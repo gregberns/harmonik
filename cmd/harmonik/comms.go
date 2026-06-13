@@ -81,6 +81,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/presence"
 )
 
 // runCommsSubcommand routes `harmonik comms <verb> [args]`.
@@ -689,161 +690,54 @@ EXAMPLES
 `)
 }
 
-// presenceTTL is the online window for the presence projection (agent-comms
-// spec §4 / Q2 — APPROVED → C = 60s refresh cadence, TTL = ~2× = 120s).
-const presenceTTL = 120 * time.Second
+// Presence projection — CANONICAL HOME MOVED to internal/presence (hitl-decisions
+// K5 lift, bead hk-061). The agent-presence registry projection (T10) used to live
+// here in package main; it was lifted into the leaf package internal/presence so
+// the session-keeper orphan reaper (which MUST NOT import internal/daemon and could
+// not import package main at all) can compute the same Offline predicate. The
+// symbols below are thin aliases keeping the package-main call sites (comms who,
+// two-captains conflict detection, decisions_k4.go orphaned-pending flag) and their
+// tests unchanged — the behaviour is byte-for-byte identical (same logic, same
+// constants), it just lives in one shared place now.
+//
+// Spec ref: agent-comms spec §4 (presence registry projection); hitl-decisions
+// SPEC §5 / N9 (the K5 reaper reuses this same Offline determination).
+// Bead refs: hk-7t27s (T10, original), hk-6vwi3 (fix #1), hk-061 (this lift).
 
-// presenceStaleCutoff is the outer window beyond which a stale agent is
-// considered fully offline. online=[0,presenceTTL), stale=[presenceTTL,presenceStaleCutoff),
-// offline=[presenceStaleCutoff,∞) — unless an explicit leave beat fires first.
-const presenceStaleCutoff = 10 * time.Minute
-
-// PresenceRecord is one entry in the presence registry projection.
-// Used by comms join/leave (T10) and consumed by comms who (T11).
-type PresenceRecord struct {
-	Agent    string
-	Status   string    // "online" or "offline" — from the latest agent_presence beat
-	LastSeen time.Time // wall time from the latest agent_presence beat
-	// EffectiveLastSeen is max(LastSeen, latest agent_message send timestamp for this agent).
-	// Incorporates activity-derived liveness so an agent sending messages stays online
-	// even when its explicit presence beat is stale (hk-6vwi3 fix #1).
-	EffectiveLastSeen time.Time
-	// SessionID is the session_id field from the most recent agent_presence beat
-	// that carried a non-empty session_id. Used for two-captains conflict detection
-	// (hk-z0f02): if a new session claims this name but reports a different session_id,
-	// the CLI warns before sending.
-	SessionID string
-}
-
-// PresenceState is the computed liveness state for a PresenceRecord.
-type PresenceState int
-
+// presenceTTL / presenceStaleCutoff alias the canonical windows in
+// internal/presence (TTL=120s, StaleCutoff=10m).
 const (
-	// PresenceStateOnline: effective_last_seen < presenceTTL (120s).
-	PresenceStateOnline PresenceState = iota
-	// PresenceStateStale: presenceTTL ≤ effective_last_seen < presenceStaleCutoff (10m).
-	PresenceStateStale
-	// PresenceStateOffline: explicit leave beat OR effective_last_seen ≥ presenceStaleCutoff.
-	PresenceStateOffline
+	presenceTTL         = presence.TTL
+	presenceStaleCutoff = presence.StaleCutoff
 )
 
-// GetPresenceState returns the computed PresenceState for r.
-// A clean leave beat (Status=="offline") short-circuits to PresenceStateOffline
-// immediately, bypassing the TTL check — so a departing agent never reads as stale.
-func GetPresenceState(r PresenceRecord) PresenceState {
-	if r.Status == "offline" {
-		return PresenceStateOffline
-	}
-	age := time.Since(r.EffectiveLastSeen)
-	if age < presenceTTL {
-		return PresenceStateOnline
-	}
-	if age < presenceStaleCutoff {
-		return PresenceStateStale
-	}
-	return PresenceStateOffline
-}
+// PresenceRecord aliases presence.Record (the registry projection entry).
+type PresenceRecord = presence.Record
 
-// IsOnline reports whether r represents an agent that is currently online
-// (effective_last_seen < presenceTTL and no leave beat).
-func IsOnline(r PresenceRecord) bool {
-	return GetPresenceState(r) == PresenceStateOnline
-}
+// PresenceState aliases presence.State (the computed liveness state).
+type PresenceState = presence.State
 
-// IsStale reports whether r represents an agent in the stale window
-// (presenceTTL ≤ effective_last_seen < presenceStaleCutoff, no leave beat).
-func IsStale(r PresenceRecord) bool {
-	return GetPresenceState(r) == PresenceStateStale
-}
+// Presence-state constants alias presence.State{Online,Stale,Offline}.
+const (
+	PresenceStateOnline  = presence.StateOnline
+	PresenceStateStale   = presence.StateStale
+	PresenceStateOffline = presence.StateOffline
+)
 
-// ComputePresenceRegistry returns the current presence projection over events.jsonl.
-//
-// The projection folds two event types in a single forward scan (hk-6vwi3 fix #1):
-//   - agent_presence: latest beat per agent determines Status and LastSeen.
-//   - agent_message:  latest send timestamp per agent (from==agent) extends
-//     EffectiveLastSeen so active agents remain visible even without a recent beat.
-//
-// EffectiveLastSeen = max(LastSeen, latest agent_message.from timestamp).
-// A missing or empty file returns an empty map.
-//
-// Spec ref: agent-comms spec §4 (presence registry projection).
-// Bead ref: hk-7t27s (T10); consumed by T11 (comms who); hk-6vwi3 (fix #1).
+// GetPresenceState delegates to presence.GetState.
+func GetPresenceState(r PresenceRecord) PresenceState { return presence.GetState(r) }
+
+// IsOnline delegates to presence.IsOnline.
+func IsOnline(r PresenceRecord) bool { return presence.IsOnline(r) }
+
+// IsStale delegates to presence.IsStale.
+func IsStale(r PresenceRecord) bool { return presence.IsStale(r) }
+
+// ComputePresenceRegistry delegates to presence.ComputeRegistry — the canonical
+// agent-presence projection over events.jsonl (logic unchanged from the former
+// package-main implementation).
 func ComputePresenceRegistry(eventsPath string) map[string]PresenceRecord {
-	var zeroID core.EventID
-	byAgent := make(map[string]PresenceRecord)
-	// lastActivity tracks the most recent agent_message.from timestamp per agent.
-	lastActivity := make(map[string]time.Time)
-
-	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
-		switch ev.Type {
-		case "agent_presence":
-			var p core.AgentPresencePayload
-			if decErr := json.Unmarshal(ev.Payload, &p); decErr != nil {
-				continue
-			}
-			if p.Agent == "" {
-				continue
-			}
-			lastSeen, parseErr := time.Parse(time.RFC3339, p.LastSeen)
-			if parseErr != nil {
-				continue
-			}
-			// Always overwrite: later entries in the file are more recent (UUIDv7 ordering).
-			// Carry forward SessionID from the previous record when the new beat omits it
-			// (e.g. recv-refresh beats never carry a session_id) so we don't lose the
-			// session binding established by the last explicit join/send beat.
-			prev := byAgent[p.Agent]
-			sessionID := p.SessionID
-			if sessionID == "" {
-				sessionID = prev.SessionID
-			}
-			byAgent[p.Agent] = PresenceRecord{
-				Agent:     p.Agent,
-				Status:    string(p.Status),
-				LastSeen:  lastSeen,
-				SessionID: sessionID,
-				// EffectiveLastSeen filled in post-scan pass below.
-			}
-		case "agent_message":
-			var p core.AgentMessagePayload
-			if decErr := json.Unmarshal(ev.Payload, &p); decErr != nil {
-				continue
-			}
-			if p.From == "" {
-				continue
-			}
-			if ev.TimestampWall.After(lastActivity[p.From]) {
-				lastActivity[p.From] = ev.TimestampWall
-			}
-		}
-	}
-
-	// Post-scan: compute EffectiveLastSeen for agents with an explicit presence beat.
-	for agent, rec := range byAgent {
-		effective := rec.LastSeen
-		if act := lastActivity[agent]; act.After(effective) {
-			effective = act
-		}
-		rec.EffectiveLastSeen = effective
-		byAgent[agent] = rec
-	}
-
-	// Synthesize entries for send-only agents — agents that appear only as senders
-	// in agent_message events but never emitted an explicit agent_presence beat.
-	// agent_message is F-class (fsync'd), so these entries survive daemon crashes
-	// even when the O-class implicit refresh beats were not flushed to disk (hk-nf111).
-	for agent, act := range lastActivity {
-		if _, known := byAgent[agent]; known {
-			continue // already covered above
-		}
-		byAgent[agent] = PresenceRecord{
-			Agent:             agent,
-			Status:            "online",
-			EffectiveLastSeen: act,
-		}
-	}
-
-	return byAgent
+	return presence.ComputeRegistry(eventsPath)
 }
 
 // resolveSessionID returns the per-session opaque token for two-captains conflict

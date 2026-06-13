@@ -149,6 +149,11 @@ func runKeeperSubcommand(args []string) int {
 		FallbackWindowSize: windowSizeFlag,
 		WarnAbsTokens:      warnAbsTokensFlag,
 		RespawnCmd:         respawnCmdFlag,
+		// hitl-decisions K5 (hk-061): the keeper watch tick is the SOLE emitter of
+		// decision_withdrawn(orphaned, by=keeper). Enable the orphan reaper on the
+		// standalone keeper; it reuses the FileEmitter (appends to the same
+		// events.jsonl) and derives EventsJSONLPath from ProjectDir in applyDefaults.
+		ReapDecisions: true,
 	}
 	w := keeper.NewWatcher(cfg, emitter)
 	if runErr := w.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {

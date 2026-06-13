@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/presence"
 )
 
 // Emitter is a minimal event-emission interface used by the keeper watcher.
@@ -232,6 +233,36 @@ type WatcherConfig struct {
 	// Set in tests to control the check without real tmux commands.
 	// Refs: hk-3w2.
 	IsPaneIdleFn func(ctx context.Context, target string) bool
+
+	// ReapDecisions enables the hitl-decisions orphan reaper (component K5, bead
+	// hk-061) on the watch tick. When true, every ticker fire runs
+	// presence.ReapOrphanedDecisions over EventsJSONLPath, emitting
+	// decision_withdrawn(orphaned, by=keeper) for any open decision whose
+	// blocked_agent is Offline (an explicit leave beat OR age ≥ presence.StaleCutoff,
+	// never merely Stale — N9). The keeper tick is the SOLE emitter of orphaned
+	// withdrawals (N9); the reap runs UNCONDITIONALLY on each tick (independent of
+	// the gauge-fresh state machine below) so orphan latency is bounded by the tick
+	// cadence regardless of this agent's own gauge state.
+	//
+	// Default: false (the reaper is opt-in; the standalone `harmonik keeper`
+	// process enables it — keeper_cmd.go). When false the watcher behaves exactly
+	// as before (no decision reaping).
+	// Refs: hk-061 (hitl-decisions K5); SPEC §5 / N9.
+	ReapDecisions bool
+
+	// EventsJSONLPath is the path to the project's events.jsonl, read by the
+	// orphan reaper (ReapDecisions) for the open-decision projection + presence
+	// registry. When empty and ReapDecisions is true, applyDefaults derives it as
+	// <ProjectDir>/.harmonik/<core.EventsJSONLPath>.
+	// Refs: hk-061.
+	EventsJSONLPath string
+
+	// DecisionEmitter is the bus used by the orphan reaper to emit
+	// decision_withdrawn(orphaned). When nil and ReapDecisions is true, the
+	// watcher's primary emitter is reused (the FileEmitter for the standalone
+	// keeper, which appends to the same events.jsonl). Set to a spy in tests.
+	// Refs: hk-061.
+	DecisionEmitter presence.Emitter
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -271,6 +302,9 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.IsPaneIdleFn == nil {
 		c.IsPaneIdleFn = IsPaneIdle
+	}
+	if c.ReapDecisions && c.EventsJSONLPath == "" {
+		c.EventsJSONLPath = filepath.Join(c.ProjectDir, ".harmonik", core.EventsJSONLPath)
 	}
 }
 
@@ -370,6 +404,16 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			// ── hitl-decisions orphan reaper (K5, hk-061) ────────────────────
+			// Runs UNCONDITIONALLY on every tick, BEFORE the gauge-read branches
+			// below (which may `continue` past the rest of the loop body when the
+			// gauge is absent/stale/foreign). This keeps orphan-withdraw latency
+			// bounded by the tick cadence (≤ Offline-cutoff + one tick, SPEC §5 /
+			// N9) regardless of THIS agent's own gauge state — the reaper acts on
+			// the global open-decision set, not on this watcher's managed pane.
+			// The keeper tick is the SOLE emitter of decision_withdrawn(orphaned).
+			w.maybeReapOrphanedDecisions(ctx)
+
 			ctxFile, modTime, err := ReadCtxFile(w.cfg.ProjectDir, w.cfg.AgentName)
 
 			// ── gauge absent ────────────────────────────────────────────────
@@ -572,6 +616,36 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 			}
 		}
+	}
+}
+
+// maybeReapOrphanedDecisions runs one hitl-decisions orphan-reap pass (K5,
+// hk-061) when the reaper is enabled (cfg.ReapDecisions). It emits
+// decision_withdrawn(orphaned, by=keeper) for every open decision whose
+// blocked_agent is Offline (an explicit leave beat OR age ≥ presence.StaleCutoff,
+// never merely Stale — N9), via the canonical presence.ReapOrphanedDecisions.
+//
+// It is a no-op when ReapDecisions is false. The emitter is cfg.DecisionEmitter
+// when set, else the watcher's primary emitter (the standalone keeper's
+// FileEmitter, which appends to the same events.jsonl). A reap error or a
+// per-decision emit failure is logged and swallowed — the next tick retries
+// (the pass is idempotent: the open set is re-read fresh each call, N3).
+func (w *Watcher) maybeReapOrphanedDecisions(ctx context.Context) {
+	if !w.cfg.ReapDecisions {
+		return
+	}
+	emitter := w.cfg.DecisionEmitter
+	if emitter == nil {
+		emitter = w.emitter
+	}
+	res, err := presence.ReapOrphanedDecisions(ctx, w.cfg.EventsJSONLPath, emitter)
+	if err != nil {
+		slog.WarnContext(ctx, "keeper: orphan-decision reap", "err", err, "events_path", w.cfg.EventsJSONLPath)
+		return
+	}
+	if res.Reaped > 0 {
+		slog.InfoContext(ctx, "keeper: reaped orphaned decisions",
+			"agent", w.cfg.AgentName, "reaped", res.Reaped, "open", res.Open, "decision_ids", res.DecisionIDs)
 	}
 }
 

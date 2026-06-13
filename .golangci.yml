@@ -113,15 +113,21 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "crew MUST NOT import daemon (c2-spec.md §3.3)" }
 
-        # keeper: stdlib + core + eventbus + self-import (external test pattern);
-        # MUST NOT import daemon or workloop.
-        # Rationale: codename:session-keeper (hk-ekap1); bead hk-fzzc6.
+        # keeper: stdlib + core + eventbus + presence + self-import (external test
+        # pattern); MUST NOT import daemon or workloop.
+        # presence: the hitl-decisions K5 orphan reaper (presence.ReapOrphanedDecisions)
+        # runs on the keeper watch tick (watcher.go); internal/presence is the leaf
+        # that owns the open-decision projection + the Offline presence predicate +
+        # the reaper, so the keeper tick imports it without importing daemon
+        # (hitl-decisions SPEC §5 / N9; bead hk-061).
+        # Rationale: codename:session-keeper (hk-ekap1); bead hk-fzzc6, hk-061.
         keeper:
           files: ["**/internal/keeper/**"]
           allow:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/presence"
             - "github.com/gregberns/harmonik/internal/keeper"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "keeper MUST NOT import daemon (session-keeper spec hk-ekap1)" }
@@ -210,6 +216,21 @@ linters:
         policy:
           files: ["**/internal/policy/**"]
           allow: ["$gostd", "github.com/gregberns/harmonik/internal/core"]
+        # presence: core + eventbus + self-import (external test pattern).
+        # Leaf package owning the agent-presence projection (lifted from
+        # cmd/harmonik/comms.go) AND the hitl-decisions open-decision projection +
+        # orphan reaper (lifted from internal/daemon), so internal/keeper can import
+        # it for the K5 keeper-tick reaper without importing internal/daemon.
+        # MUST NOT import daemon. Spec ref: hitl-decisions SPEC §5 / N9; bead hk-061.
+        presence:
+          files: ["**/internal/presence/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/presence"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "presence is a leaf; MUST NOT import daemon (hitl-decisions hk-061)" }
         # handler-contract: core + uuid (sessionid.go) + self-import (external test pattern).
         # uuid is a leaf utility needed by sessionid.go (NewSessionID) and test fixtures.
         # Self-import allows the standard Go external test pattern (package handlercontract_test).

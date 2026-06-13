@@ -525,6 +525,157 @@ func TestStaleWatch_PerBeadLabelOverride(t *testing.T) {
 	}
 }
 
+// TestStaleWatch_ReviewerLaunchNodeGating verifies that when the last event for
+// a run is reviewer_launched, the stale watcher applies the
+// ReviewerLaunchStaleAfter floor rather than the default StaleAfter, preventing
+// false-positive run_stale events during normal reviewer execution windows
+// (logmine F38, hk-0z2).
+func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
+	reg := daemon.NewRunRegistry()
+	runID := staleFixtureNewRunID(t)
+	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	reg.Register(runID, &daemon.RunHandle{
+		BeadID:    "hk-testrevgating",
+		StartedAt: startedAt,
+	})
+
+	defaultStaleAfter := 10 * time.Minute
+	reviewerLaunchStaleAfter := 30 * time.Minute
+
+	// Controllable clock: starts at startedAt.
+	clockVal := startedAt
+	nowFn := func() time.Time { return clockVal }
+
+	sfb := staleFixtureNewBus(t)
+	// Build a second bus that the watcher subscribes to (and the reviewer_launched
+	// event is emitted on). The watcher emits run_stale to sfb.bus.
+	unsealedForWatcher := eventbus.NewBusImpl()
+
+	w := daemon.NewStaleWatcher(daemon.StaleWatcherConfig{
+		SubscribeBus:             unsealedForWatcher,
+		Emitter:                  sfb.bus,
+		Registry:                 reg,
+		StaleAfter:               defaultStaleAfter,
+		ReviewerLaunchStaleAfter: reviewerLaunchStaleAfter,
+		ScanInterval:             time.Hour,
+		Now:                      nowFn,
+	})
+	if err := w.Subscribe(); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := unsealedForWatcher.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Deliver reviewer_launched at t=0. The watcher observes it and records
+	// lastEventType = "reviewer_launched".
+	if err := unsealedForWatcher.EmitWithRunID(ctx, runID, core.EventTypeReviewerLaunched, json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("EmitWithRunID reviewer_launched: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Advance to just past the default threshold (10 min + 1 s).
+	// Without the gate this would fire run_stale; with the gate it must not.
+	clockVal = startedAt.Add(defaultStaleAfter + time.Second)
+	daemon.ExportedStalewatchScan(w, ctx)
+	time.Sleep(50 * time.Millisecond)
+	if n := len(sfb.collected()); n != 0 {
+		t.Fatalf("at default threshold+1s after reviewer_launched: expected 0 run_stale events (gate suppressed), got %d", n)
+	}
+
+	// Advance to just past the reviewer-launch floor (30 min + 1 s) — run_stale
+	// must now fire because the reviewer has been silent for the full floor window.
+	clockVal = startedAt.Add(reviewerLaunchStaleAfter + time.Second)
+	daemon.ExportedStalewatchScan(w, ctx)
+	time.Sleep(50 * time.Millisecond)
+	evts := sfb.collected()
+	if len(evts) != 1 {
+		t.Fatalf("at reviewer-launch floor+1s: expected 1 run_stale event, got %d", len(evts))
+	}
+	if evts[0].BeadID != "hk-testrevgating" {
+		t.Errorf("bead_id: got %s want hk-testrevgating", evts[0].BeadID)
+	}
+	if evts[0].LastEventType != string(core.EventTypeReviewerLaunched) {
+		t.Errorf("last_event_type: got %q want %q", evts[0].LastEventType, string(core.EventTypeReviewerLaunched))
+	}
+}
+
+// TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff verifies that
+// once the exponential backoff has grown beyond ReviewerLaunchStaleAfter, the
+// backoff value (not the gate floor) governs subsequent re-emissions.
+func TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff(t *testing.T) {
+	reg := daemon.NewRunRegistry()
+	runID := staleFixtureNewRunID(t)
+	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	reg.Register(runID, &daemon.RunHandle{
+		BeadID:    "hk-testrevbackoff",
+		StartedAt: startedAt,
+	})
+
+	defaultStaleAfter := 10 * time.Minute
+	reviewerLaunchStaleAfter := 30 * time.Minute
+
+	clockVal := startedAt
+	nowFn := func() time.Time { return clockVal }
+
+	sfb := staleFixtureNewBus(t)
+	unsealedForWatcher := eventbus.NewBusImpl()
+	w := daemon.NewStaleWatcher(daemon.StaleWatcherConfig{
+		SubscribeBus:             unsealedForWatcher,
+		Emitter:                  sfb.bus,
+		Registry:                 reg,
+		StaleAfter:               defaultStaleAfter,
+		ReviewerLaunchStaleAfter: reviewerLaunchStaleAfter,
+		ScanInterval:             time.Hour,
+		Now:                      nowFn,
+	})
+	if err := w.Subscribe(); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := unsealedForWatcher.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Deliver reviewer_launched at t=0.
+	if err := unsealedForWatcher.EmitWithRunID(ctx, runID, core.EventTypeReviewerLaunched, json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("EmitWithRunID reviewer_launched: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// First emission at the reviewer-launch floor (30 min).
+	clockVal = startedAt.Add(reviewerLaunchStaleAfter)
+	daemon.ExportedStalewatchScan(w, ctx)
+	time.Sleep(50 * time.Millisecond)
+	if n := len(sfb.collected()); n != 1 {
+		t.Fatalf("first emit: expected 1, got %d", n)
+	}
+	// After first emit, nextEmitAfter is set to effectiveThreshold*2 = 30*2 = 60 min.
+	// Because the gate raised the base from 10 min to 30 min, the doubling
+	// now uses the gate floor so the backoff schedule is: 30, 60, 120, ...
+	// Second emission fires when age from startedAt >= 30 + 60 = 90 min.
+	// (age is measured from lastEventAt = startedAt+0, so threshold is 60 min
+	//  but age is already 30 min; we need age to reach 60 min, i.e. clockVal = startedAt+60 min.)
+	// Actually: age = clockVal - startedAt; nextEmitAfter = 60 min; fires when age >= 60 min.
+	clockVal = startedAt.Add(59 * time.Minute)
+	daemon.ExportedStalewatchScan(w, ctx)
+	time.Sleep(50 * time.Millisecond)
+	if n := len(sfb.collected()); n != 1 {
+		t.Fatalf("just under second emit (59min): expected 1, got %d", n)
+	}
+	clockVal = startedAt.Add(60*time.Minute + time.Second)
+	daemon.ExportedStalewatchScan(w, ctx)
+	time.Sleep(50 * time.Millisecond)
+	if n := len(sfb.collected()); n != 2 {
+		t.Fatalf("second emit (60min+1s): expected 2, got %d", n)
+	}
+}
+
 // TestStaleWatch_PayloadValid verifies that the emitted RunStalePayload passes
 // its own Valid() check.
 func TestStaleWatch_PayloadValid(t *testing.T) {

@@ -49,6 +49,14 @@ const (
 	// check all active runs. Keep small relative to staleWatchDefaultAfter so
 	// we don't miss a window; 30 s gives ≤30 s detection latency.
 	staleWatchScanInterval = 30 * time.Second
+
+	// staleWatchReviewerLaunchAfter is the minimum quiet window applied when
+	// the most recent event for a run is reviewer_launched.  The reviewer
+	// session can run silently for up to 30 min before emitting a verdict, so
+	// the base 10-min threshold produces 100% false-positive run_stale events
+	// for that node type (logmine F38, hk-0z2).  30 min matches the reviewer's
+	// observed worst-case latency.
+	staleWatchReviewerLaunchAfter = 30 * time.Minute
 )
 
 // launchStallThreshold is the maximum time allowed between run_started and the
@@ -111,6 +119,13 @@ type StaleWatcherConfig struct {
 	// StaleAfter is the base quiet window. Zero → staleWatchDefaultAfter (10 min).
 	StaleAfter time.Duration
 
+	// ReviewerLaunchStaleAfter is the minimum quiet window applied when the
+	// most recent event for a run is reviewer_launched.  Zero →
+	// staleWatchReviewerLaunchAfter (30 min).  This floor prevents
+	// false-positive run_stale events during the reviewer's normal silent
+	// execution window (logmine F38, hk-0z2).
+	ReviewerLaunchStaleAfter time.Duration
+
 	// ScanInterval is how often the background goroutine scans active runs.
 	// Zero → staleWatchScanInterval (30 s).
 	ScanInterval time.Duration
@@ -151,6 +166,9 @@ func beadStaleAfter(labels []string, defaultAfter time.Duration) time.Duration {
 func NewStaleWatcher(cfg StaleWatcherConfig) *StaleWatcher {
 	if cfg.StaleAfter <= 0 {
 		cfg.StaleAfter = staleWatchDefaultAfter
+	}
+	if cfg.ReviewerLaunchStaleAfter <= 0 {
+		cfg.ReviewerLaunchStaleAfter = staleWatchReviewerLaunchAfter
 	}
 	if cfg.ScanInterval <= 0 {
 		cfg.ScanInterval = staleWatchScanInterval
@@ -316,7 +334,18 @@ func (w *StaleWatcher) checkRun(
 	}
 
 	age := now.Sub(refTime)
-	if age < st.nextEmitAfter {
+
+	// hk-0z2 (logmine F38): gate the threshold by last event type.  When the
+	// most recent event is reviewer_launched, the reviewer session runs silently
+	// for up to 30 min before emitting a verdict.  Apply a higher floor so we
+	// do not emit false-positive run_stale events during that window.
+	effectiveThreshold := st.nextEmitAfter
+	if core.EventType(st.lastEventType) == core.EventTypeReviewerLaunched &&
+		effectiveThreshold < w.cfg.ReviewerLaunchStaleAfter {
+		effectiveThreshold = w.cfg.ReviewerLaunchStaleAfter
+	}
+
+	if age < effectiveThreshold {
 		w.mu.Unlock()
 		return
 	}
@@ -332,7 +361,10 @@ func (w *StaleWatcher) checkRun(
 	}
 	beadID := st.beadID
 	// Double the window for the next emission (exponential backoff).
-	st.nextEmitAfter *= 2
+	// Use effectiveThreshold as the base so that the reviewer-launch gate
+	// floor is accounted for in the schedule: if the gate raised the
+	// threshold to 30 min, the next window is 60 min (not 20 min).
+	st.nextEmitAfter = effectiveThreshold * 2
 	w.mu.Unlock()
 
 	// HC-064..HC-067 / hk-xrygh: before emitting run_stale, drive the session

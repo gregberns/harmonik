@@ -303,7 +303,12 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.IsPaneIdleFn == nil {
 		c.IsPaneIdleFn = IsPaneIdle
 	}
-	if c.ReapDecisions && c.EventsJSONLPath == "" {
+	// EventsJSONLPath is read by BOTH the K5 orphan reaper (ReapDecisions) and the
+	// K6 respawn-exemption (blockedOnOpenDecision). Derive it whenever it is unset
+	// and a project dir is known — K6's exemption must consult the open-decision
+	// set even when the K5 reaper is disabled.
+	// Refs: hk-061 (K5), hk-50f (K6).
+	if c.EventsJSONLPath == "" && c.ProjectDir != "" {
 		c.EventsJSONLPath = filepath.Join(c.ProjectDir, ".harmonik", core.EventsJSONLPath)
 	}
 }
@@ -724,9 +729,10 @@ func (w *Watcher) emitWarn(ctx context.Context, cf *CtxFile) {
 //   - staleSince has been set for at least RespawnGrace
 //   - cooldown since last attempt has elapsed
 //   - the tmux pane is idle (agent has exited)
+//   - the agent is NOT blocked on an open decision (hitl-decisions K6 exemption)
 //
 // On success it updates *lastRespawnAt and emits session_keeper_respawn_attempted.
-// Refs: hk-3w2.
+// Refs: hk-3w2; hk-50f (K6 exemption).
 func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRespawnAt *time.Time) {
 	if w.cfg.RespawnCmd == "" || w.cfg.TmuxTarget == "" {
 		return
@@ -738,6 +744,22 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 		return
 	}
 	if !w.cfg.IsPaneIdleFn(ctx, w.cfg.TmuxTarget) {
+		return
+	}
+
+	// ── hitl-decisions K6 exemption (SPEC §4/§5) ─────────────────────────────
+	// The 120s-silent-hang reaper (this respawn path) is about to kill/respawn
+	// the watched agent as "hung". But an agent that is the blocked_agent of an
+	// OPEN decision — and is legitimately WAITING (a fresh §4 heartbeat keeps it
+	// Online) — is BLOCKED, not hung. Skip the reap: it is the complement of K5
+	// (K6 protects the LIVE blocked agent; K5 reaps the DECISION once the agent
+	// is genuinely gone). The fresh-heartbeat qualifier (presence Online) is what
+	// prevents over-shielding a truly-dead agent — a Stale/Offline blocked agent
+	// is NOT exempted here (its decision is K5's to reap). Read-only: consults the
+	// projection, emits nothing.
+	if w.blockedOnOpenDecision(ctx) {
+		slog.InfoContext(ctx, "keeper: agent blocked on an open decision — exempt from 120s reaper",
+			"agent", w.cfg.AgentName)
 		return
 	}
 
@@ -759,6 +781,65 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 			"agent", w.cfg.AgentName, "err", runErr)
 	}
 	w.emitRespawnAttempted(ctx, outcome, errMsg)
+}
+
+// blockedOnOpenDecision reports whether the watched agent (w.cfg.AgentName) is
+// the blocked_agent of an OPEN hitl-decisions decision AND is legitimately
+// waiting per SPEC §4 (a fresh heartbeat — presence Online). This is the K6
+// exemption predicate: when true, the 120s-silent-hang reaper (maybeRespawn)
+// treats the agent as BLOCKED, not HUNG, and skips the kill/respawn.
+//
+// It is READ-ONLY — it consults the K3 open-decision projection
+// (presence.OpenDecisions) and the presence registry (presence.ComputeRegistry)
+// over the durable events.jsonl and emits NOTHING. K6 protects the live agent;
+// K5 (the reaper) is the SOLE emitter of decision_withdrawn(orphaned) once the
+// agent is genuinely gone.
+//
+// The fresh-heartbeat qualifier is the exact complement of K5's "truly gone"
+// predicate (presence StateOffline): K6 exempts ONLY when the blocked agent is
+// presence-Online (a fresh §4 subscribe-stream heartbeat). A Stale or Offline
+// blocked agent is NOT exempted — it is not indefinitely shielded; its open
+// decision is K5's to reap. This is the no-over-exemption guarantee:
+//   - an agent absent from every open decision → not exempt (reaped normally);
+//   - an agent named in an open decision but presence-Stale/Offline → not exempt
+//     (K5 reaps the decision; the agent is not shielded);
+//   - an agent named in an open decision with a fresh (Online) heartbeat → EXEMPT.
+//
+// Returns false (fail-open — i.e. NOT exempt, the agent is reaped normally) when
+// EventsJSONLPath is unset, so a misconfigured keeper never silently shields a
+// hung agent.
+//
+// Refs: hk-50f (component K6); SPEC §4 (keeper-alive via heartbeat), §5 (keeper
+// seam K6).
+func (w *Watcher) blockedOnOpenDecision(_ context.Context) bool {
+	if w.cfg.EventsJSONLPath == "" {
+		return false
+	}
+	open := presence.OpenDecisions(w.cfg.EventsJSONLPath)
+	if len(open) == 0 {
+		return false
+	}
+	// Is this agent the blocked_agent of any open decision?
+	blocked := false
+	for _, dec := range open {
+		if dec.BlockedAgent == w.cfg.AgentName {
+			blocked = true
+			break
+		}
+	}
+	if !blocked {
+		return false
+	}
+	// Fresh-heartbeat qualifier (SPEC §4): exempt ONLY when the agent's presence
+	// is Online. A merely-Stale or Offline blocked agent is NOT exempted — it is
+	// K5's job to reap the decision, not K6's to shield a dead agent. An agent
+	// with no presence record at all is likewise not exempt (no evidence it is
+	// alive and waiting).
+	rec, known := presence.ComputeRegistry(w.cfg.EventsJSONLPath)[w.cfg.AgentName]
+	if !known {
+		return false
+	}
+	return presence.GetState(rec) == presence.StateOnline
 }
 
 // emitRespawnAttempted emits the session_keeper_respawn_attempted event.

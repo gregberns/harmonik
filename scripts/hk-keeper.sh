@@ -2,8 +2,8 @@
 # hk-keeper.sh — Robust harmonik daemon keeper.
 #
 # Runs OUTSIDE tmux so it survives tmux-session kills. Launches the daemon
-# inside a non-"harmonik"-prefixed tmux session ("hkdkeeper") so an over-broad
-# `harmonik-*` orphan sweep can't kill it.
+# inside a per-project hash-qualified tmux session (hk-<project_hash>-keeper)
+# so an over-broad `harmonik-*` orphan sweep can't kill it (ON-058c).
 #
 # Strips ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN so the daemon bills the
 # subscription, not the API credit pool (see codename:credfence).
@@ -17,8 +17,8 @@
 # Defaults:
 #   HK_PROJECT        — first positional arg, or $HK_PROJECT, or CWD
 #   HK_CONCURRENCY    — second positional arg, or $HK_CONCURRENCY, or 6
-#   HK_LOG            — $HK_LOG, or /tmp/hk-daemon.log
-#   HK_SESS           — $HK_SESS, or hkdkeeper
+#   HK_LOG            — $HK_LOG, or /tmp/hk-<project_hash>-daemon.log  (ON-058c)
+#   HK_SESS           — $HK_SESS, or hk-<project_hash>-keeper          (ON-058c)
 #
 # Work-project deployment (repos where main must never be auto-pushed):
 #   Set HK_TARGET_BRANCH and HK_PROTECT_BRANCH to engage integration-branch mode.
@@ -41,8 +41,12 @@ set -euo pipefail
 
 PROJ="${1:-${HK_PROJECT:-$(pwd)}}"
 CONCURRENCY="${2:-${HK_CONCURRENCY:-6}}"
-LOG="${HK_LOG:-/tmp/hk-daemon.log}"
-SESS="${HK_SESS:-hkdkeeper}"
+
+# Derive per-project hash (ON-058c/ON-058e) for hash-qualified /tmp resources.
+# Guard: stale binary lacking `project-hash` degrades to unqualified names.
+_HASH="$(harmonik project-hash --project "$PROJ" 2>/dev/null || true)"
+LOG="${HK_LOG:-/tmp/hk-${_HASH:+${_HASH}-}daemon.log}"
+SESS="${HK_SESS:-hk-${_HASH:+${_HASH}-}keeper}"
 
 # Optional work-project integration-branch flags.
 TARGET_BRANCH="${HK_TARGET_BRANCH:-}"

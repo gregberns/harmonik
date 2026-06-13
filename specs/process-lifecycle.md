@@ -59,6 +59,7 @@ The spec exists separately from `operator-nfr.md` because the daemon is the proc
 - Event payload schemas for lifecycle events — owned by [event-model.md §6.3, §8.7].
 - Startup failure-mode catalog content (exit codes per prerequisite failure) — owned by [operator-nfr.md §4.1 ON-003] spec-draft obligation + [reconciliation/spec.md §4.3 RC-012] Cat 0 pre-check.
 - Queue document schema, queue-method payload schemas, queue persistence layout, and queue-status semantics — owned by [queue-model.md §2, §3, §6, §7]. PL owns the socket transport, the persisted-queue startup read, the CLI dispatch shape for `hk queue *`, and the file-surface inventory entry only.
+- Multi-repo dispatch (known boundary): the daemon lands only changes to the repo it supervises. Worktrees are rooted at `<projectDir>/.harmonik/worktrees/`; a bead touching another repo cannot satisfy the managed-worktree prefix check; no per-bead repo override exists (`BeadRecord` carries no `repo_url`/`target_repo`/`repoPath` field). Cross-repo fixes are applied out-of-band until **hk-3r3** (adopted under `codename:fleet-portability`) lands the multi-repo dispatch mechanism.
 
 ## 3. Glossary
 

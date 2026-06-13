@@ -71,6 +71,12 @@ if [ -z "${PCT}" ] || ! printf '%s' "${PCT}" | grep -qE '^[0-9]+(\.[0-9]+)?$'; t
 fi
 
 SESSION_ID="$(printf '%s' "${INPUT}" | jq -r '.session_id // ""' 2>/dev/null || true)"
+# Normalise to lowercase: Claude Code may emit the conversation/transcript-dir
+# UUID (uppercase UUIDv4) as session_id instead of the actual session UUID.
+# Lowercasing prevents the uppercase guard in the keeper watcher from rejecting
+# a legitimately-latched SID and also prevents poisoning .managed with a
+# conversation UUID (hk-mzdm).
+SESSION_ID="$(printf '%s' "${SESSION_ID}" | tr '[:upper:]' '[:lower:]')"
 TS="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 # Extract absolute token counts — default to 0 when absent (older Claude Code).

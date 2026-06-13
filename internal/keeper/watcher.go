@@ -274,6 +274,27 @@ type WatcherConfig struct {
 	// Default: 3 (≈15 s at the default 5 s PollInterval).
 	// Refs: hk-mejt (stale/mismatched .managed binding).
 	StaleBindingThreshold int
+
+	// AutoClearCooldown is the window within which two auto-clears are considered
+	// a "rapid repeat" (flap). When a second auto-clear fires within this duration
+	// of the previous one, the consecutive-rapid-clear counter is incremented.
+	// If the counter reaches AutoClearMaxAttempts, latch is suppressed (see below)
+	// and the operator must run 'keeper rebind' to re-establish a stable binding.
+	//
+	// Default: 3 * StaleBindingThreshold * PollInterval (≈45 s at defaults).
+	// Refs: hk-mzdm (flap cooldown).
+	AutoClearCooldown time.Duration
+
+	// AutoClearMaxAttempts is the number of rapid auto-clears (within
+	// AutoClearCooldown of each other) before latch is suppressed. Prevents the
+	// keeper from silently re-latching a wrong session_id in a sustained flap
+	// (two alternating non-daemon UUIDv4 sessions repeatedly writing .ctx).
+	// When suppressed, 'keeper rebind' writes the correct session_id directly
+	// and the keeper resumes on the next matching gauge tick.
+	//
+	// Default: 2 (suppress after the second rapid clear).
+	// Refs: hk-mzdm (flap cooldown).
+	AutoClearMaxAttempts int
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -317,6 +338,16 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.StaleBindingThreshold <= 0 {
 		c.StaleBindingThreshold = 3
 	}
+	if c.AutoClearMaxAttempts <= 0 {
+		c.AutoClearMaxAttempts = 2
+	}
+	// AutoClearCooldown defaults to 3×StaleBindingThreshold×PollInterval.
+	// At defaults (threshold=3, poll=5s) this is 45 s — wide enough that two
+	// auto-clears caused by a brief transient are not misclassified as a flap,
+	// but tight enough to catch a sustained two-session thrash.
+	if c.AutoClearCooldown <= 0 {
+		c.AutoClearCooldown = time.Duration(3*c.StaleBindingThreshold) * c.PollInterval
+	}
 	// EventsJSONLPath is read by BOTH the K5 orphan reaper (ReapDecisions) and the
 	// K6 respawn-exemption (blockedOnOpenDecision). Derive it whenever it is unset
 	// and a project dir is known — K6's exemption must consult the open-decision
@@ -347,6 +378,33 @@ func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
 		return cf.Tokens < threshold
 	}
 	return cf.Pct < c.WarnPct
+}
+
+// isUppercaseUUID reports whether s is a UUID-shaped string (36 bytes,
+// hyphens at the canonical positions) that contains at least one uppercase
+// hex digit (A–F). This is characteristic of the conversation/transcript-dir
+// UUID that Claude Code occasionally emits as session_id instead of the actual
+// (lowercase) session UUID. Non-UUID strings (len≠36 or wrong hyphen layout)
+// are never considered uppercase UUIDs so short test/label strings like
+// "sess-C" are not rejected. Used as defense-in-depth at the watcher latch
+// point; the primary source fix is the lowercase-normalisation in
+// keeper-statusline.sh. Refs: hk-mzdm.
+func isUppercaseUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+		return false
+	}
+	for i, r := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			continue
+		}
+		if r >= 'A' && r <= 'F' {
+			return true
+		}
+	}
+	return false
 }
 
 // Watcher polls the gauge file and manages the warn-injection state machine.
@@ -411,6 +469,25 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// StaleBindingThreshold the watcher auto-clears .managed so the next
 		// valid gauge tick re-latches. (Refs: hk-mejt)
 		consecutiveForeignTicks int
+
+		// lastAutoClearAt is the time of the most recent auto-clear of .managed.
+		// Used to detect rapid-repeat auto-clears (flap thrashing). Zero when no
+		// auto-clear has occurred this session. (Refs: hk-mzdm)
+		lastAutoClearAt time.Time
+
+		// consecutiveRapidClears counts auto-clears that fired within
+		// AutoClearCooldown of the previous one. Reset to 1 after a cooldown-
+		// spaced clear. When it reaches AutoClearMaxAttempts, latchSuppressed
+		// is set. (Refs: hk-mzdm)
+		consecutiveRapidClears int
+
+		// latchSuppressed is set when too many rapid auto-clears have occurred.
+		// While true, the watcher skips the auto-latch path and emits
+		// foreign_session, requiring the operator to run 'keeper rebind' to write
+		// a known-good session_id into .managed. Cleared when a stable binding is
+		// confirmed (gauge matches .managed) or when the keeper is restarted.
+		// (Refs: hk-mzdm)
+		latchSuppressed bool
 	)
 
 	// Boot-time check: emit no_gauge immediately if gauge is absent or stale.
@@ -522,6 +599,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 				if managedSID != "" && !isUUIDv7(managedSID) && isUUIDv7(ctxFile.SessionID) {
 					slog.DebugContext(ctx, "keeper: transient UUIDv7 in .ctx while .managed is UUIDv4 — skipping tick, retaining last gauge",
 						"agent", w.cfg.AgentName, "managed_sid", managedSID, "ctx_sid", ctxFile.SessionID)
+					// Reset the consecutive-foreign counter so that a UUIDv7 tick
+					// between two real foreign ticks does not accumulate toward the
+					// threshold — only STRICTLY consecutive foreign ticks should count.
+					// Refs: hk-mzdm (counter-reset-on-retain).
+					consecutiveForeignTicks = 0
 					continue
 				}
 
@@ -545,6 +627,27 @@ func (w *Watcher) Run(ctx context.Context) error {
 							slog.WarnContext(ctx, "keeper: auto-clear stale .managed", "agent", w.cfg.AgentName, "err", clearErr)
 						} else {
 							consecutiveForeignTicks = 0
+							// Flap cooldown: track rapid-repeat auto-clears (hk-mzdm).
+							// If a second clear fires within AutoClearCooldown of the
+							// previous one, increment the rapid-clear counter. Once it
+							// reaches AutoClearMaxAttempts, suppress latch until the
+							// operator runs 'keeper rebind' — otherwise the watcher
+							// silently re-latches the wrong session on every clear.
+							now := time.Now()
+							if !lastAutoClearAt.IsZero() && now.Sub(lastAutoClearAt) < w.cfg.AutoClearCooldown {
+								consecutiveRapidClears++
+								if consecutiveRapidClears >= w.cfg.AutoClearMaxAttempts {
+									latchSuppressed = true
+									slog.WarnContext(ctx, "keeper: flap cooldown active — repeated rapid auto-clears detected; run 'harmonik keeper rebind' to restore binding",
+										"agent", w.cfg.AgentName,
+										"rapid_clears", consecutiveRapidClears,
+										"max_attempts", w.cfg.AutoClearMaxAttempts,
+										"cooldown", w.cfg.AutoClearCooldown)
+								}
+							} else {
+								consecutiveRapidClears = 1
+							}
+							lastAutoClearAt = now
 						}
 					}
 					w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
@@ -554,6 +657,20 @@ func (w *Watcher) Run(ctx context.Context) error {
 					pendingInject = false
 					continue
 				} else if managedSID == "" && ctxFile.SessionID != "" {
+					// Latch suppression: if too many rapid auto-clears have occurred,
+					// stop silently re-latching and require operator intervention. This
+					// prevents the keeper from oscillating between wrong sessions in a
+					// sustained two-captain flap. (Refs: hk-mzdm)
+					if latchSuppressed {
+						slog.WarnContext(ctx, "keeper: latch suppressed (flap cooldown active) — run 'harmonik keeper rebind' to restore binding",
+							"agent", w.cfg.AgentName, "candidate_sid", ctxFile.SessionID)
+						w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
+						noGaugeEmittedAtBoot = true
+						warnArmed = true
+						warnFired = false
+						pendingInject = false
+						continue
+					}
 					// Latch: first valid gauge seen — bind its session_id into .managed.
 					// Reject UUIDv7 SIDs: daemon-spawned implementers use UUIDv7;
 					// interactive captain sessions use UUIDv4. After a clear->resume
@@ -570,11 +687,21 @@ func (w *Watcher) Run(ctx context.Context) error {
 						pendingInject = false
 						continue
 					}
-					// Note: Claude Code may occasionally emit the conversation/transcript-dir
-					// UUID as session_id (not the session UUID). If the wrong UUID gets
-					// latched here, the stale-binding auto-recovery (StaleBindingThreshold
-					// foreign ticks → auto-clear) or `harmonik keeper rebind` recovers it.
-					// Refs: hk-mejt.
+					// Reject uppercase session_ids: Claude Code occasionally emits the
+					// conversation/transcript-dir UUID (uppercase UUIDv4) as session_id
+					// instead of the actual session UUID. The primary fix is lowercase-
+					// normalisation in keeper-statusline.sh (hk-mzdm). This guard is
+					// defense-in-depth for any path that bypasses the script.
+					if isUppercaseUUID(ctxFile.SessionID) {
+						slog.WarnContext(ctx, "keeper: skipping latch of uppercase UUID (likely conversation/transcript-dir id, not session UUID); fix: keeper-statusline.sh lowercase normalisation",
+							"agent", w.cfg.AgentName, "sid", ctxFile.SessionID)
+						w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
+						noGaugeEmittedAtBoot = true
+						warnArmed = true
+						warnFired = false
+						pendingInject = false
+						continue
+					}
 					slog.InfoContext(ctx, "keeper: latching session_id into .managed",
 						"agent", w.cfg.AgentName, "session_id", ctxFile.SessionID)
 					if latchErr := w.cfg.WriteManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName, ctxFile.SessionID); latchErr != nil {
@@ -591,6 +718,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 			lastNoGaugeEmit = time.Time{}
 			gaugeStaleSince = time.Time{}
 			consecutiveForeignTicks = 0
+			// Clear flap-cooldown suppression on stable bind (e.g. after a
+			// successful 'keeper rebind' that writes the correct session_id and the
+			// gauge now matches). Reset all flap-tracking state so future
+			// clear→resume cycles start fresh. (Refs: hk-mzdm)
+			if latchSuppressed {
+				slog.InfoContext(ctx, "keeper: flap cooldown cleared — stable session binding established",
+					"agent", w.cfg.AgentName)
+				latchSuppressed = false
+				consecutiveRapidClears = 0
+				lastAutoClearAt = time.Time{} // reset cooldown window
+			}
 
 			// ── idle-gate ────────────────────────────────────────────────────
 			// The pane is considered idle when the gauge file's mod-time has not

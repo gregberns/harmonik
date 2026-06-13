@@ -962,3 +962,250 @@ func TestWatcher_SkipsNoGaugeOnTransientUUIDv7WhenManagedIsUUIDv4(t *testing.T) 
 		t.Errorf("want 0 session_keeper_warn on transient UUIDv7 skip; got %d", len(warns))
 	}
 }
+
+// TestWatcher_SkipsUppercaseSessionIDLatch verifies that the watcher does NOT
+// latch an uppercase session_id into .managed. Claude Code may occasionally emit
+// the conversation/transcript-dir UUID (uppercase UUIDv4) as session_id; latching
+// it would poison .managed and cause permanent foreign_session noise until the
+// operator ran 'keeper rebind'. The primary fix is lowercase normalisation in
+// keeper-statusline.sh; this guard is defense-in-depth. Refs: hk-mzdm.
+func TestWatcher_SkipsUppercaseSessionIDLatch(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "uppercase-skip-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	latchCalled := 0
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// No binding — simulates post-clear state.
+		ReadManagedSessionFn: func(_, _ string) (string, error) { return "", nil },
+		WriteManagedSessionFn: func(_, _, _ string) error {
+			latchCalled++
+			return nil
+		},
+	}
+
+	// Uppercase UUIDv4 — the conversation/transcript-dir UUID format Claude Code
+	// may write as session_id (incident value: 5B5BF51B-..., hk-mzdm).
+	writeCtxFile(t, projectDir, agent, 50.0, "5B5BF51B-ABCD-4DEF-8000-000000000001")
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	if latchCalled != 0 {
+		t.Errorf("WriteManagedSessionFn called %d time(s); want 0 — uppercase session_id must not be latched", latchCalled)
+	}
+	noGaugeEvents := em.EventsOfType(core.EventTypeSessionKeeperNoGauge)
+	if len(noGaugeEvents) == 0 {
+		t.Error("want at least one session_keeper_no_gauge for uppercase session_id skip; got none")
+	}
+}
+
+// TestWatcher_FlapCooldownSuppressesRelatch verifies that when multiple rapid
+// auto-clears fire within AutoClearCooldown (flap thrashing — two alternating
+// non-daemon UUIDv4 sessions overwriting .ctx), latch is suppressed after
+// AutoClearMaxAttempts clears. The watcher emits foreign_session instead of
+// silently re-latching the wrong session. Refs: hk-mzdm.
+func TestWatcher_FlapCooldownSuppressesRelatch(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "flap-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	var mu sync.Mutex
+	storedSID := "sess-A" // initial bound session
+	clearCount := 0
+	var latchedSIDs []string
+
+	readFn := func(_, _ string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return storedSID, nil
+	}
+	writeFn := func(_, _, sid string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if sid == "" {
+			clearCount++
+			storedSID = ""
+		} else {
+			latchedSIDs = append(latchedSIDs, sid)
+			storedSID = sid
+		}
+		return nil
+	}
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// threshold=1: one foreign tick → auto-clear.
+		StaleBindingThreshold: 1,
+		// Long cooldown (500ms) so both auto-clears are within the rapid window.
+		AutoClearCooldown:    500 * time.Millisecond,
+		AutoClearMaxAttempts: 2,
+		ReadManagedSessionFn: readFn,
+		WriteManagedSessionFn: writeFn,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w := keeper.NewWatcher(cfg, em)
+		_ = w.Run(ctx) //nolint:errcheck // context.Canceled expected
+	}()
+
+	// Phase 1: "sess-B" is foreign relative to "sess-A" → auto-clear + re-latch.
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-B")
+	time.Sleep(50 * time.Millisecond) // enough for clear + re-latch (2 ticks)
+
+	// Phase 2: "sess-C" is now foreign relative to "sess-B" → second rapid auto-clear
+	// → latch suppression activates (consecutiveRapidClears=2 ≥ maxAttempts=2).
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-C")
+	time.Sleep(50 * time.Millisecond)
+
+	// Phase 3: write a new UUIDv4 session — should NOT be latched (suppressed).
+	const goodSID = "f7e7210d-1234-4abc-8000-000000000002"
+	writeCtxFile(t, projectDir, agent, 50.0, goodSID)
+	time.Sleep(50 * time.Millisecond)
+
+	cancel()
+	<-done
+
+	mu.Lock()
+	cc := clearCount
+	ls := append([]string(nil), latchedSIDs...)
+	mu.Unlock()
+
+	// At least 2 auto-clears must have fired to trigger suppression.
+	if cc < 2 {
+		t.Errorf("want ≥2 auto-clears for flap detection; got %d", cc)
+	}
+
+	// goodSID must NOT have been latched — flap suppression should be active.
+	for _, sid := range ls {
+		if sid == goodSID {
+			t.Errorf("goodSID %q was latched despite flap-cooldown suppression — latch must be blocked after rapid clears", goodSID)
+		}
+	}
+}
+
+// TestWatcher_FlapCooldownClearsOnStableBind verifies that flap-cooldown
+// suppression is automatically cleared when the watcher confirms a stable
+// session binding (gauge session_id matches .managed). This allows normal latch
+// behaviour to resume after 'keeper rebind' restores a correct binding.
+// Refs: hk-mzdm.
+func TestWatcher_FlapCooldownClearsOnStableBind(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "flap-clear-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	var mu sync.Mutex
+	storedSID := "sess-A"
+	clearCount := 0
+	var latchedSIDs []string
+
+	readFn := func(_, _ string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return storedSID, nil
+	}
+	writeFn := func(_, _, sid string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if sid == "" {
+			clearCount++
+			storedSID = ""
+		} else {
+			latchedSIDs = append(latchedSIDs, sid)
+			storedSID = sid
+		}
+		return nil
+	}
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:             agent,
+		ProjectDir:            projectDir,
+		PollInterval:          10 * time.Millisecond,
+		WarnPct:               80.0,
+		IdleQuiesce:           1 * time.Millisecond,
+		Staleness:             120 * time.Second,
+		TmuxTarget:            "",
+		StaleBindingThreshold: 1,
+		AutoClearCooldown:     500 * time.Millisecond,
+		AutoClearMaxAttempts:  2,
+		ReadManagedSessionFn:  readFn,
+		WriteManagedSessionFn: writeFn,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w := keeper.NewWatcher(cfg, em)
+		_ = w.Run(ctx) //nolint:errcheck // context.Canceled expected
+	}()
+
+	// Trigger two rapid auto-clears to activate flap suppression.
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-B")
+	time.Sleep(50 * time.Millisecond)
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-C")
+	time.Sleep(50 * time.Millisecond)
+
+	// Simulate operator 'keeper rebind': write known-good SID directly into .managed.
+	// The watcher will see managedSID="good-sess" and when gauge also has "good-sess",
+	// the stable-bind path fires and clears latchSuppressed.
+	const goodSID = "aabbccdd-1234-4abc-8000-000000000003"
+	mu.Lock()
+	storedSID = goodSID // simulate rebind writing into .managed
+	mu.Unlock()
+	writeCtxFile(t, projectDir, agent, 50.0, goodSID) // gauge matches managed
+	time.Sleep(50 * time.Millisecond)
+
+	// After stable bind, write another "foreign" session and verify it causes a
+	// normal auto-clear (not blocked by stale latchSuppressed).
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-D")
+	time.Sleep(50 * time.Millisecond)
+
+	cancel()
+	<-done
+
+	mu.Lock()
+	cc := clearCount
+	mu.Unlock()
+
+	// After stable bind clears suppression, a new foreign session should cause
+	// a new auto-clear (normal behaviour resuming). So total clears ≥ 3.
+	if cc < 3 {
+		t.Errorf("want ≥3 auto-clears (2 for suppression + 1 post-stable-clear); got %d — latch suppression may not have cleared on stable bind", cc)
+	}
+}

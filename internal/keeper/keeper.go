@@ -157,6 +157,10 @@ func isUUIDv7(sid string) bool { return IsUUIDv7(sid) }
 // is created if absent (which also makes IsManaged return true). Passing an
 // empty sessionID clears the binding while preserving the managed marker.
 //
+// The write is performed atomically via a temp-file + rename so that a process
+// crash between truncation and write never leaves .managed in a partial state
+// (TOCTOU guard on the clear→re-latch window). Refs: hk-mzdm.
+//
 // Called by the watcher when it latches the first observed session_id, and by
 // the cycler after a cycle completes to bind to the resumed session.
 //
@@ -175,9 +179,17 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 	if content != "" {
 		content += "\n"
 	}
+	// Write to a temp file in the same directory then rename — the rename is
+	// atomic on POSIX for same-filesystem paths, so .managed is never partially
+	// written (prevents partial reads on clear→re-latch races). Refs: hk-mzdm.
+	tmpPath := path + ".tmp"
 	//nolint:gosec // G304,G306: path from validated operator-controlled inputs; 0600 keeper-owned
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		return fmt.Errorf("keeper: write managed session_id %q: %w", path, err)
+	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
+		return fmt.Errorf("keeper: write managed session_id tmp %q: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup of tmp
+		return fmt.Errorf("keeper: rename managed session_id %q: %w", path, err)
 	}
 	return nil
 }

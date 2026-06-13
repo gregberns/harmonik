@@ -1,6 +1,6 @@
 # Twin Parity Audit — 2026-05-14
 
-**Against:** operational 8-stage flow, 11 umbrella fixes (docs/dogfood-smoke-run-2026-05-14-operational-green.md)
+**Against:** operational 8-stage flow, 11 umbrella fixes (docs/historical/dogfood-smoke-traces/dogfood-smoke-run-2026-05-14-operational-green.md)
 **Twin under review:** cmd/harmonik-twin-claude (main.go, scriptdriver.go, scenarios.go, wire.go)
 **Refs:** hk-cno1z, hk-wuu5h
 

@@ -19,6 +19,8 @@ A quick-start reference for an agent running harmonik. This doc distills the mos
 4. `HANDOFF.md` — previous session context (if present)
 5. `docs/orchestrator-rules.md` — permanent dispatch / priority / lifecycle rules
 
+**Booting as a captain or crew, not a solo orchestrator?** Load `.claude/skills/captain` (captain session) or `.claude/skills/crew-launch` (crew session) for your operating contract — boot sequence, queue/comms discipline, progress feed. See also `.claude/skills/keeper` (per-session context-watcher) and `.claude/skills/harmonik-lifecycle` (supervise / promote / reconcile / init).
+
 ---
 
 ## 2. Start the Daemon

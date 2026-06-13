@@ -146,7 +146,7 @@ A long-lived **captain** orchestrator that spawns and coordinates a pool of long
 
 - **Design:** [docs/plans/captain/SPEC.md](docs/plans/captain/SPEC.md), [docs/plans/captain/SESSION.md](docs/plans/captain/SESSION.md)
 - **CLI:** `harmonik crew start/stop/list`; crew launch = `claude --remote-control "<name>" --session-id <uuid>`
-- **Skills:** `captain` (captain operating context), `crew-launch` (crew boot sequence)
+- **Skills:** `captain` (captain operating context), `crew-launch` (crew boot sequence); see also `keeper` (per-session context-watcher) and `harmonik-lifecycle` (supervise / promote / reconcile / init)
 - **Status:** 15/15 tasks on main (`57c6fd94`); production crew: chani / duncan / liet / stilgar
 
 ### Session-keeper (mechanism done; testing = priority)
@@ -163,6 +163,15 @@ Scenario/test coverage infrastructure from the `hk-37giq` wedge postmortem. Flag
 
 ### Named queues — parked
 `hk-tigaf` (12-bead epic) **parked as of 2026-06-10** — superseded by captain/crew-per-epic model.
+
+## Agent Skills (operating contracts)
+Booting into a specific role? Load its skill for the operating contract:
+- `.claude/skills/captain` -- captain session: boot runbook, lane organization, crew spawn/verify, surfaces
+- `.claude/skills/crew-launch` -- crew session: boot sequence, OWN-queue loop, progress feed, keeper re-hydration
+- `.claude/skills/keeper` -- per-session context-fill watcher (warn / handoff-clear-resume thresholds)
+- `.claude/skills/harmonik-lifecycle` -- supervise / promote / reconcile / init operations
+- `.claude/skills/harmonik-dispatch` -- main-agent daily loop (route ≥75% through the daemon queue)
+- `.claude/skills/agent-comms`, `.claude/skills/beads-cli` -- comms bus + `br` write discipline
 
 ## Operational Protocols
 - [docs/orchestrator-rules.md](docs/orchestrator-rules.md) -- Permanent orchestrator directives (dispatch, priority, autonomy, monitor pattern)

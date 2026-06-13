@@ -822,6 +822,24 @@ type DaemonOrphanSweepCompletedPayload struct {
 	// Bead ref: hk-7u002, hk-9vp51.
 	CoordinatorSessionsReaped int `json:"coordinator_sessions_reaped"`
 
+	// CrewSessionsSkipped is the count of live crew tmux sessions excluded
+	// from the orphan-kill pass because the crew registry record exists AND
+	// the session's first-pane PID is alive (PL-006d mechanism iii).
+	// Required (must be >= 0).
+	//
+	// Spec ref: process-lifecycle.md §4.2 PL-006d mechanism (iii).
+	// Bead ref: hk-qp3.
+	CrewSessionsSkipped int `json:"crew_sessions_skipped"`
+
+	// CaptainSessionsSkipped is the count of live captain tmux sessions
+	// excluded from the orphan-kill pass because the captain.sentinel file is
+	// present AND the captain PID is alive (PL-006d mechanism ii).
+	// Required (must be >= 0).
+	//
+	// Spec ref: process-lifecycle.md §4.2 PL-006d mechanism (ii).
+	// Bead ref: hk-qp3.
+	CaptainSessionsSkipped int `json:"captain_sessions_skipped"`
+
 	// SweptAt is the RFC 3339 wall-clock timestamp at sweep completion.
 	// Required (non-empty).
 	SweptAt string `json:"swept_at"`
@@ -867,6 +885,12 @@ func (p DaemonOrphanSweepCompletedPayload) Valid() bool {
 		return false
 	}
 	if p.CoordinatorSessionsReaped < 0 {
+		return false
+	}
+	if p.CrewSessionsSkipped < 0 {
+		return false
+	}
+	if p.CaptainSessionsSkipped < 0 {
 		return false
 	}
 	if p.SweptAt == "" {

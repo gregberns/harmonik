@@ -14,6 +14,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workspace"
@@ -115,6 +116,22 @@ type OrphanSweepResult struct {
 	// forever.  hk-9vp51.
 	CoordinatorSessionsReaped int
 
+	// CrewSessionsSkipped is the count of live crew tmux sessions excluded
+	// from the orphan-kill pass because the crew registry record exists AND
+	// the session's first-pane PID is alive (PL-006d mechanism iii).
+	//
+	// Spec ref: process-lifecycle.md §4.2 PL-006d mechanism (iii).
+	// Bead ref: hk-qp3.
+	CrewSessionsSkipped int
+
+	// CaptainSessionsSkipped is the count of live captain tmux sessions
+	// excluded from the orphan-kill pass because captain.sentinel is present
+	// AND the captain PID is alive (PL-006d mechanism ii).
+	//
+	// Spec ref: process-lifecycle.md §4.2 PL-006d mechanism (ii).
+	// Bead ref: hk-qp3.
+	CaptainSessionsSkipped int
+
 	// SweptAt is the wall-clock time at sweep completion.
 	SweptAt time.Time
 }
@@ -134,6 +151,8 @@ func (r OrphanSweepResult) ToPayload() core.DaemonOrphanSweepCompletedPayload {
 		BeadCat3cClosed:            r.BeadCat3cClosed,
 		CoordinatorSessionsSkipped: r.CoordinatorSessionsSkipped,
 		CoordinatorSessionsReaped:  r.CoordinatorSessionsReaped,
+		CrewSessionsSkipped:        r.CrewSessionsSkipped,
+		CaptainSessionsSkipped:     r.CaptainSessionsSkipped,
 		SweptAt:                    r.SweptAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -448,6 +467,146 @@ func removeStaleSentinel(sentinelPath string, logger *log.Logger) bool {
 	return true
 }
 
+// captainSentinelPath returns the captain.sentinel path (PL-006d mechanism ii).
+func captainSentinelPath(projectDir string) string {
+	return filepath.Join(coordinatorSentinelDir(projectDir), "captain.sentinel")
+}
+
+// captainPidfilePath returns the captain.pid path.
+func captainPidfilePath(projectDir string) string {
+	return filepath.Join(coordinatorSentinelDir(projectDir), "captain.pid")
+}
+
+// probeCaptainSentinel checks whether the captain process is live per PL-006d
+// mechanism (ii):
+//
+//   - Reads captain.sentinel at .harmonik/cognition/captain.sentinel.
+//   - If absent → captain is not running; returns false.
+//   - If present → reads .harmonik/cognition/captain.pid and probes the PID
+//     via kill(pid, 0).
+//   - If PID live → returns true (captain session MUST be excluded).
+//   - If PID dead or unreadable → returns false; removes the stale sentinel.
+//
+// Spec ref: process-lifecycle.md §4.2 PL-006d mechanism (ii).
+// Bead ref: hk-qp3.
+func probeCaptainSentinel(projectDir string, logger *log.Logger) bool {
+	sentinelPath := captainSentinelPath(projectDir)
+	pidfilePath := captainPidfilePath(projectDir)
+
+	if _, statErr := os.Stat(sentinelPath); os.IsNotExist(statErr) {
+		return false
+	}
+
+	pid, readErr := readSupervisorPID(pidfilePath)
+	if readErr != nil {
+		if logger != nil {
+			logger.Printf("daemon: probeCaptainSentinel: cannot read captain.pid (%v); removing stale sentinel", readErr)
+		}
+		removeStaleSentinel(sentinelPath, logger)
+		return false
+	}
+
+	if err := syscall.Kill(pid, 0); err != nil {
+		if err == syscall.EPERM {
+			if logger != nil {
+				logger.Printf("daemon: probeCaptainSentinel: captain PID %d EPERM (live); skipping captain session (PL-006d ii)", pid)
+			}
+			return true
+		}
+		if logger != nil {
+			logger.Printf("daemon: probeCaptainSentinel: captain PID %d is dead (%v); removing stale sentinel", pid, err)
+		}
+		removeStaleSentinel(sentinelPath, logger)
+		return false
+	}
+
+	if logger != nil {
+		logger.Printf("daemon: probeCaptainSentinel: captain PID %d is live; skipping captain session (PL-006d ii)", pid)
+	}
+	return true
+}
+
+// probeCrewRegistrySessions lists crew registry records, checks each crew's
+// tmux session against the live session snapshot, and adds live crew sessions
+// (session present AND first-pane PID alive) to excludeSessions.
+//
+// REVIEW-FIX: session ABSENT from snapshot → launch-in-flight; skip
+// conservatively (do NOT call crew.Remove). Session present + PID dead →
+// let the generic sweep handle it (do NOT call crew.Remove).
+//
+// Returns the count of sessions added to excludeSessions.
+//
+// Spec ref: process-lifecycle.md §4.2 PL-006d mechanism (iii).
+// Bead ref: hk-qp3.
+func probeCrewRegistrySessions(
+	ctx context.Context,
+	projectDir string,
+	projectHash core.ProjectHash,
+	adapter ltmux.Adapter,
+	logger *log.Logger,
+	sessionSnapshot map[string]struct{},
+	excludeSessions map[string]struct{},
+) int {
+	if adapter == nil {
+		return 0
+	}
+
+	records, err := crew.List(projectDir)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("daemon: probeCrewRegistrySessions: crew.List error (skipping crew exemption): %v", err)
+		}
+		return 0
+	}
+
+	skipped := 0
+	for _, rec := range records {
+		sessionName := lifecycle.TmuxSessionName(projectHash, "crew-"+rec.Name)
+
+		// If the session is not in the live snapshot, it may be launch-in-flight.
+		// Skip conservatively — do NOT call crew.Remove.
+		if _, present := sessionSnapshot[sessionName]; !present {
+			if logger != nil {
+				logger.Printf("daemon: probeCrewRegistrySessions: crew %q session %q absent from snapshot (launch-in-flight?); skipping", rec.Name, sessionName)
+			}
+			continue
+		}
+
+		// Session is present — probe the first-pane PID.
+		firstHandle := ltmux.WindowHandle(sessionName + ":")
+		pid, pidErr := adapter.WindowPanePID(ctx, firstHandle)
+		if pidErr != nil {
+			if logger != nil {
+				logger.Printf("daemon: probeCrewRegistrySessions: crew %q WindowPanePID error: %v (skipping)", rec.Name, pidErr)
+			}
+			continue
+		}
+		if pid <= 0 {
+			if logger != nil {
+				logger.Printf("daemon: probeCrewRegistrySessions: crew %q session %q pane PID %d invalid (skipping)", rec.Name, sessionName, pid)
+			}
+			continue
+		}
+
+		// kill(pid, 0) probes liveness.
+		if err := syscall.Kill(pid, 0); err != nil && err != syscall.EPERM {
+			// ESRCH = dead; let the generic sweep handle it. Do NOT call crew.Remove.
+			if logger != nil {
+				logger.Printf("daemon: probeCrewRegistrySessions: crew %q session %q pane PID %d dead (%v); letting sweep handle it", rec.Name, sessionName, pid, err)
+			}
+			continue
+		}
+
+		// PID live (or EPERM = exists but no permission = alive): exempt.
+		excludeSessions[sessionName] = struct{}{}
+		skipped++
+		if logger != nil {
+			logger.Printf("daemon: probeCrewRegistrySessions: crew %q session %q is live (PID %d); skipping (PL-006d iii)", rec.Name, sessionName, pid)
+		}
+	}
+	return skipped
+}
+
 // RunOrphanSweep executes the full PL-006 orphan sweep in order:
 //
 //  1. Probe the coordinator (flywheel) sentinel (PL-006d).
@@ -492,6 +651,22 @@ func RunOrphanSweep(
 			cfg.Logger.Printf("daemon: RunOrphanSweep: excluding daemon spawn-target session %q from sweep (hk-9vp51)", cfg.DaemonSpawnSession)
 		}
 	}
+
+	// Build a snapshot of live tmux sessions (needed by probeCrewRegistrySessions).
+	// We snapshot once here to avoid repeated ListSessions calls in the loop below.
+	// A nil adapter means no tmux: snapshot is empty (no sessions to exempt).
+	sessionSnapshot := map[string]struct{}{}
+	if cfg.TmuxAdapter != nil {
+		liveSessions, listErr := cfg.TmuxAdapter.ListSessions(ctx)
+		if listErr != nil {
+			errs = append(errs, fmt.Sprintf("session-snapshot: %v", listErr))
+		} else {
+			for _, s := range liveSessions {
+				sessionSnapshot[s] = struct{}{}
+			}
+		}
+	}
+
 	if projectDir != "" {
 		probe, probeErr := probeCoordinatorSentinel(projectDir, cfg.Logger)
 		if probeErr != nil {
@@ -531,6 +706,23 @@ func RunOrphanSweep(
 			result.CoordinatorSessionsReaped += reaped
 			result.TmuxSessionsKilled += reaped
 		}
+
+		// (PL-006d mechanism ii) Captain sentinel: exclude the captain session when
+		// captain.sentinel is present and captain PID is alive.
+		if probeCaptainSentinel(projectDir, cfg.Logger) {
+			captainSession := lifecycle.TmuxSessionName(projectHash, "captain")
+			excludedTmuxSessions[captainSession] = struct{}{}
+			result.CaptainSessionsSkipped = 1
+			if cfg.Logger != nil {
+				cfg.Logger.Printf("daemon: RunOrphanSweep: skipping captain session %q (PL-006d ii)", captainSession)
+			}
+		}
+
+		// (PL-006d mechanism iii) Crew registry probe: exclude live crew sessions.
+		result.CrewSessionsSkipped = probeCrewRegistrySessions(
+			ctx, projectDir, projectHash, cfg.TmuxAdapter, cfg.Logger,
+			sessionSnapshot, excludedTmuxSessions,
+		)
 	}
 
 	// (a) Tmux sessions — two passes:

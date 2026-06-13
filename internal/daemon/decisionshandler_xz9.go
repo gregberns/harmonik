@@ -55,6 +55,23 @@ type DecisionsHandler interface {
 	// payload (a DecisionsWithdrawRequest) and returns a DecisionsWithdrawResult
 	// carrying the minted event_id.
 	HandleDecisionsWithdraw(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
+
+	// HandleDecisionsList reads the current open-decision set from the K3
+	// projection (decisionsProjection over events.jsonl) and returns a
+	// DecisionsListResult carrying every open decision. It is a pure read op:
+	// it emits NO event and runs no aggregator (SPEC §3, §6 S6) — the
+	// Offline/orphaned-pending flag is computed CLIENT-side because presence is
+	// only computable in the cmd/harmonik layer (SPEC §5 / N9, read-pure).
+	// Component K4 (bead hk-kba).
+	HandleDecisionsList(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
+
+	// HandleDecisionsAnswer validates a DecisionsAnswerRequest against the K3
+	// open set (the decision must be OPEN and the chosen option must be one of
+	// its options — N7), then emits decision_resolved (SPEC §1.2) and returns a
+	// DecisionsAnswerResult. An unknown or already-terminal decision_id is a
+	// no-op (no error, no second emit — N3 first-writer-wins). A bad option on
+	// an OPEN decision IS an error (N7). Component K4 (bead hk-kba).
+	HandleDecisionsAnswer(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
 }
 
 // DecisionsRaiseRequest is the wire payload for a "decisions-raise" socket op.

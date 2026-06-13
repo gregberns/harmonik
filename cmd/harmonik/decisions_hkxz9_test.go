@@ -323,7 +323,11 @@ func TestDecisionsWait_RequiresExactlyOneID(t *testing.T) {
 }
 
 // TestDecisionsSubcommand_Routing covers the verb switch: unknown verb → exit 2,
-// help → exit 0, K4 verbs (list/show/answer) not yet routed → exit 2.
+// help → exit 0, and the K4 operator verbs (list/show/answer) are now ROUTED —
+// they MUST NOT return the unrecognised-verb code (2). With no daemon socket and
+// no args, list dials and gets exit 17 (socket absent); show/answer hit their
+// arg-validation (exit 1) before dialling. The contract this test asserts is
+// "no longer 2" (i.e. the verb is recognised and dispatched), per the K4 bead.
 func TestDecisionsSubcommand_Routing(t *testing.T) {
 	if rc := runDecisionsSubcommand([]string{"--help"}); rc != 0 {
 		t.Errorf("decisions --help: rc = %d, want 0", rc)
@@ -331,10 +335,24 @@ func TestDecisionsSubcommand_Routing(t *testing.T) {
 	if rc := runDecisionsSubcommand([]string{"bogus-verb"}); rc != 2 {
 		t.Errorf("decisions bogus-verb: rc = %d, want 2", rc)
 	}
-	// list/show/answer are K4 (later bead) — not yet routed → unrecognised (2).
-	for _, v := range []string{"list", "show", "answer"} {
-		if rc := runDecisionsSubcommand([]string{v}); rc != 2 {
-			t.Errorf("decisions %s (K4, not yet routed): rc = %d, want 2", v, rc)
+	// list/show/answer are K4 — now routed. The only forbidden outcome is the
+	// unrecognised-verb exit code 2: getting anything else proves they routed.
+	// Point each at an absent socket so list cannot hang on a real daemon.
+	absentSock := filepath.Join(t.TempDir(), "no-daemon.sock")
+	cases := []struct {
+		verb string
+		args []string
+	}{
+		// list → routes, dials the (absent) socket → exit 17 (NOT 2).
+		{"list", []string{"list", "--socket", absentSock}},
+		// show with no id → routes, arg-validation → exit 1 (NOT 2).
+		{"show", []string{"show"}},
+		// answer with no args → routes, arg-validation → exit 1 (NOT 2).
+		{"answer", []string{"answer"}},
+	}
+	for _, c := range cases {
+		if rc := runDecisionsSubcommand(c.args); rc == 2 {
+			t.Errorf("decisions %s (K4): rc = 2 (unrecognised) — verb is not routed", c.verb)
 		}
 	}
 }

@@ -556,6 +556,39 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 		}
 
 	// -----------------------------------------------------------------------
+	// hitl-decisions operator-side ops (hitl-decisions SPEC §2, bead hk-kba K4)
+	//   decisions-list   → pure read of the K3 open-decision projection (S6).
+	//   decisions-answer → emit decision_resolved (N7 option check, N3 no-op).
+	// Both ride the same DecisionsHandler value as the K2 emit ops.
+	// -----------------------------------------------------------------------
+
+	case "decisions-list":
+		dh, ok := ch.(DecisionsHandler)
+		if !ok || dh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: DecisionsHandler not registered"}
+			break
+		}
+		result, err := dh.HandleDecisionsList(ctx, req.Payload)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: err.Error()}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
+		}
+
+	case "decisions-answer":
+		dh, ok := ch.(DecisionsHandler)
+		if !ok || dh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: DecisionsHandler not registered"}
+			break
+		}
+		result, err := dh.HandleDecisionsAnswer(ctx, req.Payload)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: err.Error()}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
+		}
+
+	// -----------------------------------------------------------------------
 	// Operator control ops (specs/operator-nfr.md §4.3 ON-007–ON-010)
 	// -----------------------------------------------------------------------
 

@@ -12,10 +12,9 @@ package main
 //   - withdraw → decisions-withdraw daemon op (emit decision_withdrawn,
 //                reason=self_obsoleted by default).
 //
-// The OPERATOR-side verbs (list / show / answer — component K4) are a LATER
-// bead. K4 will ADD them to runDecisionsSubcommand and this file; the verb
-// switch's default branch lists only the K2 verbs and is written to be cleanly
-// extended. The orphan reaper (K5) is keeper-resident and does not live here.
+// The OPERATOR-side verbs (list / show / answer — component K4, bead hk-kba)
+// live in decisions_k4.go and are routed from runDecisionsSubcommand below. The
+// orphan reaper (K5) is keeper-resident and does not live here.
 //
 // §4 blocked-wait contract (NORMATIVE — N8 arm-then-check, the #1 footgun):
 // a subscribe stream only delivers events that arrive AFTER it is armed, so the
@@ -78,10 +77,15 @@ func runDecisionsSubcommand(subArgs []string) int {
 		return runDecisionsWaitSubcommand(subArgs[1:])
 	case "withdraw":
 		return runDecisionsWithdrawSubcommand(subArgs[1:])
-	// list / show / answer are component K4 (a later bead). Until they land,
-	// fall through to the unrecognised-verb branch.
+	// list / show / answer are the OPERATOR side (component K4, bead hk-kba).
+	case "list":
+		return runDecisionsListSubcommand(subArgs[1:])
+	case "show":
+		return runDecisionsShowSubcommand(subArgs[1:])
+	case "answer":
+		return runDecisionsAnswerSubcommand(subArgs[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "harmonik decisions: unrecognised verb %q; verbs are: raise, wait, withdraw\n", verb)
+		fmt.Fprintf(os.Stderr, "harmonik decisions: unrecognised verb %q; verbs are: raise, wait, withdraw, list, show, answer\n", verb)
 		return 2
 	}
 }
@@ -713,12 +717,12 @@ func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, int)
 // -----------------------------------------------------------------------------
 
 func decisionsUsage() {
-	fmt.Print(`harmonik decisions — agent→human decision surface (agent side)
+	fmt.Print(`harmonik decisions — agent→human decision surface
 
 USAGE
   harmonik decisions <verb> [flags]
 
-VERBS (agent side — K2)
+VERBS (agent side)
   raise     Emit a decision_needed event; print the minted decision_id.
             With --wait, block until answered and print the chosen option.
   wait      Block until a decision's terminal arrives; print the chosen option
@@ -726,7 +730,15 @@ VERBS (agent side — K2)
   withdraw  Emit a decision_withdrawn(self_obsoleted) — the agent cancels its
             own open decision.
 
-  (list / show / answer — the operator side — are component K4, a later bead.)
+VERBS (operator side)
+  list      Show every open decision across all agents (the what-needs-me queue):
+            question · options · blocked_agent · context_link · decision_id.
+            An open decision whose blocked_agent is Offline is flagged
+            "orphaned-pending" (display only). --json for machine-readable output.
+  show      Show one decision by id (list filtered to a single decision_id).
+  answer    Resolve an open decision: emit decision_resolved with the chosen
+            option (must be one of the decision's options). A no-op on an
+            unknown or already-answered decision_id.
 
 EXIT CODES
   0   Success
@@ -739,6 +751,10 @@ EXAMPLES
   harmonik decisions raise --question "Ship v2?" --option ship --option hold --wait
   harmonik decisions wait 0192f5a1-...
   harmonik decisions withdraw 0192f5a1-... --reason self_obsoleted
+  harmonik decisions list
+  harmonik decisions list --json
+  harmonik decisions show 0192f5a1-...
+  harmonik decisions answer 0192f5a1-... ship --resolver operator
 `)
 }
 

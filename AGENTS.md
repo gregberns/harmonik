@@ -125,7 +125,18 @@ Full design: `docs/orchestration-protocol-v2.md`. The kerf workflow below remain
 
 ### Submitting work
 
-`harmonik queue submit <queue-file>` takes a JSON file shaped as a `QueueSubmitRequest` (struct: `internal/queue/types.go` — `QueueSubmitRequest` / `Group` / `Item`):
+**Primary path — submit bead IDs directly with `--beads` (no hand-authored JSON).** `submit` / `dry-run` accept a comma-separated (or repeated) `--beads` list and synthesise a minimal stream group for you (hk-m9a7g, landed):
+
+```bash
+# Primary: submit beads directly (no hand-authored JSON)
+harmonik queue dry-run --beads hk-a,hk-b   # validate without persisting (reports ledger-dep deferrals)
+harmonik queue submit  --beads hk-a,hk-b   # accept; prints the daemon-minted queue_id
+harmonik queue status                      # inspect the live queue (returns the queue envelope)
+```
+
+- A crew submits to its own named queue with `--queue <name>` (e.g. `harmonik queue submit --queue investigate --beads hk-a,hk-b`); the main-loop default needs no `--queue` flag.
+
+**For multi-group or wave submits, hand-author a `QueueSubmitRequest` JSON** (struct: `internal/queue/types.go` — `QueueSubmitRequest` / `Group` / `Item`) and pass the file path:
 
 ```json
 {
@@ -148,13 +159,12 @@ Full design: `docs/orchestration-protocol-v2.md`. The kerf workflow below remain
 ```bash
 harmonik queue dry-run /tmp/batch.json     # validate without persisting (reports ledger-dep deferrals)
 harmonik queue submit  /tmp/batch.json     # accept; prints the daemon-minted queue_id
-harmonik queue status                      # inspect the live queue (returns the queue envelope)
 ```
 
 - `kind: "stream"` groups accept mid-flight appends; `kind: "wave"` groups are immutable after submit. Use `stream` for the daily loop.
 - **Mid-flight adds:** `harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` — e.g. `harmonik queue append --queue-id <uuid> 0 hk-ccc hk-ddd`. Streams accept appends while pending or active.
 - Exit code 17 from any `queue` verb means the daemon is not running — start it first.
-- In-flight gaps: **hk-m9a7g** will let `submit` / `dry-run` accept `--beads hk-a,hk-b` directly so you no longer hand-author the JSON file. **hk-24xn1 LANDED** — idle-wake channel (`QueueStore.WakeCh()`) is wired; submit and append both call `SetQueue` which fires it immediately. Verified by `scenario_queue_submit_dispatch_hksk00a_test.go`.
+- **hk-24xn1 LANDED** — idle-wake channel (`QueueStore.WakeCh()`) is wired; submit and append both call `SetQueue` which fires it immediately. Verified by `scenario_queue_submit_dispatch_hksk00a_test.go`.
 
 ## Monitoring the daemon
 

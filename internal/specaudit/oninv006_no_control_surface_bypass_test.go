@@ -246,6 +246,12 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// on the ledger JSON file directly; no daemon required, no in-flight run impact.
 	// Spec ref: release-pipeline.md §4, §6, §7.1.
 	"release": "release-pipeline.md §4/§6/§7.1; offline ledger management, no run impact",
+	// hk-0es (codename:schedule): generic recurring-job config (add/list/remove/
+	// enable/disable/run-now). Mutates .harmonik/schedules.json directly with no
+	// daemon connection; it does NOT abort or mutate in-flight harmonik runs. The
+	// daemon's schedule tick fires actions through the already-governed crew-start
+	// and command-exec paths — the §7.1 between-task invariant is unaffected.
+	"schedule": "operator-nfr.md §4.9 ON-055; offline recurring-job config, no in-flight run abort",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled

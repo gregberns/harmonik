@@ -478,6 +478,14 @@ EXAMPLES
 		return runCrewSubcommand(os.Args[2:])
 	}
 
+	// harmonik schedule <verb> — generic recurring-job primitive (codename:schedule,
+	// hk-0es). All verbs mutate/read .harmonik/schedules.json directly and work
+	// whether or not the daemon is running; a running daemon picks up changes on
+	// its next poll tick. No daemon connection required (no exit-17 path).
+	if len(os.Args) >= 2 && os.Args[1] == "schedule" {
+		return runScheduleSubcommand(os.Args[2:])
+	}
+
 	// harmonik graph <verb> — workflow graph utilities (hk-voyf4).
 	// Currently supports: graph validate <path>
 	// No daemon required; reads files directly.

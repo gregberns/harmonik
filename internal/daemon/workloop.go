@@ -51,6 +51,7 @@ import (
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
@@ -537,6 +538,39 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-wcv.
 	beadAuditLogger func(ctx context.Context, id core.BeadID) ([]brcli.AuditEvent, error)
+
+	// scheduleStore, when non-nil, is the daemon-owned recurring-job registry
+	// (codename:schedule, hk-0es). The work loop runs runScheduleTick once per
+	// poll iteration (after the dispatch-context check, before the capacity gate)
+	// to fire any due jobs. When nil the schedule surface is disabled (legacy /
+	// unit-test daemons without the surface).
+	//
+	// Bead ref: hk-0es.
+	scheduleStore *schedule.Store
+
+	// crewHandler, when non-nil, is the daemon's crew-start handler. The schedule
+	// tick fires spawn-crew actions through HandleCrewStart so subscription-billing
+	// guards apply by construction (reuses the same path as `harmonik crew start`).
+	// Injected at daemon composition alongside scheduleStore. nil → spawn-crew
+	// scheduled actions error out (logged, non-fatal); command actions are unaffected.
+	//
+	// Bead ref: hk-0es.
+	crewHandler crewStarter
+
+	// commsWhoQuerier returns the set of presence-online agent names for the
+	// spawn-crew overlap check. Production wires shellCommsWho (shells out to
+	// `harmonik comms who --json`); tests inject a double. nil → spawn-crew
+	// overlap never blocks (HandleCrewStart's own collision check is the backstop).
+	//
+	// Bead ref: hk-0es.
+	commsWhoQuerier commsWhoQuerier
+
+	// scheduleWakeC, when non-nil, is the channel returned by scheduleStore.WakeCh().
+	// The work loop selects on it alongside submitWakeC so a schedule mutation made
+	// against the in-memory store wakes the idle loop immediately.
+	//
+	// Bead ref: hk-0es.
+	scheduleWakeC <-chan struct{}
 }
 
 // closeBeadWithHistoryTrim trims .beads/.br_history to brHistoryCloseTrimKeep
@@ -689,40 +723,40 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 	}
 
 	return workLoopDeps{
-		brAdapter:           adapter,
-		bus:                 bus,
-		h:                   h,
-		intentLogDir:        intentLogDir,
-		projectDir:          cfg.ProjectDir,
-		handlerBinary:       binary,
-		daemonBinaryPath:    daemonBinaryPath,
-		handlerArgs:         cfg.HandlerArgs,
-		handlerEnv:          handlerEnv,
-		brTimeoutCfg:        brcli.TimeoutConfig{},
-		tidGen:              core.NewTransitionIDGenerator(),
-		workflowModeDefault: workflowModeDefault,
-		runRegistry:         newLocalRunRegistry(),
-		maxConcurrent:       maxConcurrent,
-		hookStore:           store,
-		cpRegistry:          cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
-		adapterRegistry:     registry,
-		harnessRegistry:     harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
-		substrate:           cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
-		agentReadyTimeout:   cfg.AgentReadyTimeout,
-		cancelOnQueueDrain:  cfg.CancelOnQueueDrain,
-		projectCfg:          cfg.ProjectCfg,
-		queueStore:          nil,                            // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		queueLedger:         newBRQueueLedger(adapter),      // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
-		staleBlockerCloser:  adapter,                        // hk-rnsjs: auto-close stale blockers on claim failure
-		kerfPath:            cfg.KerfPath,                   // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		brAdapter:             adapter,
+		bus:                   bus,
+		h:                     h,
+		intentLogDir:          intentLogDir,
+		projectDir:            cfg.ProjectDir,
+		handlerBinary:         binary,
+		daemonBinaryPath:      daemonBinaryPath,
+		handlerArgs:           cfg.HandlerArgs,
+		handlerEnv:            handlerEnv,
+		brTimeoutCfg:          brcli.TimeoutConfig{},
+		tidGen:                core.NewTransitionIDGenerator(),
+		workflowModeDefault:   workflowModeDefault,
+		runRegistry:           newLocalRunRegistry(),
+		maxConcurrent:         maxConcurrent,
+		hookStore:             store,
+		cpRegistry:            cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
+		adapterRegistry:       registry,
+		harnessRegistry:       harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
+		substrate:             cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		agentReadyTimeout:     cfg.AgentReadyTimeout,
+		cancelOnQueueDrain:    cfg.CancelOnQueueDrain,
+		projectCfg:            cfg.ProjectCfg,
+		queueStore:            nil,                            // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueLedger:           newBRQueueLedger(adapter),      // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
+		staleBlockerCloser:    adapter,                        // hk-rnsjs: auto-close stale blockers on claim failure
+		kerfPath:              cfg.KerfPath,                   // hk-9321v: kerf next for EM-062/EM-063 eager-refill
 		noAutoPull:            cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
-		skipBrHistoryRotation: cfg.SkipBrHistoryRotation,     // hk-hypbi: per-close .br_history trim
-		mergeMu:               &sync.Mutex{},                 // hk-yyso7: global merge-serialisation across all queues
-		emittedEpics:        make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
-		emittedEpicsMu:      &sync.Mutex{},
-		targetBranch:        resolveTargetBranch(cfg.TargetBranch),
-		protectBranches:     cfg.ProtectBranches,
-		beadAuditLogger:     adapter.AuditLog, // hk-wcv: reopen-for-fix bypass in pre-dispatch subsume check
+		skipBrHistoryRotation: cfg.SkipBrHistoryRotation,      // hk-hypbi: per-close .br_history trim
+		mergeMu:               &sync.Mutex{},                  // hk-yyso7: global merge-serialisation across all queues
+		emittedEpics:          make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
+		emittedEpicsMu:        &sync.Mutex{},
+		targetBranch:          resolveTargetBranch(cfg.TargetBranch),
+		protectBranches:       cfg.ProtectBranches,
+		beadAuditLogger:       adapter.AuditLog, // hk-wcv: reopen-for-fix bypass in pre-dispatch subsume check
 	}, nil
 }
 
@@ -1045,6 +1079,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		default:
 		}
 
+		// Step 1b: schedule tick — fire any due recurring jobs (codename:schedule,
+		// hk-0es). Runs IN-LOOP (reusing this loop's poll cadence + claim-write
+		// serialisation), placed after the dispatch-halt check and before the
+		// capacity gate so a fired spawn-crew/command action is independent of the
+		// bead-dispatch capacity. No-op when scheduleStore is nil.
+		runScheduleTick(ctx, deps)
+
 		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.
 		// Read from the controller on every tick when set (hk-ohiaf), so that
 		// queue-set-concurrency adjustments take effect without a restart.
@@ -1224,7 +1265,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						// Queues are loaded but none can contribute right now (all
 						// paused, drained, or at their per-queue cap). Block until a
 						// queue-submit wake signal or shutdown.
-						if sleepErr := workloopIdleWait(dispatchCtx, deps.submitWakeC); sleepErr != nil {
+						//
+						// hk-0es: when a schedule with enabled jobs is loaded the daemon
+						// must NOT block indefinitely — it has to re-tick to fire due jobs.
+						// scheduleAwareIdleWait bounds the wait by the poll interval in that
+						// case so runScheduleTick re-runs at sub-minute latency, while
+						// degrading to the indefinite block when no schedule is armed.
+						if sleepErr := scheduleAwareIdleWait(dispatchCtx, deps); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -3289,6 +3336,42 @@ func workloopIdleWait(ctx context.Context, wakeC <-chan struct{}) error {
 	}
 }
 
+// scheduleAwareIdleWait is the schedule-aware variant of workloopIdleWait used
+// at the queues-loaded-but-idle dispatch point. When a schedule with at least
+// one enabled job is loaded the daemon MUST re-tick periodically to fire due
+// jobs, so this bounds the wait by workloopPollInterval (and selects on the
+// schedule wake channel so a CLI mutation wakes the loop immediately). When no
+// schedule is armed it degrades to the indefinite block of workloopIdleWait,
+// preserving the no-busy-poll idle contract (PL-013).
+//
+// Bead ref: hk-0es.
+func scheduleAwareIdleWait(ctx context.Context, deps workLoopDeps) error {
+	if deps.scheduleStore == nil || !hasEnabledScheduledJob(deps.scheduleStore) {
+		return workloopIdleWait(ctx, deps.submitWakeC)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(workloopPollInterval):
+		return nil
+	case <-deps.submitWakeC:
+		return nil
+	case <-deps.scheduleWakeC:
+		return nil
+	}
+}
+
+// hasEnabledScheduledJob reports whether the store holds at least one enabled
+// job. Used to decide whether the idle wait must be bounded.
+func hasEnabledScheduledJob(s *schedule.Store) bool {
+	for _, j := range s.List() {
+		if j.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
 // productionWorktreeFactory is the default worktreeFactory: creates a real git
 // worktree under the project's .harmonik/worktrees/ directory and returns the
 // path plus a cleanup function that removes it.
@@ -4001,8 +4084,8 @@ func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir 
 //  2. Rebase run-branch onto main (hk-j1aq5; rebase_conflict → EM-053 reopen path).
 //  3. Fast-forward check (non-FF → EM-053 reopen path).
 //  4. git update-ref refs/heads/main <tip>.
-//  4a. Post-merge build gate: go build+vet in wtPath (hk-o68j3/hk-ycp62;
-//      merge_build_failed → EM-053 reopen path).
+//     4a. Post-merge build gate: go build+vet in wtPath (hk-o68j3/hk-ycp62;
+//     merge_build_failed → EM-053 reopen path).
 //  5. git push origin main.
 //  6. git reset --hard HEAD (working-tree refresh, EM-054).
 //

@@ -22,6 +22,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -1413,6 +1414,13 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Bead ref: hk-ohiaf.
 	var concurrencyCtrl *ConcurrencyController
 
+	// crewHandler is the daemon-singleton crew-start/stop handler. Constructed
+	// inside the ProjectDir block (for the socket listener) and also injected into
+	// the workloop deps so the schedule tick can fire spawn-crew actions through
+	// the same HandleCrewStart path (codename:schedule, hk-0es). Declared here so
+	// both blocks share scope; nil in unit-test mode (no ProjectDir / socket).
+	var crewHandler CrewHandler
+
 	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
 	// subprocesses can deliver outcome_emitted envelopes to the daemon.
 	//
@@ -1513,7 +1521,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// Construct the C2 crew-start/stop handler (c2-spec.md §3.1).
 		// Spec ref: docs/plans/captain/05-specs/c2-spec.md.
 		// Bead ref: hk-5tg5o.
-		crewHandler := NewCrewHandler(cfg.HandlerBinary, cfg.ProjectDir, cfg.Substrate, opPauseCtrl)
+		// Assigned to the function-scope var (declared above) so the workloop deps
+		// block can reuse it for spawn-crew scheduled actions (hk-0es).
+		crewHandler = NewCrewHandler(cfg.HandlerBinary, cfg.ProjectDir, cfg.Substrate, opPauseCtrl)
 
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done
@@ -1562,6 +1572,22 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// Wire the wake channel so queue-submit RPCs immediately unblock the
 		// workloop's idle sleep (hk-24xn1).
 		deps.submitWakeC = qs.WakeCh()
+
+		// Wire the generic recurring-job surface (codename:schedule, hk-0es).
+		// Load .harmonik/schedules.json into a single-writer store; the workloop
+		// runScheduleTick fires due jobs each poll. spawn-crew actions reuse the
+		// crewHandler (HandleCrewStart path) so subscription-billing guards apply by
+		// construction; command actions inherit deps.handlerEnv (no credential keys).
+		// A present-but-unparseable file is fatal so the operator notices early; an
+		// absent file is a normal empty store.
+		scheduleStore := schedule.NewStore(cfg.ProjectDir)
+		if loadErr := scheduleStore.Load(); loadErr != nil {
+			return fmt.Errorf("daemon.Start: load schedule store: %w", loadErr)
+		}
+		deps.scheduleStore = scheduleStore
+		deps.scheduleWakeC = scheduleStore.WakeCh()
+		deps.crewHandler = crewHandler // may be nil in unit-test mode (no socket)
+		deps.commsWhoQuerier = shellCommsWho(deps.daemonBinaryPath, cfg.ProjectDir)
 
 		// Inject the HandlerPauseController so the dispatcher skip-on-paused gate
 		// (hk-kac8g) can consult pause state before claiming each item.

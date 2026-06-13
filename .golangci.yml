@@ -146,6 +146,19 @@ linters:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/core"
 
+        # schedule: generic recurring-job primitive (codename:schedule, hk-0es).
+        # Pure types + next-fire clock + durable single-writer store. Leaf:
+        # stdlib + self-import only (no core dep today; action execution + the
+        # work-loop tick live in internal/daemon which imports this package).
+        # MUST NOT import daemon. Spec ref: hk-0es brief (operator-locked D1/D2).
+        schedule:
+          files: ["**/internal/schedule/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/schedule"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "schedule MUST NOT import daemon (hk-0es: leaf primitive)" }
+
         # BI-004: The handler subsystem MUST NOT import internal/brcli.
         # The daemon invokes br directly (as a subprocess via the brcli adapter);
         # agents invoke br only through the Beads-CLI skill injected at launch time

@@ -2095,6 +2095,195 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 	}
 }
 
+// TestCycler_BootGrace_SuppressesAndThenAllows verifies the hk-4f8 boot-grace
+// fix (Defect A — bad trigger timing): when BootGracePeriod is set, MaybeRun
+// suppresses cycles for the first BootGracePeriod after a session_id CHANGE.
+// Before the grace expires the cycle is blocked; after it expires the cycle fires.
+// The grace does NOT apply on the very first session the Cycler ever observes
+// (no prior session_id evicted), so a keeper that boots while the agent is
+// already running monitors it without delay.
+func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "boot-grace-agent"
+		cycleID = "cyc-boot-001"
+		prevSID = "sess-prev" // session seen before the /session-resume (at low pct — no cycle)
+		bootSID = "sess-boot" // new session created by /session-resume (at high pct)
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(0, nonce)
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: bootSID}, time.Now(), nil
+	}
+
+	const bootGrace = 120 * time.Millisecond
+
+	cfg := keeper.CyclerConfig{
+		AgentName:           agent,
+		ProjectDir:          t.TempDir(),
+		TmuxTarget:          "fake-pane",
+		ActPct:              90.0,
+		WarnPct:             80.0,
+		ForceActPct:         95.0, // force threshold so CrispIdle=false is bypassed
+		HandoffTimeout:      200 * time.Millisecond,
+		ClearSettle:         50 * time.Millisecond,
+		PollInterval:        10 * time.Millisecond,
+		BootGracePeriod:     bootGrace,
+		CycleIDGen:          func() string { return cycleID },
+		IsManagedFn:         func(_, _ string) bool { return true },
+		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:         readHandoff,
+		TruncateHandoffFn:   func(_ string) error { return nil },
+		InjectFn:            spy.inject,
+		ReadGaugeFn:         noopGauge,
+		CrispIdleFn:         func(_, _ string) bool { return false }, // busy (forced-clear path)
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// ── Part 1: first-boot does NOT trigger grace (no prior session evicted) ──
+
+	// Observe prevSID at low pct (below ActPct): Gate 3 blocks the cycle but
+	// establishes prevSID as currentSessionID WITHOUT starting the grace timer
+	// (grace only starts on eviction of a non-empty prior session_id).
+	cfLow := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cfLow); err != nil {
+		t.Fatalf("MaybeRun (prevSID low pct): %v", err)
+	}
+	// No cycle at low pct.
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 0 {
+		t.Errorf("prevSID low pct: want 0 handoff_started; got %d", n)
+	}
+
+	// ── Part 2: session_id changes → grace starts; cycle suppressed during grace ──
+
+	// Switch to bootSID at high pct (above force threshold). Because prevSID was
+	// the prior session, the boot-grace timer starts NOW. Cycle must be suppressed.
+	cfBoot := &keeper.CtxFile{Pct: 95.0, SessionID: bootSID}
+	if err := cycler.MaybeRun(context.Background(), cfBoot); err != nil {
+		t.Fatalf("MaybeRun (during boot grace): %v", err)
+	}
+	duringGrace := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted))
+	if duringGrace != 0 {
+		t.Errorf("during boot grace: want 0 handoff_started (suppressed); got %d", duringGrace)
+	}
+
+	// Wait for the boot grace to expire.
+	time.Sleep(bootGrace + 20*time.Millisecond)
+
+	// ── Part 3: after grace expires, cycle fires normally ──
+	if err := cycler.MaybeRun(context.Background(), cfBoot); err != nil {
+		t.Fatalf("MaybeRun (after boot grace): %v", err)
+	}
+	afterGrace := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted))
+	if afterGrace != 1 {
+		t.Errorf("after boot grace: want 1 handoff_started (grace over, cycle fires); got %d", afterGrace)
+	}
+}
+
+// TestCycler_AbortClearsManaged verifies the hk-4f8 no-re-arm fix (Defect B):
+// after a handoff_timeout abort, SetManagedSessionFn must be called with an
+// empty string. This clears the watcher's .managed binding so it can re-latch
+// on a new session_id (post-/session-resume), preventing the new session from
+// being permanently classified as foreign_session and silencing all subsequent
+// MaybeRun calls.
+func TestCycler_AbortClearsManaged(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "abort-managed-agent"
+		cycleID = "cyc-abort-managed"
+		sid     = "sess-abort-managed"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
+	}
+
+	var (
+		managedMu         sync.Mutex
+		managedCallCount  int
+		managedLastValue  string
+	)
+	setManagedFn := func(_, _, sessionID string) error {
+		managedMu.Lock()
+		defer managedMu.Unlock()
+		managedCallCount++
+		managedLastValue = sessionID
+		return nil
+	}
+
+	cfg := keeper.CyclerConfig{
+		AgentName:           agent,
+		ProjectDir:          t.TempDir(),
+		TmuxTarget:          "fake-pane",
+		ActPct:              90.0,
+		WarnPct:             80.0,
+		HandoffTimeout:      40 * time.Millisecond, // short → quick abort
+		ClearSettle:         10 * time.Millisecond,
+		PollInterval:        5 * time.Millisecond,
+		CycleIDGen:          func() string { return cycleID },
+		IsManagedFn:         func(_, _ string) bool { return true },
+		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:         handoffNeverReturnsNonce,
+		TruncateHandoffFn:   func(_ string) error { return nil },
+		InjectFn:            spy.inject,
+		ReadGaugeFn:         noopGauge,
+		CrispIdleFn:         func(_, _ string) bool { return true },
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: setManagedFn,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	// Verify the cycle aborted (nonce never arrived).
+	abortedEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)
+	if len(abortedEvts) != 1 {
+		t.Fatalf("want 1 cycle_aborted; got %d", len(abortedEvts))
+	}
+	var abortPayload core.SessionKeeperCycleAbortedPayload
+	if err := json.Unmarshal(abortedEvts[0].Payload, &abortPayload); err != nil {
+		t.Fatalf("unmarshal cycle_aborted: %v", err)
+	}
+	if abortPayload.Reason != "handoff_timeout" {
+		t.Errorf("cycle_aborted.reason = %q; want \"handoff_timeout\"", abortPayload.Reason)
+	}
+
+	// SetManagedSessionFn must have been called once with empty string.
+	managedMu.Lock()
+	count := managedCallCount
+	last := managedLastValue
+	managedMu.Unlock()
+
+	if count != 1 {
+		t.Errorf("SetManagedSessionFn called %d times; want 1 (abort must clear managed)", count)
+	}
+	if last != "" {
+		t.Errorf("SetManagedSessionFn last value = %q; want \"\" (abort must clear binding)", last)
+	}
+}
+
 // TestCycler_ForcedClear_BelowThreshold_StillBlocked verifies that when context
 // is above ActPct but below ForceActPct, a non-idle agent (CrispIdle=false) is
 // still blocked (normal behavior unchanged). Refs: hk-0uu.

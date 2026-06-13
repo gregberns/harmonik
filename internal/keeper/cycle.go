@@ -108,6 +108,18 @@ type CyclerConfig struct {
 	// Default: 120s. Refs: hk-qoz (forced-clear catch-22 fix).
 	ForceRetryInterval time.Duration
 
+	// BootGracePeriod is the minimum duration after a session_id CHANGE before
+	// the keeper starts a cycle on the new session. During the grace window all
+	// cycle-gate checks return immediately, preventing forced-clear cycles from
+	// firing while the agent is still booting after a /session-resume (the
+	// agent cannot respond to /session-handoff during boot).
+	// Zero (the package default) disables boot-grace; set to a positive value
+	// in production (e.g. 5 * time.Minute). The grace applies only when the
+	// session_id CHANGES — not on first Cycler startup — so an already-running
+	// agent is monitored without delay on keeper boot.
+	// Refs: hk-4f8 (bad-trigger-timing + no-re-arm fix).
+	BootGracePeriod time.Duration
+
 	// MaxHandoffTimeouts is the number of consecutive handoff timeouts above
 	// the force threshold before escalating to ForceRestartFn. Zero disables
 	// escalation. Default: 3. Refs: hk-qoz.
@@ -417,6 +429,15 @@ type Cycler struct {
 	// below-force-threshold abort. When it reaches MaxHandoffTimeouts,
 	// ForceRestartFn is called to hard-restart the agent.
 	consecutiveHandoffTimeouts int
+
+	// Boot-grace tracking (Refs: hk-4f8).
+	// currentSessionID is the session_id most recently seen in MaybeRun.
+	// currentSessionIDSince is the time the session_id last CHANGED (set only
+	// when a non-empty previous session_id was evicted). Zero on first boot,
+	// meaning the grace does not apply when the Cycler has never seen a prior
+	// session — only post-/session-resume transitions trigger the grace.
+	currentSessionID      string
+	currentSessionIDSince time.Time
 }
 
 // NewCycler constructs a Cycler. Defaults are applied to zero-valued config fields.
@@ -473,6 +494,28 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	if c.lastFiredSID != "" && cf.SessionID == c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
 		c.lastFiredSID = ""
 		c.seenLowPctAfterLastFire = false
+	}
+
+	// Boot-grace gate (Refs: hk-4f8 — bad-trigger-timing fix).
+	// Track when the session_id last changed. Apply a grace window after each
+	// session_id transition so that forced-clear cycles cannot fire while an
+	// agent is still booting after a /session-resume. The grace applies ONLY
+	// when a previous session_id was evicted (currentSessionIDSince is non-zero),
+	// not on initial Cycler startup — so a long-running agent is monitored
+	// without delay when the keeper first boots.
+	if cf.SessionID != c.currentSessionID {
+		if c.currentSessionID != "" {
+			// Session changed: start the boot-grace timer.
+			c.currentSessionIDSince = time.Now()
+		}
+		c.currentSessionID = cf.SessionID
+	}
+	if c.cfg.BootGracePeriod > 0 && !c.currentSessionIDSince.IsZero() &&
+		time.Since(c.currentSessionIDSince) < c.cfg.BootGracePeriod {
+		slog.DebugContext(ctx, "keeper: boot grace active — deferring cycle for new session",
+			"agent", c.cfg.AgentName, "session_id", cf.SessionID,
+			"grace_remaining", c.cfg.BootGracePeriod-time.Since(c.currentSessionIDSince))
+		return nil
 	}
 
 	// Gate 3: context must reach the act threshold.
@@ -610,6 +653,19 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 		// DEFECT-4: record suppression on abort to prevent re-fire on next tick.
 		c.lastFiredSID = cf.SessionID
 		c.seenLowPctAfterLastFire = false
+
+		// Re-arm: clear .managed so the watcher re-latches on the next valid
+		// gauge after this abort. Without this, a session_id change after the
+		// abort (agent completed /session-resume) leaves the watcher's binding
+		// stale: the new session's gauge is permanently classified as
+		// foreign_session and MaybeRun is never called again for that session.
+		// Clearing .managed allows the watcher to latch the new session_id on
+		// its next fresh-gauge tick, restoring normal monitoring and re-arm.
+		// Refs: hk-4f8 (no-re-arm fix).
+		if setErr := c.cfg.SetManagedSessionFn(c.cfg.ProjectDir, c.cfg.AgentName, ""); setErr != nil {
+			slog.WarnContext(ctx, "keeper: clear managed session_id after handoff_timeout abort",
+				"agent", c.cfg.AgentName, "err", setErr)
+		}
 
 		// Escalation path: track consecutive timeouts above the force threshold
 		// and call ForceRestartFn after MaxHandoffTimeouts. This handles the case

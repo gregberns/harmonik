@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/keeper"
 )
@@ -125,13 +126,14 @@ func runKeeperSubcommand(args []string) int {
 	emitter := keeper.NewFileEmitter(projectDir)
 
 	cycler := keeper.NewCycler(keeper.CyclerConfig{
-		AgentName:     agentFlag,
-		ProjectDir:    projectDir,
-		TmuxTarget:    resolvedTmux,
-		ActPct:        float64(actPctFlag),
-		ActAbsTokens:  actAbsTokensFlag,
-		WarnAbsTokens: warnAbsTokensFlag,
-		SendEscapeFn:  keeper.SendEscapeKey,
+		AgentName:       agentFlag,
+		ProjectDir:      projectDir,
+		TmuxTarget:      resolvedTmux,
+		ActPct:          float64(actPctFlag),
+		ActAbsTokens:    actAbsTokensFlag,
+		WarnAbsTokens:   warnAbsTokensFlag,
+		SendEscapeFn:    keeper.SendEscapeKey,
+		BootGracePeriod: 5 * time.Minute, // hk-4f8: defer cycles during post-/session-resume boot
 	}, emitter)
 
 	// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before

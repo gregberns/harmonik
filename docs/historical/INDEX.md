@@ -11,4 +11,13 @@ This directory holds documentation that is **clearly historical** — superseded
 - `QUESTIONS.md` — inception-era open-questions capture.
 - `extqueue-v0.1-changelog.md`, `extqueue-v0.1-integration.md` — extqueue v0.1 historical notes.
 
+## Intentionally kept in place (NOT relocated here)
+
+Two clearly-historical directories were evaluated for this quarantine but **deliberately left at their original paths** — banner-archived in place, not moved — because live docs/specs still link them and relocating would orphan those references:
+
+- `docs/reviews/` — Apr 2026 foundation/spec persona reviews; several are linked from [AGENT_INDEX.md](../../AGENT_INDEX.md). See [docs/reviews/README.md](../reviews/README.md).
+- `docs/decompose-to-tasks/` — Apr–May 2026 spec-pilot discipline; actively cited by the live normative spec [specs/beads-integration.md](../../specs/beads-integration.md). See [docs/decompose-to-tasks/README.md](../decompose-to-tasks/README.md).
+
+Nothing in this `docs/historical/` tree claims these were moved; this note records that their staying-in-place is intentional, not a pending step.
+
 > This directory was established as part of the doc-overhaul quarantine pass (hk-8us): a reversible separation of the audit trail from live docs. To find where a moved file came from, use `git log --follow` on the file.

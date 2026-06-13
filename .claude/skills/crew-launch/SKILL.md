@@ -127,6 +127,25 @@ harmonik comms recv --follow --json
 - Always use `--json`. Do NOT parse the human-readable `recv` output — parse
   only the `event_id`, `from`, `to`, `topic`, and `body` JSON fields.
 
+### Idle-crew-wake protocol (keep `--follow` armed)
+
+**A crew does NOT reliably wake the instant a `comms send` arrives.** A
+one-shot / idle Claude session only processes a delivered message when one of
+two things is true:
+
+1. it has an **armed `harmonik comms recv --follow --json` stream still
+   running** (the boot sequence starts this — Step 5 — and you MUST keep it
+   running for the whole life of the session), OR
+2. its tmux pane gets a **nudge** — e.g. the sender used
+   `comms send --to <crew> --wake` (see the agent-comms skill, § Waking an idle
+   peer), or the captain pokes the pane manually.
+
+**Rule:** keep `comms recv --follow --json` running continuously. If a crew has
+gone fully idle WITHOUT an armed `--follow`, it may miss a wake until something
+nudges it — a bare `send` alone is not guaranteed to rouse it. (This reflects
+observed behavior: idle crews do not reliably wake on a bare send.) If you ever
+find your `--follow` stream has died, re-arm it immediately as part of your loop.
+
 ### Message handling
 
 | `topic` | Action |
@@ -277,6 +296,22 @@ criterion #3 is owned here.
 Context-full wind-down is the **keeper's** job, not yours. When the keeper cycles
 you, it writes a handoff, clears context, and resumes your **same** `session_id`.
 
+> For the gauge thresholds (warn vs act and their real default values),
+> `keeper doctor`, and the deployment-state caveat (the gauge is not yet wired
+> for crews on the live deployment — confirm with `keeper doctor`), see the
+> **`keeper` skill** (`.claude/skills/keeper/SKILL.md`). This section only covers
+> what a crew does on restart; the keeper skill owns the mechanism.
+
+### Do NOT self-`/quit` on a keeper WARN
+
+A keeper **WARN is informational only.** When you see a wrap-up-warning injected
+into your pane, you MUST keep working and MUST NOT `/quit`, `/clear`, or exit
+yourself. Only the keeper's **ACT** path performs the handoff → clear → resume
+cycle — that is the keeper's job, not the crew's. **Self-quitting on a warn is a
+known failure mode** (it abandons in-flight loop state for no reason; the keeper
+would have cycled you cleanly at the ACT threshold). The `keeper` skill states
+this same rule — see § Don't self-quit on a warn there.
+
 On resume you re-run the full boot sequence from Step 1:
 1. Re-read your handoff / re-derive `{queue, epic_id}` from beads (`assignee ==
    crew_name`).
@@ -324,6 +359,9 @@ before leaving.
   four triggers (boot, bead-close, ≤10-min timer, drain).
 - Re-hydrate from durable state on restart (handoff frontmatter AND/OR beads
   `assignee`; prefer beads if they disagree).
+- Keep `comms recv --follow --json` armed for the whole life of the session —
+  idle crews do not reliably wake on a bare `send` without it (§ Idle-crew-wake
+  protocol).
 - Use `--json` output for all `comms recv` and `br` parsing.
 
 ### MUST NOT
@@ -340,6 +378,9 @@ before leaving.
   harmonik-dispatch).
 - Parse non-JSON `comms`/`br` output.
 - Re-dispatch the same bead more than once without reporting to the captain first.
+- **Self-`/quit`, `/clear`, or exit on a keeper WARN.** A warn is informational;
+  only the keeper's ACT path performs the reset cycle (§ Self-restart via the
+  keeper). Self-quitting on a warn is a known failure mode.
 
 ---
 
@@ -374,3 +415,6 @@ If the handoff file is missing, unreadable, any required field is absent, or
   MUST NOT issue terminal transitions).
 - `.claude/skills/harmonik-dispatch/SKILL.md` — daemon queue submit loop;
   harmonik-dispatch is the outer pattern this skill scopes to one crew's queue.
+- `.claude/skills/keeper/SKILL.md` — the session-keeper contract: warn-vs-act
+  thresholds, `keeper doctor`, the "do NOT self-`/quit` on a warn" rule, and the
+  crew-restart re-hydration mechanism referenced by § Self-restart via the keeper.

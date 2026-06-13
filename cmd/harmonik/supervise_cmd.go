@@ -18,6 +18,7 @@ import (
 //	1  — argument or operational error
 //	2  — unrecognised verb
 //	17 — daemon not running (start/restart only)
+//	24 — flywheel session already exists (start only)
 //	25 — supervisor already running (start only)
 //
 // Spec ref: process-lifecycle.md §4.10 PL-028d.
@@ -86,6 +87,7 @@ EXIT CODES
    1  Argument or operational error
    2  Unrecognised verb
   17  Daemon not running (start/restart/pause/resume)
+  24  Flywheel session already exists (start)
   25  Supervisor already running (start)
 
 EXAMPLES

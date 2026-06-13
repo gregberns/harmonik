@@ -55,6 +55,58 @@ func main() {
 	os.Exit(run())
 }
 
+// queueTopUsage is the help block for `harmonik queue`. It is printed both at
+// the verb position (`harmonik queue --help`, hk-y4e96) and when --help is the
+// first sub-arg of a file-or-args-taking verb (`harmonik queue submit --help`,
+// hk-l7b) so that --help is never swallowed as a queue-file path.
+const queueTopUsage = `harmonik queue — submit or inspect the bead queue
+
+USAGE
+  harmonik queue <verb> [flags]
+
+VERBS
+  submit    Submit a new bead to the queue (daemon must be running)
+  append    Append a bead to an existing queue run (daemon must be running)
+  status    Show current queue state and bead statuses (daemon must be running)
+  list      List all active queues with status and worker counts (daemon must be running)
+  pause     Pause a named queue (daemon must be running)
+  resume    Resume a paused named queue (daemon must be running)
+  dry-run   Validate a queue submission without executing (daemon must be running)
+  cancel    Archive a stale queue.json without a live daemon (no daemon required)
+  set-concurrency <n>  Set the daemon's concurrent-dispatch ceiling live (daemon must be running)
+
+NOTES
+  Most verbs require the daemon to be running.
+  'cancel' works without a live daemon — use it to clear a queue left by a
+  killed daemon (e.g. after SIGTERM of a wedged harmonik process).
+  Exit code 17 means the daemon is not running (socket absent or ECONNREFUSED).
+  Queues are created automatically on first submit to a new name (--queue flag).
+  Absent --queue defaults to the 'main' queue.
+
+EXIT CODES
+  0   Success (JSON response to stdout)
+  1   Validation error (JSON error body to stdout)
+  2   Transport/protocol error or unrecognised verb
+  17  Daemon not running
+
+EXAMPLES
+  harmonik queue submit --beads hk-abc123
+  harmonik queue submit --queue investigate --beads hk-abc,hk-def
+  harmonik queue submit --beads hk-abc,hk-def,hk-ghi
+  harmonik queue submit /tmp/batch.json
+  harmonik queue dry-run --beads hk-abc123
+  harmonik queue dry-run /tmp/batch.json
+  harmonik queue append --queue-id <uuid> 0 hk-abc123
+  harmonik queue append --queue investigate 0 hk-abc123
+  harmonik queue status
+  harmonik queue list
+  harmonik queue pause investigate
+  harmonik queue resume investigate
+  harmonik queue cancel
+  harmonik queue cancel --force
+  harmonik queue set-concurrency 4
+`
+
 // run is the testable entry-point. It constructs the composition root and
 // starts the daemon. It returns an exit code.
 //
@@ -271,60 +323,24 @@ EXAMPLES
 		if len(os.Args) >= 3 {
 			verb = os.Args[2]
 		}
-		// --help/-h intercept (hk-y4e96): catch on the verb position or as first subArg.
+		// --help/-h intercept (hk-y4e96): catch on the verb position; the
+		// first-subArg case (e.g. `queue submit --help`) is handled below (hk-l7b).
 		if verb == "--help" || verb == "-h" {
-			fmt.Print(`harmonik queue — submit or inspect the bead queue
-
-USAGE
-  harmonik queue <verb> [flags]
-
-VERBS
-  submit    Submit a new bead to the queue (daemon must be running)
-  append    Append a bead to an existing queue run (daemon must be running)
-  status    Show current queue state and bead statuses (daemon must be running)
-  list      List all active queues with status and worker counts (daemon must be running)
-  pause     Pause a named queue (daemon must be running)
-  resume    Resume a paused named queue (daemon must be running)
-  dry-run   Validate a queue submission without executing (daemon must be running)
-  cancel    Archive a stale queue.json without a live daemon (no daemon required)
-  set-concurrency <n>  Set the daemon's concurrent-dispatch ceiling live (daemon must be running)
-
-NOTES
-  Most verbs require the daemon to be running.
-  'cancel' works without a live daemon — use it to clear a queue left by a
-  killed daemon (e.g. after SIGTERM of a wedged harmonik process).
-  Exit code 17 means the daemon is not running (socket absent or ECONNREFUSED).
-  Queues are created automatically on first submit to a new name (--queue flag).
-  Absent --queue defaults to the 'main' queue.
-
-EXIT CODES
-  0   Success (JSON response to stdout)
-  1   Validation error (JSON error body to stdout)
-  2   Transport/protocol error or unrecognised verb
-  17  Daemon not running
-
-EXAMPLES
-  harmonik queue submit --beads hk-abc123
-  harmonik queue submit --queue investigate --beads hk-abc,hk-def
-  harmonik queue submit --beads hk-abc,hk-def,hk-ghi
-  harmonik queue submit /tmp/batch.json
-  harmonik queue dry-run --beads hk-abc123
-  harmonik queue dry-run /tmp/batch.json
-  harmonik queue append --queue-id <uuid> 0 hk-abc123
-  harmonik queue append --queue investigate 0 hk-abc123
-  harmonik queue status
-  harmonik queue list
-  harmonik queue pause investigate
-  harmonik queue resume investigate
-  harmonik queue cancel
-  harmonik queue cancel --force
-  harmonik queue set-concurrency 4
-`)
+			fmt.Print(queueTopUsage)
 			return 0
 		}
 		subArgs := []string{}
 		if len(os.Args) >= 4 {
 			subArgs = os.Args[3:]
+		}
+		// --help/-h intercept (hk-l7b): catch --help as the FIRST sub-arg of a
+		// file-or-args-taking verb (submit/dry-run/append/set-concurrency).
+		// Without this, `harmonik queue submit --help` reaches the submit handler
+		// and treats "--help" as the queue-file path ("open --help: no such file").
+		// Reuse the verb-position queue help block above; exit 0 like that path.
+		if len(subArgs) >= 1 && (subArgs[0] == "--help" || subArgs[0] == "-h") {
+			fmt.Print(queueTopUsage)
+			return 0
 		}
 		ctx := context.Background()
 		switch verb {

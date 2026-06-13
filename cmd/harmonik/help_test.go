@@ -146,6 +146,75 @@ func TestQueueHelpFlag(t *testing.T) {
 	}
 }
 
+// TestQueueSubmitHelpFlag verifies that `harmonik queue submit --help` exits 0
+// and prints the queue help block — rather than treating "--help" as the
+// queue-file path and printing `open --help: no such file` (the hk-l7b bug).
+// The verb-position intercept (TestQueueHelpFlag) only caught `queue --help`;
+// this asserts the first-sub-arg intercept catches `queue submit --help` too.
+//
+// Not parallel: drives run() which mutates os.Args and flag.CommandLine.
+//
+// Acceptance: hk-l7b — `queue submit --help` exits 0 with help, not an
+// "open --help" filepath error.
+func TestQueueSubmitHelpFlag(t *testing.T) {
+	mainFixtureResetFlags(t)
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "queue", "submit", "--help"})
+
+	var exitCode int
+	output := helpFixtureCaptureStdout(t, func() {
+		exitCode = run()
+	})
+
+	if exitCode != 0 {
+		t.Errorf("run() with queue submit --help: got exit code %d, want 0", exitCode)
+	}
+
+	// The bug printed "open --help: no such file"; the help must NOT contain it.
+	if strings.Contains(output, "no such file") {
+		t.Errorf("queue submit --help swallowed --help as a filepath:\n%s", output)
+	}
+
+	for _, want := range []string{
+		"submit",
+		"set-concurrency",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("queue submit --help output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+// TestQueueDryRunHelpFlag verifies the same first-sub-arg --help intercept for
+// `harmonik queue dry-run --help` (hk-l7b).
+//
+// Not parallel: drives run() which mutates os.Args and flag.CommandLine.
+func TestQueueDryRunHelpFlag(t *testing.T) {
+	mainFixtureResetFlags(t)
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "queue", "dry-run", "--help"})
+
+	var exitCode int
+	output := helpFixtureCaptureStdout(t, func() {
+		exitCode = run()
+	})
+
+	if exitCode != 0 {
+		t.Errorf("run() with queue dry-run --help: got exit code %d, want 0", exitCode)
+	}
+
+	if strings.Contains(output, "no such file") {
+		t.Errorf("queue dry-run --help swallowed --help as a filepath:\n%s", output)
+	}
+
+	for _, want := range []string{
+		"dry-run",
+		"set-concurrency",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("queue dry-run --help output missing %q:\n%s", want, output)
+		}
+	}
+}
+
 // TestRunHelpFlag verifies that `harmonik run --help` exits 0 and the output
 // contains the expected flags, exit-code section, and at least one example.
 //

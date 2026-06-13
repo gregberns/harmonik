@@ -169,17 +169,22 @@ func DefaultSessionName(projectDir string) string {
 	return "harmonik-" + tmuxStartHashDir(projectDir) + "-default"
 }
 
-// SupervisorSessionName is the tmux session the auto-revive supervisor
-// (/tmp/hk-daemon-supervise.sh) runs in. The daemon, launched as a child of the
-// supervisor, can inherit $TMUX pointing at this session; implementer windows
-// MUST NOT spawn here (they would leak into the supervisor's session and a
-// `grep harmonik-*-flywheel` would find "0 sessions" — the symptom that
-// mis-diagnosed hk-9vp51 as a launch wedge).
+// SupervisorSessionName returns the tmux session name for the auto-revive
+// supervisor for the given project directory. Format: hk-<project_hash>-daemon-supervise
+// (fleet-portability: per-project, outside the harmonik-<hash>- orphan-sweep
+// namespace, per specs/process-lifecycle.md §PL-019).
+//
+// The daemon, launched as a child of the supervisor, can inherit $TMUX pointing
+// at this session; implementer windows MUST NOT spawn here (they would leak into
+// the supervisor's session and a `grep harmonik-*-flywheel` would find "0
+// sessions" — the symptom that mis-diagnosed hk-9vp51 as a launch wedge).
 //
 // hk-9vp51 fix-forward: this is the ONE session ResolveDaemonSpawnSession
 // excludes; every other ambient session (including the operator's `hk
 // tmux-start` session) is a valid, already-existing spawn target.
-const SupervisorSessionName = "hk-daemon-supervise"
+func SupervisorSessionName(projectDir string) string {
+	return "hk-" + tmuxStartHashDir(projectDir) + "-daemon-supervise"
+}
 
 // ResolveDaemonSpawnSession decides which tmux session the daemon should spawn
 // implementer windows into, given the live session it currently runs inside
@@ -210,7 +215,7 @@ const SupervisorSessionName = "hk-daemon-supervise"
 // session and is never empty.
 func ResolveDaemonSpawnSession(projectDir, liveSession string) (session string, needEnsure bool) {
 	live := strings.TrimSpace(liveSession)
-	if live == "" || live == SupervisorSessionName {
+	if live == "" || live == SupervisorSessionName(projectDir) {
 		// Forced fallback: the ambient session is unusable as a spawn target.
 		// Use the deterministic daemon-owned session and require the caller to
 		// ensure it exists (and keep it alive for the daemon's lifetime).

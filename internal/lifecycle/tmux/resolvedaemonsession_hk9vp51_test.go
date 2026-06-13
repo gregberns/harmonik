@@ -53,7 +53,7 @@ func TestResolveDaemonSpawnSession_NormalSessionUsedVerbatim(t *testing.T) {
 			if needEnsure {
 				t.Errorf("ResolveDaemonSpawnSession(%q) needEnsure = true, want false (live session already exists)", live)
 			}
-			if got == SupervisorSessionName {
+			if got == SupervisorSessionName(projectDir) {
 				t.Errorf("ResolveDaemonSpawnSession(%q) returned the supervisor session — INVARIANT VIOLATION", live)
 			}
 			if got == "" {
@@ -71,12 +71,13 @@ func TestResolveDaemonSpawnSession_SupervisorSessionExcluded(t *testing.T) {
 
 	// The supervisor's own session must NEVER be the spawn target — fall back to
 	// the deterministic daemon session and require the caller to EnsureSession it.
-	for _, live := range []string{SupervisorSessionName, "  " + SupervisorSessionName + "  "} {
+	supervisorName := SupervisorSessionName(projectDir)
+	for _, live := range []string{supervisorName, "  " + supervisorName + "  "} {
 		live := live
 		t.Run(live, func(t *testing.T) {
 			t.Parallel()
 			got, needEnsure := ResolveDaemonSpawnSession(projectDir, live)
-			if got == SupervisorSessionName {
+			if got == SupervisorSessionName(projectDir) {
 				t.Fatalf("ResolveDaemonSpawnSession(%q) returned the supervisor session — this is the exact P0 leak the bead fixes", live)
 			}
 			if got != want {
@@ -116,7 +117,8 @@ func TestResolveDaemonSpawnSession_EmptyLiveFallsBack(t *testing.T) {
 func TestResolveDaemonSpawnSession_FallbackIsNeverSupervisor(t *testing.T) {
 	t.Parallel()
 
-	if DefaultSessionName(t.TempDir()) == SupervisorSessionName {
+	dir := t.TempDir()
+	if DefaultSessionName(dir) == SupervisorSessionName(dir) {
 		t.Fatal("DefaultSessionName collides with SupervisorSessionName — fallback could spawn into the supervisor session")
 	}
 }

@@ -10,7 +10,7 @@ Read [AGENT_INDEX.md](AGENT_INDEX.md) first. It is the master map of the knowled
 
 **Orchestrator permanent directives:** [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md) — all stable rules (dispatch discipline, priority, bead lifecycle, autonomy, dispatch shape, monitor pattern). Load alongside HANDOFF.md on every `/session-resume`. **Known workarounds** (worktree bugs, harness quirks): [`docs/known-workarounds.md`](docs/known-workarounds.md).
 
-**Booting as a captain or crew?** Load `.claude/skills/captain` (captain session) or `.claude/skills/crew-launch` (crew session) for your operating contract — boot sequence, queue/comms discipline, progress feed. See also `.claude/skills/keeper` (per-session context-watcher) and `.claude/skills/harmonik-lifecycle` (supervise / promote / reconcile / init).
+**Booting as a captain or crew?** These skills are **project-local under the repo** — read them at `/Users/gb/github/harmonik/.claude/skills/…`, NOT the global `~/.claude/skills/` (there is no captain/crew skill there; reading the global path fails). Captain session: read `/Users/gb/github/harmonik/.claude/skills/captain/STARTUP.md` FIRST, then `SKILL.md` in that same dir. Crew session: read `/Users/gb/github/harmonik/.claude/skills/crew-launch/SKILL.md`. These hold your operating contract — boot sequence, queue/comms discipline, progress feed. See also `.claude/skills/keeper` (per-session context-watcher) and `.claude/skills/harmonik-lifecycle` (supervise / promote / reconcile / init), same project-local dir.
 
 ## Orchestrator discipline (HARD RULE)
 

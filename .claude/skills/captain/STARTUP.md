@@ -1,6 +1,11 @@
 # Captain Startup Instructions (boot runbook)
 
 > **Run this EVERY session, handoff or not.** The handoff is INPUT, not gospel.
+> **Path note:** every `.claude/skills/…` path in this file is **project-local**,
+> rooted at `/Users/gb/github/harmonik/.claude/skills/` — NOT the global
+> `~/.claude/skills/`. There is no captain/crew skill under `~/.claude/skills/`;
+> reading the global path returns "file does not exist." Read these files from the
+> repo dir (or just `ls /Users/gb/github/harmonik/.claude/skills/captain/` if unsure).
 > This runbook is the captain's equivalent of the crew's boot sequence
 > (`.claude/skills/crew-launch/SKILL.md` § Boot sequence). It EXTENDS the captain
 > skill (`.claude/skills/captain/SKILL.md`) — that skill owns per-crew MECHANICS

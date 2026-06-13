@@ -263,7 +263,8 @@ Write HANDOFF.md using the **captain handoff format** (tiered model):
 
 ```markdown
 <!-- PP-TRIAL:v2 <date> <branch> — CAPTAIN handoff. <1-line fleet status>.
-     Load STARTUP.md FIRST, then this. HANDOFF.md is gitignored. -->
+     Load /Users/gb/github/harmonik/.claude/skills/captain/STARTUP.md FIRST
+     (project-local path — NOT ~/.claude/skills/), then this. HANDOFF.md is gitignored. -->
 
 <!-- ORCHESTRATION DIRECTIVES — DO NOT EDIT -->
 <verbatim from prior handoff's DIRECTIVES block — these are durable>

@@ -1412,6 +1412,17 @@ type ExportedErrMalformedConfigYAML = ErrMalformedConfigYAML
 // Bead ref: hk-bfvk7.
 type ExportedErrUnsupportedConfigVersion = ErrUnsupportedConfigVersion
 
+// ExportedErrWorkflowModeFloorViolation is a type alias so tests can use errors.As.
+//
+// Bead ref: hk-rcp7.
+type ExportedErrWorkflowModeFloorViolation = ErrWorkflowModeFloorViolation
+
+// ExportedDaemonConfig is a type alias for DaemonConfig so tests in package
+// daemon_test can reference the type directly without importing internal types.
+//
+// Bead ref: hk-rcp7.
+type ExportedDaemonConfig = DaemonConfig
+
 // ExportedLoadProjectConfig exposes LoadProjectConfig for tests in package daemon_test.
 //
 // Bead ref: hk-bfvk7.

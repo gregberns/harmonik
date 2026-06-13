@@ -42,6 +42,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/hookrelay"
@@ -722,6 +723,51 @@ EXAMPLES
 	if _, err := os.Stat(projectDir); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: project directory %q does not exist or is not accessible: %v\n", projectDir, err)
 		return 1
+	}
+
+	// PL-004b (hk-rcp7): flag > config > default precedence for max_concurrent,
+	// workflow_mode, and target_branch.
+	//
+	// flag.Visit iterates only the flags that were explicitly set on the command
+	// line (not defaulted-and-not-passed).  An explicitly-passed flag always wins
+	// over any config-file value; a defaulted-but-not-passed flag defers to the
+	// config file, which in turn defers to the built-in default.
+	explicitFlags := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
+
+	// Load the daemon: block from .harmonik/config.yaml.  The loader validates
+	// the workflow_mode value and returns *ErrWorkflowModeFloorViolation when
+	// single is found (PL-004a review floor — daemon-level config must never
+	// lower the mode below review-loop).
+	projCfg, projCfgErr := daemon.LoadProjectConfig(projectDir)
+	if projCfgErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: %v\n", projCfgErr)
+		return 1
+	}
+
+	// Load branching.yaml for the authoritative target_branch precedence source
+	// (config.yaml daemon.target_branch is observability/symmetry only per PL-004b).
+	branchDflt, branchErr := branching.Load(projectDir)
+	if branchErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: %v\n", branchErr)
+		return 1
+	}
+
+	// Resolve max_concurrent: explicit flag > config (> 0) > flag default (1).
+	if !explicitFlags["max-concurrent"] && projCfg.Daemon.MaxConcurrent > 0 {
+		maxConcurrentFlag = projCfg.Daemon.MaxConcurrent
+	}
+
+	// Resolve workflow_mode: explicit flag > config (non-empty, already validated) > flag default (dot).
+	// The loader already enforces the PL-004a review floor on the config value.
+	if !explicitFlags["workflow-mode"] && projCfg.Daemon.WorkflowMode != "" {
+		workflowModeFlag = string(projCfg.Daemon.WorkflowMode)
+	}
+
+	// Resolve target_branch: explicit flag > branching.yaml lands_on > flag default ("").
+	// The daemon normalises empty → "main" via resolveTargetBranch.
+	if !explicitFlags["target-branch"] && branchDflt.LandsOn != "" {
+		targetBranchFlag = branchDflt.LandsOn
 	}
 
 	// hk-sm6j7: resolve br binary via PATH so the work loop is reachable.

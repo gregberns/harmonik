@@ -67,11 +67,13 @@ func TestDaemonStart_QueueOperatorEventConsumerSubscribedInProductionComposition
 	//   9. agent_rate_limit_status  — bandwidthTunerBackstop emergency backstop
 	//  10. bead_closed             — ReviewGateAnomalyWatcher consecutive-close alarm (hk-tnmjy)
 	//  11. reviewer_verdict        — ReviewGateAnomalyWatcher verdict reset (hk-tnmjy)
+	//  12. budget_accrual          — PerQueueSpendMeter per-queue spend cap (NQ-X1, hk-tigaf.11)
 	//
 	// Any deviation indicates a composition-root wiring regression.
 	// Update history: 9→11 (ReviewGateAnomalyWatcher hk-tnmjy registers two
-	// subscriptions — bead_closed + reviewer_verdict).
-	const wantSubscriptions = 11
+	// subscriptions — bead_closed + reviewer_verdict); 11→12 (PerQueueSpendMeter
+	// NQ-X1 registers a second budget_accrual consumer — hk-tigaf.11).
+	const wantSubscriptions = 12
 	if capturedCount != wantSubscriptions {
 		t.Errorf("bus subscription count before Seal = %d, want %d; "+
 			"QueueOperatorEventConsumer.Subscribe must be called pre-Seal in daemon.Start (hk-7urls)",

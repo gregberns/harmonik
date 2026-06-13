@@ -51,6 +51,10 @@ const (
 	// PreSealSubsystemBandwidthTunerBackstop is the bandwidthTunerBackstop that
 	// subscribes to agent_rate_limited bus events as a rate-limit backstop (hk-81n9r).
 	PreSealSubsystemBandwidthTunerBackstop PreSealSubsystem = "bandwidthTunerBackstop"
+
+	// PreSealSubsystemPerQueueSpendMeter is the PerQueueSpendMeter (budget_accrual
+	// consumer attributing per-queue spend and pausing-by-budget; NQ-X1, hk-tigaf.11).
+	PreSealSubsystemPerQueueSpendMeter PreSealSubsystem = "PerQueueSpendMeter"
 )
 
 // SubscribeContract declares the ConsumerIDs a subsystem registers via Subscribe.
@@ -91,6 +95,9 @@ var RequiredPreSealSubscribers = map[PreSealSubsystem]SubscribeContract{
 	}},
 	PreSealSubsystemBandwidthTunerBackstop: {ConsumerIDs: []string{
 		"bandwidth-tuner-rate-limit-backstop",
+	}},
+	PreSealSubsystemPerQueueSpendMeter: {ConsumerIDs: []string{
+		"per-queue-spend-meter-budget-accrual",
 	}},
 }
 

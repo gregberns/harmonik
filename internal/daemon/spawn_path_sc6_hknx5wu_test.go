@@ -11,7 +11,7 @@ package daemon_test
 //
 // Four sub-tests:
 //
-//  1. pre-seal-without-notify-stream: count = 11
+//  1. pre-seal-without-notify-stream: count = 12
 //     - 2 from HandlerPausePolicyGoroutine (agent_rate_limit_status, budget_exhausted)
 //     - 2 from DaemonSpendMeter            (run_started, budget_accrual)
 //     - 2 from QueueOperatorEventConsumer  (operator_pause_status, operator_resuming)
@@ -19,9 +19,10 @@ package daemon_test
 //     - 1 from StaleWatcher                (wildcard observer)
 //     - 2 from ReviewGateAnomalyWatcher    (bead_closed, reviewer_verdict)
 //     - 1 from bandwidthTunerBackstop      (agent_rate_limited backstop)
+//     - 1 from PerQueueSpendMeter          (budget_accrual; NQ-X1 hk-tigaf.11)
 //
-//  2. pre-seal-with-notify-stream: count = 15
-//     - 11 base subscriptions (same as above)
+//  2. pre-seal-with-notify-stream: count = 16
+//     - 12 base subscriptions (same as above)
 //     - 4 from NotifyStreamConsumer (run_started, workspace_merge_status,
 //       run_completed, run_failed)
 //
@@ -100,8 +101,9 @@ func TestSC6_CompositionRootWiringScan_AllPreSealSubscriptionsPresent(t *testing
 		//   1 StaleWatcher                (wildcard observer; hk-wkzlc)
 		//   2 ReviewGateAnomalyWatcher    (bead_closed + reviewer_verdict; hk-tnmjy)
 		//   1 bandwidthTunerBackstop      (rate-limit backstop; hk-81n9r)
-		// = 11.
-		const wantBase = 11
+		//   1 PerQueueSpendMeter          (budget_accrual per-queue cap; NQ-X1 hk-tigaf.11)
+		// = 12.
+		const wantBase = 12
 		if capturedCount != wantBase {
 			t.Errorf("SC6/without-notify: pre-Seal subscription count = %d, want %d; "+
 				"a subscribe call is missing or spurious in daemon.Start composition root (hk-nx5wu / EV-009)",
@@ -138,11 +140,11 @@ func TestSC6_CompositionRootWiringScan_AllPreSealSubscriptionsPresent(t *testing
 				"startWithHooks must invoke the observer after pre-Seal subscriptions")
 		}
 
-		// 11 base + 4 from NotifyStreamConsumer (run_started, workspace_merge_status,
-		// run_completed, run_failed) = 15. Base count is the wantBase set above
+		// 12 base + 4 from NotifyStreamConsumer (run_started, workspace_merge_status,
+		// run_completed, run_failed) = 16. Base count is the wantBase set above
 		// (HandlerPause, DaemonSpendMeter, QueueOp, SubscribeHub, StaleWatcher,
-		// ReviewGateAnomalyWatcher, bandwidthTunerBackstop).
-		const wantWithNotify = 15
+		// ReviewGateAnomalyWatcher, bandwidthTunerBackstop, PerQueueSpendMeter).
+		const wantWithNotify = 16
 		if capturedCount != wantWithNotify {
 			t.Errorf("SC6/with-notify: pre-Seal subscription count = %d, want %d; "+
 				"NotifyStreamConsumer.Subscribe must add 4 subscriptions when NotifyStream is set (hk-nx5wu)",

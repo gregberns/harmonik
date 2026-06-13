@@ -865,6 +865,22 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		hooks.spendMeterObserver(spendMeter)
 	}
 
+	// Construct and subscribe the PerQueueSpendMeter (NQ-X1, hk-tigaf.11) BEFORE
+	// Seal. Sibling of DaemonSpendMeter above: it enforces the OPTIONAL, lower,
+	// per-queue spend ceiling (queue.Queue.SpendCapUSD) by attributing each
+	// budget_accrual chunk back to its queue via the shared RunRegistry
+	// (RunHandle.QueueName) and pausing ONLY the offending queue
+	// (QueueStatusPausedByBudget) — sibling queues keep dispatching. The global
+	// meter above remains the daemon-wide ceiling; the stricter ceiling binds.
+	// Un-pause happens on the per-queue meter's own UTC day-rollover.
+	//
+	// Spec ref: specs/queue-model.md (NQ-X1).
+	// Bead ref: hk-tigaf.11.
+	perQueueSpendMeter := NewPerQueueSpendMeter(sharedRunRegistry, qs, cfg.ProjectDir)
+	if subscribeErr := perQueueSpendMeter.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: PerQueueSpendMeter.Subscribe: %w", subscribeErr)
+	}
+
 	// Construct and subscribe the QueueOperatorEventConsumer BEFORE Seal so
 	// operator_pause_status and operator_resuming events are delivered during the
 	// production run (EV-009: subscribers MUST register before Seal).

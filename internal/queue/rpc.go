@@ -233,6 +233,13 @@ func HandleQueueSubmit(
 		// verbatim (oversubscription permitted — the runtime global ceiling still
 		// wins per QM-062). The caller (HandlerAdapter) logs oversubscription once.
 		Workers: DefaultWorkers(req.Workers, globalMaxConcurrent),
+		// SpendCapUSD is the OPTIONAL per-queue daily spend ceiling (NQ-X1).
+		// Carried verbatim from the request: zero/absent means no per-queue cap
+		// (only the global DaemonSpendMeter applies); a positive value pauses ONLY
+		// this queue (paused-by-budget) when its attributed daily spend reaches the
+		// cap. A cap above the global ceiling is permitted (the global ceiling still
+		// wins) and logged once at submit (HandlerAdapter), mirroring Workers.
+		SpendCapUSD: req.SpendCapUSD,
 		// DefaultHarness is the per-queue harness-selection default (tier 2 of the
 		// resolveHarness precedence walk; hk-4x3rg [C4/T6]). A valid requested
 		// AgentType is carried verbatim; an invalid/empty value is normalised to

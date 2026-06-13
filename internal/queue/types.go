@@ -54,6 +54,17 @@ const (
 	// shutdown drain per §8.5.
 	QueueStatusPausedByDrain QueueStatus = "paused-by-drain"
 
+	// QueueStatusPausedByBudget means this queue's own per-queue spend ceiling
+	// (Queue.SpendCapUSD, NQ-X1) tripped: the queue's attributed daily spend
+	// reached its cap, so the per-queue spend meter paused ONLY this queue while
+	// leaving sibling queues (and the global daemon ceiling) untouched. Distinct
+	// from the global DaemonSpendMeter trip, which pauses the entire claude
+	// handler type via handler-pause. Cleared back to active on the next UTC
+	// day-rollover by the per-queue spend meter.
+	//
+	// Bead ref: hk-tigaf.11 (NQ-X1).
+	QueueStatusPausedByBudget QueueStatus = "paused-by-budget"
+
 	// QueueStatusCompleted means all groups are complete-success; the
 	// queue.json file is unlinked per QM-003.
 	QueueStatusCompleted QueueStatus = "completed"
@@ -275,6 +286,27 @@ type Queue struct {
 	// Bead ref: hk-tigaf.4 (NQ-B1).
 	Workers int `json:"workers,omitempty"`
 
+	// SpendCapUSD is the OPTIONAL per-queue daily spend ceiling in USD (NQ-X1).
+	// When positive, the per-queue spend meter accumulates this queue's
+	// attributed daily spend (via budget_accrual events keyed back to this queue
+	// by RunID → RunHandle.QueueName) and pauses ONLY this queue
+	// (Status = QueueStatusPausedByBudget) when the attributed spend reaches the
+	// cap — sibling queues keep dispatching, so a single busy queue can no longer
+	// starve the whole daemon. The global DaemonSpendMeter ceiling remains the
+	// daemon-wide ceiling and binds independently; admission requires
+	// global-remaining > 0 AND (no per-queue cap OR queue-remaining > 0), so the
+	// STRICTER ceiling wins. A cap greater than the effective global ceiling is
+	// permitted (the global ceiling still binds), mirroring the Workers
+	// oversubscription rule; the daemon logs that case once at submit.
+	//
+	// Zero or absent means NO per-queue cap = behaviour identical to the
+	// pre-NQ-X1 daemon (only the global meter applies). omitempty preserves
+	// round-trip compat with queue.json files that predate the field; absent
+	// unmarshals to 0 (no cap).
+	//
+	// Bead ref: hk-tigaf.11 (NQ-X1).
+	SpendCapUSD float64 `json:"spend_cap_usd,omitempty"`
+
 	// DefaultHarness is the per-queue harness-selection default — tier 2 of the
 	// four-tier precedence walk (bead-label > per-queue > node > global) in
 	// resolveHarness (internal/daemon/harnessresolve.go). When set to a valid
@@ -363,6 +395,16 @@ type QueueSubmitRequest struct {
 	//
 	// Bead ref: hk-tigaf.4 (NQ-B1).
 	Workers int `json:"workers,omitempty"`
+
+	// SpendCapUSD is the requested OPTIONAL per-queue daily spend ceiling in USD
+	// (NQ-X1; see Queue.SpendCapUSD). When zero or absent the queue has no
+	// per-queue cap and only the global DaemonSpendMeter ceiling applies. A
+	// positive value is carried verbatim onto the persisted Queue; a value
+	// greater than the global ceiling is accepted (oversubscription) and logged
+	// once — the global ceiling still binds at runtime.
+	//
+	// Bead ref: hk-tigaf.11 (NQ-X1).
+	SpendCapUSD float64 `json:"spend_cap_usd,omitempty"`
 
 	// DefaultHarness is the requested per-queue harness-selection default
 	// (tier 2 of the precedence walk; see Queue.DefaultHarness). When set to a

@@ -1280,6 +1280,58 @@ func ExportedSpendMeterSetDailyCapBytes(m *DaemonSpendMeter, b float64) {
 	m.mu.Unlock()
 }
 
+// ExportedNewPerQueueSpendMeter constructs a PerQueueSpendMeter for tests in
+// package daemon_test (NQ-X1).
+//
+// Bead ref: hk-tigaf.11.
+func ExportedNewPerQueueSpendMeter(reg *RunRegistry, store *QueueStore, projectDir string) *PerQueueSpendMeter {
+	return NewPerQueueSpendMeter(reg, store, projectDir)
+}
+
+// ExportedPerQueueSpendMeterHandleBudgetAccrual invokes the unexported
+// handleBudgetAccrual method on a PerQueueSpendMeter for tests (NQ-X1).
+//
+// Bead ref: hk-tigaf.11.
+func ExportedPerQueueSpendMeterHandleBudgetAccrual(m *PerQueueSpendMeter, ctx context.Context, evt core.Event) error {
+	return m.handleBudgetAccrual(ctx, evt)
+}
+
+// ExportedPerQueueSpendMeterSetDayKey overrides the meter's UTC day key to a
+// past value so the next handled event forces a rollover (which resets counters
+// and un-pauses paused-by-budget queues). Used to deterministically exercise the
+// rollover un-pause path without waiting for real midnight (NQ-X1).
+//
+// Bead ref: hk-tigaf.11.
+func ExportedPerQueueSpendMeterSetDayKey(m *PerQueueSpendMeter, key string) {
+	m.mu.Lock()
+	m.dayKey = key
+	m.mu.Unlock()
+}
+
+// ExportedPerQueueSpendMeterSetGlobalCapUSD overrides the meter's globalCapUSD
+// for deterministic oversubscription-warning tests (NQ-X1).
+//
+// Bead ref: hk-tigaf.11.
+func ExportedPerQueueSpendMeterSetGlobalCapUSD(m *PerQueueSpendMeter, usd float64) {
+	m.mu.Lock()
+	m.globalCapUSD = usd
+	m.mu.Unlock()
+}
+
+// ExportedQueueStoreSetQueue installs q into the QueueStore for tests (NQ-X1).
+//
+// Bead ref: hk-tigaf.11.
+func ExportedQueueStoreSetQueue(s *QueueStore, q *queue.Queue) {
+	s.SetQueue(q)
+}
+
+// ExportedRunRegistryRegister registers a handle under runID for tests (NQ-X1).
+//
+// Bead ref: hk-tigaf.11.
+func ExportedRunRegistryRegister(r *RunRegistry, runID core.RunID, handle *RunHandle) {
+	r.Register(runID, handle)
+}
+
 // ExportedPasteInjectOnLaunch exposes pasteInjectOnLaunch for tests in package
 // daemon_test.  Returns the briefDelivered channel (hk-930o3).
 //

@@ -522,6 +522,40 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 		}
 
 	// -----------------------------------------------------------------------
+	// hitl-decisions agent-side emit ops (hitl-decisions SPEC §2, bead hk-xz9 K2)
+	// -----------------------------------------------------------------------
+
+	case "decisions-raise":
+		// Type-assert ch to DecisionsHandler. In production, *commsSendHandlerImpl
+		// implements DecisionsHandler (decisionshandler_xz9.go) alongside the
+		// comms handlers, so it rides the same ch value — no new socket-listener
+		// parameter. K4 (list/answer) and K5 (reaper) are separate later beads.
+		dh, ok := ch.(DecisionsHandler)
+		if !ok || dh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: DecisionsHandler not registered"}
+			break
+		}
+		result, err := dh.HandleDecisionsRaise(ctx, req.Payload)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: err.Error()}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
+		}
+
+	case "decisions-withdraw":
+		dh, ok := ch.(DecisionsHandler)
+		if !ok || dh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: DecisionsHandler not registered"}
+			break
+		}
+		result, err := dh.HandleDecisionsWithdraw(ctx, req.Payload)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: err.Error()}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
+		}
+
+	// -----------------------------------------------------------------------
 	// Operator control ops (specs/operator-nfr.md §4.3 ON-007–ON-010)
 	// -----------------------------------------------------------------------
 

@@ -469,6 +469,15 @@ EXAMPLES
 		return runCommsSubcommand(os.Args[2:])
 	}
 
+	// harmonik decisions <verb> — agent→human decision surface (hitl-decisions
+	// SPEC §2; agent-side K2). raise/withdraw are daemon emit ops (exit 17 when
+	// daemon down); wait is a pure client-side subscribe stream (§4 N8). The
+	// operator side (list/show/answer) is component K4, a later bead.
+	// Bead ref: hk-xz9 (K2).
+	if len(os.Args) >= 2 && os.Args[1] == "decisions" {
+		return runDecisionsSubcommand(os.Args[2:])
+	}
+
 	// harmonik crew <verb> — captain & crew session management (C2).
 	// crew start/stop are daemon RPCs (exit 17 when daemon down).
 	// crew list is a local read that works daemon-down.
@@ -799,12 +808,12 @@ EXAMPLES
 	maxSessions := spawnCapFromEnv(maxConcurrentFlag)
 
 	cfg := daemon.Config{
-		ProjectDir:               projectDir,
-		BrPath:                   brPath,
-		KerfPath:                 kerfPath,                            // hk-9321v: kerf next for EM-062/EM-063 eager-refill
-		JSONLLogPath:             jsonlLogPath,
-		MaxConcurrent:            maxConcurrentFlag,
-		NoAutoPull:               !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
+		ProjectDir:    projectDir,
+		BrPath:        brPath,
+		KerfPath:      kerfPath, // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		JSONLLogPath:  jsonlLogPath,
+		MaxConcurrent: maxConcurrentFlag,
+		NoAutoPull:    !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
 		Substrate: daemon.NewTmuxSubstrate(tmuxAdapter, sessionName,
 			daemon.WithSpawnCap(maxSessions),
 			daemon.WithSpawnStagger(spawnStaggerFlag), // hk-hzj: spread concurrent cold-starts; 0 = disabled

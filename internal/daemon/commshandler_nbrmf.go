@@ -78,6 +78,12 @@ type commsSendHandlerImpl struct {
 	emitter     eventbus.CommsMessageEmitter
 	presEmitter eventbus.CommsPresenceEmitter // nil when bus does not support presence
 
+	// decisionEmitter emits the hitl-decisions typed events (decision_needed /
+	// decision_withdrawn / decision_resolved) and returns the minted event_id.
+	// nil when the bus does not implement eventbus.TypedEmitter — in which case
+	// the decisions-* ops return an error response. Bead ref: hk-xz9 (K2).
+	decisionEmitter eventbus.TypedEmitter
+
 	// recv deps — set by SetRecvDeps; nil/empty disables comms-recv.
 	cursorStore     *CursorStore
 	eventsJSONLPath string
@@ -100,6 +106,13 @@ func NewCommsSendHandler(bus eventbus.EventBus) CommsSendHandler {
 	h := &commsSendHandlerImpl{emitter: ce}
 	if pe, ok := bus.(eventbus.CommsPresenceEmitter); ok {
 		h.presEmitter = pe
+	}
+	// Wire the typed emitter for the hitl-decisions emit ops (K2). The real
+	// *busImpl satisfies eventbus.TypedEmitter via EmitTyped; test stubs that
+	// only implement CommsMessageEmitter leave decisionEmitter nil, so the
+	// decisions-* ops return an error response. Bead ref: hk-xz9.
+	if te, ok := bus.(eventbus.TypedEmitter); ok {
+		h.decisionEmitter = te
 	}
 	return h
 }

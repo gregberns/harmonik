@@ -80,6 +80,33 @@ type CommsPresenceEmitter interface {
 	EmitAgentPresence(ctx context.Context, payload core.AgentPresencePayload) (core.EventID, error)
 }
 
+// TypedEmitter is an optional capability implemented by bus implementations
+// that support emitting an arbitrary typed event and returning the minted
+// event_id.
+//
+// busImpl satisfies this interface via [busImpl.EmitTyped]. It generalises
+// [CommsMessageEmitter] / [CommsPresenceEmitter] for callers that need the
+// minted event_id but do not have a dedicated Emit* method — e.g. the
+// hitl-decisions emit ops (decisions-raise / decisions-withdraw /
+// decisions-answer), where the decision_id IS the decision_needed event's own
+// event_id (hitl-decisions SPEC §1). Type-assert the EventBus value:
+//
+//	if te, ok := bus.(eventbus.TypedEmitter); ok {
+//	    eventID, err := te.EmitTyped(ctx, core.EventTypeDecisionNeeded, payloadBytes)
+//	}
+//
+// This is a separate interface (not on [EventBus]) so the core EventBus contract
+// is unchanged. The pattern follows [RunDrainer] and [CommsMessageEmitter].
+//
+// Bead: hk-xz9 (hitl-decisions K2 agent CLI).
+type TypedEmitter interface {
+	// EmitTyped emits an event of eventType carrying the JSON-encoded payload
+	// and returns the minted event_id. Fsync-before-return is applied iff
+	// eventType is F-class per the §8 taxonomy (so F-class events such as the
+	// three decision_* types are durable before EmitTyped returns).
+	EmitTyped(ctx context.Context, eventType core.EventType, payload []byte) (core.EventID, error)
+}
+
 // TailTruncationCallback is the optional consumer-supplied callback the bus
 // invokes immediately after restart replay completes when the JSONL tail was
 // truncated by the read-recovery rule (specs/event-model.md §6.2).

@@ -695,6 +695,105 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 	return eventID, nil
 }
 
+// EmitTyped emits an event of the given type carrying the JSON-marshalled
+// payload and returns the minted event_id.
+//
+// This satisfies [TypedEmitter]. It generalises [EmitAgentMessage] /
+// [EmitAgentPresence]: it generates the event_id BEFORE building the envelope
+// (so the caller can relay it back to the CLI — the base [EventBus.Emit] returns
+// only error), applies the EV-035 redaction pipeline, appends the envelope to
+// the durable JSONL with fsync derived from the §8 taxonomy via
+// [isFsyncBoundaryEvent] (F-class types are fsync'd before return), and fans out
+// to subscribers identically to Emit.
+//
+// It is used by the hitl-decisions emit ops (decisions-raise →
+// decision_needed, decisions-withdraw → decision_withdrawn, decisions-answer →
+// decision_resolved): all three are F-class (busimpl.go:fsyncBoundaryEventTypes,
+// hitl-decisions SPEC §6 N1), so the decision landmark is durable before the
+// blocked agent can act on it (Risk R1).
+//
+// payload is the already-JSON-encoded event payload (e.g. the marshalled
+// core.DecisionNeededPayload). The decision_id a caller returns to the agent is
+// the minted event_id's canonical string form (hitl-decisions SPEC §1).
+func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, payload []byte) (core.EventID, error) {
+	typeName := string(eventType)
+
+	// Step 1–3: redaction pipeline (EV-035) — same as EmitAgentMessage.
+	var rawPayload map[string]any
+	if err := json.Unmarshal(payload, &rawPayload); err != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): payload unmarshal for redaction: %w", typeName, err)
+	}
+	redacted := b.registry.RedactionMiddleware(rawPayload)
+	redactedBytes, err := json.Marshal(redacted)
+	if err != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): re-encoding redacted payload: %w", typeName, err)
+	}
+
+	// Step 4a: generate event_id BEFORE building the envelope so we can return it.
+	eventID, idErr := b.idGen.Next()
+	if idErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): generate event_id: %w", typeName, idErr)
+	}
+	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(typeName)
+	if !knownType {
+		typeSchemaVersion = 1
+	}
+	evt := core.Event{
+		EventID:         eventID,
+		SchemaVersion:   typeSchemaVersion,
+		Type:            typeName,
+		TimestampWall:   time.Now(),
+		SourceSubsystem: "eventbus",
+		Payload:         redactedBytes,
+	}
+
+	// Step 4b: JSONL append. Fsync iff the type is F-class per the §8 taxonomy.
+	envelopeBytes, marshalEnvErr := json.Marshal(evt)
+	if marshalEnvErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): marshal envelope: %w", typeName, marshalEnvErr)
+	}
+	fsync := isFsyncBoundaryEvent(eventType)
+	if appendErr := b.jsonlWriter.Append(envelopeBytes, fsync); appendErr != nil {
+		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): JSONL append: %w", typeName, appendErr)
+	}
+
+	// Step 5–6: fan-out to subscribers — same pattern as EmitAgentMessage.
+	b.mu.Lock()
+	subs := make([]core.Subscription, len(b.subscriptions))
+	copy(subs, b.subscriptions)
+	b.mu.Unlock()
+
+	for _, sub := range subs {
+		if !sub.EventPattern.MatchesType(typeName) {
+			continue
+		}
+		if sub.Handler == nil {
+			continue
+		}
+		switch sub.ConsumerClass {
+		case core.ConsumerClassSynchronous:
+			if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
+				return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): synchronous consumer %q: %w", typeName, sub.ConsumerID, handlerErr)
+			}
+		default:
+			sub := sub // capture loop variable
+			b.wg.Add(1)
+			go func() {
+				defer b.wg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+					}
+				}()
+				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
+					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+				}
+			}()
+		}
+	}
+	return eventID, nil
+}
+
 // ErrDuplicateSynchronousConsumer is the typed configuration error returned
 // by Subscribe when a second synchronous consumer registers for an event type
 // that already has one. At most one synchronous consumer per event type is

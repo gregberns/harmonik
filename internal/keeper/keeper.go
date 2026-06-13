@@ -141,13 +141,16 @@ func ReadManagedSessionID(projectDir, agent string) (string, error) {
 	return "", nil // empty or whitespace-only file — no binding in effect
 }
 
-// isUUIDv7 reports whether sid is a well-formed UUIDv7.
+// IsUUIDv7 reports whether sid is a well-formed UUIDv7.
 // UUID layout: xxxxxxxx-xxxx-Vxxx-Sxxx-xxxxxxxxxxxx (36 bytes).
 // The version digit V occupies index 14. Daemon-spawned implementers write
 // UUIDv7 session IDs; interactive captain sessions write UUIDv4. (Refs: hk-lap)
-func isUUIDv7(sid string) bool {
+func IsUUIDv7(sid string) bool {
 	return len(sid) == 36 && sid[14] == '7'
 }
+
+// isUUIDv7 is a package-internal alias for IsUUIDv7.
+func isUUIDv7(sid string) bool { return IsUUIDv7(sid) }
 
 // WriteManagedSessionID writes sessionID into the .managed marker file for the
 // given agent, establishing or updating the session binding. The .managed file

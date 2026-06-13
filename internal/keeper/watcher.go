@@ -263,6 +263,17 @@ type WatcherConfig struct {
 	// keeper, which appends to the same events.jsonl). Set to a spy in tests.
 	// Refs: hk-061.
 	DecisionEmitter presence.Emitter
+
+	// StaleBindingThreshold is the number of consecutive foreign_session ticks
+	// after which the watcher auto-clears .managed to allow re-latch. This
+	// recovers from the case where .managed holds a stale or mismatched session_id
+	// (e.g. conversation-id instead of session-id) that causes the keeper to emit
+	// no_gauge:foreign_session indefinitely. Keeper restarts/redeploys do not
+	// recover on their own because a non-empty .managed always blocks re-latch.
+	//
+	// Default: 3 (≈15 s at the default 5 s PollInterval).
+	// Refs: hk-mejt (stale/mismatched .managed binding).
+	StaleBindingThreshold int
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -302,6 +313,9 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.IsPaneIdleFn == nil {
 		c.IsPaneIdleFn = IsPaneIdle
+	}
+	if c.StaleBindingThreshold <= 0 {
+		c.StaleBindingThreshold = 3
 	}
 	// EventsJSONLPath is read by BOTH the K5 orphan reaper (ReapDecisions) and the
 	// K6 respawn-exemption (blockedOnOpenDecision). Derive it whenever it is unset
@@ -390,6 +404,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// lastRespawnAt is the time of the most recent respawn attempt. Used to
 		// enforce RespawnCooldown. Zero when no respawn has occurred. (Refs: hk-3w2)
 		lastRespawnAt time.Time
+
+		// consecutiveForeignTicks counts consecutive ticks where the gauge is
+		// fresh but its session_id does not match .managed (foreign_session path).
+		// Cleared on any tick that is NOT foreign_session. When it reaches
+		// StaleBindingThreshold the watcher auto-clears .managed so the next
+		// valid gauge tick re-latches. (Refs: hk-mejt)
+		consecutiveForeignTicks int
 	)
 
 	// Boot-time check: emit no_gauge immediately if gauge is absent or stale.
@@ -428,6 +449,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
+				consecutiveForeignTicks = 0
 				if gaugeStaleSince.IsZero() {
 					gaugeStaleSince = time.Now()
 				}
@@ -440,6 +462,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit)
 				noGaugeEmittedAtBoot = true
 				pendingInject = false
+				consecutiveForeignTicks = 0
 				if gaugeStaleSince.IsZero() {
 					gaugeStaleSince = time.Now()
 				}
@@ -454,6 +477,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
+				consecutiveForeignTicks = 0
 				if gaugeStaleSince.IsZero() {
 					gaugeStaleSince = time.Now()
 				}
@@ -503,8 +527,26 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 				if managedSID != "" && ctxFile.SessionID != "" && ctxFile.SessionID != managedSID {
 					// Foreign session — treat as absent.
-					slog.DebugContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",
-						"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID)
+					// Also tracks consecutive foreign ticks to detect a stale/mismatched
+					// .managed binding (e.g. conversation-id written instead of session-id,
+					// hk-mejt). After StaleBindingThreshold consecutive mismatches, auto-clear
+					// .managed so the next valid gauge re-latches. This recovers without
+					// operator intervention and survives keeper restarts (non-empty .managed
+					// blocks re-latch on every restart).
+					consecutiveForeignTicks++
+					slog.WarnContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",
+						"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID,
+						"consecutive_foreign_ticks", consecutiveForeignTicks, "threshold", w.cfg.StaleBindingThreshold)
+					if consecutiveForeignTicks >= w.cfg.StaleBindingThreshold {
+						slog.WarnContext(ctx, "keeper: stale .managed binding detected — auto-clearing for re-latch",
+							"agent", w.cfg.AgentName, "stale_sid", managedSID, "live_sid", ctxFile.SessionID,
+							"consecutive_foreign_ticks", consecutiveForeignTicks)
+						if clearErr := w.cfg.WriteManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName, ""); clearErr != nil {
+							slog.WarnContext(ctx, "keeper: auto-clear stale .managed", "agent", w.cfg.AgentName, "err", clearErr)
+						} else {
+							consecutiveForeignTicks = 0
+						}
+					}
 					w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
 					noGaugeEmittedAtBoot = true
 					warnArmed = true
@@ -528,6 +570,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 						pendingInject = false
 						continue
 					}
+					// Note: Claude Code may occasionally emit the conversation/transcript-dir
+					// UUID as session_id (not the session UUID). If the wrong UUID gets
+					// latched here, the stale-binding auto-recovery (StaleBindingThreshold
+					// foreign ticks → auto-clear) or `harmonik keeper rebind` recovers it.
+					// Refs: hk-mejt.
+					slog.InfoContext(ctx, "keeper: latching session_id into .managed",
+						"agent", w.cfg.AgentName, "session_id", ctxFile.SessionID)
 					if latchErr := w.cfg.WriteManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName, ctxFile.SessionID); latchErr != nil {
 						slog.WarnContext(ctx, "keeper: latch managed session_id", "agent", w.cfg.AgentName, "err", latchErr)
 						// Non-fatal: continue monitoring without persisting the binding.
@@ -535,11 +584,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 			}
 
-			// Gauge is fresh (and belongs to the managed session): reset no_gauge
-			// and respawn tracking so they re-arm if the gauge goes stale again.
+			// Gauge is fresh (and belongs to the managed session): reset no_gauge,
+			// respawn tracking, and the foreign-tick counter so they re-arm if
+			// the gauge goes stale or foreign again.
 			noGaugeEmittedAtBoot = false
 			lastNoGaugeEmit = time.Time{}
 			gaugeStaleSince = time.Time{}
+			consecutiveForeignTicks = 0
 
 			// ── idle-gate ────────────────────────────────────────────────────
 			// The pane is considered idle when the gauge file's mod-time has not

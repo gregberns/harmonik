@@ -435,6 +435,8 @@ EXAMPLES
 				return runKeeperEnableSubcommand(subArgs[1:])
 			case "doctor":
 				return runKeeperDoctorSubcommand(subArgs[1:])
+			case "rebind":
+				return runKeeperRebind(subArgs[1:])
 			}
 		}
 		for _, arg := range subArgs {

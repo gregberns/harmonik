@@ -782,6 +782,137 @@ func TestWatcher_RespawnCooldownPreventsDoubleSpawn(t *testing.T) {
 	}
 }
 
+// TestWatcher_StaleBindingAutoRecovery verifies that when .managed holds a
+// session_id that never matches the live gauge (stale/mismatched binding, e.g.
+// a conversation-id written instead of a session-id), the watcher auto-clears
+// .managed after StaleBindingThreshold consecutive foreign_session ticks, allowing
+// the next valid gauge to re-latch.
+// Refs: hk-mejt (stale .managed / foreign_session root cause).
+func TestWatcher_StaleBindingAutoRecovery(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "stale-binding-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Simulate .managed holding a stale conversation-id (UUIDv4 but wrong UUID).
+	const staleSID = "5b5bf51b-dde1-4ec7-8e60-9c9121900f7e" // conversation-id
+	const liveSID = "c0a1c545-1234-4abc-8000-000000000001"  // real session-id in gauge
+
+	storedSID := staleSID
+	var clearedToEmpty bool
+	var latchedSID string
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		PollInterval:         10 * time.Millisecond,
+		WarnPct:              80.0,
+		IdleQuiesce:          1 * time.Millisecond,
+		Staleness:            120 * time.Second,
+		TmuxTarget:           "",
+		StaleBindingThreshold: 3, // clear after 3 consecutive foreign ticks
+		ReadManagedSessionFn: func(_, _ string) (string, error) {
+			return storedSID, nil
+		},
+		WriteManagedSessionFn: func(_, _, sessionID string) error {
+			if sessionID == "" {
+				clearedToEmpty = true
+				storedSID = ""
+			} else {
+				latchedSID = sessionID
+				storedSID = sessionID
+			}
+			return nil
+		},
+	}
+
+	// Live gauge always has the real session_id — never matches stale .managed.
+	writeCtxFile(t, projectDir, agent, 85.0, liveSID)
+
+	// Run long enough for 3+ foreign ticks (3 * 10ms = 30ms) plus re-latch.
+	runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
+
+	if !clearedToEmpty {
+		t.Error("want .managed auto-cleared after StaleBindingThreshold foreign ticks; WriteManagedSessionFn(\"\",...) never called")
+	}
+	if latchedSID != liveSID {
+		t.Errorf("want re-latched to live session_id %q after auto-clear; got %q", liveSID, latchedSID)
+	}
+	// After re-latch, a warn should fire (gauge pct 85 > threshold 80).
+	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
+	if len(warns) == 0 {
+		t.Error("want at least one session_keeper_warn after stale-binding recovery and re-latch; got 0")
+	}
+}
+
+// TestWatcher_StaleBindingCounterResetsOnMatchingGauge verifies that the
+// consecutive-foreign-tick counter resets when a gauge tick matches .managed,
+// so a legitimate brief foreign-tick burst (e.g. daemon transient) does not
+// trigger auto-clear.
+// Refs: hk-mejt.
+func TestWatcher_StaleBindingCounterResetsOnMatchingGauge(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "foreign-reset-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	const managedSID = "c0a1c545-1234-4abc-8000-000000000001"
+	const foreignSID = "aaaaaaaa-0000-4000-8000-000000000000"
+
+	// Gauge alternates: foreign → managed → foreign → managed …
+	// The counter should never reach the threshold because each matching tick resets it.
+	tick := 0
+	clearCalled := false
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		PollInterval:         10 * time.Millisecond,
+		WarnPct:              80.0,
+		IdleQuiesce:          1 * time.Millisecond,
+		Staleness:            120 * time.Second,
+		TmuxTarget:           "",
+		StaleBindingThreshold: 3,
+		ReadManagedSessionFn: func(_, _ string) (string, error) {
+			return managedSID, nil
+		},
+		WriteManagedSessionFn: func(_, _, sessionID string) error {
+			if sessionID == "" {
+				clearCalled = true
+			}
+			return nil
+		},
+	}
+
+	// Alternate gauge between foreign and managed on each poll.
+	go func() {
+		sids := []string{foreignSID, managedSID, foreignSID, managedSID, foreignSID, managedSID}
+		for _, sid := range sids {
+			writeCtxFile(t, projectDir, agent, 85.0, sid)
+			tick++
+			time.Sleep(15 * time.Millisecond)
+		}
+	}()
+
+	runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
+
+	if clearCalled {
+		t.Error("want .managed NOT auto-cleared when foreign ticks are interrupted by matching ticks; got auto-clear")
+	}
+}
+
 // TestWatcher_SkipsNoGaugeOnTransientUUIDv7WhenManagedIsUUIDv4 verifies that
 // when .managed holds a UUIDv4 (the real captain session) and captain.ctx is
 // transiently overwritten with a UUIDv7 (daemon implementer dispatch), the

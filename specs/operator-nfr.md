@@ -1034,12 +1034,9 @@ file or an unqualified shared tmux session MUST either live under the project's 
 
 **(e) Project-hash derivation.** All shell-layer call sites that need the per-project
 hash MUST obtain it from the read-only `harmonik project-hash [--project DIR]` subcommand
-rather than reimplementing SHA-256 in shell, and MUST guard the call so that a stale
-binary lacking the subcommand degrades gracefully (the un-qualified name is the fallback)
-rather than failing the launch. Subcommand contract: prints exactly the PL-006a
-`project_hash` (first 12 hex chars of `SHA-256(realpath(project_root))`) followed by a
-single newline; exit 0; `--project DIR` defaults to CWD; side-effect-free (no daemon, no
-`$TMUX` required); non-zero + empty stdout on error for shell-guard degradation.
+per [process-lifecycle.md §4.2 PL-031] rather than reimplementing SHA-256 in shell, and
+MUST guard the call so that a stale binary lacking the subcommand degrades gracefully (the
+un-qualified name is the fallback) rather than failing the launch.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent

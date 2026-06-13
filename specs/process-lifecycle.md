@@ -360,7 +360,7 @@ The daemon MUST compute a stable `project_hash` at startup as the first 12 hexad
   - **the captain session: `harmonik-<project_hash>-captain`**;
   - **keeper sessions: `harmonik-<project_hash>-keeper-<role>`**, where `<role>` distinguishes per-role keepers.
 
-  The supervisor session MUST use a **distinct prefix** (`hk-<project_hash>-daemon-supervise`) so it remains OUTSIDE the swept `harmonik-<project_hash>-` orphan-sweep namespace and requires no PL-006d sentinel exemption. The single hashing scheme of this clause MUST be reused for every name above; no second hashing scheme is permitted. The canonical builder for `harmonik-`-prefixed names is `lifecycle.TmuxSessionName(project_hash, session_name)` = `"harmonik-" + project_hash + "-" + session_name`. The captain, keeper, and crew names are minted by the launch tooling (captain-launch.sh, crew-launch) and only become subject to this clause once that tooling lands; until then those sessions retain their current outside-the-prefix names so nothing regresses. The read-only `harmonik project-hash [--project DIR]` subcommand (owned by C3/ON-058) exposes the PL-006a hash to shell-layer scripts without reimplementing SHA-256 in bash.
+  The supervisor session MUST use a **distinct prefix** (`hk-<project_hash>-daemon-supervise`) so it remains OUTSIDE the swept `harmonik-<project_hash>-` orphan-sweep namespace and requires no PL-006d sentinel exemption. The single hashing scheme of this clause MUST be reused for every name above; no second hashing scheme is permitted. The canonical builder for `harmonik-`-prefixed names is `lifecycle.TmuxSessionName(project_hash, session_name)` = `"harmonik-" + project_hash + "-" + session_name`. The captain, keeper, and crew names are minted by the launch tooling (captain-launch.sh, crew-launch) and only become subject to this clause once that tooling lands; until then those sessions retain their current outside-the-prefix names so nothing regresses. The read-only `harmonik project-hash [--project DIR]` subcommand (per §PL-031) exposes the PL-006a hash to shell-layer scripts without reimplementing SHA-256 in bash.
 
 (b) Scope a provenance marker on every handler subprocess spawned by the daemon.
 
@@ -376,6 +376,34 @@ The orphan sweep (PL-006) MUST match on the environment variable on Linux and on
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
+#### PL-031 — `harmonik project-hash` read-only subcommand
+
+A read-only CLI subcommand `harmonik project-hash [--project DIR]` exposes the PL-006a
+`project_hash` to shell-layer scripts (captain-launch.sh, hk-supervise.sh, etc.) without
+requiring those scripts to reimplement SHA-256. Normative contract:
+
+1. It MUST print exactly the PL-006a `project_hash` — the first 12 hexadecimal characters of
+   `SHA-256(realpath(project_root))` — followed by a single trailing newline, and exit 0. The
+   underlying computation MUST be the identical accessor the Go core uses for tmux-session
+   scoping and process-provenance markers (`lifecycle.ComputeProjectHash` /
+   `tmuxStartHashDir`); no second hashing scheme is permitted.
+2. `--project DIR` selects the project root; when omitted, the project root defaults to the
+   current working directory. The path MUST be resolved to its real (canonical) path before
+   hashing, consistent with PL-006a.
+3. It MUST be side-effect-free: it MUST NOT start, contact, or require a running daemon, and
+   MUST NOT write any file. It MUST NOT require `$TMUX`.
+4. On any error (e.g. unresolvable project root) it MUST exit non-zero with a diagnostic on
+   stderr and print nothing to stdout, so a shell guard of the form
+   `HASH="$(harmonik project-hash --project "$P" 2>/dev/null || true)"` degrades to the
+   empty/fallback value rather than emitting a malformed hash.
+
+Ownership: OWNED by C3 (C3 needs it first, for the de-hardcoded shell scripts). CONSUMED by C2
+(session-namers' shell-facing peers) and by ON-058(e) (global-surface isolation scripts). Both
+consumers MUST use this single subcommand as the authoritative hash source.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### PL-006b — BeadResetter: bead-reset write extension point
 

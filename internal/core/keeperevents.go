@@ -141,6 +141,8 @@ type SessionKeeperPrecompactBlockedPayload struct {
 	//   "cycle_triggered"       — all gates passed; cycle was started.
 	//   "hold_dispatch_skip"    — HoldingDispatch was true; cycle skipped.
 	//   "anti_loop_suppressed"  — anti-loop gate suppressed re-fire on same session.
+	//   "operator_attached"     — a human operator is attached to the tmux session;
+	//                             injection suppressed (warn-only). Refs: hk-6qf.
 	//   "not_managed"           — .managed marker was absent (defensive; shell script
 	//                             should have caught this before writing the marker).
 	Action string `json:"action"`
@@ -182,4 +184,26 @@ type SessionKeeperRespawnAttemptedPayload struct {
 
 	// Error is the error message when Outcome is "error". Omitted on success.
 	Error string `json:"error,omitempty"`
+}
+
+// SessionKeeperOperatorAttachedPayload is the payload for
+// session_keeper_operator_attached (codename:session-keeper).
+//
+// Emitted by the keeper cycle core when it suppresses a reset-cycle injection
+// because a human operator is attached to the target tmux session. The keeper
+// falls back to warn-only (the watcher keeps emitting the warning/gauge) and
+// resumes the normal inject cycle once the operator detaches.
+//
+// Durability class: O (ordinary — observability).
+// Refs: hk-6qf.
+type SessionKeeperOperatorAttachedPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// SessionID is the gauge session_id at the time the cycle was suppressed.
+	SessionID string `json:"session_id,omitempty"`
+
+	// Phase identifies which act-path suppressed the injection. Values:
+	// "cycle" (Cycler.MaybeRun) | "precompact" (Cycler.RunForPrecompact).
+	Phase string `json:"phase"`
 }

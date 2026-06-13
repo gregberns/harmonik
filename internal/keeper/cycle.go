@@ -124,6 +124,17 @@ type CyclerConfig struct {
 	// Set to keeper.SendEscapeKey in production; leave nil in tests.
 	// Refs: hk-qoz (forced-clear busy-pane fix).
 	SendEscapeFn func(ctx context.Context, target string) error
+
+	// OperatorAttachedFn reports whether a human operator is currently attached
+	// to the target tmux session. When it returns true the act-path goes
+	// warn-only: the destructive reset-cycle injection (/session-handoff,
+	// /clear, /session-resume) is suppressed so the keeper never races the
+	// operator's own keystrokes and clobbers an in-flight turn. The watcher's
+	// warn/gauge emissions continue, and the cycle resumes on the next tick
+	// once the operator detaches. Nil → OperatorAttached (real tmux
+	// list-clients). The check is skipped entirely when TmuxTarget is empty
+	// (no pane to inject into). Refs: hk-6qf.
+	OperatorAttachedFn func(target string) bool
 }
 
 func (c *CyclerConfig) applyDefaults() {
@@ -216,6 +227,9 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.SetTmuxEnvFn == nil {
 		c.SetTmuxEnvFn = SetTmuxEnv
+	}
+	if c.OperatorAttachedFn == nil {
+		c.OperatorAttachedFn = OperatorAttached
 	}
 }
 
@@ -506,7 +520,29 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 		}
 	}
 
+	// Gate 7: operator-attached guard (warn-only). If a human operator is
+	// attached to the target tmux session, suppress the destructive injection so
+	// the keeper never races the operator's keystrokes and clobbers an in-flight
+	// turn. The watcher keeps emitting warn/gauge; the cycle resumes on a later
+	// tick once the operator detaches. Skipped when TmuxTarget is empty (nothing
+	// to inject into). Refs: hk-6qf.
+	if c.operatorAttached() {
+		c.emitOperatorAttached(ctx, cf.SessionID, "cycle")
+		return nil
+	}
+
 	return c.runCycle(ctx, cf)
+}
+
+// operatorAttached reports whether a human operator is attached to the target
+// tmux session. Returns false (proceed) when TmuxTarget is empty — there is no
+// pane to race over — matching the test/warn-only-injection convention used
+// elsewhere in the cycle core.
+func (c *Cycler) operatorAttached() bool {
+	if c.cfg.TmuxTarget == "" {
+		return false
+	}
+	return c.cfg.OperatorAttachedFn(c.cfg.TmuxTarget)
 }
 
 // runCycle executes the full 7-step reset cycle.
@@ -808,6 +844,19 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 		}
 	}
 
+	// Gate 5: operator-attached guard (warn-only). Even under PreCompact, if a
+	// human operator is attached we must not race their keystrokes with a /clear.
+	// Emit the precompact decision (operator_attached) AND the operator_attached
+	// event, clear the marker (bounded-fallback: native compaction proceeds next
+	// time), and suppress the cycle. The keeper retries on a later PreCompact fire
+	// once the operator detaches. Refs: hk-6qf.
+	if c.operatorAttached() {
+		c.emitPrecompactBlocked(ctx, sessionID, "operator_attached")
+		c.emitOperatorAttached(ctx, sessionID, "precompact")
+		_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
+		return nil
+	}
+
 	// All gates passed: emit the precompact event, clear the marker, run cycle.
 	c.emitPrecompactBlocked(ctx, sessionID, "cycle_triggered")
 	_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
@@ -828,6 +877,20 @@ func (c *Cycler) emitPrecompactBlocked(ctx context.Context, sessionID, action st
 	}
 	raw, _ := json.Marshal(payload)                                                                   //nolint:errcheck
 	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperPrecompactBlocked, raw) //nolint:errcheck
+}
+
+// emitOperatorAttached emits session_keeper_operator_attached when a reset-cycle
+// injection is suppressed because a human operator is attached to the target
+// tmux session. Phase is "cycle" (MaybeRun) or "precompact" (RunForPrecompact).
+// Refs: hk-6qf.
+func (c *Cycler) emitOperatorAttached(ctx context.Context, sessionID, phase string) {
+	payload := core.SessionKeeperOperatorAttachedPayload{
+		AgentName: c.cfg.AgentName,
+		SessionID: sessionID,
+		Phase:     phase,
+	}
+	raw, _ := json.Marshal(payload)                                                                  //nolint:errcheck
+	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperOperatorAttached, raw) //nolint:errcheck
 }
 
 // pollForNonce polls handoffPath until the nonce appears or the handoff

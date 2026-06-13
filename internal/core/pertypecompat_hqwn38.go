@@ -260,6 +260,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "session_keeper_precompact_blocked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-3w2: supervised respawn path.
 	{TypeName: "session_keeper_respawn_attempted", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-6qf: operator-attached guard (warn-only suppression).
+	{TypeName: "session_keeper_operator_attached", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.14 Alarm / self-check ───────────────────────────────────────────
 	// hk-tnmjy: review-gate anomaly alarm — N consecutive bead_closed with no reviewer_verdict.

@@ -839,6 +839,15 @@ const (
 	// Durability class: O (ordinary — observability).
 	// Refs: hk-3w2.
 	EventTypeSessionKeeperRespawnAttempted EventType = "session_keeper_respawn_attempted"
+
+	// EventTypeSessionKeeperOperatorAttached is the session_keeper_operator_attached
+	// event type. Emitted by the keeper cycle core when it suppresses a reset-cycle
+	// injection because a human operator is attached to the target tmux session
+	// (a tmux client is attached). The keeper falls back to warn-only and resumes
+	// the normal inject cycle once the operator detaches.
+	// Durability class: O (ordinary — observability).
+	// Refs: hk-6qf.
+	EventTypeSessionKeeperOperatorAttached EventType = "session_keeper_operator_attached"
 )
 
 // ---------------------------------------------------------------------------

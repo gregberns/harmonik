@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // HarmonikSessionName returns the conventional tmux session name for a
@@ -77,4 +78,37 @@ func tmuxSessionLive(sessionName string) bool {
 	//nolint:gosec // G204: sessionName is derived from projectDir (filepath-resolved) + validated agentName
 	cmd := exec.CommandContext(context.Background(), "tmux", "has-session", "-t", "="+sessionName)
 	return cmd.Run() == nil
+}
+
+// OperatorAttached reports whether a human operator is currently attached to the
+// tmux session that owns target. It runs `tmux list-clients -t <target>` and
+// reports true when the command succeeds AND prints at least one client line.
+//
+// This is the production default for CyclerConfig.OperatorAttachedFn (hk-6qf):
+// when an operator is attached (e.g. `tmux attach`, or an iOS mobile
+// remote-control channel), the keeper's reset-cycle injection would race the
+// operator's own keystrokes and could clobber an in-flight turn — so the cycle
+// suppresses injection and falls back to warn-only until the operator detaches.
+//
+// `tmux list-clients -t <target>` prints one line per attached client; an empty
+// output (and a zero exit) means no client is attached. A non-zero exit (e.g.
+// the session does not exist, or no tmux server is running) is treated as
+// NOT attached — fail-open — so a transient tmux error never permanently
+// suppresses the reset cycle that protects against context exhaustion.
+//
+// target accepts any tmux target form (session name, "session:window.pane", or
+// a "%pane_id"); tmux resolves it to the owning session for client listing.
+func OperatorAttached(target string) bool {
+	if target == "" {
+		return false
+	}
+	// context.Background(): synchronous sub-second probe, mirroring tmuxSessionLive.
+	//nolint:gosec // G204: target is the resolved tmux target (derived from validated agentName / operator --tmux flag)
+	cmd := exec.CommandContext(context.Background(), "tmux", "list-clients", "-t", target)
+	out, err := cmd.Output()
+	if err != nil {
+		// Session absent / no server / other tmux error → fail-open (not attached).
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
 }

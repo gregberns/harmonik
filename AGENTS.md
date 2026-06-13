@@ -117,11 +117,12 @@ Full design: `docs/orchestration-protocol-v2.md`. The kerf workflow below remain
 
 ### `harmonik run` is the legacy / solo-bootstrap path
 
-`harmonik run --beads ...` does **not** submit to an existing daemon — it *becomes* the daemon for the duration of its beads, then exits when they finish. If a daemon is already up it collides on the pidfile lock and **exits code 5** (`pidfile locked`). So:
+`harmonik run --beads ...` is NOT the canonical dispatcher. Its current behavior (hk-b3wqd, landed):
 
-- Use `harmonik run --beads ...` ONLY to bootstrap a one-shot solo batch when no daemon is running and you don't want a persistent one.
-- For all ongoing multi-agent work, run the persistent daemon above and submit to its queue.
-- In-flight gap: **hk-b3wqd** will make `harmonik run` submit-to-an-existing-daemon (instead of exit-5) so the two paths interoperate. Until it lands, treat `harmonik run` and "persistent daemon + submit" as mutually exclusive within a project.
+- **If a daemon is already up** (detected via `daemon.sock`): `harmonik run` **submits its beads to that daemon's queue** as a stream group and blocks until they reach a terminal state — it does NOT collide on the pidfile lock, and exit 5 is NOT returned.
+- **If no daemon is running:** `harmonik run` *becomes* the inline daemon for the duration of its beads, then exits when they finish. This solo-bootstrap path is the only one that can hit exit 5 (`pidfile locked`). Use it ONLY to bootstrap a one-shot solo batch when you don't want a persistent daemon.
+
+So `harmonik run` and "persistent daemon + submit" now interoperate within a project: with a daemon up, `harmonik run` just submits to its queue. For all ongoing multi-agent work, run the persistent daemon above and submit to its queue — don't reach for `harmonik run` as the default dispatch verb. (hk-b3wqd landed 61cae015.)
 
 ### Submitting work
 

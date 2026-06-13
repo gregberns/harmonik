@@ -1065,8 +1065,16 @@ func TestWatcher_FlapCooldownSuppressesRelatch(t *testing.T) {
 		// Long cooldown (500ms) so both auto-clears are within the rapid window.
 		AutoClearCooldown:    500 * time.Millisecond,
 		AutoClearMaxAttempts: 2,
-		ReadManagedSessionFn: readFn,
-		WriteManagedSessionFn: writeFn,
+		// High threshold so the 50ms window cannot trigger self-recovery
+		// (would need 100×10ms = 1s). This test exercises the INITIAL suppression
+		// window; TestWatcher_FlapCooldownSelfRecovers covers self-recovery.
+		SuppressRecoverThreshold: 100,
+		ReadManagedSessionFn:     readFn,
+		WriteManagedSessionFn:    writeFn,
+		// No-ops: test uses in-memory readFn/writeFn; no real file needed.
+		WriteSuppressFn: func(_, _ string) error { return nil },
+		ClearSuppressFn: func(_, _ string) error { return nil },
+		ReadSuppressFn:  func(_, _ string) bool { return false },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1086,7 +1094,8 @@ func TestWatcher_FlapCooldownSuppressesRelatch(t *testing.T) {
 	writeCtxFile(t, projectDir, agent, 50.0, "sess-C")
 	time.Sleep(50 * time.Millisecond)
 
-	// Phase 3: write a new UUIDv4 session — should NOT be latched (suppressed).
+	// Phase 3: write a new UUIDv4 session — should NOT be latched (suppressed;
+	// SuppressRecoverThreshold=100 means ~1s needed for self-recovery, far beyond 50ms).
 	const goodSID = "f7e7210d-1234-4abc-8000-000000000002"
 	writeCtxFile(t, projectDir, agent, 50.0, goodSID)
 	time.Sleep(50 * time.Millisecond)
@@ -1104,11 +1113,113 @@ func TestWatcher_FlapCooldownSuppressesRelatch(t *testing.T) {
 		t.Errorf("want ≥2 auto-clears for flap detection; got %d", cc)
 	}
 
-	// goodSID must NOT have been latched — flap suppression should be active.
+	// goodSID must NOT have been latched — flap suppression should be active
+	// within the 50ms window (SuppressRecoverThreshold=100 prevents self-recovery).
 	for _, sid := range ls {
 		if sid == goodSID {
 			t.Errorf("goodSID %q was latched despite flap-cooldown suppression — latch must be blocked after rapid clears", goodSID)
 		}
+	}
+}
+
+// TestWatcher_FlapCooldownSelfRecovers verifies that after latch suppression is
+// triggered by rapid auto-clears, the keeper auto-clears the suppression and
+// re-latches once the same clean session_id appears for SuppressRecoverThreshold
+// consecutive ticks. This allows autonomous captain/crew sessions to self-recover
+// from a flap-cooldown trip without a human 'keeper rebind'. Refs: hk-0tvm.
+func TestWatcher_FlapCooldownSelfRecovers(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "flap-selfheal-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	var mu sync.Mutex
+	storedSID := "sess-A"
+	var latchedSIDs []string
+
+	readFn := func(_, _ string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return storedSID, nil
+	}
+	writeFn := func(_, _, sid string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if sid == "" {
+			storedSID = ""
+		} else {
+			latchedSIDs = append(latchedSIDs, sid)
+			storedSID = sid
+		}
+		return nil
+	}
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// threshold=1 → fast auto-clears; cooldown=500ms → both fit in rapid window.
+		StaleBindingThreshold: 1,
+		AutoClearCooldown:     500 * time.Millisecond,
+		AutoClearMaxAttempts:  2,
+		// SuppressRecoverThreshold=3 → needs 3 consecutive stable ticks (30ms at
+		// 10ms poll) to self-recover. The 150ms window in phase 3 is ample.
+		SuppressRecoverThreshold: 3,
+		ReadManagedSessionFn:     readFn,
+		WriteManagedSessionFn:    writeFn,
+		WriteSuppressFn:          func(_, _ string) error { return nil },
+		ClearSuppressFn:          func(_, _ string) error { return nil },
+		ReadSuppressFn:           func(_, _ string) bool { return false },
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w := keeper.NewWatcher(cfg, em)
+		_ = w.Run(ctx) //nolint:errcheck // context.Canceled expected
+	}()
+
+	// Phase 1: trigger two rapid auto-clears to activate flap suppression.
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-B")
+	time.Sleep(50 * time.Millisecond)
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-C")
+	time.Sleep(50 * time.Millisecond)
+
+	// Phase 2: write a stable clean UUIDv4 session_id for 150ms. With
+	// SuppressRecoverThreshold=3 and PollInterval=10ms, 3 consecutive stable ticks
+	// take ~30ms, well within the 150ms window. Self-recovery should fire.
+	const stableSID = "aabb1234-1234-4abc-8000-000000000099"
+	writeCtxFile(t, projectDir, agent, 50.0, stableSID)
+	time.Sleep(150 * time.Millisecond) // >>3 ticks for self-recovery
+
+	cancel()
+	<-done
+
+	mu.Lock()
+	ls := append([]string(nil), latchedSIDs...)
+	mu.Unlock()
+
+	// stableSID must have been latched after self-recovery.
+	found := false
+	for _, sid := range ls {
+		if sid == stableSID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("stableSID %q was not latched after self-recovery (SuppressRecoverThreshold=3, 150ms window) — want self-recover; latched: %v", stableSID, ls)
 	}
 }
 
@@ -1165,6 +1276,9 @@ func TestWatcher_FlapCooldownClearsOnStableBind(t *testing.T) {
 		AutoClearMaxAttempts:  2,
 		ReadManagedSessionFn:  readFn,
 		WriteManagedSessionFn: writeFn,
+		WriteSuppressFn:       func(_, _ string) error { return nil },
+		ClearSuppressFn:       func(_, _ string) error { return nil },
+		ReadSuppressFn:        func(_, _ string) bool { return false },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1184,6 +1298,9 @@ func TestWatcher_FlapCooldownClearsOnStableBind(t *testing.T) {
 	// Simulate operator 'keeper rebind': write known-good SID directly into .managed.
 	// The watcher will see managedSID="good-sess" and when gauge also has "good-sess",
 	// the stable-bind path fires and clears latchSuppressed.
+	// Note: with SuppressRecoverThreshold=1 (default from StaleBindingThreshold),
+	// the watcher may self-recover before this rebind. Both paths result in ≥3
+	// total auto-clears, which is what this test verifies.
 	const goodSID = "aabbccdd-1234-4abc-8000-000000000003"
 	mu.Lock()
 	storedSID = goodSID // simulate rebind writing into .managed

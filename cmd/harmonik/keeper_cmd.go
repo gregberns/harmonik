@@ -301,6 +301,16 @@ func runKeeperRebind(args []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik keeper rebind: gauge session_id %q is UUIDv7 (daemon implementer) — cannot rebind captain to a daemon session\n", ctxFile.SessionID)
 		return 1
 	}
+	// Refuse uppercase UUIDs: Claude Code occasionally emits the conversation/
+	// transcript-dir UUID (uppercase UUIDv4) as session_id instead of the actual
+	// session UUID. Binding to it would poison .managed with a conversation-dir id
+	// and trigger no_gauge:foreign_session on every subsequent tick.
+	// Primary fix is lowercase-normalisation in keeper-statusline.sh (hk-mzdm);
+	// this guard is defense-in-depth at the rebind entry point. (Refs: hk-0tvm)
+	if keeper.IsUppercaseUUID(ctxFile.SessionID) {
+		fmt.Fprintf(os.Stderr, "harmonik keeper rebind: gauge session_id %q is an uppercase UUID (likely conversation/transcript-dir id, not session UUID) — cannot rebind; fix: lowercase normalisation in keeper-statusline.sh\n", ctxFile.SessionID)
+		return 1
+	}
 	// Staleness check — default 120s.
 	const staleness = 120 * time.Second
 	if age := time.Since(modTime); age >= staleness {

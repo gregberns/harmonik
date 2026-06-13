@@ -152,6 +152,63 @@ func IsUUIDv7(sid string) bool {
 // isUUIDv7 is a package-internal alias for IsUUIDv7.
 func isUUIDv7(sid string) bool { return IsUUIDv7(sid) }
 
+// IsUppercaseUUID is the exported form of isUppercaseUUID. Reports whether s
+// is a UUID-shaped string that contains at least one uppercase hex digit (A–F),
+// characteristic of the conversation/transcript-dir UUID that Claude Code
+// occasionally emits as session_id. Used by keeper_cmd.go to guard 'keeper
+// rebind'. Refs: hk-mzdm, hk-0tvm.
+func IsUppercaseUUID(s string) bool { return isUppercaseUUID(s) }
+
+// suppressStatePath returns the path to the suppress state file for the given agent.
+func suppressStatePath(projectDir, agent string) string {
+	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".suppress")
+}
+
+// WriteSuppressState creates the latch-suppress marker for the given agent,
+// persisting the flap-cooldown suppression state across keeper restarts. When
+// the marker is present, ReadSuppressState returns true and the keeper restores
+// latchSuppressed on boot so a sustained thrash cannot re-latch a bad SID
+// after a restart. Refs: hk-0tvm.
+func WriteSuppressState(projectDir, agent string) error {
+	if err := validateAgent(agent); err != nil {
+		return err
+	}
+	path := suppressStatePath(projectDir, agent)
+	keeperDir := filepath.Dir(path)
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		return fmt.Errorf("keeper: create keeper dir for suppress state: %w", err)
+	}
+	//nolint:gosec // G306: 0600 — keeper-owned file; no world-read needed
+	if err := os.WriteFile(path, []byte("suppressed\n"), 0o600); err != nil {
+		return fmt.Errorf("keeper: write suppress state %q: %w", path, err)
+	}
+	return nil
+}
+
+// ClearSuppressState removes the latch-suppress marker for the given agent.
+// Idempotent: an already-absent marker is not an error. Refs: hk-0tvm.
+func ClearSuppressState(projectDir, agent string) error {
+	if err := validateAgent(agent); err != nil {
+		return err
+	}
+	path := suppressStatePath(projectDir, agent)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("keeper: clear suppress state %q: %w", path, err)
+	}
+	return nil
+}
+
+// ReadSuppressState reports whether the latch-suppress marker exists for the
+// given agent. Returns false for any invalid agent name. Refs: hk-0tvm.
+func ReadSuppressState(projectDir, agent string) bool {
+	if validateAgent(agent) != nil {
+		return false
+	}
+	_, err := os.Stat(suppressStatePath(projectDir, agent))
+	return err == nil
+}
+
 // WriteManagedSessionID writes sessionID into the .managed marker file for the
 // given agent, establishing or updating the session binding. The .managed file
 // is created if absent (which also makes IsManaged return true). Passing an

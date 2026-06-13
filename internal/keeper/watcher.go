@@ -289,12 +289,39 @@ type WatcherConfig struct {
 	// AutoClearCooldown of each other) before latch is suppressed. Prevents the
 	// keeper from silently re-latching a wrong session_id in a sustained flap
 	// (two alternating non-daemon UUIDv4 sessions repeatedly writing .ctx).
-	// When suppressed, 'keeper rebind' writes the correct session_id directly
-	// and the keeper resumes on the next matching gauge tick.
+	// When suppressed, the keeper auto-recovers after SuppressRecoverThreshold
+	// consecutive stable ticks; 'keeper rebind' is the manual escape hatch for
+	// immediate recovery.
 	//
 	// Default: 2 (suppress after the second rapid clear).
 	// Refs: hk-mzdm (flap cooldown).
 	AutoClearMaxAttempts int
+
+	// SuppressRecoverThreshold is the number of consecutive ticks on which the
+	// same clean (non-UUIDv7, non-uppercase) session_id appears in the gauge
+	// while latchSuppressed is set before the keeper auto-clears the suppression
+	// and re-latches. This allows an autonomous captain/crew to self-recover from
+	// a flap-cooldown trip without a human 'keeper rebind'.
+	//
+	// Default: StaleBindingThreshold (≈15 s at default PollInterval of 5 s).
+	// Refs: hk-0tvm.
+	SuppressRecoverThreshold int
+
+	// WriteSuppressFn, when non-nil, is called when latchSuppressed transitions
+	// to true so the suppression survives a keeper restart (a restart must not
+	// reset a sustained thrash). When nil, WriteSuppressState is used. Set to a
+	// no-op in unit tests that do not need persist side-effects. Refs: hk-0tvm.
+	WriteSuppressFn func(projectDir, agent string) error
+
+	// ClearSuppressFn, when non-nil, is called when latchSuppressed transitions
+	// to false to remove the persisted marker. When nil, ClearSuppressState is
+	// used. Set to a no-op in unit tests. Refs: hk-0tvm.
+	ClearSuppressFn func(projectDir, agent string) error
+
+	// ReadSuppressFn, when non-nil, is called once at keeper boot to restore
+	// latchSuppressed from the persisted state. When nil, ReadSuppressState is
+	// used. Set to a constant false in unit tests. Refs: hk-0tvm.
+	ReadSuppressFn func(projectDir, agent string) bool
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -347,6 +374,18 @@ func (c *WatcherConfig) applyDefaults() {
 	// but tight enough to catch a sustained two-session thrash.
 	if c.AutoClearCooldown <= 0 {
 		c.AutoClearCooldown = time.Duration(3*c.StaleBindingThreshold) * c.PollInterval
+	}
+	if c.SuppressRecoverThreshold <= 0 {
+		c.SuppressRecoverThreshold = c.StaleBindingThreshold
+	}
+	if c.WriteSuppressFn == nil {
+		c.WriteSuppressFn = WriteSuppressState
+	}
+	if c.ClearSuppressFn == nil {
+		c.ClearSuppressFn = ClearSuppressState
+	}
+	if c.ReadSuppressFn == nil {
+		c.ReadSuppressFn = ReadSuppressState
 	}
 	// EventsJSONLPath is read by BOTH the K5 orphan reaper (ReapDecisions) and the
 	// K6 respawn-exemption (blockedOnOpenDecision). Derive it whenever it is unset
@@ -483,12 +522,33 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 		// latchSuppressed is set when too many rapid auto-clears have occurred.
 		// While true, the watcher skips the auto-latch path and emits
-		// foreign_session, requiring the operator to run 'keeper rebind' to write
-		// a known-good session_id into .managed. Cleared when a stable binding is
-		// confirmed (gauge matches .managed) or when the keeper is restarted.
-		// (Refs: hk-mzdm)
+		// foreign_session. The keeper self-clears suppression after
+		// SuppressRecoverThreshold consecutive ticks on the same clean SID;
+		// 'keeper rebind' is the manual immediate-recovery path.
+		// Persisted to <agent>.suppress so a restart does not silently re-latch a
+		// bad SID during a sustained thrash. (Refs: hk-mzdm, hk-0tvm)
 		latchSuppressed bool
+
+		// suppressedStableSID is the session_id observed on the most recent tick
+		// while latchSuppressed is set. Consecutive ticks showing the same clean
+		// SID increment consecutiveStableSuppressedTicks toward self-recovery.
+		// Reset when the SID changes or latchSuppressed is cleared. (Refs: hk-0tvm)
+		suppressedStableSID string
+
+		// consecutiveStableSuppressedTicks counts consecutive ticks where the
+		// gauge shows the same clean SID while latchSuppressed is set. When it
+		// reaches SuppressRecoverThreshold the watcher auto-clears the
+		// suppression and re-latches. (Refs: hk-0tvm)
+		consecutiveStableSuppressedTicks int
 	)
+
+	// Restore latch-suppression from persisted state so a sustained thrash does
+	// not get a free re-latch on keeper restart. (Refs: hk-0tvm)
+	latchSuppressed = w.cfg.ReadSuppressFn(w.cfg.ProjectDir, w.cfg.AgentName)
+	if latchSuppressed {
+		slog.WarnContext(ctx, "keeper: latch suppression restored from persisted state (flap cooldown was active before restart)",
+			"agent", w.cfg.AgentName)
+	}
 
 	// Boot-time check: emit no_gauge immediately if gauge is absent or stale.
 	if absent, reason := w.gaugeUnavailable(ctx); absent {
@@ -638,11 +698,15 @@ func (w *Watcher) Run(ctx context.Context) error {
 								consecutiveRapidClears++
 								if consecutiveRapidClears >= w.cfg.AutoClearMaxAttempts {
 									latchSuppressed = true
-									slog.WarnContext(ctx, "keeper: flap cooldown active — repeated rapid auto-clears detected; run 'harmonik keeper rebind' to restore binding",
+									slog.WarnContext(ctx, "keeper: flap cooldown active — repeated rapid auto-clears detected; keeper will self-recover after stable SID or run 'harmonik keeper rebind' for immediate recovery",
 										"agent", w.cfg.AgentName,
 										"rapid_clears", consecutiveRapidClears,
 										"max_attempts", w.cfg.AutoClearMaxAttempts,
-										"cooldown", w.cfg.AutoClearCooldown)
+										"cooldown", w.cfg.AutoClearCooldown,
+										"recover_threshold", w.cfg.SuppressRecoverThreshold)
+									if writeErr := w.cfg.WriteSuppressFn(w.cfg.ProjectDir, w.cfg.AgentName); writeErr != nil {
+										slog.WarnContext(ctx, "keeper: write suppress state file", "agent", w.cfg.AgentName, "err", writeErr)
+									}
 								}
 							} else {
 								consecutiveRapidClears = 1
@@ -658,18 +722,67 @@ func (w *Watcher) Run(ctx context.Context) error {
 					continue
 				} else if managedSID == "" && ctxFile.SessionID != "" {
 					// Latch suppression: if too many rapid auto-clears have occurred,
-					// stop silently re-latching and require operator intervention. This
-					// prevents the keeper from oscillating between wrong sessions in a
-					// sustained two-captain flap. (Refs: hk-mzdm)
+					// stop silently re-latching. The keeper self-recovers after
+					// SuppressRecoverThreshold consecutive ticks on the same clean SID;
+					// 'keeper rebind' is the immediate manual escape hatch. (Refs: hk-mzdm, hk-0tvm)
 					if latchSuppressed {
-						slog.WarnContext(ctx, "keeper: latch suppressed (flap cooldown active) — run 'harmonik keeper rebind' to restore binding",
-							"agent", w.cfg.AgentName, "candidate_sid", ctxFile.SessionID)
-						w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
-						noGaugeEmittedAtBoot = true
-						warnArmed = true
-						warnFired = false
-						pendingInject = false
-						continue
+						sid := ctxFile.SessionID
+						// Self-recovery: count consecutive ticks where the same clean SID
+						// appears. A clean SID is non-UUIDv7 (not a daemon implementer) and
+						// non-uppercase (not a conversation/transcript-dir UUID). After
+						// SuppressRecoverThreshold stable ticks the keeper writes the SID
+						// into .managed and clears the suppression, allowing an autonomous
+						// captain/crew to recover without a human 'keeper rebind'. (Refs: hk-0tvm)
+						if !isUUIDv7(sid) && !isUppercaseUUID(sid) {
+							if sid == suppressedStableSID {
+								consecutiveStableSuppressedTicks++
+							} else {
+								suppressedStableSID = sid
+								consecutiveStableSuppressedTicks = 1
+							}
+							if consecutiveStableSuppressedTicks >= w.cfg.SuppressRecoverThreshold {
+								slog.InfoContext(ctx, "keeper: auto-clearing flap suppression — stable SID observed for K consecutive ticks; self-recovering",
+									"agent", w.cfg.AgentName,
+									"stable_sid", sid,
+									"ticks", consecutiveStableSuppressedTicks,
+									"threshold", w.cfg.SuppressRecoverThreshold)
+								latchSuppressed = false
+								consecutiveRapidClears = 0
+								lastAutoClearAt = time.Time{}
+								suppressedStableSID = ""
+								consecutiveStableSuppressedTicks = 0
+								if clearErr := w.cfg.ClearSuppressFn(w.cfg.ProjectDir, w.cfg.AgentName); clearErr != nil {
+									slog.WarnContext(ctx, "keeper: clear suppress state file on self-recovery", "agent", w.cfg.AgentName, "err", clearErr)
+								}
+								// Fall through to the normal latch path below: the SID
+								// already passed the UUIDv7 and uppercase guards above so
+								// it will latch on this tick.
+							} else {
+								slog.WarnContext(ctx, "keeper: latch suppressed (flap cooldown active); awaiting stable SID for self-recovery",
+									"agent", w.cfg.AgentName, "candidate_sid", sid,
+									"stable_ticks", consecutiveStableSuppressedTicks,
+									"threshold", w.cfg.SuppressRecoverThreshold)
+								w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
+								noGaugeEmittedAtBoot = true
+								warnArmed = true
+								warnFired = false
+								pendingInject = false
+								continue
+							}
+						} else {
+							// Dirty SID (UUIDv7 or uppercase): reset the stable counter so
+							// only a clean run counts toward self-recovery. Still suppress.
+							slog.WarnContext(ctx, "keeper: latch suppressed (flap cooldown active) — candidate SID rejected (UUIDv7 or uppercase); run 'harmonik keeper rebind' for immediate recovery",
+								"agent", w.cfg.AgentName, "candidate_sid", sid)
+							suppressedStableSID = ""
+							consecutiveStableSuppressedTicks = 0
+							w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
+							noGaugeEmittedAtBoot = true
+							warnArmed = true
+							warnFired = false
+							pendingInject = false
+							continue
+						}
 					}
 					// Latch: first valid gauge seen — bind its session_id into .managed.
 					// Reject UUIDv7 SIDs: daemon-spawned implementers use UUIDv7;
@@ -721,13 +834,18 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// Clear flap-cooldown suppression on stable bind (e.g. after a
 			// successful 'keeper rebind' that writes the correct session_id and the
 			// gauge now matches). Reset all flap-tracking state so future
-			// clear→resume cycles start fresh. (Refs: hk-mzdm)
+			// clear→resume cycles start fresh. (Refs: hk-mzdm, hk-0tvm)
 			if latchSuppressed {
 				slog.InfoContext(ctx, "keeper: flap cooldown cleared — stable session binding established",
 					"agent", w.cfg.AgentName)
 				latchSuppressed = false
 				consecutiveRapidClears = 0
 				lastAutoClearAt = time.Time{} // reset cooldown window
+				suppressedStableSID = ""
+				consecutiveStableSuppressedTicks = 0
+				if clearErr := w.cfg.ClearSuppressFn(w.cfg.ProjectDir, w.cfg.AgentName); clearErr != nil {
+					slog.WarnContext(ctx, "keeper: clear suppress state file on stable bind", "agent", w.cfg.AgentName, "err", clearErr)
+				}
 			}
 
 			// ── idle-gate ────────────────────────────────────────────────────

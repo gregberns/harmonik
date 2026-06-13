@@ -1155,6 +1155,25 @@ func runAutoStatusInspection(ctx context.Context, wtPath string) (core.Outcome, 
 			}, false
 		}
 	}
+	// C2: deny-side marker check per EM-068.
+	// C1 already passed above; C2 fires only when C1 is clean (D3: C1 authoritative,
+	// C1 FAIL short-circuits before reaching here).
+	// D1: deny-side only — absent/non-FAIL markers are treated as absent by
+	// ReadAutoStatusMarker, so C1-only pass-through is preserved.
+	// D4: derived FAIL is terminal; no reviewer-loop re-entry.
+	marker, _ := workspace.ReadAutoStatusMarker(wtPath)
+	if marker != nil {
+		c2fc := core.FailureClassDeterministic // HC-059 daemon back-fill when hint absent.
+		if marker.FailureClass != "" {
+			c2fc = core.FailureClass(marker.FailureClass)
+		}
+		return core.Outcome{
+			Status:       core.OutcomeStatusFail,
+			Kind:         core.OutcomeKindDefault,
+			FailureClass: &c2fc,
+			Notes:        marker.Notes,
+		}, false
+	}
 	return core.Outcome{}, true
 }
 

@@ -26,8 +26,9 @@ These are the documented exit codes per command. `17` (daemon not running) and `
 | 3 | File I/O error | release |
 | 4 | Push failed / no last-good binary | promote (4=push), release (4=no last-good) |
 | 5 | Push-mode refused (target protected); another instance running | promote (5=protected); run (5=inline-daemon collision); **pidfile-locked = 5** when a second daemon collides on the lock |
+| 7 | `.harmonik/` directory not found | digest |
 | 16 | No pending verdict for the run_id | confirm-verdict, veto-verdict |
-| 17 | Daemon not running (socket absent / ECONNREFUSED) | queue, supervise (start/restart/pause/resume), confirm-verdict, veto-verdict, smoke, subscribe, comms (send/recv/join/leave), crew (start/stop) |
+| 17 | Daemon not running (socket absent / ECONNREFUSED) | queue, supervise (start/restart/pause/resume), confirm-verdict, veto-verdict, smoke, subscribe, comms (send/recv/join/leave), crew (start/stop), decisions |
 | 25 | Supervisor already running | supervise start |
 
 > **Pidfile-locked = exit 5.** Starting a second daemon for the same project collides on the pidfile lock and exits **5**. `harmonik run` avoids this when a daemon is already up by submitting to the existing daemon's socket instead of colliding (so exit 5 is not returned in that case).
@@ -51,6 +52,8 @@ harmonik <subcommand> [flags]
 | `--max-concurrent N` | Max simultaneous beads | 1 |
 | `--auto-pull` | Enable br-ready fallback poll (historical topology) | OFF |
 | `--no-auto-pull` | No-op alias; queue-only is the default (back-compat) | — |
+
+Branch targeting: `--target-branch` / `--protect-branch` / `--forbid-default-main` keep the daemon from auto-pushing `main` — see [CONFIGURATION.md](CONFIGURATION.md).
 
 **Subcommands listed in the menu:** version, init, run, handler, queue, subscribe, comms, crew, reconcile, confirm-verdict, veto-verdict, graph, promote, release, supervise, keeper, beads-merge, smoke, tmux-start, hook-relay.
 
@@ -192,11 +195,7 @@ harmonik handler status --type claude-code --format json
 
 **Notes:** queues are created automatically on first submit to a new name (`--queue` flag); absent `--queue` defaults to the `main` queue. `--queue-id <uuid>` targets a specific run for `append`. Exit 17 means the daemon is not running (socket absent / ECONNREFUSED).
 
-**Verb `--help` quirk (load-bearing):** some verbs treat `--help` as a *filename* and error.
-- `harmonik queue submit --help` → `cannot read "--help": open --help: no such file or directory` (**exit 2**).
-- `harmonik queue dry-run --help` → same error (**exit 2**).
-- `harmonik queue status --help` → ignores the arg and just runs (`(no queue active)`, exit 0).
-- For these verbs, read the form from the EXAMPLES below rather than from `<verb> --help`.
+**Verb `--help`:** `harmonik queue submit --help`, `harmonik queue dry-run --help`, and `harmonik queue append --help` now print the `harmonik queue` help and exit 0 — `--help` is intercepted as the first sub-arg before the value is read as a queue-file path. (Earlier builds swallowed `--help` as a filename and errored with `cannot read "--help"`; that is fixed — documented from source, takes effect after the next daemon rebuild if your installed binary predates the fix.) `harmonik queue status --help` ignores the arg and just runs (`(no queue active)`, exit 0).
 
 **Exit codes:** 0 success (JSON to stdout) · 1 validation error (JSON error body) · 2 transport/protocol error or unrecognised verb (also: usage error from `set-concurrency`) · 17 daemon not running.
 
@@ -536,6 +535,60 @@ harmonik hook-relay Stop
 **Example**
 ```bash
 harmonik subscribe --types run_completed,run_failed --heartbeat 30s
+```
+
+---
+
+## `harmonik digest`
+
+**Purpose:** print a cognition/supervisor status sheet — a deterministic digest of recent activity (active runs, recent events, open notes) computed from the durable files under `.harmonik/`. No LLM and, in snapshot mode, no daemon connection required.
+
+**Usage:** `harmonik digest [--project DIR] [--json] [--since EVENT_ID] [--full]`
+
+**Flags**
+| Flag | Meaning | Default |
+|---|---|---|
+| `--project DIR` | Project directory | current working directory |
+| `--json` | Emit one schema-versioned NDJSON object to stdout (instead of the human-readable sheet) | — |
+| `--since EVENT_ID` | Restrict the events window to those after this `event_id` (a UUIDv7 watermark) | — |
+| `--full` | Disable size caps — include all active runs, events, and notes | — |
+
+> A `--watch` flag also exists (live view polling at ~1s cadence; Ctrl-C to exit).
+
+**Exit codes:** 0 success · 1 argument/flag error · **7 `.harmonik/` directory not found**.
+
+**Example**
+```bash
+harmonik digest --json
+```
+
+---
+
+## `harmonik decisions`
+
+> **(documented from source; available after the next daemon rebuild.)** The installed binary that produced the rest of this reference predates this command, so `decisions` is not in the live `--help` menu yet; this section is documented directly from `cmd/harmonik/decisions.go`.
+
+**Purpose:** the agent→human decision surface — an agent raises a decision the operator must make, then blocks until it is answered. Only the **agent-side** verbs have landed:
+
+| Verb | Meaning |
+|---|---|
+| `raise` | Emit a decision-needed request and print the minted `decision_id`. With `--wait`, also block until answered and print the chosen option. |
+| `wait` | Block until a decision's terminal arrives; print the chosen option (resolved) or the withdrawal reason. |
+| `withdraw` | Cancel your own open decision (default reason `self_obsoleted`). |
+
+**`raise` flags:** `--question TEXT` (required) · `--option VALUE` (repeatable, at least one required) · `--context LINK` · `--from NAME` (default `$HARMONIK_AGENT`) · `--wait` · `--socket PATH` · `--project DIR`.
+
+**`wait`:** `harmonik decisions wait <decision_id> [--socket PATH] [--project DIR]`.
+
+**`withdraw` flags:** `harmonik decisions withdraw <decision_id>` · `--reason self_obsoleted|orphaned` (default `self_obsoleted`) · `--from NAME` · `--socket PATH` · `--project DIR`.
+
+**Exit codes:** 0 success · 1 argument error or op rejected · 2 unrecognised verb · 17 daemon not running (socket missing / ECONNREFUSED).
+
+> **Operator verbs (`list` / `show` / `answer`) have landed; their full documentation is coming in a dedicated human-in-the-loop section.**
+
+**Example**
+```bash
+harmonik decisions raise --question "Ship v2?" --option ship --option hold --wait
 ```
 
 ---

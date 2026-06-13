@@ -1,5 +1,7 @@
 # External Concept Digests
 
+> **As-of April 2026 (Phase-0 framing).** These conceptual anchors are frozen at project inception and predate the comms-bus / Captain-&-Crew / persistent-daemon reality. For current state see [STATUS.md](../../STATUS.md) and [docs/INITIATIVES.md](../INITIATIVES.md).
+
 ## Overview
 Digested summaries of external projects, articles, and systems that contain ideas applicable to harmonik. Each digest extracts the key concepts and maps them to our problem/goal space.
 

@@ -1,5 +1,7 @@
 # Problems We're Solving
 
+> **As-of April 2026 (Phase-0 framing).** These conceptual anchors are frozen at project inception and predate the comms-bus / Captain-&-Crew / persistent-daemon reality. For current state see [STATUS.md](../../STATUS.md) and [docs/INITIATIVES.md](../INITIATIVES.md).
+
 ## Overview
 This directory documents the core problems harmonik aims to address. Each problem includes context for why it matters and how it connects to the broader system.
 

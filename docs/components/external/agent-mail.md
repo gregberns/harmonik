@@ -11,6 +11,8 @@ updated: 2026-04-13
 
 # MCP Agent Mail
 
+> **RETIRED 2026-06-08.** agent-mail was uninstalled (runaway log → disk-full); replaced by the `harmonik comms` bus. See AGENTS.md §Multi-agent comms.
+
 ## Summary
 Agent Mail is a Rust binary providing 36 MCP tools across 9 functional clusters for agent-to-agent coordination. It gives agents persistent identities, threaded messaging, advisory file reservations, and build coordination -- all backed by a Git audit trail with SQLite as a rebuildable index. Agent Mail is the communication fabric that lets independent agent processes coordinate without sharing memory or direct coupling.
 

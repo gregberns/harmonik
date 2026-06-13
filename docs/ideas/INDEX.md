@@ -9,6 +9,8 @@ updated: 2026-04-13
 
 # Idea Catalog
 
+> **As-of April 2026 (Phase-0 framing).** These conceptual anchors are frozen at project inception and predate the comms-bus / Captain-&-Crew / persistent-daemon reality. For current state see [STATUS.md](../../STATUS.md) and [docs/INITIATIVES.md](../INITIATIVES.md).
+
 ## Overview
 This directory captures brainstorm ideas -- proposed mechanisms, patterns, and approaches that could become part of harmonik's design. Ideas are seeds: some will grow into subsystem designs, others will be absorbed into broader patterns, others will be discarded. Each idea links to the subsystems, problems, and goals it relates to.
 

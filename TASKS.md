@@ -1,5 +1,7 @@
 # Harmonik Tasks
 
+> **As of 2026-05-12 (Phase-1 task list).** For current project state and live work, see STATUS.md and [docs/INITIATIVES.md](docs/INITIATIVES.md).
+
 > **Phase 0: CLOSED 2026-05-06.** See [`docs/foundation/phase-0-milestone-close.md`](docs/foundation/phase-0-milestone-close.md). The list under "Phase 0 historical" below is preserved for reference; do not re-action items there. Active task surface is the bead corpus: `br ready -l scope:bootstrap` returns claimable work.
 >
 > **[HANDOFF.md](HANDOFF.md) remains authoritative for per-session current state and the next concrete steps.** This file tracks phase boundaries.

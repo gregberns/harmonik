@@ -1,5 +1,7 @@
 # Harmonik Roadmap
 
+> **As of 2026-05-15.** High-level epic roadmap; for live lane/initiative tracking see [docs/INITIATIVES.md](docs/INITIATIVES.md) and STATUS.md.
+
 _Last updated: 2026-05-15. High-level epic order from current state to a fully operational harmonik that orchestrators can drive at scale._
 
 ## Current state

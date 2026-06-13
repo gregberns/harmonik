@@ -1,5 +1,7 @@
 # Goals We're Pursuing
 
+> **As-of April 2026 (Phase-0 framing).** These conceptual anchors are frozen at project inception and predate the comms-bus / Captain-&-Crew / persistent-daemon reality. For current state see [STATUS.md](../../STATUS.md) and [docs/INITIATIVES.md](../INITIATIVES.md).
+
 ## Overview
 This directory documents the design goals for harmonik. Each goal describes a desired system capability, concrete success criteria, and the problems it addresses. Goals bridge the gap between problems (what's wrong) and subsystems (what we build).
 

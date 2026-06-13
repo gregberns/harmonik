@@ -300,10 +300,13 @@ BEHAVIOUR (Phase-2, .managed-gated)
 GAUGE SETUP
   Add to ~/.claude/settings.json (via: harmonik keeper enable <agent> ...):
     "statusLine": {
-      "command": "HARMONIK_PROJECT=/path/to/project /path/to/scripts/keeper-statusline.sh"
+      "type": "command",
+      "command": "/path/to/scripts/keeper-statusline.sh"
     }
+  The command carries no HARMONIK_PROJECT= prefix (ON-058b): project routing is
+  resolved at runtime from each session's inherited HARMONIK_PROJECT env var.
   The script derives the agent name from the tmux session name at runtime, so a
-  single global entry works for all concurrent sessions without perturbing peers.
+  single project-agnostic entry works for all projects and concurrent sessions.
 
 EXIT CODES (watcher mode)
   0  Success (no-op or clean signal shutdown)

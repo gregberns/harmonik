@@ -74,7 +74,7 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 
 	settings := readSettingsJSON(t, settingsPath)
 
-	// statusLine.
+	// statusLine (ON-058b: project-agnostic — no HARMONIK_PROJECT= prefix).
 	sl, ok := settings["statusLine"].(map[string]interface{})
 	if !ok {
 		t.Fatal("statusLine missing or wrong type")
@@ -83,13 +83,15 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 	if !strings.Contains(cmd, "keeper-statusline.sh") {
 		t.Errorf("statusLine.command does not contain keeper-statusline.sh: %q", cmd)
 	}
-	// hk-nm32w: agent name must NOT be embedded; scripts derive it from the tmux
-	// session name at runtime so all concurrent sessions share one settings entry.
+	// hk-nm32w: agent name must NOT be embedded.
 	if strings.Contains(cmd, "HARMONIK_AGENT=") {
 		t.Errorf("statusLine.command must not embed HARMONIK_AGENT= (hk-nm32w): %q", cmd)
 	}
-	if !strings.Contains(cmd, "HARMONIK_PROJECT=") {
-		t.Errorf("statusLine.command missing HARMONIK_PROJECT=: %q", cmd)
+	// ON-058b: statusLine command must NOT carry HARMONIK_PROJECT= — it is
+	// project-agnostic; project routing is resolved at runtime from the
+	// inherited HARMONIK_PROJECT env var.
+	if strings.Contains(cmd, "HARMONIK_PROJECT=") {
+		t.Errorf("statusLine.command must not embed HARMONIK_PROJECT= (ON-058b): %q", cmd)
 	}
 	// hk-hs1: statusLine MUST carry "type":"command". Without it Claude Code
 	// rejects the entire settings.json and disables ALL hooks.
@@ -97,10 +99,10 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 		t.Errorf(`statusLine.type = %q; want "command" (hk-hs1)`, got)
 	}
 
-	// Stop hook.
-	found, stopCmd := findHookForScript(settings, "Stop", "keeper-stop-hook.sh")
+	// Stop hook (ON-058a: matched on (basename, HARMONIK_PROJECT=<projectDir>) pair).
+	found, stopCmd := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir)
 	if !found {
-		t.Error("Stop hook not wired in settings.json")
+		t.Error("Stop hook not wired in settings.json for this project")
 	}
 	// hk-nm32w: agent name must NOT be embedded in hook commands.
 	if strings.Contains(stopCmd, "HARMONIK_KEEPER_AGENT=") {
@@ -110,10 +112,10 @@ func TestKeeperEnable_FreshSettings(t *testing.T) {
 		t.Errorf("Stop hook command missing HARMONIK_PROJECT=: %q", stopCmd)
 	}
 
-	// PreCompact hook.
-	found, pcCmd := findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh")
+	// PreCompact hook (ON-058a: matched on (basename, HARMONIK_PROJECT=<projectDir>) pair).
+	found, pcCmd := findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir)
 	if !found {
-		t.Error("PreCompact hook not wired in settings.json")
+		t.Error("PreCompact hook not wired in settings.json for this project")
 	}
 	// hk-nm32w: agent name must NOT be embedded in hook commands.
 	if strings.Contains(pcCmd, "HARMONIK_KEEPER_AGENT=") {
@@ -240,7 +242,8 @@ func TestKeeperEnable_NormalizesStaleAgentCmd(t *testing.T) {
 	}
 
 	settings := readSettingsJSON(t, settingsPath)
-	found, updatedCmd := findHookForScript(settings, "Stop", "keeper-stop-hook.sh")
+	// ON-058a: look up by (basename, HARMONIK_PROJECT=<projectDir>) pair.
+	found, updatedCmd := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir)
 	if !found {
 		t.Fatal("Stop hook not found after normalization")
 	}
@@ -443,15 +446,17 @@ func makeDoctorCfg(t *testing.T, agent string) (doctorConfig, func()) {
 
 // writeFullSettings writes a settings.json with all three keeper stanzas.
 // agent is unused in the command strings — hk-nm32w removed agent from commands.
+// ON-058b: statusLine is project-agnostic (no HARMONIK_PROJECT= prefix).
+// ON-058a: Stop/PreCompact hooks carry HARMONIK_PROJECT= for project-keyed dedup.
 func writeFullSettings(t *testing.T, settingsPath, projectDir, scriptsDir, _ string) {
 	t.Helper()
 	settings := map[string]interface{}{}
-	statusLineCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-statusline.sh")
+	statusLineCmd := filepath.Join(scriptsDir, "keeper-statusline.sh")
 	stopCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-stop-hook.sh")
 	pcCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-precompact-hook.sh")
 	mergeStatusLineStanza(settings, statusLineCmd)
-	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", stopCmd)
-	mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", pcCmd)
+	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, stopCmd)
+	mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", projectDir, pcCmd)
 	raw, _ := json.MarshalIndent(settings, "", "  ")
 	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
 		t.Fatalf("writeFullSettings: %v", err)
@@ -815,13 +820,14 @@ func TestMergeStatusLineStanza_Update(t *testing.T) {
 func TestMergeHookStanza_Add(t *testing.T) {
 	t.Parallel()
 
+	const projectDir = "/proj"
 	settings := map[string]interface{}{}
-	cmd := "HARMONIK_PROJECT=/proj HARMONIK_KEEPER_AGENT=x /scripts/keeper-stop-hook.sh"
-	action := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", cmd)
+	cmd := "HARMONIK_PROJECT=" + projectDir + " HARMONIK_KEEPER_AGENT=x /scripts/keeper-stop-hook.sh"
+	action := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, cmd)
 	if action != "added" {
 		t.Errorf("want \"added\", got %q", action)
 	}
-	found, _ := findHookForScript(settings, "Stop", "keeper-stop-hook.sh")
+	found, _ := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", projectDir)
 	if !found {
 		t.Error("Stop hook not found after add")
 	}
@@ -831,33 +837,131 @@ func TestMergeHookStanza_Add(t *testing.T) {
 func TestMergeHookStanza_Unchanged(t *testing.T) {
 	t.Parallel()
 
-	cmd := "HARMONIK_PROJECT=/proj HARMONIK_KEEPER_AGENT=x /scripts/keeper-stop-hook.sh"
+	const projectDir = "/proj"
+	cmd := "HARMONIK_PROJECT=" + projectDir + " HARMONIK_KEEPER_AGENT=x /scripts/keeper-stop-hook.sh"
 	settings := map[string]interface{}{}
-	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", cmd)
-	action := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", cmd)
+	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, cmd)
+	action := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, cmd)
 	if action != "unchanged" {
 		t.Errorf("want \"unchanged\", got %q", action)
 	}
 }
 
-// TestMergeHookStanza_Update verifies normalization of a stale command.
+// TestMergeHookStanza_Update verifies normalization of a stale command for the same project.
 func TestMergeHookStanza_Update(t *testing.T) {
 	t.Parallel()
 
+	const projectDir = "/proj"
 	settings := map[string]interface{}{}
-	oldCmd := "HARMONIK_AGENT=x /old/keeper-stop-hook.sh"
-	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", oldCmd)
-	newCmd := "HARMONIK_KEEPER_AGENT=x /new/keeper-stop-hook.sh"
-	action := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", newCmd)
+	// Old command: same project, stale script path or extra agent env var.
+	oldCmd := "HARMONIK_PROJECT=" + projectDir + " HARMONIK_KEEPER_AGENT=x /old/keeper-stop-hook.sh"
+	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, oldCmd)
+	// New canonical command: same project, clean form.
+	newCmd := "HARMONIK_PROJECT=" + projectDir + " /new/keeper-stop-hook.sh"
+	action := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, newCmd)
 	if action != "updated (normalized)" {
 		t.Errorf("want \"updated (normalized)\", got %q", action)
 	}
-	found, got := findHookForScript(settings, "Stop", "keeper-stop-hook.sh")
+	found, got := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", projectDir)
 	if !found {
 		t.Fatal("Stop hook not found after update")
 	}
 	if got != newCmd {
 		t.Errorf("command not updated: want %q, got %q", newCmd, got)
+	}
+}
+
+// TestKeeperEnable_MultiProjectCoexistence verifies ON-058a: two distinct projects
+// each running `harmonik keeper enable` produce two sibling groups in the
+// hooks.Stop and hooks.PreCompact arrays, and a single shared project-agnostic
+// statusLine stanza (ON-058b).
+func TestKeeperEnable_MultiProjectCoexistence(t *testing.T) {
+	t.Parallel()
+
+	// Two projects share the same settings.json (simulating ~/.claude/settings.json).
+	settingsDir := t.TempDir()
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+	scriptsDir := makeScriptsDir(t)
+
+	projectA := t.TempDir()
+	projectB := t.TempDir()
+
+	cfgA := enableConfig{
+		agentName:    "orchestrator",
+		projectDir:   projectA,
+		scriptsDir:   scriptsDir,
+		settingsPath: settingsPath,
+	}
+	cfgB := enableConfig{
+		agentName:    "orchestrator",
+		projectDir:   projectB,
+		scriptsDir:   scriptsDir,
+		settingsPath: settingsPath,
+	}
+
+	var out bytes.Buffer
+	if code := runKeeperEnable(cfgA, &out, &out); code != 0 {
+		t.Fatalf("enable projectA: want 0, got %d\n%s", code, out.String())
+	}
+	out.Reset()
+	if code := runKeeperEnable(cfgB, &out, &out); code != 0 {
+		t.Fatalf("enable projectB: want 0, got %d\n%s", code, out.String())
+	}
+
+	settings := readSettingsJSON(t, settingsPath)
+
+	// ON-058b: exactly one statusLine stanza, project-agnostic (no HARMONIK_PROJECT=).
+	sl, ok := settings["statusLine"].(map[string]interface{})
+	if !ok {
+		t.Fatal("statusLine missing or wrong type")
+	}
+	slCmd, _ := sl["command"].(string)
+	if !strings.Contains(slCmd, "keeper-statusline.sh") {
+		t.Errorf("statusLine.command missing keeper-statusline.sh: %q", slCmd)
+	}
+	if strings.Contains(slCmd, "HARMONIK_PROJECT=") {
+		t.Errorf("statusLine.command must not embed HARMONIK_PROJECT= (ON-058b): %q", slCmd)
+	}
+
+	// ON-058a: each project has its own sibling group in Stop and PreCompact arrays.
+	foundA, _ := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", projectA)
+	if !foundA {
+		t.Error("Stop hook for projectA not found")
+	}
+	foundB, _ := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", projectB)
+	if !foundB {
+		t.Error("Stop hook for projectB not found")
+	}
+
+	// Two distinct sibling groups should be present (one per project).
+	stopCount := countHookEntriesForScript(settings, "Stop", "keeper-stop-hook.sh")
+	if stopCount != 2 {
+		t.Errorf("Stop hook entry count: want 2 (one per project), got %d", stopCount)
+	}
+
+	foundA, _ = findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh", projectA)
+	if !foundA {
+		t.Error("PreCompact hook for projectA not found")
+	}
+	foundB, _ = findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh", projectB)
+	if !foundB {
+		t.Error("PreCompact hook for projectB not found")
+	}
+
+	pcCount := countHookEntriesForScript(settings, "PreCompact", "keeper-precompact-hook.sh")
+	if pcCount != 2 {
+		t.Errorf("PreCompact hook entry count: want 2 (one per project), got %d", pcCount)
+	}
+
+	// ON-058a idempotency: re-running enable for projectA must not add a third group.
+	out.Reset()
+	if code := runKeeperEnable(cfgA, &out, &out); code != 0 {
+		t.Fatalf("re-enable projectA: want 0, got %d\n%s", code, out.String())
+	}
+	settings = readSettingsJSON(t, settingsPath)
+	stopCountAfter := countHookEntriesForScript(settings, "Stop", "keeper-stop-hook.sh")
+	if stopCountAfter != 2 {
+		t.Errorf("Stop hook count after re-enable: want 2, got %d", stopCountAfter)
 	}
 }
 

@@ -200,9 +200,16 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	// Agent name is NOT embedded — scripts derive it from the tmux session name at
 	// runtime so a single global ~/.claude/settings.json entry works for all concurrent
 	// sessions on the machine without perturbing peer agents (hk-nm32w).
-	statusLineCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
-		cfg.projectDir,
-		filepath.Join(cfg.scriptsDir, "keeper-statusline.sh"))
+	//
+	// ON-058b: statusLine is project-agnostic — no HARMONIK_PROJECT= prefix.
+	// Runtime routing is via the inherited HARMONIK_PROJECT env var; the script
+	// uses PROJECT="${HARMONIK_PROJECT:-${PWD}}" to resolve the correct project.
+	// All projects on the machine converge on the identical bare-path stanza.
+	statusLineCmd := filepath.Join(cfg.scriptsDir, "keeper-statusline.sh")
+	// ON-058a: Stop/PreCompact hook commands retain HARMONIK_PROJECT= so dedup can
+	// match on the (basename, HARMONIK_PROJECT=<projectDir>) pair — two distinct
+	// projects produce two sibling groups in the hooks array and coexist without
+	// one project's enable perturbing the other's group.
 	stopHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
 		cfg.projectDir,
 		filepath.Join(cfg.scriptsDir, "keeper-stop-hook.sh"))
@@ -212,8 +219,8 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 
 	// Merge stanzas (idempotent).
 	statusLineAction := mergeStatusLineStanza(settings, statusLineCmd)
-	stopAction := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", stopHookCmd)
-	precompactAction := mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", precompactHookCmd)
+	stopAction := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir, stopHookCmd)
+	precompactAction := mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir, precompactHookCmd)
 
 	fmt.Fprintf(stdout, "keeper enable: statusLine     — %s\n", statusLineAction)
 	fmt.Fprintf(stdout, "keeper enable: Stop hook      — %s\n", stopAction)
@@ -409,11 +416,6 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 				check("statusLine", false, fmt.Sprintf("keeper-statusline.sh not found in statusLine.command — run: harmonik keeper enable %s ...", cfg.agentName))
 			} else {
 				check("statusLine", true, "keeper-statusline.sh wired")
-				// Sub-check: HARMONIK_PROJECT must be present (agent name is derived at
-				// runtime from the tmux session — it is no longer embedded, hk-nm32w).
-				if !strings.Contains(cmd, "HARMONIK_PROJECT=") {
-					check("statusLine.project", false, "statusLine.command missing HARMONIK_PROJECT= — run: harmonik keeper enable to normalize")
-				}
 				// Sub-check: required "type":"command" field (hk-hs1). Without it
 				// Claude Code rejects the whole settings.json and disables all hooks.
 				if !statusLineTypeIsCommand(settings) {
@@ -432,36 +434,30 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 3. Stop hook present.
+	// 3. Stop hook present for THIS project (ON-058a: matched on (basename, HARMONIK_PROJECT=<projectDir>) pair).
 	{
 		if !settingsPresent {
 			check("Stop hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
 		} else {
-			found, cmd := findHookForScript(settings, "Stop", "keeper-stop-hook.sh")
+			found, _ := findHookForScript(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir)
 			if !found {
-				check("Stop hook", false, "keeper-stop-hook.sh not found in hooks.Stop — run: harmonik keeper enable "+cfg.agentName+" ...")
+				check("Stop hook", false, "keeper-stop-hook.sh not found in hooks.Stop for this project — run: harmonik keeper enable "+cfg.agentName+" ...")
 			} else {
 				check("Stop hook", true, "keeper-stop-hook.sh wired")
-				if !strings.Contains(cmd, "HARMONIK_PROJECT=") {
-					check("Stop hook.project", false, "Stop hook command missing HARMONIK_PROJECT= — run: harmonik keeper enable to normalize")
-				}
 			}
 		}
 	}
 
-	// 4. PreCompact hook present.
+	// 4. PreCompact hook present for THIS project (ON-058a: matched on (basename, HARMONIK_PROJECT=<projectDir>) pair).
 	{
 		if !settingsPresent {
 			check("PreCompact hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
 		} else {
-			found, cmd := findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh")
+			found, _ := findHookForScript(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir)
 			if !found {
-				check("PreCompact hook", false, "keeper-precompact-hook.sh not found in hooks.PreCompact — run: harmonik keeper enable "+cfg.agentName+" ...")
+				check("PreCompact hook", false, "keeper-precompact-hook.sh not found in hooks.PreCompact for this project — run: harmonik keeper enable "+cfg.agentName+" ...")
 			} else {
 				check("PreCompact hook", true, "keeper-precompact-hook.sh wired")
-				if !strings.Contains(cmd, "HARMONIK_PROJECT=") {
-					check("PreCompact hook.project", false, "PreCompact hook command missing HARMONIK_PROJECT= — run: harmonik keeper enable to normalize")
-				}
 			}
 		}
 	}
@@ -619,20 +615,26 @@ func mergeStatusLineStanza(settings map[string]interface{}, canonicalCmd string)
 
 // mergeHookStanza upserts a keeper hook stanza for the given event name.
 // scriptBasename is used for deduplication (e.g. "keeper-stop-hook.sh").
+// projectDir is the harmonik project root for ON-058a project-keyed dedup:
+// an existing group matches only when BOTH the script basename AND
+// "HARMONIK_PROJECT=<projectDir>" appear in its command. A group with the same
+// basename but a different HARMONIK_PROJECT value is left untouched and a new
+// sibling group is appended — enabling two distinct projects to coexist in the
+// same hooks array (ON-058a(1–2)).
 // Returns a short action string.
-func mergeHookStanza(settings map[string]interface{}, eventName, scriptBasename, canonicalCmd string) string {
-	found, existingCmd := findHookForScript(settings, eventName, scriptBasename)
+func mergeHookStanza(settings map[string]interface{}, eventName, scriptBasename, projectDir, canonicalCmd string) string {
+	found, existingCmd := findHookForScript(settings, eventName, scriptBasename, projectDir)
 
 	if found {
 		if existingCmd == canonicalCmd {
 			return "unchanged"
 		}
-		// Update existing entry to normalized form.
-		updateHookCommand(settings, eventName, scriptBasename, canonicalCmd)
+		// Update existing entry to normalized form (same project, stale command).
+		updateHookCommand(settings, eventName, scriptBasename, projectDir, canonicalCmd)
 		return "updated (normalized)"
 	}
 
-	// Add new matcher group.
+	// Add new matcher group (no matching (basename, project) pair found).
 	appendHookGroup(settings, eventName, canonicalCmd)
 	return "added"
 }
@@ -682,8 +684,11 @@ func getOrCreateStatusLine(settings map[string]interface{}) map[string]interface
 }
 
 // findHookForScript scans hooks[eventName] for any entry whose command contains
-// scriptBasename.  Returns (true, matchingCommand) if found.
-func findHookForScript(settings map[string]interface{}, eventName, scriptBasename string) (bool, string) {
+// scriptBasename.  When projectDir is non-empty, the entry must also contain
+// "HARMONIK_PROJECT=<projectDir>" — the ON-058a project-keyed dedup predicate.
+// A basename match with a different HARMONIK_PROJECT value does NOT match.
+// Returns (true, matchingCommand) if found.
+func findHookForScript(settings map[string]interface{}, eventName, scriptBasename, projectDir string) (bool, string) {
 	hooksRaw, ok := settings["hooks"]
 	if !ok || hooksRaw == nil {
 		return false, ""
@@ -719,16 +724,26 @@ func findHookForScript(settings map[string]interface{}, eventName, scriptBasenam
 				continue
 			}
 			cmd, _ := eMap["command"].(string)
-			if strings.Contains(cmd, scriptBasename) {
-				return true, cmd
+			if !strings.Contains(cmd, scriptBasename) {
+				continue
 			}
+			// ON-058a: when projectDir is set, require the HARMONIK_PROJECT= value
+			// to match THIS project's root.  A basename match for a peer project's
+			// group must NOT be treated as a match for this project.
+			if projectDir != "" && !strings.Contains(cmd, "HARMONIK_PROJECT="+projectDir) {
+				continue
+			}
+			return true, cmd
 		}
 	}
 	return false, ""
 }
 
-// updateHookCommand replaces the command in the first entry that contains scriptBasename.
-func updateHookCommand(settings map[string]interface{}, eventName, scriptBasename, newCmd string) {
+// updateHookCommand replaces the command in the first entry that contains scriptBasename
+// AND (when projectDir is non-empty) contains "HARMONIK_PROJECT=<projectDir>".
+// This is the ON-058a in-place normalize path: only the group matching THIS project's
+// (basename, HARMONIK_PROJECT) pair is rewritten; peer projects' groups are untouched.
+func updateHookCommand(settings map[string]interface{}, eventName, scriptBasename, projectDir, newCmd string) {
 	hooksMap, ok := settings["hooks"].(map[string]interface{})
 	if !ok {
 		return
@@ -752,10 +767,14 @@ func updateHookCommand(settings map[string]interface{}, eventName, scriptBasenam
 				continue
 			}
 			cmd, _ := eMap["command"].(string)
-			if strings.Contains(cmd, scriptBasename) {
-				eMap["command"] = newCmd
-				return
+			if !strings.Contains(cmd, scriptBasename) {
+				continue
 			}
+			if projectDir != "" && !strings.Contains(cmd, "HARMONIK_PROJECT="+projectDir) {
+				continue
+			}
+			eMap["command"] = newCmd
+			return
 		}
 	}
 }

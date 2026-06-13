@@ -99,6 +99,9 @@ func TestHarmonikTopLevelHelp(t *testing.T) {
 		"run",
 		"handler",
 		"queue",
+		"subscribe",
+		"comms",
+		"crew",
 		"reconcile",
 		"tmux-start",
 		"hook-relay",
@@ -107,6 +110,38 @@ func TestHarmonikTopLevelHelp(t *testing.T) {
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("top-level help output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+// TestQueueHelpFlag verifies that `harmonik queue --help` exits 0 and the
+// VERBS list includes set-concurrency (the live concurrent-dispatch ceiling
+// verb), which is a real verb in the queue switch but was historically omitted
+// from the printed help block.
+//
+// Not parallel: drives run() which mutates os.Args and flag.CommandLine.
+//
+// Acceptance: hk-nh2 — queue --help surfaces set-concurrency.
+func TestQueueHelpFlag(t *testing.T) {
+	mainFixtureResetFlags(t)
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "queue", "--help"})
+
+	var exitCode int
+	output := helpFixtureCaptureStdout(t, func() {
+		exitCode = run()
+	})
+
+	if exitCode != 0 {
+		t.Errorf("run() with queue --help: got exit code %d, want 0", exitCode)
+	}
+
+	for _, want := range []string{
+		"submit",
+		"append",
+		"set-concurrency",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("queue --help output missing %q:\n%s", want, output)
 		}
 	}
 }

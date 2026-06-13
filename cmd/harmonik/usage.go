@@ -21,6 +21,9 @@ SUBCOMMANDS
   run              Legacy/solo-bootstrap: submit to a running daemon, else run inline and exit
   handler          Inspect or resume a paused handler
   queue            Submit or inspect the bead queue (daemon must be running)
+  subscribe        Stream daemon events (run_completed/run_failed/run_stale/heartbeat) as NDJSON
+  comms            Agent-to-agent messaging bus (send/recv/who/log/join/leave)
+  crew             Captain & crew session management (start/stop/list)
   reconcile        Close in_progress beads whose implementation has merged
   confirm-verdict  Confirm a pending reconciliation verdict (daemon must be running)
   veto-verdict     Veto a pending reconciliation verdict (daemon must be running)

@@ -287,6 +287,7 @@ VERBS
   resume    Resume a paused named queue (daemon must be running)
   dry-run   Validate a queue submission without executing (daemon must be running)
   cancel    Archive a stale queue.json without a live daemon (no daemon required)
+  set-concurrency <n>  Set the daemon's concurrent-dispatch ceiling live (daemon must be running)
 
 NOTES
   Most verbs require the daemon to be running.
@@ -317,6 +318,7 @@ EXAMPLES
   harmonik queue resume investigate
   harmonik queue cancel
   harmonik queue cancel --force
+  harmonik queue set-concurrency 4
 `)
 			return 0
 		}

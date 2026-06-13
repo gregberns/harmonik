@@ -310,7 +310,7 @@ FLAGS
 // Spec ref: specs/release-pipeline.md §7 — ROLLBACK stage.
 // Bead ref: hk-ya51z.
 func runReleaseRollback(args []string) int {
-	_, _, flags, err := parseReleaseFlags(args)
+	projectDir, _, flags, err := parseReleaseFlags(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik release rollback: %v\n", err)
 		return 1
@@ -332,7 +332,7 @@ EXIT CODES
   4  No last-good binary has been recorded yet
 
 NOTES
-  The last-good binary state is stored at /tmp/hk-last-good-binary (pre-1.0).
+  The last-good binary state is stored at <project>/.harmonik/state/last-good-binary.
   The supervisor pins a new last-good after the daemon has been healthy for >=30s.
   After rollback, restart the daemon to load the restored binary.
 
@@ -354,7 +354,7 @@ EXAMPLES
 		binPath = exe
 	}
 
-	statePath := release.DefaultLastGoodStatePath()
+	statePath := release.LastGoodStatePath(projectDir)
 	if restoreErr := release.RestoreLastGoodBinary(statePath, binPath); restoreErr != nil {
 		if errors.Is(restoreErr, release.ErrNoLastGood) {
 			fmt.Fprintln(os.Stderr, "harmonik release rollback: no last-good binary recorded; the supervisor pins one after >=30s of healthy daemon runtime")

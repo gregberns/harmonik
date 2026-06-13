@@ -5,10 +5,10 @@
 // harmonik binary in a state file; on yanked-binary detection or crash-loop
 // the supervisor restores from that pinned path.
 //
-// State file path (pre-1.0): /tmp/hk-last-good-binary
+// State file path: <projectDir>/.harmonik/state/last-good-binary
 // Binary snapshot path: <original-binary>.last-good
 //
-// Spec ref: specs/release-pipeline.md §7.2.
+// Spec ref: specs/release-pipeline.md §7.2, specs/operator-nfr.md §4(d).1.
 package release
 
 import (
@@ -20,12 +20,15 @@ import (
 	"strings"
 )
 
-// DefaultLastGoodStatePath returns the pre-1.0 state file path for the
-// last-good binary record.
+// LastGoodStatePath returns the per-project state file path for the last-good
+// binary record: <projectDir>/.harmonik/state/last-good-binary.
 //
-// Spec ref: specs/release-pipeline.md §7.2 — "/tmp/hk-last-good-binary for pre-1.0".
-func DefaultLastGoodStatePath() string {
-	return "/tmp/hk-last-good-binary"
+// Spec ref: specs/release-pipeline.md §7.2; specs/operator-nfr.md §4(d).1
+// (ON-058c) — per-project path replaces the pre-1.0 machine-global
+// /tmp/hk-last-good-binary. Absent file on first read is a fresh start with
+// no migration from the old /tmp path.
+func LastGoodStatePath(projectDir string) string {
+	return filepath.Join(projectDir, ".harmonik", "state", "last-good-binary")
 }
 
 // ErrNoLastGood is returned when the last-good state file does not exist or

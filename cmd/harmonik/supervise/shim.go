@@ -193,7 +193,7 @@ func runWithSupervisor(cfg Config, projectDir string, stdout, stderr io.Writer) 
 			Command:      daemonCmd,
 			WorkDir:      projectDir,
 			LedgerPath:   release.LedgerPath(projectDir),
-			LastGoodPath: release.DefaultLastGoodStatePath(),
+			LastGoodPath: release.LastGoodStatePath(projectDir),
 		}, log)
 		go func() {
 			if err := dw.Run(ctx); err != nil && ctx.Err() == nil {

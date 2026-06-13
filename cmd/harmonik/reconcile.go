@@ -54,6 +54,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -65,9 +66,9 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// reconcileUsage prints the help text for `harmonik reconcile`.
-func reconcileUsage() {
-	fmt.Print(`harmonik reconcile — close in_progress beads whose implementation has merged
+// reconcileUsage prints the help text for `harmonik reconcile` to w.
+func reconcileUsage(w io.Writer) {
+	fmt.Fprint(w, `harmonik reconcile — close in_progress beads whose implementation has merged
 
 USAGE
   harmonik reconcile [--project DIR] [--target-branch BRANCH] [--run RUN_ID]
@@ -93,6 +94,13 @@ EXAMPLES
 // runReconcileSubcommand implements `harmonik reconcile [--project DIR] [--target-branch BRANCH] [--run RUN_ID]`.
 // subArgs is os.Args[2:] (everything after "reconcile").
 func runReconcileSubcommand(subArgs []string) int {
+	return runReconcileSubcommandIO(subArgs, os.Stdout)
+}
+
+// runReconcileSubcommandIO is the testable variant that accepts an explicit
+// stdout writer. The stdout parameter receives --help output; error messages
+// go to os.Stderr unchanged.
+func runReconcileSubcommandIO(subArgs []string, stdout io.Writer) int {
 	// --- Parse flags ---
 
 	projectDirFlag := ""
@@ -101,7 +109,7 @@ func runReconcileSubcommand(subArgs []string) int {
 	for i := 0; i < len(subArgs); i++ {
 		switch {
 		case subArgs[i] == "--help" || subArgs[i] == "-h":
-			reconcileUsage()
+			reconcileUsage(stdout)
 			return 0
 		case subArgs[i] == "--project" && i+1 < len(subArgs):
 			i++

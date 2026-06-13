@@ -218,19 +218,19 @@ func TestQueueDryRunHelpFlag(t *testing.T) {
 // TestRunHelpFlag verifies that `harmonik run --help` exits 0 and the output
 // contains the expected flags, exit-code section, and at least one example.
 //
-// Parallel: safe — runBeadSubcommand does not touch flag.CommandLine.
+// Parallel: safe — runBeadSubcommandIO accepts an explicit writer; no global
+// os.Stdout redirection needed.
 //
 // Acceptance: hk-u0oo2 — run --help lists flags, exit codes, and examples.
 func TestRunHelpFlag(t *testing.T) {
 	t.Parallel()
 
-	var exitCode int
-	output := helpFixtureCaptureStdout(t, func() {
-		exitCode = runBeadSubcommand([]string{"--help"})
-	})
+	var buf bytes.Buffer
+	exitCode := runBeadSubcommandIO([]string{"--help"}, &buf)
+	output := buf.String()
 
 	if exitCode != 0 {
-		t.Errorf("runBeadSubcommand([--help]): got exit code %d, want 0", exitCode)
+		t.Errorf("runBeadSubcommandIO([--help]): got exit code %d, want 0", exitCode)
 	}
 
 	for _, want := range []string{
@@ -363,19 +363,19 @@ func TestMaxConcurrentDefaultNotDuplicated(t *testing.T) {
 // TestReconcileHelpFlag verifies that `harmonik reconcile --help` exits 0 and
 // the output contains the expected flags and exit-code documentation.
 //
-// Parallel: safe — runReconcileSubcommand does not touch flag.CommandLine.
+// Parallel: safe — runReconcileSubcommandIO accepts an explicit writer; no
+// global os.Stdout redirection needed.
 //
 // Acceptance: hk-u0oo2 — reconcile --help lists flags and exit codes.
 func TestReconcileHelpFlag(t *testing.T) {
 	t.Parallel()
 
-	var exitCode int
-	output := helpFixtureCaptureStdout(t, func() {
-		exitCode = runReconcileSubcommand([]string{"--help"})
-	})
+	var buf bytes.Buffer
+	exitCode := runReconcileSubcommandIO([]string{"--help"}, &buf)
+	output := buf.String()
 
 	if exitCode != 0 {
-		t.Errorf("runReconcileSubcommand([--help]): got exit code %d, want 0", exitCode)
+		t.Errorf("runReconcileSubcommandIO([--help]): got exit code %d, want 0", exitCode)
 	}
 
 	for _, want := range []string{

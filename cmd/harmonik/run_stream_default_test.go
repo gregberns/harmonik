@@ -16,8 +16,6 @@ package main
 // Bead ref: hk-7nbey.
 
 import (
-	"io"
-	"os"
 	"strings"
 	"testing"
 )
@@ -84,28 +82,10 @@ func TestRunStreamHelpMentionsWave(t *testing.T) {
 	}
 }
 
-// streamDefaultFixtureCaptureUsage captures the text printed by runUsage()
-// by temporarily replacing os.Stdout with a pipe.
+// streamDefaultFixtureCaptureUsage captures the text printed by runUsage().
 func streamDefaultFixtureCaptureUsage(t *testing.T) string {
 	t.Helper()
-
-	// Use os.Pipe to capture fmt.Print output from runUsage().
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("streamDefaultFixtureCaptureUsage: os.Pipe: %v", err)
-	}
-
-	origStdout := os.Stdout
-	os.Stdout = w
-
-	runUsage()
-
-	os.Stdout = origStdout
-	_ = w.Close()
-
 	var buf strings.Builder
-	_, _ = io.Copy(&buf, r)
-	_ = r.Close()
-
+	runUsage(&buf)
 	return buf.String()
 }

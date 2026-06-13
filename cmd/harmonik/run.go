@@ -106,6 +106,13 @@ var runBeadSelfWrapExec = func(argv0 string, argv []string, envv []string) error
 // runBeadSubcommand implements `harmonik run <bead-id> [flags]`.
 // subArgs is os.Args[2:] (everything after "run").
 func runBeadSubcommand(subArgs []string) int {
+	return runBeadSubcommandIO(subArgs, os.Stdout)
+}
+
+// runBeadSubcommandIO is the testable variant that accepts an explicit stdout
+// writer. The stdout parameter receives --help output and dry-run plan output;
+// error messages go to os.Stderr unchanged.
+func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	// --- Parse flags ---
 
 	projectDirFlag := ""
@@ -254,7 +261,7 @@ func runBeadSubcommand(subArgs []string) int {
 
 		// --help / -h (hk-vudz0)
 		case arg == "--help" || arg == "-h":
-			runUsage()
+			runUsage(stdout)
 			return 0
 
 		case strings.HasPrefix(arg, "-"):
@@ -370,7 +377,7 @@ func runBeadSubcommand(subArgs []string) int {
 	var notifyFile *os.File
 	if notifyStreamSet {
 		if notifyStream == "-" {
-			notifyWriter = os.Stdout
+			notifyWriter = stdout
 		} else {
 			var openErr error
 			//nolint:gosec // G304: operator-controlled path from CLI flag
@@ -484,7 +491,7 @@ func runBeadSubcommand(subArgs []string) int {
 	// hk-cebjc: --dry-run / --plan-only prints the intended spawn plan and exits
 	// without persisting queue.json, touching the bead ledger, or launching claude.
 	if dryRun {
-		printDryRunPlan(os.Stdout, beadRecords, itemWorkflowMode, itemWorkflowRef, maxConcurrent, resolveGroupKind(subArgs))
+		printDryRunPlan(stdout, beadRecords, itemWorkflowMode, itemWorkflowRef, maxConcurrent, resolveGroupKind(subArgs))
 		return 0
 	}
 
@@ -859,11 +866,10 @@ func printDryRunPlan(out io.Writer, beadRecords []core.BeadRecord, workflowMode 
 	fmt.Fprintln(out, "No changes written. Run without --dry-run to execute.")
 }
 
-// runUsage prints help for `harmonik run --help` and returns, leaving the
-// caller to return exit code 0. Output goes to stdout so it can be captured
-// by agents without stderr redirection (hk-vudz0).
-func runUsage() {
-	fmt.Print(`harmonik run — legacy/solo-bootstrap bead execution
+// runUsage prints help for `harmonik run --help` to w. Output goes to
+// stdout so it can be captured by agents without stderr redirection (hk-vudz0).
+func runUsage(w io.Writer) {
+	fmt.Fprint(w, `harmonik run — legacy/solo-bootstrap bead execution
 
   Not the primary dispatcher. For ongoing work, start one persistent daemon
   (queue-only) and submit beads with 'harmonik queue submit'. 'harmonik run'

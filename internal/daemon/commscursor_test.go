@@ -4,7 +4,38 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/google/uuid"
 )
+
+// freshV7 returns a valid UUIDv7 string for use as a cursor event_id. Cursors in
+// production are always real event_ids (UUIDv7); Advance parses them to enforce
+// the monotonic-advance invariant (hk-fvo9e), so test cursors must be valid too.
+func freshV7(t *testing.T) string {
+	t.Helper()
+	u, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid.NewV7: %v", err)
+	}
+	return u.String()
+}
+
+// orderedV7Pair returns two valid UUIDv7 strings in strictly ascending order
+// (first < second by byte/chronological order, EV-002).
+func orderedV7Pair(t *testing.T) (string, string) {
+	t.Helper()
+	for {
+		a := freshV7(t)
+		b := freshV7(t)
+		if a < b {
+			return a, b
+		}
+		if b < a {
+			return b, a
+		}
+		// equal (same intra-ms slot collision) — retry
+	}
+}
 
 // TestCursorStoreGet_NoFile verifies Get returns "" (no error) when no cursor
 // exists yet — the caller should treat this as "start of log".
@@ -29,7 +60,7 @@ func TestCursorStoreAdvanceThenGet(t *testing.T) {
 	dir := t.TempDir()
 	cs := NewCursorStore(filepath.Join(dir, "cursors"))
 
-	const wantID = "01JXXXXXXXXXXXXXXXXXXX"
+	wantID := freshV7(t)
 	if err := cs.Advance("agent-a", wantID); err != nil {
 		t.Fatalf("Advance: %v", err)
 	}
@@ -43,15 +74,14 @@ func TestCursorStoreAdvanceThenGet(t *testing.T) {
 	}
 }
 
-// TestCursorStoreAdvanceOverwrite verifies that a second Advance replaces the
-// previous cursor value.
+// TestCursorStoreAdvanceOverwrite verifies that a second, strictly-forward
+// Advance replaces the previous cursor value.
 func TestCursorStoreAdvanceOverwrite(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	cs := NewCursorStore(filepath.Join(dir, "cursors"))
 
-	first := "01JFIRST00000000000000"
-	second := "01JSECOND0000000000000"
+	first, second := orderedV7Pair(t) // first < second
 	if err := cs.Advance("agent-b", first); err != nil {
 		t.Fatalf("first Advance: %v", err)
 	}
@@ -76,7 +106,7 @@ func TestCursorStoreSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
 	cursorDir := filepath.Join(dir, "cursors")
 
-	const wantID = "01JRESTART0000000000000"
+	wantID := freshV7(t)
 	cs1 := NewCursorStore(cursorDir)
 	if err := cs1.Advance("flywheel", wantID); err != nil {
 		t.Fatalf("Advance: %v", err)
@@ -100,10 +130,12 @@ func TestCursorStoreMultipleAgents(t *testing.T) {
 	dir := t.TempDir()
 	cs := NewCursorStore(filepath.Join(dir, "cursors"))
 
-	if err := cs.Advance("alice", "01JALICE000000000000000"); err != nil {
+	aliceID := freshV7(t)
+	bobID := freshV7(t)
+	if err := cs.Advance("alice", aliceID); err != nil {
 		t.Fatalf("Advance alice: %v", err)
 	}
-	if err := cs.Advance("bob", "01JBOB0000000000000000"); err != nil {
+	if err := cs.Advance("bob", bobID); err != nil {
 		t.Fatalf("Advance bob: %v", err)
 	}
 
@@ -111,16 +143,16 @@ func TestCursorStoreMultipleAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get alice: %v", err)
 	}
-	if alice != "01JALICE000000000000000" {
-		t.Fatalf("alice cursor: want %q, got %q", "01JALICE000000000000000", alice)
+	if alice != aliceID {
+		t.Fatalf("alice cursor: want %q, got %q", aliceID, alice)
 	}
 
 	bob, err := cs.Get("bob")
 	if err != nil {
 		t.Fatalf("Get bob: %v", err)
 	}
-	if bob != "01JBOB0000000000000000" {
-		t.Fatalf("bob cursor: want %q, got %q", "01JBOB0000000000000000", bob)
+	if bob != bobID {
+		t.Fatalf("bob cursor: want %q, got %q", bobID, bob)
 	}
 }
 
@@ -168,7 +200,7 @@ func TestCursorStoreAtomicWrite(t *testing.T) {
 	cursorDir := filepath.Join(t.TempDir(), "cursors")
 	cs := NewCursorStore(cursorDir)
 
-	if err := cs.Advance("agent-d", "01JATOMIC0000000000000"); err != nil {
+	if err := cs.Advance("agent-d", freshV7(t)); err != nil {
 		t.Fatalf("Advance: %v", err)
 	}
 

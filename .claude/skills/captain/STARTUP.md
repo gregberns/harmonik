@@ -221,7 +221,7 @@ harmonik comms send --from captain --to <crew> --topic assign -- "<epic_id> <1-l
 harmonik comms who --json | grep -q '"agent":"<crew>"' && echo "ONLINE" || echo "NOT ONLINE"
 
 # (b) pane-truth: the crew is actually DOING something (boot status / dispatch)
-tmux capture-pane -p -t harmonik-<hash>-default:hk-crew-<crew> | tail -25
+tmux capture-pane -p -t harmonik-<hash>-crew-<crew>:hk-crew-<crew> | tail -25
 #   look for: comms join, "crew <crew> online owning <epic>", a queue submit.
 harmonik comms log --from <crew> --topic status --since 10m --json   # boot status posted?
 harmonik queue status --json                                          # its named queue has a bead?
@@ -307,7 +307,7 @@ a FAILED health tick (daemon down / crew silent). Everything else is the crews' 
 
 > **Idle-crew wake (load-bearing):** a `comms send` does NOT wake an idle crew that
 > isn't running `comms recv --follow`. After re-tasking an idle crew, NUDGE its pane
-> (`tmux send-keys -t hk-crew-<name> -l "..."` then a separate `Enter`) and tell it
+> (`tmux send-keys -t harmonik-<hash>-crew-<name>:hk-crew-<name> -l "..."` then a separate `Enter`) and tell it
 > to `comms recv` + arm `--follow`. Verify it woke via `capture-pane`, don't assume.
 
 > **SLOW-RECOVERY vs GENUINE-WEDGE guard (load-bearing):** `run_stale` at ~10min is

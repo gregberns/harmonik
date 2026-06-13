@@ -81,6 +81,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/presence"
 )
 
@@ -357,8 +358,9 @@ func runCommsSendSubcommand(subArgs []string) int {
 //
 // Resolution order for the pane target:
 //  1. crew registry: loads .harmonik/crew/<agentName>.json and uses Handle+".0"
-//     (independent crew session pane, format "hk-crew-<n>:hk-crew-<n>.0").
-//  2. convention fallback: "hk-crew-<agentName>" (session name, targets first pane).
+//     (independent crew session pane, format "<session>:<window>.0").
+//  2. convention fallback: "harmonik-<projectHash>-crew-<agentName>" (session name,
+//     targets first pane). Fleet-portability T2: project-qualified crew session name.
 //
 // Best-effort: errors are returned but the caller treats them as non-fatal so that
 // message delivery is not affected by wake failures (e.g. no tmux running).
@@ -368,11 +370,11 @@ func commsWakePaneForAgent(ctx context.Context, projectDir, agentName string) er
 	var paneTarget string
 	rec, loadErr := crew.Load(projectDir, agentName)
 	if loadErr == nil && rec.Handle != "" {
-		// handle format: "hk-crew-alpha:hk-crew-alpha" → pane = handle + ".0"
+		// handle format: "<session>:<window>" → pane = handle + ".0"
 		paneTarget = rec.Handle + ".0"
 	} else {
-		// Fall back to the deterministic crew session naming convention.
-		paneTarget = "hk-crew-" + agentName
+		// Fall back to the deterministic project-qualified crew session name (T2).
+		paneTarget = lifecycle.TmuxSessionName(lifecycle.ComputeProjectHash(projectDir), "crew-"+agentName)
 	}
 	nudgeMsg := "You have a new comms message. Please check your inbox."
 	return commsInjectTmuxPane(ctx, paneTarget, nudgeMsg)
@@ -481,7 +483,7 @@ FLAGS
   --reply-to ID   Optional event_id of the message being replied to (threading hint).
   --wake          After sending, nudge the recipient's tmux pane to wake an idle crew
                   member. Requires --to (not --broadcast). The pane target is resolved
-                  from the crew registry handle, falling back to "hk-crew-<name>".
+                  from the crew registry handle, falling back to "harmonik-<hash>-crew-<name>".
                   Best-effort: wake failures are reported to stderr but do not affect
                   the exit code.
   --socket PATH   Override socket path (default: <project>/.harmonik/daemon.sock).

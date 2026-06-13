@@ -26,7 +26,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -178,6 +180,11 @@ type tmuxSubstrate struct {
 	// Bead ref: hk-hzj.
 	spawnStagger  time.Duration
 	lastWindowAt  time.Time // guarded by newWindowMu; set to time.Now() each SpawnWindow
+
+	// projectHash, when non-zero, is used to project-qualify crew session names
+	// per fleet-portability T2: "harmonik-<projectHash>-crew-<name>".
+	// Set via WithCrewProjectHash. Zero value falls back to legacy "hk-crew-<name>".
+	projectHash core.ProjectHash
 }
 
 // TmuxSubstrateOption is a functional option for NewTmuxSubstrate.
@@ -309,6 +316,15 @@ func WithSpawnStagger(d time.Duration) TmuxSubstrateOption {
 		if d > 0 {
 			s.spawnStagger = d
 		}
+	}
+}
+
+// WithCrewProjectHash sets the project hash used to project-qualify crew session
+// names: "harmonik-<projectHash>-crew-<name>" (fleet-portability T2).
+// When not set (zero value), crew session names fall back to "hk-crew-<name>".
+func WithCrewProjectHash(h core.ProjectHash) TmuxSubstrateOption {
+	return func(s *tmuxSubstrate) {
+		s.projectHash = h
 	}
 }
 
@@ -978,12 +994,16 @@ type crewSessionStopper interface {
 }
 
 // crewSessionName returns the deterministic tmux session name for crewName.
-// The name has the form "hk-crew-<crewName>".
-func crewSessionName(name string) string {
+// When projectHash is set: "harmonik-<projectHash>-crew-<crewName>" (fleet-portability T2).
+// Fallback (legacy, no projectHash): "hk-crew-<crewName>".
+func (s *tmuxSubstrate) crewSessionName(name string) string {
+	if s.projectHash != "" {
+		return lifecycle.TmuxSessionName(s.projectHash, "crew-"+name)
+	}
 	return "hk-crew-" + name
 }
 
-// SpawnCrewSession creates an independent tmux session named "hk-crew-<crewName>"
+// SpawnCrewSession creates an independent tmux session for the crew and runs
 // and runs spawn.Argv inside it. The session is decoupled from the daemon's own
 // session so that daemon restarts do not kill running crew windows (hk-mmlqt).
 //
@@ -999,7 +1019,7 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 		return nil, fmt.Errorf("daemon: SpawnCrewSession: adapter does not support session creation: %w", handler.ErrStructural)
 	}
 
-	sessName := crewSessionName(crewName)
+	sessName := s.crewSessionName(crewName)
 	windowName := spawn.WindowName
 	if windowName == "" {
 		windowName = "hk-crew-" + crewName
@@ -1061,7 +1081,7 @@ func (s *tmuxSubstrate) StopCrewSession(ctx context.Context, crewName string, ha
 	case <-time.After(crewStopQuitGrace):
 	}
 
-	return s.adapter.KillSession(ctx, crewSessionName(crewName))
+	return s.adapter.KillSession(ctx, s.crewSessionName(crewName))
 }
 
 // newPerRunSubstrate constructs a perRunSubstrate that delegates SpawnWindow to

@@ -6,13 +6,13 @@ package daemon
 // daemon SIGTERM / supervisor-revive tore down every crew window.
 //
 // Fix: crews are now spawned via crewSessionSpawner.SpawnCrewSession which
-// creates an independent tmux session ("hk-crew-<name>"), decoupled from the
-// daemon's lifecycle. The crew-stop path uses crewSessionStopper.StopCrewSession
-// to kill the whole independent session rather than just the window.
+// creates an independent tmux session, decoupled from the daemon's lifecycle.
+// The crew-stop path uses crewSessionStopper.StopCrewSession to kill the whole
+// independent session rather than just the window.
 //
 // These tests verify:
 //   - SpawnCrewSession is called (not SpawnWindow) when substrate implements crewSessionSpawner.
-//   - The independent session name follows "hk-crew-<name>".
+//   - The independent session name follows the project-qualified form (hk-ohd fleet-portability T2).
 //   - The crew registry handle is recorded from the independent session.
 //   - StopCrewSession is called (not StopWindowByHandle) when substrate implements crewSessionStopper.
 //   - The fallback SpawnWindow path remains intact for substrates that don't implement crewSessionSpawner.
@@ -24,8 +24,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +63,9 @@ func (f *hkmmlqtCrewSessionSubstrate) SpawnCrewSession(_ context.Context, crewNa
 	if f.spawnErr != nil {
 		return nil, f.spawnErr
 	}
-	return &fakeSession{handle: crewSessionName(crewName) + ":hk-crew-" + crewName}, nil
+	// Fake uses the legacy fallback session name to keep the test simple.
+	sessName := "hk-crew-" + crewName
+	return &fakeSession{handle: sessName + ":hk-crew-" + crewName}, nil
 }
 
 // StopWindowByHandle satisfies crewPaneStopper. Should NOT be called when
@@ -110,11 +114,12 @@ func TestCrewStart_IndependentSession_hkmmlqt(t *testing.T) {
 	}
 
 	// The recorded handle must carry the independent session name prefix.
+	// The fake substrate uses "hk-crew-<name>" as session name.
 	rec, loadErr := crew.Load(dir, "chani")
 	if loadErr != nil {
 		t.Fatalf("crew.Load: %v", loadErr)
 	}
-	wantPrefix := crewSessionName("chani") + ":"
+	wantPrefix := "hk-crew-chani:"
 	if !strings.HasPrefix(rec.Handle, wantPrefix) {
 		t.Errorf("registry handle = %q, want prefix %q (independent session)", rec.Handle, wantPrefix)
 	}
@@ -170,14 +175,27 @@ func TestCrewStop_FallbackToStopWindowByHandle_hkmmlqt(t *testing.T) {
 }
 
 // TestCrewSessionName_hkmmlqt verifies the deterministic session name formula.
+// Fleet-portability T2 (hk-ohd): project-qualified form "harmonik-<hash>-crew-<name>"
+// when projectHash is set; legacy "hk-crew-<name>" fallback when projectHash is zero.
 func TestCrewSessionName_hkmmlqt(t *testing.T) {
-	cases := []struct{ name, want string }{
-		{"alpha", "hk-crew-alpha"},
-		{"chani-1", "hk-crew-chani-1"},
+	const testHash core.ProjectHash = "abc123def456"
+
+	cases := []struct {
+		name        string
+		projectHash core.ProjectHash
+		want        string
+	}{
+		// Legacy fallback: no project hash.
+		{"alpha", "", "hk-crew-alpha"},
+		{"chani-1", "", "hk-crew-chani-1"},
+		// Project-qualified (T2): with project hash.
+		{"alpha", testHash, lifecycle.TmuxSessionName(testHash, "crew-alpha")},
+		{"chani-1", testHash, lifecycle.TmuxSessionName(testHash, "crew-chani-1")},
 	}
 	for _, tc := range cases {
-		if got := crewSessionName(tc.name); got != tc.want {
-			t.Errorf("crewSessionName(%q) = %q, want %q", tc.name, got, tc.want)
+		sub := &tmuxSubstrate{projectHash: tc.projectHash}
+		if got := sub.crewSessionName(tc.name); got != tc.want {
+			t.Errorf("crewSessionName(%q, projectHash=%q) = %q, want %q", tc.name, tc.projectHash, got, tc.want)
 		}
 	}
 }

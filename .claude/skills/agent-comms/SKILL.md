@@ -85,7 +85,7 @@ harmonik comms send (--to NAME | --broadcast) [--from NAME] [--topic T]
   so an idle Claude session wakes and processes it. Requires a directed
   `--to NAME` (rejected with `--broadcast` — you cannot wake a broadcast). The
   pane target is resolved from the crew registry (`.harmonik/crew/<name>.json`),
-  falling back to the `hk-crew-<name>` session convention. The nudge is delivered
+  falling back to the `harmonik-<projectHash>-crew-<name>` session convention (fleet-portability T2). The nudge is delivered
   via bracketed-paste (the same mechanism the keeper uses). Best-effort: a wake
   failure (no tmux, pane gone) is reported to stderr but does NOT affect the exit
   code or the message delivery. Reach for this when the recipient may be idle and

@@ -678,6 +678,16 @@ func ExportedSpawnSlotsInUse(sub handler.Substrate) int {
 	return 0
 }
 
+// ExportedCrewSessionName exposes the crewSessionName method of a substrate
+// returned by NewTmuxSubstrate, for fleet-portability T2 naming tests (hk-ohd).
+// Returns "" when sub is not a *tmuxSubstrate.
+func ExportedCrewSessionName(sub handler.Substrate, crewName string) string {
+	if ts, ok := sub.(*tmuxSubstrate); ok {
+		return ts.crewSessionName(crewName)
+	}
+	return ""
+}
+
 // ExportedNoCommitGuardShouldReopen exposes noCommitGuardShouldReopen for the
 // single-mode no-commit guard regression test (hk-4ie1z).
 func ExportedNoCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, parentSHA string, beadID core.BeadID) bool {

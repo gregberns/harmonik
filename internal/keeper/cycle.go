@@ -451,7 +451,10 @@ type Cycler struct {
 	// seenSessionIDs tracks all session_ids ever observed — a SID already in this
 	// set does NOT re-arm the grace timer (prevents flapping SIDs from perpetually
 	// extending the grace window). bootGraceFirstArmAt is the timestamp of the
-	// very first grace arm; used to enforce MaxBootGraceTotal ceiling.
+	// most recent burst's first grace arm; used to enforce MaxBootGraceTotal ceiling.
+	//
+	// TODO(hk-hz9 fix 5): seenSessionIDs grows unbounded. If keeper becomes
+	// permanently resident, cap it with an LRU (e.g. 128 entries).
 	currentSessionID      string
 	currentSessionIDSince time.Time
 	seenSessionIDs        map[string]struct{}
@@ -528,9 +531,15 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 			// Already-seen SIDs (e.g. a flapping session_id) do not re-arm the
 			// timer — the prior grace period was sufficient. (Refs: hk-ibb fix 2)
 			if _, alreadySeen := c.seenSessionIDs[cf.SessionID]; !alreadySeen {
-				c.currentSessionIDSince = time.Now()
-				if c.bootGraceFirstArmAt.IsZero() {
-					c.bootGraceFirstArmAt = c.currentSessionIDSince
+				now := time.Now()
+				c.currentSessionIDSince = now
+				// Burst-relative cap (Refs: hk-hz9 fix 1): reset the grace burst
+				// window on first arm OR when the prior burst's MaxBootGraceTotal has
+				// already elapsed. This ensures a new boot burst gets a fresh total
+				// window rather than inheriting accumulated time from a prior burst.
+				if c.bootGraceFirstArmAt.IsZero() ||
+					(c.cfg.MaxBootGraceTotal > 0 && time.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal) {
+					c.bootGraceFirstArmAt = now
 				}
 			}
 		}
@@ -600,7 +609,19 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 			// Fall through: retry the forced-clear.
 		} else if !c.seenLowPctAfterLastFire {
 			// Different session: suppress until pct has been seen below WarnPct.
-			return nil
+			// Force-retry exception (Refs: hk-hz9 fix 2): mirrors the same-SID path
+			// above. A novel session staying above WarnPct would otherwise wedge
+			// indefinitely — it can never arm seenLowPctAfterLastFire and the normal
+			// suppression never lifts. When above the hard force threshold and
+			// ForceRetryInterval has elapsed, allow a retry to break the stall.
+			if c.cfg.aboveForceThreshold(cf) {
+				if !c.lastForcedAttemptAt.IsZero() && time.Since(c.lastForcedAttemptAt) < c.cfg.ForceRetryInterval {
+					return nil
+				}
+				// Fall through: retry the forced-clear.
+			} else {
+				return nil
+			}
 		}
 	}
 
@@ -796,8 +817,11 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	c.lastFiredSID = cf.SessionID
 	c.seenLowPctAfterLastFire = false
 
-	// Successful cycle: reset the consecutive-timeout counter.
+	// Successful cycle: reset the consecutive-timeout counter and the grace
+	// burst window so the next novel SID after this /clear gets a fresh total
+	// window, not residual time from the current burst. (Refs: hk-hz9 fix 1)
 	c.consecutiveHandoffTimeouts = 0
+	c.bootGraceFirstArmAt = time.Time{}
 
 	return nil
 }
@@ -878,6 +902,12 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 // Gate order (subset of MaybeRun):
 //  1. .managed opt-in guard.
 //  2. Non-empty session_id (anti-loop identity requires it).
+//  2b. Boot-grace: if the session is within its grace window, defer (clear
+//      marker so the next PreCompact fire gets a clean slate). The grace state
+//      is populated by MaybeRun, which the watcher ALWAYS calls before
+//      RunForPrecompact (watcher.go:568 before :580) — that ordering is the
+//      load-bearing invariant keeping this state current without re-computing it
+//      here. Force-path exception: above ForceActPct, bypass grace.
 //  3. NOT HoldingDispatch (fail-closed: skip cycle, clear marker → next PreCompact is fail-open).
 //  4. Anti-loop suppression (same policy as MaybeRun).
 //
@@ -909,6 +939,24 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 		c.emitPrecompactBlocked(ctx, sessionID, "hold_dispatch_skip")
 		_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
 		return nil
+	}
+
+	// Gate 2b: boot-grace (Refs: hk-hz9 fix 3). The grace state is kept current
+	// by MaybeRun, which the watcher calls immediately before RunForPrecompact
+	// (watcher.go:568 before :580) — that ordering is the load-bearing invariant.
+	// Force-path exception: cf above ForceActPct bypasses grace (pane-overflow
+	// risk outweighs boot-timing false-positive risk).
+	if c.cfg.BootGracePeriod > 0 && !c.currentSessionIDSince.IsZero() &&
+		(cf == nil || !c.cfg.aboveForceThreshold(cf)) &&
+		time.Since(c.currentSessionIDSince) < c.cfg.BootGracePeriod {
+		totalExceeded := c.cfg.MaxBootGraceTotal > 0 &&
+			!c.bootGraceFirstArmAt.IsZero() &&
+			time.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal
+		if !totalExceeded {
+			c.emitPrecompactBlocked(ctx, sessionID, "boot_grace")
+			_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
+			return nil
+		}
 	}
 
 	// Observe context level for re-arm tracking (mirrors MaybeRun side-effect).

@@ -2890,3 +2890,257 @@ func TestCycler_AbortToRelatchToGraceToRefire(t *testing.T) {
 		t.Errorf("resumeSID refire: want journal phases; got none")
 	}
 }
+
+// TestCycler_CrossSID_ForceRetry_AfterAbort verifies hk-hz9 fix 2 (PROBE F):
+// after an abort, a novel session_id that stays above WarnPct (never dropping
+// below it to re-arm seenLowPctAfterLastFire) must NOT wedge permanently.
+// Gate-6 cross-SID force-retry: when above the hard force threshold and
+// ForceRetryInterval has elapsed, the cycle fires despite seenLowPctAfterLastFire
+// being false.
+//
+// Two sub-cases are exercised:
+//
+//	A: prevSID → abortSID (abort) → novelSID stays above WarnPct → recovers via
+//	   force-retry once interval elapses and context climbs above ForceActPct.
+//	B: first-session abort (no prevSID before the aborting SID) → same recovery.
+//	   This exercises the case where currentSessionIDSince is zero throughout.
+func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
+	t.Parallel()
+
+	// forceRetryInterval is kept short so the test runs fast. abortHandoffTimeout
+	// is also short so the abort completes quickly.
+	const forceRetryInterval = 80 * time.Millisecond
+	const abortHandoffTimeout = 25 * time.Millisecond
+
+	for _, tc := range []struct {
+		name     string
+		prevSID  string // empty = first-session case (no prevSID before abortSID)
+		abortSID string
+		novelSID string
+	}{
+		{name: "prev-then-abort", prevSID: "sess-prev-A", abortSID: "sess-abort-A", novelSID: "sess-novel-A"},
+		{name: "first-session-abort", prevSID: "", abortSID: "sess-abort-B", novelSID: "sess-novel-B"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			const cycleID1 = "cyc-cross-001"
+			const cycleID2 = "cyc-cross-002"
+
+			em := &keeper.RecordingEmitter{}
+			spy := &cycleSpyInjector{}
+			jc1, jc2 := &journalCapture{}, &journalCapture{}
+			cycleCount := 0
+			writeJournalFn := func(path string, j *keeper.CycleJournal) error {
+				if cycleCount == 0 {
+					return jc1.write(path, j)
+				}
+				return jc2.write(path, j)
+			}
+
+			cycleIDGen := func() string {
+				if cycleCount == 0 {
+					return cycleID1
+				}
+				return cycleID2
+			}
+
+			nonce2 := "<!-- KEEPER:" + cycleID2 + " -->"
+			readHandoff := func(_ string) (string, error) {
+				if cycleCount == 0 {
+					return "", nil // abort: no nonce
+				}
+				return nonce2, nil
+			}
+			readGaugeFn := gaugeReturnsNewSIDAfter(1, "", "agent-cross", tc.novelSID, tc.novelSID+"_post")
+
+			cfg := keeper.CyclerConfig{
+				AgentName:          "agent-cross",
+				ProjectDir:         t.TempDir(),
+				TmuxTarget:         "fake-pane",
+				ActPct:             90.0,
+				WarnPct:            80.0,
+				ForceActPct:        95.0,
+				ForceRetryInterval: forceRetryInterval,
+				HandoffTimeout:     abortHandoffTimeout,
+				ClearSettle:        20 * time.Millisecond,
+				PollInterval:       5 * time.Millisecond,
+				// BootGracePeriod disabled: this test focuses on Gate-6, not boot-grace.
+				CycleIDGen:          cycleIDGen,
+				IsManagedFn:         func(_, _ string) bool { return true },
+				HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+				ReadHandoff:         readHandoff,
+				TruncateHandoffFn:   func(_ string) error { return nil },
+				InjectFn:            spy.inject,
+				ReadGaugeFn:         readGaugeFn,
+				CrispIdleFn:         func(_, _ string) bool { return true },
+				HoldingDispatchFn:   func(_, _ string) bool { return false },
+				WriteJournalFn:      writeJournalFn,
+				AppendHandoffFn:     func(_, _ string) error { return nil },
+				SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+				SetManagedSessionFn: func(_, _, _ string) error { return nil },
+			}
+			cycler := keeper.NewCycler(cfg, em)
+			ctx := context.Background()
+
+			// ── Phase A: establish prevSID (if any) then abort on abortSID ──
+
+			if tc.prevSID != "" {
+				// Observe prevSID at low pct to establish currentSessionID without
+				// arming boot-grace (currentSessionID was "" so the inner block skips).
+				cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: tc.prevSID}
+				if err := cycler.MaybeRun(ctx, cfPrev); err != nil {
+					t.Fatalf("MaybeRun (prevSID): %v", err)
+				}
+			}
+
+			// abortSID at 97% (above ForceActPct) — fires immediately (no boot-grace,
+			// force-path bypasses Gate 3). Nonce poll times out → abort.
+			cfAbort := &keeper.CtxFile{Pct: 97.0, SessionID: tc.abortSID}
+			if err := cycler.MaybeRun(ctx, cfAbort); err != nil {
+				t.Fatalf("MaybeRun (abortSID): %v", err)
+			}
+			if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 1 {
+				t.Fatalf("Phase A: want 1 cycle_aborted; got %d", n)
+			}
+			// lastFiredSID = abortSID, lastForcedAttemptAt = now, seenLowPctAfterLastFire = false.
+
+			// ── Phase B: novelSID appears above WarnPct — must be suppressed ──
+			cycleCount = 1
+
+			// novelSID at 85% (WarnPct < 85 < ForceActPct=95): Gate-6 cross-SID
+			// suppresses because seenLowPctAfterLastFire=false AND not above force.
+			cfNovelMid := &keeper.CtxFile{Pct: 85.0, SessionID: tc.novelSID}
+			if err := cycler.MaybeRun(ctx, cfNovelMid); err != nil {
+				t.Fatalf("MaybeRun (novelSID Warn<pct<Force): %v", err)
+			}
+			if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+				t.Errorf("novelSID mid-band: want still-1 handoff_started; got %d", n)
+			}
+
+			// novelSID at 97% (above ForceActPct), immediately after abort:
+			// lastForcedAttemptAt just set → interval not elapsed → still suppressed.
+			cfNovelForce := &keeper.CtxFile{Pct: 97.0, SessionID: tc.novelSID}
+			if err := cycler.MaybeRun(ctx, cfNovelForce); err != nil {
+				t.Fatalf("MaybeRun (novelSID force, interval not elapsed): %v", err)
+			}
+			if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+				t.Errorf("novelSID force, interval not elapsed: want still-1 handoff_started; got %d (force-retry fired too early)", n)
+			}
+
+			// Wait for ForceRetryInterval to elapse.
+			time.Sleep(forceRetryInterval + 15*time.Millisecond)
+
+			// novelSID at 97% after interval: Gate-6 cross-SID force-retry escape fires.
+			if err := cycler.MaybeRun(ctx, cfNovelForce); err != nil {
+				t.Fatalf("MaybeRun (novelSID force, after interval): %v", err)
+			}
+			if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 2 {
+				t.Errorf("novelSID force, after interval: want 2 handoff_started (force-retry fired); got %d", n)
+			}
+		})
+	}
+}
+
+// TestCycler_BootGrace_BurstRelativeCap verifies hk-hz9 fix 1 (PROBE H):
+// after MaxBootGraceTotal has elapsed for one burst, a brand-new novel SID
+// must STILL receive a full boot-grace window (the cap resets per burst, not
+// lifetime). Without the fix, bootGraceFirstArmAt is never reset and
+// totalExceeded is permanently true ~10 min in, disabling boot-grace forever.
+func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent    = "burst-cap-agent"
+		prevSID  = "sess-burst-prev"
+		firstSID = "sess-burst-first"
+		nextSID  = "sess-burst-next"
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	// Set MaxBootGraceTotal very short so we can observe it elapsing.
+	const bootGrace = 80 * time.Millisecond
+	const maxBootGraceTotal = 60 * time.Millisecond // shorter than bootGrace
+
+	cfg := keeper.CyclerConfig{
+		AgentName:         agent,
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		ActPct:            90.0,
+		WarnPct:           80.0,
+		ForceActPct:       95.0,
+		HandoffTimeout:    300 * time.Millisecond,
+		ClearSettle:       20 * time.Millisecond,
+		PollInterval:      5 * time.Millisecond,
+		BootGracePeriod:   bootGrace,
+		MaxBootGraceTotal: maxBootGraceTotal,
+		CycleIDGen:        func() string { return "cyc-burst-cap" },
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:       func(_ string) (string, error) { return "", nil }, // abort
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 85.0, SessionID: nextSID}, time.Now(), nil
+		},
+		CrispIdleFn:         func(_, _ string) bool { return true },
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+	ctx := context.Background()
+
+	// 1. Observe prevSID at low pct — no grace armed (first SID seen, currentSessionID "").
+	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
+	if err := cycler.MaybeRun(ctx, cfPrev); err != nil {
+		t.Fatalf("MaybeRun (prevSID): %v", err)
+	}
+
+	// 2. firstSID at 92%: session change from prevSID → firstSID arms bootGraceFirstArmAt.
+	cfFirst := &keeper.CtxFile{Pct: 92.0, SessionID: firstSID}
+	if err := cycler.MaybeRun(ctx, cfFirst); err != nil {
+		t.Fatalf("MaybeRun (firstSID grace-arm): %v", err)
+	}
+	// Grace must suppress.
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 0 {
+		t.Fatalf("firstSID during grace: want 0 handoff_started; got %d", n)
+	}
+
+	// 3. Wait for MaxBootGraceTotal to elapse — the OLD first burst is now expired.
+	time.Sleep(maxBootGraceTotal + 15*time.Millisecond)
+
+	// 4. nextSID at 92%: this is a novel SID. With the fix, bootGraceFirstArmAt
+	//    resets because MaxBootGraceTotal has elapsed → a new burst window starts
+	//    → boot-grace suppresses the cycle for this new SID.
+	cfNext := &keeper.CtxFile{Pct: 92.0, SessionID: nextSID}
+	if err := cycler.MaybeRun(ctx, cfNext); err != nil {
+		t.Fatalf("MaybeRun (nextSID, should be grace-protected): %v", err)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 0 {
+		t.Errorf("nextSID after old burst expired: want 0 handoff_started (grace reset for new burst); got %d", n)
+	}
+
+	// 5. Wait for the new burst's BootGracePeriod to elapse.
+	time.Sleep(bootGrace + 15*time.Millisecond)
+
+	// 6. Observe nextSID at low pct to set seenLowPctAfterLastFire (lastFiredSID="" so this is a no-op).
+	cfNextLow := &keeper.CtxFile{Pct: 70.0, SessionID: nextSID}
+	if err := cycler.MaybeRun(ctx, cfNextLow); err != nil {
+		t.Fatalf("MaybeRun (nextSID low): %v", err)
+	}
+
+	// 7. nextSID at 92% after new burst grace expires → cycle fires (gate-3 act, gate-4 crisp).
+	if err := cycler.MaybeRun(ctx, cfNext); err != nil {
+		t.Fatalf("MaybeRun (nextSID after grace): %v", err)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+		t.Errorf("nextSID after new burst grace expires: want 1 handoff_started; got %d", n)
+	}
+}

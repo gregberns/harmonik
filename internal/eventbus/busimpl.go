@@ -322,7 +322,7 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 		// registry-coverage sensor (EV-034) catches unregistered types at startup.
 		typeSchemaVersion = 1
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	evt := core.Event{
 		EventID:         eventID,
 		SchemaVersion:   typeSchemaVersion,
@@ -440,7 +440,7 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 	if !knownTypeWithRun {
 		typeSchemaVersionWithRun = 1
 	}
-	now := time.Now()
+	now := time.Now().UTC()
 	runIDVal := runID
 	evt := core.Event{
 		EventID:         eventID,
@@ -555,7 +555,7 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 		EventID:         eventID,
 		SchemaVersion:   typeSchemaVersion,
 		Type:            agentMessageType,
-		TimestampWall:   time.Now(),
+		TimestampWall:   time.Now().UTC(),
 		SourceSubsystem: "eventbus",
 		Payload:         redactedBytes,
 	}
@@ -644,7 +644,7 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 		EventID:         eventID,
 		SchemaVersion:   typeSchemaVersion,
 		Type:            agentPresenceType,
-		TimestampWall:   time.Now(),
+		TimestampWall:   time.Now().UTC(),
 		SourceSubsystem: "eventbus",
 		Payload:         redactedBytes,
 	}
@@ -742,7 +742,7 @@ func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, paylo
 		EventID:         eventID,
 		SchemaVersion:   typeSchemaVersion,
 		Type:            typeName,
-		TimestampWall:   time.Now(),
+		TimestampWall:   time.Now().UTC(),
 		SourceSubsystem: "eventbus",
 		Payload:         redactedBytes,
 	}

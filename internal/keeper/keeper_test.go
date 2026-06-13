@@ -2,8 +2,10 @@ package keeper_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/keeper"
@@ -222,6 +224,63 @@ func TestWriteAndReadManagedSessionID(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("ReadManagedSessionID = %q; want %q", got, want)
+	}
+}
+
+// TestWriteManagedSessionID_ConcurrentWrites verifies that multiple goroutines
+// (simulating concurrent watcher/cycler/rebind-CLI writers) can call
+// WriteManagedSessionID concurrently without leaving the .managed file in a
+// partial or corrupt state. Each writer uses a unique temp path (os.CreateTemp)
+// so writers never trample each other's in-flight content. After all goroutines
+// complete, .managed must be readable and contain a well-formed session_id line.
+// Refs: hk-b5e2 (os.CreateTemp hardening).
+func TestWriteManagedSessionID_ConcurrentWrites(t *testing.T) {
+	t.Parallel()
+
+	const writers = 20
+	projectDir := t.TempDir()
+	agent := "concurrent-agent"
+
+	var wg sync.WaitGroup
+	wg.Add(writers)
+	errs := make([]error, writers)
+	sids := make([]string, writers)
+	for i := range writers {
+		i := i
+		sid := fmt.Sprintf("sess-%04d", i)
+		sids[i] = sid
+		go func() {
+			defer wg.Done()
+			errs[i] = keeper.WriteManagedSessionID(projectDir, agent, sid)
+		}()
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("writer %d: %v", i, err)
+		}
+	}
+
+	// .managed must still exist and contain a valid (non-empty) session_id.
+	if !keeper.IsManaged(projectDir, agent) {
+		t.Fatal("IsManaged: expected true after concurrent writes")
+	}
+	got, err := keeper.ReadManagedSessionID(projectDir, agent)
+	if err != nil {
+		t.Fatalf("ReadManagedSessionID after concurrent writes: %v", err)
+	}
+	// The winning session_id must be one of the values written by a goroutine —
+	// it cannot be empty or a partial mix of two writes.
+	found := false
+	for _, sid := range sids {
+		if got == sid {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("ReadManagedSessionID = %q; want one of the %d written session_ids", got, writers)
 	}
 }
 

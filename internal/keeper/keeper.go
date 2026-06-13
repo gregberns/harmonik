@@ -157,9 +157,12 @@ func isUUIDv7(sid string) bool { return IsUUIDv7(sid) }
 // is created if absent (which also makes IsManaged return true). Passing an
 // empty sessionID clears the binding while preserving the managed marker.
 //
-// The write is performed atomically via a temp-file + rename so that a process
-// crash between truncation and write never leaves .managed in a partial state
-// (TOCTOU guard on the clear→re-latch window). Refs: hk-mzdm.
+// The write is performed atomically via a unique temp-file (os.CreateTemp) +
+// fsync + rename. Using os.CreateTemp prevents the watcher, cycler, and
+// 'keeper rebind' CLI (separate processes) from clobbering each other's
+// in-flight content, since each writer gets a distinct temp path. The fsync
+// before rename closes the power-loss partial-write window. The rename itself
+// is atomic on POSIX for same-filesystem paths (TOCTOU guard). Refs: hk-mzdm, hk-b5e2.
 //
 // Called by the watcher when it latches the first observed session_id, and by
 // the cycler after a cycle completes to bind to the resumed session.
@@ -179,13 +182,30 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 	if content != "" {
 		content += "\n"
 	}
-	// Write to a temp file in the same directory then rename — the rename is
-	// atomic on POSIX for same-filesystem paths, so .managed is never partially
-	// written (prevents partial reads on clear→re-latch races). Refs: hk-mzdm.
-	tmpPath := path + ".tmp"
-	//nolint:gosec // G304,G306: path from validated operator-controlled inputs; 0600 keeper-owned
-	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
+	// os.CreateTemp gives each concurrent writer a unique temp path so no two
+	// concurrent writes (watcher, cycler, rebind CLI) can publish each other's
+	// partial content. Refs: hk-b5e2.
+	//nolint:gosec // G304: keeperDir derived from operator-controlled projectDir; pattern uses validated agent name
+	tmp, err := os.CreateTemp(keeperDir, agent+".managed.*.tmp")
+	if err != nil {
+		return fmt.Errorf("keeper: create managed session_id tmp: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()    //nolint:errcheck // cleanup before remove
+		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: write managed session_id tmp %q: %w", tmpPath, err)
+	}
+	// fsync before rename to close the power-loss partial-write window.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()    //nolint:errcheck // cleanup before remove
+		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
+		return fmt.Errorf("keeper: fsync managed session_id tmp %q: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
+		return fmt.Errorf("keeper: close managed session_id tmp %q: %w", tmpPath, err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup of tmp

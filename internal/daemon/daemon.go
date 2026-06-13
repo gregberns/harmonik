@@ -1323,6 +1323,24 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			// Bead ref: hk-th378.
 			_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brAdapterErr, "br-new-for-project-queue", bus)
 		} else {
+			// F40 (hk-n2y): run `br sync --flush-only` before QM-002a/QM-002b
+			// reconciliation to ensure the SQLite ledger is settled. After a
+			// daemon restart the database may be transiently locked by the
+			// previous process, causing every `br show` call to return exit 3
+			// with empty stdout for the first ~31 items. A flush-only sync
+			// forces a full database round-trip, clearing the lock so the
+			// subsequent ShowBead queries succeed without spurious warnings.
+			// Non-fatal: on sync failure the reconciliation continues with
+			// the pre-F40 degraded behaviour (ShowBead failures are warned
+			// and skipped).
+			if syncErr := brAdapterForQueue.SyncFlushOnly(context.Background()); syncErr != nil {
+				logW := cfg.LogWriter
+				if logW == nil {
+					logW = os.Stderr
+				}
+				fmt.Fprintf(logW, "warn: daemon startup: br sync --flush-only failed; QM-002b ShowBead queries may emit transient exit-3 warnings: %v\n", syncErr)
+			}
+
 			loadedQueues, loadErr := lifecycle.LoadQueueAtStartup(
 				context.Background(),
 				cfg.ProjectDir,

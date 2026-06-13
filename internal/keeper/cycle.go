@@ -117,8 +117,17 @@ type CyclerConfig struct {
 	// in production (e.g. 5 * time.Minute). The grace applies only when the
 	// session_id CHANGES — not on first Cycler startup — so an already-running
 	// agent is monitored without delay on keeper boot.
-	// Refs: hk-4f8 (bad-trigger-timing + no-re-arm fix).
+	// EXCEPTION: an agent above ForceActPct bypasses the grace (hk-ibb fix 1).
+	// Refs: hk-4f8 (bad-trigger-timing + no-re-arm fix), hk-ibb (follow-up).
 	BootGracePeriod time.Duration
+
+	// MaxBootGraceTotal is an upper bound on how long boot-grace can suppress
+	// cycles across all SID transitions since the first grace was armed. After
+	// this total duration the grace gate is skipped even if per-SID grace has
+	// not yet expired. This caps the total latency added by grace in adversarial
+	// SID-flapping scenarios. Default: 2 * BootGracePeriod when BootGracePeriod
+	// > 0, otherwise zero (disabled). Refs: hk-ibb (fix 2 — flap cap).
+	MaxBootGraceTotal time.Duration
 
 	// MaxHandoffTimeouts is the number of consecutive handoff timeouts above
 	// the force threshold before escalating to ForceRestartFn. Zero disables
@@ -182,6 +191,9 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.ForceRetryInterval <= 0 {
 		c.ForceRetryInterval = 120 * time.Second
+	}
+	if c.BootGracePeriod > 0 && c.MaxBootGraceTotal <= 0 {
+		c.MaxBootGraceTotal = 2 * c.BootGracePeriod
 	}
 	if c.MaxHandoffTimeouts <= 0 {
 		c.MaxHandoffTimeouts = 3
@@ -430,14 +442,20 @@ type Cycler struct {
 	// ForceRestartFn is called to hard-restart the agent.
 	consecutiveHandoffTimeouts int
 
-	// Boot-grace tracking (Refs: hk-4f8).
+	// Boot-grace tracking (Refs: hk-4f8, hk-ibb).
 	// currentSessionID is the session_id most recently seen in MaybeRun.
-	// currentSessionIDSince is the time the session_id last CHANGED (set only
-	// when a non-empty previous session_id was evicted). Zero on first boot,
-	// meaning the grace does not apply when the Cycler has never seen a prior
-	// session — only post-/session-resume transitions trigger the grace.
+	// currentSessionIDSince is the time the session_id last CHANGED to a
+	// never-before-seen SID (set only when a non-empty previous session_id was
+	// evicted AND the new SID is novel). Zero on first boot, meaning the grace
+	// does not apply when the Cycler has never seen a prior session.
+	// seenSessionIDs tracks all session_ids ever observed — a SID already in this
+	// set does NOT re-arm the grace timer (prevents flapping SIDs from perpetually
+	// extending the grace window). bootGraceFirstArmAt is the timestamp of the
+	// very first grace arm; used to enforce MaxBootGraceTotal ceiling.
 	currentSessionID      string
 	currentSessionIDSince time.Time
+	seenSessionIDs        map[string]struct{}
+	bootGraceFirstArmAt   time.Time
 }
 
 // NewCycler constructs a Cycler. Defaults are applied to zero-valued config fields.
@@ -496,26 +514,49 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 		c.seenLowPctAfterLastFire = false
 	}
 
-	// Boot-grace gate (Refs: hk-4f8 — bad-trigger-timing fix).
-	// Track when the session_id last changed. Apply a grace window after each
-	// session_id transition so that forced-clear cycles cannot fire while an
-	// agent is still booting after a /session-resume. The grace applies ONLY
-	// when a previous session_id was evicted (currentSessionIDSince is non-zero),
-	// not on initial Cycler startup — so a long-running agent is monitored
-	// without delay when the keeper first boots.
+	// Boot-grace gate (Refs: hk-4f8 — bad-trigger-timing fix, hk-ibb — follow-up).
+	// Track when the session_id last changed to a NEVER-SEEN SID. Apply a grace
+	// window after each novel session_id transition so cycles cannot fire while
+	// an agent is still booting after a /session-resume. The grace applies ONLY
+	// when a previous session_id was evicted AND the new SID is novel (never
+	// observed before), preventing flapping SIDs from perpetually re-arming the
+	// timer. On initial Cycler startup (currentSessionID == "") no grace is armed
+	// so an already-running agent is monitored without delay on keeper boot.
 	if cf.SessionID != c.currentSessionID {
 		if c.currentSessionID != "" {
-			// Session changed: start the boot-grace timer.
-			c.currentSessionIDSince = time.Now()
+			// Session changed: arm grace only for a never-seen SID.
+			// Already-seen SIDs (e.g. a flapping session_id) do not re-arm the
+			// timer — the prior grace period was sufficient. (Refs: hk-ibb fix 2)
+			if _, alreadySeen := c.seenSessionIDs[cf.SessionID]; !alreadySeen {
+				c.currentSessionIDSince = time.Now()
+				if c.bootGraceFirstArmAt.IsZero() {
+					c.bootGraceFirstArmAt = c.currentSessionIDSince
+				}
+			}
 		}
+		if c.seenSessionIDs == nil {
+			c.seenSessionIDs = make(map[string]struct{})
+		}
+		c.seenSessionIDs[cf.SessionID] = struct{}{}
 		c.currentSessionID = cf.SessionID
 	}
+	// Force-path exemption (Refs: hk-ibb fix 1): an agent above ForceActPct
+	// bypasses the boot grace entirely — pane-overflow risk outweighs the
+	// boot-timing false-positive risk.
 	if c.cfg.BootGracePeriod > 0 && !c.currentSessionIDSince.IsZero() &&
+		!c.cfg.aboveForceThreshold(cf) &&
 		time.Since(c.currentSessionIDSince) < c.cfg.BootGracePeriod {
-		slog.DebugContext(ctx, "keeper: boot grace active — deferring cycle for new session",
-			"agent", c.cfg.AgentName, "session_id", cf.SessionID,
-			"grace_remaining", c.cfg.BootGracePeriod-time.Since(c.currentSessionIDSince))
-		return nil
+		// MaxBootGraceTotal ceiling: if total time since first grace-arm exceeds
+		// the cap, skip the grace gate regardless of per-SID timer. (hk-ibb fix 2)
+		totalExceeded := c.cfg.MaxBootGraceTotal > 0 &&
+			!c.bootGraceFirstArmAt.IsZero() &&
+			time.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal
+		if !totalExceeded {
+			slog.DebugContext(ctx, "keeper: boot grace active — deferring cycle for new session",
+				"agent", c.cfg.AgentName, "session_id", cf.SessionID,
+				"grace_remaining", c.cfg.BootGracePeriod-time.Since(c.currentSessionIDSince))
+			return nil
+		}
 	}
 
 	// Gate 3: context must reach the act threshold.
@@ -655,16 +696,20 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 		c.seenLowPctAfterLastFire = false
 
 		// Re-arm: clear .managed so the watcher re-latches on the next valid
-		// gauge after this abort. Without this, a session_id change after the
-		// abort (agent completed /session-resume) leaves the watcher's binding
-		// stale: the new session's gauge is permanently classified as
-		// foreign_session and MaybeRun is never called again for that session.
-		// Clearing .managed allows the watcher to latch the new session_id on
-		// its next fresh-gauge tick, restoring normal monitoring and re-arm.
-		// Refs: hk-4f8 (no-re-arm fix).
-		if setErr := c.cfg.SetManagedSessionFn(c.cfg.ProjectDir, c.cfg.AgentName, ""); setErr != nil {
-			slog.WarnContext(ctx, "keeper: clear managed session_id after handoff_timeout abort",
-				"agent", c.cfg.AgentName, "err", setErr)
+		// gauge after this abort — but ONLY when a real session-id change was
+		// previously observed (currentSessionIDSince non-zero). When the keeper
+		// has never seen a session change (first monitored session), clearing
+		// .managed prematurely allows a new SID to latch and trigger boot-grace,
+		// creating a Gate-6 suppression stall where the force-retry exception
+		// never fires (different SID, no low-pct observation). Gating this on
+		// !currentSessionIDSince.IsZero() ensures the watcher stays bound to the
+		// original session and Gate-6 same-SID force-retry handles the retry loop.
+		// Refs: hk-4f8 (no-re-arm fix), hk-ibb (fix 3 — gate abort-clear).
+		if !c.currentSessionIDSince.IsZero() {
+			if setErr := c.cfg.SetManagedSessionFn(c.cfg.ProjectDir, c.cfg.AgentName, ""); setErr != nil {
+				slog.WarnContext(ctx, "keeper: clear managed session_id after handoff_timeout abort",
+					"agent", c.cfg.AgentName, "err", setErr)
+			}
 		}
 
 		// Escalation path: track consecutive timeouts above the force threshold

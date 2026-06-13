@@ -168,6 +168,10 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-djqc9: agent-comms typed events (agent-comms spec §1).
 	{TypeName: "agent_message", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "agent_presence", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-33p: hitl-decisions typed events (hitl-decisions SPEC §1, component K1).
+	{TypeName: "decision_needed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "decision_resolved", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "decision_withdrawn", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.4 Budget lifecycle ───────────────────────────────────────────────
 	{TypeName: "budget_accrual", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

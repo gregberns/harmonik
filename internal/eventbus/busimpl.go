@@ -128,6 +128,13 @@ var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
 	// agent-comms §1.1 (hk-djqc9): agent_message is F-class so comms-send is
 	// durable before returning OK ("no silent drops" goal G2).
 	core.EventType("agent_message"): {},
+	// hitl-decisions §1 (hk-33p, K1): the three decision_* events are F-class
+	// (SPEC §6 N1, load-bearing) — a lost decision_resolved would leave the
+	// blocked agent waiting forever (Risk R1). Distinct from the §8.12
+	// decision_required/decision_acknowledged daemon-escalation family.
+	core.EventType("decision_needed"):    {},
+	core.EventType("decision_resolved"):  {},
+	core.EventType("decision_withdrawn"): {},
 }
 
 // isFsyncBoundaryEvent reports whether eventType is an F-class (fsync-boundary)

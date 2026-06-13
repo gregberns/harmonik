@@ -912,3 +912,43 @@ const (
 	// Bead ref: hk-9321v.
 	EventTypeStaleOpenBeadDetected EventType = "stale_open_bead_detected"
 )
+
+// ---------------------------------------------------------------------------
+// §8.15 HITL-decisions event types (codename:hitl-decisions, hk-33p)
+// ---------------------------------------------------------------------------
+//
+// The agent→human decision dual of agent-comms: an agent emits a
+// decision_needed event when it hits a point that needs a human (a product
+// call, an authorization, a pick among options) and blocks cleanly; a human
+// answers, routing a decision_resolved back; an orphaned or self-obsoleted
+// decision is closed with decision_withdrawn. All three ride the standard
+// EV-001 envelope and are F-class (fsync-boundary, N1 — see
+// eventbus.fsyncBoundaryEventTypes): a lost terminal would leave the blocked
+// agent waiting forever (hitl-decisions SPEC §6 N1 / Risk R1, load-bearing).
+//
+// These are DISTINCT from the pre-existing §8.12 decision_required /
+// decision_acknowledged daemon-escalation family — different names, different
+// payloads, different producers.
+//
+// Spec ref: ~/.kerf/.../hitl-decisions/SPEC.md §1 (1.1/1.2/1.3 schemas), §6 N1.
+// Bead ref: hk-33p (component K1).
+const (
+	// EventTypeDecisionNeeded is the decision_needed event type (hitl-decisions
+	// SPEC §1.1). Emitted by an agent (via the daemon on its behalf) when it
+	// hits a decision point that needs a human. Its bus-minted event_id becomes
+	// the decision_id that the two terminals carry. Durability class: F.
+	EventTypeDecisionNeeded EventType = "decision_needed"
+
+	// EventTypeDecisionResolved is the decision_resolved event type
+	// (hitl-decisions SPEC §1.2). Emitted when a human answers an open
+	// decision; carries the decision_id and the chosen_option, routed back to
+	// unblock the originating agent (first-writer-wins on decision_id per §9).
+	// Durability class: F.
+	EventTypeDecisionResolved EventType = "decision_resolved"
+
+	// EventTypeDecisionWithdrawn is the decision_withdrawn event type
+	// (hitl-decisions SPEC §1.3). Emitted when an agent self-obsoletes its own
+	// open decision (reason=self_obsoleted) or the keeper reaps an orphaned one
+	// (reason=orphaned). Durability class: F.
+	EventTypeDecisionWithdrawn EventType = "decision_withdrawn"
+)

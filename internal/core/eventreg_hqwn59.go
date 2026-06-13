@@ -41,6 +41,7 @@ func init() {
 	registerWorkflowLoaderEvents()
 	registerKeeperEvents()
 	registerAlarmEvents()
+	registerHITLDecisionEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors,
@@ -461,6 +462,27 @@ func registerKeeperEvents() {
 //     from bead_closed + reviewer_verdict sequence in the JSONL log)
 func registerAlarmEvents() {
 	mustRegister("review_gate_anomaly", func() EventPayload { return &ReviewGateAnomalyPayload{} })
+}
+
+// registerHITLDecisionEvents registers the §8.15 hitl-decisions event payload
+// constructors (codename:hitl-decisions, hk-33p, component K1).
+//
+// These are the agent→human decision dual of agent-comms. All three are F-class
+// (fsync-boundary — added to eventbus.fsyncBoundaryEventTypes per SPEC §6 N1):
+// a lost decision_resolved would leave the blocked agent waiting forever
+// (Risk R1, load-bearing).
+//
+// Durability classes per hitl-decisions SPEC §1 / §6 N1:
+//   - decision_needed (§1.1):    F (fsync-boundary — durable decision-request landmark)
+//   - decision_resolved (§1.2):  F (fsync-boundary — a lost answer never wakes the agent)
+//   - decision_withdrawn (§1.3): F (fsync-boundary — a lost withdrawal leaves a stale open decision)
+//
+// Distinct from the §8.12 decision_required / decision_acknowledged
+// daemon-escalation family.
+func registerHITLDecisionEvents() {
+	mustRegister("decision_needed", func() EventPayload { return &DecisionNeededPayload{} })
+	mustRegister("decision_resolved", func() EventPayload { return &DecisionResolvedPayload{} })
+	mustRegister("decision_withdrawn", func() EventPayload { return &DecisionWithdrawnPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

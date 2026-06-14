@@ -45,6 +45,7 @@ import (
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/hookrelay"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -678,6 +679,20 @@ EXAMPLES
 	flag.StringVar(&codexBinaryFlag, "codex-binary", "",
 		"path to the codex executable (default: 'codex' resolved by PATH)")
 
+	// --worker-host: CLI override for the single remote worker's host field.
+	// When explicitly set, takes precedence over the value in .harmonik/workers.yaml
+	// following flag > file > default precedence (B4 remote-substrate).
+	var workerHostFlag string
+	flag.StringVar(&workerHostFlag, "worker-host", "",
+		"override the remote worker host (B4 remote-substrate; empty = use workers.yaml value)")
+
+	// --worker-enabled: CLI override for the single remote worker's enabled field.
+	// When explicitly set via --worker-enabled or --no-worker-enabled, takes
+	// precedence over the value in .harmonik/workers.yaml (B4 remote-substrate).
+	var workerEnabledFlag bool
+	flag.BoolVar(&workerEnabledFlag, "worker-enabled", false,
+		"override the remote worker enabled state (B4 remote-substrate)")
+
 	// --agent-ready-timeout: HC-056 per-dispatch timeout for the agent_ready event.
 	// The daemon kills and reopens the bead when the agent does not signal ready
 	// within this window. Zero (the default) falls back to the compiled-in default
@@ -756,6 +771,16 @@ EXAMPLES
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", branchErr)
 		return 1
 	}
+
+	// Load workers.yaml for the remote-substrate worker registry (B4).
+	// Missing file → zero-value Config (local execution only); malformed → fatal.
+	workersCfg, workersErr := workers.Load(projectDir)
+	if workersErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik: %v\n", workersErr)
+		return 1
+	}
+	// Apply CLI overrides: flag > file > default (B4).
+	workersCfg = applyWorkerOverrides(workersCfg, explicitFlags, workerHostFlag, workerEnabledFlag)
 
 	// Resolve max_concurrent: explicit flag > config (> 0) > flag default (1).
 	if !explicitFlags["max-concurrent"] && projCfg.Daemon.MaxConcurrent > 0 {
@@ -913,6 +938,7 @@ EXAMPLES
 		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag,        // hk-mkxw1: guard against unprotected default branch
 		DefaultHarness:           core.AgentType(defaultHarnessFlag),  // hk-y01k6: tier-4 harness default
 		CodexBinary:              codexBinaryFlag,                     // hk-y01k6: codex executable path
+		Workers:                  workersCfg,                          // hk-rs-b4-bootwire-b44z: remote-substrate worker registry
 	}
 
 	// Yanked-binary check (specs/release-pipeline.md §7.2 point 4).

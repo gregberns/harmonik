@@ -15,6 +15,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/brcli"
+	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -507,6 +508,15 @@ type Config struct {
 	//
 	// Bead ref: hk-y01k6 [C4/T4].
 	CodexBinary string
+
+	// Workers is the remote-worker registry loaded from .harmonik/workers.yaml at
+	// daemon startup (remote-substrate B4). The zero value (empty Config) means
+	// local execution only. CLI flag overrides applied by the composition root
+	// (--worker-host, --worker-enabled) take precedence over file values per the
+	// flag > file > default chain.
+	//
+	// Bead ref: hk-rs-b4-bootwire-b44z.
+	Workers workers.Config
 }
 
 // daemonTestHooks carries test-only injection points that are absent from the

@@ -146,10 +146,10 @@ You do NOT dispatch until there is a written, lane-organized plan. "Watch one
 bead and react" is the failure mode — this step forbids it.
 
 ```bash
-br ready --json | jq -r '.[] | "\(.id)\t\(.title)"'        # everything unblocked
-br list --status=open --type=epic --json                    # candidate lane epics
-kerf next --format=json                                     # ranked feed (priority SoT)
-kerf map                                                     # works grouped by area
+br ready --limit 0 --json | jq -r '.[] | "\(.id)\t\(.title)"'  # ALL unblocked (unpaginated)
+br list --status=open --type=epic --json                        # candidate lane epics
+kerf next --format=json                                         # ranked feed (priority SoT)
+kerf map                                                        # works grouped by area
 ```
 
 > kerf is the priority source of truth — and **executing that existing ranking is
@@ -322,7 +322,7 @@ harmonik comms recv --follow --from captain --json
 ```text
 # Watcher 2 — a SPARSE health tick via /loop (NOT a short-heartbeat subscribe).
 #   Paste this ONCE after the fleet is verified; it self-paces and survives keeper resets:
-/loop 12m Captain health check: (1) daemon up — harmonik queue status, exit17=rebuild+restart; (2) all crews comms-fresh — harmonik comms who, each <150s (stale ⇒ capture-pane, nudge/reconcile); (3) drain comms for epic_completed/errors/operator and act. Else report one-line green. Do NOT read run ages, narrate active beads, or call a launch wedge before launch+30min.
+/loop 12m Captain health check: (1) daemon up — harmonik queue status, exit17=rebuild+restart; (2) all crews comms-fresh — harmonik comms who, each <150s (stale ⇒ capture-pane, nudge/reconcile); (3) drain comms for epic_completed/errors/operator and act; (4) BACKLOG-PULL: run kerf next + br ready --limit 0, staff every ready lane/bead with a free crew/queue slot — do not leave ready work unassigned while a slot exists; (5) LULL-DEPLOY: if in a true lull (0 merging runs), deploy + verify own merged work (ff-after-push); (6) self-audit: is any initiative stalled for a reason other than a genuine §8 surface-and-await case? If so, unblock it. A tick that finds ready work AND a free slot AND does NOT staff them is a FAILED tick, not a healthy one. Do NOT read run ages, narrate active beads, or call a launch wedge before launch+30min.
 ```
 
 If you keep a `subscribe` for lane completion, request **ONLY** `epic_completed`
@@ -334,7 +334,15 @@ The health tick IS the "periodic lightweight Step 2": each fire re-checks daemon
 staring at runs. **Between ticks, idle** — a verified crew self-manages its beads,
 wedges, and failures. React only to: `epic_completed` (re-task the crew to its
 next lane), crew error posts (investigate/decide), operator messages (answer), or
-a FAILED health tick (daemon down / crew silent). Everything else is the crews' job.
+a FAILED health tick (daemon down / crew silent / ready work unassigned). Everything
+else is the crews' job.
+
+> **FAILED-tick definition (tightened):** a tick is FAILED if: (a) the daemon is
+> down, OR (b) any crew is comms-silent past 150s, OR **(c) `br ready --limit 0`
+> shows ready beads AND a free crew/queue slot exists AND the tick did not staff
+> them.** A quiet all-green tick while (c) holds is NOT a healthy tick — it is a
+> MISSED STAFFING FAILURE. The captain's job is to maximize throughput; idling with
+> ready work in the feed is the same failure mode as watching a zombie crew.
 
 > **Idle-crew wake (load-bearing):** a `comms send` does NOT wake an idle crew that
 > isn't running `comms recv --follow`. After re-tasking an idle crew, NUDGE its pane
@@ -395,6 +403,13 @@ exactly how lanes end up zombie/idle/unassigned.
 out at ~120s. A crew in `crew list` but absent from `comms who` is a ZOMBIE (Step
 3), not a healthy lane — even if its tmux window still exists. Reconcile it; do
 not assume it.
+
+**G. Never be wishy-washy / never over-defer.** Holding while ready work exists,
+punting a decidable question to the operator, or treating a satisfied past request
+as a standing blocker are all FAILURES. Decide and act unless the matter is one of
+the four genuine §8 cases (locked-reversal, destructive-op, brand-new-initiative,
+authorization-scope you don't have). Every other decision is captain-owned: make it,
+state the rationale in one line, and move.
 
 ---
 

@@ -53,6 +53,10 @@ Fire this protocol when ALL hold:
 3. Issue is blocking the critical path (daemon down, no-spawn, no-merge).
 4. At least one refutation came from a **live-smoke**, not reasoning alone.
 
+> **NOT for deciding open questions** — that is the captain skill's §0.1
+> consensus-first gate (a 3-agent consensus run before any surface-and-await). This
+> protocol DIAGNOSES a stuck BLOCKER only; it does not DECIDE a question.
+
 ---
 
 ## The protocol (abbreviated)

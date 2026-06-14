@@ -173,7 +173,7 @@ Write the plan as a **lane table** (one lane = one epic = one crew). For each:
 SURFACE the plan to the operator (dual-channel — status line AND `comms send --to
 operator --topic status`) for VISIBILITY, then proceed to Step 5 to staff every
 KNOWN ready lane. Do NOT block on a lane-assignment reply for work already ranked in
-`kerf next` — surface-and-await only for a brand-NEW initiative (§8).
+`kerf next` — surface-and-await only for a brand-NEW initiative (§8). And before any such surface-and-await, run the captain skill's §0.1 consensus-first gate — adopt a sound 3-agent consensus as a STATUS with a redline window; block only on a genuine split.
 
 ---
 

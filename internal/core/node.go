@@ -100,7 +100,7 @@ type Node struct {
 	// False by default. Meaningful only for dot-mode agentic implementer nodes.
 	NonCommitting bool
 
-	// AutoStatus is the optional auto_status boolean field (WG-041 §I.4).
+	// AutoStatus is the optional auto_status boolean field (WG-053).
 	// When true on an implementer-class agentic node, after the implementer exits
 	// the daemon runs a deterministic work-product inspection (AR-006-clean,
 	// no LLM) and emits Outcome{FAIL, failure_class=deterministic} if the

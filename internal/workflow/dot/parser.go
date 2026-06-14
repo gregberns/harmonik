@@ -697,7 +697,7 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				})
 			}
 		case "auto_status":
-			// Agentic-only per WG-041 §I.4. Accepted as "true" or "false" (boolean);
+			// Agentic-only per WG-053. Accepted as "true" or "false" (boolean);
 			// retained on reviewer/non-agentic/gate nodes with a v1 WARNING (WG-031).
 			// Any non-boolean value (policy name/mode) is rejected — reserved for a
 			// future step. Sibling to non_committing.
@@ -710,7 +710,7 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 				errs = append(errs, &ParseError{
 					Line: pair.line,
 					Message: fmt.Sprintf(
-						"node %q: auto_status %q must be \"true\" or \"false\" (WG-041 §I.4); "+
+						"node %q: auto_status %q must be \"true\" or \"false\" (WG-053); "+
 							"non-boolean policy values are reserved for a future step",
 						rn.id, pair.val),
 				})
@@ -841,14 +841,14 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 		})
 	}
 	// Post-loop: auto_status= is agentic-only. Emit a v1 WARNING when it
-	// appears on a reviewer-class, non-agentic, or gate node (WG-041 §I.4,
+	// appears on a reviewer-class, non-agentic, or gate node (WG-053,
 	// WG-031 permissive-retain). Only warn when node.Type is resolved and is
 	// not agentic. The value is retained in the AST and ignored at dispatch.
 	if node.AutoStatus && node.Type != "" && node.Type != core.NodeTypeAgentic {
 		warns = append(warns, ParseWarning{
 			Line: node.Line,
 			Message: fmt.Sprintf(
-				"node %q: attribute \"auto_status\" is agentic-only; on type %q it is retained but ignored at v1 (WG-041 §I.4)",
+				"node %q: attribute \"auto_status\" is agentic-only; on type %q it is retained but ignored at v1 (WG-053)",
 				rn.id, node.RawType),
 		})
 	}

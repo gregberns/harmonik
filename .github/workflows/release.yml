@@ -1,0 +1,81 @@
+# Release pipeline — tag-triggered goreleaser build + VALIDATE gate.
+#
+# Stages (spec: specs/release-pipeline.md):
+#   CREATE   — goreleaser builds the binary matrix and creates a GitHub pre-release.
+#   VALIDATE — make release-validate must pass; on failure the pre-release is deleted.
+#
+# Trigger: push of a signed tag matching v[0-9]+\.[0-9]+\.[0-9]+ to main.
+# Refs: hk-jdesv  Epic: hk-brc3z  Label: codename:release-pipeline
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+jobs:
+  create:
+    name: CREATE — goreleaser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Extract tag
+        id: meta
+        run: echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  validate:
+    name: VALIDATE — release-validate gate
+    needs: create
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.create.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache dev tools
+        uses: actions/cache@v4
+        with:
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: Install dev tools
+        run: make tools
+
+      - name: make release-validate
+        run: make release-validate
+
+      - name: Yank pre-release on gate failure
+        if: failure()
+        run: gh release delete "$TAG" --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -269,7 +269,7 @@ the operator).
 ### On-WARN procedure for the captain (LOAD-BEARING)
 
 The keeper injects a **captain-specific** warn text (different from the default
-crew advisory): *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain. Do NOT /quit or stop."*
+crew advisory): *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain, keep the turn open, and stop typing. The keeper drives the clear→resume cycle."*
 
 **The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate;
 all other safety gates (nonce-confirmed handoff, `.managed`, `HoldingDispatch`) are
@@ -293,7 +293,7 @@ current state. `/clear` is the reset — no manual hand-trim.
    - Run: `harmonik keeper restart-now --agent captain [--project DIR]`
 3. **Keep the turn OPEN and stop typing.** The keeper fires the cycle on its next
    tick (≤5 s): nonce-poll → `/clear` → `/session-resume`.
-4. **NEVER self-`/quit`.** A manual `/quit` exits the captain permanently.
+4. **NEVER exit or terminate your own session on a warn.** Self-terminating exits the captain permanently.
 
 **On resume after a restart-now cycle:**
 

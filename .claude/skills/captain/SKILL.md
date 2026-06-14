@@ -627,9 +627,9 @@ emit a failure-surface, and do NOT re-`crew start` the crew — it returns under
 same name and re-appears in `comms who` on its own. (A transient presence drop during
 the cycle is the "crew offline" edge above — a returning crew needs no action.)
 
-**The captain MUST NOT self-`/quit` on a keeper context-warning.** Your OWN session
+**The captain MUST NOT exit or stop its own session on a keeper context-warning.** Your OWN session
 is keeper-managed too (`harmonik keeper --agent captain`), and the keeper injects a
-**captain-specific** warn: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain. Do NOT /quit or stop."*
+**captain-specific** warn: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain, keep the turn open, and stop typing. The keeper drives the clear→resume cycle."*
 
 > ~~**Old guidance (OBSOLETE — hk-4zy9):** "On a WARN, just keep holding / do
 > nothing extra — wait for the keeper's ACT cycle to fire."~~ This caused captains
@@ -651,7 +651,7 @@ hand-trim.
    - Run: `harmonik keeper restart-now --agent captain`
 3. Keep the turn OPEN and stop typing. The keeper fires the cycle on its next tick
    (≤5 s): handoff → nonce-poll → `/clear` → `/session-resume`.
-4. **NEVER self-`/quit`.** A manual `/quit` exits the captain permanently — the
+4. **NEVER exit or terminate your own session on a warn.** Self-terminating exits the captain permanently — the
    keeper cannot rebind to a session that already exited.
 
 **On resume:** re-drain comms, re-ground via STARTUP.md. Do NOT trust the

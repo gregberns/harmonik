@@ -22,7 +22,7 @@ Choose one of three postures **before executing any step below**:
 |---|---|
 | Operator ending the session; all lanes drained or cleanly blocked | **Full shutdown**: stand down complete-lane crews, deploy banked commits, write HANDOFF.md, `comms leave`. |
 | Operator leaving for a break; active lanes still in flight | **Hand off**: record state in HANDOFF.md + crew missions, do NOT stop healthy crews; daemon keeps draining. The next captain runs STARTUP.md. |
-| Context approaching limit (~80–90%); fleet still healthy | **Captain-initiated restart (ON-059)**: do NOT stop crews manually AND do NOT self-`/quit`. At a clean idle point (no in-flight dispatch/merge/crew-spawn): write `HANDOFF-captain.md` with the KEEPER nonce, run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, stop typing. The keeper fires the cycle on its next tick. Skip to Step 5 (state capture). On resume: re-drain comms + re-ground via STARTUP.md Steps 2–6 — do NOT snapshot live queue/daemon state in the handoff body (STARTUP.md re-derives it). |
+| Context approaching limit (~80–90%); fleet still healthy | **Captain-initiated restart (ON-059)**: do NOT stop crews manually AND do NOT exit your own session. At a clean idle point (no in-flight dispatch/merge/crew-spawn): write `HANDOFF-captain.md` with the KEEPER nonce, run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, stop typing. The keeper fires the cycle on its next tick. Skip to Step 5 (state capture). On resume: re-drain comms + re-ground via STARTUP.md Steps 2–6 — do NOT snapshot live queue/daemon state in the handoff body (STARTUP.md re-derives it). |
 
 > **The daemon almost always keeps running.** The daemon process is supervisor-managed
 > and independent of your session. Only crews need explicit stand-down for complete
@@ -374,8 +374,8 @@ comm -23 \
   the watcher immediately Phase-2-live. The operator must confirm full-cycle vs.
   warn-only before hooks are wired (see Step 4, PIN example).
 
-- **The captain MUST NOT self-`/quit` on a keeper context-warning.** The captain's
-  keeper injects a specific warn: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain. Do NOT /quit or stop."* Follow that procedure exactly (see
+- **The captain MUST NOT exit or stop its own session on a keeper context-warning.** The captain's
+  keeper injects a specific warn: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain, keep the turn open, and stop typing. The keeper drives the clear→resume cycle."* Follow that procedure exactly (see
   STARTUP.md "On-WARN procedure"). A captain that obeys `/quit` exits permanently —
   there is no supervised respawn wrapper. Launch via
   `~/.claude/captain-tools/captain-launch.sh` so the session has a stable

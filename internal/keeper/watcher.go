@@ -324,9 +324,10 @@ type WatcherConfig struct {
 	ReadSuppressFn func(projectDir, agent string) bool
 
 	// OnDemandRestart, when true, replaces the default wrap-up advisory with the
-	// captain-specific restart-now instruction: "Context is filling. At a clean
-	// idle point: write HANDOFF-<agent>.md (include your KEEPER nonce), then run:
-	// harmonik keeper restart-now --agent <agent>. Do NOT /quit."
+	// captain-specific restart-now instruction: "[KEEPER WARNING — automated]
+	// Proactive context checkpoint — you have ample buffer remaining. Keep working.
+	// At a clean checkpoint only: write HANDOFF-<agent>.md (include the KEEPER
+	// nonce), then run: harmonik keeper restart-now --agent <agent>. Do NOT /quit or stop."
 	//
 	// The keeper band is UNCHANGED — this flag does not widen the warn or act
 	// thresholds. It only changes the text injected at the warn crossing; the

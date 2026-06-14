@@ -375,9 +375,7 @@ comm -23 \
   warn-only before hooks are wired (see Step 4, PIN example).
 
 - **The captain MUST NOT self-`/quit` on a keeper context-warning.** The captain's
-  keeper injects a specific warn: *"Context is filling. At a clean idle point: write
-  HANDOFF-captain.md (include your KEEPER nonce), then run: harmonik keeper
-  restart-now --agent captain. Do NOT /quit."* Follow that procedure exactly (see
+  keeper injects a specific warn: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain. Do NOT /quit or stop."* Follow that procedure exactly (see
   STARTUP.md "On-WARN procedure"). A captain that obeys `/quit` exits permanently —
   there is no supervised respawn wrapper. Launch via
   `~/.claude/captain-tools/captain-launch.sh` so the session has a stable

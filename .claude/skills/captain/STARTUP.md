@@ -269,9 +269,7 @@ the operator).
 ### On-WARN procedure for the captain (LOAD-BEARING)
 
 The keeper injects a **captain-specific** warn text (different from the default
-crew advisory): *"Context is filling. At a clean idle point: write HANDOFF-captain.md
-(include your KEEPER nonce), then run: harmonik keeper restart-now --agent captain.
-Do NOT /quit."*
+crew advisory): *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain. Do NOT /quit or stop."*
 
 **The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate;
 all other safety gates (nonce-confirmed handoff, `.managed`, `HoldingDispatch`) are

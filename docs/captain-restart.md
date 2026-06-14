@@ -60,9 +60,7 @@ When the keeper watcher crosses the WARN threshold for the captain agent
 (`WatcherConfig.OnDemandRestart=true`, auto-set when `AgentName=="captain"`), it
 injects the captain-specific text:
 
-> *"Context is filling. At a clean idle point: write HANDOFF-captain.md (include
-> your KEEPER nonce), then run: harmonik keeper restart-now --agent captain.
-> Do NOT /quit."*
+> *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain. Do NOT /quit or stop."*
 
 Crews receive the default advisory. The band is not widened for either.
 

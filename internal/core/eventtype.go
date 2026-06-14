@@ -848,6 +848,15 @@ const (
 	// Durability class: O (ordinary — observability).
 	// Refs: hk-6qf.
 	EventTypeSessionKeeperOperatorAttached EventType = "session_keeper_operator_attached"
+
+	// EventTypeSessionKeeperRestartNowBlocked is the
+	// session_keeper_restart_now_blocked event type. Emitted by RunOnDemand when
+	// the captain-initiated restart-now cycle is suppressed by a gate or freshness
+	// check. The marker is always consumed-once at entry; this event is the sole
+	// observability signal for the suppression.
+	// Durability class: O (ordinary — observability; non-destructive).
+	// Refs: hk-wjzf, hk-xjlq, ON-059.
+	EventTypeSessionKeeperRestartNowBlocked EventType = "session_keeper_restart_now_blocked"
 )
 
 // ---------------------------------------------------------------------------

@@ -1041,6 +1041,80 @@ un-qualified name is the fallback) rather than failing the launch.
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+### 4.13 Captain-initiated keeper restart-now
+
+#### ON-059 — Captain-initiated restart-now: `.restart-now` marker + RunOnDemand cycle
+
+The keeper MUST support a captain-initiated on-demand clear→resume cycle that bypasses
+the act-pct threshold gate only, keeping ALL other safety gates intact. This is the
+captain's escape hatch when context is high but below the keeper's act threshold, or
+when the captain wants to trigger a cycle at a specific point (e.g. after writing a
+complete handoff).
+
+**Marker format.** The marker file at `.harmonik/keeper/<agent>.restart-now` MUST contain
+a single JSON object:
+
+```json
+{
+  "nonce":        "<KEEPER:cyc-…> marker extracted from HANDOFF-<agent>.md",
+  "requested_at": "<RFC3339 timestamp when harmonik keeper restart-now was called>",
+  "session_id":   "<current .ctx session_id at call time>"
+}
+```
+
+The marker MUST be written atomically (temp-file + fsync + rename per the korba pattern
+from `WriteManagedSessionID`, hk-b5e2) so no torn/partial JSON is ever observable.
+
+**CLI contract.** `harmonik keeper restart-now <agent>` MUST:
+
+1. Validate the agent name (path-traversal check).
+2. Read `HANDOFF-<agent>.md`; exit non-zero with a human-readable message ("write your
+   handoff first" or equivalent) if the file does not exist or contains no
+   `<!-- KEEPER:… -->` nonce comment.
+3. Extract the nonce token from the comment.
+4. Write the `.restart-now` marker JSON with `{nonce, requested_at: now, session_id}`
+   where `session_id` comes from the current `.ctx` gauge file (empty string if absent).
+
+**Watcher consumption.** The keeper watcher MUST check for the `.restart-now` marker on
+each poll tick, immediately after the HasPrecompactTrigger check. When the marker is
+present and the Cycler is non-nil, the watcher calls `Cycler.RunOnDemand(ctx, ctxFile)`.
+
+**`RunOnDemand` gate order and behavior.**
+
+1. Read the marker JSON, then ClearRestartNowTrigger at entry (consume-once: even on gate
+   failure the marker is removed so no re-fire occurs).
+2. Gate 1: `.managed` opt-in guard.
+3. Gate 2: non-empty `session_id` from the gauge (anti-loop identity requirement).
+4. Gate 3: NOT HoldingDispatch (fail-closed).
+5. Gate 4: CrispIdle (agent at await-input boundary).
+6. Gate 5: anti-loop `lastFiredSID` suppression (same policy as MaybeRun).
+7. Gate 6: operator-attached guard (suppress if human operator is attached).
+8. **Freshness gate** (all four conditions must hold):
+   - `marker.session_id == cf.SessionID` (marker was written for the current session).
+   - HANDOFF-<agent>.md contains `<!-- KEEPER:<marker.nonce> -->`.
+   - HANDOFF mtime ≥ `marker.requested_at` (handoff was written after the restart-now call).
+   - After `onDemandSettle` (3 s), re-stat HANDOFF mtime — must be unchanged (stable).
+9. On any gate or freshness failure: emit `session_keeper_restart_now_blocked{reason}`,
+   return nil (non-destructive; leave the session running).
+10. On freshness-gate pass: execute the /clear → /session-resume cycle tail, reusing
+    `runCycle`'s post-confirm steps. The /session-handoff-inject and handoff-truncate
+    steps are SKIPPED (the captain already wrote the handoff). The identity-block append,
+    HARMONIK_AGENT env set, /clear, ClearSettle wait, .managed update, and
+    /session-resume steps are executed exactly as in `runCycle`.
+
+**`onDemandSettle`.** The stable-dwell duration is 3 s (package constant `onDemandSettle`,
+sibling to `ClearSettle`).
+
+**Event.** `session_keeper_restart_now_blocked{agent_name, session_id, reason}` is emitted
+whenever RunOnDemand returns nil due to a gate or freshness failure. Reason values:
+`"not_managed"`, `"empty_session_id"`, `"hold_dispatch"`, `"not_crisp_idle"`,
+`"anti_loop_suppressed"`, `"operator_attached"`, `"session_id_mismatch"`, `"nonce_mismatch"`,
+`"handoff_stale"`, `"handoff_modified_during_settle"`, `"handoff_read_error"`,
+`"handoff_stat_error"`, `"marker_read_error"`.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+
 ## 5. Invariants
 
 #### ON-INV-001 — N-1 compat window holds across every versioned artifact
@@ -1417,6 +1491,7 @@ Default-if-unresolved: Structured logs are N-1 governed; ON-018 enumeration is u
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-06-13 | 0.5.6 | agent (hk-wjzf) | **ON-059 — Captain-initiated keeper restart-now (new §4.13).** Added **ON-059** (`§4.13 Captain-initiated keeper restart-now`): normative contract for the captain-initiated on-demand clear→resume cycle. Key clauses: `.restart-now` marker JSON `{nonce, requested_at, session_id}` written atomically via temp+fsync+rename; `harmonik keeper restart-now <agent>` CLI reads existing HANDOFF nonce and writes the marker; watcher checks the marker after HasPrecompactTrigger on each tick; `RunOnDemand` gate order (managed, session_id, HoldingDispatch, CrispIdle, anti-loop, operatorAttached, freshness gate: nonce match + mtime≥requested_at + session_id match + settle-stable); `onDemandSettle`=3s; consume-once; `session_keeper_restart_now_blocked{reason}` emitted on any gate/freshness failure; on pass: execute /clear→/session-resume tail from runCycle, skipping handoff-truncate and /session-handoff-inject. **New IDs (net):** ON-059. No invariants added or retired. No §8 exit-code changes. Refs: hk-wjzf, hk-xjlq. |
 | 2026-06-13 | 0.5.5 | agent (fleet-portability / hk-lbh) | **ON-058 — Multi-tenant global-surface isolation (new §4.12, with §10.1 and §10.2 updates).** Added **ON-058** (`§4.12 Multi-tenant global-surface isolation`): normative requirements ensuring N harmonik fleets coexist on one machine without global-surface collisions. Five sub-clauses: **(a) Keeper hook stanzas** — `harmonik keeper enable` deduplicates on the `(script-basename, HARMONIK_PROJECT=<projectDir>)` PAIR; two projects produce two sibling groups in `hooks.Stop`/`hooks.PreCompact`; non-perturbation guarantee (project B enable MUST NOT rewrite project A's group); doctor scope restricted to THIS project's pair. **(b) `statusLine` scalar singleton** — single project-agnostic `statusLine.command` shared by all projects; no `HARMONIK_PROJECT=` prefix on the statusLine command; project routing at runtime via `${HARMONIK_PROJECT:-${PWD}}`; env-unset guard falls back to `$PWD`; cwd-walk dispatcher explicitly PROHIBITED. **(c) `~/.claude/captain-tools/` scripts** — version-controlled under `scripts/captain-tools/`, embedded in binary; `harmonik init` provisions only-if-absent; scripts MUST contain no literal absolute project path; runtime resolution via `${HK_PROJECT:-${HARMONIK_PROJECT:-$(git rev-parse --show-toplevel)}}` + `harmonik project-hash`. **(d) Per-project daemon state** — last-good binary MUST be at `<projectDir>/.harmonik/state/last-good-binary` (NOT machine-global `/tmp/hk-last-good-binary`); daemon log and keeper-launcher session hash-qualified by `<project_hash>`; `harmonik supervise` (in-binary, zero `/tmp` globals) is the canonical supervisor. **(e) Project-hash derivation** — all shell-layer call sites MUST use `harmonik project-hash [--project DIR]` per [process-lifecycle.md §4.2 PL-031]; graceful degradation if subcommand absent. **§10.1 update:** conformance profile extended from "ON-001 through ON-049" to "ON-001 through ON-058" with bracketed entries for all post-ON-049 requirements (ON-050/051, ON-053/054, ON-056/057, ON-058). **§10.2 update:** added ON-058 test-surface obligation with three sensor groups (keeper-hook coexistence, daemon-state isolation, captain-tools isolation) covering fleet isolation end-to-end. **New IDs (net):** ON-058 (1 new requirement ID). No invariants added or retired. No §8 exit-code changes. Refs: hk-lbh, fleet-portability; implementation in commits 9b801145 (keeper), 7bcb10ec (hash-qualify daemon log), d2a3fe98 (last-good binary), c2c60c0f (scenario test), 74069f8f (captain-tools provisioning), 15a86160 (captain-launch.sh project-qualify). |
 | 2026-06-11 | 0.5.4 | agent (kerf `standard-bead-dot` work, epic hk-o7j) | **ON-004a — workflow-mode default flipped `single` → `dot` (embedded `standard-bead.dot`) with review-loop floor.** Two surgical amendments to the ON-004a config-inventory entry to align ON with the `standard-bead-dot` kerf work, which makes `dot` (the embedded `standard-bead.dot` graph) the daemon's built-in default workflow mode: (1) **Default value** changed from "`single` (built-in fallback)" to "`dot` (the embedded `standard-bead.dot` workflow graph; built-in fallback)", with the normative review-loop floor — on embedded-load failure the daemon MUST fall to `review-loop`, NEVER to `single`; `single` is reachable ONLY via an explicit per-task `workflow:single` label. (2) **Precedence tier 4** changed from "Built-in fallback `single`" to "Built-in fallback `dot` (the embedded `standard-bead.dot`); on embedded-load failure fall to `review-loop`, never to `single`; `single` selectable only via an explicit `workflow:single` label at tier 1." Both clauses cross-reference [execution-model.md §4.3 EM-012a] (the workflow-mode resolution walk and the review-loop floor). No other ON requirement text changed; the precedence-tier ordering, change-takes-effect semantics, runtime-tunability, iteration-cap, and allowed enumeration are unchanged. No new requirement IDs; no §8 exit-code changes; no invariants added or retired. Refs: epic hk-o7j. |
 | 2026-06-01 | 0.5.3 | agent (hk-sx9r.57) | **ON-041 spec-draft fulfilled: ON-041a/ON-041b/ON-041c — multi-daemon commands normative definitions.** Added three normative requirements to §4.10 fulfilling the ON-041 spec-draft obligation: **ON-041a `harmonik list` normative surface** — daemon discovery scan across `$HOME` and `$HARMONIK_PROJECT_ROOTS`; two-step liveness probe (`kill(pid,0)` + JSON-RPC socket probe); full output-column table (`daemon_id`, `project_root`, `pid`, `status`, `socket_path`, `started_at`, `last_exit_code`, `budget_summary`); filtering by `--status` and `--project-root`; `--json` NDJSON output; exit-code discipline (0 = success including empty; 17 only when scan scope inaccessible). **ON-041b Daemon-identification flags** — normative definitions for `--socket`, `--cwd`, `--daemon-id` on all daemon-communicating commands (`stop`, `pause`, `resume`, `attach`, `status`, `upgrade`, `queue {submit,status,append,dry-run}`); flag precedence order (`--socket` > `--daemon-id` > `--cwd` > default CWD walk-up); default walk-up resolution from `$PWD`; exit 17 on resolution failure. **ON-041c Machine-level agent-subprocess ceiling** — advisory-lock-guarded shared counter at `$HOME/.harmonik/machine-agent-count`; protocol: flock → read → compare → increment/defer → write → unlock, with decrement on subprocess exit; crash-recovery drift correction in orphan sweep (PL-005 step 3); 60 s periodic drift check via `get-agent-count`; fallback to per-daemon-only on `flock`-unsupported filesystems. Resolved OQ-ON-003 (machine-ceiling implementation locus): shared counter file selected as MVH shape; coordinator daemon deferred post-MVH. Expanded §10.2 ON-041—ON-046 sensor with 15 sub-assertions covering the three new requirements (ON-041a: 5; ON-041b: 5; ON-041c: 5). **New IDs:** ON-041a, ON-041b, ON-041c. **No §8 exit-code changes** (codes 17 and 18 already existed). **No invariants added or retired.** Refs: hk-sx9r.57. |

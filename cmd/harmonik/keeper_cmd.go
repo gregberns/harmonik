@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -327,6 +328,97 @@ func runKeeperRebind(args []string) int {
 	return 0
 }
 
+// runKeeperRestartNow implements `harmonik keeper restart-now <agent>`.
+//
+// Reads HANDOFF-<agent>.md, extracts the <!-- KEEPER:... --> nonce, and writes
+// the .restart-now marker JSON {nonce, requested_at, session_id} so the keeper
+// watcher's next tick calls RunOnDemand. The .restart-now marker is written
+// atomically (temp + fsync + rename per hk-b5e2). The captain must have
+// already written a handoff via /session-handoff before calling this command.
+//
+// Exit codes:
+//
+//	0  — marker written successfully
+//	1  — argument error, I/O error, or missing handoff/nonce
+//
+// Refs: hk-wjzf, hk-xjlq, ON-059.
+func runKeeperRestartNow(args []string) int {
+	fs := flag.NewFlagSet("keeper restart-now", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	var projectFlag string
+	fs.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "harmonik keeper restart-now: agent name argument is required")
+		return 1
+	}
+	agent := fs.Arg(0)
+	if projectFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: cannot determine working directory: %v\n", err)
+			return 1
+		}
+		projectFlag = wd
+	}
+
+	// Read the handoff file — the captain must have written it first.
+	handoffPath := fmt.Sprintf("%s/HANDOFF-%s.md", projectFlag, agent)
+	//nolint:gosec // G304: handoffPath derived from operator-controlled projectDir + agent validated below
+	handoffBytes, err := os.ReadFile(handoffPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: read handoff %q: %v\n"+
+			"  write your handoff first (run /session-handoff in the managed pane)\n", handoffPath, err)
+		return 1
+	}
+
+	// Extract the <!-- KEEPER:xxx --> nonce from the handoff content.
+	nonce := extractKeeperNonce(string(handoffBytes))
+	if nonce == "" {
+		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: no <!-- KEEPER:... --> nonce found in %q\n"+
+			"  write your handoff first (run /session-handoff in the managed pane)\n", handoffPath)
+		return 1
+	}
+
+	// Read the current session_id from .ctx (best-effort; empty string is OK).
+	sessionID := ""
+	if ctxFile, _, ctxErr := keeper.ReadCtxFile(projectFlag, agent); ctxErr == nil {
+		sessionID = ctxFile.SessionID
+	}
+
+	marker := &keeper.RestartNowMarker{
+		Nonce:       nonce,
+		RequestedAt: time.Now().UTC(),
+		SessionID:   sessionID,
+	}
+	if err := keeper.WriteRestartNowMarker(projectFlag, agent, marker); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: write marker: %v\n", err)
+		return 1
+	}
+	fmt.Printf("keeper restart-now: agent=%q marker written (nonce=%s, session_id=%s)\n",
+		agent, nonce, sessionID)
+	return 0
+}
+
+// extractKeeperNonce scans content for the first <!-- KEEPER:xxx --> HTML
+// comment and returns the nonce token (the xxx part). Returns "" if not found.
+func extractKeeperNonce(content string) string {
+	const prefix = "<!-- KEEPER:"
+	const suffix = " -->"
+	start := strings.Index(content, prefix)
+	if start < 0 {
+		return ""
+	}
+	rest := content[start+len(prefix):]
+	end := strings.Index(rest, suffix)
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:end])
+}
+
 const keeperTopUsage = `harmonik keeper — context watcher for a managed agent pane (session-keeper, hk-ekap1)
 
 USAGE
@@ -336,6 +428,7 @@ USAGE
   harmonik keeper rebind <agent> [--project DIR]
   harmonik keeper set-dispatching <agent> [--project DIR]
   harmonik keeper clear-dispatching <agent> [--project DIR]
+  harmonik keeper restart-now <agent> [--project DIR]
 
 VERBS
   enable             Wire statusLine + Stop + PreCompact stanzas into ~/.claude/settings.json
@@ -358,6 +451,15 @@ VERBS
                      cycle defers the handoff action while queue work is in flight.
   clear-dispatching  Remove the .dispatching marker for <agent>; HoldingDispatch → false.
                      Call when all in-flight queue work has completed. Idempotent.
+  restart-now        Captain-initiated on-demand clear→resume cycle (ON-059, hk-wjzf).
+                     Reads the <!-- KEEPER:... --> nonce from HANDOFF-<agent>.md (the
+                     captain must have already run /session-handoff) and writes a
+                     .restart-now marker so the keeper watcher triggers RunOnDemand on
+                     the next poll tick. Bypasses the act-pct threshold only; all other
+                     safety gates (CrispIdle, HoldingDispatch, anti-loop, freshness)
+                     are enforced by the watcher. Non-destructive: if any gate blocks,
+                     the marker is consumed once and session_keeper_restart_now_blocked
+                     is emitted. Refs: hk-wjzf, hk-xjlq.
 
 FLAGS (watcher mode)
   --agent <name>         Agent name (required); identifies the lockfile and .managed marker

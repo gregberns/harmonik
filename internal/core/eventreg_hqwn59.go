@@ -452,6 +452,8 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_respawn_attempted", func() EventPayload { return &SessionKeeperRespawnAttemptedPayload{} })
 	// hk-6qf: operator-attached guard (warn-only suppression).
 	mustRegister("session_keeper_operator_attached", func() EventPayload { return &SessionKeeperOperatorAttachedPayload{} })
+	// hk-wjzf, ON-059: captain-initiated restart-now gate/freshness suppression.
+	mustRegister("session_keeper_restart_now_blocked", func() EventPayload { return &SessionKeeperRestartNowBlockedPayload{} })
 }
 
 // registerAlarmEvents registers §8.14 alarm / self-check event payload

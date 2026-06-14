@@ -186,6 +186,31 @@ type SessionKeeperRespawnAttemptedPayload struct {
 	Error string `json:"error,omitempty"`
 }
 
+// SessionKeeperRestartNowBlockedPayload is the payload for
+// session_keeper_restart_now_blocked (ON-059, hk-wjzf).
+//
+// Emitted by RunOnDemand whenever the on-demand restart-now cycle is suppressed
+// by a gate or freshness check. The marker is always consumed-once first; this
+// event is the only observability signal for the suppression.
+//
+// Durability class: O (ordinary — observability; non-destructive).
+// Refs: hk-wjzf, hk-xjlq.
+type SessionKeeperRestartNowBlockedPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// SessionID is the gauge session_id at the time the marker was consumed.
+	// May be empty if the gauge file was unavailable.
+	SessionID string `json:"session_id,omitempty"`
+
+	// Reason describes why the cycle was suppressed. Values: "not_managed",
+	// "empty_session_id", "hold_dispatch", "not_crisp_idle",
+	// "anti_loop_suppressed", "operator_attached", "session_id_mismatch",
+	// "nonce_mismatch", "handoff_stale", "handoff_modified_during_settle",
+	// "handoff_read_error", "handoff_stat_error", "marker_read_error".
+	Reason string `json:"reason"`
+}
+
 // SessionKeeperOperatorAttachedPayload is the payload for
 // session_keeper_operator_attached (codename:session-keeper).
 //

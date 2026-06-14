@@ -80,6 +80,16 @@ type CyclerConfig struct {
 	ReadJournalFn            func(path string) (*CycleJournal, error)
 	ClearPrecompactTriggerFn func(projectDir, agentName string) error
 
+	// ClearRestartNowTriggerFn removes the .restart-now marker for the given
+	// agent. Called at entry in RunOnDemand (consume-once contract). Nil →
+	// ClearRestartNowTrigger. Refs: hk-wjzf, ON-059.
+	ClearRestartNowTriggerFn func(projectDir, agentName string) error
+
+	// ReadRestartNowMarkerFn reads and parses the .restart-now marker JSON for
+	// the given agent. Called at entry in RunOnDemand before the marker is
+	// cleared. Nil → ReadRestartNowMarker. Refs: hk-wjzf, ON-059.
+	ReadRestartNowMarkerFn func(projectDir, agentName string) (*RestartNowMarker, error)
+
 	// AppendHandoffFn appends text to the handoff file after the nonce is
 	// confirmed. Used to pin keeper-authoritative identity into the handoff so
 	// the resumed agent reads the correct name rather than guessing from context.
@@ -243,6 +253,12 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.ClearPrecompactTriggerFn == nil {
 		c.ClearPrecompactTriggerFn = ClearPrecompactTrigger
 	}
+	if c.ClearRestartNowTriggerFn == nil {
+		c.ClearRestartNowTriggerFn = ClearRestartNowTrigger
+	}
+	if c.ReadRestartNowMarkerFn == nil {
+		c.ReadRestartNowMarkerFn = ReadRestartNowMarker
+	}
 	if c.AppendHandoffFn == nil {
 		c.AppendHandoffFn = defaultAppendHandoff
 	}
@@ -324,6 +340,13 @@ func (c *CyclerConfig) aboveForceThreshold(cf *CtxFile) bool {
 	}
 	return cf.Pct >= c.ForceActPct
 }
+
+// onDemandSettle is the dwell period in RunOnDemand after the freshness gate
+// initially passes, before the keeper re-stats the HANDOFF mtime to confirm
+// the file was not written concurrently (stability check). Sibling to the
+// ClearSettle config field which governs the post-/clear session_id wait.
+// Refs: hk-wjzf, ON-059.
+const onDemandSettle = 3 * time.Second
 
 // newCycleIDGen returns a closure that generates collision-resistant cycle IDs.
 // The ID includes a startup-time timestamp prefix so IDs issued by different
@@ -1015,6 +1038,248 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 		cf = &CtxFile{SessionID: sessionID}
 	}
 	return c.runCycle(ctx, cf)
+}
+
+// RunOnDemand executes the on-demand clear→resume cycle initiated by the
+// captain via `harmonik keeper restart-now`. Unlike MaybeRun, it bypasses the
+// act-pct threshold gate only — ALL other safety gates are kept. The captain
+// already wrote HANDOFF-<agent>.md; this method skips the handoff-truncate and
+// /session-handoff-inject steps and instead validates the freshness gate before
+// issuing /clear.
+//
+// Gate order (ON-059):
+//  1. Read marker JSON, then ClearRestartNowTrigger at entry (consume-once).
+//  2. Gate 1: .managed opt-in guard.
+//  3. Gate 2: non-empty session_id (anti-loop identity).
+//  4. Gate 3: NOT HoldingDispatch (fail-closed).
+//  5. Gate 4: CrispIdle.
+//  6. Gate 5: anti-loop lastFiredSID suppression.
+//  7. Gate 6: operator-attached guard.
+//  8. Freshness gate: marker.session_id == cf.SessionID; handoff contains
+//     <!-- KEEPER:<marker.nonce> -->; handoff mtime >= marker.requested_at;
+//     after onDemandSettle re-stat mtime must be unchanged.
+//  9. On any gate/freshness failure: emit session_keeper_restart_now_blocked,
+//     return nil (non-destructive).
+// 10. On freshness-gate pass: execute /clear → /session-resume tail.
+//
+// Refs: hk-wjzf, hk-xjlq, ON-059.
+func (c *Cycler) RunOnDemand(ctx context.Context, cf *CtxFile) error {
+	sessionID := ""
+	if cf != nil {
+		sessionID = cf.SessionID
+	}
+
+	// Step 1: read marker BEFORE clearing (consume-once at entry).
+	marker, markerErr := c.cfg.ReadRestartNowMarkerFn(c.cfg.ProjectDir, c.cfg.AgentName)
+	// Always clear the marker at entry, even on gate failure, so no re-fire occurs.
+	if clearErr := c.cfg.ClearRestartNowTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName); clearErr != nil {
+		slog.WarnContext(ctx, "keeper: restart-now: clear marker", "agent", c.cfg.AgentName, "err", clearErr)
+	}
+
+	emitBlocked := func(reason string) {
+		c.emitRestartNowBlocked(ctx, sessionID, reason)
+	}
+
+	if markerErr != nil {
+		slog.WarnContext(ctx, "keeper: restart-now: read marker", "agent", c.cfg.AgentName, "err", markerErr)
+		emitBlocked("marker_read_error")
+		return nil
+	}
+
+	// Gate 1: .managed opt-in.
+	if !c.cfg.IsManagedFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		emitBlocked("not_managed")
+		return nil
+	}
+	// Gate 2: non-empty session_id.
+	if sessionID == "" {
+		emitBlocked("empty_session_id")
+		return nil
+	}
+	// Gate 3: HoldingDispatch fail-closed.
+	if c.cfg.HoldingDispatchFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		emitBlocked("hold_dispatch")
+		return nil
+	}
+	// Gate 4: CrispIdle.
+	if !c.cfg.CrispIdleFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		emitBlocked("not_crisp_idle")
+		return nil
+	}
+	// Gate 5: anti-loop lastFiredSID suppression.
+	if c.lastFiredSID != "" && c.lastFiredSID == sessionID {
+		emitBlocked("anti_loop_suppressed")
+		return nil
+	}
+	// Gate 6: operator-attached guard.
+	if c.operatorAttached() {
+		c.emitOperatorAttached(ctx, sessionID, "restart_now")
+		emitBlocked("operator_attached")
+		return nil
+	}
+
+	// Freshness gate.
+	handoffPath := c.cfg.HandoffFilePath(c.cfg.ProjectDir, c.cfg.AgentName)
+
+	// Check session_id matches.
+	if marker.SessionID != sessionID {
+		slog.WarnContext(ctx, "keeper: restart-now: session_id mismatch",
+			"agent", c.cfg.AgentName, "marker_sid", marker.SessionID, "current_sid", sessionID)
+		emitBlocked("session_id_mismatch")
+		return nil
+	}
+
+	// Read handoff file and check nonce.
+	handoffContent, readErr := c.cfg.ReadHandoff(handoffPath)
+	if readErr != nil {
+		slog.WarnContext(ctx, "keeper: restart-now: read handoff", "agent", c.cfg.AgentName, "err", readErr)
+		emitBlocked("handoff_read_error")
+		return nil
+	}
+	expectedNonce := nonceMarker(marker.Nonce)
+	if !strings.Contains(handoffContent, expectedNonce) {
+		slog.WarnContext(ctx, "keeper: restart-now: nonce mismatch",
+			"agent", c.cfg.AgentName, "expected", expectedNonce)
+		emitBlocked("nonce_mismatch")
+		return nil
+	}
+
+	// Check handoff mtime >= marker.requested_at.
+	handoffStat, statErr := os.Stat(handoffPath)
+	if statErr != nil {
+		slog.WarnContext(ctx, "keeper: restart-now: stat handoff", "agent", c.cfg.AgentName, "err", statErr)
+		emitBlocked("handoff_stat_error")
+		return nil
+	}
+	if handoffStat.ModTime().Before(marker.RequestedAt) {
+		slog.WarnContext(ctx, "keeper: restart-now: handoff predates marker",
+			"agent", c.cfg.AgentName,
+			"handoff_mtime", handoffStat.ModTime(), "requested_at", marker.RequestedAt)
+		emitBlocked("handoff_stale")
+		return nil
+	}
+	handoffMtime := handoffStat.ModTime()
+
+	// Settle dwell: wait onDemandSettle then re-stat handoff mtime.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(onDemandSettle):
+	}
+
+	handoffStat2, statErr2 := os.Stat(handoffPath)
+	if statErr2 != nil {
+		slog.WarnContext(ctx, "keeper: restart-now: re-stat handoff after settle",
+			"agent", c.cfg.AgentName, "err", statErr2)
+		emitBlocked("handoff_stat_error")
+		return nil
+	}
+	if !handoffStat2.ModTime().Equal(handoffMtime) {
+		slog.WarnContext(ctx, "keeper: restart-now: handoff mtime changed during settle",
+			"agent", c.cfg.AgentName, "before", handoffMtime, "after", handoffStat2.ModTime())
+		emitBlocked("handoff_modified_during_settle")
+		return nil
+	}
+
+	// All gates and freshness checks passed. Execute the /clear → /session-resume
+	// tail, reusing runCycle's post-confirm logic. The captain already wrote the
+	// HANDOFF; we skip the truncate + /session-handoff-inject steps.
+	return c.runOnDemandCycleTail(ctx, cf)
+}
+
+// runOnDemandCycleTail executes the post-confirm tail of the reset cycle for
+// an on-demand (restart-now) invocation. Corresponds to runCycle steps 3b–7:
+// identity-block append, HARMONIK_AGENT env, /clear, settle, .managed update,
+// /session-resume, journal close, anti-loop update.
+//
+// Called only after RunOnDemand's freshness gate passes. The handoff file
+// already contains the nonce and identity; we do NOT truncate or re-inject it.
+func (c *Cycler) runOnDemandCycleTail(ctx context.Context, cf *CtxFile) error {
+	cycleID := c.cfg.CycleIDGen()
+	now := time.Now().UTC()
+	journalPath := c.journalPath()
+	handoffPath := c.cfg.HandoffFilePath(c.cfg.ProjectDir, c.cfg.AgentName)
+
+	sessionID := ""
+	if cf != nil {
+		sessionID = cf.SessionID
+	}
+
+	// Open journal.
+	j := &CycleJournal{
+		CycleID:   cycleID,
+		Phase:     "confirmed", // freshness gate = confirmation; no handoff-inject needed
+		OpenedAt:  now,
+		UpdatedAt: now,
+	}
+	if err := c.cfg.WriteJournalFn(journalPath, j); err != nil {
+		return err
+	}
+	c.emitHandoffStarted(ctx, cycleID, sessionID)
+
+	// Step 3b: pin identity — append keeper-authoritative identity block.
+	_ = c.cfg.AppendHandoffFn(handoffPath, identityBlock(c.cfg.AgentName)) //nolint:errcheck
+
+	// Step 3c: set HARMONIK_AGENT in the tmux session environment.
+	if c.cfg.TmuxTarget != "" {
+		_ = c.cfg.SetTmuxEnvFn(ctx, c.cfg.TmuxTarget, "HARMONIK_AGENT", c.cfg.AgentName) //nolint:errcheck
+	}
+
+	// Step 4: inject /clear.
+	if c.cfg.TmuxTarget != "" {
+		_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, "/clear") //nolint:errcheck
+	}
+	j.Phase = "cleared"
+	j.UpdatedAt = time.Now().UTC()
+	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
+
+	// Step 5: wait for new session_id (best-effort).
+	newSID := c.waitForNewSessionID(ctx, sessionID)
+	if newSID == "" {
+		c.emitClearUnconfirmed(ctx, cycleID, sessionID)
+	}
+
+	// Step 5b: update .managed so the watcher accepts the new session.
+	if err := c.cfg.SetManagedSessionFn(c.cfg.ProjectDir, c.cfg.AgentName, newSID); err != nil {
+		slog.WarnContext(ctx, "keeper: restart-now: update managed session_id",
+			"agent", c.cfg.AgentName, "new_sid", newSID, "err", err)
+	}
+
+	// Step 6: inject /session-resume.
+	if c.cfg.TmuxTarget != "" {
+		_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, fmt.Sprintf("/session-resume %s", handoffPath)) //nolint:errcheck
+	}
+	j.Phase = "resumed"
+	j.UpdatedAt = time.Now().UTC()
+	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
+
+	// Step 7: close journal; emit cycle_complete.
+	j.Phase = "complete"
+	j.UpdatedAt = time.Now().UTC()
+	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
+	c.emitCycleComplete(ctx, cycleID, sessionID, newSID)
+
+	// Anti-loop: record the session_id so we do not re-fire until both a new
+	// session_id is observed AND pct drops below WarnPct on it.
+	c.lastFiredSID = sessionID
+	c.seenLowPctAfterLastFire = false
+
+	// Reset the consecutive-timeout counter and grace burst window.
+	c.consecutiveHandoffTimeouts = 0
+	c.bootGraceFirstArmAt = time.Time{}
+
+	return nil
+}
+
+// emitRestartNowBlocked emits session_keeper_restart_now_blocked.
+func (c *Cycler) emitRestartNowBlocked(ctx context.Context, sessionID, reason string) {
+	payload := core.SessionKeeperRestartNowBlockedPayload{
+		AgentName: c.cfg.AgentName,
+		SessionID: sessionID,
+		Reason:    reason,
+	}
+	raw, _ := json.Marshal(payload)                                                                        //nolint:errcheck
+	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperRestartNowBlocked, raw) //nolint:errcheck
 }
 
 // emitPrecompactBlocked emits session_keeper_precompact_blocked.

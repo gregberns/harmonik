@@ -437,6 +437,8 @@ EXAMPLES
 				return runKeeperDoctorSubcommand(subArgs[1:])
 			case "rebind":
 				return runKeeperRebind(subArgs[1:])
+			case "restart-now":
+				return runKeeperRestartNow(subArgs[1:])
 			}
 		}
 		for _, arg := range subArgs {

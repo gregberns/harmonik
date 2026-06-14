@@ -923,6 +923,24 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// §8.16 Remote-substrate worker event types (remote-substrate B6, hk-rs-b6-healthcheck-isda)
+// ---------------------------------------------------------------------------
+
+const (
+	// EventTypeWorkerUnhealthy is the worker_unhealthy event type.
+	// Emitted by RunHealthCheck in the workers package when a boot-time health
+	// probe fails for an enabled remote worker. The worker is disabled in-memory
+	// (SetEnabled(false)) but its config entry is retained (FR11). Carries the
+	// worker name and the name of the first failing probe.
+	//
+	// Payload fields: worker_name, failing_probe, detail, detected_at.
+	// Durability class: O (ordinary — operator observability; the worker is
+	// excluded from dispatch until the next successful health check).
+	// Bead ref: hk-rs-b6-healthcheck-isda.
+	EventTypeWorkerUnhealthy EventType = "worker_unhealthy"
+)
+
+// ---------------------------------------------------------------------------
 // §8.15 HITL-decisions event types (codename:hitl-decisions, hk-33p)
 // ---------------------------------------------------------------------------
 //

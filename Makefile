@@ -140,10 +140,14 @@ secret-scan:  ## Scan staged diff for API keys / credentials / .env files
 #            by check-fast, check, and CI). gofumpt -l and gci diff both exit 0
 #            on format drift, so we wrap them with explicit output checks here.
 # ---------------------------------------------------------------------------
+# Order: gci first (import ordering), then gofumpt (blank-line rules). This
+# ensures a single pass converges: gci may shift import blocks in ways that
+# gofumpt wants to touch, but gofumpt never alters import order so gci stays
+# satisfied after gofumpt runs.
 .PHONY: fmt
 fmt:  ## Auto-format all Go files with gofumpt + gci (writes in-place)
-	$(TOOLS_DIR)/gofumpt -w .
 	$(TOOLS_DIR)/gci write -s standard -s default -s 'prefix($(MODULE))' .
+	$(TOOLS_DIR)/gofumpt -w .
 
 .PHONY: fmt-check
 fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 'make fmt' to fix)

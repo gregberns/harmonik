@@ -2,7 +2,7 @@ package daemon
 
 // projectconfig.go — per-project model/effort config loader for
 // .harmonik/config.yaml (hk-bfvk7), extended with the daemon operational
-// config block per PL-004b (hk-rcp7).
+// config block per PL-004b (hk-rcp7) and the keeper config block (hk-lhu2).
 //
 // Implements tier-2 of the EM-012b model/effort resolution chain:
 // per-project .harmonik/config.yaml supplies per-agent-type defaults that take
@@ -13,6 +13,11 @@ package daemon
 // the optional daemon: mapping under schema_version: 1, extracting workflow_mode,
 // max_concurrent, and target_branch. Callers read these via ProjectConfig.Daemon
 // to apply the flag > config > default precedence chain at startup.
+//
+// Also implements the hk-lhu2 keeper: block reader: LoadProjectConfig parses the
+// optional keeper: mapping under schema_version: 1, extracting context thresholds
+// and warn message overrides. Callers read these via ProjectConfig.Keeper and
+// apply the CLI flag > config > default precedence chain at keeper startup.
 //
 // # File location
 //
@@ -36,9 +41,20 @@ package daemon
 //	  workflow_mode: dot       # review-loop or dot; single FORBIDDEN (PL-004a floor)
 //	  max_concurrent: 4        # > 0 to override --max-concurrent default
 //	  target_branch: main      # observability/symmetry only; authoritative source is branching.yaml
+//	keeper:
+//	  context_thresholds:
+//	    warn_abs_tokens: 270000    # absolute warn gate (default 270000); ≤0 = not configured
+//	    act_abs_tokens: 300000     # absolute act gate (default 300000); ≤0 = not configured
+//	    force_act_abs_tokens: 340000  # hard ceiling, unconditional clear (default act+40000); ≤0 = not configured
+//	    act_pct_ceil: 0.85         # pct-of-window cap for act gate (default 0.85); ≤0 = not configured
+//	    warn_pct_ceil: 0.70        # pct-of-window cap for warn gate (default 0.70); ≤0 = not configured
+//	  warn_messages:
+//	    default_warn_text: ""      # warn injection text for non-captain agents; empty = compiled default
+//	    on_demand_warn_text: ""    # warn injection text for captain (restart-now path); empty = compiled default
 //
 // Unknown agent keys are silently ignored (forward-compat).
 // Unknown sibling keys under daemon: are silently ignored (forward-compat per PL-004b).
+// Unknown sibling keys under keeper: are silently ignored (forward-compat per hk-lhu2).
 // Unknown schema_version → ErrUnsupportedConfigVersion.
 // Parse error on a present file → ErrMalformedConfigYAML.
 // daemon.workflow_mode: single → ErrWorkflowModeFloorViolation (PL-004a floor).
@@ -51,7 +67,7 @@ package daemon
 // specs/process-lifecycle.md §4.1 PL-004a — review floor (never single from config).
 // specs/process-lifecycle.md §4.1 PL-004b — flag > config > default precedence chain.
 //
-// Beads: hk-bfvk7, hk-rcp7.
+// Beads: hk-bfvk7, hk-rcp7, hk-lhu2.
 
 import (
 	"errors"
@@ -131,6 +147,56 @@ type rawDaemonConfig struct {
 	TargetBranch  string `yaml:"target_branch"` // observability/symmetry only per PL-004b
 }
 
+// rawKeeperContextThresholds holds configurable threshold values in the
+// keeper.context_thresholds block. Values ≤ 0 are treated as not configured
+// (defer to CLI flag or compiled default). Unknown keys are silently ignored.
+type rawKeeperContextThresholds struct {
+	WarnAbsTokens     int64   `yaml:"warn_abs_tokens"`
+	ActAbsTokens      int64   `yaml:"act_abs_tokens"`
+	ForceActAbsTokens int64   `yaml:"force_act_abs_tokens"`
+	ActPctCeil        float64 `yaml:"act_pct_ceil"`
+	WarnPctCeil       float64 `yaml:"warn_pct_ceil"`
+}
+
+// rawKeeperWarnMessages holds configurable warn text overrides in the
+// keeper.warn_messages block. Empty strings are treated as not configured.
+type rawKeeperWarnMessages struct {
+	DefaultWarnText  string `yaml:"default_warn_text"`
+	OnDemandWarnText string `yaml:"on_demand_warn_text"`
+}
+
+// rawKeeperConfig is the keeper: block in config.yaml.
+// Unknown keys at this level are silently ignored (forward-compat per hk-lhu2).
+type rawKeeperConfig struct {
+	ContextThresholds rawKeeperContextThresholds `yaml:"context_thresholds"`
+	WarnMessages      rawKeeperWarnMessages      `yaml:"warn_messages"`
+}
+
+// KeeperConfig holds the keeper-level configuration read from the
+// .harmonik/config.yaml keeper: block. All fields are optional in the file;
+// zero/empty values signal "not configured — defer to CLI flag or built-in default".
+// Precedence: CLI flag > config.yaml > compiled default (hk-lhu2).
+//
+// Bead ref: hk-lhu2.
+type KeeperConfig struct {
+	// WarnAbsTokens is the absolute warn threshold. Zero = not configured.
+	WarnAbsTokens int64
+	// ActAbsTokens is the absolute act threshold. Zero = not configured.
+	ActAbsTokens int64
+	// ForceActAbsTokens is the hard forced-clear ceiling. Zero = not configured.
+	ForceActAbsTokens int64
+	// ActPctCeil caps the act gate as a fraction of window size. Zero = not configured.
+	ActPctCeil float64
+	// WarnPctCeil caps the warn gate as a fraction of window size. Zero = not configured.
+	WarnPctCeil float64
+	// DefaultWarnText overrides the compiled-in wrap-up advisory for non-captain agents.
+	// Empty = not configured (use compiled default).
+	DefaultWarnText string
+	// OnDemandWarnText overrides the compiled-in restart-now advisory for the captain.
+	// Empty = not configured (use compiled default).
+	OnDemandWarnText string
+}
+
 // DaemonConfig holds the daemon-level operational configuration read from the
 // .harmonik/config.yaml daemon: block. All fields are optional in the file;
 // zero values signal "not configured — defer to CLI flag or built-in default".
@@ -160,7 +226,8 @@ type DaemonConfig struct {
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
-	Daemon        rawDaemonConfig           `yaml:"daemon"` // hk-rcp7: PL-004b daemon: block
+	Daemon        rawDaemonConfig           `yaml:"daemon"`  // hk-rcp7: PL-004b daemon: block
+	Keeper        rawKeeperConfig           `yaml:"keeper"`  // hk-lhu2: keeper config block
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.
@@ -177,7 +244,7 @@ type agentConfigEntry struct {
 
 // ProjectConfig is the decoded and cached representation of .harmonik/config.yaml.
 // It is the zero value when the file is absent. Use LookupAgent to query per-type
-// values, and Daemon for daemon operational settings.
+// values, Daemon for daemon operational settings, and Keeper for keeper settings.
 type ProjectConfig struct {
 	// entries maps core.AgentType to the configured (model, effort) pair.
 	// Only known-at-parse-time entries are stored; unknown keys are discarded.
@@ -189,6 +256,12 @@ type ProjectConfig struct {
 	// Spec ref: specs/process-lifecycle.md §4.1 PL-004b.
 	// Bead ref: hk-rcp7.
 	Daemon DaemonConfig
+
+	// Keeper holds the keeper-level config read from the keeper: block.
+	// Zero value when the block is absent.
+	//
+	// Bead ref: hk-lhu2.
+	Keeper KeeperConfig
 }
 
 // LookupAgent returns the (model, effort) pair configured for agentType, or
@@ -238,10 +311,11 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		return ProjectConfig{}, &ErrMalformedConfigYAML{Path: path, Cause: err}
 	}
 
-	// Empty-file sentinel: schema_version 0 + no agents + no daemon block → absent semantics.
-	// A file with only a daemon: block but no schema_version: 1 falls through to
-	// the version check below and returns ErrUnsupportedConfigVersion (fail-fast).
-	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 && raw.Daemon == (rawDaemonConfig{}) {
+	// Empty-file sentinel: schema_version 0 + no agents + no daemon block + no keeper block
+	// → absent semantics. A file with only a daemon: or keeper: block but no schema_version: 1
+	// falls through to the version check below and returns ErrUnsupportedConfigVersion (fail-fast).
+	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
+		raw.Daemon == (rawDaemonConfig{}) && raw.Keeper == (rawKeeperConfig{}) {
 		return ProjectConfig{}, nil
 	}
 
@@ -258,9 +332,13 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		return ProjectConfig{}, err
 	}
 
+	// hk-lhu2: parse the keeper: block (no fail-fast errors; all values optional).
+	keeperCfg := parseKeeperBlock(raw.Keeper)
+
 	cfg := ProjectConfig{
 		entries: make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
 		Daemon:  daemonCfg,
+		Keeper:  keeperCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
@@ -312,4 +390,36 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseKeeperBlock converts a rawKeeperConfig into a KeeperConfig.
+// All values are optional; ≤ 0 / empty strings are stored as zero values so
+// callers can detect "not configured" and defer to the CLI flag or compiled
+// default. Unknown YAML keys at any level are silently ignored (forward-compat
+// per hk-lhu2).
+//
+// Bead ref: hk-lhu2.
+func parseKeeperBlock(raw rawKeeperConfig) KeeperConfig {
+	cfg := KeeperConfig{}
+	t := raw.ContextThresholds
+	// Values ≤ 0 are treated as "not configured" — defer to CLI flag or compiled default.
+	if t.WarnAbsTokens > 0 {
+		cfg.WarnAbsTokens = t.WarnAbsTokens
+	}
+	if t.ActAbsTokens > 0 {
+		cfg.ActAbsTokens = t.ActAbsTokens
+	}
+	if t.ForceActAbsTokens > 0 {
+		cfg.ForceActAbsTokens = t.ForceActAbsTokens
+	}
+	if t.ActPctCeil > 0 {
+		cfg.ActPctCeil = t.ActPctCeil
+	}
+	if t.WarnPctCeil > 0 {
+		cfg.WarnPctCeil = t.WarnPctCeil
+	}
+	// Empty strings are treated as "not configured" — defer to compiled default.
+	cfg.DefaultWarnText = raw.WarnMessages.DefaultWarnText
+	cfg.OnDemandWarnText = raw.WarnMessages.OnDemandWarnText
+	return cfg
 }

@@ -339,6 +339,20 @@ type WatcherConfig struct {
 	// set explicitly if a different agent name needs the same UX in the future.
 	// Refs: hk-xjlq, ON-059.
 	OnDemandRestart bool
+
+	// DefaultWarnText, when non-empty, overrides the compiled-in wrapUpWarningText
+	// constant injected at warn crossings for non-captain agents (OnDemandRestart=false).
+	// Empty (or InjectFn non-nil) → compiled default is used.
+	// Sourced from .harmonik/config.yaml keeper.warn_messages.default_warn_text.
+	// Refs: hk-lhu2.
+	DefaultWarnText string
+
+	// OnDemandWarnText, when non-empty, overrides the compiled-in onDemandRestartWarningFmt
+	// text injected at warn crossings when OnDemandRestart is true (i.e. for the captain).
+	// Empty (or InjectFn non-nil) → compiled default is used.
+	// Sourced from .harmonik/config.yaml keeper.warn_messages.on_demand_warn_text.
+	// Refs: hk-lhu2.
+	OnDemandWarnText string
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -957,8 +971,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 				if inject == nil {
 					if w.cfg.OnDemandRestart {
 						agentName := w.cfg.AgentName
+						customText := w.cfg.OnDemandWarnText
 						inject = func(ctx context.Context, target string) error {
+							if customText != "" {
+								return InjectText(ctx, target, customText)
+							}
 							return InjectOnDemandRestartWarning(ctx, target, agentName)
+						}
+					} else if w.cfg.DefaultWarnText != "" {
+						customText := w.cfg.DefaultWarnText
+						inject = func(ctx context.Context, target string) error {
+							return InjectText(ctx, target, customText)
 						}
 					} else {
 						inject = InjectWrapUpWarning

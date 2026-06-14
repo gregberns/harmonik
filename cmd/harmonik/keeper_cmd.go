@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
@@ -99,6 +100,45 @@ func runKeeperSubcommand(args []string) int {
 		return 1
 	}
 
+	// Load .harmonik/config.yaml keeper: block for threshold + text defaults.
+	// Errors are non-fatal (logged to stderr); missing file is silently a no-op.
+	// Precedence: CLI flag > config.yaml > compiled default (applied in applyDefaults).
+	projCfg, projCfgErr := daemon.LoadProjectConfig(projectDir)
+	if projCfgErr != nil {
+		fmt.Fprintf(os.Stderr, "keeper: project config: %v (ignoring; using defaults)\n", projCfgErr)
+	}
+	keeperCfg := projCfg.Keeper
+
+	// Detect which threshold flags were explicitly set by the caller so we can
+	// distinguish "caller passed 0" from "caller omitted the flag".
+	var absWarnSet, absActSet bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "warn-abs-tokens":
+			absWarnSet = true
+		case "act-abs-tokens":
+			absActSet = true
+		}
+	})
+
+	// Resolve effective thresholds: CLI flag > config.yaml > compiled default (0 → applyDefaults).
+	resolvedWarnAbs := warnAbsTokensFlag
+	if !absWarnSet && keeperCfg.WarnAbsTokens > 0 {
+		resolvedWarnAbs = keeperCfg.WarnAbsTokens
+	}
+	resolvedActAbs := actAbsTokensFlag
+	if !absActSet && keeperCfg.ActAbsTokens > 0 {
+		resolvedActAbs = keeperCfg.ActAbsTokens
+	}
+	// force_act_abs_tokens has no CLI flag; config wins over computed default.
+	resolvedForceActAbs := int64(0)
+	if keeperCfg.ForceActAbsTokens > 0 {
+		resolvedForceActAbs = keeperCfg.ForceActAbsTokens
+	}
+	// pct ceils have no CLI flags; config wins over compiled defaults (0 → applyDefaults).
+	resolvedActPctCeil := keeperCfg.ActPctCeil     // 0 if not set → applyDefaults fills 0.85
+	resolvedWarnPctCeil := keeperCfg.WarnPctCeil   // 0 if not set → applyDefaults fills 0.70
+
 	// Step 1: acquire single-keeper lockfile.
 	lock, err := keeper.AcquireLock(projectDir, agentFlag)
 	if err != nil {
@@ -144,14 +184,17 @@ func runKeeperSubcommand(args []string) int {
 	emitter := keeper.NewFileEmitter(projectDir)
 
 	cycler := keeper.NewCycler(keeper.CyclerConfig{
-		AgentName:       agentFlag,
-		ProjectDir:      projectDir,
-		TmuxTarget:      resolvedTmux,
-		ActPct:          float64(actPctFlag),
-		ActAbsTokens:    actAbsTokensFlag,
-		WarnAbsTokens:   warnAbsTokensFlag,
-		SendEscapeFn:    keeper.SendEscapeKey,
-		BootGracePeriod: 5 * time.Minute, // hk-4f8: defer cycles during post-/session-resume boot
+		AgentName:         agentFlag,
+		ProjectDir:        projectDir,
+		TmuxTarget:        resolvedTmux,
+		ActPct:            float64(actPctFlag),
+		ActAbsTokens:      resolvedActAbs,
+		WarnAbsTokens:     resolvedWarnAbs,
+		ForceActAbsTokens: resolvedForceActAbs,
+		ActPctCeil:        resolvedActPctCeil,
+		WarnPctCeil:       resolvedWarnPctCeil,
+		SendEscapeFn:      keeper.SendEscapeKey,
+		BootGracePeriod:   5 * time.Minute, // hk-4f8: defer cycles during post-/session-resume boot
 	}, emitter)
 
 	// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before
@@ -167,8 +210,12 @@ func runKeeperSubcommand(args []string) int {
 		TmuxTarget:         resolvedTmux,
 		Cycler:             cycler,
 		FallbackWindowSize: windowSizeFlag,
-		WarnAbsTokens:      warnAbsTokensFlag,
+		WarnAbsTokens:      resolvedWarnAbs,
+		WarnPctCeil:        resolvedWarnPctCeil,
 		RespawnCmd:         respawnCmdFlag,
+		// Warn text overrides from config.yaml (empty = use compiled defaults).
+		DefaultWarnText:  keeperCfg.DefaultWarnText,
+		OnDemandWarnText: keeperCfg.OnDemandWarnText,
 		// hitl-decisions K5 (hk-061): the keeper watch tick is the SOLE emitter of
 		// decision_withdrawn(orphaned, by=keeper). Enable the orphan reaper on the
 		// standalone keeper; it reuses the FileEmitter (appends to the same

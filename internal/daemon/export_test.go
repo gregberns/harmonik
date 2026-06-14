@@ -1433,6 +1433,12 @@ type ExportedErrWorkflowModeFloorViolation = ErrWorkflowModeFloorViolation
 // Bead ref: hk-rcp7.
 type ExportedDaemonConfig = DaemonConfig
 
+// ExportedKeeperConfig is a type alias for KeeperConfig so tests in package
+// daemon_test can reference the type directly without importing internal types.
+//
+// Bead ref: hk-lhu2.
+type ExportedKeeperConfig = KeeperConfig
+
 // ExportedLoadProjectConfig exposes LoadProjectConfig for tests in package daemon_test.
 //
 // Bead ref: hk-bfvk7.

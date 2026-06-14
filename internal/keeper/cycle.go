@@ -52,8 +52,8 @@ type CyclerConfig struct {
 	// ensures a perpetually-busy crew (one that never satisfies CrispIdle) still
 	// gets cleared before context exhaustion. Effective threshold is
 	// min(ForceActAbsTokens, ForceActPctCeil * WindowSize).
-	// Refs: hk-0uu.
-	ForceActAbsTokens int64   // default 380000
+	// Refs: hk-0uu, hk-lhu2.
+	ForceActAbsTokens int64   // default ActAbsTokens+40000 (i.e. 340000 with defaults)
 	ForceActPctCeil   float64 // default 0.95
 
 	// Pct-based fallbacks used when CtxFile.Tokens == 0 or WindowSize == 0
@@ -190,8 +190,10 @@ func (c *CyclerConfig) applyDefaults() {
 	// ForceAct thresholds are derived from their corresponding act thresholds so
 	// that a custom --act-pct/--act-abs-tokens never creates a dead zone where
 	// context is above the act gate but below the force-clear gate (hk-6el).
+	// Offset reduced from +80k to +40k per operator decision (hk-lhu2): the
+	// resulting default force_act=340k is the final operator-decided value.
 	if c.ForceActAbsTokens <= 0 {
-		c.ForceActAbsTokens = c.ActAbsTokens + 80_000
+		c.ForceActAbsTokens = c.ActAbsTokens + 40_000
 	}
 	if c.ForceActPctCeil <= 0 {
 		c.ForceActPctCeil = c.ActPctCeil + 0.10

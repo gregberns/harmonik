@@ -87,7 +87,7 @@ wins, 300k) — preventing a `90%` gate from firing only at ~900k tokens
 |---|---|---|---|
 | **WARN** | `WarnAbsTokens = 270000` | `--warn-pct 80` (pct-ceil 0.70) | `cycle.go:applyDefaults`, `watcher.go:applyDefaults` |
 | **ACT** | `ActAbsTokens = 300000` | `--act-pct 90` (pct-ceil 0.85) | `cycle.go:applyDefaults` |
-| **FORCE-ACT** | `ForceActAbsTokens = 380000` | pct 95 (pct-ceil 0.95) | `cycle.go:applyDefaults` |
+| **FORCE-ACT** | `ForceActAbsTokens = 340000` (act+40k) | pct 95 (pct-ceil 0.95) | `cycle.go:applyDefaults` |
 | window fallback | `FallbackWindowSize = 200000` | — | `watcher.go:applyDefaults`, `--window-size` |
 
 - The **pct gates (`--warn-pct`/`--act-pct`) are only used as a fallback** when
@@ -104,10 +104,35 @@ wins, 300k) — preventing a `90%` gate from firing only at ~900k tokens
 - **FORCE-ACT** is the hard ceiling: above it the cycle fires **unconditionally,
   bypassing the CrispIdle gate**, so a perpetually-busy session that never goes
   idle still gets cleared before exhaustion (`cycle.go:50-57`, Refs: hk-0uu).
-- **Abs thresholds are configurable** via `--warn-abs-tokens`, `--act-abs-tokens`,
-  `--window-size` (`keeper_cmd.go`). The pct flags (`--warn-pct`, `--act-pct`)
+- **Abs thresholds are configurable** via CLI flags OR `.harmonik/config.yaml`
+  `keeper:` block (see § Project config below). CLI flags win over config.yaml;
+  config.yaml wins over compiled defaults. The pct flags (`--warn-pct`, `--act-pct`)
   are a legacy fallback — do NOT pass them on modern deployments (they are inert
-  when Claude Code emits absolute token counts). Refs: hk-odhh.
+  when Claude Code emits absolute token counts). Refs: hk-odhh, hk-lhu2.
+
+### § Project config — .harmonik/config.yaml `keeper:` block
+
+Operators can customise thresholds and warn texts per-project by adding a
+`keeper:` section to `.harmonik/config.yaml` (`schema_version: 1`). All fields
+are optional; absent or `0`/`""` values defer to the CLI flag or compiled default
+(precedence: CLI flag > config.yaml > compiled default).
+
+```yaml
+schema_version: 1
+keeper:
+  context_thresholds:
+    warn_abs_tokens: 270000      # absolute warn gate; ≤0 = not configured
+    act_abs_tokens: 300000       # absolute act gate; ≤0 = not configured
+    force_act_abs_tokens: 340000 # hard unconditional ceiling; ≤0 = not configured (derived as act+40k)
+    act_pct_ceil: 0.85           # pct-of-window cap for act gate; ≤0 = not configured
+    warn_pct_ceil: 0.70          # pct-of-window cap for warn gate; ≤0 = not configured
+  warn_messages:
+    default_warn_text: ""        # warn injection for non-captain agents; empty = compiled default
+    on_demand_warn_text: ""      # warn injection for captain (restart-now); empty = compiled default
+```
+
+The config is loaded once at keeper startup. Restart the keeper to reload.
+Refs: `internal/daemon/projectconfig.go`, hk-lhu2.
 
 ---
 

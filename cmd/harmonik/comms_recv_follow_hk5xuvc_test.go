@@ -298,32 +298,24 @@ func TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 		}
 	}()
 
-	// Redirect stdout so follow-loop message output does not pollute test output.
+	// Capture follow-loop output in a temp file rather than redirecting os.Stdout
+	// (redirecting the global os.Stdout races with the goroutine reading it — hk-uh6x).
 	outFile, _ := os.CreateTemp(dir, "watermark-hb-*.txt")
-	oldOut := os.Stdout
-	os.Stdout = outFile
-	t.Cleanup(func() {
-		os.Stdout = oldOut
-		_ = outFile.Close()
-	})
+	t.Cleanup(func() { _ = outFile.Close() })
 
 	// Run the follow loop; no initial since_event_id (cold start).
 	go func() {
-		runCommsRecvFollow(sockPath, "alice", "", "", "" /* sinceEventID */, true /*jsonOut*/)
+		runCommsRecvFollowIO(sockPath, "alice", "", "", "" /* sinceEventID */, true /*jsonOut*/, outFile)
 	}()
 
 	// Wait for the second connection's captured since_event_id.
 	// Allow up to 15 s to cover the 1 s initial reconnect backoff.
 	select {
 	case captured := <-reconnectSinceID:
-		os.Stdout = oldOut
-		_ = outFile.Close()
 		if captured != heartbeatLastEventID {
 			t.Errorf("reconnect since_event_id=%q, want %q (heartbeat.last_event_id — EV-037a)", captured, heartbeatLastEventID)
 		}
 	case <-time.After(15 * time.Second):
-		os.Stdout = oldOut
-		_ = outFile.Close()
 		t.Fatal("timed out waiting for second reconnect; watermark may not be advancing from heartbeat")
 	}
 }

@@ -935,6 +935,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### ON-058 — Multi-tenant global-surface isolation
 
+Tags: mechanism
+
 Harmonik's contributions to surfaces shared across all projects on one machine — the
 global `~/.claude/settings.json` keeper hook stanzas, the `~/.claude/captain-tools/`
 scripts, and `/tmp/hk-*` daemon-state files — MUST be project-namespaced so that N
@@ -1044,6 +1046,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 ### 4.13 Captain-initiated keeper restart-now
 
 #### ON-059 — Captain-initiated restart-now: `.restart-now` marker + RunOnDemand cycle
+
+Tags: mechanism
 
 The keeper MUST support a captain-initiated on-demand clear→resume cycle that bypasses
 the act-pct threshold gate only, keeping ALL other safety gates intact. This is the

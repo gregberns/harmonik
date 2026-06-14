@@ -1,6 +1,44 @@
 # harmonik promote — spec
 
+```yaml
+---
+title: harmonik promote
+spec-id: promote
+requirement-prefix: PR
+spec-category: runtime-subsystem
+status: reviewed
+spec-shape: requirements-first
+version: 0.1.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-06-13
+depends-on:
+  - operator-nfr
+  - process-lifecycle
+---
+```
+
 Bead: hk-pk3p1 (reconciles hk-gax8v, which is subsumed by this design).
+
+### 4.a Subsystem envelope
+
+Tags: mechanism
+
+(a) Events produced: none (`promote` operates offline without a running daemon).
+
+(b) Events consumed: none.
+
+(c) Types introduced: none cross-subsystem.
+
+(d) Handlers implemented: none (`promote` is a standalone CLI command, not a daemon handler).
+
+(e) State owned: none persistent (uses a temporary git worktree, auto-removed on completion).
+
+(f) Control points provided: none.
+
+(g) NFRs inherited: `ON-055` (offline surface); `promote` does not abort in-flight runs per ON-INV-006.
+
+(h) Boundary classification: all promote ops are `Tags: mechanism`; `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`.
 
 ## Purpose
 

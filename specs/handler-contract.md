@@ -331,7 +331,7 @@ An implementer-class `agentic` node carrying `auto_status="true"` per [workflow-
 - `notes` (string, OPTIONAL) — freeform human-readable rationale; the engine MUST NOT parse it (mirrors `Outcome.notes` per [execution-model.md §4.1 EM-005]).
 - `signals` (object, OPTIONAL) — freeform agent-supplied evidence map; retained for audit, NOT routed as edge-LHS.
 
-Tags: mechanism, normative
+Tags: mechanism
 
 ### 4.3 Concurrency model
 

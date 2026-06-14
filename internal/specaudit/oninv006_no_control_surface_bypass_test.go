@@ -252,6 +252,19 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// daemon's schedule tick fires actions through the already-governed crew-start
 	// and command-exec paths — the §7.1 between-task invariant is unaffected.
 	"schedule": "operator-nfr.md §4.9 ON-055; offline recurring-job config, no in-flight run abort",
+	// hitl-decisions SPEC §2 (hk-xz9/hk-kba): agent→human decision surface.
+	// raise/withdraw/list/answer emit or query decision events on events.jsonl;
+	// none of these ops abort an in-flight run or mutate daemon run-state.
+	// Authorised by operator-nfr.md §4.9 ON-055 (observation/event surface).
+	"decisions": "operator-nfr.md §4.9 ON-055; agent→human decision event surface, no run abort",
+	// specs/promote.md (hk-pk3p1): git cherry-pick-to-target with build gate
+	// (push-mode) or gh pr create (PR-mode). Operates in a temp worktree with no
+	// daemon connection; cannot abort an in-flight run.
+	"promote": "specs/promote.md §2; offline git cherry-pick or PR opener, no run abort",
+	// specs/process-lifecycle.md §4.2 PL-031 (hk-dmw): read-only SHA-256 hash
+	// printer — prints the first 12 hex chars of SHA-256(realpath(project_root))
+	// and exits 0. No daemon connection, no state mutation, no run impact.
+	"project-hash": "process-lifecycle.md §4.2 PL-031; read-only project hash, no run impact",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled
@@ -302,6 +315,18 @@ var oninv006FixtureSocketOpAllowlist = map[string]string{
 	// and cannot abort the between-task invariant.
 	"crew-start": "operator-nfr.md §4.9 ON-055; crew session spawn, no in-flight run abort",
 	"crew-stop":  "operator-nfr.md §4.9 ON-055; crew session teardown, no in-flight run abort",
+	// hitl-decisions SPEC §2 (hk-xz9 K2): agent-side emit ops. decisions-raise
+	// and decisions-withdraw write decision_needed / decision_withdrawn events to
+	// events.jsonl via DecisionsHandler; they do not mutate run state or abort
+	// in-flight runs. Authorised by operator-nfr.md §4.9 ON-055.
+	"decisions-raise":    "operator-nfr.md §4.9 ON-055; agent-side decision emit, no run abort",
+	"decisions-withdraw": "operator-nfr.md §4.9 ON-055; agent-side decision withdraw, no run abort",
+	// hitl-decisions SPEC §2 (hk-kba K4): operator-side ops. decisions-list is a
+	// read-only projection over events.jsonl (S6); decisions-answer emits a
+	// decision_resolved event (N7 option check, N3 no-op on duplicate). Neither
+	// op aborts an in-flight run. Authorised by operator-nfr.md §4.9 ON-055.
+	"decisions-list":   "operator-nfr.md §4.9 ON-055; read-only open-decision projection, no run abort",
+	"decisions-answer": "operator-nfr.md §4.9 ON-055; operator decision resolve event, no run abort",
 }
 
 // oninv006FixtureSignalAllowlist is the exhaustive set of signals registered

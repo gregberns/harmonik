@@ -2,6 +2,25 @@
 
 # hitl-decisions — SPEC (implementer entry point)
 
+```yaml
+---
+title: HITL Decisions
+spec-id: hitl-decisions
+requirement-prefix: HD
+spec-category: runtime-subsystem
+status: reviewed
+spec-shape: requirements-first
+version: 0.1.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-06-13
+depends-on:
+  - operator-nfr
+  - event-model
+  - execution-model
+---
+```
+
 **Work:** hitl-decisions (bead hk-0zxv6, P3, feature) · **Codename:** hitl-decisions · **Jig:** plan
 **Scope:** DESIGN-ONLY. This document defines *what to build*; **paul owns the daemon-infra implementation.** No code is changed by the hitl-decisions work itself.
 **Status:** §9 policy gate SIGNED (operator, 2026-06-13) → change-spec → integration → tasks.
@@ -9,6 +28,26 @@
 > This is the **self-contained reference** an implementing agent reads first. It is a **faithful assembly** of the upstream artifacts — it adds no new requirements and changes no decision. For full prose detail, the normative source is `05-specs/hitl-decisions-spec.md` (the change-spec); this document consolidates it and stands alone as the entry point.
 
 ---
+
+### 4.a Subsystem envelope
+
+Tags: mechanism
+
+(a) Events produced: `decision_needed` (agent raises), `decision_withdrawn` (agent withdraws, §1.3), `decision_resolved` (operator answers, §1.2).
+
+(b) Events consumed: none directly; open-decision projection (§3) reads `events.jsonl` passively.
+
+(c) Types introduced: none cross-subsystem (event payloads use the existing comms bus envelope per §1).
+
+(d) Handlers implemented: `DecisionsHandler` interface mounted on `*commsSendHandlerImpl` (`HandleDecisionsRaise`, `HandleDecisionsWithdraw`, `HandleDecisionsList`, `HandleDecisionsAnswer`).
+
+(e) State owned: none persistent; open-decision set is a projection over `events.jsonl` (source of truth per §3).
+
+(f) Control points provided: none.
+
+(g) NFRs inherited: `ON-055` (event-surface); decisions ops do not abort in-flight runs per ON-INV-006.
+
+(h) Boundary classification: all decisions ops are `Tags: mechanism`; `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent`.
 
 ## Overview
 

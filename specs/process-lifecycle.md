@@ -230,6 +230,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### PL-004b — Operational config resolution (workflow_mode, max_concurrent, target_branch)
 
+Tags: mechanism
+
 The daemon's three operational configuration scalars — `workflow_mode`, `max_concurrent`, and
 `target_branch` — MUST each resolve through the precedence chain **explicit flag > checked-in
 config file > built-in default**. "Explicit flag" means a flag the operator actually passed on
@@ -961,6 +963,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 ### 4.11 Initialization contract
 
 #### PL-029 — Portable project initialization contract
+
+Tags: mechanism
 
 `harmonik init`, when run from an **installed harmonik binary** against a **foreign repository**
 (any git repository that is NOT the harmonik source tree), MUST exit `0` and MUST produce a

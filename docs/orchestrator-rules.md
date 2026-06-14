@@ -154,3 +154,21 @@ tail -F /Users/gb/github/harmonik/.harmonik/events/events.jsonl 2>/dev/null \
 ```
 
 NOTE: there is no `daemon.log` file and no per-run output file to tail; `--notify-stream` belonged to the foreground `harmonik run` path, which the persistent daemon does not use.
+
+---
+
+## Run liveness: stale ≠ wedged
+
+**`run_stale` IS NOT A WEDGE SIGNAL (HARD RULE).** Before flagging a daemon run as wedged OR re-dispatching it, the orchestrator MUST:
+
+1. **Wait for the slow-recovery ceiling.** `run_stale` fires at ~10 min of silence — well before the actual recovery window closes. A silent implementer grinding through a long node, a reviewer thinking, or the commit_gate working through the merge sequence are all legitimate. The real ceiling is **~30 minutes from the relevant phase launch** (implementer launch, reviewer launch, or commit_gate entry), not from the first `run_stale` event. Do not call a run wedged until the 30-min ceiling has passed with no forward progress.
+
+2. **Ground-truth via the durable run_id event trace.** Check `.harmonik/events/events.jsonl` filtered by the specific `run_id`:
+
+   ```bash
+   jq 'select(.run_id == "<run_id>")' /Users/gb/github/harmonik/.harmonik/events/events.jsonl | tail -20
+   ```
+
+   Inspect the **last event TYPE and node** for that run — e.g. `node_dispatch_requested` for `commit_gate` means the run is grinding through the merge gate (normal); a long-silent implementer or reviewer node is also normal. Do NOT use the `harmonik subscribe` heartbeat's `last_event_id` field as a proxy — that is a GLOBAL cursor across all runs, not a per-run liveness indicator.
+
+**A `run_stale` during legitimate slow recovery is NOT a wedge.** Observed pattern: ~4 captain↔crew false-wedge round-trips per window (e.g. hk-4mten: `run_stale` fired at 601s during `launch_initiated`, retracted via `run_id` trace, never re-dispatched). Each false alarm wastes a crew turn and burns context. Refs: hk-9gkwa hk-fdoa.

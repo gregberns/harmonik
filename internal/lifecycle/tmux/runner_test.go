@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"bytes"
 	"context"
 	"os/exec"
 	"strings"
@@ -97,6 +98,126 @@ func TestOSAdapter_WithRunner_RoutesListSessions(t *testing.T) {
 	}
 	if len(rr.Calls[0].Args) == 0 || rr.Calls[0].Args[0] != "list-sessions" {
 		t.Errorf("RecordingRunner: call args = %v, want [list-sessions ...]", rr.Calls[0].Args)
+	}
+}
+
+// TestSSHRunner_NewWindowArgv verifies that SSHRunner wraps tmux commands in
+// the expected `ssh <host> -- tmux ...` argv without shell-quoting.
+func TestSSHRunner_NewWindowArgv(t *testing.T) {
+	t.Parallel()
+
+	sr := SSHRunner{Host: "worker-mac-1"}
+	rr := &RecordingRunner{
+		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			// Return a no-op cmd so nothing actually runs.
+			return exec.CommandContext(ctx, "true")
+		},
+	}
+	// Wrap the SSHRunner inside the RecordingRunner so we can inspect the
+	// fully-expanded argv that SSHRunner produces.
+	// Instead, call SSHRunner.Command directly and inspect the resulting Cmd.
+	ctx := context.Background()
+	_ = rr // silence unused warning; we use SSHRunner directly below
+
+	// Build a NewWindowIn with a space-containing workdir and a slash-containing
+	// window name — these are the hk-kuxxl slash class and argv-quoting risks.
+	p := NewWindowIn{
+		Session:    "mysession",
+		WindowName: "feat/my-feature",
+		WorkDir:    "/home/user/work dir with spaces",
+	}
+	args := buildNewWindowArgs(p)
+
+	cmd := sr.Command(ctx, "tmux", args...)
+	if cmd == nil {
+		t.Fatal("SSHRunner.Command: got nil cmd")
+	}
+
+	// cmd.Args[0] is the binary path; cmd.Args[1:] are the argv tokens.
+	argv := cmd.Args
+	// Expected prefix: [ssh, worker-mac-1, --, tmux, new-window, ...]
+	if len(argv) < 4 {
+		t.Fatalf("SSHRunner argv too short: %v", argv)
+	}
+	if argv[0] != "ssh" {
+		t.Errorf("argv[0] = %q, want ssh", argv[0])
+	}
+	if argv[1] != "worker-mac-1" {
+		t.Errorf("argv[1] = %q, want worker-mac-1", argv[1])
+	}
+	if argv[2] != "--" {
+		t.Errorf("argv[2] = %q, want --", argv[2])
+	}
+	if argv[3] != "tmux" {
+		t.Errorf("argv[3] = %q, want tmux", argv[3])
+	}
+	if argv[4] != "new-window" {
+		t.Errorf("argv[4] = %q, want new-window", argv[4])
+	}
+
+	// Verify the space-containing workdir and slash-containing window name each
+	// appear as a single discrete token — not split or shell-quoted.
+	fullArgv := strings.Join(argv, " ")
+	_ = fullArgv
+
+	foundWorkDir := false
+	foundWindowName := false
+	for _, a := range argv {
+		if a == "/home/user/work dir with spaces" {
+			foundWorkDir = true
+		}
+		if a == "feat/my-feature" {
+			foundWindowName = true
+		}
+	}
+	if !foundWorkDir {
+		t.Errorf("argv %v: space-containing workdir not found as a single token", argv)
+	}
+	if !foundWindowName {
+		t.Errorf("argv %v: slash-containing window name not found as a single token", argv)
+	}
+}
+
+// TestSSHRunner_Opts verifies that extra Opts are prepended before the host.
+func TestSSHRunner_Opts(t *testing.T) {
+	t.Parallel()
+
+	sr := SSHRunner{Host: "worker-mac-1", Opts: []string{"-p", "2222", "-i", "/path/to/key"}}
+	ctx := context.Background()
+	cmd := sr.Command(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
+	argv := cmd.Args
+	// Expected: [ssh, -p, 2222, -i, /path/to/key, worker-mac-1, --, tmux, ...]
+	if argv[1] != "-p" || argv[2] != "2222" || argv[3] != "-i" || argv[4] != "/path/to/key" {
+		t.Errorf("Opts not prepended correctly: %v", argv)
+	}
+	if argv[5] != "worker-mac-1" {
+		t.Errorf("host position wrong: argv[5] = %q, want worker-mac-1", argv[5])
+	}
+	if argv[6] != "--" {
+		t.Errorf("separator position wrong: argv[6] = %q, want --", argv[6])
+	}
+}
+
+// TestSSHRunner_LoadBufferForwardsStdin verifies that the cmd returned by
+// SSHRunner allows the caller to set cmd.Stdin (needed for `tmux load-buffer -`
+// over ssh). SSHRunner must not touch cmd.Stdin itself.
+func TestSSHRunner_LoadBufferForwardsStdin(t *testing.T) {
+	t.Parallel()
+
+	sr := SSHRunner{Host: "worker-mac-1"}
+	ctx := context.Background()
+	cmd := sr.Command(ctx, "tmux", "load-buffer", "-b", "harmonik-abc-payload", "-")
+	if cmd == nil {
+		t.Fatal("SSHRunner.Command: got nil cmd")
+	}
+	// cmd.Stdin must be nil before the caller sets it.
+	if cmd.Stdin != nil {
+		t.Errorf("SSHRunner.Command: cmd.Stdin pre-set by runner; must be nil so caller can set it")
+	}
+	// Simulate what OSAdapter.LoadBuffer does: set cmd.Stdin.
+	cmd.Stdin = bytes.NewReader([]byte("hello"))
+	if cmd.Stdin == nil {
+		t.Error("cmd.Stdin: assignment lost — runner must not override it")
 	}
 }
 

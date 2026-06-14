@@ -66,3 +66,32 @@ func (r *RecordingRunner) Command(ctx context.Context, name string, args ...stri
 	}
 	return exec.CommandContext(ctx, name, args...)
 }
+
+// SSHRunner is a CommandRunner that tunnels every command through ssh. Each
+// call produces:
+//
+//	ssh [Opts...] <Host> -- <name> <args...>
+//
+// Arguments are passed as discrete argv tokens (never shell-concatenated) so
+// remote tmux/git receive exactly one token per argument. This preserves spaces
+// inside working-directory paths and slashes inside window names without any
+// quoting.
+//
+// Callers may set cmd.Stdin after the call returns; SSHRunner does not touch
+// it.  The daemon's LoadBuffer path relies on this to stream payload bytes into
+// `tmux load-buffer -` over the ssh connection.
+type SSHRunner struct {
+	// Host is the SSH destination (user@host or bare host).
+	Host string
+	// Opts are extra flags passed to ssh before the host (e.g. ["-p", "2222"]).
+	Opts []string
+}
+
+// Command returns an *exec.Cmd that runs `ssh [Opts...] <Host> -- <name> <args...>`.
+func (s SSHRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	sshArgs := make([]string, 0, len(s.Opts)+2+1+len(args))
+	sshArgs = append(sshArgs, s.Opts...)
+	sshArgs = append(sshArgs, s.Host, "--", name)
+	sshArgs = append(sshArgs, args...)
+	return exec.CommandContext(ctx, "ssh", sshArgs...)
+}

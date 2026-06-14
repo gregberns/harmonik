@@ -594,9 +594,7 @@ the cycle is the "crew offline" edge above — a returning crew needs no action.
 
 **The captain MUST NOT self-`/quit` on a keeper context-warning.** Your OWN session
 is keeper-managed too (`harmonik keeper --agent captain`), and the keeper injects a
-**captain-specific** warn: *"Context is filling. At a clean idle point: write
-HANDOFF-captain.md (include your KEEPER nonce), then run: harmonik keeper
-restart-now --agent captain. Do NOT /quit."*
+**captain-specific** warn: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain. Do NOT /quit or stop."*
 
 > ~~**Old guidance (OBSOLETE — hk-4zy9):** "On a WARN, just keep holding / do
 > nothing extra — wait for the keeper's ACT cycle to fire."~~ This caused captains

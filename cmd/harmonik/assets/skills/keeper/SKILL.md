@@ -272,9 +272,7 @@ On a keeper context-warning:
 
 ### Captain (OnDemandRestart warn text)
 
-The captain's warn injection says: *"Context is filling. At a clean idle point:
-write HANDOFF-captain.md (include your KEEPER nonce), then run: harmonik keeper
-restart-now --agent captain. Do NOT /quit."*
+The captain's warn injection says: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain. Do NOT /quit or stop."*
 
 At a **clean idle point** (no `.dispatching` in flight, not mid crew-spawn/merge/submit):
 1. Finish the current logical unit of work.

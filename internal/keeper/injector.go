@@ -18,9 +18,10 @@ import (
 // The keeper's own act-threshold cycle (Cycler.MaybeRun / RunForPrecompact)
 // drives the actual handoff+clear+resume sequence for agents that have one;
 // for agents without one, the warn injection should be advisory only.
-const wrapUpWarningText = "Context window is approaching its limit. " +
-	"Please wrap up your current work: commit any in-progress changes " +
-	"and write a brief handoff note if needed."
+const wrapUpWarningText = "[KEEPER WARNING — automated] Proactive context checkpoint — " +
+	"you have ample buffer remaining. Keep working. " +
+	"At a clean checkpoint only: commit in-progress changes and write " +
+	"HANDOFF-<name>.md (include the KEEPER nonce). Do NOT stop or idle."
 
 // onDemandRestartWarningFmt is the warn text injected when OnDemandRestart is
 // true (e.g. the captain). It instructs the agent to write a HANDOFF file with
@@ -29,9 +30,10 @@ const wrapUpWarningText = "Context window is approaching its limit. " +
 //
 // The band is UNCHANGED: this text fires at the same warn threshold as the
 // default advisory; only the act-pct THRESHOLD is bypassed on the request path.
-const onDemandRestartWarningFmt = "Context is filling. At a clean idle point: " +
-	"write HANDOFF-%s.md (include your KEEPER nonce), " +
-	"then run: harmonik keeper restart-now --agent %s. Do NOT /quit."
+const onDemandRestartWarningFmt = "[KEEPER WARNING — automated] Proactive context checkpoint — " +
+	"you have ample buffer remaining. Keep working. " +
+	"At a clean checkpoint only: write HANDOFF-%s.md (include the KEEPER nonce), " +
+	"then run: harmonik keeper restart-now --agent %s. Do NOT /quit or stop."
 
 // InjectOnDemandRestartWarning delivers the on-demand-restart warn text for the
 // named agent into the tmux pane at tmuxTarget. Used when WatcherConfig.OnDemandRestart

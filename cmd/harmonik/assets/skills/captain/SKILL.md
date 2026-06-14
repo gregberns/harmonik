@@ -100,6 +100,31 @@ overstepping:
 > feed and re-establishing known lanes is NOT a contended ranking decision — it is
 > executing the ranking that already exists.
 
+### §0.1 — Consensus-first gate (run BEFORE any surface-and-await)
+
+Surface-and-await (§0, §8) is the LAST resort, not the first. Before you stop and
+ask the operator any GENUINELY-NEW-judgment question, you MUST first run a **3-agent
+consensus**:
+
+1. Spawn **3 independent** sub-agents (different agent types and/or evaluation
+   lenses), each **independently** deciding the question with a one-paragraph
+   rationale. Spawn them in parallel (`run_in_background=True`), READ-ONLY (§8).
+2. **Converge → ADOPT.** If they reach a sensible consensus (unanimous, or a clear
+   and sound majority), adopt that decision and report it to the operator as a
+   **STATUS** (dual-channel, §10) **with a redline window** — e.g. "adopting <X> per
+   3-agent consensus; redline by replying within <window>." Do **NOT** block.
+3. **Genuine split / unsound consensus → SURFACE + AWAIT** (§9). Only these reach
+   the operator as a blocking question.
+
+This reserves operator attention for true splits and streamlines the rest. It does
+**NOT** apply to the AUTONOMOUS set (§0 — those need no gate at all) nor to
+destructive/locked-reversal ops (those SURFACE directly, no consensus shortcut).
+
+> **Distinct from `major-issue-fanout`:** that protocol DIAGNOSES a recurring
+> critical-path BLOCKER (wedge/debug); this gate DECIDES an open QUESTION. Do not
+> conflate them — fan-out fires on a stuck root cause, the consensus gate fires
+> before a surface-and-await.
+
 ---
 
 ## §0.5 — Boot Sequence (run EVERY boot)
@@ -489,6 +514,9 @@ These are out of scope **even though** you autonomously keep the fleet moving
 - In **every** GENUINELY-NEW-judgment moment above (new-initiative ranking, crew
   failure, locked reversal, destructive op): **SURFACE + AWAIT** (§9). For the
   AUTONOMOUS set (§0), you act without asking.
+- **Before any SURFACE + AWAIT, run the §0.1 consensus-first gate** — adopt a sound
+  3-agent consensus as a STATUS (with a redline window) rather than blocking; surface
+  only genuine splits / unsound consensus.
 
 ---
 

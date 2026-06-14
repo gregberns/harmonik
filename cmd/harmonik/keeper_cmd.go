@@ -410,15 +410,21 @@ func runKeeperRestartNow(args []string) int {
 	fs := flag.NewFlagSet("keeper restart-now", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	var projectFlag string
+	var agentFlag string
 	fs.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
+	fs.StringVar(&agentFlag, "agent", "", "agent name (alternative to positional argument)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() < 1 {
+	// Accept --agent flag or positional argument; flag takes precedence.
+	agent := agentFlag
+	if agent == "" && fs.NArg() >= 1 {
+		agent = fs.Arg(0)
+	}
+	if agent == "" {
 		fmt.Fprintln(os.Stderr, "harmonik keeper restart-now: agent name argument is required")
 		return 1
 	}
-	agent := fs.Arg(0)
 	if projectFlag == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -492,6 +498,7 @@ USAGE
   harmonik keeper rebind <agent> [--project DIR]
   harmonik keeper set-dispatching <agent> [--project DIR]
   harmonik keeper clear-dispatching <agent> [--project DIR]
+  harmonik keeper restart-now --agent <name> [--project DIR]
   harmonik keeper restart-now <agent> [--project DIR]
 
 VERBS

@@ -586,6 +586,7 @@ func TestT6_UnicodeHeavyBody(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestT6_LargeWorktreeBase(t *testing.T) {
+	skipRealDaemonE2EInShort(t) // real daemon E2E; creates 1000 dirs + git worktree — exceeds -short budget
 	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 
@@ -655,6 +656,7 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestT6_ConcurrentBeadCreate(t *testing.T) {
+	skipRealDaemonE2EInShort(t) // real daemon E2E; 4-bead concurrent run — may exceed -short budget
 	// Not parallel: ctx cancellation stops the daemon (converted from SIGINT self-signal per hk-i4mtq)
 	projectDir, jsonlPath, brWrapper, handlerScript := t6FixtureDir(t)
 

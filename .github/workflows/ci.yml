@@ -1,6 +1,8 @@
-# Tier 2 — make check
-# Runs gofumpt+gci diff, go vet, go build, golangci-lint, go test -race,
-# go mod tidy check, coverage gate, and govulncheck.
+# Tier 2 — make check-short
+# Runs gofumpt+gci diff, go vet, go build, golangci-lint, and go test -short
+# -race. Skips real-daemon E2E tests (skipRealDaemonE2EInShort) that require
+# br, twin binaries, and a live daemon — none available on ubuntu-latest.
+# Those tests belong in the separate Tier 3 hk-6hzci lane.
 # Non-merge-blocking: no required status check configured in branch protection.
 name: CI
 
@@ -30,14 +32,5 @@ jobs:
       - name: Install dev tools
         run: make tools
 
-      # TEMPORARY (flywheel, per operator directive): continue-on-error so failed runs
-      # report SUCCESS and stop emailing the operator. Main is currently red on Linux for
-      # reasons unrelated to the originally-expected test reds — REMOVE this once green:
-      #   hk-x342d  Linux build break (monotonic_linux.go syscall.ClockGettime) — KEYSTONE
-      #   hk-agouy  gofumpt/gci formatting drift (e.g. internal/hooksystem/dispatcher.go)
-      #   hk-jzepv  Tier2 should run lint + `go test -short` (full make check pulls
-      #             real-daemon E2E needing br/twins); also owns removing this interim
-      #   hk-ihfzp/hk-tidsb/hk-feow8 (specaudit) + hk-sr5jb (t6probe) test reds
-      - name: make check
-        run: make check
-        continue-on-error: true
+      - name: make check-short
+        run: make check-short

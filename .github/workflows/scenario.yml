@@ -26,10 +26,5 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # TEMPORARY (flywheel, per operator directive): continue-on-error so failed runs
-      # report SUCCESS and stop emailing the operator. This job currently fails to BUILD on
-      # Linux (hk-x342d, monotonic_linux.go) before any scenario runs. REMOVE once green;
-      # hk-jzepv owns removal + the ubuntu-vs-macos runner decision.
       - name: make test-scenario
         run: make test-scenario
-        continue-on-error: true

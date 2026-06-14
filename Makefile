@@ -179,6 +179,22 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	fi
 
 # ---------------------------------------------------------------------------
+# Tier 2a — check-short (CI gate, ~2-3 min)
+# Runs in CI on every push/PR via .github/workflows/ci.yml.
+# Skips real-daemon E2E tests (skipRealDaemonE2EInShort) that require br,
+# twin binaries, and a live daemon — none available on hosted runners.
+# Those tests live in the separate Tier 3 scenario lane (hk-6hzci).
+# TMPDIR=/tmp: ensures socket-path tests don't hit macOS TMPDIR length limits.
+# ---------------------------------------------------------------------------
+.PHONY: check-short
+check-short:  ## CI Tier 2: fmt-check + golangci-lint + go test -short -race (skips real-daemon E2E; hk-jzepv)
+	$(MAKE) fmt-check
+	go vet ./...
+	go build ./...
+	$(TOOLS_DIR)/golangci-lint run
+	TMPDIR=/tmp go test -short -race -count=1 ./...
+
+# ---------------------------------------------------------------------------
 # Tier 2 — check (~3-5 min target)
 # Default pre-push + work-in-progress verification.
 # ---------------------------------------------------------------------------

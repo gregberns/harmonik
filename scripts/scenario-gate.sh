@@ -274,9 +274,17 @@ main() {
     # `go test` argument):
     #   unit_pkgs     — every changed .go file's recursive package pattern.
     #   scenario_pkgs — only scenario-touching files' patterns (affectedScenarioPkgs).
-    local unit_acc="" scenario_acc=""
+    local unit_acc="" scenario_acc="" specaudit_trigger=0
     while IFS= read -r f; do
         [ -n "$f" ] || continue
+        # Detect files that require specaudit to always run (hk-wz95): changes to
+        # specs/, cmd/harmonik/, or internal/daemon/socket.go escape the affected-
+        # set because specaudit's sensors (oninv006 CLI-verb scan, socket-op scan,
+        # spec front-matter checks) read THOSE files but live in internal/specaudit.
+        case "$f" in
+            specs/*|cmd/harmonik/*|internal/daemon/socket.go)
+                specaudit_trigger=1 ;;
+        esac
         local pat
         pat=$(file_to_pkg_pattern "$f")
         [ -n "$pat" ] || continue
@@ -285,6 +293,14 @@ main() {
             scenario_acc="${scenario_acc}${pat}"$'\n'
         fi
     done <<< "$files"
+
+    # If any specaudit-triggering file changed, always include internal/specaudit
+    # in the unit run so spec-rule, CLI-verb, and socket-op sensors can't slip
+    # through a bead that doesn't directly touch internal/specaudit. Refs: hk-wz95.
+    if [ "$specaudit_trigger" -eq 1 ] && [ -d ./internal/specaudit ]; then
+        log "specaudit trigger: specs/, cmd/harmonik/, or internal/daemon/socket.go changed — injecting ./internal/specaudit/..."
+        unit_acc="${unit_acc}./internal/specaudit/..."$'\n'
+    fi
 
     local -a unit_pkgs=() scenario_pkgs=()
     while IFS= read -r p; do [ -n "$p" ] && unit_pkgs+=("$p"); done \

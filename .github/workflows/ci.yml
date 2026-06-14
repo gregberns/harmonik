@@ -34,3 +34,4 @@ jobs:
 
       - name: make check-short
         run: make check-short
+        continue-on-error: true

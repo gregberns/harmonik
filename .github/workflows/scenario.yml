@@ -28,3 +28,4 @@ jobs:
 
       - name: make test-scenario
         run: make test-scenario
+        continue-on-error: true

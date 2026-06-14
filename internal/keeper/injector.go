@@ -12,28 +12,30 @@ import (
 // context-window percentage crosses the warn threshold. It is NON-DESTRUCTIVE:
 // it asks the agent to wrap up without forcing a /clear or handoff.
 //
-// NOTE: deliberately does NOT include a /quit instruction. Agents without a
-// supervised respawn path (e.g. a bare captain with no --session-id / keeper
-// clear→resume rebind) would exit permanently if instructed to /quit here.
-// The keeper's own act-threshold cycle (Cycler.MaybeRun / RunForPrecompact)
-// drives the actual handoff+clear+resume sequence for agents that have one;
-// for agents without one, the warn injection should be advisory only.
+// NOTE: deliberately omits an agent-exit instruction. Agents without a
+// supervised respawn path (e.g. a bare captain without a stable --session-id
+// that the keeper can rebind via clear→resume) would exit permanently if
+// instructed to stop here. The keeper's own act-threshold cycle
+// (Cycler.MaybeRun / RunForPrecompact) drives the actual handoff+clear+resume
+// sequence for agents that have one; for agents without one, the warn
+// injection should be advisory only.
 const wrapUpWarningText = "[KEEPER WARNING — automated] Proactive context checkpoint — " +
 	"you have ample buffer remaining. Keep working. " +
 	"At a clean checkpoint only: commit in-progress changes and write " +
 	"HANDOFF-<name>.md (include the KEEPER nonce). Do NOT stop or idle."
 
 // onDemandRestartWarningFmt is the warn text injected when OnDemandRestart is
-// true (e.g. the captain). It instructs the agent to write a HANDOFF file with
-// the KEEPER nonce and then trigger 'harmonik keeper restart-now --agent <name>'
-// rather than /quit — the keeper owns the actual clear→resume cycle (ON-059).
+// true (e.g. the captain). It instructs the agent to checkpoint then run
+// 'harmonik keeper restart-now --agent <name>'; the keeper owns the
+// clear→resume rebind, so the agent never exits on its own (ON-059).
 //
 // The band is UNCHANGED: this text fires at the same warn threshold as the
 // default advisory; only the act-pct THRESHOLD is bypassed on the request path.
 const onDemandRestartWarningFmt = "[KEEPER WARNING — automated] Proactive context checkpoint — " +
 	"you have ample buffer remaining. Keep working. " +
 	"At a clean checkpoint only: write HANDOFF-%s.md (include the KEEPER nonce), " +
-	"then run: harmonik keeper restart-now --agent %s. Do NOT /quit or stop."
+	"then run: harmonik keeper restart-now --agent %s, keep the turn open, and stop typing. " +
+	"The keeper drives the clear→resume cycle."
 
 // InjectOnDemandRestartWarning delivers the on-demand-restart warn text for the
 // named agent into the tmux pane at tmuxTarget. Used when WatcherConfig.OnDemandRestart

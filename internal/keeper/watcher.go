@@ -327,7 +327,8 @@ type WatcherConfig struct {
 	// captain-specific restart-now instruction: "[KEEPER WARNING — automated]
 	// Proactive context checkpoint — you have ample buffer remaining. Keep working.
 	// At a clean checkpoint only: write HANDOFF-<agent>.md (include the KEEPER
-	// nonce), then run: harmonik keeper restart-now --agent <agent>. Do NOT /quit or stop."
+	// nonce), then run: harmonik keeper restart-now --agent <agent>, keep the turn
+	// open, and stop typing. The keeper drives the clear→resume cycle."
 	//
 	// The keeper band is UNCHANGED — this flag does not widen the warn or act
 	// thresholds. It only changes the text injected at the warn crossing; the

@@ -10,11 +10,10 @@
 #   `harmonik crew start` (internal/daemon/crewstart.go resolveSessionID) — that is
 #   exactly what lets a keeper-cycled crew come back as the same session. The
 #   captain, historically launched as a bare `claude --remote-control captain` with
-#   NO --session-id, had no stable id, so the keeper could only ever WARN it (the
-#   non-destructive warn injection, internal/keeper/injector.go, whose text ends
-#   "…then run /quit"); when the captain obeyed /quit it exited and nothing
-#   respawned it → dead and stayed dead. Minting --session-id here mirrors the crew
-#   model and gives the keeper a session to rebind.
+#   NO --session-id, had no stable id; the keeper could only inject the advisory
+#   warn text but could not rebind after a clear (no session to --resume). Minting
+#   --session-id here mirrors the crew model: the keeper can checkpoint the captain
+#   via restart-now (internal/keeper/injector.go) and resume the same conversation.
 #
 # WHY captain.sentinel + captain.pid matter (orphan-sweep exclusion, load-bearing):
 #   The daemon's orphan sweep (internal/daemon/orphansweep.go probeCaptainSentinel)

@@ -302,17 +302,7 @@ you, it writes a handoff, clears context, and resumes your **same** `session_id`
 > **`keeper` skill** (`.claude/skills/keeper/SKILL.md`). This section only covers
 > what a crew does on restart; the keeper skill owns the mechanism.
 
-### Do NOT self-`/quit` on a keeper WARN
-
-A keeper **WARN is informational only.** When you see a wrap-up-warning injected
-into your pane, you MUST keep working and MUST NOT `/quit`, `/clear`, or exit
-yourself. Only the keeper's **ACT** path performs the handoff → clear → resume
-cycle — that is the keeper's job, not the crew's. **Self-quitting on a warn is a
-known failure mode** (it abandons in-flight loop state for no reason; the keeper
-would have cycled you cleanly at the ACT threshold). The `keeper` skill states
-this same rule — see § Don't self-quit on a warn there.
-
-On resume you re-run the full boot sequence from Step 1:
+On restart, re-run the full boot sequence from Step 1:
 1. Re-read your handoff / re-derive `{queue, epic_id}` from beads (`assignee ==
    crew_name`).
 2. Re-`join` (re-announce presence).
@@ -416,5 +406,5 @@ If the handoff file is missing, unreadable, any required field is absent, or
 - `.claude/skills/harmonik-dispatch/SKILL.md` — daemon queue submit loop;
   harmonik-dispatch is the outer pattern this skill scopes to one crew's queue.
 - `.claude/skills/keeper/SKILL.md` — the session-keeper contract: warn-vs-act
-  thresholds, `keeper doctor`, the "do NOT self-`/quit` on a warn" rule, and the
-  crew-restart re-hydration mechanism referenced by § Self-restart via the keeper.
+  thresholds, `keeper doctor`, and the crew-restart re-hydration mechanism
+  referenced by § Self-restart via the keeper.

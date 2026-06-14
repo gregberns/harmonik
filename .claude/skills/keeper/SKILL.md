@@ -9,10 +9,9 @@ description: >
   any keeper-watched session — captain, crew, flywheel, orchestrator. Covers:
   the two thresholds (warn vs act) and their REAL default values, the command
   surface (enable / doctor / set-dispatching / clear-dispatching / the watcher
-  itself), the hard rule "do NOT self-/quit on a keeper warn" (only the keeper's
-  ACT path performs the reset-cycle), crew-restart re-hydration, and the KNOWN
-  drift that the gauge is not wired for crews on the live deployment (confirm with
-  `keeper doctor`). Load-bearing: must not rot. Composes with crew-launch
+  itself), crew-restart re-hydration, and the KNOWN drift that the gauge is not
+  wired for crews on the live deployment (confirm with `keeper doctor`).
+  Load-bearing: must not rot. Composes with crew-launch
   (§ Self-restart via the keeper) and captain (§10 restart continuity).
 
 sources:
@@ -40,9 +39,7 @@ with its work intact.
 
 You interact with the keeper in three roles:
 
-1. **As a managed session** — you keep working; you read its warn injections but
-   you do NOT act on them yourself (the keeper owns the reset). See § Don't
-   self-quit on a warn.
+1. **As a managed session** — you keep working; the keeper owns the reset cycle.
 2. **As an operator/captain wiring it up** — `keeper enable` / `keeper doctor`.
 3. **As a dispatcher** — `keeper set-dispatching` / `clear-dispatching` to defer
    the reset while a queue batch is in flight.
@@ -269,7 +266,7 @@ in-flight queue work has completed. Exit codes: `0` removed (or already absent);
 
 | crossing | keeper does | YOU do (crew / default) | YOU do (captain / OnDemandRestart) |
 |---|---|---|---|
-| **WARN** (≥270k tokens abs / `--warn-pct` fallback) | injects warn text, emits `session_keeper_warn` | **Keep working.** Optionally refresh `HANDOFF-<agent>.md`. Do NOT `/quit`, `/clear`, or stop. | **Keep working.** At the next clean idle point: write `HANDOFF-captain.md` (include the KEEPER nonce), run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, and stop typing. Do NOT `/quit`. |
+| **WARN** (≥270k tokens abs / `--warn-pct` fallback) | injects warn text, emits `session_keeper_warn` | **Keep working.** Optionally refresh `HANDOFF-<agent>.md`. | **Keep working.** At the next clean idle point: write `HANDOFF-captain.md` (include the KEEPER nonce), run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, and stop typing. Do NOT `/quit`. |
 | **ACT** (≥300k / `--act-pct`, CrispIdle, no dispatch hold) | runs handoff → nonce-poll → `/clear` → `/session-resume` | **Nothing.** Hold with `keeper set-dispatching` if mid-dispatch. | **Nothing** — same cycle fires if the captain has not already triggered restart-now. |
 | **FORCE-ACT** (≥380k / `--act-pct` 95) | runs the cycle **unconditionally** (bypasses CrispIdle) | **Nothing** — the safety net for a never-idle session. | **Nothing** — same safety net; always fires regardless of restart-now status. |
 | **captain restart-now** | `RunOnDemand`: bypasses CrispIdle gate, runs cycle immediately on next tick | — | Captain writes handoff + nonce, then calls `harmonik keeper restart-now --agent captain`. |
@@ -281,17 +278,7 @@ handoff, `.managed`, `HoldingDispatch`) remain intact.
 
 ---
 
-## § Don't self-quit on a keeper warn (HARD RULE)
-
-**A warn is informational. The agent MUST NOT `/quit`, `/clear`, or stop in
-response to it.** Only the keeper's **ACT path** (or the captain's `restart-now`
-request path) performs the handoff → `/clear` → `/session-resume` cycle, rebinding
-your minted `--session-id` so you wake up as the SAME agent with context cleared.
-
-If you obey a warn injection's "wrap up / quit" wording and actually exit, and
-you were launched **without a supervised respawn wrapper** (`--respawn-cmd`),
-you **stay dead** — defeating the entire cycle (`captain` skill §10; this is a
-documented live failure mode).
+## § On a keeper warn — crew vs captain
 
 ### Crews (default advisory warn text)
 

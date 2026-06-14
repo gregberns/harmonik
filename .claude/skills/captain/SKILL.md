@@ -598,10 +598,22 @@ is keeper-managed too (`harmonik keeper --agent captain`), and the keeper inject
 HANDOFF-captain.md (include your KEEPER nonce), then run: harmonik keeper
 restart-now --agent captain. Do NOT /quit."*
 
-**On a WARN, the captain-initiated restart-now procedure is:**
+> ~~**Old guidance (OBSOLETE — hk-4zy9):** "On a WARN, just keep holding / do
+> nothing extra — wait for the keeper's ACT cycle to fire."~~ This caused captains
+> to idle through 40+ warn-cycles re-narrating state and burning context. The
+> **REQUIRED** action is `restart-now` at the next clean checkpoint.
 
-1. Keep working on the current logical unit. Do NOT stop mid crew-spawn/merge/submit.
-2. At the next clean idle point (no `.dispatching` in flight):
+**TERSE-ACK / NO-RE-NARRATION rule (HARD — hk-4zy9, ON-059):** On a keeper WARN,
+ack with ONE terse line (e.g. *"WARN received — will trigger restart-now at next
+clean checkpoint"*) then continue working immediately. **DO NOT** re-summarize or
+re-narrate current state in response to a WARN. Context burn from re-narration is
+what forced 40+ idle warn-cycles. `/clear` is the reset — there is no manual
+hand-trim.
+
+**On a WARN, restart-now is REQUIRED at the next clean checkpoint:**
+
+1. Continue working on the current logical unit. Do NOT stop mid crew-spawn/merge/submit.
+2. **At the next clean idle point** (no `.dispatching` in flight — do not delay past it):
    - Write `HANDOFF-captain.md` with a fresh KEEPER nonce.
    - Run: `harmonik keeper restart-now --agent captain`
 3. Keep the turn OPEN and stop typing. The keeper fires the cycle on its next tick

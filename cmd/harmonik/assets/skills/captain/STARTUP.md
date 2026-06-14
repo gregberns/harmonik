@@ -277,11 +277,20 @@ Do NOT /quit."*
 all other safety gates (nonce-confirmed handoff, `.managed`, `HoldingDispatch`) are
 intact. The operator HARD-NO on widening the band stands.
 
-**When you receive a WARN:**
+> ~~**Old guidance (OBSOLETE — hk-4zy9):** "On a WARN, just keep holding / do nothing
+> extra — wait for the keeper's ACT cycle."~~ This caused 40+ idle warn-cycles with
+> context re-narration. `restart-now` at the next clean checkpoint is now REQUIRED.
 
-1. **Keep working** on the current logical unit. Do NOT stop mid crew-spawn, merge,
-   or submit. Wait for a clean idle point (no `.dispatching` in flight).
-2. At that clean point:
+**TERSE-ACK / NO-RE-NARRATION rule (HARD — hk-4zy9, ON-059):** On receiving a WARN,
+ack with ONE terse line then keep working. **DO NOT** re-summarize or re-narrate
+current state. `/clear` is the reset — no manual hand-trim.
+
+**When you receive a WARN — restart-now is REQUIRED at the next clean checkpoint:**
+
+1. **Terse-ack** the warn in one line (e.g. *"WARN received — triggering restart-now
+   at next clean checkpoint"*). **Then immediately keep working.** Do NOT stop mid
+   crew-spawn, merge, or submit.
+2. **At the next clean idle point** (no `.dispatching` in flight — do not delay past it):
    - Write `HANDOFF-captain.md` with current state, including the `<!-- KEEPER:<nonce> -->` line.
    - Run: `harmonik keeper restart-now --agent captain [--project DIR]`
 3. **Keep the turn OPEN and stop typing.** The keeper fires the cycle on its next

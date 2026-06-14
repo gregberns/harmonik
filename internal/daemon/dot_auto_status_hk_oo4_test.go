@@ -33,7 +33,7 @@ package daemon_test
 // function directly in the test process, which would immediately deadlock or
 // time out if any LLM call were attempted (no API key / no network in CI).
 //
-// Bead ref: hk-oo4. Spec refs: WG-041 §I.4, AR-006.
+// Bead ref: hk-oo4. Spec refs: WG-053, AR-006.
 
 import (
 	"context"
@@ -52,7 +52,7 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestDotParser_AutoStatusTrue_Parsed verifies that auto_status="true" on an
-// agentic node parses to node.AutoStatus=true with no errors (hk-oo4 WG-041 §I.4).
+// agentic node parses to node.AutoStatus=true with no errors (hk-oo4 WG-053).
 func TestDotParser_AutoStatusTrue_Parsed(t *testing.T) {
 	t.Parallel()
 
@@ -104,7 +104,7 @@ func TestDotParser_AutoStatusFalse_Parsed(t *testing.T) {
 
 // TestDotParser_AutoStatus_WarnOnNonAgentic verifies that auto_status="true"
 // on a non-agentic node is retained with a v1 WARNING and does NOT raise a
-// strict error (WG-031 permissive-retain / WG-041 §I.4).
+// strict error (WG-031 permissive-retain / WG-053).
 func TestDotParser_AutoStatus_WarnOnNonAgentic(t *testing.T) {
 	t.Parallel()
 

@@ -253,6 +253,7 @@ func TestReviewLoopCycleComplete_Approved(t *testing.T) {
 // Spec: event-model.md §8.1a.6; execution-model.md §4.3 EM-015e.
 // Bead: hk-7om2q.24.
 func TestReviewLoopCycleComplete_CapHit(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, wtPath, parentSHA := rlcFixtureSetup(t)

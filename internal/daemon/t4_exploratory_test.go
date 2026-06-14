@@ -165,6 +165,7 @@ func (s *t4StubLedger) getReopenedIDs() []core.BeadID {
 //
 // Finding candidate: if the loop crashes or errors on empty queue.
 func TestT4_EmptyQueue(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := t4FixtureSetup(t)
@@ -233,6 +234,7 @@ func TestT4_EmptyQueue(t *testing.T) {
 //   - Does the loop retry after a ClaimBead error?
 //   - Does it emit a stale run_started event before the claim fails?
 func TestT4_ClaimConflict(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := t4FixtureSetup(t)
@@ -322,6 +324,7 @@ func TestT4_ClaimConflict(t *testing.T) {
 //   - Does the loop emit run_failed after the non-zero exit?
 //   - Does the second dispatch emit run_completed with success=true?
 func TestT4_ReopenThenRedispatch(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := t4FixtureSetup(t)
@@ -468,6 +471,7 @@ done:
 //   - Does the loop continue to the next bead after a CloseBead failure?
 //   - Is run_completed still emitted even if CloseBead fails?
 func TestT4_CloseBeadError(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := t4FixtureSetup(t)
@@ -569,6 +573,7 @@ doneS4:
 // (production ClaimBead uses `br update --claim` which is atomic in SQLite).
 // This test documents the expected behavior and the stub limitation.
 func TestT4_ConcurrentLoops(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := t4FixtureSetup(t)
@@ -682,6 +687,7 @@ doneS5:
 //
 // Spec ref: specs/event-model.md §8.1 (run_completed); workloop.go steps 9 & 10.
 func TestT4_EventOrderingOnCloseError(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir := t4FixtureSetup(t)

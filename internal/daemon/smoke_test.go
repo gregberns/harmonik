@@ -287,6 +287,7 @@ func smokeFixturePollRunTerminal(t *testing.T, jsonlPath string, budget time.Dur
 //   - Config.HandlerArgs not present → workaround: baked handler.sh script.
 //   - Worktree cleanup not wired in R10 → workaround: accept worktree present.
 func TestMVHSmoke(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	realBrPath := smokeFixtureBrPath(t)

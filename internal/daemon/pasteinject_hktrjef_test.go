@@ -214,6 +214,7 @@ func TestPasteInjectQuitOnCommit_NewCommitNoKill(t *testing.T) {
 // not exited within postQuitKillGrace, killer.Kill is called to unblock the
 // workloop's sess.Wait.
 func TestPasteInjectQuitOnCommit_PostQuitWatchdogKillsOnGrace(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	// Override package vars: short pollInterval + long pollTimeout so the
 	// noChange-timeout path does NOT fire; short postQuitKillGrace so the
 	// watchdog fires quickly.

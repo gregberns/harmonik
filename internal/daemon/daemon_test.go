@@ -170,6 +170,7 @@ func TestDaemonStart_PidfileBlocksSecondInvocation(t *testing.T) {
 // Spec ref: specs/event-model.md §8.7.1; specs/process-lifecycle.md PL-005.
 // Bead ref: hk-iarcy.
 func TestDaemonStart_EmitsDaemonStarted(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
@@ -212,6 +213,7 @@ func TestDaemonStart_EmitsDaemonStarted(t *testing.T) {
 // Spec ref: specs/event-model.md §8.7.1.
 // Bead ref: hk-iarcy.
 func TestDaemonStart_DaemonStartedInJSONLLog(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
@@ -317,6 +319,7 @@ func TestDaemonStart_OrphanSweepEventEmitted(t *testing.T) {
 // runs before socket/listener bind.
 // Bead ref: hk-60uvn.
 func TestDaemonStart_OrphanSweepNonFatalOnEmptyDir(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
@@ -468,6 +471,7 @@ func TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor(t *testing.T) {
 // Spec ref: specs/process-lifecycle.md §4.1 PL-003; §4.2 PL-005 step 3a.
 // Bead ref: hk-tjl40.
 func TestDaemonStart_BindsSocket(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	const sunPathMax = 104

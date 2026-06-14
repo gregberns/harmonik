@@ -305,6 +305,7 @@ func parallelSmokeFixtureExtractRunCompletedRunIDs(t *testing.T, jsonlPath strin
 // Spec ref: POST_MVH_PARALLELISM_ROADMAP.md row 7.
 // Bead ref: hk-e61c3.4.
 func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
 	projectDir, jsonlPath, brWrapper, beadID1, beadID2 := parallelSmokeFixtureSetup(t)

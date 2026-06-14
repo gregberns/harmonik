@@ -4309,6 +4309,18 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 					}
 				}
 			}
+
+			// Step 3c: post-merge fmt-check gate (hk-k1hn).
+			//
+			// Run gofumpt -l and gci diff on the merged tree to catch formatting
+			// drift before the push. Both tools exit 0 and emit output when files
+			// are dirty; non-empty output blocks the merge.
+			// Fail-open: if the .tools/ binaries are absent (non-Go repos, bare
+			// test fixtures, CI machines without tools installed) the check is
+			// skipped entirely. Same rollback+emit pattern as the build gate above.
+			if fmtOutcome := runMergeFmtCheck(ctx, buildDir, projectDir, targetBranch, mainTip, runID, beadID, bus); fmtOutcome != nil {
+				return *fmtOutcome
+			}
 		}
 
 		// Step 4: push origin <targetBranch>.
@@ -4768,6 +4780,79 @@ func emitMergeBuildFailed(ctx context.Context, bus handlercontract.EventEmitter,
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeMergeBuildFailed, b)
+}
+
+// runMergeFmtCheck runs gofumpt -l and gci diff on buildDir to detect
+// formatting drift before the push. Both tools exit 0 and write the list of
+// dirty files (or a diff) to stdout when formatting is needed; non-empty
+// output is treated as a failure.
+//
+// Fail-open: if either tool binary is absent in projectDir/.tools/ the check
+// is silently skipped (non-Go repos, bare test fixtures, CI without tools).
+//
+// On failure the caller's update-ref is rolled back and merge_build_failed is
+// emitted (reusing the existing event type so operators see it in the same
+// subscription stream). Returns nil on pass or skip.
+//
+// Bead: hk-k1hn.
+func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, mainTip string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) *mergeOutcome {
+	rollback := func() {
+		rb := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
+		rb.Dir = projectDir
+		_ = rb.Run()
+	}
+
+	gofumptBin := filepath.Join(projectDir, ".tools", "gofumpt")
+	if _, err := os.Stat(gofumptBin); err == nil {
+		cmd := exec.CommandContext(ctx, gofumptBin, "-l", ".")
+		cmd.Dir = buildDir
+		// gofumpt -l exits 0; non-empty stdout = unformatted files.
+		if out, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
+			rollback()
+			msg := "gofumpt: unformatted files (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
+			emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
+			return &mergeOutcome{
+				success: false,
+				reason:  "merge_fmt_failed (gofumpt): " + strings.TrimRight(string(out), "\n"),
+			}
+		}
+	}
+
+	gciBin := filepath.Join(projectDir, ".tools", "gci")
+	if _, err := os.Stat(gciBin); err == nil {
+		if mod := readGoModule(buildDir); mod != "" {
+			cmd := exec.CommandContext(ctx, gciBin, "diff", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".")
+			cmd.Dir = buildDir
+			// gci diff exits 0; non-empty stdout = import order drift.
+			if out, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
+				rollback()
+				msg := "gci: import order drift (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
+				emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
+				return &mergeOutcome{
+					success: false,
+					reason:  "merge_fmt_failed (gci): import order drift detected",
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// readGoModule parses the first "module <path>" directive from dir/go.mod.
+// Returns empty string on any error.
+func readGoModule(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			return fields[1]
+		}
+	}
+	return ""
 }
 
 // emitBeadClosed emits a bead_closed event after a successful CloseBead call.

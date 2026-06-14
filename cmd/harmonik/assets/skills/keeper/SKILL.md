@@ -111,6 +111,32 @@ wins, 300k) — preventing a `90%` gate from firing only at ~900k tokens
 All keeper verbs are under `harmonik keeper`. Top-level usage:
 `keeper_cmd.go:243` (`keeperTopUsage`).
 
+### `harmonik keeper restart-now <agent> [--project DIR]` — captain-initiated on-demand restart
+
+Writes the `.restart-now` marker (`{nonce, requested_at, session_id}`) read from
+the captain's current `HANDOFF-captain.md`. On the next watcher tick, the keeper
+calls `RunOnDemand`, which bypasses the act-pct idle gate and runs the
+handoff → nonce-poll → `/clear` → `/session-resume` cycle immediately.
+
+**The keeper band is UNCHANGED.** The warn and act thresholds are not widened.
+`restart-now` bypasses ONLY the act-pct idle-gate (CrispIdle check); all other
+safety gates (nonce-confirmed handoff, `.managed`, HoldingDispatch check) remain
+intact. The operator HARD-NO on widening the band stands.
+
+**The captain mints the nonce.** On the request path the captain writes
+`HANDOFF-captain.md` (including the `<!-- KEEPER:<nonce> -->` comment), then calls
+`harmonik keeper restart-now --agent captain`. The keeper reads the nonce from the
+handoff; if no nonce is present or the nonce mismatches the one in `.restart-now`,
+the cycle is aborted (safety invariant: never `/clear` without a confirmed nonce).
+
+```bash
+# Captain procedure (at a clean idle point — no in-flight dispatch):
+# 1. Write HANDOFF-captain.md with current state (include the KEEPER nonce comment).
+# 2. Trigger the restart-now cycle:
+harmonik keeper restart-now --agent captain [--project DIR]
+# The keeper's next tick (≤5 s) fires RunOnDemand → /clear → /session-resume.
+```
+
 ### `harmonik keeper --agent <name> [flags]` — the watcher (run this to start it)
 
 Starts the watcher loop and blocks until SIGINT/SIGTERM.
@@ -211,32 +237,55 @@ in-flight queue work has completed. Exit codes: `0` removed (or already absent);
 
 ## § Warn vs act — what to do at each
 
-| crossing | keeper does | YOU do |
-|---|---|---|
-| **WARN** (≥240k tokens / `--warn-pct`) | injects a wrap-up prompt, emits `session_keeper_warn` | **Keep working.** Optionally refresh your `HANDOFF-<agent>.md` so the eventual reset carries good state. Do NOT `/quit`, do NOT `/clear`, do NOT stop. |
-| **ACT** (≥300k / `--act-pct`, CrispIdle, no dispatch hold) | runs handoff → nonce-poll → `/clear` → `/session-resume` | **Nothing.** The keeper owns the cycle. If you are mid-dispatch, hold it off with `keeper set-dispatching` first so ACT waits. |
-| **FORCE-ACT** (≥380k / `--act-pct` 95) | runs the cycle **unconditionally** (bypasses CrispIdle) | **Nothing** — this is the safety net for a never-idle session. |
-| **operator attached** | act-path goes **warn-only**: the destructive injection is suppressed so the keeper never races a human's keystrokes; warn/gauge emissions continue; the cycle resumes once the operator detaches | nothing (`cycle.go:128-137`, hk-6qf) |
+| crossing | keeper does | YOU do (crew / default) | YOU do (captain / OnDemandRestart) |
+|---|---|---|---|
+| **WARN** (≥240k tokens / `--warn-pct`) | injects warn text, emits `session_keeper_warn` | **Keep working.** Optionally refresh `HANDOFF-<agent>.md`. Do NOT `/quit`, `/clear`, or stop. | **Keep working.** At the next clean idle point: write `HANDOFF-captain.md` (include the KEEPER nonce), run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, and stop typing. Do NOT `/quit`. |
+| **ACT** (≥300k / `--act-pct`, CrispIdle, no dispatch hold) | runs handoff → nonce-poll → `/clear` → `/session-resume` | **Nothing.** Hold with `keeper set-dispatching` if mid-dispatch. | **Nothing** — same cycle fires if the captain has not already triggered restart-now. |
+| **FORCE-ACT** (≥380k / `--act-pct` 95) | runs the cycle **unconditionally** (bypasses CrispIdle) | **Nothing** — the safety net for a never-idle session. | **Nothing** — same safety net; always fires regardless of restart-now status. |
+| **captain restart-now** | `RunOnDemand`: bypasses CrispIdle gate, runs cycle immediately on next tick | — | Captain writes handoff + nonce, then calls `harmonik keeper restart-now --agent captain`. |
+| **operator attached** | act-path goes **warn-only**: destructive injection suppressed so keeper never races human keystrokes; warn/gauge continue; cycle resumes once operator detaches | nothing (`cycle.go:128-137`, hk-6qf) | nothing |
+
+**The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate;
+it does NOT widen warn or act thresholds. All other safety gates (nonce-confirmed
+handoff, `.managed`, `HoldingDispatch`) remain intact.
 
 ---
 
 ## § Don't self-quit on a keeper warn (HARD RULE)
 
 **A warn is informational. The agent MUST NOT `/quit`, `/clear`, or stop in
-response to it.** Only the keeper's **ACT path** performs the
-handoff → `/clear` → `/session-resume` cycle, and it rebinds your minted
-`--session-id` so you wake up as the SAME agent with context cleared.
+response to it.** Only the keeper's **ACT path** (or the captain's `restart-now`
+request path) performs the handoff → `/clear` → `/session-resume` cycle, rebinding
+your minted `--session-id` so you wake up as the SAME agent with context cleared.
 
 If you obey a warn injection's "wrap up / quit" wording and actually exit, and
 you were launched **without a supervised respawn wrapper** (`--respawn-cmd`),
 you **stay dead** — defeating the entire cycle (`captain` skill §10; this is a
-documented live failure mode). So on a keeper context-warning:
+documented live failure mode).
+
+### Crews (default advisory warn text)
+
+On a keeper context-warning:
 
 1. Refresh your `HANDOFF-<agent>.md` (so the eventual reset carries good state).
 2. **Keep working.** Let the keeper cycle you when it crosses ACT.
 
-The captain and every crew are themselves keeper-managed; this rule applies to
-all of them.
+### Captain (OnDemandRestart warn text)
+
+The captain's warn injection says: *"Context is filling. At a clean idle point:
+write HANDOFF-captain.md (include your KEEPER nonce), then run: harmonik keeper
+restart-now --agent captain. Do NOT /quit."*
+
+At a **clean idle point** (no `.dispatching` in flight, not mid crew-spawn/merge/submit):
+1. Finish the current logical unit of work.
+2. Write `HANDOFF-captain.md` with a fresh KEEPER nonce.
+3. Run `harmonik keeper restart-now --agent captain`.
+4. Keep the turn OPEN, stop typing — the keeper fires the cycle on its next tick (≤5 s).
+5. **NEVER self-`/quit`.** The keeper owns the clear→resume cycle; a manual `/quit`
+   exits the captain permanently (no supervised respawn path today).
+
+Handoff carries INTENT only — `STARTUP.md` re-drains comms and re-grounds via live
+state on resume. Do not snapshot live queue/daemon state in the handoff body.
 
 ---
 
@@ -313,6 +362,9 @@ harmonik keeper --agent <agent> --tmux <pane> --warn-pct 25 --act-pct 30
 # Defer the reset while a queue batch is in flight, then release
 harmonik keeper set-dispatching <agent>
 harmonik keeper clear-dispatching <agent>
+
+# Captain-initiated restart (write HANDOFF-captain.md first, include KEEPER nonce)
+harmonik keeper restart-now --agent captain [--project DIR]
 ```
 
 If the keeper is NOT armed (per `doctor`) and a crew wedges at ~200k tokens:

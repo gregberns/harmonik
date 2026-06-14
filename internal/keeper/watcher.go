@@ -322,6 +322,22 @@ type WatcherConfig struct {
 	// latchSuppressed from the persisted state. When nil, ReadSuppressState is
 	// used. Set to a constant false in unit tests. Refs: hk-0tvm.
 	ReadSuppressFn func(projectDir, agent string) bool
+
+	// OnDemandRestart, when true, replaces the default wrap-up advisory with the
+	// captain-specific restart-now instruction: "Context is filling. At a clean
+	// idle point: write HANDOFF-<agent>.md (include your KEEPER nonce), then run:
+	// harmonik keeper restart-now --agent <agent>. Do NOT /quit."
+	//
+	// The keeper band is UNCHANGED — this flag does not widen the warn or act
+	// thresholds. It only changes the text injected at the warn crossing; the
+	// act-pct threshold is bypassed only on the captain-initiated request path
+	// (harmonik keeper restart-now → RunOnDemand). Crews always use the default
+	// advisory (OnDemandRestart=false).
+	//
+	// Auto-set to true when AgentName=="captain" (see applyDefaults). Can also be
+	// set explicitly if a different agent name needs the same UX in the future.
+	// Refs: hk-xjlq, ON-059.
+	OnDemandRestart bool
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -386,6 +402,13 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.ReadSuppressFn == nil {
 		c.ReadSuppressFn = ReadSuppressState
+	}
+	// Auto-enable on-demand restart UX for the captain agent. The captain uses
+	// 'harmonik keeper restart-now' (ON-059) rather than the keeper's auto-cycle,
+	// so the warn injection must instruct it accordingly. The band is unchanged.
+	// Refs: hk-xjlq, ON-059.
+	if !c.OnDemandRestart && c.AgentName == "captain" {
+		c.OnDemandRestart = true
 	}
 	// EventsJSONLPath is read by BOTH the K5 orphan reaper (ReapDecisions) and the
 	// K6 respawn-exemption (blockedOnOpenDecision). Derive it whenever it is unset
@@ -931,7 +954,14 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if pendingInject && gaugeQuiesced {
 				inject := w.cfg.InjectFn
 				if inject == nil {
-					inject = InjectWrapUpWarning
+					if w.cfg.OnDemandRestart {
+						agentName := w.cfg.AgentName
+						inject = func(ctx context.Context, target string) error {
+							return InjectOnDemandRestartWarning(ctx, target, agentName)
+						}
+					} else {
+						inject = InjectWrapUpWarning
+					}
 				}
 				if injectErr := inject(ctx, w.cfg.TmuxTarget); injectErr != nil {
 					slog.WarnContext(ctx, "keeper: inject wrap-up warning", "err", injectErr)

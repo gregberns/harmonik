@@ -14,6 +14,58 @@ state (which crews are live, their epics/queues, armed watchers, the task list,
 pending operator directives). It must be saved-and-restarted **without losing that
 state and without stopping mid-critical-op**.
 
+## Two restart paths (ON-059, hk-wjzf, hk-xjlq)
+
+The keeper supports two cycle-trigger paths for the captain:
+
+### Watcher path (passive — keeper-initiated)
+
+The keeper polls the gauge every 5s and at the **act threshold** (≥300k tokens /
+`--act-pct`, CrispIdle, no HoldingDispatch) it runs the automatic cycle:
+handoff-inject → nonce-poll → `/clear` → `/session-resume captain`.
+
+On this path the keeper **injects `/session-handoff`** itself (the captain does not
+need to act). The nonce-confirmed invariant still applies.
+
+### Request path (active — captain-initiated, ON-059)
+
+The captain can **trigger the cycle early** at a clean idle point rather than
+waiting for the act threshold. This is the preferred mechanism because the captain
+can choose a moment that is not mid-dispatch or mid-crew-spawn.
+
+**Procedure:**
+
+1. At a clean idle point (no `.dispatching` in flight, not mid crew-spawn/merge/submit):
+2. Write `HANDOFF-captain.md` (the captain mints the nonce via `/session-handoff`
+   or writes it manually as `<!-- KEEPER:<uuid> -->`).
+3. Run: `harmonik keeper restart-now --agent captain [--project DIR]`
+4. Keep the turn OPEN and stop typing. The keeper fires `RunOnDemand` on its next
+   tick (≤5 s), which: consumes the `.restart-now` marker (once), verifies the
+   nonce in `HANDOFF-captain.md`, then runs the same `/clear` → `/session-resume`
+   cycle as the watcher path.
+
+**The keeper band is UNCHANGED.** `restart-now` bypasses ONLY the act-pct idle
+gate (CrispIdle check). All other safety gates intact:
+- `.managed` must exist (destructive consent required)
+- Nonce in `HANDOFF-captain.md` must match the marker (no `/clear` without confirmed handoff)
+- `HoldingDispatch` check still defers the cycle if `keeper set-dispatching` is held
+
+The captain **mints the nonce** on the request path by writing the handoff first.
+The marker JSON (`{nonce, requested_at, session_id}`) is consumed once — a second
+call with the same nonce is a no-op.
+
+### Per-agent WARN text
+
+When the keeper watcher crosses the WARN threshold for the captain agent
+(`WatcherConfig.OnDemandRestart=true`, auto-set when `AgentName=="captain"`), it
+injects the captain-specific text:
+
+> *"Context is filling. At a clean idle point: write HANDOFF-captain.md (include
+> your KEEPER nonce), then run: harmonik keeper restart-now --agent captain.
+> Do NOT /quit."*
+
+Crews receive the default advisory. The band is not widened for either.
+
 ## Mechanism — the SAME session-keeper used for crews, pointed at the captain
 
 The captain already runs in a **named tmux session `captain`** (the hard prereq for
@@ -21,11 +73,11 @@ The captain already runs in a **named tmux session `captain`** (the hard prereq 
 
 1. **Gauge:** the keeper statusline writes `.harmonik/keeper/captain.ctx`
    (pct/tokens/session_id) each turn.
-2. **Watcher:** polls ~5s; at the act threshold it runs the cycle.
-3. **Cycle (nonce-safe):** truncates the handoff → injects `/session-handoff` →
-   **polls for the handoff nonce** → ONLY THEN `/clear` → `/session-resume captain`.
-   The invariant the crew test validates — *never `/clear` without a confirmed
-   handoff* — is exactly what protects the captain too.
+2. **Watcher:** polls ~5s; at the act threshold (watcher path) or on the next tick
+   after `restart-now` (request path) it runs the cycle.
+3. **Cycle (nonce-safe):** truncates the handoff → nonce-poll → ONLY THEN
+   `/clear` → `/session-resume captain`. The invariant — *never `/clear` without a
+   confirmed handoff nonce* — applies on BOTH paths.
 
 ## Re-hydration — captain resumes from BOTH the handoff AND live ground-truth
 

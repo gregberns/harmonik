@@ -593,16 +593,32 @@ same name and re-appears in `comms who` on its own. (A transient presence drop d
 the cycle is the "crew offline" edge above — a returning crew needs no action.)
 
 **The captain MUST NOT self-`/quit` on a keeper context-warning.** Your OWN session
-is keeper-managed too (`harmonik keeper --agent captain`), and wind-down is the
-KEEPER's job, not yours: it drives the in-process handoff → `/clear` →
-`/session-resume` cycle and rebinds to your minted `--session-id` (you MUST be
-launched via `~/.claude/captain-tools/captain-launch.sh`, which mints that id —
-STARTUP.md Step 6 "Keeper arming"). A captain that obeys the warn injection's
-`/quit` exits and, **lacking a supervised respawn wrapper** (until the durable
-respawn bead lands — Gap below), **stays dead**, defeating the whole cycle. So on a
-keeper context-warning, do NOT run `/quit`: refresh `HANDOFF.md` and let the keeper
-cycle you. (Gap: the keeper today only INJECTS in-process and has no respawn path
-for the captain — filed as the captain-restart-continuity follow-up bead.)
+is keeper-managed too (`harmonik keeper --agent captain`), and the keeper injects a
+**captain-specific** warn: *"Context is filling. At a clean idle point: write
+HANDOFF-captain.md (include your KEEPER nonce), then run: harmonik keeper
+restart-now --agent captain. Do NOT /quit."*
+
+**On a WARN, the captain-initiated restart-now procedure is:**
+
+1. Keep working on the current logical unit. Do NOT stop mid crew-spawn/merge/submit.
+2. At the next clean idle point (no `.dispatching` in flight):
+   - Write `HANDOFF-captain.md` with a fresh KEEPER nonce.
+   - Run: `harmonik keeper restart-now --agent captain`
+3. Keep the turn OPEN and stop typing. The keeper fires the cycle on its next tick
+   (≤5 s): handoff → nonce-poll → `/clear` → `/session-resume`.
+4. **NEVER self-`/quit`.** A manual `/quit` exits the captain permanently — the
+   keeper cannot rebind to a session that already exited.
+
+**On resume:** re-drain comms, re-ground via STARTUP.md. Do NOT trust the
+handoff's live-state claims — measure them. The handoff carries INTENT only; do not
+snapshot live queue/daemon/pane state that STARTUP.md will re-derive.
+
+**The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate
+(CrispIdle check). All other safety gates (nonce-confirmed handoff, `.managed`,
+`HoldingDispatch`) remain intact. The operator HARD-NO on widening the band stands.
+(You MUST be launched via `~/.claude/captain-tools/captain-launch.sh`, which mints
+the stable `--session-id` the keeper rebinds to — STARTUP.md Step 6 "Keeper arming".
+A bare `claude --remote-control captain` with no `--session-id` cannot be cycled.)
 
 ---
 

@@ -22,6 +22,25 @@ const wrapUpWarningText = "Context window is approaching its limit. " +
 	"Please wrap up your current work: commit any in-progress changes " +
 	"and write a brief handoff note if needed."
 
+// onDemandRestartWarningFmt is the warn text injected when OnDemandRestart is
+// true (e.g. the captain). It instructs the agent to write a HANDOFF file with
+// the KEEPER nonce and then trigger 'harmonik keeper restart-now --agent <name>'
+// rather than /quit — the keeper owns the actual clear→resume cycle (ON-059).
+//
+// The band is UNCHANGED: this text fires at the same warn threshold as the
+// default advisory; only the act-pct THRESHOLD is bypassed on the request path.
+const onDemandRestartWarningFmt = "Context is filling. At a clean idle point: " +
+	"write HANDOFF-%s.md (include your KEEPER nonce), " +
+	"then run: harmonik keeper restart-now --agent %s. Do NOT /quit."
+
+// InjectOnDemandRestartWarning delivers the on-demand-restart warn text for the
+// named agent into the tmux pane at tmuxTarget. Used when WatcherConfig.OnDemandRestart
+// is true (e.g. the captain session). Refs: hk-xjlq, ON-059.
+func InjectOnDemandRestartWarning(ctx context.Context, tmuxTarget, agentName string) error {
+	text := fmt.Sprintf(onDemandRestartWarningFmt, agentName, agentName)
+	return InjectText(ctx, tmuxTarget, text)
+}
+
 // bufferName is the tmux buffer name used for keeper injections. Using a
 // keeper-specific name avoids clobbering buffers owned by the daemon's own
 // paste-inject step (which uses buffers like "hk-<run_id>").

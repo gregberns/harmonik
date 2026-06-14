@@ -250,11 +250,8 @@ the operator).
 > if the session was launched with a STABLE, caller-minted `--session-id` to
 > `--resume`. A captain launched as a bare `claude --remote-control captain` (NO
 > `--session-id`, the historical mistake) has no id for the keeper to rebind — so
-> the keeper can only ever WARN it, and the warn injection's text ends in `/quit`;
-> when the captain obeys `/quit` it exits and, lacking a respawn wrapper, **stays
-> dead.** The minted `--session-id` is precisely what mirrors the crew model and
-> lets the clear→resume cycle survive. So launch the captain via the script below,
-> NEVER as a bare `claude --remote-control captain`:
+> the keeper can only WARN it. So launch the captain via the script below, NEVER as
+> a bare `claude --remote-control captain`:
 >
 > ```bash
 > # Launches the captain with a minted --session-id AND arms the keeper at 25/30:
@@ -267,10 +264,37 @@ the operator).
 >
 > If you ever relaunch the keeper by hand, ALWAYS pass `--warn-pct 25 --act-pct 30`
 > (bare defaults are 80/90 ≈ 800k/900k tokens on a 1M window — that defeats the
-> intent). Until the durable supervised-respawn bead lands (see captain SKILL.md
-> §10 restart continuity), a captain that `/quit`s has no respawn path — so the
-> captain MUST NOT self-`/quit` on a keeper context-warning (wind-down is the
-> keeper's job; refresh HANDOFF.md and let the keeper cycle you).
+> intent).
+
+### On-WARN procedure for the captain (LOAD-BEARING)
+
+The keeper injects a **captain-specific** warn text (different from the default
+crew advisory): *"Context is filling. At a clean idle point: write HANDOFF-captain.md
+(include your KEEPER nonce), then run: harmonik keeper restart-now --agent captain.
+Do NOT /quit."*
+
+**The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate;
+all other safety gates (nonce-confirmed handoff, `.managed`, `HoldingDispatch`) are
+intact. The operator HARD-NO on widening the band stands.
+
+**When you receive a WARN:**
+
+1. **Keep working** on the current logical unit. Do NOT stop mid crew-spawn, merge,
+   or submit. Wait for a clean idle point (no `.dispatching` in flight).
+2. At that clean point:
+   - Write `HANDOFF-captain.md` with current state, including the `<!-- KEEPER:<nonce> -->` line.
+   - Run: `harmonik keeper restart-now --agent captain [--project DIR]`
+3. **Keep the turn OPEN and stop typing.** The keeper fires the cycle on its next
+   tick (≤5 s): nonce-poll → `/clear` → `/session-resume`.
+4. **NEVER self-`/quit`.** A manual `/quit` exits the captain permanently.
+
+**On resume after a restart-now cycle:**
+
+- Re-drain comms (`comms recv --follow --json | head -60`) before forming any plan.
+- Re-ground via this STARTUP.md (Steps 2–6) — do NOT trust the handoff's live-state
+  claims. The handoff carries INTENT only; STARTUP.md re-derives reality.
+- Re-arm watchers (Step 6 below) — keeper arming survives the cycle, but the
+  `comms recv --follow` and `/loop` health tick must be re-armed after `/clear`.
 
 > **The captain watches HEALTH + LANES + DECISIONS — never RUNS.** Run-level
 > telemetry (per-bead `run_stale`, `heartbeat` with `active_runs`, every

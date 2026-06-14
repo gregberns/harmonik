@@ -1,6 +1,10 @@
 package workspace
 
-import "path/filepath"
+import (
+	"path/filepath"
+
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+)
 
 // DefaultWorktreeRoot is the default worktree-root directory relative to the
 // repo root, per workspace-model.md §4.1 WM-002 and §6.2.
@@ -23,11 +27,17 @@ const DefaultWorktreeRoot = ".harmonik/worktrees"
 //
 // Construct via [NoWorktreeRootOverride] (use default) or
 // [WithWorktreeRootOverride] (set the runtime override slot).
+// To route git commands through SSH, compose with [WithRunner].
 type WorktreeRootConfig struct {
 	// runtimeOverride is the highest-precedence slot per CP-037 §layer-1.
 	// A nil or empty value means "no runtime override; fall through to default".
 	// The override MUST be an absolute path or a path relative to repoRoot.
 	runtimeOverride *string
+
+	// runner is the CommandRunner used for all git subprocess invocations in
+	// CreateWorktree and CreateReviewerWorktree.  A nil value falls back to
+	// tmux.LocalRunner{} (exec.CommandContext, unchanged local behaviour).
+	runner tmux.CommandRunner
 }
 
 // NoWorktreeRootOverride returns a WorktreeRootConfig with no override set;
@@ -45,6 +55,24 @@ func NoWorktreeRootOverride() WorktreeRootConfig {
 // before passing when a relative path is intended.
 func WithWorktreeRootOverride(override string) WorktreeRootConfig {
 	return WorktreeRootConfig{runtimeOverride: &override}
+}
+
+// WithRunner returns a copy of cfg with the given CommandRunner installed.
+// CreateWorktree and CreateReviewerWorktree route every git subprocess through
+// this runner; a nil runner or the zero value of WorktreeRootConfig uses
+// tmux.LocalRunner{} (unchanged local behaviour).
+func (cfg WorktreeRootConfig) WithRunner(r tmux.CommandRunner) WorktreeRootConfig {
+	cfg.runner = r
+	return cfg
+}
+
+// commandRunner returns the effective CommandRunner: the caller-supplied runner
+// when set, otherwise tmux.LocalRunner{}.
+func (cfg WorktreeRootConfig) commandRunner() tmux.CommandRunner {
+	if cfg.runner != nil {
+		return cfg.runner
+	}
+	return tmux.LocalRunner{}
 }
 
 // WorktreeRootPath returns the absolute path to the worktree root directory.

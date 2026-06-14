@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,11 +44,13 @@ func CreateReviewerWorktree(ctx context.Context, repoRoot, runID string, iterati
 		return "", nil, fmt.Errorf("workspace: CreateReviewerWorktree: MkdirAll %q: %w", parentDir, mkErr)
 	}
 
-	// `git worktree add --detach <path> <sha>` — no branch created; detached HEAD
-	// at headSHA.  Multiple worktrees may reference the same SHA (unlike branches,
-	// which git prevents from being checked out in two worktrees simultaneously).
-	cmd := exec.CommandContext(ctx, "git", "worktree", "add", "--detach", wtPath, headSHA)
-	cmd.Dir = repoRoot
+	runner := cfg.commandRunner()
+
+	// `git -C <repoRoot> worktree add --detach <path> <sha>` — no branch created;
+	// detached HEAD at headSHA.  Multiple worktrees may reference the same SHA
+	// (unlike branches, which git prevents from being checked out in two worktrees
+	// simultaneously).
+	cmd := runner.Command(ctx, "git", "-C", repoRoot, "worktree", "add", "--detach", wtPath, headSHA)
 	out, gitErr := cmd.CombinedOutput()
 	if gitErr != nil {
 		return "", nil, fmt.Errorf("%w: git worktree add --detach %q %q: %v\ngit output: %s",
@@ -62,11 +63,9 @@ func CreateReviewerWorktree(ctx context.Context, repoRoot, runID string, iterati
 			return
 		}
 		cleanedUp = true
-		rmCmd := exec.CommandContext(context.Background(), "git", "worktree", "remove", "--force", "--force", wtPath)
-		rmCmd.Dir = repoRoot
+		rmCmd := runner.Command(context.Background(), "git", "-C", repoRoot, "worktree", "remove", "--force", "--force", wtPath)
 		_ = rmCmd.Run()
-		pruneCmd := exec.CommandContext(context.Background(), "git", "worktree", "prune")
-		pruneCmd.Dir = repoRoot
+		pruneCmd := runner.Command(context.Background(), "git", "-C", repoRoot, "worktree", "prune")
 		_ = pruneCmd.Run()
 	}
 
@@ -148,15 +147,16 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 		return fmt.Errorf("workspace: CreateWorktree: MkdirAll %q: %w", parentDir, err)
 	}
 
-	// Issue `git worktree add -b <branch> <path> <parentCommit>` with bounded
-	// retry for the transient macOS/APFS commondir race (hk-gq3my).
+	runner := cfg.commandRunner()
+
+	// Issue `git -C <repoRoot> worktree add -b <branch> <path> <parentCommit>`
+	// with bounded retry for the transient macOS/APFS commondir race (hk-gq3my).
 	var (
 		out []byte
 		err error
 	)
 	for attempt := 0; attempt <= worktreeAddMaxRetries; attempt++ {
-		cmd := exec.CommandContext(ctx, "git", "worktree", "add", "-b", branch, worktreePath, parentCommit)
-		cmd.Dir = repoRoot
+		cmd := runner.Command(ctx, "git", "-C", repoRoot, "worktree", "add", "-b", branch, worktreePath, parentCommit)
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			return nil
@@ -169,12 +169,10 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 			// Clean up any partial state so the next attempt starts fresh.
 			_ = os.RemoveAll(worktreePath)
 			// Remove the branch if git created it before failing.
-			delBranch := exec.CommandContext(ctx, "git", "branch", "-D", branch)
-			delBranch.Dir = repoRoot
+			delBranch := runner.Command(ctx, "git", "-C", repoRoot, "branch", "-D", branch)
 			_ = delBranch.Run()
 			// Prune stale worktree metadata entries.
-			pruneCmd := exec.CommandContext(ctx, "git", "worktree", "prune")
-			pruneCmd.Dir = repoRoot
+			pruneCmd := runner.Command(ctx, "git", "-C", repoRoot, "worktree", "prune")
 			_ = pruneCmd.Run()
 
 			delay := time.Duration(50*(1<<attempt)) * time.Millisecond // 50ms, 100ms, 200ms

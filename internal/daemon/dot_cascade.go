@@ -809,7 +809,7 @@ func dispatchDotAgenticNode(
 	}
 
 	// Attach the optional substrate (nil at MVH / in the deterministic E2E test).
-	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary)
+	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, nil)
 	var substrate handler.Substrate = deps.substrate
 	var pasteTarget handler.Substrate = deps.substrate
 	if prs != nil {

@@ -314,7 +314,7 @@ func executeCognitionGate(
 		spec.Args = append(deps.handlerArgs, spec.Args...)
 	}
 
-	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary)
+	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, nil)
 	var substrate handler.Substrate = deps.substrate
 	var pasteTarget handler.Substrate = deps.substrate
 	if prs != nil {

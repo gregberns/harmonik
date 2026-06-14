@@ -1395,7 +1395,7 @@ func ExportedResolveIter1ClaudeSessionID(interceptorID, realMintedID string) str
 //
 // Bead ref: hk-jfh59, hk-vhped.
 func ExportedNewPerRunSubstrate(sub handler.Substrate) handler.Substrate {
-	prs := newPerRunSubstrate(sub, "")
+	prs := newPerRunSubstrate(sub, "", nil)
 	if prs == nil {
 		return nil
 	}

@@ -830,16 +830,39 @@ type perRunSubstrate struct {
 	//
 	// Bead: hk-vhped.
 	agentCommandFragments []string
+
+	// runner is the CommandRunner used by PaneHasActiveProcess (pgrep/ps probes)
+	// and by pasteInjectQuitOnCommit (git rev-parse HEAD / git status) via the
+	// commandRunnerProvider interface.  A nil value falls back to
+	// tmux.LocalRunner{} (unchanged local behaviour).
+	//
+	// Bead: hk-rs-b9-liveness-1m9n.
+	runner tmux.CommandRunner
+}
+
+// commandRunner returns the effective CommandRunner for this run: the
+// caller-supplied runner when set, otherwise tmux.LocalRunner{} (unchanged
+// local behaviour).  Implements commandRunnerProvider so
+// pasteInjectQuitOnCommit can route git and process probes through the same
+// runner as PaneHasActiveProcess.
+//
+// Bead: hk-rs-b9-liveness-1m9n.
+func (p *perRunSubstrate) commandRunner() tmux.CommandRunner {
+	if p.runner != nil {
+		return p.runner
+	}
+	return tmux.LocalRunner{}
 }
 
 // Compile-time assertions for perRunSubstrate.
 var (
-	_ handler.Substrate   = (*perRunSubstrate)(nil)
-	_ pasteInjecter       = (*perRunSubstrate)(nil)
-	_ enterSender         = (*perRunSubstrate)(nil)
-	_ quitSender          = (*perRunSubstrate)(nil)
-	_ paneLivenessChecker = (*perRunSubstrate)(nil)
-	_ paneOutputSizer     = (*perRunSubstrate)(nil)
+	_ handler.Substrate      = (*perRunSubstrate)(nil)
+	_ pasteInjecter          = (*perRunSubstrate)(nil)
+	_ enterSender            = (*perRunSubstrate)(nil)
+	_ quitSender             = (*perRunSubstrate)(nil)
+	_ paneLivenessChecker    = (*perRunSubstrate)(nil)
+	_ paneOutputSizer        = (*perRunSubstrate)(nil)
+	_ commandRunnerProvider  = (*perRunSubstrate)(nil)
 )
 
 // paneTargeter is an optional interface a SubstrateSession may implement to
@@ -1092,6 +1115,11 @@ func (s *tmuxSubstrate) StopCrewSession(ctx context.Context, crewName string, ha
 // matching via agentCommandFragmentsFor; pass "" to fall back to the global
 // livePaneCommandSubstrings default.
 //
+// runner is the CommandRunner used for liveness probes (pgrep, ps) and
+// worktree git probes (rev-parse HEAD, git status).  Pass nil to fall back to
+// tmux.LocalRunner{} (unchanged local behaviour).  For remote-substrate workers
+// (B9) pass the SSHRunner built from the worker's host config.
+//
 // When sub implements substrateWithAdapter, perRunSubstrate can forward
 // paste-inject calls to the underlying tmux.Adapter using the captured pane
 // target; this is the production path (*tmuxSubstrate).
@@ -1104,7 +1132,9 @@ func (s *tmuxSubstrate) StopCrewSession(ctx context.Context, crewName string, ha
 //
 // Returns nil when sub is nil (safe: the caller falls back to the shared-substrate
 // path which is correct for the exec.CommandContext / no-tmux code path).
-func newPerRunSubstrate(sub handler.Substrate, handlerBinary string) *perRunSubstrate {
+//
+// Bead: hk-rs-b9-liveness-1m9n (runner parameter).
+func newPerRunSubstrate(sub handler.Substrate, handlerBinary string, runner tmux.CommandRunner) *perRunSubstrate {
 	if sub == nil {
 		return nil
 	}
@@ -1119,6 +1149,7 @@ func newPerRunSubstrate(sub handler.Substrate, handlerBinary string) *perRunSubs
 	return &perRunSubstrate{
 		inner:                 ts,
 		agentCommandFragments: agentCommandFragmentsFor(handlerBinary),
+		runner:                runner,
 	}
 }
 
@@ -1221,10 +1252,11 @@ func (p *perRunSubstrate) PaneHasActiveProcess(ctx context.Context) bool {
 	if err != nil || pid <= 0 {
 		return false
 	}
-	if hasAnyDirectChild(pid) {
+	r := p.commandRunner()
+	if hasAnyDirectChildVia(ctx, r, pid) {
 		return true
 	}
-	return commandMatchesLiveAgent(pid, p.agentCommandFragments)
+	return commandMatchesLiveAgentVia(ctx, r, pid, p.agentCommandFragments)
 }
 
 // PaneOutputFingerprint returns a string encoding the current pane output

@@ -217,7 +217,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		} else {
 			// ── Fallback: window inside the daemon's session ──
 			// Used by test doubles that don't implement crewSessionSpawner.
-			prs := newPerRunSubstrate(h.substrate, h.claudeBinary)
+			prs := newPerRunSubstrate(h.substrate, h.claudeBinary, nil)
 			var sess handler.SubstrateSession
 			if prs != nil {
 				sess, err = prs.SpawnWindow(ctx, spawn)

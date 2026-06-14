@@ -272,6 +272,16 @@ func hasAnyDirectChild(pid int) bool {
 	return exec.Command("pgrep", "-P", fmt.Sprintf("%d", pid)).Run() == nil
 }
 
+// hasAnyDirectChildVia is like hasAnyDirectChild but routes the pgrep probe
+// through runner instead of bare exec.Command.  Used by perRunSubstrate so
+// that remote-substrate workers can probe processes on the remote host via
+// SSHRunner.
+//
+// Bead: hk-rs-b9-liveness-1m9n.
+func hasAnyDirectChildVia(ctx context.Context, runner tmux.CommandRunner, pid int) bool {
+	return runner.Command(ctx, "pgrep", "-P", fmt.Sprintf("%d", pid)).Run() == nil
+}
+
 // commandMatchesLiveAgent reports whether the command name of pid contains one
 // of the provided fragments (e.g. "claude" or its "node" runtime).  Uses
 // `ps -o comm= -p <pid>`, which is available on macOS and mainstream Linux.
@@ -291,6 +301,92 @@ func commandMatchesLiveAgent(pid int, fragments []string) bool {
 		}
 	}
 	return false
+}
+
+// commandMatchesLiveAgentVia is like commandMatchesLiveAgent but routes the
+// ps probe through runner instead of bare exec.Command.  Used by
+// perRunSubstrate for remote-substrate liveness detection.
+//
+// Bead: hk-rs-b9-liveness-1m9n.
+func commandMatchesLiveAgentVia(ctx context.Context, runner tmux.CommandRunner, pid int, fragments []string) bool {
+	out, err := runner.Command(ctx, "ps", "-o", "comm=", "-p", fmt.Sprintf("%d", pid)).Output()
+	if err != nil {
+		return false
+	}
+	comm := strings.ToLower(strings.TrimSpace(string(out)))
+	if comm == "" {
+		return false
+	}
+	for _, frag := range fragments {
+		if strings.Contains(comm, frag) {
+			return true
+		}
+	}
+	return false
+}
+
+// commandRunnerProvider is an optional interface that a quitSender may
+// implement to expose its CommandRunner.  pasteInjectQuitOnCommit probes qs
+// for this interface so that resolveWorktreeHEAD and worktreeActivityFingerprint
+// are routed through the run's CommandRunner (e.g. SSHRunner for remote
+// substrates) instead of bare exec.Command.
+//
+// Bead: hk-rs-b9-liveness-1m9n.
+type commandRunnerProvider interface {
+	commandRunner() tmux.CommandRunner
+}
+
+// resolveWorktreeHEADVia is like resolveWorktreeHEAD but routes the git probe
+// through runner instead of bare exec.CommandContext.  Uses `git -C <wtPath>
+// rev-parse HEAD` (the -C form works for both local and SSH runners).
+//
+// Bead: hk-rs-b9-liveness-1m9n.
+func resolveWorktreeHEADVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, error) {
+	out, err := runner.Command(ctx, "git", "-C", wtPath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("daemon: resolveWorktreeHEADVia: git -C %q rev-parse HEAD: %w", wtPath, err)
+	}
+	sha := string(out)
+	for len(sha) > 0 && sha[len(sha)-1] == '\n' {
+		sha = sha[:len(sha)-1]
+	}
+	if sha == "" {
+		return "", fmt.Errorf("daemon: resolveWorktreeHEADVia: git rev-parse HEAD returned empty in %q", wtPath)
+	}
+	return sha, nil
+}
+
+// worktreeActivityFingerprintVia is like worktreeActivityFingerprint but
+// routes git commands through runner.  The os.Stat pass over changed paths is
+// retained (it operates on the local filesystem regardless of runner type).
+//
+// Bead: hk-rs-b9-liveness-1m9n.
+func worktreeActivityFingerprintVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, bool) {
+	head, err := resolveWorktreeHEADVia(ctx, runner, wtPath)
+	if err != nil {
+		return "", false
+	}
+	out, err := runner.Command(ctx, "git", "-C", wtPath, "status", "--porcelain=v1").Output()
+	if err != nil {
+		return "", false
+	}
+	var sb strings.Builder
+	sb.WriteString(head)
+	sb.WriteByte(0)
+	sb.Write(out)
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := line[3:]
+		if strings.Contains(path, " -> ") || strings.HasPrefix(path, "\"") {
+			continue
+		}
+		if fi, statErr := os.Stat(filepath.Join(wtPath, path)); statErr == nil {
+			fmt.Fprintf(&sb, "\x00%s:%d:%d", path, fi.Size(), fi.ModTime().UnixNano())
+		}
+	}
+	return sb.String(), true
 }
 
 // briefDeliveredTimeout is the maximum time pasteInjectQuitOnCommit will wait
@@ -618,6 +714,15 @@ func pasteInjectQuitOnCommit(
 	var lastLaunchSuppressLog time.Time
 	var lastStalenessLog time.Time
 
+	// hk-rs-b9: resolve the CommandRunner from qs when it implements
+	// commandRunnerProvider (production: perRunSubstrate with an SSHRunner for
+	// remote workers).  Falls back to tmux.LocalRunner{} so local behaviour is
+	// unchanged when qs does not carry a runner.
+	probeRunner := tmux.CommandRunner(tmux.LocalRunner{})
+	if crp, ok := qs.(commandRunnerProvider); ok {
+		probeRunner = crp.commandRunner()
+	}
+
 	// hk-az4fd: worktree-activity fingerprint for activity-aware launch
 	// suppression.  An implementer that is ACTIVELY editing files (but has not
 	// yet committed or emitted a heartbeat the tap can observe) advances this
@@ -625,7 +730,7 @@ func pasteInjectQuitOnCommit(
 	// nothing) leaves it stable.  When the launch-suppression ceiling elapses we
 	// consult this to distinguish "working past the ceiling" (defer to the 90-min
 	// hard budget) from "wedged at the ceiling" (kill — preserves hk-jgxqc).
-	lastActivityFingerprint, _ := worktreeActivityFingerprint(ctx, wtPath)
+	lastActivityFingerprint, _ := worktreeActivityFingerprintVia(ctx, probeRunner, wtPath)
 
 	// hk-ue0u2: pane-output fingerprint baseline — initialised before the
 	// loop so the first tick has a reference to diff against.  Nil when qs
@@ -790,7 +895,7 @@ func pasteInjectQuitOnCommit(
 				// is still expired, no heartbeat arrived in this budget window.
 				// Require observable progress before extending (hk-ukx).
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					wtFP, wtOK := worktreeActivityFingerprint(ctx, wtPath)
+					wtFP, wtOK := worktreeActivityFingerprintVia(ctx, probeRunner, wtPath)
 					budgetWorktreeProgressed := wtOK && wtFP != lastActivityFingerprint
 
 					budgetPaneOutputProgressed := false
@@ -865,7 +970,7 @@ func pasteInjectQuitOnCommit(
 				// output) does NOT clear firstHeartbeatSeen, so the launch-suppression
 				// ceiling below still fires for the genuinely-wedged case.
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					wtFP, wtOK := worktreeActivityFingerprint(ctx, wtPath)
+					wtFP, wtOK := worktreeActivityFingerprintVia(ctx, probeRunner, wtPath)
 					worktreeProgressed := wtOK && wtFP != lastActivityFingerprint
 
 					paneOutputProgressed := false
@@ -965,7 +1070,7 @@ func pasteInjectQuitOnCommit(
 				}
 			}
 
-			headSHA, err := resolveWorktreeHEAD(ctx, wtPath)
+			headSHA, err := resolveWorktreeHEADVia(ctx, probeRunner, wtPath)
 			if err != nil {
 				// Worktree may not be ready yet; keep polling.
 				continue

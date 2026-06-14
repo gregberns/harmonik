@@ -187,11 +187,11 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 # TMPDIR=/tmp: ensures socket-path tests don't hit macOS TMPDIR length limits.
 # ---------------------------------------------------------------------------
 .PHONY: check-short
-check-short:  ## CI Tier 2: fmt-check + golangci-lint + go test -short -race (skips real-daemon E2E; hk-jzepv)
+check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -short -race (skips real-daemon E2E; hk-jzepv)
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...
-	$(TOOLS_DIR)/golangci-lint run
+	$(TOOLS_DIR)/golangci-lint run --new-from-rev=origin/main
 	TMPDIR=/tmp go test -short -race -count=1 ./...
 
 # ---------------------------------------------------------------------------

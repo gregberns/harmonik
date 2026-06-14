@@ -345,47 +345,47 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	}
 
 	return workLoopDeps{
-		brAdapter:              p.BrAdapter,
-		bus:                    p.Bus,
-		h:                      h,
-		intentLogDir:           p.IntentLogDir,
-		projectDir:             p.ProjectDir,
-		handlerBinary:          binary,
-		handlerArgs:            p.HandlerArgs,
-		handlerEnv:             nil,
-		brTimeoutCfg:           brcli.TimeoutConfig{},
-		tidGen:                 core.NewTransitionIDGenerator(),
-		workflowModeDefault:    wmd,
-		runRegistry:            reg,
-		maxConcurrent:          maxConcurrent,
-		cpRegistry:             p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
-		hookStore:              hookStore,
-		launchSpecBuilder:      lsb,
-		worktreeFactory:        wtf,
-		adapterRegistry:        p.AdapterRegistry2,
-		substrate:              p.Substrate,
+		brAdapter:                 p.BrAdapter,
+		bus:                       p.Bus,
+		h:                         h,
+		intentLogDir:              p.IntentLogDir,
+		projectDir:                p.ProjectDir,
+		handlerBinary:             binary,
+		handlerArgs:               p.HandlerArgs,
+		handlerEnv:                nil,
+		brTimeoutCfg:              brcli.TimeoutConfig{},
+		tidGen:                    core.NewTransitionIDGenerator(),
+		workflowModeDefault:       wmd,
+		runRegistry:               reg,
+		maxConcurrent:             maxConcurrent,
+		cpRegistry:                p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
+		hookStore:                 hookStore,
+		launchSpecBuilder:         lsb,
+		worktreeFactory:           wtf,
+		adapterRegistry:           p.AdapterRegistry2,
+		substrate:                 p.Substrate,
 		agentReadyTimeout:         p.AgentReadyTimeout,
 		postAgentReadyHangTimeout: p.PostAgentReadyHangTimeout,
-		projectCfg:             p.ProjectCfg,
-		queueStore:             p.QueueStore,
-		queueLedger:            p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
-		submitWakeC:            submitWakeC,
-		cancelOnQueueDrain:     p.CancelOnQueueDrain,
-		cancelOnQueueExit:      p.CancelOnQueueExit,
-		stopDispatchCtx:        p.StopDispatchCtx,
-		handlerPauseController: p.HandlerPauseController,
-		staleBlockerCloser:     p.StaleBlockerCloser, // hk-rnsjs
-		operatorPauseCtrl:      p.OperatorPauseCtrl,  // hk-ry8q1
-		decisionBlocker:        p.DecisionBlocker,    // hk-a6e24 EV-043
-		noAutoPull:             p.NoAutoPull,         // hk-h5lv2 / EM-066
-		concurrencyCtrl:        p.ConcurrencyCtrl,    // hk-ohiaf
-		skipBrHistoryRotation:  true,                 // hk-hypbi: tests use temp dirs without real .br_history
-		targetBranch:           resolveTargetBranch(p.TargetBranch),
-		protectBranches:        p.ProtectBranches,
-		mergeMu:                mergeMu,
-		emittedEpics:           make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
-		emittedEpicsMu:         &sync.Mutex{},
-		beadAuditLogger:        p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption
+		projectCfg:                p.ProjectCfg,
+		queueStore:                p.QueueStore,
+		queueLedger:               p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
+		submitWakeC:               submitWakeC,
+		cancelOnQueueDrain:        p.CancelOnQueueDrain,
+		cancelOnQueueExit:         p.CancelOnQueueExit,
+		stopDispatchCtx:           p.StopDispatchCtx,
+		handlerPauseController:    p.HandlerPauseController,
+		staleBlockerCloser:        p.StaleBlockerCloser, // hk-rnsjs
+		operatorPauseCtrl:         p.OperatorPauseCtrl,  // hk-ry8q1
+		decisionBlocker:           p.DecisionBlocker,    // hk-a6e24 EV-043
+		noAutoPull:                p.NoAutoPull,         // hk-h5lv2 / EM-066
+		concurrencyCtrl:           p.ConcurrencyCtrl,    // hk-ohiaf
+		skipBrHistoryRotation:     true,                 // hk-hypbi: tests use temp dirs without real .br_history
+		targetBranch:              resolveTargetBranch(p.TargetBranch),
+		protectBranches:           p.ProtectBranches,
+		mergeMu:                   mergeMu,
+		emittedEpics:              make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
+		emittedEpicsMu:            &sync.Mutex{},
+		beadAuditLogger:           p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption
 	}
 }
 

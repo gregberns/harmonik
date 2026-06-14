@@ -502,7 +502,7 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 
 	// Both beads must drain+close via the title fallback.
 	if !allClosed {
-		t.Errorf("T6-3 FAIL: not all beads closed within 60s; "+
+		t.Errorf("T6-3 FAIL: not all beads closed within 60s; " +
 			"no-body and whitespace-only should both fall back to title (hk-lpbu7)")
 	}
 }

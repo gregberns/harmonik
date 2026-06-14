@@ -250,13 +250,13 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 	tmpPath := tmp.Name()
 
 	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()    //nolint:errcheck // cleanup before remove
+		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: write managed session_id tmp %q: %w", tmpPath, err)
 	}
 	// fsync before rename to close the power-loss partial-write window.
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()    //nolint:errcheck // cleanup before remove
+		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: fsync managed session_id tmp %q: %w", tmpPath, err)
 	}

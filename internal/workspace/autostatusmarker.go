@@ -23,11 +23,11 @@ import (
 //   - Notes:         Optional freeform rationale; engine MUST NOT parse for routing.
 //   - Signals:       Optional agent-supplied evidence map; retained for audit only.
 type AutoStatusMarker struct {
-	SchemaVersion int               `json:"schema_version"`
-	Status        string            `json:"status"`
-	FailureClass  string            `json:"failure_class"`
-	Notes         string            `json:"notes"`
-	Signals       map[string]any    `json:"signals"`
+	SchemaVersion int            `json:"schema_version"`
+	Status        string         `json:"status"`
+	FailureClass  string         `json:"failure_class"`
+	Notes         string         `json:"notes"`
+	Signals       map[string]any `json:"signals"`
 }
 
 // AutoStatusMarkerSchemaVersion is the current auto_status.json schema version.

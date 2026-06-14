@@ -325,7 +325,6 @@ func commitHashOf(binPath string) string {
 	return strings.TrimSpace(rest[:j])
 }
 
-
 // isDaemonAlive probes the daemon Unix socket. Returns true when the daemon is
 // reachable; false on any error (absent, ECONNREFUSED, timeout, etc.).
 func (dw *DaemonWatchdog) isDaemonAlive(ctx context.Context) bool {

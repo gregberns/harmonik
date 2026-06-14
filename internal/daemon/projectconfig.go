@@ -226,8 +226,8 @@ type DaemonConfig struct {
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
-	Daemon        rawDaemonConfig           `yaml:"daemon"`  // hk-rcp7: PL-004b daemon: block
-	Keeper        rawKeeperConfig           `yaml:"keeper"`  // hk-lhu2: keeper config block
+	Daemon        rawDaemonConfig           `yaml:"daemon"` // hk-rcp7: PL-004b daemon: block
+	Keeper        rawKeeperConfig           `yaml:"keeper"` // hk-lhu2: keeper config block
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.

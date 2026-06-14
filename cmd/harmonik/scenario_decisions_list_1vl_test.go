@@ -368,11 +368,11 @@ func TestScenario_DecisionsList_1VL(t *testing.T) {
 		}
 		// All five fields present in the rendered row.
 		for label, want := range map[string]string{
-			"question":     c.question,
-			"options":      c.options,
+			"question":      c.question,
+			"options":       c.options,
 			"blocked_agent": c.blocked,
-			"context_link": c.ctx,
-			"decision_id":  c.did,
+			"context_link":  c.ctx,
+			"decision_id":   c.did,
 		} {
 			if !strings.Contains(row, want) {
 				t.Fatalf("S2 VIOLATED: row for %s is missing the %s field %q (all five fields required: question·options·blocked_agent·context_link·decision_id)\nrow: %q", c.did, label, want, row)

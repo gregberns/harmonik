@@ -65,9 +65,11 @@ func (a *hkhzjStaggerAdapter) ProbeTmux(_ context.Context) error { return nil }
 func (a *hkhzjStaggerAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hkhzjStaggerAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hkhzjStaggerAdapter) NewWindowIn(_ context.Context, params tmux.NewWindowIn) tmux.Outcome {
 	a.mu.Lock()
 	a.callTimes = append(a.callTimes, time.Now())
@@ -79,6 +81,7 @@ func (a *hkhzjStaggerAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle)
 func (a *hkhzjStaggerAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *hkhzjStaggerAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "", nil
 }
@@ -264,4 +267,3 @@ func TestSpawnStagger_ZeroDisablesStagger(t *testing.T) {
 		t.Errorf("SpawnStagger_ZeroDisablesStagger FAIL: expected %d NewWindowIn calls, got %d", n, nCalls)
 	}
 }
-

@@ -900,8 +900,8 @@ EXAMPLES
 		NoAutoPull:    !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
 		Substrate: daemon.NewTmuxSubstrate(tmuxAdapter, sessionName,
 			daemon.WithSpawnCap(maxSessions),
-			daemon.WithSpawnStagger(spawnStaggerFlag),                                // hk-hzj: spread concurrent cold-starts; 0 = disabled
-			daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir)),     // fleet-portability T2
+			daemon.WithSpawnStagger(spawnStaggerFlag),                            // hk-hzj: spread concurrent cold-starts; 0 = disabled
+			daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir)), // fleet-portability T2
 		),
 		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash:         commitHash,                          // stamped via -ldflags at build time (hk-mz0x4)

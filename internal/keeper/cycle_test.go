@@ -1757,15 +1757,15 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
-		AppendHandoffFn:   func(_, _ string) error { return nil },
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
+		ReadHandoff:         readHandoff,
+		TruncateHandoffFn:   func(_ string) error { return nil },
+		InjectFn:            spy.inject,
+		ReadGaugeFn:         readGaugeFn,
+		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := keeper.NewCycler(cfg, em)
@@ -1834,18 +1834,18 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 	const forceRetryInterval = 60 * time.Millisecond
 
 	cfg := keeper.CyclerConfig{
-		AgentName:      agent,
-		ProjectDir:     t.TempDir(),
-		TmuxTarget:     "fake-pane",
-		ActPct:         90.0,
-		WarnPct:        80.0,
-		ForceActPct:    95.0,
+		AgentName:          agent,
+		ProjectDir:         t.TempDir(),
+		TmuxTarget:         "fake-pane",
+		ActPct:             90.0,
+		WarnPct:            80.0,
+		ForceActPct:        95.0,
 		ForceRetryInterval: forceRetryInterval,
-		HandoffTimeout: 30 * time.Millisecond, // short → quick abort
-		ClearSettle:    10 * time.Millisecond,
-		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return true },
+		HandoffTimeout:     30 * time.Millisecond, // short → quick abort
+		ClearSettle:        10 * time.Millisecond,
+		PollInterval:       5 * time.Millisecond,
+		CycleIDGen:         func() string { return cycleID },
+		IsManagedFn:        func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -2052,9 +2052,9 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:         handoffNeverReturnsNonce,
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            spy.inject,
+		ReadHandoff:       handoffNeverReturnsNonce,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
 		},
@@ -2233,22 +2233,22 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 	}
 
 	cfg := keeper.CyclerConfig{
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		ForceActPct:         95.0,
-		HandoffTimeout:      40 * time.Millisecond, // short → quick abort
-		ClearSettle:         10 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:         handoffNeverReturnsNonce,
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            spy.inject,
-		ReadGaugeFn:         func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		AgentName:         agent,
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		ActPct:            90.0,
+		WarnPct:           80.0,
+		ForceActPct:       95.0,
+		HandoffTimeout:    40 * time.Millisecond, // short → quick abort
+		ClearSettle:       10 * time.Millisecond,
+		PollInterval:      5 * time.Millisecond,
+		CycleIDGen:        func() string { return cycleID },
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:       handoffNeverReturnsNonce,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 95.0, SessionID: abortSID}, time.Now(), nil
 		},
 		CrispIdleFn:         func(_, _ string) bool { return true },
@@ -2394,11 +2394,11 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 	// ActPct=35, ForceActPct left at zero → must default to 35+5=40.
 	// Session at pct=41 (above force threshold) with CrispIdle=false must fire.
 	cfg := keeper.CyclerConfig{
-		AgentName:      agent,
-		ProjectDir:     t.TempDir(),
-		TmuxTarget:     "fake-pane",
-		ActPct:         35.0,
-		WarnPct:        25.0,
+		AgentName:  agent,
+		ProjectDir: t.TempDir(),
+		TmuxTarget: "fake-pane",
+		ActPct:     35.0,
+		WarnPct:    25.0,
 		// ForceActPct intentionally omitted → must default to ActPct+5 = 40.0
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    200 * time.Millisecond,
@@ -2574,21 +2574,21 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 	}
 
 	cfg := keeper.CyclerConfig{
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		ForceActPct:         95.0,
-		HandoffTimeout:      40 * time.Millisecond,
-		ClearSettle:         10 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:         handoffNeverReturnsNonce,
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            spy.inject,
+		AgentName:         agent,
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		ActPct:            90.0,
+		WarnPct:           80.0,
+		ForceActPct:       95.0,
+		HandoffTimeout:    40 * time.Millisecond,
+		ClearSettle:       10 * time.Millisecond,
+		PollInterval:      5 * time.Millisecond,
+		CycleIDGen:        func() string { return cycleID },
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:       handoffNeverReturnsNonce,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
 		},
@@ -3084,7 +3084,7 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 		ReadHandoff:       func(_ string) (string, error) { return "", nil }, // abort
 		TruncateHandoffFn: func(_ string) error { return nil },
 		InjectFn:          spy.inject,
-		ReadGaugeFn:       func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 85.0, SessionID: nextSID}, time.Now(), nil
 		},
 		CrispIdleFn:         func(_, _ string) bool { return true },

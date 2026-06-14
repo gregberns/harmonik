@@ -133,7 +133,7 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 	// (f4) Injection ordering: handoff before /clear before /session-resume, and
 	// the live gauge ended on S2.
 	inj := rs.snapshotInjected()
-	var handoffIdx, clearIdx, resumeIdx = -1, -1, -1
+	handoffIdx, clearIdx, resumeIdx := -1, -1, -1
 	for i, txt := range inj {
 		switch {
 		case handoffIdx == -1 && containsSubstr(txt, "/session-handoff"):

@@ -37,15 +37,15 @@ func restartNowCyclerConfig(
 	clearRestartNowTriggerFn func(string, string) error,
 ) (keeper.CyclerConfig, *keeper.Cycler) {
 	cfg := keeper.CyclerConfig{
-		AgentName:   agent,
-		ProjectDir:  projectDir,
-		TmuxTarget:  "fake-pane",
-		ActPct:      90.0,
-		WarnPct:     80.0,
-		ClearSettle: 1 * time.Millisecond,
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		TmuxTarget:   "fake-pane",
+		ActPct:       90.0,
+		WarnPct:      80.0,
+		ClearSettle:  1 * time.Millisecond,
 		PollInterval: 5 * time.Millisecond,
-		CycleIDGen:  func() string { return "cyc-test-000001" },
-		IsManagedFn: func(_, _ string) bool { return isManaged },
+		CycleIDGen:   func() string { return "cyc-test-000001" },
+		IsManagedFn:  func(_, _ string) bool { return isManaged },
 		HandoffFilePath: func(pd, ag string) string {
 			return filepath.Join(pd, "HANDOFF-"+ag+".md")
 		},

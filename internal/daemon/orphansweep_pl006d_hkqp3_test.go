@@ -178,8 +178,11 @@ func (a *hkqp3FakeAdapter) WindowPanePID(_ context.Context, _ ltmux.WindowHandle
 	return a.panePID, nil
 }
 
-func (a *hkqp3FakeAdapter) ProbeTmux(_ context.Context) error                         { return nil }
-func (a *hkqp3FakeAdapter) ListWindows(_ context.Context, _ string) ([]string, error) { return nil, nil }
+func (a *hkqp3FakeAdapter) ProbeTmux(_ context.Context) error { return nil }
+func (a *hkqp3FakeAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
 func (a *hkqp3FakeAdapter) NewWindowIn(_ context.Context, _ ltmux.NewWindowIn) ltmux.Outcome {
 	return ltmux.Outcome{}
 }

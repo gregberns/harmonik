@@ -178,8 +178,8 @@ type tmuxSubstrate struct {
 	// so they need no additional lock. Set via WithSpawnStagger.
 	//
 	// Bead ref: hk-hzj.
-	spawnStagger  time.Duration
-	lastWindowAt  time.Time // guarded by newWindowMu; set to time.Now() each SpawnWindow
+	spawnStagger time.Duration
+	lastWindowAt time.Time // guarded by newWindowMu; set to time.Now() each SpawnWindow
 
 	// projectHash, when non-zero, is used to project-qualify crew session names
 	// per fleet-portability T2: "harmonik-<projectHash>-crew-<name>".

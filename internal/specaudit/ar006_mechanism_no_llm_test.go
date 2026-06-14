@@ -73,7 +73,7 @@ var ar006FixtureLLMFreedomNonZero = regexp.MustCompile(`\bllm-freedom=(bounded|u
 
 // ar006FixtureViolation records a single AR-006 Axes-contradiction violation.
 type ar006FixtureViolation struct {
-	file         string
+	file          string
 	headingLineNo int    // 1-based line number of the requirement heading
 	axesLineNo    int    // 1-based line number of the Axes: line
 	reqID         string // requirement ID from the heading (e.g. "CP-011a")

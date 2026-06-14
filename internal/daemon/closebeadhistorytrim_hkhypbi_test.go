@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 )
@@ -35,16 +36,20 @@ type closeCaptureAdapter struct {
 func (a *closeCaptureAdapter) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	return nil, nil
 }
+
 func (a *closeCaptureAdapter) ShowBead(_ context.Context, _ core.BeadID) (core.BeadRecord, error) {
 	return core.BeadRecord{Status: "closed"}, nil
 }
+
 func (a *closeCaptureAdapter) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	return nil
 }
+
 func (a *closeCaptureAdapter) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
 	a.closeCalls++
 	return a.closeErr
 }
+
 func (a *closeCaptureAdapter) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ string) error {
 	return nil
 }

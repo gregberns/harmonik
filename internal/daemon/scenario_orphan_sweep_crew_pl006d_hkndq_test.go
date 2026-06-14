@@ -98,6 +98,7 @@ func (a *hkndqFakeAdapter) KillSession(_ context.Context, name string) error {
 
 // No-op stubs for the remaining Adapter surface.
 func (a *hkndqFakeAdapter) ProbeTmux(_ context.Context) error { return nil }
+
 func (a *hkndqFakeAdapter) NewWindowIn(_ context.Context, _ ltmux.NewWindowIn) ltmux.Outcome {
 	return ltmux.Outcome{}
 }

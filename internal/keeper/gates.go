@@ -134,12 +134,12 @@ func WriteRestartNowMarker(projectDir, agent string, m *RestartNowMarker) error 
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(content); err != nil {
-		_ = tmp.Close()    //nolint:errcheck // cleanup before remove
+		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: write restart-now marker tmp %q: %w", tmpPath, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()    //nolint:errcheck // cleanup before remove
+		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
 		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
 		return fmt.Errorf("keeper: fsync restart-now marker tmp %q: %w", tmpPath, err)
 	}

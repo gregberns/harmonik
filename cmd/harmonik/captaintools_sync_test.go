@@ -32,9 +32,9 @@ func TestCaptainLaunchShEmbedInSync(t *testing.T) {
 	}
 
 	if string(captainLaunchSh) != string(canonicalBytes) {
-		t.Fatalf("embedded cmd/harmonik/captain-tools/captain-launch.sh is OUT OF SYNC "+
-			"with scripts/captain-tools/captain-launch.sh.\n"+
-			"Re-sync with:\n"+
+		t.Fatalf("embedded cmd/harmonik/captain-tools/captain-launch.sh is OUT OF SYNC " +
+			"with scripts/captain-tools/captain-launch.sh.\n" +
+			"Re-sync with:\n" +
 			"  cp scripts/captain-tools/captain-launch.sh cmd/harmonik/captain-tools/captain-launch.sh")
 	}
 }

@@ -73,7 +73,7 @@ func TestEV040_S1_LivenessFailureAfterKInterval(t *testing.T) {
 	// Well past the threshold: still failed.
 	now = time.Unix(1000, 0).Add(threshold + time.Minute)
 	if !checker.IsLivenessFailed() {
-		t.Errorf("EV040-S1 FAIL: IsLivenessFailed()=false well past threshold; "+
+		t.Errorf("EV040-S1 FAIL: IsLivenessFailed()=false well past threshold; " +
 			"must remain failed until reconnect (EV-040)")
 	}
 
@@ -134,7 +134,7 @@ func TestEV040_S3_NotStartedNeverFails(t *testing.T) {
 	now = time.Unix(0, 0).Add(24 * time.Hour)
 
 	if checker.IsLivenessFailed() {
-		t.Errorf("EV040-S3 FAIL: IsLivenessFailed()=true before Start() was called; "+
+		t.Errorf("EV040-S3 FAIL: IsLivenessFailed()=true before Start() was called; " +
 			"MUST NOT fire before observation begins (EV-040)")
 	}
 
@@ -162,14 +162,14 @@ func TestEV040_S4_DefaultKIsTwo(t *testing.T) {
 	// 1 × interval (60s): should NOT fail (K=2 required, not K=1).
 	now = time.Unix(4000, 0).Add(interval)
 	if checker.IsLivenessFailed() {
-		t.Errorf("EV040-S4: IsLivenessFailed()=true at 1×interval; K=0 must normalise to K=2; "+
+		t.Errorf("EV040-S4: IsLivenessFailed()=true at 1×interval; K=0 must normalise to K=2; " +
 			"must NOT fail before 2×interval (EV-040)")
 	}
 
 	// 2 × interval (120s): MUST fail.
 	now = time.Unix(4000, 0).Add(2 * interval)
 	if !checker.IsLivenessFailed() {
-		t.Errorf("EV040-S4 FAIL: IsLivenessFailed()=false at 2×interval with K=0→2; "+
+		t.Errorf("EV040-S4 FAIL: IsLivenessFailed()=false at 2×interval with K=0→2; " +
 			"MUST fail at K=2 × interval (EV-040)")
 	}
 
@@ -206,7 +206,7 @@ func TestEV040_S7_RecordHeartbeatResetsWindow(t *testing.T) {
 	// Deliver a heartbeat: timer resets.
 	checker.RecordHeartbeat()
 	if checker.IsLivenessFailed() {
-		t.Errorf("EV040-S7 FAIL: IsLivenessFailed()=true immediately after RecordHeartbeat; "+
+		t.Errorf("EV040-S7 FAIL: IsLivenessFailed()=true immediately after RecordHeartbeat; " +
 			"heartbeat MUST reset the liveness window (EV-040)")
 	}
 
@@ -220,7 +220,7 @@ func TestEV040_S7_RecordHeartbeatResetsWindow(t *testing.T) {
 	// Cross the threshold: failed again.
 	now = now.Add(time.Millisecond)
 	if !checker.IsLivenessFailed() {
-		t.Errorf("EV040-S7 FAIL: IsLivenessFailed()=false at threshold after heartbeat reset; "+
+		t.Errorf("EV040-S7 FAIL: IsLivenessFailed()=false at threshold after heartbeat reset; " +
 			"MUST fail again after K×interval without a subsequent heartbeat (EV-040)")
 	}
 

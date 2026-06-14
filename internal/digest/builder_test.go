@@ -371,9 +371,9 @@ func TestBuildPendingDecisionsUnacknowledged(t *testing.T) {
 	watermarkEventID := "01900000-0000-7000-8000-000000000099"
 	writeDecisionEvents(t, dir, []testDecisionEvent{
 		{
-			eventID: decisionEventID,
-			evType:  "decision_required",
-			ackToken: "tok-aaa",
+			eventID:     decisionEventID,
+			evType:      "decision_required",
+			ackToken:    "tok-aaa",
 			subjectKind: "bead",
 			subjectID:   "hk-test1",
 			reason:      "bead_double_failure",
@@ -610,11 +610,11 @@ func writeDecisionEvents(t *testing.T, dir string, events []testDecisionEvent) {
 		switch ev.evType {
 		case "decision_required":
 			payload = map[string]interface{}{
-				"subject":          map[string]interface{}{"kind": ev.subjectKind, "id": ev.subjectID},
-				"reason":           ev.reason,
-				"suggested_action": "",
-				"ack_required":     true,
-				"ack_token":        ev.ackToken,
+				"subject":             map[string]interface{}{"kind": ev.subjectKind, "id": ev.subjectID},
+				"reason":              ev.reason,
+				"suggested_action":    "",
+				"ack_required":        true,
+				"ack_token":           ev.ackToken,
 				"triggering_event_id": "00000000-0000-7000-8000-000000000000",
 			}
 		case "decision_acknowledged":

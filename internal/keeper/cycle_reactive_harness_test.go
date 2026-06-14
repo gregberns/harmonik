@@ -64,7 +64,7 @@ type reactiveSession struct {
 
 	// Observability / causality tracking.
 	injected    []string // every injected command, in order
-	clearedSeen bool      // set true the moment "/clear" is injected
+	clearedSeen bool     // set true the moment "/clear" is injected
 
 	// sidFlipCause records the injected command DURING WHICH the gauge SID first
 	// changed away from the seed. This is the load-bearing causality witness: the

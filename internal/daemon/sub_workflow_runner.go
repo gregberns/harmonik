@@ -308,14 +308,14 @@ func dispatchSubWorkflowExpandedNode(
 			r.parentSHA,
 			r.daemonSocket,
 			n,
-			false,           // isReviewer: sub-workflow nodes are not reviewer nodes
+			false, // isReviewer: sub-workflow nodes are not reviewer nodes
 			*r.iterationCount,
 			r.claudeSessionID,
 			r.resolvedModel,
 			r.resolvedEffort,
 			r.extraContext,
 			r.baseBranch,
-			"",              // reviewerHarnessOverride: none
+			"", // reviewerHarnessOverride: none
 		)
 
 	case core.NodeTypeGate:

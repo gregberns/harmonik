@@ -142,7 +142,7 @@ func TestHC068_ReadAutoStatusMarkerNonFailStatusTreatedAbsent(t *testing.T) {
 		"BLOCK",
 		"REQUEST_CHANGES",
 		"",
-		"fail",    // wrong case
+		"fail", // wrong case
 		"UNKNOWN",
 	}
 	for _, status := range nonFailStatuses {

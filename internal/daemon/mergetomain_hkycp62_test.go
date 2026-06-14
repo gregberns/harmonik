@@ -151,10 +151,10 @@ func mergeBuildGateRunWorkLoop(t *testing.T, params daemon.WorkLoopDepsParams, l
 // TestMergeBuildGate_BuildFailReopens verifies that when the merged run-branch
 // tree fails go build, the daemon:
 //
-//   (n1) emits merge_build_failed,
-//   (n2) calls ReopenBead,
-//   (n3) does NOT call CloseBead,
-//   (n4) does NOT advance refs/heads/main beyond the pre-merge SHA.
+//	(n1) emits merge_build_failed,
+//	(n2) calls ReopenBead,
+//	(n3) does NOT call CloseBead,
+//	(n4) does NOT advance refs/heads/main beyond the pre-merge SHA.
 //
 // The scenario simulates the real-world case from hk-ycp62: an agent commits
 // a Go file with a syntax error (representing a redeclared symbol or other

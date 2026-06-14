@@ -503,20 +503,20 @@ func TestGcIntentOpLanded(t *testing.T) {
 		wantLanded        bool
 	}{
 		// claim (→ in_progress): landed if bead ≠ open
-		{"claim", core.CoarseStatusInProgress, core.CoarseStatusInProgress, true},  // exact match
-		{"claim", core.CoarseStatusClosed, core.CoarseStatusInProgress, true},      // advanced past
-		{"claim", core.CoarseStatusTombstone, core.CoarseStatusInProgress, true},   // advanced past
-		{"claim", core.CoarseStatusOpen, core.CoarseStatusInProgress, false},       // not claimed yet
+		{"claim", core.CoarseStatusInProgress, core.CoarseStatusInProgress, true}, // exact match
+		{"claim", core.CoarseStatusClosed, core.CoarseStatusInProgress, true},     // advanced past
+		{"claim", core.CoarseStatusTombstone, core.CoarseStatusInProgress, true},  // advanced past
+		{"claim", core.CoarseStatusOpen, core.CoarseStatusInProgress, false},      // not claimed yet
 		// close (→ closed): landed if status = closed or tombstone
-		{"close", core.CoarseStatusClosed, core.CoarseStatusClosed, true},          // exact match
-		{"close", core.CoarseStatusTombstone, core.CoarseStatusClosed, true},       // advanced past
-		{"close", core.CoarseStatusOpen, core.CoarseStatusClosed, false},           // ambiguous
-		{"close", core.CoarseStatusInProgress, core.CoarseStatusClosed, false},     // not closed yet
+		{"close", core.CoarseStatusClosed, core.CoarseStatusClosed, true},      // exact match
+		{"close", core.CoarseStatusTombstone, core.CoarseStatusClosed, true},   // advanced past
+		{"close", core.CoarseStatusOpen, core.CoarseStatusClosed, false},       // ambiguous
+		{"close", core.CoarseStatusInProgress, core.CoarseStatusClosed, false}, // not closed yet
 		// reopen (→ open): landed if status = open, in_progress, or tombstone
-		{"reopen", core.CoarseStatusOpen, core.CoarseStatusOpen, true},             // exact match
-		{"reopen", core.CoarseStatusInProgress, core.CoarseStatusOpen, true},       // advanced past
-		{"reopen", core.CoarseStatusTombstone, core.CoarseStatusOpen, true},        // advanced past
-		{"reopen", core.CoarseStatusClosed, core.CoarseStatusOpen, false},          // ambiguous
+		{"reopen", core.CoarseStatusOpen, core.CoarseStatusOpen, true},       // exact match
+		{"reopen", core.CoarseStatusInProgress, core.CoarseStatusOpen, true}, // advanced past
+		{"reopen", core.CoarseStatusTombstone, core.CoarseStatusOpen, true},  // advanced past
+		{"reopen", core.CoarseStatusClosed, core.CoarseStatusOpen, false},    // ambiguous
 		// reset (→ open): same rules as reopen
 		{"reset", core.CoarseStatusOpen, core.CoarseStatusOpen, true},
 		{"reset", core.CoarseStatusInProgress, core.CoarseStatusOpen, true},

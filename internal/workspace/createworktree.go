@@ -122,6 +122,7 @@ func CreateReviewerWorktree(ctx context.Context, repoRoot, runID string, iterati
 //   - workspace-model.md §4.1 WM-002 — canonical path convention.
 //   - workspace-model.md §4.2 WM-005 — task branch naming.
 //   - workspace-model.md §4.a WM-ENV-002 — git minimum version.
+//
 // worktreeAddMaxRetries is the maximum number of retries for a transient
 // git worktree add failure caused by the macOS/APFS commondir race.
 const worktreeAddMaxRetries = 3

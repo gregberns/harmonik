@@ -161,10 +161,10 @@ func TestON008a_BuildStatusIncludesLoopStatus(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name        string
-		rec         LoopStatusRecord
-		wantStatus  string
-		wantReason  string
+		name       string
+		rec        LoopStatusRecord
+		wantStatus string
+		wantReason string
 	}{
 		{
 			name:       "budget-paused",

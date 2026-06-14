@@ -550,7 +550,7 @@ func driveDotWorkflow(
 				return dotWorkflowResult{
 					success:        false,
 					needsAttention: true,
-					summary: fmt.Sprintf("dot: sub-workflow node %q: invalid spec (missing sub_workflow_ref or workflow_version)", currentNodeID),
+					summary:        fmt.Sprintf("dot: sub-workflow node %q: invalid spec (missing sub_workflow_ref or workflow_version)", currentNodeID),
 				}
 			}
 			swOutcome, swErr := runner.Run(ctx, swSpec)

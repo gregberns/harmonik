@@ -927,12 +927,12 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 // Gate order (subset of MaybeRun):
 //  1. .managed opt-in guard.
 //  2. Non-empty session_id (anti-loop identity requires it).
-//  2b. Boot-grace: if the session is within its grace window, defer (clear
-//      marker so the next PreCompact fire gets a clean slate). The grace state
-//      is populated by MaybeRun, which the watcher ALWAYS calls before
-//      RunForPrecompact (watcher.go:568 before :580) — that ordering is the
-//      load-bearing invariant keeping this state current without re-computing it
-//      here. Force-path exception: above ForceActPct, bypass grace.
+//     2b. Boot-grace: if the session is within its grace window, defer (clear
+//     marker so the next PreCompact fire gets a clean slate). The grace state
+//     is populated by MaybeRun, which the watcher ALWAYS calls before
+//     RunForPrecompact (watcher.go:568 before :580) — that ordering is the
+//     load-bearing invariant keeping this state current without re-computing it
+//     here. Force-path exception: above ForceActPct, bypass grace.
 //  3. NOT HoldingDispatch (fail-closed: skip cycle, clear marker → next PreCompact is fail-open).
 //  4. Anti-loop suppression (same policy as MaybeRun).
 //
@@ -1062,6 +1062,7 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 //     after onDemandSettle re-stat mtime must be unchanged.
 //  9. On any gate/freshness failure: emit session_keeper_restart_now_blocked,
 //     return nil (non-destructive).
+//
 // 10. On freshness-gate pass: execute /clear → /session-resume tail.
 //
 // Refs: hk-wjzf, hk-xjlq, ON-059.
@@ -1280,7 +1281,7 @@ func (c *Cycler) emitRestartNowBlocked(ctx context.Context, sessionID, reason st
 		SessionID: sessionID,
 		Reason:    reason,
 	}
-	raw, _ := json.Marshal(payload)                                                                        //nolint:errcheck
+	raw, _ := json.Marshal(payload)                                                                   //nolint:errcheck
 	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperRestartNowBlocked, raw) //nolint:errcheck
 }
 

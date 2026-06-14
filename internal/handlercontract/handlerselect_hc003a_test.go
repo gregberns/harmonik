@@ -130,7 +130,7 @@ func TestHC003a_SpecSectionExists(t *testing.T) {
 	}
 
 	if !foundHeading {
-		t.Errorf("HC-003a: specs/handler-contract.md does not contain '#### HC-003a' heading; "+
+		t.Errorf("HC-003a: specs/handler-contract.md does not contain '#### HC-003a' heading; " +
 			"the workflow-mode dispatch-level invariant MUST be declared normatively")
 	}
 	if !foundObservational {
@@ -269,7 +269,7 @@ func TestHC003a_SensorCoverage(t *testing.T) {
 
 	adapterFiles := hc003aFixtureAdapterFiles(t)
 	if len(adapterFiles) == 0 {
-		t.Errorf("HC-003a sensor: no adapter_*.go files found under internal/handler/; "+
+		t.Errorf("HC-003a sensor: no adapter_*.go files found under internal/handler/; " +
 			"sensor cannot assert the adapter mode-agnostic invariant")
 	}
 }

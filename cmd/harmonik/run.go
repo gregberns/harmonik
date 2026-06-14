@@ -696,7 +696,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		ProjectDir:               projectDir,
 		BrPath:                   brPath,
 		JSONLLogPath:             jsonlLogPath,
-		MaxConcurrent:            maxConcurrent, // hk-w3cp1: user-controlled concurrency
+		MaxConcurrent:            maxConcurrent,                                                                                                                                             // hk-w3cp1: user-controlled concurrency
 		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions), daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir))), // fleet-portability T2
 		DaemonBinaryPath:         daemonBinaryPath,
 		BinaryCommitHash:         commitHash,

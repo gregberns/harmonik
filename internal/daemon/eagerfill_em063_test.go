@@ -87,7 +87,7 @@ func em063FixtureDeps(t *testing.T, qs *QueueStore) workLoopDeps {
 // not need event inspection.
 type noopEmitter struct{}
 
-func (n *noopEmitter) Emit(_ context.Context, _ core.EventType, _ []byte) error        { return nil }
+func (n *noopEmitter) Emit(_ context.Context, _ core.EventType, _ []byte) error { return nil }
 func (n *noopEmitter) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
 	return nil
 }

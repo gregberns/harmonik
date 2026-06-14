@@ -37,6 +37,7 @@ type em065Ledger struct{}
 func (l *em065Ledger) LookupStatus(_ context.Context, _ core.BeadID) (queue.BeadStatus, error) {
 	return queue.BeadStatusOpen, nil
 }
+
 func (l *em065Ledger) BlocksEdge(_ context.Context, _, _ core.BeadID) (bool, error) {
 	return false, nil
 }

@@ -136,8 +136,8 @@ func runKeeperSubcommand(args []string) int {
 		resolvedForceActAbs = keeperCfg.ForceActAbsTokens
 	}
 	// pct ceils have no CLI flags; config wins over compiled defaults (0 → applyDefaults).
-	resolvedActPctCeil := keeperCfg.ActPctCeil     // 0 if not set → applyDefaults fills 0.85
-	resolvedWarnPctCeil := keeperCfg.WarnPctCeil   // 0 if not set → applyDefaults fills 0.70
+	resolvedActPctCeil := keeperCfg.ActPctCeil   // 0 if not set → applyDefaults fills 0.85
+	resolvedWarnPctCeil := keeperCfg.WarnPctCeil // 0 if not set → applyDefaults fills 0.70
 
 	// Step 1: acquire single-keeper lockfile.
 	lock, err := keeper.AcquireLock(projectDir, agentFlag)

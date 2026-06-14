@@ -512,13 +512,13 @@ func TestWatcher_LatchesUUIDv4AfterSkippingUUIDv7(t *testing.T) {
 	writeCtxFile(t, projectDir, agent, 50.0, v7SID)
 
 	cfg := keeper.WatcherConfig{
-		AgentName:    agent,
-		ProjectDir:   projectDir,
-		PollInterval: 10 * time.Millisecond,
-		WarnPct:      80.0,
-		IdleQuiesce:  1 * time.Millisecond,
-		Staleness:    120 * time.Second,
-		TmuxTarget:   "",
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		PollInterval:         10 * time.Millisecond,
+		WarnPct:              80.0,
+		IdleQuiesce:          1 * time.Millisecond,
+		Staleness:            120 * time.Second,
+		TmuxTarget:           "",
 		ReadManagedSessionFn: func(_, _ string) (string, error) { return "", nil },
 		WriteManagedSessionFn: func(_, _, sessionID string) error {
 			latchedSID = sessionID
@@ -809,13 +809,13 @@ func TestWatcher_StaleBindingAutoRecovery(t *testing.T) {
 
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{
-		AgentName:            agent,
-		ProjectDir:           projectDir,
-		PollInterval:         10 * time.Millisecond,
-		WarnPct:              80.0,
-		IdleQuiesce:          1 * time.Millisecond,
-		Staleness:            120 * time.Second,
-		TmuxTarget:           "",
+		AgentName:             agent,
+		ProjectDir:            projectDir,
+		PollInterval:          10 * time.Millisecond,
+		WarnPct:               80.0,
+		IdleQuiesce:           1 * time.Millisecond,
+		Staleness:             120 * time.Second,
+		TmuxTarget:            "",
 		StaleBindingThreshold: 3, // clear after 3 consecutive foreign ticks
 		ReadManagedSessionFn: func(_, _ string) (string, error) {
 			return storedSID, nil
@@ -877,13 +877,13 @@ func TestWatcher_StaleBindingCounterResetsOnMatchingGauge(t *testing.T) {
 
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{
-		AgentName:            agent,
-		ProjectDir:           projectDir,
-		PollInterval:         10 * time.Millisecond,
-		WarnPct:              80.0,
-		IdleQuiesce:          1 * time.Millisecond,
-		Staleness:            120 * time.Second,
-		TmuxTarget:           "",
+		AgentName:             agent,
+		ProjectDir:            projectDir,
+		PollInterval:          10 * time.Millisecond,
+		WarnPct:               80.0,
+		IdleQuiesce:           1 * time.Millisecond,
+		Staleness:             120 * time.Second,
+		TmuxTarget:            "",
 		StaleBindingThreshold: 3,
 		ReadManagedSessionFn: func(_, _ string) (string, error) {
 			return managedSID, nil

@@ -58,7 +58,7 @@ type noSessionFixtureBase struct {
 	windowCount int
 }
 
-func (a *noSessionFixtureBase) ProbeTmux(_ context.Context) error             { return nil }
+func (a *noSessionFixtureBase) ProbeTmux(_ context.Context) error                { return nil }
 func (a *noSessionFixtureBase) ListSessions(_ context.Context) ([]string, error) { return nil, nil }
 func (a *noSessionFixtureBase) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
@@ -67,6 +67,7 @@ func (a *noSessionFixtureBase) KillWindow(_ context.Context, _ tmux.WindowHandle
 func (a *noSessionFixtureBase) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *noSessionFixtureBase) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "", nil
 }

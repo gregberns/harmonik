@@ -70,3 +70,34 @@ Magentic-One dual-ledger progress-gate (deterministic non-progress counter force
 
 ## 10. Session provenance
 Designed across the 2026-06-14 captain session via a 6-agent fan-out (transcript-behavior, /quit-source, restart-now-deploy, contract-redesign, buffer/token, prior-art) + a flywheel creative fan-out (goal-keeper, focus-injection, mechanistic, why-it-keeps-failing, external-prior-art) + live operator design dialogue. Full agent findings are in `hk-0oca` comments.
+
+## 11. Captured from transcript (reconciliation 2026-06-14, crew `kynes`)
+A two-agent sweep of the prior captain session transcript (`8f68d96f…`, msgs 124–156) reconciled the operator's verbatim design words against §1–§10 above. Most was already faithfully captured (inverse-movement governor, GAN framing, config-editable equation, captain-overrule-stop, injection-rejection, design-phase-quiet, real-progress weighting, idle-triggered realign, the "opposite of a flywheel" vision). The items below were **missing or under-captured** and are recorded verbatim so nothing is lost. (The current captain session `748968d3…` held no operator design content — it is all restart cycles.)
+
+### 11.1 Over-deference root-cause hypothesis: the handoff embeds the last operator request "as law" [extends §2]
+> *"there is text somewhere that is causing the captain to defer all decision making to the operator. The captains instructions should be clear that it can make decisions but it constantly becomes wishy washy. It seems like maybe in the handoff (maybe) it embeds the last operators request and makes that law - instead of taking that as guidance and letting the 'get shit done' protocol over rule it."*
+
+The operator's concrete, testable hypothesis for **where** over-deference is injected — not just that it happens. Design constraint: a handoff's inherited operator request is **guidance**, not standing law; get-shit-done overrules it. (This is exactly what `hk-trg5`, the contract-redesign, landed — but the *root-cause framing* belongs in the flywheel design as the reason the goal-state/restart layer must re-classify inherited "pending" items rather than freeze on them.)
+
+### 11.2 The idle-state model needs a second axis — crew utilization [extends §5 "3-way idle states"]
+> *"if the captain is quiet but crew is working - that's excellent. If only the captain is working (assuming a lot of big tasks are needed) and crew is not used then there may be an issue. If captain and crew is NOT woking and there are goals defined, initiatives with no blockers, beads able to be worked, untested or undeployed code - THIS is what we want to try and solve."*
+
+The §5 idle-state split keys only on **captain** idleness. The operator adds a **crew-utilization** axis with three verdicts: (captain-quiet + crew-working = excellent — the goal), (captain-working + crew-unused = a *soft/possible* problem — captain hogging delegable work), (both idle + work-exists = the hard trip to solve). The middle case is a movement-signal nuance the sentinel must model and §5 currently omits.
+
+### 11.3 The keeper-warn message is the proximate stop-working trigger — 5 design requirements [new; relates §2 + §6]
+> *"that message almost seems to guarentee the captain stops doing work when there's more todo… First don't say it's approaching its limit because it's not and so then the model argues that. Second say who the message is from (keeper not operator). Third we have the handoff protocol but that's not mentioned. Fourth, that doesn't say it's a warning. Fifth that message almost seems to guarentee the captain stops doing work… get the captain to keep working AND correctly transition so it's contexts stay tight to minimize token usage and keep quality up."*
+
+The doc cites `hk-4zy9` (keeper-warn fix, DEPLOYED) only in passing. The operator's five acceptance criteria for the warn message — (1) don't claim "approaching limit"; (2) attribute sender = keeper, not operator; (3) reference the handoff protocol; (4) label it a WARNING; (5) don't phrase it so the captain stops — are the *proximate* mechanism behind the idle failure the flywheel exists to cure. Keep-working-AND-clean-transition is the design intent behind the deployed fix.
+
+### 11.4 Creative mandate: stop repeating the same fix; combine mechanism + agent [extends §1 / §2]
+> *"we should be creative in how we try and solve it. We've kinda been trying the same thing over and over - and it's not working."* … *"we could have a more mechanistic process - or figure out how to use an agent to try and get the system back on track - probably need a combination."*
+
+The operator's explicit directive that produced the §3–§6 shape: a **combination of a deterministic mechanism AND an agent**, not another single prompt-text iteration. Recorded as a guiding principle, not just provenance.
+
+### 11.5 Unsolved: where does `/quit` language originate? [extends §9 open questions]
+> *"we need to I understand where the hell all this slash quit messaging is coming from. We battled with this causing sessions not restarting many days ago… Where the hell is slash quit language introduced with the keeper (or wherever) so that there needs to be language to tell the agent that does[n't] need to be done?? That's been driving me nuts."*
+
+The doc references `hk-hxkz` (/quit excision) as done packaging. The operator treats it as an **open root-cause question** in the same "sessions not restarting/continuing" failure family — trace where `/quit` is introduced such that counter-language is even needed. Open item, not resolved.
+
+### 11.6 Nuance tightening [already captured]
+- §6 idle-trigger: the operator's exact trigger is two-pronged — *not working* **OR** *thinks it has nothing to do* (doc says only the latter).

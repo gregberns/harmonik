@@ -44,7 +44,7 @@ type CyclerConfig struct {
 	// Refs: hk-cl74g.
 	ActAbsTokens  int64   // absolute cycle threshold; default 300000
 	ActPctCeil    float64 // pct-of-window cap for cycle gate; default 0.85
-	WarnAbsTokens int64   // absolute warn/re-arm threshold; default 240000
+	WarnAbsTokens int64   // absolute warn/re-arm threshold; default 270000
 	WarnPctCeil   float64 // pct-of-window cap for warn gate; default 0.70
 
 	// ForceActAbsTokens / ForceActPctCeil define the hard upper threshold above
@@ -176,7 +176,7 @@ func (c *CyclerConfig) applyDefaults() {
 		c.ActPctCeil = 0.85
 	}
 	if c.WarnAbsTokens <= 0 {
-		c.WarnAbsTokens = 240_000
+		c.WarnAbsTokens = 270_000
 	}
 	if c.WarnPctCeil <= 0 {
 		c.WarnPctCeil = 0.70

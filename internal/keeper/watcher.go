@@ -151,8 +151,8 @@ type WatcherConfig struct {
 	// is min(WarnAbsTokens, WarnPctCeil * WindowSize). Used when the gauge file
 	// contains Tokens (i.e. keeper-statusline.sh is current). When WindowSize is
 	// zero, FallbackWindowSize is used to cap the threshold. Falls back to WarnPct
-	// only when Tokens is also zero. Default: 240000.
-	// Refs: hk-cl74g, hk-kgn.
+	// only when Tokens is also zero. Default: 270000.
+	// Refs: hk-cl74g, hk-kgn, hk-odhh.
 	WarnAbsTokens int64
 
 	// FallbackWindowSize is the assumed context-window size used for the
@@ -350,7 +350,7 @@ func (c *WatcherConfig) applyDefaults() {
 		c.WarnPct = 80.0
 	}
 	if c.WarnAbsTokens <= 0 {
-		c.WarnAbsTokens = 240_000
+		c.WarnAbsTokens = 270_000
 	}
 	if c.FallbackWindowSize <= 0 {
 		c.FallbackWindowSize = 200_000

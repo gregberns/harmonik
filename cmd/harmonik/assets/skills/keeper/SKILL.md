@@ -85,24 +85,29 @@ wins, 300k) — preventing a `90%` gate from firing only at ~900k tokens
 
 | gate | abs-token default | pct default | source |
 |---|---|---|---|
-| **WARN** | `WarnAbsTokens = 240000` | `--warn-pct 80` (pct-ceil 0.70) | `cycle.go:147-151`, `keeper_cmd.go:61` |
-| **ACT** | `ActAbsTokens = 300000` | `--act-pct 90` (pct-ceil 0.85) | `cycle.go:141-146`, `keeper_cmd.go:62` |
-| **FORCE-ACT** | `ForceActAbsTokens = 380000` | pct 95 (pct-ceil 0.95) | `cycle.go:56-57,142` |
-| window fallback | `FallbackWindowSize = 200000` | — | `watcher.go:249`, `--window-size` |
+| **WARN** | `WarnAbsTokens = 270000` | `--warn-pct 80` (pct-ceil 0.70) | `cycle.go:applyDefaults`, `watcher.go:applyDefaults` |
+| **ACT** | `ActAbsTokens = 300000` | `--act-pct 90` (pct-ceil 0.85) | `cycle.go:applyDefaults` |
+| **FORCE-ACT** | `ForceActAbsTokens = 380000` | pct 95 (pct-ceil 0.95) | `cycle.go:applyDefaults` |
+| window fallback | `FallbackWindowSize = 200000` | — | `watcher.go:applyDefaults`, `--window-size` |
 
-- The **pct gates are only used as a fallback** when the gauge does not emit
-  absolute token counts (`CtxFile.Tokens == 0` or `WindowSize == 0`) — i.e.
-  older Claude Code versions (`cycle.go:59-63`). When absolute tokens ARE
-  present, the abs/pct-ceil `min` formula above governs.
+- The **pct gates (`--warn-pct`/`--act-pct`) are only used as a fallback** when
+  the gauge does not emit absolute token counts (`CtxFile.Tokens == 0` or
+  `WindowSize == 0`) — i.e. older Claude Code versions (`cycle.go:belowActThreshold`,
+  `watcher.go:belowWarnThreshold`). When absolute tokens ARE present (all current
+  Claude Code versions with [1m] or 200k windows), the abs/pct-ceil `min` formula
+  above governs.
+- **On [1m]-window models (1M token context) the abs thresholds are
+  authoritative**: `min(270k, 0.70×1M)=270k` for warn, `min(300k, 0.85×1M)=300k`
+  for act. `--warn-pct`/`--act-pct` have no effect and the keeper will emit a
+  warning if they are passed explicitly. Use `--warn-abs-tokens`/`--act-abs-tokens`
+  to override thresholds. (Refs: hk-odhh.)
 - **FORCE-ACT** is the hard ceiling: above it the cycle fires **unconditionally,
   bypassing the CrispIdle gate**, so a perpetually-busy session that never goes
   idle still gets cleared before exhaustion (`cycle.go:50-57`, Refs: hk-0uu).
-- **All of these are configurable flags** on the watcher: `--warn-pct`,
-  `--act-pct`, `--warn-abs-tokens`, `--act-abs-tokens`, `--window-size`
-  (`keeper_cmd.go:59-65`). On a 1M-token window the bare `80/90` pct defaults
-  defeat the intent — captains relaunch with tighter pct (`--warn-pct 25
-  --act-pct 30`) so the gauge fires at a sane absolute fill. The abs-token caps
-  (240k/300k/380k) already bound it regardless.
+- **Abs thresholds are configurable** via `--warn-abs-tokens`, `--act-abs-tokens`,
+  `--window-size` (`keeper_cmd.go`). The pct flags (`--warn-pct`, `--act-pct`)
+  are a legacy fallback — do NOT pass them on modern deployments (they are inert
+  when Claude Code emits absolute token counts). Refs: hk-odhh.
 
 ---
 
@@ -147,10 +152,10 @@ Flags (`keeper_cmd.go:59-66`):
 |---|---|---|
 | `--agent <name>` | — (**required**) | identifies the lockfile + `.managed` marker |
 | `--tmux <target>` | auto-derived | pane to inject warn/handoff into; auto-resolved from `harmonik-<hash12>-<agent>` if omitted (`keeper_cmd.go:111-116`) |
-| `--warn-pct N` | `80` | pct fallback warn gate |
-| `--act-pct N` | `90` | pct fallback act gate (`.managed`-gated) |
-| `--warn-abs-tokens N` | `240000` | absolute warn gate |
-| `--act-abs-tokens N` | `300000` | absolute act gate |
+| `--warn-pct N` | `80` | pct fallback warn gate — **inert on [1m] models**; emits a warning if passed explicitly |
+| `--act-pct N` | `90` | pct fallback act gate (`.managed`-gated) — **inert on [1m] models**; emits a warning if passed explicitly |
+| `--warn-abs-tokens N` | `270000` | absolute warn gate (authoritative on [1m] models) |
+| `--act-abs-tokens N` | `300000` | absolute act gate (authoritative on [1m] models) |
 | `--window-size N` | `200000` | assumed window when gauge reports `WindowSize==0` |
 | `--respawn-cmd <cmd>` | — | supervised respawn: after the gauge goes stale 20s and the pane is at a shell prompt, run `sh -c <cmd>` to relaunch the agent (requires `--tmux`; 90s cooldown). Refs hk-3w2. |
 
@@ -239,7 +244,7 @@ in-flight queue work has completed. Exit codes: `0` removed (or already absent);
 
 | crossing | keeper does | YOU do (crew / default) | YOU do (captain / OnDemandRestart) |
 |---|---|---|---|
-| **WARN** (≥240k tokens / `--warn-pct`) | injects warn text, emits `session_keeper_warn` | **Keep working.** Optionally refresh `HANDOFF-<agent>.md`. Do NOT `/quit`, `/clear`, or stop. | **Keep working.** At the next clean idle point: write `HANDOFF-captain.md` (include the KEEPER nonce), run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, and stop typing. Do NOT `/quit`. |
+| **WARN** (≥270k tokens abs / `--warn-pct` fallback) | injects warn text, emits `session_keeper_warn` | **Keep working.** Optionally refresh `HANDOFF-<agent>.md`. Do NOT `/quit`, `/clear`, or stop. | **Keep working.** At the next clean idle point: write `HANDOFF-captain.md` (include the KEEPER nonce), run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, and stop typing. Do NOT `/quit`. |
 | **ACT** (≥300k / `--act-pct`, CrispIdle, no dispatch hold) | runs handoff → nonce-poll → `/clear` → `/session-resume` | **Nothing.** Hold with `keeper set-dispatching` if mid-dispatch. | **Nothing** — same cycle fires if the captain has not already triggered restart-now. |
 | **FORCE-ACT** (≥380k / `--act-pct` 95) | runs the cycle **unconditionally** (bypasses CrispIdle) | **Nothing** — the safety net for a never-idle session. | **Nothing** — same safety net; always fires regardless of restart-now status. |
 | **captain restart-now** | `RunOnDemand`: bypasses CrispIdle gate, runs cycle immediately on next tick | — | Captain writes handoff + nonce, then calls `harmonik keeper restart-now --agent captain`. |
@@ -377,7 +382,7 @@ mission (known-workarounds.md §Crew context management).
   `clear-dispatching`, flags, exit codes, `keeperTopUsage`.
 - `cmd/harmonik/keeper_enable_doctor_cmd.go` — `enable` / `doctor`, the
   settings.json wiring, the doctor check table, usage strings.
-- `internal/keeper/cycle.go` — the threshold defaults (240k/300k/380k), the
+- `internal/keeper/cycle.go` — the threshold defaults (270k warn/300k act/380k force-act), the
   `min(abs, pct*window)` formula, CrispIdle / force-act / operator-attached
   gating.
 - `internal/keeper/watcher.go` — the poll loop, `FallbackWindowSize`, warn

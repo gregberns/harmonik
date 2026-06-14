@@ -1050,10 +1050,21 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 Tags: mechanism
 
 The keeper MUST support a captain-initiated on-demand clear→resume cycle that bypasses
-the act-pct threshold gate only, keeping ALL other safety gates intact. This is the
-captain's escape hatch when context is high but below the keeper's act threshold, or
-when the captain wants to trigger a cycle at a specific point (e.g. after writing a
+the act threshold gate only (the CrispIdle check), keeping ALL other safety gates intact.
+This is the captain's escape hatch when context is high but below the keeper's act threshold,
+or when the captain wants to trigger a cycle at a specific point (e.g. after writing a
 complete handoff).
+
+**Threshold semantics for [1m]-window models.** On modern Claude Code versions that emit
+absolute token counts (`CtxFile.Tokens > 0`), the absolute thresholds are authoritative:
+warn = 270 000 tokens, act = 300 000 tokens, force-act = 380 000 tokens. The effective
+threshold is `min(absTokens, pctCeil × windowSize)`; on a 1M-token window the abs cap
+always wins. The `--warn-pct`/`--act-pct` CLI flags are a fallback used ONLY when the
+gauge does not report absolute token counts (older Claude Code). On a 1M-window model
+these flags are inert and MUST NOT be relied upon; the keeper emits a diagnostic warning
+when they are passed explicitly. Operators who previously passed `--warn-pct 25 --act-pct 30`
+on a 1M deployment were silently getting 270k/300k (not 250k/300k) — use
+`--warn-abs-tokens`/`--act-abs-tokens` for explicit overrides. (Refs: hk-odhh.)
 
 **Marker format.** The marker file at `.harmonik/keeper/<agent>.restart-now` MUST contain
 a single JSON object:

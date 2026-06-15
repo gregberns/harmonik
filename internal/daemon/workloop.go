@@ -50,10 +50,12 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
+	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -519,6 +521,15 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-6r6xv.
 	protectBranches []string
+
+	// workerRegistry is the remote-worker registry for the DD1 code-sync path
+	// (remote-substrate B8). When non-nil and SelectWorker() returns a worker,
+	// beadRunOne inserts fetch-base + remote-worktree + push-branch + box-A-fetch
+	// steps around the existing worktree-add and merge. When nil or when no
+	// worker is available, the local path is taken (NFR7).
+	//
+	// Bead ref: hk-rs-b8-codesync-3fk0.
+	workerRegistry *workers.Registry
 
 	// beadAuditLogger, when non-nil, is called in the pre-dispatch subsume check
 	// to determine whether a bead was explicitly reopened after a successful close
@@ -2026,9 +2037,79 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 
+	// ── DD1 code-sync: select remote worker (remote-substrate B8) ───────────
+	//
+	// When a worker is available, three new git steps wrap the existing
+	// worktree-add and merge operations:
+	//   (a) fetch-base on worker (before worktree-add)
+	//   (b) push run-branch from worker to origin (before merge)
+	//   (c) fetch run-branch on box A (before merge)
+	// Local runs (no registry or no available slot) skip all three steps.
+	//
+	// remoteBeadCtx is nil for local runs; non-nil for remote runs.
+	type remoteBeadCtx struct {
+		worker    workers.Worker
+		sshRunner tmuxpkg.CommandRunner
+	}
+	var rbc *remoteBeadCtx
+	if deps.workerRegistry != nil {
+		if w := deps.workerRegistry.SelectWorker(); w != nil {
+			rbc = &remoteBeadCtx{
+				worker:    *w,
+				sshRunner: tmuxpkg.SSHRunner{Host: w.Host},
+			}
+			defer deps.workerRegistry.ReleaseSlot()
+		}
+	}
+
+	// Step (a): for remote runs, ensure baseSHA is on the worker before the
+	// worktree is created there (DD1 code-sync, remote-substrate B8).
+	if rbc != nil {
+		if fetchErr := fetchBaseOnWorker(ctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA); fetchErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: fetchBaseOnWorker bead %s run %s: %v (reopening)\n",
+				beadID, runID.String(), fetchErr)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("fetch base on worker failed: %v", fetchErr))
+			return
+		}
+	}
+
+	// preMergeSync runs steps (b) and (c) for remote runs: push the run branch
+	// from the worker to origin, then fetch it on box A. Returns an error string
+	// on failure (empty string = success). No-op for local runs (rbc == nil).
+	preMergeSync := func() string {
+		if rbc == nil {
+			return ""
+		}
+		workerWtPath := workspace.WorktreePath(rbc.worker.RepoPath, runID.String(), workspace.NoWorktreeRootOverride())
+		if err := pushRunBranchOnWorker(ctx, rbc.sshRunner, workerWtPath, runID.String()); err != nil {
+			return fmt.Sprintf("push run branch on worker: %v", err)
+		}
+		if err := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String()); err != nil {
+			return fmt.Sprintf("fetch run branch on box A: %v", err)
+		}
+		return ""
+	}
+	// ── end DD1 code-sync setup ──────────────────────────────────────────────
+
 	wtFactory := deps.worktreeFactory
 	if wtFactory == nil {
-		wtFactory = productionWorktreeFactory
+		if rbc != nil {
+			// Remote run: create the worktree on the worker via SSHRunner (B7+B8).
+			sshRunner := rbc.sshRunner
+			workerRepoPath := rbc.worker.RepoPath
+			wtFactory = func(ctx context.Context, _, runID, headSHA string) (string, func(), error) {
+				cfg := workspace.NoWorktreeRootOverride().WithRunner(sshRunner)
+				if err := workspace.CreateWorktree(ctx, workerRepoPath, runID, headSHA, cfg); err != nil {
+					return "", nil, err
+				}
+				wtPath := workspace.WorktreePath(workerRepoPath, runID, workspace.NoWorktreeRootOverride())
+				return wtPath, nil, nil
+			}
+		} else {
+			wtFactory = productionWorktreeFactory
+		}
 	}
 	// Serialize 'git worktree add' under mergeMu so concurrent beadRunOne
 	// goroutines do not race on projectDir/.git/index.lock (hk-h8u7p).
@@ -2193,6 +2274,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 			// §4.12.EM-052: merge run-branch to main before CloseBead.
 			// Mirrors the single-mode merge path (hk-ftyvo).
+			// DD1 code-sync (remote-substrate B8): push-branch + box-A-fetch
+			// BEFORE merge when a remote worker was used.
+			if syncReason := preMergeSync(); syncReason != "" {
+				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", syncReason)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					fmt.Sprintf("code-sync failed (review-loop): %s", syncReason))
+				emitDone(false, fmt.Sprintf("code-sync-failed (review-loop): %s", syncReason))
+				return
+			}
 			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -2361,6 +2452,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// the gate lives inside standard-bead.dot's commit_gate tool_command.
 			// §4.12.EM-052: merge run-branch to main before CloseBead (mirrors the
 			// single-mode and review-loop merge path).
+			// DD1 code-sync (remote-substrate B8): push-branch + box-A-fetch BEFORE merge.
+			if syncReason := preMergeSync(); syncReason != "" {
+				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", syncReason)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					fmt.Sprintf("code-sync failed (dot): %s", syncReason))
+				emitDone(false, fmt.Sprintf("code-sync-failed (dot): %s", syncReason))
+				return
+			}
 			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -2943,6 +3043,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			return
 		}
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
+		// DD1 code-sync (remote-substrate B8): push-branch + box-A-fetch BEFORE merge.
+		if syncReason := preMergeSync(); syncReason != "" {
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", syncReason)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("code-sync failed (agent_completed): %s", syncReason))
+			emitDone(false, fmt.Sprintf("code-sync-failed (agent_completed): %s", syncReason))
+			return
+		}
 		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
@@ -2983,6 +3092,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			return
 		}
 		// §4.12.EM-052: merge run-branch to main before CloseBead.
+		// DD1 code-sync (remote-substrate B8): push-branch + box-A-fetch BEFORE merge.
+		if syncReason := preMergeSync(); syncReason != "" {
+			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", syncReason)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("code-sync failed (auto-close): %s", syncReason))
+			emitDone(false, fmt.Sprintf("code-sync-failed (auto-close): %s", syncReason))
+			return
+		}
 		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.

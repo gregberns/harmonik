@@ -25,6 +25,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
@@ -269,6 +270,13 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-wcv.
 	BeadAuditLogger func(ctx context.Context, id core.BeadID) ([]brcli.AuditEvent, error)
+
+	// WorkerRegistry, when non-nil, enables the DD1 remote code-sync path in
+	// beadRunOne (remote-substrate B8). When nil (the test default), all runs
+	// take the local path: no SSH fetch/push steps are inserted.
+	//
+	// Bead ref: hk-rs-b8-codesync-3fk0.
+	WorkerRegistry *workers.Registry
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -386,6 +394,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		emittedEpics:              make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
 		emittedEpicsMu:            &sync.Mutex{},
 		beadAuditLogger:           p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption
+		workerRegistry:            p.WorkerRegistry,  // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
 	}
 }
 

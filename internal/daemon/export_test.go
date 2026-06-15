@@ -502,10 +502,13 @@ func ExportedRunReviewLoop(
 // ExportedRunAutoStatusInspection exposes runAutoStatusInspection for unit
 // tests. The function is deterministic and LLM-free (AR-006 mechanism-tagged);
 // this export allows tests to verify pass/fail outcomes without the full
-// cascade machinery.
+// cascade machinery. It injects a nil runner (the LOCAL path), so these tests
+// exercise the byte-identical local-substrate behavior (NFR7).
 //
 // Bead ref: hk-oo4.
-var ExportedRunAutoStatusInspection = runAutoStatusInspection
+func ExportedRunAutoStatusInspection(ctx context.Context, wtPath string) (core.Outcome, bool) {
+	return runAutoStatusInspection(ctx, nil, wtPath)
+}
 
 // DotWorkflowResultExported is the exported shape of dotWorkflowResult for tests
 // in package daemon_test. Fields mirror dotWorkflowResult verbatim.

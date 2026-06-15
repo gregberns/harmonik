@@ -297,7 +297,7 @@ func dispatchSubWorkflowExpandedNode(
 	switch n.Type {
 	case core.NodeTypeNonAgentic:
 		if n.ToolCommand != "" && n.HandlerRef == "shell" {
-			return dispatchDotToolNode(ctx, r.wtPath, n, r.deps.handlerEnv)
+			return dispatchDotToolNode(ctx, r.runner, r.wtPath, n, r.deps.handlerEnv)
 		}
 		// Non-shell non-agentic: synthesize SUCCESS.
 		return core.Outcome{Status: core.OutcomeStatusSuccess}, nil

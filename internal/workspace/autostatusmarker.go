@@ -75,15 +75,31 @@ func ReadAutoStatusMarker(workspacePath string) (*AutoStatusMarker, error) {
 		return nil, fmt.Errorf("workspace: ReadAutoStatusMarker: ReadFile %q: %w", target, err)
 	}
 
+	return ParseAutoStatusMarker(data), nil
+}
+
+// ParseAutoStatusMarker validates raw auto_status.json bytes and applies the
+// TREAT-AS-ABSENT discipline per HC-068, returning the typed marker or nil when
+// the bytes do not denote an active FAIL marker. It is the byte-level core of
+// ReadAutoStatusMarker, factored out so a caller that obtains the marker bytes by
+// some other transport (e.g. a remote-substrate worker over an SSHRunner, where
+// the file is not on box A's filesystem) can apply identical validation.
+//
+// Returns nil for: empty input, JSON parse failure, or status != "FAIL".
+func ParseAutoStatusMarker(data []byte) *AutoStatusMarker {
+	if len(data) == 0 {
+		return nil
+	}
+
 	// JSON parse failure → treat as absent per HC-068 Validation.
 	var m AutoStatusMarker
 	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, nil //nolint:nilnil // treat-as-absent per HC-068
+		return nil // treat-as-absent per HC-068
 	}
 
 	// status MUST be "FAIL" per HC-068 D1; any other value → treat as absent.
 	if m.Status != "FAIL" {
-		return nil, nil //nolint:nilnil // non-FAIL status is deny-side-only; treat as absent per HC-068
+		return nil // non-FAIL status is deny-side-only; treat as absent per HC-068
 	}
 
 	// failure_class hint processing per HC-059 / HC-068:
@@ -96,5 +112,5 @@ func ReadAutoStatusMarker(workspacePath string) (*AutoStatusMarker, error) {
 		m.FailureClass = string(core.FailureClassStructural)
 	}
 
-	return &m, nil
+	return &m
 }

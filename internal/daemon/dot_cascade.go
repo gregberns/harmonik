@@ -71,6 +71,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -302,7 +303,7 @@ func driveDotWorkflow(
 				// Path 1: shell tool node — execute tool_command via the built-in
 				// in-process shell handler (WG-039 / HC-063). MAY run in-process;
 				// no subprocess/socket/NDJSON/agent_ready/heartbeat required.
-				toolOutcome, toolErr := dispatchDotToolNode(ctx, wtPath, node, deps.handlerEnv)
+				toolOutcome, toolErr := dispatchDotToolNode(ctx, runner, wtPath, node, deps.handlerEnv)
 				if toolErr != nil {
 					return dotWorkflowResult{
 						success:        false,
@@ -1138,7 +1139,7 @@ func dispatchDotAgenticNode(
 	// On pass: unchanged SUCCESS path. On fail: FAIL+deterministic.
 	// AR-006-clean — see runAutoStatusInspection for the mechanism-tag guarantee.
 	if node.AutoStatus {
-		if outcome, pass := runAutoStatusInspection(ctx, wtPath); !pass {
+		if outcome, pass := runAutoStatusInspection(ctx, runner, wtPath); !pass {
 			return outcome, nil
 		}
 	}
@@ -1158,10 +1159,18 @@ func dispatchDotAgenticNode(
 // Only active when a go.mod is present in wtPath (mirrors merge-build-gate;
 // non-Go projects and bare-repo fixtures are unaffected).
 //
+// Remote runs (runner != nil): wtPath lives on the worker's filesystem, which
+// box A cannot stat / chdir into. So the go.mod probe, the go build/vet gate, and
+// the C2 marker read all route through runner so they run ON THE WORKER. Like the
+// shell tool node, the build/vet gate is run under a login shell — `/bin/sh -lc
+// 'cd <wt> && go build ./...'` — because SSHRunner does NOT forward cmd.Env, so the
+// worker's own PATH (homebrew toolchain) must be sourced for `go` to resolve.
+// NFR7: the LOCAL (runner == nil) branch is byte-identical to the prior code.
+//
 // Returns (outcome, false) on inspection failure — caller should return the
 // outcome. Returns (zero, true) on pass — caller continues to SUCCESS.
-func runAutoStatusInspection(ctx context.Context, wtPath string) (core.Outcome, bool) {
-	if _, err := os.Stat(filepath.Join(wtPath, "go.mod")); err != nil {
+func runAutoStatusInspection(ctx context.Context, runner tmux.CommandRunner, wtPath string) (core.Outcome, bool) {
+	if !autoStatusHasGoMod(ctx, runner, wtPath) {
 		return core.Outcome{}, true // no go.mod: pass through
 	}
 	fc := core.FailureClassDeterministic
@@ -1169,8 +1178,17 @@ func runAutoStatusInspection(ctx context.Context, wtPath string) (core.Outcome, 
 		{"build", "./..."},
 		{"vet", "./..."},
 	} {
-		cmd := exec.CommandContext(ctx, "go", buildArgs...)
-		cmd.Dir = wtPath
+		var cmd *exec.Cmd
+		if runner == nil {
+			// LOCAL run (NFR7: byte-identical to the pre-remote path).
+			cmd = exec.CommandContext(ctx, "go", buildArgs...)
+			cmd.Dir = wtPath
+		} else {
+			// REMOTE run: cd into the worker's worktree under a login shell so
+			// the worker's PATH resolves `go`; SSHRunner does not forward cmd.Env.
+			cmd = runner.Command(ctx, "/bin/sh", "-lc",
+				fmt.Sprintf("cd %s && go %s", shellQuote(wtPath), strings.Join(buildArgs, " ")))
+		}
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return core.Outcome{
 				Status:       core.OutcomeStatusFail,
@@ -1186,7 +1204,7 @@ func runAutoStatusInspection(ctx context.Context, wtPath string) (core.Outcome, 
 	// D1: deny-side only — absent/non-FAIL markers are treated as absent by
 	// ReadAutoStatusMarker, so C1-only pass-through is preserved.
 	// D4: derived FAIL is terminal; no reviewer-loop re-entry.
-	marker, _ := workspace.ReadAutoStatusMarker(wtPath)
+	marker, _ := readAutoStatusMarkerVia(ctx, runner, wtPath)
 	if marker != nil {
 		c2fc := core.FailureClassDeterministic // HC-059 daemon back-fill when hint absent.
 		if marker.FailureClass != "" {
@@ -1202,6 +1220,40 @@ func runAutoStatusInspection(ctx context.Context, wtPath string) (core.Outcome, 
 	return core.Outcome{}, true
 }
 
+// autoStatusHasGoMod reports whether a go.mod exists at the worktree root,
+// routing the probe through runner so it targets the worker's filesystem on a
+// remote run. NFR7: the LOCAL (runner == nil) branch is byte-identical to the
+// prior os.Stat(filepath.Join(wtPath, "go.mod")) check.
+func autoStatusHasGoMod(ctx context.Context, runner tmux.CommandRunner, wtPath string) bool {
+	if runner == nil {
+		_, err := os.Stat(filepath.Join(wtPath, "go.mod"))
+		return err == nil
+	}
+	// REMOTE: `test -f <wt>/go.mod` on the worker; exit 0 = present.
+	err := runner.Command(ctx, "test", "-f", filepath.Join(wtPath, "go.mod")).Run()
+	return err == nil
+}
+
+// readAutoStatusMarkerVia reads + validates the C2 auto_status marker, routing
+// the read through runner on a remote run so the marker is read from the worker's
+// filesystem. NFR7: the LOCAL (runner == nil) branch calls the unchanged
+// workspace.ReadAutoStatusMarker. The remote branch streams the file bytes over
+// the runner (cat) and applies the identical validation via
+// workspace.ParseAutoStatusMarker; a missing file (cat exits non-zero) yields a
+// nil marker = C1-only pass-through, matching the local not-exist behavior.
+func readAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (*workspace.AutoStatusMarker, error) {
+	if runner == nil {
+		return workspace.ReadAutoStatusMarker(wtPath)
+	}
+	out, err := runner.Command(ctx, "cat", workspace.AutoStatusMarkerPath(wtPath)).Output()
+	if err != nil {
+		// Absent marker (cat: no such file) or transport hiccup → treat as absent,
+		// preserving C1-only pass-through (the local not-exist path returns nil,nil).
+		return nil, nil //nolint:nilnil // absent/unreadable marker = C1-only gate per HC-068
+	}
+	return workspace.ParseAutoStatusMarker(out), nil
+}
+
 // dispatchDotToolNode executes a non-agentic shell node's tool_command in-process
 // via /bin/sh -c. It is the built-in shell handler per WG-039 / HC-063.
 //
@@ -1215,9 +1267,9 @@ func runAutoStatusInspection(ctx context.Context, wtPath string) (core.Outcome, 
 // No RETRY or PARTIAL outcomes are produced; the author routes on FAIL sub-classes
 // via edge conditions if needed.
 //
-// Environment (hk-m5axg): the shell command inherits the daemon's full process
-// environment (os.Environ()) with the handler-supplied env layered ON TOP so any
-// operator overrides win on duplicate keys. The handler env alone is just
+// Environment (hk-m5axg): for a LOCAL run the shell command inherits the daemon's
+// full process environment (os.Environ()) with the handler-supplied env layered ON
+// TOP so any operator overrides win on duplicate keys. The handler env alone is just
 // HARMONIK_PROJECT_HASH (cfg.HandlerEnv is nil in production — see
 // cmd/harmonik/main.go daemon.Config) and crucially carries NO PATH. Without the
 // inherited environment, `/bin/sh -c "go build ..."` cannot find `go` (exit 127),
@@ -1226,7 +1278,19 @@ func runAutoStatusInspection(ctx context.Context, wtPath string) (core.Outcome, 
 // node — the run went run_stale. Unlike the claude implementer/reviewer launches
 // (which inherit a full shell env via the tmux substrate), this shell node
 // exec.CommandContext's directly and so must reconstruct the environment itself.
-func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env []string) (core.Outcome, error) {
+//
+// Remote runs (runner != nil, an SSHRunner): the gate MUST run ON THE WORKER, not
+// box A — the worktree path lives on the worker's filesystem, which box A cannot
+// chdir into (cmd.Dir = wtPath → chdir/"no such file"). We route the command
+// through runner.Command so it tunnels to the worker. SSHRunner.Command does NOT
+// propagate cmd.Env to the remote shell (it only forwards argv), so the os.Environ()
+// inheritance that gives the LOCAL path its PATH does not apply remotely. Instead we
+// build a LOGIN shell — `/bin/sh -lc 'cd <wtPath> && <ToolCommand>'` — so the
+// worker's own ~/.zprofile / ~/.profile PATH (which includes /opt/homebrew/bin,
+// where go/git/claude resolve on the worker) is sourced before the gate runs. The
+// cd anchors the gate at the worker's worktree the way cmd.Dir does locally.
+// NFR7: the LOCAL (runner == nil) branch is byte-identical to the prior code.
+func dispatchDotToolNode(ctx context.Context, runner tmux.CommandRunner, wtPath string, node *dot.Node, env []string) (core.Outcome, error) {
 	timeoutSecs := 300
 	if node.Timeout != "" {
 		if n, err := strconv.Atoi(node.Timeout); err == nil && n > 0 {
@@ -1237,11 +1301,21 @@ func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(execCtx, "/bin/sh", "-c", node.ToolCommand)
-	cmd.Dir = wtPath
-	// Inherit the daemon's process env (PATH, HOME, GOPATH, …) then layer the
-	// handler-supplied entries last so they override on duplicate keys.
-	cmd.Env = append(os.Environ(), env...)
+	var cmd *exec.Cmd
+	if runner == nil {
+		// LOCAL run (NFR7: byte-identical to the pre-remote path).
+		cmd = exec.CommandContext(execCtx, "/bin/sh", "-c", node.ToolCommand)
+		cmd.Dir = wtPath
+		// Inherit the daemon's process env (PATH, HOME, GOPATH, …) then layer the
+		// handler-supplied entries last so they override on duplicate keys.
+		cmd.Env = append(os.Environ(), env...)
+	} else {
+		// REMOTE run: route the gate through the worker's runner. cd into the
+		// worker's worktree and run under a login shell so the worker's PATH
+		// (homebrew toolchain) is sourced — SSHRunner does NOT forward cmd.Env.
+		cmd = runner.Command(execCtx, "/bin/sh", "-lc",
+			fmt.Sprintf("cd %s && %s", shellQuote(wtPath), node.ToolCommand))
+	}
 
 	// CAPTURE the combined stdout+stderr instead of discarding it (hk-pj4b6).
 	// On a deterministic gate FAIL the cascade loops back to the implementer; the
@@ -1258,8 +1332,14 @@ func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env
 
 	// F30: write full gate output to a dedicated file; never tee go test / scenario
 	// output into the daemon log. The daemon log gets a one-line pointer instead.
+	// LOCAL only: for a REMOTE run wtPath is the worker's filesystem (absent on
+	// box A), so this write would silently fail — skip it. The actionable tail is
+	// still captured in Outcome.Notes from the combined output streamed back over
+	// the runner, so the re-entering implementer keeps its diagnostic.
 	gateLogPath := filepath.Join(wtPath, ".harmonik", "commit-gate.log")
-	_ = os.WriteFile(gateLogPath, combined, 0o644)
+	if runner == nil {
+		_ = os.WriteFile(gateLogPath, combined, 0o644)
+	}
 
 	outputTail := tailString(string(combined), dotGateOutputTailBytes)
 
@@ -1287,6 +1367,15 @@ func dispatchDotToolNode(ctx context.Context, wtPath string, node *dot.Node, env
 // is retained in Outcome.Notes / logged. Gate output (full `go build`/`go vet`/
 // test logs) can be large; the tail carries the actionable failure lines.
 const dotGateOutputTailBytes = 4096
+
+// shellQuote wraps s in single quotes for safe interpolation into a remote
+// `/bin/sh -lc '<script>'` string, escaping any embedded single quotes via the
+// standard '\” idiom. Used only for the worktree path on the REMOTE gate path,
+// so a worker worktree path containing spaces (or other shell metacharacters)
+// survives the cd intact. The local path never shell-interpolates wtPath.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 // tailString returns the last n bytes of s (rune-boundary-safe at the cut),
 // prefixed with a truncation marker when s was longer than n. Returns s

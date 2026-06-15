@@ -626,6 +626,26 @@ func driveDotWorkflow(
 			// than dropping the capped edge and re-selecting an unconditional
 			// fallback, so cap-hit does NOT reach a terminal node; it ends as a
 			// reopen, same as a genuine no-match structural failure.
+			//
+			// F42 (hk-1vlz) AUTO-SALVAGE: when the traversal cap fires at the
+			// commit_gate node AND the implementer already committed (HEAD advanced
+			// past parentSHA), the committed work must NOT be silently discarded.
+			// Return success so the caller (workloop.go) merges the committed run
+			// branch to main, mirroring the verdict-absent salvage (hk-bqf1q) and
+			// the approved-and-done path (hk-8ps7q).
+			//
+			// This covers the live failure class: implementer commits N times, gate
+			// keeps failing, cap fires — the most-recent commit is salvaged rather
+			// than stranded on the run branch (hk-3js5m).
+			if decision.CompletionReason == "cap_hit" && currentNodeID == "commit_gate" {
+				if salvageHead, salvageErr := resolveDotWorktreeHEAD(ctx, runner, wtPath); salvageErr == nil &&
+					salvageHead != "" && salvageHead != parentSHA {
+					return dotWorkflowResult{
+						success: true,
+						summary: fmt.Sprintf("dot: commit_gate cap-hit salvaged — committed tip present; auto-advancing to merge (hk-1vlz F42)"),
+					}
+				}
+			}
 			needsAttention := true
 			summary := fmt.Sprintf("dot: cascade failed at node %q: class=%s reason=%s",
 				currentNodeID, decision.FailureClass, decision.FailureReason)

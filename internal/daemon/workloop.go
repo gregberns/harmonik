@@ -3849,12 +3849,29 @@ type workloopRunCompletedPayload struct {
 	WorktreeTipSHA     *string `json:"worktree_tip_sha,omitempty"`
 }
 
-// hasAPIKeyInEnv reports whether any element of env is ANTHROPIC_API_KEY or
-// has the ANTHROPIC_API_KEY= prefix. Used by the D2 fail-closed check to
-// prevent forwarding the local API key to a remote worker (B10).
+// hasAPIKeyInEnv reports whether any element of env would forward a *live*
+// ANTHROPIC_API_KEY to a remote worker. Used by the D2 fail-closed check to
+// prevent billing the worker's own API quota (B10).
+//
+// Two forms are dangerous and must be refused:
+//   - "ANTHROPIC_API_KEY=<value>" with a non-empty value — an explicit live key.
+//   - "ANTHROPIC_API_KEY" (bare, no '=') — inherits the daemon process's value.
+//
+// The empty-override form "ANTHROPIC_API_KEY=" (value after '=' is empty) is
+// SAFE and must NOT be refused: ClaudeEnvVars always appends it as a CI-003
+// credential-zeroing override (specs/credential-isolation.md §4 CI-003), so it
+// appears in spec.Env for *every* launch, local or remote. Treating that empty
+// override as a live key would fail-close every remote dispatch (the B12
+// localhost e2e surfaced exactly this).
 func hasAPIKeyInEnv(env []string) bool {
 	for _, e := range env {
-		if e == "ANTHROPIC_API_KEY" || strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+		if e == "ANTHROPIC_API_KEY" {
+			// Bare key with no '=' → inherits the parent process value. Refuse.
+			return true
+		}
+		if v, ok := strings.CutPrefix(e, "ANTHROPIC_API_KEY="); ok && v != "" {
+			// KEY=<non-empty> → a live key. Refuse. KEY= (empty) is the CI-003
+			// zeroing override and is safe to forward.
 			return true
 		}
 	}

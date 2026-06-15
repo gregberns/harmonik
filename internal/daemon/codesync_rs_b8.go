@@ -82,11 +82,12 @@ func fetchRunBranchBoxA(ctx context.Context, r tmux.CommandRunner, projectDir, r
 		r = tmux.LocalRunner{}
 	}
 	branch := workspace.TaskBranchName(runID)
-	cmd := r.Command(ctx, "git", "-C", projectDir, "fetch", "origin", branch)
+	refspec := branch + ":refs/heads/" + branch
+	cmd := r.Command(ctx, "git", "-C", projectDir, "fetch", "origin", refspec)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("codesync: fetchRunBranchBoxA (project=%s branch=%s): %w\ngit: %s",
-			projectDir, branch, err, out)
+		return fmt.Errorf("codesync: fetchRunBranchBoxA (project=%s refspec=%s): %w\ngit: %s",
+			projectDir, refspec, err, out)
 	}
 	return nil
 }

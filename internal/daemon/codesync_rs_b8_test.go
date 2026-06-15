@@ -130,7 +130,7 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 		if cLocal.Name != "git" {
 			t.Errorf("RSB8/remote: localRR.calls[0].Name = %q, want git", cLocal.Name)
 		}
-		wantLocal := []string{"-C", projectDir, "fetch", "origin", branch}
+		wantLocal := []string{"-C", projectDir, "fetch", "origin", branch + ":refs/heads/" + branch}
 		if !argvSliceEqual(cLocal.Args, wantLocal) {
 			t.Errorf("RSB8/remote: localRR.calls[0].Args = %v, want %v", cLocal.Args, wantLocal)
 		}
@@ -181,7 +181,7 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 			t.Fatalf("RSB8/local: expected 1 local call, got %d: %v", len(localRR.Calls), localRR.Calls)
 		}
 		localBranch := workspace.TaskBranchName(runID)
-		wantLocal := []string{"-C", projectDir, "fetch", "origin", localBranch}
+		wantLocal := []string{"-C", projectDir, "fetch", "origin", localBranch + ":refs/heads/" + localBranch}
 		if !argvSliceEqual(localRR.Calls[0].Args, wantLocal) {
 			t.Errorf("RSB8/local: localRR.calls[0].Args = %v, want %v", localRR.Calls[0].Args, wantLocal)
 		}

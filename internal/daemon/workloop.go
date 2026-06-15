@@ -2746,6 +2746,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			prs.onConnectionFailure = func(c context.Context, detail string) {
 				notifyWorkerOffline("liveness", detail)
 			}
+			// remote-substrate worker-spawn gap: tell the per-run substrate which
+			// tmux session to ENSURE + spawn into ON THE WORKER, and the cwd to use
+			// when creating it (the worker's repo_path). Without this the spawn would
+			// target box A's local "-default" session — which does not exist on the
+			// worker — and the launch wedges at launch_initiated.
+			prs.workerSessionName = prs.inner.workerSpawnSessionName(rbc.worker.Name)
+			prs.workerSessionCwd = rbc.worker.RepoPath
 		}
 		runSubstrate = prs
 		runPasteTarget = prs

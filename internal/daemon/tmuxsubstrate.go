@@ -484,6 +484,23 @@ func (s *tmuxSubstrate) releaseSpawnSlot() {
 // Spec ref: process-lifecycle.md §4.7 PL-021b obligation 1.
 // Bead ref: hk-xb5yi (spawn cap).
 func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	// Local path (box A): use the shared adapter and the daemon-owned spawn-target
+	// session, unchanged. Remote runs route through spawnWindowVia with an
+	// SSH-backed adapter + a worker-scoped session (see perRunSubstrate.SpawnWindow).
+	// NFR7: the local path is byte-identical to the pre-remote behaviour.
+	return s.spawnWindowVia(ctx, in, s.adapter, s.sessionName)
+}
+
+// spawnWindowVia is the adapter/session-parameterised core of SpawnWindow. The
+// local path passes s.adapter / s.sessionName (byte-identical to the original
+// behaviour). The remote path (perRunSubstrate.SpawnWindow with a non-local
+// runner) passes an SSH-backed adapter and a worker-scoped session so the
+// `tmux new-window`, pane-PID resolution, and the spawned session's Wait/Kill
+// all execute on the WORKER's tmux server rather than box A's.
+//
+// All shared machinery — spawn semaphore, new-window mutex, stagger, the
+// new-window timeout, and spawnedHandles tracking — is preserved for both paths.
+func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.SubstrateSpawn, adapter tmux.Adapter, sessionName string) (handler.SubstrateSession, error) {
 	// Acquire a spawn semaphore slot before creating the window. This enforces
 	// the concurrent-session ceiling (hk-xb5yi). When the cap is not configured
 	// (spawnSem is nil) this block is a no-op.
@@ -548,7 +565,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	}
 
 	params := tmux.NewWindowIn{
-		Session:    s.sessionName,
+		Session:    sessionName,
 		WindowName: windowName,
 		Env:        in.Env,
 		WorkDir:    in.Cwd,
@@ -564,7 +581,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	// hang into a prompt, observable launch failure (tmux_new_window_timeout
 	// diagnostic + ErrStructural). The semaphore slot is released on the timeout
 	// path so the leak does not compound.
-	outcome, timeoutErr := s.callNewWindowBounded(ctx, params)
+	outcome, timeoutErr := s.callNewWindowBounded(ctx, adapter, params)
 	if timeoutErr != nil {
 		s.releaseSpawnSlot()
 		return nil, timeoutErr
@@ -578,9 +595,13 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 		// until a daemon restart.
 		recovered := false
 		if errors.Is(outcome.Err, tmux.ErrNoSession) {
-			if se, ok := s.adapter.(sessionEnsurer); ok {
-				if ensErr := se.EnsureSession(ctx, s.sessionName, ""); ensErr == nil {
-					retryOutcome, retryTimeoutErr := s.callNewWindowBounded(ctx, params)
+			if se, ok := adapter.(sessionEnsurer); ok {
+				// Empty cwd preserves the box-A recovery behaviour byte-for-byte
+				// (NFR7). For the remote path the worker session is ensured up
+				// front (with the worker repo_path as cwd) in
+				// perRunSubstrate.SpawnWindow, so this lazy recovery is a backstop.
+				if ensErr := se.EnsureSession(ctx, sessionName, ""); ensErr == nil {
+					retryOutcome, retryTimeoutErr := s.callNewWindowBounded(ctx, adapter, params)
 					if retryTimeoutErr != nil {
 						s.releaseSpawnSlot()
 						return nil, retryTimeoutErr
@@ -625,7 +646,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	// "session:path/to/dir.0" as a pane target; "%NNNN" is always slash-free.
 	paneID := outcome.PaneID
 	if paneID == "" {
-		if id, paneIDErr := s.adapter.WindowPaneID(ctx, outcome.Handle); paneIDErr == nil {
+		if id, paneIDErr := adapter.WindowPaneID(ctx, outcome.Handle); paneIDErr == nil {
 			paneID = id
 		}
 	}
@@ -650,7 +671,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	}
 
 	// Retrieve the pane PID immediately so SubstrateSession.PID() is available.
-	pid, pidErr := s.adapter.WindowPanePID(ctx, pidTarget)
+	pid, pidErr := adapter.WindowPanePID(ctx, pidTarget)
 	if pidErr != nil {
 		// PID retrieval failure is non-fatal: the window is alive. Log and
 		// continue with pid=0; callers should not depend on PID for correctness.
@@ -668,7 +689,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	// exactly once inside killOnce.Do so the semaphore slot is returned when the
 	// session ends. When no cap was configured, releaseSpawnSlot is a no-op.
 	sess := &tmuxSubstrateSession{
-		adapter:     s.adapter,
+		adapter:     adapter,
 		handle:      outcome.Handle,
 		paneID:      paneID,
 		pidTarget:   pidTarget,
@@ -697,7 +718,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 // The bounded ctx is passed to NewWindowIn so a ctx-aware adapter (OSAdapter
 // uses exec.CommandContext) also gets its tmux subprocess SIGKILLed on timeout;
 // the goroutine+select wrapper is the backstop for adapters that ignore ctx.
-func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, params tmux.NewWindowIn) (tmux.Outcome, error) {
+func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, adapter tmux.Adapter, params tmux.NewWindowIn) (tmux.Outcome, error) {
 	// hk-oihnf: serialize the new-window exec daemon-wide. The mutex is held ONLY
 	// for the duration of this bounded call (the tmux-server-lock contention
 	// point), never across the semaphore acquire or spec-build in SpawnWindow. The
@@ -754,7 +775,7 @@ func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, params tmux.Ne
 	resCh := make(chan result, 1)
 	start := time.Now()
 	go func() {
-		resCh <- result{outcome: s.adapter.NewWindowIn(callCtx, params)}
+		resCh <- result{outcome: adapter.NewWindowIn(callCtx, params)}
 	}()
 
 	select {
@@ -836,8 +857,36 @@ type perRunSubstrate struct {
 	// commandRunnerProvider interface.  A nil value falls back to
 	// tmux.LocalRunner{} (unchanged local behaviour).
 	//
+	// A non-nil runner ALSO marks this as a REMOTE run: SpawnWindow then routes
+	// `tmux new-window` (and the spawned session's pane-PID/Wait/Kill) through an
+	// SSH-backed adapter targeting a worker-scoped tmux session, rather than the
+	// shared local adapter + box-A session.
+	//
 	// Bead: hk-rs-b9-liveness-1m9n.
 	runner tmux.CommandRunner
+
+	// workerSessionName is the tmux session on the WORKER that remote runs spawn
+	// their implementer/reviewer window into. Set by the workloop for remote runs
+	// (nil runner ⇒ empty ⇒ local path, untouched). SpawnWindow ensures this
+	// session exists on the worker (via the SSH-backed adapter) BEFORE the
+	// `tmux new-window`, mirroring how box A ensures its "-default" session.
+	//
+	// Bead ref: remote-substrate worker-spawn gap.
+	workerSessionName string
+
+	// workerSessionCwd is the working directory used when ensuring
+	// workerSessionName on the worker (the worker's repo_path). Empty ⇒ tmux
+	// default cwd.
+	workerSessionCwd string
+
+	// remoteAdapter caches the SSH-backed adapter built once at SpawnWindow time
+	// from the inner adapter via WithRunner(runner). Paste-inject calls
+	// (WriteLastPane / SendEnter / SendQuit) and PaneHasActiveProcess's PID
+	// resolution use it so all tmux I/O for a remote run reaches the worker's
+	// tmux server. Nil for local runs (paste-inject uses inner.adapter, unchanged).
+	//
+	// Bead ref: remote-substrate worker-spawn gap.
+	remoteAdapter tmux.Adapter
 
 	// onConnectionFailure is called when an SSH connection failure (exit-255) is
 	// detected during PaneHasActiveProcess. Wired by the workloop for remote runs
@@ -863,13 +912,13 @@ func (p *perRunSubstrate) commandRunner() tmux.CommandRunner {
 
 // Compile-time assertions for perRunSubstrate.
 var (
-	_ handler.Substrate      = (*perRunSubstrate)(nil)
-	_ pasteInjecter          = (*perRunSubstrate)(nil)
-	_ enterSender            = (*perRunSubstrate)(nil)
-	_ quitSender             = (*perRunSubstrate)(nil)
-	_ paneLivenessChecker    = (*perRunSubstrate)(nil)
-	_ paneOutputSizer        = (*perRunSubstrate)(nil)
-	_ commandRunnerProvider  = (*perRunSubstrate)(nil)
+	_ handler.Substrate     = (*perRunSubstrate)(nil)
+	_ pasteInjecter         = (*perRunSubstrate)(nil)
+	_ enterSender           = (*perRunSubstrate)(nil)
+	_ quitSender            = (*perRunSubstrate)(nil)
+	_ paneLivenessChecker   = (*perRunSubstrate)(nil)
+	_ paneOutputSizer       = (*perRunSubstrate)(nil)
+	_ commandRunnerProvider = (*perRunSubstrate)(nil)
 )
 
 // paneTargeter is an optional interface a SubstrateSession may implement to
@@ -995,6 +1044,27 @@ type sessionEnsurer interface {
 	EnsureSession(ctx context.Context, name, workDir string) error
 }
 
+// runnerSwapper is an optional interface a tmux.Adapter may implement to return
+// a copy of itself that tunnels every tmux command through a different
+// CommandRunner (e.g. an SSHRunner targeting a remote worker). This is the seam
+// the remote-substrate path uses so a remote run's `tmux new-window`,
+// pane-PID resolution, paste-inject, and session Wait/Kill all execute on the
+// WORKER's tmux server rather than box A's.
+//
+// Implemented by tmux.OSAdapter (WithRunner method, value receiver returning a
+// copy). NOT added to the tmux.Adapter interface to avoid breaking existing
+// test doubles.
+//
+// Bead ref: remote-substrate worker-spawn gap (worker tmux session never
+// created; `tmux new-window` targeted box A's session over the local runner).
+type runnerSwapper interface {
+	WithRunner(r tmux.CommandRunner) tmux.OSAdapter
+}
+
+// Compile-time assertion: tmux.OSAdapter (the production adapter) satisfies
+// runnerSwapper, so the remote-substrate spawn path can swap in an SSH runner.
+var _ runnerSwapper = tmux.OSAdapter{}
+
 // crewSessionSpawner is an optional interface a Substrate may implement to
 // spawn a crew member in its own independent tmux session (hk-mmlqt).
 //
@@ -1031,6 +1101,28 @@ func (s *tmuxSubstrate) crewSessionName(name string) string {
 		return lifecycle.TmuxSessionName(s.projectHash, "crew-"+name)
 	}
 	return "hk-crew-" + name
+}
+
+// workerSpawnSessionName returns the tmux session name a REMOTE run spawns its
+// implementer/reviewer window into ON THE WORKER. This session lives on the
+// worker's own tmux server (created via the SSH-backed adapter's EnsureSession),
+// so it never collides with box A's "-default" session.
+//
+// When projectHash is set: "harmonik-<projectHash>-worker-<workerName>" — one
+// shared spawn-target session per worker, mirroring how box A shares one
+// "-default" session for all its local runs. A single shared worker session is
+// safe because each run gets its OWN window (and worktree) inside it.
+//
+// Fallback (no projectHash / no workerName): the box-A spawn-target session
+// name (s.sessionName). On the worker's own tmux server this is still a fresh,
+// collision-free session that EnsureSession creates.
+//
+// Bead ref: remote-substrate worker-spawn gap.
+func (s *tmuxSubstrate) workerSpawnSessionName(workerName string) string {
+	if s.projectHash != "" && workerName != "" {
+		return lifecycle.TmuxSessionName(s.projectHash, "worker-"+workerName)
+	}
+	return s.sessionName
 }
 
 // SpawnCrewSession creates an independent tmux session for the crew and runs
@@ -1168,6 +1260,30 @@ func newPerRunSubstrate(sub handler.Substrate, handlerBinary string, runner tmux
 // returned session does not implement paneTargeter, the pane target remains
 // empty and paste-inject calls will fail gracefully.
 func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	// Remote path: a non-nil runner marks this as a remote run. Route the spawn
+	// through an SSH-backed adapter + worker-scoped session so `tmux new-window`,
+	// pane-PID resolution, and the spawned session's Wait/Kill all execute on the
+	// WORKER's tmux server. Without this the inner SpawnWindow would target box
+	// A's local tmux server and the box-A "-default" session, which does NOT
+	// exist on the worker — the launch wedges at launch_initiated with no spawn.
+	//
+	// NFR7: when runner is nil (local run) we fall through to the unchanged
+	// p.inner.SpawnWindow delegation below, byte-identical to the pre-remote path.
+	if p.runner != nil {
+		sess, err := p.spawnWindowRemote(ctx, in)
+		if err != nil {
+			return nil, err
+		}
+		if pt, ok := sess.(paneTargeter); ok {
+			if target := pt.PaneTarget(); target != "" {
+				p.paneTargetMu.Lock()
+				p.cachedPaneTarget = target
+				p.paneTargetMu.Unlock()
+			}
+		}
+		return sess, nil
+	}
+
 	sess, err := p.inner.SpawnWindow(ctx, in)
 	if err != nil {
 		return nil, err
@@ -1182,6 +1298,68 @@ func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateS
 		}
 	}
 	return sess, nil
+}
+
+// spawnWindowRemote performs the remote-run spawn: it builds an SSH-backed
+// adapter from the inner adapter (WithRunner(p.runner)), ENSURES the worker's
+// target tmux session exists on the worker (idempotent — mirroring box A's
+// "-default" EnsureSession), then delegates to p.inner.spawnWindowVia with the
+// remote adapter + worker session so the `tmux new-window` and the spawned
+// session's pane-PID/Wait/Kill all run on the WORKER's tmux server.
+//
+// The ensured remote adapter is cached on p.remoteAdapter so the paste-inject
+// methods (WriteLastPane / SendEnterToLastPane / SendQuitToLastPane) and
+// PaneHasActiveProcess's PID resolution route through the worker too.
+//
+// Worker session name: p.workerSessionName (worker-scoped, set by the
+// workloop). Session cwd: p.workerSessionCwd (the worker's repo_path).
+//
+// Bead ref: remote-substrate worker-spawn gap.
+func (p *perRunSubstrate) spawnWindowRemote(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	// The inner adapter must support runner-swapping (OSAdapter does). A test
+	// double that does not implement runnerSwapper cannot exercise the remote
+	// path; fail closed with a structural error rather than silently spawning
+	// against box A's local tmux.
+	sw, ok := p.inner.adapter.(runnerSwapper)
+	if !ok {
+		return nil, fmt.Errorf("daemon: perRunSubstrate.spawnWindowRemote: inner adapter does not support WithRunner (cannot target worker tmux): %w", handler.ErrStructural)
+	}
+	remoteAdapter := tmux.Adapter(sw.WithRunner(p.runner))
+
+	sessName := p.workerSessionName
+	if sessName == "" {
+		// Defensive: a remote run without an explicit worker session name still
+		// must NOT spawn into box A's "-default". Reuse the inner (box-A
+		// project-hash-derived) session name; on the worker's own tmux server
+		// this name is collision-free, and EnsureSession below creates it.
+		sessName = p.inner.sessionName
+	}
+
+	// ENSURE the worker session exists on the worker BEFORE new-window. This is
+	// the fix: nothing else creates a target session on a remote worker, so
+	// `tmux new-window -t <session>` would fail/hang. EnsureSession is idempotent
+	// (`tmux has-session || tmux new-session -d -s <name> -c <cwd>` semantics via
+	// the duplicate-session-is-success path) and runs over the SSH runner.
+	if se, ok := remoteAdapter.(sessionEnsurer); ok {
+		if ensErr := se.EnsureSession(ctx, sessName, p.workerSessionCwd); ensErr != nil {
+			return nil, fmt.Errorf("daemon: perRunSubstrate.spawnWindowRemote: ensure worker session %q: %w: %w", sessName, ensErr, handler.ErrStructural)
+		}
+	}
+
+	// Cache the remote adapter for paste-inject + liveness PID resolution.
+	p.remoteAdapter = remoteAdapter
+
+	return p.inner.spawnWindowVia(ctx, in, remoteAdapter, sessName)
+}
+
+// pasteAdapter returns the adapter that paste-inject and liveness PID-resolution
+// calls should target: the cached remote (SSH-backed) adapter for a remote run,
+// otherwise the shared inner adapter (unchanged local behaviour, NFR7).
+func (p *perRunSubstrate) pasteAdapter() tmux.Adapter {
+	if p.remoteAdapter != nil {
+		return p.remoteAdapter
+	}
+	return p.inner.adapter
 }
 
 // paneTarget returns the tmux pane target captured at SpawnWindow time for
@@ -1203,7 +1381,7 @@ func (p *perRunSubstrate) WriteLastPane(ctx context.Context, bufferName string, 
 	if target == "" {
 		return fmt.Errorf("daemon: perRunSubstrate.WriteLastPane: no window spawned yet: %w", tmux.ErrStructural)
 	}
-	return p.inner.adapter.WriteToPane(ctx, bufferName, target, payload)
+	return p.pasteAdapter().WriteToPane(ctx, bufferName, target, payload)
 }
 
 // SendEnterToLastPane sends a bare Enter key to this run's pane.
@@ -1214,7 +1392,7 @@ func (p *perRunSubstrate) SendEnterToLastPane(ctx context.Context) error {
 	if target == "" {
 		return fmt.Errorf("daemon: perRunSubstrate.SendEnterToLastPane: no window spawned yet: %w", tmux.ErrStructural)
 	}
-	return p.inner.adapter.SendKeysEnter(ctx, target)
+	return p.pasteAdapter().SendKeysEnter(ctx, target)
 }
 
 // SendQuitToLastPane sends /quit followed by Enter to this run's pane.
@@ -1225,7 +1403,7 @@ func (p *perRunSubstrate) SendQuitToLastPane(ctx context.Context) error {
 	if target == "" {
 		return fmt.Errorf("daemon: perRunSubstrate.SendQuitToLastPane: no window spawned yet: %w", tmux.ErrStructural)
 	}
-	return p.inner.adapter.SendKeysQuit(ctx, target)
+	return p.pasteAdapter().SendKeysQuit(ctx, target)
 }
 
 // PaneHasActiveProcess returns true when the tmux pane shell (identified by the
@@ -1255,7 +1433,10 @@ func (p *perRunSubstrate) PaneHasActiveProcess(ctx context.Context) bool {
 	// Use a tmux.WindowHandle from the per-run pane target. WindowPanePID
 	// accepts either a "%NNNN" pane ID or a "session:window.index" handle;
 	// paneTarget() already returns the stable pane ID captured at spawn time.
-	pid, err := p.inner.adapter.WindowPanePID(ctx, tmux.WindowHandle(target))
+	// For a remote run pasteAdapter() resolves the pane PID on the WORKER's tmux
+	// server; the probeLivenessOrSSHFail below then checks that PID over the same
+	// SSH runner.
+	pid, err := p.pasteAdapter().WindowPanePID(ctx, tmux.WindowHandle(target))
 	if err != nil || pid <= 0 {
 		return false
 	}

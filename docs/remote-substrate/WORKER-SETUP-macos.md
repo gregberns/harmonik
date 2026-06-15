@@ -29,6 +29,13 @@ These need a browser / interactive prompts; a headless agent can't do them.
    - GUI app from tailscale.com, or `brew install tailscale && sudo tailscale up --ssh`
    - `--ssh` enables Tailscale SSH so box A authenticates by tailnet identity (no key mgmt).
    - Note the worker's tailnet name (e.g. `worker-mac-1`) — box A's config will use it.
+   - **CRITICAL — the SSH ACL must be `accept`-mode, NOT `check`-mode.** In the Tailscale
+     admin **Access Controls**, the SSH rule granting box A's user → this worker must use
+     `"action": "accept"`. In `check` mode every connection prints
+     `# Tailscale SSH requires an additional check / visit: https://login.tailscale.com/...`
+     and HANGS waiting for browser re-approval (then fails: `failed to fetch next SSH action`,
+     rc 255). A daemon cannot click an approval URL, so `check`-mode breaks every bead spawn.
+   - Verify from box A: `tailscale ssh <worker> -- hostname` returns INSTANTLY (no prompt).
 2. **Log Claude Code into the subscription** (this is the billing-critical step, satisfies D2):
    - Install Claude Code first if absent (see Part 2 step 2), then run `claude` → `/login`.
    - Choose the **Pro/Max subscription** account. Do **NOT** use an API key.

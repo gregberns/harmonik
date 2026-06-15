@@ -2145,7 +2145,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 
 	// Emit run_started with optional queue_id + queue_group_index per QM-011/QM-012.
-	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex)
+	// FR13: include worker_name and worker_os for remote runs; empty for local.
+	var runStartedWorkerName, runStartedWorkerOS string
+	if rbc != nil {
+		runStartedWorkerName = rbc.worker.Name
+		runStartedWorkerOS = rbc.worker.OS
+	}
+	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS)
 
 	// hk-ly0hg Fix-2: pre-dispatch subsumed check — if this bead's commit is
 	// already on main (e.g. merged by a prior run that was interrupted by a
@@ -2577,6 +2583,20 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		spec.Args = append(deps.handlerArgs, spec.Args...)
 	}
 
+	// D2 (fail-closed): refuse to forward ANTHROPIC_API_KEY to a remote worker.
+	// A key present in spec.Env for a remote run would bill the worker's own API
+	// quota (the 2026-05-30 credential-leak incident). Fail the dispatch rather
+	// than silently forwarding it.
+	if rbc != nil && hasAPIKeyInEnv(spec.Env) {
+		const reason = "remote run: ANTHROPIC_API_KEY in spawn env (D2 fail-closed)"
+		fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s run %s (reopening)\n",
+			reason, beadID, runID.String())
+		reopenTID, _ := deps.tidGen.Next()
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, reason)
+		emitDone(false, reason)
+		return
+	}
+
 	// Attach the optional tmux substrate (nil at MVH; set from deps.substrate).
 	//
 	// hk-012af: when deps.substrate is a *tmuxSubstrate, wrap it in a
@@ -2588,9 +2608,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// perRunSubstrate captures the pane ID of *this* goroutine's spawned window
 	// and routes all paste-inject I/O there. (hk-jfh59: shared-state methods on
 	// tmuxSubstrate removed.)
+	//
+	// B10: for remote runs pass the SSHRunner so liveness probes (pgrep, ps) and
+	// git commit-detect are tunnelled to the worker host instead of executing locally.
 	var runSubstrate handler.Substrate = deps.substrate
 	var runPasteTarget handler.Substrate = deps.substrate // fallback: shared substrate
-	if prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, nil); prs != nil {
+	var runRunner tmuxpkg.CommandRunner
+	if rbc != nil {
+		runRunner = rbc.sshRunner
+	}
+	if prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runRunner); prs != nil {
 		runSubstrate = prs
 		runPasteTarget = prs
 	}
@@ -3670,6 +3697,9 @@ type workloopRunStartedPayload struct {
 	StartedAt       string  `json:"started_at"`
 	QueueID         *string `json:"queue_id,omitempty"`
 	QueueGroupIndex *int    `json:"queue_group_index,omitempty"`
+	// WorkerName and WorkerOS are non-empty for remote runs (FR13); empty for local.
+	WorkerName string `json:"worker_name,omitempty"`
+	WorkerOS   string `json:"worker_os,omitempty"`
 }
 
 // workloopRunCompletedPayload is the minimal run_completed / run_failed payload
@@ -3699,7 +3729,19 @@ type workloopRunCompletedPayload struct {
 	WorktreeTipSHA     *string `json:"worktree_tip_sha,omitempty"`
 }
 
-func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, queueID *string, queueGroupIndex *int) {
+// hasAPIKeyInEnv reports whether any element of env is ANTHROPIC_API_KEY or
+// has the ANTHROPIC_API_KEY= prefix. Used by the D2 fail-closed check to
+// prevent forwarding the local API key to a remote worker (B10).
+func hasAPIKeyInEnv(env []string) bool {
+	for _, e := range env {
+		if e == "ANTHROPIC_API_KEY" || strings.HasPrefix(e, "ANTHROPIC_API_KEY=") {
+			return true
+		}
+	}
+	return false
+}
+
+func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, queueID *string, queueGroupIndex *int, workerName, workerOS string) {
 	pl := workloopRunStartedPayload{
 		RunID:           runID.String(),
 		BeadID:          string(beadID),
@@ -3707,6 +3749,8 @@ func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID
 		StartedAt:       time.Now().UTC().Format(time.RFC3339),
 		QueueID:         queueID,
 		QueueGroupIndex: queueGroupIndex,
+		WorkerName:      workerName,
+		WorkerOS:        workerOS,
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {

@@ -52,7 +52,8 @@ func workerCfg() workers.Config {
 func captureEmit(events *[]struct {
 	Type    core.EventType
 	Payload []byte
-}) workers.EmitFunc {
+},
+) workers.EmitFunc {
 	return func(ctx context.Context, et core.EventType, b []byte) error {
 		*events = append(*events, struct {
 			Type    core.EventType

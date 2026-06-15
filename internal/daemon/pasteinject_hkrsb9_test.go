@@ -217,7 +217,7 @@ func TestRSB9_ResolveWorktreeHEADVia_SSHArgv(t *testing.T) {
 		},
 	}
 	// Will fail (no real ssh) but we only care about the recorded argv.
-	_ , _ = resolveWorktreeHEADVia(context.Background(), rr, "/remote/path/wt")
+	_, _ = resolveWorktreeHEADVia(context.Background(), rr, "/remote/path/wt")
 
 	if len(rr.Calls) < 1 {
 		t.Fatal("RSB9/ssh: no calls recorded")

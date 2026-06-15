@@ -15,7 +15,6 @@ import (
 
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/brcli"
-	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -24,6 +23,7 @@ import (
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/schedule"
+	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 

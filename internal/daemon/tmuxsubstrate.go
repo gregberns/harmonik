@@ -838,6 +838,13 @@ type perRunSubstrate struct {
 	//
 	// Bead: hk-rs-b9-liveness-1m9n.
 	runner tmux.CommandRunner
+
+	// onConnectionFailure is called when an SSH connection failure (exit-255) is
+	// detected during PaneHasActiveProcess. Wired by the workloop for remote runs
+	// to emit worker_offline and disable the worker in-memory. Nil for local runs.
+	//
+	// Bead: hk-rs-b11-offline-dh57.
+	onConnectionFailure func(ctx context.Context, detail string)
 }
 
 // commandRunner returns the effective CommandRunner for this run: the
@@ -1253,10 +1260,22 @@ func (p *perRunSubstrate) PaneHasActiveProcess(ctx context.Context) bool {
 		return false
 	}
 	r := p.commandRunner()
-	if hasAnyDirectChildVia(ctx, r, pid) {
-		return true
+	// Use the SSH-failure-aware probe so that an unreachable worker (exit-255)
+	// is reported to the workloop for worker_offline emission and in-memory
+	// disable (B11). The run still returns false (not wedged) and recovers via
+	// the existing run_stale path.
+	alive, connFailed := probeLivenessOrSSHFail(ctx, r, pid, p.agentCommandFragments)
+	if connFailed {
+		p.notifyConnectionFailure(ctx, "liveness probe returned ssh exit-255")
 	}
-	return commandMatchesLiveAgentVia(ctx, r, pid, p.agentCommandFragments)
+	return alive
+}
+
+// notifyConnectionFailure calls p.onConnectionFailure if set.
+func (p *perRunSubstrate) notifyConnectionFailure(ctx context.Context, detail string) {
+	if p.onConnectionFailure != nil {
+		p.onConnectionFailure(ctx, detail)
+	}
 }
 
 // PaneOutputFingerprint returns a string encoding the current pane output

@@ -938,6 +938,18 @@ const (
 	// excluded from dispatch until the next successful health check).
 	// Bead ref: hk-rs-b6-healthcheck-isda.
 	EventTypeWorkerUnhealthy EventType = "worker_unhealthy"
+
+	// EventTypeWorkerOffline is the worker_offline event type (§8.16).
+	// Emitted when an SSH connection failure (ssh exit code 255) is detected
+	// for a remote worker either at spawn time (code-sync steps a/b) or during
+	// a mid-run liveness probe. The worker is disabled in-memory
+	// (SetEnabled(false)); the run recovers via the existing run_stale path.
+	//
+	// Phase field: "spawn" (code-sync failure) or "liveness" (process probe).
+	// Payload fields: worker_name, worker_host, phase, detail, detected_at.
+	// Durability class: O (ordinary — operator observability).
+	// Bead ref: hk-rs-b11-offline-dh57.
+	EventTypeWorkerOffline EventType = "worker_offline"
 )
 
 // ---------------------------------------------------------------------------

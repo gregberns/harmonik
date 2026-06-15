@@ -2062,12 +2062,29 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 
+	// notifyWorkerOffline emits a worker_offline event and disables the worker
+	// in-memory. Active only for remote runs (rbc != nil). Phase is "spawn" for
+	// code-sync failures and "liveness" for mid-run probe failures (B11).
+	notifyWorkerOffline := func(phase, detail string) {
+		if rbc == nil {
+			return
+		}
+		workers.EmitWorkerOfflineEvent(ctx, rbc.worker.Name, rbc.worker.Host, phase, detail, deps.bus.Emit)
+		if deps.workerRegistry != nil {
+			deps.workerRegistry.SetEnabled(false)
+		}
+	}
+
 	// Step (a): for remote runs, ensure baseSHA is on the worker before the
 	// worktree is created there (DD1 code-sync, remote-substrate B8).
 	if rbc != nil {
 		if fetchErr := fetchBaseOnWorker(ctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA); fetchErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: fetchBaseOnWorker bead %s run %s: %v (reopening)\n",
 				beadID, runID.String(), fetchErr)
+			// B11: SSH connection failure → emit worker_offline + disable worker.
+			if tmuxpkg.IsSSHConnectionFailure(fetchErr) {
+				notifyWorkerOffline("spawn", fmt.Sprintf("fetchBaseOnWorker: %v", fetchErr))
+			}
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 				fmt.Sprintf("fetch base on worker failed: %v", fetchErr))
@@ -2084,6 +2101,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 		workerWtPath := workspace.WorktreePath(rbc.worker.RepoPath, runID.String(), workspace.NoWorktreeRootOverride())
 		if err := pushRunBranchOnWorker(ctx, rbc.sshRunner, workerWtPath, runID.String()); err != nil {
+			// B11: SSH connection failure → emit worker_offline + disable worker.
+			if tmuxpkg.IsSSHConnectionFailure(err) {
+				notifyWorkerOffline("spawn", fmt.Sprintf("pushRunBranchOnWorker: %v", err))
+			}
 			return fmt.Sprintf("push run branch on worker: %v", err)
 		}
 		if err := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String()); err != nil {
@@ -2105,7 +2126,17 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					return "", nil, err
 				}
 				wtPath := workspace.WorktreePath(workerRepoPath, runID, workspace.NoWorktreeRootOverride())
-				return wtPath, nil, nil
+				// B11: return a cleanup func that removes the remote worktree on
+				// run completion (GC orphaned remote worktrees via the SSHRunner).
+				cleanup := func() {
+					cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					rmCmd := sshRunner.Command(cleanCtx, "git", "-C", workerRepoPath, "worktree", "remove", "--force", "--force", wtPath)
+					_ = rmCmd.Run()
+					pruneCmd := sshRunner.Command(cleanCtx, "git", "-C", workerRepoPath, "worktree", "prune")
+					_ = pruneCmd.Run()
+				}
+				return wtPath, cleanup, nil
 			}
 		} else {
 			wtFactory = productionWorktreeFactory
@@ -2618,6 +2649,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		runRunner = rbc.sshRunner
 	}
 	if prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runRunner); prs != nil {
+		// B11: wire the offline callback so mid-run SSH failures emit worker_offline
+		// and disable the worker. Nil for local runs (rbc == nil).
+		if rbc != nil {
+			prs.onConnectionFailure = func(c context.Context, detail string) {
+				notifyWorkerOffline("liveness", detail)
+			}
+		}
 		runSubstrate = prs
 		runPasteTarget = prs
 	}

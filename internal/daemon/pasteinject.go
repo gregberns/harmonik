@@ -325,6 +325,64 @@ func commandMatchesLiveAgentVia(ctx context.Context, runner tmux.CommandRunner, 
 	return false
 }
 
+// hasAnyDirectChildOrSSHFail is like hasAnyDirectChildVia but also returns
+// whether the failure was an SSH connection error (ssh exit-255). Callers use
+// the connFailed flag to emit worker_offline and disable the worker in-memory.
+//
+// Returns: (alive bool, connFailed bool).
+//
+// Bead: hk-rs-b11-offline-dh57.
+func hasAnyDirectChildOrSSHFail(ctx context.Context, runner tmux.CommandRunner, pid int) (alive bool, connFailed bool) {
+	err := runner.Command(ctx, "pgrep", "-P", fmt.Sprintf("%d", pid)).Run()
+	if err == nil {
+		return true, false
+	}
+	return false, tmux.IsSSHConnectionFailure(err)
+}
+
+// commandMatchesLiveAgentOrSSHFail is like commandMatchesLiveAgentVia but also
+// returns whether the failure was an SSH connection error (ssh exit-255).
+//
+// Returns: (alive bool, connFailed bool).
+//
+// Bead: hk-rs-b11-offline-dh57.
+func commandMatchesLiveAgentOrSSHFail(ctx context.Context, runner tmux.CommandRunner, pid int, fragments []string) (alive bool, connFailed bool) {
+	out, err := runner.Command(ctx, "ps", "-o", "comm=", "-p", fmt.Sprintf("%d", pid)).Output()
+	if err != nil {
+		return false, tmux.IsSSHConnectionFailure(err)
+	}
+	comm := strings.ToLower(strings.TrimSpace(string(out)))
+	if comm == "" {
+		return false, false
+	}
+	for _, frag := range fragments {
+		if strings.Contains(comm, frag) {
+			return true, false
+		}
+	}
+	return false, false
+}
+
+// probeLivenessOrSSHFail runs both liveness probes (pgrep -P then ps comm=)
+// via runner and returns (alive, connFailed). connFailed is true when an SSH
+// connection failure (exit-255) is detected on any probe; in that case alive
+// is always false. The function returns immediately (no wedge) even when SSH
+// is unreachable because the underlying exec returns promptly on failure.
+//
+// This is the testable core used by perRunSubstrate.PaneHasActiveProcess.
+//
+// Bead: hk-rs-b11-offline-dh57.
+func probeLivenessOrSSHFail(ctx context.Context, runner tmux.CommandRunner, pid int, fragments []string) (alive bool, connFailed bool) {
+	alive1, cf1 := hasAnyDirectChildOrSSHFail(ctx, runner, pid)
+	if cf1 {
+		return false, true
+	}
+	if alive1 {
+		return true, false
+	}
+	return commandMatchesLiveAgentOrSSHFail(ctx, runner, pid, fragments)
+}
+
 // commandRunnerProvider is an optional interface that a quitSender may
 // implement to expose its CommandRunner.  pasteInjectQuitOnCommit probes qs
 // for this interface so that resolveWorktreeHEAD and worktreeActivityFingerprint

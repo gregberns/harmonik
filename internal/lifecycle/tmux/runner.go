@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"sync"
 )
@@ -94,4 +95,20 @@ func (s SSHRunner) Command(ctx context.Context, name string, args ...string) *ex
 	sshArgs = append(sshArgs, s.Host, "--", name)
 	sshArgs = append(sshArgs, args...)
 	return exec.CommandContext(ctx, "ssh", sshArgs...)
+}
+
+// IsSSHConnectionFailure reports whether err is an SSH transport failure.
+// SSH exits with code 255 on connection errors (refused, timeout, host-key
+// mismatch) to distinguish transport failures from remote-command exit codes.
+//
+// Bead: hk-rs-b11-offline-dh57.
+func IsSSHConnectionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode() == 255
+	}
+	return false
 }

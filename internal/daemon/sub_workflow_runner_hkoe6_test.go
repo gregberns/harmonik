@@ -143,6 +143,7 @@ func swMakeRunner(t *testing.T, bus *recordingBusDaemon, projectDir string, pare
 		run,
 		core.NewCycleCounter(),
 		parentGraph,
+		nil, // runner: local (NFR7)
 	)
 }
 

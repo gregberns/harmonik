@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os/exec"
+
+	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // ComputeDiffHash returns the SHA-256 hex digest of the output of
@@ -32,6 +34,24 @@ func ComputeDiffHash(ctx context.Context, worktreePath, parentSHA, headSHA strin
 		return "", fmt.Errorf("workspace: ComputeDiffHash: git diff %s: %w", rangeArg, err)
 	}
 
+	sum := sha256.Sum256(out)
+	return fmt.Sprintf("%x", sum), nil
+}
+
+// ComputeDiffHashVia is like ComputeDiffHash but routes the `git diff` through
+// runner (e.g. an SSHRunner for a remote-substrate worker whose worktree lives on
+// a separate filesystem). Uses the `git -C <worktreePath> diff <range>` form,
+// which works for both local and SSH runners. Callers pass nil to use
+// ComputeDiffHash's byte-identical bare-exec path (NFR7).
+func ComputeDiffHashVia(ctx context.Context, runner tmux.CommandRunner, worktreePath, parentSHA, headSHA string) (string, error) {
+	if runner == nil {
+		return ComputeDiffHash(ctx, worktreePath, parentSHA, headSHA)
+	}
+	rangeArg := parentSHA + ".." + headSHA
+	out, err := runner.Command(ctx, "git", "-C", worktreePath, "diff", rangeArg).Output()
+	if err != nil {
+		return "", fmt.Errorf("workspace: ComputeDiffHashVia: git -C %s diff %s: %w", worktreePath, rangeArg, err)
+	}
 	sum := sha256.Sum256(out)
 	return fmt.Sprintf("%x", sum), nil
 }

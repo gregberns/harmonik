@@ -79,10 +79,28 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
+
+// resolveDotWorktreeHEAD resolves the worktree HEAD for a DOT-mode run, routing
+// the git probe through the run's CommandRunner when one is present.
+//
+// NFR7 (local runs MUST stay byte-identical): when runner is nil — every LOCAL
+// run, since rbc.sshRunner is nil unless a remote worker was selected — this
+// calls the bare resolveWorktreeHEAD (exec.Command + cmd.Dir), unchanged. Only
+// REMOTE runs (runner != nil, an SSHRunner) take the runner-routed path
+// (resolveWorktreeHEADVia, `git -C <wtPath> rev-parse HEAD` over the transport),
+// which is REQUIRED on a worker whose worktree lives on a separate filesystem
+// that box A cannot chdir into.
+func resolveDotWorktreeHEAD(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, error) {
+	if runner == nil {
+		return resolveWorktreeHEAD(ctx, wtPath)
+	}
+	return resolveWorktreeHEADVia(ctx, runner, wtPath)
+}
 
 // errDotNoChangeSubsumed is returned by dispatchDotAgenticNode when the
 // implementer exited without advancing HEAD and the bead is already subsumed
@@ -156,6 +174,7 @@ func driveDotWorkflow(
 	resolvedEffort string,
 	extraContext string,
 	baseBranch string,
+	runner tmux.CommandRunner, // remote-substrate: SSHRunner for remote runs; nil for local (NFR7)
 ) dotWorkflowResult {
 	daemonSocket := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
 
@@ -354,7 +373,7 @@ func driveDotWorkflow(
 			// Unlike the review-loop, DOT mode does NOT emit
 			// review_loop_cycle_complete after no_progress_detected — the DOT walk
 			// terminates directly per the §8.1a ordering-rule DOT exemption.
-			currentHead, headErr := resolveWorktreeHEAD(ctx, wtPath)
+			currentHead, headErr := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 			if headErr != nil {
 				return dotWorkflowResult{
 					success:        false,
@@ -362,7 +381,7 @@ func driveDotWorkflow(
 					summary:        fmt.Sprintf("dot: resolve HEAD before agentic node %q at iteration %d: %v", currentNodeID, iterationCount, headErr),
 				}
 			}
-			currentHash, hashErr := rlComputeDiffHash(ctx, wtPath, parentSHA)
+			currentHash, hashErr := rlComputeDiffHashVia(ctx, runner, wtPath, parentSHA)
 			if hashErr != nil {
 				return dotWorkflowResult{
 					success:        false,
@@ -455,7 +474,7 @@ func driveDotWorkflow(
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
 				isReviewer, iterationCount, &claudeSessionID,
 				resolvedModel, resolvedEffort, extraContext, baseBranch,
-				lastImplementerReviewerHarness)
+				lastImplementerReviewerHarness, runner)
 			if nodeErr != nil {
 				if errors.Is(nodeErr, errDotNoChangeSubsumed) {
 					return dotWorkflowResult{
@@ -534,11 +553,12 @@ func driveDotWorkflow(
 			// Sub-workflow dispatch: resolve graph, check acyclicity, expand in
 			// place, and run the nested cascade within the parent run (SW-001..SW-010).
 			// Per SW-007, we build a dotSubWorkflowRunner and call Run.
-			runner := newDotSubWorkflowRunner(
+			swRunner := newDotSubWorkflowRunner(
 				deps, runID, beadID, beadRecord, beadTitle, beadDescription,
 				wtPath, parentSHA, daemonSocket,
 				&iterationCount, &claudeSessionID, resolvedModel, resolvedEffort,
 				extraContext, baseBranch, run, cycles, graph,
+				runner, // remote-substrate: thread the run's runner into nested dispatch
 			)
 			swSpec := handler.SubWorkflowRunSpec{
 				Run:                run,
@@ -553,7 +573,7 @@ func driveDotWorkflow(
 					summary:        fmt.Sprintf("dot: sub-workflow node %q: invalid spec (missing sub_workflow_ref or workflow_version)", currentNodeID),
 				}
 			}
-			swOutcome, swErr := runner.Run(ctx, swSpec)
+			swOutcome, swErr := swRunner.Run(ctx, swSpec)
 			if swErr != nil {
 				// Infrastructure failure → run_failed (not needs-attention).
 				return dotWorkflowResult{
@@ -673,11 +693,12 @@ func dispatchDotAgenticNode(
 	extraContext string,
 	baseBranch string,
 	reviewerHarnessOverride core.AgentType, // T14 hk-iv748: reviewer_harness from implementer node; empty = DEFAULT (same as implementer)
+	runner tmux.CommandRunner, // remote-substrate: SSHRunner for remote runs; nil for local (NFR7)
 ) (core.Outcome, error) {
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
 	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
 	if isReviewer {
-		headSHA, headErr := resolveWorktreeHEAD(ctx, wtPath)
+		headSHA, headErr := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		if headErr != nil {
 			return core.Outcome{}, fmt.Errorf("resolve HEAD before reviewer node %q: %w", node.ID, headErr)
 		}
@@ -809,7 +830,11 @@ func dispatchDotAgenticNode(
 	}
 
 	// Attach the optional substrate (nil at MVH / in the deterministic E2E test).
-	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, nil)
+	// remote-substrate: thread the run's runner (SSHRunner for remote, nil for
+	// local) so the per-run substrate's liveness + worktree probes target the
+	// WORKER, and the implementer/reviewer spawns on the worker (mirrors the
+	// single-mode path, workloop.go ~2733). nil preserves local behaviour (NFR7).
+	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runner)
 	var substrate handler.Substrate = deps.substrate
 	var pasteTarget handler.Substrate = deps.substrate
 	if prs != nil {
@@ -818,7 +843,7 @@ func dispatchDotAgenticNode(
 	}
 	spec.Substrate = substrate
 
-	preHeadSHA, _ := resolveWorktreeHEAD(ctx, wtPath)
+	preHeadSHA, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 
 	if deps.hookStore != nil {
 		deps.hookStore.RegisterHookSession(runID.String(), artifacts.claudeSessionID)
@@ -1017,7 +1042,7 @@ func dispatchDotAgenticNode(
 	// implementer session ends, mirroring workloop.go:1697 and reviewloop.go:526.
 	// Skipped for reviewer-class nodes (they produce reviewer_verdict instead).
 	if !isReviewer {
-		curHead, _ := resolveWorktreeHEAD(ctx, wtPath)
+		curHead, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		commitLanded := curHead != "" && curHead != preHeadSHA
 		emitImplementerPhaseComplete(ctx, deps.bus, runID, nodeEI.exitCode,
 			nodeEI.stderrTail, commitLanded, time.Since(nodeLaunchedAt))
@@ -1089,7 +1114,7 @@ func dispatchDotAgenticNode(
 	// the analogous "no new commit" case to the diff-hash check (reviewloop.go
 	// defers to state.iterationCount >= 2 in its diff-hash block rather than the
 	// no-commit guard which fires only on iteration 1).
-	postHeadSHA, headErr := resolveWorktreeHEAD(ctx, wtPath)
+	postHeadSHA, headErr := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 	if headErr != nil {
 		return core.Outcome{}, fmt.Errorf("resolve HEAD after node %q: %w", node.ID, headErr)
 	}

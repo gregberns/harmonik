@@ -533,7 +533,7 @@ func ExportedDriveDotWorkflow(
 	parentSHA string,
 	graph *dot.Graph,
 ) DotWorkflowResultExported {
-	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, "", "", wtPath, parentSHA, graph, "", "", "", "")
+	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, "", "", wtPath, parentSHA, graph, "", "", "", "", nil)
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,
@@ -557,7 +557,7 @@ func ExportedDriveDotWorkflowFull(
 	graph *dot.Graph,
 	extraContext string,
 ) DotWorkflowResultExported {
-	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", extraContext, "")
+	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", extraContext, "", nil)
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,
@@ -632,7 +632,7 @@ func ExportedDriveDotWorkflowWithModelEffort(
 	resolvedModel string,
 	resolvedEffort string,
 ) DotWorkflowResultExported {
-	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, resolvedModel, resolvedEffort, "", "")
+	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, resolvedModel, resolvedEffort, "", "", nil)
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,

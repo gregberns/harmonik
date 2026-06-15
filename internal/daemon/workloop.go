@@ -2556,11 +2556,20 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 		}
 
+		// remote-substrate: for a remote run the cascade's worktree git probes
+		// (resolve HEAD, diff-hash) and the agentic-node spawn must target the
+		// WORKER via its SSHRunner; box A cannot chdir into the worker's worktree.
+		// nil for local runs keeps the cascade byte-identical (NFR7).
+		var dotRunner tmuxpkg.CommandRunner
+		if rbc != nil {
+			dotRunner = rbc.sshRunner
+		}
+
 		// Drive the cascade: walk start → … → terminal, dispatching each node by
 		// type (non-agentic synthesize-success, agentic substrate-dispatch,
 		// gate/sub-workflow out-of-scope error).
 		dotResult := driveDotWorkflow(ctx, deps, runID, beadID, beadRecord, beadRecord.Title, beadRecord.Description,
-			wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch)
+			wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch, dotRunner)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if dotResult.success {

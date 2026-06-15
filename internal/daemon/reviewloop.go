@@ -54,6 +54,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -1399,6 +1400,22 @@ func rlComputeDiffHash(ctx context.Context, wtPath, parentSHA string) (string, e
 		return "", fmt.Errorf("daemon: reviewloop: git rev-parse HEAD returned empty in %q", wtPath)
 	}
 	return workspace.ComputeDiffHash(ctx, wtPath, parentSHA, headSHA)
+}
+
+// rlComputeDiffHashVia is like rlComputeDiffHash but routes both the HEAD probe
+// and the diff through runner. When runner is nil (every LOCAL run) it delegates
+// to rlComputeDiffHash byte-identically (NFR7); only REMOTE DOT runs (runner is an
+// SSHRunner) take the routed path, REQUIRED when the worktree is on a worker whose
+// filesystem box A cannot read directly.
+func rlComputeDiffHashVia(ctx context.Context, runner tmux.CommandRunner, wtPath, parentSHA string) (string, error) {
+	if runner == nil {
+		return rlComputeDiffHash(ctx, wtPath, parentSHA)
+	}
+	headSHA, err := resolveWorktreeHEADVia(ctx, runner, wtPath)
+	if err != nil {
+		return "", fmt.Errorf("daemon: reviewloop: %w", err)
+	}
+	return workspace.ComputeDiffHashVia(ctx, runner, wtPath, parentSHA, headSHA)
 }
 
 // rlSynthesiseClaudeSessionID produces a synthetic session ID for the MVH twin-

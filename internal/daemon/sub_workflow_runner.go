@@ -30,6 +30,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
+	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
@@ -53,6 +54,7 @@ func newDotSubWorkflowRunner(
 	run *core.Run,
 	cycles *core.CycleCounter,
 	parentGraph *dot.Graph,
+	runner tmux.CommandRunner, // remote-substrate: SSHRunner for remote runs; nil for local (NFR7)
 ) *dotSubWorkflowRunner {
 	parentName := parentGraphName(parentGraph)
 	return &dotSubWorkflowRunner{
@@ -75,6 +77,7 @@ func newDotSubWorkflowRunner(
 		cycles:             cycles,
 		parentGraph:        parentGraph,
 		parentWorkflowName: parentName,
+		runner:             runner,
 	}
 }
 
@@ -116,6 +119,10 @@ type dotSubWorkflowRunner struct {
 	baseBranch      string
 	run             *core.Run
 	cycles          *core.CycleCounter
+	// runner is the run's CommandRunner (SSHRunner for a remote-substrate worker,
+	// nil for local). Threaded into nested dispatchDotAgenticNode calls so the
+	// sub-workflow's worktree probes + spawn target the worker (NFR7: nil = local).
+	runner tmux.CommandRunner
 	// parentGraph is the loaded dot.Graph of the parent workflow. Its Name is
 	// used as the "parent" vertex when building the sub-workflow reference graph
 	// for the acyclicity check (SW-003 / EM-034b).
@@ -315,7 +322,8 @@ func dispatchSubWorkflowExpandedNode(
 			r.resolvedEffort,
 			r.extraContext,
 			r.baseBranch,
-			"", // reviewerHarnessOverride: none
+			"",       // reviewerHarnessOverride: none
+			r.runner, // remote-substrate: route sub-workflow node dispatch through the run's runner
 		)
 
 	case core.NodeTypeGate:

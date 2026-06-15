@@ -2205,6 +2205,30 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					_ = rbc.tunnelCmd.Wait()
 				}
 			}()
+
+			// gap #7 bead 3: tunnel readiness gate. The worker-side implementer
+			// agent can fire its first agent_ready hook BEFORE the `ssh -N -R`
+			// forward above is actually live; the hook relay retries only on
+			// daemon_not_ready, NOT on a dial failure, so launching the agent
+			// before the forward is live yields a silent bridge_dial_failed →
+			// agent_ready_timeout. Block until the worker-side per-run socket is
+			// confirmed live (test -S over the SSHRunner) before any Launch. On
+			// timeout/failure, do NOT launch: emit worker_tunnel_failed, reopen
+			// the bead for re-dispatch, and return — the deferred tunnel teardown
+			// (above) and ReleaseSlot run on the way out, so the `ssh -N` process
+			// does not leak. The gate runs ONLY here, inside the remote branch
+			// (NFR7: local runs never construct a tunnel and never reach it).
+			if waitErr := waitWorkerSocketLive(ctx, rbc.sshRunner, rbc.workerHookSock, workerSocketReadyTimeout); waitErr != nil {
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: reverse-tunnel readiness gate bead %s run %s: %v (reopening, not launching)\n",
+					beadID, runID.String(), waitErr)
+				workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
+					rbc.worker.Name, rbc.worker.Host, rbc.workerHookSock, waitErr.Error(), deps.bus.Emit)
+				reopenTID, _ := deps.tidGen.Next()
+				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					fmt.Sprintf("reverse-tunnel not ready: %v", waitErr))
+				return
+			}
 		}
 	}
 

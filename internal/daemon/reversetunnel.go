@@ -27,9 +27,23 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
+
+// workerSocketPollInterval is the cadence at which waitWorkerSocketLive probes
+// the worker-side reverse-tunnel socket. The socket should appear within ~1s of
+// the forward establishing, so a sub-second cadence keeps the gate snappy
+// without hammering the ssh transport.
+const workerSocketPollInterval = 300 * time.Millisecond
+
+// workerSocketReadyTimeout is the default bound for waitWorkerSocketLive: how
+// long beadRunOne waits for the per-run reverse-tunnel socket to become live on
+// the worker before failing the readiness gate. ~10s comfortably covers a
+// healthy `ssh -N -R` establishing its forward; a longer hang means the tunnel
+// will not come up and launching the agent would race ahead of a dead forward.
+const workerSocketReadyTimeout = 10 * time.Second
 
 // reverseTunnelRunner is the seam for constructing the long-lived `ssh -N -R`
 // reverse-tunnel process. Production uses exec.CommandContext; tests inject a
@@ -118,4 +132,50 @@ func ensureWorkerHarmonikDir(ctx context.Context, r tmuxpkg.CommandRunner, worke
 		return fmt.Errorf("ensureWorkerHarmonikDir (dir=%s): %w\nmkdir: %s", dir, err, out)
 	}
 	return nil
+}
+
+// waitWorkerSocketLive blocks until the worker-side per-run reverse-tunnel
+// socket (sockPath) exists AND is a socket, or until timeout / ctx cancellation
+// (gap #7 Option A, bead 3 — the tunnel readiness gate).
+//
+// Why this gate exists: the worker-side implementer agent can fire its first
+// agent_ready hook BEFORE the per-run `ssh -N -R` forward is actually live. The
+// hook relay retries only on daemon_not_ready, NOT on a dial failure, so an
+// agent that races ahead of the forward yields a silent bridge_dial_failed and
+// an agent_ready_timeout. beadRunOne therefore MUST NOT launch the agent until
+// this returns nil.
+//
+// The probe runs `test -S <sockPath>` through r (an SSHRunner in production, so
+// the test executes ON THE WORKER). `test -S` exits 0 iff the path exists and
+// is a socket; any non-zero exit (not-yet-bound, or a regular file) is treated
+// as "not ready yet" and the poll continues. The path-selection contract is
+// unit-tested with a fake CommandRunner, so no real ssh is needed.
+//
+// Returns:
+//   - nil once the socket is confirmed live within timeout (Launch may proceed).
+//   - ctx.Err() promptly if ctx is cancelled while waiting.
+//   - a timeout error if the socket never becomes live within timeout (caller
+//     emits worker_tunnel_failed + reopens the bead, and does NOT Launch).
+func waitWorkerSocketLive(ctx context.Context, r tmuxpkg.CommandRunner, sockPath string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(workerSocketPollInterval)
+	defer ticker.Stop()
+
+	for {
+		// `test -S <sock>` exits 0 iff sockPath exists and is a socket.
+		if err := r.Command(ctx, "test", "-S", sockPath).Run(); err == nil {
+			return nil
+		}
+		// Stop as soon as the deadline has passed (also covers timeout <= 0:
+		// we still probe once above before bailing).
+		if time.Now().After(deadline) {
+			return fmt.Errorf("waitWorkerSocketLive: socket %s not live within %s", sockPath, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			// next probe
+		}
+	}
 }

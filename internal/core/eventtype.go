@@ -950,6 +950,22 @@ const (
 	// Durability class: O (ordinary — operator observability).
 	// Bead ref: hk-rs-b11-offline-dh57.
 	EventTypeWorkerOffline EventType = "worker_offline"
+
+	// EventTypeWorkerTunnelFailed is the worker_tunnel_failed event type.
+	// Emitted when the per-run `ssh -N -R` reverse tunnel's worker-side socket
+	// does not become live within the bounded readiness window after the tunnel
+	// is started and BEFORE the implementer agent is launched (gap #7 bead 3).
+	// The relay retries only on daemon_not_ready, not on a dial failure, so
+	// launching the agent before the forward is live would produce a silent
+	// bridge_dial_failed → agent_ready_timeout. The run is NOT launched; the
+	// bead is reopened for re-dispatch.
+	//
+	// Payload fields: run_id, bead_id, worker_name, worker_host, socket_path,
+	// detail, detected_at.
+	// Durability class: O (ordinary — operator observability; the bead is
+	// reopened so the work recovers on the next dispatch).
+	// Bead ref: hk-rs-tunnel-readiness-cc1w.
+	EventTypeWorkerTunnelFailed EventType = "worker_tunnel_failed"
 )
 
 // ---------------------------------------------------------------------------

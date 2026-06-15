@@ -27,6 +27,17 @@ package daemon
 //     other runner types (fall back to the worker record's Host).
 //
 // Bead: rs-tunnel-spawn.
+//
+// ── gap #7 bead 3 (tunnel readiness gate, hk-rs-tunnel-readiness-cc1w) ──
+//   TestWaitWorkerSocketLive_SocketAppears:
+//     the fake runner returns non-zero for the first N polls then exit 0;
+//     waitWorkerSocketLive returns nil (Launch would proceed) and the probe
+//     argv is `test -S <sock>`.
+//   TestWaitWorkerSocketLive_Timeout:
+//     the fake runner always returns non-zero; waitWorkerSocketLive returns a
+//     timeout error within ~the (short) bound.
+//   TestWaitWorkerSocketLive_CtxCancel:
+//     a cancelled ctx makes waitWorkerSocketLive return ctx.Err() promptly.
 
 import (
 	"context"
@@ -34,6 +45,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -294,5 +306,113 @@ func TestTunnelEnv_EnsureWorkerHarmonikDir(t *testing.T) {
 	}
 	if err := ensureWorkerHarmonikDir(context.Background(), rrFail, "/home/worker/repo"); err == nil {
 		t.Error("ensureWorkerHarmonikDir: expected error on non-zero mkdir exit, got nil")
+	}
+}
+
+// TestWaitWorkerSocketLive_SocketAppears asserts the readiness gate (gap #7
+// bead 3) returns nil once the worker-side socket becomes live: the fake runner
+// returns non-zero (`false`) for the first 2 polls — simulating the forward not
+// yet bound — then exit 0 (`true`). The gate must then return nil (Launch would
+// proceed) and the probe argv must be `test -S <sock>`.
+func TestWaitWorkerSocketLive_SocketAppears(t *testing.T) {
+	t.Parallel()
+
+	const sock = "/home/worker/repo/.harmonik/run-RUNID.sock"
+	var calls int32
+	rr := &tmuxpkg.RecordingRunner{
+		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			// Non-zero exit for the first 2 probes, then exit 0.
+			if atomic.AddInt32(&calls, 1) <= 2 {
+				return exec.CommandContext(ctx, "false")
+			}
+			return exec.CommandContext(ctx, "true")
+		},
+	}
+
+	// Timeout comfortably exceeds 3 × the poll interval so the third probe lands.
+	if err := waitWorkerSocketLive(context.Background(), rr, sock, 5*time.Second); err != nil {
+		t.Fatalf("waitWorkerSocketLive: unexpected error: %v", err)
+	}
+
+	// waitWorkerSocketLive has returned, so the runner is no longer invoked
+	// concurrently — rr.Calls is safe to read directly.
+	if len(rr.Calls) < 3 {
+		t.Fatalf("expected at least 3 probes (2 not-ready + 1 ready), got %d: %+v", len(rr.Calls), rr.Calls)
+	}
+	// Probe argv must be exactly `test -S <sock>`.
+	first := rr.Calls[0]
+	if first.Name != "test" {
+		t.Errorf("probe command name = %q, want test", first.Name)
+	}
+	if want := []string{"-S", sock}; !reflect.DeepEqual(first.Args, want) {
+		t.Errorf("probe argv = %v, want %v", first.Args, want)
+	}
+}
+
+// TestWaitWorkerSocketLive_Timeout asserts the gate returns a timeout error
+// (NOT nil) within ~the bound when the socket never becomes live: the fake
+// runner always exits non-zero. A SHORT timeout (200ms) keeps the test fast.
+func TestWaitWorkerSocketLive_Timeout(t *testing.T) {
+	t.Parallel()
+
+	const sock = "/home/worker/repo/.harmonik/run-RUNID.sock"
+	rr := &tmuxpkg.RecordingRunner{
+		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "false") // never ready
+		},
+	}
+
+	const bound = 200 * time.Millisecond
+	start := time.Now()
+	err := waitWorkerSocketLive(context.Background(), rr, sock, bound)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("waitWorkerSocketLive: expected a timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not live") {
+		t.Errorf("error = %q, want it to mention the socket not being live", err.Error())
+	}
+	// Must return at/after the bound but not hang far beyond it (one extra poll
+	// interval of slack).
+	if elapsed < bound {
+		t.Errorf("returned in %s, want >= bound %s", elapsed, bound)
+	}
+	if elapsed > bound+2*time.Second {
+		t.Errorf("returned in %s, want within ~the bound %s (no hang)", elapsed, bound)
+	}
+}
+
+// TestWaitWorkerSocketLive_CtxCancel asserts the gate honours ctx cancellation:
+// a context cancelled while the socket is still not live makes the gate return
+// ctx.Err() promptly (well before the 30s timeout would fire).
+func TestWaitWorkerSocketLive_CtxCancel(t *testing.T) {
+	t.Parallel()
+
+	const sock = "/home/worker/repo/.harmonik/run-RUNID.sock"
+	rr := &tmuxpkg.RecordingRunner{
+		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "false") // never ready
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel shortly after the first probe so the gate is parked on the ticker
+	// select when the cancellation lands.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	err := waitWorkerSocketLive(ctx, rr, sock, 30*time.Second)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("waitWorkerSocketLive: expected ctx error, got nil")
+	}
+	if err != context.Canceled {
+		t.Errorf("error = %v, want context.Canceled", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("returned in %s, want prompt return on ctx cancel (well under the 30s timeout)", elapsed)
 	}
 }

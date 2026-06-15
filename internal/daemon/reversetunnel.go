@@ -24,6 +24,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 
@@ -80,4 +81,41 @@ func sshHostOpts(r tmuxpkg.CommandRunner) (host string, opts []string, ok bool) 
 		return sr.Host, sr.Opts, true
 	}
 	return "", nil, false
+}
+
+// resolveAgentDaemonSocket selects the HARMONIK_DAEMON_SOCKET path injected into
+// the implementer agent's spawn env (gap #7 Option A, bead 2).
+//
+//   - REMOTE run (workerHookSock != ""): the agent runs on a worker host that
+//     cannot reach box A's local daemon.sock, so it must dial the worker-side
+//     reverse-tunnel socket (<worker.RepoPath>/.harmonik/run-<runID>.sock), which
+//     `ssh -N -R` forwards back to box A's daemon.sock.
+//   - LOCAL run (workerHookSock == ""): the agent runs on box A and dials box A's
+//     daemon.sock directly — returned UNCHANGED (NFR7: byte-identical to before).
+//
+// The function is pure (no I/O) so the path-selection contract is unit-testable
+// without spawning a daemon or any ssh.
+func resolveAgentDaemonSocket(workerHookSock, daemonSock string) string {
+	if workerHookSock != "" {
+		return workerHookSock
+	}
+	return daemonSock
+}
+
+// ensureWorkerHarmonikDir runs `mkdir -p <workerRepoPath>/.harmonik` on the worker
+// through r (an SSHRunner in production) so the reverse tunnel can bind its per-run
+// socket (run-<runID>.sock) under that directory. `ssh -N -R` fails to create the
+// bind socket if the parent directory is missing, so this MUST run before the
+// tunnel's bind attempt.
+//
+// gap #7 Option A, bead 2. Caller treats a non-nil error as non-fatal (logs and
+// continues — the readiness gate in bead 3 is the authority): a transient mkdir
+// failure should not abort the dispatch on its own.
+func ensureWorkerHarmonikDir(ctx context.Context, r tmuxpkg.CommandRunner, workerRepoPath string) error {
+	dir := filepath.Join(workerRepoPath, ".harmonik")
+	cmd := r.Command(ctx, "mkdir", "-p", dir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ensureWorkerHarmonikDir (dir=%s): %w\nmkdir: %s", dir, err, out)
+	}
+	return nil
 }

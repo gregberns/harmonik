@@ -2129,9 +2129,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Local runs (no registry or no available slot) skip all three steps.
 	//
 	// remoteBeadCtx is nil for local runs; non-nil for remote runs.
+	//
+	// rs-tunnel-spawn: tunnelCmd holds the long-lived `ssh -N -R` reverse-tunnel
+	// process for this remote run; it is torn down in the run-completion defer
+	// (next to ReleaseSlot). workerHookSock is the per-run worker-side socket path
+	// the tunnel binds (<worker.RepoPath>/.harmonik/run-<runID>.sock); the
+	// env-override bead (2) injects it as HARMONIK_DAEMON_SOCKET so the
+	// worker-side agent's hook relay dials the tunnel rather than box A's
+	// unreachable local socket, and the readiness-gate bead (3) references it.
 	type remoteBeadCtx struct {
-		worker    workers.Worker
-		sshRunner tmuxpkg.CommandRunner
+		worker         workers.Worker
+		sshRunner      tmuxpkg.CommandRunner
+		tunnelCmd      *exec.Cmd
+		workerHookSock string
 	}
 	var rbc *remoteBeadCtx
 	if deps.workerRegistry != nil {
@@ -2141,6 +2151,60 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				sshRunner: tmuxpkg.SSHRunner{Host: w.Host},
 			}
 			defer deps.workerRegistry.ReleaseSlot()
+
+			// gap #7 Option A: ensure the worker's .harmonik/ dir exists, then
+			// start the per-run SSH reverse tunnel — BOTH before any agent Launch.
+			//
+			//  1. workerHookSock is the per-run worker-side socket the tunnel binds
+			//     (shared by beads 1, 2, and 3).
+			//  2. ensureWorkerHarmonikDir (bead 2) mkdir-p's the parent .harmonik/
+			//     dir: `ssh -N -R` fails to create its bind socket if that
+			//     directory is missing, so this MUST precede the tunnel launch.
+			//     Non-fatal — the readiness gate (bead 3) is the authority.
+			//  3. The tunnel (bead 1) is a SEPARATE long-lived `ssh -N -R`
+			//     process: the implementer agent is spawned via a DETACHED ssh
+			//     (tmux new-window -d) that returns immediately, so a -R flag on
+			//     THAT ssh would tear the tunnel down before the agent's first
+			//     hook. The tunnel is keyed to this run and held open for its
+			//     lifetime, forwarding the worker-side per-run socket back to box
+			//     A's daemon hook socket. Start is non-fatal; teardown defers a
+			//     Kill+Wait.
+			//
+			// NFR7: this block runs only for remote runs (rbc != nil); local runs
+			// are byte-identical (no mkdir, no tunnel, no new behaviour).
+			rbc.workerHookSock = workerRunSocketPath(rbc.worker.RepoPath, runID.String())
+
+			if mkErr := ensureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: ensureWorkerHarmonikDir bead %s run %s: %v (non-fatal; readiness gate is authority)\n",
+					beadID, runID.String(), mkErr)
+			}
+
+			daemonHookSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+			// Mirror the SSHRunner host/opts argv pattern (runner.go SSHRunner.Command):
+			// extra opts BEFORE the host. Fall back to the worker record's Host when
+			// the runner is not an SSHRunner (e.g. a test double).
+			tunnelHost, tunnelOpts, hostOK := sshHostOpts(rbc.sshRunner)
+			if !hostOK {
+				tunnelHost = rbc.worker.Host
+			}
+			tunnelArgs := buildReverseTunnelArgs(rbc.workerHookSock, daemonHookSock, tunnelHost, tunnelOpts)
+			rbc.tunnelCmd = reverseTunnelRunner(ctx, "ssh", tunnelArgs...)
+			if startErr := rbc.tunnelCmd.Start(); startErr != nil {
+				// Non-fatal: a failed tunnel start means the worker-side agent's hooks
+				// will not reach box A, but the readiness gate (bead 3) is the
+				// authority that fails the run. Log and clear tunnelCmd so the
+				// teardown defer is a no-op.
+				fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel start bead %s run %s: %v\n",
+					beadID, runID.String(), startErr)
+				rbc.tunnelCmd = nil
+			}
+			defer func() {
+				if rbc.tunnelCmd != nil && rbc.tunnelCmd.Process != nil {
+					_ = rbc.tunnelCmd.Process.Kill()
+					_ = rbc.tunnelCmd.Wait()
+				}
+			}()
 		}
 	}
 
@@ -2671,11 +2735,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	// Step 1: build the Claude launch spec via buildClaudeLaunchSpec.
 	daemonSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+	// gap #7 bead 2: a REMOTE worker cannot reach box A's local daemon.sock. For
+	// remote runs, the implementer agent must dial the worker-side reverse-tunnel
+	// socket (rbc.workerHookSock) instead, which the `ssh -N -R` tunnel launched
+	// above forwards back to box A's daemon.sock. resolveAgentDaemonSocket returns
+	// rbc.workerHookSock for a remote run and the unchanged box-A daemonSock for a
+	// local run (rbc == nil), so local runs remain byte-identical (NFR7). The
+	// resolved path flows into rc.daemonSocket → ClaudeEnvVars(HARMONIK_DAEMON_SOCKET).
+	var rbcHookSock string
+	if rbc != nil {
+		rbcHookSock = rbc.workerHookSock
+	}
+	agentDaemonSock := resolveAgentDaemonSocket(rbcHookSock, daemonSock)
 	rc := claudeRunCtx{
 		runID:             runID,
 		beadID:            string(beadID),
 		workspacePath:     wtPath,
-		daemonSocket:      daemonSock,
+		daemonSocket:      agentDaemonSock,
 		workflowMode:      workflowMode,
 		phase:             "", // empty = single-mode
 		iterationCount:    1,

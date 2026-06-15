@@ -226,3 +226,73 @@ func TestReverseTunnel_SSHRunnerHostOptsExtraction(t *testing.T) {
 		t.Error("sshHostOpts(LocalRunner): ok = true, want false")
 	}
 }
+
+// TestTunnelEnv_ResolveAgentDaemonSocket asserts the HARMONIK_DAEMON_SOCKET path
+// selection (gap #7 bead 2): a REMOTE run resolves to the worker-side run socket
+// (<worker.RepoPath>/.harmonik/run-<runID>.sock), NOT box A's daemon.sock; a LOCAL
+// run resolves to box A's daemon.sock UNCHANGED (NFR7 byte-identical).
+func TestTunnelEnv_ResolveAgentDaemonSocket(t *testing.T) {
+	t.Parallel()
+
+	const (
+		runID    = "run-deadbeef"
+		repo     = "/home/worker/repo"
+		boxASock = "/Users/gb/github/harmonik/.harmonik/daemon.sock"
+	)
+	workerSock := workerRunSocketPath(repo, runID) // /home/worker/repo/.harmonik/run-run-deadbeef.sock
+
+	// REMOTE: workerHookSock is set (rbc != nil) → resolved socket is the
+	// worker-side run socket, and explicitly NOT box A's daemon.sock.
+	if got := resolveAgentDaemonSocket(workerSock, boxASock); got != workerSock {
+		t.Errorf("remote run: resolveAgentDaemonSocket = %q, want worker-side %q", got, workerSock)
+	}
+	if got := resolveAgentDaemonSocket(workerSock, boxASock); got == boxASock {
+		t.Errorf("remote run: resolved socket must NOT be box A's daemon.sock (%q)", boxASock)
+	}
+
+	// LOCAL: workerHookSock == "" (rbc == nil) → resolved socket is box A's
+	// daemon.sock, unchanged.
+	if got := resolveAgentDaemonSocket("", boxASock); got != boxASock {
+		t.Errorf("local run: resolveAgentDaemonSocket = %q, want box-A %q (unchanged)", got, boxASock)
+	}
+}
+
+// TestTunnelEnv_EnsureWorkerHarmonikDir asserts ensureWorkerHarmonikDir runs
+// `mkdir -p <repo>/.harmonik` through the injected runner (so the reverse tunnel
+// can bind its socket there) and surfaces a runner error.
+func TestTunnelEnv_EnsureWorkerHarmonikDir(t *testing.T) {
+	t.Parallel()
+
+	// Success path: a RecordingRunner whose CmdFunc returns a no-op `true` records
+	// the exact mkdir argv.
+	rr := &tmuxpkg.RecordingRunner{
+		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "true")
+		},
+	}
+	if err := ensureWorkerHarmonikDir(context.Background(), rr, "/home/worker/repo"); err != nil {
+		t.Fatalf("ensureWorkerHarmonikDir: unexpected error: %v", err)
+	}
+	if len(rr.Calls) != 1 {
+		t.Fatalf("expected exactly 1 runner call, got %d: %+v", len(rr.Calls), rr.Calls)
+	}
+	gotCall := rr.Calls[0]
+	if gotCall.Name != "mkdir" {
+		t.Errorf("command name = %q, want mkdir", gotCall.Name)
+	}
+	wantArgs := []string{"-p", "/home/worker/repo/.harmonik"}
+	if !reflect.DeepEqual(gotCall.Args, wantArgs) {
+		t.Errorf("mkdir argv = %v, want %v", gotCall.Args, wantArgs)
+	}
+
+	// Failure path: a runner whose command exits non-zero must surface an error
+	// (the caller treats it as non-fatal, but the helper must report it).
+	rrFail := &tmuxpkg.RecordingRunner{
+		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "false")
+		},
+	}
+	if err := ensureWorkerHarmonikDir(context.Background(), rrFail, "/home/worker/repo"); err == nil {
+		t.Error("ensureWorkerHarmonikDir: expected error on non-zero mkdir exit, got nil")
+	}
+}

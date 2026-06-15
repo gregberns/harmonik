@@ -410,14 +410,16 @@ func writeHarmonikGitignore(projectDir string, force bool, stdout, stderr io.Wri
 
 // renderAgentsMD reads the embedded AGENTS.template.md (foreign-repo variant),
 // substitutes $PROJECT_DIR and $TARGET_BRANCH, and writes AGENTS.md at the
-// project root. Skipped when AGENTS.md already exists and force is false.
+// project root.
+//
+// When AGENTS.md already exists and force is false, the project root's AGENTS.md
+// is never touched. Instead of silently skipping (which left projects with their
+// own AGENTS.md without any harmonik operating instructions anywhere), the
+// rendered template is written to the reviewable sidecar
+// .harmonik/AGENTS.harmonik.md so the operator can merge it into their AGENTS.md.
+// The sidecar write is itself idempotent: it is skipped when the sidecar already
+// exists unless force is set.
 func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr io.Writer) int {
-	outPath := filepath.Join(projectDir, "AGENTS.md")
-	if _, err := os.Stat(outPath); err == nil && !force {
-		fmt.Fprintln(stdout, "harmonik init: AGENTS.md already exists — skipping (use --force to overwrite)")
-		return 0
-	}
-
 	data, err := initSkillAssets.ReadFile("assets/templates/AGENTS.template.md")
 	if err != nil {
 		fmt.Fprintf(stderr, "harmonik init: read embedded AGENTS.template.md: %v\n", err)
@@ -427,12 +429,39 @@ func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr 
 	rendered := strings.ReplaceAll(string(data), "$PROJECT_DIR", projectDir)
 	rendered = strings.ReplaceAll(rendered, "$TARGET_BRANCH", targetBranch)
 
+	outPath := filepath.Join(projectDir, "AGENTS.md")
+	if _, err := os.Stat(outPath); err == nil && !force {
+		// The real AGENTS.md exists and we must not overwrite it without --force.
+		// Surface the harmonik instructions in a sidecar the operator can merge in.
+		return writeAgentsHarmonikSidecar(projectDir, rendered, force, stdout, stderr)
+	}
+
 	//nolint:gosec // G306
 	if err := os.WriteFile(outPath, []byte(rendered), 0o644); err != nil {
 		fmt.Fprintf(stderr, "harmonik init: write AGENTS.md: %v\n", err)
 		return 1
 	}
 	fmt.Fprintln(stdout, "harmonik init: wrote AGENTS.md")
+	return 0
+}
+
+// writeAgentsHarmonikSidecar writes the rendered harmonik AGENTS template to
+// .harmonik/AGENTS.harmonik.md so an operator whose project already has its own
+// AGENTS.md has a reviewable copy of the harmonik operating instructions to merge
+// in. Idempotent: skipped when the sidecar already exists unless force is set.
+func writeAgentsHarmonikSidecar(projectDir, rendered string, force bool, stdout, stderr io.Writer) int {
+	sidecarPath := filepath.Join(projectDir, ".harmonik", "AGENTS.harmonik.md")
+	if _, err := os.Stat(sidecarPath); err == nil && !force {
+		fmt.Fprintln(stdout, "harmonik init: AGENTS.md already exists — harmonik instructions already at .harmonik/AGENTS.harmonik.md (use --force to refresh)")
+		return 0
+	}
+
+	//nolint:gosec // G306
+	if err := os.WriteFile(sidecarPath, []byte(rendered), 0o644); err != nil {
+		fmt.Fprintf(stderr, "harmonik init: write .harmonik/AGENTS.harmonik.md: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "harmonik init: AGENTS.md already exists — wrote harmonik operating instructions to .harmonik/AGENTS.harmonik.md for you to merge in.")
 	return 0
 }
 

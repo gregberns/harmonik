@@ -45,12 +45,12 @@ import (
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
-	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/hookrelay"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	queuecli "github.com/gregberns/harmonik/internal/queue/cli"
 	"github.com/gregberns/harmonik/internal/release"
+	"github.com/gregberns/harmonik/internal/workers"
 )
 
 func main() {

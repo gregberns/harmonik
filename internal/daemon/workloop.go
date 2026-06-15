@@ -53,9 +53,9 @@ import (
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/schedule"
+	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
-	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -733,6 +733,11 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: newHarnessRegistry: %w", hErr)
 	}
 
+	// Build the remote-worker registry from cfg.Workers and run the boot-time
+	// health check (remote-substrate B4/B6). Returns nil when no worker is
+	// enabled so the dispatch path takes the existing local-only branch (NFR7).
+	workerReg := buildWorkerRegistry(context.Background(), cfg.Workers, bus)
+
 	return workLoopDeps{
 		brAdapter:             adapter,
 		bus:                   bus,
@@ -768,7 +773,84 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		targetBranch:          resolveTargetBranch(cfg.TargetBranch),
 		protectBranches:       cfg.ProtectBranches,
 		beadAuditLogger:       adapter.AuditLog, // hk-wcv: reopen-for-fix bypass in pre-dispatch subsume check
+		workerRegistry:        workerReg,        // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
 	}, nil
+}
+
+// buildWorkerRegistry turns the loaded workers.Config into a live *workers.Registry
+// and runs the boot-time health check (remote-substrate B4/B6).
+//
+// It returns nil — keeping the dispatch path on the existing local-only branch
+// (NFR7) — when no worker is ENABLED. When a worker is enabled it:
+//
+//  1. Constructs the registry via workers.NewRegistry (B5 selection + slot
+//     tracking).
+//  2. Runs workers.RunHealthCheck over the worker's transport runner (B6),
+//     which probes tmux/claude/git/no-API-key, disables (SetEnabled(false)) any
+//     worker that fails a probe, and emits a worker_unhealthy event via bus.Emit.
+//     A worker that fails the boot health check is therefore SelectWorker()-skipped
+//     so its beads run locally rather than against an unhealthy host.
+//
+// The runner for the health check is tmux.SSHRunner{Host: worker.Host} for
+// transport "ssh" (the only supported transport); other transports run no probes
+// and the worker stays enabled as configured.
+//
+// Bead ref: hk-rs-b4-bootwire-b44z, hk-rs-b6-healthcheck-isda.
+func buildWorkerRegistry(ctx context.Context, cfg workers.Config, bus handlercontract.EventEmitter) *workers.Registry {
+	return buildWorkerRegistryWithRunner(ctx, cfg, bus, bootHealthRunner(cfg))
+}
+
+// buildWorkerRegistryWithRunner is the runner-injectable core of
+// buildWorkerRegistry. Production passes the transport-resolved runner from
+// bootHealthRunner; tests pass a recording/no-op runner so the boot path is
+// exercisable without real ssh.
+//
+// runner == nil ⇒ the B6 boot health check is skipped (the worker stays enabled
+// as configured); this is also the unsupported-transport behaviour.
+func buildWorkerRegistryWithRunner(ctx context.Context, cfg workers.Config, bus handlercontract.EventEmitter, runner tmuxpkg.CommandRunner) *workers.Registry {
+	if !hasEnabledWorker(cfg) {
+		return nil
+	}
+	reg := workers.NewRegistry(cfg)
+
+	// B6 boot health check: probe each enabled worker over its transport runner.
+	// On a probe failure the worker is disabled in-registry and a worker_unhealthy
+	// event is emitted, so SelectWorker() skips it and the run falls back to local.
+	if runner != nil {
+		var emit workers.EmitFunc
+		if bus != nil {
+			emit = bus.Emit
+		}
+		_ = workers.RunHealthCheck(ctx, runner, cfg, reg, emit)
+	}
+	return reg
+}
+
+// hasEnabledWorker reports whether cfg has at least one worker with Enabled==true.
+func hasEnabledWorker(cfg workers.Config) bool {
+	for _, w := range cfg.Workers {
+		if w.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// bootHealthRunner resolves the CommandRunner used for the boot health-check
+// probes against the (single, v1) enabled worker. Returns an SSHRunner for
+// transport "ssh"; nil for any other transport (probes skipped, worker stays
+// enabled as configured).
+func bootHealthRunner(cfg workers.Config) tmuxpkg.CommandRunner {
+	for _, w := range cfg.Workers {
+		if !w.Enabled {
+			continue
+		}
+		if w.Transport == "ssh" {
+			return tmuxpkg.SSHRunner{Host: w.Host}
+		}
+		return nil
+	}
+	return nil
 }
 
 // resolveTargetBranch returns branch when non-empty, otherwise the production

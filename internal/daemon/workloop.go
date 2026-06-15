@@ -2379,12 +2379,22 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// single mode: one-shot implementer dispatch.
 	switch workflowMode {
 	case core.WorkflowModeReviewLoop:
-		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch)
+		// rlRunner is the per-run CommandRunner threaded into the review loop: the
+		// worker's SSHRunner for a REMOTE run (so the implementer-worktree HEAD/diff
+		// probes target the worker and the run branch is synced to box A before each
+		// reviewer launch), nil for a LOCAL run (byte-identical local path, NFR7).
+		var rlRunner tmuxpkg.CommandRunner
+		if rbc != nil {
+			rlRunner = rbc.sshRunner
+		}
+		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch, rlRunner)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if rlResult.success {
 			// Scenario gate (hk-i2ie5): block merge when scenario tests go RED.
-			if sgr := runScenarioGateIfNeeded(ctx, wtPath, headSHA); sgr.blocked {
+			// REMOTE: route via rlRunner so the gate's git-diff, file sniff, and
+			// `go test` run on the worker where the worktree lives (nil ⇒ box-A-local).
+			if sgr := runScenarioGateIfNeededVia(ctx, rlRunner, wtPath, headSHA); sgr.blocked {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", sgr.reason)
 				reopenTID, _ := deps.tidGen.Next()
 				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, sgr.reason)
@@ -2638,7 +2648,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// parent (a commit landed on the run branch before the gate bounced it),
 			// record the tip SHA in the run_failed payload so the operator can find
 			// and manually cherry-pick / merge the stranded work.
-			if tipSHA, tipErr := resolveWorktreeHEAD(ctx, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
+			//
+			// REMOTE: wtPath is on the worker; resolve via dotRunner so the tip SHA
+			// reflects the worker's run branch (nil dotRunner ⇒ box-A-local, NFR7).
+			if tipSHA, tipErr := resolveWorktreeHEADVia(ctx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
 				runTipSHA = &tipSHA
 			}
 			reopenTID, _ := deps.tidGen.Next()
@@ -3079,8 +3092,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// commitLanded is determined by comparing the current worktree HEAD against
 	// headSHA.  resolveWorktreeHEAD errors are treated as "not landed" (conservative).
+	// REMOTE: route via runRunner so HEAD is read from the worker (nil ⇒ box-A-local).
 	{
-		curHead, _ := resolveWorktreeHEAD(ctx, wtPath)
+		curHead, _ := resolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA
 		emitImplementerPhaseComplete(ctx, deps.bus, runID, ei.exitCode, ei.stderrTail,
 			commitLanded, time.Since(implementerLaunchedAt))
@@ -3173,7 +3187,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// failed run when HEAD == headSHA.
 	//
 	// Bead: hk-mmh8f.
-	if curHeadSHA, curHeadErr := resolveWorktreeHEAD(ctx, wtPath); curHeadErr == nil &&
+	//
+	// REMOTE: route the worktree-HEAD probe via runRunner so the no-commit guard
+	// reads the WORKER's run-branch HEAD (nil runRunner ⇒ box-A-local, NFR7). The
+	// noCommitGuardShouldReopen "did THIS bead land on main?" check below stays
+	// box-A-local — main is always box A's, regardless of where the work ran.
+	if curHeadSHA, curHeadErr := resolveWorktreeHEADVia(ctx, runRunner, wtPath); curHeadErr == nil &&
 		noCommitGuardShouldReopen(ctx, deps.projectDir, curHeadSHA, headSHA, beadID) {
 		// hk-4ie1z: the implementer's worktree HEAD never advanced past the
 		// parent (NO commit) AND this bead's own work is not on main. The prior
@@ -3198,7 +3217,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	case term.Type == handlercontract.ProgressMsgTypeAgentCompleted:
 		// CHB-020 branch 1: stop-hook WORK_COMPLETE or REVIEWER_VERDICT.
 		// Scenario gate (hk-i2ie5): block merge when scenario tests go RED.
-		if sgr := runScenarioGateIfNeeded(ctx, wtPath, headSHA); sgr.blocked {
+		// REMOTE: route via runRunner so the gate runs on the worker (nil ⇒ local).
+		if sgr := runScenarioGateIfNeededVia(ctx, runRunner, wtPath, headSHA); sgr.blocked {
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", sgr.reason)
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, sgr.reason)
@@ -3247,7 +3267,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		//
 		// hk-wfbxf: same CloseBead error handling as branch 1.
 		// Scenario gate (hk-i2ie5): block merge when scenario tests go RED.
-		if sgr := runScenarioGateIfNeeded(ctx, wtPath, headSHA); sgr.blocked {
+		// REMOTE: route via runRunner so the gate runs on the worker (nil ⇒ local).
+		if sgr := runScenarioGateIfNeededVia(ctx, runRunner, wtPath, headSHA); sgr.blocked {
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", sgr.reason)
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, sgr.reason)

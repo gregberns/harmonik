@@ -398,8 +398,15 @@ type commandRunnerProvider interface {
 // through runner instead of bare exec.CommandContext.  Uses `git -C <wtPath>
 // rev-parse HEAD` (the -C form works for both local and SSH runners).
 //
+// When runner is nil the call delegates to the bare-local resolveWorktreeHEAD,
+// so callers can pass the per-run runner unconditionally and get byte-identical
+// local behaviour for LOCAL runs (nil runner) — NFR7.
+//
 // Bead: hk-rs-b9-liveness-1m9n.
 func resolveWorktreeHEADVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, error) {
+	if runner == nil {
+		return resolveWorktreeHEAD(ctx, wtPath)
+	}
 	out, err := runner.Command(ctx, "git", "-C", wtPath, "rev-parse", "HEAD").Output()
 	if err != nil {
 		return "", fmt.Errorf("daemon: resolveWorktreeHEADVia: git -C %q rev-parse HEAD: %w", wtPath, err)
@@ -414,9 +421,31 @@ func resolveWorktreeHEADVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 	return sha, nil
 }
 
-// worktreeActivityFingerprintVia is like worktreeActivityFingerprint but
-// routes git commands through runner.  The os.Stat pass over changed paths is
-// retained (it operates on the local filesystem regardless of runner type).
+// runnerIsLocalFS reports whether r operates on box A's local filesystem — i.e.
+// the worktree paths it is given are directly stat-able with os.Stat. A nil
+// runner (defensive) and tmux.LocalRunner both qualify; an SSHRunner (or any
+// other transport) does NOT, because its worktree lives on a remote worker.
+func runnerIsLocalFS(r tmux.CommandRunner) bool {
+	switch r.(type) {
+	case nil, tmux.LocalRunner:
+		return true
+	default:
+		return false
+	}
+}
+
+// worktreeActivityFingerprintVia is like worktreeActivityFingerprint but routes
+// the git probes through runner.
+//
+// The per-file os.Stat(size, mtime) precision component is retained ONLY when
+// runner is local-filesystem (nil / tmux.LocalRunner) — for a LOCAL run wtPath
+// is on box A and the stat is meaningful, keeping the fingerprint byte-identical
+// to worktreeActivityFingerprint (NFR7). For a REMOTE run wtPath lives on the
+// worker, so a box-A os.Stat would either error (file absent) or read an
+// unrelated box-A file; we DROP that component and rely on the routed
+// HEAD + `git status --porcelain` (which run on the worker via the SSHRunner)
+// to detect implementer activity. This loses sub-status-change precision but
+// preserves correctness for remote runs.
 //
 // Bead: hk-rs-b9-liveness-1m9n.
 func worktreeActivityFingerprintVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, bool) {
@@ -432,16 +461,18 @@ func worktreeActivityFingerprintVia(ctx context.Context, runner tmux.CommandRunn
 	sb.WriteString(head)
 	sb.WriteByte(0)
 	sb.Write(out)
-	for _, line := range strings.Split(string(out), "\n") {
-		if len(line) < 4 {
-			continue
-		}
-		path := line[3:]
-		if strings.Contains(path, " -> ") || strings.HasPrefix(path, "\"") {
-			continue
-		}
-		if fi, statErr := os.Stat(filepath.Join(wtPath, path)); statErr == nil {
-			fmt.Fprintf(&sb, "\x00%s:%d:%d", path, fi.Size(), fi.ModTime().UnixNano())
+	if runnerIsLocalFS(runner) {
+		for _, line := range strings.Split(string(out), "\n") {
+			if len(line) < 4 {
+				continue
+			}
+			path := line[3:]
+			if strings.Contains(path, " -> ") || strings.HasPrefix(path, "\"") {
+				continue
+			}
+			if fi, statErr := os.Stat(filepath.Join(wtPath, path)); statErr == nil {
+				fmt.Fprintf(&sb, "\x00%s:%d:%d", path, fi.Size(), fi.ModTime().UnixNano())
+			}
 		}
 	}
 	return sb.String(), true

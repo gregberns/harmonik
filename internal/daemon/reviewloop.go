@@ -189,6 +189,14 @@ func runReviewLoop(
 	resolvedEffort string,
 	extraContext string, // hk-boiwe: per-item context injected into agent-task.md
 	baseBranch string, // hk-mtm0w: resolved lands_on for pre-exit rebase step
+	// runner is the per-run CommandRunner. For a REMOTE (SSH worker) run it is the
+	// worker's SSHRunner; for a LOCAL run it is nil. When non-nil, the
+	// implementer-worktree HEAD/diff probes route to the WORKER (where the
+	// implementer's commits live), and the run branch is pushed worker→origin and
+	// fetched origin→box-A before each reviewer launch so the reviewer's own
+	// box-A worktree (CreateReviewerWorktree, always box-A-local) can materialise
+	// at the implementer's committed SHA. nil ⇒ byte-identical local path (NFR7).
+	runner tmux.CommandRunner,
 ) reviewLoopResult {
 	// daemonSocket is the UNIX-domain socket path for the hook-relay per design §7.
 	// Derived from projectDir so reviewloop.go does not need a separate field on deps.
@@ -335,6 +343,16 @@ func runReviewLoop(
 					// Spawn a goroutine to persist + ACK so the Watcher is not blocked.
 					//
 					// CHB-023 ordering: git commit → transition_event → ACK.
+					//
+					// REMOTE-RUN NOTE (FLAGGED follow-up): persistClaudeSessionID
+					// commits into capturedWtPath via a box-A-local git/os.WriteFile.
+					// For a remote run capturedWtPath is on the worker, so the persist
+					// fails and the goroutine signals empty → the loop falls back to
+					// session-id synthesis (non-fatal; iteration 1 still proceeds, and
+					// the version_selected ACK is still sent below). The CHB-023
+					// context-commit baseline is not written on the worker; a
+					// worker-routed persistClaudeSessionIDVia is part of the
+					// multi-iteration remote follow-up bundle.
 					go func() {
 						res, persistErr := persistClaudeSessionID(capturedCtx, capturedWtPath, capturedRunID, id)
 						if persistErr != nil {
@@ -621,7 +639,9 @@ func runReviewLoop(
 		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
 		// Beads: hk-cmybm, hk-930o3.
 		if qs, ok := implPasteTarget.(quitSender); ok {
-			implInitialSHA, resolveErr := resolveWorktreeHEAD(ctx, wtPath)
+			// REMOTE: wtPath is on the worker; resolve its HEAD via the worker runner
+			// (resolveWorktreeHEADVia delegates to the local probe when runner is nil).
+			implInitialSHA, resolveErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
 			if resolveErr != nil {
 				implInitialSHA = parentSHA // fallback to known-good parent SHA
 			}
@@ -650,7 +670,7 @@ func runReviewLoop(
 		// commitLanded is true when the worktree HEAD has advanced past
 		// parentSHA; HEAD resolution errors are treated as "not landed".
 		{
-			curHead, _ := resolveWorktreeHEAD(ctx, wtPath)
+			curHead, _ := resolveWorktreeHEADVia(ctx, runner, wtPath)
 			commitLanded := curHead != "" && curHead != parentSHA
 			emitImplementerPhaseComplete(ctx, deps.bus, runID, implEI.exitCode,
 				implEI.stderrTail, commitLanded, time.Since(implLaunchedAt))
@@ -721,7 +741,7 @@ func runReviewLoop(
 		}
 
 		if state.iterationCount == 1 {
-			headSHA, headErr := resolveWorktreeHEAD(ctx, wtPath)
+			headSHA, headErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
 			if headErr != nil {
 				result := rlErrorResult(fmt.Sprintf("resolve worktree HEAD after implementer at iteration %d: %v", state.iterationCount, headErr))
 				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -802,7 +822,16 @@ func runReviewLoop(
 			// session within this daemon process — only cross-restart recovery and
 			// event observability are lost (matching the interceptor goroutine's
 			// own non-fatal-on-error posture).
-			if interceptorID == "" && state.claudeSessionID == implArtifacts.claudeSessionID && implArtifacts.claudeSessionID != "" {
+			//
+			// REMOTE (runner != nil): persistClaudeSessionID does a box-A-local
+			// os.WriteFile + git add/commit inside wtPath, which for a remote run is
+			// the WORKER's worktree — the box-A-local write would fail. The persist
+			// is purely for cross-restart --resume recovery + event observability;
+			// iteration 2 already resumes the live session in-process regardless. So
+			// we skip it on remote (avoids a guaranteed-error log every remote run).
+			// A worker-routed persist (persistClaudeSessionIDVia) is FLAGGED as
+			// multi-iteration follow-up.
+			if runner == nil && interceptorID == "" && state.claudeSessionID == implArtifacts.claudeSessionID && implArtifacts.claudeSessionID != "" {
 				res, persistErr := persistClaudeSessionID(ctx, wtPath, runID, state.claudeSessionID)
 				if persistErr != nil {
 					fmt.Fprintf(os.Stderr,
@@ -834,13 +863,13 @@ func runReviewLoop(
 		// so the verdict half of the rule is structurally guaranteed; the explicit
 		// check is the HEAD-advance half. lastDiffHash is retained only for the
 		// no_progress_detected event payload.
-		currentHash, hashErr := rlComputeDiffHash(ctx, wtPath, parentSHA)
+		currentHash, hashErr := rlComputeDiffHashVia(ctx, runner, wtPath, parentSHA)
 		if hashErr != nil {
 			result := rlErrorResult(fmt.Sprintf("diff-hash error before reviewer at iteration %d: %v", state.iterationCount, hashErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result
 		}
-		currentHead, npHeadErr := resolveWorktreeHEAD(ctx, wtPath)
+		currentHead, npHeadErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
 		if npHeadErr != nil {
 			result := rlErrorResult(fmt.Sprintf("resolve HEAD before reviewer at iteration %d: %v", state.iterationCount, npHeadErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -879,7 +908,15 @@ func runReviewLoop(
 		//
 		// Per EM-015d: archive the prior review.json to review.iter-{N-1}.json
 		// before launching the iteration-N reviewer. Non-fatal on failure.
-		if state.iterationCount >= 2 {
+		//
+		// LOCAL only: this is an os.Rename inside the IMPLEMENTER worktree
+		// (wtPath). For a REMOTE run wtPath is on the worker, so a box-A-local
+		// rename targets a path that does not exist on box A. The canonical
+		// verdict for each iteration already lives at revWtPath on box A
+		// (ReadReviewVerdict below), so skipping the worker-side archive on remote
+		// loses only a post-run inspection artifact in the worker worktree.
+		// Routing this to the worker is FLAGGED as multi-iteration follow-up.
+		if state.iterationCount >= 2 && runner == nil {
 			if archErr := workspace.ArchiveVerdict(wtPath, state.iterationCount-1); archErr != nil {
 				// F21: ErrNotFound is expected (reviewer didn't produce a verdict on
 				// the prior iter) — suppress the log to keep the daemon log clean.
@@ -900,11 +937,50 @@ func runReviewLoop(
 		// WriteAgentTask inside buildClaudeLaunchSpec (CHB-028); the reviewer
 		// brief is materialized here rather than there because the reviewer
 		// requires diff-range SHAs that are only known to runReviewLoop.
-		reviewHeadSHA, headErr := resolveWorktreeHEAD(ctx, wtPath)
-		if headErr != nil {
-			result := rlErrorResult(fmt.Sprintf("resolve worktree HEAD before reviewer at iteration %d: %v", state.iterationCount, headErr))
-			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
-			return result
+		//
+		// reviewHeadSHA is the implementer's committed HEAD that the reviewer
+		// worktree checks out (detached) on BOX A.
+		//
+		// LOCAL run (runner == nil): wtPath is box-A-local, so the SHA is read
+		// directly from the implementer's worktree (unchanged behaviour, NFR7).
+		//
+		// REMOTE run (runner != nil): the implementer's commit lives on the
+		// WORKER. The reviewer must run on box A off the box-A-fetched run branch
+		// (Phase-1 DD3), but box A does not yet have that commit — preMergeSync
+		// (workloop.go) only fetches it AFTER the review loop returns. So we run
+		// B8 steps (b)+(c) HERE, before each reviewer launch: push the run branch
+		// worker→origin, fetch origin→box-A as refs/heads/run/<id>, then resolve
+		// reviewHeadSHA from that box-A ref. Each REQUEST_CHANGES iteration
+		// re-pushes the advanced (fast-forward) branch, so the reviewer always
+		// sees the latest implementer commit. The later preMergeSync is then a
+		// harmless no-op push + no-op fetch.
+		var reviewHeadSHA string
+		if runner != nil {
+			if pushErr := pushRunBranchOnWorker(ctx, runner, wtPath, runID.String()); pushErr != nil {
+				result := rlErrorResult(fmt.Sprintf("push run branch worker→origin before reviewer at iteration %d: %v", state.iterationCount, pushErr))
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
+			if fetchErr := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String()); fetchErr != nil {
+				result := rlErrorResult(fmt.Sprintf("fetch run branch origin→box-A before reviewer at iteration %d: %v", state.iterationCount, fetchErr))
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
+			sha, branchErr := resolveBranchSHA(ctx, deps.projectDir, workspace.TaskBranchName(runID.String()))
+			if branchErr != nil {
+				result := rlErrorResult(fmt.Sprintf("resolve box-A run-branch SHA before reviewer at iteration %d: %v", state.iterationCount, branchErr))
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
+			reviewHeadSHA = sha
+		} else {
+			sha, headErr := resolveWorktreeHEAD(ctx, wtPath)
+			if headErr != nil {
+				result := rlErrorResult(fmt.Sprintf("resolve worktree HEAD before reviewer at iteration %d: %v", state.iterationCount, headErr))
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
+			reviewHeadSHA = sha
 		}
 
 		// ── Create isolated reviewer worktree (hk-dut6b) ─────────────────
@@ -1259,21 +1335,34 @@ func runReviewLoop(
 		// Copy review.json from the reviewer's isolated worktree to the
 		// implementer's worktree so ArchiveVerdict (below) and post-run
 		// inspection tools find it at the canonical wtPath location.
-		if cpErr := rlCopyReviewVerdict(revWtPath, wtPath); cpErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: reviewloop: copy review verdict iter %d: %v (non-fatal)\n",
-				state.iterationCount, cpErr)
+		//
+		// LOCAL only: writes into the IMPLEMENTER worktree (wtPath). For a REMOTE
+		// run wtPath is on the worker; this box-A-local copy would target a
+		// nonexistent box-A path and create a stray directory tree. The verdict is
+		// already read from revWtPath (box A) above and routed below, so the copy
+		// is only an inspection convenience — skip it on remote.
+		if runner == nil {
+			if cpErr := rlCopyReviewVerdict(revWtPath, wtPath); cpErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: reviewloop: copy review verdict iter %d: %v (non-fatal)\n",
+					state.iterationCount, cpErr)
+			}
 		}
 
 		// Emit reviewer_verdict (verbatim agent-reviewer schema v1 fields per EM-015d).
 		emitReviewerVerdict(ctx, deps.bus, runID, revSessionID, state.claudeSessionID, state.iterationCount, verdict)
 
 		// Archive this iteration's verdict to review.iter-N.json per EM-015d.
-		if archErr := workspace.ArchiveVerdict(wtPath, state.iterationCount); archErr != nil {
-			// F21: ErrNotFound is expected when the reviewer session ended without
-			// writing review.json — suppress to keep the daemon log clean.
-			if !errors.Is(archErr, workspace.ErrNotFound) {
-				fmt.Fprintf(os.Stderr, "daemon: reviewloop: ArchiveVerdict iter %d: %v (non-fatal)\n",
-					state.iterationCount, archErr)
+		//
+		// LOCAL only (os.Rename inside wtPath) — see the prior-iter archive guard
+		// above. Skipped on remote; FLAGGED as multi-iteration follow-up.
+		if runner == nil {
+			if archErr := workspace.ArchiveVerdict(wtPath, state.iterationCount); archErr != nil {
+				// F21: ErrNotFound is expected when the reviewer session ended without
+				// writing review.json — suppress to keep the daemon log clean.
+				if !errors.Is(archErr, workspace.ErrNotFound) {
+					fmt.Fprintf(os.Stderr, "daemon: reviewloop: ArchiveVerdict iter %d: %v (non-fatal)\n",
+						state.iterationCount, archErr)
+				}
 			}
 		}
 
@@ -1345,7 +1434,22 @@ func runReviewLoop(
 				Notes:          verdict.Notes,
 				DiffHash:       state.lastDiffHash,
 			}
-			if rfErr := workspace.WriteReviewerFeedback(rfPayload); rfErr != nil {
+			// REMOTE-RUN LIMITATION (FLAGGED follow-up): the feedback file must land
+			// in the IMPLEMENTER worktree (wtPath) so the iter-(N+1)
+			// implementer-resume paste-inject — which runs on the WORKER — can read
+			// it. WriteReviewerFeedback is a box-A-local os.WriteFile; for a remote
+			// run wtPath is on the worker, so the write does not reach the worker.
+			// There is no WriteReviewerFeedbackVia yet. We log loudly and continue;
+			// the resume will skip the feedback inject (same effect as a missing
+			// feedback file). Routing reviewer feedback to the worker is the one true
+			// blocker for MULTI-ITERATION (REQUEST_CHANGES) remote runs — see the
+			// return report's FLAGGED-follow-up section. First-pass APPROVE remote
+			// runs never reach this branch.
+			if runner != nil {
+				fmt.Fprintf(os.Stderr,
+					"daemon: reviewloop: REMOTE run iter %d: reviewer feedback NOT routed to worker worktree (no WriteReviewerFeedbackVia); implementer-resume will run without feedback — multi-iteration remote runs are not yet supported (FLAGGED follow-up)\n",
+					state.iterationCount)
+			} else if rfErr := workspace.WriteReviewerFeedback(rfPayload); rfErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: reviewloop: WriteReviewerFeedback iter %d: %v (non-fatal)\n",
 					state.iterationCount, rfErr)
 				// Non-fatal: continue to next iteration. The implementer-resume will
@@ -1416,6 +1520,30 @@ func rlComputeDiffHashVia(ctx context.Context, runner tmux.CommandRunner, wtPath
 		return "", fmt.Errorf("daemon: reviewloop: %w", err)
 	}
 	return workspace.ComputeDiffHashVia(ctx, runner, wtPath, parentSHA, headSHA)
+}
+
+// resolveBranchSHA resolves a local branch ref to its commit SHA on BOX A via
+// `git -C <projectDir> rev-parse refs/heads/<branch>`. Used by the REMOTE
+// review-loop path to read the implementer's HEAD from the box-A-fetched run
+// branch (refs/heads/run/<id>) so the reviewer worktree — created on box A —
+// checks out a commit box A actually has. The lookup runs box-A-local (the
+// reviewer always runs on box A regardless of where the implementer ran), so it
+// uses a bare exec, mirroring resolveWorktreeHEAD.
+func resolveBranchSHA(ctx context.Context, projectDir, branch string) (string, error) {
+	ref := "refs/heads/" + branch
+	cmd := exec.CommandContext(ctx, "git", "-C", projectDir, "rev-parse", ref)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("daemon: reviewloop: resolveBranchSHA: git -C %q rev-parse %s: %w", projectDir, ref, err)
+	}
+	sha := string(out)
+	for len(sha) > 0 && sha[len(sha)-1] == '\n' {
+		sha = sha[:len(sha)-1]
+	}
+	if sha == "" {
+		return "", fmt.Errorf("daemon: reviewloop: resolveBranchSHA: git rev-parse %s returned empty in %q", ref, projectDir)
+	}
+	return sha, nil
 }
 
 // rlSynthesiseClaudeSessionID produces a synthetic session ID for the MVH twin-

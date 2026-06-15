@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // scenarioGateTimeout is the maximum time the scenario test suite may run
@@ -88,18 +90,33 @@ type scenarioGateResult struct {
 //
 // Bead: hk-i2ie5, hk-ur428.
 func runScenarioGateIfNeeded(ctx context.Context, wtPath, headSHA string) scenarioGateResult {
-	changedFiles, err := changedFilesSince(ctx, wtPath, headSHA)
+	return runScenarioGateIfNeededVia(ctx, nil, wtPath, headSHA)
+}
+
+// runScenarioGateIfNeededVia is the runner-routed form of runScenarioGateIfNeeded.
+//
+// For a REMOTE run (runner is an SSHRunner) the worktree, its .go files, and the
+// Go toolchain all live on the WORKER, so every step of the gate — the
+// `git diff` change-set probe, the per-file scenario-tag inspection, and the
+// `go test -tags=scenario` run itself — must execute on the worker. Routing
+// them through runner sends each command over SSH to the worker.
+//
+// For a LOCAL run (runner is nil or tmux.LocalRunner) the calls delegate to the
+// existing bare-exec helpers byte-identically (NFR7): runScenarioGateIfNeeded
+// above is exactly runScenarioGateIfNeededVia(ctx, nil, ...).
+func runScenarioGateIfNeededVia(ctx context.Context, runner tmux.CommandRunner, wtPath, headSHA string) scenarioGateResult {
+	changedFiles, err := changedFilesSinceVia(ctx, runner, wtPath, headSHA)
 	if err != nil || len(changedFiles) == 0 {
 		return scenarioGateResult{}
 	}
 
-	pkgs := affectedScenarioPkgs(wtPath, changedFiles)
+	pkgs := affectedScenarioPkgsVia(ctx, runner, wtPath, changedFiles)
 	if len(pkgs) == 0 {
 		return scenarioGateResult{}
 	}
 
 	return scenarioGateWithRetry(pkgs, func() scenarioGateResult {
-		return runScenarioGateOnce(ctx, wtPath, pkgs)
+		return runScenarioGateOnceVia(ctx, runner, wtPath, pkgs)
 	})
 }
 
@@ -107,15 +124,36 @@ func runScenarioGateIfNeeded(ctx context.Context, wtPath, headSHA string) scenar
 // package(s) and classifies the result.  Extracted from runScenarioGateIfNeeded
 // so the retry-on-flaky path (hk-5em) can re-invoke a single run.
 func runScenarioGateOnce(ctx context.Context, wtPath string, pkgs []string) scenarioGateResult {
+	return runScenarioGateOnceVia(ctx, nil, wtPath, pkgs)
+}
+
+// runScenarioGateOnceVia runs the scenario suite once via runner.
+//
+// LOCAL (runner nil / LocalRunner): `go test` runs on box A with cmd.Dir=wtPath,
+// byte-identical to the original. REMOTE (SSHRunner): the run is tunnelled to
+// the worker as `git -C` is — we use `go -C <wtPath> test ...` over the runner
+// so the worker's Go toolchain compiles and runs the worker-resident worktree
+// (cmd.Dir cannot set a remote cwd, so the cwd is carried via `go -C`).
+func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPath string, pkgs []string) scenarioGateResult {
 	gateCtx, cancel := context.WithTimeout(ctx, scenarioGateTimeout)
 	defer cancel()
 
 	// -race dropped (hk-ur428) — it is the primary OOM/SIGKILL cause on the
 	// heavy suite.  Scoped to the affected package(s) only.
-	args := append([]string{"test", "-tags=scenario"}, pkgs...)
-	cmd := exec.CommandContext(gateCtx, "go", args...)
-	cmd.Dir = wtPath
-	out, testErr := cmd.CombinedOutput()
+	var out []byte
+	var testErr error
+	if runnerIsLocalFS(runner) {
+		args := append([]string{"test", "-tags=scenario"}, pkgs...)
+		cmd := exec.CommandContext(gateCtx, "go", args...)
+		cmd.Dir = wtPath
+		out, testErr = cmd.CombinedOutput()
+	} else {
+		// `go -C <wtPath> test ...` carries the working directory as an argv token
+		// because a remote runner has no cmd.Dir handle on the worker.
+		args := append([]string{"-C", wtPath, "test", "-tags=scenario"}, pkgs...)
+		cmd := runner.Command(gateCtx, "go", args...)
+		out, testErr = cmd.CombinedOutput()
+	}
 
 	return classifyScenarioGateError(gateCtx.Err(), testErr, out, pkgs)
 }
@@ -278,9 +316,22 @@ func isGenuineTestFailure(err error, output string) bool {
 // changedFilesSince returns the set of file paths (relative to wtPath) that
 // differ between headSHA and the current HEAD of the worktree.
 func changedFilesSince(ctx context.Context, wtPath, headSHA string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", headSHA+"..HEAD")
-	cmd.Dir = wtPath
-	out, err := cmd.Output()
+	return changedFilesSinceVia(ctx, nil, wtPath, headSHA)
+}
+
+// changedFilesSinceVia is the runner-routed form of changedFilesSince. For a
+// REMOTE run the diff runs on the worker (`git -C <wtPath>` over the SSHRunner);
+// for a LOCAL run (nil / LocalRunner) it is byte-identical to changedFilesSince.
+func changedFilesSinceVia(ctx context.Context, runner tmux.CommandRunner, wtPath, headSHA string) ([]string, error) {
+	var out []byte
+	var err error
+	if runnerIsLocalFS(runner) {
+		cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", headSHA+"..HEAD")
+		cmd.Dir = wtPath
+		out, err = cmd.Output()
+	} else {
+		out, err = runner.Command(ctx, "git", "-C", wtPath, "diff", "--name-only", headSHA+"..HEAD").Output()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -295,9 +346,17 @@ func changedFilesSince(ctx context.Context, wtPath, headSHA string) ([]string, e
 // (e.g. "./internal/daemon/...") that contain scenario-tagged files among
 // changedFiles.
 func affectedScenarioPkgs(wtPath string, changedFiles []string) []string {
+	return affectedScenarioPkgsVia(context.Background(), nil, wtPath, changedFiles)
+}
+
+// affectedScenarioPkgsVia is the runner-routed form of affectedScenarioPkgs:
+// the per-file scenario-tag inspection routes file reads through runner so a
+// REMOTE run inspects the worker-resident files. LOCAL runs (nil / LocalRunner)
+// are byte-identical to affectedScenarioPkgs.
+func affectedScenarioPkgsVia(ctx context.Context, runner tmux.CommandRunner, wtPath string, changedFiles []string) []string {
 	seen := map[string]bool{}
 	for _, f := range changedFiles {
-		if isScenarioTouching(wtPath, f) {
+		if isScenarioTouchingVia(ctx, runner, wtPath, f) {
 			pat := fileToGoPackagePattern(f)
 			if pat != "" {
 				seen[pat] = true
@@ -315,6 +374,14 @@ func affectedScenarioPkgs(wtPath string, changedFiles []string) []string {
 // scenario-touching: either its path prefix marks it as a scenario file or its
 // content carries a //go:build scenario (or legacy // +build scenario) tag.
 func isScenarioTouching(wtPath, filePath string) bool {
+	return isScenarioTouchingVia(context.Background(), nil, wtPath, filePath)
+}
+
+// isScenarioTouchingVia is the runner-routed form of isScenarioTouching. The
+// path-prefix check is transport-independent; the content sniff reads the file
+// via the runner (LOCAL: os.ReadFile, byte-identical; REMOTE: `cat <wtPath/f>`
+// over the SSHRunner, since the file lives on the worker).
+func isScenarioTouchingVia(ctx context.Context, runner tmux.CommandRunner, wtPath, filePath string) bool {
 	if strings.HasPrefix(filePath, "test/scenario/") ||
 		strings.HasPrefix(filePath, "internal/scenario/") {
 		return true
@@ -323,9 +390,19 @@ func isScenarioTouching(wtPath, filePath string) bool {
 		return false
 	}
 	full := filepath.Join(wtPath, filePath)
-	data, err := os.ReadFile(full)
-	if err != nil {
-		return false
+	var data []byte
+	if runnerIsLocalFS(runner) {
+		var err error
+		data, err = os.ReadFile(full)
+		if err != nil {
+			return false
+		}
+	} else {
+		out, err := runner.Command(ctx, "cat", full).Output()
+		if err != nil {
+			return false
+		}
+		data = out
 	}
 	return bytes.Contains(data, []byte("//go:build scenario")) ||
 		bytes.Contains(data, []byte("// +build scenario"))

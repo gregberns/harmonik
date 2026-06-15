@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
@@ -1483,8 +1482,14 @@ func (p *perRunSubstrate) PaneOutputFingerprint(ctx context.Context) (string, bo
 	if target == "" {
 		return "", false
 	}
-	//nolint:gosec // G204: target is captured from tmux at spawn time, not user input
-	out, err := exec.CommandContext(ctx, "tmux", "display-message",
+	// Route through the per-run CommandRunner so the probe queries the tmux
+	// server that actually hosts this run's pane: the WORKER's tmux for a REMOTE
+	// run (p.runner is an SSHRunner), box A's tmux for a LOCAL run (p.runner nil
+	// ⇒ LocalRunner, which execs the identical bare `tmux display-message` — NFR7
+	// byte-identical). A bare exec.CommandContext here would query box A's tmux
+	// for a remote run (the wrong pane), silently disabling the output-growth
+	// ceiling-kill safety probe for remote runs.
+	out, err := p.commandRunner().Command(ctx, "tmux", "display-message",
 		"-t", target, "-p", "#{history_size} #{cursor_y}").Output()
 	if err != nil {
 		return "", false

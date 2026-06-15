@@ -490,7 +490,8 @@ func ExportedRunReviewLoop(
 	wtPath string,
 	parentSHA string,
 ) ReviewLoopResultExported {
-	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "")
+	// nil runner ⇒ LOCAL run: byte-identical to the pre-remote-substrate path.
+	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", nil)
 	return ReviewLoopResultExported{
 		Success:          r.success,
 		CompletionReason: string(r.completionReason),

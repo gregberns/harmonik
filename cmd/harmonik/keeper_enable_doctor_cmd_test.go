@@ -16,11 +16,12 @@ import (
 // ── enable helpers ────────────────────────────────────────────────────────────
 
 // makeScriptsDir creates a fake scripts directory in the temp dir with
-// zero-byte placeholder files for the three keeper scripts.
+// placeholder files for the keeper scripts (including the SessionStart hook,
+// hk-8prq).
 func makeScriptsDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"keeper-statusline.sh", "keeper-stop-hook.sh", "keeper-precompact-hook.sh"} {
+	for _, name := range []string{"keeper-statusline.sh", "keeper-stop-hook.sh", "keeper-precompact-hook.sh", "keeper-sessionstart-hook.sh"} {
 		p := filepath.Join(dir, name)
 		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatalf("makeScriptsDir: write %s: %v", name, err)
@@ -447,7 +448,8 @@ func makeDoctorCfg(t *testing.T, agent string) (doctorConfig, func()) {
 	return cfg, cleanup
 }
 
-// writeFullSettings writes a settings.json with all three keeper stanzas.
+// writeFullSettings writes a settings.json with all keeper stanzas
+// (statusLine + Stop + PreCompact + SessionStart).
 // agent is unused in the command strings — hk-nm32w removed agent from commands.
 // ON-058b: statusLine is project-agnostic (no HARMONIK_PROJECT= prefix).
 // ON-058a: Stop/PreCompact hooks carry HARMONIK_PROJECT= for project-keyed dedup.
@@ -457,9 +459,11 @@ func writeFullSettings(t *testing.T, settingsPath, projectDir, scriptsDir, _ str
 	statusLineCmd := filepath.Join(scriptsDir, "keeper-statusline.sh")
 	stopCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-stop-hook.sh")
 	pcCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-precompact-hook.sh")
+	ssCmd := "HARMONIK_PROJECT=" + projectDir + " " + filepath.Join(scriptsDir, "keeper-sessionstart-hook.sh")
 	mergeStatusLineStanza(settings, statusLineCmd)
 	mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", projectDir, stopCmd)
 	mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", projectDir, pcCmd)
+	mergeHookStanza(settings, "SessionStart", "keeper-sessionstart-hook.sh", projectDir, ssCmd)
 	raw, _ := json.MarshalIndent(settings, "", "  ")
 	if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
 		t.Fatalf("writeFullSettings: %v", err)

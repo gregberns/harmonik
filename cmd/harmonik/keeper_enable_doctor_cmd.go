@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/keeper"
 )
 
 // knownLiveAgents are production agents where an accidental /clear cycle could
@@ -170,6 +172,7 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 		"keeper-statusline.sh",
 		"keeper-stop-hook.sh",
 		"keeper-precompact-hook.sh",
+		"keeper-sessionstart-hook.sh",
 	}
 	for _, name := range requiredScripts {
 		p := filepath.Join(cfg.scriptsDir, name)
@@ -216,15 +219,26 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 	precompactHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
 		cfg.projectDir,
 		filepath.Join(cfg.scriptsDir, "keeper-precompact-hook.sh"))
+	// SessionStart hook (hk-8prq): same project-keyed, agent-free command shape
+	// as Stop/PreCompact — HARMONIK_PROJECT= for ON-058a dedup, NO literal
+	// HARMONIK_AGENT= (the script derives the agent from the inherited env / tmux
+	// name, avoiding the hk-67k ctx-pollution regression). Provisioning the hook
+	// here is what makes the single-writer <agent>.sid channel exist for EVERY
+	// keeper-managed session.
+	sessionStartHookCmd := fmt.Sprintf("HARMONIK_PROJECT=%s %s",
+		cfg.projectDir,
+		filepath.Join(cfg.scriptsDir, "keeper-sessionstart-hook.sh"))
 
 	// Merge stanzas (idempotent).
 	statusLineAction := mergeStatusLineStanza(settings, statusLineCmd)
 	stopAction := mergeHookStanza(settings, "Stop", "keeper-stop-hook.sh", cfg.projectDir, stopHookCmd)
 	precompactAction := mergeHookStanza(settings, "PreCompact", "keeper-precompact-hook.sh", cfg.projectDir, precompactHookCmd)
+	sessionStartAction := mergeHookStanza(settings, "SessionStart", "keeper-sessionstart-hook.sh", cfg.projectDir, sessionStartHookCmd)
 
 	fmt.Fprintf(stdout, "keeper enable: statusLine     — %s\n", statusLineAction)
 	fmt.Fprintf(stdout, "keeper enable: Stop hook      — %s\n", stopAction)
 	fmt.Fprintf(stdout, "keeper enable: PreCompact hook — %s\n", precompactAction)
+	fmt.Fprintf(stdout, "keeper enable: SessionStart hook — %s\n", sessionStartAction)
 
 	// Write updated settings.json.
 	if err := writeGlobalSettings(cfg.settingsPath, settings); err != nil {
@@ -462,6 +476,23 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// 4b. SessionStart hook present for THIS project (hk-8prq). A keeper-managed
+	// session WITHOUT this hook produces no <agent>.sid, so the keeper silently
+	// degrades to the fallback identity path — flag it so the provisioning gap is
+	// visible. (Matched on the (basename, HARMONIK_PROJECT=<projectDir>) pair.)
+	{
+		if !settingsPresent {
+			check("SessionStart hook", false, "settings.json absent — run: harmonik keeper enable "+cfg.agentName+" ...")
+		} else {
+			found, _ := findHookForScript(settings, "SessionStart", "keeper-sessionstart-hook.sh", cfg.projectDir)
+			if !found {
+				check("SessionStart hook", false, "keeper-sessionstart-hook.sh not found in hooks.SessionStart for this project — single-writer .sid channel will be absent; run: harmonik keeper enable "+cfg.agentName+" ...")
+			} else {
+				check("SessionStart hook", true, "keeper-sessionstart-hook.sh wired (single-writer .sid channel)")
+			}
+		}
+	}
+
 	// 5. Gauge freshness: has <agent>.ctx been written?
 	{
 		ctxPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".ctx")
@@ -475,6 +506,34 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 			} else {
 				check("gauge", true, fmt.Sprintf(".ctx fresh (%s old)", formatAge(age)))
 			}
+		}
+	}
+
+	// 5b. .sid channel: has the SessionStart hook written <agent>.sid, and is it
+	// a well-formed primary id? (hk-8prq) Absent or malformed → the keeper is on
+	// the FALLBACK identity path (not an error, but flagged so the operator can
+	// confirm the SessionStart hook is provisioned and has fired). When present
+	// and well-formed, report its age and whether it AGREES with the gauge's
+	// session_id — a disagreement is the value-drift signal a time-based TTL
+	// cannot capture (the hook writes .sid only at session boundaries).
+	{
+		sid, sidMod, sidErr := keeper.ReadSessionIDFile(cfg.projectDir, cfg.agentName)
+		sidPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".sid")
+		switch {
+		case sidErr != nil:
+			check("sid channel", false, fmt.Sprintf(".sid absent (%s) — SessionStart hook has not fired yet; keeper is on the FALLBACK (latch) identity path", sidPath))
+		case !keeper.IsPrimarySID(sid):
+			check("sid channel", false, fmt.Sprintf(".sid present but not a primary session id (%q) — keeper is on the FALLBACK identity path", sid))
+		default:
+			msg := fmt.Sprintf(".sid present and well-formed (%s old)", formatAge(time.Since(sidMod)))
+			// Cross-check against the gauge's authoritative-or-fallback id. Since
+			// ReadCtxFile applies the .sid override, agreement here means the gauge
+			// either carries the same id or was overridden — a mismatch can only
+			// arise if the gauge held a different id the override rejected.
+			if cf, _, ctxErr := keeper.ReadCtxFile(cfg.projectDir, cfg.agentName); ctxErr == nil && cf.SessionID != "" && cf.SessionID != sid {
+				msg += fmt.Sprintf("; WARNING: gauge session_id %q differs — possible drift", cf.SessionID)
+			}
+			check("sid channel", true, msg)
 		}
 	}
 
@@ -923,7 +982,7 @@ FLAGS
 WHAT IT DOES
   1. Validates agent name and (without --yes-destructive) refuses known live agents
   2. Backs up existing ~/.claude/settings.json
-  3. Merges statusLine, Stop hook, PreCompact hook stanzas — idempotent, normalizes env-var names
+  3. Merges statusLine, Stop, PreCompact, and SessionStart hook stanzas — idempotent, normalizes env-var names
   4. Seeds HANDOFF-<agent>.md at --project if absent
   5. Validates --tmux pane exists (if --tmux is provided)
   6. If --yes-destructive: creates .harmonik/keeper/<agent>.managed (LIVE handoff consent)
@@ -956,7 +1015,9 @@ CHECKS (all read-only; no filesystem mutations)
   statusLine     keeper-statusline.sh wired in ~/.claude/settings.json
   Stop hook      keeper-stop-hook.sh wired in hooks.Stop
   PreCompact     keeper-precompact-hook.sh wired in hooks.PreCompact
+  SessionStart   keeper-sessionstart-hook.sh wired in hooks.SessionStart (.sid channel)
   gauge          .harmonik/keeper/<agent>.ctx exists and is fresh (<5 min)
+  sid channel    .harmonik/keeper/<agent>.sid present and a well-formed primary id
   idle marker    .harmonik/keeper/<agent>.idle has been written (Stop hook fired)
   managed        .harmonik/keeper/<agent>.managed present (handoff cycle live)
   api-key-risk   ANTHROPIC_API_KEY not set in environment

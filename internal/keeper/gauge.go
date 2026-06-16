@@ -46,5 +46,18 @@ func ReadCtxFile(projectDir, agent string) (*CtxFile, time.Time, error) {
 	if err := json.Unmarshal(raw, &cf); err != nil {
 		return nil, time.Time{}, fmt.Errorf("keeper: parse ctx file %q: %w", path, err)
 	}
+	// PRIMARY identity source (hk-8prq): the SessionStart hook writes the live
+	// session_id to the single-writer <agent>.sid channel the daemon never
+	// touches. When present and well-formed it OVERRIDES the gauge's session_id
+	// — the gauge remains the source for pct/tokens, but .sid is authoritative
+	// for identity, removing the multi-writer ambiguity that the watcher's
+	// latch/UUIDv7/uppercase heuristics work around. When .sid is absent or
+	// malformed, cf.SessionID keeps the gauge value (the FALLBACK path; the
+	// heuristics still apply). Centralising the override here means BOTH the
+	// watcher loop AND the cycler's waitForNewSessionID (which read through this
+	// function / the default ReadGaugeFn) pick up the authoritative id.
+	if sid, _, sidErr := ReadSessionIDFile(projectDir, agent); sidErr == nil && isPrimarySID(sid) {
+		cf.SessionID = sid
+	}
 	return &cf, stat.ModTime(), nil
 }

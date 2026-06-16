@@ -265,6 +265,13 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// printer — prints the first 12 hex chars of SHA-256(realpath(project_root))
 	// and exits 0. No daemon connection, no state mutation, no run impact.
 	"project-hash": "process-lifecycle.md §4.2 PL-031; read-only project hash, no run impact",
+	// flywheel V6 (hk-owz1): ephemeral goal-keeper that reads operator comms
+	// since the last_event_id cursor and rewrites .harmonik/intent/goal-state.json.
+	// No daemon connection, no run abort, no in-flight state mutation. Fired
+	// on idle-triggered realign by the Pi dispatcher (NOT a clock timer).
+	// Authorised by operator-nfr.md §4.9 ON-055 (offline state file mutation,
+	// observation-only impact on in-flight runs).
+	"goal-keeper": "operator-nfr.md §4.9 ON-055; offline goal-state update, no in-flight run abort",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled

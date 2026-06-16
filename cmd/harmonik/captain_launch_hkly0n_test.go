@@ -7,6 +7,7 @@ package main
 // non-UUIDv4 --session-id. Helpers carry the hkly0n suffix per test-hygiene.
 
 import (
+	"io"
 	"os/exec"
 	"testing"
 
@@ -22,6 +23,11 @@ func captureRunHkly0n() (run captainLaunchRunFn, captured **exec.Cmd) {
 		return nil
 	}, &got
 }
+
+// noopKeeperHkly0n is a keeper-enable seam that records nothing and reports
+// success. The hkly0n launcher tests assert tmux argv, not keeper wiring, so a
+// no-op keeper keeps them from touching the real ~/.claude/settings.json.
+func noopKeeperHkly0n(_ enableConfig, _, _ io.Writer) int { return 0 }
 
 // argvHkly0n returns the captured command's full argv (cmd.Args), or nil.
 func argvHkly0n(cmd *exec.Cmd) []string {
@@ -43,7 +49,7 @@ func flagValueHkly0n(argv []string, flag string) string {
 
 func TestCaptainLaunch_MintsUUIDv4AndBuildsArgv_hkly0n(t *testing.T) {
 	run, captured := captureRunHkly0n()
-	code := runCaptainLaunch([]string{"--project", t.TempDir()}, run)
+	code := runCaptainLaunch([]string{"--project", t.TempDir()}, run, noopKeeperHkly0n)
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0", code)
 	}
@@ -85,7 +91,7 @@ func TestCaptainLaunch_HonorsNameAndTmuxFlags_hkly0n(t *testing.T) {
 	run, captured := captureRunHkly0n()
 	code := runCaptainLaunch([]string{
 		"--name", "skipper", "--tmux", "cap-pane", "--project", t.TempDir(),
-	}, run)
+	}, run, noopKeeperHkly0n)
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0", code)
 	}
@@ -104,7 +110,7 @@ func TestCaptainLaunch_HonorsNameAndTmuxFlags_hkly0n(t *testing.T) {
 func TestCaptainLaunch_AcceptsValidSessionID_hkly0n(t *testing.T) {
 	const want = "11111111-2222-4333-8444-555555555555" // canonical lowercase UUIDv4
 	run, captured := captureRunHkly0n()
-	code := runCaptainLaunch([]string{"--session-id", want, "--project", t.TempDir()}, run)
+	code := runCaptainLaunch([]string{"--session-id", want, "--project", t.TempDir()}, run, noopKeeperHkly0n)
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0", code)
 	}
@@ -123,7 +129,7 @@ func TestCaptainLaunch_RejectsNonUUIDv4_hkly0n(t *testing.T) {
 	for label, sid := range cases {
 		t.Run(label, func(t *testing.T) {
 			run, captured := captureRunHkly0n()
-			code := runCaptainLaunch([]string{"--session-id", sid, "--project", t.TempDir()}, run)
+			code := runCaptainLaunch([]string{"--session-id", sid, "--project", t.TempDir()}, run, noopKeeperHkly0n)
 			if code != 1 {
 				t.Fatalf("runCaptainLaunch(%q) exit = %d, want 1", sid, code)
 			}

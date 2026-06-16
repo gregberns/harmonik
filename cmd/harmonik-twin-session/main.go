@@ -67,6 +67,20 @@ type config struct {
 	startTokens int64
 	window      int64
 	model       string
+
+	// emitNA makes every statusLine carry a non-numeric used_percentage ("NA")
+	// instead of a derived number, modeling the transient post-/clear statusLine
+	// real Claude Code emits. keeper-statusline.sh's numeric guard then SKIPS the
+	// .ctx write (scripts/keeper-statusline.sh line ~69), so the gauge file never
+	// advances. Test-only knob; NO production behavior change.
+	emitNA bool
+
+	// suppressAfter, when > 0, stops the twin emitting statusLine JSON once this
+	// much wall-clock has elapsed since the emitter started. The idle hook and
+	// token growth keep running, so the session stays alive while its gauge .ctx
+	// goes STALE — the input the keeper's gauge-liveness / force-restart paths
+	// need. 0 (the default) never suppresses. Test-only knob; NO production change.
+	suppressAfter time.Duration
 }
 
 // twinState is the mutable state shared between the emitter goroutine and the
@@ -81,6 +95,8 @@ type twinState struct {
 	window      int64
 	model       string
 	startTokens int64
+	// emitNA forces a non-numeric used_percentage in every emit (see config).
+	emitNA bool
 
 	// handoffPath is the file the keeper polls for the nonce — the twin writes
 	// the verbatim nonce line here on a /session-handoff. Project root,
@@ -119,6 +135,22 @@ func run(args []string) int {
 
 	st := newState(cfg)
 
+	// suppressDeadline is the wall-clock instant after which statusLine emits
+	// stop (--suppress-statusline-after). Zero means never. Computed once and
+	// shared by BOTH the emitter goroutine and the REPL re-emit so the gauge
+	// .ctx goes stale consistently across both paths. The idle hook and token
+	// growth keep running, so the session stays alive while its gauge ages out.
+	var suppressDeadline time.Time
+	if cfg.suppressAfter > 0 {
+		suppressDeadline = time.Now().Add(cfg.suppressAfter)
+	}
+	emit := func(j []byte) {
+		if statuslineSuppressed(suppressDeadline, time.Now()) {
+			return
+		}
+		runStatusline(cfg, j)
+	}
+
 	// Emitter goroutine: pipe statusLine JSON to the script + fire the idle hook
 	// on a fixed cadence, growing tokens so the gauge crosses keeper thresholds.
 	done := make(chan struct{})
@@ -128,7 +160,7 @@ func run(args []string) int {
 		defer ticker.Stop()
 		for range ticker.C {
 			j := st.buildStatusJSON()
-			runStatusline(cfg, j)
+			emit(j)
 			runIdleHook(cfg)
 			st.grow(cfg.growth)
 		}
@@ -142,8 +174,10 @@ func run(args []string) int {
 		line := sc.Text()
 		if changed := st.handleLine(line); changed {
 			// Re-emit immediately so a /clear's new session_id / reset tokens
-			// reach the gauge without waiting a full tick, then mark idle.
-			runStatusline(cfg, st.buildStatusJSON())
+			// reach the gauge without waiting a full tick, then mark idle. Honors
+			// the suppression deadline so a suppressed gauge stays stale even
+			// across a /clear.
+			emit(st.buildStatusJSON())
 		}
 		// Every handled line is an await-input boundary.
 		runIdleHook(cfg)
@@ -163,6 +197,8 @@ func parseFlags(args []string) (config, error) {
 	fs.Int64Var(&cfg.startTokens, "start-tokens", 10000, "initial token count (and post-/clear reset value)")
 	fs.Int64Var(&cfg.window, "window", 0, "context window size; 0 omits context_window_size from the JSON (the [1m] quirk)")
 	fs.StringVar(&cfg.model, "model", "claude-opus-4-8 [1m]", "model id reported in the statusLine JSON")
+	fs.BoolVar(&cfg.emitNA, "emit-na", false, "emit a non-numeric used_percentage (\"NA\") so the statusLine script skips the .ctx write (models the post-/clear NA statusLine)")
+	fs.DurationVar(&cfg.suppressAfter, "suppress-statusline-after", 0, "stop emitting statusLine JSON after this much elapsed time so the gauge .ctx goes stale; 0 never suppresses (idle hook + growth keep running)")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
 	}
@@ -186,6 +222,7 @@ func newState(cfg config) *twinState {
 		window:      cfg.window,
 		model:       cfg.model,
 		startTokens: cfg.startTokens,
+		emitNA:      cfg.emitNA,
 		handoffPath: handoffFilePath(cfg.project, cfg.agent),
 		seen:        make(map[string]bool),
 	}
@@ -210,6 +247,7 @@ type statusSnapshot struct {
 	sessionID string
 	window    int64
 	model     string
+	emitNA    bool
 }
 
 // statusJSON is the shape marshaled to the statusLine script's stdin. The field
@@ -231,8 +269,10 @@ type statusJSON struct {
 }
 
 type contextWindow struct {
-	UsedPercentage   float64 `json:"used_percentage"`
-	TotalInputTokens int64   `json:"total_input_tokens"`
+	// Raw so the builder can emit EITHER a derived number (the normal path) or
+	// the non-numeric literal "NA" (--emit-na) under the same struct/field path.
+	UsedPercentage   json.RawMessage `json:"used_percentage"`
+	TotalInputTokens int64           `json:"total_input_tokens"`
 	// Nested fallback path the script also checks
 	// (.context_window.context_window_size). Omitted when window==0.
 	ContextWindowSize *int64 `json:"context_window_size,omitempty"`
@@ -248,6 +288,7 @@ func (s *twinState) buildStatusJSON() []byte {
 		sessionID: s.sessionID,
 		window:    s.window,
 		model:     s.model,
+		emitNA:    s.emitNA,
 	}
 	s.mu.Unlock()
 	return marshalStatusJSON(snap)
@@ -259,13 +300,24 @@ func (s *twinState) buildStatusJSON() []byte {
 // gates on pct alone, so we report 0 (the keeper's pct fallback uses the absolute
 // pct field, which the script copies through verbatim).
 func marshalStatusJSON(snap statusSnapshot) []byte {
-	pct := 0.0
-	if snap.window > 0 {
-		pct = 100.0 * float64(snap.tokens) / float64(snap.window)
+	// used_percentage is either the non-numeric literal "NA" (--emit-na, models
+	// the post-/clear statusLine the script's numeric guard rejects) or a derived
+	// number. Both travel through the SAME field path so downstream beads need no
+	// second emit shape.
+	var pctRaw json.RawMessage
+	if snap.emitNA {
+		pctRaw = json.RawMessage(`"NA"`)
+	} else {
+		pct := 0.0
+		if snap.window > 0 {
+			pct = 100.0 * float64(snap.tokens) / float64(snap.window)
+		}
+		// json.Marshal of a finite float never fails.
+		pctRaw, _ = json.Marshal(pct) //nolint:errcheck
 	}
 	js := statusJSON{
 		ContextWindow: contextWindow{
-			UsedPercentage:   pct,
+			UsedPercentage:   pctRaw,
 			TotalInputTokens: snap.tokens,
 		},
 		SessionID: snap.sessionID,
@@ -429,6 +481,14 @@ func newUUIDv4() string {
 	b[8] = (b[8] & 0x3f) | 0x80 // RFC-4122 variant
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// statuslineSuppressed reports whether statusLine emits should be suppressed at
+// now: true once now is at/after the deadline. A zero deadline (the default,
+// --suppress-statusline-after unset/0) never suppresses. Pure so the gating
+// logic is unit-testable without wall-clock or tmux.
+func statuslineSuppressed(deadline, now time.Time) bool {
+	return !deadline.IsZero() && !now.Before(deadline)
 }
 
 // isBlank reports whether the line is empty or whitespace-only.

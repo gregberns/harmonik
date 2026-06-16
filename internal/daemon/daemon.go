@@ -1263,6 +1263,23 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		}
 	}
 
+	// hk-9ptu: proactive keepalive for the daemon-owned spawn-target session.
+	//
+	// On supervisor-revive (DaemonWatchdog path), the daemon falls back to the
+	// deterministic "harmonik-<hash>-default" session (needEnsureSession=true in
+	// main.go) and marks the substrate with WithSessionKeepalive.  A background
+	// goroutine then periodically calls EnsureSession so the session is recreated
+	// if it is killed externally between dispatches — complementing the reactive
+	// hk-yaj self-heal in SpawnWindow that only fires when a SpawnWindow call
+	// actually hits ErrNoSession.
+	//
+	// For the normal "live ambient session" path (needEnsureSession=false in
+	// main.go) WithSessionKeepalive is NOT passed, so keepaliveEnabled=false and
+	// RunSessionKeepalive returns immediately (no-op goroutine).
+	if sk, ok := cfg.Substrate.(substrateWithKeepalive); ok {
+		go sk.RunSessionKeepalive(ctx)
+	}
+
 	// Step 4 (hk-ecrxy): register adapters and launch the work loop.
 	//
 	// AdapterRegistry: construct, register ClaudeCodeAdapter for core.AgentTypeClaudeCode,

@@ -930,6 +930,22 @@ EXAMPLES
 	// reviewer sessions per in-flight bead.
 	maxSessions := spawnCapFromEnv(maxConcurrentFlag)
 
+	// hk-9ptu: build substrate options; add session keepalive when the daemon owns
+	// the session (needEnsureSession=true → supervisor-revive or display-message
+	// failure boot path). On this path the daemon is responsible for keeping the
+	// "-default" session alive for its entire lifetime. The keepalive goroutine
+	// complements the reactive hk-yaj ErrNoSession self-heal in SpawnWindow by
+	// proactively recreating the session between dispatches so a killed session
+	// does not cause a fleet-wide launch_initiated outage.
+	substrateOpts := []daemon.TmuxSubstrateOption{
+		daemon.WithSpawnCap(maxSessions),
+		daemon.WithSpawnStagger(spawnStaggerFlag),                            // hk-hzj: spread concurrent cold-starts; 0 = disabled
+		daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir)), // fleet-portability T2
+	}
+	if needEnsureSession {
+		substrateOpts = append(substrateOpts, daemon.WithSessionKeepalive(0)) // 0 = default 30 s interval
+	}
+
 	cfg := daemon.Config{
 		ProjectDir:    projectDir,
 		BrPath:        brPath,
@@ -937,11 +953,7 @@ EXAMPLES
 		JSONLLogPath:  jsonlLogPath,
 		MaxConcurrent: maxConcurrentFlag,
 		NoAutoPull:    !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
-		Substrate: daemon.NewTmuxSubstrate(tmuxAdapter, sessionName,
-			daemon.WithSpawnCap(maxSessions),
-			daemon.WithSpawnStagger(spawnStaggerFlag),                            // hk-hzj: spread concurrent cold-starts; 0 = disabled
-			daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir)), // fleet-portability T2
-		),
+		Substrate:     daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...),
 		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash:         commitHash,                          // stamped via -ldflags at build time (hk-mz0x4)
 		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (90s)

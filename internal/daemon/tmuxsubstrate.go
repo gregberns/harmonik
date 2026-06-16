@@ -184,6 +184,16 @@ type tmuxSubstrate struct {
 	// per fleet-portability T2: "harmonik-<projectHash>-crew-<name>".
 	// Set via WithCrewProjectHash. Zero value falls back to legacy "hk-crew-<name>".
 	projectHash core.ProjectHash
+
+	// keepaliveEnabled, when true, signals that the daemon owns the spawn-target
+	// session and must keep it alive for its entire lifetime. Set via
+	// WithSessionKeepalive. The daemon calls RunSessionKeepalive as a background
+	// goroutine when this flag is set (hk-9ptu).
+	keepaliveEnabled bool
+
+	// keepaliveInterval is the period between EnsureSession probes in
+	// RunSessionKeepalive. Zero means use defaultSessionKeepaliveInterval.
+	keepaliveInterval time.Duration
 }
 
 // TmuxSubstrateOption is a functional option for NewTmuxSubstrate.
@@ -324,6 +334,82 @@ func WithSpawnStagger(d time.Duration) TmuxSubstrateOption {
 func WithCrewProjectHash(h core.ProjectHash) TmuxSubstrateOption {
 	return func(s *tmuxSubstrate) {
 		s.projectHash = h
+	}
+}
+
+// defaultSessionKeepaliveInterval is the default period between EnsureSession
+// probes in RunSessionKeepalive (hk-9ptu). Short enough that a killed session
+// is recreated well within the 30-min implementer commit budget; long enough
+// that the tmux round-trip overhead is negligible.
+const defaultSessionKeepaliveInterval = 30 * time.Second
+
+// WithSessionKeepalive marks the substrate as owning its spawn-target session
+// and enables the proactive keepalive mechanism (hk-9ptu).
+//
+// When interval > 0 it overrides the default 30 s probe period. Pass 0 to use
+// the default.
+//
+// Call this option ONLY when the daemon owns the session (needEnsureSession=true
+// in main.go — the supervisor-revive or display-message-failure boot path).
+// For the normal "live ambient session" path the session is already managed by
+// the operator's tmux-start/shell and no keepalive is needed.
+//
+// Bead ref: hk-9ptu.
+func WithSessionKeepalive(interval time.Duration) TmuxSubstrateOption {
+	return func(s *tmuxSubstrate) {
+		s.keepaliveEnabled = true
+		if interval > 0 {
+			s.keepaliveInterval = interval
+		}
+	}
+}
+
+// RunSessionKeepalive is the background keepalive loop for the daemon-owned
+// spawn-target session (hk-9ptu). It calls EnsureSession on the adapter at
+// a fixed interval until ctx is cancelled.
+//
+// This is the proactive complement to the reactive hk-yaj ErrNoSession
+// self-heal in SpawnWindow. hk-yaj recovers the session when a SpawnWindow
+// call hits ErrNoSession; RunSessionKeepalive prevents the vulnerability window
+// where the session is dead and no SpawnWindow is in-flight to trigger the
+// self-heal — keeping the session alive between dispatches.
+//
+// It is a no-op when the adapter does not implement sessionEnsurer (no tmux
+// available, test stubs, etc.).
+//
+// daemon.Start starts this as a goroutine when cfg.Substrate implements
+// substrateWithKeepalive (detected via keepaliveEnabled=true, which is set by
+// WithSessionKeepalive).
+//
+// Bead ref: hk-9ptu.
+func (s *tmuxSubstrate) RunSessionKeepalive(ctx context.Context) {
+	if !s.keepaliveEnabled {
+		return // WithSessionKeepalive was not passed; no keepalive for this substrate
+	}
+	se, ok := s.adapter.(sessionEnsurer)
+	if !ok {
+		return // adapter lacks EnsureSession; keepalive is a no-op
+	}
+
+	interval := s.keepaliveInterval
+	if interval <= 0 {
+		interval = defaultSessionKeepaliveInterval
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Idempotent: if the session exists, EnsureSession returns nil
+			// (duplicate-session treated as success). If the session was killed,
+			// EnsureSession recreates it so the next SpawnWindow succeeds without
+			// requiring the hk-yaj retry path.
+			_ = se.EnsureSession(ctx, s.sessionName, "")
+		}
 	}
 }
 
@@ -966,6 +1052,24 @@ type substrateWithSessionName interface {
 // daemonSessionName exposes the session name this substrate spawns windows into,
 // satisfying substrateWithSessionName (hk-9vp51).
 func (s *tmuxSubstrate) daemonSessionName() string { return s.sessionName }
+
+// substrateWithKeepalive is an optional interface a Substrate may implement to
+// expose a background keepalive loop for its daemon-owned spawn-target session
+// (hk-9ptu). daemon.Start probes cfg.Substrate for this interface after the
+// boot orphan sweep and starts RunSessionKeepalive as a goroutine when found.
+//
+// Only tmuxSubstrate instances built with WithSessionKeepalive satisfy this
+// interface (keepaliveEnabled=true). Normal "live ambient session" substrates
+// do not implement it — their session is managed by the operator's shell.
+type substrateWithKeepalive interface {
+	RunSessionKeepalive(ctx context.Context)
+}
+
+// Compile-time assertion: *tmuxSubstrate always satisfies substrateWithKeepalive.
+// RunSessionKeepalive is a no-op when keepaliveEnabled=false (WithSessionKeepalive
+// was not passed), so daemon.Start can unconditionally start the goroutine for
+// any *tmuxSubstrate — it exits immediately for the non-keepalive path.
+var _ substrateWithKeepalive = (*tmuxSubstrate)(nil)
 
 // KillAllWindows kills every tmux window spawned by this daemon instance.
 //

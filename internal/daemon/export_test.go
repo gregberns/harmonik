@@ -135,6 +135,17 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-bfvk7.
 	ProjectCfg ProjectConfig
 
+	// HarnessRegistry, when non-nil, is forwarded into workLoopDeps.harnessRegistry
+	// as the per-agent-type Harness route table. When nil, harnessRegistry is left
+	// nil in workLoopDeps — the completion-mode check defaults to
+	// CompletionEventStreamThenQuit (backward-compat: waitAgentReady always runs).
+	//
+	// Supply a non-nil value to exercise the hk-f6g7 ProcessExit-skips-waitAgentReady
+	// path (codex harness) without using the production newHarnessRegistry wiring.
+	//
+	// Bead ref: hk-f6g7.
+	HarnessRegistry *handlercontract.HarnessRegistry
+
 	// LaunchSpecBuilder, when non-nil, overrides the buildClaudeLaunchSpec
 	// function called by beadRunOne. When nil, the production buildClaudeLaunchSpec
 	// is used (via the nil-guard in beadRunOne). Tests that use this path must
@@ -375,6 +386,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		launchSpecBuilder:         lsb,
 		worktreeFactory:           wtf,
 		adapterRegistry:           p.AdapterRegistry2,
+		harnessRegistry:           p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
 		substrate:                 p.Substrate,
 		agentReadyTimeout:         p.AgentReadyTimeout,
 		postAgentReadyHangTimeout: p.PostAgentReadyHangTimeout,
@@ -2102,6 +2114,35 @@ var ExportedNewClaudeHarness = NewClaudeHarness
 // Bead ref: hk-hj9ld.
 func ExportedNewHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
 	return newHarnessRegistry()
+}
+
+// ExportedCodexProcessExitLaunchSpecBuilder returns a launchSpecBuilder that
+// produces a handler.LaunchSpec for the provided shell script and stamps
+// resolvedAgentType = core.AgentTypeCodex on the returned artifacts.
+//
+// Use in tests that exercise the hk-f6g7 ProcessExit-skips-waitAgentReady gate:
+// wire AdapterRegistry2 with RegisterCodex and HarnessRegistry from
+// ExportedNewHarnessRegistry, then supply this builder so beadRunOne looks up
+// the codex adapter + harness (Completion() == CompletionProcessExit).
+//
+// The script is expected to run in the worktree directory (handler.LaunchSpec.WorkDir
+// = claudeRunCtx.workspacePath).  It MUST make a "Refs: <beadID>" git commit and
+// exit 0; it MUST NOT emit agent_ready.
+//
+// Bead ref: hk-f6g7.
+func ExportedCodexProcessExitLaunchSpecBuilder(scriptPath string) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+		spec := handler.LaunchSpec{
+			Binary:  "/bin/sh",
+			Args:    []string{scriptPath},
+			WorkDir: rc.workspacePath,
+			Role:    string(rc.phase),
+		}
+		arts := claudeRunArtifacts{
+			resolvedAgentType: core.AgentTypeCodex,
+		}
+		return spec, arts, nil
+	}
 }
 
 // ExportedRoutedLaunchSpecBuilder exposes routedLaunchSpecBuilder for tests in

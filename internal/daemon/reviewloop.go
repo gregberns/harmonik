@@ -548,80 +548,96 @@ func runReviewLoop(
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(%s) implementer bead %s iter %d: %v (skipping ready-wait)\n",
 				artifactAgentType(implArtifacts), beadID, state.iterationCount, implAdapterErr)
 		} else {
-			// Derive a child context that cancels when the implementer watcher
-			// finishes (handler exit), preventing a full-timeout block on crash.
-			//
-			// Substrate path: implWatcher is nil when deps.substrate != nil
-			// (tmux-hosted sessions return nil from handler.launchViaSubstrate).
-			// Skip the watcher-done goroutine in that case — readyCtx is still
-			// valid and will be cancelled by the outer ctx or readyCancel below.
-			// Bead ref: hk-yjduq.
-			implReadyCtx, implReadyCancel := context.WithCancel(ctx)
-			if implWatcher != nil {
-				go func() {
-					select {
-					case <-implWatcher.Done():
-						implReadyCancel()
-					case <-implReadyCtx.Done():
-					}
-				}()
+			// hk-f6g7: skip waitAgentReady for ProcessExit harnesses (codex). These
+			// self-terminate on turn completion and never emit agent_ready; calling
+			// waitAgentReady unconditionally caused HC-056 timeout in all workflow modes.
+			// Spec: specs/harness-contract.md §2 N5.
+			implCompletionMode := handlercontract.CompletionEventStreamThenQuit
+			if deps.harnessRegistry != nil {
+				if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(implArtifacts)); hErr == nil {
+					implCompletionMode = h.Completion()
+				}
 			}
-
-			implEventSrc := newChanAgentEventSource(implTapCh)
-			implReadyErr := waitAgentReady(implReadyCtx, runID, implEventSrc, implAdapter, deps.agentReadyTimeout)
-			implReadyCancel() // always release the watcher-done goroutine above
-			// hk-isq02: the ready-wait has returned — stop the resume-phase fallback
-			// goroutine promptly so it does not emit a stale agent_ready after we have
-			// moved on to paste-inject.
-			resumeReadyFallbackCancel()
-
-			if implReadyErr == ErrAgentReadyTimeout {
-				// HC-056: implementer agent_ready_timeout — kill, reap, error result.
-				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady implementer bead %s iter %d run %s: %v (error)\n",
-					beadID, state.iterationCount, runID.String(), implReadyErr)
-				_ = implSess.Kill(ctx)
+			if implCompletionMode != handlercontract.CompletionProcessExit {
+				// Derive a child context that cancels when the implementer watcher
+				// finishes (handler exit), preventing a full-timeout block on crash.
+				//
+				// Substrate path: implWatcher is nil when deps.substrate != nil
+				// (tmux-hosted sessions return nil from handler.launchViaSubstrate).
+				// Skip the watcher-done goroutine in that case — readyCtx is still
+				// valid and will be cancelled by the outer ctx or readyCancel below.
+				// Bead ref: hk-yjduq.
+				implReadyCtx, implReadyCancel := context.WithCancel(ctx)
 				if implWatcher != nil {
-					select {
-					case <-implWatcher.Done():
-					case <-time.After(agentReadyKillReapTimeout):
-						fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
-							beadID, state.iterationCount, runID.String())
-					}
+					go func() {
+						select {
+						case <-implWatcher.Done():
+							implReadyCancel()
+						case <-implReadyCtx.Done():
+						}
+					}()
 				}
-				_ = implSess.Wait(ctx)
-				if deps.hookStore != nil {
-					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
-				}
-				emitAgentReadyTimeout(ctx, deps.bus, runID, implArtifacts.claudeSessionID, deps.agentReadyTimeout)
-				result := rlErrorResult(fmt.Sprintf("implementer agent_ready_timeout at iteration %d", state.iterationCount))
-				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
-				return result
-			}
-			// implReadyErr == nil (agent_ready observed) OR context.Canceled
-			// (watcher exited first or ctx cancelled). Fall through to paste-inject.
 
-			// hk-a2okh: post-agent_ready hang detector — exec path only.
-			// If agent_ready was observed (not just a context cancel) and we have a
-			// watcher (exec path), subscribe to implTap AFTER agent_ready to watch
-			// for the next event.  If none arrives within postAgentReadyHangTimeout
-			// the session is declared hung and we fail fast.
-			//
-			// tmux path (implWatcher == nil) is intentionally excluded: the only
-			// post-ready signal there would be unconditional daemon heartbeats which
-			// cannot distinguish a hung agent from a working one.
-			if implWatcher != nil && implReadyErr == nil {
-				implHangCh := make(chan struct{})
-				implHangDetectedCh = implHangCh
-				hangCtx, cancelFn := context.WithCancel(ctx)
-				implHangCancel = cancelFn
-				postReadyCh := implTap.Subscribe()
-				go func() {
-					defer cancelFn()
-					if err := waitPostAgentReadyProgress(hangCtx, postReadyCh, deps.postAgentReadyHangTimeout); errors.Is(err, ErrPostAgentReadyHang) {
-						close(implHangCh)
-						_ = implSess.Kill(hangCtx)
+				implEventSrc := newChanAgentEventSource(implTapCh)
+				implReadyErr := waitAgentReady(implReadyCtx, runID, implEventSrc, implAdapter, deps.agentReadyTimeout)
+				implReadyCancel() // always release the watcher-done goroutine above
+				// hk-isq02: the ready-wait has returned — stop the resume-phase fallback
+				// goroutine promptly so it does not emit a stale agent_ready after we have
+				// moved on to paste-inject.
+				resumeReadyFallbackCancel()
+
+				if implReadyErr == ErrAgentReadyTimeout {
+					// HC-056: implementer agent_ready_timeout — kill, reap, error result.
+					fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady implementer bead %s iter %d run %s: %v (error)\n",
+						beadID, state.iterationCount, runID.String(), implReadyErr)
+					_ = implSess.Kill(ctx)
+					if implWatcher != nil {
+						select {
+						case <-implWatcher.Done():
+						case <-time.After(agentReadyKillReapTimeout):
+							fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
+								beadID, state.iterationCount, runID.String())
+						}
 					}
-				}()
+					_ = implSess.Wait(ctx)
+					if deps.hookStore != nil {
+						deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+					}
+					emitAgentReadyTimeout(ctx, deps.bus, runID, implArtifacts.claudeSessionID, deps.agentReadyTimeout)
+					result := rlErrorResult(fmt.Sprintf("implementer agent_ready_timeout at iteration %d", state.iterationCount))
+					emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+					return result
+				}
+				// implReadyErr == nil (agent_ready observed) OR context.Canceled
+				// (watcher exited first or ctx cancelled). Fall through to paste-inject.
+
+				// hk-a2okh: post-agent_ready hang detector — exec path only.
+				// If agent_ready was observed (not just a context cancel) and we have a
+				// watcher (exec path), subscribe to implTap AFTER agent_ready to watch
+				// for the next event.  If none arrives within postAgentReadyHangTimeout
+				// the session is declared hung and we fail fast.
+				//
+				// tmux path (implWatcher == nil) is intentionally excluded: the only
+				// post-ready signal there would be unconditional daemon heartbeats which
+				// cannot distinguish a hung agent from a working one.
+				if implWatcher != nil && implReadyErr == nil {
+					implHangCh := make(chan struct{})
+					implHangDetectedCh = implHangCh
+					hangCtx, cancelFn := context.WithCancel(ctx)
+					implHangCancel = cancelFn
+					postReadyCh := implTap.Subscribe()
+					go func() {
+						defer cancelFn()
+						if err := waitPostAgentReadyProgress(hangCtx, postReadyCh, deps.postAgentReadyHangTimeout); errors.Is(err, ErrPostAgentReadyHang) {
+							close(implHangCh)
+							_ = implSess.Kill(hangCtx)
+						}
+					}()
+				}
+			} else {
+				// CompletionProcessExit: task delivered via argv; no agent_ready handshake.
+				// Cancel the resume-phase fallback goroutine — it is not needed here.
+				resumeReadyFallbackCancel()
 			}
 		}
 

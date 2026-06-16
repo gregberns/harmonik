@@ -1141,40 +1141,55 @@ func dispatchDotAgenticNode(
 		fmt.Fprintf(os.Stderr, "daemon: dot: ForAgent(%s) node %q: %v (skipping ready-wait)\n",
 			artifactAgentType(artifacts), node.ID, adapterErr)
 	} else {
-		readyCtx, readyCancel := context.WithCancel(ctx)
-		if watcher != nil {
-			go func() {
-				select {
-				case <-watcher.Done():
-					readyCancel()
-				case <-readyCtx.Done():
-				}
-			}()
+		// hk-f6g7: skip waitAgentReady for ProcessExit harnesses (codex). These
+		// self-terminate on turn completion and never emit agent_ready; calling
+		// waitAgentReady unconditionally caused HC-056 timeout in all workflow modes.
+		// Mirrors the completionMode gate already applied to the /quit watchdog below
+		// (dot_cascade.go:1213-1233). Spec: specs/harness-contract.md §2 N5.
+		dotCompletionMode := handlercontract.CompletionEventStreamThenQuit
+		if deps.harnessRegistry != nil {
+			if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+				dotCompletionMode = h.Completion()
+			}
 		}
-
-		eventSrc := newChanAgentEventSource(tapCh)
-		readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, deps.agentReadyTimeout)
-		readyCancel() // always release the watcher-done goroutine above
-
-		if readyErr == ErrAgentReadyTimeout {
-			fmt.Fprintf(os.Stderr, "daemon: dot: waitAgentReady node %q run %s: %v (failing node)\n",
-				node.ID, runID.String(), readyErr)
-			_ = sess.Kill(ctx)
+		if dotCompletionMode != handlercontract.CompletionProcessExit {
+			readyCtx, readyCancel := context.WithCancel(ctx)
 			if watcher != nil {
-				select {
-				case <-watcher.Done():
-				case <-time.After(agentReadyKillReapTimeout):
+				go func() {
+					select {
+					case <-watcher.Done():
+						readyCancel()
+					case <-readyCtx.Done():
+					}
+				}()
+			}
+
+			eventSrc := newChanAgentEventSource(tapCh)
+			readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, deps.agentReadyTimeout)
+			readyCancel() // always release the watcher-done goroutine above
+
+			if readyErr == ErrAgentReadyTimeout {
+				fmt.Fprintf(os.Stderr, "daemon: dot: waitAgentReady node %q run %s: %v (failing node)\n",
+					node.ID, runID.String(), readyErr)
+				_ = sess.Kill(ctx)
+				if watcher != nil {
+					select {
+					case <-watcher.Done():
+					case <-time.After(agentReadyKillReapTimeout):
+					}
 				}
+				_ = sess.Wait(ctx)
+				if deps.hookStore != nil {
+					deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
+				}
+				emitAgentReadyTimeout(ctx, deps.bus, runID, artifacts.claudeSessionID, deps.agentReadyTimeout)
+				return core.Outcome{}, fmt.Errorf("node %q agent_ready_timeout", node.ID)
 			}
-			_ = sess.Wait(ctx)
-			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
-			}
-			emitAgentReadyTimeout(ctx, deps.bus, runID, artifacts.claudeSessionID, deps.agentReadyTimeout)
-			return core.Outcome{}, fmt.Errorf("node %q agent_ready_timeout", node.ID)
+			// readyErr == nil (agent_ready observed) OR context.Canceled (watcher
+			// exited first / ctx cancelled). Fall through to paste-inject.
 		}
-		// readyErr == nil (agent_ready observed) OR context.Canceled (watcher
-		// exited first / ctx cancelled). Fall through to paste-inject.
+		// CompletionProcessExit: process self-terminates; fall through directly to
+		// paste-inject (which is a no-op for codex) and waitWithSocketGrace.
 	}
 
 	// Paste-inject + quit-on-commit / quit-on-review-file. These are no-ops when

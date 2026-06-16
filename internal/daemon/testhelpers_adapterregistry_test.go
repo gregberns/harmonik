@@ -53,3 +53,23 @@ func NewEmptySealedAdapterRegistryForTest(t *testing.T) *handlercontract.Adapter
 	_, _ = reg.ForAgent(core.AgentTypeClaudeCode) // seal; ForAgent returns error (no adapter registered)
 	return reg
 }
+
+// NewCodexSealedAdapterRegistryForTest constructs and seals an AdapterRegistry
+// with the CodexAdapter registered under core.AgentTypeCodex.
+//
+// Use in tests that exercise the hk-f6g7 ProcessExit-skips-waitAgentReady gate:
+// the CodexAdapter's DetectReady only fires on agent_ready, so without the
+// hk-f6g7 fix, a codex run would hit HC-056 timeout because codex never emits
+// agent_ready. With the fix, the completion-mode check (harnessRegistry.ForAgent →
+// Completion() == CompletionProcessExit) bypasses waitAgentReady entirely.
+//
+// Bead ref: hk-f6g7.
+func NewCodexSealedAdapterRegistryForTest(t *testing.T) *handlercontract.AdapterRegistry {
+	t.Helper()
+	reg := handlercontract.NewAdapterRegistry()
+	if err := handler.RegisterCodex(reg); err != nil {
+		t.Fatalf("NewCodexSealedAdapterRegistryForTest: RegisterCodex: %v", err)
+	}
+	_, _ = reg.ForAgent(core.AgentTypeCodex) // seal
+	return reg
+}

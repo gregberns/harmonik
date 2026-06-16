@@ -947,13 +947,13 @@ EXAMPLES
 	}
 
 	cfg := daemon.Config{
-		ProjectDir:    projectDir,
-		BrPath:        brPath,
-		KerfPath:      kerfPath, // hk-9321v: kerf next for EM-062/EM-063 eager-refill
-		JSONLLogPath:  jsonlLogPath,
-		MaxConcurrent: maxConcurrentFlag,
-		NoAutoPull:    !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
-		Substrate:     daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...),
+		ProjectDir:               projectDir,
+		BrPath:                   brPath,
+		KerfPath:                 kerfPath, // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		JSONLLogPath:             jsonlLogPath,
+		MaxConcurrent:            maxConcurrentFlag,
+		NoAutoPull:               !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
+		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...),
 		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash:         commitHash,                          // stamped via -ldflags at build time (hk-mz0x4)
 		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (90s)

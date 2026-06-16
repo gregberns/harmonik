@@ -299,6 +299,110 @@ func TestResolveHarnessConflictPayloadShape(t *testing.T) {
 // TestResolveHarnessResultIsValidAgentType
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TestResolveHarnessEmitsHarnessSelected (hk-lr5t)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestResolveHarnessEmitsHarnessSelected verifies that a harness_selected event
+// is emitted for every successful resolution, carrying the correct agent_type
+// and tier. Covers the primary cases from the hk-lr5t deliverable:
+//   - harness:codex label → codex selected (tier 1)
+//   - no label → claude-code selected (tier 4 built-in fallback)
+//   - queue default → tier 2
+//   - global default → tier 4
+func TestResolveHarnessEmitsHarnessSelected(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		beadLabels    []string
+		queueDefault  core.AgentType
+		nodeDefault   core.AgentType
+		globalDefault core.AgentType
+		wantType      core.AgentType
+		wantTier      int
+	}{
+		{
+			name:       "harness:codex label selects codex at tier 1",
+			beadLabels: []string{"harness:codex"},
+			wantType:   core.AgentTypeCodex,
+			wantTier:   1,
+		},
+		{
+			name:     "no label falls to built-in claude-code at tier 4",
+			wantType: core.AgentTypeClaudeCode,
+			wantTier: 4,
+		},
+		{
+			name:         "queue default selects at tier 2",
+			queueDefault: core.AgentTypeCodex,
+			wantType:     core.AgentTypeCodex,
+			wantTier:     2,
+		},
+		{
+			name:          "global default selects at tier 4",
+			globalDefault: core.AgentTypeCodex,
+			wantType:      core.AgentTypeCodex,
+			wantTier:      4,
+		},
+		{
+			name:        "node default selects at tier 3",
+			nodeDefault: core.AgentTypeCodex,
+			wantType:    core.AgentTypeCodex,
+			wantTier:    3,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			bus := &harnessResolveFixtureBus{}
+			bead := harnessResolveFixtureBead(t, tc.beadLabels)
+
+			got := daemon.ExportedResolveHarness(
+				t.Context(), bead,
+				tc.queueDefault, tc.nodeDefault, tc.globalDefault,
+				bus,
+			)
+
+			if got != tc.wantType {
+				t.Errorf("resolveHarness: got %q; want %q", got, tc.wantType)
+			}
+
+			events := harnessResolveFixtureBusEvents(t, bus)
+			var selectedPL *core.HarnessSelectedPayload
+			for _, e := range events {
+				if e.EventType == core.EventTypeHarnessSelected {
+					var pl core.HarnessSelectedPayload
+					if err := json.Unmarshal(e.Payload, &pl); err != nil {
+						t.Fatalf("harness_selected payload unmarshal: %v", err)
+					}
+					selectedPL = &pl
+					break
+				}
+			}
+
+			if selectedPL == nil {
+				t.Fatal("resolveHarness: no harness_selected event emitted")
+			}
+			if !selectedPL.Valid() {
+				t.Errorf("resolveHarness: HarnessSelectedPayload.Valid() = false; payload = %+v", *selectedPL)
+			}
+			if selectedPL.AgentType != string(tc.wantType) {
+				t.Errorf("resolveHarness: harness_selected agent_type = %q; want %q", selectedPL.AgentType, tc.wantType)
+			}
+			if selectedPL.Tier != tc.wantTier {
+				t.Errorf("resolveHarness: harness_selected tier = %d; want %d", selectedPL.Tier, tc.wantTier)
+			}
+			if selectedPL.BeadID != string(bead.BeadID) {
+				t.Errorf("resolveHarness: harness_selected bead_id = %q; want %q", selectedPL.BeadID, bead.BeadID)
+			}
+		})
+	}
+}
+
 // TestResolveHarnessResultIsValidAgentType verifies the resolved value is always
 // a valid core.AgentType (AR-025) regardless of inputs.
 func TestResolveHarnessResultIsValidAgentType(t *testing.T) {

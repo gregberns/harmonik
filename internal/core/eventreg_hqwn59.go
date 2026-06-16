@@ -213,6 +213,11 @@ func registerAgentEvents() {
 	// agent_presence (hk-djqc9, agent-comms spec §1.2): join/refresh/leave presence
 	// beat. Durability class: O (ordinary — TTL projection reconciles crash gaps).
 	mustRegister("agent_presence", func() EventPayload { return &AgentPresencePayload{} })
+	// harness_selected (hk-lr5t): emitted by resolveHarness at dispatch time to
+	// record which harness (agent_type) was chosen and which tier resolved it.
+	// Closes the observability gap where silent claude-code fallback was invisible.
+	// Durability class: O.
+	mustRegister("harness_selected", func() EventPayload { return &HarnessSelectedPayload{} })
 }
 
 // registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.

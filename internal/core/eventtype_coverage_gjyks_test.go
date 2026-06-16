@@ -158,6 +158,9 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeHandlerResumed, func() EventPayload { return &HandlerResumedPayload{} }},
 	{EventTypeQueueItemHeldForHandlerPause, func() EventPayload { return &QueueItemHeldForHandlerPausePayload{} }},
 
+	// hk-lr5t: harness_selected dispatch observability
+	{EventTypeHarnessSelected, func() EventPayload { return &HarnessSelectedPayload{} }},
+
 	// §8.12 Staleness-detection
 	{EventTypeRunStale, func() EventPayload { return &RunStalePayload{} }},
 

@@ -781,3 +781,50 @@ func (p HandlerCapabilitiesPayload) Valid() bool {
 	}
 	return true
 }
+
+// HarnessSelectedPayload is the typed event payload for the harness_selected
+// event (hk-lr5t).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — dispatch-time observability; enables post-hoc
+// audit of which harness was chosen for each bead without re-reading br labels).
+//
+// Emitted by the daemon's resolveHarness path (harnessresolve.go) immediately
+// after the four-tier precedence walk returns. The event fills the observability
+// gap noted in hk-lr5t: before this event, nothing in events.jsonl showed which
+// harness was chosen, making silent claude-code fallbacks invisible.
+//
+// # Payload fields
+//
+//   - bead_id   — opaque bead identifier per beads-integration.md §4.3 BI-008
+//   - agent_type — the resolved harness identifier (AR-025); e.g. "codex", "claude-code"
+//   - tier      — which tier resolved the harness: 1=per-bead label, 2=queue default,
+//     3=DOT node attribute, 4=global config / built-in fallback
+type HarnessSelectedPayload struct {
+	// BeadID is the opaque bead identifier per beads-integration.md §4.3 BI-008.
+	// Required (non-empty).
+	BeadID string `json:"bead_id"`
+
+	// AgentType is the resolved harness identifier (AR-025).
+	// Required (non-empty, valid per AR-025 regex).
+	AgentType string `json:"agent_type"`
+
+	// Tier is the precedence tier that resolved the harness.
+	// 1 = per-bead harness:<agent-type> label
+	// 2 = per-queue harness default (stub until hk-4x3rg)
+	// 3 = DOT node harness attribute (stub until hk-u67of)
+	// 4 = global Config.DefaultHarness or built-in fallback (claude-code)
+	// Required (must be 1–4).
+	Tier int `json:"tier"`
+}
+
+// Valid reports whether p is a well-formed HarnessSelectedPayload.
+//
+// Rules:
+//   - BeadID must be non-empty.
+//   - AgentType must be non-empty.
+//   - Tier must be in [1, 4].
+func (p HarnessSelectedPayload) Valid() bool {
+	return p.BeadID != "" && p.AgentType != "" && p.Tier >= 1 && p.Tier <= 4
+}

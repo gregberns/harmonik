@@ -1461,8 +1461,15 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				//
 				//   blocked (hk-n91y0): deps-blocked beads fall through to Phase 3
 				//     and ClaimBead, where the dedicated guard handles them.
+				//
+				// hk-lr5t: preClaimRecord is declared outside the anonymous block so
+				// its labels/title/description are available at beadRecord construction
+				// below (line ~1658). This avoids a second ShowBead round-trip for the
+				// most common case; the post-claim ShowBead at ~line 1954 refreshes if
+				// anything changed between the pre-claim read and the claim write.
+				var preClaimRecord core.BeadRecord
 				{
-					preClaimRecord, preClaimErr := deps.brAdapter.ShowBead(ctx, snapItemBeadID)
+					rec, preClaimErr := deps.brAdapter.ShowBead(ctx, snapItemBeadID)
 					if preClaimErr != nil {
 						if dispatchCtx.Err() != nil {
 							return exitClean()
@@ -1473,6 +1480,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						}
 						continue
 					}
+					preClaimRecord = rec
 					if preClaimRecord.Status != core.CoarseStatusOpen && preClaimRecord.Status != core.CoarseStatusBlocked {
 						// BI-013c: non-open status observed — skip claim, emit
 						// bead_claim_skipped, set item to deferred-for-ledger-dep.
@@ -1655,7 +1663,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					lq.Done()
 				}
 
-				beadRecord = core.BeadRecord{BeadID: snapItemBeadID}
+				// hk-lr5t: initialize beadRecord with the pre-claim ShowBead result so
+				// labels (harness:<agent-type>, workflow:<mode>, model:<alias>, etc.)
+				// are available to resolveHarness and resolveWorkflowMode even when
+				// the post-claim ShowBead below fails. The post-claim ShowBead at
+				// ~line 1954 refreshes these fields after claim and remains the
+				// authoritative source; this initialization closes the label-load gap
+				// where a post-claim ShowBead failure left Labels=nil, causing
+				// resolveHarness to fall through to the claude-code built-in fallback
+				// despite a harness:codex label on the bead (root cause of hk-lr5t).
+				beadRecord = core.BeadRecord{
+					BeadID:      snapItemBeadID,
+					Labels:      preClaimRecord.Labels,
+					Title:       preClaimRecord.Title,
+					Description: preClaimRecord.Description,
+				}
 				queueItemIndex = snapItemIdx
 				capturedQueueName = snapQueueName // NQ-B1: tag the run with its queue
 				qID := snapQueueID

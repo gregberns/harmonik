@@ -681,6 +681,16 @@ const (
 	// bead status between the dispatcher's selection of a queue item and the
 	// claim write to Beads. Carries bead_id, observed_status, and reason.
 	EventTypeBeadClaimSkipped EventType = "bead_claim_skipped"
+
+	// EventTypeHarnessSelected is the harness_selected event type (hk-lr5t).
+	// Durability class: O (ordinary — dispatch-time observability; today nothing
+	// shows which harness was chosen, making codex routing silent failures hard to
+	// diagnose).
+	//
+	// Emitted by the daemon's resolveHarness path immediately after the four-tier
+	// precedence walk returns. Carries bead_id, agent_type, and the tier that
+	// resolved it (1=per-bead label, 2=queue default, 3=DOT node, 4=global/fallback).
+	EventTypeHarnessSelected EventType = "harness_selected"
 )
 
 // ---------------------------------------------------------------------------

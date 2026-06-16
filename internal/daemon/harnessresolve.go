@@ -18,11 +18,17 @@ package daemon
 // colon MUST satisfy core.AgentType.Valid() (AR-025). Unknown or malformed values
 // are treated as absent and a bead_label_conflict event is emitted.
 //
+// After each successful resolution, a harness_selected event is emitted (hk-lr5t)
+// carrying bead_id, agent_type, and the resolving tier (1–4). This closes the
+// observability gap: previously nothing in events.jsonl showed which harness was
+// chosen, making silent claude-code fallbacks invisible.
+//
 // Spec ref: codex-harness design, C4-selection-spec.
-// Bead: hk-y01k6 [C4/T4]
+// Bead: hk-y01k6 [C4/T4], hk-lr5t [observability]
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -40,6 +46,7 @@ const harnessLabelPrefix = "harness:"
 //   - nodeDefault  — DOT node harness attribute (pass core.AgentType("") when absent/unimplemented)
 //   - globalDefault — daemon Config.DefaultHarness (pass core.AgentType("") to get the built-in fallback)
 //   - bus          — event emitter; receives bead_label_conflict when tier 1 is ambiguous or malformed
+//     and harness_selected on every successful resolution (hk-lr5t).
 //
 // Returns the resolved AgentType. The returned value is always a valid AgentType
 // per AR-025. When no tier resolves, falls back to core.AgentTypeClaudeCode.
@@ -66,6 +73,7 @@ func resolveHarness(
 		agentTypePart := strings.TrimPrefix(harnessLabels[0], harnessLabelPrefix)
 		at := core.AgentType(agentTypePart)
 		if at.Valid() {
+			emitHarnessSelected(ctx, bus, bead, at, 1)
 			return at
 		}
 		// Invalid agent-type value — treat tier 1 as absent and emit conflict event.
@@ -84,6 +92,7 @@ func resolveHarness(
 	// When it lands, the caller passes the queue's harness field here.
 	// Until then, queueDefault is always empty and falls through.
 	if queueDefault.Valid() {
+		emitHarnessSelected(ctx, bus, bead, queueDefault, 2)
 		return queueDefault
 	}
 
@@ -93,14 +102,39 @@ func resolveHarness(
 	// When it lands, the caller passes the node's harness attribute here.
 	// Until then, nodeDefault is always empty and falls through.
 	if nodeDefault.Valid() {
+		emitHarnessSelected(ctx, bus, bead, nodeDefault, 3)
 		return nodeDefault
 	}
 
 	// ── Tier 4: global Config.DefaultHarness / built-in fallback ──────────────
 	if globalDefault.Valid() {
+		emitHarnessSelected(ctx, bus, bead, globalDefault, 4)
 		return globalDefault
 	}
 
 	// Built-in fallback: claude-code (the only harness until codex is wired in C5).
+	emitHarnessSelected(ctx, bus, bead, core.AgentTypeClaudeCode, 4)
 	return core.AgentTypeClaudeCode
+}
+
+// emitHarnessSelected emits a harness_selected event (hk-lr5t) recording which
+// harness was chosen and at which tier. Best-effort: emit errors are silently
+// discarded (the selection result is already determined before this call).
+func emitHarnessSelected(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	bead core.BeadRecord,
+	agentType core.AgentType,
+	tier int,
+) {
+	pl := core.HarnessSelectedPayload{
+		BeadID:    string(bead.BeadID),
+		AgentType: string(agentType),
+		Tier:      tier,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.Emit(ctx, core.EventTypeHarnessSelected, b)
 }

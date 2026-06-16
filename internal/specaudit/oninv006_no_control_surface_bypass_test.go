@@ -232,6 +232,15 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// crew sub-sessions, not in-flight harmonik runs; cannot abort the between-task
 	// invariant.
 	"crew": "operator-nfr.md §4.9 ON-055; crew session mgmt, no in-flight run abort",
+	// hk-ly0n (captain launcher): bare launcher that mints a UUIDv4 --session-id
+	// and brings up `claude --remote-control` in a tmux session. A bootstrap
+	// launcher like tmux-start — it never opens the daemon socket, never acquires
+	// the pidfile lock, and cannot abort an in-flight run.
+	"captain": "operator-nfr.md §4.9 ON-055; captain session launcher, no daemon connection, no run abort",
+	// hk-ly0n: `harmonik start captain` is the alias prefix for the captain
+	// launcher above; same bootstrap-only authorisation (the verb after `start`
+	// routes to runCaptainSubcommand). No daemon connection, no in-flight run impact.
+	"start": "operator-nfr.md §4.9 ON-055; alias prefix for captain launcher, no run abort",
 	// hk-voyf4: workflow-graph utilities (graph validate <path>); reads files
 	// directly, no daemon, no state mutation.
 	"graph": "operator-nfr.md §4.9 ON-055; offline graph validation, no run impact",

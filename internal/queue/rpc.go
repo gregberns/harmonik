@@ -201,6 +201,15 @@ func HandleQueueSubmit(
 				Status:     ItemStatusPending,
 				RunID:      nil,
 				AppendedAt: nil,
+				// Carry per-item workflow fields verbatim so the persisted queue
+				// (what the workloop reads after SetQueue) retains them. Dropping
+				// these here meant a per-item workflow_ref/workflow_mode never
+				// reached the run, silently falling back to the embedded
+				// standard-bead.dot single-reviewer workflow (hk-u6zp).
+				WorkflowMode:   item.WorkflowMode,
+				WorkflowRef:    item.WorkflowRef,
+				Context:        item.Context,
+				TemplateParams: item.TemplateParams,
 			}
 		}
 		// Apply QM-025 deferred status to items that have an open blocker.

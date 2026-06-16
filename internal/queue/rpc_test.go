@@ -185,9 +185,173 @@ func TestHandleQueueSubmit_ValidationError_AlreadyActive(t *testing.T) {
 	}
 }
 
+// TestHandleQueueSubmit_RetainsPerItemWorkflowFields is the hk-u6zp regression
+// guard. The submit handler rebuilds every Item; before the fix it copied only
+// BeadID/Status/RunID/AppendedAt and SILENTLY DROPPED the per-item workflow
+// fields (WorkflowMode, WorkflowRef, Context, TemplateParams). The dropped
+// workflow_ref/workflow_mode then never reached the run, so the daemon fell back
+// to the embedded standard-bead.dot single-reviewer workflow.
+//
+// The prior hk-rssrg test only asserted the serialized REQUEST round-trip, which
+// stayed green while the bug was live. This test asserts the PERSISTED queue —
+// exactly what the workloop reads after SetQueue — RETAINS the fields. It MUST
+// fail on the 4-field-copy code and pass after the fix.
+func TestHandleQueueSubmit_RetainsPerItemWorkflowFields(t *testing.T) {
+	t.Parallel()
+
+	const beadA core.BeadID = "hk-rpcwf1"
+
+	projectDir := rpcFixtureTempProjectDir(t)
+	ledger := rpcFixtureOpenLedger(beadA)
+
+	const wantRef = ".harmonik/workflows/opus-triple-review.dot"
+	const wantMode = "dot"
+	const wantContext = "extra context body"
+	wantParams := map[string]string{"REVIEWER_MODEL": "opus"}
+
+	item := queue.Item{
+		BeadID:         beadA,
+		Status:         queue.ItemStatusPending,
+		WorkflowMode:   wantMode,
+		WorkflowRef:    wantRef,
+		Context:        wantContext,
+		TemplateParams: wantParams,
+	}
+	req := queue.QueueSubmitRequest{
+		SchemaVersion: 1,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindStream,
+				Status:     queue.GroupStatusPending,
+				Items:      []queue.Item{item},
+				CreatedAt:  time.Now().UTC(),
+			},
+		},
+	}
+
+	_, q, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 1)
+	if rpcErr != nil {
+		t.Fatalf("HandleQueueSubmit: unexpected RPCError: %v", rpcErr)
+	}
+	if q == nil {
+		t.Fatal("returned *Queue is nil")
+	}
+
+	// 1. The in-memory queue handed to SetQueue must retain the fields.
+	assertWorkflowFields(t, "returned queue", q, wantMode, wantRef, wantContext, wantParams)
+
+	// 2. The PERSISTED queue (what the workloop re-reads via Load after SetQueue)
+	//    must retain them too — guards against an omitempty/round-trip drop.
+	loaded, loadErr := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
+	if loadErr != nil {
+		t.Fatalf("Load persisted queue: %v", loadErr)
+	}
+	assertWorkflowFields(t, "persisted queue", loaded, wantMode, wantRef, wantContext, wantParams)
+}
+
+// assertWorkflowFields asserts the first item of the first group carries the
+// expected per-item workflow fields.
+func assertWorkflowFields(t *testing.T, label string, q *queue.Queue, mode, ref, ctx string, params map[string]string) {
+	t.Helper()
+	if q == nil || len(q.Groups) == 0 || len(q.Groups[0].Items) == 0 {
+		t.Fatalf("%s: no items to assert", label)
+	}
+	got := q.Groups[0].Items[0]
+	if got.WorkflowMode != mode {
+		t.Errorf("%s: WorkflowMode = %q, want %q (DROPPED by item-rebuild — hk-u6zp)", label, got.WorkflowMode, mode)
+	}
+	if got.WorkflowRef != ref {
+		t.Errorf("%s: WorkflowRef = %q, want %q (DROPPED by item-rebuild — hk-u6zp)", label, got.WorkflowRef, ref)
+	}
+	if got.Context != ctx {
+		t.Errorf("%s: Context = %q, want %q (DROPPED by item-rebuild — hk-u6zp)", label, got.Context, ctx)
+	}
+	if got.TemplateParams[paramKey] != params[paramKey] {
+		t.Errorf("%s: TemplateParams[%q] = %q, want %q (DROPPED by item-rebuild — hk-u6zp)",
+			label, paramKey, got.TemplateParams[paramKey], params[paramKey])
+	}
+}
+
+// paramKey is the single TemplateParams key asserted by assertWorkflowFields.
+const paramKey = "REVIEWER_MODEL"
+
 // ---------------------------------------------------------------------------
 // HandleQueueAppend
 // ---------------------------------------------------------------------------
+
+// TestHandleQueueAppend_PreservesSubmitTimeWorkflowFields is the append-path
+// half of the hk-u6zp guard. QueueAppendRequest carries no per-item workflow
+// fields, so appended items correctly have empty workflow fields — but the
+// append MUST NOT corrupt the already-persisted submit-time items' workflow
+// fields when it tail-appends and re-persists the queue.
+func TestHandleQueueAppend_PreservesSubmitTimeWorkflowFields(t *testing.T) {
+	t.Parallel()
+
+	const beadA core.BeadID = "hk-rpcwf2" // submit-time item carrying workflow fields
+	const beadB core.BeadID = "hk-rpcwf3" // appended item
+
+	projectDir := rpcFixtureTempProjectDir(t)
+	ledger := rpcFixtureOpenLedger(beadA, beadB)
+
+	const wantRef = ".harmonik/workflows/opus-triple-review.dot"
+	const wantMode = "dot"
+	const wantContext = "extra context body"
+	wantParams := map[string]string{paramKey: "opus"}
+
+	submitReq := queue.QueueSubmitRequest{
+		SchemaVersion: 1,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindStream,
+				Status:     queue.GroupStatusPending,
+				Items: []queue.Item{{
+					BeadID:         beadA,
+					Status:         queue.ItemStatusPending,
+					WorkflowMode:   wantMode,
+					WorkflowRef:    wantRef,
+					Context:        wantContext,
+					TemplateParams: wantParams,
+				}},
+				CreatedAt: time.Now().UTC(),
+			},
+		},
+	}
+	submitResp, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), submitReq, ledger, projectDir, 1)
+	if rpcErr != nil {
+		t.Fatalf("setup submit: unexpected RPCError: %v", rpcErr)
+	}
+
+	appendReq := queue.QueueAppendRequest{
+		QueueID:    submitResp.QueueID,
+		GroupIndex: 0,
+		BeadIDs:    []core.BeadID{beadB},
+	}
+	_, mutated, _, rpcErr2 := queue.HandleQueueAppend(t.Context(), appendReq, ledger, projectDir)
+	if rpcErr2 != nil {
+		t.Fatalf("HandleQueueAppend: unexpected RPCError: %v", rpcErr2)
+	}
+	if mutated == nil {
+		t.Fatal("mutated queue is nil")
+	}
+
+	// The submit-time item (index 0) must still carry its workflow fields after
+	// the append mutated the queue.
+	assertWorkflowFields(t, "after append (in-memory)", mutated, wantMode, wantRef, wantContext, wantParams)
+
+	// Re-persist the mutated queue exactly as HandlerAdapter.HandleQueueAppend
+	// does, then Load it — what the workloop re-reads after the append's
+	// SetQueue. The submit-time item's workflow fields must survive that round-trip.
+	if persistErr := queue.Persist(t.Context(), projectDir, mutated); persistErr != nil {
+		t.Fatalf("Persist mutated queue: %v", persistErr)
+	}
+	loaded, loadErr := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
+	if loadErr != nil {
+		t.Fatalf("Load persisted queue: %v", loadErr)
+	}
+	assertWorkflowFields(t, "after append (persisted)", loaded, wantMode, wantRef, wantContext, wantParams)
+}
 
 // TestHandleQueueAppend_HappyPath verifies that appending to a stream group
 // returns the correct appended_count and new_tail_indices.

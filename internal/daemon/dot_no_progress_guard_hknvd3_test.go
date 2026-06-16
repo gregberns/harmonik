@@ -107,7 +107,6 @@ func nvd3ReviewLoopDOT(guardVal string) string {
 `, guardAttr)
 }
 
-
 // ── scripts ───────────────────────────────────────────────────────────────────
 
 // nvd3StrictScript: iter-1 commits then reviewer gives REQUEST_CHANGES; iter-2

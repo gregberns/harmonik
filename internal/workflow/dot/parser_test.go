@@ -804,14 +804,14 @@ func TestNoProgressGuardAttr_ValidValues(t *testing.T) {
 // strict parse error. hk-nvd3.
 func TestNoProgressGuardAttr_InvalidValues(t *testing.T) {
 	invalid := []string{
-		"STRICT",       // wrong case
-		"Cap:1",        // wrong case prefix
-		"capped:0",     // N must be >= 1
-		"capped:-1",    // negative N
-		"capped:abc",   // non-integer N
-		"capped:",      // empty N
-		"disabled",     // not a valid value
-		"none",         // not a valid value
+		"STRICT",     // wrong case
+		"Cap:1",      // wrong case prefix
+		"capped:0",   // N must be >= 1
+		"capped:-1",  // negative N
+		"capped:abc", // non-integer N
+		"capped:",    // empty N
+		"disabled",   // not a valid value
+		"none",       // not a valid value
 	}
 	for _, val := range invalid {
 		_, err := Parse(noProgressGuardFixture(val), "npg.dot")

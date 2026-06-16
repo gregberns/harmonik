@@ -168,11 +168,10 @@ func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath s
 	delete(merged, "disableAllHooks")
 
 	// Serialize the merged result.
-	content, err := json.MarshalIndent(merged, "", "  ")
+	content, err := marshalSettings(merged)
 	if err != nil {
 		return fmt.Errorf("workspace: MaterializeClaudeSettings: MarshalIndent: %w", err)
 	}
-	content = append(content, '\n')
 
 	// Atomic write per WM-026.
 	if err := atomicWriteWithParentFsync(settingsPath, content); err != nil {
@@ -198,6 +197,18 @@ func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath s
 var harmonikAllowedTools = []interface{}{
 	"Read", "Write", "Edit", "Bash", "Glob", "Grep",
 	"WebFetch", "WebSearch", "NotebookEdit", "TodoWrite", "Task",
+}
+
+// marshalSettings serializes a merged settings map to the canonical on-disk
+// byte form (indented JSON + trailing newline). Shared by the local
+// MaterializeClaudeSettings write and the remote MaterializeClaudeSettingsVia
+// write so both produce byte-identical settings.json content (hk-z8ek).
+func marshalSettings(merged map[string]interface{}) ([]byte, error) {
+	content, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(content, '\n'), nil
 }
 
 // buildBridgeOnlySettings returns a settings map containing only the

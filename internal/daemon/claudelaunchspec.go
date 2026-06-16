@@ -40,6 +40,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -166,6 +167,21 @@ type claudeRunCtx struct {
 	// agent-task header and can rebase against origin/$baseBranch pre-exit.
 	// Empty when the caller cannot resolve branching config (non-fatal).
 	baseBranch string
+
+	// runner is the CommandRunner for materializing the run's launch artifacts
+	// (.claude/settings.json, .harmonik/agent-task.md, ~/.claude.json trust).
+	// It is the worker's SSHRunner for a REMOTE run — so the three writes land
+	// on the WORKER's filesystem where the worktree actually lives — and nil for
+	// a LOCAL run, in which case the materialization takes the byte-identical
+	// box-A-local os.* path (NFR7). Threaded from workloop's rbc.sshRunner (hk-z8ek).
+	runner tmux.CommandRunner
+
+	// workerBinaryPath is the absolute path to harmonik ON THE WORKER, used as the
+	// hook "command" field in the worker's .claude/settings.json for a REMOTE run
+	// (the hook subprocess is executed on the worker, so a box-A path would not
+	// exist there). Empty for LOCAL runs, where daemonBinaryPath (box A's path) is
+	// used unchanged. Set by the caller only when runner != nil (hk-z8ek).
+	workerBinaryPath string
 }
 
 // claudeRunArtifacts carries the values that the workloop and review-loop
@@ -239,9 +255,19 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	sessionLogPath := handler.DeriveCIaudeTranscriptPath(rc.workspacePath, mintRes.ClaudeSessionID)
 
 	// Step 3 — Materialize .claude/settings.json in the worktree (CHB-001..005).
-	// Pass rc.daemonBinaryPath so the hook "command" field is an absolute path
-	// rather than the bare "harmonik" name (hk-kqdpf.6 fix).
-	if err := workspace.MaterializeClaudeSettings(rc.workspacePath, rc.daemonBinaryPath, sessionLogPath); err != nil {
+	// For a LOCAL run (rc.runner == nil) this is the byte-identical box-A-local
+	// write (NFR7). For a REMOTE run (rc.runner is the worker's SSHRunner) the
+	// settings file is written onto the WORKER's filesystem, where the worktree
+	// lives — otherwise the worker's claude launches with no hook and times out
+	// at agent_ready (hk-z8ek). The hook "command" field is resolved to the
+	// WORKER's harmonik path for remote runs (a box-A path would not exist on the
+	// worker); falls back to rc.daemonBinaryPath when workerBinaryPath is unset
+	// (hk-kqdpf.6: absolute path, never the bare "harmonik" name).
+	settingsHookBinary := rc.daemonBinaryPath
+	if rc.runner != nil && rc.workerBinaryPath != "" {
+		settingsHookBinary = rc.workerBinaryPath
+	}
+	if err := workspace.MaterializeClaudeSettingsVia(ctx, rc.runner, rc.workspacePath, settingsHookBinary, sessionLogPath); err != nil {
 		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: MaterializeClaudeSettings: %w", err)
 	}
@@ -249,7 +275,10 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	// Step 3a — Pre-seed ~/.claude.json with worktree trust (CHB-029 / WM-040b).
 	// MUST be after MaterializeClaudeSettings and BEFORE SubstrateSpawn.
 	// Failure is a fatal structural error: an un-trusted session blocks indefinitely.
-	if err := workspace.EnsureWorktreeTrust(rc.workspacePath); err != nil {
+	// REMOTE run (rc.runner != nil): the trust entry is upserted into the WORKER's
+	// ~/.claude.json (the worker is where claude reads trust); LOCAL run: unchanged
+	// box-A ~/.claude.json write (NFR7) (hk-z8ek).
+	if err := workspace.EnsureWorktreeTrustVia(ctx, rc.runner, rc.workspacePath); err != nil {
 		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: EnsureWorktreeTrust: %w", err)
 	}
@@ -295,7 +324,9 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 		ExtraContext:        rc.extraContext,
 		BaseBranch:          rc.baseBranch,
 	}
-	if err := workspace.WriteAgentTask(rc.workspacePath, agentTaskPayload); err != nil {
+	// REMOTE run (rc.runner != nil): write agent-task.md onto the WORKER's
+	// worktree; LOCAL run: unchanged box-A-local write (NFR7) (hk-z8ek).
+	if err := workspace.WriteAgentTaskVia(ctx, rc.runner, rc.workspacePath, agentTaskPayload); err != nil {
 		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
 			"daemon: buildClaudeLaunchSpec: WriteAgentTask: %w", err)
 	}

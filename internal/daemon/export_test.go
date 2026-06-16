@@ -862,6 +862,16 @@ type ExportedClaudeRunCtx struct {
 	// attribute (WG-040 §I.3). When non-empty and phase is implementer, it
 	// REPLACES BeadDescription as the CHB-028 Body channel (hk-sdnzj).
 	NodePrompt string
+
+	// Runner is the CommandRunner threaded into the materialization step for a
+	// REMOTE run (hk-z8ek). Non-nil → the three launch-artifact writes go through
+	// the runner onto the worker FS; nil → byte-identical box-A-local writes (NFR7).
+	Runner tmuxPkg.CommandRunner
+
+	// WorkerBinaryPath is the worker-side harmonik path used as the hook command
+	// in the worker's settings.json for a REMOTE run (hk-z8ek). Empty → the
+	// box-A DaemonBinaryPath is used unchanged.
+	WorkerBinaryPath string
 }
 
 // ExportedClaudeRunArtifacts is the exported shape of claudeRunArtifacts for tests.
@@ -899,6 +909,8 @@ func ExportedBuildClaudeLaunchSpec(ctx context.Context, rc ExportedClaudeRunCtx)
 		worktreeRootPath:  rc.WorktreeRootPath,
 		beadDescription:   rc.BeadDescription,
 		nodePrompt:        rc.NodePrompt,
+		runner:            rc.Runner,
+		workerBinaryPath:  rc.WorkerBinaryPath,
 	}
 	spec, arts, err := buildClaudeLaunchSpec(ctx, internal)
 	if err != nil {

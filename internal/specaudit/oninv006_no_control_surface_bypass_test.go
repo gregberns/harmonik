@@ -272,6 +272,12 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// Authorised by operator-nfr.md §4.9 ON-055 (offline state file mutation,
 	// observation-only impact on in-flight runs).
 	"goal-keeper": "operator-nfr.md §4.9 ON-055; offline goal-state update, no in-flight run abort",
+	// flywheel V4 (hk-9mr2): sentinel governor-trip exception writer. `emit-trip`
+	// writes a decision_required record to .harmonik/decision_acks/ — a file-only
+	// operation with no daemon connection and no in-flight run abort. The adversary
+	// crew calls this LLM-free command after reviewing evidence; the projector (not
+	// this CLI) gates the all-clear. Authorised by operator-nfr.md §4.9 ON-055.
+	"sentinel": "operator-nfr.md §4.9 ON-055; offline decision_acks writer, no in-flight run abort",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled

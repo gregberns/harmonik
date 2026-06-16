@@ -166,7 +166,22 @@ type CyclerConfig struct {
 	// list-clients). The check is skipped entirely when TmuxTarget is empty
 	// (no pane to inject into). Refs: hk-6qf.
 	OperatorAttachedFn func(target string) bool
+
+	// OperatorAttachedSampleInterval bounds how often the poll-tick
+	// session_keeper_operator_attached event is persisted. Gate 7 re-checks live
+	// tmux on every watcher tick (~5s); without this throttle every tick wrote a
+	// durable event (logmine F55: 51% of one events.jsonl window). One sample per
+	// interval keeps the digest resolver's attached-source fresh (its
+	// AttachedInactiveTimeout default is 5m) while cutting event volume ~12x.
+	// Zero → defaultOperatorAttachedSampleInterval. Refs: hk-2yvx.
+	OperatorAttachedSampleInterval time.Duration
 }
+
+// defaultOperatorAttachedSampleInterval is the default Gate-7 emission sample
+// window: at most one operator_attached event per minute while an operator stays
+// attached. Well inside the digest resolver's 5m AttachedInactiveTimeout so
+// suppression stays pinned, but ~12x below the ~5s poll cadence. Refs: hk-2yvx.
+const defaultOperatorAttachedSampleInterval = time.Minute
 
 func (c *CyclerConfig) applyDefaults() {
 	if c.ActAbsTokens <= 0 {
@@ -203,6 +218,9 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.ForceRetryInterval <= 0 {
 		c.ForceRetryInterval = 120 * time.Second
+	}
+	if c.OperatorAttachedSampleInterval <= 0 {
+		c.OperatorAttachedSampleInterval = defaultOperatorAttachedSampleInterval
 	}
 	if c.BootGracePeriod > 0 && c.MaxBootGraceTotal <= 0 {
 		c.MaxBootGraceTotal = 2 * c.BootGracePeriod
@@ -461,6 +479,11 @@ type Cycler struct {
 	// retries after an abort without permanently blocking them.
 	lastForcedAttemptAt time.Time
 
+	// lastOperatorAttachedEmit is the wall-clock time of the most recent
+	// Gate-7 operator_attached emission. Used to throttle the poll-tick event to
+	// one per OperatorAttachedSampleInterval (logmine F55 spam fix). Refs: hk-2yvx.
+	lastOperatorAttachedEmit time.Time
+
 	// consecutiveHandoffTimeouts counts consecutive handoff timeouts while
 	// above the force threshold. Reset to 0 on a successful cycle or on a
 	// below-force-threshold abort. When it reaches MaxHandoffTimeouts,
@@ -657,7 +680,7 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	// tick once the operator detaches. Skipped when TmuxTarget is empty (nothing
 	// to inject into). Refs: hk-6qf.
 	if c.operatorAttached() {
-		c.emitOperatorAttached(ctx, cf.SessionID, "cycle")
+		c.maybeEmitOperatorAttached(ctx, cf.SessionID, "cycle")
 		return nil
 	}
 
@@ -1296,6 +1319,22 @@ func (c *Cycler) emitPrecompactBlocked(ctx context.Context, sessionID, action st
 	}
 	raw, _ := json.Marshal(payload)                                                                   //nolint:errcheck
 	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperPrecompactBlocked, raw) //nolint:errcheck
+}
+
+// maybeEmitOperatorAttached emits a Gate-7 operator_attached event at most once
+// per OperatorAttachedSampleInterval, collapsing the ~5s poll-tick spam (logmine
+// F55) into a sample. The first observation after an interval gap always emits,
+// so a fresh attach edge is recorded promptly; subsequent same-window ticks are
+// dropped. The discrete precompact/restart_now paths emit unconditionally — they
+// are marker-driven, not poll-driven. Refs: hk-2yvx.
+func (c *Cycler) maybeEmitOperatorAttached(ctx context.Context, sessionID, phase string) {
+	now := time.Now()
+	if !c.lastOperatorAttachedEmit.IsZero() &&
+		now.Sub(c.lastOperatorAttachedEmit) < c.cfg.OperatorAttachedSampleInterval {
+		return
+	}
+	c.lastOperatorAttachedEmit = now
+	c.emitOperatorAttached(ctx, sessionID, phase)
 }
 
 // emitOperatorAttached emits session_keeper_operator_attached when a reset-cycle

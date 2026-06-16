@@ -849,11 +849,28 @@ EXAMPLES
 	// hk-002zx: startup banner so the operator knows the daemon is active.
 	fmt.Fprintln(os.Stderr, "harmonik daemon starting in", projectDir)
 
-	// Build a context that is cancelled on SIGINT or SIGTERM so the work loop
-	// shuts down cleanly. Signal handling lives at the composition root
-	// (hk-7oz2f) so daemon.Start is testable without process-level signals.
+	// F56 (hk-86eh): two-phase shutdown — separate dispatch-halt from in-flight cancel.
+	//
+	// ctx (from signal.NotifyContext) is cancelled immediately on SIGINT/SIGTERM.
+	// It is used ONLY as StopDispatchCtx: it halts new dispatch without touching
+	// in-flight DOT/implement goroutines, which run on runCtx below.
+	//
+	// runCtx is passed to daemon.Start. It is independent of signals; the grace
+	// goroutine cancels it after inFlightDrainGrace once ctx fires, bounding
+	// the window in which a hung implement node can delay process exit.
+	// In practice the supervisor sends SIGKILL within its StopTimeout (10 s)
+	// before the grace fires; either way, goroutines never see a cancelled
+	// context and never emit 'context cancelled during node implement'.
+	// QM-002a on the next daemon start resets in-progress beads to open.
+	//
+	// Signal handling lives at the composition root (hk-7oz2f) so daemon.Start
+	// is testable without process-level signals.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	go inFlightDrainGoroutine(ctx, runCtx, cancelRun)
 
 	// hk-kqdpf.6: resolve the absolute path to this binary so that settings.json
 	// hook commands reference an absolute path rather than a bare "harmonik" name.
@@ -1005,9 +1022,13 @@ EXAMPLES
 		}
 	}
 
+	// F56 (hk-86eh): wire signal ctx as StopDispatchCtx so SIGTERM halts new
+	// dispatch immediately; in-flight goroutines continue on runCtx.
+	cfg.StopDispatchCtx = ctx
+
 	// hk-b6m3h: map lifecycle.ErrPidfileLocked → exit code 5 per PL-008a.
 	// All other errors map to exit code 1.
-	if err := daemon.Start(ctx, cfg); err != nil {
+	if err := daemon.Start(runCtx, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: %v\n", err)
 		if errors.Is(err, lifecycle.ErrPidfileLocked) {
 			return 5
@@ -1029,6 +1050,32 @@ func (f *stringSliceFlag) String() string { return strings.Join(*f, ",") }
 func (f *stringSliceFlag) Set(v string) error {
 	*f = append(*f, v)
 	return nil
+}
+
+// inFlightDrainGrace is the bounded window the persistent daemon gives
+// in-flight DOT/implement goroutines to complete after SIGTERM fires (F56,
+// hk-86eh). After this duration runCtx is cancelled, which surfaces as an
+// error in still-running goroutines. In practice the supervisor (or the
+// operator's shell) sends SIGKILL within its own StopTimeout (10 s) before
+// this timer fires; the constant exists to ensure the process exits eventually
+// even without an external kill.
+const inFlightDrainGrace = 5 * time.Minute
+
+// inFlightDrainGoroutine implements the F56 (hk-86eh) two-phase shutdown:
+// wait for sigCtx to fire, then cancel runCtx after inFlightDrainGrace. If
+// runCtx is cancelled first (normal exit), the goroutine exits immediately.
+func inFlightDrainGoroutine(sigCtx, runCtx context.Context, cancelRun context.CancelFunc) {
+	select {
+	case <-sigCtx.Done():
+		t := time.NewTimer(inFlightDrainGrace)
+		defer t.Stop()
+		select {
+		case <-t.C:
+			cancelRun()
+		case <-runCtx.Done():
+		}
+	case <-runCtx.Done():
+	}
 }
 
 // spawnCapFromEnv resolves the concurrent-session spawn ceiling (hk-xb5yi).

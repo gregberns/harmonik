@@ -31,6 +31,12 @@ import (
 // per beads-integration.md §4.3 BI-009a.
 const workflowLabelPrefix = "workflow:"
 
+// dotRefLabelPrefix is the label prefix for per-bead .dot workflow-file selection
+// (hk-30q6). A bead carrying dot:<name> routes to <name>.dot in the project dir.
+// This is the tier-1 path in resolveWorkflowRef; the tier-0 per-item WorkflowRef
+// from queue.Item takes precedence over it.
+const dotRefLabelPrefix = "dot:"
+
 // resolveWorkflowMode implements the EM-012a four-tier precedence walk.
 //
 //   - bead      — carries the labels from the ready-work record (BI-013)
@@ -119,6 +125,49 @@ func emitReviewBypassed(
 		return
 	}
 	_ = bus.Emit(ctx, core.EventTypeReviewBypassed, b)
+}
+
+// resolveWorkflowRef resolves the .dot workflow file path for a bead using the
+// EM-012a tier hierarchy (hk-30q6).
+//
+// Precedence:
+//
+//	Tier 0: itemWorkflowRef — explicit per-item override from queue.Item.WorkflowRef.
+//	        If set, returned unchanged (highest priority).
+//	Tier 1: per-bead dot:<name> label.
+//	        Exactly one dot: label → resolve to <name> (appending ".dot" if absent).
+//	        Zero or multiple dot: labels → tier 1 absent; fall through.
+//	Tier 2–4: absent; returns "" so the caller falls through to project-level
+//	          workflow.dot or the embedded standard-bead.dot.
+//
+// This function is purely a string resolver: it does not validate that the
+// returned path exists on disk. Path validation happens in beadRunOne's DOT case.
+func resolveWorkflowRef(bead core.BeadRecord, itemWorkflowRef string) string {
+	// Tier 0: per-item explicit ref wins over label.
+	if itemWorkflowRef != "" {
+		return itemWorkflowRef
+	}
+
+	// Tier 1: per-bead dot:<name> label.
+	var dotLabels []string
+	for _, lbl := range bead.Labels {
+		if strings.HasPrefix(lbl, dotRefLabelPrefix) {
+			dotLabels = append(dotLabels, lbl)
+		}
+	}
+	if len(dotLabels) == 1 {
+		name := strings.TrimPrefix(dotLabels[0], dotRefLabelPrefix)
+		if name != "" {
+			if !strings.HasSuffix(name, ".dot") {
+				name += ".dot"
+			}
+			return name
+		}
+	}
+
+	// Tier 2–4: no label present (or ambiguous / empty value); let caller fall
+	// through to the project-level workflow.dot or the embedded standard-bead.dot.
+	return ""
 }
 
 // emitBeadLabelConflict emits a bead_label_conflict event per

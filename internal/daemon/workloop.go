@@ -2096,6 +2096,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 
+	// Resolve workflow_ref per EM-012a: per-item (queue.Item.WorkflowRef, hk-qo9pq,
+	// tier-0) wins over per-bead dot:<name> label (hk-30q6, tier-1); absence falls
+	// through to the project-level workflow.dot or embedded standard-bead.dot.
+	itemWorkflowRef = resolveWorkflowRef(beadRecord, itemWorkflowRef)
+
 	// Resolve (model, effort) per EM-012b four-tier precedence walk.
 	// Resolved once at claim time; sealed into the run for its lifetime.
 	// The agentType is claude-code for the production path at MVH; it is

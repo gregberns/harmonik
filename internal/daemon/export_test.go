@@ -434,6 +434,14 @@ func ExportedResolveWorkflowMode(
 	return resolveWorkflowMode(ctx, bead, daemonDefault, bus)
 }
 
+// ExportedResolveWorkflowRef exposes resolveWorkflowRef for tests in package
+// daemon_test. See moderesolve.go for semantics.
+//
+// Bead ref: hk-30q6.
+func ExportedResolveWorkflowRef(bead core.BeadRecord, itemWorkflowRef string) string {
+	return resolveWorkflowRef(bead, itemWorkflowRef)
+}
+
 // ExportedResolveHarness exposes resolveHarness for tests in package daemon_test.
 // See harnessresolve.go for semantics.
 //

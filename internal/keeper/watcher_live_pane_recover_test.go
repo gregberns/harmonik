@@ -85,12 +85,14 @@ func TestWatcher_LivePaneRecover_FiresWhenStalePaneAliveValidSid(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "lpr-fire-agent"
 
-	writeGauge(t, projectDir, agent, gaugeSID)      // .ctx exists → STALE branch (not absent)
-	writeSidFile(t, projectDir, agent, primarySID)  // valid UUIDv4 bound identity
+	writeGauge(t, projectDir, agent, gaugeSID)     // .ctx exists → STALE branch (not absent)
+	writeSidFile(t, projectDir, agent, primarySID) // valid UUIDv4 bound identity
 
 	rec := &lprRecorder{}
 	em := &keeper.RecordingEmitter{}
-	runWatcherFor(context.Background(), lprConfig(projectDir, agent, rec.fn), em, 200*time.Millisecond)
+	// Generous run window so even under CPU contention (the gate runs all
+	// packages' tests in parallel) several poll ticks elapse past the tiny grace.
+	runWatcherFor(context.Background(), lprConfig(projectDir, agent, rec.fn), em, 1500*time.Millisecond)
 
 	if rec.count() == 0 {
 		t.Fatal("want LiveRecoverFn to fire at least once; got 0 calls")
@@ -239,7 +241,9 @@ func TestWatcher_LivePaneRecover_CooldownPreventsDouble(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	cfg := lprConfig(projectDir, agent, rec.fn)
 	cfg.LiveRecoverCooldown = 10 * time.Second // only one attempt allowed in the run
-	runWatcherFor(context.Background(), cfg, em, 300*time.Millisecond)
+	// Generous window so recovery reliably fires once even under contention; the
+	// 10s cooldown (>> window) guarantees it cannot fire a second time.
+	runWatcherFor(context.Background(), cfg, em, 1500*time.Millisecond)
 
 	if rec.count() != 1 {
 		t.Errorf("cooldown: want exactly 1 LiveRecoverFn call across the run; got %d", rec.count())

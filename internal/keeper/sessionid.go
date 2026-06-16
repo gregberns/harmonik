@@ -45,6 +45,12 @@ func ReadSessionIDFile(projectDir, agent string) (string, time.Time, error) {
 	return sid, mod, nil
 }
 
+// IsPrimarySID is the exported form of isPrimarySID: it reports whether sid is
+// trustworthy as the keeper's PRIMARY identity (a well-formed lowercase UUIDv4).
+// Used by `harmonik keeper doctor` to report whether the .sid channel carries a
+// usable primary id or the keeper is on the fallback path. Refs: hk-8prq.
+func IsPrimarySID(sid string) bool { return isPrimarySID(sid) }
+
 // isPrimarySID reports whether sid is trustworthy as the keeper's PRIMARY
 // identity: a well-formed, lowercase UUIDv4. Interactive captain/crew sessions
 // use UUIDv4; daemon-spawned implementers use UUIDv7 (rejected here), and the

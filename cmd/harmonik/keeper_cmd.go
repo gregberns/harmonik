@@ -213,6 +213,14 @@ func runKeeperSubcommand(args []string) int {
 		WarnAbsTokens:      resolvedWarnAbs,
 		WarnPctCeil:        resolvedWarnPctCeil,
 		RespawnCmd:         respawnCmdFlag,
+		// hk-75mr: gauge-INDEPENDENT live-pane recovery. When the gauge is stale
+		// past LiveRecoverGrace (default 5m) but the pane is still ALIVE (agent hung
+		// mid-turn), no operator is attached, the agent is not blocked on a
+		// decision, and the bound .sid identity is a valid UUIDv4, fire a gated
+		// ForceRestart via the operator-supplied --respawn-cmd (the same launch
+		// command the idle-respawn path uses; the closure re-verifies identity and
+		// refuses on a non-UUIDv4 .sid). Nil when --respawn-cmd is empty → disabled.
+		LiveRecoverFn: keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmdFlag),
 		// Warn text overrides from config.yaml (empty = use compiled defaults).
 		DefaultWarnText:  keeperCfg.DefaultWarnText,
 		OnDemandWarnText: keeperCfg.OnDemandWarnText,

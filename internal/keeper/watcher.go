@@ -480,6 +480,25 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.IsPaneIdleFn == nil {
 		c.IsPaneIdleFn = IsPaneIdle
 	}
+	// Live-pane recovery defaults (hk-75mr). LiveRecoverGrace (5m) is MUCH larger
+	// than RespawnGrace (20s) so an EXITED agent is always handled by the
+	// idle-respawn path long before live recovery considers force-restarting a
+	// (possibly briefly) stale-but-alive pane — the anti-premature-reap invariant.
+	if c.LiveRecoverGrace <= 0 {
+		c.LiveRecoverGrace = 5 * time.Minute
+	}
+	if c.LiveRecoverCooldown <= 0 {
+		c.LiveRecoverCooldown = 5 * time.Minute
+	}
+	if c.IsPaneAliveFn == nil {
+		c.IsPaneAliveFn = IsPaneAlive
+	}
+	if c.OperatorAttachedFn == nil {
+		c.OperatorAttachedFn = OperatorAttached
+	}
+	if c.ReadSidFn == nil {
+		c.ReadSidFn = ReadSessionIDFile
+	}
 	if c.StaleBindingThreshold <= 0 {
 		c.StaleBindingThreshold = 3
 	}
@@ -627,6 +646,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// enforce RespawnCooldown. Zero when no respawn has occurred. (Refs: hk-3w2)
 		lastRespawnAt time.Time
 
+		// lastLiveRecoverAt is the time of the most recent live-pane recovery
+		// attempt. Used to enforce LiveRecoverCooldown. Zero when no recovery has
+		// occurred this session. (Refs: hk-75mr)
+		lastLiveRecoverAt time.Time
+
 		// consecutiveForeignTicks counts consecutive ticks where the gauge is
 		// fresh but its session_id does not match .managed (foreign_session path).
 		// Cleared on any tick that is NOT foreign_session. When it reaches
@@ -716,6 +740,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 					gaugeStaleSince = time.Now()
 				}
 				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
+				w.maybeLivePaneRecover(ctx, gaugeStaleSince, &lastLiveRecoverAt)
 				continue
 			}
 			if err != nil {
@@ -729,6 +754,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 					gaugeStaleSince = time.Now()
 				}
 				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
+				w.maybeLivePaneRecover(ctx, gaugeStaleSince, &lastLiveRecoverAt)
 				continue
 			}
 
@@ -755,6 +781,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 					gaugeStaleSince = time.Now()
 				}
 				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
+				w.maybeLivePaneRecover(ctx, gaugeStaleSince, &lastLiveRecoverAt)
 				continue
 			}
 
@@ -1252,6 +1279,112 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 			"agent", w.cfg.AgentName, "err", runErr)
 	}
 	w.emitRespawnAttempted(ctx, outcome, errMsg)
+}
+
+// maybeLivePaneRecover is the gauge-INDEPENDENT last-resort recovery (hk-75mr).
+// It fires a GATED ForceRestart (LiveRecoverFn) for an agent that is hung
+// MID-TURN: the gauge has gone stale but the tmux pane is still ALIVE, so the
+// idle-respawn path (maybeRespawn) never engages and a /clear inject cannot
+// reach a hung turn. It is called from the same stale/absent branches as
+// maybeRespawn; the two are mutually exclusive via the pane alive-vs-idle check.
+//
+// EVERY gate is fail-closed — recovery fires ONLY when ALL hold:
+//   - LiveRecoverFn is wired AND TmuxTarget is non-empty (else no-op);
+//   - staleSince ≥ LiveRecoverGrace (>> RespawnGrace — anti-premature-reap);
+//   - LiveRecoverCooldown since the last attempt has elapsed;
+//   - the pane is ALIVE (IsPaneAliveFn) — a hung agent, not an exited one;
+//   - NO human operator is actively attached (OperatorAttachedFn, hk-0t5s) —
+//     never force-restart a pane a human is driving;
+//   - the agent is NOT blocked on an open decision (hitl-decisions K6) — a
+//     blocked agent is waiting, not hung;
+//   - the bound .sid identity is a valid UUIDv4 (ReadSidFn + isPrimarySID) — an
+//     absent or malformed channel fails CLOSED (we will not force-restart an
+//     agent whose identity we cannot trust).
+//
+// Interaction with the heartbeat (hk-81wk): the keeper-side heartbeat is the
+// FIRST line of defense — it re-writes .ctx on a live pane so a transient
+// repaint gap never trips the stale branch. Live-pane recovery therefore fires
+// ONLY when the gauge has gone stale DESPITE the heartbeat (heartbeat disabled,
+// or its WriteCtxFile failing) while the pane is still alive — a true last
+// resort. LiveRecoverGrace (5m) is set far past the heartbeat threshold (~60s)
+// so the heartbeat gets many chances to recover the gauge before recovery acts.
+//
+// On a successful gate pass it sets *lastRecoverAt and emits
+// session_keeper_live_pane_recover. Refs: hk-75mr; hk-8prq (identity); hk-0t5s
+// (operator discriminator); hk-50f (K6 exemption); hk-81wk (heartbeat).
+func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time, lastRecoverAt *time.Time) {
+	if w.cfg.LiveRecoverFn == nil || w.cfg.TmuxTarget == "" {
+		return
+	}
+	if staleSince.IsZero() || time.Since(staleSince) < w.cfg.LiveRecoverGrace {
+		return
+	}
+	if !lastRecoverAt.IsZero() && time.Since(*lastRecoverAt) < w.cfg.LiveRecoverCooldown {
+		return
+	}
+	// Pane must be ALIVE (non-shell). An idle pane is the maybeRespawn path's job.
+	if !w.cfg.IsPaneAliveFn(ctx, w.cfg.TmuxTarget) {
+		return
+	}
+	// Never force-restart a pane a human operator is actively driving (hk-0t5s).
+	if w.cfg.OperatorAttachedFn(w.cfg.TmuxTarget) {
+		slog.InfoContext(ctx, "keeper: live-pane recovery suppressed — operator actively attached",
+			"agent", w.cfg.AgentName)
+		return
+	}
+	// A blocked-on-decision agent is waiting, not hung (hitl-decisions K6).
+	if w.blockedOnOpenDecision(ctx) {
+		slog.InfoContext(ctx, "keeper: live-pane recovery suppressed — agent blocked on an open decision",
+			"agent", w.cfg.AgentName)
+		return
+	}
+	// Bound identity MUST be a valid UUIDv4 from the single-writer .sid channel.
+	// Fail CLOSED on an absent/malformed channel — we will not force-restart an
+	// agent whose identity we cannot trust (hk-8prq).
+	boundSID, _, sidErr := w.cfg.ReadSidFn(w.cfg.ProjectDir, w.cfg.AgentName)
+	if sidErr != nil || !isPrimarySID(boundSID) {
+		slog.WarnContext(ctx, "keeper: live-pane recovery suppressed — bound .sid identity absent or not a valid UUIDv4 (fail-closed)",
+			"agent", w.cfg.AgentName, "sid_err", sidErr, "bound_sid", boundSID)
+		return
+	}
+
+	staleSeconds := int64(time.Since(staleSince).Seconds())
+	slog.WarnContext(ctx, "keeper: live-pane recovery — gauge stale over a live pane; firing gated ForceRestart last-resort",
+		"agent", w.cfg.AgentName, "stale_seconds", staleSeconds, "bound_sid", boundSID)
+	fmt.Printf("keeper: live-pane recovery — agent %q hung mid-turn (gauge stale %ds, pane alive); force-restarting\n",
+		w.cfg.AgentName, staleSeconds)
+
+	runErr := w.cfg.LiveRecoverFn(ctx, w.cfg.AgentName)
+
+	*lastRecoverAt = time.Now()
+	outcome := "ok"
+	errMsg := ""
+	if runErr != nil {
+		outcome = "error"
+		errMsg = runErr.Error()
+		slog.WarnContext(ctx, "keeper: live-pane recovery action failed",
+			"agent", w.cfg.AgentName, "err", runErr)
+	}
+	w.emitLivePaneRecover(ctx, boundSID, staleSeconds, outcome, errMsg)
+}
+
+// emitLivePaneRecover emits the session_keeper_live_pane_recover event.
+func (w *Watcher) emitLivePaneRecover(ctx context.Context, sessionID string, staleSeconds int64, outcome, errMsg string) {
+	payload := core.SessionKeeperLivePaneRecoverPayload{
+		AgentName:    w.cfg.AgentName,
+		SessionID:    sessionID,
+		StaleSeconds: staleSeconds,
+		Outcome:      outcome,
+		Error:        errMsg,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		slog.WarnContext(ctx, "keeper: marshal live_pane_recover payload", "err", err)
+		return
+	}
+	if emitErr := w.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperLivePaneRecover, raw); emitErr != nil {
+		slog.WarnContext(ctx, "keeper: emit session_keeper_live_pane_recover", "err", emitErr)
+	}
 }
 
 // blockedOnOpenDecision reports whether the watched agent (w.cfg.AgentName) is

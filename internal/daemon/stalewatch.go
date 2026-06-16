@@ -59,6 +59,19 @@ const (
 	staleWatchReviewerLaunchAfter = 30 * time.Minute
 )
 
+// neverSpawnedReaperDefaultTimeout is the default deadline for the never-spawned
+// reaper (hk-0z5x): when launch_initiated has been observed but agent_ready has
+// not arrived within this window, the stale watcher cancels the per-run context
+// so waitWithSocketGrace unblocks, the bead reopens, and the queue group drains.
+//
+// 30 min aligns with the observed incident timeline (run_stale emitted twice at
+// 10 min and 20 min; operator intervened past 30 min). The reaper fires before
+// a third run_stale would be needed, replacing manual daemon-restart with
+// automatic per-run abort.
+//
+// Declared as var so tests can override without waiting real wall time.
+var neverSpawnedReaperDefaultTimeout = 30 * time.Minute
+
 // launchStallThreshold is the maximum time allowed between run_started and the
 // first launch_initiated event.  If launch_initiated does not appear within
 // this window the stale watcher emits launch_stall_detected once per run.
@@ -102,6 +115,23 @@ type runStaleState struct {
 	// launchStallEmitted is true once a launch_stall_detected event has been
 	// emitted for this run.  The event is emitted at most once per run.
 	launchStallEmitted bool
+
+	// launchInitiatedAt is the wall-clock time when launch_initiated was first
+	// observed. Zero until the event is seen. Used as the reference timestamp
+	// for the never-spawned reaper (hk-0z5x) so that subsequent events (e.g.
+	// daemon heartbeats) do not reset the deadline.
+	launchInitiatedAt time.Time
+
+	// agentReadySeen is true once agent_ready has been observed for this run.
+	// Used by the never-spawned reaper: when launchInitiatedSeen is true but
+	// agentReadySeen remains false past NeverSpawnedReaperTimeout, the reaper
+	// cancels the per-run context so the queue group can drain (hk-0z5x).
+	agentReadySeen bool
+
+	// neverSpawnedFired is true once the never-spawned reaper has fired for
+	// this run.  Prevents repeated cancel calls on subsequent scan ticks.
+	// Bead ref: hk-0z5x.
+	neverSpawnedFired bool
 }
 
 // StaleWatcherConfig holds the construction-time parameters for StaleWatcher.
@@ -129,6 +159,13 @@ type StaleWatcherConfig struct {
 	// ScanInterval is how often the background goroutine scans active runs.
 	// Zero → staleWatchScanInterval (30 s).
 	ScanInterval time.Duration
+
+	// NeverSpawnedReaperTimeout is the deadline for the never-spawned reaper
+	// (hk-0z5x): when launch_initiated has been observed but agent_ready has
+	// not arrived within this window, the stale watcher calls handle.Cancel()
+	// to abort the per-run context.
+	// Zero → neverSpawnedReaperDefaultTimeout (30 min).
+	NeverSpawnedReaperTimeout time.Duration
 
 	// Now is the wall-clock source. Nil → time.Now.
 	Now func() time.Time
@@ -172,6 +209,9 @@ func NewStaleWatcher(cfg StaleWatcherConfig) *StaleWatcher {
 	}
 	if cfg.ScanInterval <= 0 {
 		cfg.ScanInterval = staleWatchScanInterval
+	}
+	if cfg.NeverSpawnedReaperTimeout <= 0 {
+		cfg.NeverSpawnedReaperTimeout = neverSpawnedReaperDefaultTimeout
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -228,6 +268,17 @@ func (w *StaleWatcher) observe(_ context.Context, evt core.Event) error {
 	}
 	if core.EventType(typeStr) == core.EventTypeLaunchInitiated {
 		st.launchInitiatedSeen = true
+		// hk-0z5x: record the first launch_initiated timestamp as the reference
+		// for the never-spawned reaper deadline. Subsequent events (daemon
+		// heartbeats, etc.) must not reset this timestamp.
+		if st.launchInitiatedAt.IsZero() {
+			st.launchInitiatedAt = now
+		}
+	}
+	// hk-0z5x: track agent_ready so the never-spawned reaper knows when the
+	// implementer has successfully started (suppresses the reaper for normal runs).
+	if core.EventType(typeStr) == core.EventTypeAgentReady {
+		st.agentReadySeen = true
 	}
 
 	w.mu.Unlock()
@@ -316,6 +367,33 @@ func (w *StaleWatcher) checkRun(
 		st.launchStallEmitted = true
 		w.mu.Unlock()
 		w.emitLaunchStallDetected(ctx, runID, beadIDForStall, now.Sub(runStartedAt))
+		w.mu.Lock()
+		// Re-acquire st after unlock/lock cycle.
+		st = w.states[runID]
+		if st == nil {
+			w.mu.Unlock()
+			return
+		}
+	}
+
+	// hk-0z5x: never-spawned reaper — detect runs that received launch_initiated
+	// (the tmux window was created) but never received agent_ready (the claude
+	// process never started or the -default session was orphaned).  After
+	// NeverSpawnedReaperTimeout the stale watcher cancels the per-run context
+	// so waitWithSocketGrace unblocks, the bead is reopened, and the queue group
+	// drains.  This fires once per run independently of the main run_stale logic.
+	//
+	// Reference timestamp is launchInitiatedAt (not lastEventAt) so that
+	// subsequent events (e.g. daemon heartbeats) do not delay the deadline.
+	launchInitiatedAt := st.launchInitiatedAt
+	agentReadySeen := st.agentReadySeen
+	neverSpawnedFired := st.neverSpawnedFired
+	if st.launchInitiatedSeen && !agentReadySeen && !neverSpawnedFired && !launchInitiatedAt.IsZero() &&
+		now.Sub(launchInitiatedAt) > w.cfg.NeverSpawnedReaperTimeout {
+		st.neverSpawnedFired = true
+		beadIDForNSR := st.beadID
+		w.mu.Unlock()
+		w.fireNeverSpawnedReaper(ctx, runID, beadIDForNSR, handle, now.Sub(launchInitiatedAt))
 		w.mu.Lock()
 		// Re-acquire st after unlock/lock cycle.
 		st = w.states[runID]
@@ -453,6 +531,38 @@ func (w *StaleWatcher) emitLaunchStallDetected(ctx context.Context, runID core.R
 		return
 	}
 	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeLaunchStallDetected, b)
+}
+
+// fireNeverSpawnedReaper is called (at most once per run) when launch_initiated
+// was observed but agent_ready never arrived within NeverSpawnedReaperTimeout.
+// It marks the RunHandle as aborted and calls handle.Cancel() to unblock
+// waitWithSocketGrace (which is stuck on sess.Wait for an orphaned session).
+// beadRunOne's per-run abort check then reopens the bead and emits run_failed
+// so the queue group drains automatically.
+//
+// If handle.Cancel is nil (run registered before the per-run context was wired),
+// the method logs a warning and takes no further action — the operator must
+// restart the daemon to reap the stuck run.
+//
+// Bead ref: hk-0z5x.
+func (w *StaleWatcher) fireNeverSpawnedReaper(
+	_ context.Context,
+	runID core.RunID,
+	beadID core.BeadID,
+	handle *RunHandle,
+	elapsed time.Duration,
+) {
+	fmt.Fprintf(os.Stderr,
+		"daemon: stalewatch: never-spawned reaper: bead %s run %s elapsed %s — launch_initiated but no agent_ready; aborting run\n",
+		beadID, runID, elapsed.Round(time.Second))
+	if handle.Cancel == nil {
+		fmt.Fprintf(os.Stderr,
+			"daemon: stalewatch: never-spawned reaper: bead %s run %s: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required\n",
+			beadID, runID)
+		return
+	}
+	handle.aborted.Store(true)
+	handle.Cancel()
 }
 
 // probeWorktreeHEAD returns the HEAD commit SHA of the git worktree at wtPath,

@@ -824,6 +824,21 @@ func ExportedBeadStaleAfter(labels []string, defaultAfter time.Duration) time.Du
 	return beadStaleAfter(labels, defaultAfter)
 }
 
+// ExportedRunHandleIsAborted returns true if the RunHandle's aborted flag is set.
+// Used by the never-spawned reaper tests (hk-0z5x).
+func ExportedRunHandleIsAborted(h *RunHandle) bool {
+	return h.aborted.Load()
+}
+
+// ExportedStalewatchObserve invokes the StaleWatcher's observe callback directly
+// with the given event. The watcher's configured Now() function is used as the
+// timestamp, so tests must set an appropriate clock before calling this.
+//
+// Bead ref: hk-0z5x.
+func ExportedStalewatchObserve(w *StaleWatcher, ctx context.Context, evt core.Event) {
+	_ = w.observe(ctx, evt)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // buildClaudeLaunchSpec test seams (hk-gql20.13)
 // ─────────────────────────────────────────────────────────────────────────────

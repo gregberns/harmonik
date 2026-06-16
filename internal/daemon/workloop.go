@@ -1975,6 +1975,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Register the run and spawn a goroutine to handle it end-to-end.
 		// The goroutine owns Unregister on exit; the outer loop may proceed to
 		// claim the next bead immediately (up to effectiveMax).
+		//
+		// hk-0z5x: create a per-run derived context with its own cancel function
+		// so the never-spawned reaper (StaleWatcher.fireNeverSpawnedReaper) can
+		// abort THIS run without affecting the daemon or other concurrent runs.
+		// The cancel is stored in RunHandle.Cancel for the stale watcher to call.
+		runCtx, runCancel := context.WithCancel(ctx)
 		deps.runRegistry.Register(runID, &RunHandle{
 			BeadID: beadID,
 			// QueueName tags the run with its dispatching queue so the per-queue
@@ -1983,6 +1989,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			QueueName: capturedQueueName,
 			Labels:    beadRecord.Labels,
 			StartedAt: time.Now(),
+			Cancel:    runCancel,
 		})
 		wg.Add(1)
 		// NQ-B1: capture the dispatching queue's name so the completion path can
@@ -1992,11 +1999,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// never marks its item terminal → the group stalls forever (hk-tigaf.4).
 		go func(runID core.RunID, beadRecord core.BeadRecord, qname string, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string) {
 			defer wg.Done()
+			defer runCancel() // always release the per-run context, even on panic
 			defer deps.runRegistry.Unregister(runID)
 			// runSucceeded is set by the emitDone closure inside beadRunOne
 			// and read here after beadRunOne returns for EM-015f group-advance.
 			var runSucceeded bool
-			beadRunOne(ctx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams)
+			beadRunOne(runCtx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				// hk-ly0hg Fix-1: if the daemon context was cancelled (shutdown),
@@ -3189,6 +3197,30 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// apply the stop-hook grace window for a pending outcome_emitted payload.
 	socketOutcome, ei := waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
 		runID.String(), artifacts.claudeSessionID)
+
+	// hk-0z5x: per-run abort check — fired when the never-spawned reaper in
+	// StaleWatcher cancels the per-run context (ctx) because launch_initiated
+	// was observed but agent_ready never arrived within NeverSpawnedReaperTimeout.
+	//
+	// Distinguish from daemon-wide shutdown (where ctx is also cancelled but
+	// handle.aborted is NOT set): check handle.aborted before treating this as
+	// a per-run abort. Daemon shutdown falls through to the existing ctx.Err()
+	// check in the no-commit path (line ~3441) which leaves the item 'dispatched'
+	// for QM-002a recovery.
+	if ctx.Err() != nil {
+		if handle, ok := deps.runRegistry.Get(runID); ok && handle.aborted.Load() {
+			const abortReason = "never_spawned_reaper: launch_initiated but agent_ready not received within deadline"
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(context.Background(), deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, abortReason)
+			emitRunCompleted(context.Background(), deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, false, abortReason, queueID, queueGroupIndex, nil)
+			if runSucceeded != nil {
+				*runSucceeded = false
+			}
+			return
+		}
+		// ctx cancelled for other reasons (daemon shutdown) — fall through to the
+		// existing daemon-shutdown handling in the no-commit path.
+	}
 
 	// HC-065: Drive StateTerminating → StateTerminated/StateFailed transitions.
 	// The session has exited (waitWithSocketGrace returned). Attempt to advance

@@ -80,6 +80,12 @@ type RunHandle struct {
 	// by beadRunOne after a successful handler.Launch; nil before the handler
 	// is launched. Use SetMachine / GetMachine for race-free access.
 	machine atomic.Pointer[hclifecycle.Machine]
+
+	// aborted is set to true by the never-spawned reaper (StaleWatcher) before
+	// calling Cancel() so that beadRunOne can distinguish a per-run abort from
+	// a daemon-wide shutdown when ctx.Err() != nil.
+	// Bead ref: hk-0z5x.
+	aborted atomic.Bool
 }
 
 // SetMachine stores m as the lifecycle Machine for this run. Thread-safe.

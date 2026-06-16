@@ -1021,6 +1021,168 @@ func countHookEntriesForScript(settings map[string]interface{}, eventName, scrip
 	return count
 }
 
+// ── enable/doctor parser-parity tests (hk-ar5y) ──────────────────────────────
+
+// TestParseKeeperEnableArgs_PreservesYesDestructive guards the exact regression
+// that failed the original hk-psds: the enable parser MUST keep its
+// --yes-destructive case (sets yesDestructive=true), NOT reject it as unknown.
+func TestParseKeeperEnableArgs_PreservesYesDestructive(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	pa, code := parseKeeperEnableArgs([]string{"orchestrator", "--yes-destructive"}, &stdout, &stderr)
+	if code != -1 {
+		t.Fatalf("parse: want -1 (proceed), got %d\nstderr: %s", code, stderr.String())
+	}
+	if !pa.yesDestructive {
+		t.Error("--yes-destructive not parsed to yesDestructive=true (hk-psds regression)")
+	}
+	if pa.agentName != "orchestrator" {
+		t.Errorf("agentName = %q; want orchestrator", pa.agentName)
+	}
+}
+
+// TestParseKeeperEnableArgs_AgentFlagWinsPositional: when both a positional and
+// --agent are given, the flag wins.
+func TestParseKeeperEnableArgs_AgentFlagWinsPositional(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	pa, code := parseKeeperEnableArgs([]string{"positionalname", "--agent", "flagname"}, &stdout, &stderr)
+	if code != -1 {
+		t.Fatalf("want -1, got %d", code)
+	}
+	if pa.agentName != "flagname" {
+		t.Errorf("flag must win positional: agentName = %q; want flagname", pa.agentName)
+	}
+}
+
+// TestParseKeeperEnableArgs_AgentEqualsForm verifies the --agent=NAME form.
+func TestParseKeeperEnableArgs_AgentEqualsForm(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	pa, code := parseKeeperEnableArgs([]string{"--agent=flagname"}, &stdout, &stderr)
+	if code != -1 {
+		t.Fatalf("want -1, got %d", code)
+	}
+	if pa.agentName != "flagname" {
+		t.Errorf("--agent=NAME: agentName = %q; want flagname", pa.agentName)
+	}
+}
+
+// TestParseKeeperEnableArgs_RejectsUnknownFlag: an unrecognized leading-dash
+// token exits 2.
+func TestParseKeeperEnableArgs_RejectsUnknownFlag(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	_, code := parseKeeperEnableArgs([]string{"orchestrator", "--bogus"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("--bogus: want exit 2, got %d", code)
+	}
+}
+
+// TestParseKeeperEnableArgs_MissingAgent: no agent (flag or positional) exits 1.
+func TestParseKeeperEnableArgs_MissingAgent(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	_, code := parseKeeperEnableArgs([]string{"--project", "/tmp/x"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("missing agent: want exit 1, got %d", code)
+	}
+}
+
+// TestParseKeeperEnableArgs_AllKnownFlagsPreserved enumerates every recognized
+// enable flag and asserts each is still parsed (the reject is ONLY for
+// UNRECOGNIZED leading-dash tokens).
+func TestParseKeeperEnableArgs_AllKnownFlagsPreserved(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	pa, code := parseKeeperEnableArgs([]string{
+		"orchestrator", "--project", "/p", "--scripts-dir", "/s", "--tmux", "sess:0.0", "--yes-destructive",
+	}, &stdout, &stderr)
+	if code != -1 {
+		t.Fatalf("want -1, got %d\nstderr: %s", code, stderr.String())
+	}
+	if pa.agentName != "orchestrator" || pa.projectDir != "/p" || pa.scriptsDir != "/s" ||
+		pa.tmuxTarget != "sess:0.0" || !pa.yesDestructive {
+		t.Errorf("not all flags parsed: %+v", pa)
+	}
+}
+
+// TestParseKeeperDoctorArgs_AgentFlagWinsPositional mirrors the enable behavior
+// for doctor — THE CLASS-A killer: `doctor --agent X` must operate on X, NOT on
+// an agent literally named "--agent".
+func TestParseKeeperDoctorArgs_AgentFlagWinsPositional(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	da, code := parseKeeperDoctorArgs([]string{"pos", "--agent", "flag"}, &stdout, &stderr)
+	if code != -1 {
+		t.Fatalf("want -1, got %d", code)
+	}
+	if da.agentName != "flag" {
+		t.Errorf("flag must win positional: agentName = %q; want flag", da.agentName)
+	}
+}
+
+// TestParseKeeperDoctorArgs_AgentFlagNotLiteral confirms `doctor --agent X`
+// resolves to X, not the literal "--agent" token (the false-green captain hit).
+func TestParseKeeperDoctorArgs_AgentFlagNotLiteral(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	da, code := parseKeeperDoctorArgs([]string{"--agent", "captain"}, &stdout, &stderr)
+	if code != -1 {
+		t.Fatalf("want -1, got %d", code)
+	}
+	if da.agentName != "captain" {
+		t.Errorf("--agent captain: agentName = %q; want captain (NOT \"--agent\")", da.agentName)
+	}
+}
+
+// TestParseKeeperDoctorArgs_RejectsUnknownFlag: an unrecognized leading-dash
+// token exits 2 for doctor too.
+func TestParseKeeperDoctorArgs_RejectsUnknownFlag(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	_, code := parseKeeperDoctorArgs([]string{"--bogus"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("--bogus: want exit 2, got %d", code)
+	}
+}
+
+// TestParseKeeperDoctorArgs_ProjectFlagPreserved confirms --project is still
+// recognized (enumerate-and-keep) and the positional agent is parsed.
+func TestParseKeeperDoctorArgs_ProjectFlagPreserved(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	da, code := parseKeeperDoctorArgs([]string{"captain", "--project", "/p"}, &stdout, &stderr)
+	if code != -1 {
+		t.Fatalf("want -1, got %d", code)
+	}
+	if da.agentName != "captain" || da.projectDir != "/p" {
+		t.Errorf("flags not parsed: %+v", da)
+	}
+}
+
+// TestKeeperEnableEntry_RejectsUnknownFlag verifies the unknown-flag reject
+// propagates exit 2 through the entry point.
+func TestKeeperEnableEntry_RejectsUnknownFlag(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	code := runKeeperEnableEntry([]string{"orchestrator", "--bogus"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("entry --bogus: want exit 2, got %d", code)
+	}
+}
+
+// TestKeeperDoctorEntry_RejectsUnknownFlag verifies the unknown-flag reject
+// propagates exit 2 through the doctor entry point.
+func TestKeeperDoctorEntry_RejectsUnknownFlag(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	code := runKeeperDoctorEntry([]string{"captain", "--bogus"}, &stdout, &stderr)
+	if code != 2 {
+		t.Errorf("entry --bogus: want exit 2, got %d", code)
+	}
+}
+
 // ── rebind tests ──────────────────────────────────────────────────────────────
 
 // writeTestCtxFile writes a .ctx gauge file for the given agent under projectDir.

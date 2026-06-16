@@ -83,7 +83,7 @@ func TestHKQP3_ProbeCaptainSentinel_Absent(t *testing.T) {
 
 	projectDir := daemonOrphanSweepTempProjectDir(t)
 
-	live := probeCaptainSentinel(projectDir, nil)
+	live := probeCaptainSentinel(context.Background(), projectDir, hkqp3ProjectHash, nil, nil, nil)
 	if live {
 		t.Error("absent sentinel: live = true, want false")
 	}
@@ -99,7 +99,7 @@ func TestHKQP3_ProbeCaptainSentinel_LivePID(t *testing.T) {
 	hkqp3WriteCaptainSentinel(t, projectDir)
 	hkqp3WriteCaptainPidfile(t, projectDir, os.Getpid())
 
-	live := probeCaptainSentinel(projectDir, nil)
+	live := probeCaptainSentinel(context.Background(), projectDir, hkqp3ProjectHash, nil, nil, nil)
 	if !live {
 		t.Error("live PID: live = false, want true")
 	}
@@ -123,7 +123,7 @@ func TestHKQP3_ProbeCaptainSentinel_DeadPID(t *testing.T) {
 	hkqp3WriteCaptainSentinel(t, projectDir)
 	hkqp3WriteCaptainPidfile(t, projectDir, deadPID)
 
-	live := probeCaptainSentinel(projectDir, nil)
+	live := probeCaptainSentinel(context.Background(), projectDir, hkqp3ProjectHash, nil, nil, nil)
 	if live {
 		t.Error("dead PID: live = true, want false")
 	}
@@ -142,12 +142,70 @@ func TestHKQP3_ProbeCaptainSentinel_MissingPidfile(t *testing.T) {
 	hkqp3WriteCaptainSentinel(t, projectDir)
 	// No pidfile written.
 
-	live := probeCaptainSentinel(projectDir, nil)
+	live := probeCaptainSentinel(context.Background(), projectDir, hkqp3ProjectHash, nil, nil, nil)
 	if live {
 		t.Error("missing pidfile: live = true, want false")
 	}
 	if hkqp3CaptainSentinelExists(projectDir) {
 		t.Error("missing pidfile: sentinel file still exists after removal")
+	}
+}
+
+// TestHKWUXG_ProbeCaptainSentinel_StalePidLiveSession reproduces the "captain
+// dies suddenly" chain (hk-wuxg): the recorded captain.pid is STALE/dead (its
+// pane PID churned across a keeper wind-down cycle) but the captain tmux session
+// is genuinely alive. The hardened probe MUST trust the live session, return
+// true, and KEEP the sentinel — so the next orphan sweep does not reap the live
+// captain (the proximate cause of daemon_orphan_sweep_completed with
+// captain_sessions_skipped:0).
+func TestHKWUXG_ProbeCaptainSentinel_StalePidLiveSession(t *testing.T) {
+	t.Parallel()
+
+	const deadPID = 99989
+	if daemonOrphanSweepIsPidLive(deadPID) {
+		t.Skipf("PID %d is live on this host; skipping", deadPID)
+	}
+
+	projectDir := daemonOrphanSweepTempProjectDir(t)
+	hkqp3WriteCaptainSentinel(t, projectDir)
+	// captain.pid records a DEAD pid (stale write-once value).
+	hkqp3WriteCaptainPidfile(t, projectDir, deadPID)
+
+	// The captain tmux session is present in the snapshot with a LIVE pane PID.
+	captainSession := lifecycle.TmuxSessionName(hkqp3ProjectHash, "captain")
+	sessionSnapshot := map[string]struct{}{captainSession: {}}
+	adapter := &hkqp3FakeAdapter{sessions: []string{captainSession}, panePID: os.Getpid()}
+
+	live := probeCaptainSentinel(context.Background(), projectDir, hkqp3ProjectHash, adapter, nil, sessionSnapshot)
+	if !live {
+		t.Error("stale pid + live session: live = false, want true (must not reap a live captain)")
+	}
+	if !hkqp3CaptainSentinelExists(projectDir) {
+		t.Error("stale pid + live session: sentinel was removed; must survive a live session with a stale pid")
+	}
+}
+
+// TestHKWUXG_ProbeCaptainSentinel_SessionGoneFallbackPidLive verifies the
+// fallback: the captain session is absent from the snapshot (e.g. no-tmux
+// daemon, or pre-snapshot launch window) but the recorded captain.pid is live →
+// still protected.
+func TestHKWUXG_ProbeCaptainSentinel_SessionGoneFallbackPidLive(t *testing.T) {
+	t.Parallel()
+
+	projectDir := daemonOrphanSweepTempProjectDir(t)
+	hkqp3WriteCaptainSentinel(t, projectDir)
+	hkqp3WriteCaptainPidfile(t, projectDir, os.Getpid())
+
+	// Adapter present but the captain session is NOT in the snapshot.
+	adapter := &hkqp3FakeAdapter{sessions: []string{}, panePID: 0}
+	sessionSnapshot := map[string]struct{}{}
+
+	live := probeCaptainSentinel(context.Background(), projectDir, hkqp3ProjectHash, adapter, nil, sessionSnapshot)
+	if !live {
+		t.Error("session absent + live recorded pid: live = false, want true (fallback must protect)")
+	}
+	if !hkqp3CaptainSentinelExists(projectDir) {
+		t.Error("session absent + live recorded pid: sentinel was removed; must be kept")
 	}
 }
 

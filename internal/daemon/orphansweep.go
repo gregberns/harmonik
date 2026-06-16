@@ -477,53 +477,81 @@ func captainPidfilePath(projectDir string) string {
 	return filepath.Join(coordinatorSentinelDir(projectDir), "captain.pid")
 }
 
-// probeCaptainSentinel checks whether the captain process is live per PL-006d
-// mechanism (ii):
+// probeCaptainSentinel checks whether the captain session is live per PL-006d
+// mechanism (ii). Liveness is determined from the LIVE captain tmux session
+// FIRST (mirroring the crew probe), falling back to the recorded captain.pid:
 //
 //   - Reads captain.sentinel at .harmonik/cognition/captain.sentinel.
 //   - If absent → captain is not running; returns false.
-//   - If present → reads .harmonik/cognition/captain.pid and probes the PID
-//     via kill(pid, 0).
-//   - If PID live → returns true (captain session MUST be excluded).
-//   - If PID dead or unreadable → returns false; removes the stale sentinel.
+//   - If present and the captain tmux session is in the snapshot with a live
+//     pane PID → returns true (captain session MUST be excluded).
+//   - Else if the recorded captain.pid is live → returns true.
+//   - Else (session gone AND recorded PID dead/absent) → returns false and
+//     removes the stale sentinel.
+//
+// Hardening (hk-wuxg): the captain.pid file is written ONCE at launch, but the
+// captain's pane PID churns across keeper wind-down cycles (handoff → /clear →
+// /session-resume) and force-restarts. Trusting only the stale captain.pid let
+// a sweep remove the sentinel while the captain session was genuinely alive —
+// the next sweep then reaped the live captain (the "captain dies suddenly"
+// chain: handoff_timeout abort → orphan_sweep with captain_sessions_skipped:0).
+// Resolving the current pane PID from tmux makes the exclusion survive a cycle
+// abort and pid churn, exactly as probeCrewRegistrySessions does for crews.
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006d mechanism (ii).
-// Bead ref: hk-qp3.
-func probeCaptainSentinel(projectDir string, logger *log.Logger) bool {
+// Bead ref: hk-qp3, hk-wuxg.
+func probeCaptainSentinel(
+	ctx context.Context,
+	projectDir string,
+	projectHash core.ProjectHash,
+	adapter ltmux.Adapter,
+	logger *log.Logger,
+	sessionSnapshot map[string]struct{},
+) bool {
 	sentinelPath := captainSentinelPath(projectDir)
-	pidfilePath := captainPidfilePath(projectDir)
 
 	if _, statErr := os.Stat(sentinelPath); os.IsNotExist(statErr) {
 		return false
 	}
 
-	pid, readErr := readSupervisorPID(pidfilePath)
-	if readErr != nil {
-		if logger != nil {
-			logger.Printf("daemon: probeCaptainSentinel: cannot read captain.pid (%v); removing stale sentinel", readErr)
-		}
-		removeStaleSentinel(sentinelPath, logger)
-		return false
-	}
-
-	if err := syscall.Kill(pid, 0); err != nil {
-		if err == syscall.EPERM {
-			if logger != nil {
-				logger.Printf("daemon: probeCaptainSentinel: captain PID %d EPERM (live); skipping captain session (PL-006d ii)", pid)
+	// PRIMARY: trust the live captain tmux session over the write-once pidfile.
+	sessionName := lifecycle.TmuxSessionName(projectHash, "captain")
+	if adapter != nil {
+		if _, present := sessionSnapshot[sessionName]; present {
+			pid, pidErr := adapter.WindowPanePID(ctx, ltmux.WindowHandle(sessionName+":"))
+			if pidErr == nil && pid > 0 && pidIsLive(pid) {
+				if logger != nil {
+					logger.Printf("daemon: probeCaptainSentinel: captain session %q live (pane PID %d); skipping (PL-006d ii)", sessionName, pid)
+				}
+				return true
 			}
-			return true
 		}
-		if logger != nil {
-			logger.Printf("daemon: probeCaptainSentinel: captain PID %d is dead (%v); removing stale sentinel", pid, err)
-		}
-		removeStaleSentinel(sentinelPath, logger)
-		return false
 	}
 
-	if logger != nil {
-		logger.Printf("daemon: probeCaptainSentinel: captain PID %d is live; skipping captain session (PL-006d ii)", pid)
+	// FALLBACK: no adapter / session absent from snapshot / pane PID dead. Probe
+	// the recorded captain.pid before declaring the captain gone — covers the
+	// no-tmux daemon and the brief window before the session enters the snapshot.
+	if pid, readErr := readSupervisorPID(captainPidfilePath(projectDir)); readErr == nil && pidIsLive(pid) {
+		if logger != nil {
+			logger.Printf("daemon: probeCaptainSentinel: captain PID %d live; skipping (PL-006d ii)", pid)
+		}
+		return true
 	}
-	return true
+
+	// Captain is genuinely gone: neither the live session nor the recorded PID is
+	// alive. Remove the stale sentinel and let the generic sweep reap the session.
+	if logger != nil {
+		logger.Printf("daemon: probeCaptainSentinel: captain session %q and recorded pid both dead/absent; removing stale sentinel", sessionName)
+	}
+	removeStaleSentinel(sentinelPath, logger)
+	return false
+}
+
+// pidIsLive reports whether pid is a live process via kill(pid, 0). EPERM means
+// the process exists but is owned by another user — still live.
+func pidIsLive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
 }
 
 // probeCrewRegistrySessions lists crew registry records, checks each crew's
@@ -709,7 +737,7 @@ func RunOrphanSweep(
 
 		// (PL-006d mechanism ii) Captain sentinel: exclude the captain session when
 		// captain.sentinel is present and captain PID is alive.
-		if probeCaptainSentinel(projectDir, cfg.Logger) {
+		if probeCaptainSentinel(ctx, projectDir, projectHash, cfg.TmuxAdapter, cfg.Logger, sessionSnapshot) {
 			captainSession := lifecycle.TmuxSessionName(projectHash, "captain")
 			excludedTmuxSessions[captainSession] = struct{}{}
 			result.CaptainSessionsSkipped = 1

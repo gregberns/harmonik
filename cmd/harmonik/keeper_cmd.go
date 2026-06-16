@@ -69,7 +69,11 @@ func runKeeperSubcommand(args []string) int {
 	fs.StringVar(&respawnCmdFlag, "respawn-cmd", "", "shell command to re-launch the agent after it exits (supervised respawn path; hk-3w2)")
 
 	if err := fs.Parse(args); err != nil {
-		return 1
+		if errors.Is(err, flag.ErrHelp) {
+			return 1
+		}
+		// Unrecognized flag (incl. a stray leading-dash token): loud exit 2.
+		return 2
 	}
 
 	// Detect explicitly-set pct flags and warn: on [1m]-window models
@@ -89,10 +93,15 @@ func runKeeperSubcommand(args []string) int {
 			"Use --warn-abs-tokens/--act-abs-tokens to override the act thresholds instead.")
 	}
 
-	if agentFlag == "" {
-		fmt.Fprintln(os.Stderr, "harmonik keeper: --agent is required")
-		return 1
+	// Resolve the target agent identically to restart-now (the gold standard):
+	// accept the --agent flag (wins) OR a positional <name>, and reject any
+	// unrecognized leading-dash token loudly (exit 2). All pre-existing watcher
+	// flags above remain recognized; only stray dash tokens are rejected.
+	resolvedAgent, code := resolveKeeperAgent(fs, "harmonik keeper", agentFlag)
+	if resolvedAgent == "" {
+		return code
 	}
+	agentFlag = resolvedAgent
 
 	projectDir, err := os.Getwd()
 	if err != nil {
@@ -245,6 +254,74 @@ func runKeeperSubcommand(args []string) int {
 	return 0
 }
 
+// newKeeperMarkerFlags builds the flag set shared by the keeper marker
+// subcommands (set-dispatching, clear-dispatching, rebind, restart-now): a
+// --project override and an --agent alias for the positional <name>. Keeping the
+// registration in one place guarantees parser parity with restart-now (the gold
+// standard) and gives tests a single seam.
+func newKeeperMarkerFlags(name string) (fs *flag.FlagSet, projectFlag, agentFlag *string) {
+	fs = flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	projectFlag = fs.String("project", "", "project directory (default: current working directory)")
+	agentFlag = fs.String("agent", "", "agent name (alternative to the positional <name>)")
+	return fs, projectFlag, agentFlag
+}
+
+// resolveKeeperAgent resolves the target agent for a keeper subcommand from the
+// already-parsed flag set, mirroring restart-now: the --agent flag WINS, and the
+// first positional argument is the fallback. It rejects any UNRECOGNIZED
+// leading-dash token loudly with exit 2 rather than letting Go's flag package
+// silently drop a trailing "-foo" — the package stops parsing at the first
+// positional, leaving later dash tokens in Args() where they would otherwise be
+// ignored and mistaken for "no such flag, never mind". Returns (agent, 0) on
+// success; ("", code) when the caller should return code (2 = stray leading-dash
+// token, 1 = no agent supplied).
+func resolveKeeperAgent(fs *flag.FlagSet, label, agentFlag string) (string, int) {
+	for _, a := range fs.Args() {
+		if len(a) > 1 && a[0] == '-' {
+			fmt.Fprintf(os.Stderr, "%s: unrecognized flag %q — flags must precede the positional <name>\n", label, a)
+			return "", 2
+		}
+	}
+	agent := agentFlag
+	if agent == "" && fs.NArg() >= 1 {
+		agent = fs.Arg(0)
+	}
+	if agent == "" {
+		fmt.Fprintf(os.Stderr, "%s: agent name (--agent <name> or positional <name>) is required\n", label)
+		return "", 1
+	}
+	return agent, 0
+}
+
+// parseKeeperMarkerArgs parses args for a marker subcommand and resolves the
+// target agent + project directory. Returns (agent, project, 0) on success, or
+// ("", "", code) when the caller should return code immediately.
+func parseKeeperMarkerArgs(label string, args []string) (agent, project string, code int) {
+	fs, projectFlag, agentFlag := newKeeperMarkerFlags(label)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return "", "", 1
+		}
+		// Unrecognized flag (incl. a stray leading-dash token): loud exit 2.
+		return "", "", 2
+	}
+	agent, code = resolveKeeperAgent(fs, "harmonik "+label, *agentFlag)
+	if agent == "" {
+		return "", "", code
+	}
+	project = *projectFlag
+	if project == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik %s: cannot determine working directory: %v\n", label, err)
+			return "", "", 1
+		}
+		project = wd
+	}
+	return agent, project, 0
+}
+
 // runKeeperSetDispatching implements `harmonik keeper set-dispatching <agent>`.
 //
 // Writes .harmonik/keeper/<agent>.dispatching so HoldingDispatch returns true.
@@ -258,27 +335,11 @@ func runKeeperSubcommand(args []string) int {
 //
 // Spec ref: codename:session-keeper (hk-ekap1); bead hk-rc51s.
 func runKeeperSetDispatching(args []string) int {
-	fs := flag.NewFlagSet("keeper set-dispatching", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	var projectFlag string
-	fs.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
-	if err := fs.Parse(args); err != nil {
-		return 1
+	agent, project, code := parseKeeperMarkerArgs("keeper set-dispatching", args)
+	if agent == "" {
+		return code
 	}
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "harmonik keeper set-dispatching: agent name argument is required")
-		return 1
-	}
-	agent := fs.Arg(0)
-	if projectFlag == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik keeper set-dispatching: cannot determine working directory: %v\n", err)
-			return 1
-		}
-		projectFlag = wd
-	}
-	if err := keeper.SetDispatching(projectFlag, agent); err != nil {
+	if err := keeper.SetDispatching(project, agent); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik keeper set-dispatching: %v\n", err)
 		return 1
 	}
@@ -299,27 +360,11 @@ func runKeeperSetDispatching(args []string) int {
 //
 // Spec ref: codename:session-keeper (hk-ekap1); bead hk-rc51s.
 func runKeeperClearDispatching(args []string) int {
-	fs := flag.NewFlagSet("keeper clear-dispatching", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	var projectFlag string
-	fs.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
-	if err := fs.Parse(args); err != nil {
-		return 1
+	agent, project, code := parseKeeperMarkerArgs("keeper clear-dispatching", args)
+	if agent == "" {
+		return code
 	}
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "harmonik keeper clear-dispatching: agent name argument is required")
-		return 1
-	}
-	agent := fs.Arg(0)
-	if projectFlag == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik keeper clear-dispatching: cannot determine working directory: %v\n", err)
-			return 1
-		}
-		projectFlag = wd
-	}
-	if err := keeper.ClearDispatching(projectFlag, agent); err != nil {
+	if err := keeper.ClearDispatching(project, agent); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik keeper clear-dispatching: %v\n", err)
 		return 1
 	}
@@ -345,25 +390,9 @@ func runKeeperClearDispatching(args []string) int {
 //
 // Refs: hk-mejt (stale/mismatched .managed binding).
 func runKeeperRebind(args []string) int {
-	fs := flag.NewFlagSet("keeper rebind", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	var projectFlag string
-	fs.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "harmonik keeper rebind: agent name argument is required")
-		return 1
-	}
-	agent := fs.Arg(0)
-	if projectFlag == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik keeper rebind: cannot determine working directory: %v\n", err)
-			return 1
-		}
-		projectFlag = wd
+	agent, projectFlag, code := parseKeeperMarkerArgs("keeper rebind", args)
+	if agent == "" {
+		return code
 	}
 
 	ctxFile, modTime, err := keeper.ReadCtxFile(projectFlag, agent)
@@ -421,31 +450,9 @@ func runKeeperRebind(args []string) int {
 //
 // Refs: hk-wjzf, hk-xjlq, ON-059.
 func runKeeperRestartNow(args []string) int {
-	fs := flag.NewFlagSet("keeper restart-now", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	var projectFlag string
-	var agentFlag string
-	fs.StringVar(&projectFlag, "project", "", "project directory (default: current working directory)")
-	fs.StringVar(&agentFlag, "agent", "", "agent name (alternative to positional argument)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	// Accept --agent flag or positional argument; flag takes precedence.
-	agent := agentFlag
-	if agent == "" && fs.NArg() >= 1 {
-		agent = fs.Arg(0)
-	}
+	agent, projectFlag, code := parseKeeperMarkerArgs("keeper restart-now", args)
 	if agent == "" {
-		fmt.Fprintln(os.Stderr, "harmonik keeper restart-now: agent name argument is required")
-		return 1
-	}
-	if projectFlag == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: cannot determine working directory: %v\n", err)
-			return 1
-		}
-		projectFlag = wd
+		return code
 	}
 
 	// Read the handoff file — the captain must have written it first.
@@ -509,11 +516,13 @@ USAGE
   harmonik keeper --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N] [--warn-abs-tokens N] [--act-abs-tokens N]
   harmonik keeper enable <agent> [--project DIR] [--scripts-dir DIR] [--tmux TARGET] [--yes-destructive]
   harmonik keeper doctor <agent> [--project DIR]
-  harmonik keeper rebind <agent> [--project DIR]
-  harmonik keeper set-dispatching <agent> [--project DIR]
-  harmonik keeper clear-dispatching <agent> [--project DIR]
-  harmonik keeper restart-now --agent <name> [--project DIR]
-  harmonik keeper restart-now <agent> [--project DIR]
+  harmonik keeper rebind <agent>|--agent <name> [--project DIR]
+  harmonik keeper set-dispatching <agent>|--agent <name> [--project DIR]
+  harmonik keeper clear-dispatching <agent>|--agent <name> [--project DIR]
+  harmonik keeper restart-now <agent>|--agent <name> [--project DIR]
+
+  Every verb (and the bare watcher) accepts the agent as a positional <name> or
+  via --agent (flag wins); an unrecognized leading-dash token exits 2.
 
 VERBS
   enable             Wire statusLine + Stop + PreCompact stanzas into ~/.claude/settings.json

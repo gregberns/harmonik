@@ -3080,6 +3080,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// context.Canceled — in that case we skip the reopen and fall through to
 	// the normal waitWithSocketGrace path which handles the exit correctly per
 	// CHB-020 branch 3.
+	// hk-zlo8: resolve completionMode before the adapter check so it is accessible
+	// at the paste-inject gate below (pasteInjectOnLaunch + pasteInjectQuitOnCommit
+	// must be skipped for ProcessExit harnesses — same class as hk-f6g7).
+	completionMode := handlercontract.CompletionEventStreamThenQuit
+	if deps.harnessRegistry != nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+			completionMode = h.Completion()
+		}
+	}
+
 	adapter, adapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(artifacts))
 	if adapterErr != nil {
 		// No adapter for the resolved agent type — non-fatal; skip ready-wait.
@@ -3090,12 +3100,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// self-terminate on turn completion and never emit agent_ready; calling
 		// waitAgentReady unconditionally caused HC-056 timeout in all workflow modes.
 		// Spec: specs/harness-contract.md §2 N5.
-		completionMode := handlercontract.CompletionEventStreamThenQuit
-		if deps.harnessRegistry != nil {
-			if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
-				completionMode = h.Completion()
-			}
-		}
+		// completionMode was resolved above (hk-zlo8) and is used here directly.
 		if completionMode != handlercontract.CompletionProcessExit {
 			// Derive a child context that cancels when the watcher finishes (handler
 			// exit). This prevents waitAgentReady from blocking for the full timeout
@@ -3168,70 +3173,80 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// waitWithSocketGrace without the agent_ready handshake.
 	}
 
-	// Step 6a: pasteInjectOnLaunch — deliver "Please read .harmonik/agent-task.md
-	// and begin." (or phase-appropriate equivalent) to the tmux pane via
-	// WriteLastPane.
+	// Steps 6a/6b: paste-inject — only for interactive TUI harnesses (not ProcessExit).
+	// hk-zlo8: CodexHarness (CompletionProcessExit) has no tmux pane; calling
+	// pasteInjectOnLaunch causes "WriteLastPane: cant find pane" → no_commit in ~4s.
+	// ProcessExit harnesses receive their task via argv (launch spec), not pane paste.
+	// Mirrors the existing hk-f6g7 gate above for waitAgentReady.
 	//
-	// MUST run AFTER waitAgentReady returns (smoke v9 RED, hk-zchbu): when
-	// paste-inject fires before agent_ready, the trailing \n is consumed by
-	// Claude Code's welcome-splash render before the REPL input state is
-	// active; the buffered text sits in the input bar unsubmitted, claude
-	// never reads agent-task.md, HC-056 never fires (the splash itself
-	// doesn't emit SessionStart on its own), and the run hangs.
-	//
-	// Errors are logged to stderr but non-fatal (PL-021d).
-	//
-	// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
-	// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
-	briefDelivered := pasteInjectOnLaunch(ctx, runPasteTarget, artifacts.claudeSessionID,
-		handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath,
-		deps.bus, runID)
-
-	// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
-	// worktree, send `/quit Enter` to Claude Code's REPL to trigger the Stop
-	// hook and unblock the workloop (CHB-028 session-completion-instruction,
-	// hk-cmybm).
-	//
-	// Background: in interactive TUI mode the Stop hook fires on session exit
-	// (/quit or Ctrl-C) — NOT after each assistant response.  Claude Code agents
-	// cannot execute slash commands from their tool API; the daemon detects the
-	// commit and injects /quit programmatically via tmux send-keys.
-	//
-	// The goroutine polls the worktree HEAD every 500ms.  When HEAD changes from
-	// headSHA (the pre-commit parent), it sends /quit.  Non-fatal on error.
-	//
-	// hk-012af: use runPasteTarget (per-run substrate) so /quit targets this
-	// run's pane, not the shared "last pane" which may have been overwritten by
-	// a concurrent beadRunOne goroutine.
-	//
-	// hk-930o3: briefDelivered is passed so pasteInjectQuitOnCommit blocks on
-	// brief delivery before starting the commit poll loop, preventing a stale
-	// tmux pane /exit race.
-	//
-	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
-	// Beads: hk-cmybm, hk-930o3.
-	// noChangeTimeoutCh is closed by pasteInjectQuitOnCommit when it kills the
-	// session after commitPollTimeout without a new commit (hk-trjef).  The
-	// workloop checks it non-blockingly in the default switch branch to
-	// distinguish a forced-kill from a genuine agent failure.
-	//
-	// hk-7srrd: pass a per-run heartbeat channel so pasteInjectQuitOnCommit can
-	// track agent_heartbeat events and use heartbeat staleness as the primary
-	// kill trigger instead of a fixed wall-clock deadline.
-	//
-	// hk-37giq: this MUST be an INDEPENDENT subscription (tap.Subscribe()), NOT
-	// the same tapCh that waitAgentReady consumes. A Go channel receive is
-	// exclusive, so sharing tapCh let waitAgentReady's drain goroutine — which can
-	// keep running after readyCancel() until it happens to select ctx.Done() —
-	// steal every heartbeat from this watchdog under concurrent dispatch. With the
-	// fan-out tap, the watchdog gets its own copy of every event and observes
-	// firstHeartbeatSeen, so it advances instead of spinning in the launch-
-	// suppression branch forever (launch_stall_detected → run_stale wedge).
+	// noChangeTimeoutCh is declared unconditionally so the default switch branch at
+	// the post-wait select can read it (nil = no watchdog, treated as open channel).
 	var noChangeTimeoutCh chan struct{}
-	if qs, ok := runPasteTarget.(quitSender); ok {
-		noChangeTimeoutCh = make(chan struct{})
-		watchdogCh := tap.Subscribe()
-		go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, deps.bus, runID)
+	if completionMode != handlercontract.CompletionProcessExit {
+		// Step 6a: pasteInjectOnLaunch — deliver "Please read .harmonik/agent-task.md
+		// and begin." (or phase-appropriate equivalent) to the tmux pane via
+		// WriteLastPane.
+		//
+		// MUST run AFTER waitAgentReady returns (smoke v9 RED, hk-zchbu): when
+		// paste-inject fires before agent_ready, the trailing \n is consumed by
+		// Claude Code's welcome-splash render before the REPL input state is
+		// active; the buffered text sits in the input bar unsubmitted, claude
+		// never reads agent-task.md, HC-056 never fires (the splash itself
+		// doesn't emit SessionStart on its own), and the run hangs.
+		//
+		// Errors are logged to stderr but non-fatal (PL-021d).
+		//
+		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
+		// Bead ref: hk-lj1p9.4 (wiring), hk-zchbu (ordering).
+		briefDelivered := pasteInjectOnLaunch(ctx, runPasteTarget, artifacts.claudeSessionID,
+			handlercontract.ReviewLoopPhase(rc.phase), rc.iterationCount, wtPath,
+			deps.bus, runID)
+
+		// Step 6b: pasteInjectQuitOnCommit — after the task commit lands in the
+		// worktree, send `/quit Enter` to Claude Code's REPL to trigger the Stop
+		// hook and unblock the workloop (CHB-028 session-completion-instruction,
+		// hk-cmybm).
+		//
+		// Background: in interactive TUI mode the Stop hook fires on session exit
+		// (/quit or Ctrl-C) — NOT after each assistant response.  Claude Code agents
+		// cannot execute slash commands from their tool API; the daemon detects the
+		// commit and injects /quit programmatically via tmux send-keys.
+		//
+		// The goroutine polls the worktree HEAD every 500ms.  When HEAD changes from
+		// headSHA (the pre-commit parent), it sends /quit.  Non-fatal on error.
+		//
+		// hk-012af: use runPasteTarget (per-run substrate) so /quit targets this
+		// run's pane, not the shared "last pane" which may have been overwritten by
+		// a concurrent beadRunOne goroutine.
+		//
+		// hk-930o3: briefDelivered is passed so pasteInjectQuitOnCommit blocks on
+		// brief delivery before starting the commit poll loop, preventing a stale
+		// tmux pane /exit race.
+		//
+		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028.
+		// Beads: hk-cmybm, hk-930o3.
+		// noChangeTimeoutCh is closed by pasteInjectQuitOnCommit when it kills the
+		// session after commitPollTimeout without a new commit (hk-trjef).  The
+		// workloop checks it non-blockingly in the default switch branch to
+		// distinguish a forced-kill from a genuine agent failure.
+		//
+		// hk-7srrd: pass a per-run heartbeat channel so pasteInjectQuitOnCommit can
+		// track agent_heartbeat events and use heartbeat staleness as the primary
+		// kill trigger instead of a fixed wall-clock deadline.
+		//
+		// hk-37giq: this MUST be an INDEPENDENT subscription (tap.Subscribe()), NOT
+		// the same tapCh that waitAgentReady consumes. A Go channel receive is
+		// exclusive, so sharing tapCh let waitAgentReady's drain goroutine — which can
+		// keep running after readyCancel() until it happens to select ctx.Done() —
+		// steal every heartbeat from this watchdog under concurrent dispatch. With the
+		// fan-out tap, the watchdog gets its own copy of every event and observes
+		// firstHeartbeatSeen, so it advances instead of spinning in the launch-
+		// suppression branch forever (launch_stall_detected → run_stale wedge).
+		if qs, ok := runPasteTarget.(quitSender); ok {
+			noChangeTimeoutCh = make(chan struct{})
+			watchdogCh := tap.Subscribe()
+			go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, headSHA, noChangeTimeoutCh, briefDelivered, watchdogCh, deps.bus, runID)
+		}
 	}
 
 	// Step 7: wait for the watcher to finish (handler exit or ctx cancel) then

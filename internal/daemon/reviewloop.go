@@ -542,6 +542,17 @@ func runReviewLoop(
 		var implHangDetectedCh <-chan struct{}
 		var implHangCancel context.CancelFunc = func() {}
 
+		// hk-zlo8: resolve implCompletionMode before the adapter check so it is
+		// accessible at the paste-inject gate below (pasteInjectOnLaunch +
+		// pasteInjectQuitOnCommit must be skipped for ProcessExit harnesses —
+		// same class as hk-f6g7).
+		implCompletionMode := handlercontract.CompletionEventStreamThenQuit
+		if deps.harnessRegistry != nil {
+			if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(implArtifacts)); hErr == nil {
+				implCompletionMode = h.Completion()
+			}
+		}
+
 		implAdapter, implAdapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(implArtifacts))
 		if implAdapterErr != nil {
 			// No adapter for the resolved agent type — non-fatal; skip ready-wait.
@@ -552,12 +563,7 @@ func runReviewLoop(
 			// self-terminate on turn completion and never emit agent_ready; calling
 			// waitAgentReady unconditionally caused HC-056 timeout in all workflow modes.
 			// Spec: specs/harness-contract.md §2 N5.
-			implCompletionMode := handlercontract.CompletionEventStreamThenQuit
-			if deps.harnessRegistry != nil {
-				if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(implArtifacts)); hErr == nil {
-					implCompletionMode = h.Completion()
-				}
-			}
+			// implCompletionMode was resolved above (hk-zlo8) and is used here directly.
 			if implCompletionMode != handlercontract.CompletionProcessExit {
 				// Derive a child context that cancels when the implementer watcher
 				// finishes (handler exit), preventing a full-timeout block on crash.
@@ -641,7 +647,12 @@ func runReviewLoop(
 			}
 		}
 
-		// Paste-inject: deliver the kick-off message to the implementer pane (hk-zrj83).
+		// Paste-inject: only for interactive TUI harnesses (not ProcessExit).
+		// hk-zlo8: CodexHarness (CompletionProcessExit) has no tmux pane; calling
+		// pasteInjectOnLaunch causes "WriteLastPane: cant find pane" → no_commit in ~4s.
+		// ProcessExit harnesses receive their task via argv (launch spec), not pane paste.
+		// Mirrors the existing hk-f6g7 gate above for waitAgentReady.
+		if implCompletionMode != handlercontract.CompletionProcessExit {
 		// pasteInjectOnLaunch is a no-op when deps.substrate does not implement
 		// pasteInjecter (exec.CommandContext path, test fixtures). Non-fatal.
 		// Returns briefDelivered, passed to pasteInjectQuitOnCommit (hk-930o3).
@@ -686,6 +697,7 @@ func runReviewLoop(
 			implHBCh := implTap.Subscribe()
 			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, deps.bus, runID)
 		}
+		} // end hk-zlo8 ProcessExit gate
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.

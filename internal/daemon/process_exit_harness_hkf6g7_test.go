@@ -188,7 +188,7 @@ func TestProcessExitHarness_SingleMode_SkipsAgentReadyGate(t *testing.T) {
 	// unexpectedly. This is a soft warning, not a hard failure.
 	for _, et := range emittedTypes {
 		if et == string(core.EventTypeAgentReady) {
-			t.Logf("hkf6g7 NOTE: agent_ready observed even though script never emitted it — "+
+			t.Logf("hkf6g7 NOTE: agent_ready observed even though script never emitted it — " +
 				"may be a synthetic event from the tap infrastructure (not a failure)")
 			break
 		}

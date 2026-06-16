@@ -83,9 +83,9 @@ var _ tmux.Adapter = (*supervisorReviveCountingAdapter)(nil)
 // SpawnWindow succeeds without the hk-yaj retry path.
 type selfHealAdapter struct {
 	noSessionFixtureBase
-	killed       atomic.Bool
-	ensureCalls  atomic.Int64
-	newWindowIn  atomic.Int64
+	killed      atomic.Bool
+	ensureCalls atomic.Int64
+	newWindowIn atomic.Int64
 }
 
 func (a *selfHealAdapter) NewWindowIn(_ context.Context, _ tmux.NewWindowIn) tmux.Outcome {

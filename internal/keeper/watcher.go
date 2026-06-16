@@ -379,6 +379,61 @@ type WatcherConfig struct {
 	// reading forward, so gauge liveness is unaffected.
 	// Refs: hk-81wk.
 	TranscriptDir string
+
+	// ── Gauge-independent live-pane recovery (hk-75mr) ───────────────────────
+	// The respawn path (RespawnCmd) only fires when the pane has gone IDLE (the
+	// agent exited). It cannot recover an agent that is hung MID-TURN: the pane
+	// stays alive, the gauge goes stale, and a /clear inject cannot reach a hung
+	// turn. LiveRecover is the gauge-INDEPENDENT last resort for exactly that
+	// case — a gated ForceRestart. Every gate is fail-closed; the action runs
+	// ONLY when ALL hold (see maybeLivePaneRecover):
+	//   - LiveRecoverFn is wired AND TmuxTarget is non-empty;
+	//   - the gauge has been stale for at least LiveRecoverGrace (>> RespawnGrace,
+	//     so the much-shorter idle-respawn path always wins for an exited agent);
+	//   - the pane is ALIVE (IsPaneAliveFn — a non-shell command);
+	//   - NO human operator is actively attached (OperatorAttachedFn, the hk-0t5s
+	//     keystroke-recency discriminator) — never force-restart under an operator;
+	//   - the agent is NOT blocked on an open decision (hitl-decisions K6);
+	//   - the LiveRecoverCooldown since the last attempt has elapsed;
+	//   - the bound .sid identity is a valid UUIDv4 (ReadSidFn + isPrimarySID);
+	//     an absent/invalid .sid fails CLOSED (no recovery).
+
+	// LiveRecoverFn, when non-empty, is the gated ForceRestart last-resort action
+	// (NOT a /clear inject). When nil the live-pane recovery path is disabled
+	// (fail-closed: no action wired → no recovery). The closure itself MUST also
+	// refuse on a non-UUIDv4 bound identity (defense-in-depth); the watcher gate
+	// already enforces this via ReadSidFn + isPrimarySID. Refs: hk-75mr.
+	LiveRecoverFn func(ctx context.Context, agentName string) error
+
+	// LiveRecoverGrace is the minimum gauge-staleness before a live-pane recovery
+	// is attempted. MUST be >> RespawnGrace (default 20s) so a briefly-stale gauge
+	// on a live agent is never force-restarted prematurely, and so an EXITED agent
+	// is always handled by the much-shorter idle-respawn path first.
+	// Default: 5m. Refs: hk-75mr.
+	LiveRecoverGrace time.Duration
+
+	// LiveRecoverCooldown is the minimum duration between consecutive live-pane
+	// recovery attempts. Prevents a tight force-restart loop. Default: 5m.
+	// Refs: hk-75mr.
+	LiveRecoverCooldown time.Duration
+
+	// IsPaneAliveFn reports whether the tmux pane at target is running a NON-shell
+	// command (the managed agent is still present — hung, not exited). When nil,
+	// IsPaneAlive is used. Set in tests to control the check without real tmux.
+	// Refs: hk-75mr.
+	IsPaneAliveFn func(ctx context.Context, target string) bool
+
+	// OperatorAttachedFn reports whether a human operator is ACTIVELY attached to
+	// the target tmux session (keystroke recency, hk-0t5s). When true, live-pane
+	// recovery is suppressed — never force-restart a pane a human is driving. When
+	// nil, OperatorAttached is used. Refs: hk-75mr, hk-0t5s.
+	OperatorAttachedFn func(target string) bool
+
+	// ReadSidFn reads the bound identity from the single-writer .sid channel
+	// (hk-8prq). Live-pane recovery is gated on the value being a valid UUIDv4
+	// (isPrimarySID); an absent/invalid .sid fails CLOSED. When nil,
+	// ReadSessionIDFile is used. Set in tests. Refs: hk-75mr, hk-8prq.
+	ReadSidFn func(projectDir, agent string) (string, time.Time, error)
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.

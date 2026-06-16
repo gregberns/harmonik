@@ -857,6 +857,18 @@ const (
 	// Durability class: O (ordinary — observability; non-destructive).
 	// Refs: hk-wjzf, hk-xjlq, ON-059.
 	EventTypeSessionKeeperRestartNowBlocked EventType = "session_keeper_restart_now_blocked"
+
+	// EventTypeSessionKeeperLivePaneRecover is the session_keeper_live_pane_recover
+	// event type. Emitted by the keeper watcher's gauge-INDEPENDENT last-resort
+	// recovery: when the gauge has been stale beyond LiveRecoverGrace but the tmux
+	// pane is still ALIVE (a non-shell command), no human operator is actively
+	// attached, the agent is not blocked on an open decision, and the bound .sid
+	// identity is a valid UUIDv4, the watcher fires a gated ForceRestart (a /clear
+	// inject cannot reach a hung mid-turn agent). Carries the outcome ("ok" or
+	// "error") and the bound session_id.
+	// Durability class: O (ordinary — observability of a destructive last-resort).
+	// Refs: hk-75mr; codename:keeper-redesign.
+	EventTypeSessionKeeperLivePaneRecover EventType = "session_keeper_live_pane_recover"
 )
 
 // ---------------------------------------------------------------------------

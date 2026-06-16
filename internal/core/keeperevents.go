@@ -211,6 +211,38 @@ type SessionKeeperRestartNowBlockedPayload struct {
 	Reason string `json:"reason"`
 }
 
+// SessionKeeperLivePaneRecoverPayload is the payload for
+// session_keeper_live_pane_recover (hk-75mr).
+//
+// Emitted by the keeper watcher when its gauge-INDEPENDENT last-resort recovery
+// fires a gated ForceRestart: the gauge has been stale past LiveRecoverGrace,
+// the tmux pane is still alive (the agent is hung mid-turn, not exited — so the
+// respawn-on-idle path does NOT apply and a /clear inject cannot reach it), no
+// human operator is actively attached, the agent is not blocked on an open
+// decision, the cooldown has elapsed, and the bound .sid identity is a valid
+// UUIDv4. This is the complement of session_keeper_respawn_attempted (which
+// fires when the pane has gone IDLE).
+//
+// Durability class: O (ordinary — observability of a destructive last-resort).
+// Refs: hk-75mr; codename:keeper-redesign.
+type SessionKeeperLivePaneRecoverPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// SessionID is the bound identity (from the .sid channel) that the recovery
+	// was gated on — always a valid UUIDv4 (recovery fails closed otherwise).
+	SessionID string `json:"session_id,omitempty"`
+
+	// StaleSeconds is the gauge staleness (seconds) at the moment recovery fired.
+	StaleSeconds int64 `json:"stale_seconds"`
+
+	// Outcome is "ok" when the ForceRestart action returned nil, or "error".
+	Outcome string `json:"outcome"`
+
+	// Error is the error message when Outcome is "error". Omitted on success.
+	Error string `json:"error,omitempty"`
+}
+
 // SessionKeeperOperatorAttachedPayload is the payload for
 // session_keeper_operator_attached (codename:session-keeper).
 //

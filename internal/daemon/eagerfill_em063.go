@@ -35,6 +35,7 @@ import (
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -353,4 +354,102 @@ func kerfNextBeads(ctx context.Context, kerfPath string, limit int) ([]core.Bead
 		}
 	}
 	return ids, nil
+}
+
+// stagedBeadGeneratorEval implements flywheel-motion.md §5.4 (B) STAGED-BEAD
+// GENERATOR. On a Phase-1 completion (successful merge to origin/main) of a
+// deploy-relevant bead, it emits a staged deploy+verify follow-up bead via `br
+// create` with all four guardrails:
+//
+//  1. Rule-only   — fires only when the completed bead carries a label matching
+//     a Phase-2 class declared in sentinel.done_definition; never LLM-invented.
+//  2. Land-open   — created bead lands with status=open; never auto-dispatched
+//     the same tick.
+//  3. WIP ceiling — skipped when the current in-flight count equals maxConcurrent.
+//  4. At-most-once — idempotency guard keyed on (completedBeadID, class) so
+//     re-entrant calls from retry paths do not duplicate the follow-up.
+//
+// The created bead is STAGED (captain must greenlit before dispatch). It is
+// NEVER auto-deployed by this function.
+//
+// Spec ref: flywheel-motion.md §5.4 (B). Bead ref: hk-f722.
+func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBeadID core.BeadID, completedBeadLabels []string) {
+	// Require brPath and projectDir — without them we cannot shell out to br.
+	if deps.brPath == "" || deps.projectDir == "" {
+		return
+	}
+
+	// Guardrail 3: skip when WIP == max_concurrent.
+	maxConcurrent := deps.maxConcurrent
+	if deps.concurrencyCtrl != nil {
+		maxConcurrent = deps.concurrencyCtrl.Get()
+	}
+	if deps.runRegistry != nil && deps.runRegistry.Len() >= maxConcurrent {
+		return
+	}
+
+	// Guardrail 1: rule-only — load sentinel config to determine Phase-2 classes.
+	sentinelCfg, err := digest.LoadSentinelConfig(deps.projectDir)
+	if err != nil {
+		// Config parse failure is non-fatal; log and skip.
+		fmt.Fprintf(os.Stderr, "daemon: stagedBeadGeneratorEval: LoadSentinelConfig: %v\n", err)
+		return
+	}
+	phase2Classes := sentinelCfg.Phase2Classes()
+	if len(phase2Classes) == 0 {
+		return
+	}
+	phase2Set := make(map[string]struct{}, len(phase2Classes))
+	for _, c := range phase2Classes {
+		phase2Set[c] = struct{}{}
+	}
+	var matchedClass string
+	for _, label := range completedBeadLabels {
+		if _, ok := phase2Set[label]; ok {
+			matchedClass = label
+			break
+		}
+	}
+	if matchedClass == "" {
+		return
+	}
+
+	// Guardrail 4: at-most-once ledger.
+	if deps.followUpLedgerMu != nil {
+		ledgerKey := string(completedBeadID) + ":" + matchedClass
+		deps.followUpLedgerMu.Lock()
+		_, exists := deps.followUpLedger[ledgerKey]
+		if !exists {
+			deps.followUpLedger[ledgerKey] = struct{}{}
+		}
+		deps.followUpLedgerMu.Unlock()
+		if exists {
+			return
+		}
+	}
+
+	// Guardrail 2: land-open — br create with --status open so the bead is
+	// never auto-dispatched the same tick. Captain must greenlit before dispatch.
+	verifyCmd := sentinelCfg.DoneDefinitionFor(matchedClass)
+	title := fmt.Sprintf("deploy+verify: %s (%s)", completedBeadID, matchedClass)
+	description := fmt.Sprintf(
+		"Phase-2 deploy+verify follow-up for bead %s (class: %s).\n"+
+			"Verify command: %s\n\n"+
+			"STAGED — captain must greenlit before dispatch (flywheel-motion.md §5.4 B).",
+		completedBeadID, matchedClass, verifyCmd,
+	)
+	//nolint:gosec // G204: brPath resolved via exec.LookPath at startup; args are controlled
+	cmd := exec.CommandContext(ctx, deps.brPath,
+		"create", title,
+		"--description", description,
+		"--type", "task",
+		"--status", "open",
+		"--label", matchedClass,
+		"--label", fmt.Sprintf("followup:%s:%s", completedBeadID, matchedClass),
+	)
+	cmd.Dir = deps.projectDir
+	if out, runErr := cmd.Output(); runErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: stagedBeadGeneratorEval: br create bead=%s class=%s: %v\n%s",
+			completedBeadID, matchedClass, runErr, out)
+	}
 }

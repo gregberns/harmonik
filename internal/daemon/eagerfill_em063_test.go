@@ -23,10 +23,15 @@ package daemon
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -262,4 +267,215 @@ func TestEM063_EagerRefillEval_NoopWhenQueueStoreNil(t *testing.T) {
 
 	// Must not panic.
 	eagerRefillEval(context.Background(), deps)
+}
+
+// ---------------------------------------------------------------------------
+// stagedBeadGeneratorEval (flywheel V9 §5.4 B, hk-f722)
+// ---------------------------------------------------------------------------
+
+// writeTestFile writes content to path, creating parent directories as needed.
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("writeTestFile: mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writeTestFile: write: %v", err)
+	}
+}
+
+// writePhase2Config writes a minimal .harmonik/config.yaml with one Phase-2
+// class entry: class → verifyCmd.
+func writePhase2Config(t *testing.T, projectDir, class, verifyCmd string) {
+	t.Helper()
+	content := "sentinel:\n  done_definition:\n    " + class + ": \"" + verifyCmd + "\"\n"
+	writeTestFile(t, filepath.Join(projectDir, ".harmonik", "config.yaml"), content)
+}
+
+// writeFakeBrScript creates an executable shell script at scriptPath that
+// appends its first two arguments (subcommand + title) to argsFile and exits 0.
+// The full description is NOT written to avoid newline-splitting in counts.
+func writeFakeBrScript(t *testing.T, scriptPath, argsFile string) {
+	t.Helper()
+	// Write only the first arg ($1) and the second arg ($2) so that
+	// multi-line descriptions in later args do not create spurious "lines".
+	script := "#!/bin/sh\nprintf 'CALL %s %s\\n' \"$1\" \"$2\" >> " + argsFile + "\n"
+	writeTestFile(t, scriptPath, script)
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatalf("writeFakeBrScript: chmod: %v", err)
+	}
+}
+
+// writeFakeBrArgScript creates an executable shell script at scriptPath that
+// appends ALL arguments (joined by space) to argsFile.  Use this variant only
+// when the test needs to inspect specific flags; note that newlines embedded in
+// arguments will appear verbatim in the file.
+func writeFakeBrArgScript(t *testing.T, scriptPath, argsFile string) {
+	t.Helper()
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + argsFile + "\n"
+	writeTestFile(t, scriptPath, script)
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatalf("writeFakeBrArgScript: chmod: %v", err)
+	}
+}
+
+// stagedBeadFixtureDeps builds a workLoopDeps for stagedBeadGeneratorEval
+// tests with the given brPath wired in.
+func stagedBeadFixtureDeps(t *testing.T, projectDir, brPath string) workLoopDeps {
+	t.Helper()
+	deps := em063FixtureDeps(t, nil)
+	deps.projectDir = projectDir
+	deps.brPath = brPath
+	deps.followUpLedger = make(map[string]struct{})
+	deps.followUpLedgerMu = new(sync.Mutex)
+	return deps
+}
+
+// TestStagedBeadGenerator_NoopWhenBrPathEmpty verifies guardrail: empty brPath
+// makes stagedBeadGeneratorEval a no-op (generator disabled).
+func TestStagedBeadGenerator_NoopWhenBrPathEmpty(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy")
+
+	deps := stagedBeadFixtureDeps(t, projectDir, "")
+	// Must not panic and must not call br (no file to write to since brPath is empty).
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-abc", []string{"deploy"})
+}
+
+// TestStagedBeadGenerator_NoopWhenNoPhase2Classes verifies guardrail 1:
+// if sentinel has no Phase-2 classes, nothing is created.
+func TestStagedBeadGenerator_NoopWhenNoPhase2Classes(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	// Config with only "merged" (default): no Phase-2 classes.
+	writeTestFile(t, filepath.Join(projectDir, ".harmonik", "config.yaml"),
+		"sentinel:\n  done_definition:\n    myclass: merged\n")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-abc", []string{"myclass"})
+
+	// argsFile must not exist (br was never called).
+	if _, statErr := os.Stat(argsFile); statErr == nil {
+		t.Error("br was called despite no Phase-2 classes; expected no-op")
+	}
+}
+
+// TestStagedBeadGenerator_NoopWhenLabelsMismatch verifies guardrail 1:
+// if the completed bead has no labels matching any Phase-2 class, nothing is created.
+func TestStagedBeadGenerator_NoopWhenLabelsMismatch(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	// Labels: "bugfix", "chore" — neither matches "deploy".
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-abc", []string{"bugfix", "chore"})
+
+	if _, statErr := os.Stat(argsFile); statErr == nil {
+		t.Error("br was called despite no matching Phase-2 label; expected no-op")
+	}
+}
+
+// TestStagedBeadGenerator_CreatesBead verifies that a matching bead causes
+// br create to be called with correct arguments (guardrail 2: --status open).
+func TestStagedBeadGenerator_CreatesBead(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy-prod")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrArgScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-xyz", []string{"deploy", "other"})
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("br was not called; expected a follow-up bead to be created: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, "create") {
+		t.Errorf("br args missing 'create': %q", line)
+	}
+	if !strings.Contains(line, "hk-xyz") {
+		t.Errorf("br args missing completed bead ID 'hk-xyz': %q", line)
+	}
+	if !strings.Contains(line, "--status") || !strings.Contains(line, "open") {
+		t.Errorf("br args missing '--status open' (guardrail 2 land-open): %q", line)
+	}
+}
+
+// TestStagedBeadGenerator_AtMostOnce verifies guardrail 4: a second call with
+// the same (beadID, class) is a no-op; br is only invoked once.
+func TestStagedBeadGenerator_AtMostOnce(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy-prod")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	// First call: should create the bead.
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-xyz", []string{"deploy"})
+	// Second call with the same bead + class: must be a no-op.
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-xyz", []string{"deploy"})
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("br was not called on first invocation: %v", err)
+	}
+	// writeFakeBrScript writes "CALL <subcmd> <title>\n" per invocation.
+	var callCount int
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "CALL ") {
+			callCount++
+		}
+	}
+	if callCount != 1 {
+		t.Errorf("br was called %d times; want exactly 1 (at-most-once guardrail)", callCount)
+	}
+}
+
+// TestStagedBeadGenerator_NoopWhenAtCeiling verifies guardrail 3: when
+// in-flight run count == maxConcurrent the generator skips bead creation.
+func TestStagedBeadGenerator_NoopWhenAtCeiling(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy-prod")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	deps.maxConcurrent = 1
+
+	// Register a fake in-flight run to saturate the ceiling.
+	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000099")), &RunHandle{
+		BeadID:    core.BeadID("hk-other"),
+		StartedAt: time.Now(),
+	})
+
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-xyz", []string{"deploy"})
+
+	if _, statErr := os.Stat(argsFile); statErr == nil {
+		t.Error("br was called at WIP==max_concurrent; expected no-op (guardrail 3)")
+	}
 }

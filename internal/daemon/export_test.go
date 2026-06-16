@@ -277,6 +277,10 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-rs-b8-codesync-3fk0.
 	WorkerRegistry *workers.Registry
+
+	// BrPath is the absolute path to the `br` CLI binary used by the staged-bead
+	// generator (hk-f722). When empty the generator is disabled (safe test default).
+	BrPath string
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -395,6 +399,9 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		emittedEpicsMu:            &sync.Mutex{},
 		beadAuditLogger:           p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption
 		workerRegistry:            p.WorkerRegistry,  // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
+		brPath:                    p.BrPath,          // hk-f722: staged-bead generator; empty → disabled
+		followUpLedger:            make(map[string]struct{}),
+		followUpLedgerMu:          &sync.Mutex{},
 	}
 }
 

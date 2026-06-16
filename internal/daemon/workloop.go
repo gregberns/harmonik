@@ -142,6 +142,23 @@ type workLoopDeps struct {
 	// Bead ref: hk-9321v.
 	kerfPath string
 
+	// brPath is the absolute path to the `br` CLI binary, used by the
+	// staged-bead generator to create Phase-2 deploy+verify follow-up beads
+	// (flywheel-motion.md §5.4 B). Empty → generator is disabled.
+	//
+	// Bead ref: hk-f722.
+	brPath string
+
+	// followUpLedger is the at-most-once idempotency guard for the staged-bead
+	// generator (flywheel-motion.md §5.4 B guardrail 4). Keyed on
+	// "<beadID>:<class>"; a hit means a follow-up bead was already emitted this
+	// daemon session for that (bead, class) pair.
+	// Concurrent access is serialised by followUpLedgerMu.
+	//
+	// Bead ref: hk-f722.
+	followUpLedger   map[string]struct{}
+	followUpLedgerMu *sync.Mutex
+
 	// handlerBinary is the binary to spawn per iteration.  Empty → "claude".
 	handlerBinary string
 
@@ -765,6 +782,9 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		queueLedger:           newBRQueueLedger(adapter),      // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
 		staleBlockerCloser:    adapter,                        // hk-rnsjs: auto-close stale blockers on claim failure
 		kerfPath:              cfg.KerfPath,                   // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		brPath:                cfg.BrPath,                     // hk-f722: staged-bead generator br create
+		followUpLedger:        make(map[string]struct{}),      // hk-f722: at-most-once guard per daemon session
+		followUpLedgerMu:      &sync.Mutex{},
 		noAutoPull:            cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
 		skipBrHistoryRotation: cfg.SkipBrHistoryRotation,      // hk-hypbi: per-close .br_history trim
 		mergeMu:               &sync.Mutex{},                  // hk-yyso7: global merge-serialisation across all queues
@@ -1989,6 +2009,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				} else {
 					evaluateGroupAdvanceWithOutcome(ctx, deps, qname, *qid, *qgidx, itemIdx, runSucceeded)
 				}
+			}
+			// hk-f722 flywheel V9 §5.4 B: on Phase-1 success, emit a staged
+			// deploy+verify bead for any Phase-2 class the completed bead belongs to.
+			if runSucceeded && ctx.Err() == nil {
+				stagedBeadGeneratorEval(ctx, deps, beadRecord.BeadID, beadRecord.Labels)
 			}
 		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams)
 	}

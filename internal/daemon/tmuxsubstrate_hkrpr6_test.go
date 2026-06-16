@@ -63,20 +63,25 @@ func (a *hkrpr6CommandCapturingAdapter) ProbeTmux(_ context.Context) error { ret
 func (a *hkrpr6CommandCapturingAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hkrpr6CommandCapturingAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hkrpr6CommandCapturingAdapter) NewWindowIn(_ context.Context, params tmux.NewWindowIn) tmux.Outcome {
 	a.capturedCommand = params.Command
 	a.capturedParams = params
 	return tmux.Outcome{Handle: tmux.WindowHandle("test-session:hkrpr6-window")}
 }
+
 func (a *hkrpr6CommandCapturingAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
 	return nil
 }
+
 func (a *hkrpr6CommandCapturingAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return a.panePIDResult, nil
 }
+
 func (a *hkrpr6CommandCapturingAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "", nil
 }
@@ -84,18 +89,23 @@ func (a *hkrpr6CommandCapturingAdapter) KillSession(_ context.Context, _ string)
 func (a *hkrpr6CommandCapturingAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
+
 func (a *hkrpr6CommandCapturingAdapter) PasteBuffer(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *hkrpr6CommandCapturingAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *hkrpr6CommandCapturingAdapter) SendKeysEnter(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *hkrpr6CommandCapturingAdapter) SendKeysQuit(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *hkrpr6CommandCapturingAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
@@ -134,7 +144,7 @@ func TestShellQuoteArg_StringWithSpaces(t *testing.T) {
 }
 
 // TestShellQuoteArg_StringWithSingleQuote verifies embedded single-quotes are
-// escaped correctly using the '\'' sequence.
+// escaped correctly using the '\” sequence.
 func TestShellQuoteArg_StringWithSingleQuote(t *testing.T) {
 	t.Parallel()
 	input := "it's done"

@@ -522,15 +522,16 @@ var validNodeEffortLevels = map[string]bool{
 // reservedGraphAttrs is the set of reserved graph-level attribute names per WG-031.
 // Unknown names at the graph level are permissive (warning + retained) per WG-031/032.
 var reservedGraphAttrs = map[string]bool{
-	"schema_version":    true,
-	"version":           true,
-	"start_node":        true,
-	"start_node_id":     true, // alternate spelling accepted for compat
-	"terminal_node_ids": true,
-	"context_keys":      true,
-	"workflow_id":       true,
-	"workflow_class":    true,
-	"goal":              true, // WG-044: graph-level intent string
+	"schema_version":     true,
+	"version":            true,
+	"start_node":         true,
+	"start_node_id":      true, // alternate spelling accepted for compat
+	"terminal_node_ids":  true,
+	"context_keys":       true,
+	"workflow_id":        true,
+	"workflow_class":     true,
+	"goal":               true, // WG-044: graph-level intent string
+	"no_progress_guard":  true, // hk-nvd3: configurable no-progress guard
 }
 
 // ── graph builder (rawDoc → *Graph) ──────────────────────────────────────────
@@ -571,6 +572,16 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 		case "goal":
 			// WG-044: graph-level goal string; threaded into agentic briefs via ExtraContext.
 			g.Goal = pair.val
+		case "no_progress_guard":
+			// hk-nvd3: validate and store; valid values: "", "strict", "off", "capped:N" (N >= 1).
+			if err := validateNoProgressGuard(pair.val); err != nil {
+				strictErrs = append(strictErrs, &ParseError{
+					Line:    pair.line,
+					Message: fmt.Sprintf("graph-level: no_progress_guard %q: %v", pair.val, err),
+				})
+			} else {
+				g.NoProgressGuard = pair.val
+			}
 		default:
 			// Non-reserved graph-level attribute: permissive per WG-031/032.
 			g.UnknownAttrs[pair.key] = pair.val
@@ -1131,6 +1142,24 @@ func isValidWG001NodeType(nt core.NodeType) bool {
 	default:
 		return false
 	}
+}
+
+// validateNoProgressGuard returns an error when val is not a valid
+// no_progress_guard value.  Valid values are "", "strict", "off", and
+// "capped:N" where N is a positive integer.  hk-nvd3.
+func validateNoProgressGuard(val string) error {
+	switch val {
+	case "", "strict", "off":
+		return nil
+	}
+	if strings.HasPrefix(val, "capped:") {
+		n, err := strconv.Atoi(strings.TrimPrefix(val, "capped:"))
+		if err != nil || n < 1 {
+			return fmt.Errorf("capped:N requires N to be a positive integer; got %q", strings.TrimPrefix(val, "capped:"))
+		}
+		return nil
+	}
+	return fmt.Errorf("must be one of \"\", \"strict\", \"off\", or \"capped:N\" (N >= 1); got %q", val)
 }
 
 // splitIDs splits a comma-and-space-separated ID list.

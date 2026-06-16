@@ -304,6 +304,30 @@ func driveDotWorkflow(
 	// verdicts before the next consolidate join.
 	axisReviewerVerdicts := make(map[string]string)
 
+	// hk-nvd3 — configurable no-progress guard.
+	//
+	// noProgressGuardOff: when true the guard never fires (graph sets
+	// no_progress_guard="off"). Code workflows should always leave this false.
+	//
+	// noProgressGuardCap: when > 0 the graph sets no_progress_guard="capped:N".
+	// The guard fires only after noProgressGuardCap+1 CONSECUTIVE no-progress
+	// iterations (i.e. N allowed before the (N+1)th fires). When 0 and !off the
+	// guard fires immediately at the first no-progress iteration (strict / default).
+	//
+	// consecutiveNoProgressCount counts how many consecutive agentic-node entries
+	// have been reached with !headAdvanced (after the completion exemptions). Reset
+	// to 0 whenever headAdvanced==true so a real commit always resets the count.
+	noProgressGuardOff := false
+	noProgressGuardCap := 0
+	switch {
+	case graph.NoProgressGuard == "off":
+		noProgressGuardOff = true
+	case strings.HasPrefix(graph.NoProgressGuard, "capped:"):
+		// Already validated by the parser; Atoi cannot fail here.
+		noProgressGuardCap, _ = strconv.Atoi(strings.TrimPrefix(graph.NoProgressGuard, "capped:"))
+	}
+	consecutiveNoProgressCount := 0
+
 	for visits := 0; visits < dotMaxNodeVisits; visits++ {
 		node := nodesByID[currentNodeID]
 		if node == nil {
@@ -489,26 +513,61 @@ func driveDotWorkflow(
 						summary: fmt.Sprintf("dot: completed at iteration %d — REQUEST_CHANGES was advisory-only (commit gate green; HEAD final, nothing committable remained) (hk-w2ow)", iterationCount),
 					}
 				}
-				// hk-m1wqp: emit review_fixup_stalled (carrying the reviewer flags)
-				// when the prior verdict was REQUEST_CHANGES and the implementer made
-				// no new commit. Fall back to no_progress_detected for the uncommon
-				// case where HEAD did not advance without any prior reviewer verdict
-				// (e.g. a commit_gate loop with no reviewer node).
-				if priorVerdict == workspace.ReviewVerdictRequestChanges {
-					emitReviewFixupStalled(ctx, deps.bus, runID, core.WorkflowModeDot,
-						iterationCount, priorVerdictFlags, currentHash, lastDiffHash)
-					return dotWorkflowResult{
-						success:        false,
-						needsAttention: true,
-						summary:        fmt.Sprintf("dot: review fix-up stalled at iteration %d: HEAD did not advance after REQUEST_CHANGES", iterationCount),
+				// hk-nvd3 — configurable no-progress guard.
+				// The completion exemptions above (APPROVE + committed, advisory
+				// RC + green gate) are evaluated BEFORE this knob and remain in
+				// effect regardless of guard mode: they represent genuine COMPLETION,
+				// not stalled rework.  The knob only controls genuinely-stuck cases.
+				//
+				//   "off"      — skip the guard entirely; continue the walk.
+				//   "capped:N" — allow up to N consecutive IMPLEMENTER no-progress
+				//                iterations; fire only after the (N+1)th. Reviewer
+				//                entries do not count toward the cap (reviewers are
+				//                never expected to advance HEAD).
+				//   "" / "strict" — fire immediately (default, unchanged behavior).
+				if noProgressGuardOff {
+					// Guard disabled: fall through to continue the walk.
+				} else {
+					shouldFire := true
+					if noProgressGuardCap > 0 {
+						// Only implementer entries count toward the cap; reviewer
+						// entries are expected to leave HEAD unchanged (they write
+						// verdicts, not commits) and must not exhaust the budget.
+						if !isReviewer {
+							consecutiveNoProgressCount++
+						}
+						shouldFire = consecutiveNoProgressCount > noProgressGuardCap
+					}
+					if shouldFire {
+						// hk-m1wqp: emit review_fixup_stalled (carrying the reviewer
+						// flags) when the prior verdict was REQUEST_CHANGES and the
+						// implementer made no new commit. Fall back to
+						// no_progress_detected for the uncommon case where HEAD did not
+						// advance without any prior reviewer verdict (e.g. a commit_gate
+						// loop with no reviewer node).
+						if priorVerdict == workspace.ReviewVerdictRequestChanges {
+							emitReviewFixupStalled(ctx, deps.bus, runID, core.WorkflowModeDot,
+								iterationCount, priorVerdictFlags, currentHash, lastDiffHash)
+							return dotWorkflowResult{
+								success:        false,
+								needsAttention: true,
+								summary:        fmt.Sprintf("dot: review fix-up stalled at iteration %d: HEAD did not advance after REQUEST_CHANGES", iterationCount),
+							}
+						}
+						emitDotNoProgressDetected(ctx, deps.bus, runID, iterationCount, currentHash, lastDiffHash)
+						return dotWorkflowResult{
+							success:        false,
+							needsAttention: true,
+							summary:        fmt.Sprintf("dot: no-progress detected at iteration %d: HEAD did not advance", iterationCount),
+						}
 					}
 				}
-				emitDotNoProgressDetected(ctx, deps.bus, runID, iterationCount, currentHash, lastDiffHash)
-				return dotWorkflowResult{
-					success:        false,
-					needsAttention: true,
-					summary:        fmt.Sprintf("dot: no-progress detected at iteration %d: HEAD did not advance", iterationCount),
-				}
+			}
+			// hk-nvd3: reset consecutive no-progress counter when HEAD has
+			// advanced AND this is an implementer entry (a new commit from the
+			// implementer resets the streak; reviewer entries cannot advance HEAD).
+			if headAdvanced && !isReviewer {
+				consecutiveNoProgressCount = 0
 			}
 			lastDiffHash = currentHash
 			priorIterHeadSHA = currentHead

@@ -751,3 +751,72 @@ func TestDotFixtureConditionRawRetained(t *testing.T) {
 		t.Errorf("ConditionRaw = %q, want %q", g.Edges[0].ConditionRaw, rawCond)
 	}
 }
+
+// ── no_progress_guard attribute parsing (hk-nvd3) ────────────────────────────
+
+// noProgressGuardFixture returns a minimal two-node graph with the given
+// no_progress_guard attribute value embedded at the graph level.
+func noProgressGuardFixture(val string) string {
+	attr := ""
+	if val != "" {
+		attr = "\n  no_progress_guard=\"" + val + "\";"
+	}
+	return `digraph npg {
+  schema_version="1";
+  version="1.0";` + attr + `
+  start_node="a";
+  terminal_node_ids="b";
+  a [type="agentic", agent_type="impl", handler_ref="h", idempotency_class="non-idempotent"];
+  b [type="non-agentic", handler_ref="noop", idempotency_class="idempotent"];
+  a -> b;
+}`
+}
+
+// TestNoProgressGuardAttr_ValidValues verifies that "", "strict", "off", and
+// "capped:N" are accepted and round-trip through the Graph.NoProgressGuard field.
+// hk-nvd3.
+func TestNoProgressGuardAttr_ValidValues(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"strict", "strict"},
+		{"off", "off"},
+		{"capped:1", "capped:1"},
+		{"capped:10", "capped:10"},
+		{"capped:100", "capped:100"},
+	}
+	for _, tc := range cases {
+		g, err := Parse(noProgressGuardFixture(tc.input), "npg.dot")
+		if err != nil {
+			t.Errorf("no_progress_guard=%q: unexpected parse error: %v", tc.input, err)
+			continue
+		}
+		if g.NoProgressGuard != tc.want {
+			t.Errorf("no_progress_guard=%q: got Graph.NoProgressGuard=%q, want %q",
+				tc.input, g.NoProgressGuard, tc.want)
+		}
+	}
+}
+
+// TestNoProgressGuardAttr_InvalidValues verifies that invalid values produce a
+// strict parse error. hk-nvd3.
+func TestNoProgressGuardAttr_InvalidValues(t *testing.T) {
+	invalid := []string{
+		"STRICT",       // wrong case
+		"Cap:1",        // wrong case prefix
+		"capped:0",     // N must be >= 1
+		"capped:-1",    // negative N
+		"capped:abc",   // non-integer N
+		"capped:",      // empty N
+		"disabled",     // not a valid value
+		"none",         // not a valid value
+	}
+	for _, val := range invalid {
+		_, err := Parse(noProgressGuardFixture(val), "npg.dot")
+		if err == nil {
+			t.Errorf("no_progress_guard=%q: expected strict parse error, got nil", val)
+		}
+	}
+}

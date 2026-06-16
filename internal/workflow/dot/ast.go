@@ -63,6 +63,18 @@ type Graph struct {
 	// WorkflowClass is the optional workflow_class graph-level attribute.
 	WorkflowClass string
 
+	// NoProgressGuard controls how strictly the no-progress guard fires for
+	// this workflow.  Valid values:
+	//   ""       — same as "strict" (default: preserves today's exact behavior)
+	//   "strict" — fire on first no-progress detection at iter ≥ 2 (code workflows)
+	//   "capped:N" — allow up to N consecutive no-progress iterations; fire only
+	//              after N+1 consecutive occurrences (doc/design/vendor workflows)
+	//   "off"    — never fire the no-progress guard (fully-advisory workflows)
+	// The completion exemptions (APPROVE + committed, advisory-RC + green gate) are
+	// applied BEFORE this knob; they bypass the guard regardless of its setting.
+	// hk-nvd3.
+	NoProgressGuard string
+
 	// Goal is the optional graph-level goal attribute per WG-044.
 	// Carries the human-readable intent for this workflow run (e.g. "Fix #172").
 	// After template-param substitution the value is threaded into every agentic

@@ -34,8 +34,10 @@ echo "agent=$HARMONIK_AGENT  cwd=$(pwd)"
 # Expect: agent=captain  cwd=$HARMONIK_PROJECT
 ```
 
-- Your comms identity is **`captain`**. Pass `--from captain` on every `comms`
+- Your comms identity is **`captain`**. Pass `--from captain` on every **send**
   op (shell `export` does NOT persist between tool calls — pass it explicitly).
+  For **recv/who/log**, use `--agent captain` (your inbox identity) — `--from`
+  is a sender filter and would give you only messages you already sent.
 - CWD MUST stay `$HARMONIK_PROJECT` all session. Never `cd` into a
   worktree (the daemon may `git worktree remove` it). Use `git -C <repo>` /
   `harmonik --project <repo>` for everything.
@@ -85,6 +87,11 @@ harmonik subscribe --types heartbeat --heartbeat 1s --json | head -1
 
 # f) Recent run activity (attribute later via br show --assignee, never by guessing)
 harmonik comms log --since 30m --json | tail -40
+
+# g) Paused / failed queues — 'up' ≠ 'dispatching'; paused-by-failure = NOT healthy.
+#    HEALTHY criterion #6 (exit≠17) is a FALSE-GREEN for a paused main/crew queue.
+harmonik queue list --json | jq -r '.queues[]|select(.status|test("paused|complete-with-failures"))|"\(.name)\t\(.status)"'
+# Any output = those queues are BLOCKED. Resume with: harmonik queue resume --queue <name>
 ```
 
 **Build the live-state table** — one row per registered crew, columns:
@@ -227,6 +234,14 @@ harmonik comms log --from <crew> --topic status --since 10m --json   # boot stat
 harmonik queue status --json                                          # its named queue has a bead?
 ```
 
+```bash
+# (c) Workflow quality-bar: dispatched beads must use dot/review-loop — NOT single (no review).
+#     single = review bypassed; this gap let hk-u6zp's workflow_ref Opus-bar bypass land silently.
+grep '"type":"run_started"' .harmonik/events/events.jsonl | tail -10 | \
+  jq -r 'select(.workflow_mode == "single") | "WARN: \(.bead_id) dispatched single (no review)"'
+# Any output = surface to operator; do NOT let single-mode dispatches accumulate.
+```
+
 A lane passes verification only when **(a) comms-online AND (b) pane-truth shows
 it dispatched a bead (or posted a boot status and is finding ready beads).** If
 (a) fails past ~120s → SURFACE "crew <crew> never came online" (do NOT declare it
@@ -254,17 +269,17 @@ the operator).
 > a bare `claude --remote-control captain`:
 >
 > ```bash
-> # Launches the captain with a minted --session-id AND arms the keeper at 25/30:
+> # Launches the captain with a minted --session-id AND arms the keeper at 30/35:
 > ~/.claude/captain-tools/captain-launch.sh captain
 > #   ⇒ tmux session `captain` runs:
 > #      claude --dangerously-skip-permissions --remote-control captain --session-id <uuid>
 > #   ⇒ tmux session `hk-keeper-captain` runs:
-> #      harmonik keeper --agent captain --tmux captain --warn-pct 25 --act-pct 30
+> #      harmonik keeper --agent captain --tmux captain --warn-pct 30 --act-pct 35
 > ```
 >
-> If you ever relaunch the keeper by hand, ALWAYS pass `--warn-pct 25 --act-pct 30`
-> (bare defaults are 80/90 ≈ 800k/900k tokens on a 1M window — that defeats the
-> intent).
+> If you ever relaunch the keeper by hand, ALWAYS pass `--warn-pct 30 --act-pct 35`
+> (matching `captain-launch.sh` defaults; bare 80/90 ≈ 800k/900k tokens on a 1M
+> window — that defeats the intent).
 
 ### On-WARN procedure for the captain (LOAD-BEARING)
 
@@ -316,13 +331,13 @@ current state. `/clear` is the reset — no manual hand-trim.
 # Watcher 1 — operator direction + crew milestones/errors/epic_completed feed.
 #   The SPARSE, ACTIONABLE feed: crews post status here, the operator directs here.
 #   (Monitor tool; --follow.) Dedupe on event_id (N3, at-least-once). Re-arm on timeout.
-harmonik comms recv --follow --from captain --json
+harmonik comms recv --agent captain --follow --json
 ```
 
 ```text
 # Watcher 2 — a SPARSE health tick via /loop (NOT a short-heartbeat subscribe).
 #   Paste this ONCE after the fleet is verified; it self-paces and survives keeper resets:
-/loop 12m Captain health check: (1) daemon up — harmonik queue status, exit17=rebuild+restart; (2) all crews comms-fresh — harmonik comms who, each <150s (stale ⇒ capture-pane, nudge/reconcile); (3) drain comms for epic_completed/errors/operator and act; (4) BACKLOG-PULL: run kerf next + br ready --limit 0, staff every ready lane/bead with a free crew/queue slot — do not leave ready work unassigned while a slot exists; (5) LULL-DEPLOY: if in a true lull (0 merging runs), deploy + verify own merged work (ff-after-push); (6) self-audit: is any initiative stalled for a reason other than a genuine §8 surface-and-await case? If so, unblock it. A tick that finds ready work AND a free slot AND does NOT staff them is a FAILED tick, not a healthy one. Do NOT read run ages, narrate active beads, or call a launch wedge before launch+30min.
+/loop 12m Captain health check: (1) daemon up — harmonik queue status, exit17=rebuild+restart; (2) ALL queues healthy — harmonik queue list --json | jq '.queues[]|select(.status|test("paused"))|.name' — any output=paused-by-failure=NOT dispatching, surface+resume; (3) all crews comms-fresh — harmonik comms who, each <150s (stale ⇒ capture-pane, nudge/reconcile); (4) drain comms for epic_completed/errors/operator and act; (5) BACKLOG-PULL: run kerf next + br ready --limit 0, staff every ready lane/bead with a free crew/queue slot — do not leave ready work unassigned while a slot exists; (6) LULL-DEPLOY: if in a true lull (0 merging runs), deploy + verify own merged work (ff-after-push); (7) QUALITY-CHECK: grep '"type":"run_started"' .harmonik/events/events.jsonl | tail -10 | jq -r 'select(.workflow_mode=="single")|"WARN: \(.bead_id) single(no review)"' — any output=surface to operator; (8) self-audit: is any initiative stalled for a reason other than a genuine §8 surface-and-await case? If so, unblock it. A tick that finds ready work AND a free slot AND does NOT staff them is a FAILED tick, not a healthy one. Do NOT read run ages, narrate active beads, or call a launch wedge before launch+30min.
 ```
 
 If you keep a `subscribe` for lane completion, request **ONLY** `epic_completed`
@@ -428,9 +443,13 @@ The fleet is healthy when, for the plan's intended set of lanes, ALL hold:
    status, which is healthy-idle, not zombie).
 5. **No ZOMBIE / GHOST records** in `crew list` (every record maps to an online
    crew with a live pane).
-6. **The daemon is up** (`queue status` ≠ exit 17) and the HEALTH watchers are
-   armed: `comms recv --follow` + the `/loop 12m` health tick (NOT a
-   short-heartbeat run-level subscribe — see Step 6, "observe everything" fix).
+6. **The daemon is up** (`queue status` ≠ exit 17) **AND no queue is
+   `paused-by-failure`** — run Step 2g (`harmonik queue list --json`) to sweep
+   all named queues; a `paused-by-failure` queue is NOT dispatching even though
+   exit ≠ 17. Surface the paused set and resume before declaring the daemon
+   healthy. HEALTH watchers are armed: `comms recv --agent captain --follow` +
+   the `/loop 12m` health tick (NOT a short-heartbeat run-level subscribe — see
+   Step 6).
 
 Quick one-liner to spot the #1 zombie signature (registered but not online):
 

@@ -1,0 +1,440 @@
+// Package sentinel implements the flywheel movement governor (flywheel-motion §1).
+//
+// The governor is a deterministic, LLM-free subsystem that measures real terminal
+// progress over a sliding window, applies a discrete inverse-staircase activation
+// function, and emits a GovernorSignal indicating whether the system is dormant,
+// watching, or active (tripped).
+//
+// Design constraints (spec §§1.2, 0.3):
+//   - DISCRETE activation — a step/staircase function, NOT a smooth EWMA. An
+//     operator MUST be able to reproduce the activation level by hand from the
+//     events window alone.
+//   - INVERSE — high movement → dormant; low movement → escalated scrutiny.
+//   - LLM-FREE — no language model is consulted in this package.
+//
+// Spec ref: .kerf/works/flywheel-motion/05-spec-drafts/flywheel-motion.md §1.
+// Bead: hk-u0lv. Epic: hk-0oca (codename:flywheel).
+package sentinel
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/eventbus"
+)
+
+// DefaultHighWeight is the movement score awarded for each terminal-progress event.
+const DefaultHighWeight = 10
+
+// DefaultWeights is the default per-event-type weight table (spec §1.1).
+// Terminal-progress events carry DefaultHighWeight; all other events carry 0
+// (enforced by the zero-value default in ComputeWindowMovement).
+//
+// reviewer_verdict is handled specially: only APPROVE verdicts carry weight;
+// REQUEST_CHANGES and BLOCK carry 0. This is applied inside ComputeWindowMovement
+// by inspecting the payload.
+var DefaultWeights = map[core.EventType]int{
+	core.EventTypeBeadClosed:      DefaultHighWeight,
+	core.EventTypeRunCompleted:    DefaultHighWeight,
+	core.EventTypeReviewerVerdict: DefaultHighWeight, // gated by APPROVE payload check below
+}
+
+// ActivationLevel is the discrete staircase output (spec §1.2).
+//
+// Levels are inverse to movement score:
+//
+//	ActivationDormant  — high movement; governor takes no action
+//	ActivationWatching — moderate movement; governor observing
+//	ActivationActive   — sustained low movement + actionable work; governor trips
+type ActivationLevel int
+
+const (
+	// ActivationDormant means sufficient terminal progress was observed in the window.
+	ActivationDormant ActivationLevel = 0
+	// ActivationWatching means low movement but not yet sustained enough to trip.
+	ActivationWatching ActivationLevel = 1
+	// ActivationActive means sustained low movement with actionable work: governor trips.
+	// At this level the caller SHOULD emit a digest exception (spec §3.5).
+	ActivationActive ActivationLevel = 2
+)
+
+func (a ActivationLevel) String() string {
+	switch a {
+	case ActivationDormant:
+		return "dormant"
+	case ActivationWatching:
+		return "watching"
+	case ActivationActive:
+		return "active"
+	default:
+		return fmt.Sprintf("unknown(%d)", int(a))
+	}
+}
+
+// Config holds the tunable parameters for the movement governor (spec §7).
+// Zero values use the defaults documented on each field.
+type Config struct {
+	// Window is the sliding-window duration for movement computation.
+	// Default: 30 minutes (spec §1.2).
+	Window time.Duration
+
+	// WarmupWindow is the minimum elapsed time since DaemonStartedAt before
+	// the governor may trip (spec §1.4 cold-start gate).
+	// Default: 30 minutes.
+	WarmupWindow time.Duration
+
+	// SustainedWindows is the number of consecutive "low" windows required
+	// before the governor can trip (spec §1.4 sustained-low gate).
+	// Default: 2.
+	SustainedWindows int
+
+	// HighThreshold: movement scores at or above this value are "high" → dormant.
+	// Default: DefaultHighWeight (10) — at least one terminal-progress event.
+	HighThreshold int
+
+	// LowThreshold: movement scores strictly below this value are "low".
+	// Default: DefaultHighWeight (10) — any score < 10 counts as low.
+	LowThreshold int
+
+	// Weights overrides the per-event-type weight table. Nil uses DefaultWeights.
+	Weights map[core.EventType]int
+}
+
+func (c Config) window() time.Duration {
+	if c.Window <= 0 {
+		return 30 * time.Minute
+	}
+	return c.Window
+}
+
+func (c Config) warmupWindow() time.Duration {
+	if c.WarmupWindow <= 0 {
+		return 30 * time.Minute
+	}
+	return c.WarmupWindow
+}
+
+func (c Config) sustainedWindows() int {
+	if c.SustainedWindows <= 0 {
+		return 2
+	}
+	return c.SustainedWindows
+}
+
+func (c Config) highThreshold() int {
+	if c.HighThreshold <= 0 {
+		return DefaultHighWeight
+	}
+	return c.HighThreshold
+}
+
+func (c Config) lowThreshold() int {
+	if c.LowThreshold <= 0 {
+		return DefaultHighWeight
+	}
+	return c.LowThreshold
+}
+
+func (c Config) weights() map[core.EventType]int {
+	if c.Weights != nil {
+		return c.Weights
+	}
+	return DefaultWeights
+}
+
+// GovernorState is the mutable state that must persist across governor evaluations.
+//
+// Callers own the state lifetime; Evaluate reads and writes it. For a stateless
+// single-shot call, pass a pointer to a zero-value GovernorState — the cold-start
+// gate will suppress the first activation correctly.
+type GovernorState struct {
+	// ConsecutiveLowWindows is the count of back-to-back windows whose movement
+	// score was below the low threshold. Reset to 0 when a high window is observed.
+	// The sustained-low gate requires this to reach SustainedWindows before tripping.
+	ConsecutiveLowWindows int
+
+	// DaemonStartedAt is the wall-clock time the calling daemon started.
+	// Used by the cold-start warmup gate (spec §1.4). Zero suppresses the gate
+	// (no warmup required), which is suitable for tests.
+	DaemonStartedAt time.Time
+}
+
+// GovernorInput collects the external observations needed by one Evaluate call.
+type GovernorInput struct {
+	// ProjectDir is the root of the harmonik project (parent of .harmonik/).
+	ProjectDir string
+
+	// Now is the current wall-clock time used as the right edge of the sliding window.
+	// Zero is NOT valid; callers must supply a real time.
+	Now time.Time
+
+	// HasReadyBeads is true when ≥1 unblocked open bead exists (opportunity gate §1.3).
+	HasReadyBeads bool
+
+	// HasUndeployedTail is true when merged-but-undeployed work exists (§1.3, §5.2).
+	HasUndeployedTail bool
+
+	// GitPath is the path to the git binary; defaults to "git" on PATH.
+	GitPath string
+}
+
+// WindowSample records the movement observed in one evaluation window.
+// All fields are human-readable so an operator can reproduce the activation level by hand.
+type WindowSample struct {
+	// WindowStart is the left edge of the sliding window (Now - Window).
+	WindowStart time.Time
+	// WindowEnd is the right edge (Now).
+	WindowEnd time.Time
+	// MovementScore is the weighted sum of terminal-progress events in the window.
+	MovementScore int
+	// TerminalEventCount is the number of terminal-progress events from events.jsonl.
+	TerminalEventCount int
+	// HeadAdvanceCount is the number of commits on origin/main within the window.
+	HeadAdvanceCount int
+}
+
+// GovernorSignal is the output of one Evaluate call.
+type GovernorSignal struct {
+	// Level is the activation level (DORMANT / WATCHING / ACTIVE).
+	Level ActivationLevel
+	// Sample holds the window observation that produced this signal.
+	Sample WindowSample
+	// SuppressedBy describes which gate suppressed activation (empty when not suppressed).
+	SuppressedBy string
+	// HasOpportunity is true when the opportunity gate (§1.3) is open.
+	HasOpportunity bool
+	// ConsecutiveLowWindows is the value of GovernorState.ConsecutiveLowWindows
+	// AFTER this Evaluate call updates it (useful for audit).
+	ConsecutiveLowWindows int
+}
+
+// reviewerVerdictPayload is a minimal unmarshal target for reviewer_verdict events.
+type reviewerVerdictPayload struct {
+	Verdict core.ReviewerVerdict `json:"verdict"`
+}
+
+// ComputeWindowMovement reads events.jsonl and git log to produce a WindowSample
+// over the window [windowStart, windowEnd].
+//
+// Terminal-progress events (spec §1.1):
+//   - bead_closed                             → +weight (from weights map)
+//   - run_completed (always success)           → +weight
+//   - reviewer_verdict{verdict=APPROVE}        → +weight (others carry 0)
+//   - commit on origin/main within the window  → +weight (from git log)
+//
+// All other event types carry weight 0 (start/chatter; spec §1.1 "weight 0").
+// A missing or unreadable events.jsonl is treated as zero movement (not an error).
+//
+// eventsPath is the full path to events.jsonl.
+// gitPath is the git binary (empty → "git").
+// projectDir is the repo root (for git -C).
+func ComputeWindowMovement(
+	ctx context.Context,
+	eventsPath string,
+	windowStart time.Time,
+	windowEnd time.Time,
+	weights map[core.EventType]int,
+	gitPath string,
+	projectDir string,
+) WindowSample {
+	return computeWindowMovement(ctx, eventsPath, windowStart, windowEnd, weights, gitPath, projectDir)
+}
+
+// computeWindowMovement is the internal implementation.
+func computeWindowMovement(
+	ctx context.Context,
+	eventsPath string,
+	windowStart time.Time,
+	windowEnd time.Time,
+	weights map[core.EventType]int,
+	gitPath string,
+	projectDir string,
+) WindowSample {
+	if gitPath == "" {
+		gitPath = "git"
+	}
+	sample := WindowSample{
+		WindowStart: windowStart,
+		WindowEnd:   windowEnd,
+	}
+
+	// --- events.jsonl scan ---
+	for ev := range eventbus.ScanAfter(eventsPath, core.EventID{}) {
+		// Filter to events within the window by wall-clock time.
+		// UUIDv7 ordering would be more correct but wall-clock is sufficient
+		// for a ~30-minute window and avoids timestamp parsing from EventIDs.
+		if ev.TimestampWall.Before(windowStart) {
+			continue
+		}
+		if ev.TimestampWall.After(windowEnd) {
+			break // events are ordered; no need to scan further
+		}
+
+		evType := core.EventType(ev.Type)
+		switch evType {
+		case core.EventTypeBeadClosed, core.EventTypeRunCompleted:
+			w := weights[evType]
+			sample.MovementScore += w
+			sample.TerminalEventCount++
+
+		case core.EventTypeReviewerVerdict:
+			var p reviewerVerdictPayload
+			if err := json.Unmarshal(ev.Payload, &p); err != nil {
+				continue
+			}
+			if p.Verdict == core.ReviewerVerdictApprove {
+				w := weights[evType]
+				sample.MovementScore += w
+				sample.TerminalEventCount++
+			}
+		}
+	}
+
+	// --- git: commits on origin/main within the window ---
+	headAdvances := countHeadAdvances(ctx, gitPath, projectDir, windowStart, windowEnd)
+	sample.HeadAdvanceCount = headAdvances
+	if headAdvances > 0 {
+		// Each HEAD advance is one terminal-progress unit at the high weight.
+		// Use bead_closed weight as the canonical "high" weight for git advances.
+		highWeight := weights[core.EventTypeBeadClosed]
+		if highWeight == 0 {
+			highWeight = DefaultHighWeight
+		}
+		sample.MovementScore += headAdvances * highWeight
+	}
+
+	return sample
+}
+
+// countHeadAdvances counts commits on origin/main whose committer date falls
+// within [windowStart, windowEnd]. Returns 0 on any git error (non-fatal).
+func countHeadAdvances(ctx context.Context, gitPath, projectDir string, windowStart, windowEnd time.Time) int {
+	if projectDir == "" {
+		return 0
+	}
+	// --after and --before use committer date by default.
+	// RFC3339 format is accepted by git log date filters.
+	after := windowStart.UTC().Format(time.RFC3339)
+	before := windowEnd.UTC().Format(time.RFC3339)
+	args := []string{
+		"-C", projectDir,
+		"log", "origin/main",
+		"--oneline",
+		"--after=" + after,
+		"--before=" + before,
+	}
+	//nolint:gosec // G204: all args are daemon-controlled, not user input.
+	cmd := exec.CommandContext(ctx, gitPath, args...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+// Evaluate runs one governor evaluation cycle.
+//
+// It reads events.jsonl and git log to compute the movement score for the current
+// window, applies the discrete inverse staircase, checks all gates (opportunity,
+// cold-start, sustained), and returns a GovernorSignal.
+//
+// state is updated in-place: ConsecutiveLowWindows is incremented or reset
+// based on whether the current window is "low". Callers must persist state
+// between calls to implement the sustained-low gate.
+//
+// Spec ref: flywheel-motion.md §§1.2, 1.3, 1.4.
+func Evaluate(
+	ctx context.Context,
+	state *GovernorState,
+	input GovernorInput,
+	cfg Config,
+) GovernorSignal {
+	win := cfg.window()
+	windowStart := input.Now.Add(-win)
+	windowEnd := input.Now
+
+	eventsPath := filepath.Join(input.ProjectDir, ".harmonik", "events", "events.jsonl")
+	weights := cfg.weights()
+
+	sample := computeWindowMovement(
+		ctx,
+		eventsPath,
+		windowStart,
+		windowEnd,
+		weights,
+		input.GitPath,
+		input.ProjectDir,
+	)
+
+	sig := GovernorSignal{
+		Sample:         sample,
+		HasOpportunity: input.HasReadyBeads || input.HasUndeployedTail,
+	}
+
+	// --- Discrete inverse staircase (spec §1.2) ---
+	// A movement score >= highThreshold means at least one terminal-progress event
+	// in the window: the governor is dormant. Score < lowThreshold is "low".
+	// The staircase is auditable by reading sample.MovementScore directly.
+	isHighWindow := sample.MovementScore >= cfg.highThreshold()
+	isLowWindow := sample.MovementScore < cfg.lowThreshold()
+
+	if isHighWindow {
+		state.ConsecutiveLowWindows = 0
+		sig.Level = ActivationDormant
+		sig.ConsecutiveLowWindows = state.ConsecutiveLowWindows
+		return sig
+	}
+
+	if isLowWindow {
+		state.ConsecutiveLowWindows++
+	} else {
+		// Moderate — in between thresholds. Count as low for the sustained gate.
+		state.ConsecutiveLowWindows++
+	}
+	sig.ConsecutiveLowWindows = state.ConsecutiveLowWindows
+
+	// Default to WATCHING; gates below can promote to ACTIVE.
+	sig.Level = ActivationWatching
+
+	// --- Opportunity gate (spec §1.3) ---
+	// MUST NOT trip if there is no actionable work.
+	if !sig.HasOpportunity {
+		sig.SuppressedBy = "no_opportunity"
+		return sig
+	}
+
+	// --- Cold-start warmup gate (spec §1.4) ---
+	// Suppress until the warmup watermark has elapsed since daemon start.
+	if !state.DaemonStartedAt.IsZero() {
+		elapsed := input.Now.Sub(state.DaemonStartedAt)
+		if elapsed < cfg.warmupWindow() {
+			sig.SuppressedBy = fmt.Sprintf("warmup(elapsed=%s,required=%s)", elapsed.Round(time.Second), cfg.warmupWindow())
+			return sig
+		}
+	}
+
+	// --- Sustained-low gate (spec §1.4) ---
+	// Require ≥ sustainedWindows consecutive low windows before tripping.
+	if state.ConsecutiveLowWindows < cfg.sustainedWindows() {
+		// Still watching; not yet sustained.
+		return sig
+	}
+
+	// All gates passed: trip.
+	sig.Level = ActivationActive
+	return sig
+}

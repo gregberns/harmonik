@@ -5218,19 +5218,22 @@ func emitMergeBuildFailed(ctx context.Context, bus handlercontract.EventEmitter,
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeMergeBuildFailed, b)
 }
 
-// runMergeFmtCheck runs gofumpt -l and gci diff on buildDir to detect
-// formatting drift before the push. Both tools exit 0 and write the list of
-// dirty files (or a diff) to stdout when formatting is needed; non-empty
-// output is treated as a failure.
+// runMergeFmtCheck detects formatting drift (gofumpt, gci) on buildDir before
+// the push and auto-heals it when an isolated worktree is available.
+//
+// Auto-heal path (buildDir != projectDir — worktree exists): runs gofumpt -w
+// and/or gci write to reformat in place, then stages and commits the changes
+// in the worktree and advances refs/heads/<targetBranch> to the new tip so the
+// caller's push step picks up the format commit.
+//
+// Fallback path (buildDir == projectDir — worktree already removed): rolls
+// back the update-ref and emits merge_build_failed, same as the original
+// reject behaviour, because committing in the live project directory is unsafe.
 //
 // Fail-open: if either tool binary is absent in projectDir/.tools/ the check
 // is silently skipped (non-Go repos, bare test fixtures, CI without tools).
 //
-// On failure the caller's update-ref is rolled back and merge_build_failed is
-// emitted (reusing the existing event type so operators see it in the same
-// subscription stream). Returns nil on pass or skip.
-//
-// Bead: hk-k1hn.
+// Beads: hk-k1hn (original gate), hk-0lrt (auto-heal).
 func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, mainTip string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) *mergeOutcome {
 	rollback := func() {
 		rb := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
@@ -5238,18 +5241,37 @@ func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, m
 		_ = rb.Run()
 	}
 
+	// Auto-format is only safe when an isolated worktree is available.
+	// When buildDir == projectDir the worktree has already been removed and
+	// we cannot commit a format change without racing the project's own index.
+	canAutoFmt := buildDir != projectDir
+
+	needsCommit := false
+
 	gofumptBin := filepath.Join(projectDir, ".tools", "gofumpt")
 	if _, err := os.Stat(gofumptBin); err == nil {
-		cmd := exec.CommandContext(ctx, gofumptBin, "-l", ".")
-		cmd.Dir = buildDir
+		listCmd := exec.CommandContext(ctx, gofumptBin, "-l", ".")
+		listCmd.Dir = buildDir
 		// gofumpt -l exits 0; non-empty stdout = unformatted files.
-		if out, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
-			rollback()
-			msg := "gofumpt: unformatted files (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
-			emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-			return &mergeOutcome{
-				success: false,
-				reason:  "merge_fmt_failed (gofumpt): " + strings.TrimRight(string(out), "\n"),
+		if out, err := listCmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
+			if canAutoFmt {
+				fmtCmd := exec.CommandContext(ctx, gofumptBin, "-w", ".")
+				fmtCmd.Dir = buildDir
+				if fmtErr := fmtCmd.Run(); fmtErr != nil {
+					rollback()
+					msg := "gofumpt -w: " + fmtErr.Error()
+					emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
+					return &mergeOutcome{success: false, reason: "merge_fmt_failed (gofumpt -w): " + fmtErr.Error()}
+				}
+				needsCommit = true
+			} else {
+				rollback()
+				msg := "gofumpt: unformatted files (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
+				emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
+				return &mergeOutcome{
+					success: false,
+					reason:  "merge_fmt_failed (gofumpt): " + strings.TrimRight(string(out), "\n"),
+				}
 			}
 		}
 	}
@@ -5257,17 +5279,64 @@ func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, m
 	gciBin := filepath.Join(projectDir, ".tools", "gci")
 	if _, err := os.Stat(gciBin); err == nil {
 		if mod := readGoModule(buildDir); mod != "" {
-			cmd := exec.CommandContext(ctx, gciBin, "diff", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".")
-			cmd.Dir = buildDir
+			diffCmd := exec.CommandContext(ctx, gciBin, "diff", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".")
+			diffCmd.Dir = buildDir
 			// gci diff exits 0; non-empty stdout = import order drift.
-			if out, err := cmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
-				rollback()
-				msg := "gci: import order drift (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
-				emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-				return &mergeOutcome{
-					success: false,
-					reason:  "merge_fmt_failed (gci): import order drift detected",
+			if out, err := diffCmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
+				if canAutoFmt {
+					writeCmd := exec.CommandContext(ctx, gciBin, "write", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".")
+					writeCmd.Dir = buildDir
+					if writeErr := writeCmd.Run(); writeErr != nil {
+						rollback()
+						msg := "gci write: " + writeErr.Error()
+						emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
+						return &mergeOutcome{success: false, reason: "merge_fmt_failed (gci write): " + writeErr.Error()}
+					}
+					needsCommit = true
+				} else {
+					rollback()
+					msg := "gci: import order drift (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
+					emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
+					return &mergeOutcome{
+						success: false,
+						reason:  "merge_fmt_failed (gci): import order drift detected",
+					}
 				}
+			}
+		}
+	}
+
+	if needsCommit {
+		// Stage all formatting changes in the worktree.
+		addCmd := exec.CommandContext(ctx, "git", "add", "-A")
+		addCmd.Dir = buildDir
+		if addOut, addErr := addCmd.CombinedOutput(); addErr != nil {
+			rollback()
+			emitMergeBuildFailed(ctx, bus, runID, beadID, addErr, addOut)
+			return &mergeOutcome{success: false, reason: "merge_fmt_failed (git add): " + addErr.Error()}
+		}
+
+		commitMsg := fmt.Sprintf("fmt: auto-format via gofumpt+gci\n\nRefs: %s", beadID)
+		commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
+		commitCmd.Dir = buildDir
+		if commitOut, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
+			rollback()
+			emitMergeBuildFailed(ctx, bus, runID, beadID, commitErr, commitOut)
+			return &mergeOutcome{success: false, reason: "merge_fmt_failed (fmt commit): " + commitErr.Error()}
+		}
+
+		// Advance targetBranch to the new formatted tip so step 4 (push)
+		// picks up the format commit.
+		newTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+		newTipCmd.Dir = buildDir
+		if newTipOut, newTipErr := newTipCmd.Output(); newTipErr == nil {
+			newTip := strings.TrimRight(string(newTipOut), "\n")
+			updateCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, newTip)
+			updateCmd.Dir = projectDir
+			if updateErr := updateCmd.Run(); updateErr != nil {
+				rollback()
+				emitMergeBuildFailed(ctx, bus, runID, beadID, updateErr, nil)
+				return &mergeOutcome{success: false, reason: "merge_fmt_failed (update-ref after fmt): " + updateErr.Error()}
 			}
 		}
 	}

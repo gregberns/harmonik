@@ -5249,36 +5249,48 @@ func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, m
 	needsCommit := false
 
 	gofumptBin := filepath.Join(projectDir, ".tools", "gofumpt")
-	if _, err := os.Stat(gofumptBin); err == nil {
-		listCmd := exec.CommandContext(ctx, gofumptBin, "-l", ".")
-		listCmd.Dir = buildDir
-		// gofumpt -l exits 0; non-empty stdout = unformatted files.
-		if out, err := listCmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
-			if canAutoFmt {
-				fmtCmd := exec.CommandContext(ctx, gofumptBin, "-w", ".")
-				fmtCmd.Dir = buildDir
-				if fmtErr := fmtCmd.Run(); fmtErr != nil {
+	gciBin := filepath.Join(projectDir, ".tools", "gci")
+	_, gofumptAvail := os.Stat(gofumptBin)
+	_, gciAvail := os.Stat(gciBin)
+	mod := readGoModule(buildDir)
+
+	// Run gofumpt+gci to a fixpoint: each tool can disturb the other's
+	// invariant (gci re-groups imports → gofumpt sees drift; gofumpt adjusts
+	// spacing → gci sees drift), so we loop until both are clean or we exhaust
+	// the iteration cap.
+	const maxFmtIter = 5
+	for i := range maxFmtIter {
+		iterDirty := false
+
+		if gofumptAvail == nil {
+			listCmd := exec.CommandContext(ctx, gofumptBin, "-l", ".")
+			listCmd.Dir = buildDir
+			// gofumpt -l exits 0; non-empty stdout = unformatted files.
+			if out, err := listCmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
+				if canAutoFmt {
+					fmtCmd := exec.CommandContext(ctx, gofumptBin, "-w", ".")
+					fmtCmd.Dir = buildDir
+					if fmtErr := fmtCmd.Run(); fmtErr != nil {
+						rollback()
+						msg := "gofumpt -w: " + fmtErr.Error()
+						emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
+						return &mergeOutcome{success: false, reason: "merge_fmt_failed (gofumpt -w): " + fmtErr.Error()}
+					}
+					needsCommit = true
+					iterDirty = true
+				} else {
 					rollback()
-					msg := "gofumpt -w: " + fmtErr.Error()
+					msg := "gofumpt: unformatted files (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
 					emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-					return &mergeOutcome{success: false, reason: "merge_fmt_failed (gofumpt -w): " + fmtErr.Error()}
-				}
-				needsCommit = true
-			} else {
-				rollback()
-				msg := "gofumpt: unformatted files (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
-				emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-				return &mergeOutcome{
-					success: false,
-					reason:  "merge_fmt_failed (gofumpt): " + strings.TrimRight(string(out), "\n"),
+					return &mergeOutcome{
+						success: false,
+						reason:  "merge_fmt_failed (gofumpt): " + strings.TrimRight(string(out), "\n"),
+					}
 				}
 			}
 		}
-	}
 
-	gciBin := filepath.Join(projectDir, ".tools", "gci")
-	if _, err := os.Stat(gciBin); err == nil {
-		if mod := readGoModule(buildDir); mod != "" {
+		if gciAvail == nil && mod != "" {
 			diffCmd := exec.CommandContext(ctx, gciBin, "diff", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".")
 			diffCmd.Dir = buildDir
 			// gci diff exits 0; non-empty stdout = import order drift.
@@ -5293,6 +5305,7 @@ func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, m
 						return &mergeOutcome{success: false, reason: "merge_fmt_failed (gci write): " + writeErr.Error()}
 					}
 					needsCommit = true
+					iterDirty = true
 				} else {
 					rollback()
 					msg := "gci: import order drift (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
@@ -5302,6 +5315,22 @@ func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, m
 						reason:  "merge_fmt_failed (gci): import order drift detected",
 					}
 				}
+			}
+		}
+
+		if !iterDirty {
+			break
+		}
+		if i == maxFmtIter-1 {
+			// Both tools are still disagreeing after maxFmtIter passes — a
+			// genuine divergence in tool config; fail rather than loop forever.
+			rollback()
+			emitMergeBuildFailed(ctx, bus, runID, beadID,
+				errors.New("gofumpt+gci did not converge after "+fmt.Sprint(maxFmtIter)+" passes"),
+				nil)
+			return &mergeOutcome{
+				success: false,
+				reason:  "merge_fmt_failed: gofumpt+gci did not converge after " + fmt.Sprint(maxFmtIter) + " passes (check gci local-prefix config vs module path)",
 			}
 		}
 	}

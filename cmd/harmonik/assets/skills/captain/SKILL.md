@@ -218,7 +218,8 @@ on its own named queue. Two crews never share an epic or touch the same files.
 > wind-down has been LIFTED — do NOT carry it forward. Crews that were stood down
 > have persisted mission files; re-establish their lanes if `kerf next` still ranks
 > the work. **Session-keeper arming:** relaunch the watcher with
-> `--warn-pct 25 --act-pct 30` (bare 80/90 defaults defeat the intent on a 1M window).
+> `--warn-pct 30 --act-pct 35` (matching `captain-launch.sh` defaults; bare 80/90
+> defaults defeat the intent on a 1M window).
 
 | crew | lane (initiative) | epic | live state (2026-06-11) |
 |---|---|---|---|

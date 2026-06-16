@@ -448,6 +448,19 @@ func runReviewLoop(
 		if implLaunchInitiatedMsg != nil {
 			emitPreExecMessage(ctx, deps.bus, runID, implLaunchInitiatedMsg)
 		}
+		// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
+		// receives agent_heartbeat events (with run_id) after launch_initiated.
+		// Without this, lastEventType stays frozen at "launch_initiated" for the
+		// full run duration, causing false-positive run_stale on every review-loop
+		// dispatch. Mirrors the single-mode path (workloop.go Step 5). The defer
+		// accumulates per iteration (same pattern as implSessForTeardown below);
+		// the goroutine also exits on ctx cancellation.
+		implHBDone := make(chan struct{})
+		go handler.RunHeartbeatLoop(ctx, implArtifacts.handlerSessionID,
+			handler.HeartbeatInterval, implHBDone,
+			newDaemonHeartbeatEmitter(implTap, runID))
+		defer close(implHBDone)
+
 		// hk-68pvl / hk-4l7zs: release this iteration's implementer session
 		// PROMPTLY at the end of the iteration rather than only at runReviewLoop
 		// return. The per-phase Kill (waitWithSocketGrace branch, ~line 533) is the

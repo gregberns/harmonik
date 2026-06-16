@@ -931,6 +931,17 @@ func dispatchDotAgenticNode(
 		emitPreExecMessage(ctx, deps.bus, runID, nodeLaunchInitiatedMsg)
 	}
 
+	// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
+	// receives agent_heartbeat events (with run_id) after launch_initiated.
+	// Without this, lastEventType stays frozen at "launch_initiated" for the
+	// full run duration, causing false-positive run_stale on every DOT dispatch.
+	// Mirrors the single-mode path (workloop.go Step 5).
+	nodeHBDone := make(chan struct{})
+	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
+		handler.HeartbeatInterval, nodeHBDone,
+		newDaemonHeartbeatEmitter(tap, runID))
+	defer close(nodeHBDone)
+
 	// hk-goczd / hk-68pvl: force-tear-down the session before this function
 	// returns on EVERY exit path (success, ctx-cancel, verdict-read error, HEAD
 	// resolution error, reviewer-success return). The success path below kills the

@@ -352,6 +352,17 @@ func executeCognitionGate(
 		emitPreExecMessage(ctx, deps.bus, runID, gateLaunchInitiatedMsg)
 	}
 
+	// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
+	// receives agent_heartbeat events (with run_id) after launch_initiated.
+	// Without this, lastEventType stays frozen at "launch_initiated" for the
+	// full run duration, causing false-positive run_stale on every gate dispatch.
+	// Mirrors the single-mode path (workloop.go Step 5).
+	gateHBDone := make(chan struct{})
+	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
+		handler.HeartbeatInterval, gateHBDone,
+		newDaemonHeartbeatEmitter(tap, runID))
+	defer close(gateHBDone)
+
 	// hk-goczd / hk-68pvl: slot-reclaim backstop — guarantee the spawn-semaphore
 	// slot (hk-xb5yi / hk-4l7zs) is released on EVERY return path. The success path
 	// below kills the session only when watcher == nil (dot_gate.go ~line 397);

@@ -262,6 +262,17 @@ func driveDotWorkflow(
 	// Bead ref: hk-m1wqp.
 	var priorVerdictFlags []string
 
+	// lastGatePassed records whether the MOST RECENT shell commit-gate node
+	// (build + vet + test-compile + scenario tests) produced a SUCCESS outcome.
+	// hk-w2ow: the broadened completion exemption in the no-progress block
+	// consults this to distinguish an ADVISORY-ONLY REQUEST_CHANGES re-entry
+	// whose gate is GREEN (build + tests pass — nothing committable left, so
+	// COMPLETION) from a genuinely-stalled rework re-entry whose gate is RED
+	// (build/test failure still un-addressed — FAIL). False until a gate node
+	// has run, so a gate-less graph can NEVER take the broadened exemption: it
+	// cannot assert the gate passes, so it preserves the prior fail behavior.
+	lastGatePassed := false
+
 	// reviewerNoVerdictRetries counts how many times the current reviewer node
 	// invocation was retried after producing no verdict (stall / hang).
 	// hk-bqf1q: when committed work exists, the caller retries the reviewer
@@ -325,6 +336,14 @@ func driveDotWorkflow(
 					}
 				}
 				outcome = toolOutcome
+				// hk-w2ow: record whether this build/test gate passed. The
+				// broadened completion exemption (no-progress block below) treats an
+				// advisory-only REQUEST_CHANGES re-entry with a GREEN gate as
+				// COMPLETION; a RED gate (build/test failure) still fails as stalled
+				// rework. Most-recent semantics are sound here: the no-progress check
+				// only fires when HEAD is UNCHANGED, so the gate result reflects the
+				// exact tree under review.
+				lastGatePassed = outcome.Status == core.OutcomeStatusSuccess
 
 			case node.ToolCommand != "" && node.HandlerRef != "shell":
 				// Path 3: non-agentic node bound to a non-shell handler — v1 stub.
@@ -415,8 +434,8 @@ func driveDotWorkflow(
 				// hk-8ps7q — approved-and-done is COMPLETION, not no-progress.
 				//
 				// The no-progress condition (iter ≥ 2 + HEAD unchanged) is met by
-				// TWO structurally-distinct situations, disambiguated ONLY by the
-				// prior reviewer verdict:
+				// THREE structurally-distinct situations, disambiguated by the prior
+				// reviewer verdict AND the most-recent build/test gate state:
 				//
 				//   (1) GENUINELY STUCK: the prior reviewer said REQUEST_CHANGES
 				//       (or no reviewer has run yet) and the implementer re-entered
@@ -443,6 +462,31 @@ func driveDotWorkflow(
 					return dotWorkflowResult{
 						success: true,
 						summary: fmt.Sprintf("dot: completed at iteration %d — reviewer APPROVED and committed work is final (hk-8ps7q: HEAD did not advance because nothing remained to do)", iterationCount),
+					}
+				}
+				// hk-w2ow — advisory-only REQUEST_CHANGES + GREEN gate is COMPLETION.
+				//
+				//   (3) ADVISORY AND DONE: there IS a committed result AND the prior
+				//       reviewer returned REQUEST_CHANGES (advisory severity — NOT a
+				//       BLOCK, per the hk-cmry BLOCK>RC>APPROVE severity-join that
+				//       sets priorVerdict) AND the most-recent build/test gate passed
+				//       (lastGatePassed). A REQUEST_CHANGES carrying only advisory /
+				//       nitpick feedback has nothing committable: the implementer
+				//       correctly added no new commit, HEAD stays put, and the gate
+				//       is still green. Firing the stalled-rework failure here would
+				//       discard finished, tested, gate-green work. The run instead
+				//       COMPLETES so the caller merges it.
+				//
+				// This must STILL fail genuinely-stalled rework. A BLOCK verdict
+				// never reaches this branch (priorVerdict != REQUEST_CHANGES → it
+				// falls through to no_progress_detected below). A REQUEST_CHANGES
+				// whose gate is RED (build/test still failing — real, un-addressed
+				// work) has lastGatePassed == false, so it skips this branch and
+				// falls through to review_fixup_stalled below, exactly as before.
+				if committedResult && priorVerdict == workspace.ReviewVerdictRequestChanges && lastGatePassed {
+					return dotWorkflowResult{
+						success: true,
+						summary: fmt.Sprintf("dot: completed at iteration %d — REQUEST_CHANGES was advisory-only (commit gate green; HEAD final, nothing committable remained) (hk-w2ow)", iterationCount),
 					}
 				}
 				// hk-m1wqp: emit review_fixup_stalled (carrying the reviewer flags)

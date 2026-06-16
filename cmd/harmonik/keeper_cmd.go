@@ -57,6 +57,7 @@ func runKeeperSubcommand(args []string) int {
 		warnAbsTokensFlag int64
 		actAbsTokensFlag  int64
 		respawnCmdFlag    string
+		forceRestartFlag  bool
 	)
 
 	fs.StringVar(&agentFlag, "agent", "", "agent name (required)")
@@ -67,6 +68,7 @@ func runKeeperSubcommand(args []string) int {
 	fs.Int64Var(&warnAbsTokensFlag, "warn-abs-tokens", 0, "absolute-token warn threshold (default 270000)")
 	fs.Int64Var(&actAbsTokensFlag, "act-abs-tokens", 0, "absolute-token act threshold (default 300000)")
 	fs.StringVar(&respawnCmdFlag, "respawn-cmd", "", "shell command to re-launch the agent after it exits (supervised respawn path; hk-3w2)")
+	fs.BoolVar(&forceRestartFlag, "force-restart", false, "opt in to the handoff-timeout hard-restart escalation (fail-closed; requires --respawn-cmd; hk-suxt)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -204,6 +206,13 @@ func runKeeperSubcommand(args []string) int {
 		WarnPctCeil:       resolvedWarnPctCeil,
 		SendEscapeFn:      keeper.SendEscapeKey,
 		BootGracePeriod:   5 * time.Minute, // hk-4f8: defer cycles during post-/session-resume boot
+		// hk-suxt: activate the handoff-timeout hard-restart escalation
+		// (cycle.go:767, dormant until now because CyclerConfig.ForceRestartFn was
+		// never populated in production). Fail-closed: nil unless the operator BOTH
+		// opts in with --force-restart AND supplies a --respawn-cmd to launch from.
+		// MaxHandoffTimeouts defaults to 3 (applyDefaults), so a non-nil fn alone
+		// enables the escalation. Thresholds are unchanged (operator HARD-NO).
+		ForceRestartFn: keeperForceRestartFn(forceRestartFlag, projectDir, respawnCmdFlag),
 	}, emitter)
 
 	// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before
@@ -252,6 +261,22 @@ func runKeeperSubcommand(args []string) int {
 	}
 
 	return 0
+}
+
+// keeperForceRestartFn returns the ForceRestartFn to wire into CyclerConfig for
+// the handoff-timeout hard-restart escalation (cycle.go:767). It is FAIL-CLOSED:
+// nil — the escalation stays dormant and behaviour is byte-identical to today —
+// UNLESS the operator BOTH opts in with --force-restart AND supplies a
+// --respawn-cmd to launch from. The returned closure reuses
+// NewLiveRecoverViaRespawn, which re-verifies the bound .sid identity at the
+// moment of firing and refuses (returns ErrLiveRecoverIdentityUntrusted, no
+// restart) on a non-UUIDv4 — force-restart is the most destructive keeper action.
+// Refs: hk-suxt (wire dormant ForceRestartFn), hk-qoz (escalation path).
+func keeperForceRestartFn(forceRestart bool, projectDir, respawnCmd string) func(ctx context.Context, agentName string) error {
+	if !forceRestart || respawnCmd == "" {
+		return nil
+	}
+	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)
 }
 
 // newKeeperMarkerFlags builds the flag set shared by the keeper marker
@@ -567,6 +592,11 @@ FLAGS (watcher mode)
                          the keeper runs "sh -c <cmd>" to respawn the agent. Requires --tmux.
                          A 90s cooldown prevents tight respawn loops.
                          Example: --respawn-cmd '~/.claude/captain-tools/captain-launch.sh'
+  --force-restart        Opt in to the handoff-timeout hard-restart escalation (default false; hk-suxt).
+                         After MaxHandoffTimeouts (3) consecutive handoff timeouts above the force
+                         threshold, the keeper runs --respawn-cmd to hard-restart a permanently
+                         unresponsive pane. FAIL-CLOSED: inert unless BOTH --force-restart and
+                         --respawn-cmd are set; the respawn refuses on a non-UUIDv4 bound .sid.
 
 BEHAVIOUR (Phase-2, .managed-gated)
   1. Acquires .harmonik/keeper/<agent>.lock; exits 2 if another keeper is live.

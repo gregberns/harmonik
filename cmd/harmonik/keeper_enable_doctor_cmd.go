@@ -53,13 +53,34 @@ func runKeeperEnableSubcommand(args []string) int {
 	return runKeeperEnableEntry(args, os.Stdout, os.Stderr)
 }
 
-// runKeeperEnableEntry parses flags and delegates to runKeeperEnable.
-func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
+// enableArgs holds the parsed `keeper enable` argument vector.
+type enableArgs struct {
+	agentName      string
+	projectDir     string
+	scriptsDir     string
+	tmuxTarget     string
+	yesDestructive bool
+}
+
+// parseKeeperEnableArgs parses the enable argument vector. The agent name is
+// accepted either as `--agent <name>` / `--agent=<name>` OR as a bare positional;
+// the flag WINS when both are present. An UNRECOGNIZED leading-dash token is
+// rejected LOUDLY (exit 2) rather than silently used as the positional agent —
+// the CLASS-A bug where `doctor --agent X` checked an agent named "--agent".
+// Every existing recognized flag (including --yes-destructive, the regression
+// that failed the original hk-psds) is enumerated and kept; the reject is ONLY
+// for unrecognized leading-dash tokens.
+//
+// The returned code is a control signal, not just an exit code:
+//
+//	-1 → parse OK, caller should proceed
+//	 0 → --help printed, caller should return 0
+//	 1 → missing agent name
+//	 2 → unrecognized leading-dash flag
+func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs, int) {
 	var (
-		projectDir     string
-		scriptsDir     string
-		tmuxTarget     string
-		yesDestructive bool
+		pa        enableArgs
+		agentFlag string
 	)
 
 	// manual flag parse to match existing codebase convention
@@ -68,35 +89,66 @@ func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
 			fmt.Fprint(stdout, keeperEnableUsage)
-			return 0
+			return enableArgs{}, 0
+		case args[i] == "--agent" && i+1 < len(args):
+			i++
+			agentFlag = args[i]
+		case strings.HasPrefix(args[i], "--agent="):
+			agentFlag = strings.TrimPrefix(args[i], "--agent=")
 		case args[i] == "--project" && i+1 < len(args):
 			i++
-			projectDir = args[i]
+			pa.projectDir = args[i]
 		case strings.HasPrefix(args[i], "--project="):
-			projectDir = strings.TrimPrefix(args[i], "--project=")
+			pa.projectDir = strings.TrimPrefix(args[i], "--project=")
 		case args[i] == "--scripts-dir" && i+1 < len(args):
 			i++
-			scriptsDir = args[i]
+			pa.scriptsDir = args[i]
 		case strings.HasPrefix(args[i], "--scripts-dir="):
-			scriptsDir = strings.TrimPrefix(args[i], "--scripts-dir=")
+			pa.scriptsDir = strings.TrimPrefix(args[i], "--scripts-dir=")
 		case args[i] == "--tmux" && i+1 < len(args):
 			i++
-			tmuxTarget = args[i]
+			pa.tmuxTarget = args[i]
 		case strings.HasPrefix(args[i], "--tmux="):
-			tmuxTarget = strings.TrimPrefix(args[i], "--tmux=")
+			pa.tmuxTarget = strings.TrimPrefix(args[i], "--tmux=")
 		case args[i] == "--yes-destructive":
-			yesDestructive = true
+			pa.yesDestructive = true
+		case strings.HasPrefix(args[i], "-"):
+			// Unrecognized leading-dash token: reject loudly instead of silently
+			// treating it as the positional agent name (the CLASS-A false-green).
+			// This catch-all MUST stay AFTER every recognized flag case above so
+			// --yes-destructive et al. are not swept into the reject.
+			fmt.Fprintf(stderr, "harmonik keeper enable: unrecognized flag %q\n", args[i])
+			fmt.Fprint(stderr, keeperEnableUsage)
+			return enableArgs{}, 2
 		default:
 			rest = append(rest, args[i])
 		}
 	}
 
-	if len(rest) < 1 {
-		fmt.Fprintln(stderr, "harmonik keeper enable: agent name is required")
-		fmt.Fprint(stderr, keeperEnableUsage)
-		return 1
+	// Flag wins positional.
+	pa.agentName = agentFlag
+	if pa.agentName == "" {
+		if len(rest) < 1 {
+			fmt.Fprintln(stderr, "harmonik keeper enable: agent name is required")
+			fmt.Fprint(stderr, keeperEnableUsage)
+			return enableArgs{}, 1
+		}
+		pa.agentName = rest[0]
 	}
-	agentName := rest[0]
+	return pa, -1
+}
+
+// runKeeperEnableEntry parses flags and delegates to runKeeperEnable.
+func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
+	pa, code := parseKeeperEnableArgs(args, stdout, stderr)
+	if code != -1 {
+		return code
+	}
+	agentName := pa.agentName
+	projectDir := pa.projectDir
+	scriptsDir := pa.scriptsDir
+	tmuxTarget := pa.tmuxTarget
+	yesDestructive := pa.yesDestructive
 
 	// Resolve project dir.
 	if projectDir == "" {
@@ -324,32 +376,71 @@ func runKeeperDoctorSubcommand(args []string) int {
 	return runKeeperDoctorEntry(args, os.Stdout, os.Stderr)
 }
 
-// runKeeperDoctorEntry parses flags and delegates to runKeeperDoctor.
-func runKeeperDoctorEntry(args []string, stdout, stderr io.Writer) int {
-	var projectDir string
+// doctorArgs holds the parsed `keeper doctor` argument vector.
+type doctorArgs struct {
+	agentName  string
+	projectDir string
+}
 
+// parseKeeperDoctorArgs parses the doctor argument vector with the SAME
+// agent-name parity as enable: `--agent <name>` / `--agent=<name>` OR a bare
+// positional, flag wins; an unrecognized leading-dash token is rejected loudly
+// (exit 2). The return code follows the same control-signal convention as
+// parseKeeperEnableArgs (-1 proceed, 0 help, 1 missing agent, 2 unknown flag).
+func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs, int) {
+	var (
+		da        doctorArgs
+		agentFlag string
+	)
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--help" || args[i] == "-h":
 			fmt.Fprint(stdout, keeperDoctorUsage)
-			return 0
+			return doctorArgs{}, 0
+		case args[i] == "--agent" && i+1 < len(args):
+			i++
+			agentFlag = args[i]
+		case strings.HasPrefix(args[i], "--agent="):
+			agentFlag = strings.TrimPrefix(args[i], "--agent=")
 		case args[i] == "--project" && i+1 < len(args):
 			i++
-			projectDir = args[i]
+			da.projectDir = args[i]
 		case strings.HasPrefix(args[i], "--project="):
-			projectDir = strings.TrimPrefix(args[i], "--project=")
+			da.projectDir = strings.TrimPrefix(args[i], "--project=")
+		case strings.HasPrefix(args[i], "-"):
+			// Unrecognized leading-dash token: reject loudly. THE CLASS-A killer —
+			// `doctor --agent X` previously checked an agent literally named
+			// "--agent" (false-green doctor at keeper boot; captain hit this live).
+			fmt.Fprintf(stderr, "harmonik keeper doctor: unrecognized flag %q\n", args[i])
+			fmt.Fprint(stderr, keeperDoctorUsage)
+			return doctorArgs{}, 2
 		default:
 			rest = append(rest, args[i])
 		}
 	}
 
-	if len(rest) < 1 {
-		fmt.Fprintln(stderr, "harmonik keeper doctor: agent name is required")
-		fmt.Fprint(stderr, keeperDoctorUsage)
-		return 1
+	// Flag wins positional.
+	da.agentName = agentFlag
+	if da.agentName == "" {
+		if len(rest) < 1 {
+			fmt.Fprintln(stderr, "harmonik keeper doctor: agent name is required")
+			fmt.Fprint(stderr, keeperDoctorUsage)
+			return doctorArgs{}, 1
+		}
+		da.agentName = rest[0]
 	}
-	agentName := rest[0]
+	return da, -1
+}
+
+// runKeeperDoctorEntry parses flags and delegates to runKeeperDoctor.
+func runKeeperDoctorEntry(args []string, stdout, stderr io.Writer) int {
+	da, code := parseKeeperDoctorArgs(args, stdout, stderr)
+	if code != -1 {
+		return code
+	}
+	agentName := da.agentName
+	projectDir := da.projectDir
 
 	if projectDir == "" {
 		wd, err := os.Getwd()
@@ -968,11 +1059,14 @@ const keeperEnableUsage = `harmonik keeper enable <agent> — wire keeper stanza
 
 USAGE
   harmonik keeper enable <agent> [--project DIR] [--scripts-dir DIR] [--tmux TARGET] [--yes-destructive]
+  harmonik keeper enable --agent <agent> [...]
 
 ARGUMENTS
   <agent>   Agent name (e.g. orchestrator, flywheel). Must not contain '/' or '..'.
+            May also be given as --agent <agent>; the flag wins over a positional.
 
 FLAGS
+  --agent NAME         Agent name (alternative to the positional; flag wins)
   --project DIR        Harmonik project root (default: current working directory)
   --scripts-dir DIR    Directory containing keeper-*.sh scripts (auto-detected if not specified)
   --tmux TARGET        tmux pane target for the run command and pane validation (optional)
@@ -1003,11 +1097,14 @@ const keeperDoctorUsage = `harmonik keeper doctor <agent> — read-only drift va
 
 USAGE
   harmonik keeper doctor <agent> [--project DIR]
+  harmonik keeper doctor --agent <agent> [--project DIR]
 
 ARGUMENTS
   <agent>   Agent name to check (e.g. orchestrator, flywheel)
+            May also be given as --agent <agent>; the flag wins over a positional.
 
 FLAGS
+  --agent NAME    Agent name (alternative to the positional; flag wins)
   --project DIR   Harmonik project root (default: current working directory)
 
 CHECKS (all read-only; no filesystem mutations)

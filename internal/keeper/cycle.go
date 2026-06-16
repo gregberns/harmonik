@@ -805,7 +805,9 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 
 	// Step 5: clear-readiness — wait for a new session_id (best-effort, NOT a hard gate).
-	// Spec note: spike proved resume survives /clear FIFO; absent new session_id is non-fatal.
+	// Spec note: the session_id is RE-MINTED at every /clear, so the keeper must
+	// re-resolve the new id post-clear — waitForNewSessionID polls the gauge until it
+	// differs from prevSID (cf.SessionID). Absent a new session_id is non-fatal.
 	newSID := c.waitForNewSessionID(ctx, cf.SessionID)
 	if newSID == "" {
 		c.emitClearUnconfirmed(ctx, cycleID, cf.SessionID)

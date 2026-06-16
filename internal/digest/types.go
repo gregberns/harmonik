@@ -96,6 +96,19 @@ type DigestJSON struct {
 	// Truncated reports what was truncated per CL-032 size budget.
 	Truncated *TruncationReport `json:"truncated,omitempty"`
 
+	// HasUndeployedTail is true when at least one closed bead carries a
+	// Phase-2 class label (a done_definition that requires deploy+verify beyond
+	// "merged") and has not yet been verified (flywheel-motion.md §5.3).
+	//
+	// Until Phase-2 verify is implemented a closed Phase-2 bead counts as
+	// merged-but-undeployed. The opportunity gate MUST treat this as actionable
+	// work so the flywheel does not stall on an empty ready-beads list
+	// (flywheel-motion.md §5.2).
+	//
+	// False when no Phase-2 classes are configured, br is unavailable, or no
+	// closed beads carry Phase-2 labels.
+	HasUndeployedTail bool `json:"has_undeployed_tail"`
+
 	// SuppressionState is the output of the deterministic suppression resolver
 	// (flywheel-motion.md §3). Suppressed=false means EXECUTE-BACKLOG (default).
 	// Present in every digest so the cognition loop can always read the current state.

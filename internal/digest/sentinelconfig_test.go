@@ -104,3 +104,67 @@ func TestParseSentinelConfig_InvalidWindow(t *testing.T) {
 		t.Error("expected error for invalid window duration, got nil")
 	}
 }
+
+// TestSentinelConfig_Phase2Classes verifies that Phase2Classes returns only
+// class names whose done_definition is not "merged" (flywheel-motion.md §5.3).
+func TestSentinelConfig_Phase2Classes(t *testing.T) {
+	t.Parallel()
+
+	yaml := []byte(`
+sentinel:
+  done_definition:
+    default: merged
+    deploy-class: make deploy && make smoke
+    verify-class: ./scripts/verify.sh
+`)
+	cfg, err := parseSentinelConfig(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	classes := cfg.Phase2Classes()
+	if len(classes) != 2 {
+		t.Fatalf("Phase2Classes: got %d classes, want 2; classes=%v", len(classes), classes)
+	}
+	classSet := make(map[string]struct{}, len(classes))
+	for _, c := range classes {
+		classSet[c] = struct{}{}
+	}
+	for _, want := range []string{"deploy-class", "verify-class"} {
+		if _, ok := classSet[want]; !ok {
+			t.Errorf("Phase2Classes missing %q; got %v", want, classes)
+		}
+	}
+	if _, ok := classSet["default"]; ok {
+		t.Errorf("Phase2Classes must not include 'default' (value is 'merged')")
+	}
+}
+
+// TestSentinelConfig_Phase2Classes_Empty verifies that Phase2Classes returns
+// nil when all done_definitions are "merged" or not configured.
+func TestSentinelConfig_Phase2Classes_Empty(t *testing.T) {
+	t.Parallel()
+
+	// No done_definition configured.
+	cfg, err := parseSentinelConfig([]byte(`sentinel: {}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.Phase2Classes(); len(got) != 0 {
+		t.Errorf("Phase2Classes with no config: got %v, want empty", got)
+	}
+
+	// All classes are "merged".
+	cfg2, err := parseSentinelConfig([]byte(`
+sentinel:
+  done_definition:
+    default: merged
+    another: merged
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg2.Phase2Classes(); len(got) != 0 {
+		t.Errorf("Phase2Classes all-merged: got %v, want empty", got)
+	}
+}

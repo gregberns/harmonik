@@ -673,3 +673,186 @@ func writeNotesJSONL(t *testing.T, dir string, n int) {
 		}
 	}
 }
+
+// makeFakeBr writes a shell script that acts as a fake `br` binary. When invoked
+// with `list --status closed --json` it prints issuesJSON; otherwise it exits 1.
+// Returns the path to the script.
+func makeFakeBr(t *testing.T, dir, issuesJSON string) string {
+	t.Helper()
+	script := "#!/bin/sh\n" +
+		"for arg in \"$@\"; do\n" +
+		"  case \"$arg\" in\n" +
+		"    closed) echo '" + issuesJSON + "'; exit 0;;\n" +
+		"  esac\n" +
+		"done\n" +
+		"echo '{\"issues\":[]}'\nexit 0\n"
+	path := filepath.Join(dir, "fake-br")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake-br: %v", err)
+	}
+	return path
+}
+
+// TestBuildHasUndeployedTail_NoPhase2Classes verifies HasUndeployedTail is false
+// when no Phase-2 done_definition classes are configured.
+func TestBuildHasUndeployedTail_NoPhase2Classes(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	// No sentinel config — all defaults (no Phase-2 classes).
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	if d.HasUndeployedTail {
+		t.Error("HasUndeployedTail should be false when no Phase-2 classes configured")
+	}
+}
+
+// TestBuildHasUndeployedTail_Phase2ClassesNoClosedBeads verifies HasUndeployedTail
+// is false when Phase-2 classes are configured but no closed beads carry those labels.
+func TestBuildHasUndeployedTail_Phase2ClassesNoClosedBeads(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	// Write sentinel config with a Phase-2 class.
+	cfgDir := filepath.Join(dir, ".harmonik")
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
+sentinel:
+  done_definition:
+    deploy-class: make deploy
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fake br returns no closed beads.
+	fakeBr := makeFakeBr(t, dir, `{"issues":[]}`)
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+		BrPath:     fakeBr,
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	if d.HasUndeployedTail {
+		t.Error("HasUndeployedTail should be false when no closed beads have Phase-2 labels")
+	}
+}
+
+// TestBuildHasUndeployedTail_ClosedBeadMatchesPhase2Class verifies HasUndeployedTail
+// is true when a closed bead carries a Phase-2 class label (§5.2, §5.3).
+func TestBuildHasUndeployedTail_ClosedBeadMatchesPhase2Class(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	// Write sentinel config with a Phase-2 class.
+	cfgDir := filepath.Join(dir, ".harmonik")
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
+sentinel:
+  done_definition:
+    deploy-class: make deploy && make smoke
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fake br returns one closed bead labelled "deploy-class".
+	fakeBr := makeFakeBr(t, dir,
+		`{"issues":[{"id":"hk-abc","title":"deploy thing","labels":["deploy-class"]}]}`)
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+		BrPath:     fakeBr,
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	if !d.HasUndeployedTail {
+		t.Error("HasUndeployedTail should be true when closed bead has Phase-2 label")
+	}
+}
+
+// TestBuildHasUndeployedTail_ClosedBeadNoMatchingLabel verifies HasUndeployedTail
+// is false when closed beads exist but none carry a Phase-2 class label.
+func TestBuildHasUndeployedTail_ClosedBeadNoMatchingLabel(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	// Write sentinel config with a Phase-2 class.
+	cfgDir := filepath.Join(dir, ".harmonik")
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
+sentinel:
+  done_definition:
+    deploy-class: make deploy
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fake br returns a closed bead with a DIFFERENT label (not deploy-class).
+	fakeBr := makeFakeBr(t, dir,
+		`{"issues":[{"id":"hk-xyz","title":"other thing","labels":["bug","priority-1"]}]}`)
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+		BrPath:     fakeBr,
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	if d.HasUndeployedTail {
+		t.Error("HasUndeployedTail should be false when closed beads have no Phase-2 labels")
+	}
+}
+
+// TestBuildHasUndeployedTail_InJSON verifies has_undeployed_tail serializes into
+// the JSON digest output.
+func TestBuildHasUndeployedTail_InJSON(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	cfgDir := filepath.Join(dir, ".harmonik")
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(`
+sentinel:
+  done_definition:
+    deploy-class: make deploy
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fakeBr := makeFakeBr(t, dir,
+		`{"issues":[{"id":"hk-abc","title":"thing","labels":["deploy-class"]}]}`)
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+		BrPath:     fakeBr,
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	val, ok := raw["has_undeployed_tail"]
+	if !ok {
+		t.Fatal("has_undeployed_tail missing from JSON output")
+	}
+	if val != true {
+		t.Errorf("has_undeployed_tail in JSON: got %v, want true", val)
+	}
+}

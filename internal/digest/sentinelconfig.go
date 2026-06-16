@@ -177,6 +177,20 @@ func (c SentinelConfig) DoneDefinitionFor(class string) string {
 	return DefaultDoneDefinition
 }
 
+// Phase2Classes returns the class names whose done_definition requires more
+// than a merge (i.e., any class whose value is not DefaultDoneDefinition
+// "merged" and not empty). These classes opt into Phase-2 deploy+verify
+// (flywheel-motion.md §5.3). The returned slice order is unspecified.
+func (c SentinelConfig) Phase2Classes() []string {
+	var classes []string
+	for class, def := range c.DoneDefinition {
+		if def != "" && def != DefaultDoneDefinition {
+			classes = append(classes, class)
+		}
+	}
+	return classes
+}
+
 // ErrPhaseFlagMissingExpiry is returned by LoadSentinelConfig when sentinel.phase_flag
 // is set without a sentinel.phase_flag_expiry. A phase flag without expiry is
 // invalid config per flywheel-motion.md §3.2.

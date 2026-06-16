@@ -140,6 +140,17 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 	}
 	out.SuppressionState = ResolveSuppressionState(eventsPath, now, sentinelCfg)
 
+	// --- HasUndeployedTail (flywheel-motion.md §5.2, §5.3) ---
+	// If Phase-2 classes are configured and br is available, check whether any
+	// closed bead carries a Phase-2 class label. Until the verify step lands a
+	// closed Phase-2 bead counts as merged-but-undeployed (actionable work for
+	// the opportunity gate).
+	if in.BrPath != "" && len(sentinelCfg.Phase2Classes()) > 0 {
+		var undeployedErr error
+		out.HasUndeployedTail, undeployedErr = buildHasUndeployedTail(ctx, in.BrPath, in.ProjectDir, sentinelCfg.Phase2Classes())
+		addErr("undeployed_tail", undeployedErr)
+	}
+
 	return out, nil
 }
 
@@ -425,6 +436,61 @@ func kerfNext(ctx context.Context, kerfPath, _ string) (interface{}, error) {
 		return nil, err
 	}
 	return v, nil
+}
+
+// brBeadLabels holds the minimal fields needed to check Phase-2 class labels.
+type brBeadLabels struct {
+	Labels []string `json:"labels"`
+}
+
+// brBeadLabelsEnvelope is the JSON shape of `br list --status closed --json`.
+type brBeadLabelsEnvelope struct {
+	Issues []brBeadLabels `json:"issues"`
+}
+
+// brClosedBeadsWithLabels runs `br list --status closed --json` and returns a
+// slice of label sets for every closed bead. Errors are returned to the caller
+// for non-fatal surfacing per DC-007.
+func brClosedBeadsWithLabels(ctx context.Context, brPath string) ([][]string, error) {
+	out, err := runCmd(ctx, brPath, "list", "--status", "closed", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var env brBeadLabelsEnvelope
+	if jsonErr := json.Unmarshal(out, &env); jsonErr != nil {
+		return nil, jsonErr
+	}
+	result := make([][]string, 0, len(env.Issues))
+	for _, item := range env.Issues {
+		result = append(result, item.Labels)
+	}
+	return result, nil
+}
+
+// buildHasUndeployedTail returns true when at least one closed bead carries a
+// Phase-2 class label (flywheel-motion.md §5.2, §5.3). Phase-2 classes are
+// provided by the caller (SentinelConfig.Phase2Classes()). Any error querying
+// br is returned for non-fatal surfacing; the boolean is false on error.
+func buildHasUndeployedTail(ctx context.Context, brPath, _ string, phase2Classes []string) (bool, error) {
+	if len(phase2Classes) == 0 {
+		return false, nil
+	}
+	classSet := make(map[string]struct{}, len(phase2Classes))
+	for _, c := range phase2Classes {
+		classSet[c] = struct{}{}
+	}
+	labelSets, err := brClosedBeadsWithLabels(ctx, brPath)
+	if err != nil {
+		return false, err
+	}
+	for _, labels := range labelSets {
+		for _, l := range labels {
+			if _, ok := classSet[l]; ok {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // runCmd executes a command and returns its stdout. Stderr is discarded.

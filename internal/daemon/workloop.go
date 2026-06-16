@@ -5125,7 +5125,7 @@ func discardDirtyChurn(ctx context.Context, wtPath string) {
 	}
 }
 
-// commitResidualDelta commits any UNCOMMITTED tracked change that survives
+// commitResidualDelta commits any UNCOMMITTED change that survives
 // discardDirtyChurn onto the run-branch, immediately before the pre-merge
 // `git rebase main`.
 //
@@ -5138,27 +5138,45 @@ func discardDirtyChurn(ctx context.Context, wtPath string) {
 // `git rebase main`, which aborts with "cannot rebase: You have unstaged
 // changes" — failing the merge even though the bead's work is complete.
 //
+// Bug (hk-cmry defect #3): the implementer / a review-loop iteration can author
+// genuinely NEW files (untracked, status "??") that were never committed — e.g.
+// hk-8prq's GREEN added internal/keeper/sessionid.go and a new hook script as
+// brand-new files. The original `git add -u` staged only TRACKED modifications
+// and SILENTLY DROPPED those new files: the residual commit then carried only
+// the tracked changes (often the RED test) and the new-file GREEN was lost when
+// the worktree was later cleaned. That is how the daemon silently dropped a
+// reviewed GREEN and broke main fleet-wide. The fix stages with `git add -A` so
+// authored new files can NEVER be silently dropped.
+//
 // The fix PRESERVES hk-i1n7j: it does NOT discard the residual work. It COMMITS
 // the delta onto the run-branch (it IS the bead's own work — a review-loop edit
-// that never got committed) so the rebase proceeds with the work intact.
+// or new source file that never got committed) so the rebase proceeds with the
+// work intact.
 //
-// Staging uses `git add -u`, NOT `git add -A`: -u stages only tracked changes
-// (modifications + deletions) and deliberately EXCLUDES untracked files. A stray
-// untracked file is not committed-lineage work; with -A it would be swept into
-// the residual commit, FF-merge to main, and push junk to origin. Untracked
-// files also do not block a rebase, so leaving them alone is correct.
+// On the original `git add -u` → `git add -A` concern: -A also stages untracked
+// files, which the prior code feared would sweep "stray junk" to main+origin.
+// That concern is now mitigated on two grounds: (1) `git add -A` HONORS
+// .gitignore, and this repo's .gitignore excludes every class of daemon/runtime
+// junk (.harmonik/, .beads/*, .env, build outputs, worktrees, *.test, etc.), so
+// none of it is stageable; (2) discardDirtyChurn has already restored the
+// isHarmonikChurn allowlist, so any non-gitignored untracked file that SURVIVES
+// to this point is the bead's authored work, not stray junk. Dropping it (the
+// old behavior) is the actual bug; capturing it is correct.
 //
-// It is a no-op when no non-churn tracked change remains after churn cleanup
-// (so it never manufactures an empty commit). Errors are best-effort/non-fatal
-// in the same style as discardDirtyChurn: a failure leaves the residual delta
-// in place and the subsequent rebase surfaces the real "unstaged changes"
-// failure rather than masking it.
+// It is a no-op when no non-churn change remains after churn cleanup (so it
+// never manufactures an empty commit). Errors are best-effort/non-fatal in the
+// same style as discardDirtyChurn: a failure leaves the residual delta in place
+// and the subsequent rebase surfaces the real "unstaged changes" failure rather
+// than masking it.
 //
-// Bead: review-loop residual-delta merge fix (hk-rljho class).
+// Bead: review-loop residual-delta merge fix (hk-rljho class); untracked-capture
+// fix (hk-cmry defect #3).
 func commitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
-	// Enumerate dirty paths once. We commit only if a non-churn TRACKED change
-	// survives churn cleanup. Untracked files ("??") are excluded: they are not
-	// committed-lineage work and `git add -u` will not stage them either.
+	// Enumerate dirty paths once. We commit only if a non-churn change survives
+	// churn cleanup. Untracked files ("??") ARE counted now: an untracked file
+	// surviving discardDirtyChurn is the bead's authored work (a new source
+	// file), and `git add -A` will stage it. Gitignored paths never appear in
+	// `git status --porcelain`, so they are excluded here and by `git add -A`.
 	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	statusCmd.Dir = wtPath
 	statusOut, statusErr := statusCmd.Output()
@@ -5171,11 +5189,8 @@ func commitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		if len(line) < 4 {
 			continue
 		}
-		// Porcelain v1: "XY <path>". Untracked is "?? <path>" — not the bead's
-		// committed-lineage work; skip.
-		if line[:2] == "??" {
-			continue
-		}
+		// Porcelain v1: "XY <path>". Untracked is "?? <path>" — a NEW authored
+		// file that must be captured, NOT skipped (hk-cmry defect #3).
 		path := line[3:]
 		// Handle rename "old -> new": classify on the destination path.
 		if idx := strings.Index(path, " -> "); idx >= 0 {
@@ -5189,18 +5204,19 @@ func commitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		break
 	}
 	if !residual {
-		return // no genuine residual tracked delta — do not create an empty commit
+		return // no genuine residual delta — do not create an empty commit
 	}
 
-	// Stage ONLY tracked changes (modifications + deletions). `git add -u`
-	// deliberately excludes untracked files so a stray untracked file is not
-	// swept into the run-branch (which would FF-merge it to main and push to
-	// origin). The churn allowlist was already restored by discardDirtyChurn,
-	// so -u captures only the genuine residual iteration delta.
-	addCmd := exec.CommandContext(ctx, "git", "add", "-u")
+	// Stage all residual work — tracked modifications/deletions AND untracked
+	// NEW files. `git add -A` HONORS .gitignore (so daemon/runtime/build junk
+	// stays excluded), and discardDirtyChurn already restored the churn
+	// allowlist, so -A captures exactly the bead's genuine residual iteration
+	// delta, including any newly authored source files that would otherwise be
+	// silently dropped (hk-cmry defect #3).
+	addCmd := exec.CommandContext(ctx, "git", "add", "-A")
 	addCmd.Dir = wtPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: commitResidualDelta: git add -u: %v\n%s", err, out)
+		fmt.Fprintf(os.Stderr, "daemon: commitResidualDelta: git add -A: %v\n%s", err, out)
 		return
 	}
 

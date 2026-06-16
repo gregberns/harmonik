@@ -97,8 +97,10 @@ func (s *hkzlo8SpySubstrate) WriteLastPane(_ context.Context, _ string, _ []byte
 	return nil
 }
 
-var _ handler.Substrate = (*hkzlo8SpySubstrate)(nil)
-var _ daemon.PasteInjecterExported = (*hkzlo8SpySubstrate)(nil)
+var (
+	_ handler.Substrate            = (*hkzlo8SpySubstrate)(nil)
+	_ daemon.PasteInjecterExported = (*hkzlo8SpySubstrate)(nil)
+)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // hkzlo8SpySession — SubstrateSession backed by a real *exec.Cmd
@@ -235,7 +237,7 @@ func TestPasteInject_ProcessExitHarness_SkipsPaste(t *testing.T) {
 	// ── Assertion 3: pasteinject_failed NOT emitted ───────────────────────────
 	for _, et := range emittedTypes {
 		if et == string(core.EventTypePasteInjectFailed) {
-			t.Errorf("hkzlo8 FAIL: pasteinject_failed emitted for a ProcessExit harness; "+
+			t.Errorf("hkzlo8 FAIL: pasteinject_failed emitted for a ProcessExit harness; " +
 				"paste-inject should have been skipped entirely (hk-zlo8)")
 			break
 		}
@@ -268,11 +270,11 @@ func TestPasteInject_InteractiveHarness_RetainsPaste(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		Bus:          collector,
-		ProjectDir:   projectDir,
+		Bus:           collector,
+		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
-		HandlerArgs:  []string{scriptPath},
-		IntentLogDir: filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		HandlerArgs:   []string{scriptPath},
+		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		// Empty registry: ForAgent returns error → waitAgentReady skipped via
 		// adapterErr path. completionMode stays CompletionEventStreamThenQuit
 		// (no HarnessRegistry → default) → paste-inject gate NOT applied.
@@ -300,8 +302,8 @@ func TestPasteInject_InteractiveHarness_RetainsPaste(t *testing.T) {
 
 	// ── Assertion: WriteLastPane WAS called (paste retained for non-ProcessExit) ──
 	if pasteAttempts == 0 {
-		t.Errorf("hkzlo8 FAIL: WriteLastPane was NOT called for an interactive harness; "+
-			"paste-inject must be retained when completionMode != CompletionProcessExit.\n"+
+		t.Errorf("hkzlo8 FAIL: WriteLastPane was NOT called for an interactive harness; " +
+			"paste-inject must be retained when completionMode != CompletionProcessExit.\n" +
 			"The gate may be over-broad (applying to all harnesses, not just ProcessExit).")
 	}
 }

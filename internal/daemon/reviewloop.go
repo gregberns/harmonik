@@ -653,50 +653,50 @@ func runReviewLoop(
 		// ProcessExit harnesses receive their task via argv (launch spec), not pane paste.
 		// Mirrors the existing hk-f6g7 gate above for waitAgentReady.
 		if implCompletionMode != handlercontract.CompletionProcessExit {
-		// pasteInjectOnLaunch is a no-op when deps.substrate does not implement
-		// pasteInjecter (exec.CommandContext path, test fixtures). Non-fatal.
-		// Returns briefDelivered, passed to pasteInjectQuitOnCommit (hk-930o3).
-		//
-		// MUST run AFTER waitAgentReady returns (hk-kunm4): when paste-inject fires
-		// before agent_ready, the trailing \n is consumed by Claude Code's welcome-splash
-		// render before the REPL input state is active; the buffered text sits in the
-		// input bar unsubmitted, claude never reads agent-task.md, and the run hangs.
-		//
-		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
-		// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3, hk-kunm4.
-		implBriefDelivered := pasteInjectOnLaunch(ctx, implPasteTarget, implArtifacts.claudeSessionID,
-			implPhase, state.iterationCount, wtPath, deps.bus, runID)
+			// pasteInjectOnLaunch is a no-op when deps.substrate does not implement
+			// pasteInjecter (exec.CommandContext path, test fixtures). Non-fatal.
+			// Returns briefDelivered, passed to pasteInjectQuitOnCommit (hk-930o3).
+			//
+			// MUST run AFTER waitAgentReady returns (hk-kunm4): when paste-inject fires
+			// before agent_ready, the trailing \n is consumed by Claude Code's welcome-splash
+			// render before the REPL input state is active; the buffered text sits in the
+			// input bar unsubmitted, claude never reads agent-task.md, and the run hangs.
+			//
+			// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
+			// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3, hk-kunm4.
+			implBriefDelivered := pasteInjectOnLaunch(ctx, implPasteTarget, implArtifacts.claudeSessionID,
+				implPhase, state.iterationCount, wtPath, deps.bus, runID)
 
-		// Quit-on-commit: after the implementer's task commit lands in the worktree,
-		// send `/quit Enter` to trigger Stop hook → outcome_emitted → workloop unblocked.
-		// The initial HEAD for this iteration is the current worktree HEAD at launch time.
-		// Non-fatal: only fires when substrate implements quitSender (tmux path).
-		//
-		// hk-012af: use implPasteTarget (per-run wrapper) so /quit targets this
-		// iteration's pane, not the shared "last pane".
-		// hk-930o3: implBriefDelivered gates commit-polling until the brief paste lands.
-		//
-		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-		// Beads: hk-cmybm, hk-930o3.
-		if qs, ok := implPasteTarget.(quitSender); ok {
-			// REMOTE: wtPath is on the worker; resolve its HEAD via the worker runner
-			// (resolveWorktreeHEADVia delegates to the local probe when runner is nil).
-			implInitialSHA, resolveErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
-			if resolveErr != nil {
-				implInitialSHA = parentSHA // fallback to known-good parent SHA
+			// Quit-on-commit: after the implementer's task commit lands in the worktree,
+			// send `/quit Enter` to trigger Stop hook → outcome_emitted → workloop unblocked.
+			// The initial HEAD for this iteration is the current worktree HEAD at launch time.
+			// Non-fatal: only fires when substrate implements quitSender (tmux path).
+			//
+			// hk-012af: use implPasteTarget (per-run wrapper) so /quit targets this
+			// iteration's pane, not the shared "last pane".
+			// hk-930o3: implBriefDelivered gates commit-polling until the brief paste lands.
+			//
+			// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+			// Beads: hk-cmybm, hk-930o3.
+			if qs, ok := implPasteTarget.(quitSender); ok {
+				// REMOTE: wtPath is on the worker; resolve its HEAD via the worker runner
+				// (resolveWorktreeHEADVia delegates to the local probe when runner is nil).
+				implInitialSHA, resolveErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
+				if resolveErr != nil {
+					implInitialSHA = parentSHA // fallback to known-good parent SHA
+				}
+				// Pass implSess as the killer so commitPollTimeout forces an exit;
+				// nil noChangeTimeoutCh — the reviewloop handles outcomes differently.
+				// hk-x78n: subscribe to implTap BEFORE launching the goroutine so no
+				// heartbeats are missed. Each tap.Subscribe() returns an independent
+				// fan-out channel (no competing-consumer race with implTapCh or the
+				// post-ready hang-detector). This makes the implementer-wait budget
+				// heartbeat-extended (matching the reviewer-side hk-60t8 pattern):
+				// each agent_heartbeat extends totalDeadline by commitPollTimeout;
+				// only a genuine heartbeat-stall or commitHardCeiling kills.
+				implHBCh := implTap.Subscribe()
+				go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, deps.bus, runID)
 			}
-			// Pass implSess as the killer so commitPollTimeout forces an exit;
-			// nil noChangeTimeoutCh — the reviewloop handles outcomes differently.
-			// hk-x78n: subscribe to implTap BEFORE launching the goroutine so no
-			// heartbeats are missed. Each tap.Subscribe() returns an independent
-			// fan-out channel (no competing-consumer race with implTapCh or the
-			// post-ready hang-detector). This makes the implementer-wait budget
-			// heartbeat-extended (matching the reviewer-side hk-60t8 pattern):
-			// each agent_heartbeat extends totalDeadline by commitPollTimeout;
-			// only a genuine heartbeat-stall or commitHardCeiling kills.
-			implHBCh := implTap.Subscribe()
-			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, deps.bus, runID)
-		}
 		} // end hk-zlo8 ProcessExit gate
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).

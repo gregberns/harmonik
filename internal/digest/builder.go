@@ -452,7 +452,10 @@ type brBeadLabelsEnvelope struct {
 // slice of label sets for every closed bead. Errors are returned to the caller
 // for non-fatal surfacing per DC-007.
 func brClosedBeadsWithLabels(ctx context.Context, brPath string) ([][]string, error) {
-	out, err := runCmd(ctx, brPath, "list", "--status", "closed", "--json")
+	// --limit 0 fetches all closed beads; the default (50) silently misses any
+	// Phase-2-labelled bead at position 51+, which would cause HasUndeployedTail
+	// to return false when the tail exists — violating §5.2.
+	out, err := runCmd(ctx, brPath, "list", "--status", "closed", "--limit", "0", "--json")
 	if err != nil {
 		return nil, err
 	}

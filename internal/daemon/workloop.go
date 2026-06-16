@@ -3298,6 +3298,39 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			commitLanded, time.Since(implementerLaunchedAt))
 	}
 
+	// ── Codex daemon-side commit fallback (hk-gd9r) ───────────────────────
+	//
+	// codex --sandbox workspace-write blocks writes to .git. In a git worktree
+	// the .git entry is a FILE pointing to the MAIN repo's
+	// .git/worktrees/<run-id>/ directory, which lies OUTSIDE the sandbox
+	// workspace root, so codex self-commit fails 100% of the time
+	// (fatal: Unable to create .git/index.lock). The daemon runs git OUTSIDE
+	// the sandbox; after the codex process exits we call ensureCodexRefsTrailer
+	// to stage+commit any worktree changes codex produced but could not commit.
+	//
+	// The three-way decision table (see codexcommit.go):
+	//   • HEAD already carries "Refs: <beadID>" → no-op (codex self-committed).
+	//   • HEAD advanced but lacks the trailer → amend HEAD to add it.
+	//   • HEAD unchanged, worktree dirty → stage all + create trailer commit.
+	//   • HEAD unchanged, worktree clean → no_change (fall through to guard).
+	//
+	// Fires only for CompletionProcessExit harnesses (codex). claude runs through
+	// the interactive TUI and self-commits; this block is a no-op for claude.
+	// On error we log and fall through to the no-commit guard which reopens.
+	if deps.harnessRegistry != nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil &&
+			h.Completion() == handlercontract.CompletionProcessExit {
+			outcome, ensureErr := ensureCodexRefsTrailer(ctx, wtPath, headSHA, beadID)
+			if ensureErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
+					beadID, ensureErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: ensureCodexRefsTrailer bead %s: %s\n",
+					beadID, outcome)
+			}
+		}
+	}
+
 	// Step 8: map Wait-return to a terminal event (CHB-020 branches 1/2/3).
 	term := handler.MapWaitReturnToTerminalEvent(
 		artifacts.handlerSessionID, ei.exitCode, ei.waitErr, socketOutcome,

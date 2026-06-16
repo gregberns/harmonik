@@ -1,11 +1,11 @@
 // Package digest — sentinel config reader.
 //
 // Reads the optional sentinel: block from .harmonik/config.yaml so the
-// suppression resolver can apply configurable TTLs and phase flags without
-// depending on the daemon package.
+// suppression resolver and movement governor can apply configurable parameters
+// without depending on the daemon package.
 //
 // Spec ref: flywheel-motion.md §7 (sentinel: config block).
-// Bead: hk-1f8f.
+// Beads: hk-1f8f, hk-w0rm.
 package digest
 
 import (
@@ -26,6 +26,32 @@ const DefaultSuppressionTTL = 10 * time.Minute
 // operatorAttached-pins-forever bug when attached_inactive_timeout is not configured.
 // Must be ≤ DefaultSuppressionTTL to be a meaningful inner guard.
 const DefaultAttachedInactiveTimeout = 5 * time.Minute
+
+// DefaultGovernorWindow is the default sliding-window duration for the movement
+// governor (flywheel-motion.md §1.2).
+const DefaultGovernorWindow = 30 * time.Minute
+
+// DefaultGovernorWarmupWindow is the default cold-start watermark before the
+// governor may trip (flywheel-motion.md §1.4).
+const DefaultGovernorWarmupWindow = 30 * time.Minute
+
+// DefaultGovernorSustainedWindows is the default number of consecutive low
+// windows required before the governor trips (flywheel-motion.md §1.4).
+const DefaultGovernorSustainedWindows = 2
+
+// DefaultGovernorHighWeight is the movement score awarded for each
+// terminal-progress event (matches sentinel.DefaultHighWeight).
+const DefaultGovernorHighWeight = 10
+
+// DefaultLivenessNoProgressN is the default number of consecutive governor
+// cycles with no terminal progress before G-liveness triggers self-kill
+// (flywheel-motion.md §6.1). Operator-tunable via sentinel.liveness_no_progress_n.
+const DefaultLivenessNoProgressN = 10
+
+// DefaultDoneDefinition is the default per-class completion definition:
+// "merged" means the bead is done when its Refs: trailer lands on origin/main
+// (flywheel-motion.md §5.2).
+const DefaultDoneDefinition = "merged"
 
 // SentinelConfig holds the resolved sentinel: block from .harmonik/config.yaml
 // (flywheel-motion.md §7).
@@ -51,6 +77,36 @@ type SentinelConfig struct {
 
 	// PhaseFlagExpiry is the mandatory expiry for PhaseFlag. Zero when PhaseFlag is empty.
 	PhaseFlagExpiry time.Time
+
+	// Window is the sliding-window duration for terminal-progress movement scoring
+	// (flywheel-motion.md §1.2). Default: DefaultGovernorWindow (30m).
+	Window time.Duration
+
+	// WarmupWindow is the cold-start watermark before the governor may trip
+	// (flywheel-motion.md §1.4). Default: DefaultGovernorWarmupWindow (30m).
+	WarmupWindow time.Duration
+
+	// SustainedWindows is the number of consecutive low windows required to
+	// trip the governor (flywheel-motion.md §1.4).
+	// Default: DefaultGovernorSustainedWindows (2).
+	SustainedWindows int
+
+	// MovementWeights is the per-event-type weight table (flywheel-motion.md §1.1).
+	// Keys are event type strings (e.g. "bead_closed", "run_completed",
+	// "reviewer_verdict"). Nil or empty uses the compiled defaults:
+	// terminal-progress events = DefaultGovernorHighWeight (10), others = 0.
+	MovementWeights map[string]int
+
+	// LivenessNoProgressN is the number of consecutive governor cycles with
+	// no terminal progress before G-liveness triggers a self-kill
+	// (flywheel-motion.md §6.1). Default: DefaultLivenessNoProgressN (10).
+	LivenessNoProgressN int
+
+	// DoneDefinition is the per-class completion definition
+	// (flywheel-motion.md §5.2). Keys are class names; values are
+	// "merged" (default) or a Phase-2 deploy+verify command. Nil or empty
+	// uses DefaultDoneDefinition ("merged") for all classes.
+	DoneDefinition map[string]string
 }
 
 // suppressionTTL returns the effective SuppressionTTL, falling back to the default.
@@ -69,6 +125,58 @@ func (c SentinelConfig) attachedInactiveTimeout() time.Duration {
 	return DefaultAttachedInactiveTimeout
 }
 
+// GovernorWindow returns the effective sliding-window duration for the governor,
+// falling back to DefaultGovernorWindow.
+func (c SentinelConfig) GovernorWindow() time.Duration {
+	if c.Window > 0 {
+		return c.Window
+	}
+	return DefaultGovernorWindow
+}
+
+// GovernorWarmupWindow returns the effective cold-start watermark duration,
+// falling back to DefaultGovernorWarmupWindow.
+func (c SentinelConfig) GovernorWarmupWindow() time.Duration {
+	if c.WarmupWindow > 0 {
+		return c.WarmupWindow
+	}
+	return DefaultGovernorWarmupWindow
+}
+
+// GovernorSustainedWindows returns the effective consecutive-low-window count,
+// falling back to DefaultGovernorSustainedWindows.
+func (c SentinelConfig) GovernorSustainedWindows() int {
+	if c.SustainedWindows > 0 {
+		return c.SustainedWindows
+	}
+	return DefaultGovernorSustainedWindows
+}
+
+// GovernorMovementWeights returns the effective per-event-type weight table.
+// Returns nil when not configured so callers can apply their own compiled defaults
+// (the sentinel package's DefaultWeights).
+func (c SentinelConfig) GovernorMovementWeights() map[string]int {
+	return c.MovementWeights
+}
+
+// GovernorLivenessNoProgressN returns the effective G-liveness cycle threshold,
+// falling back to DefaultLivenessNoProgressN.
+func (c SentinelConfig) GovernorLivenessNoProgressN() int {
+	if c.LivenessNoProgressN > 0 {
+		return c.LivenessNoProgressN
+	}
+	return DefaultLivenessNoProgressN
+}
+
+// DoneDefinitionFor returns the completion definition for the given class name,
+// falling back to DefaultDoneDefinition ("merged") when not configured.
+func (c SentinelConfig) DoneDefinitionFor(class string) string {
+	if v, ok := c.DoneDefinition[class]; ok && v != "" {
+		return v
+	}
+	return DefaultDoneDefinition
+}
+
 // ErrPhaseFlagMissingExpiry is returned by LoadSentinelConfig when sentinel.phase_flag
 // is set without a sentinel.phase_flag_expiry. A phase flag without expiry is
 // invalid config per flywheel-motion.md §3.2.
@@ -81,11 +189,18 @@ func (e *ErrPhaseFlagMissingExpiry) Error() string {
 }
 
 // rawSentinelConfig is the YAML shape of the sentinel: block.
+// Unknown keys are silently ignored (forward-compat).
 type rawSentinelConfig struct {
-	SuppressionTTL          string `yaml:"suppression_ttl"`
-	AttachedInactiveTimeout string `yaml:"attached_inactive_timeout"`
-	PhaseFlag               string `yaml:"phase_flag"`
-	PhaseFlagExpiry         string `yaml:"phase_flag_expiry"`
+	SuppressionTTL          string            `yaml:"suppression_ttl"`
+	AttachedInactiveTimeout string            `yaml:"attached_inactive_timeout"`
+	PhaseFlag               string            `yaml:"phase_flag"`
+	PhaseFlagExpiry         string            `yaml:"phase_flag_expiry"`
+	Window                  string            `yaml:"window"`
+	WarmupWindow            string            `yaml:"warmup_window"`
+	SustainedWindows        int               `yaml:"sustained_windows"`
+	MovementWeights         map[string]int    `yaml:"movement_weights"`
+	LivenessNoProgressN     int               `yaml:"liveness_no_progress_n"`
+	DoneDefinition          map[string]string `yaml:"done_definition"`
 }
 
 // rawConfigWithSentinel is the minimal top-level shape we need to extract sentinel:.
@@ -153,6 +268,42 @@ func parseSentinelConfig(data []byte) (SentinelConfig, error) {
 		}
 		cfg.PhaseFlag = s.PhaseFlag
 		cfg.PhaseFlagExpiry = expiry
+	}
+
+	if s.Window != "" {
+		d, err := time.ParseDuration(s.Window)
+		if err != nil {
+			return SentinelConfig{}, fmt.Errorf("digest: sentinel config: window %q: %w", s.Window, err)
+		}
+		if d > 0 {
+			cfg.Window = d
+		}
+	}
+
+	if s.WarmupWindow != "" {
+		d, err := time.ParseDuration(s.WarmupWindow)
+		if err != nil {
+			return SentinelConfig{}, fmt.Errorf("digest: sentinel config: warmup_window %q: %w", s.WarmupWindow, err)
+		}
+		if d > 0 {
+			cfg.WarmupWindow = d
+		}
+	}
+
+	if s.SustainedWindows > 0 {
+		cfg.SustainedWindows = s.SustainedWindows
+	}
+
+	if len(s.MovementWeights) > 0 {
+		cfg.MovementWeights = s.MovementWeights
+	}
+
+	if s.LivenessNoProgressN > 0 {
+		cfg.LivenessNoProgressN = s.LivenessNoProgressN
+	}
+
+	if len(s.DoneDefinition) > 0 {
+		cfg.DoneDefinition = s.DoneDefinition
 	}
 
 	return cfg, nil

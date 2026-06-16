@@ -326,6 +326,50 @@ daemon:
   max_concurrent: 4
   # Default workflow mode: single, review-loop, dot
   workflow_mode: review-loop
+
+# sentinel: configures the flywheel movement governor (flywheel-motion.md §7).
+# All fields are optional; compiled defaults shown below as comments.
+# Spec ref: flywheel-motion.md §7; bead hk-w0rm.
+sentinel:
+  # Sliding-window duration for terminal-progress movement scoring (§1.2).
+  # window: 30m
+
+  # Cold-start watermark: governor suppressed until this much time has elapsed
+  # since daemon start (§1.4). Prevents false trips during the warm-up period.
+  # warmup_window: 30m
+
+  # Number of consecutive low-movement windows required before the governor
+  # trips (§1.4). Prevents single-lull false alarms.
+  # sustained_windows: 2
+
+  # Per-event-type weight table (§1.1). Terminal-progress events carry weight;
+  # starts/chatter carry 0. reviewer_verdict counts only on APPROVE verdict.
+  # movement_weights:
+  #   bead_closed: 10
+  #   run_completed: 10
+  #   reviewer_verdict: 10
+
+  # Decaying TTL for operator-attached and operator-dialogue suppression (§3.2).
+  # suppression_ttl: 10m
+
+  # Inner guard that expires operator-attached suppression when no new
+  # session_keeper_operator_attached events arrive within this window.
+  # Must be ≤ suppression_ttl to be a meaningful inner guard.
+  # attached_inactive_timeout: 5m
+
+  # Operator-forced suppression label. Requires phase_flag_expiry (mandatory).
+  # phase_flag: ""
+  # phase_flag_expiry: ""
+
+  # G-liveness: consecutive cycles with no terminal progress before self-kill
+  # (§6.1). Prevents a stuck loop from spinning indefinitely.
+  # liveness_no_progress_n: 10
+
+  # Per-class completion definition (§5.2). Default "merged" means done when
+  # the Refs: trailer lands on origin/main. Phase-2 classes may supply a
+  # deploy+verify command here.
+  # done_definition:
+  #   default: merged
 `
 
 // writeConfigYAML writes .harmonik/config.yaml.

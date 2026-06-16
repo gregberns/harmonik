@@ -4814,6 +4814,22 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		if rebasedMainOut, rebasedMainErr := rebasedMainCmd.Output(); rebasedMainErr == nil {
 			mainTip = strings.TrimRight(string(rebasedMainOut), "\n")
 		}
+
+		// hk-zmpd: rebase-drop guard. Before this block we established that
+		// runTip ≠ mainTip (the run-branch had reviewed commits). If the rebase
+		// exits 0 but the new runTip equals mainTip, git silently dropped every
+		// commit as "already applied" (patch-id match). Pushing a main that lost
+		// reviewed work is worse than a visible reopen; fail-closed so the work
+		// is salvageable on the run-branch.
+		if runTip == mainTip {
+			return mergeOutcome{
+				success: false,
+				reason: fmt.Sprintf(
+					"rebase_dropped_commits: rebase of %s onto %s produced no commits"+
+						" ahead of target; reviewed work silently dropped — salvage from run-branch",
+					runBranch, targetBranch),
+			}
+		}
 	}
 
 	// hk-4je: strip .harmonik/run-context/** from the run-branch before the
@@ -5004,6 +5020,19 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		if retryRunTipOut, retryRunTipErr := retryRunTipCmd.Output(); retryRunTipErr == nil {
 			runTip = strings.TrimRight(string(retryRunTipOut), "\n")
 		}
+
+		// hk-zmpd: rebase-drop guard on push-retry rebase (same invariant as the
+		// initial rebase above — reviewed commits must survive onto the new base).
+		if runTip == mainTip {
+			return mergeOutcome{
+				success: false,
+				reason: fmt.Sprintf(
+					"rebase_dropped_commits_on_push_retry (attempt %d): rebase of %s"+
+						" onto %s produced no commits ahead of target",
+					pushAttempt, runBranch, targetBranch),
+			}
+		}
+
 		// Loop back: FF-check → update-ref → build gate → push with updated mainTip/runTip.
 	}
 

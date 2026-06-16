@@ -335,3 +335,37 @@ run (no API-key leak); `codex exec resume <thread_id>` carries context + re-task
 latency ~33s median single-turn (8–70s), resume 4–9s. So once the four beads land, codex is expected to
 soak cleanly. On GREEN: re-arm `harmonik subscribe`, then run §9 batch-and-investigate; verify each run's
 `agent_type=codex` + a `Refs:` commit before scaling.
+
+---
+
+## 11. Live-test matrix + bead-class pre-screen (interim prep, 2026-06-16)
+
+> Prepared read-only while blocked on thufir's redeploy. Operationalizes §9's
+> 2–3→investigate→30+ cadence with a concrete matrix and a vetted bead-class order.
+
+### 11.1 Live-test matrix (bead-type × what to verify)
+
+Every cell ALSO runs the per-run billing checklist (11.2). Run each row ≥3× across batches.
+
+| Bead type | Example (safe) | Probes | Pass criteria (beyond billing) |
+|---|---|---|---|
+| trivial no-op append | append ISO-ts line to `docs/codex-soak-log.md` | spawn, complete, commit, Refs | merged HEAD has `Refs:<bead>`; diff = 1 line |
+| single-file code edit | add a comment / rename a local var in one `.go` | edit→commit, build gate | builds; diff scoped to 1 file |
+| multi-file | a const + its single caller | multi-file staging in one commit | both files in one `Refs` commit |
+| doc / markdown | fix a `docs/*.md` typo | no-build-gate path | diff = the wording change only |
+| with-tests | add one `_test.go` case | test-compile gate | test compiles + passes |
+| without-tests | code change, no test | reviewer / no-test handling | merges or REQUEST_CHANGES, not a crash |
+| genuine no-op | bead whose work already on main | `no_commit` route (no fabricated commit) | clean `no_commit`; bead reopens |
+
+### 11.2 Per-run billing checklist (apply to EVERY run — see §6)
+1. `config.toml` has `forced_login_method = "chatgpt"` (rewritten each launch — also proves the guard fired).
+2. `auth.json` has empty/absent `OPENAI_API_KEY`.
+3. `codex login status` = ChatGPT plan.
+4. No new OpenAI **API-pool** spend for the soak window (ground truth).
+5. (after G4/hk-? fix) `codex_billing_guard` event `materialized`→`allowed` in events.jsonl.
+
+### 11.3 Bead-class soak order (pre-screened backlog 2026-06-16: 53 ready)
+- **Batches 1–2 (THROWAWAY, required first):** self-created `harness:codex` + `codex-soak` beads that append a timestamped line to `docs/codex-soak-log.md`. Zero risk; prove spawn+complete+commit+billing on the fresh hk-gd9r fix BEFORE any real work.
+- **Batches 3–4 (SMALL-REAL, self-authored):** I create tiny genuinely-real beads in the soak area (e.g., a docs typo fix, a comment clarification) — real but low-stakes; review each diff.
+- **Later batches (BACKLOG docs/spec-drift ONLY):** the ready backlog is mostly **lane-owned** (flywheel / remote-substrate / daemon-reliability / keeper) or touches live subsystems — NOT safe codex fodder. The only genuinely-isolated class is docs/spec-drift wording, e.g. **hk-p0bj** (spec-drift WG-031 reserved-graph-attr, docs P3). **Do NOT poach another crew's active-lane or any `internal/daemon` bead for soak.**
+- **Pacing:** ≤4–5 concurrent; back off on rate-limit; investigate EVERY run before the next batch (§9).

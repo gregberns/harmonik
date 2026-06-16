@@ -129,6 +129,17 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 	// watermark has advanced past the event.
 	out.PendingDecisions = buildPendingDecisions(eventsPath)
 
+	// --- suppression resolver (flywheel-motion.md §3) ---
+	// Deterministic, LLM-free. EXECUTE-BACKLOG is the default (Suppressed=false).
+	// Reads .harmonik/config.yaml sentinel: block; config errors are non-fatal
+	// (fail-open: the invalid source is treated as inactive per §3.2).
+	sentinelCfg, sentinelErr := LoadSentinelConfig(in.ProjectDir)
+	if sentinelErr != nil {
+		// Non-fatal: record as a collection error and use zero config (all defaults).
+		addErr("sentinel_config", sentinelErr)
+	}
+	out.SuppressionState = ResolveSuppressionState(eventsPath, now, sentinelCfg)
+
 	return out, nil
 }
 

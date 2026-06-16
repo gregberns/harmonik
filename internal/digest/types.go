@@ -10,6 +10,46 @@ package digest
 
 import "time"
 
+// SuppressionState is the output of the deterministic suppression resolver
+// (flywheel-motion.md §3). EXECUTE-BACKLOG is the default (Suppressed=false)
+// when no source is active.
+type SuppressionState struct {
+	// Suppressed is true when at least one source is currently active.
+	Suppressed bool `json:"suppressed"`
+
+	// Sources lists the evaluated suppression sources with their resolved state.
+	Sources []SuppressionSourceState `json:"sources"`
+
+	// ConfigError is set when the sentinel config has a validation error
+	// (e.g., phase_flag without phase_flag_expiry). The resolver fails-open:
+	// the invalid source is treated as inactive so dispatch is not blocked.
+	ConfigError string `json:"config_error,omitempty"`
+}
+
+// SuppressionSourceState is the resolved state of one suppression source.
+type SuppressionSourceState struct {
+	// Name identifies the source:
+	//   "operator_attached"  — keeper session_keeper_operator_attached events
+	//   "operator_dialogue"  — comms agent_message events from "operator"
+	//   "phase_flag"         — sentinel.phase_flag in .harmonik/config.yaml
+	Name string `json:"name"`
+
+	// Active is true when this source is currently suppressing dispatch.
+	Active bool `json:"active"`
+
+	// LastSeen is when this source was last observed (zero if never seen).
+	// For phase_flag, this is zero (the source is config-driven, not event-driven).
+	LastSeen time.Time `json:"last_seen,omitempty"`
+
+	// ExpiresAt is when the suppression from this source expires.
+	// For operator_attached and operator_dialogue: LastSeen + effective TTL.
+	// For phase_flag: PhaseFlagExpiry from the config.
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+
+	// Reason is a short diagnostic string.
+	Reason string `json:"reason,omitempty"`
+}
+
 // SchemaVersion is the current digest JSON schema version (CL-033).
 // N-1 consumers MUST accept version 1 when the current version is 2, etc.
 const SchemaVersion = 1
@@ -55,6 +95,11 @@ type DigestJSON struct {
 
 	// Truncated reports what was truncated per CL-032 size budget.
 	Truncated *TruncationReport `json:"truncated,omitempty"`
+
+	// SuppressionState is the output of the deterministic suppression resolver
+	// (flywheel-motion.md §3). Suppressed=false means EXECUTE-BACKLOG (default).
+	// Present in every digest so the cognition loop can always read the current state.
+	SuppressionState SuppressionState `json:"suppression_state"`
 
 	// Errors lists non-fatal collection errors so the loop can surface them.
 	Errors []string `json:"errors,omitempty"`

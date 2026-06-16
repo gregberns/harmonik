@@ -778,12 +778,12 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		agentReadyTimeout:     cfg.AgentReadyTimeout,
 		cancelOnQueueDrain:    cfg.CancelOnQueueDrain,
 		projectCfg:            cfg.ProjectCfg,
-		queueStore:            nil,                            // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		queueLedger:           newBRQueueLedger(adapter),      // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
-		staleBlockerCloser:    adapter,                        // hk-rnsjs: auto-close stale blockers on claim failure
-		kerfPath:              cfg.KerfPath,                   // hk-9321v: kerf next for EM-062/EM-063 eager-refill
-		brPath:                cfg.BrPath,                     // hk-f722: staged-bead generator br create
-		followUpLedger:        make(map[string]struct{}),      // hk-f722: at-most-once guard per daemon session
+		queueStore:            nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueLedger:           newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
+		staleBlockerCloser:    adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
+		kerfPath:              cfg.KerfPath,              // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		brPath:                cfg.BrPath,                // hk-f722: staged-bead generator br create
+		followUpLedger:        make(map[string]struct{}), // hk-f722: at-most-once guard per daemon session
 		followUpLedgerMu:      &sync.Mutex{},
 		noAutoPull:            cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
 		skipBrHistoryRotation: cfg.SkipBrHistoryRotation,      // hk-hypbi: per-close .br_history trim

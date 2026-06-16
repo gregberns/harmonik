@@ -440,10 +440,8 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 	)
 	//nolint:gosec // G204: brPath resolved via exec.LookPath at startup; args are controlled
 	cmd := exec.CommandContext(ctx, deps.brPath,
-		"create", title,
+		"create", title, "--type", "task", "--status", "open", // new bead, not a reset
 		"--description", description,
-		"--type", "task",
-		"--status", "open",
 		"--label", matchedClass,
 		"--label", fmt.Sprintf("followup:%s:%s", completedBeadID, matchedClass),
 	)

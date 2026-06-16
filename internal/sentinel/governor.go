@@ -1,9 +1,9 @@
-// Package sentinel implements the flywheel movement governor (flywheel-motion §1).
+// Package sentinel implements the flywheel movement governor (flywheel-motion §§1, 6.1).
 //
 // The governor is a deterministic, LLM-free subsystem that measures real terminal
 // progress over a sliding window, applies a discrete inverse-staircase activation
 // function, and emits a GovernorSignal indicating whether the system is dormant,
-// watching, or active (tripped).
+// watching, active (tripped), or halted (G-liveness doom-loop detected).
 //
 // Design constraints (spec §§1.2, 0.3):
 //   - DISCRETE activation — a step/staircase function, NOT a smooth EWMA. An
@@ -12,8 +12,12 @@
 //   - INVERSE — high movement → dormant; low movement → escalated scrutiny.
 //   - LLM-FREE — no language model is consulted in this package.
 //
-// Spec ref: .kerf/works/flywheel-motion/05-spec-drafts/flywheel-motion.md §1.
-// Bead: hk-u0lv. Epic: hk-0oca (codename:flywheel).
+// G-liveness self-kill (spec §6.1, bead hk-2do3): when N consecutive evaluation
+// cycles observe zero terminal progress (no HEAD advance / bead close / run complete),
+// the governor signals ActivationHalt. Callers MUST halt dispatch and page.
+//
+// Spec ref: .kerf/works/flywheel-motion/05-spec-drafts/flywheel-motion.md §§1, 6.1.
+// Bead: hk-u0lv (V1 movement governor). Epic: hk-0oca (codename:flywheel).
 package sentinel
 
 import (
@@ -46,13 +50,14 @@ var DefaultWeights = map[core.EventType]int{
 	core.EventTypeReviewerVerdict: DefaultHighWeight, // gated by APPROVE payload check below
 }
 
-// ActivationLevel is the discrete staircase output (spec §1.2).
+// ActivationLevel is the discrete staircase output (spec §1.2, §6.1).
 //
 // Levels are inverse to movement score:
 //
 //	ActivationDormant  — high movement; governor takes no action
 //	ActivationWatching — moderate movement; governor observing
 //	ActivationActive   — sustained low movement + actionable work; governor trips
+//	ActivationHalt     — G-liveness doom-loop: N zero-progress cycles; MUST halt + page
 type ActivationLevel int
 
 const (
@@ -63,6 +68,10 @@ const (
 	// ActivationActive means sustained low movement with actionable work: governor trips.
 	// At this level the caller SHOULD emit a digest exception (spec §3.5).
 	ActivationActive ActivationLevel = 2
+	// ActivationHalt means the G-liveness self-kill gate has fired (spec §6.1):
+	// LivenessNoProgressN consecutive evaluation cycles observed zero terminal
+	// progress. Callers MUST halt dispatch and emit a liveness_halt page event.
+	ActivationHalt ActivationLevel = 3
 )
 
 func (a ActivationLevel) String() string {
@@ -73,6 +82,8 @@ func (a ActivationLevel) String() string {
 		return "watching"
 	case ActivationActive:
 		return "active"
+	case ActivationHalt:
+		return "halt"
 	default:
 		return fmt.Sprintf("unknown(%d)", int(a))
 	}
@@ -105,6 +116,13 @@ type Config struct {
 
 	// Weights overrides the per-event-type weight table. Nil uses DefaultWeights.
 	Weights map[core.EventType]int
+
+	// LivenessNoProgressN is the number of consecutive zero-progress evaluation
+	// cycles before the G-liveness self-kill gate fires (spec §6.1, bead hk-2do3).
+	// A cycle is zero-progress when MovementScore == 0 (no HEAD advance, no
+	// bead_closed, no run_completed, no reviewer_verdict{APPROVE}).
+	// 0 (default) disables the G-liveness gate entirely.
+	LivenessNoProgressN int
 }
 
 func (c Config) window() time.Duration {
@@ -149,6 +167,10 @@ func (c Config) weights() map[core.EventType]int {
 	return DefaultWeights
 }
 
+func (c Config) livenessNoProgressN() int {
+	return c.LivenessNoProgressN // 0 = disabled; no default
+}
+
 // GovernorState is the mutable state that must persist across governor evaluations.
 //
 // Callers own the state lifetime; Evaluate reads and writes it. For a stateless
@@ -159,6 +181,13 @@ type GovernorState struct {
 	// score was below the low threshold. Reset to 0 when a high window is observed.
 	// The sustained-low gate requires this to reach SustainedWindows before tripping.
 	ConsecutiveLowWindows int
+
+	// ConsecutiveZeroCycles is the count of back-to-back evaluation cycles where
+	// MovementScore was exactly zero (no HEAD advance, no bead_closed, no
+	// run_completed, no reviewer_verdict{APPROVE}). Reset to 0 when any
+	// terminal-progress event appears. Used by the G-liveness self-kill gate
+	// (spec §6.1, bead hk-2do3).
+	ConsecutiveZeroCycles int
 
 	// DaemonStartedAt is the wall-clock time the calling daemon started.
 	// Used by the cold-start warmup gate (spec §1.4). Zero suppresses the gate
@@ -202,7 +231,7 @@ type WindowSample struct {
 
 // GovernorSignal is the output of one Evaluate call.
 type GovernorSignal struct {
-	// Level is the activation level (DORMANT / WATCHING / ACTIVE).
+	// Level is the activation level (DORMANT / WATCHING / ACTIVE / HALT).
 	Level ActivationLevel
 	// Sample holds the window observation that produced this signal.
 	Sample WindowSample
@@ -213,6 +242,14 @@ type GovernorSignal struct {
 	// ConsecutiveLowWindows is the value of GovernorState.ConsecutiveLowWindows
 	// AFTER this Evaluate call updates it (useful for audit).
 	ConsecutiveLowWindows int
+	// ConsecutiveZeroCycles is the value of GovernorState.ConsecutiveZeroCycles
+	// AFTER this Evaluate call updates it. Used by the G-liveness gate (§6.1).
+	ConsecutiveZeroCycles int
+	// LivenessViolated is true when the G-liveness self-kill gate fires:
+	// ConsecutiveZeroCycles >= Config.LivenessNoProgressN (and N > 0).
+	// When true, Level is set to ActivationHalt. Callers MUST halt dispatch
+	// and emit a liveness_halt page event.
+	LivenessViolated bool
 }
 
 // reviewerVerdictPayload is a minimal unmarshal target for reviewer_verdict events.
@@ -352,11 +389,11 @@ func countHeadAdvances(ctx context.Context, gitPath, projectDir string, windowSt
 // window, applies the discrete inverse staircase, checks all gates (opportunity,
 // cold-start, sustained), and returns a GovernorSignal.
 //
-// state is updated in-place: ConsecutiveLowWindows is incremented or reset
-// based on whether the current window is "low". Callers must persist state
-// between calls to implement the sustained-low gate.
+// state is updated in-place: ConsecutiveLowWindows and ConsecutiveZeroCycles are
+// incremented or reset based on the window observation. Callers must persist state
+// between calls to implement both the sustained-low gate and the G-liveness gate.
 //
-// Spec ref: flywheel-motion.md §§1.2, 1.3, 1.4.
+// Spec ref: flywheel-motion.md §§1.2, 1.3, 1.4, 6.1.
 func Evaluate(
 	ctx context.Context,
 	state *GovernorState,
@@ -383,6 +420,31 @@ func Evaluate(
 	sig := GovernorSignal{
 		Sample:         sample,
 		HasOpportunity: input.HasReadyBeads || input.HasUndeployedTail,
+	}
+
+	// --- G-liveness self-kill gate (spec §6.1, bead hk-2do3) ---
+	// Track consecutive evaluation cycles with zero terminal progress independently
+	// of the inverse-staircase gate. Any terminal-progress event (score > 0)
+	// resets the counter; score == 0 increments it.
+	// This tracking runs before the staircase so the counter is always current.
+	if sample.MovementScore == 0 {
+		state.ConsecutiveZeroCycles++
+	} else {
+		state.ConsecutiveZeroCycles = 0
+	}
+	sig.ConsecutiveZeroCycles = state.ConsecutiveZeroCycles
+
+	n := cfg.livenessNoProgressN()
+	if n > 0 && state.ConsecutiveZeroCycles >= n {
+		// Respect the warmup gate: a just-restarted daemon has naturally-low
+		// movement, so G-liveness does not fire during the startup grace window.
+		inWarmup := !state.DaemonStartedAt.IsZero() &&
+			input.Now.Sub(state.DaemonStartedAt) < cfg.warmupWindow()
+		if !inWarmup {
+			sig.LivenessViolated = true
+			sig.Level = ActivationHalt
+			return sig
+		}
 	}
 
 	// --- Discrete inverse staircase (spec §1.2) ---

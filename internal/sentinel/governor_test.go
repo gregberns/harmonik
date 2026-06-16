@@ -430,10 +430,227 @@ func TestGovernor_ActivationLevelString(t *testing.T) {
 		{sentinel.ActivationDormant, "dormant"},
 		{sentinel.ActivationWatching, "watching"},
 		{sentinel.ActivationActive, "active"},
+		{sentinel.ActivationHalt, "halt"},
 	}
 	for _, tc := range cases {
 		if got := tc.level.String(); got != tc.want {
 			t.Errorf("ActivationLevel(%d).String() = %q, want %q", int(tc.level), got, tc.want)
+		}
+	}
+}
+
+// --- G-liveness self-kill gate tests (spec §6.1, bead hk-2do3) ---
+
+func TestGLiveness_Disabled_NeverHalts(t *testing.T) {
+	// LivenessNoProgressN == 0 → G-liveness gate disabled; even many zero cycles
+	// must not produce ActivationHalt.
+	projectDir := makeEventsFile(t)
+	now := time.Now()
+
+	state := &sentinel.GovernorState{}
+	cfg := sentinel.Config{
+		Window:              30 * time.Minute,
+		WarmupWindow:        0,
+		LivenessNoProgressN: 0, // disabled
+	}
+	input := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           now,
+		HasReadyBeads: true,
+	}
+
+	for i := 0; i < 10; i++ {
+		sig := sentinel.Evaluate(context.Background(), state, input, cfg)
+		if sig.Level == sentinel.ActivationHalt {
+			t.Fatalf("iteration %d: G-liveness disabled but got ActivationHalt", i)
+		}
+		if sig.LivenessViolated {
+			t.Fatalf("iteration %d: G-liveness disabled but LivenessViolated=true", i)
+		}
+	}
+}
+
+func TestGLiveness_TripsAfterNZeroCycles(t *testing.T) {
+	// N=3 consecutive zero-progress cycles → ActivationHalt + LivenessViolated.
+	projectDir := makeEventsFile(t)
+	now := time.Now()
+
+	state := &sentinel.GovernorState{}
+	cfg := sentinel.Config{
+		Window:              30 * time.Minute,
+		WarmupWindow:        0,
+		LivenessNoProgressN: 3,
+	}
+	input := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           now,
+		HasReadyBeads: true,
+	}
+
+	var sig sentinel.GovernorSignal
+	for i := 1; i <= 3; i++ {
+		sig = sentinel.Evaluate(context.Background(), state, input, cfg)
+		if i < 3 {
+			if sig.Level == sentinel.ActivationHalt {
+				t.Errorf("cycle %d: premature ActivationHalt (expected after cycle 3)", i)
+			}
+			if sig.LivenessViolated {
+				t.Errorf("cycle %d: premature LivenessViolated=true", i)
+			}
+		}
+	}
+
+	if sig.Level != sentinel.ActivationHalt {
+		t.Errorf("cycle 3: expected ActivationHalt, got %s", sig.Level)
+	}
+	if !sig.LivenessViolated {
+		t.Error("cycle 3: expected LivenessViolated=true")
+	}
+	if sig.ConsecutiveZeroCycles != 3 {
+		t.Errorf("cycle 3: expected ConsecutiveZeroCycles=3, got %d", sig.ConsecutiveZeroCycles)
+	}
+}
+
+func TestGLiveness_ResetOnProgress(t *testing.T) {
+	// After N-1 zero cycles, a terminal-progress event resets the counter.
+	// Subsequent zero cycles must count from 0 again.
+	projectDir := makeEventsFile(t)
+	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
+	now := time.Now()
+
+	state := &sentinel.GovernorState{}
+	cfg := sentinel.Config{
+		Window:              30 * time.Minute,
+		WarmupWindow:        0,
+		LivenessNoProgressN: 3,
+	}
+	input := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           now,
+		HasReadyBeads: true,
+	}
+
+	// Two zero-progress cycles (N-1 = 2; one short of tripping).
+	for i := 0; i < 2; i++ {
+		sig := sentinel.Evaluate(context.Background(), state, input, cfg)
+		if sig.Level == sentinel.ActivationHalt {
+			t.Fatalf("premature halt at zero cycle %d", i)
+		}
+	}
+	if state.ConsecutiveZeroCycles != 2 {
+		t.Fatalf("expected ConsecutiveZeroCycles=2, got %d", state.ConsecutiveZeroCycles)
+	}
+
+	// Write a bead_closed event → progress resets the counter.
+	writeEvent(t, eventsPath, core.EventTypeBeadClosed, now.Add(-1*time.Minute), json.RawMessage(`{}`))
+	sig := sentinel.Evaluate(context.Background(), state, input, cfg)
+	if sig.Level == sentinel.ActivationHalt {
+		t.Error("progress event should have reset G-liveness counter; got ActivationHalt")
+	}
+	if state.ConsecutiveZeroCycles != 0 {
+		t.Errorf("expected ConsecutiveZeroCycles reset to 0 after progress, got %d",
+			state.ConsecutiveZeroCycles)
+	}
+
+	// Remove the event so subsequent cycles are zero again; must restart from 0.
+	// Re-use same eventsPath but write to a fresh project dir to clear events.
+	freshDir := makeEventsFile(t)
+	freshInput := sentinel.GovernorInput{
+		ProjectDir:    freshDir,
+		Now:           now,
+		HasReadyBeads: true,
+	}
+	for i := 1; i <= 2; i++ {
+		sig2 := sentinel.Evaluate(context.Background(), state, freshInput, cfg)
+		if sig2.Level == sentinel.ActivationHalt {
+			t.Errorf("cycle %d after reset: unexpected ActivationHalt (need %d more for N=3)", i, 3-i)
+		}
+	}
+}
+
+func TestGLiveness_WarmupSuppressesHalt(t *testing.T) {
+	// G-liveness does not fire during the daemon warmup window even if N
+	// zero-progress cycles have elapsed.
+	projectDir := makeEventsFile(t)
+	now := time.Now()
+
+	state := &sentinel.GovernorState{
+		DaemonStartedAt: now.Add(-5 * time.Minute), // started 5 min ago
+	}
+	cfg := sentinel.Config{
+		Window:              30 * time.Minute,
+		WarmupWindow:        30 * time.Minute, // 30m required; only 5m elapsed
+		LivenessNoProgressN: 2,
+	}
+	input := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           now,
+		HasReadyBeads: true,
+	}
+
+	// Run N cycles with zero progress; warmup must suppress the halt.
+	for i := 0; i < 5; i++ {
+		sig := sentinel.Evaluate(context.Background(), state, input, cfg)
+		if sig.Level == sentinel.ActivationHalt {
+			t.Fatalf("cycle %d: G-liveness fired during warmup window", i)
+		}
+		if sig.LivenessViolated {
+			t.Fatalf("cycle %d: LivenessViolated=true during warmup window", i)
+		}
+	}
+}
+
+func TestGLiveness_WarmupElapsed_Halts(t *testing.T) {
+	// Once the warmup window elapses, G-liveness fires after N zero-progress cycles.
+	projectDir := makeEventsFile(t)
+	now := time.Now()
+
+	state := &sentinel.GovernorState{
+		DaemonStartedAt:       now.Add(-60 * time.Minute), // started 60 min ago; warmup done
+		ConsecutiveZeroCycles: 2,                          // already at N-1
+	}
+	cfg := sentinel.Config{
+		Window:              30 * time.Minute,
+		WarmupWindow:        30 * time.Minute, // satisfied: 60m > 30m
+		LivenessNoProgressN: 3,
+	}
+	input := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           now,
+		HasReadyBeads: true,
+	}
+
+	// Empty events.jsonl → score=0 → ConsecutiveZeroCycles reaches 3 → halt.
+	sig := sentinel.Evaluate(context.Background(), state, input, cfg)
+	if sig.Level != sentinel.ActivationHalt {
+		t.Errorf("warmup elapsed + ConsecutiveZeroCycles=3: expected ActivationHalt, got %s", sig.Level)
+	}
+	if !sig.LivenessViolated {
+		t.Error("expected LivenessViolated=true when halt fires")
+	}
+}
+
+func TestGLiveness_ZeroCyclesCounter_TrackedInSignal(t *testing.T) {
+	// ConsecutiveZeroCycles in the returned signal reflects the post-update count.
+	projectDir := makeEventsFile(t)
+	now := time.Now()
+
+	state := &sentinel.GovernorState{}
+	cfg := sentinel.Config{
+		Window:              30 * time.Minute,
+		WarmupWindow:        0,
+		LivenessNoProgressN: 10, // high threshold so we don't halt during this test
+	}
+	input := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           now,
+		HasReadyBeads: true,
+	}
+
+	for i := 1; i <= 5; i++ {
+		sig := sentinel.Evaluate(context.Background(), state, input, cfg)
+		if sig.ConsecutiveZeroCycles != i {
+			t.Errorf("cycle %d: expected ConsecutiveZeroCycles=%d, got %d", i, i, sig.ConsecutiveZeroCycles)
 		}
 	}
 }

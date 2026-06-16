@@ -36,7 +36,7 @@ Agent-permissible writes are limited to:
 
 | Operation | Command | Notes |
 |---|---|---|
-| Add a comment | `br comments add <bead_id> --body "..."` | Progress notes, observations |
+| Add a comment | `br comments add <bead_id> --message "..."` | Progress notes, observations |
 | Add a label | `br update <bead_id> --add-label <label>` | Non-status metadata only |
 | Remove a label | `br update <bead_id> --remove-label <label>` | Non-status metadata only |
 | Update description/notes | `br update <bead_id> --notes "..."` | Clarifications, findings |
@@ -87,7 +87,7 @@ br list --format json -l scope:bootstrap -s open
 br list --format json -s in_progress
 
 # Children of an epic
-br list --format json --parent <epic_id>
+br list --format json --label codename:<epic_id>
 
 # Search by text
 br search --format json "keyword"

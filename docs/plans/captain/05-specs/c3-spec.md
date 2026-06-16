@@ -56,7 +56,7 @@ C3 is the crew's instructions plus the schema shared across C2/C3/C4.
   loop):
   - periodic `harmonik comms send --to <captain_name> --topic status -- <update>`
     (durable in `events.jsonl`), AND
-  - `br comments add <epic_id> --body "<update>"` on the assigned epic (durable in
+  - `br comments add <epic_id> --message "<update>"` on the assigned epic (durable in
     SQLite + git-tracked JSONL).
   with a concrete **cadence trigger** (on each bead close observed + on a timer).
 
@@ -260,7 +260,7 @@ from the handoff frontmatter, not the skill — so one skill serves all crew.
 5. **§ Operating loop — work YOUR epic on YOUR queue** — composes on
    `harmonik-dispatch`, scoped to `--queue <queue>`:
    1. Find ready beads under the epic: `br ready --format json` filtered to the
-      epic's children (`br list --format json --parent <epic_id>` ∩ ready), or the
+      epic's children (`br list --format json --label codename:<epic_id>` ∩ ready), or the
       kerf feed if the work is kerf-attached.
    2. **Submit to YOUR named queue, NEVER `main`:**
       ```bash
@@ -315,7 +315,7 @@ from the handoff frontmatter, not the skill — so one skill serves all crew.
    Durable in `events.jsonl`; the captain reads it via `comms recv`/`comms log`.
 2. **Epic journal in beads** (the durable, git-tracked record on the work itself):
    ```bash
-   br comments add <epic_id> --body "<update>"
+   br comments add <epic_id> --message "<update>"
    ```
    Durable in SQLite + `.beads/issues.jsonl`; survives any session/daemon restart
    and is reviewable out-of-band.

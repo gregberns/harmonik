@@ -166,7 +166,7 @@ This loop composes on `harmonik-dispatch`, scoped exclusively to `--queue <queue
 
 ```bash
 # List epic's children and intersect with ready (no blocked/draft)
-br list --format json --parent <epic_id>   # get child bead IDs
+br list --format json --label codename:<epic_id>   # get beads in this epic's scope
 br ready --format json                      # get all ready beads
 # intersect the two sets
 ```

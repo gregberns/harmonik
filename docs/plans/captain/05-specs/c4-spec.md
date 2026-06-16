@@ -140,10 +140,10 @@ already-specified surfaces. The composition map:
   `comms leave` (presence beats). **Exit 17 = daemon not running** for
   send/recv/join/leave; `log`/`who` work without the daemon.
 - **beads / `br`** (`beads-cli` skill). C4's permitted writes are **comments only**:
-  `br comments add <epic> --body "..."`. **The Captain MUST NOT issue
+  `br comments add <epic> --message "..."`. **The Captain MUST NOT issue
   terminal-transition writes** (`br claim/close/reopen`) — daemon-owned (BI-010).
   Read surface: `br show <epic> --format json`, `br comments list <epic>`,
-  `br list --parent <epic> --format json`.
+  `br list --label codename:<epic> --format json`.
 - **`subscribe`** (`harmonik-dispatch` skill / `cmd/harmonik/subscribe.go`).
   `harmonik subscribe --types <list> --json [--heartbeat <dur>]`. The Captain uses
   `--types epic_completed` (and may add `run_failed,run_stale` for surface-only

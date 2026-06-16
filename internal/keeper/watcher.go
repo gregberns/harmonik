@@ -148,18 +148,20 @@ type WatcherConfig struct {
 	WarnPct float64
 
 	// WarnAbsTokens is the absolute-token warn threshold. The effective threshold
-	// is min(WarnAbsTokens, WarnPctCeil * WindowSize). Used when the gauge file
-	// contains Tokens (i.e. keeper-statusline.sh is current). When WindowSize is
-	// zero, FallbackWindowSize is used to cap the threshold. Falls back to WarnPct
-	// only when Tokens is also zero. Default: 270000.
-	// Refs: hk-cl74g, hk-kgn, hk-odhh.
+	// is min(WarnAbsTokens, WarnPctCeil * WindowSize), applied by belowWarnThreshold
+	// ONLY when the gauge reports BOTH Tokens>0 and WindowSize>0. When WindowSize==0
+	// the abs gate is not trustworthy (the window is unknown), so the gate falls
+	// back to Pct vs WarnPct — identical to the cycler, avoiding the F45
+	// Tokens-vs-Pct split-brain. Default: 270000.
+	// Refs: hk-cl74g, hk-kgn, hk-odhh, hk-jgzg.
 	WarnAbsTokens int64
 
-	// FallbackWindowSize is the assumed context-window size used for the
-	// WarnPctCeil cap when the gauge file reports WindowSize==0 (e.g. [1m]-class
-	// models whose window size cannot be inferred). Default: 200000. Set via
-	// --window-size.
-	// Refs: hk-kgn.
+	// FallbackWindowSize is the assumed context-window size used to derive a live
+	// pct from a fresh token count in the heartbeat refresh (heartbeat.go) when the
+	// gauge file reports WindowSize==0 (e.g. [1m]-class models whose window size
+	// cannot be inferred). It is NOT used to cap the warn threshold — belowWarnThreshold
+	// requires a real WindowSize. Default: 200000. Set via --window-size.
+	// Refs: hk-kgn, hk-jgzg.
 	FallbackWindowSize int64
 
 	// WarnPctCeil caps the warn threshold as a fraction of the context window,
@@ -544,17 +546,19 @@ func (c *WatcherConfig) applyDefaults() {
 }
 
 // belowWarnThreshold reports whether the gauge reading is below the warn
-// threshold. Uses absolute tokens when Tokens>0, even if WindowSize==0 (using
-// FallbackWindowSize for the pct-ceil cap). Falls back to Pct vs WarnPct only
-// when Tokens is also zero.
+// threshold. Uses the absolute-token gate ONLY when both Tokens and WindowSize
+// are present; otherwise falls back to Pct vs WarnPct. This is byte-for-byte the
+// cycler's CyclerConfig.belowWarnThreshold gate (cycle.go) — the two MUST agree,
+// or warn and cycle decide on different bases (the F45 Tokens-vs-Pct split-brain:
+// the watcher previously fabricated a FallbackWindowSize for the pct-ceil cap when
+// WindowSize==0, so on a large-window session reporting tokens-but-no-window it
+// fired warn at ~140k tokens — far below the configured warn_pct, recording
+// pct < warn_pct in the event log). With the window unknown the pct comparison is
+// the only trustworthy signal, matching the cycler. Refs: hk-jgzg (F45), hk-bpkv.
 func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
-	if cf.Tokens > 0 {
-		windowSize := cf.WindowSize
-		if windowSize == 0 {
-			windowSize = c.FallbackWindowSize
-		}
+	if cf.Tokens > 0 && cf.WindowSize > 0 {
 		// Shared min(abs, pctCeil*window) formula — single impl in thresholds.go.
-		return cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, windowSize)
+		return cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct
 }

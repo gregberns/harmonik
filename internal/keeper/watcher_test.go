@@ -53,6 +53,31 @@ func writeCtxFile(t *testing.T, projectDir, agent string, pct float64, sessionID
 	}
 }
 
+// writeCtxFileTokens writes a .ctx gauge file carrying an absolute token count
+// and an explicit window size (either may be 0) in addition to the percentage.
+// Used by the F45 regression test to exercise the Tokens-vs-Pct gate path.
+func writeCtxFileTokens(t *testing.T, projectDir, agent string, pct float64, tokens, windowSize int64, sessionID string) {
+	t.Helper()
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	data, err := json.Marshal(keeper.CtxFile{
+		Pct:        pct,
+		Tokens:     tokens,
+		WindowSize: windowSize,
+		SessionID:  sessionID,
+		Ts:         time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal CtxFile: %v", err)
+	}
+	path := filepath.Join(keeperDir, agent+".ctx")
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		t.Fatalf("WriteFile ctx: %v", err)
+	}
+}
+
 // runWatcherFor starts the watcher and cancels it after dur.
 func runWatcherFor(ctx context.Context, cfg keeper.WatcherConfig, em keeper.Emitter, dur time.Duration) {
 	ctx2, cancel := context.WithTimeout(ctx, dur)
@@ -230,6 +255,51 @@ func TestWatcher_NoWarnWhenBelowThreshold(t *testing.T) {
 
 	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
 		t.Errorf("want 0 session_keeper_warn below threshold; got %d", len(warns))
+	}
+}
+
+// TestWatcher_NoWarnBelowPctWhenWindowUnknown is the regression test for logmine
+// F45 (hk-jgzg): keeper "warn" fired BELOW the configured warn_pct. The watcher's
+// belowWarnThreshold substituted FallbackWindowSize (200k) whenever the gauge
+// reported Tokens>0 but WindowSize==0, applying the 0.70 pct-ceil to a FABRICATED
+// window → an effective 140k-token threshold. On a real large-window session whose
+// statusline reports tokens but no window_size, that fired warn at ~140k tokens —
+// well below the configured pct threshold, so the warn event recorded pct < warn_pct.
+// The cycler's identically-named belowWarnThreshold never did this (it requires
+// WindowSize>0, falling back to Pct otherwise), so warn and cycle gated on different
+// bases: the Tokens-vs-Pct split-brain. The fix unifies the watcher with the cycler.
+//
+// FAILS on old code (warn fires off the fabricated 200k window) and PASSES on the
+// fix (WindowSize==0 → Pct path → 27<80 → below → no warn).
+// Refs: hk-jgzg (F45), codename:keeper-redesign.
+func TestWatcher_NoWarnBelowPctWhenWindowUnknown(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "f45-agent"
+
+	em := &keeper.RecordingEmitter{}
+
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+	}
+
+	// Tokens (270k) exceed the FallbackWindowSize-derived 140k threshold, but Pct
+	// (27%) is far below WarnPct (80%) and the gauge reports NO window_size. With a
+	// known window this would be a legitimate abs-token warn; with the window
+	// unknown the watcher must defer to the pct comparison, exactly as the cycler does.
+	writeCtxFileTokens(t, projectDir, agent, 27.0, 270_000, 0, "sess-f45")
+
+	runWatcherFor(context.Background(), cfg, em, 60*time.Millisecond)
+
+	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
+		t.Errorf("want 0 session_keeper_warn when pct(27)<warn_pct(80) and window unknown; got %d (F45 Tokens-vs-Pct split-brain)", len(warns))
 	}
 }
 

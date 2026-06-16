@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // newTestState builds a twinState with a deterministic seed session_id and an
@@ -323,6 +324,61 @@ func TestBuildStatusJSON_FieldPathsMatchScript(t *testing.T) {
 		if _, ok := cw[key]; !ok {
 			t.Fatalf("context_window key %q missing", key)
 		}
+	}
+}
+
+// TestBuildStatusJSON_EmitNA proves --emit-na emits a NON-numeric
+// used_percentage ("NA") under the same field path, so the real
+// keeper-statusline.sh numeric guard (script line ~69) skips the .ctx write.
+// The other fields the script reads stay present and well-formed.
+func TestBuildStatusJSON_EmitNA(t *testing.T) {
+	snap := statusSnapshot{tokens: 300_000, sessionID: "sid-na", window: 1_000_000, model: "m", emitNA: true}
+	raw := marshalStatusJSON(snap)
+
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		t.Fatalf("unmarshal: %v\njson: %s", err, raw)
+	}
+	var cw map[string]json.RawMessage
+	if err := json.Unmarshal(top["context_window"], &cw); err != nil {
+		t.Fatalf("unmarshal context_window: %v\njson: %s", err, raw)
+	}
+	// used_percentage must be the JSON string "NA" — NOT a number. A numeric
+	// value would defeat the script's skip guard.
+	var pct any
+	if err := json.Unmarshal(cw["used_percentage"], &pct); err != nil {
+		t.Fatalf("unmarshal used_percentage: %v\njson: %s", err, raw)
+	}
+	if s, ok := pct.(string); !ok || s != "NA" {
+		t.Fatalf("emit-na used_percentage = %#v; want string \"NA\"; json: %s", pct, raw)
+	}
+	// session_id / model still present (faithful full statusLine shape).
+	if string(top["session_id"]) != `"sid-na"` {
+		t.Fatalf("missing/wrong session_id; json: %s", raw)
+	}
+	if _, ok := top["model"]; !ok {
+		t.Fatalf("missing model; json: %s", raw)
+	}
+}
+
+// TestStatuslineSuppressed covers the pure suppression gate behind
+// --suppress-statusline-after: a zero deadline never suppresses; a set deadline
+// suppresses only at/after the instant.
+func TestStatuslineSuppressed(t *testing.T) {
+	base := time.Date(2026, 6, 16, 0, 0, 0, 0, time.UTC)
+	// Zero deadline (flag unset / 0): never suppressed.
+	if statuslineSuppressed(time.Time{}, base) {
+		t.Fatal("zero deadline must never suppress")
+	}
+	deadline := base.Add(1 * time.Second)
+	if statuslineSuppressed(deadline, base) {
+		t.Fatal("before the deadline must not suppress")
+	}
+	if !statuslineSuppressed(deadline, deadline) {
+		t.Fatal("at the deadline must suppress")
+	}
+	if !statuslineSuppressed(deadline, deadline.Add(time.Millisecond)) {
+		t.Fatal("after the deadline must suppress")
 	}
 }
 

@@ -178,6 +178,16 @@ type twTwinSpec struct {
 	// HARMONIK_KEEPER_WINDOW_SIZE=...) so the real statusline script's env
 	// fallbacks can be exercised.
 	extraEnv []string
+	// emitNA passes the twin's --emit-na flag: every statusLine carries a
+	// non-numeric used_percentage ("NA") so the real script SKIPS the .ctx write
+	// (models the post-/clear NA statusLine). Downstream gauge-liveness beads
+	// reuse this single definition.
+	emitNA bool
+	// suppressAfter passes the twin's --suppress-statusline-after flag: statusLine
+	// emits stop after this much elapsed time so the gauge .ctx goes stale while
+	// the session stays alive (idle hook + growth keep running). 0 = never.
+	// Downstream gauge-liveness / force-restart beads reuse this single definition.
+	suppressAfter time.Duration
 }
 
 // twStartTwin launches the twin binary as the foreground process of a new,
@@ -198,6 +208,14 @@ func twStartTwin(t *testing.T, spec twTwinSpec) string {
 		spec.twin, spec.project, spec.agent, spec.statusline, spec.idleHook,
 		spec.model, spec.window, spec.growth, spec.startTokens, spec.emitEvery,
 	)
+	// Optional gauge-liveness knobs (off by default; the happy-path E2E above
+	// passes neither). Single definition — downstream beads set the spec fields.
+	if spec.emitNA {
+		cmd += " --emit-na"
+	}
+	if spec.suppressAfter > 0 {
+		cmd += fmt.Sprintf(" --suppress-statusline-after %s", spec.suppressAfter)
+	}
 
 	args := []string{"new-session", "-d", "-s", sess}
 	// Inject extra env via tmux's -e flag (tmux 3.2+) so the statusline script

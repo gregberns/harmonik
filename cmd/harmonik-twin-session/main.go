@@ -407,13 +407,14 @@ func runStatusline(cfg config, jsonLine []byte) {
 }
 
 // runIdleHook execs keeper-stop-hook.sh to touch the .idle marker. The stop hook
-// reads HARMONIK_KEEPER_AGENT (NOT HARMONIK_AGENT — see keeper-stop-hook.sh:37),
-// so set BOTH plus pass the agent positionally for belt-and-suspenders.
+// now reads HARMONIK_AGENT first (same var as statusline), falling back to
+// HARMONIK_KEEPER_AGENT for backward compat (hk-p9kw). Pass the agent positionally
+// as belt-and-suspenders.
 func runIdleHook(cfg config) {
 	cmd := exec.Command(cfg.idleHook, cfg.agent) //nolint:gosec // G204: operator-supplied script path
 	cmd.Env = append(os.Environ(),
 		"HARMONIK_PROJECT="+cfg.project,
-		"HARMONIK_KEEPER_AGENT="+cfg.agent,
+		"HARMONIK_AGENT="+cfg.agent,
 	)
 	_ = cmd.Run() //nolint:errcheck // best-effort idle marker
 }

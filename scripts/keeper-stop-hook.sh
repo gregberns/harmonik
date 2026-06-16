@@ -13,28 +13,36 @@
 #         "hooks": [
 #           {
 #             "type": "command",
-#             "command": "HARMONIK_PROJECT=/path/to/project HARMONIK_KEEPER_AGENT=orchestrator /path/to/scripts/keeper-stop-hook.sh"
+#             "command": "HARMONIK_PROJECT=/path/to/project /path/to/scripts/keeper-stop-hook.sh"
 #           }
 #         ]
 #       }
 #     ]
+#   Agent name is derived at runtime from $HARMONIK_AGENT (set by the daemon
+#   or crew launch), then $HARMONIK_KEEPER_AGENT (backward-compat alias), then
+#   the tmux session name, then "default".
 #
 # Environment
 #   HARMONIK_PROJECT        Absolute path to the project root (fallback: $PWD).
-#   HARMONIK_KEEPER_AGENT   Agent name to namespace the .idle file (fallback: "default").
+#   HARMONIK_AGENT          Agent name to namespace the .idle file (primary; fallback: "default").
+#   HARMONIK_KEEPER_AGENT   Backward-compat alias for HARMONIK_AGENT (checked second).
 #                           Can also be passed as $1.
 #
 # Output
 #   Touches (creates or updates mtime of):
 #     $HARMONIK_PROJECT/.harmonik/keeper/$AGENT.idle
 #
-# Refs: hk-djdng (session-keeper Phase-2 foundation).
+# Refs: hk-djdng (session-keeper Phase-2 foundation),
+#       hk-p9kw (unify HARMONIK_AGENT / HARMONIK_KEEPER_AGENT).
 set -euo pipefail
 
-# Derive agent name: HARMONIK_KEEPER_AGENT → positional arg → tmux session name → "default".
+# Derive agent name: HARMONIK_AGENT → HARMONIK_KEEPER_AGENT (backward compat) →
+# positional arg → tmux session name → "default".
 # The tmux fallback means a single global hook entry in ~/.claude/settings.json
 # works correctly for all concurrent agent sessions (hk-nm32w).
-if [ -n "${HARMONIK_KEEPER_AGENT:-}" ]; then
+if [ -n "${HARMONIK_AGENT:-}" ]; then
+    AGENT="${HARMONIK_AGENT}"
+elif [ -n "${HARMONIK_KEEPER_AGENT:-}" ]; then
     AGENT="${HARMONIK_KEEPER_AGENT}"
 elif [ -n "${1:-}" ]; then
     AGENT="${1}"

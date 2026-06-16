@@ -276,7 +276,7 @@ func TestQuitOnReviewFile_ReseedsOnceWhenStalledAndPaneActive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, stub, kl, stub, "01hwxyz-rev7rgqs", wtPath, nil)
+	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, stub, kl, stub, "01hwxyz-rev7rgqs", wtPath, nil, nil, 0)
 
 	writes, _ := stub.snapshot()
 	// Exactly one re-seed paste (the watchdog calls pasteInjectReviewer once).
@@ -325,7 +325,7 @@ func TestQuitOnReviewFile_ReseedsOnlyOnce(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, stub, kl, stub, "01hwxyz-rev7rgqs", wtPath, nil)
+	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, stub, kl, stub, "01hwxyz-rev7rgqs", wtPath, nil, nil, 0)
 
 	writes, _ := stub.snapshot()
 	if writes != 1 {
@@ -365,7 +365,7 @@ func TestQuitOnReviewFile_NoReseedWhenPaneDead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, stub, kl, stub, "01hwxyz-rev7rgqs", wtPath, nil)
+	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, stub, kl, stub, "01hwxyz-rev7rgqs", wtPath, nil, nil, 0)
 
 	writes, _ := stub.snapshot()
 	if writes != 0 {

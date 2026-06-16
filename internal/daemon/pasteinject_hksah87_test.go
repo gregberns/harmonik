@@ -220,7 +220,7 @@ func TestQuitOnReviewFile_BudgetKillWritesSentinel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil)
+	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil, nil, 0)
 
 	if got := qs.calls.Load(); got != 1 {
 		t.Errorf("SendQuitToLastPane: want 1 (budget kill), got %d", got)
@@ -276,7 +276,7 @@ func TestQuitOnReviewFile_NoMarkerWhenVerdictWritten(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil)
+		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil, nil, 0)
 	}()
 
 	time.Sleep(20 * time.Millisecond)
@@ -330,7 +330,7 @@ func TestQuitOnReviewFile_PaneLivenessExtendsBudget(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil)
+		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil, nil, 0)
 	}()
 
 	// Observe for ~6x the base budget — an active pane must survive (no kill).
@@ -371,7 +371,7 @@ func TestQuitOnReviewFile_HardCeilingKillsActivePane(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil)
+	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil, nil, 0)
 
 	if got := qs.quitCalls.Load(); got != 1 {
 		t.Errorf("SendQuitToLastPane: want 1 (hard ceiling kill), got %d", got)

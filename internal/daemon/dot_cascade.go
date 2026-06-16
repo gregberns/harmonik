@@ -1135,7 +1135,21 @@ func dispatchDotAgenticNode(
 			// it is a perRunSubstrate; a non-pasteInjecter target yields a nil inj
 			// inside the watchdog → re-seed disabled).
 			revInj, _ := pasteTarget.(pasteInjecter)
-			go pasteInjectQuitOnReviewFile(ctx, qs, sess, revInj, artifacts.claudeSessionID, wtPath, briefDelivered)
+			// hk-60t8: parse per-node reviewer hard-ceiling override from the DOT
+			// timeout= attribute (integer seconds).  A non-zero value overrides
+			// reviewFileHardCeiling for this node only, allowing opus/high reviewer
+			// nodes to declare a longer budget in the workflow graph.
+			var reviewerCeiling time.Duration
+			if node.Timeout != "" {
+				if n, err := strconv.Atoi(node.Timeout); err == nil && n > 0 {
+					reviewerCeiling = time.Duration(n) * time.Second
+				}
+			}
+			// hk-60t8: give the reviewer watchdog its OWN independent subscription
+			// so it can track agent_heartbeat events for the active-reasoning
+			// extension — independent of the tapCh used by waitAgentReady.
+			reviewerHBCh := tap.Subscribe()
+			go pasteInjectQuitOnReviewFile(ctx, qs, sess, revInj, artifacts.claudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
 		} else {
 			// hk-o90sl (T13/C5): gate on Completion() policy (specs/harness-contract.md §2 N5).
 			// ProcessExit harnesses (codex) self-terminate when the turn completes; sess.Wait +

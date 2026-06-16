@@ -122,7 +122,7 @@ func TestPasteInjectQuitOnReviewFile_VerdictDetected(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil)
+		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil, nil, 0)
 	}()
 
 	// Write verdict after a short delay so the goroutine is already polling.
@@ -166,7 +166,7 @@ func TestPasteInjectQuitOnReviewFile_TimeoutSendsQuitAndKills(t *testing.T) {
 	defer cancel()
 
 	// Runs synchronously: timeout fires, /quit sent, kill delay waited, Kill called.
-	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil)
+	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil, nil, 0)
 
 	if got := qs.calls.Load(); got != 1 {
 		t.Errorf("SendQuitToLastPane calls: want 1, got %d", got)
@@ -209,7 +209,7 @@ func TestPasteInjectQuitOnReviewFile_BriefGateBlocksUntilClosed(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, nil, nil, "", wtPath, briefDelivered)
+		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, nil, nil, "", wtPath, briefDelivered, nil, 0)
 	}()
 
 	// Observe for 100ms — brief gate is blocking (timeout=2s), so /quit must be 0.
@@ -263,7 +263,7 @@ func TestPasteInjectQuitOnReviewFile_BriefDeliveredTimeoutProceedsWithPoll(t *te
 
 	// Synchronous call: brief-gate timeout (30ms) → poll starts → review
 	// timeout (80ms) fires → /quit sent → noChangeKillDelay (15ms) → Kill.
-	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, briefDelivered)
+	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, briefDelivered, nil, 0)
 
 	if got := qs.calls.Load(); got != 1 {
 		t.Errorf("SendQuitToLastPane: want 1 (poll started after brief-gate timeout), got %d", got)
@@ -301,7 +301,7 @@ func TestPasteInjectQuitOnReviewFile_CtxCancelExitsCleanly(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil)
+		daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil, nil, 0)
 	}()
 
 	select {

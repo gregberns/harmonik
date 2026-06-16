@@ -1282,7 +1282,12 @@ func runReviewLoop(
 			// when it is a perRunSubstrate; a non-pasteInjecter target yields a nil
 			// inj inside the watchdog → re-seed disabled).
 			revInj, _ := revPasteTarget.(pasteInjecter)
-			go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revInj, revArtifacts.claudeSessionID, revWtPath, revBriefDelivered)
+			// hk-60t8: give the reviewer watchdog an independent heartbeat
+			// subscription so it can extend the deadline when the reviewer is
+			// actively reasoning (recent agent_heartbeat), not only when the OS
+			// pane-liveness probe finds an active process.
+			revHBCh := revTap.Subscribe()
+			go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revInj, revArtifacts.claudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
 		}
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).

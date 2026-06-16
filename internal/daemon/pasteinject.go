@@ -1630,13 +1630,36 @@ var reviewFileTimeout = 10 * time.Minute
 // claude pane alive (so pane-liveness alone cannot distinguish it from a working
 // reviewer); this ceiling is the firm backstop that bounds it.  It is set well
 // below the implementer's commitHardCeiling (90 min) because a review is
-// read-only — it has no test loops or multi-file edits to run, so 30 minutes is
-// generous even for a very large diff.
+// read-only — it has no test loops or multi-file edits to run.
+//
+// hk-60t8: raised from 30 to 40 minutes — opus/high reviewers on non-trivial
+// DOT-mode cascade runs were killed at exactly the budget deadline (20 min for
+// a ~2000-line diff) because the hard ceiling left no headroom for the
+// heartbeat-based extension added in the same bead.  40 min gives those
+// reviewers sufficient runway while still bounding a genuinely hung session.
 //
 // Declared as var so tests can override.
 //
-// Bead: hk-sah87.
-var reviewFileHardCeiling = 30 * time.Minute
+// Bead: hk-sah87, hk-60t8.
+var reviewFileHardCeiling = 40 * time.Minute
+
+// reviewerHeartbeatActiveGrace is the window after the most-recent
+// agent_heartbeat within which the reviewer is considered "actively reasoning"
+// for the purposes of the budget-extension check.  Set to twice the heartbeat
+// interval (2×5 min = 10 min) so a single missed heartbeat tick does not
+// trigger a premature kill.
+//
+// hk-60t8: the paul canary (run 019ed1ad-77a3) was killed at EXACTLY 20 min
+// while the opus/high reviewer was still heartbeating (4×5-min beats observed).
+// PaneHasActiveProcess correctly returned true, but the extension only fires
+// when livenessChecker is non-nil.  Adding a heartbeat-based extension
+// (liveness OR recent heartbeat) ensures an actively-reasoning reviewer is
+// never killed while it is still emitting progress signals.
+//
+// Declared as var so tests can override.
+//
+// Bead: hk-60t8.
+var reviewerHeartbeatActiveGrace = 10 * time.Minute
 
 // reviewFilePerKLineBudget is the extra wait granted per 1000 changed lines in
 // the diff under review, added on top of reviewFileTimeout.  5 minutes/1000
@@ -1951,6 +1974,21 @@ func ReadReviewerBudgetSentinel(wtPath string) (*reviewerBudgetSentinel, error) 
 // skipped and only the budget logic applies.
 //
 // Bead: hk-zimkh, hk-sah87, hk-7rgqs.
+// pasteInjectQuitOnReviewFile watches for <wtPath>/.harmonik/review.json to
+// appear (indicating the reviewer has written its verdict), then sends /quit
+// to terminate the reviewer session. Without this, the reviewer claude sits
+// idle at a prompt after writing the verdict, blocking the daemon indefinitely.
+//
+// hk-60t8: two new parameters extend the reviewer liveness logic:
+//   - eventCh: an independent per-run event tap subscriber (nil = no heartbeat
+//     tracking). When a recent agent_heartbeat is observed, the reviewer is
+//     considered "actively reasoning" and the budget is extended (same semantics
+//     as the pane-liveness extension, but keyed on heartbeat rather than OS
+//     process state — more reliable under concurrent dispatch).
+//   - overrideCeiling: when > 0 overrides reviewFileHardCeiling for this node
+//     only (matches the DOT timeout= attribute from the node graph).  This lets
+//     DOT authors author per-node reviewer timeouts for opus/high nodes that
+//     legitimately need more time than the default ceiling.
 func pasteInjectQuitOnReviewFile(
 	ctx context.Context,
 	qs quitSender,
@@ -1959,6 +1997,8 @@ func pasteInjectQuitOnReviewFile(
 	claudeSessID string,
 	wtPath string,
 	briefDelivered <-chan struct{},
+	eventCh <-chan core.EventEnvelope, // hk-60t8: heartbeat tracking; nil = disabled
+	overrideCeiling time.Duration, // hk-60t8: 0 = use reviewFileHardCeiling
 ) {
 	if briefDelivered != nil {
 		bdTimeout := briefDeliveredTimeout
@@ -1977,13 +2017,20 @@ func pasteInjectQuitOnReviewFile(
 	pollInterval := reviewFilePollInterval
 	killDelay := noChangeKillDelay
 
+	// hk-60t8: resolve the effective hard ceiling.  A per-node overrideCeiling
+	// (from the DOT timeout= attribute) takes precedence over the package default.
+	effectiveCeiling := reviewFileHardCeiling
+	if overrideCeiling > 0 {
+		effectiveCeiling = overrideCeiling
+	}
+
 	// hk-sah87: size the verdict budget by the diff the reviewer must read.
 	// worktreeDiffLineCount returns -1 on any measurement failure → base budget.
 	changedLines := worktreeDiffLineCount(ctx, wtPath)
-	budget := reviewBudgetForDiff(changedLines, reviewFileTimeout, reviewFilePerKLineBudget, reviewFileHardCeiling)
+	budget := reviewBudgetForDiff(changedLines, reviewFileTimeout, reviewFilePerKLineBudget, effectiveCeiling)
 	fmt.Fprintf(os.Stderr,
-		"daemon: pasteinject: quit-on-review-file: verdict budget %v for %s (changed_lines=%d)\n",
-		budget, wtPath, changedLines)
+		"daemon: pasteinject: quit-on-review-file: verdict budget %v for %s (changed_lines=%d, ceiling=%v)\n",
+		budget, wtPath, changedLines, effectiveCeiling)
 
 	loopStart := time.Now()
 	deadline := loopStart.Add(budget)
@@ -1993,7 +2040,16 @@ func pasteInjectQuitOnReviewFile(
 	// than killing a reviewer that is genuinely still reading the diff — but the
 	// extension is itself bounded by the absolute hard ceiling below.
 	livenessChecker, _ := qs.(paneLivenessChecker)
-	hardDeadline := loopStart.Add(reviewFileHardCeiling)
+	hardDeadline := loopStart.Add(effectiveCeiling)
+
+	// hk-60t8: track the most-recent agent_heartbeat time.  When a heartbeat
+	// arrived within reviewerHeartbeatActiveGrace the reviewer is considered
+	// actively reasoning; the budget is extended even when pane-liveness is
+	// unavailable (livenessChecker == nil) or the OS-level probe misses the
+	// process.  Initialized to zero (never seen) so the first check on an
+	// unlaunched reviewer never spuriously extends.
+	var lastHeartbeatAt time.Time
+	heartbeatActiveGrace := reviewerHeartbeatActiveGrace
 
 	// hk-7rgqs (reviewer SEED-SUBMIT RACE safety net): fire a one-shot re-seed of
 	// the reviewer brief if no verdict appears within reviewerReseedGrace and the
@@ -2011,8 +2067,42 @@ func pasteInjectQuitOnReviewFile(
 		select {
 		case <-ctx.Done():
 			return
+
+		case env, ok := <-eventCh:
+			// eventCh is nil-safe: a nil channel blocks forever, so this case is
+			// never selected when eventCh is nil.  Drain agent_heartbeat events
+			// promptly so lastHeartbeatAt stays current between ticker ticks.
+			if !ok {
+				eventCh = nil
+				continue
+			}
+			if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
+				lastHeartbeatAt = time.Now()
+			}
+
 		case <-ticker.C:
 			now := time.Now()
+
+			// hk-60t8: drain any heartbeats buffered in eventCh since the last
+			// tick so that lastHeartbeatAt reflects all progress that has arrived
+			// between ticks (mirrors the hk-ukx drain in pasteInjectQuitOnCommit).
+			if eventCh != nil {
+			drainReviewerHB:
+				for {
+					select {
+					case env, ok := <-eventCh:
+						if !ok {
+							eventCh = nil
+							break drainReviewerHB
+						}
+						if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
+							lastHeartbeatAt = now
+						}
+					default:
+						break drainReviewerHB
+					}
+				}
+			}
 
 			// hk-7rgqs: one-shot re-seed BEFORE the budget/verdict checks.  When
 			// the grace has elapsed, no verdict file exists yet, and the pane still
@@ -2042,14 +2132,28 @@ func pasteInjectQuitOnReviewFile(
 			}
 
 			if now.After(deadline) {
-				// hk-sah87: before killing, consult pane liveness.  If the
-				// reviewer pane still hosts an active claude process AND we are
-				// not yet past the absolute hard ceiling, extend the budget by
-				// one base window — the reviewer is still working, not hung.
-				if livenessChecker != nil && now.Before(hardDeadline) && livenessChecker.PaneHasActiveProcess(ctx) {
+				// hk-sah87 / hk-60t8: before killing, check whether the reviewer
+				// is still actively working.  Two independent signals qualify:
+				//   1. Pane liveness: the OS-level probe detects an active child
+				//      process in the tmux pane (hk-sah87).
+				//   2. Recent heartbeat: an agent_heartbeat arrived within
+				//      reviewerHeartbeatActiveGrace, indicating active reasoning
+				//      at the LLM level — more reliable than pane-liveness under
+				//      concurrent dispatch (hk-60t8).
+				// When either signal fires AND we have not yet reached the absolute
+				// hard ceiling, extend the budget by one base window.
+				recentHB := !lastHeartbeatAt.IsZero() && now.Sub(lastHeartbeatAt) < heartbeatActiveGrace
+				paneActive := livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx)
+				if (paneActive || recentHB) && now.Before(hardDeadline) {
+					signal := "pane-active"
+					if recentHB && !paneActive {
+						signal = "heartbeat"
+					} else if recentHB {
+						signal = "pane-active+heartbeat"
+					}
 					fmt.Fprintf(os.Stderr,
-						"daemon: pasteinject: quit-on-review-file: budget %v elapsed but reviewer pane active in %s; extending (hard ceiling %v)\n",
-						budget, wtPath, reviewFileHardCeiling)
+						"daemon: pasteinject: quit-on-review-file: budget %v elapsed but reviewer active (%s) in %s; extending (hard ceiling %v) [hk-60t8]\n",
+						budget, signal, wtPath, effectiveCeiling)
 					deadline = now.Add(reviewFileTimeout)
 					if deadline.After(hardDeadline) {
 						deadline = hardDeadline

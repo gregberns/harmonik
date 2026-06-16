@@ -1113,7 +1113,10 @@ func ExportedPasteInjectImplementerInitial(ctx context.Context, inj pasteInjecte
 // path is exercisable; pass nil inj to disable re-seed (the pre-hk-7rgqs
 // behaviour).
 //
-// Bead: hk-jimbc, hk-7rgqs.
+// hk-60t8: now takes eventCh (heartbeat channel; nil = disabled) and
+// overrideCeiling (0 = use reviewFileHardCeiling).
+//
+// Bead: hk-jimbc, hk-7rgqs, hk-60t8.
 func ExportedPasteInjectQuitOnReviewFile(
 	ctx context.Context,
 	qs quitSenderExported,
@@ -1122,8 +1125,10 @@ func ExportedPasteInjectQuitOnReviewFile(
 	claudeSessID string,
 	wtPath string,
 	briefDelivered <-chan struct{},
+	eventCh <-chan core.EventEnvelope,
+	overrideCeiling time.Duration,
 ) {
-	pasteInjectQuitOnReviewFile(ctx, qs, killer, inj, claudeSessID, wtPath, briefDelivered)
+	pasteInjectQuitOnReviewFile(ctx, qs, killer, inj, claudeSessID, wtPath, briefDelivered, eventCh, overrideCeiling)
 }
 
 // hk-sah87 diff-scaled reviewer-budget test seams.
@@ -1140,6 +1145,14 @@ var ExportedReviewFileHardCeiling = &reviewFileHardCeiling
 //
 // Bead: hk-sah87.
 var ExportedReviewFilePerKLineBudget = &reviewFilePerKLineBudget
+
+// ExportedReviewerHeartbeatActiveGrace is a pointer to the package-level
+// reviewerHeartbeatActiveGrace var.  Tests set *ExportedReviewerHeartbeatActiveGrace
+// to a short duration to exercise the heartbeat-based extension path without
+// waiting 10 minutes.
+//
+// Bead: hk-60t8.
+var ExportedReviewerHeartbeatActiveGrace = &reviewerHeartbeatActiveGrace
 
 // ExportedReviewBudgetForDiff exposes reviewBudgetForDiff for unit tests.
 //

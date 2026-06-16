@@ -91,6 +91,15 @@ EXAMPLES
 		case "--json":
 			jsonMode = true
 		default:
+			// Reject an UNRECOGNIZED leading-dash token LOUDLY (exit 2) instead of
+			// silently treating it as the <path> (which would surface only as an
+			// obscure exit-1 read error). Mirrors the keeper/queue parser-parity
+			// discipline (hk-t1wd / hk-snjr). A bare "-" (len 1) and genuine paths
+			// do not start with a dash, so real positionals are never swallowed.
+			if len(args[i]) > 1 && args[i][0] == '-' {
+				fmt.Fprintln(os.Stderr, "harmonik graph validate: unrecognized flag:", args[i])
+				return 2
+			}
 			if dotPath != "" {
 				fmt.Fprintln(os.Stderr, "harmonik graph validate: unexpected argument:", args[i])
 				return 2

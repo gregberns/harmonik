@@ -62,7 +62,19 @@ func parseQueueFlagsExtra(
 					continue
 				}
 			}
-			// Treat as positional (or unknown flag — passed through).
+			// Reject an UNRECOGNIZED leading-dash token LOUDLY (ok=false → exit 2)
+			// instead of silently consuming it as a positional. This mirrors the
+			// keeper subcommand parser-parity discipline (hk-t1wd / hk-snjr):
+			// every recognized flag is matched in an earlier case (or by the verb's
+			// extraFlagFn), so any remaining "--bogus"/"-x" is a typo the caller must
+			// see, not a queue name. A bare "-" (len 1) and all genuine positionals
+			// (bead IDs, queue names, file paths, group indices) do not start with a
+			// dash, so this never swallows real arguments.
+			if len(arg) > 1 && arg[0] == '-' {
+				fmt.Fprintf(errOut, "harmonik queue: unrecognized flag %q\n", arg)
+				return "", nil, false, false
+			}
+			// Treat as positional.
 			positional = append(positional, arg)
 			i++
 		}

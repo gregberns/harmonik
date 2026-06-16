@@ -76,13 +76,13 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 		case strings.HasPrefix(args[i], "--queue-id="):
 			queueIDFlag = strings.TrimPrefix(args[i], "--queue-id=")
 			return i + 1, true
-		case strings.HasPrefix(args[i], "--"):
-			// Unknown flag — let parseQueueFlagsExtra handle as positional.
 		}
+		// Any other "--flag" is unrecognized: parseQueueFlagsExtra rejects it
+		// loudly (exit 2) rather than swallowing it as a positional (hk-snjr).
 		return i, false
 	})
 	if !ok {
-		return 1
+		return exitTransportError
 	}
 
 	// Resolve the target queue. UUID lookup enumerates disk files; name-based

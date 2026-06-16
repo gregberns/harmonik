@@ -44,16 +44,20 @@ digraph "sub-workflow-commit-gate" {
 
     // ─── Nodes ───────────────────────────────────────────────────────────────
 
-    // build_check: build + static-analysis gate. Non-terminal. Routes to tests
-    // on SUCCESS; falls through to gate_fail on any failure (build error, vet
-    // warning promoted to error, or infrastructure failure).
+    // build_check: build + static-analysis + test-compile gate. Non-terminal.
+    // Routes to tests on SUCCESS; falls through to gate_fail on any failure
+    // (build error, vet warning promoted to error, a non-compiling _test.go file,
+    // or infrastructure failure). `go test -run=^$ ./...` runs NO tests — it is a
+    // COMPILE-ONLY test build that fails when any test references an undefined
+    // symbol, closing the hk-cmry hole where a RED-only commit slipped a
+    // build-only gate (go build skips _test.go) and reached the reviewers.
     build_check [
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="go build ./... && go vet ./...",
+        tool_command="go build ./... && go vet ./... && go test -run=^$ ./...",
         timeout="300",
-        role="build + vet gate; exit 0 = clean build, non-zero = build or vet failure"
+        role="build + vet + test-compile gate; exit 0 = clean build (incl. test files), non-zero = build, vet, or test-compile failure"
     ];
 
     // tests: affected-package-scoped scenario gate (fail-open on infra errors).

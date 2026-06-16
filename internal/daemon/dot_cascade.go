@@ -280,6 +280,19 @@ func driveDotWorkflow(
 	// implementer→reviewer cycles when the graph revisits implementer nodes.
 	var lastImplementerReviewerHarness core.AgentType
 
+	// axisReviewerVerdicts records the latest verdict produced by each
+	// reviewer-class node, keyed by node ID, during the current review pass. A
+	// consolidate-style join node (a reviewer with >= 2 upstream reviewer
+	// predecessors) reads its upstream axes from this map and routes on the
+	// DETERMINISTIC severity-max (BLOCK > REQUEST_CHANGES > APPROVE) of those
+	// axes — OVERRIDING its own self-reported verdict. This closes the
+	// review-integrity hole (hk-cmry) where a consolidate LLM that self-reports
+	// APPROVE while an upstream axis said REQUEST_CHANGES would route to close
+	// and merge unreviewed-rejected work. Reset whenever an implementer
+	// (re-)enters, so each fresh implementation cycle re-collects all axis
+	// verdicts before the next consolidate join.
+	axisReviewerVerdicts := make(map[string]string)
+
 	for visits := 0; visits < dotMaxNodeVisits; visits++ {
 		node := nodesByID[currentNodeID]
 		if node == nil {
@@ -466,6 +479,10 @@ func driveDotWorkflow(
 			if !isReviewer {
 				iterationCount++
 				reviewerNoVerdictRetries = 0
+				// hk-cmry: a fresh implementation cycle invalidates the prior
+				// pass's per-axis reviewer verdicts; clear them so the next
+				// consolidate join aggregates only the current cycle's axes.
+				axisReviewerVerdicts = make(map[string]string)
 				// T14 hk-iv748: capture the reviewer_harness override from this
 				// implementer node. A new implementer dispatch resets the override so
 				// stale values from prior implementer cycles do not bleed into the next.
@@ -514,6 +531,40 @@ func driveDotWorkflow(
 			}
 			outcome = nodeOutcome
 
+			// hk-cmry — DETERMINISTIC multi-reviewer severity-join.
+			//
+			// Record this reviewer node's self-reported verdict, then — if this
+			// node is a consolidate-style JOIN node (a reviewer with >= 2 upstream
+			// reviewer predecessors on the spine) — OVERRIDE the routing
+			// preferred_label with the severity-max (BLOCK > REQUEST_CHANGES >
+			// APPROVE) of those upstream per-axis verdicts. Routing MUST be the
+			// deterministic join, never the consolidate LLM's self-report, so a
+			// single over-lenient consolidate APPROVE can never merge work that
+			// any axis-reviewer rejected (review-integrity hole: an unreviewed
+			// RED-only commit reached main and broke the build fleet-wide).
+			//
+			// The consolidate node still produces a human-readable summary in
+			// .harmonik/review.json; only the ROUTING label is overridden here.
+			// Implementer-class nodes carry no preferred_label and are skipped.
+			if isReviewer && outcome.PreferredLabel != nil {
+				axisReviewerVerdicts[currentNodeID] = *outcome.PreferredLabel
+				if upstream, isJoin := isConsolidateJoinNode(graph, nodesByID, currentNodeID); isJoin {
+					upstreamVerdicts := make([]string, 0, len(upstream))
+					for id := range upstream {
+						if v, ok := axisReviewerVerdicts[id]; ok {
+							upstreamVerdicts = append(upstreamVerdicts, v)
+						}
+					}
+					if joined := verdictSeverityMax(upstreamVerdicts); joined != "" && joined != *outcome.PreferredLabel {
+						fmt.Fprintf(os.Stderr,
+							"daemon: dot: consolidate node %q self-reported %q; routing on deterministic severity-max %q of %d upstream axes %v [hk-cmry]\n",
+							currentNodeID, *outcome.PreferredLabel, joined, len(upstreamVerdicts), upstreamVerdicts)
+						joinedLabel := joined
+						outcome.PreferredLabel = &joinedLabel
+					}
+				}
+			}
+
 			// hk-8ps7q: remember the most recent reviewer verdict so the
 			// no-progress check above can distinguish an approved-and-done re-entry
 			// (complete-and-merge) from a genuinely-stuck REQUEST_CHANGES re-entry
@@ -522,9 +573,12 @@ func driveDotWorkflow(
 			// means the reviewer is no longer stalled.
 			// hk-m1wqp: also capture flags from the verdict so review_fixup_stalled
 			// can carry the specific REQUEST_CHANGES flags to triage.
-			if isReviewer && nodeOutcome.PreferredLabel != nil {
-				priorVerdict = *nodeOutcome.PreferredLabel
-				flags := nodeOutcome.PreferredLabelFlags
+			// hk-cmry: priorVerdict reflects the (possibly join-overridden) ROUTING
+			// label in `outcome`, so the no-progress / fix-loop logic sees the same
+			// verdict the cascade routes on.
+			if isReviewer && outcome.PreferredLabel != nil {
+				priorVerdict = *outcome.PreferredLabel
+				flags := outcome.PreferredLabelFlags
 				if flags == nil {
 					flags = []string{}
 				}
@@ -1434,6 +1488,107 @@ func nodeIsReviewer(node *dot.Node) bool {
 		return true
 	}
 	return node.HandlerRef == "claude-reviewer"
+}
+
+// verdictSeverity ranks a reviewer verdict on the BLOCK > REQUEST_CHANGES >
+// APPROVE severity ladder. Higher is more severe. An unrecognized verdict ranks
+// as REQUEST_CHANGES (1) — fail-toward-rejection, never silently APPROVE.
+func verdictSeverity(verdict string) int {
+	switch verdict {
+	case workspace.ReviewVerdictApprove:
+		return 0
+	case workspace.ReviewVerdictRequestChanges:
+		return 1
+	case workspace.ReviewVerdictBlock:
+		return 2
+	default:
+		// Unknown / empty: treat as REQUEST_CHANGES so a malformed value can
+		// never approve work. (Empty never reaches here in practice — the map
+		// only ever holds validated verdicts — but the guard is fail-closed.)
+		return 1
+	}
+}
+
+// verdictSeverityMax returns the most-severe verdict among the inputs on the
+// BLOCK > REQUEST_CHANGES > APPROVE ladder. Returns "" for an empty input.
+// This is the DETERMINISTIC severity-join the consolidate node's prose role=
+// string describes but cannot itself enforce — a single over-lenient consolidate
+// self-report can never approve work that any axis-reviewer rejected (hk-cmry).
+func verdictSeverityMax(verdicts []string) string {
+	best := ""
+	bestRank := -1
+	for _, v := range verdicts {
+		if r := verdictSeverity(v); r > bestRank {
+			bestRank = r
+			best = v
+		}
+	}
+	return best
+}
+
+// upstreamReviewerNodeIDs returns the set of reviewer-class node IDs that can
+// reach targetID through the graph's forward edges (i.e. the reviewer nodes that
+// run BEFORE targetID on the spine), excluding targetID itself. The
+// keeper-redesign graph wires
+// review_correctness → review_design → review_tests → consolidate, so all three
+// axis reviewers are transitive predecessors of consolidate.
+func upstreamReviewerNodeIDs(graph *dot.Graph, nodesByID map[string]*dot.Node, targetID string) map[string]bool {
+	// Build backward adjacency (ToNodeID -> []FromNodeID).
+	backward := make(map[string][]string, len(graph.Nodes))
+	for _, e := range graph.Edges {
+		backward[e.ToNodeID] = append(backward[e.ToNodeID], e.FromNodeID)
+	}
+	// BFS backward from targetID over all predecessors.
+	reviewers := make(map[string]bool)
+	seen := map[string]bool{targetID: true}
+	queue := append([]string{}, backward[targetID]...)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if n := nodesByID[id]; n != nil && nodeIsReviewer(n) {
+			reviewers[id] = true
+		}
+		queue = append(queue, backward[id]...)
+	}
+	return reviewers
+}
+
+// nodeRoutesOnPreferredLabel reports whether nodeID has at least one outgoing
+// edge whose condition references outcome.preferred_label. This is the structural
+// signature that distinguishes a verdict-JOIN node (e.g. consolidate, which
+// branches close / implement / close-needs-attention on the consolidated verdict)
+// from a per-axis reviewer (which routes UNCONDITIONALLY to the next reviewer).
+func nodeRoutesOnPreferredLabel(graph *dot.Graph, nodeID string) bool {
+	for _, e := range graph.Edges {
+		if e.FromNodeID != nodeID || e.Condition == nil {
+			continue
+		}
+		for _, c := range e.Condition.Clauses {
+			if c.LHS == "outcome.preferred_label" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isConsolidateJoinNode reports whether nodeID is a consolidate-style verdict
+// JOIN node: a reviewer node that (a) ROUTES on outcome.preferred_label AND (b)
+// has >= 2 upstream reviewer predecessors. Both conditions together uniquely
+// select the consolidate node and never a per-axis reviewer — axis reviewers
+// route unconditionally (fail condition a) even though, on a linear axis chain,
+// later axis reviewers do have >= 2 reviewer predecessors. Name-free so it holds
+// for any graph that follows the multi-reviewer-then-join shape (hk-cmry).
+func isConsolidateJoinNode(graph *dot.Graph, nodesByID map[string]*dot.Node, nodeID string) (upstream map[string]bool, ok bool) {
+	if !nodeRoutesOnPreferredLabel(graph, nodeID) {
+		return nil, false
+	}
+	upstream = upstreamReviewerNodeIDs(graph, nodesByID, nodeID)
+	return upstream, len(upstream) >= 2
 }
 
 // dotTerminalNodeIsSuccess classifies a terminal node as the success terminal

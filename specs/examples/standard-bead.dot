@@ -89,17 +89,25 @@ digraph "standard-bead" {
     // to be the dispatch default (hk-30vlb): a whole-repo `go test ./...` would
     // let a pre-existing RED test in an UNRELATED package block every bead.
     // build + vet stay whole-repo — a build break anywhere is legitimately fatal.
+    // `go test -run=^$ ./...` is a COMPILE-ONLY test build (no test runs): it
+    // compiles every _test.go file whole-repo and FAILS if any test references an
+    // undefined symbol. This closes the hk-cmry enabling hole — `go build` does
+    // NOT compile test files, and scenario-gate.sh is FAIL-OPEN on compile errors,
+    // so a RED-only commit (tests referencing undefined symbols) used to PASS the
+    // gate and reach the reviewers. A non-compiling test is a build break and is
+    // legitimately fatal, so this stays whole-repo (it runs no tests, so an
+    // unrelated pre-existing test FAILURE cannot block — only a compile break can).
     // Exit 0 (SUCCESS) → all checks pass → advance to review.
-    // Non-zero deterministic → build / vet / genuine test failure → loop back to implement (capped at 3).
+    // Non-zero deterministic → build / vet / test-compile / genuine test failure → loop back to implement (capped at 3).
     // Non-zero transient → infra glitch → self-loop retry (capped at 2).
     // Any other outcome → unconditional fallback → close-needs-attention.
     commit_gate [
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="go build ./... && go vet ./... && bash scripts/scenario-gate.sh",
+        tool_command="go build ./... && go vet ./... && go test -run=^$ ./... && bash scripts/scenario-gate.sh",
         timeout="900",
-        role="commit gate: build + vet + affected-package-scoped unit + scenario tests (fail-open); exit 0 = ready for review"
+        role="commit gate: build + vet + test-compile + affected-package-scoped unit + scenario tests (fail-open); exit 0 = ready for review"
     ];
 
     // review: agentic reviewer. Emits an Outcome whose preferred_label

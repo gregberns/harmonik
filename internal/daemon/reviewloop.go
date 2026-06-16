@@ -676,9 +676,15 @@ func runReviewLoop(
 			}
 			// Pass implSess as the killer so commitPollTimeout forces an exit;
 			// nil noChangeTimeoutCh — the reviewloop handles outcomes differently.
-			// nil eventCh — although implTapCh now exists (hk-kunm4), heartbeat
-			// staleness detection in pasteInjectQuitOnCommit is deferred (hk-7srrd).
-			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, nil, deps.bus, runID)
+			// hk-x78n: subscribe to implTap BEFORE launching the goroutine so no
+			// heartbeats are missed. Each tap.Subscribe() returns an independent
+			// fan-out channel (no competing-consumer race with implTapCh or the
+			// post-ready hang-detector). This makes the implementer-wait budget
+			// heartbeat-extended (matching the reviewer-side hk-60t8 pattern):
+			// each agent_heartbeat extends totalDeadline by commitPollTimeout;
+			// only a genuine heartbeat-stall or commitHardCeiling kills.
+			implHBCh := implTap.Subscribe()
+			go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, deps.bus, runID)
 		}
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).

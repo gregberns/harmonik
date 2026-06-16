@@ -517,6 +517,13 @@ EXAMPLES
 		return runScheduleSubcommand(os.Args[2:])
 	}
 
+	// harmonik sentinel <verb> — flywheel sentinel surface (flywheel V4, hk-9mr2).
+	// Exposes governor-trip exception writes to the adversary crew and operators.
+	// No daemon required; file-only operations.
+	if len(os.Args) >= 2 && os.Args[1] == "sentinel" {
+		return runSentinelSubcommand(os.Args[2:])
+	}
+
 	// harmonik goal-keeper [--project DIR] — ephemeral goal-state updater
 	// (flywheel V6, hk-owz1). Reads operator comms since the last_event_id
 	// cursor in .harmonik/intent/goal-state.json, appends new messages as

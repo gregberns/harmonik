@@ -59,6 +59,19 @@ type SubstrateSpawn struct {
 	// Argv is the binary and its arguments: Argv[0] is the binary path,
 	// Argv[1:] are the arguments. MUST be non-empty.
 	Argv []string
+
+	// StdinDevNull, when true, instructs the substrate to redirect stdin from
+	// /dev/null so the subprocess does not block waiting for terminal input.
+	//
+	// Required for ProcessExit harnesses (e.g. codex) that run inside a tmux
+	// pane: the pane PTY never sends EOF, causing codex 0.139.0 to block on
+	// "Reading additional input from stdin...". Redirecting stdin unblocks it.
+	//
+	// MUST NOT be set for claude (pane-paste harness): claude does not read
+	// stdin and the paste-inject path is unaffected.
+	//
+	// Bead: hk-rpr6.
+	StdinDevNull bool
 }
 
 // SubstrateSession is the daemon's handle on a subprocess hosted by a Substrate.

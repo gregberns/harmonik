@@ -641,12 +641,29 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 	}
 
 	// Build the tmux.NewWindowIn from SubstrateSpawn.
-	// Argv[0] is the binary; Argv[1:] are the arguments. tmux new-window takes
-	// a single shell command string, so we join with spaces. The argv is
-	// validated by the caller (buildClaudeLaunchSpec) before reaching here.
+	// Argv[0] is the binary; Argv[1:] are the arguments. tmux new-window passes
+	// the joined string to `sh -c`, which re-word-splits on whitespace. Shell-
+	// quote each element with single-quotes so argv values containing spaces
+	// (e.g. the codex multi-word seed prompt) survive as a single sh token.
+	// hk-rpr6: fixes codex ARGC=15 shattering that caused immediate exit-2.
 	command := ""
 	if len(in.Argv) > 0 {
-		command = strings.Join(in.Argv, " ")
+		quoted := make([]string, len(in.Argv))
+		for i, arg := range in.Argv {
+			quoted[i] = shellQuoteArg(arg)
+		}
+		command = strings.Join(quoted, " ")
+	}
+	// hk-rpr6: ProcessExit harnesses (codex) run in a tmux pane whose PTY never
+	// sends EOF, causing codex 0.139.0 to block on stdin indefinitely. Redirect
+	// stdin from /dev/null so codex does not stall after completing its work.
+	// The claude paste-inject path is unaffected (StdinDevNull is false for claude).
+	if in.StdinDevNull {
+		if command == "" {
+			command = "< /dev/null"
+		} else {
+			command += " < /dev/null"
+		}
 	}
 
 	params := tmux.NewWindowIn{
@@ -1923,4 +1940,14 @@ func (s *tmuxSubstrateSession) WindowHandle() string {
 // Spec ref: handler-contract.md HC-054; design §4 "Substrate seam".
 func (s *tmuxSubstrateSession) Stdout() io.Reader {
 	return nil
+}
+
+// shellQuoteArg wraps s in POSIX single-quotes, escaping any embedded
+// single-quote characters so the argument survives `sh -c` word-splitting as a
+// single token. Used by spawnWindowVia to protect multi-word argv values (e.g.
+// the codex seed prompt) from being shattered by the sh -c join.
+//
+// Bead: hk-rpr6.
+func shellQuoteArg(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

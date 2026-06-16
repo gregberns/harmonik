@@ -92,6 +92,13 @@ type LaunchSpec struct {
 	// Spec: specs/claude-hook-bridge.md §4.6.CHB-023.
 	StdoutWrapper func(io.Reader) io.Reader
 
+	// StdinDevNull, when true, is forwarded to SubstrateSpawn.StdinDevNull so
+	// the substrate can redirect stdin from /dev/null. Only meaningful when
+	// Substrate is non-nil. See SubstrateSpawn.StdinDevNull for semantics.
+	//
+	// Bead: hk-rpr6.
+	StdinDevNull bool
+
 	// Substrate, when non-nil, indicates the subprocess MUST be hosted inside
 	// a substrate-managed environment (e.g. a tmux window) rather than spawned
 	// directly via exec.CommandContext.
@@ -290,10 +297,11 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontract.SessionID, spec LaunchSpec) (Session, *handlercontract.Watcher, error) {
 	argv := append([]string{spec.Binary}, spec.Args...)
 	spawn := SubstrateSpawn{
-		WindowName: spec.WorkDir, // caller overrides via Substrate.SpawnWindow; opaque to handler
-		Cwd:        spec.WorkDir,
-		Env:        spec.Env,
-		Argv:       argv,
+		WindowName:   spec.WorkDir, // caller overrides via Substrate.SpawnWindow; opaque to handler
+		Cwd:          spec.WorkDir,
+		Env:          spec.Env,
+		Argv:         argv,
+		StdinDevNull: spec.StdinDevNull, // hk-rpr6: ProcessExit harnesses need /dev/null stdin
 	}
 
 	subSess, err := spec.Substrate.SpawnWindow(ctx, spawn)

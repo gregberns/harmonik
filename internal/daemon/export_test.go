@@ -2355,3 +2355,10 @@ func ExportedEnsureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA strin
 func ExportedCodexSeedPromptInstruction(beadID core.BeadID) string {
 	return fmt.Sprintf(codexSeedPromptTemplate, string(beadID))
 }
+
+// ExportedShellQuoteArg exposes shellQuoteArg for unit tests in package daemon_test.
+//
+// Bead ref: hk-rpr6.
+func ExportedShellQuoteArg(s string) string {
+	return shellQuoteArg(s)
+}

@@ -183,11 +183,12 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	}
 
 	return handler.LaunchSpec{
-		Binary:  binary,
-		Args:    args,
-		Env:     env,
-		WorkDir: rc.workspacePath,
-		Role:    "implementer",
+		Binary:       binary,
+		Args:         args,
+		Env:          env,
+		WorkDir:      rc.workspacePath,
+		Role:         "implementer",
+		StdinDevNull: true, // hk-rpr6: codex (ProcessExit) blocks on pane PTY stdin without EOF
 	}, nil
 }
 

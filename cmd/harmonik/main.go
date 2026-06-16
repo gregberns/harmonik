@@ -517,6 +517,20 @@ EXAMPLES
 		return runScheduleSubcommand(os.Args[2:])
 	}
 
+	// harmonik goal-keeper [--project DIR] — ephemeral goal-state updater
+	// (flywheel V6, hk-owz1). Reads operator comms since the last_event_id
+	// cursor in .harmonik/intent/goal-state.json, appends new messages as
+	// verbatim operator_directives, and exits. Spawned by the daemon's
+	// schedule primitive on idle-triggered realign; also callable manually.
+	// No daemon required.
+	if len(os.Args) >= 2 && os.Args[1] == "goal-keeper" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runGoalkeeperSubcommand(subArgs)
+	}
+
 	// harmonik graph <verb> — workflow graph utilities (hk-voyf4).
 	// Currently supports: graph validate <path>
 	// No daemon required; reads files directly.

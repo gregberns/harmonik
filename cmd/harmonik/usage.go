@@ -34,6 +34,7 @@ SUBCOMMANDS
   keeper           Context watcher for a managed agent pane (session-keeper Phase-1)
   beads-merge      Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
   smoke            5-signal end-to-end verification of a live daemon (hk-4rkrg)
+  goal-keeper      Update .harmonik/intent/goal-state.json from operator comms (flywheel V6)
   project-hash     Print the PL-006a project hash for a directory (no daemon required)
   tmux-start       Bootstrap a tmux session and start the daemon inside it
   hook-relay       Forward a Claude hook event to the daemon (internal use)

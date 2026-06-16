@@ -26,7 +26,7 @@
 
 import { Type } from "typebox";
 import type { ExtensionAPI, AgentToolResult } from "@earendil-works/pi-coding-agent";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
@@ -45,6 +45,7 @@ const NOTE_FILE = join(REPO_ROOT, ".harmonik/cognition/notes.jsonl");
 const COGNITION_DIR = join(REPO_ROOT, ".harmonik/cognition");
 const EVENTS_FILE = join(REPO_ROOT, ".harmonik/events/events.jsonl");
 const SKILLS_DIR = join(REPO_ROOT, ".flywheel/skills");
+const GOAL_STATE_FILE = join(REPO_ROOT, ".harmonik/intent/goal-state.json");
 
 // ── byte-stable prefix (CL-021 / CL-INV-003) ─────────────────────────────
 // Seeded into every fresh session (recycle via /reset) and marked with a
@@ -229,12 +230,20 @@ export default function activate(pi: ExtensionAPI) {
   const bridge = createEventBridge(harness, { repoRoot: REPO_ROOT, dispatcher });
   bridge.start();
 
-  // ── TUI digest panel (CL-082) ─────────────────────────────────────────
+  // ── TUI digest panel (CL-082) + goal-state injection (hk-owz1) ──────────
   // Start on first session_start; ctx.ui may be absent in non-interactive
   // (RPC/print) modes — guard with hasUI.
+  // Goal-state is injected ONCE per session start (not per-turn) per the
+  // flywheel V6 §6 design mandate: "NO per-turn injection."
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.hasUI) {
       digestPanel.start(ctx.ui);
+    }
+    // Inject goal-state as the first volatile message after the stable prefix.
+    // readGoalStateText() returns "" when the file is absent or empty — no-op.
+    const goalStateText = readGoalStateText();
+    if (goalStateText) {
+      pi.sendUserMessage?.(goalStateText, { deliverAs: "followUp" });
     }
   });
 
@@ -529,24 +538,70 @@ export default function activate(pi: ExtensionAPI) {
   // ── /reset: hard reseed via newSession (lives on command context) ───
   // CL-024: recycle sequence seeds the new session with:
   //   (1) STABLE_PREFIX_TEXT — byte-identical across all recycles (CL-INV-003)
-  //   (2) digest — volatile status sheet from harmonik digest
+  //   (2) goal-state — operator objectives/directives from .harmonik/intent/goal-state.json
+  //       (flywheel V6 hk-owz1; injected once per recycle, never per-turn)
+  //   (3) digest — volatile status sheet from harmonik digest
   // The context hook will inject cache_control onto (1) on the first model call,
   // marking the breakpoint between the stable prefix and volatile content.
   pi.registerCommand?.("reset", {
-    description: "Hard reset: open notes survive; reseed a new session from the stable prefix + digest.",
+    description: "Hard reset: open notes survive; reseed a new session from the stable prefix + goal-state + digest.",
     handler: async (_args, ctx) => {
       const digestText = await buildDigest();
+      const goalStateText = readGoalStateText();
       await ctx.newSession?.({
         parentSession: ctx.sessionManager?.getSessionFile() ?? undefined,
         withSession: async (rep) => {
           // (1) byte-stable prefix — same bytes every recycle
           rep.sendUserMessage?.(STABLE_PREFIX_TEXT, { deliverAs: "followUp" });
-          // (2) volatile digest below breakpoint
+          // (2) goal-state — operator intent (flywheel V6 hk-owz1)
+          if (goalStateText) {
+            rep.sendUserMessage?.(goalStateText, { deliverAs: "followUp" });
+          }
+          // (3) volatile digest below breakpoint
           rep.sendUserMessage?.(digestText, { deliverAs: "followUp" });
         },
       });
     },
   });
+}
+
+// ── goal-state reader (flywheel V6, hk-owz1) ─────────────────────────────
+// Goal-state is injected ONCE on session start / context recycle; never
+// per-turn (NO per-turn injection per §6 design mandate). The goal-keeper
+// (harmonik goal-keeper) maintains the file; this function reads it.
+interface GoalStateJSON {
+  schema_version?: number;
+  objectives?: string[];
+  antigoals?: string[];
+  operator_directives?: string[];
+  last_event_id?: string;
+}
+
+function readGoalStateText(): string {
+  if (!existsSync(GOAL_STATE_FILE)) {
+    return "";
+  }
+  try {
+    const raw = readFileSync(GOAL_STATE_FILE, "utf8");
+    const gs = JSON.parse(raw) as GoalStateJSON;
+    const lines: string[] = ["## Operator goal-state (.harmonik/intent/goal-state.json)"];
+    if (gs.objectives && gs.objectives.length > 0) {
+      lines.push("### Objectives");
+      for (const obj of gs.objectives) lines.push(`- ${obj}`);
+    }
+    if (gs.antigoals && gs.antigoals.length > 0) {
+      lines.push("### Anti-goals (do NOT do these)");
+      for (const ag of gs.antigoals) lines.push(`- ${ag}`);
+    }
+    if (gs.operator_directives && gs.operator_directives.length > 0) {
+      lines.push("### Recent operator directives (guidance, not law — get-shit-done protocol overrides)");
+      for (const d of gs.operator_directives) lines.push(`- ${d}`);
+    }
+    if (lines.length === 1) return ""; // only heading — nothing useful
+    return lines.join("\n");
+  } catch {
+    return "";
+  }
 }
 
 async function buildDigest(): Promise<string> {

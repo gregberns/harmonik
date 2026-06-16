@@ -233,6 +233,30 @@ function makeQueueAppend(harmonikBin: string, queueName?: string): DispatcherDep
   };
 }
 
+// ── Goal-keeper fire-and-forget ───────────────────────────────────────────────
+
+/**
+ * fireGoalKeeper spawns `harmonik goal-keeper --project <repoRoot>` as a
+ * detached fire-and-forget process (flywheel V6 idle-triggered realign,
+ * hk-owz1). Errors are non-fatal — if the goal-keeper fails the captain is
+ * woken anyway with whatever goal-state exists (possibly stale).
+ *
+ * Called on every empty-queue wake so the captain always sees the latest
+ * operator directives before deciding what to do next.
+ */
+function fireGoalKeeper(
+  harmonikBin: string,
+  repoRoot: string,
+  onCognitionEvent: (record: Record<string, unknown>) => void,
+): void {
+  const proc = spawn(harmonikBin, ["goal-keeper", "--project", repoRoot], {
+    stdio: "ignore",
+    detached: true,
+  });
+  proc.unref();
+  onCognitionEvent({ type: "goal_keeper_fired", repoRoot });
+}
+
 // ── createDispatcher ──────────────────────────────────────────────────────────
 
 export function createDispatcher(opts: DispatcherOptions): Dispatcher {
@@ -302,6 +326,11 @@ export function createDispatcher(opts: DispatcherOptions): Dispatcher {
         // CL-073: empty queue → wake model with kerf output as context.
         appendDispatchLog({ triggering_event_id: triggeringEventId, result: "empty_queue" });
         onCognitionEvent({ type: "eager_refill_kerf_empty", triggering_event_id: triggeringEventId });
+        // Idle-triggered goal-keeper realign (flywheel V6, hk-owz1): when the
+        // queue is empty and the captain is about to be woken to assess the
+        // situation, refresh the goal-state first so the captain sees the most
+        // recent operator directives. Fire-and-forget; failures are non-fatal.
+        fireGoalKeeper(harmonikBin, repoRoot, onCognitionEvent);
         onWakeModel("empty_queue", { kerfNextRaw });
         return;
       }

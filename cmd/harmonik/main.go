@@ -500,6 +500,17 @@ EXAMPLES
 		return runDecisionsSubcommand(os.Args[2:])
 	}
 
+	// harmonik captain  (alias: harmonik start captain) — bare launcher for the
+	// Captain LLM session: mint/validate a stable UUIDv4 --session-id and bring
+	// up `claude --remote-control` in a tmux session. It is a launcher, not a
+	// daemon — it never touches the pidfile lock. Bead ref: hk-ly0n.
+	if len(os.Args) >= 2 && os.Args[1] == "captain" {
+		return runCaptainSubcommand(os.Args[2:])
+	}
+	if len(os.Args) >= 3 && os.Args[1] == "start" && os.Args[2] == "captain" {
+		return runCaptainSubcommand(os.Args[3:])
+	}
+
 	// harmonik crew <verb> — captain & crew session management (C2).
 	// crew start/stop are daemon RPCs (exit 17 when daemon down).
 	// crew list is a local read that works daemon-down.

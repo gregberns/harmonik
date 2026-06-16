@@ -30,7 +30,22 @@ import (
 	"time"
 
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/workers"
 )
+
+// workerHarmonikPath resolves the absolute harmonik binary path ON THE WORKER,
+// used as the hook "command" in the worker's per-run .claude/settings.json
+// (hk-z8ek). Operators set it per-worker via workers.yaml (harmonik_path);
+// when unset it falls back to the documented Go-install convention
+// (workers.DefaultHarmonikPath). harmonik MUST be installed at this path on the
+// worker for the hook relay to fire — a worker-setup requirement the daemon
+// cannot fabricate.
+func workerHarmonikPath(w workers.Worker) string {
+	if w.HarmonikPath != "" {
+		return w.HarmonikPath
+	}
+	return workers.DefaultHarmonikPath
+}
 
 // workerSocketPollInterval is the cadence at which waitWorkerSocketLive probes
 // the worker-side reverse-tunnel socket. The socket should appear within ~1s of

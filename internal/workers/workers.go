@@ -41,7 +41,24 @@ type Worker struct {
 	RepoPath  string `yaml:"repo_path"`
 	MaxSlots  int    `yaml:"max_slots"`
 	Enabled   bool   `yaml:"enabled"`
+
+	// HarmonikPath is the absolute path to the harmonik binary ON THE WORKER.
+	// It is written as the hook "command" field in the worker's per-run
+	// .claude/settings.json so the worker-side claude can invoke `harmonik
+	// hook-relay` regardless of the spawned tmux window's $PATH (hk-z8ek; mirrors
+	// the box-A daemonBinaryPath / hk-kqdpf.6 rationale). When empty, callers fall
+	// back to DefaultHarmonikPath. Optional in workers.yaml (yaml: harmonik_path).
+	HarmonikPath string `yaml:"harmonik_path"`
 }
+
+// DefaultHarmonikPath is the conventional worker-side harmonik binary path used
+// when a Worker entry does not set HarmonikPath. It matches the Go-install
+// default ($HOME/go/bin/harmonik) on the canonical macOS worker, and is the same
+// fallback the release pipeline documents (specs/release-pipeline.md §BIN).
+// NOTE (hk-z8ek): harmonik MUST be installed at this path on the worker for the
+// hook relay to fire — a worker-setup requirement, not something the daemon can
+// fabricate.
+const DefaultHarmonikPath = "/Users/gb/go/bin/harmonik"
 
 // Config is the top-level structure decoded from .harmonik/workers.yaml.
 type Config struct {

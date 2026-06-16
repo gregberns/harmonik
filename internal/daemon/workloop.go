@@ -2854,6 +2854,17 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		extraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
 		baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 	}
+	// hk-z8ek: for a REMOTE run, thread the worker's SSHRunner into the launch
+	// spec so the three materialization writes (.claude/settings.json,
+	// .harmonik/agent-task.md, ~/.claude.json trust) land on the WORKER's
+	// filesystem — where the worktree actually lives — instead of box A's mirror
+	// path. Resolve the hook "command" to the worker's harmonik path too (the
+	// hook subprocess runs ON THE WORKER). Nil runner + empty workerBinaryPath
+	// for a LOCAL run keeps the materialization byte-identical (NFR7).
+	if rbc != nil {
+		rc.runner = rbc.sshRunner
+		rc.workerBinaryPath = workerHarmonikPath(rbc.worker)
+	}
 	// Use the pre-built routed specBuilder (set above, before the mode switch).
 	// deps.launchSpecBuilder is always non-nil here: the pre-build block ensures it
 	// (T12, hk-xhawy). specBuilder is a local alias for clarity.

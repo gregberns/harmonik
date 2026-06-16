@@ -184,23 +184,25 @@ type CyclerConfig struct {
 const defaultOperatorAttachedSampleInterval = time.Minute
 
 func (c *CyclerConfig) applyDefaults() {
+	// Threshold defaults are sourced from thresholds.go (the single source of
+	// truth shared with WatcherConfig.applyDefaults). Refs: hk-bpkv.
 	if c.ActAbsTokens <= 0 {
-		c.ActAbsTokens = 300_000
+		c.ActAbsTokens = defaultActAbsTokens
 	}
 	if c.ActPctCeil <= 0 {
-		c.ActPctCeil = 0.85
+		c.ActPctCeil = defaultActPctCeil
 	}
 	if c.WarnAbsTokens <= 0 {
-		c.WarnAbsTokens = 270_000
+		c.WarnAbsTokens = defaultWarnAbsTokens
 	}
 	if c.WarnPctCeil <= 0 {
-		c.WarnPctCeil = 0.70
+		c.WarnPctCeil = defaultWarnPctCeil
 	}
 	if c.ActPct <= 0 {
-		c.ActPct = 90.0
+		c.ActPct = defaultActPct
 	}
 	if c.WarnPct <= 0 {
-		c.WarnPct = 80.0
+		c.WarnPct = defaultWarnPct
 	}
 	// ForceAct thresholds are derived from their corresponding act thresholds so
 	// that a custom --act-pct/--act-abs-tokens never creates a dead zone where
@@ -208,13 +210,13 @@ func (c *CyclerConfig) applyDefaults() {
 	// Offset reduced from +80k to +40k per operator decision (hk-lhu2): the
 	// resulting default force_act=340k is the final operator-decided value.
 	if c.ForceActAbsTokens <= 0 {
-		c.ForceActAbsTokens = c.ActAbsTokens + 40_000
+		c.ForceActAbsTokens = c.ActAbsTokens + defaultForceActAbsOffset
 	}
 	if c.ForceActPctCeil <= 0 {
-		c.ForceActPctCeil = c.ActPctCeil + 0.10
+		c.ForceActPctCeil = c.ActPctCeil + defaultForceActPctCeilOffset
 	}
 	if c.ForceActPct <= 0 {
-		c.ForceActPct = c.ActPct + 5.0
+		c.ForceActPct = c.ActPct + defaultForceActPctOffset
 	}
 	if c.ForceRetryInterval <= 0 {
 		c.ForceRetryInterval = 120 * time.Second
@@ -299,25 +301,13 @@ func (c *CyclerConfig) applyDefaults() {
 // windows. When windowSize == 0 (old .ctx without window data) returns ActAbsTokens
 // so callers can still apply it as a hard cap if they have a token count.
 func (c *CyclerConfig) actThreshold(windowSize int64) int64 {
-	if windowSize > 0 {
-		pctBased := int64(c.ActPctCeil * float64(windowSize))
-		if pctBased < c.ActAbsTokens {
-			return pctBased
-		}
-	}
-	return c.ActAbsTokens
+	return minAbsOrPctCeil(c.ActAbsTokens, c.ActPctCeil, windowSize)
 }
 
 // warnThreshold returns the effective absolute-token warn/re-arm threshold for
 // the given windowSize, using the same min(abs, pct*window) formula as actThreshold.
 func (c *CyclerConfig) warnThreshold(windowSize int64) int64 {
-	if windowSize > 0 {
-		pctBased := int64(c.WarnPctCeil * float64(windowSize))
-		if pctBased < c.WarnAbsTokens {
-			return pctBased
-		}
-	}
-	return c.WarnAbsTokens
+	return minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, windowSize)
 }
 
 // belowActThreshold reports whether cf is below the cycle-trigger threshold.
@@ -342,13 +332,7 @@ func (c *CyclerConfig) belowWarnThreshold(cf *CtxFile) bool {
 // forceActThreshold returns the effective absolute-token forced-clear threshold
 // using the same min(abs, pct*window) formula as actThreshold.
 func (c *CyclerConfig) forceActThreshold(windowSize int64) int64 {
-	if windowSize > 0 {
-		pctBased := int64(c.ForceActPctCeil * float64(windowSize))
-		if pctBased < c.ForceActAbsTokens {
-			return pctBased
-		}
-	}
-	return c.ForceActAbsTokens
+	return minAbsOrPctCeil(c.ForceActAbsTokens, c.ForceActPctCeil, windowSize)
 }
 
 // aboveForceThreshold reports whether cf is at or above the hard forced-clear

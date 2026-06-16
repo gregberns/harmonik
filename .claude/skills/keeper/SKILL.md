@@ -268,7 +268,7 @@ in-flight queue work has completed. Exit codes: `0` removed (or already absent);
 |---|---|---|---|
 | **WARN** (≥270k tokens abs / `--warn-pct` fallback) | injects warn text, emits `session_keeper_warn` | **Keep working.** Optionally refresh `HANDOFF-<agent>.md`. | **Keep working.** At the next clean idle point: write `HANDOFF-captain.md` (include the KEEPER nonce), run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, and stop typing. |
 | **ACT** (≥300k / `--act-pct`, CrispIdle, no dispatch hold) | runs handoff → nonce-poll → `/clear` → `/session-resume` | **Nothing.** Hold with `keeper set-dispatching` if mid-dispatch. | **Nothing** — same cycle fires if the captain has not already triggered restart-now. |
-| **FORCE-ACT** (≥380k / `--act-pct` 95) | runs the cycle **unconditionally** (bypasses CrispIdle) | **Nothing** — the safety net for a never-idle session. | **Nothing** — same safety net; always fires regardless of restart-now status. |
+| **FORCE-ACT** (≥340k / `--act-pct` 95) | runs the cycle **unconditionally** (bypasses CrispIdle) | **Nothing** — the safety net for a never-idle session. | **Nothing** — same safety net; always fires regardless of restart-now status. |
 | **captain restart-now** | `RunOnDemand`: bypasses CrispIdle gate, runs cycle immediately on next tick | — | Captain writes handoff + nonce, then calls `harmonik keeper restart-now --agent captain`. |
 | **operator attached** | act-path goes **warn-only**: destructive injection suppressed so keeper never races human keystrokes; warn/gauge continue; cycle resumes once operator detaches | nothing (`cycle.go:128-137`, hk-6qf) | nothing |
 
@@ -394,9 +394,11 @@ mission (known-workarounds.md §Crew context management).
   `clear-dispatching`, flags, exit codes, `keeperTopUsage`.
 - `cmd/harmonik/keeper_enable_doctor_cmd.go` — `enable` / `doctor`, the
   settings.json wiring, the doctor check table, usage strings.
-- `internal/keeper/cycle.go` — the threshold defaults (270k warn/300k act/380k force-act), the
-  `min(abs, pct*window)` formula, CrispIdle / force-act / operator-attached
-  gating.
+- `internal/keeper/thresholds.go` — the single source of truth for the threshold
+  defaults (270k warn/300k act/340k force-act) and the `min(abs, pct*window)`
+  formula, shared by both watcher and cycler.
+- `internal/keeper/cycle.go` — CrispIdle / force-act / operator-attached gating
+  and the reset-cycle state machine.
 - `internal/keeper/watcher.go` — the poll loop, `FallbackWindowSize`, warn
   emission.
 - `cmd/harmonik/keeper_dispatching_cmd_hkrc51s_test.go` — the

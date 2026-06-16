@@ -441,17 +441,19 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.PollInterval <= 0 {
 		c.PollInterval = 5 * time.Second
 	}
+	// Warn-band defaults are sourced from thresholds.go (the single source of
+	// truth shared with CyclerConfig.applyDefaults). Refs: hk-bpkv.
 	if c.WarnPct <= 0 {
-		c.WarnPct = 80.0
+		c.WarnPct = defaultWarnPct
 	}
 	if c.WarnAbsTokens <= 0 {
-		c.WarnAbsTokens = 270_000
+		c.WarnAbsTokens = defaultWarnAbsTokens
 	}
 	if c.FallbackWindowSize <= 0 {
-		c.FallbackWindowSize = 200_000
+		c.FallbackWindowSize = defaultFallbackWindowSize
 	}
 	if c.WarnPctCeil <= 0 {
-		c.WarnPctCeil = 0.70
+		c.WarnPctCeil = defaultWarnPctCeil
 	}
 	if c.IdleQuiesce <= 0 {
 		c.IdleQuiesce = 8 * time.Second
@@ -551,14 +553,8 @@ func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
 		if windowSize == 0 {
 			windowSize = c.FallbackWindowSize
 		}
-		threshold := c.WarnAbsTokens
-		if c.WarnPctCeil > 0 && windowSize > 0 {
-			pctBased := int64(c.WarnPctCeil * float64(windowSize))
-			if pctBased < threshold {
-				threshold = pctBased
-			}
-		}
-		return cf.Tokens < threshold
+		// Shared min(abs, pctCeil*window) formula — single impl in thresholds.go.
+		return cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, windowSize)
 	}
 	return cf.Pct < c.WarnPct
 }

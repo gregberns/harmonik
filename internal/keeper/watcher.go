@@ -354,6 +354,31 @@ type WatcherConfig struct {
 	// Sourced from .harmonik/config.yaml keeper.warn_messages.on_demand_warn_text.
 	// Refs: hk-lhu2.
 	OnDemandWarnText string
+
+	// HeartbeatEnabled turns on the keeper-side gauge heartbeat (hk-81wk). When
+	// enabled, every tick on which the gauge has aged past HeartbeatThreshold while
+	// the tmux pane is still alive re-writes .ctx with a fresh timestamp (and a
+	// transcript-derived token count when available), so the gauge NEVER goes stale
+	// on a live agent — the dominant no_gauge:stale failure that killed BOTH keeper
+	// triggers. Requires TmuxTarget to be non-empty (the pane-alive gate); a no-op
+	// otherwise, which keeps the no-tmux unit-test path unchanged. The standalone
+	// `harmonik keeper` process enables it (keeper_cmd.go). Default: false.
+	// Refs: hk-81wk; codename:keeper-redesign.
+	HeartbeatEnabled bool
+
+	// HeartbeatThreshold is the gauge age at which the heartbeat refreshes .ctx.
+	// MUST be < Staleness so the refresh lands before the stale branch is reached.
+	// Default: Staleness/2.
+	// Refs: hk-81wk.
+	HeartbeatThreshold time.Duration
+
+	// TranscriptDir overrides the Claude Code transcript projects directory the
+	// heartbeat reads to derive the live token count. When empty it is derived as
+	// ~/.claude/projects/<munged ProjectDir>. Set in tests. A wrong/empty value
+	// only loses token freshness — the heartbeat still carries the last-good
+	// reading forward, so gauge liveness is unaffected.
+	// Refs: hk-81wk.
+	TranscriptDir string
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -378,6 +403,12 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.Staleness <= 0 {
 		c.Staleness = 120 * time.Second
+	}
+	// HeartbeatThreshold defaults to half of Staleness: refresh well before the
+	// stale branch (≈60 s at the 120 s default) so a live agent's gauge never
+	// reaches Staleness. Refs: hk-81wk.
+	if c.HeartbeatThreshold <= 0 {
+		c.HeartbeatThreshold = c.Staleness / 2
 	}
 	if c.ReadManagedSessionFn == nil {
 		c.ReadManagedSessionFn = ReadManagedSessionID
@@ -645,6 +676,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
 				continue
 			}
+
+			// ── keeper-side heartbeat (hk-81wk) ──────────────────────────────
+			// The gauge's only other writer is keeper-statusline.sh, which fires
+			// on UI repaint and SKIPS the write on NA/absent pct (after /clear, or
+			// when a session stops repainting). On a LIVE agent the gauge can then
+			// age into the stale branch below and `continue` past BOTH triggers.
+			// Once the gauge is aging while the pane is still alive, re-write .ctx
+			// with a fresh ts (transcript-derived tokens when available) so a live
+			// agent's gauge NEVER goes stale. No-op when the pane is idle so the
+			// respawn path stays intact.
+			w.maybeHeartbeat(ctx, ctxFile, time.Since(modTime))
 
 			// ── gauge stale ──────────────────────────────────────────────────
 			if time.Since(modTime) >= w.cfg.Staleness {

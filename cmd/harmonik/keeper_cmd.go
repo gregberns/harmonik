@@ -221,6 +221,12 @@ func runKeeperSubcommand(args []string) int {
 		// standalone keeper; it reuses the FileEmitter (appends to the same
 		// events.jsonl) and derives EventsJSONLPath from ProjectDir in applyDefaults.
 		ReapDecisions: true,
+		// hk-81wk: keep the gauge live independent of statusLine repaint. Once the
+		// gauge ages toward Staleness while the tmux pane is still alive, the watcher
+		// re-writes .ctx with a fresh ts (transcript-derived token count when
+		// available), so a live agent's gauge NEVER goes stale — the dominant
+		// no_gauge:stale failure that killed both keeper triggers.
+		HeartbeatEnabled: true,
 	}
 	w := keeper.NewWatcher(cfg, emitter)
 	if runErr := w.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {

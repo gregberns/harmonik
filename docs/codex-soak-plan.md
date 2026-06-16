@@ -290,3 +290,48 @@ Track per batch and cumulatively in `docs/codex-soak-log.md` (or a sibling table
 Gate to production-enable: billing-correct rate = 100% across ≥ ~20 runs, AND a no_commit
 rate low enough to be operationally acceptable (or G1 fixed first). File a bead per gap
 (§0) you want closed before flipping `--default-harness codex` on the real fleet.
+
+---
+
+## 9. Operator soak methodology (batch-and-investigate) — REQUIRED
+
+> Per operator directive (2026-06-16, via captain). Applies once the daemon path is
+> unblocked (§10) and the captain GREENs the resume.
+
+Run codex through **30+ small beads total** to flush ALL issues — but **NEVER fire them all
+at once**. Use small batches with investigation between each:
+
+1. **Batch of 2–3** beads (one `harmonik queue submit --queue codexcrew` of 2–3 `harness:codex` beads).
+2. **Investigate EACH run** before the next batch — five dimensions per run:
+   - **spawn:** did codex actually launch? (`session_log_location agent_type=codex`, NOT claude — guards hk-lr5t)
+   - **complete:** reached completion without `agent_ready_timeout`? (guards hk-f6g7)
+   - **commit:** merged HEAD carries the `Refs:<bead>` trailer? (guards hk-gd9r — daemon fallback vs codex self-commit)
+   - **billing:** ChatGPT-billed, no API-key leak (§6 checks, every run)
+   - **output quality:** is the diff what the bead asked for?
+3. **Adjust if needed** — any daemon bug found routes to thufir; any harness/bead-shape issue → refine + re-run.
+4. **Next batch of 2–3 → investigate → repeat**, ramping batch size up only as runs prove clean, to **30+ total**.
+
+Each batch's findings feed the next. Pacing still ≤4–5 concurrent (§7); back off on rate-limit.
+
+### Bead sourcing (staged risk)
+- **Early batches (first ~2): throwaway / low-stakes ONLY** — `docs/codex-soak-log.md` appends. codex
+  self-commit is freshly fixed (hk-gd9r); do **NOT** risk real work until **2 batches prove clean**
+  (spawn + complete + commit + billing all green).
+- **Later batches: small REAL beads** from the backlog (`br ready --limit 0`, pick trivial/safe) —
+  but **review codex's output before it merges** (codex is unproven; verify each diff).
+
+---
+
+## 10. Preconditions to resume the real harness soak (post-fix)
+
+BLOCKED until thufir lands these (filed 2026-06-16, `codename:codex-harness`) + captain redeploys + GREENs:
+- **hk-lr5t** (P1) — `harness:codex` routes to claude → codex must actually spawn.
+- **hk-f6g7** (P1) — HC-056 `agent_ready` gate (all modes incl DOT) → codex must reach completion.
+- **hk-gd9r** (P1) — `--sandbox workspace-write` blocks `.git` self-commit → daemon-side commit fallback (or loosened sandbox).
+- **hk-mzgh** (P2) — thread_id→resume wiring + drop `-C` on the resume subcommand (only for codex WITH review-loop/iter≥2; single-turn soak unaffected).
+
+LIVE-TEST PROVEN (2026-06-16, standalone): codex CLI works; ChatGPT-subscription billing correct every
+run (no API-key leak); `codex exec resume <thread_id>` carries context + re-tasks (commits with `Refs:`);
+latency ~33s median single-turn (8–70s), resume 4–9s. So once the four beads land, codex is expected to
+soak cleanly. On GREEN: re-arm `harmonik subscribe`, then run §9 batch-and-investigate; verify each run's
+`agent_type=codex` + a `Refs:` commit before scaling.

@@ -3507,7 +3507,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, deps.projectDir, dirtyFiles)
 		failReason := fmt.Sprintf("implementer_escaped_worktree: %d file(s) dirty in main: %s",
 			len(dirtyFiles), strings.Join(dirtyFiles, ", "))
-		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+		if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason); reopenErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED (escaped_worktree) bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually (hk-s20z)\n",
+				beadID, runID.String(), reopenErr)
+		}
 		emitDone(false, failReason)
 		return
 	}
@@ -3546,7 +3549,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// review-loop no-commit guard (reviewloop.go ~567), which never had the
 		// escape.
 		failReason := fmt.Sprintf("no_commit_during_implementer: HEAD did not advance past parent %s at iteration 1 exit=%d", headSHA, ei.exitCode)
-		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+		if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason); reopenErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED (no_commit) bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually (hk-s20z)\n",
+				beadID, runID.String(), reopenErr)
+		}
 		emitDone(false, failReason)
 		return
 	}
@@ -3734,7 +3740,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					beadID, runID.String(), truncated, tail)
 				failReason += fmt.Sprintf(" stderr_tail%s=%q", truncated, tail)
 			}
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason)
+			if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason); reopenErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED (run-failed) bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually (hk-s20z)\n",
+					beadID, runID.String(), reopenErr)
+			}
 			emitDone(false, fmt.Sprintf("auto-reopen: %s", failReason))
 		}
 	}

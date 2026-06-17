@@ -116,9 +116,9 @@ func TestWorkLoop_ShutdownDrainsCommittedRun_hkdnrg(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:    ledger,
-		Bus:          collector,
-		ProjectDir:   projectDir,
+		BrAdapter:     ledger,
+		Bus:           collector,
+		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		// Long-running handler: stays alive while the test cancels the context.
 		// The shutdown path must detect the pre-committed worktree HEAD and drain.

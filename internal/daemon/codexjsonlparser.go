@@ -41,6 +41,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"sync"
 )
 
 // codexEventKind classifies a parsed codex JSONL event into the small set of
@@ -213,6 +215,85 @@ type codexRunArtifacts struct {
 	// event. Empty unless turnFailed is true (and even then may be empty if codex
 	// omitted the error message).
 	turnFailureMessage string
+}
+
+// codexThreadIDInterceptor wraps an io.Reader (codex JSONL stdout) and fires a
+// callback exactly once when it captures a non-empty thread_id from the first
+// thread.started event in the stream. All bytes are passed through to callers
+// unchanged so the SpawnWatcher can process them normally.
+//
+// This is the codex analog of SessionIDInterceptor (sessioncontext_chb023.go) for
+// the claude harness. It is line-buffered: bytes accumulate until a '\n' boundary
+// is found, then the complete JSONL line is parsed by parseCodexJSONLEvent +
+// captureCodexThreadID. The callback fires at most once (first thread_id wins).
+//
+// Usage:
+//
+//	cb := func(threadID string) { sessionIDCh <- threadID }
+//	implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
+//	    return newCodexThreadIDInterceptor(r, cb)
+//	}
+//
+// Bead: hk-mzgh (G2 — codex thread_id capture into resume path).
+type codexThreadIDInterceptor struct {
+	mu        sync.Mutex
+	inner     io.Reader
+	buf       bytes.Buffer
+	firedOnce bool
+	arts      codexRunArtifacts
+	cb        func(string)
+}
+
+// newCodexThreadIDInterceptor wraps inner and fires cb with the captured
+// thread_id on the first thread.started JSONL event.
+func newCodexThreadIDInterceptor(inner io.Reader, cb func(string)) *codexThreadIDInterceptor {
+	return &codexThreadIDInterceptor{inner: inner, cb: cb}
+}
+
+// Read implements io.Reader. Bytes are passed through unchanged; each complete
+// JSONL line is also parsed for the thread_id side-effect.
+func (c *codexThreadIDInterceptor) Read(p []byte) (int, error) {
+	n, err := c.inner.Read(p)
+	if n > 0 {
+		c.mu.Lock()
+		c.buf.Write(p[:n])
+		c.checkBuffer()
+		c.mu.Unlock()
+	}
+	return n, err
+}
+
+// checkBuffer scans c.buf for complete JSONL lines and fires the callback on
+// the first line that yields a non-empty capturedThreadID. Called with c.mu held.
+func (c *codexThreadIDInterceptor) checkBuffer() {
+	if c.firedOnce {
+		return
+	}
+	for {
+		b := c.buf.Bytes()
+		idx := bytes.IndexByte(b, '\n')
+		if idx < 0 {
+			break
+		}
+		line := make([]byte, idx)
+		copy(line, b[:idx])
+		c.buf.Next(idx + 1)
+
+		if len(line) == 0 {
+			continue
+		}
+
+		ev, err := parseCodexJSONLEvent(line)
+		if err != nil {
+			continue
+		}
+		captureCodexThreadID(&c.arts, ev)
+		if c.arts.capturedThreadID != "" {
+			c.firedOnce = true
+			c.cb(c.arts.capturedThreadID)
+			return
+		}
+	}
 }
 
 // captureCodexThreadID folds a parsed codexEvent into the run artifacts.

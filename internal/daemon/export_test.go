@@ -2362,3 +2362,15 @@ func ExportedCodexSeedPromptInstruction(beadID core.BeadID) string {
 func ExportedShellQuoteArg(s string) string {
 	return shellQuoteArg(s)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// codex thread_id interceptor test seams (hk-mzgh)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedNewCodexThreadIDInterceptor exposes newCodexThreadIDInterceptor for
+// tests in package daemon_test.
+//
+// Bead ref: hk-mzgh.
+func ExportedNewCodexThreadIDInterceptor(inner io.Reader, cb func(string)) io.Reader {
+	return newCodexThreadIDInterceptor(inner, cb)
+}

@@ -109,8 +109,16 @@ func TestBuildCodexLaunchSpec_ResumeTurn(t *testing.T) {
 	// AC2.2: argv[0]="exec" argv[1]="resume" argv[2]=<thread_id>
 	codexLaunchSpecAssertArgv(t, spec.Args, true, threadID)
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--json")
-	codexLaunchSpecAssertArgContains(t, spec.Args, "-C")
-	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "-C", rc.WorkspacePath)
+
+	// hk-mzgh: codex exec resume rejects -C (exit 2: "unexpected argument -C found").
+	// The resume subcommand must NOT pass -C; WorkDir in the LaunchSpec sets CWD.
+	for _, arg := range spec.Args {
+		if arg == "-C" {
+			t.Errorf("resume argv must not contain -C; codex exec resume rejects it: %v", spec.Args)
+			break
+		}
+	}
+
 	codexLaunchSpecAssertSeedPrompt(t, spec.Args, rc.BeadID)
 }
 

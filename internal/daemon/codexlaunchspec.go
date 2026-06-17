@@ -146,11 +146,12 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	seedPrompt := fmt.Sprintf(codexSeedPromptTemplate, rc.beadID)
 	var args []string
 	if rc.priorThreadID != nil {
+		// codex exec resume does NOT accept -C (exit 2: "unexpected argument -C found").
+		// WorkDir in the returned LaunchSpec sets the subprocess working directory.
 		args = []string{
 			"exec", "resume", *rc.priorThreadID,
 			"--json",
 			"--sandbox", "workspace-write",
-			"-C", rc.workspacePath,
 			seedPrompt,
 		}
 	} else {

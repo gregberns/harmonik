@@ -295,6 +295,23 @@ func runReviewLoop(
 		}
 		implSpec.Substrate = implSubstrate
 
+		// hk-mzgh: For SessionIDCaptured harnesses (codex): force the exec path so
+		// that stdout is exposed as an io.Reader and StdoutWrapper can fire. The tmux
+		// substrate returns Stdout()==nil (handler.launchViaSubstrate returns early),
+		// so StdoutWrapper is never called and thread_id is never captured. Clearing
+		// Substrate selects exec.CommandContext, which wires a real stdout pipe.
+		// Paste injection and waitAgentReady are already gated on CompletionProcessExit
+		// so they are safe to skip without a tmux pane.
+		implIsSessionIDCaptured := false
+		if deps.harnessRegistry != nil {
+			if implH, implHErr := deps.harnessRegistry.ForAgent(artifactAgentType(implArtifacts)); implHErr == nil {
+				implIsSessionIDCaptured = implH.SessionIDPolicy() == handlercontract.SessionIDCaptured
+			}
+		}
+		if implIsSessionIDCaptured {
+			implSpec.Substrate = nil
+		}
+
 		// Prepend deps.handlerArgs so test handlers (e.g. /bin/sh scriptPath) are invoked
 		// correctly. For production (claude binary, empty handlerArgs) this is a no-op.
 		// The session-id / resume flags from buildClaudeLaunchSpec follow the script path.
@@ -334,64 +351,82 @@ func runReviewLoop(
 		var implSess handler.Session
 
 		if state.iterationCount == 1 {
-			// Capture loop variables for the closure.
-			capturedWtPath := wtPath
-			capturedRunID := runID
-			capturedBus := deps.bus
-			capturedCtx := ctx
-			capturedContextCommitSHACh := contextCommitSHACh
+			if implIsSessionIDCaptured {
+				// hk-mzgh: Codex path — capture thread_id from the first thread.started
+				// JSONL event on the exec-path stdout pipe. No CHB-023 checkpoint commit
+				// (codex uses no context persist) and no version_selected ACK (codex
+				// communicates only via argv/JSONL, not the hook-bridge handshake).
+				capturedSessionIDCh := sessionIDFromCapabilities
+				implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
+					return newCodexThreadIDInterceptor(r, func(threadID string) {
+						capturedSessionIDCh <- threadID
+					})
+				}
+			} else {
+				// Claude path: wire a SessionIDInterceptor on the progress stream so the
+				// daemon can extract claude_session_id from handler_capabilities, persist
+				// it to git (CHB-023), and release the version_selected ACK before the
+				// handler execs Claude.
+				//
+				// Capture loop variables for the closure.
+				capturedWtPath := wtPath
+				capturedRunID := runID
+				capturedBus := deps.bus
+				capturedCtx := ctx
+				capturedContextCommitSHACh := contextCommitSHACh
 
-			implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
-				return newSessionIDInterceptor(r, func(id string) {
-					// Fired on the Watcher's goroutine (inside Read).
-					// Spawn a goroutine to persist + ACK so the Watcher is not blocked.
-					//
-					// CHB-023 ordering: git commit → transition_event → ACK.
-					//
-					// REMOTE-RUN NOTE (FLAGGED follow-up): persistClaudeSessionID
-					// commits into capturedWtPath via a box-A-local git/os.WriteFile.
-					// For a remote run capturedWtPath is on the worker, so the persist
-					// fails and the goroutine signals empty → the loop falls back to
-					// session-id synthesis (non-fatal; iteration 1 still proceeds, and
-					// the version_selected ACK is still sent below). The CHB-023
-					// context-commit baseline is not written on the worker; a
-					// worker-routed persistClaudeSessionIDVia is part of the
-					// multi-iteration remote follow-up bundle.
-					go func() {
-						res, persistErr := persistClaudeSessionID(capturedCtx, capturedWtPath, capturedRunID, id)
-						if persistErr != nil {
-							fmt.Fprintf(os.Stderr,
-								"daemon: reviewloop: persist claude_session_id: %v (continuing without persistence)\n", persistErr)
-							// Signal empty so the review loop falls back to synthesis.
-							sessionIDFromCapabilities <- ""
-							capturedContextCommitSHACh <- ""
-							return
-						}
-						if !res.Skipped {
-							// EM-025a: emit transition_event AFTER git commit.
-							emitClaudeSessionIDPersisted(capturedCtx, capturedBus, capturedRunID, res.CommitSHA, id)
-							capturedContextCommitSHACh <- res.CommitSHA
-						} else {
-							// Idempotent: CHB-023 commit already on the branch (daemon-restart +
-							// resume). Resolve the current HEAD so the no-commit guard has the
-							// correct post-context-commit baseline.
-							sha, resolveErr := resolveWorktreeHEAD(capturedCtx, capturedWtPath)
-							if resolveErr != nil {
-								sha = ""
+				implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
+					return newSessionIDInterceptor(r, func(id string) {
+						// Fired on the Watcher's goroutine (inside Read).
+						// Spawn a goroutine to persist + ACK so the Watcher is not blocked.
+						//
+						// CHB-023 ordering: git commit → transition_event → ACK.
+						//
+						// REMOTE-RUN NOTE (FLAGGED follow-up): persistClaudeSessionID
+						// commits into capturedWtPath via a box-A-local git/os.WriteFile.
+						// For a remote run capturedWtPath is on the worker, so the persist
+						// fails and the goroutine signals empty → the loop falls back to
+						// session-id synthesis (non-fatal; iteration 1 still proceeds, and
+						// the version_selected ACK is still sent below). The CHB-023
+						// context-commit baseline is not written on the worker; a
+						// worker-routed persistClaudeSessionIDVia is part of the
+						// multi-iteration remote follow-up bundle.
+						go func() {
+							res, persistErr := persistClaudeSessionID(capturedCtx, capturedWtPath, capturedRunID, id)
+							if persistErr != nil {
+								fmt.Fprintf(os.Stderr,
+									"daemon: reviewloop: persist claude_session_id: %v (continuing without persistence)\n", persistErr)
+								// Signal empty so the review loop falls back to synthesis.
+								sessionIDFromCapabilities <- ""
+								capturedContextCommitSHACh <- ""
+								return
 							}
-							capturedContextCommitSHACh <- sha
-						}
-						// CHB-023: ACK (version_selected) AFTER the git commit.
-						// implSess is read from the outer variable; this goroutine
-						// runs only after Launch returns (the Watcher starts after
-						// Launch), so implSess is already set.
-						if ackErr := sendVersionSelectedACK(capturedCtx, implSess); ackErr != nil {
-							fmt.Fprintf(os.Stderr,
-								"daemon: reviewloop: sendVersionSelectedACK: %v (non-fatal)\n", ackErr)
-						}
-						sessionIDFromCapabilities <- id
-					}()
-				})
+							if !res.Skipped {
+								// EM-025a: emit transition_event AFTER git commit.
+								emitClaudeSessionIDPersisted(capturedCtx, capturedBus, capturedRunID, res.CommitSHA, id)
+								capturedContextCommitSHACh <- res.CommitSHA
+							} else {
+								// Idempotent: CHB-023 commit already on the branch (daemon-restart +
+								// resume). Resolve the current HEAD so the no-commit guard has the
+								// correct post-context-commit baseline.
+								sha, resolveErr := resolveWorktreeHEAD(capturedCtx, capturedWtPath)
+								if resolveErr != nil {
+									sha = ""
+								}
+								capturedContextCommitSHACh <- sha
+							}
+							// CHB-023: ACK (version_selected) AFTER the git commit.
+							// implSess is read from the outer variable; this goroutine
+							// runs only after Launch returns (the Watcher starts after
+							// Launch), so implSess is already set.
+							if ackErr := sendVersionSelectedACK(capturedCtx, implSess); ackErr != nil {
+								fmt.Fprintf(os.Stderr,
+									"daemon: reviewloop: sendVersionSelectedACK: %v (non-fatal)\n", ackErr)
+							}
+							sessionIDFromCapabilities <- id
+						}()
+					})
+				}
 			}
 		}
 
@@ -882,7 +917,11 @@ func runReviewLoop(
 			// we skip it on remote (avoids a guaranteed-error log every remote run).
 			// A worker-routed persist (persistClaudeSessionIDVia) is FLAGGED as
 			// multi-iteration follow-up.
-			if runner == nil && interceptorID == "" && state.claudeSessionID == implArtifacts.claudeSessionID && implArtifacts.claudeSessionID != "" {
+			// hk-mzgh: skip CHB-023 fallback persist for SessionIDCaptured harnesses
+			// (codex). Their session id is the captured thread_id, not a minted UUID;
+			// persisting implArtifacts.claudeSessionID (a tracking UUID, not a real codex
+			// thread_id) would write a useless value and misrepresent the state.
+			if runner == nil && interceptorID == "" && state.claudeSessionID == implArtifacts.claudeSessionID && implArtifacts.claudeSessionID != "" && !implIsSessionIDCaptured {
 				res, persistErr := persistClaudeSessionID(ctx, wtPath, runID, state.claudeSessionID)
 				if persistErr != nil {
 					fmt.Fprintf(os.Stderr,

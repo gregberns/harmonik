@@ -162,6 +162,11 @@ func TestCodexHarness_LaunchSpec_ResumeDelegates(t *testing.T) {
 
 	// argv: exec resume <thread_id> ...
 	codexHarnessAssertArgContainsSeq(t, spawn.Args, "exec", "resume", threadID)
+
+	// hk-mzgh: codex exec resume rejects -C; it must be absent from the resume argv.
+	if codexHarnessArgsContain(spawn.Args, "-C") {
+		t.Errorf("resume argv must not contain -C (codex exec resume rejects it): %v", spawn.Args)
+	}
 }
 
 // TestCodexHarness_LaunchSpec_CustomBinary verifies the constructor's codexBinary

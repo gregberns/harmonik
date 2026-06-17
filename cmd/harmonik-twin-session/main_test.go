@@ -382,6 +382,28 @@ func TestStatuslineSuppressed(t *testing.T) {
 	}
 }
 
+// TestParseFlags_ResumeStatuslineOnClear covers the hk-nlio test-only knob: it
+// defaults off and is enabled by --resume-statusline-on-clear. The end-to-end
+// resume behavior is exercised by the keeper integration gate
+// (TestIntegration_TwinE2E_OperatorRealEnv).
+func TestParseFlags_ResumeStatuslineOnClear(t *testing.T) {
+	base := []string{"--project", "/p", "--statusline", "/s", "--idle-hook", "/h"}
+	cfg, err := parseFlags(base)
+	if err != nil {
+		t.Fatalf("parseFlags(base): %v", err)
+	}
+	if cfg.resumeStatuslineOnClear {
+		t.Error("resumeStatuslineOnClear must default to false")
+	}
+	cfg, err = parseFlags(append(base, "--resume-statusline-on-clear"))
+	if err != nil {
+		t.Fatalf("parseFlags(+flag): %v", err)
+	}
+	if !cfg.resumeStatuslineOnClear {
+		t.Error("--resume-statusline-on-clear must set resumeStatuslineOnClear")
+	}
+}
+
 func TestNewUUIDv4_IsV4AndUnique(t *testing.T) {
 	seen := make(map[string]bool)
 	for i := 0; i < 1000; i++ {

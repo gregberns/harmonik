@@ -188,6 +188,13 @@ type twTwinSpec struct {
 	// the session stays alive (idle hook + growth keep running). 0 = never.
 	// Downstream gauge-liveness / force-restart beads reuse this single definition.
 	suppressAfter time.Duration
+	// resumeStatuslineOnClear passes the twin's --resume-statusline-on-clear flag:
+	// a /clear lifts an active suppressAfter so the post-clear session resumes
+	// emitting (the gauge re-appears with the rotated session_id). This is what
+	// lets the operator real-env cycle present a STALE gauge before /clear yet a
+	// FRESH, rebound gauge after — the headline hk-nlio scenario. Single
+	// definition; downstream force-restart/live-recovery beads reuse it.
+	resumeStatuslineOnClear bool
 }
 
 // twStartTwin launches the twin binary as the foreground process of a new,
@@ -215,6 +222,9 @@ func twStartTwin(t *testing.T, spec twTwinSpec) string {
 	}
 	if spec.suppressAfter > 0 {
 		cmd += fmt.Sprintf(" --suppress-statusline-after %s", spec.suppressAfter)
+	}
+	if spec.resumeStatuslineOnClear {
+		cmd += " --resume-statusline-on-clear"
 	}
 
 	args := []string{"new-session", "-d", "-s", sess}
@@ -459,6 +469,385 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 	// (e) handoff_started emitted exactly once (cycle was auditable).
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
 		t.Errorf("tw: want 1 handoff_started; got %d", n)
+	}
+}
+
+// TestIntegration_TwinE2E_OperatorRealEnv is the KEEPER-REDESIGN HEADLINE
+// VALIDATION GATE (bead hk-nlio). It drives the FULL clear→restart cycle against
+// the faithful session twin in a real tmux pane, REAL statusLine pipeline, and
+// REAL keeper.InjectText — but it first reconstructs the operator's actual
+// failure environment, the one the redesign was built to survive:
+//
+//	(1) HIGH CONTEXT — tokens past the act threshold on a [1m] (1M-window) model,
+//	    so the gauge reports an absolute-token view well above Act 300k.
+//	(2) STALE GAUGE while the pane is ALIVE — the statusLine emit is suppressed
+//	    (the .ctx FREEZES) while the idle hook keeps firing (the .idle marker
+//	    advances). This is the "gauge stale on a live agent" condition that used
+//	    to blind the keeper (no_gauge:stale / gauge-NA stall).
+//	(3) IDLE / REMOTE-CONTROL CLIENT ATTACHED — the operator drives via the
+//	    iOS / `claude --remote-control` channel, so a tmux client is attached but
+//	    its #{client_activity} is frozen at attach time. The keeper MUST NOT
+//	    treat that as a live typist and false-suppress the cycle (hk-0t5s).
+//
+// It then asserts the full cycle COMPLETES and REBINDS IDENTITY:
+//
+//	handoff → confirm-nonce → /clear → session-id FLIP (a fresh, valid UUIDv4,
+//	NOT v7) → /session-resume, with .managed rebound to the rotated session_id.
+//
+// Plus the standing invariants that the redesign locks in:
+//   - no-auto-clear: EXACTLY ONE /clear is injected, and only AFTER the handoff
+//     nonce confirmed — the old identity-disambiguation heuristic loop is dead.
+//   - SetManagedSession is called EXACTLY ONCE, with the rotated session_id.
+//   - the cycle is NOT suppressed by the idle/remote-control client (0
+//     operator_attached events; the cycle completes).
+//
+// ACCEPTANCE: RED on a pre-redesign main (identity-binding / gauge-liveness /
+// operator-attached / live-pane beads absent); GREEN once they all land. This is
+// the deterministic "it works" gate. The LIVE-SOAK with a real attached client
+// over a >5-min idle window is the INDEPENDENT-verifier step recorded in the
+// epic acceptance procedure — NOT this deterministic test.
+func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
+	twRequireTmux(t)
+
+	project := t.TempDir()
+	agent := fmt.Sprintf("twe2eop%d", rand.Int64()) //nolint:gosec // G404: test-local agent-name uniqueness
+	twin := twBuildTwin(t, project)
+	statusline, idleHook := twScripts(t)
+
+	// Opt the agent in (.managed) so the REAL IsManaged gate passes; start with an
+	// empty binding (the watcher would latch the first gauge tick in production).
+	if err := keeper.WriteManagedSessionID(project, agent, ""); err != nil {
+		t.Fatalf("tw: WriteManagedSessionID: %v", err)
+	}
+
+	// (1) HIGH CONTEXT on a 1M window: start low and grow past Act 300k, then
+	// (2) FREEZE the gauge after suppressAfter while keeping the pane alive, and
+	// resume emitting on /clear so the post-clear rotated SID becomes observable
+	// (the operator's stale-gauge-then-recover path).
+	const emitEvery = 150 * time.Millisecond
+	sess := twStartTwin(t, twTwinSpec{
+		project:                 project,
+		agent:                   agent,
+		twin:                    twin,
+		statusline:              statusline,
+		idleHook:                idleHook,
+		model:                   "claude-opus-4-8 [1m]",
+		window:                  1_000_000,
+		growth:                  60_000,
+		startTokens:             50_000, // post-/clear reset value — must be well below Act.
+		emitEvery:               emitEvery,
+		suppressAfter:           2500 * time.Millisecond,
+		resumeStatuslineOnClear: true,
+	})
+
+	// Wait (via the REAL .ctx) for tokens to cross the act threshold while the
+	// gauge is still fresh — this is the seed reading the keeper acts on.
+	seed := twWaitForCtxTokens(t, project, agent, 300_000, 8*time.Second)
+	seedSID := seed.SessionID
+	if seedSID == "" {
+		t.Fatal("tw: seed .ctx has empty session_id")
+	}
+	if seed.WindowSize != 1_000_000 {
+		t.Fatalf("tw: seed .ctx window_size = %d; want 1000000 (the [1m] absolute-token view)", seed.WindowSize)
+	}
+	if !keeper.CrispIdle(project, agent) {
+		t.Fatal("tw: CrispIdle false at seed — the twin's .idle marker did not register a crisp boundary")
+	}
+
+	// (2) Prove the gauge is now STALE while the pane is ALIVE: wait past the
+	// suppression deadline, then confirm the .ctx modTime is FROZEN across a
+	// sampling window while the .idle marker keeps ADVANCING.
+	time.Sleep(2500*time.Millisecond + 4*emitEvery)
+	_, ctxMod1, err := keeper.ReadCtxFile(project, agent)
+	if err != nil {
+		t.Fatalf("tw: read .ctx (stale sample 1): %v", err)
+	}
+	idle1, err := os.Stat(twIdlePath(project, agent))
+	if err != nil {
+		t.Fatalf("tw: stat .idle (sample 1): %v", err)
+	}
+	time.Sleep(6 * emitEvery)
+	_, ctxMod2, err := keeper.ReadCtxFile(project, agent)
+	if err != nil {
+		t.Fatalf("tw: read .ctx (stale sample 2): %v", err)
+	}
+	idle2, err := os.Stat(twIdlePath(project, agent))
+	if err != nil {
+		t.Fatalf("tw: stat .idle (sample 2): %v", err)
+	}
+	if !ctxMod2.Equal(ctxMod1) {
+		t.Fatalf("tw: gauge .ctx advanced (%s → %s); the operator-real-env precondition is a STALE gauge", ctxMod1, ctxMod2)
+	}
+	if !idle2.ModTime().After(idle1.ModTime()) {
+		t.Fatalf("tw: .idle did not advance (%s → %s); the pane must stay ALIVE under a stale gauge", idle1.ModTime(), idle2.ModTime())
+	}
+	if !keeper.CrispIdle(project, agent) {
+		t.Fatal("tw: CrispIdle false under the stale gauge — a live pane must still present a crisp boundary")
+	}
+
+	// (3) IDLE / REMOTE-CONTROL CLIENT: feed a STALE #{client_activity} line to the
+	// PRODUCTION distinction logic with the PRODUCTION window. operatorActiveSince
+	// must read NOT-active (the client is attached but idle), so the cycle proceeds
+	// rather than false-suppressing (hk-0t5s). Exercising the real parser keeps the
+	// gate faithful; the live attached-client soak is the human-verifier step.
+	operatorAttached := func(_ string) bool {
+		staleClient := fmt.Sprintf("%d\n", time.Now().Add(-10*time.Minute).Unix())
+		return keeper.OperatorActiveSinceForTest(staleClient, time.Now(), keeper.OperatorActiveWindowForTest)
+	}
+	if operatorAttached(sess) {
+		t.Fatal("tw: idle/remote-control client mis-read as ACTIVE — it would false-suppress the cycle")
+	}
+
+	// Recording wrappers around the PRODUCTION fns so the no-auto-clear and
+	// SetManagedSession-called-once invariants are observable while still driving
+	// the REAL tmux injection + REAL .managed write.
+	var injects []string
+	recInject := func(ctx context.Context, target, text string) error {
+		injects = append(injects, text)
+		return keeper.InjectText(ctx, target, text)
+	}
+	var setManagedSIDs []string
+	recSetManaged := func(projectDir, agentName, sessionID string) error {
+		setManagedSIDs = append(setManagedSIDs, sessionID)
+		return keeper.WriteManagedSessionID(projectDir, agentName, sessionID)
+	}
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.CyclerConfig{
+		AgentName:           agent,
+		ProjectDir:          project,
+		TmuxTarget:          sess,
+		HandoffTimeout:      10 * time.Second,
+		ClearSettle:         6 * time.Second,
+		PollInterval:        150 * time.Millisecond,
+		InjectFn:            recInject,
+		SetManagedSessionFn: recSetManaged,
+		OperatorAttachedFn:  operatorAttached,
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// Watch for the post-/clear token RESET on the rotated session (immune to the
+	// resumed emitter's regrowth), exactly as the happy-path E2E does.
+	stopWatch := make(chan struct{})
+	resetCh := make(chan int64, 1)
+	go twWatchForReset(project, agent, seedSID, stopWatch, resetCh)
+
+	if err := cycler.MaybeRun(context.Background(), seed); err != nil {
+		close(stopWatch)
+		t.Fatalf("tw: MaybeRun: %v", err)
+	}
+	close(stopWatch)
+	minPostClearTokens := <-resetCh
+
+	// (a) Nonce landed in the HANDOFF file (handoff confirmed — the /clear precondition).
+	handoffPath := filepath.Join(project, "HANDOFF-"+agent+".md")
+	hb, err := os.ReadFile(handoffPath) //nolint:gosec // G304: test-local temp path
+	if err != nil {
+		t.Fatalf("tw: read HANDOFF: %v", err)
+	}
+	if !strings.Contains(string(hb), "<!-- KEEPER:") {
+		t.Fatalf("tw: HANDOFF file missing keeper nonce; got:\n%s", hb)
+	}
+
+	// (b) SESSION-ID FLIP: a new, valid UUIDv4 (keeper rejects v7) replaced the seed.
+	final, _, err := keeper.ReadCtxFile(project, agent)
+	if err != nil {
+		t.Fatalf("tw: read final .ctx: %v", err)
+	}
+	if final.SessionID == seedSID {
+		t.Fatalf("tw: session_id did not flip on /clear (still %q) — the cycle did not happen", seedSID)
+	}
+	if !twIsValidUUIDv4(final.SessionID) {
+		t.Fatalf("tw: rotated session_id %q is not a valid UUIDv4", final.SessionID)
+	}
+
+	// (c) Tokens dropped after /clear (context was actually shed).
+	if minPostClearTokens < 0 {
+		t.Errorf("tw: never observed a reading on the rotated session — cannot confirm the token reset")
+	} else if minPostClearTokens >= seed.Tokens {
+		t.Errorf("tw: tokens did not drop after /clear: min-on-new-session=%d >= seed=%d", minPostClearTokens, seed.Tokens)
+	}
+
+	// (d) IDENTITY REBOUND: .managed now holds the rotated session_id, and IsManaged
+	// stays true (the opt-in marker is preserved across the cycle).
+	if !keeper.IsManaged(project, agent) {
+		t.Error("tw: agent no longer .managed after the cycle — the opt-in marker must be preserved")
+	}
+	boundSID, err := keeper.ReadManagedSessionID(project, agent)
+	if err != nil {
+		t.Fatalf("tw: ReadManagedSessionID: %v", err)
+	}
+	if boundSID != final.SessionID {
+		t.Errorf("tw: .managed rebound to %q; want the rotated SID %q", boundSID, final.SessionID)
+	}
+
+	// (e) cycle_complete with prev==seed and new==rotated; NO aborted.
+	complete := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
+	if len(complete) != 1 {
+		t.Fatalf("tw: want 1 cycle_complete; got %d", len(complete))
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
+		t.Errorf("tw: want 0 cycle_aborted; got %d", n)
+	}
+	var cp core.SessionKeeperCycleCompletePayload
+	if err := json.Unmarshal(complete[0].Payload, &cp); err != nil {
+		t.Fatalf("tw: unmarshal cycle_complete: %v", err)
+	}
+	if cp.PrevSessionID != seedSID {
+		t.Errorf("tw: cycle_complete.prev_session_id = %q; want %q", cp.PrevSessionID, seedSID)
+	}
+	if cp.NewSessionID != final.SessionID {
+		t.Errorf("tw: cycle_complete.new_session_id = %q; want %q", cp.NewSessionID, final.SessionID)
+	}
+
+	// (f) NO operator-attached suppression (the idle/remote-control client was
+	// correctly read as not-a-live-typist).
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached)); n != 0 {
+		t.Errorf("tw: want 0 operator_attached events for an IDLE/remote-control client; got %d", n)
+	}
+
+	// (g) NO-AUTO-CLEAR invariant: EXACTLY ONE /clear, injected only AFTER the
+	// handoff and before the resume — the deterministic 7-step cycle, with the old
+	// heuristic auto-clear loop dead.
+	handoffIdx, clearIdx, resumeIdx := -1, -1, -1
+	clears := 0
+	for i, text := range injects {
+		switch {
+		case strings.Contains(text, "/session-handoff"):
+			if handoffIdx < 0 {
+				handoffIdx = i
+			}
+		case strings.Contains(text, "/session-resume"):
+			resumeIdx = i
+		case strings.Contains(text, "/clear"):
+			clears++
+			clearIdx = i
+		}
+	}
+	if clears != 1 {
+		t.Errorf("tw: want exactly 1 /clear injection (no-auto-clear); got %d (%v)", clears, injects)
+	}
+	if !(handoffIdx >= 0 && handoffIdx < clearIdx && clearIdx < resumeIdx) {
+		t.Errorf("tw: inject order must be handoff(%d) < clear(%d) < resume(%d): %v", handoffIdx, clearIdx, resumeIdx, injects)
+	}
+
+	// (h) SetManagedSession called EXACTLY ONCE, with the rotated SID.
+	if len(setManagedSIDs) != 1 {
+		t.Fatalf("tw: want SetManagedSession called exactly once; got %d (%v)", len(setManagedSIDs), setManagedSIDs)
+	}
+	if setManagedSIDs[0] != final.SessionID {
+		t.Errorf("tw: SetManagedSession called with %q; want the rotated SID %q", setManagedSIDs[0], final.SessionID)
+	}
+
+	// (i) handoff_started emitted exactly once (the cycle was auditable).
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+		t.Errorf("tw: want 1 handoff_started; got %d", n)
+	}
+}
+
+// TestIntegration_TwinE2E_DefaultsPin asserts the STANDING band-PIN invariant in
+// the same suite as the headline gate (hk-nlio): the resolved CyclerConfig
+// defaults are the operator-decided Act 300k / 0.85, Warn 270k / 0.70, and
+// Force +40k → 340k / 0.95. NO band retune — widening the band is an operator
+// HARD-NO. A value drifting here fails the gate. Refs: hk-lhu2, hk-bpkv,
+// codename:keeper-redesign.
+func TestIntegration_TwinE2E_DefaultsPin(t *testing.T) {
+	d := keeper.ResolveCyclerDefaultsForTest()
+	cases := []struct {
+		name string
+		got  float64
+		want float64
+	}{
+		{"ActAbsTokens", float64(d.ActAbsTokens), 300_000},
+		{"ActPctCeil", d.ActPctCeil, 0.85},
+		{"WarnAbsTokens", float64(d.WarnAbsTokens), 270_000},
+		{"WarnPctCeil", d.WarnPctCeil, 0.70},
+		{"ForceActAbsTokens", float64(d.ForceActAbsTokens), 340_000},
+		{"ForceActPctCeil", d.ForceActPctCeil, 0.95},
+		{"ActPct", d.ActPct, 90},
+		{"WarnPct", d.WarnPct, 80},
+		{"ForceActPct", d.ForceActPct, 95},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s = %v; want %v (operator-pinned band — NO retune)", c.name, c.got, c.want)
+		}
+	}
+
+	// Operator idle/remote-control-vs-live-typist distinction (the guard the
+	// headline relies on to NOT false-suppress). Exercises the production parser.
+	now := time.Now()
+	w := keeper.OperatorActiveWindowForTest
+	live := fmt.Sprintf("%d\n", now.Unix())                      // keystroke just now → live typist.
+	idle := fmt.Sprintf("%d\n", now.Add(-10*time.Minute).Unix()) // frozen at attach → remote-control.
+	if !keeper.OperatorActiveSinceForTest(live, now, w) {
+		t.Error("tw: a just-now keystroke must read as an ACTIVE live typist (suppress)")
+	}
+	if keeper.OperatorActiveSinceForTest(idle, now, w) {
+		t.Error("tw: an idle/remote-control client (stale activity) must read as NOT active (proceed)")
+	}
+	if keeper.OperatorActiveSinceForTest("", now, w) {
+		t.Error("tw: no attached client must read as NOT active")
+	}
+}
+
+// TestIntegration_TwinE2E_GaugeStateTransitions is the gauge-state-transition
+// table standing invariant (hk-nlio). It drives the REAL keeper.Cycler.MaybeRun
+// across representative gauge states and asserts the fire/no-fire decision,
+// pinning the effective band BEHAVIORALLY: Act 300k absolute on a 1M window,
+// Act 0.85*window on a 200k window, and Force 340k bypassing CrispIdle. A fired
+// cycle emits handoff_started (here it then aborts on the missing nonce, since
+// there is no real pane — fire/no-fire is all this table cares about).
+func TestIntegration_TwinE2E_GaugeStateTransitions(t *testing.T) {
+	cases := []struct {
+		name      string
+		window    int64
+		tokens    int64
+		crispIdle bool
+		wantFired bool
+	}{
+		{"1m-below-act", 1_000_000, 299_999, true, false},
+		{"1m-at-act", 1_000_000, 300_000, true, true},
+		{"1m-below-warn", 1_000_000, 269_999, true, false},
+		{"200k-below-act-ceil", 200_000, 169_999, true, false}, // 0.85*200k = 170k
+		{"200k-at-act-ceil", 200_000, 170_000, true, true},
+		{"1m-act-but-not-crisp", 1_000_000, 300_000, false, false},   // act but below force, not idle → no fire
+		{"1m-force-bypasses-crisp", 1_000_000, 340_000, false, true}, // force bypasses CrispIdle
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			em := &keeper.RecordingEmitter{}
+			cfg := keeper.CyclerConfig{
+				AgentName:           "twe2egst",
+				ProjectDir:          t.TempDir(),
+				TmuxTarget:          "", // no real pane: a fired cycle aborts on the missing nonce.
+				HandoffTimeout:      200 * time.Millisecond,
+				PollInterval:        30 * time.Millisecond,
+				ClearSettle:         30 * time.Millisecond,
+				IsManagedFn:         func(_, _ string) bool { return true },
+				CrispIdleFn:         func(_, _ string) bool { return c.crispIdle },
+				HoldingDispatchFn:   func(_, _ string) bool { return false },
+				HandoffFilePath:     func(_, _ string) string { return filepath.Join(t.TempDir(), "HANDOFF.md") },
+				ReadHandoff:         func(_ string) (string, error) { return "", nil }, // never confirms → abort.
+				TruncateHandoffFn:   func(_ string) error { return nil },
+				WriteJournalFn:      func(_ string, _ *keeper.CycleJournal) error { return nil },
+				SetManagedSessionFn: func(_, _, _ string) error { return nil },
+				InjectFn:            func(_ context.Context, _, _ string) error { return nil },
+			}
+			cycler := keeper.NewCycler(cfg, em)
+			cf := &keeper.CtxFile{
+				Tokens:     c.tokens,
+				WindowSize: c.window,
+				SessionID:  fmt.Sprintf("sess-gst-%s", c.name),
+			}
+			if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+				t.Fatalf("MaybeRun: %v", err)
+			}
+			fired := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)) > 0
+			if fired != c.wantFired {
+				t.Errorf("fired=%v; want %v (tokens=%d window=%d crisp=%v)", fired, c.wantFired, c.tokens, c.window, c.crispIdle)
+			}
+		})
 	}
 }
 

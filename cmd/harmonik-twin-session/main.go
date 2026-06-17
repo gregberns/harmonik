@@ -49,6 +49,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -81,6 +82,18 @@ type config struct {
 	// goes STALE — the input the keeper's gauge-liveness / force-restart paths
 	// need. 0 (the default) never suppresses. Test-only knob; NO production change.
 	suppressAfter time.Duration
+
+	// resumeStatuslineOnClear, when true, LIFTS an active --suppress-statusline-after
+	// suppression the moment a /clear is processed, so the post-clear session
+	// resumes emitting statusLine JSON. This models the operator's REAL recovery
+	// path: the gauge froze on a live, high-context agent (stale gauge + live
+	// pane), the keeper drove the reset cycle, and the fresh post-/clear session
+	// is healthy again — its statusLine resumes and the gauge re-appears with the
+	// rotated session_id. Without this knob a suppressed gauge would never show
+	// the post-/clear session_id, so the keeper could not rebind .managed to it.
+	// Test-only knob; NO production behavior change. Refs: hk-nlio (operator
+	// real-env validation gate).
+	resumeStatuslineOnClear bool
 }
 
 // twinState is the mutable state shared between the emitter goroutine and the
@@ -144,8 +157,14 @@ func run(args []string) int {
 	if cfg.suppressAfter > 0 {
 		suppressDeadline = time.Now().Add(cfg.suppressAfter)
 	}
+	// resumed is flipped to true by the REPL goroutine when a /clear is processed
+	// under --resume-statusline-on-clear; it lifts the suppression deadline so the
+	// post-clear session resumes emitting. An atomic.Bool keeps suppressDeadline
+	// itself read-only (no data race with the emitter goroutine) while the pure
+	// statuslineSuppressed helper stays untouched.
+	var resumed atomic.Bool
 	emit := func(j []byte) {
-		if statuslineSuppressed(suppressDeadline, time.Now()) {
+		if statuslineSuppressed(suppressDeadline, time.Now()) && !resumed.Load() {
 			return
 		}
 		runStatusline(cfg, j)
@@ -173,10 +192,19 @@ func run(args []string) int {
 	for sc.Scan() {
 		line := sc.Text()
 		if changed := st.handleLine(line); changed {
+			// changed==true only for a /clear (the sole state-mutating command:
+			// it resets tokens and rotates the session_id). Under
+			// --resume-statusline-on-clear, lift the suppression so the fresh
+			// post-clear session resumes emitting — modeling a healthy agent
+			// recovering after the keeper's reset cycle (the gauge re-appears with
+			// the rotated session_id so the keeper can rebind .managed to it).
+			if cfg.resumeStatuslineOnClear {
+				resumed.Store(true)
+			}
 			// Re-emit immediately so a /clear's new session_id / reset tokens
 			// reach the gauge without waiting a full tick, then mark idle. Honors
-			// the suppression deadline so a suppressed gauge stays stale even
-			// across a /clear.
+			// the suppression deadline (unless lifted above) so a suppressed gauge
+			// otherwise stays stale even across a /clear.
 			emit(st.buildStatusJSON())
 		}
 		// Every handled line is an await-input boundary.
@@ -199,6 +227,7 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.model, "model", "claude-opus-4-8 [1m]", "model id reported in the statusLine JSON")
 	fs.BoolVar(&cfg.emitNA, "emit-na", false, "emit a non-numeric used_percentage (\"NA\") so the statusLine script skips the .ctx write (models the post-/clear NA statusLine)")
 	fs.DurationVar(&cfg.suppressAfter, "suppress-statusline-after", 0, "stop emitting statusLine JSON after this much elapsed time so the gauge .ctx goes stale; 0 never suppresses (idle hook + growth keep running)")
+	fs.BoolVar(&cfg.resumeStatuslineOnClear, "resume-statusline-on-clear", false, "lift --suppress-statusline-after on the first /clear so the post-clear session resumes emitting (models the operator's stale-gauge-then-recover path)")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
 	}

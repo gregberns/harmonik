@@ -1638,10 +1638,15 @@ var reviewFileTimeout = 10 * time.Minute
 // heartbeat-based extension added in the same bead.  40 min gives those
 // reviewers sufficient runway while still bounding a genuinely hung session.
 //
+// hk-4p2h: raised from 40 to 60 minutes — coupled with the reviewFilePerKLineBudget
+// increase (5→10 min/kline), a 2000-line diff now gets a 30-min base budget with
+// room for up to three 10-min heartbeat-based extensions before hitting the ceiling.
+// The 60-min ceiling remains well below the 90-min implementer hard ceiling.
+//
 // Declared as var so tests can override.
 //
-// Bead: hk-sah87, hk-60t8.
-var reviewFileHardCeiling = 40 * time.Minute
+// Bead: hk-sah87, hk-60t8, hk-4p2h.
+var reviewFileHardCeiling = 60 * time.Minute
 
 // reviewerHeartbeatActiveGrace is the window after the most-recent
 // agent_heartbeat within which the reviewer is considered "actively reasoning"
@@ -1662,15 +1667,22 @@ var reviewFileHardCeiling = 40 * time.Minute
 var reviewerHeartbeatActiveGrace = 10 * time.Minute
 
 // reviewFilePerKLineBudget is the extra wait granted per 1000 changed lines in
-// the diff under review, added on top of reviewFileTimeout.  5 minutes/1000
-// lines means a 2000-line diff gets 10 (base) + 10 = 20 min, a 4000-line diff
-// gets 10 + 20 = 30 (capped by reviewFileHardCeiling).  A small diff stays at
-// the 10-minute base.
+// the diff under review, added on top of reviewFileTimeout.  10 minutes/1000
+// lines means a 2000-line diff gets 10 (base) + 20 = 30 min, a 4000-line diff
+// gets 10 + 40 = 50 min (capped by reviewFileHardCeiling).  A small diff stays
+// at the 10-minute base.
+//
+// hk-4p2h: raised from 5 to 10 min/kline — the paul canary (run 019ed1ad-77a3,
+// hk-t1wd) had its opus/high reviewer killed at EXACTLY 20:00 (= 10+10 min for
+// a ~2000-line diff) because the 5 min/kline budget was too tight for an opus
+// reviewer to finish reading and reasoning over a large diff.  10 min/kline
+// gives a 2000-line diff a 30-min base budget, preventing the premature kill
+// without the reviewer needing the heartbeat-based extension as a crutch.
 //
 // Declared as var so tests can override.
 //
-// Bead: hk-sah87.
-var reviewFilePerKLineBudget = 5 * time.Minute
+// Bead: hk-sah87, hk-4p2h.
+var reviewFilePerKLineBudget = 10 * time.Minute
 
 // reviewFilePollInterval is how often to check for the review verdict file.
 var reviewFilePollInterval = 2 * time.Second

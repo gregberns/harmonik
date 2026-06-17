@@ -99,16 +99,18 @@ the path as-is to the crew's paste seed.
 
 ## 3. Field contract
 
-All six fields are **required**. There are no optional fields in schema version 1.
+Six fields are **required**. One field is **optional** (additive, no schema_version
+bump — per §8 additive-change rule).
 
-| Field | Type | Charset / constraints | Meaning |
-|---|---|---|---|
-| `schema_version` | integer | must equal `1` | Schema version. Bump on any breaking field change. C2 and C4 MUST validate this equals 1 before acting. |
-| `crew_name` | string | `[a-z0-9-]`, 1–64 chars | The crew's stable identity. Equals its `$HARMONIK_AGENT` env var, its comms identity (`--from`/`--to`), and the registry `Name` field in `.harmonik/crew/<name>.json` (C2 §3.3). |
-| `queue` | string | `[a-z0-9-]`, 1–64 chars | The crew's named queue. Equals the registry `Queue` field and the on-disk file `.harmonik/queues/<queue>.json`. The crew MUST submit beads only to this queue, NEVER to `main`. |
-| `epic_id` | string | opaque bead id (e.g. `hk-XXXXX`) | The assigned epic. The parent bead whose ready children the crew dispatches. |
-| `goal` | string | single line, no newlines | Plain-English mission statement. Used in `/session-resume` framing and in crew status updates. |
-| `captain_name` | string | `[a-z0-9-]`, 1–64 chars | The captain's comms identity. The crew sends `--to <captain_name> --topic status` progress updates here. |
+| Field | Type | Charset / constraints | Required | Meaning |
+|---|---|---|---|---|
+| `schema_version` | integer | must equal `1` | yes | Schema version. Bump on any breaking field change. C2 and C4 MUST validate this equals 1 before acting. |
+| `crew_name` | string | `[a-z0-9-]`, 1–64 chars | yes | The crew's stable identity. Equals its `$HARMONIK_AGENT` env var, its comms identity (`--from`/`--to`), and the registry `Name` field in `.harmonik/crew/<name>.json` (C2 §3.3). |
+| `queue` | string | `[a-z0-9-]`, 1–64 chars | yes | The crew's named queue. Equals the registry `Queue` field and the on-disk file `.harmonik/queues/<queue>.json`. The crew MUST submit beads only to this queue, NEVER to `main`. |
+| `epic_id` | string | opaque bead id (e.g. `hk-XXXXX`) | yes | The assigned epic. The parent bead whose ready children the crew dispatches. |
+| `goal` | string | single line, no newlines | yes | Plain-English mission statement. Used in `/session-resume` framing and in crew status updates. |
+| `captain_name` | string | `[a-z0-9-]`, 1–64 chars | yes | The captain's comms identity. The crew sends `--to <captain_name> --topic status` progress updates here. |
+| `model` | string | `opus` \| `sonnet` \| `haiku` | **optional** | Claude model the crew should run on. When present, C2 (daemon) injects `--model <value>` on the crew's launch argv. Absent = default (Opus). Decision rule: **sonnet** for lane-drain crews with file-disjoint clean beads (add mission clause "escalate to captain on ANY run_failed, do NOT self-classify"); **opus** for design / test / investigation. |
 
 ### 3.1 Charset enforcement
 
@@ -190,7 +192,7 @@ See `.harmonik/crew/missions/example-handoff.md` for a concrete filled-in exampl
 (the `alpha` / `alpha-q` / `hk-tigaf` case) intended as a copy-paste template for
 C2's smoke and C4's author.
 
-The example frontmatter:
+The example frontmatter (with optional `model:` field):
 
 ```markdown
 ---
@@ -200,8 +202,12 @@ queue: alpha-q
 epic_id: hk-tigaf
 goal: "Ship named-queues: multi-queue generalization of harmonik's single queue"
 captain_name: captain
+model: sonnet
 ---
 ```
+
+The `model:` field is optional. Omit it for the default (Opus). Include it when
+the captain has decided this lane uses Sonnet (lane-drain, file-disjoint beads).
 
 This maps to:
 - Crew `alpha` on queue `alpha-q`

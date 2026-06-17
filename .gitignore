@@ -29,8 +29,9 @@
 /twins/*
 !/twins/.gitkeep
 
-# Harmonik runtime state
-/.harmonik/
+# Harmonik runtime state (context/ is committed as tier-3/tier-2 bootstrap; see leanfleet D5)
+/.harmonik/*
+!/.harmonik/context
 # Daemon-written task files in worktrees (hk-ynn8u)
 .harmonik/agent-task*
 

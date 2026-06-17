@@ -1,0 +1,24 @@
+# Tier-3 context: project-level state (weeks cadence)
+# Captain reads this on every boot (STARTUP.md Step 0a) BEFORE re-deriving state.
+# Update when: phase changes, new decisions are locked, or operator policies shift.
+# Do NOT record ephemeral state here — that belongs in HANDOFF.md (tier1).
+
+phase: operational  # operational | bootstrap | maintenance | winding-down
+
+# Actions the captain must NEVER take without explicit operator confirmation.
+forbidden_actions:
+  - force-push to main
+  - delete a named queue that has pending or active items
+  - rm any worktree without confirming it is orphaned (no live run, no pending commit)
+  - submit beads to the main queue from a crew (crews use their own named queue)
+  - widen keeper warn/act band (operator HARD-NO; see feedback_keeper_band_no_retune.md)
+
+# Architectural decisions locked as of 2026-04-19 (see STATUS.md §Decisions).
+# Reopening requires strong new evidence + explicit operator request.
+locked_decisions:
+  - single-daemon-per-project via pidfile lock (hk-li14r)
+  - worktrees+merges over agent-mail reservation (Gas Town)
+  - twin-binaries, not in-process mocks
+  - tmux inspectability required
+  - no verifier subsystem
+  - beads owns terminal bead transitions; harmonik daemon does NOT call br close directly

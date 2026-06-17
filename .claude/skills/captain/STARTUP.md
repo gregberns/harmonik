@@ -44,6 +44,36 @@ echo "agent=$HARMONIK_AGENT  cwd=$(pwd)"
 
 ---
 
+## Step 0a/0b — Read tier-3 then tier-2 context (fast boot reads)
+
+Read these two files BEFORE loading skills or the handoff. They encode state
+that changes on a weeks/days cadence — project phase, locked decisions, active
+lanes — so you skip re-deriving them from scratch. Step 2 VERIFIES their claims
+against live reality; it does not discover state you already have here.
+
+**0a — Tier-3 (weeks cadence):**
+
+```bash
+cat .harmonik/context/project.yaml
+# Encodes: phase, forbidden_actions, locked_decisions.
+# If missing: use STATUS.md §Decisions for locked decisions; treat phase as "operational".
+```
+
+**0b — Tier-2 (days cadence):**
+
+```bash
+cat .harmonik/context/captain-lanes.md
+# Encodes: active_lanes table (crew/epic/queue/model), operator_initiatives, parked, pipeline.
+# If missing: treat active_lanes as unknown — Step 2 ground-truth derives it.
+```
+
+> **Update discipline:** the tier-3 file changes rarely (phase shifts, new locked
+> decisions). The tier-2 file changes per session (lane assignments, epic
+> handoffs). Update captain-lanes.md at the END of each session before writing
+> HANDOFF.md so the next boot reads accurate lane state.
+
+---
+
 ## Step 1 — Load context (the captain reads more than the handoff)
 
 Read, in this order. The handoff is the LAST input, and it is INPUT not gospel —
@@ -63,7 +93,12 @@ ground-truth (Step 2) overrides anything it claims about live state.
 
 ---
 
-## Step 2 — Ground-truth the live state (DO NOT trust, MEASURE)
+## Step 2 — Verify live state (check tier-3/tier-2 claims against ground-truth)
+
+> You have already READ claimed state from `.harmonik/context/` (Steps 0a/0b).
+> This step VERIFIES those claims — daemon up, crews online, epics still assigned.
+> It does NOT re-discover lanes from scratch. Any discrepancy between tier-2 claims
+> and live state here means tier-2 is stale; update `captain-lanes.md` after Step 3.
 
 > **One-call shortcut — run the boot digest first:**
 > ```bash
@@ -188,6 +223,12 @@ Write the plan as a **lane table** (one lane = one epic = one crew). For each:
 
 - **One crew per lane.** Decompose the backlog into non-conflicting epics so two
   crews never touch the same files/package (parallel-helper collision risk).
+- **Assign a model per lane (model-tiering):** add a `model` column to the lane
+  table. Decision rule: **Sonnet** = lane-drain crews working file-disjoint clean
+  beads (set mission clause "escalate to captain on ANY run_failed, do NOT
+  self-classify"); **Opus** = design, test, investigation, or any lane where the
+  crew must triage failures itself. Record the choice in `captain-lanes.md` (tier-2)
+  so it survives restarts without re-derivation.
 - **Mark keystone-gated vs safe-now:** a bead is *keystone-gated* if it depends
   on an open epic or an in-flight keystone change — it will silently insta-fail at
   dispatch (group_failure, no run_started). Mark those "BLOCKED — do not dispatch
@@ -356,10 +397,6 @@ harmonik comms recv --agent captain --follow --json
 #   Paste this ONCE after the fleet is verified; it self-paces and survives keeper resets:
 /loop 12m Captain health check: (1) daemon up — harmonik queue status, exit17=rebuild+restart; (2) ALL queues healthy — harmonik queue list --json | jq '.queues[]|select(.status|test("paused"))|.name' — any output=paused-by-failure=NOT dispatching, surface+resume; (3) all crews comms-fresh — harmonik comms who, each <150s (stale ⇒ capture-pane, nudge/reconcile); (4) drain comms for epic_completed/errors/operator and act; (5) BACKLOG-PULL: run kerf next + br ready --limit 0, staff every ready lane/bead with a free crew/queue slot — do not leave ready work unassigned while a slot exists; (6) LULL-DEPLOY: if in a true lull (0 merging runs), deploy + verify own merged work (ff-after-push); (7) QUALITY-CHECK: grep '"type":"run_started"' .harmonik/events/events.jsonl | tail -10 | jq -r 'select(.workflow_mode=="single")|"WARN: \(.bead_id) single(no review)"' — any output=surface to operator; (8) self-audit: is any initiative stalled for a reason other than a genuine §8 surface-and-await case? If so, unblock it. A tick that finds ready work AND a free slot AND does NOT staff them is a FAILED tick, not a healthy one. Do NOT read run ages, narrate active beads, or call a launch wedge before launch+30min.
 ```
-
-If you keep a `subscribe` for lane completion, request **ONLY** `epic_completed`
-and set `--heartbeat 600s` (liveness keepalive only) — and treat any heartbeat
-payload as NON-actionable. NEVER arm `run_stale`/`heartbeat` with a short interval.
 
 The health tick IS the "periodic lightweight Step 2": each fire re-checks daemon +
 `comms who` + a spot `capture-pane`, so a crew going silent is caught without

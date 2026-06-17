@@ -5,7 +5,8 @@ description: >
   complete boot sequence (parse handoff, confirm identity, join comms, mirror
   assignee, subscribe inbox), the operating loop scoped to the crew's OWN named
   queue (NEVER main), the mandatory progress feed (both comms --topic status AND
-  br comments, on bead-close + ≤10-min timer + boot/drain bookends), and
+  br comments, on bead-close + ≤10-min timer while dispatching / ≤15-min when
+  idle/draining + boot/drain bookends), and
   keeper-restart re-hydration. Load-bearing: must not rot. Composes on
   agent-comms (N3 dedupe), beads-cli (write discipline), and harmonik-dispatch
   (queue submit). The Gap-1 --assignee-on-every-adopt rule is present and
@@ -53,14 +54,36 @@ Your stable identity is `$HARMONIK_AGENT` (== `crew_name` from your handoff).
 ### Step 1 — Read your mission
 
 You were seeded with a `/session-resume` on your handoff file
-(`.harmonik/crew/missions/<crew_name>.md`). Parse its YAML frontmatter into:
+(`.harmonik/crew/missions/<crew_name>.md`). The file has two sections:
+
+**Stable front-matter (tier-2 — written once by the captain, survives restarts):**
 
 ```
-{schema_version, crew_name, queue, epic_id, goal, captain_name}
+{schema_version, crew_name, queue, epic_id, goal, captain_name[, model]}
 ```
 
-All six fields are **required**. If the file is missing, unreadable, or any
+All six base fields are **required**. `model` is optional (see §3 of
+`specs/crew-handoff-schema.md`). If the file is missing, unreadable, or any
 required field is absent, or `schema_version != 1`, go to **§ Invalid handoff**.
+
+**`## Current State` block (tier-1 — updated by the captain on every /clear):**
+
+The body may contain a `## Current State` section after the frontmatter. Parse
+it for: `queue_id`, `in_flight` beads, armed monitor state, `next_action`,
+open blockers, and any translations glossary. This section overrides any stale
+claim in tier-2 about what is actively dispatching. If the section is absent,
+treat all tier-1 fields as unknown and re-derive them via Steps 2–4 below.
+
+```markdown
+## Current State
+
+queue_id: <uuid or "(none)">
+in_flight: [hk-aaa, hk-bbb]          # beads submitted but not yet terminal
+monitor: armed | not-armed
+next_action: <1-sentence description>
+blockers: <none | description>
+translations: hk-abc = "short plain-English title"
+```
 
 ### Step 2 — Confirm identity
 
@@ -285,8 +308,9 @@ restart and is reviewable out-of-band.
    "crew <crew_name>: bead <bead_id> completed; <N> beads done, <M> remaining in <epic_id>"
    ```
 
-3. **Timer:** at least once every **10 minutes** while the operating loop is
-   active (heartbeat-style liveness update):
+3. **Timer:** at least once every **10 minutes** while actively dispatching
+   beads; at least once every **15 minutes** when idle (no ready beads) or
+   draining (all beads submitted, awaiting completion) — heartbeat-style liveness:
    ```
    "crew <crew_name>: still working <epic_id>; <N> beads done, <M> remaining"
    ```
@@ -356,7 +380,8 @@ before leaving.
   `epic_completed`, `run_failed`, `run_stale`, wedge. Stale or missing assignee =
   "whose bead is this?" round-trips (Gap 1, F13).
 - Emit status on BOTH surfaces (`comms --topic status` AND `br comments`) on ALL
-  four triggers (boot, bead-close, ≤10-min timer, drain).
+  four triggers (boot, bead-close, ≤10-min timer while dispatching / ≤15-min when
+  idle or draining, drain).
 - Re-hydrate from durable state on restart (handoff frontmatter AND/OR beads
   `assignee`; prefer beads if they disagree).
 - Keep `comms recv --follow --json` armed for the whole life of the session —

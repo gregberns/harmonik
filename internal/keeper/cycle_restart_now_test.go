@@ -427,6 +427,155 @@ func TestRunOnDemand_AntiLoopSuppressed(t *testing.T) {
 	}
 }
 
+// TestRunOnDemand_NotCrispIdleDoesNotBlock_hka8xy reproduces F46 (hk-a8xy): an
+// actively-working session continuously refreshes .ctx, so .idle is never within
+// the crisp-idle tolerance and CrispIdle reports false. Under the OLD gate order
+// restart-now was perpetually blocked with reason=not_crisp_idle even though the
+// keeper/operator explicitly requested the restart (the exact stuck/looping-crew
+// case restart-now exists for). After the F46 fix restart-now is DECOUPLED from
+// CrispIdle (an explicit escalation, cf. the hk-0uu force-threshold bypass and
+// hk-suxt --force-restart): the cycle proceeds to /clear and /session-resume.
+//
+// RED (pre-fix): emitBlocked("not_crisp_idle") fired, no /clear.
+// GREEN (post-fix): no restart_now_blocked, /clear + /session-resume injected.
+func TestRunOnDemand_NotCrispIdleDoesNotBlock_hka8xy(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "captain"
+	sessionID := "sess-a8xy"
+	nonce := "cyc-20260616T000000-0a8xy1"
+	requestedAt := time.Now().UTC().Add(-5 * time.Second)
+
+	handoffPath := filepath.Join(projectDir, "HANDOFF-captain.md")
+	handoffContent := "# Handoff\n\n<!-- KEEPER:" + nonce + " -->\n\nContent."
+	if err := os.WriteFile(handoffPath, []byte(handoffContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	marker := &keeper.RestartNowMarker{
+		Nonce:       nonce,
+		RequestedAt: requestedAt,
+		SessionID:   sessionID,
+	}
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	var clearCalled bool
+	_, c := restartNowCyclerConfig(
+		projectDir, agent, em, spy, jc,
+		true,  // isManaged
+		false, // crispIdle = false → actively-working .ctx, NOT crisp (the F46 trigger)
+		false, // holdingDispatch
+		"",    // no prior fired SID
+		func(_ string) (string, error) { return handoffContent, nil },
+		fixedGauge(sessionID),
+		func(_, _ string) (*keeper.RestartNowMarker, error) { return marker, nil },
+		func(_, _ string) error { clearCalled = true; return nil },
+	)
+
+	ctx := context.Background()
+	cf := &keeper.CtxFile{Pct: 50.0, SessionID: sessionID}
+	if err := c.RunOnDemand(ctx, cf); err != nil {
+		t.Fatalf("RunOnDemand unexpected error: %v", err)
+	}
+
+	if !clearCalled {
+		t.Error("ClearRestartNowTrigger was not called (consume-once required)")
+	}
+
+	// The not_crisp_idle FALSE block must NOT fire (decoupled).
+	blocked := em.EventsOfType(core.EventTypeSessionKeeperRestartNowBlocked)
+	if len(blocked) != 0 {
+		t.Errorf("restart-now wrongly blocked despite explicit escalation; events: %v", blocked)
+	}
+
+	// The cycle must proceed to /clear and /session-resume.
+	texts := spy.texts()
+	foundClear, foundResume := false, false
+	for _, txt := range texts {
+		if txt == "/clear" {
+			foundClear = true
+		}
+		if len(txt) > 16 && txt[:16] == "/session-resume " {
+			foundResume = true
+		}
+	}
+	if !foundClear {
+		t.Errorf("no /clear injection on non-crisp-idle explicit restart-now; got texts: %v", texts)
+	}
+	if !foundResume {
+		t.Errorf("no /session-resume injection on non-crisp-idle explicit restart-now; got texts: %v", texts)
+	}
+}
+
+// TestRunOnDemand_StillRefusesHoldingDispatch_hka8xy is the safety half of the
+// F46 fix: decoupling restart-now from CrispIdle must NOT remove the genuinely-
+// unsafe-state guards. With CrispIdle false (decoupled) AND in-flight dispatch
+// work present, restart-now must still refuse with reason=hold_dispatch and
+// inject no /clear — proving the fix narrowed only the FALSE not_crisp_idle
+// block, not the real mid-work safety.
+func TestRunOnDemand_StillRefusesHoldingDispatch_hka8xy(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "captain"
+	sessionID := "sess-a8xy2"
+	nonce := "cyc-20260616T000000-0a8xy2"
+
+	handoffPath := filepath.Join(projectDir, "HANDOFF-captain.md")
+	handoffContent := "# Handoff\n\n<!-- KEEPER:" + nonce + " -->\n\nContent."
+	if err := os.WriteFile(handoffPath, []byte(handoffContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	marker := &keeper.RestartNowMarker{
+		Nonce:       nonce,
+		RequestedAt: time.Now().UTC().Add(-5 * time.Second),
+		SessionID:   sessionID,
+	}
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	var clearCalled bool
+	_, c := restartNowCyclerConfig(
+		projectDir, agent, em, spy, jc,
+		true,  // isManaged
+		false, // crispIdle = false (decoupled — must not matter)
+		true,  // holdingDispatch = true → genuinely-unsafe in-flight work
+		"",
+		func(_ string) (string, error) { return handoffContent, nil },
+		fixedGauge(sessionID),
+		func(_, _ string) (*keeper.RestartNowMarker, error) { return marker, nil },
+		func(_, _ string) error { clearCalled = true; return nil },
+	)
+
+	ctx := context.Background()
+	cf := &keeper.CtxFile{Pct: 50.0, SessionID: sessionID}
+	if err := c.RunOnDemand(ctx, cf); err != nil {
+		t.Fatalf("RunOnDemand unexpected error: %v", err)
+	}
+
+	if !clearCalled {
+		t.Error("ClearRestartNowTrigger was not called (consume-once required even on gate fail)")
+	}
+
+	blocked := em.EventsOfType(core.EventTypeSessionKeeperRestartNowBlocked)
+	if len(blocked) != 1 {
+		t.Fatalf("expected 1 restart_now_blocked (hold_dispatch), got %d", len(blocked))
+	}
+
+	for _, txt := range spy.texts() {
+		if txt == "/clear" {
+			t.Error("unexpected /clear injection while HoldingDispatch — mid-work safety lost")
+		}
+	}
+}
+
 // TestRestartNowMarker_RoundTrip verifies that WriteRestartNowMarker +
 // ReadRestartNowMarker preserve all fields correctly (JSON round-trip).
 func TestRestartNowMarker_RoundTrip(t *testing.T) {

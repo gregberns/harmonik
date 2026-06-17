@@ -1053,7 +1053,10 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 
 // RunOnDemand executes the on-demand clear→resume cycle initiated by the
 // captain via `harmonik keeper restart-now`. Unlike MaybeRun, it bypasses the
-// act-pct threshold gate only — ALL other safety gates are kept. The captain
+// act-pct threshold gate AND the CrispIdle gate (F46, hk-a8xy — restart-now is an
+// explicit escalation, not an automatic mid-turn clear); ALL other safety gates
+// are kept (managed opt-in, non-empty session_id, HoldingDispatch fail-closed,
+// anti-loop, operator-attached, and the full freshness gate). The captain
 // already wrote HANDOFF-<agent>.md; this method skips the handoff-truncate and
 // /session-handoff-inject steps and instead validates the freshness gate before
 // issuing /clear.
@@ -1063,18 +1066,19 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 //  2. Gate 1: .managed opt-in guard.
 //  3. Gate 2: non-empty session_id (anti-loop identity).
 //  4. Gate 3: NOT HoldingDispatch (fail-closed).
-//  5. Gate 4: CrispIdle.
-//  6. Gate 5: anti-loop lastFiredSID suppression.
-//  7. Gate 6: operator-attached guard.
-//  8. Freshness gate: marker.session_id == cf.SessionID; handoff contains
+//     (No CrispIdle gate — DECOUPLED for restart-now; see F46 note below and at
+//     the gate site. restart-now is an explicit escalation, not an automatic
+//     mid-turn clear, so the crisp-await-input requirement does not apply.)
+//  5. Gate 5: anti-loop lastFiredSID suppression.
+//  6. Gate 6: operator-attached guard.
+//  7. Freshness gate: marker.session_id == cf.SessionID; handoff contains
 //     <!-- KEEPER:<marker.nonce> -->; handoff mtime >= marker.requested_at;
 //     after onDemandSettle re-stat mtime must be unchanged.
-//  9. On any gate/freshness failure: emit session_keeper_restart_now_blocked,
+//  8. On any gate/freshness failure: emit session_keeper_restart_now_blocked,
 //     return nil (non-destructive).
+//  9. On freshness-gate pass: execute /clear → /session-resume tail.
 //
-// 10. On freshness-gate pass: execute /clear → /session-resume tail.
-//
-// Refs: hk-wjzf, hk-xjlq, ON-059.
+// Refs: hk-wjzf, hk-xjlq, hk-a8xy (F46), ON-059.
 func (c *Cycler) RunOnDemand(ctx context.Context, cf *CtxFile) error {
 	sessionID := ""
 	if cf != nil {
@@ -1113,11 +1117,19 @@ func (c *Cycler) RunOnDemand(ctx context.Context, cf *CtxFile) error {
 		emitBlocked("hold_dispatch")
 		return nil
 	}
-	// Gate 4: CrispIdle.
-	if !c.cfg.CrispIdleFn(c.cfg.ProjectDir, c.cfg.AgentName) {
-		emitBlocked("not_crisp_idle")
-		return nil
-	}
+	// NOTE (F46, hk-a8xy): restart-now is intentionally DECOUPLED from the
+	// CrispIdle gate. CrispIdle exists to stop the AUTOMATIC (MaybeRun) cycle from
+	// clearing mid-turn; restart-now is an EXPLICIT operator/keeper escalation
+	// (cf. the hk-0uu force-threshold CrispIdle bypass and the hk-suxt
+	// --force-restart path) whose whole purpose is to restart a busy/looping
+	// session that never reaches a crisp await-input boundary. Re-gating it on
+	// CrispIdle perpetually blocked it with not_crisp_idle (statusLine keeps
+	// refreshing .ctx so .idle is never within tolerance while a session works).
+	// Genuinely-unsafe states are still refused by the surviving gates:
+	// HoldingDispatch above (in-flight queue work), the operator-attached guard
+	// below, and the freshness gate's settle-dwell (handoff mtime must be stable).
+	// DEFAULTS-PIN: we do NOT relax crispIdleTolerance (a window value).
+	//
 	// Gate 5: anti-loop lastFiredSID suppression.
 	if c.lastFiredSID != "" && c.lastFiredSID == sessionID {
 		emitBlocked("anti_loop_suppressed")

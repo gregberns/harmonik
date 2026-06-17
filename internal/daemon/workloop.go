@@ -2605,6 +2605,20 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				emitDone(false, fmt.Sprintf("code-sync-failed (review-loop): %s", syncReason))
 				return
 			}
+			// hk-dyim: amend the HEAD commit in the implementer worktree to embed
+			// Reviewed-By: and Review-Verdict: trailers before the FF merge, so the
+			// review audit trail is visible in git history. Non-fatal: the merge
+			// proceeds without trailers if the amend fails (e.g. empty worktree).
+			// LOCAL runs only (rbc == nil): for REMOTE runs the implementer worktree
+			// lives on the worker and the amend would require SSH routing; the
+			// rebase inside mergeRunBranchToMain runs on box-A and sees the
+			// worker-side commits, so the trailers land post-rebase on box-A in a
+			// follow-up (FLAGGED).
+			if rlResult.approveVerdict != nil && rbc == nil {
+				if amendErr := appendReviewTrailersToHEAD(ctx, wtPath, rlResult.approveVerdict); amendErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
+				}
+			}
 			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)

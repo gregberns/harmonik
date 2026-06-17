@@ -110,6 +110,10 @@ type reviewLoopResult struct {
 
 	// needsAttention controls whether CloseBead applies the needs-attention label.
 	needsAttention bool
+
+	// approveVerdict carries the APPROVE verdict for merge commit trailer injection
+	// (hk-dyim). Non-nil only when success=true; nil on all failure paths.
+	approveVerdict *workspace.ReviewVerdict
 }
 
 // reviewLoopState carries mutable per-cycle context threaded through iterations.
@@ -1445,6 +1449,7 @@ func runReviewLoop(
 				completionReason: core.ReviewLoopCompletionReasonApproved,
 				summary:          fmt.Sprintf("APPROVE at iteration %d", state.iterationCount),
 				needsAttention:   false,
+				approveVerdict:   verdict, // hk-dyim: thread verdict for merge commit trailers
 			}
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 			return result

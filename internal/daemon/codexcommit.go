@@ -66,6 +66,7 @@ import (
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // codexRefsOutcome classifies what ensureCodexRefsTrailer did so the caller can
@@ -122,10 +123,19 @@ func codexRefsTrailerLine(beadID core.BeadID) string {
 // "Refs: hk-foo.1" does NOT match a commit whose only trailer is
 // "Refs: hk-foo.10". Returns (false, err) on any git error (e.g. no commits
 // yet); the caller treats a git error as "trailer not present".
-func worktreeHEADHasRefsTrailer(ctx context.Context, wtPath string, beadID core.BeadID) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", "HEAD")
-	cmd.Dir = wtPath
-	out, err := cmd.Output()
+//
+// When runner is non-nil the git command is routed through it (remote worker);
+// when nil it falls back to bare local exec (NFR7 — byte-identical for local).
+func worktreeHEADHasRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath string, beadID core.BeadID) (bool, error) {
+	var out []byte
+	var err error
+	if runner != nil {
+		out, err = runner.Command(ctx, "git", "-C", wtPath, "log", "-1", "--format=%B", "HEAD").Output()
+	} else {
+		cmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", "HEAD")
+		cmd.Dir = wtPath
+		out, err = cmd.Output()
+	}
 	if err != nil {
 		return false, fmt.Errorf("daemon: worktreeHEADHasRefsTrailer: git log HEAD in %q: %w", wtPath, err)
 	}
@@ -145,10 +155,19 @@ func worktreeHEADHasRefsTrailer(ctx context.Context, wtPath string, beadID core.
 // Returns (false, err) on git error; the caller treats an error as "not dirty"
 // only after also checking HEAD advancement, so a git failure cannot silently
 // fabricate a commit.
-func codexWorktreeDirty(ctx context.Context, wtPath string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
-	cmd.Dir = wtPath
-	out, err := cmd.Output()
+//
+// When runner is non-nil the git command is routed through it (remote worker);
+// when nil it falls back to bare local exec (NFR7 — byte-identical for local).
+func codexWorktreeDirty(ctx context.Context, runner tmux.CommandRunner, wtPath string) (bool, error) {
+	var out []byte
+	var err error
+	if runner != nil {
+		out, err = runner.Command(ctx, "git", "-C", wtPath, "status", "--porcelain").Output()
+	} else {
+		cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+		cmd.Dir = wtPath
+		out, err = cmd.Output()
+	}
 	if err != nil {
 		return false, fmt.Errorf("daemon: codexWorktreeDirty: git status in %q: %w", wtPath, err)
 	}
@@ -162,6 +181,11 @@ func codexWorktreeDirty(ctx context.Context, wtPath string) (bool, error) {
 //
 // Parameters:
 //   - ctx       — caller context, propagated to every git subprocess.
+//   - runner    — the per-run CommandRunner (nil for local runs, sshRunner for
+//     remote). All git operations are routed through runner so that HEAD reads,
+//     dirty checks, amend, and commit all operate on the SAME host as the
+//     no-commit guard (resolveWorktreeHEADVia). nil is byte-identical to local
+//     exec (NFR7).
 //   - wtPath    — absolute path of the run's git worktree.
 //   - parentSHA — the worktree HEAD SHA captured BEFORE the codex turn launched.
 //     Used to decide whether codex produced a commit (HEAD != parentSHA) or only
@@ -177,7 +201,7 @@ func codexWorktreeDirty(ctx context.Context, wtPath string) (bool, error) {
 //	HEAD advanced, no trailer                → amend HEAD to add trailer  → codexRefsAmended
 //	HEAD == parentSHA, worktree dirty        → stage all + commit w/ trailer → codexRefsCommitted
 //	HEAD == parentSHA, worktree clean        → codexRefsNoChange (no commit fabricated)
-func ensureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadID core.BeadID) (codexRefsOutcome, error) {
+func ensureCodexRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (codexRefsOutcome, error) {
 	if wtPath == "" {
 		return codexRefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: wtPath must be non-empty")
 	}
@@ -187,14 +211,15 @@ func ensureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadI
 
 	// VERIFY: does HEAD already carry the trailer? If so we are done — this is
 	// the happy path where codex obeyed the seed-prompt instruction.
-	hasTrailer, trailerErr := worktreeHEADHasRefsTrailer(ctx, wtPath, beadID)
+	hasTrailer, trailerErr := worktreeHEADHasRefsTrailer(ctx, runner, wtPath, beadID)
 	if trailerErr == nil && hasTrailer {
 		return codexRefsAlreadyPresent, nil
 	}
 
 	// Determine whether codex produced a commit this turn (HEAD advanced past
-	// the parent SHA the caller captured before launch).
-	curHead, headErr := resolveWorktreeHEAD(ctx, wtPath)
+	// the parent SHA the caller captured before launch). Route through runner
+	// so REMOTE HEAD is read from the worker, matching the no-commit guard.
+	curHead, headErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
 	if headErr != nil {
 		return codexRefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: resolve HEAD: %w", headErr)
 	}
@@ -204,7 +229,7 @@ func ensureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadI
 		// the trailer — the edits are already in the commit, so a follow-up
 		// empty commit would be noise. This keeps a single work-commit carrying
 		// the trailer, matching the claude posture (one commit, trailer-bearing).
-		if err := amendHEADAddRefsTrailer(ctx, wtPath, beadID); err != nil {
+		if err := amendHEADAddRefsTrailer(ctx, runner, wtPath, beadID); err != nil {
 			return codexRefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: amend: %w", err)
 		}
 		return codexRefsAmended, nil
@@ -212,7 +237,7 @@ func ensureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadI
 
 	// HEAD did not advance. Either codex edited files without committing
 	// (dirty worktree → deterministic commit) or did nothing (clean → no_change).
-	dirty, dirtyErr := codexWorktreeDirty(ctx, wtPath)
+	dirty, dirtyErr := codexWorktreeDirty(ctx, runner, wtPath)
 	if dirtyErr != nil {
 		return codexRefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: status: %w", dirtyErr)
 	}
@@ -223,7 +248,7 @@ func ensureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadI
 	}
 
 	// codex edited but never committed: stage everything and create the commit.
-	if err := commitAllWithRefsTrailer(ctx, wtPath, beadID); err != nil {
+	if err := commitAllWithRefsTrailer(ctx, runner, wtPath, beadID); err != nil {
 		return codexRefsNoChange, fmt.Errorf("daemon: ensureCodexRefsTrailer: commit: %w", err)
 	}
 	return codexRefsCommitted, nil
@@ -235,17 +260,28 @@ func ensureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadI
 // Mirrors the git-commit mechanics of persistClaudeSessionID
 // (sessioncontext_chb023.go): `git add -A` then `git commit -m`. The message is
 // a deterministic codex-fallback message; the load-bearing line is the trailer.
-func commitAllWithRefsTrailer(ctx context.Context, wtPath string, beadID core.BeadID) error {
+//
+// When runner is non-nil the git commands are routed through it (remote worker);
+// when nil they fall back to bare local exec (NFR7 — byte-identical for local).
+func commitAllWithRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath string, beadID core.BeadID) error {
+	msg := fmt.Sprintf(
+		"feat(codex): codex turn output (auto-committed by daemon fallback)\n\n%s",
+		codexRefsTrailerLine(beadID),
+	)
+	if runner != nil {
+		if out, err := runner.Command(ctx, "git", "-C", wtPath, "add", "-A").CombinedOutput(); err != nil {
+			return fmt.Errorf("git add -A: %w\ngit output: %s", err, out)
+		}
+		if out, err := runner.Command(ctx, "git", "-C", wtPath, "commit", "-m", msg).CombinedOutput(); err != nil {
+			return fmt.Errorf("git commit: %w\ngit output: %s", err, out)
+		}
+		return nil
+	}
 	addCmd := exec.CommandContext(ctx, "git", "add", "-A")
 	addCmd.Dir = wtPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add -A: %w\ngit output: %s", err, out)
 	}
-
-	msg := fmt.Sprintf(
-		"feat(codex): codex turn output (auto-committed by daemon fallback)\n\n%s",
-		codexRefsTrailerLine(beadID),
-	)
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg)
 	commitCmd.Dir = wtPath
 	if out, err := commitCmd.CombinedOutput(); err != nil {
@@ -260,11 +296,20 @@ func commitAllWithRefsTrailer(ctx context.Context, wtPath string, beadID core.Be
 // It reads the current HEAD message, appends a blank line + the trailer if the
 // trailer is not already present, and `git commit --amend`s with the new
 // message. No files are staged, so the tree is preserved exactly.
-func amendHEADAddRefsTrailer(ctx context.Context, wtPath string, beadID core.BeadID) error {
+//
+// When runner is non-nil the git commands are routed through it (remote worker);
+// when nil they fall back to bare local exec (NFR7 — byte-identical for local).
+func amendHEADAddRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath string, beadID core.BeadID) error {
 	// Read the existing HEAD commit message body.
-	logCmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", "HEAD")
-	logCmd.Dir = wtPath
-	out, err := logCmd.Output()
+	var out []byte
+	var err error
+	if runner != nil {
+		out, err = runner.Command(ctx, "git", "-C", wtPath, "log", "-1", "--format=%B", "HEAD").Output()
+	} else {
+		logCmd := exec.CommandContext(ctx, "git", "log", "-1", "--format=%B", "HEAD")
+		logCmd.Dir = wtPath
+		out, err = logCmd.Output()
+	}
 	if err != nil {
 		return fmt.Errorf("git log HEAD: %w", err)
 	}
@@ -279,6 +324,12 @@ func amendHEADAddRefsTrailer(ctx context.Context, wtPath string, beadID core.Bea
 		newMsg = existing + "\n\n" + trailer
 	}
 
+	if runner != nil {
+		if out, err := runner.Command(ctx, "git", "-C", wtPath, "commit", "--amend", "-m", newMsg).CombinedOutput(); err != nil {
+			return fmt.Errorf("git commit --amend: %w\ngit output: %s", err, out)
+		}
+		return nil
+	}
 	amendCmd := exec.CommandContext(ctx, "git", "commit", "--amend", "-m", newMsg)
 	amendCmd.Dir = wtPath
 	if out, err := amendCmd.CombinedOutput(); err != nil {

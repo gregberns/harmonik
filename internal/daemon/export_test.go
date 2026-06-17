@@ -2368,7 +2368,7 @@ const (
 //
 // Bead ref: hk-bpxci.
 func ExportedWorktreeHEADHasRefsTrailer(ctx context.Context, wtPath string, beadID core.BeadID) (bool, error) {
-	return worktreeHEADHasRefsTrailer(ctx, wtPath, beadID)
+	return worktreeHEADHasRefsTrailer(ctx, nil, wtPath, beadID)
 }
 
 // ExportedEnsureCodexRefsTrailer exposes ensureCodexRefsTrailer (VERIFY +
@@ -2376,7 +2376,7 @@ func ExportedWorktreeHEADHasRefsTrailer(ctx context.Context, wtPath string, bead
 //
 // Bead ref: hk-bpxci.
 func ExportedEnsureCodexRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadID core.BeadID) (ExportedCodexRefsOutcome, error) {
-	return ensureCodexRefsTrailer(ctx, wtPath, parentSHA, beadID)
+	return ensureCodexRefsTrailer(ctx, nil, wtPath, parentSHA, beadID)
 }
 
 // ExportedCodexSeedPromptInstruction returns the codex seed prompt for beadID so

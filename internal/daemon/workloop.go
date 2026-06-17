@@ -3478,7 +3478,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if deps.harnessRegistry != nil {
 		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil &&
 			h.Completion() == handlercontract.CompletionProcessExit {
-			outcome, ensureErr := ensureCodexRefsTrailer(ctx, wtPath, headSHA, beadID)
+			outcome, ensureErr := ensureCodexRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
 			if ensureErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
 					beadID, ensureErr)

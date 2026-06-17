@@ -280,7 +280,7 @@ func keeperForceRestartFn(forceRestart bool, projectDir, respawnCmd string) func
 }
 
 // newKeeperMarkerFlags builds the flag set shared by the keeper marker
-// subcommands (set-dispatching, clear-dispatching, rebind, restart-now): a
+// subcommands (set-dispatching, clear-dispatching, restart-now): a
 // --project override and an --agent alias for the positional <name>. Keeping the
 // registration in one place guarantees parser parity with restart-now (the gold
 // standard) and gives tests a single seam.
@@ -396,70 +396,6 @@ func runKeeperClearDispatching(args []string) int {
 	return 0
 }
 
-// runKeeperRebind implements `harmonik keeper rebind <agent>`.
-//
-// Reads the current live gauge (.ctx) for the agent and writes its session_id
-// into .managed, overwriting any stale binding. This is the operator escape
-// hatch when .managed holds the wrong session_id (e.g. a conversation-id instead
-// of a session-id, hk-mejt) and the keeper is stuck emitting
-// no_gauge:foreign_session indefinitely.
-//
-// The command refuses to rebind to a UUIDv7 session_id (daemon implementer) or
-// an empty session_id. The gauge must be fresh (< Staleness) for the rebind to
-// succeed.
-//
-// Exit codes:
-//
-//	0  — .managed updated successfully
-//	1  — argument, I/O, or validation error
-//
-// Refs: hk-mejt (stale/mismatched .managed binding).
-func runKeeperRebind(args []string) int {
-	agent, projectFlag, code := parseKeeperMarkerArgs("keeper rebind", args)
-	if agent == "" {
-		return code
-	}
-
-	ctxFile, modTime, err := keeper.ReadCtxFile(projectFlag, agent)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "harmonik keeper rebind: read gauge: %v\n", err)
-		return 1
-	}
-	if ctxFile.SessionID == "" {
-		fmt.Fprintln(os.Stderr, "harmonik keeper rebind: gauge has empty session_id — wait for a gauge write then retry")
-		return 1
-	}
-	// Refuse UUIDv7 (daemon implementer) — the captain always has a UUIDv4.
-	if keeper.IsUUIDv7(ctxFile.SessionID) {
-		fmt.Fprintf(os.Stderr, "harmonik keeper rebind: gauge session_id %q is UUIDv7 (daemon implementer) — cannot rebind captain to a daemon session\n", ctxFile.SessionID)
-		return 1
-	}
-	// Refuse uppercase UUIDs: Claude Code occasionally emits the conversation/
-	// transcript-dir UUID (uppercase UUIDv4) as session_id instead of the actual
-	// session UUID. Binding to it would poison .managed with a conversation-dir id
-	// and trigger no_gauge:foreign_session on every subsequent tick.
-	// Primary fix is lowercase-normalisation in keeper-statusline.sh (hk-mzdm);
-	// this guard is defense-in-depth at the rebind entry point. (Refs: hk-0tvm)
-	if keeper.IsUppercaseUUID(ctxFile.SessionID) {
-		fmt.Fprintf(os.Stderr, "harmonik keeper rebind: gauge session_id %q is an uppercase UUID (likely conversation/transcript-dir id, not session UUID) — cannot rebind; fix: lowercase normalisation in keeper-statusline.sh\n", ctxFile.SessionID)
-		return 1
-	}
-	// Staleness check — default 120s.
-	const staleness = 120 * time.Second
-	if age := time.Since(modTime); age >= staleness {
-		fmt.Fprintf(os.Stderr, "harmonik keeper rebind: gauge is stale (%s old, limit %s) — ensure the agent is running, then retry\n",
-			age.Round(time.Second), staleness)
-		return 1
-	}
-
-	if err := keeper.WriteManagedSessionID(projectFlag, agent, ctxFile.SessionID); err != nil {
-		fmt.Fprintf(os.Stderr, "harmonik keeper rebind: write .managed: %v\n", err)
-		return 1
-	}
-	fmt.Printf("keeper rebind: agent=%q .managed → %s (was stale; keeper will now re-manage this session)\n", agent, ctxFile.SessionID)
-	return 0
-}
-
 // runKeeperRestartNow implements `harmonik keeper restart-now <agent>`.
 //
 // Reads HANDOFF-<agent>.md, extracts the <!-- KEEPER:... --> nonce, and writes
@@ -541,7 +477,6 @@ USAGE
   harmonik keeper --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N] [--warn-abs-tokens N] [--act-abs-tokens N]
   harmonik keeper enable <agent> [--project DIR] [--scripts-dir DIR] [--tmux TARGET] [--yes-destructive]
   harmonik keeper doctor <agent> [--project DIR]
-  harmonik keeper rebind <agent>|--agent <name> [--project DIR]
   harmonik keeper set-dispatching <agent>|--agent <name> [--project DIR]
   harmonik keeper clear-dispatching <agent>|--agent <name> [--project DIR]
   harmonik keeper restart-now <agent>|--agent <name> [--project DIR]
@@ -559,12 +494,6 @@ VERBS
                      gauge freshness, .idle written, .managed present, ANTHROPIC_API_KEY risk.
                      Exits non-zero on any gap.  Also runs automatically at keeper BOOT.
                      Run 'harmonik keeper doctor --help' for full usage.
-  rebind             Force-rebind .managed to the session_id in the current live gauge.
-                     Use when .managed holds a stale or mismatched session_id and the
-                     keeper is stuck emitting no_gauge:foreign_session indefinitely.
-                     The keeper auto-recovers after StaleBindingThreshold ticks (≈15 s);
-                     rebind is the manual escape hatch for immediate recovery.
-                     Refs: hk-mejt (stale .managed / foreign_session root cause).
   set-dispatching    Write the .dispatching marker for <agent>; HoldingDispatch → true.
                      Call BEFORE submitting a batch to the daemon queue so the keeper
                      cycle defers the handoff action while queue work is in flight.

@@ -8,13 +8,13 @@ import (
 
 // hk-t1wd — KEEPER parser-parity SPLIT A. These tests pin the contract that the
 // keeper subcommands in keeper_cmd.go (watcher, set-dispatching,
-// clear-dispatching, rebind) mirror restart-now: each accepts the target agent
+// clear-dispatching) mirror restart-now: each accepts the target agent
 // via the --agent flag (flag wins) OR a positional <name>, every pre-existing
 // recognized flag still parses, and an UNRECOGNIZED leading-dash token exits 2
 // loudly instead of being silently consumed/dropped.
 
 // TestKeeperMarkerArgsParity exercises the real shared parser used by
-// set-dispatching, clear-dispatching, rebind, and restart-now. parseKeeperMarkerArgs
+// set-dispatching, clear-dispatching, and restart-now. parseKeeperMarkerArgs
 // performs no file I/O (only flag parsing + os.Getwd), so it is safe to call
 // directly across the resolution matrix.
 func TestKeeperMarkerArgsParity(t *testing.T) {
@@ -45,14 +45,13 @@ func TestKeeperMarkerArgsParity(t *testing.T) {
 }
 
 // TestKeeperSubcommandsRejectBogusFlag asserts that an unrecognized leading-dash
-// token exits 2 at the real command boundary for all five subcommands. Every
+// token exits 2 at the real command boundary for all subcommands. Every
 // command short-circuits on the stray flag BEFORE any file I/O, so these calls
 // have no side effects.
 func TestKeeperSubcommandsRejectBogusFlag(t *testing.T) {
 	runners := map[string]func([]string) int{
 		"set-dispatching":   runKeeperSetDispatching,
 		"clear-dispatching": runKeeperClearDispatching,
-		"rebind":            runKeeperRebind,
 		"restart-now":       runKeeperRestartNow,
 		"watcher":           runKeeperSubcommand,
 	}

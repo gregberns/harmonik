@@ -3,14 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gregberns/harmonik/internal/keeper"
 )
 
 // ── enable helpers ────────────────────────────────────────────────────────────
@@ -1180,112 +1177,6 @@ func TestKeeperDoctorEntry_RejectsUnknownFlag(t *testing.T) {
 	code := runKeeperDoctorEntry([]string{"captain", "--bogus"}, &stdout, &stderr)
 	if code != 2 {
 		t.Errorf("entry --bogus: want exit 2, got %d", code)
-	}
-}
-
-// ── rebind tests ──────────────────────────────────────────────────────────────
-
-// writeTestCtxFile writes a .ctx gauge file for the given agent under projectDir.
-func writeTestCtxFile(t *testing.T, projectDir, agent string, pct float64, sessionID string) {
-	t.Helper()
-	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
-		t.Fatalf("writeTestCtxFile MkdirAll: %v", err)
-	}
-	content := fmt.Sprintf(`{"pct":%f,"session_id":%q,"ts":"%s"}`+"\n",
-		pct, sessionID, time.Now().UTC().Format(time.RFC3339))
-	path := filepath.Join(keeperDir, agent+".ctx")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("writeTestCtxFile WriteFile: %v", err)
-	}
-}
-
-// TestKeeperRebind_UpdatesManagedWithLiveGauge verifies that rebind reads the
-// live gauge session_id and writes it to .managed, recovering from a stale binding.
-// Refs: hk-mejt.
-func TestKeeperRebind_UpdatesManagedWithLiveGauge(t *testing.T) {
-	t.Parallel()
-
-	projectDir := t.TempDir()
-	agent := "captain"
-	const liveSID = "c0a1c545-1234-4abc-8000-000000000001"
-
-	// Write a fresh gauge.
-	writeTestCtxFile(t, projectDir, agent, 60.0, liveSID)
-
-	rc := runKeeperRebind([]string{"--project", projectDir, agent})
-	if rc != 0 {
-		t.Fatalf("runKeeperRebind: exit %d; want 0", rc)
-	}
-
-	// Verify .managed was written with the live session_id.
-	got, err := keeper.ReadManagedSessionID(projectDir, agent)
-	if err != nil {
-		t.Fatalf("ReadManagedSessionID: %v", err)
-	}
-	if got != liveSID {
-		t.Errorf(".managed = %q; want %q", got, liveSID)
-	}
-}
-
-// TestKeeperRebind_RejectsUUIDv7 verifies that rebind refuses to bind a UUIDv7
-// session_id (daemon implementer) into .managed.
-// Refs: hk-mejt.
-func TestKeeperRebind_RejectsUUIDv7(t *testing.T) {
-	t.Parallel()
-
-	projectDir := t.TempDir()
-	agent := "captain"
-	const daemonSID = "019ebb07-0000-7000-8000-000000000001" // UUIDv7
-
-	writeTestCtxFile(t, projectDir, agent, 60.0, daemonSID)
-
-	rc := runKeeperRebind([]string{"--project", projectDir, agent})
-	if rc != 1 {
-		t.Errorf("runKeeperRebind with UUIDv7: exit %d; want 1", rc)
-	}
-}
-
-// TestKeeperRebind_RejectsEmptySessionID verifies that rebind fails when the
-// gauge has no session_id.
-// Refs: hk-mejt.
-func TestKeeperRebind_RejectsEmptySessionID(t *testing.T) {
-	t.Parallel()
-
-	projectDir := t.TempDir()
-	agent := "captain"
-
-	writeTestCtxFile(t, projectDir, agent, 60.0, "")
-
-	rc := runKeeperRebind([]string{"--project", projectDir, agent})
-	if rc != 1 {
-		t.Errorf("runKeeperRebind with empty session_id: exit %d; want 1", rc)
-	}
-}
-
-// TestKeeperRebind_RejectsAbsentGauge verifies that rebind fails when no gauge
-// file exists for the agent.
-// Refs: hk-mejt.
-func TestKeeperRebind_RejectsAbsentGauge(t *testing.T) {
-	t.Parallel()
-
-	projectDir := t.TempDir()
-	agent := "captain"
-
-	rc := runKeeperRebind([]string{"--project", projectDir, agent})
-	if rc != 1 {
-		t.Errorf("runKeeperRebind with absent gauge: exit %d; want 1", rc)
-	}
-}
-
-// TestKeeperRebind_NoAgentArg verifies that rebind returns exit 1 when no
-// agent argument is provided.
-func TestKeeperRebind_NoAgentArg(t *testing.T) {
-	t.Parallel()
-
-	rc := runKeeperRebind([]string{})
-	if rc != 1 {
-		t.Errorf("runKeeperRebind with no args: exit %d; want 1", rc)
 	}
 }
 

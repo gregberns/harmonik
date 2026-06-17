@@ -34,6 +34,7 @@ package daemon_test
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -175,6 +176,58 @@ func TestCommitResidualDelta_GitignoredUntrackedNotSwept(t *testing.T) {
 	// The junk remains on disk but git still ignores it (status is clean).
 	if status := dirtyLedgerGit(t, wtPath, "status", "--porcelain"); status != "" {
 		t.Errorf("after commit, only ignored junk.log remains on disk; status should be clean, got:\n%s", status)
+	}
+}
+
+// TestCommitResidualDelta_UntrackedClaudeNotSwept guards against the hk-igq3
+// latent hazard: a worktree that has a legitimate non-churn residual delta AND
+// an untracked .claude/ file (e.g. settings.local.json, todos/, ide/ — classes
+// that are NOT gitignored). With the original `git add -A`, BOTH the
+// legitimate file and the .claude/ file would be staged and committed — the
+// latter would then be pushed to origin (credential-adjacent leak). With the
+// fix (explicit :(exclude).claude pathspec), the .claude/ file must NOT appear
+// in the residual commit; the legitimate change MUST still be captured.
+func TestCommitResidualDelta_UntrackedClaudeNotSwept(t *testing.T) {
+	t.Parallel()
+
+	wtPath := dirtyLedgerSetup(t)
+
+	// A legitimate new source file the implementer authored (non-churn, should
+	// be captured in the residual commit).
+	writeFile(t, wtPath+"/new_feature.go", "package work\n// authored feature\n")
+
+	// An untracked .claude/ file that is NOT covered by .gitignore — the class
+	// that would be leaked by a blanket `git add -A`.  settings.local.json is a
+	// real example; so are .claude/todos/, .claude/ide/, etc.
+	if err := os.MkdirAll(wtPath+"/.claude", 0o755); err != nil { //nolint:gosec
+		t.Fatalf("MkdirAll .claude: %v", err)
+	}
+	writeFile(t, wtPath+"/.claude/settings.local.json", `{"localOverride":true}`+"\n")
+
+	// Churn cleanup restores the churn allowlist; the .claude file is churn and
+	// left in place (untracked, not gitignored, but isHarmonikChurn → skip).
+	daemon.ExportedDiscardDirtyChurn(context.Background(), wtPath)
+
+	runID := newResidualRunID(t)
+	daemon.ExportedCommitResidualDelta(context.Background(), wtPath, runID)
+
+	committed := dirtyLedgerGit(t, wtPath, "show", "--name-only", "--format=", "HEAD")
+
+	// The legitimate new file MUST be in the residual commit (hk-cmry defect #3
+	// regression: don't regress the untracked-capture fix).
+	if !strings.Contains(committed, "new_feature.go") {
+		t.Errorf("hk-igq3: authored new_feature.go must be captured in the residual commit; HEAD changed files:\n%s", committed)
+	}
+
+	// The untracked .claude/settings.local.json MUST NOT be in the commit —
+	// this is the hk-igq3 assertion: :(exclude).claude blocks the sweep.
+	if strings.Contains(committed, ".claude") {
+		t.Errorf("hk-igq3: .claude/ file must NOT be swept into the residual commit (credential-adjacent leak); HEAD changed files:\n%s", committed)
+	}
+
+	// The .claude file must remain untracked on disk (not deleted, not committed).
+	if files := dirtyLedgerGit(t, wtPath, "ls-files", ".claude/settings.local.json"); files != "" {
+		t.Errorf("hk-igq3: .claude/settings.local.json must remain untracked; ls-files shows it as tracked:\n%s", files)
 	}
 }
 

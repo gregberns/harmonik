@@ -5286,7 +5286,21 @@ func commitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 	// allowlist, so -A captures exactly the bead's genuine residual iteration
 	// delta, including any newly authored source files that would otherwise be
 	// silently dropped (hk-cmry defect #3).
-	addCmd := exec.CommandContext(ctx, "git", "add", "-A")
+	//
+	// Hardening (hk-igq3): use explicit pathspec EXCLUSIONS for .claude/ and
+	// .harmonik/run-context so that untracked .claude/ files (e.g.
+	// settings.local.json, todos/, ide/) are never swept into a commit even
+	// when a legitimate non-churn change is present in the same worktree.
+	// .claude/ is only partially gitignored (worktrees/ + scheduled_tasks.lock),
+	// so a blanket -A could stage and push credential-adjacent files to origin.
+	// The :(exclude) pathspec magic is honored by git ≥ 2.0 and matches the
+	// directory and all descendants.  .harmonik/ is already fully gitignored
+	// (redundant but explicit for belt-and-suspenders).
+	addCmd := exec.CommandContext(ctx, "git", "add", "-A", "--",
+		".",
+		":(exclude).claude",
+		":(exclude).harmonik/run-context",
+	)
 	addCmd.Dir = wtPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: commitResidualDelta: git add -A: %v\n%s", err, out)

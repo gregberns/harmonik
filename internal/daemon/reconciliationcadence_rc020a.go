@@ -137,9 +137,13 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 
 	var beadsExamined, beadsClosed, beadsReset int
 
-	// Emit reconciliation_completed once the scan finishes (non-fatal; pairs with
-	// reconciliation_started so a hung scan is detectable from the JSONL log).
+	// Emit reconciliation_completed only when work was done (closed>0 or reset>0).
+	// No-op scans (86% of ticks) are silently dropped to reduce log noise.
+	// Refs: hk-ubp1 logmine TA3.
 	defer func() {
+		if beadsClosed == 0 && beadsReset == 0 {
+			return
+		}
 		completedPayload := core.ReconciliationCompletedPayload{
 			ReconciliationRunID: runID,
 			Trigger:             core.ReconciliationTriggerScheduled,

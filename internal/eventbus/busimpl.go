@@ -650,12 +650,17 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 	}
 
 	// JSONL append — O-class: fsync=false (agent_presence is not fsync-boundary).
-	envelopeBytes, marshalEnvErr := json.Marshal(evt)
-	if marshalEnvErr != nil {
-		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: marshal envelope: %w", marshalEnvErr)
-	}
-	if appendErr := b.jsonlWriter.Append(envelopeBytes, false /* O-class: no fsync */); appendErr != nil {
-		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: JSONL append: %w", appendErr)
+	// Refresh beats are not persisted: only join/leave edges carry signal worth
+	// storing (logmine TA3 noise cut; in-memory fan-out below still fires for
+	// "comms who" TTL projection). Refs: hk-ubp1.
+	if payload.Reason != core.AgentPresenceReasonRefresh {
+		envelopeBytes, marshalEnvErr := json.Marshal(evt)
+		if marshalEnvErr != nil {
+			return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: marshal envelope: %w", marshalEnvErr)
+		}
+		if appendErr := b.jsonlWriter.Append(envelopeBytes, false /* O-class: no fsync */); appendErr != nil {
+			return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: JSONL append: %w", appendErr)
+		}
 	}
 
 	// Fan-out to subscribers.

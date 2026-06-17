@@ -127,17 +127,9 @@ func TestCycler_OperatorAttached_SuppressesInjection(t *testing.T) {
 	if evts := em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted); len(evts) != 0 {
 		t.Errorf("want 0 handoff_started while operator attached; got %d", len(evts))
 	}
-	// Exactly one operator_attached event, with phase "cycle".
-	oa := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached)
-	if len(oa) != 1 {
-		t.Fatalf("want 1 operator_attached event; got %d", len(oa))
-	}
-	var p core.SessionKeeperOperatorAttachedPayload
-	if err := json.Unmarshal(oa[0].Payload, &p); err != nil {
-		t.Fatalf("unmarshal operator_attached: %v", err)
-	}
-	if p.AgentName != agent || p.SessionID != sid || p.Phase != "cycle" {
-		t.Errorf("operator_attached payload = %+v; want agent=%q sid=%q phase=cycle", p, agent, sid)
+	// operator_attached is no longer persisted (logmine TA3 / finish F55).
+	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 0 {
+		t.Errorf("want 0 operator_attached events (non-durable since TA3); got %d", len(evts))
 	}
 	// The guard probe was consulted.
 	if attach.calls == 0 {
@@ -221,8 +213,9 @@ func TestCycler_OperatorDetachThenResume(t *testing.T) {
 	if n := len(spy.texts()); n != 0 {
 		t.Fatalf("want 0 inject calls on attached tick; got %d", n)
 	}
-	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 1 {
-		t.Fatalf("want 1 operator_attached after attached tick; got %d", len(evts))
+	// operator_attached is no longer persisted (logmine TA3 / finish F55).
+	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 0 {
+		t.Errorf("want 0 operator_attached (non-durable since TA3); got %d", len(evts))
 	}
 
 	// Operator detaches.
@@ -240,9 +233,9 @@ func TestCycler_OperatorDetachThenResume(t *testing.T) {
 	if evts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete); len(evts) != 1 {
 		t.Errorf("want 1 cycle_complete after detach; got %d", len(evts))
 	}
-	// Still only the single operator_attached event from the first tick.
-	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 1 {
-		t.Errorf("want exactly 1 operator_attached total; got %d", len(evts))
+	// operator_attached is no longer persisted (logmine TA3 / finish F55).
+	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 0 {
+		t.Errorf("want 0 operator_attached total (non-durable since TA3); got %d", len(evts))
 	}
 }
 
@@ -310,16 +303,9 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 	if cleared != 1 {
 		t.Errorf("want precompact marker cleared exactly once (bounded-fallback); got %d", cleared)
 	}
-	oa := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached)
-	if len(oa) != 1 {
-		t.Fatalf("want 1 operator_attached under precompact; got %d", len(oa))
-	}
-	var p core.SessionKeeperOperatorAttachedPayload
-	if err := json.Unmarshal(oa[0].Payload, &p); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if p.Phase != "precompact" {
-		t.Errorf("operator_attached.phase = %q; want \"precompact\"", p.Phase)
+	// operator_attached is no longer persisted (logmine TA3 / finish F55).
+	if evts := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(evts) != 0 {
+		t.Errorf("want 0 operator_attached under precompact (non-durable since TA3); got %d", len(evts))
 	}
 	// precompact_blocked recorded the operator_attached action.
 	pcb := em.EventsOfType(core.EventTypeSessionKeeperPrecompactBlocked)

@@ -1333,19 +1333,11 @@ func (c *Cycler) maybeEmitOperatorAttached(ctx context.Context, sessionID, phase
 	c.emitOperatorAttached(ctx, sessionID, phase)
 }
 
-// emitOperatorAttached emits session_keeper_operator_attached when a reset-cycle
-// injection is suppressed because a human operator is attached to the target
-// tmux session. Phase is "cycle" (MaybeRun) or "precompact" (RunForPrecompact).
-// Refs: hk-6qf.
-func (c *Cycler) emitOperatorAttached(ctx context.Context, sessionID, phase string) {
-	payload := core.SessionKeeperOperatorAttachedPayload{
-		AgentName: c.cfg.AgentName,
-		SessionID: sessionID,
-		Phase:     phase,
-	}
-	raw, _ := json.Marshal(payload)                                                                  //nolint:errcheck
-	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperOperatorAttached, raw) //nolint:errcheck
-}
+// emitOperatorAttached is a no-op: session_keeper_operator_attached is no longer
+// persisted to events.jsonl (logmine TA3 / finish F55). The suppression resolver's
+// AttachedInactiveTimeout (default 5 min) handles expiry; the live OperatorAttachedFn
+// remains the authoritative source. Refs: hk-6qf, hk-ubp1.
+func (c *Cycler) emitOperatorAttached(_ context.Context, _, _ string) {}
 
 // pollForNonce polls handoffPath until the nonce appears or the handoff
 // timeout (or ctx) elapses.

@@ -98,9 +98,9 @@ func TestCycler_OperatorAttached_ThrottledAcrossTicks(t *testing.T) {
 	if n := len(spy.texts()); n != 0 {
 		t.Errorf("want 0 inject calls while operator attached; got %d", n)
 	}
-	// Exactly ONE operator_attached event despite 8 ticks — the rest are throttled.
-	if oa := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(oa) != 1 {
-		t.Fatalf("want 1 throttled operator_attached event across 8 ticks; got %d", len(oa))
+	// operator_attached is no longer persisted (logmine TA3 / finish F55).
+	if oa := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(oa) != 0 {
+		t.Errorf("want 0 operator_attached events (non-durable since TA3); got %d", len(oa))
 	}
 }
 
@@ -139,8 +139,9 @@ func TestCycler_OperatorAttached_ReEmitsAfterInterval(t *testing.T) {
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun tick 2: %v", err)
 	}
-	if oa := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(oa) != 1 {
-		t.Fatalf("want 1 event before interval elapses; got %d", len(oa))
+	// operator_attached is no longer persisted (logmine TA3 / finish F55).
+	if oa := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(oa) != 0 {
+		t.Errorf("want 0 operator_attached events before interval (non-durable since TA3); got %d", len(oa))
 	}
 
 	// Let the sample window elapse, then tick again while still attached.
@@ -148,7 +149,8 @@ func TestCycler_OperatorAttached_ReEmitsAfterInterval(t *testing.T) {
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun tick 3: %v", err)
 	}
-	if oa := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(oa) != 2 {
-		t.Fatalf("want 2 events after sample interval elapses; got %d", len(oa))
+	// Still 0 — emission is permanently suppressed.
+	if oa := em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached); len(oa) != 0 {
+		t.Errorf("want 0 operator_attached events after interval (non-durable since TA3); got %d", len(oa))
 	}
 }

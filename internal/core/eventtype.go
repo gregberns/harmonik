@@ -585,6 +585,16 @@ const (
 	// Durability class: O.
 	// Bead ref: hk-sul12.
 	EventTypeDaemonConfig EventType = "daemon_config"
+
+	// EventTypeDiskLow is the disk_low event type (§8.7.19).
+	// Emitted by the daemon work loop when available disk space on the project
+	// filesystem falls below the configured watermark (default 10 GiB). The
+	// daemon pauses new bead dispatch while the condition persists and attempts
+	// `go clean -cache` to reclaim the Go build cache.
+	// Durability class: O (ordinary — observability; the daemon self-recovers
+	// once disk space is restored).
+	// Bead ref: hk-sxlb.
+	EventTypeDiskLow EventType = "disk_low"
 )
 
 // ---------------------------------------------------------------------------

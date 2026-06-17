@@ -274,6 +274,11 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// ── §8.14 Alarm / self-check ───────────────────────────────────────────
 	// hk-tnmjy: review-gate anomaly alarm — N consecutive bead_closed with no reviewer_verdict.
 	{TypeName: "review_gate_anomaly", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
+	// ── §8.7.19 Disk-watermark (hk-sxlb) ──────────────────────────────────
+	// hk-sxlb: disk_low — emitted when free disk falls below the 10 GiB watermark;
+	// daemon pauses dispatch and attempts go clean -cache.
+	{TypeName: "disk_low", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 }
 
 // LookupPayloadCompatEntry returns the PayloadCompatEntry for the given

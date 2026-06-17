@@ -308,6 +308,8 @@ func registerReconciliationEvents() {
 //   - infrastructure_unavailable (§8.7.15):       O (ordinary, operator-observability)
 //   - operator_command_failed (§8.7.16):          O (ordinary, ON-013a panic-barrier emission)
 //   - operator_escalation_cleared (§8.7.17):      O (ordinary, ON-emission-owned companion to §8.6.9)
+//   - daemon_config (§8.7.18):                    O (ordinary, resolved-config audit)
+//   - disk_low (§8.7.19, hk-sxlb):               O (ordinary, disk-watermark self-healing signal)
 func registerDaemonLifecycleEvents() {
 	mustRegister("daemon_started", func() EventPayload { return &DaemonStartedPayload{} })
 	mustRegister("daemon_ready", func() EventPayload { return &DaemonReadyPayload{} })
@@ -327,6 +329,9 @@ func registerDaemonLifecycleEvents() {
 	mustRegister("operator_command_failed", func() EventPayload { return &OperatorCommandFailedPayload{} })
 	mustRegister("operator_escalation_cleared", func() EventPayload { return &OperatorEscalationClearedPayload{} })
 	mustRegister("daemon_config", func() EventPayload { return &DaemonConfigPayload{} })
+	// disk_low (§8.7.19, hk-sxlb): emitted when available disk falls below the
+	// configured watermark; daemon pauses dispatch and attempts go clean -cache.
+	mustRegister("disk_low", func() EventPayload { return &DiskLowPayload{} })
 }
 
 // registerBusEvents registers all §8.8 observability and bus-internal event

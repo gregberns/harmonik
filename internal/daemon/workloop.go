@@ -117,6 +117,26 @@ const agentReadyKillReapTimeout = 10 * time.Second
 // Tests may inject a shorter value via workLoopDeps.coordinatorReapInterval.
 const periodicCoordinatorReapInterval = 5 * time.Minute
 
+// diskLowWatermarkDefault is the default free-disk threshold below which the
+// daemon pauses new bead dispatch and attempts a go-cache reap (hk-sxlb).
+// 10 GiB chosen because --max-concurrent 4 with go build can consume ~3–5 GiB
+// of build intermediates and worktree content per concurrent run; 10 GiB
+// provides enough headroom to finish in-flight runs while rejecting new ones.
+const diskLowWatermarkDefault uint64 = 10 * 1024 * 1024 * 1024 // 10 GiB
+
+// diskCheckInterval is the default minimum interval between successive disk
+// free-space probes in the work loop (hk-sxlb). 10 minutes is frequent enough
+// to catch rapid accumulation (go build cache) without adding syscall overhead
+// on every 2-second poll tick.
+const diskCheckInterval = 10 * time.Minute
+
+// goCacheCleanInterval is the default minimum interval between proactive
+// `go clean -cache` runs in the work loop (hk-sxlb). 60 minutes prevents the
+// build cache from accumulating to 20 GiB between disk-low crossings. The
+// reactive path (triggered when disk < watermark) runs independently of this
+// timer and may fire sooner.
+const goCacheCleanInterval = 60 * time.Minute
+
 // workLoopDeps bundles the injectable dependencies of the work loop.  All
 // fields are required (non-nil).  Use newWorkLoopDeps to construct the
 // production set from daemon.Config.
@@ -641,6 +661,47 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-t08m.
 	lastCoordinatorReap time.Time
+
+	// lastDiskCheck records when the periodic disk free-space probe last ran.
+	// Guarded entirely by the work-loop goroutine — no locking needed. Initialised
+	// to zero so the first tick fires after diskCheckInterval elapses; the guard
+	// below uses time.Since which returns a large value for a zero time.
+	//
+	// Bead ref: hk-sxlb.
+	lastDiskCheck time.Time
+
+	// lastGoCacheClean records when `go clean -cache` was last run proactively
+	// (independently of a disk-low crossing). Guarded by the work-loop goroutine.
+	// Zero → first proactive clean fires after goCacheCleanInterval.
+	//
+	// Bead ref: hk-sxlb.
+	lastGoCacheClean time.Time
+
+	// diskLow is true when the most recent disk probe found available space below
+	// diskLowWatermarkDefault (or deps.diskLowWatermark). The dispatch loop skips
+	// bead claiming while this flag is set, sleeping and retrying each poll tick
+	// until disk recovers above the watermark.
+	//
+	// Bead ref: hk-sxlb.
+	diskLow bool
+
+	// diskLowWatermark is the injectable free-space floor for tests. Zero →
+	// diskLowWatermarkDefault (10 GiB). Production leaves this zero.
+	//
+	// Bead ref: hk-sxlb.
+	diskLowWatermark uint64
+
+	// diskCheckIntervalOverride overrides diskCheckInterval for tests.
+	// Zero → diskCheckInterval (10 min).
+	//
+	// Bead ref: hk-sxlb.
+	diskCheckIntervalOverride time.Duration
+
+	// goCacheCleanIntervalOverride overrides goCacheCleanInterval for tests.
+	// Zero → goCacheCleanInterval (60 min).
+	//
+	// Bead ref: hk-sxlb.
+	goCacheCleanIntervalOverride time.Duration
 }
 
 // closeBeadWithHistoryTrim trims .beads/.br_history to brHistoryCloseTrimKeep
@@ -1289,6 +1350,26 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				runPeriodicCoordinatorReap(ctx, deps.projectDir, deps.coordinatorReapProjectHash, deps.coordinatorReapAdapter, nil)
 				deps.lastCoordinatorReap = time.Now()
 			}
+		}
+
+		// Step 1d: periodic disk watermark check and proactive go-cache reap
+		// (hk-sxlb). Two rate-limited sub-steps run from the same block:
+		//
+		// (A) Disk probe — every diskCheckInterval (default 10 min). When the
+		//     probe finds available space below the watermark, deps.diskLow is set
+		//     true, a disk_low event is emitted, and `go clean -cache` is run
+		//     immediately (reactive reap). The loop then skips dispatch this
+		//     iteration (see the gate below step 1d).
+		//
+		// (B) Proactive go-cache reap — every goCacheCleanInterval (default
+		//     60 min) even when disk is healthy, preventing the cache from
+		//     growing to 20 GiB between low-disk crossings.
+		runPeriodicDiskCheck(ctx, &deps)
+		if deps.diskLow {
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+				return exitClean()
+			}
+			continue
 		}
 
 		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.

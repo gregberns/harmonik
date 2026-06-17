@@ -103,7 +103,7 @@ func TestDispatchDotToolNode_Remote_EnvInlinedInArgv(t *testing.T) {
 
 // TestDispatchDotToolNode_Remote_EnvValueWithSingleQuote (T3): verifies that a
 // value containing a single-quote character is inlined without causing a shell
-// syntax error (shellQuote uses the '\'' escape convention).
+// syntax error (shellQuote uses the '\” escape convention).
 func TestDispatchDotToolNode_Remote_EnvValueWithSingleQuote(t *testing.T) {
 	ctx := context.Background()
 	rr := &tmux.RecordingRunner{}

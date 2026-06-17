@@ -61,28 +61,34 @@ func (a *hkt08mFakeAdapter_t08m) killedSessions_t08m() []string {
 // --- no-op stubs to satisfy ltmux.Adapter ---
 
 func (a *hkt08mFakeAdapter_t08m) ProbeTmux(_ context.Context) error { return nil }
+
 func (a *hkt08mFakeAdapter_t08m) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hkt08mFakeAdapter_t08m) NewWindowIn(_ context.Context, _ ltmux.NewWindowIn) ltmux.Outcome {
 	return ltmux.Outcome{}
 }
+
 func (a *hkt08mFakeAdapter_t08m) KillWindow(_ context.Context, _ ltmux.WindowHandle) error {
 	return nil
 }
+
 func (a *hkt08mFakeAdapter_t08m) WindowPanePID(_ context.Context, _ ltmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *hkt08mFakeAdapter_t08m) WindowPaneID(_ context.Context, _ ltmux.WindowHandle) (string, error) {
 	return "", nil
 }
+
 func (a *hkt08mFakeAdapter_t08m) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
-func (a *hkt08mFakeAdapter_t08m) PasteBuffer(_ context.Context, _, _ string) error  { return nil }
+func (a *hkt08mFakeAdapter_t08m) PasteBuffer(_ context.Context, _, _ string) error     { return nil }
 func (a *hkt08mFakeAdapter_t08m) SendKeysLiteral(_ context.Context, _, _ string) error { return nil }
-func (a *hkt08mFakeAdapter_t08m) SendKeysEnter(_ context.Context, _ string) error   { return nil }
-func (a *hkt08mFakeAdapter_t08m) SendKeysQuit(_ context.Context, _ string) error    { return nil }
+func (a *hkt08mFakeAdapter_t08m) SendKeysEnter(_ context.Context, _ string) error      { return nil }
+func (a *hkt08mFakeAdapter_t08m) SendKeysQuit(_ context.Context, _ string) error       { return nil }
 func (a *hkt08mFakeAdapter_t08m) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }

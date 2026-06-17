@@ -792,46 +792,46 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 	}
 
 	return workLoopDeps{
-		brAdapter:             adapter,
-		bus:                   bus,
-		h:                     h,
-		intentLogDir:          intentLogDir,
-		projectDir:            cfg.ProjectDir,
-		handlerBinary:         binary,
-		daemonBinaryPath:      daemonBinaryPath,
-		handlerArgs:           cfg.HandlerArgs,
-		handlerEnv:            handlerEnv,
-		brTimeoutCfg:          brcli.TimeoutConfig{},
-		tidGen:                core.NewTransitionIDGenerator(),
-		workflowModeDefault:   workflowModeDefault,
-		runRegistry:           newLocalRunRegistry(),
-		maxConcurrent:         maxConcurrent,
-		hookStore:             store,
-		cpRegistry:            cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
-		adapterRegistry:       registry,
-		harnessRegistry:       harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
-		substrate:             cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
-		agentReadyTimeout:     cfg.AgentReadyTimeout,
-		cancelOnQueueDrain:    cfg.CancelOnQueueDrain,
-		projectCfg:            cfg.ProjectCfg,
-		queueStore:            nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		queueLedger:           newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
-		staleBlockerCloser:    adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
-		kerfPath:              cfg.KerfPath,              // hk-9321v: kerf next for EM-062/EM-063 eager-refill
-		brPath:                cfg.BrPath,                // hk-f722: staged-bead generator br create
-		followUpLedger:        make(map[string]struct{}), // hk-f722: at-most-once guard per daemon session
-		followUpLedgerMu:      &sync.Mutex{},
-		noAutoPull:            cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
-		skipBrHistoryRotation: cfg.SkipBrHistoryRotation,      // hk-hypbi: per-close .br_history trim
-		mergeMu:               &sync.Mutex{},                  // hk-yyso7: global merge-serialisation across all queues
-		emittedEpics:          make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
-		emittedEpicsMu:        &sync.Mutex{},
-		targetBranch:          resolveTargetBranch(cfg.TargetBranch),
-		protectBranches:       cfg.ProtectBranches,
-		beadAuditLogger:            adapter.AuditLog,        // hk-wcv / hk-f38n: retained for tests; pre-dispatch block removed
-		workerRegistry:             workerReg,               // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
-		coordinatorReapAdapter:     coordinatorReapAdapter,  // hk-t08m: periodic flywheel-coordinator reaper
-		coordinatorReapProjectHash: projectHash,             // hk-t08m: pre-computed for session name derivation
+		brAdapter:                  adapter,
+		bus:                        bus,
+		h:                          h,
+		intentLogDir:               intentLogDir,
+		projectDir:                 cfg.ProjectDir,
+		handlerBinary:              binary,
+		daemonBinaryPath:           daemonBinaryPath,
+		handlerArgs:                cfg.HandlerArgs,
+		handlerEnv:                 handlerEnv,
+		brTimeoutCfg:               brcli.TimeoutConfig{},
+		tidGen:                     core.NewTransitionIDGenerator(),
+		workflowModeDefault:        workflowModeDefault,
+		runRegistry:                newLocalRunRegistry(),
+		maxConcurrent:              maxConcurrent,
+		hookStore:                  store,
+		cpRegistry:                 cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
+		adapterRegistry:            registry,
+		harnessRegistry:            harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
+		substrate:                  cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		agentReadyTimeout:          cfg.AgentReadyTimeout,
+		cancelOnQueueDrain:         cfg.CancelOnQueueDrain,
+		projectCfg:                 cfg.ProjectCfg,
+		queueStore:                 nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueLedger:                newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
+		staleBlockerCloser:         adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
+		kerfPath:                   cfg.KerfPath,              // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		brPath:                     cfg.BrPath,                // hk-f722: staged-bead generator br create
+		followUpLedger:             make(map[string]struct{}), // hk-f722: at-most-once guard per daemon session
+		followUpLedgerMu:           &sync.Mutex{},
+		noAutoPull:                 cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
+		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,      // hk-hypbi: per-close .br_history trim
+		mergeMu:                    &sync.Mutex{},                  // hk-yyso7: global merge-serialisation across all queues
+		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
+		emittedEpicsMu:             &sync.Mutex{},
+		targetBranch:               resolveTargetBranch(cfg.TargetBranch),
+		protectBranches:            cfg.ProtectBranches,
+		beadAuditLogger:            adapter.AuditLog,       // hk-wcv / hk-f38n: retained for tests; pre-dispatch block removed
+		workerRegistry:             workerReg,              // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
+		coordinatorReapAdapter:     coordinatorReapAdapter, // hk-t08m: periodic flywheel-coordinator reaper
+		coordinatorReapProjectHash: projectHash,            // hk-t08m: pre-computed for session name derivation
 	}, nil
 }
 

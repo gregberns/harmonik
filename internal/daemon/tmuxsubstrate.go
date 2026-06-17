@@ -1088,6 +1088,34 @@ type substrateWithKeepalive interface {
 // any *tmuxSubstrate — it exits immediately for the non-keepalive path.
 var _ substrateWithKeepalive = (*tmuxSubstrate)(nil)
 
+// substrateSpawnReadier is an optional interface a Substrate may implement to
+// expose a lightweight pre-dispatch spawn-readiness probe. daemon.Start probes
+// cfg.Substrate for this interface after a restart-backoff boot (hk-bk33):
+// when the backoff delay is non-zero, Start launches ProbeSpawnReady in a
+// goroutine and closes a channel when it returns; runWorkLoop waits on that
+// channel (spawnSubstrateReadyCh) before its first dispatch tick.
+//
+// Bead ref: hk-bk33.
+type substrateSpawnReadier interface {
+	ProbeSpawnReady(ctx context.Context) error
+}
+
+// ProbeSpawnReady calls EnsureSession on the underlying adapter to verify the
+// daemon's spawn-target session is ready to accept new tmux windows. Returns
+// nil immediately when the adapter does not implement sessionEnsurer (test
+// stubs, non-tmux adapters, etc.).
+//
+// Implements substrateSpawnReadier (hk-bk33).
+func (s *tmuxSubstrate) ProbeSpawnReady(ctx context.Context) error {
+	se, ok := s.adapter.(sessionEnsurer)
+	if !ok {
+		return nil
+	}
+	return se.EnsureSession(ctx, s.sessionName, "")
+}
+
+var _ substrateSpawnReadier = (*tmuxSubstrate)(nil)
+
 // KillAllWindows kills every tmux window spawned by this daemon instance.
 //
 // It is called from exitClean() in runWorkLoop after wg.Wait() returns, so all

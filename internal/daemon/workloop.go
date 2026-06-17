@@ -356,6 +356,14 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.14.
 	substrate handler.Substrate
 
+	// spawnSubstrateReadyCh, when non-nil, is awaited at the START of runWorkLoop
+	// before the first dispatch tick. daemon.Start closes this channel once the
+	// spawn substrate has been probed for readiness after a restart-backoff boot
+	// (hk-bk33). Nil on normal (no-backoff) boots — the gate is bypassed.
+	//
+	// Bead ref: hk-bk33.
+	spawnSubstrateReadyCh <-chan struct{}
+
 	// agentReadyTimeout is the maximum duration waitAgentReady blocks waiting
 	// for an agent_ready event per HC-056.  Zero → defaultAgentReadyTimeout (30s).
 	// Sourced from Config.AgentReadyTimeout (also zero-value safe).
@@ -1218,6 +1226,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 		drainCancelledQueue(context.Background(), deps)
 		return nil
+	}
+
+	// hk-bk33: gate post-boot re-dispatch on spawn-substrate readiness.
+	// When a restart-backoff was applied and the substrate exposes a readiness
+	// probe, daemon.Start starts a goroutine that probes the substrate and closes
+	// this channel when done. Waiting here prevents the first dispatch tick from
+	// launching a run before the tmux session is ready to accept new windows,
+	// avoiding spurious agent_ready_timeout on QM-002a-reverted beads.
+	// Nil on normal (no-backoff) boots — the select is skipped entirely.
+	if deps.spawnSubstrateReadyCh != nil {
+		select {
+		case <-deps.spawnSubstrateReadyCh:
+		case <-ctx.Done():
+			return exitClean()
+		}
 	}
 
 	for {

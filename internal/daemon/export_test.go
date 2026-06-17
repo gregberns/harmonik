@@ -292,6 +292,15 @@ type WorkLoopDepsParams struct {
 	// BrPath is the absolute path to the `br` CLI binary used by the staged-bead
 	// generator (hk-f722). When empty the generator is disabled (safe test default).
 	BrPath string
+
+	// SpawnSubstrateReadyCh, when non-nil, is forwarded to
+	// workLoopDeps.spawnSubstrateReadyCh so tests can assert that dispatch is
+	// gated on spawn-substrate readiness after a simulated restart-backoff boot
+	// (hk-bk33). When nil the gate is disabled (safe default for tests that do
+	// not exercise this path).
+	//
+	// Bead ref: hk-bk33.
+	SpawnSubstrateReadyCh <-chan struct{}
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -414,6 +423,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		brPath:                    p.BrPath,          // hk-f722: staged-bead generator; empty → disabled
 		followUpLedger:            make(map[string]struct{}),
 		followUpLedgerMu:          &sync.Mutex{},
+		spawnSubstrateReadyCh:     p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
 	}
 }
 

@@ -778,8 +778,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// loop (incident: 10 boots in a day, each auto-pulling br ready). The call is
 	// non-fatal and ctx-interruptible. Skipped when SkipRestartBackoff is true
 	// (test isolation) or when ProjectDir is empty (unit-test mode).
+	var bootBackoffDelay time.Duration
 	if cfg.ProjectDir != "" && !cfg.SkipRestartBackoff {
-		applyBootBackoff(ctx, cfg.ProjectDir)
+		bootBackoffDelay = applyBootBackoff(ctx, cfg.ProjectDir)
 	}
 
 	// Instantiate the RedactionRegistry (HC-032; hk-8i31.83).
@@ -1698,6 +1699,23 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// (hk-yyso7), so production merges stay serialised.
 		if hooks.mergeMu != nil {
 			deps.mergeMu = hooks.mergeMu
+		}
+
+		// hk-bk33: spawn-substrate readiness gate for post-boot re-dispatch.
+		// When a restart-backoff delay was applied and the substrate exposes a
+		// readiness probe, start a goroutine that calls ProbeSpawnReady and closes
+		// a channel when it returns. runWorkLoop waits on this channel before the
+		// first dispatch tick, preventing spurious agent_ready_timeout on
+		// QM-002a-reverted beads re-dispatched right after a restart-backoff boot.
+		if bootBackoffDelay > 0 {
+			if prober, ok := cfg.Substrate.(substrateSpawnReadier); ok {
+				readyCh := make(chan struct{})
+				go func() {
+					defer close(readyCh)
+					_ = prober.ProbeSpawnReady(ctx)
+				}()
+				deps.spawnSubstrateReadyCh = readyCh
+			}
 		}
 
 		// Emit the composition-root wiring audit log when HARMONIK_DEBUG_WIRING=1

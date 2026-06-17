@@ -88,7 +88,7 @@ func hk4p2hWriteVerdict(t *testing.T, wtPath string) {
 // Bead: hk-4p2h.
 func TestReviewBudget_Hk4p2h_DefaultConstants(t *testing.T) {
 	base := 10 * time.Minute
-	perK := 10 * time.Minute // new default
+	perK := 10 * time.Minute    // new default
 	ceiling := 60 * time.Minute // new default
 
 	cases := []struct {
@@ -98,10 +98,10 @@ func TestReviewBudget_Hk4p2h_DefaultConstants(t *testing.T) {
 	}{
 		{"unknown-uses-base", -1, base},
 		{"zero-uses-base", 0, base},
-		{"1000-lines", 1000, base + perK},               // 10 + 10 = 20 min
+		{"1000-lines", 1000, base + perK},                // 10 + 10 = 20 min
 		{"2000-lines-old-incident", 2000, base + 2*perK}, // 10 + 20 = 30 min (was 20)
 		{"4000-lines", 4000, base + 4*perK},              // 10 + 40 = 50 min (was 30)
-		{"5000-lines-capped", 5000, ceiling},              // 10 + 50 = 60 = ceiling
+		{"5000-lines-capped", 5000, ceiling},             // 10 + 50 = 60 = ceiling
 		{"huge-diff-clamped", 100000, ceiling},
 	}
 	for _, tc := range cases {

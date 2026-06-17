@@ -652,16 +652,22 @@ func driveDotWorkflow(
 			if isReviewer && outcome.PreferredLabel != nil {
 				axisReviewerVerdicts[currentNodeID] = *outcome.PreferredLabel
 				if upstream, isJoin := isConsolidateJoinNode(graph, nodesByID, currentNodeID); isJoin {
-					upstreamVerdicts := make([]string, 0, len(upstream))
+					// hk-0gnt: include self in the severity-max so a consolidate
+					// node's own BLOCK can ESCALATE the join (never de-escalate it).
+					// Self-APPROVE still cannot override an upstream BLOCK — the max
+					// of upstream+self preserves the hk-cmry severity-integrity property
+					// while closing the gap where a consolidate-caught BLOCK was lost.
+					allVerdicts := make([]string, 0, len(upstream)+1)
+					allVerdicts = append(allVerdicts, *outcome.PreferredLabel) // self
 					for id := range upstream {
 						if v, ok := axisReviewerVerdicts[id]; ok {
-							upstreamVerdicts = append(upstreamVerdicts, v)
+							allVerdicts = append(allVerdicts, v)
 						}
 					}
-					if joined := verdictSeverityMax(upstreamVerdicts); joined != "" && joined != *outcome.PreferredLabel {
+					if joined := verdictSeverityMax(allVerdicts); joined != "" && joined != *outcome.PreferredLabel {
 						fmt.Fprintf(os.Stderr,
-							"daemon: dot: consolidate node %q self-reported %q; routing on deterministic severity-max %q of %d upstream axes %v [hk-cmry]\n",
-							currentNodeID, *outcome.PreferredLabel, joined, len(upstreamVerdicts), upstreamVerdicts)
+							"daemon: dot: consolidate node %q self-reported %q; routing on deterministic severity-max %q of %d axes (upstream+self) %v [hk-cmry,hk-0gnt]\n",
+							currentNodeID, *outcome.PreferredLabel, joined, len(allVerdicts), allVerdicts)
 						joinedLabel := joined
 						outcome.PreferredLabel = &joinedLabel
 					}

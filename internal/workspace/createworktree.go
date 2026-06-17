@@ -140,14 +140,26 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 	worktreePath := WorktreePath(repoRoot, runID, cfg)
 	branch := TaskBranchName(runID)
 
-	// Create the parent directory (worktree root) if absent.
-	parentDir := filepath.Dir(worktreePath)
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(parentDir, 0o755); err != nil {
-		return fmt.Errorf("workspace: CreateWorktree: MkdirAll %q: %w", parentDir, err)
-	}
-
 	runner := cfg.commandRunner()
+
+	// Create the parent directory (worktree root) if absent.
+	// For remote runs (cfg.runner != nil), the git commands execute on the
+	// worker via SSHRunner, so we must create the directory on the worker too.
+	// Using os.MkdirAll here would create the path locally while git runs
+	// remotely — the TOCTOU race reported as hk-eodo. Route mkdir through the
+	// same runner so local and remote paths are both handled correctly.
+	parentDir := filepath.Dir(worktreePath)
+	if cfg.runner != nil {
+		mkdirCmd := runner.Command(ctx, "mkdir", "-p", parentDir)
+		if out, mkErr := mkdirCmd.CombinedOutput(); mkErr != nil {
+			return fmt.Errorf("workspace: CreateWorktree: remote mkdir -p %q: %v\noutput: %s", parentDir, mkErr, out)
+		}
+	} else {
+		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+			return fmt.Errorf("workspace: CreateWorktree: MkdirAll %q: %w", parentDir, err)
+		}
+	}
 
 	// Issue `git -C <repoRoot> worktree add -b <branch> <path> <parentCommit>`
 	// with bounded retry for the transient macOS/APFS commondir race (hk-gq3my).

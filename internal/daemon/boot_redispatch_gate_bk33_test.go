@@ -108,13 +108,13 @@ func TestWorkLoop_PostBootReDispatchGate_bk33(t *testing.T) {
 	spawnReadyCh := make(chan struct{})
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:            ledger,
-		Bus:                  sink,
-		ProjectDir:           "", // no real git repo needed; handler exits immediately
-		HandlerBinary:        "/bin/sh",
-		HandlerArgs:          []string{"-c", "exit 0"},
-		AdapterRegistry2:     NewSealedAdapterRegistryForTest(t),
-		IntentLogDir:         t.TempDir(),
+		BrAdapter:             ledger,
+		Bus:                   sink,
+		ProjectDir:            "", // no real git repo needed; handler exits immediately
+		HandlerBinary:         "/bin/sh",
+		HandlerArgs:           []string{"-c", "exit 0"},
+		AdapterRegistry2:      NewSealedAdapterRegistryForTest(t),
+		IntentLogDir:          t.TempDir(),
 		SpawnSubstrateReadyCh: spawnReadyCh,
 	})
 

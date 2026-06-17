@@ -1508,10 +1508,13 @@ func readAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, wtP
 // through runner.Command so it tunnels to the worker. SSHRunner.Command does NOT
 // propagate cmd.Env to the remote shell (it only forwards argv), so the os.Environ()
 // inheritance that gives the LOCAL path its PATH does not apply remotely. Instead we
-// build a LOGIN shell — `/bin/sh -lc 'cd <wtPath> && <ToolCommand>'` — so the
-// worker's own ~/.zprofile / ~/.profile PATH (which includes /opt/homebrew/bin,
-// where go/git/claude resolve on the worker) is sourced before the gate runs. The
-// cd anchors the gate at the worker's worktree the way cmd.Dir does locally.
+// build a LOGIN shell — `/bin/sh -lc 'export K=V; … cd <wtPath> && <ToolCommand>'`
+// — so (a) the worker's own ~/.zprofile / ~/.profile PATH (which includes
+// /opt/homebrew/bin, where go/git/claude resolve on the worker) is sourced, and
+// (b) handler-supplied env vars (e.g. HARMONIK_PROJECT_HASH) are inlined as export
+// statements before the gate, making them accessible to env-dependent tool_commands
+// on the worker (hk-230h). The cd anchors the gate at the worker's worktree the way
+// cmd.Dir does locally.
 // NFR7: the LOCAL (runner == nil) branch is byte-identical to the prior code.
 func dispatchDotToolNode(ctx context.Context, runner tmux.CommandRunner, wtPath string, node *dot.Node, env []string) (core.Outcome, error) {
 	timeoutSecs := 300
@@ -1536,8 +1539,24 @@ func dispatchDotToolNode(ctx context.Context, runner tmux.CommandRunner, wtPath 
 		// REMOTE run: route the gate through the worker's runner. cd into the
 		// worker's worktree and run under a login shell so the worker's PATH
 		// (homebrew toolchain) is sourced — SSHRunner does NOT forward cmd.Env.
-		cmd = runner.Command(execCtx, "/bin/sh", "-lc",
-			fmt.Sprintf("cd %s && %s", shellQuote(wtPath), node.ToolCommand))
+		// Inline handler-supplied env vars (e.g. HARMONIK_PROJECT_HASH) as
+		// shell export statements prepended to the gate command so env-dependent
+		// tool_commands can reference them on the worker (hk-230h).
+		var sb strings.Builder
+		for _, kv := range env {
+			if idx := strings.IndexByte(kv, '='); idx >= 0 {
+				sb.WriteString("export ")
+				sb.WriteString(kv[:idx])
+				sb.WriteByte('=')
+				sb.WriteString(shellQuote(kv[idx+1:]))
+				sb.WriteString("; ")
+			}
+		}
+		sb.WriteString("cd ")
+		sb.WriteString(shellQuote(wtPath))
+		sb.WriteString(" && ")
+		sb.WriteString(node.ToolCommand)
+		cmd = runner.Command(execCtx, "/bin/sh", "-lc", sb.String())
 	}
 
 	// CAPTURE the combined stdout+stderr instead of discarding it (hk-pj4b6).

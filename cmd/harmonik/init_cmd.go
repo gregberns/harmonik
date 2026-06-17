@@ -472,6 +472,9 @@ comms/
 crew/
 keeper/
 queues/
+# review-loop verdict files (hk-znou: must not be committed onto run branches)
+review.json
+review.iter-*.json
 `
 
 // writeHarmonikGitignore writes .harmonik/.gitignore.

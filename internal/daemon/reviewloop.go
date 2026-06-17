@@ -1436,6 +1436,11 @@ func runReviewLoop(
 		// nonexistent box-A path and create a stray directory tree. The verdict is
 		// already read from revWtPath (box A) above and routed below, so the copy
 		// is only an inspection convenience — skip it on remote.
+		//
+		// review.json and review.iter-*.json MUST be gitignored so they are never
+		// committed onto the run branch. The .harmonik/.gitignore written by
+		// `harmonik init` covers these paths; commitResidualDelta explicitly
+		// excludes all of .harmonik/ as belt-and-suspenders (GH #7, hk-znou).
 		if runner == nil {
 			if cpErr := rlCopyReviewVerdict(revWtPath, wtPath); cpErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: reviewloop: copy review verdict iter %d: %v (non-fatal)\n",
@@ -1695,19 +1700,6 @@ func rlResolveIter1ClaudeSessionID(interceptorID, realMintedID string) string {
 	return rlSynthesiseClaudeSessionID()
 }
 
-// rlTruncateUTF8 returns the prefix of s that is at most maxBytes UTF-8 bytes,
-// trimming any incomplete trailing code unit per event-model.md §6.3.
-func rlTruncateUTF8(s string, maxBytes int) string {
-	if len(s) <= maxBytes {
-		return s
-	}
-	b := []byte(s[:maxBytes])
-	for len(b) > 0 && !utf8.Valid(b) {
-		b = b[:len(b)-1]
-	}
-	return string(b)
-}
-
 // rlCopyReviewVerdict copies ${srcWtPath}/.harmonik/review.json to
 // ${dstWtPath}/.harmonik/review.json so the implementer's worktree retains the
 // reviewer's verdict for ArchiveVerdict and post-run inspection after the
@@ -1715,6 +1707,12 @@ func rlTruncateUTF8(s string, maxBytes int) string {
 //
 // The destination directory is created if absent.  Errors are non-fatal to the
 // caller; a failed copy is logged but does not reopen the bead.
+//
+// review.json and its per-iteration archives (review.iter-*.json) MUST be
+// covered by .gitignore so they are never committed onto the run branch.
+// The .harmonik/.gitignore written by `harmonik init` covers them, and
+// commitResidualDelta explicitly excludes all of .harmonik/ as an additional
+// safeguard (GH #7, hk-znou).
 func rlCopyReviewVerdict(srcWtPath, dstWtPath string) error {
 	src := workspace.ReviewVerdictPath(srcWtPath)
 	dst := workspace.ReviewVerdictPath(dstWtPath)
@@ -1733,6 +1731,20 @@ func rlCopyReviewVerdict(srcWtPath, dstWtPath string) error {
 	}
 	return nil
 }
+
+// rlTruncateUTF8 returns the prefix of s that is at most maxBytes UTF-8 bytes,
+// trimming any incomplete trailing code unit per event-model.md §6.3.
+func rlTruncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	b := []byte(s[:maxBytes])
+	for len(b) > 0 && !utf8.Valid(b) {
+		b = b[:len(b)-1]
+	}
+	return string(b)
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Event emission helpers (§8.1a review-loop events)

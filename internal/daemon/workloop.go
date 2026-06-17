@@ -5496,18 +5496,20 @@ func commitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 	// silently dropped (hk-cmry defect #3).
 	//
 	// Hardening (hk-igq3): use explicit pathspec EXCLUSIONS for .claude/ and
-	// .harmonik/run-context so that untracked .claude/ files (e.g.
-	// settings.local.json, todos/, ide/) are never swept into a commit even
-	// when a legitimate non-churn change is present in the same worktree.
+	// .harmonik/ so that neither is ever swept into a commit even when a
+	// legitimate non-churn change is present in the same worktree.
 	// .claude/ is only partially gitignored (worktrees/ + scheduled_tasks.lock),
 	// so a blanket -A could stage and push credential-adjacent files to origin.
+	// .harmonik/ contains daemon runtime state (review.json, run-context, etc.)
+	// that MUST NOT land on the merge target; gitignore covers it but the
+	// explicit exclusion is belt-and-suspenders (GH #7, hk-znou: review.json
+	// committed via -A caused add/add rebase conflicts on concurrent runs).
 	// The :(exclude) pathspec magic is honored by git ≥ 2.0 and matches the
-	// directory and all descendants.  .harmonik/ is already fully gitignored
-	// (redundant but explicit for belt-and-suspenders).
+	// directory and all descendants.
 	addCmd := exec.CommandContext(ctx, "git", "add", "-A", "--",
 		".",
 		":(exclude).claude",
-		":(exclude).harmonik/run-context",
+		":(exclude).harmonik",
 	)
 	addCmd.Dir = wtPath
 	if out, err := addCmd.CombinedOutput(); err != nil {

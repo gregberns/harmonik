@@ -3148,6 +3148,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// no-op backstop on the normal exit path where the session already exited.
 	defer forceTeardownSession(sess)
 
+	// hk-xnnd: register the implementer identity on the comms bus so peers can
+	// attribute escalation messages sent under "<beadID>-impl". Retire on run-end
+	// via defer so the leave event fires on every exit path (normal, abort, error).
+	emitImplPresence(ctx, deps.bus, beadID, core.AgentPresenceStatusOnline, core.AgentPresenceReasonJoin)
+	defer func() {
+		emitImplPresence(context.Background(), deps.bus, beadID, core.AgentPresenceStatusOffline, core.AgentPresenceReasonLeave)
+	}()
+
 	// Step 4a: wire the agent-ready callback so that incoming agent_ready relay
 	// messages from the hook-relay subprocess (CHB-013 / HC-039) are forwarded
 	// into tapCh, which waitAgentReady blocks on.
@@ -4377,6 +4385,24 @@ func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, run
 		eventType = core.EventTypeRunFailed
 	}
 	_ = bus.EmitWithRunID(ctx, runID, eventType, b)
+}
+
+// emitImplPresence emits an agent_presence event for a daemon-spawned implementer
+// so that peers on the comms bus can attribute and route messages from the identity
+// "<beadID>-impl" (hk-xnnd). Errors are silently swallowed — presence is
+// best-effort and must not gate the run lifecycle.
+func emitImplPresence(ctx context.Context, bus handlercontract.EventEmitter, beadID core.BeadID, status core.AgentPresenceStatus, reason core.AgentPresenceReason) {
+	pl := core.AgentPresencePayload{
+		Agent:    string(beadID) + "-impl",
+		Status:   status,
+		LastSeen: time.Now().UTC().Format(time.RFC3339),
+		Reason:   reason,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.Emit(ctx, core.EventType("agent_presence"), b)
 }
 
 // resolveOwningEpicFromRecord scans beadRecord.Edges for a parent-child edge

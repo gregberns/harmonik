@@ -139,7 +139,7 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 
 	// Build argv.
 	// Initial:  codex exec --json --sandbox workspace-write -C <wt> <seed>
-	// Resume:   codex exec resume <thread_id> --json --sandbox workspace-write -C <wt> <seed>
+	// Resume:   codex exec resume <thread_id> --json --sandbox workspace-write <seed>
 	//
 	// Note: codex 0.139.0 removed the -a/--ask-for-approval flag. Sandboxing is
 	// controlled exclusively by --sandbox/-s. Do not add -a back.

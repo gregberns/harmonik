@@ -12,11 +12,16 @@
 // from the event log without inspecting the binary.
 //
 // When the binary is built without the ldflags stamp (e.g. plain `go build`
-// or `go test`), commitHash retains its initialiser value "unknown".  The
-// event payload will show "unknown" rather than a real SHA.
+// or `go test`), resolvedCommitHash() falls back to the VCS revision embedded
+// by the Go toolchain via runtime/debug.ReadBuildInfo() (available since
+// Go 1.18 when building from a git worktree without -trimpath).  If neither
+// source yields a hash, the sentinel "unknown" is returned.
 //
-// Cite: specs/event-model.md §8.7.1 (daemon_started payload); bead hk-mz0x4.
+// Cite: specs/event-model.md §8.7.1 (daemon_started payload); bead hk-mz0x4,
+// bead hk-v3nv (runtime fallback).
 package main
+
+import "runtime/debug"
 
 // commitHash is stamped at build time via:
 //
@@ -37,3 +42,27 @@ var commitHash = "unknown" //nolint:gochecknoglobals // build-time injection tar
 //
 // Cite: specs/release-pipeline.md §2.3; bead hk-t0yvy.
 var version = "dev" //nolint:gochecknoglobals // build-time injection target
+
+// resolvedCommitHash returns the best available commit hash for the running
+// binary.  It prefers the ldflags-stamped commitHash (set at build time via
+// -X main.commitHash=<sha>).  When that value is still the sentinel "unknown",
+// it falls back to the VCS revision embedded by the Go toolchain in the
+// binary's build info (go build / go install from a git worktree since Go
+// 1.18).  Returns "unknown" when neither source has a value.
+//
+// Cite: bead hk-v3nv (TA4 tokenaudit — unblocks version<->cost correlation).
+func resolvedCommitHash() string {
+	if commitHash != "unknown" && commitHash != "" {
+		return commitHash
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && s.Value != "" {
+			return s.Value
+		}
+	}
+	return "unknown"
+}

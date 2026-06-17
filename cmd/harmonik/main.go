@@ -136,7 +136,7 @@ func run() int {
 	//
 	// Spec ref: specs/release-pipeline.md §2.3; bead hk-ww7ee.
 	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
-		fmt.Printf("harmonik %s (commit: %s)\n", version, commitHash)
+		fmt.Printf("harmonik %s (commit: %s)\n", version, resolvedCommitHash())
 		return 0
 	}
 
@@ -979,6 +979,11 @@ EXAMPLES
 		substrateOpts = append(substrateOpts, daemon.WithSessionKeepalive(0)) // 0 = default 30 s interval
 	}
 
+	// Resolve the binary's commit hash once: ldflags stamp takes precedence;
+	// runtime/debug VCS embedding is the fallback for plain go install builds.
+	// Cite: bead hk-v3nv (TA4 tokenaudit — unblocks version<->cost correlation).
+	resolvedHash := resolvedCommitHash()
+
 	cfg := daemon.Config{
 		ProjectDir:               projectDir,
 		BrPath:                   brPath,
@@ -988,7 +993,7 @@ EXAMPLES
 		NoAutoPull:               !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
 		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...),
 		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
-		BinaryCommitHash:         commitHash,                          // stamped via -ldflags at build time (hk-mz0x4)
+		BinaryCommitHash:         resolvedHash,                        // ldflags stamp or runtime/debug fallback (hk-mz0x4, hk-v3nv)
 		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (90s)
 		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag,        // hk-ymav1: bandwidth auto-tuner
 		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-30vlb: default to dot (embedded standard-bead.dot)
@@ -1010,21 +1015,21 @@ EXAMPLES
 	// tools like `harmonik release rollback` remain usable even on a yanked binary.
 	//
 	// Exit code 9 = yanked-binary per spec §7.2.4.
-	if commitHash != "unknown" && commitHash != "" {
+	if resolvedHash != "unknown" && resolvedHash != "" {
 		// Check compiled-in ledger.
 		for _, e := range release.Ledger {
-			if e.CommitHash == commitHash && e.Yanked {
+			if e.CommitHash == resolvedHash && e.Yanked {
 				fmt.Fprintf(os.Stderr, "FATAL: this binary (%s, %s) has been yanked: %s\n",
-					e.Semver, commitHash, e.YankedReason)
+					e.Semver, resolvedHash, e.YankedReason)
 				return 9
 			}
 		}
 		// Check on-disk (mutable) ledger.
 		if onDiskEntries, ldErr := release.LoadLedgerFile(release.LedgerPath(projectDir)); ldErr == nil {
 			for _, e := range onDiskEntries {
-				if e.CommitHash == commitHash && e.Yanked {
+				if e.CommitHash == resolvedHash && e.Yanked {
 					fmt.Fprintf(os.Stderr, "FATAL: this binary (%s, %s) has been yanked: %s\n",
-						e.Semver, commitHash, e.YankedReason)
+						e.Semver, resolvedHash, e.YankedReason)
 					return 9
 				}
 			}

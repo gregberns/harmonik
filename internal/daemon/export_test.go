@@ -301,6 +301,14 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-bk33.
 	SpawnSubstrateReadyCh <-chan struct{}
+
+	// AllowedRepos is the safelist of absolute repository paths the daemon is
+	// permitted to dispatch cross-repo beads against (hk-xfuc). When nil/empty
+	// no cross-repo dispatch is permitted. Supply a non-empty list to test the
+	// cross-repo dispatch path (beads declaring target_repo in ## Branching).
+	//
+	// Bead ref: hk-xfuc.
+	AllowedRepos []string
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -424,6 +432,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		followUpLedger:            make(map[string]struct{}),
 		followUpLedgerMu:          &sync.Mutex{},
 		spawnSubstrateReadyCh:     p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
+		allowedRepos:              p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
 	}
 }
 
@@ -1277,6 +1286,19 @@ func ExportedResolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody
 //
 // Bead ref: hk-ncwb3.
 type ExportedLandsOnProtectedError = LandsOnProtectedError
+
+// ExportedCrossRepoUnsafeError is a type alias for CrossRepoUnsafeError so
+// tests in package daemon_test can use errors.As without importing internal types.
+//
+// Bead ref: hk-xfuc.
+type ExportedCrossRepoUnsafeError = CrossRepoUnsafeError
+
+// ExportedIsInAllowedRepos exposes isInAllowedRepos for tests in package daemon_test.
+//
+// Bead ref: hk-xfuc.
+func ExportedIsInAllowedRepos(targetRepo string, allowedRepos []string) bool {
+	return isInAllowedRepos(targetRepo, allowedRepos)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // landing strategy test seams (hk-icgp1)

@@ -142,9 +142,10 @@ func (e *ErrWorkflowModeFloorViolation) Error() string {
 // rawDaemonConfig is the per-daemon block in the config.yaml daemon: mapping.
 // Unknown keys at this level are silently ignored (forward-compat per PL-004b).
 type rawDaemonConfig struct {
-	WorkflowMode  string `yaml:"workflow_mode"`
-	MaxConcurrent int    `yaml:"max_concurrent"`
-	TargetBranch  string `yaml:"target_branch"` // observability/symmetry only per PL-004b
+	WorkflowMode  string   `yaml:"workflow_mode"`
+	MaxConcurrent int      `yaml:"max_concurrent"`
+	TargetBranch  string   `yaml:"target_branch"` // observability/symmetry only per PL-004b
+	AllowedRepos  []string `yaml:"allowed_repos"`  // cross-repo dispatch safelist (hk-xfuc)
 }
 
 // rawKeeperContextThresholds holds configurable threshold values in the
@@ -220,6 +221,13 @@ type DaemonConfig struct {
 	// the branching.yaml lands_on value in the resolution chain. Callers MUST use
 	// branching.Load() for the authoritative target_branch.
 	TargetBranch string
+
+	// AllowedRepos is the safelist of absolute repository paths the daemon is
+	// permitted to dispatch cross-repo beads against (hk-xfuc). A bead whose
+	// target_repo is not in this list is refused with CrossRepoUnsafeError.
+	// An empty list means no cross-repo dispatch is allowed.
+	// See docs/cross-repo-dispatch.md.
+	AllowedRepos []string
 }
 
 // rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
@@ -314,8 +322,10 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	// Empty-file sentinel: schema_version 0 + no agents + no daemon block + no keeper block
 	// → absent semantics. A file with only a daemon: or keeper: block but no schema_version: 1
 	// falls through to the version check below and returns ErrUnsupportedConfigVersion (fail-fast).
+	daemonAbsent := raw.Daemon.WorkflowMode == "" && raw.Daemon.MaxConcurrent == 0 &&
+		raw.Daemon.TargetBranch == "" && len(raw.Daemon.AllowedRepos) == 0
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
-		raw.Daemon == (rawDaemonConfig{}) && raw.Keeper == (rawKeeperConfig{}) {
+		daemonAbsent && raw.Keeper == (rawKeeperConfig{}) {
 		return ProjectConfig{}, nil
 	}
 
@@ -388,6 +398,9 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 	if raw.MaxConcurrent > 0 {
 		cfg.MaxConcurrent = raw.MaxConcurrent
 	}
+
+	// allowed_repos: stored as-is; nil/empty = cross-repo dispatch not permitted.
+	cfg.AllowedRepos = raw.AllowedRepos
 
 	return cfg, nil
 }

@@ -419,6 +419,9 @@ func resolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody, target
 // ## Branching section declares a target_repo that differs from the daemon's
 // projectDir. Cross-repo dispatch is not yet implemented (hk-3r3); the operator
 // must apply the fix out-of-band. See docs/cross-repo-dispatch.md.
+//
+// Deprecated: superseded by CrossRepoUnsafeError for the safelist-check path
+// (hk-xfuc). CrossRepoUnsupportedError is retained for legacy compatibility.
 type CrossRepoUnsupportedError struct {
 	TargetRepo string
 	ProjectDir string
@@ -428,6 +431,36 @@ func (e *CrossRepoUnsupportedError) Error() string {
 	return fmt.Sprintf(
 		"daemon: bead declares target_repo %q but daemon supervises %q; cross-repo dispatch not yet implemented (hk-3r3) — apply fix out-of-band, see docs/cross-repo-dispatch.md",
 		e.TargetRepo, e.ProjectDir)
+}
+
+// CrossRepoUnsafeError is the typed error returned when a bead's
+// ## Branching section declares a target_repo that is not in the daemon's
+// allowed_repos safelist (hk-xfuc). The operator must add the repo to
+// .harmonik/config.yaml under daemon.allowed_repos before dispatching
+// cross-repo beads. See docs/cross-repo-dispatch.md.
+type CrossRepoUnsafeError struct {
+	TargetRepo string
+	ProjectDir string
+}
+
+func (e *CrossRepoUnsafeError) Error() string {
+	return fmt.Sprintf(
+		"daemon: bead declares target_repo %q (daemon supervises %q) but it is not in the "+
+			"allowed_repos safelist; add it to .harmonik/config.yaml daemon.allowed_repos "+
+			"to enable cross-repo dispatch (hk-xfuc) — see docs/cross-repo-dispatch.md",
+		e.TargetRepo, e.ProjectDir)
+}
+
+// isInAllowedRepos reports whether targetRepo appears in allowedRepos.
+// The comparison is exact string equality on absolute paths; no symlink
+// resolution is performed. An empty allowedRepos list always returns false.
+func isInAllowedRepos(targetRepo string, allowedRepos []string) bool {
+	for _, r := range allowedRepos {
+		if r == targetRepo {
+			return true
+		}
+	}
+	return false
 }
 
 // LandsOnProtectedError is the typed error returned when a bead's resolved

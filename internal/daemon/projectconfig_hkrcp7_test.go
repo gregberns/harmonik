@@ -63,7 +63,7 @@ agents:
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
-	if cfg.Daemon != (daemon.ExportedDaemonConfig{}) {
+	if cfg.Daemon.WorkflowMode != "" || cfg.Daemon.MaxConcurrent != 0 || cfg.Daemon.TargetBranch != "" || len(cfg.Daemon.AllowedRepos) != 0 {
 		t.Errorf("absent daemon block: want zero DaemonConfig; got %+v", cfg.Daemon)
 	}
 }
@@ -79,7 +79,7 @@ daemon: {}
 	if err != nil {
 		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
 	}
-	if cfg.Daemon != (daemon.ExportedDaemonConfig{}) {
+	if cfg.Daemon.WorkflowMode != "" || cfg.Daemon.MaxConcurrent != 0 || cfg.Daemon.TargetBranch != "" || len(cfg.Daemon.AllowedRepos) != 0 {
 		t.Errorf("empty daemon block: want zero DaemonConfig; got %+v", cfg.Daemon)
 	}
 }
@@ -336,7 +336,7 @@ func TestDaemonBlock_EmptyFile_SentinelPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProjectConfig (empty file): unexpected error: %v", err)
 	}
-	if cfg.Daemon != (daemon.ExportedDaemonConfig{}) {
+	if cfg.Daemon.WorkflowMode != "" || cfg.Daemon.MaxConcurrent != 0 || cfg.Daemon.TargetBranch != "" || len(cfg.Daemon.AllowedRepos) != 0 {
 		t.Errorf("empty file: want zero DaemonConfig; got %+v", cfg.Daemon)
 	}
 }

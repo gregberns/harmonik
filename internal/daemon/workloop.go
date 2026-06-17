@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -139,6 +140,12 @@ type workLoopDeps struct {
 
 	// projectDir is the absolute path of the harmonik project root.
 	projectDir string
+
+	// allowedRepos is the safelist of absolute repository paths the daemon is
+	// permitted to dispatch cross-repo beads against (hk-xfuc). Sourced from
+	// .harmonik/config.yaml daemon.allowed_repos at startup. An empty list means
+	// no cross-repo dispatch is allowed. See docs/cross-repo-dispatch.md.
+	allowedRepos []string
 
 	// kerfPath is the absolute path to the `kerf` CLI binary, or empty when
 	// kerf is not installed. When empty, eagerRefillEval returns immediately
@@ -836,10 +843,11 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		emittedEpicsMu:             &sync.Mutex{},
 		targetBranch:               resolveTargetBranch(cfg.TargetBranch),
 		protectBranches:            cfg.ProtectBranches,
-		beadAuditLogger:            adapter.AuditLog,       // hk-wcv / hk-f38n: retained for tests; pre-dispatch block removed
-		workerRegistry:             workerReg,              // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
-		coordinatorReapAdapter:     coordinatorReapAdapter, // hk-t08m: periodic flywheel-coordinator reaper
-		coordinatorReapProjectHash: projectHash,            // hk-t08m: pre-computed for session name derivation
+		allowedRepos:               cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
+		beadAuditLogger:            adapter.AuditLog,                   // hk-wcv / hk-f38n: retained for tests; pre-dispatch block removed
+		workerRegistry:             workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
+		coordinatorReapAdapter:     coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
+		coordinatorReapProjectHash: projectHash,                        // hk-t08m: pre-computed for session name derivation
 	}, nil
 }
 
@@ -2221,13 +2229,63 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		string(beadID),
 	)
 
+	// Determine activeRepo: the repository where the per-bead worktree lives,
+	// commits happen, and merges are pushed (hk-xfuc cross-repo dispatch).
+	//
+	// For local beads (no target_repo or target_repo == projectDir):
+	//   activeRepo = deps.projectDir  (unchanged behaviour)
+	//
+	// For cross-repo beads (target_repo declared in ## Branching):
+	//   1. Check the allowed_repos safelist — refuse with CrossRepoUnsafeError
+	//      when the target is not in the list (prevents arbitrary path injection).
+	//   2. Set activeRepo = target_repo; all git-touching operations below use
+	//      activeRepo instead of deps.projectDir.
+	//
+	// Note: deps.projectDir remains the harmonik project root for non-git
+	// operations (daemon socket, queue persistence, br adapter, workflow.dot).
+	//
+	// Bead: hk-xfuc (cross-repo dispatch follow-up to hk-3r3 guard).
+	activeRepo := deps.projectDir
+
+	// Parse the bead body cheaply (tier-1 only; no I/O) to extract target_repo
+	// so we can determine activeRepo before resolveParentCommit, which must run
+	// against the correct repository.
+	earlyBrCfg, _ := parseBranchingSection(beadRecord.Description) // errors treated as absent per BI-009b
+	if earlyBrCfg.TargetRepo != "" && earlyBrCfg.TargetRepo != deps.projectDir {
+		if !isInAllowedRepos(earlyBrCfg.TargetRepo, deps.allowedRepos) {
+			crErr := &CrossRepoUnsafeError{TargetRepo: earlyBrCfg.TargetRepo, ProjectDir: deps.projectDir}
+			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, crErr)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				crErr.Error())
+			return
+		}
+		activeRepo = earlyBrCfg.TargetRepo
+		slog.InfoContext(ctx, "cross_repo_dispatch",
+			"bead_id", string(beadID),
+			"active_repo", activeRepo,
+			"project_dir", deps.projectDir,
+		)
+	}
+
+	// effectiveMergeProtectBranches is deps.protectBranches for local runs.
+	// For cross-repo runs the daemon's ProtectBranches guards harmonik's branches,
+	// not the target repo's; pass nil so the merge gate doesn't refuse a legitimate
+	// target-repo branch (e.g. merging into kerf's "main" when harmonik protects its
+	// own "main"). Hk-xfuc.
+	effectiveMergeProtectBranches := deps.protectBranches
+	if activeRepo != deps.projectDir {
+		effectiveMergeProtectBranches = nil
+	}
+
 	// Resolve the parent commit (start_from SHA) for worktree creation per
 	// WM-005b / BI-009b. resolveParentCommit parses the bead's ## Branching
 	// section and resolves start_from to a commit SHA; it falls back to HEAD
 	// when the section is absent or start_from is not set. If start_from is
 	// present but names a ref that does not exist locally, the error is
 	// surfaced as a typed StartFromRefError and the bead is reopened.
-	headSHA, headErr := resolveParentCommit(ctx, deps.projectDir, string(beadID), beadRecord.Description, deps.targetBranch)
+	// Use activeRepo so cross-repo beads resolve against the target repository.
+	headSHA, headErr := resolveParentCommit(ctx, activeRepo, string(beadID), beadRecord.Description, deps.targetBranch)
 	if headErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: resolveParentCommit for bead %s: %v (reopening)\n", beadID, headErr)
 		reopenTID, _ := deps.tidGen.Next()
@@ -2248,31 +2306,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// operator has declared off-limits for direct pushes. The bead is reopened
 	// with a LandsOnProtectedError so the operator can correct the bead body or
 	// the project branching config.
+	// For cross-repo beads (activeRepo != projectDir), the daemon's ProtectBranches
+	// list governs the harmonik project's branches, not the target repo's; skip the
+	// protect check for cross-repo runs to avoid refusing legitimate target branches.
 	var baseBranch string
-	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, deps.projectDir, deps.targetBranch); brErr == nil {
+	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, activeRepo, deps.targetBranch); brErr == nil {
 		baseBranch = brCfg.LandsOn
 
-		// Cross-repo guard (hk-3r3): if the bead declares a target_repo that
-		// differs from the daemon's projectDir, dispatch is unsupported today.
-		// Reopen the bead with CrossRepoUnsupportedError so the operator knows
-		// to apply the fix out-of-band. See docs/cross-repo-dispatch.md.
-		if brCfg.TargetRepo != "" && brCfg.TargetRepo != deps.projectDir {
-			crErr := &CrossRepoUnsupportedError{TargetRepo: brCfg.TargetRepo, ProjectDir: deps.projectDir}
-			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, crErr)
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-				crErr.Error())
-			return
-		}
-
-		for _, protected := range deps.protectBranches {
-			if baseBranch == protected {
-				protErr := &LandsOnProtectedError{LandsOn: baseBranch}
-				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, protErr)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					protErr.Error())
-				return
+		if activeRepo == deps.projectDir {
+			for _, protected := range deps.protectBranches {
+				if baseBranch == protected {
+					protErr := &LandsOnProtectedError{LandsOn: baseBranch}
+					fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, protErr)
+					reopenTID, _ := deps.tidGen.Next()
+					_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+						protErr.Error())
+					return
+				}
 			}
 		}
 	}
@@ -2478,7 +2528,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if deps.mergeMu != nil {
 		deps.mergeMu.Lock()
 	}
-	wtPath, wtCleanup, wtErr := wtFactory(ctx, deps.projectDir, runID.String(), headSHA)
+	wtPath, wtCleanup, wtErr := wtFactory(ctx, activeRepo, runID.String(), headSHA)
 	if deps.mergeMu != nil {
 		deps.mergeMu.Unlock()
 	}
@@ -2493,12 +2543,13 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		defer wtCleanup()
 	}
 
-	// hk-ooexj: snapshot the main repo's pre-existing untracked files at run-start
+	// hk-ooexj: snapshot the active repo's pre-existing untracked files at run-start
 	// (before the implementer launches) so the post-run escape check can exclude
 	// files that already existed and which the implementer never touched. A failed
 	// snapshot leaves preRunUntracked nil — the escape check then degrades to its
 	// prior, baseline-free behaviour rather than silently suppressing escapes.
-	preRunUntracked, snapErr := snapshotUntrackedFiles(ctx, deps.projectDir)
+	// Use activeRepo: cross-repo runs create the worktree in the target repo.
+	preRunUntracked, snapErr := snapshotUntrackedFiles(ctx, activeRepo)
 	if snapErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: snapshotUntrackedFiles for bead %s run %s: %v (escape check will run without baseline)\n", beadID, runID.String(), snapErr)
 	}
@@ -2642,7 +2693,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
 				}
 			}
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -2828,7 +2879,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				emitDone(false, fmt.Sprintf("code-sync-failed (dot): %s", syncReason))
 				return
 			}
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -2930,8 +2981,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		effort:            resolvedEffort,
 		// worktreeRootPath is used by buildClaudeLaunchSpec to check whether the
 		// workspace is a harmonik-managed worktree for --dangerously-skip-permissions
-		// per HC-055b. Derived from projectDir via the standard worktree root formula.
-		worktreeRootPath: workspace.WorktreeRootPath(deps.projectDir, workspace.NoWorktreeRootOverride()),
+		// per HC-055b. Derived from activeRepo (= target repo for cross-repo runs).
+		worktreeRootPath: workspace.WorktreeRootPath(activeRepo, workspace.NoWorktreeRootOverride()),
 		extraContext:     extraContext, // hk-boiwe: per-item context from queue.Item.Context
 		baseBranch:       baseBranch,   // hk-mtm0w: pre-exit rebase target
 	}
@@ -3499,12 +3550,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if deps.mergeMu != nil {
 		deps.mergeMu.Lock()
 	}
-	mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, deps.projectDir, preRunUntracked)
+	mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, activeRepo, preRunUntracked)
 	if deps.mergeMu != nil {
 		deps.mergeMu.Unlock()
 	}
 	if escapeErr == nil && mainDirty {
-		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, deps.projectDir, dirtyFiles)
+		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, activeRepo, dirtyFiles)
 		failReason := fmt.Sprintf("implementer_escaped_worktree: %d file(s) dirty in main: %s",
 			len(dirtyFiles), strings.Join(dirtyFiles, ", "))
 		if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, failReason); reopenErr != nil {
@@ -3531,10 +3582,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// REMOTE: route the worktree-HEAD probe via runRunner so the no-commit guard
 	// reads the WORKER's run-branch HEAD (nil runRunner ⇒ box-A-local, NFR7). The
-	// noCommitGuardShouldReopen "did THIS bead land on main?" check below stays
-	// box-A-local — main is always box A's, regardless of where the work ran.
+	// noCommitGuardShouldReopen checks if THIS bead's code landed in the target
+	// repo's main branch (cross-repo: activeRepo; local: deps.projectDir).
 	if curHeadSHA, curHeadErr := resolveWorktreeHEADVia(ctx, runRunner, wtPath); curHeadErr == nil &&
-		noCommitGuardShouldReopen(ctx, deps.projectDir, curHeadSHA, headSHA, beadID) {
+		noCommitGuardShouldReopen(ctx, activeRepo, curHeadSHA, headSHA, beadID) {
 		// hk-4ie1z: the implementer's worktree HEAD never advanced past the
 		// parent (NO commit) AND this bead's own work is not on main. The prior
 		// escape hatch (hk-cwxow) bypassed the guard whenever refs/heads/main had
@@ -3579,7 +3630,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (agent_completed): %s", syncReason))
 			return
 		}
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -3629,7 +3680,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (auto-close): %s", syncReason))
 			return
 		}
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -3659,7 +3710,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// the bead was already subsumed by a prior run that landed on main.
 		select {
 		case <-noChangeTimeoutCh:
-			if beadAlreadySubsumedInMain(ctx, deps.projectDir, beadID) {
+			if beadAlreadySubsumedInMain(ctx, activeRepo, beadID) {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
 				if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (noChange-subsumed) %s: %v\n", beadID, closeErr)
@@ -3686,7 +3737,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// does not abort the merge sequence.
 				bgCtx := context.Background()
 				if curHeadSHA, headErr := resolveWorktreeHEAD(bgCtx, wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
-					mergeRes := lockedMergeRunBranchToMain(bgCtx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
+					mergeRes := lockedMergeRunBranchToMain(bgCtx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
 					if mergeRes.success || mergeRes.noChange {
 						drainTID, _ := deps.tidGen.Next()
 						if closeErr := deps.closeBeadWithHistoryTrim(bgCtx, runID, drainTID, beadID, false); closeErr != nil {

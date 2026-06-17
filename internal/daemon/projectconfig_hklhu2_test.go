@@ -279,7 +279,7 @@ keeper:
 	if cfg.Keeper.ForceActAbsTokens != 340000 {
 		t.Errorf("ForceActAbsTokens: want 340000, got %d", cfg.Keeper.ForceActAbsTokens)
 	}
-	if cfg.Daemon != (daemon.ExportedDaemonConfig{}) {
+	if cfg.Daemon.WorkflowMode != "" || cfg.Daemon.MaxConcurrent != 0 || cfg.Daemon.TargetBranch != "" || len(cfg.Daemon.AllowedRepos) != 0 {
 		t.Errorf("daemon block should be zero when absent; got %+v", cfg.Daemon)
 	}
 }

@@ -404,6 +404,21 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// the append-only guarantee on an observed task branch.
 	// Authorised: codex-harness spec C2/T9 (hk-bpxci); pre-observation amend only.
 	"internal/daemon/codexcommit.go": "codex-harness C2/T9 (hk-bpxci); post-exit Refs-trailer amend before workspace_leased; not a rewrite of an observed task branch",
+
+	// internal/daemon/reviewtrailers_hkdyim.go — appendReviewTrailersToHEAD
+	// amends the run/* worktree HEAD commit ONLY to append the review audit
+	// trail (Reviewed-By: agent-reviewer / Review-Verdict: <json>) after the
+	// review loop returns APPROVE. The commit TREE is unchanged — only the
+	// commit message gains trailers. It runs in the daemon-private worktree
+	// after the implementer process has exited and the reviewer has returned its
+	// verdict, immediately before the fast-forward merge (workloop.go calls it
+	// right before lockedMergeRunBranchToMain), so the trailer-bearing commit is
+	// the one main fast-forwards to. No other process observes the branch at this
+	// point — this mirrors the codexcommit.go authorization (daemon-private,
+	// message-only, pre-merge amend), it is NOT a rewrite of an observed task
+	// branch. Authorised: hk-dyim review audit-trail embed; agent-reviewer skill
+	// contract §"How the verdict lands in git".
+	"internal/daemon/reviewtrailers_hkdyim.go": "hk-dyim review audit-trail trailer embed; daemon-private worktree HEAD message-only amend after implementer exit + reviewer APPROVE, immediately before the FF merge; tree unchanged, no concurrent observer — mirrors codexcommit.go; not a rewrite of an observed task branch",
 }
 
 // wmInv003FixtureScanGoSource walks all .go files under the given root (up to

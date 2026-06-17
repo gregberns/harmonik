@@ -27,6 +27,7 @@ Ideas are not commitments. They are named, trackable thoughts.
 | I05 | [Model Pyramid Cost Optimization](model-pyramid-cost-optimization.md) | seed | ZFC, Kilroy |
 | I06 | [Agent Specialization Through Constraints](agent-specialization-through-constraints.md) | seed | G03, P05 |
 | I07 | [Filesystem as Coordination Substrate](filesystem-as-coordination-substrate.md) | seed | P02, P03, G02 |
+| I08 | [Fleet Sleep/Wake Research](fleet-sleep-wake-research.md) | research (2026-06) | hk-rl4b |
 
 ## Documents
 - [I01: Hook-Driven Agent Behavior](hook-driven-agent-behavior.md) -- Hooks enforce behavior and compose workflows
@@ -36,3 +37,4 @@ Ideas are not commitments. They are named, trackable thoughts.
 - [I05: Model Pyramid Cost Optimization](model-pyramid-cost-optimization.md) -- Route tasks to the smallest capable model
 - [I06: Agent Specialization Through Constraints](agent-specialization-through-constraints.md) -- Constrained capabilities make agents more effective
 - [I07: Filesystem as Coordination Substrate](filesystem-as-coordination-substrate.md) -- Git-tracked files as the coordination mechanism
+- [I08: Fleet Sleep/Wake Research](fleet-sleep-wake-research.md) -- Quiesce token-burning LLM idle-wakeups when work drains; daemon stays up as the cheap wake-trigger (initiative hk-rl4b, 2026-06)

@@ -1258,17 +1258,29 @@ func pasteInjectOnLaunch(
 			return
 		}
 
+		// Extract the per-run runner for remote-aware file-stat probes (hk-hh5e).
+		// For local runs commandRunner() returns LocalRunner{} (runnerIsLocalFS=true)
+		// so runner stays nil and statTaskFileVia falls back to os.Stat — unchanged
+		// local behaviour (NFR7).  For remote runs the SSHRunner is non-local, so
+		// runner is set and statTaskFileVia checks file existence on the worker.
+		var runner tmux.CommandRunner
+		if crp, ok2 := substrate.(commandRunnerProvider); ok2 {
+			if r := crp.commandRunner(); !runnerIsLocalFS(r) {
+				runner = r
+			}
+		}
+
 		var failReason string
 		switch phase {
 		case handlercontract.ReviewLoopPhaseReviewer:
-			failReason = pasteInjectReviewer(ctx, inj, claudeSessID, wtPath)
+			failReason = pasteInjectReviewer(ctx, inj, claudeSessID, wtPath, runner)
 
 		case handlercontract.ReviewLoopPhaseImplementerResume:
-			failReason = pasteInjectImplementerResume(ctx, inj, claudeSessID, iterCount, wtPath)
+			failReason = pasteInjectImplementerResume(ctx, inj, claudeSessID, iterCount, wtPath, runner)
 
 		default:
 			// Single-mode or implementer-initial: deliver agent-task.md kick-off.
-			failReason = pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath)
+			failReason = pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath, runner)
 		}
 
 		// hk-fra5l: emit pasteinject_failed when the delivery failed.
@@ -1368,9 +1380,9 @@ func splashDismissWait(ctx context.Context) {
 // not complete (e.g. task file absent, WriteLastPane error).  The caller
 // (pasteInjectOnLaunch) emits pasteinject_failed when the reason is non-empty.
 // Returns "" on success.
-func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
+func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string, runner tmux.CommandRunner) string {
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
-	if err := statTaskFile(taskFile); err != nil {
+	if err := statTaskFileVia(ctx, runner, taskFile); err != nil {
 		reason := fmt.Sprintf("implementer-initial: %v", err)
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s (skipping inject)\n", reason)
 		return reason
@@ -1433,7 +1445,7 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 //
 // Returns a non-empty failure reason string when the paste-inject step could not
 // complete.  Returns "" on success.
-func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string) string {
+func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claudeSessID string, iterCount int, wtPath string, runner tmux.CommandRunner) string {
 	// Dismiss the welcome splash first (hk-rf4ux) — same as implementer-initial.
 	if es, ok := inj.(enterSender); ok {
 		if err := es.SendEnterToLastPane(ctx); err != nil {
@@ -1443,7 +1455,7 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	}
 
 	taskFile := filepath.Join(wtPath, ".harmonik", "agent-task.md")
-	if err := statTaskFile(taskFile); err != nil {
+	if err := statTaskFileVia(ctx, runner, taskFile); err != nil {
 		reason := fmt.Sprintf("implementer-resume task: %v", err)
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s (skipping inject)\n", reason)
 		return reason
@@ -1454,7 +1466,7 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	// WriteLastPane call (one paste, one Enter) to eliminate the race (hk-poy7k).
 	priorIter := iterCount - 1
 	feedbackFile := filepath.Join(wtPath, ".harmonik", fmt.Sprintf("reviewer-feedback.iter-%d.md", priorIter))
-	feedbackExists := statTaskFile(feedbackFile) == nil
+	feedbackExists := statTaskFileVia(ctx, runner, feedbackFile) == nil
 
 	var msg string
 	if feedbackExists {
@@ -1548,9 +1560,9 @@ func sendResumeSubmitEnter(ctx context.Context, es enterSender) {
 //
 // Returns a non-empty failure reason string when the paste-inject step could not
 // complete.  Returns "" on success.
-func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
+func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string, runner tmux.CommandRunner) string {
 	reviewFile := filepath.Join(wtPath, ".harmonik", "review-target.md")
-	if err := statTaskFile(reviewFile); err != nil {
+	if err := statTaskFileVia(ctx, runner, reviewFile); err != nil {
 		reason := fmt.Sprintf("reviewer: %v", err)
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s (skipping inject)\n", reason)
 		return reason
@@ -2134,7 +2146,15 @@ func pasteInjectQuitOnReviewFile(
 					fmt.Fprintf(os.Stderr,
 						"daemon: pasteinject: quit-on-review-file: no verdict after %v re-seed grace and pane active in %s; re-seeding reviewer brief once (hk-7rgqs)\n",
 						reviewerReseedGrace, wtPath)
-					if reason := pasteInjectReviewer(ctx, inj, claudeSessID, wtPath); reason != "" {
+					// Extract runner for remote-aware stat probe (hk-hh5e): inj is a
+					// perRunSubstrate which also implements commandRunnerProvider.
+					var reseedRunner tmux.CommandRunner
+					if crp, ok2 := inj.(commandRunnerProvider); ok2 {
+						if r := crp.commandRunner(); !runnerIsLocalFS(r) {
+							reseedRunner = r
+						}
+					}
+					if reason := pasteInjectReviewer(ctx, inj, claudeSessID, wtPath, reseedRunner); reason != "" {
 						fmt.Fprintf(os.Stderr,
 							"daemon: pasteinject: quit-on-review-file: re-seed failed for %s: %s\n",
 							wtPath, reason)
@@ -2233,6 +2253,29 @@ func statTaskFile(path string) error {
 	}
 	if info.Size() == 0 {
 		return fmt.Errorf("%w: task file empty: %s", tmux.ErrStructural, path)
+	}
+	return nil
+}
+
+// statTaskFileVia is like statTaskFile but routes the existence check through
+// runner for remote runs (hk-hh5e).  When runner is nil, delegates to
+// statTaskFile (local os.Stat).  When runner is non-nil (e.g. an SSHRunner
+// targeting a remote worker), stat is executed on the worker via
+// runner.Command(ctx, "stat", path).
+//
+// File-content emptiness is NOT re-checked for the remote path: WriteAgentTaskVia
+// validates non-empty content at write time, so existence implies non-empty for
+// runner-managed runs.
+//
+// Bead: hk-hh5e.
+func statTaskFileVia(ctx context.Context, runner tmux.CommandRunner, path string) error {
+	if runner == nil {
+		return statTaskFile(path)
+	}
+	out, err := runner.Command(ctx, "stat", path).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: task file absent on worker %s: %v\n%s",
+			tmux.ErrStructural, path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

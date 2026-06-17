@@ -1147,14 +1147,14 @@ var ExportedSplashDismissDelay = &splashDismissDelay
 // assert the reviewer kick-off delivery (splash-dismiss → paste → bounded submit
 // Enter) directly (hk-7rgqs).
 func ExportedPasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
-	return pasteInjectReviewer(ctx, inj, claudeSessID, wtPath)
+	return pasteInjectReviewer(ctx, inj, claudeSessID, wtPath, nil)
 }
 
 // ExportedPasteInjectImplementerInitial exposes pasteInjectImplementerInitial for
 // unit tests that assert the implementer-initial robust-submit hardening
 // (hk-7rgqs).
 func ExportedPasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claudeSessID, wtPath string) string {
-	return pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath)
+	return pasteInjectImplementerInitial(ctx, inj, claudeSessID, wtPath, nil)
 }
 
 // ExportedPasteInjectQuitOnReviewFile exposes pasteInjectQuitOnReviewFile for
@@ -1512,6 +1512,15 @@ func ExportedNewPerRunSubstrate(sub handler.Substrate) handler.Substrate {
 		return nil
 	}
 	return prs
+}
+
+// ExportedStatTaskFileVia exposes statTaskFileVia for unit tests in package
+// daemon_test.  The runner is used for remote stat checks (hk-hh5e); nil runner
+// falls back to local os.Stat (same as statTaskFile).
+//
+// Bead: hk-hh5e.
+func ExportedStatTaskFileVia(ctx context.Context, runner tmuxPkg.CommandRunner, path string) error {
+	return statTaskFileVia(ctx, runner, path)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

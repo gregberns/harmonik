@@ -145,7 +145,7 @@ type rawDaemonConfig struct {
 	WorkflowMode  string   `yaml:"workflow_mode"`
 	MaxConcurrent int      `yaml:"max_concurrent"`
 	TargetBranch  string   `yaml:"target_branch"` // observability/symmetry only per PL-004b
-	AllowedRepos  []string `yaml:"allowed_repos"`  // cross-repo dispatch safelist (hk-xfuc)
+	AllowedRepos  []string `yaml:"allowed_repos"` // cross-repo dispatch safelist (hk-xfuc)
 }
 
 // rawKeeperContextThresholds holds configurable threshold values in the

@@ -132,7 +132,7 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		targetBranch = "main"
 	}
 	if prefix == "" {
-		prefix = "hk"
+		prefix = deriveBeadPrefix(projectDir)
 	}
 
 	// Run doctor checks.
@@ -213,6 +213,44 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 
 	fmt.Fprintln(stdout, "harmonik init: done")
 	return 0
+}
+
+// deriveBeadPrefix derives a short lowercase bead prefix from a project
+// directory path. It takes the base name, splits on word boundaries
+// (hyphens, underscores, spaces, dots), and returns a slug:
+//   - ≥2 words → leading letter of each word, up to 4 characters
+//   - 1 word   → first 2 alphanumeric characters
+//
+// Falls back to "hk" only when the directory base name contains no usable
+// alphanumeric characters.
+func deriveBeadPrefix(projectDir string) string {
+	base := strings.ToLower(filepath.Base(projectDir))
+	words := strings.FieldsFunc(base, func(r rune) bool {
+		return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9')
+	})
+	if len(words) == 0 {
+		return "hk"
+	}
+	if len(words) >= 2 {
+		var slug strings.Builder
+		for _, w := range words {
+			if len(w) > 0 {
+				slug.WriteByte(w[0])
+			}
+			if slug.Len() >= 4 {
+				break
+			}
+		}
+		if slug.Len() >= 2 {
+			return slug.String()
+		}
+	}
+	// Single word (or too-short initials): use first 2 characters.
+	word := words[0]
+	if len(word) >= 2 {
+		return word[:2]
+	}
+	return word + "x"
 }
 
 // runDoctorChecks verifies prerequisites and reports results.
@@ -724,7 +762,7 @@ USAGE
 FLAGS
   --project DIR          Project directory (default: current working directory)
   --target-branch BRANCH Branch harmonik merges completed work into (default: main)
-  --prefix PREFIX        Bead ID prefix for 'br init' (default: hk)
+  --prefix PREFIX        Bead ID prefix for 'br init' (default: derived from project directory name)
   --doctor               Run precondition checks only; do not modify anything
   --force                Overwrite existing files and reinitialise br database
   --smoke                Run a smoke test after init to verify the setup

@@ -3649,13 +3649,38 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 		default:
 			// hk-ly0hg Fix-1: context-cancel path — daemon is shutting down.
-			// Reopen the bead (with a background context so the write succeeds
-			// despite shutdown) and return without emitting run_failed. The queue
-			// item stays 'dispatched'; QM-002a at next startup will revert it to
-			// pending once it sees the bead is open again.
 			if ctx.Err() != nil {
+				// hk-dnrg: drain committed-but-unmerged runs on shutdown instead of
+				// abandoning. A run that already committed in its worktree must be
+				// merged before exit — abandoning it causes re-dispatch (wasted or
+				// duplicated work) on next boot. Use background context so shutdown
+				// does not abort the merge sequence.
+				bgCtx := context.Background()
+				if curHeadSHA, headErr := resolveWorktreeHEAD(bgCtx, wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
+					mergeRes := lockedMergeRunBranchToMain(bgCtx, deps.mergeMu, deps.projectDir, runID, deps.bus, beadID, headSHA, deps.targetBranch, deps.protectBranches)
+					if mergeRes.success || mergeRes.noChange {
+						drainTID, _ := deps.tidGen.Next()
+						if closeErr := deps.closeBeadWithHistoryTrim(bgCtx, runID, drainTID, beadID, false); closeErr != nil {
+							fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (shutdown-drain) %s: %v\n", beadID, closeErr)
+							if errors.Is(closeErr, brcli.BrUnavailable) {
+								emitRunCompleted(bgCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, true, "close-transient-merged (shutdown-drain)", queueID, queueGroupIndex, runTipSHA)
+							} else {
+								emitRunCompleted(bgCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, false, fmt.Sprintf("close-error (shutdown-drain): %v", closeErr), queueID, queueGroupIndex, runTipSHA)
+							}
+						} else {
+							emitBeadClosedAndMaybeEpic(bgCtx, deps, runID, beadID)
+							emitRunCompleted(bgCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, true, "shutdown-drain: committed work merged", queueID, queueGroupIndex, runTipSHA)
+						}
+						return
+					}
+					// Merge failed: log and fall through to reopen.
+					fmt.Fprintf(os.Stderr, "daemon: workloop: shutdown-drain: merge failed for bead %s: %s; reopening for re-dispatch\n", beadID, mergeRes.reason)
+				}
+				// No commit in worktree (or HEAD check failed): reopen for re-dispatch.
+				// QM-002a at next startup reverts the queue item to pending once it
+				// sees the bead is open again.
 				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(context.Background(), deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				_ = deps.brAdapter.ReopenBead(bgCtx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 					"context_cancelled: daemon shutdown, requeue pending")
 				return
 			}

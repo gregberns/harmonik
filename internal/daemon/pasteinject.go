@@ -743,17 +743,71 @@ func pasteInjectQuitOnCommit(
 	// handle from a prior run is reused: without this gate the commit watcher
 	// may fire /quit before the newly-launched claude has read agent-task.md,
 	// tearing down the session with zero assistant turns.
+	briefDeliveredFired := false
 	if briefDelivered != nil {
 		bdTimeout := briefDeliveredTimeout // snapshot before blocking
 		select {
 		case <-ctx.Done():
 			return
 		case <-briefDelivered:
+			briefDeliveredFired = true
 			// Brief delivered — proceed to commit polling.
 		case <-time.After(bdTimeout):
 			fmt.Fprintf(os.Stderr,
 				"daemon: pasteinject: quit-on-commit: brief_delivered timeout after %v for %s; proceeding with commit poll (session may be broken)\n",
 				bdTimeout, wtPath)
+		}
+	}
+
+	// hk-1too: stale-spawn dead-pane fast-fail.
+	//
+	// When a daemon restarts while beads are mid-spawn, the prior daemon's
+	// KillAllWindows can kill the window the new daemon spawned for the same bead
+	// (both use the same deterministic window name, e.g. session:bead-X/i1).  The
+	// paste then fails ("implementer-initial WriteLastPane: can't find pane"),
+	// briefDelivered closes immediately, and without this check the watchdog
+	// waits 180 s for launchHeartbeatTimeout before firing noChangePath.  That
+	// 180 s delay causes 47% of no_commit failures in restart windows (4/9 in the
+	// 2026-06-16 logmine window).
+	//
+	// This check fires noChangePath immediately (instead of after 180 s) when all
+	// three conditions hold:
+	//   1. briefDelivered completed (not timed out): paste-inject goroutine exited.
+	//   2. eventCh is non-nil (heartbeat-tracking mode): without heartbeats we
+	//      cannot safely distinguish "pane dead" from "pane alive, claude loading"
+	//      — skipping the check is the conservative choice.
+	//   3. PaneHasActiveProcess returns false: the pane was killed before paste.
+	//
+	// False-positive safety: when waitAgentReady succeeds (the normal path) claude
+	// IS running in the pane before paste-inject starts, so PaneHasActiveProcess
+	// returns true and the check is skipped.  The pane can only be dead here if it
+	// was killed between waitAgentReady and the paste attempt — exactly the
+	// stale-spawn scenario this addresses.
+	if briefDeliveredFired && eventCh != nil {
+		if lc, ok := qs.(paneLivenessChecker); ok && !lc.PaneHasActiveProcess(ctx) {
+			stalePaneKillDelay := noChangeKillDelay // snapshot before the main snapshot block
+			fmt.Fprintf(os.Stderr,
+				"daemon: pasteinject: quit-on-commit: stale-pane: pane dead at brief delivery in %s; "+
+					"firing noChange immediately to reopen bead for retry (hk-1too)\n", wtPath)
+			if qErr := qs.SendQuitToLastPane(ctx); qErr != nil {
+				fmt.Fprintf(os.Stderr,
+					"daemon: pasteinject: quit-on-commit: stale-pane: SendQuitToLastPane: %v\n", qErr)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(stalePaneKillDelay):
+			}
+			if killer != nil {
+				if kErr := killer.Kill(ctx); kErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-commit: stale-pane: Kill: %v\n", kErr)
+				}
+			}
+			if noChangeTimeoutCh != nil {
+				close(noChangeTimeoutCh)
+			}
+			return
 		}
 	}
 

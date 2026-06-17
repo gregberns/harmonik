@@ -901,3 +901,33 @@ func RunOrphanSweep(
 	}
 	return result, nil
 }
+
+// runPeriodicCoordinatorReap is the work-loop periodic counterpart of the
+// boot-time coordinator-session reaper (hk-t08m).
+//
+// It applies the SAME sentinel-PID-dead guard used at boot (hk-9vp51 /
+// hk-7u002): if the supervisor PID is live the function is a no-op. Only when
+// the sentinel is absent or the PID is dead does it call
+// reapDeadCoordinatorSession, which itself guards that ONLY the
+// "-flywheel"-suffixed session can be targeted.
+//
+// Callers are responsible for rate-limiting invocations (e.g., via a time
+// gate in the work loop). Returns the number of sessions reaped (0 or 1).
+func runPeriodicCoordinatorReap(ctx context.Context, projectDir string, projectHash core.ProjectHash, adapter ltmux.Adapter, logger *log.Logger) int {
+	if adapter == nil || projectDir == "" {
+		return 0
+	}
+	probe, probeErr := probeCoordinatorSentinel(projectDir, logger)
+	if probeErr != nil {
+		if logger != nil {
+			logger.Printf("daemon: runPeriodicCoordinatorReap: sentinel probe error (skipping): %v", probeErr)
+		}
+		return 0
+	}
+	if probe.Live {
+		// Supervisor is running — its flywheel session must be preserved.
+		return 0
+	}
+	// Sentinel absent or PID confirmed dead: safe to reap any leaked flywheel session.
+	return reapDeadCoordinatorSession(ctx, projectHash, adapter, logger)
+}

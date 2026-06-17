@@ -110,6 +110,12 @@ const maxItemAttempts = queue.MaxItemAttempts
 // Bead ref: hk-do7te.
 const agentReadyKillReapTimeout = 10 * time.Second
 
+// periodicCoordinatorReapInterval is the default minimum interval between
+// successive periodic coordinator-session reap passes in the work loop
+// (hk-t08m). 5 minutes balances prompt cleanup against excess tmux chatter.
+// Tests may inject a shorter value via workLoopDeps.coordinatorReapInterval.
+const periodicCoordinatorReapInterval = 5 * time.Minute
+
 // workLoopDeps bundles the injectable dependencies of the work loop.  All
 // fields are required (non-nil).  Use newWorkLoopDeps to construct the
 // production set from daemon.Config.
@@ -588,6 +594,38 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-0es.
 	scheduleWakeC <-chan struct{}
+
+	// coordinatorReapAdapter is the tmux Adapter used by the work-loop periodic
+	// coordinator-session reaper (hk-t08m). When nil the periodic reap is disabled
+	// (no tmux substrate, or test callers that do not need it).
+	//
+	// Extracted from cfg.Substrate via substrateWithAdapter at startup; threaded
+	// here so the work loop does not touch cfg.Substrate directly.
+	//
+	// Bead ref: hk-t08m.
+	coordinatorReapAdapter tmuxpkg.Adapter
+
+	// coordinatorReapProjectHash is the project hash used to derive the
+	// flywheel-coordinator session name for the periodic reaper (hk-t08m).
+	// Pre-computed once at startup from cfg.ProjectDir to avoid repeated hashing.
+	//
+	// Bead ref: hk-t08m.
+	coordinatorReapProjectHash core.ProjectHash
+
+	// coordinatorReapInterval is the minimum duration between periodic
+	// coordinator-session reap passes. Zero or negative → defaults to
+	// periodicCoordinatorReapInterval (5 min). Tests may inject a shorter value
+	// (e.g. 0) to exercise the periodic path without real wall-clock delay.
+	//
+	// Bead ref: hk-t08m.
+	coordinatorReapInterval time.Duration
+
+	// lastCoordinatorReap records when the periodic coordinator reaper last ran.
+	// Guarded entirely by the work-loop goroutine — no locking needed. Initialised
+	// to zero so the first tick always fires.
+	//
+	// Bead ref: hk-t08m.
+	lastCoordinatorReap time.Time
 }
 
 // closeBeadWithHistoryTrim trims .beads/.br_history to brHistoryCloseTrimKeep
@@ -744,6 +782,15 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 	// enabled so the dispatch path takes the existing local-only branch (NFR7).
 	workerReg := buildWorkerRegistry(context.Background(), cfg.Workers, bus)
 
+	// Extract the tmux adapter from cfg.Substrate for the periodic coordinator
+	// reaper (hk-t08m). Same extraction pattern as the boot-time sweep above.
+	// When no tmux substrate is configured, coordinatorReapAdapter stays nil and
+	// the periodic reap is a no-op (safe default).
+	var coordinatorReapAdapter tmuxpkg.Adapter
+	if sa, ok := cfg.Substrate.(substrateWithAdapter); ok {
+		coordinatorReapAdapter = sa.tmuxAdapter()
+	}
+
 	return workLoopDeps{
 		brAdapter:             adapter,
 		bus:                   bus,
@@ -781,8 +828,10 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		emittedEpicsMu:        &sync.Mutex{},
 		targetBranch:          resolveTargetBranch(cfg.TargetBranch),
 		protectBranches:       cfg.ProtectBranches,
-		beadAuditLogger:       adapter.AuditLog, // hk-wcv / hk-f38n: retained for tests; pre-dispatch block removed
-		workerRegistry:        workerReg,        // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
+		beadAuditLogger:            adapter.AuditLog,        // hk-wcv / hk-f38n: retained for tests; pre-dispatch block removed
+		workerRegistry:             workerReg,               // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
+		coordinatorReapAdapter:     coordinatorReapAdapter,  // hk-t08m: periodic flywheel-coordinator reaper
+		coordinatorReapProjectHash: projectHash,             // hk-t08m: pre-computed for session name derivation
 	}, nil
 }
 
@@ -1187,6 +1236,29 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// capacity gate so a fired spawn-crew/command action is independent of the
 		// bead-dispatch capacity. No-op when scheduleStore is nil.
 		runScheduleTick(ctx, deps)
+
+		// Step 1c: periodic coordinator-session reap (hk-t08m).
+		//
+		// The boot-time sweep (RunOrphanSweep) reaped dead flywheel-coordinator
+		// sessions once at startup, but sessions accumulated across hard supervisor
+		// crashes that skipped clean shutdown.  Running the same predicate
+		// periodically here ensures leaked sessions are cleaned up without requiring
+		// a daemon restart.
+		//
+		// Rate-limited by coordinatorReapInterval (default 5 min) so the tmux
+		// adapter is not called on every 2 s poll tick.  The first tick fires
+		// immediately (lastCoordinatorReap is zero-valued).  No-op when
+		// coordinatorReapAdapter is nil (no tmux substrate).
+		{
+			interval := deps.coordinatorReapInterval
+			if interval <= 0 {
+				interval = periodicCoordinatorReapInterval
+			}
+			if deps.coordinatorReapAdapter != nil && time.Since(deps.lastCoordinatorReap) >= interval {
+				runPeriodicCoordinatorReap(ctx, deps.projectDir, deps.coordinatorReapProjectHash, deps.coordinatorReapAdapter, nil)
+				deps.lastCoordinatorReap = time.Now()
+			}
+		}
 
 		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.
 		// Read from the controller on every tick when set (hk-ohiaf), so that

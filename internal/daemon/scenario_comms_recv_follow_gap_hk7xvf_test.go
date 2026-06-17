@@ -150,9 +150,9 @@ func TestCommsRecvFollowGap_WithoutAnchorDropsGapMessage(t *testing.T) {
 
 	// Subscribe WITHOUT since_event_id (the bug state: CLI omits it when cursor_after=="").
 	conn, rdr := subscribeTestDial(t, sockPath, map[string]any{
-		"op":                "subscribe",
-		"types":             []string{"agent_message"},
-		"to":                "alice",
+		"op":    "subscribe",
+		"types": []string{"agent_message"},
+		"to":    "alice",
 		// no since_event_id
 		"heartbeat_seconds": 10, // short heartbeat so we get a response quickly
 	})

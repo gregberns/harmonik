@@ -1319,10 +1319,22 @@ func runCommsRecvSubcommand(subArgs []string) int {
 			Ts        string `json:"ts"`
 		} `json:"messages"`
 		CursorAfter string `json:"cursor_after,omitempty"`
+		ScanAnchor  string `json:"scan_anchor,omitempty"`
 	}
 	if unmarshalErr := json.Unmarshal(resp.Result, &result); unmarshalErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik comms recv: decode result: %v\n", unmarshalErr)
 		return 1
+	}
+
+	// followAnchor is the since_event_id to pass to the subscribe stream.
+	// Use cursor_after when available (agent has delivered messages → cursor advanced).
+	// Fall back to scan_anchor (last event scanned regardless of match) so that
+	// the subscribe replay covers the gap window even when no messages matched
+	// (GH #8 / hk-7xvf: without this, since_event_id="" causes replay to be
+	// skipped entirely and messages arriving in the gap are permanently lost).
+	followAnchor := result.CursorAfter
+	if followAnchor == "" {
+		followAnchor = result.ScanAnchor
 	}
 
 	// --wait: block until exactly ONE matching message, then exit. If the drain
@@ -1335,7 +1347,7 @@ func runCommsRecvSubcommand(subArgs []string) int {
 			return 0
 		}
 		// Backlog empty — block on a subscribe stream for exactly one message.
-		return runCommsRecvWait(sockPath, agent, fromFlag, topicFlag, result.CursorAfter, jsonFlag, timeoutFlag)
+		return runCommsRecvWait(sockPath, agent, fromFlag, topicFlag, followAnchor, jsonFlag, timeoutFlag)
 	}
 
 	if len(result.Messages) == 0 && !jsonFlag && !followFlag {
@@ -1351,13 +1363,15 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 0
 	}
 
-	// --follow: open a subscribe connection anchored at cursor_after to tail
+	// --follow: open a subscribe connection anchored at followAnchor to tail
 	// live agent_message events with no gap.
 	//
-	// The subscribe server registers for live events BEFORE replaying the gap
-	// (subscribe.go:304), so any agent_message events that arrived between the
-	// comms-recv call and this subscribe dial are covered by the replay path.
-	return runCommsRecvFollow(sockPath, agent, fromFlag, topicFlag, result.CursorAfter, jsonFlag)
+	// followAnchor is cursor_after when present, or scan_anchor when cursor_after
+	// is "" (no matching messages and no stored cursor). The scan_anchor ensures
+	// HandleSubscribe runs replay from that point forward, covering messages that
+	// arrived in the gap between the drain completing and the subscriber registering
+	// on the hub (GH #8 / hk-7xvf fix).
+	return runCommsRecvFollow(sockPath, agent, fromFlag, topicFlag, followAnchor, jsonFlag)
 }
 
 // commsFollowReconnectInitialBackoff is the starting reconnect delay after a

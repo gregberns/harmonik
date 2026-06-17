@@ -105,6 +105,17 @@ type CommsRecvResult struct {
 	// Empty string when no cursor has ever been stored and the backlog was empty.
 	// Clients use this as the since-event-id anchor for a follow-mode subscribe.
 	CursorAfter string `json:"cursor_after,omitempty"`
+
+	// ScanAnchor is the event_id of the last event scanned during this drain,
+	// regardless of whether it matched the agent filter. Empty only when the
+	// events.jsonl was completely empty (no events at all).
+	//
+	// Purpose (GH #8 / hk-7xvf): when CursorAfter is "" (no matching messages
+	// and no stored cursor), the CLI --follow path passes ScanAnchor as
+	// since_event_id so HandleSubscribe runs the replay path from ScanAnchor
+	// forward. This covers any messages that arrived in the gap between the
+	// drain completing and the subscribe subscriber registering on the hub.
+	ScanAnchor string `json:"scan_anchor,omitempty"`
 }
 
 // SetRecvDeps wires the cursor store and events JSONL path into the handler so
@@ -173,8 +184,10 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 	// Scan events.jsonl forward from the cursor, filter, collect.
 	var messages []CommsRecvMessage
 	var lastEventID string
+	var lastScannedID string // last event_id seen regardless of match (for ScanAnchor)
 
 	for evt := range eventbus.ScanAfter(h.eventsJSONLPath, sinceID) {
+		lastScannedID = evt.EventID.String()
 		if evt.Type != "agent_message" {
 			continue
 		}
@@ -221,7 +234,7 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 	if cursorAfter == "" {
 		cursorAfter = cursorStr
 	}
-	result := CommsRecvResult{Messages: messages, CursorAfter: cursorAfter}
+	result := CommsRecvResult{Messages: messages, CursorAfter: cursorAfter, ScanAnchor: lastScannedID}
 	resultBytes, marshalErr := json.Marshal(result)
 	if marshalErr != nil {
 		return nil, fmt.Errorf("comms-recv: marshal result: %w", marshalErr)

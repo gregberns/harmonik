@@ -40,6 +40,7 @@ package daemon
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -194,4 +195,120 @@ func TestCommsRecvFollowGap_WithoutAnchorDropsGapMessage(t *testing.T) {
 	} else {
 		t.Logf("BUG CONFIRMED: gap message %q dropped (no since_event_id → replay skipped, not in live channel)", mID)
 	}
+}
+
+// TestCommsRecvResult_ScanAnchorPopulated is the regression guard for GH #8 fix
+// (hk-7xvf): HandleCommsRecv must populate ScanAnchor with the event_id of the
+// last scanned event, regardless of whether it matched the agent filter.
+//
+// Three cases:
+//
+//  1. Empty log → ScanAnchor == "" (nothing scanned).
+//  2. Events present but none match the agent → ScanAnchor == last event_id,
+//     CursorAfter == "" (no matching messages, but scan still advanced past them).
+//  3. Matching message → ScanAnchor == CursorAfter == last event_id.
+func TestCommsRecvResult_ScanAnchorPopulated(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty_log", func(t *testing.T) {
+		t.Parallel()
+		dir, err := os.MkdirTemp("/tmp", "hk7xvf-scananchor-empty-")
+		if err != nil {
+			t.Fatalf("mkdtemp: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		eventsPath := filepath.Join(dir, "events.jsonl")
+		// Create an empty file.
+		f, _ := os.Create(eventsPath)
+		_ = f.Close()
+
+		cs := NewCursorStore(filepath.Join(dir, "cursors"))
+		impl := newTestCommsHandler(cs, eventsPath)
+		req, _ := json.Marshal(CommsRecvRequest{Agent: "alice"})
+		resBytes, recvErr := impl.HandleCommsRecv(context.Background(), req)
+		if recvErr != nil {
+			t.Fatalf("HandleCommsRecv: %v", recvErr)
+		}
+		var res CommsRecvResult
+		if uErr := json.Unmarshal(resBytes, &res); uErr != nil {
+			t.Fatalf("decode: %v", uErr)
+		}
+		if res.ScanAnchor != "" {
+			t.Errorf("empty log: ScanAnchor=%q, want empty", res.ScanAnchor)
+		}
+		if res.CursorAfter != "" {
+			t.Errorf("empty log: CursorAfter=%q, want empty", res.CursorAfter)
+		}
+	})
+
+	t.Run("events_but_no_match", func(t *testing.T) {
+		t.Parallel()
+		dir, err := os.MkdirTemp("/tmp", "hk7xvf-scananchor-nomatch-")
+		if err != nil {
+			t.Fatalf("mkdtemp: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		eventsPath := filepath.Join(dir, "events.jsonl")
+
+		// Write two events directed to "bob" (not "alice").
+		writeTestEvent(t, eventsPath, "agent_message", AgentMessagePayload{From: "x", To: "bob", Body: "e1"})
+		time.Sleep(2 * time.Millisecond)
+		lastID := writeTestEvent(t, eventsPath, "agent_message", AgentMessagePayload{From: "x", To: "bob", Body: "e2"})
+
+		cs := NewCursorStore(filepath.Join(dir, "cursors"))
+		impl := newTestCommsHandler(cs, eventsPath)
+		req, _ := json.Marshal(CommsRecvRequest{Agent: "alice"})
+		resBytes, recvErr := impl.HandleCommsRecv(context.Background(), req)
+		if recvErr != nil {
+			t.Fatalf("HandleCommsRecv: %v", recvErr)
+		}
+		var res CommsRecvResult
+		if uErr := json.Unmarshal(resBytes, &res); uErr != nil {
+			t.Fatalf("decode: %v", uErr)
+		}
+		if len(res.Messages) != 0 {
+			t.Errorf("no_match: got %d messages, want 0", len(res.Messages))
+		}
+		if res.CursorAfter != "" {
+			t.Errorf("no_match: CursorAfter=%q, want empty (cursor not advanced when no match)", res.CursorAfter)
+		}
+		if res.ScanAnchor != lastID {
+			t.Errorf("no_match: ScanAnchor=%q, want %q (last scanned event_id)", res.ScanAnchor, lastID)
+		}
+	})
+
+	t.Run("matching_message", func(t *testing.T) {
+		t.Parallel()
+		dir, err := os.MkdirTemp("/tmp", "hk7xvf-scananchor-match-")
+		if err != nil {
+			t.Fatalf("mkdtemp: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		eventsPath := filepath.Join(dir, "events.jsonl")
+
+		writeTestEvent(t, eventsPath, "agent_message", AgentMessagePayload{From: "x", To: "bob", Body: "noise"})
+		time.Sleep(2 * time.Millisecond)
+		matchID := writeTestEvent(t, eventsPath, "agent_message", AgentMessagePayload{From: "captain", To: "alice", Body: "retask"})
+
+		cs := NewCursorStore(filepath.Join(dir, "cursors"))
+		impl := newTestCommsHandler(cs, eventsPath)
+		req, _ := json.Marshal(CommsRecvRequest{Agent: "alice"})
+		resBytes, recvErr := impl.HandleCommsRecv(context.Background(), req)
+		if recvErr != nil {
+			t.Fatalf("HandleCommsRecv: %v", recvErr)
+		}
+		var res CommsRecvResult
+		if uErr := json.Unmarshal(resBytes, &res); uErr != nil {
+			t.Fatalf("decode: %v", uErr)
+		}
+		if len(res.Messages) != 1 {
+			t.Fatalf("matching: got %d messages, want 1", len(res.Messages))
+		}
+		if res.CursorAfter != matchID {
+			t.Errorf("matching: CursorAfter=%q, want %q", res.CursorAfter, matchID)
+		}
+		if res.ScanAnchor != matchID {
+			t.Errorf("matching: ScanAnchor=%q, want %q (should equal CursorAfter when last scan IS the match)", res.ScanAnchor, matchID)
+		}
+	})
 }

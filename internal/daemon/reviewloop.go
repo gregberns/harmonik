@@ -1745,7 +1745,6 @@ func rlTruncateUTF8(s string, maxBytes int) string {
 	return string(b)
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Event emission helpers (§8.1a review-loop events)
 // ─────────────────────────────────────────────────────────────────────────────

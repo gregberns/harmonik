@@ -2228,6 +2228,20 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	var baseBranch string
 	if brCfg, brErr := resolveBranching(ctx, beadRecord.Description, deps.projectDir, deps.targetBranch); brErr == nil {
 		baseBranch = brCfg.LandsOn
+
+		// Cross-repo guard (hk-3r3): if the bead declares a target_repo that
+		// differs from the daemon's projectDir, dispatch is unsupported today.
+		// Reopen the bead with CrossRepoUnsupportedError so the operator knows
+		// to apply the fix out-of-band. See docs/cross-repo-dispatch.md.
+		if brCfg.TargetRepo != "" && brCfg.TargetRepo != deps.projectDir {
+			crErr := &CrossRepoUnsupportedError{TargetRepo: brCfg.TargetRepo, ProjectDir: deps.projectDir}
+			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, crErr)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				crErr.Error())
+			return
+		}
+
 		for _, protected := range deps.protectBranches {
 			if baseBranch == protected {
 				protErr := &LandsOnProtectedError{LandsOn: baseBranch}

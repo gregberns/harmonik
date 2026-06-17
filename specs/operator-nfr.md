@@ -63,7 +63,7 @@ This spec owns *semantics* (what must happen between tasks, what must be readabl
 - Distributed tracing across multiple harmonik instances — post-MVH; per-project daemon isolation makes multi-instance tracing an OS-process concern per §4.10.
 - Per-tenant cost attribution — no multi-tenancy in MVH per §4.10; shared LLM-budget / shared skill-registry / shared operator-identity concerns acknowledged and deferred.
 - Observability overhead budget — post-MVH.
-- Multi-repo workflow support — post-MVH; MVH operates against one repository at a time per problem-space constraints. Known boundary: the daemon lands changes only to the supervised repo; cross-repo fixes are applied out-of-band (tracked as **hk-3r3**, adopted under `codename:fleet-portability`; see [process-lifecycle.md §2.2]).
+- Multi-repo workflow support — post-MVH; MVH operates against one repository at a time per problem-space constraints. Known boundary: the daemon lands changes only to the supervised repo; a bead declaring `target_repo: <path>` is now explicitly refused with `CrossRepoUnsupportedError` (guard landed **hk-3r3**); cross-repo fixes are applied out-of-band until full cross-repo dispatch is implemented (see `docs/cross-repo-dispatch.md` and [process-lifecycle.md §2.2]).
 - Reconciliation category classifier internals — owned by [reconciliation/spec.md §4.2, §4.3] and [reconciliation/spec.md §8]; this spec consumes the reconciliation status for pause carve-out only.
 - Beads SQLite schema internals — managed upstream; this spec names the overlay-compat contract, not the bead wire schema.
 

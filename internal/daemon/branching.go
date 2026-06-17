@@ -67,6 +67,13 @@ type BranchingConfig struct {
 	// Empty means absent → spec-level default is "squash".
 	// Consumed by hk-icgp1 (landing strategy).
 	LandingStrategy string
+
+	// TargetRepo is the absolute path of a non-harmonik repository that this
+	// bead's fix should land in. When set, the daemon CANNOT dispatch the bead
+	// (cross-repo dispatch is not yet implemented — hk-3r3); beadRunOne reopens
+	// the bead with a CrossRepoUnsupportedError so the operator knows to apply
+	// the fix out-of-band. See docs/cross-repo-dispatch.md for the design note.
+	TargetRepo string
 }
 
 // Spec-level defaults per WM-005b (lowest precedence in the three-tier chain).
@@ -154,10 +161,13 @@ func resolveBranching(ctx context.Context, beadBody, projectRoot, targetBranch s
 
 	// Merge: bead-body fields win; project defaults fill unset slots; spec
 	// defaults fill anything still unset.
+	// TargetRepo has no project-level or spec-level default — it is bead-body
+	// only (hk-3r3). An empty TargetRepo means the bead targets this repo.
 	merged := BranchingConfig{
 		StartFrom:       firstNonEmpty(beadCfg.StartFrom, projDefaults.StartFrom, specStartFrom),
 		LandsOn:         firstNonEmpty(beadCfg.LandsOn, projDefaults.LandsOn, specLandsOn),
 		LandingStrategy: firstNonEmpty(beadCfg.LandingStrategy, string(projDefaults.LandingStrategy), specDefaultLandingStrategy),
+		TargetRepo:      beadCfg.TargetRepo,
 	}
 	return merged, nil
 }
@@ -181,6 +191,10 @@ type branchingYAMLShape struct {
 	StartFrom       string `yaml:"start_from"`
 	LandsOn         string `yaml:"target_branch"` // bead body key is target_branch; spec vocab is lands_on
 	LandingStrategy string `yaml:"landing_strategy"`
+	// target_repo declares an out-of-repo landing target (hk-3r3). When present
+	// the daemon reopens the bead with CrossRepoUnsupportedError — cross-repo
+	// dispatch is not yet implemented. See docs/cross-repo-dispatch.md.
+	TargetRepo string `yaml:"target_repo"`
 }
 
 // parseBranchingSection extracts per-bead branching configuration from a bead
@@ -258,6 +272,7 @@ func parseBranchingSection(beadBody string) (BranchingConfig, error) {
 		StartFrom:       shape.StartFrom,
 		LandsOn:         shape.LandsOn,
 		LandingStrategy: shape.LandingStrategy,
+		TargetRepo:      shape.TargetRepo,
 	}, nil
 }
 
@@ -398,6 +413,21 @@ func resolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody, target
 		return "", fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, err)
 	}
 	return sha, nil
+}
+
+// CrossRepoUnsupportedError is the typed error returned when a bead's
+// ## Branching section declares a target_repo that differs from the daemon's
+// projectDir. Cross-repo dispatch is not yet implemented (hk-3r3); the operator
+// must apply the fix out-of-band. See docs/cross-repo-dispatch.md.
+type CrossRepoUnsupportedError struct {
+	TargetRepo string
+	ProjectDir string
+}
+
+func (e *CrossRepoUnsupportedError) Error() string {
+	return fmt.Sprintf(
+		"daemon: bead declares target_repo %q but daemon supervises %q; cross-repo dispatch not yet implemented (hk-3r3) — apply fix out-of-band, see docs/cross-repo-dispatch.md",
+		e.TargetRepo, e.ProjectDir)
 }
 
 // LandsOnProtectedError is the typed error returned when a bead's resolved

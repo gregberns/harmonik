@@ -231,10 +231,10 @@ func TestStalePane_BriefDeliveredTimeout_SkipsCheck(t *testing.T) {
 	// stale path fires in ~10ms if check runs — would be < 25ms total.
 	// Normal path (brief timeout + launch window) = 20 + 80 = 100ms.
 	restore := hk1tooShortTimeouts(
-		20*time.Millisecond,  // brief timeout (fires; briefDelivered never closes)
-		80*time.Millisecond,  // launch window (fires after brief timeout elapses)
-		10*time.Millisecond,  // kill delay
-		10*time.Second,       // total timeout
+		20*time.Millisecond, // brief timeout (fires; briefDelivered never closes)
+		80*time.Millisecond, // launch window (fires after brief timeout elapses)
+		10*time.Millisecond, // kill delay
+		10*time.Second,      // total timeout
 	)
 	defer restore()
 

@@ -3724,7 +3724,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					emitDone(true, "noChange-subsumed: bead found in main")
 				}
 			} else {
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, "noChange-timeout")
+				if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, "noChange-timeout"); reopenErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED (noChange-timeout) bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually (hk-1h5q)\n",
+						beadID, runID.String(), reopenErr)
+				}
 				emitDone(false, "noChange-timeout: no commit in commitPollTimeout window")
 			}
 		default:
@@ -3760,8 +3763,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// QM-002a at next startup reverts the queue item to pending once it
 				// sees the bead is open again.
 				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(bgCtx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					"context_cancelled: daemon shutdown, requeue pending")
+				if reopenErr := deps.brAdapter.ReopenBead(bgCtx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+					"context_cancelled: daemon shutdown, requeue pending"); reopenErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED (context_cancelled) bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually (hk-1h5q)\n",
+						beadID, runID.String(), reopenErr)
+				}
 				return
 			}
 

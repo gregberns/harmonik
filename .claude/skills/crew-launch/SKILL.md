@@ -40,6 +40,16 @@ Your stable identity is `$HARMONIK_AGENT` (== `crew_name` from your handoff).
 
 ## § Boot sequence (do this first, in order)
 
+> **One-call discovery shortcut — run the crew boot digest first:**
+> ```bash
+> ~/.claude/captain-tools/crew-boot-digest.sh
+> ```
+> This reads your mission file, checks daemon status, agents online, your
+> queue and epic state, ready beads, and recent comms — in one shell call —
+> and emits a single Markdown STATE DIGEST. Read the digest, then continue
+> with Steps 3–6 below (join, mirror, recv, boot-status — these are **actions**
+> that cannot be scripted away; only discovery is collapsed).
+
 ### Step 1 — Read your mission
 
 You were seeded with a `/session-resume` on your handoff file

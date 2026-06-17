@@ -65,6 +65,17 @@ ground-truth (Step 2) overrides anything it claims about live state.
 
 ## Step 2 — Ground-truth the live state (DO NOT trust, MEASURE)
 
+> **One-call shortcut — run the boot digest first:**
+> ```bash
+> ~/.claude/captain-tools/captain-boot-digest.sh
+> ```
+> This executes ALL commands from Steps 2a–2g **and** Step 4 in one shell call
+> and emits a single Markdown STATE DIGEST (daemon status, agents online, crew
+> registry, tmux fleet, paused queues, recent comms, ready beads, open epics,
+> kerf next, kerf map). Read the digest output, then skip to Step 3 — you do
+> not need to rerun the individual commands below unless a specific entry needs
+> a deeper look.
+
 Run ALL of these before forming any plan or touching any crew. Capture the
 output; you will reconcile it in Step 3.
 
@@ -151,6 +162,12 @@ different name (that is a judgment call → SURFACE + AWAIT, captain skill §8).
 
 You do NOT dispatch until there is a written, lane-organized plan. "Watch one
 bead and react" is the failure mode — this step forbids it.
+
+> **Already covered by the boot digest** — if you ran
+> `~/.claude/captain-tools/captain-boot-digest.sh` in Step 2, the digest
+> already includes sections 7–10 (ready beads, open epics, kerf next, kerf
+> map). Use that output to build the lane table below; skip re-running the
+> individual commands unless a section looks stale.
 
 ```bash
 br ready --limit 0 --json | jq -r '.[] | "\(.id)\t\(.title)"'  # ALL unblocked (unpaginated)

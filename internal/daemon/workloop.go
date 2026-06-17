@@ -2403,7 +2403,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS)
 
-
 	// hk-f38n: the pre-dispatch subsumption check (hk-ly0hg Fix-2 / hk-wcv) was
 	// REMOVED here. That check called beadAlreadySubsumedInMain — a bare
 	// "Refs: <id>" git-log grep — and closed the bead pre-dispatch when it

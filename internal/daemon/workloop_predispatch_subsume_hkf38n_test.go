@@ -162,7 +162,7 @@ func TestBeadAlreadySubsumedInMain_FullyLanded_ReturnsTrue(t *testing.T) {
 
 	got := daemon.ExportedBeadAlreadySubsumedInMain(t.Context(), dir, beadID)
 	if !got {
-		t.Fatalf("beadAlreadySubsumedInMain = false for fully-landed bead; want true.\n"+
+		t.Fatalf("beadAlreadySubsumedInMain = false for fully-landed bead; want true.\n" +
 			"The runtime noChange path relies on this returning true to close crash-restart beads.")
 	}
 }

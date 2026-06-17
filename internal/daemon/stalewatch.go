@@ -180,15 +180,20 @@ type StaleWatcher struct {
 	states map[core.RunID]*runStaleState
 }
 
-// beadStaleAfter parses a "stale_after=<seconds>" label from labels and
-// returns the corresponding duration. Returns defaultAfter when no such label
-// is present or the value is ≤0.
+// beadStaleAfter parses a "stale_after=<seconds>" or "stale_after:<seconds>"
+// label from labels and returns the corresponding duration. Returns
+// defaultAfter when no such label is present or the value is ≤0.
 func beadStaleAfter(labels []string, defaultAfter time.Duration) time.Duration {
 	for _, l := range labels {
-		if !strings.HasPrefix(l, "stale_after=") {
+		var val string
+		switch {
+		case strings.HasPrefix(l, "stale_after="):
+			val = strings.TrimPrefix(l, "stale_after=")
+		case strings.HasPrefix(l, "stale_after:"):
+			val = strings.TrimPrefix(l, "stale_after:")
+		default:
 			continue
 		}
-		val := strings.TrimPrefix(l, "stale_after=")
 		secs, err := strconv.ParseInt(val, 10, 64)
 		if err != nil || secs <= 0 {
 			return defaultAfter

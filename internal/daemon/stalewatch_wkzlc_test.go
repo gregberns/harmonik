@@ -458,6 +458,13 @@ func TestBeadStaleAfter_LabelParsing(t *testing.T) {
 		{"zero value falls back", []string{"stale_after=0"}, def},
 		{"negative falls back", []string{"stale_after=-1"}, def},
 		{"non-numeric falls back", []string{"stale_after=abc"}, def},
+		// colon-form (valid label syntax: alnum/hyphen/underscore/colon)
+		{"colon form 120s", []string{"stale_after:120"}, 120 * time.Second},
+		{"colon form 1800s", []string{"stale_after:1800"}, 1800 * time.Second},
+		{"colon form with other labels", []string{"workflow:default", "stale_after:900", "foo"}, 900 * time.Second},
+		{"colon form zero falls back", []string{"stale_after:0"}, def},
+		{"colon form negative falls back", []string{"stale_after:-1"}, def},
+		{"colon form non-numeric falls back", []string{"stale_after:abc"}, def},
 	}
 
 	for _, tc := range cases {
@@ -522,6 +529,60 @@ func TestStaleWatch_PerBeadLabelOverride(t *testing.T) {
 	}
 	if evts[0].BeadID != "hk-testlabel" {
 		t.Errorf("bead_id: got %s want hk-testlabel", evts[0].BeadID)
+	}
+}
+
+// TestStaleWatch_PerBeadColonFormLabelOverride verifies that a run registered
+// with a "stale_after:<seconds>" label (colon form — the only form accepted by
+// beads label validation) uses that value as its stale threshold.
+func TestStaleWatch_PerBeadColonFormLabelOverride(t *testing.T) {
+	reg := daemon.NewRunRegistry()
+	runID := staleFixtureNewRunID(t)
+	startedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// 120s per-bead override; watcher default is 10 min.
+	reg.Register(runID, &daemon.RunHandle{
+		BeadID:    "hk-testcolonlabel",
+		Labels:    []string{"stale_after:120"},
+		StartedAt: startedAt,
+	})
+
+	now := startedAt.Add(1 * time.Minute) // before per-bead threshold
+
+	sfb := staleFixtureNewBus(t)
+	unsealed := eventbus.NewBusImpl()
+	w := daemon.NewStaleWatcher(daemon.StaleWatcherConfig{
+		SubscribeBus: unsealed,
+		Emitter:      sfb.bus,
+		Registry:     reg,
+		StaleAfter:   10 * time.Minute,
+		ScanInterval: time.Hour,
+		Now:          func() time.Time { return now },
+	})
+	if err := w.Subscribe(); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := unsealed.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// At 1 min the per-bead threshold (120s = 2 min) is not crossed → no emit.
+	daemon.ExportedStalewatchScan(w, context.Background())
+	time.Sleep(50 * time.Millisecond)
+	if n := len(sfb.collected()); n != 0 {
+		t.Fatalf("before per-bead threshold: expected 0 events, got %d", n)
+	}
+
+	// Advance to 121s — crosses the 120s colon-form override → emit 1.
+	now = startedAt.Add(121 * time.Second)
+	daemon.ExportedStalewatchScan(w, context.Background())
+	time.Sleep(50 * time.Millisecond)
+	evts := sfb.collected()
+	if len(evts) != 1 {
+		t.Fatalf("at colon-form threshold (121s): expected 1 event, got %d", len(evts))
+	}
+	if evts[0].BeadID != "hk-testcolonlabel" {
+		t.Errorf("bead_id: got %s want hk-testcolonlabel", evts[0].BeadID)
 	}
 }
 

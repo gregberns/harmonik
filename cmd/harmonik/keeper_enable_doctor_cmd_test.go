@@ -1294,8 +1294,8 @@ func TestKeeperDoctor_CaptainToolsStale(t *testing.T) {
 	if !strings.Contains(out, "STALE") {
 		t.Errorf("captain-tools check should flag STALE when runtime copy differs, got: %s", out)
 	}
-	if !strings.Contains(out, "harmonik init --force") {
-		t.Errorf("captain-tools STALE message should mention 'harmonik init --force', got: %s", out)
+	if !strings.Contains(out, "harmonik init --refresh-captain-tools") {
+		t.Errorf("captain-tools STALE message should mention 'harmonik init --refresh-captain-tools', got: %s", out)
 	}
 	if code == 0 {
 		t.Errorf("want non-zero exit code when captain-tools is stale, got 0")

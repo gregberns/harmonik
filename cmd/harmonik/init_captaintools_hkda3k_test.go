@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,43 @@ func TestProvisionCaptainToolsOnlyIfAbsent(t *testing.T) {
 	after, _ := os.ReadFile(destPath)
 	if !bytes.Equal(after, sentinel) {
 		t.Fatalf("expected file to be unchanged (only-if-absent), but it was overwritten")
+	}
+}
+
+// TestInitRefreshCaptainTools verifies that --refresh-captain-tools only refreshes
+// captain-tools without touching any other init steps (no br init, no config.yaml, etc.).
+func TestInitRefreshCaptainTools(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	destDir := filepath.Join(tmpHome, ".claude", "captain-tools")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	destPath := filepath.Join(destDir, "captain-launch.sh")
+	// Pre-populate with stale content.
+	if err := os.WriteFile(destPath, []byte("stale content"), 0o755); err != nil {
+		t.Fatalf("write stale content: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	// runInit with --refresh-captain-tools must not require a project dir or git repo.
+	code := runInit([]string{"--refresh-captain-tools"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runInit --refresh-captain-tools returned %d; stderr: %s", code, stderr.String())
+	}
+
+	refreshed, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatalf("read after --refresh-captain-tools: %v", err)
+	}
+	if !bytes.Equal(refreshed, captainLaunchSh) {
+		t.Fatalf("--refresh-captain-tools did not refresh: content still stale")
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "captain-tools") {
+		t.Errorf("stdout should mention captain-tools, got: %s", out)
 	}
 }
 

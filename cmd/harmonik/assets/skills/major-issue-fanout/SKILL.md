@@ -96,6 +96,7 @@ Pick angles from this taxonomy (don't repeat angles across agents):
 |---|---|
 | Code structure | File:line in wedge event; goroutine lifecycle; channel ownership |
 | Event timeline | Ordered event sequence; timing gaps; missing events |
+| **run_id lifecycle (context_cancel precondition)** | **Before any other hypothesis: was a reaper-spawn / `agent_ready` observed for this run_id? A context_cancel with NO observed reaper lifecycle means investigate the lifecycle, NOT the deadline or cache.** See §run_id lifecycle check below. |
 | Config drift | Binary version, `--workflow-mode`, daemon flags at wedge time |
 | Concurrency model | Channel consumers; mutex holders; race under N>1 |
 | Regression window | First-bad commit; what changed? `git bisect` direction |
@@ -106,6 +107,25 @@ Pick angles from this taxonomy (don't repeat angles across agents):
 | Canary isolation | Last known-good vs first known-bad configuration delta |
 
 **Spawn all in parallel, `run_in_background=True`.**
+
+---
+
+### run_id lifecycle check (mandatory precondition for `context_cancel`)
+
+**Before accepting ANY timing / cache / graph-size hypothesis for a `context_cancel` event:**
+
+1. Pull the full event sequence for the affected `run_id` via structured query:
+   ```bash
+   jq 'select(.run_id == "<run_id>")' $HARMONIK_PROJECT/.harmonik/events/events.jsonl \
+     | jq -s 'sort_by(.timestamp) | .[] | {timestamp, event_type, run_id}'
+   ```
+2. Confirm that `agent_ready` (or equivalent reaper-spawn) appears **before** the `context_cancel`.
+3. If **no** `agent_ready` / reaper-spawn event exists for this `run_id`:
+   - **Reject all timing/cache/graph-size hypotheses immediately.**
+   - The cancel was fired by a reaper whose `stalewatch.observe()` received a nil `run_id` event — it cancelled PER-RUN contexts for a run that never spawned. Investigate the lifecycle gap, not the deadline.
+   - Reference fix: `960deafc` (stalewatch nil-run_id skip).
+
+**Lesson source:** 2026-06-18 DOT context-cancel saga — ~270 min burned on two refuted hypotheses (cold-cache, DOT-deadline) before the nil-run_id lifecycle gap surfaced via hk-wths.
 
 ### Step 4 — Synthesize, then verify adversarially
 
@@ -157,6 +177,7 @@ Exit when: ≥2 verifiers CONFIRM the same root cause AND you have a concrete ar
 | Single-bead trivial smoke as concurrency validator | Masked the real bug 3× |
 | Captain debugging inline | Context exhaustion + blocked main thread |
 | Declaring fixed without independent lane review | Required by orchestrator-rules.md |
+| Accepting timing/cache hypothesis for `context_cancel` without checking run_id lifecycle | ~270 min burned on two refuted hypotheses (2026-06-18); nil-run_id skip in stalewatch was the real cause (hk-wths / `960deafc`) |
 
 ---
 

@@ -688,7 +688,7 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 			check("captain-tools", false,
 				fmt.Sprintf("~/.claude/captain-tools/captain-launch.sh is STALE (differs from binary-embedded copy) — "+
 					"missing project-hash naming or sentinel/PID orphan-sweep protection (PL-006d). "+
-					"Fix: harmonik init --force"))
+					"Fix: harmonik init --refresh-captain-tools"))
 		default:
 			check("captain-tools", true, "captain-launch.sh matches binary-embedded copy (in sync)")
 		}
@@ -1155,7 +1155,7 @@ CHECKS (all read-only; no filesystem mutations)
   idle marker    .harmonik/keeper/<agent>.idle has been written (Stop hook fired)
   managed        .harmonik/keeper/<agent>.managed present (handoff cycle live)
   api-key-risk   ANTHROPIC_API_KEY not set in environment
-  captain-tools  ~/.claude/captain-tools/captain-launch.sh matches binary-embedded copy (skipped if absent)
+  captain-tools  ~/.claude/captain-tools/captain-launch.sh matches binary-embedded copy (skipped if absent); fix: harmonik init --refresh-captain-tools
 
 EXIT CODES
   0  All checks passed

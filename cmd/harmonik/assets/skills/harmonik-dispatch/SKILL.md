@@ -48,6 +48,20 @@ tmux new-session -d -s harmonik-daemon \
    ```
    Removes the `.dispatching` marker; the keeper cycle resumes normal threshold checks.
 
+### Pre-screen for already-landed beads
+
+Beads can be stale-open — the implementation landed on `main` but the bead was never closed. Dispatching one wastes a daemon slot (hits the noChange path). Before submitting a batch, grep history and drop any already-landed bead:
+
+```bash
+for id in hk-aaa hk-bbb hk-ccc; do
+  hits=$(git -C $HARMONIK_PROJECT log --all --grep "Refs: $id" --oneline | wc -l)
+  echo "$id $hits"
+done
+# any id with hits>0 → br close <id> --reason "Subsumed: landed as <sha>"
+```
+
+(Gap filed as hk-lhv8i to do this at submit-time inside the daemon.)
+
 ### Stream vs wave
 
 Use `kind: "stream"` groups for the daily loop — they accept mid-flight appends and dispatch in order (head-of-line blocking). Use `kind: "wave"` only when you need true concurrent dispatch of a fixed, immutable set up to `--max-concurrent`; waves do not accept appends. Remaining gap: hk-24xn1 — the daemon doesn't wake on submit/append when idle, so newly-added beads sit `pending` until the next workloop tick.

@@ -71,13 +71,14 @@ func runInitSubcommand(args []string) int {
 // runInit is the testable core of the init subcommand.
 func runInit(args []string, stdout, stderr io.Writer) int {
 	var (
-		projectDir   string
-		targetBranch string
-		prefix       string
-		doctorOnly   bool
-		force        bool
-		smoke        bool
-		noSupervise  bool
+		projectDir          string
+		targetBranch        string
+		prefix              string
+		doctorOnly          bool
+		force               bool
+		smoke               bool
+		noSupervise         bool
+		refreshCaptainTools bool
 	)
 
 	for i := 0; i < len(args); i++ {
@@ -108,6 +109,8 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 			smoke = true
 		case args[i] == "--no-supervise":
 			noSupervise = true
+		case args[i] == "--refresh-captain-tools":
+			refreshCaptainTools = true
 		}
 	}
 
@@ -133,6 +136,18 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	}
 	if prefix == "" {
 		prefix = deriveBeadPrefix(projectDir)
+	}
+
+	// --refresh-captain-tools: ONLY refresh ~/.claude/captain-tools/ — safe to run
+	// on a live project (no beads database reinitialization, no config.yaml or
+	// branching.yaml clobber). Fixes the "captain-tools STALE" keeper doctor flag
+	// (hk-tgrw) without the nuclear side-effects of --force.
+	if refreshCaptainTools {
+		if code := provisionCaptainTools(true, stdout, stderr); code != 0 {
+			return code
+		}
+		fmt.Fprintln(stdout, "harmonik init: captain-tools refreshed — run 'harmonik keeper doctor captain' to verify")
+		return 0
 	}
 
 	// Run doctor checks.
@@ -761,15 +776,19 @@ const initUsage = `harmonik init — bootstrap a new project for use with harmon
 USAGE
   harmonik init [--project DIR] [--target-branch BRANCH] [--prefix PREFIX]
                 [--doctor] [--force] [--smoke] [--no-supervise]
+                [--refresh-captain-tools]
 
 FLAGS
-  --project DIR          Project directory (default: current working directory)
-  --target-branch BRANCH Branch harmonik merges completed work into (default: main)
-  --prefix PREFIX        Bead ID prefix for 'br init' (default: derived from project directory name)
-  --doctor               Run precondition checks only; do not modify anything
-  --force                Overwrite existing files and reinitialise br database
-  --smoke                Run a smoke test after init to verify the setup
-  --no-supervise         Skip 'harmonik supervise start --watch-restart'
+  --project DIR             Project directory (default: current working directory)
+  --target-branch BRANCH    Branch harmonik merges completed work into (default: main)
+  --prefix PREFIX           Bead ID prefix for 'br init' (default: derived from project directory name)
+  --doctor                  Run precondition checks only; do not modify anything
+  --force                   Overwrite existing files and reinitialise br database
+  --smoke                   Run a smoke test after init to verify the setup
+  --no-supervise            Skip 'harmonik supervise start --watch-restart'
+  --refresh-captain-tools   ONLY refresh ~/.claude/captain-tools/ from the binary-embedded copy.
+                            Safe to run on a live project: skips beads database, config, and scaffold steps.
+                            Use this to fix 'keeper doctor captain: captain-tools STALE' without --force.
 
 WHAT IT DOES
   1. Checks preconditions (git repo, br/harmonik on PATH)

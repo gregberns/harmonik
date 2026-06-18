@@ -978,6 +978,43 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: bandwidth-tuner backstop subscribe: %w", subscribeErr)
 	}
 
+	// Wire the QuiesceArbiter (hk-jeby, M1 of hk-rl4b / codename:sleep-wake).
+	//
+	// Two-phase wiring:
+	//   Phase 1 (here, pre-Seal): Subscribe epic_completed + agent_message
+	//     wake triggers so they are delivered during the production run.
+	//   Phase 2 (inside if cfg.BrPath != "", post-Seal): construct the
+	//     DrainDetector (requires brAdapter from newWorkLoopDeps) via
+	//     quiesceArbiter.SetDrain, then call quiesceArbiter.Start(ctx).
+	//
+	// When cfg.ProjectDir is empty (unit-test mode), the arbiter is still
+	// constructed and subscribed but Start is never called — all fields that
+	// require a project directory are guarded with nil/empty checks.
+	//
+	// Bead ref: hk-jeby.
+	var quiesceAdapter ltmux.Adapter
+	if sa, ok := cfg.Substrate.(substrateWithAdapter); ok {
+		quiesceAdapter = sa.tmuxAdapter()
+	}
+	var quiesceCommsBus eventbus.CommsMessageEmitter
+	if ce, ok := bus.(eventbus.CommsMessageEmitter); ok {
+		quiesceCommsBus = ce
+	}
+	var quiesceHash core.ProjectHash
+	if cfg.ProjectDir != "" {
+		quiesceHash = lifecycle.ComputeProjectHash(cfg.ProjectDir)
+	}
+	quiesceArbiter := NewQuiesceArbiter(QuiesceArbiterConfig{
+		ProjectDir:  cfg.ProjectDir,
+		ProjectHash: quiesceHash,
+		Adapter:     quiesceAdapter,
+		QueueStore:  qs,
+		CommsBus:    quiesceCommsBus,
+	})
+	if subscribeErr := quiesceArbiter.Subscribe(bus); subscribeErr != nil {
+		return fmt.Errorf("daemon.Start: QuiesceArbiter.Subscribe: %w", subscribeErr)
+	}
+
 	// Wire the substrate launch-timeout diagnostic hooks (hk-oihnf). The substrate
 	// was constructed by the composition root (cmd/harmonik) BEFORE the bus
 	// existed, so its spawn_cap_blocked / tmux_new_window_timeout hooks were left
@@ -1717,6 +1754,34 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				deps.spawnSubstrateReadyCh = readyCh
 			}
 		}
+
+		// QuiesceArbiter Phase 2 (hk-jeby): wire the DrainDetector now that the
+		// brAdapter is available, then start the background goroutine.
+		//
+		// A fresh brAdapter is constructed here (not shared with deps.brAdapter)
+		// so the drain oracle's br CLI invocations do not interfere with the work
+		// loop's own br calls.  Construction failure is non-fatal: the arbiter
+		// simply polls without a DrainDetector (tick() guards on nil) and auto-wakes
+		// are still issued by the event subscriptions wired in Phase 1.
+		//
+		// Bead ref: hk-jeby.
+		if drainBrAdapter, drainBrErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir); drainBrErr == nil {
+			quiesceArbiter.SetDrain(NewDrainDetector(
+				drainBrAdapter,
+				drainBrAdapter,
+				newBRQueueLedger(drainBrAdapter),
+				sharedRunRegistry,
+				qs,
+				cfg.ProjectDir,
+			))
+		} else {
+			logW := cfg.LogWriter
+			if logW == nil {
+				logW = os.Stderr
+			}
+			fmt.Fprintf(logW, "daemon.Start: QuiesceArbiter: brAdapter: %v; drain-check disabled\n", drainBrErr)
+		}
+		quiesceArbiter.Start(ctx)
 
 		// Emit the composition-root wiring audit log when HARMONIK_DEBUG_WIRING=1
 		// is set in the operator environment.  All 31 wiring points have been

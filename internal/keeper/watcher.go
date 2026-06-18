@@ -684,15 +684,34 @@ func (w *Watcher) Run(ctx context.Context) error {
 				slog.WarnContext(ctx, "keeper: read managed session_id", "err", managedErr)
 				// Fall through on read error to avoid silent monitoring gaps.
 			} else if managedSID != "" && ctxFile.SessionID != "" && ctxFile.SessionID != managedSID {
-				// Foreign session — treat as absent.
-				slog.WarnContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",
-					"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID)
-				w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
-				noGaugeEmittedAtBoot = true
-				warnArmed = true
-				warnFired = false
-				pendingInject = false
-				continue
+				// Potential foreign session or same-agent post-external-/clear.
+				// Re-read the authoritative .sid channel before rejecting: if the live
+				// .sid is a valid UUIDv4 and matches the gauge's session_id, this is
+				// the SAME agent with a new session after an external /clear — adopt it
+				// by rewriting .managed. Reject as truly foreign only when the gauge's
+				// session_id does NOT match the authoritative .sid (two concurrent
+				// sessions writing to shared .ctx). Refs: hk-1tn2.
+				liveSID, _, sidErr := w.cfg.ReadSidFn(w.cfg.ProjectDir, w.cfg.AgentName)
+				if sidErr == nil && isPrimarySID(liveSID) && liveSID == ctxFile.SessionID {
+					// Same agent, new session after external /clear — adopt.
+					slog.InfoContext(ctx, "keeper: re-resolving .managed after external /clear; adopting new session_id",
+						"agent", w.cfg.AgentName, "old_sid", managedSID, "new_sid", liveSID)
+					if adoptErr := w.cfg.WriteManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName, liveSID); adoptErr != nil {
+						slog.WarnContext(ctx, "keeper: adopt managed session_id", "agent", w.cfg.AgentName, "err", adoptErr)
+						// Non-fatal: fall through and keep monitoring with the new id.
+					}
+					// Fall through to fresh-gauge handling below.
+				} else {
+					// True foreign session — treat as absent.
+					slog.WarnContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",
+						"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID)
+					w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
+					noGaugeEmittedAtBoot = true
+					warnArmed = true
+					warnFired = false
+					pendingInject = false
+					continue
+				}
 			} else if managedSID == "" && ctxFile.SessionID != "" {
 				// Latch: first valid gauge seen — bind its session_id into .managed.
 				slog.InfoContext(ctx, "keeper: latching session_id into .managed",

@@ -424,10 +424,12 @@ func TestWatcher_WarnResetOnDropBelow(t *testing.T) {
 	}
 }
 
-// TestWatcher_IgnoresForeignSessionGauge verifies that when the managed session
-// binding in .managed is "sess-expected" and the gauge carries "sess-foreign",
-// the watcher treats the gauge as absent and emits NO warn event.
-// Refs: hk-igt (session_id clobber — two same-agent sessions writing to .ctx).
+// TestWatcher_IgnoresForeignSessionGauge verifies that when the managed binding
+// is "sess-expected", the gauge carries "sess-foreign", and the authoritative
+// .sid also carries "sess-expected" (matching managed, not the gauge), the
+// watcher treats the gauge as absent and emits NO warn event. This is a TRUE
+// concurrent foreign session: the .sid does not endorse the gauge's session_id.
+// Refs: hk-igt, hk-1tn2.
 func TestWatcher_IgnoresForeignSessionGauge(t *testing.T) {
 	t.Parallel()
 
@@ -451,6 +453,12 @@ func TestWatcher_IgnoresForeignSessionGauge(t *testing.T) {
 		// Pre-set binding to "sess-expected".
 		ReadManagedSessionFn:  func(_, _ string) (string, error) { return "sess-expected", nil },
 		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
+		// .sid endorses "sess-expected" (the managed sid), NOT the gauge's sid.
+		// This is the true-foreign case: two concurrent sessions, the authoritative
+		// .sid does not match the gauge's session_id.
+		ReadSidFn: func(_, _ string) (string, time.Time, error) {
+			return "sess-expected", time.Time{}, nil
+		},
 	}
 
 	// Write gauge with a DIFFERENT session_id — foreign session.
@@ -461,6 +469,165 @@ func TestWatcher_IgnoresForeignSessionGauge(t *testing.T) {
 	// No warn — gauge belongs to a different session.
 	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
 		t.Errorf("want 0 session_keeper_warn for foreign session; got %d", len(warns))
+	}
+}
+
+// TestWatcher_AdoptsSameAgentNewSidAfterExternalClear verifies that when the
+// managed binding is stale (old-sid from a prior session) but the authoritative
+// .sid and the live gauge both carry a new UUIDv4 (the same agent after an
+// external /clear), the watcher re-resolves .managed to the new sid and
+// continues monitoring — emitting a warn at the high-pct gauge rather than
+// treating it as foreign. Refs: hk-1tn2.
+func TestWatcher_AdoptsSameAgentNewSidAfterExternalClear(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "adopt-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	const oldSID = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
+	const newSID = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+
+	var adoptedSID string
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// Managed binding is stale (prior session).
+		ReadManagedSessionFn: func(_, _ string) (string, error) { return oldSID, nil },
+		WriteManagedSessionFn: func(_, _, sessionID string) error {
+			adoptedSID = sessionID
+			return nil
+		},
+		// .sid endorses the NEW session_id — same agent, new session after /clear.
+		ReadSidFn: func(_, _ string) (string, time.Time, error) {
+			return newSID, time.Time{}, nil
+		},
+	}
+
+	// Gauge carries the new session_id at high pct.
+	writeCtxFile(t, projectDir, agent, 90.0, newSID)
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	// Watcher must have adopted the new sid by calling WriteManagedSessionFn.
+	if adoptedSID != newSID {
+		t.Errorf("want adopted sid %q; got %q", newSID, adoptedSID)
+	}
+
+	// Warn must fire — the gauge is valid and above threshold.
+	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) == 0 {
+		t.Errorf("want ≥1 session_keeper_warn after adopt; got 0")
+	}
+}
+
+// TestWatcher_RejectsConcurrentDifferentSession verifies that when the managed
+// binding is "sess-managed", the gauge carries "sess-gauge-other", and the
+// authoritative .sid carries "sess-sid-third" (all three differ), the watcher
+// rejects the gauge as a true concurrent foreign session and emits NO warn.
+// Refs: hk-1tn2.
+func TestWatcher_RejectsConcurrentDifferentSession(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "concurrent-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	const managedSID = "cccccccc-cccc-4ccc-cccc-cccccccccccc"
+	const gaugeSID = "dddddddd-dddd-4ddd-dddd-dddddddddddd"
+	const sidSID = "eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee"
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		ReadManagedSessionFn:  func(_, _ string) (string, error) { return managedSID, nil },
+		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
+		// .sid does NOT endorse the gauge's session_id.
+		ReadSidFn: func(_, _ string) (string, time.Time, error) {
+			return sidSID, time.Time{}, nil
+		},
+	}
+
+	writeCtxFile(t, projectDir, agent, 90.0, gaugeSID)
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	// No warn — gauge is foreign.
+	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
+		t.Errorf("want 0 session_keeper_warn for concurrent foreign session; got %d", len(warns))
+	}
+}
+
+// TestWatcher_NoAdoptWhenSidMalformed verifies that when the managed binding is
+// stale but the .sid file carries a malformed value (not a valid UUIDv4), the
+// watcher does NOT adopt the new gauge session_id — it rejects as foreign.
+// A corrupt or absent .sid fails closed. Refs: hk-1tn2.
+func TestWatcher_NoAdoptWhenSidMalformed(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "malformed-sid-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	const oldSID = "ffffffff-ffff-4fff-ffff-ffffffffffff"
+	const newSID = "11111111-1111-4111-1111-111111111111"
+
+	adoptCalled := false
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		ReadManagedSessionFn: func(_, _ string) (string, error) { return oldSID, nil },
+		WriteManagedSessionFn: func(_, _, _ string) error {
+			adoptCalled = true
+			return nil
+		},
+		// .sid is malformed — fails the UUIDv4 check.
+		ReadSidFn: func(_, _ string) (string, time.Time, error) {
+			return "not-a-uuid", time.Time{}, nil
+		},
+	}
+
+	writeCtxFile(t, projectDir, agent, 90.0, newSID)
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	// Must NOT adopt — malformed .sid fails closed.
+	if adoptCalled {
+		t.Errorf("want no adopt on malformed .sid; WriteManagedSessionFn was called")
+	}
+
+	// No warn — gauge is treated as foreign.
+	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
+		t.Errorf("want 0 session_keeper_warn for malformed-sid case; got %d", len(warns))
 	}
 }
 

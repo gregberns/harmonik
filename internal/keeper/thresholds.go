@@ -51,6 +51,15 @@ const (
 	defaultFallbackWindowSize = 200_000
 )
 
+// DefaultWarnAbsTokens and DefaultActAbsTokens are the exported forms of the
+// absolute-token band thresholds. Use these wherever the values must be
+// referenced outside this package (e.g. cmd/harmonik/keeper_cmd.go warning
+// messages) so the printed text stays in sync with the live defaults. Refs: hk-cu7g.
+const (
+	DefaultWarnAbsTokens = defaultWarnAbsTokens
+	DefaultActAbsTokens  = defaultActAbsTokens
+)
+
 // DefaultBootGracePeriod is the YOUNG-SESSION guard window: the minimum time a
 // session must run after a session_id CHANGE before the keeper will restart it.
 // It is LOAD-BEARING under the aggressive earlier band (hk-8hr1): warn=200K /

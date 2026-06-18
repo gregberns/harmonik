@@ -24,8 +24,8 @@ import (
 //	--warn-pct N          context-use percentage that triggers a warning (default 80)
 //	--act-pct N           context-use percentage that triggers handoff action (default 90; .managed-gated)
 //	--window-size N       assumed context-window token size when gauge reports WindowSize==0 (default 200000)
-//	--warn-abs-tokens N   absolute-token warn threshold (default 270000)
-//	--act-abs-tokens N    absolute-token act threshold (default 300000)
+//	--warn-abs-tokens N   absolute-token warn threshold (default 200000)
+//	--act-abs-tokens N    absolute-token act threshold (default 215000)
 //
 // Behaviour (Phase-2, .managed-gated):
 //  1. Acquire .harmonik/keeper/<agent>.lock; exit 2 if another live keeper holds it.
@@ -65,8 +65,8 @@ func runKeeperSubcommand(args []string) int {
 	fs.IntVar(&warnPctFlag, "warn-pct", 80, "context-use percentage that triggers a warning")
 	fs.IntVar(&actPctFlag, "act-pct", 90, "context-use percentage that triggers handoff action (.managed-gated)")
 	fs.Int64Var(&windowSizeFlag, "window-size", 0, "assumed context-window token size when the gauge reports WindowSize==0 (default 200000)")
-	fs.Int64Var(&warnAbsTokensFlag, "warn-abs-tokens", 0, "absolute-token warn threshold (default 270000)")
-	fs.Int64Var(&actAbsTokensFlag, "act-abs-tokens", 0, "absolute-token act threshold (default 300000)")
+	fs.Int64Var(&warnAbsTokensFlag, "warn-abs-tokens", 0, "absolute-token warn threshold (default 200000)")
+	fs.Int64Var(&actAbsTokensFlag, "act-abs-tokens", 0, "absolute-token act threshold (default 215000)")
 	fs.StringVar(&respawnCmdFlag, "respawn-cmd", "", "shell command to re-launch the agent after it exits (supervised respawn path; hk-3w2)")
 	fs.BoolVar(&forceRestartFlag, "force-restart", false, "opt in to the handoff-timeout hard-restart escalation (fail-closed; requires --respawn-cmd; hk-suxt)")
 
@@ -79,7 +79,7 @@ func runKeeperSubcommand(args []string) int {
 	}
 
 	// Detect explicitly-set pct flags and warn: on [1m]-window models
-	// (WindowSize=1_000_000) the abs thresholds (warn=270k, act=300k) are
+	// (WindowSize=1_000_000) the abs thresholds (warn=200k, act=215k) are
 	// authoritative and --warn-pct/--act-pct are never consulted.  Emitting
 	// a warning here prevents silent misconfiguration — the caller should use
 	// --warn-abs-tokens/--act-abs-tokens instead.  Refs: hk-odhh.
@@ -90,9 +90,10 @@ func runKeeperSubcommand(args []string) int {
 		}
 	})
 	if pctFlagsSet {
-		fmt.Fprintln(os.Stderr, "keeper warning: --warn-pct/--act-pct are inert on 1M-window models "+
-			"(Claude Code emits absolute token counts; abs thresholds warn=270000 act=300000 govern). "+
-			"Use --warn-abs-tokens/--act-abs-tokens to override the act thresholds instead.")
+		fmt.Fprintf(os.Stderr, "keeper warning: --warn-pct/--act-pct are inert on 1M-window models "+
+			"(Claude Code emits absolute token counts; abs thresholds warn=%d act=%d govern). "+
+			"Use --warn-abs-tokens/--act-abs-tokens to override the act thresholds instead.\n",
+			keeper.DefaultWarnAbsTokens, keeper.DefaultActAbsTokens)
 	}
 
 	// Resolve the target agent identically to restart-now (the gold standard):
@@ -514,8 +515,8 @@ FLAGS (watcher mode)
   --tmux <target>        tmux pane target (optional; injected into on warn/act-pct crossing)
   --warn-pct N           Context-use percentage that triggers a warning (default 80)
   --act-pct N            Context-use percentage that triggers handoff action (default 90; .managed-gated)
-  --warn-abs-tokens N    Absolute-token warn threshold (default 270000); effective = min(warn-abs-tokens, warn-pct% * window)
-  --act-abs-tokens N     Absolute-token act threshold (default 300000); effective = min(act-abs-tokens, act-pct% * window)
+  --warn-abs-tokens N    Absolute-token warn threshold (default 200000); effective = min(warn-abs-tokens, warn-pct% * window)
+  --act-abs-tokens N     Absolute-token act threshold (default 215000); effective = min(act-abs-tokens, act-pct% * window)
   --respawn-cmd <cmd>    Shell command to re-launch the agent when it exits (supervised respawn; hk-3w2).
                          After the gauge goes stale for 20s and the tmux pane is idle (shell prompt),
                          the keeper runs "sh -c <cmd>" to respawn the agent. Requires --tmux.

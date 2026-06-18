@@ -8,11 +8,15 @@ package daemon
 //     path, using syscall.Statfs. Returns (0, err) on failure.
 //
 //   - runPeriodicDiskCheck(ctx, deps) — called once per work-loop poll tick.
-//     Rate-limited to diskCheckInterval (default 10 min) for the probe and
-//     goCacheCleanInterval (default 60 min) for the proactive go-cache reap.
+//     Rate-limited to diskCheckInterval (default 10 min) for the probe.
 //     When disk is below the watermark, sets deps.diskLow = true, emits a
 //     disk_low event, and runs `go clean -cache` reactively. When disk
 //     recovers, clears deps.diskLow.
+//
+//     NOTE: the proactive 60-min go-cache reap (former "Sub-step B") was
+//     removed (hk-guez stopgap) — it ran `go clean -cache` unconditionally,
+//     racing in-flight merge-builds and causing merge_build_failed. Only the
+//     reactive below-watermark reap remains.
 //
 // Spec ref: bead hk-sxlb (logmine F65 disk-watermark guard).
 
@@ -43,16 +47,17 @@ func diskFreeBytes(path string) (uint64, error) {
 }
 
 // runPeriodicDiskCheck is called once per work-loop poll tick to probe disk
-// space and run proactive go-cache cleanup (hk-sxlb).
+// space and run reactive go-cache cleanup (hk-sxlb).
 //
 // Sub-step A — disk probe (rate-limited to deps.diskCheckIntervalOverride or
 // diskCheckInterval): reads available bytes on the project filesystem. If below
 // the watermark, sets deps.diskLow = true, emits disk_low, and immediately runs
 // `go clean -cache` (reactive reap). If above, clears deps.diskLow.
 //
-// Sub-step B — proactive go-cache reap (rate-limited to
-// deps.goCacheCleanIntervalOverride or goCacheCleanInterval): runs `go clean
-// -cache` even when disk is healthy to prevent silent build-cache growth.
+// The former proactive 60-min go-cache reap ("Sub-step B") was removed
+// (hk-guez stopgap): it ran `go clean -cache` unconditionally and raced
+// in-flight merge-builds (merge_build_failed). Only the reactive
+// below-watermark reap above remains.
 func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 	now := time.Now()
 
@@ -60,11 +65,6 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 	if checkInterval <= 0 {
 		checkInterval = diskCheckInterval
 	}
-	cleanInterval := deps.goCacheCleanIntervalOverride
-	if cleanInterval <= 0 {
-		cleanInterval = goCacheCleanInterval
-	}
-
 	watermark := deps.diskLowWatermark
 	if watermark == 0 {
 		watermark = diskLowWatermarkDefault
@@ -119,16 +119,5 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 			}
 			deps.diskLow = false
 		}
-	}
-
-	// Sub-step B: proactive go-cache reap (only when disk is not already low,
-	// to avoid double-running on the same tick as the reactive path above).
-	if !deps.diskLow && time.Since(deps.lastGoCacheClean) >= cleanInterval {
-		deps.lastGoCacheClean = now
-		cleanCtx, cleanCancel := context.WithTimeout(ctx, 5*time.Minute)
-		if cleanErr := exec.CommandContext(cleanCtx, "go", "clean", "-cache").Run(); cleanErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: disk-check: proactive go clean -cache: %v\n", cleanErr)
-		}
-		cleanCancel()
 	}
 }

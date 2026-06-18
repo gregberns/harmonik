@@ -103,11 +103,6 @@ type QuiesceArbiterConfig struct {
 	// obtained from cfg.Substrate via the substrateWithAdapter interface.
 	Adapter paneNudger
 
-	// Bus is the event bus.  REQUIRED.  The arbiter subscribes to epic_completed
-	// and agent_message before the bus is sealed; Start() starts the background
-	// goroutine after sealing.
-	Bus eventbus.EventBus
-
 	// QueueStore is the queue store used to determine which named queue has new
 	// pending items (wake routing for crew sessions).  REQUIRED.
 	QueueStore *QueueStore

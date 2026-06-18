@@ -9,7 +9,14 @@ package keeper
 // Changing any value here is a deliberate band-retune: an operator decision (the
 // operator HARD-NO on widening the band stands — see codename:keeper-redesign),
 // never a side effect of a refactor. The thresholds_test.go defaults-PIN locks
-// these values. Refs: hk-bpkv, hk-lhu2, hk-odhh.
+// these values. Refs: hk-bpkv, hk-lhu2, hk-odhh, hk-8hr1.
+//
+// INVARIANT: warn < act < force_act (asserted in thresholds_test.go).
+// TA1 band-retune (hk-8hr1): warn=200K / act=215K / force_act=240K — restart
+// EARLIER to cap cache-read token spend. On a 1M window the abs values win
+// (~20-24% of window); on a 200K window the pctCeil caps fire first (~70-95%).
+// The 15K warn→act gap is intentional: the handoff is written via injected
+// /session-handoff during the cycle, not from band width.
 
 const (
 	// Pct-based fallbacks (used when CtxFile.Tokens==0 or WindowSize==0 — older
@@ -21,12 +28,13 @@ const (
 	defaultForceActPctOffset = 5.0 // ForceActPct = ActPct + this
 
 	// Absolute-token thresholds (preferred when Tokens + WindowSize are present).
-	defaultWarnAbsTokens = 270_000
-	defaultActAbsTokens  = 300_000
+	// TA1 band-retune (hk-8hr1): warn=200K / act=215K to restart EARLIER and cap
+	// cache-read token spend. Operator-authorized 2026-06-17.
+	defaultWarnAbsTokens = 200_000
+	defaultActAbsTokens  = 215_000
 	// defaultForceActAbsOffset derives ForceActAbsTokens from ActAbsTokens.
-	// Reduced from +80k to +40k per operator decision (hk-lhu2): the resulting
-	// default force_act=340k is the final operator-decided value.
-	defaultForceActAbsOffset = 40_000 // ForceActAbsTokens = ActAbsTokens + this
+	// force_act = 215K + 25K = 240K (hk-8hr1). Satisfies warn<act<force_act.
+	defaultForceActAbsOffset = 25_000 // ForceActAbsTokens = ActAbsTokens + this
 
 	// Pct-of-window caps. The effective threshold is min(abs, pctCeil*window),
 	// so the gate fires early enough on both 200k and 1M windows.

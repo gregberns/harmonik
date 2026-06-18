@@ -55,6 +55,10 @@ const (
 	// PreSealSubsystemPerQueueSpendMeter is the PerQueueSpendMeter (budget_accrual
 	// consumer attributing per-queue spend and pausing-by-budget; NQ-X1, hk-tigaf.11).
 	PreSealSubsystemPerQueueSpendMeter PreSealSubsystem = "PerQueueSpendMeter"
+
+	// PreSealSubsystemQuiesceArbiter is the QuiesceArbiter (epic_completed +
+	// agent_message consumers driving sleep/wake quiescence; M1, hk-jeby).
+	PreSealSubsystemQuiesceArbiter PreSealSubsystem = "QuiesceArbiter"
 )
 
 // SubscribeContract declares the ConsumerIDs a subsystem registers via Subscribe.
@@ -98,6 +102,10 @@ var RequiredPreSealSubscribers = map[PreSealSubsystem]SubscribeContract{
 	}},
 	PreSealSubsystemPerQueueSpendMeter: {ConsumerIDs: []string{
 		"per-queue-spend-meter-budget-accrual",
+	}},
+	PreSealSubsystemQuiesceArbiter: {ConsumerIDs: []string{
+		"quiesce-arbiter-epic-completed",
+		"quiesce-arbiter-agent-message",
 	}},
 }
 

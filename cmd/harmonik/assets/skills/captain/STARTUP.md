@@ -44,6 +44,36 @@ echo "agent=$HARMONIK_AGENT  cwd=$(pwd)"
 
 ---
 
+## Step 0a/0b — Read tier-3 then tier-2 context (fast boot reads)
+
+Read these two files BEFORE loading skills or the handoff. They encode state
+that changes on a weeks/days cadence — project phase, locked decisions, active
+lanes — so you skip re-deriving them from scratch. Step 2 VERIFIES their claims
+against live reality; it does not discover state you already have here.
+
+**0a — Tier-3 (weeks cadence):**
+
+```bash
+cat .harmonik/context/project.yaml
+# Encodes: phase, forbidden_actions, locked_decisions.
+# If missing: use STATUS.md §Decisions for locked decisions; treat phase as "operational".
+```
+
+**0b — Tier-2 (days cadence):**
+
+```bash
+cat .harmonik/context/captain-lanes.md
+# Encodes: active_lanes table (crew/epic/queue/model), operator_initiatives, parked, pipeline.
+# If missing: treat active_lanes as unknown — Step 2 ground-truth derives it.
+```
+
+> **Update discipline:** the tier-3 file changes rarely (phase shifts, new locked
+> decisions). The tier-2 file changes per session (lane assignments, epic
+> handoffs). Update captain-lanes.md at the END of each session before writing
+> HANDOFF.md so the next boot reads accurate lane state.
+
+---
+
 ## Step 1 — Load context (the captain reads more than the handoff)
 
 Read, in this order. The handoff is the LAST input, and it is INPUT not gospel —
@@ -63,7 +93,23 @@ ground-truth (Step 2) overrides anything it claims about live state.
 
 ---
 
-## Step 2 — Ground-truth the live state (DO NOT trust, MEASURE)
+## Step 2 — Verify live state (check tier-3/tier-2 claims against ground-truth)
+
+> You have already READ claimed state from `.harmonik/context/` (Steps 0a/0b).
+> This step VERIFIES those claims — daemon up, crews online, epics still assigned.
+> It does NOT re-discover lanes from scratch. Any discrepancy between tier-2 claims
+> and live state here means tier-2 is stale; update `captain-lanes.md` after Step 3.
+
+> **One-call shortcut — run the boot digest first:**
+> ```bash
+> ~/.claude/captain-tools/captain-boot-digest.sh
+> ```
+> This executes ALL commands from Steps 2a–2g **and** Step 4 in one shell call
+> and emits a single Markdown STATE DIGEST (daemon status, agents online, crew
+> registry, tmux fleet, paused queues, recent comms, ready beads, open epics,
+> kerf next, kerf map). Read the digest output, then skip to Step 3 — you do
+> not need to rerun the individual commands below unless a specific entry needs
+> a deeper look.
 
 Run ALL of these before forming any plan or touching any crew. Capture the
 output; you will reconcile it in Step 3.
@@ -152,6 +198,12 @@ different name (that is a judgment call → SURFACE + AWAIT, captain skill §8).
 You do NOT dispatch until there is a written, lane-organized plan. "Watch one
 bead and react" is the failure mode — this step forbids it.
 
+> **Already covered by the boot digest** — if you ran
+> `~/.claude/captain-tools/captain-boot-digest.sh` in Step 2, the digest
+> already includes sections 7–10 (ready beads, open epics, kerf next, kerf
+> map). Use that output to build the lane table below; skip re-running the
+> individual commands unless a section looks stale.
+
 ```bash
 br ready --limit 0 --json | jq -r '.[] | "\(.id)\t\(.title)"'  # ALL unblocked (unpaginated)
 br list --status=open --type=epic --json                        # candidate lane epics
@@ -171,6 +223,12 @@ Write the plan as a **lane table** (one lane = one epic = one crew). For each:
 
 - **One crew per lane.** Decompose the backlog into non-conflicting epics so two
   crews never touch the same files/package (parallel-helper collision risk).
+- **Assign a model per lane (model-tiering):** add a `model` column to the lane
+  table. Decision rule: **Sonnet** = lane-drain crews working file-disjoint clean
+  beads (set mission clause "escalate to captain on ANY run_failed, do NOT
+  self-classify"); **Opus** = design, test, investigation, or any lane where the
+  crew must triage failures itself. Record the choice in `captain-lanes.md` (tier-2)
+  so it survives restarts without re-derivation.
 - **Mark keystone-gated vs safe-now:** a bead is *keystone-gated* if it depends
   on an open epic or an in-flight keystone change — it will silently insta-fail at
   dispatch (group_failure, no run_started). Mark those "BLOCKED — do not dispatch
@@ -340,10 +398,6 @@ harmonik comms recv --agent captain --follow --json
 /loop 12m Captain health check: (1) daemon up — harmonik queue status, exit17=rebuild+restart; (2) ALL queues healthy — harmonik queue list --json | jq '.queues[]|select(.status|test("paused"))|.name' — any output=paused-by-failure=NOT dispatching, surface+resume; (3) all crews comms-fresh — harmonik comms who, each <150s (stale ⇒ capture-pane, nudge/reconcile); (4) drain comms for epic_completed/errors/operator and act; (5) BACKLOG-PULL: run kerf next + br ready --limit 0, staff every ready lane/bead with a free crew/queue slot — do not leave ready work unassigned while a slot exists; (6) LULL-DEPLOY: if in a true lull (0 merging runs), deploy + verify own merged work (ff-after-push); (7) QUALITY-CHECK: grep '"type":"run_started"' .harmonik/events/events.jsonl | tail -10 | jq -r 'select(.workflow_mode=="single")|"WARN: \(.bead_id) single(no review)"' — any output=surface to operator; (8) self-audit: is any initiative stalled for a reason other than a genuine §8 surface-and-await case? If so, unblock it. A tick that finds ready work AND a free slot AND does NOT staff them is a FAILED tick, not a healthy one. Do NOT read run ages, narrate active beads, or call a launch wedge before launch+30min.
 ```
 
-If you keep a `subscribe` for lane completion, request **ONLY** `epic_completed`
-and set `--heartbeat 600s` (liveness keepalive only) — and treat any heartbeat
-payload as NON-actionable. NEVER arm `run_stale`/`heartbeat` with a short interval.
-
 The health tick IS the "periodic lightweight Step 2": each fire re-checks daemon +
 `comms who` + a spot `capture-pane`, so a crew going silent is caught without
 staring at runs. **Between ticks, idle** — a verified crew self-manages its beads,
@@ -462,3 +516,52 @@ comm -23 \
 
 If any of 1–6 fails, the fleet is NOT healthy: reconcile (Step 3) and/or
 re-establish the missing lane (Step 5) before settling into the monitor loop.
+
+---
+
+## § Park / wake — fleet idle-down (hk-s8qi M2, codename:sleep-wake)
+
+### Default behaviour (pinned)
+
+**When the captain's `comms recv --follow` Monitor delivers a `park` message
+(topic="park", from="daemon") and exits with code 0** — the daemon's
+QuiesceArbiter has declared the fleet genuinely drained and is putting the
+captain to sleep.
+
+The captain MUST NOT self-exit (R-C4.11). Only its loops quiesce.
+
+### PARK procedure
+
+1. **Cancel the `/loop 12m` health tick.** Do not let it re-arm.
+2. **Do NOT re-arm `comms recv --follow`.** The Monitor self-exited on the park
+   message; leave it stopped.
+3. Captain pane remains open but idle. Zero scheduled wakes = zero token burn.
+4. **Stop each crew** via `harmonik crew stop <name>`. Crew state is durable in
+   beads (via the `--assignee` mirror and the mission file), so `crew start`
+   re-hydrates with zero work loss.
+5. **Await the pane nudge.** The daemon will inject Enter into your pane when:
+   - New work arrives on a queue (WakeCh trigger).
+   - An `epic_completed` event fires.
+   - A comms message directed at `captain` arrives.
+   - The 4-hour max-sleep failsafe fires.
+
+> **CRITICAL: do NOT re-arm ANY loop between the park message and the pane nudge.**
+
+### Detecting the park exit
+
+Same pattern as the crew (see crew-launch SKILL.md § Park/wake):
+- Last Monitor output line contains `"topic":"park","from":"daemon"` → park exit.
+- Normal disconnect (code 0, no park line) → re-arm the Monitor.
+
+### WAKE procedure
+
+On pane nudge (daemon injects Enter into your pane):
+
+1. **Run the full STARTUP.md boot sequence** (Steps 1–6 above). Treat the wake
+   exactly like a fresh session start — re-derive live state, do NOT trust the
+   pre-sleep snapshot.
+2. Re-arm `comms recv --agent captain --follow --json` (Watcher 1, Step 6).
+3. Re-arm the `/loop 12m` health tick (Watcher 2, Step 6).
+4. Re-start each crew (`harmonik crew start <name>`) and staff all ready lanes.
+
+Spec ref: `specs/park-resume-protocol.md` §3.3 and §4.1.

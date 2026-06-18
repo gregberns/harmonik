@@ -111,6 +111,50 @@ Manual releases skip the automated per-gate failure reporting. Document any gate
 
 ---
 
+## Salvage-promote: recovering context_cancelled runs
+
+**CONTEXT_CANCELLED RUN WITH A COMMITTED SHA — SALVAGE VIA PROMOTE, NOT RE-DISPATCH.**
+
+Symptom: `.harmonik/events/events.jsonl` shows `run_failed` with `failure_class: context_cancelled` for a bead, but `git log run/<run_id>` (or the bead's worktree branch) shows a `Refs: <bead_id>` commit — the implementer completed its work before the session was cancelled.
+
+**Do not re-dispatch.** The work is done and the SHA is immutable. Re-dispatching bills another Opus session (~30–50 min) for work already completed.
+
+**Recovery procedure:**
+
+```bash
+# 1. Locate the committed SHA on the run-branch:
+git log --oneline run/<run_id> | head -5
+# look for the commit bearing "Refs: <bead_id>"
+
+# 2. Verify completeness (build + tests must pass):
+git stash                            # if needed
+git checkout <sha>                   # or use --detach
+go build ./...
+go test -short ./...
+git checkout -                       # return to previous branch
+
+# Optional: byte-identity check across independent runs.
+# If two independent runs produced the same commit content (e.g. hk-rai2:
+# b86a9ea2 == 4a62ff8e, identical 291 lines), that is proof-of-determinism
+# and a single review suffices — no second review needed.
+
+# 3. Promote the SHA onto the target branch (race-safe, 3 non-ff retries):
+harmonik promote --project $HARMONIK_PROJECT <sha>
+
+# 4. Close the bead once promote succeeds (or let the daemon's reconciler do it):
+br close <bead_id> --reason "Salvaged: context_cancelled; SHA promoted via harmonik promote"
+```
+
+**Safety properties:**
+- The run-branch SHA is immutable — the implementer's output can be audited at any time.
+- Byte-identity across independent runs proves determinism; single-review is sufficient for salvage.
+- `harmonik promote` is race-safe (cherry-pick `-x` + up to 3 non-ff rebase retries, build gate).
+- This is **not a gate-bypass** — the commit still carries the `Refs:` trailer and goes through the same build gate as a normal daemon merge.
+
+**When push-mode is refused (exit 5):** the target branch is in `protect_branches`. Use `harmonik promote --pr` to open a PR instead of pushing directly.
+
+---
+
 ## DOT-mode issues
 
 **DOT COMMIT_GATE SHELL NODE: `go` COMMAND NOT FOUND / EXIT 127 (first seen 2026-06-08, fixed hk-m5axg).**

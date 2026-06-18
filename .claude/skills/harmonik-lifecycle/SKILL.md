@@ -237,6 +237,37 @@ auto-merges integration→main — `promote` is the tool that does/opens it.
 Cross-ref AGENTS.md §"Work-project deployment" → "integration → main is a human
 step".
 
+### Salvage pattern: `context_cancelled` run with a committed SHA
+
+When a run fails with `failure_class: context_cancelled` but the implementer
+already committed (a `Refs: <bead_id>` commit exists on `run/<run_id>`),
+**do not re-dispatch** — the work is done and the SHA is immutable.
+
+```bash
+# 1. Find the committed SHA:
+git log --oneline run/<run_id> | head -5
+
+# 2. Verify (build + short tests must pass):
+git checkout --detach <sha>
+go build ./...
+go test -short ./...
+git checkout -
+
+# 3. Promote race-safely (cherry-pick -x, 3 non-ff retries, build gate):
+harmonik promote --project $HARMONIK_PROJECT <sha>
+
+# 4. Close the bead (or let harmonik reconcile do it automatically):
+br close <bead_id> --reason "Salvaged: context_cancelled; SHA promoted"
+```
+
+**Safety:** the SHA is immutable and carries the `Refs:` trailer; the build gate
+runs as normal; this is not a gate-bypass. Byte-identity across two independent
+runs (same diff content produced by separate agents) is proof-of-determinism and
+makes a single review sufficient for salvage. When the target branch is
+protected, use `harmonik promote --pr` instead of push-mode (exit 5 is the
+fail-closed signal). See `docs/known-workarounds.md §Salvage-promote` for the
+full procedure.
+
 ---
 
 ## § `harmonik reconcile` — close beads whose work already merged (Cat 3c)

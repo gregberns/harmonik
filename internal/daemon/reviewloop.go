@@ -531,8 +531,11 @@ func runReviewLoop(
 		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
 		if deps.hookStore != nil {
 			capturedImplTap := implTap
+			capturedImplRunID := runID // hk-wths: copy for EmitWithRunID closure
 			deps.hookStore.SetAgentReadyCallback(runID.String(), implArtifacts.claudeSessionID, func() {
-				_ = capturedImplTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+				// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
+				// the stale watcher's never-spawned reaper sees agentReadySeen = true.
+				_ = capturedImplTap.EmitWithRunID(context.Background(), capturedImplRunID, core.EventTypeAgentReady, nil)
 			})
 		}
 
@@ -1264,8 +1267,11 @@ func runReviewLoop(
 		// Bead ref: hk-lj1p9.4.
 		if deps.hookStore != nil {
 			capturedRevTap := revTap
+			capturedRevRunID := runID // hk-wths: copy for EmitWithRunID closure
 			deps.hookStore.SetAgentReadyCallback(runID.String(), revArtifacts.claudeSessionID, func() {
-				_ = capturedRevTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+				// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
+				// the stale watcher's never-spawned reaper sees agentReadySeen = true.
+				_ = capturedRevTap.EmitWithRunID(context.Background(), capturedRevRunID, core.EventTypeAgentReady, nil)
 			})
 		}
 

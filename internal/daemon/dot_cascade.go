@@ -1117,8 +1117,15 @@ func dispatchDotAgenticNode(
 
 	if deps.hookStore != nil {
 		capturedTap := tap
+		capturedRunID := runID // hk-wths: copy runID so EmitWithRunID stamps the bus envelope
 		deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
-			_ = capturedTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+			// hk-wths: use EmitWithRunID so the bus envelope carries run_id. Without
+			// this, the stale watcher's observe() skips the event (evt.RunID == nil),
+			// agentReadySeen stays false, and the never-spawned reaper fires after
+			// neverSpawnedReaperDefaultTimeout (30 min) — cancelling the per-run
+			// context mid-session on any DOT-mode run whose implement node takes longer
+			// than 30 min (e.g. opus+max on complex beads).
+			_ = capturedTap.EmitWithRunID(context.Background(), capturedRunID, core.EventTypeAgentReady, nil)
 		})
 	}
 

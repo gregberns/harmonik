@@ -3300,10 +3300,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		b, marshalErr := json.Marshal(pl)
 		if marshalErr != nil {
 			// Fallback: emit without payload rather than silently dropping the event.
-			_ = tap.Emit(context.Background(), core.EventTypeAgentReady, nil)
+			// hk-wths: use EmitWithRunID so the bus envelope carries run_id and the
+			// stale watcher's never-spawned reaper sees agentReadySeen = true.
+			_ = tap.EmitWithRunID(context.Background(), cbRunID, core.EventTypeAgentReady, nil)
 			return
 		}
-		_ = tap.Emit(context.Background(), core.EventTypeAgentReady, b)
+		// hk-wths: use EmitWithRunID so the bus envelope carries run_id and the
+		// stale watcher's never-spawned reaper sees agentReadySeen = true.
+		_ = tap.EmitWithRunID(context.Background(), cbRunID, core.EventTypeAgentReady, b)
 	})
 
 	// Step 4b: paste-inject the kick-off message into the Claude pane (hk-zrj83).

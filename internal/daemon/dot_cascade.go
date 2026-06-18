@@ -482,7 +482,15 @@ func driveDotWorkflow(
 				// fix-loop re-entry on an already-approved, already-committed bead —
 				// the production T12/hk-xhawy shape).
 				committedResult := parentSHA == "" || currentHead != parentSHA
-				if committedResult && priorVerdict == workspace.ReviewVerdictApprove {
+				// hk-2vpj: gate the APPROVE-completion exemption on !isReviewer.
+				// In a multi-reviewer fan-out (review_correctness → review_design →
+				// review_tests → consolidate), if the FIRST reviewer APPROVEs at
+				// iterationCount>=2, the guard would otherwise fire on ENTRY to the
+				// 2nd reviewer and short-circuit the run — reviewers 2..N + consolidate
+				// never run. The exemption must only trigger when the NEXT node is an
+				// IMPLEMENTER (nothing left to do after APPROVE) — never when we are
+				// merely advancing to the next REVIEWER in the fan-out sequence.
+				if committedResult && priorVerdict == workspace.ReviewVerdictApprove && !isReviewer {
 					return dotWorkflowResult{
 						success: true,
 						summary: fmt.Sprintf("dot: completed at iteration %d — reviewer APPROVED and committed work is final (hk-8ps7q: HEAD did not advance because nothing remained to do)", iterationCount),
@@ -570,7 +578,16 @@ func driveDotWorkflow(
 				consecutiveNoProgressCount = 0
 			}
 			lastDiffHash = currentHash
-			priorIterHeadSHA = currentHead
+			// hk-2vpj: only advance priorIterHeadSHA for implementer nodes. Reviewers
+			// never commit, so updating the baseline on every reviewer entry would make
+			// headAdvanced=false for the NEXT reviewer (reviewer-to-reviewer transition
+			// in a multi-reviewer fan-out) and wrongly trigger the no-progress guard.
+			// By anchoring the baseline to the last IMPLEMENTER entry, all reviewers in
+			// a fan-out that follows a committing implementer see headAdvanced=true and
+			// correctly skip the guard.
+			if !isReviewer {
+				priorIterHeadSHA = currentHead
+			}
 
 			// Increment AFTER the no-progress check: an implementer (re-)entry
 			// counts as a new iteration; reviewers reuse the implementer's count

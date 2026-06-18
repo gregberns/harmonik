@@ -3,6 +3,9 @@ package brcli_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -261,5 +264,83 @@ func TestReadyNeedsAttentionOnlyExcludesAll(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Errorf("len(records) = %d; want 0 (all beads carry needs-attention)", len(records))
+	}
+}
+
+// --- ReadyAll (hk-95uf defense #1: un-paginated `br ready --limit 0`) ---
+
+func TestReadyAllSuccess(t *testing.T) {
+	jsonStr := readyFixtureJSON()
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	records, err := adapter.ReadyAll(context.Background())
+	if err != nil {
+		t.Fatalf("ReadyAll: unexpected error: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("len(records) = %d; want 2", len(records))
+	}
+	if records[0].BeadID != core.BeadID("hk-872.13") {
+		t.Errorf("records[0].BeadID = %q; want %q", records[0].BeadID, "hk-872.13")
+	}
+}
+
+func TestReadyAllEmpty(t *testing.T) {
+	path := brcliFixtureMockBinary(t, readyFixtureEmptyJSON(), "", 0)
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	records, err := adapter.ReadyAll(context.Background())
+	if err != nil {
+		t.Fatalf("ReadyAll: unexpected error for empty result: %v", err)
+	}
+	if len(records) != 0 {
+		t.Errorf("len(records) = %d; want 0", len(records))
+	}
+}
+
+func TestReadyAllNonZeroExit(t *testing.T) {
+	path := brcliFixtureMockBinary(t, `{"error":{"code":"INTERNAL_ERROR","message":"db locked"}}`, "", 1)
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = adapter.ReadyAll(context.Background())
+	if err == nil {
+		t.Fatal("expected ErrBrReadyFailed error, got nil")
+	}
+	if !errors.Is(err, brcli.ErrBrReadyFailed) {
+		t.Errorf("errors.Is(err, ErrBrReadyFailed) = false; got %v", err)
+	}
+}
+
+// TestReadyAllPassesLimitZero asserts ReadyAll forwards `--limit 0` to br so
+// the oracle never receives a default-paginated (truncatable) result set.
+func TestReadyAllPassesLimitZero(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "spy-args.txt")
+	path := brcliFixtureEchoArgsToFileBinary(t, argsFile)
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// The spy binary prints nothing → JSON parse fails; we only care about args.
+	_, _ = adapter.ReadyAll(context.Background())
+
+	raw, err := os.ReadFile(argsFile) //nolint:gosec // G304: test-controlled tempdir path
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, "--limit 0") {
+		t.Errorf("ReadyAll args = %q; want to contain %q", got, "--limit 0")
+	}
+	if !strings.Contains(got, "ready") {
+		t.Errorf("ReadyAll args = %q; want to contain %q", got, "ready")
 	}
 }

@@ -88,7 +88,41 @@ func (a *Adapter) Ready(ctx context.Context) ([]core.BeadRecord, error) {
 	// Pin `--sort priority` per the brReadySortPriority comment above
 	// (hk-rp48p): the claim path picks readyRecords[0] and MUST observe
 	// strict priority order across the returned slice.
-	result, err := a.runFormatJSON(ctx, "ready", "--sort", brReadySortPriority)
+	return a.readyWithArgs(ctx, "--sort", brReadySortPriority)
+}
+
+// ReadyAll invokes `br ready --limit 0 --sort priority --format json` and
+// returns the FULL, un-paginated set of dispatchable beads.
+//
+// The plain Ready() path relies on br's default pagination, which can truncate
+// the result set and report a falsely-short (or empty) ready list when more
+// beads are actually ready than fit on one page. The genuine-drain oracle
+// (internal/daemon/draindetect.go) MUST NOT trust a default-paginated empty
+// list as evidence of "no work": a paginated empty is one of the documented
+// false-negative sources for the fleet sleep/wake interlock (hk-95uf defense
+// #1). ReadyAll pins `--limit 0` so br returns every ready bead in one call,
+// making an empty result trustworthy.
+//
+// Error and parse semantics are identical to Ready (see the doc comment above):
+// a non-zero br exit wraps ErrBrReadyFailed; a parse / missing-id failure wraps
+// BrSchemaMismatch. An empty slice (not nil) is a valid "no ready beads"
+// result and is NOT an error.
+//
+// Bead ref: hk-95uf (genuine-drain oracle, defense #1 — br-ready pagination).
+func (a *Adapter) ReadyAll(ctx context.Context) ([]core.BeadRecord, error) {
+	return a.readyWithArgs(ctx, "--limit", "0", "--sort", brReadySortPriority)
+}
+
+// readyWithArgs is the shared implementation behind Ready and ReadyAll. It
+// invokes `br ready <extraArgs...> --format json`, applies the BI-013a
+// needs-attention exclusion, and returns the parsed BeadRecord slice. The
+// caller supplies the sort/limit flags so the two public entry points differ
+// only in pagination behaviour.
+func (a *Adapter) readyWithArgs(ctx context.Context, extraArgs ...string) ([]core.BeadRecord, error) {
+	args := make([]string, 0, len(extraArgs)+1)
+	args = append(args, "ready")
+	args = append(args, extraArgs...)
+	result, err := a.runFormatJSON(ctx, args...)
 	if err != nil {
 		return nil, fmt.Errorf("brcli.Ready: exec failed: %w", err)
 	}

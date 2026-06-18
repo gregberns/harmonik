@@ -1,5 +1,7 @@
 package keeper
 
+import "time"
+
 // thresholds.go is the SINGLE source of truth for the keeper warn/act/force
 // context-band. Both WatcherConfig.applyDefaults and CyclerConfig.applyDefaults
 // reference the constants below, and every effective-threshold computation routes
@@ -48,6 +50,19 @@ const (
 	// whose window size cannot be inferred). Set via --window-size.
 	defaultFallbackWindowSize = 200_000
 )
+
+// DefaultBootGracePeriod is the YOUNG-SESSION guard window: the minimum time a
+// session must run after a session_id CHANGE before the keeper will restart it.
+// It is LOAD-BEARING under the aggressive earlier band (hk-8hr1): warn=200K /
+// act=215K restarts much sooner, so without this guard the keeper could clear a
+// session that just finished a /session-resume and has barely begun work. The
+// force-act ceiling (240K) bypasses this grace — a session already that full is
+// genuinely at risk of pane-overflow regardless of age. Wired into the live
+// keeper command (cmd/harmonik/keeper_cmd.go). NOT applied as a CyclerConfig
+// applyDefaults default: that would suppress the immediate-fire semantics every
+// non-keeper caller (and the test suite) relies on; the guard is opt-in per
+// construction site, and the production site opts in. Refs: hk-4f8, hk-ibb.
+const DefaultBootGracePeriod = 5 * time.Minute
 
 // minAbsOrPctCeil returns the effective absolute-token threshold for windowSize:
 // min(abs, int64(pctCeil*windowSize)) when windowSize>0 AND pctCeil>0, otherwise

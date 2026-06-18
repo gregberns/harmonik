@@ -2197,6 +2197,162 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 	}
 }
 
+// TestCycler_YoungSessionGuard_NewBand_AbsTokens pins the YOUNG-SESSION guard
+// against the aggressive earlier band (hk-8hr1: act=215K / force=240K on the
+// absolute-token path). A session that just changed session_id (post-/session-
+// resume) must NOT be restarted while it is younger than BootGracePeriod even
+// though it is already ABOVE the new act threshold — otherwise the lowered band
+// would clear a freshly-resumed session that has barely begun work. The force-act
+// ceiling (240K) is the deliberate exception: a session that full is at genuine
+// pane-overflow risk regardless of age, so it bypasses the guard.
+func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "young-guard-agent"
+		cycleID = "cyc-young-001"
+		prevSID = "sess-prev-young"
+		bootSID = "sess-boot-young"
+		window  = int64(1_000_000)
+	)
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(0, nonce)
+
+	// Long grace so the young session stays within it for the whole test (no sleep).
+	const bootGrace = 30 * time.Second
+
+	cfg := keeper.CyclerConfig{
+		AgentName:         agent,
+		ProjectDir:        t.TempDir(),
+		TmuxTarget:        "fake-pane",
+		HandoffTimeout:    200 * time.Millisecond,
+		ClearSettle:       50 * time.Millisecond,
+		PollInterval:      10 * time.Millisecond,
+		BootGracePeriod:   bootGrace,
+		CycleIDGen:        func() string { return cycleID },
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		// Use the default abs-token band (act=215K / force=240K); do not override.
+		CrispIdleFn:         func(_, _ string) bool { return true },
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// Establish prevSID below the act threshold (50K < 215K) — no grace armed yet.
+	cfPrev := &keeper.CtxFile{Pct: 5.0, Tokens: 50_000, WindowSize: window, SessionID: prevSID}
+	if err := cycler.MaybeRun(context.Background(), cfPrev); err != nil {
+		t.Fatalf("MaybeRun (prevSID): %v", err)
+	}
+
+	// Switch to bootSID at 230K — ABOVE the new act (215K) but BELOW force (240K).
+	// The session_id change arms the boot grace; the young-session guard must
+	// suppress the restart even though context is past the aggressive act gate.
+	cfYoung := &keeper.CtxFile{Pct: 23.0, Tokens: 230_000, WindowSize: window, SessionID: bootSID}
+	if err := cycler.MaybeRun(context.Background(), cfYoung); err != nil {
+		t.Fatalf("MaybeRun (young, above act below force): %v", err)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 0 {
+		t.Errorf("young session above act(215K) below force(240K): want 0 handoff_started (guard suppresses); got %d", n)
+	}
+
+	// Same young session now crosses the force-act ceiling (245K >= 240K). The
+	// force exemption bypasses the young-session guard — pane-overflow risk wins.
+	cfForce := &keeper.CtxFile{Pct: 24.5, Tokens: 245_000, WindowSize: window, SessionID: bootSID}
+	if err := cycler.MaybeRun(context.Background(), cfForce); err != nil {
+		t.Fatalf("MaybeRun (young, above force): %v", err)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+		t.Errorf("young session above force(240K): want 1 handoff_started (force ceiling bypasses guard); got %d", n)
+	}
+}
+
+// TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce pins the
+// CLEAN-HANDOFF guard against the aggressive band (hk-8hr1). When the agent has
+// in-flight queue work (the .dispatching marker is present), the keeper must NOT
+// restart it — even ABOVE the force-act ceiling (240K), where the CrispIdle gate
+// is otherwise bypassed. This proves Gate 5 (HoldingDispatch) has no force-path
+// exemption: the lowered band can never clobber a mid-commit / mid-dispatch
+// session. Uses the REAL HoldingDispatch gate + SetDispatching/ClearDispatching
+// against an on-disk marker, not a stub.
+func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "clean-handoff-agent"
+		cycleID = "cyc-clean-001"
+		sid     = "sess-clean"
+		window  = int64(1_000_000)
+	)
+
+	projectDir := t.TempDir()
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	readHandoff := handoffReturnsNonceAfter(0, nonce)
+
+	cfg := keeper.CyclerConfig{
+		AgentName:         agent,
+		ProjectDir:        projectDir,
+		TmuxTarget:        "fake-pane",
+		HandoffTimeout:    200 * time.Millisecond,
+		ClearSettle:       50 * time.Millisecond,
+		PollInterval:      10 * time.Millisecond,
+		CycleIDGen:        func() string { return cycleID },
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		// CrispIdle false (busy) — above force the cycle would normally bypass it;
+		// the clean-handoff guard must still hold.
+		CrispIdleFn: func(_, _ string) bool { return false },
+		// HoldingDispatchFn intentionally LEFT NIL so applyDefaults wires the real
+		// HoldingDispatch (reads the on-disk .dispatching marker).
+		WriteJournalFn:      jc.write,
+		AppendHandoffFn:     func(_, _ string) error { return nil },
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	// Mark in-flight dispatch, then drive context ABOVE the force ceiling (245K).
+	if err := keeper.SetDispatching(projectDir, agent); err != nil {
+		t.Fatalf("SetDispatching: %v", err)
+	}
+	cfForce := &keeper.CtxFile{Pct: 24.5, Tokens: 245_000, WindowSize: window, SessionID: sid}
+	if err := cycler.MaybeRun(context.Background(), cfForce); err != nil {
+		t.Fatalf("MaybeRun (dispatching, above force): %v", err)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 0 {
+		t.Errorf("dispatching marker present above force(240K): want 0 handoff_started (clean-handoff guard holds); got %d", n)
+	}
+
+	// Clear the marker: with no in-flight work, the force-path cycle now fires.
+	if err := keeper.ClearDispatching(projectDir, agent); err != nil {
+		t.Fatalf("ClearDispatching: %v", err)
+	}
+	if err := cycler.MaybeRun(context.Background(), cfForce); err != nil {
+		t.Fatalf("MaybeRun (marker cleared, above force): %v", err)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
+		t.Errorf("marker cleared above force(240K): want 1 handoff_started (guard lifted, cycle fires); got %d", n)
+	}
+}
+
 // TestCycler_AbortClearsManaged verifies the hk-4f8 no-re-arm fix (Defect B)
 // as refined by hk-ibb fix 3: after a handoff_timeout abort that follows a REAL
 // session_id change, SetManagedSessionFn must be called with an empty string.

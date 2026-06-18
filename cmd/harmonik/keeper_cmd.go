@@ -205,7 +205,7 @@ func runKeeperSubcommand(args []string) int {
 		ActPctCeil:        resolvedActPctCeil,
 		WarnPctCeil:       resolvedWarnPctCeil,
 		SendEscapeFn:      keeper.SendEscapeKey,
-		BootGracePeriod:   5 * time.Minute, // hk-4f8: defer cycles during post-/session-resume boot
+		BootGracePeriod:   keeper.DefaultBootGracePeriod, // young-session guard (hk-4f8/hk-8hr1): defer cycles during post-/session-resume boot
 		// hk-suxt: activate the handoff-timeout hard-restart escalation
 		// (cycle.go:767, dormant until now because CyclerConfig.ForceRestartFn was
 		// never populated in production). Fail-closed: nil unless the operator BOTH

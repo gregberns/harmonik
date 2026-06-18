@@ -1,6 +1,9 @@
 package keeper
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // TestSharedThresholdDefaults_SingleSource pins the keeper warn/act/force band to
 // its single source of truth (thresholds.go) and asserts that WatcherConfig and
@@ -94,6 +97,16 @@ func TestThresholdInvariant_WarnLtActLtForceAct(t *testing.T) {
 	if cy.ActPctCeil >= cy.ForceActPctCeil {
 		t.Errorf("invariant violated: ActPctCeil(%v) >= ForceActPctCeil(%v); want act < force_act",
 			cy.ActPctCeil, cy.ForceActPctCeil)
+	}
+
+	// Young-session guard window is pinned alongside the band: under the
+	// aggressive earlier band a just-resumed session must be protected from an
+	// immediate restart, so this must stay > 0 (hk-8hr1).
+	if DefaultBootGracePeriod != 5*time.Minute {
+		t.Errorf("DefaultBootGracePeriod = %v; want 5m (young-session guard window)", DefaultBootGracePeriod)
+	}
+	if DefaultBootGracePeriod <= 0 {
+		t.Errorf("DefaultBootGracePeriod = %v; must be > 0 to guard young sessions", DefaultBootGracePeriod)
 	}
 }
 

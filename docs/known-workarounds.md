@@ -50,6 +50,13 @@ The script runs *outside* tmux, launches the daemon in a `hkdkeeper` tmux sessio
 **TMUX NEW-WINDOW TIMEOUT (fixed hk-r1rup, commit ec30b225).**
 2026-06-08: tmux new-window calls are now bounded by a 60s timeout (hk-r1rup, commit ec30b225). A hung tmux new-window now emits a tmux_new_window_timeout event + returns ErrStructural to reopen the bead, instead of wedging a daemon slot at launch_stall forever (was the hk-9vp51 residual no-spawn wedge).
 
+**WHEN DISPATCH HANGS (manual recovery — rare; most hang classes auto-recover).**
+The pasteinject quit-on-commit hang (hk-trjef, `internal/daemon/pasteinject.go:146-208`) and the post-commit `/quit` watchdog (hk-5s7tg) are **auto-recovered in the daemon** — you should rarely intervene. For other hangs:
+1. Identify the stuck `run_id` from `.harmonik/queue.json` or the worktree listing.
+2. `git -C .harmonik/worktrees/<run_id> log --oneline -3` — if a `Refs:` commit exists, work was done; the daemon is stuck on a later step (merge, reviewer, push).
+3. Tail `.harmonik/events/events.jsonl` filtered by `run_id` — which event types fired, which expected ones did not?
+4. If the implementer claude already exited but the daemon is hung: kill the daemon PID (`pkill -f "harmonik --project"`), ff-merge the worktree branch by hand, push, close the bead, then re-start the daemon. File a friction bead with the missing-event signature.
+
 ---
 
 ## Crew context management

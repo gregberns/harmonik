@@ -64,3 +64,52 @@ Kerf is the **planning and specification layer**. Its role in the system:
 1. How should kerf's bead graphs integrate with Kilroy's DOT pipeline format? Is there a natural mapping, or do we need an adapter?
 2. Should kerf own the "what to work on next" decision, or should that be a separate orchestration concern?
 3. How do we handle plan invalidation when implementation feedback contradicts the spec?
+
+## Commands & Workflow (for planning agents)
+
+This project is **spec-first**: the spec describes how the system operates; code is updated to match. The `spec` jig is the default. Before non-trivial changes (new subsystems, cross-subsystem refactors, cross-cutting contracts), create a kerf work; trivial changes (typos, one-liners) skip kerf.
+
+### Key commands
+
+    kerf new <codename>              Create a new work
+    kerf show <codename>             See current state + jig instructions for next steps
+    kerf status <codename>           Check current status
+    kerf status <codename> <status>  Advance to next pass
+    kerf shelve <codename>           Save progress when ending a session
+    kerf resume <codename>           Pick up where you left off
+    kerf square <codename>           Verify the work is complete
+    kerf finalize <codename> --branch <name>  Package for implementation
+
+### Queue + work-attachment surface
+
+    kerf next                        Ranked feed of bead IDs ready to dispatch
+    kerf triage                      Drift report (suggested bead reattachments, stale links)
+    kerf triage --ack                Advance kerf's baseline after acting on the report
+    kerf pin <bead> <work>           Attach a bead to a kerf work
+    kerf work edit <codename>        Edit a work's bead-attachment config (bead_filter etc.)
+    kerf map                         Works grouped by area
+    kerf areas                       Manage areas (list/add/edit)
+
+### Agent loop pattern (informal)
+
+`kerf next` returns ranked bead IDs → orchestrator dispatches them via harmonik → on completion `br close <id>` is invoked → `kerf triage --ack` advances kerf's baseline. kerf manages the queue and work-attachment; harmonik executes.
+
+### When to use kerf
+
+- New subsystems, cross-cutting spec changes → `kerf new --jig spec`
+- Non-trivial feature plans → `kerf new --jig plan`
+- Bug investigations → `kerf new --jig bug`
+- Trivial changes (typos, one-line fixes) → skip kerf
+
+### Workflow
+
+1. `kerf new <codename>` — read the output; it tells you exactly what to do
+2. Follow each pass: write the artifacts, advance status
+3. `kerf show <codename>` — if you lose context, this shows where you are
+4. `kerf shelve` / `kerf resume` — for multi-session work
+5. `kerf square` — verify everything is complete
+6. `kerf finalize` — package into a git branch for implementation
+
+### Beta-test caveat
+
+kerf is in **beta-test** in this project. Known issues: `kerf next` may report empty for works lacking `bead_filter` clauses; `kerf init` emits stale + duplicated agent-instruction blocks; `kerf triage` mixes good and phantom suggestions. Log issues to `docs/kerf-beta-feedback.md` (convention: `KERF-FEEDBACK.md`).

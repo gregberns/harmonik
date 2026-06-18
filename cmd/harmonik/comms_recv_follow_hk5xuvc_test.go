@@ -375,12 +375,12 @@ func TestCommsRecvFollow_ParkMessageExitsWithoutReconnect(t *testing.T) {
 					"body":  `{"type":"park","reason":"drain_detected"}`,
 				})
 				ev := map[string]any{
-					"type":            "agent_message",
-					"event_id":        mid.String(),
-					"schema_version":  1,
-					"timestamp_wall":  time.Now().UTC().Format(time.RFC3339Nano),
+					"type":             "agent_message",
+					"event_id":         mid.String(),
+					"schema_version":   1,
+					"timestamp_wall":   time.Now().UTC().Format(time.RFC3339Nano),
 					"source_subsystem": "quiesce-arbiter",
-					"payload":         json.RawMessage(parkPayload),
+					"payload":          json.RawMessage(parkPayload),
 				}
 				_ = json.NewEncoder(c).Encode(ev)
 				// Leave connection open briefly so the client can read the event.

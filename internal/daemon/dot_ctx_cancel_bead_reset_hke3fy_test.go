@@ -78,9 +78,9 @@ const hke3fyDotSrc = `digraph "hk-e3fy-ctx-cancel" {
 type hke3fyLedger struct {
 	mu sync.Mutex
 
-	beadID     core.BeadID
-	readyQueue []core.BeadID
-	claimCount int
+	beadID      core.BeadID
+	readyQueue  []core.BeadID
+	claimCount  int
 	reopenCount int
 
 	reopened         chan struct{}

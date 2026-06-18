@@ -185,9 +185,66 @@ find your `--follow` stream has died, re-arm it immediately as part of your loop
 |---|---|
 | `assign` (or a message naming a new `epic_id`) | Adopt the new epic: update your working `epic_id`, run `br update <new_epic> --assignee <crew_name>` (**load-bearing, every re-task**), and begin dispatching its ready beads to your queue. |
 | `reprioritize` / other directives | Act per the body. |
+| `park` (from `daemon`) | **Fleet sleep — QUIESCE all loops** (see § Park/wake below). |
 | Anything else | Log and no-op (do not crash). |
 
 The `--assignee` mirror on every `topic == assign` re-task is **NOT optional** — see Step 4 rationale.
+
+---
+
+## § Park / wake — fleet idle-down (hk-s8qi M2, codename:sleep-wake)
+
+### Default behaviour (pinned)
+
+**When `comms recv --follow` delivers a `park` message (topic="park", from="daemon")
+and then exits with code 0** — the daemon's QuiesceArbiter has declared the fleet
+genuinely drained and is putting this session to sleep.
+
+**PARK procedure (do this immediately):**
+
+1. **Stop the `harmonik subscribe` Monitor.** Kill or allow it to expire. Do NOT
+   re-arm it.
+2. **Do NOT re-arm `comms recv --follow`.** It self-exited on the park message;
+   leave it stopped.
+3. **Pause the ≤10-min progress-feed timer.** No status posts while parked.
+4. **Await the pane nudge.** The daemon will inject Enter into your pane when new
+   work arrives or a WAKE trigger fires.
+
+> **CRITICAL: do NOT re-arm ANY loop between the park message and the pane nudge.**
+> Re-arming the subscribe Monitor or `comms recv --follow` while parked defeats
+> the idle-down goal — each heartbeat re-invokes a Claude turn and burns tokens.
+
+### Detecting the park exit
+
+The park path is:
+1. `comms recv --follow` Monitor delivers a line with `"topic":"park","from":"daemon"`.
+2. The Monitor exits with code 0 immediately after delivering the line.
+
+Distinguish from a normal disconnect exit (code 0 but NO park line): a normal
+disconnect SHOULD be re-armed; a park exit MUST NOT be re-armed. Check whether
+the last Monitor output line contained `"topic":"park"` before deciding.
+
+### WAKE procedure
+
+On pane nudge (daemon injects Enter into your pane):
+
+1. Re-run the **full boot sequence** (§ Boot sequence above, Steps 1–6).
+2. Re-arm `comms recv --follow`.
+3. Re-arm the `harmonik subscribe` Monitor.
+4. Resume the progress-feed timer.
+5. Re-poll `br ready` and continue draining the epic.
+
+Treat a wake exactly like a fresh crew start — re-derive live state, do NOT trust
+the pre-sleep snapshot.
+
+### Note on captain-managed sleep
+
+The captain MAY also call `harmonik crew stop <name>` to fully terminate the crew
+pane when the fleet sleeps. In that case this park/wake procedure is not needed
+— the crew is simply re-started by the captain on wake. The park procedure above
+applies only when the crew pane remains open but its loops are quiesced.
+
+Spec ref: `specs/park-resume-protocol.md` §3.2 and §4.2.
 
 ---
 

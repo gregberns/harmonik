@@ -516,3 +516,52 @@ comm -23 \
 
 If any of 1–6 fails, the fleet is NOT healthy: reconcile (Step 3) and/or
 re-establish the missing lane (Step 5) before settling into the monitor loop.
+
+---
+
+## § Park / wake — fleet idle-down (hk-s8qi M2, codename:sleep-wake)
+
+### Default behaviour (pinned)
+
+**When the captain's `comms recv --follow` Monitor delivers a `park` message
+(topic="park", from="daemon") and exits with code 0** — the daemon's
+QuiesceArbiter has declared the fleet genuinely drained and is putting the
+captain to sleep.
+
+The captain MUST NOT self-exit (R-C4.11). Only its loops quiesce.
+
+### PARK procedure
+
+1. **Cancel the `/loop 12m` health tick.** Do not let it re-arm.
+2. **Do NOT re-arm `comms recv --follow`.** The Monitor self-exited on the park
+   message; leave it stopped.
+3. Captain pane remains open but idle. Zero scheduled wakes = zero token burn.
+4. **Stop each crew** via `harmonik crew stop <name>`. Crew state is durable in
+   beads (via the `--assignee` mirror and the mission file), so `crew start`
+   re-hydrates with zero work loss.
+5. **Await the pane nudge.** The daemon will inject Enter into your pane when:
+   - New work arrives on a queue (WakeCh trigger).
+   - An `epic_completed` event fires.
+   - A comms message directed at `captain` arrives.
+   - The 4-hour max-sleep failsafe fires.
+
+> **CRITICAL: do NOT re-arm ANY loop between the park message and the pane nudge.**
+
+### Detecting the park exit
+
+Same pattern as the crew (see crew-launch SKILL.md § Park/wake):
+- Last Monitor output line contains `"topic":"park","from":"daemon"` → park exit.
+- Normal disconnect (code 0, no park line) → re-arm the Monitor.
+
+### WAKE procedure
+
+On pane nudge (daemon injects Enter into your pane):
+
+1. **Run the full STARTUP.md boot sequence** (Steps 1–6 above). Treat the wake
+   exactly like a fresh session start — re-derive live state, do NOT trust the
+   pre-sleep snapshot.
+2. Re-arm `comms recv --agent captain --follow --json` (Watcher 1, Step 6).
+3. Re-arm the `/loop 12m` health tick (Watcher 2, Step 6).
+4. Re-start each crew (`harmonik crew start <name>`) and staff all ready lanes.
+
+Spec ref: `specs/park-resume-protocol.md` §3.3 and §4.1.

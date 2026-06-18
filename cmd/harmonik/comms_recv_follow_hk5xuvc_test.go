@@ -1,7 +1,8 @@
 package main
 
 // comms_recv_follow_hk5xuvc_test.go — tests for `comms recv --follow`
-// reconnect behaviour (F12 fix, bead hk-5xuvc) and EV-037a watermark invariant.
+// reconnect behaviour (F12 fix, bead hk-5xuvc), EV-037a watermark invariant,
+// and park-signal self-quiesce (hk-s8qi, codename:sleep-wake M2).
 //
 // The tests verify:
 //   1. First-dial failure (daemon absent) → exit 17 (old behaviour preserved).
@@ -9,6 +10,8 @@ package main
 //      the second server without gaps or duplicates (F12 fix).
 //   3. Heartbeat last_event_id advances lastSeen watermark so reconnects use
 //      max(prior, heartbeat.last_event_id) as since_event_id (EV-037a).
+//   4. Park signal (topic="park", from="daemon") causes --follow to deliver the
+//      message then exit cleanly (code 0) WITHOUT reconnecting (hk-s8qi M2).
 
 import (
 	"context"
@@ -317,5 +320,104 @@ func TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("timed out waiting for second reconnect; watermark may not be advancing from heartbeat")
+	}
+}
+
+// TestCommsRecvFollow_ParkMessageExitsWithoutReconnect verifies that when the
+// daemon emits a park agent_message (topic="park", from="daemon"), comms recv
+// --follow delivers the message and exits cleanly (code 0) WITHOUT reconnecting.
+//
+// This is the Go contract for the park/resume protocol (hk-s8qi M2,
+// codename:sleep-wake): the session self-quiesces by having --follow exit on
+// the park signal. The session MUST NOT re-arm --follow until after a pane-nudge
+// WAKE (defined in the crew-launch and captain skill files).
+func TestCommsRecvFollow_ParkMessageExitsWithoutReconnect(t *testing.T) {
+	sockPath := "/tmp/hks8qi-park.sock"
+	_ = os.Remove(sockPath)
+	t.Cleanup(func() { _ = os.Remove(sockPath) })
+
+	// exitCode receives the return value of runCommsRecvFollowIO.
+	exitCode := make(chan int, 1)
+
+	// connCount lets the test detect reconnect attempts.
+	var connCount int32
+
+	ln, lnErr := net.Listen("unix", sockPath)
+	if lnErr != nil {
+		t.Fatalf("listen: %v", lnErr)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	go func() {
+		for {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+			n := atomic.AddInt32(&connCount, 1)
+			go func(c net.Conn, num int32) {
+				defer func() { _ = c.Close() }()
+				// Read (and discard) the subscribe request.
+				var req map[string]any
+				if decErr := json.NewDecoder(c).Decode(&req); decErr != nil {
+					return
+				}
+				if num > 1 {
+					// Any second connection means the follow loop reconnected — fail fast.
+					return
+				}
+				// Send a park agent_message directed at "captain" from "daemon".
+				mid, _ := uuid.NewV7()
+				parkPayload, _ := json.Marshal(map[string]any{
+					"from":  "daemon",
+					"to":    "captain",
+					"topic": "park",
+					"body":  `{"type":"park","reason":"drain_detected"}`,
+				})
+				ev := map[string]any{
+					"type":            "agent_message",
+					"event_id":        mid.String(),
+					"schema_version":  1,
+					"timestamp_wall":  time.Now().UTC().Format(time.RFC3339Nano),
+					"source_subsystem": "quiesce-arbiter",
+					"payload":         json.RawMessage(parkPayload),
+				}
+				_ = json.NewEncoder(c).Encode(ev)
+				// Leave connection open briefly so the client can read the event.
+				time.Sleep(200 * time.Millisecond)
+				// c closed on return — if follow loop were to reconnect it would
+				// hit connCount == 2 and return immediately.
+			}(conn, n)
+		}
+	}()
+
+	outFile, _ := os.CreateTemp(t.TempDir(), "park-test-*.txt")
+	t.Cleanup(func() { _ = outFile.Close() })
+
+	go func() {
+		exitCode <- runCommsRecvFollowIO(sockPath, "captain", "", "", "", true /*jsonOut*/, outFile)
+	}()
+
+	// Expect exit within 5 s; a reconnect path would loop indefinitely.
+	select {
+	case code := <-exitCode:
+		if code != 0 {
+			t.Errorf("runCommsRecvFollowIO: exit %d after park signal, want 0", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runCommsRecvFollowIO did not exit after park signal (reconnect loop?)")
+	}
+
+	// Verify no reconnect attempt was made after the park message.
+	conns := atomic.LoadInt32(&connCount)
+	if conns > 1 {
+		t.Errorf("got %d subscribe connections; park signal should not trigger reconnect (want 1)", conns)
+	}
+
+	// Verify the park message was delivered to the output.
+	_ = outFile.Sync()
+	raw, _ := os.ReadFile(outFile.Name())
+	if !strings.Contains(string(raw), `"topic":"park"`) {
+		t.Errorf("park message not found in follow output; got:\n%s", raw)
 	}
 }

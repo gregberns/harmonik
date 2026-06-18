@@ -1601,6 +1601,17 @@ func runCommsRecvFollowIO(sockPath, agent, fromFilter, topicFilter, sinceEventID
 					fmt.Fprintf(w, "%s  %-30s  %s\n", ts, direction, p.Body)
 				}
 			}
+
+			// Park signal (hk-s8qi M2, codename:sleep-wake): when the daemon parks
+			// this session it emits a park agent_message. Deliver it, then EXIT
+			// without reconnecting — the session self-quiesces. The skill files
+			// (crew-launch, captain/STARTUP.md) define the resume protocol: the
+			// session MUST NOT re-arm --follow until after a pane-nudge WAKE.
+			if p.Topic == "park" && p.From == "daemon" {
+				close(connCloseOnce)
+				_ = conn.Close()
+				return 0
+			}
 		}
 
 		if !reconnect {

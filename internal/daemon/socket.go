@@ -276,6 +276,25 @@ func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandle
 	return RunSocketListenerWithCrew(ctx, sockPath, h, hr, sub, oh, ch, nil, qh...)
 }
 
+// QuiesceOverrideHandler is the interface for manual operator sleep/wake
+// commands (CLI surface: harmonik sleep / harmonik wake).
+//
+// The QuiesceArbiter implements this interface; the socket listener dispatches
+// daemon-sleep and daemon-wake ops to it.
+//
+// Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
+type QuiesceOverrideHandler interface {
+	// HandleDaemonSleep parks all LLM sessions now.
+	// When force is false, the drain oracle is consulted first; the call fails
+	// when the fleet is not yet drained.  force=true bypasses the oracle.
+	HandleDaemonSleep(ctx context.Context, force bool) error
+
+	// HandleDaemonWake wakes sleeping LLM sessions.
+	// wakeAll=true wakes every session; agentName wakes one specific session.
+	// Returns an error when neither flag is set.
+	HandleDaemonWake(ctx context.Context, agentName string, wakeAll bool) error
+}
+
 // RunSocketListenerWithCrew is RunSocketListenerFull with an additional
 // CrewHandler parameter. When crewh is nil, crew-start/crew-stop ops return an
 // error response.
@@ -283,6 +302,15 @@ func RunSocketListenerFull(ctx context.Context, sockPath string, h RequestHandle
 // Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1.
 // Bead ref: hk-5tg5o (C2 daemon handler).
 func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, qh ...QueueHandler) error {
+	return RunSocketListenerWithSleepWake(ctx, sockPath, h, hr, sub, oh, ch, crewh, nil, qh...)
+}
+
+// RunSocketListenerWithSleepWake is RunSocketListenerWithCrew with an
+// additional QuiesceOverrideHandler parameter. When sleepWakeh is nil,
+// daemon-sleep and daemon-wake ops return an error response.
+//
+// Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
+func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, qh ...QueueHandler) error {
 	if err := removeStaleSocket(sockPath); err != nil {
 		return fmt.Errorf("daemon: RunSocketListener: stale-socket check: %w", err)
 	}
@@ -319,7 +347,7 @@ func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHa
 			}
 			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh)
+		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh, sleepWakeh)
 	}
 }
 
@@ -337,7 +365,7 @@ func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHa
 // terminator), json.Decoder.Decode returns an error and the connection is dropped
 // with no response after writing a bad_envelope ack — the relay will have exited
 // already in this case, so the write is best-effort.
-func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler) {
+func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler) {
 	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	// Decode into a raw map first to detect the message format (type vs op).
@@ -640,6 +668,54 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: crew-stop: %v", err)}
 		} else {
 			resp = SocketResponse{Ok: true, Result: result}
+		}
+
+	// -----------------------------------------------------------------------
+	// Quiesce override ops (manual operator sleep/wake; codename:sleep-wake)
+	// daemon-sleep: park all LLM sessions now (gated on GenuineDrain unless --force).
+	// daemon-wake:  wake sleeping sessions (--agent <name> or --all).
+	// Bead ref: hk-s5v3 (M4 of hk-rl4b).
+	// -----------------------------------------------------------------------
+
+	case "daemon-sleep":
+		if sleepWakeh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: QuiesceOverrideHandler not registered"}
+			break
+		}
+		var sleepReq struct {
+			Force bool `json:"force"`
+		}
+		if len(req.Payload) > 0 {
+			if err := json.Unmarshal(req.Payload, &sleepReq); err != nil {
+				resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: daemon-sleep: decode payload: %v", err)}
+				break
+			}
+		}
+		if err := sleepWakeh.HandleDaemonSleep(ctx, sleepReq.Force); err != nil {
+			resp = SocketResponse{Ok: false, Error: err.Error()}
+		} else {
+			resp = SocketResponse{Ok: true}
+		}
+
+	case "daemon-wake":
+		if sleepWakeh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: QuiesceOverrideHandler not registered"}
+			break
+		}
+		var wakeReq struct {
+			Agent string `json:"agent"`
+			All   bool   `json:"all"`
+		}
+		if len(req.Payload) > 0 {
+			if err := json.Unmarshal(req.Payload, &wakeReq); err != nil {
+				resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: daemon-wake: decode payload: %v", err)}
+				break
+			}
+		}
+		if err := sleepWakeh.HandleDaemonWake(ctx, wakeReq.Agent, wakeReq.All); err != nil {
+			resp = SocketResponse{Ok: false, Error: err.Error()}
+		} else {
+			resp = SocketResponse{Ok: true}
 		}
 
 	default:

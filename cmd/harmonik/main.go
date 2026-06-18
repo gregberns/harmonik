@@ -320,6 +320,40 @@ EXAMPLES
 		return runBeadsMergeSubcommand(os.Args[2:])
 	}
 
+	// harmonik sleep [--force] [--project DIR]
+	// Manual operator override to quiesce (park) all LLM sessions now.
+	// Without --force, the daemon's GenuineDrain oracle is consulted first.
+	// --force bypasses the drain gate (operator/captain maintenance escape hatch).
+	//
+	// Exit-code contract:
+	//   0  — fleet parked
+	//   1  — argument error
+	//   2  — daemon rejected the request or protocol error
+	//  17  — daemon not running
+	//
+	// Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
+	if len(os.Args) >= 2 && os.Args[1] == "sleep" {
+		subArgs := os.Args[2:]
+		return runSleepSubcommand(context.Background(), subArgs)
+	}
+
+	// harmonik wake (--agent <name> | --all) [--project DIR]
+	// Manual operator override to wake sleeping LLM sessions.
+	// --agent <name> wakes one specific session; --all wakes every sleeping session.
+	// This is the fleet-stall human escape hatch when automatic wake triggers miss.
+	//
+	// Exit-code contract:
+	//   0  — sessions nudged
+	//   1  — argument error
+	//   2  — daemon rejected the request or protocol error
+	//  17  — daemon not running
+	//
+	// Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
+	if len(os.Args) >= 2 && os.Args[1] == "wake" {
+		subArgs := os.Args[2:]
+		return runWakeSubcommand(context.Background(), subArgs)
+	}
+
 	if len(os.Args) >= 2 && os.Args[1] == "queue" {
 		verb := ""
 		if len(os.Args) >= 3 {

@@ -32,6 +32,8 @@ SUBCOMMANDS
   release          Release ledger management (ledger, certify, yank)
   supervise        Manage the supervisor/cognition process (start/stop/status/attach/restart/logs)
   keeper           Context watcher for a managed agent pane (session-keeper Phase-1)
+  sleep            Park all LLM sessions now (manual quiesce override; gated on GenuineDrain unless --force)
+  wake             Wake sleeping LLM sessions (--agent <name> or --all; fleet-stall escape hatch)
   beads-merge      Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
   smoke            5-signal end-to-end verification of a live daemon (hk-4rkrg)
   goal-keeper      Update .harmonik/intent/goal-state.json from operator comms (flywheel V6)

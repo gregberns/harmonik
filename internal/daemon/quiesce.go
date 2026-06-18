@@ -519,6 +519,84 @@ func (a *QuiesceArbiter) clearSleepMarker(sessionID string) {
 	}
 }
 
+// HandleDaemonSleep implements QuiesceOverrideHandler.
+//
+// If force is false the GenuineDrain oracle is consulted first; the request is
+// rejected with an error when the fleet still has work (DRAINED not reached).
+// If force is true, sessions are parked immediately regardless of drain state.
+//
+// CLI surface: harmonik sleep [--force]
+// Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
+func (a *QuiesceArbiter) HandleDaemonSleep(ctx context.Context, force bool) error {
+	if !force {
+		if a.cfg.Drain == nil {
+			return fmt.Errorf("daemon: sleep: drain oracle not wired; use --force to override")
+		}
+		res, err := a.cfg.Drain.GenuineDrain(ctx)
+		if err != nil {
+			return fmt.Errorf("daemon: sleep: drain check failed: %w; use --force to override", err)
+		}
+		if res.State != DrainStateDrained {
+			return fmt.Errorf("daemon: sleep: fleet not drained (state=%s); use --force to override", res.State)
+		}
+	}
+	a.parkAllSessions(ctx)
+	return nil
+}
+
+// HandleDaemonWake implements QuiesceOverrideHandler.
+//
+// wakeAll=true wakes every sleeping session regardless of agentName.
+// agentName, when non-empty, wakes only that named sleeping session.
+// Returns an error if neither agentName nor wakeAll is specified.
+//
+// CLI surface: harmonik wake [--agent <name>|--all]
+// Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
+func (a *QuiesceArbiter) HandleDaemonWake(ctx context.Context, agentName string, wakeAll bool) error {
+	if !wakeAll && agentName == "" {
+		return fmt.Errorf("daemon: wake: provide --agent <name> or --all")
+	}
+	if wakeAll {
+		a.wakeAllSessions(ctx)
+		return nil
+	}
+	// Wake a specific named agent.
+	a.mu.Lock()
+	rec, ok := a.sleeping[agentName]
+	if ok {
+		delete(a.sleeping, agentName)
+	}
+	a.mu.Unlock()
+	if !ok {
+		// Not currently sleeping — informational, not fatal.
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: wake: %q is not currently sleeping\n", agentName)
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "daemon: quiesce: waking %q (operator wake --agent)\n", agentName)
+	a.nudgePane(ctx, agentName, rec.paneTarget)
+	a.clearSleepMarker(rec.sessionID)
+	return nil
+}
+
+// wakeAllSessions wakes every sleeping session unconditionally.
+// Used by HandleDaemonWake(--all) and the operator CLI surface.
+func (a *QuiesceArbiter) wakeAllSessions(ctx context.Context) {
+	a.mu.Lock()
+	targets := make([]sessionSleepRecord, 0, len(a.sleeping))
+	for _, rec := range a.sleeping {
+		targets = append(targets, rec)
+	}
+	for _, rec := range targets {
+		delete(a.sleeping, rec.agentName)
+	}
+	a.mu.Unlock()
+	for _, rec := range targets {
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: waking %q (operator wake --all)\n", rec.agentName)
+		a.nudgePane(ctx, rec.agentName, rec.paneTarget)
+		a.clearSleepMarker(rec.sessionID)
+	}
+}
+
 // listCrewRecords loads the current crew registry.  Returns nil on error
 // (logged; non-fatal — the arbiter simply skips crews it cannot enumerate).
 func (a *QuiesceArbiter) listCrewRecords() []crew.Record {

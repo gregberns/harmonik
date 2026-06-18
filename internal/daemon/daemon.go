@@ -1614,7 +1614,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// reasoning as defer ln.Close() discards errors in RunSocketListener.
 		socketDone := make(chan error, 1)
 		go func() {
-			socketDone <- RunSocketListenerWithCrew(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, crewHandler, queueHandler)
+			socketDone <- RunSocketListenerWithSleepWake(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, crewHandler, quiesceArbiter, queueHandler)
 		}()
 		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 	}

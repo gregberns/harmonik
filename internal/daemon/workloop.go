@@ -3002,8 +3002,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 		} else {
 			// Non-success terminal (BLOCK / cap-hit / no-progress / structural
-			// failure / gate-out-of-scope) → reopen the bead so it can be retried
-			// or escalated. The needsAttention flag is carried in the summary.
+			// failure / gate-out-of-scope / context_cancelled) → reopen the bead
+			// so it can be retried or escalated. The needsAttention flag is
+			// carried in the summary.
 			//
 			// Orphan-salvage (hk-8b35c): if the implementer advanced HEAD past the
 			// parent (a commit landed on the run branch before the gate bounced it),
@@ -3012,11 +3013,25 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			//
 			// REMOTE: wtPath is on the worker; resolve via dotRunner so the tip SHA
 			// reflects the worker's run branch (nil dotRunner ⇒ box-A-local, NFR7).
-			if tipSHA, tipErr := resolveWorktreeHEADVia(ctx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
+			//
+			// hk-e3fy: use context.Background() for the HEAD resolve so a
+			// context_cancelled DOT failure (daemon shutdown or per-run abort)
+			// can still capture the tip SHA for orphan-salvage — ctx is already
+			// cancelled when this path fires for that failure class.
+			tipResolveCtx := ctx
+			if ctx.Err() != nil {
+				tipResolveCtx = context.Background()
+			}
+			if tipSHA, tipErr := resolveWorktreeHEADVia(tipResolveCtx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
 				runTipSHA = &tipSHA
 			}
 			reopenTID, _ := deps.tidGen.Next()
-			if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, dotResult.summary); reopenErr != nil {
+			// hk-e3fy: ReopenBead uses context.Background() so a context_cancelled
+			// DOT run (daemon shutdown, per-run abort, or agentic-node budget-cancel)
+			// still resets the bead to open. Using ctx here silently discards the
+			// call when ctx is already cancelled — exactly the strand class this
+			// bead fixes.
+			if reopenErr := deps.brAdapter.ReopenBead(context.Background(), deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, dotResult.summary); reopenErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (dot) %s: %v\n", beadID, reopenErr)
 			}
 			emitDone(false, dotResult.summary)

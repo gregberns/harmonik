@@ -67,10 +67,12 @@ func TestDaemonStart_HandlerPausePolicySubscribedInProductionComposition(t *test
 	//  10. bead_closed             — ReviewGateAnomalyWatcher consecutive-close alarm (hk-tnmjy)
 	//  11. reviewer_verdict        — ReviewGateAnomalyWatcher verdict reset (hk-tnmjy)
 	//  12. budget_accrual          — PerQueueSpendMeter per-queue spend cap (NQ-X1, hk-tigaf.11)
+	//  13. epic_completed          — QuiesceArbiter wake trigger (hk-jeby)
+	//  14. agent_message           — QuiesceArbiter wake trigger (hk-jeby)
 	//
 	// Any deviation indicates a composition-root wiring regression.
-	// Update history: 4→5 (SubscribeHub hk-6ynv4), 5→8 (SpendMeter hk-k3f8g +2, StaleWatcher hk-wkzlc +1), 8→9 (bandwidthTunerBackstop), 9→11 (ReviewGateAnomalyWatcher hk-tnmjy registers bead_closed + reviewer_verdict), 11→12 (PerQueueSpendMeter NQ-X1 hk-tigaf.11 registers budget_accrual).
-	const wantSubscriptions = 12
+	// Update history: 4→5 (SubscribeHub hk-6ynv4), 5→8 (SpendMeter hk-k3f8g +2, StaleWatcher hk-wkzlc +1), 8→9 (bandwidthTunerBackstop), 9→11 (ReviewGateAnomalyWatcher hk-tnmjy registers bead_closed + reviewer_verdict), 11→12 (PerQueueSpendMeter NQ-X1 hk-tigaf.11 registers budget_accrual), 12→14 (QuiesceArbiter hk-jeby registers epic_completed + agent_message).
+	const wantSubscriptions = 14
 	if capturedCount != wantSubscriptions {
 		t.Errorf("bus subscription count before Seal = %d, want %d; "+
 			"HandlerPausePolicyGoroutine.Subscribe must be called pre-Seal in daemon.Start (hk-37zy8)",

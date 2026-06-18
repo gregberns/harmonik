@@ -85,11 +85,12 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 		// ── Assert SSH call order ─────────────────────────────────────────
 		// Expected calls via sshRR (in order):
 		//   [0] git -C <tmpWorkerRepo> fetch origin <baseSHA>  (fetch-base)
-		//   [1] git -C <tmpWorkerRepo> worktree add -b ...     (worktree-add, may retry)
+		//   [1] mkdir -p <parentDir>                           (CreateWorktree remote mkdir, hk-eodo)
+		//   [2] git -C <tmpWorkerRepo> worktree add -b ...     (worktree-add, may retry)
 		//   [N] git -C <tmpWorkerWtPath> push origin run/<id> (push-branch)
 
-		if len(sshRR.Calls) < 2 {
-			t.Fatalf("RSB8/remote: expected at least 2 SSH calls, got %d: %v", len(sshRR.Calls), sshRR.Calls)
+		if len(sshRR.Calls) < 3 {
+			t.Fatalf("RSB8/remote: expected at least 3 SSH calls, got %d: %v", len(sshRR.Calls), sshRR.Calls)
 		}
 
 		// Call 0: fetch-base
@@ -102,14 +103,25 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 			t.Errorf("RSB8/remote: calls[0].Args = %v, want %v", c0.Args, wantC0)
 		}
 
-		// Call 1: worktree-add (first command issued by CreateWorktree).
+		// Call 1: remote mkdir -p <parentDir> (CreateWorktree routes mkdir through
+		// the runner for remote runs so the parent dir is created on the worker,
+		// not locally — hk-eodo TOCTOU fix).
 		c1 := sshRR.Calls[1]
-		if c1.Name != "git" {
-			t.Errorf("RSB8/remote: calls[1].Name = %q, want git", c1.Name)
+		if c1.Name != "mkdir" {
+			t.Errorf("RSB8/remote: calls[1].Name = %q, want mkdir", c1.Name)
 		}
-		if len(c1.Args) < 4 || c1.Args[0] != "-C" || c1.Args[1] != tmpWorkerRepo ||
-			c1.Args[2] != "worktree" || c1.Args[3] != "add" {
-			t.Errorf("RSB8/remote: calls[1].Args = %v, want [-C <tmpWorkerRepo> worktree add ...]", c1.Args)
+		if len(c1.Args) < 2 || c1.Args[0] != "-p" {
+			t.Errorf("RSB8/remote: calls[1].Args = %v, want [-p <parentDir>]", c1.Args)
+		}
+
+		// Call 2: worktree-add (first git command issued by CreateWorktree).
+		c2 := sshRR.Calls[2]
+		if c2.Name != "git" {
+			t.Errorf("RSB8/remote: calls[2].Name = %q, want git", c2.Name)
+		}
+		if len(c2.Args) < 4 || c2.Args[0] != "-C" || c2.Args[1] != tmpWorkerRepo ||
+			c2.Args[2] != "worktree" || c2.Args[3] != "add" {
+			t.Errorf("RSB8/remote: calls[2].Args = %v, want [-C <tmpWorkerRepo> worktree add ...]", c2.Args)
 		}
 
 		// Last SSH call: push-branch (must come after worktree-add).

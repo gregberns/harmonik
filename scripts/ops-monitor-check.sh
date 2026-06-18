@@ -40,6 +40,14 @@ MISS_LIMIT=2          # consecutive stale observations before signaling
 IDLE_THRESHOLD=1200   # 20 minutes: no active workers + no recent event = idle
 DIGEST_COOLDOWN=900   # 15 minutes: minimum gap between digest sends
 
+# Inert queues / dead-crew glob patterns — paused-by-failure on these NEVER fires an
+# immediate alert. Add exact names or fnmatch-style globs. Editable here.
+INERT_SUPPRESS_JSON='["main","remote-substrate","chani-q*","duncan-q*","liet-q*","stilgar-q*"]'
+# Queues that are always alert-worthy even when their crew is offline.
+LIVE_ALLOW_JSON='[]'
+# Re-alert cooldown for the SAME still-active immediate signal (seconds).
+IMMEDIATE_COOLDOWN=1800  # 30 minutes
+
 mkdir -p "$OUT_DIR"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,6 +60,7 @@ py3() { python3 -c "$@"; }
 
 PREV_STALE_MISSES='{}'
 PREV_LAST_DIGEST=0
+PREV_ALERTED_IMMEDIATE='{}'
 if [[ -f "$STATE_FILE" ]]; then
   PREV_STALE_MISSES=$(py3 "
 import json, sys
@@ -68,6 +77,14 @@ try:
     print(d.get('last_digest_ts', 0))
 except Exception:
     print(0)
+")
+  PREV_ALERTED_IMMEDIATE=$(py3 "
+import json
+try:
+    d = json.load(open('$STATE_FILE'))
+    print(json.dumps(d.get('alerted_immediate', {})))
+except Exception:
+    print('{}')
 ")
 fi
 
@@ -134,21 +151,25 @@ fi
 # ── Python analysis: produce JSON snapshot ────────────────────────────────────
 
 ANALYSIS=$(py3 "
-import json, sys, os, datetime
+import json, sys, os, datetime, fnmatch
 
-proj         = '$PROJ'
-ts           = '$TS'
-ts_epoch     = int('$TS_EPOCH')
-daemon_up    = '$DAEMON_UP' == 'true'
-stale_thresh = int('$STALE_THRESHOLD')
-miss_limit   = int('$MISS_LIMIT')
-idle_thresh  = int('$IDLE_THRESHOLD')
-cooldown     = int('$DIGEST_COOLDOWN')
-last_run_ts  = int('$LAST_RUN_EVENT_TS')
-prev_misses  = json.loads('$PREV_STALE_MISSES')
-prev_digest  = int('$PREV_LAST_DIGEST')
-comms_raw    = '''$COMMS_WHO_NDJSON'''
-qlist_raw    = '''$QUEUE_LIST_JSON'''
+proj               = '$PROJ'
+ts                 = '$TS'
+ts_epoch           = int('$TS_EPOCH')
+daemon_up          = '$DAEMON_UP' == 'true'
+stale_thresh       = int('$STALE_THRESHOLD')
+miss_limit         = int('$MISS_LIMIT')
+idle_thresh        = int('$IDLE_THRESHOLD')
+cooldown           = int('$DIGEST_COOLDOWN')
+last_run_ts        = int('$LAST_RUN_EVENT_TS')
+prev_misses        = json.loads('$PREV_STALE_MISSES')
+prev_digest        = int('$PREV_LAST_DIGEST')
+prev_alerted       = json.loads('''$PREV_ALERTED_IMMEDIATE''')
+immediate_cooldown = int('$IMMEDIATE_COOLDOWN')
+inert_suppress     = json.loads('''$INERT_SUPPRESS_JSON''')
+live_allow         = json.loads('''$LIVE_ALLOW_JSON''')
+comms_raw          = '''$COMMS_WHO_NDJSON'''
+qlist_raw          = '''$QUEUE_LIST_JSON'''
 
 # ── Parse comms who ──────────────────────────────────────────────────────────
 online_crews = {}   # crew_name -> last_seen_epoch
@@ -199,14 +220,16 @@ if daemon_up and qlist_raw.strip().startswith('{'):
             queues.append({'name': qname, 'status': qstatus, 'workers': workers,
                            'pending_items': pending, 'failed_items': failed})
 
-            # Paused signal: paused-by-failure on main queue, or on an online
-            # crew's queue (derive crew name: strip trailing '-q' suffix)
+            # Paused signal: alert only when queue is NOT inert AND its crew is
+            # online (or the queue is in the explicit live-allow list).
             if qstatus == 'paused-by-failure':
-                crew_guess = qname[:-2] if qname.endswith('-q') else qname
-                is_main    = qname == 'main'
-                is_active_crew = crew_guess in online_crews
-                if is_main or is_active_crew:
-                    paused_queues.append(qname)
+                is_inert = any(fnmatch.fnmatch(qname, pat) for pat in inert_suppress)
+                if not is_inert:
+                    crew_guess    = qname[:-2] if qname.endswith('-q') else qname
+                    is_crew_online = crew_guess in online_crews
+                    is_live_allow  = qname in live_allow
+                    if is_crew_online or is_live_allow:
+                        paused_queues.append(qname)
 
             # Ready-unstaffed: pending items but workers==0 and crew not online
             if pending > 0 and workers == 0 and qstatus not in ('paused-by-failure', 'paused-by-drain'):
@@ -266,6 +289,28 @@ if idle_fleet:
 
 all_green = not immediate_signals and not digest_signals
 
+# ── De-dup + cooldown for immediate signals ──────────────────────────────────
+# Build new_alerted: {signal_key: first_alert_epoch} persisted across runs.
+# A signal is sent only on its first occurrence (edge) or when the cooldown
+# has expired and it is still active. Clear entries when the condition resolves.
+new_alerted = {}
+send_immediate_signals = []
+
+for sig in immediate_signals:
+    if sig in prev_alerted:
+        age = ts_epoch - prev_alerted[sig]
+        if age >= immediate_cooldown:
+            send_immediate_signals.append(sig)
+            new_alerted[sig] = ts_epoch  # reset timer on re-alert
+        else:
+            new_alerted[sig] = prev_alerted[sig]  # keep original timestamp
+    else:
+        send_immediate_signals.append(sig)  # new edge: send immediately
+        new_alerted[sig] = ts_epoch
+
+# Drop resolved signals (not in this run's immediate_signals) from alerted set.
+# They will re-alert fresh if the condition recurs.
+
 # ── Determine whether to send digest (cooldown) ──────────────────────────────
 # send_digest: would send digest (no immediate preemption, cooldown expired)
 # immediate preemption is computed here so state correctly reflects actual send
@@ -288,6 +333,7 @@ snapshot = {
     'idle_fleet_age_s': idle_age_s,
     'total_active_workers': total_workers,
     'immediate_signals': immediate_signals,
+    'send_immediate_signals': send_immediate_signals,
     'digest_signals': digest_signals,
     'all_green': all_green,
     'send_digest': send_digest,
@@ -299,6 +345,7 @@ new_state = {
     'ts': ts,
     'stale_crew_misses': new_misses,
     'last_digest_ts': new_last_digest,
+    'alerted_immediate': new_alerted,
 }
 
 print(json.dumps({'snapshot': snapshot, 'state': new_state}))
@@ -323,6 +370,7 @@ print(json.dumps(d['state'], indent=2))
 # ── Send comms if signals present ─────────────────────────────────────────────
 
 IMMEDIATE=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d['snapshot']['immediate_signals']))" <<< "$ANALYSIS")
+SEND_IMMEDIATE=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d['snapshot']['send_immediate_signals']))" <<< "$ANALYSIS")
 DIGEST=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d['snapshot']['digest_signals']))" <<< "$ANALYSIS")
 SEND_DIGEST=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(d['snapshot']['send_digest'])" <<< "$ANALYSIS")
 ALL_GREEN=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(d['snapshot']['all_green'])" <<< "$ANALYSIS")
@@ -336,8 +384,9 @@ send_comms() {
     -- "$body") 2>&1 || true
 }
 
-if [[ "$IMMEDIATE" != "[]" ]]; then
-  SIGNALS_TEXT=$(py3 "import json; sigs=json.loads('$IMMEDIATE'); print(' | '.join(sigs))")
+# Send [IMMEDIATE] only for signals that are new or whose cooldown has expired.
+if [[ "$SEND_IMMEDIATE" != "[]" ]]; then
+  SIGNALS_TEXT=$(py3 "import json; sigs=json.loads('$SEND_IMMEDIATE'); print(' | '.join(sigs))")
   send_comms "[IMMEDIATE] ops-monitor: $SIGNALS_TEXT | ts=$TS | see .harmonik/ops-monitor/latest.json"
 elif [[ "$SEND_DIGEST" == "True" && "$DIGEST" != "[]" ]]; then
   SIGNALS_TEXT=$(py3 "import json; sigs=json.loads('$DIGEST'); print(' | '.join(sigs))")
@@ -350,7 +399,8 @@ if [[ "$ALL_GREEN" == "True" ]]; then
   echo "ops-monitor: all-green @ $TS"
 elif [[ "$IMMEDIATE" != "[]" ]]; then
   SIGNALS_TEXT=$(py3 "import json; sigs=json.loads('$IMMEDIATE'); print(' | '.join(sigs))")
-  echo "ops-monitor: IMMEDIATE: $SIGNALS_TEXT @ $TS"
+  SEND_TEXT=$(py3 "import json; sigs=json.loads('$SEND_IMMEDIATE'); print('(suppressed)' if not sigs else '')")
+  echo "ops-monitor: IMMEDIATE: $SIGNALS_TEXT $SEND_TEXT@ $TS"
 else
   SIGNALS_TEXT=$(py3 "import json; sigs=json.loads('$DIGEST'); print(' | '.join(sigs))")
   echo "ops-monitor: digest($SEND_DIGEST): $SIGNALS_TEXT @ $TS"

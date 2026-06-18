@@ -79,6 +79,23 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
+// twReadRawCtxSID reads the .ctx file directly and returns the raw session_id
+// embedded in it, bypassing ReadCtxFile's .sid override. Used to detect when
+// the twin has emitted a rotated session_id after an external /clear, before
+// we have written the new .sid file that would make ReadCtxFile report it.
+func twReadRawCtxSID(project, agent string) string {
+	path := filepath.Join(project, ".harmonik", "keeper", agent+".ctx")
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: test-local temp path
+	if err != nil {
+		return ""
+	}
+	var cf keeper.CtxFile
+	if err := json.Unmarshal(raw, &cf); err != nil {
+		return ""
+	}
+	return cf.SessionID
+}
+
 // twRequireTmux skips the calling test when tmux is not installed. The real
 // send-keys E2E is meaningless without it.
 func twRequireTmux(t *testing.T) {
@@ -848,6 +865,157 @@ func TestIntegration_TwinE2E_GaugeStateTransitions(t *testing.T) {
 				t.Errorf("fired=%v; want %v (tokens=%d window=%d crisp=%v)", fired, c.wantFired, c.tokens, c.window, c.crispIdle)
 			}
 		})
+	}
+}
+
+// TestIntegration_TwinWatcher_ExternalClearReResolve proves the watcher's
+// foreign-guard re-resolve path (hk-1tn2) end-to-end against the faithful
+// session twin in a real tmux pane. It drives an EXTERNAL /clear — one NOT
+// caused by the keeper's own cycle — which rotates the twin's session_id.
+// The test then asserts the watcher re-resolves .managed to the new id without
+// emitting any foreign_session event.
+//
+// Scenario:
+//  1. A prior watcher latched SID-A into .managed.
+//  2. The operator issues /clear directly into the twin pane (no keeper cycle);
+//     the twin mints SID-B and the gauge reflects it.
+//  3. The SessionStart hook (simulated by writing .sid=SID-B) records SID-B as
+//     the authoritative live identity.
+//  4. The watcher's next tick sees: managed=SID-A, gauge=SID-B (from .sid),
+//     .sid=SID-B == gauge → re-adopt, updating .managed to SID-B.
+//
+// RED on a pre-fix main that treats every SID mismatch as a true concurrent
+// foreign session; GREEN once the re-resolve path (hk-1tn2) lands.
+func TestIntegration_TwinWatcher_ExternalClearReResolve(t *testing.T) {
+	twRequireTmux(t)
+
+	project := t.TempDir()
+	agent := fmt.Sprintf("twextclr%d", rand.Int64()) //nolint:gosec // G404: test-local agent-name uniqueness
+	twin := twBuildTwin(t, project)
+	statusline, idleHook := twScripts(t)
+
+	const startTokens int64 = 50_000
+
+	// Start the twin emitting a [1m] gauge. Growth at 50k/200ms crosses
+	// startTokens within one tick, making the /clear gate open.
+	sess := twStartTwin(t, twTwinSpec{
+		project:     project,
+		agent:       agent,
+		twin:        twin,
+		statusline:  statusline,
+		idleHook:    idleHook,
+		model:       "claude-opus-4-8 [1m]",
+		window:      1_000_000,
+		growth:      50_000,
+		startTokens: startTokens,
+		emitEvery:   200 * time.Millisecond,
+	})
+
+	// Wait for the gauge to grow past startTokens so the /clear will fire
+	// (the twin's /clear is a no-op when tokens <= startTokens).
+	seed := twWaitForCtxTokens(t, project, agent, startTokens+1, 5*time.Second)
+	seedSID := seed.SessionID
+	if seedSID == "" {
+		t.Fatal("tw: seed .ctx has empty session_id")
+	}
+
+	// Simulate a prior watcher that latched seedSID into .managed.
+	if err := keeper.WriteManagedSessionID(project, agent, seedSID); err != nil {
+		t.Fatalf("tw: WriteManagedSessionID(seedSID): %v", err)
+	}
+
+	// Inject /clear EXTERNALLY — directly into the twin pane, bypassing the
+	// keeper cycle. The twin processes this via its stdin REPL, resets tokens
+	// to startTokens, and mints a fresh UUIDv4 (SID-B).
+	if err := keeper.InjectText(context.Background(), sess, "/clear"); err != nil {
+		t.Fatalf("tw: inject /clear into twin pane: %v", err)
+	}
+
+	// Poll the RAW .ctx for the rotated session_id. No .sid file exists yet so
+	// ReadCtxFile falls back to the gauge's session_id — the rotation is visible
+	// as soon as the twin re-emits SID-B after /clear.
+	var newSID string
+	sidDeadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(sidDeadline) {
+		if raw := twReadRawCtxSID(project, agent); raw != "" && raw != seedSID {
+			newSID = raw
+			break
+		}
+		time.Sleep(75 * time.Millisecond)
+	}
+	if newSID == "" {
+		t.Fatalf("tw: gauge never reflected the rotated session_id after external /clear (seed %q unchanged within timeout)", seedSID)
+	}
+	if !twIsValidUUIDv4(newSID) {
+		t.Fatalf("tw: rotated session_id %q is not a valid UUIDv4", newSID)
+	}
+
+	// Write newSID to .sid, simulating what the real SessionStart hook
+	// (scripts/keeper-sessionstart-hook.sh) produces when the session resumes
+	// after /clear. Once .sid carries a valid UUIDv4, ReadCtxFile overrides
+	// the gauge's raw session_id with it — the watcher's re-resolve gate then
+	// confirms .sid == gauge and re-adopts without emitting foreign_session.
+	writeSidFile(t, project, agent, newSID)
+
+	// State at watcher start:
+	//   .managed = seedSID (stale latch — the "prior session")
+	//   gauge    = newSID  (rotated by the external /clear)
+	//   .sid     = newSID  (endorses the gauge as primary identity)
+	// The watcher detects the mismatch, confirms .sid endorses the gauge,
+	// and re-adopts by calling WriteManagedSessionFn(newSID) without emitting
+	// any foreign_session event.
+	em := &keeper.RecordingEmitter{}
+	adoptedCh := make(chan string, 1)
+
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   project,
+		TmuxTarget:   "", // no injection needed; warn is a side-effect only
+		PollInterval: 100 * time.Millisecond,
+		Staleness:    30 * time.Second,
+		IdleQuiesce:  1 * time.Millisecond,
+		WarnPct:      80.0,
+		WriteManagedSessionFn: func(projectDir, agentName, sid string) error {
+			select {
+			case adoptedCh <- sid:
+			default:
+			}
+			return keeper.WriteManagedSessionID(projectDir, agentName, sid)
+		},
+	}
+
+	watchCtx, watchCancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer watchCancel()
+
+	w := keeper.NewWatcher(cfg, em)
+	go func() { _ = w.Run(watchCtx) }() //nolint:errcheck // context cancel is expected
+
+	var gotSID string
+	select {
+	case gotSID = <-adoptedCh:
+	case <-watchCtx.Done():
+		t.Fatalf("tw: watcher did not re-resolve .managed within the run window "+
+			"(re-resolve path did not fire; seed=%q new=%q)", seedSID, newSID)
+	}
+	watchCancel()
+
+	// (a) The adopted SID is the rotated one (not the stale seed).
+	if gotSID != newSID {
+		t.Errorf("tw: watcher re-adopted %q; want the rotated SID %q", gotSID, newSID)
+	}
+
+	// (b) NO foreign_session events: the watcher must recognise the mismatch as
+	// "same agent, new session after external /clear" (endorsed by .sid) and
+	// re-adopt cleanly. Even one foreign_session emit means the re-resolve gate
+	// rejected a valid same-agent rotation as if it were a concurrent intruder.
+	for _, ev := range em.EventsOfType(core.EventTypeSessionKeeperNoGauge) {
+		var payload core.SessionKeeperNoGaugePayload
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			continue
+		}
+		if payload.Reason == "foreign_session" {
+			t.Errorf("tw: watcher emitted no_gauge(foreign_session); the re-resolve path must adopt same-agent rotations cleanly (seed=%q new=%q)", seedSID, newSID)
+		}
 	}
 }
 

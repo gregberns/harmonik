@@ -171,6 +171,48 @@ live_allow         = json.loads('''$LIVE_ALLOW_JSON''')
 comms_raw          = '''$COMMS_WHO_NDJSON'''
 qlist_raw          = '''$QUEUE_LIST_JSON'''
 
+# ── Parse events.jsonl for recent agent_message activity ────────────────────
+# Used as a presence fallback: comms send does NOT refresh the presence
+# heartbeat, so an agent posting status while its presence is stale by
+# last_seen would fire a false crew-stale alert. We suppress it if the
+# sender has an agent_message within stale_thresh seconds (hk-gu3v).
+import os as _os
+last_msg_ts = {}  # agent_name -> epoch of most recent agent_message
+_events_path = _os.path.join(proj, '.harmonik', 'events', 'events.jsonl')
+if _os.path.isfile(_events_path):
+    import datetime as _dt
+    try:
+        with open(_events_path, 'rb') as _ef:
+            _ef.seek(0, 2)
+            _file_size = _ef.tell()
+            _read_start = max(0, _file_size - 256 * 1024)  # last 256 KB
+            _ef.seek(_read_start)
+            _raw = _ef.read()
+        for _line in _raw.decode('utf-8', errors='replace').splitlines():
+            _line = _line.strip()
+            if not _line:
+                continue
+            try:
+                _ev = json.loads(_line)
+                if _ev.get('type') != 'agent_message':
+                    continue
+                _tw = _ev.get('timestamp_wall', '')
+                if not _tw:
+                    continue
+                _ts_clean = _tw[:19].replace('T', ' ')
+                _d = _dt.datetime.strptime(_ts_clean, '%Y-%m-%d %H:%M:%S')
+                _epoch = int(_d.replace(tzinfo=_dt.timezone.utc).timestamp())
+                _payload = _ev.get('payload', {})
+                if isinstance(_payload, str):
+                    _payload = json.loads(_payload)
+                _sender = _payload.get('from', '')
+                if _sender and _epoch > last_msg_ts.get(_sender, 0):
+                    last_msg_ts[_sender] = _epoch
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 # ── Parse comms who ──────────────────────────────────────────────────────────
 online_crews = {}   # crew_name -> last_seen_epoch
 crew_status  = {}   # crew_name -> {last_seen_s, stale, online}
@@ -247,7 +289,16 @@ new_misses = {}
 stale_signal_crews = []
 for name, info in crew_status.items():
     miss_count = prev_misses.get(name, 0)
-    if info['stale']:
+    # comms send does NOT refresh presence, so fall back to agent_message
+    # recency: if the agent posted a message within stale_thresh, treat as
+    # active even when the presence last_seen is stale (hk-gu3v).
+    effective_stale = info['stale']
+    if effective_stale:
+        _msg_ts = last_msg_ts.get(name, 0)
+        if _msg_ts and (ts_epoch - _msg_ts) <= stale_thresh:
+            effective_stale = False
+            info['msg_override'] = ts_epoch - _msg_ts  # age of most recent msg, for snapshot
+    if effective_stale:
         miss_count += 1
         new_misses[name] = miss_count
         if miss_count >= miss_limit:

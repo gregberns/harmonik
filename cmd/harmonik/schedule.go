@@ -97,40 +97,47 @@ func resolveScheduleStore(projectFlag string) (*schedule.Store, int) {
 	return store, 0
 }
 
-// parseScheduleSpec parses a "daily@HH:MM <tz>" spec string into a Schedule.
-// The tz token is optional and defaults to "local".
+// parseScheduleSpec parses a schedule spec string into a Schedule.
 //
 // Accepted forms:
 //
-//	"daily@09:30"
-//	"daily@09:30 local"
-//	"daily@09:30 America/New_York"
+//	"daily@09:30"                    — daily at 09:30 local time
+//	"daily@09:30 America/New_York"   — daily at 09:30 in a specific timezone
+//	"every@5m"                       — every 5 minutes (Go duration, e.g. 30s, 1h)
 func parseScheduleSpec(spec string) (schedule.Schedule, error) {
 	spec = strings.TrimSpace(spec)
-	// Split kind@time from the optional tz token.
 	fields := strings.Fields(spec)
 	if len(fields) == 0 {
 		return schedule.Schedule{}, fmt.Errorf("empty --schedule")
 	}
 	head := fields[0]
-	tz := schedule.TZLocal
-	if len(fields) >= 2 {
-		tz = fields[1]
-	}
 	at := strings.SplitN(head, "@", 2)
 	if len(at) != 2 {
-		return schedule.Schedule{}, fmt.Errorf("invalid --schedule %q: want \"daily@HH:MM [tz]\"", spec)
+		return schedule.Schedule{}, fmt.Errorf("invalid --schedule %q: want \"daily@HH:MM [tz]\" or \"every@<dur>\"", spec)
 	}
 	kind := at[0]
-	if kind != schedule.ScheduleKindDaily {
-		return schedule.Schedule{}, fmt.Errorf("unsupported schedule kind %q (v1 supports %q only)", kind, schedule.ScheduleKindDaily)
+	switch kind {
+	case schedule.ScheduleKindDaily:
+		tz := schedule.TZLocal
+		if len(fields) >= 2 {
+			tz = fields[1]
+		}
+		s := schedule.Schedule{Kind: kind, At: at[1], TZ: tz}
+		// Validate via NextFire so a bad HH:MM / tz fails at add-time, not at fire-time.
+		if _, err := schedule.NextFire(s, time.Now()); err != nil {
+			return schedule.Schedule{}, err
+		}
+		return s, nil
+	case schedule.ScheduleKindEvery:
+		// Validate the duration at add-time.
+		s := schedule.Schedule{Kind: kind, Interval: at[1]}
+		if _, err := schedule.NextFire(s, time.Now()); err != nil {
+			return schedule.Schedule{}, err
+		}
+		return s, nil
+	default:
+		return schedule.Schedule{}, fmt.Errorf("unsupported schedule kind %q (supported: %q, %q)", kind, schedule.ScheduleKindDaily, schedule.ScheduleKindEvery)
 	}
-	s := schedule.Schedule{Kind: kind, At: at[1], TZ: tz}
-	// Validate via NextFire so a bad HH:MM / tz fails at add-time, not at fire-time.
-	if _, err := schedule.NextFire(s, time.Now()); err != nil {
-		return schedule.Schedule{}, err
-	}
-	return s, nil
 }
 
 // runScheduleAdd implements `schedule add`.
@@ -260,7 +267,12 @@ func runScheduleAdd(args []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik schedule add: %v\n", addErr)
 		return 1
 	}
-	fmt.Printf("added: %s (%s@%s %s, action=%s, enabled)\n", id, sched.Kind, sched.At, sched.TZ, action.Kind)
+	switch sched.Kind {
+	case schedule.ScheduleKindEvery:
+		fmt.Printf("added: %s (every@%s, action=%s, enabled)\n", id, sched.Interval, action.Kind)
+	default:
+		fmt.Printf("added: %s (%s@%s %s, action=%s, enabled)\n", id, sched.Kind, sched.At, sched.TZ, action.Kind)
+	}
 	return 0
 }
 
@@ -312,7 +324,7 @@ func runScheduleList(args []string) int {
 			enabled = "enabled"
 		}
 		nextStr := "-"
-		if next, err := schedule.NextFire(j.Schedule, now); err == nil {
+		if next, err := schedule.JobNextFire(j, now); err == nil {
 			// Display next-fire in local time per the brief.
 			nextStr = next.Local().Format("2006-01-02 15:04 MST")
 		}
@@ -459,20 +471,23 @@ VERBS
 
 ADD FLAGS
   --id <id>                    Unique job id (required)
-  --schedule "daily@HH:MM [tz]"  Daily fire time; tz is "local" or an IANA zone (default local)
+  --schedule <spec>            When to fire (required). Two forms:
+                                 "daily@HH:MM [tz]"  — once per day; tz default local
+                                 "every@<dur>"        — fixed interval (e.g. every@5m, every@1h)
   --action <command|spawn-crew>  Action kind (required)
   --crew <c>                   Crew name        (spawn-crew)
   --queue <q>                  Named queue      (spawn-crew)
   --mission <p>                Mission handoff path (spawn-crew, optional)
   -- <argv...>                 Command + args   (command; must be last)
   --overlap-policy <skip|allow>  Default skip
-  --catchup <coalesce-within-window|off>  Default coalesce-within-window
-  --catchup-window <dur>       Catch-up window (e.g. 24h); default = schedule interval
+  --catchup <coalesce-within-window|off>  Default coalesce-within-window (daily only)
+  --catchup-window <dur>       Catch-up window (e.g. 24h); default = 24h (daily only)
   --project DIR                Project directory (default: cwd)
 
 NOTES
   All verbs mutate .harmonik/schedules.json directly and work whether or not the
   daemon is running. A running daemon picks up changes on its next poll tick.
+  The "ops-monitor" job is auto-registered by the daemon on startup (every@5m).
 
 EXIT CODES
   0   Success
@@ -484,6 +499,8 @@ EXAMPLES
     --action spawn-crew --crew nightowl --queue night --mission /tmp/mission.md
   harmonik schedule add --id rotate-logs --schedule "daily@00:30" \
     --action command -- /usr/bin/logrotate /etc/logrotate.conf
+  harmonik schedule add --id ops-monitor --schedule "every@5m" \
+    --action command --overlap-policy skip --catchup off -- bash scripts/ops-monitor-check.sh
   harmonik schedule list
   harmonik schedule disable nightly-crew
   harmonik schedule run-now rotate-logs

@@ -11,6 +11,21 @@ import (
 // default CatchupWindow for daily jobs (D2).
 const dailyInterval = 24 * time.Hour
 
+// parseInterval parses Schedule.Interval for a ScheduleKindEvery schedule.
+func parseInterval(s Schedule) (time.Duration, error) {
+	if s.Interval == "" {
+		return 0, fmt.Errorf("schedule: every kind requires a non-empty interval")
+	}
+	d, err := time.ParseDuration(s.Interval)
+	if err != nil {
+		return 0, fmt.Errorf("schedule: invalid interval %q: %w", s.Interval, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("schedule: interval must be positive, got %q", s.Interval)
+	}
+	return d, nil
+}
+
 // ResolveLocation resolves a Schedule.TZ value to a *time.Location.
 //
 // "local" (TZLocal) → time.Local. Any other value is loaded as an IANA zone
@@ -63,8 +78,18 @@ func parseHHMM(at string) (hour, minute int, err error) {
 // contract; on a DST boundary the next fire's wall-clock can shift by an hour,
 // which is the expected behaviour for a fixed-period daily timer.
 func NextFire(s Schedule, ref time.Time) (time.Time, error) {
+	if s.Kind == ScheduleKindEvery {
+		// For display purposes: next fire is ref + interval (conservative estimate
+		// assuming just fired). For accurate next-fire accounting for LastFire, use
+		// JobNextFire.
+		d, err := parseInterval(s)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("schedule: NextFire: %w", err)
+		}
+		return ref.Add(d).UTC(), nil
+	}
 	if s.Kind != ScheduleKindDaily {
-		return time.Time{}, fmt.Errorf("schedule: NextFire: unsupported kind %q (v1 supports %q only)", s.Kind, ScheduleKindDaily)
+		return time.Time{}, fmt.Errorf("schedule: NextFire: unsupported kind %q (supported: %q, %q)", s.Kind, ScheduleKindDaily, ScheduleKindEvery)
 	}
 	loc, err := ResolveLocation(s.TZ)
 	if err != nil {
@@ -93,8 +118,16 @@ func NextFire(s Schedule, ref time.Time) (time.Time, error) {
 //
 // A fire exactly at ref counts as the previous fire (inclusive of ref).
 func PrevFire(s Schedule, ref time.Time) (time.Time, error) {
+	if s.Kind == ScheduleKindEvery {
+		// For display purposes: previous fire is ref - interval.
+		d, err := parseInterval(s)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("schedule: PrevFire: %w", err)
+		}
+		return ref.Add(-d).UTC(), nil
+	}
 	if s.Kind != ScheduleKindDaily {
-		return time.Time{}, fmt.Errorf("schedule: PrevFire: unsupported kind %q (v1 supports %q only)", s.Kind, ScheduleKindDaily)
+		return time.Time{}, fmt.Errorf("schedule: PrevFire: unsupported kind %q (supported: %q, %q)", s.Kind, ScheduleKindDaily, ScheduleKindEvery)
 	}
 	loc, err := ResolveLocation(s.TZ)
 	if err != nil {
@@ -127,6 +160,52 @@ func catchupWindow(j ScheduledJob) (time.Duration, error) {
 		return 0, fmt.Errorf("schedule: job %q: invalid catchup_window %q: %w", j.ID, j.CatchupWindow, err)
 	}
 	return d, nil
+}
+
+// JobNextFire returns the accurate next-fire instant for job j at ref, using
+// j.LastFire when available. This is the display companion to Decide: it gives
+// the "when will this job fire next" answer a human or `schedule list` can show.
+//
+//   - daily kind: delegates to NextFire(j.Schedule, ref).
+//   - every kind: lastFire + interval if j has fired before; ref (immediate) if not.
+func JobNextFire(j ScheduledJob, ref time.Time) (time.Time, error) {
+	if j.Schedule.Kind == ScheduleKindEvery {
+		d, err := parseInterval(j.Schedule)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("schedule: JobNextFire: %w", err)
+		}
+		lastFire, hadLast, err := parseLastFire(j)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if !hadLast {
+			return ref.UTC(), nil // never fired → fires immediately on next tick
+		}
+		return lastFire.Add(d).UTC(), nil
+	}
+	return NextFire(j.Schedule, ref)
+}
+
+// decideInterval computes the fire decision for a ScheduleKindEvery job.
+// Interval jobs fire as soon as the interval has elapsed since LastFire. There
+// is no "missed boundary" concept: if the daemon was down for multiple intervals,
+// exactly one fire is triggered on restart and the timer resets from that point.
+func decideInterval(j ScheduledJob, nowUTC time.Time) (FireDecision, error) {
+	d, err := parseInterval(j.Schedule)
+	if err != nil {
+		return FireDecision{}, fmt.Errorf("schedule: job %q: %w", j.ID, err)
+	}
+	lastFire, hadLast, err := parseLastFire(j)
+	if err != nil {
+		return FireDecision{}, err
+	}
+	if !hadLast {
+		return FireDecision{Fire: true, FireInstant: nowUTC}, nil
+	}
+	if nowUTC.Before(lastFire.Add(d)) {
+		return FireDecision{Fire: false}, nil
+	}
+	return FireDecision{Fire: true, FireInstant: nowUTC}, nil
 }
 
 // FireDecision is the pure verdict for whether a job is due at a reference time.
@@ -180,6 +259,10 @@ func parseLastFire(j ScheduledJob) (time.Time, bool, error) {
 // Returns an error only for malformed job fields (bad At/TZ/last_fire/window).
 func Decide(j ScheduledJob, nowUTC time.Time) (FireDecision, error) {
 	nowUTC = nowUTC.UTC()
+
+	if j.Schedule.Kind == ScheduleKindEvery {
+		return decideInterval(j, nowUTC)
+	}
 
 	prev, err := PrevFire(j.Schedule, nowUTC)
 	if err != nil {

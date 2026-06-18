@@ -23,15 +23,15 @@
 //     catchup:"off" disables it.
 package schedule
 
-// Schedule.Kind values. v1 supports "daily" only; "cron"/"interval" are reserved
-// so stored rows remain forward-compatible when those kinds are added.
+// Schedule.Kind values. v1 supports "daily" and "every"; "cron" is reserved.
 const (
 	// ScheduleKindDaily fires once per day at Schedule.At in Schedule.TZ.
 	ScheduleKindDaily = "daily"
+	// ScheduleKindEvery fires repeatedly at a fixed interval (Schedule.Interval).
+	// CLI syntax: every@<dur> (e.g. "every@5m"). Interval is a Go duration string.
+	ScheduleKindEvery = "every"
 	// ScheduleKindCron is reserved for a future cron-expression schedule kind.
 	ScheduleKindCron = "cron"
-	// ScheduleKindInterval is reserved for a future fixed-interval schedule kind.
-	ScheduleKindInterval = "interval"
 )
 
 // Action.Kind values.
@@ -69,16 +69,21 @@ const TZLocal = "local"
 
 // Schedule describes WHEN a job fires.
 //
-// v1: Kind is always "daily"; At is "HH:MM" 24h wall-clock; TZ is "local" or an
-// IANA zone name. The Kind discriminator is the forward-compatibility seam for
-// cron/interval kinds (D1).
+// daily kind: Kind="daily", At="HH:MM" 24h wall-clock, TZ="local" or IANA zone.
+// every kind: Kind="every", Interval=Go duration string (e.g. "5m"). At and TZ
+// are ignored. The Kind discriminator is the forward-compatibility seam.
 type Schedule struct {
-	// Kind is the schedule discriminator. v1: "daily" only.
+	// Kind is the schedule discriminator: "daily" or "every".
 	Kind string `json:"kind"`
 	// At is the daily fire time as "HH:MM" 24-hour wall-clock (e.g. "09:30").
-	At string `json:"at"`
+	// Used only when Kind="daily".
+	At string `json:"at,omitempty"`
 	// TZ is "local" (host time.Local) or an IANA zone name (e.g. "America/New_York").
-	TZ string `json:"tz"`
+	// Used only when Kind="daily".
+	TZ string `json:"tz,omitempty"`
+	// Interval is a Go duration string (e.g. "5m", "1h") for Kind="every".
+	// Ignored when Kind="daily".
+	Interval string `json:"interval,omitempty"`
 }
 
 // Action describes WHAT a job does when it fires.

@@ -393,6 +393,69 @@ func TestScheduleTick_CommandOverlapSkip(t *testing.T) {
 	}
 }
 
+// TestScheduleTick_IntervalFires covers the ScheduleKindEvery path end-to-end
+// through the tick: a job that has never fired fires immediately; a subsequent
+// tick that is too early does not re-fire; a tick after the interval elapses fires
+// again.
+func TestScheduleTick_IntervalFires(t *testing.T) {
+	deps, store, crew := newTickDeps(t)
+
+	job := schedule.ScheduledJob{
+		ID:            "interval1",
+		Schedule:      schedule.Schedule{Kind: schedule.ScheduleKindEvery, Interval: "1s"},
+		Action:        schedule.Action{Kind: schedule.ActionKindSpawnCrew, Crew: "owl", Queue: "night"},
+		Enabled:       true,
+		OverlapPolicy: schedule.OverlapPolicySkip,
+		Catchup:       schedule.CatchupOff,
+	}
+	if err := store.Add(job); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// First tick: never fired → should fire immediately.
+	runScheduleTick(context.Background(), deps)
+	if crew.count() != 1 {
+		t.Fatalf("interval job did not fire on first tick: count = %d, want 1", crew.count())
+	}
+
+	// Immediate second tick: interval not yet elapsed → no re-fire.
+	runScheduleTick(context.Background(), deps)
+	if crew.count() != 1 {
+		t.Fatalf("interval job re-fired before interval elapsed: count = %d, want 1", crew.count())
+	}
+}
+
+// TestScheduleTick_EnsureOpsMonitor verifies ensureOpsMonitorSchedule registers
+// the ops-monitor job when absent and is a no-op when already present.
+func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
+	deps, store, _ := newTickDeps(t)
+
+	// Before: job is absent.
+	if _, ok := store.Get(opsMonitorJobID); ok {
+		t.Fatal("ops-monitor job unexpectedly present before ensure call")
+	}
+
+	ensureOpsMonitorSchedule(store)
+
+	j, ok := store.Get(opsMonitorJobID)
+	if !ok {
+		t.Fatal("ops-monitor job not registered after ensureOpsMonitorSchedule")
+	}
+	if j.Schedule.Kind != schedule.ScheduleKindEvery {
+		t.Errorf("kind = %q, want %q", j.Schedule.Kind, schedule.ScheduleKindEvery)
+	}
+	if j.Schedule.Interval != "5m" {
+		t.Errorf("interval = %q, want %q", j.Schedule.Interval, "5m")
+	}
+	if !j.Enabled {
+		t.Errorf("ops-monitor job should be enabled by default")
+	}
+
+	// Second call is a no-op (idempotent).
+	ensureOpsMonitorSchedule(store)
+	_ = deps // satisfy unused import
+}
+
 // TestParseCommsWho_NDJSONContract pins the FIX-3 `comms who --json` contract:
 // NDJSON rows; only status=="online" agents are reported; stale/dead rows are
 // excluded; and a JSON-array fallback is honoured so a future shape change fails

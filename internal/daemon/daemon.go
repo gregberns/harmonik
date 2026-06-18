@@ -1667,6 +1667,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		if loadErr := scheduleStore.Load(); loadErr != nil {
 			return fmt.Errorf("daemon.Start: load schedule store: %w", loadErr)
 		}
+		ensureOpsMonitorSchedule(scheduleStore)
 		deps.scheduleStore = scheduleStore
 		deps.scheduleWakeC = scheduleStore.WakeCh()
 		deps.crewHandler = crewHandler // may be nil in unit-test mode (no socket)

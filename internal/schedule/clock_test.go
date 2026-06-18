@@ -109,6 +109,9 @@ func TestNextFire_Errors(t *testing.T) {
 		{"bad minute", Schedule{Kind: ScheduleKindDaily, At: "09:99", TZ: "UTC"}},
 		{"missing colon", Schedule{Kind: ScheduleKindDaily, At: "0900", TZ: "UTC"}},
 		{"bad tz", Schedule{Kind: ScheduleKindDaily, At: "09:00", TZ: "Not/AZone"}},
+		{"every kind empty interval", Schedule{Kind: ScheduleKindEvery}},
+		{"every kind zero interval", Schedule{Kind: ScheduleKindEvery, Interval: "0s"}},
+		{"every kind bad interval", Schedule{Kind: ScheduleKindEvery, Interval: "notadur"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -273,4 +276,92 @@ func TestNextFire_DSTSpringForward(t *testing.T) {
 	if gotNY.Year() != 2026 || gotNY.Month() != time.March || gotNY.Day() != 8 {
 		t.Fatalf("NextFire drifted off the spring-forward day: got %s (NY)", gotNY.Format(time.RFC3339))
 	}
+}
+
+// TestDecideInterval covers the ScheduleKindEvery fire logic.
+func TestDecideInterval(t *testing.T) {
+	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	every5m := Schedule{Kind: ScheduleKindEvery, Interval: "5m"}
+
+	tests := []struct {
+		name      string
+		job       ScheduledJob
+		now       time.Time
+		wantFire  bool
+	}{
+		{
+			name:     "never fired → fire immediately",
+			job:      ScheduledJob{ID: "a", Schedule: every5m},
+			now:      base,
+			wantFire: true,
+		},
+		{
+			name:     "fired 6m ago → due",
+			job:      ScheduledJob{ID: "a", Schedule: every5m, LastFire: base.Add(-6 * time.Minute).Format(time.RFC3339)},
+			now:      base,
+			wantFire: true,
+		},
+		{
+			name:     "fired exactly 5m ago → due (boundary inclusive)",
+			job:      ScheduledJob{ID: "a", Schedule: every5m, LastFire: base.Add(-5 * time.Minute).Format(time.RFC3339)},
+			now:      base,
+			wantFire: true,
+		},
+		{
+			name:     "fired 3m ago → not due",
+			job:      ScheduledJob{ID: "a", Schedule: every5m, LastFire: base.Add(-3 * time.Minute).Format(time.RFC3339)},
+			now:      base,
+			wantFire: false,
+		},
+		{
+			name:     "daemon was down 2h (many missed intervals) → fire exactly once",
+			job:      ScheduledJob{ID: "a", Schedule: every5m, LastFire: base.Add(-2 * time.Hour).Format(time.RFC3339)},
+			now:      base,
+			wantFire: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.job.NormaliseDefaults()
+			got, err := Decide(tc.job, tc.now)
+			if err != nil {
+				t.Fatalf("Decide: %v", err)
+			}
+			if got.Fire != tc.wantFire {
+				t.Errorf("Fire = %v, want %v", got.Fire, tc.wantFire)
+			}
+			if got.MissedSkipped {
+				t.Errorf("MissedSkipped should never be true for interval schedules")
+			}
+		})
+	}
+}
+
+func TestJobNextFire_Interval(t *testing.T) {
+	base := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	every5m := Schedule{Kind: ScheduleKindEvery, Interval: "5m"}
+
+	t.Run("never fired → returns ref (fires immediately)", func(t *testing.T) {
+		j := ScheduledJob{ID: "x", Schedule: every5m}
+		got, err := JobNextFire(j, base)
+		if err != nil {
+			t.Fatalf("JobNextFire: %v", err)
+		}
+		if !got.Equal(base.UTC()) {
+			t.Fatalf("JobNextFire = %s, want %s (ref)", got.Format(time.RFC3339), base.UTC().Format(time.RFC3339))
+		}
+	})
+
+	t.Run("fired 2m ago → next in 3m", func(t *testing.T) {
+		lastFire := base.Add(-2 * time.Minute)
+		j := ScheduledJob{ID: "x", Schedule: every5m, LastFire: lastFire.Format(time.RFC3339)}
+		got, err := JobNextFire(j, base)
+		if err != nil {
+			t.Fatalf("JobNextFire: %v", err)
+		}
+		want := lastFire.Add(5 * time.Minute).UTC()
+		if !got.Equal(want) {
+			t.Fatalf("JobNextFire = %s, want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
+		}
+	})
 }

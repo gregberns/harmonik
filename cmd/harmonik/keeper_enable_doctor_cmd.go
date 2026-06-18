@@ -641,13 +641,23 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 7. .managed present.
+	// 7. .managed present; and when both managed and live SIDs are set, they must agree.
+	// A mismatch means the keeper is bound to a dead session and will never act (blind).
 	{
 		managedPath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".managed")
 		if _, statErr := os.Stat(managedPath); statErr != nil {
 			check("managed", false, ".managed marker absent — keeper is in passive mode (no handoff cycle). Add with: harmonik keeper enable --yes-destructive, or: touch "+managedPath)
 		} else {
-			check("managed", true, ".managed present (handoff cycle is LIVE)")
+			managedSID, _ := keeper.ReadManagedSessionID(cfg.projectDir, cfg.agentName)
+			if managedSID != "" {
+				if cf, _, ctxErr := keeper.ReadCtxFile(cfg.projectDir, cfg.agentName); ctxErr == nil && cf.SessionID != "" && cf.SessionID != managedSID {
+					check("managed", false, fmt.Sprintf("managed SID %q != live gauge/.sid SID %q — keeper bound to DEAD session (blind); restart watcher", managedSID, cf.SessionID))
+				} else {
+					check("managed", true, ".managed present (handoff cycle is LIVE)")
+				}
+			} else {
+				check("managed", true, ".managed present (handoff cycle is LIVE)")
+			}
 		}
 	}
 

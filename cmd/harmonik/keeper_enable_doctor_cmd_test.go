@@ -586,6 +586,45 @@ func TestKeeperDoctor_ManagedPresentReported(t *testing.T) {
 	}
 }
 
+// TestDoctor_ManagedSidMismatchIsRed verifies that doctor exits non-zero and
+// reports a RED "managed" check when .managed holds a session ID that differs
+// from the live gauge/.sid session ID — the "keeper bound to dead session" case.
+func TestDoctor_ManagedSidMismatchIsRed(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+	keeperDir := filepath.Join(cfg.projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Write .managed with a dead (old) session ID.
+	deadSID := "dead0000-0000-4000-a000-000000000001"
+	managedPath := filepath.Join(keeperDir, "orchestrator.managed")
+	if err := os.WriteFile(managedPath, []byte(deadSID+"\n"), 0o600); err != nil {
+		t.Fatalf("write .managed: %v", err)
+	}
+
+	// Write .ctx (gauge) with a different live session ID.
+	liveSID := "live0000-0000-4000-a000-000000000002"
+	ctxContent := `{"pct":50,"session_id":"` + liveSID + `","ts":"2026-01-01T00:00:00Z"}`
+	ctxPath := filepath.Join(keeperDir, "orchestrator.ctx")
+	if err := os.WriteFile(ctxPath, []byte(ctxContent), 0o600); err != nil {
+		t.Fatalf("write .ctx: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runKeeperDoctor(cfg, &stdout, &stderr)
+
+	out := stdout.String() + stderr.String()
+	if code == 0 {
+		t.Errorf("want non-zero exit (managed SID mismatch), got 0\noutput: %s", out)
+	}
+	if !strings.Contains(out, "DEAD") && !strings.Contains(out, "dead") && !strings.Contains(out, "blind") {
+		t.Errorf("doctor output should mention dead session or blind; got: %s", out)
+	}
+}
+
 // TestKeeperDoctor_RejectsPathTraversal verifies that doctor rejects agent
 // names with path traversal sequences.
 func TestKeeperDoctor_RejectsPathTraversal(t *testing.T) {

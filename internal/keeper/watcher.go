@@ -377,6 +377,16 @@ type WatcherConfig struct {
 	// (isPrimarySID); an absent/invalid .sid fails CLOSED. When nil,
 	// ReadSessionIDFile is used. Set in tests. Refs: hk-75mr, hk-8prq.
 	ReadSidFn func(projectDir, agent string) (string, time.Time, error)
+
+	// SleepingCheckFn reports whether the session identified by sessionID is
+	// currently parked by the QuiesceArbiter (.harmonik/.sleeping.<sessionID>
+	// marker, M1 / hk-jeby). When it returns true, the keeper suppresses BOTH
+	// warn pane-injection AND cycle dispatch so the sleeping session is not woken
+	// by its own keeper (M3 / hk-l3gs, Risk 1 option a). The keeper state machine
+	// (warnArmed/warnFired) stays intact; only tmux delivery is gated, so the
+	// keeper cooperates rather than fights. When nil, IsSleeping is used.
+	// Refs: hk-l3gs, hk-jeby.
+	SleepingCheckFn func(projectDir, sessionID string) bool
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -443,6 +453,9 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.ReadSidFn == nil {
 		c.ReadSidFn = ReadSessionIDFile
+	}
+	if c.SleepingCheckFn == nil {
+		c.SleepingCheckFn = IsSleeping
 	}
 	// Auto-enable on-demand restart UX for the captain agent. The captain uses
 	// 'harmonik keeper restart-now' (ON-059) rather than the keeper's auto-cycle,
@@ -778,6 +791,14 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// once the pane has quiesced. Retries on each tick until success so a
 			// non-quiesced crossing tick never permanently suppresses injection.
 			if pendingInject && gaugeQuiesced {
+				// Sleep gate (M3 / hk-l3gs): do not inject into a parked session.
+				// warnFired and pendingInject remain true so delivery retries on the
+				// next tick once the session wakes (M1 failsafe clears the marker).
+				if w.cfg.SleepingCheckFn(w.cfg.ProjectDir, ctxFile.SessionID) {
+					slog.DebugContext(ctx, "keeper: inject suppressed — session is sleeping",
+						"agent", w.cfg.AgentName, "session_id", ctxFile.SessionID)
+					continue
+				}
 				inject := w.cfg.InjectFn
 				if inject == nil {
 					if w.cfg.OnDemandRestart {

@@ -257,3 +257,21 @@ func ClearDispatching(projectDir, agent string) error {
 	}
 	return nil
 }
+
+// IsSleeping reports whether the session identified by sessionID is currently
+// parked by the QuiesceArbiter (M1 / hk-jeby). It checks for the presence of
+// .harmonik/.sleeping.<sessionID>, the per-session marker written by the daemon
+// when a session is quiesced. When sessionID or projectDir is empty, returns
+// false (fail-open: cannot determine state, allow keeper to act).
+//
+// The keeper watcher (M3 / hk-l3gs) uses this to gate warn pane-injection and
+// cycle dispatch so a sleeping session is not woken by its own keeper.
+// Refs: hk-l3gs, hk-jeby.
+func IsSleeping(projectDir, sessionID string) bool {
+	if sessionID == "" || projectDir == "" {
+		return false
+	}
+	path := filepath.Join(projectDir, ".harmonik", ".sleeping."+sessionID)
+	_, err := os.Stat(path)
+	return err == nil
+}

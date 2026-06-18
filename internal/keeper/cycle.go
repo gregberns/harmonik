@@ -175,6 +175,15 @@ type CyclerConfig struct {
 	// AttachedInactiveTimeout default is 5m) while cutting event volume ~12x.
 	// Zero → defaultOperatorAttachedSampleInterval. Refs: hk-2yvx.
 	OperatorAttachedSampleInterval time.Duration
+
+	// SleepingCheckFn reports whether the session identified by sessionID is
+	// currently parked by the QuiesceArbiter (.harmonik/.sleeping.<sessionID>,
+	// M1 / hk-jeby). MaybeRun returns nil (cycle deferred) when this returns
+	// true, so the keeper does not inject /session-handoff into a sleeping
+	// session. M1's max-sleep failsafe wakes the session first; the keeper acts
+	// on the next tick after the marker is cleared. When nil, IsSleeping is used.
+	// Refs: hk-l3gs, hk-jeby.
+	SleepingCheckFn func(projectDir, sessionID string) bool
 }
 
 // defaultOperatorAttachedSampleInterval is the default Gate-7 emission sample
@@ -292,6 +301,9 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.OperatorAttachedFn == nil {
 		c.OperatorAttachedFn = OperatorAttached
+	}
+	if c.SleepingCheckFn == nil {
+		c.SleepingCheckFn = IsSleeping
 	}
 }
 
@@ -619,6 +631,13 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	}
 	// Gate 5: no in-flight queue work (fail-closed via HoldingDispatchFn).
 	if c.cfg.HoldingDispatchFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		return nil
+	}
+	// Gate 5b: session sleeping — defer cycle (M3 / hk-l3gs). The keeper must
+	// not inject /session-handoff into a parked session. M1's max-sleep failsafe
+	// wakes a genuinely-overflowing session first; the keeper acts on the next
+	// tick after .sleeping.<sessionID> is cleared.
+	if cf.SessionID != "" && c.cfg.SleepingCheckFn(c.cfg.ProjectDir, cf.SessionID) {
 		return nil
 	}
 	// Gate 6: full anti-loop suppression (only applies after the first fire).

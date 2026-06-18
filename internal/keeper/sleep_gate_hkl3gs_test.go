@@ -309,7 +309,7 @@ func TestCyclerMaybeRun_SleepingGateReachedWhenAwake(t *testing.T) {
 	cfg := keeper.CyclerConfig{
 		AgentName:  agent,
 		ProjectDir: projectDir,
-		TmuxTarget: "",    // no real tmux; runCycle skips handoff injection
+		TmuxTarget: "", // no real tmux; runCycle skips handoff injection
 		ActPct:     80.0,
 		WarnPct:    70.0,
 		// All gates pass; session is NOT sleeping.

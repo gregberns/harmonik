@@ -284,10 +284,10 @@ func TestDecideInterval(t *testing.T) {
 	every5m := Schedule{Kind: ScheduleKindEvery, Interval: "5m"}
 
 	tests := []struct {
-		name      string
-		job       ScheduledJob
-		now       time.Time
-		wantFire  bool
+		name     string
+		job      ScheduledJob
+		now      time.Time
+		wantFire bool
 	}{
 		{
 			name:     "never fired → fire immediately",

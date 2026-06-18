@@ -552,13 +552,13 @@ func TestWatcher_RejectsConcurrentDifferentSession(t *testing.T) {
 
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{
-		AgentName:    agent,
-		ProjectDir:   projectDir,
-		PollInterval: 10 * time.Millisecond,
-		WarnPct:      80.0,
-		IdleQuiesce:  1 * time.Millisecond,
-		Staleness:    120 * time.Second,
-		TmuxTarget:   "",
+		AgentName:             agent,
+		ProjectDir:            projectDir,
+		PollInterval:          10 * time.Millisecond,
+		WarnPct:               80.0,
+		IdleQuiesce:           1 * time.Millisecond,
+		Staleness:             120 * time.Second,
+		TmuxTarget:            "",
 		ReadManagedSessionFn:  func(_, _ string) (string, error) { return managedSID, nil },
 		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
 		// .sid does NOT endorse the gauge's session_id.
@@ -598,13 +598,13 @@ func TestWatcher_NoAdoptWhenSidMalformed(t *testing.T) {
 	adoptCalled := false
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{
-		AgentName:    agent,
-		ProjectDir:   projectDir,
-		PollInterval: 10 * time.Millisecond,
-		WarnPct:      80.0,
-		IdleQuiesce:  1 * time.Millisecond,
-		Staleness:    120 * time.Second,
-		TmuxTarget:   "",
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		PollInterval:         10 * time.Millisecond,
+		WarnPct:              80.0,
+		IdleQuiesce:          1 * time.Millisecond,
+		Staleness:            120 * time.Second,
+		TmuxTarget:           "",
 		ReadManagedSessionFn: func(_, _ string) (string, error) { return oldSID, nil },
 		WriteManagedSessionFn: func(_, _, _ string) error {
 			adoptCalled = true

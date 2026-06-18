@@ -92,6 +92,7 @@ func drainedLedger() *fakeLedger { return &fakeLedger{} }
 func openEpic(id core.BeadID) core.BeadRecord {
 	return core.BeadRecord{BeadID: id, BeadType: beadTypeEpic, Status: core.CoarseStatusOpen}
 }
+
 func blockedChild(id core.BeadID) core.BeadRecord {
 	return core.BeadRecord{BeadID: id, BeadType: "task", Status: core.CoarseStatusBlocked}
 }

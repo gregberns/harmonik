@@ -2,7 +2,20 @@
 
 **Operator brief:** The captain does too much busy-work. Its startup procedure alone pushes context past 100k (target ceiling 200k), restart has issues, and conflicting instructions make it unreliable. Investigate, find the inefficiencies and contradictions, make the captain leaner and more reliable. Converge → beads → fix in worktrees → merge.
 
-## Status: CE1 LANDED — CE4/CE5/CE6 tracked, held
+## Status: ✅ COMPLETE — all 4 beads merged to main
+
+Epic **hk-unjy** CLOSED. CE1/CE4/CE5/CE6 all landed + pushed. Reviews R1–R7 in reviews/.
+One documented follow-up: **hk-orni** (P2) — extend the ops-monitor review-gate to also catch the DOT short-circuit class (`node_dispatch_requested node_id=review*` with no verdict); known limitation, not a regression.
+
+| Bead | Landed | Reviewer |
+|------|--------|----------|
+| CE1 hk-039z | 8ccae3e6 + e418223b (asset sync) | R3 APPROVE-WITH-NITS |
+| CE4 hk-ayvx | a4a98f94 + 3ef6fb6f (review-gate fix) | R6 REQUEST_CHANGES → R7 APPROVE-WITH-LIMITATION |
+| CE5 hk-y7v8 | 09c112c5 | R5 APPROVE-WITH-NITS |
+| CE6 hk-9mpk | d47ebab4 + local deploy | R4 APPROVE-WITH-NITS |
+
+---
+### (historical) earlier status
 
 Epic **hk-unjy**. Investigation + review COMPLETE — see CONVERGENCE.md. Beads:
 - CE1 hk-039z — captain skill-lean + de-conflict + real boot-digest. **✅ MERGED to main** (8ccae3e6 + asset re-sync e418223b; reviewer APPROVE-WITH-NITS R3; guard test green; pushed). Boot cost ~81k→~55-60k.

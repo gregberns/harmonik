@@ -7,12 +7,24 @@
 #   3. single-mode      — max_concurrent == 1 (throughput bottleneck)
 #   4. crew-staleness   — comms last_seen >150s; signals after 2 consecutive misses
 #   5. ready-unstaffed  — queue has pending_items > 0 but no workers and no online crew
-#   6. idle-fleet       — no active workers + last run event >20m ago
+#   6. idle-fleet       — no active workers + last run event >20m ago (lull detect)
+#   7. review-gate      — a run_completed run_id with NO matching reviewer_verdict =
+#                         review BYPASSED (M2 code-half; CE4). Deterministic run_id↔
+#                         verdict JOIN over the last N run_completed run_ids, NOT a
+#                         (broken) workflow_mode grep.
+#   8. backlog-ready    — `br ready --limit 0` shows ready beads (captain staffing
+#                         signal — judgment item, surfaced via digest)
+#
+# This is the DETERMINISTIC slice of the captain's /loop 12m health tick (CE4,
+# leanfleet D4/D6). It runs as a cheap bash schedule (NOT an Opus turn); the captain
+# reads latest.json once per tick and only escalates on FLAGGED judgment items.
 #
 # Writes:  $PROJ/.harmonik/ops-monitor/latest.json  (machine snapshot, always)
+#          The snapshot includes a `checks` digest map: name -> {state:ok|flag, detail}
+#          so the captain can read one structured signal-vs-digest object.
 # Sends:   harmonik comms --from ops-monitor --to captain --topic ops-monitor
-#            immediate : daemon-down | paused-queue | single-mode
-#            digest    : ready-unstaffed | idle-fleet  (≤15m cooldown)
+#            immediate : daemon-down | paused-queue | single-mode | review-bypass
+#            digest    : ready-unstaffed | idle-fleet | backlog-ready  (≤15m cooldown)
 #            all-green : write json, send nothing
 #
 # Usage:
@@ -23,7 +35,7 @@
 #   stale_crew_misses  : {crew_name: consecutive_miss_count}
 #   last_digest_ts     : unix epoch of last digest send
 #
-# Refs: hk-k2px, leanfleet D4 (epic hk-itoc)
+# Refs: hk-k2px, hk-ayvx (CE4), leanfleet D4/D6 (epic hk-itoc)
 
 set -euo pipefail
 
@@ -39,6 +51,9 @@ STALE_THRESHOLD=150   # seconds: crew last_seen older than this = stale
 MISS_LIMIT=2          # consecutive stale observations before signaling
 IDLE_THRESHOLD=1200   # 20 minutes: no active workers + no recent event = idle
 DIGEST_COOLDOWN=900   # 15 minutes: minimum gap between digest sends
+REVIEW_GATE_WINDOW=10 # review-gate: examine the last N run_completed run_ids
+REVIEW_GATE_GRACE=180 # seconds: a run_completed younger than this is skipped (its
+                      # reviewer_verdict may still be in flight — avoids false bypass)
 
 # Inert queues / dead-crew glob patterns — paused-by-failure on these NEVER fires an
 # immediate alert. Add exact names or fnmatch-style globs. Editable here.
@@ -114,6 +129,32 @@ if [[ $hk_comms_exit -eq 17 ]]; then
   DAEMON_UP=false
 fi
 
+# ── Check 8: Backlog-readiness (br ready --limit 0) ────────────────────────────
+# Deterministic count of beads ready to staff. The COUNT is deterministic; the
+# staffing DECISION (which crew, which lane) stays on the Opus captain — we only
+# surface the count so the captain wakes when ready work exists, not every 12m.
+READY_COUNT=0
+if command -v br >/dev/null 2>&1; then
+  BR_READY_JSON=$( (cd "$PROJ" && br ready --limit 0 --json) 2>/dev/null ) || BR_READY_JSON=""
+  if [[ -n "$BR_READY_JSON" ]]; then
+    READY_COUNT=$(printf '%s' "$BR_READY_JSON" | py3 "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    # br --json may emit a bare list or {'issues': [...]} — handle both.
+    if isinstance(d, dict):
+        items = d.get('issues') or d.get('ready') or d.get('beads') or []
+    elif isinstance(d, list):
+        items = d
+    else:
+        items = []
+    print(len(items))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+  fi
+fi
+
 # ── Check events for idle-fleet ───────────────────────────────────────────────
 
 LAST_RUN_EVENT_TS=0
@@ -170,6 +211,9 @@ inert_suppress     = json.loads('''$INERT_SUPPRESS_JSON''')
 live_allow         = json.loads('''$LIVE_ALLOW_JSON''')
 comms_raw          = '''$COMMS_WHO_NDJSON'''
 qlist_raw          = '''$QUEUE_LIST_JSON'''
+ready_count        = int('$READY_COUNT')
+review_window      = int('$REVIEW_GATE_WINDOW')
+review_grace       = int('$REVIEW_GATE_GRACE')
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -178,6 +222,15 @@ qlist_raw          = '''$QUEUE_LIST_JSON'''
 # sender has an agent_message within stale_thresh seconds (hk-gu3v).
 import os as _os
 last_msg_ts = {}  # agent_name -> epoch of most recent agent_message
+# Review-gate (M2 code-half): join run_completed -> reviewer_verdict by run_id.
+run_completed_ts = {}   # run_id -> epoch of the run_completed event
+verdict_run_ids  = set() # run_ids that have a reviewer_verdict event
+
+def _ev_epoch(_tw, _dt):
+    _ts_clean = _tw[:19].replace('T', ' ')
+    _d = _dt.datetime.strptime(_ts_clean, '%Y-%m-%d %H:%M:%S')
+    return int(_d.replace(tzinfo=_dt.timezone.utc).timestamp())
+
 _events_path = _os.path.join(proj, '.harmonik', 'events', 'events.jsonl')
 if _os.path.isfile(_events_path):
     import datetime as _dt
@@ -194,24 +247,51 @@ if _os.path.isfile(_events_path):
                 continue
             try:
                 _ev = json.loads(_line)
-                if _ev.get('type') != 'agent_message':
-                    continue
-                _tw = _ev.get('timestamp_wall', '')
-                if not _tw:
-                    continue
-                _ts_clean = _tw[:19].replace('T', ' ')
-                _d = _dt.datetime.strptime(_ts_clean, '%Y-%m-%d %H:%M:%S')
-                _epoch = int(_d.replace(tzinfo=_dt.timezone.utc).timestamp())
+                _etype = _ev.get('type', '')
                 _payload = _ev.get('payload', {})
                 if isinstance(_payload, str):
-                    _payload = json.loads(_payload)
-                _sender = _payload.get('from', '')
-                if _sender and _epoch > last_msg_ts.get(_sender, 0):
-                    last_msg_ts[_sender] = _epoch
+                    try:
+                        _payload = json.loads(_payload)
+                    except Exception:
+                        _payload = {}
+
+                if _etype == 'agent_message':
+                    _tw = _ev.get('timestamp_wall', '')
+                    if not _tw:
+                        continue
+                    _epoch = _ev_epoch(_tw, _dt)
+                    _sender = _payload.get('from', '')
+                    if _sender and _epoch > last_msg_ts.get(_sender, 0):
+                        last_msg_ts[_sender] = _epoch
+
+                elif _etype == 'run_completed':
+                    # run_id lives in payload; epoch from timestamp_wall.
+                    _rid = _payload.get('run_id') or _ev.get('run_id') or ''
+                    _tw = _ev.get('timestamp_wall', '')
+                    if _rid and _tw:
+                        run_completed_ts[_rid] = _ev_epoch(_tw, _dt)
+
+                elif _etype == 'reviewer_verdict':
+                    # reviewer_verdict carries run_id at top level AND in payload.
+                    _rid = _ev.get('run_id') or _payload.get('run_id') or ''
+                    if _rid:
+                        verdict_run_ids.add(_rid)
             except Exception:
                 pass
     except Exception:
         pass
+
+# ── Review-gate: completed runs (oldest-first window, past grace) with no verdict ─
+# A run_completed run_id that has NO matching reviewer_verdict ran review-bypassed.
+# Skip runs younger than review_grace — their verdict may still be in flight.
+_recent_completed = sorted(run_completed_ts.items(), key=lambda kv: kv[1])
+_recent_completed = _recent_completed[-review_window:]
+review_bypass_run_ids = []
+for _rid, _cts in _recent_completed:
+    if (ts_epoch - _cts) < review_grace:
+        continue  # too young to judge — verdict may still arrive
+    if _rid not in verdict_run_ids:
+        review_bypass_run_ids.append(_rid)
 
 # ── Parse comms who ──────────────────────────────────────────────────────────
 online_crews = {}   # crew_name -> last_seen_epoch
@@ -329,6 +409,8 @@ if paused_queues:
     immediate_signals.append('paused-queue:' + ','.join(paused_queues))
 if single_mode:
     immediate_signals.append('single-mode:max_concurrent=1')
+if review_bypass_run_ids:
+    immediate_signals.append('review-bypass:' + ','.join(review_bypass_run_ids))
 
 if stale_signal_crews:
     names = ','.join(c['crew'] for c in stale_signal_crews)
@@ -337,8 +419,34 @@ if ready_unstaffed:
     digest_signals.append('ready-unstaffed:' + ','.join(ready_unstaffed))
 if idle_fleet:
     digest_signals.append('idle-fleet:age=' + str(idle_age_s) + 's')
+# Backlog-ready: only a JUDGMENT signal when there is ready work AND a free slot
+# (total_active_workers < max_concurrent). The captain decides staffing; we just
+# surface that staffing MAY be warranted so the captain wakes only then.
+backlog_ready = daemon_up and ready_count > 0 and total_workers < max(max_concurrent, 1)
+if backlog_ready:
+    digest_signals.append('backlog-ready:count=' + str(ready_count))
 
 all_green = not immediate_signals and not digest_signals
+
+# ── Checks digest map (signal-vs-digest; one structured object for the captain) ─
+# Each deterministic check -> {state: 'ok'|'flag', detail: <str>}. The captain reads
+# this single map and escalates only on the JUDGMENT-flagged items (D6).
+checks = {
+    'daemon-up':     {'state': 'ok' if daemon_up else 'flag',
+                      'detail': 'reachable' if daemon_up else 'queue status exit 17'},
+    'paused-queues': {'state': 'flag' if paused_queues else 'ok',
+                      'detail': ','.join(paused_queues) if paused_queues else 'none'},
+    'single-mode':   {'state': 'flag' if single_mode else 'ok',
+                      'detail': 'max_concurrent=1' if single_mode else 'max_concurrent=' + str(max_concurrent)},
+    'crew-fresh':    {'state': 'flag' if stale_signal_crews else 'ok',
+                      'detail': ','.join(c['crew'] for c in stale_signal_crews) if stale_signal_crews else 'all <150s'},
+    'review-gate':   {'state': 'flag' if review_bypass_run_ids else 'ok',
+                      'detail': ('unreviewed:' + ','.join(review_bypass_run_ids)) if review_bypass_run_ids else 'all completed runs have a verdict'},
+    'backlog-ready': {'state': 'flag' if backlog_ready else 'ok',
+                      'detail': ('ready=' + str(ready_count) + ' free_slot') if backlog_ready else 'ready=' + str(ready_count)},
+    'lull':          {'state': 'flag' if idle_fleet else 'ok',
+                      'detail': ('idle ' + str(idle_age_s) + 's') if idle_fleet else 'active' if total_workers > 0 else 'idle<thresh'},
+}
 
 # ── De-dup + cooldown for immediate signals ──────────────────────────────────
 # Build new_alerted: {signal_key: first_alert_epoch} persisted across runs.
@@ -370,7 +478,7 @@ new_last_digest = ts_epoch if send_digest else prev_digest
 
 # ── Snapshot ─────────────────────────────────────────────────────────────────
 snapshot = {
-    'schema_version': 1,
+    'schema_version': 2,
     'ts': ts,
     'daemon_up': daemon_up,
     'max_concurrent': max_concurrent,
@@ -383,6 +491,10 @@ snapshot = {
     'idle_fleet': idle_fleet,
     'idle_fleet_age_s': idle_age_s,
     'total_active_workers': total_workers,
+    'ready_count': ready_count,
+    'backlog_ready': backlog_ready,
+    'review_bypass_run_ids': review_bypass_run_ids,
+    'checks': checks,
     'immediate_signals': immediate_signals,
     'send_immediate_signals': send_immediate_signals,
     'digest_signals': digest_signals,

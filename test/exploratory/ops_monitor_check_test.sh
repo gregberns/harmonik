@@ -14,6 +14,12 @@
 #   [x] idle-fleet           → digest signal
 #   [x] all-green            → no comms sent
 #   [x] inert-queue suppression (main queue paused → no alert)
+#   [x] review-gate bypass   → immediate signal (run_completed, no reviewer_verdict)
+#   [x] review-gate clean    → no flag (run_completed has matching verdict)
+#   [x] review-gate grace    → no flag (fresh run, verdict may be in flight)
+#   [x] backlog-ready        → digest signal (br ready beads + free slot)
+#   [x] backlog suppressed   → no flag when all slots busy
+#   [x] checks map present, schema_version=2
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -117,6 +123,7 @@ setup_fixture() {
   local hk_cw_json=''
   local state_json=''
   local events_content=''
+  local br_ready_json='[]'   # `br ready --limit 0 --json` output for the stub
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -126,6 +133,7 @@ setup_fixture() {
       --hk-comms-who-json)      hk_cw_json="$2";    shift 2 ;;
       --state-json)             state_json="$2";    shift 2 ;;
       --events-jsonl)           events_content="$2";shift 2 ;;
+      --br-ready-json)          br_ready_json="$2"; shift 2 ;;
       *) echo "setup_fixture: unknown arg $1" >&2; return 1 ;;
     esac
   done
@@ -191,6 +199,25 @@ case "\$*" in
 esac
 EOF
   chmod +x "$stub_bin"
+
+  # Stub `br` so the backlog-readiness check is deterministic in tests.
+  local br_ready_escaped
+  br_ready_escaped=$(printf '%s' "$br_ready_json" | sed "s/'/'\\\\''/g")
+  local br_bin="$tmpdir/bin/br"
+  cat > "$br_bin" <<EOF
+#!/usr/bin/env bash
+# Stub br
+BR_READY_JSON='${br_ready_escaped}'
+case "\$*" in
+  ready*--json*|*ready*--json*)
+    printf '%s\n' "\$BR_READY_JSON"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+EOF
+  chmod +x "$br_bin"
 
   printf '%s' "$tmpdir"
 }
@@ -431,6 +458,162 @@ if [[ -f "$PROJ/.harmonik/ops-monitor/latest.json" ]]; then
 else
   fail "latest.json missing after daemon-down"
 fi
+rm -rf "$PROJ"
+
+# ── checks-map assertion helper ───────────────────────────────────────────────
+assert_check_state() {
+  local label="$1" file="$2" check="$3" expected="$4"
+  local actual
+  actual=$(python3 -c "
+import json
+d = json.load(open('$file'))
+print(d.get('checks', {}).get('$check', {}).get('state', 'MISSING'))
+" 2>/dev/null || echo "MISSING")
+  if [[ "$actual" == "$expected" ]]; then
+    pass "$label"
+  else
+    fail "$label (checks[$check].state expected='$expected' actual='$actual')"
+  fi
+}
+
+# ── Test 10: review-gate bypass — run_completed with NO reviewer_verdict ───────
+echo ""
+echo "=== Test 10: review-gate bypass (completed run, no verdict) — immediate ==="
+OLD_WALL=$(ts_ago 600)   # 10 min old → past the 180s grace, judgeable
+# A run_completed run_id 'r-bypass' with NO matching reviewer_verdict.
+EVENTS='{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-bypass","success":true}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$EVENTS" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "review-bypass stdout IMMEDIATE" "IMMEDIATE"     "$OUTPUT"
+assert_contains "review-bypass stdout signal"    "review-bypass" "$OUTPUT"
+assert_json_list_contains "immediate_signals has review-bypass" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "review-bypass"
+assert_json_list_contains "review_bypass_run_ids has r-bypass" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review_bypass_run_ids" "r-bypass"
+assert_check_state "checks.review-gate=flag" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review-gate" "flag"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "review-bypass: comms sent"
+  assert_contains "review-bypass comms [IMMEDIATE]" "[IMMEDIATE]"   "$(cat "$LOG")"
+  assert_contains "review-bypass comms signal"      "review-bypass" "$(cat "$LOG")"
+else
+  fail "review-bypass: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 11: review-gate clean — completed run WITH a matching verdict ─────────
+echo ""
+echo "=== Test 11: review-gate clean (completed run has verdict) — no flag ==="
+OLD_WALL=$(ts_ago 600)
+EVENTS='{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-ok","success":true}}
+{"type":"reviewer_verdict","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-ok","payload":{"run_id":"r-ok","verdict":"APPROVE"}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$EVENTS" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "review-gate clean all-green" "all-green" "$OUTPUT"
+assert_json_list_empty "review_bypass_run_ids empty" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review_bypass_run_ids"
+assert_check_state "checks.review-gate=ok" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review-gate" "ok"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  fail "review-gate clean: no comms should be sent"
+else
+  pass "review-gate clean: no comms sent"
+fi
+rm -rf "$PROJ"
+
+# ── Test 12: review-gate grace — fresh completed run NOT yet judged ───────────
+echo ""
+echo "=== Test 12: review-gate grace (fresh run, verdict may be in flight) — no flag ==="
+FRESH_WALL=$(ts_ago 30)   # <180s grace → skip, do not call bypass
+EVENTS='{"type":"run_completed","timestamp_wall":"'"$FRESH_WALL"'","payload":{"run_id":"r-fresh","success":true}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$EVENTS" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_json_list_empty "grace: review_bypass_run_ids empty" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review_bypass_run_ids"
+assert_check_state "grace: checks.review-gate=ok" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review-gate" "ok"
+rm -rf "$PROJ"
+
+# ── Test 13: backlog-ready — br ready shows beads + free slot — digest ────────
+echo ""
+echo "=== Test 13: backlog-ready (ready beads + free slot) — digest ==="
+BR_READY='[{"id":"hk-1"},{"id":"hk-2"},{"id":"hk-3"}]'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --br-ready-json "$BR_READY" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "backlog-ready stdout digest" "digest"        "$OUTPUT"
+assert_contains "backlog-ready stdout signal" "backlog-ready" "$OUTPUT"
+assert_json_bool "latest.json backlog_ready=true" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "backlog_ready" "true"
+assert_json_list_contains "digest_signals has backlog-ready" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "digest_signals" "backlog-ready"
+assert_check_state "checks.backlog-ready=flag" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "backlog-ready" "flag"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "backlog-ready: comms sent"
+  assert_contains "backlog-ready comms [DIGEST]" "[DIGEST]"      "$(cat "$LOG")"
+  assert_contains "backlog-ready comms signal"   "backlog-ready" "$(cat "$LOG")"
+else
+  fail "backlog-ready: expected digest comms, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 14: backlog-ready suppressed when no free slot ───────────────────────
+echo ""
+echo "=== Test 14: backlog-ready suppressed (ready beads but all slots busy) ==="
+BR_READY='[{"id":"hk-1"}]'
+# 4 active workers == max_concurrent 4 → no free slot → no backlog-ready flag.
+QLIST='{"queues":[{"name":"crewa-q","status":"active","workers":4,"pending_items":0,"failed_items":0}],"max_concurrent":4}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json "$QLIST" \
+  --hk-comms-who-json '' \
+  --br-ready-json "$BR_READY" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_json_bool "latest.json backlog_ready=false (no slot)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "backlog_ready" "false"
+assert_check_state "checks.backlog-ready=ok (no slot)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "backlog-ready" "ok"
+rm -rf "$PROJ"
+
+# ── Test 15: checks map present + schema_version 2 ────────────────────────────
+echo ""
+echo "=== Test 15: checks map present, schema_version=2 ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+)
+run_check "$PROJ" > /dev/null 2>&1
+SCHEMA=$(python3 -c "import json; print(json.load(open('$PROJ/.harmonik/ops-monitor/latest.json')).get('schema_version'))")
+assert_eq "schema_version=2" "2" "$SCHEMA"
+for CHK in daemon-up paused-queues single-mode crew-fresh review-gate backlog-ready lull; do
+  assert_check_state "checks.$CHK present (green)" \
+    "$PROJ/.harmonik/ops-monitor/latest.json" "$CHK" "ok"
+done
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

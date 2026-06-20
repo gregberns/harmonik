@@ -1,8 +1,6 @@
 package keeper
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -52,127 +50,14 @@ func ClearPrecompactTrigger(projectDir, agent string) error {
 	return nil
 }
 
-// restartNowMarkerPath returns the path to <projectDir>/.harmonik/keeper/<agent>.restart-now.
-// This file is written by `harmonik keeper restart-now` with JSON content
-// {nonce, requested_at, session_id}. The keeper watcher detects it and runs the
-// on-demand clear→resume cycle (RunOnDemand), then calls ClearRestartNowTrigger.
-func restartNowMarkerPath(projectDir, agent string) string {
-	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".restart-now")
-}
-
-// RestartNowMarker is the JSON content of the .restart-now marker file written
-// by `harmonik keeper restart-now`. It carries the nonce extracted from the
-// captain's HANDOFF file, the timestamp of the request, and the session_id at
-// the time of the request. The keeper's RunOnDemand freshness gate validates all
-// three fields before issuing /clear.
-//
-// Refs: hk-wjzf, hk-xjlq, ON-059.
-type RestartNowMarker struct {
-	// Nonce is the KEEPER:cyc token extracted from HANDOFF-<agent>.md by the CLI.
-	// RunOnDemand checks that the handoff still contains <!-- KEEPER:<Nonce> -->.
-	Nonce string `json:"nonce"`
-
-	// RequestedAt is the time at which `harmonik keeper restart-now` was called.
-	// The handoff file mtime must be >= RequestedAt for the freshness gate to pass.
-	RequestedAt time.Time `json:"requested_at"`
-
-	// SessionID is the .ctx session_id at the time the restart-now was requested.
-	// Must match cf.SessionID in RunOnDemand.
-	SessionID string `json:"session_id"`
-}
-
-// HasRestartNowTrigger reports whether the restart-now trigger marker exists for
-// the given agent. Returns true when `harmonik keeper restart-now` has written
-// the marker and the keeper has not yet consumed it.
-// Returns false for any agent name that fails validateAgent.
-func HasRestartNowTrigger(projectDir, agent string) bool {
-	if validateAgent(agent) != nil {
-		return false // fail-open: traversal name cannot have a valid marker
-	}
-	_, err := os.Stat(restartNowMarkerPath(projectDir, agent))
-	return err == nil
-}
-
-// ClearRestartNowTrigger removes the restart-now trigger marker for the given
-// agent. RunOnDemand calls this at entry (consume-once) so no re-fire occurs
-// even when a gate blocks the cycle. Idempotent.
-func ClearRestartNowTrigger(projectDir, agent string) error {
-	if err := validateAgent(agent); err != nil {
-		return err
-	}
-	if err := os.Remove(restartNowMarkerPath(projectDir, agent)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("keeper: remove restart-now marker: %w", err)
-	}
-	return nil
-}
-
-// WriteRestartNowMarker writes m atomically to the .restart-now marker file for
-// the given agent, using the korba fsync-marker pattern (temp + fsync + rename)
-// from WriteManagedSessionID (hk-b5e2) so no torn/partial JSON is ever
-// observable by the watcher's freshness gate.
-func WriteRestartNowMarker(projectDir, agent string, m *RestartNowMarker) error {
-	if err := validateAgent(agent); err != nil {
-		return err
-	}
-	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
-		return fmt.Errorf("keeper: create keeper dir: %w", err)
-	}
-	path := restartNowMarkerPath(projectDir, agent)
-	content, err := json.Marshal(m)
-	if err != nil {
-		return fmt.Errorf("keeper: marshal restart-now marker: %w", err)
-	}
-	content = append(content, '\n')
-	// os.CreateTemp gives each concurrent writer a unique temp path so no two
-	// concurrent writes can publish each other's partial content. Refs: hk-b5e2.
-	//nolint:gosec // G304: keeperDir derived from operator-controlled projectDir; pattern uses validated agent name
-	tmp, err := os.CreateTemp(keeperDir, agent+".restart-now.*.tmp")
-	if err != nil {
-		return fmt.Errorf("keeper: create restart-now marker tmp: %w", err)
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(content); err != nil {
-		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
-		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
-		return fmt.Errorf("keeper: write restart-now marker tmp %q: %w", tmpPath, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()        //nolint:errcheck // cleanup before remove
-		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
-		return fmt.Errorf("keeper: fsync restart-now marker tmp %q: %w", tmpPath, err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
-		return fmt.Errorf("keeper: close restart-now marker tmp %q: %w", tmpPath, err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup of tmp
-		return fmt.Errorf("keeper: rename restart-now marker %q: %w", path, err)
-	}
-	return nil
-}
-
-// ReadRestartNowMarker reads and parses the .restart-now marker JSON for the
-// given agent. Returns an error when the file is absent, unreadable, or
-// contains invalid JSON.
-func ReadRestartNowMarker(projectDir, agent string) (*RestartNowMarker, error) {
-	if err := validateAgent(agent); err != nil {
-		return nil, err
-	}
-	path := restartNowMarkerPath(projectDir, agent)
-	//nolint:gosec // G304: path derived from operator-controlled projectDir and agent validated above
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("keeper: read restart-now marker %q: %w", path, err)
-	}
-	var m RestartNowMarker
-	if err := json.Unmarshal(bytes.TrimSpace(data), &m); err != nil {
-		return nil, fmt.Errorf("keeper: parse restart-now marker %q: %w", path, err)
-	}
-	return &m, nil
-}
+// NOTE (hk-5da7): the .restart-now MARKER and its helpers (RestartNowMarker,
+// HasRestartNowTrigger, ClearRestartNowTrigger, WriteRestartNowMarker,
+// ReadRestartNowMarker) were REMOVED. restart-now no longer hands work to the
+// watcher via a marker file — `harmonik keeper restart-now` drives the
+// ack→/clear→/session-resume synchronously in-process
+// (internal/keeper/restartnow.go). The marker write/poll indirection was the
+// silent-no-op bug (CLI wrote under os.Getwd()'s project dir; the watcher polled
+// a different fixed dir, so the marker landed where nobody looked).
 
 // crispIdleTolerance is the maximum age by which .ctx may postdate .idle and
 // still be considered a statusLine poll rather than real tool activity. The

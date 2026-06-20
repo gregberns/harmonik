@@ -18,7 +18,7 @@ func TestRunKeeperSetDispatching_CreatesMarker(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "test-orchestrator"
 
-	code := runKeeperSetDispatching([]string{"--project", projectDir, agent})
+	code := runKeeperSetDispatching([]string{"--project", projectDir, "--agent", agent})
 	if code != 0 {
 		t.Fatalf("runKeeperSetDispatching: want exit 0, got %d", code)
 	}
@@ -46,12 +46,13 @@ func TestRunKeeperSetDispatching_MissingAgent(t *testing.T) {
 }
 
 // TestRunKeeperSetDispatching_InvalidAgent verifies that a path-traversal agent
-// name returns exit 1.
+// name (passed via --agent) returns exit 1. The traversal is caught by
+// validateAgent inside SetDispatching; the CLI maps that error to exit 1.
 func TestRunKeeperSetDispatching_InvalidAgent(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	code := runKeeperSetDispatching([]string{"--project", projectDir, "../evil"})
+	code := runKeeperSetDispatching([]string{"--project", projectDir, "--agent", "../evil"})
 	if code != 1 {
 		t.Errorf("runKeeperSetDispatching with traversal agent: want exit 1, got %d", code)
 	}
@@ -71,7 +72,7 @@ func TestRunKeeperClearDispatching_RemovesMarker(t *testing.T) {
 		t.Fatalf("setup SetDispatching: %v", err)
 	}
 
-	code := runKeeperClearDispatching([]string{"--project", projectDir, agent})
+	code := runKeeperClearDispatching([]string{"--project", projectDir, "--agent", agent})
 	if code != 0 {
 		t.Fatalf("runKeeperClearDispatching: want exit 0, got %d", code)
 	}
@@ -89,7 +90,7 @@ func TestRunKeeperClearDispatching_IdempotentWhenAbsent(t *testing.T) {
 	projectDir := t.TempDir()
 	agent := "absent-agent"
 
-	code := runKeeperClearDispatching([]string{"--project", projectDir, agent})
+	code := runKeeperClearDispatching([]string{"--project", projectDir, "--agent", agent})
 	if code != 0 {
 		t.Errorf("runKeeperClearDispatching on absent marker: want exit 0, got %d", code)
 	}
@@ -108,12 +109,13 @@ func TestRunKeeperClearDispatching_MissingAgent(t *testing.T) {
 }
 
 // TestRunKeeperClearDispatching_InvalidAgent verifies that a path-traversal
-// agent name returns exit 1.
+// agent name (passed via --agent) returns exit 1. The traversal is caught by
+// validateAgent inside ClearDispatching; the CLI maps that error to exit 1.
 func TestRunKeeperClearDispatching_InvalidAgent(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	code := runKeeperClearDispatching([]string{"--project", projectDir, "../evil"})
+	code := runKeeperClearDispatching([]string{"--project", projectDir, "--agent", "../evil"})
 	if code != 1 {
 		t.Errorf("runKeeperClearDispatching with traversal agent: want exit 1, got %d", code)
 	}
@@ -131,14 +133,14 @@ func TestRunKeeperDispatchingRoundtrip(t *testing.T) {
 		t.Fatal("HoldingDispatch: want false before set-dispatching")
 	}
 
-	if code := runKeeperSetDispatching([]string{"--project", projectDir, agent}); code != 0 {
+	if code := runKeeperSetDispatching([]string{"--project", projectDir, "--agent", agent}); code != 0 {
 		t.Fatalf("set-dispatching: want exit 0, got %d", code)
 	}
 	if !keeper.HoldingDispatch(projectDir, agent) {
 		t.Error("HoldingDispatch: want true after set-dispatching")
 	}
 
-	if code := runKeeperClearDispatching([]string{"--project", projectDir, agent}); code != 0 {
+	if code := runKeeperClearDispatching([]string{"--project", projectDir, "--agent", agent}); code != 0 {
 		t.Fatalf("clear-dispatching: want exit 0, got %d", code)
 	}
 	if keeper.HoldingDispatch(projectDir, agent) {

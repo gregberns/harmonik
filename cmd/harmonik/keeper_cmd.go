@@ -78,28 +78,37 @@ func runKeeperSubcommand(args []string) int {
 		return 2
 	}
 
-	// Detect explicitly-set pct flags and warn: on [1m]-window models
-	// (WindowSize=1_000_000) the abs thresholds (warn=200k, act=215k) are
-	// authoritative and --warn-pct/--act-pct are never consulted.  Emitting
-	// a warning here prevents silent misconfiguration — the caller should use
-	// --warn-abs-tokens/--act-abs-tokens instead.  Refs: hk-odhh.
-	pctFlagsSet := false
+	// hk-5da7: HONOR explicitly-set --warn-pct/--act-pct instead of silently
+	// ignoring them. Previously these flags were inert on 1M-window models — the
+	// gate consulted only the hardcoded pct-CEILS (0.70/0.85) and abs caps
+	// (200k/215k), so on a 1M window the abs cap always won and the operator's
+	// `--warn-pct 30 --act-pct 35` did nothing. We now feed an explicit pct flag
+	// in as the pct-ceil (pct/100), so it flows through the SAME min(abs, ceil*window)
+	// band logic. The EARLIER of the two thresholds fires, so a lower pct than the
+	// abs default restarts sooner (the operator's intent) and a higher one is
+	// harmlessly capped by abs. The threshold math itself is unchanged — this only
+	// routes the flag into the existing pctCeil seam. Refs: hk-odhh, hk-5da7.
+	var warnPctSet, actPctSet bool
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "warn-pct" || f.Name == "act-pct" {
-			pctFlagsSet = true
+		switch f.Name {
+		case "warn-pct":
+			warnPctSet = true
+		case "act-pct":
+			actPctSet = true
 		}
 	})
-	if pctFlagsSet {
-		fmt.Fprintf(os.Stderr, "keeper warning: --warn-pct/--act-pct are inert on 1M-window models "+
-			"(Claude Code emits absolute token counts; abs thresholds warn=%d act=%d govern). "+
-			"Use --warn-abs-tokens/--act-abs-tokens to override the act thresholds instead.\n",
-			keeper.DefaultWarnAbsTokens, keeper.DefaultActAbsTokens)
+	// Emit the honoring acknowledgment EARLY (before agent resolution) so it is
+	// visible even when the command later fails for another reason — this is the
+	// loud, no-silent-misconfig signal the old inert warning used to be.
+	if warnPctSet {
+		fmt.Fprintf(os.Stderr, "keeper: honoring --warn-pct %d as warn ceil %.2f of window\n", warnPctFlag, float64(warnPctFlag)/100.0)
+	}
+	if actPctSet {
+		fmt.Fprintf(os.Stderr, "keeper: honoring --act-pct %d as act ceil %.2f of window\n", actPctFlag, float64(actPctFlag)/100.0)
 	}
 
-	// Resolve the target agent identically to restart-now (the gold standard):
-	// accept the --agent flag (wins) OR a positional <name>, and reject any
-	// unrecognized leading-dash token loudly (exit 2). All pre-existing watcher
-	// flags above remain recognized; only stray dash tokens are rejected.
+	// Resolve the target agent: FLAG-ONLY (hk-5da7). --agent is required; a
+	// positional argument is rejected with exit 2.
 	resolvedAgent, code := resolveKeeperAgent(fs, "harmonik keeper", agentFlag)
 	if resolvedAgent == "" {
 		return code
@@ -147,9 +156,18 @@ func runKeeperSubcommand(args []string) int {
 	if keeperCfg.ForceActAbsTokens > 0 {
 		resolvedForceActAbs = keeperCfg.ForceActAbsTokens
 	}
-	// pct ceils have no CLI flags; config wins over compiled defaults (0 → applyDefaults).
+	// pct ceils: an explicitly-set --warn-pct/--act-pct WINS (hk-5da7, honored as
+	// pct/100), else config.yaml, else compiled default (0 → applyDefaults fills
+	// 0.70/0.85). Honoring the CLI pct as the ceil is what makes the flag effective
+	// on a 1M window: min(abs, (pct/100)*window) fires whichever is earlier.
 	resolvedActPctCeil := keeperCfg.ActPctCeil   // 0 if not set → applyDefaults fills 0.85
 	resolvedWarnPctCeil := keeperCfg.WarnPctCeil // 0 if not set → applyDefaults fills 0.70
+	if warnPctSet {
+		resolvedWarnPctCeil = float64(warnPctFlag) / 100.0
+	}
+	if actPctSet {
+		resolvedActPctCeil = float64(actPctFlag) / 100.0
+	}
 
 	// Step 1: acquire single-keeper lockfile.
 	lock, err := keeper.AcquireLock(projectDir, agentFlag)
@@ -280,44 +298,36 @@ func keeperForceRestartFn(forceRestart bool, projectDir, respawnCmd string) func
 	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)
 }
 
-// newKeeperMarkerFlags builds the flag set shared by the keeper marker
-// subcommands (set-dispatching, clear-dispatching, restart-now): a
-// --project override and an --agent alias for the positional <name>. Keeping the
-// registration in one place guarantees parser parity with restart-now (the gold
-// standard) and gives tests a single seam.
+// newKeeperMarkerFlags builds the flag set shared by the keeper marker/action
+// subcommands (set-dispatching, clear-dispatching, restart-now, ping): a
+// --project override and the required --agent. Keeping the registration in one
+// place guarantees parser parity and gives tests a single seam.
 func newKeeperMarkerFlags(name string) (fs *flag.FlagSet, projectFlag, agentFlag *string) {
 	fs = flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	projectFlag = fs.String("project", "", "project directory (default: current working directory)")
-	agentFlag = fs.String("agent", "", "agent name (alternative to the positional <name>)")
+	agentFlag = fs.String("agent", "", "agent name (required)")
 	return fs, projectFlag, agentFlag
 }
 
 // resolveKeeperAgent resolves the target agent for a keeper subcommand from the
-// already-parsed flag set, mirroring restart-now: the --agent flag WINS, and the
-// first positional argument is the fallback. It rejects any UNRECOGNIZED
-// leading-dash token loudly with exit 2 rather than letting Go's flag package
-// silently drop a trailing "-foo" — the package stops parsing at the first
-// positional, leaving later dash tokens in Args() where they would otherwise be
-// ignored and mistaken for "no such flag, never mind". Returns (agent, 0) on
-// success; ("", code) when the caller should return code (2 = stray leading-dash
-// token, 1 = no agent supplied).
+// already-parsed flag set. FLAG-ONLY (hk-5da7): the agent MUST be supplied via
+// --agent; ANY positional argument is rejected with exit 2. Positional args were
+// the recurring restart-now failure mode (a positional silently took the place
+// of --agent and routed to the wrong project), so they are no longer accepted.
+// Returns (agent, 0) on success; ("", code) when the caller should return code
+// (2 = unexpected positional/stray token, 1 = no --agent supplied).
 func resolveKeeperAgent(fs *flag.FlagSet, label, agentFlag string) (string, int) {
-	for _, a := range fs.Args() {
-		if len(a) > 1 && a[0] == '-' {
-			fmt.Fprintf(os.Stderr, "%s: unrecognized flag %q — flags must precede the positional <name>\n", label, a)
-			return "", 2
-		}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "%s: unexpected positional argument(s) %q — this command is flag-only; use --agent <name>\n",
+			label, strings.Join(fs.Args(), " "))
+		return "", 2
 	}
-	agent := agentFlag
-	if agent == "" && fs.NArg() >= 1 {
-		agent = fs.Arg(0)
-	}
-	if agent == "" {
-		fmt.Fprintf(os.Stderr, "%s: agent name (--agent <name> or positional <name>) is required\n", label)
+	if agentFlag == "" {
+		fmt.Fprintf(os.Stderr, "%s: --agent <name> is required\n", label)
 		return "", 1
 	}
-	return agent, 0
+	return agentFlag, 0
 }
 
 // parseKeeperMarkerArgs parses args for a marker subcommand and resolves the
@@ -397,79 +407,108 @@ func runKeeperClearDispatching(args []string) int {
 	return 0
 }
 
-// runKeeperRestartNow implements `harmonik keeper restart-now <agent>`.
+// runKeeperRestartNow implements `harmonik keeper restart-now --agent <name>`.
 //
-// Reads HANDOFF-<agent>.md, extracts the <!-- KEEPER:... --> nonce, and writes
-// the .restart-now marker JSON {nonce, requested_at, session_id} so the keeper
-// watcher's next tick calls RunOnDemand. The .restart-now marker is written
-// atomically (temp + fsync + rename per hk-b5e2). The captain must have
-// already written a handoff via /session-handoff before calling this command.
+// SIMPLIFIED (hk-5da7): this runs the restart SYNCHRONOUSLY in-process — verify
+// the session id, ONE handoff-freshness check, inject an ACK line (so the agent
+// can verify receipt), then inject /clear and /session-resume. It does NOT write
+// a marker for a watcher to pick up — that indirection was the silent-no-op bug
+// (marker written under the wrong project dir, watcher polled elsewhere). Every
+// step logs at INFO/WARN and any failure returns a non-zero exit with the reason.
 //
 // Exit codes:
 //
-//	0  — marker written successfully
-//	1  — argument error, I/O error, or missing handoff/nonce
+//	0  — restart driven (ack + /clear + /session-resume injected)
+//	1  — argument error, no pane, unverifiable session id, missing/stale handoff,
+//	     or an injection failure (the log names which step)
+//	2  — unexpected positional argument (flag-only)
 //
-// Refs: hk-wjzf, hk-xjlq, ON-059.
+// Refs: hk-5da7, hk-wjzf, hk-xjlq, ON-059.
 func runKeeperRestartNow(args []string) int {
 	agent, projectFlag, code := parseKeeperMarkerArgs("keeper restart-now", args)
 	if agent == "" {
 		return code
 	}
 
-	// Read the handoff file — the captain must have written it first.
-	handoffPath := fmt.Sprintf("%s/HANDOFF-%s.md", projectFlag, agent)
-	//nolint:gosec // G304: handoffPath derived from operator-controlled projectDir + agent validated below
-	handoffBytes, err := os.ReadFile(handoffPath)
+	// Resolve the tmux pane the same way the watcher does (convention-derived
+	// when not explicit). restart-now has no --tmux flag — it is always the
+	// agent's own pane.
+	tmuxTarget := keeper.ResolveTmuxTarget(projectFlag, agent, "", nil)
+
+	requestedAt := time.Now().UTC()
+	nonce := restartNowNonce(requestedAt)
+	err := keeper.RestartNow(context.Background(), keeper.RestartNowConfig{
+		ProjectDir:  projectFlag,
+		AgentName:   agent,
+		TmuxTarget:  tmuxTarget,
+		RequestedAt: requestedAt,
+	}, nonce)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: read handoff %q: %v\n"+
-			"  write your handoff first (run /session-handoff in the managed pane)\n", handoffPath, err)
+		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: %v\n", err)
 		return 1
 	}
-
-	// Extract the <!-- KEEPER:xxx --> nonce from the handoff content.
-	nonce := extractKeeperNonce(string(handoffBytes))
-	if nonce == "" {
-		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: no <!-- KEEPER:... --> nonce found in %q\n"+
-			"  write your handoff first (run /session-handoff in the managed pane)\n", handoffPath)
-		return 1
-	}
-
-	// Read the current session_id from .ctx (best-effort; empty string is OK).
-	sessionID := ""
-	if ctxFile, _, ctxErr := keeper.ReadCtxFile(projectFlag, agent); ctxErr == nil {
-		sessionID = ctxFile.SessionID
-	}
-
-	marker := &keeper.RestartNowMarker{
-		Nonce:       nonce,
-		RequestedAt: time.Now().UTC(),
-		SessionID:   sessionID,
-	}
-	if err := keeper.WriteRestartNowMarker(projectFlag, agent, marker); err != nil {
-		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: write marker: %v\n", err)
-		return 1
-	}
-	fmt.Printf("keeper restart-now: agent=%q marker written (nonce=%s, session_id=%s)\n",
-		agent, nonce, sessionID)
+	// Print the nonce so an external watcher can match the injected
+	// '[KEEPER ACK <nonce>] received restart' line in the pane scrollback.
+	fmt.Printf("keeper restart-now: agent=%q nonce=%s restart driven (ack + /clear + /session-resume injected into %q)\n",
+		agent, nonce, tmuxTarget)
 	return 0
 }
 
-// extractKeeperNonce scans content for the first <!-- KEEPER:xxx --> HTML
-// comment and returns the nonce token (the xxx part). Returns "" if not found.
-func extractKeeperNonce(content string) string {
-	const prefix = "<!-- KEEPER:"
-	const suffix = " -->"
-	start := strings.Index(content, prefix)
-	if start < 0 {
-		return ""
+// runKeeperPing implements `harmonik keeper ping --agent <name> [--nonce N]`.
+//
+// Injects ONLY the verifiability ACK line into the agent's pane (no /clear, no
+// resume) so the agent can confirm the keeper is alive and reachable. Refs: hk-5da7.
+//
+// Exit codes:
+//
+//	0  — ack injected
+//	1  — argument error, no pane, or injection failure
+//	2  — unexpected positional argument (flag-only)
+func runKeeperPing(args []string) int {
+	fs, projectFlag, agentFlag := newKeeperMarkerFlags("keeper ping")
+	nonceFlag := fs.String("nonce", "", "verifiability nonce echoed in the [KEEPER ACK <nonce>] line (default: timestamp)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 1
+		}
+		return 2
 	}
-	rest := content[start+len(prefix):]
-	end := strings.Index(rest, suffix)
-	if end < 0 {
-		return ""
+	agent, code := resolveKeeperAgent(fs, "harmonik keeper ping", *agentFlag)
+	if agent == "" {
+		return code
 	}
-	return strings.TrimSpace(rest[:end])
+	projectDir := *projectFlag
+	if projectDir == "" {
+		wd, wdErr := os.Getwd()
+		if wdErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik keeper ping: cannot determine working directory: %v\n", wdErr)
+			return 1
+		}
+		projectDir = wd
+	}
+	nonce := *nonceFlag
+	if nonce == "" {
+		nonce = restartNowNonce(time.Now().UTC())
+	}
+	tmuxTarget := keeper.ResolveTmuxTarget(projectDir, agent, "", nil)
+	if err := keeper.Ping(context.Background(), keeper.RestartNowConfig{
+		ProjectDir: projectDir,
+		AgentName:  agent,
+		TmuxTarget: tmuxTarget,
+	}, nonce); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper ping: %v\n", err)
+		return 1
+	}
+	fmt.Printf("keeper ping: agent=%q ack injected (nonce=%s) into %q\n", agent, nonce, tmuxTarget)
+	return 0
+}
+
+// restartNowNonce derives a compact verifiability nonce from the request time.
+// The agent that fired restart-now matches the [KEEPER ACK <nonce>] line on this
+// token; uniqueness within a session is all that is required, so a millisecond
+// timestamp suffices.
+func restartNowNonce(t time.Time) string {
+	return fmt.Sprintf("rn-%d", t.UnixMilli())
 }
 
 const keeperTopUsage = `harmonik keeper — context watcher for a managed agent pane (session-keeper, hk-ekap1)
@@ -478,12 +517,14 @@ USAGE
   harmonik keeper --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N] [--warn-abs-tokens N] [--act-abs-tokens N]
   harmonik keeper enable <agent> [--project DIR] [--scripts-dir DIR] [--tmux TARGET] [--yes-destructive]
   harmonik keeper doctor <agent> [--project DIR]
-  harmonik keeper set-dispatching <agent>|--agent <name> [--project DIR]
-  harmonik keeper clear-dispatching <agent>|--agent <name> [--project DIR]
-  harmonik keeper restart-now <agent>|--agent <name> [--project DIR]
+  harmonik keeper set-dispatching --agent <name> [--project DIR]
+  harmonik keeper clear-dispatching --agent <name> [--project DIR]
+  harmonik keeper restart-now --agent <name> [--project DIR]
+  harmonik keeper ping --agent <name> [--nonce N] [--project DIR]
 
-  Every verb (and the bare watcher) accepts the agent as a positional <name> or
-  via --agent (flag wins); an unrecognized leading-dash token exits 2.
+  FLAG-ONLY (hk-5da7): every verb (and the bare watcher) names the agent ONLY via
+  --agent. A positional argument is rejected with exit 2 (positionals were the
+  recurring restart-now failure mode); an unrecognized flag also exits 2.
 
 VERBS
   enable             Wire statusLine + Stop + PreCompact stanzas into ~/.claude/settings.json
@@ -500,15 +541,18 @@ VERBS
                      cycle defers the handoff action while queue work is in flight.
   clear-dispatching  Remove the .dispatching marker for <agent>; HoldingDispatch → false.
                      Call when all in-flight queue work has completed. Idempotent.
-  restart-now        Captain-initiated on-demand clear→resume cycle (ON-059, hk-wjzf).
-                     Reads the <!-- KEEPER:... --> nonce from HANDOFF-<agent>.md (the
-                     captain must have already run /session-handoff) and writes a
-                     .restart-now marker so the keeper watcher triggers RunOnDemand on
-                     the next poll tick. Bypasses the act-pct threshold only; all other
-                     safety gates (CrispIdle, HoldingDispatch, anti-loop, freshness)
-                     are enforced by the watcher. Non-destructive: if any gate blocks,
-                     the marker is consumed once and session_keeper_restart_now_blocked
-                     is emitted. Refs: hk-wjzf, hk-xjlq.
+  restart-now        Agent/captain-initiated SYNCHRONOUS clear→resume (hk-5da7).
+                     Verifies the session id (lowercase UUIDv4), checks HANDOFF-<agent>.md
+                     exists and is fresh (written within 10 min — run /session-handoff
+                     first), then injects an ACK line, /clear, and /session-resume into
+                     the agent's pane — all in THIS process, no marker, no watcher poll.
+                     FAILS LOUDLY (non-zero exit + logged reason) on no pane, an
+                     unverifiable session id, or a missing/stale handoff. The injected
+                     '[KEEPER ACK <nonce>] received restart' line lets a watcher verify
+                     receipt. Refs: hk-5da7 (was hk-wjzf/ON-059 marker path).
+  ping               Liveness check: inject ONLY '[KEEPER ACK <nonce>] received ping'
+                     into the agent's pane (no /clear, no resume). --nonce sets the
+                     verifiability token (default: timestamp). Refs: hk-5da7.
 
 FLAGS (watcher mode)
   --agent <name>         Agent name (required); identifies the lockfile and .managed marker
@@ -562,8 +606,10 @@ EXIT CODES (set-dispatching / clear-dispatching)
 
 EXAMPLES
   harmonik keeper --agent orchestrator
-  harmonik keeper --agent flywheel --tmux harmonik:0 --warn-pct 80
-  harmonik keeper set-dispatching orchestrator
-  harmonik keeper clear-dispatching orchestrator
-  harmonik keeper set-dispatching flywheel --project /path/to/project
+  harmonik keeper --agent flywheel --tmux harmonik:0 --warn-abs-tokens 200000 --act-abs-tokens 215000
+  harmonik keeper set-dispatching --agent orchestrator
+  harmonik keeper clear-dispatching --agent orchestrator
+  harmonik keeper set-dispatching --agent flywheel --project /path/to/project
+  harmonik keeper restart-now --agent captain
+  harmonik keeper ping --agent captain --nonce check-001
 `

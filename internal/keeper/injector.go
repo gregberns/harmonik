@@ -28,6 +28,16 @@ func InjectOnDemandRestartWarning(ctx context.Context, tmuxTarget, agentName str
 	return InjectText(ctx, tmuxTarget, text)
 }
 
+// AckLine formats the verifiability ACK line that the keeper injects into the
+// agent's pane (via the restart-now / ping injection surface) on a restart-now
+// or ping request. The agent arms a timer after firing the request and waits for
+// this exact line (matched on the nonce) to confirm the keeper received it —
+// instead of trusting a silent success. kind is "restart" or "ping".
+// Refs: hk-5da7 (operator-specified ack handshake).
+func AckLine(nonce, kind string) string {
+	return fmt.Sprintf("[KEEPER ACK %s] received %s", nonce, kind)
+}
+
 // bufferName is the tmux buffer name used for keeper injections. Using a
 // keeper-specific name avoids clobbering buffers owned by the daemon's own
 // paste-inject step (which uses buffers like "hk-<run_id>").

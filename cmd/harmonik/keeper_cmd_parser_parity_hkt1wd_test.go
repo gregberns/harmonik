@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// hk-t1wd — KEEPER parser-parity SPLIT A. These tests pin the contract that the
-// keeper subcommands in keeper_cmd.go (watcher, set-dispatching,
-// clear-dispatching) mirror restart-now: each accepts the target agent
-// via the --agent flag (flag wins) OR a positional <name>, every pre-existing
-// recognized flag still parses, and an UNRECOGNIZED leading-dash token exits 2
-// loudly instead of being silently consumed/dropped.
+// hk-t1wd / hk-5da7 — KEEPER parser-parity. These tests pin the FLAG-ONLY
+// contract (hk-5da7) shared by the keeper subcommands in keeper_cmd.go (watcher,
+// set-dispatching, clear-dispatching, restart-now, ping): the target agent is
+// supplied ONLY via --agent; ANY positional argument is rejected with exit 2
+// (positionals were the recurring restart-now failure mode). Every pre-existing
+// recognized flag still parses, and an unrecognized flag also exits 2.
 
 // TestKeeperMarkerArgsParity exercises the real shared parser used by
 // set-dispatching, clear-dispatching, and restart-now. parseKeeperMarkerArgs
@@ -25,13 +25,13 @@ func TestKeeperMarkerArgsParity(t *testing.T) {
 		wantCode  int
 	}{
 		{"flag", []string{"--agent", "alpha"}, "alpha", 0},
-		{"positional", []string{"alpha"}, "alpha", 0},
-		{"flag-wins-positional", []string{"--agent", "flagwin", "posval"}, "flagwin", 0},
-		{"project-flag-kept-then-positional", []string{"--project", "/tmp/x", "beta"}, "beta", 0},
+		{"positional-rejected", []string{"alpha"}, "", 2},
+		{"flag-then-stray-positional-rejected", []string{"--agent", "flagwin", "posval"}, "", 2},
+		{"project-flag-kept-then-positional-rejected", []string{"--project", "/tmp/x", "beta"}, "", 2},
 		{"project-flag-kept-then-agent-flag", []string{"--project", "/tmp/x", "--agent", "beta"}, "beta", 0},
 		{"missing-agent", []string{"--project", "/tmp/x"}, "", 1},
 		{"leading-dash-bogus", []string{"--bogus"}, "", 2},
-		{"trailing-dash-bogus", []string{"alpha", "--bogus"}, "", 2},
+		{"positional-then-bogus", []string{"alpha", "--bogus"}, "", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,11 +89,10 @@ func TestKeeperWatcherRecognizedFlagsStillParse(t *testing.T) {
 	}
 }
 
-// TestKeeperWatcherAgentResolution proves the watcher resolves an agent from
-// --agent and from a positional identically (flag wins), via the shared
-// resolveKeeperAgent helper and a flag set that mirrors the watcher's
-// registration. This avoids running the full watcher (which would acquire a
-// lock) while still asserting parser parity for the watcher path.
+// TestKeeperWatcherAgentResolution proves the watcher resolves an agent ONLY
+// from --agent (flag-only, hk-5da7): a positional argument is rejected with exit
+// 2. Uses the shared resolveKeeperAgent helper and a flag set that mirrors the
+// watcher's registration, avoiding the full watcher (which would acquire a lock).
 func TestKeeperWatcherAgentResolution(t *testing.T) {
 	build := func(args []string) (*flag.FlagSet, string) {
 		fs := flag.NewFlagSet("keeper", flag.ContinueOnError)
@@ -106,19 +105,20 @@ func TestKeeperWatcherAgentResolution(t *testing.T) {
 		return fs, *agent
 	}
 	cases := []struct {
-		args []string
-		want string
+		args     []string
+		want     string
+		wantCode int
 	}{
-		{[]string{"--agent", "w1"}, "w1"},
-		{[]string{"w1"}, "w1"},
-		{[]string{"--agent", "flagwin", "posval"}, "flagwin"},
-		{[]string{"--tmux", "s:0", "w1"}, "w1"}, // pre-existing flag kept, positional still resolves
+		{[]string{"--agent", "w1"}, "w1", 0},
+		{[]string{"--tmux", "s:0", "--agent", "w1"}, "w1", 0},
+		{[]string{"w1"}, "", 2},                           // positional rejected
+		{[]string{"--agent", "flagwin", "posval"}, "", 2}, // stray positional rejected
 	}
 	for _, tc := range cases {
 		fs, agentFlag := build(tc.args)
 		got, code := resolveKeeperAgent(fs, "keeper", agentFlag)
-		if got != tc.want || code != 0 {
-			t.Fatalf("args %v: got (%q,%d), want (%q,0)", tc.args, got, code, tc.want)
+		if got != tc.want || code != tc.wantCode {
+			t.Fatalf("args %v: got (%q,%d), want (%q,%d)", tc.args, got, code, tc.want, tc.wantCode)
 		}
 	}
 }

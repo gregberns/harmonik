@@ -768,17 +768,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 			}
 
-			// ── Restart-now (captain-initiated on-demand cycle) ───────────────
-			// If `harmonik keeper restart-now` wrote a .restart-now marker, detect
-			// it and run the on-demand cycle. Unlike PreCompact, act_pct is bypassed
-			// but ALL other gates (CrispIdle, HoldingDispatch, anti-loop, freshness)
-			// are enforced. RunOnDemand always clears the marker at entry (consume-once).
-			// Refs: hk-wjzf, ON-059.
-			if w.cfg.Cycler != nil && HasRestartNowTrigger(w.cfg.ProjectDir, w.cfg.AgentName) {
-				if rnErr := w.cfg.Cycler.RunOnDemand(ctx, ctxFile); rnErr != nil {
-					slog.WarnContext(ctx, "keeper: restart-now cycle error", "agent", w.cfg.AgentName, "err", rnErr)
-				}
-			}
+			// NOTE: restart-now (captain-initiated) is NO LONGER a watcher-detected
+			// marker path. `harmonik keeper restart-now` now drives the
+			// ack→/clear→/session-resume SYNCHRONOUSLY in its own process
+			// (internal/keeper/restartnow.go) — there is no .restart-now marker for
+			// the watcher to poll, which removes the silent-no-op project-dir
+			// divergence. Refs: hk-5da7 (was hk-wjzf/ON-059 marker path).
 
 			// ── warn state machine ───────────────────────────────────────────
 			if w.cfg.belowWarnThreshold(ctxFile) {

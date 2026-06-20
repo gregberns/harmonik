@@ -33,8 +33,11 @@
 # Optional overrides:
 #   CAP_TMUX   — first positional arg, or $CAP_TMUX, or harmonik-<hash>-captain
 #   CAP_NAME   — $CAP_NAME, or "captain"  (the --remote-control / comms identity)
-#   CAP_WARN   — $CAP_WARN, or 30   (keeper --warn-pct; bare 80/90 defeats intent on a 1M window)
-#   CAP_ACT    — $CAP_ACT,  or 35   (keeper --act-pct)
+#   CAP_WARN_ABS — $CAP_WARN_ABS, or 200000  (keeper --warn-abs-tokens; absolute-token
+#                  thresholds; on a 1M window the percentage flags were inert because abs
+#                  caps (200k/215k) always won — pass abs tokens directly for an
+#                  unambiguous band. hk-5da7.)
+#   CAP_ACT_ABS  — $CAP_ACT_ABS,  or 215000  (keeper --act-abs-tokens)
 
 set -euo pipefail
 
@@ -49,8 +52,8 @@ PROJ_HASH="$(harmonik project-hash --project "$HK_PROJECT")"
 
 CAP_TMUX="${1:-${CAP_TMUX:-harmonik-${PROJ_HASH}-captain}}"
 CAP_NAME="${CAP_NAME:-captain}"
-CAP_WARN="${CAP_WARN:-30}"
-CAP_ACT="${CAP_ACT:-35}"
+CAP_WARN_ABS="${CAP_WARN_ABS:-200000}"   # keeper --warn-abs-tokens
+CAP_ACT_ABS="${CAP_ACT_ABS:-215000}"     # keeper --act-abs-tokens
 
 # Mint a stable session id ONCE; the keeper's clear→resume cycle re-binds to it.
 # Lowercase it: macOS uuidgen emits uppercase, but the keeper's identity gate
@@ -59,7 +62,7 @@ CAP_ACT="${CAP_ACT:-35}"
 # canonical lowercase id so the resume matches and the .sid binding stays primary.
 SID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 
-echo "captain-launch: name=$CAP_NAME tmux=$CAP_TMUX session_id=$SID warn=$CAP_WARN act=$CAP_ACT project=$HK_PROJECT"
+echo "captain-launch: name=$CAP_NAME tmux=$CAP_TMUX session_id=$SID warn_abs=$CAP_WARN_ABS act_abs=$CAP_ACT_ABS project=$HK_PROJECT"
 
 # 1) Launch the captain in its own tmux session with the MINTED --session-id.
 #    Interactive, remote-controllable (operator can watch at claude.ai/code).
@@ -104,14 +107,16 @@ chmod +x "$RESPAWN_SCRIPT"
 
 # 4) Arm the session-keeper AFTER the captain is up. The keeper drives the
 #    in-process handoff→/clear→/session-resume cycle against this tmux session.
-#    --warn-pct/--act-pct must be passed explicitly (bare defaults are 80/90).
+#    --warn-abs-tokens/--act-abs-tokens are passed explicitly: on a 1M window the
+#    percentage flags were inert because the abs caps (200k/215k) always won, so we
+#    pass abs tokens directly for an unambiguous band (hk-5da7).
 #    --respawn-cmd wires the dead-pane self-heal: the keeper runs RESPAWN_SCRIPT
 #    once the gauge goes stale and the pane is at a shell prompt (90s cooldown).
 #    Keeper session stays on hk-<name> prefix (outside harmonik-<hash>-* sweep namespace).
 tmux new-session -d -s "hk-keeper-$CAP_NAME" \
-  "harmonik keeper --agent \"$CAP_NAME\" --tmux \"$CAP_TMUX\" --warn-pct $CAP_WARN --act-pct $CAP_ACT --respawn-cmd \"$RESPAWN_SCRIPT\""
+  "harmonik keeper --agent \"$CAP_NAME\" --tmux \"$CAP_TMUX\" --warn-abs-tokens $CAP_WARN_ABS --act-abs-tokens $CAP_ACT_ABS --respawn-cmd \"$RESPAWN_SCRIPT\""
 
-echo "captain-launch: captain up in tmux '$CAP_TMUX' (session_id $SID, pane_pid $CAPTAIN_PID); keeper armed in tmux 'hk-keeper-$CAP_NAME' (warn $CAP_WARN / act $CAP_ACT)."
+echo "captain-launch: captain up in tmux '$CAP_TMUX' (session_id $SID, pane_pid $CAPTAIN_PID); keeper armed in tmux 'hk-keeper-$CAP_NAME' (warn_abs $CAP_WARN_ABS / act_abs $CAP_ACT_ABS)."
 echo "captain-launch: sentinel written to $COGNITION_DIR/captain.sentinel; daemon orphan sweep will skip '$CAP_TMUX' while PID $CAPTAIN_PID is live (PL-006d ii)."
 echo "captain-launch: self-heal respawn wired — keeper will relaunch '$CAP_TMUX' via $RESPAWN_SCRIPT (--resume $SID, agent-pane only, no dup keeper) if the captain pane dies."
 echo "captain-launch: NOTE — a stable --session-id is what lets the keeper's clear→resume cycle survive (mirrors the crew model)."

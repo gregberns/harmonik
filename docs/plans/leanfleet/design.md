@@ -4,7 +4,9 @@
 > adversarial critics. This is the authoritative design record for the leanfleet
 > initiative.
 >
-> **Refs:** docs/retro/2026-06-17/token-burn-analysis.md · epic hk-itoc
+> **Refs:** epic hk-itoc. (The 2026-06-17 token-burn audit report was never
+> committed as a standalone file — its conclusions are preserved in this
+> design's "Finding" section below and in the hk-bsdr bead comments.)
 >
 > **Lane split (captain boundary):** PAUL = all keeper code; LOGMINE = non-keeper
 > design/coordination docs.

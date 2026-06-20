@@ -211,8 +211,15 @@ func TestIntegration_OperatorAttached_RealClient(t *testing.T) {
 
 // TestIntegration_OperatorAttached_SuppressesAndResumes drives the FULL act-path
 // (Cycler.MaybeRun) against the real tmux probe: while a real client is attached
-// the cycle is suppressed (warn-only, an operator_attached event, NO injection);
-// after the client detaches the cycle proceeds and completes.
+// the cycle is SUPPRESSED (warn-only, NO destructive /clear injection); after the
+// client detaches the cycle proceeds and completes.
+//
+// Note: this test no longer asserts a session_keeper_operator_attached event.
+// That event was deliberately dropped — emitOperatorAttached was made a no-op on
+// 2026-06-17 (commit f46ad0bf, hk-ubp1 monitor-noise cut); the event is no longer
+// persisted to events.jsonl. The behavior that MATTERS — and is asserted here —
+// is the *effect* of the operator-attached guard: zero injections while attached,
+// and a completed cycle after detach. Refs: hk-6qf, hk-ubp1, f46ad0bf.
 //
 // InjectFn is a spy (we do NOT paste into the real pane — the point is to assert
 // suppression vs. proceed, not to drive a real Claude REPL). Only OperatorAttached
@@ -288,18 +295,22 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 		t.Fatalf("oai: client not visible to OperatorAttached(%q) before suppress assertion", name)
 	}
 
-	// (1) Attached → MaybeRun must suppress: no injection, operator_attached event.
+	// (1) Attached → MaybeRun must SUPPRESS: the destructive /clear injection is
+	// withheld and the handoff never starts. (We no longer assert an
+	// operator_attached event — emitOperatorAttached is a no-op since f46ad0bf /
+	// hk-ubp1; see the function doc above. The real, load-bearing signal is the
+	// *absence of injection and handoff* while the operator is attached.)
 	if err := cycler.MaybeRun(context.Background(), &CtxFile{Pct: 95.0, SessionID: prevSID}); err != nil {
 		t.Fatalf("MaybeRun(attached): %v", err)
 	}
 	if n := injectCount(); n != 0 {
 		t.Fatalf("oai: want 0 injections while operator attached; got %d (%v)", n, injectMu.texts)
 	}
-	if got := len(em.EventsOfType(core.EventTypeSessionKeeperOperatorAttached)); got != 1 {
-		t.Fatalf("oai: want 1 operator_attached event while attached; got %d", got)
-	}
 	if got := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); got != 0 {
 		t.Fatalf("oai: want 0 handoff_started while attached; got %d", got)
+	}
+	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != 0 {
+		t.Fatalf("oai: want 0 cycle_complete while attached (cycle must be suppressed); got %d", got)
 	}
 
 	// (2) Detach the real client; wait until the probe reports no client.

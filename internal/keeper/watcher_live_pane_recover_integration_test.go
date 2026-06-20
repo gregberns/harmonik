@@ -66,8 +66,9 @@ func (r *lprIntRecorder) count() int {
 // .sid bound → the watcher fires the gated ForceRestart action and emits
 // session_keeper_live_pane_recover.
 //
-// RED on main: maybeLivePaneRecover does not exist there, so the recovery never
-// fires (the fired channel times out).
+// The live-pane recovery path (maybeLivePaneRecover) is now present in
+// production, so this test is GREEN: a stale gauge over an alive pane with a
+// valid .sid bound fires the gated recovery and emits the event.
 func TestIntegration_LivePaneRecover_FiresOnStaleGaugeLivePane(t *testing.T) {
 	twRequireTmux(t)
 
@@ -131,9 +132,19 @@ func TestIntegration_LivePaneRecover_FiresOnStaleGaugeLivePane(t *testing.T) {
 		t.Fatalf("tw: live-pane recovery never fired within the run window (calls=%d); "+
 			"a stale gauge over an alive pane with a valid .sid must trigger it", rec.count())
 	}
+
+	// rec.fired is signalled from INSIDE LiveRecoverFn, but production emits
+	// session_keeper_live_pane_recover only AFTER LiveRecoverFn returns
+	// (watcher.go ~1345/1362). Reading EventsOfType synchronously here races the
+	// watcher goroutine's emit. Poll for the event (deadline 2s) so we assert it
+	// genuinely appears — without weakening the requirement that it MUST appear.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(em.EventsOfType(core.EventTypeSessionKeeperLivePaneRecover)) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
 	cancel()
 
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperLivePaneRecover)); n == 0 {
-		t.Errorf("tw: want ≥1 session_keeper_live_pane_recover event; got 0")
+		t.Errorf("tw: want >=1 session_keeper_live_pane_recover event; got 0")
 	}
 }

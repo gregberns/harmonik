@@ -432,6 +432,55 @@ func nonceMarker(cycleID string) string {
 	return fmt.Sprintf("<!-- KEEPER:%s -->", cycleID)
 }
 
+// nonceMarkerPrefix is the stable prefix shared by every keeper nonce marker.
+// Its presence (with a value other than the current nonce) signals a leftover
+// nonce from a prior cycle that must be cleared before polling. Refs: hk-vpnp.
+const nonceMarkerPrefix = "<!-- KEEPER:"
+
+// handoffHasStaleNonce reports whether the handoff file already contains a keeper
+// nonce marker from some OTHER (prior) cycle. The current cycle's nonce is unique
+// and cannot already be present, so a marker that is not currentNonce is stale and
+// would falsely pre-satisfy the poll (DEFECT-2). When this returns false the file
+// is either absent, empty, or a genuine operator handoff with no keeper nonce —
+// in which case it MUST be preserved rather than truncated (hk-vpnp / Bug 3b).
+func (c *Cycler) handoffHasStaleNonce(handoffPath, currentNonce string) bool {
+	content, err := c.cfg.ReadHandoff(handoffPath)
+	if err != nil {
+		return false // absent/unreadable → nothing stale to clear
+	}
+	if !strings.Contains(content, nonceMarkerPrefix) {
+		return false // no keeper nonce at all → genuine handoff; preserve it
+	}
+	// A keeper nonce is present. If it is ONLY the current cycle's nonce (cannot
+	// happen for a fresh unique id, but be defensive), it is not stale.
+	return strings.Contains(content, nonceMarkerPrefix) &&
+		!isOnlyNonce(content, currentNonce)
+}
+
+// isOnlyNonce reports whether every keeper nonce marker in content equals
+// currentNonce (i.e. there is no foreign/stale nonce present).
+func isOnlyNonce(content, currentNonce string) bool {
+	rest := content
+	for {
+		i := strings.Index(rest, nonceMarkerPrefix)
+		if i < 0 {
+			return true
+		}
+		// Extract the full marker up to the closing "-->".
+		tail := rest[i:]
+		end := strings.Index(tail, "-->")
+		if end < 0 {
+			// Malformed marker; treat as stale to be safe.
+			return false
+		}
+		marker := tail[:end+len("-->")]
+		if marker != currentNonce {
+			return false
+		}
+		rest = tail[end+len("-->"):]
+	}
+}
+
 // Cycler runs the Phase-2 intent-preserving reset cycle when gate conditions
 // are met. It is safe to call MaybeRun on every watcher tick.
 //
@@ -445,6 +494,17 @@ type Cycler struct {
 	// below WarnPct on that new session_id.
 	lastFiredSID            string // session_id of the last completed or aborted cycle
 	seenLowPctAfterLastFire bool   // true once pct < WarnPct is observed on the new session
+
+	// lastFireWasAbort records whether the most recent fire ABORTED (handoff
+	// never confirmed → /clear was NEVER issued) rather than completing. It gates
+	// the same-SID anti-loop escape hatch: after an ABORT, a below-WarnPct reading
+	// on the SAME (un-cleared) session_id is NOT evidence that a real /clear
+	// happened — it is gauge noise (truncated handoff, transient repaint). Re-arming
+	// on it caused hk-vpnp / Bug 3a: the cycle re-fired a fresh nonce every time
+	// the gauge dipped, looping against a session that was never cleared. The
+	// escape hatch is therefore taken only after a COMPLETED cycle, where /clear
+	// genuinely ran and a real context drop is expected. Refs: hk-vpnp.
+	lastFireWasAbort bool
 
 	// Forced-clear retry state (Refs: hk-qoz).
 	// lastForcedAttemptAt is set at the start of any runCycle call when
@@ -533,9 +593,18 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	// must be allowed to re-arm. Reset lastFiredSID so subsequent ticks on the
 	// same session_id can pass Gate 6 once the context climbs again.
 	// (Refs: hk-uxu)
-	if c.lastFiredSID != "" && cf.SessionID == c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
+	//
+	// hk-vpnp / Bug 3a: take this escape hatch ONLY when the last fire COMPLETED
+	// (i.e. /clear actually ran). After an ABORT, /clear was never issued, so a
+	// same-SID below-WarnPct reading is gauge noise (truncated handoff, transient
+	// repaint), NOT proof of a real clear. Re-arming on it re-fired a fresh nonce
+	// on a never-cleared session, looping. After an abort, re-fire is governed
+	// solely by the Gate-6 force-retry path (rate-limited), not by this hatch.
+	if c.lastFiredSID != "" && cf.SessionID == c.lastFiredSID &&
+		!c.lastFireWasAbort && c.cfg.belowWarnThreshold(cf) {
 		c.lastFiredSID = ""
 		c.seenLowPctAfterLastFire = false
+		c.lastFireWasAbort = false
 	}
 
 	// Boot-grace gate (Refs: hk-4f8 — bad-trigger-timing fix, hk-ibb — follow-up).
@@ -707,10 +776,18 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	// Emit session_keeper_handoff_started so the cycle is auditable.
 	c.emitHandoffStarted(ctx, cycleID, cf.SessionID)
 
-	// Step 2: truncate handoff file BEFORE injecting /session-handoff.
-	// This prevents a stale nonce from a pre-crash cycle from pre-satisfying
-	// the poll in step 3 (DEFECT-2).
-	_ = c.cfg.TruncateHandoffFn(handoffPath) //nolint:errcheck // non-fatal; poll will fail gracefully
+	// Step 2: clear any STALE keeper nonce from a prior cycle BEFORE injecting
+	// /session-handoff, so a leftover nonce cannot pre-satisfy the poll in step 3
+	// (DEFECT-2). The current cycle's nonce is unique (timestamp-prefixed,
+	// per-process sequence), so it can never already be present — only a PRIOR
+	// cycle's nonce can. We therefore truncate ONLY when the existing file carries
+	// a keeper nonce; a genuine, non-empty handoff that carries no keeper nonce is
+	// PRESERVED. Truncating it unconditionally was hk-vpnp / Bug 3b: an aborted
+	// cycle (handoff never confirmed) wiped the prior handoff to 0 lines, and the
+	// next cycle wiped it again, so the loop destroyed the operator's fleet intent.
+	if c.handoffHasStaleNonce(handoffPath, nonceMarker(cycleID)) {
+		_ = c.cfg.TruncateHandoffFn(handoffPath) //nolint:errcheck // non-fatal; poll will fail gracefully
+	}
 
 	// Step 2b: inject /session-handoff with nonce directive.
 	// Send Escape first to preempt any in-progress input on a busy pane so the
@@ -743,6 +820,9 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 		// DEFECT-4: record suppression on abort to prevent re-fire on next tick.
 		c.lastFiredSID = cf.SessionID
 		c.seenLowPctAfterLastFire = false
+		// hk-vpnp / Bug 3a: mark this fire as an ABORT so the same-SID escape hatch
+		// does NOT re-arm on a post-abort gauge dip (no /clear was issued).
+		c.lastFireWasAbort = true
 
 		// Re-arm: clear .managed so the watcher re-latches on the next valid
 		// gauge after this abort — but ONLY when a real session-id change was
@@ -846,6 +926,9 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	// a new session_id is observed AND pct drops below WarnPct on it.
 	c.lastFiredSID = cf.SessionID
 	c.seenLowPctAfterLastFire = false
+	// hk-vpnp / Bug 3a: this fire COMPLETED (/clear ran), so the same-SID escape
+	// hatch may legitimately re-arm on a real context drop.
+	c.lastFireWasAbort = false
 
 	// Successful cycle: reset the consecutive-timeout counter and the grace
 	// burst window so the next novel SID after this /clear gets a fresh total
@@ -996,10 +1079,13 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 
 	// Anti-loop escape hatch (mirrors MaybeRun): same-session + below WarnPct
 	// means a real /clear happened with ClearSettle timeout; reset so re-arm
-	// is possible. (Refs: hk-uxu)
-	if cf != nil && c.lastFiredSID != "" && cf.SessionID == c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
+	// is possible. (Refs: hk-uxu) — gated on !lastFireWasAbort to avoid the
+	// hk-vpnp / Bug 3a re-fire loop (an aborted cycle never issued /clear).
+	if cf != nil && c.lastFiredSID != "" && cf.SessionID == c.lastFiredSID &&
+		!c.lastFireWasAbort && c.cfg.belowWarnThreshold(cf) {
 		c.lastFiredSID = ""
 		c.seenLowPctAfterLastFire = false
+		c.lastFireWasAbort = false
 	}
 
 	// Gate 3: HoldingDispatch — fail-closed; skip cycle.

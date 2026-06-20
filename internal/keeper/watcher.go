@@ -419,6 +419,13 @@ type WatcherConfig struct {
 	// count remains above the ceiling across multiple ticks.
 	// Default: 5 minutes. Refs: hk-34ac.
 	HardCeilingCooldown time.Duration
+
+	// BlindKeeperThreshold is the minimum duration of continuous foreign_session
+	// rejection before the blind-keeper alarm (session_keeper_blind) fires. In
+	// production this is 5 minutes; it may be set to a much shorter value in tests
+	// so the alarm can be exercised without sleeping 5 real minutes.
+	// Default: 5 minutes. Refs: hk-34ac, hk-nlio.
+	BlindKeeperThreshold time.Duration
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -509,6 +516,11 @@ func (c *WatcherConfig) applyDefaults() {
 	// Hard-ceiling backstop cooldown (hk-34ac). Default: 5 minutes.
 	if c.HardCeilingCooldown <= 0 {
 		c.HardCeilingCooldown = 5 * time.Minute
+	}
+	// Blind-keeper alarm threshold (hk-34ac). Default: 5 minutes.
+	// Tests set this to a small value to exercise the alarm without sleeping.
+	if c.BlindKeeperThreshold <= 0 {
+		c.BlindKeeperThreshold = 5 * time.Minute
 	}
 	// Auto-enable on-demand restart UX for the captain agent. The captain uses
 	// 'harmonik keeper restart-now' (ON-059) rather than the keeper's auto-cycle,
@@ -834,7 +846,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 					if w.blindSince.IsZero() {
 						w.blindSince = time.Now()
 					}
-					if !w.blindAlarmFired && time.Since(w.blindSince) > 5*time.Minute {
+					if !w.blindAlarmFired && time.Since(w.blindSince) > w.cfg.BlindKeeperThreshold {
 						blindSeconds := int64(time.Since(w.blindSince).Seconds())
 						slog.WarnContext(ctx, "keeper: blind-keeper alarm: continuous foreign_session for >5 min; keeper cannot monitor this pane",
 							"agent", w.cfg.AgentName, "managed_sid", managedSID, "live_sid", ctxFile.SessionID,

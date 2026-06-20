@@ -138,7 +138,7 @@ Refs: `internal/daemon/projectconfig.go`, hk-lhu2.
 All keeper verbs are under `harmonik keeper`. Top-level usage:
 `keeper_cmd.go:243` (`keeperTopUsage`).
 
-### `harmonik keeper restart-now <agent> [--project DIR]` — captain-initiated on-demand restart
+### `harmonik keeper restart-now --agent <name> [--project DIR]` — captain-initiated on-demand restart
 
 Writes the `.restart-now` marker (`{nonce, requested_at, session_id}`) read from
 the captain's current `HANDOFF-captain.md`. On the next watcher tick, the keeper
@@ -255,7 +255,7 @@ silent).
 shutdown); `1` argument or I/O error; `2` lock already held by another live
 keeper (only ONE keeper per agent).
 
-### `harmonik keeper enable <agent> [flags]` — wire the hooks
+### `harmonik keeper enable --agent <name> [flags]` — wire the hooks
 
 IDEMPOTENT wiring of the three keeper stanzas into the GLOBAL
 `~/.claude/settings.json`: `statusLine` + `Stop` hook + `PreCompact` hook. Backs
@@ -283,7 +283,7 @@ Flags (`keeper_enable_doctor_cmd.go:889-922`): `--project DIR`,
 **Exit codes** (`keeper_enable_doctor_cmd.go:919-922`): `0` success; `1`
 argument, validation, or I/O error.
 
-### `harmonik keeper doctor <agent> [--project DIR]` — read-only drift validator
+### `harmonik keeper doctor --agent <name> [--project DIR]` — read-only drift validator
 
 READ-ONLY; mutates nothing. Also runs automatically at keeper **boot** as a loud
 diagnostic (`keeper_enable_doctor_cmd.go:539-552`). **Run this to find out the
@@ -304,7 +304,7 @@ ACTUAL deployed keeper state.** Checks (`keeper_enable_doctor_cmd.go:366-536`,
 **Exit codes** (`keeper_enable_doctor_cmd.go:945-948`): `0` all checks passed;
 `1` one or more failed (details on stdout).
 
-### `harmonik keeper set-dispatching <agent> [--project DIR]` — hold the reset
+### `harmonik keeper set-dispatching --agent <name> [--project DIR]` — hold the reset
 
 Writes `.harmonik/keeper/<agent>.dispatching` so `HoldingDispatch → true`
 (`keeper_cmd.go:162-200`). The reset cycle **defers** while this marker is
@@ -313,7 +313,7 @@ does not `/clear` you mid-dispatch (`keeperTopUsage` VERBS). Exit codes
 (`keeper_cmd.go:166-171`): `0` written; `1` argument / path-traversal / I/O
 error. Verified by `keeper_dispatching_cmd_hkrc51s_test.go:15-34`.
 
-### `harmonik keeper clear-dispatching <agent> [--project DIR]` — release the hold
+### `harmonik keeper clear-dispatching --agent <name> [--project DIR]` — release the hold
 
 Removes the `.dispatching` marker so `HoldingDispatch → false`
 (`keeper_cmd.go:202-241`). **Idempotent** — an already-absent marker is not an
@@ -407,14 +407,16 @@ There is a documented inconsistency in the docs, and the source ships the gauge
   fresh mission file.** (Refs hk-ekap1, hk-njetn; enablement deferred to an
   operator-supervised session.)
 
-- Meanwhile the **captain** skill (§A lane snapshot) instructs relaunching the
-  watcher with `--warn-pct 25 --act-pct 30` — an **armed** posture that assumes
-  the gauge IS wired. These two coexist: the captain note describes how to arm
-  it; the deployment-state docs say it is not currently armed for crews.
+- Meanwhile the **captain** skill (STARTUP.md Step 6 "Keeper arming") instructs
+  relaunching the captain watcher with `--warn-abs-tokens 200000 --act-abs-tokens
+  215000` (the canonical absolute band; pct flags are inert on the 1M window) — an
+  **armed** posture that assumes the gauge IS wired. These two coexist: the captain
+  note describes how to arm it; the deployment-state docs say it is not currently
+  armed for crews.
 
 **KNOWN DRIFT:** whether the gauge is armed for a given agent on YOUR box is not
 something to assume from the docs — they disagree. **Confirm the ACTUAL state
-with `harmonik keeper doctor <agent>`** before relying on the keeper to clear
+with `harmonik keeper doctor --agent <agent>`** (flag-only — hk-nbft) before relying on the keeper to clear
 that session. If `doctor` reports the `statusLine` / `gauge` / `managed` checks
 failing, the keeper is passive and you must fall back to manual
 stop/start. Source-verified facts: the gauge is OFF unless `keeper enable
@@ -426,18 +428,23 @@ session is armed is a deployment fact to check, not infer.
 ## § Quick reference
 
 ```bash
+# All keeper verbs are FLAG-ONLY (hk-nbft) — pass --agent <name>; a POSITIONAL agent
+# is rejected with exit 2 (a positional silently became an agent literally named the
+# flag, the recurring restart-now failure). Use --agent everywhere below.
+
 # Is the keeper actually armed for this agent? (run this first — settles the drift)
-harmonik keeper doctor <agent> --project $HARMONIK_PROJECT
+harmonik keeper doctor --agent <agent> --project $HARMONIK_PROJECT
 
 # Wire the hooks (GLOBAL settings.json edit; --yes-destructive arms the reset cycle)
-harmonik keeper enable <agent> --tmux <pane> --yes-destructive
+harmonik keeper enable --agent <agent> --tmux <pane> --yes-destructive
 
-# Start the watcher (tighten pct on a 1M window so the gauge fires sanely)
-harmonik keeper --agent <agent> --tmux <pane> --warn-pct 25 --act-pct 30
+# Start the watcher (use ABSOLUTE tokens — pct flags are INERT on a 1M window).
+# The captain's canonical band is warn 200k / act 215k (operator-lowered; M1/hk-039z):
+harmonik keeper --agent <agent> --tmux <pane> --warn-abs-tokens 200000 --act-abs-tokens 215000
 
 # Defer the reset while a queue batch is in flight, then release
-harmonik keeper set-dispatching <agent>
-harmonik keeper clear-dispatching <agent>
+harmonik keeper set-dispatching --agent <agent>
+harmonik keeper clear-dispatching --agent <agent>
 
 # Captain-initiated restart (write HANDOFF-captain.md first, include KEEPER nonce)
 harmonik keeper restart-now --agent captain [--project DIR]

@@ -180,8 +180,12 @@ ordered checklist; this paragraph is the contract it enforces:
    then **VERIFY** the crew is real on BOTH axes: comms-online (`comms who`) AND
    pane-truth (`capture-pane` shows a boot status / dispatch). A 0-exit from
    `crew start` is NOT verification (STARTUP.md Anti-pattern E).
-5. **Arm watchers** — `comms recv --follow` (operator + crew feed) and
-   `subscribe --types epic_completed,run_failed,run_stale,heartbeat`.
+5. **Arm watchers — EXACTLY two (M3/hk-039z):** `comms recv --follow` (operator +
+   crew feed) and the `/loop 12m` health tick. **Do NOT arm a `run_stale,heartbeat`
+   standing subscribe** — that short-heartbeat run-level subscribe re-invokes the
+   captain every minute and burns the context the captain role exists to protect
+   (the operator-flagged "observe everything" failure). The `/loop 12m` tick is the
+   superset; run-level telemetry is the CREWS' job. See STARTUP.md Step 6.
 6. **THEN monitor** — only after the FULL fleet passes verification do you settle
    into the monitor loop (§5–§9).
 
@@ -198,64 +202,23 @@ makes that impossible.
 
 ---
 
-## §A — Lanes & next-lane roadmap
+## §A — Lane MODEL (live lane state lives in captain-lanes.md)
 
 **The model: one lane = one epic = one crew.** A lane is an initiative; its epic is
 the parent bead whose ready children the crew dispatches; the crew owns that epic
 on its own named queue. Two crews never share an epic or touch the same files.
 
-> The codenames and bead ids below are a **point-in-time snapshot** (captured the
-> session this section was written). They will drift. Treat them as the *current*
-> lane map to verify against live state in the boot sequence (§0.5 Step 1–3) — NOT
-> as gospel. Re-derive the live lanes from `crew list` + `kerf next` every boot.
+> **LIVE LANE STATE IS NOT HERE (M9/hk-039z).** The single source of record for the
+> current lane table, parked work, operator initiatives, and next-lane roadmap is
+> the tier-2 file **`.harmonik/context/captain-lanes.md`**, which you read at
+> STARTUP.md Step 0b and which SHUTDOWN.md updates at session end. This section
+> carries ONLY the durable MODEL and the assignment rule — it deliberately holds NO
+> point-in-time crew/bead snapshot (that duplicated and drifted from captain-lanes.md).
+> Re-derive live lanes from `crew list` + `kerf next` + captain-lanes.md every boot.
 
-### Lane snapshot (POINT-IN-TIME ONLY — re-derive live every boot)
-
-> The lane rows below are a **historical snapshot**, NOT current state and NOT a
-> standing order. **Per the operator's keep-the-fleet-moving directive, you
-> re-derive live lanes from `crew list` + `kerf next` every boot and AUTONOMOUSLY
-> staff a crew per KNOWN ready lane (§0).** A prior "run fewer / fleet parked"
-> wind-down has been LIFTED — do NOT carry it forward. Crews that were stood down
-> have persisted mission files; re-establish their lanes if `kerf next` still ranks
-> the work. **Session-keeper arming:** relaunch the watcher with
-> `--warn-pct 30 --act-pct 35` (matching `captain-launch.sh` defaults; bare 80/90
-> defaults defeat the intent on a 1M window).
-
-| crew | lane (initiative) | epic | live state (2026-06-11) |
-|---|---|---|---|
-| _(none live)_ | — | — | fleet wound down; daemon idle awaiting operator re-spawn/ranking |
-| ~~gurney~~ | ~~churn / loose-beads~~ | ~~`hk-9gkwa`~~ | STOOD DOWN overnight — lane complete (~10 wins) |
-| ~~chani~~ | ~~release-pipeline `hk-brc3z`~~ | — | STOOD DOWN (2026-06-10 consolidation) |
-| ~~liet~~ | ~~test/CI `hk-kjkbw`~~ | — | STOOD DOWN (2026-06-10 consolidation) |
-| ~~duncan~~ | ~~codex-harness `hk-w4tmz`~~ | — | STOOD DOWN — codex 8/8 + queue-bug 3/3 complete |
-| ~~stilgar~~ | ~~daemon/infra `hk-3js5m`~~ | — | STOOD DOWN — 20 daemon/infra + session-keeper + logmine complete |
-
-**Genuinely-new judgment still pending operator (the §0 surface-and-await set only):**
-ranking `standard-bead-dot` as a brand-NEW Phase-3 initiative — it has no existing
-`kerf next` priority, so surface-and-await before staffing it (a NEW-initiative
-ranking, §8). Everything already in `kerf next` / `br ready` you staff autonomously.
-The gh `workflow`-scope beads remain externally-gated (operator is remote-only — do
-NOT recommend `gh auth refresh`).
-
-### Prioritized NEXT work (what to feed the fleet next)
-
-- **Next phase (brand-NEW initiative — surface-and-await per §8):**
-  **standard-bead-dot** (per-bead DOT workflow, the Phase-3 north-star keystone) is
-  the top candidate but is NOT yet in `kerf next`, so ranking-it-in is the operator's
-  call (a NEW-initiative ranking, §8). Every OTHER item in this list is already
-  ranked and you staff it autonomously. Full analysis + ~25 harmonik-embed proposals:
-  `docs/retro/2026-06-10/SYNTHESIS.md`.
-- **Open product bug:** `hk-h8u7p` (P1) — daemon's concurrent `git worktree add`
-  races `.git/index.lock` at MaxConcurrent>1 (the `--max-concurrent 4` workaround's
-  root). Needs a product fix (serialize prod `CreateWorktree` / bounded retry).
-- **Retro beads filed 2026-06-10:** `hk-my7y8` (restore-staged-after-merge),
-  `hk-7evda` (epic-assignee in run events), `hk-37ra4` (comms `--wake`),
-  `hk-pk3p1` (`harmonik promote`), `hk-jzdy5` (refresh AGENT_INDEX/STATUS),
-  `hk-g1umi` (create captain/SHUTDOWN.md).
-- **Singletons (verify before submit — some landed):** `extqueue hk-fkpb7` LANDED,
-  `session-keeper` code COMPLETE; remaining candidates `flywheel hk-m8zqv` (4h smoke,
-  needs ranking), `named-queues hk-tigaf` (epic), `pilot hk-ynjnf`.
-- **Hygiene:** `kerf triage --ack`; wire or shelve unwired kerf works.
+> **Session-keeper arming band:** see STARTUP.md Step 6 "Keeper arming" for the
+> canonical `--warn-abs-tokens 200000 --act-abs-tokens 215000` flags. The pct flags
+> are inert on the captain's 1M window — do NOT use them (M1/hk-039z).
 
 ### Assignment rule (LOAD-BEARING)
 
@@ -430,6 +393,12 @@ harmonik subscribe --types epic_completed --json
 This attaches to the running daemon and sees `epic_completed` regardless of which
 agent submitted the underlying work. It is independent of any crew self-report.
 
+> **Scope (M3/hk-039z):** this is an `epic_completed`-ONLY subscribe — it is NOT a
+> heartbeat stream and does NOT add `run_stale`/`heartbeat`. Do not widen it to
+> run-level telemetry (that is the forbidden context-burn — STARTUP.md Step 6).
+> If you prefer, fold `epic_completed` into the `/loop 12m` tick + `comms recv
+> --follow` feed rather than running a third always-on subscribe.
+
 On each `epic_completed{epic_id, last_child_bead_id, closed_at}` (dedupe on
 `event_id`):
 
@@ -542,11 +511,21 @@ rather than blocking; surface only genuine splits / unsound consensus.
   exceeded`, `run_id=null`, the bead **never dispatches**. `--assignee` goes on the
   **EPIC only** (so the captain can attribute its run events — §5 Gap 1); every
   child / dispatchable bead **stays UNASSIGNED**. (Refs hk-kr791, hk-amed0.)
-- **Permitted `br` writes = comments + the EPIC `--assignee` mirror ONLY**
-  (`br comments add <epic> "..."` and `br update <epic> --assignee <crew>`). You
-  MUST NOT issue terminal-transition writes (`br claim` / `br close` / `br reopen`)
-  — those are daemon-owned (beads-cli write discipline, BI-010). An out-of-band
-  `br close` racing the daemon breaks C1's `epic_completed` chain.
+- **`br close` — the ONE sanctioned exception (M7/hk-039z, authoritative
+  statement).** Permitted `br` writes = comments + the EPIC `--assignee` mirror ONLY
+  (`br comments add <epic> "..."` and `br update <epic> --assignee <crew>`). You MUST
+  NOT issue terminal-transition writes (`br claim` / `br close` / `br reopen`) — those
+  are daemon-owned (beads-cli write discipline, BI-010); an out-of-band `br close`
+  racing the daemon breaks C1's `epic_completed` chain. **The single sanctioned
+  exception:** `br close <bead>` AFTER a *verified* manual cherry-pick to `main` via
+  the SHUTDOWN.md Step 2 bypass-SOP (`--reason "Manually deployed: <sha> (bypass-SOP)"`).
+  **Exception-to-the-exception (do NOT raw-close):** `harmonik promote` cherry-picks
+  LACK the `Harmonik-Bead-ID` merge trailer that `harmonik reconcile` keys on, so a
+  raw `br close` strands the bead — for those, let `harmonik reconcile` close it (or
+  land the hk-53p3 fix), do NOT raw-close. And a bead flagged in `captain-lanes.md`
+  as "do NOT raw-close — reverses a locked decision" is a §8 surface-and-await, not
+  this exception. (Reconciles SHUTDOWN.md §Step 2 / §Fleet-safe / beads-cli /
+  captain-lanes.md into this one place.)
 - **Review/planning sub-agents you dispatch MUST be READ-ONLY** — they run NO git
   state-changing commands (`git reset` / `git checkout` / `git cherry-pick` /
   `git merge` / `git rebase`) on the shared repo. A reviewer agent that `reset`
@@ -583,6 +562,14 @@ decide.** (c4-spec §7.)
 NOT spin up ≥10 parallel Agent-tool sub-agents while the daemon dispatches crew
 beads (rate-limit rule). Crew spawning is rare and coarse; you otherwise watch and
 mail.
+
+> **Stream-vs-wave (M12/hk-039z — mostly crew-facing; bites the captain only on
+> lull-deploy / canary).** `harmonik-dispatch` recommends `--wave` for true concurrent
+> dispatch, but hard-won operational memory is that concurrent dispatch of REAL beads
+> can WEDGE at `launch_stall_detected` — only SERIAL reliably worked. Reconcile: if
+> concurrent dispatch wedges at `launch_stall_detected`, fall back to
+> `--max-concurrent 1` (serial) per the known concurrent-dispatch-wedge class; verify
+> the fix-bead status (hk-h8u7p / hk-3j50y) before going wide.
 
 ---
 
@@ -722,12 +709,16 @@ When **writing** a handoff, the captain MUST NOT record "NEXT CAPTAIN: decide X"
 for a §0 item. Write "re-task X (autonomous)" or "staff lane X (autonomous)" —
 never a decide-gate on an autonomous duty.
 
-**The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate
-(CrispIdle check). All other safety gates (nonce-confirmed handoff, `.managed`,
-`HoldingDispatch`) remain intact. The operator HARD-NO on widening the band stands.
+**`restart-now` does not WIDEN the band (M1/M4-hk-039z).** It bypasses only the
+act-pct idle gate (CrispIdle check). All other safety gates (nonce-confirmed handoff,
+`.managed`, `HoldingDispatch`) remain intact. The operator HARD-NO is on **WIDENING**
+only — LOWERING the band to restart earlier (the current 200k/215k absolute band) is
+operator-directed and correct; do NOT re-apply the old "no band-retune" lock to refuse
+a LOWERING. The pct flags are inert on the 1M window — arm with
+`--warn-abs-tokens 200000 --act-abs-tokens 215000` (STARTUP.md Step 6 "Keeper arming").
 (You MUST be launched via `~/.claude/captain-tools/captain-launch.sh`, which mints
-the stable `--session-id` the keeper rebinds to — STARTUP.md Step 6 "Keeper arming".
-A bare `claude --remote-control captain` with no `--session-id` cannot be cycled.)
+the stable `--session-id` the keeper rebinds to. A bare `claude --remote-control
+captain` with no `--session-id` cannot be cycled.)
 
 ---
 

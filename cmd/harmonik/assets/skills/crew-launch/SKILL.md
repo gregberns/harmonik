@@ -43,7 +43,7 @@ Your stable identity is `$HARMONIK_AGENT` (== `crew_name` from your handoff).
 
 > **One-call discovery shortcut — run the crew boot digest first:**
 > ```bash
-> ~/.claude/captain-tools/crew-boot-digest.sh
+> scripts/crew-boot-digest.sh        # in-repo, portable (hk-039z); --crew / --project optional
 > ```
 > This reads your mission file, checks daemon status, agents online, your
 > queue and epic state, ready beads, and recent comms — in one shell call —

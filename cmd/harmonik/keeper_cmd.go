@@ -150,32 +150,38 @@ func runKeeperSubcommand(args []string) int {
 		}
 	})
 
-	// Resolve effective thresholds: CLI flag > config.yaml > compiled default (0 → applyDefaults).
-	resolvedWarnAbs := warnAbsTokensFlag
-	if !absWarnSet && keeperCfg.WarnAbsTokens > 0 {
-		resolvedWarnAbs = keeperCfg.WarnAbsTokens
+	// Resolve the effective threshold band through the SINGLE precedence resolver
+	// (hk-4pnv): FLAG > CONFIG > DEFAULT per field, tighten-only pct, force-act
+	// precedence (abs wins over offset), defaults read from internal/keeper's
+	// exported Default* consts. FAIL-LOUD (operator decision): on ANY bad config
+	// value, bad CLI flag, pct>1, or a cross-field band inversion the resolver
+	// returns a *KeeperConfigError — we log it and REFUSE to start. We do NOT
+	// silently default and do NOT revert the block to compiled defaults: a
+	// misconfiguration MUST be learned, never masked. This matches the daemon
+	// block's fail-fast posture.
+	resolved, resolveErr := ResolveKeeperConfig(KeeperFlags{
+		WarnAbsTokens: warnAbsTokensFlag,
+		WarnAbsSet:    absWarnSet,
+		ActAbsTokens:  actAbsTokensFlag,
+		ActAbsSet:     absActSet,
+		WarnPct:       warnPctFlag,
+		WarnPctSet:    warnPctSet,
+		ActPct:        actPctFlag,
+		ActPctSet:     actPctSet,
+	}, keeperCfg)
+	if resolveErr != nil {
+		fmt.Fprintf(os.Stderr, "keeper: refusing to start — %v\n", resolveErr)
+		// Surface a durable event too: the keeper events.jsonl is reachable here
+		// (FileEmitter derives its path from projectDir), so a fail-loud
+		// misconfiguration is not stderr-only.
+		emitKeeperConfigRejected(projectDir, agentFlag, resolveErr)
+		return 1
 	}
-	resolvedActAbs := actAbsTokensFlag
-	if !absActSet && keeperCfg.ActAbsTokens > 0 {
-		resolvedActAbs = keeperCfg.ActAbsTokens
-	}
-	// force_act_abs_tokens has no CLI flag; config wins over computed default.
-	resolvedForceActAbs := int64(0)
-	if keeperCfg.ForceActAbsTokens > 0 {
-		resolvedForceActAbs = keeperCfg.ForceActAbsTokens
-	}
-	// pct ceils: an explicitly-set --warn-pct/--act-pct WINS (hk-5da7, honored as
-	// pct/100), else config.yaml, else compiled default (0 → applyDefaults fills
-	// 0.70/0.85). Honoring the CLI pct as the ceil is what makes the flag effective
-	// on a 1M window: min(abs, (pct/100)*window) fires whichever is earlier.
-	resolvedActPctCeil := keeperCfg.ActPctCeil   // 0 if not set → applyDefaults fills 0.85
-	resolvedWarnPctCeil := keeperCfg.WarnPctCeil // 0 if not set → applyDefaults fills 0.70
-	if warnPctSet {
-		resolvedWarnPctCeil = float64(warnPctFlag) / 100.0
-	}
-	if actPctSet {
-		resolvedActPctCeil = float64(actPctFlag) / 100.0
-	}
+	resolvedWarnAbs := resolved.WarnAbsTokens
+	resolvedActAbs := resolved.ActAbsTokens
+	resolvedForceActAbs := resolved.ForceActAbsTokens
+	resolvedActPctCeil := resolved.ActPctCeil
+	resolvedWarnPctCeil := resolved.WarnPctCeil
 
 	// Step 1: acquire single-keeper lockfile.
 	lock, err := keeper.AcquireLock(projectDir, agentFlag)
@@ -253,8 +259,14 @@ func runKeeperSubcommand(args []string) int {
 			ForceActAbsTokens: resolvedForceActAbs,
 			ActPctCeil:        resolvedActPctCeil,
 			WarnPctCeil:       resolvedWarnPctCeil,
-			SendEscapeFn:      keeper.SendEscapeKey,
-			BootGracePeriod:   keeper.DefaultBootGracePeriod, // young-session guard (hk-4f8/hk-8hr1): defer cycles during post-/session-resume boot
+			// R2 (hk-4pnv): the idle-crew restart floor is a threshold-domain default
+			// promoted in hk-gwz6 (DefaultIdleRestartAbsTokens) with a config key
+			// (keeper.context_thresholds.idle_floor_abs_tokens). Thread the configured
+			// value through so an adopter's config takes effect; 0 = not configured →
+			// CyclerConfig.applyDefaults fills DefaultIdleRestartAbsTokens (150k).
+			IdleRestartAbsTokens: keeperCfg.IdleFloorAbsTokens,
+			SendEscapeFn:         keeper.SendEscapeKey,
+			BootGracePeriod:      keeper.DefaultBootGracePeriod, // young-session guard (hk-4f8/hk-8hr1): defer cycles during post-/session-resume boot
 			// hk-suxt: activate the handoff-timeout hard-restart escalation
 			// (cycle.go:767, dormant until now because CyclerConfig.ForceRestartFn was
 			// never populated in production). Fail-closed: nil unless the operator BOTH

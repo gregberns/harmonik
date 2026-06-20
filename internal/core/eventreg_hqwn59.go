@@ -470,6 +470,9 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_hard_ceiling", func() EventPayload { return &SessionKeeperHardCeilingPayload{} })
 	// hk-ee81: idle crew below idle-restart floor (advisory to captain).
 	mustRegister("session_keeper_idle_crew", func() EventPayload { return &SessionKeeperIdleCrewPayload{} })
+	// hk-4pnv: keeper refused to start because threshold config / flags failed the
+	// fail-loud precedence resolver (bad value or band inversion).
+	mustRegister("session_keeper_config_rejected", func() EventPayload { return &SessionKeeperConfigRejectedPayload{} })
 }
 
 // registerAlarmEvents registers §8.14 alarm / self-check event payload

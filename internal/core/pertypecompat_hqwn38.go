@@ -278,6 +278,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "session_keeper_hard_ceiling", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-ee81: session_keeper_idle_crew — crew is idle with context below 150K idle-restart floor.
 	{TypeName: "session_keeper_idle_crew", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-4pnv: session_keeper_config_rejected — keeper refused to start on bad threshold config / flags.
+	{TypeName: "session_keeper_config_rejected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.14 Alarm / self-check ───────────────────────────────────────────
 	// hk-tnmjy: review-gate anomaly alarm — N consecutive bead_closed with no reviewer_verdict.

@@ -258,6 +258,16 @@ type rawKeeperWarnMessages struct {
 // rawKeeperConfig is the keeper: block in config.yaml.
 // Unknown keys at this level are silently ignored (forward-compat per hk-lhu2).
 //
+// TODO(hk-4pnv / operator-decision): the fail-loud sweep asked whether to REJECT
+// unknown keys in the keeper block (so an operator who fat-fingers a key learns of
+// it). LEFT AS-IS: unknown-key tolerance is a NORMATIVE spec requirement, not an
+// incidental default — specs/process-lifecycle.md §PL-004b makes "unknown sibling
+// keys MUST be tolerated (silently ignored)" load-bearing for the config surface
+// (older binaries must tolerate a config.yaml written for a newer binary while the
+// keeper schema is actively extended across hk-lhu2 → hk-exg3 → hk-9kgf). Rejecting
+// here would break that forward-compat posture. Flagged for operator call; do not
+// flip to strict (KnownFields(true)) without amending the spec.
+//
 // # Config-schema convention (LOCKED — hk-exg3)
 //
 // All keeper config lives in ONE keeper: block under schema_version: 1 in

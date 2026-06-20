@@ -369,3 +369,26 @@ type SessionKeeperAckTimeoutPayload struct {
 	//   "no_tmux_target"    — no pane could be resolved for the agent.
 	Reason string `json:"reason"`
 }
+
+// SessionKeeperConfigRejectedPayload is the typed payload for
+// session_keeper_config_rejected (hk-4pnv).
+//
+// Emitted by the standalone `harmonik keeper` start path when the threshold
+// precedence resolver (cmd/harmonik.ResolveKeeperConfig) rejects the keeper
+// threshold config or CLI flags — a bad value (pct out of range), an invalid
+// enum, a malformed duration, or a cross-field band inversion
+// (warn<act<force_act<hard_ceiling, warn_pct<act_pct). The keeper then REFUSES to
+// start rather than running with silently-defaulted thresholds, so the operator
+// learns of the misconfiguration. Durability class: O (ordinary — operator
+// attention; the refusal is also logged to stderr).
+type SessionKeeperConfigRejectedPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// Field names the offending knob (e.g. "act_pct_ceil", "--warn-pct",
+	// "warn<act<force_act<hard_ceiling").
+	Field string `json:"field"`
+
+	// Reason is the human-readable rejection explanation.
+	Reason string `json:"reason"`
+}

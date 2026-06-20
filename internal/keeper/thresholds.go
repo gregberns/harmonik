@@ -60,6 +60,22 @@ const (
 	DefaultActAbsTokens  = defaultActAbsTokens
 )
 
+// Exported forms of the rest of the warn/act/force band so an out-of-package
+// resolver (cmd/harmonik.ResolveKeeperConfig — depguard bans keeper→daemon, so
+// the precedence resolver lives in cmd/harmonik and must read these defaults from
+// here) can implement FLAG > CONFIG > DEFAULT against the SAME single source of
+// truth as applyDefaults. Promoting these is a naming change only — values are
+// BYTE-IDENTICAL to the lowercase band consts above. Refs: hk-4pnv.
+const (
+	// DefaultForceActAbsOffset derives ForceActAbsTokens from ActAbsTokens when
+	// the absolute force gate is unset (force_act = act + offset).
+	DefaultForceActAbsOffset int64 = defaultForceActAbsOffset
+	// DefaultWarnPctCeil is the warn pct-of-window cap.
+	DefaultWarnPctCeil = defaultWarnPctCeil
+	// DefaultActPctCeil is the act pct-of-window cap.
+	DefaultActPctCeil = defaultActPctCeil
+)
+
 // HardCeilingAbsTokens is the SID-independent absolute-token hard ceiling
 // (hk-34ac). When any watched pane's token count meets or exceeds this value
 // the keeper forces a handoff+restart regardless of whether the session_id

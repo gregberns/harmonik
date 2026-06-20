@@ -18,6 +18,9 @@
 #   [x] review-gate clean    → no flag (reviewer_launched has matching verdict)
 #   [x] review-gate grace    → no flag (fresh reviewer_launched, verdict may be in flight)
 #   [x] review-gate suppress → no flag (auto-close/noChange run_completed, no reviewer) [R6]
+#   [x] review-gate short-circuit → immediate signal (node_dispatch_requested node_id=review*,
+#                                   NO reviewer_launched, NO reviewer_verdict) [hk-orni / hk-2vpj]
+#   [x] review-gate req+verdict   → no flag (review node requested AND a matching verdict)
 #   [x] backlog-ready        → digest signal (br ready beads + free slot)
 #   [x] backlog suppressed   → no flag when all slots busy
 #   [x] checks map present, schema_version=2
@@ -586,6 +589,71 @@ if [[ -f "$LOG" && -s "$LOG" ]]; then
   fail "suppression: no comms should be sent for review-less auto-close runs"
 else
   pass "suppression: no comms sent for auto-close/noChange runs"
+fi
+rm -rf "$PROJ"
+
+# ── Test 12c: review-gate SHORT-CIRCUIT — review REQUESTED, never launched, no verdict ─
+# The hk-2vpj engine-short-circuit class (hk-orni): the engine emitted
+# node_dispatch_requested node_id=review* (a review WAS requested) but the reviewer never
+# launched (NO reviewer_launched) and produced NO reviewer_verdict — the change merged +
+# closed UNREVIEWED. The launched-only gate (R6) MISSED this; the node_dispatch_requested
+# arm catches it. node_id lives under .payload; run_id is top-level.
+echo ""
+echo "=== Test 12c: review-gate short-circuit (review requested, never launched, no verdict) — immediate ==="
+OLD_WALL=$(ts_ago 600)   # past the 180s grace, judgeable
+EVENTS='{"type":"node_dispatch_requested","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-shortcircuit","payload":{"node_id":"review_correctness","run_id":"r-shortcircuit"}}
+{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-shortcircuit","success":true}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$EVENTS" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "short-circuit stdout IMMEDIATE" "IMMEDIATE"     "$OUTPUT"
+assert_contains "short-circuit stdout signal"    "review-bypass" "$OUTPUT"
+assert_json_list_contains "immediate_signals has review-bypass (short-circuit)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "review-bypass"
+assert_json_list_contains "review_bypass_run_ids has r-shortcircuit" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review_bypass_run_ids" "r-shortcircuit"
+assert_check_state "short-circuit: checks.review-gate=flag" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review-gate" "flag"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "short-circuit: comms sent"
+  assert_contains "short-circuit comms [IMMEDIATE]" "[IMMEDIATE]"   "$(cat "$LOG")"
+  assert_contains "short-circuit comms signal"      "review-bypass" "$(cat "$LOG")"
+else
+  fail "short-circuit: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 12d: review-gate REQUEST + VERDICT — review requested AND a verdict — no flag ─
+# A run that requested a review node AND produced a reviewer_verdict (the normal path,
+# whether or not a separate reviewer_launched event exists) is cleared by the verdict.
+echo ""
+echo "=== Test 12d: review-gate request + verdict (review requested, verdict present) — no flag ==="
+OLD_WALL=$(ts_ago 600)
+EVENTS='{"type":"node_dispatch_requested","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-reqok","payload":{"node_id":"review","run_id":"r-reqok"}}
+{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-reqok","success":true}}
+{"type":"reviewer_verdict","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-reqok","payload":{"run_id":"r-reqok","verdict":"APPROVE"}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$EVENTS" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "request+verdict all-green" "all-green" "$OUTPUT"
+assert_json_list_empty "request+verdict: review_bypass_run_ids empty" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review_bypass_run_ids"
+assert_check_state "request+verdict: checks.review-gate=ok" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review-gate" "ok"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  fail "request+verdict: no comms should be sent"
+else
+  pass "request+verdict: no comms sent"
 fi
 rm -rf "$PROJ"
 

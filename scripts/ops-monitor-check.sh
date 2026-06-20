@@ -8,21 +8,30 @@
 #   4. crew-staleness   — comms last_seen >150s; signals after 2 consecutive misses
 #   5. ready-unstaffed  — queue has pending_items > 0 but no workers and no online crew
 #   6. idle-fleet       — no active workers + last run event >20m ago (lull detect)
-#   7. review-gate      — a run_id that LAUNCHED a reviewer (reviewer_launched event)
-#                         but produced NO matching reviewer_verdict = review BYPASSED
-#                         (M2 code-half; CE4). Deterministic run_id↔verdict JOIN over
-#                         the last N reviewer-launched run_ids, NOT a (broken)
-#                         workflow_mode grep, and NOT a bare completed-without-verdict
-#                         join (R6 fix hk-ayvx): the daemon has a LEGITIMATE review-less
-#                         close path — MVH twin-blind `auto-close: exit=0`, noChange, and
-#                         subsumed completions merge+close with NO reviewer BY DESIGN
-#                         (workloop.go ~:3811). Those never emit reviewer_launched, so
-#                         gating on launched-but-no-verdict suppresses them instead of
-#                         firing ~180 false `review-bypass` alerts (alert fatigue would
-#                         bury the REAL bypass). Multi-iteration DOT runs (MEDIUM): a
-#                         terminal `run_completed` run_id that never launched a reviewer
-#                         is likewise never flagged, so unmatched `dot: reached terminal
-#                         node close` run_ids can't false-flag either.
+#   7. review-gate      — a run_id that ENTERED-OR-REQUESTED a review (reviewer_launched
+#                         event OR node_dispatch_requested node_id=review*) but produced
+#                         NO matching reviewer_verdict = review BYPASSED (M2 code-half;
+#                         CE4 + hk-orni short-circuit follow-up). Deterministic
+#                         run_id↔verdict JOIN over the last N review-anchored run_ids,
+#                         NOT a (broken) workflow_mode grep, and NOT a bare
+#                         completed-without-verdict join (R6 fix hk-ayvx): the daemon has
+#                         a LEGITIMATE review-less close path — MVH twin-blind
+#                         `auto-close: exit=0`, noChange, and subsumed completions
+#                         merge+close with NO reviewer BY DESIGN (workloop.go ~:3811).
+#                         Those neither launch NOR request a reviewer, so they are absent
+#                         from both anchors and stay suppressed instead of firing ~180
+#                         false `review-bypass` alerts (alert fatigue would bury the REAL
+#                         bypass). The node_dispatch_requested arm closes the hk-2vpj
+#                         engine-short-circuit blind spot (hk-orni): the engine REQUESTS a
+#                         review node but the reviewer never launches (no
+#                         reviewer_launched), so a change merges+closes UNREVIEWED — now
+#                         caught because a review node WAS requested yet no verdict exists
+#                         (8 live run_ids, 0 auto-close false positives). Multi-iteration
+#                         DOT runs (MEDIUM): launch/request and verdict are joined on the
+#                         SAME run_id, so a verdict on ANY iteration clears the run; a
+#                         terminal-close run_id that never launched OR requested a reviewer
+#                         is in neither anchor, so unmatched `dot: reached terminal node
+#                         close` run_ids can't false-flag either.
 #   8. backlog-ready    — `br ready --limit 0` shows ready beads (captain staffing
 #                         signal — judgment item, surfaced via digest)
 #
@@ -240,6 +249,13 @@ last_msg_ts = {}  # agent_name -> epoch of most recent agent_message
 # reviewer_launched -> reviewer_verdict by run_id, NOT run_completed -> verdict.
 reviewer_launched_ts = {}  # run_id -> epoch of the reviewer_launched event (review entered)
 verdict_run_ids      = set() # run_ids that have a reviewer_verdict event
+# Short-circuit signal (hk-orni / hk-2vpj follow-up): a run that REQUESTED a review node
+# (node_dispatch_requested with node_id starting 'review' — review / review_correctness /
+# review_design / review_tests / reviewer) but for which the reviewer never launched (no
+# reviewer_launched event). On live data this cleanly separates engine-short-circuited
+# reviewers (8 run_ids) from legitimately review-less auto-closes (0 of 181 request a
+# review node). node_id lives under .payload; run_id is top-level.
+review_requested_ts  = {}  # run_id -> epoch of the earliest review-node dispatch request
 
 def _ev_epoch(_tw, _dt):
     _ts_clean = _tw[:19].replace('T', ' ')
@@ -292,25 +308,52 @@ if _os.path.isfile(_events_path):
                     _rid = _ev.get('run_id') or _payload.get('run_id') or ''
                     if _rid:
                         verdict_run_ids.add(_rid)
+
+                elif _etype == 'node_dispatch_requested':
+                    # The engine requested a node for this run. node_id is under .payload.
+                    # Only review-node requests matter here (prefix 'review' catches review,
+                    # review_correctness, review_design, review_tests, reviewer — and NOT
+                    # close/commit_gate/implement/start/consolidate/finalize).
+                    _nid = _payload.get('node_id', '') if isinstance(_payload, dict) else ''
+                    if isinstance(_nid, str) and _nid.startswith('review'):
+                        _rid = _ev.get('run_id') or (_payload.get('run_id') if isinstance(_payload, dict) else '') or ''
+                        _tw = _ev.get('timestamp_wall', '')
+                        if _rid and _tw:
+                            _e = _ev_epoch(_tw, _dt)
+                            # keep the EARLIEST review-request epoch for the run
+                            if _rid not in review_requested_ts or _e < review_requested_ts[_rid]:
+                                review_requested_ts[_rid] = _e
             except Exception:
                 pass
     except Exception:
         pass
 
-# ── Review-gate: reviewer-LAUNCHED runs (window, past grace) with no verdict ──────
-# A run that emitted reviewer_launched but has NO matching reviewer_verdict entered a
-# review path and produced no verdict = review BYPASSED. Auto-close / noChange /
-# subsumed runs never launch a reviewer, so they are absent from reviewer_launched_ts
-# and cannot be flagged (R6 fix hk-ayvx). Window over the most-recent launched run_ids;
-# skip any younger than review_grace — its verdict may still be in flight.
-# MEDIUM (multi-iteration DOT): reviewer_launched and reviewer_verdict are joined on the
-# SAME run_id; if any iteration of a run emits a verdict under that run_id the run is
-# cleared. A terminal-close run_id that never launched a reviewer is not in this map at
-# all, so unmatched `dot: reached terminal node close` run_ids never false-flag.
-_recent_launched = sorted(reviewer_launched_ts.items(), key=lambda kv: kv[1])
-_recent_launched = _recent_launched[-review_window:]
+# ── Review-gate: runs that ENTERED-OR-REQUESTED review (window, past grace) w/o verdict ──
+# A run is review-BYPASSED if it either (a) emitted reviewer_launched (entered a review
+# path) OR (b) requested a review node via node_dispatch_requested node_id=review* (the
+# engine asked for review) — yet has NO matching reviewer_verdict. Case (b) catches the
+# hk-2vpj engine-short-circuit class: the engine REQUESTS a review node but the reviewer
+# never launches, so no reviewer_launched event exists and the change merges UNREVIEWED.
+# Auto-close / noChange / subsumed runs neither launch nor request a reviewer, so they are
+# absent from both maps and cannot be flagged (R6 suppression preserved, hk-ayvx).
+# We take the UNION of the launched and review-requested run_ids, key each by the EARLIEST
+# review event (launch or request) for the grace check, window over the most-recent such
+# run_ids, and skip any younger than review_grace — its verdict may still be in flight.
+# MEDIUM (multi-iteration DOT): launch/request and reviewer_verdict are joined on the SAME
+# run_id; if ANY iteration of a run emits a verdict under that run_id the run is cleared. A
+# terminal-close run_id that never launched OR requested a reviewer is in neither map, so
+# unmatched `dot: reached terminal node close` run_ids never false-flag.
+_review_anchor_ts = {}  # run_id -> earliest review-related epoch (launch or request)
+for _rid, _e in reviewer_launched_ts.items():
+    if _rid not in _review_anchor_ts or _e < _review_anchor_ts[_rid]:
+        _review_anchor_ts[_rid] = _e
+for _rid, _e in review_requested_ts.items():
+    if _rid not in _review_anchor_ts or _e < _review_anchor_ts[_rid]:
+        _review_anchor_ts[_rid] = _e
+_recent_review = sorted(_review_anchor_ts.items(), key=lambda kv: kv[1])
+_recent_review = _recent_review[-review_window:]
 review_bypass_run_ids = []
-for _rid, _lts in _recent_launched:
+for _rid, _lts in _recent_review:
     if (ts_epoch - _lts) < review_grace:
         continue  # too young to judge — verdict may still arrive
     if _rid not in verdict_run_ids:
@@ -464,7 +507,7 @@ checks = {
     'crew-fresh':    {'state': 'flag' if stale_signal_crews else 'ok',
                       'detail': ','.join(c['crew'] for c in stale_signal_crews) if stale_signal_crews else 'all <150s'},
     'review-gate':   {'state': 'flag' if review_bypass_run_ids else 'ok',
-                      'detail': ('unreviewed:' + ','.join(review_bypass_run_ids)) if review_bypass_run_ids else 'all reviewer-launched runs have a verdict'},
+                      'detail': ('unreviewed:' + ','.join(review_bypass_run_ids)) if review_bypass_run_ids else 'all review-launched/requested runs have a verdict'},
     'backlog-ready': {'state': 'flag' if backlog_ready else 'ok',
                       'detail': ('ready=' + str(ready_count) + ' free_slot') if backlog_ready else 'ready=' + str(ready_count)},
     'lull':          {'state': 'flag' if idle_fleet else 'ok',

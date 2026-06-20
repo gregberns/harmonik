@@ -15,8 +15,8 @@ package main
 //   PL-029(b) — AGENTS.md rendered from the embedded template (not from disk).
 //
 //   PL-029(c) — Self-consistent render: no unreplaced $PROJECT_DIR or
-//     $TARGET_BRANCH placeholders; scaffold files (AGENT_INDEX.md, STATUS.md,
-//     TASKS.md) created; CLAUDE.md → AGENTS.md symlink created.
+//     $TARGET_BRANCH placeholders; scaffold files (AGENT_INDEX.md, STATUS.md)
+//     created (TASKS.md retired — hk-5qey); CLAUDE.md → AGENTS.md symlink created.
 //
 //   PL-029(d) — Runtime directories created: .harmonik/{comms,crew,keeper,queues}.
 //
@@ -153,10 +153,34 @@ func TestScenario_Init_PL029_HKoa5(t *testing.T) {
 
 	// ── PL-029(c): scaffold files created ────────────────────────────────────────
 
-	for _, scaffold := range []string{"AGENT_INDEX.md", "STATUS.md", "TASKS.md"} {
+	for _, scaffold := range []string{"AGENT_INDEX.md", "STATUS.md"} {
 		p := filepath.Join(foreignRepo, scaffold)
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("PL-029(c): scaffold %s not created at %s: %v", scaffold, p, err)
+		}
+	}
+
+	// TASKS.md is RETIRED in the three-kinds model (hk-5qey) — must NOT scaffold.
+	if _, err := os.Stat(filepath.Join(foreignRepo, "TASKS.md")); err == nil {
+		t.Errorf("hk-5qey: TASKS.md was scaffolded but is retired in the three-kinds model")
+	}
+
+	// AGENTS.md is the three-kinds ROUTER — must carry the managed marker.
+	if !strings.Contains(agentsMD, "harmonik:managed agents-router") {
+		t.Errorf("hk-5qey: AGENTS.md missing the 'harmonik:managed agents-router' marker (not the router structure)")
+	}
+
+	// ── hk-5qey: .harmonik/context/ tier files + seed HANDOFF.md ──────────────────
+
+	for _, tier := range []string{
+		".harmonik/context/project.yaml",
+		".harmonik/context/captain-lanes.md",
+		".harmonik/context/roadmap.md",
+		"HANDOFF.md",
+	} {
+		p := filepath.Join(foreignRepo, tier)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("hk-5qey: context tier file %s not created at %s: %v", tier, p, err)
 		}
 	}
 

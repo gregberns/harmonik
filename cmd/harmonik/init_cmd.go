@@ -26,9 +26,12 @@ package main
 //  8. Provision versioned captain-tools scripts to ~/.claude/captain-tools/
 //     (only-if-absent; --force refreshes). C1↔C3 seam (ON-058b, hk-da3k).
 //  9. Write scaffold files from the embedded asset bundle →
-//     AGENT_INDEX.md, STATUS.md, TASKS.md.
+//     AGENT_INDEX.md, STATUS.md (TASKS.md retired — hk-5qey).
+//  9a. Scaffold .harmonik/context/ tier files (project.yaml, captain-lanes.md,
+//     roadmap.md) + seed HANDOFF.md at the repo root from embedded templates.
 // 10. Render embedded AGENTS.template.md → AGENTS.md (substitutes
-//     $PROJECT_DIR and $TARGET_BRANCH).
+//     $PROJECT_DIR and $TARGET_BRANCH). AGENTS.md is the three-kinds ROUTER
+//     (precedence + per-role load map + harmonik:managed markers).
 // 11. Symlink CLAUDE.md → AGENTS.md.
 // 12. (Optional) Run `harmonik supervise start --watch-restart` unless
 //     --no-supervise is passed.
@@ -196,8 +199,13 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	// Step 10: write scaffold files (AGENT_INDEX.md, STATUS.md, TASKS.md).
+	// Step 10: write scaffold files (AGENT_INDEX.md, STATUS.md).
 	if code := provisionScaffolds(projectDir, force, stdout, stderr); code != 0 {
+		return code
+	}
+
+	// Step 10b: scaffold .harmonik/context/ tier files + seed HANDOFF.md.
+	if code := provisionContextTiers(projectDir, force, stdout, stderr); code != 0 {
 		return code
 	}
 
@@ -508,9 +516,11 @@ func writeHarmonikGitignore(projectDir string, force bool, stdout, stderr io.Wri
 	return 0
 }
 
-// renderAgentsMD reads the embedded AGENTS.template.md (foreign-repo variant),
-// substitutes $PROJECT_DIR and $TARGET_BRANCH, and writes AGENTS.md at the
-// project root. Skipped when AGENTS.md already exists and force is false.
+// renderAgentsMD reads the embedded AGENTS.template.md (foreign-repo variant of
+// the three-kinds ROUTER: precedence + per-role load map + harmonik:managed
+// agents-router markers), substitutes $PROJECT_DIR and $TARGET_BRANCH, and
+// writes AGENTS.md at the project root. Skipped when AGENTS.md already exists
+// and force is false.
 func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr io.Writer) int {
 	outPath := filepath.Join(projectDir, "AGENTS.md")
 	if _, err := os.Stat(outPath); err == nil && !force {
@@ -640,11 +650,16 @@ func provisionCaptainTools(force bool, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// provisionScaffolds writes the three minimal scaffold files (AGENT_INDEX.md,
-// STATUS.md, TASKS.md) from the embedded asset bundle (PL-029c).
+// provisionScaffolds writes the minimal scaffold files (AGENT_INDEX.md,
+// STATUS.md) from the embedded asset bundle (PL-029c).
 // Skipped when each file already exists and force is false.
+//
+// TASKS.md is NOT scaffolded — it is retired in the three-kinds instruction
+// model (hk-5qey). This-session work lives in HANDOFF.md (tier-1) and the
+// lane/epic tracker in .harmonik/context/captain-lanes.md (tier-2), both
+// rendered by provisionContextTiers below.
 func provisionScaffolds(projectDir string, force bool, stdout, stderr io.Writer) int {
-	scaffolds := []string{"AGENT_INDEX.md", "STATUS.md", "TASKS.md"}
+	scaffolds := []string{"AGENT_INDEX.md", "STATUS.md"}
 	for _, name := range scaffolds {
 		outPath := filepath.Join(projectDir, name)
 		if _, err := os.Stat(outPath); err == nil && !force {
@@ -662,6 +677,59 @@ func provisionScaffolds(projectDir string, force bool, stdout, stderr io.Writer)
 			return 1
 		}
 		fmt.Fprintf(stdout, "harmonik init: wrote %s\n", name)
+	}
+	return 0
+}
+
+// provisionContextTiers scaffolds the operational-state tier files from the
+// embedded asset bundle (three-kinds instruction model, hk-5qey). It creates
+// .harmonik/context/ and renders the tier templates:
+//
+//	assets/context/project.yaml.tmpl       → .harmonik/context/project.yaml   (tier-3)
+//	assets/context/captain-lanes.md.tmpl   → .harmonik/context/captain-lanes.md (tier-2)
+//	assets/context/roadmap.md.tmpl         → .harmonik/context/roadmap.md      (tier-4)
+//	assets/context/HANDOFF.md.tmpl         → HANDOFF.md (repo root)            (tier-1)
+//
+// HANDOFF.md is a this-session file and lives at the repo root (where the
+// captain/orchestrator expects it), NOT under .harmonik/context/.
+//
+// Idempotent: each output is skipped when it already exists and force is false.
+func provisionContextTiers(projectDir string, force bool, stdout, stderr io.Writer) int {
+	contextDir := filepath.Join(projectDir, ".harmonik", "context")
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(contextDir, 0o755); err != nil {
+		fmt.Fprintf(stderr, "harmonik init: mkdir .harmonik/context: %v\n", err)
+		return 1
+	}
+
+	tiers := []struct {
+		tmpl    string // asset path under assets/context/
+		outPath string // destination, relative to projectDir
+		label   string // for stdout messaging
+	}{
+		{"project.yaml.tmpl", filepath.Join(".harmonik", "context", "project.yaml"), ".harmonik/context/project.yaml"},
+		{"captain-lanes.md.tmpl", filepath.Join(".harmonik", "context", "captain-lanes.md"), ".harmonik/context/captain-lanes.md"},
+		{"roadmap.md.tmpl", filepath.Join(".harmonik", "context", "roadmap.md"), ".harmonik/context/roadmap.md"},
+		{"HANDOFF.md.tmpl", "HANDOFF.md", "HANDOFF.md"},
+	}
+
+	for _, t := range tiers {
+		outPath := filepath.Join(projectDir, t.outPath)
+		if _, err := os.Stat(outPath); err == nil && !force {
+			fmt.Fprintf(stdout, "harmonik init: %s already exists — skipping (use --force to overwrite)\n", t.label)
+			continue
+		}
+		content, err := initSkillAssets.ReadFile("assets/context/" + t.tmpl)
+		if err != nil {
+			fmt.Fprintf(stderr, "harmonik init: read embedded context template %s: %v\n", t.tmpl, err)
+			return 1
+		}
+		//nolint:gosec // G306
+		if err := os.WriteFile(outPath, content, 0o644); err != nil {
+			fmt.Fprintf(stderr, "harmonik init: write %s: %v\n", t.label, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "harmonik init: wrote %s\n", t.label)
 	}
 	return 0
 }
@@ -803,8 +871,10 @@ WHAT IT DOES
      harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout,orchestrator}
   8. Provisions versioned captain-tools scripts → ~/.claude/captain-tools/
      (only-if-absent; --force refreshes stale copies)
-  9. Writes scaffold files: AGENT_INDEX.md, STATUS.md, TASKS.md
- 10. Renders embedded AGENTS.template.md → AGENTS.md
+  9. Writes scaffold files: AGENT_INDEX.md, STATUS.md
+ 9a. Scaffolds .harmonik/context/ tier files (project.yaml, captain-lanes.md,
+     roadmap.md) and seeds HANDOFF.md from embedded templates
+ 10. Renders embedded AGENTS.template.md (three-kinds router) → AGENTS.md
  11. Creates CLAUDE.md → AGENTS.md symlink
  12. Starts the supervisor: harmonik supervise start --watch-restart
  13. (--smoke) Runs basic sanity checks

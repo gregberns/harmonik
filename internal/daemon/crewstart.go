@@ -178,7 +178,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 
 	// ── Step 4: build launch spec + spawn ──
 	// Read the optional model: front-matter field from the mission handoff
-	// (specs/crew-handoff-schema.md §4). Best-effort: a missing/unreadable mission
+	// (specs/crew-handoff-schema.md §3). Best-effort: a missing/unreadable mission
 	// or absent field yields "" and the crew inherits the compiled default model.
 	model := readMissionModel(req.MissionPath)
 	lspec, buildErr := buildCrewLaunchSpec(crewLaunchCtx{
@@ -449,7 +449,7 @@ func createCrewManagedMarker(projectDir, name string) error {
 // the crew's concern (it re-derives them on /session-resume). yaml.v3 silently
 // ignores the unmodelled keys (schema_version, crew_name, queue, …).
 //
-// Spec ref: specs/crew-handoff-schema.md §4 (model: optional, opus|sonnet|haiku).
+// Spec ref: specs/crew-handoff-schema.md §3 (model: optional, opus|sonnet|haiku).
 type missionFrontMatter struct {
 	Model string `yaml:"model"`
 }

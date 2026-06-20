@@ -81,7 +81,7 @@ func buildCrewLaunchSpec(rc crewLaunchCtx) (handler.LaunchSpec, error) {
 		args = []string{"--dangerously-skip-permissions", "--remote-control", rc.name, "--session-id", rc.sessionID}
 	}
 
-	// Optional per-crew model injection (specs/crew-handoff-schema.md §4): the
+	// Optional per-crew model injection (specs/crew-handoff-schema.md §3): the
 	// captain may pin a lane to a specific model via the mission `model:` field.
 	// Empty inherits the compiled default (currently sonnet) — append nothing.
 	if rc.model != "" {

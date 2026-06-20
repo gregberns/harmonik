@@ -110,7 +110,7 @@ bump — per §8 additive-change rule).
 | `epic_id` | string | opaque bead id (e.g. `hk-XXXXX`) | yes | The assigned epic. The parent bead whose ready children the crew dispatches. |
 | `goal` | string | single line, no newlines | yes | Plain-English mission statement. Used in `/session-resume` framing and in crew status updates. |
 | `captain_name` | string | `[a-z0-9-]`, 1–64 chars | yes | The captain's comms identity. The crew sends `--to <captain_name> --topic status` progress updates here. |
-| `model` | string | `opus` \| `sonnet` \| `haiku` | **optional** | Claude model the crew should run on. When present, C2 (daemon) injects `--model <value>` on the crew's launch argv. Absent = default (Opus). Decision rule: **sonnet** for lane-drain crews with file-disjoint clean beads (add mission clause "escalate to captain on ANY run_failed, do NOT self-classify"); **opus** for design / test / investigation. |
+| `model` | string | `opus` \| `sonnet` \| `haiku` | **optional** | Claude model the crew should run on. When present, C2 (daemon) injects `--model <value>` on the crew's launch argv. Absent = no `--model` flag is added, so the crew inherits the launcher's configured default model (harmonik does not pin one). Decision rule: **sonnet** for lane-drain crews with file-disjoint clean beads (add mission clause "escalate to captain on ANY run_failed, do NOT self-classify"); **opus** for design / test / investigation. |
 
 ### 3.1 Charset enforcement
 
@@ -206,8 +206,9 @@ model: sonnet
 ---
 ```
 
-The `model:` field is optional. Omit it for the default (Opus). Include it when
-the captain has decided this lane uses Sonnet (lane-drain, file-disjoint beads).
+The `model:` field is optional. Omit it to inherit the launcher's configured
+default model (harmonik adds no `--model` flag). Include it when the captain has
+decided this lane uses a specific model (e.g. Sonnet for lane-drain, file-disjoint beads).
 
 This maps to:
 - Crew `alpha` on queue `alpha-q`

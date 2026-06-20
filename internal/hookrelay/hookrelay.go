@@ -24,6 +24,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -488,9 +489,35 @@ func buildNotificationMessage(inp hookInput) (
 	return "agent_heartbeat", pl, false, nil
 }
 
-// sendToSocket implements the one-shot UDS write with daemon-not-ready retry
-// per CHB-015 and CHB-016.
+// hookEndpointTCPPrefix marks a HARMONIK_DAEMON_SOCKET value as a TCP loopback
+// endpoint (the REMOTE-run reverse-tunnel transport) rather than a unix-socket
+// path. A unix-socket path never starts with this prefix, so the dialer can pick
+// the transport purely from the env value. Kept in sync with the daemon side
+// (internal/daemon/reversetunnel.go tcpEndpointPrefix).
+//
+// hk-ege6: remote runs dial a TCP loopback listener on the worker
+// (tcp://127.0.0.1:<port>) because the macOS-root sshd `-R` unix-socket bind is
+// root-owned 0600 and unconnectable by this unprivileged hook subprocess. Local
+// runs keep dialing box A's daemon unix socket (the default, no prefix).
+const hookEndpointTCPPrefix = "tcp://"
+
+// resolveDialTarget maps a HARMONIK_DAEMON_SOCKET value to the (network, address)
+// pair for net.Dial: a "tcp://host:port" value → ("tcp", "host:port"); any other
+// value is treated as a unix-socket path → ("unix", value). Unix is the default
+// for backward compat with local runs.
+func resolveDialTarget(endpoint string) (network, address string) {
+	if strings.HasPrefix(endpoint, hookEndpointTCPPrefix) {
+		return "tcp", strings.TrimPrefix(endpoint, hookEndpointTCPPrefix)
+	}
+	return "unix", endpoint
+}
+
+// sendToSocket implements the one-shot write with daemon-not-ready retry per
+// CHB-015 and CHB-016. socketPath is the HARMONIK_DAEMON_SOCKET value: a unix
+// path for local runs, or a "tcp://127.0.0.1:<port>" reverse-tunnel endpoint for
+// remote-worker runs (hk-ege6) — the transport is selected by resolveDialTarget.
 func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
+	network, address := resolveDialTarget(socketPath)
 	const (
 		dialTimeout = 5 * time.Second
 		readTimeout = 5 * time.Second
@@ -511,7 +538,7 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 	for {
 		// CHB-015: 5s dial timeout.
 		dialCtx, cancelDial := context.WithTimeout(context.Background(), dialTimeout)
-		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", socketPath)
+		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, network, address)
 		cancelDial()
 
 		if dialErr != nil {

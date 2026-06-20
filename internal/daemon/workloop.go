@@ -2421,11 +2421,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// rs-tunnel-spawn: tunnelCmd holds the long-lived `ssh -N -R` reverse-tunnel
 	// process for this remote run; it is torn down in the run-completion defer
-	// (next to ReleaseSlot). workerHookSock is the per-run worker-side socket path
-	// the tunnel binds (<worker.RepoPath>/.harmonik/run-<runID>.sock); the
+	// (next to ReleaseSlot). workerHookSock is the per-run worker-side reverse-
+	// tunnel TCP endpoint the tunnel binds (tcp://127.0.0.1:<port>); the
 	// env-override bead (2) injects it as HARMONIK_DAEMON_SOCKET so the
 	// worker-side agent's hook relay dials the tunnel rather than box A's
 	// unreachable local socket, and the readiness-gate bead (3) references it.
+	//
+	// hk-ege6: the worker-side bind is a TCP loopback listener, NOT a unix socket.
+	// On macOS sshd is root, so a `-R` StreamLocal unix bind is root-owned 0600 and
+	// the unprivileged hook user gets connect: permission denied → agent_ready_timeout.
+	// A TCP loopback listener has no filesystem permission bits.
 	type remoteBeadCtx struct {
 		worker         workers.Worker
 		sshRunner      tmuxpkg.CommandRunner
@@ -2444,12 +2449,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// gap #7 Option A: ensure the worker's .harmonik/ dir exists, then
 			// start the per-run SSH reverse tunnel — BOTH before any agent Launch.
 			//
-			//  1. workerHookSock is the per-run worker-side socket the tunnel binds
-			//     (shared by beads 1, 2, and 3).
-			//  2. ensureWorkerHarmonikDir (bead 2) mkdir-p's the parent .harmonik/
-			//     dir: `ssh -N -R` fails to create its bind socket if that
-			//     directory is missing, so this MUST precede the tunnel launch.
-			//     Non-fatal — the readiness gate (bead 3) is the authority.
+			//  1. workerHookSock is the per-run worker-side TCP endpoint the tunnel
+			//     binds (tcp://127.0.0.1:<port>), shared by beads 1, 2, and 3. The
+			//     port is allocated from box A's free ephemeral space as a HINT for
+			//     sshd's worker-side bind (collision-safe: see
+			//     allocateReverseTunnelPort + ExitOnForwardFailure=yes).
+			//  2. ensureWorkerHarmonikDir (bead 2) mkdir-p's the worker's .harmonik/
+			//     dir for other per-run artifacts; non-fatal — the readiness gate
+			//     (bead 3) is the authority.
 			//  3. The tunnel (bead 1) is a SEPARATE long-lived `ssh -N -R`
 			//     process: the implementer agent is spawned via a DETACHED ssh
 			//     (tmux new-window -d) that returns immediately, so a -R flag on
@@ -2461,7 +2468,17 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			//
 			// NFR7: this block runs only for remote runs (rbc != nil); local runs
 			// are byte-identical (no mkdir, no tunnel, no new behaviour).
-			rbc.workerHookSock = workerRunSocketPath(rbc.worker.RepoPath, runID.String())
+			// Allocate a free TCP port (hint for sshd's worker-side loopback bind)
+			// and form the per-run worker TCP endpoint the hook relay will dial.
+			tunnelPort, portErr := allocateReverseTunnelPort()
+			if portErr != nil {
+				// Non-fatal: log and skip the tunnel; the readiness gate below would
+				// fail an empty endpoint, so guard the gate on workerHookSock != "".
+				fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel port alloc bead %s run %s: %v\n",
+					beadID, runID.String(), portErr)
+			} else {
+				rbc.workerHookSock = workerTCPEndpoint(tunnelPort)
+			}
 
 			if mkErr := ensureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
 				fmt.Fprintf(os.Stderr,
@@ -2477,7 +2494,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			if !hostOK {
 				tunnelHost = rbc.worker.Host
 			}
-			tunnelArgs := buildReverseTunnelArgs(rbc.workerHookSock, daemonHookSock, tunnelHost, tunnelOpts)
+			tunnelArgs := buildReverseTunnelArgs(tunnelPort, daemonHookSock, tunnelHost, tunnelOpts)
 			rbc.tunnelCmd = reverseTunnelRunner(ctx, "ssh", tunnelArgs...)
 			if startErr := rbc.tunnelCmd.Start(); startErr != nil {
 				// Non-fatal: a failed tunnel start means the worker-side agent's hooks
@@ -2500,9 +2517,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// forward above is actually live; the hook relay retries only on
 			// daemon_not_ready, NOT on a dial failure, so launching the agent
 			// before the forward is live yields a silent bridge_dial_failed →
-			// agent_ready_timeout. Block until the worker-side per-run socket is
-			// confirmed live (test -S over the SSHRunner) before any Launch. On
-			// timeout/failure, do NOT launch: emit worker_tunnel_failed, reopen
+			// agent_ready_timeout. Block until the worker-side per-run TCP listener
+			// is confirmed CONNECTABLE (nc -z over the SSHRunner, as the worker
+			// user) before any Launch — an existence-only check would false-green a
+			// non-connectable endpoint (hk-ege6). On timeout/failure (including a
+			// failed port alloc that left workerHookSock empty), do NOT launch:
+			// emit worker_tunnel_failed, reopen
 			// the bead for re-dispatch, and return — the deferred tunnel teardown
 			// (above) and ReleaseSlot run on the way out, so the `ssh -N` process
 			// does not leak. The gate runs ONLY here, inside the remote branch
@@ -3054,8 +3074,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	daemonSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
 	// gap #7 bead 2: a REMOTE worker cannot reach box A's local daemon.sock. For
 	// remote runs, the implementer agent must dial the worker-side reverse-tunnel
-	// socket (rbc.workerHookSock) instead, which the `ssh -N -R` tunnel launched
-	// above forwards back to box A's daemon.sock. resolveAgentDaemonSocket returns
+	// TCP endpoint (rbc.workerHookSock, tcp://127.0.0.1:<port>) instead, which the
+	// `ssh -N -R` tunnel launched above forwards back to box A's daemon.sock (it is
+	// a TCP loopback listener, not a unix socket, so the unprivileged hook user can
+	// connect — hk-ege6). resolveAgentDaemonSocket returns
 	// rbc.workerHookSock for a remote run and the unchanged box-A daemonSock for a
 	// local run (rbc == nil), so local runs remain byte-identical (NFR7). The
 	// resolved path flows into rc.daemonSocket → ClaudeEnvVars(HARMONIK_DAEMON_SOCKET).

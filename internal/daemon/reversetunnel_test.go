@@ -53,28 +53,38 @@ import (
 )
 
 // TestReverseTunnel_ArgvExact asserts the exact argv (no opts) matches the
-// normative form: ssh -N -R <wsock>:<dsock> -o StreamLocalBindUnlink=yes <host>.
+// hk-ege6 TCP-loopback form: ssh -N -R 127.0.0.1:<port>:<dsock> -o
+// ExitOnForwardFailure=yes <host>. The worker-side bind is a TCP loopback
+// listener (NOT a unix socket), so the macOS-root sshd cannot create a root-owned
+// 0600 socket the unprivileged hook user can't connect to.
 func TestReverseTunnel_ArgvExact(t *testing.T) {
 	t.Parallel()
 
 	const (
-		wsock = "/home/worker/repo/.harmonik/run-RUNID.sock"
+		port  = 51234
 		dsock = "/Users/gb/github/harmonik/.harmonik/daemon.sock"
 		host  = "worker-mac-1"
 	)
-	got := buildReverseTunnelArgs(wsock, dsock, host, nil)
+	got := buildReverseTunnelArgs(port, dsock, host, nil)
 	want := []string{
-		"-N", "-R", wsock + ":" + dsock,
-		"-o", "StreamLocalBindUnlink=yes",
+		"-N", "-R", "127.0.0.1:51234:" + dsock,
+		"-o", "ExitOnForwardFailure=yes",
 		host,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("buildReverseTunnelArgs argv mismatch:\n got: %v\nwant: %v", got, want)
 	}
+	// hk-ege6: the forward MUST be a TCP loopback bind, NOT a unix-socket bind.
+	if !strings.HasPrefix(got[2], "127.0.0.1:") {
+		t.Errorf("remote forward %q is not a 127.0.0.1 TCP loopback bind", got[2])
+	}
+	if strings.Contains(strings.Join(got, " "), "StreamLocal") {
+		t.Errorf("argv must NOT use a StreamLocal/unix-socket bind (hk-ege6): %v", got)
+	}
 	// Full ssh argv (with the command name prepended, as the runner sees it).
 	full := append([]string{"ssh"}, got...)
 	if joined := strings.Join(full, " "); joined !=
-		"ssh -N -R "+wsock+":"+dsock+" -o StreamLocalBindUnlink=yes "+host {
+		"ssh -N -R 127.0.0.1:51234:"+dsock+" -o ExitOnForwardFailure=yes "+host {
 		t.Errorf("full ssh argv = %q", joined)
 	}
 }
@@ -85,14 +95,14 @@ func TestReverseTunnel_ArgvWithOpts(t *testing.T) {
 	t.Parallel()
 
 	const (
-		wsock = "/w/.harmonik/run-X.sock"
+		port  = 2200
 		dsock = "/d/.harmonik/daemon.sock"
 		host  = "user@host"
 	)
-	got := buildReverseTunnelArgs(wsock, dsock, host, []string{"-p", "2222"})
+	got := buildReverseTunnelArgs(port, dsock, host, []string{"-p", "2222"})
 	want := []string{
-		"-N", "-R", wsock + ":" + dsock,
-		"-o", "StreamLocalBindUnlink=yes",
+		"-N", "-R", "127.0.0.1:2200:" + dsock,
+		"-o", "ExitOnForwardFailure=yes",
 		"-p", "2222",
 		host,
 	}
@@ -105,15 +115,74 @@ func TestReverseTunnel_ArgvWithOpts(t *testing.T) {
 	}
 }
 
-// TestReverseTunnel_WorkerRunSocketPath asserts the per-run worker-side socket
-// path embeds the run id under the worker repo's .harmonik dir.
-func TestReverseTunnel_WorkerRunSocketPath(t *testing.T) {
+// TestReverseTunnel_WorkerTCPEndpoint asserts the per-run worker-side endpoint is
+// the "tcp://127.0.0.1:<port>" form the hookrelay dialer keys off, and that
+// tcpEndpointAddr round-trips it (and rejects a unix path).
+func TestReverseTunnel_WorkerTCPEndpoint(t *testing.T) {
 	t.Parallel()
 
-	got := workerRunSocketPath("/home/worker/repo", "abc-123")
-	want := "/home/worker/repo/.harmonik/run-abc-123.sock"
+	got := workerTCPEndpoint(51234)
+	want := "tcp://127.0.0.1:51234"
 	if got != want {
-		t.Fatalf("workerRunSocketPath = %q, want %q", got, want)
+		t.Fatalf("workerTCPEndpoint = %q, want %q", got, want)
+	}
+
+	addr, ok := tcpEndpointAddr(got)
+	if !ok {
+		t.Fatal("tcpEndpointAddr(tcp endpoint): ok = false, want true")
+	}
+	if addr != "127.0.0.1:51234" {
+		t.Errorf("tcpEndpointAddr = %q, want 127.0.0.1:51234", addr)
+	}
+
+	// A unix-socket path must NOT be classified as a TCP endpoint.
+	if _, ok := tcpEndpointAddr("/home/worker/repo/.harmonik/daemon.sock"); ok {
+		t.Error("tcpEndpointAddr(unix path): ok = true, want false")
+	}
+}
+
+// TestReverseTunnel_AllocatePortConcurrencySafe asserts allocateReverseTunnelPort
+// returns a usable port and that a batch of concurrent allocations (mirroring a
+// wave of 4+ remote runs) yields DISTINCT ports — the concurrency-safety property
+// the daemon relies on (no shared mutable counter; the kernel hands out distinct
+// free ephemeral ports).
+func TestReverseTunnel_AllocatePortConcurrencySafe(t *testing.T) {
+	t.Parallel()
+
+	const n = 8
+	ports := make([]int, n)
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var firstErr error
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			p, err := allocateReverseTunnelPort()
+			if err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+				return
+			}
+			ports[idx] = p
+		}(i)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		t.Fatalf("allocateReverseTunnelPort: %v", firstErr)
+	}
+	seen := make(map[int]bool, n)
+	for _, p := range ports {
+		if p <= 0 || p > 65535 {
+			t.Errorf("allocated port %d out of range", p)
+		}
+		if seen[p] {
+			t.Errorf("duplicate port %d across concurrent allocations (not collision-safe)", p)
+		}
+		seen[p] = true
 	}
 }
 
@@ -145,17 +214,15 @@ func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
 	}
 
 	const (
-		runID = "run-deadbeef"
-		repo  = "/home/worker/repo"
-		proj  = "/Users/gb/github/harmonik"
-		host  = "worker-mac-1"
+		port = 51234
+		proj = "/Users/gb/github/harmonik"
+		host = "worker-mac-1"
 	)
-	wsock := workerRunSocketPath(repo, runID)
 	dsock := proj + "/.harmonik/daemon.sock"
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	args := buildReverseTunnelArgs(wsock, dsock, host, nil)
+	args := buildReverseTunnelArgs(port, dsock, host, nil)
 	cmd := reverseTunnelRunner(ctx, "ssh", args...)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("tunnel Start: %v", err)
@@ -169,8 +236,8 @@ func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
 		t.Errorf("recorded command name = %q, want ssh", gotCmd)
 	}
 	wantArg := []string{
-		"-N", "-R", wsock + ":" + dsock,
-		"-o", "StreamLocalBindUnlink=yes",
+		"-N", "-R", "127.0.0.1:51234:" + dsock,
+		"-o", "ExitOnForwardFailure=yes",
 		host,
 	}
 	if !reflect.DeepEqual(gotArg, wantArg) {
@@ -239,27 +306,23 @@ func TestReverseTunnel_SSHRunnerHostOptsExtraction(t *testing.T) {
 	}
 }
 
-// TestTunnelEnv_ResolveAgentDaemonSocket asserts the HARMONIK_DAEMON_SOCKET path
-// selection (gap #7 bead 2): a REMOTE run resolves to the worker-side run socket
-// (<worker.RepoPath>/.harmonik/run-<runID>.sock), NOT box A's daemon.sock; a LOCAL
-// run resolves to box A's daemon.sock UNCHANGED (NFR7 byte-identical).
+// TestTunnelEnv_ResolveAgentDaemonSocket asserts the HARMONIK_DAEMON_SOCKET
+// selection (gap #7 bead 2): a REMOTE run resolves to the worker-side TCP
+// reverse-tunnel endpoint (tcp://127.0.0.1:<port>), NOT box A's daemon.sock; a
+// LOCAL run resolves to box A's daemon.sock UNCHANGED (NFR7 byte-identical).
 func TestTunnelEnv_ResolveAgentDaemonSocket(t *testing.T) {
 	t.Parallel()
 
-	const (
-		runID    = "run-deadbeef"
-		repo     = "/home/worker/repo"
-		boxASock = "/Users/gb/github/harmonik/.harmonik/daemon.sock"
-	)
-	workerSock := workerRunSocketPath(repo, runID) // /home/worker/repo/.harmonik/run-run-deadbeef.sock
+	const boxASock = "/Users/gb/github/harmonik/.harmonik/daemon.sock"
+	workerSock := workerTCPEndpoint(51234) // tcp://127.0.0.1:51234
 
-	// REMOTE: workerHookSock is set (rbc != nil) → resolved socket is the
-	// worker-side run socket, and explicitly NOT box A's daemon.sock.
+	// REMOTE: workerHookSock is set (rbc != nil) → resolved endpoint is the
+	// worker-side TCP endpoint, and explicitly NOT box A's daemon.sock.
 	if got := resolveAgentDaemonSocket(workerSock, boxASock); got != workerSock {
 		t.Errorf("remote run: resolveAgentDaemonSocket = %q, want worker-side %q", got, workerSock)
 	}
 	if got := resolveAgentDaemonSocket(workerSock, boxASock); got == boxASock {
-		t.Errorf("remote run: resolved socket must NOT be box A's daemon.sock (%q)", boxASock)
+		t.Errorf("remote run: resolved endpoint must NOT be box A's daemon.sock (%q)", boxASock)
 	}
 
 	// LOCAL: workerHookSock == "" (rbc == nil) → resolved socket is box A's
@@ -310,14 +373,15 @@ func TestTunnelEnv_EnsureWorkerHarmonikDir(t *testing.T) {
 }
 
 // TestWaitWorkerSocketLive_SocketAppears asserts the readiness gate (gap #7
-// bead 3) returns nil once the worker-side socket becomes live: the fake runner
-// returns non-zero (`false`) for the first 2 polls — simulating the forward not
-// yet bound — then exit 0 (`true`). The gate must then return nil (Launch would
-// proceed) and the probe argv must be `test -S <sock>`.
+// bead 3) returns nil once the worker-side TCP listener becomes CONNECTABLE: the
+// fake runner returns non-zero (`false`) for the first 2 polls — simulating the
+// forward not yet bound — then exit 0 (`true`). The gate must then return nil
+// (Launch would proceed) and the probe argv must be `nc -z 127.0.0.1 <port>` (an
+// actual connect probe, hk-ege6 — NOT a `test -S` existence check).
 func TestWaitWorkerSocketLive_SocketAppears(t *testing.T) {
 	t.Parallel()
 
-	const sock = "/home/worker/repo/.harmonik/run-RUNID.sock"
+	const endpoint = "tcp://127.0.0.1:51234"
 	var calls int32
 	rr := &tmuxpkg.RecordingRunner{
 		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -330,7 +394,7 @@ func TestWaitWorkerSocketLive_SocketAppears(t *testing.T) {
 	}
 
 	// Timeout comfortably exceeds 3 × the poll interval so the third probe lands.
-	if err := waitWorkerSocketLive(context.Background(), rr, sock, 5*time.Second); err != nil {
+	if err := waitWorkerSocketLive(context.Background(), rr, endpoint, 5*time.Second); err != nil {
 		t.Fatalf("waitWorkerSocketLive: unexpected error: %v", err)
 	}
 
@@ -339,23 +403,52 @@ func TestWaitWorkerSocketLive_SocketAppears(t *testing.T) {
 	if len(rr.Calls) < 3 {
 		t.Fatalf("expected at least 3 probes (2 not-ready + 1 ready), got %d: %+v", len(rr.Calls), rr.Calls)
 	}
-	// Probe argv must be exactly `test -S <sock>`.
+	// Probe argv must be exactly `nc -z 127.0.0.1 <port>` — a CONNECT probe, not
+	// an existence check.
 	first := rr.Calls[0]
-	if first.Name != "test" {
-		t.Errorf("probe command name = %q, want test", first.Name)
+	if first.Name != "nc" {
+		t.Errorf("probe command name = %q, want nc (connect probe)", first.Name)
 	}
-	if want := []string{"-S", sock}; !reflect.DeepEqual(first.Args, want) {
+	if want := []string{"-z", "127.0.0.1", "51234"}; !reflect.DeepEqual(first.Args, want) {
 		t.Errorf("probe argv = %v, want %v", first.Args, want)
 	}
 }
 
+// TestWaitWorkerSocketLive_NonConnectableFails asserts the gate FAILS (does not
+// false-green) when the endpoint never becomes connectable — the exact regression
+// the old `test -S` existence check allowed (a present-but-unconnectable
+// root-owned 0600 socket). The fake runner always exits non-zero (connection
+// refused), and a malformed/non-TCP endpoint is also rejected outright.
+func TestWaitWorkerSocketLive_NonConnectableFails(t *testing.T) {
+	t.Parallel()
+
+	const endpoint = "tcp://127.0.0.1:51234"
+	rr := &tmuxpkg.RecordingRunner{
+		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "false") // connection always refused
+		},
+	}
+	if err := waitWorkerSocketLive(context.Background(), rr, endpoint, 200*time.Millisecond); err == nil {
+		t.Fatal("non-connectable endpoint: expected an error, got nil (false-green regression)")
+	}
+
+	// A non-TCP endpoint (e.g. an empty endpoint from a failed port alloc, or a
+	// stray unix path) is rejected before any probe — fail-safe, never launches.
+	if err := waitWorkerSocketLive(context.Background(), rr, "", 200*time.Millisecond); err == nil {
+		t.Error("empty endpoint: expected an error, got nil")
+	}
+	if err := waitWorkerSocketLive(context.Background(), rr, "/some/unix.sock", 200*time.Millisecond); err == nil {
+		t.Error("unix-path endpoint: expected a not-a-TCP-endpoint error, got nil")
+	}
+}
+
 // TestWaitWorkerSocketLive_Timeout asserts the gate returns a timeout error
-// (NOT nil) within ~the bound when the socket never becomes live: the fake
-// runner always exits non-zero. A SHORT timeout (200ms) keeps the test fast.
+// (NOT nil) within ~the bound when the listener never becomes connectable: the
+// fake runner always exits non-zero. A SHORT timeout (200ms) keeps the test fast.
 func TestWaitWorkerSocketLive_Timeout(t *testing.T) {
 	t.Parallel()
 
-	const sock = "/home/worker/repo/.harmonik/run-RUNID.sock"
+	const endpoint = "tcp://127.0.0.1:51234"
 	rr := &tmuxpkg.RecordingRunner{
 		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 			return exec.CommandContext(ctx, "false") // never ready
@@ -364,7 +457,7 @@ func TestWaitWorkerSocketLive_Timeout(t *testing.T) {
 
 	const bound = 200 * time.Millisecond
 	start := time.Now()
-	err := waitWorkerSocketLive(context.Background(), rr, sock, bound)
+	err := waitWorkerSocketLive(context.Background(), rr, endpoint, bound)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("waitWorkerSocketLive: expected a timeout error, got nil")
@@ -388,7 +481,7 @@ func TestWaitWorkerSocketLive_Timeout(t *testing.T) {
 func TestWaitWorkerSocketLive_CtxCancel(t *testing.T) {
 	t.Parallel()
 
-	const sock = "/home/worker/repo/.harmonik/run-RUNID.sock"
+	const endpoint = "tcp://127.0.0.1:51234"
 	rr := &tmuxpkg.RecordingRunner{
 		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 			return exec.CommandContext(ctx, "false") // never ready
@@ -404,7 +497,7 @@ func TestWaitWorkerSocketLive_CtxCancel(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err := waitWorkerSocketLive(ctx, rr, sock, 30*time.Second)
+	err := waitWorkerSocketLive(ctx, rr, endpoint, 30*time.Second)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("waitWorkerSocketLive: expected ctx error, got nil")

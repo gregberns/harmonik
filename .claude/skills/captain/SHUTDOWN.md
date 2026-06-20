@@ -83,8 +83,10 @@ git -C /tmp/cap-deploy cherry-pick <sha1> <sha2> ...
 go build ./... && go vet ./internal/daemon/... && go vet ./internal/queue/...
 
 # 4. Announce before push (crews need to know main is advancing)
-harmonik comms send --from captain --broadcast --topic announce -- \
+harmonik comms send --from "$HARMONIK_AGENT" --broadcast --topic announce -- \
   "DEPLOY: cherry-picking <shas> to main — brief push window"
+# --from = your verified lane identity ($HARMONIK_AGENT), NOT a hardcoded "captain"
+# (an uncommissioned --from captain freezes the fleet — STARTUP.md Step 0 identity guard).
 
 # 5. Push and ff-update local main (CRITICAL — skipping wedges the daemon)
 git -C /tmp/cap-deploy push origin HEAD:main
@@ -117,7 +119,7 @@ closed, no banked commits outstanding, no open operator-decision blocking the la
 # For each complete-lane crew:
 
 # a) Announce the stand-down so peers don't send it work mid-stop
-harmonik comms send --from captain --to <crew> --topic status -- \
+harmonik comms send --from "$HARMONIK_AGENT" --to <crew> --topic status -- \
   "Lane complete — standing you down cleanly. Mission file persists for respawn."
 
 # b) Stop the crew (removes registry record + pane; mission file is preserved)
@@ -181,8 +183,8 @@ For each PIN, capture ALL of the following (in HANDOFF.md §Open/next — see St
 ```
 ⚠️ OPERATOR ACTION: wire session-keeper hooks + decide full-cycle vs. warn-only
   Blocks: context-flood toil (crew reseeds require manual captain intervention)
-  Unblock steps: `harmonik keeper enable <crew> --project ... --scripts-dir ... --tmux <handle>`
-                 then `harmonik keeper doctor <crew>` (must pass all checks).
+  Unblock steps: `harmonik keeper enable --agent <crew> --project ... --scripts-dir ... --tmux <handle>`
+                 then `harmonik keeper doctor --agent <crew>` (must pass all checks). (keeper verbs are flag-only — hk-nbft)
   Context: `.managed` markers already exist for all crews — Phase-2 (destructive /clear
            cycle) ACTIVATES the moment hooks are wired; don't arm full-cycle unsupervised
            on a live crew. The captain cannot wire hooks in its own session without risk.
@@ -202,17 +204,21 @@ File a PIN; the operator decides whether to proceed.
 
 Update durable artifacts so the next captain starts clean:
 
-### 5a — Update SKILL.md §A lane roadmap
+### 5a — Update the live lane roadmap (`.harmonik/context/captain-lanes.md`)
 
-The "Current lanes" table in `.claude/skills/captain/SKILL.md` §A is a live snapshot.
-Update it to match the actual state at shutdown:
+**Write the SINGLE source of record — the tier-2 file `.harmonik/context/captain-lanes.md`
+(M9/hk-039z), NOT SKILL.md §A.** STARTUP.md Step 0b READS captain-lanes.md at boot;
+keeping the lane state there (and only there) is what prevents the drift between two
+snapshots. SKILL.md §A now holds only the durable lane MODEL — do NOT write a
+point-in-time table back into it. Update captain-lanes.md to match shutdown state:
 
-- Stood-down crews → strikethrough row + `STOOD DOWN — <reason>`
-- Remaining crews → current epic, status, blocker if any
-- "Prioritized NEXT work" → update with any new beads filed or priorities shifted
+- `active_lanes` table → stood-down crews removed/struck; remaining crews → current
+  epic, queue, model, status, blocker if any.
+- `parked` / `operator_initiatives` / `pipeline` → update with any new beads filed or
+  priorities shifted.
 
-> This is the one doc agents read without running ground-truth — it must reflect
-> reality, not the state from the prior session.
+> captain-lanes.md is the one doc the captain reads at boot without running
+> ground-truth (Step 0b) — it must reflect reality, not the prior session's state.
 
 ### 5b — Refresh crew mission files
 
@@ -305,7 +311,7 @@ main == origin/main in sync (or: main is at <sha>, origin at <sha> — divergenc
 
 ```bash
 # Signal departure to any agents still online
-harmonik comms send --from captain --broadcast --topic status -- \
+harmonik comms send --from "$HARMONIK_AGENT" --broadcast --topic status -- \
   "Captain session ending. Fleet state in HANDOFF.md. Daemon up; crews <list> live."
 
 # Leave the bus
@@ -339,8 +345,10 @@ Run this final check before the session exits. All six must hold:
    cleanly stood down this step (not in `crew list` and not in `comms who`). No
    zombie/ghost records.
 
-6. **SKILL.md §A is current:** the lane table matches actual state (stood-down lanes
-   struck through; blocked lanes show their blocker; next-phase candidates listed).
+6. **`.harmonik/context/captain-lanes.md` is current (M9/hk-039z):** the lane table
+   there matches actual state (stood-down lanes removed/struck; blocked lanes show
+   their blocker; next-phase candidates listed). This is the file STARTUP.md Step 0b
+   reads — NOT SKILL.md §A, which now holds only the durable lane model.
 
 ```bash
 # Quick one-liner for check #5 (registered-but-offline = zombie remaining)
@@ -381,8 +389,11 @@ comm -23 \
   `~/.claude/captain-tools/captain-launch.sh` so the session has a stable
   `--session-id` (the keeper rebinds to this). A bare `claude --remote-control
   captain` with no `--session-id` cannot be cycled and is the historical
-  dead-captain bug. The **keeper band is UNCHANGED** — `restart-now` bypasses only
-  the act-pct idle gate; warn/act thresholds are not widened.
+  dead-captain bug. **`restart-now` does not WIDEN the band** — it bypasses only the
+  act-pct idle gate. The operator HARD-NO is on WIDENING only; LOWERING the band to
+  restart earlier (the current 200k/215k band) is operator-directed (M1/M4-hk-039z).
+  Arm the keeper with `--warn-abs-tokens 200000 --act-abs-tokens 215000` (the pct
+  flags are inert on the 1M window — STARTUP.md Step 6 "Keeper arming").
 
 - **`gh auth` workflow scope requires the `workflow` scope specifically** — it is NOT
   included in the default `repo` scope. Beads touching `.github/workflows/` will
@@ -399,12 +410,14 @@ comm -23 \
 ## References
 
 - `.claude/skills/captain/STARTUP.md` — the boot counterpart to this file.
-- `.claude/skills/captain/SKILL.md` — §0 autonomy bright-line; §8 surface-and-await;
-  §A lane roadmap (update in Step 5a).
+- `.claude/skills/captain/SKILL.md` — §0 autonomy bright-line; §8 surface-and-await
+  (incl. the single sanctioned `br close` exception); §A lane MODEL. Live lane state
+  is in `.harmonik/context/captain-lanes.md` (update in Step 5a), NOT SKILL.md §A.
 - `docs/retro/2026-06-10/A5-formalize-process.md` — tiered handoff model that
   motivated this doc (§3.3 captain handoff rules, tiered-handoff table).
 - `specs/crew-handoff-schema.md` — six-field mission handoff contract.
 - `.claude/skills/agent-comms/SKILL.md` — comms CLI surface + N3 dedupe requirement.
 - `.claude/skills/beads-cli/SKILL.md` — write discipline (captain MUST NOT issue
-  terminal transitions; `br close` on manually-deployed beads is the one exception,
-  sanctioned by the bypass-SOP).
+  terminal transitions). The ONE sanctioned `br close` exception and its
+  exception-to-the-exception (promote cherry-picks lack the reconcile trailer →
+  do NOT raw-close) are stated authoritatively in **SKILL.md §8** (M7/hk-039z).

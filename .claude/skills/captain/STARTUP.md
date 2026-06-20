@@ -34,10 +34,17 @@ echo "agent=$HARMONIK_AGENT  cwd=$(pwd)"
 # Expect: agent=captain  cwd=$HARMONIK_PROJECT
 ```
 
-- Your comms identity is **`captain`**. Pass `--from captain` on every **send**
-  op (shell `export` does NOT persist between tool calls — pass it explicitly).
-  For **recv/who/log**, use `--agent captain` (your inbox identity) — `--from`
-  is a sender filter and would give you only messages you already sent.
+- **Identity guard (NORMATIVE — M8/hk-039z):** your comms identity is
+  `$HARMONIK_AGENT`, verified above — NOT a hardcoded `captain`. Pass
+  `--from "$HARMONIK_AGENT"` on every **send** op (shell `export` does NOT persist
+  between tool calls — pass the resolved value explicitly). For **recv/who/log**
+  use `--agent "$HARMONIK_AGENT"` (your inbox identity) — `--from` is a sender
+  filter and would give you only messages you already sent. Only assert
+  `--from captain` if `$HARMONIK_AGENT == captain` AND no other live `captain` is in
+  `comms who`. **An uncommissioned `--from captain` (a session resumed under a
+  different lane) freezes the fleet** (two-captains collision, `reference_my_comms_identity`).
+  If this session was resumed under a non-captain lane, you are NOT the captain —
+  do not run this skill's captain ops.
 - CWD MUST stay `$HARMONIK_PROJECT` all session. Never `cd` into a
   worktree (the daemon may `git worktree remove` it). Use `git -C <repo>` /
   `harmonik --project <repo>` for everything.
@@ -91,6 +98,16 @@ ground-truth (Step 2) overrides anything it claims about live state.
 > If a handoff and ground-truth disagree, **ground-truth wins.** Note the
 > discrepancy in your first operator status; do not act on the stale claim.
 
+> **DO NOT full-read `AGENT_INDEX.md` / `STATUS.md` / `TASKS.md` at boot
+> (M5/hk-039z — context economy).** The general project `CLAUDE.md` reading order
+> is written for an implementer orchestrator; the captain is a fleet orchestrator
+> and needs only **phase + locked-decisions + lane-table + backlog**, which the
+> tier-3/tier-2 files (Steps 0a/0b) and the boot digest (Step 2) already provide —
+> and Step 2 ground-truths every live claim those files would carry anyway. Read a
+> specific STATUS/TASKS *section* on demand only if the digest or a decision flags
+> a gap. The keeper facts you need at boot are the ~10-line cheatsheet below
+> (§ Keeper cheatsheet), NOT the full 484-line `keeper` SKILL.md.
+
 ---
 
 ## Step 2 — Verify live state (check tier-3/tier-2 claims against ground-truth)
@@ -100,40 +117,38 @@ ground-truth (Step 2) overrides anything it claims about live state.
 > It does NOT re-discover lanes from scratch. Any discrepancy between tier-2 claims
 > and live state here means tier-2 is stale; update `captain-lanes.md` after Step 3.
 
-> **One-call shortcut — run the boot digest first:**
+> **MANDATORY — run the boot digest (M4/M5/hk-039z). This is the boot path, not an
+> optional shortcut:**
 > ```bash
-> ~/.claude/captain-tools/captain-boot-digest.sh
+> scripts/captain-boot-digest.sh        # in-repo, portable; --project DIR optional
 > ```
-> This executes ALL commands from Steps 2a–2g **and** Step 4 in one shell call
-> and emits a single Markdown STATE DIGEST (daemon status, agents online, crew
-> registry, tmux fleet, paused queues, recent comms, ready beads, open epics,
-> kerf next, kerf map). Read the digest output, then skip to Step 3 — you do
-> not need to rerun the individual commands below unless a specific entry needs
-> a deeper look.
+> This executes ALL of Steps 2a–2g **and** Step 4 in one shell call and emits a
+> single Markdown STATE DIGEST (daemon status, agents online, crew registry, tmux
+> fleet, paused queues, recent comms, ready beads, open epics, kerf next, kerf map).
+> **Read the digest, then go to Step 3.** Re-run an INDIVIDUAL command (from the
+> reference list below) ONLY if a specific digest section is empty/ambiguous and
+> needs a deeper look — never re-run the whole set (that is the double-run that
+> defeats the savings).
+>
+> If the script is missing on this box, copy it from `scripts/` or fall back to the
+> individual commands in the reference list below — but the digest is the intended
+> path.
 
-Run ALL of these before forming any plan or touching any crew. Capture the
-output; you will reconcile it in Step 3.
+**Reference — the individual commands the digest already runs** (do NOT re-run these
+wholesale after the digest; they are here only so you can rerun ONE if a digest
+section needs a deeper look):
 
 ```bash
 # a) Daemon up? (RPC surface) — exit 17 ⇒ daemon DOWN ⇒ jump to Step 2.1
 harmonik queue status                         # "(no queue active)" = up-but-idle, NOT down
-
 # b) Who is actually online on the bus right now (~120s TTL)
 harmonik comms who --json
-
 # c) Registered crews (LOCAL read; works daemon-down) — name/queue/session/handle
 harmonik crew list --json
-
 # d) tmux fleet — sessions and EVERY window (crew panes + stray worktree windows)
-tmux list-sessions
-tmux list-windows -a
-
-# e) Is the daemon ACTIVELY dispatching a bead right now? (one heartbeat, then quit)
-harmonik subscribe --types heartbeat --heartbeat 1s --json | head -1
-
+tmux list-sessions ; tmux list-windows -a
 # f) Recent run activity (attribute later via br show --assignee, never by guessing)
 harmonik comms log --since 30m --json | tail -40
-
 # g) Paused / failed queues — 'up' ≠ 'dispatching'; paused-by-failure = NOT healthy.
 #    HEALTHY criterion #6 (exit≠17) is a FALSE-GREEN for a paused main/crew queue.
 harmonik queue list --json | jq -r '.queues[]|select(.status|test("paused|complete-with-failures"))|"\(.name)\t\(.status)"'
@@ -198,18 +213,11 @@ different name (that is a judgment call → SURFACE + AWAIT, captain skill §8).
 You do NOT dispatch until there is a written, lane-organized plan. "Watch one
 bead and react" is the failure mode — this step forbids it.
 
-> **Already covered by the boot digest** — if you ran
-> `~/.claude/captain-tools/captain-boot-digest.sh` in Step 2, the digest
-> already includes sections 7–10 (ready beads, open epics, kerf next, kerf
-> map). Use that output to build the lane table below; skip re-running the
-> individual commands unless a section looks stale.
-
-```bash
-br ready --limit 0 --json | jq -r '.[] | "\(.id)\t\(.title)"'  # ALL unblocked (unpaginated)
-br list --status=open --type=epic --json                        # candidate lane epics
-kerf next --format=json                                         # ranked feed (priority SoT)
-kerf map                                                        # works grouped by area
-```
+> **Already covered by the boot digest (M5/hk-039z).** Sections 7–10 of the digest
+> you ran in Step 2 (ready beads, open epics, kerf next, kerf map) ARE this step's
+> discovery — build the lane table from that output. Do NOT re-run the raw `br
+> ready` / `br list` / `kerf next` / `kerf map` commands; rerun ONE only if its
+> digest section was empty/ambiguous.
 
 > kerf is the priority source of truth — and **executing that existing ranking is
 > AUTONOMOUS** (captain skill §0 / R-C4.6). Organize the KNOWN `kerf next` / `br
@@ -276,7 +284,7 @@ For an ALREADY-LIVE crew that just needs a new epic, this is a **comms re-task,
 NOT a new `crew start`** (captain skill §4):
 
 ```bash
-harmonik comms send --from captain --to <crew> --topic assign -- "<epic_id> <1-line goal>"
+harmonik comms send --from "$HARMONIK_AGENT" --to <crew> --topic assign -- "<epic_id> <1-line goal>"   # --from = your verified lane (Step 0 identity guard), NOT a hardcoded "captain"
 ```
 
 **5d — VERIFY the crew is real (BOTH conditions; assumption ≠ verification):**
@@ -293,11 +301,23 @@ harmonik queue status --json                                          # its name
 ```
 
 ```bash
-# (c) Workflow quality-bar: dispatched beads must use dot/review-loop — NOT single (no review).
-#     single = review bypassed; this gap let hk-u6zp's workflow_ref Opus-bar bypass land silently.
-grep '"type":"run_started"' .harmonik/events/events.jsonl | tail -10 | \
-  jq -r 'select(.workflow_mode == "single") | "WARN: \(.bead_id) dispatched single (no review)"'
-# Any output = surface to operator; do NOT let single-mode dispatches accumulate.
+# (c) Workflow quality-bar: a completed run must have a matching reviewer_verdict —
+#     a run_completed with NO verdict = review was BYPASSED (single-mode / no review loop).
+#     ROBUST METHOD (M2/hk-039z): do NOT grep run_started for workflow_mode. That field
+#     EXISTS on the type (core.RunStartedPayload `workflow_mode,omitempty`) but the daemon's
+#     emit struct omits it, so it is ABSENT on live run_started events → a top-level
+#     `.workflow_mode` grep silently always passes (false GREEN). If you must read it, it
+#     nests under `.payload.workflow_mode` — but prefer the verdict join below.
+for rid in $(jq -r 'select(.type=="run_completed") | .payload.run_id' \
+               .harmonik/events/events.jsonl | tail -10); do
+  vc=$(jq -r --arg r "$rid" \
+        'select(.type=="reviewer_verdict" and .payload.run_id==$r) | .payload.run_id' \
+        .harmonik/events/events.jsonl | head -1)
+  [[ -z "$vc" ]] && echo "WARN: run $rid completed with NO reviewer_verdict (review bypassed)"
+done
+# Any output = surface to operator; do NOT let review-bypassed runs accumulate.
+# NOTE (CE4): this deterministic check should MOVE to the Sonnet ops-monitor; it is
+# here as an interim until that monitor absorbs it.
 ```
 
 A lane passes verification only when **(a) comms-online AND (b) pane-truth shows
@@ -315,6 +335,28 @@ the operator).
 
 ## Step 6 — Arm the HEALTH watchers, THEN enter the SPARSE monitor loop
 
+### Keeper cheatsheet (the ~15 lines the captain needs — M5/hk-039z)
+
+The captain is keeper-MANAGED, not a keeper operator — it does NOT need the full
+`keeper` SKILL.md at boot. The facts that matter:
+
+- **Band (canonical):** warn 200k / act 215k ABSOLUTE tokens. Arm with
+  `--warn-abs-tokens 200000 --act-abs-tokens 215000`. The pct flags are INERT on the
+  captain's 1M window (keeper warns if passed). Source of truth = `captain-launch.sh`
+  / `.harmonik/config.yaml` `keeper:` block.
+- **All keeper verbs are FLAG-ONLY (hk-nbft):** `--agent <name>`, never a positional
+  (a positional exits 2).
+- **On WARN:** terse-ack one line, keep working; at the next clean idle point write
+  `HANDOFF-captain.md` (with the `<!-- KEEPER:<nonce> -->`) and run
+  `harmonik keeper restart-now --agent captain`, keep the turn open, stop typing.
+  **NEVER `/quit` / self-terminate** — that exits the captain permanently.
+- **Self-restart is VERIFIED externally** via
+  `scripts/captain-tools/keeper-restart-verified.sh captain` (it survives your
+  `/clear`); a CREW restart you trigger, YOU verify with `keeper await-ack`.
+- **Restart is a NON-EVENT for a crew** — do not re-`crew start` a crew that cycled.
+- Full detail (config block, FORCE-ACT, doctor checks, await-ack handshake) is in the
+  `keeper` SKILL.md — read it ON DEMAND, not at boot.
+
 ### Keeper arming — the captain MUST be launched with a stable `--session-id`
 
 > **LOAD-BEARING — restart continuity.** The captain is a `claude --remote-control`
@@ -327,26 +369,51 @@ the operator).
 > a bare `claude --remote-control captain`:
 >
 > ```bash
-> # Launches the captain with a minted --session-id AND arms the keeper at 30/35:
+> # Launches the captain with a minted --session-id AND arms the keeper at the
+> # canonical absolute-token band (warn 200k / act 215k):
 > ~/.claude/captain-tools/captain-launch.sh captain
 > #   ⇒ tmux session `captain` runs:
 > #      claude --dangerously-skip-permissions --remote-control captain --session-id <uuid>
 > #   ⇒ tmux session `hk-keeper-captain` runs:
-> #      harmonik keeper --agent captain --tmux captain --warn-pct 30 --act-pct 35
+> #      harmonik keeper --agent captain --tmux captain \
+> #        --warn-abs-tokens 200000 --act-abs-tokens 215000
 > ```
 >
-> If you ever relaunch the keeper by hand, ALWAYS pass `--warn-pct 30 --act-pct 35`
-> (matching `captain-launch.sh` defaults; bare 80/90 ≈ 800k/900k tokens on a 1M
-> window — that defeats the intent).
+> **Keeper band — canonical flags (M1/hk-039z):** the captain runs on a **1M-token
+> window**, where the percent flags `--warn-pct` / `--act-pct` are **INERT** (the
+> keeper ignores them and emits a warning if they are passed). The single source of
+> truth for the band is `captain-launch.sh` (and the `.harmonik/config.yaml`
+> `keeper:` block). If you ever relaunch the keeper by hand, ALWAYS use the absolute
+> flags, NEVER the inert pct flags:
+> ```bash
+> harmonik keeper --agent captain --tmux captain \
+>   --warn-abs-tokens 200000 --act-abs-tokens 215000
+> ```
+> (The threshold VALUES are the operator's lowered band — see the on-WARN block
+> below. Do not change them here; this fix is the flag SYNTAX only.)
 
 ### On-WARN procedure for the captain (LOAD-BEARING)
 
 The keeper injects a **captain-specific** warn text (different from the default
 crew advisory): *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain, keep the turn open, and stop typing. The keeper drives the clear→resume cycle."*
 
-**The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate;
+**`restart-now` does not WIDEN the band.** It bypasses only the act-pct idle gate;
 all other safety gates (nonce-confirmed handoff, `.managed`, `HoldingDispatch`) are
-intact. The operator HARD-NO on widening the band stands.
+intact. The operator HARD-NO is on **WIDENING** only — **LOWERING the band to
+restart earlier (the current 200k/215k band) is operator-directed and correct**
+(`feedback_keeper_band_no_retune` 2026-06-17 UPDATE). Do NOT re-apply the old
+"no band-retune" lock to refuse a LOWERING directive.
+
+> **VERIFY the warn text is captain-safe (M11/hk-039z — one-time at boot).** The
+> compiled `on_demand_warn_text` MUST inject the captain `restart-now` advisory
+> (the block below), NOT the shared crew `/quit` text — a captain that obeys `/quit`
+> exits permanently. Confirm with:
+> ```bash
+> harmonik keeper doctor captain --project "$HARMONIK_PROJECT"
+> ```
+> If the injected text ends in `/quit` (or the config block's `on_demand_warn_text`
+> is the shared fatal advisory), do NOT trust auto-restart — the "NEVER self-quit"
+> rule below overrides ANY injected `/quit`; surface the misconfiguration.
 
 > ~~**Old guidance (OBSOLETE — hk-4zy9):** "On a WARN, just keep holding / do nothing
 > extra — wait for the keeper's ACT cycle."~~ This caused 40+ idle warn-cycles with
@@ -368,13 +435,27 @@ current state. `/clear` is the reset — no manual hand-trim.
    tick (≤5 s): nonce-poll → `/clear` → `/session-resume`.
 4. **NEVER exit or terminate your own session on a warn.** Self-terminating exits the captain permanently.
 
-**On resume after a restart-now cycle:**
+**On resume after a restart-now cycle (LEAN resume — M4/hk-039z):**
+
+A keeper-restart resume is NOT a cold boot. The lower band exists to restart EARLIER
+and more often, so the resume MUST be cheap — re-running the full heavy STARTUP every
+time would burn the very context the lower band saves. So:
 
 - Re-drain comms (`comms recv --follow --json | head -60`) before forming any plan.
-- Re-ground via this STARTUP.md (Steps 2–6) — do NOT trust the handoff's live-state
-  claims. The handoff carries INTENT only; STARTUP.md re-derives reality.
+- **Read tier-3/tier-2 (Steps 0a/0b) + run `scripts/captain-boot-digest.sh` ONCE.**
+  The digest is the SINGLE verification pass. **TRUST the cached tier-2/tier-3 state
+  as INPUT** — mid epics and long-horizon goals are stable across a restart and you do
+  NOT re-derive them. The handoff carries INTENT only; trust that intent.
+- **Full Step-2 re-derivation (the individual reference commands) is only for a COLD
+  boot or a digest-flagged discrepancy** — if the digest shows a crew/queue/daemon
+  state that conflicts with tier-2, reconcile that specific item; otherwise proceed
+  straight to Step 5/6.
 - Re-arm watchers (Step 6 below) — keeper arming survives the cycle, but the
   `comms recv --follow` and `/loop` health tick must be re-armed after `/clear`.
+
+> This reconciles the two pulls the operator flagged: "restart earlier" (lower band)
+> vs "re-ground every resume." Cached tier-2/3 is TRUSTED input; the digest is the one
+> verification pass; the heavy full re-derive is reserved for cold boot / flagged drift.
 
 > **The captain watches HEALTH + LANES + DECISIONS — never RUNS.** Run-level
 > telemetry (per-bead `run_stale`, `heartbeat` with `active_runs`, every
@@ -395,7 +476,7 @@ harmonik comms recv --agent captain --follow --json
 ```text
 # Watcher 2 — a SPARSE health tick via /loop (NOT a short-heartbeat subscribe).
 #   Paste this ONCE after the fleet is verified; it self-paces and survives keeper resets:
-/loop 12m Captain health check: (1) daemon up — harmonik queue status, exit17=rebuild+restart; (2) ALL queues healthy — harmonik queue list --json | jq '.queues[]|select(.status|test("paused"))|.name' — any output=paused-by-failure=NOT dispatching, surface+resume; (3) all crews comms-fresh — harmonik comms who, each <150s (stale ⇒ capture-pane, nudge/reconcile); (4) drain comms for epic_completed/errors/operator and act; (5) BACKLOG-PULL: run kerf next + br ready --limit 0, staff every ready lane/bead with a free crew/queue slot — do not leave ready work unassigned while a slot exists; (6) LULL-DEPLOY: if in a true lull (0 merging runs), deploy + verify own merged work (ff-after-push); (7) QUALITY-CHECK: grep '"type":"run_started"' .harmonik/events/events.jsonl | tail -10 | jq -r 'select(.workflow_mode=="single")|"WARN: \(.bead_id) single(no review)"' — any output=surface to operator; (8) self-audit: is any initiative stalled for a reason other than a genuine §8 surface-and-await case? If so, unblock it. A tick that finds ready work AND a free slot AND does NOT staff them is a FAILED tick, not a healthy one. Do NOT read run ages, narrate active beads, or call a launch wedge before launch+30min.
+/loop 12m Captain health check: (1) daemon up — harmonik queue status, exit17=rebuild+restart; (2) ALL queues healthy — harmonik queue list --json | jq '.queues[]|select(.status|test("paused"))|.name' — any output=paused-by-failure=NOT dispatching, surface+resume; (3) all crews comms-fresh — harmonik comms who, each <150s (stale ⇒ capture-pane, nudge/reconcile); (4) drain comms for epic_completed/errors/operator and act; (5) BACKLOG-PULL: run kerf next + br ready --limit 0, staff every ready lane/bead with a free crew/queue slot — do not leave ready work unassigned while a slot exists; (6) LULL-DEPLOY: if in a true lull (0 merging runs), deploy + verify own merged work (ff-after-push); (7) QUALITY-CHECK (M2/hk-039z — verdict-join, NOT workflow_mode grep): for each of the last 10 run_completed run_ids (jq '.payload.run_id'), confirm a matching reviewer_verdict event exists; a run_completed with NO matching reviewer_verdict = review BYPASSED — surface to operator. Do NOT grep run_started for workflow_mode (the daemon omits that field → false GREEN); this deterministic check should move to the Sonnet ops-monitor (CE4); (8) self-audit: is any initiative stalled for a reason other than a genuine §8 surface-and-await case? If so, unblock it. A tick that finds ready work AND a free slot AND does NOT staff them is a FAILED tick, not a healthy one. Do NOT read run ages, narrate active beads, or call a launch wedge before launch+30min.
 ```
 
 The health tick IS the "periodic lightweight Step 2": each fire re-checks daemon +

@@ -20,7 +20,7 @@ The keeper supports two cycle-trigger paths for the captain:
 
 ### Watcher path (passive — keeper-initiated)
 
-The keeper polls the gauge every 5s and at the **act threshold** (≥300k tokens /
+The keeper polls the gauge every 5s and at the **act threshold** (≥215k tokens /
 `--act-pct`, CrispIdle, no HoldingDispatch) it runs the automatic cycle:
 handoff-inject → nonce-poll → `/clear` → `/session-resume captain`.
 

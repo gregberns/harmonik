@@ -57,6 +57,57 @@ harmonik keeper ping --agent <name> [--nonce <N>]
    `no_tmux_target`, `sid_not_primary`, `handoff_missing`, `handoff_stale`,
    `ack_inject_failed`. **Do not assume success.**
 
+## Actionable warn → self-service restart
+
+The keeper's **actionable warn** (fired at the warn gate — `warn_abs_tokens`, default
+**200 000** tokens, effective `min(warn_abs_tokens, warn_pct_ceil × window)`) is the
+trigger that lets an agent restart **itself** *before* the keeper's own act/force path
+has to. It is the warn-only crew keeper's primary self-restart mechanism (crews run
+`--warn-only`, so the automatic cycle is INERT — see
+[`docs/components/internal/keeper.md`](components/internal/keeper.md) §Configuration
+surface). Self-service is gated by `keeper.self_service.enabled`; for crews,
+`keeper.self_service.crews_enabled` defaults to **true** (hk-vs4u), so crews
+self-restart out of the box.
+
+When you (captain or crew) receive an actionable warn:
+
+1. **Handoff-first freshness gate.** Run `/session-handoff` *immediately* so
+   `HANDOFF-<name>.md` is fresh. `restart-now` enforces the **< 10 min** freshness
+   window (it refuses with `handoff_stale` / `handoff_missing` otherwise). The warn is
+   actionable precisely because it leaves enough headroom (warn 200k → act 215k → force
+   240k) to write the handoff before the gauge climbs into the act band.
+2. **Fire `harmonik keeper restart-now --agent <name>`** (the same verified-ACK command
+   above). It writes the handoff-gated ACK, then `/clear` + `/session-resume`.
+
+### Implicit gauge-drop suppression (no double-restart)
+
+After your self-service restart, the `/clear` drops the gauge's token count back to a
+fresh-session baseline. The keeper observes that drop and **does not re-fire** the
+act/force cycle on top of your restart — the gauge falling back below the warn gate is
+the implicit signal that the self-service restart succeeded. There is **no second,
+keeper-initiated restart** racing your own: your `restart-now` and the keeper's cycle
+target the same pane, and the post-`/clear` low gauge suppresses the redundant cycle.
+
+### Fall-through to automatic act / force
+
+The actionable warn is an **invitation, not a mandate**. If you ignore it and keep
+working, the gauge keeps climbing and the keeper falls through to its automatic path:
+
+- **act gate** (`act_abs_tokens`, default **215 000**) — when the session is CrispIdle
+  and not HoldingDispatch, the keeper itself injects `/session-handoff` and runs the
+  full handoff → `/clear` → `/session-resume` cycle (no agent action required). For a
+  warn-only crew keeper this act path is INERT — the warn IS the crew's only prompt, so
+  a crew that ignores the warn relies on the captain/operator backstop instead.
+- **force-act gate** (`force_act_abs_tokens`, default **240 000** = act + 25 000) — the
+  cycle fires **unconditionally**, bypassing the CrispIdle gate, so a perpetually-busy
+  session still gets cleared before context exhaustion.
+- **hard-ceiling** (`hard_ceiling.abs_tokens`, default **280 000**) — an independent,
+  SID-blind backstop (mode-gated: `off|alarm|restart`, default `alarm`) that trips even
+  if the session-id binding is wrong.
+
+In short: **warn → you restart yourself (handoff-first); ignore it → the keeper restarts
+you (act/force); worst case → the hard-ceiling backstop catches an mis-bound keeper.**
+
 ## Key behavioral notes
 
 - **Fails loudly.** A silent no-op is impossible. The **exit code is the first

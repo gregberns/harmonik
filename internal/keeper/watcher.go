@@ -202,8 +202,8 @@ type WatcherConfig struct {
 	// ONLY when the gauge reports BOTH Tokens>0 and WindowSize>0. When WindowSize==0
 	// the abs gate is not trustworthy (the window is unknown), so the gate falls
 	// back to Pct vs WarnPct — identical to the cycler, avoiding the F45
-	// Tokens-vs-Pct split-brain. Default: 270000.
-	// Refs: hk-cl74g, hk-kgn, hk-odhh, hk-jgzg.
+	// Tokens-vs-Pct split-brain. Default: 200000.
+	// Refs: hk-cl74g, hk-kgn, hk-odhh, hk-jgzg, hk-8hr1.
 	WarnAbsTokens int64
 
 	// FallbackWindowSize is the assumed context-window size used to derive a live

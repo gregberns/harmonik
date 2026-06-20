@@ -279,7 +279,7 @@ func TestIntegration_Twin1mGauge_CycleFiresOnInferredWindow(t *testing.T) {
 	}
 
 	// [1m] model, NO context_window_size, growing tokens. The script must infer
-	// window_size=1M for the absolute-token gate (300k default) to ever trip.
+	// window_size=1M for the absolute-token gate (215k default) to ever trip.
 	sess := twStartTwin(t, twTwinSpec{
 		project:     project,
 		agent:       agent,

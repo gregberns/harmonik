@@ -1057,13 +1057,14 @@ complete handoff).
 
 **Threshold semantics for [1m]-window models.** On modern Claude Code versions that emit
 absolute token counts (`CtxFile.Tokens > 0`), the absolute thresholds are authoritative:
-warn = 270 000 tokens, act = 300 000 tokens, force-act = 380 000 tokens. The effective
+warn = 200 000 tokens, act = 215 000 tokens, force-act = 240 000 tokens. The effective
 threshold is `min(absTokens, pctCeil × windowSize)`; on a 1M-token window the abs cap
 always wins. The `--warn-pct`/`--act-pct` CLI flags are a fallback used ONLY when the
 gauge does not report absolute token counts (older Claude Code). On a 1M-window model
 these flags are inert and MUST NOT be relied upon; the keeper emits a diagnostic warning
-when they are passed explicitly. Operators who previously passed `--warn-pct 25 --act-pct 30`
-on a 1M deployment were silently getting 270k/300k (not 250k/300k) — use
+when they are passed explicitly. Operators who previously passed a percent override
+(e.g. `--warn-pct 25 --act-pct 30`) on a 1M deployment were silently getting the abs
+band (200k/215k), not the percent-of-window values they intended — use
 `--warn-abs-tokens`/`--act-abs-tokens` for explicit overrides. (Refs: hk-odhh.)
 
 **Marker format.** The marker file at `.harmonik/keeper/<agent>.restart-now` MUST contain

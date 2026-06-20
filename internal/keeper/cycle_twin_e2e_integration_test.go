@@ -347,7 +347,7 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 	}
 
 	// window=1M so the gauge sees an absolute-token window; growth pushes tokens
-	// over the act threshold (default 300k, capped by 0.85*1M) within a couple
+	// over the act threshold (default 215k, capped by 0.85*1M) within a couple
 	// of seconds at 50k/200ms.
 	sess := twStartTwin(t, twTwinSpec{
 		project:     project,
@@ -496,7 +496,7 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 // failure environment, the one the redesign was built to survive:
 //
 //	(1) HIGH CONTEXT — tokens past the act threshold on a [1m] (1M-window) model,
-//	    so the gauge reports an absolute-token view well above Act 300k.
+//	    so the gauge reports an absolute-token view well above Act 215k.
 //	(2) STALE GAUGE while the pane is ALIVE — the statusLine emit is suppressed
 //	    (the .ctx FREEZES) while the idle hook keeps firing (the .idle marker
 //	    advances). This is the "gauge stale on a live agent" condition that used
@@ -537,7 +537,7 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Fatalf("tw: WriteManagedSessionID: %v", err)
 	}
 
-	// (1) HIGH CONTEXT on a 1M window: start low and grow past Act 300k, then
+	// (1) HIGH CONTEXT on a 1M window: start low and grow past Act 215k, then
 	// (2) FREEZE the gauge after suppressAfter while keeping the pane alive, and
 	// resume emitting on /clear so the post-clear rotated SID becomes observable
 	// (the operator's stale-gauge-then-recover path).

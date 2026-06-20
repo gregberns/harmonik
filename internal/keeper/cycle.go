@@ -40,11 +40,11 @@ type CyclerConfig struct {
 	// available). The effective act threshold is min(ActAbsTokens, ActPctCeil *
 	// WindowSize); similarly for warn. This handles both 200k and 1M windows:
 	// on a 200k window the pct-ceil wins (~170k); on a 1M window the abs cap
-	// wins (300k) — preventing the 90%-pct gate from firing at ~900k tokens.
-	// Refs: hk-cl74g.
-	ActAbsTokens  int64   // absolute cycle threshold; default 300000
+	// wins (215k) — preventing the 90%-pct gate from firing at ~900k tokens.
+	// Refs: hk-cl74g, hk-8hr1.
+	ActAbsTokens  int64   // absolute cycle threshold; default 215000
 	ActPctCeil    float64 // pct-of-window cap for cycle gate; default 0.85
-	WarnAbsTokens int64   // absolute warn/re-arm threshold; default 270000
+	WarnAbsTokens int64   // absolute warn/re-arm threshold; default 200000
 	WarnPctCeil   float64 // pct-of-window cap for warn gate; default 0.70
 
 	// ForceActAbsTokens / ForceActPctCeil define the hard upper threshold above
@@ -53,7 +53,7 @@ type CyclerConfig struct {
 	// gets cleared before context exhaustion. Effective threshold is
 	// min(ForceActAbsTokens, ForceActPctCeil * WindowSize).
 	// Refs: hk-0uu, hk-lhu2.
-	ForceActAbsTokens int64   // default ActAbsTokens+40000 (i.e. 340000 with defaults)
+	ForceActAbsTokens int64   // default ActAbsTokens+25000 (i.e. 240000 with defaults)
 	ForceActPctCeil   float64 // default 0.95
 
 	// Pct-based fallbacks used when CtxFile.Tokens == 0 or WindowSize == 0
@@ -219,8 +219,8 @@ func (c *CyclerConfig) applyDefaults() {
 	// ForceAct thresholds are derived from their corresponding act thresholds so
 	// that a custom --act-pct/--act-abs-tokens never creates a dead zone where
 	// context is above the act gate but below the force-clear gate (hk-6el).
-	// Offset reduced from +80k to +40k per operator decision (hk-lhu2): the
-	// resulting default force_act=340k is the final operator-decided value.
+	// Offset is +25k per the TA1 band-retune (hk-8hr1): the resulting default
+	// force_act=240k (act 215k + 25k) is the final operator-decided value.
 	if c.ForceActAbsTokens <= 0 {
 		c.ForceActAbsTokens = c.ActAbsTokens + defaultForceActAbsOffset
 	}

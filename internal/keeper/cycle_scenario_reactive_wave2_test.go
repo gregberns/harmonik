@@ -219,7 +219,7 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 	}
 	cycler := keeper.NewCycler(cfg, em)
 
-	// Tokens at/above the default ForceActAbsTokens (340_000) with CrispIdle=false.
+	// Tokens at/above the default ForceActAbsTokens (240_000) with CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 97.0, Tokens: 390_000, WindowSize: 1_000_000, SessionID: s1}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)

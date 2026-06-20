@@ -43,10 +43,10 @@ package daemon
 //	  target_branch: main      # observability/symmetry only; authoritative source is branching.yaml
 //	keeper:
 //	  context_thresholds:
-//	    warn_abs_tokens: 270000        # absolute warn gate (default 270000); ≤0 = not configured
-//	    act_abs_tokens: 300000         # absolute act gate (default 300000); ≤0 = not configured
-//	    force_act_abs_tokens: 340000   # hard ceiling, unconditional clear (default act+40000); ≤0 = not configured
-//	    force_act_abs_offset: 40000    # offset over act when force_act_abs_tokens unset; ≤0 = not configured (hk-9kgf)
+//	    warn_abs_tokens: 200000        # absolute warn gate (default 200000); ≤0 = not configured
+//	    act_abs_tokens: 215000         # absolute act gate (default 215000); ≤0 = not configured
+//	    force_act_abs_tokens: 240000   # hard ceiling, unconditional clear (default act+25000); ≤0 = not configured
+//	    force_act_abs_offset: 25000    # offset over act when force_act_abs_tokens unset; ≤0 = not configured (hk-9kgf)
 //	    idle_floor_abs_tokens: 200000  # floor below which idle crews are not idle-restarted; ≤0 = not configured (hk-9kgf)
 //	    act_pct_ceil: 0.85             # pct-of-window cap for act gate (default 0.85); ≤0 = not configured; >1 = error
 //	    warn_pct_ceil: 0.70            # pct-of-window cap for warn gate (default 0.70); ≤0 = not configured; >1 = error

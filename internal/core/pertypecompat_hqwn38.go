@@ -271,6 +271,14 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-wjzf: captain-initiated restart-now blocked diagnostic (ON-059).
 	{TypeName: "session_keeper_restart_now_blocked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
+	// ── §8.13 Keeper backstops + idle-restart (hk-34ac, hk-ee81) ─────────
+	// hk-34ac: session_keeper_blind — fired after 5min continuous foreign_session (latched per episode).
+	{TypeName: "session_keeper_blind", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-34ac: session_keeper_hard_ceiling — SID-independent restart at 280K tokens.
+	{TypeName: "session_keeper_hard_ceiling", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-ee81: session_keeper_idle_crew — crew is idle with context below 150K idle-restart floor.
+	{TypeName: "session_keeper_idle_crew", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
 	// ── §8.14 Alarm / self-check ───────────────────────────────────────────
 	// hk-tnmjy: review-gate anomaly alarm — N consecutive bead_closed with no reviewer_verdict.
 	{TypeName: "review_gate_anomaly", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

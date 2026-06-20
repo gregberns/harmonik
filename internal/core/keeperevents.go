@@ -302,11 +302,37 @@ type SessionKeeperHardCeilingPayload struct {
 	// AgentName is the keeper agent name (--agent flag value).
 	AgentName string `json:"agent_name"`
 
-	// Tokens is the token count observed in the gauge at the time of the action.
-	Tokens int64 `json:"tokens"`
+	// ContextLen is the token count observed in the gauge at the time of the
+	// action. JSON key is "tokens" for wire compatibility with existing events.
+	// Field is NOT named "Tokens" to satisfy EV-036 secret-prefix rule (hk-6x7dw).
+	ContextLen int64 `json:"tokens"`
 
 	// HardCeiling is the configured HardCeilingAbsTokens threshold.
 	HardCeiling int64 `json:"hard_ceiling"`
+}
+
+// SessionKeeperIdleCrewPayload is the payload for session_keeper_idle_crew
+// (hk-ee81).
+//
+// Emitted when a crew session is idle (CrispIdle + not HoldingDispatch) with
+// a token count BELOW the idle-restart floor (IdleRestartAbsTokens, default
+// 150 000). The keeper does not restart on this path — the captain may choose
+// to reap the crew instead. Restart is triggered only when tokens are at or
+// above the idle-restart floor (see RunForIdle in cycle.go).
+//
+// Durability class: O (ordinary — advisory signal to captain).
+// Refs: hk-ee81.
+type SessionKeeperIdleCrewPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent"`
+
+	// ContextLen is the token count observed in the gauge at the time of
+	// emission. JSON key is "tokens" for wire consistency with related events.
+	// Field is NOT named "Tokens" to satisfy EV-036 secret-prefix rule (hk-6x7dw).
+	ContextLen int64 `json:"tokens"`
+
+	// Reason is always "below_idle_threshold" on this path.
+	Reason string `json:"reason"`
 }
 
 // SessionKeeperAckTimeoutPayload is the payload for session_keeper_ack_timeout

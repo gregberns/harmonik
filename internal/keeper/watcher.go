@@ -1436,7 +1436,7 @@ func (w *Watcher) emitBlind(ctx context.Context, managedSID, liveSID string, bli
 func (w *Watcher) emitHardCeiling(ctx context.Context, tokens int64) {
 	payload := core.SessionKeeperHardCeilingPayload{
 		AgentName:   w.cfg.AgentName,
-		Tokens:      tokens,
+		ContextLen:  tokens,
 		HardCeiling: HardCeilingAbsTokens,
 	}
 	raw, err := json.Marshal(payload)

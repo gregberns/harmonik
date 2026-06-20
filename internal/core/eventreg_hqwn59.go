@@ -468,6 +468,8 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_blind", func() EventPayload { return &SessionKeeperBlindPayload{} })
 	// hk-34ac: SID-independent hard-ceiling failsafe (tokens >= 280K).
 	mustRegister("session_keeper_hard_ceiling", func() EventPayload { return &SessionKeeperHardCeilingPayload{} })
+	// hk-ee81: idle crew below idle-restart floor (advisory to captain).
+	mustRegister("session_keeper_idle_crew", func() EventPayload { return &SessionKeeperIdleCrewPayload{} })
 }
 
 // registerAlarmEvents registers §8.14 alarm / self-check event payload

@@ -273,8 +273,8 @@ func TestHardCeiling_FiresAbove280K_DespiteForeignSession(t *testing.T) {
 			if payload.AgentName != agent {
 				t.Errorf("payload.AgentName = %q; want %q", payload.AgentName, agent)
 			}
-			if payload.Tokens != 290_000 {
-				t.Errorf("payload.Tokens = %d; want 290000", payload.Tokens)
+			if payload.ContextLen != 290_000 {
+				t.Errorf("payload.ContextLen = %d; want 290000", payload.ContextLen)
 			}
 			if payload.HardCeiling != keeper.HardCeilingAbsTokens {
 				t.Errorf("payload.HardCeiling = %d; want %d", payload.HardCeiling, keeper.HardCeilingAbsTokens)

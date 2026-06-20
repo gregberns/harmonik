@@ -179,7 +179,20 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 		}
 		if attempt < worktreeAddMaxRetries && isTransientWorktreeAddRace(out) {
 			// Clean up any partial state so the next attempt starts fresh.
-			_ = os.RemoveAll(worktreePath)
+			// For remote runs (cfg.runner != nil) the worktree dir lives on the
+			// worker, so os.RemoveAll (which runs LOCALLY on box A) is a no-op and
+			// leaves the stale dir behind — the next dispatch then collides with
+			// "branch/reference already exists", which is NOT matched as a transient
+			// race, so no retry fires and the dispatch fails silently. Route the
+			// directory removal through the same runner as the sibling branch -D /
+			// worktree prune calls so remote partial state is actually cleaned.
+			// Best-effort: ignore the error, matching the sibling calls. (hk-3vbc)
+			if cfg.runner != nil {
+				rmCmd := runner.Command(ctx, "rm", "-rf", worktreePath)
+				_ = rmCmd.Run()
+			} else {
+				_ = os.RemoveAll(worktreePath)
+			}
 			// Remove the branch if git created it before failing.
 			delBranch := runner.Command(ctx, "git", "-C", repoRoot, "branch", "-D", branch)
 			_ = delBranch.Run()

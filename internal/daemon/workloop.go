@@ -2615,6 +2615,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 	if wtErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: CreateWorktree for bead %s run %s: %v (reopening)\n", beadID, runID.String(), wtErr)
+		// Surface the worktree-create failure as a terminal run_failed event so it
+		// lands in events.jsonl. Without this the failure is invisible to operators
+		// — they only see a downstream agent_ready_timeout (~90s later) with no
+		// cause attached. Emit BEFORE reopening the bead + returning. (hk-3vbc)
+		emitDone(false, fmt.Sprintf("worktree_create_failed: %v", wtErr))
 		reopenTID, _ := deps.tidGen.Next()
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 			fmt.Sprintf("create worktree failed: %v", wtErr))

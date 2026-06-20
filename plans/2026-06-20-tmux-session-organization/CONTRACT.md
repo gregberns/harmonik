@@ -17,8 +17,8 @@ harmonik-<hash>-crew-<name>        (session)
 harmonik-<hash>-default            (session, UNCHANGED)
   └─ windows <beadID>/i<n>, <beadID>/r<n>   implementer/reviewer agents
 
-harmonik-<hash>-supervise          (session)  RENAMED from hk-<hash>-daemon-supervise
-  └─ supervisor / auto-reaper
+hk-<hash>-supervise                (session)  RENAMED from hk-<hash>-daemon-supervise
+  └─ supervisor / auto-reaper  (stays hk- = outside the swept namespace)
 
 harmonik-<hash>-flywheel           (session, UNCHANGED) reaped by `supervise reap`
 ```
@@ -35,7 +35,12 @@ No more `hk-<hash>-*` or `hk-keeper-*`. `<hash>` = existing 12-hex project hash.
   - Keeper package (depguard-isolated, may NOT import lifecycle): hardcode the
     string literals `"agent"`/`"keeper"` locally with a `// MUST match tmux.WindowAgent/WindowKeeper` comment (mirrors the existing tmuxresolve.go duplication pattern).
   - Shell (captain scripts): hardcode `agent` / `keeper`.
-- Supervisor session name: `harmonik-<hash>-supervise` (drop `hk-` and `daemon-`).
+- Supervisor session name: `hk-<hash>-supervise` (drop redundant `daemon-`, but
+  KEEP the `hk-` prefix — the supervisor MUST stay OUTSIDE the `harmonik-<hash>-*`
+  namespace because the daemon's boot orphan-sweep prefix-kills `harmonik-<hash>-*`
+  sessions not on its live-exclusion list (orphansweep.go:766-770, PL-019). `hk-`
+  keeps it sweep-immune with no exclusion-list coupling; it still sorts adjacent
+  to the `harmonik-` block in the tree.
 - Crew session name: always `harmonik-<hash>-crew-<name>` — DELETE the legacy `hk-crew-<name>` path.
 
 ## Keeper inject-target contract (THE load-bearing shared change)

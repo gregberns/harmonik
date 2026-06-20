@@ -194,8 +194,10 @@ keeper:
 	if k.DefaultWarnText != defaultText {
 		t.Errorf("DefaultWarnText: want %q, got %q", defaultText, k.DefaultWarnText)
 	}
-	if k.OnDemandWarnText != onDemandText {
-		t.Errorf("OnDemandWarnText: want %q, got %q", onDemandText, k.OnDemandWarnText)
+	// hk-vs4u: on_demand_warn_text is now a DEPRECATED alias of actionable_warn_text.
+	// Its value maps onto ActionableWarnText (with a log warning).
+	if k.ActionableWarnText != onDemandText {
+		t.Errorf("ActionableWarnText (via deprecated on_demand_warn_text alias): want %q, got %q", onDemandText, k.ActionableWarnText)
 	}
 }
 
@@ -217,8 +219,9 @@ keeper:
 	if k.DefaultWarnText != "" {
 		t.Errorf("DefaultWarnText empty: want \"\", got %q", k.DefaultWarnText)
 	}
-	if k.OnDemandWarnText != "" {
-		t.Errorf("OnDemandWarnText empty: want \"\", got %q", k.OnDemandWarnText)
+	// hk-vs4u: empty on_demand_warn_text does not populate ActionableWarnText.
+	if k.ActionableWarnText != "" {
+		t.Errorf("ActionableWarnText empty: want \"\", got %q", k.ActionableWarnText)
 	}
 }
 

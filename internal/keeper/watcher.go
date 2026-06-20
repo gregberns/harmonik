@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -321,20 +322,17 @@ type WatcherConfig struct {
 	// Refs: hk-061.
 	DecisionEmitter presence.Emitter
 
-	// OnDemandRestart, when true, replaces the default wrap-up advisory with the
-	// captain-specific restart-now instruction (see onDemandRestartWarningFmt in
-	// injector.go): at a clean stop write HANDOFF-<agent>.md then run
-	// "harmonik keeper restart-now --agent <agent>". The keeper drives clear→resume.
+	// OnDemandRestart, when true, marks this agent as one that owns the on-demand
+	// restart-now path (the keeper drives clear→resume when the agent runs
+	// `harmonik keeper restart-now`). It is auto-set for the captain in applyDefaults
+	// and retained for backward compatibility, but the warn-text SELECTION is now
+	// governed by selectWarnText (hk-vs4u): the actionable self-service form fires
+	// when SelfServiceEnabled AND (captain OR crew-with-crews-enabled) AND a primary
+	// SID AND CrispIdle. The keeper band is UNCHANGED — neither this flag nor the
+	// selection widens the warn or act thresholds; only the injected text differs.
 	//
-	// The keeper band is UNCHANGED — this flag does not widen the warn or act
-	// thresholds. It only changes the text injected at the warn crossing; the
-	// act-pct threshold is bypassed only on the captain-initiated request path
-	// (harmonik keeper restart-now → RunOnDemand). Crews always use the default
-	// advisory (OnDemandRestart=false).
-	//
-	// Auto-set to true when AgentName=="captain" (see applyDefaults). Can also be
-	// set explicitly if a different agent name needs the same UX in the future.
-	// Refs: hk-xjlq, ON-059.
+	// Auto-set to true when AgentName=="captain" (see applyDefaults). Refs: hk-xjlq,
+	// ON-059, hk-vs4u.
 	OnDemandRestart bool
 
 	// DefaultWarnText, when non-empty, overrides the compiled-in wrapUpWarningText
@@ -344,12 +342,43 @@ type WatcherConfig struct {
 	// Refs: hk-lhu2.
 	DefaultWarnText string
 
-	// OnDemandWarnText, when non-empty, overrides the compiled-in onDemandRestartWarningFmt
-	// text injected at warn crossings when OnDemandRestart is true (i.e. for the captain).
-	// Empty (or InjectFn non-nil) → compiled default is used.
-	// Sourced from .harmonik/config.yaml keeper.warn_messages.on_demand_warn_text.
-	// Refs: hk-lhu2.
-	OnDemandWarnText string
+	// ActionableWarnText, when non-empty, overrides the compiled-in ActionableWarnText
+	// output injected at the warn crossing when the actionable self-service form is
+	// selected (see selectWarnText). Empty (or InjectFn non-nil) → the compiled
+	// ActionableWarnText is used. A custom override is REQUIRED to still carry the
+	// verbatim "harmonik keeper restart-now" command token; selectWarnText falls back
+	// to the compiled text when the override drops it, so the required handshake
+	// command can never be silently lost.
+	//
+	// This is the SINGLE config key for the actionable advisory: the deprecated
+	// keeper.warn_messages.on_demand_warn_text aliases onto it (mapped in
+	// projectconfig.go with a log warning), kept as a RECOGNIZED key so old strict
+	// configs (hk-9f3f) do not hard-error.
+	// Sourced from .harmonik/config.yaml keeper.warn_messages.actionable_warn_text.
+	// Refs: hk-vs4u, hk-lhu2.
+	ActionableWarnText string
+
+	// SelfServiceEnabled gates the actionable self-service restart handshake form of
+	// the warn text. When false, every warn injects the lighter finish-the-turn
+	// advisory regardless of agent/idle/SID. Threaded from
+	// keeper.self_service.enabled. Refs: hk-vs4u, hk-4gtu.
+	SelfServiceEnabled bool
+
+	// SelfServiceCrewsEnabled, when true, extends the actionable form to CREW agents
+	// (the captain always gets it when SelfServiceEnabled). DEFAULT is TRUE — crews
+	// self-restart; it is not the captain's job to babysit them (operator decision,
+	// hk-vs4u). The unset→true resolution happens in ResolveKeeperConfig (a *bool in
+	// the raw config), so an absent crews_enabled reaches here as true and an explicit
+	// `crews_enabled: false` reaches here as false. Threaded from
+	// keeper.self_service.crews_enabled. Refs: hk-vs4u.
+	SelfServiceCrewsEnabled bool
+
+	// SelfServiceGraceSeconds and SelfServiceInstructOnlyWhenIdle are threaded for
+	// completeness (hk-vs4u defines the self_service block end-to-end). The watcher's
+	// idle gate already uses CrispIdle; these carry the configured intent to the
+	// resolved struct so future tuning has a consumer. Refs: hk-vs4u, hk-4gtu.
+	SelfServiceGraceSeconds         int
+	SelfServiceInstructOnlyWhenIdle bool
 
 	// HeartbeatEnabled turns on the keeper-side gauge heartbeat (hk-81wk). When
 	// enabled, every tick on which the gauge has aged past HeartbeatThreshold while
@@ -662,6 +691,77 @@ func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
 		return cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct
+}
+
+// actionableWarnEligible reports whether the ACTIONABLE self-service restart
+// handshake warn form should be selected for this agent at this tick, per the
+// hk-vs4u gate. ALL of the following must hold:
+//   - SelfServiceEnabled (self_service.enabled);
+//   - the agent is the captain, OR it is a crew AND SelfServiceCrewsEnabled
+//     (crews_enabled, which DEFAULTS TRUE — operator decision: crews self-restart);
+//   - the bound SID is a primary lowercase UUIDv4 (IsPrimarySID) — we only instruct
+//     a self-restart when the keeper can trust the identity it will act on;
+//   - the pane is CrispIdle (the Stop hook fired after the last gauge update) — we
+//     instruct a clean-stop procedure only at a clean stop.
+//
+// The ReadCtxFile-succeeds clause from the spec is implicit: this is called from
+// the fresh-gauge path where ctxFile is already a successfully-read gauge.
+//
+// When this returns false the lighter finish-the-turn advisory is selected, which
+// the watcher ALWAYS injects once gaugeQuiesced even when NOT CrispIdle — so a busy
+// (non-CrispIdle) session still gets exactly one warn. Refs: hk-vs4u.
+func (c *WatcherConfig) actionableWarnEligible(sessionID string, crispIdle bool) bool {
+	if !c.SelfServiceEnabled {
+		return false
+	}
+	isCaptain := c.AgentName == "captain"
+	if !isCaptain && !c.SelfServiceCrewsEnabled {
+		return false
+	}
+	if !isPrimarySID(sessionID) {
+		return false
+	}
+	return crispIdle
+}
+
+// selectWarnText returns the warn text to inject for this tick. When the agent is
+// actionable-eligible (actionableWarnEligible) it returns the ACTIONABLE
+// self-service restart handshake text (live tokens + band interpolated). A custom
+// ActionableWarnText config override is honored ONLY when it still carries the
+// verbatim restart-now command token; otherwise the compiled ActionableWarnText is
+// used so the required handshake command can never be silently dropped (the bead's
+// "custom override CANNOT drop the required command token" invariant).
+//
+// When NOT eligible it returns the lighter finish-the-turn advisory: DefaultWarnText
+// when configured, else the compiled wrapUpWarningText. Refs: hk-vs4u.
+func (c *WatcherConfig) selectWarnText(cf *CtxFile, crispIdle bool) string {
+	if c.actionableWarnEligible(cf.SessionID, crispIdle) {
+		compiled := ActionableWarnText(c.AgentName, cf.Tokens, c.WarnAbsTokens, c.actEffectiveTokens())
+		if c.ActionableWarnText != "" && containsRestartNowCmd(c.ActionableWarnText) {
+			return c.ActionableWarnText
+		}
+		return compiled
+	}
+	if c.DefaultWarnText != "" {
+		return c.DefaultWarnText
+	}
+	return wrapUpWarningText
+}
+
+// actEffectiveTokens returns the act-band token figure used in the actionable warn
+// text. The watcher does not carry the act threshold directly (it lives on the
+// Cycler), so it is derived from the warn threshold plus the compiled warn→act gap
+// when unavailable — a display-only figure; the real act gate is the Cycler's.
+func (c *WatcherConfig) actEffectiveTokens() int64 {
+	return c.WarnAbsTokens + (defaultActAbsTokens - defaultWarnAbsTokens)
+}
+
+// containsRestartNowCmd reports whether s carries the verbatim restart-now command
+// stem ("harmonik keeper restart-now"). Used to validate a custom ActionableWarnText
+// override before honoring it — an override that drops the command falls back to the
+// compiled text so the required self-restart handshake is never lost. Refs: hk-vs4u.
+func containsRestartNowCmd(s string) bool {
+	return strings.Contains(s, "harmonik keeper restart-now")
 }
 
 // isUppercaseUUID reports whether s is a UUID-shaped string (36 bytes,
@@ -1159,22 +1259,16 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 				inject := w.cfg.InjectFn
 				if inject == nil {
-					if w.cfg.OnDemandRestart {
-						agentName := w.cfg.AgentName
-						customText := w.cfg.OnDemandWarnText
-						inject = func(ctx context.Context, target string) error {
-							if customText != "" {
-								return InjectText(ctx, target, customText)
-							}
-							return InjectOnDemandRestartWarning(ctx, target, agentName)
-						}
-					} else if w.cfg.DefaultWarnText != "" {
-						customText := w.cfg.DefaultWarnText
-						inject = func(ctx context.Context, target string) error {
-							return InjectText(ctx, target, customText)
-						}
-					} else {
-						inject = InjectWrapUpWarning
+					// hk-vs4u: select the ACTIONABLE self-service restart handshake
+					// text vs the lighter finish-the-turn advisory. The actionable
+					// form fires ONLY when ALL of: self_service.enabled AND
+					// (captain OR crew-with-crews-enabled) AND a primary (UUIDv4) SID
+					// AND CrispIdle. Otherwise the lighter advisory is used — and the
+					// lighter advisory ALWAYS injects once gaugeQuiesced (this block),
+					// even when NOT CrispIdle, so no session ever loses its warn.
+					text := w.cfg.selectWarnText(ctxFile, crispIdle)
+					inject = func(ctx context.Context, target string) error {
+						return InjectText(ctx, target, text)
 					}
 				}
 				if injectErr := inject(ctx, w.cfg.TmuxTarget); injectErr != nil {

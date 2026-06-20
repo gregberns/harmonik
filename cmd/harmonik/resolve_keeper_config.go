@@ -169,6 +169,27 @@ type ResolvedKeeperConfig struct {
 	BootGraceSet       bool // true when CONFIG or FLAG set boot_grace (honor a 0 = disabled)
 	WarnCooldown       time.Duration
 	MaxHandoffTimeouts int
+
+	// ── self_service (hk-vs4u) ───────────────────────────────────────────────
+	// Threaded CONFIG-only (no flags). These reach WatcherConfig so watcher.go can
+	// select the actionable self-service restart-handshake warn text vs the lighter
+	// advisory (selectWarnText).
+	//
+	// SelfServiceCrewsEnabled is resolved UNSET→TRUE: the raw config carries a *bool
+	// (nil when keeper.self_service.crews_enabled is absent), and the operator
+	// decision (hk-vs4u) is that crews self-restart by default. An absent key
+	// resolves to true here; an explicit `crews_enabled: false` resolves to false.
+	SelfServiceEnabled              bool
+	SelfServiceGraceSeconds         int
+	SelfServiceInstructOnlyWhenIdle bool
+	SelfServiceCrewsEnabled         bool
+
+	// Warn-text overrides (CONFIG-only; empty = compiled default). DefaultWarnText is
+	// the lighter advisory for non-captain agents; ActionableWarnText is the R3
+	// self-service restart-handshake override (the deprecated on_demand_warn_text is
+	// aliased onto it in projectconfig.go). Refs: hk-vs4u.
+	DefaultWarnText    string
+	ActionableWarnText string
 }
 
 // ResolveKeeperConfig implements FLAG > CONFIG > DEFAULT per field and validates
@@ -317,6 +338,20 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig) (ResolvedKe
 	// MaxHandoffTimeouts: 0 = no-escalation sentinel; forward verbatim (0 when
 	// unconfigured → cycler applyDefaults fills DefaultMaxHandoffTimeouts).
 	out.MaxHandoffTimeouts = cfg.MaxHandoffTimeouts
+
+	// ── self_service (hk-vs4u): CONFIG-only thread-through ──
+	// crews_enabled resolves UNSET→TRUE (operator decision: crews self-restart). The
+	// raw config carries a *bool: nil (absent) → true; non-nil → the explicit value.
+	out.SelfServiceEnabled = cfg.SelfServiceEnabled
+	out.SelfServiceGraceSeconds = cfg.SelfServiceGraceSeconds
+	out.SelfServiceInstructOnlyWhenIdle = cfg.SelfServiceInstructOnlyWhenIdle
+	if cfg.SelfServiceCrewsEnabled == nil {
+		out.SelfServiceCrewsEnabled = true
+	} else {
+		out.SelfServiceCrewsEnabled = *cfg.SelfServiceCrewsEnabled
+	}
+	out.DefaultWarnText = cfg.DefaultWarnText
+	out.ActionableWarnText = cfg.ActionableWarnText
 
 	// ── cross-field invariants (fail-loud — NEVER revert to defaults) ──
 	// Band ordering: warn < act < force_act < hard_ceiling.

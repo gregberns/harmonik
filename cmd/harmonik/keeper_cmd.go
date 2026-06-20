@@ -109,10 +109,18 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 			resolved.HardCeilingMode, p.ResolvedTmux, p.ProjectDir, p.RespawnCmd),
 		WarnCooldown:     resolved.WarnCooldown,
 		LiveRecoverFn:    keeperLiveRecoverFn(p.WarnOnly, p.ProjectDir, p.RespawnCmd),
-		DefaultWarnText:  p.KeeperCfg.DefaultWarnText,
-		OnDemandWarnText: p.KeeperCfg.OnDemandWarnText,
-		ReapDecisions:    true,
-		HeartbeatEnabled: true,
+		// hk-vs4u: warn-text + self_service flow through the resolver (config>default).
+		// DefaultWarnText = lighter advisory; ActionableWarnText = the R3 self-service
+		// restart handshake (selectWarnText picks between them). crews_enabled is
+		// resolved UNSET→TRUE in ResolveKeeperConfig.
+		DefaultWarnText:                 resolved.DefaultWarnText,
+		ActionableWarnText:              resolved.ActionableWarnText,
+		SelfServiceEnabled:              resolved.SelfServiceEnabled,
+		SelfServiceCrewsEnabled:         resolved.SelfServiceCrewsEnabled,
+		SelfServiceGraceSeconds:         resolved.SelfServiceGraceSeconds,
+		SelfServiceInstructOnlyWhenIdle: resolved.SelfServiceInstructOnlyWhenIdle,
+		ReapDecisions:                   true,
+		HeartbeatEnabled:                true,
 	}
 	return cyclerCfg, watcherCfg
 }

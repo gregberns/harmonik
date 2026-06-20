@@ -14,17 +14,48 @@ import (
 const wrapUpWarningText = "[KEEPER WARN] Context threshold crossed. " +
 	"At a clean stop: commit + write HANDOFF-<name>.md (KEEPER nonce). Keep working."
 
-// onDemandRestartWarningFmt is the warn text injected when OnDemandRestart is
-// true (e.g. the captain). Keeper owns the clear→resume rebind (ON-059).
-const onDemandRestartWarningFmt = "[KEEPER WARN] Context threshold crossed. " +
-	"At a clean stop: write HANDOFF-%s.md (KEEPER nonce), " +
-	"run: harmonik keeper restart-now --agent %s. Keep the turn open."
+// restartNowCmdToken is the EXACT, load-bearing command an actionable-warn agent
+// must run to self-restart. It is templated INTO ActionableWarnText (never
+// concatenated free-form) so a custom warn-text override CANNOT drop the required
+// command token: the agent always receives the verbatim command. Refs: hk-vs4u.
+const restartNowCmdToken = "harmonik keeper restart-now --agent %s"
 
-// InjectOnDemandRestartWarning delivers the on-demand-restart warn text for the
-// named agent into the tmux pane at tmuxTarget. Used when WatcherConfig.OnDemandRestart
-// is true (e.g. the captain session). Refs: hk-xjlq, ON-059.
+// ActionableWarnText produces the R3 self-service restart handshake text injected
+// at the warn crossing when the keeper warns AND the agent can act (captain, or a
+// crew with self_service.crews_enabled). Unlike the lighter advisory, it names the
+// EXACT two-step procedure so the agent self-restarts and the keeper's existing
+// restart-now path completes the clear→resume cycle:
+//
+//	(a) run /session-handoff, then
+//	(b) run `harmonik keeper restart-now --agent <name>`.
+//
+// The live token count and band (warn/act, in thousands) are interpolated so the
+// agent sees its real position. A fall-through line tells it to act ONLY at a clean
+// stop — if mid-task, finish first, because the keeper auto-restarts at the act
+// ceiling regardless. The restart-now command is templated IN (restartNowCmdToken),
+// so even a config override of this whole string cannot strip the required token;
+// the watcher selection layer enforces that the override still contains it. Refs:
+// hk-vs4u (R3 actionable warn → self-service restart handshake), hk-5da7 (ack).
+func ActionableWarnText(agent string, tokens, warn, act int64) string {
+	cmd := fmt.Sprintf(restartNowCmdToken, agent)
+	return fmt.Sprintf(
+		"[KEEPER WARN] Context at %dk tokens (warn %dk / act %dk). "+
+			"Self-restart now: (a) run /session-handoff, then "+
+			"(b) run `%s`. "+
+			"Only at a clean stop; if mid-task, finish first — the keeper auto-restarts at %dk.",
+		tokens/1000, warn/1000, act/1000, cmd, act/1000)
+}
+
+// InjectOnDemandRestartWarning delivers the on-demand-restart actionable warn text
+// for the named agent into the tmux pane at tmuxTarget. Used when
+// WatcherConfig.OnDemandRestart is true (e.g. the captain session). It is a thin
+// wrapper over ActionableWarnText (hk-vs4u), preserving the historical signature
+// for callers that only have the agent name. The token/band figures default to the
+// compiled warn/act band when the live values are unknown at the call site; the
+// watcher passes the live figures via the selection layer. Refs: hk-xjlq, ON-059,
+// hk-vs4u.
 func InjectOnDemandRestartWarning(ctx context.Context, tmuxTarget, agentName string) error {
-	text := fmt.Sprintf(onDemandRestartWarningFmt, agentName, agentName)
+	text := ActionableWarnText(agentName, defaultWarnAbsTokens, defaultWarnAbsTokens, defaultActAbsTokens)
 	return InjectText(ctx, tmuxTarget, text)
 }
 

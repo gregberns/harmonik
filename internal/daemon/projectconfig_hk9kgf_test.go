@@ -143,15 +143,22 @@ keeper:
 	if !k.SelfServiceInstructOnlyWhenIdle {
 		t.Errorf("SelfServiceInstructOnlyWhenIdle: want true")
 	}
-	if !k.SelfServiceCrewsEnabled {
-		t.Errorf("SelfServiceCrewsEnabled: want true")
+	// hk-vs4u: SelfServiceCrewsEnabled is now a *bool (nil = absent → resolved
+	// true downstream). Here the key was set explicitly to true.
+	if k.SelfServiceCrewsEnabled == nil || !*k.SelfServiceCrewsEnabled {
+		t.Errorf("SelfServiceCrewsEnabled: want explicit true (non-nil *bool=true), got %v", k.SelfServiceCrewsEnabled)
 	}
 
-	// warn_messages.actionable_warn_text
+	// warn_messages.actionable_warn_text (hk-vs4u: the new key wins over the
+	// deprecated on_demand_warn_text alias when both are present).
 	if k.ActionableWarnText != "do this thing" {
 		t.Errorf("ActionableWarnText: want %q, got %q", "do this thing", k.ActionableWarnText)
 	}
 }
+
+// boolPtr returns a pointer to b. Used to set the *bool crews_enabled field in
+// rawKeeperSelfService literals (hk-vs4u).
+func boolPtr(b bool) *bool { return &b }
 
 func checkInt64(t *testing.T, name string, got, want int64) {
 	t.Helper()
@@ -298,7 +305,8 @@ keeper:
 	if k.ForceActAbsOffset != 0 || k.IdleFloorAbsTokens != 0 {
 		t.Errorf("new threshold fields should be zero: %+v", k)
 	}
-	if k.SelfServiceGraceSeconds != 0 || k.SelfServiceInstructOnlyWhenIdle || k.SelfServiceCrewsEnabled {
+	// hk-vs4u: SelfServiceCrewsEnabled is a *bool; absent → nil (resolved true downstream).
+	if k.SelfServiceGraceSeconds != 0 || k.SelfServiceInstructOnlyWhenIdle || k.SelfServiceCrewsEnabled != nil {
 		t.Errorf("self_service unset fields not zero: %+v", k)
 	}
 	if k.ActionableWarnText != "" {
@@ -357,7 +365,7 @@ func TestKeeper9kgf_BlockAbsent_AnyNewFieldSet_False(t *testing.T) {
 		{"SelfService.Enabled", daemon.ExportedRawKeeperConfig{SelfService: daemon.ExportedRawKeeperSelfService{Enabled: true}}},
 		{"SelfService.GraceSeconds", daemon.ExportedRawKeeperConfig{SelfService: daemon.ExportedRawKeeperSelfService{GraceSeconds: 1}}},
 		{"SelfService.InstructOnlyWhenIdle", daemon.ExportedRawKeeperConfig{SelfService: daemon.ExportedRawKeeperSelfService{InstructOnlyWhenIdle: true}}},
-		{"SelfService.CrewsEnabled", daemon.ExportedRawKeeperConfig{SelfService: daemon.ExportedRawKeeperSelfService{CrewsEnabled: true}}},
+		{"SelfService.CrewsEnabled", daemon.ExportedRawKeeperConfig{SelfService: daemon.ExportedRawKeeperSelfService{CrewsEnabled: boolPtr(true)}}},
 		// warn_messages new field
 		{"WarnMessages.ActionableWarnText", daemon.ExportedRawKeeperConfig{WarnMessages: daemon.ExportedRawKeeperWarnMessages{ActionableWarnText: "x"}}},
 	}

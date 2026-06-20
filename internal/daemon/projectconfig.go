@@ -80,11 +80,11 @@ package daemon
 //	    enabled: true                  # bool; default false
 //	    grace_seconds: 30              # ≤0 = not configured
 //	    instruct_only_when_idle: true  # bool; default false
-//	    crews_enabled: true            # bool; default false
+//	    crews_enabled: true            # *bool; ABSENT = TRUE (crews self-restart, hk-vs4u); explicit false = false
 //	  warn_messages:
 //	    default_warn_text: ""          # warn injection text for non-captain agents; empty = compiled default
-//	    on_demand_warn_text: ""        # warn injection text for captain (restart-now path); empty = compiled default
-//	    actionable_warn_text: ""       # actionable warn advisory override; empty = compiled default (hk-9kgf)
+//	    actionable_warn_text: ""       # actionable self-service restart-handshake advisory override; empty = compiled default (hk-9kgf, hk-vs4u)
+//	    on_demand_warn_text: ""        # DEPRECATED alias of actionable_warn_text (kept RECOGNIZED so old strict configs don't hard-error); mapped with a log warning (hk-vs4u)
 //
 // Unknown agent keys are silently ignored (forward-compat).
 // Unknown sibling keys under daemon: are silently ignored (forward-compat per PL-004b).
@@ -111,6 +111,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -276,13 +277,20 @@ type rawKeeperBudgets struct {
 	MaxHandoffTimeouts int `yaml:"max_handoff_timeouts"`
 }
 
-// rawKeeperSelfService holds the keeper.self_service block. Bools default false;
-// GraceSeconds ≤ 0 = not configured.
+// rawKeeperSelfService holds the keeper.self_service block. Enabled /
+// InstructOnlyWhenIdle default false; GraceSeconds ≤ 0 = not configured.
+//
+// CrewsEnabled is a *bool (NOT bool) deliberately: the operator decision (hk-vs4u)
+// is that CREWS SELF-RESTART BY DEFAULT, so an ABSENT crews_enabled must resolve to
+// TRUE while an explicit `crews_enabled: false` resolves to false. A plain bool
+// zero-value cannot distinguish "unset" from "explicit false"; the pointer is nil
+// when the key is absent and non-nil (pointing at the parsed value) when present.
+// The unset→true resolution is applied in ResolveKeeperConfig. Refs: hk-vs4u.
 type rawKeeperSelfService struct {
-	Enabled              bool `yaml:"enabled"`
-	GraceSeconds         int  `yaml:"grace_seconds"`
-	InstructOnlyWhenIdle bool `yaml:"instruct_only_when_idle"`
-	CrewsEnabled         bool `yaml:"crews_enabled"`
+	Enabled              bool  `yaml:"enabled"`
+	GraceSeconds         int   `yaml:"grace_seconds"`
+	InstructOnlyWhenIdle bool  `yaml:"instruct_only_when_idle"`
+	CrewsEnabled         *bool `yaml:"crews_enabled"`
 }
 
 // rawKeeperWarnMessages holds configurable warn text overrides in the
@@ -398,7 +406,7 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		!s.Enabled &&
 		s.GraceSeconds == 0 &&
 		!s.InstructOnlyWhenIdle &&
-		!s.CrewsEnabled &&
+		s.CrewsEnabled == nil &&
 		// warn_messages
 		w.DefaultWarnText == "" &&
 		w.OnDemandWarnText == "" &&
@@ -467,16 +475,22 @@ type KeeperConfig struct {
 	SelfServiceEnabled              bool
 	SelfServiceGraceSeconds         int
 	SelfServiceInstructOnlyWhenIdle bool
-	SelfServiceCrewsEnabled         bool
+	// SelfServiceCrewsEnabled is nil when keeper.self_service.crews_enabled is
+	// ABSENT and non-nil (the parsed bool) when present. The operator decision
+	// (hk-vs4u) resolves an ABSENT key to TRUE — crews self-restart by default — so
+	// the nil/non-nil distinction is preserved here and resolved in
+	// ResolveKeeperConfig. Refs: hk-vs4u.
+	SelfServiceCrewsEnabled *bool
 
 	// DefaultWarnText overrides the compiled-in wrap-up advisory for non-captain agents.
 	// Empty = not configured (use compiled default).
 	DefaultWarnText string
-	// OnDemandWarnText overrides the compiled-in restart-now advisory for the captain.
-	// Empty = not configured (use compiled default).
-	OnDemandWarnText string
-	// ActionableWarnText overrides the compiled-in actionable warn advisory.
-	// Empty = not configured (use compiled default).
+	// ActionableWarnText overrides the compiled-in actionable self-service warn
+	// advisory (the R3 restart handshake). Empty = not configured (use compiled
+	// default). This is the SINGLE warn-text key for the actionable advisory; the
+	// deprecated keeper.warn_messages.on_demand_warn_text ALIASES onto it (with a log
+	// warning) and is kept as a RECOGNIZED key so old strict configs (hk-9f3f) do not
+	// hard-error. Refs: hk-vs4u, hk-lhu2.
 	ActionableWarnText string
 }
 
@@ -966,12 +980,26 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		cfg.SelfServiceGraceSeconds = s.GraceSeconds
 	}
 	cfg.SelfServiceInstructOnlyWhenIdle = s.InstructOnlyWhenIdle
+	// crews_enabled: carry the nil/non-nil pointer through verbatim. ResolveKeeperConfig
+	// resolves nil (absent) → true (operator decision: crews self-restart, hk-vs4u).
 	cfg.SelfServiceCrewsEnabled = s.CrewsEnabled
 
 	// ── warn_messages ── empty strings are "not configured" — defer to compiled default.
 	cfg.DefaultWarnText = raw.WarnMessages.DefaultWarnText
-	cfg.OnDemandWarnText = raw.WarnMessages.OnDemandWarnText
 	cfg.ActionableWarnText = raw.WarnMessages.ActionableWarnText
+	// Dedup (hk-vs4u): on_demand_warn_text is DEPRECATED in favour of the single key
+	// actionable_warn_text, but it stays a RECOGNIZED key (rawKeeperWarnMessages still
+	// declares it) so old strict configs (hk-9f3f) do not hard-error. Map the
+	// deprecated value onto ActionableWarnText with a log warning, UNLESS the new key
+	// was already set (the new key wins on conflict).
+	if raw.WarnMessages.OnDemandWarnText != "" {
+		if cfg.ActionableWarnText == "" {
+			cfg.ActionableWarnText = raw.WarnMessages.OnDemandWarnText
+			slog.Warn("keeper config: keeper.warn_messages.on_demand_warn_text is DEPRECATED; mapping it onto actionable_warn_text. Rename the key.")
+		} else {
+			slog.Warn("keeper config: keeper.warn_messages.on_demand_warn_text is DEPRECATED and IGNORED because actionable_warn_text is also set. Remove on_demand_warn_text.")
+		}
+	}
 
 	return cfg, nil
 }

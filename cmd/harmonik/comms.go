@@ -353,6 +353,29 @@ func runCommsSendSubcommand(subArgs []string) int {
 	return 0
 }
 
+// resolveProjectPath canonicalises projectDir for project-hash computation,
+// resolving symlinks via filepath.EvalSymlinks and falling back to the input
+// path unchanged when EvalSymlinks errors (e.g. the path does not exist yet).
+//
+// This MUST mirror how the tmux session-name's project hash is derived
+// (internal/lifecycle/tmux/subcommand.go tmuxStartHashDir and
+// internal/keeper/tmuxresolve.go HarmonikSessionName both EvalSymlinks-then-
+// fallback before hashing). The wake codepath hashes through this helper so a
+// symlinked project path produces the SAME hash as the live tmux session name;
+// without it the wake targeted a "harmonik-<wrongHash>-..." pane that never
+// existed and the crew/captain wake silently failed (hk-z365).
+//
+// NOTE: lifecycle.ComputeProjectHash deliberately does NOT resolve symlinks (its
+// doc requires the caller to canonicalise first), so the resolution must happen
+// here, on the wake path, rather than inside the hash function.
+func resolveProjectPath(projectDir string) string {
+	resolved, err := filepath.EvalSymlinks(projectDir)
+	if err != nil {
+		return projectDir
+	}
+	return resolved
+}
+
 // commsWakePaneCandidates returns the ordered list of tmux pane targets to try
 // when waking the named agent, most-specific first. The list is pure (no side
 // effects) so it can be unit-tested in isolation.
@@ -376,7 +399,7 @@ func runCommsSendSubcommand(subArgs []string) int {
 //
 // Bead ref: hk-y7v8 (CE5), originally hk-37ra4.
 func commsWakePaneCandidates(projectDir, agentName string) []string {
-	hash := lifecycle.ComputeProjectHash(projectDir)
+	hash := lifecycle.ComputeProjectHash(resolveProjectPath(projectDir))
 	var candidates []string
 	if rec, loadErr := crew.Load(projectDir, agentName); loadErr == nil && rec.Handle != "" {
 		// handle format: "<session>:<window>" → pane = handle + ".0"

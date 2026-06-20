@@ -60,6 +60,18 @@ func runKeeperSubcommand(args []string) int {
 		respawnCmdFlag    string
 		forceRestartFlag  bool
 		warnOnlyFlag      bool
+
+		// TIER-1 tunable flags (hk-4gtu): high-traffic knobs get a CLI flag
+		// (FLAG > CONFIG > DEFAULT). Long-tail cadence/budget stays config-only
+		// but is still THREADED from config into the Watcher/Cycler literals.
+		stalenessFlag       time.Duration
+		idleQuiesceFlag     time.Duration
+		pollIntervalFlag    time.Duration
+		handoffTimeoutFlag  time.Duration
+		bootGraceFlag       time.Duration
+		idleFloorAbsFlag    int64
+		hardCeilingAbsFlag  int64
+		hardCeilingModeFlag string
 	)
 
 	fs.StringVar(&agentFlag, "agent", "", "agent name (required)")
@@ -77,6 +89,15 @@ func runKeeperSubcommand(args []string) int {
 	fs.StringVar(&respawnCmdFlag, "respawn-cmd", "", "shell command to re-launch the agent after it exits (supervised respawn path; hk-3w2)")
 	fs.BoolVar(&forceRestartFlag, "force-restart", false, "opt in to the handoff-timeout hard-restart escalation (fail-closed; requires --respawn-cmd; hk-suxt)")
 	fs.BoolVar(&warnOnlyFlag, "warn-only", false, "warn-only mode: emit warn events but never trigger restart, respawn, or live-pane recovery (for crew keepers; hk-yfcc)")
+	// TIER-1 tunable flags (hk-4gtu). Each FLAG > CONFIG > DEFAULT; 0/"" = unset → defer.
+	fs.DurationVar(&stalenessFlag, "staleness", 0, "gauge-staleness window before the gauge is treated as absent (default 120s)")
+	fs.DurationVar(&idleQuiesceFlag, "idle-quiesce", 0, "minimum gauge quiescence before the pane is considered idle (default 8s)")
+	fs.DurationVar(&pollIntervalFlag, "poll-interval", 0, "watcher gauge-poll cadence (default 5s)")
+	fs.DurationVar(&handoffTimeoutFlag, "handoff-timeout", 0, "cycler handoff-nonce wait (default 180s)")
+	fs.DurationVar(&bootGraceFlag, "boot-grace", 0, "young-session guard window after a session_id change; 0 (explicit) disables it (default 5m)")
+	fs.Int64Var(&idleFloorAbsFlag, "idle-floor-abs-tokens", 0, "idle-crew restart token floor (default 150000)")
+	fs.Int64Var(&hardCeilingAbsFlag, "hard-ceiling-abs-tokens", 0, "SID-independent hard-ceiling token trigger (default 280000)")
+	fs.StringVar(&hardCeilingModeFlag, "hard-ceiling-mode", "", "hard-ceiling backstop mode: off|alarm|restart (default alarm)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -151,12 +172,31 @@ func runKeeperSubcommand(args []string) int {
 	// Detect which threshold flags were explicitly set by the caller so we can
 	// distinguish "caller passed 0" from "caller omitted the flag".
 	var absWarnSet, absActSet bool
+	// TIER-1 explicit-set detection (hk-4gtu): so a 0 flag can override config.
+	var stalenessSet, idleQuiesceSet, pollIntervalSet, handoffTimeoutSet bool
+	var bootGraceSet, idleFloorSet, hardCeilingAbsSet, hardCeilingModeSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "warn-abs-tokens":
 			absWarnSet = true
 		case "act-abs-tokens":
 			absActSet = true
+		case "staleness":
+			stalenessSet = true
+		case "idle-quiesce":
+			idleQuiesceSet = true
+		case "poll-interval":
+			pollIntervalSet = true
+		case "handoff-timeout":
+			handoffTimeoutSet = true
+		case "boot-grace":
+			bootGraceSet = true
+		case "idle-floor-abs-tokens":
+			idleFloorSet = true
+		case "hard-ceiling-abs-tokens":
+			hardCeilingAbsSet = true
+		case "hard-ceiling-mode":
+			hardCeilingModeSet = true
 		}
 	})
 
@@ -178,6 +218,23 @@ func runKeeperSubcommand(args []string) int {
 		WarnPctSet:    warnPctSet,
 		ActPct:        actPctFlag,
 		ActPctSet:     actPctSet,
+		// TIER-1 tunable flags (hk-4gtu).
+		Staleness:          stalenessFlag,
+		StalenessSet:       stalenessSet,
+		IdleQuiesce:        idleQuiesceFlag,
+		IdleQuiesceSet:     idleQuiesceSet,
+		PollInterval:       pollIntervalFlag,
+		PollIntervalSet:    pollIntervalSet,
+		HandoffTimeout:     handoffTimeoutFlag,
+		HandoffTimeoutSet:  handoffTimeoutSet,
+		BootGrace:          bootGraceFlag,
+		BootGraceSet:       bootGraceSet,
+		IdleFloorAbsTokens: idleFloorAbsFlag,
+		IdleFloorSet:       idleFloorSet,
+		HardCeilingAbs:     hardCeilingAbsFlag,
+		HardCeilingAbsSet:  hardCeilingAbsSet,
+		HardCeilingMode:    hardCeilingModeFlag,
+		HardCeilingModeSet: hardCeilingModeSet,
 	}, keeperCfg)
 	if resolveErr != nil {
 		fmt.Fprintf(os.Stderr, "keeper: refusing to start — %v\n", resolveErr)
@@ -238,6 +295,14 @@ func runKeeperSubcommand(args []string) int {
 	effWarn, effAct, effForce := keeper.EffectiveBandTokens(
 		resolvedWarnAbs, resolvedActAbs, resolvedForceActAbs,
 		resolvedWarnPctCeil, resolvedActPctCeil, windowSizeFlag)
+	// hk-4gtu: BootGrace is fed at the Cycler construction site (never via
+	// applyDefaults, per the opt-in-per-construction-site contract in thresholds.go).
+	// When neither flag nor config set it, use DefaultBootGracePeriod (5m); when
+	// set, honor the configured value VERBATIM including the 0 = disabled sentinel.
+	resolvedBootGrace := keeper.DefaultBootGracePeriod
+	if resolved.BootGraceSet {
+		resolvedBootGrace = resolved.BootGrace
+	}
 	pctNote := ""
 	if warnPctSet || actPctSet {
 		pctNote = fmt.Sprintf(" [pct ceils: warn=%.2f act=%.2f, tighten-only]", resolvedWarnPctCeil, resolvedActPctCeil)
@@ -249,6 +314,14 @@ func runKeeperSubcommand(args []string) int {
 	fmt.Fprintf(os.Stderr,
 		"keeper started for %s (effective band: warn=%d act=%d force=%d tokens%s, tmux=%q%s)\n",
 		agentFlag, effWarn, effAct, effForce, pctNote, resolvedTmux, warnOnlyNote)
+	// hk-4gtu: report the EFFECTIVE resolved timing/cadence/budget so a
+	// misconfiguration (or an applied tunable) is visible at boot, not silent.
+	fmt.Fprintf(os.Stderr,
+		"keeper effective tunables: poll=%s idle_quiesce=%s staleness=%s handoff_timeout=%s boot_grace=%s "+
+			"hard_ceiling=%d/%s idle_floor=%d no_gauge_backoff=%s heartbeat_max_misses=%d\n",
+		resolved.PollInterval, resolved.IdleQuiesce, resolved.Staleness, resolved.HandoffTimeout, resolvedBootGrace,
+		resolved.HardCeilingAbsTokens, resolved.HardCeilingMode, resolved.IdleRestartAbsTokens,
+		resolved.NoGaugeBackoff, resolved.HeartbeatMaxMisses)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -256,7 +329,7 @@ func runKeeperSubcommand(args []string) int {
 	emitter := keeper.NewFileEmitter(projectDir)
 
 	// In warn-only mode skip the cycler entirely — no handoff/clear/resume cycles.
-	// Refs: hk-yfcc.
+	// Refs: hk-yfcc. (resolvedBootGrace computed above, before the banner.)
 	var cycler *keeper.Cycler
 	if !warnOnlyFlag {
 		cycler = keeper.NewCycler(keeper.CyclerConfig{
@@ -269,14 +342,26 @@ func runKeeperSubcommand(args []string) int {
 			ForceActAbsTokens: resolvedForceActAbs,
 			ActPctCeil:        resolvedActPctCeil,
 			WarnPctCeil:       resolvedWarnPctCeil,
-			// R2 (hk-4pnv): the idle-crew restart floor is a threshold-domain default
-			// promoted in hk-gwz6 (DefaultIdleRestartAbsTokens) with a config key
-			// (keeper.context_thresholds.idle_floor_abs_tokens). Thread the configured
-			// value through so an adopter's config takes effect; 0 = not configured →
-			// CyclerConfig.applyDefaults fills DefaultIdleRestartAbsTokens (150k).
-			IdleRestartAbsTokens: keeperCfg.IdleFloorAbsTokens,
-			SendEscapeFn:         keeper.SendEscapeKey,
-			BootGracePeriod:      keeper.DefaultBootGracePeriod, // young-session guard (hk-4f8/hk-8hr1): defer cycles during post-/session-resume boot
+			// R2 (hk-4pnv/hk-4gtu): the idle-crew restart floor is now resolved through
+			// ResolveKeeperConfig (FLAG --idle-floor-abs-tokens > CONFIG
+			// context_thresholds.idle_floor_abs_tokens > DEFAULT 150k), so an adopter's
+			// config/flag demonstrably reaches the constructed Cycler.
+			IdleRestartAbsTokens: resolved.IdleRestartAbsTokens,
+			// hk-4gtu: thread the resolved cycler cadence/budget so config values reach
+			// the constructed Cycler instead of being parsed-then-dropped (R2 violation).
+			HandoffTimeout:      resolved.HandoffTimeout,
+			ClearSettle:         resolved.ClearSettle,
+			PollInterval:        resolved.CyclerPollInterval,
+			ForceRetryInterval:  resolved.ForceRetryInterval,
+			IdleRestartCooldown: resolved.IdleRestartCooldown,
+			// MaxHandoffTimeouts 0 = no-escalation sentinel preserved end-to-end:
+			// resolved.MaxHandoffTimeouts forwards the configured value; 0 (unconfigured)
+			// → CyclerConfig.applyDefaults fills DefaultMaxHandoffTimeouts (3).
+			MaxHandoffTimeouts: resolved.MaxHandoffTimeouts,
+			SendEscapeFn:       keeper.SendEscapeKey,
+			// hk-4gtu: BootGrace is resolved (FLAG > CONFIG > DEFAULT) at this site,
+			// preserving the 0 = disabled sentinel; young-session guard (hk-4f8/hk-8hr1).
+			BootGracePeriod: resolvedBootGrace,
 			// hk-suxt: activate the handoff-timeout hard-restart escalation
 			// (cycle.go:767, dormant until now because CyclerConfig.ForceRestartFn was
 			// never populated in production). Fail-closed: nil unless the operator BOTH
@@ -304,6 +389,31 @@ func runKeeperSubcommand(args []string) int {
 		WarnPctCeil:        resolvedWarnPctCeil,
 		WarnOnly:           warnOnlyFlag,
 		RespawnCmd:         respawnCmdFlag,
+		// hk-4gtu: thread the resolved watcher timing/cadence/budget so a config
+		// value (or tier-1 flag) demonstrably reaches keeper behaviour instead of
+		// parsing-then-dropping (the R2 violation this bead closes). Defaults are
+		// already baked in by the resolver (keeper.Default* consts), so these are
+		// never 0 — applyDefaults is a no-op belt-and-suspenders for them.
+		PollInterval:         resolved.PollInterval,
+		IdleQuiesce:          resolved.IdleQuiesce,
+		Staleness:            resolved.Staleness,
+		RespawnGrace:         resolved.RespawnGrace,
+		RespawnCooldown:      resolved.RespawnCooldown,
+		LiveRecoverGrace:     resolved.LiveRecoverGrace,
+		LiveRecoverCooldown:  resolved.LiveRecoverCooldown,
+		NoGaugeBackoff:       resolved.NoGaugeBackoff,
+		HardCeilingCooldown:  resolved.HardCeilingCooldown,
+		BlindKeeperThreshold: resolved.BlindKeeperThreshold,
+		HeartbeatMaxMisses:   resolved.HeartbeatMaxMisses,
+		// HardCeilingTokens + HardCeilingMode (hk-n6kn/hk-4gtu): thread the resolved
+		// SID-independent backstop ceiling AND mode. Mode zero value = Alarm (the
+		// operator-chosen default), so an unconfigured mode is alarm-safe.
+		HardCeilingTokens: resolved.HardCeilingAbsTokens,
+		HardCeilingMode:   resolved.HardCeilingMode,
+		// WarnCooldown < 0 = disabled sentinel preserved end-to-end: resolved.WarnCooldown
+		// forwards the configured value; 0 (unconfigured) → applyDefaults fills 30s,
+		// a negative value disables the cooldown.
+		WarnCooldown: resolved.WarnCooldown,
 		// hk-75mr: gauge-INDEPENDENT live-pane recovery. When the gauge is stale
 		// past LiveRecoverGrace (default 5m) but the pane is still ALIVE (agent hung
 		// mid-turn), no operator is attached, the agent is not blocked on a

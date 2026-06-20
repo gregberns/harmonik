@@ -455,6 +455,13 @@ type WatcherConfig struct {
 	// Refs: hk-sol6.
 	WarnCooldown time.Duration
 
+	// NoGaugeBackoff is the duration the watcher backs off (suppressing no_gauge
+	// re-emission and gauge re-reads) after emitting a session_keeper_no_gauge
+	// event. Zero (default) uses DefaultNoGaugeBackoff (30s). Threaded from
+	// .harmonik/config.yaml keeper.cadence.no_gauge_backoff via ResolveKeeperConfig
+	// so an adopter's config reaches the live backoff. Refs: hk-4gtu, hk-sol6.
+	NoGaugeBackoff time.Duration
+
 	// ── Backstop 2: SID-independent hard-ceiling failsafe (hk-34ac) ──────────
 
 	// HardCeilingRestartFn, when non-nil, enables the SID-independent hard-ceiling
@@ -593,6 +600,12 @@ func (c *WatcherConfig) applyDefaults() {
 		c.WarnCooldown = 0 // negative sentinel → disable cooldown
 	} else if c.WarnCooldown == 0 {
 		c.WarnCooldown = DefaultWarnCooldown // zero sentinel → use production default
+	}
+	// NoGaugeBackoff (hk-4gtu): fill from DefaultNoGaugeBackoff (30s) when zero so
+	// the runtime backoff window reads w.cfg.NoGaugeBackoff (configurable) rather
+	// than the bare package const.
+	if c.NoGaugeBackoff <= 0 {
+		c.NoGaugeBackoff = DefaultNoGaugeBackoff
 	}
 	// Hard-ceiling threshold (hk-n6kn): fill from DefaultHardCeilingTokens
 	// (280 000, byte-identical to the prior bare const) when zero so the live
@@ -814,7 +827,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if errors.Is(err, os.ErrNotExist) {
 				if !inNoGaugeBackoff {
 					if w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit) {
-						backoffUntil = time.Now().Add(noGaugeBackoff)
+						backoffUntil = time.Now().Add(w.cfg.NoGaugeBackoff)
 					}
 				}
 				noGaugeEmittedAtBoot = true
@@ -833,7 +846,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				slog.WarnContext(ctx, "keeper: read ctx file", "err", err)
 				if !inNoGaugeBackoff {
 					if w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit) {
-						backoffUntil = time.Now().Add(noGaugeBackoff)
+						backoffUntil = time.Now().Add(w.cfg.NoGaugeBackoff)
 					}
 				}
 				noGaugeEmittedAtBoot = true
@@ -861,7 +874,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if time.Since(modTime) >= w.cfg.Staleness {
 				if !inNoGaugeBackoff {
 					if w.maybeReemitNoGauge(ctx, "stale", lastNoGaugeEmit, &lastNoGaugeEmit) {
-						backoffUntil = time.Now().Add(noGaugeBackoff)
+						backoffUntil = time.Now().Add(w.cfg.NoGaugeBackoff)
 					}
 				}
 				noGaugeEmittedAtBoot = true
@@ -919,7 +932,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 						"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID)
 					if !inNoGaugeBackoff {
 						if w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit) {
-							backoffUntil = time.Now().Add(noGaugeBackoff)
+							backoffUntil = time.Now().Add(w.cfg.NoGaugeBackoff)
 						}
 					}
 					noGaugeEmittedAtBoot = true

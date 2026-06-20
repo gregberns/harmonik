@@ -245,13 +245,14 @@ type rawKeeperHardCeiling struct {
 // rawKeeperTimings holds the keeper.timings block. All fields are Go duration
 // STRINGS; empty = not configured, a bare number = error.
 type rawKeeperTimings struct {
-	PollInterval      string `yaml:"poll_interval"`
-	IdleQuiesce       string `yaml:"idle_quiesce"`
-	Staleness         string `yaml:"staleness"`
-	HandoffTimeout    string `yaml:"handoff_timeout"`
-	ClearSettle       string `yaml:"clear_settle"`
-	BootGrace         string `yaml:"boot_grace"`
-	MaxBootGraceTotal string `yaml:"max_boot_grace_total"`
+	PollInterval       string `yaml:"poll_interval"`
+	CyclerPollInterval string `yaml:"cycler_poll_interval"` // hk-4gtu: distinct from poll_interval (watcher)
+	IdleQuiesce        string `yaml:"idle_quiesce"`
+	Staleness          string `yaml:"staleness"`
+	HandoffTimeout     string `yaml:"handoff_timeout"`
+	ClearSettle        string `yaml:"clear_settle"`
+	BootGrace          string `yaml:"boot_grace"`
+	MaxBootGraceTotal  string `yaml:"max_boot_grace_total"`
 }
 
 // rawKeeperCadence holds the keeper.cadence block. All fields are Go duration
@@ -372,6 +373,7 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		h.Cooldown == "" &&
 		// timings
 		tm.PollInterval == "" &&
+		tm.CyclerPollInterval == "" &&
 		tm.IdleQuiesce == "" &&
 		tm.Staleness == "" &&
 		tm.HandoffTimeout == "" &&
@@ -436,13 +438,14 @@ type KeeperConfig struct {
 	HardCeilingCooldownDur time.Duration
 
 	// Timings (all zero = not configured).
-	PollInterval      time.Duration
-	IdleQuiesce       time.Duration
-	Staleness         time.Duration
-	HandoffTimeout    time.Duration
-	ClearSettle       time.Duration
-	BootGrace         time.Duration
-	MaxBootGraceTotal time.Duration
+	PollInterval       time.Duration
+	CyclerPollInterval time.Duration // hk-4gtu: distinct from the watcher PollInterval
+	IdleQuiesce        time.Duration
+	Staleness          time.Duration
+	HandoffTimeout     time.Duration
+	ClearSettle        time.Duration
+	BootGrace          time.Duration
+	MaxBootGraceTotal  time.Duration
 
 	// Cadence (all zero = not configured).
 	WarnCooldown               time.Duration
@@ -907,6 +910,7 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		dst *time.Duration
 	}{
 		{"timings.poll_interval", tm.PollInterval, &cfg.PollInterval},
+		{"timings.cycler_poll_interval", tm.CyclerPollInterval, &cfg.CyclerPollInterval},
 		{"timings.idle_quiesce", tm.IdleQuiesce, &cfg.IdleQuiesce},
 		{"timings.staleness", tm.Staleness, &cfg.Staleness},
 		{"timings.handoff_timeout", tm.HandoffTimeout, &cfg.HandoffTimeout},

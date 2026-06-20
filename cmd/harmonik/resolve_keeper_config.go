@@ -47,6 +47,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
@@ -83,6 +84,28 @@ type KeeperFlags struct {
 	WarnPctSet    bool
 	ActPct        int // raw --act-pct (percent, 0..100); ceil = ActPct/100
 	ActPctSet     bool
+
+	// ── TIER-1 flags (hk-4gtu): a small set of high-traffic tunables get a CLI
+	// flag (FLAG > CONFIG > DEFAULT). The long-tail cadence/budget knobs are
+	// config-only — they are still THREADED from config, just not flag-settable.
+	// Each *Set bool records explicit presence so a 0 flag can override a config
+	// value when intended. ──
+	Staleness          time.Duration
+	StalenessSet       bool
+	IdleQuiesce        time.Duration
+	IdleQuiesceSet     bool
+	PollInterval       time.Duration
+	PollIntervalSet    bool
+	HandoffTimeout     time.Duration
+	HandoffTimeoutSet  bool
+	BootGrace          time.Duration // 0-disabled sentinel honored when BootGraceSet
+	BootGraceSet       bool
+	IdleFloorAbsTokens int64
+	IdleFloorSet       bool
+	HardCeilingAbs     int64
+	HardCeilingAbsSet  bool
+	HardCeilingMode    string // raw token off|alarm|restart; "" = defer to config/default
+	HardCeilingModeSet bool
 }
 
 // ResolvedKeeperConfig is the NEUTRAL resolved keeper band/threshold config the
@@ -100,15 +123,52 @@ type ResolvedKeeperConfig struct {
 
 	// Hard ceiling (SID-independent backstop). Mode "" = compiled default.
 	HardCeilingAbsTokens int64
+	// HardCeilingMode is the resolved backstop mode (CONFIG > DEFAULT=Alarm). The
+	// zero value (HardCeilingModeAlarm) IS the compiled default, so an unset config
+	// resolves to Alarm. Validated fail-loud (∈ off|alarm|restart) belt-and-suspenders
+	// over the daemon parse layer. Refs: hk-4gtu, hk-n6kn.
+	HardCeilingMode keeper.HardCeilingMode
 
-	// Sentinel-bearing pass-throughs (NOT defaulted by this resolver — their zero
-	// /negative carries special meaning the start path honors):
+	// ── Watcher timing / cadence / budget (hk-4gtu) ──────────────────────────
+	// Every field is the EFFECTIVE post-precedence value (FLAG>CONFIG>DEFAULT for
+	// the tier-1 ones, CONFIG>DEFAULT for the long tail), read from the keeper
+	// Default* consts so defaults live in ONE place. The start path copies each
+	// into the WatcherConfig literal so a config value DEMONSTRABLY reaches keeper
+	// behaviour (R2: parse-but-drop is a violation).
+	PollInterval         time.Duration
+	IdleQuiesce          time.Duration
+	Staleness            time.Duration
+	RespawnGrace         time.Duration
+	RespawnCooldown      time.Duration
+	LiveRecoverGrace     time.Duration
+	LiveRecoverCooldown  time.Duration
+	NoGaugeBackoff       time.Duration
+	HardCeilingCooldown  time.Duration
+	BlindKeeperThreshold time.Duration
+	HeartbeatMaxMisses   int
+
+	// ── Cycler timing / cadence / budget (hk-4gtu) ───────────────────────────
+	HandoffTimeout       time.Duration
+	ClearSettle          time.Duration
+	CyclerPollInterval   time.Duration
+	ForceRetryInterval   time.Duration
+	IdleRestartAbsTokens int64
+	IdleRestartCooldown  time.Duration
+
+	// ── Sentinel-bearing pass-throughs (hk-4gtu) ─────────────────────────────
+	// These carry special meaning the start path honors END-TO-END; the resolver
+	// forwards the CONFIGURED value verbatim and does NOT apply a non-sentinel
+	// default (so the zero/negative is preserved into the construction literal):
 	//   BootGrace          0  = disabled (young-session guard off)
 	//   WarnCooldown    < 0   = disabled (warn-firing cooldown off)
 	//   MaxHandoffTimeouts 0  = no-escalation
-	// Their non-sentinel defaults are applied DOWNSTREAM (Watcher/Cycler
-	// applyDefaults), exactly as before — the resolver only forwards the configured
-	// value.
+	// BootGrace's non-sentinel production value (DefaultBootGracePeriod) is fed at
+	// the construction site when unconfigured — NOT via applyDefaults — preserving
+	// the opt-in-per-construction-site contract (thresholds.go DefaultBootGracePeriod).
+	BootGrace          time.Duration
+	BootGraceSet       bool // true when CONFIG or FLAG set boot_grace (honor a 0 = disabled)
+	WarnCooldown       time.Duration
+	MaxHandoffTimeouts int
 }
 
 // ResolveKeeperConfig implements FLAG > CONFIG > DEFAULT per field and validates
@@ -174,12 +234,89 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig) (ResolvedKe
 		out.ActPctCeil = ceil
 	}
 
-	// ── hard ceiling (CONFIG > DEFAULT). The SID-independent backstop. ──
-	if cfg.HardCeilingAbsTokens > 0 {
-		out.HardCeilingAbsTokens = cfg.HardCeilingAbsTokens
-	} else {
-		out.HardCeilingAbsTokens = keeper.HardCeilingAbsTokens
+	// ── hard ceiling abs (FLAG > CONFIG > DEFAULT). The SID-independent backstop. ──
+	out.HardCeilingAbsTokens = resolveInt64(
+		flags.HardCeilingAbs, flags.HardCeilingAbsSet,
+		cfg.HardCeilingAbsTokens,
+		keeper.HardCeilingAbsTokens)
+
+	// ── hard ceiling MODE (FLAG > CONFIG > DEFAULT=Alarm). Validate fail-loud ──
+	// (belt-and-suspenders over the daemon parse layer, which already rejects an
+	// unknown mode string). The zero value HardCeilingModeAlarm IS the compiled
+	// default, so an absent mode resolves to Alarm. Refs: hk-4gtu, hk-n6kn.
+	modeStr := ""
+	switch {
+	case flags.HardCeilingModeSet:
+		modeStr = flags.HardCeilingMode
+	case cfg.HardCeilingMode != "":
+		modeStr = cfg.HardCeilingMode
 	}
+	if modeStr != "" {
+		switch modeStr {
+		case "off", "alarm", "restart":
+			out.HardCeilingMode = keeper.ParseHardCeilingMode(modeStr)
+		default:
+			return ResolvedKeeperConfig{}, &KeeperConfigError{
+				Field:  "hard_ceiling.mode",
+				Reason: fmt.Sprintf("%q is not a valid mode; must be one of off, alarm, restart", modeStr),
+			}
+		}
+	} else {
+		out.HardCeilingMode = keeper.HardCeilingModeAlarm // zero value = compiled default
+	}
+
+	// ── Watcher timing/cadence/budget: tier-1 = FLAG>CONFIG>DEFAULT; the long ──
+	// tail = CONFIG>DEFAULT. Reading every default from keeper.Default* so the
+	// band/cadence lives in ONE place. R2: every Default* must be reachable from
+	// config, and every configured value must reach the constructed Watcher/Cycler.
+	out.PollInterval = resolveDur(
+		flags.PollInterval, flags.PollIntervalSet, cfg.PollInterval, keeper.DefaultPollInterval)
+	out.IdleQuiesce = resolveDur(
+		flags.IdleQuiesce, flags.IdleQuiesceSet, cfg.IdleQuiesce, keeper.DefaultIdleQuiesce)
+	out.Staleness = resolveDur(
+		flags.Staleness, flags.StalenessSet, cfg.Staleness, keeper.DefaultStaleness)
+	out.RespawnGrace = resolveDur(0, false, cfg.RespawnGrace, keeper.DefaultRespawnGrace)
+	out.RespawnCooldown = resolveDur(0, false, cfg.RespawnCooldown, keeper.DefaultRespawnCooldown)
+	out.LiveRecoverGrace = resolveDur(0, false, cfg.LiveRecoverGrace, keeper.DefaultLiveRecoverGrace)
+	out.LiveRecoverCooldown = resolveDur(0, false, cfg.LiveRecoverCooldown, keeper.DefaultLiveRecoverCooldown)
+	out.NoGaugeBackoff = resolveDur(0, false, cfg.NoGaugeBackoff, keeper.DefaultNoGaugeBackoff)
+	out.HardCeilingCooldown = resolveDur(0, false, cfg.CadenceHardCeilingCooldown, keeper.DefaultHardCeilingCooldown)
+	out.BlindKeeperThreshold = resolveDur(0, false, cfg.BlindKeeperThreshold, keeper.DefaultBlindKeeperThreshold)
+	out.HeartbeatMaxMisses = resolveInt(0, false, cfg.HeartbeatMaxMisses, keeper.DefaultMaxHeartbeatMisses)
+
+	// ── Cycler timing/cadence/budget ──
+	out.HandoffTimeout = resolveDur(
+		flags.HandoffTimeout, flags.HandoffTimeoutSet, cfg.HandoffTimeout, keeper.DefaultHandoffTimeout)
+	out.ClearSettle = resolveDur(0, false, cfg.ClearSettle, keeper.DefaultClearSettle)
+	out.CyclerPollInterval = resolveDur(0, false, cfg.CyclerPollInterval, keeper.DefaultCyclerPollInterval)
+	out.ForceRetryInterval = resolveDur(0, false, cfg.ForceRetryInterval, keeper.DefaultForceRetryInterval)
+	out.IdleRestartAbsTokens = resolveInt64(
+		flags.IdleFloorAbsTokens, flags.IdleFloorSet, cfg.IdleFloorAbsTokens, keeper.DefaultIdleRestartAbsTokens)
+	out.IdleRestartCooldown = resolveDur(0, false, cfg.IdleRestartCooldown, keeper.DefaultIdleRestartCooldown)
+
+	// ── Sentinel-bearing pass-throughs: forward the CONFIGURED value verbatim. ──
+	// BootGrace: FLAG > CONFIG; 0 = disabled is HONORED when explicitly set. When
+	// neither set, BootGraceSet=false signals the start path to feed
+	// DefaultBootGracePeriod at the construction site (opt-in-per-site contract).
+	switch {
+	case flags.BootGraceSet:
+		out.BootGrace = flags.BootGrace
+		out.BootGraceSet = true
+	case cfg.BootGrace != 0:
+		out.BootGrace = cfg.BootGrace
+		out.BootGraceSet = true
+	default:
+		out.BootGrace = 0
+		out.BootGraceSet = false
+	}
+	// WarnCooldown: a NEGATIVE config value (disable sentinel) and 0 (zero sentinel
+	// → applyDefaults fills 30s) both pass through untouched. The watcher's
+	// applyDefaults owns the sentinel translation; we only forward the configured
+	// value (0 when unconfigured → default applies downstream).
+	out.WarnCooldown = cfg.WarnCooldown
+	// MaxHandoffTimeouts: 0 = no-escalation sentinel; forward verbatim (0 when
+	// unconfigured → cycler applyDefaults fills DefaultMaxHandoffTimeouts).
+	out.MaxHandoffTimeouts = cfg.MaxHandoffTimeouts
 
 	// ── cross-field invariants (fail-loud — NEVER revert to defaults) ──
 	// Band ordering: warn < act < force_act < hard_ceiling.
@@ -228,6 +365,33 @@ func resolveInt64(flagVal int64, flagSet bool, cfgVal, def int64) int64 {
 // resolveFloat applies CONFIG > DEFAULT for a pct field (≤ 0 = not configured).
 // The flag layer is handled separately because pct flags are tighten-only.
 func resolveFloat(cfgVal, def float64) float64 {
+	if cfgVal > 0 {
+		return cfgVal
+	}
+	return def
+}
+
+// resolveDur applies FLAG > CONFIG > DEFAULT for a non-sentinel duration field.
+// flagSet distinguishes an explicit flag (which WINS even if 0) from an omitted
+// one. A config value ≤ 0 is treated as not configured. NOT for sentinel-bearing
+// durations (boot_grace, warn_cooldown) — those are forwarded verbatim. hk-4gtu.
+func resolveDur(flagVal time.Duration, flagSet bool, cfgVal, def time.Duration) time.Duration {
+	if flagSet {
+		return flagVal
+	}
+	if cfgVal > 0 {
+		return cfgVal
+	}
+	return def
+}
+
+// resolveInt applies FLAG > CONFIG > DEFAULT for a non-sentinel int budget field
+// (≤ 0 = not configured). NOT for the MaxHandoffTimeouts 0-no-escalation sentinel.
+// hk-4gtu.
+func resolveInt(flagVal int, flagSet bool, cfgVal, def int) int {
+	if flagSet {
+		return flagVal
+	}
 	if cfgVal > 0 {
 		return cfgVal
 	}

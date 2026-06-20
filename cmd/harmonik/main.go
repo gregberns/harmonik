@@ -568,15 +568,20 @@ EXAMPLES
 		return runDecisionsSubcommand(os.Args[2:])
 	}
 
-	// harmonik captain  (alias: harmonik start captain) — bare launcher for the
-	// Captain LLM session: mint/validate a stable UUIDv4 --session-id and bring
-	// up `claude --remote-control` in a tmux session. It is a launcher, not a
-	// daemon — it never touches the pidfile lock. Bead ref: hk-ly0n.
+	// harmonik captain — bare launcher for the Captain LLM session: mint/validate
+	// a stable UUIDv4 --session-id and bring up `claude --remote-control` in a
+	// tmux session. It is a launcher, not a daemon — it never touches the pidfile
+	// lock. Bead ref: hk-ly0n.
 	if len(os.Args) >= 2 && os.Args[1] == "captain" {
 		return runCaptainSubcommand(os.Args[2:])
 	}
-	if len(os.Args) >= 3 && os.Args[1] == "start" && os.Args[2] == "captain" {
-		return runCaptainSubcommand(os.Args[3:])
+
+	// harmonik start <role> … — the umbrella easy-start verb (codename:easy-start,
+	// ES1/hk-kbjl). Owns ALL start-routing: enforces the positional-XOR-flags rule
+	// (operator decision D2) then delegates to the captain launcher (above) or the
+	// crew subcommand (below). The former `start captain` alias is folded in here.
+	if len(os.Args) >= 2 && os.Args[1] == "start" {
+		return runStart(os.Args[2:])
 	}
 
 	// harmonik crew <verb> — captain & crew session management (C2).

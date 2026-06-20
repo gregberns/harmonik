@@ -1,5 +1,13 @@
 # Doc & Instruction Audit — 2026-06-20
 
+> ## ✅ STATUS: COMPLETE (2026-06-20)
+> The audit's recommendations were executed. Summary:
+> - **Track 1 cleanup** — `3b25168c`: untracked 2 dead committed files (HANDOFF-controlpoints.md, ops-monitor.md mission), archived 14 dead/stale missions + 3 dead handoffs + retired AGENT_COMMS.md to `.harmonik/_archive/`, gitignored `*.env.txt`.
+> - **Phase A — instruction consolidation (the three-kinds model)** — `334bb759`: NEW `orchestrator-rules` skill (single standing-rules contract), AGENTS.md→router, `.harmonik/context/` tiers with self-describing headers, retired AOM/TASKS/PRIORITIES, slimmed STATUS/AGENT_INDEX. `511d3348`: `harmonik init` now scaffolds the new model.
+> - **Phase B — asset-sync update path** (epic hk-vk7b, CLOSED) — `7b0da354` manifest+classes, `f7c286ac` reconcile engine, `91ff5e0f` **`harmonik sync-assets`** command, `38f23f21` supervisor skew-notify. Each bead implement→review→commit; the reconcile matrix and sync writes got adversarial review (caught + fixed real data-loss bugs).
+> - **Deferred:** `hk-fozq` (P3) supervisor auto-apply execution; **Track 1b** bulk gitignored cruft (~3.2 GB — binaries, .beads.bak, worktree/run-context prune) pending a fleet-down window.
+> - Detail docs 07/09/10 (load-discipline, reusable layout, asset-sync) are the as-built design; the issue tables below are the original findings, now addressed.
+
 Audit of root files, `.harmonik/` instruction/state artifacts, crew missions, and gitignored cruft.
 Goal: separate **operational/session state** (volatile, hour-to-hour) from **behavioral directives** (stable, how-to-act) from **long-term priorities** (roadmap/goals) — and clean up the accumulated cruft.
 

@@ -47,6 +47,7 @@ package workspace
 // Bead: hk-z8ek, hk-rs-phase1-qfn1
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -175,28 +176,50 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 		return EnsureWorktreeTrust(worktreePath)
 	}
 
-	// The Python program is passed via `python3 -c <prog> <worktreePath>` so the
-	// worktree path arrives as sys.argv[1] — no interpolation, no escaping of the
-	// path into the program text. The program realpath-normalizes the path on the
-	// worker (mirrors EnsureWorktreeTrust's filepath.EvalSymlinks), then upserts
+	// The Python program is fed to `python3 - <worktreePath>` ON STDIN, NOT via
+	// `python3 -c <prog>`. This is load-bearing for the REMOTE (SSH) path:
+	// tmux.SSHRunner produces `ssh <host> -- python3 -c <prog> <path>`, and the
+	// ssh client space-JOINS those argv tokens into one remote command string that
+	// the worker's LOGIN SHELL re-splits on whitespace. A multi-line `-c` program
+	// is shredded by that re-split — python's `-c` receives only the first
+	// whitespace token ("Argument expected for the -c option"; the rest run as
+	// stray shell commands: `import: command not found`), so the upsert never
+	// executes and the worker's ~/.claude.json never gets the worktree key
+	// (hk-gglt: untrusted per-run worktree → trust/bypass modal → no_commit).
+	//
+	// Piping the program on stdin to `python3 -` sidesteps the re-split entirely:
+	// the program bytes never appear on the remote command line. The worktree path
+	// is the one argv token that DOES traverse the command line; it is a harmonik
+	// per-run worktree path (a UUID run-id dir) that never contains whitespace, so
+	// it survives the remote shell's word-splitting as a single sys.argv[1]. The
+	// program defensively strips a surrounding pair of single quotes (a no-op for
+	// the bare path; tolerant should a caller ever pre-quote it). It then
+	// realpath-normalizes the path on the worker (mirrors EnsureWorktreeTrust's
+	// filepath.EvalSymlinks) and upserts
 	// ~/.claude.json["projects"][<realpath>]["hasTrustDialogAccepted"] = true,
 	// writing atomically via a temp file + os.replace and preserving all other
 	// keys. It is a no-op (no rewrite) when the entry is already trusted.
-	out, err := runner.Command(ctx, "python3", "-c", workerTrustUpsertProgram, worktreePath).CombinedOutput()
+	cmd := runner.Command(ctx, "python3", "-", worktreePath)
+	cmd.Stdin = bytes.NewReader([]byte(workerTrustUpsertProgram))
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("workspace: EnsureWorktreeTrustVia %s: %w\nremote: %s", worktreePath, err, out)
 	}
 	return nil
 }
 
-// workerTrustUpsertProgram is the python3 -c program that idempotently upserts
-// the worktree-trust entry in the worker's ~/.claude.json. It mirrors
+// workerTrustUpsertProgram is the python3 program (fed on STDIN to `python3 -`,
+// NOT via -c — see EnsureWorktreeTrustVia for why) that idempotently upserts the
+// worktree-trust entry in the worker's ~/.claude.json. It mirrors
 // ensureWorktreeTrustAt's contract: realpath-normalize the key, set
 // projects[key].hasTrustDialogAccepted = true, preserve all other content, write
 // atomically, and skip the rewrite when already trusted.
 const workerTrustUpsertProgram = `
 import json, os, sys, tempfile
-wt = os.path.realpath(sys.argv[1])
+arg = sys.argv[1]
+if len(arg) >= 2 and arg[0] == "'" and arg[-1] == "'":
+    arg = arg[1:-1]
+wt = os.path.realpath(arg)
 cfg_path = os.path.join(os.path.expanduser("~"), ".claude.json")
 cfg = {}
 try:

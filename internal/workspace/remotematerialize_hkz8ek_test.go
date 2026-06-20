@@ -15,6 +15,7 @@ package workspace
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -179,6 +180,16 @@ func TestWriteAgentTaskVia_Remote_EmptyBodyRejected(t *testing.T) {
 func TestEnsureWorktreeTrustVia_Remote(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
+
+	// hk-gglt: the trust upsert MUST run `python3 - <worktreePath>` with the
+	// program piped on STDIN, NOT `python3 -c <prog>`. Rationale: tmux.SSHRunner
+	// emits `ssh <host> -- python3 -c <prog> <path>`; the ssh client space-joins
+	// the argv and the worker's login shell re-splits it, shredding a multi-line
+	// `-c` program so python never runs the upsert and the worker's ~/.claude.json
+	// never gets the worktree trust key → untrusted per-run worktree → Claude's
+	// trust/bypass modal → daemon paste-Enter selects "No, exit" → no_commit.
+	// Feeding the program on stdin keeps its bytes off the remote command line.
+	//
 	rr := newNoOpRecorder()
 
 	if err := EnsureWorktreeTrustVia(ctx, rr, z8ekWorkerWt); err != nil {
@@ -189,23 +200,124 @@ func TestEnsureWorktreeTrustVia_Remote(t *testing.T) {
 		t.Fatalf("expected exactly 1 runner call, got %d: %v", len(rr.Calls), rr.Calls)
 	}
 	call := rr.Calls[0]
-	// The trust upsert runs python3 -c <prog> <worktreePath> ON THE WORKER.
 	if call.Name != "python3" {
 		t.Fatalf("trust call.Name = %q, want python3", call.Name)
 	}
-	if len(call.Args) != 3 || call.Args[0] != "-c" {
-		t.Fatalf("trust call.Args = %v, want [-c <prog> <worktreePath>]", call.Args)
+	// Argv must be `- <worktreePath>` — `-` = read program from stdin (NOT `-c`).
+	if len(call.Args) != 2 || call.Args[0] != "-" {
+		t.Fatalf("trust call.Args = %v, want [- <worktreePath>] (program via stdin, not -c)", call.Args)
 	}
-	if call.Args[2] != z8ekWorkerWt {
-		t.Errorf("trust worktree arg = %q, want %q", call.Args[2], z8ekWorkerWt)
+	if call.Args[1] != z8ekWorkerWt {
+		t.Errorf("trust worktree arg = %q, want %q", call.Args[1], z8ekWorkerWt)
 	}
-	// The program must upsert hasTrustDialogAccepted under projects, keyed by a
-	// realpath-normalized worktree path, into the worker HOME ~/.claude.json.
-	prog := call.Args[1]
-	for _, want := range []string{"hasTrustDialogAccepted", "projects", "realpath", ".claude.json"} {
-		if !strings.Contains(prog, want) {
-			t.Errorf("trust program missing %q:\n%s", want, prog)
+	// Regression guard: the program must NOT travel as a `-c` argv token.
+	for _, a := range call.Args {
+		if a == "-c" {
+			t.Errorf("trust call still passes the program via -c (hk-gglt regression): args=%v", call.Args)
 		}
+	}
+
+	// The program piped on stdin must upsert hasTrustDialogAccepted under
+	// projects, keyed by a realpath-normalized worktree path, into the worker HOME
+	// ~/.claude.json. The helper pipes the package constant verbatim on stdin
+	// (proven by the `-` argv above); assert the constant carries the contract.
+	prog := workerTrustUpsertProgram
+	for _, want := range []string{"hasTrustDialogAccepted", "projects", "realpath", ".claude.json", "sys.argv[1]"} {
+		if !strings.Contains(prog, want) {
+			t.Errorf("trust program (stdin) missing %q:\n%s", want, prog)
+		}
+	}
+}
+
+// TestEnsureWorktreeTrustVia_PipesProgramOnStdin physically proves the trust
+// program bytes reach the python3 process's STDIN (not the command line). The
+// CmdFunc substitutes `cat`, capturing what the helper pipes via cmd.Stdin into
+// a buffer; the captured bytes must equal the package trust program (hk-gglt).
+func TestEnsureWorktreeTrustVia_PipesProgramOnStdin(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Substitute `sh -c 'cat > <capFile>'` for python3 so the bytes the helper
+	// pipes on cmd.Stdin are persisted to capFile (CombinedOutput sets stdout/
+	// stderr, which the redirect ignores). capFile then holds exactly what reached
+	// the process stdin.
+	capFile := filepath.Join(t.TempDir(), "stdin.txt")
+	rr := &tmux.RecordingRunner{
+		CmdFunc: func(c context.Context, name string, _ ...string) *exec.Cmd {
+			if name == "python3" {
+				return exec.CommandContext(c, "sh", "-c", "cat > "+capFile)
+			}
+			return exec.Command("true")
+		},
+	}
+
+	if err := EnsureWorktreeTrustVia(ctx, rr, z8ekWorkerWt); err != nil {
+		t.Fatalf("EnsureWorktreeTrustVia: %v", err)
+	}
+	got, err := os.ReadFile(capFile)
+	if err != nil {
+		t.Fatalf("read captured stdin: %v (nothing piped on stdin?)", err)
+	}
+	if string(got) != workerTrustUpsertProgram {
+		t.Errorf("stdin-piped program mismatch.\n got: %q\nwant: %q", got, workerTrustUpsertProgram)
+	}
+}
+
+// TestEnsureWorktreeTrustVia_RealPythonWritesTrust runs the ACTUAL trust upsert
+// path end-to-end against a real python3 with HOME redirected to a temp dir,
+// proving the program — fed on stdin to `python3 - <path>` — lands
+// projects[<realpath>].hasTrustDialogAccepted=true in <HOME>/.claude.json. This
+// is the regression that the prior `-c` form silently failed over SSH (hk-gglt).
+func TestEnsureWorktreeTrustVia_RealPythonWritesTrust(t *testing.T) {
+	// Not parallel: mutates HOME for the duration of the call.
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	ctx := context.Background()
+	home := t.TempDir()
+	wt := filepath.Join(t.TempDir(), "worktrees", "run-gglt")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	// A LocalRunner that forces HOME=<temp> so the python program's
+	// os.path.expanduser("~") resolves to the temp dir, mirroring the worker's
+	// HOME resolution without touching the real ~/.claude.json.
+	rr := &tmux.RecordingRunner{
+		CmdFunc: func(c context.Context, name string, args ...string) *exec.Cmd {
+			cmd := exec.CommandContext(c, name, args...)
+			cmd.Env = append(os.Environ(), "HOME="+home)
+			return cmd
+		},
+	}
+
+	if err := EnsureWorktreeTrustVia(ctx, rr, wt); err != nil {
+		t.Fatalf("EnsureWorktreeTrustVia (real python): %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		t.Fatalf("read temp ~/.claude.json: %v (the upsert did not run — the bug)", err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse ~/.claude.json: %v\n%s", err, data)
+	}
+	projects, _ := cfg["projects"].(map[string]interface{})
+	if projects == nil {
+		t.Fatalf("no projects map in written config:\n%s", data)
+	}
+	// Key is the realpath-normalized worktree path.
+	realWt, _ := filepath.EvalSymlinks(wt)
+	entry, _ := projects[realWt].(map[string]interface{})
+	if entry == nil {
+		entry, _ = projects[wt].(map[string]interface{})
+	}
+	if entry == nil {
+		t.Fatalf("no trust entry for worktree %q (or %q) in:\n%s", realWt, wt, data)
+	}
+	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+		t.Errorf("hasTrustDialogAccepted not true for worktree entry:\n%s", data)
 	}
 }
 

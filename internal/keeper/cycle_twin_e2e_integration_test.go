@@ -764,9 +764,11 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 
 // TestIntegration_TwinE2E_DefaultsPin asserts the STANDING band-PIN invariant in
 // the same suite as the headline gate (hk-nlio): the resolved CyclerConfig
-// defaults are the operator-decided Act 300k / 0.85, Warn 270k / 0.70, and
-// Force +40k → 340k / 0.95. NO band retune — widening the band is an operator
-// HARD-NO. A value drifting here fails the gate. Refs: hk-lhu2, hk-bpkv,
+// defaults are the operator-decided Act 215k / 0.85, Warn 200k / 0.70, and
+// Force +25k → 240k / 0.95. NO band retune — widening the band is an operator
+// HARD-NO. The TA1 earlier-restart band (hk-8hr1, operator-authorized
+// 2026-06-17) is the SOURCE OF TRUTH in thresholds.go; these expectations track
+// it. A value drifting here fails the gate. Refs: hk-8hr1, hk-lhu2, hk-bpkv,
 // codename:keeper-redesign.
 func TestIntegration_TwinE2E_DefaultsPin(t *testing.T) {
 	d := keeper.ResolveCyclerDefaultsForTest()
@@ -775,11 +777,11 @@ func TestIntegration_TwinE2E_DefaultsPin(t *testing.T) {
 		got  float64
 		want float64
 	}{
-		{"ActAbsTokens", float64(d.ActAbsTokens), 300_000},
+		{"ActAbsTokens", float64(d.ActAbsTokens), 215_000},
 		{"ActPctCeil", d.ActPctCeil, 0.85},
-		{"WarnAbsTokens", float64(d.WarnAbsTokens), 270_000},
+		{"WarnAbsTokens", float64(d.WarnAbsTokens), 200_000},
 		{"WarnPctCeil", d.WarnPctCeil, 0.70},
-		{"ForceActAbsTokens", float64(d.ForceActAbsTokens), 340_000},
+		{"ForceActAbsTokens", float64(d.ForceActAbsTokens), 240_000},
 		{"ForceActPctCeil", d.ForceActPctCeil, 0.95},
 		{"ActPct", d.ActPct, 90},
 		{"WarnPct", d.WarnPct, 80},
@@ -811,10 +813,11 @@ func TestIntegration_TwinE2E_DefaultsPin(t *testing.T) {
 // TestIntegration_TwinE2E_GaugeStateTransitions is the gauge-state-transition
 // table standing invariant (hk-nlio). It drives the REAL keeper.Cycler.MaybeRun
 // across representative gauge states and asserts the fire/no-fire decision,
-// pinning the effective band BEHAVIORALLY: Act 300k absolute on a 1M window,
-// Act 0.85*window on a 200k window, and Force 340k bypassing CrispIdle. A fired
-// cycle emits handoff_started (here it then aborts on the missing nonce, since
-// there is no real pane — fire/no-fire is all this table cares about).
+// pinning the effective band BEHAVIORALLY: Act 215k absolute on a 1M window,
+// Act 0.85*window on a 200k window, and Force 240k bypassing CrispIdle. The TA1
+// earlier-restart band (hk-8hr1) is the source of truth in thresholds.go. A
+// fired cycle emits handoff_started (here it then aborts on the missing nonce,
+// since there is no real pane — fire/no-fire is all this table cares about).
 func TestIntegration_TwinE2E_GaugeStateTransitions(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -823,13 +826,13 @@ func TestIntegration_TwinE2E_GaugeStateTransitions(t *testing.T) {
 		crispIdle bool
 		wantFired bool
 	}{
-		{"1m-below-act", 1_000_000, 299_999, true, false},
-		{"1m-at-act", 1_000_000, 300_000, true, true},
-		{"1m-below-warn", 1_000_000, 269_999, true, false},
+		{"1m-below-act", 1_000_000, 214_999, true, false},
+		{"1m-at-act", 1_000_000, 215_000, true, true},
+		{"1m-below-warn", 1_000_000, 199_999, true, false},
 		{"200k-below-act-ceil", 200_000, 169_999, true, false}, // 0.85*200k = 170k
 		{"200k-at-act-ceil", 200_000, 170_000, true, true},
-		{"1m-act-but-not-crisp", 1_000_000, 300_000, false, false},   // act but below force, not idle → no fire
-		{"1m-force-bypasses-crisp", 1_000_000, 340_000, false, true}, // force bypasses CrispIdle
+		{"1m-act-but-not-crisp", 1_000_000, 215_000, false, false},   // act but below force, not idle → no fire
+		{"1m-force-bypasses-crisp", 1_000_000, 240_000, false, true}, // force bypasses CrispIdle
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

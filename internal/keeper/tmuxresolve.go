@@ -30,12 +30,58 @@ func HarmonikSessionName(projectDir, agentName string) string {
 	return "harmonik-" + hash12 + "-" + agentName
 }
 
+// windowAgent is the tmux window name carrying the LLM (agent) pane inside an
+// agent session, per the tmux-reorg session layout (CONTRACT.md). The keeper
+// runs in a sibling "keeper" window of the same session, so it must inject /
+// gauge / measure liveness against the AGENT window's pane — never its own.
+//
+// MUST match tmux.WindowAgent ("agent") in internal/lifecycle/tmux/windowname.go.
+// Hardcoded here because the keeper package is depguard-isolated and may NOT
+// import lifecycle (hk-ekap1 / hk-fzzc6) — same local-duplication pattern as
+// HarmonikSessionName above.
+const windowAgent = "agent"
+
+// SplitTmuxTarget splits a --tmux value into its session and window components.
+//
+//   - "session:window" → (session, window) — the keeper targets the named
+//     window's active pane (e.g. "harmonik-<hash>-captain:agent").
+//   - "session"        → (session, "")     — no window; legacy session-active-pane
+//     behavior, for back-compat with a half-migrated fleet.
+//
+// Only the FIRST colon separates session from window; any remaining colons stay
+// in the window component, so a full tmux "session:window.pane" form round-trips
+// (window = "window.pane"). An empty input yields ("", "").
+func SplitTmuxTarget(value string) (session, window string) {
+	if value == "" {
+		return "", ""
+	}
+	if i := strings.IndexByte(value, ':'); i >= 0 {
+		return value[:i], value[i+1:]
+	}
+	return value, ""
+}
+
 // ResolveTmuxTarget determines the effective tmux target for a keeper session.
+//
+// The returned target is what ALL keeper tmux operations use — keystroke
+// injection (send-keys / paste-buffer), context-gauge liveness probes
+// (capture-pane / display-message), and operator-attach detection
+// (list-clients). tmux resolves a "session:window" target to that window's
+// ACTIVE pane, which is exactly what the keeper needs so that a keeper running
+// in its own sibling "keeper" window measures and injects into the AGENT
+// window's pane, never itself (CONTRACT.md §Keeper inject-target contract).
 //
 // Priority:
 //  1. explicit — if non-empty, returned as-is (caller-supplied --tmux flag).
-//  2. convention — derives "harmonik-<hash12>-<agentName>" and verifies the
-//     session exists in tmux; returns it if live.
+//     A "session:window" value (e.g. "harmonik-<hash>-captain:agent") therefore
+//     targets the named window's active pane; a bare "session" value keeps the
+//     legacy session-active-pane behavior. The split rule lives in
+//     SplitTmuxTarget; tmux itself honours the "session:window" target form, so
+//     the explicit value passes through verbatim.
+//  2. convention — derives "harmonik-<hash12>-<agentName>", verifies the SESSION
+//     exists in tmux, and (when live) returns "<session>:agent" so the gauge /
+//     inject path targets the AGENT window's pane rather than whatever window is
+//     focused.
 //  3. "" — no usable target; caller proceeds without tmux injection.
 //
 // sessionExistsFn may be nil, in which case a real tmux display-message check
@@ -47,12 +93,15 @@ func ResolveTmuxTarget(projectDir, agentName, explicit string, sessionExistsFn f
 	if agentName == "" || projectDir == "" {
 		return ""
 	}
-	candidate := HarmonikSessionName(projectDir, agentName)
+	session := HarmonikSessionName(projectDir, agentName)
 	if sessionExistsFn == nil {
 		sessionExistsFn = tmuxSessionLive
 	}
-	if sessionExistsFn(candidate) {
-		return candidate
+	// Liveness is checked against the bare SESSION name (tmuxSessionLive uses
+	// `has-session -t =<name>`, which matches a session, not a window).
+	if sessionExistsFn(session) {
+		// Target the AGENT window's active pane, not the session's focused window.
+		return session + ":" + windowAgent
 	}
 	return ""
 }

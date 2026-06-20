@@ -2756,10 +2756,22 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// probes target the worker and the run branch is synced to box A before each
 		// reviewer launch), nil for a LOCAL run (byte-identical local path, NFR7).
 		var rlRunner tmuxpkg.CommandRunner
+		// hk-fxy9: rlWorkerBinary resolves the SessionStart hook command to the WORKER's
+		// harmonik path; rlWorkerHookSock is the worker-side reverse-tunnel TCP endpoint
+		// the worker's claude dials for the hook relay; rlWorkerSession/Cwd tell the
+		// per-run substrate which tmux session to ensure+spawn into ON THE WORKER. All
+		// empty for a LOCAL run (rbc == nil) ⇒ byte-identical box-A-local path (NFR7).
+		var rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd string
 		if rbc != nil {
 			rlRunner = rbc.sshRunner
+			rlWorkerBinary = workerHarmonikPath(rbc.worker)
+			rlWorkerHookSock = rbc.workerHookSock
+			rlWorkerCwd = rbc.worker.RepoPath
+			if ts, ok := deps.substrate.(*tmuxSubstrate); ok {
+				rlWorkerSession = ts.workerSpawnSessionName(rbc.worker.Name)
+			}
 		}
-		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch, rlRunner)
+		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch, rlRunner, rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if rlResult.success {
@@ -2957,15 +2969,28 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// WORKER via its SSHRunner; box A cannot chdir into the worker's worktree.
 		// nil for local runs keeps the cascade byte-identical (NFR7).
 		var dotRunner tmuxpkg.CommandRunner
+		// hk-538l: dotWorkerBinary resolves each node's SessionStart hook command to the
+		// WORKER's harmonik path; dotWorkerHookSock is the worker-side reverse-tunnel TCP
+		// endpoint each node's claude dials for the hook relay; dotWorkerSession/Cwd tell
+		// the per-run substrate which tmux session to ensure+spawn into ON THE WORKER.
+		// All empty for a LOCAL run (rbc == nil) ⇒ byte-identical box-A path (NFR7).
+		var dotWorkerBinary, dotWorkerHookSock, dotWorkerSession, dotWorkerCwd string
 		if rbc != nil {
 			dotRunner = rbc.sshRunner
+			dotWorkerBinary = workerHarmonikPath(rbc.worker)
+			dotWorkerHookSock = rbc.workerHookSock
+			dotWorkerCwd = rbc.worker.RepoPath
+			if ts, ok := deps.substrate.(*tmuxSubstrate); ok {
+				dotWorkerSession = ts.workerSpawnSessionName(rbc.worker.Name)
+			}
 		}
 
 		// Drive the cascade: walk start → … → terminal, dispatching each node by
 		// type (non-agentic synthesize-success, agentic substrate-dispatch,
 		// gate/sub-workflow out-of-scope error).
 		dotResult := driveDotWorkflow(ctx, deps, runID, beadID, beadRecord, beadRecord.Title, beadRecord.Description,
-			wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch, dotRunner)
+			wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch, dotRunner,
+			dotWorkerBinary, dotWorkerHookSock, dotWorkerSession, dotWorkerCwd)
 
 		transitionTID, _ := deps.tidGen.Next()
 		if dotResult.success {

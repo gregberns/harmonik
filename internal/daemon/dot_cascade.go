@@ -176,8 +176,26 @@ func driveDotWorkflow(
 	extraContext string,
 	baseBranch string,
 	runner tmux.CommandRunner, // remote-substrate: SSHRunner for remote runs; nil for local (NFR7)
+	// hk-538l worker-launch params: workerBinaryPath resolves each node's SessionStart
+	// hook command to the WORKER's harmonik path; workerHookSock is the worker-side
+	// reverse-tunnel TCP endpoint each node's claude dials for the hook relay;
+	// workerSessionName/Cwd tell the per-run substrate which tmux session to ensure +
+	// spawn into ON THE WORKER. All empty for a LOCAL run ⇒ byte-identical box-A path
+	// (NFR7).
+	workerBinaryPath string,
+	workerHookSock string,
+	workerSessionName string,
+	workerSessionCwd string,
 ) dotWorkflowResult {
-	daemonSocket := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+	// hk-538l: for a REMOTE run rewrite the hook socket to the worker-side reverse-
+	// tunnel TCP endpoint so the worker's claude can reach the relay; box A's local
+	// unix daemon.sock is unreachable from the worker. Empty workerHookSock (LOCAL
+	// run) ⇒ unchanged box-A unix socket (NFR7). Mirrors workloop.go single-mode
+	// resolveAgentDaemonSocket; previously the box-A unix path flowed into every
+	// node's rc.daemonSocket → HARMONIK_DAEMON_SOCKET → connect failure → no hook →
+	// agent_ready_timeout.
+	boxADaemonSocket := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+	daemonSocket := resolveAgentDaemonSocket(workerHookSock, boxADaemonSocket)
 
 	// Index nodes by ID for O(1) type lookup during the walk.
 	nodesByID := make(map[string]*dot.Node, len(graph.Nodes))
@@ -612,7 +630,8 @@ func driveDotWorkflow(
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
 				isReviewer, iterationCount, &claudeSessionID,
 				resolvedModel, resolvedEffort, extraContext, baseBranch,
-				lastImplementerReviewerHarness, runner)
+				lastImplementerReviewerHarness, runner,
+				workerBinaryPath, workerSessionName, workerSessionCwd)
 			if nodeErr != nil {
 				if errors.Is(nodeErr, errDotNoChangeSubsumed) {
 					return dotWorkflowResult{
@@ -739,7 +758,10 @@ func driveDotWorkflow(
 				wtPath, parentSHA, daemonSocket,
 				&iterationCount, &claudeSessionID, resolvedModel, resolvedEffort,
 				extraContext, baseBranch, run, cycles, graph,
-				runner, // remote-substrate: thread the run's runner into nested dispatch
+				runner,            // remote-substrate: thread the run's runner into nested dispatch
+				workerBinaryPath,  // hk-538l: worker harmonik path for remote sub-workflow node hooks
+				workerSessionName, // hk-538l: worker tmux session for remote sub-workflow spawn
+				workerSessionCwd,  // hk-538l: worker repo cwd for the worker tmux session
 			)
 			swSpec := handler.SubWorkflowRunSpec{
 				Run:                run,
@@ -895,6 +917,12 @@ func dispatchDotAgenticNode(
 	baseBranch string,
 	reviewerHarnessOverride core.AgentType, // T14 hk-iv748: reviewer_harness from implementer node; empty = DEFAULT (same as implementer)
 	runner tmux.CommandRunner, // remote-substrate: SSHRunner for remote runs; nil for local (NFR7)
+	// hk-538l: workerBinaryPath resolves the node's SessionStart hook command to the
+	// WORKER's harmonik path; workerSessionName/Cwd identify the tmux session to
+	// ensure + spawn into ON THE WORKER. All empty for a LOCAL run ⇒ box-A path (NFR7).
+	workerBinaryPath string,
+	workerSessionName string,
+	workerSessionCwd string,
 ) (core.Outcome, error) {
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
 	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
@@ -977,7 +1005,12 @@ func dispatchDotAgenticNode(
 		// for a LOCAL run (runner == nil, NFR7). Without this the trust upsert ran
 		// box-A-local → worker worktree untrusted → trust modal → no_commit
 		// (hk-3sus; symmetric with how settings/agent-task get the worker).
-		runner:            runner,
+		runner: runner,
+		// hk-538l: workerBinaryPath resolves the SessionStart hook command to the
+		// WORKER's harmonik path for a REMOTE DOT run; empty for LOCAL falls back box-A-
+		// local in claudelaunchspec. Without this the worker's settings.json pointed at
+		// box-A's daemonBinaryPath → hook never exec'd → agent_ready_timeout (hk-538l).
+		workerBinaryPath:  workerBinaryPath,
 		daemonSocket:      daemonSocket,
 		workflowMode:      core.WorkflowModeDot,
 		phase:             phase,
@@ -1046,6 +1079,15 @@ func dispatchDotAgenticNode(
 	var substrate handler.Substrate = deps.substrate
 	var pasteTarget handler.Substrate = deps.substrate
 	if prs != nil {
+		// hk-538l: for a REMOTE run tell the per-run substrate which tmux session to
+		// ENSURE + spawn into ON THE WORKER and the cwd to create it with (the worker's
+		// repo_path). Without this the worker spawn falls back to the box-A project-hash
+		// session name with an empty cwd. runner != nil gates the remote case symmetric
+		// with workloop.go single-mode.
+		if runner != nil && workerSessionName != "" {
+			prs.workerSessionName = workerSessionName
+			prs.workerSessionCwd = workerSessionCwd
+		}
 		substrate = prs
 		pasteTarget = prs
 	}

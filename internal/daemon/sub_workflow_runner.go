@@ -55,6 +55,9 @@ func newDotSubWorkflowRunner(
 	cycles *core.CycleCounter,
 	parentGraph *dot.Graph,
 	runner tmux.CommandRunner, // remote-substrate: SSHRunner for remote runs; nil for local (NFR7)
+	workerBinaryPath string, // hk-538l: worker harmonik path for remote sub-workflow nodes; "" = local
+	workerSessionName string, // hk-538l: worker tmux session for remote sub-workflow spawn; "" = local
+	workerSessionCwd string, // hk-538l: worker repo cwd for the worker tmux session; "" = local
 ) *dotSubWorkflowRunner {
 	parentName := parentGraphName(parentGraph)
 	return &dotSubWorkflowRunner{
@@ -78,6 +81,9 @@ func newDotSubWorkflowRunner(
 		parentGraph:        parentGraph,
 		parentWorkflowName: parentName,
 		runner:             runner,
+		workerBinaryPath:   workerBinaryPath,
+		workerSessionName:  workerSessionName,
+		workerSessionCwd:   workerSessionCwd,
 	}
 }
 
@@ -123,6 +129,13 @@ type dotSubWorkflowRunner struct {
 	// nil for local). Threaded into nested dispatchDotAgenticNode calls so the
 	// sub-workflow's worktree probes + spawn target the worker (NFR7: nil = local).
 	runner tmux.CommandRunner
+	// hk-538l: worker-launch params propagated into nested dispatchDotAgenticNode
+	// calls so a REMOTE sub-workflow agentic node resolves its hook command to the
+	// worker's harmonik path and spawns into the worker's tmux session. All empty
+	// for a LOCAL run (NFR7).
+	workerBinaryPath  string
+	workerSessionName string
+	workerSessionCwd  string
 	// parentGraph is the loaded dot.Graph of the parent workflow. Its Name is
 	// used as the "parent" vertex when building the sub-workflow reference graph
 	// for the acyclicity check (SW-003 / EM-034b).
@@ -252,6 +265,10 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 		cycles:             r.cycles,
 		parentGraph:        subGraph,
 		parentWorkflowName: string(spec.SubWorkflowRef),
+		runner:             r.runner,
+		workerBinaryPath:   r.workerBinaryPath,
+		workerSessionName:  r.workerSessionName,
+		workerSessionCwd:   r.workerSessionCwd,
 	}
 
 	nodeRunner := func(ctx context.Context, nodeID core.NodeID, nodeType core.NodeType) (core.Outcome, error) {
@@ -322,8 +339,11 @@ func dispatchSubWorkflowExpandedNode(
 			r.resolvedEffort,
 			r.extraContext,
 			r.baseBranch,
-			"",       // reviewerHarnessOverride: none
-			r.runner, // remote-substrate: route sub-workflow node dispatch through the run's runner
+			"",                  // reviewerHarnessOverride: none
+			r.runner,            // remote-substrate: route sub-workflow node dispatch through the run's runner
+			r.workerBinaryPath,  // hk-538l: worker harmonik path for the node hook command
+			r.workerSessionName, // hk-538l: worker tmux session to ensure + spawn into
+			r.workerSessionCwd,  // hk-538l: worker repo cwd for the worker tmux session
 		)
 
 	case core.NodeTypeGate:

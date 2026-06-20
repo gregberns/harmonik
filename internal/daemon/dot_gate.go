@@ -314,6 +314,14 @@ func executeCognitionGate(
 		spec.Args = append(deps.handlerArgs, spec.Args...)
 	}
 
+	// TODO(hk-538l): the cognition-gate launch path is NOT remote-substrate-aware —
+	// rc.runner / rc.workerBinaryPath are unset (box-A), the daemonSocket is the box-A
+	// unix path (not the worker reverse-tunnel TCP), newPerRunSubstrate is passed nil,
+	// and os.Remove/writeCognitionGateTask operate on the box-A wtPath. LATENT: the
+	// default workflow.dot uses a tool-command commit_gate, not a cognition gate, so
+	// no live remote run exercises this path today. To make it remote-correct, thread
+	// the run's CommandRunner + worker binary/session/cwd through dispatchDotGateNode
+	// → executeCognitionGate the same way reviewloop.go / dot_cascade.go now do.
 	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, nil)
 	var substrate handler.Substrate = deps.substrate
 	var pasteTarget handler.Substrate = deps.substrate

@@ -1521,6 +1521,13 @@ func (s *tmuxSubstrate) StopCrewSession(ctx context.Context, crewName string, ha
 //
 // Bead: hk-rs-b9-liveness-1m9n (runner parameter).
 func newPerRunSubstrate(sub handler.Substrate, handlerBinary string, runner tmux.CommandRunner) *perRunSubstrate {
+	// test seam (hk-fxy9 / hk-538l regression); no-op in prod. Fired with the
+	// `runner` ARG this constructor actually received — the single source of truth
+	// for the SUBSTRATE-SPAWN runner. A regression that drops a call site's 3rd arg
+	// back to nil is caught here regardless of whether sub is a *tmuxSubstrate (the
+	// review-loop/DOT test fixtures use a non-tmux substrate, so the returned *prs
+	// is nil and the stored field would be unobservable — observing the arg is not).
+	notifySubstrateRunner(runner)
 	if sub == nil {
 		return nil
 	}

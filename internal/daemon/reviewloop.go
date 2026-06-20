@@ -58,6 +58,20 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
+// substrateRunnerObserver is a TEST SEAM (hk-fxy9). When non-nil it is invoked
+// with the CommandRunner passed into newPerRunSubstrate at the review-loop and
+// DOT agentic launch sites, letting a regression test assert the SUBSTRATE-spawn
+// runner is the real (non-nil) worker runner for a REMOTE run — distinct from the
+// SPEC runner the hk-3sus test already covers. nil in production (zero overhead).
+var substrateRunnerObserver func(tmux.CommandRunner)
+
+// notifySubstrateRunner invokes substrateRunnerObserver if set. No-op in prod.
+func notifySubstrateRunner(r tmux.CommandRunner) {
+	if substrateRunnerObserver != nil {
+		substrateRunnerObserver(r)
+	}
+}
+
 // reviewLoopIterationCap is the hardcoded maximum number of iterations per
 // execution-model.md §4.3.EM-015e. Not operator-tunable at MVH.
 const reviewLoopIterationCap = 3
@@ -201,10 +215,34 @@ func runReviewLoop(
 	// box-A worktree (CreateReviewerWorktree, always box-A-local) can materialise
 	// at the implementer's committed SHA. nil ⇒ byte-identical local path (NFR7).
 	runner tmux.CommandRunner,
+	// workerBinaryPath is the absolute path to harmonik ON THE WORKER, used as the
+	// SessionStart hook "command" in the implementer's .claude/settings.json for a
+	// REMOTE run (a box-A path would not exist on the worker). Empty for a LOCAL
+	// run, in which case claudelaunchspec falls back to deps.daemonBinaryPath
+	// box-A-local (NFR7). hk-fxy9: without this the worker's claude launched with a
+	// box-A hook command that won't exec → agent_ready_timeout → no_commit.
+	workerBinaryPath string,
+	// workerHookSock is the per-run worker-side reverse-tunnel TCP endpoint
+	// (tcp://127.0.0.1:<port>) the implementer's claude must dial for the hook
+	// relay; box A's local unix daemon.sock is unreachable from the worker. Empty
+	// for a LOCAL run ⇒ the unchanged box-A unix socket is used (NFR7). hk-fxy9:
+	// mirrors the single-mode rewrite at workloop.go (resolveAgentDaemonSocket).
+	workerHookSock string,
+	// workerSessionName / workerSessionCwd identify the tmux session ON THE WORKER
+	// that a REMOTE implementer spawn must ensure + target, and the cwd to create it
+	// with (the worker's repo_path). Empty for a LOCAL run ⇒ unchanged box-A spawn
+	// (NFR7). hk-fxy9: mirrors workloop.go single-mode prs.workerSessionName wiring.
+	workerSessionName string,
+	workerSessionCwd string,
 ) reviewLoopResult {
 	// daemonSocket is the UNIX-domain socket path for the hook-relay per design §7.
 	// Derived from projectDir so reviewloop.go does not need a separate field on deps.
-	daemonSocket := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+	// For a REMOTE run (workerHookSock != ""), rewrite to the worker-side
+	// reverse-tunnel TCP endpoint so the worker's claude can reach the relay
+	// (hk-fxy9; symmetric with workloop.go single-mode resolveAgentDaemonSocket).
+	// nil/"" ⇒ unchanged box-A unix socket (NFR7).
+	boxADaemonSocket := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+	daemonSocket := resolveAgentDaemonSocket(workerHookSock, boxADaemonSocket)
 
 	state := reviewLoopState{iterationCount: 1}
 
@@ -250,7 +288,12 @@ func runReviewLoop(
 			// worktree-trust upsert ran box-A-local and the worker's per-run worktree
 			// stayed untrusted → claude showed the trust/bypass modal → no_commit
 			// (hk-3sus; symmetric with how settings/agent-task get the worker).
-			runner:            runner,
+			runner: runner,
+			// workerBinaryPath resolves the SessionStart hook command to the WORKER's
+			// harmonik path for a REMOTE run; empty for a LOCAL run falls back box-A-
+			// local in claudelaunchspec (hk-fxy9). Without this the worker's settings.json
+			// pointed at box-A's daemonBinaryPath → hook never exec'd → agent_ready_timeout.
+			workerBinaryPath:  workerBinaryPath,
 			daemonSocket:      daemonSocket,
 			workflowMode:      core.WorkflowModeReviewLoop,
 			phase:             implPhase,
@@ -294,10 +337,28 @@ func runReviewLoop(
 		// (hk-jfh59: shared-state methods on tmuxSubstrate removed.)
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
-		implPRS := newPerRunSubstrate(deps.substrate, deps.handlerBinary, nil)
+		//
+		// hk-fxy9 (THE live fix): pass the per-run `runner` (the worker's SSHRunner
+		// for a REMOTE run, nil for LOCAL) into newPerRunSubstrate so the claude
+		// PROCESS spawns ON THE WORKER's tmux server and pasteinject/stat probes run
+		// there too. Previously this was hardcoded nil, so even though the SPEC runner
+		// (hk-3sus) wrote trust/settings to the worker, the process itself spawned
+		// against box A's tmux/-default session — which does not exist on the worker —
+		// wedging at launch_initiated → agent_ready_timeout → no_commit. Mirrors the
+		// single-mode wiring at workloop.go (runRunner → newPerRunSubstrate).
+		implPRS := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runner)
 		var implSubstrate handler.Substrate = deps.substrate
 		var implPasteTarget handler.Substrate = deps.substrate
 		if implPRS != nil {
+			// hk-fxy9: for a REMOTE run tell the per-run substrate which tmux session to
+			// ENSURE + spawn into ON THE WORKER (workerSessionName) and the cwd to create
+			// it with (the worker's repo_path). Without this the worker spawn falls back
+			// to the box-A project-hash session name with an empty cwd. runner != nil gates
+			// the remote case symmetric with workloop.go single-mode.
+			if runner != nil && workerSessionName != "" {
+				implPRS.workerSessionName = workerSessionName
+				implPRS.workerSessionCwd = workerSessionCwd
+			}
 			implSubstrate = implPRS
 			implPasteTarget = implPRS
 		}
@@ -1131,10 +1192,17 @@ func runReviewLoop(
 			runID:         runID,
 			beadID:        string(beadID),
 			workspacePath: revWtPath,
-			// runner: see implRC above (hk-3sus). The reviewer's worktree-trust /
-			// settings / agent-task writes must reach the WORKER on a REMOTE run.
-			runner:            runner,
-			daemonSocket:      daemonSocket,
+			// hk-fxy9 (fix D): the reviewer worktree is ALWAYS box-A-local
+			// (CreateReviewerWorktree above uses NoWorktreeRootOverride and materialises
+			// on box A at the implementer's pushed SHA), so its spec runner MUST be nil —
+			// the worktree-trust / settings / agent-task writes belong on BOX A where the
+			// reviewer worktree lives, NOT on the worker. Previously this was the worker
+			// `runner`, which wrote trust/settings to the worker for a box-A worktree → the
+			// box-A reviewer worktree stayed untrusted → trust modal → reviewer no-verdict.
+			// (The reviewer's SUBSTRATE runner at revPRS below is correctly nil — its claude
+			// process also spawns box-A-local.)
+			runner:            nil,
+			daemonSocket:      boxADaemonSocket,
 			workflowMode:      core.WorkflowModeReviewLoop,
 			phase:             handlercontract.ReviewLoopPhaseReviewer,
 			iterationCount:    state.iterationCount,

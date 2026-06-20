@@ -144,6 +144,9 @@ func swMakeRunner(t *testing.T, bus *recordingBusDaemon, projectDir string, pare
 		core.NewCycleCounter(),
 		parentGraph,
 		nil, // runner: local (NFR7)
+		"",  // workerBinaryPath: local
+		"",  // workerSessionName: local
+		"",  // workerSessionCwd: local
 	)
 }
 

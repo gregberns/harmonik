@@ -537,7 +537,7 @@ func ExportedRunReviewLoop(
 	parentSHA string,
 ) ReviewLoopResultExported {
 	// nil runner ⇒ LOCAL run: byte-identical to the pre-remote-substrate path.
-	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", nil)
+	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", nil, "", "", "", "")
 	return ReviewLoopResultExported{
 		Success:          r.success,
 		CompletionReason: string(r.completionReason),
@@ -583,7 +583,7 @@ func ExportedDriveDotWorkflow(
 	parentSHA string,
 	graph *dot.Graph,
 ) DotWorkflowResultExported {
-	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, "", "", wtPath, parentSHA, graph, "", "", "", "", nil)
+	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, "", "", wtPath, parentSHA, graph, "", "", "", "", nil, "", "", "", "")
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,
@@ -607,7 +607,7 @@ func ExportedDriveDotWorkflowFull(
 	graph *dot.Graph,
 	extraContext string,
 ) DotWorkflowResultExported {
-	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", extraContext, "", nil)
+	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", extraContext, "", nil, "", "", "", "")
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,
@@ -672,13 +672,22 @@ func ExportedRunReviewLoopWithRunner(
 	parentSHA string,
 	runner tmuxPkg.CommandRunner,
 ) ReviewLoopResultExported {
-	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", runner)
+	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", runner, "", "", "", "")
 	return ReviewLoopResultExported{
 		Success:          r.success,
 		CompletionReason: string(r.completionReason),
 		Summary:          r.summary,
 		NeedsAttention:   r.needsAttention,
 	}
+}
+
+// ExportedSetSubstrateRunnerObserver installs (or clears, with nil) the package
+// test seam that captures the CommandRunner passed into newPerRunSubstrate at the
+// review-loop and DOT agentic launch sites. Tests use this to assert the
+// SUBSTRATE-spawn runner (distinct from the SPEC runner) is the real non-nil
+// worker runner for a REMOTE run (hk-fxy9 / hk-538l).
+func ExportedSetSubstrateRunnerObserver(f func(tmuxPkg.CommandRunner)) {
+	substrateRunnerObserver = f
 }
 
 // ExportedDriveDotWorkflowWithRunner exposes driveDotWorkflow with an explicit
@@ -696,7 +705,7 @@ func ExportedDriveDotWorkflowWithRunner(
 	graph *dot.Graph,
 	runner tmuxPkg.CommandRunner,
 ) DotWorkflowResultExported {
-	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", "", "", runner)
+	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", "", "", runner, "", "", "", "")
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,
@@ -743,7 +752,7 @@ func ExportedDriveDotWorkflowWithModelEffort(
 	resolvedModel string,
 	resolvedEffort string,
 ) DotWorkflowResultExported {
-	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, resolvedModel, resolvedEffort, "", "", nil)
+	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, resolvedModel, resolvedEffort, "", "", nil, "", "", "", "")
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,

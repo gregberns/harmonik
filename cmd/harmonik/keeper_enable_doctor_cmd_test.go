@@ -625,20 +625,22 @@ func TestDoctor_ManagedSidMismatchIsRed(t *testing.T) {
 	}
 }
 
-// TestKeeperDoctor_RejectsPathTraversal verifies that doctor rejects agent
-// names with path traversal sequences.
-func TestKeeperDoctor_RejectsPathTraversal(t *testing.T) {
+// TestKeeperDoctor_RejectsPositionalAgent verifies that doctor is FLAG-ONLY
+// (hk-nbft): a positional agent (here a path-traversal token) is rejected with
+// exit 2 BEFORE it can reach runKeeperDoctor. Previously the positional was
+// accepted (exit 0 false-green at keeper boot).
+func TestKeeperDoctor_RejectsPositionalAgent(t *testing.T) {
 	t.Parallel()
 
 	cfg, _ := makeDoctorCfg(t, "../evil")
 	var stdout, stderr bytes.Buffer
 	code := runKeeperDoctorEntry([]string{"--project", cfg.projectDir, "../evil"}, &stdout, &stderr)
-	// Doctor with path-traversal agent: the agent name passes through to runKeeperDoctor
-	// which doesn't validate the name itself (it checks files). But the entry-point passes
-	// it as a positional arg — it should succeed in parsing but the file paths simply won't
-	// match any real keeper files.  The primary validation is: enable must reject it.
-	// For doctor we just verify it doesn't panic and produces output.
-	_ = code
+	if code != 2 {
+		t.Fatalf("positional agent: want exit 2 (flag-only reject), got %d\nstderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "flag-only") {
+		t.Errorf("want flag-only reject message, got: %s", stderr.String())
+	}
 }
 
 // TestKeeperDoctor_StatusLineTypeMissing verifies that doctor reports a failure
@@ -1065,7 +1067,7 @@ func countHookEntriesForScript(settings map[string]interface{}, eventName, scrip
 func TestParseKeeperEnableArgs_PreservesYesDestructive(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	pa, code := parseKeeperEnableArgs([]string{"orchestrator", "--yes-destructive"}, &stdout, &stderr)
+	pa, code := parseKeeperEnableArgs([]string{"--agent", "orchestrator", "--yes-destructive"}, &stdout, &stderr)
 	if code != -1 {
 		t.Fatalf("parse: want -1 (proceed), got %d\nstderr: %s", code, stderr.String())
 	}
@@ -1077,17 +1079,17 @@ func TestParseKeeperEnableArgs_PreservesYesDestructive(t *testing.T) {
 	}
 }
 
-// TestParseKeeperEnableArgs_AgentFlagWinsPositional: when both a positional and
-// --agent are given, the flag wins.
-func TestParseKeeperEnableArgs_AgentFlagWinsPositional(t *testing.T) {
+// TestParseKeeperEnableArgs_RejectsPositional: FLAG-ONLY (hk-nbft) — a positional
+// agent (even alongside --agent) is rejected with exit 2.
+func TestParseKeeperEnableArgs_RejectsPositional(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	pa, code := parseKeeperEnableArgs([]string{"positionalname", "--agent", "flagname"}, &stdout, &stderr)
-	if code != -1 {
-		t.Fatalf("want -1, got %d", code)
+	_, code := parseKeeperEnableArgs([]string{"positionalname", "--agent", "flagname"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("positional: want exit 2 (flag-only reject), got %d", code)
 	}
-	if pa.agentName != "flagname" {
-		t.Errorf("flag must win positional: agentName = %q; want flagname", pa.agentName)
+	if !strings.Contains(stderr.String(), "flag-only") {
+		t.Errorf("want flag-only reject message, got: %s", stderr.String())
 	}
 }
 
@@ -1132,7 +1134,7 @@ func TestParseKeeperEnableArgs_AllKnownFlagsPreserved(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
 	pa, code := parseKeeperEnableArgs([]string{
-		"orchestrator", "--project", "/p", "--scripts-dir", "/s", "--tmux", "sess:0.0", "--yes-destructive",
+		"--agent", "orchestrator", "--project", "/p", "--scripts-dir", "/s", "--tmux", "sess:0.0", "--yes-destructive",
 	}, &stdout, &stderr)
 	if code != -1 {
 		t.Fatalf("want -1, got %d\nstderr: %s", code, stderr.String())
@@ -1143,18 +1145,18 @@ func TestParseKeeperEnableArgs_AllKnownFlagsPreserved(t *testing.T) {
 	}
 }
 
-// TestParseKeeperDoctorArgs_AgentFlagWinsPositional mirrors the enable behavior
-// for doctor — THE CLASS-A killer: `doctor --agent X` must operate on X, NOT on
-// an agent literally named "--agent".
-func TestParseKeeperDoctorArgs_AgentFlagWinsPositional(t *testing.T) {
+// TestParseKeeperDoctorArgs_RejectsPositional mirrors the enable behavior for
+// doctor — FLAG-ONLY (hk-nbft): a positional agent (even with --agent present) is
+// rejected with exit 2 (was the doctor false-green positional path).
+func TestParseKeeperDoctorArgs_RejectsPositional(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	da, code := parseKeeperDoctorArgs([]string{"pos", "--agent", "flag"}, &stdout, &stderr)
-	if code != -1 {
-		t.Fatalf("want -1, got %d", code)
+	_, code := parseKeeperDoctorArgs([]string{"pos", "--agent", "flag"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("positional: want exit 2 (flag-only reject), got %d", code)
 	}
-	if da.agentName != "flag" {
-		t.Errorf("flag must win positional: agentName = %q; want flag", da.agentName)
+	if !strings.Contains(stderr.String(), "flag-only") {
+		t.Errorf("want flag-only reject message, got: %s", stderr.String())
 	}
 }
 
@@ -1184,11 +1186,11 @@ func TestParseKeeperDoctorArgs_RejectsUnknownFlag(t *testing.T) {
 }
 
 // TestParseKeeperDoctorArgs_ProjectFlagPreserved confirms --project is still
-// recognized (enumerate-and-keep) and the positional agent is parsed.
+// recognized (enumerate-and-keep) alongside --agent, in any order.
 func TestParseKeeperDoctorArgs_ProjectFlagPreserved(t *testing.T) {
 	t.Parallel()
 	var stdout, stderr bytes.Buffer
-	da, code := parseKeeperDoctorArgs([]string{"captain", "--project", "/p"}, &stdout, &stderr)
+	da, code := parseKeeperDoctorArgs([]string{"--agent", "captain", "--project", "/p"}, &stdout, &stderr)
 	if code != -1 {
 		t.Fatalf("want -1, got %d", code)
 	}

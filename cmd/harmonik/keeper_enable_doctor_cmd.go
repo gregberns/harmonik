@@ -62,21 +62,24 @@ type enableArgs struct {
 	yesDestructive bool
 }
 
-// parseKeeperEnableArgs parses the enable argument vector. The agent name is
-// accepted either as `--agent <name>` / `--agent=<name>` OR as a bare positional;
-// the flag WINS when both are present. An UNRECOGNIZED leading-dash token is
-// rejected LOUDLY (exit 2) rather than silently used as the positional agent —
-// the CLASS-A bug where `doctor --agent X` checked an agent named "--agent".
-// Every existing recognized flag (including --yes-destructive, the regression
-// that failed the original hk-psds) is enumerated and kept; the reject is ONLY
-// for unrecognized leading-dash tokens.
+// parseKeeperEnableArgs parses the enable argument vector. FLAG-ONLY (hk-nbft):
+// the agent name MUST be supplied via `--agent <name>` / `--agent=<name>`. ANY
+// positional argument is rejected LOUDLY (exit 2) with the same message every
+// other keeper verb uses (resolveKeeperAgent) — positionals were the recurring
+// footgun where a bare token silently took the place of --agent (e.g.
+// `enable captain` parsed the agent then failed downstream on scripts-dir). An
+// UNRECOGNIZED leading-dash token is likewise rejected (exit 2) — the CLASS-A
+// bug where `doctor --agent X` checked an agent named "--agent". Every existing
+// recognized flag (including --yes-destructive, the regression that failed the
+// original hk-psds) is enumerated and kept; the reject now covers unrecognized
+// flags AND positional arguments.
 //
 // The returned code is a control signal, not just an exit code:
 //
 //	-1 → parse OK, caller should proceed
 //	 0 → --help printed, caller should return 0
-//	 1 → missing agent name
-//	 2 → unrecognized leading-dash flag
+//	 1 → missing agent name (no --agent supplied)
+//	 2 → unrecognized leading-dash flag OR unexpected positional argument
 func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs, int) {
 	var (
 		pa        enableArgs
@@ -125,15 +128,21 @@ func parseKeeperEnableArgs(args []string, stdout, stderr io.Writer) (enableArgs,
 		}
 	}
 
-	// Flag wins positional.
+	// FLAG-ONLY (hk-nbft): any positional argument is rejected with the SAME
+	// message resolveKeeperAgent uses for the other keeper verbs, exit 2.
+	if len(rest) > 0 {
+		fmt.Fprintf(stderr,
+			"harmonik keeper enable: unexpected positional argument(s) %q — this command is flag-only; use --agent <name>\n",
+			strings.Join(rest, " "))
+		fmt.Fprint(stderr, keeperEnableUsage)
+		return enableArgs{}, 2
+	}
+
 	pa.agentName = agentFlag
 	if pa.agentName == "" {
-		if len(rest) < 1 {
-			fmt.Fprintln(stderr, "harmonik keeper enable: agent name is required")
-			fmt.Fprint(stderr, keeperEnableUsage)
-			return enableArgs{}, 1
-		}
-		pa.agentName = rest[0]
+		fmt.Fprintln(stderr, "harmonik keeper enable: --agent <name> is required")
+		fmt.Fprint(stderr, keeperEnableUsage)
+		return enableArgs{}, 1
 	}
 	return pa, -1
 }
@@ -383,11 +392,14 @@ type doctorArgs struct {
 	projectDir string
 }
 
-// parseKeeperDoctorArgs parses the doctor argument vector with the SAME
-// agent-name parity as enable: `--agent <name>` / `--agent=<name>` OR a bare
-// positional, flag wins; an unrecognized leading-dash token is rejected loudly
-// (exit 2). The return code follows the same control-signal convention as
-// parseKeeperEnableArgs (-1 proceed, 0 help, 1 missing agent, 2 unknown flag).
+// parseKeeperDoctorArgs parses the doctor argument vector. FLAG-ONLY (hk-nbft),
+// with the SAME parity as enable: the agent name MUST come via `--agent <name>` /
+// `--agent=<name>`. ANY positional argument is rejected loudly (exit 2) with the
+// shared resolveKeeperAgent message — `doctor captain` previously accepted the
+// positional and exited 0 (false-green at keeper boot). An unrecognized
+// leading-dash token is likewise rejected (exit 2). The return code follows the
+// same control-signal convention as parseKeeperEnableArgs (-1 proceed, 0 help,
+// 1 missing agent, 2 unknown flag OR unexpected positional).
 func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs, int) {
 	var (
 		da        doctorArgs
@@ -421,15 +433,21 @@ func parseKeeperDoctorArgs(args []string, stdout, stderr io.Writer) (doctorArgs,
 		}
 	}
 
-	// Flag wins positional.
+	// FLAG-ONLY (hk-nbft): any positional argument is rejected with the SAME
+	// message resolveKeeperAgent uses for the other keeper verbs, exit 2.
+	if len(rest) > 0 {
+		fmt.Fprintf(stderr,
+			"harmonik keeper doctor: unexpected positional argument(s) %q — this command is flag-only; use --agent <name>\n",
+			strings.Join(rest, " "))
+		fmt.Fprint(stderr, keeperDoctorUsage)
+		return doctorArgs{}, 2
+	}
+
 	da.agentName = agentFlag
 	if da.agentName == "" {
-		if len(rest) < 1 {
-			fmt.Fprintln(stderr, "harmonik keeper doctor: agent name is required")
-			fmt.Fprint(stderr, keeperDoctorUsage)
-			return doctorArgs{}, 1
-		}
-		da.agentName = rest[0]
+		fmt.Fprintln(stderr, "harmonik keeper doctor: --agent <name> is required")
+		fmt.Fprint(stderr, keeperDoctorUsage)
+		return doctorArgs{}, 1
 	}
 	return da, -1
 }
@@ -1092,18 +1110,17 @@ func formatAge(d time.Duration) string {
 
 // ── Usage strings ─────────────────────────────────────────────────────────────
 
-const keeperEnableUsage = `harmonik keeper enable <agent> — wire keeper stanzas into ~/.claude/settings.json
+const keeperEnableUsage = `harmonik keeper enable --agent <name> — wire keeper stanzas into ~/.claude/settings.json
 
 USAGE
-  harmonik keeper enable <agent> [--project DIR] [--scripts-dir DIR] [--tmux TARGET] [--yes-destructive]
-  harmonik keeper enable --agent <agent> [...]
+  harmonik keeper enable --agent <name> [--project DIR] [--scripts-dir DIR] [--tmux TARGET] [--yes-destructive]
 
-ARGUMENTS
-  <agent>   Agent name (e.g. orchestrator, flywheel). Must not contain '/' or '..'.
-            May also be given as --agent <agent>; the flag wins over a positional.
+  FLAG-ONLY (hk-nbft): the agent is named ONLY via --agent. A positional argument
+  is rejected with exit 2 (positionals were a recurring keeper footgun); an
+  unrecognized flag also exits 2.
 
 FLAGS
-  --agent NAME         Agent name (alternative to the positional; flag wins)
+  --agent NAME         Agent name (required; e.g. orchestrator, flywheel). Must not contain '/' or '..'.
   --project DIR        Harmonik project root (default: current working directory)
   --scripts-dir DIR    Directory containing keeper-*.sh scripts (auto-detected if not specified)
   --tmux TARGET        tmux pane target for the run command and pane validation (optional)
@@ -1128,20 +1145,19 @@ SAFETY
 EXIT CODES
   0  Success
   1  Argument, validation, or I/O error
+  2  Unexpected positional argument or unrecognized flag (flag-only)
 `
 
-const keeperDoctorUsage = `harmonik keeper doctor <agent> — read-only drift validator for keeper setup
+const keeperDoctorUsage = `harmonik keeper doctor --agent <name> — read-only drift validator for keeper setup
 
 USAGE
-  harmonik keeper doctor <agent> [--project DIR]
-  harmonik keeper doctor --agent <agent> [--project DIR]
+  harmonik keeper doctor --agent <name> [--project DIR]
 
-ARGUMENTS
-  <agent>   Agent name to check (e.g. orchestrator, flywheel)
-            May also be given as --agent <agent>; the flag wins over a positional.
+  FLAG-ONLY (hk-nbft): the agent is named ONLY via --agent. A positional argument
+  is rejected with exit 2; an unrecognized flag also exits 2.
 
 FLAGS
-  --agent NAME    Agent name (alternative to the positional; flag wins)
+  --agent NAME    Agent name (required; e.g. orchestrator, flywheel)
   --project DIR   Harmonik project root (default: current working directory)
 
 CHECKS (all read-only; no filesystem mutations)
@@ -1160,4 +1176,5 @@ CHECKS (all read-only; no filesystem mutations)
 EXIT CODES
   0  All checks passed
   1  One or more checks failed (details printed to stdout)
+  2  Unexpected positional argument or unrecognized flag (flag-only)
 `

@@ -15,6 +15,12 @@
 # <crew>` then `await-ack --agent <crew>` directly (it survives the crew's /clear);
 # the captain skill documents that path.
 #
+# WINDOW-NESTING (hk-z036): this wrapper drives the restart purely by `--agent`.
+# The inject/verify TARGET — the captain session's `agent` window
+# ($CAP_TMUX:agent) — is bound into the keeper at launch via `--tmux
+# <session>:agent` (captain-launch.sh step 4). A self restart-now respawns ONLY
+# the `agent` window; the keeper window (and this verification path) survives.
+#
 # Usage:
 #   ./scripts/captain-tools/keeper-restart-verified.sh <agent> [--project DIR] \
 #       [--timeout 30s] [--poll 1s]

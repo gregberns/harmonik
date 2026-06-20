@@ -252,3 +252,16 @@ func TestWindowName_NoTruncationAt64(t *testing.T) {
 		t.Errorf("expected verbatim bead_id, got %q", got)
 	}
 }
+
+// TestWindowConstants pins the exported window-name constants that name the two
+// windows inside a captain/crew session per the tmux-session-organization
+// CONTRACT. Consumers (daemon slice C, keeper slice K via mirrored literals)
+// depend on these exact values.
+func TestWindowConstants(t *testing.T) {
+	if WindowAgent != "agent" {
+		t.Errorf("WindowAgent = %q; want %q", WindowAgent, "agent")
+	}
+	if WindowKeeper != "keeper" {
+		t.Errorf("WindowKeeper = %q; want %q", WindowKeeper, "keeper")
+	}
+}

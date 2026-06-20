@@ -304,3 +304,38 @@ func TestRunTmuxStart_DefaultSessionName(t *testing.T) {
 		t.Errorf("RunTmuxStart default-name: hash part %q has len %d, want 12", hash, len(hash))
 	}
 }
+
+// TestSupervisorSessionName verifies the supervisor session name follows the
+// hk-<hash12>-supervise form (shortened from the legacy hk-<hash>-daemon-supervise).
+// The supervisor DELIBERATELY keeps the hk- prefix to stay OUTSIDE the
+// harmonik-<hash>-* orphan-sweep namespace (PL-019, tmux-session-organization
+// CONTRACT) — so it must NOT carry the harmonik- prefix.
+func TestSupervisorSessionName(t *testing.T) {
+	dir := t.TempDir()
+	name := SupervisorSessionName(dir)
+
+	if !strings.HasPrefix(name, "hk-") {
+		t.Errorf("SupervisorSessionName(%q) = %q; want hk- prefix (must stay outside harmonik-<hash>-* swept namespace)", dir, name)
+	}
+	if strings.HasPrefix(name, "harmonik-") {
+		t.Errorf("SupervisorSessionName(%q) = %q; must NOT carry harmonik- prefix (would expose it to the orphan sweep)", dir, name)
+	}
+	if !strings.HasSuffix(name, "-supervise") {
+		t.Errorf("SupervisorSessionName(%q) = %q; want -supervise suffix", dir, name)
+	}
+	if strings.Contains(name, "daemon-supervise") {
+		t.Errorf("SupervisorSessionName(%q) = %q; must not contain legacy daemon-supervise", dir, name)
+	}
+	// hash part must be exactly 12 hex chars: hk-<hash>-supervise.
+	parts := strings.SplitN(name, "-", 3)
+	if len(parts) != 3 {
+		t.Fatalf("SupervisorSessionName: cannot split %q into 3 parts", name)
+	}
+	if hash := parts[1]; len(hash) != 12 {
+		t.Errorf("SupervisorSessionName: hash part %q has len %d, want 12", hash, len(hash))
+	}
+	// Same hash as the DefaultSessionName family (same project), different prefix.
+	if want := tmuxStartHashDir(dir); parts[1] != want {
+		t.Errorf("SupervisorSessionName: hash %q != project hash %q", parts[1], want)
+	}
+}

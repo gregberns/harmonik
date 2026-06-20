@@ -170,9 +170,12 @@ func DefaultSessionName(projectDir string) string {
 }
 
 // SupervisorSessionName returns the tmux session name for the auto-revive
-// supervisor for the given project directory. Format: hk-<project_hash>-daemon-supervise
-// (fleet-portability: per-project, outside the harmonik-<hash>- orphan-sweep
-// namespace, per specs/process-lifecycle.md §PL-019).
+// supervisor for the given project directory. Format: hk-<project_hash>-supervise
+// (shortened from the legacy hk-<hash>-daemon-supervise form). The supervisor
+// DELIBERATELY keeps the hk- prefix so it stays OUTSIDE the harmonik-<hash>-*
+// namespace that the daemon's boot orphan-sweep prefix-kills (orphansweep.go,
+// PL-019) — moving it into harmonik-<hash>-* would require a sweep-exclusion
+// entry and widen the blast radius. Per the tmux-session-organization CONTRACT.
 //
 // The daemon, launched as a child of the supervisor, can inherit $TMUX pointing
 // at this session; implementer windows MUST NOT spawn here (they would leak into
@@ -183,7 +186,7 @@ func DefaultSessionName(projectDir string) string {
 // the flywheel session — see FlywheelSessionName) as spawn targets; every other
 // ambient session is a valid, already-existing spawn target.
 func SupervisorSessionName(projectDir string) string {
-	return "hk-" + tmuxStartHashDir(projectDir) + "-daemon-supervise"
+	return "hk-" + tmuxStartHashDir(projectDir) + "-supervise"
 }
 
 // FlywheelSessionName returns the tmux session name for the flywheel (shim)

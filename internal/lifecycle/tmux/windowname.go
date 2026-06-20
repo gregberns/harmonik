@@ -15,6 +15,26 @@ const (
 	projectHashPrefixLen = 6
 )
 
+// WindowAgent and WindowKeeper name the two windows inside a captain or crew
+// session (harmonik-<hash>-captain / harmonik-<hash>-crew-<name>), per the
+// tmux-session-organization CONTRACT:
+//
+//   - WindowAgent ("agent")  holds the LLM pane (claude --remote-control).
+//   - WindowKeeper ("keeper") holds the per-agent session-keeper watcher, which
+//     injects into the sibling "agent" window's active pane.
+//
+// A captain/crew restart respawns ONLY the "agent" window so the keeper window
+// (and the keeper process) survive the restart. The daemon (slice C) imports
+// these constants when constructing the session's window layout.
+//
+// The keeper package is depguard-isolated from internal/lifecycle and therefore
+// cannot import these symbols; it hardcodes the same "agent"/"keeper" literals
+// with a "// MUST match tmux.WindowAgent/WindowKeeper" comment.
+const (
+	WindowAgent  = "agent"
+	WindowKeeper = "keeper"
+)
+
 // WindowName derives the deterministic tmux window name for a given agent
 // session. The function is pure: identical inputs produce identical outputs
 // across invocations.

@@ -16,6 +16,107 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
+// keeperBuildParams carries the per-invocation, side-effect-free inputs the
+// keeper Cycler/Watcher config literals are built from. It exists so the
+// resolve→construct path that `harmonik keeper` uses (ResolveKeeperConfig +
+// buildKeeperConfigs) is reachable from a test WITHOUT spinning the full
+// runKeeperSubcommand (which acquires a lock, runs doctor, and blocks on signals).
+// Refs: hk-yy57 (live config-driven-thresholds E2E test seam).
+type keeperBuildParams struct {
+	AgentName    string
+	ProjectDir   string
+	ResolvedTmux string
+	WindowSize   int64
+	WarnOnly     bool
+	RespawnCmd   string
+	ForceRestart bool
+	// WarnPctRaw/ActPctRaw are the raw --warn-pct/--act-pct percent values (0..100)
+	// threaded into CyclerConfig.ActPct and WatcherConfig.WarnPct verbatim, exactly
+	// as the inline path did.
+	WarnPctRaw int
+	ActPctRaw  int
+	// KeeperCfg carries the config-only warn-text overrides (the only KeeperConfig
+	// fields the literals read directly rather than via ResolvedKeeperConfig).
+	KeeperCfg daemon.KeeperConfig
+}
+
+// buildKeeperConfigs builds the CyclerConfig and WatcherConfig literals the keeper
+// start path constructs, from the already-resolved ResolvedKeeperConfig and the
+// per-invocation params. It is SIDE-EFFECT-FREE: it returns the two config literals
+// (data) and does NOT call NewCycler / RecoverFromCrash / NewWatcher — the caller
+// (runKeeperSubcommand) owns those side effects so behaviour is byte-identical to
+// the prior inline construction. The returned WatcherConfig.Cycler is left nil; the
+// caller assigns the constructed *Cycler after crash recovery. Factored out (no
+// behaviour change) so the config-driven-threshold resolution + construction is
+// testable end-to-end without the lock/doctor/signal machinery. Refs: hk-yy57.
+func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (keeper.CyclerConfig, keeper.WatcherConfig) {
+	// hk-4gtu: BootGrace is fed at the Cycler construction site (never via
+	// applyDefaults). When neither flag nor config set it, use DefaultBootGracePeriod
+	// (5m); when set, honor the configured value VERBATIM including the 0 = disabled
+	// sentinel.
+	resolvedBootGrace := keeper.DefaultBootGracePeriod
+	if resolved.BootGraceSet {
+		resolvedBootGrace = resolved.BootGrace
+	}
+
+	cyclerCfg := keeper.CyclerConfig{
+		AgentName:            p.AgentName,
+		ProjectDir:           p.ProjectDir,
+		TmuxTarget:           p.ResolvedTmux,
+		ActPct:               float64(p.ActPctRaw),
+		ActAbsTokens:         resolved.ActAbsTokens,
+		WarnAbsTokens:        resolved.WarnAbsTokens,
+		ForceActAbsTokens:    resolved.ForceActAbsTokens,
+		ActPctCeil:           resolved.ActPctCeil,
+		WarnPctCeil:          resolved.WarnPctCeil,
+		IdleRestartAbsTokens: resolved.IdleRestartAbsTokens,
+		HandoffTimeout:       resolved.HandoffTimeout,
+		ClearSettle:          resolved.ClearSettle,
+		PollInterval:         resolved.CyclerPollInterval,
+		ForceRetryInterval:   resolved.ForceRetryInterval,
+		IdleRestartCooldown:  resolved.IdleRestartCooldown,
+		MaxHandoffTimeouts:   resolved.MaxHandoffTimeouts,
+		SendEscapeFn:         keeper.SendEscapeKey,
+		BootGracePeriod:      resolvedBootGrace,
+		ForceRestartFn:       keeperForceRestartFn(p.ForceRestart, p.ProjectDir, p.RespawnCmd),
+	}
+
+	watcherCfg := keeper.WatcherConfig{
+		AgentName:            p.AgentName,
+		ProjectDir:           p.ProjectDir,
+		WarnPct:              float64(p.WarnPctRaw),
+		TmuxTarget:           p.ResolvedTmux,
+		Cycler:               nil, // caller assigns the constructed *Cycler post crash-recovery
+		FallbackWindowSize:   p.WindowSize,
+		WarnAbsTokens:        resolved.WarnAbsTokens,
+		WarnPctCeil:          resolved.WarnPctCeil,
+		WarnOnly:             p.WarnOnly,
+		RespawnCmd:           p.RespawnCmd,
+		PollInterval:         resolved.PollInterval,
+		IdleQuiesce:          resolved.IdleQuiesce,
+		Staleness:            resolved.Staleness,
+		RespawnGrace:         resolved.RespawnGrace,
+		RespawnCooldown:      resolved.RespawnCooldown,
+		LiveRecoverGrace:     resolved.LiveRecoverGrace,
+		LiveRecoverCooldown:  resolved.LiveRecoverCooldown,
+		NoGaugeBackoff:       resolved.NoGaugeBackoff,
+		HardCeilingCooldown:  resolved.HardCeilingCooldown,
+		BlindKeeperThreshold: resolved.BlindKeeperThreshold,
+		HeartbeatMaxMisses:   resolved.HeartbeatMaxMisses,
+		HardCeilingTokens:    resolved.HardCeilingAbsTokens,
+		HardCeilingMode:      resolved.HardCeilingMode,
+		HardCeilingRestartFn: keeperHardCeilingRestartFn(
+			resolved.HardCeilingMode, p.ResolvedTmux, p.ProjectDir, p.RespawnCmd),
+		WarnCooldown:     resolved.WarnCooldown,
+		LiveRecoverFn:    keeperLiveRecoverFn(p.WarnOnly, p.ProjectDir, p.RespawnCmd),
+		DefaultWarnText:  p.KeeperCfg.DefaultWarnText,
+		OnDemandWarnText: p.KeeperCfg.OnDemandWarnText,
+		ReapDecisions:    true,
+		HeartbeatEnabled: true,
+	}
+	return cyclerCfg, watcherCfg
+}
+
 // runKeeperSubcommand implements `harmonik keeper`.
 //
 // Flags:
@@ -328,48 +429,28 @@ func runKeeperSubcommand(args []string) int {
 
 	emitter := keeper.NewFileEmitter(projectDir)
 
+	// hk-yy57: build the Cycler/Watcher config LITERALS through the shared,
+	// side-effect-free buildKeeperConfigs helper (resolve→construct seam). The
+	// side-effecting NewCycler / RecoverFromCrash / NewWatcher calls stay here so
+	// behaviour is byte-identical to the prior inline construction.
+	cyclerCfg, cfg := buildKeeperConfigs(resolved, keeperBuildParams{
+		AgentName:    agentFlag,
+		ProjectDir:   projectDir,
+		ResolvedTmux: resolvedTmux,
+		WindowSize:   windowSizeFlag,
+		WarnOnly:     warnOnlyFlag,
+		RespawnCmd:   respawnCmdFlag,
+		ForceRestart: forceRestartFlag,
+		WarnPctRaw:   warnPctFlag,
+		ActPctRaw:    actPctFlag,
+		KeeperCfg:    keeperCfg,
+	})
+
 	// In warn-only mode skip the cycler entirely — no handoff/clear/resume cycles.
-	// Refs: hk-yfcc. (resolvedBootGrace computed above, before the banner.)
+	// Refs: hk-yfcc.
 	var cycler *keeper.Cycler
 	if !warnOnlyFlag {
-		cycler = keeper.NewCycler(keeper.CyclerConfig{
-			AgentName:         agentFlag,
-			ProjectDir:        projectDir,
-			TmuxTarget:        resolvedTmux,
-			ActPct:            float64(actPctFlag),
-			ActAbsTokens:      resolvedActAbs,
-			WarnAbsTokens:     resolvedWarnAbs,
-			ForceActAbsTokens: resolvedForceActAbs,
-			ActPctCeil:        resolvedActPctCeil,
-			WarnPctCeil:       resolvedWarnPctCeil,
-			// R2 (hk-4pnv/hk-4gtu): the idle-crew restart floor is now resolved through
-			// ResolveKeeperConfig (FLAG --idle-floor-abs-tokens > CONFIG
-			// context_thresholds.idle_floor_abs_tokens > DEFAULT 150k), so an adopter's
-			// config/flag demonstrably reaches the constructed Cycler.
-			IdleRestartAbsTokens: resolved.IdleRestartAbsTokens,
-			// hk-4gtu: thread the resolved cycler cadence/budget so config values reach
-			// the constructed Cycler instead of being parsed-then-dropped (R2 violation).
-			HandoffTimeout:      resolved.HandoffTimeout,
-			ClearSettle:         resolved.ClearSettle,
-			PollInterval:        resolved.CyclerPollInterval,
-			ForceRetryInterval:  resolved.ForceRetryInterval,
-			IdleRestartCooldown: resolved.IdleRestartCooldown,
-			// MaxHandoffTimeouts 0 = no-escalation sentinel preserved end-to-end:
-			// resolved.MaxHandoffTimeouts forwards the configured value; 0 (unconfigured)
-			// → CyclerConfig.applyDefaults fills DefaultMaxHandoffTimeouts (3).
-			MaxHandoffTimeouts: resolved.MaxHandoffTimeouts,
-			SendEscapeFn:       keeper.SendEscapeKey,
-			// hk-4gtu: BootGrace is resolved (FLAG > CONFIG > DEFAULT) at this site,
-			// preserving the 0 = disabled sentinel; young-session guard (hk-4f8/hk-8hr1).
-			BootGracePeriod: resolvedBootGrace,
-			// hk-suxt: activate the handoff-timeout hard-restart escalation
-			// (cycle.go:767, dormant until now because CyclerConfig.ForceRestartFn was
-			// never populated in production). Fail-closed: nil unless the operator BOTH
-			// opts in with --force-restart AND supplies a --respawn-cmd to launch from.
-			// MaxHandoffTimeouts defaults to 3 (applyDefaults), so a non-nil fn alone
-			// enables the escalation. Thresholds are unchanged (operator HARD-NO).
-			ForceRestartFn: keeperForceRestartFn(forceRestartFlag, projectDir, respawnCmdFlag),
-		}, emitter)
+		cycler = keeper.NewCycler(cyclerCfg, emitter)
 
 		// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before
 		// starting the watcher loop (resume any interrupted /clear, or abort cleanly).
@@ -377,76 +458,9 @@ func runKeeperSubcommand(args []string) int {
 			fmt.Fprintf(os.Stderr, "harmonik keeper: crash recovery: %v\n", recoverErr)
 		}
 	}
+	// Assign the constructed *Cycler (nil in warn-only mode) after crash recovery.
+	cfg.Cycler = cycler
 
-	cfg := keeper.WatcherConfig{
-		AgentName:          agentFlag,
-		ProjectDir:         projectDir,
-		WarnPct:            float64(warnPctFlag),
-		TmuxTarget:         resolvedTmux,
-		Cycler:             cycler,
-		FallbackWindowSize: windowSizeFlag,
-		WarnAbsTokens:      resolvedWarnAbs,
-		WarnPctCeil:        resolvedWarnPctCeil,
-		WarnOnly:           warnOnlyFlag,
-		RespawnCmd:         respawnCmdFlag,
-		// hk-4gtu: thread the resolved watcher timing/cadence/budget so a config
-		// value (or tier-1 flag) demonstrably reaches keeper behaviour instead of
-		// parsing-then-dropping (the R2 violation this bead closes). Defaults are
-		// already baked in by the resolver (keeper.Default* consts), so these are
-		// never 0 — applyDefaults is a no-op belt-and-suspenders for them.
-		PollInterval:         resolved.PollInterval,
-		IdleQuiesce:          resolved.IdleQuiesce,
-		Staleness:            resolved.Staleness,
-		RespawnGrace:         resolved.RespawnGrace,
-		RespawnCooldown:      resolved.RespawnCooldown,
-		LiveRecoverGrace:     resolved.LiveRecoverGrace,
-		LiveRecoverCooldown:  resolved.LiveRecoverCooldown,
-		NoGaugeBackoff:       resolved.NoGaugeBackoff,
-		HardCeilingCooldown:  resolved.HardCeilingCooldown,
-		BlindKeeperThreshold: resolved.BlindKeeperThreshold,
-		HeartbeatMaxMisses:   resolved.HeartbeatMaxMisses,
-		// HardCeilingTokens + HardCeilingMode (hk-n6kn/hk-4gtu): thread the resolved
-		// SID-independent backstop ceiling AND mode. Mode zero value = Alarm (the
-		// operator-chosen default), so an unconfigured mode is alarm-safe.
-		HardCeilingTokens: resolved.HardCeilingAbsTokens,
-		HardCeilingMode:   resolved.HardCeilingMode,
-		// HardCeilingRestartFn (hk-z8d0): wire the SID-independent blind-path
-		// auto-restart ONLY in restart mode, and FAIL-CLOSED — nil unless mode ==
-		// restart AND --respawn-cmd is set AND a durable pane is resolvable. When
-		// the fn is nil the watcher's restart mode degrades to alarm-only (emit, no
-		// restart), never panics. This closes hk-746u (the failsafe was nil in
-		// production). The auto-restart is exclusive to the blind/foreign path; the
-		// normal SID-matched path restarts via force_act at the act/force cycle.
-		HardCeilingRestartFn: keeperHardCeilingRestartFn(
-			resolved.HardCeilingMode, resolvedTmux, projectDir, respawnCmdFlag),
-		// WarnCooldown < 0 = disabled sentinel preserved end-to-end: resolved.WarnCooldown
-		// forwards the configured value; 0 (unconfigured) → applyDefaults fills 30s,
-		// a negative value disables the cooldown.
-		WarnCooldown: resolved.WarnCooldown,
-		// hk-75mr: gauge-INDEPENDENT live-pane recovery. When the gauge is stale
-		// past LiveRecoverGrace (default 5m) but the pane is still ALIVE (agent hung
-		// mid-turn), no operator is attached, the agent is not blocked on a
-		// decision, and the bound .sid identity is a valid UUIDv4, fire a gated
-		// ForceRestart via the operator-supplied --respawn-cmd (the same launch
-		// command the idle-respawn path uses; the closure re-verifies identity and
-		// refuses on a non-UUIDv4 .sid). Nil when --respawn-cmd is empty → disabled.
-		// Also nil when --warn-only: no live-pane recovery for crew keepers.
-		LiveRecoverFn: keeperLiveRecoverFn(warnOnlyFlag, projectDir, respawnCmdFlag),
-		// Warn text overrides from config.yaml (empty = use compiled defaults).
-		DefaultWarnText:  keeperCfg.DefaultWarnText,
-		OnDemandWarnText: keeperCfg.OnDemandWarnText,
-		// hitl-decisions K5 (hk-061): the keeper watch tick is the SOLE emitter of
-		// decision_withdrawn(orphaned, by=keeper). Enable the orphan reaper on the
-		// standalone keeper; it reuses the FileEmitter (appends to the same
-		// events.jsonl) and derives EventsJSONLPath from ProjectDir in applyDefaults.
-		ReapDecisions: true,
-		// hk-81wk: keep the gauge live independent of statusLine repaint. Once the
-		// gauge ages toward Staleness while the tmux pane is still alive, the watcher
-		// re-writes .ctx with a fresh ts (transcript-derived token count when
-		// available), so a live agent's gauge NEVER goes stale — the dominant
-		// no_gauge:stale failure that killed both keeper triggers.
-		HeartbeatEnabled: true,
-	}
 	w := keeper.NewWatcher(cfg, emitter)
 	if runErr := w.Run(ctx); runErr != nil && !errors.Is(runErr, context.Canceled) {
 		fmt.Fprintf(os.Stderr, "harmonik keeper: watcher: %v\n", runErr)

@@ -168,9 +168,56 @@ type rawKeeperWarnMessages struct {
 
 // rawKeeperConfig is the keeper: block in config.yaml.
 // Unknown keys at this level are silently ignored (forward-compat per hk-lhu2).
+//
+// # Config-schema convention (LOCKED — hk-exg3)
+//
+// All keeper config lives in ONE keeper: block under schema_version: 1 in
+// .harmonik/config.yaml. It is NOT a second file, and it is NOT project.yaml
+// (project.yaml is the captain's separate state file under .harmonik/context/,
+// unrelated to this loader).
+//
+// Field-type convention for every present and future keeper sub-field:
+//   - Token / count fields are ints (e.g. warn_abs_tokens, max_concurrent).
+//   - ALL duration fields are Go duration STRINGS (e.g. "5m", "120s") parsed
+//     with time.ParseDuration. A bare number for a duration field MUST fail
+//     loudly (time.ParseDuration rejects it) — never silently coerce a number
+//     to seconds/nanoseconds.
+//
+// # Absent-file fast path (hk-exg3)
+//
+// The empty-file sentinel in parseProjectConfig uses keeperBlockAbsent, an
+// explicit field-by-field zero check, NOT `raw.Keeper == (rawKeeperConfig{})`.
+// This is deliberate: the moment any forthcoming keeper config bead adds a
+// slice / map / nested-non-comparable sub-struct field, the `==` form stops
+// compiling. keeperBlockAbsent keeps the absent-file fast path compiling and
+// MUST be extended field-by-field whenever a field is added here.
 type rawKeeperConfig struct {
 	ContextThresholds rawKeeperContextThresholds `yaml:"context_thresholds"`
 	WarnMessages      rawKeeperWarnMessages      `yaml:"warn_messages"`
+}
+
+// keeperBlockAbsent reports whether the keeper: block is at its zero value —
+// i.e. no keeper config was supplied in .harmonik/config.yaml. It does an
+// explicit field-by-field zero check rather than `raw == (rawKeeperConfig{})`
+// so that adding a slice / map / nested-non-comparable sub-struct field to
+// rawKeeperConfig (which forthcoming hk-exg3-initiative beads will do) cannot
+// break compilation of the absent-file fast path.
+//
+// INVARIANT (hk-exg3): every field of rawKeeperConfig MUST be checked here.
+// When a field is added to rawKeeperConfig (or its sub-structs), extend this
+// helper in lockstep.
+//
+// Bead ref: hk-exg3.
+func keeperBlockAbsent(raw rawKeeperConfig) bool {
+	t := raw.ContextThresholds
+	w := raw.WarnMessages
+	return t.WarnAbsTokens == 0 &&
+		t.ActAbsTokens == 0 &&
+		t.ForceActAbsTokens == 0 &&
+		t.ActPctCeil == 0 &&
+		t.WarnPctCeil == 0 &&
+		w.DefaultWarnText == "" &&
+		w.OnDemandWarnText == ""
 }
 
 // KeeperConfig holds the keeper-level configuration read from the
@@ -325,7 +372,7 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	daemonAbsent := raw.Daemon.WorkflowMode == "" && raw.Daemon.MaxConcurrent == 0 &&
 		raw.Daemon.TargetBranch == "" && len(raw.Daemon.AllowedRepos) == 0
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
-		daemonAbsent && raw.Keeper == (rawKeeperConfig{}) {
+		daemonAbsent && keeperBlockAbsent(raw.Keeper) {
 		return ProjectConfig{}, nil
 	}
 

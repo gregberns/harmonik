@@ -1567,6 +1567,33 @@ func ExportedLoadProjectConfig(repoRoot string) (ProjectConfig, error) {
 	return LoadProjectConfig(repoRoot)
 }
 
+// ExportedRawKeeperConfig is a type alias for rawKeeperConfig so tests in
+// package daemon_test can construct keeper-block fixtures directly.
+//
+// Bead ref: hk-exg3.
+type ExportedRawKeeperConfig = rawKeeperConfig
+
+// ExportedRawKeeperContextThresholds is a type alias for the nested
+// context_thresholds sub-struct so tests can set a single field.
+//
+// Bead ref: hk-exg3.
+type ExportedRawKeeperContextThresholds = rawKeeperContextThresholds
+
+// ExportedRawKeeperWarnMessages is a type alias for the nested warn_messages
+// sub-struct so tests can set a single field.
+//
+// Bead ref: hk-exg3.
+type ExportedRawKeeperWarnMessages = rawKeeperWarnMessages
+
+// ExportedKeeperBlockAbsent exposes keeperBlockAbsent for tests in package
+// daemon_test (hk-exg3): the explicit field-by-field zero check that replaces
+// the `== (rawKeeperConfig{})` empty-block sentinel.
+//
+// Bead ref: hk-exg3.
+func ExportedKeeperBlockAbsent(raw ExportedRawKeeperConfig) bool {
+	return keeperBlockAbsent(raw)
+}
+
 // ExportedResolveModelPreference exposes ResolveModelPreference for tests.
 //
 // Bead ref: hk-bfvk7.

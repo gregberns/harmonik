@@ -58,6 +58,8 @@
 .env.*
 *.env
 .env.*.local
+*.env.txt
+edited.env.txt
 
 # Per-thread session handoffs (operator/agent working artifacts). The canonical
 # HANDOFF.md stays tracked; per-thread HANDOFF-<name>.md are scratch and MUST be

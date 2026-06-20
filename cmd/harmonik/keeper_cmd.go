@@ -410,6 +410,15 @@ func runKeeperSubcommand(args []string) int {
 		// operator-chosen default), so an unconfigured mode is alarm-safe.
 		HardCeilingTokens: resolved.HardCeilingAbsTokens,
 		HardCeilingMode:   resolved.HardCeilingMode,
+		// HardCeilingRestartFn (hk-z8d0): wire the SID-independent blind-path
+		// auto-restart ONLY in restart mode, and FAIL-CLOSED — nil unless mode ==
+		// restart AND --respawn-cmd is set AND a durable pane is resolvable. When
+		// the fn is nil the watcher's restart mode degrades to alarm-only (emit, no
+		// restart), never panics. This closes hk-746u (the failsafe was nil in
+		// production). The auto-restart is exclusive to the blind/foreign path; the
+		// normal SID-matched path restarts via force_act at the act/force cycle.
+		HardCeilingRestartFn: keeperHardCeilingRestartFn(
+			resolved.HardCeilingMode, resolvedTmux, projectDir, respawnCmdFlag),
 		// WarnCooldown < 0 = disabled sentinel preserved end-to-end: resolved.WarnCooldown
 		// forwards the configured value; 0 (unconfigured) → applyDefaults fills 30s,
 		// a negative value disables the cooldown.
@@ -469,6 +478,25 @@ func keeperForceRestartFn(forceRestart bool, projectDir, respawnCmd string) func
 // --respawn-cmd is empty). Refs: hk-yfcc, hk-75mr.
 func keeperLiveRecoverFn(warnOnly bool, projectDir, respawnCmd string) func(ctx context.Context, agentName string) error {
 	if warnOnly {
+		return nil
+	}
+	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)
+}
+
+// keeperHardCeilingRestartFn returns the HardCeilingRestartFn to wire into
+// WatcherConfig for the SID-independent blind-path hard-ceiling auto-restart
+// (watcher.go Backstop 2). It is FAIL-CLOSED: nil — the ceiling stays alarm-only,
+// behaviour-identical to the dormant-failsafe state hk-746u captured — UNLESS the
+// operator selects restart mode AND supplies a --respawn-cmd to launch from AND a
+// durable pane target is resolvable. The returned closure reuses
+// NewLiveRecoverViaRespawn, which re-verifies the bound .sid identity at the moment
+// of firing and refuses (no restart) on a non-UUIDv4 — the auto-restart is the most
+// destructive keeper action on the blind path. When mode != restart this is nil,
+// so the gate (which calls the fn ONLY in restart mode) never reaches a non-restart
+// path; the explicit mode check here is belt-and-suspenders. Refs: hk-z8d0 (wire
+// the dormant ceiling restart), resolves hk-746u.
+func keeperHardCeilingRestartFn(mode keeper.HardCeilingMode, tmuxTarget, projectDir, respawnCmd string) func(ctx context.Context, agentName string) error {
+	if mode != keeper.HardCeilingModeRestart || respawnCmd == "" || tmuxTarget == "" {
 		return nil
 	}
 	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)

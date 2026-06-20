@@ -485,9 +485,13 @@ type WatcherConfig struct {
 	HardCeilingTokens int64
 
 	// HardCeilingMode selects the backstop's action at the ceiling. Zero value =
-	// HardCeilingModeAlarm (operator-chosen default). The gate does NOT yet
-	// consult this field — restart still keys on HardCeilingRestartFn != nil;
-	// the mode is threaded for the next bead. Refs: hk-n6kn.
+	// HardCeilingModeAlarm (operator-chosen default). The gate CONSULTS this field
+	// (hk-z8d0): off → no-op; alarm → emit only (even when HardCeilingRestartFn is
+	// nil); restart → emit + call HardCeilingRestartFn (degrades to alarm-only when
+	// the fn is nil). The auto-restart is EXCLUSIVE to the SID-independent
+	// blind/foreign path — the normal SID-matched path restarts via force_act at
+	// the act/force cycle, never via this ceiling. Refs: hk-n6kn (type), hk-z8d0
+	// (gate wiring; resolves hk-746u dormant-failsafe).
 	HardCeilingMode HardCeilingMode
 
 	// HardCeilingCooldown is the minimum duration between consecutive
@@ -958,24 +962,54 @@ func (w *Watcher) Run(ctx context.Context) error {
 						w.blindAlarmFired = true
 					}
 
-					// ── Backstop 2: SID-independent hard-ceiling failsafe (hk-34ac) ──
+					// ── Backstop 2: SID-independent hard-ceiling failsafe (hk-z8d0) ──
 					// Even when the SID is foreign, the ctxFile IS readable (we just
-					// parsed it above). If the pane has hit HardCeilingAbsTokens
-					// (280 000), force a restart regardless of SID binding so a
-					// mis-bound keeper cannot silently allow context overflow.
-					// Cooldown-gated to prevent thrashing. Skip if token count is not
-					// available (zero — older .ctx or unreadable field).
-					if ctxFile.Tokens > 0 && ctxFile.Tokens >= w.cfg.HardCeilingTokens &&
-						w.cfg.HardCeilingRestartFn != nil {
-						if hardCeilingLastAt.IsZero() || time.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
-							slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): forcing restart",
-								"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens)
-							w.emitHardCeiling(ctx, ctxFile.Tokens)
-							_ = w.cfg.HardCeilingRestartFn(ctx, w.cfg.AgentName) //nolint:errcheck // best-effort restart
-							hardCeilingLastAt = time.Now()
+					// parsed it above). This is the ONE place the keeper can act on
+					// context overflow while blind: the normal act/force cycle cannot
+					// run (the cycler keys on a fresh, SID-matched gauge), so a
+					// mis-bound keeper would otherwise silently allow overflow.
+					//
+					// Mode gating (HardCeilingMode, default alarm) — fixes hk-746u, the
+					// dormant-failsafe bug where the emit lived INSIDE the
+					// `HardCeilingRestartFn != nil` guard, so alarm mode (and a nil fn)
+					// emitted nothing:
+					//   - off     → no-op (no emit, no restart).
+					//   - alarm   → emit session_keeper_hard_ceiling ONLY. The emit MUST
+					//               fire even when HardCeilingRestartFn is nil.
+					//   - restart → emit + call HardCeilingRestartFn, cooldown-gated. If
+					//               the fn is nil (not wired) it degrades to alarm
+					//               (emit only) — never panics.
+					// Skip entirely if token count is not available (zero — older .ctx
+					// or unreadable field) or below the ceiling.
+					if w.cfg.HardCeilingMode != HardCeilingModeOff &&
+						ctxFile.Tokens > 0 && ctxFile.Tokens >= w.cfg.HardCeilingTokens {
+						wantRestart := w.cfg.HardCeilingMode == HardCeilingModeRestart &&
+							w.cfg.HardCeilingRestartFn != nil
+						if wantRestart {
+							// Restart mode with a wired fn: cooldown-gate the whole
+							// emit+restart so we do not thrash. Outside the cooldown the
+							// emit is suppressed too (the prior tick already alarmed).
+							if hardCeilingLastAt.IsZero() || time.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
+								slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): forcing restart",
+									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens)
+								w.emitHardCeiling(ctx, ctxFile.Tokens)
+								_ = w.cfg.HardCeilingRestartFn(ctx, w.cfg.AgentName) //nolint:errcheck // best-effort restart
+								hardCeilingLastAt = time.Now()
+							} else {
+								slog.DebugContext(ctx, "keeper: hard ceiling hit but cooldown active; skipping restart",
+									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens)
+							}
 						} else {
-							slog.DebugContext(ctx, "keeper: hard ceiling hit but cooldown active; skipping restart",
-								"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens)
+							// Alarm mode, OR restart mode degraded to alarm (fn nil): emit
+							// only, cooldown-gated so we alarm at most once per cooldown
+							// window rather than every tick the pane sits above ceiling.
+							if hardCeilingLastAt.IsZero() || time.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
+								slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): alarm only",
+									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens,
+									"mode", w.cfg.HardCeilingMode.String())
+								w.emitHardCeiling(ctx, ctxFile.Tokens)
+								hardCeilingLastAt = time.Now()
+							}
 						}
 					}
 

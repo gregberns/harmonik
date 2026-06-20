@@ -151,6 +151,34 @@ func TestResolveKeeperConfig_FailLoud(t *testing.T) {
 			wantField: "warn_pct<act_pct",
 		},
 		{
+			// hk-z8d0: restart-mode ceiling AT force_act is nonsensical — force_act
+			// already restarts via the cycle there. The restart-mode-specific check
+			// runs before the generic force_act<hard_ceiling band check, so the
+			// operator sees the intent-naming field, not the generic band message.
+			name: "restart-mode hard ceiling == force_act is rejected",
+			cfg: daemon.KeeperConfig{
+				WarnAbsTokens:        200_000,
+				ActAbsTokens:         215_000,
+				ForceActAbsTokens:    240_000,
+				HardCeilingAbsTokens: 240_000, // == force_act → nonsensical in restart mode
+				HardCeilingMode:      "restart",
+			},
+			wantField: "hard_ceiling.abs_tokens",
+		},
+		{
+			// hk-z8d0: restart-mode ceiling BELOW force_act is likewise rejected by
+			// the restart-specific check (it uses <=).
+			name: "restart-mode hard ceiling below force_act is rejected",
+			cfg: daemon.KeeperConfig{
+				WarnAbsTokens:        200_000,
+				ActAbsTokens:         215_000,
+				ForceActAbsTokens:    240_000,
+				HardCeilingAbsTokens: 230_000, // < force_act
+				HardCeilingMode:      "restart",
+			},
+			wantField: "hard_ceiling.abs_tokens",
+		},
+		{
 			name:      "tighten-only violated: a LOOSER warn-pct flag is rejected",
 			flags:     KeeperFlags{WarnPct: 95, WarnPctSet: true}, // 0.95 > 0.70 default
 			wantField: "--warn-pct",

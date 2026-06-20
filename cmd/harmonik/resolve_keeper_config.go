@@ -332,6 +332,21 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig) (ResolvedKe
 			Reason: fmt.Sprintf("band inversion: act_abs_tokens (%d) must be < force_act_abs_tokens (%d)", out.ActAbsTokens, out.ForceActAbsTokens),
 		}
 	}
+	// Hard-ceiling restart sanity (hk-z8d0): a RESTART-mode ceiling at or below the
+	// effective force_act threshold is nonsensical — force_act already restarts via
+	// the act/force cycle there, so a restart ceiling could never fire later than
+	// force_act and would only double-fire. Reject fail-loud (operator rule) with a
+	// restart-mode-specific, clearly-named field. Checked BEFORE the generic
+	// force_act<hard_ceiling band invariant below so restart-mode operators get the
+	// intent-naming error rather than the generic band message; for non-restart
+	// modes the generic band check still applies.
+	if out.HardCeilingMode == keeper.HardCeilingModeRestart &&
+		out.HardCeilingAbsTokens <= out.ForceActAbsTokens {
+		return ResolvedKeeperConfig{}, &KeeperConfigError{
+			Field:  "hard_ceiling.abs_tokens",
+			Reason: fmt.Sprintf("restart-mode hard ceiling (%d) must be > force_act_abs_tokens (%d): a restart ceiling at/below force_act is nonsensical (force_act already restarts via the cycle there)", out.HardCeilingAbsTokens, out.ForceActAbsTokens),
+		}
+	}
 	if !(out.ForceActAbsTokens < out.HardCeilingAbsTokens) {
 		return ResolvedKeeperConfig{}, &KeeperConfigError{
 			Field:  "force_act<hard_ceiling",

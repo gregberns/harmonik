@@ -340,6 +340,7 @@ func TestHardCeiling_FiresAbove280K_DespiteForeignSession(t *testing.T) {
 		spy := &restartSpy{}
 
 		cfg := foreignSessionConfig(t, projectDir, agent, 290_000)
+		cfg.HardCeilingMode = keeper.HardCeilingModeRestart // hk-z8d0: restart mode calls the fn
 		cfg.HardCeilingRestartFn = spy.restart
 		cfg.HardCeilingCooldown = 10 * time.Second // long cooldown → only one attempt
 
@@ -417,6 +418,7 @@ func TestHardCeiling_CooldownPreventsMultipleRestarts(t *testing.T) {
 	spy := &restartSpy{}
 
 	cfg := foreignSessionConfig(t, projectDir, agent, 290_000)
+	cfg.HardCeilingMode = keeper.HardCeilingModeRestart // hk-z8d0: restart mode calls the fn
 	cfg.HardCeilingRestartFn = spy.restart
 	cfg.HardCeilingCooldown = 10 * time.Second // long cooldown → only one attempt
 
@@ -428,25 +430,177 @@ func TestHardCeiling_CooldownPreventsMultipleRestarts(t *testing.T) {
 	}
 }
 
-// TestHardCeiling_NoRestartWhenFnNil verifies that when HardCeilingRestartFn is
-// nil (fail-closed), no restart fires even at 290K tokens.
-func TestHardCeiling_NoRestartWhenFnNil(t *testing.T) {
+// TestHardCeiling_AlarmEmitsWhenFnNil proves the hk-746u fix (hk-z8d0): in the
+// DEFAULT alarm mode, the hard-ceiling alarm MUST emit even when
+// HardCeilingRestartFn is nil — the emit used to live INSIDE the
+// `HardCeilingRestartFn != nil` guard, so a nil fn (the production state)
+// silently emitted nothing. Now alarm emits regardless of the fn, and the fn is
+// never called in alarm mode.
+func TestHardCeiling_AlarmEmitsWhenFnNil(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	agent := "hard-ceiling-nil-fn-agent"
+	agent := "hard-ceiling-alarm-nil-fn-agent"
 
 	em := &keeper.RecordingEmitter{}
 
 	cfg := foreignSessionConfig(t, projectDir, agent, 290_000)
-	// HardCeilingRestartFn is nil (not set) — backstop disabled.
+	// Default mode is alarm (zero value); HardCeilingRestartFn left nil.
+	cfg.HardCeilingCooldown = 10 * time.Second // alarm at most once
 
 	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
 
-	// No ceiling events (function not wired).
+	// The alarm MUST emit even though the fn is nil (the hk-746u fix).
 	ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling)
-	if len(ceilEvents) != 0 {
-		t.Errorf("want 0 session_keeper_hard_ceiling events when fn is nil; got %d", len(ceilEvents))
+	if len(ceilEvents) == 0 {
+		t.Error("hk-746u regression: want ≥1 session_keeper_hard_ceiling in alarm mode with nil fn; got 0")
+	}
+}
+
+// TestHardCeiling_OffMode_NoEmitNoRestart verifies off mode is a total no-op:
+// no alarm event and no restart call even far above the ceiling.
+func TestHardCeiling_OffMode_NoEmitNoRestart(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "hard-ceiling-off-agent"
+
+	em := &keeper.RecordingEmitter{}
+	spy := &restartSpy{}
+
+	cfg := foreignSessionConfig(t, projectDir, agent, 290_000)
+	cfg.HardCeilingMode = keeper.HardCeilingModeOff
+	cfg.HardCeilingRestartFn = spy.restart // wired but must NOT be called in off mode
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	if n := spy.count(); n != 0 {
+		t.Errorf("off mode: want 0 restart calls; got %d", n)
+	}
+	if ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling); len(ceilEvents) != 0 {
+		t.Errorf("off mode: want 0 session_keeper_hard_ceiling events; got %d", len(ceilEvents))
+	}
+}
+
+// TestHardCeiling_AlarmMode_EmitOnly verifies alarm mode emits the event but NEVER
+// calls the restart fn, even when a fn is wired.
+func TestHardCeiling_AlarmMode_EmitOnly(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "hard-ceiling-alarm-agent"
+
+	em := &keeper.RecordingEmitter{}
+	spy := &restartSpy{}
+
+	cfg := foreignSessionConfig(t, projectDir, agent, 290_000)
+	cfg.HardCeilingMode = keeper.HardCeilingModeAlarm
+	cfg.HardCeilingRestartFn = spy.restart // wired but must NOT be called in alarm mode
+	cfg.HardCeilingCooldown = 10 * time.Second
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	if n := spy.count(); n != 0 {
+		t.Errorf("alarm mode: want 0 restart calls even with a wired fn; got %d", n)
+	}
+	if ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling); len(ceilEvents) == 0 {
+		t.Error("alarm mode: want ≥1 session_keeper_hard_ceiling event; got 0")
+	}
+}
+
+// TestHardCeiling_RestartMode_NilFnDegradesToAlarm verifies that restart mode with
+// a NIL fn does NOT panic and degrades to alarm (emit only). This is the
+// fail-closed degrade path: an operator selected restart but the closure was nil
+// (no --respawn-cmd / unresolvable pane), so we alarm rather than crash.
+func TestHardCeiling_RestartMode_NilFnDegradesToAlarm(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "hard-ceiling-restart-nilfn-agent"
+
+	em := &keeper.RecordingEmitter{}
+
+	cfg := foreignSessionConfig(t, projectDir, agent, 290_000)
+	cfg.HardCeilingMode = keeper.HardCeilingModeRestart
+	// HardCeilingRestartFn deliberately nil — must NOT panic.
+	cfg.HardCeilingCooldown = 10 * time.Second
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	// Degrades to alarm: the event still emits, no panic occurred (test reached here).
+	if ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling); len(ceilEvents) == 0 {
+		t.Error("restart mode with nil fn: want ≥1 alarm event (degrade-to-alarm); got 0")
+	}
+}
+
+// TestHardCeiling_NormalPath_NeverActsOnCeiling is the CRITICAL double-fire guard
+// (hk-z8d0): on the NORMAL (non-foreign, SID-matched) fresh-gauge path the
+// hard-ceiling restart fn must NEVER be called AND no ceiling alarm is emitted —
+// force_act at the act/force cycle already restarts there, so a ceiling
+// auto-restart/alarm would double-fire. The hard-ceiling gate lives ONLY inside
+// the foreign_session branch (which the matched gauge never enters), so a
+// SID-MATCHED gauge above the ceiling must reach the cycler path, never the
+// ceiling gate. We wire a HardCeilingRestartFn spy in restart mode and drive the
+// gauge above the ceiling on a SID-MATCHED gauge; the spy must stay at zero.
+func TestHardCeiling_NormalPath_NeverActsOnCeiling(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "hard-ceiling-normal-path-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// SID-MATCHED gauge ("sess-managed") above the ceiling — the NORMAL path.
+	data, err := json.Marshal(keeper.CtxFile{
+		Pct:       99.0,
+		Tokens:    290_000,
+		SessionID: "sess-managed",
+		Ts:        time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal CtxFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(keeperDir, agent+".ctx"), append(data, '\n'), 0o600); err != nil {
+		t.Fatalf("WriteFile ctx: %v", err)
+	}
+
+	em := &keeper.RecordingEmitter{}
+	ceilSpy := &restartSpy{}
+
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 5 * time.Millisecond,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		// SID is matched on every tick — the NORMAL (non-foreign) path. The
+		// foreign_session branch (the ONLY site of the ceiling gate) is never entered.
+		ReadManagedSessionFn:  func(_, _ string) (string, error) { return "sess-managed", nil },
+		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
+		ReadSidFn: func(_, _ string) (string, time.Time, error) {
+			return "sess-managed", time.Time{}, nil
+		},
+		// Restart mode + a wired ceiling fn: if the gate erroneously evaluated the
+		// ceiling on the normal path, this spy WOULD be called.
+		HardCeilingMode:      keeper.HardCeilingModeRestart,
+		HardCeilingRestartFn: ceilSpy.restart,
+		HardCeilingCooldown:  10 * time.Second,
+		// Cycler nil: the normal path is exercised without needing a live tmux
+		// target; we are only asserting the ceiling gate is NOT reached here.
+	}
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	// The ceiling fn must NEVER fire on the normal path (double-fire guard).
+	if n := ceilSpy.count(); n != 0 {
+		t.Errorf("double-fire guard: hard-ceiling restart fn called %d times on the NORMAL path; want 0 (force_act owns the restart there)", n)
+	}
+	// No SID-independent ceiling alarm on the normal path either — the alarm is
+	// foreign-path-only.
+	if ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling); len(ceilEvents) != 0 {
+		t.Errorf("normal path: want 0 session_keeper_hard_ceiling events (alarm is foreign-path-only); got %d", len(ceilEvents))
 	}
 }
 
@@ -491,6 +645,7 @@ func TestHardCeiling_EffectiveThresholdWiredThrough(t *testing.T) {
 	// 260K is BELOW the 280K default but ABOVE the configured 250K ceiling, so
 	// it only trips when the configured value is actually used by the gate.
 	cfg := foreignSessionConfig(t, projectDir, agent, 260_000)
+	cfg.HardCeilingMode = keeper.HardCeilingModeRestart // hk-z8d0: restart mode calls the fn
 	cfg.HardCeilingTokens = effectiveCeiling
 	cfg.HardCeilingRestartFn = spy.restart
 	cfg.HardCeilingCooldown = 10 * time.Second // long cooldown → one attempt

@@ -5,7 +5,11 @@
 ## Status: ✅ COMPLETE — all 4 beads merged to main
 
 Epic **hk-unjy** CLOSED. CE1/CE4/CE5/CE6 all landed + pushed. Reviews R1–R7 in reviews/.
-One documented follow-up: **hk-orni** (P2) — extend the ops-monitor review-gate to also catch the DOT short-circuit class (`node_dispatch_requested node_id=review*` with no verdict); known limitation, not a regression.
+Follow-up queue DRAINED:
+- **hk-orni** (P2) — DOT short-circuit detection in the review-gate. **LANDED 96bcb8ce** (R8 APPROVE). The CE4 limitation is now closed.
+- **hk-umhp** — captain quality-check false all-clear. **CLOSED** (resolved by CE1+CE4; was a duplicate).
+- **hk-z365** (P3) — comms `--wake` hash symlink-parity nit (filepath.Abs vs EvalSymlinks; affects crew+captain). FILED, left for its own reviewed change (pre-existing, shared comms hashing).
+- doc-sweep: dangling `token-burn-analysis.md` ref fixed (11383c85); the `.harmonik/config.yaml keeper:` block was verified REAL (R3 nit was wrong), skills left as-is.
 
 | Bead | Landed | Reviewer |
 |------|--------|----------|

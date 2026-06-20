@@ -13,11 +13,154 @@ package daemon_test
 // Bead: hk-kbqto.
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/daemon"
 )
+
+// argvHasFlagValue reports whether args contains the pair [flag, value] adjacent
+// (flag immediately followed by value).
+func argvHasFlagValue(args []string, flag, value string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+// argvHasFlag reports whether args contains flag anywhere.
+func argvHasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag {
+			return true
+		}
+	}
+	return false
+}
+
+// TestBuildCrewLaunchSpec_ModelInjection verifies the optional per-crew model:
+// front-matter field (hk-9j3z): a non-empty Model appends [--model <alias>] to
+// argv on BOTH the fresh-session and the --resume branch, and an empty Model
+// appends no --model flag (the crew inherits the compiled default).
+func TestBuildCrewLaunchSpec_ModelInjection(t *testing.T) {
+	t.Parallel()
+
+	const uuid = "01930000-0000-7000-8000-0000000000a1"
+
+	cases := []struct {
+		label  string
+		model  string
+		resume bool
+		want   bool // expect --model present
+	}{
+		{label: "fresh_opus", model: "opus", resume: false, want: true},
+		{label: "fresh_sonnet", model: "sonnet", resume: false, want: true},
+		{label: "resume_opus", model: "opus", resume: true, want: true},
+		{label: "fresh_empty", model: "", resume: false, want: false},
+		{label: "resume_empty", model: "", resume: true, want: false},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.label, func(t *testing.T) {
+			t.Parallel()
+			rc := daemon.ExportedCrewLaunchCtx{
+				Name:       "modeled-crew",
+				SessionID:  uuid,
+				ProjectDir: "/tmp/harmonik",
+				Resume:     c.resume,
+				Model:      c.model,
+			}
+			spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+			if err != nil {
+				t.Fatalf("buildCrewLaunchSpec(%s): unexpected error: %v", c.label, err)
+			}
+
+			hasFlag := argvHasFlag(spec.Args, "--model")
+			if hasFlag != c.want {
+				t.Fatalf("%s: --model present=%v; want %v (argv=%v)", c.label, hasFlag, c.want, spec.Args)
+			}
+			if c.want && !argvHasFlagValue(spec.Args, "--model", c.model) {
+				t.Errorf("%s: argv missing [--model %s]; got %v", c.label, c.model, spec.Args)
+			}
+			// The model flag must follow the session/resume flag (the base argv
+			// is unchanged), so the first five elements are untouched.
+			if spec.Args[1] != "--remote-control" {
+				t.Errorf("%s: base argv mutated; Args[1]=%q want --remote-control", c.label, spec.Args[1])
+			}
+		})
+	}
+}
+
+// TestReadMissionModel verifies the mission front-matter model: parse (hk-9j3z):
+// a present model: field is returned; absence, a missing file, an empty path, or
+// no front-matter block all degrade to "".
+func TestReadMissionModel(t *testing.T) {
+	t.Parallel()
+
+	const withModel = `---
+schema_version: 1
+crew_name: alpha
+queue: alpha-q
+epic_id: hk-tigaf
+goal: "Ship named-queues"
+captain_name: captain
+model: opus
+---
+
+# Mission: Ship named-queues
+body text here
+`
+	const withoutModel = `---
+schema_version: 1
+crew_name: beta
+queue: beta-q
+epic_id: hk-xyz
+goal: "drain a lane"
+captain_name: captain
+---
+
+# Mission
+`
+	const noFrontMatter = "# Mission\n\njust prose, no front-matter\n"
+
+	cases := []struct {
+		label   string
+		content string
+		want    string
+	}{
+		{label: "present", content: withModel, want: "opus"},
+		{label: "absent", content: withoutModel, want: ""},
+		{label: "no_frontmatter", content: noFrontMatter, want: ""},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.label, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			p := filepath.Join(dir, "mission.md")
+			if err := os.WriteFile(p, []byte(c.content), 0o600); err != nil {
+				t.Fatalf("write mission: %v", err)
+			}
+			if got := daemon.ExportedReadMissionModel(p); got != c.want {
+				t.Errorf("readMissionModel(%s) = %q; want %q", c.label, got, c.want)
+			}
+		})
+	}
+
+	// Empty path and missing file both return "".
+	if got := daemon.ExportedReadMissionModel(""); got != "" {
+		t.Errorf("readMissionModel(\"\") = %q; want \"\"", got)
+	}
+	if got := daemon.ExportedReadMissionModel(filepath.Join(t.TempDir(), "nope.md")); got != "" {
+		t.Errorf("readMissionModel(missing) = %q; want \"\"", got)
+	}
+}
 
 func TestBuildCrewLaunchSpec_Argv(t *testing.T) {
 	t.Parallel()

@@ -39,6 +39,12 @@ type crewLaunchCtx struct {
 	// already exists on disk; --resume continues the same conversation without
 	// forking a new session id.
 	resume bool
+
+	// model is the optional Claude model alias (opus | sonnet | haiku) read from
+	// the mission handoff's `model:` front-matter field (specs/crew-handoff-schema.md
+	// §4). When non-empty, --model <model> is appended to argv. Empty inherits the
+	// compiled default (currently sonnet) — no flag is added.
+	model string
 }
 
 // buildCrewLaunchSpec constructs a handler.LaunchSpec for launching a
@@ -73,6 +79,13 @@ func buildCrewLaunchSpec(rc crewLaunchCtx) (handler.LaunchSpec, error) {
 		args = []string{"--dangerously-skip-permissions", "--remote-control", rc.name, "--resume", rc.sessionID}
 	} else {
 		args = []string{"--dangerously-skip-permissions", "--remote-control", rc.name, "--session-id", rc.sessionID}
+	}
+
+	// Optional per-crew model injection (specs/crew-handoff-schema.md §4): the
+	// captain may pin a lane to a specific model via the mission `model:` field.
+	// Empty inherits the compiled default (currently sonnet) — append nothing.
+	if rc.model != "" {
+		args = append(args, "--model", rc.model)
 	}
 
 	env := []string{

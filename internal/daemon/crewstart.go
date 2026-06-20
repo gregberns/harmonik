@@ -16,9 +16,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -175,12 +177,17 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	}
 
 	// ── Step 4: build launch spec + spawn ──
+	// Read the optional model: front-matter field from the mission handoff
+	// (specs/crew-handoff-schema.md §4). Best-effort: a missing/unreadable mission
+	// or absent field yields "" and the crew inherits the compiled default model.
+	model := readMissionModel(req.MissionPath)
 	lspec, buildErr := buildCrewLaunchSpec(crewLaunchCtx{
 		claudeBinary: h.claudeBinary,
 		name:         req.Name,
 		sessionID:    sessionID,
 		projectDir:   h.projectDir,
 		resume:       isResume,
+		model:        model,
 	})
 	if buildErr != nil {
 		_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
@@ -435,6 +442,63 @@ func createCrewManagedMarker(projectDir, name string) error {
 		return fmt.Errorf("create .managed: %w", err)
 	}
 	return f.Close()
+}
+
+// missionFrontMatter is the subset of the mission-handoff YAML front-matter the
+// daemon reads at launch time. Only model: matters here; all other fields are
+// the crew's concern (it re-derives them on /session-resume). yaml.v3 silently
+// ignores the unmodelled keys (schema_version, crew_name, queue, …).
+//
+// Spec ref: specs/crew-handoff-schema.md §4 (model: optional, opus|sonnet|haiku).
+type missionFrontMatter struct {
+	Model string `yaml:"model"`
+}
+
+// readMissionModel reads the optional model: field from a mission handoff's YAML
+// front-matter (the leading `---`-delimited block per crew-handoff-schema.md §3).
+//
+// Best-effort by design: an empty path, a missing/unreadable file, a mission
+// without a front-matter block, or an absent model: field all return "". The
+// caller passes that to buildCrewLaunchSpec, which then injects no --model flag
+// and the crew inherits the compiled default model. A malformed front-matter
+// block likewise degrades to "" rather than failing the crew-start op — the
+// model: field is an optimisation, not a correctness contract.
+func readMissionModel(missionPath string) string {
+	if missionPath == "" {
+		return ""
+	}
+	//nolint:gosec // G304: missionPath is an operator/captain-supplied handoff path
+	data, err := os.ReadFile(missionPath)
+	if err != nil {
+		return ""
+	}
+
+	block := frontMatterBlock(string(data))
+	if block == "" {
+		return ""
+	}
+
+	var fm missionFrontMatter
+	if err := yaml.Unmarshal([]byte(block), &fm); err != nil {
+		return ""
+	}
+	return fm.Model
+}
+
+// frontMatterBlock extracts the YAML body between the leading `---` fence and the
+// closing `---` fence of a Markdown handoff. Returns "" when no front-matter
+// block is present (the file does not open with a `---` line).
+func frontMatterBlock(content string) string {
+	const fence = "---"
+	rest, ok := strings.CutPrefix(content, fence+"\n")
+	if !ok {
+		return ""
+	}
+	end := strings.Index(rest, "\n"+fence)
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

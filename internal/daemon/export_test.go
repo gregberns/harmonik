@@ -2024,6 +2024,9 @@ type ExportedCrewLaunchCtx struct {
 	// Resume, when true, builds argv with --resume instead of --session-id
 	// (stale re-launch path per c2-spec.md §7).
 	Resume bool
+	// Model is the optional per-crew model alias (hk-9j3z); empty injects no
+	// --model flag.
+	Model string
 }
 
 // ExportedBuildCrewLaunchSpec exposes buildCrewLaunchSpec for tests in package
@@ -2037,7 +2040,14 @@ func ExportedBuildCrewLaunchSpec(rc ExportedCrewLaunchCtx) (handler.LaunchSpec, 
 		sessionID:    rc.SessionID,
 		projectDir:   rc.ProjectDir,
 		resume:       rc.Resume,
+		model:        rc.Model,
 	})
+}
+
+// ExportedReadMissionModel exposes readMissionModel for tests in package
+// daemon_test (hk-9j3z): reads the optional model: front-matter field.
+func ExportedReadMissionModel(missionPath string) string {
+	return readMissionModel(missionPath)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -221,6 +221,15 @@ func seedSID(projectDir, name, sessionID string) {
 	}
 }
 
+// crewKeeperSessionName derives the detached tmux session name for a crew's
+// warn-only keeper from the crew name ("hk-keeper-<name>"). This naming
+// convention is the load-bearing constraint: stopCrewKeeper must kill exactly
+// the session spawnCrewKeeper created. Both call sites MUST use this function so
+// the two never drift. Refs: hk-yfcc.
+func crewKeeperSessionName(name string) string {
+	return "hk-keeper-" + name
+}
+
 // spawnCrewKeeper launches a warn-only keeper for the crew pane in a detached
 // tmux session named "hk-keeper-<name>". The keeper runs
 //
@@ -231,7 +240,7 @@ func seedSID(projectDir, name, sessionID string) {
 // but crew start succeeds. The crew session's tmux target is auto-resolved by
 // the keeper from the "harmonik-<hash>-<name>" convention. Refs: hk-yfcc.
 func spawnCrewKeeper(projectDir, name string) {
-	keeperSession := "hk-keeper-" + name
+	keeperSession := crewKeeperSessionName(name)
 	// Resolve harmonik binary path: use the same binary that is running now.
 	selfBin, selfErr := os.Executable()
 	if selfErr != nil {
@@ -332,7 +341,7 @@ func runCrewStopSubcommand(subArgs []string) int {
 // not exist or tmux is unavailable the error is logged but crew stop succeeds.
 // Refs: hk-yfcc.
 func stopCrewKeeper(name string) {
-	keeperSession := "hk-keeper-" + name
+	keeperSession := crewKeeperSessionName(name)
 	//nolint:gosec // G204: keeperSession is internally constructed from validated crew name
 	cmd := exec.Command("tmux", "kill-session", "-t", keeperSession)
 	if runErr := cmd.Run(); runErr != nil {

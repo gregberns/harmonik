@@ -212,6 +212,98 @@ func TestBlindKeeperAlarm_LatchClearedOnReadableGauge(t *testing.T) {
 	}
 }
 
+// TestBlindKeeperAlarm_EmitsAfterInjectedThreshold exercises the blind-keeper
+// alarm EMISSION path in CI (NOT integration-tagged) by injecting a tiny
+// BlindKeeperThreshold via WatcherConfig. The production default is the 5-min
+// constant (applyDefaults restores it when the field is 0); here we shrink it so
+// a few fast foreign ticks cross it.
+//
+// Asserts the full latch state machine:
+//   - blind FIRES exactly once after the injected threshold elapses under a
+//     continuous foreign_session streak;
+//   - it does NOT re-fire on subsequent foreign ticks while still blind (latch);
+//   - a matched (non-foreign) tick clears the latch + timer, so a fresh foreign
+//     streak arms a new clock and emits a SECOND blind event after the threshold.
+//
+// Without an injectable threshold this path could only be asserted ABSENT (the
+// other two tests). This is the first test that proves the alarm ACTUALLY emits.
+func TestBlindKeeperAlarm_EmitsAfterInjectedThreshold(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "blind-emit-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Track which session_id the gauge carries (controlled by the test) and
+	// which session_id is "managed"/.sid-endorsed (constant "sess-managed").
+	em := &keeper.RecordingEmitter{}
+
+	// Start with a foreign gauge.
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-foreign")
+
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 5 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second, // generous — gauge stays fresh
+		TmuxTarget:   "",
+		// ── injected seam: 30ms instead of the 5-min production constant ──
+		BlindKeeperThreshold: 30 * time.Millisecond,
+		// Managed binding + .sid both endorse "sess-managed", so a gauge bearing
+		// "sess-foreign" is rejected as foreign on every tick.
+		ReadManagedSessionFn:  func(_, _ string) (string, error) { return "sess-managed", nil },
+		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
+		ReadSidFn: func(_, _ string) (string, time.Time, error) {
+			return "sess-managed", time.Time{}, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w := keeper.NewWatcher(cfg, em)
+		_ = w.Run(ctx) //nolint:errcheck
+	}()
+
+	// Phase 1: foreign streak well past the 30ms threshold (≈ many ticks). The
+	// alarm must fire exactly ONCE — the latch suppresses every later tick.
+	time.Sleep(120 * time.Millisecond)
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperBlind)); n != 1 {
+		cancel()
+		<-done
+		t.Fatalf("phase 1: want exactly 1 session_keeper_blind after injected threshold; got %d", n)
+	}
+
+	// Phase 2: a matched (non-foreign) tick — clears blindSince + blindAlarmFired.
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-managed")
+	time.Sleep(40 * time.Millisecond)
+	// Still exactly one (the readable tick must not emit a new blind event).
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperBlind)); n != 1 {
+		cancel()
+		<-done
+		t.Fatalf("phase 2: matched gauge must not add a blind event; got %d", n)
+	}
+
+	// Phase 3: foreign again — a FRESH clock arms; after the threshold a SECOND
+	// blind event must emit (proves the latch+timer reset on the readable tick).
+	writeCtxFile(t, projectDir, agent, 50.0, "sess-foreign")
+	time.Sleep(120 * time.Millisecond)
+
+	cancel()
+	<-done
+
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperBlind)); n != 2 {
+		t.Errorf("phase 3: want a 2nd blind event after latch reset + fresh foreign streak; got %d total", n)
+	}
+}
+
 // restartSpy records calls to a restart function and counts them.
 type restartSpy struct {
 	mu    sync.Mutex

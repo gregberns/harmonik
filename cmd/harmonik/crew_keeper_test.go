@@ -106,7 +106,11 @@ func TestCrewKeeperSessionName(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := "hk-keeper-" + tc.name
+			// Assert against the REAL derivation helper used by both
+			// spawnCrewKeeper and stopCrewKeeper. A change to the naming scheme
+			// in crew.go must break this test (it is no longer tautological —
+			// the expected value is a literal, the actual comes from prod code).
+			got := crewKeeperSessionName(tc.name)
 			if got != tc.wantSes {
 				t.Errorf("keeper session name for %q = %q; want %q", tc.name, got, tc.wantSes)
 			}

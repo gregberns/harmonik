@@ -187,6 +187,12 @@ type WatcherConfig struct {
 	// to verify injection without spawning real tmux commands.
 	InjectFn func(ctx context.Context, target string) error
 
+	// SelfHintInjectFn delivers the one-time 190K [KEEPER HINT] text into the
+	// pane (hk-lsk5). When nil, InjectText is used (the production path, which
+	// shells out to tmux). Set to a spy in unit tests so the hint path can be
+	// observed without real tmux. Mirrors InjectFn for the warn injection.
+	SelfHintInjectFn func(ctx context.Context, target, text string) error
+
 	// Cycler, if non-nil, enables Phase-2 cycle dispatch. MaybeRun is called on
 	// each fresh-gauge tick; gating (act_pct, CrispIdle, HoldingDispatch,
 	// anti-loop) is handled internally by the Cycler.
@@ -487,6 +493,9 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.IsPaneIdleFn == nil {
 		c.IsPaneIdleFn = IsPaneIdle
+	}
+	if c.SelfHintInjectFn == nil {
+		c.SelfHintInjectFn = InjectText
 	}
 	// Live-pane recovery defaults (hk-75mr). LiveRecoverGrace (5m) is MUCH larger
 	// than RespawnGrace (20s) so an EXITED agent is always handled by the
@@ -1009,7 +1018,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				// so the agent is nudged to wrap up. Only once per session —
 				// hintSentThisSession latches after delivery.
 				if !hintSentThisSession && w.cfg.TmuxTarget != "" {
-					if hintErr := InjectText(ctx, w.cfg.TmuxTarget, keeperHintText); hintErr != nil {
+					if hintErr := w.cfg.SelfHintInjectFn(ctx, w.cfg.TmuxTarget, keeperHintText); hintErr != nil {
 						slog.WarnContext(ctx, "keeper: inject self-hint", "err", hintErr)
 					} else {
 						hintSentThisSession = true

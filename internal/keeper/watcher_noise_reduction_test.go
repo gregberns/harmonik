@@ -11,6 +11,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -154,59 +156,46 @@ func TestWatcher_SelfHint_InjectedOncePerSession(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
-	type injCall struct{ text string }
+	// Spy the self-hint path directly via the SelfHintInjectFn seam, which the
+	// watcher calls in place of InjectText when set. A non-empty TmuxTarget is
+	// REQUIRED — the hint branch is gated by `TmuxTarget != ""` — so we provide
+	// a dummy pane and stub the warn InjectFn too (TmuxTarget!="" enables the
+	// pendingInject delivery path). This makes the 190K hint path actually
+	// execute under test, instead of falling back to a warn-count proxy.
 	var (
-		injMu   = make(chan injCall, 64)
-		hintKey = "[KEEPER HINT]"
+		hintMu    sync.Mutex
+		hintTexts []string
 	)
-
-	// Spy InjectFn that records all injected texts and counts the hint injections.
-	spyInjectFn := func(_ context.Context, _ string) error {
-		return nil // the warn-injection spy
+	spyHint := func(_ context.Context, _ string, text string) error {
+		hintMu.Lock()
+		defer hintMu.Unlock()
+		hintTexts = append(hintTexts, text)
+		return nil
 	}
-
-	// We need to intercept InjectText (the self-hint path). We can't override
-	// InjectText directly, but the WatcherConfig.InjectFn only covers the
-	// wrap-up warn injection, NOT the hint path. The hint uses InjectText
-	// directly. Since we don't have a TmuxTarget, the hint branch is guarded
-	// by TmuxTarget != "" and won't fire. So test with a non-empty TmuxTarget
-	// and a custom InjectFn that captures all text.
-	//
-	// Use an injector that records calls via a channel.
-	var hintCount int
-	allTexts := make([]string, 0, 16)
-
-	// Override the hint mechanism: use TmuxTarget="" so InjectText is a no-op
-	// (tmux won't be called). To capture hint injection we need a different
-	// approach: use TmuxTarget + InjectFn that captures the warn injection, and
-	// separately verify via events that warn fires exactly once.
-	//
-	// The self-hint fires via InjectText(ctx, w.cfg.TmuxTarget, keeperHintText).
-	// Since InjectText calls tmux when TmuxTarget is set, and we don't have tmux
-	// in unit tests, set TmuxTarget="" to skip the hint path and instead verify
-	// the warn event count (one-time emit = one warn event = one hint attempt if
-	// TmuxTarget were set). This is a functional equivalence test.
-	_ = hintCount
-	_ = allTexts
-	_ = injMu
-	_ = spyInjectFn
-	_ = hintKey
+	hintCount := func() int {
+		hintMu.Lock()
+		defer hintMu.Unlock()
+		return len(hintTexts)
+	}
 
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{
-		AgentName:    agent,
-		ProjectDir:   projectDir,
-		PollInterval: 5 * time.Millisecond,
-		WarnPct:      80.0,
-		IdleQuiesce:  1 * time.Millisecond,
-		Staleness:    120 * time.Second,
-		TmuxTarget:   "", // no real tmux; hint path guarded by TmuxTarget != ""
-		WarnCooldown: 1 * time.Millisecond, // allow re-crossing in test
+		AgentName:        agent,
+		ProjectDir:       projectDir,
+		PollInterval:     5 * time.Millisecond,
+		WarnPct:          80.0,
+		IdleQuiesce:      1 * time.Millisecond,
+		Staleness:        120 * time.Second,
+		TmuxTarget:       "dummy-pane", // non-empty → hint path is ENABLED
+		InjectFn:         func(_ context.Context, _ string) error { return nil },
+		SelfHintInjectFn: spyHint, // ← observe the one-time 190K self-hint
+		// WarnCooldown defaults to 30s; the gauge stays above threshold the
+		// whole run so there is no dip to re-arm the hint latch.
 	}
 
-	// Write gauge above threshold; the watcher emits one warn event. With
-	// WarnCooldown=1ms the hint latch resets after each dip, but we keep the
-	// gauge above the threshold so only one warn fires.
+	// Write gauge above threshold; the watcher crosses warn once and injects
+	// the hint exactly once. It stays above threshold for the whole run, so the
+	// hint must NOT re-fire on later ticks (hintSentThisSession latch).
 	writeCtxFile(t, projectDir, agent, 85.0, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -217,15 +206,26 @@ func TestWatcher_SelfHint_InjectedOncePerSession(t *testing.T) {
 		_ = w.Run(ctx) //nolint:errcheck
 	}()
 
-	// Let it run for 200ms — multiple ticks above threshold.
+	// Let it run for 200ms — ~40 ticks, all above threshold.
 	time.Sleep(200 * time.Millisecond)
 	cancel()
 	<-done
 
+	// The self-hint must fire EXACTLY ONCE despite ~40 above-threshold ticks
+	// (the hintSentThisSession latch). A regression that drops the latch would
+	// inject the hint on every tick and FAIL here.
+	if n := hintCount(); n != 1 {
+		t.Errorf("want exactly 1 self-hint injection across sustained above-threshold; got %d", n)
+	}
+	// And the injected text must be the real 190K hint, not arbitrary content.
+	hintMu.Lock()
+	if len(hintTexts) > 0 && !strings.Contains(hintTexts[0], "[KEEPER HINT]") {
+		t.Errorf("self-hint text = %q; want it to contain %q", hintTexts[0], "[KEEPER HINT]")
+	}
+	hintMu.Unlock()
+
 	warns := em.EventsOfType(core.EventTypeSessionKeeperWarn)
-	// Only one warn event should fire (warnFired latches to true and prevents
-	// re-emit until the gauge dips below). This mirrors the one-time hint
-	// semantics: hint fires iff warnArmed && !warnFired && !hintSentThisSession.
+	// One warn crossing = one hint. Belt-and-suspenders on the latch.
 	if len(warns) != 1 {
 		t.Errorf("want exactly 1 warn event on sustained above-threshold; got %d", len(warns))
 	}

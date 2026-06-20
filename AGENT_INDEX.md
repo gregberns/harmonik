@@ -2,9 +2,11 @@
 
 > **Start here.** This is the master index for the harmonik knowledge base. Every document in the project is reachable from this file within two hops.
 >
-> **New to harmonik?** See [README.md](README.md) for what it is and how to install it, and [AGENT_OPERATING_MANUAL.md](AGENT_OPERATING_MANUAL.md) for the distilled ops guide agents need on every session.
+> **New to harmonik?** See [README.md](README.md) for what it is and how to install it.
 >
-> **For project state and what to do next, see [STATUS.md](STATUS.md) and [TASKS.md](TASKS.md).**
+> **Reading order on boot:** AGENT_INDEX (this map) → [STATUS.md](STATUS.md) (phase + locked decisions) → [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md) (live lanes, medium-term) → [HANDOFF.md](HANDOFF.md) (this-session state).
+>
+> **Roadmap & progress:** [ROADMAP.md](ROADMAP.md). **Live lanes / epics-in-progress:** [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md).
 
 ## What Is Harmonik?
 
@@ -139,30 +141,10 @@ Most recent entries:
 ## Plans
 - [docs/bootstrap.md](docs/bootstrap.md) -- Bootstrap and self-build plan (companion to G06)
 
-## Major Features Landed (2026-06)
+## Progress & live state
 
-### Captain & Crew system (landed 2026-06-09)
-A long-lived **captain** orchestrator that spawns and coordinates a pool of long-lived **crew** agents — each owning one epic and its own named work queue — wired together by the `harmonik comms` bus plus `epic_completed` events.
-
-- **Design:** [docs/plans/captain/SPEC.md](docs/plans/captain/SPEC.md), [docs/plans/captain/SESSION.md](docs/plans/captain/SESSION.md)
-- **CLI:** `harmonik crew start/stop/list`; crew launch = `claude --remote-control "<name>" --session-id <uuid>`
-- **Skills:** `captain` (captain operating context), `crew-launch` (crew boot sequence); see also `keeper` (per-session context-watcher) and `harmonik-lifecycle` (supervise / promote / reconcile / init)
-- **Status:** 15/15 tasks on main (`57c6fd94`); production crew: chani / duncan / liet / stilgar
-
-### Session-keeper (mechanism done; testing = priority)
-Per-orchestrator context-watcher that injects a context-warning at ~80% and triggers handoff-clear-resume at ~90%. Hosted as a standalone `harmonik keeper` process.
-
-- **Design:** kerf work `hk-ekap1`; bench artifacts at `~/.kerf/projects/.../session-keeper/`
-- **Status:** mechanism complete; Phase-1 warn-only ships first; test plan ready — exec on throwaway `kk-test` crew is the immediate priority
-
-### Validation-net (CORE landed 2026-06-09)
-Scenario/test coverage infrastructure from the `hk-37giq` wedge postmortem. Flagship infra at `8cfc75f8`; `make-target` + postmortem; 3 daemon fixes deployed.
-
-- VN4 revert-demo found **structurally infeasible** in-process (guard=tap keystone); filed `hk-d5twq`
-- VN9 CI parked on workflow-scope permission (needs `gh auth refresh -s workflow`)
-
-### Named queues — parked
-`hk-tigaf` (12-bead epic) **parked as of 2026-06-10** — superseded by captain/crew-per-epic model.
+- **Roadmap, landed features, milestone log:** [ROADMAP.md](ROADMAP.md)
+- **Live lanes, epics-in-progress, lane→crew registry:** [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md)
 
 ## Agent Skills (operating contracts)
 Booting into a specific role? Load its skill for the operating contract:
@@ -174,8 +156,8 @@ Booting into a specific role? Load its skill for the operating contract:
 - `.claude/skills/agent-comms`, `.claude/skills/beads-cli` -- comms bus + `br` write discipline
 
 ## Operational Protocols
-- [docs/orchestrator-rules.md](docs/orchestrator-rules.md) -- Permanent orchestrator directives (dispatch, priority, autonomy, monitor pattern)
-- [docs/INITIATIVES.md](docs/INITIATIVES.md) -- Live initiatives board: epic IDs, status, done/total counts, blocked items
+- the `orchestrator-rules` skill (.claude/skills/orchestrator-rules/SKILL.md) -- Permanent orchestrator directives (dispatch, priority, autonomy, monitor pattern)
+- [.harmonik/context/captain-lanes.md](.harmonik/context/captain-lanes.md) -- Live initiatives board: epic IDs, status, done/total counts, blocked items
 - [docs/major-issue-fanout-protocol.md](docs/major-issue-fanout-protocol.md) -- Major-issue fan-out diagnosis protocol: when a wedge survives ≥2 fix attempts, fan out 10–15 agents at distinct angles + ≥2 adversarial verifiers; never hand-grep events.jsonl by run_id
 - [docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md](docs/postmortems/2026-06-09-concurrent-dispatch-wedge.md) -- tapCh competing-consumer race; 18h incident; 6 refuted hypotheses; fix + process lessons (motivating source for major-issue-fanout protocol)
 - [docs/captain-restart.md](docs/captain-restart.md) -- Captain self-restart design (session-keeper on the captain session)

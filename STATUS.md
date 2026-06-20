@@ -2,7 +2,7 @@
 
 > **[HANDOFF.md](HANDOFF.md) is the per-session authoritative source for current state and next steps.** This file is a higher-level structural summary. Sections below labelled "*(historical)*" are preserved for reference.
 >
-> Last updated: 2026-06-10 — **Captain & Crew system fully landed** (15/15 tasks, `57c6fd94`). Persistent daemon model operational. Session-keeper mechanism complete; testing is the priority lane. Named-queues parked (superseded). Validation-net CORE landed. See [docs/INITIATIVES.md](docs/INITIATIVES.md) for the live initiatives board.
+> Last updated: 2026-06-10 — **Captain & Crew system fully landed** (15/15 tasks, `57c6fd94`). Persistent daemon model operational. Session-keeper mechanism complete; testing is the priority lane. Named-queues parked (superseded). Validation-net CORE landed. See [.harmonik/context/captain-lanes.md](.harmonik/context/captain-lanes.md) for the live initiatives board.
 >
 > Previously: 2026-05-06 — **Phase 0 closed.** 11 reviewed specs (~562 req IDs); 905 live beads in `<repo>/.beads/` with 3,589 edges, zero cycles; 376 beads carry `scope:bootstrap` (348 spec-corpus + 28 meta-epic); discipline at v0.12 (12 versions, 16 class-lane findings absorbed). Readiness gaps closed in beads: build/test scaffolding (`hk-pvcs`), twin-binary scaffolding (`hk-ahvq.48`), operational skills (`hk-jhob`), Phase-1 validation (`hk-kle6`), no-op PolicyEngine (`hk-b3f.89`). Parked-state lifecycle withdrawn per user 2026-05-05; loaded beads transition directly to dispatchable. Phase-1 starting point: `hk-pvcs` 8-bead local-scaffolding epic.
 
@@ -16,28 +16,11 @@ A composable agentic orchestration system. Core principle: **deterministic skele
 
 ### Active work lanes
 
-| Initiative | Epic | Status |
-|---|---|---|
-| Auto test/CI restoration | `hk-kjkbw` | 🟡 near-done (~26/27 beads closed) |
-| Session-keeper testing | `hk-ekap1` | 🎯 priority — mechanism done, test plan ready |
-| Spec-drift cleanup | ~17 beads | 🟡 ideal churn batch (`kind:spec-drift`) |
-| Codex enablement | `hk-w4tmz` + `hk-n5lfz` | ⛔ blocked — `-a never` flag-fix + operator OAuth login |
-| Release pipeline | `hk-brc3z` | ⛔ blocked — GitHub `workflow` permission (tabled ~days) |
-
-See [docs/INITIATIVES.md](docs/INITIATIVES.md) for the full board with done/total counts.
+For live lanes (lane → crew → queue → epic), see [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md).
 
 ### Recently completed
 
-| Feature | When | Notes |
-|---|---|---|
-| Captain & Crew system | 2026-06-09 | 15/15 tasks landed (`57c6fd94`); crew runs via `claude --remote-control` |
-| Validation-net CORE | 2026-06-09 | Scenario/test infra (8cfc75f8); VN4 revert-demo infeasible (filed `hk-d5twq`) |
-| Daemon/infra reliability | 2026-06 | tapCh race fixed; spawn-semaphore wedge mitigated; auto-revive supervisor live |
-| Codex harness code | 2026-06-09 | 10/20 tasks landed via bypass-SOP; T9+T11 banked on worktree branches |
-| Productization P0 gate | 2026-06-03 | Integration-branch enforcement (`hk-6r6xv`); harmonik can target non-main |
-| harmonik comms bus | 2026-06-01 | `harmonik comms send/recv/who/log`; file-outbox convention retired |
-| Persistent daemon model | 2026-05-30 | `harmonik --project ... --no-auto-pull --max-concurrent N` + supervisor auto-revive |
-| Phase 1 operational | 2026-05-14 | End-to-end zero-human bead dispatch (smoke v13 GREEN) |
+For the running progress log / milestones, see [ROADMAP.md](ROADMAP.md).
 
 ### Named queues — parked
 
@@ -107,8 +90,7 @@ See CLAUDE.md §"Daily loop" for the full operating manual.
 
 ## Where to start next session
 
-1. Read [HANDOFF.md](HANDOFF.md) — most-recent `/session-handoff` output; authoritative for current state and blockers.
-2. Read [docs/INITIATIVES.md](docs/INITIATIVES.md) — live initiatives board: done/total per epic, blocked items, loose bead clusters.
-3. Read [docs/orchestrator-rules.md](docs/orchestrator-rules.md) — permanent dispatch/priority directives.
-4. Run `harmonik queue status` to confirm the daemon is alive (exit 17 = not running; start it per CLAUDE.md §"Start the daemon once").
-5. Run `kerf next` to get the prioritized dispatch feed for the session.
+1. Read in order: [AGENT_INDEX.md](AGENT_INDEX.md) → [STATUS.md](STATUS.md) → [.harmonik/context/captain-lanes.md](.harmonik/context/captain-lanes.md) → [HANDOFF.md](HANDOFF.md). HANDOFF.md is the most-recent `/session-handoff` output; captain-lanes.md is the live medium-term lane/epic tracker.
+2. Read the `orchestrator-rules` skill (`.claude/skills/orchestrator-rules/SKILL.md`) — permanent dispatch/priority directives.
+3. Run `harmonik queue status` to confirm the daemon is alive (exit 17 = not running; start it per CLAUDE.md §"Start the daemon once").
+4. Run `kerf next` to get the prioritized dispatch feed for the session.

@@ -29,11 +29,17 @@ func TestSkillAssetsEmbedInSync(t *testing.T) {
 		t.Fatalf("read embedded assets/skills: %v", err)
 	}
 
+	// Track which skills the guard actually walked, so we can assert that
+	// load-bearing additions (e.g. the orchestrator standing-rules contract)
+	// are embedded and therefore covered — not silently absent.
+	seen := map[string]bool{}
+
 	for _, skillEntry := range skillEntries {
 		if !skillEntry.IsDir() {
 			continue
 		}
 		skill := skillEntry.Name()
+		seen[skill] = true
 
 		fileEntries, err := initSkillAssets.ReadDir("assets/skills/" + skill)
 		if err != nil {
@@ -67,5 +73,14 @@ func TestSkillAssetsEmbedInSync(t *testing.T) {
 					skill, fname, skill, fname)
 			}
 		}
+	}
+
+	// The orchestrator skill is the universal standing-rules contract; it must
+	// ship with the binary (and thus be guarded above). If it is missing from
+	// the embedded bundle, the sync-guard would silently never check it.
+	if !seen["orchestrator-rules"] {
+		t.Errorf("orchestrator skill is NOT embedded under assets/skills/ — " +
+			"the standing-rules contract must ship with the binary.\n" +
+			"Mirror it with:\n  cp .claude/skills/orchestrator/SKILL.md cmd/harmonik/assets/skills/orchestrator/SKILL.md")
 	}
 }

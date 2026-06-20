@@ -20,9 +20,9 @@ package main
 //  4. Write .harmonik/config.yaml (project-level daemon defaults).
 //  5. Write .harmonik/branching.yaml (branching defaults).
 //  6. Write .harmonik/.gitignore (excludes runtime files from git).
-//  7. Provision 8 fleet skills from the embedded asset bundle →
+//  7. Provision 9 fleet skills from the embedded asset bundle →
 //     .claude/skills/{captain,crew-launch,keeper,harmonik-dispatch,
-//     harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout}.
+//     harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout,orchestrator}.
 //  8. Provision versioned captain-tools scripts to ~/.claude/captain-tools/
 //     (only-if-absent; --force refreshes). C1↔C3 seam (ON-058b, hk-da3k).
 //  9. Write scaffold files from the embedded asset bundle →
@@ -536,7 +536,7 @@ func renderAgentsMD(projectDir, targetBranch string, force bool, stdout, stderr 
 	return 0
 }
 
-// provisionSkills extracts the 8 fleet skills from the embedded asset bundle
+// provisionSkills extracts the 9 fleet skills from the embedded asset bundle
 // into the project's .claude/skills/ directory (PL-029a).
 // Idempotent: skips files that already exist unless force is true.
 // Does NOT delete or overwrite sibling skill directories (PL-029e).
@@ -798,9 +798,9 @@ WHAT IT DOES
   4. Writes .harmonik/config.yaml (project-level daemon defaults)
   5. Writes .harmonik/branching.yaml (branching strategy defaults)
   6. Writes .harmonik/.gitignore (excludes runtime files)
-  7. Provisions 8 fleet skills from the binary-embedded asset bundle →
+  7. Provisions 9 fleet skills from the binary-embedded asset bundle →
      .claude/skills/{captain,crew-launch,keeper,harmonik-dispatch,
-     harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout}
+     harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout,orchestrator}
   8. Provisions versioned captain-tools scripts → ~/.claude/captain-tools/
      (only-if-absent; --force refreshes stale copies)
   9. Writes scaffold files: AGENT_INDEX.md, STATUS.md, TASKS.md

@@ -4,57 +4,45 @@
 
 > Cross-project working-style rules (keep moving, delegate, plain English, compact, review gate) live in `~/.claude/CLAUDE.md`. This file adds harmonik-specific bits on top of those.
 
+<!-- BEGIN harmonik:managed agents-router -->
+
+## Precedence
+
+Standing behavioral rules: the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`) is canonical. On conflict: **orchestrator-rules skill > AGENTS.md prose > per-domain skills own their detail**. Operational state lives in `.harmonik/context/` (captain tiers) and `HANDOFF.md` (this session) — **never in this file**. AGENTS.md is a ROUTER: it points you at the right contract; it does not restate one.
+
+## Per-role load map
+
+Each role loads only its slice. The boot runbook in each role's skill is authoritative; this is the map.
+
+- **Captain — cold boot** (see `.claude/skills/captain/STARTUP.md`):
+  1. Step 0 — identity + CWD guard.
+  2. Step 0a — tier-3 `.harmonik/context/project.yaml` (phase, locked decisions, guardrails).
+  3. Step 0b — tier-2 `.harmonik/context/captain-lanes.md` (lanes + epics-in-progress + parked + dated operator directives).
+  4. Step 1 — `captain/SKILL.md` + the **`orchestrator-rules` skill** (standing rules) + tier-1 `HANDOFF.md` (a claim, not ground truth).
+  5. Step 2 — boot digest = ground-truth; overrides every claim above. Steps 3–6 reconcile / plan / staff / arm watchers.
+  - Does **NOT** boot-read: `AGENT_INDEX.md`, `STATUS.md`, product/`docs/` knowledge base, full skill bodies. `ROADMAP.md` only on cold boot / milestone.
+- **Captain — keeper-restart resume (LEAN):** re-drain comms → re-read tier-3/tier-2 + ONE boot digest → trust cached tier state as input → re-arm watchers. No heavy re-derive.
+- **Crew — minimal load** (see `.claude/skills/crew-launch/SKILL.md`): its mission file (`.harmonik/crew/missions/<crew>.md`) + `crew-launch/SKILL.md` + `agent-comms` + `beads-cli` + `harmonik-dispatch`. Does **NOT** load fleet-level state (ROADMAP, captain-lanes, project.yaml, orchestrator standing-rules, STATUS, HANDOFF, knowledge base) — scoped to ONE epic + ONE queue.
+- **Implementer-orchestrator (main `/session-resume`, non-captain):** `AGENT_INDEX → STATUS → HANDOFF` reading order + the **`orchestrator-rules` skill** (standing rules) + `harmonik-dispatch`.
+
 ## Start here
 
-Read [AGENT_INDEX.md](AGENT_INDEX.md) first. It is the master map of the knowledge base and every document is reachable from there within two hops. Then read [STATUS.md](STATUS.md) for current project state and [TASKS.md](TASKS.md) for the active work list.
+Read [AGENT_INDEX.md](AGENT_INDEX.md) first — the master map of the knowledge base (every doc reachable within two hops). Then [STATUS.md](STATUS.md) for phase + locked decisions, `.harmonik/context/captain-lanes.md` for the medium-term lane/epic tracker, and [HANDOFF.md](HANDOFF.md) for this-session state.
 
-**Orchestrator permanent directives:** [`docs/orchestrator-rules.md`](docs/orchestrator-rules.md) — all stable rules (dispatch discipline, priority, bead lifecycle, autonomy, dispatch shape, monitor pattern). Load alongside HANDOFF.md on every `/session-resume`. **Known workarounds** (worktree bugs, harness quirks): [`docs/known-workarounds.md`](docs/known-workarounds.md).
+**Booting as a captain or crew?** These skills are **project-local under the repo** — read them at `/Users/gb/github/harmonik/.claude/skills/…`, NOT the global `~/.claude/skills/` (no captain/crew skill exists there). Captain: read `.claude/skills/captain/STARTUP.md` FIRST, then `SKILL.md` in that dir. Crew: read `.claude/skills/crew-launch/SKILL.md`. See also `.claude/skills/keeper` (per-session context-watcher) and `.claude/skills/harmonik-lifecycle` (supervise / promote / reconcile / init).
 
-**Booting as a captain or crew?** These skills are **project-local under the repo** — read them at `/Users/gb/github/harmonik/.claude/skills/…`, NOT the global `~/.claude/skills/` (there is no captain/crew skill there; reading the global path fails). Captain session: read `/Users/gb/github/harmonik/.claude/skills/captain/STARTUP.md` FIRST, then `SKILL.md` in that same dir. Crew session: read `/Users/gb/github/harmonik/.claude/skills/crew-launch/SKILL.md`. These hold your operating contract — boot sequence, queue/comms discipline, progress feed. See also `.claude/skills/keeper` (per-session context-watcher) and `.claude/skills/harmonik-lifecycle` (supervise / promote / reconcile / init), same project-local dir.
+## Standing rules → the `orchestrator-rules` skill
 
-## Orchestrator discipline (HARD RULE)
+Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (kerf-first), bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, autonomy/flow boundaries, and the major-issue fan-out trigger: all canonical in the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`). It points to the detail-owner skills; it does not duplicate them.
 
-The orchestrator MUST NOT do inline code reading, investigation, or debugging on the main thread. Every session the main thread exists to dispatch — not to be an implementer or investigator.
+- **Daily loop / daemon / `queue submit` / `append` / `subscribe`:** the **harmonik-dispatch** skill. Full design: `docs/orchestration-protocol-v2.md`.
+- **Monitoring the daemon** (the canonical Monitor pattern, stream-vs-wave, failure triage): the **harmonik-dispatch** skill. Manual hang-recovery: `docs/known-workarounds.md`.
+- **CWD discipline** (never `cd` into a worktree; operate from repo root via `git -C` absolute paths): the **orchestrator-rules** skill.
+- **Multi-agent comms** (`harmonik comms` bus; dedupe on `event_id`): the **agent-comms** skill. The `.harmonik/comms/*.md` file-outbox is RETIRED — do NOT write to those files.
+- **Lifecycle** (init / supervise / reconcile / promote; work-project deployment, `branching.yaml`): the **harmonik-lifecycle** skill. integration→main is always a human PR step.
+- **Keeper** (per-session context-fill watcher): the **keeper** skill.
 
-When a batch fails or a bug surfaces:
-1. File a bead if one doesn't exist (`br create --title="..." --type=bug --priority=1`).
-2. Dispatch a sub-agent to investigate — anchor it to **durable artifacts** (file paths, line numbers, events.jsonl entries), NOT ephemeral state (tmux pane contents, live process output).
-3. Keep the main thread dispatching other work while the investigator runs.
-
-**Investigation dispatch template:** "Start with `<file>:<line>`, read the code and comments there, then check `<specific durable artifact>`. Report root cause in under 200 words."
-
-The main-thread context window is precious — protect it. Inline investigation is the #1 cause of context exhaustion (v60: ~30% of context wasted on inline reads).
-
-## On batch failure
-
-When a submitted batch returns failures (a group reaches complete-with-failures, or `harmonik subscribe` reports `run_failed`):
-1. Read the failure class from `.harmonik/events/events.jsonl` (`no_commit`, `context_cancelled`, etc.).
-2. If the **same bead failed twice** this session → dispatch an investigator sub-agent; do NOT re-dispatch the bead.
-3. If a **new failure class** → file a bead, dispatch an investigator.
-4. Never re-dispatch a bead more than twice without investigation.
-5. Reopen any beads incorrectly closed by implementers (`br update <id> --status=open`).
-
-## Daily loop (canonical)
-
-**One persistent daemon per project is the dispatcher; agents dispatch by submitting beads to its queue.** harmonik now enforces a single daemon per project via the pidfile lock (hk-li14r — single-flywheel-per-project supervise lock, landed 2026-05-31). Multiple agents/orchestrators can run concurrently, but they MUST share that one daemon: it dispatches up to N beads concurrently in isolated worktrees, merges to main **one-at-a-time** (so there are no merge races), and **auto-skips** any bead whose merge conflicts. That shared-queue handoff IS the multi-agent coordination mechanism — there is no manual agent-wrangling to do.
-
-Daemon-start, the daily loop, `harmonik run` legacy behavior, and `queue submit` / `append` / `dry-run`: see the **harmonik-dispatch** skill (loads on session-resume); the ≥75%-of-substantive-commits-through-the-daemon-queue target lives there too. Full design: `docs/orchestration-protocol-v2.md`.
-
-### Work-project deployment
-
-Work-project (integration-branch / protected-main) deployment, `branching.yaml`, and `harmonik promote` (push & PR modes): see the **harmonik-lifecycle** skill. integration→main is always a human PR step.
-
-## Monitoring the daemon
-
-`harmonik subscribe` (the canonical Monitor pattern), stream-vs-wave semantics, queue append, the pre-flight checklist, and post-flight failure triage: see the **harmonik-dispatch** skill. The dispatch-hang class (pasteinject quit-on-commit, post-commit /quit) is **auto-recovered in the daemon** (hk-trjef / hk-5s7tg); manual hang-recovery steps live in `docs/known-workarounds.md`.
-
-### CWD discipline — never `cd` into a worktree
-
-The daemon may `git worktree remove` a worktree out from under you on bead completion. Always operate from the repo root via absolute paths: `git -C /Users/gb/github/harmonik <cmd>` rather than `cd`. The orchestrator's CWD must remain `/Users/gb/github/harmonik` for the whole session.
-
-## Multi-agent comms
-
-The `harmonik comms` bus surface (send / recv / who / log; dedupe on `event_id`, at-least-once delivery N3) is the coordination mechanism for concurrent orchestrator sessions — see the **agent-comms** skill. The `AGENT_COMMS.md` / `.harmonik/comms/*.md` file-outbox is RETIRED (hk-8sm4f, 2026-06-01) — do NOT write to those files.
+<!-- END harmonik:managed -->
 
 ## Planning with kerf
 
@@ -72,7 +60,7 @@ Non-trivial changes are planned with **kerf** (spec-first; create a kerf work be
 
 - Don't reopen locked-in decisions without explicit user request.
 - Don't add abstraction layers the user hasn't asked for.
-- Don't skip the AGENT_INDEX → STATUS → TASKS reading order when picking up the project.
+- Don't skip the AGENT_INDEX → STATUS → captain-lanes → HANDOFF reading order when picking up the project.
 
 <!-- bv-agent-instructions-v2 -->
 

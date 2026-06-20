@@ -1,5 +1,7 @@
 # Captain Initiatives Board
 
+> SUPERSEDED 2026-06-20 — the live medium-term lane/epic tracker is now `.harmonik/context/captain-lanes.md`. Kept for history.
+
 > **The high-level tracker.** One line per major initiative: epic id · status ·
 > beads done/total. The captain keeps this current at every hourly heartbeat and
 > whenever an initiative completes. For task-level detail, see the beads tracker

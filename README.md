@@ -214,9 +214,9 @@ Each completed bead prints a `run_completed` event. Failures print `run_failed` 
 
 These docs are for setting up and running **automated agent workflows** (implementers, reviewers, orchestrators) — not the human-facing getting-started path above.
 
-- **[AGENT_OPERATING_MANUAL.md](AGENT_OPERATING_MANUAL.md)** — operating manual for agents
-  (implementers, reviewers, orchestrators): session discipline, bead lifecycle, monitoring patterns,
-  daily loop. Start here if you are setting up an automated agent workflow.
+- **[AGENTS.md](AGENTS.md)** — the agent-operating router: precedence, per-role load map, and
+  pointers to the standing-rules contract (the `orchestrator-rules` skill under `.claude/skills/`)
+  and the domain skills (dispatch, comms, lifecycle, keeper). Start here for an automated agent workflow.
 - **[AGENT_INDEX.md](AGENT_INDEX.md)** — master map of the knowledge base; every doc is
   reachable from here within two hops.
 - **[AGENTS.md](AGENTS.md)** — agent instructions (same file as `CLAUDE.md`): the full daily

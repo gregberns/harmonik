@@ -5,7 +5,7 @@ package main
 //
 // Asset layout (all under cmd/harmonik/assets/):
 //
-//	assets/skills/<skill-name>/<file>  — 8 fleet skills (copies of .claude/skills/)
+//	assets/skills/<skill-name>/<file>  — 9 fleet skills (copies of .claude/skills/)
 //	assets/templates/AGENTS.template.md — foreign-repo AGENTS template variant
 //	assets/scaffolds/{AGENT_INDEX,STATUS,TASKS}.md — minimal committed stub files
 //

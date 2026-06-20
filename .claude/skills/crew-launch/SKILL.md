@@ -41,6 +41,11 @@ Your stable identity is `$HARMONIK_AGENT` (== `crew_name` from your handoff).
 
 ## § Boot sequence (do this first, in order)
 
+> **MINIMAL LOAD (load-bearing).** Do NOT load fleet-level state (`ROADMAP.md`,
+> `.harmonik/context/captain-lanes.md`, `project.yaml`, the orchestrator-rules
+> standing-rules skill) — you are scoped to ONE epic + ONE queue; your mission
+> file is your tier-1 state. Fleet-level state is the captain's concern.
+
 > **One-call discovery shortcut — run the crew boot digest first:**
 > ```bash
 > scripts/crew-boot-digest.sh        # in-repo, portable (hk-039z); --crew / --project optional

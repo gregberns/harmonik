@@ -1,7 +1,11 @@
-# Tier-3 context: project-level state (weeks cadence)
-# Captain reads this on every boot (STARTUP.md Step 0a) BEFORE re-deriving state.
-# Update when: phase changes, new decisions are locked, or operator policies shift.
-# Do NOT record ephemeral state here — that belongs in HANDOFF.md (tier1).
+<!-- TIER: 3 (operational state, weeks cadence)
+     LOADED BY: captain @ STARTUP Step 0a; NOT loaded by crews or implementers
+     OWNER: captain, updated when phase changes / decisions are locked / guardrails shift
+     DO NOT PUT HERE: time-boxed operator directives + lane priorities (→ captain-lanes.md tier-2);
+                      standing behavioral rules (→ orchestrator-rules skill); this-session state (→ HANDOFF.md tier-1) -->
+
+# Durable project-level state only. Captain reads on every boot (STARTUP.md Step 0a)
+# BEFORE re-deriving state. Three blocks: phase, forbidden_actions, locked_decisions.
 
 phase: operational  # operational | bootstrap | maintenance | winding-down
 

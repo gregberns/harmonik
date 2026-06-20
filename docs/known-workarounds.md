@@ -167,3 +167,65 @@ br close <bead_id> --reason "Salvaged: context_cancelled; SHA promoted via harmo
 **DOT COMMIT_GATE SHELL NODE: `go` COMMAND NOT FOUND / EXIT 127 (first seen 2026-06-08, fixed hk-m5axg).**
 Symptom: DOT-mode `commit_gate` shell nodes failed with `go: command not found` (exit 127), triggering fix-loop and eventually `run_stale`; `go` is not on `PATH` inside the shell node's subprocess.
 Resolution: Fixed in `internal/daemon/dot_cascade.go` by inheriting the daemon's full environment (`append(os.Environ(), env...)`) when spawning shell nodes, so `PATH` (and all other env vars) propagate correctly.
+
+---
+
+## Orchestrator gotchas (ex-AGENT_OPERATING_MANUAL)
+
+Five hard-won operational failures, relocated here from the retired AGENT_OPERATING_MANUAL.
+
+### Gotcha 1 — ENV-STRIP / BILLING
+
+**Symptom:** API credit consumed in ~2 hours with no obvious cause (2026-05-30 incident — all credit gone in ~2h).
+
+**Cause:** `ANTHROPIC_API_KEY` was present in a repo `.env` file that `harmonik --project` auto-sourced. Daemon-spawned claude sessions inherit the parent environment. An inherited API key makes claude bill pay-per-token API instead of the Max subscription.
+
+**Fix:**
+- Never put `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH*` in a repo `.env` that a bare `harmonik --project` daemon can inherit.
+- The credential deny-list in the daemon scrubs these keys from every daemon-spawned claude. Only `harmonik supervise start` reads `.env` and injects the key into Pi (the flywheel cognition process).
+- Always start the daemon with `--no-auto-pull`.
+
+### Gotcha 2 — WIDE WAVES (disk + CPU exhaustion)
+
+**Symptom:** builds crawl, `run_stale` false alarms fire at ~10 min, eventual `no space left on device`.
+
+**Cause:** `--max-concurrent ≥ 6` exhausts disk (each isolated worktree ≈ 26 MB; dozens add up fast) and oversubscribes CPU (each implementer runs multi-core `go build`/`go test`; 8–10 wide makes every bead crawl).
+
+**Fix:**
+- Throughput knee is **4–5 wide** on a 10-core box. Start there.
+- Change a live daemon's ceiling without restart: `harmonik queue set-concurrency N`.
+- Biggest safe disk reclaim: `go clean -cache` (~12 GB freed in the incident).
+- Before `go install`, always `git fetch && git reset --hard origin/main` — the daemon pushes per-bead merges but your local `main` lags. Rebuilding from stale `main` silently ships a daemon WITHOUT the just-landed fix.
+
+### Gotcha 3 — EPIC-DEP BLOCKS DISPATCH
+
+**Symptom:** `harmonik queue submit` shows `group_failure`, `failed > 0`, but ZERO `run_started` events — no implementer ever launches.
+
+**Cause:** `br dep add <task> <epic>` makes the task blocked-by the OPEN epic. The daemon silently insta-fails dispatch for any task with an open blocker — no implementer spawns, no log, just failure.
+
+**Fix:**
+- Attach a bead to its kerf work via the `codename:<name>` **label**, not an epic dependency.
+- Example: `br label add hk-abc codename:productization` (not `br dep add hk-abc hk-epic`).
+- To diagnose: `br show <id>` — look for `blocked_by` entries listing an open bead.
+
+### Gotcha 4 — $TMUX REQUIRED
+
+**Symptom:** `harmonik run` or `harmonik status` exits immediately with `"$TMUX is not set"` (exit 1). No daemon spawns.
+
+**Cause:** harmonik hard-requires a tmux environment. Invoking from a plain shell (terminal not inside tmux, or a headless script) triggers this check.
+
+**Fix:**
+- Always wrap launches in a detached tmux session: `tmux new-session -d -s harmonik-daemon '...'`
+- The persistent daemon is launched the same way.
+- If running interactively, start inside a tmux window first.
+
+### Gotcha 5 — STALE BINARY
+
+**Symptom:** "but I already fixed that" — a known bug persists after you patched the code.
+
+**Cause:** The running daemon is using the old binary. `go install` only updates the binary on disk; a running daemon doesn't reload.
+
+**Fix:**
+1. After any harmonik code change: `go install ./cmd/harmonik`
+2. **Then restart the daemon** — kill its tmux session (`tmux kill-session -t harmonik-daemon`) or `pkill -f "harmonik --project"`, then wait for the supervisor to revive it (or relaunch manually).
+3. Pair with Gotcha #2's reset-before-install: `git fetch && git reset --hard origin/main` first so you build from the latest merged code.

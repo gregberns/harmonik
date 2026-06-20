@@ -1,8 +1,26 @@
+<!-- TIER: 4 (operational state, weeks–months / long cadence)
+     LOADED BY: captain @ cold boot / milestone only (NOT every restart); implementer-orchestrator on demand
+     OWNER: orchestrator, updated at milestone boundaries
+     DO NOT PUT HERE: live lane/crew registry + dated directives (→ captain-lanes.md tier-2);
+                      this-session state (→ HANDOFF.md tier-1) -->
+
 # Harmonik Roadmap
 
-> **As of 2026-05-15.** High-level epic roadmap; for live lane/initiative tracking see [docs/INITIATIVES.md](docs/INITIATIVES.md) and STATUS.md.
+> High-level epic roadmap; for live lane/initiative tracking see [captain-lanes.md](.harmonik/context/captain-lanes.md) (tier-2) and STATUS.md.
 
-_Last updated: 2026-05-15. High-level epic order from current state to a fully operational harmonik that orchestrators can drive at scale._
+## We are HERE (2026-06-20)
+
+Phase 1 + Phase 2-entry are GREEN. The persistent daemon, Captain & Crew system, and session-keeper all landed. Current work is operational hardening + fleet economy, tracked as June campaigns:
+
+| Campaign | Epic | Status (2026-06-20) |
+|---|---|---|
+| **keeper-redesign** (per-session context-watcher hardening) | `hk-gffc` | ✅ COMPLETE — 11 beads closed, identity-first + blind-keeper alarm + per-crew keeper + 280K hard-ceiling |
+| **captain-economy** (lean the captain boot + skill-lean) | `hk-unjy` | 🟡 IN PROGRESS — CE1 landed (boot ~81k→~55-60k); CE4/CE5/CE6 held |
+| **productization** (deployable on any project + integration-branch enforcement) | `codename:productization` | 🟡 IN PROGRESS — P0 gate landed (integration-branch enforcement), embed/init scaffolding ongoing |
+| **fleet economy** (sleep/wake, leanfleet, token-burn) | `hk-rl4b` / `hk-itoc` / `hk-bsdr` | 🟡 ranked, mostly unstaffed (LEAN park) |
+| **remote-substrate** (distribute bead-work to a 2nd machine) | `hk-rs-phase1` | 🟡 phase-1, e2e blocked on gb-mbp worker |
+
+_Earlier high-level epic order (current state → fully operational harmonik that orchestrators can drive at scale) follows._
 
 ## Current state
 

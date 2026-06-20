@@ -90,7 +90,8 @@ ground-truth (Step 2) overrides anything it claims about live state.
    / mail / attribution / surface-and-await). Load alongside `agent-comms`,
    `beads-cli`, `harmonik-dispatch`.
 2. **THIS file** (`.claude/skills/captain/STARTUP.md`) — the boot checklist.
-3. `docs/orchestrator-rules.md` — permanent dispatch/priority/review directives.
+3. the `orchestrator-rules` skill (`.claude/skills/orchestrator-rules/SKILL.md`) — the
+   canonical standing rules (permanent dispatch/priority/review directives).
 4. `HANDOFF.md` — prior session's narrative. Treat as a CLAIM to be verified, not
    a description of current reality. Extract: which lanes existed, which epics,
    any open blocker. Then VERIFY every claim against Step 2.

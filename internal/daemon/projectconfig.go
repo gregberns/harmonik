@@ -88,7 +88,10 @@ package daemon
 //
 // Unknown agent keys are silently ignored (forward-compat).
 // Unknown sibling keys under daemon: are silently ignored (forward-compat per PL-004b).
-// Unknown sibling keys under keeper: are silently ignored (forward-compat per hk-lhu2).
+// Unknown keys under keeper: (and every keeper sub-block) are REJECTED with
+//   *ErrUnknownConfigKey naming the offending key path (operator decision, hk-9f3f).
+//   The previous "silently ignored (forward-compat per hk-lhu2)" behaviour is removed
+//   because silent-ignore masks a typo'd / fat-fingered keeper key.
 // Unknown schema_version → ErrUnsupportedConfigVersion.
 // Parse error on a present file → ErrMalformedConfigYAML.
 // daemon.workflow_mode: single → ErrWorkflowModeFloorViolation (PL-004a floor).
@@ -104,10 +107,13 @@ package daemon
 // Beads: hk-bfvk7, hk-rcp7, hk-lhu2, hk-exg3, hk-9kgf.
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -135,6 +141,37 @@ func (e *ErrMalformedConfigYAML) Error() string {
 }
 
 func (e *ErrMalformedConfigYAML) Unwrap() error { return e.Cause }
+
+// ErrUnknownConfigKey is returned when the keeper: block (or any of its
+// sub-blocks) carries a key that the schema does not recognise. Per the
+// operator decision (hk-9f3f) unknown keeper keys are a HARD ERROR — they are
+// no longer silently ignored, because silent-ignore masks a fat-fingered /
+// typo'd key. The daemon and `harmonik keeper` MUST refuse to start when this
+// error is returned; the operator fixes the offending key.
+//
+// KeyPath names the offending key as a dotted path rooted at keeper
+// (e.g. "keeper.context_thresholds.warn_abs_token").
+//
+// Scope: this strict-rejection applies ONLY to the keeper: block. The daemon:
+// block remains tolerant of unknown sibling keys per the PL-004b spec
+// requirement (specs/process-lifecycle.md §4.1).
+//
+// Bead ref: hk-9f3f.
+type ErrUnknownConfigKey struct {
+	// Path is the absolute path to the file.
+	Path string
+	// KeyPath is the dotted path to the offending key, rooted at keeper.
+	KeyPath string
+	// Cause is the underlying strict-decode error (carries the yaml.v3 message).
+	Cause error
+}
+
+func (e *ErrUnknownConfigKey) Error() string {
+	return fmt.Sprintf("daemon: project config: unknown key %q under keeper: in %s (unknown keeper keys are rejected; fix the key)",
+		e.KeyPath, e.Path)
+}
+
+func (e *ErrUnknownConfigKey) Unwrap() error { return e.Cause }
 
 // ErrUnsupportedConfigVersion is returned when .harmonik/config.yaml declares a
 // schema_version other than projectConfigCurrentVersion (1).
@@ -185,7 +222,7 @@ type rawDaemonConfig struct {
 
 // rawKeeperContextThresholds holds configurable threshold values in the
 // keeper.context_thresholds block. Values ≤ 0 are treated as not configured
-// (defer to CLI flag or compiled default). Unknown keys are silently ignored.
+// (defer to CLI flag or compiled default). Unknown keys are REJECTED (hk-9f3f).
 type rawKeeperContextThresholds struct {
 	WarnAbsTokens      int64   `yaml:"warn_abs_tokens"`
 	ActAbsTokens       int64   `yaml:"act_abs_tokens"`
@@ -256,17 +293,19 @@ type rawKeeperWarnMessages struct {
 }
 
 // rawKeeperConfig is the keeper: block in config.yaml.
-// Unknown keys at this level are silently ignored (forward-compat per hk-lhu2).
 //
-// TODO(hk-4pnv / operator-decision): the fail-loud sweep asked whether to REJECT
-// unknown keys in the keeper block (so an operator who fat-fingers a key learns of
-// it). LEFT AS-IS: unknown-key tolerance is a NORMATIVE spec requirement, not an
-// incidental default — specs/process-lifecycle.md §PL-004b makes "unknown sibling
-// keys MUST be tolerated (silently ignored)" load-bearing for the config surface
-// (older binaries must tolerate a config.yaml written for a newer binary while the
-// keeper schema is actively extended across hk-lhu2 → hk-exg3 → hk-9kgf). Rejecting
-// here would break that forward-compat posture. Flagged for operator call; do not
-// flip to strict (KnownFields(true)) without amending the spec.
+// Unknown keys at this level — and in EVERY keeper sub-block (context_thresholds,
+// hard_ceiling, timings, cadence, budgets, self_service, warn_messages) — are
+// REJECTED with *ErrUnknownConfigKey naming the offending key path (operator
+// decision, hk-9f3f). This is enforced by strict yaml.v3 decoding (KnownFields(true))
+// of the keeper sub-node ONLY; see strictDecodeKeeperBlock. The daemon: block is
+// decoded SEPARATELY and stays tolerant (PL-004b spec requirement).
+//
+// History: hk-lhu2 originally made unknown keeper keys silently ignored for
+// forward-compat while the schema was actively extended (hk-lhu2 → hk-exg3 →
+// hk-9kgf). The schema is now stable and silent-ignore was masking real
+// misconfiguration (a typo'd key would be silently dropped, defeating the
+// operator's intent). hk-9f3f removes silent-ignore for the keeper block.
 //
 // # Config-schema convention (LOCKED — hk-exg3)
 //
@@ -582,6 +621,13 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		return ProjectConfig{}, err
 	}
 
+	// hk-9f3f: REJECT unknown keys under the keeper: block (and every sub-block).
+	// This is a strict decode of the keeper sub-node ONLY — the daemon: block
+	// above was decoded tolerantly (PL-004b) and is untouched by this check.
+	if err := strictDecodeKeeperBlock(path, data); err != nil {
+		return ProjectConfig{}, err
+	}
+
 	// hk-lhu2 / hk-9kgf: parse the keeper: block. Most values are optional, but
 	// a malformed duration string (e.g. a bare number) fails loudly (hk-9kgf).
 	keeperCfg, err := parseKeeperBlock(path, raw.Keeper)
@@ -649,6 +695,103 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 	return cfg, nil
 }
 
+// keeperNodeEnvelope captures the keeper: sub-node of the top-level config YAML
+// as a raw yaml.Node WITHOUT strict decoding, so that sibling top-level keys
+// (schema_version, agents, daemon) are tolerated. The captured node is then
+// re-decoded strictly IN ISOLATION (strictDecodeKeeperBlock), which is what
+// scopes the unknown-key rejection to the keeper block alone. (hk-9f3f)
+type keeperNodeEnvelope struct {
+	Keeper yaml.Node `yaml:"keeper"`
+}
+
+// keeperTypeToPrefix maps each keeper sub-struct's Go type name (as it appears
+// in yaml.v3's KnownFields(true) error message) to its dotted key-path prefix
+// rooted at keeper. Used to render a precise KeyPath in *ErrUnknownConfigKey.
+//
+// Bead ref: hk-9f3f.
+var keeperTypeToPrefix = map[string]string{
+	"rawKeeperConfig":            "keeper",
+	"rawKeeperContextThresholds": "keeper.context_thresholds",
+	"rawKeeperHardCeiling":       "keeper.hard_ceiling",
+	"rawKeeperTimings":           "keeper.timings",
+	"rawKeeperCadence":           "keeper.cadence",
+	"rawKeeperBudgets":           "keeper.budgets",
+	"rawKeeperSelfService":       "keeper.self_service",
+	"rawKeeperWarnMessages":      "keeper.warn_messages",
+}
+
+// keeperUnknownFieldRe extracts the field name and owning Go type from a single
+// yaml.v3 KnownFields(true) error line, e.g.:
+//
+//	line 6: field warn_abs_token not found in type daemon.rawKeeperContextThresholds
+var keeperUnknownFieldRe = regexp.MustCompile(`field (\S+) not found in type (?:[\w.]+\.)?(\w+)`)
+
+// strictDecodeKeeperBlock re-decodes ONLY the keeper: sub-node of the config
+// YAML with yaml.v3 KnownFields(true) so that an unknown key anywhere under
+// keeper: (the block itself or any sub-block) is REJECTED rather than silently
+// ignored (operator decision, hk-9f3f).
+//
+// SCOPE: it decodes a strictKeeperEnvelope (only a keeper field), so the
+// daemon:, agents:, and schema_version: top-level keys are NEVER subjected to
+// the strict check — the daemon block keeps its PL-004b unknown-key tolerance.
+//
+// On an unknown key it returns *ErrUnknownConfigKey whose KeyPath names the
+// offending key rooted at keeper (e.g. keeper.context_thresholds.warn_abs_token).
+// A malformed-YAML error from the strict decoder that is NOT an unknown-field
+// error is surfaced as *ErrMalformedConfigYAML (defensive; the tolerant decode
+// in parseProjectConfig already caught structural errors upstream).
+func strictDecodeKeeperBlock(path string, data []byte) error {
+	// 1. Tolerantly capture ONLY the keeper sub-node, ignoring sibling top-level
+	//    keys (schema_version, agents, daemon). No KnownFields here — top-level
+	//    tolerance must be preserved.
+	var env keeperNodeEnvelope
+	if err := yaml.Unmarshal(data, &env); err != nil {
+		// Structural error — already surfaced upstream as malformed; be defensive.
+		return &ErrMalformedConfigYAML{Path: path, Cause: err}
+	}
+	// Absent keeper block: zero node (Kind 0) → nothing to validate.
+	if env.Keeper.Kind == 0 {
+		return nil
+	}
+
+	// 2. Re-marshal the isolated keeper node and strict-decode it. KnownFields(true)
+	//    now applies ONLY to the keeper sub-tree, so an unknown key under keeper:
+	//    or any of its sub-blocks is rejected — while the daemon: block (decoded
+	//    separately and tolerantly in parseProjectConfig) is untouched.
+	keeperBytes, err := yaml.Marshal(&env.Keeper)
+	if err != nil {
+		return &ErrMalformedConfigYAML{Path: path, Cause: err}
+	}
+	var probe rawKeeperConfig
+	dec := yaml.NewDecoder(bytes.NewReader(keeperBytes))
+	dec.KnownFields(true)
+	err = dec.Decode(&probe)
+	if err == nil || errors.Is(err, io.EOF) {
+		return nil
+	}
+
+	// yaml.v3 reports unknown fields as a TypeError whose message lists one line
+	// per offending field: "field <name> not found in type <pkg>.<Type>".
+	msg := err.Error()
+	if m := keeperUnknownFieldRe.FindStringSubmatch(msg); m != nil {
+		field, typeName := m[1], m[2]
+		prefix, ok := keeperTypeToPrefix[typeName]
+		if !ok {
+			// Unknown owning type (should not happen for a keeper sub-node) —
+			// fall back to a keeper-rooted path so the operator still sees the key.
+			prefix = "keeper"
+		}
+		return &ErrUnknownConfigKey{
+			Path:    path,
+			KeyPath: prefix + "." + field,
+			Cause:   err,
+		}
+	}
+
+	// Not an unknown-field error: surface as malformed (defensive).
+	return &ErrMalformedConfigYAML{Path: path, Cause: err}
+}
+
 // parseDurationField parses a Go duration STRING into a time.Duration.
 //
 // Contract (hk-9kgf, operator decision): a duration field MUST be a Go duration
@@ -688,9 +831,11 @@ func parseDurationField(path, key, value string) (time.Duration, error) {
 // Cross-field invariants (warn < act < force) are NOT checked here — they run
 // post-resolution in a later bead.
 //
-// Unknown YAML keys at any level are silently ignored (forward-compat per hk-lhu2).
+// Unknown YAML keys at any level under keeper: are REJECTED (operator decision,
+// hk-9f3f) — strict decoding happens upstream in strictDecodeKeeperBlock before
+// this function runs; parseKeeperBlock receives an already-validated rawKeeperConfig.
 //
-// Bead ref: hk-lhu2, hk-9kgf.
+// Bead ref: hk-lhu2, hk-9kgf, hk-9f3f.
 func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	cfg := KeeperConfig{}
 

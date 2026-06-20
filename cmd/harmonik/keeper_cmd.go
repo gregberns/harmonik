@@ -134,6 +134,16 @@ func runKeeperSubcommand(args []string) int {
 	// Precedence: CLI flag > config.yaml > compiled default (applied in applyDefaults).
 	projCfg, projCfgErr := daemon.LoadProjectConfig(projectDir)
 	if projCfgErr != nil {
+		// hk-9f3f (operator decision): an unknown / typo'd key under the keeper:
+		// block is a HARD ERROR — `harmonik keeper` REFUSES to start so the
+		// operator notices and fixes the key, rather than silently running on
+		// defaults with their intended config dropped. Other loader errors remain
+		// non-fatal (logged; defaults used) per the prior keeper-startup contract.
+		var unknownKey *daemon.ErrUnknownConfigKey
+		if errors.As(projCfgErr, &unknownKey) {
+			fmt.Fprintf(os.Stderr, "keeper: refusing to start: %v\n", projCfgErr)
+			return 2
+		}
 		fmt.Fprintf(os.Stderr, "keeper: project config: %v (ignoring; using defaults)\n", projCfgErr)
 	}
 	keeperCfg := projCfg.Keeper

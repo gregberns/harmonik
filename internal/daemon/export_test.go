@@ -1543,6 +1543,12 @@ type ExportedErrMalformedConfigYAML = ErrMalformedConfigYAML
 // Bead ref: hk-bfvk7.
 type ExportedErrUnsupportedConfigVersion = ErrUnsupportedConfigVersion
 
+// ExportedErrUnknownConfigKey is a type alias so tests can use errors.As to
+// assert that an unknown key under keeper: is rejected (hk-9f3f).
+//
+// Bead ref: hk-9f3f.
+type ExportedErrUnknownConfigKey = ErrUnknownConfigKey
+
 // ExportedErrWorkflowModeFloorViolation is a type alias so tests can use errors.As.
 //
 // Bead ref: hk-rcp7.

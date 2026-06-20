@@ -850,3 +850,64 @@ func TestWatcher_RespawnCooldownPreventsDoubleSpawn(t *testing.T) {
 		t.Errorf("want exactly 1 session_keeper_respawn_attempted (cooldown); got %d", len(events))
 	}
 }
+
+// TestWatcher_ForeignSessionEmitsNoGauge is the alarm-path complement of
+// TestWatcher_IgnoresForeignSessionGauge: a true concurrent foreign session
+// must not only suppress the warn — it must actively emit
+// session_keeper_no_gauge with reason "foreign_session" so the operator can
+// see the blind-keeper event rather than a silent pass.
+//
+// This closes the structural test gap noted in the hk-zole/hk-nlio audit:
+// the prior test checked warn==0 but not that the alarm channel fired.
+func TestWatcher_ForeignSessionEmitsNoGauge(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "foreign-alarm-agent"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   projectDir,
+		PollInterval: 10 * time.Millisecond,
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		Staleness:    120 * time.Second,
+		TmuxTarget:   "",
+		// Managed binding is "sess-mine"; .sid endorses "sess-mine"; gauge carries
+		// "sess-foreign" — true concurrent foreign session.
+		ReadManagedSessionFn:  func(_, _ string) (string, error) { return "sess-mine", nil },
+		WriteManagedSessionFn: func(_, _, _ string) error { return nil },
+		ReadSidFn: func(_, _ string) (string, time.Time, error) {
+			return "sess-mine", time.Time{}, nil
+		},
+	}
+
+	// Gauge belongs to a different session — foreign.
+	writeCtxFile(t, projectDir, agent, 90.0, "sess-foreign")
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	// (a) No warn — guard against false positives from foreign sessions.
+	if warns := em.EventsOfType(core.EventTypeSessionKeeperWarn); len(warns) != 0 {
+		t.Errorf("want 0 session_keeper_warn for foreign session; got %d", len(warns))
+	}
+
+	// (b) At least one no_gauge:foreign_session event — the alarm channel must fire.
+	noGauge := em.EventsOfType(core.EventTypeSessionKeeperNoGauge)
+	foreignCount := 0
+	for _, ev := range noGauge {
+		var p core.SessionKeeperNoGaugePayload
+		if err := json.Unmarshal(ev.Payload, &p); err == nil && p.Reason == "foreign_session" {
+			foreignCount++
+		}
+	}
+	if foreignCount == 0 {
+		t.Errorf("want ≥1 no_gauge:foreign_session event (blind-keeper alarm); got 0 (total no_gauge events: %d)", len(noGauge))
+	}
+}

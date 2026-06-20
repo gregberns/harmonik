@@ -1217,8 +1217,21 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 		return nil
 	}
 
+	// Arm the cooldown only when the cycle COMPLETES. The idle path wants
+	// completion-stamping (unlike the forced path's start-stamping anti-thrash at
+	// lastForcedAttemptAt): an idle restart that ABORTS (handoff-nonce timeout,
+	// context cancel — runCycle sets lastFireWasAbort and returns) issued no
+	// /clear, so the crew is still wedged at large context. Start-stamping there
+	// let Gate 6 suppress every retry for the full IdleRestartCooldown (30 min
+	// default), stranding the idle crew on a single failed attempt. Stamp before
+	// the call so the in-flight cycle is rate-limited, then unwind the stamp if it
+	// aborted so the next tick can retry. Refs: hk-4i0s.
 	c.lastIdleRestartAt = time.Now()
-	return c.runCycle(ctx, cf)
+	err := c.runCycle(ctx, cf)
+	if c.lastFireWasAbort {
+		c.lastIdleRestartAt = time.Time{}
+	}
+	return err
 }
 
 // emitPrecompactBlocked emits session_keeper_precompact_blocked.

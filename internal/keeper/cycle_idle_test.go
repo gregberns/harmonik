@@ -296,6 +296,64 @@ func TestCycler_RunForIdle_RespectsCooldown(t *testing.T) {
 	}
 }
 
+// TestCycler_RunForIdle_AbortDoesNotArmCooldown verifies that an idle-restart
+// attempt that ABORTS (handoff nonce never confirmed → runCycle returns without
+// issuing /clear) does NOT arm IdleRestartCooldown. A start-stamped cooldown
+// would suppress every retry for the full window (30 min default), wedging the
+// still-large-context idle crew on a single failed attempt. After the fix the
+// next tick must be free to attempt again. Refs: hk-4i0s.
+func TestCycler_RunForIdle_AbortDoesNotArmCooldown(t *testing.T) {
+	t.Parallel()
+
+	em := &keeper.RecordingEmitter{}
+	// readHandoff returns NO keeper nonce, so pollForNonce times out and runCycle
+	// ABORTS (the handoff_timeout path) on every call.
+	readHandoff := func(_ string) (string, error) {
+		return "# Handoff\n\n(no nonce here)\n", nil
+	}
+	readGaugeFn := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 200_000, SessionID: "sess-abort-gauge"}, time.Now(), nil
+	}
+
+	// 1-hour cooldown: if the abort start-stamped it, the second call would be
+	// gated for the whole window. The fix unwinds the stamp on abort.
+	cycler := newIdleCycler(t, t.TempDir(), em,
+		true,  // crispIdle
+		false, // holdingDispatch
+		actAbsForIdleTests,
+		defaultIdleTokenThreshold,
+		1*time.Hour, // long cooldown
+		readHandoff, readGaugeFn,
+	)
+	ctx := context.Background()
+
+	// First call: attempts, then aborts (no nonce confirmed).
+	cf1 := &keeper.CtxFile{Pct: 50.0, Tokens: aboveIdleButBelowAct, WindowSize: 1_000_000, SessionID: "sess-abort-1"}
+	if err := cycler.RunForIdle(ctx, cf1); err != nil {
+		t.Fatalf("first RunForIdle: %v", err)
+	}
+	if got := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); got != 1 {
+		t.Fatalf("first attempt: want 1 handoff_started, got %d", got)
+	}
+	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); got != 1 {
+		t.Fatalf("first attempt should ABORT: want 1 cycle_aborted, got %d", got)
+	}
+	if got := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); got != 0 {
+		t.Fatalf("first attempt must not complete: got %d cycle_complete", got)
+	}
+
+	// Second call on the next tick with a DIFFERENT session_id (clears Gate-7
+	// anti-loop, isolating the cooldown gate). With the start-stamp bug this is
+	// suppressed for the whole cooldown; after the fix it attempts again.
+	cf2 := &keeper.CtxFile{Pct: 50.0, Tokens: aboveIdleButBelowAct, WindowSize: 1_000_000, SessionID: "sess-abort-2"}
+	if err := cycler.RunForIdle(ctx, cf2); err != nil {
+		t.Fatalf("second RunForIdle: %v", err)
+	}
+	if got := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); got != 2 {
+		t.Errorf("aborted attempt must NOT arm cooldown: want 2 handoff_started after retry, got %d", got)
+	}
+}
+
 // TestCycler_RunForIdle_AntiLoop verifies that a RunForIdle call with the same
 // session_id as lastFiredSID (set by a prior MaybeRun cycle) is suppressed.
 func TestCycler_RunForIdle_AntiLoop(t *testing.T) {

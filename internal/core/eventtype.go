@@ -901,6 +901,24 @@ const (
 	// Durability class: O (ordinary — escalation signal; operator attention).
 	// Refs: hk-uldg; codename:keeper-redesign.
 	EventTypeSessionKeeperAckTimeout EventType = "session_keeper_ack_timeout"
+
+	// EventTypeSessionKeeperBlind is the session_keeper_blind event type.
+	// Emitted by the keeper watcher when a continuous foreign_session rejection
+	// streak exceeds 5 minutes — the keeper is bound to the wrong session and
+	// cannot monitor the live agent. Latched per blind episode (fired once);
+	// cleared when the gauge becomes readable again.
+	// Durability class: O (ordinary — safety alarm; operator attention required).
+	// Refs: hk-34ac.
+	EventTypeSessionKeeperBlind EventType = "session_keeper_blind"
+
+	// EventTypeSessionKeeperHardCeiling is the session_keeper_hard_ceiling event
+	// type. Emitted by the keeper watcher when a pane's token count exceeds
+	// HardCeilingAbsTokens (280 000) regardless of SID binding — a failsafe that
+	// triggers a handoff+restart even when the keeper is mis-bound. The event is
+	// emitted before the restart action fires.
+	// Durability class: O (ordinary — safety action; observability).
+	// Refs: hk-34ac.
+	EventTypeSessionKeeperHardCeiling EventType = "session_keeper_hard_ceiling"
 )
 
 // ---------------------------------------------------------------------------

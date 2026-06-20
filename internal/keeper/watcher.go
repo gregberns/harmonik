@@ -399,6 +399,26 @@ type WatcherConfig struct {
 	// Set to 0 in tests that deliberately exercise multi-crossing behaviour.
 	// Refs: hk-sol6.
 	WarnCooldown time.Duration
+
+	// ── Backstop 2: SID-independent hard-ceiling failsafe (hk-34ac) ──────────
+
+	// HardCeilingRestartFn, when non-nil, enables the SID-independent hard-ceiling
+	// backstop. When any watched pane's token count meets or exceeds
+	// HardCeilingAbsTokens (280 000), this function is called to force a
+	// handoff+restart regardless of whether the SID binding is correct. The
+	// cooldown (HardCeilingCooldown) prevents tight restart loops.
+	//
+	// When nil the hard-ceiling backstop is disabled (fail-closed: no action
+	// wired → no restart). Set in production to a Cycler.MaybeRun wrapper or an
+	// on-demand restart function; set to a spy in tests.
+	// Refs: hk-34ac.
+	HardCeilingRestartFn func(ctx context.Context, agentName string) error
+
+	// HardCeilingCooldown is the minimum duration between consecutive
+	// hard-ceiling restart attempts. Prevents tight restart loops when the token
+	// count remains above the ceiling across multiple ticks.
+	// Default: 5 minutes. Refs: hk-34ac.
+	HardCeilingCooldown time.Duration
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -486,6 +506,10 @@ func (c *WatcherConfig) applyDefaults() {
 	} else if c.WarnCooldown == 0 {
 		c.WarnCooldown = warnCooldown // zero sentinel → use production default
 	}
+	// Hard-ceiling backstop cooldown (hk-34ac). Default: 5 minutes.
+	if c.HardCeilingCooldown <= 0 {
+		c.HardCeilingCooldown = 5 * time.Minute
+	}
 	// Auto-enable on-demand restart UX for the captain agent. The captain uses
 	// 'harmonik keeper restart-now' (ON-059) rather than the keeper's auto-cycle,
 	// so the warn injection must instruct it accordingly. The band is unchanged.
@@ -562,6 +586,18 @@ type Watcher struct {
 	// no_gauge:stale path fires loudly. Reset to 0 on any successful derive.
 	// Refs: hk-lal8.
 	heartbeatMissCount int
+
+	// ── Backstop 1: blind-keeper alarm (hk-34ac) ─────────────────────────────
+	// blindSince is the time of the FIRST foreign_session tick in the current
+	// continuous blind episode. Zero value means the keeper is not currently
+	// blind. Set on the first foreign_session tick; reset on any successful
+	// (non-foreign, non-stale) tick.
+	blindSince time.Time
+
+	// blindAlarmFired is true when session_keeper_blind has already been emitted
+	// for the current blind episode. Prevents re-emission on every tick. Cleared
+	// (along with blindSince) when the gauge becomes readable again.
+	blindAlarmFired bool
 }
 
 // NewWatcher constructs a Watcher with the given config and emitter.
@@ -630,6 +666,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// injection fires on the first warn crossing of a session. Reset to false
 		// when a cycle completes (warnArmed reset path). Refs: hk-lsk5.
 		hintSentThisSession = false
+
+		// hardCeilingLastAt is the time of the most recent hard-ceiling restart
+		// attempt. Used to enforce HardCeilingCooldown. Zero when no hard-ceiling
+		// restart has occurred this session. (Refs: hk-34ac)
+		hardCeilingLastAt time.Time
 	)
 
 	// Boot-time check: emit no_gauge immediately if gauge is absent or stale.
@@ -783,6 +824,46 @@ func (w *Watcher) Run(ctx context.Context) error {
 					warnArmed = true
 					warnFired = false
 					pendingInject = false
+
+					// ── Backstop 1: blind-keeper alarm (hk-34ac) ─────────────────
+					// Track continuous foreign_session episodes. Arm blindSince on
+					// the first foreign tick of each episode; fire session_keeper_blind
+					// once after 5 minutes of continuous blindness. Latch so we emit
+					// only once per episode (blindAlarmFired). The latch and timer are
+					// reset on the next successful (non-foreign) tick (below).
+					if w.blindSince.IsZero() {
+						w.blindSince = time.Now()
+					}
+					if !w.blindAlarmFired && time.Since(w.blindSince) > 5*time.Minute {
+						blindSeconds := int64(time.Since(w.blindSince).Seconds())
+						slog.WarnContext(ctx, "keeper: blind-keeper alarm: continuous foreign_session for >5 min; keeper cannot monitor this pane",
+							"agent", w.cfg.AgentName, "managed_sid", managedSID, "live_sid", ctxFile.SessionID,
+							"blind_seconds", blindSeconds)
+						w.emitBlind(ctx, managedSID, ctxFile.SessionID, blindSeconds)
+						w.blindAlarmFired = true
+					}
+
+					// ── Backstop 2: SID-independent hard-ceiling failsafe (hk-34ac) ──
+					// Even when the SID is foreign, the ctxFile IS readable (we just
+					// parsed it above). If the pane has hit HardCeilingAbsTokens
+					// (280 000), force a restart regardless of SID binding so a
+					// mis-bound keeper cannot silently allow context overflow.
+					// Cooldown-gated to prevent thrashing. Skip if token count is not
+					// available (zero — older .ctx or unreadable field).
+					if ctxFile.Tokens > 0 && ctxFile.Tokens >= HardCeilingAbsTokens &&
+						w.cfg.HardCeilingRestartFn != nil {
+						if hardCeilingLastAt.IsZero() || time.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
+							slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): forcing restart",
+								"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", HardCeilingAbsTokens)
+							w.emitHardCeiling(ctx, ctxFile.Tokens)
+							_ = w.cfg.HardCeilingRestartFn(ctx, w.cfg.AgentName) //nolint:errcheck // best-effort restart
+							hardCeilingLastAt = time.Now()
+						} else {
+							slog.DebugContext(ctx, "keeper: hard ceiling hit but cooldown active; skipping restart",
+								"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens)
+						}
+					}
+
 					continue
 				}
 			} else if managedSID == "" && ctxFile.SessionID != "" {
@@ -803,6 +884,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 			lastNoGaugeEmit = time.Time{}
 			gaugeStaleSince = time.Time{}
 			backoffUntil = time.Time{}
+
+			// ── Backstop 1 reset (hk-34ac) ───────────────────────────────────────
+			// Gauge is readable and SID-matched: clear the blind episode so the
+			// next foreign_session streak starts a fresh 5-minute clock.
+			w.blindSince = time.Time{}
+			w.blindAlarmFired = false
 
 			// ── idle-gate ────────────────────────────────────────────────────
 			// The pane is considered idle when the gauge file's mod-time has not
@@ -1286,6 +1373,41 @@ func (w *Watcher) blockedOnOpenDecision(_ context.Context) bool {
 		return false
 	}
 	return presence.GetState(rec) == presence.StateOnline
+}
+
+// emitBlind emits the session_keeper_blind event (hk-34ac, Backstop 1).
+func (w *Watcher) emitBlind(ctx context.Context, managedSID, liveSID string, blindSeconds int64) {
+	payload := core.SessionKeeperBlindPayload{
+		AgentName:    w.cfg.AgentName,
+		ManagedSID:   managedSID,
+		LiveSID:      liveSID,
+		BlindSeconds: blindSeconds,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		slog.WarnContext(ctx, "keeper: marshal blind payload", "err", err)
+		return
+	}
+	if emitErr := w.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperBlind, raw); emitErr != nil {
+		slog.WarnContext(ctx, "keeper: emit session_keeper_blind", "err", emitErr)
+	}
+}
+
+// emitHardCeiling emits the session_keeper_hard_ceiling event (hk-34ac, Backstop 2).
+func (w *Watcher) emitHardCeiling(ctx context.Context, tokens int64) {
+	payload := core.SessionKeeperHardCeilingPayload{
+		AgentName:   w.cfg.AgentName,
+		Tokens:      tokens,
+		HardCeiling: HardCeilingAbsTokens,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		slog.WarnContext(ctx, "keeper: marshal hard_ceiling payload", "err", err)
+		return
+	}
+	if emitErr := w.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperHardCeiling, raw); emitErr != nil {
+		slog.WarnContext(ctx, "keeper: emit session_keeper_hard_ceiling", "err", emitErr)
+	}
 }
 
 // emitRespawnAttempted emits the session_keeper_respawn_attempted event.

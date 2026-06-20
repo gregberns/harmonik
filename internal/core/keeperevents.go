@@ -265,6 +265,50 @@ type SessionKeeperOperatorAttachedPayload struct {
 	Phase string `json:"phase"`
 }
 
+// SessionKeeperBlindPayload is the payload for session_keeper_blind (hk-34ac).
+//
+// Emitted when the keeper watcher has continuously rejected its gauge as
+// foreign_session for more than 5 minutes. The keeper is bound to the wrong
+// session and cannot monitor the live agent's context usage. Latched once per
+// blind episode; cleared on the next successful (non-foreign, non-stale) tick.
+//
+// Durability class: O (ordinary — safety alarm; operator attention required).
+// Refs: hk-34ac.
+type SessionKeeperBlindPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// ManagedSID is the session_id the keeper is bound to (.managed).
+	ManagedSID string `json:"managed_sid,omitempty"`
+
+	// LiveSID is the session_id the live gauge is reporting.
+	LiveSID string `json:"live_sid,omitempty"`
+
+	// BlindSeconds is how long the keeper has been blind (seconds).
+	BlindSeconds int64 `json:"blind_seconds"`
+}
+
+// SessionKeeperHardCeilingPayload is the payload for session_keeper_hard_ceiling
+// (hk-34ac).
+//
+// Emitted by the keeper watcher when a pane's token count exceeds
+// HardCeilingAbsTokens (280 000) regardless of SID binding. This is a
+// SID-independent failsafe: the action fires even when the keeper is mis-bound,
+// keyed only on the observed gauge token count.
+//
+// Durability class: O (ordinary — safety action; observability).
+// Refs: hk-34ac.
+type SessionKeeperHardCeilingPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// Tokens is the token count observed in the gauge at the time of the action.
+	Tokens int64 `json:"tokens"`
+
+	// HardCeiling is the configured HardCeilingAbsTokens threshold.
+	HardCeiling int64 `json:"hard_ceiling"`
+}
+
 // SessionKeeperAckTimeoutPayload is the payload for session_keeper_ack_timeout
 // (hk-uldg — the agent-side half of the restart-now/ping ACK handshake).
 //

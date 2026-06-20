@@ -464,6 +464,10 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_operator_attached", func() EventPayload { return &SessionKeeperOperatorAttachedPayload{} })
 	// hk-wjzf, ON-059: captain-initiated restart-now gate/freshness suppression.
 	mustRegister("session_keeper_restart_now_blocked", func() EventPayload { return &SessionKeeperRestartNowBlockedPayload{} })
+	// hk-34ac: blind-keeper alarm (continuous foreign_session > 5 min).
+	mustRegister("session_keeper_blind", func() EventPayload { return &SessionKeeperBlindPayload{} })
+	// hk-34ac: SID-independent hard-ceiling failsafe (tokens >= 280K).
+	mustRegister("session_keeper_hard_ceiling", func() EventPayload { return &SessionKeeperHardCeilingPayload{} })
 }
 
 // registerAlarmEvents registers §8.14 alarm / self-check event payload

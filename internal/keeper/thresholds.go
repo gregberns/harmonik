@@ -60,6 +60,17 @@ const (
 	DefaultActAbsTokens  = defaultActAbsTokens
 )
 
+// HardCeilingAbsTokens is the SID-independent absolute-token hard ceiling
+// (hk-34ac). When any watched pane's token count meets or exceeds this value
+// the keeper forces a handoff+restart regardless of whether the session_id
+// binding is correct. This is a last-resort backstop so a mis-bound keeper
+// cannot silently allow a session to overflow.
+//
+// NOTE: This value is deliberately ABOVE the normal band (warn=200K /
+// act=215K / force_act=240K). It does NOT change the warn/act/force_act
+// thresholds; it is an additional independent trip-wire. Refs: hk-34ac.
+const HardCeilingAbsTokens int64 = 280_000
+
 // DefaultBootGracePeriod is the YOUNG-SESSION guard window: the minimum time a
 // session must run after a session_id CHANGE before the keeper will restart it.
 // It is LOAD-BEARING under the aggressive earlier band (hk-8hr1): warn=200K /

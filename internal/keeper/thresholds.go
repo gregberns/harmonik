@@ -69,7 +69,17 @@ const (
 // NOTE: This value is deliberately ABOVE the normal band (warn=200K /
 // act=215K / force_act=240K). It does NOT change the warn/act/force_act
 // thresholds; it is an additional independent trip-wire. Refs: hk-34ac.
-const HardCeilingAbsTokens int64 = 280_000
+//
+// DefaultHardCeilingTokens is the EXPORTED single source of truth for the
+// hard-ceiling threshold; WatcherConfig.applyDefaults bakes it into
+// HardCeilingTokens when that field is zero, and the live gate reads the
+// config field (never this const directly) so the ceiling is configurable
+// per-construction. HardCeilingAbsTokens is kept as a byte-identical alias so
+// existing symbols/tests compile unchanged. Refs: hk-n6kn (const→field).
+const DefaultHardCeilingTokens int64 = 280_000
+
+// HardCeilingAbsTokens aliases DefaultHardCeilingTokens (value unchanged).
+const HardCeilingAbsTokens int64 = DefaultHardCeilingTokens
 
 // DefaultBootGracePeriod is the YOUNG-SESSION guard window: the minimum time a
 // session must run after a session_id CHANGE before the keeper will restart it.

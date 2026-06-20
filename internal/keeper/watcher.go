@@ -132,6 +132,55 @@ func (r *RecordingEmitter) EventsOfType(t core.EventType) []EmittedEvent {
 	return out
 }
 
+// HardCeilingMode selects what the SID-independent hard-ceiling backstop does
+// when a watched pane crosses HardCeilingTokens. The ZERO VALUE is
+// HardCeilingModeAlarm (operator decision: hard-ceiling default mode = alarm),
+// so a config left untouched alarms but does not restart. Refs: hk-n6kn.
+//
+// NOTE: this bead (hk-n6kn) adds the TYPE only — the gate still keys restart on
+// HardCeilingRestartFn != nil and is behaviour-identical to today (the mode is
+// not yet consulted by the gate; that wiring is the NEXT bead).
+type HardCeilingMode int
+
+const (
+	// HardCeilingModeAlarm is the zero value: emit session_keeper_hard_ceiling
+	// but take no restart action. This is the operator-chosen default.
+	HardCeilingModeAlarm HardCeilingMode = iota
+	// HardCeilingModeOff disables the hard-ceiling backstop entirely.
+	HardCeilingModeOff
+	// HardCeilingModeRestart alarms AND drives a handoff+restart.
+	HardCeilingModeRestart
+)
+
+// String renders the mode as its lowercase flag token.
+func (m HardCeilingMode) String() string {
+	switch m {
+	case HardCeilingModeOff:
+		return "off"
+	case HardCeilingModeRestart:
+		return "restart"
+	case HardCeilingModeAlarm:
+		return "alarm"
+	default:
+		return "alarm"
+	}
+}
+
+// ParseHardCeilingMode parses a flag token into a HardCeilingMode. An empty or
+// unrecognized token resolves to the zero value (alarm). Refs: hk-n6kn.
+func ParseHardCeilingMode(s string) HardCeilingMode {
+	switch s {
+	case "off":
+		return HardCeilingModeOff
+	case "restart":
+		return HardCeilingModeRestart
+	case "alarm", "":
+		return HardCeilingModeAlarm
+	default:
+		return HardCeilingModeAlarm
+	}
+}
+
 // WatcherConfig is the configuration for a Watcher instance.
 type WatcherConfig struct {
 	// AgentName is the keeper agent identifier (matches the --agent flag).
@@ -420,6 +469,20 @@ type WatcherConfig struct {
 	// Refs: hk-34ac.
 	HardCeilingRestartFn func(ctx context.Context, agentName string) error
 
+	// HardCeilingTokens is the SID-independent absolute-token hard ceiling: when
+	// a watched pane's token count meets or exceeds this value the hard-ceiling
+	// backstop trips. applyDefaults fills it with DefaultHardCeilingTokens
+	// (280 000) when zero, so the live gate reads w.cfg.HardCeilingTokens rather
+	// than the bare const and the emitted session_keeper_hard_ceiling event
+	// reports the EFFECTIVE configured value. Refs: hk-n6kn (const→field).
+	HardCeilingTokens int64
+
+	// HardCeilingMode selects the backstop's action at the ceiling. Zero value =
+	// HardCeilingModeAlarm (operator-chosen default). The gate does NOT yet
+	// consult this field — restart still keys on HardCeilingRestartFn != nil;
+	// the mode is threaded for the next bead. Refs: hk-n6kn.
+	HardCeilingMode HardCeilingMode
+
 	// HardCeilingCooldown is the minimum duration between consecutive
 	// hard-ceiling restart attempts. Prevents tight restart loops when the token
 	// count remains above the ceiling across multiple ticks.
@@ -531,6 +594,15 @@ func (c *WatcherConfig) applyDefaults() {
 	} else if c.WarnCooldown == 0 {
 		c.WarnCooldown = DefaultWarnCooldown // zero sentinel → use production default
 	}
+	// Hard-ceiling threshold (hk-n6kn): fill from DefaultHardCeilingTokens
+	// (280 000, byte-identical to the prior bare const) when zero so the live
+	// gate and the emitted event report the EFFECTIVE configured value.
+	if c.HardCeilingTokens <= 0 {
+		c.HardCeilingTokens = DefaultHardCeilingTokens
+	}
+	// HardCeilingMode zero value IS HardCeilingModeAlarm (operator-chosen
+	// default), so no normalization is required here — the zero value is
+	// already alarm-safe. Refs: hk-n6kn.
 	// Hard-ceiling backstop cooldown (hk-34ac). Default: 5 minutes.
 	if c.HardCeilingCooldown <= 0 {
 		c.HardCeilingCooldown = DefaultHardCeilingCooldown
@@ -880,11 +952,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 					// mis-bound keeper cannot silently allow context overflow.
 					// Cooldown-gated to prevent thrashing. Skip if token count is not
 					// available (zero — older .ctx or unreadable field).
-					if ctxFile.Tokens > 0 && ctxFile.Tokens >= HardCeilingAbsTokens &&
+					if ctxFile.Tokens > 0 && ctxFile.Tokens >= w.cfg.HardCeilingTokens &&
 						w.cfg.HardCeilingRestartFn != nil {
 						if hardCeilingLastAt.IsZero() || time.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
 							slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): forcing restart",
-								"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", HardCeilingAbsTokens)
+								"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens)
 							w.emitHardCeiling(ctx, ctxFile.Tokens)
 							_ = w.cfg.HardCeilingRestartFn(ctx, w.cfg.AgentName) //nolint:errcheck // best-effort restart
 							hardCeilingLastAt = time.Now()
@@ -1448,7 +1520,7 @@ func (w *Watcher) emitHardCeiling(ctx context.Context, tokens int64) {
 	payload := core.SessionKeeperHardCeilingPayload{
 		AgentName:   w.cfg.AgentName,
 		ContextLen:  tokens,
-		HardCeiling: HardCeilingAbsTokens,
+		HardCeiling: w.cfg.HardCeilingTokens,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

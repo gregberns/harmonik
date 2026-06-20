@@ -368,8 +368,11 @@ func TestHardCeiling_FiresAbove280K_DespiteForeignSession(t *testing.T) {
 			if payload.ContextLen != 290_000 {
 				t.Errorf("payload.ContextLen = %d; want 290000", payload.ContextLen)
 			}
-			if payload.HardCeiling != keeper.HardCeilingAbsTokens {
-				t.Errorf("payload.HardCeiling = %d; want %d", payload.HardCeiling, keeper.HardCeilingAbsTokens)
+			// The emitted ceiling must reflect the EFFECTIVE configured value.
+			// This cfg left HardCeilingTokens at zero, so applyDefaults fills it
+			// with DefaultHardCeilingTokens (== HardCeilingAbsTokens alias).
+			if payload.HardCeiling != keeper.DefaultHardCeilingTokens {
+				t.Errorf("payload.HardCeiling = %d; want default %d", payload.HardCeiling, keeper.DefaultHardCeilingTokens)
 			}
 		}
 	})
@@ -466,5 +469,89 @@ func TestHardCeiling_SkipsWhenTokensZero(t *testing.T) {
 
 	if n := spy.count(); n != 0 {
 		t.Errorf("want 0 hard-ceiling restart calls when tokens==0; got %d", n)
+	}
+}
+
+// TestHardCeiling_EffectiveThresholdWiredThrough proves the const→field plumbing
+// (hk-n6kn): a NON-default HardCeilingTokens (250 000) must (a) drive the gate at
+// a lower token count than the 280 000 default and (b) be the value carried in
+// the emitted session_keeper_hard_ceiling payload — i.e. the EFFECTIVE configured
+// ceiling is wired through, not a fixed 280 000.
+func TestHardCeiling_EffectiveThresholdWiredThrough(t *testing.T) {
+	t.Parallel()
+
+	const effectiveCeiling int64 = 250_000
+
+	projectDir := t.TempDir()
+	agent := "hard-ceiling-effective-agent"
+
+	em := &keeper.RecordingEmitter{}
+	spy := &restartSpy{}
+
+	// 260K is BELOW the 280K default but ABOVE the configured 250K ceiling, so
+	// it only trips when the configured value is actually used by the gate.
+	cfg := foreignSessionConfig(t, projectDir, agent, 260_000)
+	cfg.HardCeilingTokens = effectiveCeiling
+	cfg.HardCeilingRestartFn = spy.restart
+	cfg.HardCeilingCooldown = 10 * time.Second // long cooldown → one attempt
+
+	runWatcherFor(context.Background(), cfg, em, 80*time.Millisecond)
+
+	// Gate must have fired at 260K because the effective ceiling is 250K.
+	if n := spy.count(); n == 0 {
+		t.Errorf("want ≥1 restart at 260K with a 250K configured ceiling; got 0 (gate ignored cfg.HardCeilingTokens?)")
+	}
+
+	ceilEvents := em.EventsOfType(core.EventTypeSessionKeeperHardCeiling)
+	if len(ceilEvents) == 0 {
+		t.Fatal("want ≥1 session_keeper_hard_ceiling event; got 0")
+	}
+	var payload core.SessionKeeperHardCeilingPayload
+	if err := json.Unmarshal(ceilEvents[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal hard_ceiling payload: %v", err)
+	}
+	// The CORE assertion: the payload carries 250000, NOT the 280000 default.
+	if payload.HardCeiling != effectiveCeiling {
+		t.Errorf("payload.HardCeiling = %d; want effective %d (NOT the %d default)",
+			payload.HardCeiling, effectiveCeiling, keeper.DefaultHardCeilingTokens)
+	}
+	if payload.HardCeiling == keeper.DefaultHardCeilingTokens {
+		t.Errorf("payload.HardCeiling = %d == default; effective value NOT wired through", payload.HardCeiling)
+	}
+}
+
+// TestHardCeilingMode_ZeroValueIsAlarm asserts the operator decision: the
+// HardCeilingMode zero value resolves to Alarm (config left untouched alarms,
+// not Off, not Restart). Refs: hk-n6kn.
+func TestHardCeilingMode_ZeroValueIsAlarm(t *testing.T) {
+	t.Parallel()
+
+	var zero keeper.HardCeilingMode // zero value
+	if zero != keeper.HardCeilingModeAlarm {
+		t.Errorf("zero HardCeilingMode = %v; want HardCeilingModeAlarm", zero)
+	}
+	if zero.String() != "alarm" {
+		t.Errorf("zero HardCeilingMode.String() = %q; want \"alarm\"", zero.String())
+	}
+	// applyDefaults must not flip the zero value away from alarm: a config built
+	// without setting HardCeilingMode keeps the alarm default.
+	cfg := keeper.WatcherConfig{}
+	if cfg.HardCeilingMode != keeper.HardCeilingModeAlarm {
+		t.Errorf("unset cfg.HardCeilingMode = %v; want HardCeilingModeAlarm", cfg.HardCeilingMode)
+	}
+	// ParseHardCeilingMode round-trips and empty/unknown → alarm.
+	for _, tc := range []struct {
+		in   string
+		want keeper.HardCeilingMode
+	}{
+		{"", keeper.HardCeilingModeAlarm},
+		{"alarm", keeper.HardCeilingModeAlarm},
+		{"off", keeper.HardCeilingModeOff},
+		{"restart", keeper.HardCeilingModeRestart},
+		{"bogus", keeper.HardCeilingModeAlarm},
+	} {
+		if got := keeper.ParseHardCeilingMode(tc.in); got != tc.want {
+			t.Errorf("ParseHardCeilingMode(%q) = %v; want %v", tc.in, got, tc.want)
+		}
 	}
 }

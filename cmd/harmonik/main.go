@@ -476,6 +476,21 @@ EXAMPLES
 				return runKeeperPing(subArgs[1:])
 			case "await-ack":
 				return runKeeperAwaitAck(subArgs[1:])
+			default:
+				// W7 (hk-x7s): a NON-flag first token that matches no known verb is a
+				// typo'd subcommand (e.g. "restrt-now"). Previously it fell through to
+				// runKeeperSubcommand and was rejected as a stray positional with the
+				// misleading "this command is flag-only" message — so the operator
+				// thought the FLAG form was wrong, not that they fat-fingered the verb
+				// (a real recovery footgun for a destructive verb like restart-now).
+				// Catch it loudly here with the verb list and a non-zero exit. Tokens
+				// that START with '-' are watcher-mode flags, not verbs, so they fall
+				// through to the help intercept + runKeeperSubcommand below.
+				if !strings.HasPrefix(subArgs[0], "-") {
+					fmt.Fprintf(os.Stderr, "harmonik keeper: unknown keeper subcommand %q\n\n", subArgs[0])
+					fmt.Fprint(os.Stderr, keeperTopUsage)
+					return 2
+				}
 			}
 		}
 		for _, arg := range subArgs {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -21,8 +22,8 @@ import (
 //
 //	--agent <name>        agent name (required); identifies the lockfile and .managed marker
 //	--tmux <target>       tmux pane target (optional; injected into on warn/act crossing)
-//	--warn-pct N          context-use percentage that triggers a warning (default 80)
-//	--act-pct N           context-use percentage that triggers handoff action (default 90; .managed-gated)
+//	--warn-pct N          context-use percentage that triggers a warning (default 0 = unset → use abs band; tighten-only)
+//	--act-pct N           context-use percentage that triggers handoff action (default 0 = unset → use abs band; .managed-gated; tighten-only)
 //	--window-size N       assumed context-window token size when gauge reports WindowSize==0 (default 200000)
 //	--warn-abs-tokens N   absolute-token warn threshold (default 200000)
 //	--act-abs-tokens N    absolute-token act threshold (default 215000)
@@ -62,8 +63,13 @@ func runKeeperSubcommand(args []string) int {
 
 	fs.StringVar(&agentFlag, "agent", "", "agent name (required)")
 	fs.StringVar(&tmuxFlag, "tmux", "", "tmux pane target (optional; injected into on warn crossing)")
-	fs.IntVar(&warnPctFlag, "warn-pct", 80, "context-use percentage that triggers a warning")
-	fs.IntVar(&actPctFlag, "act-pct", 90, "context-use percentage that triggers handoff action (.managed-gated)")
+	// W7 (hk-x7s): default 0 = UNSET → use the abs band. The advertised 80/90
+	// defaults were never applied (only an EXPLICITLY-set flag flows through the
+	// pct-ceil seam via fs.Visit), so a reader trusting the help text got a silent
+	// no-op. Defaulting to 0 makes "unset → abs band" honest; an explicit value is
+	// still honored (and tighten-only clamped) below.
+	fs.IntVar(&warnPctFlag, "warn-pct", 0, "context-use percentage that triggers a warning (0 = unset; use abs band)")
+	fs.IntVar(&actPctFlag, "act-pct", 0, "context-use percentage that triggers handoff action (0 = unset; use abs band; .managed-gated)")
 	fs.Int64Var(&windowSizeFlag, "window-size", 0, "assumed context-window token size when the gauge reports WindowSize==0 (default 200000)")
 	fs.Int64Var(&warnAbsTokensFlag, "warn-abs-tokens", 0, "absolute-token warn threshold (default 200000)")
 	fs.Int64Var(&actAbsTokensFlag, "act-abs-tokens", 0, "absolute-token act threshold (default 215000)")
@@ -205,8 +211,22 @@ func runKeeperSubcommand(args []string) int {
 	}
 
 	// Step 5: agent is managed — start the watcher and block until signal.
-	fmt.Fprintf(os.Stderr, "keeper started for %s (warn-pct=%d, act-pct=%d, tmux=%q)\n",
-		agentFlag, warnPctFlag, actPctFlag, resolvedTmux)
+	// W7 (hk-x7s): print the EFFECTIVE resolved band (the abs tokens the gate
+	// actually fires on, tighten-only-clamped by any explicit pct ceil) rather than
+	// the raw pct flag — the old banner printed warn-pct=80/act-pct=90 even when the
+	// abs band is what fires, which is exactly the misleading-default class W7 closes.
+	// windowSizeFlag is the startup fallback (0 = resolved at runtime from the gauge);
+	// when 0 the pct ceil is applied later, so the banner shows the abs values.
+	effWarn, effAct, effForce := keeper.EffectiveBandTokens(
+		resolvedWarnAbs, resolvedActAbs, resolvedForceActAbs,
+		resolvedWarnPctCeil, resolvedActPctCeil, windowSizeFlag)
+	pctNote := ""
+	if warnPctSet || actPctSet {
+		pctNote = fmt.Sprintf(" [pct ceils: warn=%.2f act=%.2f, tighten-only]", resolvedWarnPctCeil, resolvedActPctCeil)
+	}
+	fmt.Fprintf(os.Stderr,
+		"keeper started for %s (effective band: warn=%d act=%d force=%d tokens%s, tmux=%q)\n",
+		agentFlag, effWarn, effAct, effForce, pctNote, resolvedTmux)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -355,7 +375,33 @@ func parseKeeperMarkerArgs(label string, args []string) (agent, project string, 
 		}
 		project = wd
 	}
+	// W5 (hk-x7s / round-1 bug-2a): Abs-normalize the project dir so a relative
+	// --project (or a worktree CWD) resolves to the SAME .harmonik/keeper/ dir the
+	// watcher uses (it derives projectDir from os.Getwd(), always absolute). enable
+	// and doctor already normalize; the marker verbs (set/clear/restart-now) skipped
+	// it, so two commands could "agree" on --project yet touch different files. The
+	// os.Getwd() default is intentionally KEPT (load-bearing for the live captain /
+	// dispatch scripts — adversary 08 §W5); only the normalization is added.
+	abs, err := normalizeProjectDir(label, project)
+	if err != nil {
+		return "", "", 1
+	}
+	project = abs
 	return agent, project, 0
+}
+
+// normalizeProjectDir applies filepath.Abs to a keeper marker-verb project dir so
+// every marker verb resolves to the SAME .harmonik/keeper/ directory the watcher
+// uses (the watcher's projectDir comes from os.Getwd(), always absolute). It is
+// the single chokepoint for the W5 relative-path parity fix; on error it logs to
+// stderr and returns the error so the caller can return exit 1.
+func normalizeProjectDir(label, project string) (string, error) {
+	abs, err := filepath.Abs(project)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik %s: cannot resolve project path %q: %v\n", label, project, err)
+		return "", err
+	}
+	return abs, nil
 }
 
 // runKeeperSetDispatching implements `harmonik keeper set-dispatching <agent>`.
@@ -378,6 +424,19 @@ func runKeeperSetDispatching(args []string) int {
 	if err := keeper.SetDispatching(project, agent); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik keeper set-dispatching: %v\n", err)
 		return 1
+	}
+	// W5 (hk-x7s) fail-open WARNING: the marker write above always succeeds (exit 0),
+	// even when no keeper is watching the resolved project+agent — so the operator can
+	// get a green exit while the dispatch is actually unguarded. Emit a non-fatal
+	// stderr warning when no live keeper holds the <agent>.lock for this dir, so
+	// "I set the marker but nobody's watching" is visible. NOT a hard-fail: a keeper
+	// may legitimately start later (adversary 08 §W5 — advisory only, exit stays 0).
+	if !keeper.LiveKeeperPresent(project, agent) {
+		fmt.Fprintf(os.Stderr,
+			"keeper set-dispatching: WARNING — no live keeper found for agent %q under %q "+
+				"(.dispatching marker written, but no watcher is currently guarding this dispatch; "+
+				"start `harmonik keeper --agent %s` or verify --project)\n",
+			agent, project, agent)
 	}
 	return 0
 }
@@ -486,6 +545,12 @@ func runKeeperPing(args []string) int {
 		}
 		projectDir = wd
 	}
+	// W5 (hk-x7s): Abs-normalize for parity with the watcher / enable / doctor.
+	absPing, absPingErr := normalizeProjectDir("keeper ping", projectDir)
+	if absPingErr != nil {
+		return 1
+	}
+	projectDir = absPing
 	nonce := *nonceFlag
 	if nonce == "" {
 		nonce = restartNowNonce(time.Now().UTC())
@@ -561,6 +626,12 @@ func runKeeperAwaitAck(args []string) int {
 		}
 		projectDir = wd
 	}
+	// W5 (hk-x7s): Abs-normalize for parity with the watcher / enable / doctor.
+	absAA, absAAErr := normalizeProjectDir("keeper await-ack", projectDir)
+	if absAAErr != nil {
+		return 1
+	}
+	projectDir = absAA
 
 	tmuxTarget := keeper.ResolveTmuxTarget(projectDir, agent, "", nil)
 	emitter := keeper.NewFileEmitter(projectDir)
@@ -641,8 +712,10 @@ VERBS
 FLAGS (watcher mode)
   --agent <name>         Agent name (required); identifies the lockfile and .managed marker
   --tmux <target>        tmux pane target (optional; injected into on warn/act-pct crossing)
-  --warn-pct N           Context-use percentage that triggers a warning (default 80)
-  --act-pct N            Context-use percentage that triggers handoff action (default 90; .managed-gated)
+  --warn-pct N           Context-use percentage that triggers a warning (default 0 = unset → use abs band;
+                         an explicit value is tighten-only: it can move warn EARLIER, never later, than the abs band)
+  --act-pct N            Context-use percentage that triggers handoff action (default 0 = unset → use abs band; .managed-gated;
+                         an explicit value is tighten-only: it can move act EARLIER, never later, than the abs band)
   --warn-abs-tokens N    Absolute-token warn threshold (default 200000); effective = min(warn-abs-tokens, warn-pct% * window)
   --act-abs-tokens N     Absolute-token act threshold (default 215000); effective = min(act-abs-tokens, act-pct% * window)
   --respawn-cmd <cmd>    Shell command to re-launch the agent when it exits (supervised respawn; hk-3w2).

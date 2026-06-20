@@ -86,3 +86,34 @@ func minAbsOrPctCeil(abs int64, pctCeil float64, windowSize int64) int64 {
 	}
 	return abs
 }
+
+// EffectiveBandTokens resolves the EFFECTIVE warn/act/force absolute-token band
+// the keeper will actually fire on, for honest banner display (W7, hk-x7s). It
+// applies the compiled defaults to any 0 input, then runs the SAME tighten-only
+// min(abs, pctCeil*window) formula the live gate uses — so an explicit --warn-pct
+// / --act-pct can only move the threshold EARLIER (never later) than the abs band.
+// windowSize 0 means "window unknown at startup"; the abs values are then returned
+// unchanged (the pct ceil is applied at runtime once the gauge reports a window).
+// ForceActAbsTokens is derived as ActAbsTokens+defaultForceActAbsOffset when its
+// input is 0, mirroring applyDefaults.
+func EffectiveBandTokens(warnAbs, actAbs, forceActAbs int64, warnPctCeil, actPctCeil float64, windowSize int64) (warn, act, force int64) {
+	if warnAbs <= 0 {
+		warnAbs = defaultWarnAbsTokens
+	}
+	if actAbs <= 0 {
+		actAbs = defaultActAbsTokens
+	}
+	if forceActAbs <= 0 {
+		forceActAbs = actAbs + defaultForceActAbsOffset
+	}
+	if warnPctCeil <= 0 {
+		warnPctCeil = defaultWarnPctCeil
+	}
+	if actPctCeil <= 0 {
+		actPctCeil = defaultActPctCeil
+	}
+	warn = minAbsOrPctCeil(warnAbs, warnPctCeil, windowSize)
+	act = minAbsOrPctCeil(actAbs, actPctCeil, windowSize)
+	force = minAbsOrPctCeil(forceActAbs, actPctCeil+defaultForceActPctCeilOffset, windowSize)
+	return warn, act, force
+}

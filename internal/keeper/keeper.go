@@ -99,6 +99,43 @@ func AcquireLock(projectDir, agent string) (*Lock, error) {
 	return &Lock{path: lockPath, fd: fd}, nil
 }
 
+// LiveKeeperPresent reports whether a live keeper process currently holds the
+// exclusive flock on <projectDir>/.harmonik/keeper/<agent>.lock. It is a
+// READ-ONLY liveness probe: it opens the lockfile and attempts a non-blocking
+// shared flock — if that FAILS with EAGAIN/EWOULDBLOCK the exclusive lock is
+// held by a live keeper (present=true); if it SUCCEEDS the probe immediately
+// releases its shared lock and reports present=false (no live keeper). A missing
+// lockfile (never started, or removed) also reports false. The probe never
+// disturbs a live keeper's exclusive lock.
+//
+// set-dispatching (hk-x7s / W5 fail-open) uses this to emit a non-fatal WARNING
+// when it writes a .dispatching marker for an agent that has no live watcher —
+// "I set the marker but nobody's watching." It is advisory only; exit stays 0,
+// because a keeper may legitimately start later.
+func LiveKeeperPresent(projectDir, agent string) bool {
+	if validateAgent(agent) != nil {
+		return false
+	}
+	lockPath := filepath.Join(projectDir, ".harmonik", "keeper", agent+".lock")
+	//nolint:gosec // G304: lockPath derived from operator-controlled projectDir and validated agent name
+	fd, err := os.OpenFile(lockPath, os.O_RDONLY|syscall.O_CLOEXEC, 0o600)
+	if err != nil {
+		return false // missing lockfile (or unreadable) → no live keeper to find
+	}
+	defer func() { _ = fd.Close() }() //nolint:errcheck // probe-only fd
+	// Non-blocking SHARED lock: succeeds iff no exclusive lock is held. A live
+	// keeper holds LOCK_EX, so the shared attempt fails with EAGAIN/EWOULDBLOCK.
+	if flockErr := syscall.Flock(int(fd.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); flockErr != nil {
+		if errors.Is(flockErr, syscall.EAGAIN) || errors.Is(flockErr, syscall.EWOULDBLOCK) {
+			return true // exclusive lock held → live keeper present
+		}
+		return false // unexpected flock error → don't claim presence
+	}
+	// We got the shared lock → no exclusive holder. Release and report absent.
+	_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN) //nolint:errcheck // probe cleanup
+	return false
+}
+
 // IsManaged reports whether the opt-in marker
 // <projectDir>/.harmonik/keeper/<agent>.managed exists. Keepers MUST NOT act
 // on a non-managed pane; the absent-marker case is the fail-safe default.

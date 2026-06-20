@@ -1585,6 +1585,26 @@ type ExportedRawKeeperContextThresholds = rawKeeperContextThresholds
 // Bead ref: hk-exg3.
 type ExportedRawKeeperWarnMessages = rawKeeperWarnMessages
 
+// ExportedRawKeeperHardCeiling, ...Timings, ...Cadence, ...Budgets, and
+// ...SelfService are type aliases for the keeper sub-blocks added in hk-9kgf so
+// tests can construct single-field keeper fixtures for the keeperBlockAbsent
+// per-field coverage (hk-exg3 invariant).
+//
+// Bead ref: hk-9kgf.
+type ExportedRawKeeperHardCeiling = rawKeeperHardCeiling
+
+// ExportedRawKeeperTimings — see ExportedRawKeeperHardCeiling. Bead ref: hk-9kgf.
+type ExportedRawKeeperTimings = rawKeeperTimings
+
+// ExportedRawKeeperCadence — see ExportedRawKeeperHardCeiling. Bead ref: hk-9kgf.
+type ExportedRawKeeperCadence = rawKeeperCadence
+
+// ExportedRawKeeperBudgets — see ExportedRawKeeperHardCeiling. Bead ref: hk-9kgf.
+type ExportedRawKeeperBudgets = rawKeeperBudgets
+
+// ExportedRawKeeperSelfService — see ExportedRawKeeperHardCeiling. Bead ref: hk-9kgf.
+type ExportedRawKeeperSelfService = rawKeeperSelfService
+
 // ExportedKeeperBlockAbsent exposes keeperBlockAbsent for tests in package
 // daemon_test (hk-exg3): the explicit field-by-field zero check that replaces
 // the `== (rawKeeperConfig{})` empty-block sentinel.

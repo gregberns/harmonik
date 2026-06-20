@@ -43,14 +43,48 @@ package daemon
 //	  target_branch: main      # observability/symmetry only; authoritative source is branching.yaml
 //	keeper:
 //	  context_thresholds:
-//	    warn_abs_tokens: 270000    # absolute warn gate (default 270000); ≤0 = not configured
-//	    act_abs_tokens: 300000     # absolute act gate (default 300000); ≤0 = not configured
-//	    force_act_abs_tokens: 340000  # hard ceiling, unconditional clear (default act+40000); ≤0 = not configured
-//	    act_pct_ceil: 0.85         # pct-of-window cap for act gate (default 0.85); ≤0 = not configured
-//	    warn_pct_ceil: 0.70        # pct-of-window cap for warn gate (default 0.70); ≤0 = not configured
+//	    warn_abs_tokens: 270000        # absolute warn gate (default 270000); ≤0 = not configured
+//	    act_abs_tokens: 300000         # absolute act gate (default 300000); ≤0 = not configured
+//	    force_act_abs_tokens: 340000   # hard ceiling, unconditional clear (default act+40000); ≤0 = not configured
+//	    force_act_abs_offset: 40000    # offset over act when force_act_abs_tokens unset; ≤0 = not configured (hk-9kgf)
+//	    idle_floor_abs_tokens: 200000  # floor below which idle crews are not idle-restarted; ≤0 = not configured (hk-9kgf)
+//	    act_pct_ceil: 0.85             # pct-of-window cap for act gate (default 0.85); ≤0 = not configured; >1 = error
+//	    warn_pct_ceil: 0.70            # pct-of-window cap for warn gate (default 0.70); ≤0 = not configured; >1 = error
+//	  hard_ceiling:                  # hk-9kgf
+//	    mode: restart                  # off|alarm|restart; other = error; empty = not configured
+//	    abs_tokens: 360000             # ≤0 = not configured
+//	    cooldown: 30m                  # Go duration STRING; bare number = error; empty = not configured
+//	  timings:                       # all Go duration STRINGS; bare number = error; empty = not configured (hk-9kgf)
+//	    poll_interval: 60s
+//	    idle_quiesce: 5m
+//	    staleness: 10m
+//	    handoff_timeout: 5m
+//	    clear_settle: 30s
+//	    boot_grace: 2m
+//	    max_boot_grace_total: 10m
+//	  cadence:                       # all Go duration STRINGS; bare number = error; empty = not configured (hk-9kgf)
+//	    warn_cooldown: 15m
+//	    no_gauge_backoff: 2m
+//	    respawn_grace: 1m
+//	    respawn_cooldown: 5m
+//	    live_recover_grace: 1m
+//	    live_recover_cooldown: 5m
+//	    force_retry_interval: 2m
+//	    idle_restart_cooldown: 10m
+//	    hard_ceiling_cooldown: 30m
+//	    blind_keeper_threshold: 20m
+//	  budgets:                       # hk-9kgf; ≤0 = not configured
+//	    heartbeat_max_misses: 3
+//	    max_handoff_timeouts: 2
+//	  self_service:                  # hk-9kgf
+//	    enabled: true                  # bool; default false
+//	    grace_seconds: 30              # ≤0 = not configured
+//	    instruct_only_when_idle: true  # bool; default false
+//	    crews_enabled: true            # bool; default false
 //	  warn_messages:
-//	    default_warn_text: ""      # warn injection text for non-captain agents; empty = compiled default
-//	    on_demand_warn_text: ""    # warn injection text for captain (restart-now path); empty = compiled default
+//	    default_warn_text: ""          # warn injection text for non-captain agents; empty = compiled default
+//	    on_demand_warn_text: ""        # warn injection text for captain (restart-now path); empty = compiled default
+//	    actionable_warn_text: ""       # actionable warn advisory override; empty = compiled default (hk-9kgf)
 //
 // Unknown agent keys are silently ignored (forward-compat).
 // Unknown sibling keys under daemon: are silently ignored (forward-compat per PL-004b).
@@ -67,13 +101,14 @@ package daemon
 // specs/process-lifecycle.md §4.1 PL-004a — review floor (never single from config).
 // specs/process-lifecycle.md §4.1 PL-004b — flag > config > default precedence chain.
 //
-// Beads: hk-bfvk7, hk-rcp7, hk-lhu2.
+// Beads: hk-bfvk7, hk-rcp7, hk-lhu2, hk-exg3, hk-9kgf.
 
 import (
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -152,18 +187,72 @@ type rawDaemonConfig struct {
 // keeper.context_thresholds block. Values ≤ 0 are treated as not configured
 // (defer to CLI flag or compiled default). Unknown keys are silently ignored.
 type rawKeeperContextThresholds struct {
-	WarnAbsTokens     int64   `yaml:"warn_abs_tokens"`
-	ActAbsTokens      int64   `yaml:"act_abs_tokens"`
-	ForceActAbsTokens int64   `yaml:"force_act_abs_tokens"`
-	ActPctCeil        float64 `yaml:"act_pct_ceil"`
-	WarnPctCeil       float64 `yaml:"warn_pct_ceil"`
+	WarnAbsTokens      int64   `yaml:"warn_abs_tokens"`
+	ActAbsTokens       int64   `yaml:"act_abs_tokens"`
+	ForceActAbsTokens  int64   `yaml:"force_act_abs_tokens"`
+	ForceActAbsOffset  int64   `yaml:"force_act_abs_offset"`
+	IdleFloorAbsTokens int64   `yaml:"idle_floor_abs_tokens"`
+	ActPctCeil         float64 `yaml:"act_pct_ceil"`
+	WarnPctCeil        float64 `yaml:"warn_pct_ceil"`
+}
+
+// rawKeeperHardCeiling holds the keeper.hard_ceiling block. Mode is one of
+// off|alarm|restart (validated). AbsTokens ≤ 0 = not configured. Cooldown is a
+// Go duration STRING (e.g. "5m"); empty = not configured, bare number = error.
+type rawKeeperHardCeiling struct {
+	Mode      string `yaml:"mode"`
+	AbsTokens int64  `yaml:"abs_tokens"`
+	Cooldown  string `yaml:"cooldown"`
+}
+
+// rawKeeperTimings holds the keeper.timings block. All fields are Go duration
+// STRINGS; empty = not configured, a bare number = error.
+type rawKeeperTimings struct {
+	PollInterval      string `yaml:"poll_interval"`
+	IdleQuiesce       string `yaml:"idle_quiesce"`
+	Staleness         string `yaml:"staleness"`
+	HandoffTimeout    string `yaml:"handoff_timeout"`
+	ClearSettle       string `yaml:"clear_settle"`
+	BootGrace         string `yaml:"boot_grace"`
+	MaxBootGraceTotal string `yaml:"max_boot_grace_total"`
+}
+
+// rawKeeperCadence holds the keeper.cadence block. All fields are Go duration
+// STRINGS; empty = not configured, a bare number = error.
+type rawKeeperCadence struct {
+	WarnCooldown         string `yaml:"warn_cooldown"`
+	NoGaugeBackoff       string `yaml:"no_gauge_backoff"`
+	RespawnGrace         string `yaml:"respawn_grace"`
+	RespawnCooldown      string `yaml:"respawn_cooldown"`
+	LiveRecoverGrace     string `yaml:"live_recover_grace"`
+	LiveRecoverCooldown  string `yaml:"live_recover_cooldown"`
+	ForceRetryInterval   string `yaml:"force_retry_interval"`
+	IdleRestartCooldown  string `yaml:"idle_restart_cooldown"`
+	HardCeilingCooldown  string `yaml:"hard_ceiling_cooldown"`
+	BlindKeeperThreshold string `yaml:"blind_keeper_threshold"`
+}
+
+// rawKeeperBudgets holds the keeper.budgets block. Values ≤ 0 = not configured.
+type rawKeeperBudgets struct {
+	HeartbeatMaxMisses int `yaml:"heartbeat_max_misses"`
+	MaxHandoffTimeouts int `yaml:"max_handoff_timeouts"`
+}
+
+// rawKeeperSelfService holds the keeper.self_service block. Bools default false;
+// GraceSeconds ≤ 0 = not configured.
+type rawKeeperSelfService struct {
+	Enabled              bool `yaml:"enabled"`
+	GraceSeconds         int  `yaml:"grace_seconds"`
+	InstructOnlyWhenIdle bool `yaml:"instruct_only_when_idle"`
+	CrewsEnabled         bool `yaml:"crews_enabled"`
 }
 
 // rawKeeperWarnMessages holds configurable warn text overrides in the
 // keeper.warn_messages block. Empty strings are treated as not configured.
 type rawKeeperWarnMessages struct {
-	DefaultWarnText  string `yaml:"default_warn_text"`
-	OnDemandWarnText string `yaml:"on_demand_warn_text"`
+	DefaultWarnText    string `yaml:"default_warn_text"`
+	OnDemandWarnText   string `yaml:"on_demand_warn_text"`
+	ActionableWarnText string `yaml:"actionable_warn_text"`
 }
 
 // rawKeeperConfig is the keeper: block in config.yaml.
@@ -193,6 +282,11 @@ type rawKeeperWarnMessages struct {
 // MUST be extended field-by-field whenever a field is added here.
 type rawKeeperConfig struct {
 	ContextThresholds rawKeeperContextThresholds `yaml:"context_thresholds"`
+	HardCeiling       rawKeeperHardCeiling       `yaml:"hard_ceiling"`
+	Timings           rawKeeperTimings           `yaml:"timings"`
+	Cadence           rawKeeperCadence           `yaml:"cadence"`
+	Budgets           rawKeeperBudgets           `yaml:"budgets"`
+	SelfService       rawKeeperSelfService       `yaml:"self_service"`
 	WarnMessages      rawKeeperWarnMessages      `yaml:"warn_messages"`
 }
 
@@ -210,14 +304,54 @@ type rawKeeperConfig struct {
 // Bead ref: hk-exg3.
 func keeperBlockAbsent(raw rawKeeperConfig) bool {
 	t := raw.ContextThresholds
+	h := raw.HardCeiling
+	tm := raw.Timings
+	c := raw.Cadence
+	b := raw.Budgets
+	s := raw.SelfService
 	w := raw.WarnMessages
 	return t.WarnAbsTokens == 0 &&
 		t.ActAbsTokens == 0 &&
 		t.ForceActAbsTokens == 0 &&
+		t.ForceActAbsOffset == 0 &&
+		t.IdleFloorAbsTokens == 0 &&
 		t.ActPctCeil == 0 &&
 		t.WarnPctCeil == 0 &&
+		// hard_ceiling
+		h.Mode == "" &&
+		h.AbsTokens == 0 &&
+		h.Cooldown == "" &&
+		// timings
+		tm.PollInterval == "" &&
+		tm.IdleQuiesce == "" &&
+		tm.Staleness == "" &&
+		tm.HandoffTimeout == "" &&
+		tm.ClearSettle == "" &&
+		tm.BootGrace == "" &&
+		tm.MaxBootGraceTotal == "" &&
+		// cadence
+		c.WarnCooldown == "" &&
+		c.NoGaugeBackoff == "" &&
+		c.RespawnGrace == "" &&
+		c.RespawnCooldown == "" &&
+		c.LiveRecoverGrace == "" &&
+		c.LiveRecoverCooldown == "" &&
+		c.ForceRetryInterval == "" &&
+		c.IdleRestartCooldown == "" &&
+		c.HardCeilingCooldown == "" &&
+		c.BlindKeeperThreshold == "" &&
+		// budgets
+		b.HeartbeatMaxMisses == 0 &&
+		b.MaxHandoffTimeouts == 0 &&
+		// self_service
+		!s.Enabled &&
+		s.GraceSeconds == 0 &&
+		!s.InstructOnlyWhenIdle &&
+		!s.CrewsEnabled &&
+		// warn_messages
 		w.DefaultWarnText == "" &&
-		w.OnDemandWarnText == ""
+		w.OnDemandWarnText == "" &&
+		w.ActionableWarnText == ""
 }
 
 // KeeperConfig holds the keeper-level configuration read from the
@@ -233,16 +367,65 @@ type KeeperConfig struct {
 	ActAbsTokens int64
 	// ForceActAbsTokens is the hard forced-clear ceiling. Zero = not configured.
 	ForceActAbsTokens int64
+	// ForceActAbsOffset is the offset above act used to derive the force-act gate
+	// when ForceActAbsTokens is unset. Zero = not configured.
+	ForceActAbsOffset int64
+	// IdleFloorAbsTokens is the floor below which an idle large-context crew is
+	// not idle-restarted. Zero = not configured.
+	IdleFloorAbsTokens int64
 	// ActPctCeil caps the act gate as a fraction of window size. Zero = not configured.
 	ActPctCeil float64
 	// WarnPctCeil caps the warn gate as a fraction of window size. Zero = not configured.
 	WarnPctCeil float64
+
+	// HardCeilingMode is the hard-ceiling behaviour: off|alarm|restart.
+	// Empty = not configured (use compiled default).
+	HardCeilingMode string
+	// HardCeilingAbsTokens is the hard-ceiling token trigger. Zero = not configured.
+	HardCeilingAbsTokens int64
+	// HardCeilingCooldownDur is the hard-ceiling re-trigger cooldown. Zero = not configured.
+	HardCeilingCooldownDur time.Duration
+
+	// Timings (all zero = not configured).
+	PollInterval      time.Duration
+	IdleQuiesce       time.Duration
+	Staleness         time.Duration
+	HandoffTimeout    time.Duration
+	ClearSettle       time.Duration
+	BootGrace         time.Duration
+	MaxBootGraceTotal time.Duration
+
+	// Cadence (all zero = not configured).
+	WarnCooldown               time.Duration
+	NoGaugeBackoff             time.Duration
+	RespawnGrace               time.Duration
+	RespawnCooldown            time.Duration
+	LiveRecoverGrace           time.Duration
+	LiveRecoverCooldown        time.Duration
+	ForceRetryInterval         time.Duration
+	IdleRestartCooldown        time.Duration
+	CadenceHardCeilingCooldown time.Duration
+	BlindKeeperThreshold       time.Duration
+
+	// Budgets (zero = not configured).
+	HeartbeatMaxMisses int
+	MaxHandoffTimeouts int
+
+	// SelfService.
+	SelfServiceEnabled              bool
+	SelfServiceGraceSeconds         int
+	SelfServiceInstructOnlyWhenIdle bool
+	SelfServiceCrewsEnabled         bool
+
 	// DefaultWarnText overrides the compiled-in wrap-up advisory for non-captain agents.
 	// Empty = not configured (use compiled default).
 	DefaultWarnText string
 	// OnDemandWarnText overrides the compiled-in restart-now advisory for the captain.
 	// Empty = not configured (use compiled default).
 	OnDemandWarnText string
+	// ActionableWarnText overrides the compiled-in actionable warn advisory.
+	// Empty = not configured (use compiled default).
+	ActionableWarnText string
 }
 
 // DaemonConfig holds the daemon-level operational configuration read from the
@@ -389,8 +572,12 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		return ProjectConfig{}, err
 	}
 
-	// hk-lhu2: parse the keeper: block (no fail-fast errors; all values optional).
-	keeperCfg := parseKeeperBlock(raw.Keeper)
+	// hk-lhu2 / hk-9kgf: parse the keeper: block. Most values are optional, but
+	// a malformed duration string (e.g. a bare number) fails loudly (hk-9kgf).
+	keeperCfg, err := parseKeeperBlock(path, raw.Keeper)
+	if err != nil {
+		return ProjectConfig{}, err
+	}
 
 	cfg := ProjectConfig{
 		entries: make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
@@ -452,15 +639,52 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 	return cfg, nil
 }
 
-// parseKeeperBlock converts a rawKeeperConfig into a KeeperConfig.
-// All values are optional; ≤ 0 / empty strings are stored as zero values so
-// callers can detect "not configured" and defer to the CLI flag or compiled
-// default. Unknown YAML keys at any level are silently ignored (forward-compat
-// per hk-lhu2).
+// parseDurationField parses a Go duration STRING into a time.Duration.
 //
-// Bead ref: hk-lhu2.
-func parseKeeperBlock(raw rawKeeperConfig) KeeperConfig {
+// Contract (hk-9kgf, operator decision): a duration field MUST be a Go duration
+// STRING (e.g. "5m", "120s", "1h30m"). It FAILS LOUDLY — returning
+// *ErrMalformedConfigYAML naming the offending key — on a bare number or any
+// other unparseable value. It MUST NEVER silently coerce a number to
+// seconds/nanoseconds: bad config is an operator error and must surface.
+//
+// An empty string means "not configured": parseDurationField returns (0, nil)
+// so the resolver later applies the compiled default.
+//
+// Bead ref: hk-9kgf.
+func parseDurationField(path, key, value string) (time.Duration, error) {
+	if value == "" {
+		return 0, nil // not configured — defer to default
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, &ErrMalformedConfigYAML{
+			Path:  path,
+			Cause: fmt.Errorf("keeper.%s %q: not a valid Go duration string (e.g. %q); a bare number is rejected — never silently coerced", key, value, "5m"),
+		}
+	}
+	return d, nil
+}
+
+// parseKeeperBlock converts a rawKeeperConfig into a KeeperConfig.
+//
+// Most values are optional; ≤ 0 / empty strings are stored as zero values so
+// callers can detect "not configured" and defer to the CLI flag or compiled
+// default. Two classes of value FAIL LOUDLY (hk-9kgf):
+//   - any duration field whose string is unparseable (e.g. a bare number) →
+//     *ErrMalformedConfigYAML naming the key (via parseDurationField).
+//   - hard_ceiling.mode whose value is not one of off|alarm|restart.
+//
+// Per-field validation (pct in 0..1, mode enum, duration parses) is done HERE.
+// Cross-field invariants (warn < act < force) are NOT checked here — they run
+// post-resolution in a later bead.
+//
+// Unknown YAML keys at any level are silently ignored (forward-compat per hk-lhu2).
+//
+// Bead ref: hk-lhu2, hk-9kgf.
+func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	cfg := KeeperConfig{}
+
+	// ── context_thresholds ──
 	t := raw.ContextThresholds
 	// Values ≤ 0 are treated as "not configured" — defer to CLI flag or compiled default.
 	if t.WarnAbsTokens > 0 {
@@ -472,14 +696,123 @@ func parseKeeperBlock(raw rawKeeperConfig) KeeperConfig {
 	if t.ForceActAbsTokens > 0 {
 		cfg.ForceActAbsTokens = t.ForceActAbsTokens
 	}
+	if t.ForceActAbsOffset > 0 {
+		cfg.ForceActAbsOffset = t.ForceActAbsOffset
+	}
+	if t.IdleFloorAbsTokens > 0 {
+		cfg.IdleFloorAbsTokens = t.IdleFloorAbsTokens
+	}
+	// pct fields: per-field validation — must be in (0, 1]. ≤ 0 = not configured.
 	if t.ActPctCeil > 0 {
+		if t.ActPctCeil > 1 {
+			return KeeperConfig{}, &ErrMalformedConfigYAML{
+				Path:  path,
+				Cause: fmt.Errorf("keeper.context_thresholds.act_pct_ceil %v: must be a fraction in (0, 1]", t.ActPctCeil),
+			}
+		}
 		cfg.ActPctCeil = t.ActPctCeil
 	}
 	if t.WarnPctCeil > 0 {
+		if t.WarnPctCeil > 1 {
+			return KeeperConfig{}, &ErrMalformedConfigYAML{
+				Path:  path,
+				Cause: fmt.Errorf("keeper.context_thresholds.warn_pct_ceil %v: must be a fraction in (0, 1]", t.WarnPctCeil),
+			}
+		}
 		cfg.WarnPctCeil = t.WarnPctCeil
 	}
-	// Empty strings are treated as "not configured" — defer to compiled default.
+
+	// ── hard_ceiling ──
+	hc := raw.HardCeiling
+	if hc.Mode != "" {
+		switch hc.Mode {
+		case "off", "alarm", "restart":
+			cfg.HardCeilingMode = hc.Mode
+		default:
+			return KeeperConfig{}, &ErrMalformedConfigYAML{
+				Path:  path,
+				Cause: fmt.Errorf("keeper.hard_ceiling.mode %q: unknown value; must be one of off, alarm, restart", hc.Mode),
+			}
+		}
+	}
+	if hc.AbsTokens > 0 {
+		cfg.HardCeilingAbsTokens = hc.AbsTokens
+	}
+	d, err := parseDurationField(path, "hard_ceiling.cooldown", hc.Cooldown)
+	if err != nil {
+		return KeeperConfig{}, err
+	}
+	cfg.HardCeilingCooldownDur = d
+
+	// ── timings (all durations) ──
+	tm := raw.Timings
+	for _, f := range []struct {
+		key string
+		val string
+		dst *time.Duration
+	}{
+		{"timings.poll_interval", tm.PollInterval, &cfg.PollInterval},
+		{"timings.idle_quiesce", tm.IdleQuiesce, &cfg.IdleQuiesce},
+		{"timings.staleness", tm.Staleness, &cfg.Staleness},
+		{"timings.handoff_timeout", tm.HandoffTimeout, &cfg.HandoffTimeout},
+		{"timings.clear_settle", tm.ClearSettle, &cfg.ClearSettle},
+		{"timings.boot_grace", tm.BootGrace, &cfg.BootGrace},
+		{"timings.max_boot_grace_total", tm.MaxBootGraceTotal, &cfg.MaxBootGraceTotal},
+	} {
+		dv, derr := parseDurationField(path, f.key, f.val)
+		if derr != nil {
+			return KeeperConfig{}, derr
+		}
+		*f.dst = dv
+	}
+
+	// ── cadence (all durations) ──
+	c := raw.Cadence
+	for _, f := range []struct {
+		key string
+		val string
+		dst *time.Duration
+	}{
+		{"cadence.warn_cooldown", c.WarnCooldown, &cfg.WarnCooldown},
+		{"cadence.no_gauge_backoff", c.NoGaugeBackoff, &cfg.NoGaugeBackoff},
+		{"cadence.respawn_grace", c.RespawnGrace, &cfg.RespawnGrace},
+		{"cadence.respawn_cooldown", c.RespawnCooldown, &cfg.RespawnCooldown},
+		{"cadence.live_recover_grace", c.LiveRecoverGrace, &cfg.LiveRecoverGrace},
+		{"cadence.live_recover_cooldown", c.LiveRecoverCooldown, &cfg.LiveRecoverCooldown},
+		{"cadence.force_retry_interval", c.ForceRetryInterval, &cfg.ForceRetryInterval},
+		{"cadence.idle_restart_cooldown", c.IdleRestartCooldown, &cfg.IdleRestartCooldown},
+		{"cadence.hard_ceiling_cooldown", c.HardCeilingCooldown, &cfg.CadenceHardCeilingCooldown},
+		{"cadence.blind_keeper_threshold", c.BlindKeeperThreshold, &cfg.BlindKeeperThreshold},
+	} {
+		dv, derr := parseDurationField(path, f.key, f.val)
+		if derr != nil {
+			return KeeperConfig{}, derr
+		}
+		*f.dst = dv
+	}
+
+	// ── budgets ──
+	b := raw.Budgets
+	if b.HeartbeatMaxMisses > 0 {
+		cfg.HeartbeatMaxMisses = b.HeartbeatMaxMisses
+	}
+	if b.MaxHandoffTimeouts > 0 {
+		cfg.MaxHandoffTimeouts = b.MaxHandoffTimeouts
+	}
+
+	// ── self_service ──
+	s := raw.SelfService
+	cfg.SelfServiceEnabled = s.Enabled
+	if s.GraceSeconds > 0 {
+		cfg.SelfServiceGraceSeconds = s.GraceSeconds
+	}
+	cfg.SelfServiceInstructOnlyWhenIdle = s.InstructOnlyWhenIdle
+	cfg.SelfServiceCrewsEnabled = s.CrewsEnabled
+
+	// ── warn_messages ── empty strings are "not configured" — defer to compiled default.
 	cfg.DefaultWarnText = raw.WarnMessages.DefaultWarnText
 	cfg.OnDemandWarnText = raw.WarnMessages.OnDemandWarnText
-	return cfg
+	cfg.ActionableWarnText = raw.WarnMessages.ActionableWarnText
+
+	return cfg, nil
 }

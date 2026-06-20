@@ -911,6 +911,13 @@ const (
 	// Refs: hk-34ac.
 	EventTypeSessionKeeperBlind EventType = "session_keeper_blind"
 
+	// EventTypeSessionKeeperIdleCrew is emitted when a crew session is idle
+	// with a context below the idle-restart threshold (IdleRestartAbsTokens).
+	// The captain may choose to reap the crew on receipt. Never emitted when
+	// tokens >= IdleRestartAbsTokens (that path triggers a restart instead).
+	// Refs: hk-ee81.
+	EventTypeSessionKeeperIdleCrew EventType = "session_keeper_idle_crew"
+
 	// EventTypeSessionKeeperHardCeiling is the session_keeper_hard_ceiling event
 	// type. Emitted by the keeper watcher when a pane's token count exceeds
 	// HardCeilingAbsTokens (280 000) regardless of SID binding — a failsafe that

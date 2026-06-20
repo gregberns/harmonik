@@ -108,6 +108,19 @@ type CyclerConfig struct {
 	// Default: 120s. Refs: hk-qoz (forced-clear catch-22 fix).
 	ForceRetryInterval time.Duration
 
+	// IdleRestartAbsTokens is the absolute-token floor above which an idle crew
+	// session (CrispIdle + not HoldingDispatch) is restarted to compact its
+	// context to a small baseline. Below this threshold the keeper emits
+	// session_keeper_idle_crew (notifying the captain) without restarting.
+	// Default: 150_000. Refs: hk-ee81.
+	IdleRestartAbsTokens int64
+
+	// IdleRestartCooldown is the minimum duration between consecutive
+	// idle-restart attempts. Prevents repeated restarts if a crew re-enters
+	// the idle+large-ctx state quickly after resuming.
+	// Default: 30 minutes. Refs: hk-ee81.
+	IdleRestartCooldown time.Duration
+
 	// BootGracePeriod is the minimum duration after a session_id CHANGE before
 	// the keeper starts a cycle on the new session. During the grace window all
 	// cycle-gate checks return immediately, preventing forced-clear cycles from
@@ -288,6 +301,12 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.SleepingCheckFn == nil {
 		c.SleepingCheckFn = IsSleeping
+	}
+	if c.IdleRestartAbsTokens <= 0 {
+		c.IdleRestartAbsTokens = 150_000
+	}
+	if c.IdleRestartCooldown <= 0 {
+		c.IdleRestartCooldown = 30 * time.Minute
 	}
 }
 
@@ -516,6 +535,11 @@ type Cycler struct {
 	// Gate-7 operator_attached emission. Used to throttle the poll-tick event to
 	// one per OperatorAttachedSampleInterval (logmine F55 spam fix). Refs: hk-2yvx.
 	lastOperatorAttachedEmit time.Time
+
+	// lastIdleRestartAt is when the most recent idle-restart was triggered.
+	// Used to enforce IdleRestartCooldown. Zero = no restart this session.
+	// Refs: hk-ee81.
+	lastIdleRestartAt time.Time
 
 	// consecutiveHandoffTimeouts counts consecutive handoff timeouts while
 	// above the force threshold. Reset to 0 on a successful cycle or on a
@@ -1130,6 +1154,70 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 		// Construct a minimal CtxFile so runCycle has a session_id.
 		cf = &CtxFile{SessionID: sessionID}
 	}
+	return c.runCycle(ctx, cf)
+}
+
+// RunForIdle is the idle-large-context entry point. Called by the watcher
+// on each fresh-gauge tick for sessions below the act threshold. When the
+// session is CrispIdle, not HoldingDispatch, and tokens >= IdleRestartAbsTokens,
+// triggers a full handoff cycle to restart the agent to a small context.
+//
+// Gate order:
+//  1. cf != nil (requires a live gauge).
+//  2. Tokens >= IdleRestartAbsTokens: if below, emit session_keeper_idle_crew
+//     and return (no restart; captain may reap).
+//  3. Tokens < effective act threshold: don't double-fire with MaybeRun.
+//  4. CrispIdle (pane quiescent).
+//  5. NOT HoldingDispatch (fail-closed: in-flight work → skip).
+//  6. IdleRestartCooldown: time since last idle restart >= cooldown.
+//  7. Anti-loop: session_id must differ from lastFiredSID.
+//
+// Refs: hk-ee81.
+func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
+	if cf == nil {
+		return nil
+	}
+	sessionID := cf.SessionID
+
+	// Gate 2: below idle-restart floor → emit notification, no restart.
+	if cf.Tokens < c.cfg.IdleRestartAbsTokens {
+		if cf.Tokens > 0 {
+			payload, _ := json.Marshal(map[string]any{
+				"agent":  c.cfg.AgentName,
+				"tokens": cf.Tokens,
+				"reason": "below_idle_threshold",
+			})
+			_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperIdleCrew, payload)
+		}
+		return nil
+	}
+
+	// Gate 3: above or at act threshold → let MaybeRun handle it.
+	if !c.cfg.belowActThreshold(cf) {
+		return nil
+	}
+
+	// Gate 4: pane must be quiescent.
+	if !c.cfg.CrispIdleFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		return nil
+	}
+
+	// Gate 5: no in-flight dispatch (fail-closed).
+	if c.cfg.HoldingDispatchFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		return nil
+	}
+
+	// Gate 6: cooldown.
+	if !c.lastIdleRestartAt.IsZero() && time.Since(c.lastIdleRestartAt) < c.cfg.IdleRestartCooldown {
+		return nil
+	}
+
+	// Gate 7: anti-loop.
+	if c.lastFiredSID != "" && sessionID == c.lastFiredSID {
+		return nil
+	}
+
+	c.lastIdleRestartAt = time.Now()
 	return c.runCycle(ctx, cf)
 }
 

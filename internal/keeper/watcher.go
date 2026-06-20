@@ -953,6 +953,16 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 			}
 
+			// ── idle-large-context restart ────────────────────────────────────
+			// Restart idle crews with large (≥150K) context below the act
+			// threshold to compact context to a small baseline. Gating is
+			// handled internally. (Refs: hk-ee81)
+			if w.cfg.Cycler != nil && !w.cfg.WarnOnly {
+				if idleErr := w.cfg.Cycler.RunForIdle(ctx, ctxFile); idleErr != nil {
+					slog.WarnContext(ctx, "keeper: RunForIdle error", "agent", w.cfg.AgentName, "err", idleErr)
+				}
+			}
+
 			// NOTE: restart-now (captain-initiated) is NO LONGER a watcher-detected
 			// marker path. `harmonik keeper restart-now` now drives the
 			// ack→/clear→/session-resume SYNCHRONOUSLY in its own process

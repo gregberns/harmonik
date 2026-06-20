@@ -391,6 +391,14 @@ type WatcherConfig struct {
 	// keeper cooperates rather than fights. When nil, IsSleeping is used.
 	// Refs: hk-l3gs, hk-jeby.
 	SleepingCheckFn func(projectDir, sessionID string) bool
+
+	// WarnCooldown is the minimum duration the warn state machine waits after a
+	// warn fires before re-arming for a second crossing (dip-rise cooldown).
+	// A transient dip below the threshold followed immediately by a rise back above
+	// is treated as one event during this window. Default: warnCooldown (30s).
+	// Set to 0 in tests that deliberately exercise multi-crossing behaviour.
+	// Refs: hk-sol6.
+	WarnCooldown time.Duration
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -465,6 +473,18 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.SleepingCheckFn == nil {
 		c.SleepingCheckFn = IsSleeping
+	}
+	// WarnCooldown: default to warnCooldown (30s) when not explicitly set.
+	// Tests that need multi-crossing behaviour must set WarnCooldown to a small
+	// positive value (e.g. 1ms) rather than 0, since 0 is the zero-value sentinel
+	// that triggers this default. The state machine treats 0 as "no cooldown" after
+	// applyDefaults runs — but applyDefaults replaces 0 with 30s, so 0 is never
+	// seen at runtime unless explicitly forced by passing a *negative* duration
+	// (which applyDefaults clamps to 0 to disable the gate). Refs: hk-sol6.
+	if c.WarnCooldown < 0 {
+		c.WarnCooldown = 0 // negative sentinel → disable cooldown
+	} else if c.WarnCooldown == 0 {
+		c.WarnCooldown = warnCooldown // zero sentinel → use production default
 	}
 	// Auto-enable on-demand restart UX for the captain agent. The captain uses
 	// 'harmonik keeper restart-now' (ON-059) rather than the keeper's auto-cycle,
@@ -595,6 +615,21 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// attempt. Used to enforce LiveRecoverCooldown. Zero when no recovery has
 		// occurred this session. (Refs: hk-75mr)
 		lastLiveRecoverAt time.Time
+
+		// backoffUntil is set to now+noGaugeBackoff after a no_gauge event is
+		// emitted. While time.Now() is before backoffUntil the gauge read is
+		// skipped entirely to avoid re-emitting on every tick. Refs: hk-sol6.
+		backoffUntil time.Time
+
+		// lastWarnFiredAt is the wall time of the most recent warn-threshold
+		// firing. Used by the dip-rise cooldown to suppress a re-fire within
+		// warnCooldown of the previous one. Refs: hk-sol6.
+		lastWarnFiredAt time.Time
+
+		// hintSentThisSession is latched true after the one-time [KEEPER HINT]
+		// injection fires on the first warn crossing of a session. Reset to false
+		// when a cycle completes (warnArmed reset path). Refs: hk-lsk5.
+		hintSentThisSession = false
 	)
 
 	// Boot-time check: emit no_gauge immediately if gauge is absent or stale.
@@ -624,11 +659,21 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// The keeper tick is the SOLE emitter of decision_withdrawn(orphaned).
 			w.maybeReapOrphanedDecisions(ctx)
 
+			// inNoGaugeBackoff is true during the 30s back-off window after a
+			// no_gauge emission. When true the re-emit calls below are suppressed
+			// (we don't re-read the gauge or try to emit), but respawn/live-recover
+			// still run against the last-known staleness state. Refs: hk-sol6.
+			inNoGaugeBackoff := !backoffUntil.IsZero() && time.Now().Before(backoffUntil)
+
 			ctxFile, modTime, err := ReadCtxFile(w.cfg.ProjectDir, w.cfg.AgentName)
 
 			// ── gauge absent ────────────────────────────────────────────────
 			if errors.Is(err, os.ErrNotExist) {
-				w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit)
+				if !inNoGaugeBackoff {
+					if w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit) {
+						backoffUntil = time.Now().Add(noGaugeBackoff)
+					}
+				}
 				noGaugeEmittedAtBoot = true
 				warnArmed = true
 				warnFired = false
@@ -643,7 +688,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if err != nil {
 				// parse / stat error: treat as absent, log and continue
 				slog.WarnContext(ctx, "keeper: read ctx file", "err", err)
-				w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit)
+				if !inNoGaugeBackoff {
+					if w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit) {
+						backoffUntil = time.Now().Add(noGaugeBackoff)
+					}
+				}
 				noGaugeEmittedAtBoot = true
 				pendingInject = false
 				if gaugeStaleSince.IsZero() {
@@ -667,7 +716,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 			// ── gauge stale ──────────────────────────────────────────────────
 			if time.Since(modTime) >= w.cfg.Staleness {
-				w.maybeReemitNoGauge(ctx, "stale", lastNoGaugeEmit, &lastNoGaugeEmit)
+				if !inNoGaugeBackoff {
+					if w.maybeReemitNoGauge(ctx, "stale", lastNoGaugeEmit, &lastNoGaugeEmit) {
+						backoffUntil = time.Now().Add(noGaugeBackoff)
+					}
+				}
 				noGaugeEmittedAtBoot = true
 				warnArmed = true
 				warnFired = false
@@ -721,7 +774,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 					// True foreign session — treat as absent.
 					slog.WarnContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",
 						"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID)
-					w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit)
+					if !inNoGaugeBackoff {
+						if w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit) {
+							backoffUntil = time.Now().Add(noGaugeBackoff)
+						}
+					}
 					noGaugeEmittedAtBoot = true
 					warnArmed = true
 					warnFired = false
@@ -740,10 +797,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 			// Gauge is fresh (and belongs to the managed session): reset no_gauge
 			// and respawn tracking so they re-arm if the gauge goes stale or foreign
-			// again.
+			// again. Also clear the no_gauge back-off so the watcher monitors
+			// normally once the gauge recovers. Refs: hk-sol6.
 			noGaugeEmittedAtBoot = false
 			lastNoGaugeEmit = time.Time{}
 			gaugeStaleSince = time.Time{}
+			backoffUntil = time.Time{}
 
 			// ── idle-gate ────────────────────────────────────────────────────
 			// The pane is considered idle when the gauge file's mod-time has not
@@ -796,9 +855,19 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// ── warn state machine ───────────────────────────────────────────
 			if w.cfg.belowWarnThreshold(ctxFile) {
 				// Below threshold: reset so the next upward crossing will warn.
-				warnArmed = true
-				warnFired = false
-				pendingInject = false
+				// Dip-rise cooldown (hk-sol6): only re-arm warnArmed if the
+				// cooldown period (cfg.WarnCooldown, default 30s) has elapsed
+				// since the last warn fire, preventing a transient dip-then-rise
+				// from counting as a second event. A zero WarnCooldown disables
+				// the gate entirely (used by tests that exercise multi-crossing).
+				if lastWarnFiredAt.IsZero() || w.cfg.WarnCooldown == 0 || time.Since(lastWarnFiredAt) >= w.cfg.WarnCooldown {
+					warnArmed = true
+					warnFired = false
+					pendingInject = false
+					// Reset hint latch on genuine session reset (gauge dropped below
+					// warn and cooldown elapsed — new effective session start).
+					hintSentThisSession = false
+				}
 				continue
 			}
 
@@ -812,8 +881,21 @@ func (w *Watcher) Run(ctx context.Context) error {
 				w.emitWarn(ctx, ctxFile)
 				warnFired = true
 				warnArmed = false
+				lastWarnFiredAt = time.Now()
 				if w.cfg.TmuxTarget != "" {
 					pendingInject = true
+				}
+
+				// ── one-time self-hint injection (hk-lsk5) ───────────────────
+				// On the FIRST warn crossing of the session, inject the hint text
+				// so the agent is nudged to wrap up. Only once per session —
+				// hintSentThisSession latches after delivery.
+				if !hintSentThisSession && w.cfg.TmuxTarget != "" {
+					if hintErr := InjectText(ctx, w.cfg.TmuxTarget, keeperHintText); hintErr != nil {
+						slog.WarnContext(ctx, "keeper: inject self-hint", "err", hintErr)
+					} else {
+						hintSentThisSession = true
+					}
 				}
 			}
 
@@ -906,13 +988,36 @@ func (w *Watcher) gaugeUnavailable(ctx context.Context) (bool, string) {
 	return false, ""
 }
 
-// maybeReemitNoGauge emits session_keeper_no_gauge if the staleness interval
-// has elapsed since the last emission. Updates *lastEmit on emission.
-func (w *Watcher) maybeReemitNoGauge(ctx context.Context, reason string, lastEmit time.Time, lastEmitOut *time.Time) {
-	if lastEmit.IsZero() || time.Since(lastEmit) >= w.cfg.Staleness {
+// noGaugeReemitInterval is the minimum time between repeated session_keeper_no_gauge
+// events for the same stale/absent episode. Bumped from 120s to 300s (5 min) to
+// reduce noise from sustained no_gauge episodes. Refs: hk-sol6.
+const noGaugeReemitInterval = 300 * time.Second
+
+// noGaugeBackoff is the duration the watcher backs off after emitting a
+// no_gauge event before re-polling the gauge. Prevents a flurry of no_gauge
+// events on consecutive ticks during a stale episode. Refs: hk-sol6.
+const noGaugeBackoff = 30 * time.Second
+
+// warnCooldown is the minimum duration between warn-threshold firings in the
+// same direction (dip-rise cooldown). Prevents a transient dip below the
+// threshold immediately followed by a rise from counting as a second event.
+// Refs: hk-sol6.
+const warnCooldown = 30 * time.Second
+
+// keeperHintText is the one-time self-hint injected on the first warn-threshold
+// crossing per session. Refs: hk-lsk5.
+const keeperHintText = "[KEEPER HINT] Context is at ~190K tokens. Consider wrapping up the current task and preparing a handoff soon."
+
+// maybeReemitNoGauge emits session_keeper_no_gauge if the re-emit interval
+// (noGaugeReemitInterval = 300s) has elapsed since the last emission. Updates
+// *lastEmit on emission and returns true when an event was emitted. Refs: hk-sol6.
+func (w *Watcher) maybeReemitNoGauge(ctx context.Context, reason string, lastEmit time.Time, lastEmitOut *time.Time) bool {
+	if lastEmit.IsZero() || time.Since(lastEmit) >= noGaugeReemitInterval {
 		w.emitNoGauge(ctx, reason)
 		*lastEmitOut = time.Now()
+		return true
 	}
+	return false
 }
 
 // emitNoGauge emits the session_keeper_no_gauge event.

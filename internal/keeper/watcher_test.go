@@ -379,6 +379,9 @@ func TestWatcher_WarnResetOnDropBelow(t *testing.T) {
 		IdleQuiesce:  1 * time.Millisecond,
 		Staleness:    120 * time.Second,
 		TmuxTarget:   "",
+		// WarnCooldown: set to 1ms so the dip-rise cooldown (hk-sol6) doesn't
+		// suppress the second upward crossing in this test. Production default is 30s.
+		WarnCooldown: 1 * time.Millisecond,
 	}
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")

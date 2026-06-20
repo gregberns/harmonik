@@ -601,6 +601,23 @@ State this convention to the operator: *"To receive Captain status directly, run
 `harmonik comms join --name operator`; otherwise read `harmonik comms log --from
 <captain> --topic status`."*
 
+### Re-arm `comms recv --follow` after every `/clear` or PARK — LOAD-BEARING
+
+The wake path CANNOT reach the captain. `comms send --to captain --wake` nudges the
+captain's tmux pane, and while the derivation now correctly targets the bare
+`harmonik-<hash>-captain` session (hk-y7v8 — it previously hit a nonexistent
+`...-crew-captain`), pane-nudge wake remains **best-effort**: it depends on tmux
+being up and the pane accepting keystrokes, and a captain that has dropped its
+receiver will not act on a delivered message regardless. Your standing, reliable
+operator channel is your OWN armed `comms recv --follow`.
+
+Therefore: after **every** keeper `/clear`→`/session-resume` and after **every**
+PARK, the FIRST thing you re-do (before settling into monitor) is re-arm
+`comms recv --follow`. A `/clear` wipes the in-process `--follow` stream and PARK
+deliberately drops it; a captain that does not re-arm becomes unreachable and will
+silently miss operator direction. If you cannot re-arm (no daemon), escalate to the
+human operator — do not assume `--wake` will rouse you.
+
 ### Restart continuity (success-criterion #5 / AC-6)
 
 When a crew's keeper winds it down (context-full) and **resumes its same

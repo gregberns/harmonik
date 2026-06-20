@@ -353,31 +353,63 @@ func runCommsSendSubcommand(subArgs []string) int {
 	return 0
 }
 
-// commsWakePaneForAgent nudges the tmux pane for the named crew agent so that
-// an idle Claude session wakes and processes the newly-delivered message.
+// commsWakePaneCandidates returns the ordered list of tmux pane targets to try
+// when waking the named agent, most-specific first. The list is pure (no side
+// effects) so it can be unit-tested in isolation.
 //
-// Resolution order for the pane target:
-//  1. crew registry: loads .harmonik/crew/<agentName>.json and uses Handle+".0"
-//     (independent crew session pane, format "<session>:<window>.0").
-//  2. convention fallback: "harmonik-<projectHash>-crew-<agentName>" (session name,
-//     targets first pane). Fleet-portability T2: project-qualified crew session name.
+// Resolution order:
+//  1. crew registry: if .harmonik/crew/<agentName>.json exists with a Handle, use
+//     Handle+".0" (the independent crew session pane, "<session>:<window>.0").
+//  2. crew convention: "harmonik-<projectHash>-crew-<agentName>" — how crew
+//     sessions are named at spawn (fleet-portability T2).
+//  3. bare convention: "harmonik-<projectHash>-<agentName>" — how NON-crew agent
+//     sessions are named at spawn. The CAPTAIN is the canonical case: its session
+//     is "harmonik-<hash>-captain" (NO "crew-" prefix; see
+//     scripts/captain-tools/captain-launch.sh `harmonik-${PROJ_HASH}-captain`) and
+//     it has no crew-registry record, so candidates (1) and (2) both miss. Without
+//     this third candidate, `comms send --to captain --wake` targeted a nonexistent
+//     "...-crew-captain" pane and a stalled captain could not be roused (M10 /
+//     reference_comms_wake_captain_pane_mismatch.md).
 //
-// Best-effort: errors are returned but the caller treats them as non-fatal so that
-// message delivery is not affected by wake failures (e.g. no tmux running).
+// Crews still resolve via (1)/(2); the bare candidate is appended, not substituted,
+// so crew wake is unaffected (the crew pane is found first).
 //
-// Bead ref: hk-37ra4.
-func commsWakePaneForAgent(ctx context.Context, projectDir, agentName string) error {
-	var paneTarget string
-	rec, loadErr := crew.Load(projectDir, agentName)
-	if loadErr == nil && rec.Handle != "" {
+// Bead ref: hk-y7v8 (CE5), originally hk-37ra4.
+func commsWakePaneCandidates(projectDir, agentName string) []string {
+	hash := lifecycle.ComputeProjectHash(projectDir)
+	var candidates []string
+	if rec, loadErr := crew.Load(projectDir, agentName); loadErr == nil && rec.Handle != "" {
 		// handle format: "<session>:<window>" → pane = handle + ".0"
-		paneTarget = rec.Handle + ".0"
-	} else {
-		// Fall back to the deterministic project-qualified crew session name (T2).
-		paneTarget = lifecycle.TmuxSessionName(lifecycle.ComputeProjectHash(projectDir), "crew-"+agentName)
+		candidates = append(candidates, rec.Handle+".0")
 	}
-	nudgeMsg := "You have a new comms message. Please check your inbox."
-	return commsInjectTmuxPane(ctx, paneTarget, nudgeMsg)
+	candidates = append(candidates, lifecycle.TmuxSessionName(hash, "crew-"+agentName))
+	candidates = append(candidates, lifecycle.TmuxSessionName(hash, agentName))
+	return candidates
+}
+
+// commsWakePaneForAgent nudges the tmux pane for the named agent so that an idle
+// Claude session wakes and processes the newly-delivered message. It tries each
+// candidate from commsWakePaneCandidates in order, stopping at the first that
+// accepts the nudge; this transparently handles the crew-vs-captain naming
+// asymmetry (crews are "...-crew-<name>", the captain is bare "...-captain").
+//
+// Best-effort: the LAST error is returned when every candidate fails, but the
+// caller treats it as non-fatal so message delivery is not affected by wake
+// failures (e.g. no tmux running, no such pane).
+//
+// Bead ref: hk-y7v8 (CE5), originally hk-37ra4.
+func commsWakePaneForAgent(ctx context.Context, projectDir, agentName string) error {
+	const nudgeMsg = "You have a new comms message. Please check your inbox."
+	candidates := commsWakePaneCandidates(projectDir, agentName)
+	var lastErr error
+	for _, paneTarget := range candidates {
+		if err := commsInjectTmuxPane(ctx, paneTarget, nudgeMsg); err != nil {
+			lastErr = err
+			continue
+		}
+		return nil
+	}
+	return lastErr
 }
 
 // commsInjectTmuxPane delivers text into a tmux pane via the bracketed-paste

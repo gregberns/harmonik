@@ -426,6 +426,15 @@ type WatcherConfig struct {
 	// so the alarm can be exercised without sleeping 5 real minutes.
 	// Default: 5 minutes. Refs: hk-34ac, hk-nlio.
 	BlindKeeperThreshold time.Duration
+
+	// WarnOnly, when true, restricts the keeper to warn-only mode: it emits
+	// session_keeper_warn events and injects the wrap-up advisory into the pane
+	// when the context threshold is crossed, but NEVER triggers a restart cycle,
+	// respawn, or live-pane recovery. RespawnCmd and LiveRecoverFn are both
+	// ignored when WarnOnly is true. This is the correct mode for crew-session
+	// keepers: the captain, not the keeper, decides when to restart a crew.
+	// Set via --warn-only on `harmonik keeper`. Refs: hk-yfcc.
+	WarnOnly bool
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -1173,6 +1182,10 @@ func (w *Watcher) emitWarn(ctx context.Context, cf *CtxFile) {
 // On success it updates *lastRespawnAt and emits session_keeper_respawn_attempted.
 // Refs: hk-3w2; hk-50f (K6 exemption).
 func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRespawnAt *time.Time) {
+	// WarnOnly mode: never respawn — warn events only. Refs: hk-yfcc.
+	if w.cfg.WarnOnly {
+		return
+	}
 	if w.cfg.RespawnCmd == "" || w.cfg.TmuxTarget == "" {
 		return
 	}
@@ -1254,6 +1267,10 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 // session_keeper_live_pane_recover. Refs: hk-75mr; hk-8prq (identity); hk-0t5s
 // (operator discriminator); hk-50f (K6 exemption); hk-81wk (heartbeat).
 func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time, lastRecoverAt *time.Time) {
+	// WarnOnly mode: never force-restart — warn events only. Refs: hk-yfcc.
+	if w.cfg.WarnOnly {
+		return
+	}
 	if w.cfg.LiveRecoverFn == nil || w.cfg.TmuxTarget == "" {
 		return
 	}

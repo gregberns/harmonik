@@ -59,6 +59,7 @@ func runKeeperSubcommand(args []string) int {
 		actAbsTokensFlag  int64
 		respawnCmdFlag    string
 		forceRestartFlag  bool
+		warnOnlyFlag      bool
 	)
 
 	fs.StringVar(&agentFlag, "agent", "", "agent name (required)")
@@ -75,6 +76,7 @@ func runKeeperSubcommand(args []string) int {
 	fs.Int64Var(&actAbsTokensFlag, "act-abs-tokens", 0, "absolute-token act threshold (default 215000)")
 	fs.StringVar(&respawnCmdFlag, "respawn-cmd", "", "shell command to re-launch the agent after it exits (supervised respawn path; hk-3w2)")
 	fs.BoolVar(&forceRestartFlag, "force-restart", false, "opt in to the handoff-timeout hard-restart escalation (fail-closed; requires --respawn-cmd; hk-suxt)")
+	fs.BoolVar(&warnOnlyFlag, "warn-only", false, "warn-only mode: emit warn events but never trigger restart, respawn, or live-pane recovery (for crew keepers; hk-yfcc)")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -224,40 +226,49 @@ func runKeeperSubcommand(args []string) int {
 	if warnPctSet || actPctSet {
 		pctNote = fmt.Sprintf(" [pct ceils: warn=%.2f act=%.2f, tighten-only]", resolvedWarnPctCeil, resolvedActPctCeil)
 	}
+	warnOnlyNote := ""
+	if warnOnlyFlag {
+		warnOnlyNote = " [warn-only: no restart/respawn]"
+	}
 	fmt.Fprintf(os.Stderr,
-		"keeper started for %s (effective band: warn=%d act=%d force=%d tokens%s, tmux=%q)\n",
-		agentFlag, effWarn, effAct, effForce, pctNote, resolvedTmux)
+		"keeper started for %s (effective band: warn=%d act=%d force=%d tokens%s, tmux=%q%s)\n",
+		agentFlag, effWarn, effAct, effForce, pctNote, resolvedTmux, warnOnlyNote)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	emitter := keeper.NewFileEmitter(projectDir)
 
-	cycler := keeper.NewCycler(keeper.CyclerConfig{
-		AgentName:         agentFlag,
-		ProjectDir:        projectDir,
-		TmuxTarget:        resolvedTmux,
-		ActPct:            float64(actPctFlag),
-		ActAbsTokens:      resolvedActAbs,
-		WarnAbsTokens:     resolvedWarnAbs,
-		ForceActAbsTokens: resolvedForceActAbs,
-		ActPctCeil:        resolvedActPctCeil,
-		WarnPctCeil:       resolvedWarnPctCeil,
-		SendEscapeFn:      keeper.SendEscapeKey,
-		BootGracePeriod:   keeper.DefaultBootGracePeriod, // young-session guard (hk-4f8/hk-8hr1): defer cycles during post-/session-resume boot
-		// hk-suxt: activate the handoff-timeout hard-restart escalation
-		// (cycle.go:767, dormant until now because CyclerConfig.ForceRestartFn was
-		// never populated in production). Fail-closed: nil unless the operator BOTH
-		// opts in with --force-restart AND supplies a --respawn-cmd to launch from.
-		// MaxHandoffTimeouts defaults to 3 (applyDefaults), so a non-nil fn alone
-		// enables the escalation. Thresholds are unchanged (operator HARD-NO).
-		ForceRestartFn: keeperForceRestartFn(forceRestartFlag, projectDir, respawnCmdFlag),
-	}, emitter)
+	// In warn-only mode skip the cycler entirely — no handoff/clear/resume cycles.
+	// Refs: hk-yfcc.
+	var cycler *keeper.Cycler
+	if !warnOnlyFlag {
+		cycler = keeper.NewCycler(keeper.CyclerConfig{
+			AgentName:         agentFlag,
+			ProjectDir:        projectDir,
+			TmuxTarget:        resolvedTmux,
+			ActPct:            float64(actPctFlag),
+			ActAbsTokens:      resolvedActAbs,
+			WarnAbsTokens:     resolvedWarnAbs,
+			ForceActAbsTokens: resolvedForceActAbs,
+			ActPctCeil:        resolvedActPctCeil,
+			WarnPctCeil:       resolvedWarnPctCeil,
+			SendEscapeFn:      keeper.SendEscapeKey,
+			BootGracePeriod:   keeper.DefaultBootGracePeriod, // young-session guard (hk-4f8/hk-8hr1): defer cycles during post-/session-resume boot
+			// hk-suxt: activate the handoff-timeout hard-restart escalation
+			// (cycle.go:767, dormant until now because CyclerConfig.ForceRestartFn was
+			// never populated in production). Fail-closed: nil unless the operator BOTH
+			// opts in with --force-restart AND supplies a --respawn-cmd to launch from.
+			// MaxHandoffTimeouts defaults to 3 (applyDefaults), so a non-nil fn alone
+			// enables the escalation. Thresholds are unchanged (operator HARD-NO).
+			ForceRestartFn: keeperForceRestartFn(forceRestartFlag, projectDir, respawnCmdFlag),
+		}, emitter)
 
-	// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before
-	// starting the watcher loop (resume any interrupted /clear, or abort cleanly).
-	if recoverErr := cycler.RecoverFromCrash(ctx); recoverErr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik keeper: crash recovery: %v\n", recoverErr)
+		// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before
+		// starting the watcher loop (resume any interrupted /clear, or abort cleanly).
+		if recoverErr := cycler.RecoverFromCrash(ctx); recoverErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik keeper: crash recovery: %v\n", recoverErr)
+		}
 	}
 
 	cfg := keeper.WatcherConfig{
@@ -269,6 +280,7 @@ func runKeeperSubcommand(args []string) int {
 		FallbackWindowSize: windowSizeFlag,
 		WarnAbsTokens:      resolvedWarnAbs,
 		WarnPctCeil:        resolvedWarnPctCeil,
+		WarnOnly:           warnOnlyFlag,
 		RespawnCmd:         respawnCmdFlag,
 		// hk-75mr: gauge-INDEPENDENT live-pane recovery. When the gauge is stale
 		// past LiveRecoverGrace (default 5m) but the pane is still ALIVE (agent hung
@@ -277,7 +289,8 @@ func runKeeperSubcommand(args []string) int {
 		// ForceRestart via the operator-supplied --respawn-cmd (the same launch
 		// command the idle-respawn path uses; the closure re-verifies identity and
 		// refuses on a non-UUIDv4 .sid). Nil when --respawn-cmd is empty → disabled.
-		LiveRecoverFn: keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmdFlag),
+		// Also nil when --warn-only: no live-pane recovery for crew keepers.
+		LiveRecoverFn: keeperLiveRecoverFn(warnOnlyFlag, projectDir, respawnCmdFlag),
 		// Warn text overrides from config.yaml (empty = use compiled defaults).
 		DefaultWarnText:  keeperCfg.DefaultWarnText,
 		OnDemandWarnText: keeperCfg.OnDemandWarnText,
@@ -313,6 +326,17 @@ func runKeeperSubcommand(args []string) int {
 // Refs: hk-suxt (wire dormant ForceRestartFn), hk-qoz (escalation path).
 func keeperForceRestartFn(forceRestart bool, projectDir, respawnCmd string) func(ctx context.Context, agentName string) error {
 	if !forceRestart || respawnCmd == "" {
+		return nil
+	}
+	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)
+}
+
+// keeperLiveRecoverFn returns the LiveRecoverFn for the watcher. In warn-only
+// mode this is always nil — crew keepers never trigger live-pane recovery.
+// Outside warn-only mode it falls through to NewLiveRecoverViaRespawn (nil when
+// --respawn-cmd is empty). Refs: hk-yfcc, hk-75mr.
+func keeperLiveRecoverFn(warnOnly bool, projectDir, respawnCmd string) func(ctx context.Context, agentName string) error {
+	if warnOnly {
 		return nil
 	}
 	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)

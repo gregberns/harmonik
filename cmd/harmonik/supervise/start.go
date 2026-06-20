@@ -221,6 +221,14 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	//nolint:gosec // G204
 	_ = exec.Command("tmux", "set-option", "-t", sessionName, "remain-on-exit", "on").Run()
 
+	// Boot auto-reap (Tier 3): a fresh supervisor start cleans up stale
+	// flywheel orphans left by prior killed/crashed daemons (dead pane,
+	// predating the live daemon) BUT never touches the session we just created
+	// (ProtectSession) nor any non-flywheel session (the reaper only ever
+	// targets harmonik-<12hex>-flywheel — CONTRACT.md invariant I3). Best-effort:
+	// a reap error is non-fatal to the start (the supervisor is already running).
+	bootReapOrphanFlywheels(projectDir, sessionName)
+
 	// Release the lock now that the tmux session (and shim) is running.
 	// The shim will immediately acquire it (blocking flock). Releasing here
 	// rather than via the defer lets the defer no-op cleanly.

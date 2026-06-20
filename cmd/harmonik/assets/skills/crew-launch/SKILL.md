@@ -410,6 +410,30 @@ your `queue` and `epic_id` are durable in beads.
 - Re-processing a `topic == assign` with a dedupe hit → no-op (same
   `event_id`).
 
+### § Restart verification — who confirms the ACK (hk-uldg)
+
+You do NOT verify your OWN restart-now: the `/clear` wipes your context before the
+keeper's `[KEEPER ACK <nonce>] received restart` line could ever be read by you. An
+**external** watcher confirms it instead — the **captain** runs `harmonik keeper
+await-ack --agent <you> --kind restart` after triggering your restart (captain
+watches crews; see the captain skill §10 and the keeper skill § Verifying a restart
+with await-ack). If that ACK times out the captain re-arms your keeper — that is
+their job, not yours.
+
+**Self-service liveness check (this you CAN do, while live).** If you are unsure the
+keeper is even reachable for your pane, ping it and confirm the ACK in your OWN pane
+— use a FRESH unique nonce each time:
+
+```bash
+n=ping-$(date +%s%3N)
+harmonik keeper ping --agent <you> --nonce "$n"
+harmonik keeper await-ack --agent <you> --nonce "$n" --kind ping --timeout 15s
+```
+
+Exit 0 = keeper alive and watching your pane; exit 3 = it emitted
+`session_keeper_ack_timeout` — surface it to the captain over comms
+(`--from <you>`), do NOT silently continue assuming the keeper will save you.
+
 ---
 
 ## § Clean shutdown

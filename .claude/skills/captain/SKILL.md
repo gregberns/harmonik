@@ -628,6 +628,41 @@ emit a failure-surface, and do NOT re-`crew start` the crew — it returns under
 same name and re-appears in `comms who` on its own. (A transient presence drop during
 the cycle is the "crew offline" edge above — a returning crew needs no action.)
 
+**VERIFY a crew restart you TRIGGER — captain watches crews (hk-uldg, design
+decision 1).** When YOU fire a crew restart (e.g. a wedged crew at ~200k that you
+restart with `harmonik keeper restart-now --agent <crew>`), do NOT assume it landed
+— the keeper may be dead, watching the wrong pane, or unable to verify the session
+id. The captain's process is EXTERNAL to the crew, so it survives the crew's
+`/clear` and can confirm the ACK directly:
+
+```bash
+# 1. Fire the restart and capture the printed nonce=rn-<millis>:
+out=$(harmonik keeper restart-now --agent <crew> --project "$HARMONIK_PROJECT")
+nonce=$(printf '%s\n' "$out" | sed -n 's/.*nonce=\(rn-[0-9]*\).*/\1/p')
+# 2. Confirm the keeper delivered the ACK (exit 3 + session_keeper_ack_timeout on failure):
+harmonik keeper await-ack --agent <crew> --nonce "$nonce" --kind restart \
+  --timeout 30s --project "$HARMONIK_PROJECT"
+```
+
+On a NON-ZERO `await-ack` exit, **escalate**: do NOT trust the restart as
+successful, comms-alert the operator, and run the documented investigation:
+
+```bash
+harmonik comms send --to operator --topic keeper-alert --from <your-lane> \
+  "keeper ACK timeout for crew <crew> nonce <nonce> — keeper unverified; investigating"
+```
+
+Then check the fired command's exit/stderr reason (`no_tmux_target` /
+`sid_not_primary` / `handoff_missing` / `handoff_stale` / `ack_inject_failed`) and
+re-arm the crew's keeper (`harmonik keeper enable …` / rebind) rather than letting
+it silently keep overflowing. (`<your-lane>` is THIS session's comms identity, NOT
+a hardcoded `captain` — an uncommissioned `--from captain` freezes the fleet.)
+
+> This verification applies to a restart you TRIGGER. A keeper-DRIVEN automatic
+> restart (the crew's own keeper crossing ACT) is still a non-event you do not
+> watch — ACK verification of the automatic cycle is out of scope for hk-uldg
+> (companion hk-vpnp owns the automatic-cycle area).
+
 **The captain MUST NOT exit or stop its own session on a keeper context-warning.** Your OWN session
 is keeper-managed too (`harmonik keeper --agent captain`), and the keeper injects a
 **captain-specific** warn: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain, keep the turn open, and stop typing. The keeper drives the clear→resume cycle."*
@@ -654,6 +689,17 @@ hand-trim.
    (≤5 s): handoff → nonce-poll → `/clear` → `/session-resume`.
 4. **NEVER exit or terminate your own session on a warn.** Self-terminating exits the captain permanently — the
    keeper cannot rebind to a session that already exited.
+
+**Self-restart verification is EXTERNAL, not yours (hk-uldg, design decision 1).**
+You cannot confirm your OWN restart's ACK — the `/clear` wipes your context before
+the ACK could be read. The verification is delegated to an external watcher: the
+wrapper **`scripts/captain-tools/keeper-restart-verified.sh captain`** fires
+`restart-now`, parses the printed `nonce=rn-…`, and runs `await-ack --kind restart`
+as a separate OS process (it survives your `/clear`), exiting non-zero + emitting
+`session_keeper_ack_timeout` if the ACK never lands. If your launch wrapper drives
+restart through this script, your self-restart is VERIFIED rather than assumed; you
+still just fire `restart-now` and stop typing. (If you ever restart a PEER captain
+or crew, run `await-ack` yourself per §10 — your process is external to theirs.)
 
 **On resume:** re-drain comms, re-ground via STARTUP.md. Do NOT trust the
 handoff's live-state claims — measure them. The handoff carries INTENT only; do not

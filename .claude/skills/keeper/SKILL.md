@@ -164,6 +164,67 @@ harmonik keeper restart-now --agent captain [--project DIR]
 # The keeper's next tick (≤5 s) fires RunOnDemand → /clear → /session-resume.
 ```
 
+**A restart-now is now VERIFIABLE — don't assume it landed (hk-uldg).** Before
+this, the firing agent fired the command, trusted the exit code, and moved on; if
+the keeper was dead / watching the wrong pane / couldn't verify the session id, the
+restart silently never happened. The keeper now injects a `[KEEPER ACK <nonce>]
+received restart` line into the pane **before** the gated `/clear`, and
+`restart-now` prints `nonce=rn-<millis>` to stdout. An **external** observer reads
+that nonce and runs `harmonik keeper await-ack` (below) to PROVE the keeper
+delivered the ACK. It must be external because on a SELF restart the `/clear`
+wipes the firing agent's context before it could ever read its own ACK — see
+§ Verifying a restart with await-ack.
+
+### `harmonik keeper await-ack --agent <name> --nonce <N> [--kind restart|ping] [--timeout 15s] [--poll 1s] [--project DIR]` — confirm the ACK landed
+
+The AGENT-SIDE half of the handshake. Polls the agent's OWN pane scrollback for
+the exact bracket token `[KEEPER ACK <nonce>]` (not the bare nonce — no cross-cycle
+false match). **Exit 0** when observed (keeper proven alive); on timeout it
+emits a durable `session_keeper_ack_timeout` event to `events.jsonl` and **exits
+3** (distinct from the flag-misuse exit 2). The pane-capture is an injectable seam
+so the timer/poll/match logic is unit-tested Go, not skill prose.
+
+The binary does **NOT** send comms — the CALLER owns escalation (comms identity
+`--from <lane>` is the caller's; baking a hardcoded `--from` in would risk the
+"uncommissioned --from captain freezes the fleet" footgun). On exit 3 the caller
+must comms-alert the operator and run the investigation steps:
+
+```bash
+harmonik comms send --to operator --topic keeper-alert --from <lane> \
+  "keeper ACK timeout for <agent> nonce <N> — keeper may be dead/wrong-pane/unverifiable sid; investigating"
+```
+
+Default timeouts: 15s (ping) — pass `--timeout 30s` for restart-now (the keeper
+does freshness checks + three injects around the ACK). **Exit codes:** `0` ack
+observed; `1` argument error; `2` flag misuse (flag-only); `3` ack-timeout
+(event emitted).
+
+### § Verifying a restart with await-ack — who runs it (design decision 1)
+
+**Captain watches crews; a restart wrapper watches for self.** The asymmetry:
+
+- **ping** (self-service liveness) — the SAME live agent fires `ping --nonce N`
+  then runs `await-ack --kind ping --nonce N`; the ACK lands in its own pane and
+  it reads `await-ack`'s exit code. Use a FRESH unique nonce per ping.
+- **restart-now (SELF)** — the firing agent is `/clear`-wiped before its ACK
+  lands, so it CANNOT wait for its own ACK. An **external** process must run
+  `await-ack`. Use the wrapper **`scripts/captain-tools/keeper-restart-verified.sh
+  <agent>`**: it fires `restart-now`, parses the printed `nonce=rn-…`, then runs
+  `await-ack --kind restart` for the SAME agent and exits non-zero (logging) if the
+  ACK never lands. Wire keeper/captain SELF restarts through this wrapper instead
+  of bare `restart-now`.
+- **restart-now (CREW, captain watching)** — the captain tells the crew to
+  restart, fires `restart-now --agent <crew>`, captures the nonce, then runs
+  `await-ack --agent <crew> --kind restart` directly. The captain's process is
+  external to the crew, so it survives the crew's `/clear`. See the captain skill
+  §10 Restart continuity.
+
+> **OUT OF SCOPE (hk-uldg):** the AUTOMATIC keeper cycle (`MaybeRun`/`runCycle` in
+> `cycle.go`/`watcher.go`) does NOT yet run `await-ack` on its own restarts — it
+> still relies on its internal handoff-nonce poll. Adding ACK verification to the
+> automatic cycle is a separate bead (companion hk-vpnp owns that area). The
+> verification wired here covers the MANUAL `restart-now` / `ping` paths only.
+
 ### `harmonik keeper --agent <name> [flags]` — the watcher (run this to start it)
 
 Starts the watcher loop and blocks until SIGINT/SIGTERM.
@@ -380,6 +441,16 @@ harmonik keeper clear-dispatching <agent>
 
 # Captain-initiated restart (write HANDOFF-captain.md first, include KEEPER nonce)
 harmonik keeper restart-now --agent captain [--project DIR]
+
+# Confirm a restart actually landed (external watcher; survives the agent's /clear).
+# For a SELF restart use the wrapper — it fires restart-now, parses nonce, awaits ACK:
+scripts/captain-tools/keeper-restart-verified.sh captain [--project DIR]
+# For a CREW restart the captain runs await-ack directly after restart-now:
+harmonik keeper await-ack --agent <crew> --nonce rn-<millis> --kind restart --timeout 30s
+
+# Self-service liveness check (live agent — fresh nonce each time):
+harmonik keeper ping --agent <self> --nonce ping-$(date +%s%3N)
+harmonik keeper await-ack --agent <self> --nonce ping-<same> --kind ping --timeout 15s
 ```
 
 If the keeper is NOT armed (per `doctor`) and a crew wedges at ~200k tokens:

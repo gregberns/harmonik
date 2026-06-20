@@ -183,6 +183,13 @@ func runWithSupervisor(cfg Config, projectDir string, stdout, stderr io.Writer) 
 	ctx, stop := setupSignals()
 	defer stop()
 
+	// Boot-time asset version-skew check (hk-yqx9): compare the RUNNING binary's
+	// embedded asset bundle against what this project last installed
+	// (.harmonik/assets.lock) and, on skew, notify the captain to run sync-assets.
+	// Best-effort, detection+notify only — never writes project files; runs ONCE at
+	// boot (a binary swap requires a supervisor restart, which re-runs this).
+	RunAssetSkewCheck(projectDir, cfg, log, stderr)
+
 	// Daemon watchdog: runs alongside the Pi supervisor, reviving the harmonik
 	// daemon when it is detected dead via socket probe (CL-083 supervisor-owned
 	// revival). The daemon command is built from the current executable and the

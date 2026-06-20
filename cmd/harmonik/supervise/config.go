@@ -92,6 +92,23 @@ type Config struct {
 	// config.json lives under .harmonik/cognition/ which is gitignored, so
 	// the value is never committed (CI-007).
 	APIKey string `json:"api_key,omitempty"`
+
+	// AssetSync gates the supervisor's asset version-skew behaviour (hk-yqx9,
+	// doc 10 §Daemon-safety). When absent (the common case) all fields default to
+	// their zero values: detection+notify run, AUTO-APPLY IS OFF.
+	AssetSync AssetSyncConfig `json:"asset_sync,omitempty"`
+}
+
+// AssetSyncConfig is the supervisor's asset-sync knob block. The DEFAULT (zero
+// value) is the safe one: AutoApply is false, so the supervisor only DETECTS skew
+// and NOTIFIES the captain — it never writes project files automatically. Auto-apply
+// is strictly opt-in and, even when enabled, is limited to Managed + FastForward
+// items applied during a confirmed daemon lull (every conflict / content-owned
+// change is still surfaced for human review, never applied).
+type AssetSyncConfig struct {
+	// AutoApply, when true AND a true lull is confirmed, lets the supervisor apply
+	// ONLY the safe (Managed + FastForward) skill fast-forwards. OFF by default.
+	AutoApply bool `json:"auto_apply,omitempty"`
 }
 
 // WriteConfigAtomic writes cfg to .harmonik/cognition/config.json atomically

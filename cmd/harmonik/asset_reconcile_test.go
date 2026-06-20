@@ -121,6 +121,89 @@ func TestReconcileMatrix(t *testing.T) {
 	}
 }
 
+// TestReconcileUnclassified covers the Unclassified class (hk-gh1m gap 1): an
+// embed path matching no known class prefix is still planned, carries the
+// Unclassified class, and reconciles conservatively (create-if-missing, skip when
+// disk already matches, conflict when disk differs).
+func TestReconcileUnclassified(t *testing.T) {
+	const path = "assets/other/thing.md"
+	if got := Classify(path); got != Unclassified {
+		t.Fatalf("Classify(%q) = %q, want %q", path, got, Unclassified)
+	}
+
+	cases := []struct {
+		name string
+		disk string // "" = absent
+		want Action
+	}{
+		{name: "create-when-absent", disk: "", want: ActionCreate},
+		{name: "skip-when-disk-eq-embed", disk: shaEmbed, want: ActionSkip},
+		{name: "conflict-when-disk-differs", disk: shaLocal, want: ActionConflict},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := Manifest{FormatVersion: ManifestFormatVersion, Files: []FileEntry{
+				{Path: path, Sha256: shaEmbed, Class: Unclassified},
+			}}
+			lock := Lock{FormatVersion: LockFormatVersion, Files: map[string]LockEntry{}}
+			disk := map[string]string{}
+			if c.disk != "" {
+				disk[path] = c.disk
+			}
+			items := Reconcile(m, lock, disk)
+			if len(items) != 1 {
+				t.Fatalf("expected 1 item, got %d", len(items))
+			}
+			if items[0].Class != Unclassified {
+				t.Errorf("Class = %q, want %q", items[0].Class, Unclassified)
+			}
+			if items[0].Action != c.want {
+				t.Errorf("Action = %q, want %q (reason: %s)", items[0].Action, c.want, items[0].Reason)
+			}
+		})
+	}
+}
+
+// TestReconcileLeavePathClass asserts the Leave path (a project-authored file not
+// in the embed manifest) is both ActionLeave AND classified by its on-disk path
+// (hk-gh1m gap 2): a disk-only path under context/ classifies ContentOwned even
+// though the planner leaves it untouched.
+func TestReconcileLeavePathClass(t *testing.T) {
+	// Empty manifest: nothing is shipped, so every disk path is project-authored.
+	m := Manifest{FormatVersion: ManifestFormatVersion}
+	lock := Lock{FormatVersion: LockFormatVersion, Files: map[string]LockEntry{}}
+	disk := map[string]string{
+		"assets/context/notes.md":  shaLocal, // structurally ContentOwned
+		"assets/skills/mine/X.md":  shaLocal, // structurally Managed
+		"assets/random/standalone": shaLocal, // Unclassified
+	}
+	items := Reconcile(m, lock, disk)
+	byPath := map[string]ReconcileItem{}
+	for _, it := range items {
+		byPath[it.Path] = it
+	}
+	checks := []struct {
+		path  string
+		class AssetClass
+	}{
+		{"assets/context/notes.md", ContentOwned},
+		{"assets/skills/mine/X.md", Managed},
+		{"assets/random/standalone", Unclassified},
+	}
+	for _, c := range checks {
+		it, ok := byPath[c.path]
+		if !ok {
+			t.Fatalf("missing reconcile item for %q", c.path)
+		}
+		if it.Action != ActionLeave {
+			t.Errorf("%q: Action = %q, want %q", c.path, it.Action, ActionLeave)
+		}
+		if it.Class != c.class {
+			t.Errorf("%q: Class = %q, want %q (Leave items must still carry the structural class)", c.path, it.Class, c.class)
+		}
+	}
+}
+
 // TestReconcileDeterministicOrder asserts the plan is sorted by path regardless
 // of map iteration order.
 func TestReconcileDeterministicOrder(t *testing.T) {
@@ -149,7 +232,7 @@ func TestLockRoundTrip(t *testing.T) {
 	l := Lock{
 		FormatVersion: LockFormatVersion,
 		Files: map[string]LockEntry{
-			"assets/skills/keeper/SKILL.md":     {Path: "assets/skills/keeper/SKILL.md", Sha256: shaEmbed},
+			"assets/skills/keeper/SKILL.md":       {Path: "assets/skills/keeper/SKILL.md", Sha256: shaEmbed},
 			"assets/templates/AGENTS.template.md": {Path: "assets/templates/AGENTS.template.md", Sha256: shaLock},
 		},
 	}

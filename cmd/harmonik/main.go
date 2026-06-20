@@ -261,6 +261,23 @@ EXAMPLES
 		return runInitSubcommand(subArgs)
 	}
 
+	// harmonik sync-assets [--project DIR] [--dry-run|--apply|--commit] [--force]
+	//
+	// Ongoing UPDATE path (sibling of init): reconcile a project's on-disk
+	// instruction files against the binary's embedded asset bundle via a
+	// class-aware 3-way reconcile. --dry-run is the default; --apply refuses
+	// while the daemon is dispatching unless --force.
+	//
+	// Exit codes: 0 success, 1 arg/IO error, 3 daemon-lull gate refused.
+	// Bead ref: hk-i7i3. Design: plans/2026-06-20-doc-instruction-audit/10-asset-sync.md.
+	if len(os.Args) >= 2 && os.Args[1] == "sync-assets" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runSyncAssetsSubcommand(subArgs)
+	}
+
 	// harmonik reconcile [--project DIR] [--target-branch BRANCH]
 	// Cat 3c auto-reconciler: detect and close IN_PROGRESS beads whose
 	// implementation has already merged to the target branch.

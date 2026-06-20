@@ -373,11 +373,14 @@ The captain is keeper-MANAGED, not a keeper operator — it does NOT need the fu
 > # Launches the captain with a minted --session-id AND arms the keeper at the
 > # canonical absolute-token band (warn 200k / act 215k):
 > ~/.claude/captain-tools/captain-launch.sh captain
-> #   ⇒ tmux session `captain` runs:
-> #      claude --dangerously-skip-permissions --remote-control captain --session-id <uuid>
-> #   ⇒ tmux session `hk-keeper-captain` runs:
-> #      harmonik keeper --agent captain --tmux captain \
-> #        --warn-abs-tokens 200000 --act-abs-tokens 215000
+> #   ⇒ ONE tmux session `harmonik-<hash>-captain` with TWO windows (hk-z036):
+> #      window `agent`  → claude --dangerously-skip-permissions --remote-control captain --session-id <uuid>
+> #      window `keeper` → harmonik keeper --agent captain --tmux <session>:agent \
+> #                          --warn-abs-tokens 200000 --act-abs-tokens 215000
+> #   The keeper targets the `agent` WINDOW (--tmux <session>:agent), so it
+> #   injects/gauges the captain pane, never its own keeper window. A captain
+> #   restart respawns ONLY the `agent` window; the keeper window survives.
+> #   (No separate `hk-keeper-captain` session anymore.)
 > ```
 >
 > **Keeper band — canonical flags (M1/hk-039z):** the captain runs on a **1M-token
@@ -387,10 +390,12 @@ The captain is keeper-MANAGED, not a keeper operator — it does NOT need the fu
 > `keeper:` block). If you ever relaunch the keeper by hand, ALWAYS use the absolute
 > flags, NEVER the inert pct flags:
 > ```bash
-> harmonik keeper --agent captain --tmux captain \
+> harmonik keeper --agent captain --tmux harmonik-<hash>-captain:agent \
 >   --warn-abs-tokens 200000 --act-abs-tokens 215000
 > ```
-> (The threshold VALUES are the operator's lowered band — see the on-WARN block
+> (The `--tmux <session>:agent` WINDOW target is load-bearing, hk-z036: it points
+> the keeper at the captain's `agent` window so it never injects into its own
+> `keeper` window. The threshold VALUES are the operator's lowered band — see the on-WARN block
 > below. Do not change them here; this fix is the flag SYNTAX only.)
 
 ### On-WARN procedure for the captain (LOAD-BEARING)

@@ -120,3 +120,5 @@ echo "captain-launch: captain up in tmux '$CAP_TMUX' (session_id $SID, pane_pid 
 echo "captain-launch: sentinel written to $COGNITION_DIR/captain.sentinel; daemon orphan sweep will skip '$CAP_TMUX' while PID $CAPTAIN_PID is live (PL-006d ii)."
 echo "captain-launch: self-heal respawn wired — keeper will relaunch '$CAP_TMUX' via $RESPAWN_SCRIPT (--resume $SID, agent-pane only, no dup keeper) if the captain pane dies."
 echo "captain-launch: NOTE — a stable --session-id is what lets the keeper's clear→resume cycle survive (mirrors the crew model)."
+echo "captain-launch: MANUAL RESTART: use keeper-restart-verified.sh (co-located) instead of bare 'harmonik keeper restart-now' to confirm the ACK lands:"
+echo "  $(dirname "$0")/keeper-restart-verified.sh \"$CAP_NAME\" --project \"$HK_PROJECT\""

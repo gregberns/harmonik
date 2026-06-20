@@ -644,6 +644,67 @@ func ExportedCaptureNodePromptBuilder(ch chan<- string) func(context.Context, cl
 	}
 }
 
+// ExportedCaptureRunnerBuilder returns a launchSpecBuilder stub that sends the
+// CommandRunner from the FIRST call's claudeRunCtx into ch (non-blocking), then
+// returns an error to short-circuit the dispatch. Tests use this to assert that
+// the review-loop and DOT launch paths thread the run's CommandRunner into the
+// claudeRunCtx so the worktree-trust / settings / agent-task writes land on the
+// WORKER for a REMOTE run (hk-3sus).
+func ExportedCaptureRunnerBuilder(ch chan<- tmuxPkg.CommandRunner) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+		select {
+		case ch <- rc.runner:
+		default:
+		}
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf("capture-only stub: stopping dispatch")
+	}
+}
+
+// ExportedRunReviewLoopWithRunner exposes runReviewLoop with an explicit
+// CommandRunner so tests can assert the remote (runner != nil) path threads the
+// runner into the implementer/reviewer claudeRunCtx (hk-3sus).
+func ExportedRunReviewLoopWithRunner(
+	ctx context.Context,
+	deps workLoopDeps,
+	runID core.RunID,
+	beadID core.BeadID,
+	wtPath string,
+	parentSHA string,
+	runner tmuxPkg.CommandRunner,
+) ReviewLoopResultExported {
+	r := runReviewLoop(ctx, deps, runID, beadID, "", "", wtPath, parentSHA, "", "", "", "", runner)
+	return ReviewLoopResultExported{
+		Success:          r.success,
+		CompletionReason: string(r.completionReason),
+		Summary:          r.summary,
+		NeedsAttention:   r.needsAttention,
+	}
+}
+
+// ExportedDriveDotWorkflowWithRunner exposes driveDotWorkflow with an explicit
+// CommandRunner so tests can assert the remote (runner != nil) path threads the
+// runner into the DOT agentic-node claudeRunCtx (hk-3sus).
+func ExportedDriveDotWorkflowWithRunner(
+	ctx context.Context,
+	deps workLoopDeps,
+	runID core.RunID,
+	beadID core.BeadID,
+	beadTitle string,
+	beadDescription string,
+	wtPath string,
+	parentSHA string,
+	graph *dot.Graph,
+	runner tmuxPkg.CommandRunner,
+) DotWorkflowResultExported {
+	r := driveDotWorkflow(ctx, deps, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", "", "", runner)
+	return DotWorkflowResultExported{
+		Success:        r.success,
+		TerminalNodeID: r.terminalNodeID,
+		NeedsAttention: r.needsAttention,
+		Summary:        r.summary,
+	}
+}
+
 // ModelEffortPair holds the model and effort values captured from a claudeRunCtx.
 // Used by ExportedCaptureModelEffortBuilder tests (hk-q8nqr).
 type ModelEffortPair struct {

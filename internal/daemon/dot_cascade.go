@@ -968,9 +968,16 @@ func dispatchDotAgenticNode(
 	}
 
 	rc := claudeRunCtx{
-		runID:             runID,
-		beadID:            string(beadID),
-		workspacePath:     wtPath,
+		runID:         runID,
+		beadID:        string(beadID),
+		workspacePath: wtPath,
+		// runner threads the per-run CommandRunner into buildClaudeLaunchSpec so the
+		// worktree-trust / settings / agent-task writes land on the WORKER for a
+		// REMOTE DOT run (runner == dotRunner == rbc.sshRunner) and stay box-A-local
+		// for a LOCAL run (runner == nil, NFR7). Without this the trust upsert ran
+		// box-A-local → worker worktree untrusted → trust modal → no_commit
+		// (hk-3sus; symmetric with how settings/agent-task get the worker).
+		runner:            runner,
 		daemonSocket:      daemonSocket,
 		workflowMode:      core.WorkflowModeDot,
 		phase:             phase,

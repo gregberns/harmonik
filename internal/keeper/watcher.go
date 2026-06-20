@@ -734,8 +734,16 @@ func (c *WatcherConfig) actionableWarnEligible(sessionID string, crispIdle bool)
 //
 // When NOT eligible it returns the lighter finish-the-turn advisory: DefaultWarnText
 // when configured, else the compiled wrapUpWarningText. Refs: hk-vs4u.
-func (c *WatcherConfig) selectWarnText(cf *CtxFile, crispIdle bool) string {
-	if c.actionableWarnEligible(cf.SessionID, crispIdle) {
+//
+// operatorAttached is the operator-attached guard (hk-1ryc): when a human operator
+// is actively attached to the pane the ACTIONABLE restart instruction is NOT
+// injected — issuing the self-restart handshake command mid-keystroke would race
+// the operator's own input. The lighter finish-the-turn advisory is selected
+// instead so the warn is still delivered (no warn is ever lost) without ever
+// instructing a self-restart over an operator's in-flight turn. This mirrors the
+// Cycler's act-path guard (cycle.go Gate-7) for the warn-path actionable text.
+func (c *WatcherConfig) selectWarnText(cf *CtxFile, crispIdle, operatorAttached bool) string {
+	if !operatorAttached && c.actionableWarnEligible(cf.SessionID, crispIdle) {
 		compiled := ActionableWarnText(c.AgentName, cf.Tokens, c.WarnAbsTokens, c.actEffectiveTokens())
 		if c.ActionableWarnText != "" && containsRestartNowCmd(c.ActionableWarnText) {
 			return c.ActionableWarnText
@@ -1266,7 +1274,16 @@ func (w *Watcher) Run(ctx context.Context) error {
 					// AND CrispIdle. Otherwise the lighter advisory is used — and the
 					// lighter advisory ALWAYS injects once gaugeQuiesced (this block),
 					// even when NOT CrispIdle, so no session ever loses its warn.
-					text := w.cfg.selectWarnText(ctxFile, crispIdle)
+					//
+					// hk-1ryc operator-attached guard: when a human operator is
+					// actively attached to the pane, suppress the ACTIONABLE restart
+					// instruction (it would race the operator's keystrokes mid-turn)
+					// and fall back to the lighter advisory. The warn is still
+					// delivered; only the self-restart command is withheld until the
+					// operator detaches. Checked here (not at the crossing tick) so the
+					// live attach state is sampled at delivery time.
+					operatorAttached := w.cfg.TmuxTarget != "" && w.cfg.OperatorAttachedFn(w.cfg.TmuxTarget)
+					text := w.cfg.selectWarnText(ctxFile, crispIdle, operatorAttached)
 					inject = func(ctx context.Context, target string) error {
 						return InjectText(ctx, target, text)
 					}

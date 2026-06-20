@@ -65,7 +65,7 @@ func TestSelectWarnText_CaptainActionableWhenIdleAndPrimary(t *testing.T) {
 		SelfServiceEnabled: true,
 		WarnAbsTokens:      200_000,
 	}
-	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true /*crispIdle*/)
+	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true /*crispIdle*/, false /*operatorAttached*/)
 	if !strings.Contains(txt, restartNowStem) {
 		t.Fatalf("captain idle+primary: want actionable (restart-now), got: %s", txt)
 	}
@@ -81,7 +81,7 @@ func TestSelectWarnText_CrewActionableWhenCrewsEnabledDefault(t *testing.T) {
 		SelfServiceCrewsEnabled: true,
 		WarnAbsTokens:           200_000,
 	}
-	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true)
+	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true, false)
 	if !strings.Contains(txt, restartNowStem) {
 		t.Fatalf("crew with crews_enabled=true: want actionable, got: %s", txt)
 	}
@@ -98,7 +98,7 @@ func TestSelectWarnText_CrewLighterWhenCrewsDisabled(t *testing.T) {
 		SelfServiceCrewsEnabled: false, // explicit false
 		WarnAbsTokens:           200_000,
 	}
-	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true)
+	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true, false)
 	if strings.Contains(txt, restartNowStem) {
 		t.Fatalf("crew with crews_enabled=false: want lighter advisory, got actionable: %s", txt)
 	}
@@ -114,7 +114,7 @@ func TestSelectWarnText_BrokenSIDFallsToLighter(t *testing.T) {
 		SelfServiceEnabled: true,
 		WarnAbsTokens:      200_000,
 	}
-	txt := c.selectWarnText(ctxWith(brokenSID, 205_000), true)
+	txt := c.selectWarnText(ctxWith(brokenSID, 205_000), true, false)
 	if strings.Contains(txt, restartNowStem) {
 		t.Fatalf("broken/non-primary SID: want lighter advisory, got actionable: %s", txt)
 	}
@@ -130,7 +130,7 @@ func TestSelectWarnText_BusyCaptainStillGetsLighterAdvisory(t *testing.T) {
 		SelfServiceEnabled: true,
 		WarnAbsTokens:      200_000,
 	}
-	txt := c.selectWarnText(ctxWith(primarySID, 205_000), false /*busy*/)
+	txt := c.selectWarnText(ctxWith(primarySID, 205_000), false /*busy*/, false /*operatorAttached*/)
 	if strings.Contains(txt, restartNowStem) {
 		t.Fatalf("busy captain: want lighter advisory, got actionable: %s", txt)
 	}
@@ -146,7 +146,7 @@ func TestSelectWarnText_SelfServiceDisabledAlwaysLighter(t *testing.T) {
 		SelfServiceEnabled: false, // off
 		WarnAbsTokens:      200_000,
 	}
-	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true)
+	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true, false)
 	if strings.Contains(txt, restartNowStem) {
 		t.Fatalf("self_service disabled: want lighter advisory, got actionable: %s", txt)
 	}
@@ -161,7 +161,7 @@ func TestSelectWarnText_CustomActionableHonoredWhenItKeepsCommand(t *testing.T) 
 		ActionableWarnText: custom,
 		WarnAbsTokens:      200_000,
 	}
-	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true)
+	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true, false)
 	if txt != custom {
 		t.Errorf("custom actionable text carrying the command must be honored verbatim, got: %s", txt)
 	}
@@ -178,7 +178,7 @@ func TestSelectWarnText_CustomActionableDroppingCommandFallsBackToCompiled(t *te
 		ActionableWarnText: custom,
 		WarnAbsTokens:      200_000,
 	}
-	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true)
+	txt := c.selectWarnText(ctxWith(primarySID, 205_000), true, false)
 	if txt == custom {
 		t.Fatal("custom override dropping the command must NOT be honored")
 	}

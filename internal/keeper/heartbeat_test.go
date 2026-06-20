@@ -204,3 +204,117 @@ func joinLines(ls []string) string {
 	}
 	return out
 }
+
+// TestHeartbeat_DeriveMissBudget_SuppressesCarryForward verifies hk-lal8: when
+// deriveContextTokens persistently returns false (transcript absent), the heartbeat
+// stops writing the gauge file after HeartbeatMaxMisses consecutive misses. Once
+// writes stop, the gauge ages to genuine staleness and the watcher emits
+// no_gauge:stale — restoring the safety signal that the carry-forward write was
+// silently suppressing.
+//
+// The test uses HeartbeatMaxMisses=2 so the budget is exceeded quickly without
+// long wall-clock delays. The contrast assertion (MaxMisses=100) confirms the
+// existing behaviour on a live pane is unchanged while the budget is large.
+func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
+	t.Parallel()
+
+	// ── sub-test: budget exceeded → gauge goes stale → no_gauge:stale fires ──
+	t.Run("budget_exceeded_emits_stale", func(t *testing.T) {
+		t.Parallel()
+
+		projectDir := t.TempDir()
+		agent := "test-agent"
+
+		// Seed an initial gauge aged past HeartbeatThreshold so the heartbeat
+		// fires on the very first tick.
+		writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
+			Pct:       50.0,
+			Tokens:    180_000,
+			SessionID: "11111111-2222-4333-8444-555555555555",
+			Ts:        time.Now().UTC().Format(time.RFC3339),
+		}, 60*time.Millisecond)
+
+		em := &keeper.RecordingEmitter{}
+		cfg := keeper.WatcherConfig{
+			AgentName:  agent,
+			ProjectDir: projectDir,
+
+			PollInterval:       5 * time.Millisecond,
+			Staleness:          80 * time.Millisecond,
+			HeartbeatThreshold: 40 * time.Millisecond,
+			HeartbeatEnabled:   true,
+			// Small budget: after 2 consecutive derive-misses the heartbeat stops
+			// writing, allowing the gauge to age past Staleness (80ms).
+			HeartbeatMaxMisses: 2,
+
+			TmuxTarget:   "fake:0.0",
+			WarnPct:      80.0,
+			IdleQuiesce:  1 * time.Millisecond,
+			IsPaneIdleFn: func(context.Context, string) bool { return false }, // pane alive
+
+			// No transcript on disk → derive always returns false.
+			TranscriptDir: filepath.Join(projectDir, "no-such-transcript-dir"),
+		}
+
+		// Run long enough for: 2 heartbeat writes (within budget) + budget exceeded
+		// + gauge ages past Staleness (80ms) → no_gauge:stale fires.
+		runWatcherFor(context.Background(), cfg, em, 600*time.Millisecond)
+
+		if got := noGaugeStaleCount(em); got == 0 {
+			t.Fatalf("expected ≥1 no_gauge:stale after derive-miss budget exceeded, got 0 (heartbeat is still papering over stale count)")
+		}
+	})
+
+	// ── sub-test: budget NOT exceeded → gauge stays fresh (existing behaviour) ──
+	t.Run("within_budget_keeps_gauge_fresh", func(t *testing.T) {
+		t.Parallel()
+
+		projectDir := t.TempDir()
+		agent := "test-agent"
+		managedSID := "22222222-3333-4444-8555-666666666666"
+		keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+		if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := keeper.WriteManagedSessionID(projectDir, agent, managedSID); err != nil {
+			t.Fatalf("WriteManagedSessionID: %v", err)
+		}
+
+		writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
+			Pct:       50.0,
+			Tokens:    180_000,
+			SessionID: managedSID,
+			Ts:        time.Now().UTC().Format(time.RFC3339),
+		}, 60*time.Millisecond)
+
+		em := &keeper.RecordingEmitter{}
+		cfg := keeper.WatcherConfig{
+			AgentName:  agent,
+			ProjectDir: projectDir,
+
+			PollInterval:       5 * time.Millisecond,
+			Staleness:          120 * time.Millisecond,
+			HeartbeatThreshold: 40 * time.Millisecond,
+			HeartbeatEnabled:   true,
+			// Large budget: carry-forward continues for a long time — gauge stays fresh.
+			HeartbeatMaxMisses: 100,
+
+			TmuxTarget:   "fake:0.0",
+			WarnPct:      80.0,
+			IdleQuiesce:  1 * time.Millisecond,
+			IsPaneIdleFn: func(context.Context, string) bool { return false },
+
+			TranscriptDir: filepath.Join(projectDir, "no-such-transcript-dir"),
+		}
+
+		runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
+
+		if got := noGaugeStaleCount(em); got != 0 {
+			t.Fatalf("expected 0 no_gauge:stale while within miss budget on a live pane, got %d", got)
+		}
+		_, modTime := readCtxFor(t, projectDir, agent)
+		if time.Since(modTime) >= cfg.Staleness {
+			t.Fatalf("gauge was not refreshed: mod-time age %v >= Staleness %v", time.Since(modTime), cfg.Staleness)
+		}
+	})
+}

@@ -14,6 +14,17 @@ import (
 
 // heartbeat.go — keeper-side gauge liveness (hk-81wk).
 //
+// MaxHeartbeatMisses is the number of consecutive ticks on which
+// deriveContextTokens may return false before the heartbeat stops writing the
+// gauge file. At the default 10 s tick cadence, 12 misses ≈ 2 minutes — roughly
+// one Staleness window. After the budget is exceeded the heartbeat suppresses
+// WriteCtxFile so the gauge ages to genuine staleness and the existing
+// no_gauge:stale path fires loudly, restoring the safety signal that carry-forward
+// writes were silently suppressing (hk-lal8).
+//
+// This constant does NOT change any warn/act/force_act/window threshold values.
+const MaxHeartbeatMisses = 12
+//
 // PROBLEM. The .ctx gauge's sole writer is scripts/keeper-statusline.sh, which
 // runs ONLY on a Claude Code UI repaint and SKIPS the write whenever the pane
 // reports an absent/NA percentage (right after /clear, or when a busy/idle
@@ -205,6 +216,7 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 		Ts:         time.Now().UTC().Format(time.RFC3339),
 	}
 	if tokens, ok := deriveContextTokens(transcriptDir, sid); ok {
+		w.heartbeatMissCount = 0
 		fresh.Tokens = tokens
 		// Recompute pct from the fresh token count when a window size is known so
 		// the gauge tracks live growth, not just the last repaint's percentage.
@@ -214,6 +226,19 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 		}
 		if windowSize > 0 {
 			fresh.Pct = float64(tokens) / float64(windowSize) * 100.0
+		}
+	} else {
+		w.heartbeatMissCount++
+		maxMisses := w.cfg.HeartbeatMaxMisses
+		if w.heartbeatMissCount > maxMisses {
+			// Derive-miss budget exceeded: suppress the carry-forward write so the
+			// gauge ages to genuine staleness. The existing no_gauge:stale path then
+			// fires loudly, restoring the safety signal (hk-lal8).
+			if w.heartbeatMissCount == maxMisses+1 {
+				slog.WarnContext(ctx, "keeper: heartbeat derive-miss budget exceeded, suppressing carry-forward write",
+					"agent", w.cfg.AgentName, "miss_count", w.heartbeatMissCount)
+			}
+			return
 		}
 	}
 

@@ -321,6 +321,12 @@ type WatcherConfig struct {
 	// Refs: hk-81wk.
 	TranscriptDir string
 
+	// HeartbeatMaxMisses is the number of consecutive derive-miss ticks before
+	// the heartbeat stops writing the gauge file. Zero (default) uses
+	// MaxHeartbeatMisses (12). Set to a small value in tests to exercise the
+	// miss-budget path without waiting 12 real ticks. Refs: hk-lal8.
+	HeartbeatMaxMisses int
+
 	// ── Gauge-independent live-pane recovery (hk-75mr) ───────────────────────
 	// The respawn path (RespawnCmd) only fires when the pane has gone IDLE (the
 	// agent exited). It cannot recover an agent that is hung MID-TURN: the pane
@@ -417,6 +423,11 @@ func (c *WatcherConfig) applyDefaults() {
 	// reaches Staleness. Refs: hk-81wk.
 	if c.HeartbeatThreshold <= 0 {
 		c.HeartbeatThreshold = c.Staleness / 2
+	}
+	// HeartbeatMaxMisses defaults to the package constant. Tests may set a
+	// smaller value to exercise the miss-budget path quickly. Refs: hk-lal8.
+	if c.HeartbeatMaxMisses <= 0 {
+		c.HeartbeatMaxMisses = MaxHeartbeatMisses
 	}
 	if c.ReadManagedSessionFn == nil {
 		c.ReadManagedSessionFn = ReadManagedSessionID
@@ -524,6 +535,13 @@ func isUppercaseUUID(s string) bool {
 type Watcher struct {
 	cfg     WatcherConfig
 	emitter Emitter
+
+	// heartbeatMissCount counts consecutive ticks on which deriveContextTokens
+	// returned false. When it exceeds MaxHeartbeatMisses the heartbeat stops
+	// writing the gauge file, allowing it to age to genuine staleness so the
+	// no_gauge:stale path fires loudly. Reset to 0 on any successful derive.
+	// Refs: hk-lal8.
+	heartbeatMissCount int
 }
 
 // NewWatcher constructs a Watcher with the given config and emitter.

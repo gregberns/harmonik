@@ -206,6 +206,9 @@ func TestSupervise_CommandFlagPropagatestoConfig(t *testing.T) {
 // written to disk contains the expected Command field.
 func TestSupervise_StartCommandFlagSetsConfigCommand(t *testing.T) {
 	dir := socketSafeTempDir(t)
+	// On a tmux-equipped host RunStart actually creates harmonik-<hash>-flywheel;
+	// reap it by exact name on teardown so it does not leak (hk-0ouc).
+	cleanupFlywheelSession(t, dir)
 
 	// Create a mock Unix socket so the daemon probe passes.
 	harmonikDir := dir + "/.harmonik"
@@ -251,6 +254,9 @@ func TestSupervise_StartCommandFlagSetsConfigCommand(t *testing.T) {
 // form also populates Config.Command correctly.
 func TestSupervise_StartDoubleDashCommand(t *testing.T) {
 	dir := socketSafeTempDir(t)
+	// On a tmux-equipped host RunStart actually creates harmonik-<hash>-flywheel;
+	// reap it by exact name on teardown so it does not leak (hk-0ouc).
+	cleanupFlywheelSession(t, dir)
 
 	// Create a mock Unix socket.
 	harmonikDir := dir + "/.harmonik"
@@ -298,6 +304,10 @@ func TestSupervise_StartHoldsLockDuringSessionCreation(t *testing.T) {
 	// The race-window fix is structural (defer-based hold until after tmux call);
 	// this test confirms the flock probe path still exits 25 correctly.
 	dir := socketSafeTempDir(t)
+	// Lock-held → RunStart exits 25 before the tmux step, so no flywheel session
+	// is created here; the reap is a defensive no-op should that path ever change
+	// (hk-0ouc).
+	cleanupFlywheelSession(t, dir)
 	harmonikDir := dir + "/.harmonik"
 	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
 		t.Fatal(err)

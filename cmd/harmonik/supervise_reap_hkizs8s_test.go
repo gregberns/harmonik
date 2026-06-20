@@ -17,6 +17,31 @@ func tmuxAvailable() bool {
 	return err == nil
 }
 
+// cleanupFlywheelSession registers a t.Cleanup that kills — by EXACT name — the
+// flywheel tmux session a successful `supervise start` would create for project
+// dir. RunStart, on a tmux-equipped host, actually creates
+// harmonik-<hash>-flywheel (running `supervise _shim`) with remain-on-exit on,
+// so the empty session lingers after the shim exits and is NEVER reaped by the
+// test (hk-0ouc — the "*-flywheel leak"). These start-path tests were written
+// assuming "no tmux in CI"; on a dev/fleet box with tmux they leak one flywheel
+// session per RunStart-with-command call.
+//
+// The name is derived deterministically from dir (a t.TempDir / socketSafeTempDir
+// path unique to this test run) via FlywheelSessionName, so the kill targets ONLY
+// this test's own session — exact "=<name>" match, NO glob, NO list-and-kill. It
+// can never touch a real harmonik-<realhash>-flywheel, a *-default spawn target,
+// or any captain/crew session. Killing an absent session is a no-op, so a test
+// that never reached the tmux step (exit 17/25) cleans up to nothing.
+func cleanupFlywheelSession(t *testing.T, dir string) {
+	t.Helper()
+	sessionName := supervisecmd.FlywheelSessionName(dir)
+	t.Cleanup(func() {
+		// Exact-name kill only ("=" anchor defeats tmux prefix/fuzzy matching).
+		// Best-effort: an absent session (test never created one) is a no-op.
+		_ = exec.Command("tmux", "kill-session", "-t", "="+sessionName).Run()
+	})
+}
+
 // TestSupervise_StopReapsFlywheelSession verifies that RunStop kills the flywheel
 // tmux session (child-tree reap), not just the supervisor process.
 //

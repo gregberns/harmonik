@@ -28,7 +28,66 @@ import (
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// crewWindowRecordingAdapter — tmux.Adapter + sessionCreator double (hk-rmy1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// crewWindowRecordingAdapter records the NewSessionIn (agent window) and
+// NewWindowIn (keeper window) parameters so the slice-C two-window topology can
+// be asserted without a real tmux server. It implements tmux.Adapter and the
+// daemon-local sessionCreator interface (NewSessionIn).
+type crewWindowRecordingAdapter struct {
+	newSessionParams tmux.NewWindowIn
+	newWindowParams  []tmux.NewWindowIn
+}
+
+// NewSessionIn satisfies sessionCreator: records the agent-window/session params.
+func (a *crewWindowRecordingAdapter) NewSessionIn(_ context.Context, params tmux.NewWindowIn) tmux.Outcome {
+	a.newSessionParams = params
+	return tmux.Outcome{Handle: tmux.WindowHandle(params.Session + ":" + params.WindowName), PaneID: "%1"}
+}
+
+// NewWindowIn satisfies tmux.Adapter: records each sibling-window creation
+// (the keeper window on the slice-C path).
+func (a *crewWindowRecordingAdapter) NewWindowIn(_ context.Context, params tmux.NewWindowIn) tmux.Outcome {
+	a.newWindowParams = append(a.newWindowParams, params)
+	return tmux.Outcome{Handle: tmux.WindowHandle(params.Session + ":" + params.WindowName), PaneID: "%2"}
+}
+
+func (a *crewWindowRecordingAdapter) ProbeTmux(_ context.Context) error { return nil }
+func (a *crewWindowRecordingAdapter) ListSessions(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+func (a *crewWindowRecordingAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+func (a *crewWindowRecordingAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
+	return nil
+}
+func (a *crewWindowRecordingAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
+	return 0, nil
+}
+func (a *crewWindowRecordingAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
+	return "", nil
+}
+func (a *crewWindowRecordingAdapter) KillSession(_ context.Context, _ string) error { return nil }
+func (a *crewWindowRecordingAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+func (a *crewWindowRecordingAdapter) PasteBuffer(_ context.Context, _, _ string) error { return nil }
+func (a *crewWindowRecordingAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
+	return nil
+}
+func (a *crewWindowRecordingAdapter) SendKeysEnter(_ context.Context, _ string) error { return nil }
+func (a *crewWindowRecordingAdapter) SendKeysQuit(_ context.Context, _ string) error  { return nil }
+func (a *crewWindowRecordingAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
+	return nil
+}
+
+var _ tmux.Adapter = (*crewWindowRecordingAdapter)(nil)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test doubles
@@ -175,27 +234,167 @@ func TestCrewStop_FallbackToStopWindowByHandle_hkmmlqt(t *testing.T) {
 }
 
 // TestCrewSessionName_hkmmlqt verifies the deterministic session name formula.
-// Fleet-portability T2 (hk-ohd): project-qualified form "harmonik-<hash>-crew-<name>"
-// when projectHash is set; legacy "hk-crew-<name>" fallback when projectHash is zero.
+// hk-rmy1 (slice C): the name is ALWAYS the project-qualified form
+// "harmonik-<hash>-crew-<name>"; the legacy "hk-crew-<name>" no-hash fallback was
+// DELETED. With no project hash, crewSessionName returns an error (never a legacy
+// name).
 func TestCrewSessionName_hkmmlqt(t *testing.T) {
 	const testHash core.ProjectHash = "abc123def456"
 
+	// Project-qualified (T2): with project hash → always the harmonik-<hash>- form.
 	cases := []struct {
-		name        string
-		projectHash core.ProjectHash
-		want        string
+		name string
+		want string
 	}{
-		// Legacy fallback: no project hash.
-		{"alpha", "", "hk-crew-alpha"},
-		{"chani-1", "", "hk-crew-chani-1"},
-		// Project-qualified (T2): with project hash.
-		{"alpha", testHash, lifecycle.TmuxSessionName(testHash, "crew-alpha")},
-		{"chani-1", testHash, lifecycle.TmuxSessionName(testHash, "crew-chani-1")},
+		{"alpha", lifecycle.TmuxSessionName(testHash, "crew-alpha")},
+		{"chani-1", lifecycle.TmuxSessionName(testHash, "crew-chani-1")},
 	}
 	for _, tc := range cases {
-		sub := &tmuxSubstrate{projectHash: tc.projectHash}
-		if got := sub.crewSessionName(tc.name); got != tc.want {
-			t.Errorf("crewSessionName(%q, projectHash=%q) = %q, want %q", tc.name, tc.projectHash, got, tc.want)
+		sub := &tmuxSubstrate{projectHash: testHash}
+		got, err := sub.crewSessionName(tc.name)
+		if err != nil {
+			t.Errorf("crewSessionName(%q, hash=%q): unexpected error: %v", tc.name, testHash, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("crewSessionName(%q, hash=%q) = %q, want %q", tc.name, testHash, got, tc.want)
+		}
+		if strings.HasPrefix(got, "hk-crew-") {
+			t.Errorf("crewSessionName(%q) = %q: legacy hk-crew- form must never be produced", tc.name, got)
 		}
 	}
+
+	// No project hash → error, NOT a legacy "hk-crew-<name>" name.
+	noHash := &tmuxSubstrate{projectHash: ""}
+	got, err := noHash.crewSessionName("alpha")
+	if err == nil {
+		t.Errorf("crewSessionName with empty hash: want error, got name %q", got)
+	}
+	if got != "" {
+		t.Errorf("crewSessionName with empty hash: want empty name, got %q", got)
+	}
+}
+
+// TestCrewKeeperWindowArgv_hkrmy1 verifies the keeper-window launch argv: the
+// per-crew keeper targets the sibling "agent" window via "--tmux <session>:agent"
+// (slice K inject-target contract) and runs --warn-only (crew keeper mode).
+func TestCrewKeeperWindowArgv_hkrmy1(t *testing.T) {
+	const (
+		keeperBin = "/usr/local/bin/harmonik"
+		crewName  = "alpha"
+		sessName  = "harmonik-abc123def456-crew-alpha"
+		projDir   = "/home/op/proj"
+	)
+	argv := crewKeeperWindowArgv(keeperBin, crewName, sessName, projDir)
+	joined := strings.Join(argv, " ")
+
+	// Must invoke the keeper subcommand for the right crew.
+	if argv[0] != keeperBin {
+		t.Errorf("argv[0] = %q, want keeper binary %q", argv[0], keeperBin)
+	}
+	if !containsPair(argv, "keeper", "") || argv[1] != "keeper" {
+		t.Errorf("argv = %v, want 'keeper' subcommand", argv)
+	}
+	if !containsPair(argv, "--agent", crewName) {
+		t.Errorf("argv = %v, want --agent %q", argv, crewName)
+	}
+
+	// THE load-bearing assertion: --tmux targets the sibling "agent" window.
+	wantTarget := sessName + ":agent"
+	if !containsPair(argv, "--tmux", wantTarget) {
+		t.Errorf("argv = %v, want --tmux %q (slice-K window inject target)", argv, wantTarget)
+	}
+	if !strings.Contains(joined, ":agent") {
+		t.Errorf("keeper argv %q missing the ':agent' window suffix", joined)
+	}
+
+	// Crew keeper is warn-only and pinned to the project.
+	if !argvHasFlag(argv, "--warn-only") {
+		t.Errorf("argv = %v, want --warn-only (crew keeper mode)", argv)
+	}
+	if !containsPair(argv, "--project", projDir) {
+		t.Errorf("argv = %v, want --project %q", argv, projDir)
+	}
+
+	// Empty project dir omits the --project flag (best-effort derivation).
+	argvNoProj := crewKeeperWindowArgv(keeperBin, crewName, sessName, "")
+	if argvHasFlag(argvNoProj, "--project") {
+		t.Errorf("argv = %v, want no --project flag when projectDir empty", argvNoProj)
+	}
+}
+
+// TestSpawnCrewSession_AgentAndKeeperWindows_hkrmy1 verifies SpawnCrewSession
+// creates the crew session with the "agent" window (NewSessionIn) AND adds a
+// sibling "keeper" window (NewWindowIn) whose command launches the keeper with
+// the "--tmux <session>:agent" inject target.
+func TestSpawnCrewSession_AgentAndKeeperWindows_hkrmy1(t *testing.T) {
+	const testHash core.ProjectHash = "abc123def456"
+	adapter := &crewWindowRecordingAdapter{}
+	sub := &tmuxSubstrate{adapter: adapter, sessionName: "daemon-default", projectHash: testHash}
+
+	spawn := handler.SubstrateSpawn{
+		Cwd:  "/home/op/proj",
+		Env:  []string{"HARMONIK_PROJECT=/home/op/proj", "HARMONIK_AGENT=alpha"},
+		Argv: []string{"claude", "--remote-control", "alpha"},
+	}
+	if _, err := sub.SpawnCrewSession(context.Background(), "alpha", spawn); err != nil {
+		t.Fatalf("SpawnCrewSession: %v", err)
+	}
+
+	wantSession := lifecycle.TmuxSessionName(testHash, "crew-alpha")
+
+	// The session must be created with the "agent" window.
+	if adapter.newSessionParams.Session != wantSession {
+		t.Errorf("NewSessionIn session = %q, want %q", adapter.newSessionParams.Session, wantSession)
+	}
+	if adapter.newSessionParams.WindowName != "agent" {
+		t.Errorf("crew claude window = %q, want %q", adapter.newSessionParams.WindowName, "agent")
+	}
+
+	// A sibling "keeper" window must be added in the SAME session.
+	if len(adapter.newWindowParams) != 1 {
+		t.Fatalf("NewWindowIn called %d times, want 1 (the keeper window)", len(adapter.newWindowParams))
+	}
+	kw := adapter.newWindowParams[0]
+	if kw.Session != wantSession {
+		t.Errorf("keeper window session = %q, want %q (same session as agent)", kw.Session, wantSession)
+	}
+	if kw.WindowName != "keeper" {
+		t.Errorf("keeper window name = %q, want %q", kw.WindowName, "keeper")
+	}
+
+	// The keeper window's command must target the agent window via --tmux.
+	if !strings.Contains(kw.Command, "keeper") || !strings.Contains(kw.Command, "--agent") {
+		t.Errorf("keeper window command = %q, want a 'keeper --agent ...' invocation", kw.Command)
+	}
+	wantInject := wantSession + ":agent"
+	if !strings.Contains(kw.Command, "--tmux") || !strings.Contains(kw.Command, wantInject) {
+		t.Errorf("keeper window command = %q, want --tmux %q", kw.Command, wantInject)
+	}
+	if !strings.Contains(kw.Command, "--warn-only") {
+		t.Errorf("keeper window command = %q, want --warn-only", kw.Command)
+	}
+}
+
+func argvHasFlag(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// containsPair reports whether ss contains flag immediately followed by val.
+// When val is "", it reports whether flag is present at all.
+func containsPair(ss []string, flag, val string) bool {
+	for i, s := range ss {
+		if s == flag {
+			if val == "" {
+				return true
+			}
+			return i+1 < len(ss) && ss[i+1] == val
+		}
+	}
+	return false
 }

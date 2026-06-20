@@ -24,6 +24,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -197,8 +198,13 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	var windowHandle string
 	if h.substrate != nil {
 		argv := append([]string{lspec.Binary}, lspec.Args...)
+		// WindowName names the crew's claude pane window. The independent-session
+		// path (SpawnCrewSession) hardcodes tmux.WindowAgent internally and also
+		// adds a sibling tmux.WindowKeeper window; this value is consumed only by
+		// the fallback SpawnWindow path, where the CONTRACT "agent" name keeps the
+		// crew pane consistent across both paths (hk-rmy1, slice C).
 		spawn := handler.SubstrateSpawn{
-			WindowName: "hk-crew-" + req.Name,
+			WindowName: tmux.WindowAgent,
 			Cwd:        lspec.WorkDir,
 			Env:        lspec.Env,
 			Argv:       argv,
@@ -207,7 +213,14 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		if css, ok := h.substrate.(crewSessionSpawner); ok {
 			// ── Independent-session path (hk-mmlqt) ──
 			// Crew lives in its own tmux session so daemon SIGTERM / supervisor-revive
-			// does not kill running crew windows.
+			// does not kill running crew windows. SpawnCrewSession creates the session
+			// with TWO windows — "agent" (this crew claude) and "keeper" (the per-crew
+			// session-keeper, "harmonik keeper --tmux <session>:agent"). Invariant I1:
+			// a crew RESTART/re-task must respawn ONLY the "agent" window so the keeper
+			// window survives — there is NO in-daemon crew-restart path here today (crew
+			// restart is driven by the keeper itself / externally via crew stop+start),
+			// so no agent-only respawn is implemented in this package; the keeper window
+			// is the durable sibling that re-binds to a freshly respawned agent pane.
 			var sess handler.SubstrateSession
 			sess, err = css.SpawnCrewSession(ctx, req.Name, spawn)
 			if err != nil {
@@ -246,9 +259,17 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	}
 
 	// ── Step 6a: .managed marker (keeper-attach input) ──
+	//
+	// Slice-C note (hk-rmy1): on the independent-session path the daemon now
+	// launches the keeper IN-SESSION (the "keeper" window), so the .managed marker
+	// is largely REDUNDANT for the in-session keeper — it no longer gates whether a
+	// keeper attaches. It is RETAINED because external readers still depend on it:
+	// keeper.IsManaged consults it (and the CLI crew keeper / crew-stop marker
+	// cleanup, plus `keeper doctor`, key off it). Removing it is a separate cleanup,
+	// not in scope for this topology change.
 	if markerErr := createCrewManagedMarker(h.projectDir, req.Name); markerErr != nil {
-		// Non-fatal: session is live; keeper just won't attach until the marker is
-		// created externally.
+		// Non-fatal: session is live; the in-session keeper window is already
+		// launched independently of this marker.
 		fmt.Fprintf(os.Stderr, "daemon: crew-start: create .managed marker for %q: %v\n", req.Name, markerErr)
 	}
 

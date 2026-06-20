@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -180,9 +181,11 @@ type tmuxSubstrate struct {
 	spawnStagger time.Duration
 	lastWindowAt time.Time // guarded by newWindowMu; set to time.Now() each SpawnWindow
 
-	// projectHash, when non-zero, is used to project-qualify crew session names
-	// per fleet-portability T2: "harmonik-<projectHash>-crew-<name>".
-	// Set via WithCrewProjectHash. Zero value falls back to legacy "hk-crew-<name>".
+	// projectHash project-qualifies crew session names per fleet-portability T2:
+	// "harmonik-<projectHash>-crew-<name>". Set via WithCrewProjectHash. Required
+	// for crew spawning: crewSessionName errors when it is empty (the legacy
+	// no-hash "hk-crew-<name>" form was deleted in hk-rmy1, slice C). In
+	// production both daemon construction sites always set it.
 	projectHash core.ProjectHash
 
 	// keepaliveEnabled, when true, signals that the daemon owns the spawn-target
@@ -330,7 +333,11 @@ func WithSpawnStagger(d time.Duration) TmuxSubstrateOption {
 
 // WithCrewProjectHash sets the project hash used to project-qualify crew session
 // names: "harmonik-<projectHash>-crew-<name>" (fleet-portability T2).
-// When not set (zero value), crew session names fall back to "hk-crew-<name>".
+//
+// This option is REQUIRED for crew spawning: when unset, crewSessionName returns
+// an error rather than minting a session under the deleted legacy "hk-crew-<name>"
+// name (hk-rmy1, slice C — one prefix family for the whole fleet). Both daemon
+// construction sites pass it.
 func WithCrewProjectHash(h core.ProjectHash) TmuxSubstrateOption {
 	return func(s *tmuxSubstrate) {
 		s.projectHash = h
@@ -1242,13 +1249,23 @@ type crewSessionStopper interface {
 }
 
 // crewSessionName returns the deterministic tmux session name for crewName.
-// When projectHash is set: "harmonik-<projectHash>-crew-<crewName>" (fleet-portability T2).
-// Fallback (legacy, no projectHash): "hk-crew-<crewName>".
-func (s *tmuxSubstrate) crewSessionName(name string) string {
-	if s.projectHash != "" {
-		return lifecycle.TmuxSessionName(s.projectHash, "crew-"+name)
+//
+// The name is ALWAYS the project-qualified form
+// "harmonik-<projectHash>-crew-<crewName>" routed through
+// lifecycle.TmuxSessionName (one prefix family for the whole fleet, per the
+// tmux-session-organization CONTRACT §"Shared symbols"). The legacy
+// "hk-crew-<crewName>" no-hash form was DELETED (hk-rmy1, slice C): there is no
+// fallback. In production the project hash is always present (both daemon
+// construction sites pass WithCrewProjectHash(ComputeProjectHash(projectDir))),
+// so the error path is a defensive guard rather than a real runtime branch —
+// surfacing a missing hash as an error is strictly safer than minting a session
+// under a name outside the swept "harmonik-<hash>-*" namespace.
+func (s *tmuxSubstrate) crewSessionName(name string) (string, error) {
+	if s.projectHash == "" {
+		return "", fmt.Errorf("daemon: crewSessionName: project hash unavailable for crew %q "+
+			"(NewTmuxSubstrate must be built with WithCrewProjectHash): %w", name, handler.ErrStructural)
 	}
-	return "hk-crew-" + name
+	return lifecycle.TmuxSessionName(s.projectHash, "crew-"+name), nil
 }
 
 // workerSpawnSessionName returns the tmux session name a REMOTE run spawns its
@@ -1289,11 +1306,14 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 		return nil, fmt.Errorf("daemon: SpawnCrewSession: adapter does not support session creation: %w", handler.ErrStructural)
 	}
 
-	sessName := s.crewSessionName(crewName)
-	windowName := spawn.WindowName
-	if windowName == "" {
-		windowName = "hk-crew-" + crewName
+	sessName, nameErr := s.crewSessionName(crewName)
+	if nameErr != nil {
+		return nil, fmt.Errorf("daemon: SpawnCrewSession: %w", nameErr)
 	}
+
+	// The crew's claude --remote-control always runs in the "agent" window
+	// (tmux.WindowAgent), per the tmux-session-organization CONTRACT. The keeper
+	// targets this window's active pane via "--tmux <session>:agent".
 	command := ""
 	if len(spawn.Argv) > 0 {
 		command = strings.Join(spawn.Argv, " ")
@@ -1301,7 +1321,7 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 
 	params := tmux.NewWindowIn{
 		Session:    sessName,
-		WindowName: windowName,
+		WindowName: tmux.WindowAgent,
 		Env:        spawn.Env,
 		WorkDir:    spawn.Cwd,
 		Command:    command,
@@ -1311,6 +1331,14 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 	if outcome.Err != nil {
 		return nil, fmt.Errorf("daemon: SpawnCrewSession: new-session for crew %q: %w", crewName, outcome.Err)
 	}
+
+	// Add the sibling "keeper" window (tmux.WindowKeeper) in the SAME session,
+	// running the per-crew session-keeper. The keeper injects into the agent
+	// window's active pane (slice K: "--tmux <session>:agent"). Because the keeper
+	// lives in its own window it survives an agent-window respawn (invariant I1)
+	// and is torn down with the session on crew-stop. Best-effort: a failed keeper
+	// window does NOT fail the crew start — the agent is already live.
+	s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn)
 
 	paneID := outcome.PaneID
 	pidTarget := outcome.Handle
@@ -1329,6 +1357,92 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 		releaseSlot: func() {}, // crew sessions are outside the daemon spawn-cap
 	}
 	return sess, nil
+}
+
+// crewKeeperWindowArgv builds the argv the keeper window runs to watch the crew
+// agent pane. The keeper targets the sibling "agent" window
+// ("--tmux <session>:agent", slice K) so it never pastes into its own window,
+// and runs --warn-only (mirroring the CLI crew keeper in cmd/harmonik/crew.go's
+// spawnCrewKeeper: a crew keeper emits warn events but does not drive restart).
+//
+//	<keeperBin> keeper --agent <crew> --tmux <session>:agent --warn-only [--project <dir>]
+//
+// keeperBin is the path of the currently-running harmonik binary (the keeper is
+// a harmonik subcommand, not the claude handler). projectDir, when non-empty,
+// pins the keeper to the crew's project root.
+func crewKeeperWindowArgv(keeperBin, crewName, sessName, projectDir string) []string {
+	injectTarget := sessName + ":" + tmux.WindowAgent
+	argv := []string{
+		keeperBin, "keeper",
+		"--agent", crewName,
+		"--tmux", injectTarget,
+		"--warn-only",
+	}
+	if projectDir != "" {
+		argv = append(argv, "--project", projectDir)
+	}
+	return argv
+}
+
+// spawnCrewKeeperWindow creates the "keeper" window inside the crew's session
+// (already created by SpawnCrewSession) and launches the per-crew keeper in it.
+//
+// projectDir is derived from the crew spawn: spawn.Cwd is the crew's WorkDir
+// (the project root per buildCrewLaunchSpec), with HARMONIK_PROJECT from
+// spawn.Env as a fallback. The keeper binary is the currently-running harmonik
+// executable (os.Executable, "harmonik" on failure), matching the CLI crew
+// keeper resolution.
+//
+// Best-effort: any failure (no project dir, NewWindowIn error) is logged and
+// returns without failing the crew start — the agent window is already live and
+// an operator can attach a keeper externally (the .managed marker still records
+// the crew as keeper-managed).
+func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, sessName string, spawn handler.SubstrateSpawn) {
+	projectDir := spawn.Cwd
+	if projectDir == "" {
+		for _, kv := range spawn.Env {
+			if v, ok := strings.CutPrefix(kv, "HARMONIK_PROJECT="); ok {
+				projectDir = v
+				break
+			}
+		}
+	}
+
+	keeperBin, exErr := os.Executable()
+	if exErr != nil {
+		keeperBin = "harmonik" // fallback: rely on PATH
+	}
+
+	argv := crewKeeperWindowArgv(keeperBin, crewName, sessName, projectDir)
+
+	params := tmux.NewWindowIn{
+		Session:    sessName,
+		WindowName: tmux.WindowKeeper,
+		WorkDir:    projectDir,
+		Command:    shellJoinArgv(argv),
+	}
+
+	outcome := s.adapter.NewWindowIn(ctx, params)
+	if outcome.Err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: SpawnCrewSession: launch keeper window for crew %q (%s:%s): %v (non-fatal)\n",
+			crewName, sessName, tmux.WindowKeeper, outcome.Err)
+	}
+}
+
+// shellJoinArgv single-quotes each argv element and joins with spaces so the
+// command survives `tmux new-window`'s `sh -c` re-word-splitting (mirrors the
+// SpawnWindow quoting at the top of spawnWindowVia). The keeper inject target
+// "<session>:agent" contains no shell metacharacters, but the binary path and
+// project dir may contain spaces, so quote uniformly.
+func shellJoinArgv(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		quoted[i] = shellQuoteArg(a)
+	}
+	return strings.Join(quoted, " ")
 }
 
 // StopCrewSession sends /quit to the crew's pane (best-effort), waits a grace
@@ -1351,7 +1465,14 @@ func (s *tmuxSubstrate) StopCrewSession(ctx context.Context, crewName string, ha
 	case <-time.After(crewStopQuitGrace):
 	}
 
-	return s.adapter.KillSession(ctx, s.crewSessionName(crewName))
+	sessName, nameErr := s.crewSessionName(crewName)
+	if nameErr != nil {
+		return nameErr
+	}
+	// Killing the whole crew session tears down BOTH the "agent" and "keeper"
+	// windows (and the keeper process running in the keeper window). No separate
+	// keeper-window teardown is needed on crew-stop.
+	return s.adapter.KillSession(ctx, sessName)
 }
 
 // newPerRunSubstrate constructs a perRunSubstrate that delegates SpawnWindow to

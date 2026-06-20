@@ -739,12 +739,14 @@ func ExportedSpawnSlotsInUse(sub handler.Substrate) int {
 
 // ExportedCrewSessionName exposes the crewSessionName method of a substrate
 // returned by NewTmuxSubstrate, for fleet-portability T2 naming tests (hk-ohd).
-// Returns "" when sub is not a *tmuxSubstrate.
-func ExportedCrewSessionName(sub handler.Substrate, crewName string) string {
+// Returns ("", nil) when sub is not a *tmuxSubstrate; otherwise propagates the
+// (name, err) result — err is non-nil when no project hash is configured
+// (hk-rmy1, slice C: the legacy "hk-crew-<name>" fallback was removed).
+func ExportedCrewSessionName(sub handler.Substrate, crewName string) (string, error) {
 	if ts, ok := sub.(*tmuxSubstrate); ok {
 		return ts.crewSessionName(crewName)
 	}
-	return ""
+	return "", nil
 }
 
 // ExportedNoCommitGuardShouldReopen exposes noCommitGuardShouldReopen for the

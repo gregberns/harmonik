@@ -231,7 +231,7 @@ func (c *CyclerConfig) applyDefaults() {
 		c.ForceActPct = c.ActPct + defaultForceActPctOffset
 	}
 	if c.ForceRetryInterval <= 0 {
-		c.ForceRetryInterval = 120 * time.Second
+		c.ForceRetryInterval = DefaultForceRetryInterval
 	}
 	if c.OperatorAttachedSampleInterval <= 0 {
 		c.OperatorAttachedSampleInterval = defaultOperatorAttachedSampleInterval
@@ -240,16 +240,16 @@ func (c *CyclerConfig) applyDefaults() {
 		c.MaxBootGraceTotal = 2 * c.BootGracePeriod
 	}
 	if c.MaxHandoffTimeouts <= 0 {
-		c.MaxHandoffTimeouts = 3
+		c.MaxHandoffTimeouts = DefaultMaxHandoffTimeouts
 	}
 	if c.HandoffTimeout <= 0 {
-		c.HandoffTimeout = 180 * time.Second
+		c.HandoffTimeout = DefaultHandoffTimeout
 	}
 	if c.ClearSettle <= 0 {
-		c.ClearSettle = 3 * time.Second
+		c.ClearSettle = DefaultClearSettle
 	}
 	if c.PollInterval <= 0 {
-		c.PollInterval = 200 * time.Millisecond
+		c.PollInterval = DefaultCyclerPollInterval
 	}
 	if c.CycleIDGen == nil {
 		c.CycleIDGen = newCycleIDGen()
@@ -303,10 +303,10 @@ func (c *CyclerConfig) applyDefaults() {
 		c.SleepingCheckFn = IsSleeping
 	}
 	if c.IdleRestartAbsTokens <= 0 {
-		c.IdleRestartAbsTokens = 150_000
+		c.IdleRestartAbsTokens = DefaultIdleRestartAbsTokens
 	}
 	if c.IdleRestartCooldown <= 0 {
-		c.IdleRestartCooldown = 30 * time.Minute
+		c.IdleRestartCooldown = DefaultIdleRestartCooldown
 	}
 }
 

@@ -84,6 +84,64 @@ const HardCeilingAbsTokens int64 = 280_000
 // construction site, and the production site opts in. Refs: hk-4f8, hk-ibb.
 const DefaultBootGracePeriod = 5 * time.Minute
 
+// Default* below are the EXPORTED single source of truth for every non-band
+// default the keeper's two applyDefaults methods bake in (WatcherConfig in
+// watcher.go, CyclerConfig in cycle.go). Promoting the bare literals here keeps
+// the defaults in one auditable place; the values are BYTE-IDENTICAL to the
+// pre-promotion literals — this is a naming change, never a value change. The
+// operator-locked warn/act/force band lives in the const block above and is NOT
+// part of this sweep. Refs: hk-gwz6.
+//
+// INTENTIONAL EXCLUSIONS (left at their construction sites, not promoted here):
+// DefaultBootGracePeriod (opt-in per construction site — see :74-85 above), the
+// WarnCooldown negative-disabled sentinel, the MaxHandoffTimeouts==0
+// no-escalation sentinel, and the HeartbeatThreshold = Staleness/2 derivation.
+const (
+	// DefaultPollInterval is the WatcherConfig gauge-poll cadence.
+	DefaultPollInterval = 5 * time.Second
+	// DefaultIdleQuiesce is the WatcherConfig idle-quiesce window.
+	DefaultIdleQuiesce = 8 * time.Second
+	// DefaultStaleness is the WatcherConfig gauge-staleness window. The
+	// HeartbeatThreshold derives as Staleness/2 (NOT promoted — derivation, not
+	// a literal).
+	DefaultStaleness = 120 * time.Second
+	// DefaultRespawnGrace is the WatcherConfig idle-respawn grace window.
+	DefaultRespawnGrace = 20 * time.Second
+	// DefaultRespawnCooldown is the WatcherConfig idle-respawn cooldown.
+	DefaultRespawnCooldown = 90 * time.Second
+	// DefaultLiveRecoverGrace is the WatcherConfig live-pane-recovery grace window.
+	DefaultLiveRecoverGrace = 5 * time.Minute
+	// DefaultLiveRecoverCooldown is the WatcherConfig live-pane-recovery cooldown.
+	DefaultLiveRecoverCooldown = 5 * time.Minute
+	// DefaultWarnCooldown is the WatcherConfig warn-firing cooldown (zero-sentinel
+	// default). The NEGATIVE sentinel (disable) is NOT promoted — it is special.
+	DefaultWarnCooldown = 30 * time.Second
+	// DefaultNoGaugeBackoff is the watcher's post-no_gauge re-poll backoff.
+	DefaultNoGaugeBackoff = 30 * time.Second
+	// DefaultHardCeilingCooldown is the WatcherConfig hard-ceiling backstop cooldown.
+	DefaultHardCeilingCooldown = 5 * time.Minute
+	// DefaultBlindKeeperThreshold is the WatcherConfig blind-keeper alarm threshold.
+	DefaultBlindKeeperThreshold = 5 * time.Minute
+	// DefaultMaxHeartbeatMisses is the watcher heartbeat miss budget.
+	DefaultMaxHeartbeatMisses = 12
+
+	// DefaultHandoffTimeout is the CyclerConfig handoff-nonce wait.
+	DefaultHandoffTimeout = 180 * time.Second
+	// DefaultClearSettle is the CyclerConfig post-/clear settle wait for a new sid.
+	DefaultClearSettle = 3 * time.Second
+	// DefaultCyclerPollInterval is the CyclerConfig nonce/settle poll cadence.
+	DefaultCyclerPollInterval = 200 * time.Millisecond
+	// DefaultForceRetryInterval is the CyclerConfig forced-clear retry interval.
+	DefaultForceRetryInterval = 120 * time.Second
+	// DefaultIdleRestartAbsTokens is the CyclerConfig idle-crew restart token floor.
+	DefaultIdleRestartAbsTokens int64 = 150_000
+	// DefaultIdleRestartCooldown is the CyclerConfig idle-restart cooldown.
+	DefaultIdleRestartCooldown = 30 * time.Minute
+	// DefaultMaxHandoffTimeouts is the CyclerConfig consecutive-timeout escalation
+	// count. The ==0 disables-escalation sentinel is NOT promoted — it is special.
+	DefaultMaxHandoffTimeouts = 3
+)
+
 // minAbsOrPctCeil returns the effective absolute-token threshold for windowSize:
 // min(abs, int64(pctCeil*windowSize)) when windowSize>0 AND pctCeil>0, otherwise
 // abs. This is the one shared implementation of the keeper band formula; the

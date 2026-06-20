@@ -141,3 +141,62 @@ func TestMinAbsOrPctCeil(t *testing.T) {
 		}
 	}
 }
+
+// TestPromotedDefaults_ByteIdentity pins every Default* constant promoted out of
+// the two applyDefaults methods (hk-gwz6) to the EXACT literal it replaced. This
+// is a value-freeze: the promotion is a naming change only, so these values must
+// stay byte-identical to the pre-promotion literals. A diff here means a default
+// number changed — which is an operator decision, never a refactor side effect.
+// The package-const aliases (warnCooldown, noGaugeBackoff, MaxHeartbeatMisses)
+// are asserted to equal their Default* source so call sites stay correct.
+func TestPromotedDefaults_ByteIdentity(t *testing.T) {
+	durCases := []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{"DefaultPollInterval", DefaultPollInterval, 5 * time.Second},
+		{"DefaultIdleQuiesce", DefaultIdleQuiesce, 8 * time.Second},
+		{"DefaultStaleness", DefaultStaleness, 120 * time.Second},
+		{"DefaultRespawnGrace", DefaultRespawnGrace, 20 * time.Second},
+		{"DefaultRespawnCooldown", DefaultRespawnCooldown, 90 * time.Second},
+		{"DefaultLiveRecoverGrace", DefaultLiveRecoverGrace, 5 * time.Minute},
+		{"DefaultLiveRecoverCooldown", DefaultLiveRecoverCooldown, 5 * time.Minute},
+		{"DefaultWarnCooldown", DefaultWarnCooldown, 30 * time.Second},
+		{"DefaultNoGaugeBackoff", DefaultNoGaugeBackoff, 30 * time.Second},
+		{"DefaultHardCeilingCooldown", DefaultHardCeilingCooldown, 5 * time.Minute},
+		{"DefaultBlindKeeperThreshold", DefaultBlindKeeperThreshold, 5 * time.Minute},
+		{"DefaultHandoffTimeout", DefaultHandoffTimeout, 180 * time.Second},
+		{"DefaultClearSettle", DefaultClearSettle, 3 * time.Second},
+		{"DefaultCyclerPollInterval", DefaultCyclerPollInterval, 200 * time.Millisecond},
+		{"DefaultForceRetryInterval", DefaultForceRetryInterval, 120 * time.Second},
+		{"DefaultIdleRestartCooldown", DefaultIdleRestartCooldown, 30 * time.Minute},
+	}
+	for _, c := range durCases {
+		if c.got != c.want {
+			t.Errorf("%s = %v; want %v (promotion must be byte-identical — do not change in a refactor)", c.name, c.got, c.want)
+		}
+	}
+
+	if DefaultIdleRestartAbsTokens != 150_000 {
+		t.Errorf("DefaultIdleRestartAbsTokens = %d; want 150000", DefaultIdleRestartAbsTokens)
+	}
+	if DefaultMaxHandoffTimeouts != 3 {
+		t.Errorf("DefaultMaxHandoffTimeouts = %d; want 3", DefaultMaxHandoffTimeouts)
+	}
+	if DefaultMaxHeartbeatMisses != 12 {
+		t.Errorf("DefaultMaxHeartbeatMisses = %d; want 12", DefaultMaxHeartbeatMisses)
+	}
+
+	// Package-const aliases must equal their exported Default* source so every
+	// existing call site keeps resolving the same value.
+	if warnCooldown != DefaultWarnCooldown {
+		t.Errorf("warnCooldown alias = %v; want DefaultWarnCooldown %v", warnCooldown, DefaultWarnCooldown)
+	}
+	if noGaugeBackoff != DefaultNoGaugeBackoff {
+		t.Errorf("noGaugeBackoff alias = %v; want DefaultNoGaugeBackoff %v", noGaugeBackoff, DefaultNoGaugeBackoff)
+	}
+	if MaxHeartbeatMisses != DefaultMaxHeartbeatMisses {
+		t.Errorf("MaxHeartbeatMisses alias = %d; want DefaultMaxHeartbeatMisses %d", MaxHeartbeatMisses, DefaultMaxHeartbeatMisses)
+	}
+}

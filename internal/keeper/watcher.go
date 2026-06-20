@@ -446,7 +446,7 @@ type WatcherConfig struct {
 // applyDefaults fills in zero-valued duration / pct fields.
 func (c *WatcherConfig) applyDefaults() {
 	if c.PollInterval <= 0 {
-		c.PollInterval = 5 * time.Second
+		c.PollInterval = DefaultPollInterval
 	}
 	// Warn-band defaults are sourced from thresholds.go (the single source of
 	// truth shared with CyclerConfig.applyDefaults). Refs: hk-bpkv.
@@ -463,10 +463,10 @@ func (c *WatcherConfig) applyDefaults() {
 		c.WarnPctCeil = defaultWarnPctCeil
 	}
 	if c.IdleQuiesce <= 0 {
-		c.IdleQuiesce = 8 * time.Second
+		c.IdleQuiesce = DefaultIdleQuiesce
 	}
 	if c.Staleness <= 0 {
-		c.Staleness = 120 * time.Second
+		c.Staleness = DefaultStaleness
 	}
 	// HeartbeatThreshold defaults to half of Staleness: refresh well before the
 	// stale branch (≈60 s at the 120 s default) so a live agent's gauge never
@@ -477,7 +477,7 @@ func (c *WatcherConfig) applyDefaults() {
 	// HeartbeatMaxMisses defaults to the package constant. Tests may set a
 	// smaller value to exercise the miss-budget path quickly. Refs: hk-lal8.
 	if c.HeartbeatMaxMisses <= 0 {
-		c.HeartbeatMaxMisses = MaxHeartbeatMisses
+		c.HeartbeatMaxMisses = DefaultMaxHeartbeatMisses
 	}
 	if c.ReadManagedSessionFn == nil {
 		c.ReadManagedSessionFn = ReadManagedSessionID
@@ -486,10 +486,10 @@ func (c *WatcherConfig) applyDefaults() {
 		c.WriteManagedSessionFn = WriteManagedSessionID
 	}
 	if c.RespawnGrace <= 0 {
-		c.RespawnGrace = 20 * time.Second
+		c.RespawnGrace = DefaultRespawnGrace
 	}
 	if c.RespawnCooldown <= 0 {
-		c.RespawnCooldown = 90 * time.Second
+		c.RespawnCooldown = DefaultRespawnCooldown
 	}
 	if c.IsPaneIdleFn == nil {
 		c.IsPaneIdleFn = IsPaneIdle
@@ -502,10 +502,10 @@ func (c *WatcherConfig) applyDefaults() {
 	// idle-respawn path long before live recovery considers force-restarting a
 	// (possibly briefly) stale-but-alive pane — the anti-premature-reap invariant.
 	if c.LiveRecoverGrace <= 0 {
-		c.LiveRecoverGrace = 5 * time.Minute
+		c.LiveRecoverGrace = DefaultLiveRecoverGrace
 	}
 	if c.LiveRecoverCooldown <= 0 {
-		c.LiveRecoverCooldown = 5 * time.Minute
+		c.LiveRecoverCooldown = DefaultLiveRecoverCooldown
 	}
 	if c.IsPaneAliveFn == nil {
 		c.IsPaneAliveFn = IsPaneAlive
@@ -529,16 +529,16 @@ func (c *WatcherConfig) applyDefaults() {
 	if c.WarnCooldown < 0 {
 		c.WarnCooldown = 0 // negative sentinel → disable cooldown
 	} else if c.WarnCooldown == 0 {
-		c.WarnCooldown = warnCooldown // zero sentinel → use production default
+		c.WarnCooldown = DefaultWarnCooldown // zero sentinel → use production default
 	}
 	// Hard-ceiling backstop cooldown (hk-34ac). Default: 5 minutes.
 	if c.HardCeilingCooldown <= 0 {
-		c.HardCeilingCooldown = 5 * time.Minute
+		c.HardCeilingCooldown = DefaultHardCeilingCooldown
 	}
 	// Blind-keeper alarm threshold (hk-34ac). Default: 5 minutes.
 	// Tests set this to a small value to exercise the alarm without sleeping.
 	if c.BlindKeeperThreshold <= 0 {
-		c.BlindKeeperThreshold = 5 * time.Minute
+		c.BlindKeeperThreshold = DefaultBlindKeeperThreshold
 	}
 	// Auto-enable on-demand restart UX for the captain agent. The captain uses
 	// 'harmonik keeper restart-now' (ON-059) rather than the keeper's auto-cycle,
@@ -1123,13 +1123,15 @@ const noGaugeReemitInterval = 300 * time.Second
 // noGaugeBackoff is the duration the watcher backs off after emitting a
 // no_gauge event before re-polling the gauge. Prevents a flurry of no_gauge
 // events on consecutive ticks during a stale episode. Refs: hk-sol6.
-const noGaugeBackoff = 30 * time.Second
+// Alias of the exported DefaultNoGaugeBackoff (thresholds.go single source). hk-gwz6.
+const noGaugeBackoff = DefaultNoGaugeBackoff
 
 // warnCooldown is the minimum duration between warn-threshold firings in the
 // same direction (dip-rise cooldown). Prevents a transient dip below the
 // threshold immediately followed by a rise from counting as a second event.
 // Refs: hk-sol6.
-const warnCooldown = 30 * time.Second
+// Alias of the exported DefaultWarnCooldown (thresholds.go single source). hk-gwz6.
+const warnCooldown = DefaultWarnCooldown
 
 // keeperHintText is the one-time self-hint injected on the first warn-threshold
 // crossing per session. Refs: hk-lsk5.

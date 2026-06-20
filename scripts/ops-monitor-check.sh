@@ -8,10 +8,21 @@
 #   4. crew-staleness   — comms last_seen >150s; signals after 2 consecutive misses
 #   5. ready-unstaffed  — queue has pending_items > 0 but no workers and no online crew
 #   6. idle-fleet       — no active workers + last run event >20m ago (lull detect)
-#   7. review-gate      — a run_completed run_id with NO matching reviewer_verdict =
-#                         review BYPASSED (M2 code-half; CE4). Deterministic run_id↔
-#                         verdict JOIN over the last N run_completed run_ids, NOT a
-#                         (broken) workflow_mode grep.
+#   7. review-gate      — a run_id that LAUNCHED a reviewer (reviewer_launched event)
+#                         but produced NO matching reviewer_verdict = review BYPASSED
+#                         (M2 code-half; CE4). Deterministic run_id↔verdict JOIN over
+#                         the last N reviewer-launched run_ids, NOT a (broken)
+#                         workflow_mode grep, and NOT a bare completed-without-verdict
+#                         join (R6 fix hk-ayvx): the daemon has a LEGITIMATE review-less
+#                         close path — MVH twin-blind `auto-close: exit=0`, noChange, and
+#                         subsumed completions merge+close with NO reviewer BY DESIGN
+#                         (workloop.go ~:3811). Those never emit reviewer_launched, so
+#                         gating on launched-but-no-verdict suppresses them instead of
+#                         firing ~180 false `review-bypass` alerts (alert fatigue would
+#                         bury the REAL bypass). Multi-iteration DOT runs (MEDIUM): a
+#                         terminal `run_completed` run_id that never launched a reviewer
+#                         is likewise never flagged, so unmatched `dot: reached terminal
+#                         node close` run_ids can't false-flag either.
 #   8. backlog-ready    — `br ready --limit 0` shows ready beads (captain staffing
 #                         signal — judgment item, surfaced via digest)
 #
@@ -222,9 +233,13 @@ review_grace       = int('$REVIEW_GATE_GRACE')
 # sender has an agent_message within stale_thresh seconds (hk-gu3v).
 import os as _os
 last_msg_ts = {}  # agent_name -> epoch of most recent agent_message
-# Review-gate (M2 code-half): join run_completed -> reviewer_verdict by run_id.
-run_completed_ts = {}   # run_id -> epoch of the run_completed event
-verdict_run_ids  = set() # run_ids that have a reviewer_verdict event
+# Review-gate (M2 code-half; R6 fix): a run is review-BYPASSED only if it actually
+# ENTERED a review path (emitted reviewer_launched) yet produced NO reviewer_verdict.
+# Runs that auto-closed / made no change / were subsumed never launch a reviewer (by
+# design — workloop.go ~:3811) so they must NOT be flagged. We therefore join
+# reviewer_launched -> reviewer_verdict by run_id, NOT run_completed -> verdict.
+reviewer_launched_ts = {}  # run_id -> epoch of the reviewer_launched event (review entered)
+verdict_run_ids      = set() # run_ids that have a reviewer_verdict event
 
 def _ev_epoch(_tw, _dt):
     _ts_clean = _tw[:19].replace('T', ' ')
@@ -264,12 +279,13 @@ if _os.path.isfile(_events_path):
                     if _sender and _epoch > last_msg_ts.get(_sender, 0):
                         last_msg_ts[_sender] = _epoch
 
-                elif _etype == 'run_completed':
-                    # run_id lives in payload; epoch from timestamp_wall.
-                    _rid = _payload.get('run_id') or _ev.get('run_id') or ''
+                elif _etype == 'reviewer_launched':
+                    # A reviewer/DOT review node WAS started for this run_id. run_id is
+                    # top-level (and mirrored in payload); epoch from timestamp_wall.
+                    _rid = _ev.get('run_id') or (_payload.get('run_id') if isinstance(_payload, dict) else '') or ''
                     _tw = _ev.get('timestamp_wall', '')
                     if _rid and _tw:
-                        run_completed_ts[_rid] = _ev_epoch(_tw, _dt)
+                        reviewer_launched_ts[_rid] = _ev_epoch(_tw, _dt)
 
                 elif _etype == 'reviewer_verdict':
                     # reviewer_verdict carries run_id at top level AND in payload.
@@ -281,14 +297,21 @@ if _os.path.isfile(_events_path):
     except Exception:
         pass
 
-# ── Review-gate: completed runs (oldest-first window, past grace) with no verdict ─
-# A run_completed run_id that has NO matching reviewer_verdict ran review-bypassed.
-# Skip runs younger than review_grace — their verdict may still be in flight.
-_recent_completed = sorted(run_completed_ts.items(), key=lambda kv: kv[1])
-_recent_completed = _recent_completed[-review_window:]
+# ── Review-gate: reviewer-LAUNCHED runs (window, past grace) with no verdict ──────
+# A run that emitted reviewer_launched but has NO matching reviewer_verdict entered a
+# review path and produced no verdict = review BYPASSED. Auto-close / noChange /
+# subsumed runs never launch a reviewer, so they are absent from reviewer_launched_ts
+# and cannot be flagged (R6 fix hk-ayvx). Window over the most-recent launched run_ids;
+# skip any younger than review_grace — its verdict may still be in flight.
+# MEDIUM (multi-iteration DOT): reviewer_launched and reviewer_verdict are joined on the
+# SAME run_id; if any iteration of a run emits a verdict under that run_id the run is
+# cleared. A terminal-close run_id that never launched a reviewer is not in this map at
+# all, so unmatched `dot: reached terminal node close` run_ids never false-flag.
+_recent_launched = sorted(reviewer_launched_ts.items(), key=lambda kv: kv[1])
+_recent_launched = _recent_launched[-review_window:]
 review_bypass_run_ids = []
-for _rid, _cts in _recent_completed:
-    if (ts_epoch - _cts) < review_grace:
+for _rid, _lts in _recent_launched:
+    if (ts_epoch - _lts) < review_grace:
         continue  # too young to judge — verdict may still arrive
     if _rid not in verdict_run_ids:
         review_bypass_run_ids.append(_rid)
@@ -441,7 +464,7 @@ checks = {
     'crew-fresh':    {'state': 'flag' if stale_signal_crews else 'ok',
                       'detail': ','.join(c['crew'] for c in stale_signal_crews) if stale_signal_crews else 'all <150s'},
     'review-gate':   {'state': 'flag' if review_bypass_run_ids else 'ok',
-                      'detail': ('unreviewed:' + ','.join(review_bypass_run_ids)) if review_bypass_run_ids else 'all completed runs have a verdict'},
+                      'detail': ('unreviewed:' + ','.join(review_bypass_run_ids)) if review_bypass_run_ids else 'all reviewer-launched runs have a verdict'},
     'backlog-ready': {'state': 'flag' if backlog_ready else 'ok',
                       'detail': ('ready=' + str(ready_count) + ' free_slot') if backlog_ready else 'ready=' + str(ready_count)},
     'lull':          {'state': 'flag' if idle_fleet else 'ok',

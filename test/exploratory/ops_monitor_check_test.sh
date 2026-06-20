@@ -14,9 +14,10 @@
 #   [x] idle-fleet           → digest signal
 #   [x] all-green            → no comms sent
 #   [x] inert-queue suppression (main queue paused → no alert)
-#   [x] review-gate bypass   → immediate signal (run_completed, no reviewer_verdict)
-#   [x] review-gate clean    → no flag (run_completed has matching verdict)
-#   [x] review-gate grace    → no flag (fresh run, verdict may be in flight)
+#   [x] review-gate bypass   → immediate signal (reviewer_launched, NO reviewer_verdict)
+#   [x] review-gate clean    → no flag (reviewer_launched has matching verdict)
+#   [x] review-gate grace    → no flag (fresh reviewer_launched, verdict may be in flight)
+#   [x] review-gate suppress → no flag (auto-close/noChange run_completed, no reviewer) [R6]
 #   [x] backlog-ready        → digest signal (br ready beads + free slot)
 #   [x] backlog suppressed   → no flag when all slots busy
 #   [x] checks map present, schema_version=2
@@ -476,12 +477,15 @@ print(d.get('checks', {}).get('$check', {}).get('state', 'MISSING'))
   fi
 }
 
-# ── Test 10: review-gate bypass — run_completed with NO reviewer_verdict ───────
+# ── Test 10: review-gate bypass — reviewer_launched but NO reviewer_verdict ────
 echo ""
-echo "=== Test 10: review-gate bypass (completed run, no verdict) — immediate ==="
+echo "=== Test 10: review-gate bypass (reviewer launched, no verdict) — immediate ==="
 OLD_WALL=$(ts_ago 600)   # 10 min old → past the 180s grace, judgeable
-# A run_completed run_id 'r-bypass' with NO matching reviewer_verdict.
-EVENTS='{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-bypass","success":true}}'
+# A run_id 'r-bypass' that LAUNCHED a reviewer (entered the review path) but has NO
+# matching reviewer_verdict → genuine review bypass. The accompanying run_completed
+# is incidental; the flag is driven by reviewer_launched ∖ reviewer_verdict (R6 fix).
+EVENTS='{"type":"reviewer_launched","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-bypass","payload":{"run_id":"r-bypass"}}
+{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-bypass","success":true}}'
 PROJ=$(setup_fixture \
   --hk-queue-status-json '{"status":"ok"}' \
   --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
@@ -507,11 +511,12 @@ else
 fi
 rm -rf "$PROJ"
 
-# ── Test 11: review-gate clean — completed run WITH a matching verdict ─────────
+# ── Test 11: review-gate clean — reviewer launched AND a matching verdict ──────
 echo ""
-echo "=== Test 11: review-gate clean (completed run has verdict) — no flag ==="
+echo "=== Test 11: review-gate clean (reviewer launched + verdict) — no flag ==="
 OLD_WALL=$(ts_ago 600)
-EVENTS='{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-ok","success":true}}
+EVENTS='{"type":"reviewer_launched","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-ok","payload":{"run_id":"r-ok"}}
+{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-ok","success":true}}
 {"type":"reviewer_verdict","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-ok","payload":{"run_id":"r-ok","verdict":"APPROVE"}}'
 PROJ=$(setup_fixture \
   --hk-queue-status-json '{"status":"ok"}' \
@@ -533,11 +538,11 @@ else
 fi
 rm -rf "$PROJ"
 
-# ── Test 12: review-gate grace — fresh completed run NOT yet judged ───────────
+# ── Test 12: review-gate grace — fresh reviewer_launched NOT yet judged ───────
 echo ""
-echo "=== Test 12: review-gate grace (fresh run, verdict may be in flight) — no flag ==="
+echo "=== Test 12: review-gate grace (fresh reviewer launch, verdict in flight) — no flag ==="
 FRESH_WALL=$(ts_ago 30)   # <180s grace → skip, do not call bypass
-EVENTS='{"type":"run_completed","timestamp_wall":"'"$FRESH_WALL"'","payload":{"run_id":"r-fresh","success":true}}'
+EVENTS='{"type":"reviewer_launched","timestamp_wall":"'"$FRESH_WALL"'","run_id":"r-fresh","payload":{"run_id":"r-fresh"}}'
 PROJ=$(setup_fixture \
   --hk-queue-status-json '{"status":"ok"}' \
   --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
@@ -549,6 +554,39 @@ assert_json_list_empty "grace: review_bypass_run_ids empty" \
   "$PROJ/.harmonik/ops-monitor/latest.json" "review_bypass_run_ids"
 assert_check_state "grace: checks.review-gate=ok" \
   "$PROJ/.harmonik/ops-monitor/latest.json" "review-gate" "ok"
+rm -rf "$PROJ"
+
+# ── Test 12b: review-gate SUPPRESSION — legitimate review-LESS close path ─────
+# The daemon auto-closes runs with NO reviewer (MVH twin-blind `auto-close: exit=0`,
+# noChange, subsumed — workloop.go ~:3811). Those emit run_completed but NEVER
+# reviewer_launched, so they must NOT be flagged (R6 fix hk-ayvx). This is the
+# regression the old completed∖verdict join produced (~180 false positives).
+echo ""
+echo "=== Test 12b: review-gate suppression (auto-close + noChange, no reviewer) — no flag ==="
+OLD_WALL=$(ts_ago 600)   # past grace, so the only reason NOT to flag is the launch-gate
+# Two legitimate review-less closes: an auto-close and a noChange-subsumed run, each
+# with a run_completed but NO reviewer_launched / reviewer_verdict.
+EVENTS='{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-autoclose","success":true,"summary":"auto-close: exit=0"}}
+{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-nochange","success":true,"summary":"noChange-subsumed: bead found in main"}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$EVENTS" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "suppression: all-green (no review-bypass)" "all-green" "$OUTPUT"
+assert_not_contains "suppression: no review-bypass in stdout" "review-bypass" "$OUTPUT"
+assert_json_list_empty "suppression: review_bypass_run_ids empty" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review_bypass_run_ids"
+assert_check_state "suppression: checks.review-gate=ok" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review-gate" "ok"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  fail "suppression: no comms should be sent for review-less auto-close runs"
+else
+  pass "suppression: no comms sent for auto-close/noChange runs"
+fi
 rm -rf "$PROJ"
 
 # ── Test 13: backlog-ready — br ready shows beads + free slot — digest ────────

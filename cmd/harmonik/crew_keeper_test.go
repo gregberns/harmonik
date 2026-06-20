@@ -88,32 +88,3 @@ func TestSeedSID_MkdirAll(t *testing.T) {
 		t.Errorf("seedSID did not create keeper dir at %q", keeperDir)
 	}
 }
-
-// TestCrewKeeperSessionName verifies the naming convention for the keeper tmux
-// session ("hk-keeper-<name>") used by spawnCrewKeeper and stopCrewKeeper. The
-// convention is the load-bearing constraint: crew stop kills exactly the session
-// that crew start created. Refs: hk-yfcc.
-func TestCrewKeeperSessionName(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name    string
-		wantSes string
-	}{
-		{"alpha", "hk-keeper-alpha"},
-		{"my-crew", "hk-keeper-my-crew"},
-		{"crew-01", "hk-keeper-crew-01"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Assert against the REAL derivation helper used by both
-			// spawnCrewKeeper and stopCrewKeeper. A change to the naming scheme
-			// in crew.go must break this test (it is no longer tautological —
-			// the expected value is a literal, the actual comes from prod code).
-			got := crewKeeperSessionName(tc.name)
-			if got != tc.wantSes {
-				t.Errorf("keeper session name for %q = %q; want %q", tc.name, got, tc.wantSes)
-			}
-		})
-	}
-}

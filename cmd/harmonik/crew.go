@@ -43,7 +43,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -194,11 +193,11 @@ func runCrewStartSubcommand(subArgs []string) int {
 		seedSID(absProject, name, result.SessionID)
 	}
 
-	// Spawn a warn-only keeper for the crew pane in a background tmux session.
-	// The keeper runs in "hk-keeper-<name>" so it can be found and killed on
-	// crew stop. Non-fatal: a failed keeper spawn is logged but does not fail
-	// crew start. Refs: hk-yfcc.
-	spawnCrewKeeper(absProject, name)
+	// The crew's warn-only keeper is launched by the DAEMON as a sibling `keeper`
+	// window inside the crew session (HandleCrewStart → SpawnCrewSession,
+	// hk-rmy1), targeting the crew's `agent` window via `--tmux <session>:agent`.
+	// The CLI no longer spawns a separate hk-keeper-<name> session — doing so would
+	// run two keepers per crew. Refs: hk-rmy1 / hk-yfcc.
 
 	fmt.Println(result.SessionID)
 	return 0
@@ -218,42 +217,6 @@ func seedSID(projectDir, name, sessionID string) {
 	//nolint:gosec // G306: .sid is readable by the keeper process (same user)
 	if writeErr := os.WriteFile(sidPath, []byte(sessionID+"\n"), 0o644); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: seed .sid: write %q: %v\n", sidPath, writeErr)
-	}
-}
-
-// crewKeeperSessionName derives the detached tmux session name for a crew's
-// warn-only keeper from the crew name ("hk-keeper-<name>"). This naming
-// convention is the load-bearing constraint: stopCrewKeeper must kill exactly
-// the session spawnCrewKeeper created. Both call sites MUST use this function so
-// the two never drift. Refs: hk-yfcc.
-func crewKeeperSessionName(name string) string {
-	return "hk-keeper-" + name
-}
-
-// spawnCrewKeeper launches a warn-only keeper for the crew pane in a detached
-// tmux session named "hk-keeper-<name>". The keeper runs
-//
-//	harmonik keeper --agent <name> --warn-only --project <projectDir>
-//
-// The session is detached and non-blocking: crew start returns immediately.
-// If tmux is not available or the session already exists, the error is logged
-// but crew start succeeds. The crew session's tmux target is auto-resolved by
-// the keeper from the "harmonik-<hash>-<name>" convention. Refs: hk-yfcc.
-func spawnCrewKeeper(projectDir, name string) {
-	keeperSession := crewKeeperSessionName(name)
-	// Resolve harmonik binary path: use the same binary that is running now.
-	selfBin, selfErr := os.Executable()
-	if selfErr != nil {
-		selfBin = "harmonik" // fallback: rely on PATH
-	}
-	// Build the keeper command string for tmux new-session -d.
-	keeperCmd := fmt.Sprintf("%s keeper --agent %q --warn-only --project %q",
-		selfBin, name, projectDir)
-	//nolint:gosec // G204: keeperSession, keeperCmd are internally constructed from validated inputs
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", keeperSession, keeperCmd)
-	if runErr := cmd.Run(); runErr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik crew start: keeper spawn: tmux new-session -d -s %q: %v (non-fatal)\n",
-			keeperSession, runErr)
 	}
 }
 
@@ -326,30 +289,13 @@ func runCrewStopSubcommand(subArgs []string) int {
 		return exitCode
 	}
 
-	// Kill the crew's keeper tmux session (best-effort, non-fatal).
-	// The .managed marker was removed by the daemon's HandleCrewStop, so the
-	// keeper would exit on its next poll anyway — this just speeds it up.
-	// Refs: hk-yfcc.
-	stopCrewKeeper(name)
+	// The daemon's HandleCrewStop tears down the whole crew session
+	// (StopCrewSession → KillSession), which kills BOTH the `agent` and `keeper`
+	// windows — so the keeper process dies with the session. No separate
+	// hk-keeper-<name> teardown is needed any more. Refs: hk-rmy1 / hk-yfcc.
 
 	fmt.Printf("crew %s stopped\n", name)
 	return 0
-}
-
-// stopCrewKeeper kills the detached tmux session "hk-keeper-<name>" that was
-// created by spawnCrewKeeper on crew start. Best-effort: if the session does
-// not exist or tmux is unavailable the error is logged but crew stop succeeds.
-// Refs: hk-yfcc.
-func stopCrewKeeper(name string) {
-	keeperSession := crewKeeperSessionName(name)
-	//nolint:gosec // G204: keeperSession is internally constructed from validated crew name
-	cmd := exec.Command("tmux", "kill-session", "-t", keeperSession)
-	if runErr := cmd.Run(); runErr != nil {
-		// Exit 1 from tmux kill-session means the session did not exist — not an
-		// error worth logging loudly. Any other error IS worth surfacing.
-		fmt.Fprintf(os.Stderr, "harmonik crew stop: keeper teardown: tmux kill-session -t %q: %v (non-fatal)\n",
-			keeperSession, runErr)
-	}
 }
 
 // runCrewListSubcommand implements `harmonik crew list [--json] [--project DIR]`.

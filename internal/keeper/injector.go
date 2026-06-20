@@ -54,10 +54,33 @@ var submitSettle = 750 * time.Millisecond
 // extra times to defend against a dropped first keypress. A redundant Enter at
 // an already-submitted REPL is a harmless empty line. Mirrors the daemon's
 // resumeSubmitRetries / resumeSubmitRetryDelay (hk-ip33d, hk-7rgqs).
-const (
-	submitRetries    = 2
-	submitRetryDelay = 400 * time.Millisecond
-)
+const submitRetries = 2
+
+// submitRetryDelay is a var (not a const) for the same reason submitSettle is:
+// tests can zero it to drive the retry loop instantly without skipping it. Its
+// designed value (400ms) is regression-guarded by TestInjectText_SettleConstants.
+var submitRetryDelay = 400 * time.Millisecond
+
+// tmuxRunFn is the seam through which the injector shells out to tmux. It runs
+// the given tmux argv (with optional stdin) and returns the combined
+// stdout+stderr plus any error — the same surface CombinedOutput() provides.
+//
+// It exists so the paste/settle/Enter/retry SEQUENCE (not just its timing
+// constants) can be driven deterministically against a fake runner, with no
+// real tmux. It is a package-level var defaulting to the real exec, mirroring
+// the package's existing injectable-function style (CyclerConfig.InjectFn et
+// al.). Tests in package keeper swap it out and restore it. Refs: hk-zole.
+var tmuxRunFn = runTmuxCombined
+
+// runTmuxCombined is the production tmuxRunFn: it execs `tmux <args...>` with the
+// given stdin ("" for none) and returns CombinedOutput().
+func runTmuxCombined(ctx context.Context, stdin string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "tmux", args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	return cmd.CombinedOutput()
+}
 
 // InjectText delivers arbitrary text into the tmux pane at tmuxTarget using
 // the bracketed-paste mechanism (tmux load-buffer → paste-buffer → settle →
@@ -81,14 +104,11 @@ func InjectText(ctx context.Context, tmuxTarget, text string) error {
 
 	const buf = "hk-keeper-inject"
 
-	loadCmd := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", buf, "-")
-	loadCmd.Stdin = strings.NewReader(text)
-	if out, err := loadCmd.CombinedOutput(); err != nil {
+	if out, err := tmuxRunFn(ctx, text, "load-buffer", "-b", buf, "-"); err != nil {
 		return fmt.Errorf("keeper: tmux load-buffer: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
 	}
 
-	pasteCmd := exec.CommandContext(ctx, "tmux", "paste-buffer", "-b", buf, "-t", tmuxTarget, "-d")
-	if out, err := pasteCmd.CombinedOutput(); err != nil {
+	if out, err := tmuxRunFn(ctx, "", "paste-buffer", "-b", buf, "-t", tmuxTarget, "-d"); err != nil {
 		return fmt.Errorf("keeper: tmux paste-buffer: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
 	}
 
@@ -119,8 +139,7 @@ func InjectText(ctx context.Context, tmuxTarget, text string) error {
 // sendEnter sends a bare Enter keypress to the pane as a real key event (NOT a
 // bracketed paste), so the REPL's key-event handler submits the pending line.
 func sendEnter(ctx context.Context, tmuxTarget string) error {
-	cmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", tmuxTarget, "Enter")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := tmuxRunFn(ctx, "", "send-keys", "-t", tmuxTarget, "Enter"); err != nil {
 		return fmt.Errorf("%w (stderr: %s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil

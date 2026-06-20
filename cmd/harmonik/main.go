@@ -474,6 +474,8 @@ EXAMPLES
 				return runKeeperRestartNow(subArgs[1:])
 			case "ping":
 				return runKeeperPing(subArgs[1:])
+			case "await-ack":
+				return runKeeperAwaitAck(subArgs[1:])
 			}
 		}
 		for _, arg := range subArgs {

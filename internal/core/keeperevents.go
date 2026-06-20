@@ -264,3 +264,38 @@ type SessionKeeperOperatorAttachedPayload struct {
 	// "cycle" (Cycler.MaybeRun) | "precompact" (Cycler.RunForPrecompact).
 	Phase string `json:"phase"`
 }
+
+// SessionKeeperAckTimeoutPayload is the payload for session_keeper_ack_timeout
+// (hk-uldg — the agent-side half of the restart-now/ping ACK handshake).
+//
+// Emitted by `harmonik keeper await-ack` when the timeout elapses without
+// observing the exact `[KEEPER ACK <nonce>]` line in the watched agent's tmux
+// pane. This makes the "keeper did not deliver the ACK" failure DURABLE — an
+// orchestrator's `harmonik subscribe` or a postmortem can find it. The binary
+// then exits non-zero (3); per design §3 the comms escalation is the CALLER's
+// responsibility (the binary stays identity-free).
+//
+// Durability class: O (ordinary — escalation signal; operator attention).
+// Refs: hk-uldg; codename:keeper-redesign.
+type SessionKeeperAckTimeoutPayload struct {
+	// AgentName is the watched agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// Nonce is the exact verifiability token await-ack was waiting for.
+	Nonce string `json:"nonce"`
+
+	// Kind is the handshake kind being confirmed: "restart" or "ping".
+	Kind string `json:"kind"`
+
+	// TimeoutSeconds is the configured timeout (seconds) that elapsed.
+	TimeoutSeconds float64 `json:"timeout_seconds"`
+
+	// TmuxTarget is the resolved pane address await-ack polled. May be empty
+	// if no pane could be resolved.
+	TmuxTarget string `json:"tmux_target,omitempty"`
+
+	// Reason describes why the ACK was not confirmed. Values:
+	//   "ack_not_observed"  — polled to timeout, the exact ACK line never appeared.
+	//   "no_tmux_target"    — no pane could be resolved for the agent.
+	Reason string `json:"reason"`
+}

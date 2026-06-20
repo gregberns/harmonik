@@ -511,6 +511,80 @@ func restartNowNonce(t time.Time) string {
 	return fmt.Sprintf("rn-%d", t.UnixMilli())
 }
 
+// runKeeperAwaitAck implements
+// `harmonik keeper await-ack --agent <name> --nonce <N> [--kind restart|ping]
+//
+//	[--timeout 15s] [--poll 1s] [--project DIR]`.
+//
+// It is the AGENT-SIDE half of the ACK handshake (hk-uldg): resolve the agent's
+// pane, poll `tmux capture-pane` every --poll for the exact line
+// `[KEEPER ACK <nonce>]` until match (exit 0) or timeout. On timeout it emits a
+// durable session_keeper_ack_timeout event (via the keeper FileEmitter) and
+// exits 3. The BINARY does NOT send comms — the calling skill owns the comms
+// alert (design §3, operator-confirmed).
+//
+// Exit codes:
+//
+//	0  — ack observed within the timeout (keeper proven alive)
+//	1  — argument error (missing --agent / --nonce) or working-dir error
+//	2  — unexpected positional argument or unrecognized flag (flag-only)
+//	3  — timeout: no [KEEPER ACK <nonce>] observed (event emitted), OR no pane
+//	     could be resolved, OR capture-pane failed repeatedly
+//
+// Refs: hk-uldg; design plans/2026-06-20-keeper-architecture-critique/18-design-agent-side-ack.md.
+func runKeeperAwaitAck(args []string) int {
+	fs, projectFlag, agentFlag := newKeeperMarkerFlags("keeper await-ack")
+	nonceFlag := fs.String("nonce", "", "exact verifiability nonce to match in the [KEEPER ACK <nonce>] line (required)")
+	kindFlag := fs.String("kind", "ping", "handshake kind being confirmed: restart|ping (echoed into the event)")
+	timeoutFlag := fs.Duration("timeout", keeper.DefaultAwaitAckTimeout, "max time to wait for the ack before timing out")
+	pollFlag := fs.Duration("poll", keeper.DefaultAwaitAckPoll, "interval between capture-pane polls")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 1
+		}
+		return 2
+	}
+	agent, code := resolveKeeperAgent(fs, "harmonik keeper await-ack", *agentFlag)
+	if agent == "" {
+		return code
+	}
+	if *nonceFlag == "" {
+		fmt.Fprintf(os.Stderr, "harmonik keeper await-ack: --nonce <N> is required\n")
+		return 1
+	}
+	projectDir := *projectFlag
+	if projectDir == "" {
+		wd, wdErr := os.Getwd()
+		if wdErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik keeper await-ack: cannot determine working directory: %v\n", wdErr)
+			return 1
+		}
+		projectDir = wd
+	}
+
+	tmuxTarget := keeper.ResolveTmuxTarget(projectDir, agent, "", nil)
+	emitter := keeper.NewFileEmitter(projectDir)
+	err := keeper.AwaitAck(context.Background(), keeper.AwaitAckConfig{
+		AgentName:  agent,
+		TmuxTarget: tmuxTarget,
+		Nonce:      *nonceFlag,
+		Kind:       *kindFlag,
+		Timeout:    *timeoutFlag,
+		Poll:       *pollFlag,
+	}, emitter)
+	if err != nil {
+		// Timeout (incl. no-pane / repeated capture failure): exit 3 so the
+		// caller can distinguish it from flag misuse (2) and confirmed-alive (0).
+		fmt.Fprintf(os.Stderr, "harmonik keeper await-ack: %v\n", err)
+		if errors.Is(err, keeper.ErrAckTimeout) {
+			return 3
+		}
+		return 1
+	}
+	fmt.Printf("keeper await-ack: agent=%q nonce=%s ack observed in %q (keeper alive)\n", agent, *nonceFlag, tmuxTarget)
+	return 0
+}
+
 const keeperTopUsage = `harmonik keeper — context watcher for a managed agent pane (session-keeper, hk-ekap1)
 
 USAGE
@@ -521,6 +595,7 @@ USAGE
   harmonik keeper clear-dispatching --agent <name> [--project DIR]
   harmonik keeper restart-now --agent <name> [--project DIR]
   harmonik keeper ping --agent <name> [--nonce N] [--project DIR]
+  harmonik keeper await-ack --agent <name> --nonce N [--kind restart|ping] [--timeout 15s] [--poll 1s] [--project DIR]
 
   FLAG-ONLY (hk-5da7): every verb (and the bare watcher) names the agent ONLY via
   --agent. A positional argument is rejected with exit 2 (positionals were the
@@ -553,6 +628,15 @@ VERBS
   ping               Liveness check: inject ONLY '[KEEPER ACK <nonce>] received ping'
                      into the agent's pane (no /clear, no resume). --nonce sets the
                      verifiability token (default: timestamp). Refs: hk-5da7.
+  await-ack          AGENT-SIDE half of the ack handshake (hk-uldg): poll the agent's
+                     pane every --poll (default 1s) for the EXACT '[KEEPER ACK <nonce>]'
+                     line until match (exit 0) or --timeout (default 15s). On timeout
+                     emits a durable session_keeper_ack_timeout event and exits 3. The
+                     BINARY does NOT send comms — the caller (skill) sends the alert on
+                     non-zero exit. --kind restart|ping is echoed into the event. The
+                     match is on the EXACT nonce, so a stale ACK from another cycle never
+                     matches. For restart-now an EXTERNAL watcher must run this (the firing
+                     agent /clears itself). Refs: hk-uldg.
 
 FLAGS (watcher mode)
   --agent <name>         Agent name (required); identifies the lockfile and .managed marker

@@ -889,6 +889,18 @@ const (
 	// Durability class: O (ordinary — observability of a destructive last-resort).
 	// Refs: hk-75mr; codename:keeper-redesign.
 	EventTypeSessionKeeperLivePaneRecover EventType = "session_keeper_live_pane_recover"
+
+	// EventTypeSessionKeeperAckTimeout is the session_keeper_ack_timeout event
+	// type. Emitted by `harmonik keeper await-ack` (the agent-side half of the
+	// restart-now/ping ACK handshake) when the timeout elapses without observing
+	// the exact `[KEEPER ACK <nonce>]` line in the agent's tmux pane. Durable
+	// signal that the keeper may be dead, watching the wrong pane, or otherwise
+	// failed to deliver the ACK — an orchestrator's subscribe / a postmortem can
+	// find it. The binary then exits non-zero (3); the CALLING skill is
+	// responsible for the comms alert (the binary is identity-free).
+	// Durability class: O (ordinary — escalation signal; operator attention).
+	// Refs: hk-uldg; codename:keeper-redesign.
+	EventTypeSessionKeeperAckTimeout EventType = "session_keeper_ack_timeout"
 )
 
 // ---------------------------------------------------------------------------

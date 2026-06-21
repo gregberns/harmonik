@@ -1639,6 +1639,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			deps.governorState = &sentinel.GovernorState{
 				DaemonStartedAt: daemonStartTime,
 			}
+			// FW2 (hk-z1lr): store mode and Phase-2 classes so the per-tick
+			// governor evaluate block can guard on mode and compute HasUndeployedTail.
+			deps.sentinelMode = sentinelCfg.Mode
+			deps.sentinelPhase2Classes = sentinelCfg.Phase2Classes()
 		}
 
 		// C1 boot-seed (hk-o50hy): populate emittedEpics from the durable event log

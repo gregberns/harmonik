@@ -473,6 +473,14 @@ func brClosedBeadsWithLabels(ctx context.Context, brPath string) ([][]string, er
 	return result, nil
 }
 
+// BuildHasUndeployedTail returns true when at least one closed bead carries a
+// Phase-2 class label (flywheel-motion.md §5.2, §5.3). Used by the sentinel
+// governor (FW2 hk-z1lr) to populate GovernorInput.HasUndeployedTail without
+// building a full digest. Returns false (not an error) when phase2Classes is empty.
+func BuildHasUndeployedTail(ctx context.Context, brPath string, phase2Classes []string) (bool, error) {
+	return buildHasUndeployedTail(ctx, brPath, "", phase2Classes)
+}
+
 // buildHasUndeployedTail returns true when at least one closed bead carries a
 // Phase-2 class label (flywheel-motion.md §5.2, §5.3). Phase-2 classes are
 // provided by the caller (SentinelConfig.Phase2Classes()). Any error querying

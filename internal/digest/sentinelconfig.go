@@ -110,6 +110,12 @@ type SentinelConfig struct {
 	// "merged" (default) or a Phase-2 deploy+verify command. Nil or empty
 	// uses DefaultDoneDefinition ("merged") for all classes.
 	DoneDefinition map[string]string
+
+	// Mode controls sentinel activation behaviour (flywheel-motion.md §7).
+	// "" or "observe" — evaluate the governor and emit governor_signal events,
+	//                   but take no action (no EmitTrip, no halt). Default.
+	// "act"           — full ACT behaviour added by FW3 (hk-4toh).
+	Mode string
 }
 
 // suppressionTTL returns the effective SuppressionTTL, falling back to the default.
@@ -245,6 +251,7 @@ type rawSentinelConfig struct {
 	MovementWeights         map[string]int    `yaml:"movement_weights"`
 	LivenessNoProgressN     int               `yaml:"liveness_no_progress_n"`
 	DoneDefinition          map[string]string `yaml:"done_definition"`
+	Mode                    string            `yaml:"mode"`
 }
 
 // rawConfigWithSentinel is the minimal top-level shape we need to extract sentinel:.
@@ -348,6 +355,10 @@ func parseSentinelConfig(data []byte) (SentinelConfig, error) {
 
 	if len(s.DoneDefinition) > 0 {
 		cfg.DoneDefinition = s.DoneDefinition
+	}
+
+	if s.Mode != "" {
+		cfg.Mode = s.Mode
 	}
 
 	return cfg, nil

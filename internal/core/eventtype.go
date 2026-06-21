@@ -1103,3 +1103,25 @@ const (
 	// (reason=orphaned). Durability class: F.
 	EventTypeDecisionWithdrawn EventType = "decision_withdrawn"
 )
+
+// ---------------------------------------------------------------------------
+// §8.17 Flywheel governor observe signal (FW2 hk-z1lr)
+// ---------------------------------------------------------------------------
+//
+// governor_signal is the observe-only audit record for one sentinel.Evaluate
+// cycle (flywheel-motion.md §§1, 6.1). Emitted every workloop tick when
+// sentinel.mode is "observe" (default); carries the full GovernorSignal so
+// operators can watch the staircase against the real event stream before the
+// governor has teeth.
+//
+// Durability class: O (ordinary — reconstructible by re-running Evaluate over
+// the events.jsonl window; loss of one tick does not affect correctness).
+//
+// Bead ref: hk-z1lr (FW2 wire-Evaluate observe-only).
+const (
+	// EventTypeGovernorSignal is emitted on every sentinel governor evaluation
+	// in observe mode (sentinel.mode: observe, the default). Payload is a
+	// JSON-serialised sentinel.GovernorSignal. No action is taken on the signal
+	// in this mode — it is purely for audit / falsify-early validation.
+	EventTypeGovernorSignal EventType = "governor_signal"
+)

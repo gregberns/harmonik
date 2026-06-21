@@ -47,6 +47,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
@@ -720,6 +721,20 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-y9fn (FW1).
 	governorCfg sentinel.Config
+
+	// sentinelMode is the mode from the sentinel: block (flywheel-motion.md §7).
+	// "" or "observe" → FW2 observe-only (emit GovernorSignal, no trip, no halt).
+	// "act"           → FW3 ACT mode (adds EmitTrip/halt — wired by hk-4toh).
+	//
+	// Bead ref: hk-z1lr (FW2).
+	sentinelMode string
+
+	// sentinelPhase2Classes are the Phase-2 done_definition class names from the
+	// sentinel config, used to compute HasUndeployedTail in the governor input.
+	// Nil/empty → HasUndeployedTail always false (no br call needed).
+	//
+	// Bead ref: hk-z1lr (FW2).
+	sentinelPhase2Classes []string
 }
 
 // closeBeadWithHistoryTrim trims .beads/.br_history to brHistoryCloseTrimKeep
@@ -1415,6 +1430,45 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// Spec ref: specs/execution-model.md §4.13 EM-062.
 		// Bead ref: hk-9321v.
 		eagerRefillEval(ctx, deps)
+
+		// FW2 (hk-z1lr): sentinel governor observe-only evaluation.
+		//
+		// Fires every tick when the governor is wired (governorState non-nil) and
+		// sentinel.mode is "observe" (the default). Emits a governor_signal typed
+		// event so operators can watch the staircase decisions against the real
+		// event stream before the governor has teeth.
+		//
+		// OBSERVE-ONLY CONTRACT: no EmitTrip, no halt, no dispatch side-effects.
+		// ACT mode (hk-4toh FW3) wires the trip/halt/all-clear block separately.
+		//
+		// Spec ref: flywheel-motion.md §§1, 6.1. Bead ref: hk-z1lr (FW2).
+		if deps.governorState != nil && (deps.sentinelMode == "" || deps.sentinelMode == "observe") {
+			now := time.Now()
+
+			// Snapshot hasReadyBeads: ≥1 unblocked open bead exists (§1.3).
+			var hasReadyBeads bool
+			if readyRecs, readyErr := deps.brAdapter.Ready(ctx); readyErr == nil {
+				hasReadyBeads = len(readyRecs) > 0
+			}
+
+			// HasUndeployedTail: closed Phase-2-class bead present (§1.3, §5.2).
+			// Skip the br call when no Phase-2 classes are configured (fast path).
+			var hasUndeployedTail bool
+			if len(deps.sentinelPhase2Classes) > 0 && deps.brPath != "" {
+				hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
+			}
+
+			sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
+				ProjectDir:        deps.projectDir,
+				Now:               now,
+				HasReadyBeads:     hasReadyBeads,
+				HasUndeployedTail: hasUndeployedTail,
+			}, deps.governorCfg)
+
+			if raw, mErr := json.Marshal(sig); mErr == nil {
+				_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw)
+			}
+		}
 
 		// Step 3: dispatch source — queue-pull or br-ready fallback.
 		//

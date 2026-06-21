@@ -11,10 +11,23 @@ import (
 	"github.com/gregberns/harmonik/internal/supervise"
 )
 
+// socketDir creates a temp dir under /tmp with a short path so that Unix
+// socket files created inside it stay within macOS's 104-char sun_path limit.
+// t.TempDir() embeds the full test name and exceeds the limit on macOS.
+func socketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "hkwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // TestDaemonWatchdog_NoReviveWhenAlive verifies that when the daemon socket is
 // reachable, the watchdog does not attempt to spawn a revival process.
 func TestDaemonWatchdog_NoReviveWhenAlive(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := socketDir(t)
 	sockPath := filepath.Join(tmpDir, "daemon.sock")
 	markerPath := filepath.Join(tmpDir, "revived")
 
@@ -156,7 +169,7 @@ func TestDaemonWatchdog_StopsOnContextCancel(t *testing.T) {
 //
 // The revival command appends a line to a counter file; we count lines at end.
 func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := socketDir(t)
 	sockPath := filepath.Join(tmpDir, "daemon.sock")
 	counterFile := filepath.Join(tmpDir, "revive-count")
 
@@ -254,7 +267,7 @@ func TestDaemonWatchdog_ReviveCounterResets(t *testing.T) {
 // 15ms, < ReviveWindow 250ms) → socket binds → pollUntilAlive resets counter.
 // Test asserts the revival command ran exactly once.
 func TestDaemonWatchdog_PhantomReviveGuard(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := socketDir(t)
 	sockPath := filepath.Join(tmpDir, "daemon.sock")
 	counterFile := filepath.Join(tmpDir, "revive-count")
 

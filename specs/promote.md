@@ -64,6 +64,7 @@ with a live daemon (it works in a temp git worktree, never the live main tree).
 |---|---|---|
 | `--project <dir>` | cwd / `$HARMONIK_PROJECT` | Project root |
 | `--target <branch>` | `branching.yaml` `lands_on`, else `main` | Target branch |
+| `--bead <id>` | — | Bead ID to stamp as `Harmonik-Bead-ID` trailer on cherry-picked commits; enables `harmonik reconcile` auto-close of the salvaged bead. If absent, promote auto-detects from the source commit subject's `(hk-xxx)` parenthetical. |
 | `--pr` | — | PR-mode; mutually exclusive with positional SHA args |
 | `--from <branch>` | `integration` | PR-mode: head branch |
 | `--title <text>` | — | PR-mode: passthrough to `gh pr create` |
@@ -99,6 +100,14 @@ multi-agent box where the daemon may be mid-merge).
 3. For each `<sha>` in argument order: `git cherry-pick -x <sha>`. The `-x` flag
    records provenance in the commit message, matching the manual bypass-SOP. On
    conflict or error: `git cherry-pick --abort`, remove the temp worktree, exit 2.
+   - **3a. Stamp bead trailer**: after each successful cherry-pick, resolve the
+     bead ID — `--bead <id>` if provided, else auto-detect from the source
+     commit subject's `(hk-xxx)` parenthetical. If a bead ID is found, run
+     `git commit --amend --no-edit --trailer "Harmonik-Bead-ID: <id>"`.
+     This trailer is what `harmonik reconcile` and the daemon orphan sweep use to
+     detect subsumed beads (Cat 3c auto-close). Without it, a salvaged bead stays
+     `in_progress` forever. The amend failure is non-fatal — push proceeds with a
+     warning, but `harmonik reconcile` will not be able to auto-close the bead.
 4. **Build gate**: if `go.mod` is present in the temp worktree:
    - `go build ./...`
    - `go vet ./...`

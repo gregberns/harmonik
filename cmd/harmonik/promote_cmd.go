@@ -38,10 +38,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/branching"
 )
+
+// beadIDInSubjectRE matches a harmonik bead ID parenthetical anywhere in a
+// commit subject, e.g. "(hk-abc123)".  Used to auto-detect the bead ID from
+// the source commit when --bead is not explicitly provided.
+var beadIDInSubjectRE = regexp.MustCompile(`\((hk-[a-z0-9]+)\)`)
+
+// extractBeadIDFromSubject returns the last bead ID found in subject as
+// "(hk-xxx)", or "" if none is present.
+func extractBeadIDFromSubject(subject string) string {
+	matches := beadIDInSubjectRE.FindAllStringSubmatch(subject, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[len(matches)-1][1]
+}
 
 const promoteUsage = `harmonik promote — promote work toward the target branch
 
@@ -52,6 +68,8 @@ USAGE
 FLAGS
   --project <dir>     Project root (default: cwd or $HARMONIK_PROJECT)
   --target <branch>   Target branch (default: branching.yaml lands_on, else "main")
+  --bead <id>         Bead ID to stamp as Harmonik-Bead-ID trailer on cherry-picked commits
+                      (enables reconcile auto-close; auto-detected from subject "(hk-xxx)" if absent)
   --pr                PR-mode; mutually exclusive with positional SHA arguments
   --from <branch>     PR-mode: head branch for the PR (default: "integration")
   --title <text>      PR-mode: PR title (passthrough to gh pr create)
@@ -161,6 +179,7 @@ func runPromoteSubcommand(subArgs []string) int {
 type promoteConfig struct {
 	projectDir      string
 	target          string
+	beadID          string // optional: stamp Harmonik-Bead-ID trailer on cherry-picked commits
 	prMode          bool
 	from            string
 	title           string
@@ -188,6 +207,11 @@ func parsePromoteFlags(args []string) (promoteConfig, error) {
 			cfg.target = args[i]
 		case strings.HasPrefix(arg, "--target="):
 			cfg.target = strings.TrimPrefix(arg, "--target=")
+		case arg == "--bead" && i+1 < len(args):
+			i++
+			cfg.beadID = args[i]
+		case strings.HasPrefix(arg, "--bead="):
+			cfg.beadID = strings.TrimPrefix(arg, "--bead=")
 		case arg == "--pr":
 			cfg.prMode = true
 		case arg == "--from" && i+1 < len(args):
@@ -242,6 +266,11 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 	if cfg.dryRun {
 		fmt.Printf("harmonik promote (dry-run): would cherry-pick %s onto %q in a temp worktree\n",
 			strings.Join(cfg.shas, " "), target)
+		if cfg.beadID != "" {
+			fmt.Printf("harmonik promote (dry-run): would stamp Harmonik-Bead-ID: %s trailer on cherry-picked commit(s)\n", cfg.beadID)
+		} else {
+			fmt.Printf("harmonik promote (dry-run): would auto-detect bead ID from commit subject (hk-xxx) and stamp Harmonik-Bead-ID trailer if found\n")
+		}
 		fmt.Printf("harmonik promote (dry-run): would run: go build ./... && go vet ./...\n")
 		fmt.Printf("harmonik promote (dry-run): would push: git push origin HEAD:%s (with up to %d non-ff retries)\n",
 			target, maxPromotePushAttempts)
@@ -299,6 +328,32 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 			_ = abortCmd.Run()
 			fmt.Fprintf(os.Stderr, "harmonik promote: cherry-pick %s failed (conflict or error):\n%s\n", sha, cpOut)
 			return 2
+		}
+
+		// Step 3a: stamp Harmonik-Bead-ID trailer so 'harmonik reconcile' can
+		// auto-close the salvaged bead.  Without this trailer the cherry-picked
+		// commit is a plain commit that reconcile.go:GitMergeCommitScanner cannot
+		// match, leaving the bead stranded in_progress forever (hk-53p3).
+		beadID := cfg.beadID
+		if beadID == "" {
+			// Auto-detect from the source commit's subject "(hk-xxx)" parenthetical.
+			subjectCmd := exec.CommandContext(ctx, "git", "-C", projectDir, "log", "-1", "--format=%s", sha)
+			if subjectOut, subjectErr := subjectCmd.Output(); subjectErr == nil {
+				beadID = extractBeadIDFromSubject(strings.TrimSpace(string(subjectOut)))
+			}
+		}
+		if beadID != "" {
+			amendCmd := exec.CommandContext(ctx, "git", "commit", "--amend", "--no-edit",
+				"--trailer", "Harmonik-Bead-ID: "+beadID)
+			amendCmd.Dir = tmpDir
+			if amendOut, amendErr := amendCmd.CombinedOutput(); amendErr != nil {
+				// Non-fatal: push proceeds; warn that reconcile auto-close will not work.
+				fmt.Fprintf(os.Stderr,
+					"harmonik promote: warning: failed to stamp Harmonik-Bead-ID: %s trailer on cherry-pick of %s: %v\n%s\n",
+					beadID, sha, amendErr, amendOut)
+			} else {
+				fmt.Fprintf(os.Stderr, "harmonik promote: stamped Harmonik-Bead-ID: %s trailer on cherry-pick of %s\n", beadID, sha)
+			}
 		}
 	}
 

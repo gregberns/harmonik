@@ -70,9 +70,37 @@
           }
         ],
         "matcher": ""
+      },
+      {
+        "hooks": [
+          {
+            "args": [
+              "hook-relay",
+              "Notification"
+            ],
+            "command": "/Users/gb/go/bin/harmonik",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
       }
     ],
     "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "args": [
+              "hook-relay",
+              "SessionEnd"
+            ],
+            "command": "/Users/gb/go/bin/harmonik",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      },
       {
         "hooks": [
           {
@@ -214,6 +242,20 @@
           }
         ],
         "matcher": ""
+      },
+      {
+        "hooks": [
+          {
+            "args": [
+              "hook-relay",
+              "SessionStart"
+            ],
+            "command": "/Users/gb/go/bin/harmonik",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
       }
     ],
     "Stop": [
@@ -286,9 +328,37 @@
           }
         ],
         "matcher": ""
+      },
+      {
+        "hooks": [
+          {
+            "args": [
+              "hook-relay",
+              "Stop"
+            ],
+            "command": "/Users/gb/go/bin/harmonik",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
       }
     ],
     "StopFailure": [
+      {
+        "hooks": [
+          {
+            "args": [
+              "hook-relay",
+              "StopFailure"
+            ],
+            "command": "/Users/gb/go/bin/harmonik",
+            "timeout": 30,
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      },
       {
         "hooks": [
           {

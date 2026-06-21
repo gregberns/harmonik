@@ -20,6 +20,26 @@ import (
 	"testing"
 )
 
+// gitRevParse returns the SHA of the given ref in dir.
+func gitRevParse(t *testing.T, dir, ref string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "rev-parse", ref).Output() //nolint:gosec
+	if err != nil {
+		t.Fatalf("git rev-parse %s in %s: %v", ref, dir, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// gitLogBody returns the full commit message body of the tip of ref in dir.
+func gitLogBody(t *testing.T, dir, ref string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "log", "-1", "--format=%B", ref).Output() //nolint:gosec
+	if err != nil {
+		t.Fatalf("git log -1 %s in %s: %v", ref, dir, err)
+	}
+	return string(out)
+}
+
 // setupPromoteRepo creates a minimal git repo with a remote that has a "main"
 // branch. It returns the repo root (the "local" clone) and a cleanup function.
 func setupPromoteRepo(t *testing.T) (string, func()) {
@@ -251,4 +271,138 @@ defaults:
 			t.Errorf("expected exit 0 for dry-run with default target main, got %d", rc)
 		}
 	})
+}
+
+// ---- (e) extractBeadIDFromSubject unit tests ----
+
+// TestExtractBeadIDFromSubject verifies the bead-ID auto-detection helper.
+func TestExtractBeadIDFromSubject(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		subject string
+		want    string
+	}{
+		{"fix: patch the thing (hk-abc123)", "hk-abc123"},
+		{"chore: cleanup (hk-z99)", "hk-z99"},
+		{"no bead id here", ""},
+		{"multiple (hk-aaa) and (hk-bbb)", "hk-bbb"}, // last match wins
+		{"(hk-53p3)", "hk-53p3"},
+		{"unrelated (foo-bar)", ""},
+	}
+
+	for _, tc := range cases {
+		got := extractBeadIDFromSubject(tc.subject)
+		if got != tc.want {
+			t.Errorf("extractBeadIDFromSubject(%q) = %q, want %q", tc.subject, got, tc.want)
+		}
+	}
+}
+
+// ---- (f) push-mode Harmonik-Bead-ID trailer stamping ----
+
+// setupCommitOnBranch creates a new branch off local main, adds a file, and
+// commits with the given message.  Returns the commit SHA.
+func setupCommitOnBranch(t *testing.T, repoRoot, branch, commitMsg string) string {
+	t.Helper()
+	runGit(t, repoRoot, "checkout", "-b", branch)
+	writeFile(t, repoRoot, branch+".go", "package main\n// "+branch+"\n")
+	runGit(t, repoRoot, "add", branch+".go")
+	runGitWithEnv(t, repoRoot, nil, "commit", "-m", commitMsg)
+	sha := gitRevParse(t, repoRoot, "HEAD")
+	runGit(t, repoRoot, "checkout", "main")
+	return sha
+}
+
+// TestPromotePushModeStampsBeadIDTrailerExplicit verifies that when --bead is
+// provided, the cherry-picked commit on the target branch carries a
+// Harmonik-Bead-ID trailer that harmonik reconcile can match.
+func TestPromotePushModeStampsBeadIDTrailerExplicit(t *testing.T) {
+	repoRoot, cleanup := setupPromoteRepo(t)
+	defer cleanup()
+
+	sha := setupCommitOnBranch(t, repoRoot, "task-explicit", "fix: explicit bead stamp (hk-testexplicit)")
+
+	// Promote with an explicit --bead flag.
+	args := []string{"--project", repoRoot, "--bead", "hk-testexplicit", sha}
+	rc := runPromoteSubcommand(args)
+	if rc != 0 {
+		t.Fatalf("harmonik promote --bead: expected exit 0, got %d", rc)
+	}
+
+	// The pushed origin/main tip must carry the Harmonik-Bead-ID trailer.
+	runGit(t, repoRoot, "fetch", "origin", "main")
+	msg := gitLogBody(t, repoRoot, "origin/main")
+	const want = "Harmonik-Bead-ID: hk-testexplicit"
+	if !strings.Contains(msg, want) {
+		t.Errorf("expected %q in commit message after promote --bead, got:\n%s", want, msg)
+	}
+}
+
+// TestPromotePushModeStampsBeadIDTrailerAutoDetect verifies that when --bead is
+// absent, promote auto-detects the bead ID from the source commit subject's
+// "(hk-xxx)" parenthetical and stamps it as a trailer.
+func TestPromotePushModeStampsBeadIDTrailerAutoDetect(t *testing.T) {
+	repoRoot, cleanup := setupPromoteRepo(t)
+	defer cleanup()
+
+	sha := setupCommitOnBranch(t, repoRoot, "task-autodetect", "fix: auto-detect bead stamp (hk-testauto)")
+
+	// Promote without --bead; auto-detection should extract hk-testauto.
+	args := []string{"--project", repoRoot, sha}
+	rc := runPromoteSubcommand(args)
+	if rc != 0 {
+		t.Fatalf("harmonik promote (auto-detect): expected exit 0, got %d", rc)
+	}
+
+	runGit(t, repoRoot, "fetch", "origin", "main")
+	msg := gitLogBody(t, repoRoot, "origin/main")
+	const want = "Harmonik-Bead-ID: hk-testauto"
+	if !strings.Contains(msg, want) {
+		t.Errorf("expected %q in commit message after promote (auto-detect), got:\n%s", want, msg)
+	}
+}
+
+// TestPromotePushModeNoTrailerWhenNoBeadID verifies that promote does not stamp
+// a Harmonik-Bead-ID trailer when neither --bead nor a "(hk-xxx)" pattern is
+// present in the subject.  The commit should still land; only the trailer is absent.
+func TestPromotePushModeNoTrailerWhenNoBeadID(t *testing.T) {
+	repoRoot, cleanup := setupPromoteRepo(t)
+	defer cleanup()
+
+	sha := setupCommitOnBranch(t, repoRoot, "task-nobead", "fix: no bead in subject")
+
+	args := []string{"--project", repoRoot, sha}
+	rc := runPromoteSubcommand(args)
+	if rc != 0 {
+		t.Fatalf("harmonik promote (no bead): expected exit 0, got %d", rc)
+	}
+
+	runGit(t, repoRoot, "fetch", "origin", "main")
+	msg := gitLogBody(t, repoRoot, "origin/main")
+	if strings.Contains(msg, "Harmonik-Bead-ID:") {
+		t.Errorf("expected no Harmonik-Bead-ID trailer when no bead ID is detectable, got:\n%s", msg)
+	}
+}
+
+// TestPromoteParseFlagsBead verifies --bead flag parsing.
+func TestPromoteParseFlagsBead(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := parsePromoteFlags([]string{"--bead", "hk-abc123", "deadbeef"})
+	if err != nil {
+		t.Fatalf("parsePromoteFlags: %v", err)
+	}
+	if cfg.beadID != "hk-abc123" {
+		t.Errorf("expected beadID %q, got %q", "hk-abc123", cfg.beadID)
+	}
+
+	// = form
+	cfg2, err2 := parsePromoteFlags([]string{"--bead=hk-xyz", "deadbeef"})
+	if err2 != nil {
+		t.Fatalf("parsePromoteFlags: %v", err2)
+	}
+	if cfg2.beadID != "hk-xyz" {
+		t.Errorf("expected beadID %q, got %q", "hk-xyz", cfg2.beadID)
+	}
 }

@@ -77,6 +77,10 @@ func runCaptainRespawnTmux(cmd *exec.Cmd) ([]byte, error) { return cmd.Output() 
 // rcPrefix (hk-igpg) folds the per-project prefix into the --remote-control LABEL
 // via daemon.JoinRemoteControlName so the respawned session keeps the SAME picker
 // label the launcher used (resume parity). Empty prefix ⇒ bare name.
+//
+// Assumes daemon.remote_control_prefix is stable across launch→respawn; if an
+// operator edits it between launch and a native 'harmonik captain respawn' call,
+// the picker label will diverge from the one produced at launch time.
 func buildCaptainRespawnWindowCmd(name, tmuxTarget, sessionID, rcPrefix string) *exec.Cmd {
 	return exec.Command(
 		"tmux", "respawn-window", "-k",

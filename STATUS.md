@@ -2,7 +2,9 @@
 
 > **[HANDOFF.md](HANDOFF.md) is the per-session authoritative source for current state and next steps.** This file is a higher-level structural summary. Sections below labelled "*(historical)*" are preserved for reference.
 >
-> Last updated: 2026-06-10 — **Captain & Crew system fully landed** (15/15 tasks, `57c6fd94`). Persistent daemon model operational. Session-keeper mechanism complete; testing is the priority lane. Named-queues parked (superseded). Validation-net CORE landed. See [.harmonik/context/captain-lanes.md](.harmonik/context/captain-lanes.md) for the live initiatives board.
+> Last updated: 2026-06-20 — **Nine initiatives landed in a single-day burst** (keeper redesign, captain economy, doc/instruction audit, easy-start launchers, tmux session organization, RC session prefix, fleet sleep/wake Phase 0, remote-node telemetry, remote-substrate e2e proof). The project is now entering a **live-validation / testing phase**: most of the burst shipped as code but has not been exercised live. See "Recently completed (2026-06-20 burst)" below and [.harmonik/context/captain-lanes.md](.harmonik/context/captain-lanes.md) for the live initiatives board.
+>
+> Previously: 2026-06-10 — **Captain & Crew system fully landed** (15/15 tasks, `57c6fd94`). Persistent daemon model operational. Session-keeper mechanism complete. Named-queues parked (superseded). Validation-net CORE landed.
 >
 > Previously: 2026-05-06 — **Phase 0 closed.** 11 reviewed specs (~562 req IDs); 905 live beads in `<repo>/.beads/` with 3,589 edges, zero cycles; 376 beads carry `scope:bootstrap` (348 spec-corpus + 28 meta-epic); discipline at v0.12 (12 versions, 16 class-lane findings absorbed). Readiness gaps closed in beads: build/test scaffolding (`hk-pvcs`), twin-binary scaffolding (`hk-ahvq.48`), operational skills (`hk-jhob`), Phase-1 validation (`hk-kle6`), no-op PolicyEngine (`hk-b3f.89`). Parked-state lifecycle withdrawn per user 2026-05-05; loaded beads transition directly to dispatchable. Phase-1 starting point: `hk-pvcs` 8-bead local-scaffolding epic.
 
@@ -10,17 +12,31 @@
 
 A composable agentic orchestration system. Core principle: **deterministic skeleton, probabilistic organs**. See [AGENT_INDEX.md](AGENT_INDEX.md) for the full map.
 
-## Current Phase (2026-06-10)
+## Current Phase (2026-06-20)
 
-**Phase 1 operational.** Harmonik runs Claude end-to-end on a bead with zero human input (smoke v13 GREEN, 2026-05-14). The daemon runs as a persistent background process; agents dispatch work via `harmonik queue submit`. Review-loop is on by default.
+**Phase 1 operational, entering live-validation.** Harmonik runs Claude end-to-end on a bead with zero human input (smoke v13 GREEN, 2026-05-14). The daemon runs as a persistent background process; agents dispatch work via `harmonik queue submit`. Review-loop is on by default.
 
-### Active work lanes
+### Active work / priority lane
+
+**Live validation of the 2026-06-20 burst.** The nine initiatives below shipped as code, but most were never exercised live — testing the system means turning them on. The critical-path blocker is the **remote-substrate end-to-end run**: the DOT remote path still never receives `agent_ready` (`hk-538l`, P1), which gates the remote-substrate validation lane and everything downstream (remote-node telemetry has zero live data, fleet auto-sleep round-trip is unobserved). Stand up `hk-538l` first.
 
 For live lanes (lane → crew → queue → epic), see [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md).
 
-### Recently completed
+### Recently completed (2026-06-20 burst)
 
-For the running progress log / milestones, see [ROADMAP.md](ROADMAP.md).
+Nine initiatives landed in ~18 hours (135 commits). One plain-English line each; full reconciliation in [plans/2026-06-20-state-reassessment-and-doc-sync/README.md](plans/2026-06-20-state-reassessment-and-doc-sync/README.md).
+
+- **Keeper redesign** — per-project config, zero hardcoded thresholds, actionable-warn self-restart handshake, hold/release co-working override, configurable hard-ceiling backstop, durable tmux↔session-id identity (epic `hk-gffc` + keeper config work).
+- **Captain economy** — slimmed captain boot (~81k→~55-60k tokens), Sonnet ops-monitor offload, comms `--wake` fix, per-crew `--model` (epic `hk-unjy`).
+- **Doc & instruction audit** — three-kinds tracking model (docs / behavioral-contracts=skills incl. the new `orchestrator-rules` skill / operational-state tiers), AGENTS.md→router, new `harmonik sync-assets` + supervisor skew-notify (epic `hk-vk7b`).
+- **Easy-start launchers** — native Go `harmonik start captain|crew <name>`; bash `captain-launch.sh` retired; `captain respawn` self-heal; shared `agentlaunch` helper (`codename:easy-start`).
+- **Tmux session organization** — unified `harmonik-<hash>-*` namespace, agent+keeper window-nesting, window-granular restart, `supervise reap` (epic `hk-0v9e`).
+- **Remote-control session prefix** — per-project RC session-label prefix (`hk-captain`); core landed, 4 tail beads open (epic `hk-dhe6`).
+- **Fleet sleep/wake (fleet-state Phase 0)** — sleep markers with source+level, fail-closed IsSleeping, live wake-pane resolution, boot reconcile of orphaned markers, ctx-watchdog skips parked sessions (`codename:fleet-state`).
+- **Remote-node telemetry** — worker-report resource snapshots + problem flags (P1) and live resource-breach detection (P2); off-by-default, never live-run (`worker-report` / `worker-breach`).
+- **Remote-substrate e2e** — SSHRunner quote fix, substrate-runner threading, agent_ready TCP loopback, SSH-direct branch fetch; proof committed on gb-mbp but not yet live-validated under the daemon (`hk-620j` / `hk-7bwx` / `hk-538l`).
+
+For the running progress log / earlier milestones, see [ROADMAP.md](ROADMAP.md).
 
 ### Named queues — parked
 

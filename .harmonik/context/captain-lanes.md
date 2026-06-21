@@ -9,35 +9,89 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
-## active_lanes  (as of 2026-06-18 ~21:25 UTC — LEAN park, operator away)
+## active_lanes  (as of 2026-06-20 — re-derived after the 2026-06-20 nine-initiative burst, 135 commits)
+
+# This re-derive reflects the 2026-06-20 burst (biggest single-day landing in the project).
+# Source synthesis: plans/2026-06-20-state-reassessment-and-doc-sync/README.md.
+# Next phase is TESTING / live-validation — most 2026-06-20 work shipped as code but was NEVER exercised live.
 
 | crew | epic_id | epic_title (plain English) | queue | model |
 |---|---|---|---|---|
-| _(none — 0-crew lean park)_ | — | — | — | — |
+| _(none — 0-crew lean park; ready to stand up for the testing phase)_ | — | — | — | — |
 
-- **logmine STOOD DOWN 2026-06-18 ~21:25 UTC** (autonomous, §0): harvest COMPLETE this cycle (logmine-q 0 pending, hk-gu3v salvaged), crew was idle + context filling (~187.5k, no crew-keeper auto-clear on this deploy per hk-tt9q) → teardown honors hk-rl4b token-burn + hk-ev9e (auto-teardown-after-daily-run intent). **No work lost** — durable mission file `.harmonik/crew/missions/logmine.md` + `br show hk-mhmaw --assignee` mirror → `harmonik crew start logmine --queue logmine-q --mission .harmonik/crew/missions/logmine.md` re-hydrates next cycle / on operator return. Fleet now = daemon + captain + supervisor (minimal burn).
+- **Fleet currently = daemon + captain + supervisor (minimal burn).** No crews up. The 2026-06-20 burst landed via worktree agents + daemon; the immediate next move is the live-validation lanes below, not new feature crews.
 
-## Epics in progress
+## Recently CLOSED / COMPLETED (2026-06-20 burst)
 
-Live initiative/epic roster (absorbs STATUS.md "Active work lanes"). Verify status against `kerf next` / `br show <epic>` at boot — these are cached claims.
+These epics are fully landed — moved out of the in-progress table. Verify against `br show <epic>` only if a regression is suspected.
 
-| Initiative | Epic | Status |
+| Initiative (plain English) | Epic / codename | Status |
 |---|---|---|
-| keeper-redesign | `hk-gffc` | ✅ substantively DONE (keystones landed Jun16-18). Remaining is operator-gated: hk-34ac (re-scope), hk-gfpd (.sid-deploy call), hk-nlio (stranded-open, needs close) |
-| Fleet sleep/wake | `hk-rl4b` | ⛔ not built — quiesce idle LLM-session token burn when operator away + work drained; genuine-drain guard required. Drives the LEAN posture. assignee=paul (crew not up) |
-| leanfleet (fleet token-efficiency) | `hk-itoc` | 🟡 not staffed — restart-earlier, model-tiering, noise-cut |
-| token-burn analysis | `hk-bsdr` | 🟡 not staffed (P1) |
-| remote-substrate phase-1 | `hk-rs-phase1` | 🟡 not staffed (P1) — enables 2nd machine / scale-out; e2e needs gb-mbp worker |
-| flywheel v1 — positive/negative loops | `hk-0oca` (+ `codename:flywheel`) | 🟡 built-but-UNWIRED — 9 components landed on `main` but `sentinel.Evaluate()` has 0 daemon callers; 26 completion beads OPEN (keystone FW1 `hk-y9fn` → FW2 `hk-z1lr`). Roadmap + live status: `.kerf/works/flywheel-motion/06-completion-plan.md`. ⛔ dispatch blocked 2026-06-20 on remote-worker (gb-mbp) routing — every bead instant-fails `no_commit` |
-| codex soak | `hk-0639` | ⛔ PAUSED (operator 2026-06-19) |
-| Auto test/CI restoration | `hk-kjkbw` | 🟡 near-done (~26/27 beads closed) |
-| remote-node telemetry (worker-report + worker-breach) | `codename:worker-report` / `codename:worker-breach` | ✅ Phase 1 (reporting) + Phase 2 (live breach alerts) COMPLETE & on main (`df89cbe8`→`24ae1aef`, 9 beads). Off-by-default; **never live-run** (gb-mbp `enabled:false`). Phase 3 (node agent + data-driven autoscale) PARKED — resume only after the remote e2e is green + a live-validation window. Pickup checklist: `plans/2026-06-20-remote-node-telemetry-autoscale/00-overview.md` |
+| keeper-redesign — per-project config, zero hardcoded thresholds, actionable-warn self-restart handshake, hold/release co-working override, configurable hard-ceiling backstop, durable tmux↔session-id identity | `hk-gffc` | ✅ COMPLETE — ALL remaining beads landed (the earlier "operator-gated remaining" claim is stale; zero open) |
+| captain-economy — slim captain boot (~81k→~55-60k tokens), Sonnet ops-monitor offload, comms `--wake` fix, per-crew `--model` | `hk-unjy` (CE1/CE4/CE5/CE6) | ✅ COMPLETE |
+| tmux-session-organization — unified `harmonik-<hash>-*` namespace, agent+keeper window-nesting, window-granular restart, `supervise reap` | `hk-0v9e` | ✅ COMPLETE |
+| doc-instruction-audit — three-kinds model (docs / skills incl. new `orchestrator-rules` / state tiers), AGENTS.md→router, new `harmonik sync-assets` + supervisor skew-notify | `hk-vk7b` | ✅ COMPLETE (Phase A+B); deferred follow-up `hk-fozq` (P3 supervisor auto-apply) |
+| easy-start native launchers — native Go `harmonik start captain\|crew <name>`; bash `captain-launch.sh` retired; `captain respawn` self-heal; shared `agentlaunch` helper | `hk-kbjl`/`hk-bcd0`/`hk-sn4n`/`hk-z1rj` | ✅ CORE SHIPPED — integration paths (tmux-takes-effect, live `/clear`-injection) untested; see live-validation lane |
+| remote-control session prefix — per-project RC session-label prefix (`hk-captain`) | `bf7d51f8` | ✅ CORE LANDED — 4 tail beads still open: `hk-dhe6` (epic), `hk-w8ex` (CLI parity test), `hk-25bg` (live 2-project validation), `hk-f4w7` (migration prompt) |
+
+## LIVE FLEET STATE (snapshot 2026-06-20 ~22:30 — verify at boot)
+
+> **Daemon is UP but WEDGED — clear before staffing crews.**
+> - Main queue is `paused-by-failure` on `hk-tagp` (old remote e2e). Submit fresh named queues per lane; do NOT resume main.
+> - Disk at **90% (≈19 GiB free; daemon paused dispatch at 2.5 GiB earlier and self-GC'd)**. `.claude/worktrees` = 3.1 GiB across **88 registered git worktrees** — worktree GC (lane L2) is a real prerequisite for reliable spawns.
+> - Daemon's `br show` is erroring (exit 3) on a batch of beads — daemon-side; `br` from repo root is healthy (86 ready).
+>
+> **Other agents working NOW (coordinate, do NOT collide):**
+> - **keeper polish** — an agent has uncommitted edits to `cmd/harmonik/captain.go` + `keeper_enable_doctor_cmd.go` and just landed the keeper "no-defaults" commit. → overlaps lanes **L7, L9**.
+> - **remote-substrate e2e + disk firefighting** — the "chani" session owns the running daemon. → owns lane **L3** entirely; shares the daemon with **L1/L2** (merge/GC timing).
+
+## Dispatch-ready lanes — captain → crew staffing (re-verified 2026-06-20)
+
+One crew per lane (file-disjoint). Buckets: TEST=live-validate shipped code · BUILD=new code · BUGFIX · HYGIENE. Verify IDs at boot.
+
+| # | Lane (plain English) | Bucket | Value | Epic / key beads | Ready? | Overlap |
+|---|---|---|---|---|---|---|
+| **L1** | **Daemon-reliability bugfixes** — kill the false-positives/strands that corrupt the orchestration signal | BUGFIX | **HIGH** | epic `hk-sfvc`; `hk-sj6a` (DOT review-phase freezes ~40m, no self-recover), `hk-53p3` (promote strands bead in_progress), `hk-ijtw` (review-gate false-pos sticks forever), `hk-gu3v` (crew-stale false-pos on active agent), `hk-vx1i`≡`hk-5zmz` (no_progress false-fire — DEDUP), `hk-g9zz` (rebase aborts on dirty worktree), `hk-guez` (cache-reaper races merge-build) | ✅ | merge-timing w/ chani |
+| **L2** | **Disk / worktree GC** — reclaim space; 88 worktrees, 90% disk | HYGIENE | **HIGH** | `hk-ldzp` | ✅ | ⚠️ chani owns daemon — coordinate so GC doesn't race in-flight runs |
+| **L3** | **Remote-substrate e2e proofs** — live-prove the remote path end-to-end | TEST | **HIGH** | `hk-4lrj` (DOT triple-review remote run lands on main — the only unproven variant), `hk-tagp`/`hk-h106` (agent_ready-over-tunnel proofs), 6× worktree-create proofs (`hk-icdz`/`3zij`/`d2z1`/`tzfw`/`xbpm`/`k0pz`), `hk-tyyy` (auto-scp binary), `hk-vjsv` (commit_gate stale-window loop) | ✅ | ⚠️ **IN-FLIGHT (chani)** — hand over / coordinate, don't re-staff |
+| **L4** | **Fleet-state model + ZFC wind-down** — demote drain-oracle to a fact-tool, decisions back to captain | BUILD | **HIGH** | epic `hk-up4b` (supersedes `hk-rl4b`); `hk-pfr4` (GatherDrainFacts), `hk-kj7d` (delete auto-park tick), `hk-zqb3` (veto-on-execute), `hk-9mdz` (spec reword); **P2 gated behind design keystone `hk-9fvk`** → then `hk-8lne` (spec), `hk-gv04`/`hk-jay1` (aggregator + context-into-state) | P1 ✅ / P2 blocked on `hk-9fvk` | none |
+| **L5** | **Flywheel wiring + validation** — wire `sentinel.Evaluate` into the tick, OBSERVE-only first, then staged ACT | BUILD+TEST | MED | epic `hk-0oca` (~28 beads); keystone `hk-y9fn` (FW1 config adapter) → FW2-6, AC1-5, BT1-6 tests, CD1-4 deploy, `hk-m8zqv` (4h soak) | ✅ keystone | none |
+| **L6** | **rc-prefix tail** — finish CLI test, migration prompt, live 2-project validation | TEST+BUILD | MED | epic `hk-dhe6`; `hk-w8ex`, `hk-25bg`, `hk-f4w7`, `hk-kqra` | ✅ | none |
+| **L7** | **Easy-start launcher validation** — integration tests + swap remaining doc examples to native | TEST | MED | epic `hk-q1ll`; `hk-dyqy` (doc swap) | ✅ | ⚠️ keeper tranche touches `captain.go` (in-flight keeper edits) |
+| **L8** | **Codex-harness soak** — exercise the Codex implementer + verify ChatGPT billing each run | TEST | MED | epic `hk-0639`; `hk-cr31`/`y3g5`/`84c2`/`4cop`/`ngnv` | ⛔ operator-PAUSED 2026-06-19 | none |
+| **L9** | **Crew keeper-gauge wiring** — wire the context gauge for crews on the live deploy | BUILD | MED | `hk-tt9q` | ✅ | ⚠️ keeper subsystem (in-flight) |
+| **L10** | **Kerf binding + triage hygiene** — wire bead_filters, then `triage --ack` to restore drift detection | HYGIENE | MED | 63 untriaged; ~22 unwired works; baseline ~397 behind | ✅ | none |
+| **L11** | **Doc-audit / security follow-ups** — close the tail; scrub plaintext API key | HYGIENE | LOW-MED | `hk-fozq` (asset-sync auto-apply); **P0: scrub any `*.env.txt` API key**; retention pruning | ✅ | none |
+| **L12** | **Flaky-test stabilization** — deterministic-sort digest; fix watchdog regression; CI timeouts | BUGFIX | LOW-MED | `hk-z8fp` (Manifest.Digest map-order), `hk-7m39` (3 `TestDaemonWatchdog_*` RED on main), `hk-963f` (Tier-3 CI timeouts) | ✅ | none |
+| **L13** | **leanfleet / token-burn efficiency** — restart-earlier, idle-restart, model-tiering | BUILD | LOW-MED | epic `hk-itoc`, `hk-bsdr` (analysis) | ✅ (research-heavy; partly superseded by L4) | none |
+| **L14** | **Tooling capture (passive)** — aggregate emergent tooling patterns | HYGIENE | LOW | `hk-nlhys` — **CAPTURE-ONLY, do NOT formalize/dispatch** | n/a | none |
+
+### START FIRST
+**L1 (daemon-reliability, `hk-sfvc`)** — highest leverage: every bead is a false-positive/strand that corrupts the signal the whole fleet runs on; fixing them makes every other lane's dispatch trustworthy. All ready, no operator decision, distinct from the two in-flight areas (it's `internal/daemon/dot*` + reconcile). Dedup `hk-vx1i`≡`hk-5zmz`; coordinate merge timing with chani.
+Runner-up: **L2 disk GC** — urgent (90% disk) but must coordinate with chani.
+
+### DO NOT DISPATCH YET
+- `hk-cyec` (fleet-state P4 desired-state reconcile loop) — operator HOLD.
+- **L4 P2 code** (`hk-gv04`/`hk-jay1`/`hk-8lne`) — blocked behind design keystone `hk-9fvk`; operator said "nail the model first."
+- `hk-1nwt` (paul ideation placeholder), `hk-nlhys` (L14) — capture-only / no-dispatch by design.
+- **L3 (remote-substrate)** & **L7/L9 (keeper)** — owned by in-flight agents; coordinate before staffing.
+- `hk-77x1` — Claude Code core RC regression, NOT harmonik-fixable; tracking note only.
+- `hk-tagp` / main queue — paused-by-failure; do NOT re-dispatch to main.
+
+### RESOLVED since last reassessment (do NOT re-open)
+- `hk-538l` (remote review-loop e2e `agent_ready`) — **CLOSED**, proven end-to-end (`15ca1eb3`); only the DOT-mode variant (`hk-4lrj`, in L3) remains.
+- `hk-5da7` / keeper `89852bb3` restart-now fix — **CLOSED on main** (`4128d760`). The earlier "unmerged, needs ACK verify + pct-vs-band operator decision" is RESOLVED; the active keeper-polish edits are separate follow-on work.
 
 ## Active operator directives (dated)
 
 > set: 2026-06-19 · expires: ~2026-06-22 (3-day scale-out push — re-confirm or expire after the window)
 > STANDING for EVERY captain across ALL restarts within the window. These OVERRIDE any
 > stale "lean park / one-at-a-time / operator away" posture in a handoff. On conflict, THESE win.
+>
+> NOTE (2026-06-20): a TESTING / live-validation phase is IMMINENT ("where are we at?"). Much of the
+> 2026-06-20 burst shipped as code but was never exercised live. Expect the scale-out directive to
+> yield to a live-validation posture when the operator opens that window (operator decision §3.1 of the
+> state-reassessment plan). Until then the scale-out directives below remain in force.
 
 - **set:2026-06-19 expires:~2026-06-22** — ONE-AT-A-TIME IS RETIRED. Run multiple lanes/crews in parallel (file-disjoint). The prior "work one item at a time" directive is NO LONGER in effect.
 - **set:2026-06-19 expires:~2026-06-22** — Scale OUT across many sessions over ~3 days. Lots of context budget is available, but do NOT run too much at once — stage lanes; don't blast the whole fleet up at once.
@@ -48,20 +102,15 @@ Live initiative/epic roster (absorbs STATUS.md "Active work lanes"). Verify stat
 - **set:2026-06-19 expires:~2026-06-22** — EVERY session (captain + crews + flywheel + watchdog) MUST stay under 300k tokens of context. The built-in keeper has reliability issues. Run an INDEPENDENT Sonnet context-watchdog: a 30-min loop that idles between ticks, checks every session's context, and FORCE-restarts any that exceed the cap.
 - **set:2026-06-19 expires:~2026-06-22** — Internet is FLAKY. The agent<->Anthropic API loop works, but other internet calls (WebFetch, gh, package downloads, SSH to the remote box) may fail. Propagate this caveat to EVERY crew, especially remote-substrate.
 
-## Lane staffing priority order (set 2026-06-19)
+> Staffing order is in the dispatch table above (START FIRST → L1, runner-up L2). The remaining
+> live-validation gaps (remote-node telemetry live-run, fleet auto-sleep round-trip, easy-start
+> integration tests) are folded into lanes L3/L4/L7. The "remote-substrate live-validation first"
+> ordering is RELAXED now that `hk-538l` is closed — L1 daemon-reliability leads.
 
-1. **remote-substrate** — FIRST, before anything else (enables the 2nd machine / scale-out)
-2. **daemon-reliability** — make the daemon truly reliable
-3. **token-usage / leanfleet** — move orchestration work off the captain onto a cheaper Sonnet agent
-4. **flywheel positive/negative** — finish planning, create impl beads, push to remote; enables long non-stop cycles
-5. then: keeper-limit reduction, logmine, churn (harah/gurney)
+## Operational caveats (still live)
 
-## parked
-
-- daemon-reliability lane (paul): **hk-sj6a (P1, reviewer-stall wedge — #1 reliability blocker)** + **hk-53p3 (P1, promote-close-path gap; reconcile can't close promote cherry-picks)** are the priority pair. Plus hk-30jd/v144/tnui (daemon bugs), hk-ldzp (disk GC). NOT staffed while operator away (token-burn directive). **RECOMMEND on operator return: stand up paul targeting hk-sj6a + hk-53p3 first.**
-- **STRANDED in_progress/open, pending hk-53p3 (do NOT raw `br close` — would reverse the locked beads-own-transitions decision):** hk-gu3v (fix on main, in_progress) + hk-nlio (prior promote-salvage, open). Both auto-close once hk-53p3 lands and `harmonik reconcile` runs.
-- hk-tagp / main queue: paused-by-failure; remote-substrate e2e needing gb-mbp worker. Do NOT re-dispatch to main.
-- hk-rty1 (P1): stranded in_progress one-liner (default→triple-review); needs split/reset to unstick.
+- **STRANDED in_progress/open, pending `hk-53p3`** (do NOT raw `br close` — would reverse the locked beads-own-transitions decision): `hk-gu3v` (fix on main, in_progress) + `hk-nlio` (prior promote-salvage, open). Both auto-close once `hk-53p3` lands and `harmonik reconcile` runs.
+- `hk-rty1` (P1): stranded in_progress one-liner (default→triple-review); needs split/reset to unstick.
 
 ## paused
 

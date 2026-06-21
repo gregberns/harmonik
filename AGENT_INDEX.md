@@ -141,6 +141,13 @@ Most recent entries:
 ## Plans
 - [docs/bootstrap.md](docs/bootstrap.md) -- Bootstrap and self-build plan (companion to G06)
 
+### Recent campaigns (2026-06-20 burst)
+- [plans/2026-06-20-state-reassessment-and-doc-sync/](plans/2026-06-20-state-reassessment-and-doc-sync/) -- Authoritative reconciliation of the nine-initiative single-day burst: what landed, the want-vs-got gap, live-validation blockers, operator decisions
+- [plans/2026-06-20-doc-instruction-audit/](plans/2026-06-20-doc-instruction-audit/) -- Three-kinds tracking model (docs / behavioral-contract skills / operational-state tiers), AGENTS.md→router, `harmonik sync-assets`
+- [plans/2026-06-20-tmux-session-organization/](plans/2026-06-20-tmux-session-organization/) -- Unified `harmonik-<hash>-*` namespace, window-nesting, window-granular restart, `supervise reap`
+- [plans/2026-06-20-fleet-sleep-wake-status-and-next/](plans/2026-06-20-fleet-sleep-wake-status-and-next/) -- Fleet-state Phase 0 sleep/wake markers, IsSleeping fail-closed, wake-pane resolution, orphan-marker reconcile
+- [plans/2026-06-20-remote-node-telemetry-autoscale/](plans/2026-06-20-remote-node-telemetry-autoscale/) -- Worker-report resource snapshots + breach detection (P1+P2 landed, off-by-default); Phase-3 autoscale deferred
+
 ## Progress & live state
 
 - **Roadmap, landed features, milestone log:** [ROADMAP.md](ROADMAP.md)
@@ -148,6 +155,7 @@ Most recent entries:
 
 ## Agent Skills (operating contracts)
 Booting into a specific role? Load its skill for the operating contract:
+- `.claude/skills/orchestrator-rules` -- **LOAD-BEARING standing-rules contract** for any orchestrator (captain, implementer-orchestrator, solo): the single canonical statement of dispatch discipline, kerf-first priority, bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, the monitor pattern, CWD discipline (never `cd` into a worktree), autonomy/flow boundaries, and the major-issue fan-out trigger. Loaded as a CONTRACT at captain STARTUP and by the implementer-orchestrator on `/session-resume`. Points to the detail-owner skills; does not duplicate them.
 - `.claude/skills/captain` -- captain session: boot runbook, lane organization, crew spawn/verify, surfaces
 - `.claude/skills/crew-launch` -- crew session: boot sequence, OWN-queue loop, progress feed, keeper re-hydration
 - `.claude/skills/keeper` -- per-session context-fill watcher (warn / handoff-clear-resume thresholds)

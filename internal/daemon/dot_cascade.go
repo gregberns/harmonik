@@ -368,8 +368,15 @@ func driveDotWorkflow(
 			case node.ToolCommand != "" && node.HandlerRef == "shell":
 				// Path 1: shell tool node — execute tool_command via the built-in
 				// in-process shell handler (WG-039 / HC-063). MAY run in-process;
-				// no subprocess/socket/NDJSON/agent_ready/heartbeat required.
-				toolOutcome, toolErr := dispatchDotToolNode(ctx, runner, wtPath, node, deps.handlerEnv)
+				// no subprocess/socket/NDJSON/agent_ready required. It DOES, however,
+				// require a daemon-emitted heartbeat: a long-running gate (the default
+				// commit_gate: go build/vet/test + scenario-gate, up to 900s) produces
+				// no NDJSON stream, so without an explicit heartbeat the stale watcher
+				// sees no event for the run for the gate's full duration and false-fires
+				// run_stale, re-dispatching the gate without killing the prior shell
+				// (hk-vjsv). dispatchDotToolNode now ticks agent_heartbeat for the run
+				// while the gate command runs (both local and remote paths).
+				toolOutcome, toolErr := dispatchDotToolNode(ctx, deps.bus, runID, runner, wtPath, node, deps.handlerEnv)
 				if toolErr != nil {
 					return dotWorkflowResult{
 						success:        false,
@@ -1589,7 +1596,19 @@ func readAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, wtP
 // on the worker (hk-230h). The cd anchors the gate at the worker's worktree the way
 // cmd.Dir does locally.
 // NFR7: the LOCAL (runner == nil) branch is byte-identical to the prior code.
-func dispatchDotToolNode(ctx context.Context, runner tmux.CommandRunner, wtPath string, node *dot.Node, env []string) (core.Outcome, error) {
+//
+// hk-vjsv: while the gate command runs, a daemon heartbeat goroutine emits
+// agent_heartbeat (run-scoped, via newDaemonHeartbeatEmitter) on HeartbeatInterval
+// so the stale watcher keeps seeing events for this run. A non-agentic shell gate
+// has no Claude handler session / NDJSON stream, so without this the run would
+// appear silent for the full gate duration (default commit_gate ~build+vet+test+
+// scenario, node timeout 900s, common to exceed the ~10-min stale window on a slow
+// or cold-cache worker), and the watcher would false-fire run_stale and re-dispatch
+// the gate without killing the prior shell. The goroutine ticks for BOTH the local
+// and remote command paths and is stopped via close(hbDone) the moment the command
+// returns, so it cannot leak. bus may be nil in unit tests that exercise the gate
+// in isolation; the heartbeat is simply skipped in that case.
+func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, runner tmux.CommandRunner, wtPath string, node *dot.Node, env []string) (core.Outcome, error) {
 	timeoutSecs := 300
 	if node.Timeout != "" {
 		if n, err := strconv.Atoi(node.Timeout); err == nil && n > 0 {
@@ -1599,6 +1618,20 @@ func dispatchDotToolNode(ctx context.Context, runner tmux.CommandRunner, wtPath 
 
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
+
+	// hk-vjsv: heartbeat the run for the lifetime of the gate command. Synthesize a
+	// session ID (no handler session exists for a shell node). RunHeartbeatLoop emits
+	// the first heartbeat immediately, then every HeartbeatInterval, until hbDone is
+	// closed (deferred below) or execCtx is cancelled. Bind the loop to execCtx so it
+	// also stops if the gate times out / the parent context is cancelled.
+	if bus != nil {
+		hbDone := make(chan struct{})
+		defer close(hbDone)
+		gateSessionID := string(handlercontract.NewSessionID())
+		go handler.RunHeartbeatLoop(execCtx, gateSessionID,
+			dotGateHeartbeatInterval, hbDone,
+			newDaemonHeartbeatEmitter(bus, runID))
+	}
 
 	var cmd *exec.Cmd
 	if runner == nil {
@@ -1666,6 +1699,27 @@ func dispatchDotToolNode(ctx context.Context, runner tmux.CommandRunner, wtPath 
 	}
 
 	// Parent context cancelled (operator stop / SIGKILL / ctx-cancel).
+	//
+	// hk-vjsv Fix (B) — gate-shell teardown on run re-dispatch / teardown:
+	//   LOCAL (runner == nil): the gate runs under exec.CommandContext(execCtx, …);
+	//   when the per-run context is cancelled (the run is torn down or re-dispatched
+	//   after run_stale), Go kills the local shell process automatically, so no
+	//   local gate shell leaks. Confirmed by the canceled-path test
+	//   (dot_cascade_tool_hkcucz6_test.go).
+	//
+	//   REMOTE (runner != nil, SSHRunner): exec.CommandContext kills only the LOCAL
+	//   `ssh` client on ctx-cancel; the remote `/bin/sh -lc '… go build/test …'`
+	//   process tree on the WORKER is orphaned (classic SSH no-PTY orphan), which is
+	//   the pile-up of concurrent full build+scenario runs the bug observed. Fix (A)
+	//   removes the ROOT trigger (run_stale no longer false-fires for a healthy
+	//   gate, so the run is not re-dispatched out from under a live gate), so this
+	//   residual only bites on a GENUINE teardown of a still-running remote gate.
+	//   TODO(hk-vjsv): make the remote gate killable — allocate a PTY (`ssh -tt`) so
+	//   the worker shell dies with the client, or run the gate inside a wrapper that
+	//   records its remote PID/PGID and have SSHRunner-aware teardown `ssh <host>
+	//   kill -TERM -<pgid>` on ctx-cancel. Threading this needs the same
+	//   runner/worker-session plumbing dispatchDotGateNode's cognition path is
+	//   already missing (see TODO(hk-538l) in dot_gate.go); do it once for both.
 	if ctx.Err() != nil {
 		fc := core.FailureClassCanceled
 		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
@@ -1682,6 +1736,14 @@ func dispatchDotToolNode(ctx context.Context, runner tmux.CommandRunner, wtPath 
 // is retained in Outcome.Notes / logged. Gate output (full `go build`/`go vet`/
 // test logs) can be large; the tail carries the actionable failure lines.
 const dotGateOutputTailBytes = 4096
+
+// dotGateHeartbeatInterval is the cadence at which dispatchDotToolNode emits
+// agent_heartbeat for the run while a non-agentic shell gate command executes
+// (hk-vjsv). Defaults to handler.HeartbeatInterval (300s), matching the agentic
+// DOT path. Declared as a var (not a const) so tests can shrink it to assert the
+// PERIODIC tick fires for a gate that outlives one interval — without waiting the
+// full 5 minutes. Production code never reassigns it.
+var dotGateHeartbeatInterval = handler.HeartbeatInterval
 
 // shellQuote wraps s in single quotes for safe interpolation into a remote
 // `/bin/sh -lc '<script>'` string, escaping any embedded single quotes via the

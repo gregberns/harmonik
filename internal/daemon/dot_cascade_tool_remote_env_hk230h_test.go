@@ -43,7 +43,7 @@ func TestDispatchDotToolNode_Remote_EnvVarAccessible(t *testing.T) {
 	rr := &tmux.RecordingRunner{} // nil CmdFunc → exec.CommandContext directly
 	handlerEnv := []string{"HARMONIK_PROJECT_HASH=remote-env-test-hash-hk230h"}
 	node := toolNode(`[ "$HARMONIK_PROJECT_HASH" = "remote-env-test-hash-hk230h" ]`, "")
-	outcome, err := dispatchDotToolNode(ctx, rr, t.TempDir(), node, handlerEnv)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, rr, t.TempDir(), node, handlerEnv)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestDispatchDotToolNode_Remote_MultipleEnvVarsAccessible(t *testing.T) {
 		`[ "$HARMONIK_PROJECT_HASH" = "hash-abc" ] && [ "$EXTRA_VAR" = "extra-value-xyz" ]`,
 		"",
 	)
-	outcome, err := dispatchDotToolNode(ctx, rr, t.TempDir(), node, handlerEnv)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, rr, t.TempDir(), node, handlerEnv)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestDispatchDotToolNode_Remote_EnvInlinedInArgv(t *testing.T) {
 	rr := &tmux.RecordingRunner{}
 	handlerEnv := []string{"FOO=bar", "BAZ=qux"}
 	node := toolNode("exit 0", "")
-	_, _ = dispatchDotToolNode(ctx, rr, t.TempDir(), node, handlerEnv)
+	_, _ = dispatchDotToolNode(ctx, nil, core.RunID{}, rr, t.TempDir(), node, handlerEnv)
 	if len(rr.Calls) == 0 {
 		t.Fatal("T2: no Command calls recorded by RecordingRunner")
 	}
@@ -111,7 +111,7 @@ func TestDispatchDotToolNode_Remote_EnvValueWithSingleQuote(t *testing.T) {
 	handlerEnv := []string{`MSG=it's a test`}
 	// The shell test: $MSG must equal exactly "it's a test"
 	node := toolNode(`[ "$MSG" = "it's a test" ]`, "")
-	outcome, err := dispatchDotToolNode(ctx, rr, t.TempDir(), node, handlerEnv)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, rr, t.TempDir(), node, handlerEnv)
 	if err != nil {
 		t.Fatalf("T3: unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestDispatchDotToolNode_Remote_ZeroEnvEntries(t *testing.T) {
 	rr := &tmux.RecordingRunner{}
 	node := toolNode("exit 0", "")
 	tmp := t.TempDir()
-	_, _ = dispatchDotToolNode(ctx, rr, tmp, node, nil)
+	_, _ = dispatchDotToolNode(ctx, nil, core.RunID{}, rr, tmp, node, nil)
 	if len(rr.Calls) == 0 {
 		t.Fatal("T4: no Command calls recorded")
 	}

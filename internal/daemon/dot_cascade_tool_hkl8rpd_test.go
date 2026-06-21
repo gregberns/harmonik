@@ -33,7 +33,7 @@ func toolNode(cmd, timeout string) *dot.Node {
 
 func TestDispatchDotToolNode_Exit0_SUCCESS(t *testing.T) {
 	ctx := context.Background()
-	outcome, err := dispatchDotToolNode(ctx, nil, t.TempDir(), toolNode("exit 0", ""), nil)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, nil, t.TempDir(), toolNode("exit 0", ""), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestDispatchDotToolNode_Exit0_SUCCESS(t *testing.T) {
 
 func TestDispatchDotToolNode_Exit3_Deterministic(t *testing.T) {
 	ctx := context.Background()
-	outcome, err := dispatchDotToolNode(ctx, nil, t.TempDir(), toolNode("exit 3", ""), nil)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, nil, t.TempDir(), toolNode("exit 3", ""), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestDispatchDotToolNode_TimeoutKill_Transient(t *testing.T) {
 	// Use a 1-second timeout; the command sleeps longer.
 	node := toolNode("sleep 60", "1")
 	start := time.Now()
-	outcome, err := dispatchDotToolNode(ctx, nil, t.TempDir(), node, nil)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, nil, t.TempDir(), node, nil)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -96,7 +96,7 @@ func TestDispatchDotToolNode_CtxCancel_Canceled(t *testing.T) {
 		err     error
 	}, 1)
 	go func() {
-		o, e := dispatchDotToolNode(ctx, nil, t.TempDir(), node, nil)
+		o, e := dispatchDotToolNode(ctx, nil, core.RunID{}, nil, t.TempDir(), node, nil)
 		done <- struct {
 			outcome core.Outcome
 			err     error
@@ -126,7 +126,7 @@ func TestDispatchDotToolNode_WorkingDir(t *testing.T) {
 	// Confirm cwd is set to wtPath: the command writes a file there, and we check it.
 	tmp := t.TempDir()
 	ctx := context.Background()
-	outcome, err := dispatchDotToolNode(ctx, nil, tmp, toolNode("touch marker.txt", ""), nil)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, nil, tmp, toolNode("touch marker.txt", ""), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestDispatchDotToolNode_WorkingDir(t *testing.T) {
 func TestDispatchDotToolNode_DefaultTimeout(t *testing.T) {
 	// Omit timeout field → default 300s. Command exits immediately.
 	ctx := context.Background()
-	outcome, err := dispatchDotToolNode(ctx, nil, t.TempDir(), toolNode("exit 0", ""), nil)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, nil, t.TempDir(), toolNode("exit 0", ""), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestDispatchDotToolNode_InheritsProcessEnv_PATH(t *testing.T) {
 	// `command -v env` resolves a binary through PATH; exits non-zero when PATH
 	// is missing/empty. With the fix the daemon's inherited PATH makes it pass.
 	node := toolNode("command -v env >/dev/null", "")
-	outcome, err := dispatchDotToolNode(ctx, nil, t.TempDir(), node, handlerEnv)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, nil, t.TempDir(), node, handlerEnv)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestDispatchDotToolNode_HandlerEnvOverlaysProcessEnv(t *testing.T) {
 	// inherited + handler env are unioned.
 	handlerEnv := []string{"HARMONIK_PROJECT_HASH=overlay-marker"}
 	node := toolNode(`[ -n "$HOME" ] && [ "$HARMONIK_PROJECT_HASH" = "overlay-marker" ]`, "")
-	outcome, err := dispatchDotToolNode(ctx, nil, t.TempDir(), node, handlerEnv)
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, nil, t.TempDir(), node, handlerEnv)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

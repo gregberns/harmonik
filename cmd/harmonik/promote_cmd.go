@@ -334,6 +334,15 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 		// auto-close the salvaged bead.  Without this trailer the cherry-picked
 		// commit is a plain commit that reconcile.go:GitMergeCommitScanner cannot
 		// match, leaving the bead stranded in_progress forever (hk-53p3).
+		//
+		// hk-tnui (accepted exception): Reviewed-By / Review-Verdict trailers are
+		// NOT re-stamped here. git cherry-pick -x preserves the full source-commit
+		// message, so any trailers already present on the source commit are
+		// inherited verbatim. When the source commit lacks trailers (older runs
+		// before hk-dyim, or DOT runs before hk-tnui), the cherry-pick also lacks
+		// them — re-synthesising a verdict with no backing workspace file would
+		// produce misleading audit data. Accept this as a known gap: future
+		// promotes of daemon-merged commits will carry trailers automatically.
 		beadID := cfg.beadID
 		if beadID == "" {
 			// Auto-detect from the source commit's subject "(hk-xxx)" parenthetical.

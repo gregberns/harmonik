@@ -148,6 +148,14 @@ type dotWorkflowResult struct {
 	// bead was already found in main (noChange-subsumed). The caller closes the
 	// bead rather than reopening it.
 	subsumed bool
+
+	// approveVerdict carries the APPROVE verdict when the cascade succeeded via
+	// the explicit reviewer-APPROVE path (hk-8ps7q). Nil when success was via a
+	// non-reviewer terminal node, advisory-RC advisory-only, or cap-hit salvage.
+	// The caller (workloop.go) uses this to stamp Reviewed-By / Review-Verdict
+	// trailers on the HEAD commit before merging, mirroring the review-loop path
+	// (hk-tnui).
+	approveVerdict *workspace.ReviewVerdict
 }
 
 // driveDotWorkflow walks the validated DOT graph from its start node to a
@@ -539,9 +547,15 @@ func driveDotWorkflow(
 				//       NEXT node is the implementer, not the case where the graph
 				//       routes implement→review after the post-APPROVE no-commit run.)
 				if committedResult && priorVerdict == workspace.ReviewVerdictApprove && !prevAgenticNodeWasReviewer {
+					// hk-tnui: read the verdict so the caller can stamp
+					// Reviewed-By / Review-Verdict trailers before merge.
+					// Non-fatal: a missing/unreadable file yields nil, which the
+					// caller's trailer-stamp guard already skips.
+					dotApproveVerdict, _ := workspace.ReadReviewVerdict(wtPath)
 					return dotWorkflowResult{
-						success: true,
-						summary: fmt.Sprintf("dot: completed at iteration %d — reviewer APPROVED and committed work is final (hk-8ps7q: HEAD did not advance because nothing remained to do)", iterationCount),
+						success:        true,
+						approveVerdict: dotApproveVerdict,
+						summary:        fmt.Sprintf("dot: completed at iteration %d — reviewer APPROVED and committed work is final (hk-8ps7q: HEAD did not advance because nothing remained to do)", iterationCount),
 					}
 				}
 				// hk-w2ow — advisory-only REQUEST_CHANGES + GREEN gate is COMPLETION.

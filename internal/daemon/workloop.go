@@ -3296,6 +3296,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				emitDone(false, fmt.Sprintf("code-sync-failed (dot): %s", syncReason))
 				return
 			}
+			// hk-tnui: stamp Reviewed-By / Review-Verdict trailers on the HEAD
+			// commit before the FF merge, mirroring the review-loop path (line
+			// 3095). LOCAL runs only (rbc == nil): remote runs keep the trailer
+			// injection deferred (same FLAGGED note as the review-loop path).
+			if dotResult.approveVerdict != nil && rbc == nil {
+				if amendErr := appendReviewTrailersToHEAD(ctx, wtPath, dotResult.approveVerdict); amendErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
+				}
+			}
 			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)

@@ -27,6 +27,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // WorkLoopDepsParams carries the parameters for ExportedWorkLoopDeps so callers
@@ -630,6 +631,8 @@ type DotWorkflowResultExported struct {
 	TerminalNodeID string
 	NeedsAttention bool
 	Summary        string
+	// ApproveVerdict mirrors dotWorkflowResult.approveVerdict (hk-tnui).
+	ApproveVerdict *workspace.ReviewVerdict
 }
 
 // ExportedDriveDotWorkflow exposes driveDotWorkflow for tests in package
@@ -653,6 +656,7 @@ func ExportedDriveDotWorkflow(
 		TerminalNodeID: r.terminalNodeID,
 		NeedsAttention: r.needsAttention,
 		Summary:        r.summary,
+		ApproveVerdict: r.approveVerdict,
 	}
 }
 
@@ -677,6 +681,7 @@ func ExportedDriveDotWorkflowFull(
 		TerminalNodeID: r.terminalNodeID,
 		NeedsAttention: r.needsAttention,
 		Summary:        r.summary,
+		ApproveVerdict: r.approveVerdict,
 	}
 }
 

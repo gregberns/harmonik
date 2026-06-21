@@ -23,17 +23,15 @@ package main
 //  7. Provision 9 fleet skills from the embedded asset bundle →
 //     .claude/skills/{captain,crew-launch,keeper,harmonik-dispatch,
 //     harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout,orchestrator}.
-//  8. Provision versioned captain-tools scripts to ~/.claude/captain-tools/
-//     (only-if-absent; --force refreshes). C1↔C3 seam (ON-058b, hk-da3k).
-//  9. Write scaffold files from the embedded asset bundle →
+//  8. Write scaffold files from the embedded asset bundle →
 //     AGENT_INDEX.md, STATUS.md (TASKS.md retired — hk-5qey).
-//  9a. Scaffold .harmonik/context/ tier files (project.yaml, captain-lanes.md,
+//  8a. Scaffold .harmonik/context/ tier files (project.yaml, captain-lanes.md,
 //     roadmap.md) + seed HANDOFF.md at the repo root from embedded templates.
-// 10. Render embedded AGENTS.template.md → AGENTS.md (substitutes
+//  9. Render embedded AGENTS.template.md → AGENTS.md (substitutes
 //     $PROJECT_DIR and $TARGET_BRANCH). AGENTS.md is the three-kinds ROUTER
 //     (precedence + per-role load map + harmonik:managed markers).
-// 11. Symlink CLAUDE.md → AGENTS.md.
-// 12. (Optional) Run `harmonik supervise start --watch-restart` unless
+// 10. Symlink CLAUDE.md → AGENTS.md.
+// 11. (Optional) Run `harmonik supervise start --watch-restart` unless
 //     --no-supervise is passed.
 // 13. (Optional) Smoke test when --smoke is passed.
 //
@@ -77,11 +75,10 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		projectDir          string
 		targetBranch        string
 		prefix              string
-		doctorOnly          bool
-		force               bool
-		smoke               bool
-		noSupervise         bool
-		refreshCaptainTools bool
+		doctorOnly  bool
+		force       bool
+		smoke       bool
+		noSupervise bool
 	)
 
 	for i := 0; i < len(args); i++ {
@@ -112,8 +109,6 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 			smoke = true
 		case args[i] == "--no-supervise":
 			noSupervise = true
-		case args[i] == "--refresh-captain-tools":
-			refreshCaptainTools = true
 		}
 	}
 
@@ -139,18 +134,6 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	}
 	if prefix == "" {
 		prefix = deriveBeadPrefix(projectDir)
-	}
-
-	// --refresh-captain-tools: ONLY refresh ~/.claude/captain-tools/ — safe to run
-	// on a live project (no beads database reinitialization, no config.yaml or
-	// branching.yaml clobber). Fixes the "captain-tools STALE" keeper doctor flag
-	// (hk-tgrw) without the nuclear side-effects of --force.
-	if refreshCaptainTools {
-		if code := provisionCaptainTools(true, stdout, stderr); code != 0 {
-			return code
-		}
-		fmt.Fprintln(stdout, "harmonik init: captain-tools refreshed — run 'harmonik keeper doctor captain' to verify")
-		return 0
 	}
 
 	// Run doctor checks.
@@ -191,11 +174,6 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 
 	// Step 8: provision 8 fleet skills from the embedded asset bundle.
 	if code := provisionSkills(projectDir, force, stdout, stderr); code != 0 {
-		return code
-	}
-
-	// Step 9: provision captain-tools scripts to ~/.claude/captain-tools/ (C1↔C3 seam).
-	if code := provisionCaptainTools(force, stdout, stderr); code != 0 {
 		return code
 	}
 
@@ -673,50 +651,6 @@ func provisionSkills(projectDir string, force bool, stdout, stderr io.Writer) in
 	return 0
 }
 
-// provisionCaptainTools extracts the versioned captain-tools scripts from the
-// binary-embedded asset bundle into ~/.claude/captain-tools/ (C1↔C3 seam,
-// ON-058b, hk-da3k).
-//
-// Idempotent: skips files that already exist unless force is true.
-// With --force: overwrites existing scripts so a stale hardcoded version is
-// replaced by the binary-embedded one (rollout note: live boxes may carry a
-// stale ~/.claude/captain-tools/captain-launch.sh).
-func provisionCaptainTools(force bool, stdout, stderr io.Writer) int {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintf(stderr, "harmonik init: cannot determine home directory: %v\n", err)
-		return 1
-	}
-	destDir := filepath.Join(homeDir, ".claude", "captain-tools")
-	//nolint:gosec // G301: 0755 for ~/.claude/captain-tools/
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
-		fmt.Fprintf(stderr, "harmonik init: mkdir ~/.claude/captain-tools: %v\n", err)
-		return 1
-	}
-
-	scripts := []struct {
-		name    string
-		content []byte
-	}{
-		{"captain-launch.sh", captainLaunchSh},
-	}
-
-	for _, s := range scripts {
-		destPath := filepath.Join(destDir, s.name)
-		if _, statErr := os.Stat(destPath); statErr == nil && !force {
-			fmt.Fprintf(stdout, "harmonik init: ~/.claude/captain-tools/%s already exists — skipping (use --force to refresh)\n", s.name)
-			continue
-		}
-		//nolint:gosec // G306: 0755 so the shell script is executable
-		if err := os.WriteFile(destPath, s.content, 0o755); err != nil {
-			fmt.Fprintf(stderr, "harmonik init: write ~/.claude/captain-tools/%s: %v\n", s.name, err)
-			return 1
-		}
-		fmt.Fprintf(stdout, "harmonik init: provisioned ~/.claude/captain-tools/%s\n", s.name)
-	}
-	return 0
-}
-
 // provisionScaffolds writes the minimal scaffold files (AGENT_INDEX.md,
 // STATUS.md) from the embedded asset bundle (PL-029c).
 // Skipped when each file already exists and force is false.
@@ -911,7 +845,6 @@ const initUsage = `harmonik init — bootstrap a new project for use with harmon
 USAGE
   harmonik init [--project DIR] [--target-branch BRANCH] [--prefix PREFIX]
                 [--doctor] [--force] [--smoke] [--no-supervise]
-                [--refresh-captain-tools]
 
 FLAGS
   --project DIR             Project directory (default: current working directory)
@@ -921,9 +854,6 @@ FLAGS
   --force                   Overwrite existing files and reinitialise br database
   --smoke                   Run a smoke test after init to verify the setup
   --no-supervise            Skip 'harmonik supervise start --watch-restart'
-  --refresh-captain-tools   ONLY refresh ~/.claude/captain-tools/ from the binary-embedded copy.
-                            Safe to run on a live project: skips beads database, config, and scaffold steps.
-                            Use this to fix 'keeper doctor captain: captain-tools STALE' without --force.
 
 WHAT IT DOES
   1. Checks preconditions (git repo, br/harmonik on PATH)
@@ -936,15 +866,13 @@ WHAT IT DOES
   7. Provisions 9 fleet skills from the binary-embedded asset bundle →
      .claude/skills/{captain,crew-launch,keeper,harmonik-dispatch,
      harmonik-lifecycle,agent-comms,beads-cli,major-issue-fanout,orchestrator}
-  8. Provisions versioned captain-tools scripts → ~/.claude/captain-tools/
-     (only-if-absent; --force refreshes stale copies)
-  9. Writes scaffold files: AGENT_INDEX.md, STATUS.md
- 9a. Scaffolds .harmonik/context/ tier files (project.yaml, captain-lanes.md,
+  8. Writes scaffold files: AGENT_INDEX.md, STATUS.md
+ 8a. Scaffolds .harmonik/context/ tier files (project.yaml, captain-lanes.md,
      roadmap.md) and seeds HANDOFF.md from embedded templates
- 10. Renders embedded AGENTS.template.md (three-kinds router) → AGENTS.md
- 11. Creates CLAUDE.md → AGENTS.md symlink
- 12. Starts the supervisor: harmonik supervise start --watch-restart
- 13. (--smoke) Runs basic sanity checks
+  9. Renders embedded AGENTS.template.md (three-kinds router) → AGENTS.md
+ 10. Creates CLAUDE.md → AGENTS.md symlink
+ 11. Starts the supervisor: harmonik supervise start --watch-restart
+ 12. (--smoke) Runs basic sanity checks
 
 IDEMPOTENCY
   Each step is skipped when its output artifact already exists.

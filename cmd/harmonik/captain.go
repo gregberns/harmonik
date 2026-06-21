@@ -1,12 +1,13 @@
 package main
 
 // captain.go — `harmonik captain` (alias `harmonik start captain`): the
-// first-class, NATIVE-Go, full-parity launcher for the Captain LLM session,
-// superseding the caller-side scripts/captain-tools/captain-launch.sh
+// first-class, NATIVE-Go, full-parity launcher for the Captain LLM session.
+// It superseded — and then ES8 (hk-877k) retired — the old caller-side bash
+// captain launcher (the former scripts/captain-tools bash entrypoint) and its
 // minting+tmux dance (D1: no bash on the launch path, cross-platform, testable).
 //
 // PARITY (ES2 / hk-bcd0, plan plans/2026-06-20-easy-start-commands §3 + review A):
-// the launcher now does EVERYTHING captain-launch.sh did, natively:
+// the launcher does EVERYTHING the retired bash launcher did, natively:
 //
 //  1. project = --project or cwd; project-hash computed IN-PROCESS via
 //     lifecycle.ComputeProjectHash (no `harmonik project-hash` shell-out, no
@@ -36,7 +37,7 @@ package main
 // WHY a STABLE caller-minted --session-id is load-bearing: it is what lets the
 // session-keeper's handoff → /clear → /session-resume cycle re-bind to the same
 // conversation (mirrors the crew model — internal/daemon/crewstart.go
-// resolveSessionID). See scripts/captain-tools/captain-launch.sh for the full WHY.
+// resolveSessionID).
 //
 // This is a LAUNCHER, not a daemon: it never acquires the daemon pidfile lock,
 // so it cannot collide on it (exit 5 is impossible from this path).
@@ -185,8 +186,8 @@ func (o osCaptainTmuxOps) AgentPaneAlive(ctx context.Context, sess string) (bool
 //	  claude --dangerously-skip-permissions --remote-control <name> --session-id <id>
 //
 // -n agent names the first window so the keeper can target "<session>:agent"
-// (window-nesting, hk-z036). --dangerously-skip-permissions mirrors
-// captain-launch.sh: a remote-control captain that hit a permission prompt would
+// (window-nesting, hk-z036). --dangerously-skip-permissions mirrors the retired
+// bash launcher: a remote-control captain that hit a permission prompt would
 // wedge unattended, so it is part of the launcher's correctness contract.
 // Returning the fully-built *exec.Cmd (rather than running it inline) is what
 // lets the test assert the exact argv via the injected run func.
@@ -243,8 +244,8 @@ func runCaptainLaunch(subArgs []string, run captainLaunchRunFn, enableKeeper kee
 // captainTmuxSessionName resolves the tmux session name for the captain:
 //   - an explicit --tmux value wins (operator override / back-compat);
 //   - otherwise the HASHED namespace harmonik-<hash>-captain, computed in-process
-//     from the realpath'd project dir (mirrors captain-launch.sh's
-//     `harmonik project-hash` + "harmonik-${HASH}-captain", but no shell-out).
+//     from the realpath'd project dir (the retired bash launcher derived the same
+//     "harmonik-${HASH}-captain" via `harmonik project-hash`, but with a shell-out).
 //
 // Resolving the realpath first matches lifecycle.ComputeProjectHash's contract
 // (callers resolve symlinks before hashing) so the Go launcher and the daemon's
@@ -333,7 +334,7 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	// D7 idempotent pre-flight: if the target session already exists, decide
 	// between REAP-then-recreate (the keeper outlived a STOPPED agent) and REFUSE
 	// (a LIVE captain is already running). tmux `new-session -s` on an existing
-	// name errors "duplicate session" (captain-launch.sh:80) — the native launcher
+	// name errors "duplicate session" — the native launcher
 	// must never throw that — but it must ALSO never blindly clobber a live
 	// captain: doing so would kill the running conversation and recreate a fresh
 	// session with a NEW session-id, destroying the keeper's clear→resume binding.

@@ -17,9 +17,9 @@ var ErrLiveRecoverIdentityUntrusted = errors.New("keeper: live-pane recovery ref
 // NewLiveRecoverViaRespawn builds the gated ForceRestart action wired into
 // WatcherConfig.LiveRecoverFn for the standalone keeper (hk-75mr). The action
 // force-restarts the agent by running respawnCmd via `sh -c` — the same
-// operator-supplied launch command the idle-respawn path uses; that script is
-// responsible for killing the hung pane and re-launching (e.g. captain-launch.sh
-// does `tmux kill-session … ; tmux new-session … 'claude …'`).
+// operator-supplied launch command the idle-respawn path uses; that command is
+// responsible for killing the hung pane and re-launching (e.g.
+// `harmonik captain respawn …` does `tmux kill-session … ; tmux new-session … 'claude …'`).
 //
 // The closure REFUSES (returns ErrLiveRecoverIdentityUntrusted, no restart) when
 // the bound .sid identity is not a valid UUIDv4. This is defense-in-depth atop

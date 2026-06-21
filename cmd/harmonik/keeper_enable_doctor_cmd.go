@@ -372,10 +372,9 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 
 // doctorConfig is the injectable configuration for runKeeperDoctor.
 type doctorConfig struct {
-	agentName       string
-	projectDir      string
-	settingsPath    string
-	captainToolsDir string // path to ~/.claude/captain-tools/; injected for tests
+	agentName    string
+	projectDir   string
+	settingsPath string
 	// paneExistsFn is injected in tests to avoid real tmux calls.
 	// When nil, tmuxPaneExists is used.
 	paneExistsFn func(target string) (bool, error)
@@ -482,13 +481,11 @@ func runKeeperDoctorEntry(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
-	captainToolsDir := filepath.Join(home, ".claude", "captain-tools")
 
 	cfg := doctorConfig{
-		agentName:       agentName,
-		projectDir:      projectDir,
-		settingsPath:    settingsPath,
-		captainToolsDir: captainToolsDir,
+		agentName:    agentName,
+		projectDir:   projectDir,
+		settingsPath: settingsPath,
 	}
 	return runKeeperDoctor(cfg, stdout, stderr)
 }
@@ -688,29 +685,10 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 		}
 	}
 
-	// 9. captain-tools runtime-copy drift guard (hk-tgrw).
-	// Compare ~/.claude/captain-tools/captain-launch.sh against the binary-embedded
-	// copy. A mismatch means the installed script is stale — the captain session
-	// will lack project-hash naming or sentinel/PID orphan-sweep protection (PL-006d).
-	// When the file is absent the captain was never launched from this install path;
-	// skip silently (not a failure). Fix: harmonik init --force to re-provision.
-	if cfg.captainToolsDir != "" {
-		runtimePath := filepath.Join(cfg.captainToolsDir, "captain-launch.sh")
-		runtimeBytes, readErr := os.ReadFile(runtimePath) //nolint:gosec // G304: operator-controlled path
-		switch {
-		case os.IsNotExist(readErr):
-			// File absent — captain-tools not installed on this machine; skip.
-		case readErr != nil:
-			check("captain-tools", false, fmt.Sprintf("cannot read %s: %v", runtimePath, readErr))
-		case string(runtimeBytes) != string(captainLaunchSh):
-			check("captain-tools", false,
-				fmt.Sprintf("~/.claude/captain-tools/captain-launch.sh is STALE (differs from binary-embedded copy) — "+
-					"missing project-hash naming or sentinel/PID orphan-sweep protection (PL-006d). "+
-					"Fix: harmonik init --refresh-captain-tools"))
-		default:
-			check("captain-tools", true, "captain-launch.sh matches binary-embedded copy (in sync)")
-		}
-	}
+	// 9. captain-tools bash-launcher drift guard — RETIRED (ES8 / hk-877k).
+	// The bash captain launcher was deleted once native `harmonik start captain`
+	// + `harmonik captain respawn` fully replaced it; there is no longer an
+	// embedded script to compare a deployed copy against.
 
 	// Print results.
 	allOK := true
@@ -1171,7 +1149,6 @@ CHECKS (all read-only; no filesystem mutations)
   idle marker    .harmonik/keeper/<agent>.idle has been written (Stop hook fired)
   managed        .harmonik/keeper/<agent>.managed present (handoff cycle live)
   api-key-risk   ANTHROPIC_API_KEY not set in environment
-  captain-tools  ~/.claude/captain-tools/captain-launch.sh matches binary-embedded copy (skipped if absent); fix: harmonik init --refresh-captain-tools
 
 EXIT CODES
   0  All checks passed

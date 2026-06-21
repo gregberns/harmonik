@@ -928,7 +928,7 @@ FLAGS (watcher mode)
                          After the gauge goes stale for 20s and the tmux pane is idle (shell prompt),
                          the keeper runs "sh -c <cmd>" to respawn the agent. Requires --tmux.
                          A 90s cooldown prevents tight respawn loops.
-                         Example: --respawn-cmd '~/.claude/captain-tools/captain-launch.sh'
+                         Example: --respawn-cmd 'harmonik captain respawn ...'
   --force-restart        Opt in to the handoff-timeout hard-restart escalation (default false; hk-suxt).
                          After MaxHandoffTimeouts (3) consecutive handoff timeouts above the force
                          threshold, the keeper runs --respawn-cmd to hard-restart a permanently

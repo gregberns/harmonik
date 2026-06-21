@@ -387,8 +387,9 @@ func resolveProjectPath(projectDir string) string {
 //     sessions are named at spawn (fleet-portability T2).
 //  3. bare convention: "harmonik-<projectHash>-<agentName>" — how NON-crew agent
 //     sessions are named at spawn. The CAPTAIN is the canonical case: its session
-//     is "harmonik-<hash>-captain" (NO "crew-" prefix; see
-//     scripts/captain-tools/captain-launch.sh `harmonik-${PROJ_HASH}-captain`) and
+//     is "harmonik-<hash>-captain" (NO "crew-" prefix; see the native launcher
+//     in cmd/harmonik/captain.go, which names the session
+//     `harmonik-<projectHash>-captain`) and
 //     it has no crew-registry record, so candidates (1) and (2) both miss. Without
 //     this third candidate, `comms send --to captain --wake` targeted a nonexistent
 //     "...-crew-captain" pane and a stalled captain could not be roused (M10 /

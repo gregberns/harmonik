@@ -175,9 +175,10 @@ func runKeeperEnableEntry(args []string, stdout, stderr io.Writer) int {
 	}
 	projectDir = absProject
 
-	// Resolve scripts dir.
+	// Resolve scripts dir. projectDir (resolved above) is the primary hint so a
+	// `go install`'d binary run from the repo still finds <project>/scripts.
 	if scriptsDir == "" {
-		scriptsDir = autoDetectScriptsDir()
+		scriptsDir = autoDetectScriptsDir(projectDir)
 	}
 
 	// Resolve settings path.
@@ -997,24 +998,38 @@ func appendHookGroup(settings map[string]interface{}, eventName, cmd string) {
 
 // ── Misc helpers ──────────────────────────────────────────────────────────────
 
-// autoDetectScriptsDir tries to find the keeper scripts by looking relative to
-// the running harmonik binary.  Returns "" if no scripts directory is found.
-func autoDetectScriptsDir() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	// Resolve symlinks so that `go install`'d binaries find the real path.
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return ""
+// autoDetectScriptsDir tries to find the keeper scripts. It checks, in order:
+// any caller-supplied hint dir's scripts/ subdir (the project root / cwd), then
+// paths relative to the running harmonik binary. Returns "" if none contain the
+// keeper hook scripts.
+//
+// The binary-relative candidates only work when harmonik is built into the repo
+// (./bin/harmonik adjacent to ./scripts). A `go install`'d binary lands in
+// $GOPATH/bin with no scripts/ nearby, so the hint dirs are the path that lets
+// `harmonik start captain` (run from the repo) wire keeper hooks.
+func autoDetectScriptsDir(hints ...string) string {
+	var candidates []string
+
+	// Caller hints first (project root, cwd) — these win for go-install'd binaries.
+	for _, h := range hints {
+		if h == "" {
+			continue
+		}
+		candidates = append(candidates, filepath.Join(h, "scripts"))
 	}
 
-	// Common layouts: binary in bin/ adjacent to scripts/ (source tree or install).
-	candidates := []string{
-		filepath.Join(filepath.Dir(exe), "..", "scripts"),
-		filepath.Join(filepath.Dir(exe), "scripts"),
+	if exe, err := os.Executable(); err == nil {
+		// Resolve symlinks so that `go install`'d binaries find the real path.
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		// Common layouts: binary in bin/ adjacent to scripts/ (source-tree build).
+		candidates = append(candidates,
+			filepath.Join(filepath.Dir(exe), "..", "scripts"),
+			filepath.Join(filepath.Dir(exe), "scripts"),
+		)
 	}
+
 	for _, dir := range candidates {
 		abs, err := filepath.Abs(dir)
 		if err != nil {

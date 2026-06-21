@@ -237,7 +237,7 @@ func buildCaptainKeeperConfig(name, projectDir string) (enableConfig, error) {
 	return enableConfig{
 		agentName:    name,
 		projectDir:   projectDir,
-		scriptsDir:   autoDetectScriptsDir(),
+		scriptsDir:   autoDetectScriptsDir(projectDir),
 		settingsPath: filepath.Join(home, ".claude", "settings.json"),
 	}, nil
 }

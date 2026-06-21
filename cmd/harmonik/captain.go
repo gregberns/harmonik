@@ -41,10 +41,12 @@ package main
 // This is a LAUNCHER, not a daemon: it never acquires the daemon pidfile lock,
 // so it cannot collide on it (exit 5 is impossible from this path).
 //
-// STILL EXCLUDED (ES3 / hk-z1rj): the `harmonik captain respawn` subcommand that
-// the --respawn-cmd seam points at, and deleting the verified-restart wrapper.
-// ES2 wires --respawn-cmd as a TODO-marked seam so ES3 slots in cleanly; see the
-// respawnCmd hand-off below.
+// SELF-HEAL RESPAWN (ES3 / hk-z1rj, LANDED): the --respawn-cmd seam is now wired
+// to the `harmonik captain respawn` subcommand (captain_respawn.go) — the native
+// Go replacement for the generated captain-respawn.sh. There is NO verified-
+// restart wrapper: per review B, `harmonik keeper restart-now` already does the
+// synchronous verified clear→resume in-process, so no captain-restart-verified.sh
+// equivalent is generated or built.
 //
 // Bead refs: hk-ly0n (bare launcher), hk-igek (keeper-enable wiring),
 // hk-bcd0 (this — native full parity D1/D6/D7).
@@ -204,6 +206,12 @@ func buildCaptainTmuxCmd(name, tmuxSession, sessionID string) *exec.Cmd {
 // `harmonik start captain`. It wires the production run + keeper-enable funcs and
 // the production tmux ops.
 func runCaptainSubcommand(subArgs []string) int {
+	// `harmonik captain respawn …` (ES3 / hk-z1rj): the dead-pane self-heal
+	// subverb the keeper's --respawn-cmd seam points at. Peel it off here so
+	// `harmonik captain` (no subverb) and `harmonik start captain` keep launching.
+	if len(subArgs) >= 1 && subArgs[0] == "respawn" {
+		return runCaptainRespawnSubcommand(subArgs[1:])
+	}
 	return runCaptainLaunchWithOps(subArgs, runCaptainTmux, runKeeperEnable, osCaptainTmuxOps{adapter: ltmux.OSAdapter{}})
 }
 
@@ -403,16 +411,21 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	//    captain agent window is already live.
 	//
 	//    --respawn-cmd seam (ES3 / hk-z1rj): the dead-pane self-heal respawn
-	//    command goes here. ES2 leaves it empty (no respawn arming) until the
-	//    `harmonik captain respawn --session-id … --tmux …` subcommand lands in
-	//    ES3; at that point set RespawnCmd to that subcommand's invocation so the
-	//    keeper relaunches ONLY the agent window with --resume <sid>.
-	//    TODO(hk-z1rj): set RespawnCmd to the `harmonik captain respawn` invocation.
+	//    command. RespawnCmd is the `harmonik captain respawn …` invocation the
+	//    keeper runs (via `sh -c`, watcher.go maybeRespawn) when the agent pane
+	//    dies — it respawns ONLY the agent window with --resume <sid> (NOT
+	//    --session-id: resume keeps the SAME conversation), keeper window survives,
+	//    no dup keeper (hk-z036 / hk-opuv). The binary is resolved via
+	//    os.Executable() so the keeper's `sh -c` finds the SAME harmonik binary.
+	//    There is NO verified-restart wrapper (review B): keeper restart-now
+	//    already does the synchronous verified work in-process; nothing is
+	//    generated here for it.
 	if !*noKeeperFlag {
 		keeperBin, exErr := os.Executable()
 		if exErr != nil {
 			keeperBin = "harmonik" // fallback: rely on PATH
 		}
+		respawnCmd := captainRespawnCmdString(keeperBin, name, tmuxSession, sessionID, project)
 		outcome := ops.SpawnKeeperWindow(ctx, agentlaunch.KeeperWindowOpts{
 			KeeperBin:     keeperBin,
 			AgentName:     name,
@@ -421,7 +434,7 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 			WarnOnly:      false, // captain is FORCE-CUT: full warn→act→restart band.
 			WarnAbsTokens: *warnAbsFlag,
 			ActAbsTokens:  *actAbsFlag,
-			RespawnCmd:    "", // TODO(hk-z1rj, ES3): wire `harmonik captain respawn`.
+			RespawnCmd:    respawnCmd, // hk-z1rj: `harmonik captain respawn …` (ES3).
 		})
 		if outcome.Err != nil {
 			fmt.Fprintf(os.Stderr, "harmonik captain: keeper watcher window failed (%v) — launching anyway; "+

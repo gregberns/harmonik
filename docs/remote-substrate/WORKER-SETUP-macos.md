@@ -81,6 +81,9 @@ Run these and verify each. Stop and report if any step fails.
        max_slots: 4              # concurrent beads this worker accepts
        enabled: true             # flip to false to live-disable without deleting the entry
    ```
+   Two optional top-level telemetry knobs (`report_interval_seconds`, `disk_floor_mb`) and
+   the periodic `worker_report` event they drive are documented in
+   [worker-reporting.md](worker-reporting.md).
 2. **SSH multiplexing** — add to box A's `~/.ssh/config` so per-bead chatter reuses one
    connection:
    ```

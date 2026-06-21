@@ -288,6 +288,8 @@ Tags: mechanism
 
 An operator `pause` or `upgrade` command issued while the daemon status is `ready` MUST NOT interrupt any in-flight run (per §3 `in_flight(run)`). The daemon MUST transition to `pausing`, allow every in-flight run to proceed to its next durable checkpoint per [execution-model.md §4.5], AND complete the full drain sequence of §4.7.ON-027 (all eight steps) before transitioning to `paused`. The `pausing → paused` transition is gated on drain-completion: entry into `paused` is forbidden until (a) no run satisfies `in_flight(run)` AND (b) every drain step of ON-027 has completed (or the drain-timeout escalation path of §4.7.ON-029 has fired). `upgrade` further transitions `paused` → `upgrading` → (exec-replace) → `running` under the contract of §4.6.
 
+The `daemon-sleep` / `sleep` quiesce command (captain/crew LLM-session quiesce) is NOT governed by this between-task drain gate. Sleep MUST be LLM-initiated: the orchestrator agent issues the command; the daemon MUST NOT auto-sleep when the work queue drains. The daemon MUST refuse (veto, exit non-zero) a non-`--force` sleep if any run satisfies `in_flight(run)` (per §3) or dispatchable work is pending; `--force` overrides the veto but MUST NOT abort in-flight runs (the between-task invariant holds at the run layer). The veto invariant is declared in [system-state.md §5 SS-INV-005].
+
 Tags: mechanism
 
 #### ON-008a — Credential injection and budget-exhaustion operator surface
@@ -319,6 +321,8 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 #### ON-010 — Reconciliation carve-out: pause queues during `reconciling`
 
 Pause MUST NOT interrupt reconciliation workflows per [reconciliation/spec.md §4.1]. The daemon's status progression is `starting` → (optional `degraded`) → `reconciling` → `ready` per [process-lifecycle.md §4.2]; the between-task invariant of §4.3.ON-008 applies only after the daemon reaches `ready`. An operator pause issued during `reconciling` MUST be queued and applied at the boundary event "all reconciliation runs have either resumed into normal flow or produced a verdict."
+
+The LLM-initiated sleep veto guard (per §4.3.ON-008) treats `reconciling` as an active-work state: the daemon MUST refuse a non-`--force` `sleep` command if the current status is `reconciling`. The `daemon-wake` / `wake` command operates at the LLM-session layer only and does not mutate daemon run state or affect in-flight runs.
 
 Tags: mechanism
 

@@ -287,15 +287,15 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// crew calls this LLM-free command after reviewing evidence; the projector (not
 	// this CLI) gates the all-clear. Authorised by operator-nfr.md §4.9 ON-055.
 	"sentinel": "operator-nfr.md §4.9 ON-055; offline decision_acks writer, no in-flight run abort",
-	// hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake): manual operator override to
-	// quiesce captain+crew LLM sessions. Without --force, gated on GenuineDrain
-	// (ON-008 drain-gated; no new dispatches while in-flight runs complete). With
-	// --force, parks orchestrator sessions immediately — the between-task invariant
-	// is NOT violated because sleep parks LLM *sessions* (captain/crew orchestrators),
-	// NOT harmonik *runs*; in-flight runs proceed to completion unaffected.
-	"sleep": "operator-nfr.md §4.3 ON-008; drain-gated LLM-session quiesce; --force parks sessions only, no in-flight run abort",
-	// hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake): manual operator override to
-	// wake sleeping captain/crew LLM sessions. Resumes orchestrator sessions only;
+	// hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake): LLM-initiated quiesce of
+	// captain+crew sessions. Non-force consults the SS-INV-005 veto guard:
+	// daemon refuses if in-flight runs exist or dispatchable work is pending.
+	// --force overrides the veto; in-flight runs proceed to completion unaffected
+	// (the between-task invariant is NOT violated because sleep parks LLM
+	// *sessions*, NOT harmonik *runs*; per §4.3.ON-008).
+	"sleep": "operator-nfr.md §4.3 ON-008; LLM-initiated quiesce; daemon refuses if work stranded (SS-INV-005 veto); --force overrides veto, parks sessions only, no in-flight run abort",
+	// hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake): LLM-initiated wake of
+	// sleeping captain/crew sessions. Resumes orchestrator sessions only;
 	// no harmonik run state is mutated and no in-flight run is affected. --all and
 	// --agent variants both route through QuiesceArbiter.HandleDaemonWake.
 	// Equivalent in scope to operator-resume (ON-010) but at the session layer.
@@ -375,15 +375,17 @@ var oninv006FixtureSocketOpAllowlist = map[string]string{
 	// op aborts an in-flight run. Authorised by operator-nfr.md §4.9 ON-055.
 	"decisions-list":   "operator-nfr.md §4.9 ON-055; read-only open-decision projection, no run abort",
 	"decisions-answer": "operator-nfr.md §4.9 ON-055; operator decision resolve event, no run abort",
-	// hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake): manual operator sleep override.
-	// Routes to QuiesceArbiter.HandleDaemonSleep; without force= consults GenuineDrain
-	// (ON-008 drain-gated). With force=true parks orchestrator sessions immediately —
-	// the between-task invariant is NOT violated because this parks LLM *sessions*
-	// (captain/crew), NOT harmonik *runs*; in-flight runs proceed to completion.
-	"daemon-sleep": "operator-nfr.md §4.3 ON-008; drain-gated LLM-session quiesce; force bypasses drain but parks sessions only, no in-flight run abort",
-	// hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake): manual operator wake override.
-	// Routes to QuiesceArbiter.HandleDaemonWake; clears sleep markers and nudges
-	// captain/crew tmux panes. No harmonik run state mutated; no in-flight run abort.
+	// hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake): LLM-initiated quiesce of
+	// captain/crew sessions. Routes to QuiesceArbiter.HandleDaemonSleep; non-force
+	// consults the SS-INV-005 veto guard (refuses if work stranded). force=true
+	// parks orchestrator sessions immediately — the between-task invariant is NOT
+	// violated because this parks LLM *sessions* (captain/crew), NOT harmonik
+	// *runs*; in-flight runs proceed to completion (per §4.3.ON-008).
+	"daemon-sleep": "operator-nfr.md §4.3 ON-008; LLM-initiated quiesce; daemon refuses if work stranded (SS-INV-005 veto); force overrides veto, parks sessions only, no in-flight run abort",
+	// hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake): LLM-initiated wake of
+	// sleeping captain/crew sessions. Routes to QuiesceArbiter.HandleDaemonWake;
+	// clears sleep markers and nudges captain/crew tmux panes. No harmonik run
+	// state mutated; no in-flight run abort.
 	// Equivalent scope to operator-resume (ON-010) at the LLM session layer.
 	"daemon-wake": "operator-nfr.md §4.3 ON-010; resumes sleeping LLM sessions, no run state mutation, no in-flight run abort",
 }

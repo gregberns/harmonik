@@ -311,7 +311,7 @@ func TestQuiesceArbiterSleepMarkerWrittenAndCleared(t *testing.T) {
 	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
 
 	// Park the captain directly.
-	arbiter.parkSession(context.Background(), captainAgentName, "", sessionID, captainPane)
+	arbiter.parkSession(context.Background(), captainAgentName, "", sessionID, captainPane, SleepSourceCaptain, SleepLevelDrain)
 
 	// Marker file should exist.
 	markerPath := filepath.Join(projectDir, sleepingMarkerDir, ".sleeping."+sessionID)
@@ -443,8 +443,8 @@ func TestQuiesceArbiterParkIdempotent(t *testing.T) {
 	projectDir := t.TempDir()
 	arbiter, _, comms := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
 
-	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0")
-	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0")
+	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0", SleepSourceCaptain, SleepLevelDrain)
+	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0", SleepSourceCaptain, SleepLevelDrain)
 
 	comms.mu.Lock()
 	n := len(comms.msgs)
@@ -480,7 +480,7 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 	arbiter, _, comms := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
 
 	// Park all sessions (drain scenario).
-	arbiter.parkAllSessions(context.Background())
+	arbiter.parkAllSessions(context.Background(), SleepSourceCaptain, SleepLevelDrain)
 
 	// Paul should be sleeping.
 	arbiter.mu.Lock()
@@ -502,5 +502,59 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 	markerPath := filepath.Join(projectDir, sleepingMarkerDir, ".sleeping.paul-session-123")
 	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
 		t.Errorf("sleep marker for paul not found at %q", markerPath)
+	}
+}
+
+// TestSleepMarkerSourceLevelWritten verifies that parkSession records the park
+// source + level on the on-disk marker (hk-caaf / codename:fleet-state).
+func TestSleepMarkerSourceLevelWritten(t *testing.T) {
+	projectDir := t.TempDir()
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+
+	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-src", "pane:0.0", SleepSourceOperator, SleepLevelHandoff)
+
+	markerPath := filepath.Join(projectDir, sleepingMarkerDir, ".sleeping.sess-src")
+	m, err := arbiter.readSleepMarker(markerPath)
+	if err != nil {
+		t.Fatalf("readSleepMarker: %v", err)
+	}
+	if m.Source != SleepSourceOperator {
+		t.Errorf("source: got %q want %q", m.Source, SleepSourceOperator)
+	}
+	if m.Level != SleepLevelHandoff {
+		t.Errorf("level: got %q want %q", m.Level, SleepLevelHandoff)
+	}
+	if m.SessionID != "sess-src" {
+		t.Errorf("session_id: got %q want %q", m.SessionID, "sess-src")
+	}
+}
+
+// TestSleepMarkerBackwardCompatDefaults verifies that a legacy marker carrying
+// only session_id + parked_at (written by an older daemon) parses cleanly and
+// receives the backward-compatible defaults: operator source, L1 drain level
+// (hk-caaf).
+func TestSleepMarkerBackwardCompatDefaults(t *testing.T) {
+	projectDir := t.TempDir()
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+
+	dir := filepath.Join(projectDir, sleepingMarkerDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	legacy := `{"session_id":"old-sess","parked_at":"2026-06-20T00:00:00Z"}`
+	markerPath := filepath.Join(dir, ".sleeping.old-sess")
+	if err := os.WriteFile(markerPath, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("write legacy marker: %v", err)
+	}
+
+	m, err := arbiter.readSleepMarker(markerPath)
+	if err != nil {
+		t.Fatalf("readSleepMarker on legacy marker: %v", err)
+	}
+	if m.Source != defaultSleepSource {
+		t.Errorf("legacy source default: got %q want %q", m.Source, defaultSleepSource)
+	}
+	if m.Level != defaultSleepLevel {
+		t.Errorf("legacy level default: got %q want %q", m.Level, defaultSleepLevel)
 	}
 }

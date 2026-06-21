@@ -75,6 +75,68 @@ const (
 	captainAgentName = "captain"
 )
 
+// SleepSource identifies who initiated a park (hk-caaf / codename:fleet-state).
+// Operator intent outranks the event-reflex wake: an operator PARK must not be
+// auto-woken by a stray queue submit, whereas a captain/auto park is the
+// event-reflex sleep and may be woken by the normal wake triggers.
+type SleepSource string
+
+const (
+	// SleepSourceOperator marks a park initiated by an explicit operator command
+	// (e.g. `harmonik sleep`). Operator intent is sticky against auto-wake.
+	SleepSourceOperator SleepSource = "operator"
+	// SleepSourceCaptain marks a park initiated by the daemon's own drain-detect
+	// event reflex (the captain-class auto-park). These are the parks the wake
+	// triggers are designed to lift.
+	SleepSourceCaptain SleepSource = "captain"
+)
+
+// SleepLevel is the depth of a park (hk-caaf / codename:fleet-state):
+//
+//	L0 — abandon      (lightest: no resumption intent recorded)
+//	L1 — drain        (default: park once the current work drains)
+//	L2 — handoff      (park with an intent-preserving handoff written)
+//	L3 — finish-lane  (deepest: hold until the whole lane completes)
+type SleepLevel string
+
+const (
+	SleepLevelAbandon    SleepLevel = "L0"
+	SleepLevelDrain      SleepLevel = "L1"
+	SleepLevelHandoff    SleepLevel = "L2"
+	SleepLevelFinishLane SleepLevel = "L3"
+)
+
+// defaultSleepSource / defaultSleepLevel are the backward-compatible defaults
+// applied when an on-disk marker predates the source/level fields (hk-caaf).
+// A marker with no source is treated as an operator park (the safe, sticky
+// interpretation — never auto-wake something we cannot prove was an auto-park);
+// a marker with no level is treated as an L1 drain park (the common case).
+const (
+	defaultSleepSource = SleepSourceOperator
+	defaultSleepLevel  = SleepLevelDrain
+)
+
+// sleepMarker is the on-disk shape of .harmonik/.sleeping.<session_id>.
+// JSON tags are stable; new fields MUST default cleanly so a marker written by
+// an older daemon (session_id + parked_at only) still round-trips.
+type sleepMarker struct {
+	SessionID string      `json:"session_id"`
+	ParkedAt  string      `json:"parked_at"`
+	Source    SleepSource `json:"source"`
+	Level     SleepLevel  `json:"level"`
+}
+
+// normalize applies the backward-compatible defaults for any field a legacy
+// marker omitted, so callers always see a fully-populated record (hk-caaf).
+func (m *sleepMarker) normalize() {
+	if m.Source == "" {
+		m.Source = defaultSleepSource
+	}
+	if m.Level == "" {
+		m.Level = defaultSleepLevel
+	}
+}
+
 // paneNudger is the minimal interface the QuiesceArbiter needs from the tmux
 // adapter.  Using a narrow interface lets tests inject a simple stub without
 // implementing the full tmuxpkg.Adapter (which has ~14 methods).
@@ -126,6 +188,8 @@ type sessionSleepRecord struct {
 	paneTarget string // tmux pane target for Enter-key nudge
 	sessionID  string // for .sleeping.<session_id> marker file
 	sleptAt    time.Time
+	source     SleepSource // who initiated the park (hk-caaf)
+	level      SleepLevel  // depth of the park (hk-caaf)
 }
 
 // QuiesceArbiter polls GenuineDrain and manages fleet sleep/wake.
@@ -291,18 +355,20 @@ func (a *QuiesceArbiter) tick(ctx context.Context, maxSleep time.Duration) {
 		return
 	}
 
-	// Drained: park all sessions not already sleeping.
-	a.parkAllSessions(ctx)
+	// Drained: park all sessions not already sleeping.  Drain-triggered parks are
+	// the captain-class event reflex (source=captain), level L1 (drain).
+	a.parkAllSessions(ctx, SleepSourceCaptain, SleepLevelDrain)
 }
 
 // parkAllSessions writes sleep markers and sends park comms signals to every
 // known LLM session (captain + all crews) that is not already sleeping.
-func (a *QuiesceArbiter) parkAllSessions(ctx context.Context) {
+// source/level record the park provenance/depth on each marker (hk-caaf).
+func (a *QuiesceArbiter) parkAllSessions(ctx context.Context, source SleepSource, level SleepLevel) {
 	records := a.listCrewRecords()
 
 	// Captain: resolve pane target via session name convention.
 	captainTarget := lifecycle.TmuxSessionName(a.cfg.ProjectHash, captainAgentName) + ":0.0"
-	a.parkSession(ctx, captainAgentName, "", "captain-session", captainTarget)
+	a.parkSession(ctx, captainAgentName, "", "captain-session", captainTarget, source, level)
 
 	// Each crew session.
 	for _, r := range records {
@@ -310,13 +376,19 @@ func (a *QuiesceArbiter) parkAllSessions(ctx context.Context) {
 			continue
 		}
 		pane := r.Handle + ".0"
-		a.parkSession(ctx, r.Name, r.Queue, r.SessionID, pane)
+		a.parkSession(ctx, r.Name, r.Queue, r.SessionID, pane, source, level)
 	}
 }
 
 // parkSession parks one session: writes the sleep marker file and sends a comms
 // park signal.  No-op when the session is already sleeping.
-func (a *QuiesceArbiter) parkSession(ctx context.Context, agentName, queueName, sessionID, paneTarget string) {
+func (a *QuiesceArbiter) parkSession(ctx context.Context, agentName, queueName, sessionID, paneTarget string, source SleepSource, level SleepLevel) {
+	if source == "" {
+		source = defaultSleepSource
+	}
+	if level == "" {
+		level = defaultSleepLevel
+	}
 	a.mu.Lock()
 	if _, already := a.sleeping[agentName]; already {
 		a.mu.Unlock()
@@ -328,13 +400,15 @@ func (a *QuiesceArbiter) parkSession(ctx context.Context, agentName, queueName, 
 		paneTarget: paneTarget,
 		sessionID:  sessionID,
 		sleptAt:    time.Now(),
+		source:     source,
+		level:      level,
 	}
 	a.sleeping[agentName] = rec
 	a.mu.Unlock()
 
 	// Write .sleeping.<session_id> marker.
 	if sessionID != "" && a.cfg.ProjectDir != "" {
-		a.writeSleepMarker(sessionID)
+		a.writeSleepMarker(sessionID, source, level)
 	}
 
 	// Emit comms park signal (best-effort; log on failure; never fatal).
@@ -486,10 +560,10 @@ func (a *QuiesceArbiter) nudgePane(ctx context.Context, agentName, paneTarget st
 }
 
 // writeSleepMarker creates .harmonik/.sleeping.<sessionID>.
-// The file body is a JSON object with the session_id and parked_at time; it is
-// written best-effort and used by external observers (e.g. the captain's
-// crew-launch loop) to detect parked state.
-func (a *QuiesceArbiter) writeSleepMarker(sessionID string) {
+// The file body is a JSON object with the session_id, parked_at time, and the
+// park source/level (hk-caaf); it is written best-effort and used by external
+// observers (e.g. the captain's crew-launch loop) to detect parked state.
+func (a *QuiesceArbiter) writeSleepMarker(sessionID string, source SleepSource, level SleepLevel) {
 	dir := filepath.Join(a.cfg.ProjectDir, sleepingMarkerDir)
 	//nolint:gosec // G301: .harmonik/ dir needs to be readable/writable by the project owner; 0755 is intentional
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -497,14 +571,35 @@ func (a *QuiesceArbiter) writeSleepMarker(sessionID string) {
 		return
 	}
 	path := filepath.Join(dir, ".sleeping."+sessionID)
-	body, _ := json.Marshal(map[string]string{
-		"session_id": sessionID,
-		"parked_at":  time.Now().UTC().Format(time.RFC3339),
-	})
+	marker := sleepMarker{
+		SessionID: sessionID,
+		ParkedAt:  time.Now().UTC().Format(time.RFC3339),
+		Source:    source,
+		Level:     level,
+	}
+	marker.normalize()
+	body, _ := json.Marshal(marker)
 	//nolint:gosec // G306: marker file is readable by all users of this project; 0644 is intentional
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: quiesce: write sleep marker %q: %v\n", path, err)
 	}
+}
+
+// readSleepMarker reads and parses .harmonik/.sleeping.<sessionID>, applying the
+// backward-compatible defaults (hk-caaf) so a marker written by an older daemon
+// (session_id + parked_at only) still yields a fully-populated record.
+func (a *QuiesceArbiter) readSleepMarker(path string) (sleepMarker, error) {
+	var m sleepMarker
+	//nolint:gosec // G304: path is composed from the trusted ProjectDir + a fixed marker prefix.
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return m, err
+	}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return m, err
+	}
+	m.normalize()
+	return m, nil
 }
 
 // clearSleepMarker removes .harmonik/.sleeping.<sessionID>.
@@ -540,7 +635,9 @@ func (a *QuiesceArbiter) HandleDaemonSleep(ctx context.Context, force bool) erro
 			return fmt.Errorf("daemon: sleep: fleet not drained (state=%s); use --force to override", res.State)
 		}
 	}
-	a.parkAllSessions(ctx)
+	// CLI `harmonik sleep` is an explicit operator command: source=operator so
+	// the resulting park is sticky against event-reflex auto-wake (hk-caaf).
+	a.parkAllSessions(ctx, SleepSourceOperator, SleepLevelDrain)
 	return nil
 }
 

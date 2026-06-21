@@ -475,6 +475,17 @@ time would burn the very context the lower band saves. So:
   boot or a digest-flagged discrepancy** — if the digest shows a crew/queue/daemon
   state that conflicts with tier-2, reconcile that specific item; otherwise proceed
   straight to Step 5/6.
+- **Re-ground from goal-state (§4.3/FW6):** after the digest, read the durable
+  goal-state with one command and align priorities before dispatching:
+  ```bash
+  cat .harmonik/intent/goal-state.json 2>/dev/null
+  ```
+  If it exists, scan `objectives` + `operator_directives` and align your current
+  priorities with them. Goal-state is written by the goal-keeper agent (FW5) from
+  operator comms; if its `last_event_id` predates comms you just drained, the keeper
+  will refresh it on its next scheduled run. **No per-turn injection** (§4.5 — locked):
+  this is a ONCE-per-restart read, not a persistent prompt fragment. If no
+  `goal-state.json` exists yet (FW5 not yet scheduled), skip silently.
 - Re-arm watchers (Step 6 below) — keeper arming survives the cycle, but the
   `comms recv --follow` and `/loop` health tick must be re-armed after `/clear`.
 
@@ -522,6 +533,37 @@ wedges, and failures. React only to: `epic_completed` (re-task the crew to its
 next lane), crew error posts (investigate/decide), operator messages (answer), or
 a FAILED health tick (daemon down / crew silent / ready work unassigned). Everything
 else is the crews' job.
+
+### Idle-triggered realign (§4.4 — replaces the dropped 12m focus-check)
+
+Goal realignment fires on **genuine system idle**, NOT on a fixed clock timer (the
+12-minute focus-check was dropped per operator steer 2026-06-14 — a busy captain
+already knows its initiatives). The CE4 health tick is the natural detection point.
+
+**Idle conditions (ALL must hold before firing):**
+1. Ops-monitor all checks `ok` (no flagged items in the CE4 tick).
+2. `br ready --limit 0` empty (no unblocked ready beads) and no undeployed code.
+3. No crew actively dispatching (no in-flight runs in the comms feed).
+
+**When idle is confirmed**, run the realign:
+
+```bash
+cat .harmonik/intent/goal-state.json 2>/dev/null
+# Scan: objectives, antigoals, operator_directives.
+# Compare to the current lane table and what kerf next says.
+# Drift detected → comms send --from "$HARMONIK_AGENT" --to operator --topic intent \
+#                  -- "<1-line: current goal vs stated objectives>"
+# No drift → idle silently; do NOT narrate "nothing to do."
+```
+
+**Guards (do NOT fire when):**
+- **Warm-up grace:** within the first 2 health ticks after a cold boot or
+  restart — the system may be spinning up naturally.
+- **Work truly exhausted:** backlog is genuinely empty with no undeployed code and
+  no defined unblocked initiatives — that is a different surface (tell the operator
+  the backlog is empty), not a drift signal.
+- **No goal-state file:** if `.harmonik/intent/goal-state.json` does not exist yet
+  (FW5 not yet scheduled), skip silently.
 
 > **FAILED-tick definition (tightened):** a tick is FAILED if: (a) the daemon is
 > down, OR (b) any crew is comms-silent past 150s, OR **(c) `br ready --limit 0`

@@ -63,22 +63,23 @@ func TestIsSleeping_TrueWhenMarkerPresent(t *testing.T) {
 	}
 }
 
-// TestIsSleeping_FalseWhenEmptySessionID verifies IsSleeping returns false
-// (fail-open) when sessionID is empty — cannot determine state.
-func TestIsSleeping_FalseWhenEmptySessionID(t *testing.T) {
+// TestIsSleeping_TrueWhenEmptySessionID verifies IsSleeping returns true
+// (FAIL-CLOSED, hk-uord) when sessionID is empty — state is indeterminate, so
+// the keeper must defer rather than inject into a session it cannot identify.
+func TestIsSleeping_TrueWhenEmptySessionID(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()
-	if keeper.IsSleeping(projectDir, "") {
-		t.Error("IsSleeping: want false for empty sessionID")
+	if !keeper.IsSleeping(projectDir, "") {
+		t.Error("IsSleeping: want true (fail-closed) for empty sessionID")
 	}
 }
 
-// TestIsSleeping_FalseWhenEmptyProjectDir verifies IsSleeping returns false
-// (fail-open) when projectDir is empty.
-func TestIsSleeping_FalseWhenEmptyProjectDir(t *testing.T) {
+// TestIsSleeping_TrueWhenEmptyProjectDir verifies IsSleeping returns true
+// (FAIL-CLOSED, hk-uord) when projectDir is empty.
+func TestIsSleeping_TrueWhenEmptyProjectDir(t *testing.T) {
 	t.Parallel()
-	if keeper.IsSleeping("", "some-session") {
-		t.Error("IsSleeping: want false for empty projectDir")
+	if !keeper.IsSleeping("", "some-session") {
+		t.Error("IsSleeping: want true (fail-closed) for empty projectDir")
 	}
 }
 

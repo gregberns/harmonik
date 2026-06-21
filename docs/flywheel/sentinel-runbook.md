@@ -2,7 +2,8 @@
 
 > **Spec:** `specs/flywheel-motion.md`. **Implementation status:** `specs/flywheel-motion.md §9`.
 > **Audience:** operators activating or operating the sentinel on a live harmonik project.
-> **Written for:** v1 components FW1–FW6 + AC1–AC5 landed 2026-06-21.
+> **Written for:** v1 components FW1–FW3, FW5–FW6, AC1–AC3, AC5 landed 2026-06-21; FW4 (adversary
+> spawn, hk-jsvc) + AC4 (legitimate-halt clear, hk-jvul) pending (see `specs/flywheel-motion.md §9.1`).
 
 ---
 

@@ -2,7 +2,8 @@
 
 > **STATUS: NORMATIVE.** All design blockers resolved by 18-reviewer convergence; C resolved to (B)
 > staged-bead generator (operator delegated the pick to the captain 2026-06-16; kynes fresh-analysis
-> concurred). kynes 2026-06-16. v1 components FW1–FW6 + AC1–AC5 landed on `main` (2026-06-21).
+> concurred). kynes 2026-06-16. v1 components FW1–FW3, FW5–FW6, AC1–AC3, AC5 landed on `main`
+> (2026-06-21); FW4 (adversary spawn, hk-jsvc) + AC4 (legitimate-halt clear, hk-jvul) pending — see §9.1.
 > Spec finalized from kerf bench draft (`flywheel-motion/05-spec-drafts/flywheel-motion.md`) by ED1
 > (hk-zf4n). Design vision: `docs/flywheel-self-reinforcing-design.md`. Problem space:
 > `~/.kerf/projects/gregberns-harmonik/flywheel-motion/01-problem-space.md`. Pinned bead: `hk-0oca`.

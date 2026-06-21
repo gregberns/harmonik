@@ -582,7 +582,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	// session, unchanged. Remote runs route through spawnWindowVia with an
 	// SSH-backed adapter + a worker-scoped session (see perRunSubstrate.SpawnWindow).
 	// NFR7: the local path is byte-identical to the pre-remote behaviour.
-	return s.spawnWindowVia(ctx, in, s.adapter, s.sessionName)
+	return s.spawnWindowVia(ctx, in, s.adapter, s.sessionName, false /* local */)
 }
 
 // spawnWindowVia is the adapter/session-parameterised core of SpawnWindow. The
@@ -594,7 +594,10 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 //
 // All shared machinery — spawn semaphore, new-window mutex, stagger, the
 // new-window timeout, and spawnedHandles tracking — is preserved for both paths.
-func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.SubstrateSpawn, adapter tmux.Adapter, sessionName string) (handler.SubstrateSession, error) {
+// The remote flag marks the spawned session as worker-hosted so runWait polls
+// worker-side liveness instead of a local kill(s.pid,0) (hk-r1zq). Local callers
+// pass false ⇒ unchanged behaviour (NFR7).
+func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.SubstrateSpawn, adapter tmux.Adapter, sessionName string, remote bool) (handler.SubstrateSession, error) {
 	// Acquire a spawn semaphore slot before creating the window. This enforces
 	// the concurrent-session ceiling (hk-xb5yi). When the cap is not configured
 	// (spawnSem is nil) this block is a no-op.
@@ -805,6 +808,7 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 		paneID:      paneID,
 		pidTarget:   pidTarget,
 		pid:         pid,
+		remote:      remote,
 		waitDone:    make(chan struct{}),
 		releaseSlot: s.releaseSpawnSlot,
 	}
@@ -1643,7 +1647,7 @@ func (p *perRunSubstrate) spawnWindowRemote(ctx context.Context, in handler.Subs
 	// Cache the remote adapter for paste-inject + liveness PID resolution.
 	p.remoteAdapter = remoteAdapter
 
-	return p.inner.spawnWindowVia(ctx, in, remoteAdapter, sessName)
+	return p.inner.spawnWindowVia(ctx, in, remoteAdapter, sessName, true /* remote: worker-hosted, runWait must poll worker liveness not local kill (hk-r1zq) */)
 }
 
 // pasteAdapter returns the adapter that paste-inject and liveness PID-resolution
@@ -1826,6 +1830,18 @@ type tmuxSubstrateSession struct {
 	pidTarget tmux.WindowHandle
 	pid       int
 
+	// remote is true when this session was spawned on a REMOTE worker's tmux
+	// server (perRunSubstrate.spawnWindowRemote) rather than box A's local tmux.
+	// For a remote run s.pid is the WORKER's pane PID, which does NOT exist in the
+	// daemon host's process table — so runWait's local processDead(s.pid) =
+	// kill(pid,0) fast path would return ESRCH ("dead") on the very first tick and
+	// prematurely conclude exitCodeClean while claude is still running on the
+	// worker (hk-r1zq, the remote completion-detection misfire). When remote,
+	// runWait skips the local-kill fast path and polls worker-side liveness via
+	// s.adapter.WindowPanePID (which routes over the run's SSH runner). Local
+	// sessions leave this false ⇒ the fast path is byte-identical (NFR7).
+	remote bool
+
 	// killOnce ensures Kill is idempotent.
 	killOnce sync.Once
 
@@ -1987,7 +2003,15 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 			// polling ticks; ctx.Done() fired first with exitCode=-1, causing
 			// a false claude_crashed classification.
 			exitCode := exitCodeUnknown
-			if s.pid > 0 && deadFn(s.pid) {
+			// hk-r1zq: only trust the local kill(s.pid,0) for a LOCAL session. A
+			// remote session's s.pid is the WORKER's pane PID — local deadFn would
+			// return ESRCH ("dead") unconditionally and falsely report exitCodeClean
+			// on a mid-flight cancel while claude is still alive on the worker, which
+			// can drive the close-on-exit-0 fallback to close an incomplete bead. For
+			// remote we leave exitCodeUnknown (honest "unverified"); the Stop-hook
+			// socket outcome, when present, takes precedence for the real
+			// classification, and otherwise the incomplete/crashed branch handles it.
+			if s.pid > 0 && !s.remote && deadFn(s.pid) {
 				exitCode = exitCodeClean
 			}
 			s.outcome = handler.Outcome{
@@ -1996,10 +2020,19 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 			}
 			return
 		case <-ticker.C:
-			if s.pid > 0 {
-				// Fast path: check OS process table directly. This avoids the
-				// tmux display-message fallback that returns the active-pane PID
-				// when the window name is no longer resolvable (hk-smuku).
+			if s.pid > 0 && !s.remote {
+				// Fast path (LOCAL sessions only): check OS process table directly.
+				// This avoids the tmux display-message fallback that returns the
+				// active-pane PID when the window name is no longer resolvable
+				// (hk-smuku).
+				//
+				// hk-r1zq: a REMOTE session's s.pid is the WORKER's pane PID, which
+				// is NOT in the daemon host's process table — processDead(s.pid) =
+				// kill(pid,0) would return ESRCH ("dead") on the first tick and
+				// falsely conclude exitCodeClean while claude is still running on the
+				// worker. Remote sessions therefore fall through to the worker-side
+				// WindowPanePID poll below (s.adapter routes over the run's SSH
+				// runner), treating worker-pane-gone as the exit signal.
 				if deadFn(s.pid) {
 					s.outcome = handler.Outcome{
 						ExitCode: exitCodeClean,
@@ -2027,11 +2060,17 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 				}
 				// Process and pane both appear alive — continue polling.
 			} else {
-				// Slow path: PID unknown; fall back to WindowPanePID.
+				// Worker / PID-unknown path: poll pane liveness via WindowPanePID.
+				// Reached by (a) a LOCAL session whose spawn-time PID fetch failed
+				// (s.pid==0) and (b) every REMOTE session (hk-r1zq) — for a remote
+				// run s.adapter is the SSH-backed worker adapter, so this resolves
+				// #{pane_pid} on the WORKER's tmux server, i.e. it polls the actual
+				// claude process on the worker rather than a local kill.
 				// hk-kuxxl: use the slash-free pidTarget for the same reason.
 				_, err := s.adapter.WindowPanePID(ctx, s.panePIDTarget())
 				if err != nil {
-					// Window or session gone — treat as process exited.
+					// Window or session gone (the worker pane closed when claude
+					// exited) — treat as process exited.
 					s.outcome = handler.Outcome{
 						ExitCode: exitCodeClean,
 						Duration: time.Since(startedAt),

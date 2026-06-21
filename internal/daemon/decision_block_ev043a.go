@@ -74,6 +74,12 @@ type decisionAckRecord struct {
 	EmittedAt     string                 `json:"emitted_at,omitempty"`
 }
 
+// sentinelSubjectIDACT is the reserved subject_id for sentinel governor exceptions
+// in ACT mode (FW3 hk-4toh). Must match sentinel.sentinelSubjectID ("sentinel").
+// Defined here (daemon package) to avoid importing internal/sentinel — the sentinel
+// package already imports internal/core; a reverse import would create a cycle.
+const sentinelSubjectIDACT = "sentinel"
+
 // decisionAcksDir returns the path to the .harmonik/decision_acks/ directory
 // for the given project directory.
 func decisionAcksDir(projectDir string) string {

@@ -856,3 +856,146 @@ sentinel:
 		t.Errorf("has_undeployed_tail in JSON: got %v, want true", val)
 	}
 }
+
+// TestBuildPendingDecisions_FromAcksDirOnly verifies that a pending sentinel
+// ack-state file surfaces in PendingDecisions even when events.jsonl is empty
+// (FW3 hk-4toh: durable decision_acks/ supplement).
+func TestBuildPendingDecisions_FromAcksDirOnly(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	// Write a pending ack-state file (no corresponding events.jsonl entry).
+	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
+	if err := os.MkdirAll(acksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tok := "test-ack-token-durable-only"
+	ackRecord := map[string]interface{}{
+		"schema_version": 1,
+		"ack_token":      tok,
+		"status":         "pending",
+		"subject_kind":   "queue",
+		"subject_id":     "sentinel",
+		"reason":         "sentinel: sustained low movement detected",
+		"emitted_at":     "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(ackRecord)
+	if err := os.WriteFile(filepath.Join(acksDir, tok), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	if len(d.PendingDecisions) != 1 {
+		t.Fatalf("expected 1 pending decision from acks dir; got %d", len(d.PendingDecisions))
+	}
+	pd := d.PendingDecisions[0]
+	if pd.AckToken != tok {
+		t.Errorf("ack_token: got %q, want %q", pd.AckToken, tok)
+	}
+	if pd.SubjectKind != "queue" {
+		t.Errorf("subject_kind: got %q, want %q", pd.SubjectKind, "queue")
+	}
+	if pd.SubjectID != "sentinel" {
+		t.Errorf("subject_id: got %q, want %q", pd.SubjectID, "sentinel")
+	}
+}
+
+// TestBuildPendingDecisions_AcksDirDedup verifies that when the same ack_token
+// appears in both events.jsonl and decision_acks/, it is surfaced only once
+// (FW3 hk-4toh: dedup between sources).
+func TestBuildPendingDecisions_AcksDirDedup(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	tok := "tok-dedup-test"
+
+	// Write the same ack_token to events.jsonl.
+	writeDecisionEvents(t, dir, []testDecisionEvent{
+		{
+			eventID:     "01900000-0000-7000-8000-000000000001",
+			evType:      "decision_required",
+			ackToken:    tok,
+			subjectKind: "queue",
+			subjectID:   "sentinel",
+			reason:      "sentinel: sustained low movement detected",
+		},
+	})
+
+	// Write a pending ack-state file with the same ack_token.
+	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
+	if err := os.MkdirAll(acksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ackRecord := map[string]interface{}{
+		"schema_version": 1,
+		"ack_token":      tok,
+		"status":         "pending",
+		"subject_kind":   "queue",
+		"subject_id":     "sentinel",
+		"reason":         "sentinel: sustained low movement detected",
+	}
+	data, _ := json.Marshal(ackRecord)
+	if err := os.WriteFile(filepath.Join(acksDir, tok), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	if len(d.PendingDecisions) != 1 {
+		t.Errorf("expected 1 pending decision (dedup); got %d", len(d.PendingDecisions))
+	}
+}
+
+// TestBuildPendingDecisions_AcksDirAcknowledgedSkipped verifies that a file
+// in decision_acks/ with status=acknowledged is NOT surfaced even when there
+// is no matching decision_acknowledged event in events.jsonl.
+func TestBuildPendingDecisions_AcksDirAcknowledgedSkipped(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+
+	tok := "tok-already-acked"
+	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
+	if err := os.MkdirAll(acksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ackRecord := map[string]interface{}{
+		"schema_version": 1,
+		"ack_token":      tok,
+		"status":         "acknowledged",
+		"subject_kind":   "queue",
+		"subject_id":     "sentinel",
+		"reason":         "sentinel: sustained low movement detected",
+	}
+	data, _ := json.Marshal(ackRecord)
+	if err := os.WriteFile(filepath.Join(acksDir, tok), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	if len(d.PendingDecisions) != 0 {
+		t.Errorf("expected 0 pending decisions (acknowledged file should be skipped); got %d", len(d.PendingDecisions))
+	}
+}

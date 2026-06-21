@@ -1125,3 +1125,26 @@ const (
 	// in this mode — it is purely for audit / falsify-early validation.
 	EventTypeGovernorSignal EventType = "governor_signal"
 )
+
+// ---------------------------------------------------------------------------
+// §8.18 Flywheel G-liveness halt page (FW3 hk-4toh)
+// ---------------------------------------------------------------------------
+//
+// liveness_halt is the page event emitted when the G-liveness self-kill gate
+// fires in ACT mode (sentinel.mode: act). Signals that N consecutive evaluation
+// cycles observed zero terminal progress (no HEAD advance / bead close /
+// run_completed) — a strong indicator of a doom-loop or system stall.
+//
+// Receipt of this event means dispatch has been halted. Operator intervention
+// is required: investigate the cause, fix the loop, then restart the daemon.
+//
+// Durability class: F (flight-critical — must not be lost; the daemon halts
+// on emission and will not re-emit on restart until the root cause is fixed).
+//
+// Bead ref: hk-4toh (FW3 ACT mode). Epic: hk-0oca (codename:flywheel).
+const (
+	// EventTypeLivenessHalt is emitted once when the G-liveness gate fires in
+	// ACT mode. Payload carries ConsecutiveZeroCycles (the count that triggered
+	// the halt) and LivenessNoProgressN (the configured threshold).
+	EventTypeLivenessHalt EventType = "liveness_halt"
+)

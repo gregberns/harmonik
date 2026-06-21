@@ -1299,6 +1299,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// Bead ref: hk-kupeo (ShowBead bounded retry), hk-6pspu (dispatch bound).
 	readyPathAttempts := make(map[core.BeadID]int)
 
+	// sentinelPendingAckToken is the ack_token of the in-flight sentinel trip
+	// (ACT mode, FW3 hk-4toh). Empty when no trip is pending. Persists across
+	// loop iterations so dormant transitions can clear the correct token.
+	var sentinelPendingAckToken string
+
+	// governorHalted is set to true when the G-liveness self-kill gate fires
+	// in ACT mode. The loop checks this at the top of each iteration and
+	// calls exitClean() — halting dispatch while allowing in-flight runs to drain.
+	var governorHalted bool
+
 	// dispatchCtx is the context checked by the outer poll loop to decide
 	// whether to halt dispatch. It is separate from ctx (the main daemon context)
 	// so that CancelOnQueueDrain/CancelOnQueueExit can stop the dispatch loop
@@ -1377,6 +1387,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		case <-dispatchCtx.Done():
 			return exitClean()
 		default:
+		}
+
+		// G-liveness halt (FW3 hk-4toh): if the governor fired ActivationHalt
+		// in ACT mode on a prior tick, drain in-flight runs and exit cleanly.
+		// The liveness_halt page event was already emitted when governorHalted
+		// was set; here we merely enforce the halt.
+		if governorHalted {
+			return exitClean()
 		}
 
 		// Step 1b: schedule tick — fire any due recurring jobs (codename:schedule,
@@ -1494,6 +1512,99 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 			if raw, mErr := json.Marshal(sig); mErr == nil {
 				_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw)
+			}
+		}
+
+		// FW3 (hk-4toh): sentinel governor ACT mode.
+		//
+		// Fires every tick when the governor is wired and sentinel.mode=="act".
+		// ACT mode adds real teeth: EmitTrip on sustained-low-movement, ClearTrip
+		// on real movement, and a G-liveness halt + page on doom-loop detection.
+		// Config default is OFF ("observe"); operators opt in via .harmonik/config.yaml.
+		//
+		// Trip/clear state is durable: EmitTrip writes an ack-state file to
+		// .harmonik/decision_acks/ (EV-043a anchor) AND updates the in-memory
+		// DecisionBlocker so IsQueueBlocked("sentinel") gates all dispatch while
+		// the trip is pending.
+		//
+		// Spec ref: flywheel-motion.md §§2, 6.1. Bead ref: hk-4toh (FW3).
+		if deps.governorState != nil && deps.sentinelMode == "act" {
+			now := time.Now()
+
+			var hasReadyBeads bool
+			var readyBeadIDs []string
+			if readyRecs, readyErr := deps.brAdapter.Ready(ctx); readyErr == nil {
+				hasReadyBeads = len(readyRecs) > 0
+				for _, rec := range readyRecs {
+					readyBeadIDs = append(readyBeadIDs, string(rec.BeadID))
+				}
+			}
+
+			var hasUndeployedTail bool
+			if len(deps.sentinelPhase2Classes) > 0 && deps.brPath != "" {
+				hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
+			}
+
+			sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
+				ProjectDir:        deps.projectDir,
+				Now:               now,
+				HasReadyBeads:     hasReadyBeads,
+				HasUndeployedTail: hasUndeployedTail,
+			}, deps.governorCfg)
+
+			if raw, mErr := json.Marshal(sig); mErr == nil {
+				_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw)
+			}
+
+			switch {
+			case sig.Level == sentinel.ActivationHalt:
+				// G-liveness doom-loop: halt dispatch + emit liveness_halt page event.
+				// Set governorHalted=true so the next iteration calls exitClean().
+				governorHalted = true
+				halPayload, _ := json.Marshal(map[string]interface{}{
+					"consecutive_zero_cycles": sig.ConsecutiveZeroCycles,
+					"liveness_no_progress_n":  deps.governorCfg.LivenessNoProgressN,
+				})
+				_ = deps.bus.Emit(ctx, core.EventTypeLivenessHalt, halPayload)
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: sentinel: G-liveness halt fired after %d zero-progress cycles (threshold=%d); halting dispatch\n",
+					sig.ConsecutiveZeroCycles, deps.governorCfg.LivenessNoProgressN)
+
+			case sig.Level == sentinel.ActivationActive && sig.SuppressedBy == "":
+				// Sustained low movement with opportunity: emit decision_required trip.
+				// Idempotent: EmitTrip returns the existing ack_token if one is pending.
+				if sentinelPendingAckToken == "" {
+					tok, tripErr := sentinel.EmitTrip(ctx, sentinel.TripInput{
+						ProjectDir:        deps.projectDir,
+						ReadyBeadIDs:      readyBeadIDs,
+						HasUndeployedTail: hasUndeployedTail,
+						Now:               now,
+					})
+					if tripErr != nil {
+						fmt.Fprintf(os.Stderr,
+							"daemon: workloop: sentinel: EmitTrip failed (non-fatal): %v\n", tripErr)
+					} else if tok != "" {
+						sentinelPendingAckToken = tok
+						if deps.decisionBlocker != nil {
+							deps.decisionBlocker.AddQueueBlock(sentinelSubjectIDACT, tok)
+						}
+					}
+				}
+
+			case sig.Level == sentinel.ActivationDormant && sentinelPendingAckToken != "":
+				// Real movement detected: clear the pending trip automatically.
+				// ClearTrip writes decision_acknowledged to events.jsonl + updates the
+				// ack file. Only governor movement (bead_closed / run_completed /
+				// HEAD-advance) can clear the trip — not the captain's say-so alone.
+				if clearErr := sentinel.ClearTrip(ctx, deps.projectDir, sentinelPendingAckToken, now); clearErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: workloop: sentinel: ClearTrip failed (non-fatal): %v\n", clearErr)
+				} else {
+					if deps.decisionBlocker != nil {
+						deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
+					}
+					sentinelPendingAckToken = ""
+				}
 			}
 		}
 
@@ -1711,11 +1822,25 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// if the bead has an unacknowledged decision_required pending,
 				// hold it without claiming and retry on the next poll tick.
 				//
+				// Sentinel queue-level gate (FW3 hk-4toh): also hold when the
+				// sentinel governor trip is pending (IsQueueBlocked("sentinel")),
+				// which blocks ALL beads — not just a specific one — until real
+				// movement clears the trip.
+				//
 				// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
-				// Bead ref: hk-pbmsq.
+				// Bead ref: hk-pbmsq (bead gate), hk-4toh (sentinel queue gate).
 				if deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(snapItemBeadID) {
 					fmt.Fprintf(os.Stderr,
 						"daemon: workloop: bead %s blocked by unacknowledged decision_required (EV-043) — holding\n",
+						snapItemBeadID)
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						return exitClean()
+					}
+					continue
+				}
+				if deps.decisionBlocker != nil && deps.decisionBlocker.IsQueueBlocked(sentinelSubjectIDACT) {
+					fmt.Fprintf(os.Stderr,
+						"daemon: workloop: bead %s blocked by sentinel governor trip (EV-043, FW3) — holding until real movement\n",
 						snapItemBeadID)
 					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 						return exitClean()
@@ -2072,11 +2197,23 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// Decision-required dispatch-blocking gate (EV-043, br-ready path):
 			// mirror the check applied in the queue path above.
 			//
+			// Sentinel queue-level gate (FW3 hk-4toh): also hold when the sentinel
+			// governor trip is pending — all beads are blocked until real movement.
+			//
 			// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
-			// Bead ref: hk-pbmsq.
+			// Bead ref: hk-pbmsq (bead gate), hk-4toh (sentinel queue gate).
 			if deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(beadRecord.BeadID) {
 				fmt.Fprintf(os.Stderr,
 					"daemon: workloop: bead %s blocked by unacknowledged decision_required (EV-043, br-ready path) — holding\n",
+					beadRecord.BeadID)
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					return exitClean()
+				}
+				continue
+			}
+			if deps.decisionBlocker != nil && deps.decisionBlocker.IsQueueBlocked(sentinelSubjectIDACT) {
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: bead %s blocked by sentinel governor trip (EV-043, FW3, br-ready path) — holding until real movement\n",
 					beadRecord.BeadID)
 				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 					return exitClean()

@@ -124,10 +124,14 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 	}
 
 	// --- pending decision_required events (EV-044) ---
-	// Scanned from the beginning of events.jsonl, ignoring SinceEventID, so
+	// Primary: scan events.jsonl from the beginning (ignoring SinceEventID) so
 	// that unacknowledged decisions surface even during quiet periods where the
 	// watermark has advanced past the event.
-	out.PendingDecisions = buildPendingDecisions(eventsPath)
+	// Supplement: also scan .harmonik/decision_acks/ (the durable anchor) so
+	// decisions emitted before events.jsonl rotation still surface. The two sets
+	// are merged and deduplicated by ack_token (FW3 hk-4toh).
+	acksDir := filepath.Join(in.ProjectDir, ".harmonik", "decision_acks")
+	out.PendingDecisions = buildPendingDecisions(eventsPath, acksDir)
 
 	// --- suppression resolver (flywheel-motion.md §3) ---
 	// Deterministic, LLM-free. EXECUTE-BACKLOG is the default (Suppressed=false).
@@ -154,14 +158,18 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 	return out, nil
 }
 
-// buildPendingDecisions scans the full events.jsonl (from the beginning, ignoring
-// SinceEventID) and returns every decision_required event whose ack_token has no
-// matching decision_acknowledged event (EV-044).
+// buildPendingDecisions returns every unacknowledged decision_required entry.
+//
+// Two sources are scanned and merged (deduped by ack_token):
+//  1. events.jsonl (full scan from the beginning, ignoring SinceEventID) —
+//     the observational record, fast for live-running daemons.
+//  2. .harmonik/decision_acks/ (the durable anchor, FW3 hk-4toh) — survives
+//     events.jsonl rotation and daemon restarts; only pending files appear.
 //
 // "Quiet" suppression — where a watermark-advancing consumer would skip old events
 // — MUST NOT apply to decision_required: they must appear in every digest until
 // explicitly acknowledged.
-func buildPendingDecisions(eventsPath string) []DecisionRequiredSummary {
+func buildPendingDecisions(eventsPath, acksDir string) []DecisionRequiredSummary {
 	type decisionRequiredPayload struct {
 		Subject struct {
 			Kind string `json:"kind"`
@@ -175,7 +183,7 @@ func buildPendingDecisions(eventsPath string) []DecisionRequiredSummary {
 		AckToken string `json:"ack_token"`
 	}
 
-	// First pass: collect all decision_required and decision_acknowledged events.
+	// --- Source 1: events.jsonl ---
 	var decisions []struct {
 		eventID string
 		payload decisionRequiredPayload
@@ -207,7 +215,8 @@ func buildPendingDecisions(eventsPath string) []DecisionRequiredSummary {
 		}
 	}
 
-	// Second pass: filter to unacknowledged decisions.
+	// Filter events.jsonl source to unacknowledged decisions and build index.
+	seen := make(map[string]struct{}) // ack_token → already in out
 	var out []DecisionRequiredSummary
 	for _, d := range decisions {
 		if _, acked := ackedTokens[d.payload.AckToken]; acked {
@@ -221,7 +230,50 @@ func buildPendingDecisions(eventsPath string) []DecisionRequiredSummary {
 			Reason:          d.payload.Reason,
 			SuggestedAction: d.payload.SuggestedAction,
 		})
+		seen[d.payload.AckToken] = struct{}{}
 	}
+
+	// --- Source 2: .harmonik/decision_acks/ (durable anchor) ---
+	// Supplement with any pending ack-state files not already in out (e.g.
+	// written before events.jsonl was created, or after log rotation).
+	// Acknowledged files (status != "pending") are skipped.
+	if entries, err := os.ReadDir(acksDir); err == nil { //nolint:gosec // G304: operator-controlled dir
+		type ackRecord struct {
+			SchemaVersion int    `json:"schema_version"`
+			AckToken      string `json:"ack_token"`
+			Status        string `json:"status"`
+			SubjectKind   string `json:"subject_kind"`
+			SubjectID     string `json:"subject_id"`
+			Reason        string `json:"reason"`
+			EmittedAt     string `json:"emitted_at"`
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			data, readErr := os.ReadFile(filepath.Join(acksDir, entry.Name())) //nolint:gosec // G304: operator-controlled dir
+			if readErr != nil {
+				continue
+			}
+			var rec ackRecord
+			if jsonErr := json.Unmarshal(data, &rec); jsonErr != nil {
+				continue
+			}
+			if rec.Status != "pending" || rec.AckToken == "" {
+				continue
+			}
+			if _, already := seen[rec.AckToken]; already {
+				continue // already surfaced via events.jsonl
+			}
+			out = append(out, DecisionRequiredSummary{
+				AckToken:    rec.AckToken,
+				SubjectKind: rec.SubjectKind,
+				SubjectID:   rec.SubjectID,
+				Reason:      rec.Reason,
+			})
+		}
+	}
+
 	return out
 }
 

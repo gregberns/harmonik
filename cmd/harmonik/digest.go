@@ -206,6 +206,19 @@ func printHumanDigest(d *digest.DigestJSON) {
 		}
 	}
 
+	// Pending decisions (EV-044) — surfaced unconditionally so operators cannot
+	// miss a sentinel trip or other blocking decision_required event.
+	if len(d.PendingDecisions) > 0 {
+		fmt.Printf("\n=== Pending decisions (%d — BLOCKING) ===\n", len(d.PendingDecisions))
+		for _, pd := range d.PendingDecisions {
+			fmt.Printf("  [%s/%s] %s\n", pd.SubjectKind, pd.SubjectID, pd.Reason)
+			if pd.SuggestedAction != "" {
+				fmt.Printf("    → %s\n", pd.SuggestedAction)
+			}
+			fmt.Printf("    ack_token=%s\n", pd.AckToken)
+		}
+	}
+
 	// Open notes
 	fmt.Printf("\n=== Open notes (%d) ===\n", len(d.OpenNotes))
 	if len(d.OpenNotes) == 0 {

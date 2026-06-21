@@ -313,6 +313,12 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// socket connection, no state mutation, side-effect-free. Mirror of
 	// project-hash (same bootstrap-only authorisation).
 	"remote-control-prefix": "operator-nfr.md §4.9 ON-055; read-only RC-prefix printer, no daemon connection, no run impact",
+	// hk-gv04 (P2-a): typed StateSnapshot aggregator (specs/system-state.md
+	// §4 SS-001..SS-015). Daemon-up: live socket RPC ("state" op, read-only
+	// snapshot); daemon-down: disk fallback. No state mutation, no in-flight
+	// run abort. Authorised by operator-nfr.md §4.9 ON-055 (read-only
+	// observation surface).
+	"state": "specs/system-state.md §4 SS-001; read-only state snapshot aggregator, no in-flight run abort",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled
@@ -388,6 +394,11 @@ var oninv006FixtureSocketOpAllowlist = map[string]string{
 	// state mutated; no in-flight run abort.
 	// Equivalent scope to operator-resume (ON-010) at the LLM session layer.
 	"daemon-wake": "operator-nfr.md §4.3 ON-010; resumes sleeping LLM sessions, no run state mutation, no in-flight run abort",
+	// hk-gv04 (P2-a): read-only StateSnapshot RPC. HandleState snapshots
+	// RunRegistry + QueueStore and computes the §4.2 fold — pure reads,
+	// no state mutation, no in-flight run abort. Authorised by
+	// specs/system-state.md §4 SS-001 (read-only snapshot via live socket).
+	"state": "specs/system-state.md §4 SS-001; read-only state snapshot RPC, no state mutation, no in-flight run abort",
 }
 
 // oninv006FixtureSignalAllowlist is the exhaustive set of signals registered

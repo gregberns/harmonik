@@ -6,18 +6,24 @@ package workers
 // This file is the foundation of the worker-report feature: the typed event
 // payload, its registration, and the pure parser for the inline darwin collector
 // output. It mirrors health.go's shape (typed payload + core.RegisterEventType in
-// init() + EmitFunc) but does NOT touch SSH, the substrate, or dispatch. The
-// CommandRunner-driven collector (CollectReport) and the timer wiring land in
-// later beads (WR2/WR3); this bead is observability scaffolding only.
+// init() + EmitFunc). WR2 adds the CommandRunner-driven collector (CollectReport
+// + the inline darwin `sh -c` collector script), mirroring health.go's
+// runner/emit shape. The timer/poll-loop wiring still lands in WR3, and
+// problem-flag derivation (Problems) in WR4.
 //
-// Bead ref: hk-9wbl (WR1).
+// Bead refs: hk-9wbl (WR1), hk-ec9v (WR2).
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // WorkerReportPayload is the typed event payload for the worker_report event
@@ -66,6 +72,81 @@ func init() {
 	}
 }
 
+// darwinCollectorScript builds the inline `sh -c` collector body for a worker,
+// substituting repoPath into the `df` target. It mirrors the spec's collector
+// (§"The collector") line-for-line and adds an authoritative `pagesize=` line
+// (the WR1 TODO) so MemFreeMB is correct on Apple Silicon page sizes.
+//
+// Each line is `key=value`, order-independent, parsed by parseWorkerReport. The
+// `vmstat<<` line carries the raw `vm_stat` block; `pagesize=` is emitted last so
+// the explicit sysctl value wins over any vm_stat-header scrape.
+func darwinCollectorScript(repoPath string) string {
+	// repoPath is quoted in the df invocation to tolerate spaces in the path.
+	return strings.Join([]string{
+		`echo "load=$(sysctl -n vm.loadavg | tr -d '{}')"`,
+		`echo "ncpu=$(sysctl -n hw.ncpu)"`,
+		`echo "memtotal=$(sysctl -n hw.memsize)"`,
+		`echo "vmstat<<$(vm_stat)"`,
+		`echo "swap=$(sysctl -n vm.swapusage)"`,
+		`echo "disk=$(df -m '` + repoPath + `' | tail -1)"`,
+		`echo "claude=$(pgrep -f 'claude --session-id' | wc -l | tr -d ' ')"`,
+		`echo "pagesize=$(sysctl -n hw.pagesize)"`,
+	}, "\n")
+}
+
+// CollectReport runs the inline darwin resource collector on worker w via runner,
+// parses its output into a WorkerReportPayload, stamps WorkerName + SampledAt
+// (RFC 3339 UTC), and emits a worker_report event via emit.
+//
+// It is the resource-snapshot sibling of RunHealthCheck: same runner
+// (tmux.CommandRunner → SSH in production), same EmitFunc contract (nil emit
+// suppresses emission without error), same `runner.Command(ctx, ...)` +
+// bytes.Buffer stdout-capture shape.
+//
+// CollectReport does NOT derive Problems — that is WR4's problem-detection pass,
+// which will cross-check ClaudeProcs against Registry.inFlight and add a Registry
+// parameter at that point. Until then no Registry is needed here (matching
+// RunHealthCheck's split: it takes reg only because it mutates enabled-state).
+//
+// On a runner failure the collector error is returned and no event is emitted.
+//
+// Bead ref: hk-ec9v (WR2).
+func CollectReport(ctx context.Context, runner tmux.CommandRunner, w Worker, emit EmitFunc) (WorkerReportPayload, error) {
+	cmd := runner.Command(ctx, "sh", "-c", darwinCollectorScript(w.RepoPath))
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return WorkerReportPayload{}, fmt.Errorf("CollectReport: %s: collector failed: %w (output: %q)", w.Name, err, out.String())
+	}
+
+	p, err := parseWorkerReport(out.String())
+	if err != nil {
+		return WorkerReportPayload{}, fmt.Errorf("CollectReport: %s: %w", w.Name, err)
+	}
+
+	p.WorkerName = w.Name
+	p.SampledAt = time.Now().UTC().Format(time.RFC3339)
+	// TODO(WR4): derive p.Problems here (orphaned_claude / worktree_leak /
+	// disk_pressure), which will require a *Registry to read inFlight.
+
+	emitWorkerReport(ctx, p, emit)
+	return p, nil
+}
+
+// emitWorkerReport marshals and emits a worker_report event. No-op when emit is
+// nil (mirrors emitUnhealthyEvent in health.go).
+func emitWorkerReport(ctx context.Context, p WorkerReportPayload, emit EmitFunc) {
+	if emit == nil {
+		return
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return
+	}
+	_ = emit(ctx, core.EventTypeWorkerReport, b)
+}
+
 // defaultDarwinPageSize is the fallback vm_stat page size (bytes) used only when
 // the collector's vm_stat header does not carry an authoritative page size. It is
 // 16384 — correct for the actual Apple Silicon worker (gb-mbp) — NOT the old 4096
@@ -73,8 +154,11 @@ func init() {
 // from the vm_stat header line ("Mach Virtual Memory Statistics: (page size of N
 // bytes)"); this constant is only the safety net.
 //
-// TODO(WR2): consider having the collector pass `sysctl -n hw.pagesize` explicitly
-// so the page size is never inferred from the header.
+// WR2 resolved the WR1 TODO: the collector now emits an explicit
+// `pagesize=$(sysctl -n hw.pagesize)` line (see darwinCollectorScript), so page
+// size is authoritative rather than inferred from the vm_stat header. This
+// constant remains the last-resort safety net (header absent AND no pagesize=
+// line, e.g. a future non-darwin collector).
 const defaultDarwinPageSize = 16384
 
 const bytesPerMB = 1024 * 1024
@@ -114,9 +198,11 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 		freePg   int64
 		inactPg  int64
 		inVMStat bool
-		// pageSize is the vm_stat page size in bytes. It is parsed from the
-		// vm_stat header ("page size of N bytes"); until that header is seen it
-		// holds the fallback (16384, correct for the actual Apple Silicon worker).
+		// pageSize is the vm_stat page size in bytes. The collector now emits an
+		// authoritative `pagesize=` line (sysctl -n hw.pagesize, WR2); when that is
+		// absent it is parsed from the vm_stat header ("page size of N bytes"); and
+		// until either is seen it holds the fallback (16384, correct for the actual
+		// Apple Silicon worker).
 		pageSize int64 = defaultDarwinPageSize
 	)
 
@@ -182,6 +268,17 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 		val = strings.TrimSpace(val)
 
 		switch key {
+		case "pagesize":
+			// Authoritative page size from `sysctl -n hw.pagesize` (WR2 collector).
+			// Overrides the vm_stat-header scrape and the fallback so MemFreeMB is
+			// correct on Apple Silicon (16384) rather than the old x86 4096 guess.
+			n, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: pagesize: %w", err)
+			}
+			if n > 0 {
+				pageSize = n
+			}
 		case "load":
 			l1, l5, err := parseLoadavg(val)
 			if err != nil {

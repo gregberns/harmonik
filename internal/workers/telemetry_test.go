@@ -7,8 +7,14 @@ package workers
 // health_test.go without needing SSH or a CommandRunner.
 
 import (
+	"context"
+	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // sampleDarwinReport is a realistic block of the inline darwin collector output
@@ -188,6 +194,177 @@ func TestParseWorkerReport(t *testing.T) {
 				t.Errorf("Problems: parser must leave nil, got %v", got.Problems)
 			}
 		})
+	}
+}
+
+// ---- WR2 (hk-ec9v): CollectReport runner + emit tests ----
+
+// cannedCollectorStdout is realistic output of darwinCollectorScript on an
+// Apple-Silicon worker: the explicit `pagesize=16384` line (WR2) makes MemFreeMB
+// page-size-correct (the old 4096 x86 assumption would under-count it 4×).
+const cannedCollectorStdout = `load=1.20 1.10 0.95
+ncpu=8
+memtotal=17179869184
+vmstat<<Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                              100000.
+Pages inactive:                           50000.
+Pages active:                            200000.
+
+swap=total = 2048.00M  used = 512.50M  free = 1535.50M  (encrypted)
+disk=/dev/disk1s1   476802   12345   400000    24%  1234567  9876543   11%   /System/Volumes/Data
+claude=3
+pagesize=16384
+`
+
+// collectorRunner is a fake tmux.CommandRunner returning canned stdout for the
+// `sh -c <collector>` invocation. When failExit is true the command exits 1.
+type collectorRunner struct {
+	stdout   string
+	failExit bool
+}
+
+func (r collectorRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	if r.failExit {
+		return exec.CommandContext(ctx, "sh", "-c", "exit 1")
+	}
+	// Echo the canned stdout verbatim, passed as $0 to avoid quoting issues with
+	// the multi-line content.
+	return exec.CommandContext(ctx, "sh", "-c", `printf '%s' "$0"`, r.stdout)
+}
+
+var _ tmux.CommandRunner = collectorRunner{}
+
+// captureReportEmit returns an EmitFunc that records (type, payload) pairs.
+func captureReportEmit(events *[]struct {
+	Type    core.EventType
+	Payload []byte
+},
+) EmitFunc {
+	return func(ctx context.Context, et core.EventType, b []byte) error {
+		*events = append(*events, struct {
+			Type    core.EventType
+			Payload []byte
+		}{et, b})
+		return nil
+	}
+}
+
+func reportTestWorker() Worker {
+	return Worker{
+		Name:      "test-worker",
+		Transport: "ssh",
+		Host:      "host.example.com",
+		OS:        "darwin",
+		RepoPath:  "/repo",
+		MaxSlots:  4,
+		Enabled:   true,
+	}
+}
+
+// TestCollectReport_PopulatesPayloadAndEmits asserts CollectReport parses the
+// canned collector output, stamps WorkerName + SampledAt, emits a worker_report
+// event with the same payload, and does NOT derive Problems (WR4).
+func TestCollectReport_PopulatesPayloadAndEmits(t *testing.T) {
+	runner := collectorRunner{stdout: cannedCollectorStdout}
+
+	var captured []struct {
+		Type    core.EventType
+		Payload []byte
+	}
+	emit := captureReportEmit(&captured)
+
+	got, err := CollectReport(context.Background(), runner, reportTestWorker(), emit)
+	if err != nil {
+		t.Fatalf("CollectReport returned unexpected error: %v", err)
+	}
+
+	if got.WorkerName != "test-worker" {
+		t.Errorf("WorkerName: got %q, want %q", got.WorkerName, "test-worker")
+	}
+	if got.SampledAt == "" {
+		t.Error("SampledAt must not be empty")
+	}
+	if got.Load1 != 1.20 || got.Load5 != 1.10 {
+		t.Errorf("Load: got %v/%v, want 1.20/1.10", got.Load1, got.Load5)
+	}
+	if got.NCPU != 8 {
+		t.Errorf("NCPU: got %d, want 8", got.NCPU)
+	}
+	if got.MemTotalMB != 16384 {
+		t.Errorf("MemTotalMB: got %d, want 16384", got.MemTotalMB)
+	}
+	// (100000 free + 50000 inactive) * 16384 / 1MiB, page-size-correct.
+	wantFreeMB := int64(150000) * 16384 / (1024 * 1024)
+	if got.MemFreeMB != wantFreeMB {
+		t.Errorf("MemFreeMB: got %d, want %d (16384 page size)", got.MemFreeMB, wantFreeMB)
+	}
+	if got.SwapUsedMB != 512 {
+		t.Errorf("SwapUsedMB: got %d, want 512", got.SwapUsedMB)
+	}
+	if got.DiskFreeMB != 400000 {
+		t.Errorf("DiskFreeMB: got %d, want 400000", got.DiskFreeMB)
+	}
+	if got.ClaudeProcs != 3 {
+		t.Errorf("ClaudeProcs: got %d, want 3", got.ClaudeProcs)
+	}
+	if len(got.Problems) != 0 {
+		t.Errorf("Problems: got %v, want empty (WR4 owns derivation)", got.Problems)
+	}
+
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 emitted event, got %d", len(captured))
+	}
+	if captured[0].Type != core.EventTypeWorkerReport {
+		t.Fatalf("event type: got %q, want %q", captured[0].Type, core.EventTypeWorkerReport)
+	}
+	var payload WorkerReportPayload
+	if err := json.Unmarshal(captured[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal emitted payload: %v", err)
+	}
+	if payload.WorkerName != "test-worker" || payload.ClaudeProcs != 3 {
+		t.Errorf("emitted payload mismatch: %+v", payload)
+	}
+	if payload.SampledAt != got.SampledAt {
+		t.Errorf("emitted SampledAt %q != returned %q", payload.SampledAt, got.SampledAt)
+	}
+}
+
+// TestCollectReport_NilEmitNoError asserts a nil EmitFunc suppresses emission
+// without error and still returns the parsed payload.
+func TestCollectReport_NilEmitNoError(t *testing.T) {
+	runner := collectorRunner{stdout: cannedCollectorStdout}
+	got, err := CollectReport(context.Background(), runner, reportTestWorker(), nil)
+	if err != nil {
+		t.Fatalf("CollectReport (nil emit): unexpected error: %v", err)
+	}
+	if got.NCPU != 8 {
+		t.Errorf("NCPU: got %d, want 8", got.NCPU)
+	}
+}
+
+// TestCollectReport_RunnerFailure asserts a non-zero collector exit yields an
+// error, a zero-value payload, and no emitted event.
+func TestCollectReport_RunnerFailure(t *testing.T) {
+	runner := collectorRunner{failExit: true}
+
+	var captured []struct {
+		Type    core.EventType
+		Payload []byte
+	}
+	emit := captureReportEmit(&captured)
+
+	got, err := CollectReport(context.Background(), runner, reportTestWorker(), emit)
+	if err == nil {
+		t.Fatal("CollectReport: expected error on runner failure, got nil")
+	}
+	if got.WorkerName != "" {
+		t.Errorf("expected zero-value payload on failure, got WorkerName %q", got.WorkerName)
+	}
+	if len(captured) != 0 {
+		t.Errorf("expected no event on runner failure, got %d", len(captured))
+	}
+	if !strings.Contains(err.Error(), "collector failed") {
+		t.Errorf("error should name the collector failure, got: %v", err)
 	}
 }
 

@@ -1048,6 +1048,20 @@ const (
 	// history mined later to choose a real concurrency max).
 	// Bead ref: hk-9wbl.
 	EventTypeWorkerReport EventType = "worker_report"
+
+	// EventTypeResourceBreach is the resource_breach event type (worker-report
+	// Phase 2, PB1). Emitted by the workers-package breach detector when a
+	// worker's normalized resource pressure (cpu / memory / swap) crosses a
+	// configured enter threshold and stays over it for the breach dwell window
+	// ("breach"), or recovers under the exit threshold for the clear dwell window
+	// ("clear"). Drives Phase-2 autoscale backoff; observability + control input.
+	//
+	// Payload fields: worker_name, kind, signal, value, threshold,
+	// breached_for_seconds, in_flight, started_at, fired_at.
+	// Durability class: O (ordinary — operator observability; the breach/clear
+	// state is reconstructible from the worker_report event stream).
+	// Bead ref: hk-necs.
+	EventTypeResourceBreach EventType = "resource_breach"
 )
 
 // ---------------------------------------------------------------------------

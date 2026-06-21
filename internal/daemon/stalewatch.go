@@ -132,6 +132,18 @@ type runStaleState struct {
 	// this run.  Prevents repeated cancel calls on subsequent scan ticks.
 	// Bead ref: hk-0z5x.
 	neverSpawnedFired bool
+
+	// lastLaunchInitiatedAt is the wall-clock time of the MOST RECENT
+	// launch_initiated event.  Unlike launchInitiatedAt (first-only), this
+	// updates on every launch_initiated so the per-dispatch reaper below can
+	// reference the most recent node's start time (hk-sj6a).
+	lastLaunchInitiatedAt time.Time
+
+	// agentReadySeenSinceLastLaunch is reset to false on every launch_initiated
+	// and set to true when agent_ready arrives.  The per-dispatch reaper uses
+	// this to detect a DOT reviewer session that stalls before agent_ready even
+	// when a prior node (implementer) already set agentReadySeen (hk-sj6a).
+	agentReadySeenSinceLastLaunch bool
 }
 
 // StaleWatcherConfig holds the construction-time parameters for StaleWatcher.
@@ -286,11 +298,18 @@ func (w *StaleWatcher) observe(_ context.Context, evt core.Event) error {
 		if st.launchInitiatedAt.IsZero() {
 			st.launchInitiatedAt = now
 		}
+		// hk-sj6a: update the most-recent launch timestamp and reset the
+		// per-dispatch flag so the per-dispatch reaper can fire for a DOT
+		// reviewer node that stalls before agent_ready.
+		st.lastLaunchInitiatedAt = now
+		st.agentReadySeenSinceLastLaunch = false
 	}
 	// hk-0z5x: track agent_ready so the never-spawned reaper knows when the
 	// implementer has successfully started (suppresses the reaper for normal runs).
 	if core.EventType(typeStr) == core.EventTypeAgentReady {
 		st.agentReadySeen = true
+		// hk-sj6a: mark agent_ready received for the current dispatch.
+		st.agentReadySeenSinceLastLaunch = true
 	}
 
 	w.mu.Unlock()
@@ -410,6 +429,36 @@ func (w *StaleWatcher) checkRun(
 		beadIDForNSR := st.beadID
 		w.mu.Unlock()
 		w.fireNeverSpawnedReaper(ctx, runID, beadIDForNSR, handle, now.Sub(launchInitiatedAt))
+		w.mu.Lock()
+		// Re-acquire st after unlock/lock cycle.
+		st = w.states[runID]
+		if st == nil {
+			w.mu.Unlock()
+			return
+		}
+	}
+
+	// hk-sj6a: per-dispatch never-spawned reaper for DOT runs with sequential
+	// nodes.  agentReadySeen is permanently true once any node gets agent_ready
+	// (e.g. the implementer), permanently suppressing the classic check above for
+	// all subsequent dispatches.  This per-dispatch variant uses
+	// lastLaunchInitiatedAt (most-recent dispatch) and
+	// agentReadySeenSinceLastLaunch (reset on each launch_initiated) so that a
+	// reviewer session that stalls before agent_ready is still reaped.
+	//
+	// Fires at most once per run (shares neverSpawnedFired with the classic
+	// check above).  Only triggers when agentReadySeen=true (at least one prior
+	// dispatch succeeded), distinguishing the DOT multi-node case from the
+	// single-dispatch path already handled by the classic check.
+	lastLaunchInitiatedAt := st.lastLaunchInitiatedAt
+	agentReadySinceLastLaunch := st.agentReadySeenSinceLastLaunch
+	if agentReadySeen && !agentReadySinceLastLaunch && !neverSpawnedFired &&
+		!lastLaunchInitiatedAt.IsZero() &&
+		now.Sub(lastLaunchInitiatedAt) > w.cfg.NeverSpawnedReaperTimeout {
+		st.neverSpawnedFired = true
+		beadIDForNSR2 := st.beadID
+		w.mu.Unlock()
+		w.fireNeverSpawnedReaper(ctx, runID, beadIDForNSR2, handle, now.Sub(lastLaunchInitiatedAt))
 		w.mu.Lock()
 		// Re-acquire st after unlock/lock cycle.
 		st = w.states[runID]

@@ -1201,10 +1201,19 @@ func dispatchDotAgenticNode(
 	// Without this, lastEventType stays frozen at "launch_initiated" for the
 	// full run duration, causing false-positive run_stale on every DOT dispatch.
 	// Mirrors the single-mode path (workloop.go Step 5).
+	//
+	// hk-sj6a: emit to deps.bus directly (NOT through tap). Routing daemon
+	// heartbeats through tap fans them out to tap.Subscribe() consumers —
+	// including reviewerHBCh — which pasteInjectQuitOnReviewFile interprets as
+	// evidence the reviewer is still reasoning. This keeps recentHB=true
+	// indefinitely after the reviewer claude process dies (the daemon goroutine
+	// itself is alive), preventing Kill from firing until the hard ceiling (60 min).
+	// Emitting to deps.bus keeps the stale watcher informed (it subscribes to the
+	// underlying bus) without leaking daemon heartbeats into the reviewer watchdog.
 	nodeHBDone := make(chan struct{})
 	go handler.RunHeartbeatLoop(ctx, artifacts.handlerSessionID,
 		handler.HeartbeatInterval, nodeHBDone,
-		newDaemonHeartbeatEmitter(tap, runID))
+		newDaemonHeartbeatEmitter(deps.bus, runID))
 	defer close(nodeHBDone)
 
 	// hk-goczd / hk-68pvl: force-tear-down the session before this function

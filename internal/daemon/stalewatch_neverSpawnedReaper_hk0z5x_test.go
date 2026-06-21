@@ -259,6 +259,93 @@ func TestNeverSpawnedReaper_NotYetDue(t *testing.T) {
 	}
 }
 
+// TestNeverSpawnedReaper_PerDispatch_DOTReviewerStallsBeforeAgentReady verifies
+// the per-dispatch never-spawned reaper added by hk-sj6a.
+//
+// Scenario: a DOT run whose implementer node completed (launch_initiated +
+// agent_ready) but whose reviewer node stalled before agent_ready.  The classic
+// check is suppressed (agentReadySeen=true from the implementer).  The
+// per-dispatch check must fire after NeverSpawnedReaperTimeout from the
+// reviewer's launch_initiated.
+func TestNeverSpawnedReaper_PerDispatch_DOTReviewerStallsBeforeAgentReady(t *testing.T) {
+	t.Parallel()
+	reg := daemon.NewRunRegistry()
+	runID := nsrNewRunID(t)
+	epoch := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clk := newMutableClock(epoch)
+
+	var cancelCalled atomic.Bool
+	handle := &daemon.RunHandle{
+		BeadID:    "hk-sj6a-per-dispatch",
+		StartedAt: epoch,
+		Cancel:    func() { cancelCalled.Store(true) },
+	}
+	reg.Register(runID, handle)
+
+	const reaperTimeout = 30 * time.Minute
+	w, _ := nsrBuildWatcher(t, reg, reaperTimeout, clk)
+
+	// Implementer dispatch: launch_initiated then agent_ready.
+	nsrSimulateEvent(w, clk, runID, core.EventTypeLaunchInitiated, epoch)
+	nsrSimulateEvent(w, clk, runID, core.EventTypeAgentReady, epoch.Add(1*time.Minute))
+
+	// Reviewer dispatch: launch_initiated but NO agent_ready (stall).
+	reviewerLaunchAt := epoch.Add(10 * time.Minute)
+	nsrSimulateEvent(w, clk, runID, core.EventTypeLaunchInitiated, reviewerLaunchAt)
+
+	// Advance past NeverSpawnedReaperTimeout from the reviewer's launch_initiated.
+	clk.Set(reviewerLaunchAt.Add(31 * time.Minute))
+	daemon.ExportedStalewatchScan(w, context.Background())
+	time.Sleep(50 * time.Millisecond)
+
+	if !cancelCalled.Load() {
+		t.Error("hk-sj6a: expected per-dispatch never-spawned reaper to fire for " +
+			"DOT reviewer that stalled before agent_ready")
+	}
+	if !daemon.ExportedRunHandleIsAborted(handle) {
+		t.Error("hk-sj6a: expected handle.aborted=true after per-dispatch reaper fires")
+	}
+}
+
+// TestNeverSpawnedReaper_PerDispatch_SuppressedWhenReviewerGetsAgentReady verifies
+// the per-dispatch reaper does NOT fire when the reviewer's session does get
+// agent_ready (the normal, healthy DOT run path).
+func TestNeverSpawnedReaper_PerDispatch_SuppressedWhenReviewerGetsAgentReady(t *testing.T) {
+	t.Parallel()
+	reg := daemon.NewRunRegistry()
+	runID := nsrNewRunID(t)
+	epoch := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clk := newMutableClock(epoch)
+
+	var cancelCalled atomic.Bool
+	handle := &daemon.RunHandle{
+		BeadID:    "hk-sj6a-suppressed",
+		StartedAt: epoch,
+		Cancel:    func() { cancelCalled.Store(true) },
+	}
+	reg.Register(runID, handle)
+
+	w, _ := nsrBuildWatcher(t, reg, 30*time.Minute, clk)
+
+	// Implementer: both events.
+	nsrSimulateEvent(w, clk, runID, core.EventTypeLaunchInitiated, epoch)
+	nsrSimulateEvent(w, clk, runID, core.EventTypeAgentReady, epoch.Add(1*time.Minute))
+
+	// Reviewer: launch_initiated AND agent_ready (healthy path).
+	reviewerLaunchAt := epoch.Add(10 * time.Minute)
+	nsrSimulateEvent(w, clk, runID, core.EventTypeLaunchInitiated, reviewerLaunchAt)
+	nsrSimulateEvent(w, clk, runID, core.EventTypeAgentReady, reviewerLaunchAt.Add(1*time.Minute))
+
+	// Advance past reaper timeout — reaper should remain suppressed.
+	clk.Set(reviewerLaunchAt.Add(31 * time.Minute))
+	daemon.ExportedStalewatchScan(w, context.Background())
+	time.Sleep(50 * time.Millisecond)
+
+	if cancelCalled.Load() {
+		t.Error("hk-sj6a: per-dispatch reaper must NOT fire when reviewer got agent_ready")
+	}
+}
+
 // TestNeverSpawnedReaper_NilCancelSafe verifies the reaper does not panic when
 // handle.Cancel is nil (run registered before per-run context was wired).
 func TestNeverSpawnedReaper_NilCancelSafe(t *testing.T) {

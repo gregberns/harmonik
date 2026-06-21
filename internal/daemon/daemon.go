@@ -1815,6 +1815,24 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			LogWriter:    cfg.LogWriter,
 		})
 
+		// WR3 (hk-jn3u): recurring worker-report poll. The boot health check
+		// (buildWorkerRegistry, B6) probes each enabled worker once at startup;
+		// this drives workers.CollectReport on a report_interval ticker so worker
+		// resource + problem reports (WR1/WR2/WR4) actually flow during operation.
+		//
+		// Phase-1 OBSERVABILITY ONLY: it emits worker_report events on a timer and
+		// does NOT touch SelectWorker, max_slots, or dispatch. RunReportLoop is
+		// off-by-default — it returns immediately (no ticker armed) when the
+		// registry is nil / no worker is enabled, so a deployment with no
+		// workers.yaml behaves byte-identically. It runs in its own goroutine bound
+		// to the shutdown ctx; a slow/failing CollectReport is logged and dropped,
+		// never wedging the work loop.
+		var reportEmit workers.EmitFunc
+		if bus != nil {
+			reportEmit = bus.Emit
+		}
+		go workers.RunReportLoop(ctx, cfg.Workers, deps.workerRegistry, workers.ProductionRunnerForWorker, reportEmit)
+
 		// Use the caller-supplied ctx to drive a clean shutdown. The production
 		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that
 		// Ctrl-C / SIGTERM cancels the work loop without sending signals into

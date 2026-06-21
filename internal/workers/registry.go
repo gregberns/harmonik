@@ -75,3 +75,18 @@ func (r *Registry) InFlight() int {
 	defer r.mu.Unlock()
 	return r.inFlight
 }
+
+// WorkerSnapshot returns a copy of the configured worker with its CURRENT
+// Enabled state (which the boot health check may have flipped via SetEnabled),
+// or nil when no worker is configured. It does NOT reserve a slot — unlike
+// SelectWorker — so the recurring worker-report poll (WR3) can read live-disable
+// state without perturbing dispatch capacity.
+func (r *Registry) WorkerSnapshot() *Worker {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasWorker {
+		return nil
+	}
+	w := r.worker
+	return &w
+}

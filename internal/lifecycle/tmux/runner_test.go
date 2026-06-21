@@ -134,10 +134,13 @@ func TestSSHRunner_NewWindowArgv(t *testing.T) {
 	}
 
 	// cmd.Args[0] is the binary path; cmd.Args[1:] are the argv tokens.
+	// SSHRunner ships the remote command as a SINGLE shell-quoted operand after
+	// `--` (NOT a discrete argv vector — OpenSSH would space-join it and the
+	// remote login shell would re-parse it; see SSHRunner doc + the hkfxy9 test).
 	argv := cmd.Args
-	// Expected prefix: [ssh, worker-mac-1, --, tmux, new-window, ...]
-	if len(argv) < 4 {
-		t.Fatalf("SSHRunner argv too short: %v", argv)
+	// Expected: [ssh, worker-mac-1, --, <one quoted remote string>]
+	if len(argv) != 4 {
+		t.Fatalf("SSHRunner argv = %v; want exactly 4 elements (ssh host -- <remote>)", argv)
 	}
 	if argv[0] != "ssh" {
 		t.Errorf("argv[0] = %q, want ssh", argv[0])
@@ -148,33 +151,25 @@ func TestSSHRunner_NewWindowArgv(t *testing.T) {
 	if argv[2] != "--" {
 		t.Errorf("argv[2] = %q, want --", argv[2])
 	}
-	if argv[3] != "tmux" {
-		t.Errorf("argv[3] = %q, want tmux", argv[3])
+	remote := argv[3]
+	// The remote string must be the per-token single-quoted join of tmux+args.
+	wantTokens := append([]string{"tmux"}, args...)
+	wantParts := make([]string, len(wantTokens))
+	for i, tk := range wantTokens {
+		wantParts[i] = shellQuoteArg(tk)
 	}
-	if argv[4] != "new-window" {
-		t.Errorf("argv[4] = %q, want new-window", argv[4])
+	if want := strings.Join(wantParts, " "); remote != want {
+		t.Fatalf("remote command not token-quoted:\n got=%q\nwant=%q", remote, want)
 	}
-
-	// Verify the space-containing workdir and slash-containing window name each
-	// appear as a single discrete token — not split or shell-quoted.
-	fullArgv := strings.Join(argv, " ")
-	_ = fullArgv
-
-	foundWorkDir := false
-	foundWindowName := false
-	for _, a := range argv {
-		if a == "/home/user/work dir with spaces" {
-			foundWorkDir = true
-		}
-		if a == "feat/my-feature" {
-			foundWindowName = true
-		}
+	// The space-containing workdir and slash-containing window name must appear
+	// QUOTED (one literal word each), not raw-split: verify the quoted forms are
+	// present and the raw (unquoted) forms are NOT (which would mean the remote
+	// shell could re-split them).
+	if !strings.Contains(remote, shellQuoteArg("/home/user/work dir with spaces")) {
+		t.Errorf("remote %q: space-containing workdir not single-quoted", remote)
 	}
-	if !foundWorkDir {
-		t.Errorf("argv %v: space-containing workdir not found as a single token", argv)
-	}
-	if !foundWindowName {
-		t.Errorf("argv %v: slash-containing window name not found as a single token", argv)
+	if !strings.Contains(remote, shellQuoteArg("feat/my-feature")) {
+		t.Errorf("remote %q: slash-containing window name not single-quoted", remote)
 	}
 }
 

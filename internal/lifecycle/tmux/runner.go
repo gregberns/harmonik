@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -71,12 +72,19 @@ func (r *RecordingRunner) Command(ctx context.Context, name string, args ...stri
 // SSHRunner is a CommandRunner that tunnels every command through ssh. Each
 // call produces:
 //
-//	ssh [Opts...] <Host> -- <name> <args...>
+//	ssh [Opts...] <Host> -- <shell-quoted: name args...>
 //
-// Arguments are passed as discrete argv tokens (never shell-concatenated) so
-// remote tmux/git receive exactly one token per argument. This preserves spaces
-// inside working-directory paths and slashes inside window names without any
-// quoting.
+// IMPORTANT: OpenSSH does NOT deliver the post-host operands as a discrete argv
+// vector — it space-joins them into a single string and runs that via the
+// remote LOGIN SHELL ($SHELL -c "<joined>"). So the remote command must be
+// shell-quoted by us, or the remote shell re-parses it: spaces re-split, and —
+// the bug this guards against — a tmux token like `-F #{pane_id}` makes the
+// remote shell treat `#{pane_id}` as the start of a `#` COMMENT, truncating the
+// command (e.g. `tmux new-window … #{pane_id} …` collapses to `tmux new-window`,
+// so the agent window — and its claude process — is never created on the worker
+// → agent_ready never fires → 90s timeout). We single-quote every token so each
+// arrives as one literal word, which also preserves spaces in paths/`-e K=V`
+// values and slashes in window names. (hk-fxy9/hk-538l remote-launch family.)
 //
 // Callers may set cmd.Stdin after the call returns; SSHRunner does not touch
 // it.  The daemon's LoadBuffer path relies on this to stream payload bytes into
@@ -88,12 +96,27 @@ type SSHRunner struct {
 	Opts []string
 }
 
-// Command returns an *exec.Cmd that runs `ssh [Opts...] <Host> -- <name> <args...>`.
+// shellQuoteArg wraps s in single quotes so a POSIX remote login shell receives
+// it as exactly one literal word — neutralising spaces, `#`-comments, tmux
+// format strings (`#{pane_id}`), and every other shell metacharacter. Embedded
+// single quotes are escaped via the standard `'\”` idiom.
+func shellQuoteArg(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// Command returns an *exec.Cmd that runs `ssh [Opts...] <Host> -- <quoted cmd>`,
+// where the remote command (name + args) is shell-quoted token-by-token so the
+// remote login shell reconstructs the exact argv. See the SSHRunner doc comment
+// for why discrete-argv delivery does NOT happen over ssh.
 func (s SSHRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
-	sshArgs := make([]string, 0, len(s.Opts)+2+1+len(args))
+	quoted := make([]string, 0, 1+len(args))
+	quoted = append(quoted, shellQuoteArg(name))
+	for _, a := range args {
+		quoted = append(quoted, shellQuoteArg(a))
+	}
+	sshArgs := make([]string, 0, len(s.Opts)+3)
 	sshArgs = append(sshArgs, s.Opts...)
-	sshArgs = append(sshArgs, s.Host, "--", name)
-	sshArgs = append(sshArgs, args...)
+	sshArgs = append(sshArgs, s.Host, "--", strings.Join(quoted, " "))
 	return exec.CommandContext(ctx, "ssh", sshArgs...)
 }
 

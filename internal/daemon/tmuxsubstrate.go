@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/agentlaunch"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/lifecycle"
@@ -1370,18 +1371,19 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 // keeperBin is the path of the currently-running harmonik binary (the keeper is
 // a harmonik subcommand, not the claude handler). projectDir, when non-empty,
 // pins the keeper to the crew's project root.
+//
+// Delegates to the SHARED agentlaunch.KeeperWindowArgv (review outcome A) so the
+// crew keeper-window argv and the CLI captain keeper-window argv have a single
+// source of truth. The crew default stays --warn-only here; ES5/hk-lcga flips it
+// off --warn-only onto the shared act+respawn band (D4).
 func crewKeeperWindowArgv(keeperBin, crewName, sessName, projectDir string) []string {
-	injectTarget := sessName + ":" + tmux.WindowAgent
-	argv := []string{
-		keeperBin, "keeper",
-		"--agent", crewName,
-		"--tmux", injectTarget,
-		"--warn-only",
-	}
-	if projectDir != "" {
-		argv = append(argv, "--project", projectDir)
-	}
-	return argv
+	return agentlaunch.KeeperWindowArgv(agentlaunch.KeeperWindowOpts{
+		KeeperBin:  keeperBin,
+		AgentName:  crewName,
+		Session:    sessName,
+		ProjectDir: projectDir,
+		WarnOnly:   true,
+	})
 }
 
 // spawnCrewKeeperWindow creates the "keeper" window inside the crew's session
@@ -1434,15 +1436,11 @@ func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, ses
 // SpawnWindow quoting at the top of spawnWindowVia). The keeper inject target
 // "<session>:agent" contains no shell metacharacters, but the binary path and
 // project dir may contain spaces, so quote uniformly.
+//
+// Delegates to the SHARED agentlaunch.ShellJoinArgv (review outcome A) so the
+// daemon and the CLI captain launcher quote argv identically.
 func shellJoinArgv(argv []string) string {
-	if len(argv) == 0 {
-		return ""
-	}
-	quoted := make([]string, len(argv))
-	for i, a := range argv {
-		quoted[i] = shellQuoteArg(a)
-	}
-	return strings.Join(quoted, " ")
+	return agentlaunch.ShellJoinArgv(argv)
 }
 
 // StopCrewSession sends /quit to the crew's pane (best-effort), waits a grace

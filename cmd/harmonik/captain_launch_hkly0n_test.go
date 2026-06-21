@@ -49,7 +49,11 @@ func flagValueHkly0n(argv []string, flag string) string {
 
 func TestCaptainLaunch_MintsUUIDv4AndBuildsArgv_hkly0n(t *testing.T) {
 	run, captured := captureRunHkly0n()
-	code := runCaptainLaunch([]string{"--project", t.TempDir()}, run, noopKeeperHkly0n)
+	// ES2 (hk-bcd0): drive through the ops-injectable core with a fake so this
+	// unit test never touches a real tmux server. The default session name is now
+	// the hashed namespace (asserted in captain_launch_hkbcd0_test.go); here we
+	// only check the agent-window argv SHAPE.
+	code := runCaptainLaunchWithOps([]string{"--project", t.TempDir()}, run, noopKeeperHkly0n, &fakeCaptainOps{})
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0", code)
 	}
@@ -58,15 +62,17 @@ func TestCaptainLaunch_MintsUUIDv4AndBuildsArgv_hkly0n(t *testing.T) {
 		t.Fatal("run func was not invoked with a command")
 	}
 
-	// tmux new-session -d -s <tmux> ...
+	// tmux new-session -d -s <tmux> -n agent ...
 	if argv[0] != "tmux" || argv[1] != "new-session" {
 		t.Fatalf("argv must start with `tmux new-session`, got %v", argv)
 	}
 	if !containsHkly0n(argv, "-d") {
 		t.Errorf("argv missing -d (detached): %v", argv)
 	}
-	if got := flagValueHkly0n(argv, "-s"); got != "captain" {
-		t.Errorf("tmux session name = %q, want default %q", got, "captain")
+	// Session name is the hashed namespace now — it must NOT be the old plain
+	// "captain" (the explicit hashed-name assertion lives in the hkbcd0 test).
+	if got := flagValueHkly0n(argv, "-s"); got == "captain" || got == "" {
+		t.Errorf("tmux session name = %q, want the hashed harmonik-<hash>-captain namespace", got)
 	}
 
 	// -e HARMONIK_AGENT=captain
@@ -89,9 +95,9 @@ func TestCaptainLaunch_MintsUUIDv4AndBuildsArgv_hkly0n(t *testing.T) {
 
 func TestCaptainLaunch_HonorsNameAndTmuxFlags_hkly0n(t *testing.T) {
 	run, captured := captureRunHkly0n()
-	code := runCaptainLaunch([]string{
+	code := runCaptainLaunchWithOps([]string{
 		"--name", "skipper", "--tmux", "cap-pane", "--project", t.TempDir(),
-	}, run, noopKeeperHkly0n)
+	}, run, noopKeeperHkly0n, &fakeCaptainOps{})
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0", code)
 	}
@@ -110,7 +116,7 @@ func TestCaptainLaunch_HonorsNameAndTmuxFlags_hkly0n(t *testing.T) {
 func TestCaptainLaunch_AcceptsValidSessionID_hkly0n(t *testing.T) {
 	const want = "11111111-2222-4333-8444-555555555555" // canonical lowercase UUIDv4
 	run, captured := captureRunHkly0n()
-	code := runCaptainLaunch([]string{"--session-id", want, "--project", t.TempDir()}, run, noopKeeperHkly0n)
+	code := runCaptainLaunchWithOps([]string{"--session-id", want, "--project", t.TempDir()}, run, noopKeeperHkly0n, &fakeCaptainOps{})
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0", code)
 	}
@@ -129,7 +135,7 @@ func TestCaptainLaunch_RejectsNonUUIDv4_hkly0n(t *testing.T) {
 	for label, sid := range cases {
 		t.Run(label, func(t *testing.T) {
 			run, captured := captureRunHkly0n()
-			code := runCaptainLaunch([]string{"--session-id", sid, "--project", t.TempDir()}, run, noopKeeperHkly0n)
+			code := runCaptainLaunchWithOps([]string{"--session-id", sid, "--project", t.TempDir()}, run, noopKeeperHkly0n, &fakeCaptainOps{})
 			if code != 1 {
 				t.Fatalf("runCaptainLaunch(%q) exit = %d, want 1", sid, code)
 			}

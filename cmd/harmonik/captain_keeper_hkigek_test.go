@@ -35,7 +35,7 @@ func TestCaptainLaunch_WiresKeeperByDefault_hkigek(t *testing.T) {
 	keeper, calls, gotCfg := captureKeeperHkigek(0)
 	proj := t.TempDir()
 
-	code := runCaptainLaunch([]string{"--project", proj}, run, keeper)
+	code := runCaptainLaunchWithOps([]string{"--project", proj}, run, keeper, &fakeCaptainOps{})
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0", code)
 	}
@@ -61,7 +61,7 @@ func TestCaptainLaunch_HonorsCustomNameInKeeperCfg_hkigek(t *testing.T) {
 	run, _ := captureRunHkly0n()
 	keeper, calls, gotCfg := captureKeeperHkigek(0)
 
-	code := runCaptainLaunch([]string{"--name", "skipper", "--project", t.TempDir()}, run, keeper)
+	code := runCaptainLaunchWithOps([]string{"--name", "skipper", "--project", t.TempDir()}, run, keeper, &fakeCaptainOps{})
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0", code)
 	}
@@ -77,7 +77,7 @@ func TestCaptainLaunch_NoKeeperSkipsWiring_hkigek(t *testing.T) {
 	run, captured := captureRunHkly0n()
 	keeper, calls, _ := captureKeeperHkigek(0)
 
-	code := runCaptainLaunch([]string{"--no-keeper", "--project", t.TempDir()}, run, keeper)
+	code := runCaptainLaunchWithOps([]string{"--no-keeper", "--project", t.TempDir()}, run, keeper, &fakeCaptainOps{})
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0", code)
 	}
@@ -94,7 +94,7 @@ func TestCaptainLaunch_KeeperFailureDoesNotBlockLaunch_hkigek(t *testing.T) {
 	run, captured := captureRunHkly0n()
 	keeper, calls, _ := captureKeeperHkigek(1) // keeper enable fails
 
-	code := runCaptainLaunch([]string{"--project", t.TempDir()}, run, keeper)
+	code := runCaptainLaunchWithOps([]string{"--project", t.TempDir()}, run, keeper, &fakeCaptainOps{})
 	if code != 0 {
 		t.Fatalf("runCaptainLaunch exit = %d, want 0 (keeper failure must not block launch)", code)
 	}

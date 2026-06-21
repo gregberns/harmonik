@@ -417,13 +417,71 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		w.ActionableWarnText == ""
 }
 
+// KeeperConfigPresence records, key-by-key, whether the operator SUPPLIED a value
+// in the keeper: block — independent of whether the parsed value is the zero value.
+// It is the presence signal the operator-facing resolver (cmd/harmonik.ResolveKeeperConfig)
+// needs to distinguish "unset" (→ MISSING, refuse to start) from an explicit value
+// that happens to be zero (e.g. boot_grace: 0s = "disable boot grace", which is a
+// LEGITIMATE explicit choice, not a missing key).
+//
+// For duration fields the raw config value is a STRING in rawKeeper* (empty = absent),
+// so a non-empty string = present even when it parses to 0 (e.g. "0s"). For
+// numeric/pct fields the raw value > 0 = present (a threshold of 0 is never meaningful,
+// so > 0 is the right presence test). For the mode it is the non-empty string.
+//
+// This struct exists so the keeper no longer silently applies compiled defaults for
+// unset values: under the operator-philosophy change (no product-imposed defaults at
+// runtime), an unset required value makes the keeper REFUSE TO START. Refs: keeper
+// operator-required-config change.
+type KeeperConfigPresence struct {
+	WarnAbsTokens        bool
+	ActAbsTokens         bool
+	ForceActAbsTokens    bool
+	ForceActAbsOffset    bool
+	IdleFloorAbsTokens   bool
+	ActPctCeil           bool
+	WarnPctCeil          bool
+	HardCeilingMode      bool
+	HardCeilingAbsTokens bool
+
+	PollInterval       bool
+	CyclerPollInterval bool
+	IdleQuiesce        bool
+	Staleness          bool
+	HandoffTimeout     bool
+	ClearSettle        bool
+	BootGrace          bool // true even for "0s" (explicit disable)
+
+	WarnCooldown         bool
+	NoGaugeBackoff       bool
+	RespawnGrace         bool
+	RespawnCooldown      bool
+	LiveRecoverGrace     bool
+	LiveRecoverCooldown  bool
+	ForceRetryInterval   bool
+	IdleRestartCooldown  bool
+	HardCeilingCooldown  bool
+	BlindKeeperThreshold bool
+	HoldTTL              bool
+
+	HeartbeatMaxMisses bool
+	MaxHandoffTimeouts bool
+}
+
 // KeeperConfig holds the keeper-level configuration read from the
 // .harmonik/config.yaml keeper: block. All fields are optional in the file;
 // zero/empty values signal "not configured — defer to CLI flag or built-in default".
 // Precedence: CLI flag > config.yaml > compiled default (hk-lhu2).
 //
+// Present (KeeperConfigPresence) records WHICH keys the operator actually supplied,
+// independent of the parsed zero value, so the operator-facing resolver can refuse
+// to start on a missing required value rather than silently defaulting.
+//
 // Bead ref: hk-lhu2.
 type KeeperConfig struct {
+	// Present records which keeper keys the operator supplied (see KeeperConfigPresence).
+	Present KeeperConfigPresence
+
 	// WarnAbsTokens is the absolute warn threshold. Zero = not configured.
 	WarnAbsTokens int64
 	// ActAbsTokens is the absolute act threshold. Zero = not configured.
@@ -881,18 +939,23 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	// Values ≤ 0 are treated as "not configured" — defer to CLI flag or compiled default.
 	if t.WarnAbsTokens > 0 {
 		cfg.WarnAbsTokens = t.WarnAbsTokens
+		cfg.Present.WarnAbsTokens = true
 	}
 	if t.ActAbsTokens > 0 {
 		cfg.ActAbsTokens = t.ActAbsTokens
+		cfg.Present.ActAbsTokens = true
 	}
 	if t.ForceActAbsTokens > 0 {
 		cfg.ForceActAbsTokens = t.ForceActAbsTokens
+		cfg.Present.ForceActAbsTokens = true
 	}
 	if t.ForceActAbsOffset > 0 {
 		cfg.ForceActAbsOffset = t.ForceActAbsOffset
+		cfg.Present.ForceActAbsOffset = true
 	}
 	if t.IdleFloorAbsTokens > 0 {
 		cfg.IdleFloorAbsTokens = t.IdleFloorAbsTokens
+		cfg.Present.IdleFloorAbsTokens = true
 	}
 	// pct fields: per-field validation — must be in (0, 1]. ≤ 0 = not configured.
 	if t.ActPctCeil > 0 {
@@ -903,6 +966,7 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 			}
 		}
 		cfg.ActPctCeil = t.ActPctCeil
+		cfg.Present.ActPctCeil = true
 	}
 	if t.WarnPctCeil > 0 {
 		if t.WarnPctCeil > 1 {
@@ -912,6 +976,7 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 			}
 		}
 		cfg.WarnPctCeil = t.WarnPctCeil
+		cfg.Present.WarnPctCeil = true
 	}
 
 	// ── hard_ceiling ──
@@ -920,6 +985,7 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		switch hc.Mode {
 		case "off", "alarm", "restart":
 			cfg.HardCeilingMode = hc.Mode
+			cfg.Present.HardCeilingMode = true
 		default:
 			return KeeperConfig{}, &ErrMalformedConfigYAML{
 				Path:  path,
@@ -929,69 +995,86 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	}
 	if hc.AbsTokens > 0 {
 		cfg.HardCeilingAbsTokens = hc.AbsTokens
+		cfg.Present.HardCeilingAbsTokens = true
 	}
 	d, err := parseDurationField(path, "hard_ceiling.cooldown", hc.Cooldown)
 	if err != nil {
 		return KeeperConfig{}, err
 	}
 	cfg.HardCeilingCooldownDur = d
+	// NOTE: Present.HardCeilingCooldown tracks cadence.hard_ceiling_cooldown (the key
+	// the resolver's HardCeilingCooldown reads), set in the cadence loop below — NOT
+	// this hard_ceiling.cooldown field (HardCeilingCooldownDur), which the resolver
+	// does not consume.
 
 	// ── timings (all durations) ──
+	// present records whether the raw STRING was non-empty (present even for "0s"),
+	// so the operator-facing resolver can tell unset from an explicit zero (boot_grace).
 	tm := raw.Timings
 	for _, f := range []struct {
-		key string
-		val string
-		dst *time.Duration
+		key     string
+		val     string
+		dst     *time.Duration
+		present *bool
 	}{
-		{"timings.poll_interval", tm.PollInterval, &cfg.PollInterval},
-		{"timings.cycler_poll_interval", tm.CyclerPollInterval, &cfg.CyclerPollInterval},
-		{"timings.idle_quiesce", tm.IdleQuiesce, &cfg.IdleQuiesce},
-		{"timings.staleness", tm.Staleness, &cfg.Staleness},
-		{"timings.handoff_timeout", tm.HandoffTimeout, &cfg.HandoffTimeout},
-		{"timings.clear_settle", tm.ClearSettle, &cfg.ClearSettle},
-		{"timings.boot_grace", tm.BootGrace, &cfg.BootGrace},
-		{"timings.max_boot_grace_total", tm.MaxBootGraceTotal, &cfg.MaxBootGraceTotal},
+		{"timings.poll_interval", tm.PollInterval, &cfg.PollInterval, &cfg.Present.PollInterval},
+		{"timings.cycler_poll_interval", tm.CyclerPollInterval, &cfg.CyclerPollInterval, &cfg.Present.CyclerPollInterval},
+		{"timings.idle_quiesce", tm.IdleQuiesce, &cfg.IdleQuiesce, &cfg.Present.IdleQuiesce},
+		{"timings.staleness", tm.Staleness, &cfg.Staleness, &cfg.Present.Staleness},
+		{"timings.handoff_timeout", tm.HandoffTimeout, &cfg.HandoffTimeout, &cfg.Present.HandoffTimeout},
+		{"timings.clear_settle", tm.ClearSettle, &cfg.ClearSettle, &cfg.Present.ClearSettle},
+		{"timings.boot_grace", tm.BootGrace, &cfg.BootGrace, &cfg.Present.BootGrace},
+		{"timings.max_boot_grace_total", tm.MaxBootGraceTotal, &cfg.MaxBootGraceTotal, nil},
 	} {
 		dv, derr := parseDurationField(path, f.key, f.val)
 		if derr != nil {
 			return KeeperConfig{}, derr
 		}
 		*f.dst = dv
+		if f.present != nil {
+			*f.present = f.val != ""
+		}
 	}
 
 	// ── cadence (all durations) ──
 	c := raw.Cadence
 	for _, f := range []struct {
-		key string
-		val string
-		dst *time.Duration
+		key     string
+		val     string
+		dst     *time.Duration
+		present *bool
 	}{
-		{"cadence.warn_cooldown", c.WarnCooldown, &cfg.WarnCooldown},
-		{"cadence.no_gauge_backoff", c.NoGaugeBackoff, &cfg.NoGaugeBackoff},
-		{"cadence.respawn_grace", c.RespawnGrace, &cfg.RespawnGrace},
-		{"cadence.respawn_cooldown", c.RespawnCooldown, &cfg.RespawnCooldown},
-		{"cadence.live_recover_grace", c.LiveRecoverGrace, &cfg.LiveRecoverGrace},
-		{"cadence.live_recover_cooldown", c.LiveRecoverCooldown, &cfg.LiveRecoverCooldown},
-		{"cadence.force_retry_interval", c.ForceRetryInterval, &cfg.ForceRetryInterval},
-		{"cadence.idle_restart_cooldown", c.IdleRestartCooldown, &cfg.IdleRestartCooldown},
-		{"cadence.hard_ceiling_cooldown", c.HardCeilingCooldown, &cfg.CadenceHardCeilingCooldown},
-		{"cadence.blind_keeper_threshold", c.BlindKeeperThreshold, &cfg.BlindKeeperThreshold},
-		{"cadence.hold_ttl", c.HoldTTL, &cfg.HoldTTL},
+		{"cadence.warn_cooldown", c.WarnCooldown, &cfg.WarnCooldown, &cfg.Present.WarnCooldown},
+		{"cadence.no_gauge_backoff", c.NoGaugeBackoff, &cfg.NoGaugeBackoff, &cfg.Present.NoGaugeBackoff},
+		{"cadence.respawn_grace", c.RespawnGrace, &cfg.RespawnGrace, &cfg.Present.RespawnGrace},
+		{"cadence.respawn_cooldown", c.RespawnCooldown, &cfg.RespawnCooldown, &cfg.Present.RespawnCooldown},
+		{"cadence.live_recover_grace", c.LiveRecoverGrace, &cfg.LiveRecoverGrace, &cfg.Present.LiveRecoverGrace},
+		{"cadence.live_recover_cooldown", c.LiveRecoverCooldown, &cfg.LiveRecoverCooldown, &cfg.Present.LiveRecoverCooldown},
+		{"cadence.force_retry_interval", c.ForceRetryInterval, &cfg.ForceRetryInterval, &cfg.Present.ForceRetryInterval},
+		{"cadence.idle_restart_cooldown", c.IdleRestartCooldown, &cfg.IdleRestartCooldown, &cfg.Present.IdleRestartCooldown},
+		{"cadence.hard_ceiling_cooldown", c.HardCeilingCooldown, &cfg.CadenceHardCeilingCooldown, &cfg.Present.HardCeilingCooldown},
+		{"cadence.blind_keeper_threshold", c.BlindKeeperThreshold, &cfg.BlindKeeperThreshold, &cfg.Present.BlindKeeperThreshold},
+		{"cadence.hold_ttl", c.HoldTTL, &cfg.HoldTTL, &cfg.Present.HoldTTL},
 	} {
 		dv, derr := parseDurationField(path, f.key, f.val)
 		if derr != nil {
 			return KeeperConfig{}, derr
 		}
 		*f.dst = dv
+		if f.present != nil {
+			*f.present = f.val != ""
+		}
 	}
 
 	// ── budgets ──
 	b := raw.Budgets
 	if b.HeartbeatMaxMisses > 0 {
 		cfg.HeartbeatMaxMisses = b.HeartbeatMaxMisses
+		cfg.Present.HeartbeatMaxMisses = true
 	}
 	if b.MaxHandoffTimeouts > 0 {
 		cfg.MaxHandoffTimeouts = b.MaxHandoffTimeouts
+		cfg.Present.MaxHandoffTimeouts = true
 	}
 
 	// ── self_service ──

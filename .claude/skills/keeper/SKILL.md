@@ -72,22 +72,35 @@ ever fires). Creating `.managed` requires explicit destructive consent (see
 
 ## § The two thresholds — REAL values from code
 
+> **Operator-required config (no built-in runtime defaults).** harmonik does NOT
+> apply a baked-in number for any keeper value when you launch `harmonik keeper`.
+> EVERY value must be set by the operator — in the `.harmonik/config.yaml` `keeper:`
+> block, or (for the flag-backed ones) via its CLI flag. If a required value is
+> unset, the keeper **REFUSES TO START** with ONE aggregated error listing every
+> missing key. Generate a complete starting block with
+> **`harmonik keeper config --example`** (the same block `harmonik init` writes),
+> paste it into `.harmonik/config.yaml`, then tune the numbers. The numbers in the
+> table below are the **suggested** values that command ships — they are NOT a silent
+> runtime fallback. (The internal-library `applyDefaults` still fills these for
+> programmatic/test construction, but the operator-facing path routes through
+> `ResolveKeeperConfig`, which imposes none.)
+
 The keeper evaluates **both** an absolute-token threshold and a
 percent-of-window threshold and uses **whichever is smaller** — i.e. the
 effective threshold is `min(absTokens, pctCeil * windowSize)`
-(`internal/keeper/cycle.go:39-43`). This is deliberate so the same defaults
+(`internal/keeper/cycle.go:39-43`). This is deliberate so the same values
 work on a 200k window (the pct-ceil wins, ~170k) and a 1M window (the abs cap
 wins, 215k) — preventing a `90%` gate from firing only at ~900k tokens
-(Refs: hk-cl74g). The band below is the TA1 retune (hk-8hr1): warn=200K /
+(Refs: hk-cl74g). The suggested band below is the TA1 retune (hk-8hr1): warn=200K /
 act=215K, operator-authorized 2026-06-17 to restart EARLIER and cap cache-read
 token spend.
 
-| gate | abs-token default | pct default | source |
+| gate | abs-token (SUGGESTED — operator-required) | pct (suggested) | source |
 |---|---|---|---|
-| **WARN** | `WarnAbsTokens = 200000` | `--warn-pct 80` (pct-ceil 0.70) | `cycle.go:applyDefaults`, `watcher.go:applyDefaults` |
-| **ACT** | `ActAbsTokens = 215000` | `--act-pct 90` (pct-ceil 0.85) | `cycle.go:applyDefaults` |
-| **FORCE-ACT** | `ForceActAbsTokens = 240000` (act+25k) | pct 95 (pct-ceil 0.95) | `cycle.go:applyDefaults` |
-| **HARD-CEILING** | `HardCeilingAbsTokens = 280000` (SID-independent trip-wire) | — | `thresholds.go:72` |
+| **WARN** | `warn_abs_tokens = 200000` | `--warn-pct 80` (pct-ceil 0.70) | `keeper config --example` / `DefaultWarnAbsTokens` |
+| **ACT** | `act_abs_tokens = 215000` | `--act-pct 90` (pct-ceil 0.85) | `DefaultActAbsTokens` |
+| **FORCE-ACT** | `force_act_abs_tokens = 240000` (act+25k) | pct 95 (pct-ceil 0.95) | `DefaultForceActAbsOffset` |
+| **HARD-CEILING** | `hard_ceiling.abs_tokens = 280000` (SID-independent trip-wire) | — | `thresholds.go` |
 | window fallback | `FallbackWindowSize = 200000` | — | `watcher.go:applyDefaults`, `--window-size` |
 
 - The **pct gates (`--warn-pct`/`--act-pct`) are only used as a fallback** when
@@ -109,35 +122,38 @@ token spend.
   ≥280k forces a handoff+restart **regardless of whether the session_id binding
   is correct**, so a mis-bound keeper cannot silently let a session overflow
   (Refs: hk-34ac). It does NOT change the warn/act/force_act thresholds.
-- **Abs thresholds are configurable** via CLI flags OR `.harmonik/config.yaml`
-  `keeper:` block (see § Project config below). CLI flags win over config.yaml;
-  config.yaml wins over compiled defaults. The pct flags (`--warn-pct`, `--act-pct`)
-  are a legacy fallback — do NOT pass them on modern deployments (they are inert
-  when Claude Code emits absolute token counts). Refs: hk-odhh, hk-lhu2.
+- **Every keeper value is OPERATOR-SET** — via a CLI flag OR the
+  `.harmonik/config.yaml` `keeper:` block (see § Project config below). CLI flags
+  win over config.yaml; an UNSET required value makes the keeper **refuse to start**
+  (no compiled fallback). The pct flags (`--warn-pct`, `--act-pct`) are a legacy
+  fallback — do NOT pass them on modern deployments (they are inert when Claude Code
+  emits absolute token counts). Refs: hk-odhh, hk-lhu2.
 
-### § Project config — .harmonik/config.yaml `keeper:` block
+### § Project config — .harmonik/config.yaml `keeper:` block (OPERATOR-REQUIRED)
 
-Operators can customise thresholds and warn texts per-project by adding a
-`keeper:` section to `.harmonik/config.yaml` (`schema_version: 1`). All fields
-are optional; absent or `0`/`""` values defer to the CLI flag or compiled default
-(precedence: CLI flag > config.yaml > compiled default).
+harmonik imposes **NO built-in keeper defaults at runtime**: every value must be set
+by the operator or `harmonik keeper` refuses to start, listing every missing key in
+one aggregated error. The one-command migration is:
 
-```yaml
-schema_version: 1
-keeper:
-  context_thresholds:
-    warn_abs_tokens: 200000      # absolute warn gate; ≤0 = not configured
-    act_abs_tokens: 215000       # absolute act gate; ≤0 = not configured
-    force_act_abs_tokens: 240000 # unconditional force-act gate; ≤0 = not configured (derived as act+25k)
-    act_pct_ceil: 0.85           # pct-of-window cap for act gate; ≤0 = not configured
-    warn_pct_ceil: 0.70          # pct-of-window cap for warn gate; ≤0 = not configured
-  warn_messages:
-    default_warn_text: ""        # warn injection for non-captain agents; empty = compiled default
-    on_demand_warn_text: ""      # warn injection for captain (restart-now); empty = compiled default
+```bash
+harmonik keeper config --example >> .harmonik/config.yaml   # complete starting block
+# then edit the numbers; or `harmonik init` writes the same complete block for a new project
 ```
 
+`harmonik keeper config --example` prints a COMPLETE, commented `keeper:` block with a
+suggested value for every required key (thresholds / hard_ceiling / timings / cadence /
+budgets, plus the optional self_service / warn_messages). Paste it under
+`schema_version: 1` in `.harmonik/config.yaml` and tune the numbers — don't delete keys.
+Precedence: **CLI flag > config.yaml > (unset → refuse to start)**.
+
+Special cases: `hard_ceiling.mode: off` is an explicit choice (then `abs_tokens` is not
+required), and `boot_grace: 0s` is the explicit "disable boot grace" sentinel (present,
+not missing). self_service / warn_messages are OPTIONAL (not in the required set);
+`crews_enabled` absent ⇒ true (crews self-restart by default — hk-vs4u).
+
 The config is loaded once at keeper startup. Restart the keeper to reload.
-Refs: `internal/daemon/projectconfig.go`, hk-lhu2.
+Refs: `cmd/harmonik/resolve_keeper_config.go` (operator-facing chokepoint),
+`internal/daemon/projectconfig.go`, hk-lhu2.
 
 ---
 
@@ -145,6 +161,13 @@ Refs: `internal/daemon/projectconfig.go`, hk-lhu2.
 
 All keeper verbs are under `harmonik keeper`. Top-level usage:
 `keeper_cmd.go:243` (`keeperTopUsage`).
+
+### `harmonik keeper config --example` — print a complete starting `keeper:` block
+
+Prints a COMPLETE, commented `keeper:` config block (every operator-required key with
+a suggested value) to stdout. Use it to migrate to the operator-required-config model:
+`harmonik keeper config --example >> .harmonik/config.yaml`, then tune the numbers.
+Same source of truth as the block `harmonik init` generates.
 
 ### `harmonik keeper restart-now --agent <name> [--project DIR]` — captain-initiated on-demand restart
 

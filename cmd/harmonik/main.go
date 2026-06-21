@@ -479,6 +479,8 @@ EXAMPLES
 		// "harmonik keeper --help" or unknown subcommands.
 		if len(subArgs) > 0 {
 			switch subArgs[0] {
+			case "config":
+				return runKeeperConfig(subArgs[1:])
 			case "set-dispatching":
 				return runKeeperSetDispatching(subArgs[1:])
 			case "clear-dispatching":

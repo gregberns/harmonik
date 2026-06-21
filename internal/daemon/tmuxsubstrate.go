@@ -29,7 +29,6 @@ import (
 	"github.com/gregberns/harmonik/internal/agentlaunch"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
-	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -1377,11 +1376,14 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 // pins the keeper to the crew's project root.
 //
 // FORCE-CUT BY DEFAULT (ES5 / hk-lcga, D4): a crew "can't get too big". The crew
-// keeper is armed with the SYSTEM DEFAULT warn/act band — the SAME
-// keeper.DefaultWarnAbsTokens / keeper.DefaultActAbsTokens the captain uses
-// (cmd/harmonik/captain.go) — so when the crew fills its context the keeper's
-// in-process restart-now cycle (handoff → /clear → /session-resume) fires and
-// force-cuts it, instead of nagging forever under the old --warn-only default.
+// keeper is armed in FULL band mode (NOT --warn-only), so when the crew fills its
+// context the keeper's in-process restart-now cycle (handoff → /clear →
+// /session-resume) fires and force-cuts it, instead of nagging forever under the
+// old --warn-only default. The actual warn/act NUMBERS are OPERATOR CONFIG: this
+// path passes NO product-default band (WarnAbsTokens/ActAbsTokens 0 = unset → the
+// flags are omitted), so the spawned keeper reads the operator's keeper: block in
+// .harmonik/config.yaml — matching the captain, and refusing to start if a
+// required value is unset. (Operator-required-config change: no baked-in numbers.)
 // The clear→resume cycle re-binds the crew on the SAME session_id (crews mint +
 // reuse a uuid via resolveSessionID), so force-cut + restart works the same way
 // it does for the captain.
@@ -1399,13 +1401,15 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 // source of truth.
 func crewKeeperWindowArgv(keeperBin, crewName, sessName, projectDir string) []string {
 	return agentlaunch.KeeperWindowArgv(agentlaunch.KeeperWindowOpts{
-		KeeperBin:     keeperBin,
-		AgentName:     crewName,
-		Session:       sessName,
-		ProjectDir:    projectDir,
-		WarnOnly:      false, // D4: crew is FORCE-CUT, full warn→act→restart band.
-		WarnAbsTokens: keeper.DefaultWarnAbsTokens,
-		ActAbsTokens:  keeper.DefaultActAbsTokens,
+		KeeperBin:  keeperBin,
+		AgentName:  crewName,
+		Session:    sessName,
+		ProjectDir: projectDir,
+		WarnOnly:   false, // D4: crew is FORCE-CUT, full warn→act→restart band.
+		// No product-default band: 0 (unset) → flags omitted → keeper reads the
+		// operator's keeper: block in .harmonik/config.yaml. (No baked-in numbers.)
+		WarnAbsTokens: 0,
+		ActAbsTokens:  0,
 		// RespawnCmd left empty — see doc comment (follow-up).
 	})
 }

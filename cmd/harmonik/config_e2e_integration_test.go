@@ -46,17 +46,47 @@ import (
 // band invariant warn < act < force_act < hard_ceiling:
 //
 //	warn 180000 < act 195000 < force_act (195000+20000=215000) < hard_ceiling 250000.
+//
+// COMPLETE keeper block (operator-required-config change: every required value must
+// be present or ResolveKeeperConfig refuses to start). The values under test are the
+// NON-default ones (warn 180000, act 195000, force_act_abs_offset 20000, hard_ceiling
+// 250000, staleness 90s); the rest are suggested values just to satisfy the gate.
 const e2eConfigYAML = `schema_version: 1
 keeper:
   context_thresholds:
     warn_abs_tokens: 180000
     act_abs_tokens: 195000
     force_act_abs_offset: 20000
+    idle_floor_abs_tokens: 150000
+    warn_pct_ceil: 0.70
+    act_pct_ceil: 0.85
   hard_ceiling:
     abs_tokens: 250000
     mode: alarm
+    cooldown: 5m
   timings:
+    poll_interval: 5s
+    cycler_poll_interval: 200ms
+    idle_quiesce: 8s
     staleness: 90s
+    handoff_timeout: 3m
+    clear_settle: 3s
+    boot_grace: 5m
+  cadence:
+    warn_cooldown: 30s
+    no_gauge_backoff: 30s
+    respawn_grace: 20s
+    respawn_cooldown: 90s
+    live_recover_grace: 5m
+    live_recover_cooldown: 5m
+    force_retry_interval: 2m
+    idle_restart_cooldown: 30m
+    hard_ceiling_cooldown: 5m
+    blind_keeper_threshold: 5m
+    hold_ttl: 45m
+  budgets:
+    heartbeat_max_misses: 12
+    max_handoff_timeouts: 3
 `
 
 // writeE2EProject creates a temp project dir with the e2e config.yaml and returns
@@ -90,7 +120,7 @@ func TestConfigE2E_ZeroFlagInheritanceAndFlagOverride(t *testing.T) {
 	keeperCfg := projCfg.Keeper
 
 	// ── Part 1: ZERO CLI flags → effective == CONFIG (not compiled defaults). ──
-	resolved, err := ResolveKeeperConfig(KeeperFlags{}, keeperCfg)
+	resolved, err := ResolveKeeperConfig(KeeperFlags{}, keeperCfg, projectDir)
 	if err != nil {
 		t.Fatalf("ResolveKeeperConfig (zero-flag): %v", err)
 	}
@@ -159,7 +189,7 @@ func TestConfigE2E_ZeroFlagInheritanceAndFlagOverride(t *testing.T) {
 	resolvedOverride, err := ResolveKeeperConfig(KeeperFlags{
 		Staleness:    flagStale,
 		StalenessSet: true,
-	}, keeperCfg)
+	}, keeperCfg, projectDir)
 	if err != nil {
 		t.Fatalf("ResolveKeeperConfig (flag override): %v", err)
 	}
@@ -195,7 +225,7 @@ func TestConfigE2E_HardCeilingPayloadCarriesConfiguredThreshold(t *testing.T) {
 	}
 	keeperCfg := projCfg.Keeper
 
-	resolved, err := ResolveKeeperConfig(KeeperFlags{}, keeperCfg)
+	resolved, err := ResolveKeeperConfig(KeeperFlags{}, keeperCfg, projectDir)
 	if err != nil {
 		t.Fatalf("ResolveKeeperConfig: %v", err)
 	}

@@ -3,20 +3,37 @@ package main
 // resolve_keeper_config.go — the SINGLE keeper threshold/band precedence resolver
 // (hk-4pnv).
 //
+// # OPERATOR-FACING CHOKEPOINT — imposes NO built-in defaults at runtime.
+//
+// ResolveKeeperConfig is the path `harmonik keeper` actually uses
+// (runKeeperSubcommand → ResolveKeeperConfig → buildKeeperConfigs). Per the
+// operator-philosophy decision, the PRODUCT must NOT apply any baked-in keeper
+// number at runtime: EVERY keeper value must be set by the operator, via the
+// keeper: block in .harmonik/config.yaml OR via an explicit CLI flag. When a
+// required value is unset (no config value AND no flag) the resolver AGGREGATES
+// all the missing keys and returns a single *KeeperConfigMissingError so the
+// keeper REFUSES TO START — it never silently uses keeper.Default*.
+//
+// This is DISTINCT from internal/keeper's library-level applyDefaults
+// (watcher.go / cycle.go), which is retained for programmatic construction and
+// the unit-test suite. applyDefaults is the LIBRARY fallback; ResolveKeeperConfig
+// is the OPERATOR-FACING enforcement gate. The keeper.Default* consts still exist,
+// but here they are used ONLY as the suggested values printed by
+// `harmonik keeper config --example` (a template the operator copies and OWNS),
+// never as a runtime fallback.
+//
 // Why it lives in cmd/harmonik (NOT internal/keeper): depguard bans
 // internal/keeper from importing internal/daemon (.golangci.yml:133, session-keeper
 // spec hk-ekap1). The resolver needs daemon.KeeperConfig (the parsed
-// .harmonik/config.yaml keeper: block), so it cannot live in internal/keeper. It
-// lives here, reads the compiled defaults from internal/keeper's exported Default*
-// consts (one source of truth), and returns a NEUTRAL resolved struct that the
-// keeper start path translates into Watcher/Cycler config.
+// .harmonik/config.yaml keeper: block), so it cannot live in internal/keeper.
 //
 // # Precedence (per field)
 //
-//	FLAG > CONFIG > DEFAULT
+//	FLAG > CONFIG > (MISSING → refuse to start)
 //
-// A zero / empty value at a level DEFERS to the next level down. The compiled
-// DEFAULT is the keeper.Default* const — defaults live in ONE place.
+// A value is SATISFIED if the operator set it via config (the keeper: block) OR via
+// an explicit CLI flag. Otherwise it is MISSING and reported in the aggregated
+// error. There is NO silent DEFAULT layer at runtime any more.
 //
 // # Preserved semantics (exact, from the pre-hk-4pnv inline ladder)
 //
@@ -34,19 +51,26 @@ package main
 // # Fail-loud (operator decision, OVERRIDES the bead's original revert-to-defaults
 // text)
 //
-// On ANY bad config value, invalid enum, malformed duration (already caught
-// upstream in daemon.parseKeeperBlock), pct>1, a cross-field invariant violation
-// (must hold warn < act < force_act < hard_ceiling, and warn_pct < act_pct), OR a
-// bad CLI flag — ResolveKeeperConfig returns a *KeeperConfigError. It NEVER
-// silently defaults and NEVER reverts the block to compiled defaults. The keeper
-// start path logs the error to stderr (and an event when reachable) and refuses to
-// start, so a misconfiguration is LEARNED, never masked.
+// Two fail-loud classes, BOTH refuse to start:
+//   - *KeeperConfigMissingError — one or more required values are UNSET (no config,
+//     no flag). All missing keys are aggregated into ONE error so the operator can
+//     fix everything in a single pass; the message names the real yaml key paths and
+//     points at `harmonik keeper config --example`.
+//   - *KeeperConfigError — a bad/invalid VALUE that IS present: invalid enum,
+//     pct>1, a cross-field invariant violation (warn < act < force_act < hard_ceiling,
+//     warn_pct < act_pct), or a bad CLI flag.
+//
+// Missing-value errors take precedence: they are checked FIRST so the operator is not
+// shown a confusing band-inversion error on top of "you didn't set the value". It
+// NEVER silently defaults. The keeper start path logs the error to stderr (and an
+// event when reachable) and refuses to start, so a misconfiguration is LEARNED.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -69,6 +93,38 @@ type KeeperConfigError struct {
 
 func (e *KeeperConfigError) Error() string {
 	return fmt.Sprintf("keeper config: %s: %s", e.Field, e.Reason)
+}
+
+// KeeperConfigMissingError is returned by ResolveKeeperConfig when one or more
+// REQUIRED keeper values are unset — neither in the keeper: block nor via a CLI
+// flag. It aggregates EVERY missing key (not just the first) so the operator can
+// fix them all in one pass, and its message names the real dotted yaml key paths
+// plus the one-command migration (`harmonik keeper config --example`).
+//
+// It is a sibling of *KeeperConfigError (which is for a bad PRESENT value); the
+// keeper start path surfaces both via the same stderr + event path and refuses to
+// start. Refs: keeper operator-required-config change.
+type KeeperConfigMissingError struct {
+	// ProjectDir is the project root whose .harmonik/config.yaml needs the keys
+	// (named in the fix instruction so the operator knows which file to edit).
+	ProjectDir string
+	// Missing is the dotted yaml key paths the operator must set, e.g.
+	// "keeper.context_thresholds.warn_abs_tokens". Aggregated, never first-only.
+	Missing []string
+}
+
+func (e *KeeperConfigMissingError) Error() string {
+	dir := e.ProjectDir
+	if dir == "" {
+		dir = "<project>"
+	}
+	return fmt.Sprintf(
+		"refusing to start — harmonik no longer applies built-in keeper defaults; "+
+			"every value must be set by the operator. Missing %d value(s): %s. "+
+			"Fix: run 'harmonik keeper config --example' to print a complete starting keeper: block, "+
+			"add it to %s/.harmonik/config.yaml, then tune the numbers. "+
+			"(Each value can alternatively be set via its CLI flag.)",
+		len(e.Missing), strings.Join(e.Missing, ", "), dir)
 }
 
 // KeeperFlags are the parsed CLI flags the resolver consumes. Each *Set bool
@@ -193,11 +249,97 @@ type ResolvedKeeperConfig struct {
 	ActionableWarnText string
 }
 
-// ResolveKeeperConfig implements FLAG > CONFIG > DEFAULT per field and validates
-// the cross-field band invariants, returning a *KeeperConfigError (NOT a silent
-// default) on any violation. Defaults are read from keeper.Default* so the band
-// lives in ONE place. See the file header for the full contract.
-func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig) (ResolvedKeeperConfig, error) {
+// requiredKeeperValue describes one operator-required keeper value: its dotted
+// yaml key path (for the missing-value error) and whether the operator supplied it
+// (config present OR flag set). Used by checkMissingKeeperValues to aggregate every
+// unset value into a single *KeeperConfigMissingError.
+type requiredKeeperValue struct {
+	keyPath   string
+	satisfied bool
+}
+
+// checkMissingKeeperValues returns the dotted yaml key paths of every required
+// keeper value the operator did NOT set (no config value AND no CLI flag), in a
+// stable order. Empty result = all required values supplied. See the file header:
+// the keeper imposes NO built-in defaults, so an unset required value refuses to
+// start.
+//
+// SPECIAL CASES (legitimate explicit values that are SATISFIED, not missing):
+//   - hard_ceiling.mode == "off" → an explicit choice; hard_ceiling.abs_tokens is
+//     then NOT required (an off ceiling never trips, so the trigger is moot).
+//   - boot_grace presence is honored even for "0s" (explicit "disable boot grace");
+//     daemon.KeeperConfig.Present.BootGrace is true for any non-empty string.
+func checkMissingKeeperValues(flags KeeperFlags, cfg daemon.KeeperConfig) []string {
+	p := cfg.Present
+
+	// hard_ceiling.mode resolves to "off" only via an EXPLICIT config value (no flag
+	// default). When the operator sets mode: off, abs_tokens is not required.
+	modeIsOff := (flags.HardCeilingModeSet && flags.HardCeilingMode == "off") ||
+		(!flags.HardCeilingModeSet && p.HardCeilingMode && cfg.HardCeilingMode == "off")
+
+	req := []requiredKeeperValue{
+		// ── thresholds ──
+		{"keeper.context_thresholds.warn_abs_tokens", flags.WarnAbsSet || p.WarnAbsTokens},
+		{"keeper.context_thresholds.act_abs_tokens", flags.ActAbsSet || p.ActAbsTokens},
+		// force_act: satisfied by either the absolute OR the offset (force = act + offset).
+		{"keeper.context_thresholds.force_act_abs_tokens (or force_act_abs_offset)", p.ForceActAbsTokens || p.ForceActAbsOffset},
+		{"keeper.context_thresholds.warn_pct_ceil", flags.WarnPctSet || p.WarnPctCeil},
+		{"keeper.context_thresholds.act_pct_ceil", flags.ActPctSet || p.ActPctCeil},
+		{"keeper.context_thresholds.idle_floor_abs_tokens", flags.IdleFloorSet || p.IdleFloorAbsTokens},
+		// ── hard_ceiling ──
+		{"keeper.hard_ceiling.mode", flags.HardCeilingModeSet || p.HardCeilingMode},
+		// abs_tokens required UNLESS mode is explicitly off.
+		{"keeper.hard_ceiling.abs_tokens", modeIsOff || flags.HardCeilingAbsSet || p.HardCeilingAbsTokens},
+		// ── timings ──
+		{"keeper.timings.poll_interval", flags.PollIntervalSet || p.PollInterval},
+		{"keeper.timings.cycler_poll_interval", p.CyclerPollInterval},
+		{"keeper.timings.idle_quiesce", flags.IdleQuiesceSet || p.IdleQuiesce},
+		{"keeper.timings.staleness", flags.StalenessSet || p.Staleness},
+		{"keeper.timings.handoff_timeout", flags.HandoffTimeoutSet || p.HandoffTimeout},
+		{"keeper.timings.clear_settle", p.ClearSettle},
+		{"keeper.timings.boot_grace", flags.BootGraceSet || p.BootGrace},
+		// ── cadence ──
+		{"keeper.cadence.warn_cooldown", p.WarnCooldown},
+		{"keeper.cadence.no_gauge_backoff", p.NoGaugeBackoff},
+		{"keeper.cadence.respawn_grace", p.RespawnGrace},
+		{"keeper.cadence.respawn_cooldown", p.RespawnCooldown},
+		{"keeper.cadence.live_recover_grace", p.LiveRecoverGrace},
+		{"keeper.cadence.live_recover_cooldown", p.LiveRecoverCooldown},
+		{"keeper.cadence.force_retry_interval", p.ForceRetryInterval},
+		{"keeper.cadence.idle_restart_cooldown", p.IdleRestartCooldown},
+		{"keeper.cadence.hard_ceiling_cooldown", p.HardCeilingCooldown},
+		{"keeper.cadence.blind_keeper_threshold", p.BlindKeeperThreshold},
+		{"keeper.cadence.hold_ttl", p.HoldTTL},
+		// ── budgets ──
+		{"keeper.budgets.heartbeat_max_misses", p.HeartbeatMaxMisses},
+		{"keeper.budgets.max_handoff_timeouts", p.MaxHandoffTimeouts},
+	}
+
+	var missing []string
+	for _, r := range req {
+		if !r.satisfied {
+			missing = append(missing, r.keyPath)
+		}
+	}
+	return missing
+}
+
+// ResolveKeeperConfig implements FLAG > CONFIG (no runtime DEFAULT layer) per field
+// and validates the cross-field band invariants. It is the OPERATOR-FACING chokepoint
+// (see file header): an unset required value aggregates into a *KeeperConfigMissingError
+// (refuse to start), and a bad PRESENT value returns a *KeeperConfigError — NEVER a
+// silent default. projectDir names the file to fix in the missing-value message.
+func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir string) (ResolvedKeeperConfig, error) {
+	// ── Missing-value gate (checked FIRST, precedence over cross-field errors). ──
+	// Every required value must be set by the operator (config or flag); harmonik
+	// imposes NO built-in default at runtime. Aggregate ALL missing keys.
+	if missing := checkMissingKeeperValues(flags, cfg); len(missing) > 0 {
+		return ResolvedKeeperConfig{}, &KeeperConfigMissingError{
+			ProjectDir: projectDir,
+			Missing:    missing,
+		}
+	}
+
 	var out ResolvedKeeperConfig
 
 	// ── warn-abs / act-abs: FLAG > CONFIG > DEFAULT ──
@@ -284,13 +426,16 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig) (ResolvedKe
 			}
 		}
 	} else {
-		out.HardCeilingMode = keeper.HardCeilingModeAlarm // zero value = compiled default
+		// Unreachable in the operator-facing path (hard_ceiling.mode is REQUIRED, so
+		// the missing-value gate already refused). Kept as a defensive belt for any
+		// programmatic caller; it is NOT a runtime product default.
+		out.HardCeilingMode = keeper.HardCeilingModeAlarm
 	}
 
-	// ── Watcher timing/cadence/budget: tier-1 = FLAG>CONFIG>DEFAULT; the long ──
-	// tail = CONFIG>DEFAULT. Reading every default from keeper.Default* so the
-	// band/cadence lives in ONE place. R2: every Default* must be reachable from
-	// config, and every configured value must reach the constructed Watcher/Cycler.
+	// ── Watcher timing/cadence/budget. Every value is operator-supplied (the ──
+	// missing-value gate above guaranteed it), so these resolve to the config (or
+	// flag) value; the keeper.Default* args are unreachable belts, NOT runtime
+	// defaults. Every configured value reaches the constructed Watcher/Cycler.
 	out.PollInterval = resolveDur(
 		flags.PollInterval, flags.PollIntervalSet, cfg.PollInterval, keeper.DefaultPollInterval)
 	out.IdleQuiesce = resolveDur(
@@ -318,14 +463,16 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig) (ResolvedKe
 	out.IdleRestartCooldown = resolveDur(0, false, cfg.IdleRestartCooldown, keeper.DefaultIdleRestartCooldown)
 
 	// ── Sentinel-bearing pass-throughs: forward the CONFIGURED value verbatim. ──
-	// BootGrace: FLAG > CONFIG; 0 = disabled is HONORED when explicitly set. When
-	// neither set, BootGraceSet=false signals the start path to feed
-	// DefaultBootGracePeriod at the construction site (opt-in-per-site contract).
+	// BootGrace: FLAG > CONFIG; 0 = disabled is HONORED when explicitly set. Presence
+	// is the raw-string signal (cfg.Present.BootGrace is true even for "0s"), so an
+	// explicit `boot_grace: 0s` resolves as SET+0 (disabled), not "unset". boot_grace
+	// is operator-required (the missing-value gate guarantees one of flag/config is
+	// present), so the default branch is unreachable in the operator path.
 	switch {
 	case flags.BootGraceSet:
 		out.BootGrace = flags.BootGrace
 		out.BootGraceSet = true
-	case cfg.BootGrace != 0:
+	case cfg.Present.BootGrace:
 		out.BootGrace = cfg.BootGrace
 		out.BootGraceSet = true
 	default:
@@ -369,25 +516,31 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig) (ResolvedKe
 			Reason: fmt.Sprintf("band inversion: act_abs_tokens (%d) must be < force_act_abs_tokens (%d)", out.ActAbsTokens, out.ForceActAbsTokens),
 		}
 	}
-	// Hard-ceiling restart sanity (hk-z8d0): a RESTART-mode ceiling at or below the
-	// effective force_act threshold is nonsensical — force_act already restarts via
-	// the act/force cycle there, so a restart ceiling could never fire later than
-	// force_act and would only double-fire. Reject fail-loud (operator rule) with a
-	// restart-mode-specific, clearly-named field. Checked BEFORE the generic
-	// force_act<hard_ceiling band invariant below so restart-mode operators get the
-	// intent-naming error rather than the generic band message; for non-restart
-	// modes the generic band check still applies.
-	if out.HardCeilingMode == keeper.HardCeilingModeRestart &&
-		out.HardCeilingAbsTokens <= out.ForceActAbsTokens {
-		return ResolvedKeeperConfig{}, &KeeperConfigError{
-			Field:  "hard_ceiling.abs_tokens",
-			Reason: fmt.Sprintf("restart-mode hard ceiling (%d) must be > force_act_abs_tokens (%d): a restart ceiling at/below force_act is nonsensical (force_act already restarts via the cycle there)", out.HardCeilingAbsTokens, out.ForceActAbsTokens),
+	// Hard-ceiling band checks apply ONLY when the ceiling is armed (mode != off). When
+	// mode is explicitly off the ceiling never trips and abs_tokens is not required (may
+	// be 0), so the band ordering against force_act is moot — skip it (otherwise a
+	// legitimate `mode: off` with no abs_tokens would spuriously fail force_act < 0).
+	if out.HardCeilingMode != keeper.HardCeilingModeOff {
+		// Hard-ceiling restart sanity (hk-z8d0): a RESTART-mode ceiling at or below the
+		// effective force_act threshold is nonsensical — force_act already restarts via
+		// the act/force cycle there, so a restart ceiling could never fire later than
+		// force_act and would only double-fire. Reject fail-loud (operator rule) with a
+		// restart-mode-specific, clearly-named field. Checked BEFORE the generic
+		// force_act<hard_ceiling band invariant below so restart-mode operators get the
+		// intent-naming error rather than the generic band message; for non-restart
+		// modes the generic band check still applies.
+		if out.HardCeilingMode == keeper.HardCeilingModeRestart &&
+			out.HardCeilingAbsTokens <= out.ForceActAbsTokens {
+			return ResolvedKeeperConfig{}, &KeeperConfigError{
+				Field:  "hard_ceiling.abs_tokens",
+				Reason: fmt.Sprintf("restart-mode hard ceiling (%d) must be > force_act_abs_tokens (%d): a restart ceiling at/below force_act is nonsensical (force_act already restarts via the cycle there)", out.HardCeilingAbsTokens, out.ForceActAbsTokens),
+			}
 		}
-	}
-	if !(out.ForceActAbsTokens < out.HardCeilingAbsTokens) {
-		return ResolvedKeeperConfig{}, &KeeperConfigError{
-			Field:  "force_act<hard_ceiling",
-			Reason: fmt.Sprintf("band inversion: force_act_abs_tokens (%d) must be < hard_ceiling_abs_tokens (%d)", out.ForceActAbsTokens, out.HardCeilingAbsTokens),
+		if !(out.ForceActAbsTokens < out.HardCeilingAbsTokens) {
+			return ResolvedKeeperConfig{}, &KeeperConfigError{
+				Field:  "force_act<hard_ceiling",
+				Reason: fmt.Sprintf("band inversion: force_act_abs_tokens (%d) must be < hard_ceiling_abs_tokens (%d)", out.ForceActAbsTokens, out.HardCeilingAbsTokens),
+			}
 		}
 	}
 	// pct ordering: warn_pct < act_pct.
@@ -472,8 +625,14 @@ func pctFlagCeil(name string, pct int) (float64, error) {
 func emitKeeperConfigRejected(projectDir, agentName string, err error) {
 	field := "config"
 	var kce *KeeperConfigError
-	if errors.As(err, &kce) {
+	var kme *KeeperConfigMissingError
+	switch {
+	case errors.As(err, &kce):
 		field = kce.Field
+	case errors.As(err, &kme):
+		// Missing-value class: there is no single offending field; record the count of
+		// unset required keys so the event is still actionable.
+		field = fmt.Sprintf("missing-required(%d)", len(kme.Missing))
 	}
 	payload, marshalErr := json.Marshal(core.SessionKeeperConfigRejectedPayload{
 		AgentName: agentName,

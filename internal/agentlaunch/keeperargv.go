@@ -65,9 +65,11 @@ type KeeperWindowOpts struct {
 	// WarnAbsTokens/ActAbsTokens band below is emitted.
 	WarnOnly bool
 
-	// WarnAbsTokens / ActAbsTokens are the absolute-token band passed when
-	// WarnOnly is false. On a 1M context window the percentage flags are inert
-	// because the abs caps always win, so the band is passed as absolute tokens
+	// WarnAbsTokens / ActAbsTokens are the absolute-token band forwarded when
+	// WarnOnly is false AND the value is > 0. The launcher imposes NO product
+	// default: a 0 (unset) value is OMITTED from the argv so the spawned keeper
+	// reads the operator's keeper: block in .harmonik/config.yaml (and refuses to
+	// start if a required value is missing). An explicit value is still forwarded
 	// for an unambiguous warn→act threshold (hk-5da7). Ignored when WarnOnly.
 	WarnAbsTokens int64
 	ActAbsTokens  int64
@@ -81,10 +83,16 @@ type KeeperWindowOpts struct {
 // KeeperWindowArgv builds the argv the keeper window runs:
 //
 //	warn-only:  <bin> keeper --agent <name> --tmux <session>:agent --warn-only [--project <dir>] [--respawn-cmd <cmd>]
-//	full band:  <bin> keeper --agent <name> --tmux <session>:agent --warn-abs-tokens <w> --act-abs-tokens <a> [--project <dir>] [--respawn-cmd <cmd>]
+//	full band:  <bin> keeper --agent <name> --tmux <session>:agent [--warn-abs-tokens <w>] [--act-abs-tokens <a>] [--project <dir>] [--respawn-cmd <cmd>]
 //
 // The inject target is "<Session>:agent" (ltmux.WindowAgent) so the keeper
 // injects into the sibling agent window, never its own keeper window (slice K).
+//
+// OPERATOR-REQUIRED CONFIG: the launcher imposes NO product-default band numbers.
+// A WarnAbsTokens/ActAbsTokens of 0 (unset) is OMITTED from the argv, so the
+// spawned keeper reads the operator's keeper: block in .harmonik/config.yaml
+// (refusing to start if a required value is missing) rather than receiving a
+// baked-in default. An explicitly-set (> 0) value is still forwarded.
 //
 // This is the single source of truth for the keeper-window argv, consumed by
 // both the daemon's crew spawn (crewKeeperWindowArgv now delegates here) and the
@@ -99,10 +107,13 @@ func KeeperWindowArgv(opts KeeperWindowOpts) []string {
 	if opts.WarnOnly {
 		argv = append(argv, "--warn-only")
 	} else {
-		argv = append(argv,
-			"--warn-abs-tokens", strconv.FormatInt(opts.WarnAbsTokens, 10),
-			"--act-abs-tokens", strconv.FormatInt(opts.ActAbsTokens, 10),
-		)
+		// Only forward an EXPLICIT (> 0) band value; 0 = unset → let operator config drive.
+		if opts.WarnAbsTokens > 0 {
+			argv = append(argv, "--warn-abs-tokens", strconv.FormatInt(opts.WarnAbsTokens, 10))
+		}
+		if opts.ActAbsTokens > 0 {
+			argv = append(argv, "--act-abs-tokens", strconv.FormatInt(opts.ActAbsTokens, 10))
+		}
 	}
 	if opts.ProjectDir != "" {
 		argv = append(argv, "--project", opts.ProjectDir)

@@ -23,9 +23,11 @@ package main
 //     runs in a sibling "keeper" window of the SAME session (hk-z036), built via
 //     the SHARED agentlaunch helper (review outcome A — same nesting+keeper-arm
 //     the daemon's crew spawn uses; no third implementation).
-//  5. Keeper WATCHER armed in the keeper window with the real warn/act band
-//     (keeper.DefaultWarnAbsTokens / DefaultActAbsTokens), plus the keeper-enable
-//     settings.json stanza wiring kept from hk-igek.
+//  5. Keeper WATCHER armed in the keeper window. The warn/act band is OPERATOR
+//     CONFIG: the launcher passes NO baked-in band numbers — the keeper reads the
+//     keeper: block in .harmonik/config.yaml (and REFUSES TO START if a required
+//     value is unset). An explicit --warn-abs-tokens/--act-abs-tokens still flows
+//     through. Plus the keeper-enable settings.json stanza wiring kept from hk-igek.
 //  6. D7 idempotent pre-flight: if the target session already exists, the
 //     launcher gates on AGENT-PANE LIVENESS. If the agent pane is dead/absent
 //     (the keeper outlived a stopped agent) it REAPS the stale session and
@@ -292,8 +294,12 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	projectFlag := fs.String("project", "", "project directory (default: current working directory)")
 	sessionIDFlag := fs.String("session-id", "", "stable UUIDv4 session id to launch with (minted when absent)")
 	noKeeperFlag := fs.Bool("no-keeper", false, "skip wiring the keeper hooks into ~/.claude/settings.json")
-	warnAbsFlag := fs.Int64("warn-abs-tokens", keeper.DefaultWarnAbsTokens, "keeper WARN band (absolute tokens)")
-	actAbsFlag := fs.Int64("act-abs-tokens", keeper.DefaultActAbsTokens, "keeper ACT/restart band (absolute tokens)")
+	// Operator-required config: NO product-imposed default number. 0 = unset → the
+	// flag injects nothing and the spawned keeper reads the operator's keeper: block
+	// in .harmonik/config.yaml (refusing to start if a required value is missing).
+	// An explicitly-passed value is still forwarded to the keeper window.
+	warnAbsFlag := fs.Int64("warn-abs-tokens", 0, "keeper WARN band (absolute tokens); 0 = unset → use operator config")
+	actAbsFlag := fs.Int64("act-abs-tokens", 0, "keeper ACT/restart band (absolute tokens); 0 = unset → use operator config")
 	// hk-igpg: per-project Claude RC label prefix. Sentinel "\x00" distinguishes
 	// "flag not passed" (→ fall back to daemon.remote_control_prefix from config)
 	// from an explicit "--rc-prefix ''" (→ force a bare label).
@@ -464,13 +470,15 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 		if outcome.Err != nil {
 			fmt.Fprintf(os.Stderr, "harmonik captain: keeper watcher window failed (%v) — launching anyway; "+
 				"the captain has NO warn/act/restart watcher until you arm one manually with "+
-				"`harmonik keeper --agent %s --tmux %s:%s --warn-abs-tokens %d --act-abs-tokens %d`\n",
-				outcome.Err, name, tmuxSession, ltmux.WindowAgent, *warnAbsFlag, *actAbsFlag)
+				"`harmonik keeper --agent %s --tmux %s:%s` "+
+				"(the band comes from the keeper: block in .harmonik/config.yaml — run "+
+				"`harmonik keeper config --example` if it is unset)\n",
+				outcome.Err, name, tmuxSession, ltmux.WindowAgent)
 		}
 	}
 
-	fmt.Printf("captain launched: name=%q tmux=%q session_id=%s project=%q warn_abs=%d act_abs=%d\n",
-		name, tmuxSession, sessionID, project, *warnAbsFlag, *actAbsFlag)
+	fmt.Printf("captain launched: name=%q tmux=%q session_id=%s project=%q (keeper band from operator config)\n",
+		name, tmuxSession, sessionID, project)
 	if *noKeeperFlag {
 		fmt.Printf("captain launched; keeper wiring skipped (--no-keeper) — run `harmonik keeper enable %s` and arm a watcher to wire warn/act.\n", name)
 	} else {

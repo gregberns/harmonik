@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/agentlaunch"
-	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -134,9 +133,12 @@ func TestCaptainLaunch_ArmsKeeperWindowWithFullBand_hkbcd0(t *testing.T) {
 	if o.WarnOnly {
 		t.Error("captain keeper must NOT be --warn-only; it is force-cut with a full band")
 	}
-	if o.WarnAbsTokens != keeper.DefaultWarnAbsTokens || o.ActAbsTokens != keeper.DefaultActAbsTokens {
-		t.Errorf("keeper band = warn %d / act %d, want defaults %d / %d",
-			o.WarnAbsTokens, o.ActAbsTokens, keeper.DefaultWarnAbsTokens, keeper.DefaultActAbsTokens)
+	// Operator-required-config change: the launcher imposes NO product-default band.
+	// With no flags passed, the band is UNSET (0) so the spawned keeper reads the
+	// operator's keeper: block in .harmonik/config.yaml (refusing to start if unset).
+	if o.WarnAbsTokens != 0 || o.ActAbsTokens != 0 {
+		t.Errorf("keeper band = warn %d / act %d, want UNSET 0/0 (no product default; keeper reads operator config)",
+			o.WarnAbsTokens, o.ActAbsTokens)
 	}
 	if o.Session != expectedHashedSession(t, proj) {
 		t.Errorf("keeper opts.Session = %q, want %q", o.Session, expectedHashedSession(t, proj))
@@ -145,8 +147,8 @@ func TestCaptainLaunch_ArmsKeeperWindowWithFullBand_hkbcd0(t *testing.T) {
 		t.Errorf("keeper opts.AgentName = %q, want %q", o.AgentName, "captain")
 	}
 
-	// Cross-check the SHARED argv-builder produces a session:agent inject target
-	// and the explicit band flags (not --warn-only).
+	// Cross-check the SHARED argv-builder: full band mode (not --warn-only), and with
+	// the band UNSET the abs flags are OMITTED (the keeper falls back to operator config).
 	keeperArgv := agentlaunch.KeeperWindowArgv(o)
 	if got := flagValueHkly0n(keeperArgv, "--tmux"); got != o.Session+":"+ltmux.WindowAgent {
 		t.Errorf("keeper --tmux = %q, want %q", got, o.Session+":"+ltmux.WindowAgent)
@@ -154,8 +156,8 @@ func TestCaptainLaunch_ArmsKeeperWindowWithFullBand_hkbcd0(t *testing.T) {
 	if containsHkly0n(keeperArgv, "--warn-only") {
 		t.Error("captain keeper argv must not contain --warn-only")
 	}
-	if flagValueHkly0n(keeperArgv, "--warn-abs-tokens") == "" || flagValueHkly0n(keeperArgv, "--act-abs-tokens") == "" {
-		t.Errorf("keeper argv missing explicit band flags: %v", keeperArgv)
+	if containsHkly0n(keeperArgv, "--warn-abs-tokens") || containsHkly0n(keeperArgv, "--act-abs-tokens") {
+		t.Errorf("keeper argv must OMIT band flags when unset (no product default); got: %v", keeperArgv)
 	}
 }
 

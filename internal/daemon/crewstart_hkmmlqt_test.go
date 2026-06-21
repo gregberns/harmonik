@@ -21,14 +21,12 @@ package daemon
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/handler"
-	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -281,11 +279,11 @@ func TestCrewSessionName_hkmmlqt(t *testing.T) {
 // per-crew keeper targets the sibling "agent" window via "--tmux <session>:agent"
 // (slice K inject-target contract).
 //
-// ES5 / hk-lcga (D4): the crew keeper is FORCE-CUT by default — it carries the
-// SYSTEM DEFAULT warn/act band (keeper.DefaultWarnAbsTokens /
-// keeper.DefaultActAbsTokens, the SAME band the captain uses), NOT --warn-only.
-// So with no params a crew that fills its context gets force-cut + restarted
-// instead of nagging forever.
+// ES5 / hk-lcga (D4): the crew keeper is FORCE-CUT by default — full band, NOT
+// --warn-only — so a crew that fills its context gets force-cut + restarted instead
+// of nagging forever. Operator-required-config change: the band NUMBERS come from
+// the operator's keeper: config (no product default), so the argv carries no band
+// flags — they are omitted and the keeper reads .harmonik/config.yaml.
 func TestCrewKeeperWindowArgv_hkrmy1(t *testing.T) {
 	const (
 		keeperBin = "/usr/local/bin/harmonik"
@@ -316,18 +314,15 @@ func TestCrewKeeperWindowArgv_hkrmy1(t *testing.T) {
 		t.Errorf("keeper argv %q missing the ':agent' window suffix", joined)
 	}
 
-	// D4: crew keeper is FORCE-CUT — it carries the system-default warn/act band
-	// and must NOT be --warn-only.
+	// D4: crew keeper is FORCE-CUT (full band, NOT --warn-only). Operator-required-
+	// config change: the band NUMBERS come from the operator's keeper: config, so the
+	// argv carries NO product-default band — the abs flags are OMITTED. The keeper
+	// reads .harmonik/config.yaml (and refuses to start if a required value is unset).
 	if argvHasFlag(argv, "--warn-only") {
 		t.Errorf("argv = %v, must NOT carry --warn-only (D4: crew is force-cut)", argv)
 	}
-	wantWarn := strconv.FormatInt(int64(keeper.DefaultWarnAbsTokens), 10)
-	wantAct := strconv.FormatInt(int64(keeper.DefaultActAbsTokens), 10)
-	if !containsPair(argv, "--warn-abs-tokens", wantWarn) {
-		t.Errorf("argv = %v, want --warn-abs-tokens %s (system default band)", argv, wantWarn)
-	}
-	if !containsPair(argv, "--act-abs-tokens", wantAct) {
-		t.Errorf("argv = %v, want --act-abs-tokens %s (system default band)", argv, wantAct)
+	if argvHasFlag(argv, "--warn-abs-tokens") || argvHasFlag(argv, "--act-abs-tokens") {
+		t.Errorf("argv = %v, must OMIT the band flags (no product default; keeper reads operator config)", argv)
 	}
 
 	// Pinned to the project.
@@ -390,13 +385,15 @@ func TestSpawnCrewSession_AgentAndKeeperWindows_hkrmy1(t *testing.T) {
 	if !strings.Contains(kw.Command, "--tmux") || !strings.Contains(kw.Command, wantInject) {
 		t.Errorf("keeper window command = %q, want --tmux %q", kw.Command, wantInject)
 	}
-	// ES5 / hk-lcga (D4): the crew keeper is force-cut by default — its command
-	// carries the system-default warn/act band, NOT --warn-only.
+	// ES5 / hk-lcga (D4): the crew keeper is force-cut by default (full band, NOT
+	// --warn-only). Operator-required-config change: the band numbers come from the
+	// operator's keeper: config, so the command carries NO product-default band — the
+	// abs flags are OMITTED and the keeper reads .harmonik/config.yaml.
 	if strings.Contains(kw.Command, "--warn-only") {
 		t.Errorf("keeper window command = %q, must NOT carry --warn-only (D4: force-cut)", kw.Command)
 	}
-	if !strings.Contains(kw.Command, "--act-abs-tokens") {
-		t.Errorf("keeper window command = %q, want --act-abs-tokens (force-cut band)", kw.Command)
+	if strings.Contains(kw.Command, "--warn-abs-tokens") || strings.Contains(kw.Command, "--act-abs-tokens") {
+		t.Errorf("keeper window command = %q, must OMIT band flags (no product default; keeper reads operator config)", kw.Command)
 	}
 }
 

@@ -382,3 +382,42 @@ func TestKeeper9kgf_BlockAbsent_AnyNewFieldSet_False(t *testing.T) {
 		})
 	}
 }
+
+// TestKeeper9kgf_PresenceTracksSuppliedKeys verifies the KeeperConfigPresence the
+// parser populates for the operator-required-config gate: a present key (including a
+// duration string that parses to 0, like boot_grace: "0s") is marked present, while an
+// absent key is NOT. This is what lets ResolveKeeperConfig distinguish "unset" (→
+// refuse to start) from an explicit zero.
+func TestKeeper9kgf_PresenceTracksSuppliedKeys(t *testing.T) {
+	const yaml = `schema_version: 1
+keeper:
+  context_thresholds:
+    warn_abs_tokens: 180000
+  timings:
+    boot_grace: 0s
+`
+	dir := keeper9kgfFixtureDir(t, yaml)
+	cfg, err := daemon.LoadProjectConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadProjectConfig: %v", err)
+	}
+	p := cfg.Keeper.Present
+	// warn_abs_tokens present (value > 0).
+	if !p.WarnAbsTokens {
+		t.Error("Present.WarnAbsTokens = false, want true (key supplied)")
+	}
+	// boot_grace present even though it parses to 0 (the disabled sentinel "0s").
+	if !p.BootGrace {
+		t.Error("Present.BootGrace = false, want true (boot_grace: 0s is an explicit value)")
+	}
+	if cfg.Keeper.BootGrace != 0 {
+		t.Errorf("BootGrace = %v, want 0 (parsed from 0s)", cfg.Keeper.BootGrace)
+	}
+	// An UNsupplied key is NOT present.
+	if p.ActAbsTokens {
+		t.Error("Present.ActAbsTokens = true, want false (key absent)")
+	}
+	if p.Staleness {
+		t.Error("Present.Staleness = true, want false (key absent)")
+	}
+}

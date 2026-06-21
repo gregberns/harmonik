@@ -346,9 +346,17 @@ func runKeeperSubcommand(args []string) int {
 		HardCeilingAbsSet:  hardCeilingAbsSet,
 		HardCeilingMode:    hardCeilingModeFlag,
 		HardCeilingModeSet: hardCeilingModeSet,
-	}, keeperCfg)
+	}, keeperCfg, projectDir)
 	if resolveErr != nil {
-		fmt.Fprintf(os.Stderr, "keeper: refusing to start — %v\n", resolveErr)
+		// The missing-value error is self-contained ("keeper: refusing to start — …");
+		// the bad-value error is a bare "keeper config: …", so prefix it. Avoid a
+		// doubled "refusing to start" for the missing-value class.
+		var kme *KeeperConfigMissingError
+		if errors.As(resolveErr, &kme) {
+			fmt.Fprintf(os.Stderr, "keeper: %v\n", resolveErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "keeper: refusing to start — %v\n", resolveErr)
+		}
 		// Surface a durable event too: the keeper events.jsonl is reachable here
 		// (FileEmitter derives its path from projectDir), so a fail-loud
 		// misconfiguration is not stderr-only.
@@ -917,6 +925,7 @@ func runKeeperAwaitAck(args []string) int {
 const keeperTopUsage = `harmonik keeper — context watcher for a managed agent pane (session-keeper, hk-ekap1)
 
 USAGE
+  harmonik keeper config --example
   harmonik keeper --agent <name> [--tmux <target>] [--warn-pct N] [--act-pct N] [--warn-abs-tokens N] [--act-abs-tokens N]
   harmonik keeper enable <agent> [--project DIR] [--scripts-dir DIR] [--tmux TARGET] [--yes-destructive]
   harmonik keeper doctor <agent> [--project DIR]
@@ -933,6 +942,11 @@ USAGE
   recurring restart-now failure mode); an unrecognized flag also exits 2.
 
 VERBS
+  config --example   Print a COMPLETE, commented keeper: config block to stdout. harmonik
+                     imposes NO built-in keeper defaults at runtime — every value must be
+                     set by the operator or the keeper REFUSES TO START. Paste the block
+                     into <project>/.harmonik/config.yaml (under schema_version: 1) and
+                     tune the numbers, then (re)launch the keeper.
   enable             Wire statusLine + Stop + PreCompact stanzas into ~/.claude/settings.json
                      (idempotent, JSON-aware, backs up first, normalizes env-var names).
                      Seeds HANDOFF-<agent>.md, validates tmux pane, prints the run command.
@@ -979,8 +993,10 @@ FLAGS (watcher mode)
                          an explicit value is tighten-only: it can move warn EARLIER, never later, than the abs band)
   --act-pct N            Context-use percentage that triggers handoff action (default 0 = unset → use abs band; .managed-gated;
                          an explicit value is tighten-only: it can move act EARLIER, never later, than the abs band)
-  --warn-abs-tokens N    Absolute-token warn threshold (default 200000); effective = min(warn-abs-tokens, warn-pct% * window)
-  --act-abs-tokens N     Absolute-token act threshold (default 215000); effective = min(act-abs-tokens, act-pct% * window)
+  --warn-abs-tokens N    Absolute-token warn threshold; OPERATOR-REQUIRED (no built-in default — set here or in
+                         keeper.context_thresholds.warn_abs_tokens); effective = min(warn-abs-tokens, warn-pct% * window)
+  --act-abs-tokens N     Absolute-token act threshold; OPERATOR-REQUIRED (no built-in default — set here or in
+                         keeper.context_thresholds.act_abs_tokens); effective = min(act-abs-tokens, act-pct% * window)
   --respawn-cmd <cmd>    Shell command to re-launch the agent when it exits (supervised respawn; hk-3w2).
                          After the gauge goes stale for 20s and the tmux pane is idle (shell prompt),
                          the keeper runs "sh -c <cmd>" to respawn the agent. Requires --tmux.
@@ -1025,6 +1041,7 @@ EXIT CODES (set-dispatching / clear-dispatching)
   1  Argument, validation, or I/O error
 
 EXAMPLES
+  harmonik keeper config --example >> .harmonik/config.yaml
   harmonik keeper --agent orchestrator
   harmonik keeper --agent flywheel --tmux harmonik:0 --warn-abs-tokens 200000 --act-abs-tokens 215000
   harmonik keeper set-dispatching --agent orchestrator

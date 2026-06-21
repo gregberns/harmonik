@@ -2,21 +2,21 @@ package main
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 // resolve_keeper_selfservice_hkvs4u_test.go — hk-vs4u: ResolveKeeperConfig threads
 // self_service end-to-end and resolves crews_enabled UNSET→TRUE (operator decision:
-// crews self-restart) while honoring an explicit false.
+// crews self-restart) while honoring an explicit false. self_service is OPTIONAL
+// (not in the required-value set), so these start from completeTestKeeperConfig()
+// (the required values) and override only the self_service fields under test.
 
 func boolPtr(b bool) *bool { return &b }
 
 func TestResolveKeeperConfig_CrewsEnabled_UnsetResolvesTrue(t *testing.T) {
-	// daemon.KeeperConfig.SelfServiceCrewsEnabled is nil when the key is absent.
-	got, err := ResolveKeeperConfig(KeeperFlags{}, daemon.KeeperConfig{
-		SelfServiceCrewsEnabled: nil,
-	})
+	// SelfServiceCrewsEnabled is nil when the key is absent.
+	cfg := completeTestKeeperConfig()
+	cfg.SelfServiceCrewsEnabled = nil
+	got, err := ResolveKeeperConfig(KeeperFlags{}, cfg, t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve: unexpected error: %v", err)
 	}
@@ -26,9 +26,9 @@ func TestResolveKeeperConfig_CrewsEnabled_UnsetResolvesTrue(t *testing.T) {
 }
 
 func TestResolveKeeperConfig_CrewsEnabled_ExplicitFalseStaysFalse(t *testing.T) {
-	got, err := ResolveKeeperConfig(KeeperFlags{}, daemon.KeeperConfig{
-		SelfServiceCrewsEnabled: boolPtr(false),
-	})
+	cfg := completeTestKeeperConfig()
+	cfg.SelfServiceCrewsEnabled = boolPtr(false)
+	got, err := ResolveKeeperConfig(KeeperFlags{}, cfg, t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve: unexpected error: %v", err)
 	}
@@ -38,9 +38,9 @@ func TestResolveKeeperConfig_CrewsEnabled_ExplicitFalseStaysFalse(t *testing.T) 
 }
 
 func TestResolveKeeperConfig_CrewsEnabled_ExplicitTrueStaysTrue(t *testing.T) {
-	got, err := ResolveKeeperConfig(KeeperFlags{}, daemon.KeeperConfig{
-		SelfServiceCrewsEnabled: boolPtr(true),
-	})
+	cfg := completeTestKeeperConfig()
+	cfg.SelfServiceCrewsEnabled = boolPtr(true)
+	got, err := ResolveKeeperConfig(KeeperFlags{}, cfg, t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve: unexpected error: %v", err)
 	}
@@ -50,13 +50,13 @@ func TestResolveKeeperConfig_CrewsEnabled_ExplicitTrueStaysTrue(t *testing.T) {
 }
 
 func TestResolveKeeperConfig_SelfServiceThreadedThrough(t *testing.T) {
-	got, err := ResolveKeeperConfig(KeeperFlags{}, daemon.KeeperConfig{
-		SelfServiceEnabled:              true,
-		SelfServiceGraceSeconds:         45,
-		SelfServiceInstructOnlyWhenIdle: true,
-		DefaultWarnText:                 "lighter",
-		ActionableWarnText:              "do this thing harmonik keeper restart-now --agent x",
-	})
+	cfg := completeTestKeeperConfig()
+	cfg.SelfServiceEnabled = true
+	cfg.SelfServiceGraceSeconds = 45
+	cfg.SelfServiceInstructOnlyWhenIdle = true
+	cfg.DefaultWarnText = "lighter"
+	cfg.ActionableWarnText = "do this thing harmonik keeper restart-now --agent x"
+	got, err := ResolveKeeperConfig(KeeperFlags{}, cfg, t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve: unexpected error: %v", err)
 	}

@@ -1,11 +1,23 @@
 # Session-Keeper: Component & Configuration Surface
 
 Bead: hk-fgnk (this doc) · Codename: `codename:keeper-config`
-Source of truth for defaults: [`internal/keeper/thresholds.go`](../../../internal/keeper/thresholds.go) (`Default*` consts).
+Source of truth for the **suggested template values**: [`internal/keeper/thresholds.go`](../../../internal/keeper/thresholds.go) (`Default*` consts).
 Config loader: [`internal/daemon/projectconfig.go`](../../../internal/daemon/projectconfig.go) (`rawKeeperConfig` + sub-structs).
 CLI flags: [`cmd/harmonik/keeper_cmd.go`](../../../cmd/harmonik/keeper_cmd.go).
+Operator-facing resolver (the chokepoint that imposes no runtime defaults): [`cmd/harmonik/resolve_keeper_config.go`](../../../cmd/harmonik/resolve_keeper_config.go).
 
-> Precedence for every tunable: **CLI flag > `.harmonik/config.yaml` `keeper:` block > compiled default** (hk-lhu2 / PL-004b).
+> **Operator-required config (no built-in runtime defaults).** harmonik does NOT apply a baked-in number
+> for any keeper value at runtime. Every value must be set by the operator — in the `.harmonik/config.yaml`
+> `keeper:` block, or (for the flag-backed ones) via its CLI flag. If a required value is unset, the keeper
+> **REFUSES TO START** with one aggregated, actionable error listing every missing key. Generate a complete
+> starting block with **`harmonik keeper config --example`** (the same block `harmonik init` writes), then
+> tune the numbers.
+>
+> Precedence for every tunable: **CLI flag > `.harmonik/config.yaml` `keeper:` block > (unset → refuse to start)**.
+> The `Default*` consts below are **suggested template values** (what `keeper config --example` / `init` ship)
+> — they are NOT a silent runtime fallback. The internal-library `applyDefaults` (watcher.go / cycle.go) still
+> fills these for programmatic construction and the unit-test suite, but the operator-facing path
+> (`harmonik keeper`) routes through `ResolveKeeperConfig`, which imposes none.
 > The warn/act/force-act **band is operator-locked** — changing it is a deliberate retune, never a refactor side effect (see `thresholds.go` header + `codename:keeper-redesign`).
 
 ---
@@ -35,7 +47,7 @@ both crew (warn-only) and captain keepers.
 
 ### `context_thresholds`
 
-| config key (dotted) | CLI flag | default | applicability |
+| config key (dotted) | CLI flag | suggested (OPERATOR-REQUIRED) | applicability |
 | --- | --- | --- | --- |
 | `keeper.context_thresholds.warn_abs_tokens` | `--warn-abs-tokens` | `200000` (`DefaultWarnAbsTokens`) | Watcher + Cycler |
 | `keeper.context_thresholds.act_abs_tokens` | `--act-abs-tokens` | `215000` (`DefaultActAbsTokens`) | Cycler (act gate) |
@@ -48,7 +60,7 @@ both crew (warn-only) and captain keepers.
 
 ### `hard_ceiling`
 
-| config key (dotted) | CLI flag | default | applicability |
+| config key (dotted) | CLI flag | suggested (OPERATOR-REQUIRED) | applicability |
 | --- | --- | --- | --- |
 | `keeper.hard_ceiling.mode` | `--hard-ceiling-mode` | `alarm` (off\|alarm\|restart) | Watcher (mode-gated backstop) |
 | `keeper.hard_ceiling.abs_tokens` | `--hard-ceiling-abs-tokens` | `280000` (`DefaultHardCeilingTokens`) | Watcher |
@@ -56,7 +68,7 @@ both crew (warn-only) and captain keepers.
 
 ### `timings` (all Go duration strings)
 
-| config key (dotted) | CLI flag | default | applicability |
+| config key (dotted) | CLI flag | suggested (OPERATOR-REQUIRED) | applicability |
 | --- | --- | --- | --- |
 | `keeper.timings.poll_interval` | `--poll-interval` | `5s` (`DefaultPollInterval`) | Watcher |
 | `keeper.timings.cycler_poll_interval` | — | `200ms` (`DefaultCyclerPollInterval`) | Cycler-only |
@@ -69,7 +81,7 @@ both crew (warn-only) and captain keepers.
 
 ### `cadence` (all Go duration strings)
 
-| config key (dotted) | CLI flag | default | applicability |
+| config key (dotted) | CLI flag | suggested (OPERATOR-REQUIRED) | applicability |
 | --- | --- | --- | --- |
 | `keeper.cadence.warn_cooldown` | — | `30s` (`DefaultWarnCooldown`) | Watcher |
 | `keeper.cadence.no_gauge_backoff` | — | `30s` (`DefaultNoGaugeBackoff`) | Watcher |
@@ -85,14 +97,14 @@ both crew (warn-only) and captain keepers.
 
 ### `budgets`
 
-| config key (dotted) | CLI flag | default | applicability |
+| config key (dotted) | CLI flag | suggested (OPERATOR-REQUIRED) | applicability |
 | --- | --- | --- | --- |
 | `keeper.budgets.heartbeat_max_misses` | — | `12` (`DefaultMaxHeartbeatMisses`) | Watcher |
 | `keeper.budgets.max_handoff_timeouts` | — | `3` (`DefaultMaxHandoffTimeouts`) | Cycler-only (timeout escalation) |
 
 ### `self_service`
 
-| config key (dotted) | CLI flag | default | applicability |
+| config key (dotted) | CLI flag | suggested (OPERATOR-REQUIRED) | applicability |
 | --- | --- | --- | --- |
 | `keeper.self_service.enabled` | — | `false` | Watcher (actionable-warn handshake) |
 | `keeper.self_service.grace_seconds` | — | (unset → compiled default) | Watcher |
@@ -101,7 +113,7 @@ both crew (warn-only) and captain keepers.
 
 ### `warn_messages`
 
-| config key (dotted) | CLI flag | default | applicability |
+| config key (dotted) | CLI flag | suggested (OPERATOR-REQUIRED) | applicability |
 | --- | --- | --- | --- |
 | `keeper.warn_messages.default_warn_text` | — | `""` (compiled default) | Watcher |
 | `keeper.warn_messages.actionable_warn_text` | — | `""` (compiled default) | Watcher (self-service advisory) |

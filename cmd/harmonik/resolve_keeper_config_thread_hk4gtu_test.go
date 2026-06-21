@@ -11,17 +11,21 @@ import (
 
 // resolve_keeper_config_thread_hk4gtu_test.go — table coverage for hk-4gtu: every
 // timing/cadence/budget/self_service value and the hard_ceiling MODE that PARSED
-// but was DROPPED must now (a) resolve config>default (flag>config>default for the
-// tier-1 ones), (b) reach the constructed Watcher/Cycler config literals, and
-// (c) preserve the boot_grace=0 / warn_cooldown<0 / max_handoff_timeouts=0
-// sentinels end-to-end. Fail-loud is preserved (a bad hard_ceiling.mode → error).
+// but was DROPPED must now (a) resolve config>flag (no runtime default layer),
+// (b) reach the constructed Watcher/Cycler config literals, and (c) preserve the
+// boot_grace=0 / warn_cooldown<0 / max_handoff_timeouts sentinels end-to-end.
+// Fail-loud is preserved (a bad hard_ceiling.mode → error).
+//
+// Operator-philosophy change: with NO config and NO flags the resolver no longer
+// fills defaults — it returns a *KeeperConfigMissingError. So the "resolves cleanly"
+// cases start from completeTestKeeperConfig() (suggested values) and mutate.
 
-// TestResolveKeeperConfig_ThreadedDefaults: with NO config and NO flags, every
-// threaded field resolves to its compiled keeper.Default* const.
+// TestResolveKeeperConfig_ThreadedDefaults: a COMPLETE config resolves each threaded
+// field to its supplied (suggested keeper.Default*) value.
 func TestResolveKeeperConfig_ThreadedDefaults(t *testing.T) {
-	got, err := ResolveKeeperConfig(KeeperFlags{}, daemon.KeeperConfig{})
+	got, err := ResolveKeeperConfig(KeeperFlags{}, completeTestKeeperConfig(), t.TempDir())
 	if err != nil {
-		t.Fatalf("resolve(defaults): unexpected error: %v", err)
+		t.Fatalf("resolve(complete config): unexpected error: %v", err)
 	}
 	checks := []struct {
 		name string
@@ -50,19 +54,19 @@ func TestResolveKeeperConfig_ThreadedDefaults(t *testing.T) {
 	}
 	for _, c := range checks {
 		if c.got != c.want {
-			t.Errorf("default %s = %v, want %v (compiled default)", c.name, c.got, c.want)
+			t.Errorf("%s = %v, want %v (suggested baseline value)", c.name, c.got, c.want)
 		}
 	}
-	// Sentinels: unconfigured boot_grace is NOT-set (start path feeds the default
-	// at the construction site); warn_cooldown and max_handoff_timeouts forward 0.
-	if got.BootGraceSet {
-		t.Errorf("default BootGraceSet = true, want false (unconfigured → site-fed default)")
+	// Sentinels: baseline boot_grace is set (5m); warn_cooldown forwards its value;
+	// max_handoff_timeouts forwards its value.
+	if !got.BootGraceSet {
+		t.Errorf("baseline BootGraceSet = false, want true (boot_grace is set in the complete config)")
 	}
-	if got.WarnCooldown != 0 {
-		t.Errorf("default WarnCooldown = %v, want 0 (downstream applyDefaults fills it)", got.WarnCooldown)
+	if got.WarnCooldown != keeper.DefaultWarnCooldown {
+		t.Errorf("WarnCooldown = %v, want %v (forwarded verbatim)", got.WarnCooldown, keeper.DefaultWarnCooldown)
 	}
-	if got.MaxHandoffTimeouts != 0 {
-		t.Errorf("default MaxHandoffTimeouts = %v, want 0 (downstream applyDefaults fills it)", got.MaxHandoffTimeouts)
+	if got.MaxHandoffTimeouts != keeper.DefaultMaxHandoffTimeouts {
+		t.Errorf("MaxHandoffTimeouts = %v, want %v (forwarded verbatim)", got.MaxHandoffTimeouts, keeper.DefaultMaxHandoffTimeouts)
 	}
 }
 
@@ -70,31 +74,32 @@ func TestResolveKeeperConfig_ThreadedDefaults(t *testing.T) {
 // value demonstrably reaches the resolved struct (which the start path copies
 // verbatim into the Watcher/Cycler literal).
 func TestResolveKeeperConfig_ConfigReachesField(t *testing.T) {
-	cfg := daemon.KeeperConfig{
-		// Keep the band valid: warn < act < force_act < hard_ceiling.
-		WarnAbsTokens:              100_000,
-		ActAbsTokens:               110_000,
-		PollInterval:               7 * time.Second,
-		IdleQuiesce:                11 * time.Second,
-		Staleness:                  99 * time.Second,
-		RespawnGrace:               22 * time.Second,
-		RespawnCooldown:            77 * time.Second,
-		LiveRecoverGrace:           6 * time.Minute,
-		LiveRecoverCooldown:        7 * time.Minute,
-		NoGaugeBackoff:             45 * time.Second,
-		CadenceHardCeilingCooldown: 9 * time.Minute,
-		BlindKeeperThreshold:       8 * time.Minute,
-		HeartbeatMaxMisses:         20,
-		HandoffTimeout:             240 * time.Second,
-		ClearSettle:                5 * time.Second,
-		CyclerPollInterval:         333 * time.Millisecond,
-		ForceRetryInterval:         150 * time.Second,
-		IdleFloorAbsTokens:         123_000,
-		IdleRestartCooldown:        40 * time.Minute,
-		HardCeilingAbsTokens:       300_000,
-		HardCeilingMode:            "restart",
-	}
-	got, err := ResolveKeeperConfig(KeeperFlags{}, cfg)
+	cfg := completeTestKeeperConfig()
+	// Keep the band valid: warn < act < force_act < hard_ceiling.
+	cfg.WarnAbsTokens = 100_000
+	cfg.ActAbsTokens = 110_000
+	cfg.ForceActAbsTokens = 120_000
+	cfg.PollInterval = 7 * time.Second
+	cfg.IdleQuiesce = 11 * time.Second
+	cfg.Staleness = 99 * time.Second
+	cfg.RespawnGrace = 22 * time.Second
+	cfg.RespawnCooldown = 77 * time.Second
+	cfg.LiveRecoverGrace = 6 * time.Minute
+	cfg.LiveRecoverCooldown = 7 * time.Minute
+	cfg.NoGaugeBackoff = 45 * time.Second
+	cfg.CadenceHardCeilingCooldown = 9 * time.Minute
+	cfg.BlindKeeperThreshold = 8 * time.Minute
+	cfg.HeartbeatMaxMisses = 20
+	cfg.HandoffTimeout = 240 * time.Second
+	cfg.ClearSettle = 5 * time.Second
+	cfg.CyclerPollInterval = 333 * time.Millisecond
+	cfg.ForceRetryInterval = 150 * time.Second
+	cfg.IdleFloorAbsTokens = 123_000
+	cfg.IdleRestartCooldown = 40 * time.Minute
+	cfg.HardCeilingAbsTokens = 300_000
+	cfg.HardCeilingMode = "restart"
+
+	got, err := ResolveKeeperConfig(KeeperFlags{}, cfg, t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve(config): unexpected error: %v", err)
 	}
@@ -129,7 +134,7 @@ func TestResolveKeeperConfig_ConfigReachesField(t *testing.T) {
 		}
 	}
 
-	// Now build the literals exactly as the start path does and assert the public
+	// Build the literals exactly as the start path does and assert the public
 	// Watcher/Cycler config fields carry the configured value BEFORE applyDefaults.
 	w := keeper.WatcherConfig{
 		PollInterval:         got.PollInterval,
@@ -166,15 +171,15 @@ func TestResolveKeeperConfig_ConfigReachesField(t *testing.T) {
 
 // TestResolveKeeperConfig_Tier1FlagOverridesConfig: a tier-1 flag wins over config.
 func TestResolveKeeperConfig_Tier1FlagOverridesConfig(t *testing.T) {
-	cfg := daemon.KeeperConfig{
-		Staleness:            99 * time.Second,
-		IdleQuiesce:          11 * time.Second,
-		PollInterval:         7 * time.Second,
-		HandoffTimeout:       240 * time.Second,
-		IdleFloorAbsTokens:   123_000,
-		HardCeilingAbsTokens: 300_000,
-		HardCeilingMode:      "alarm",
-	}
+	cfg := completeTestKeeperConfig()
+	cfg.Staleness = 99 * time.Second
+	cfg.IdleQuiesce = 11 * time.Second
+	cfg.PollInterval = 7 * time.Second
+	cfg.HandoffTimeout = 240 * time.Second
+	cfg.IdleFloorAbsTokens = 123_000
+	cfg.HardCeilingAbsTokens = 300_000
+	cfg.HardCeilingMode = "alarm"
+
 	flags := KeeperFlags{
 		Staleness:          60 * time.Second,
 		StalenessSet:       true,
@@ -191,7 +196,7 @@ func TestResolveKeeperConfig_Tier1FlagOverridesConfig(t *testing.T) {
 		HardCeilingMode:    "restart",
 		HardCeilingModeSet: true,
 	}
-	got, err := ResolveKeeperConfig(flags, cfg)
+	got, err := ResolveKeeperConfig(flags, cfg, t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve(flags): unexpected error: %v", err)
 	}
@@ -216,50 +221,63 @@ func TestResolveKeeperConfig_Tier1FlagOverridesConfig(t *testing.T) {
 }
 
 // TestResolveKeeperConfig_BootGraceSentinel: the boot_grace=0 disabled sentinel is
-// honored when explicitly set (config or flag), preserved end-to-end.
+// honored when explicitly set (config-present "0s" or flag), preserved end-to-end.
 func TestResolveKeeperConfig_BootGraceSentinel(t *testing.T) {
-	// config boot_grace=0 is NOT a sentinel (0 = "not configured" at the daemon
-	// layer); the sentinel-disable path is an explicit FLAG boot-grace=0.
-	got, err := ResolveKeeperConfig(KeeperFlags{BootGrace: 0, BootGraceSet: true}, daemon.KeeperConfig{})
+	// Explicit FLAG boot-grace=0 → disabled sentinel honored.
+	cfg := completeTestKeeperConfig()
+	got, err := ResolveKeeperConfig(KeeperFlags{BootGrace: 0, BootGraceSet: true}, cfg, t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve(boot-grace=0): %v", err)
 	}
 	if !got.BootGraceSet || got.BootGrace != 0 {
 		t.Errorf("explicit --boot-grace=0: BootGraceSet=%v BootGrace=%v, want set+0 (disabled honored)", got.BootGraceSet, got.BootGrace)
 	}
-	// A configured positive boot_grace reaches the resolved struct as set.
-	got2, err := ResolveKeeperConfig(KeeperFlags{}, daemon.KeeperConfig{BootGrace: 3 * time.Minute})
+	// Config-present boot_grace: 0s (string "0s" → present, value 0) is the disabled
+	// sentinel — present, NOT missing, and honored as 0.
+	cfg2 := completeTestKeeperConfig()
+	cfg2.BootGrace = 0
+	cfg2.Present.BootGrace = true // simulates the raw "0s" string
+	got2, err := ResolveKeeperConfig(KeeperFlags{}, cfg2, t.TempDir())
 	if err != nil {
-		t.Fatalf("resolve(config boot_grace): %v", err)
+		t.Fatalf("resolve(config boot_grace 0s): %v", err)
 	}
-	if !got2.BootGraceSet || got2.BootGrace != 3*time.Minute {
-		t.Errorf("config boot_grace=3m: BootGraceSet=%v BootGrace=%v, want set+3m", got2.BootGraceSet, got2.BootGrace)
+	if !got2.BootGraceSet || got2.BootGrace != 0 {
+		t.Errorf("config boot_grace=0s: BootGraceSet=%v BootGrace=%v, want set+0 (disabled honored)", got2.BootGraceSet, got2.BootGrace)
+	}
+	// A configured positive boot_grace reaches the resolved struct as set.
+	cfg3 := completeTestKeeperConfig()
+	cfg3.BootGrace = 3 * time.Minute
+	got3, err := ResolveKeeperConfig(KeeperFlags{}, cfg3, t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve(config boot_grace 3m): %v", err)
+	}
+	if !got3.BootGraceSet || got3.BootGrace != 3*time.Minute {
+		t.Errorf("config boot_grace=3m: BootGraceSet=%v BootGrace=%v, want set+3m", got3.BootGraceSet, got3.BootGrace)
 	}
 }
 
-// TestResolveKeeperConfig_WarnCooldownAndMaxHandoffSentinels: the warn_cooldown<0
-// and max_handoff_timeouts=0 sentinels forward verbatim.
+// TestResolveKeeperConfig_SentinelsForwardVerbatim: the warn_cooldown<0 disable
+// sentinel forwards verbatim.
 func TestResolveKeeperConfig_SentinelsForwardVerbatim(t *testing.T) {
-	got, err := ResolveKeeperConfig(KeeperFlags{}, daemon.KeeperConfig{
-		WarnCooldown:       -1, // disable sentinel
-		MaxHandoffTimeouts: 0,  // no-escalation sentinel (also the unconfigured value)
-	})
+	cfg := completeTestKeeperConfig()
+	cfg.WarnCooldown = -1 // disable sentinel (still present)
+	got, err := ResolveKeeperConfig(KeeperFlags{}, cfg, t.TempDir())
 	if err != nil {
 		t.Fatalf("resolve(sentinels): %v", err)
 	}
 	if got.WarnCooldown != -1 {
 		t.Errorf("WarnCooldown sentinel = %v, want -1 (forwarded verbatim)", got.WarnCooldown)
 	}
-	if got.MaxHandoffTimeouts != 0 {
-		t.Errorf("MaxHandoffTimeouts sentinel = %v, want 0", got.MaxHandoffTimeouts)
+	if got.MaxHandoffTimeouts != keeper.DefaultMaxHandoffTimeouts {
+		t.Errorf("MaxHandoffTimeouts = %v, want %v", got.MaxHandoffTimeouts, keeper.DefaultMaxHandoffTimeouts)
 	}
 }
 
 // TestResolveKeeperConfig_BadHardCeilingMode_FailsLoud: an invalid mode token is a
-// fail-loud *KeeperConfigError, NOT a silent default — proving fail-loud is
-// preserved (NOT reverted to non-fatal) for the threaded mode value.
+// fail-loud *KeeperConfigError, NOT a silent default.
 func TestResolveKeeperConfig_BadHardCeilingMode_FailsLoud(t *testing.T) {
-	_, err := ResolveKeeperConfig(KeeperFlags{HardCeilingMode: "explode", HardCeilingModeSet: true}, daemon.KeeperConfig{})
+	cfg := completeTestKeeperConfig()
+	_, err := ResolveKeeperConfig(KeeperFlags{HardCeilingMode: "explode", HardCeilingModeSet: true}, cfg, t.TempDir())
 	if err == nil {
 		t.Fatal("resolve(bad mode): expected *KeeperConfigError, got nil (fail-loud must NOT be reverted to silent-default)")
 	}
@@ -272,9 +290,7 @@ func TestResolveKeeperConfig_BadHardCeilingMode_FailsLoud(t *testing.T) {
 	}
 }
 
-// TestWarnOnlyNilsCycler asserts the warn-only path constructs a nil Cycler (crews
-// have no cycler — unchanged by hk-4gtu). It exercises the same branch keeper_cmd
-// uses: warnOnly true → cycler stays nil; false → a real Cycler is built.
+// TestWarnOnlyNilsCycler asserts the warn-only path constructs a nil Cycler.
 func TestWarnOnlyNilsCycler(t *testing.T) {
 	var cycler *keeper.Cycler
 	warnOnly := true
@@ -284,7 +300,6 @@ func TestWarnOnlyNilsCycler(t *testing.T) {
 	if cycler != nil {
 		t.Fatal("warn-only path: cycler must be nil (crews have no cycler)")
 	}
-	// Sanity: the non-warn-only branch builds a real Cycler.
 	warnOnly = false
 	if !warnOnly {
 		cycler = keeper.NewCycler(keeper.CyclerConfig{AgentName: "x", ProjectDir: t.TempDir()}, keeper.NewFileEmitter(t.TempDir()))
@@ -293,3 +308,6 @@ func TestWarnOnlyNilsCycler(t *testing.T) {
 		t.Fatal("non-warn-only path: cycler must be non-nil")
 	}
 }
+
+// keep daemon import used (KeeperFlags-only tests above don't reference it directly).
+var _ = daemon.KeeperConfig{}

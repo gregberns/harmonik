@@ -79,6 +79,44 @@ func TestKeeperWindowArgv_FullBand(t *testing.T) {
 	}
 }
 
+// TestKeeperWindowArgv_FullBandUnsetOmitsAbsFlags asserts the operator-required-config
+// behavior: in full-band mode (NOT warn-only) a 0 (unset) band OMITS the abs flags so
+// the spawned keeper falls back to the operator's keeper: config (no product default).
+func TestKeeperWindowArgv_FullBandUnsetOmitsAbsFlags(t *testing.T) {
+	argv := KeeperWindowArgv(KeeperWindowOpts{
+		KeeperBin:     "harmonik",
+		AgentName:     "captain",
+		Session:       "harmonik-abc123-captain",
+		WarnOnly:      false,
+		WarnAbsTokens: 0, // unset → omit
+		ActAbsTokens:  0, // unset → omit
+	})
+	if contains(argv, "--warn-only") {
+		t.Errorf("full-band argv must NOT contain --warn-only: %v", argv)
+	}
+	if contains(argv, "--warn-abs-tokens") || contains(argv, "--act-abs-tokens") {
+		t.Errorf("unset band must OMIT the abs flags (keeper reads operator config): %v", argv)
+	}
+}
+
+// TestKeeperWindowArgv_FullBandPartialBand asserts each abs flag is independently
+// gated on > 0 (a set warn + unset act emits only --warn-abs-tokens).
+func TestKeeperWindowArgv_FullBandPartialBand(t *testing.T) {
+	argv := KeeperWindowArgv(KeeperWindowOpts{
+		KeeperBin:     "harmonik",
+		AgentName:     "captain",
+		Session:       "s",
+		WarnAbsTokens: 200000,
+		ActAbsTokens:  0,
+	})
+	if got := flagValue(argv, "--warn-abs-tokens"); got != "200000" {
+		t.Errorf("--warn-abs-tokens = %q, want 200000", got)
+	}
+	if contains(argv, "--act-abs-tokens") {
+		t.Errorf("unset act must omit --act-abs-tokens: %v", argv)
+	}
+}
+
 func TestKeeperWindowArgv_OmitsEmptyOptionals(t *testing.T) {
 	argv := KeeperWindowArgv(KeeperWindowOpts{
 		KeeperBin: "harmonik",

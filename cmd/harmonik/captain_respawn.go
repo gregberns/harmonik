@@ -45,6 +45,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -72,13 +73,17 @@ func runCaptainRespawnTmux(cmd *exec.Cmd) ([]byte, error) { return cmd.Output() 
 // only, never the whole session, so the sibling keeper window survives. --resume
 // (NOT --session-id) re-binds the SAME conversation. The agent-window target is
 // "<session>:agent" (ltmux.WindowAgent).
-func buildCaptainRespawnWindowCmd(name, tmuxTarget, sessionID string) *exec.Cmd {
+//
+// rcPrefix (hk-igpg) folds the per-project prefix into the --remote-control LABEL
+// via daemon.JoinRemoteControlName so the respawned session keeps the SAME picker
+// label the launcher used (resume parity). Empty prefix ⇒ bare name.
+func buildCaptainRespawnWindowCmd(name, tmuxTarget, sessionID, rcPrefix string) *exec.Cmd {
 	return exec.Command(
 		"tmux", "respawn-window", "-k",
 		"-t", tmuxTarget,
 		"-e", "HARMONIK_AGENT="+name,
 		"claude", "--dangerously-skip-permissions",
-		"--remote-control", name,
+		"--remote-control", daemon.JoinRemoteControlName(rcPrefix, name),
 		"--resume", sessionID,
 	)
 }
@@ -127,6 +132,12 @@ func runCaptainRespawn(subArgs []string, run captainRespawnRunFn, stdout, stderr
 	tmuxFlag := fs.String("tmux", "", "tmux session (or session:window) target of the captain agent window")
 	sessionIDFlag := fs.String("session-id", "", "stable UUIDv4 session id to --resume (NOT --session-id: resume keeps the same conversation)")
 	projectFlag := fs.String("project", "", "project directory holding .harmonik/cognition/captain.pid (default: current working directory)")
+	// hk-igpg: per-project Claude RC label prefix — the respawn keeps the SAME
+	// --remote-control label the launcher used. Sentinel "\x00" = "flag not passed"
+	// (→ fall back to daemon.remote_control_prefix from config); explicit
+	// "--rc-prefix ''" forces a bare label.
+	const rcPrefixUnset = "\x00"
+	rcPrefixFlag := fs.String("rc-prefix", rcPrefixUnset, "per-project --remote-control label prefix (default: daemon.remote_control_prefix from .harmonik/config.yaml; empty = bare label)")
 
 	if err := fs.Parse(subArgs); err != nil {
 		return 1
@@ -165,11 +176,27 @@ func runCaptainRespawn(subArgs []string, run captainRespawnRunFn, stdout, stderr
 		project = wd
 	}
 
+	// hk-igpg: resolve the RC label prefix the SAME way the launcher (captain.go)
+	// does — explicit --rc-prefix (including empty) wins; otherwise fall back to
+	// daemon.remote_control_prefix from .harmonik/config.yaml. A config-load error
+	// is non-fatal (WARN + bare label). This keeps the respawned session's picker
+	// label identical to the launch label even though the keeper's armed
+	// `harmonik captain respawn …` does not carry --rc-prefix explicitly.
+	rcPrefix := *rcPrefixFlag
+	if rcPrefix == rcPrefixUnset {
+		rcPrefix = ""
+		if pc, perr := daemon.LoadProjectConfig(project); perr == nil {
+			rcPrefix = pc.Daemon.RemoteControlPrefix
+		} else {
+			fmt.Fprintf(stderr, "harmonik captain respawn: could not load .harmonik/config.yaml for rc-prefix (%v) — respawning with a bare --remote-control label\n", perr)
+		}
+	}
+
 	target := captainRespawnTarget(*tmuxFlag)
 
 	// 1) Respawn ONLY the agent window, resuming the same session-id. A failure
 	//    here is fatal — there is nothing to refresh if the relaunch did not run.
-	if _, err := run(buildCaptainRespawnWindowCmd(name, target, sessionID)); err != nil {
+	if _, err := run(buildCaptainRespawnWindowCmd(name, target, sessionID, rcPrefix)); err != nil {
 		fmt.Fprintf(stderr, "harmonik captain respawn: respawn-window %q: %v\n", target, err)
 		return 1
 	}

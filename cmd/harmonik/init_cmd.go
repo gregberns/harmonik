@@ -174,8 +174,10 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 
-	// Step 5: write .harmonik/config.yaml.
-	if code := writeConfigYAML(projectDir, targetBranch, force, stdout, stderr); code != 0 {
+	// Step 5: write .harmonik/config.yaml. The remote_control_prefix defaults to
+	// the SAME value passed to `br init --prefix` so the beads prefix and the
+	// Claude RC label prefix match out of the box (hk-igpg).
+	if code := writeConfigYAML(projectDir, targetBranch, prefix, force, stdout, stderr); code != 0 {
 		return code
 	}
 
@@ -400,6 +402,12 @@ daemon:
   max_concurrent: 4
   # Default workflow mode: single, review-loop, dot
   workflow_mode: review-loop
+  # Per-project prefix folded into Claude Code --remote-control session LABELS
+  # (e.g. "%[2]s" -> "%[2]s-captain", "%[2]s-paul") so concurrent projects are
+  # distinguishable in the global Remote-Control session picker. Defaults to the
+  # beads issue prefix. Empty = bare label (the agent name verbatim). Cosmetic
+  # only: HARMONIK_AGENT / tmux name / session-id stay bare. (hk-igpg)
+  remote_control_prefix: %[2]s
 
 # sentinel: configures the flywheel movement governor (flywheel-motion.md §7).
 # All fields are optional; compiled defaults shown below as comments.
@@ -500,14 +508,17 @@ sentinel:
 #     actionable_warn_text: ""        # default: "" -> compiled actionable warn advisory
 `
 
-// writeConfigYAML writes .harmonik/config.yaml.
-func writeConfigYAML(projectDir, targetBranch string, force bool, stdout, stderr io.Writer) int {
+// writeConfigYAML writes .harmonik/config.yaml. rcPrefix is written as
+// daemon.remote_control_prefix; init passes the same value given to
+// `br init --prefix` so the beads prefix and the Claude RC label prefix match
+// out of the box (hk-igpg).
+func writeConfigYAML(projectDir, targetBranch, rcPrefix string, force bool, stdout, stderr io.Writer) int {
 	path := filepath.Join(projectDir, ".harmonik", "config.yaml")
 	if _, err := os.Stat(path); err == nil && !force {
 		fmt.Fprintln(stdout, "harmonik init: .harmonik/config.yaml already exists — skipping (use --force to overwrite)")
 		return 0
 	}
-	content := fmt.Sprintf(configYAMLContent, targetBranch)
+	content := fmt.Sprintf(configYAMLContent, targetBranch, rcPrefix)
 	//nolint:gosec // G306: config file readable by owner only; 0644 matches conventions
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		fmt.Fprintf(stderr, "harmonik init: write .harmonik/config.yaml: %v\n", err)

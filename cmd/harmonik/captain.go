@@ -65,6 +65,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/agentlaunch"
+	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -190,14 +191,19 @@ func (o osCaptainTmuxOps) AgentPaneAlive(ctx context.Context, sess string) (bool
 // wedge unattended, so it is part of the launcher's correctness contract.
 // Returning the fully-built *exec.Cmd (rather than running it inline) is what
 // lets the test assert the exact argv via the injected run func.
-func buildCaptainTmuxCmd(name, tmuxSession, sessionID string) *exec.Cmd {
+//
+// rcPrefix (hk-igpg) is the per-project Claude RC label prefix: the
+// --remote-control LABEL is daemon.JoinRemoteControlName(rcPrefix, name) so it
+// shows as "<prefix>-<name>" in the picker. Empty prefix ⇒ bare name (backward
+// compatible). HARMONIK_AGENT stays BARE — the prefix is cosmetic, RC-label-only.
+func buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix string) *exec.Cmd {
 	return exec.Command(
 		"tmux", "new-session", "-d",
 		"-s", tmuxSession,
 		"-n", ltmux.WindowAgent,
 		"-e", "HARMONIK_AGENT="+name,
 		"claude", "--dangerously-skip-permissions",
-		"--remote-control", name,
+		"--remote-control", daemon.JoinRemoteControlName(rcPrefix, name),
 		"--session-id", sessionID,
 	)
 }
@@ -287,6 +293,11 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	noKeeperFlag := fs.Bool("no-keeper", false, "skip wiring the keeper hooks into ~/.claude/settings.json")
 	warnAbsFlag := fs.Int64("warn-abs-tokens", keeper.DefaultWarnAbsTokens, "keeper WARN band (absolute tokens)")
 	actAbsFlag := fs.Int64("act-abs-tokens", keeper.DefaultActAbsTokens, "keeper ACT/restart band (absolute tokens)")
+	// hk-igpg: per-project Claude RC label prefix. Sentinel "\x00" distinguishes
+	// "flag not passed" (→ fall back to daemon.remote_control_prefix from config)
+	// from an explicit "--rc-prefix ''" (→ force a bare label).
+	const rcPrefixUnset = "\x00"
+	rcPrefixFlag := fs.String("rc-prefix", rcPrefixUnset, "per-project --remote-control label prefix (default: daemon.remote_control_prefix from .harmonik/config.yaml; empty = bare label)")
 
 	if err := fs.Parse(subArgs); err != nil {
 		// flag prints its own message; ErrHelp also lands here.
@@ -307,6 +318,19 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 			return 1
 		}
 		project = wd
+	}
+
+	// hk-igpg: resolve the RC label prefix. An explicit --rc-prefix (including
+	// empty) wins; otherwise fall back to daemon.remote_control_prefix from
+	// .harmonik/config.yaml. A config-load error is non-fatal (WARN + bare label).
+	rcPrefix := *rcPrefixFlag
+	if rcPrefix == rcPrefixUnset {
+		rcPrefix = ""
+		if pc, perr := daemon.LoadProjectConfig(project); perr == nil {
+			rcPrefix = pc.Daemon.RemoteControlPrefix
+		} else {
+			fmt.Fprintf(os.Stderr, "harmonik captain: could not load .harmonik/config.yaml for rc-prefix (%v) — launching with a bare --remote-control label\n", perr)
+		}
 	}
 
 	tmuxSession, err := captainTmuxSessionName(*tmuxFlag, project)
@@ -388,7 +412,7 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	// 1) Launch the captain agent window. The agent-window run func is the hk-ly0n
 	//    test seam; the assembled command is `tmux new-session -d -s <session>
 	//    -n agent ... claude ...`.
-	cmd := buildCaptainTmuxCmd(name, tmuxSession, sessionID)
+	cmd := buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix)
 	if rerr := run(cmd); rerr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik captain: launch tmux session %q: %v\n", tmuxSession, rerr)
 		return 1

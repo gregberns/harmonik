@@ -402,3 +402,131 @@ func TestBuildCrewLaunchSpec_WorkDir(t *testing.T) {
 		t.Errorf("Role = %q; want %q", spec.Role, "crew")
 	}
 }
+
+// argvFlagValue returns the value immediately following flag in args, or "" if
+// the flag is absent or has no following element.
+func argvFlagValue(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+// TestJoinRemoteControlName covers the single source of the --remote-control
+// label format (hk-igpg): an empty prefix yields the BARE name (backward
+// compatible), a non-empty prefix yields "<prefix>-<name>".
+func TestJoinRemoteControlName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		label  string
+		prefix string
+		name   string
+		want   string
+	}{
+		{label: "empty_prefix_bare", prefix: "", name: "paul", want: "paul"},
+		{label: "empty_prefix_captain", prefix: "", name: "captain", want: "captain"},
+		{label: "prefixed", prefix: "hk", name: "paul", want: "hk-paul"},
+		{label: "prefixed_captain", prefix: "hk", name: "captain", want: "hk-captain"},
+		{label: "longer_prefix", prefix: "mproj", name: "chani", want: "mproj-chani"},
+		{label: "empty_name", prefix: "hk", name: "", want: "hk-"},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.label, func(t *testing.T) {
+			t.Parallel()
+			if got := daemon.JoinRemoteControlName(c.prefix, c.name); got != c.want {
+				t.Errorf("JoinRemoteControlName(%q, %q) = %q; want %q", c.prefix, c.name, got, c.want)
+			}
+		})
+	}
+}
+
+// TestBuildCrewLaunchSpec_RcPrefix verifies the per-project --remote-control
+// label prefix (hk-igpg):
+//   - empty RcPrefix emits the UNCHANGED bare-name arg (backward compatible);
+//   - a non-empty RcPrefix emits "<prefix>-<name>" as the --remote-control value;
+//   - the --resume and --session-id branches emit IDENTICAL labels for a given
+//     prefix (resume parity — a keeper clear→resume must not rename the picker
+//     session). HARMONIK_AGENT stays BARE in every case.
+func TestBuildCrewLaunchSpec_RcPrefix(t *testing.T) {
+	t.Parallel()
+
+	const uuid = "01930000-0000-7000-8000-0000000000b2"
+
+	t.Run("empty_prefix_unchanged", func(t *testing.T) {
+		t.Parallel()
+		for _, resume := range []bool{false, true} {
+			rc := daemon.ExportedCrewLaunchCtx{
+				Name:       "paul",
+				RcPrefix:   "",
+				SessionID:  uuid,
+				ProjectDir: "/tmp/harmonik",
+				Resume:     resume,
+			}
+			spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+			if err != nil {
+				t.Fatalf("resume=%v: unexpected error: %v", resume, err)
+			}
+			if got := argvFlagValue(spec.Args, "--remote-control"); got != "paul" {
+				t.Errorf("resume=%v: --remote-control = %q; want bare %q", resume, got, "paul")
+			}
+		}
+	})
+
+	t.Run("prefixed_resume_parity", func(t *testing.T) {
+		t.Parallel()
+		base := daemon.ExportedCrewLaunchCtx{
+			Name:       "paul",
+			RcPrefix:   "hk",
+			SessionID:  uuid,
+			ProjectDir: "/tmp/harmonik",
+		}
+
+		fresh := base
+		fresh.Resume = false
+		resumed := base
+		resumed.Resume = true
+
+		specFresh, err := daemon.ExportedBuildCrewLaunchSpec(fresh)
+		if err != nil {
+			t.Fatalf("fresh: unexpected error: %v", err)
+		}
+		specResume, err := daemon.ExportedBuildCrewLaunchSpec(resumed)
+		if err != nil {
+			t.Fatalf("resume: unexpected error: %v", err)
+		}
+
+		labelFresh := argvFlagValue(specFresh.Args, "--remote-control")
+		labelResume := argvFlagValue(specResume.Args, "--remote-control")
+
+		if labelFresh != "hk-paul" {
+			t.Errorf("fresh --remote-control = %q; want %q", labelFresh, "hk-paul")
+		}
+		if labelFresh != labelResume {
+			t.Errorf("resume parity broken: fresh label %q != resume label %q", labelFresh, labelResume)
+		}
+
+		// HARMONIK_AGENT must remain BARE (no prefix) on both branches.
+		for _, spec := range []struct {
+			label string
+			env   []string
+		}{{"fresh", specFresh.Env}, {"resume", specResume.Env}} {
+			bare := false
+			for _, e := range spec.env {
+				if e == "HARMONIK_AGENT=paul" {
+					bare = true
+				}
+				if e == "HARMONIK_AGENT=hk-paul" {
+					t.Errorf("%s: HARMONIK_AGENT was prefixed (=hk-paul); it must stay bare", spec.label)
+				}
+			}
+			if !bare {
+				t.Errorf("%s: env missing bare HARMONIK_AGENT=paul; got %v", spec.label, spec.env)
+			}
+		}
+	})
+}

@@ -26,8 +26,9 @@ package daemon_test
 //        (a) fetch-base on the worker        — real `ssh localhost -- git fetch`
 //        (worktree) git worktree add on the worker — real `ssh localhost -- git`
 //        (commit)  a stub agent writes a `Refs: <bead>` commit in the worker wt
-//        (b) push run/<id> from worker → origin — real `ssh localhost -- git push`
-//        (c) box-A `git fetch origin run/<id>`   — real local git on box A
+//        (c) box-A direct-SSH fetch of run/<id> straight from the worker repo —
+//            real local `git fetch ssh://localhost<workerDir> run/<id>:refs/...`
+//            (NO worker→GitHub push; box A pulls the branch over SSH — hk-7bwx)
 //        (merge)   the UNCHANGED one-at-a-time mergeRunBranchToMain;
 //   3. asserts the bead reaches a terminal state and inspects box A's main.
 //
@@ -43,28 +44,28 @@ package daemon_test
 // Bead: hk-rs-b12-e2e-localhost. Refs (the merged feature): hk-rs-b6-healthcheck-isda,
 // hk-rs-b8-codesync-3fk0, hk-rs-b9-liveness-1m9n, hk-rs-b11-offline-dh57.
 //
-// ── KNOWN INTEGRATION GAP this E2E surfaces (read before "fixing" a failure) ──
+// ── BOX-A REF GAP this E2E proves CLOSED (read before "fixing" a failure) ──
 //
-// On a box WITH passwordless `ssh localhost`, this test is expected to FAIL at
-// the "commit landed on box A main" assertion until a box-A-ref gap in the merged
-// feature is closed. Root cause, verified empirically:
+// This test asserts the worker's commit lands on box A's main. Two gaps had to
+// be closed for that to hold; both are now fixed in the feature:
 //
-//   - codesync_rs_b8.go fetchRunBranchBoxA runs `git -C <projectDir> fetch origin
-//     run/<id>` with NO refspec. A refspec-less fetch updates FETCH_HEAD and (in a
-//     real clone) refs/remotes/origin/run/<id> — but it does NOT create
-//     refs/heads/run/<id>.
-//   - mergeRunBranchToMain (workloop.go ~4322) resolves the run branch via
-//     `git rev-parse refs/heads/run/<id>` in projectDir. That ref is absent on box
-//     A for a REMOTE run (the worktree-add happened on the WORKER, not box A), so
-//     the merge takes the "branch missing → noChange:true" path and the remote
-//     commit silently never lands on box A's main.
+//   1. (historical) fetchRunBranchBoxA must fetch into a LOCAL head
+//      (`run/<id>:refs/heads/run/<id>`), not a refspec-less fetch — otherwise
+//      mergeRunBranchToMain's `git rev-parse refs/heads/run/<id>` finds no ref and
+//      silently no-changes. Closed: the fetch carries the explicit refspec.
 //
-// The unit tests cannot catch this because they mock every git call (argv-order
-// only). The fix belongs in the feature, not this test: either fetch into a local
-// head (`git fetch origin run/<id>:refs/heads/run/<id>`) or have the merge resolve
-// refs/remotes/origin/run/<id> for remote runs. This test deliberately keeps the
-// strict "commit lands on box A main" assertion so it goes GREEN the moment that
-// gap is closed — do NOT relax it to noChange-tolerant.
+//   2. (hk-7bwx) the branch must reach box A WITHOUT a worker→GitHub round-trip.
+//      The worker has no valid GitHub push credential in production, so the old
+//      `git push origin run/<id>` on the worker failed and box A's
+//      `fetch origin run/<id>` died with `couldn't find remote ref`. Closed: box A
+//      now fetches the branch DIRECTLY from the worker repo over SSH
+//      (`git fetch ssh://<host><repoPath> run/<id>:refs/heads/run/<id>`). In this
+//      test that URL is ssh://localhost<workerDir>; the worker clone has the
+//      branch locally because the worktree was created with `worktree add -b`.
+//
+// The unit tests cannot catch these (they mock every git call, argv-order only).
+// This test keeps the strict "commit lands on box A main" assertion — do NOT
+// relax it to noChange-tolerant.
 
 import (
 	"context"

@@ -2571,23 +2571,26 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 
-	// preMergeSync runs steps (b) and (c) for remote runs: push the run branch
-	// from the worker to origin, then fetch it on box A. Returns an error string
-	// on failure (empty string = success). No-op for local runs (rbc == nil).
+	// preMergeSync brings the run branch onto box A before the merge. For remote
+	// runs it fetches the branch DIRECTLY from the worker repo over SSH
+	// (ssh://<host><repoPath>) — hk-7bwx — rather than the old worker→GitHub→box-A
+	// round-trip, which failed when the worker had no valid GitHub push credential.
+	// Returns an error string on failure (empty string = success). No-op for local
+	// runs (rbc == nil). The final mergeRunBranchToMain pushes box A's MAIN to
+	// GitHub with box A's own (valid) credentials — unaffected by this change.
 	preMergeSync := func() string {
 		if rbc == nil {
 			return ""
 		}
-		workerWtPath := workspace.WorktreePath(rbc.worker.RepoPath, runID.String(), workspace.NoWorktreeRootOverride())
-		if err := pushRunBranchOnWorker(ctx, rbc.sshRunner, workerWtPath, runID.String()); err != nil {
+		// host/opts come from the worker SSHRunner so git's ssh:// fetch dials the
+		// worker exactly like the rest of the remote path.
+		workerHost, sshOpts, _ := sshHostOpts(rbc.sshRunner)
+		if err := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
 			// B11: SSH connection failure → emit worker_offline + disable worker.
 			if tmuxpkg.IsSSHConnectionFailure(err) {
-				notifyWorkerOffline("spawn", fmt.Sprintf("pushRunBranchOnWorker: %v", err))
+				notifyWorkerOffline("spawn", fmt.Sprintf("fetchRunBranchBoxA: %v", err))
 			}
-			return fmt.Sprintf("push run branch on worker: %v", err)
-		}
-		if err := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String()); err != nil {
-			return fmt.Sprintf("fetch run branch on box A: %v", err)
+			return fmt.Sprintf("fetch run branch from worker on box A: %v", err)
 		}
 		return ""
 	}

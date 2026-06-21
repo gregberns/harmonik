@@ -1110,21 +1110,23 @@ func runReviewLoop(
 		// WORKER. The reviewer must run on box A off the box-A-fetched run branch
 		// (Phase-1 DD3), but box A does not yet have that commit — preMergeSync
 		// (workloop.go) only fetches it AFTER the review loop returns. So we run
-		// B8 steps (b)+(c) HERE, before each reviewer launch: push the run branch
-		// worker→origin, fetch origin→box-A as refs/heads/run/<id>, then resolve
-		// reviewHeadSHA from that box-A ref. Each REQUEST_CHANGES iteration
-		// re-pushes the advanced (fast-forward) branch, so the reviewer always
-		// sees the latest implementer commit. The later preMergeSync is then a
-		// harmless no-op push + no-op fetch.
+		// the box-A fetch HERE, before each reviewer launch: fetch the run branch
+		// DIRECTLY from the worker repo over SSH as refs/heads/run/<id> (hk-7bwx),
+		// then resolve reviewHeadSHA from that box-A ref. Each REQUEST_CHANGES
+		// iteration re-fetches the advanced (fast-forward) branch, so the reviewer
+		// always sees the latest implementer commit. The later preMergeSync is then
+		// a harmless no-op re-fetch.
 		var reviewHeadSHA string
 		if runner != nil {
-			if pushErr := pushRunBranchOnWorker(ctx, runner, wtPath, runID.String()); pushErr != nil {
-				result := rlErrorResult(fmt.Sprintf("push run branch worker→origin before reviewer at iteration %d: %v", state.iterationCount, pushErr))
-				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
-				return result
-			}
-			if fetchErr := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String()); fetchErr != nil {
-				result := rlErrorResult(fmt.Sprintf("fetch run branch origin→box-A before reviewer at iteration %d: %v", state.iterationCount, fetchErr))
+			// hk-7bwx: fetch the run branch DIRECTLY from the worker's repo over SSH
+			// (ssh://<host><repoPath>) instead of the old worker→GitHub→box-A
+			// round-trip, which failed when the worker had no valid GitHub push
+			// credential. The branch lives in the worker repo (worktree add -b), and
+			// box A reaches the worker over the same SSH transport (workerSessionCwd
+			// is the worker's repo_path; the host/opts come from the worker SSHRunner).
+			workerHost, sshOpts, _ := sshHostOpts(runner)
+			if fetchErr := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String(), workerHost, workerSessionCwd, sshOpts); fetchErr != nil {
+				result := rlErrorResult(fmt.Sprintf("fetch run branch worker→box-A (direct SSH) before reviewer at iteration %d: %v", state.iterationCount, fetchErr))
 				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 				return result
 			}

@@ -318,3 +318,76 @@ func findSource(sources []SuppressionSourceState, name string) *SuppressionSourc
 	}
 	return nil
 }
+
+// --- BT1 unit-gap tests (hk-tbg8) ---
+
+// TestResolveSuppressionState_OperatorDialogueExpired verifies that an operator
+// dialogue event (agent_message from "operator") older than suppression_ttl does
+// NOT suppress dispatch. The suppression decays after the TTL elapses.
+// Spec: B3 "dialogue-recency decay (expired)".
+func TestResolveSuppressionState_OperatorDialogueExpired(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eventsPath := filepath.Join(dir, "events.jsonl")
+	now := time.Now()
+
+	// Write a dialogue event 12 minutes ago — beyond the 10m suppression_ttl.
+	writeResolverEvent(t, eventsPath, eventTypeAgentMessage,
+		map[string]string{"from": "operator", "to": "captain", "body": "continue"},
+		now.Add(-12*time.Minute))
+
+	cfg := SentinelConfig{SuppressionTTL: 10 * time.Minute}
+	state := ResolveSuppressionState(eventsPath, now, cfg)
+
+	if state.Suppressed {
+		t.Errorf("expected Suppressed=false (dialogue TTL expired); got true")
+	}
+	src := findSource(state.Sources, "operator_dialogue")
+	if src == nil {
+		t.Fatal("missing operator_dialogue source")
+	}
+	if src.Active {
+		t.Errorf("expected operator_dialogue.Active=false (TTL=%v elapsed); got true", cfg.SuppressionTTL)
+	}
+	if src.LastSeen.IsZero() {
+		t.Error("expected LastSeen to be non-zero (event was seen)")
+	}
+	if src.ExpiresAt.IsZero() {
+		t.Error("expected ExpiresAt to be non-zero for a seen event")
+	}
+}
+
+// TestResolveSuppressionState_IssueClearing_NotAMode verifies that bead_closed
+// events — representing issue-clearing progress — do NOT activate any suppression
+// source. Issue-clearing is NOT a suppression mode; it is regular terminal
+// progress that keeps the movement governor dormant.
+//
+// Spec §3.3: "Issue-clearing is NOT a mode: progressing issue-clears emit
+// bead_closed/HEAD-advances that the movement governor credits, keeping it
+// dormant without any suppression. A stalled clear correctly trips."
+// Spec: B3 "issue-clearing-is-NOT-a-mode negative".
+func TestResolveSuppressionState_IssueClearing_NotAMode(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eventsPath := filepath.Join(dir, "events.jsonl")
+	now := time.Now()
+
+	// Write several bead_closed events (active issue-clearing progress).
+	for i := 0; i < 5; i++ {
+		writeResolverEvent(t, eventsPath, string(core.EventTypeBeadClosed),
+			map[string]interface{}{"bead_id": fmt.Sprintf("hk-x%04d", i)},
+			now.Add(-time.Duration(i)*time.Minute))
+	}
+
+	state := ResolveSuppressionState(eventsPath, now, SentinelConfig{})
+
+	if state.Suppressed {
+		t.Error("bead_closed events (issue-clearing) must NOT suppress the sentinel (spec §3.3)")
+	}
+	for _, src := range state.Sources {
+		if src.Active {
+			t.Errorf("source %q must not be active from bead_closed events; got Active=true reason=%q",
+				src.Name, src.Reason)
+		}
+	}
+}

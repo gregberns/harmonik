@@ -10,8 +10,12 @@ package main
 // Flag reference for `harmonik crew start`:
 //
 //	<name>              Crew member name (charset [a-z0-9-], 1–64 chars). Required.
-//	--queue <q>         Named queue the crew is bound to. Required.
-//	--mission <path>    Path to the mission handoff file. Required.
+//	                    May also be supplied via --name <name>.
+//	--queue <q>         Named queue the crew is bound to. Default: "<name>-q".
+//	--mission <path>    Path to the mission handoff file. OPTIONAL. On a FRESH
+//	                    start this is the only source of the mission; the on-disk
+//	                    default (.harmonik/crew/missions/<name>.md) is never
+//	                    auto-read here (D3, hk-sn4n). Keeper-restart re-reads disk.
 //	--socket PATH       Override socket path (default: <project>/.harmonik/daemon.sock).
 //	--project DIR       Project directory (default: cwd).
 //
@@ -74,73 +78,140 @@ func runCrewSubcommand(subArgs []string) int {
 	}
 }
 
-// runCrewStartSubcommand implements `harmonik crew start <name> --queue <q> --mission <path>`.
-// subArgs is os.Args[3:].
-func runCrewStartSubcommand(subArgs []string) int {
-	queueFlag := ""
-	missionFlag := ""
-	socketFlag := ""
-	projectFlag := ""
+// crewStartArgs holds the resolved, post-defaulting inputs to a crew-start op.
+//
+// It is the output of resolveCrewStartArgs — the pure arg/defaulting layer that
+// ES4 (hk-sn4n) made unit-testable. The RPC wiring in runCrewStartSubcommand
+// consumes these fields; the helper itself touches no daemon, no network, and no
+// disk, so the defaulting + mission-split logic can be table-tested daemon-down.
+type crewStartArgs struct {
+	// Name is the crew member identifier (sole positional).
+	Name string
+	// Queue is the named queue, defaulted to "<name>-q" when --queue was absent.
+	Queue string
+	// MissionPath is the FRESH-START mission source. It is EXACTLY the --mission
+	// value the invoker supplied, or "" when none was given. It is NEVER defaulted
+	// to the on-disk default mission (.harmonik/crew/missions/<name>.md) — see the
+	// mission-split rule below (D3).
+	MissionPath string
+	// SocketFlag / ProjectFlag are passed through to socket/project resolution.
+	SocketFlag  string
+	ProjectFlag string
+}
+
+// resolveCrewStartArgs parses `crew start` / `start crew` argv, applies the ES4
+// defaults, and enforces the mission-split rule. It returns the resolved args,
+// a help-requested flag, and a usage-error message ("" on success).
+//
+// Defaults (hk-sn4n / PLAN §4):
+//   - --queue defaults to "<name>-q" when not supplied (one named queue per crew).
+//   - --mission is OPTIONAL on a fresh start.
+//
+// Mission-split rule (D3, review outcome D — the load-bearing invariant):
+//
+//	A FRESH `crew start` reads ONLY the --mission flag. When --mission is given,
+//	that file is the mission. When it is absent, MissionPath stays "" and the crew
+//	starts WITHOUT a mission (to be commissioned later over comms). The on-disk
+//	default mission .harmonik/crew/missions/<name>.md is NEVER consulted here.
+//
+//	This makes stale-reuse impossible BY CONSTRUCTION: this function never reads
+//	disk and never synthesises the default path, so a prior agent's leftover
+//	mission file simply cannot become the value sent over the RPC. The daemon
+//	(HandleCrewStart) only ever pastes the path it is handed — it does not read
+//	the on-disk default either — so an empty MissionPath yields a crew that boots
+//	with no auto-loaded mission rather than the stale one.
+//
+//	The KEEPER-RESTART re-hydration path is a DIFFERENT code path and is
+//	deliberately untouched: a keeper cycles a crew via `/clear` + `/session-resume`
+//	on the SAME session_id (internal/keeper), NOT via this `crew start` RPC. On
+//	that resume the crew re-runs its own boot sequence and re-reads its OWN
+//	just-written .harmonik/crew/missions/<name>.md (crew-launch § Self-restart).
+//	Because restart never flows through resolveCrewStartArgs, the "fresh start
+//	ignores disk" rule cannot regress restart's "re-read disk" behaviour.
+func resolveCrewStartArgs(subArgs []string) (args crewStartArgs, help bool, usageErr string) {
 	var positional []string
 
 	for i := 0; i < len(subArgs); i++ {
 		arg := subArgs[i]
 		switch {
 		case arg == "--help" || arg == "-h":
-			crewStartUsage()
-			return 0
+			return crewStartArgs{}, true, ""
+		case arg == "--name" && i+1 < len(subArgs):
+			i++
+			positional = append(positional, subArgs[i])
+		case strings.HasPrefix(arg, "--name="):
+			positional = append(positional, strings.TrimPrefix(arg, "--name="))
 		case arg == "--queue" && i+1 < len(subArgs):
 			i++
-			queueFlag = subArgs[i]
+			args.Queue = subArgs[i]
 		case strings.HasPrefix(arg, "--queue="):
-			queueFlag = strings.TrimPrefix(arg, "--queue=")
+			args.Queue = strings.TrimPrefix(arg, "--queue=")
 		case arg == "--mission" && i+1 < len(subArgs):
 			i++
-			missionFlag = subArgs[i]
+			args.MissionPath = subArgs[i]
 		case strings.HasPrefix(arg, "--mission="):
-			missionFlag = strings.TrimPrefix(arg, "--mission=")
+			args.MissionPath = strings.TrimPrefix(arg, "--mission=")
 		case arg == "--socket" && i+1 < len(subArgs):
 			i++
-			socketFlag = subArgs[i]
+			args.SocketFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--socket="):
-			socketFlag = strings.TrimPrefix(arg, "--socket=")
+			args.SocketFlag = strings.TrimPrefix(arg, "--socket=")
 		case arg == "--project" && i+1 < len(subArgs):
 			i++
-			projectFlag = subArgs[i]
+			args.ProjectFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--project="):
-			projectFlag = strings.TrimPrefix(arg, "--project=")
+			args.ProjectFlag = strings.TrimPrefix(arg, "--project=")
 		case strings.HasPrefix(arg, "-"):
-			fmt.Fprintf(os.Stderr, "harmonik crew start: unknown flag %q\n", arg)
-			return 1
+			return crewStartArgs{}, false, fmt.Sprintf("harmonik crew start: unknown flag %q", arg)
 		default:
 			positional = append(positional, arg)
 		}
 	}
 
 	if len(positional) != 1 {
-		fmt.Fprintf(os.Stderr, "harmonik crew start: exactly one positional argument <name> is required\n")
-		return 1
+		return crewStartArgs{}, false, "harmonik crew start: exactly one crew name is required (positional <name> or --name <name>)"
 	}
-	name := positional[0]
+	args.Name = positional[0]
 
-	if queueFlag == "" {
-		fmt.Fprintf(os.Stderr, "harmonik crew start: --queue is required\n")
-		return 1
-	}
-	if missionFlag == "" {
-		fmt.Fprintf(os.Stderr, "harmonik crew start: --mission is required\n")
-		return 1
+	// Default --queue to "<name>-q" (one named queue per crew). hk-sn4n.
+	if args.Queue == "" {
+		args.Queue = args.Name + "-q"
 	}
 
-	sockPath := crewResolveSockPath(socketFlag, projectFlag)
+	// NOTE (D3): no --mission default. MissionPath stays "" when the flag is
+	// absent — we deliberately do NOT fall back to the on-disk default mission
+	// path, which is what prevents booting on a prior agent's stale mission.
+
+	return args, false, ""
+}
+
+// runCrewStartSubcommand implements `harmonik crew start <name> [--queue <q>] [--mission <path>]`.
+//
+// Defaults --queue to "<name>-q" and treats --mission as optional, never reusing
+// the on-disk default mission — see resolveCrewStartArgs for the mission-split
+// rule (hk-sn4n / D3). subArgs is os.Args[3:].
+func runCrewStartSubcommand(subArgs []string) int {
+	args, help, usageErr := resolveCrewStartArgs(subArgs)
+	if help {
+		crewStartUsage()
+		return 0
+	}
+	if usageErr != "" {
+		fmt.Fprintln(os.Stderr, usageErr)
+		return 1
+	}
+
+	name := args.Name
+
+	sockPath := crewResolveSockPath(args.SocketFlag, args.ProjectFlag)
 	if sockPath == "" {
 		return 1
 	}
 
 	payload := map[string]any{
 		"name":         name,
-		"queue":        queueFlag,
-		"mission_path": missionFlag,
+		"queue":        args.Queue,
+		"mission_path": args.MissionPath,
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -172,7 +243,7 @@ func runCrewStartSubcommand(subArgs []string) int {
 	}
 
 	// Resolve the absolute project dir so keeper paths are stable.
-	absProject := projectFlag
+	absProject := args.ProjectFlag
 	if absProject == "" {
 		wd, wdErr := os.Getwd()
 		if wdErr != nil {
@@ -473,7 +544,7 @@ func crewStartUsage() {
 	fmt.Print(`harmonik crew start — launch a persistent crew session
 
 USAGE
-  harmonik crew start <name> --queue <q> --mission <handoff-path> [--socket PATH] [--project DIR]
+  harmonik crew start <name> [--queue <q>] [--mission <handoff-path>] [--socket PATH] [--project DIR]
 
 Sends a crew-start op to the daemon. The daemon mints a session_id, writes the
 crew registry record at .harmonik/crew/<name>.json, ensures the named queue exists,
@@ -482,10 +553,19 @@ and sets up keeper-attach inputs. The minted session_id is printed to stdout.
 
 ARGS
   <name>            Crew member name (charset [a-z0-9-], 1–64 chars). Required.
+                    May also be supplied as --name <name>.
 
 FLAGS
-  --queue <q>       Named queue the crew is bound to. Required.
-  --mission <path>  Path to the mission handoff file. Required.
+  --queue <q>       Named queue the crew is bound to.
+                    Default: "<name>-q" (one named queue per crew).
+  --mission <path>  Path to the mission handoff file. OPTIONAL.
+                    FRESH-START rule (D3): this flag is the ONLY source of the
+                    mission. The on-disk default mission
+                    (.harmonik/crew/missions/<name>.md) is NEVER auto-read on a
+                    fresh start — that prevents a crew booting on a prior agent's
+                    stale mission. With no --mission the crew starts WITHOUT a
+                    mission (commission it later over comms). A keeper RESTART is
+                    a separate path and DOES re-read the on-disk mission.
   --socket PATH     Override socket path (default: <project>/.harmonik/daemon.sock).
   --project DIR     Project directory (default: cwd).
 
@@ -495,7 +575,8 @@ EXIT CODES
   17  Daemon not running (socket missing or ECONNREFUSED)
 
 EXAMPLES
-  harmonik crew start alpha --queue alpha-q --mission /tmp/alpha-handoff.md
+  harmonik crew start alpha                                  # queue defaults to alpha-q, no mission
+  harmonik crew start alpha --mission /tmp/alpha-handoff.md  # queue defaults to alpha-q
   harmonik crew start beta  --queue beta-q  --mission /tmp/beta-handoff.md
 `)
 }

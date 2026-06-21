@@ -42,11 +42,18 @@ type LiveStateBuilder struct {
 	globalCap   int // fallback when conc is nil
 	projectDir  string
 	projectHash core.ProjectHash
+	// kconfig carries the project keeper config; zero value = not configured.
+	// Used by buildCognition to populate TooBigSignal and ContextStaticSignal
+	// thresholds (SS-012). Fields with zero value are treated as "not configured"
+	// and their dependent signal fields are emitted as null (dark-when-unset).
+	kconfig KeeperConfig
 }
 
 // NewLiveStateBuilder constructs a LiveStateBuilder. drain may be nil; when
 // nil the work_axes field will be absent and read_quality.unsure = true.
 // conc may be nil; when nil globalCap is used as the effective ceiling.
+// kconfig carries the parsed keeper: block from .harmonik/config.yaml; the
+// zero value (KeeperConfig{}) is safe and means all thresholds are unset.
 func NewLiveStateBuilder(
 	runs *RunRegistry,
 	queues *QueueStore,
@@ -54,6 +61,7 @@ func NewLiveStateBuilder(
 	conc *ConcurrencyController,
 	globalCap int,
 	projectDir string,
+	kconfig KeeperConfig,
 ) *LiveStateBuilder {
 	return &LiveStateBuilder{
 		runs:        runs,
@@ -63,6 +71,7 @@ func NewLiveStateBuilder(
 		globalCap:   globalCap,
 		projectDir:  projectDir,
 		projectHash: lifecycle.ComputeProjectHash(projectDir),
+		kconfig:     kconfig,
 	}
 }
 
@@ -320,24 +329,76 @@ func (b *LiveStateBuilder) buildCognition(agent, liveSID, declaredSID string, no
 		ReadTS:     formatRFC3339(now),
 		AgeSeconds: ageSeconds,
 	}
-	cog.Signals = CognitionSignals{
-		TooBig: TooBigSignal{
-			ThresholdRef: "keeper.context_thresholds.warn_abs_tokens",
-			Threshold:    nil, // null until P2-c wires ResolveKeeperConfig
-			Value:        cf.Tokens,
-		},
-		ContextStatic: ContextStaticSignal{
-			GaugeAgeSeconds:          ageSeconds,
-			StalenessRef:             "keeper.staleness",
-			StalenessS:               nil, // null until P2-c wires config
-			TokensUnchangedIntervals: 0,
-			StuckMinIntervalsRef:     "keeper.stuck_min_intervals",
-			StuckMinIntervals:        nil, // null until P2-c wires config
-			Flat:                     nil,
-		},
-		LoopDetected: nil, // DEFERRED (SS-013)
-	}
+	cog.Signals = b.buildCognitionSignals(cf.Tokens, ageSeconds)
 	return cog
+}
+
+// buildCognitionSignals constructs TooBig and ContextStatic signals from the
+// keeper config (SS-012). Fields whose config knob is unset are emitted as null
+// (dark-when-unset per SS-011 / no-hardcoded-keeper-thresholds mandate).
+// tokens is the current gauge token count; gaugeAgeSeconds is already computed.
+// LoopDetected always stays nil (SS-013 DEFERRED in v1.0).
+func (b *LiveStateBuilder) buildCognitionSignals(tokens int64, gaugeAgeSeconds int) CognitionSignals {
+	return CognitionSignals{
+		TooBig:        b.buildTooBigSignal(tokens),
+		ContextStatic: b.buildContextStaticSignal(gaugeAgeSeconds),
+		LoopDetected:  nil, // DEFERRED (SS-013)
+	}
+}
+
+// buildTooBigSignal computes the "context over band" signal (SS-012).
+// Threshold is null when warn_abs_tokens is not configured; Band is the highest
+// band exceeded ("warn"|"act"|"force_act") or "warn" as the reference level
+// when Tripped==false. The ThresholdRef always points at the warn knob because
+// that is the first-to-trip band and the spec example (SS-011) uses it.
+func (b *LiveStateBuilder) buildTooBigSignal(tokens int64) TooBigSignal {
+	warnAbs := b.kconfig.WarnAbsTokens // 0 = not configured
+	actAbs := b.kconfig.ActAbsTokens
+	forceAbs := b.kconfig.ForceActAbsTokens
+
+	sig := TooBigSignal{
+		ThresholdRef: "keeper.context_thresholds.warn_abs_tokens",
+		Value:        tokens,
+	}
+	if warnAbs <= 0 {
+		// Warn threshold not configured — all dependent fields stay dark (null/zero).
+		return sig
+	}
+
+	sig.Threshold = &warnAbs
+	if tokens >= warnAbs {
+		sig.Tripped = true
+		sig.Band = "warn"
+		if actAbs > 0 && tokens >= actAbs {
+			sig.Band = "act"
+		}
+		if forceAbs > 0 && tokens >= forceAbs {
+			sig.Band = "force_act"
+		}
+	} else {
+		sig.Band = "warn" // reference level; value is below the warn band
+	}
+	return sig
+}
+
+// buildContextStaticSignal constructs the "token-not-changing" raw-facts signal
+// (SS-012). Reports facts only — never a verdict. StalenessS is null when
+// keeper.staleness is not configured; StuckMinIntervals and Flat stay null
+// because stuck_min_intervals is not yet a KeeperConfig knob (dark-when-unset).
+func (b *LiveStateBuilder) buildContextStaticSignal(gaugeAgeSeconds int) ContextStaticSignal {
+	sig := ContextStaticSignal{
+		GaugeAgeSeconds:          gaugeAgeSeconds,
+		StalenessRef:             "keeper.staleness",
+		TokensUnchangedIntervals: 0, // no multi-sample history in a single .ctx read
+		StuckMinIntervalsRef:     "keeper.stuck_min_intervals",
+		StuckMinIntervals:        nil, // knob not yet in KeeperConfig (SS-012 deferred)
+		Flat:                     nil, // null when StuckMinIntervals unset
+	}
+	if b.kconfig.Staleness > 0 {
+		s := int(b.kconfig.Staleness.Seconds())
+		sig.StalenessS = &s
+	}
+	return sig
 }
 
 func absentCognitionSignals() CognitionSignals {

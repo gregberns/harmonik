@@ -1624,7 +1624,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// Build the live state handler (hk-gv04 P2-a: `harmonik state`).
 		// drainDet may be nil if ProjectDir was empty above — LiveStateBuilder
 		// tolerates that and sets read_quality.unsure=true in the response.
-		stateBuilder := NewLiveStateBuilder(sharedRunRegistry, qs, drainDet, concurrencyCtrl, cfg.MaxConcurrent, cfg.ProjectDir)
+		stateBuilder := NewLiveStateBuilder(sharedRunRegistry, qs, drainDet, concurrencyCtrl, cfg.MaxConcurrent, cfg.ProjectDir, cfg.ProjectCfg.Keeper)
 		stateHandler := NewLiveStateSocketHandler(stateBuilder)
 
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;

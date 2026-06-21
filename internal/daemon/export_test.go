@@ -2554,3 +2554,29 @@ func ExportedShellQuoteArg(s string) string {
 func ExportedNewCodexThreadIDInterceptor(inner io.Reader, cb func(string)) io.Reader {
 	return newCodexThreadIDInterceptor(inner, cb)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cognition signal test seams (hk-jay1 P2-c: SS-012)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// NewLiveStateBuilderForTest constructs a LiveStateBuilder with the given
+// projectDir, projectHash and kconfig so tests in package daemon_test can
+// exercise buildCognition without a full daemon. No runs/queues/drain needed.
+//
+// Bead ref: hk-jay1.
+func NewLiveStateBuilderForTest(projectDir string, projectHash core.ProjectHash, kconfig KeeperConfig) *LiveStateBuilder {
+	return &LiveStateBuilder{
+		projectDir:  projectDir,
+		projectHash: projectHash,
+		kconfig:     kconfig,
+	}
+}
+
+// BuildCognitionForTest calls buildCognition on lb and returns the result.
+// Exposed so tests can verify TooBigSignal and ContextStaticSignal population
+// (SS-012) without requiring a live tmux session.
+//
+// Bead ref: hk-jay1.
+func (lb *LiveStateBuilder) BuildCognitionForTest(agent, liveSID, declaredSID string, now time.Time) *SessionCognition {
+	return lb.buildCognition(agent, liveSID, declaredSID, now)
+}

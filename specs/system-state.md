@@ -8,7 +8,7 @@ requirement-prefix: SS
 spec-category: foundation-cross-cutting
 status: draft
 spec-shape: requirements-first
-version: 1.0.0
+version: 1.1.0
 spec-template-version: 1.1
 owner: fleet-state-author
 last-updated: 2026-06-20
@@ -251,7 +251,182 @@ type StateRun struct {
 	LifecycleState string `json:"lifecycle_state"`
 	Source         string `json:"source"`               // "live" | "disk"
 }
+
+// StateSession is one entry in sessions[]; captures liveness, resting status,
+// and cognition for one long-lived captain or crew session.
+type StateSession struct {
+	// Agent is the stable join key — the role name (e.g. "captain", "paul"),
+	// which survives a /clear SID-flip. Same key as .ctx/.sid filename stem.
+	Agent string `json:"agent"`
+
+	// SessionType is "captain" | "crew".
+	SessionType string `json:"session_type"`
+
+	// Alive is true iff tmux has-session returns 0 for this session.
+	Alive bool `json:"alive"`
+
+	// SleepMarker is true iff a .harmonik/.sleeping.<sid> file exists for
+	// this session's live session_id.
+	SleepMarker bool `json:"sleep_marker"`
+
+	// AtRest = Alive AND SleepMarker: the session exists but is resting
+	// under a SLEEP or PARK wind-down.
+	AtRest bool `json:"at_rest"`
+
+	// PresenceSource records which signals confirmed the session's existence.
+	// "registry" — crew registry only (tmux probe inconclusive).
+	// "tmux"     — tmux has-session only (not in crew registry; an orphan).
+	// "both"     — confirmed by crew registry AND tmux has-session.
+	PresenceSource string `json:"presence_source"`
+
+	// Cognition is populated when Alive==true; null when the session is gone.
+	// The agent/session_id/session_id_declared/sid_desync identity fields
+	// live inside Cognition (per SS-011) and are not duplicated at top level.
+	Cognition *SessionCognition `json:"cognition"`
+}
+
+// SessionCognition is the typed shape of sessions[i].cognition per SS-011.
+// Normalized form of the .ctx gauge + .sid file + crew-registry record.
+type SessionCognition struct {
+	Agent             string           `json:"agent"`               // same as StateSession.Agent
+	SessionID         string           `json:"session_id"`          // live; from .sid file at read time
+	SessionIDDeclared string           `json:"session_id_declared"` // from crew registry at spawn
+	SIDDesync         bool             `json:"sid_desync"`          // true when live != declared
+	Context           SessionContext   `json:"context"`
+	Signals           CognitionSignals `json:"signals"`
+	Subagents         interface{}      `json:"subagents"` // null in v1.0 (SS-014slot)
+}
+
+// SessionContext carries the raw token-count and derived fill_frac for one session.
+type SessionContext struct {
+	Tokens     int     `json:"tokens"`
+	WindowSize int     `json:"window_size"` // 0 ⇒ unresolvable (FallbackWindowSize used for fill_frac)
+	FillFrac   float64 `json:"fill_frac"`   // tokens / effective_window; cross-model primary fill
+	// Source names the provenance of Tokens:
+	// "gauge"            — from the keeper's .ctx gauge file (authoritative).
+	// "heartbeat_derive" — derived from the last heartbeat event.
+	// "capture_pane"     — estimated from a tmux capture-pane byte count.
+	// "absent"           — no reading available; Tokens==0, FillFrac==0.
+	//                      A consumer MUST treat "absent" as UNKNOWN, not as a
+	//                      small context (an absent gauge ≠ a small context).
+	Source     string `json:"source"`
+	GaugeTS    string `json:"gauge_ts,omitempty"` // RFC-3339; set when source=="gauge"
+	ReadTS     string `json:"read_ts"`            // RFC-3339; when this reading was taken
+	AgeSeconds int    `json:"age_seconds"`        // ReadTS − GaugeTS in seconds
+}
+
+// CognitionSignals bundles the three observable signals per SS-012..SS-013.
+type CognitionSignals struct {
+	TooBig        TooBigSignal        `json:"too_big"`
+	ContextStatic ContextStaticSignal `json:"context_static"`
+	LoopDetected  *LoopDetectedSignal `json:"loop_detected"` // null in v1.0 (SS-013 DEFERRED)
+}
+
+// TooBigSignal is the "context over band" signal (SS-012).
+type TooBigSignal struct {
+	Tripped      bool   `json:"tripped"`
+	Band         string `json:"band,omitempty"` // "warn"|"act"|"force_act"|"hard_ceiling"
+	ThresholdRef string `json:"threshold_ref"`  // config key, e.g. "keeper.warn_abs_tokens"
+	Threshold    *int   `json:"threshold"`      // null if config knob unset (SS-011)
+	Value        int    `json:"value"`
+}
+
+// ContextStaticSignal is the "token-not-changing" raw-facts signal (SS-012).
+// Reports FACTS about gauge readings; MUST NOT be read as a "stuck" verdict.
+type ContextStaticSignal struct {
+	GaugeAgeSeconds          int    `json:"gauge_age_seconds"`
+	StalenessRef             string `json:"staleness_ref"`           // "keeper.staleness"
+	StalenessS               *int   `json:"staleness_s"`             // null if config knob unset
+	TokensUnchangedIntervals int    `json:"tokens_unchanged_intervals"`
+	StuckMinIntervalsRef     string `json:"stuck_min_intervals_ref"` // "keeper.stuck_min_intervals"
+	StuckMinIntervals        *int   `json:"stuck_min_intervals"`     // null if config knob unset
+	// Flat = (TokensUnchangedIntervals >= StuckMinIntervals).
+	// null when StuckMinIntervals is unset — no product default (SS-011).
+	// "flat" is a FACT (tokens did not change for N intervals),
+	// NOT a verdict that the session is stuck.
+	Flat *bool `json:"flat"`
+}
+
+// LoopDetectedSignal is the repeating-pattern signal shape (SS-013).
+// Always null in v1.0 (producer DEFERRED). Shape reserved for a later slice.
+type LoopDetectedSignal struct {
+	Tripped    bool    `json:"tripped"`
+	Source     string  `json:"source"`     // always "haiku" when populated
+	CheckedTS  string  `json:"checked_ts"` // RFC-3339
+	Confidence float64 `json:"confidence"`
+	Note       string  `json:"note"`
+}
+
+// StateQueue is one entry in queues[]; captures the per-queue dispatch status.
+type StateQueue struct {
+	// Name is the queue's identifier.
+	Name string `json:"name"`
+
+	// Status is the queue's current operational state per [queue-model.md].
+	// "active"            — accepting dispatches; items may be eligible.
+	// "paused-by-drain"   — wind-down in motion; no new dispatches.
+	// "paused-by-failure" — a group failed; requires operator intervention.
+	// "paused-by-budget"  — budget ceiling reached; auto-resumes on reset.
+	// "inactive"          — dormant (no items, or not yet submitted).
+	Status string `json:"status"`
+
+	// Source tags the reader per SS-001a.
+	// "live" = from in-daemon QueueStore (authoritative when daemon is UP).
+	// "disk" = re-derived from queue.json (daemon-DOWN fallback only).
+	Source string `json:"source"`
+
+	// ItemCount is the total item count across all statuses.
+	ItemCount int `json:"item_count"`
+
+	// ActiveCount is the count of items currently dispatched (in-flight runs
+	// attributed to this queue), derived from RunRegistry at read time.
+	ActiveCount int `json:"active_count"`
+
+	// EffectiveWorkerCap is the resolved per-queue concurrency ceiling:
+	// min(queue.worker_cap_or_default, global.max_concurrent − Σ active_across_all_queues).
+	EffectiveWorkerCap int `json:"effective_worker_cap"`
+
+	// EligibleNow is true iff this queue contributes to QUEUE_DISPATCHABLE:
+	// Status=="active" AND EligibleItemCount>0 AND ActiveCount<EffectiveWorkerCap.
+	// (See §4.2 QUEUE_DISPATCHABLE normative predicate.)
+	EligibleNow bool `json:"eligible_now"`
+
+	// PauseReason is the human-readable reason; absent when Status=="active" or "inactive".
+	PauseReason string `json:"pause_reason,omitempty"`
+}
+
+// StateDaemon is the daemon presence block in StateSnapshot.daemon.
+type StateDaemon struct {
+	Up     bool   `json:"up"`
+	Pid    int    `json:"pid,omitempty"`    // present when Up==true
+	Socket string `json:"socket,omitempty"` // present when Up==true
+}
 ```
+
+#### SS-001b — `StateSession`, `StateQueue`, `StateDaemon` are normative types
+
+The Go types defined above (interleaved with `StateRun` in §4.1) are NORMATIVE.
+Implementations MUST conform to these shapes in the `harmonik state --json` output.
+Specifically:
+
+- `sessions[]` MUST be an array of `StateSession` values (not a map). Every
+  `StateSession` carries the `agent` field as its stable join key.
+- `Cognition` MUST be `null` when `Alive==false` — a gone session has no gauge to
+  read; the snapshot MUST NOT emit a stale or zero-filled `SessionCognition` as if
+  the session were alive (SS-INV-007: observation-only, no stale emissions).
+- `sessions[]` MUST enumerate every long-lived captain/crew session the snapshot
+  builder can observe — both alive and previously-registered-but-gone sessions
+  (the latter with `Alive==false`, `Cognition==null`). This is the complete
+  presence picture; omitting gone sessions silently hides the `SESSIONS_ALIVE`
+  false-negative risk (crew registry entry exists but tmux session is dead).
+- `queues[]` MUST be an array of `StateQueue` values, one per queue in
+  `QueueStore`. `EligibleNow` is the per-queue contribution to `QUEUE_DISPATCHABLE`
+  (§4.2); its truth value MUST agree with the fold's `QUEUE_DISPATCHABLE` result
+  (the fold is `∃ q: q.EligibleNow == true`).
+- `daemon` MUST be a `StateDaemon` value. On daemon-DOWN, `Up==false` and `Pid`/`Socket`
+  are absent; all other snapshot fields carry `source: "disk"` per SS-001a.
+
+Tags: mechanism
 
 ### 4.2 The four activity labels (normative predicates)
 
@@ -278,10 +453,18 @@ RUNS_INFLIGHT      = RegistryCount > 0
                        // down, a leaked/live worktree still counts (don't
                        // under-count to INACTIVE on a blind disk read).
                        // (See §4.2 note + SS-003 + SS-005.)
-QUEUE_DISPATCHABLE = uses the exact selectNextQueue candidate filter
-                       (workloop.go:1100, incl. EligibleItems) as the single
-                       source of truth — an active queue has a slot under its
-                       effective worker cap AND an eligible item to claim now.
+QUEUE_DISPATCHABLE ≡ ∃ q ∈ QueueStore:
+                       q.Status == active                  // queue is accepting dispatches
+                       AND EligibleItemCount(q) > 0        // ≥1 item is claimable: status is
+                                                           // "queued", not deferred, not already
+                                                           // in-flight, not epic-blocked
+                       AND ActiveRunsFor(q) <               // slot available under the intersection
+                           EffectiveWorkerCap(q)           // of per-queue and global concurrency
+                       // EffectiveWorkerCap(q) :=
+                       //   min(q.worker_cap_or_default,
+                       //       global.max_concurrent − Σ ActiveRunsFor(allQueues))
+                       // This predicate is authoritative; implementations MUST NOT
+                       // substitute a reference to any internal function signature.
 QUEUE_DRAINING     = ∃ q ∈ QueueStore: q.Status == paused-by-drain
 ANY_SLEEPING       = ∃ live .harmonik/.sleeping.<sid> marker
 SESSIONS_ALIVE     = ∃ live captain/crew session (crew-registry presence +
@@ -1031,6 +1214,7 @@ SS-INV-001 through SS-INV-007. The sensor for each invariant is stated inline in
 
 | Date | Version | Author | Change |
 |---|---|---|---|
+| 2026-06-21 | 1.1.0 | implementer-initial | **Design-completion pass (P2-DESIGN bead hk-9fvk, implementer-initial iteration 1).** Three gaps filled that blocked Phase 2 implementers: (1) **Added SS-001b** — normative Go type definitions for `StateSession`, `SessionCognition`, `SessionContext`, `CognitionSignals`, `TooBigSignal`, `ContextStaticSignal`, `LoopDetectedSignal`, `StateQueue`, and `StateDaemon`. The `sessions[]` and `queues[]` snapshot arrays now have fully typed per-entry shapes; the cognition block is formalized as `SessionCognition` with the `sessions[i].Cognition == null when Alive==false` invariant stated normatively. The `StateQueue.EligibleNow` field explicitly carries the per-queue QUEUE_DISPATCHABLE contribution. (2) **Replaced QUEUE_DISPATCHABLE code reference with a normative predicate** — removed the `workloop.go:1100` implementation pointer and replaced it with the self-contained three-clause predicate (`q.Status==active AND EligibleItemCount(q)>0 AND ActiveRunsFor(q)<EffectiveWorkerCap(q)`), including the `EffectiveWorkerCap` formula. Implementations MUST NOT substitute an internal function reference. (3) **Locked item 6 (keeper gauge + ctx-watchdog at INACTIVE)** — removed the "operator may reverse" tentative tag; the session-liveness gating is now LOCKED with rationale stated (catching a live-but-confused captain at rest is the purpose of cognition; disabling gauges at INACTIVE-label would blind the system to the primary at-rest failure mode). |
 | 2026-06-20 | 1.0.0 | fleet-state-author | Initial DRAFT — synthesis of the five-lens `fleet-state` P2-DESIGN pass (per-session-FSM roll-up, the `GatherDrainFacts` fact bundle, cognition-observability, the union-of-readers survey, the ZFC spec shape). Establishes the ACTUAL-state envelope (SS-001/SS-001a/SS-002fold), the four activity-label predicates PROCESSING/WAITING/DRAINING/INACTIVE with priority order PROCESSING > DRAINING > WAITING > INACTIVE and first-match-wins (SS-003–SS-007), the fact-bundle work-axes preserving the five false-negative defenses (SS-008/SS-008a/SS-009/SS-010), the cognition-observability fields (SS-011–SS-014slot), the veto-on-execute boundary (SS-015), the seven ZFC-purity invariants (SS-INV-001–007), the desired-state HOLD stub (§6). Status: DRAFT, pending operator sign-off. IDs frozen once ratified; retirements logged here and never reused. |
 | 2026-06-20 | 1.0.0-draft → review pass 3 (design panel) | fleet-state-author | **Design panel (4-analyst) pass; status stays DRAFT.** (1) **Terminating-run = PROCESSING RATIFIED** (operator panel): the justification is tightened to **registry membership**, NOT the lifecycle FSM. A run is registered for its whole life (claim → agent → review loop → merge → build/vet → push → worktree removal; 20–60 min, worst-case hours), so PROCESSING covers the merge/build/push/cleanup TAIL — the real teardown, exactly when run-watchers must stay armed. The FSM `Terminating` STATE is a sub-second SIGTERM micro-state (irrelevant to the label); the removed `RUN_TERMINATING` term referenced that micro-state, which is why removing it was correct (§4.2 RUNS_INFLIGHT comment + note, SS-003, SS-005). (2) **`stale_stuck` → `context_static`** — demoted from a Go JUDGMENT to RAW FACTS (ZFC §32 / SS-INV-001 conformance): renamed to a fact-not-verdict name; reports `gauge_age_seconds`, `tokens_unchanged_intervals`, and a deterministic `flat` bool only; MUST NOT be a "stuck" verdict and no Go path may act on it as one (the "actually stuck" reading is the reader's / a gated model pass, mirroring `too_big`'s band-level and `loop_detected`'s model call); gauge-stale ≠ flat preserved (SS-011 JSON, SS-012, SS-013 gating cross-ref). (3) **Keeper gauge + ctx-watchdog armed on SESSION LIVENESS, not label** — at INACTIVE these two stay ON for any live session (skip only `.sleeping.*`), reversing the drafted INACTIVE-stand-down, so an alive-but-confused captain/crew burning tokens at rest is still caught (SS-007 table rows + footnote ³). **Operator may reverse.** (4) **Daemon-down ⇒ unsure ⇒ never INACTIVE** — a disk-only read cannot prove rest (leaked/stale worktrees mis-count), so a daemon-down snapshot MUST set `read_quality.unsure = true` and MUST NOT emit INACTIVE; holds at WAITING/DRAINING (SS-001a + SS-006, +§7 sensor). (5) **New cognition knobs opt-in / fail-loud** — honoring the zero-defaults mandate, `stuck_min_intervals` (and future cognition thresholds) are NOT product-defaulted; until operator-set the dependent signal (`context_static.flat`) is DARK/absent and `ResolveKeeperConfig` fails loud; `loop_confidence_min` stays deferred (SS-011 + SS-012). (6) **Fold run-presence accounts for live worktrees** when the registry is empty/unavailable AND daemon-down: `RUNS_INFLIGHT = RegistryCount > 0 OR (daemon-down AND LiveWorktrees > 0)` — an OR, never a sum (§4.2, SS-001a). (7) **Marker-wins keeps latent counts visible** in the unfolded `work_axes` even at DRAINING (decision marker-wins ⇒ DRAINING KEPT; reader not left blind) (SS-005). REVIEWED & KEPT AS-IS: the max/union rollup (SS-003), the five false-negative defenses verbatim (SS-008a). |
 | 2026-06-20 | 1.0.0-draft → review pass 2 (operator) | fleet-state-author | **Operator review pass.** Decisions: (1) RATIFIED — `needs_decomposition` does not block wind-down. (2) AGREED — `harmonik state` is read-only. (3) RESHAPED — the `harmonik keeper loop-check` verb (an undiscussed, agent-invented mechanism) is WITHDRAWN; `loop_detected`'s producer is now DEFERRED (reserved signal, producer TBD), leaving `too_big` + `stale_stuck` as the active v1 cognition signals; the model-call-not-Go-heuristic purity constraint is retained for whatever producer is chosen later (SS-013, SS-INV-007 updated). (4) OPEN — terminating-run = PROCESSING is NOT yet ratified; awaiting operator decision after a plain-English explanation of the teardown edge case (§4.2 / SS-005 left as-drafted pending that call). Status stays DRAFT. |
@@ -1051,8 +1235,15 @@ SS-INV-001 through SS-INV-007. The sensor for each invariant is stated inline in
 >    never a Go "stuck" verdict; the stuck reading is the reader's / a gated model
 >    pass (SS-012).
 > 6. **Keeper gauge + ctx-watchdog armed on session liveness** at INACTIVE (not
->    label-gated) — ✅ RESOLVED (panel), **operator may reverse** (this widens
->    at-rest gauge polling; flagged for a one-word confirm) (SS-007).
+>    label-gated) — ✅ LOCKED. The panel's resolution stands: these two watchers
+>    stay ON for any live session regardless of the fleet activity label, and are
+>    stood down only when the session is actually asleep/gone (`.sleeping.*` file
+>    present or `Alive==false`). Rationale: catching a live-but-confused
+>    captain/crew burning tokens at rest is exactly the purpose of the cognition
+>    fields — disabling the gauge watcher at INACTIVE would blind us to the most
+>    important at-rest failure mode. The trade-off (slightly wider at-rest polling)
+>    is accepted. Reversing this would require an explicit operator directive; the
+>    prior "operator may reverse" flag is retired (SS-007, footnote ³).
 > 7. **Daemon-down ⇒ unsure ⇒ never INACTIVE** — ✅ RESOLVED (panel): a disk-only
 >    read can't prove rest (SS-001a/SS-006).
 > 8. **Cognition knobs opt-in / fail-loud** — ✅ RESOLVED (panel): zero product

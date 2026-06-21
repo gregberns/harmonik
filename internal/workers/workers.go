@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -64,6 +65,35 @@ const DefaultHarmonikPath = "/Users/gb/go/bin/harmonik"
 type Config struct {
 	Version int      `yaml:"version"`
 	Workers []Worker `yaml:"workers"`
+
+	// ReportIntervalSeconds is the cadence, in seconds, of the recurring
+	// worker-report poll (remote-substrate WR3). Optional; when unset (<= 0) the
+	// loader applies DefaultReportIntervalSeconds (60s). A deployment with no
+	// workers.yaml never reaches the poll at all (empty registry), so this field
+	// is purely a tunable for deployments that DO configure a worker.
+	ReportIntervalSeconds int `yaml:"report_interval_seconds"`
+
+	// DiskFloorMB is the disk_pressure floor, in MB, threaded into CollectReport
+	// for the recurring poll (remote-substrate WR3). Optional; when unset (<= 0)
+	// CollectReport selects the package default DefaultDiskFloorMB (2048 MB).
+	DiskFloorMB int64 `yaml:"disk_floor_mb"`
+}
+
+// DefaultReportIntervalSeconds is the worker-report poll cadence applied when
+// workers.yaml omits report_interval_seconds (or sets it <= 0). 60s matches the
+// WR3 spec default — frequent enough for operator observability, infrequent
+// enough to never load the SSH transport or the work loop.
+const DefaultReportIntervalSeconds = 60
+
+// ReportInterval returns the configured worker-report poll cadence as a
+// time.Duration, applying DefaultReportIntervalSeconds when unset (<= 0). It is
+// the single home for the default so no caller hardcodes the cadence.
+func (c Config) ReportInterval() time.Duration {
+	secs := c.ReportIntervalSeconds
+	if secs <= 0 {
+		secs = DefaultReportIntervalSeconds
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // ErrMalformedYAML is returned when the file exists but cannot be parsed.

@@ -28,9 +28,10 @@ Live initiative/epic roster (absorbs STATUS.md "Active work lanes"). Verify stat
 | leanfleet (fleet token-efficiency) | `hk-itoc` | 🟡 not staffed — restart-earlier, model-tiering, noise-cut |
 | token-burn analysis | `hk-bsdr` | 🟡 not staffed (P1) |
 | remote-substrate phase-1 | `hk-rs-phase1` | 🟡 not staffed (P1) — enables 2nd machine / scale-out; e2e needs gb-mbp worker |
-| flywheel goal-persistence | `hk-0oca` | 🟡 not staffed (P1) |
+| flywheel v1 — positive/negative loops | `hk-0oca` (+ `codename:flywheel`) | 🟡 built-but-UNWIRED — 9 components landed on `main` but `sentinel.Evaluate()` has 0 daemon callers; 26 completion beads OPEN (keystone FW1 `hk-y9fn` → FW2 `hk-z1lr`). Roadmap + live status: `.kerf/works/flywheel-motion/06-completion-plan.md`. ⛔ dispatch blocked 2026-06-20 on remote-worker (gb-mbp) routing — every bead instant-fails `no_commit` |
 | codex soak | `hk-0639` | ⛔ PAUSED (operator 2026-06-19) |
 | Auto test/CI restoration | `hk-kjkbw` | 🟡 near-done (~26/27 beads closed) |
+| remote-node telemetry (worker-report + worker-breach) | `codename:worker-report` / `codename:worker-breach` | ✅ Phase 1 (reporting) + Phase 2 (live breach alerts) COMPLETE & on main (`df89cbe8`→`24ae1aef`, 9 beads). Off-by-default; **never live-run** (gb-mbp `enabled:false`). Phase 3 (node agent + data-driven autoscale) PARKED — resume only after the remote e2e is green + a live-validation window. Pickup checklist: `plans/2026-06-20-remote-node-telemetry-autoscale/00-overview.md` |
 
 ## Active operator directives (dated)
 

@@ -18,7 +18,8 @@ Phase 1 + Phase 2-entry are GREEN. The persistent daemon, Captain & Crew system,
 | **captain-economy** (lean the captain boot + skill-lean) | `hk-unjy` | 🟡 IN PROGRESS — CE1 landed (boot ~81k→~55-60k); CE4/CE5/CE6 held |
 | **productization** (deployable on any project + integration-branch enforcement) | `codename:productization` | 🟡 IN PROGRESS — P0 gate landed (integration-branch enforcement), embed/init scaffolding ongoing |
 | **fleet economy** (sleep/wake, leanfleet, token-burn) | `hk-rl4b` / `hk-itoc` / `hk-bsdr` | 🟡 ranked, mostly unstaffed (LEAN park) |
-| **remote-substrate** (distribute bead-work to a 2nd machine) | `hk-rs-phase1` | 🟡 phase-1, e2e blocked on gb-mbp worker |
+| **remote-substrate** (distribute bead-work to a 2nd machine) | `hk-rs-phase1` | 🟡 phase-1; agent_ready + completion-detection fixes landed (`d64c6602`), full e2e on gb-mbp still to be confirmed green |
+| **remote-node telemetry** (worker reports load/problems + live breach alerts) | `codename:worker-report` / `codename:worker-breach` | ✅ Phase 1 (reporting) + Phase 2 (live breach) COMPLETE — 9 beads, main `df89cbe8`→`24ae1aef`; off-by-default, never yet live-run. Phase 3 (node agent + data-driven autoscale) DEFERRED — pickup checklist in `plans/2026-06-20-remote-node-telemetry-autoscale/00-overview.md` |
 
 _Earlier high-level epic order (current state → fully operational harmonik that orchestrators can drive at scale) follows._
 
@@ -42,3 +43,5 @@ Phase 1 reached OPERATIONAL GREEN on 2026-05-14: harmonik dispatches a bead to a
 | 10 | NEXT | Remaining spec-corpus implementation | hk-b3f, hk-hqwn, hk-8i31, hk-a8bg, hk-8mwo, hk-8mup, hk-sx9r, hk-63oh | Implement the 8 spec epics (EM, EV, HC, CP, WM, PL, ON, RC) that are open but not yet in the active critical path. |
 | 11 | NEXT | Scenario Harness implementation | hk-i0tw | Implement `specs/scenario-harness.md` — the structured test surface that lets harmonik validate its own workflows declaratively. |
 | 12 | FUTURE | Phase 3: DOT-defined bead processes | (not yet filed) | Replace hard-coded workloop/reviewloop with composable node graphs defined in DOT format; each node is a phase, edges encode verdict fan-out. |
+| 13 | DONE | Remote-node telemetry P1+P2 — worker reporting + live breach alerts | WR1–WR5, PB1–PB4 (closed) | Workers report load/mem/swap/disk + problem flags on a poll, and emit `resource_breach` alerts when a running box sustains high CPU/mem/swap. Central-side, off-by-default. Main `df89cbe8`→`24ae1aef`. |
+| 14 | FUTURE (deferred) | Remote-node telemetry P3 — node agent + data-driven autoscale | `hk-e6gs` (deferred epic) | Turn the hardcoded per-worker `max_slots` into a center-computed target driven by accrued load history; optional resident node agent (hybrid push-placement/pull-pickup). GATED: needs the remote e2e green + a live-validation window + N≥2 workers. Pickup checklist: `plans/2026-06-20-remote-node-telemetry-autoscale/00-overview.md`. NOT the same as #12. |

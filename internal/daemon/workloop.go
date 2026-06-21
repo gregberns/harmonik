@@ -1591,6 +1591,29 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 
+				// FW4 (hk-jsvc): spawn a fresh-context adversary crew to adjudicate
+				// the trip. The adversary reviews captain comms/commits as a foreign
+				// artifact and emits sentinel emit-trip if it confirms the governor's
+				// verdict. Overlap-skip: SpawnAdversary is a no-op when the adversary
+				// crew is already online (prevents stacked sessions on consecutive trips).
+				if deps.crewHandler != nil {
+					var onlineAgents map[string]struct{}
+					if deps.commsWhoQuerier != nil {
+						if agents, whoErr := deps.commsWhoQuerier(ctx); whoErr == nil {
+							onlineAgents = agents
+						}
+					}
+					if onlineAgents == nil {
+						onlineAgents = map[string]struct{}{}
+					}
+					if _, spawnErr := sentinel.SpawnAdversary(ctx, sentinel.AdversaryInput{
+						ProjectDir: deps.projectDir,
+					}, deps.crewHandler, onlineAgents); spawnErr != nil {
+						fmt.Fprintf(os.Stderr,
+							"daemon: workloop: sentinel: SpawnAdversary failed (non-fatal): %v\n", spawnErr)
+					}
+				}
+
 			case sig.Level == sentinel.ActivationDormant && sentinelPendingAckToken != "":
 				// Real movement detected: clear the pending trip automatically.
 				// ClearTrip writes decision_acknowledged to events.jsonl + updates the

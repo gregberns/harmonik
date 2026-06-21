@@ -198,6 +198,19 @@ pane nudge:
 
 ---
 
+## 7. Bead references
+
+| Bead | Role |
+|---|---|
+| hk-95uf | M0 — GatherDrainFacts oracle (formerly GenuineDrain) |
+| hk-jeby | M1 — daemon wind-down plumbing (park/wake/markers; `internal/daemon/quiesce.go`) |
+| hk-s8qi | M2 — session-side park/resume contract (§§1–6) |
+| hk-rl4b | Parent epic — fleet sleep-wake |
+| hk-wrjv | P3 — vocabulary + `--level` enum + workflow sequences (§§0, 8, 9) |
+| hk-up4b | Fleet-state umbrella epic (Phase 0–4) |
+
+---
+
 ## 8. The `--level` enum — hard ↔ soft wind-down spectrum
 
 Every wind-down verb (SLEEP, PARK, STOP, TEARDOWN) accepts an optional
@@ -384,19 +397,6 @@ Recovery: manual `harmonik start captain` after daemon restart.
 **Teardown vs SLEEP distinction:**
 - SLEEP: daemon stays alive; sessions at rest; recoverable by pane nudge or `harmonik wake`.
 - TEARDOWN: daemon stops; sessions removed; recovery requires a fresh boot.
-
----
-
-## 7. Bead references
-
-| Bead | Role |
-|---|---|
-| hk-95uf | M0 — GatherDrainFacts oracle (formerly GenuineDrain) |
-| hk-jeby | M1 — daemon wind-down plumbing (park/wake/markers; `internal/daemon/quiesce.go`) |
-| hk-s8qi | M2 — session-side park/resume contract (§§1–7) |
-| hk-rl4b | Parent epic — fleet sleep-wake |
-| hk-wrjv | P3 — vocabulary + `--level` enum + workflow sequences (§§0, 8, 9) |
-| hk-up4b | Fleet-state umbrella epic (Phase 0–4) |
 
 ---
 

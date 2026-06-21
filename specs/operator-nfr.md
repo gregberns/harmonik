@@ -999,9 +999,18 @@ projects:
 
 **(c) The `~/.claude/captain-tools/` scripts.**
 
-1. The captain-tools scripts (at minimum `captain-launch.sh` and `crewlog.sh`) MUST be
-   version-controlled in `scripts/captain-tools/` and embedded in the harmonik binary.
-2. `harmonik init` MUST provision the embedded captain-tools scripts to
+> **SUPERSEDED for captain launch/restart (codename:easy-start, 2026-06-20).** The
+> captain is now launched by the native Go command `harmonik start captain` (no env var,
+> no script path) and self-restarts via the in-process, self-verifying
+> `harmonik keeper restart-now`. The bash `captain-launch.sh` and
+> `keeper-restart-verified.sh` — and their embed + `harmonik init` provisioning — are
+> **RETIRED and deleted**; clauses 1–2 below no longer bind them. Clause 3 still governs
+> any captain-tools script that remains embedded (e.g. `crewlog.sh`, if/when added).
+
+1. Any captain-tools script that IS embedded MUST be version-controlled in
+   `scripts/captain-tools/` and embedded in the harmonik binary. (Captain launch is no
+   longer a script — see the SUPERSEDED note above.)
+2. `harmonik init` MUST provision any such embedded captain-tools script to
    `~/.claude/captain-tools/` ONLY IF the target file is absent; it MUST NOT clobber an
    operator-modified copy already present.
 3. The provisioned scripts MUST contain no literal absolute project path. They MUST

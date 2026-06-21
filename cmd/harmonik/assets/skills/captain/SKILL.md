@@ -694,16 +694,19 @@ hand-trim.
 4. **NEVER exit or terminate your own session on a warn.** Self-terminating exits the captain permanently — the
    keeper cannot rebind to a session that already exited.
 
-**Self-restart verification is EXTERNAL, not yours (hk-uldg, design decision 1).**
+**Self-restart verification is IN-PROCESS now (hk-uldg → review B).**
 You cannot confirm your OWN restart's ACK — the `/clear` wipes your context before
-the ACK could be read. The verification is delegated to an external watcher: the
-wrapper **`scripts/captain-tools/keeper-restart-verified.sh captain`** fires
-`restart-now`, parses the printed `nonce=rn-…`, and runs `await-ack --kind restart`
-as a separate OS process (it survives your `/clear`), exiting non-zero + emitting
-`session_keeper_ack_timeout` if the ACK never lands. If your launch wrapper drives
-restart through this script, your self-restart is VERIFIED rather than assumed; you
-still just fire `restart-now` and stop typing. (If you ever restart a PEER captain
-or crew, run `await-ack` yourself per §10 — your process is external to theirs.)
+the ACK could be read. You don't need to: `harmonik keeper restart-now` is
+**synchronous and self-verifying in-process** (`internal/keeper/restartnow.go`) — the
+one call resolves the pane, runs the freshness check, injects the ACK line, then drives
+`/clear` + `/session-resume` (all before returning), and it runs as a separate OS
+process that SURVIVES your `/clear`. The old external wrapper
+`scripts/captain-tools/keeper-restart-verified.sh` is **RETIRED** (deleted with the bash
+launcher; native `harmonik start captain` + in-process `restart-now` replace it) — do
+NOT wire self-restarts through it. You still just write your handoff, fire
+`harmonik keeper restart-now --agent captain`, keep the turn open, and stop typing.
+(If you ever restart a PEER captain or crew, run `await-ack` yourself per §10 — your
+process is external to theirs.)
 
 **On resume:** re-drain comms, re-ground via STARTUP.md. Do NOT trust the
 handoff's live-state claims — measure them. The handoff carries INTENT only; do not

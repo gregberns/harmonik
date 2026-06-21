@@ -14,7 +14,7 @@ package main
 //
 //  1. Precondition check (git repo present, binaries on PATH).
 //  2. Create .harmonik/ subdirectories (events/, worktrees/, beads-intents/,
-//     comms/, crew/, keeper/, queues/).
+//     comms/, crew/, keeper/, queues/, intent/).
 //  3. Run `br init --prefix <prefix>` to initialise the beads database
 //     (skipped when .beads/ already exists, unless --force).
 //  4. Write .harmonik/config.yaml (project-level daemon defaults).
@@ -31,7 +31,9 @@ package main
 //     $PROJECT_DIR and $TARGET_BRANCH). AGENTS.md is the three-kinds ROUTER
 //     (precedence + per-role load map + harmonik:managed markers).
 // 10. Symlink CLAUDE.md → AGENTS.md.
-// 11. (Optional) Run `harmonik supervise start --watch-restart` unless
+// 11. Seed the goal-keeper schedule job in .harmonik/schedules.json (FW5,
+//     hk-z25w) — every 1h command backstop; idle-trigger wiring is FW6.
+// 12. (Optional) Run `harmonik supervise start --watch-restart` unless
 //     --no-supervise is passed.
 // 13. (Optional) Smoke test when --smoke is passed.
 //
@@ -57,6 +59,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/schedule"
 )
 
 // runInitSubcommand dispatches `harmonik init [flags]`.
@@ -199,6 +203,11 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 
+	// Step 12b: seed the goal-keeper schedule job (flywheel FW5, hk-z25w).
+	if code := seedGoalKeeperSchedule(projectDir, force, stdout, stderr); code != 0 {
+		return code
+	}
+
 	// Step 13: start supervisor (optional).
 	if !noSupervise {
 		if code := maybeStartSupervise(projectDir, stdout, stderr); code != 0 {
@@ -312,6 +321,7 @@ func mkdirAll(projectDir string, stderr io.Writer) int {
 		filepath.Join(projectDir, ".harmonik", "crew"),
 		filepath.Join(projectDir, ".harmonik", "keeper"),
 		filepath.Join(projectDir, ".harmonik", "queues"),
+		filepath.Join(projectDir, ".harmonik", "intent"),
 	}
 	for _, d := range dirs {
 		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
@@ -509,6 +519,8 @@ comms/
 crew/
 keeper/
 queues/
+# goal-keeper schedule flock sidecar (runtime lock — not committed)
+schedules.json.lock
 # review-loop verdict files (hk-znou: must not be committed onto run branches)
 review.json
 review.iter-*.json
@@ -809,6 +821,40 @@ func runSmokeTest(projectDir string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// seedGoalKeeperSchedule registers the goal-keeper recurring job in
+// .harmonik/schedules.json (flywheel FW5, hk-z25w). The job runs
+// `harmonik goal-keeper --project <dir>` on an every-1h backstop cadence.
+// Idempotent: skips if the job already exists and force is false.
+func seedGoalKeeperSchedule(projectDir string, force bool, stdout, stderr io.Writer) int {
+	store := schedule.NewStore(projectDir)
+	if err := store.Load(); err != nil {
+		fmt.Fprintf(stderr, "harmonik init: load schedules: %v\n", err)
+		return 1
+	}
+	if _, ok := store.Get("goal-keeper"); ok && !force {
+		fmt.Fprintln(stdout, "harmonik init: goal-keeper schedule already registered — skipping (use --force to overwrite)")
+		return 0
+	}
+	job := schedule.ScheduledJob{
+		ID: "goal-keeper",
+		Schedule: schedule.Schedule{
+			Kind:     schedule.ScheduleKindEvery,
+			Interval: "1h",
+		},
+		Action: schedule.Action{
+			Kind: schedule.ActionKindCommand,
+			Argv: []string{"harmonik", "goal-keeper", "--project", projectDir},
+		},
+		Enabled: true,
+	}
+	if err := store.Add(job); err != nil {
+		fmt.Fprintf(stderr, "harmonik init: seed goal-keeper schedule: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "harmonik init: registered goal-keeper schedule (every 1h)")
+	return 0
+}
+
 const initUsage = `harmonik init — bootstrap a new project for use with harmonik
 
 USAGE
@@ -827,7 +873,7 @@ FLAGS
 WHAT IT DOES
   1. Checks preconditions (git repo, br/harmonik on PATH)
   2. Creates .harmonik/ directory structure (events/, worktrees/, beads-intents/,
-     comms/, crew/, keeper/, queues/)
+     comms/, crew/, keeper/, queues/, intent/)
   3. Initialises the beads database: br init --prefix <PREFIX>
   4. Writes .harmonik/config.yaml (project-level daemon defaults)
   5. Writes .harmonik/branching.yaml (branching strategy defaults)
@@ -840,8 +886,9 @@ WHAT IT DOES
      roadmap.md) and seeds HANDOFF.md from embedded templates
   9. Renders embedded AGENTS.template.md (three-kinds router) → AGENTS.md
  10. Creates CLAUDE.md → AGENTS.md symlink
- 11. Starts the supervisor: harmonik supervise start --watch-restart
- 12. (--smoke) Runs basic sanity checks
+ 11. Seeds goal-keeper schedule job in .harmonik/schedules.json (every 1h backstop)
+ 12. Starts the supervisor: harmonik supervise start --watch-restart
+ 13. (--smoke) Runs basic sanity checks
 
 IDEMPOTENCY
   Each step is skipped when its output artifact already exists.

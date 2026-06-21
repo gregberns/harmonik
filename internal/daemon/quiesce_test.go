@@ -506,6 +506,103 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 	}
 }
 
+// TestReconcileOrphanedMarkers verifies that a daemon restart re-loads orphaned
+// on-disk .sleeping.* markers into the in-memory map, preserving the ORIGINAL
+// parked_at as sleptAt so the max-sleep failsafe measures from the real park
+// time (hk-x03v / codename:fleet-state).
+func TestReconcileOrphanedMarkers(t *testing.T) {
+	projectDir := t.TempDir()
+
+	// Simulate a crew session that was parked, then the daemon died: write the
+	// crew record + an orphaned marker parked well in the past.
+	if err := crew.Write(projectDir, crew.Record{
+		Name:      "paul",
+		SessionID: "paul-orphan-sid",
+		Queue:     "paul-queue",
+		Handle:    "harmonik-abc123-paul:hk-crew-paul",
+	}); err != nil {
+		t.Fatalf("crew.Write: %v", err)
+	}
+	dir := filepath.Join(projectDir, sleepingMarkerDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	parkedAt := time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339)
+	markerBody := `{"session_id":"paul-orphan-sid","parked_at":"` + parkedAt + `","source":"operator","level":"L2"}`
+	markerPath := filepath.Join(dir, ".sleeping.paul-orphan-sid")
+	if err := os.WriteFile(markerPath, []byte(markerBody), 0o644); err != nil {
+		t.Fatalf("write orphan marker: %v", err)
+	}
+
+	// Fresh arbiter (the restarted daemon): nothing in the in-memory map yet.
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+	arbiter.reconcileOrphanedMarkers()
+
+	arbiter.mu.Lock()
+	rec, ok := arbiter.sleeping["paul"]
+	arbiter.mu.Unlock()
+	if !ok {
+		t.Fatal("reconcile did not re-load the orphaned crew marker into the sleeping map")
+	}
+	if rec.sessionID != "paul-orphan-sid" {
+		t.Errorf("sessionID: got %q want %q", rec.sessionID, "paul-orphan-sid")
+	}
+	if rec.queueName != "paul-queue" {
+		t.Errorf("queueName: got %q want %q", rec.queueName, "paul-queue")
+	}
+	if rec.paneTarget != "harmonik-abc123-paul:hk-crew-paul.0" {
+		t.Errorf("paneTarget: got %q", rec.paneTarget)
+	}
+	if rec.source != SleepSourceOperator || rec.level != SleepLevelHandoff {
+		t.Errorf("source/level: got %q/%q want operator/L2", rec.source, rec.level)
+	}
+	// sleptAt must be the ORIGINAL park time (~3h ago), not now.
+	if time.Since(rec.sleptAt) < 2*time.Hour {
+		t.Errorf("sleptAt not seeded from parked_at; since=%v (want ~3h)", time.Since(rec.sleptAt))
+	}
+}
+
+// TestReconcileOrphanedMarkersFailsafeWakes verifies that an orphaned marker
+// re-loaded at boot is then woken by the max-sleep failsafe (hk-x03v): a marker
+// parked past the ceiling is nudged on the first tick after restart, and its
+// on-disk file is removed — lifting the indefinite keeper suppression.
+func TestReconcileOrphanedMarkersFailsafeWakes(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := crew.Write(projectDir, crew.Record{
+		Name:      "paul",
+		SessionID: "paul-orphan-sid",
+		Queue:     "paul-queue",
+		Handle:    "harmonik-abc123-paul:hk-crew-paul",
+	}); err != nil {
+		t.Fatalf("crew.Write: %v", err)
+	}
+	dir := filepath.Join(projectDir, sleepingMarkerDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Parked 1 minute ago; failsafe ceiling is 100ms → immediately expired.
+	parkedAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	markerPath := filepath.Join(dir, ".sleeping.paul-orphan-sid")
+	if err := os.WriteFile(markerPath,
+		[]byte(`{"session_id":"paul-orphan-sid","parked_at":"`+parkedAt+`"}`), 0o644); err != nil {
+		t.Fatalf("write orphan marker: %v", err)
+	}
+
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 50*time.Millisecond, 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	arbiter.Start(ctx) // runs reconcile, then the loop with the short failsafe
+
+	nudges.awaitNudge(t, 1, 2*time.Second)
+	if !nudges.hasTarget("harmonik-abc123-paul:hk-crew-paul.0") {
+		t.Errorf("failsafe did not nudge the reconciled crew pane; got %v", nudges.targets)
+	}
+	// Marker file must be removed after the failsafe wake.
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Errorf("orphan marker %q still present after failsafe wake", markerPath)
+	}
+}
+
 // TestResolveCaptainTargetLastResort verifies the resolution fallback chain
 // (hk-fv40): with no live tmux session, resolveCaptainTarget returns the
 // convention-derived "<session>:agent" target (never the old hard-coded

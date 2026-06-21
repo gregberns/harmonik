@@ -279,9 +279,123 @@ func (a *QuiesceArbiter) Subscribe(bus eventbus.EventBus) error {
 // Start launches the arbiter's background goroutine.  MUST be called after
 // bus.Seal() — the goroutine runs until ctx is cancelled.
 //
+// Before the loop starts, Start reconciles any orphaned on-disk sleep markers
+// left behind by a daemon that died mid-sleep (hk-x03v): without this, the
+// in-memory sleeping map and the max-sleep failsafe are lost on restart while
+// the .sleeping.<sid> markers persist, so the keeper gates stay suppressed
+// indefinitely. The reconcile re-loads each orphaned marker into the in-memory
+// map (so the wake triggers and the failsafe cover it again).
+//
 // Pattern: same as staleWatcher.StartWatcher.
 func (a *QuiesceArbiter) Start(ctx context.Context) {
+	a.reconcileOrphanedMarkers()
 	go a.run(ctx)
+}
+
+// reconcileOrphanedMarkers re-loads on-disk .sleeping.<sid> markers into the
+// in-memory sleeping map at daemon boot (hk-x03v / codename:fleet-state).
+//
+// If the daemon dies while sessions are parked, the in-memory map and the
+// max-sleep failsafe timer are gone, but the marker files persist — so the
+// keeper's IsSleeping gate keeps suppressing those sessions with nothing left to
+// ever wake them. This pass restores the map (keeping the ORIGINAL parked_at as
+// sleptAt, so the 4h max-sleep failsafe measures from the real park time and a
+// marker already past the ceiling is woken on the first tick) and resolves a
+// fresh pane target so the nudge can land.
+//
+// A marker whose session cannot be mapped to a known session (no matching crew
+// record and not the captain sentinel) is still re-loaded under its session_id
+// so the failsafe can eventually clear its file — but without a pane target the
+// nudge is skipped (the marker removal alone lifts the keeper suppression).
+//
+// Best-effort: any per-marker error is logged and skipped; the daemon never
+// fails to start over a bad marker.
+func (a *QuiesceArbiter) reconcileOrphanedMarkers() {
+	if a.cfg.ProjectDir == "" {
+		return
+	}
+	dir := filepath.Join(a.cfg.ProjectDir, sleepingMarkerDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "daemon: quiesce: reconcile: read %q: %v\n", dir, err)
+		}
+		return // no .harmonik dir → nothing parked
+	}
+
+	// Build sessionID → crew record index for pane/queue/agent resolution.
+	crewBySID := make(map[string]crew.Record)
+	for _, r := range a.listCrewRecords() {
+		if r.SessionID != "" {
+			crewBySID[r.SessionID] = r
+		}
+	}
+
+	const markerPrefix = ".sleeping."
+	var restored int
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || len(name) <= len(markerPrefix) || name[:len(markerPrefix)] != markerPrefix {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		marker, readErr := a.readSleepMarker(path)
+		if readErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: quiesce: reconcile: parse %q: %v\n", path, readErr)
+			continue
+		}
+		sessionID := marker.SessionID
+		if sessionID == "" {
+			// Recover the session id from the filename when the body omitted it.
+			sessionID = name[len(markerPrefix):]
+		}
+
+		// sleptAt = the ORIGINAL park time so the failsafe clock continues.
+		sleptAt := time.Now()
+		if marker.ParkedAt != "" {
+			if t, perr := time.Parse(time.RFC3339, marker.ParkedAt); perr == nil {
+				sleptAt = t
+			}
+		}
+
+		// Resolve agentName / queue / pane for this session.
+		var agentName, queueName, paneTarget string
+		if r, ok := crewBySID[sessionID]; ok {
+			agentName = r.Name
+			queueName = r.Queue
+			if r.Handle != "" {
+				paneTarget = r.Handle + ".0"
+			}
+		} else if sessionID == "captain-session" {
+			agentName = captainAgentName
+			paneTarget = a.resolveCaptainTarget()
+		} else {
+			// Unknown session: key the map by session id so the failsafe can still
+			// clear the marker; no pane target → nudge is skipped.
+			agentName = sessionID
+		}
+
+		a.mu.Lock()
+		if _, already := a.sleeping[agentName]; already {
+			a.mu.Unlock()
+			continue
+		}
+		a.sleeping[agentName] = sessionSleepRecord{
+			agentName:  agentName,
+			queueName:  queueName,
+			paneTarget: paneTarget,
+			sessionID:  sessionID,
+			sleptAt:    sleptAt,
+			source:     marker.Source,
+			level:      marker.Level,
+		}
+		a.mu.Unlock()
+		restored++
+	}
+
+	if restored > 0 {
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: reconcile: re-loaded %d orphaned sleep marker(s) into the failsafe\n", restored)
+	}
 }
 
 // run is the main loop of the QuiesceArbiter.

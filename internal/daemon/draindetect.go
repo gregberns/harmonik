@@ -1,106 +1,210 @@
 package daemon
 
-// draindetect.go — the genuine-drain oracle (hk-95uf, epic hk-rl4b /
-// codename:sleep-wake).
+// draindetect.go — drain-fact oracle (hk-95uf / hk-pfr4, epic hk-rl4b /
+// codename:sleep-wake, fleet-state initiative).
 //
-// GenuineDrain is the load-bearing safety interlock for the fleet sleep/wake
-// idle-down feature (M0). The fleet may put long-lived LLM sessions to sleep
-// ONLY when bead work is TRULY drained. The captain historically
-// false-declares "no work" via several false-negative sources; a false "no
-// work" sleep stalls the fleet with ready beads pending — the #1 failure mode.
+// GatherDrainFacts is the M0 fact-tool: it reads every work axis and returns a
+// typed FleetFacts bundle (counts + ids per axis). It is a FACT reporter, not
+// a decision-maker. The captain (LLM) decides whether to sleep; Go only vetoes
+// execution (P1-c).
 //
-// GenuineDrain is a deterministic predicate that is correct against ALL known
-// false-negative sources and FAIL-CLOSED on any doubt:
+// Five false-negative defenses are preserved from GenuineDrain:
+//  1. br-ready pagination — ReadyAll (`br ready --limit 0`); paginated Ready is
+//     never trusted.
+//  2. ledger-dep gating — deferred-for-ledger-dep queue items; open-epic →
+//     otherwise-ready-but-blocked child edges.
+//  3. paused-by-failure — paused-by-* queue statuses; un-reconciled
+//     `.json.failed-*` archives scanned directly (bypassing archive filter).
+//  4. in-flight runs — RunRegistry.Len() > 0 OR live `.harmonik/worktrees/*`.
+//  5. kerf-next-empty — oracle MUST NOT consult `kerf next`; `br ready
+//     --limit 0` + the ledger are authoritative.
 //
-//   - DRAINED requires positive emptiness evidence on EVERY axis.
-//   - HAS_WORK is returned the moment any axis shows pending/in-flight work.
-//   - UNSURE is returned on any evaluation error OR the "all items terminal but
-//     queue status not yet rolled" race. UNSURE and HAS_WORK both keep the
-//     fleet AWAKE; only DRAINED licenses sleep.
-//
-// This is M0: a pure work-detection predicate. It introduces ZERO threshold /
-// band knobs and MUST NOT read or alter any keeper warn/act/force/window value
-// (operator HARD-NO). Sleep-grace / wake-trigger / bands are POLICY, deferred
-// to a later pass (M1 wires this predicate into a sleep decision).
+// GenuineDrain remains as a backward-compat bridge wrapper over GatherDrainFacts
+// for callers in quiesce.go until P1-b (hk-kj7d) removes the auto-park tick and
+// P1-c (hk-zqb3) rewrites HandleDaemonSleep.
 //
 // NOTE ON RECEIVER: the oracle spec names `func (d *Daemon) GenuineDrain`, but
 // the harmonik daemon is a composition-root FUNCTION (daemon.Start), not a
-// `Daemon` struct — there is no such type to hang the method on. DrainDetector
-// is the honest receiver: a small value bundling exactly the dependency seams
-// the predicate needs, constructable from the same shared instances Start()
-// already builds (the *brcli.Adapter, the brQueueLedger bridge, the shared
-// *RunRegistry and *QueueStore). M1 constructs one via NewDrainDetector.
-//
-// Five false-negative defenses, each a concrete check:
-//  1. br-ready pagination — uses ReadyAll (`br ready --limit 0`), never the
-//     default-paginated Ready (brcli/ready.go). A paginated empty is NOT
-//     trusted.
-//  2. ledger-dep gating — any queue item deferred-for-ledger-dep ⇒ HAS_WORK;
-//     and every OPEN epic with a ready-but-epic-blocked child ⇒ HAS_WORK
-//     (defense lives in the ledger axis, draindetect_epic; reuses BlocksEdge).
-//  3. paused-by-failure — any paused-by-* queue status ⇒ HAS_WORK; and an
-//     un-reconciled `.json.failed-*` archive on disk ⇒ HAS_WORK (scanned
-//     DIRECTLY, bypassing EnumerateQueueNames' archive filter).
-//  4. in-flight runs — RunRegistry.Len()==0 AND no live `.harmonik/worktrees/*`
-//     run.
-//  5. kerf-next-empty — the oracle MUST NOT consult `kerf next` (external,
-//     reports false-empty for works lacking bead_filter). `br ready --limit 0`
-//     is authoritative.
+// `Daemon` struct. DrainDetector is the honest receiver: a small value bundling
+// exactly the dependency seams the predicate needs, constructable from the same
+// shared instances Start() already builds. M1 constructs one via NewDrainDetector.
 
 import (
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// DrainState is the tri-state verdict of GenuineDrain.
+// ---------------------------------------------------------------------------
+// Fleet facts types (GatherDrainFacts output)
+// ---------------------------------------------------------------------------
+
+// FleetFacts is the read-only fact bundle the captain reads to decide whether
+// to wind the fleet down. It reports facts per axis as counts + lists; it never
+// renders a DRAINED/HAS_WORK decision and never short-circuits at the first
+// sign of work. The ZFC invariant: facts, never a decision; generative
+// categories are flagged, not scored. Produced by GatherDrainFacts.
+type FleetFacts struct {
+	// Dispatchable-now (defenses #1, #5: br ready --limit 0).
+	Ready BeadAxis `json:"ready"`
+
+	// In-flight work (defense #4).
+	InProgress BeadAxis `json:"in_progress"` // beads the ledger reports in_progress
+	Runs       RunAxis  `json:"runs"`        // RunRegistry + live worktrees
+
+	// Lined-up / queued-but-not-yet-dispatchable (defenses #2 queue, #3).
+	Queued QueueAxis `json:"queued"`
+
+	// Standalone blocked-by-an-open-epic (defense #2 epic).
+	BlockedByOpenEpic []EpicBlockEdge `json:"blocked_by_open_epic"`
+
+	// The other dropped buckets (not dispatchable, not lost).
+	NeedsAttention BeadAxis `json:"needs_attention"` // needs-attention label set
+	Draft          BeadAxis `json:"draft"`           // loaded-but-not-dispatchable
+	Deferred       BeadAxis `json:"deferred"`        // operator-deferred
+
+	// The ONE generative category: flagged, never scored.
+	// Childless OPEN epics — the captain decides what to do with them.
+	NeedsDecomposition []core.BeadID `json:"needs_decomposition"`
+
+	// Read quality (NOT a control signal).
+	// Unsure is true when any axis hit a read error or a transient
+	// inconsistency (e.g. QM "all items terminal, status not yet rolled"
+	// race, or unrecognised queue status, or nil epic seam). It is a
+	// data-quality caveat, not a verdict and not a license/veto.
+	Unsure        bool     `json:"unsure"`
+	UnsureReasons []string `json:"unsure_reasons,omitempty"`
+
+	// GatheredAt is the wall-clock read time, for staleness reasoning.
+	GatheredAt time.Time `json:"gathered_at"`
+}
+
+// markUnsure appends reason to UnsureReasons and sets Unsure = true.
+func (f *FleetFacts) markUnsure(reason string) {
+	f.Unsure = true
+	f.UnsureReasons = append(f.UnsureReasons, reason)
+}
+
+// BeadAxis is one bead bucket: a count plus the bead facts that compose it.
+// Count == len(Beads) by construction; both are emitted so a JSON consumer can
+// read the count without walking the list.
+type BeadAxis struct {
+	Count int        `json:"count"`
+	Beads []BeadFact `json:"beads"`
+}
+
+// BeadFact is the minimal per-bead fact (id + human context). It is a
+// projection of core.BeadRecord: id + title + type + the labels that explain
+// why the bead landed in its axis.
+type BeadFact struct {
+	ID     core.BeadID `json:"id"`
+	Title  string      `json:"title"`
+	Type   string      `json:"type"`
+	Labels []string    `json:"labels,omitempty"`
+}
+
+// RunAxis is the in-flight-runs axis (defense #4): registry runs + live
+// worktree dirs, reported separately so a stale-worktree-with-empty-registry
+// case is legible.
+type RunAxis struct {
+	RegistryCount int      `json:"registry_count"` // RunRegistry.Len()
+	LiveWorktrees int      `json:"live_worktrees"` // entries under .harmonik/worktrees
+	WorktreePaths []string `json:"worktree_paths,omitempty"`
+}
+
+// QueueAxis is the lined-up / queued-but-not-dispatchable axis (defenses #2
+// queue-portion, #3). PausedQueues and FailedArchives are the defense-#3
+// hold-the-fleet-awake signals reported as facts.
+type QueueAxis struct {
+	NonTerminalItems []QueueItemFact `json:"non_terminal_items"`
+	PausedQueues     []PausedQueue   `json:"paused_queues"`   // paused-by-failure/-drain/-budget
+	FailedArchives   []string        `json:"failed_archives"` // un-reconciled *.json.failed-*
+	Count            int             `json:"count"`           // total non-terminal items
+}
+
+// QueueItemFact is one non-terminal queue item: which queue, which bead, and
+// its item status (pending / dispatched / deferred-for-ledger-dep / …).
+type QueueItemFact struct {
+	Queue  string `json:"queue"`
+	BeadID string `json:"bead_id"`
+	Status string `json:"status"`
+}
+
+// PausedQueue names a paused queue and the pause reason (the QueueStatus value).
+type PausedQueue struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// EpicBlockEdge is one open-epic → otherwise-ready-child blocks edge
+// (defense #2 epic-portion). The child is genuine pending work `br ready`
+// cannot see.
+type EpicBlockEdge struct {
+	EpicID  core.BeadID `json:"epic_id"`
+	ChildID core.BeadID `json:"child_id"`
+}
+
+// beadToFact converts a core.BeadRecord to a BeadFact projection.
+func beadToFact(b core.BeadRecord) BeadFact {
+	return BeadFact{
+		ID:     b.BeadID,
+		Title:  b.Title,
+		Type:   b.BeadType,
+		Labels: b.Labels,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Backward-compat verdict types (used by the GenuineDrain bridge wrapper)
+// ---------------------------------------------------------------------------
+
+// DrainState is the tri-state verdict of the GenuineDrain bridge wrapper.
+// The DRAINED state is no longer a control signal in GatherDrainFacts; it
+// exists here only for the bridge callers in quiesce.go until P1-b (hk-kj7d)
+// and P1-c (hk-zqb3) land and remove those callers.
 type DrainState string
 
 const (
-	// DrainStateDrained means EVERY axis shows positive emptiness: no ready
-	// beads, no in-flight runs, no non-terminal queue items, no paused/failed
-	// queues, no open-epic-blocked ready children. The caller MAY sleep.
 	DrainStateDrained DrainState = "DRAINED"
-
-	// DrainStateHasWork means at least one axis shows pending or in-flight work.
-	// The caller MUST stay awake.
 	DrainStateHasWork DrainState = "HAS_WORK"
-
-	// DrainStateUnsure means an evaluation error occurred, or a transient
-	// inconsistency (the "all items terminal but queue status not yet rolled"
-	// race) was observed. The caller MUST stay awake — sleeping requires
-	// positive emptiness evidence, which UNSURE does not provide.
-	DrainStateUnsure DrainState = "UNSURE"
+	DrainStateUnsure  DrainState = "UNSURE"
 )
 
-// DrainResult is the verdict plus human-readable reasons. Reasons is purely
-// diagnostic (for logging / operator surfaces); control flow keys off State.
+// DrainResult is the verdict plus human-readable reasons, used by GenuineDrain.
 type DrainResult struct {
 	State   DrainState
 	Reasons []string
 }
 
+// ---------------------------------------------------------------------------
+// Dependency seams
+// ---------------------------------------------------------------------------
+
 // readySource is the br-ready seam. The production implementation is
 // *brcli.Adapter via its ReadyAll method (`br ready --limit 0`); tests inject a
-// fake. ONLY ReadyAll is exposed here — defense #1 forbids trusting the
-// default-paginated Ready.
+// fake. ONLY ReadyAll is exposed — defense #1 forbids trusting the default-
+// paginated Ready.
 type readySource interface {
 	ReadyAll(ctx context.Context) ([]core.BeadRecord, error)
 }
 
 // openBeadLister enumerates beads by ledger status. The production
 // implementation is *brcli.Adapter.ListBeadsByStatus; the ledger axis
-// (draindetect_epic.go, Phase B) uses it to enumerate open epics. Defined here
-// so the DrainDetector constructor is stable across both phases.
+// (draindetect_epic.go) uses it to enumerate open epics.
 type openBeadLister interface {
 	ListBeadsByStatus(ctx context.Context, status string) ([]core.BeadRecord, error)
 }
 
-// DrainDetector bundles the dependency seams the genuine-drain oracle reads.
+// ---------------------------------------------------------------------------
+// DrainDetector
+// ---------------------------------------------------------------------------
+
+// DrainDetector bundles the dependency seams the drain oracle reads.
 // Construct one with NewDrainDetector from the daemon composition root's shared
 // instances. The zero value is NOT valid.
 type DrainDetector struct {
@@ -140,70 +244,160 @@ func NewDrainDetector(
 	}
 }
 
-// GenuineDrain evaluates every drain axis and returns the fail-closed verdict.
-//
-// Evaluation order is fixed for deterministic reasons output. The first axis to
-// observe an evaluation ERROR returns (UNSURE, err) immediately — staying awake
-// is the default on any doubt. The "all items terminal but queue status not yet
-// rolled" race returns (UNSURE, nil). Otherwise HAS_WORK reasons accumulate
-// across axes; if any axis showed work the verdict is HAS_WORK, else DRAINED.
-//
-// The caller (M1) sleeps ONLY on State == DRAINED.
-func (d *DrainDetector) GenuineDrain(ctx context.Context) (DrainResult, error) {
-	res := DrainResult{State: DrainStateDrained}
+// ---------------------------------------------------------------------------
+// GatherDrainFacts — the new fact-tool (P1-a, hk-pfr4)
+// ---------------------------------------------------------------------------
 
-	// Axis: paused-by-* / un-reconciled failed-archive (defense #3).
+// GatherDrainFacts reads every drain axis and returns a typed FleetFacts
+// bundle. It is a fact reporter, not a decider: it never short-circuits at the
+// first sign of work, never renders a DRAINED/HAS_WORK verdict, and never
+// collapses to a single boolean. All 5 false-negative defenses are preserved
+// in the per-axis sourcing.
+//
+// Axis read errors set facts.Unsure = true and continue — the captain receives
+// the partial bundle. The error return is non-nil for the first hard axis error
+// encountered (so the bridge GenuineDrain can surface it to quiesce.go callers
+// until P1-b/P1-c land). If only transient races (not errors) are encountered,
+// error is nil but facts.Unsure is true.
+func (d *DrainDetector) GatherDrainFacts(ctx context.Context) (*FleetFacts, error) {
+	facts := &FleetFacts{GatheredAt: time.Now()}
+	var firstErr error
+
+	captureErr := func(reason string, err error) {
+		facts.markUnsure(reason)
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	// Axis: failed archives (defense #3 on-disk).
+	// Direct glob — bypasses EnumerateQueueNames which filters out archives
+	// (an un-reconciled archive is pending work and must not be hidden).
 	archives, err := d.failedArchives()
 	if err != nil {
-		return unsure("failed-archive scan error: " + err.Error()), err
-	}
-	for _, a := range archives {
-		res.flagWork(fmt.Sprintf("un-reconciled failed-queue archive on disk: %s", filepath.Base(a)))
+		captureErr("failed-archive scan error: "+err.Error(), err)
+	} else {
+		facts.Queued.FailedArchives = archives
 	}
 
-	// Axis: queue items (defenses #2 deferred-portion, #3 paused-portion).
-	qres := d.scanQueues()
-	if qres.State == DrainStateUnsure {
-		return qres, nil
-	}
-	res.merge(qres)
+	// Axis: queue items (defenses #2 queue-portion, #3 in-memory).
+	d.collectQueueFacts(facts)
 
 	// Axis: in-flight runs (defense #4).
-	if n := d.runs.Len(); n > 0 {
-		res.flagWork(fmt.Sprintf("%d in-flight run(s) in RunRegistry", n))
-	}
-	live, err := d.liveWorktrees()
+	facts.Runs.RegistryCount = d.runs.Len()
+	paths, err := d.liveWorktreeList()
 	if err != nil {
-		return unsure("worktree scan error: " + err.Error()), err
-	}
-	if live > 0 {
-		res.flagWork(fmt.Sprintf("%d live worktree(s) under .harmonik/worktrees", live))
+		captureErr("worktree scan error: "+err.Error(), err)
+	} else {
+		facts.Runs.LiveWorktrees = len(paths)
+		facts.Runs.WorktreePaths = paths
 	}
 
 	// Axis: br ready --limit 0 (defenses #1, #5). Authoritative dispatchable set.
 	ready, err := d.ready.ReadyAll(ctx)
 	if err != nil {
-		return unsure("br ready --limit 0 error: " + err.Error()), err
-	}
-	if len(ready) > 0 {
-		res.flagWork(fmt.Sprintf("%d dispatchable bead(s) from br ready --limit 0", len(ready)))
+		captureErr("br ready --limit 0 error: "+err.Error(), err)
+	} else {
+		for _, b := range ready {
+			facts.Ready.Beads = append(facts.Ready.Beads, beadToFact(b))
+		}
+		facts.Ready.Count = len(facts.Ready.Beads)
 	}
 
-	// Ledger/epic axis (defense #2 epic-portion) — Phase B, draindetect_epic.go.
-	eres, err := d.scanOpenEpics(ctx)
+	// Ledger-based axes require the lister seam; fail-closed if not wired.
+	if d.lister == nil || d.ledger == nil {
+		facts.markUnsure("ledger/epic axis not wired (lister/ledger nil)")
+		return facts, firstErr
+	}
+
+	// Axis: in_progress beads.
+	inprog, err := d.lister.ListBeadsByStatus(ctx, string(core.CoarseStatusInProgress))
 	if err != nil {
-		return unsure("open-epic scan error: " + err.Error()), err
+		captureErr("br list in_progress error: "+err.Error(), err)
+	} else {
+		for _, b := range inprog {
+			facts.InProgress.Beads = append(facts.InProgress.Beads, beadToFact(b))
+		}
+		facts.InProgress.Count = len(facts.InProgress.Beads)
 	}
-	res.merge(eres)
 
-	return res, nil
+	// Axis: draft beads.
+	draft, err := d.lister.ListBeadsByStatus(ctx, string(core.CoarseStatusDraft))
+	if err != nil {
+		captureErr("br list draft error: "+err.Error(), err)
+	} else {
+		for _, b := range draft {
+			facts.Draft.Beads = append(facts.Draft.Beads, beadToFact(b))
+		}
+		facts.Draft.Count = len(facts.Draft.Beads)
+	}
+
+	// Axis: deferred beads.
+	deferred, err := d.lister.ListBeadsByStatus(ctx, string(core.CoarseStatusDeferred))
+	if err != nil {
+		captureErr("br list deferred error: "+err.Error(), err)
+	} else {
+		for _, b := range deferred {
+			facts.Deferred.Beads = append(facts.Deferred.Beads, beadToFact(b))
+		}
+		facts.Deferred.Count = len(facts.Deferred.Beads)
+	}
+
+	// Fetch open+blocked once; both epic-facts and needs-attention need them.
+	open, err := d.lister.ListBeadsByStatus(ctx, string(core.CoarseStatusOpen))
+	if err != nil {
+		captureErr("br list open error: "+err.Error(), err)
+		return facts, firstErr
+	}
+	blocked, err := d.lister.ListBeadsByStatus(ctx, string(core.CoarseStatusBlocked))
+	if err != nil {
+		captureErr("br list blocked error: "+err.Error(), err)
+		return facts, firstErr
+	}
+
+	// Axis: BlockedByOpenEpic (defense #2 epic) + NeedsDecomposition —
+	// one pass over open epics to avoid double ledger round-trips.
+	epicBlocked, needsDecomp, epicErr := d.gatherEpicFacts(ctx, open, blocked)
+	if epicErr != nil {
+		captureErr("epic-facts scan error: "+epicErr.Error(), epicErr)
+	} else {
+		facts.BlockedByOpenEpic = epicBlocked
+		facts.NeedsDecomposition = needsDecomp
+	}
+
+	// Axis: NeedsAttention — open ∪ blocked beads carrying the needs-attention
+	// label. ReadyAll already silently excludes these (BI-013a); this axis makes
+	// the exclusion visible instead of dropping the beads on the floor.
+	for _, b := range append(open, blocked...) {
+		if hasNeedsAttentionLabel(b.Labels) {
+			facts.NeedsAttention.Beads = append(facts.NeedsAttention.Beads, beadToFact(b))
+		}
+	}
+	facts.NeedsAttention.Count = len(facts.NeedsAttention.Beads)
+
+	return facts, firstErr
 }
 
-// scanQueues evaluates the in-memory QueueStore for paused queues, non-terminal
-// items, and the terminal-but-unrolled race. Returns a DrainResult whose State
-// is HAS_WORK / DRAINED, or UNSURE for the race or an unrecognised status.
-func (d *DrainDetector) scanQueues() DrainResult {
-	res := DrainResult{State: DrainStateDrained}
+// hasNeedsAttentionLabel reports whether the needs-attention label appears in
+// the given label slice.
+func hasNeedsAttentionLabel(labels []string) bool {
+	for _, l := range labels {
+		if l == labelNeedsAttention {
+			return true
+		}
+	}
+	return false
+}
+
+// labelNeedsAttention is the Beads label constant shared with brcli/ready.go.
+const labelNeedsAttention = "needs-attention"
+
+// collectQueueFacts walks the in-memory QueueStore and populates
+// facts.Queued.NonTerminalItems, facts.Queued.PausedQueues, and
+// facts.Queued.Count. The QM race (all items terminal but queue status not
+// yet rolled) sets facts.Unsure rather than short-circuiting — the bundle
+// must be complete even under transient inconsistency.
+func (d *DrainDetector) collectQueueFacts(facts *FleetFacts) {
 	for name, q := range d.queues.AllQueues() {
 		if q == nil {
 			continue
@@ -212,16 +406,18 @@ func (d *DrainDetector) scanQueues() DrainResult {
 		case queue.QueueStatusPausedByFailure,
 			queue.QueueStatusPausedByDrain,
 			queue.QueueStatusPausedByBudget:
-			res.flagWork(fmt.Sprintf("queue %q is %s", name, q.Status))
+			facts.Queued.PausedQueues = append(facts.Queued.PausedQueues, PausedQueue{
+				Name:   name,
+				Status: string(q.Status),
+			})
 			continue
 		case queue.QueueStatusCompleted, queue.QueueStatusCancelled:
-			// Terminal queue — no work from this slot.
 			continue
 		case queue.QueueStatusActive:
 			// Inspect items below.
 		default:
-			// Unrecognised status — fail-closed toward doubt.
-			return unsure(fmt.Sprintf("queue %q has unrecognised status %q", name, q.Status))
+			facts.markUnsure(fmt.Sprintf("queue %q has unrecognised status %q", name, q.Status))
+			continue
 		}
 
 		nonTerminal := 0
@@ -231,30 +427,30 @@ func (d *DrainDetector) scanQueues() DrainResult {
 				switch it.Status {
 				case queue.ItemStatusCompleted, queue.ItemStatusFailed:
 					// terminal — drained for this item
-				case queue.ItemStatusDeferredForLedgerDep:
+				default:
 					nonTerminal++
-					res.flagWork(fmt.Sprintf("queue %q item %s deferred-for-ledger-dep", name, it.BeadID))
-				default: // pending, dispatched, or any future non-terminal status
-					nonTerminal++
-					res.flagWork(fmt.Sprintf("queue %q item %s is %s", name, it.BeadID, it.Status))
+					facts.Queued.NonTerminalItems = append(facts.Queued.NonTerminalItems, QueueItemFact{
+						Queue:  name,
+						BeadID: string(it.BeadID),
+						Status: string(it.Status),
+					})
 				}
 			}
 		}
 
-		// QM race: every item terminal but the queue status has not yet rolled
-		// to completed/cancelled. Treat as UNSURE — emptiness is not yet final.
+		// QM race: every item terminal but the queue status has not yet rolled.
 		if nonTerminal == 0 {
-			return unsure(fmt.Sprintf("queue %q is active with all items terminal (status not yet rolled)", name))
+			facts.markUnsure(fmt.Sprintf(
+				"queue %q is active with all items terminal (status not yet rolled)", name))
 		}
 	}
-	return res
+	facts.Queued.Count = len(facts.Queued.NonTerminalItems)
 }
 
 // failedArchives returns the paths of all un-reconciled
-// `.harmonik/queues/*.json.failed-*` archive files. Per defense #3 these are
-// scanned DIRECTLY rather than via EnumerateQueueNames (which filters them
-// out): an un-reconciled failed archive is pending operator work and MUST keep
-// the fleet awake.
+// `.harmonik/queues/*.json.failed-*` archive files. Defense #3 requires
+// scanning DIRECTLY rather than via EnumerateQueueNames (which filters them
+// out): an un-reconciled failed archive is pending operator work.
 func (d *DrainDetector) failedArchives() ([]string, error) {
 	pattern := filepath.Join(d.projectDir, ".harmonik", "queues", "*.json.failed-*")
 	matches, err := filepath.Glob(pattern)
@@ -264,48 +460,68 @@ func (d *DrainDetector) failedArchives() ([]string, error) {
 	return matches, nil
 }
 
-// liveWorktrees returns the count of entries under `.harmonik/worktrees`. Any
-// entry is treated, fail-closed, as a live in-progress run (defense #4): the
-// daemon removes a run's worktree on completion, so a non-empty worktrees
-// directory means a run is in flight (or a stale worktree needs reconciling —
-// either way, not drained). A missing directory means zero live runs.
-func (d *DrainDetector) liveWorktrees() (int, error) {
+// liveWorktreeList returns the paths of all entries under
+// `.harmonik/worktrees`. Any entry is treated, fail-closed, as a live
+// in-progress run (defense #4). A missing directory means zero live runs.
+func (d *DrainDetector) liveWorktreeList() ([]string, error) {
 	dir := filepath.Join(d.projectDir, ".harmonik", "worktrees")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil
+			return nil, nil
 		}
-		return 0, fmt.Errorf("readdir %q: %w", dir, err)
+		return nil, fmt.Errorf("readdir %q: %w", dir, err)
 	}
-	return len(entries), nil
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		paths = append(paths, filepath.Join(dir, e.Name()))
+	}
+	return paths, nil
 }
 
-// unsure builds an UNSURE DrainResult carrying reason.
+// ---------------------------------------------------------------------------
+// GenuineDrain — backward-compat bridge wrapper (P1-b / P1-c will remove it)
+// ---------------------------------------------------------------------------
+
+// GenuineDrain calls GatherDrainFacts and derives the legacy DrainResult
+// verdict for callers in quiesce.go. It will be removed when:
+//   - P1-b (hk-kj7d) deletes the auto-park tick that calls it via SetDrain.
+//   - P1-c (hk-zqb3) rewrites HandleDaemonSleep to call GatherDrainFacts
+//     directly.
+//
+// Bridge semantics:
+//   - facts.Unsure || any axis error → UNSURE (fail-closed, stays awake).
+//   - any work axis non-empty         → HAS_WORK.
+//   - all axes empty, not Unsure      → DRAINED.
+func (d *DrainDetector) GenuineDrain(ctx context.Context) (DrainResult, error) {
+	facts, err := d.GatherDrainFacts(ctx)
+	if err != nil {
+		return DrainResult{
+			State:   DrainStateUnsure,
+			Reasons: append(facts.UnsureReasons, "GatherDrainFacts error: "+err.Error()),
+		}, err
+	}
+	if facts.Unsure {
+		return DrainResult{State: DrainStateUnsure, Reasons: facts.UnsureReasons}, nil
+	}
+
+	hasWork := facts.Ready.Count > 0 ||
+		facts.InProgress.Count > 0 ||
+		facts.Runs.RegistryCount > 0 ||
+		facts.Runs.LiveWorktrees > 0 ||
+		facts.Queued.Count > 0 ||
+		len(facts.Queued.PausedQueues) > 0 ||
+		len(facts.Queued.FailedArchives) > 0 ||
+		len(facts.BlockedByOpenEpic) > 0
+
+	if hasWork {
+		return DrainResult{State: DrainStateHasWork}, nil
+	}
+	return DrainResult{State: DrainStateDrained}, nil
+}
+
+// unsure builds an UNSURE DrainResult carrying reason. Used by GenuineDrain
+// tests that rely on the legacy helper.
 func unsure(reason string) DrainResult {
 	return DrainResult{State: DrainStateUnsure, Reasons: []string{reason}}
-}
-
-// flagWork records a HAS_WORK reason and promotes the result to HAS_WORK unless
-// it is already UNSURE (UNSURE dominates — both keep the fleet awake, but
-// UNSURE signals doubt rather than confirmed work).
-func (r *DrainResult) flagWork(reason string) {
-	if r.State != DrainStateUnsure {
-		r.State = DrainStateHasWork
-	}
-	r.Reasons = append(r.Reasons, reason)
-}
-
-// merge folds other into r. If other is UNSURE, r becomes UNSURE; else if other
-// is HAS_WORK, r becomes HAS_WORK (unless already UNSURE). Reasons concatenate.
-func (r *DrainResult) merge(other DrainResult) {
-	switch other.State {
-	case DrainStateUnsure:
-		r.State = DrainStateUnsure
-	case DrainStateHasWork:
-		if r.State != DrainStateUnsure {
-			r.State = DrainStateHasWork
-		}
-	}
-	r.Reasons = append(r.Reasons, other.Reasons...)
 }

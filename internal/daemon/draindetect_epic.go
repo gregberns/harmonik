@@ -1,16 +1,31 @@
 package daemon
 
-// draindetect_epic.go — the ledger/epic axis of the genuine-drain oracle
-// (hk-95uf defense #2 epic-portion; Phase B, hk-rai2).
+// draindetect_epic.go — the ledger/epic axes of the drain-fact oracle
+// (hk-pfr4 / hk-95uf defense #2 epic-portion; codename:fleet-state P1-a).
 //
-// Phase A shipped a DRAINED stub here so the queue/run/ready axes could stand
-// alone. Phase B (this file) makes the axis real: an OPEN epic with a
-// non-terminal child that the ledger says it blocks is genuine pending work
-// that `br ready` cannot see (the child reports status "blocked" while the epic
-// is open), so it MUST keep the fleet awake. Without this axis a false DRAINED
-// could sleep the fleet with an open-epic ready-but-blocked child — the
-// Phase-A reviewer's explicit safety flag, and the reason M1 (quiesce, which
-// wires this oracle to the sleep decision) sequences AFTER this bead.
+// gatherEpicFacts computes two axes in one pass over open epics:
+//
+//   - BlockedByOpenEpic: ALL open-epic → otherwise-ready-child edges (defense
+//     #2 epic-portion). The child reports "blocked" while the epic is open, so
+//     `br ready` cannot see it — genuine pending work. ALL edges are emitted
+//     (no short-circuit on the first match — the captain needs the full picture).
+//
+//   - NeedsDecomposition: childless OPEN epics — epics for which no child edge
+//     exists in the ledger. These are the ONE generative category: they are
+//     flagged for the captain to act on (decompose the epic into tasks), not
+//     scored or auto-decided.
+//
+// Design notes:
+//   - Takes already-fetched open/blocked bead lists (from GatherDrainFacts) to
+//     avoid a second br round-trip for the same data.
+//   - Fail-closed: a nil lister/ledger seam, a bead-list error, or a
+//     BlocksEdge error yields an error that GatherDrainFacts maps to Unsure.
+//     DRAINED is never asserted from this function — it is a fact reporter.
+//   - The old scanOpenEpics short-circuited on the first blocked edge
+//     (draindetect_epic.go:92-96 in the prior shape). That short-circuit is
+//     REMOVED so the bundle is complete: 5 in-progress + 3 blocked edges, not
+//     "first edge found, stop reading."
+//   - MUST NOT consult `kerf next` (defense #5).
 
 import (
 	"context"
@@ -25,38 +40,24 @@ import (
 // question).
 const beadTypeEpic = "epic"
 
-// scanOpenEpics evaluates defense #2's epic-portion: for every OPEN epic E, a
-// non-terminal child C that the ledger declares E blocks (BlocksEdge(E,C)) is
-// otherwise-ready work hidden from `br ready` — C reports status "blocked"
-// while E is open. Any such child ⇒ HAS_WORK.
+// gatherEpicFacts evaluates the epic axes from the pre-fetched open and
+// blocked bead lists.
 //
-// Candidate-child universe: the union of the ledger's open and blocked beads.
-// The open list supplies the epics (an epic has no blockers, so it reports
-// "open") and the blocked list supplies the children waiting on an open
-// blocker; both are scanned so the axis is robust to either status convention.
-// A child blocked by an open epic AND some other open bead is still flagged —
-// fail-safe favours HAS_WORK, and any such child is genuine pending work.
+// It returns:
+//   - blocked: all EpicBlockEdge pairs where an open epic blocks a
+//     non-terminal candidate child (defense #2 epic-portion).
+//   - needsDecomp: IDs of open epics that have NO child edges in the ledger
+//     (the generative axis — the captain must decompose them).
+//   - err: non-nil if a BlocksEdge call failed (caller marks Unsure).
 //
-// Fail-closed (load-bearing — a false DRAINED could sleep the fleet with work
-// pending): a nil lister/ledger seam, a bead-list error, or a BlocksEdge error
-// yields UNSURE / a wrapped error (GenuineDrain maps both to UNSURE). DRAINED
-// is returned ONLY on positive emptiness: no open epic blocks any non-terminal
-// child. This axis MUST NOT consult `kerf next` (external, false-empty for
-// works lacking a bead_filter); `br ready --limit 0` and the ledger are
-// authoritative (defense #5).
-func (d *DrainDetector) scanOpenEpics(ctx context.Context) (DrainResult, error) {
-	if d.lister == nil || d.ledger == nil {
-		// The epic axis cannot prove positive emptiness without its seams.
-		// Fail-closed: UNSURE keeps the fleet awake. A nil seam must NEVER
-		// license a DRAINED verdict.
-		return unsure("ledger/epic axis not wired (lister/ledger nil)"), nil
-	}
-
-	open, err := d.lister.ListBeadsByStatus(ctx, string(core.CoarseStatusOpen))
-	if err != nil {
-		return DrainResult{}, fmt.Errorf("list open beads: %w", err)
-	}
-
+// The caller (GatherDrainFacts) is responsible for the nil-seam guard: this
+// function is only called when d.lister != nil && d.ledger != nil.
+func (d *DrainDetector) gatherEpicFacts(
+	ctx context.Context,
+	open []core.BeadRecord,
+	blocked []core.BeadRecord,
+) (blockedEdges []EpicBlockEdge, needsDecomp []core.BeadID, err error) {
+	// Extract open epics from the open list.
 	var epics []core.BeadRecord
 	for _, b := range open {
 		if b.BeadType == beadTypeEpic {
@@ -64,37 +65,41 @@ func (d *DrainDetector) scanOpenEpics(ctx context.Context) (DrainResult, error) 
 		}
 	}
 	if len(epics) == 0 {
-		// No open epics ⇒ this axis is positively empty.
-		return DrainResult{State: DrainStateDrained}, nil
+		// No open epics — both axes are positively empty.
+		return nil, nil, nil
 	}
 
-	blocked, err := d.lister.ListBeadsByStatus(ctx, string(core.CoarseStatusBlocked))
-	if err != nil {
-		return DrainResult{}, fmt.Errorf("list blocked beads: %w", err)
-	}
-
-	// Candidate children = open ∪ blocked. The first open-epic→child blocks
-	// edge is sufficient to flag HAS_WORK and short-circuit (the reasons string
-	// is diagnostic; one is enough to keep the fleet awake).
+	// Candidate children = open ∪ blocked. We check all non-self candidates
+	// for each epic. The open list includes the epics themselves, so we skip
+	// same-ID pairs below.
 	candidates := make([]core.BeadRecord, 0, len(open)+len(blocked))
 	candidates = append(candidates, open...)
 	candidates = append(candidates, blocked...)
 
 	for _, e := range epics {
+		epicHasChild := false
 		for _, c := range candidates {
 			if c.BeadID == e.BeadID {
 				continue
 			}
-			blocks, err := d.ledger.BlocksEdge(ctx, e.BeadID, c.BeadID)
-			if err != nil {
-				return DrainResult{}, fmt.Errorf("BlocksEdge(%s,%s): %w", e.BeadID, c.BeadID, err)
+			blocks, blockErr := d.ledger.BlocksEdge(ctx, e.BeadID, c.BeadID)
+			if blockErr != nil {
+				return nil, nil, fmt.Errorf("BlocksEdge(%s,%s): %w", e.BeadID, c.BeadID, blockErr)
 			}
 			if blocks {
-				res := DrainResult{State: DrainStateDrained}
-				res.flagWork(fmt.Sprintf("open epic %s blocks otherwise-ready child %s", e.BeadID, c.BeadID))
-				return res, nil
+				epicHasChild = true
+				blockedEdges = append(blockedEdges, EpicBlockEdge{
+					EpicID:  e.BeadID,
+					ChildID: c.BeadID,
+				})
+				// No break — emit ALL edges (no short-circuit).
 			}
 		}
+		if !epicHasChild {
+			// This open epic has no children in the ledger: the captain must
+			// decompose it to generate actionable tasks.
+			needsDecomp = append(needsDecomp, e.BeadID)
+		}
 	}
-	return DrainResult{State: DrainStateDrained}, nil
+	return blockedEdges, needsDecomp, nil
 }

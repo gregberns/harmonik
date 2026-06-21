@@ -1,12 +1,15 @@
 package daemon
 
-// draindetect_test.go — RED-then-GREEN unit tests for the genuine-drain oracle
-// (hk-95uf). These are pure in-package unit tests in internal/daemon (NOT
+// draindetect_test.go — unit tests for the drain-fact oracle (hk-95uf /
+// hk-pfr4). These are pure in-package unit tests in internal/daemon (NOT
 // daemon-boot scenario tests), so they carry no 30-minute commit-budget risk.
 //
-// Phase A (this file's first block): queue / run-state / ready axes — the
-// minimal-viable oracle. Phase B tests (ledger/epic axis) live alongside in the
-// second block once scanOpenEpics is implemented.
+// Phase A: queue / run-state / ready axes (via GenuineDrain bridge).
+// Phase B: ledger/epic axis (via GenuineDrain bridge).
+// Phase C (hk-pfr4): GatherDrainFacts — new axes (InProgress / Draft /
+//
+//	Deferred / NeedsDecomposition / NeedsAttention), no-short-circuit,
+//	Unsure-as-flag, counts + lists.
 
 import (
 	"context"
@@ -389,5 +392,265 @@ func TestGenuineDrain_TrulyDrainedReturnsDrained(t *testing.T) {
 	}
 	if got.State != DrainStateDrained {
 		t.Fatalf("State = %q; want %q (reasons: %v)", got.State, DrainStateDrained, got.Reasons)
+	}
+}
+
+// --- Phase C tests: GatherDrainFacts (hk-pfr4) ---------------------------
+
+// fullLister is an openBeadLister fake that serves beads by status and also
+// lets tests assert which statuses were queried.
+type fullLister struct {
+	byStatus map[string][]core.BeadRecord
+	errByStatus map[string]error // per-status errors
+	queried  []string
+}
+
+func (f *fullLister) ListBeadsByStatus(_ context.Context, status string) ([]core.BeadRecord, error) {
+	f.queried = append(f.queried, status)
+	if f.errByStatus != nil {
+		if err, ok := f.errByStatus[status]; ok {
+			return nil, err
+		}
+	}
+	return f.byStatus[status], nil
+}
+
+// minimalBead builds a BeadRecord with enough fields for filter / projection
+// logic (does NOT satisfy BeadRecord.Valid() since AuditTrailRef is empty).
+func minimalBead(id core.BeadID, status core.CoarseStatus, btype string, labels ...string) core.BeadRecord {
+	return core.BeadRecord{
+		BeadID:   id,
+		Title:    string(id),
+		BeadType: btype,
+		Status:   status,
+		Labels:   labels,
+	}
+}
+
+// drainedFullLister returns a fullLister that answers every status with nil
+// (empty) — positively drained on all ledger axes.
+func drainedFullLister() *fullLister {
+	return &fullLister{byStatus: map[string][]core.BeadRecord{}}
+}
+
+// TestGatherDrainFacts_InProgressAxisPopulated asserts the in_progress axis is
+// populated from the ledger — a bucket GenuineDrain dropped entirely.
+func TestGatherDrainFacts_InProgressAxisPopulated(t *testing.T) {
+	lister := &fullLister{byStatus: map[string][]core.BeadRecord{
+		string(core.CoarseStatusInProgress): {
+			minimalBead("hk-running-1", core.CoarseStatusInProgress, "task"),
+			minimalBead("hk-running-2", core.CoarseStatusInProgress, "bug"),
+		},
+	}}
+	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+
+	facts, err := d.GatherDrainFacts(context.Background())
+	if err != nil {
+		t.Fatalf("GatherDrainFacts: unexpected error: %v", err)
+	}
+	if facts.InProgress.Count != 2 {
+		t.Errorf("InProgress.Count = %d; want 2", facts.InProgress.Count)
+	}
+	if len(facts.InProgress.Beads) != 2 {
+		t.Errorf("len(InProgress.Beads) = %d; want 2", len(facts.InProgress.Beads))
+	}
+}
+
+// TestGatherDrainFacts_DraftAndDeferredAxes asserts draft and deferred buckets
+// are populated (both are dropped by GenuineDrain / br ready).
+func TestGatherDrainFacts_DraftAndDeferredAxes(t *testing.T) {
+	lister := &fullLister{byStatus: map[string][]core.BeadRecord{
+		string(core.CoarseStatusDraft):    {minimalBead("hk-draft", core.CoarseStatusDraft, "task")},
+		string(core.CoarseStatusDeferred): {minimalBead("hk-def", core.CoarseStatusDeferred, "task")},
+	}}
+	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+
+	facts, err := d.GatherDrainFacts(context.Background())
+	if err != nil {
+		t.Fatalf("GatherDrainFacts: unexpected error: %v", err)
+	}
+	if facts.Draft.Count != 1 {
+		t.Errorf("Draft.Count = %d; want 1", facts.Draft.Count)
+	}
+	if facts.Deferred.Count != 1 {
+		t.Errorf("Deferred.Count = %d; want 1", facts.Deferred.Count)
+	}
+}
+
+// TestGatherDrainFacts_NeedsAttentionVisible asserts that beads carrying the
+// needs-attention label surface in the NeedsAttention axis. ReadyAll silently
+// excludes them; the fact bundle makes the exclusion visible.
+func TestGatherDrainFacts_NeedsAttentionVisible(t *testing.T) {
+	lister := &fullLister{byStatus: map[string][]core.BeadRecord{
+		string(core.CoarseStatusOpen): {
+			minimalBead("hk-attention", core.CoarseStatusOpen, "task", labelNeedsAttention),
+			minimalBead("hk-normal", core.CoarseStatusOpen, "task"),
+		},
+	}}
+	d := NewDrainDetector(drainedReady(), lister, drainedLedger(), NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+
+	facts, err := d.GatherDrainFacts(context.Background())
+	if err != nil {
+		t.Fatalf("GatherDrainFacts: unexpected error: %v", err)
+	}
+	if facts.NeedsAttention.Count != 1 {
+		t.Errorf("NeedsAttention.Count = %d; want 1", facts.NeedsAttention.Count)
+	}
+	if len(facts.NeedsAttention.Beads) != 1 || facts.NeedsAttention.Beads[0].ID != "hk-attention" {
+		t.Errorf("NeedsAttention.Beads = %v; want [{hk-attention ...}]", facts.NeedsAttention.Beads)
+	}
+}
+
+// TestGatherDrainFacts_NeedsDecomposition asserts that a childless open epic
+// is reported in NeedsDecomposition — the one generative axis. An open epic
+// WITH a child must NOT appear in NeedsDecomposition.
+func TestGatherDrainFacts_NeedsDecomposition(t *testing.T) {
+	const (
+		epicWithChild    = core.BeadID("hk-epic-with-child")
+		epicWithoutChild = core.BeadID("hk-epic-childless")
+		childA           = core.BeadID("hk-child")
+	)
+	lister := &fullLister{byStatus: map[string][]core.BeadRecord{
+		string(core.CoarseStatusOpen): {
+			openEpic(epicWithChild),
+			openEpic(epicWithoutChild),
+		},
+		string(core.CoarseStatusBlocked): {blockedChild(childA)},
+	}}
+	ledger := &fakeLedger{edges: map[[2]core.BeadID]bool{
+		{epicWithChild, childA}: true,
+	}}
+	d := NewDrainDetector(drainedReady(), lister, ledger, NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+
+	facts, err := d.GatherDrainFacts(context.Background())
+	if err != nil {
+		t.Fatalf("GatherDrainFacts: unexpected error: %v", err)
+	}
+	if len(facts.NeedsDecomposition) != 1 || facts.NeedsDecomposition[0] != epicWithoutChild {
+		t.Errorf("NeedsDecomposition = %v; want [%s]", facts.NeedsDecomposition, epicWithoutChild)
+	}
+}
+
+// TestGatherDrainFacts_NoShortCircuitOnMultipleEdges asserts the no-short-
+// circuit invariant: ALL open-epic → child edges are emitted. GenuineDrain's
+// scanOpenEpics returned on the first blocked edge; GatherDrainFacts must
+// walk to completion.
+func TestGatherDrainFacts_NoShortCircuitOnMultipleEdges(t *testing.T) {
+	const (
+		epic   = core.BeadID("hk-epic")
+		childA = core.BeadID("hk-child-a")
+		childB = core.BeadID("hk-child-b")
+	)
+	lister := &fullLister{byStatus: map[string][]core.BeadRecord{
+		string(core.CoarseStatusOpen): {openEpic(epic)},
+		string(core.CoarseStatusBlocked): {
+			blockedChild(childA),
+			blockedChild(childB),
+		},
+	}}
+	ledger := &fakeLedger{edges: map[[2]core.BeadID]bool{
+		{epic, childA}: true,
+		{epic, childB}: true,
+	}}
+	d := NewDrainDetector(drainedReady(), lister, ledger, NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+
+	facts, err := d.GatherDrainFacts(context.Background())
+	if err != nil {
+		t.Fatalf("GatherDrainFacts: unexpected error: %v", err)
+	}
+	if len(facts.BlockedByOpenEpic) != 2 {
+		t.Errorf("BlockedByOpenEpic len = %d; want 2 (all edges, no short-circuit)", len(facts.BlockedByOpenEpic))
+	}
+}
+
+// TestGatherDrainFacts_UnsureIsFlagNotVerdict asserts that an axis read error
+// sets facts.Unsure = true but does NOT prevent other axes from being populated.
+// GenuineDrain short-circuited to UNSURE; GatherDrainFacts must continue.
+func TestGatherDrainFacts_UnsureIsFlagNotVerdict(t *testing.T) {
+	sentinel := errors.New("br ready: db locked")
+	lister := &fullLister{byStatus: map[string][]core.BeadRecord{
+		string(core.CoarseStatusInProgress): {
+			minimalBead("hk-running", core.CoarseStatusInProgress, "task"),
+		},
+	}}
+	d := NewDrainDetector(&fakeReady{err: sentinel}, lister, drainedLedger(), NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+
+	facts, err := d.GatherDrainFacts(context.Background())
+	if !errors.Is(err, sentinel) {
+		t.Errorf("err = %v; want wrapped %v", err, sentinel)
+	}
+	if !facts.Unsure {
+		t.Errorf("facts.Unsure = false; want true (ready axis failed)")
+	}
+	if len(facts.UnsureReasons) == 0 {
+		t.Errorf("UnsureReasons is empty; want at least one reason")
+	}
+	// In-progress axis must still be populated despite the ready-axis error.
+	if facts.InProgress.Count != 1 {
+		t.Errorf("InProgress.Count = %d; want 1 (axes continue past error)", facts.InProgress.Count)
+	}
+}
+
+// TestGatherDrainFacts_QueueAxisNonTerminalItem asserts the queued axis
+// captures non-terminal items correctly (regression against scanQueues path).
+func TestGatherDrainFacts_QueueAxisNonTerminalItem(t *testing.T) {
+	qs := NewQueueStore()
+	qs.SetQueue(&queue.Queue{
+		Name:   queue.QueueNameMain,
+		Status: queue.QueueStatusActive,
+		Groups: []queue.Group{{
+			GroupIndex: 0, Kind: queue.GroupKindStream, Status: queue.GroupStatusActive,
+			Items: []queue.Item{
+				{BeadID: "hk-pending", Status: queue.ItemStatusPending},
+				{BeadID: "hk-done", Status: queue.ItemStatusCompleted},
+			},
+		}},
+	})
+	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), NewRunRegistry(), qs, emptyTestProjectDir(t))
+
+	facts, err := d.GatherDrainFacts(context.Background())
+	if err != nil {
+		t.Fatalf("GatherDrainFacts: unexpected error: %v", err)
+	}
+	if facts.Queued.Count != 1 {
+		t.Errorf("Queued.Count = %d; want 1 (one non-terminal item)", facts.Queued.Count)
+	}
+	if len(facts.Queued.NonTerminalItems) != 1 || facts.Queued.NonTerminalItems[0].BeadID != "hk-pending" {
+		t.Errorf("Queued.NonTerminalItems = %v; want [{main hk-pending pending}]", facts.Queued.NonTerminalItems)
+	}
+}
+
+// TestGatherDrainFacts_WorktreePathsPopulated asserts live worktree paths
+// appear in RunAxis (the old liveWorktrees returned a count; new shape returns
+// paths so the captain can identify stale-vs-live worktrees).
+func TestGatherDrainFacts_WorktreePathsPopulated(t *testing.T) {
+	dir := emptyTestProjectDir(t)
+	wtDir := filepath.Join(dir, ".harmonik", "worktrees", "019e-fake-run")
+	if err := os.MkdirAll(wtDir, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), NewRunRegistry(), NewQueueStore(), dir)
+
+	facts, err := d.GatherDrainFacts(context.Background())
+	if err != nil {
+		t.Fatalf("GatherDrainFacts: unexpected error: %v", err)
+	}
+	if facts.Runs.LiveWorktrees != 1 {
+		t.Errorf("Runs.LiveWorktrees = %d; want 1", facts.Runs.LiveWorktrees)
+	}
+	if len(facts.Runs.WorktreePaths) != 1 {
+		t.Errorf("Runs.WorktreePaths = %v; want 1 path", facts.Runs.WorktreePaths)
+	}
+}
+
+// TestGatherDrainFacts_GatheredAtIsSet asserts GatheredAt is non-zero.
+func TestGatherDrainFacts_GatheredAtIsSet(t *testing.T) {
+	d := NewDrainDetector(drainedReady(), drainedFullLister(), drainedLedger(), NewRunRegistry(), NewQueueStore(), emptyTestProjectDir(t))
+	facts, err := d.GatherDrainFacts(context.Background())
+	if err != nil {
+		t.Fatalf("GatherDrainFacts: unexpected error: %v", err)
+	}
+	if facts.GatheredAt.IsZero() {
+		t.Errorf("GatheredAt is zero; want a non-zero timestamp")
 	}
 }

@@ -661,6 +661,13 @@ EXAMPLES
 
 	// harmonik digest [--project DIR] [--json] [--since EVENT_ID] [--full]
 	// Pure-Go status sheet builder; snapshot mode requires no daemon.
+	// harmonik state [--json] — typed StateSnapshot aggregator (hk-gv04 P2-a).
+	// Spec: specs/system-state.md §4.  Emits JSON or compact human table.
+	// Daemon-up: live socket RPC ("state" op); daemon-down: disk fallback.
+	if len(os.Args) >= 2 && os.Args[1] == "state" {
+		return runStateSubcommand(os.Args[2:])
+	}
+
 	// Missing .harmonik/ → exit 7. Spec: specs/digest-command.md; CL-030..033.
 	// Bead ref: hk-1qrty.
 	if len(os.Args) >= 2 && os.Args[1] == "digest" {

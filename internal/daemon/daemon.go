@@ -1496,6 +1496,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Bead ref: hk-ohiaf.
 	var concurrencyCtrl *ConcurrencyController
 
+	// drainDet is the daemon-singleton DrainDetector. Constructed inside the
+	// ProjectDir/BrPath block and reused by both the quiesce arbiter (P1-c)
+	// and the state handler (hk-gv04 P2-a). Nil in unit-test mode.
+	var drainDet *DrainDetector
+
 	// crewHandler is the daemon-singleton crew-start/stop handler. Constructed
 	// inside the ProjectDir block (for the socket listener) and also injected into
 	// the workloop deps so the schedule tick can fire spawn-crew actions through
@@ -1551,7 +1556,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				// Wire the SS-INV-005 veto gate into the quiesce arbiter (P1-c,
 				// hk-zqb3): non-force `harmonik sleep` is refused when GatherDrainFacts
 				// reports dispatchable or in-flight work that would be stranded.
-				drainDet := NewDrainDetector(brAdapterForHandler, brAdapterForHandler, newBRQueueLedger(brAdapterForHandler), sharedRunRegistry, qs, cfg.ProjectDir)
+				drainDet = NewDrainDetector(brAdapterForHandler, brAdapterForHandler, newBRQueueLedger(brAdapterForHandler), sharedRunRegistry, qs, cfg.ProjectDir)
 				quiesceArbiter.SetDrain(drainDet)
 			}
 		}
@@ -1616,13 +1621,19 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// bare label. Cosmetic only — crew identity keys stay bare.
 		crewHandler = NewCrewHandler(cfg.HandlerBinary, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RemoteControlPrefix, cfg.Substrate, opPauseCtrl)
 
+		// Build the live state handler (hk-gv04 P2-a: `harmonik state`).
+		// drainDet may be nil if ProjectDir was empty above — LiveStateBuilder
+		// tolerates that and sets read_quality.unsure=true in the response.
+		stateBuilder := NewLiveStateBuilder(sharedRunRegistry, qs, drainDet, concurrencyCtrl, cfg.MaxConcurrent, cfg.ProjectDir)
+		stateHandler := NewLiveStateSocketHandler(stateBuilder)
+
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done
 		// channel to avoid goroutine leaks; error is discarded per the same
 		// reasoning as defer ln.Close() discards errors in RunSocketListener.
 		socketDone := make(chan error, 1)
 		go func() {
-			socketDone <- RunSocketListenerWithSleepWake(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, crewHandler, quiesceArbiter, queueHandler)
+			socketDone <- RunSocketListenerWithState(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, crewHandler, quiesceArbiter, stateHandler, queueHandler)
 		}()
 		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 	}

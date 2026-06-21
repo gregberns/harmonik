@@ -214,13 +214,15 @@ observed; `1` argument error; `2` flag misuse (flag-only); `3` ack-timeout
 - **ping** (self-service liveness) — the SAME live agent fires `ping --nonce N`
   then runs `await-ack --kind ping --nonce N`; the ACK lands in its own pane and
   it reads `await-ack`'s exit code. Use a FRESH unique nonce per ping.
-- **restart-now (SELF)** — the firing agent is `/clear`-wiped before its ACK
-  lands, so it CANNOT wait for its own ACK. An **external** process must run
-  `await-ack`. Use the wrapper **`scripts/captain-tools/keeper-restart-verified.sh
-  <agent>`**: it fires `restart-now`, parses the printed `nonce=rn-…`, then runs
-  `await-ack --kind restart` for the SAME agent and exits non-zero (logging) if the
-  ACK never lands. Wire keeper/captain SELF restarts through this wrapper instead
-  of bare `restart-now`.
+- **restart-now (SELF)** — `harmonik keeper restart-now --agent <self>` is now
+  **synchronous and self-verifying in-process** (`internal/keeper/restartnow.go`):
+  the one `restart-now` call resolves the pane, runs the freshness check, injects
+  the ACK line, then drives the `/clear` + `/session-resume`, all before returning.
+  Because the verification happens inside the same call, you do NOT need an external
+  watcher for a SELF restart — fire `restart-now` and read its exit code. The old
+  external wrapper `scripts/captain-tools/keeper-restart-verified.sh` is RETIRED
+  (off the native launch path per review B; the script file is deleted by ES8). Do
+  NOT wire SELF restarts through it.
 - **restart-now (CREW, captain watching)** — the captain tells the crew to
   restart, fires `restart-now --agent <crew>`, captures the nonce, then runs
   `await-ack --agent <crew> --kind restart` directly. The captain's process is
@@ -458,10 +460,10 @@ harmonik keeper clear-dispatching --agent <agent>
 # Captain-initiated restart (write HANDOFF-captain.md first, include KEEPER nonce)
 harmonik keeper restart-now --agent captain [--project DIR]
 
-# Confirm a restart actually landed (external watcher; survives the agent's /clear).
-# For a SELF restart use the wrapper — it fires restart-now, parses nonce, awaits ACK:
-scripts/captain-tools/keeper-restart-verified.sh captain [--project DIR]
-# For a CREW restart the captain runs await-ack directly after restart-now:
+# Confirm a restart actually landed.
+# SELF restart: restart-now is synchronous + self-verifying in-process — no
+# external wrapper needed (keeper-restart-verified.sh is RETIRED, deleted by ES8).
+# CREW restart: the captain runs await-ack directly after restart-now:
 harmonik keeper await-ack --agent <crew> --nonce rn-<millis> --kind restart --timeout 30s
 
 # Self-service liveness check (live agent — fresh nonce each time):

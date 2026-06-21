@@ -18,6 +18,7 @@ USAGE
 SUBCOMMANDS
   version          Print semver + commit hash and exit (also: --version)
   init             Bootstrap a new project: create .harmonik/, init beads DB, write configs, render AGENTS.md
+  start            Launch a captain or crew with the keeper auto-armed (start captain | start crew <name>)
   sync-assets      Reconcile a project's instruction files with the binary's embedded assets (dry-run by default)
   run              Legacy/solo-bootstrap: submit to a running daemon, else run inline and exit
   handler          Inspect or resume a paused handler

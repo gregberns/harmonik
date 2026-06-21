@@ -39,6 +39,32 @@ Your stable identity is `$HARMONIK_AGENT` (== `crew_name` from your handoff).
 
 ---
 
+## § How you were launched (operator reference)
+
+The captain (or operator) starts you with the native umbrella verb:
+
+```bash
+harmonik start crew <name>          # simple form: one bare positional = your name
+harmonik start crew --name paul --queue paul-q --mission /tmp/paul.md   # advanced
+```
+
+- **Positional-XOR-flags (D2):** the simple form is a bare name and NOTHING else;
+  the moment any `--flag` appears, the name MUST move to `--name` (no bare
+  positional alongside flags). Mixing them is a hard error
+  (`positional name not allowed alongside flags — use --name paul`).
+- **`--queue` defaults to `<name>-q`** (one named queue per crew). `harmonik start
+  crew paul` binds you to `paul-q`.
+- **`--mission` is operator-supplied and OPTIONAL — never auto-stubbed (D3).**
+  Decisive rule: a **fresh** `harmonik start crew` reads ONLY the `--mission` flag
+  and IGNORES any on-disk `.harmonik/crew/missions/<name>.md` — so a stale mission
+  left by a prior same-named crew can NEVER be silently reused. A **keeper-restart**
+  re-hydration is the exception (Step 1 / § Self-restart): there you DO re-read the
+  on-disk mission, because it is your OWN just-written mission, not a stale one.
+- `harmonik crew start <name> …` remains as the back-compat entry point;
+  `start crew` is the easy alias. The keeper rides along automatically.
+
+---
+
 ## § Boot sequence (do this first, in order)
 
 > **MINIMAL LOAD (load-bearing).** Do NOT load fleet-level state (`ROADMAP.md`,

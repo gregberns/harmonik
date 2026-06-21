@@ -385,9 +385,11 @@ comm -23 \
 - **The captain MUST NOT exit or stop its own session on a keeper context-warning.** The captain's
   keeper injects a specific warn: *"[KEEPER WARNING — automated] Proactive context checkpoint — you have ample buffer remaining. Keep working. At a clean checkpoint only: write HANDOFF-captain.md (include the KEEPER nonce), then run: harmonik keeper restart-now --agent captain, keep the turn open, and stop typing. The keeper drives the clear→resume cycle."* Follow that procedure exactly (see
   STARTUP.md "On-WARN procedure"). A captain that obeys `/quit` exits permanently —
-  there is no supervised respawn wrapper. Launch via
-  `~/.claude/captain-tools/captain-launch.sh` so the session has a stable
-  `--session-id` (the keeper rebinds to this). A bare `claude --remote-control
+  there is no supervised respawn wrapper. Launch via `harmonik start captain`
+  (native; alias `harmonik captain`; NO env var, NO script path — `--project`
+  defaults to cwd) so the session has a stable `--session-id` (the keeper rebinds
+  to this). The old `~/.claude/captain-tools/captain-launch.sh` is RETIRED in favor
+  of this command. A bare `claude --remote-control
   captain` with no `--session-id` cannot be cycled and is the historical
   dead-captain bug. **`restart-now` does not WIDEN the band** — it bypasses only the
   act-pct idle gate. The operator HARD-NO is on WIDENING only; LOWERING the band to

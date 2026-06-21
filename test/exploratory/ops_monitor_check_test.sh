@@ -7,6 +7,8 @@
 #
 # DONE-CHECK:
 #   [x] daemon-down          → immediate signal
+#   [x] supervisor-down      → immediate signal (supervisor not running; no auto-revive)
+#   [x] fleet-down           → immediate signal (both daemon and supervisor down; hk-pen9)
 #   [x] paused-queue         → immediate signal (non-inert crew online)
 #   [x] single-mode          → immediate signal (max_concurrent==1)
 #   [x] stale-crew ×2 misses → digest signal
@@ -125,19 +127,21 @@ setup_fixture() {
   local hk_qs_json='{"status":"ok"}'
   local hk_ql_json='{"queues":[],"max_concurrent":4}'
   local hk_cw_json=''
+  local hk_sv_json='{"schema_version":1,"running":true,"status":"running"}'
   local state_json=''
   local events_content=''
   local br_ready_json='[]'   # `br ready --limit 0 --json` output for the stub
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --hk-queue-status-exit)   hk_qs_exit="$2";    shift 2 ;;
-      --hk-queue-status-json)   hk_qs_json="$2";    shift 2 ;;
-      --hk-queue-list-json)     hk_ql_json="$2";    shift 2 ;;
-      --hk-comms-who-json)      hk_cw_json="$2";    shift 2 ;;
-      --state-json)             state_json="$2";    shift 2 ;;
-      --events-jsonl)           events_content="$2";shift 2 ;;
-      --br-ready-json)          br_ready_json="$2"; shift 2 ;;
+      --hk-queue-status-exit)      hk_qs_exit="$2";    shift 2 ;;
+      --hk-queue-status-json)      hk_qs_json="$2";    shift 2 ;;
+      --hk-queue-list-json)        hk_ql_json="$2";    shift 2 ;;
+      --hk-comms-who-json)         hk_cw_json="$2";    shift 2 ;;
+      --hk-supervise-status-json)  hk_sv_json="$2";    shift 2 ;;
+      --state-json)                state_json="$2";    shift 2 ;;
+      --events-jsonl)              events_content="$2";shift 2 ;;
+      --br-ready-json)             br_ready_json="$2"; shift 2 ;;
       *) echo "setup_fixture: unknown arg $1" >&2; return 1 ;;
     esac
   done
@@ -160,6 +164,8 @@ setup_fixture() {
   ql_json_escaped=$(printf '%s' "$hk_ql_json" | sed "s/'/'\\\\''/g")
   local cw_json_escaped
   cw_json_escaped=$(printf '%s' "$hk_cw_json" | sed "s/'/'\\\\''/g")
+  local sv_json_escaped
+  sv_json_escaped=$(printf '%s' "$hk_sv_json" | sed "s/'/'\\\\''/g")
 
   local stub_bin="$tmpdir/bin/harmonik"
   mkdir -p "$tmpdir/bin"
@@ -172,6 +178,7 @@ HK_QS_EXIT=${qs_exit}
 HK_QS_JSON='${qs_json_escaped}'
 HK_QL_JSON='${ql_json_escaped}'
 HK_CW_JSON='${cw_json_escaped}'
+HK_SV_JSON='${sv_json_escaped}'
 COMMS_LOG='${comms_log}'
 
 case "\$*" in
@@ -184,6 +191,9 @@ case "\$*" in
     ;;
   "comms who --json"|"comms who")
     if [[ -n "\$HK_CW_JSON" ]]; then printf '%s\n' "\$HK_CW_JSON"; fi
+    ;;
+  "supervise status --json"|"supervise status")
+    printf '%s\n' "\$HK_SV_JSON"
     ;;
   comms\ send\ *)
     args=("\$@")
@@ -716,10 +726,68 @@ PROJ=$(setup_fixture \
 run_check "$PROJ" > /dev/null 2>&1
 SCHEMA=$(python3 -c "import json; print(json.load(open('$PROJ/.harmonik/ops-monitor/latest.json')).get('schema_version'))")
 assert_eq "schema_version=2" "2" "$SCHEMA"
-for CHK in daemon-up paused-queues single-mode crew-fresh review-gate backlog-ready lull; do
+for CHK in daemon-up supervisor-up paused-queues single-mode crew-fresh review-gate backlog-ready lull; do
   assert_check_state "checks.$CHK present (green)" \
     "$PROJ/.harmonik/ops-monitor/latest.json" "$CHK" "ok"
 done
+rm -rf "$PROJ"
+
+# ── Test 16: supervisor-down → immediate signal ───────────────────────────────
+# Daemon is up but supervisor is not running. DaemonWatchdog is dead so the fleet
+# has no auto-revive path for the daemon if it crashes (hk-pen9).
+echo ""
+echo "=== Test 16: supervisor-down — immediate comms ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":false,"status":"stopped"}' \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "supervisor-down stdout IMMEDIATE" "IMMEDIATE"       "$OUTPUT"
+assert_contains "supervisor-down stdout signal"    "supervisor-down" "$OUTPUT"
+assert_json_list_contains "immediate_signals has supervisor-down" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "supervisor-down"
+assert_json_bool "latest.json daemon_up=true"      "$PROJ/.harmonik/ops-monitor/latest.json" "daemon_up" "true"
+assert_json_bool "latest.json supervisor_up=false" "$PROJ/.harmonik/ops-monitor/latest.json" "supervisor_up" "false"
+assert_check_state "checks.supervisor-up flagged" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "supervisor-up" "flag"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "supervisor-down: comms sent"
+  assert_contains "supervisor-down comms [IMMEDIATE]" "[IMMEDIATE]"       "$(cat "$LOG")"
+  assert_contains "supervisor-down comms signal"      "supervisor-down"   "$(cat "$LOG")"
+else
+  fail "supervisor-down: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 17: fleet-down (daemon + supervisor both down) → immediate ────────────
+# Both daemon and supervisor are dead. No auto-revive, no dispatch: fleet-down.
+echo ""
+echo "=== Test 17: fleet-down (daemon + supervisor both down) — immediate ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-exit 17 \
+  --hk-queue-status-json '' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":false,"status":"stopped"}' \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "fleet-down stdout IMMEDIATE"  "IMMEDIATE"  "$OUTPUT"
+assert_contains "fleet-down stdout signal"     "fleet-down" "$OUTPUT"
+assert_json_list_contains "immediate_signals has fleet-down" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "fleet-down"
+assert_json_bool "latest.json daemon_up=false"     "$PROJ/.harmonik/ops-monitor/latest.json" "daemon_up" "false"
+assert_json_bool "latest.json supervisor_up=false" "$PROJ/.harmonik/ops-monitor/latest.json" "supervisor_up" "false"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "fleet-down: comms sent"
+  assert_contains "fleet-down comms [IMMEDIATE]" "[IMMEDIATE]"  "$(cat "$LOG")"
+  assert_contains "fleet-down comms signal"      "fleet-down"   "$(cat "$LOG")"
+else
+  fail "fleet-down: expected comms send, got none"
+fi
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

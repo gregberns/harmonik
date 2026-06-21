@@ -3,6 +3,9 @@
 #
 # Checks (in order):
 #   1. daemon-up        — harmonik queue status exit 17 = daemon down
+#   1a. supervisor-up   — harmonik supervise status --json; file-surface, no daemon needed.
+#                         supervisor-down is [IMMEDIATE]; when BOTH daemon and supervisor are
+#                         down the fleet has no self-healing path (hk-pen9: 7h11m gap).
 #   2. paused-queues    — main queue or active crew queue paused-by-failure
 #   3. single-mode      — max_concurrent == 1 (throughput bottleneck)
 #   4. crew-staleness   — comms last_seen >150s; signals after 2 consecutive misses;
@@ -45,7 +48,7 @@
 #          The snapshot includes a `checks` digest map: name -> {state:ok|flag, detail}
 #          so the captain can read one structured signal-vs-digest object.
 # Sends:   harmonik comms --from ops-monitor --to captain --topic ops-monitor
-#            immediate : daemon-down | paused-queue | single-mode | review-bypass
+#            immediate : daemon-down | supervisor-down | paused-queue | single-mode | review-bypass
 #            digest    : ready-unstaffed | idle-fleet | backlog-ready  (≤15m cooldown)
 #            all-green : write json, send nothing
 #
@@ -145,6 +148,29 @@ if [[ $hk_exit -eq 17 ]]; then
   DAEMON_UP=false
 fi
 
+# ── Check 1a: Supervisor up ──────────────────────────────────────────────────
+# File-surface: reads supervisor.pid + kill(0). No daemon required.
+# supervisor-down is [IMMEDIATE]: when the supervisor is dead, DaemonWatchdog
+# is also dead, so daemon deaths become permanent until a human intervenes.
+# When BOTH daemon and supervisor are down this is fleet-down (hk-pen9).
+
+SUPERVISOR_UP=false
+supervisor_exit=0
+SUPERVISOR_STATUS_JSON=$(hk supervise status --json 2>/dev/null) || supervisor_exit=$?
+if [[ $supervisor_exit -eq 0 && -n "$SUPERVISOR_STATUS_JSON" ]]; then
+  sv_running=$(printf '%s' "$SUPERVISOR_STATUS_JSON" | py3 "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print('true' if d.get('running') else 'false')
+except Exception:
+    print('false')
+" 2>/dev/null || echo "false")
+  if [[ "$sv_running" == "true" ]]; then
+    SUPERVISOR_UP=true
+  fi
+fi
+
 # ── Collect data (skip if daemon is down) ─────────────────────────────────────
 
 if [[ "$DAEMON_UP" == "true" ]]; then
@@ -228,6 +254,7 @@ proj               = '$PROJ'
 ts                 = '$TS'
 ts_epoch           = int('$TS_EPOCH')
 daemon_up          = '$DAEMON_UP' == 'true'
+supervisor_up      = '$SUPERVISOR_UP' == 'true'
 stale_thresh            = int('$STALE_THRESHOLD')
 miss_limit              = int('$MISS_LIMIT')
 idle_thresh             = int('$IDLE_THRESHOLD')
@@ -516,6 +543,11 @@ digest_signals    = []
 
 if not daemon_up:
     immediate_signals.append('daemon-down')
+if not supervisor_up:
+    # supervisor-down: DaemonWatchdog is also dead → no auto-revive path (hk-pen9).
+    # Emit fleet-down when both are absent so the captain knows recovery is manual.
+    sig = 'fleet-down:no-auto-revive' if not daemon_up else 'supervisor-down'
+    immediate_signals.append(sig)
 if paused_queues:
     immediate_signals.append('paused-queue:' + ','.join(paused_queues))
 if single_mode:
@@ -545,6 +577,8 @@ all_green = not immediate_signals and not digest_signals
 checks = {
     'daemon-up':     {'state': 'ok' if daemon_up else 'flag',
                       'detail': 'reachable' if daemon_up else 'queue status exit 17'},
+    'supervisor-up': {'state': 'ok' if supervisor_up else 'flag',
+                      'detail': 'running' if supervisor_up else 'not running — no auto-revive (hk-pen9)'},
     'paused-queues': {'state': 'flag' if paused_queues else 'ok',
                       'detail': ','.join(paused_queues) if paused_queues else 'none'},
     'single-mode':   {'state': 'flag' if single_mode else 'ok',
@@ -592,6 +626,7 @@ snapshot = {
     'schema_version': 2,
     'ts': ts,
     'daemon_up': daemon_up,
+    'supervisor_up': supervisor_up,
     'max_concurrent': max_concurrent,
     'single_mode': single_mode,
     'queues': queues,

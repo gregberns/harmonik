@@ -81,6 +81,9 @@ CREW_MSG_ACTIVE_WINDOW=900  # seconds: treat crew as active if it posted an agen
 REVIEW_GATE_WINDOW=10 # review-gate: examine the last N run_completed run_ids
 REVIEW_GATE_GRACE=180 # seconds: a run_completed younger than this is skipped (its
                       # reviewer_verdict may still be in flight — avoids false bypass)
+REVIEWER_STALE_WINDOW=3600 # seconds: a reviewer that launched but produced no verdict
+                            # and has emitted no event for this long is considered
+                            # abandoned — suppress bypass alert (hk-usz0 follow-up to hk-ijtw)
 
 # Inert queues / dead-crew glob patterns — paused-by-failure on these NEVER fires an
 # immediate alert. Add exact names or fnmatch-style globs. Editable here.
@@ -242,6 +245,7 @@ qlist_raw          = '''$QUEUE_LIST_JSON'''
 ready_count        = int('$READY_COUNT')
 review_window      = int('$REVIEW_GATE_WINDOW')
 review_grace       = int('$REVIEW_GATE_GRACE')
+reviewer_stale_window = int('$REVIEWER_STALE_WINDOW')
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -267,6 +271,7 @@ failed_run_ids       = set() # run_ids whose terminal event is run_failed (merge
 # reviewers (8 run_ids) from legitimately review-less auto-closes (0 of 181 request a
 # review node). node_id lives under .payload; run_id is top-level.
 review_requested_ts  = {}  # run_id -> epoch of the earliest review-node dispatch request
+run_last_event_ts    = {}  # run_id -> epoch of the most-recent event seen for that run (any type)
 
 def _ev_epoch(_tw, _dt):
     _ts_clean = _tw[:19].replace('T', ' ')
@@ -342,6 +347,16 @@ if _os.path.isfile(_events_path):
                             # keep the EARLIEST review-request epoch for the run
                             if _rid not in review_requested_ts or _e < review_requested_ts[_rid]:
                                 review_requested_ts[_rid] = _e
+
+                # Track the most-recent event timestamp per run_id (any event type).
+                # Used to detect abandoned reviewers: reviewer_launched with no subsequent
+                # verdict and no event at all for reviewer_stale_window seconds (hk-usz0).
+                _any_rid = _ev.get('run_id') or (_payload.get('run_id') if isinstance(_payload, dict) else '') or ''
+                _any_tw = _ev.get('timestamp_wall', '')
+                if _any_rid and _any_tw:
+                    _any_e = _ev_epoch(_any_tw, _dt)
+                    if _any_e > run_last_event_ts.get(_any_rid, 0):
+                        run_last_event_ts[_any_rid] = _any_e
             except Exception:
                 pass
     except Exception:
@@ -377,6 +392,13 @@ for _rid, _lts in _recent_review:
         continue  # too young to judge — verdict may still arrive
     if _rid in failed_run_ids:
         continue  # run_failed terminal: merged nothing, cannot be a bypass
+    # Stale/abandoned reviewer: reviewer_launched but no verdict AND no event for
+    # reviewer_stale_window seconds — the reviewer session died without a terminal
+    # event (no run_failed, no reviewer_verdict). Not a merge-safety hole; suppress
+    # to avoid alert-fatigue on IMMEDIATE (hk-usz0, follow-up to hk-ijtw).
+    _last_ev_ts = run_last_event_ts.get(_rid, _lts)
+    if (ts_epoch - _last_ev_ts) > reviewer_stale_window and _rid not in verdict_run_ids:
+        continue  # abandoned reviewer: silent past stale window, merged nothing
     if _rid not in verdict_run_ids:
         review_bypass_run_ids.append(_rid)
 

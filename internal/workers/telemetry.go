@@ -8,10 +8,12 @@ package workers
 // output. It mirrors health.go's shape (typed payload + core.RegisterEventType in
 // init() + EmitFunc). WR2 adds the CommandRunner-driven collector (CollectReport
 // + the inline darwin `sh -c` collector script), mirroring health.go's
-// runner/emit shape. The timer/poll-loop wiring still lands in WR3, and
-// problem-flag derivation (Problems) in WR4.
+// runner/emit shape. WR4 adds problem-flag derivation (deriveProblems →
+// Problems: orphaned_claude / disk_pressure / worktree_leak) plus the
+// `worktrees=` collector line + WorktreeCount field that feeds worktree_leak.
+// The timer/poll-loop wiring still lands in WR3.
 //
-// Bead refs: hk-9wbl (WR1), hk-ec9v (WR2).
+// Bead refs: hk-9wbl (WR1), hk-ec9v (WR2), hk-b2f9 (WR4).
 
 import (
 	"bytes"
@@ -60,6 +62,11 @@ type WorkerReportPayload struct {
 	DiskFreeMB int64 `json:"disk_free_mb"`
 	// ClaudeProcs is the count of running `claude --session-id` processes.
 	ClaudeProcs int `json:"claude_procs"`
+	// WorktreeCount is the number of `git worktree list` entries on the worker's
+	// repo (including the main worktree). Used to detect worktree_leak: a count
+	// above the expected baseline means run worktrees were not cleaned up. WR4
+	// added the collector `worktrees=` line that feeds this.
+	WorktreeCount int `json:"worktree_count"`
 
 	// "Are there issues?" — problem flags (presence = problem detected),
 	// e.g. "orphaned_claude", "worktree_leak", "disk_pressure".
@@ -90,6 +97,12 @@ func darwinCollectorScript(repoPath string) string {
 		`echo "swap=$(sysctl -n vm.swapusage)"`,
 		`echo "disk=$(df -m '` + repoPath + `' | tail -1)"`,
 		`echo "claude=$(pgrep -f 'claude --session-id' | wc -l | tr -d ' ')"`,
+		// worktree_leak detection (WR4): count `git worktree list` entries on the
+		// worker repo. The `^worktree ` porcelain prefix is one line per worktree
+		// (the main worktree plus every linked run worktree). repoPath is quoted to
+		// tolerate spaces; a `|| true` keeps a non-git path from failing the whole
+		// collector (it just yields 0).
+		`echo "worktrees=$(git -C '` + repoPath + `' worktree list --porcelain 2>/dev/null | grep -c '^worktree ' || true)"`,
 		`echo "pagesize=$(sysctl -n hw.pagesize)"`,
 	}, "\n")
 }
@@ -103,15 +116,19 @@ func darwinCollectorScript(repoPath string) string {
 // suppresses emission without error), same `runner.Command(ctx, ...)` +
 // bytes.Buffer stdout-capture shape.
 //
-// CollectReport does NOT derive Problems — that is WR4's problem-detection pass,
-// which will cross-check ClaudeProcs against Registry.inFlight and add a Registry
-// parameter at that point. Until then no Registry is needed here (matching
-// RunHealthCheck's split: it takes reg only because it mutates enabled-state).
+// CollectReport derives Problems (WR4) via deriveProblems before emit: it
+// cross-checks ClaudeProcs against reg.InFlight (orphaned_claude), DiskFreeMB
+// against diskFloorMB (disk_pressure), and WorktreeCount against the worktree
+// baseline (worktree_leak), derived from w.MaxSlots (1 main worktree + max_slots
+// concurrent run worktrees). reg may be nil — deriveProblems treats a nil
+// Registry as "no in-flight runs" so the orphaned_claude check still fires.
+// Passing diskFloorMB <= 0 selects the package default (DefaultDiskFloorMB);
+// WR3 will thread a configured floor through here.
 //
 // On a runner failure the collector error is returned and no event is emitted.
 //
-// Bead ref: hk-ec9v (WR2).
-func CollectReport(ctx context.Context, runner tmux.CommandRunner, w Worker, emit EmitFunc) (WorkerReportPayload, error) {
+// Bead refs: hk-ec9v (WR2), hk-b2f9 (WR4).
+func CollectReport(ctx context.Context, runner tmux.CommandRunner, w Worker, reg *Registry, diskFloorMB int64, emit EmitFunc) (WorkerReportPayload, error) {
 	cmd := runner.Command(ctx, "sh", "-c", darwinCollectorScript(w.RepoPath))
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -127,11 +144,118 @@ func CollectReport(ctx context.Context, runner tmux.CommandRunner, w Worker, emi
 
 	p.WorkerName = w.Name
 	p.SampledAt = time.Now().UTC().Format(time.RFC3339)
-	// TODO(WR4): derive p.Problems here (orphaned_claude / worktree_leak /
-	// disk_pressure), which will require a *Registry to read inFlight.
+	p.Problems = deriveProblems(p, reg, diskFloorMB, w.MaxSlots)
 
 	emitWorkerReport(ctx, p, emit)
 	return p, nil
+}
+
+// DefaultDiskFloorMB is the disk_pressure floor used when CollectReport is
+// called with diskFloorMB <= 0: DiskFreeMB below this many MB flags
+// disk_pressure. It is a sensible default (2 GB) for Phase 1; WR3 will make the
+// floor configurable per worker via workers.yaml. Kept a package const here —
+// NOT hardcoded deep in the derivation — so the config knob can override it.
+const DefaultDiskFloorMB int64 = 2048
+
+// DefaultMaxSlotsFallback is the max-slots assumed for the worktree_leak baseline
+// when a worker's MaxSlots is unset (<= 0). It is a sane mid-range concurrency so
+// the derived baseline (1 + maxSlots) stays >= 2 — never so low that a single
+// legitimate run worktree trips the leak signal.
+const DefaultMaxSlotsFallback = 4
+
+// worktreeBaseline computes the expected `git worktree list` entry count below or
+// at which worktree_leak does NOT fire. The baseline is 1 (the main worktree /
+// checkout) + maxSlots (the concurrent run worktrees a fully-loaded worker holds,
+// one per in-flight slot). A healthy worker at full load therefore holds exactly
+// 1+maxSlots worktrees and must NOT flag; only a count above that signals a leak.
+//
+// When maxSlots is unset (<= 0) it falls back to DefaultMaxSlotsFallback. The
+// baseline is floored at 2 so a single legitimate run worktree never trips the
+// signal regardless of input.
+func worktreeBaseline(maxSlots int) int {
+	if maxSlots <= 0 {
+		maxSlots = DefaultMaxSlotsFallback
+	}
+	baseline := 1 + maxSlots
+	if baseline < 2 {
+		baseline = 2
+	}
+	return baseline
+}
+
+// Problem-flag string constants — the values that land in WorkerReportPayload.Problems.
+const (
+	problemOrphanedClaude = "orphaned_claude"
+	problemDiskPressure   = "disk_pressure"
+	problemWorktreeLeak   = "worktree_leak"
+)
+
+// deriveProblems computes the "are there issues?" flags for a worker report
+// (worker-report Phase 1, §"Problem detection"). It is pure: no I/O, no command
+// execution — it reads only the parsed snapshot rep, the live Registry slot
+// count, and the disk floor.
+//
+// Flags returned (in a stable order):
+//
+//   - orphaned_claude — rep.ClaudeProcs > 0 AND the Registry reports no harmonik
+//     run in flight. This is the chani-handoff symptom: claude exits but a
+//     process lingers after the run completes, so it is unaccounted for.
+//
+//     KNOWN FALSE-POSITIVE SURFACE (Phase 1, advisory report-only — no action is
+//     taken on this flag): the ClaudeProcs count also catches an operator-run
+//     claude on the box, the health-check permission-probe claude, and the brief
+//     post-run window before a just-finished claude exits. So orphaned_claude can
+//     fire benignly; it is a signal to look, not a fault. A dwell/grace guard
+//     (require the orphan to persist across N samples, or skip the known probe
+//     PIDs) would go here in Phase 2 to suppress those transients.
+//
+//     SINGLE-WORKER ASSUMPTION (V1): the Registry tracks one global inFlight
+//     counter, not a per-worker map (NewRegistry holds at most one Worker). So
+//     "no in-flight run for THIS worker" is read as reg.InFlight() == 0 against
+//     that single counter. When Phase 2 makes the Registry multi-worker this
+//     must become a per-worker lookup keyed by rep.WorkerName. A nil reg is
+//     treated as zero in-flight (the orphaned check still fires).
+//
+//   - disk_pressure — rep.DiskFreeMB < floor, where floor is diskFloorMB, or
+//     DefaultDiskFloorMB when diskFloorMB <= 0.
+//
+//   - worktree_leak — rep.WorktreeCount > the worker's worktree baseline, where
+//     baseline = 1 (the main worktree / checkout) + maxSlots (the concurrent run
+//     worktrees a fully-loaded worker holds, one per in-flight slot). The
+//     collector emits the count from
+//     `git worktree list --porcelain | grep -c '^worktree '` (the main worktree
+//     plus every linked run worktree); a count above the baseline means run
+//     worktrees were not cleaned up (the ghost-worktree class). maxSlots <= 0
+//     (unset) falls back to DefaultMaxSlotsFallback — see worktreeBaseline.
+//
+// Returns nil (not an empty slice) when no problem is detected, so the
+// json:"problems,omitempty" tag drops the field entirely on a clean report.
+func deriveProblems(rep WorkerReportPayload, reg *Registry, diskFloorMB int64, maxSlots int) []string {
+	var problems []string
+
+	inFlight := 0
+	if reg != nil {
+		inFlight = reg.InFlight()
+	}
+	if rep.ClaudeProcs > 0 && inFlight == 0 {
+		problems = append(problems, problemOrphanedClaude)
+	}
+
+	floor := diskFloorMB
+	if floor <= 0 {
+		floor = DefaultDiskFloorMB
+	}
+	if rep.DiskFreeMB < floor {
+		problems = append(problems, problemDiskPressure)
+	}
+
+	// baseline = 1 (main worktree) + maxSlots (concurrent run worktrees); a
+	// fully-loaded healthy worker holds exactly that many and must not flag.
+	if rep.WorktreeCount > worktreeBaseline(maxSlots) {
+		problems = append(problems, problemWorktreeLeak)
+	}
+
+	return problems
 }
 
 // emitWorkerReport marshals and emits a worker_report event. No-op when emit is
@@ -180,6 +304,7 @@ const bytesPerMB = 1024 * 1024
 //	swap=total = 2048.00M  used = 512.50M  free = 1535.50M ...  # sysctl -n vm.swapusage
 //	disk=/dev/disk1 ... 123456 ... /Volumes/x   # df -m <repo_path> | tail -1
 //	claude=3                     # pgrep -f 'claude --session-id' | wc -l
+//	worktrees=2                  # git worktree list --porcelain | grep -c '^worktree ' (WR4)
 //
 // Conversions:
 //   - memtotal bytes → MB (÷ 1MiB).
@@ -316,6 +441,20 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 				return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: claude: %w", err)
 			}
 			p.ClaudeProcs = n
+		case "worktrees":
+			// `git worktree list --porcelain | grep -c '^worktree '` (WR4). Optional:
+			// an empty value (older collector, or grep -c with no match piped to a
+			// non-numeric) parses as 0 rather than erroring, so the field degrades
+			// gracefully against pre-WR4 collector output.
+			if val == "" {
+				p.WorktreeCount = 0
+				break
+			}
+			n, err := strconv.Atoi(val)
+			if err != nil {
+				return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: worktrees: %w", err)
+			}
+			p.WorktreeCount = n
 		}
 	}
 

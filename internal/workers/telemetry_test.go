@@ -262,8 +262,10 @@ func reportTestWorker() Worker {
 }
 
 // TestCollectReport_PopulatesPayloadAndEmits asserts CollectReport parses the
-// canned collector output, stamps WorkerName + SampledAt, emits a worker_report
-// event with the same payload, and does NOT derive Problems (WR4).
+// canned collector output, stamps WorkerName + SampledAt, and emits a
+// worker_report event with the same payload. A Registry with one in-flight slot
+// is passed so the canned claude=3 does NOT trip orphaned_claude, isolating this
+// test to the resource-snapshot path (problem derivation is covered separately).
 func TestCollectReport_PopulatesPayloadAndEmits(t *testing.T) {
 	runner := collectorRunner{stdout: cannedCollectorStdout}
 
@@ -273,7 +275,10 @@ func TestCollectReport_PopulatesPayloadAndEmits(t *testing.T) {
 	}
 	emit := captureReportEmit(&captured)
 
-	got, err := CollectReport(context.Background(), runner, reportTestWorker(), emit)
+	// Registry with one reserved slot → InFlight()==1 → claude=3 is accounted for.
+	reg := NewRegistry(Config{Version: 1, Workers: []Worker{reportTestWorker()}})
+	reg.SelectWorker()
+	got, err := CollectReport(context.Background(), runner, reportTestWorker(), reg, DefaultDiskFloorMB, emit)
 	if err != nil {
 		t.Fatalf("CollectReport returned unexpected error: %v", err)
 	}
@@ -307,8 +312,10 @@ func TestCollectReport_PopulatesPayloadAndEmits(t *testing.T) {
 	if got.ClaudeProcs != 3 {
 		t.Errorf("ClaudeProcs: got %d, want 3", got.ClaudeProcs)
 	}
+	// DiskFreeMB 400000 >= floor, claude=3 accounted for by the in-flight slot,
+	// no worktrees= line → 0 → no leak. So a clean report carries no Problems.
 	if len(got.Problems) != 0 {
-		t.Errorf("Problems: got %v, want empty (WR4 owns derivation)", got.Problems)
+		t.Errorf("Problems: got %v, want empty for a clean accounted report", got.Problems)
 	}
 
 	if len(captured) != 1 {
@@ -333,7 +340,7 @@ func TestCollectReport_PopulatesPayloadAndEmits(t *testing.T) {
 // without error and still returns the parsed payload.
 func TestCollectReport_NilEmitNoError(t *testing.T) {
 	runner := collectorRunner{stdout: cannedCollectorStdout}
-	got, err := CollectReport(context.Background(), runner, reportTestWorker(), nil)
+	got, err := CollectReport(context.Background(), runner, reportTestWorker(), nil, DefaultDiskFloorMB, nil)
 	if err != nil {
 		t.Fatalf("CollectReport (nil emit): unexpected error: %v", err)
 	}
@@ -353,7 +360,7 @@ func TestCollectReport_RunnerFailure(t *testing.T) {
 	}
 	emit := captureReportEmit(&captured)
 
-	got, err := CollectReport(context.Background(), runner, reportTestWorker(), emit)
+	got, err := CollectReport(context.Background(), runner, reportTestWorker(), nil, DefaultDiskFloorMB, emit)
 	if err == nil {
 		t.Fatal("CollectReport: expected error on runner failure, got nil")
 	}
@@ -411,5 +418,179 @@ func TestParseWorkerReport_Malformed(t *testing.T) {
 				t.Fatalf("error %q does not contain %q", err.Error(), tt.wantInErr)
 			}
 		})
+	}
+}
+
+// ---- WR4 (hk-b2f9): deriveProblems flag tests ----
+
+// regWithInFlight builds a single-worker Registry and reserves `n` slots so
+// InFlight() == n, exercising the orphaned_claude cross-check. MaxSlots is set
+// high enough that all n reservations succeed.
+func regWithInFlight(n int) *Registry {
+	w := reportTestWorker()
+	w.MaxSlots = n + 4
+	reg := NewRegistry(Config{Version: 1, Workers: []Worker{w}})
+	for i := 0; i < n; i++ {
+		reg.SelectWorker()
+	}
+	return reg
+}
+
+func TestDeriveProblems(t *testing.T) {
+	const floor = int64(2048)
+	// The fully-loaded healthy worker holds 1 (main worktree) + maxSlots run
+	// worktrees. With maxSlots=4 the baseline is 5: count 5 must NOT flag, 6 must.
+	const maxSlots = 4
+
+	tests := []struct {
+		name        string
+		rep         WorkerReportPayload
+		reg         *Registry
+		diskFloorMB int64
+		maxSlots    int
+		want        []string
+	}{
+		{
+			name:        "clean — no flags",
+			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: 50000, WorktreeCount: 1},
+			reg:         regWithInFlight(0),
+			diskFloorMB: floor,
+			maxSlots:    maxSlots,
+			want:        nil,
+		},
+		{
+			// claude lingers with zero in-flight runs → the chani-handoff symptom.
+			name:        "orphaned_claude — procs running, no in-flight",
+			rep:         WorkerReportPayload{ClaudeProcs: 1, DiskFreeMB: 50000, WorktreeCount: 1},
+			reg:         regWithInFlight(0),
+			diskFloorMB: floor,
+			maxSlots:    maxSlots,
+			want:        []string{"orphaned_claude"},
+		},
+		{
+			// Same procs, but a run is in flight → accounted for, no flag.
+			name:        "orphaned_claude NOT set — procs accounted for by in-flight",
+			rep:         WorkerReportPayload{ClaudeProcs: 3, DiskFreeMB: 50000, WorktreeCount: 1},
+			reg:         regWithInFlight(1),
+			diskFloorMB: floor,
+			maxSlots:    maxSlots,
+			want:        nil,
+		},
+		{
+			// nil Registry → treated as zero in-flight → orphaned fires.
+			name:        "orphaned_claude — nil registry treated as zero in-flight",
+			rep:         WorkerReportPayload{ClaudeProcs: 2, DiskFreeMB: 50000, WorktreeCount: 1},
+			reg:         nil,
+			diskFloorMB: floor,
+			maxSlots:    maxSlots,
+			want:        []string{"orphaned_claude"},
+		},
+		{
+			name:        "disk_pressure — below floor",
+			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: floor - 1, WorktreeCount: 1},
+			reg:         regWithInFlight(0),
+			diskFloorMB: floor,
+			maxSlots:    maxSlots,
+			want:        []string{"disk_pressure"},
+		},
+		{
+			name:        "disk_pressure NOT set — exactly at floor",
+			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: floor, WorktreeCount: 1},
+			reg:         regWithInFlight(0),
+			diskFloorMB: floor,
+			maxSlots:    maxSlots,
+			want:        nil,
+		},
+		{
+			// diskFloorMB <= 0 selects DefaultDiskFloorMB (2048).
+			name:        "disk_pressure — default floor when diskFloorMB <= 0",
+			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: DefaultDiskFloorMB - 1, WorktreeCount: 1},
+			reg:         regWithInFlight(0),
+			diskFloorMB: 0,
+			maxSlots:    maxSlots,
+			want:        []string{"disk_pressure"},
+		},
+		{
+			// A fully-loaded healthy worker holds 1+maxSlots worktrees and must NOT
+			// flag — this is the false-flag the off-by-one fix targets.
+			name:        "worktree_leak NOT set — fully loaded at 1+max_slots",
+			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: 50000, WorktreeCount: 1 + maxSlots},
+			reg:         regWithInFlight(0),
+			diskFloorMB: floor,
+			maxSlots:    maxSlots,
+			want:        nil,
+		},
+		{
+			// One worktree above the fully-loaded baseline (2+max_slots) → real leak.
+			name:        "worktree_leak — one above 1+max_slots baseline",
+			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: 50000, WorktreeCount: 2 + maxSlots},
+			reg:         regWithInFlight(0),
+			diskFloorMB: floor,
+			maxSlots:    maxSlots,
+			want:        []string{"worktree_leak"},
+		},
+		{
+			// maxSlots unset (0) → baseline falls back to 1+DefaultMaxSlotsFallback.
+			// Count at the fallback baseline must NOT flag; one above must.
+			name:        "worktree_leak NOT set — maxSlots unset uses fallback baseline",
+			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: 50000, WorktreeCount: 1 + DefaultMaxSlotsFallback},
+			reg:         regWithInFlight(0),
+			diskFloorMB: floor,
+			maxSlots:    0,
+			want:        nil,
+		},
+		{
+			name:        "worktree_leak — maxSlots unset, one above fallback baseline",
+			rep:         WorkerReportPayload{ClaudeProcs: 0, DiskFreeMB: 50000, WorktreeCount: 2 + DefaultMaxSlotsFallback},
+			reg:         regWithInFlight(0),
+			diskFloorMB: floor,
+			maxSlots:    0,
+			want:        []string{"worktree_leak"},
+		},
+		{
+			// All three conditions at once → stable order: orphaned, disk, worktree.
+			name:        "all three flags in stable order",
+			rep:         WorkerReportPayload{ClaudeProcs: 5, DiskFreeMB: 10, WorktreeCount: 99},
+			reg:         regWithInFlight(0),
+			diskFloorMB: floor,
+			maxSlots:    maxSlots,
+			want:        []string{"orphaned_claude", "disk_pressure", "worktree_leak"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveProblems(tt.rep, tt.reg, tt.diskFloorMB, tt.maxSlots)
+			if len(got) != len(tt.want) {
+				t.Fatalf("deriveProblems = %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("deriveProblems[%d] = %q, want %q (full: %v)", i, got[i], tt.want[i], got)
+				}
+			}
+		})
+	}
+}
+
+// TestParseWorkerReport_WorktreeCount asserts the WR4 collector `worktrees=` line
+// is parsed into WorktreeCount, and that its absence (pre-WR4 output) yields 0.
+func TestParseWorkerReport_WorktreeCount(t *testing.T) {
+	withWT := "load={1.0 1.0 1.0}\nclaude=0\nworktrees=7\n"
+	got, err := parseWorkerReport(withWT)
+	if err != nil {
+		t.Fatalf("parseWorkerReport: unexpected error: %v", err)
+	}
+	if got.WorktreeCount != 7 {
+		t.Errorf("WorktreeCount: got %d, want 7", got.WorktreeCount)
+	}
+
+	noWT := "load={1.0 1.0 1.0}\nclaude=0\n"
+	got2, err := parseWorkerReport(noWT)
+	if err != nil {
+		t.Fatalf("parseWorkerReport (no worktrees line): unexpected error: %v", err)
+	}
+	if got2.WorktreeCount != 0 {
+		t.Errorf("WorktreeCount: got %d, want 0 when line absent", got2.WorktreeCount)
 	}
 }

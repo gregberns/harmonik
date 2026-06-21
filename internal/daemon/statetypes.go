@@ -26,15 +26,15 @@ const (
 // StateSnapshot is the top-level output of `harmonik state [--json]`.
 // Spec: SS-001.
 type StateSnapshot struct {
-	SchemaVersion int           `json:"schema_version"` // always 1
-	CapturedAt    string        `json:"captured_at"`    // RFC-3339
-	Daemon        StateDaemon   `json:"daemon"`
-	ActivityLabel ActivityLabel `json:"activity_label"`
-	Runs          []StateRun    `json:"runs"`
-	Queues        []StateQueue  `json:"queues"`
+	SchemaVersion int            `json:"schema_version"` // always 1
+	CapturedAt    string         `json:"captured_at"`    // RFC-3339
+	Daemon        StateDaemon    `json:"daemon"`
+	ActivityLabel ActivityLabel  `json:"activity_label"`
+	Runs          []StateRun     `json:"runs"`
+	Queues        []StateQueue   `json:"queues"`
 	Sessions      []StateSession `json:"sessions"`
-	WorkAxes      *FleetFacts   `json:"work_axes"`
-	ReadQuality   ReadQuality   `json:"read_quality"`
+	WorkAxes      *FleetFacts    `json:"work_axes"`
+	ReadQuality   ReadQuality    `json:"read_quality"`
 }
 
 // StateDaemon is the daemon presence block. Spec: SS-001b.
@@ -71,8 +71,8 @@ type StateRun struct {
 // StateQueue is one entry in queues[].  Spec: SS-001b / SS-001a.
 type StateQueue struct {
 	Name               string `json:"name"`
-	Status             string `json:"status"`              // QueueStatus string
-	Source             string `json:"source"`              // "live" | "disk"
+	Status             string `json:"status"` // QueueStatus string
+	Source             string `json:"source"` // "live" | "disk"
 	ItemCount          int    `json:"item_count"`
 	ActiveCount        int    `json:"active_count"`
 	EffectiveWorkerCap int    `json:"effective_worker_cap"`
@@ -82,20 +82,20 @@ type StateQueue struct {
 
 // StateSession is one entry in sessions[].  Spec: SS-001b.
 type StateSession struct {
-	Agent          string           `json:"agent"`
-	SessionType    string           `json:"session_type"`    // "captain" | "crew"
-	Alive          bool             `json:"alive"`
-	SleepMarker    bool             `json:"sleep_marker"`
-	AtRest         bool             `json:"at_rest"`
-	PresenceSource string           `json:"presence_source"` // "registry" | "tmux" | "both"
+	Agent          string            `json:"agent"`
+	SessionType    string            `json:"session_type"` // "captain" | "crew"
+	Alive          bool              `json:"alive"`
+	SleepMarker    bool              `json:"sleep_marker"`
+	AtRest         bool              `json:"at_rest"`
+	PresenceSource string            `json:"presence_source"` // "registry" | "tmux" | "both"
 	Cognition      *SessionCognition `json:"cognition"`       // null when Alive==false
 }
 
 // SessionCognition is the typed shape of sessions[i].cognition.  Spec: SS-011.
 type SessionCognition struct {
 	Agent             string           `json:"agent"`
-	SessionID         string           `json:"session_id"`           // live (.sid)
-	SessionIDDeclared string           `json:"session_id_declared"`  // from crew registry
+	SessionID         string           `json:"session_id"`          // live (.sid)
+	SessionIDDeclared string           `json:"session_id_declared"` // from crew registry
 	SIDDesync         bool             `json:"sid_desync"`
 	Context           SessionContext   `json:"context"`
 	Signals           CognitionSignals `json:"signals"`
@@ -137,11 +137,11 @@ type TooBigSignal struct {
 type ContextStaticSignal struct {
 	GaugeAgeSeconds          int    `json:"gauge_age_seconds"`
 	StalenessRef             string `json:"staleness_ref"`
-	StalenessS               *int   `json:"staleness_s"`               // null if config knob unset
+	StalenessS               *int   `json:"staleness_s"`                // null if config knob unset
 	TokensUnchangedIntervals int    `json:"tokens_unchanged_intervals"` // 0 without gauge history
 	StuckMinIntervalsRef     string `json:"stuck_min_intervals_ref"`
-	StuckMinIntervals        *int   `json:"stuck_min_intervals"`        // null if config knob unset
-	Flat                     *bool  `json:"flat"`                       // null when StuckMinIntervals unset
+	StuckMinIntervals        *int   `json:"stuck_min_intervals"` // null if config knob unset
+	Flat                     *bool  `json:"flat"`                // null when StuckMinIntervals unset
 }
 
 // LoopDetectedSignal is the repeating-pattern signal.  Always null in v1.0

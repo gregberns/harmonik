@@ -52,18 +52,22 @@ that transitions a bead's `status` field. Those paths are the daemon's exclusive
 
 ```bash
 # List beads ready to claim (open, unblocked, not deferred)
-br ready --format json -l scope:bootstrap
+# ALWAYS pass --limit 0 (unlimited): bare `br ready` silently caps at 20.
+br ready --format json --limit 0 -l scope:bootstrap
 
 # Filter by label (AND logic)
-br ready --format json -l scope:bootstrap -l kind:scaffold
-
-# Limit results
-br ready --format json --limit 10
+br ready --format json --limit 0 -l scope:bootstrap -l kind:scaffold
 ```
 
 `br ready` returns beads whose dependencies are all satisfied and whose status is
 `open`. It natively excludes `draft`-status beads (harmonik's readiness gate for
 loaded-but-not-yet-dispatchable work).
+
+**RULE — `br ready` = dispatchable-now, NOT is-there-work.** Always pass `--limit 0`
+(bare `br ready` truncates at 20 and silently misleads you into thinking the queue is
+shorter — or empty — when it isn't). Never read an empty `br ready` as "fleet drained"
+without ALSO checking: in-progress beads + beads blocked-by-an-open-epic + paused/failed
+queues. A bead correctly hidden from `br ready` (blocked, in-progress, draft) is still work.
 
 ### Inspect a bead
 

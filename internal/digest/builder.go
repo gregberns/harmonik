@@ -355,9 +355,12 @@ func recentCommits(ctx context.Context, projectDir, gitPath string, n int) ([]Co
 	return commits, nil
 }
 
-// brReady runs `br ready --format json` and returns BeadSummary slice.
+// brReady runs `br ready --format json --limit 0` and returns BeadSummary slice.
+// --limit 0 (unlimited) is REQUIRED: bare `br ready` silently caps at 20, which
+// would truncate the boot digest's ready list and mislead agents into thinking
+// the ready queue is shorter than it is.
 func brReady(ctx context.Context, brPath, projectDir string) ([]BeadSummary, error) {
-	out, err := runCmd(ctx, brPath, "--format", "json", "ready")
+	out, err := runCmd(ctx, brPath, "--format", "json", "ready", "--limit", "0")
 	if err != nil {
 		return nil, err
 	}

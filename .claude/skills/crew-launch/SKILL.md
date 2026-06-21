@@ -288,9 +288,14 @@ This loop composes on `harmonik-dispatch`, scoped exclusively to `--queue <queue
 ```bash
 # List epic's children and intersect with ready (no blocked/draft)
 br list --format json --label codename:<epic_id>   # get beads in this epic's scope
-br ready --format json                      # get all ready beads
+br ready --format json --limit 0            # get ALL ready beads (--limit 0 = unlimited)
 # intersect the two sets
 ```
+
+**RULE — `br ready` = dispatchable-now, NOT is-there-work.** Always pass `--limit 0`:
+bare `br ready` silently caps at 20 and can make your epic's queue look shorter — or
+empty — when it isn't. Never read an empty `br ready` as "fleet drained" without ALSO
+checking in-progress beads + beads blocked-by-an-open-epic + paused/failed queues.
 
 Or use the kerf feed if the work is kerf-attached:
 

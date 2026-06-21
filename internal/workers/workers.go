@@ -77,6 +77,121 @@ type Config struct {
 	// for the recurring poll (remote-substrate WR3). Optional; when unset (<= 0)
 	// CollectReport selects the package default DefaultDiskFloorMB (2048 MB).
 	DiskFloorMB int64 `yaml:"disk_floor_mb"`
+
+	// --- worker-report Phase 2 (PB3): resource-breach detection knobs. ---
+	//
+	// All optional + defaulted (see the accessor methods below) so a deployment
+	// that omits them — or has no workers.yaml at all — behaves byte-identically
+	// to Phase 1. The poll loop reads these only when at least one worker is
+	// enabled AND BreachDetectionEnabled() is true.
+
+	// BreachDetectionEnabledPtr is the master switch (workers.yaml
+	// breach_detection_enabled). It is a *bool so "absent" (nil) can default to
+	// TRUE while still letting an operator write `breach_detection_enabled: false`
+	// to turn it off. Read via BreachDetectionEnabled().
+	BreachDetectionEnabledPtr *bool `yaml:"breach_detection_enabled"`
+
+	// BreachSampleIntervalSeconds is the fast cadence, in seconds, used while a
+	// run is in flight on a worker (workers.yaml breach_sample_interval_secs).
+	// Optional; <= 0 ⇒ DefaultBreachSampleIntervalSeconds (5s). Read via
+	// BreachSampleInterval().
+	BreachSampleIntervalSeconds int `yaml:"breach_sample_interval_secs"`
+
+	// BreachDwellSeconds / ClearDwellSeconds are the sustain windows the state
+	// machine waits before firing a breach / clear (workers.yaml
+	// breach_dwell_secs / clear_dwell_secs). Optional; <= 0 ⇒ the breach.go
+	// package defaults (20s / 15s). Read via BreachConfig().
+	BreachDwellSeconds int `yaml:"breach_dwell_secs"`
+	ClearDwellSeconds  int `yaml:"clear_dwell_secs"`
+
+	// CPUSource pre-wires the cpu_source: load|top knob (spec §"CPU source").
+	// Optional; empty ⇒ DefaultCPUSource ("load"). Only "load" is implemented in
+	// Phase 2; "top" is reserved for a later true-%CPU upgrade and currently
+	// behaves identically to "load". Read via CPUSourceOrDefault().
+	CPUSource string `yaml:"cpu_source"`
+
+	// Per-signal hysteresis thresholds (workers.yaml). All optional; <= 0 ⇒ the
+	// breach.go package defaults. Read via BreachConfig().
+	CPUEnter    float64 `yaml:"cpu_enter"`
+	CPUExit     float64 `yaml:"cpu_exit"`
+	MemFreeEnter float64 `yaml:"mem_free_enter"`
+	MemFreeExit  float64 `yaml:"mem_free_exit"`
+	SwapEnterMB  float64 `yaml:"swap_enter_mb"`
+	SwapExitMB   float64 `yaml:"swap_exit_mb"`
+}
+
+// Phase-2 breach-detection defaults applied by the accessor methods when the
+// corresponding workers.yaml field is unset. The threshold defaults live in
+// breach.go (DefaultCPUEnter etc.); these are the loop-cadence + switch
+// defaults that have no breach.go home.
+const (
+	// DefaultBreachSampleIntervalSeconds is the fast cadence used while a run is
+	// in flight (spec §"Config knobs": breach_sample_interval_secs: 5).
+	DefaultBreachSampleIntervalSeconds = 5
+	// DefaultCPUSource is the cpu_source applied when unset. "load" ships the
+	// load-ratio proxy (zero new collection); "top" is reserved.
+	DefaultCPUSource = "load"
+)
+
+// defaultBreachDetectionEnabled is the master-switch default when
+// breach_detection_enabled is absent from workers.yaml: TRUE (Phase 2 is on by
+// default for a configured worker; an operator opts OUT explicitly).
+const defaultBreachDetectionEnabled = true
+
+// BreachDetectionEnabled reports whether resource-breach detection is enabled,
+// applying defaultBreachDetectionEnabled (TRUE) when the workers.yaml field is
+// absent (nil pointer). An explicit `breach_detection_enabled: false` disables
+// it, returning Phase-1 behaviour (slow ticks, worker_report only).
+func (c Config) BreachDetectionEnabled() bool {
+	if c.BreachDetectionEnabledPtr == nil {
+		return defaultBreachDetectionEnabled
+	}
+	return *c.BreachDetectionEnabledPtr
+}
+
+// BreachSampleInterval returns the fast poll cadence used while a run is in
+// flight as a time.Duration, applying DefaultBreachSampleIntervalSeconds when
+// unset (<= 0). Single home for the default so no caller hardcodes the cadence.
+func (c Config) BreachSampleInterval() time.Duration {
+	secs := c.BreachSampleIntervalSeconds
+	if secs <= 0 {
+		secs = DefaultBreachSampleIntervalSeconds
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// CPUSourceOrDefault returns the configured cpu_source, applying
+// DefaultCPUSource ("load") when unset. Only "load" is implemented; "top" is
+// accepted and pre-wired but behaves as "load" in Phase 2.
+func (c Config) CPUSourceOrDefault() string {
+	if c.CPUSource == "" {
+		return DefaultCPUSource
+	}
+	return c.CPUSource
+}
+
+// BreachConfig assembles a breach.BreachConfig from the Phase-2 workers.yaml
+// knobs. Every field is passed through as-is; the zero value of any field
+// selects the breach.go package default inside NewBreachDetector
+// (BreachConfig.withDefaults), so an unset knob defaults there rather than
+// here. Dwell seconds <= 0 map to a zero Duration ⇒ the breach.go default.
+func (c Config) BreachConfig() BreachConfig {
+	dwell := func(secs int) time.Duration {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	return BreachConfig{
+		BreachDwell: dwell(c.BreachDwellSeconds),
+		ClearDwell:  dwell(c.ClearDwellSeconds),
+		CPUEnter:    c.CPUEnter,
+		CPUExit:     c.CPUExit,
+		MemEnter:    c.MemFreeEnter,
+		MemExit:     c.MemFreeExit,
+		SwapEnter:   c.SwapEnterMB,
+		SwapExit:    c.SwapExitMB,
+	}
 }
 
 // DefaultReportIntervalSeconds is the worker-report poll cadence applied when

@@ -199,7 +199,11 @@ type signalSpec struct {
 	over  func(value, threshold float64) bool
 }
 
-// higherIsWorse / lowerIsWorse are the two comparison directions.
+// higherIsWorse / lowerIsWorse are the two comparison directions. Note the
+// boundary is ASYMMETRIC by design: value==enter does NOT arm (strict >/<), while
+// value==exit DOES recover (because underExit = !over(value, exit), so equality
+// counts as under). This biases toward recovery, avoiding a stuck breach when a
+// value settles exactly on the exit threshold.
 func higherIsWorse(value, threshold float64) bool { return value > threshold }
 func lowerIsWorse(value, threshold float64) bool  { return value < threshold }
 

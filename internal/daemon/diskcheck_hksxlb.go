@@ -9,16 +9,21 @@ package daemon
 //
 //   - runPeriodicDiskCheck(ctx, deps) — called once per work-loop poll tick.
 //     Rate-limited to diskCheckInterval (default 10 min) for the probe.
-//     When disk is below the watermark, sets deps.diskLow = true, emits a
-//     disk_low event, and runs `go clean -cache` reactively. When disk
-//     recovers, clears deps.diskLow.
 //
-//     NOTE: the proactive 60-min go-cache reap (former "Sub-step B") was
-//     removed (hk-guez stopgap) — it ran `go clean -cache` unconditionally,
-//     racing in-flight merge-builds and causing merge_build_failed. Only the
-//     reactive below-watermark reap remains.
+//     Sub-step A — reactive reap: when disk is below the watermark, sets
+//     deps.diskLow = true, emits a disk_low event, and runs `go clean -cache`
+//     only when no merge-build is in flight (runRegistry.Len()==0). If a
+//     merge-build IS in flight, the reap is deferred to the next tick and a
+//     warning is logged instead of corrupting the build (hk-guez fix for the
+//     stopgap in 5c2276ca).
+//
+//     Sub-step B — proactive reap (restored by hk-guez): when disk is healthy,
+//     runs `go clean -cache` every goCacheCleanInterval (default 60 min) to
+//     prevent the cache from growing to 20 GiB between low-disk crossings.
+//     Also gated on idle (runRegistry.Len()==0) to avoid racing merge-builds.
 //
 // Spec ref: bead hk-sxlb (logmine F65 disk-watermark guard).
+// Fix ref:  bead hk-guez (merge-aware cache reaper).
 
 import (
 	"context"
@@ -46,18 +51,42 @@ func diskFreeBytes(path string) (uint64, error) {
 	return stat.Bavail * uint64(stat.Bsize), nil
 }
 
+// mergeOrRunInFlight returns true when one or more bead runs are currently
+// registered in deps.runRegistry (i.e. any merge-build or run-build is active).
+// Non-blocking: reads an atomic counter inside RunRegistry (ActiveRuns count check).
+func mergeOrRunInFlight(deps *workLoopDeps) bool {
+	return deps.runRegistry != nil && deps.runRegistry.Len() > 0
+}
+
+// runGoCleanCache executes `go clean -cache` using deps.goCacheCleanFunc when
+// set (test seam) or exec.CommandContext otherwise. Returns an error on failure.
+func runGoCleanCache(ctx context.Context, deps *workLoopDeps) error {
+	if deps.goCacheCleanFunc != nil {
+		return deps.goCacheCleanFunc()
+	}
+	cleanCtx, cleanCancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cleanCancel()
+	return exec.CommandContext(cleanCtx, "go", "clean", "-cache").Run()
+}
+
 // runPeriodicDiskCheck is called once per work-loop poll tick to probe disk
-// space and run reactive go-cache cleanup (hk-sxlb).
+// space and run reactive / proactive go-cache cleanup.
 //
 // Sub-step A — disk probe (rate-limited to deps.diskCheckIntervalOverride or
-// diskCheckInterval): reads available bytes on the project filesystem. If below
-// the watermark, sets deps.diskLow = true, emits disk_low, and immediately runs
-// `go clean -cache` (reactive reap). If above, clears deps.diskLow.
+// diskCheckInterval): reads available bytes on the project filesystem.
 //
-// The former proactive 60-min go-cache reap ("Sub-step B") was removed
-// (hk-guez stopgap): it ran `go clean -cache` unconditionally and raced
-// in-flight merge-builds (merge_build_failed). Only the reactive
-// below-watermark reap above remains.
+//   - Below watermark: sets deps.diskLow = true.
+//     If no merge-build is in flight (runRegistry.Len()==0), immediately runs
+//     `go clean -cache` (reactive reap). If a merge-build IS in flight, skips
+//     the reap and logs a loud warning — this prevents a spurious
+//     merge_build_failed at the cost of one deferred clean (hk-guez).
+//     A disk_low event is emitted when deps.bus is non-nil regardless.
+//
+//   - Above watermark: clears deps.diskLow.
+//
+// Sub-step B — proactive reap (hk-guez, restored from stopgap 5c2276ca):
+// runs `go clean -cache` every goCacheCleanInterval (default 60 min) even
+// when disk is healthy, gated on idle (runRegistry.Len()==0).
 func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 	now := time.Now()
 
@@ -74,26 +103,40 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 	if time.Since(deps.lastDiskCheck) >= checkInterval {
 		deps.lastDiskCheck = now
 
-		freeBytes, probeErr := diskFreeBytes(deps.projectDir)
+		freeBytesFunc := deps.diskFreeBytesFunc
+		if freeBytesFunc == nil {
+			freeBytesFunc = diskFreeBytes
+		}
+
+		freeBytes, probeErr := freeBytesFunc(deps.projectDir)
 		if probeErr != nil {
 			// Non-fatal: log and leave diskLow unchanged.
 			fmt.Fprintf(os.Stderr, "daemon: disk-check: Statfs %s: %v\n", deps.projectDir, probeErr)
 		} else if freeBytes < watermark {
-			// Below watermark: reactive reap + event.
+			// Below watermark: attempt reactive reap, then emit event.
 			cleanAttempted := false
 			cleanErrStr := ""
-			if deps.bus != nil {
-				// Best-effort go clean -cache. Do NOT block dispatch with a long
-				// clean; use a short timeout so the work loop stays responsive.
-				cleanCtx, cleanCancel := context.WithTimeout(ctx, 5*time.Minute)
+
+			if mergeOrRunInFlight(deps) {
+				// A merge-build is in progress. Reaping the cache now would
+				// race go vet/go build and produce a spurious
+				// merge_build_failed. Defer to the next tick and warn loudly
+				// — the operator should investigate if disk remains critical
+				// across multiple ticks (hk-guez).
+				fmt.Fprintf(os.Stderr,
+					"daemon: disk-check: WARN available=%dMiB watermark=%dMiB path=%s — "+
+						"disk below watermark but merge-build in flight; reap deferred to next tick\n",
+					freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir)
+			} else {
+				// Idle: safe to reap.
 				cleanAttempted = true
-				if cleanErr := exec.CommandContext(cleanCtx, "go", "clean", "-cache").Run(); cleanErr != nil {
+				if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
 					cleanErrStr = cleanErr.Error()
 				}
-				cleanCancel()
-				deps.lastGoCacheClean = now // reset both timers on reactive clean
+				deps.lastGoCacheClean = now // reset proactive timer on reactive clean
+			}
 
-				// Emit disk_low event.
+			if deps.bus != nil {
 				payload := core.DiskLowPayload{
 					AvailableBytes:        freeBytes,
 					WatermarkBytes:        watermark,
@@ -118,6 +161,29 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 					freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir)
 			}
 			deps.diskLow = false
+		}
+	}
+
+	// Sub-step B: proactive reap (hk-guez restored).
+	// Run `go clean -cache` every goCacheCleanInterval even when disk is
+	// healthy, but only when no merge-build is in flight.
+	cleanInterval := deps.goCacheCleanIntervalOverride
+	if cleanInterval <= 0 {
+		cleanInterval = goCacheCleanInterval
+	}
+	if !deps.diskLow && time.Since(deps.lastGoCacheClean) >= cleanInterval {
+		if mergeOrRunInFlight(deps) {
+			// Merge-build in flight: defer proactive reap to avoid racing the
+			// build cache. The timer is NOT reset so the next idle tick will
+			// fire immediately (no silent skip of the 60-min cadence).
+			fmt.Fprintf(os.Stderr,
+				"daemon: disk-check: proactive-reap deferred — merge-build in flight\n")
+		} else {
+			if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
+				fmt.Fprintf(os.Stderr,
+					"daemon: disk-check: proactive go clean -cache failed: %v\n", cleanErr)
+			}
+			deps.lastGoCacheClean = now
 		}
 	}
 }

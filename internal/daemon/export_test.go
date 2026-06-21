@@ -309,6 +309,20 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-xfuc.
 	AllowedRepos []string
+
+	// DiskFreeBytesFunc, when non-nil, overrides the diskFreeBytes call inside
+	// runPeriodicDiskCheck. Tests use this to control the apparent free-space
+	// reading without touching the real filesystem.
+	//
+	// Bead ref: hk-guez.
+	DiskFreeBytesFunc func(string) (uint64, error)
+
+	// GoCacheCleanFunc, when non-nil, overrides "go clean -cache" execution
+	// inside runPeriodicDiskCheck. Tests use this to capture or stub the
+	// reaper without side-effects on the build cache.
+	//
+	// Bead ref: hk-guez.
+	GoCacheCleanFunc func() error
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -433,7 +447,57 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		followUpLedgerMu:          &sync.Mutex{},
 		spawnSubstrateReadyCh:     p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
 		allowedRepos:              p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
+		diskFreeBytesFunc:         p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
+		goCacheCleanFunc:          p.GoCacheCleanFunc,      // hk-guez: merge-aware reaper test seam
 	}
+}
+
+// ExportedRunPeriodicDiskCheck calls runPeriodicDiskCheck with the given deps.
+// Used by diskcheck_hksxlb_test.go to drive the reaper directly without
+// running the full work loop (hk-guez).
+func ExportedRunPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
+	runPeriodicDiskCheck(ctx, deps)
+}
+
+// ExportedWorkLoopDepsPtr returns a pointer to a workLoopDeps so tests can
+// mutate fields (e.g. diskFreeBytesFunc) after construction. Callers must not
+// pass the pointer to ExportedRunWorkLoop (the loop takes the struct by value).
+//
+// Bead ref: hk-guez.
+func ExportedWorkLoopDepsPtr(p WorkLoopDepsParams) *workLoopDeps {
+	d := ExportedWorkLoopDeps(p)
+	return &d
+}
+
+// ExportedNewRunRegistry creates a fresh RunRegistry for tests.
+//
+// Bead ref: hk-guez.
+func ExportedNewRunRegistry() *RunRegistry {
+	return NewRunRegistry()
+}
+
+// ExportedDiskCheckDiskLow reads the diskLow field from deps.
+// Used by diskcheck_hksxlb_test.go to assert post-call state (hk-guez).
+func ExportedDiskCheckDiskLow(deps *workLoopDeps) bool {
+	return deps.diskLow
+}
+
+// ExportedDiskCheckSetGoCacheCleanInterval overrides the proactive-reap
+// interval on deps so tests don't have to wait 60 minutes. A zero override
+// restores the production default (goCacheCleanInterval).
+//
+// Bead ref: hk-guez.
+func ExportedDiskCheckSetGoCacheCleanInterval(deps *workLoopDeps, d time.Duration) {
+	deps.goCacheCleanIntervalOverride = d
+}
+
+// ExportedDiskCheckSetCheckInterval overrides the disk-probe interval on deps
+// so tests fire immediately. A zero override restores the production default
+// (diskCheckInterval).
+//
+// Bead ref: hk-guez.
+func ExportedDiskCheckSetCheckInterval(deps *workLoopDeps, d time.Duration) {
+	deps.diskCheckIntervalOverride = d
 }
 
 // WorkflowModeDefaultOf returns the workflowModeDefault field from deps.

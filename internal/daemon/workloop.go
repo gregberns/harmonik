@@ -714,6 +714,20 @@ type workLoopDeps struct {
 	// Bead ref: hk-sxlb.
 	goCacheCleanIntervalOverride time.Duration
 
+	// diskFreeBytesFunc, when non-nil, replaces the diskFreeBytes call inside
+	// runPeriodicDiskCheck.  Tests use this to control the apparent free-space
+	// reading without touching the real filesystem.
+	//
+	// Bead ref: hk-guez.
+	diskFreeBytesFunc func(path string) (uint64, error)
+
+	// goCacheCleanFunc, when non-nil, replaces "go clean -cache" execution
+	// inside runPeriodicDiskCheck.  Tests use this to capture or stub the
+	// reaper without side-effects on the build cache.
+	//
+	// Bead ref: hk-guez.
+	goCacheCleanFunc func() error
+
 	// governorState is the mutable state persisted across sentinel governor
 	// evaluation cycles (flywheel-motion.md §§1, 6.1; FW2 wire-Evaluate).
 	// Nil when no sentinel config is loaded (governor evaluations are no-ops
@@ -1396,17 +1410,20 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 
 		// Step 1d: periodic disk watermark check and proactive go-cache reap
-		// (hk-sxlb). Two rate-limited sub-steps run from the same block:
+		// (hk-sxlb, hk-guez). Two rate-limited sub-steps run from the same block:
 		//
 		// (A) Disk probe — every diskCheckInterval (default 10 min). When the
 		//     probe finds available space below the watermark, deps.diskLow is set
 		//     true, a disk_low event is emitted, and `go clean -cache` is run
-		//     immediately (reactive reap). The loop then skips dispatch this
-		//     iteration (see the gate below step 1d).
+		//     immediately (reactive reap) — but ONLY when no merge-build is in
+		//     flight (runRegistry.Len()==0). If a merge is in flight the reap is
+		//     skipped and a loud warning is logged instead (hk-guez fix).
+		//     The loop then skips dispatch this iteration (see the gate below).
 		//
 		// (B) Proactive go-cache reap — every goCacheCleanInterval (default
 		//     60 min) even when disk is healthy, preventing the cache from
-		//     growing to 20 GiB between low-disk crossings.
+		//     growing to 20 GiB between low-disk crossings. Also gated on idle
+		//     (runRegistry.Len()==0) to avoid racing merge-builds (hk-guez).
 		runPeriodicDiskCheck(ctx, &deps)
 		if deps.diskLow {
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {

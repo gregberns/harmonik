@@ -126,6 +126,54 @@ func TestRC020a_StartReconciliationScheduler_EmitsReconciliationStarted(t *testi
 	}
 }
 
+// TestRC020a_StartReconciliationScheduler_EmitsReconciliationCompleted verifies
+// that StartReconciliationScheduler emits reconciliation_completed paired with
+// every reconciliation_started, even on no-op ticks (no beads closed or reset).
+//
+// A missing reconciliation_completed on a no-op tick was the N5 instrumentation
+// gap: the old code guarded emission on beadsClosed>0||beadsReset>0.
+//
+// Spec ref: specs/reconciliation/spec.md §4.3 RC-020a.
+// Bead ref: hk-v144.
+func TestRC020a_StartReconciliationScheduler_EmitsReconciliationCompleted(t *testing.T) {
+	t.Parallel()
+
+	emitter := &rc020aStubEmitter{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	daemon.StartReconciliationScheduler(ctx, daemon.ReconciliationSchedulerConfig{
+		ProjectDir: "", // no bead-ledger ops (BrPath empty) — guaranteed no-op tick
+		BrPath:     "",
+		Interval:   1 * time.Millisecond,
+		Emitter:    emitter,
+		LogWriter:  nil,
+	})
+
+	// Wait until at least one reconciliation_completed event is emitted or timeout.
+	deadline := time.After(3 * time.Second)
+	for {
+		if emitter.count(core.EventTypeReconciliationCompleted) > 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("RC-020a N5: timed out waiting for reconciliation_completed from scheduler on a no-op tick; " +
+				"reconciliation_completed must always be emitted paired with reconciliation_started")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	// Verify paired: each started should have a matching completed.
+	startedCount := emitter.count(core.EventTypeReconciliationStarted)
+	completedCount := emitter.count(core.EventTypeReconciliationCompleted)
+	if completedCount == 0 {
+		t.Errorf("RC-020a N5: reconciliation_completed never emitted (started=%d, completed=%d)", startedCount, completedCount)
+	}
+}
+
 // TestRC020a_DaemonStartEmitsStartupReconciliationStarted verifies that
 // daemon.Start emits reconciliation_started{trigger:"startup"} after the
 // orphan sweep (RC-020a dispatch point (a)).

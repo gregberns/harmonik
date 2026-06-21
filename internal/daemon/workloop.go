@@ -940,10 +940,10 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		followUpLedger:             make(map[string]struct{}), // hk-f722: at-most-once guard per daemon session
 		followUpLedgerMu:           &sync.Mutex{},
 		followUpLedgerPath:         filepath.Join(cfg.ProjectDir, ".harmonik", followUpLedgerFileName), // hk-3ndb: durable ledger path
-		noAutoPull:                 cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
-		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,      // hk-hypbi: per-close .br_history trim
-		mergeMu:                    &sync.Mutex{},                  // hk-yyso7: global merge-serialisation across all queues
-		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
+		noAutoPull:                 cfg.NoAutoPull,                                                     // hk-exd7m: queue-only mode for flywheel topology
+		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,                                          // hk-hypbi: per-close .br_history trim
+		mergeMu:                    &sync.Mutex{},                                                      // hk-yyso7: global merge-serialisation across all queues
+		emittedEpics:               make(map[core.BeadID]struct{}),                                     // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:             &sync.Mutex{},
 		targetBranch:               resolveTargetBranch(cfg.TargetBranch),
 		protectBranches:            cfg.ProtectBranches,

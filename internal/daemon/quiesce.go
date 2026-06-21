@@ -24,9 +24,10 @@ package daemon
 //
 // The pane target for each session is captured once and stored in sleepRecord:
 //   - Crew sessions: crew.Record.Handle + ".0"  (matches perRunSubstrate.cachedPaneTarget convention).
-//   - Captain: lifecycle.TmuxSessionName(hash, "captain") + ":0.0" for the
-//     first window/pane, falling back to just the session name when
-//     tmuxresolve.ResolveTmuxTarget confirms the session is live.
+//   - Captain: resolved via resolveCaptainTarget() — keeper.ResolveTmuxTarget
+//     (canonical EvalSymlinks hash, has-session probe, returns "<session>:agent")
+//     first, then a bare-"captain" exact-match fallback, then the convention
+//     "<session>:agent" as last resort (hk-fv40; replaces the old hard-coded :0.0).
 //
 // A max-sleep-duration FAILSAFE auto-wakes every session that has been asleep
 // longer than maxSleepDuration (default 4 h).  This is the insurance mechanism:

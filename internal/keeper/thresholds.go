@@ -166,6 +166,12 @@ const (
 	// DefaultMaxHandoffTimeouts is the CyclerConfig consecutive-timeout escalation
 	// count. The ==0 disables-escalation sentinel is NOT promoted — it is special.
 	DefaultMaxHandoffTimeouts = 3
+
+	// DefaultHoldTTL is the keeper HOLD timer backstop: a hold marker older than this
+	// is treated as expired so a held session can never become permanently unbounded
+	// (covers operator-walk-away / crash / daemon-restart that the session-id key
+	// misses). Configurable via the keeper config block (cadence.hold_ttl). Refs: hk-9waz.
+	DefaultHoldTTL = 45 * time.Minute
 )
 
 // minAbsOrPctCeil returns the effective absolute-token threshold for windowSize:

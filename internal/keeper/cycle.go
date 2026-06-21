@@ -187,6 +187,16 @@ type CyclerConfig struct {
 	// on the next tick after the marker is cleared. When nil, IsSleeping is used.
 	// Refs: hk-l3gs, hk-jeby.
 	SleepingCheckFn func(projectDir, sessionID string) bool
+
+	// HoldTTL is the keeper HOLD timer backstop; zero → DefaultHoldTTL.
+	HoldTTL time.Duration
+
+	// HeldCheckFn reports whether a fresh, session-scoped operator HOLD is active
+	// (D5). MaybeRun returns nil (cycle deferred) when true — the destructive
+	// clear/restart is suspended while WARN still fires. Auto-reverts structurally
+	// (keyed by the re-minted session-id) plus a timer backstop. When nil, a
+	// closure over IsHeld(.,.,HoldTTL) is used. Refs: hk-9waz.
+	HeldCheckFn func(projectDir, agent string) bool
 }
 
 // defaultOperatorAttachedSampleInterval is the default Gate-7 emission sample
@@ -301,6 +311,13 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.SleepingCheckFn == nil {
 		c.SleepingCheckFn = IsSleeping
+	}
+	if c.HoldTTL <= 0 {
+		c.HoldTTL = DefaultHoldTTL
+	}
+	if c.HeldCheckFn == nil {
+		ttl := c.HoldTTL
+		c.HeldCheckFn = func(projectDir, agent string) bool { return IsHeld(projectDir, agent, ttl) }
 	}
 	if c.IdleRestartAbsTokens <= 0 {
 		c.IdleRestartAbsTokens = DefaultIdleRestartAbsTokens
@@ -708,6 +725,14 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	// wakes a genuinely-overflowing session first; the keeper acts on the next
 	// tick after .sleeping.<sessionID> is cleared.
 	if cf.SessionID != "" && c.cfg.SleepingCheckFn(c.cfg.ProjectDir, cf.SessionID) {
+		return nil
+	}
+	// Gate 5c: operator HOLD (D5/hk-9waz) — defer the destructive cycle while a
+	// fresh, session-scoped hold is active. The hold is keyed by the live session-id
+	// (re-minted on /clear) so it can never survive a restart, plus a timer backstop
+	// covers walk-away/crash. WARN still fires (watcher path); only the act/restart
+	// is suspended. The hard-ceiling restart deliberately OVERRIDES this (watcher).
+	if c.cfg.HeldCheckFn(c.cfg.ProjectDir, c.cfg.AgentName) {
 		return nil
 	}
 	// Gate 6: full anti-loop suppression (only applies after the first fire).

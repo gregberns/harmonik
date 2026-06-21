@@ -271,6 +271,7 @@ type rawKeeperCadence struct {
 	IdleRestartCooldown  string `yaml:"idle_restart_cooldown"`
 	HardCeilingCooldown  string `yaml:"hard_ceiling_cooldown"`
 	BlindKeeperThreshold string `yaml:"blind_keeper_threshold"`
+	HoldTTL              string `yaml:"hold_ttl"`
 }
 
 // rawKeeperBudgets holds the keeper.budgets block. Values ≤ 0 = not configured.
@@ -401,6 +402,7 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		c.IdleRestartCooldown == "" &&
 		c.HardCeilingCooldown == "" &&
 		c.BlindKeeperThreshold == "" &&
+		c.HoldTTL == "" &&
 		// budgets
 		b.HeartbeatMaxMisses == 0 &&
 		b.MaxHandoffTimeouts == 0 &&
@@ -468,6 +470,7 @@ type KeeperConfig struct {
 	IdleRestartCooldown        time.Duration
 	CadenceHardCeilingCooldown time.Duration
 	BlindKeeperThreshold       time.Duration
+	HoldTTL                    time.Duration
 
 	// Budgets (zero = not configured).
 	HeartbeatMaxMisses int
@@ -973,6 +976,7 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		{"cadence.idle_restart_cooldown", c.IdleRestartCooldown, &cfg.IdleRestartCooldown},
 		{"cadence.hard_ceiling_cooldown", c.HardCeilingCooldown, &cfg.CadenceHardCeilingCooldown},
 		{"cadence.blind_keeper_threshold", c.BlindKeeperThreshold, &cfg.BlindKeeperThreshold},
+		{"cadence.hold_ttl", c.HoldTTL, &cfg.HoldTTL},
 	} {
 		dv, derr := parseDurationField(path, f.key, f.val)
 		if derr != nil {

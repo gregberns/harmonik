@@ -74,6 +74,7 @@ keeper:
     idle_restart_cooldown: 11m
     hard_ceiling_cooldown: 31m
     blind_keeper_threshold: 20m
+    hold_ttl: 33m
   budgets:
     heartbeat_max_misses: 3
     max_handoff_timeouts: 2
@@ -124,6 +125,7 @@ keeper:
 	checkDur(t, "IdleRestartCooldown", k.IdleRestartCooldown, 11*time.Minute)
 	checkDur(t, "CadenceHardCeilingCooldown", k.CadenceHardCeilingCooldown, 31*time.Minute)
 	checkDur(t, "BlindKeeperThreshold", k.BlindKeeperThreshold, 20*time.Minute)
+	checkDur(t, "HoldTTL", k.HoldTTL, 33*time.Minute) // hk-9waz
 
 	// budgets
 	if k.HeartbeatMaxMisses != 3 {

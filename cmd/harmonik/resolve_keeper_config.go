@@ -145,6 +145,7 @@ type ResolvedKeeperConfig struct {
 	NoGaugeBackoff       time.Duration
 	HardCeilingCooldown  time.Duration
 	BlindKeeperThreshold time.Duration
+	HoldTTL              time.Duration
 	HeartbeatMaxMisses   int
 
 	// ── Cycler timing / cadence / budget (hk-4gtu) ───────────────────────────
@@ -301,6 +302,7 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig) (ResolvedKe
 	out.LiveRecoverGrace = resolveDur(0, false, cfg.LiveRecoverGrace, keeper.DefaultLiveRecoverGrace)
 	out.LiveRecoverCooldown = resolveDur(0, false, cfg.LiveRecoverCooldown, keeper.DefaultLiveRecoverCooldown)
 	out.NoGaugeBackoff = resolveDur(0, false, cfg.NoGaugeBackoff, keeper.DefaultNoGaugeBackoff)
+	out.HoldTTL = resolveDur(0, false, cfg.HoldTTL, keeper.DefaultHoldTTL)
 	out.HardCeilingCooldown = resolveDur(0, false, cfg.CadenceHardCeilingCooldown, keeper.DefaultHardCeilingCooldown)
 	out.BlindKeeperThreshold = resolveDur(0, false, cfg.BlindKeeperThreshold, keeper.DefaultBlindKeeperThreshold)
 	out.HeartbeatMaxMisses = resolveInt(0, false, cfg.HeartbeatMaxMisses, keeper.DefaultMaxHeartbeatMisses)

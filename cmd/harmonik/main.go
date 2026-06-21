@@ -483,6 +483,10 @@ EXAMPLES
 				return runKeeperSetDispatching(subArgs[1:])
 			case "clear-dispatching":
 				return runKeeperClearDispatching(subArgs[1:])
+			case "hold":
+				return runKeeperHold(subArgs[1:])
+			case "release":
+				return runKeeperRelease(subArgs[1:])
 			case "enable":
 				return runKeeperEnableSubcommand(subArgs[1:])
 			case "doctor":

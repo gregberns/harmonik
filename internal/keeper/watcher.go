@@ -476,6 +476,17 @@ type WatcherConfig struct {
 	// Refs: hk-l3gs, hk-jeby.
 	SleepingCheckFn func(projectDir, sessionID string) bool
 
+	// HoldTTL is the keeper HOLD timer backstop; zero → DefaultHoldTTL.
+	HoldTTL time.Duration
+
+	// HeldCheckFn reports whether a fresh, session-scoped operator HOLD is active
+	// (D5). maybeRespawn and maybeLivePaneRecover return early (respawn/restart
+	// suspended) when true, while WARN still fires. Auto-reverts structurally
+	// (keyed by the re-minted session-id) plus a timer backstop. The hard-ceiling
+	// restart deliberately does NOT consult this — true overflow protection beats a
+	// hold. When nil, a closure over IsHeld(.,.,HoldTTL) is used. Refs: hk-9waz.
+	HeldCheckFn func(projectDir, agent string) bool
+
 	// WarnCooldown is the minimum duration the warn state machine waits after a
 	// warn fires before re-arming for a second crossing (dip-rise cooldown).
 	// A transient dip below the threshold followed immediately by a rise back above
@@ -621,6 +632,13 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.SleepingCheckFn == nil {
 		c.SleepingCheckFn = IsSleeping
+	}
+	if c.HoldTTL <= 0 {
+		c.HoldTTL = DefaultHoldTTL
+	}
+	if c.HeldCheckFn == nil {
+		ttl := c.HoldTTL
+		c.HeldCheckFn = func(projectDir, agent string) bool { return IsHeld(projectDir, agent, ttl) }
 	}
 	// WarnCooldown: default to warnCooldown (30s) when not explicitly set.
 	// Tests that need multi-crossing behaviour must set WarnCooldown to a small
@@ -1089,6 +1107,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 					//               (emit only) — never panics.
 					// Skip entirely if token count is not available (zero — older .ctx
 					// or unreadable field) or below the ceiling.
+					//
+					// NOTE (hk-9waz): the hard-ceiling restart deliberately OVERRIDES an
+					// operator HOLD — true overflow protection beats a hold. No HeldCheckFn
+					// gate here, by design.
 					if w.cfg.HardCeilingMode != HardCeilingModeOff &&
 						ctxFile.Tokens > 0 && ctxFile.Tokens >= w.cfg.HardCeilingTokens {
 						wantRestart := w.cfg.HardCeilingMode == HardCeilingModeRestart &&
@@ -1440,6 +1462,11 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 	if w.cfg.RespawnCmd == "" || w.cfg.TmuxTarget == "" {
 		return
 	}
+	// Operator HOLD (D5/hk-9waz): suspend respawn while a fresh session-scoped hold
+	// is active. Auto-reverts (session-id key + timer backstop).
+	if w.cfg.HeldCheckFn(w.cfg.ProjectDir, w.cfg.AgentName) {
+		return
+	}
 	if staleSince.IsZero() || time.Since(staleSince) < w.cfg.RespawnGrace {
 		return
 	}
@@ -1523,6 +1550,11 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 		return
 	}
 	if w.cfg.LiveRecoverFn == nil || w.cfg.TmuxTarget == "" {
+		return
+	}
+	// Operator HOLD (D5/hk-9waz): suspend live-pane recovery while a fresh
+	// session-scoped hold is active. Auto-reverts (session-id key + timer backstop).
+	if w.cfg.HeldCheckFn(w.cfg.ProjectDir, w.cfg.AgentName) {
 		return
 	}
 	if staleSince.IsZero() || time.Since(staleSince) < w.cfg.LiveRecoverGrace {

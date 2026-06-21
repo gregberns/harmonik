@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -141,6 +142,121 @@ func ClearDispatching(projectDir, agent string) error {
 		return fmt.Errorf("keeper: remove dispatching marker: %w", err)
 	}
 	return nil
+}
+
+// holdMarkerPath returns the path to <projectDir>/.harmonik/keeper/<agent>.hold.<sessionID>.
+func holdMarkerPath(projectDir, agent, sessionID string) string {
+	return filepath.Join(projectDir, ".harmonik", "keeper", agent+".hold."+sessionID)
+}
+
+// SetHold writes the operator HOLD marker for the given agent, suspending the
+// keeper's destructive ACT/restart cutoff while the operator co-works (D5/hk-9waz).
+//
+// THE LOAD-BEARING INVARIANT — the hold must AUTO-REVERT, never survive a restart
+// and never survive the operator walking away. Two mechanisms, both required:
+//
+//  1. Session-id keying (structural auto-revert): the marker is keyed by the LIVE
+//     .sid session-id (re-minted on every /clear), so a hold keyed on the OLD
+//     session-id becomes structurally unreachable after a restart. Keying by agent
+//     name would survive a restart — THAT IS THE TRAP, and we do not do it.
+//  2. Timer backstop: the marker content is an RFC3339-UTC timestamp; IsHeld treats
+//     a marker older than the TTL as expired (covers walk-away / crash / daemon
+//     restart that a pure session-id key would miss).
+//
+// The session-id is resolved from the single-writer .sid channel
+// (ReadSessionIDFile) — NOT the gauge — so the writer (here) and the reader (IsHeld)
+// agree on which session-id keys the marker. When .sid is absent or not a primary
+// UUIDv4 this errors: we will not form a hold on an untrustworthy live session.
+// Returns the keying session-id on success. Refs: hk-9waz, hk-8prq.
+func SetHold(projectDir, agent string) (sessionID string, err error) {
+	if vErr := validateAgent(agent); vErr != nil {
+		return "", vErr
+	}
+	sid, _, sidErr := ReadSessionIDFile(projectDir, agent)
+	if sidErr != nil || !isPrimarySID(sid) {
+		return "", fmt.Errorf("keeper: cannot hold %q — no trustworthy live session id (.sid absent or not a UUIDv4); is the agent running with the SessionStart hook wired?", agent)
+	}
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if mkErr := os.MkdirAll(keeperDir, 0o755); mkErr != nil {
+		return "", fmt.Errorf("keeper: create keeper dir: %w", mkErr)
+	}
+	path := holdMarkerPath(projectDir, agent, sid)
+	content := time.Now().UTC().Format(time.RFC3339) + "\n"
+	//nolint:gosec // G306: 0600 — keeper-owned file, no world-read needed
+	if wErr := os.WriteFile(path, []byte(content), 0o600); wErr != nil {
+		return "", fmt.Errorf("keeper: write hold marker %q: %w", path, wErr)
+	}
+	return sid, nil
+}
+
+// ReleaseHold removes ALL hold markers for the given agent so normal keeper
+// behavior resumes (D5/hk-9waz). Idempotent: an already-absent hold is not an
+// error. It removes EVERY <agent>.hold.* marker (not just the current-sid one) so
+// "release clears it" holds regardless of whether the .sid channel is currently
+// readable. A failed Glob or a non-NotExist remove error is returned wrapped.
+func ReleaseHold(projectDir, agent string) error {
+	if err := validateAgent(agent); err != nil {
+		return err
+	}
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	matches, err := filepath.Glob(filepath.Join(keeperDir, agent+".hold.*"))
+	if err != nil {
+		return fmt.Errorf("keeper: glob hold markers: %w", err)
+	}
+	for _, m := range matches {
+		if rmErr := os.Remove(m); rmErr != nil && !os.IsNotExist(rmErr) {
+			return fmt.Errorf("keeper: remove hold marker %q: %w", m, rmErr)
+		}
+	}
+	return nil
+}
+
+// IsHeld reports whether a fresh, session-scoped operator HOLD is active for the
+// agent (D5/hk-9waz). READ-ONLY (no side effects / no removal), matching IsSleeping.
+//
+// It resolves the live session-id from the single-writer .sid channel (the SAME
+// source SetHold keyed on) and consults ONLY <agent>.hold.<sid>. This is what makes
+// the hold auto-revert across a restart: after /clear re-mints the session-id, the
+// old-sid marker is orphaned and IsHeld stops finding it. An agent-name-keyed marker
+// would survive — it is deliberately ignored here.
+//
+// Every uncertain path fails toward NOT-held so a hold can never become unbounded:
+//   - invalid agent name → false;
+//   - .sid absent / not a primary UUIDv4 → false;
+//   - marker absent → false;
+//   - marker content unparseable as RFC3339 → false (corrupt marker cannot hold);
+//   - marker older than ttl → false (EXPIRED, the timer backstop).
+//
+// ttl <= 0 falls back to DefaultHoldTTL. Refs: hk-9waz, hk-8prq.
+func IsHeld(projectDir, agent string, ttl time.Duration) bool {
+	if validateAgent(agent) != nil {
+		return false // fail-open: a traversal name cannot have a valid hold
+	}
+	if ttl <= 0 {
+		ttl = DefaultHoldTTL
+	}
+	sid, _, sidErr := ReadSessionIDFile(projectDir, agent)
+	if sidErr != nil || !isPrimarySID(sid) {
+		return false
+	}
+	path := holdMarkerPath(projectDir, agent, sid)
+	if _, statErr := os.Stat(path); statErr != nil {
+		return false // absent (or unreadable) → not held
+	}
+	//nolint:gosec // G304: path derived from validated agent + .sid-resolved sid under projectDir
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return false
+	}
+	parsed, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(string(raw)))
+	if parseErr != nil {
+		return false // corrupt marker → fail toward NOT-held
+	}
+	if time.Since(parsed) > ttl {
+		return false // EXPIRED — timer backstop
+	}
+	return true
 }
 
 // IsSleeping reports whether the session identified by sessionID is currently

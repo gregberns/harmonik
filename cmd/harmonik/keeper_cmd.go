@@ -76,6 +76,7 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		ForceRetryInterval:   resolved.ForceRetryInterval,
 		IdleRestartCooldown:  resolved.IdleRestartCooldown,
 		MaxHandoffTimeouts:   resolved.MaxHandoffTimeouts,
+		HoldTTL:              resolved.HoldTTL,
 		SendEscapeFn:         keeper.SendEscapeKey,
 		BootGracePeriod:      resolvedBootGrace,
 		ForceRestartFn:       keeperForceRestartFn(p.ForceRestart, p.ProjectDir, p.RespawnCmd),
@@ -100,6 +101,7 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		LiveRecoverGrace:     resolved.LiveRecoverGrace,
 		LiveRecoverCooldown:  resolved.LiveRecoverCooldown,
 		NoGaugeBackoff:       resolved.NoGaugeBackoff,
+		HoldTTL:              resolved.HoldTTL,
 		HardCeilingCooldown:  resolved.HardCeilingCooldown,
 		BlindKeeperThreshold: resolved.BlindKeeperThreshold,
 		HeartbeatMaxMisses:   resolved.HeartbeatMaxMisses,
@@ -107,8 +109,8 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		HardCeilingMode:      resolved.HardCeilingMode,
 		HardCeilingRestartFn: keeperHardCeilingRestartFn(
 			resolved.HardCeilingMode, p.ResolvedTmux, p.ProjectDir, p.RespawnCmd),
-		WarnCooldown:     resolved.WarnCooldown,
-		LiveRecoverFn:    keeperLiveRecoverFn(p.WarnOnly, p.ProjectDir, p.RespawnCmd),
+		WarnCooldown:  resolved.WarnCooldown,
+		LiveRecoverFn: keeperLiveRecoverFn(p.WarnOnly, p.ProjectDir, p.RespawnCmd),
 		// hk-vs4u: warn-text + self_service flow through the resolver (config>default).
 		// DefaultWarnText = lighter advisory; ActionableWarnText = the R3 self-service
 		// restart handshake (selectWarnText picks between them). crews_enabled is
@@ -672,6 +674,56 @@ func runKeeperClearDispatching(args []string) int {
 	return 0
 }
 
+// runKeeperHold implements `harmonik keeper hold --agent <name>`.
+// Writes .harmonik/keeper/<agent>.hold.<sessionID> (keyed by the live .sid
+// session-id, RFC3339-timestamped) so the keeper suspends the ACT/restart cutoff
+// while the operator co-works. AUTO-REVERTS: the session-id is re-minted on /clear
+// so the hold can never survive a restart, and a timer backstop expires it.
+// WARN still fires under hold. Refs: hk-9waz.
+//
+// Exit codes: 0 — hold written; 1 — no trustworthy live session / arg / I/O error;
+// 2 — unexpected positional (flag-only).
+func runKeeperHold(args []string) int {
+	agent, project, code := parseKeeperMarkerArgs("keeper hold", args)
+	if agent == "" {
+		return code
+	}
+	sid, err := keeper.SetHold(project, agent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper hold: %v\n", err)
+		return 1
+	}
+	// Fail-open advisory (mirrors set-dispatching): a hold with no live keeper
+	// watching is meaningless — surface it but keep exit 0.
+	if !keeper.LiveKeeperPresent(project, agent) {
+		fmt.Fprintf(os.Stderr,
+			"keeper hold: WARNING — no live keeper found for agent %q under %q "+
+				"(hold marker written, but no watcher is currently guarding this agent; "+
+				"start `harmonik keeper --agent %s`)\n", agent, project, agent)
+	}
+	fmt.Printf("keeper hold: agent=%q session=%s — ACT/restart suspended (WARN still fires; auto-reverts on restart or after the TTL). Run `harmonik keeper release --agent %s` to resume early.\n", agent, sid, agent)
+	return 0
+}
+
+// runKeeperRelease implements `harmonik keeper release --agent <name>`.
+// Removes the agent's hold marker(s) so normal keeper behavior resumes.
+// Idempotent: an already-absent hold is not an error. Refs: hk-9waz.
+//
+// Exit codes: 0 — released (or already clear); 1 — arg/validation/I/O error;
+// 2 — unexpected positional (flag-only).
+func runKeeperRelease(args []string) int {
+	agent, project, code := parseKeeperMarkerArgs("keeper release", args)
+	if agent == "" {
+		return code
+	}
+	if err := keeper.ReleaseHold(project, agent); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik keeper release: %v\n", err)
+		return 1
+	}
+	fmt.Printf("keeper release: agent=%q — hold cleared; normal keeper behavior resumed.\n", agent)
+	return 0
+}
+
 // runKeeperRestartNow implements `harmonik keeper restart-now --agent <name>`.
 //
 // SIMPLIFIED (hk-5da7): this runs the restart SYNCHRONOUSLY in-process — verify
@@ -870,6 +922,8 @@ USAGE
   harmonik keeper doctor <agent> [--project DIR]
   harmonik keeper set-dispatching --agent <name> [--project DIR]
   harmonik keeper clear-dispatching --agent <name> [--project DIR]
+  harmonik keeper hold --agent <name> [--project DIR]
+  harmonik keeper release --agent <name> [--project DIR]
   harmonik keeper restart-now --agent <name> [--project DIR]
   harmonik keeper ping --agent <name> [--nonce N] [--project DIR]
   harmonik keeper await-ack --agent <name> --nonce N [--kind restart|ping] [--timeout 15s] [--poll 1s] [--project DIR]
@@ -893,6 +947,9 @@ VERBS
                      cycle defers the handoff action while queue work is in flight.
   clear-dispatching  Remove the .dispatching marker for <agent>; HoldingDispatch → false.
                      Call when all in-flight queue work has completed. Idempotent.
+  hold               Suspend the ACT/restart cutoff while co-working (session-id-keyed +
+                     timer backstop; auto-reverts on restart; WARN still fires).
+  release            Clear the hold; resume normal keeper behavior. Idempotent.
   restart-now        Agent/captain-initiated SYNCHRONOUS clear→resume (hk-5da7).
                      Verifies the session id (lowercase UUIDv4), checks HANDOFF-<agent>.md
                      exists and is fresh (written within 10 min — run /session-handoff
@@ -973,6 +1030,8 @@ EXAMPLES
   harmonik keeper set-dispatching --agent orchestrator
   harmonik keeper clear-dispatching --agent orchestrator
   harmonik keeper set-dispatching --agent flywheel --project /path/to/project
+  harmonik keeper hold --agent captain
+  harmonik keeper release --agent captain
   harmonik keeper restart-now --agent captain
   harmonik keeper ping --agent captain --nonce check-001
 `

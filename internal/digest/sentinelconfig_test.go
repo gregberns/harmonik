@@ -3,6 +3,8 @@ package digest
 import (
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // TestParseSentinelConfig_GovernorFields verifies that the governor tunables
@@ -166,5 +168,69 @@ sentinel:
 	}
 	if got := cfg2.Phase2Classes(); len(got) != 0 {
 		t.Errorf("Phase2Classes all-merged: got %v, want empty", got)
+	}
+}
+
+// TestSentinelConfig_GovernorConfig verifies that GovernorConfig bridges the
+// map[string]int → map[core.EventType]int type-mismatch and copies all
+// governor fields into the returned sentinel.Config (FW1, hk-y9fn).
+func TestSentinelConfig_GovernorConfig(t *testing.T) {
+	t.Parallel()
+
+	yaml := []byte(`
+sentinel:
+  window: 15m
+  warmup_window: 20m
+  sustained_windows: 3
+  movement_weights:
+    bead_closed: 5
+    run_completed: 7
+  liveness_no_progress_n: 4
+`)
+	cfg, err := parseSentinelConfig(yaml)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	gcfg := cfg.GovernorConfig()
+
+	if gcfg.Window != 15*time.Minute {
+		t.Errorf("Window: got %v, want 15m", gcfg.Window)
+	}
+	if gcfg.WarmupWindow != 20*time.Minute {
+		t.Errorf("WarmupWindow: got %v, want 20m", gcfg.WarmupWindow)
+	}
+	if gcfg.SustainedWindows != 3 {
+		t.Errorf("SustainedWindows: got %d, want 3", gcfg.SustainedWindows)
+	}
+	if gcfg.LivenessNoProgressN != 4 {
+		t.Errorf("LivenessNoProgressN: got %d, want 4", gcfg.LivenessNoProgressN)
+	}
+
+	if gcfg.Weights == nil {
+		t.Fatal("Weights: got nil, want non-nil map")
+	}
+	if got := gcfg.Weights[core.EventTypeBeadClosed]; got != 5 {
+		t.Errorf("Weights[bead_closed]: got %d, want 5", got)
+	}
+	if got := gcfg.Weights[core.EventTypeRunCompleted]; got != 7 {
+		t.Errorf("Weights[run_completed]: got %d, want 7", got)
+	}
+}
+
+// TestSentinelConfig_GovernorConfig_NilWeights verifies that a zero
+// movement_weights in the YAML produces a nil Weights field so sentinel.Evaluate
+// falls back to sentinel.DefaultWeights.
+func TestSentinelConfig_GovernorConfig_NilWeights(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := parseSentinelConfig([]byte(`sentinel: {}`))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	gcfg := cfg.GovernorConfig()
+	if gcfg.Weights != nil {
+		t.Errorf("Weights: expected nil for empty config, got %v", gcfg.Weights)
 	}
 }

@@ -16,6 +16,9 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
 // DefaultSuppressionTTL is the default decaying TTL for operator-attached and
@@ -166,6 +169,33 @@ func (c SentinelConfig) GovernorLivenessNoProgressN() int {
 		return c.LivenessNoProgressN
 	}
 	return DefaultLivenessNoProgressN
+}
+
+// GovernorConfig converts the digest SentinelConfig into a sentinel.Config
+// suitable for passing to sentinel.Evaluate.
+//
+// The MovementWeights map[string]int field is translated to
+// map[core.EventType]int by casting each key; unknown event-type strings are
+// preserved (the governor ignores weights for event types it does not handle).
+// When MovementWeights is nil the returned Config.Weights is also nil, which
+// causes sentinel.Evaluate to fall back to sentinel.DefaultWeights.
+//
+// Bead: hk-y9fn (FW1 config-adapter).
+func (c SentinelConfig) GovernorConfig() sentinel.Config {
+	var weights map[core.EventType]int
+	if len(c.MovementWeights) > 0 {
+		weights = make(map[core.EventType]int, len(c.MovementWeights))
+		for k, v := range c.MovementWeights {
+			weights[core.EventType(k)] = v
+		}
+	}
+	return sentinel.Config{
+		Window:              c.Window,
+		WarmupWindow:        c.WarmupWindow,
+		SustainedWindows:    c.SustainedWindows,
+		Weights:             weights,
+		LivenessNoProgressN: c.LivenessNoProgressN,
+	}
 }
 
 // DoneDefinitionFor returns the completion definition for the given class name,

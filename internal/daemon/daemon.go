@@ -16,6 +16,7 @@ import (
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -23,6 +24,7 @@ import (
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/schedule"
+	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -1624,6 +1626,19 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		deps, depsErr := newWorkLoopDeps(cfg, bus, workflowModeDefault, adapterReg, hookStore)
 		if depsErr != nil {
 			return fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
+		}
+
+		// FW1 (hk-y9fn): init sentinel governor deps from config.
+		// LoadSentinelConfig returns a zero-value SentinelConfig (all defaults) when
+		// the sentinel: block is absent — nil-safe; GovernorConfig() is always valid.
+		// A non-nil governorState signals to FW2 (wire-Evaluate) that the governor
+		// is wired; DaemonStartedAt seeds the cold-start warmup gate (spec §1.4).
+		if cfg.ProjectDir != "" {
+			sentinelCfg, _ := digest.LoadSentinelConfig(cfg.ProjectDir)
+			deps.governorCfg = sentinelCfg.GovernorConfig()
+			deps.governorState = &sentinel.GovernorState{
+				DaemonStartedAt: daemonStartTime,
+			}
 		}
 
 		// C1 boot-seed (hk-o50hy): populate emittedEpics from the durable event log

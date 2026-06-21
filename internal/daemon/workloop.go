@@ -54,6 +54,7 @@ import (
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/schedule"
+	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -702,6 +703,23 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-sxlb.
 	goCacheCleanIntervalOverride time.Duration
+
+	// governorState is the mutable state persisted across sentinel governor
+	// evaluation cycles (flywheel-motion.md §§1, 6.1; FW2 wire-Evaluate).
+	// Nil when no sentinel config is loaded (governor evaluations are no-ops
+	// until FW2 adds the Evaluate call). Production wires a non-nil pointer at
+	// daemon.Start after newWorkLoopDeps (FW1, hk-y9fn).
+	//
+	// Bead ref: hk-y9fn (FW1).
+	governorState *sentinel.GovernorState
+
+	// governorCfg is the resolved sentinel governor configuration derived from
+	// the sentinel: block in .harmonik/config.yaml (flywheel-motion.md §7).
+	// Zero value causes sentinel.Evaluate to use compiled defaults.
+	// Production populated from digest.LoadSentinelConfig at daemon.Start (FW1, hk-y9fn).
+	//
+	// Bead ref: hk-y9fn (FW1).
+	governorCfg sentinel.Config
 }
 
 // closeBeadWithHistoryTrim trims .beads/.br_history to brHistoryCloseTrimKeep

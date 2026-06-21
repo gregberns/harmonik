@@ -27,6 +27,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -502,6 +503,34 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 	markerPath := filepath.Join(projectDir, sleepingMarkerDir, ".sleeping.paul-session-123")
 	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
 		t.Errorf("sleep marker for paul not found at %q", markerPath)
+	}
+}
+
+// TestResolveCaptainTargetLastResort verifies the resolution fallback chain
+// (hk-fv40): with no live tmux session, resolveCaptainTarget returns the
+// convention-derived "<session>:agent" target (never the old hard-coded
+// "<session>:0.0"), so the failsafe still has a plausible target.
+func TestResolveCaptainTargetLastResort(t *testing.T) {
+	projectDir := t.TempDir()
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+
+	// Guard against a stray live "captain" tmux session on the dev box, which
+	// would legitimately make resolution return the bare name instead.
+	if tmuxHasSession(captainAgentName) {
+		t.Skip("a live bare 'captain' tmux session exists; last-resort path not exercised")
+	}
+
+	got := arbiter.resolveCaptainTarget()
+
+	// In a no-tmux test environment, neither the convention session nor the bare
+	// "captain" session is live, so we expect the last-resort convention form.
+	// It must target the AGENT window's active pane (":agent"), not ":0.0".
+	want := keeper.HarmonikSessionName(projectDir, captainAgentName) + ":agent"
+	if got != want {
+		t.Errorf("resolveCaptainTarget last-resort: got %q want %q", got, want)
+	}
+	if got == keeper.HarmonikSessionName(projectDir, captainAgentName)+":0.0" {
+		t.Error("resolveCaptainTarget still produced the old hard-coded :0.0 target")
 	}
 }
 

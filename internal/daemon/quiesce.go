@@ -42,6 +42,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -49,6 +50,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -366,8 +368,13 @@ func (a *QuiesceArbiter) tick(ctx context.Context, maxSleep time.Duration) {
 func (a *QuiesceArbiter) parkAllSessions(ctx context.Context, source SleepSource, level SleepLevel) {
 	records := a.listCrewRecords()
 
-	// Captain: resolve pane target via session name convention.
-	captainTarget := lifecycle.TmuxSessionName(a.cfg.ProjectHash, captainAgentName) + ":0.0"
+	// Captain: resolve the live pane target (hk-fv40 / codename:fleet-state).
+	// The old code hard-coded "<convention-session>:0.0", which missed whenever
+	// the live captain session is the BARE name "captain" — the wake nudge then
+	// landed on a dead pane and the session stayed asleep until the 4h failsafe
+	// (which re-nudged the SAME wrong pane). resolveCaptainTarget now probes
+	// liveness and returns the target of whichever session is actually live.
+	captainTarget := a.resolveCaptainTarget()
 	a.parkSession(ctx, captainAgentName, "", "captain-session", captainTarget, source, level)
 
 	// Each crew session.
@@ -378,6 +385,50 @@ func (a *QuiesceArbiter) parkAllSessions(ctx context.Context, source SleepSource
 		pane := r.Handle + ".0"
 		a.parkSession(ctx, r.Name, r.Queue, r.SessionID, pane, source, level)
 	}
+}
+
+// resolveCaptainTarget determines the tmux target for the captain's wake nudge
+// (hk-fv40 / codename:fleet-state).
+//
+// Resolution order:
+//  1. keeper.ResolveTmuxTarget(projectDir, "captain", ...) — derives the
+//     conventional "harmonik-<hash>-captain" session, probes it with
+//     `tmux has-session`, and returns "<session>:agent" (the AGENT window's
+//     active pane) when live. This is the same idiom the keeper itself uses.
+//  2. Bare "captain" session fallback — the live captain is sometimes the bare
+//     session name "captain" (not the hashed name); probe it directly and use
+//     it when live.
+//  3. Convention-derived "<session>:agent" — last resort so the failsafe still
+//     has a plausible target even when no probe confirmed a live session
+//     (e.g. tmux unavailable in this environment).
+func (a *QuiesceArbiter) resolveCaptainTarget() string {
+	if a.cfg.ProjectDir != "" {
+		if t := keeper.ResolveTmuxTarget(a.cfg.ProjectDir, captainAgentName, "", nil); t != "" {
+			return t
+		}
+	}
+	// Fallback: the bare "captain" session (the comms-wake pane-mismatch case).
+	if tmuxHasSession(captainAgentName) {
+		return captainAgentName
+	}
+	// Last resort: convention-derived name with the AGENT window's active pane.
+	if a.cfg.ProjectDir != "" {
+		return keeper.HarmonikSessionName(a.cfg.ProjectDir, captainAgentName) + ":agent"
+	}
+	return lifecycle.TmuxSessionName(a.cfg.ProjectHash, captainAgentName) + ":agent"
+}
+
+// tmuxHasSession reports whether a tmux session whose name EXACTLY equals name
+// is live, via `tmux has-session -t "=<name>"`. The "=" anchor forces an exact
+// match (mirrors keeper.tmuxSessionLive, which is unexported). A non-zero exit
+// (absent session / no tmux server) reports false.
+func tmuxHasSession(name string) bool {
+	if name == "" {
+		return false
+	}
+	//nolint:gosec // G204: name is a fixed constant (captainAgentName) or a derived session name.
+	cmd := exec.CommandContext(context.Background(), "tmux", "has-session", "-t", "="+name)
+	return cmd.Run() == nil
 }
 
 // parkSession parks one session: writes the sleep marker file and sends a comms

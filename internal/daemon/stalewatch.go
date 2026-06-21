@@ -146,6 +146,11 @@ type StaleWatcherConfig struct {
 	// Registry is the in-flight run registry. Required.
 	Registry *RunRegistry
 
+	// Gate is the INACTIVE poll gate (SS-007, hk-w6q7).  When non-nil and
+	// gate.IsInactive() == true, scan returns early without doing work.
+	// Nil means ungated (always scan).
+	Gate *PollGate
+
 	// StaleAfter is the base quiet window. Zero → staleWatchDefaultAfter (10 min).
 	StaleAfter time.Duration
 
@@ -174,7 +179,8 @@ type StaleWatcherConfig struct {
 // StaleWatcher subscribes to the event bus to track the most recent event time
 // per run_id and emits run_stale when a run goes silent.
 type StaleWatcher struct {
-	cfg StaleWatcherConfig
+	cfg  StaleWatcherConfig
+	gate *PollGate // nil = ungated; see SS-007 / hk-w6q7
 
 	mu     sync.Mutex
 	states map[core.RunID]*runStaleState
@@ -223,6 +229,7 @@ func NewStaleWatcher(cfg StaleWatcherConfig) *StaleWatcher {
 	}
 	return &StaleWatcher{
 		cfg:    cfg,
+		gate:   cfg.Gate,
 		states: make(map[core.RunID]*runStaleState),
 	}
 }
@@ -312,6 +319,10 @@ func (w *StaleWatcher) loop(ctx context.Context) {
 
 // scan checks every registered in-flight run for staleness.
 func (w *StaleWatcher) scan(ctx context.Context) {
+	// SS-007: StaleWatcher is OFF at INACTIVE — skip when the fleet is idle.
+	if w.gate != nil && w.gate.IsInactive() {
+		return
+	}
 	now := w.cfg.Now()
 	handles := w.cfg.Registry.snapshotWithKeys()
 	goroutineCount := runtime.NumGoroutine()

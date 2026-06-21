@@ -951,6 +951,19 @@ func ExportedStalewatchObserve(w *StaleWatcher, ctx context.Context, evt core.Ev
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BandwidthTuner test seams (hk-w6q7)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedBandwidthTunerTick triggers a single evaluation tick on t, identical
+// to what the background loop does on each ticker tick. Allows tests to drive
+// poll-gate behaviour deterministically without real time passing.
+//
+// Bead ref: hk-w6q7 (P2-b: poll-gating).
+func ExportedBandwidthTunerTick(t *BandwidthTuner) {
+	t.tick()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // buildClaudeLaunchSpec test seams (hk-gql20.13)
 // ─────────────────────────────────────────────────────────────────────────────
 

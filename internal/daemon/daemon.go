@@ -938,6 +938,12 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: SubscribeHub.Subscribe: %w", subscribeErr)
 	}
 
+	// pollGate is the shared INACTIVE gate for StaleWatcher and BandwidthTuner
+	// (SS-007, hk-w6q7 P2-b).  Updated by startPollGate (started inside the
+	// cfg.ProjectDir block below once stateBuilder is ready).  Zero value is
+	// ungated so watchers always run in unit-test mode (no ProjectDir).
+	pollGate := &PollGate{}
+
 	// Wire the StaleWatcher — wildcard observer that emits run_stale when an
 	// active run produces no event for M minutes (hk-wkzlc). Subscribed before
 	// Seal so event delivery is wired for the production run (EV-009).
@@ -949,6 +955,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		SubscribeBus: bus,
 		Emitter:      bus,
 		Registry:     sharedRunRegistry,
+		Gate:         pollGate,
 	})
 	if subscribeErr := staleWatcher.Subscribe(); subscribeErr != nil {
 		return fmt.Errorf("daemon.Start: StaleWatcher.Subscribe: %w", subscribeErr)
@@ -1589,7 +1596,8 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			homeDir, homeDirErr := os.UserHomeDir()
 			if homeDirErr == nil {
 				tuner := NewBandwidthTuner(concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
-				tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
+				tuner.SetGate(pollGate)        // SS-007: OFF at INACTIVE (hk-w6q7)
+				tunerBackstop.SetTuner(tuner)  // arm the pre-Seal backstop subscriber
 				go tuner.Run(ctx)
 			}
 		}
@@ -1626,6 +1634,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// tolerates that and sets read_quality.unsure=true in the response.
 		stateBuilder := NewLiveStateBuilder(sharedRunRegistry, qs, drainDet, concurrencyCtrl, cfg.MaxConcurrent, cfg.ProjectDir, cfg.ProjectCfg.Keeper)
 		stateHandler := NewLiveStateSocketHandler(stateBuilder)
+
+		// Start the poll-gate goroutine (SS-007, hk-w6q7 P2-b): evaluates the
+		// fleet ActivityLabel every pollGateInterval and gates StaleWatcher and
+		// BandwidthTuner when INACTIVE.  Must start after stateBuilder is ready.
+		startPollGate(ctx, pollGate, stateBuilder)
 
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done

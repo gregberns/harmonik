@@ -126,6 +126,7 @@ type transcriptUsage struct {
 // Construct with NewBandwidthTuner and start with Run in a goroutine.
 // NotifyRateLimit is the emergency backstop: it snaps the ceiling to 1 and
 // suppresses upward adjustment until the retry-after window expires.
+// SetGate wires the INACTIVE poll gate (SS-007, hk-w6q7); call before Run.
 type BandwidthTuner struct {
 	ctrl     *ConcurrencyController
 	maxN     int
@@ -133,6 +134,7 @@ type BandwidthTuner struct {
 	homeDir  string
 	interval time.Duration
 	window   time.Duration
+	gate     *PollGate // nil = ungated; set via SetGate before Run
 
 	// rateLimitUntilNanos is the unix-nanosecond timestamp until which upward
 	// adjustment is suppressed.  0 = no active backoff.  Written by
@@ -174,6 +176,11 @@ func (t *BandwidthTuner) Run(ctx context.Context) {
 	}
 }
 
+// SetGate wires the INACTIVE poll gate (SS-007).  Must be called before Run.
+// When the gate reports INACTIVE, tick() returns early without adjusting the
+// ceiling.  Nil means ungated.
+func (t *BandwidthTuner) SetGate(g *PollGate) { t.gate = g }
+
 // NotifyRateLimit is the emergency backstop for a 429-class rate limit hit.
 // It snaps the concurrency ceiling to 1 immediately and suppresses upward
 // adjustment until retryAfter has elapsed.  Safe to call from any goroutine.
@@ -190,6 +197,10 @@ func (t *BandwidthTuner) NotifyRateLimit(retryAfter time.Duration) {
 // tick is a single tuner evaluation.  It reads transcript usage, computes the
 // adjusted ceiling, and calls ctrl.Set if the value changed.
 func (t *BandwidthTuner) tick() {
+	// SS-007: BandwidthTuner is OFF at INACTIVE — skip when the fleet is idle.
+	if t.gate != nil && t.gate.IsInactive() {
+		return
+	}
 	now := time.Now()
 
 	// Respect rate-limit backoff: if we're still in the suppression window, do

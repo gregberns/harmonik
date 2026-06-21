@@ -382,6 +382,8 @@ is being dispatched, but the fleet is mid-wind-down: a queue is `paused-by-drain
 or a sleep marker has been written and the last things are being let to settle.
 Direction of travel: heading toward INACTIVE.
 
+Tags: mechanism
+
 A still-registered run does NOT key DRAINING — it keys PROCESSING by **registry
 membership** (it counts toward `RUNS_INFLIGHT` for its whole merge/build/push/
 cleanup tail; see the §4.2 note). The old `RUN_TERMINATING` DRAINING term keyed on
@@ -441,6 +443,8 @@ The activity label gates which deterministic polls/watchers the daemon runs:
 This is mechanism (a deterministic poll-on/off rule keyed on activity), NOT a
 wind-down decision (SS-INV-004). The poll inventory:
 
+Tags: mechanism
+
 | Poll / watcher | PROCESSING | WAITING | DRAINING | INACTIVE |
 |---|---|---|---|---|
 | StaleWatcher (run staleness / silent-hang / never-spawned reaper) | ON | idle¹ | ON² | OFF |
@@ -494,6 +498,8 @@ DRAINED control signal. It returns a typed fact bundle reporting facts per axis 
 short-circuit at the first sign of work, and MUST carry no `State` / `DrainState`
 / `Drained bool` field (SS-INV-002). The bundle preserves all five false-negative
 defenses of the oracle *as the sourcing of each axis* (§4.3a). The Go type:
+
+Tags: mechanism
 
 ```go
 // FleetFacts is the read-only fact bundle the captain reads to decide whether to
@@ -630,6 +636,9 @@ agent's `.sid` file); a mismatch between them MUST be surfaced as a read-quality
 flag (`sid_desync: true`). The `/clear` SID-flip desync (the live `.sid` diverging
 from the registry-declared UUID) MUST be VISIBLE in `state`, never silently masked
 by overwriting one with the other.
+
+Tags: mechanism
+
 Every threshold MUST be a *reference to the resolved keeper config*
 (`ResolveKeeperConfig`, fail-loud) — **never a literal baked into the snapshot
 builder**, and **never a product-imposed default**. Per the operator's standing
@@ -691,6 +700,8 @@ Tags: mechanism
 (the ctx-watchdog reads them instead of eyeballing gauges); the snapshot MUST NOT
 itself restart, `/clear`, or remediate a session on them (auto-remediation is
 out of scope, §2.2):
+
+Tags: mechanism
 
 - **`too_big`** — context over the band. Input: `context.tokens` / `fill_frac`.
   Threshold-source: the resolved keeper band (`warn` / `act` / `force_act` /

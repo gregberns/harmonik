@@ -300,6 +300,19 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// --agent variants both route through QuiesceArbiter.HandleDaemonWake.
 	// Equivalent in scope to operator-resume (ON-010) but at the session layer.
 	"wake": "operator-nfr.md §4.3 ON-010; resumes sleeping LLM sessions only, no in-flight run abort",
+	// hk-i7i3 (codename:asset-sync): reconciles on-disk project instruction files
+	// against the binary's embedded asset bundle via a class-aware 3-way merge.
+	// --dry-run is the default and has zero side effects. --apply is gated on a
+	// daemon-lull guard (no active dispatching) — it does NOT abort in-flight runs;
+	// it only proceeds when no dispatch is in progress, preserving ON-008 safety.
+	// Exit-3 is returned (not abort) when the lull gate refuses. Operator-nfr.md
+	// §4.9 ON-055 (observation/admin surface, lull-gated write, no run abort).
+	"sync-assets": "operator-nfr.md §4.9 ON-055; lull-gated asset reconcile, --dry-run default, no in-flight run abort",
+	// hk-igpg: read-only printer for the per-project Claude RC label prefix
+	// (daemon.remote_control_prefix). Reads project config directly; no daemon
+	// socket connection, no state mutation, side-effect-free. Mirror of
+	// project-hash (same bootstrap-only authorisation).
+	"remote-control-prefix": "operator-nfr.md §4.9 ON-055; read-only RC-prefix printer, no daemon connection, no run impact",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled

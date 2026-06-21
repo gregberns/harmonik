@@ -657,3 +657,139 @@ func TestStagedBeadGenerator_FiresWhenProvenancePresent(t *testing.T) {
 		t.Errorf("br was not called despite Refs: hk-xyz present on origin/main: %v", statErr)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// B5-7: WIP == maxConcurrent-1 off-by-one (one slot free → DOES fire)
+// ---------------------------------------------------------------------------
+
+// TestStagedBeadGenerator_FiresAtMaxMinusOne verifies the WIP ceiling off-by-one:
+// when in-flight == maxConcurrent-1 (one slot free), the generator DOES fire.
+// This is the boundary complement of TestStagedBeadGenerator_NoopWhenAtCeiling.
+func TestStagedBeadGenerator_FiresAtMaxMinusOne(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy-prod")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	deps.maxConcurrent = 3
+
+	// Register 2 in-flight runs: Len() == 2 == maxConcurrent-1 → one slot free.
+	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000001")), &RunHandle{
+		BeadID:    core.BeadID("hk-inflight-1"),
+		StartedAt: time.Now(),
+	})
+	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000002")), &RunHandle{
+		BeadID:    core.BeadID("hk-inflight-2"),
+		StartedAt: time.Now(),
+	})
+
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-xyz", []string{"deploy"})
+
+	if _, statErr := os.Stat(argsFile); statErr != nil {
+		t.Errorf("br was NOT called at WIP==maxConcurrent-1; expected creation (one slot free): %v", statErr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// B5-8: multi-class / multi-bead ledger keys
+// ---------------------------------------------------------------------------
+
+// TestStagedBeadGenerator_MultiClassSameBead_DifferentLedgerKeys verifies that
+// two calls with the same completed bead but different Phase-2 class labels
+// produce two separate ledger keys (beadID:classA and beadID:classB) and
+// trigger two br create calls.
+func TestStagedBeadGenerator_MultiClassSameBead_DifferentLedgerKeys(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	// Config with two Phase-2 classes.
+	writeTestFile(t, filepath.Join(projectDir, ".harmonik", "config.yaml"),
+		"sentinel:\n  done_definition:\n    deploy: make deploy\n    smoke: make smoke\n")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	// First call: matches "deploy" (first label in the slice that is a Phase-2 class).
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-abc", []string{"deploy"})
+	// Second call: matches "smoke".
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-abc", []string{"smoke"})
+
+	// Both ledger keys must be present.
+	deps.followUpLedgerMu.Lock()
+	_, hasDeployKey := deps.followUpLedger["hk-abc:deploy"]
+	_, hasSmokeKey := deps.followUpLedger["hk-abc:smoke"]
+	deps.followUpLedgerMu.Unlock()
+
+	if !hasDeployKey {
+		t.Error("ledger missing key 'hk-abc:deploy'")
+	}
+	if !hasSmokeKey {
+		t.Error("ledger missing key 'hk-abc:smoke'")
+	}
+
+	// br should have been called twice (once per class).
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("br-args file missing: %v", err)
+	}
+	var callCount int
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "CALL ") {
+			callCount++
+		}
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 br create calls (one per class), got %d", callCount)
+	}
+}
+
+// TestStagedBeadGenerator_MultiBeadSameClass_DifferentLedgerKeys verifies that
+// two different completed beads with the same Phase-2 class label produce two
+// separate ledger keys (beadA:class and beadB:class) and trigger two br create calls.
+func TestStagedBeadGenerator_MultiBeadSameClass_DifferentLedgerKeys(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy-prod")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-alpha", []string{"deploy"})
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-beta", []string{"deploy"})
+
+	deps.followUpLedgerMu.Lock()
+	_, hasAlpha := deps.followUpLedger["hk-alpha:deploy"]
+	_, hasBeta := deps.followUpLedger["hk-beta:deploy"]
+	deps.followUpLedgerMu.Unlock()
+
+	if !hasAlpha {
+		t.Error("ledger missing key 'hk-alpha:deploy'")
+	}
+	if !hasBeta {
+		t.Error("ledger missing key 'hk-beta:deploy'")
+	}
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("br-args file missing: %v", err)
+	}
+	var callCount int
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "CALL ") {
+			callCount++
+		}
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 br create calls (one per bead), got %d", callCount)
+	}
+}

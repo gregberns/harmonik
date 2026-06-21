@@ -98,12 +98,7 @@ func runGoalkeeperSubcommand(args []string) int {
 	}
 
 	// 3. Append new directives verbatim and advance cursor.
-	gs.OperatorDirectives = append(gs.OperatorDirectives, messages...)
-	// Prune to MaxDirectives (keep the most recent).
-	if len(gs.OperatorDirectives) > goalstate.MaxDirectives {
-		gs.OperatorDirectives = gs.OperatorDirectives[len(gs.OperatorDirectives)-goalstate.MaxDirectives:]
-	}
-	gs.LastEventID = lastSeen
+	goalstate.Distill(gs, messages, lastSeen)
 
 	// 4. Persist goal-state atomically.
 	if err := goalstate.Write(projectDir, gs); err != nil {

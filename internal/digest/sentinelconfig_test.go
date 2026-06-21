@@ -300,3 +300,60 @@ sentinel:
 		t.Errorf("DoneDefinitionFor(deploy-class): got %q", got)
 	}
 }
+
+// TestParseSentinelConfig_KeeperSiblingNonInterference verifies that a
+// config.yaml containing both sentinel: and keeper: blocks loads the sentinel
+// block correctly without error (the sentinel parser ignores unknown top-level
+// keys; the keeper: block must not pollute or break the sentinel config path).
+func TestParseSentinelConfig_KeeperSiblingNonInterference(t *testing.T) {
+	t.Parallel()
+	yamlData := []byte(`
+keeper:
+  context_thresholds:
+    warn_abs_tokens: 200000
+    act_abs_tokens: 250000
+sentinel:
+  window: 20m
+  liveness_no_progress_n: 5
+`)
+	cfg, err := parseSentinelConfig(yamlData)
+	if err != nil {
+		t.Fatalf("expected no error when keeper: block is present alongside sentinel:, got: %v", err)
+	}
+	if got := cfg.GovernorWindow(); got != 20*time.Minute {
+		t.Errorf("GovernorWindow: got %v, want 20m", got)
+	}
+	if got := cfg.GovernorLivenessNoProgressN(); got != 5 {
+		t.Errorf("GovernorLivenessNoProgressN: got %d, want 5", got)
+	}
+}
+
+// TestParseSentinelConfig_MalformedPhaseFlagExpiry verifies that a valid
+// phase_flag accompanied by a non-RFC3339 phase_flag_expiry returns an error.
+func TestParseSentinelConfig_MalformedPhaseFlagExpiry(t *testing.T) {
+	t.Parallel()
+	_, err := parseSentinelConfig([]byte(`
+sentinel:
+  phase_flag: freeze
+  phase_flag_expiry: "not-a-timestamp"
+`))
+	if err == nil {
+		t.Fatal("expected error for malformed phase_flag_expiry, got nil")
+	}
+}
+
+// TestSentinelConfig_SuppressionTTLDefault verifies that suppressionTTL and
+// attachedInactiveTimeout fall back to their compiled defaults when not configured.
+func TestSentinelConfig_SuppressionTTLDefault(t *testing.T) {
+	t.Parallel()
+	cfg, err := parseSentinelConfig([]byte(`sentinel: {}`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.suppressionTTL(); got != DefaultSuppressionTTL {
+		t.Errorf("suppressionTTL default: got %v, want %v", got, DefaultSuppressionTTL)
+	}
+	if got := cfg.attachedInactiveTimeout(); got != DefaultAttachedInactiveTimeout {
+		t.Errorf("attachedInactiveTimeout default: got %v, want %v", got, DefaultAttachedInactiveTimeout)
+	}
+}

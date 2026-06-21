@@ -3,7 +3,9 @@ package sentinel_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -678,5 +680,188 @@ func TestGovernor_HasOpportunity_ReflectsInput(t *testing.T) {
 					hasReady, hasTail, sig.HasOpportunity, want)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// makeGitProjectFixture — helper for HEAD-advance tests
+// ---------------------------------------------------------------------------
+
+// makeGitProjectFixture initialises a local git repo with an origin remote.
+// Returns the project directory and a pushNewCommit closure that adds a new
+// commit to origin/main each time it is called.
+func makeGitProjectFixture(t *testing.T) (projectDir string, pushNewCommit func()) {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		//nolint:gosec // G204: git args are test-internal literals
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--initial-branch=main")
+	run("config", "user.email", "test@harmonik.local")
+	run("config", "user.name", "Harmonik Test")
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("init\n"), 0o644); err != nil {
+		t.Fatalf("makeGitProjectFixture: WriteFile: %v", err)
+	}
+	run("add", ".")
+	run("commit", "-m", "init")
+
+	originDir := t.TempDir()
+	//nolint:gosec // G204: git args are test-internal literals
+	if out, err := exec.Command("git", "init", "--bare", "--initial-branch=main", originDir).CombinedOutput(); err != nil {
+		t.Fatalf("makeGitProjectFixture: git init --bare: %v\n%s", err, out)
+	}
+	run("remote", "add", "origin", originDir)
+	run("push", "origin", "main")
+
+	// Create events dir so the projectDir is valid for Evaluate.
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o755); err != nil {
+		t.Fatalf("makeGitProjectFixture: mkdir events: %v", err)
+	}
+
+	counter := 0
+	pushNewCommit = func() {
+		counter++
+		fname := filepath.Join(dir, fmt.Sprintf("commit%d", counter))
+		if err := os.WriteFile(fname, []byte("work\n"), 0o644); err != nil {
+			t.Fatalf("makeGitProjectFixture: WriteFile commit%d: %v", counter, err)
+		}
+		run("add", ".")
+		run("commit", "-m", fmt.Sprintf("work %d", counter))
+		run("push", "origin", "main")
+	}
+	return dir, pushNewCommit
+}
+
+// ---------------------------------------------------------------------------
+// B4-1: G-liveness halt signal carries ConsecutiveZeroCycles
+// ---------------------------------------------------------------------------
+
+// TestGLiveness_HaltSignalHasPageArtifactFields verifies that when G-liveness
+// fires (ActivationHalt), the returned GovernorSignal carries
+// ConsecutiveZeroCycles == N so that the workloop can build the liveness_halt
+// page event payload without reading state again.
+func TestGLiveness_HaltSignalHasPageArtifactFields(t *testing.T) {
+	t.Parallel()
+	projectDir := makeEventsFile(t)
+	now := time.Now()
+	const N = 4
+
+	state := &sentinel.GovernorState{}
+	cfg := sentinel.Config{
+		Window:              30 * time.Minute,
+		WarmupWindow:        0,
+		LivenessNoProgressN: N,
+	}
+	input := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           now,
+		HasReadyBeads: true,
+	}
+
+	var sig sentinel.GovernorSignal
+	for i := 1; i <= N; i++ {
+		sig = sentinel.Evaluate(context.Background(), state, input, cfg)
+	}
+
+	if sig.Level != sentinel.ActivationHalt {
+		t.Fatalf("expected ActivationHalt after %d zero cycles, got %s", N, sig.Level)
+	}
+	if !sig.LivenessViolated {
+		t.Error("LivenessViolated should be true when ActivationHalt fires")
+	}
+	// The signal must carry the exact ConsecutiveZeroCycles count so the workloop
+	// can embed it in the liveness_halt page artifact without a second state read.
+	if sig.ConsecutiveZeroCycles != N {
+		t.Errorf("ConsecutiveZeroCycles in halt signal = %d, want %d (page artifact field)",
+			sig.ConsecutiveZeroCycles, N)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// B4-2: HEAD-advance resets ConsecutiveZeroCycles
+// ---------------------------------------------------------------------------
+
+// TestGLiveness_HeadAdvanceResetsZeroCycles verifies that a commit on
+// origin/main within the window gives MovementScore > 0 and resets
+// ConsecutiveZeroCycles to 0. This is the git-counterpart to
+// TestGLiveness_ResetOnProgress (events.jsonl).
+//
+// Strategy: use `now` = 2 hours from now so the fixture's initial commit
+// (which is at real wall-clock time) is within the 30m window only after we
+// push a fresh commit anchored near `now`. For the setup cycles we use
+// `setupNow` = 2h30m from now so the real-time commits are outside THAT window
+// → zero cycles. Then we switch to `now` = real time + push a new commit → within.
+//
+// Simpler approach: use a fake "past" now for the setup (far enough that no
+// real commits fall in the window), then use real now after the push.
+func TestGLiveness_HeadAdvanceResetsZeroCycles(t *testing.T) {
+	t.Parallel()
+	projectDir, pushNewCommit := makeGitProjectFixture(t)
+
+	// Use a "past" window for setup so the initial commit is outside it.
+	// The initial commit was created at real time; we look 2h in the future
+	// so real-time commits are 2h before `setupNow` → well outside the 30m window.
+	setupNow := time.Now().Add(2 * time.Hour)
+
+	state := &sentinel.GovernorState{}
+	cfg := sentinel.Config{
+		Window:              30 * time.Minute,
+		WarmupWindow:        0,
+		LivenessNoProgressN: 10, // high N so we don't halt during setup
+	}
+	setupInput := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           setupNow,
+		HasReadyBeads: true,
+	}
+
+	// Two zero-cycle evaluations: window is [setupNow-30m, setupNow] which is
+	// entirely in the future relative to the fixture's initial commit → score=0.
+	for i := 0; i < 2; i++ {
+		sig := sentinel.Evaluate(context.Background(), state, setupInput, cfg)
+		if sig.Level == sentinel.ActivationHalt {
+			t.Fatalf("unexpected ActivationHalt at setup cycle %d", i)
+		}
+	}
+	if state.ConsecutiveZeroCycles != 2 {
+		t.Fatalf("setup: expected ConsecutiveZeroCycles=2, got %d", state.ConsecutiveZeroCycles)
+	}
+
+	// Push a new commit to origin/main. Its committer date is ~real-now.
+	pushNewCommit()
+
+	// Evaluate with setupNow as window end: [setupNow-30m, setupNow].
+	// The new commit was made at real-now which is ~2h before setupNow, so still
+	// outside the future window. We need to use real now for the final eval so
+	// the new commit falls inside the window.
+	realNow := time.Now()
+	finalInput := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           realNow,
+		HasReadyBeads: true,
+	}
+
+	// Next evaluation with real now: HEAD advance gives MovementScore > 0 → counter resets.
+	sig := sentinel.Evaluate(context.Background(), state, finalInput, cfg)
+	if sig.Sample.HeadAdvanceCount == 0 {
+		t.Error("HeadAdvanceCount should be > 0 after pushing a commit within the window")
+	}
+	if sig.Sample.MovementScore == 0 {
+		t.Error("MovementScore should be > 0 after HEAD advance")
+	}
+	if sig.ConsecutiveZeroCycles != 0 {
+		t.Errorf("ConsecutiveZeroCycles should reset to 0 after HEAD advance, got %d",
+			sig.ConsecutiveZeroCycles)
+	}
+	if state.ConsecutiveZeroCycles != 0 {
+		t.Errorf("state.ConsecutiveZeroCycles should reset to 0 after HEAD advance, got %d",
+			state.ConsecutiveZeroCycles)
 	}
 }

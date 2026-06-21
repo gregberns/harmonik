@@ -249,6 +249,7 @@ last_msg_ts = {}  # agent_name -> epoch of most recent agent_message
 # reviewer_launched -> reviewer_verdict by run_id, NOT run_completed -> verdict.
 reviewer_launched_ts = {}  # run_id -> epoch of the reviewer_launched event (review entered)
 verdict_run_ids      = set() # run_ids that have a reviewer_verdict event
+failed_run_ids       = set() # run_ids whose terminal event is run_failed (merged nothing)
 # Short-circuit signal (hk-orni / hk-2vpj follow-up): a run that REQUESTED a review node
 # (node_dispatch_requested with node_id starting 'review' — review / review_correctness /
 # review_design / review_tests / reviewer) but for which the reviewer never launched (no
@@ -309,6 +310,14 @@ if _os.path.isfile(_events_path):
                     if _rid:
                         verdict_run_ids.add(_rid)
 
+                elif _etype == 'run_failed':
+                    # run_failed = terminal failure; the run merged nothing. Collect so the
+                    # review-gate can suppress false-positive bypass alerts on failed runs
+                    # (e.g. reviewer_budget_exceeded / 'verdict absent').
+                    _rid = _ev.get('run_id') or (_payload.get('run_id') if isinstance(_payload, dict) else '') or ''
+                    if _rid:
+                        failed_run_ids.add(_rid)
+
                 elif _etype == 'node_dispatch_requested':
                     # The engine requested a node for this run. node_id is under .payload.
                     # Only review-node requests matter here (prefix 'review' catches review,
@@ -356,6 +365,8 @@ review_bypass_run_ids = []
 for _rid, _lts in _recent_review:
     if (ts_epoch - _lts) < review_grace:
         continue  # too young to judge — verdict may still arrive
+    if _rid in failed_run_ids:
+        continue  # run_failed terminal: merged nothing, cannot be a bypass
     if _rid not in verdict_run_ids:
         review_bypass_run_ids.append(_rid)
 

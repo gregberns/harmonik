@@ -1,5 +1,25 @@
 # Spec — flywheel-motion (self-reinforcing motion)
 
+```yaml
+---
+title: flywheel-motion (self-reinforcing motion)
+spec-id: flywheel-motion
+requirement-prefix: FW
+status: normative
+spec-category: runtime-subsystem
+spec-shape: requirements-first
+version: 1.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-06-21
+depends-on:
+  - architecture
+  - execution-model
+  - process-lifecycle
+  - operator-nfr
+---
+```
+
 > **STATUS: NORMATIVE.** All design blockers resolved by 18-reviewer convergence; C resolved to (B)
 > staged-bead generator (operator delegated the pick to the captain 2026-06-16; kynes fresh-analysis
 > concurred). kynes 2026-06-16. v1 components FW1–FW3, FW5–FW6, AC1–AC3, AC5 landed on `main`
@@ -160,6 +180,64 @@ un-dispatched bead IDs** (and/or the un-deployed tail). It MUST NOT emit a repea
 ---
 
 ## 4. Goal-persistence [design #3 — NO injection — locked]
+
+### 4.a Subsystem envelope
+
+Envelope for the flywheel-motion subsystem per [specs/architecture.md §4.0 AR-053]. The flywheel grafts
+two coupled feedback loops onto the live captain+daemon: a negative loop (sentinel/governor) that prevents
+sustained idle, and a positive loop (work-generates-work) that compounds motion by generating follow-up
+beads from terminal outputs.
+
+(a) Events produced:
+  - `governor_signal` — sentinel governor emits one per tick in observe mode (FW2); schema in
+    [specs/event-model.md §8]; carries `activation_state`, `movement_score`, and `window_events`.
+  - Dispatch-blocking digest exception — emitted once per unsuppressed trip in act mode (FW3, §3.3);
+    names un-dispatched bead IDs; not a repeating warn-nag (§3.3 invariant).
+
+(b) Events consumed:
+  - Terminal-progress events from `.harmonik/events/events.jsonl` (§1 governor metric): `bead_closed`,
+    `run_completed`, `reviewer_verdict` — each weighted per §7 config; start/chatter events weight 0.
+  - EV-044 digest summary — read by captain at decision time (§3.2, ack-state integration).
+  - `bead_closed` / HEAD-advance — triggers AC1 staged-bead generator (§5) to emit follow-up beads.
+
+(c) Types introduced (cross-subsystem):
+  | Type | `Tags:` |
+  |---|---|
+  | `GovernorConfig` (§7, `sentinel.mode`, `movement_weights`, `window_seconds`) | mechanism |
+  | `reacted_ledger` key `(target_bead_id, follow_up_class)` (AC1 idempotency guard, §5) | mechanism |
+  | `.harmonik/decision_acks/<ack_token>` ack-state file (§3.2) | mechanism |
+  | `.harmonik/intent/goal-state.json` (§4.1 goal-keeper output) | mechanism |
+
+(d) Handlers implemented: none. The flywheel is not a handler-contract handler; it is wired into the
+daemon workloop (`workLoopDeps.governorState/governorCfg`) and the captain session-resume path (FW6).
+
+(e) State owned:
+  - `.harmonik/intent/goal-state.json` — goal-keeper distil output; updated each keeper cycle (§4.1/FW5).
+  - `.harmonik/decision_acks/` — ack-state files for trip/clear decisions (§3.2, AC1).
+  - `governorState` / `governorCfg` / `sentinelMode` / `sentinelPhase2Classes` on `workLoopDeps` —
+    in-process per-daemon-lifecycle state; initialized at `daemon.go:1667` (FW1).
+  - `reacted_ledger` — persisted `(target_bead_id, follow_up_class)` set preventing double-emit (AC1).
+
+(f) Control points provided:
+  - `sentinel` queue block — `DecisionBlocker.AddQueueBlock("sentinel")` injected on unsuppressed trip
+    in act mode (FW3, §3.3); blocks all queue dispatch until cleared or operator override.
+
+(g) NFRs inherited / overridden:
+  - Inherited: `ON-018` N-1 schema compatibility for `governor_signal` payload fields (additive-only).
+  - Inherited: `ON-027` graceful-shutdown ordering (governor tick is workloop-internal; no extra drain).
+  - Overridden: none.
+
+(h) Boundary classification per operation:
+  | Operation | `Tags:` | Axes |
+  |---|---|---|
+  | `governor_evaluate` (§1, FW2/FW3 tick) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `governor_emit_trip` (FW3) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `governor_clear_trip` (FW3) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `goal_keeper_distil` (§4.2, FW5 ephemeral) | cognition | `llm-freedom=constrained; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent` |
+  | `staged_bead_generate` (§5, AC1) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `resume_reground_goal_state` (§4.3, FW6) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+
+Tags: mechanism
 
 ### 4.1 Goal-state file
 The system SHALL maintain a durable **goal-state file** (e.g. `.harmonik/intent/goal-state.json`)

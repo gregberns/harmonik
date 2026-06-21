@@ -564,7 +564,7 @@ A semantic conflict occurs when the same bead exists in both A and B (beyond O),
   `<iso8601-timestamp> CONFLICT bead=<id> field=status a=<A_value> b=<B_value> resolution=took-ours`
 - Exit 0 (never block the merge for a semantic conflict).
 
-The reconciliation investigator reads `.beads/merge-conflicts.log` to surface audit items per Cat-BL3 (reconciliation/spec.md §8.BL3).
+The reconciliation investigator reads `.beads/merge-conflicts.log` to surface audit items per Cat-BL3 (reconciliation/spec.md §8.BL3) and MUST emit a `bead_ledger_conflict_audit` event for each batch read (event-model.md §8.15.2).
 
 Tags: mechanism
 

@@ -1784,6 +1784,30 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 
+				// Greenlight gate (AC2 — hk-lacr, queue path): staged deploy+verify beads
+				// carry "needs-greenlight" and MUST NOT be dispatched until a captain clears
+				// the label via `harmonik greenlight <bead-id>`. This check is independent of
+				// --no-auto-pull because it reads the live bead label, not a daemon mode flag.
+				// The br-ready path is gated at adapter read time (brcli/ready.go).
+				{
+					greenlightHeld := false
+					for _, lbl := range preClaimRecord.Labels {
+						if lbl == labelNeedsGreenlight {
+							greenlightHeld = true
+							break
+						}
+					}
+					if greenlightHeld {
+						fmt.Fprintf(os.Stderr,
+							"daemon: workloop: bead %s has needs-greenlight label — holding until captain runs `harmonik greenlight %s`\n",
+							snapItemBeadID, snapItemBeadID)
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+							return exitClean()
+						}
+						continue
+					}
+				}
+
 				// Phase 3 — stamp item as dispatched under the write lock (TOCTOU).
 				// NQ-B1: operate on the SELECTED queue (snapQueueName), not the "main"
 				// slot, so the dispatch stamp lands on the queue the round-robin chose.

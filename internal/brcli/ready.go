@@ -42,6 +42,14 @@ type brReadyItem struct {
 // (operator-nfr.md §4.3).
 const labelNeedsAttention = "needs-attention"
 
+// labelNeedsGreenlight is the Beads label that marks a staged deploy+verify
+// follow-up bead as requiring explicit captain approval before dispatch.
+// Beads carrying this label MUST be excluded from the ready-work set so the
+// daemon never auto-dispatches them. The label is applied by
+// stagedBeadGeneratorEval (flywheel-motion.md §5.3/§6.2 greenlight gate,
+// AC2 hk-lacr). Cleared by `harmonik greenlight <bead-id>`.
+const labelNeedsGreenlight = "needs-greenlight"
+
 // brReadySortPriority is the `br ready --sort` value the daemon's claim path
 // requires.  The br-CLI default sort policy is `hybrid`, which factors bead
 // age into ranking and can place a P1 bead ahead of a P0 bead when the P1 is
@@ -168,9 +176,13 @@ func (a *Adapter) readyWithArgs(ctx context.Context, extraArgs ...string) ([]cor
 		// dispatchable set. The label asserts operator triage is required; its
 		// presence is checked at adapter read time so the daemon's dispatch loop
 		// never observes these beads as ready.
+		//
+		// AC2 (hk-lacr): also exclude needs-greenlight (staged deploy+verify
+		// follow-up beads awaiting captain approval). Gate is label-based so it
+		// is independent of --no-auto-pull (flywheel-motion.md §5.3/§6.2).
 		excluded := false
 		for _, lbl := range item.Labels {
-			if lbl == labelNeedsAttention {
+			if lbl == labelNeedsAttention || lbl == labelNeedsGreenlight {
 				excluded = true
 				break
 			}

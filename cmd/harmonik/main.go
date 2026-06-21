@@ -614,6 +614,18 @@ EXAMPLES
 		return runSentinelSubcommand(os.Args[2:])
 	}
 
+	// harmonik greenlight <bead-id> [--project DIR] — captain approval for staged
+	// deploy+verify beads (AC2, hk-lacr). Removes the "needs-greenlight" label so
+	// the daemon's dispatch loop can claim the bead. No daemon required; calls br.
+	// Spec ref: flywheel-motion.md §5.3/§6.2.
+	if len(os.Args) >= 2 && os.Args[1] == "greenlight" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runGreenlightSubcommand(subArgs)
+	}
+
 	// harmonik goal-keeper [--project DIR] — ephemeral goal-state updater
 	// (flywheel V6, hk-owz1). Reads operator comms since the last_event_id
 	// cursor in .harmonik/intent/goal-state.json, appends new messages as

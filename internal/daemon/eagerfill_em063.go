@@ -50,6 +50,13 @@ import (
 // leave an avoidable gap in the filled stream.
 const eagerfillOverfetchFactor = 2
 
+// labelNeedsGreenlight is the Beads label applied by stagedBeadGeneratorEval
+// to staged deploy+verify follow-up beads. It gates dispatch until a captain
+// explicitly clears it via `harmonik greenlight <bead-id>`.
+// Flywheel-motion.md §5.3/§6.2 (AC2, hk-lacr). Mirrors the constant in
+// internal/brcli/ready.go (two packages, one well-known string).
+const labelNeedsGreenlight = "needs-greenlight"
+
 // eagerRefillEval implements the EM-062 eager-refill trigger and compute
 // function.
 //
@@ -461,6 +468,9 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 		"--description", description,
 		"--label", matchedClass,
 		"--label", fmt.Sprintf("followup:%s:%s", completedBeadID, matchedClass),
+		// AC2 (hk-lacr): needs-greenlight blocks dispatch until captain clears it
+		// via `harmonik greenlight <bead-id>` (flywheel-motion.md §5.3/§6.2).
+		"--label", labelNeedsGreenlight,
 	)
 	cmd.Dir = deps.projectDir
 	if out, runErr := cmd.Output(); runErr != nil {

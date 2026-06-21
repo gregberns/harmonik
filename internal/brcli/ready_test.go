@@ -245,6 +245,35 @@ func TestReadyNeedsAttentionExcluded(t *testing.T) {
 	}
 }
 
+// TestReadyNeedsGreenlightExcluded verifies AC2 (hk-lacr): beads carrying the
+// needs-greenlight label are excluded from the ready-work set at adapter read
+// time, independent of --no-auto-pull. A bead without the label must be returned.
+func TestReadyNeedsGreenlightExcluded(t *testing.T) {
+	jsonStr := `[` +
+		`{"id":"hk-staged-01","title":"deploy+verify: hk-abc (deploy)","status":"open","priority":2,"issue_type":"task","labels":["needs-greenlight","deploy","followup:hk-abc:deploy"]},` +
+		`{"id":"hk-normal-01","title":"Normal bead","status":"open","priority":2,"issue_type":"task","labels":["area:daemon"]}` +
+		`]`
+	path := brcliFixtureMockBinary(t, jsonStr, "", 0)
+
+	adapter, err := brcli.New(path)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	records, err := adapter.Ready(context.Background())
+	if err != nil {
+		t.Fatalf("Ready: unexpected error: %v", err)
+	}
+
+	// Only the bead without needs-greenlight must be returned.
+	if len(records) != 1 {
+		t.Fatalf("len(records) = %d; want 1 (needs-greenlight bead must be excluded, AC2)", len(records))
+	}
+	if records[0].BeadID != core.BeadID("hk-normal-01") {
+		t.Errorf("records[0].BeadID = %q; want %q", records[0].BeadID, "hk-normal-01")
+	}
+}
+
 // TestReadyNeedsAttentionOnlyExcludesAll verifies BI-013a with a payload that
 // contains only needs-attention beads: the result must be an empty (non-nil)
 // slice, not an error.

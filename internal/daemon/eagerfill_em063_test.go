@@ -419,6 +419,33 @@ func TestStagedBeadGenerator_CreatesBead(t *testing.T) {
 	}
 }
 
+// TestStagedBeadGenerator_AppliesNeedsGreenlightLabel verifies that the created
+// bead carries the "needs-greenlight" label (AC2 greenlight gate, hk-lacr).
+// The label is the structural block that prevents daemon auto-dispatch until a
+// captain explicitly clears it via `harmonik greenlight <bead-id>`.
+func TestStagedBeadGenerator_AppliesNeedsGreenlightLabel(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy-prod")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrArgScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-gltest", []string{"deploy"})
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("br was not called: %v", err)
+	}
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, labelNeedsGreenlight) {
+		t.Errorf("br args missing %q (AC2 greenlight gate): %q", labelNeedsGreenlight, line)
+	}
+}
+
 // TestStagedBeadGenerator_AtMostOnce verifies guardrail 4: a second call with
 // the same (beadID, class) is a no-op; br is only invoked once.
 func TestStagedBeadGenerator_AtMostOnce(t *testing.T) {

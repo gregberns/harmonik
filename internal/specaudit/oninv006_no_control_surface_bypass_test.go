@@ -287,6 +287,12 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// crew calls this LLM-free command after reviewing evidence; the projector (not
 	// this CLI) gates the all-clear. Authorised by operator-nfr.md §4.9 ON-055.
 	"sentinel": "operator-nfr.md §4.9 ON-055; offline decision_acks writer, no in-flight run abort",
+	// AC2 (hk-lacr): captain approval for staged deploy+verify follow-up beads.
+	// Removes the "needs-greenlight" label via `br label remove` so the daemon's
+	// dispatch loop can claim the bead. Label-only change; no daemon connection
+	// required, no in-flight run affected. Operator-nfr.md §4.2 ON-007 (operator
+	// controls dispatch gate explicitly; greenlight IS the authorisation).
+	"greenlight": "operator-nfr.md §4.2 ON-007; label-only br write, no daemon connection, no in-flight run abort (AC2 hk-lacr)",
 	// hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake): LLM-initiated quiesce of
 	// captain+crew sessions. Non-force consults the SS-INV-005 veto guard:
 	// daemon refuses if in-flight runs exist or dispatchable work is pending.

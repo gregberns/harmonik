@@ -93,11 +93,11 @@ func hksj6aHeartbeatEnv() core.EventEnvelope {
 // reviewer claude process dies.
 func TestQuitOnReviewFile_KillsAfterHeartbeatGraceExpires(t *testing.T) {
 	restore := hksj6aSetBudget(
-		20*time.Millisecond,   // base budget (no diff → base applies)
-		60*time.Millisecond,   // heartbeatActiveGrace (short for test)
-		500*time.Millisecond,  // hard ceiling (won't be hit)
-		5*time.Millisecond,    // poll interval
-		5*time.Millisecond,    // noChangeKillDelay
+		20*time.Millisecond,  // base budget (no diff → base applies)
+		60*time.Millisecond,  // heartbeatActiveGrace (short for test)
+		500*time.Millisecond, // hard ceiling (won't be hit)
+		5*time.Millisecond,   // poll interval
+		5*time.Millisecond,   // noChangeKillDelay
 	)
 	defer restore()
 
@@ -131,15 +131,15 @@ func TestQuitOnReviewFile_KillsAfterHeartbeatGraceExpires(t *testing.T) {
 // Kill fires within the grace window.
 func TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget(t *testing.T) {
 	const (
-		grace      = 60 * time.Millisecond
+		grace       = 60 * time.Millisecond
 		hardCeiling = 300 * time.Millisecond
 	)
 	restore := hksj6aSetBudget(
-		20*time.Millisecond,  // base budget
-		grace,                // heartbeatActiveGrace
-		hardCeiling,          // hard ceiling — ultimate backstop
-		5*time.Millisecond,   // poll
-		5*time.Millisecond,   // noChangeKillDelay
+		20*time.Millisecond, // base budget
+		grace,               // heartbeatActiveGrace
+		hardCeiling,         // hard ceiling — ultimate backstop
+		5*time.Millisecond,  // poll
+		5*time.Millisecond,  // noChangeKillDelay
 	)
 	defer restore()
 

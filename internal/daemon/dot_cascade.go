@@ -346,6 +346,20 @@ func driveDotWorkflow(
 	}
 	consecutiveNoProgressCount := 0
 
+	// prevAgenticNodeWasReviewer tracks whether the immediately preceding agentic
+	// node was a reviewer. The hk-8ps7q APPROVE-completion exemption uses this to
+	// distinguish two structurally-identical HEAD-unchanged re-entries:
+	//
+	//   (a) Multi-reviewer fan-out: review_1 APPROVE → review_2 (prev=reviewer).
+	//       review_2 must actually run — MUST NOT complete here.
+	//   (b) Implement (no commit) → review (prev=implementer). An implementer ran
+	//       after the APPROVE but produced no new commit (nothing left to do);
+	//       this entry is APPROVED-AND-DONE and MUST COMPLETE.
+	//
+	// By gating the exemption on !prevAgenticNodeWasReviewer instead of !isReviewer
+	// we allow case (b) to complete while preserving case (a).
+	prevAgenticNodeWasReviewer := false
+
 	for visits := 0; visits < dotMaxNodeVisits; visits++ {
 		node := nodesByID[currentNodeID]
 		if node == nil {
@@ -507,15 +521,24 @@ func driveDotWorkflow(
 				// fix-loop re-entry on an already-approved, already-committed bead —
 				// the production T12/hk-xhawy shape).
 				committedResult := parentSHA == "" || currentHead != parentSHA
-				// hk-2vpj: gate the APPROVE-completion exemption on !isReviewer.
-				// In a multi-reviewer fan-out (review_correctness → review_design →
-				// review_tests → consolidate), if the FIRST reviewer APPROVEs at
-				// iterationCount>=2, the guard would otherwise fire on ENTRY to the
-				// 2nd reviewer and short-circuit the run — reviewers 2..N + consolidate
-				// never run. The exemption must only trigger when the NEXT node is an
-				// IMPLEMENTER (nothing left to do after APPROVE) — never when we are
-				// merely advancing to the next REVIEWER in the fan-out sequence.
-				if committedResult && priorVerdict == workspace.ReviewVerdictApprove && !isReviewer {
+				// hk-2vpj / hk-8ps7q: gate the APPROVE-completion exemption on
+				// !prevAgenticNodeWasReviewer (rather than !isReviewer).
+				//
+				// Two HEAD-unchanged re-entries at iter ≥ 2 look identical from inside the
+				// no-progress block; the previous agentic node type disambiguates them:
+				//
+				//   (a) Multi-reviewer fan-out: review_1 APPROVE → review_2
+				//       (prevAgenticNodeWasReviewer=true). review_2 must actually run —
+				//       MUST NOT complete here. (Preserves the hk-2vpj invariant.)
+				//
+				//   (b) Implement (no commit) → review: after the APPROVE an implementer
+				//       ran but produced no new commit (nothing left to do); the reviewer
+				//       re-entry is APPROVED-AND-DONE (prevAgenticNodeWasReviewer=false)
+				//       → MUST COMPLETE and merge the approved work. (Fixes the
+				//       regression where !isReviewer only covered the case where the
+				//       NEXT node is the implementer, not the case where the graph
+				//       routes implement→review after the post-APPROVE no-commit run.)
+				if committedResult && priorVerdict == workspace.ReviewVerdictApprove && !prevAgenticNodeWasReviewer {
 					return dotWorkflowResult{
 						success: true,
 						summary: fmt.Sprintf("dot: completed at iteration %d — reviewer APPROVED and committed work is final (hk-8ps7q: HEAD did not advance because nothing remained to do)", iterationCount),
@@ -737,6 +760,12 @@ func driveDotWorkflow(
 				priorVerdictFlags = flags
 				reviewerNoVerdictRetries = 0
 			}
+
+			// Track whether the previous agentic node was a reviewer so the
+			// APPROVE-completion exemption (hk-8ps7q / hk-2vpj) can distinguish
+			// a multi-reviewer fan-out (prev=reviewer → don't complete) from an
+			// implement-no-commit→review transition (prev=implementer → complete).
+			prevAgenticNodeWasReviewer = isReviewer
 
 		case core.NodeTypeGate:
 			// Gate dispatch: resolve gate_ref → ControlPoint, build GateEvalFunc

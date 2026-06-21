@@ -453,7 +453,67 @@ func TestStagedBeadGenerator_AtMostOnce(t *testing.T) {
 	}
 }
 
-// TestStagedBeadGenerator_NoopWhenAtCeiling verifies guardrail 3: when
+// TestStagedBeadGenerator_DurableLedger_SkipsOnPreseededKey verifies that
+// when the in-memory ledger is pre-seeded (simulating a daemon restart that
+// loaded a durable ledger from disk), a subsequent call with the same
+// (beadID, class) key is a no-op — br create is NOT called.
+func TestStagedBeadGenerator_DurableLedger_SkipsOnPreseededKey(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy-prod")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	// Simulate a restart: pre-seed the in-memory ledger as the boot-seed does.
+	deps.followUpLedger["hk-xyz:deploy"] = struct{}{}
+
+	// This call must be a no-op because the key is already in the ledger.
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-xyz", []string{"deploy"})
+
+	if _, statErr := os.Stat(argsFile); statErr == nil {
+		t.Error("br was called despite key being pre-seeded in ledger (durable restart guard)")
+	}
+}
+
+// TestStagedBeadGenerator_DurableLedger_PersistsToDisk verifies that a
+// successful br create causes the ledger key to be appended to the disk file,
+// and that re-loading the file restores the key (AC1 durability contract).
+func TestStagedBeadGenerator_DurableLedger_PersistsToDisk(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy-prod")
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	ledgerPath := filepath.Join(tmp, followUpLedgerFileName)
+	deps.followUpLedgerPath = ledgerPath
+
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-persist", []string{"deploy"})
+
+	// br must have been called.
+	if _, statErr := os.Stat(argsFile); statErr != nil {
+		t.Fatalf("br was not called: %v", statErr)
+	}
+
+	// The key must be on disk.
+	ledger, err := loadFollowUpLedger(ledgerPath)
+	if err != nil {
+		t.Fatalf("loadFollowUpLedger: %v", err)
+	}
+	if _, ok := ledger["hk-persist:deploy"]; !ok {
+		t.Errorf("key 'hk-persist:deploy' missing from disk ledger after successful create; got %v", ledger)
+	}
+}
+
+// TestStagedBeadGenerator_DurableLedger_NoopWhenAtCeiling verifies guardrail 3: when
 // in-flight run count == maxConcurrent the generator skips bead creation.
 func TestStagedBeadGenerator_NoopWhenAtCeiling(t *testing.T) {
 	t.Parallel()

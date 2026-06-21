@@ -1672,6 +1672,18 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			deps.emittedEpicsMu = &sync.Mutex{}
 		}
 
+		// AC1 boot-seed (hk-3ndb): load the durable follow-up ledger so a daemon
+		// restart does not re-emit staged beads already created in a prior session
+		// (flywheel-motion.md §5.4 B guardrail 4). When followUpLedgerPath is empty
+		// (unit-test mode) the empty map from newWorkLoopDeps is retained.
+		if deps.followUpLedgerPath != "" {
+			if ledger, loadErr := loadFollowUpLedger(deps.followUpLedgerPath); loadErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon.Start: load follow-up ledger: %v\n", loadErr)
+			} else {
+				deps.followUpLedger = ledger
+			}
+		}
+
 		// Inject the QueueStore singleton so the work loop can pull from the
 		// active queue (queue-pull dispatch path per execution-model.md §7.4 TS-1).
 		//

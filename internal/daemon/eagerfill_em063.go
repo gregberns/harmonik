@@ -414,9 +414,9 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 		return
 	}
 
-	// Guardrail 4: at-most-once ledger.
+	// Guardrail 4: at-most-once ledger (in-memory check; disk-backed by AC1).
+	ledgerKey := string(completedBeadID) + ":" + matchedClass
 	if deps.followUpLedgerMu != nil {
-		ledgerKey := string(completedBeadID) + ":" + matchedClass
 		deps.followUpLedgerMu.Lock()
 		_, exists := deps.followUpLedger[ledgerKey]
 		if !exists {
@@ -449,5 +449,14 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 	if out, runErr := cmd.Output(); runErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: stagedBeadGeneratorEval: br create bead=%s class=%s: %v\n%s",
 			completedBeadID, matchedClass, runErr, out)
+		return
+	}
+
+	// AC1 (hk-3ndb): persist the new key to disk after successful br create so
+	// the at-most-once guarantee survives a daemon restart.
+	if deps.followUpLedgerPath != "" {
+		if persistErr := appendFollowUpLedger(deps.followUpLedgerPath, ledgerKey); persistErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: stagedBeadGeneratorEval: persist ledger key %s: %v\n", ledgerKey, persistErr)
+		}
 	}
 }

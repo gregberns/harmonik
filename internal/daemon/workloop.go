@@ -194,6 +194,15 @@ type workLoopDeps struct {
 	followUpLedger   map[string]struct{}
 	followUpLedgerMu *sync.Mutex
 
+	// followUpLedgerPath is the absolute path to the durable JSONL ledger file
+	// (.harmonik/follow-up-ledger.jsonl). The file is loaded at daemon boot to
+	// re-seed followUpLedger so restart does not re-emit staged beads that were
+	// already created in a prior session. Empty → disk persistence disabled
+	// (unit-test mode).
+	//
+	// Bead ref: hk-3ndb (AC1 — durable staged-bead ledger).
+	followUpLedgerPath string
+
 	// handlerBinary is the binary to spawn per iteration.  Empty → "claude".
 	handlerBinary string
 
@@ -930,6 +939,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		brPath:                     cfg.BrPath,                // hk-f722: staged-bead generator br create
 		followUpLedger:             make(map[string]struct{}), // hk-f722: at-most-once guard per daemon session
 		followUpLedgerMu:           &sync.Mutex{},
+		followUpLedgerPath:         filepath.Join(cfg.ProjectDir, ".harmonik", followUpLedgerFileName), // hk-3ndb: durable ledger path
 		noAutoPull:                 cfg.NoAutoPull,                 // hk-exd7m: queue-only mode for flywheel topology
 		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,      // hk-hypbi: per-close .br_history trim
 		mergeMu:                    &sync.Mutex{},                  // hk-yyso7: global merge-serialisation across all queues

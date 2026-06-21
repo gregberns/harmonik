@@ -331,6 +331,35 @@ error (`keeper_dispatching_cmd_hkrc51s_test.go:86-96`). Call it once all
 in-flight queue work has completed. Exit codes: `0` removed (or already absent);
 `1` argument / path-traversal / I/O error.
 
+### `harmonik keeper hold --agent <name> [--project DIR]` / `harmonik keeper release --agent <name> [--project DIR]` — co-working override
+
+An **operator/agent override that suspends the ACT/restart cutoff** while you are
+actively co-working with an agent, so the keeper does not `/clear` the session out
+from under a live human collaboration. **WARN still fires under a hold** — only the
+ACT/restart action is suspended (added 2026-06-20, hk-9waz). Distinct from
+`set-dispatching`: a dispatch-hold defers the cycle while a *queue batch* is in
+flight; a hold defers it while an *operator* is in the loop.
+
+- `harmonik keeper hold --agent <name>` writes the hold marker; `release` clears it
+  early. **`release` is idempotent** — an already-absent hold is not an error.
+- **Auto-revert invariant (it can NEVER survive a restart):** the hold marker is
+  `.harmonik/keeper/<agent>.hold.<sessionID>`, keyed by the **live session-id**.
+  The session-id is re-minted on every `/clear`, so a hold from a previous session
+  is dead on arrival after any restart — it cannot leak past the co-working window
+  it was created for.
+- **Timer backstop** covers operator-walk-away / crash: a hold older than
+  `cadence.hold_ttl` (`.harmonik/config.yaml` `keeper:` block; default **45m**,
+  `DefaultHoldTTL`) is ignored regardless of session-id, so a forgotten hold
+  self-clears.
+- **The hard-ceiling restart OVERRIDES a hold** (the one carve-out): overflow
+  protection wins, so a held session at ≥280k tokens is still force-restarted
+  rather than allowed to overflow the pane.
+- **Honest caveat — version-gated:** a hold is only honored by a keeper watcher
+  running a binary that has the feature (added 2026-06-20). An **older keeper
+  silently ignores the hold marker** and will ACT/restart anyway. Confirm the
+  watching binary is current (`harmonik keeper doctor` reports binary age) before
+  relying on a hold to protect a live co-working session.
+
 ---
 
 ## § Warn vs act — what to do at each
@@ -456,6 +485,11 @@ harmonik keeper --agent <agent> --tmux <pane> --warn-abs-tokens 200000 --act-abs
 # Defer the reset while a queue batch is in flight, then release
 harmonik keeper set-dispatching --agent <agent>
 harmonik keeper clear-dispatching --agent <agent>
+
+# Suspend the ACT/restart cutoff while co-working with an agent, then release early.
+# WARN still fires; auto-reverts on restart (session-id-keyed) + 45m timer backstop.
+harmonik keeper hold --agent <agent>
+harmonik keeper release --agent <agent>
 
 # Captain-initiated restart (write HANDOFF-captain.md first, include KEEPER nonce)
 harmonik keeper restart-now --agent captain [--project DIR]

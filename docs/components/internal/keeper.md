@@ -81,6 +81,7 @@ both crew (warn-only) and captain keepers.
 | `keeper.cadence.idle_restart_cooldown` | — | `30m` (`DefaultIdleRestartCooldown`) | Cycler-only (idle-restart) |
 | `keeper.cadence.hard_ceiling_cooldown` | — | `5m` (`DefaultHardCeilingCooldown`) | Watcher |
 | `keeper.cadence.blind_keeper_threshold` | — | `5m` (`DefaultBlindKeeperThreshold`) | Watcher |
+| `keeper.cadence.hold_ttl` | — | `45m` (`DefaultHoldTTL`) | Watcher (co-working hold backstop — hk-9waz) |
 
 ### `budgets`
 
@@ -121,6 +122,22 @@ both crew (warn-only) and captain keepers.
 > effect** — the crew self-restarts via the actionable-warn handshake (see
 > [`docs/keeper-restart-now-ack-protocol.md`](../../keeper-restart-now-ack-protocol.md) §"Actionable
 > warn → self-service restart"), and the crew-launch skill's "§ Self-restart via the keeper" prose.
+
+---
+
+## Co-working hold/release override (hk-9waz)
+
+`harmonik keeper hold --agent <name>` suspends the ACT/restart cutoff while an
+operator/agent is actively co-working, so the keeper does not `/clear` a live
+collaboration; `harmonik keeper release --agent <name>` clears it early
+(idempotent). **WARN still fires under a hold** — only the restart action is
+suspended. The hold is keyed by the live session-id
+(`.harmonik/keeper/<agent>.hold.<sessionID>`), so it **auto-reverts on any restart**
+(the session-id is re-minted on `/clear`), with `cadence.hold_ttl` (default `45m`)
+as a walk-away/crash backstop. The **hard-ceiling restart deliberately overrides a
+hold** (overflow protection wins). The verb surface and the version-gated caveat
+(an older keeper binary silently ignores a hold) are documented in the
+[`keeper` skill](../../../.claude/skills/keeper/SKILL.md) § "co-working override".
 
 ---
 

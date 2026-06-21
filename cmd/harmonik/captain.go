@@ -25,9 +25,13 @@ package main
 //  5. Keeper WATCHER armed in the keeper window with the real warn/act band
 //     (keeper.DefaultWarnAbsTokens / DefaultActAbsTokens), plus the keeper-enable
 //     settings.json stanza wiring kept from hk-igek.
-//  6. D7 idempotent pre-flight: if the target session already exists (the keeper
-//     outlived a stopped agent), the launcher REAPS the stale session and
-//     recreates it rather than erroring with tmux "duplicate session".
+//  6. D7 idempotent pre-flight: if the target session already exists, the
+//     launcher gates on AGENT-PANE LIVENESS. If the agent pane is dead/absent
+//     (the keeper outlived a stopped agent) it REAPS the stale session and
+//     recreates it rather than erroring with tmux "duplicate session". If the
+//     agent pane is ALIVE (a real captain is running) it REFUSES — never kills,
+//     never recreates — so re-running `start captain` cannot destroy a live
+//     conversation by minting a fresh session-id (review fix on hk-bcd0).
 //
 // WHY a STABLE caller-minted --session-id is load-bearing: it is what lets the
 // session-keeper's handoff → /clear → /session-resume cycle re-bind to the same
@@ -47,12 +51,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 
 	"github.com/google/uuid"
 
@@ -96,6 +102,14 @@ type captainTmuxOps interface {
 	// AgentPanePID reads the PID of the captain agent window's active pane, for
 	// captain.pid. Returns (0, err) when the pane PID can't be resolved.
 	AgentPanePID(ctx context.Context, sess string) (int, error)
+	// AgentPaneAlive reports whether the captain agent window's pane is backed by
+	// a LIVE process — i.e. there is a real captain running, not just a keeper
+	// window keeping the tmux session alive. Used by the D7 pre-flight to
+	// distinguish "reap a stale session (agent dead)" from "refuse to clobber a
+	// live captain". Resolves the agent pane PID and signal-0 probes it. Returns
+	// (false, err) only when liveness could not be determined at all; a resolvable
+	// but dead/absent pane returns (false, nil).
+	AgentPaneAlive(ctx context.Context, sess string) (bool, error)
 }
 
 // osCaptainTmuxOps is the production captainTmuxOps backed by tmux.OSAdapter.
@@ -130,6 +144,36 @@ func (o osCaptainTmuxOps) SpawnKeeperWindow(ctx context.Context, opts agentlaunc
 func (o osCaptainTmuxOps) AgentPanePID(ctx context.Context, sess string) (int, error) {
 	// The agent window holds the captain pane; resolve its first-pane PID.
 	return o.adapter.WindowPanePID(ctx, ltmux.WindowHandle(sess+":"+ltmux.WindowAgent))
+}
+
+// AgentPaneAlive resolves the agent pane PID and signal-0 probes it. A signal-0
+// kill checks process existence WITHOUT delivering a signal: nil => the process
+// is alive; an error (ESRCH / permission) => not a live, killable process.
+//
+// If the agent window is absent (the session exists but has no "agent" window —
+// the keeper-outlived-the-agent case the D7 reap targets), WindowPanePID returns
+// ErrNoSession / a zero pid: that is reported as (false, nil) — NOT a hard error
+// — so the caller treats it as "agent dead, safe to reap". A genuine probe
+// failure (couldn't even resolve the pid for some other reason) returns
+// (false, err) so the caller can decide conservatively.
+func (o osCaptainTmuxOps) AgentPaneAlive(ctx context.Context, sess string) (bool, error) {
+	pid, err := o.AgentPanePID(ctx, sess)
+	if err != nil {
+		// No agent window / pane PID unresolvable => treat as not-alive (reapable).
+		// errors.Is(ErrNoSession) is the common keeper-outlived-agent shape.
+		if errors.Is(err, ltmux.ErrNoSession) {
+			return false, nil
+		}
+		return false, err
+	}
+	if pid <= 0 {
+		return false, nil
+	}
+	// signal-0: existence probe, no signal delivered.
+	if perr := syscall.Kill(pid, 0); perr != nil {
+		return false, nil
+	}
+	return true, nil
 }
 
 // buildCaptainTmuxCmd assembles the exec.Cmd for the captain's agent-window
@@ -222,7 +266,9 @@ func captainTmuxSessionName(explicitTmux, project string) (string, error) {
 //	0  — captain launched (a keeper-enable OR keeper-window failure only WARNS;
 //	     sentinel/pid write failures also WARN — the captain stays bootable)
 //	1  — flag/arg error, non-UUIDv4 --session-id, cwd resolution, D7 reap failure,
-//	     or the agent-window tmux launch itself failing.
+//	     a LIVE captain already running in the target session (REFUSE — no
+//	     clobber), an ambiguous liveness probe, or the agent-window tmux launch
+//	     itself failing.
 func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKeeper keeperEnableFn, ops captainTmuxOps) int {
 	fs := flag.NewFlagSet("captain", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -276,18 +322,40 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 
 	ctx := context.Background()
 
-	// D7 idempotent pre-flight: if the target session already exists (the keeper
-	// outlived a stopped agent), REAP it before recreating. tmux `new-session -s`
-	// on an existing name errors "duplicate session" (captain-launch.sh:80) — the
-	// native launcher must never throw that. Killing the whole session tears down
-	// BOTH the stale agent and keeper windows, so the recreate below brings up a
-	// fresh, correctly-bound pair (and the keeper rebinds to the new agent
-	// window). A list/kill failure WARNS but does not block the launch (the create
-	// will surface a real collision as a tmux error).
+	// D7 idempotent pre-flight: if the target session already exists, decide
+	// between REAP-then-recreate (the keeper outlived a STOPPED agent) and REFUSE
+	// (a LIVE captain is already running). tmux `new-session -s` on an existing
+	// name errors "duplicate session" (captain-launch.sh:80) — the native launcher
+	// must never throw that — but it must ALSO never blindly clobber a live
+	// captain: doing so would kill the running conversation and recreate a fresh
+	// session with a NEW session-id, destroying the keeper's clear→resume binding.
+	//
+	// The decision pivots on agent-pane liveness:
+	//   - agent pane DEAD/absent (keeper window kept the session alive) → reap the
+	//     whole session and recreate a fresh, correctly-bound agent+keeper pair.
+	//   - agent pane ALIVE → REFUSE: do not kill, do not recreate; point the
+	//     operator at the live session and exit non-destructively.
+	//
+	// A SessionExists failure WARNS but does not block (the create will surface a
+	// real collision as a tmux error). A liveness-probe failure is treated
+	// conservatively as "assume alive" — better to refuse than risk clobbering a
+	// live captain on an ambiguous probe.
 	if exists, lerr := ops.SessionExists(ctx, tmuxSession); lerr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik captain: could not check for an existing session %q: %v — proceeding\n", tmuxSession, lerr)
 	} else if exists {
-		fmt.Printf("captain: existing tmux session %q found (keeper likely outlived a stopped agent) — reaping before recreate (D7)\n", tmuxSession)
+		alive, aerr := ops.AgentPaneAlive(ctx, tmuxSession)
+		if aerr != nil {
+			// Ambiguous probe: refuse rather than risk clobbering a live captain.
+			fmt.Fprintf(os.Stderr, "harmonik captain: could not determine whether the captain in tmux session %q is live (%v); "+
+				"refusing to reap it. Stop it first (or pass --tmux <name> to run a second one).\n", tmuxSession, aerr)
+			return 1
+		}
+		if alive {
+			fmt.Fprintf(os.Stderr, "harmonik captain: a live captain is already running in tmux session %q; "+
+				"stop it first (or pass --tmux <name> to run a second one).\n", tmuxSession)
+			return 1
+		}
+		fmt.Printf("captain: existing tmux session %q found with a DEAD/absent agent pane (keeper outlived a stopped agent) — reaping before recreate (D7)\n", tmuxSession)
 		if kerr := ops.KillSession(ctx, tmuxSession); kerr != nil {
 			fmt.Fprintf(os.Stderr, "harmonik captain: failed to reap stale session %q: %v\n", tmuxSession, kerr)
 			return 1

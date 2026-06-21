@@ -35,7 +35,11 @@ type fakeCaptainOps struct {
 	panePID      int   // what AgentPanePID returns (0 → "could not resolve")
 	panePIDErr   error
 
+	aliveResult bool  // what AgentPaneAlive returns (default false: agent dead/reapable)
+	aliveErr    error // optional AgentPaneAlive error (ambiguous-probe path)
+
 	existsCalls   int
+	aliveCalls    int
 	killCalls     int
 	killedSession string
 	keeperOpts    *agentlaunch.KeeperWindowOpts // nil until SpawnKeeperWindow called
@@ -64,6 +68,11 @@ func (f *fakeCaptainOps) AgentPanePID(_ context.Context, _ string) (int, error) 
 		f.panePID = 4242 // default live pid
 	}
 	return f.panePID, f.panePIDErr
+}
+
+func (f *fakeCaptainOps) AgentPaneAlive(_ context.Context, _ string) (bool, error) {
+	f.aliveCalls++
+	return f.aliveResult, f.aliveErr
 }
 
 // expectedHashedSession mirrors the launcher's in-process hash derivation so the
@@ -217,15 +226,21 @@ func TestCaptainLaunch_SentinelWrittenEvenWhenPidUnresolved_hkbcd0(t *testing.T)
 
 func TestCaptainLaunch_D7ReapsExistingSession_hkbcd0(t *testing.T) {
 	run, captured := captureRunHkly0n()
-	ops := &fakeCaptainOps{existsResult: true} // keeper outlived the agent
+	// Existing session whose AGENT pane is DEAD (the keeper outlived a stopped
+	// agent) — the only case in which a reap is legitimate.
+	ops := &fakeCaptainOps{existsResult: true, aliveResult: false}
 	proj := t.TempDir()
 
 	code := runCaptainLaunchWithOps([]string{"--project", proj}, run, noopKeeperHkly0n, ops)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 (re-launch over a stale session must Just Work, D7)", code)
 	}
+	// Liveness MUST be consulted before the reap — that gate is the safety fix.
+	if ops.aliveCalls != 1 {
+		t.Fatalf("AgentPaneAlive called %d times, want exactly 1 (reap must be liveness-gated)", ops.aliveCalls)
+	}
 	if ops.killCalls != 1 {
-		t.Fatalf("KillSession called %d times, want exactly 1 (D7 reap)", ops.killCalls)
+		t.Fatalf("KillSession called %d times, want exactly 1 (D7 reap of a DEAD agent)", ops.killCalls)
 	}
 	wantSess := expectedHashedSession(t, proj)
 	if ops.killedSession != wantSess {
@@ -234,6 +249,50 @@ func TestCaptainLaunch_D7ReapsExistingSession_hkbcd0(t *testing.T) {
 	// After reaping, the agent window must still be (re)launched.
 	if *captured == nil {
 		t.Error("agent window must be recreated after the D7 reap")
+	}
+}
+
+// TestCaptainLaunch_D7RefusesToClobberLiveCaptain_hkbcd0 is the load-bearing
+// safety case for the review fix: an existing session whose agent pane is ALIVE
+// (a real captain is running) must NOT be reaped or recreated. Re-running
+// `start captain` over a live captain previously killed it and minted a fresh
+// session-id, destroying the live conversation + the keeper's clear→resume
+// binding. The launcher must now refuse non-destructively.
+func TestCaptainLaunch_D7RefusesToClobberLiveCaptain_hkbcd0(t *testing.T) {
+	run, captured := captureRunHkly0n()
+	ops := &fakeCaptainOps{existsResult: true, aliveResult: true} // live captain
+	code := runCaptainLaunchWithOps([]string{"--project", t.TempDir()}, run, noopKeeperHkly0n, ops)
+
+	if code == 0 {
+		t.Fatalf("exit = 0, want non-zero (must refuse to clobber a LIVE captain)")
+	}
+	if ops.killCalls != 0 {
+		t.Errorf("KillSession called %d times, want 0 (a live captain must never be reaped)", ops.killCalls)
+	}
+	if *captured != nil {
+		t.Error("agent window must NOT be recreated when a live captain already occupies the session")
+	}
+	if ops.keeperOpts != nil {
+		t.Error("keeper window must NOT be armed when refusing to clobber a live captain")
+	}
+}
+
+// TestCaptainLaunch_D7AmbiguousLivenessRefuses_hkbcd0 verifies the conservative
+// path: if liveness cannot be determined (probe error), the launcher refuses
+// rather than risk clobbering a possibly-live captain.
+func TestCaptainLaunch_D7AmbiguousLivenessRefuses_hkbcd0(t *testing.T) {
+	run, captured := captureRunHkly0n()
+	ops := &fakeCaptainOps{existsResult: true, aliveErr: ltmux.ErrNoSession}
+	code := runCaptainLaunchWithOps([]string{"--project", t.TempDir()}, run, noopKeeperHkly0n, ops)
+
+	if code == 0 {
+		t.Fatalf("exit = 0, want non-zero (an ambiguous liveness probe must refuse, not clobber)")
+	}
+	if ops.killCalls != 0 {
+		t.Errorf("KillSession called %d times, want 0 on an ambiguous probe", ops.killCalls)
+	}
+	if *captured != nil {
+		t.Error("agent window must NOT be recreated on an ambiguous liveness probe")
 	}
 }
 

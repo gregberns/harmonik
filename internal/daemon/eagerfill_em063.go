@@ -414,6 +414,17 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 		return
 	}
 
+	// Provenance guard (§6.2 — hk-zlwq): only enqueue follow-ups of OWN
+	// merged commits. When a merge target branch is configured, verify the
+	// completed bead's Refs: trailer is present on origin/<targetBranch>.
+	// Fail-closed: a run that succeeds but whose commit is absent from
+	// origin/<targetBranch> spawns NO follow-up.
+	// Skipped when targetBranch is empty (no remote merge target; not
+	// reachable in production because merges require a non-empty targetBranch).
+	if deps.targetBranch != "" && !beadOnOriginMain(ctx, deps.projectDir, completedBeadID, deps.targetBranch) {
+		return
+	}
+
 	// Guardrail 4: at-most-once ledger (in-memory check; disk-backed by AC1).
 	ledgerKey := string(completedBeadID) + ":" + matchedClass
 	if deps.followUpLedgerMu != nil {
@@ -459,4 +470,36 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 			fmt.Fprintf(os.Stderr, "daemon: stagedBeadGeneratorEval: persist ledger key %s: %v\n", ledgerKey, persistErr)
 		}
 	}
+}
+
+// beadOnOriginMain returns true when beadID appears as a "Refs: <id>"
+// trailer in any commit reachable from origin/<targetBranch>.
+//
+// Used by stagedBeadGeneratorEval as the §6.2 provenance guard: the
+// work-generates-work loop SHALL only enqueue follow-ups of its OWN merged
+// commits. A run that succeeds but whose Refs: SHA is absent from
+// origin/<targetBranch> must not spawn a follow-up.
+//
+// Returns false on any git error (fail-closed) or when either argument is empty.
+//
+// Bead ref: hk-zlwq.
+func beadOnOriginMain(ctx context.Context, projectDir string, beadID core.BeadID, targetBranch string) bool {
+	if projectDir == "" || targetBranch == "" {
+		return false
+	}
+	needle := "Refs: " + string(beadID)
+	//nolint:gosec // G204: targetBranch is a daemon-internal config value, not user input
+	cmd := exec.CommandContext(ctx, "git", "log", "origin/"+targetBranch, "--format=%B",
+		"--fixed-strings", "--grep", needle)
+	cmd.Dir = projectDir
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimRight(line, "\r") == needle {
+			return true
+		}
+	}
+	return false
 }

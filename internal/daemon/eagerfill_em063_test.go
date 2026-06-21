@@ -540,3 +540,93 @@ func TestStagedBeadGenerator_NoopWhenAtCeiling(t *testing.T) {
 		t.Error("br was called at WIP==max_concurrent; expected no-op (guardrail 3)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// stagedBeadGeneratorEval — §6.2 provenance guard (hk-zlwq)
+// ---------------------------------------------------------------------------
+
+// stagedBeadGitFixture initialises a git repository with an origin remote in dir.
+// When refBeadID is non-empty, a commit with "Refs: <refBeadID>" is added to main
+// and pushed to origin so that beadOnOriginMain returns true for that bead.
+func stagedBeadGitFixture(t *testing.T, dir, refBeadID string) {
+	t.Helper()
+	run := func(args ...string) {
+		t.Helper()
+		//nolint:gosec // G204: git args are test-internal literals
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("stagedBeadGitFixture: git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--initial-branch=main")
+	run("config", "user.email", "test@harmonik.local")
+	run("config", "user.name", "Harmonik Test")
+	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("test\n"), 0o644); err != nil {
+		t.Fatalf("stagedBeadGitFixture: WriteFile: %v", err)
+	}
+	run("add", "README")
+	run("commit", "-m", "Initial commit")
+	if refBeadID != "" {
+		if err := os.WriteFile(filepath.Join(dir, "marker"), []byte(refBeadID+"\n"), 0o644); err != nil {
+			t.Fatalf("stagedBeadGitFixture: WriteFile marker: %v", err)
+		}
+		run("add", "marker")
+		run("commit", "-m", "work\n\nRefs: "+refBeadID)
+	}
+	originDir := t.TempDir()
+	//nolint:gosec // G204: git args are test-internal literals
+	initCmd := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir)
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("stagedBeadGitFixture: git init --bare: %v\n%s", err, out)
+	}
+	run("remote", "add", "origin", originDir)
+	run("push", "origin", "main")
+}
+
+// TestStagedBeadGenerator_NoopWhenProvenanceAbsent verifies the §6.2 provenance
+// guard: when targetBranch is set but origin/<targetBranch> has no "Refs: <beadID>"
+// commit, the generator is a no-op even if runSucceeded was true.
+func TestStagedBeadGenerator_NoopWhenProvenanceAbsent(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy")
+	stagedBeadGitFixture(t, projectDir, "") // no Refs: hk-xyz on origin/main
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	deps.targetBranch = "main"
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-xyz", []string{"deploy"})
+
+	if _, statErr := os.Stat(argsFile); statErr == nil {
+		t.Error("br was called despite Refs: hk-xyz absent from origin/main; want no-op (§6.2 provenance guard)")
+	}
+}
+
+// TestStagedBeadGenerator_FiresWhenProvenancePresent verifies the §6.2 provenance
+// guard positive path: when origin/<targetBranch> contains "Refs: <beadID>", the
+// generator creates the follow-up bead normally.
+func TestStagedBeadGenerator_FiresWhenProvenancePresent(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	writePhase2Config(t, projectDir, "deploy", "make deploy")
+	stagedBeadGitFixture(t, projectDir, "hk-xyz") // Refs: hk-xyz is on origin/main
+
+	tmp := t.TempDir()
+	argsFile := filepath.Join(tmp, "br-args.txt")
+	scriptPath := filepath.Join(tmp, "br")
+	writeFakeBrScript(t, scriptPath, argsFile)
+
+	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	deps.targetBranch = "main"
+	stagedBeadGeneratorEval(context.Background(), deps, "hk-xyz", []string{"deploy"})
+
+	if _, statErr := os.Stat(argsFile); statErr != nil {
+		t.Errorf("br was not called despite Refs: hk-xyz present on origin/main: %v", statErr)
+	}
+}

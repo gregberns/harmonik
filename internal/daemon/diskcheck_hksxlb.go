@@ -164,14 +164,21 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 		}
 	}
 
-	// Sub-step B: proactive reap (hk-guez restored).
-	// Run `go clean -cache` every goCacheCleanInterval even when disk is
-	// healthy, but only when no merge-build is in flight.
+	// Sub-step B: proactive reap (hk-guez restored) — DISABLED 2026-06-21 as the
+	// y3frr cache-TOCTOU emergency mitigation. The mergeOrRunInFlight() guard
+	// below is check-then-act: Len()==0 is sampled ONCE, then `go clean -cache`
+	// runs UNLOCKED for up to 5 min, during which a newly-dispatched run has its
+	// shared go-build cache wiped mid-compile -> fleet-wide merge_build_failed
+	// ("package X is not in std"; observed on leto AC4 hk-jvul twice, warm cache).
+	// Reverts to the 5c2276ca stopgap posture; the reactive below-watermark reap
+	// (Sub-step A) remains the real disk-full safety net. Re-enable only once
+	// y3frr lands reap<->dispatch mutual exclusion held for the clean's duration.
+	const proactiveCacheReapEnabled = false // y3frr mitigation
 	cleanInterval := deps.goCacheCleanIntervalOverride
 	if cleanInterval <= 0 {
 		cleanInterval = goCacheCleanInterval
 	}
-	if !deps.diskLow && time.Since(deps.lastGoCacheClean) >= cleanInterval {
+	if proactiveCacheReapEnabled && !deps.diskLow && time.Since(deps.lastGoCacheClean) >= cleanInterval {
 		if mergeOrRunInFlight(deps) {
 			// Merge-build in flight: defer proactive reap to avoid racing the
 			// build cache. The timer is NOT reset so the next idle tick will

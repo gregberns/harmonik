@@ -4,7 +4,7 @@ package main
 // the GENERATED captain-respawn.sh dead-pane self-heal helper (ES3 / hk-z1rj,
 // plan plans/2026-06-20-easy-start-commands §3 step 6, review outcome B).
 //
-// WHAT IT REPLACES: captain-launch.sh used to `cat >` a bash file
+// WHAT IT REPLACES: the retired bash captain launcher used to `cat >` a bash file
 // (captain-respawn.sh) that the keeper's idle-respawn path (internal/keeper/
 // watcher.go maybeRespawn, run via `sh -c`) invoked when the captain agent pane
 // died. That bash file did exactly two tmux calls:

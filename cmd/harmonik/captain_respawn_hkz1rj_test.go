@@ -4,9 +4,9 @@ package main
 // `harmonik captain respawn` subcommand and the captain.go --respawn-cmd arming.
 //
 // Re-authors the dead-pane self-heal coverage as ARGV tests (review E). The old
-// captain_launch_respawn_hkopuv_test.go greps scripts/captain-tools/captain-launch.sh
-// — that coverage belongs to the bash file ES8 retires; these tests assert the Go
-// behavior directly and do NOT depend on the script existing.
+// bash-grep respawn test was retired alongside the bash captain launcher (ES8 /
+// hk-877k); these tests assert the Go behavior directly and do NOT depend on any
+// shell script existing.
 //
 // Asserted invariants (hk-opuv / hk-z036):
 //   - respawn-window -k targeting the AGENT window "<sess>:agent" (only the agent

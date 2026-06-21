@@ -29,6 +29,7 @@ import (
 	"github.com/gregberns/harmonik/internal/agentlaunch"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -1362,27 +1363,46 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 
 // crewKeeperWindowArgv builds the argv the keeper window runs to watch the crew
 // agent pane. The keeper targets the sibling "agent" window
-// ("--tmux <session>:agent", slice K) so it never pastes into its own window,
-// and runs --warn-only (mirroring the CLI crew keeper in cmd/harmonik/crew.go's
-// spawnCrewKeeper: a crew keeper emits warn events but does not drive restart).
+// ("--tmux <session>:agent", slice K) so it never pastes into its own window.
 //
-//	<keeperBin> keeper --agent <crew> --tmux <session>:agent --warn-only [--project <dir>]
+//	<keeperBin> keeper --agent <crew> --tmux <session>:agent \
+//	    --warn-abs-tokens <w> --act-abs-tokens <a> [--project <dir>]
 //
 // keeperBin is the path of the currently-running harmonik binary (the keeper is
 // a harmonik subcommand, not the claude handler). projectDir, when non-empty,
 // pins the keeper to the crew's project root.
 //
+// FORCE-CUT BY DEFAULT (ES5 / hk-lcga, D4): a crew "can't get too big". The crew
+// keeper is armed with the SYSTEM DEFAULT warn/act band — the SAME
+// keeper.DefaultWarnAbsTokens / keeper.DefaultActAbsTokens the captain uses
+// (cmd/harmonik/captain.go) — so when the crew fills its context the keeper's
+// in-process restart-now cycle (handoff → /clear → /session-resume) fires and
+// force-cuts it, instead of nagging forever under the old --warn-only default.
+// The clear→resume cycle re-binds the crew on the SAME session_id (crews mint +
+// reuse a uuid via resolveSessionID), so force-cut + restart works the same way
+// it does for the captain.
+//
+// RespawnCmd is intentionally LEFT EMPTY here (NOT armed): the captain wires
+// --respawn-cmd to its captain-specific `harmonik captain respawn` subcommand
+// (dead-pane self-heal). No crew respawn entrypoint exists today, and building
+// one is a separate surface — D4 ("force-cut on fill") is satisfied by the
+// act-band restart-now cycle alone; dead-pane self-heal for crews is a distinct
+// concern. TODO(hk-lcga follow-up): add a crew respawn entrypoint (e.g.
+// `harmonik crew respawn`) and wire RespawnCmd here for crew dead-pane self-heal.
+//
 // Delegates to the SHARED agentlaunch.KeeperWindowArgv (review outcome A) so the
 // crew keeper-window argv and the CLI captain keeper-window argv have a single
-// source of truth. The crew default stays --warn-only here; ES5/hk-lcga flips it
-// off --warn-only onto the shared act+respawn band (D4).
+// source of truth.
 func crewKeeperWindowArgv(keeperBin, crewName, sessName, projectDir string) []string {
 	return agentlaunch.KeeperWindowArgv(agentlaunch.KeeperWindowOpts{
-		KeeperBin:  keeperBin,
-		AgentName:  crewName,
-		Session:    sessName,
-		ProjectDir: projectDir,
-		WarnOnly:   true,
+		KeeperBin:     keeperBin,
+		AgentName:     crewName,
+		Session:       sessName,
+		ProjectDir:    projectDir,
+		WarnOnly:      false, // D4: crew is FORCE-CUT, full warn→act→restart band.
+		WarnAbsTokens: keeper.DefaultWarnAbsTokens,
+		ActAbsTokens:  keeper.DefaultActAbsTokens,
+		// RespawnCmd left empty — see doc comment (follow-up).
 	})
 }
 

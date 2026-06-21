@@ -71,20 +71,27 @@ func (a *workerLivePaneAdapter) ListSessions(_ context.Context) ([]string, error
 func (a *workerLivePaneAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *workerLivePaneAdapter) NewWindowIn(_ context.Context, _ tmuxPkg.NewWindowIn) tmuxPkg.Outcome {
 	return tmuxPkg.Outcome{}
 }
-func (a *workerLivePaneAdapter) KillWindow(_ context.Context, _ tmuxPkg.WindowHandle) error { return nil }
+
+func (a *workerLivePaneAdapter) KillWindow(_ context.Context, _ tmuxPkg.WindowHandle) error {
+	return nil
+}
+
 func (a *workerLivePaneAdapter) WindowPaneID(_ context.Context, _ tmuxPkg.WindowHandle) (string, error) {
 	return "", nil
 }
-func (a *workerLivePaneAdapter) KillSession(_ context.Context, _ string) error              { return nil }
-func (a *workerLivePaneAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error     { return nil }
-func (a *workerLivePaneAdapter) PasteBuffer(_ context.Context, _, _ string) error           { return nil }
-func (a *workerLivePaneAdapter) SendKeysLiteral(_ context.Context, _, _ string) error       { return nil }
-func (a *workerLivePaneAdapter) SendKeysEnter(_ context.Context, _ string) error            { return nil }
-func (a *workerLivePaneAdapter) SendKeysQuit(_ context.Context, _ string) error             { return nil }
-func (a *workerLivePaneAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error { return nil }
+func (a *workerLivePaneAdapter) KillSession(_ context.Context, _ string) error          { return nil }
+func (a *workerLivePaneAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error { return nil }
+func (a *workerLivePaneAdapter) PasteBuffer(_ context.Context, _, _ string) error       { return nil }
+func (a *workerLivePaneAdapter) SendKeysLiteral(_ context.Context, _, _ string) error   { return nil }
+func (a *workerLivePaneAdapter) SendKeysEnter(_ context.Context, _ string) error        { return nil }
+func (a *workerLivePaneAdapter) SendKeysQuit(_ context.Context, _ string) error         { return nil }
+func (a *workerLivePaneAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
+	return nil
+}
 
 // TestRemoteCompletionMisfire_FastPathUsesLocalKillOnWorkerPID reproduces the
 // deterministic remote misfire. It is the production code path: deadFn is left

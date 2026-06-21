@@ -192,7 +192,6 @@ func TestSmoke_RestartNow_Integration(t *testing.T) {
 			Inject:      spyInject,
 			RequestedAt: time.Now(),
 		}, "smoke-nonce-hp")
-
 		if err != nil {
 			t.Fatalf("smoke: HappyPath: RestartNow returned unexpected error: %v", err)
 		}

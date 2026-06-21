@@ -55,8 +55,10 @@ func ctxWith(sid string, tokens int64) *CtxFile {
 	return &CtxFile{SessionID: sid, Tokens: tokens, WindowSize: 200_000, Pct: 85}
 }
 
-const primarySID = "11111111-2222-4333-8444-555555555555" // lowercase UUIDv4
-const brokenSID = "NOT-A-UUID"
+const (
+	primarySID = "11111111-2222-4333-8444-555555555555" // lowercase UUIDv4
+	brokenSID  = "NOT-A-UUID"
+)
 
 func TestSelectWarnText_CaptainActionableWhenIdleAndPrimary(t *testing.T) {
 	t.Parallel()

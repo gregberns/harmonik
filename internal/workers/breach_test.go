@@ -57,7 +57,8 @@ func swapRep(swapMB int64) WorkerReportPayload {
 func feed(d *breachDetector, steps []struct {
 	rep WorkerReportPayload
 	t   int
-}) []ResourceBreachPayload {
+},
+) []ResourceBreachPayload {
 	var all []ResourceBreachPayload
 	for _, s := range steps {
 		all = append(all, d.Observe(s.rep, at(s.t))...)
@@ -218,9 +219,9 @@ func TestObserve_SustainedClear_OneEvent_WithEpisodeLength(t *testing.T) {
 		t   int
 	}{
 		{cpuRep(0.95), 0},
-		{cpuRep(0.95), bdwell},        // breach fires at t=20
-		{cpuRep(0.50), 100},           // under exit (0.50 < 0.70) → CLEARING starts at 100
-		{cpuRep(0.50), 100 + cdwell},  // clear dwell matured → clear fires at t=115
+		{cpuRep(0.95), bdwell},       // breach fires at t=20
+		{cpuRep(0.50), 100},          // under exit (0.50 < 0.70) → CLEARING starts at 100
+		{cpuRep(0.50), 100 + cdwell}, // clear dwell matured → clear fires at t=115
 	})
 	if len(evs) != 2 {
 		t.Fatalf("want breach + clear, got %d: %+v", len(evs), evs)
@@ -424,11 +425,11 @@ func TestObserve_GuardsNoPanicNoFalseFire(t *testing.T) {
 	// NCPU<=0 and MemTotalMB<=0: cpu and memory signals must be inert; swap still
 	// reads normally. Drive a "would-be hot" cpu/mem sample with the guards tripped.
 	bad := WorkerReportPayload{
-		NCPU:       0,     // cpu guard
-		Load5:      99,    // would be enormous if divided
-		MemTotalMB: 0,     // memory guard
-		MemFreeMB:  0,     //
-		SwapUsedMB: 10,    // swap OK
+		NCPU:       0,  // cpu guard
+		Load5:      99, // would be enormous if divided
+		MemTotalMB: 0,  // memory guard
+		MemFreeMB:  0,  //
+		SwapUsedMB: 10, // swap OK
 	}
 	evs := feed(d, []struct {
 		rep WorkerReportPayload

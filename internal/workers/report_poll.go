@@ -51,7 +51,6 @@ func reportRunnerForWorker(w Worker) tmux.CommandRunner {
 // daemon can wire the recurring poll without re-deriving the SSH transport rule.
 func ProductionRunnerForWorker(w Worker) tmux.CommandRunner {
 	return reportRunnerForWorker(w)
-
 }
 
 // pollWorkerReports runs ONE sweep: for each enabled worker in cfg it resolves a

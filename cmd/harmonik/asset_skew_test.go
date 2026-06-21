@@ -6,7 +6,8 @@ import "testing"
 func fakeManifest(entries map[string]struct {
 	sha   string
 	class AssetClass
-}) Manifest {
+},
+) Manifest {
 	m := Manifest{FormatVersion: ManifestFormatVersion}
 	for p, e := range entries {
 		m.Files = append(m.Files, FileEntry{Path: p, Sha256: e.sha, Class: e.class})
@@ -78,15 +79,15 @@ func TestSkewLockBehindCountsChanges(t *testing.T) {
 		sha   string
 		class AssetClass
 	}{
-		"assets/skills/keeper/SKILL.md":  {"NEW1", Managed},
-		"assets/skills/captain/SKILL.md": {"NEW2", Managed},
+		"assets/skills/keeper/SKILL.md":    {"NEW1", Managed},
+		"assets/skills/captain/SKILL.md":   {"NEW2", Managed},
 		"assets/context/project.yaml.tmpl": {"NEW3", ContentOwned},
 	})
 	// Lock + disk both still at the OLD shas for all three → 3 fast-forwards.
 	lock := lockFromPairs(map[string]string{
-		"assets/skills/keeper/SKILL.md":     "OLD1",
-		"assets/skills/captain/SKILL.md":    "OLD2",
-		"assets/context/project.yaml.tmpl":  "OLD3",
+		"assets/skills/keeper/SKILL.md":    "OLD1",
+		"assets/skills/captain/SKILL.md":   "OLD2",
+		"assets/context/project.yaml.tmpl": "OLD3",
 	})
 	disk := map[string]string{
 		"assets/skills/keeper/SKILL.md":    "OLD1",

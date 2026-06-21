@@ -126,10 +126,10 @@ type BreachConfig struct {
 	BreachDwell time.Duration
 	ClearDwell  time.Duration
 
-	CPUEnter float64
-	CPUExit  float64
-	MemEnter float64
-	MemExit  float64
+	CPUEnter  float64
+	CPUExit   float64
+	MemEnter  float64
+	MemExit   float64
 	SwapEnter float64
 	SwapExit  float64
 }

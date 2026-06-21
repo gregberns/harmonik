@@ -13,6 +13,7 @@ package keeper_test
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -20,7 +21,6 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/keeper"
-	"os"
 )
 
 // foreignSessionConfig returns a WatcherConfig pre-wired for foreign_session

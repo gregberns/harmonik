@@ -403,8 +403,10 @@ func TestSyncAssetsDaemonLullGate(t *testing.T) {
 	// Completed queue → not dispatching.
 	done := &queue.Queue{
 		SchemaVersion: 1, QueueID: "q-done", Status: queue.QueueStatusCompleted,
-		Groups: []queue.Group{{Status: queue.GroupStatusCompleteSuccess,
-			Items: []queue.Item{{BeadID: "hk-done", Status: queue.ItemStatusCompleted}}}},
+		Groups: []queue.Group{{
+			Status: queue.GroupStatusCompleteSuccess,
+			Items:  []queue.Item{{BeadID: "hk-done", Status: queue.ItemStatusCompleted}},
+		}},
 	}
 	if disp, _ := dispatchingQueue([]*queue.Queue{done}); disp {
 		t.Errorf("dispatchingQueue should allow on a completed queue")
@@ -413,8 +415,10 @@ func TestSyncAssetsDaemonLullGate(t *testing.T) {
 	// Active queue but all items completed → not dispatching (lull).
 	lull := &queue.Queue{
 		SchemaVersion: 1, QueueID: "q-lull", Status: queue.QueueStatusActive,
-		Groups: []queue.Group{{Status: queue.GroupStatusActive,
-			Items: []queue.Item{{BeadID: "hk-c", Status: queue.ItemStatusCompleted}}}},
+		Groups: []queue.Group{{
+			Status: queue.GroupStatusActive,
+			Items:  []queue.Item{{BeadID: "hk-c", Status: queue.ItemStatusCompleted}},
+		}},
 	}
 	if disp, _ := dispatchingQueue([]*queue.Queue{lull}); disp {
 		t.Errorf("dispatchingQueue should allow when active group has no pending/dispatched items")

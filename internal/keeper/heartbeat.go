@@ -25,6 +25,7 @@ import (
 // This constant does NOT change any warn/act/force_act/window threshold values.
 // Alias of the exported DefaultMaxHeartbeatMisses (thresholds.go single source). hk-gwz6.
 const MaxHeartbeatMisses = DefaultMaxHeartbeatMisses
+
 //
 // PROBLEM. The .ctx gauge's sole writer is scripts/keeper-statusline.sh, which
 // runs ONLY on a Claude Code UI repaint and SKIPS the write whenever the pane

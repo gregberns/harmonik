@@ -112,8 +112,8 @@ type Config struct {
 
 	// Per-signal hysteresis thresholds (workers.yaml). All optional; <= 0 ⇒ the
 	// breach.go package defaults. Read via BreachConfig().
-	CPUEnter    float64 `yaml:"cpu_enter"`
-	CPUExit     float64 `yaml:"cpu_exit"`
+	CPUEnter     float64 `yaml:"cpu_enter"`
+	CPUExit      float64 `yaml:"cpu_exit"`
 	MemFreeEnter float64 `yaml:"mem_free_enter"`
 	MemFreeExit  float64 `yaml:"mem_free_exit"`
 	SwapEnterMB  float64 `yaml:"swap_enter_mb"`

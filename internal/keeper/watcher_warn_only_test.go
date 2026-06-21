@@ -116,9 +116,9 @@ func TestWatcher_WarnOnly_NoLivePaneRecover(t *testing.T) {
 		AgentName:           agent,
 		ProjectDir:          projectDir,
 		PollInterval:        10 * time.Millisecond,
-		Staleness:           5 * time.Millisecond,   // immediately stale
-		LiveRecoverGrace:    10 * time.Millisecond,  // tiny for test speed
-		LiveRecoverCooldown: 10 * time.Second,        // long: at most one attempt
+		Staleness:           5 * time.Millisecond,  // immediately stale
+		LiveRecoverGrace:    10 * time.Millisecond, // tiny for test speed
+		LiveRecoverCooldown: 10 * time.Second,      // long: at most one attempt
 		TmuxTarget:          "dummy-pane",
 		WarnOnly:            true, // ← the flag under test
 		IsPaneAliveFn:       func(_ context.Context, _ string) bool { return true },
@@ -156,16 +156,16 @@ func TestWatcher_WarnOnly_False_RespawnStillFires(t *testing.T) {
 	rec := &warnOnlyRespawnRecorder{}
 
 	cfg := keeper.WatcherConfig{
-		AgentName:    agent,
-		ProjectDir:   projectDir,
-		PollInterval: 10 * time.Millisecond,
-		Staleness:    5 * time.Millisecond,  // immediately stale
-		RespawnGrace: 10 * time.Millisecond, // tiny
+		AgentName:       agent,
+		ProjectDir:      projectDir,
+		PollInterval:    10 * time.Millisecond,
+		Staleness:       5 * time.Millisecond,  // immediately stale
+		RespawnGrace:    10 * time.Millisecond, // tiny
 		RespawnCooldown: 10 * time.Second,
-		TmuxTarget:   "dummy-pane",
-		WarnOnly:     false, // default: respawn IS permitted
-		IsPaneIdleFn: func(_ context.Context, _ string) bool { return true },
-		InjectFn:     func(_ context.Context, _ string) error { return nil },
+		TmuxTarget:      "dummy-pane",
+		WarnOnly:        false, // default: respawn IS permitted
+		IsPaneIdleFn:    func(_ context.Context, _ string) bool { return true },
+		InjectFn:        func(_ context.Context, _ string) error { return nil },
 		// Use a real non-empty RespawnCmd so maybeRespawn would qualify.
 		// The spy fn overrides RespawnCmd via the exec path — wire spy as
 		// RespawnCmd is a string; instead supply LiveRecoverFn which doesn't

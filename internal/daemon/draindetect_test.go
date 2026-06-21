@@ -400,9 +400,9 @@ func TestGenuineDrain_TrulyDrainedReturnsDrained(t *testing.T) {
 // fullLister is an openBeadLister fake that serves beads by status and also
 // lets tests assert which statuses were queried.
 type fullLister struct {
-	byStatus map[string][]core.BeadRecord
+	byStatus    map[string][]core.BeadRecord
 	errByStatus map[string]error // per-status errors
-	queried  []string
+	queried     []string
 }
 
 func (f *fullLister) ListBeadsByStatus(_ context.Context, status string) ([]core.BeadRecord, error) {

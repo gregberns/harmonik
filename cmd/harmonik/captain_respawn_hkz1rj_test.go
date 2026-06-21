@@ -49,8 +49,10 @@ func TestCaptainRespawn_RespawnsAgentWindowWithResume_hkz1rj(t *testing.T) {
 	proj := t.TempDir()
 	run, captured := captureRespawnRun("9988")
 	rc := runCaptainRespawn(
-		[]string{"--name", "captain", "--tmux", "harmonik-abc123-captain:agent",
-			"--session-id", respawnTestSID, "--project", proj},
+		[]string{
+			"--name", "captain", "--tmux", "harmonik-abc123-captain:agent",
+			"--session-id", respawnTestSID, "--project", proj,
+		},
 		run, os.Stdout, os.Stderr,
 	)
 	if rc != 0 {
@@ -89,8 +91,10 @@ func TestCaptainRespawn_RefreshesCaptainPid_hkz1rj(t *testing.T) {
 	proj := t.TempDir()
 	run, captured := captureRespawnRun("778899")
 	rc := runCaptainRespawn(
-		[]string{"--name", "captain", "--tmux", "sess:agent",
-			"--session-id", respawnTestSID, "--project", proj},
+		[]string{
+			"--name", "captain", "--tmux", "sess:agent",
+			"--session-id", respawnTestSID, "--project", proj,
+		},
 		run, os.Stdout, os.Stderr,
 	)
 	if rc != 0 {
@@ -119,8 +123,10 @@ func TestCaptainRespawn_BareSessionGetsAgentWindow_hkz1rj(t *testing.T) {
 	proj := t.TempDir()
 	run, captured := captureRespawnRun("1")
 	rc := runCaptainRespawn(
-		[]string{"--name", "captain", "--tmux", "harmonik-xyz-captain",
-			"--session-id", respawnTestSID, "--project", proj},
+		[]string{
+			"--name", "captain", "--tmux", "harmonik-xyz-captain",
+			"--session-id", respawnTestSID, "--project", proj,
+		},
 		run, os.Stdout, os.Stderr,
 	)
 	if rc != 0 {

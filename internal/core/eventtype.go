@@ -1035,6 +1035,19 @@ const (
 	// reopened so the work recovers on the next dispatch).
 	// Bead ref: hk-rs-tunnel-readiness-cc1w.
 	EventTypeWorkerTunnelFailed EventType = "worker_tunnel_failed"
+
+	// EventTypeWorkerReport is the worker_report event type (worker-report
+	// Phase 1, WR1). Emitted periodically by the workers package with a resource
+	// snapshot (load / cpu / memory / swap / disk / claude-process count) plus any
+	// detected problem flags for an enabled remote worker. Observability only —
+	// max_slots and dispatch behavior are unchanged in Phase 1.
+	//
+	// Payload fields: worker_name, sampled_at, load1, load5, ncpu, mem_total_mb,
+	// mem_free_mb, swap_used_mb, disk_free_mb, claude_procs, problems.
+	// Durability class: O (ordinary — operator observability; the event log is the
+	// history mined later to choose a real concurrency max).
+	// Bead ref: hk-9wbl.
+	EventTypeWorkerReport EventType = "worker_report"
 )
 
 // ---------------------------------------------------------------------------

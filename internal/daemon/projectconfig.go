@@ -41,6 +41,7 @@ package daemon
 //	  workflow_mode: dot       # review-loop or dot; single FORBIDDEN (PL-004a floor)
 //	  max_concurrent: 4        # > 0 to override --max-concurrent default
 //	  target_branch: main      # observability/symmetry only; authoritative source is branching.yaml
+//	  remote_control_prefix: hk # cosmetic Claude RC session-label prefix (empty = bare name); hk-igpg
 //	keeper:
 //	  context_thresholds:
 //	    warn_abs_tokens: 200000        # absolute warn gate (default 200000); ≤0 = not configured
@@ -215,10 +216,11 @@ func (e *ErrWorkflowModeFloorViolation) Error() string {
 // rawDaemonConfig is the per-daemon block in the config.yaml daemon: mapping.
 // Unknown keys at this level are silently ignored (forward-compat per PL-004b).
 type rawDaemonConfig struct {
-	WorkflowMode  string   `yaml:"workflow_mode"`
-	MaxConcurrent int      `yaml:"max_concurrent"`
-	TargetBranch  string   `yaml:"target_branch"` // observability/symmetry only per PL-004b
-	AllowedRepos  []string `yaml:"allowed_repos"` // cross-repo dispatch safelist (hk-xfuc)
+	WorkflowMode        string   `yaml:"workflow_mode"`
+	MaxConcurrent       int      `yaml:"max_concurrent"`
+	TargetBranch        string   `yaml:"target_branch"`         // observability/symmetry only per PL-004b
+	AllowedRepos        []string `yaml:"allowed_repos"`         // cross-repo dispatch safelist (hk-xfuc)
+	RemoteControlPrefix string   `yaml:"remote_control_prefix"` // per-project Claude RC session-label prefix (hk-igpg)
 }
 
 // rawKeeperContextThresholds holds configurable threshold values in the
@@ -524,6 +526,16 @@ type DaemonConfig struct {
 	// An empty list means no cross-repo dispatch is allowed.
 	// See docs/cross-repo-dispatch.md.
 	AllowedRepos []string
+
+	// RemoteControlPrefix is the per-project prefix folded into the Claude Code
+	// --remote-control session LABEL (e.g. "hk" → label "hk-paul"). It disambiguates
+	// the global-per-host Remote-Control session picker when multiple harmonik
+	// projects run concurrently. Empty = not configured ⇒ the bare agent name is
+	// emitted exactly as today (backward compatible). It is a COSMETIC label only:
+	// harmonik's own identity keys (HARMONIK_AGENT, crew-registry name, tmux name,
+	// --session-id) stay bare. Use JoinRemoteControlName to build the label so the
+	// format never drifts between launch sites. (hk-igpg)
+	RemoteControlPrefix string
 }
 
 // rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
@@ -619,7 +631,8 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	// → absent semantics. A file with only a daemon: or keeper: block but no schema_version: 1
 	// falls through to the version check below and returns ErrUnsupportedConfigVersion (fail-fast).
 	daemonAbsent := raw.Daemon.WorkflowMode == "" && raw.Daemon.MaxConcurrent == 0 &&
-		raw.Daemon.TargetBranch == "" && len(raw.Daemon.AllowedRepos) == 0
+		raw.Daemon.TargetBranch == "" && len(raw.Daemon.AllowedRepos) == 0 &&
+		raw.Daemon.RemoteControlPrefix == ""
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
 		daemonAbsent && keeperBlockAbsent(raw.Keeper) {
 		return ProjectConfig{}, nil
@@ -708,6 +721,10 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 
 	// allowed_repos: stored as-is; nil/empty = cross-repo dispatch not permitted.
 	cfg.AllowedRepos = raw.AllowedRepos
+
+	// remote_control_prefix: stored as-is; empty = not configured (bare label). No
+	// validation/length cap (operator decision hk-igpg: short default, no hard cap).
+	cfg.RemoteControlPrefix = raw.RemoteControlPrefix
 
 	return cfg, nil
 }

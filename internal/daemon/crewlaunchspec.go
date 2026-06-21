@@ -15,15 +15,43 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
+// JoinRemoteControlName builds the Claude Code --remote-control session LABEL
+// from a per-project prefix and the agent name. It is the SINGLE source of the
+// label format, shared by every launch site (daemon crew launch, captain CLI,
+// and indirectly the bash launchers via the read-side CLI) so the format never
+// drifts:
+//
+//	prefix == ""  → name                 (backward compatible — bare label)
+//	prefix != ""  → prefix + "-" + name  (e.g. "hk" + "paul" → "hk-paul")
+//
+// The label is COSMETIC: it disambiguates the global-per-host Remote-Control
+// session picker across concurrent projects. Harmonik's own identity keys
+// (HARMONIK_AGENT, crew-registry name, tmux name, --session-id) stay BARE and
+// MUST NOT be derived from this label. (hk-igpg)
+func JoinRemoteControlName(prefix, name string) string {
+	if prefix == "" {
+		return name
+	}
+	return prefix + "-" + name
+}
+
 // crewLaunchCtx carries the inputs to buildCrewLaunchSpec.
 type crewLaunchCtx struct {
 	// claudeBinary is the handler executable, resolved like daemon HandlerBinary
 	// (daemon.go:99). Empty is normalised to "claude".
 	claudeBinary string
 
-	// name is the crew member identifier — used as the --remote-control title
-	// and as HARMONIK_AGENT. Must be non-empty.
+	// name is the crew member identifier — used as the BARE HARMONIK_AGENT and as
+	// the basis for the --remote-control title. Must be non-empty. The
+	// --remote-control LABEL is JoinRemoteControlName(rcPrefix, name); HARMONIK_AGENT
+	// stays the bare name (hk-igpg).
 	name string
+
+	// rcPrefix is the per-project Claude Code Remote-Control label prefix
+	// (daemon.remote_control_prefix). Empty = bare label (today's behavior). It
+	// is folded into the --remote-control title ONLY, via JoinRemoteControlName —
+	// HARMONIK_AGENT, the crew-registry name, and --session-id stay bare (hk-igpg).
+	rcPrefix string
 
 	// sessionID is the caller-minted UUID for --session-id. Must be non-empty.
 	// C2 mints it before calling this function and writes it to the crew
@@ -74,11 +102,16 @@ func buildCrewLaunchSpec(rc crewLaunchCtx) (handler.LaunchSpec, error) {
 		binary = "claude"
 	}
 
+	// The --remote-control LABEL folds in the per-project prefix via the shared
+	// helper so the --resume and --session-id branches emit the SAME label (resume
+	// parity, hk-igpg): a keeper clear→resume must not rename the picker session.
+	rcLabel := JoinRemoteControlName(rc.rcPrefix, rc.name)
+
 	var args []string
 	if rc.resume {
-		args = []string{"--dangerously-skip-permissions", "--remote-control", rc.name, "--resume", rc.sessionID}
+		args = []string{"--dangerously-skip-permissions", "--remote-control", rcLabel, "--resume", rc.sessionID}
 	} else {
-		args = []string{"--dangerously-skip-permissions", "--remote-control", rc.name, "--session-id", rc.sessionID}
+		args = []string{"--dangerously-skip-permissions", "--remote-control", rcLabel, "--session-id", rc.sessionID}
 	}
 
 	// Optional per-crew model injection (specs/crew-handoff-schema.md §3): the

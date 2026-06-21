@@ -1606,7 +1606,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// Bead ref: hk-5tg5o.
 		// Assigned to the function-scope var (declared above) so the workloop deps
 		// block can reuse it for spawn-crew scheduled actions (hk-0es).
-		crewHandler = NewCrewHandler(cfg.HandlerBinary, cfg.ProjectDir, cfg.Substrate, opPauseCtrl)
+		// rcPrefix (hk-igpg): the per-project Claude RC label prefix, read from the
+		// cached .harmonik/config.yaml daemon block (loaded at Start, ~L745). Empty =
+		// bare label. Cosmetic only — crew identity keys stay bare.
+		crewHandler = NewCrewHandler(cfg.HandlerBinary, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RemoteControlPrefix, cfg.Substrate, opPauseCtrl)
 
 		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
 		// the absence of the socket is observable externally). Drain the done

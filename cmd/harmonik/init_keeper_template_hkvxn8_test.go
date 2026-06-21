@@ -46,7 +46,7 @@ func renderInitConfig(t *testing.T, body string) string {
 // TestInitKeeperTemplate_SchemaUncommented_RestCommented asserts the emitted
 // template has schema_version: 1 uncommented and every keeper line commented.
 func TestInitKeeperTemplate_SchemaUncommented_RestCommented(t *testing.T) {
-	body := fmt.Sprintf(configYAMLContent, "main")
+	body := fmt.Sprintf(configYAMLContent, "main", "hk")
 
 	// schema_version: 1 is UNCOMMENTED (a real top-level line, not a comment).
 	if !lineUncommented(body, "schema_version: 1") {
@@ -111,7 +111,7 @@ func TestInitKeeperTemplate_SchemaUncommented_RestCommented(t *testing.T) {
 // the keeper block is absent / all-zero so a third party inherits the compiled
 // defaults, NOT this operator's band.
 func TestInitKeeperTemplate_AllDefaultWhenCommented(t *testing.T) {
-	body := fmt.Sprintf(configYAMLContent, "main")
+	body := fmt.Sprintf(configYAMLContent, "main", "hk")
 	repoRoot := renderInitConfig(t, body)
 
 	cfg, err := daemon.LoadProjectConfig(repoRoot)
@@ -134,7 +134,7 @@ func TestInitKeeperTemplate_AllDefaultWhenCommented(t *testing.T) {
 // TestInitKeeperTemplate_SingleUncommentOverride asserts that uncommenting ONE
 // keeper line applies exactly that override, with NO version error.
 func TestInitKeeperTemplate_SingleUncommentOverride(t *testing.T) {
-	body := fmt.Sprintf(configYAMLContent, "main")
+	body := fmt.Sprintf(configYAMLContent, "main", "hk")
 
 	// Uncomment exactly the keeper: header, context_thresholds:, and the one
 	// warn_abs_tokens line. (YAML requires the parent keys present to nest the

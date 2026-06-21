@@ -85,7 +85,7 @@ func (f *fakePauseCtrl) HandleOperatorResume(_ context.Context, _ string) error 
 func newTestCrewHandler(t *testing.T, sub handler.Substrate, opCtrl OperatorControlHandler) (CrewHandler, string) {
 	t.Helper()
 	dir := t.TempDir()
-	return NewCrewHandler("claude", dir, sub, opCtrl), dir
+	return NewCrewHandler("claude", dir, "", sub, opCtrl), dir
 }
 
 func mustCrewStart(t *testing.T, h CrewHandler, req CrewStartRequest) CrewStartResult {
@@ -184,7 +184,7 @@ func TestCrewStart_SessionIDMintedBeforeLaunch(t *testing.T) {
 		},
 	}
 
-	h := NewCrewHandler("claude", "", check, nil).(*crewHandlerImpl)
+	h := NewCrewHandler("claude", "", "", check, nil).(*crewHandlerImpl)
 	// Override projectDir after construction so we can set dir.
 	dir = t.TempDir()
 	h.projectDir = dir

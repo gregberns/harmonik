@@ -2135,8 +2135,11 @@ const ExportedForcedLoginMethodValue = forcedLoginMethodValue
 type ExportedCrewLaunchCtx struct {
 	ClaudeBinary string
 	Name         string
-	SessionID    string
-	ProjectDir   string
+	// RcPrefix is the per-project --remote-control label prefix (hk-igpg); "" =
+	// bare label.
+	RcPrefix   string
+	SessionID  string
+	ProjectDir string
 	// Resume, when true, builds argv with --resume instead of --session-id
 	// (stale re-launch path per c2-spec.md §7).
 	Resume bool
@@ -2153,6 +2156,7 @@ func ExportedBuildCrewLaunchSpec(rc ExportedCrewLaunchCtx) (handler.LaunchSpec, 
 	return buildCrewLaunchSpec(crewLaunchCtx{
 		claudeBinary: rc.ClaudeBinary,
 		name:         rc.Name,
+		rcPrefix:     rc.RcPrefix,
 		sessionID:    rc.SessionID,
 		projectDir:   rc.ProjectDir,
 		resume:       rc.Resume,

@@ -677,6 +677,18 @@ EXAMPLES
 		return runProjectHashSubcommand(subArgs)
 	}
 
+	// harmonik remote-control-prefix [--project DIR] — read-only printer for the
+	// per-project Claude RC label prefix (daemon.remote_control_prefix). No daemon
+	// required; side-effect-free. Mirrors project-hash; fetches the prefix without
+	// parsing YAML. Bead ref: hk-igpg.
+	if len(os.Args) >= 2 && os.Args[1] == "remote-control-prefix" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runRemoteControlPrefixSubcommand(subArgs)
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for MVH:

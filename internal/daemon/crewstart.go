@@ -102,6 +102,7 @@ type crewPaneStopper interface {
 type crewHandlerImpl struct {
 	claudeBinary string
 	projectDir   string
+	rcPrefix     string                 // per-project --remote-control label prefix (hk-igpg); "" = bare label
 	substrate    handler.Substrate      // spawns crew windows
 	opPauseCtrl  OperatorControlHandler // for --pause-queue in crew-stop; may be nil
 }
@@ -110,16 +111,21 @@ type crewHandlerImpl struct {
 //
 // claudeBinary is the handler executable (empty resolves to "claude").
 // projectDir is the harmonik project root directory.
+// rcPrefix is the per-project Claude Code --remote-control label prefix
+// (daemon.remote_control_prefix). Empty = bare label (today's behavior); a
+// non-empty value yields "<prefix>-<name>" via JoinRemoteControlName. It is a
+// COSMETIC label only — the crew's identity keys stay bare (hk-igpg).
 // substrate is the tmux substrate for spawning crew sessions; may be nil in tests
 // that don't exercise the actual spawn path.
 // opPauseCtrl is the operator-pause controller used when --pause-queue is set;
 // may be nil (crew-stop will skip the pause step).
 //
-// Bead ref: hk-5tg5o.
-func NewCrewHandler(claudeBinary, projectDir string, substrate handler.Substrate, opPauseCtrl OperatorControlHandler) CrewHandler {
+// Bead ref: hk-5tg5o, hk-igpg.
+func NewCrewHandler(claudeBinary, projectDir, rcPrefix string, substrate handler.Substrate, opPauseCtrl OperatorControlHandler) CrewHandler {
 	return &crewHandlerImpl{
 		claudeBinary: claudeBinary,
 		projectDir:   projectDir,
+		rcPrefix:     rcPrefix,
 		substrate:    substrate,
 		opPauseCtrl:  opPauseCtrl,
 	}
@@ -185,6 +191,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	lspec, buildErr := buildCrewLaunchSpec(crewLaunchCtx{
 		claudeBinary: h.claudeBinary,
 		name:         req.Name,
+		rcPrefix:     h.rcPrefix,
 		sessionID:    sessionID,
 		projectDir:   h.projectDir,
 		resume:       isResume,

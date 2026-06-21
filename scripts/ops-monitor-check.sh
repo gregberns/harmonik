@@ -5,7 +5,9 @@
 #   1. daemon-up        — harmonik queue status exit 17 = daemon down
 #   2. paused-queues    — main queue or active crew queue paused-by-failure
 #   3. single-mode      — max_concurrent == 1 (throughput bottleneck)
-#   4. crew-staleness   — comms last_seen >150s; signals after 2 consecutive misses
+#   4. crew-staleness   — comms last_seen >150s; signals after 2 consecutive misses;
+#                         suppressed if crew posted an agent_message within 900s (comms
+#                         send does not refresh presence — hk-gu3v)
 #   5. ready-unstaffed  — queue has pending_items > 0 but no workers and no online crew
 #   6. idle-fleet       — no active workers + last run event >20m ago (lull detect)
 #   7. review-gate      — a run_id that ENTERED-OR-REQUESTED a review (reviewer_launched
@@ -71,6 +73,11 @@ STALE_THRESHOLD=150   # seconds: crew last_seen older than this = stale
 MISS_LIMIT=2          # consecutive stale observations before signaling
 IDLE_THRESHOLD=1200   # 20 minutes: no active workers + no recent event = idle
 DIGEST_COOLDOWN=900   # 15 minutes: minimum gap between digest sends
+CREW_MSG_ACTIVE_WINDOW=900  # seconds: treat crew as active if it posted an agent_message within
+                             # this window even when presence last_seen is stale (hk-gu3v).
+                             # comms send does NOT refresh presence, so a keeper-restarting agent
+                             # posting status every ~12m would exceed the 150s stale_thresh but
+                             # IS demonstrably active.  900s (15m) ≈ one posting cadence + buffer.
 REVIEW_GATE_WINDOW=10 # review-gate: examine the last N run_completed run_ids
 REVIEW_GATE_GRACE=180 # seconds: a run_completed younger than this is skipped (its
                       # reviewer_verdict may still be in flight — avoids false bypass)
@@ -218,15 +225,16 @@ proj               = '$PROJ'
 ts                 = '$TS'
 ts_epoch           = int('$TS_EPOCH')
 daemon_up          = '$DAEMON_UP' == 'true'
-stale_thresh       = int('$STALE_THRESHOLD')
-miss_limit         = int('$MISS_LIMIT')
-idle_thresh        = int('$IDLE_THRESHOLD')
-cooldown           = int('$DIGEST_COOLDOWN')
-last_run_ts        = int('$LAST_RUN_EVENT_TS')
-prev_misses        = json.loads('$PREV_STALE_MISSES')
-prev_digest        = int('$PREV_LAST_DIGEST')
-prev_alerted       = json.loads('''$PREV_ALERTED_IMMEDIATE''')
-immediate_cooldown = int('$IMMEDIATE_COOLDOWN')
+stale_thresh            = int('$STALE_THRESHOLD')
+miss_limit              = int('$MISS_LIMIT')
+idle_thresh             = int('$IDLE_THRESHOLD')
+cooldown                = int('$DIGEST_COOLDOWN')
+crew_msg_active_window  = int('$CREW_MSG_ACTIVE_WINDOW')
+last_run_ts             = int('$LAST_RUN_EVENT_TS')
+prev_misses             = json.loads('$PREV_STALE_MISSES')
+prev_digest             = int('$PREV_LAST_DIGEST')
+prev_alerted            = json.loads('''$PREV_ALERTED_IMMEDIATE''')
+immediate_cooldown      = int('$IMMEDIATE_COOLDOWN')
 inert_suppress     = json.loads('''$INERT_SUPPRESS_JSON''')
 live_allow         = json.loads('''$LIVE_ALLOW_JSON''')
 comms_raw          = '''$COMMS_WHO_NDJSON'''
@@ -237,9 +245,11 @@ review_grace       = int('$REVIEW_GATE_GRACE')
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
-# heartbeat, so an agent posting status while its presence is stale by
-# last_seen would fire a false crew-stale alert. We suppress it if the
-# sender has an agent_message within stale_thresh seconds (hk-gu3v).
+# heartbeat, so an agent posting status every ~12m while presence is stale
+# (no re-join beat after keeper restart) fires a false crew-stale alert. We
+# suppress it if the sender has an agent_message within crew_msg_active_window
+# (900s / 15m) — large enough to cover one full captain posting cadence plus
+# buffer (hk-gu3v).
 import os as _os
 last_msg_ts = {}  # agent_name -> epoch of most recent agent_message
 # Review-gate (M2 code-half; R6 fix): a run is review-BYPASSED only if it actually
@@ -447,12 +457,14 @@ stale_signal_crews = []
 for name, info in crew_status.items():
     miss_count = prev_misses.get(name, 0)
     # comms send does NOT refresh presence, so fall back to agent_message
-    # recency: if the agent posted a message within stale_thresh, treat as
-    # active even when the presence last_seen is stale (hk-gu3v).
+    # recency: if the agent posted a message within crew_msg_active_window
+    # (900s), treat as active even when presence last_seen is stale (hk-gu3v).
+    # 150s (stale_thresh) is too narrow — a captain posting every ~12m has
+    # messages 500–700s old at check time, which still exceeded 150s.
     effective_stale = info['stale']
     if effective_stale:
         _msg_ts = last_msg_ts.get(name, 0)
-        if _msg_ts and (ts_epoch - _msg_ts) <= stale_thresh:
+        if _msg_ts and (ts_epoch - _msg_ts) <= crew_msg_active_window:
             effective_stale = False
             info['msg_override'] = ts_epoch - _msg_ts  # age of most recent msg, for snapshot
     if effective_stale:

@@ -150,9 +150,6 @@ type paneNudger interface {
 // QuiesceArbiterConfig bundles the dependencies of the QuiesceArbiter.
 // All fields are required unless documented as optional.
 type QuiesceArbiterConfig struct {
-	// Drain is the GenuineDrain oracle (M0).  REQUIRED.
-	Drain *DrainDetector
-
 	// ProjectDir is the harmonik project root.  REQUIRED.
 	ProjectDir string
 
@@ -218,22 +215,12 @@ type wakeSignal struct {
 
 // NewQuiesceArbiter constructs a QuiesceArbiter from cfg.  The caller must
 // invoke Subscribe before sealing the bus, then Start after sealing.
-//
-// Two-phase init is supported: cfg.Drain may be nil at construction time and
-// set later via SetDrain before calling Start.
 func NewQuiesceArbiter(cfg QuiesceArbiterConfig) *QuiesceArbiter {
 	return &QuiesceArbiter{
 		cfg:      cfg,
 		sleeping: make(map[string]sessionSleepRecord),
 		wakeC:    make(chan wakeSignal, 32),
 	}
-}
-
-// SetDrain wires the GenuineDrain oracle after the arbiter is constructed.
-// MUST be called before Start().  Provided for two-phase daemon wiring where
-// the brAdapter (required by DrainDetector) is constructed after bus.Seal().
-func (a *QuiesceArbiter) SetDrain(d *DrainDetector) {
-	a.cfg.Drain = d
 }
 
 // Subscribe registers the arbiter's event consumers on bus.  MUST be called
@@ -459,22 +446,6 @@ func (a *QuiesceArbiter) tick(ctx context.Context, maxSleep time.Duration) {
 		delete(a.sleeping, rec.agentName)
 		a.mu.Unlock()
 	}
-
-	// Drain check: evaluate GenuineDrain; on DRAINED, park all live sessions.
-	// Skipped when the DrainDetector has not been wired yet (nil guard for
-	// two-phase daemon init — failsafe above still runs).
-	if a.cfg.Drain == nil {
-		return
-	}
-	res, err := a.cfg.Drain.GenuineDrain(ctx)
-	if err != nil || res.State != DrainStateDrained {
-		// Not drained (or error → stay awake per fail-closed contract).
-		return
-	}
-
-	// Drained: park all sessions not already sleeping.  Drain-triggered parks are
-	// the captain-class event reflex (source=captain), level L1 (drain).
-	a.parkAllSessions(ctx, SleepSourceCaptain, SleepLevelDrain)
 }
 
 // parkAllSessions writes sleep markers and sends park comms signals to every
@@ -782,25 +753,12 @@ func (a *QuiesceArbiter) clearSleepMarker(sessionID string) {
 
 // HandleDaemonSleep implements QuiesceOverrideHandler.
 //
-// If force is false the GenuineDrain oracle is consulted first; the request is
-// rejected with an error when the fleet still has work (DRAINED not reached).
-// If force is true, sessions are parked immediately regardless of drain state.
+// Parks all sessions immediately.  P1-c (hk-zqb3) will rewrite this to
+// call GatherDrainFacts directly for the non-force gate.
 //
 // CLI surface: harmonik sleep [--force]
 // Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
 func (a *QuiesceArbiter) HandleDaemonSleep(ctx context.Context, force bool) error {
-	if !force {
-		if a.cfg.Drain == nil {
-			return fmt.Errorf("daemon: sleep: drain oracle not wired; use --force to override")
-		}
-		res, err := a.cfg.Drain.GenuineDrain(ctx)
-		if err != nil {
-			return fmt.Errorf("daemon: sleep: drain check failed: %w; use --force to override", err)
-		}
-		if res.State != DrainStateDrained {
-			return fmt.Errorf("daemon: sleep: fleet not drained (state=%s); use --force to override", res.State)
-		}
-	}
 	// CLI `harmonik sleep` is an explicit operator command: source=operator so
 	// the resulting park is sticky against event-reflex auto-wake (hk-caaf).
 	a.parkAllSessions(ctx, SleepSourceOperator, SleepLevelDrain)

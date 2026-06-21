@@ -108,13 +108,12 @@ func (c *capturedComms) hasMsg(to, topic string) bool {
 
 // newTestQuiesceArbiter creates a QuiesceArbiter wired for unit testing.
 // Returns the arbiter, the nudge recorder, and the comms recorder.
-func newTestQuiesceArbiter(t *testing.T, projectDir string, qs *QueueStore, drain *DrainDetector, poll, maxSleep time.Duration) (*QuiesceArbiter, *capturedNudge, *capturedComms) {
+func newTestQuiesceArbiter(t *testing.T, projectDir string, qs *QueueStore, poll, maxSleep time.Duration) (*QuiesceArbiter, *capturedNudge, *capturedComms) {
 	t.Helper()
 	nudges := &capturedNudge{}
 	comms := &capturedComms{}
 
 	arbiter := NewQuiesceArbiter(QuiesceArbiterConfig{
-		Drain:            drain,
 		ProjectDir:       projectDir,
 		ProjectHash:      core.ProjectHash("test0000"),
 		Adapter:          nudges, // capturedNudge implements paneNudger
@@ -176,7 +175,7 @@ func forceSleepRecord(arbiter *QuiesceArbiter, rec sessionSleepRecord) {
 // a real eventbus (pre-seal).
 func TestQuiesceArbiterSubscribeNoError(t *testing.T) {
 	bus := eventbus.NewBusImpl()
-	arbiter, _, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, nil, 100*time.Millisecond, time.Hour)
+	arbiter, _, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, 100*time.Millisecond, time.Hour)
 
 	if err := arbiter.Subscribe(bus); err != nil {
 		t.Fatalf("Subscribe: unexpected error: %v", err)
@@ -187,7 +186,7 @@ func TestQuiesceArbiterSubscribeNoError(t *testing.T) {
 // an epic_completed event wakes the captain if it is sleeping.
 func TestQuiesceArbiterEpicCompletedWakesCaptain(t *testing.T) {
 	captainPane := "harmonik-test0000-captain:0.0"
-	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, nil, 5*time.Second, time.Hour)
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, 5*time.Second, time.Hour)
 
 	// Inject a sleeping captain record.
 	forceSleepRecord(arbiter, sessionSleepRecord{
@@ -224,7 +223,7 @@ func TestQuiesceArbiterEpicCompletedWakesCaptain(t *testing.T) {
 // path: a message directed at "captain" wakes the captain.
 func TestQuiesceArbiterAgentMessageToCaptainWakes(t *testing.T) {
 	captainPane := "harmonik-test0000-captain:0.0"
-	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, nil, 5*time.Second, time.Hour)
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, 5*time.Second, time.Hour)
 
 	forceSleepRecord(arbiter, sessionSleepRecord{
 		agentName:  captainAgentName,
@@ -249,7 +248,7 @@ func TestQuiesceArbiterAgentMessageToCaptainWakes(t *testing.T) {
 // messages directed at a non-captain session do NOT wake the captain (routing isolation).
 func TestQuiesceArbiterAgentMessageToOtherDoesNotWakeCaptain(t *testing.T) {
 	captainPane := "harmonik-test0000-captain:0.0"
-	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, nil, 5*time.Second, time.Hour)
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, 5*time.Second, time.Hour)
 
 	forceSleepRecord(arbiter, sessionSleepRecord{
 		agentName:  captainAgentName,
@@ -281,7 +280,7 @@ func TestQuiesceArbiterMaxSleepFailsafe(t *testing.T) {
 	projectDir := t.TempDir()
 	captainPane := "harmonik-test0000-captain:0.0"
 
-	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 50*time.Millisecond, 100*time.Millisecond)
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, 50*time.Millisecond, 100*time.Millisecond)
 
 	// Inject a captain sleep record with sleptAt in the past (already expired).
 	forceSleepRecord(arbiter, sessionSleepRecord{
@@ -309,7 +308,7 @@ func TestQuiesceArbiterSleepMarkerWrittenAndCleared(t *testing.T) {
 	captainPane := "harmonik-test0000-captain:0.0"
 	sessionID := "test-marker-sess"
 
-	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 
 	// Park the captain directly.
 	arbiter.parkSession(context.Background(), captainAgentName, "", sessionID, captainPane, SleepSourceCaptain, SleepLevelDrain)
@@ -361,7 +360,7 @@ func TestQuiesceArbiterQueueSubmitWakesCrew(t *testing.T) {
 	}
 	qs.setQueueForTest("crew-paul-queue", q)
 
-	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), qs, nil, 5*time.Second, time.Hour)
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), qs, 5*time.Second, time.Hour)
 
 	// Inject a sleeping captain and a sleeping crew record.
 	forceSleepRecord(arbiter, sessionSleepRecord{
@@ -395,7 +394,7 @@ func TestQuiesceArbiterQueueSubmitWakesCrew(t *testing.T) {
 // signals for the same sleeping session does not double-nudge.
 func TestQuiesceArbiterDuplicateWakeIsIdempotent(t *testing.T) {
 	captainPane := "harmonik-test0000-captain:0.0"
-	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, nil, 5*time.Second, time.Hour)
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, 5*time.Second, time.Hour)
 
 	forceSleepRecord(arbiter, sessionSleepRecord{
 		agentName:  captainAgentName,
@@ -442,7 +441,7 @@ func TestListCrewRecordsEmptyDir(t *testing.T) {
 // writes only one sleep marker and issues only one comms message.
 func TestQuiesceArbiterParkIdempotent(t *testing.T) {
 	projectDir := t.TempDir()
-	arbiter, _, comms := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+	arbiter, _, comms := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 
 	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0", SleepSourceCaptain, SleepLevelDrain)
 	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0", SleepSourceCaptain, SleepLevelDrain)
@@ -478,7 +477,7 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 		t.Fatalf("crew.Write: %v", err)
 	}
 
-	arbiter, _, comms := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+	arbiter, _, comms := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 
 	// Park all sessions (drain scenario).
 	arbiter.parkAllSessions(context.Background(), SleepSourceCaptain, SleepLevelDrain)
@@ -535,7 +534,7 @@ func TestReconcileOrphanedMarkers(t *testing.T) {
 	}
 
 	// Fresh arbiter (the restarted daemon): nothing in the in-memory map yet.
-	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 	arbiter.reconcileOrphanedMarkers()
 
 	arbiter.mu.Lock()
@@ -588,7 +587,7 @@ func TestReconcileOrphanedMarkersFailsafeWakes(t *testing.T) {
 		t.Fatalf("write orphan marker: %v", err)
 	}
 
-	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 50*time.Millisecond, 100*time.Millisecond)
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, 50*time.Millisecond, 100*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	arbiter.Start(ctx) // runs reconcile, then the loop with the short failsafe
@@ -609,7 +608,7 @@ func TestReconcileOrphanedMarkersFailsafeWakes(t *testing.T) {
 // "<session>:0.0"), so the failsafe still has a plausible target.
 func TestResolveCaptainTargetLastResort(t *testing.T) {
 	projectDir := t.TempDir()
-	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 
 	// Guard against a stray live "captain" tmux session on the dev box, which
 	// would legitimately make resolution return the bare name instead.
@@ -635,7 +634,7 @@ func TestResolveCaptainTargetLastResort(t *testing.T) {
 // source + level on the on-disk marker (hk-caaf / codename:fleet-state).
 func TestSleepMarkerSourceLevelWritten(t *testing.T) {
 	projectDir := t.TempDir()
-	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 
 	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-src", "pane:0.0", SleepSourceOperator, SleepLevelHandoff)
 
@@ -661,7 +660,7 @@ func TestSleepMarkerSourceLevelWritten(t *testing.T) {
 // (hk-caaf).
 func TestSleepMarkerBackwardCompatDefaults(t *testing.T) {
 	projectDir := t.TempDir()
-	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
 
 	dir := filepath.Join(projectDir, sleepingMarkerDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -238,6 +238,67 @@ func TestClearTrip_AbsentAckFile(t *testing.T) {
 	}
 }
 
+// TestClearPendingTrip_RoundTrip verifies that EmitTrip followed by
+// ClearPendingTrip marks the ack file acknowledged with ack_method="operator"
+// and appends a decision_acknowledged event (bead hk-kgwv).
+func TestClearPendingTrip_RoundTrip(t *testing.T) {
+	t.Parallel()
+	dir := makeProjectDir(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	tok, err := sentinel.EmitTrip(context.Background(), sentinel.TripInput{
+		ProjectDir:   dir,
+		ReadyBeadIDs: []string{"hk-ggg"},
+		Now:          now,
+	})
+	if err != nil || tok == "" {
+		t.Fatalf("EmitTrip: tok=%q err=%v", tok, err)
+	}
+
+	clearTime := now.Add(15 * time.Minute)
+	cleared, err := sentinel.ClearPendingTrip(context.Background(), dir, clearTime)
+	if err != nil {
+		t.Fatalf("ClearPendingTrip: %v", err)
+	}
+	if cleared != tok {
+		t.Errorf("ClearPendingTrip returned %q, want %q", cleared, tok)
+	}
+
+	// Ack file must be acknowledged.
+	ack := readAckFile(t, dir, tok)
+	if ack["status"] != "acknowledged" {
+		t.Errorf("ack status: got %q, want %q", ack["status"], "acknowledged")
+	}
+
+	// decision_acknowledged event must carry ack_method="operator".
+	acked := scanDecisionAcknowledged(t, dir)
+	if len(acked) != 1 {
+		t.Fatalf("expected 1 decision_acknowledged event; got %d", len(acked))
+	}
+	if acked[0]["ack_token"] != tok {
+		t.Errorf("ack_token: got %q, want %q", acked[0]["ack_token"], tok)
+	}
+	if acked[0]["ack_method"] != "operator" {
+		t.Errorf("ack_method: got %q, want %q", acked[0]["ack_method"], "operator")
+	}
+}
+
+// TestClearPendingTrip_NoPendingTrip verifies that ClearPendingTrip is a
+// no-op when no pending sentinel exception exists (idempotent).
+func TestClearPendingTrip_NoPendingTrip(t *testing.T) {
+	t.Parallel()
+	dir := makeProjectDir(t)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	tok, err := sentinel.ClearPendingTrip(context.Background(), dir, now)
+	if err != nil {
+		t.Errorf("ClearPendingTrip with no pending trip: want nil error; got %v", err)
+	}
+	if tok != "" {
+		t.Errorf("ClearPendingTrip with no pending trip: want empty token; got %q", tok)
+	}
+}
+
 // TestEmitTripClearTripRoundTrip verifies the full trip→clear cycle:
 // after clear, a new EmitTrip can write a fresh exception (no stale pending).
 func TestEmitTripClearTripRoundTrip(t *testing.T) {

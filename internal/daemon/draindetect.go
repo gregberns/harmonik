@@ -20,8 +20,7 @@ package daemon
 //     --limit 0` + the ledger are authoritative.
 //
 // GenuineDrain remains as a backward-compat bridge wrapper over GatherDrainFacts
-// for callers in quiesce.go until P1-b (hk-kj7d) removes the auto-park tick and
-// P1-c (hk-zqb3) rewrites HandleDaemonSleep.
+// for callers in quiesce.go until P1-b (hk-kj7d) removes the auto-park tick.
 //
 // NOTE ON RECEIVER: the oracle spec names `func (d *Daemon) GenuineDrain`, but
 // the harmonik daemon is a composition-root FUNCTION (daemon.Start), not a
@@ -484,10 +483,8 @@ func (d *DrainDetector) liveWorktreeList() ([]string, error) {
 // ---------------------------------------------------------------------------
 
 // GenuineDrain calls GatherDrainFacts and derives the legacy DrainResult
-// verdict for callers in quiesce.go. It will be removed when:
-//   - P1-b (hk-kj7d) deletes the auto-park tick that calls it via SetDrain.
-//   - P1-c (hk-zqb3) rewrites HandleDaemonSleep to call GatherDrainFacts
-//     directly.
+// verdict for callers in quiesce.go. It will be removed when P1-b (hk-kj7d)
+// deletes the auto-park tick that calls it.
 //
 // Bridge semantics:
 //   - facts.Unsure || any axis error → UNSURE (fail-closed, stays awake).

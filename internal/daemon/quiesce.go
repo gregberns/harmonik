@@ -45,6 +45,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -198,6 +199,7 @@ type QuiesceArbiter struct {
 
 	mu       sync.Mutex
 	sleeping map[string]sessionSleepRecord // agentName → record (non-empty means parked)
+	drain    *DrainDetector                // SS-INV-005 veto gate (P1-c, hk-zqb3); nil = gate skipped
 
 	// wakeC is the internal channel for event-triggered wakes.
 	wakeC chan wakeSignal
@@ -751,17 +753,88 @@ func (a *QuiesceArbiter) clearSleepMarker(sessionID string) {
 	}
 }
 
+// SetDrain wires the drain detector used by the SS-INV-005 veto gate in
+// HandleDaemonSleep (P1-c, hk-zqb3).  Called once from the daemon
+// composition root after the brcli adapter is available, before the socket
+// listener starts accepting connections.  Thread-safe (guarded by mu).
+func (a *QuiesceArbiter) SetDrain(d *DrainDetector) {
+	a.mu.Lock()
+	a.drain = d
+	a.mu.Unlock()
+}
+
 // HandleDaemonSleep implements QuiesceOverrideHandler.
 //
-// Parks all sessions immediately.  P1-c (hk-zqb3) will rewrite this to
-// call GatherDrainFacts directly for the non-force gate.
+// When force is false the SS-INV-005 veto gate runs: GatherDrainFacts is
+// called and the request is refused when the fleet has dispatchable or
+// in-flight work that would be stranded (one-directional veto, P1-c hk-zqb3).
+// force=true bypasses the gate entirely (operator escape hatch).
 //
 // CLI surface: harmonik sleep [--force]
 // Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
 func (a *QuiesceArbiter) HandleDaemonSleep(ctx context.Context, force bool) error {
+	if !force {
+		if err := a.vetoCheck(ctx); err != nil {
+			return err
+		}
+	}
 	// CLI `harmonik sleep` is an explicit operator command: source=operator so
 	// the resulting park is sticky against event-reflex auto-wake (hk-caaf).
 	a.parkAllSessions(ctx, SleepSourceOperator, SleepLevelDrain)
+	return nil
+}
+
+// vetoCheck runs GatherDrainFacts (SS-INV-005 veto gate) and returns a
+// non-nil error when the sleep request should be refused.  Returns nil when
+// the drain detector is nil (gate skipped; test mode / no brcli adapter
+// wired) or when the fleet is confirmed empty on all active-work axes.
+func (a *QuiesceArbiter) vetoCheck(ctx context.Context) error {
+	a.mu.Lock()
+	drain := a.drain
+	a.mu.Unlock()
+	if drain == nil {
+		return nil
+	}
+
+	facts, err := drain.GatherDrainFacts(ctx)
+	if err != nil {
+		return fmt.Errorf("sleep vetoed: cannot determine fleet state: %w", err)
+	}
+	if facts.Unsure {
+		return fmt.Errorf("sleep vetoed: fleet state uncertain (%s); use --force to override",
+			strings.Join(facts.UnsureReasons, "; "))
+	}
+
+	// Refuse if any dispatchable or in-flight work would be stranded.
+	var strands []string
+	if facts.Ready.Count > 0 {
+		strands = append(strands, fmt.Sprintf("%d ready bead(s)", facts.Ready.Count))
+	}
+	if facts.InProgress.Count > 0 {
+		strands = append(strands, fmt.Sprintf("%d in-progress bead(s)", facts.InProgress.Count))
+	}
+	if facts.Runs.RegistryCount > 0 {
+		strands = append(strands, fmt.Sprintf("%d in-flight run(s)", facts.Runs.RegistryCount))
+	}
+	if facts.Runs.LiveWorktrees > 0 {
+		strands = append(strands, fmt.Sprintf("%d live worktree(s)", facts.Runs.LiveWorktrees))
+	}
+	if facts.Queued.Count > 0 {
+		strands = append(strands, fmt.Sprintf("%d queued item(s)", facts.Queued.Count))
+	}
+	if len(facts.Queued.PausedQueues) > 0 {
+		strands = append(strands, fmt.Sprintf("%d paused queue(s)", len(facts.Queued.PausedQueues)))
+	}
+	if len(facts.Queued.FailedArchives) > 0 {
+		strands = append(strands, fmt.Sprintf("%d failed archive(s)", len(facts.Queued.FailedArchives)))
+	}
+	if len(facts.BlockedByOpenEpic) > 0 {
+		strands = append(strands, fmt.Sprintf("%d bead(s) blocked by open epic(s)", len(facts.BlockedByOpenEpic)))
+	}
+	if len(strands) > 0 {
+		return fmt.Errorf("sleep vetoed: fleet has active work (%s); use --force to override",
+			strings.Join(strands, ", "))
+	}
 	return nil
 }
 

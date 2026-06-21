@@ -1547,6 +1547,12 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				// (hk-tigaf.4 NQ-B1). cfg.MaxConcurrent zero → 1 inside the adapter.
 				adapter.SetGlobalMaxConcurrent(cfg.MaxConcurrent)
 				queueHandler = adapter
+
+				// Wire the SS-INV-005 veto gate into the quiesce arbiter (P1-c,
+				// hk-zqb3): non-force `harmonik sleep` is refused when GatherDrainFacts
+				// reports dispatchable or in-flight work that would be stranded.
+				drainDet := NewDrainDetector(brAdapterForHandler, brAdapterForHandler, newBRQueueLedger(brAdapterForHandler), sharedRunRegistry, qs, cfg.ProjectDir)
+				quiesceArbiter.SetDrain(drainDet)
 			}
 		}
 

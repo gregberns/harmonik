@@ -733,9 +733,12 @@ only — LOWERING the band to restart earlier (the current 200k/215k absolute ba
 operator-directed and correct; do NOT re-apply the old "no band-retune" lock to refuse
 a LOWERING. The pct flags are inert on the 1M window — arm with
 `--warn-abs-tokens 200000 --act-abs-tokens 215000` (STARTUP.md Step 6 "Keeper arming").
-(You MUST be launched via `~/.claude/captain-tools/captain-launch.sh`, which mints
-the stable `--session-id` the keeper rebinds to. A bare `claude --remote-control
-captain` with no `--session-id` cannot be cycled.)
+(You MUST be launched via `harmonik start captain` — the native Go launcher
+(alias: `harmonik captain`) that mints the stable `--session-id` the keeper
+rebinds to and arms the keeper at the band above. NO env var, NO script path:
+`--project` defaults to cwd. The old `~/.claude/captain-tools/captain-launch.sh`
+is RETIRED in favor of this command. A bare `claude --remote-control captain` with
+no `--session-id` cannot be cycled.)
 
 ---
 

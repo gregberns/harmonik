@@ -343,17 +343,21 @@ The captain is keeper-MANAGED, not a keeper operator — it does NOT need the fu
 
 - **Band (canonical):** warn 200k / act 215k ABSOLUTE tokens. Arm with
   `--warn-abs-tokens 200000 --act-abs-tokens 215000`. The pct flags are INERT on the
-  captain's 1M window (keeper warns if passed). Source of truth = `captain-launch.sh`
-  / `.harmonik/config.yaml` `keeper:` block.
+  captain's 1M window (keeper warns if passed). Source of truth = the launcher
+  defaults (`keeper.DefaultWarnAbsTokens` / `DefaultActAbsTokens`, what
+  `harmonik start captain` arms) / `.harmonik/config.yaml` `keeper:` block.
 - **All keeper verbs are FLAG-ONLY (hk-nbft):** `--agent <name>`, never a positional
   (a positional exits 2).
 - **On WARN:** terse-ack one line, keep working; at the next clean idle point write
   `HANDOFF-captain.md` (with the `<!-- KEEPER:<nonce> -->`) and run
   `harmonik keeper restart-now --agent captain`, keep the turn open, stop typing.
   **NEVER `/quit` / self-terminate** — that exits the captain permanently.
-- **Self-restart is VERIFIED externally** via
-  `scripts/captain-tools/keeper-restart-verified.sh captain` (it survives your
-  `/clear`); a CREW restart you trigger, YOU verify with `keeper await-ack`.
+- **Self-restart is VERIFIED in-process** by `harmonik keeper restart-now --agent
+  captain` itself (it does the synchronous verified clear→resume and survives your
+  `/clear`). The native launcher no longer arms any external wrapper — the old
+  `keeper-restart-verified.sh` is off the launch path (review B; the dead script
+  file is deleted by ES8). A CREW restart you trigger, YOU verify with `keeper
+  await-ack`.
 - **Restart is a NON-EVENT for a crew** — do not re-`crew start` a crew that cycled.
 - Full detail (config block, FORCE-ACT, doctor checks, await-ack handshake) is in the
   `keeper` SKILL.md — read it ON DEMAND, not at boot.
@@ -366,13 +370,14 @@ The captain is keeper-MANAGED, not a keeper operator — it does NOT need the fu
 > if the session was launched with a STABLE, caller-minted `--session-id` to
 > `--resume`. A captain launched as a bare `claude --remote-control captain` (NO
 > `--session-id`, the historical mistake) has no id for the keeper to rebind — so
-> the keeper can only WARN it. So launch the captain via the script below, NEVER as
-> a bare `claude --remote-control captain`:
+> the keeper can only WARN it. So launch the captain via the native command below,
+> NEVER as a bare `claude --remote-control captain`:
 >
 > ```bash
 > # Launches the captain with a minted --session-id AND arms the keeper at the
-> # canonical absolute-token band (warn 200k / act 215k):
-> ~/.claude/captain-tools/captain-launch.sh captain
+> # canonical absolute-token band (warn 200k / act 215k). NO env var, NO script
+> # path — `--project` defaults to the current working directory:
+> harmonik start captain                 # or the back-compat alias: harmonik captain
 > #   ⇒ ONE tmux session `harmonik-<hash>-captain` with TWO windows (hk-z036):
 > #      window `agent`  → claude --dangerously-skip-permissions --remote-control captain --session-id <uuid>
 > #      window `keeper` → harmonik keeper --agent captain --tmux <session>:agent \
@@ -381,13 +386,27 @@ The captain is keeper-MANAGED, not a keeper operator — it does NOT need the fu
 > #   injects/gauges the captain pane, never its own keeper window. A captain
 > #   restart respawns ONLY the `agent` window; the keeper window survives.
 > #   (No separate `hk-keeper-captain` session anymore.)
+> #
+> # `harmonik start captain` is the native Go launcher (ES2/hk-bcd0): it computes
+> # the project hash in-process, writes captain.sentinel + captain.pid so the
+> # daemon orphan-sweep skips it, nests the agent+keeper windows, and arms the
+> # watcher — everything the RETIRED ~/.claude/captain-tools/captain-launch.sh did.
+> # It is idempotent (D7): re-running it on a half-dead captain (keeper window
+> # outlived a stopped agent) reaps the stale session and recreates it; a LIVE
+> # captain already in the session is REFUSED, never clobbered.
 > ```
+>
+> **Self-heal:** if the captain's agent pane dies, the keeper's `--respawn-cmd`
+> seam runs `harmonik captain respawn …` (ES3/hk-z1rj — the native replacement for
+> the old generated `captain-respawn.sh`) to respawn ONLY the agent window with
+> `--resume <sid>`, preserving the conversation. You do not invoke this by hand.
 >
 > **Keeper band — canonical flags (M1/hk-039z):** the captain runs on a **1M-token
 > window**, where the percent flags `--warn-pct` / `--act-pct` are **INERT** (the
 > keeper ignores them and emits a warning if they are passed). The single source of
-> truth for the band is `captain-launch.sh` (and the `.harmonik/config.yaml`
-> `keeper:` block). If you ever relaunch the keeper by hand, ALWAYS use the absolute
+> truth for the band is the launcher's defaults (`keeper.DefaultWarnAbsTokens` /
+> `keeper.DefaultActAbsTokens`, what `harmonik start captain` arms) and the
+> `.harmonik/config.yaml` `keeper:` block. If you ever relaunch the keeper by hand, ALWAYS use the absolute
 > flags, NEVER the inert pct flags:
 > ```bash
 > harmonik keeper --agent captain --tmux harmonik-<hash>-captain:agent \

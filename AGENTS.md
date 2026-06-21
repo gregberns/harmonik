@@ -29,6 +29,8 @@ Each role loads only its slice. The boot runbook in each role's skill is authori
 
 Read [AGENT_INDEX.md](AGENT_INDEX.md) first — the master map of the knowledge base (every doc reachable within two hops). Then [STATUS.md](STATUS.md) for phase + locked decisions, `.harmonik/context/captain-lanes.md` for the medium-term lane/epic tracker, and [HANDOFF.md](HANDOFF.md) for this-session state.
 
+**Launching a captain or crew?** Use the native umbrella verb — `harmonik start captain` or `harmonik start crew <name>` (keeper auto-armed; NO env var, NO script path — `--project` defaults to cwd). The old `~/.claude/captain-tools/captain-launch.sh` + `HK_PROJECT` env var are RETIRED in favor of `harmonik start captain`. Positional-XOR-flags rule (D2): the simple form is a bare name only (`start crew paul`); the moment any `--flag` appears the name must move to `--name` (mixing a bare name with flags is a hard error). `harmonik captain` / `harmonik crew start <name>` remain as back-compat aliases.
+
 **Booting as a captain or crew?** These skills are **project-local under the repo** — read them at `/Users/gb/github/harmonik/.claude/skills/…`, NOT the global `~/.claude/skills/` (no captain/crew skill exists there). Captain: read `.claude/skills/captain/STARTUP.md` FIRST, then `SKILL.md` in that dir. Crew: read `.claude/skills/crew-launch/SKILL.md`. See also `.claude/skills/keeper` (per-session context-watcher) and `.claude/skills/harmonik-lifecycle` (supervise / promote / reconcile / init).
 
 ## Standing rules → the `orchestrator-rules` skill

@@ -195,7 +195,9 @@ func TestRunReportLoop_TicksAndEmits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		runReportLoopWithInterval(ctx, cfg, reg, fixedRunnerFor(runner), emit, 10*time.Millisecond)
+		// Idle (InFlight==0) so the loop ticks at the slow interval; pass the same
+		// short interval for fast so the test is cadence-agnostic.
+		runReportLoopWithInterval(ctx, cfg, reg, fixedRunnerFor(runner), emit, 10*time.Millisecond, 10*time.Millisecond)
 		close(done)
 	}()
 

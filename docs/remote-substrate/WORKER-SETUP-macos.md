@@ -15,7 +15,8 @@
 
 A worker Mac that runs harmonik bead-work (a headless Claude Code session + a git worktree +
 the build/test gate) on behalf of box A's daemon. Box A drives it over SSH; results return as
-a pushed branch that box A merges. Nothing here changes box A.
+a run branch in the worker repo that box A fetches directly over SSH and merges (hk-7bwx — no
+worker→GitHub push). Nothing here changes box A.
 
 **Toolchain to be present:** `git`, `tmux`, `gh`, Go, Node, Claude Code CLI, Tailscale.
 
@@ -56,8 +57,11 @@ Run these and verify each. Stop and report if any step fails.
 3. **Claude Code CLI** (if not already installed for the Part-1 login):
    `npm install -g @anthropic-ai/claude-code` (or the native installer per the official docs).
    Verify: `claude --version`.
-4. **GitHub auth** (the worker pushes result branches and pulls base commits — DD1 uses the
-   GitHub remote): `gh auth login` (choose HTTPS, grant repo scope). Verify: `gh auth status`.
+4. **GitHub auth (READ-ONLY — no write/push scope needed):** the worker only *pulls* base
+   commits; it does NOT push result branches. As of hk-7bwx, box A fetches each run branch
+   DIRECTLY from the worker repo over SSH (`git fetch ssh://<worker>/<repo> run/<id>`), so the
+   worker needs no valid GitHub *push* credential. Read access (public clone or `gh auth login`
+   for a private repo) is sufficient. Verify clone access: `git -C ~/harmonik-worker/repo fetch origin`.
 5. **Clone the repo** to the canonical path box A expects:
    `git clone https://github.com/<owner>/harmonik.git ~/harmonik-worker/repo`
    Verify: `git -C ~/harmonik-worker/repo rev-parse HEAD`.
@@ -104,7 +108,7 @@ ssh worker-mac-1 -- tmux -V                                  # tmux present
 ssh worker-mac-1 -- claude --version                        # claude present
 ssh worker-mac-1 -- git -C ~/harmonik-worker/repo rev-parse HEAD   # repo cloned
 ssh worker-mac-1 -- 'test -z "$ANTHROPIC_API_KEY" && echo OK-no-apikey'  # no API key
-ssh worker-mac-1 -- gh auth status                          # can push/pull
+ssh worker-mac-1 -- git -C ~/harmonik-worker/repo fetch origin   # read access (no push needed; hk-7bwx)
 # Smoke: a trivial headless claude run confirms subscription auth works end-to-end
 ssh worker-mac-1 -- 'cd ~/harmonik-worker/repo && claude -p "print the word READY and exit"'
 ```

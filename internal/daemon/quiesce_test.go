@@ -27,6 +27,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -311,7 +312,7 @@ func TestQuiesceArbiterSleepMarkerWrittenAndCleared(t *testing.T) {
 	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
 
 	// Park the captain directly.
-	arbiter.parkSession(context.Background(), captainAgentName, "", sessionID, captainPane)
+	arbiter.parkSession(context.Background(), captainAgentName, "", sessionID, captainPane, SleepSourceCaptain, SleepLevelDrain)
 
 	// Marker file should exist.
 	markerPath := filepath.Join(projectDir, sleepingMarkerDir, ".sleeping."+sessionID)
@@ -443,8 +444,8 @@ func TestQuiesceArbiterParkIdempotent(t *testing.T) {
 	projectDir := t.TempDir()
 	arbiter, _, comms := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
 
-	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0")
-	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0")
+	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0", SleepSourceCaptain, SleepLevelDrain)
+	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-1", "pane:0.0", SleepSourceCaptain, SleepLevelDrain)
 
 	comms.mu.Lock()
 	n := len(comms.msgs)
@@ -480,7 +481,7 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 	arbiter, _, comms := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
 
 	// Park all sessions (drain scenario).
-	arbiter.parkAllSessions(context.Background())
+	arbiter.parkAllSessions(context.Background(), SleepSourceCaptain, SleepLevelDrain)
 
 	// Paul should be sleeping.
 	arbiter.mu.Lock()
@@ -502,5 +503,184 @@ func TestQuiesceArbiterCrewRecordIntegration(t *testing.T) {
 	markerPath := filepath.Join(projectDir, sleepingMarkerDir, ".sleeping.paul-session-123")
 	if _, err := os.Stat(markerPath); os.IsNotExist(err) {
 		t.Errorf("sleep marker for paul not found at %q", markerPath)
+	}
+}
+
+// TestReconcileOrphanedMarkers verifies that a daemon restart re-loads orphaned
+// on-disk .sleeping.* markers into the in-memory map, preserving the ORIGINAL
+// parked_at as sleptAt so the max-sleep failsafe measures from the real park
+// time (hk-x03v / codename:fleet-state).
+func TestReconcileOrphanedMarkers(t *testing.T) {
+	projectDir := t.TempDir()
+
+	// Simulate a crew session that was parked, then the daemon died: write the
+	// crew record + an orphaned marker parked well in the past.
+	if err := crew.Write(projectDir, crew.Record{
+		Name:      "paul",
+		SessionID: "paul-orphan-sid",
+		Queue:     "paul-queue",
+		Handle:    "harmonik-abc123-paul:hk-crew-paul",
+	}); err != nil {
+		t.Fatalf("crew.Write: %v", err)
+	}
+	dir := filepath.Join(projectDir, sleepingMarkerDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	parkedAt := time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339)
+	markerBody := `{"session_id":"paul-orphan-sid","parked_at":"` + parkedAt + `","source":"operator","level":"L2"}`
+	markerPath := filepath.Join(dir, ".sleeping.paul-orphan-sid")
+	if err := os.WriteFile(markerPath, []byte(markerBody), 0o644); err != nil {
+		t.Fatalf("write orphan marker: %v", err)
+	}
+
+	// Fresh arbiter (the restarted daemon): nothing in the in-memory map yet.
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+	arbiter.reconcileOrphanedMarkers()
+
+	arbiter.mu.Lock()
+	rec, ok := arbiter.sleeping["paul"]
+	arbiter.mu.Unlock()
+	if !ok {
+		t.Fatal("reconcile did not re-load the orphaned crew marker into the sleeping map")
+	}
+	if rec.sessionID != "paul-orphan-sid" {
+		t.Errorf("sessionID: got %q want %q", rec.sessionID, "paul-orphan-sid")
+	}
+	if rec.queueName != "paul-queue" {
+		t.Errorf("queueName: got %q want %q", rec.queueName, "paul-queue")
+	}
+	if rec.paneTarget != "harmonik-abc123-paul:hk-crew-paul.0" {
+		t.Errorf("paneTarget: got %q", rec.paneTarget)
+	}
+	if rec.source != SleepSourceOperator || rec.level != SleepLevelHandoff {
+		t.Errorf("source/level: got %q/%q want operator/L2", rec.source, rec.level)
+	}
+	// sleptAt must be the ORIGINAL park time (~3h ago), not now.
+	if time.Since(rec.sleptAt) < 2*time.Hour {
+		t.Errorf("sleptAt not seeded from parked_at; since=%v (want ~3h)", time.Since(rec.sleptAt))
+	}
+}
+
+// TestReconcileOrphanedMarkersFailsafeWakes verifies that an orphaned marker
+// re-loaded at boot is then woken by the max-sleep failsafe (hk-x03v): a marker
+// parked past the ceiling is nudged on the first tick after restart, and its
+// on-disk file is removed — lifting the indefinite keeper suppression.
+func TestReconcileOrphanedMarkersFailsafeWakes(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := crew.Write(projectDir, crew.Record{
+		Name:      "paul",
+		SessionID: "paul-orphan-sid",
+		Queue:     "paul-queue",
+		Handle:    "harmonik-abc123-paul:hk-crew-paul",
+	}); err != nil {
+		t.Fatalf("crew.Write: %v", err)
+	}
+	dir := filepath.Join(projectDir, sleepingMarkerDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Parked 1 minute ago; failsafe ceiling is 100ms → immediately expired.
+	parkedAt := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	markerPath := filepath.Join(dir, ".sleeping.paul-orphan-sid")
+	if err := os.WriteFile(markerPath,
+		[]byte(`{"session_id":"paul-orphan-sid","parked_at":"`+parkedAt+`"}`), 0o644); err != nil {
+		t.Fatalf("write orphan marker: %v", err)
+	}
+
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 50*time.Millisecond, 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	arbiter.Start(ctx) // runs reconcile, then the loop with the short failsafe
+
+	nudges.awaitNudge(t, 1, 2*time.Second)
+	if !nudges.hasTarget("harmonik-abc123-paul:hk-crew-paul.0") {
+		t.Errorf("failsafe did not nudge the reconciled crew pane; got %v", nudges.targets)
+	}
+	// Marker file must be removed after the failsafe wake.
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Errorf("orphan marker %q still present after failsafe wake", markerPath)
+	}
+}
+
+// TestResolveCaptainTargetLastResort verifies the resolution fallback chain
+// (hk-fv40): with no live tmux session, resolveCaptainTarget returns the
+// convention-derived "<session>:agent" target (never the old hard-coded
+// "<session>:0.0"), so the failsafe still has a plausible target.
+func TestResolveCaptainTargetLastResort(t *testing.T) {
+	projectDir := t.TempDir()
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+
+	// Guard against a stray live "captain" tmux session on the dev box, which
+	// would legitimately make resolution return the bare name instead.
+	if tmuxHasSession(captainAgentName) {
+		t.Skip("a live bare 'captain' tmux session exists; last-resort path not exercised")
+	}
+
+	got := arbiter.resolveCaptainTarget()
+
+	// In a no-tmux test environment, neither the convention session nor the bare
+	// "captain" session is live, so we expect the last-resort convention form.
+	// It must target the AGENT window's active pane (":agent"), not ":0.0".
+	want := keeper.HarmonikSessionName(projectDir, captainAgentName) + ":agent"
+	if got != want {
+		t.Errorf("resolveCaptainTarget last-resort: got %q want %q", got, want)
+	}
+	if got == keeper.HarmonikSessionName(projectDir, captainAgentName)+":0.0" {
+		t.Error("resolveCaptainTarget still produced the old hard-coded :0.0 target")
+	}
+}
+
+// TestSleepMarkerSourceLevelWritten verifies that parkSession records the park
+// source + level on the on-disk marker (hk-caaf / codename:fleet-state).
+func TestSleepMarkerSourceLevelWritten(t *testing.T) {
+	projectDir := t.TempDir()
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+
+	arbiter.parkSession(context.Background(), captainAgentName, "", "sess-src", "pane:0.0", SleepSourceOperator, SleepLevelHandoff)
+
+	markerPath := filepath.Join(projectDir, sleepingMarkerDir, ".sleeping.sess-src")
+	m, err := arbiter.readSleepMarker(markerPath)
+	if err != nil {
+		t.Fatalf("readSleepMarker: %v", err)
+	}
+	if m.Source != SleepSourceOperator {
+		t.Errorf("source: got %q want %q", m.Source, SleepSourceOperator)
+	}
+	if m.Level != SleepLevelHandoff {
+		t.Errorf("level: got %q want %q", m.Level, SleepLevelHandoff)
+	}
+	if m.SessionID != "sess-src" {
+		t.Errorf("session_id: got %q want %q", m.SessionID, "sess-src")
+	}
+}
+
+// TestSleepMarkerBackwardCompatDefaults verifies that a legacy marker carrying
+// only session_id + parked_at (written by an older daemon) parses cleanly and
+// receives the backward-compatible defaults: operator source, L1 drain level
+// (hk-caaf).
+func TestSleepMarkerBackwardCompatDefaults(t *testing.T) {
+	projectDir := t.TempDir()
+	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, nil, 5*time.Second, time.Hour)
+
+	dir := filepath.Join(projectDir, sleepingMarkerDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	legacy := `{"session_id":"old-sess","parked_at":"2026-06-20T00:00:00Z"}`
+	markerPath := filepath.Join(dir, ".sleeping.old-sess")
+	if err := os.WriteFile(markerPath, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("write legacy marker: %v", err)
+	}
+
+	m, err := arbiter.readSleepMarker(markerPath)
+	if err != nil {
+		t.Fatalf("readSleepMarker on legacy marker: %v", err)
+	}
+	if m.Source != defaultSleepSource {
+		t.Errorf("legacy source default: got %q want %q", m.Source, defaultSleepSource)
+	}
+	if m.Level != defaultSleepLevel {
+		t.Errorf("legacy level default: got %q want %q", m.Level, defaultSleepLevel)
 	}
 }

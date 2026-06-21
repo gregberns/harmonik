@@ -146,15 +146,26 @@ func ClearDispatching(projectDir, agent string) error {
 // IsSleeping reports whether the session identified by sessionID is currently
 // parked by the QuiesceArbiter (M1 / hk-jeby). It checks for the presence of
 // .harmonik/.sleeping.<sessionID>, the per-session marker written by the daemon
-// when a session is quiesced. When sessionID or projectDir is empty, returns
-// false (fail-open: cannot determine state, allow keeper to act).
-//
-// The keeper watcher (M3 / hk-l3gs) uses this to gate warn pane-injection and
+// when a session is quiesced. The keeper treats a true result as "defer my
+// action": the watcher (M3 / hk-l3gs) uses it to gate warn pane-injection and
 // cycle dispatch so a sleeping session is not woken by its own keeper.
-// Refs: hk-l3gs, hk-jeby.
+//
+// FAIL-CLOSED on indeterminate state (hk-uord / codename:fleet-state).
+// An empty sessionID or projectDir means the keeper cannot determine whether the
+// session is parked — return true (treat as sleeping → defer the keeper action)
+// rather than false (act). Returning false here was unsafe: it interacts with
+// the known SID-flips-on-/clear drift, where a session that lost its session_id
+// becomes BOTH un-wakeable-by-marker AND, under the old fail-open, un-gateable —
+// so the keeper would inject /session-handoff (or a warn) into a session it
+// cannot identify, potentially clobbering an operator-parked session. Deferring
+// is the safe direction: the M1 max-sleep failsafe still bounds how long any
+// genuinely-overflowing session can stay un-cycled, and the next tick with a
+// resolved session_id re-enables the keeper. This matches HoldingDispatch's
+// fail-closed idiom above ("never clobber an uncertain state").
+// Refs: hk-l3gs, hk-jeby, hk-uord.
 func IsSleeping(projectDir, sessionID string) bool {
 	if sessionID == "" || projectDir == "" {
-		return false
+		return true // fail-closed: indeterminate → defer keeper action
 	}
 	path := filepath.Join(projectDir, ".harmonik", ".sleeping."+sessionID)
 	_, err := os.Stat(path)

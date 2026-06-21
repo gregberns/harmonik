@@ -1,6 +1,7 @@
 package digest
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -232,5 +233,70 @@ func TestSentinelConfig_GovernorConfig_NilWeights(t *testing.T) {
 	gcfg := cfg.GovernorConfig()
 	if gcfg.Weights != nil {
 		t.Errorf("Weights: expected nil for empty config, got %v", gcfg.Weights)
+	}
+}
+
+// TestParseSentinelConfig_TrivialVerifyCommand verifies that Phase-2 classes
+// with trivially-always-exit-0 verify commands are rejected at config-load time
+// (flywheel-motion.md §5.3, bead hk-kgwv).
+func TestParseSentinelConfig_TrivialVerifyCommand(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "true",
+			yaml: "sentinel:\n  done_definition:\n    myclass: \"true\"\n",
+		},
+		{
+			name: "colon",
+			yaml: "sentinel:\n  done_definition:\n    myclass: \":\"\n",
+		},
+		{
+			name: "whitespace-only",
+			yaml: "sentinel:\n  done_definition:\n    myclass: \"   \"\n",
+		},
+		{
+			name: "empty",
+			yaml: "sentinel:\n  done_definition:\n    myclass: \"\"\n",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseSentinelConfig([]byte(tc.yaml))
+			if err == nil {
+				t.Fatalf("expected ErrTrivialVerifyCommand for %q, got nil", tc.name)
+			}
+			var target *ErrTrivialVerifyCommand
+			if !errors.As(err, &target) {
+				t.Errorf("expected *ErrTrivialVerifyCommand, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestParseSentinelConfig_ValidVerifyCommand verifies that a real observable
+// post-condition command is accepted and "merged" (Phase-1) is not affected.
+func TestParseSentinelConfig_ValidVerifyCommand(t *testing.T) {
+	t.Parallel()
+
+	yaml := []byte(`
+sentinel:
+  done_definition:
+    default: merged
+    deploy-class: make deploy && make smoke
+    verify-class: ./scripts/verify.sh
+`)
+	cfg, err := parseSentinelConfig(yaml)
+	if err != nil {
+		t.Fatalf("unexpected error for valid verify commands: %v", err)
+	}
+	if got := cfg.DoneDefinitionFor("deploy-class"); got != "make deploy && make smoke" {
+		t.Errorf("DoneDefinitionFor(deploy-class): got %q", got)
 	}
 }

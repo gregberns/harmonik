@@ -158,11 +158,60 @@ func ClearTrip(_ context.Context, projectDir, ackToken string, now time.Time) er
 	}
 
 	eventsPath := eventsJSONLPath(projectDir)
-	if err := appendDecisionAcknowledged(eventsPath, ackToken, now); err != nil {
+	if err := appendDecisionAcknowledged(eventsPath, ackToken, "governor_movement", now); err != nil {
 		fmt.Fprintf(os.Stderr, "sentinel: ClearTrip: append event (non-fatal): %v\n", err)
 	}
 
 	return nil
+}
+
+// ClearPendingTrip is the operator escape hatch: it scans .harmonik/decision_acks/
+// for the current pending sentinel exception and marks it acknowledged.
+//
+// Returns (ackToken, nil) when a pending trip was cleared, ("", nil) when no
+// pending trip exists, or ("", error) on I/O failure.
+//
+// Unlike ClearTrip (called by the workloop on governor movement), this records
+// ack_method="operator" so observers can distinguish manual operator clears from
+// auto-clears on real movement.
+//
+// Called by `harmonik sentinel clear-trip` (A10 operator escape hatch,
+// flywheel-motion.md §2.2, bead hk-kgwv).
+func ClearPendingTrip(_ context.Context, projectDir string, now time.Time) (string, error) {
+	acksDir := decisionAcksDirPath(projectDir)
+
+	ackToken, err := findPendingSentinelAck(acksDir)
+	if err != nil {
+		return "", fmt.Errorf("sentinel.ClearPendingTrip: scan acks: %w", err)
+	}
+	if ackToken == "" {
+		return "", nil // no pending trip
+	}
+
+	ackPath := filepath.Join(acksDir, ackToken)
+	data, readErr := os.ReadFile(ackPath) //nolint:gosec // G304: ackToken is daemon-generated UUID
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return "", nil
+		}
+		return "", fmt.Errorf("sentinel.ClearPendingTrip: read ack file: %w", readErr)
+	}
+	var rec sentinelAckRecord
+	if jsonErr := json.Unmarshal(data, &rec); jsonErr != nil {
+		return "", fmt.Errorf("sentinel.ClearPendingTrip: parse ack file: %w", jsonErr)
+	}
+
+	rec.Status = "acknowledged"
+	if writeErr := writeSentinelAckFile(acksDir, ackToken, rec); writeErr != nil {
+		return "", fmt.Errorf("sentinel.ClearPendingTrip: update ack file: %w", writeErr)
+	}
+
+	eventsPath := eventsJSONLPath(projectDir)
+	if appendErr := appendDecisionAcknowledged(eventsPath, ackToken, "operator", now); appendErr != nil {
+		fmt.Fprintf(os.Stderr, "sentinel: ClearPendingTrip: append event (non-fatal): %v\n", appendErr)
+	}
+
+	return ackToken, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -237,11 +286,12 @@ func appendDecisionRequired(eventsPath, ackToken, reason string, now time.Time) 
 }
 
 // appendDecisionAcknowledged appends a decision_acknowledged event line to eventsPath.
-func appendDecisionAcknowledged(eventsPath, ackToken string, now time.Time) error {
+// ackMethod distinguishes auto-clears ("governor_movement") from operator clears ("operator").
+func appendDecisionAcknowledged(eventsPath, ackToken, ackMethod string, now time.Time) error {
 	payload := map[string]interface{}{
 		"ack_token":  ackToken,
 		"subject":    map[string]interface{}{"kind": sentinelSubjectKind, "id": sentinelSubjectID},
-		"ack_method": "governor_movement",
+		"ack_method": ackMethod,
 		"acked_at":   now.UTC().Format(time.RFC3339),
 	}
 	return appendEventLine(eventsPath, "decision_acknowledged", now, payload)

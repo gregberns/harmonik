@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -238,6 +239,31 @@ func (e *ErrPhaseFlagMissingExpiry) Error() string {
 	return fmt.Sprintf("digest: sentinel config: phase_flag %q requires phase_flag_expiry (mandatory per spec §3.2)", e.PhaseFlag)
 }
 
+// ErrTrivialVerifyCommand is returned by LoadSentinelConfig when a Phase-2
+// done_definition entry carries a trivially-always-exit-0 verify command
+// ("true", ":", or whitespace-only). A real observable post-condition is
+// required per flywheel-motion.md §5.3.
+type ErrTrivialVerifyCommand struct {
+	Class   string
+	Command string
+}
+
+func (e *ErrTrivialVerifyCommand) Error() string {
+	return fmt.Sprintf(
+		"digest: sentinel config: done_definition[%q] = %q is a trivially-always-exit-0 command; "+
+			"provide an observable post-condition (flywheel-motion.md §5.3)",
+		e.Class, e.Command,
+	)
+}
+
+// isTrivialVerifyCommand reports whether cmd is trivially always-exit-0 and
+// therefore cannot assert an observable post-condition (spec §5.3).
+// The trivial set is: empty/whitespace-only, "true" (shell builtin), ":" (shell no-op).
+func isTrivialVerifyCommand(cmd string) bool {
+	t := strings.TrimSpace(cmd)
+	return t == "" || t == "true" || t == ":"
+}
+
 // rawSentinelConfig is the YAML shape of the sentinel: block.
 // Unknown keys are silently ignored (forward-compat).
 type rawSentinelConfig struct {
@@ -354,6 +380,11 @@ func parseSentinelConfig(data []byte) (SentinelConfig, error) {
 	}
 
 	if len(s.DoneDefinition) > 0 {
+		for class, cmd := range s.DoneDefinition {
+			if cmd != DefaultDoneDefinition && isTrivialVerifyCommand(cmd) {
+				return SentinelConfig{}, &ErrTrivialVerifyCommand{Class: class, Command: cmd}
+			}
+		}
 		cfg.DoneDefinition = s.DoneDefinition
 	}
 

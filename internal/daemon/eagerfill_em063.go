@@ -1,6 +1,7 @@
 package daemon
 
-// eagerfill_em063.go — daemon eager-refill path (EM-062 + EM-063).
+// eagerfill_em063.go — daemon eager-refill path (EM-062 + EM-063) + flywheel
+// staged-bead generator (flywheel-motion.md §5.4 B).
 //
 // eagerRefillEval implements the EM-062 trigger/compute function: on every
 // run_terminal event and on every poll tick it computes the available-slot
@@ -22,8 +23,13 @@ package daemon
 // When kerfPath is empty (kerf not installed), eagerRefillEval returns
 // immediately — eager-refill is disabled for this daemon instance.
 //
+// stagedBeadGeneratorEval implements flywheel-motion.md §5.4 (B). It shares
+// this file (both are triggered from workloop.go on bead completion) but uses
+// a DIFFERENT code path: it calls `br create` directly, NOT queue.AppendItems.
+// The two paths share the file, not the pipeline.
+//
 // Spec ref: specs/execution-model.md §4.13 EM-062, EM-063.
-// Bead ref: hk-9321v.
+// Bead ref: hk-9321v (eagerRefill); hk-f722 (stagedBeadGenerator); hk-kgwv (reconcile).
 
 import (
 	"context"

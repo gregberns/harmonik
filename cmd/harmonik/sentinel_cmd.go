@@ -52,6 +52,8 @@ func runSentinelSubcommand(subArgs []string) int {
 		return 0
 	case "emit-trip":
 		return runSentinelEmitTrip(rest)
+	case "clear-trip":
+		return runSentinelClearTrip(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "harmonik sentinel: unknown verb %q\n", verb)
 		sentinelUsage()
@@ -148,6 +150,68 @@ func runSentinelEmitTrip(args []string) int {
 	return 0
 }
 
+// runSentinelClearTrip implements `harmonik sentinel clear-trip`.
+//
+// Operator escape hatch: scans .harmonik/decision_acks/ for the current pending
+// sentinel exception and marks it acknowledged with ack_method="operator".
+// Prints the cleared ack_token on stdout. Exits 0 with no output when no
+// pending trip exists (idempotent).
+//
+// Usage:
+//
+//	harmonik sentinel clear-trip [--project DIR]
+//
+// Flags:
+//
+//	--project DIR   Project directory (default: cwd).
+//
+// Spec ref: flywheel-motion.md §2.2 (legitimate-halt clear path), bead hk-kgwv.
+func runSentinelClearTrip(args []string) int {
+	var projectFlag string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--project" && i+1 < len(args):
+			i++
+			projectFlag = args[i]
+		case strings.HasPrefix(arg, "--project="):
+			projectFlag = strings.TrimPrefix(arg, "--project=")
+		case arg == "--help" || arg == "-h":
+			sentinelClearTripUsage()
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik sentinel clear-trip: unknown argument %q\n", arg)
+			sentinelClearTripUsage()
+			return 1
+		}
+	}
+
+	if projectFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik sentinel clear-trip: cannot determine cwd: %v\n", err)
+			return 1
+		}
+		projectFlag = wd
+	}
+	abs, err := filepath.Abs(projectFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik sentinel clear-trip: resolve project path: %v\n", err)
+		return 1
+	}
+
+	tok, err := sentinel.ClearPendingTrip(context.Background(), abs, time.Now().UTC())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik sentinel clear-trip: %v\n", err)
+		return 1
+	}
+	if tok != "" {
+		fmt.Println(tok)
+	}
+	return 0
+}
+
 func sentinelUsage() {
 	fmt.Print(`harmonik sentinel — flywheel sentinel surface (hk-9mr2)
 
@@ -155,8 +219,10 @@ Usage:
   harmonik sentinel <verb> [flags]
 
 Verbs:
-  emit-trip   Write a decision_required governor-trip exception.
-              Called by the sentinel-adversary crew after confirming the trip.
+  emit-trip    Write a decision_required governor-trip exception.
+               Called by the sentinel-adversary crew after confirming the trip.
+  clear-trip   Operator escape hatch: clear a stuck pending sentinel exception.
+               Records ack_method=operator (flywheel-motion.md §2.2).
 
 Run 'harmonik sentinel <verb> --help' for verb-specific flags.
 `)
@@ -177,5 +243,22 @@ Idempotent: if a pending sentinel exception already exists, prints the existing
 ack_token without writing again. Exit 0 in both cases.
 
 Spec ref: flywheel-motion.md §2.1, §2.3 (flywheel V4).
+`)
+}
+
+func sentinelClearTripUsage() {
+	fmt.Print(`harmonik sentinel clear-trip — operator escape hatch to clear a stuck sentinel trip
+
+Usage:
+  harmonik sentinel clear-trip [--project DIR]
+
+Flags:
+  --project DIR   Project directory (default: cwd)
+
+Scans .harmonik/decision_acks/ for a pending sentinel exception and marks it
+acknowledged with ack_method=operator. Prints the cleared ack_token on stdout.
+Exits 0 with no output when no pending trip exists (idempotent).
+
+Spec ref: flywheel-motion.md §2.2 (legitimate-halt clear path, bead hk-kgwv).
 `)
 }

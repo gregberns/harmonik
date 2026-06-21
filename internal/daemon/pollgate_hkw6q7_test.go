@@ -41,8 +41,8 @@ func pollGateFixtureNewRunID(t *testing.T) core.RunID {
 // goroutine and read only after a brief sleep, so no extra locking is needed
 // in simple tests (the bus delivers synchronously in tests).
 type pollGateFixtureCollector struct {
-	mu      sync.Mutex
-	stale   []core.RunStalePayload
+	mu    sync.Mutex
+	stale []core.RunStalePayload
 }
 
 func (c *pollGateFixtureCollector) count() int {

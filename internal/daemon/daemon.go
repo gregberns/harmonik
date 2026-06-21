@@ -1596,8 +1596,8 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			homeDir, homeDirErr := os.UserHomeDir()
 			if homeDirErr == nil {
 				tuner := NewBandwidthTuner(concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
-				tuner.SetGate(pollGate)        // SS-007: OFF at INACTIVE (hk-w6q7)
-				tunerBackstop.SetTuner(tuner)  // arm the pre-Seal backstop subscriber
+				tuner.SetGate(pollGate)       // SS-007: OFF at INACTIVE (hk-w6q7)
+				tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
 				go tuner.Run(ctx)
 			}
 		}

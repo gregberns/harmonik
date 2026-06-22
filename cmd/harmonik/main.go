@@ -714,6 +714,19 @@ EXAMPLES
 		return runRemoteControlPrefixSubcommand(subArgs)
 	}
 
+	// harmonik migrate-rc-prefix [--project DIR] — interactive migration for
+	// existing projects that pre-date daemon.remote_control_prefix. Prompts the
+	// user for a slug (defaulting to the project's beads issue_prefix) and
+	// writes it in-place to .harmonik/config.yaml. Satisfies §8.3 of the
+	// rc-prefix plan (hk-f4w7): do NOT silently backfill; ask the user.
+	if len(os.Args) >= 2 && os.Args[1] == "migrate-rc-prefix" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runMigrateRCPrefixSubcommand(subArgs)
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for MVH:

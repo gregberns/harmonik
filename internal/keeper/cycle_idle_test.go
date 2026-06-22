@@ -397,6 +397,80 @@ func TestCycler_RunForIdle_AntiLoop(t *testing.T) {
 	}
 }
 
+// TestCycler_RunForIdle_DeduplicatesIdleBelowThreshold verifies that repeated
+// RunForIdle calls with the same session_id and tokens below the idle-restart
+// floor emit session_keeper_idle_crew only once (transition, not per-poll).
+// Refs: hk-qshh8.
+func TestCycler_RunForIdle_DeduplicatesIdleBelowThreshold(t *testing.T) {
+	t.Parallel()
+
+	em := &keeper.RecordingEmitter{}
+	cycler := newIdleCycler(t, t.TempDir(), em,
+		true,  // crispIdle
+		false, // holdingDispatch
+		actAbsForIdleTests,
+		defaultIdleTokenThreshold,
+		30*time.Minute,
+		nil, nil,
+	)
+
+	cf := &keeper.CtxFile{Pct: 10.0, Tokens: 100_000, WindowSize: 200_000, SessionID: "sess-dedup"}
+	ctx := context.Background()
+
+	// Three consecutive polls with the same session_id below threshold.
+	for i := range 3 {
+		if err := cycler.RunForIdle(ctx, cf); err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i+1, err)
+		}
+	}
+
+	// Expect exactly ONE event — transition, not per-poll.
+	got := em.EventsOfType(core.EventTypeSessionKeeperIdleCrew)
+	if len(got) != 1 {
+		t.Fatalf("want 1 session_keeper_idle_crew event (transition-only), got %d", len(got))
+	}
+}
+
+// TestCycler_RunForIdle_ReemitsOnNewSID verifies that a new session_id below
+// the idle threshold does trigger a fresh session_keeper_idle_crew emission
+// even if the previous session already received one. Refs: hk-qshh8.
+func TestCycler_RunForIdle_ReemitsOnNewSID(t *testing.T) {
+	t.Parallel()
+
+	em := &keeper.RecordingEmitter{}
+	cycler := newIdleCycler(t, t.TempDir(), em,
+		true,  // crispIdle
+		false, // holdingDispatch
+		actAbsForIdleTests,
+		defaultIdleTokenThreshold,
+		30*time.Minute,
+		nil, nil,
+	)
+
+	ctx := context.Background()
+	cfA := &keeper.CtxFile{Pct: 10.0, Tokens: 100_000, WindowSize: 200_000, SessionID: "sess-a"}
+	cfB := &keeper.CtxFile{Pct: 10.0, Tokens: 80_000, WindowSize: 200_000, SessionID: "sess-b"}
+
+	// First session below threshold — expect 1 event.
+	if err := cycler.RunForIdle(ctx, cfA); err != nil {
+		t.Fatalf("sess-a RunForIdle: %v", err)
+	}
+	if err := cycler.RunForIdle(ctx, cfA); err != nil {
+		t.Fatalf("sess-a second poll: %v", err)
+	}
+	if got := em.EventsOfType(core.EventTypeSessionKeeperIdleCrew); len(got) != 1 {
+		t.Fatalf("after sess-a: want 1 idle_crew event, got %d", len(got))
+	}
+
+	// New session, also below threshold — must emit again.
+	if err := cycler.RunForIdle(ctx, cfB); err != nil {
+		t.Fatalf("sess-b RunForIdle: %v", err)
+	}
+	if got := em.EventsOfType(core.EventTypeSessionKeeperIdleCrew); len(got) != 2 {
+		t.Fatalf("after sess-b: want 2 idle_crew events total, got %d", len(got))
+	}
+}
+
 // TestCycler_RunForIdle_SkipsWhenNotIdle verifies that a non-quiescent pane
 // suppresses the idle restart.
 func TestCycler_RunForIdle_SkipsWhenNotIdle(t *testing.T) {

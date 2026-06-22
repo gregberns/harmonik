@@ -558,6 +558,13 @@ type Cycler struct {
 	// Refs: hk-ee81.
 	lastIdleRestartAt time.Time
 
+	// lastIdleCrewNotifiedSID is the session_id for which the most recent
+	// session_keeper_idle_crew (below_idle_threshold) event was emitted.
+	// Suppresses per-poll log spam: the event fires only on the first poll
+	// per session_id that is below the idle-restart floor, not on every tick.
+	// A new session_id resets eligibility automatically. Refs: hk-qshh8.
+	lastIdleCrewNotifiedSID string
+
 	// consecutiveHandoffTimeouts counts consecutive handoff timeouts while
 	// above the force threshold. Reset to 0 on a successful cycle or on a
 	// below-force-threshold abort. When it reaches MaxHandoffTimeouts,
@@ -1204,15 +1211,18 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 	}
 	sessionID := cf.SessionID
 
-	// Gate 2: below idle-restart floor → emit notification, no restart.
+	// Gate 2: below idle-restart floor → emit notification (transition only), no restart.
+	// Emit once per session_id entering the below-threshold state; suppress
+	// repeated polls on the same session to avoid events.jsonl spam. Refs: hk-qshh8.
 	if cf.Tokens < c.cfg.IdleRestartAbsTokens {
-		if cf.Tokens > 0 {
+		if cf.Tokens > 0 && sessionID != c.lastIdleCrewNotifiedSID {
 			payload, _ := json.Marshal(map[string]any{
 				"agent":  c.cfg.AgentName,
 				"tokens": cf.Tokens,
 				"reason": "below_idle_threshold",
 			})
 			_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperIdleCrew, payload)
+			c.lastIdleCrewNotifiedSID = sessionID
 		}
 		return nil
 	}

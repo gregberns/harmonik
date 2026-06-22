@@ -167,7 +167,7 @@ func TestHeartbeat_IdlePaneAllowsStale(t *testing.T) {
 }
 
 // TestDeriveContextTokens checks the transcript token derivation: the LAST
-// usage-bearing assistant turn wins, summing input + cache_read + cache_creation.
+// usage-bearing assistant turn wins, summing input + cache_read + cache_creation + output.
 func TestDeriveContextTokens(t *testing.T) {
 	t.Parallel()
 
@@ -188,8 +188,8 @@ func TestDeriveContextTokens(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected derivation to succeed")
 	}
-	if want := int64(20 + 3000 + 1000); got != want {
-		t.Fatalf("derived tokens = %d, want %d (last usage turn)", got, want)
+	if want := int64(20 + 3000 + 1000 + 80); got != want {
+		t.Fatalf("derived tokens = %d, want %d (last usage turn: input+cache_read+cache_creation+output)", got, want)
 	}
 
 	if _, ok := keeper.DeriveContextTokensForTest(dir, "no-such-session"); ok {

@@ -62,12 +62,14 @@ func transcriptDirFor(projectDir string) string {
 }
 
 // deriveContextTokens scans the Claude Code transcript JSONL for sessionID under
-// transcriptDir and returns the context-token count of the most recent assistant
-// turn that carries a usage block: input_tokens + cache_read_input_tokens +
-// cache_creation_input_tokens (the total tokens fed into that turn — the best
-// proxy for current context occupancy). Returns (0, false) when the transcript
-// is absent, unreadable, or carries no usage — callers then carry the last-good
-// reading forward, so a derivation miss never breaks gauge liveness.
+// transcriptDir and returns the effective context-token count of the most recent
+// assistant turn that carries a usage block: input_tokens + cache_read_input_tokens +
+// cache_creation_input_tokens + output_tokens. Including output_tokens makes the
+// heartbeat gauge match what /context reports — the model's output from this turn
+// will appear as input to the next turn, so "input + output" is the correct
+// post-turn context occupancy. Returns (0, false) when the transcript is absent,
+// unreadable, or carries no usage — callers then carry the last-good reading
+// forward, so a derivation miss never breaks gauge liveness.
 func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 	if transcriptDir == "" || sessionID == "" {
 		return 0, false
@@ -84,6 +86,7 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 		InputTokens         int64 `json:"input_tokens"`
 		CacheReadTokens     int64 `json:"cache_read_input_tokens"`
 		CacheCreationTokens int64 `json:"cache_creation_input_tokens"`
+		OutputTokens        int64 `json:"output_tokens"`
 	}
 	type line struct {
 		Message struct {
@@ -112,7 +115,7 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 			continue
 		}
 		u := l.Message.Usage
-		sum := u.InputTokens + u.CacheReadTokens + u.CacheCreationTokens
+		sum := u.InputTokens + u.CacheReadTokens + u.CacheCreationTokens + u.OutputTokens
 		if sum > 0 {
 			tokens = sum // keep the LAST usage-bearing turn
 			found = true

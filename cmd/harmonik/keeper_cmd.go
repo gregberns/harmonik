@@ -135,9 +135,9 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 //	--tmux <target>       tmux pane target (optional; injected into on warn/act crossing)
 //	--warn-pct N          context-use percentage that triggers a warning (default 0 = unset → use abs band; tighten-only)
 //	--act-pct N           context-use percentage that triggers handoff action (default 0 = unset → use abs band; .managed-gated; tighten-only)
-//	--window-size N       assumed context-window token size when gauge reports WindowSize==0 (default 200000)
-//	--warn-abs-tokens N   absolute-token warn threshold (default 200000)
-//	--act-abs-tokens N    absolute-token act threshold (default 215000)
+//	--window-size N       assumed context-window token size when gauge reports WindowSize==0; 0=unset
+//	--warn-abs-tokens N   absolute-token warn threshold; 0=unset → OPERATOR-REQUIRED (reads from config)
+//	--act-abs-tokens N    absolute-token act threshold; 0=unset → OPERATOR-REQUIRED (reads from config)
 //
 // Behaviour (Phase-2, .managed-gated):
 //  1. Acquire .harmonik/keeper/<agent>.lock; exit 2 if another live keeper holds it.
@@ -194,9 +194,9 @@ func runKeeperSubcommand(args []string) int {
 	// still honored (and tighten-only clamped) below.
 	fs.IntVar(&warnPctFlag, "warn-pct", 0, "context-use percentage that triggers a warning (0 = unset; use abs band)")
 	fs.IntVar(&actPctFlag, "act-pct", 0, "context-use percentage that triggers handoff action (0 = unset; use abs band; .managed-gated)")
-	fs.Int64Var(&windowSizeFlag, "window-size", 0, "assumed context-window token size when the gauge reports WindowSize==0 (default 200000)")
-	fs.Int64Var(&warnAbsTokensFlag, "warn-abs-tokens", 0, "absolute-token warn threshold (default 200000)")
-	fs.Int64Var(&actAbsTokensFlag, "act-abs-tokens", 0, "absolute-token act threshold (default 215000)")
+	fs.Int64Var(&windowSizeFlag, "window-size", 0, "assumed context-window token size when the gauge reports WindowSize==0; 0=unset")
+	fs.Int64Var(&warnAbsTokensFlag, "warn-abs-tokens", 0, "absolute-token warn threshold; 0=unset → OPERATOR-REQUIRED (reads from keeper: config block)")
+	fs.Int64Var(&actAbsTokensFlag, "act-abs-tokens", 0, "absolute-token act threshold; 0=unset → OPERATOR-REQUIRED (reads from keeper: config block)")
 	fs.StringVar(&respawnCmdFlag, "respawn-cmd", "", "shell command to re-launch the agent after it exits (supervised respawn path; hk-3w2)")
 	fs.BoolVar(&forceRestartFlag, "force-restart", false, "opt in to the handoff-timeout hard-restart escalation (fail-closed; requires --respawn-cmd; hk-suxt)")
 	fs.BoolVar(&warnOnlyFlag, "warn-only", false, "warn-only mode: emit warn events but never trigger restart, respawn, or live-pane recovery (for crew keepers; hk-yfcc)")

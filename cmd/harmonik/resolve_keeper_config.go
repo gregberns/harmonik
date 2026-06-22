@@ -203,6 +203,10 @@ type ResolvedKeeperConfig struct {
 	BlindKeeperThreshold time.Duration
 	HoldTTL              time.Duration
 	HeartbeatMaxMisses   int
+	// ReapDecisionsCadence is the orphan-reaper scan interval (CONFIG>DEFAULT;
+	// optional — zero resolves to DefaultReapDecisionsCadence via applyDefaults).
+	// Refs: hk-jrftk.
+	ReapDecisionsCadence time.Duration
 
 	// ── Cycler timing / cadence / budget (hk-4gtu) ───────────────────────────
 	HandoffTimeout       time.Duration
@@ -451,6 +455,9 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir 
 	out.HardCeilingCooldown = resolveDur(0, false, cfg.CadenceHardCeilingCooldown, keeper.DefaultHardCeilingCooldown)
 	out.BlindKeeperThreshold = resolveDur(0, false, cfg.BlindKeeperThreshold, keeper.DefaultBlindKeeperThreshold)
 	out.HeartbeatMaxMisses = resolveInt(0, false, cfg.HeartbeatMaxMisses, keeper.DefaultMaxHeartbeatMisses)
+	// ReapDecisionsCadence: CONFIG > DEFAULT (not required; applyDefaults fills
+	// DefaultReapDecisionsCadence when the resolved value is zero). Refs: hk-jrftk.
+	out.ReapDecisionsCadence = resolveDur(0, false, cfg.ReapDecisionsCadence, keeper.DefaultReapDecisionsCadence)
 
 	// ── Cycler timing/cadence/budget ──
 	out.HandoffTimeout = resolveDur(

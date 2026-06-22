@@ -122,6 +122,7 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		SelfServiceGraceSeconds:         resolved.SelfServiceGraceSeconds,
 		SelfServiceInstructOnlyWhenIdle: resolved.SelfServiceInstructOnlyWhenIdle,
 		ReapDecisions:                   true,
+		ReapDecisionsCadence:            resolved.ReapDecisionsCadence,
 		HeartbeatEnabled:                true,
 	}
 	return cyclerCfg, watcherCfg

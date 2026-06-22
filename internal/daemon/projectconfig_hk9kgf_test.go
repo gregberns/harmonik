@@ -75,6 +75,7 @@ keeper:
     hard_ceiling_cooldown: 31m
     blind_keeper_threshold: 20m
     hold_ttl: 33m
+    reap_decisions_cadence: 45s
   budgets:
     heartbeat_max_misses: 3
     max_handoff_timeouts: 2
@@ -126,6 +127,7 @@ keeper:
 	checkDur(t, "CadenceHardCeilingCooldown", k.CadenceHardCeilingCooldown, 31*time.Minute)
 	checkDur(t, "BlindKeeperThreshold", k.BlindKeeperThreshold, 20*time.Minute)
 	checkDur(t, "HoldTTL", k.HoldTTL, 33*time.Minute) // hk-9waz
+	checkDur(t, "ReapDecisionsCadence", k.ReapDecisionsCadence, 45*time.Second) // hk-jrftk
 
 	// budgets
 	if k.HeartbeatMaxMisses != 3 {
@@ -360,6 +362,7 @@ func TestKeeper9kgf_BlockAbsent_AnyNewFieldSet_False(t *testing.T) {
 		{"Cadence.IdleRestartCooldown", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{IdleRestartCooldown: "1m"}}},
 		{"Cadence.HardCeilingCooldown", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{HardCeilingCooldown: "1m"}}},
 		{"Cadence.BlindKeeperThreshold", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{BlindKeeperThreshold: "1m"}}},
+		{"Cadence.ReapDecisionsCadence", daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{ReapDecisionsCadence: "1m"}}},
 		// budgets
 		{"Budgets.HeartbeatMaxMisses", daemon.ExportedRawKeeperConfig{Budgets: daemon.ExportedRawKeeperBudgets{HeartbeatMaxMisses: 1}}},
 		{"Budgets.MaxHandoffTimeouts", daemon.ExportedRawKeeperConfig{Budgets: daemon.ExportedRawKeeperBudgets{MaxHandoffTimeouts: 1}}},

@@ -51,6 +51,7 @@ func TestResolveKeeperConfig_ThreadedDefaults(t *testing.T) {
 		{"IdleRestartCooldown", got.IdleRestartCooldown, keeper.DefaultIdleRestartCooldown},
 		{"HardCeilingAbsTokens", got.HardCeilingAbsTokens, keeper.HardCeilingAbsTokens},
 		{"HardCeilingMode", got.HardCeilingMode, keeper.HardCeilingModeAlarm},
+		{"ReapDecisionsCadence", got.ReapDecisionsCadence, keeper.DefaultReapDecisionsCadence},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -98,6 +99,7 @@ func TestResolveKeeperConfig_ConfigReachesField(t *testing.T) {
 	cfg.IdleRestartCooldown = 40 * time.Minute
 	cfg.HardCeilingAbsTokens = 300_000
 	cfg.HardCeilingMode = "restart"
+	cfg.ReapDecisionsCadence = 47 * time.Second
 
 	got, err := ResolveKeeperConfig(KeeperFlags{}, cfg, t.TempDir())
 	if err != nil {
@@ -127,6 +129,7 @@ func TestResolveKeeperConfig_ConfigReachesField(t *testing.T) {
 		{"IdleRestartCooldown", got.IdleRestartCooldown, cfg.IdleRestartCooldown},
 		{"HardCeilingAbsTokens", got.HardCeilingAbsTokens, cfg.HardCeilingAbsTokens},
 		{"HardCeilingMode", got.HardCeilingMode, keeper.HardCeilingModeRestart},
+		{"ReapDecisionsCadence", got.ReapDecisionsCadence, cfg.ReapDecisionsCadence},
 	}
 	for _, c := range checks {
 		if c.got != c.want {

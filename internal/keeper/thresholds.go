@@ -178,6 +178,14 @@ const (
 	// re-scanned. Combined with the tail-window scan (deriveContextTailBytes) this
 	// eliminates O(filesize) hotness on long-running sessions. Refs: hk-div6c.
 	DefaultDeriveCacheTTL = 30 * time.Second
+
+	// DefaultReapDecisionsCadence is how often the orphan-decision reaper
+	// (maybeReapOrphanedDecisions, K5) runs when ReapDecisions is true. The 5s
+	// poll cadence is 18× too fast for a scan that is O(events.jsonl filesize);
+	// 90s bounds the cost to ~1 scan/90s (~12-24× cheaper) with no correctness
+	// impact (orphan latency is bounded by Offline-cutoff + one reap interval,
+	// which is well within the hitl-decisions spec). Refs: hk-jrftk.
+	DefaultReapDecisionsCadence = 90 * time.Second
 )
 
 // minAbsOrPctCeil returns the effective absolute-token threshold for windowSize:

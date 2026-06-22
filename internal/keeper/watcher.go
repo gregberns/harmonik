@@ -293,19 +293,18 @@ type WatcherConfig struct {
 	IsPaneIdleFn func(ctx context.Context, target string) bool
 
 	// ReapDecisions enables the hitl-decisions orphan reaper (component K5, bead
-	// hk-061) on the watch tick. When true, every ticker fire runs
-	// presence.ReapOrphanedDecisions over EventsJSONLPath, emitting
+	// hk-061) on the watch tick. When true, maybeReapOrphanedDecisions runs at
+	// ReapDecisionsCadence (default 90s — not every poll) and emits
 	// decision_withdrawn(orphaned, by=keeper) for any open decision whose
 	// blocked_agent is Offline (an explicit leave beat OR age ≥ presence.StaleCutoff,
 	// never merely Stale — N9). The keeper tick is the SOLE emitter of orphaned
-	// withdrawals (N9); the reap runs UNCONDITIONALLY on each tick (independent of
-	// the gauge-fresh state machine below) so orphan latency is bounded by the tick
-	// cadence regardless of this agent's own gauge state.
+	// withdrawals (N9); the reaper runs independent of the gauge-fresh state machine
+	// so orphan latency is bounded by Offline-cutoff + ReapDecisionsCadence.
 	//
 	// Default: false (the reaper is opt-in; the standalone `harmonik keeper`
 	// process enables it — keeper_cmd.go). When false the watcher behaves exactly
 	// as before (no decision reaping).
-	// Refs: hk-061 (hitl-decisions K5); SPEC §5 / N9.
+	// Refs: hk-061 (hitl-decisions K5); SPEC §5 / N9; hk-jrftk (cadence gate).
 	ReapDecisions bool
 
 	// EventsJSONLPath is the path to the project's events.jsonl, read by the
@@ -321,6 +320,21 @@ type WatcherConfig struct {
 	// keeper, which appends to the same events.jsonl). Set to a spy in tests.
 	// Refs: hk-061.
 	DecisionEmitter presence.Emitter
+
+	// ReapDecisionsCadence is the minimum interval between consecutive
+	// maybeReapOrphanedDecisions runs when ReapDecisions is true. Zero uses
+	// DefaultReapDecisionsCadence (90s). The 5s poll cadence is far too fast for
+	// an O(events.jsonl) scan; 90s cuts the cost ~18× with zero correctness impact
+	// (orphan latency = Offline-cutoff + one interval, within SPEC §5). Tests may
+	// set a small positive value to exercise the cadence gate quickly. Configurable
+	// via keeper.cadence.reap_decisions_cadence in config.yaml. Refs: hk-jrftk.
+	ReapDecisionsCadence time.Duration
+
+	// ReapDecisionsFn, when non-nil, replaces presence.ReapOrphanedDecisions in
+	// maybeReapOrphanedDecisions. Set to a counting spy in unit tests to verify
+	// the cadence gate bounds invocations without real events.jsonl I/O.
+	// Refs: hk-jrftk.
+	ReapDecisionsFn func(ctx context.Context, eventsPath string, emitter presence.Emitter) (presence.ReapResult, error)
 
 	// OnDemandRestart, when true, marks this agent as one that owns the on-demand
 	// restart-now path (the keeper drives clear→resume when the agent runs
@@ -604,6 +618,11 @@ func (c *WatcherConfig) applyDefaults() {
 	// Refs: hk-div6c.
 	if c.DeriveCacheTTL <= 0 {
 		c.DeriveCacheTTL = DefaultDeriveCacheTTL
+	}
+	// ReapDecisionsCadence defaults to DefaultReapDecisionsCadence (90s). Tests
+	// set a small positive value to exercise the cadence gate quickly. Refs: hk-jrftk.
+	if c.ReapDecisionsCadence <= 0 {
+		c.ReapDecisionsCadence = DefaultReapDecisionsCadence
 	}
 	if c.ReadManagedSessionFn == nil {
 		c.ReadManagedSessionFn = ReadManagedSessionID
@@ -937,6 +956,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// attempt. Used to enforce HardCeilingCooldown. Zero when no hard-ceiling
 		// restart has occurred this session. (Refs: hk-34ac)
 		hardCeilingLastAt time.Time
+
+		// lastReapAt is the time of the most recent maybeReapOrphanedDecisions run.
+		// The cadence gate skips the O(events.jsonl) scan until ReapDecisionsCadence
+		// has elapsed. Zero value means the reaper has not run yet this session
+		// (zero → fires on the first tick). Refs: hk-jrftk.
+		lastReapAt time.Time
 	)
 
 	// Boot-time check: emit no_gauge immediately if gauge is absent or stale.
@@ -957,14 +982,14 @@ func (w *Watcher) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			// ── hitl-decisions orphan reaper (K5, hk-061) ────────────────────
-			// Runs UNCONDITIONALLY on every tick, BEFORE the gauge-read branches
-			// below (which may `continue` past the rest of the loop body when the
-			// gauge is absent/stale/foreign). This keeps orphan-withdraw latency
-			// bounded by the tick cadence (≤ Offline-cutoff + one tick, SPEC §5 /
-			// N9) regardless of THIS agent's own gauge state — the reaper acts on
-			// the global open-decision set, not on this watcher's managed pane.
-			// The keeper tick is the SOLE emitter of decision_withdrawn(orphaned).
-			w.maybeReapOrphanedDecisions(ctx)
+			// Runs BEFORE the gauge-read branches below (which may `continue` past
+			// the rest of the loop body when the gauge is absent/stale/foreign),
+			// but gated to ReapDecisionsCadence (default 90s) rather than every
+			// tick: the O(events.jsonl) scan does not need 5s latency (orphan
+			// latency bound = Offline-cutoff + one reap interval, well within
+			// SPEC §5 / N9). The keeper tick is the SOLE emitter of
+			// decision_withdrawn(orphaned). Refs: hk-jrftk.
+			w.maybeReapOrphanedDecisions(ctx, &lastReapAt)
 
 			// inNoGaugeBackoff is true during the 30s back-off window after a
 			// no_gauge emission. When true the re-emit calls below are suppressed
@@ -1342,25 +1367,39 @@ func (w *Watcher) Run(ctx context.Context) error {
 }
 
 // maybeReapOrphanedDecisions runs one hitl-decisions orphan-reap pass (K5,
-// hk-061) when the reaper is enabled (cfg.ReapDecisions). It emits
-// decision_withdrawn(orphaned, by=keeper) for every open decision whose
-// blocked_agent is Offline (an explicit leave beat OR age ≥ presence.StaleCutoff,
-// never merely Stale — N9), via the canonical presence.ReapOrphanedDecisions.
+// hk-061) when the reaper is enabled (cfg.ReapDecisions) AND the reap cadence
+// (cfg.ReapDecisionsCadence, default 90s) has elapsed since the last run.
 //
-// It is a no-op when ReapDecisions is false. The emitter is cfg.DecisionEmitter
-// when set, else the watcher's primary emitter (the standalone keeper's
-// FileEmitter, which appends to the same events.jsonl). A reap error or a
-// per-decision emit failure is logged and swallowed — the next tick retries
-// (the pass is idempotent: the open set is re-read fresh each call, N3).
-func (w *Watcher) maybeReapOrphanedDecisions(ctx context.Context) {
+// It emits decision_withdrawn(orphaned, by=keeper) for every open decision whose
+// blocked_agent is Offline (an explicit leave beat OR age ≥ presence.StaleCutoff,
+// never merely Stale — N9), via cfg.ReapDecisionsFn or the canonical
+// presence.ReapOrphanedDecisions.
+//
+// It is a no-op when ReapDecisions is false or the cadence has not elapsed.
+// The emitter is cfg.DecisionEmitter when set, else the watcher's primary
+// emitter (the standalone keeper's FileEmitter). A reap error or a per-decision
+// emit failure is logged and swallowed — the next cadence window retries (the
+// pass is idempotent: the open set is re-read fresh each call, N3).
+//
+// lastReapAt is updated on every attempt (success or error) so the cadence gate
+// bounds the O(events.jsonl) scan frequency regardless of error. Refs: hk-jrftk.
+func (w *Watcher) maybeReapOrphanedDecisions(ctx context.Context, lastReapAt *time.Time) {
 	if !w.cfg.ReapDecisions {
 		return
 	}
+	if !lastReapAt.IsZero() && time.Since(*lastReapAt) < w.cfg.ReapDecisionsCadence {
+		return
+	}
+	*lastReapAt = time.Now()
 	emitter := w.cfg.DecisionEmitter
 	if emitter == nil {
 		emitter = w.emitter
 	}
-	res, err := presence.ReapOrphanedDecisions(ctx, w.cfg.EventsJSONLPath, emitter)
+	reapFn := w.cfg.ReapDecisionsFn
+	if reapFn == nil {
+		reapFn = presence.ReapOrphanedDecisions
+	}
+	res, err := reapFn(ctx, w.cfg.EventsJSONLPath, emitter)
 	if err != nil {
 		slog.WarnContext(ctx, "keeper: orphan-decision reap", "err", err, "events_path", w.cfg.EventsJSONLPath)
 		return

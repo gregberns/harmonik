@@ -154,19 +154,20 @@ func ds7RunOneReapTick(t *testing.T, projectDir, eventsPath string) []keeper.Emi
 	t.Helper()
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{
-		AgentName:       "reaper-keeper",
-		ProjectDir:      projectDir,
-		PollInterval:    10 * time.Millisecond,
-		SuppressNoGauge: true,
-		ReapDecisions:   true,
-		EventsJSONLPath: eventsPath,
-		DecisionEmitter: em,
+		AgentName:            "reaper-keeper",
+		ProjectDir:           projectDir,
+		PollInterval:         10 * time.Millisecond,
+		ReapDecisionsCadence: 10 * time.Millisecond, // fire on every tick (match PollInterval)
+		SuppressNoGauge:      true,
+		ReapDecisions:        true,
+		EventsJSONLPath:      eventsPath,
+		DecisionEmitter:      em,
 	}
 	w := keeper.NewWatcher(cfg, em)
-	// Run ~150ms → ~15 ticks; the reaper fires on every tick. Idempotent, so
-	// multiple fires for the same already-recorded decision do not change the
-	// open set (the recorder just gets the same withdrawal again — we dedupe on
-	// decision_id below).
+	// Run ~150ms → ~15 ticks; the reaper fires on every tick (cadence=poll=10ms).
+	// Idempotent, so multiple fires for the same already-recorded decision do not
+	// change the open set (the recorder just gets the same withdrawal again — we
+	// dedupe on decision_id below).
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	_ = w.Run(ctx) //nolint:errcheck // context.DeadlineExceeded expected

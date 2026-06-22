@@ -79,7 +79,7 @@ func TestGCRetiredIntentsWithRedrive_NilWriter(t *testing.T) {
 
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
-			landedID:  {BeadID: landedID, Status: core.CoarseStatusInProgress}, // claim: in_progress == intended post-state → landed
+			landedID:  {BeadID: landedID, Status: core.CoarseStatusInProgress},  // claim: in_progress == intended post-state → landed
 			pendingID: {BeadID: pendingID, Status: core.CoarseStatusInProgress}, // close: in_progress = pre-state, not yet landed
 		},
 	}
@@ -361,9 +361,9 @@ func TestGCRetiredIntentsWithRedrive_MixedBatch(t *testing.T) {
 
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
-			landedID:   {BeadID: landedID, Status: core.CoarseStatusOpen},    // reopen landed (open==post-state)
-			redriveID:  {BeadID: redriveID, Status: core.CoarseStatusOpen},   // claim pre-state
-			retainedID: {BeadID: retainedID, Status: core.CoarseStatusOpen},  // close diverged (open≠pre-state=in_progress)
+			landedID:   {BeadID: landedID, Status: core.CoarseStatusOpen},   // reopen landed (open==post-state)
+			redriveID:  {BeadID: redriveID, Status: core.CoarseStatusOpen},  // claim pre-state
+			retainedID: {BeadID: retainedID, Status: core.CoarseStatusOpen}, // close diverged (open≠pre-state=in_progress)
 		},
 	}
 	writer := &fakeRedriveWriter{

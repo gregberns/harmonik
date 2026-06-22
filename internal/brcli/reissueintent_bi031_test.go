@@ -125,7 +125,7 @@ func TestReissueTerminalTransition_4d_BrUnavailable(t *testing.T) {
 		context.Background(),
 		intentLogDir,
 		brcli.TimeoutConfig{
-			WriteTimeout:           2 * time.Second,
+			WriteTimeout:            2 * time.Second,
 			TerminalWriteMaxRetries: 1,
 			TerminalWriteRetryBase:  1 * time.Millisecond,
 			TerminalWriteRetryCap:   5 * time.Millisecond,

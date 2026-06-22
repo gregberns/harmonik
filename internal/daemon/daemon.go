@@ -1222,9 +1222,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			} else {
 				beadLedger = brAdapter
 				beadResetter = brAdapter
-				beadCat3cCloser = brAdapter       // Cat 3c auto-reconciler (hk-lgtq2)
-				intentGCLedger = brAdapter        // GCRetiredIntentsWithRedrive ledger (hk-cizvu)
-				intentRedriveWriter = brAdapter   // BI-031 step-4 re-drive (hk-aev8t)
+				beadCat3cCloser = brAdapter     // Cat 3c auto-reconciler (hk-lgtq2)
+				intentGCLedger = brAdapter      // GCRetiredIntentsWithRedrive ledger (hk-cizvu)
+				intentRedriveWriter = brAdapter // BI-031 step-4 re-drive (hk-aev8t)
 				intentLogDir = lifecycle.BeadsIntentsDir(cfg.ProjectDir)
 			}
 		}

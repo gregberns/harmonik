@@ -1,9 +1,11 @@
 package eventbus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -101,6 +103,14 @@ type busImpl struct {
 	// goroutines. Entries are created lazily on first EmitWithRunID for a run
 	// and are never removed (they become no-ops once the run drains).
 	runDrainers map[string]*sync.WaitGroup
+
+	// HWM persistence fields (EV-002c). hwmPath is the absolute path of the
+	// event_id_hwm file; empty string disables HWM writes (test mode / no
+	// project dir). hwmMu serialises concurrent writes; hwmLast tracks the
+	// highest value already written so redundant file I/O is skipped.
+	hwmPath string
+	hwmMu   sync.Mutex
+	hwmLast [16]byte
 }
 
 // fsyncBoundaryEventTypes is the static set of F-class (fsync-boundary)
@@ -271,6 +281,75 @@ func NewBusImplWithSink(registry *core.RedactionRegistry, writer *JSONLWriter, s
 	}
 }
 
+// NewBusImplWithWriterAndHWM constructs a busImpl with a RedactionRegistry, a
+// JSONLWriter, a pre-seeded EventIDGenerator, and an HWM file path for
+// EV-002c cross-restart monotonicity.
+//
+// gen is the EventIDGenerator to use; when nil, NewEventIDGenerator() is used.
+// Callers SHOULD supply a generator seeded from the persisted HWM file via
+// [core.NewEventIDGeneratorWithHWM] so that event_ids are strictly greater
+// than any pre-restart ids. hwmPath is the absolute path of the
+// event_id_hwm file (lifecycle.EventIDHWMPath); when empty, HWM writes are
+// disabled (no-op, suitable for unit tests).
+//
+// The returned bus is unsealed; callers MUST Subscribe all consumers before
+// calling Seal (EV-009).
+//
+// Spec ref: event-model.md §4.1 EV-002c.
+func NewBusImplWithWriterAndHWM(
+	registry *core.RedactionRegistry,
+	writer *JSONLWriter,
+	gen *core.EventIDGenerator,
+	hwmPath string,
+) EventBus {
+	if registry == nil {
+		registry = core.NewRedactionRegistry()
+	}
+	var w jsonlAppender = nullJSONLWriter{}
+	if writer != nil {
+		w = writer
+	}
+	if gen == nil {
+		gen = core.NewEventIDGenerator()
+	}
+	return &busImpl{
+		registry:    registry,
+		jsonlWriter: w,
+		deadLetterSink: core.NoopDeadLetterSink{},
+		idGen:       gen,
+		hwmPath:     hwmPath,
+		runDrainers: make(map[string]*sync.WaitGroup),
+	}
+}
+
+// maybeUpdateHWM writes hwm to the HWM file when hwm is strictly greater than
+// the last persisted value. Called after every F-class JSONL fsync to keep
+// the HWM file current per EV-002c.
+//
+// The write is atomic (temp-file + rename) but not fsynced; HWM durability
+// piggybacks on the JSONL fsync domain (EV-002c "no additional fsync cost").
+// On crash between JSONL fsync and this write the HWM file may be stale;
+// daemon startup handles that via the "seed from wall clock" fallback.
+//
+// Thread-safe: protected by hwmMu.
+// Non-fatal: write errors are logged but do not fail the Emit call.
+func (b *busImpl) maybeUpdateHWM(hwm core.EventID) {
+	if b.hwmPath == "" {
+		return
+	}
+	hwmBytes := [16]byte(hwm)
+	b.hwmMu.Lock()
+	defer b.hwmMu.Unlock()
+	if bytes.Compare(hwmBytes[:], b.hwmLast[:]) <= 0 {
+		return
+	}
+	if err := core.WriteEventIDHWMAtomicNoSync(b.hwmPath, hwm); err != nil {
+		log.Printf("eventbus: HWM update to %s failed: %v", b.hwmPath, err)
+		return
+	}
+	b.hwmLast = hwmBytes
+}
+
 // Emit applies EV-035 redaction to payload via the registry's
 // RedactionMiddleware, then appends the event to the JSONL log (stub at MVH),
 // then dispatches to matching registered consumers per EV-014a.
@@ -344,6 +423,9 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 	needsSync := isFsyncBoundaryEvent(eventType)
 	if appendErr := b.jsonlWriter.Append(envelopeBytes, needsSync); appendErr != nil {
 		return fmt.Errorf("eventbus.Emit: JSONL append: %w", appendErr)
+	}
+	if needsSync {
+		b.maybeUpdateHWM(eventID)
 	}
 
 	// Step 5: collect matching subscriptions once under lock so dispatch runs
@@ -462,6 +544,9 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 	if appendErr := b.jsonlWriter.Append(envelopeBytes, needsSync); appendErr != nil {
 		return fmt.Errorf("eventbus.EmitWithRunID: JSONL append: %w", appendErr)
 	}
+	if needsSync {
+		b.maybeUpdateHWM(eventID)
+	}
 
 	// Step 5: collect matching subscriptions once under lock.
 	b.mu.Lock()
@@ -568,6 +653,7 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 	if appendErr := b.jsonlWriter.Append(envelopeBytes, true /* always fsync — F-class */); appendErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: JSONL append: %w", appendErr)
 	}
+	b.maybeUpdateHWM(eventID)
 
 	// Steps 5–6: fan-out to subscribers — same pattern as Emit (no run_id, no runWG).
 	b.mu.Lock()
@@ -760,6 +846,9 @@ func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, paylo
 	fsync := isFsyncBoundaryEvent(eventType)
 	if appendErr := b.jsonlWriter.Append(envelopeBytes, fsync); appendErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): JSONL append: %w", typeName, appendErr)
+	}
+	if fsync {
+		b.maybeUpdateHWM(eventID)
 	}
 
 	// Step 5–6: fan-out to subscribers — same pattern as EmitAgentMessage.

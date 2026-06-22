@@ -38,6 +38,21 @@ func NewEventIDGenerator() *EventIDGenerator {
 	}
 }
 
+// NewEventIDGeneratorWithHWM returns an EventIDGenerator seeded with hwm as
+// the minimum issued value. The first call to Next() will produce an EventID
+// strictly greater than hwm even if the current wall clock is behind hwm's
+// embedded timestamp. This is the startup phase of EV-002c: the daemon reads
+// the persisted HWM file and seeds the generator so every post-restart
+// event_id is strictly greater than any pre-restart event_id.
+//
+// Spec ref: event-model.md §4.1 EV-002c.
+func NewEventIDGeneratorWithHWM(hwm EventID) *EventIDGenerator {
+	return &EventIDGenerator{
+		last:  uuid.UUID(hwm),
+		newV7: uuid.NewV7,
+	}
+}
+
 // Next returns the next strictly-monotonic EventID.
 //
 // Two consecutive calls always satisfy a.Lex < b.Lex when the 16-byte

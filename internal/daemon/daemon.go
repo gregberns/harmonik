@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -824,13 +825,46 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		defer func() { _ = jsonlWriter.Close() }()
 	}
 
-	// Instantiate the EventBus with the registry and writer (EV-035; hk-8mup.62,
-	// hk-8i31.83, hk-8mup.63).
+	// EV-002c: read the persisted event-ID high-water-mark and seed the
+	// EventIDGenerator so all post-restart event_ids are strictly greater than
+	// any pre-restart event_ids, even under wall-clock regression.
+	//
+	// When cfg.ProjectDir is empty (unit-test mode) we skip HWM I/O and use a
+	// fresh generator seeded from the wall clock.
+	var hwmGen *core.EventIDGenerator
+	var hwmPath string
+	var clockRegressionDetected bool
+	if cfg.ProjectDir != "" {
+		hwmPath = lifecycle.EventIDHWMPath(cfg.ProjectDir)
+		hwm, hwmExists, hwmErr := core.ReadEventIDHWM(hwmPath)
+		switch {
+		case hwmErr != nil:
+			// Unreadable HWM file: log structured warning and seed from wall clock
+			// (EV-002c: "cross-restart ordering NOT guaranteed in that case").
+			log.Printf("daemon.Start: event_id HWM at %s unreadable: %v; seeding from wall clock — cross-restart ordering not guaranteed", hwmPath, hwmErr)
+			hwmGen = core.NewEventIDGenerator()
+		case !hwmExists:
+			// Missing HWM (first run or .harmonik/ wiped): log structured warning.
+			log.Printf("daemon.Start: event_id HWM not found at %s (first run or .harmonik/ wiped); seeding from wall clock — cross-restart ordering not guaranteed", hwmPath)
+			hwmGen = core.NewEventIDGenerator()
+		default:
+			hwmGen = core.NewEventIDGeneratorWithHWM(hwm)
+			if core.IsHWMClockRegression(hwm, time.Now()) {
+				clockRegressionDetected = true
+			}
+		}
+	}
+	if hwmGen == nil {
+		hwmGen = core.NewEventIDGenerator()
+	}
+
+	// Instantiate the EventBus with the registry, writer, seeded generator, and
+	// HWM path (EV-035, EV-002c; hk-8mup.62, hk-8i31.83, hk-8mup.63).
 	//
 	// Subscribers MUST be registered before Seal (EV-009). The
 	// HandlerPausePolicyGoroutine (hk-37zy8) is the first production subscriber;
 	// it is wired below before bus.Seal() is called.
-	bus := eventbus.NewBusImplWithWriter(registry, jsonlWriter)
+	bus := eventbus.NewBusImplWithWriterAndHWM(registry, jsonlWriter, hwmGen, hwmPath)
 
 	// PL-005 step 0 (hk-m0k0a, hk-37zy8, hk-7urls): construct HandlerPauseController,
 	// RunRegistry, and QueueStore at the composition root so all are available
@@ -1072,6 +1106,20 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 
 	if sealErr := bus.Seal(); sealErr != nil {
 		return fmt.Errorf("daemon.Start: seal bus: %w", sealErr)
+	}
+
+	// EV-002c: emit daemon_degraded{reason=clock_regression} when the wall
+	// clock was behind the persisted HWM by more than 1 second at startup.
+	// Non-fatal: the generator already synthesises IDs ahead of the clock;
+	// this event is an observability signal for operators.
+	if clockRegressionDetected {
+		degradedPayload := core.DaemonDegradedPayload{
+			DetectedAt: time.Now().UTC().Format(time.RFC3339),
+			Reason:     core.DaemonDegradedReasonClockRegression,
+		}
+		if degradedBytes, marshalErr := json.Marshal(degradedPayload); marshalErr == nil {
+			_ = bus.Emit(context.Background(), core.EventTypeDaemonDegraded, degradedBytes)
+		}
 	}
 
 	// Start the stale-watch background goroutine after Seal so the bus is in

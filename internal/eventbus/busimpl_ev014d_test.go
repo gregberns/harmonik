@@ -23,10 +23,15 @@ package eventbus_test
 //     — unknown consumer ID returns a non-nil error
 //   TestBusImpl_ReplayFrom_EmptyPathNoOp
 //     — no JSONL path → ReplayFrom is a no-op
+//   TestBusImpl_DeadLetterReplay_DeliversMatchingEvents
+//     — DeadLetterReplay dispatches dead-letter entries to the consumer
+//   TestBusImpl_DeadLetterReplay_FilterNarrowsDelivery
+//     — explicit filter constrains which dead-letter types reach the handler
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -498,5 +503,141 @@ func TestBusImpl_ReplayFrom_EmptyPathNoOp(t *testing.T) {
 	}
 	if called {
 		t.Error("ReplayFrom with empty path: handler must not be called")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DeadLetterReplay
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ev014dWriteDeadLetterEvent appends one entry to the dead-letters.jsonl file
+// adjacent to logPath.  The format mirrors the unexported deadLetterEntry struct
+// inside busimpl.go: {"envelope": <event>}.
+func ev014dWriteDeadLetterEvent(t *testing.T, logPath string, ev core.Event) {
+	t.Helper()
+	dlPath := filepath.Join(filepath.Dir(logPath), "dead-letters.jsonl")
+	entry := fmt.Sprintf(`{"envelope":%s}`, func() string {
+		b, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatalf("marshal dead-letter event: %v", err)
+		}
+		return string(b)
+	}())
+	f, err := os.OpenFile(dlPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatalf("open dead-letter log: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := fmt.Fprintln(f, entry); err != nil {
+		t.Fatalf("write dead-letter entry: %v", err)
+	}
+}
+
+// TestBusImpl_DeadLetterReplay_DeliversMatchingEvents asserts that
+// DeadLetterReplay dispatches every dead-letter entry that matches the
+// consumer's EventPattern to its handler (nil filter = no extra narrowing).
+func TestBusImpl_DeadLetterReplay_DeliversMatchingEvents(t *testing.T) {
+	fix := ev014dSetup(t)
+
+	ids := ev014dMonotonicIDs(t, 3)
+	for _, id := range ids {
+		ev014dWriteDeadLetterEvent(t, fix.logPath, ev014dMakeEvent(id, "run_failed"))
+	}
+
+	var mu sync.Mutex
+	var got []core.EventID
+
+	bus := eventbus.NewBusImplWithWriterAndHWM(nil, fix.writer, nil, "", fix.logPath)
+	sub := core.Subscription{
+		ConsumerID:    "dl-consumer",
+		ConsumerClass: core.ConsumerClassAsynchronous,
+		EventPattern:  core.EventPattern{Wildcard: true},
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, ev core.Event) error {
+			mu.Lock()
+			got = append(got, ev.EventID)
+			mu.Unlock()
+			return nil
+		},
+	}
+	if _, err := bus.Subscribe(sub); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	if err := bus.DeadLetterReplay("dl-consumer", nil); err != nil {
+		t.Fatalf("DeadLetterReplay: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 3 {
+		t.Fatalf("DeadLetterReplay: want 3 events, got %d", len(got))
+	}
+	for i, id := range ids {
+		if got[i] != id {
+			t.Errorf("DeadLetterReplay: got[%d] = %v, want %v", i, got[i], id)
+		}
+	}
+}
+
+// TestBusImpl_DeadLetterReplay_FilterNarrowsDelivery asserts that a non-nil
+// filter further constrains which dead-letter events reach the consumer's
+// handler: only events matching BOTH the consumer pattern AND the filter pass.
+func TestBusImpl_DeadLetterReplay_FilterNarrowsDelivery(t *testing.T) {
+	fix := ev014dSetup(t)
+
+	ids := ev014dMonotonicIDs(t, 4)
+	ev014dWriteDeadLetterEvent(t, fix.logPath, ev014dMakeEvent(ids[0], "run_failed"))
+	ev014dWriteDeadLetterEvent(t, fix.logPath, ev014dMakeEvent(ids[1], "run_started"))
+	ev014dWriteDeadLetterEvent(t, fix.logPath, ev014dMakeEvent(ids[2], "run_failed"))
+	ev014dWriteDeadLetterEvent(t, fix.logPath, ev014dMakeEvent(ids[3], "run_started"))
+
+	var mu sync.Mutex
+	var got []string
+
+	bus := eventbus.NewBusImplWithWriterAndHWM(nil, fix.writer, nil, "", fix.logPath)
+	// Consumer pattern = wildcard (receives all types).
+	sub := core.Subscription{
+		ConsumerID:    "dl-filtered",
+		ConsumerClass: core.ConsumerClassAsynchronous,
+		EventPattern:  core.EventPattern{Wildcard: true},
+		OnPanic:       core.OnPanicRecoverAndLog,
+		Handler: func(_ context.Context, ev core.Event) error {
+			mu.Lock()
+			got = append(got, ev.Type)
+			mu.Unlock()
+			return nil
+		},
+	}
+	if _, err := bus.Subscribe(sub); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+
+	// Replay only run_failed entries via the filter.
+	filter := &core.EventPattern{
+		Types: map[core.EventType]struct{}{
+			core.EventTypeRunFailed: {},
+		},
+	}
+	if err := bus.DeadLetterReplay("dl-filtered", filter); err != nil {
+		t.Fatalf("DeadLetterReplay with filter: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Only ids[0] and ids[2] are run_failed; the two run_started entries should be skipped.
+	if len(got) != 2 {
+		t.Fatalf("DeadLetterReplay filter: want 2 run_failed events, got %d (%v)", len(got), got)
+	}
+	for _, tp := range got {
+		if tp != string(core.EventTypeRunFailed) {
+			t.Errorf("DeadLetterReplay filter: unexpected type %q; want run_failed", tp)
+		}
 	}
 }

@@ -238,10 +238,9 @@ func mergeBeadRows(ancestor, current, other []beadRow) (merged []beadRow, confli
 				// Same timestamp: check if rows are actually identical.
 				if !rowsEqual(cRow, oRow) {
 					conflicts = append(conflicts, conflictRecord{
-						BeadID:    id,
-						Reason:    "same updated_at but differing content",
-						CurrentAt: cRow.updatedAt,
-						OtherAt:   oRow.updatedAt,
+						BeadID:  id,
+						AStatus: extractStringField(cRow.raw, "status"),
+						BStatus: extractStringField(oRow.raw, "status"),
 					})
 				}
 				// Use current as tiebreaker (no data loss; conflict logged above).
@@ -407,14 +406,14 @@ func unionDependencies(a, b, c []json.RawMessage) ([]json.RawMessage, bool) {
 // conflictRecord captures a LWW collision that could not be deterministically
 // resolved (same updated_at, different content).
 type conflictRecord struct {
-	BeadID    string
-	Reason    string
-	CurrentAt time.Time
-	OtherAt   time.Time
+	BeadID  string
+	AStatus string // status value on the current/ours (A) side
+	BStatus string // status value on the other (B) side
 }
 
 // appendConflictLog appends conflict records to .beads/merge-conflicts.log.
 // The log path is derived from the working-tree path of issues.jsonl.
+// Format: <iso8601-timestamp> CONFLICT bead=<id> field=status a=<A_value> b=<B_value> resolution=took-ours
 func appendConflictLog(workingPath string, conflicts []conflictRecord) error {
 	dir := filepath.Dir(workingPath)
 	logPath := filepath.Join(dir, "merge-conflicts.log")
@@ -427,10 +426,8 @@ func appendConflictLog(workingPath string, conflicts []conflictRecord) error {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, c := range conflicts {
-		fmt.Fprintf(f, "%s bead=%s reason=%q current_at=%s other_at=%s\n",
-			now, c.BeadID, c.Reason,
-			c.CurrentAt.UTC().Format(time.RFC3339),
-			c.OtherAt.UTC().Format(time.RFC3339),
+		fmt.Fprintf(f, "%s CONFLICT bead=%s field=status a=%s b=%s resolution=took-ours\n",
+			now, c.BeadID, c.AStatus, c.BStatus,
 		)
 	}
 	return nil

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -264,11 +265,11 @@ func TestBeadsMerge_LabelUnion(t *testing.T) {
 }
 
 func TestBeadsMerge_SameTimestampConflictLogged(t *testing.T) {
-	// Same updated_at, different content: conflict should be logged.
+	// Same updated_at, different status: conflict logged in spec-required format.
 	ts := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-	ancestorRow := map[string]any{"id": "hk-conflict", "title": "original", "updated_at": timeStr(ts)}
-	currentRow := map[string]any{"id": "hk-conflict", "title": "current version", "updated_at": timeStr(ts)}
-	otherRow := map[string]any{"id": "hk-conflict", "title": "other version", "updated_at": timeStr(ts)}
+	ancestorRow := map[string]any{"id": "hk-conflict", "status": "open", "updated_at": timeStr(ts)}
+	currentRow := map[string]any{"id": "hk-conflict", "status": "closed", "updated_at": timeStr(ts)}
+	otherRow := map[string]any{"id": "hk-conflict", "status": "in_progress", "updated_at": timeStr(ts)}
 
 	ancestorPath := beadsMergeFixture(t, []map[string]any{ancestorRow})
 	currentPath := beadsMergeFixture(t, []map[string]any{currentRow})
@@ -286,15 +287,25 @@ func TestBeadsMerge_SameTimestampConflictLogged(t *testing.T) {
 		t.Fatalf("expected 1 row, got %d", len(rows))
 	}
 
-	// Conflict log should exist.
+	// Conflict log must exist and contain the spec-required format (BL-MRG-003).
 	logPath := filepath.Join(workingDir, "merge-conflicts.log")
 	//nolint:gosec // G304: test path
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("expected merge-conflicts.log to exist: %v", err)
 	}
-	if len(data) == 0 {
-		t.Error("expected non-empty merge-conflicts.log")
+	line := strings.TrimSpace(string(data))
+	for _, want := range []string{
+		"CONFLICT",
+		"bead=hk-conflict",
+		"field=status",
+		"a=closed",
+		"b=in_progress",
+		"resolution=took-ours",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("conflict log line missing %q; got: %s", want, line)
+		}
 	}
 }
 

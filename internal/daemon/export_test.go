@@ -462,7 +462,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		followUpLedgerMu:          &sync.Mutex{},
 		spawnSubstrateReadyCh:     p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
 		allowedRepos:              p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
-		diskFreeBytesFunc: p.DiskFreeBytesFunc, // hk-guez: merge-aware reaper test seam
+		diskFreeBytesFunc:         p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
 		// hk-y3frr: default to a no-op clean in tests so that the now-enabled
 		// proactive reap never calls real `go clean -cache` in scenario tests
 		// (which have no goCacheCleanFunc set and would wipe the build cache on

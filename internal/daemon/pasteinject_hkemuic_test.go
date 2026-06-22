@@ -16,6 +16,14 @@ package daemon_test
 // the running claude process) appear on eventCh. When the implementer dies
 // silently, eventCh goes dry and the staleness kill fires correctly.
 //
+// hk-e7n76 (FIX4) update: implementers in DOT mode now emit daemon HBs through
+// tap (parity with single-mode workloop.go:3721), so watchdogCh receives them
+// and the budget watchdog can extend totalDeadline. The staleness-kill regression
+// is mitigated by the activity-fingerprint path (FIX1) for normal work. The
+// tests below remain valid: they call pasteInjectQuitOnCommit directly with a
+// manually-created eventCh that receives only real Claude HBs — when that
+// channel goes dry, Kill fires regardless of how production wires the tap.
+//
 // 3cb51c4b shipped tests for:
 //   - reviewer path: pasteInjectQuitOnReviewFile (pasteinject_hksj6a_test.go)
 //   - never-spawned DOT reaper (stalewatch_neverSpawnedReaper_hk0z5x_test.go)
@@ -24,10 +32,6 @@ package daemon_test
 //   re-entrant implementer that received agent_ready (had prior Claude HBs on
 //   eventCh) then died silently while daemon HBs flowed to a separate sink
 //   (not eventCh, per the hk-sj6a fix). Kill must fire on eventCh staleness.
-//
-// Regression signal: if daemon HBs were re-routed back through tap into eventCh
-// the channel would never go dry; staleness would never fire; Kill() would
-// never be called (kl.calls == 0), failing the assertion.
 //
 // Bead: hk-emuic.
 

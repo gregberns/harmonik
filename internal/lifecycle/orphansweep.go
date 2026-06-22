@@ -620,6 +620,12 @@ func GCRetiredIntents(
 //
 // Returns (preState, true) for known ops; (empty, false) for unknown ops.
 // The caller MUST treat an unknown op as ambiguous and retain the intent file.
+//
+// Reset note: reset returns (in_progress, true) but step-4 re-drive is never
+// reached for reset in practice. gcIntentOpLanded treats in_progress as
+// "landed" for reset (the bead was re-opened and then claimed), so the only
+// non-landed, non-post-state reachable status for reset is closed — which
+// diverges from the returned pre-state (in_progress) and routes to Cat 3a.
 func gcIntentOpPreState(op core.TerminalOp) (core.CoarseStatus, bool) {
 	switch op {
 	case core.TerminalOpClaim:

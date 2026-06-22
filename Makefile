@@ -247,9 +247,12 @@ check-full:  ## Tier 3: everything in check + integration + scenario + crash tes
 #   4. --version smoke    — verify the built binary starts and prints a version
 # ---------------------------------------------------------------------------
 .PHONY: release-validate
-release-validate: build-all  ## Release gate: lint + go test -short + scenario suite + --version smoke (hk-o4j13)
-	$(MAKE) lint
-	go test -short -race -count=1 ./...
+release-validate: build-all  ## Release gate: CI Tier 2 (check-short) + scenario suite + --version smoke (hk-o4j13)
+	# Spec (specs/release-pipeline.md §5) defines VALIDATE gates as ci_tier2 + scenario + version_smoke.
+	# check-short IS CI Tier 2: fmt-check + vet + build + golangci-lint --new-from-rev + go test -short -race.
+	# Do NOT call `make lint` (full golangci-lint) here — it fails the gate on thousands of pre-existing
+	# legacy issues that per-commit CI never blocked on, making every release impossible (hk-o4j13 drift).
+	$(MAKE) check-short
 	go test -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/...
 	@echo "release-validate: harmonik --version smoke"
 	@/tmp/harmonik --version

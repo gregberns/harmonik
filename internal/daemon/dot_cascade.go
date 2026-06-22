@@ -1914,6 +1914,17 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
 	}
 
+	// Infra-signature check: go build-cache TOCTOU failures emit a distinctive
+	// "package X is not in std" message when concurrent go clean -cache deletes
+	// stdlib cache entries mid-build. These are not code defects — retry on the
+	// same tree succeeds — so classify as transient (self-loop) rather than
+	// deterministic (fix-loop back to implement). (hk-7xgu4 / hk-1veco FIX2)
+	if isGateBuildCacheInfraError(combined) {
+		fc := core.FailureClassTransient
+		fmt.Fprintf(os.Stderr, "daemon: dot tool node %q failed (%v) with build-cache infra signature (transient); gate log: %s\n", node.ID, err, gateLogPath)
+		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
+	}
+
 	// Non-zero exit code (1..255) → deterministic failure. This is the gate-FAIL
 	// case that drives the commit_gate→implement back-edge; surface the diagnostic.
 	fc := core.FailureClassDeterministic
@@ -1959,6 +1970,20 @@ func tailString(s string, n int) string {
 		}
 	}
 	return "…(truncated)…\n" + cut
+}
+
+// isGateBuildCacheInfraError reports whether gate output matches a known go
+// build-cache / toolchain infrastructure failure signature. Infra failures are
+// transient — retry on the same committed tree succeeds — and must not be
+// misclassified as deterministic (which would bounce the bead back to the
+// implementer with a false "fix the build" signal).
+//
+// Known signatures (hk-y3frr / hk-guez / hk-7xgu4 TOCTOU lineage):
+//   - "is not in std" — concurrent go clean -cache deleted stdlib entries
+//     while "go build ./..." was running; observed as "package bufio is not
+//     in std". Passes immediately on retry after the cache is warm again.
+func isGateBuildCacheInfraError(output []byte) bool {
+	return strings.Contains(string(output), "is not in std")
 }
 
 // nodeIsReviewer reports whether an agentic node is a reviewer-class node. The

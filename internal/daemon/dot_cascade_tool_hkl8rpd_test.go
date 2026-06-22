@@ -203,3 +203,31 @@ func TestDispatchDotToolNode_HandlerEnvOverlaysProcessEnv(t *testing.T) {
 			"got %q (failure_class=%v)", outcome.Status, outcome.FailureClass)
 	}
 }
+
+// TestDispatchDotToolNode_BuildCacheInfraError_Transient verifies that a gate
+// command that exits non-zero with the go build-cache TOCTOU output signature
+// ("package X is not in std") is classified as FailureClassTransient rather
+// than FailureClassDeterministic (hk-7xgu4 / hk-1veco FIX2).
+//
+// Before this fix: classified as deterministic → gate bounced to implement with
+// a false "fix the build" signal; implementer idled and hit the 30-min budget.
+// After: classified as transient → gate self-loops, passes on the next attempt
+// once the build cache is warm.
+func TestDispatchDotToolNode_BuildCacheInfraError_Transient(t *testing.T) {
+	ctx := context.Background()
+	// Emit the observed TOCTOU signature and exit 1.
+	cmd := `printf 'package bufio is not in std\n' >&2; exit 1`
+	outcome, err := dispatchDotToolNode(ctx, nil, core.RunID{}, nil, t.TempDir(), toolNode(cmd, ""), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome.Status != core.OutcomeStatusFail {
+		t.Fatalf("expected FAIL, got %q", outcome.Status)
+	}
+	if outcome.FailureClass == nil {
+		t.Fatal("expected non-nil FailureClass")
+	}
+	if *outcome.FailureClass != core.FailureClassTransient {
+		t.Fatalf("expected failure_class=transient (go build cache infra error), got %q", *outcome.FailureClass)
+	}
+}

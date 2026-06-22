@@ -599,12 +599,29 @@ type DaemonConfig struct {
 	RemoteControlPrefix string
 }
 
+// rawWatchdogConfig is the watchdog: block in config.yaml (hk-sbitr).
+// Unknown keys at this level are silently ignored (forward-compat, matches daemon: block behaviour).
+// Enabled is a *bool so that nil (absent) resolves to the default (true) while an explicit
+// false is honoured by the caller without ambiguity.
+type rawWatchdogConfig struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+// WatchdogConfig holds the resolved watchdog configuration (hk-sbitr).
+// Enabled is true by default (absent watchdog: block → watchdog runs).
+type WatchdogConfig struct {
+	// Enabled gates the ctx-watchdog auto-relaunch schedule. Default: true.
+	// Set watchdog.enabled: false in .harmonik/config.yaml to opt out.
+	Enabled bool
+}
+
 // rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
-	Daemon        rawDaemonConfig           `yaml:"daemon"` // hk-rcp7: PL-004b daemon: block
-	Keeper        rawKeeperConfig           `yaml:"keeper"` // hk-lhu2: keeper config block
+	Daemon        rawDaemonConfig           `yaml:"daemon"`    // hk-rcp7: PL-004b daemon: block
+	Keeper        rawKeeperConfig           `yaml:"keeper"`    // hk-lhu2: keeper config block
+	Watchdog      rawWatchdogConfig         `yaml:"watchdog"`  // hk-sbitr: ctx-watchdog schedule gate
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.
@@ -639,6 +656,12 @@ type ProjectConfig struct {
 	//
 	// Bead ref: hk-lhu2.
 	Keeper KeeperConfig
+
+	// Watchdog holds the ctx-watchdog schedule gate read from the watchdog: block.
+	// When the block is absent, Watchdog.Enabled defaults to true.
+	//
+	// Bead ref: hk-sbitr.
+	Watchdog WatchdogConfig
 }
 
 // LookupAgent returns the (model, effort) pair configured for agentType, or
@@ -689,13 +712,15 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	}
 
 	// Empty-file sentinel: schema_version 0 + no agents + no daemon block + no keeper block
-	// → absent semantics. A file with only a daemon: or keeper: block but no schema_version: 1
-	// falls through to the version check below and returns ErrUnsupportedConfigVersion (fail-fast).
+	// + no watchdog block → absent semantics. A file with only a daemon: or keeper: block
+	// but no schema_version: 1 falls through to the version check below and returns
+	// ErrUnsupportedConfigVersion (fail-fast).
 	daemonAbsent := raw.Daemon.WorkflowMode == "" && raw.Daemon.MaxConcurrent == 0 &&
 		raw.Daemon.TargetBranch == "" && len(raw.Daemon.AllowedRepos) == 0 &&
 		raw.Daemon.RemoteControlPrefix == ""
+	watchdogAbsent := raw.Watchdog.Enabled == nil
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
-		daemonAbsent && keeperBlockAbsent(raw.Keeper) {
+		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent {
 		return ProjectConfig{}, nil
 	}
 
@@ -726,10 +751,14 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		return ProjectConfig{}, err
 	}
 
+	// hk-sbitr: parse the watchdog: block. Absent → Enabled defaults to true.
+	watchdogCfg := parseWatchdogBlock(raw.Watchdog)
+
 	cfg := ProjectConfig{
-		entries: make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
-		Daemon:  daemonCfg,
-		Keeper:  keeperCfg,
+		entries:  make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
+		Daemon:   daemonCfg,
+		Keeper:   keeperCfg,
+		Watchdog: watchdogCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
@@ -1106,4 +1135,19 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseWatchdogBlock converts a rawWatchdogConfig into a WatchdogConfig.
+//
+// When Enabled is nil (absent from the YAML) the function defaults to true —
+// the operator brief (hk-sbitr) specifies "cheap to leave on" and default-ON
+// is the correct behaviour when the key is omitted. An explicit false is
+// honoured verbatim.
+//
+// Bead ref: hk-sbitr.
+func parseWatchdogBlock(raw rawWatchdogConfig) WatchdogConfig {
+	if raw.Enabled == nil {
+		return WatchdogConfig{Enabled: true}
+	}
+	return WatchdogConfig{Enabled: *raw.Enabled}
 }

@@ -728,6 +728,19 @@ type workLoopDeps struct {
 	// Bead ref: hk-guez.
 	goCacheCleanFunc func() error
 
+	// cacheReapMu, when non-nil, is the reap↔dispatch exclusion lock (hk-y3frr).
+	// The cache reaper acquires a Write lock for the ENTIRE duration of
+	// `go clean -cache` (up to 5 min); each Register call acquires a Read lock
+	// for the duration of the map insert.  This ensures no run can be registered
+	// while the reaper is deleting the shared go-build cache, and the reaper
+	// cannot start while a dispatch is in progress.
+	//
+	// Production: always a non-nil *sync.RWMutex (newWorkLoopDeps).
+	// Tests may supply their own via WorkLoopDepsParams.CacheReapMu.
+	//
+	// Bead ref: hk-y3frr.
+	cacheReapMu *sync.RWMutex
+
 	// governorState is the mutable state persisted across sentinel governor
 	// evaluation cycles (flywheel-motion.md §§1, 6.1; FW2 wire-Evaluate).
 	// Nil when no sentinel config is loaded (governor evaluations are no-ops
@@ -956,7 +969,8 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		followUpLedgerPath:         filepath.Join(cfg.ProjectDir, ".harmonik", followUpLedgerFileName), // hk-3ndb: durable ledger path
 		noAutoPull:                 cfg.NoAutoPull,                                                     // hk-exd7m: queue-only mode for flywheel topology
 		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,                                          // hk-hypbi: per-close .br_history trim
-		mergeMu:                    &sync.Mutex{},                                                      // hk-yyso7: global merge-serialisation across all queues
+		mergeMu:                    &sync.Mutex{},     // hk-yyso7: global merge-serialisation across all queues
+		cacheReapMu:                &sync.RWMutex{},   // hk-y3frr: reap↔dispatch exclusion
 		emittedEpics:               make(map[core.BeadID]struct{}),                                     // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:             &sync.Mutex{},
 		targetBranch:               resolveTargetBranch(cfg.TargetBranch),
@@ -2482,6 +2496,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// abort THIS run without affecting the daemon or other concurrent runs.
 		// The cancel is stored in RunHandle.Cancel for the stale watcher to call.
 		runCtx, runCancel := context.WithCancel(ctx)
+		// hk-y3frr: hold cacheReapMu.RLock for the duration of Register so the
+		// reaper's WLock cannot be acquired while a new run is being inserted into
+		// the registry — and so Register blocks while a reap holds the WLock.
+		if deps.cacheReapMu != nil {
+			deps.cacheReapMu.RLock()
+		}
 		deps.runRegistry.Register(runID, &RunHandle{
 			BeadID: beadID,
 			// QueueName tags the run with its dispatching queue so the per-queue
@@ -2492,6 +2512,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			StartedAt: time.Now(),
 			Cancel:    runCancel,
 		})
+		if deps.cacheReapMu != nil {
+			deps.cacheReapMu.RUnlock()
+		}
 		wg.Add(1)
 		// NQ-B1: capture the dispatching queue's name so the completion path can
 		// resolve the right queue by name (evaluateGroupAdvanceWithOutcome) and

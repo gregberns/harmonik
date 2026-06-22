@@ -18,6 +18,7 @@ package daemon_test
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -168,14 +169,9 @@ func TestDiskCheck_ProactiveReaper_SkipsWhenRunsInFlight(t *testing.T) {
 }
 
 // TestDiskCheck_ProactiveReaper_RunsWhenIdle verifies that the proactive reap
-// fires when idle AND the proactive interval has elapsed.
+// fires when idle AND the proactive interval has elapsed (hk-y3frr restored).
 func TestDiskCheck_ProactiveReaper_RunsWhenIdle(t *testing.T) {
 	t.Parallel()
-	// Proactive reap disabled by hk-y3frr emergency stopgap
-	// (proactiveCacheReapEnabled=false in diskcheck_hksxlb.go).  Remove this
-	// skip and restore the want-1 assertion once the hk-y3frr mutex lands and
-	// the const is flipped back to true.
-	t.Skip("proactive go-cache reap disabled (hk-y3frr stopgap); un-skip when const restored")
 
 	cleanCount, cleanFn := diskCheckFixtureCounter()
 	deps := daemon.ExportedWorkLoopDeps(
@@ -189,4 +185,76 @@ func TestDiskCheck_ProactiveReaper_RunsWhenIdle(t *testing.T) {
 	if got := atomic.LoadInt32(cleanCount); got != 1 {
 		t.Errorf("proactive go clean -cache called %d time(s) when idle; want 1", got)
 	}
+}
+
+// TestDiskCheck_ProactiveReaper_TOCTOU verifies that cacheReapMu provides
+// reap↔dispatch mutual exclusion: Register (RLock) blocks while the proactive
+// reap holds the WLock, and proceeds immediately after the reap releases it.
+//
+// Bead ref: hk-y3frr.
+func TestDiskCheck_ProactiveReaper_TOCTOU(t *testing.T) {
+	t.Parallel()
+
+	// cleanStarted signals that the reap has acquired the WLock and is
+	// executing the (stubbed) clean.  cleanRelease controls when the stub
+	// releases the WLock back (simulating a long-running `go clean -cache`).
+	cleanStarted := make(chan struct{})
+	cleanRelease := make(chan struct{})
+
+	// Stub clean: signal that we've started, then block until the test allows
+	// us to finish — simulating a slow `go clean -cache`.
+	stubClean := func() error {
+		close(cleanStarted)
+		<-cleanRelease
+		return nil
+	}
+
+	mu := &sync.RWMutex{}
+	params := diskCheckFixtureBuildDeps(t, 0 /* idle */, diskCheckFixtureAboveWatermark(), stubClean)
+	params.CacheReapMu = mu
+	deps := daemon.ExportedWorkLoopDeps(params)
+	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
+	daemon.ExportedDiskCheckSetGoCacheCleanInterval(&deps, time.Nanosecond)
+
+	// Start the proactive reap in a goroutine; it will block inside stubClean.
+	reapDone := make(chan struct{})
+	go func() {
+		defer close(reapDone)
+		daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+	}()
+
+	// Wait until the reap has acquired the WLock (stub signals cleanStarted).
+	select {
+	case <-cleanStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for reap to start")
+	}
+
+	// With the WLock held by the reap, an RLock attempt (simulating Register)
+	// must block — verify it does not succeed immediately.
+	rlockAcquired := make(chan struct{})
+	go func() {
+		mu.RLock()
+		close(rlockAcquired)
+		mu.RUnlock()
+	}()
+
+	select {
+	case <-rlockAcquired:
+		t.Fatal("RLock (Register) should block while reap holds WLock — TOCTOU not fixed")
+	case <-time.After(50 * time.Millisecond):
+		// Good: RLock is blocked.
+	}
+
+	// Release the reap; the RLock should now succeed promptly.
+	close(cleanRelease)
+
+	select {
+	case <-rlockAcquired:
+		// Good: Register can proceed after the reap finishes.
+	case <-time.After(5 * time.Second):
+		t.Fatal("RLock (Register) did not unblock after reap released WLock")
+	}
+
+	<-reapDone
 }

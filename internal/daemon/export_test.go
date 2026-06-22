@@ -324,6 +324,14 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-guez.
 	GoCacheCleanFunc func() error
+
+	// CacheReapMu, when non-nil, overrides the reap↔dispatch exclusion
+	// RWMutex.  Tests that verify TOCTOU behaviour inject a controlled
+	// *sync.RWMutex here.  When nil, ExportedWorkLoopDeps installs a fresh
+	// *sync.RWMutex (mirrors the production newWorkLoopDeps default).
+	//
+	// Bead ref: hk-y3frr.
+	CacheReapMu *sync.RWMutex
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -389,6 +397,12 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		mergeMu = &sync.Mutex{}
 	}
 
+	// CacheReapMu: default to a fresh RWMutex (hk-y3frr).
+	cacheReapMu := p.CacheReapMu
+	if cacheReapMu == nil {
+		cacheReapMu = &sync.RWMutex{}
+	}
+
 	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{}, adapterReg)
 
 	// Derive the submit-wake channel from the QueueStore when one is provided
@@ -450,6 +464,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		allowedRepos:              p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
 		diskFreeBytesFunc:         p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
 		goCacheCleanFunc:          p.GoCacheCleanFunc,      // hk-guez: merge-aware reaper test seam
+		cacheReapMu:               cacheReapMu,             // hk-y3frr: reap↔dispatch exclusion
 	}
 }
 

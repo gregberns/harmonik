@@ -24,6 +24,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/release"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/workers"
@@ -1193,11 +1194,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// Sequencing rationale: see the package doc in
 		// internal/lifecycle/orphansweepbeads.go. The bead-reset sweep runs
 		// AFTER the existing filesystem+process sweep AND AFTER the BI-024a
-		// `br --version` handshake has succeeded. At MVH the BI-024a handshake
-		// is performed lazily by the adapter on first invocation; calling
-		// `br list --status in_progress` inside the bead-reset sweep is the
-		// first BI-write-surface adjacent call and therefore the handshake
-		// effectively precedes the reset writes.
+		// `br --version` handshake has succeeded. The handshake is performed
+		// explicitly below (BI-024a, hk-3pbox) before any bead operations so
+		// the ordering guarantee is structural, not reliant on which br call
+		// happens to be first.
 		//
 		// Bead ref: hk-iuaed.4.
 		var beadLedger lifecycle.InFlightBeadLedger
@@ -1220,6 +1220,24 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				// Bead ref: hk-th378.
 				_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brAdapterErr, "br-new-for-project-sweep", bus)
 			} else {
+				// BI-024a: explicit br --version handshake before any bead
+				// operations (PL-005 step 4 Cat 0 pre-check). Fatal: a mismatch
+				// means submit-time validation (§4.5a) would run against an
+				// incompatible br version.
+				//
+				// Spec ref: specs/beads-integration.md §4.8a BI-024a.
+				// Bead ref: hk-3pbox.
+				if versionErr := brAdapter.CheckBrVersion(ctx, release.BeadsVersion); versionErr != nil {
+					failedPayload := core.DaemonStartupFailedPayload{
+						FailedAt:    time.Now().UTC().Format(time.RFC3339),
+						ExitCode:    8,
+						FailureMode: "br-version-incompatible",
+					}
+					if failedBytes, marshalErr := json.Marshal(failedPayload); marshalErr == nil {
+						_ = bus.Emit(context.Background(), core.EventTypeDaemonStartupFailed, failedBytes)
+					}
+					return fmt.Errorf("daemon.Start: br --version handshake failed (BI-024a, exit code 8): %w", versionErr)
+				}
 				beadLedger = brAdapter
 				beadResetter = brAdapter
 				beadCat3cCloser = brAdapter     // Cat 3c auto-reconciler (hk-lgtq2)

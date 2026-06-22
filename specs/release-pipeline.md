@@ -30,18 +30,18 @@ depends-on:
 
 ## 1. Overview
 
-The release pipeline has four stages that execute in sequence after a signed semver tag is pushed to `main`:
+The release pipeline has three stages that execute after a signed semver tag is pushed to `main`:
 
 ```
-CREATE → VALIDATE → CERTIFY → [ROLLBACK if needed]
+CREATE → [dogfooding soak] → CERTIFY → [ROLLBACK if needed]
 ```
 
-- **CREATE** — goreleaser builds the binary matrix and creates a GitHub pre-release.
-- **VALIDATE** — automated gates (CI Tier 2, scenario tests, `--version` smoke) must all pass; on failure the release is yanked before users see it.
-- **CERTIFY** — a release-ledger entry is written flipping `prerelease: false`; the release becomes the current stable version.
+- **CREATE** — goreleaser builds the binary matrix and publishes a GitHub pre-release.
+- **[dogfooding soak]** — the fleet runs the pre-release on `main` continuously (typically days to weeks). There is NO automated validation gate and NO auto-yank. Dogfooding IS the validation; the captain monitors ops and soak confidence.
+- **CERTIFY** — the captain issues `harmonik release certify` once soak confidence is established; the ledger flips `prerelease: false` and the release becomes the current stable version.
 - **ROLLBACK** — if a certified release is later yanked, the supervisor restores the last-good binary automatically.
 
-The pipeline is tag-triggered. No manual "merge all PRs" step exists (main is always the candidate). A release MUST NOT become stable until CERTIFY completes.
+The pipeline is tag-triggered. No manual "merge all PRs" step exists (main is always the candidate). A release MUST NOT become stable until CERTIFY completes. A tag push publishes the pre-release and stops — CERTIFY is always a deliberate captain act after soak, never automatic.
 
 ---
 
@@ -91,7 +91,7 @@ Any other format is a spec violation.
 
 ### 2.4 Pre-release semantics
 
-A binary is in **pre-release** state from CREATE through VALIDATE. During pre-release:
+A binary is in **pre-release** state from CREATE through the dogfooding soak. During pre-release:
 - The GitHub release is marked as a pre-release (`prerelease: true` in the GitHub API).
 - The ledger entry exists with `prerelease: true`.
 - Supervisor MUST NOT adopt a pre-release binary as the last-good binary (see §5).
@@ -186,32 +186,30 @@ For pre-1.0, the ledger is a Go slice literal in `internal/release/manifest.go`,
 
 ---
 
-## 5. Stage 2 — VALIDATE
+## 5. Stage 2 — SOAK (dogfooding)
 
-**Purpose:** prevent a defective binary from becoming stable. All gates MUST pass; any failure triggers an automatic yank (the pre-release is deleted from GitHub and the pending ledger entry is discarded).
+**Purpose:** validate the pre-release through real-world fleet operation before promoting to stable. There is no automated CI gate and no auto-yank. The fleet dogfoods `main` continuously; a tagged pre-release enters the rotation and soaks.
 
-**Gates (all required, in parallel where possible):**
+**Soak protocol:**
 
-| Gate | What it runs | Pass criterion |
-|------|--------------|----------------|
-| Build + tests | `make release-validate` core: `fmt-check` + `go vet` + `go test -short -race ./...` on the tagged commit | Exit 0 |
-| Scenario tests | Full scenario suite (`go test -tags=scenario ./test/scenario/... ./internal/daemon/...`) | Exit 0, zero failures |
-| `--version` smoke | Run the built binary, `harmonik --version`, parse output | Matches `harmonik v<semver> (commit: <sha>)` with the correct semver and commit hash |
+- The pre-release binary runs on the captain's fleet (and any operator machines) in the same way that `main` HEAD normally does.
+- The captain monitors ops signals (error rates, daemon stability, event bus health, keeper behavior) via the normal ops-monitor discipline.
+- No fixed duration is mandated. Soak length is captain judgment based on observed stability and the weight of changes in the release.
+- `make release-validate` is available as an **optional local sanity check** (not on the critical release path). It is not run by CI.
 
-> **Lint is a merge-time gate, not a release-time gate.** golangci-lint is enforced on every commit to `main` by CI Tier 1/2 via `--new-from-rev`, so code reaching a release tag is already linted against new issues. The VALIDATE stage deliberately does **not** re-run full `golangci-lint`: the repo carries a large pre-existing legacy-lint backlog (a clean-lint release bar was assumed here but never achieved), and `--new-from-rev` cannot resolve its base ref in the tag-triggered (detached-HEAD) release runner. Raising the release bar to clean-lint is a separate lint-paydown initiative, tracked independently.
+**Readiness signal:**
 
-**Failure contract:**
+The captain issues `harmonik release certify` when soak confidence is established — typically after ~50 commits worth of dogfooding exposure and no unresolved regressions. This is a deliberate captain act, not an automated trigger.
 
-- If any gate fails, CI MUST: (a) delete the GitHub pre-release, (b) NOT write or retain the ledger entry, (c) push a `release_validate_failed` event to `.harmonik/events/events.jsonl` with fields `{semver, tag, failed_gate, reason}`.
-- A failed validation MUST NOT auto-retry. A new tag must be pushed to re-run the pipeline.
+**No auto-yank:** a pre-release MUST NOT be automatically deleted by any CI step. If a defect is discovered during soak, the operator yanks manually (see §7.1). A new tag may be pushed to cut a replacement pre-release.
 
-**Timing:** VALIDATE runs immediately after CREATE completes, without human intervention.
+> **Lint is a merge-time gate, not a release-time gate.** golangci-lint is enforced on every commit to `main` by CI Tier 1/2 via `--new-from-rev`. Code reaching a release tag is already linted. The soak stage does not re-run lint.
 
 ---
 
 ## 6. Stage 3 — CERTIFY
 
-**Trigger:** all VALIDATE gates pass.
+**Trigger:** captain issues `harmonik release certify` after soak confidence is established.
 
 **Steps:**
 
@@ -284,20 +282,21 @@ BIN from `command -v harmonik` with `$HOME/go/bin/harmonik` fallback, failing lo
 ### 7.3 State machine
 
 ```
-                  ┌──────────────────────────────────┐
-                  │                                  │
-    tag push   ┌──▼──────┐  VALIDATE pass  ┌────────┴─────┐
-    ──────────►│ PRE-    │────────────────►│  CERTIFIED   │
-               │ RELEASE │                 │ (stable)     │
-               └──┬──────┘                └────────┬─────┘
-                  │                                │
-                  │ VALIDATE fail                  │ yank
-                  ▼                                ▼
-               [DISCARDED]                    ┌───────────┐
-                                              │  YANKED   │
-                                              │ (audit    │
-                                              │  trail)   │
-                                              └───────────┘
+                  ┌──────────────────────────────────────────┐
+                  │                                          │
+    tag push   ┌──▼──────┐  captain certify  ┌─────────────┴──┐
+    ──────────►│ PRE-    │  (after soak)      │  CERTIFIED     │
+               │ RELEASE │──────────────────►│  (stable)      │
+               │ (soaking│                   └─────────────┬──┘
+               └──┬──────┘                                 │
+                  │                                        │ yank
+                  │ operator yank                          ▼
+                  ▼                                   ┌───────────┐
+               ┌───────────┐                          │  YANKED   │
+               │  YANKED   │                          │ (audit    │
+               │ (audit    │                          │  trail)   │
+               │  trail)   │                          └───────────┘
+               └───────────┘
 ```
 
 State transitions:
@@ -305,8 +304,8 @@ State transitions:
 | From | To | Trigger | Ledger change |
 |------|----|---------|---------------|
 | (none) | PRE-RELEASE | CREATE completes | Entry written with `Prerelease: true` |
-| PRE-RELEASE | CERTIFIED | All VALIDATE gates pass | `Prerelease: false`, `CertifiedAt` set |
-| PRE-RELEASE | DISCARDED | Any VALIDATE gate fails | Entry NOT written (or discarded if written) |
+| PRE-RELEASE | CERTIFIED | Captain issues `harmonik release certify` after soak confidence | `Prerelease: false`, `CertifiedAt` set |
+| PRE-RELEASE | YANKED | Operator manual yank during soak | `Yanked: true`, `YankedReason` set |
 | CERTIFIED | YANKED | Operator yank action | `Yanked: true`, `YankedReason` set |
 | YANKED | CERTIFIED | (not supported — yank is irreversible) | — |
 
@@ -329,10 +328,6 @@ The pipeline emits typed events to `.harmonik/events/events.jsonl`. All release-
 | `event_type` | Stage | Additional fields |
 |---|---|---|
 | `release_created` | CREATE | `artifacts: [{name, sha256}]` |
-| `release_validate_started` | VALIDATE | `gates: ["ci_tier2", "scenario", "version_smoke"]` |
-| `release_validate_gate_passed` | VALIDATE | `gate: <name>` |
-| `release_validate_gate_failed` | VALIDATE | `gate: <name>`, `reason: <string>` |
-| `release_validate_failed` | VALIDATE | `failed_gate: <name>`, `reason: <string>` |
 | `release_certified` | CERTIFY | `certified_at: <RFC3339>` |
 | `release_yanked` | ROLLBACK | `yanked_reason: <string>` |
 | `release_refused_yank` | ROLLBACK | `reason: <string>` (supervisor refused to launch yanked binary) |

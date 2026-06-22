@@ -247,7 +247,7 @@ check-full:  ## Tier 3: everything in check + integration + scenario + crash tes
 #   4. --version smoke    — verify the built binary starts and prints a version
 # ---------------------------------------------------------------------------
 .PHONY: release-validate
-release-validate: build-all  ## Release gate: fmt-check + vet + go test -short -race + scenario + --version smoke (hk-o4j13)
+release-validate: build-all  ## Optional local sanity check (NOT on the release critical path — dogfooding+captain-certify is the gate)
 	# LINT IS A MERGE-TIME GATE, NOT A RELEASE-TIME GATE. CI Tier 1/2 run golangci-lint --new-from-rev
 	# on every commit to main, so code reaching a release tag is already linted. We do NOT re-run lint here:
 	#   (1) full `golangci-lint run` fails on ~5666 pre-existing legacy issues (the release bar in the spec

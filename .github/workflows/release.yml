@@ -1,11 +1,15 @@
-# Release pipeline — tag-triggered goreleaser build + VALIDATE gate.
+# Release pipeline — tag-triggered goreleaser build → dogfooding soak → manual CERTIFY.
 #
 # Stages (spec: specs/release-pipeline.md):
-#   CREATE   — goreleaser builds the binary matrix and creates a GitHub pre-release.
-#   VALIDATE — make release-validate must pass; on failure the pre-release is deleted.
+#   CREATE   — goreleaser builds the binary matrix and publishes a GitHub pre-release.
+#   [soak]   — fleet dogfoods the pre-release on main continuously (days/weeks).
+#   CERTIFY  — captain promotes to stable via `harmonik release certify` when confident.
+#
+# There is NO automated VALIDATE gate and NO auto-yank. Dogfooding IS the validation.
+# A tag push publishes the pre-release and stops; CERTIFY is always a deliberate human act.
 #
 # Trigger: push of a signed tag matching v[0-9]+\.[0-9]+\.[0-9]+ to main.
-# Refs: hk-jdesv  Epic: hk-brc3z  Label: codename:release-pipeline
+# Refs: hk-6hkh8  Epic: hk-brc3z  Label: codename:release-pipeline
 name: Release
 
 on:
@@ -43,39 +47,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  validate:
-    name: VALIDATE — release-validate gate
-    needs: create
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      TAG: ${{ needs.create.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Cache dev tools
-        uses: actions/cache@v4
-        with:
-          path: .tools
-          key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
-
-      - name: Install dev tools
-        run: make tools
-
-      - name: make release-validate
-        run: make release-validate
-
-      - name: Yank pre-release on gate failure
-        if: failure()
-        run: gh release delete "$TAG" --yes --cleanup-tag || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

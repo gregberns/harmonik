@@ -108,7 +108,6 @@ func NewForProject(brPath, projectDir string) (*Adapter, error) {
 // [operator-nfr.md §4.9 ON-035] with subsystem=beads-adapter until the event
 // bus is available.
 //
-// TODO(hk-872.31): stderr 1 MiB cap + truncation marker attaches to this type.
 type Result struct {
 	Stdout   []byte
 	Stderr   []byte
@@ -131,7 +130,6 @@ type Result struct {
 //     Commands that use the global --json flag (br audit log) or lack JSON support (br --version)
 //     call Run directly; see BI-025b carve-out notes in audit.go and version.go.
 //   - BI-025c timeout discipline → implemented in RunWithTimeout (timeout.go)
-//   - BI-025d stderr cap + classification → hk-872.31
 //   - BI-025e concurrency discipline → RunWithDBLockedRetry (dblockretry.go, hk-872.32)
 //
 // BI-025a exit-code taxonomy IS implemented here: Result.BrErr is populated
@@ -141,7 +139,6 @@ type Result struct {
 func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 	// NOTE(hk-872.30): timeout discipline is in RunWithTimeout (timeout.go); Run is the
 	// low-level primitive used by higher-level methods that add their own timeout wrapping.
-	// TODO(hk-872.31): enforce 1 MiB stderr cap and classify captured stderr.
 	// NOTE(hk-872.32): terminal-transition writes are serialized via Adapter.terminalMu
 	// (hk-hdbls); reads are concurrent. On BrDbLocked, callers MUST use
 	// RunWithDBLockedRetry (dblockretry.go) which implements the BI-025c retry policy.
@@ -157,9 +154,10 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 		cmd.Dir = a.projectDir
 	}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
+	var stdoutBuf bytes.Buffer
+	stderrCap := newStderrCapWriter()
 	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+	cmd.Stderr = stderrCap
 
 	err := cmd.Run()
 	if err != nil {
@@ -181,7 +179,7 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 			code := exitErr.ExitCode()
 			return Result{
 				Stdout:   stdoutBuf.Bytes(),
-				Stderr:   stderrBuf.Bytes(),
+				Stderr:   stderrCap.Result().Bytes,
 				ExitCode: code,
 				BrErr:    BrErrorFromExitCode(code),
 			}, nil
@@ -196,7 +194,7 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 	// Exit code 0 — success.
 	return Result{
 		Stdout:   stdoutBuf.Bytes(),
-		Stderr:   stderrBuf.Bytes(),
+		Stderr:   stderrCap.Result().Bytes,
 		ExitCode: 0,
 		BrErr:    BrOK,
 	}, nil

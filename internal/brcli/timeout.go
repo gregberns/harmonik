@@ -142,9 +142,10 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 		cmd.Dir = a.projectDir
 	}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
+	var stdoutBuf bytes.Buffer
+	stderrCap := newStderrCapWriter()
 	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+	cmd.Stderr = stderrCap
 
 	if err := cmd.Start(); err != nil {
 		return Result{}, fmt.Errorf("brcli: exec failed: %w", err)
@@ -163,7 +164,7 @@ func (a *Adapter) RunWithTimeout(ctx context.Context, cfg TimeoutConfig, kind Co
 	select {
 	case waitErr := <-waitCh:
 		// Subprocess exited before the timeout fired.
-		return classifyWaitResult(waitErr, stdoutBuf.Bytes(), stderrBuf.Bytes())
+		return classifyWaitResult(waitErr, stdoutBuf.Bytes(), stderrCap.Result().Bytes)
 
 	case <-budgetTimer.C:
 		return terminateAndClassify(cmd, waitCh,

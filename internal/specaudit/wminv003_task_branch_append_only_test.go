@@ -384,6 +384,14 @@ var wmInv003FixtureAllowlist = map[string]string{
 	// Authorised: EM-052/EM-053 merge-path test fixture.
 	"internal/daemon/mergetomain_residualdelta_hkrljho_test.go": "EM-052/EM-053 merge-path test fixture; isolated test repo, not a live run task branch",
 
+	// internal/daemon/mergetomain_integrationartifacts_hkg9zz_test.go — regression
+	// test for hk-g9zz (pre-rebase integration-artifact cleanup). The test issues
+	// `git rebase main` twice (once to confirm it fails with untracked files, once to
+	// confirm it succeeds after cleanUntrackedFiles) and `git rebase --abort` once
+	// inside an isolated throwaway test repo; not a live run task branch.
+	// Authorised: EM-052/EM-053 merge-path test fixture (hk-g9zz regression).
+	"internal/daemon/mergetomain_integrationartifacts_hkg9zz_test.go": "EM-052/EM-053 merge-path test fixture (hk-g9zz); isolated test repo, pre/post-fix rebase probes; not a live run task branch",
+
 	// internal/specaudit/wminv003_task_branch_append_only_test.go — this file
 	// itself contains synthetic Go code fragments (as string literals) used in
 	// TestWMINV003PartBSyntheticViolationDetected and

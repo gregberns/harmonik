@@ -54,6 +54,8 @@ func runSentinelSubcommand(subArgs []string) int {
 		return runSentinelEmitTrip(rest)
 	case "clear-trip":
 		return runSentinelClearTrip(rest)
+	case "record-halt":
+		return runSentinelRecordHalt(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "harmonik sentinel: unknown verb %q\n", verb)
 		sentinelUsage()
@@ -212,6 +214,99 @@ func runSentinelClearTrip(args []string) int {
 	return 0
 }
 
+// runSentinelRecordHalt implements `harmonik sentinel record-halt`.
+//
+// Captain escape hatch (§2.2 clause 2): records a legitimate-halt reason for
+// the current pending sentinel exception and clears it, subject to re-adjudication
+// on the next governor pass. Requires a non-empty --reason flag — an empty reason
+// is indistinguishable from a bare self-ack, which the spec forbids.
+//
+// Usage:
+//
+//	harmonik sentinel record-halt --reason TEXT [--project DIR] [--token ACK_TOKEN]
+//
+// Flags:
+//
+//	--reason TEXT         Human-readable halt reason (required).
+//	                      E.g. "ENOSPC: disk full on /dev/sda1" or
+//	                           "infra: gb-mbp SSH unreachable".
+//	--project DIR         Project directory (default: cwd).
+//	--token ACK_TOKEN     Explicit ack_token to clear (default: scan for pending).
+//
+// Prints the cleared ack_token on stdout. Exits 0 with no output when no pending
+// trip exists. The governor will re-evaluate on the next tick and emit a fresh
+// trip if movement is still low (next-pass re-adjudication).
+func runSentinelRecordHalt(args []string) int {
+	var (
+		projectFlag string
+		reasonFlag  string
+		tokenFlag   string
+	)
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--project" && i+1 < len(args):
+			i++
+			projectFlag = args[i]
+		case strings.HasPrefix(arg, "--project="):
+			projectFlag = strings.TrimPrefix(arg, "--project=")
+		case arg == "--reason" && i+1 < len(args):
+			i++
+			reasonFlag = args[i]
+		case strings.HasPrefix(arg, "--reason="):
+			reasonFlag = strings.TrimPrefix(arg, "--reason=")
+		case arg == "--token" && i+1 < len(args):
+			i++
+			tokenFlag = args[i]
+		case strings.HasPrefix(arg, "--token="):
+			tokenFlag = strings.TrimPrefix(arg, "--token=")
+		case arg == "--help" || arg == "-h":
+			sentinelRecordHaltUsage()
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik sentinel record-halt: unknown argument %q\n", arg)
+			sentinelRecordHaltUsage()
+			return 1
+		}
+	}
+
+	if strings.TrimSpace(reasonFlag) == "" {
+		fmt.Fprintln(os.Stderr, "harmonik sentinel record-halt: --reason is required and must be non-empty")
+		sentinelRecordHaltUsage()
+		return 1
+	}
+
+	if projectFlag == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik sentinel record-halt: cannot determine cwd: %v\n", err)
+			return 1
+		}
+		projectFlag = wd
+	}
+	abs, err := filepath.Abs(projectFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik sentinel record-halt: resolve project path: %v\n", err)
+		return 1
+	}
+
+	tok, err := sentinel.RecordLegitimateHalt(context.Background(), sentinel.LegitimateHaltInput{
+		ProjectDir: abs,
+		AckToken:   tokenFlag,
+		HaltReason: reasonFlag,
+		Now:        time.Now().UTC(),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik sentinel record-halt: %v\n", err)
+		return 1
+	}
+	if tok != "" {
+		fmt.Println(tok)
+	}
+	return 0
+}
+
 func sentinelUsage() {
 	fmt.Print(`harmonik sentinel — flywheel sentinel surface (hk-9mr2)
 
@@ -223,6 +318,9 @@ Verbs:
                Called by the sentinel-adversary crew after confirming the trip.
   clear-trip   Operator escape hatch: clear a stuck pending sentinel exception.
                Records ack_method=operator (flywheel-motion.md §2.2).
+  record-halt  Captain escape hatch: record a legitimate-halt reason and clear
+               the pending exception, subject to re-adjudication next pass.
+               Requires --reason; records ack_method=legitimate_halt (§2.2 clause 2).
 
 Run 'harmonik sentinel <verb> --help' for verb-specific flags.
 `)
@@ -260,5 +358,35 @@ acknowledged with ack_method=operator. Prints the cleared ack_token on stdout.
 Exits 0 with no output when no pending trip exists (idempotent).
 
 Spec ref: flywheel-motion.md §2.2 (legitimate-halt clear path, bead hk-kgwv).
+`)
+}
+
+func sentinelRecordHaltUsage() {
+	fmt.Print(`harmonik sentinel record-halt — captain escape hatch to record a legitimate halt
+
+Usage:
+  harmonik sentinel record-halt --reason TEXT [--project DIR] [--token ACK_TOKEN]
+
+Flags:
+  --reason TEXT       Human-readable halt reason (required, must be non-empty).
+                      Examples: "ENOSPC: disk full on /dev/sda1"
+                                "infra: gb-mbp SSH unreachable since 14:30 UTC"
+  --project DIR       Project directory (default: cwd)
+  --token ACK_TOKEN   Explicit ack_token to clear (default: scan for pending exception)
+
+Records a legitimate-halt reason for the current pending sentinel exception and
+marks it acknowledged with ack_method=legitimate_halt. The recorded reason is
+visible to the adversary on re-adjudication. This is NOT a permanent suppression:
+the governor evaluates on the next tick and emits a fresh trip if movement is
+still low — the next adversary pass re-adjudicates with the reason in context.
+
+An empty --reason is rejected: it would be indistinguishable from a bare self-ack,
+which spec §2.2 forbids ("A legitimate-halt is a recorded reason subject to
+re-adjudication, not a self-issued dismissal").
+
+Prints the cleared ack_token on stdout. Exits 0 with no output when no pending
+trip exists.
+
+Spec ref: flywheel-motion.md §2.2 clause 2 (AC4, bead hk-jvul).
 `)
 }

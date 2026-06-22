@@ -1572,6 +1572,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 			case sig.Level == sentinel.ActivationActive && sig.SuppressedBy == "":
 				// Sustained low movement with opportunity: emit decision_required trip.
+				//
+				// AC4 (hk-jvul): reconcile the in-memory pending token against the
+				// on-disk ack file. A captain legitimate-halt (record-halt CLI) may
+				// have externally acknowledged the file between ticks. When that
+				// happens, clear the in-memory token and the DecisionBlocker so the
+				// next ActivationActive emits a fresh trip for re-adjudication (spec
+				// §2.2 clause 2 — "subject to re-adjudication next pass").
+				if sentinelPendingAckToken != "" {
+					if externallyAcked, checkErr := sentinel.IsTripAcknowledged(deps.projectDir, sentinelPendingAckToken); checkErr == nil && externallyAcked {
+						if deps.decisionBlocker != nil {
+							deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
+						}
+						sentinelPendingAckToken = ""
+					}
+				}
 				// Idempotent: EmitTrip returns the existing ack_token if one is pending.
 				if sentinelPendingAckToken == "" {
 					tok, tripErr := sentinel.EmitTrip(ctx, sentinel.TripInput{
@@ -1619,15 +1634,23 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// ClearTrip writes decision_acknowledged to events.jsonl + updates the
 				// ack file. Only governor movement (bead_closed / run_completed /
 				// HEAD-advance) can clear the trip — not the captain's say-so alone.
-				if clearErr := sentinel.ClearTrip(ctx, deps.projectDir, sentinelPendingAckToken, now); clearErr != nil {
-					fmt.Fprintf(os.Stderr,
-						"daemon: workloop: sentinel: ClearTrip failed (non-fatal): %v\n", clearErr)
-				} else {
-					if deps.decisionBlocker != nil {
-						deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
+				//
+				// AC4 (hk-jvul): if the ack was already acknowledged externally (e.g.
+				// RecordLegitimateHalt), skip ClearTrip to avoid a spurious
+				// governor_movement event on top of the existing legitimate_halt clear.
+				// Always clear in-memory state and DecisionBlocker so dispatch resumes.
+				alreadyAcked, _ := sentinel.IsTripAcknowledged(deps.projectDir, sentinelPendingAckToken)
+				if !alreadyAcked {
+					if clearErr := sentinel.ClearTrip(ctx, deps.projectDir, sentinelPendingAckToken, now); clearErr != nil {
+						fmt.Fprintf(os.Stderr,
+							"daemon: workloop: sentinel: ClearTrip failed (non-fatal): %v\n", clearErr)
+						break // preserve sentinelPendingAckToken for retry next tick
 					}
-					sentinelPendingAckToken = ""
 				}
+				if deps.decisionBlocker != nil {
+					deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
+				}
+				sentinelPendingAckToken = ""
 			}
 		}
 

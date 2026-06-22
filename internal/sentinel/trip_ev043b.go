@@ -64,6 +64,11 @@ type sentinelAckRecord struct {
 	SubjectID     string `json:"subject_id"`
 	Reason        string `json:"reason,omitempty"`
 	EmittedAt     string `json:"emitted_at,omitempty"`
+	// AckMethod and HaltReason are set when the record is acknowledged.
+	// AckMethod: "governor_movement" | "operator" | "legitimate_halt"
+	// HaltReason is only present for ack_method="legitimate_halt".
+	AckMethod  string `json:"ack_method,omitempty"`
+	HaltReason string `json:"halt_reason,omitempty"`
 }
 
 // TripInput holds the contextual data the caller supplies when the governor trips.
@@ -214,6 +219,107 @@ func ClearPendingTrip(_ context.Context, projectDir string, now time.Time) (stri
 	return ackToken, nil
 }
 
+// LegitimateHaltInput holds the data the captain supplies when declaring a
+// legitimate halt (spec §2.2 clause 2).
+type LegitimateHaltInput struct {
+	// ProjectDir is the root of the harmonik project (parent of .harmonik/).
+	ProjectDir string
+	// AckToken is the ack_token of the pending sentinel exception to clear.
+	// If empty, RecordLegitimateHalt scans for the current pending exception.
+	AckToken string
+	// HaltReason is the human-readable reason for the halt (e.g. "ENOSPC: disk
+	// full on /dev/sda1" or "infra: gb-mbp SSH unreachable"). Must be non-empty:
+	// an empty reason is indistinguishable from a bare self-ack, which is forbidden.
+	HaltReason string
+	// Now is the current wall-clock time.
+	Now time.Time
+}
+
+// RecordLegitimateHalt acknowledges a pending sentinel exception on behalf of a
+// captain-declared legitimate halt (spec §2.2 clause 2).
+//
+// The exception is marked acknowledged with ack_method="legitimate_halt" and the
+// halt reason persisted in the ack file and appended to events.jsonl. This is NOT
+// a permanent suppression: the governor continues evaluating on the next tick and
+// will EmitTrip again if movement remains low (next-pass re-adjudication). The
+// recorded halt reason is visible to the adversary session for re-adjudication.
+//
+// Returns (ackToken, nil) when a pending trip was cleared, ("", nil) when no
+// pending trip exists, or ("", error) on I/O failure or empty HaltReason.
+//
+// Called by `harmonik sentinel record-halt` (AC4 legitimate-halt clear path,
+// flywheel-motion.md §2.2 clause 2, bead hk-jvul).
+func RecordLegitimateHalt(_ context.Context, in LegitimateHaltInput) (string, error) {
+	if strings.TrimSpace(in.HaltReason) == "" {
+		return "", fmt.Errorf("sentinel.RecordLegitimateHalt: halt_reason must be non-empty (empty reason is a bare self-ack)")
+	}
+
+	acksDir := decisionAcksDirPath(in.ProjectDir)
+
+	ackToken := in.AckToken
+	if ackToken == "" {
+		var err error
+		ackToken, err = findPendingSentinelAck(acksDir)
+		if err != nil {
+			return "", fmt.Errorf("sentinel.RecordLegitimateHalt: scan acks: %w", err)
+		}
+		if ackToken == "" {
+			return "", nil // no pending trip
+		}
+	}
+
+	ackPath := filepath.Join(acksDir, ackToken)
+	data, readErr := os.ReadFile(ackPath) //nolint:gosec // G304: ackToken is daemon-generated UUID
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return "", nil // ack file absent — no-op
+		}
+		return "", fmt.Errorf("sentinel.RecordLegitimateHalt: read ack file: %w", readErr)
+	}
+	var rec sentinelAckRecord
+	if jsonErr := json.Unmarshal(data, &rec); jsonErr != nil {
+		return "", fmt.Errorf("sentinel.RecordLegitimateHalt: parse ack file: %w", jsonErr)
+	}
+
+	rec.Status = "acknowledged"
+	rec.AckMethod = "legitimate_halt"
+	rec.HaltReason = strings.TrimSpace(in.HaltReason)
+	if writeErr := writeSentinelAckFile(acksDir, ackToken, rec); writeErr != nil {
+		return "", fmt.Errorf("sentinel.RecordLegitimateHalt: update ack file: %w", writeErr)
+	}
+
+	eventsPath := eventsJSONLPath(in.ProjectDir)
+	if appendErr := appendLegitimateHaltAck(eventsPath, ackToken, rec.HaltReason, in.Now); appendErr != nil {
+		fmt.Fprintf(os.Stderr, "sentinel: RecordLegitimateHalt: append event (non-fatal): %v\n", appendErr)
+	}
+
+	return ackToken, nil
+}
+
+// IsTripAcknowledged reports whether the ack-state file for ackToken has
+// status="acknowledged". Returns (false, nil) when the file is absent or pending,
+// and (false, err) on I/O or parse failure.
+//
+// Used by the workloop to detect external clears (e.g. RecordLegitimateHalt via
+// CLI) between ticks, so it can reset sentinelPendingAckToken and re-emit a fresh
+// trip for next-pass re-adjudication.
+func IsTripAcknowledged(projectDir, ackToken string) (bool, error) {
+	acksDir := decisionAcksDirPath(projectDir)
+	ackPath := filepath.Join(acksDir, ackToken)
+	data, err := os.ReadFile(ackPath) //nolint:gosec // G304: ackToken is daemon-generated UUID
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("sentinel.IsTripAcknowledged: read ack file: %w", err)
+	}
+	var rec sentinelAckRecord
+	if jsonErr := json.Unmarshal(data, &rec); jsonErr != nil {
+		return false, fmt.Errorf("sentinel.IsTripAcknowledged: parse ack file: %w", jsonErr)
+	}
+	return rec.Status == "acknowledged", nil
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -293,6 +399,21 @@ func appendDecisionAcknowledged(eventsPath, ackToken, ackMethod string, now time
 		"subject":    map[string]interface{}{"kind": sentinelSubjectKind, "id": sentinelSubjectID},
 		"ack_method": ackMethod,
 		"acked_at":   now.UTC().Format(time.RFC3339),
+	}
+	return appendEventLine(eventsPath, "decision_acknowledged", now, payload)
+}
+
+// appendLegitimateHaltAck appends a decision_acknowledged event for a captain
+// legitimate-halt clear. Includes halt_reason and readjudicate=true so the
+// adversary can re-adjudicate on the next pass (spec §2.2 clause 2).
+func appendLegitimateHaltAck(eventsPath, ackToken, haltReason string, now time.Time) error {
+	payload := map[string]interface{}{
+		"ack_token":    ackToken,
+		"subject":      map[string]interface{}{"kind": sentinelSubjectKind, "id": sentinelSubjectID},
+		"ack_method":   "legitimate_halt",
+		"halt_reason":  haltReason,
+		"acked_at":     now.UTC().Format(time.RFC3339),
+		"readjudicate": true,
 	}
 	return appendEventLine(eventsPath, "decision_acknowledged", now, payload)
 }

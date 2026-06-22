@@ -30,8 +30,11 @@
 !/twins/.gitkeep
 
 # Harmonik runtime state (context/ is committed as tier-3/tier-2 bootstrap; see leanfleet D5)
+# crew/missions/ is committed so mission self-terminate clauses are reviewable in git (hk-ev9e)
 /.harmonik/*
 !/.harmonik/context
+!/.harmonik/crew
+!/.harmonik/crew/missions
 # Daemon-written task files in worktrees (hk-ynn8u)
 .harmonik/agent-task*
 

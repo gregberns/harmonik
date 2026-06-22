@@ -58,6 +58,10 @@ func (c *mutableClock) Advance(d time.Duration) { c.mu.Lock(); defer c.mu.Unlock
 
 // nsrBuildWatcher builds a StaleWatcher with a mutable clock and the given
 // reaper timeout. Returns the watcher, the mutable clock, and a collector bus.
+//
+// StaleAfter is set to 24 h (far beyond any simulated clock advance in these
+// tests) so the kill-consumer backstop (hk-tn36) never fires and the tests can
+// assert cleanly on never-spawned reaper behavior only.
 func nsrBuildWatcher(t *testing.T, reg *daemon.RunRegistry, reaperTimeout time.Duration, clk *mutableClock) (*daemon.StaleWatcher, *staleFixtureBus) {
 	t.Helper()
 	sfb := staleFixtureNewBus(t)
@@ -66,7 +70,7 @@ func nsrBuildWatcher(t *testing.T, reg *daemon.RunRegistry, reaperTimeout time.D
 		SubscribeBus:              unsealed,
 		Emitter:                   sfb.bus,
 		Registry:                  reg,
-		StaleAfter:                10 * time.Minute,
+		StaleAfter:                24 * time.Hour,
 		ScanInterval:              time.Hour,
 		NeverSpawnedReaperTimeout: reaperTimeout,
 		Now:                       clk.Now,

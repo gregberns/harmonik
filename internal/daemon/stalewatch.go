@@ -144,6 +144,11 @@ type runStaleState struct {
 	// this to detect a DOT reviewer session that stalls before agent_ready even
 	// when a prior node (implementer) already set agentReadySeen (hk-sj6a).
 	agentReadySeenSinceLastLaunch bool
+
+	// killConsumerFired is true once the kill-consumer backstop (hk-tn36) has
+	// fired for this run. Prevents repeated Cancel calls on subsequent scan
+	// ticks. Set to true on the first run_stale emission.
+	killConsumerFired bool
 }
 
 // StaleWatcherConfig holds the construction-time parameters for StaleWatcher.
@@ -503,6 +508,13 @@ func (w *StaleWatcher) checkRun(
 		lastEventAtStr = st.lastEventAt.UTC().Format(time.RFC3339)
 	}
 	beadID := st.beadID
+	// hk-tn36: kill-consumer backstop fires on the FIRST run_stale emission.
+	// Capture and set the flag under the same lock region as emitCount so the
+	// backstop fires exactly once even under concurrent scan ticks.
+	shouldKillConsumer := !st.killConsumerFired
+	if shouldKillConsumer {
+		st.killConsumerFired = true
+	}
 	// Double the window for the next emission (exponential backoff).
 	// Use effectiveThreshold as the base so that the reviewer-launch gate
 	// floor is accounted for in the schedule: if the gate raised the
@@ -577,6 +589,47 @@ func (w *StaleWatcher) checkRun(
 		return
 	}
 	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeRunStale, b)
+
+	// hk-tn36: kill-consumer backstop — cancel the per-run context on the
+	// first run_stale emission so a wedged consumer is reaped even when
+	// pasteInjectQuitOnCommit's HB-staleness kill (8 min) did not fire (e.g.
+	// eventCh=nil, or the kill goroutine itself stalled). If the 8-min kill
+	// already fired, handle.Cancel() is a no-op (context already cancelled).
+	if shouldKillConsumer {
+		w.killConsumerBackstop(runID, beadID, handle, time.Duration(ageSeconds)*time.Second)
+	}
+}
+
+// killConsumerBackstop is called (at most once per run) on the first run_stale
+// emission. It marks the RunHandle as aborted and calls handle.Cancel() to
+// unblock waitWithSocketGrace so the bead reopens and the queue group drains.
+//
+// Defense-in-depth: when pasteInjectQuitOnCommit's HB-staleness kill works
+// correctly, the run is already gone before run_stale fires at M minutes; when
+// it does NOT (e.g. eventCh=nil or the kill goroutine stalled), this backstop
+// ensures the slot is freed at M minutes.
+//
+// If handle.Cancel is nil the method logs a warning and returns without
+// aborting — the operator must restart the daemon to reap the stuck run.
+//
+// Bead ref: hk-tn36.
+func (w *StaleWatcher) killConsumerBackstop(
+	runID core.RunID,
+	beadID core.BeadID,
+	handle *RunHandle,
+	age time.Duration,
+) {
+	fmt.Fprintf(os.Stderr,
+		"daemon: stalewatch: kill-consumer backstop: bead %s run %s age %s — run_stale fired; aborting run\n",
+		beadID, runID, age.Round(time.Second))
+	if handle.Cancel == nil {
+		fmt.Fprintf(os.Stderr,
+			"daemon: stalewatch: kill-consumer backstop: bead %s run %s: Cancel is nil (run registered without per-run context); cannot auto-abort — operator restart required\n",
+			beadID, runID)
+		return
+	}
+	handle.aborted.Store(true)
+	handle.Cancel()
 }
 
 // emitLaunchStallDetected emits a launch_stall_detected warning event.

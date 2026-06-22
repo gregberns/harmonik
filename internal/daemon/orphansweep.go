@@ -61,12 +61,13 @@ type OrphanSweepResult struct {
 	// nil (no ledger configured), this is the raw count of all stale files.
 	StaleIntentsObserved int
 
-	// IntentsGCd is the count of stale intent files removed by GCRetiredIntents
-	// because the target bead has already reached its IntendedPostState
-	// (the op landed in a prior run; the file was a BI-030 step-6 leftover).
-	// Zero when IntentGCLedger is nil.
+	// IntentsGCd is the count of stale intent files removed during this sweep:
+	// step-3 GC (bead already reached IntendedPostState; op landed in a prior run)
+	// + step-4 re-drive (bead was still at the pre-state; br write re-issued and
+	// the file deleted on success per BI-031 step 6). Zero when IntentGCLedger is nil.
 	//
 	// Bead ref: hk-cizvu — stale_intents_observed GC.
+	// Bead ref: hk-aev8t — step-4 re-drive.
 	IntentsGCd int
 
 	// BeadInProgressReset is the count of stale `in_progress` beads reset to
@@ -854,8 +855,9 @@ func RunOrphanSweep(
 	// intent files whose op has already landed (BI-031 step-3 GC path), and when
 	// IntentRedriveWriter is also non-nil, re-drive writes for files whose bead
 	// is still at the pre-state (BI-031 step-4). StaleIntentsObserved is set to
-	// the retained count; IntentsGCd is set to the removed count. This prevents
-	// stale_intents_observed from growing unboundedly (hk-cizvu). Bead: hk-aev8t.
+	// the retained count; IntentsGCd is set to removed + redriven (both result in
+	// a cleaned-up file). This prevents stale_intents_observed from growing
+	// unboundedly (hk-cizvu). Bead: hk-aev8t.
 	//
 	// When IntentGCLedger is nil: fall back to EnumerateStaleIntents (count
 	// only, no removal — the legacy behavior).
@@ -872,7 +874,9 @@ func RunOrphanSweep(
 			errs = append(errs, fmt.Sprintf("intents-gc: %v", gcErr))
 		}
 		result.StaleIntentsObserved = gcResult.Retained
-		result.IntentsGCd = gcResult.Removed
+		// Fold redriven files into IntentsGCd: both step-3 (already-landed remove)
+		// and step-4 (pre-state re-drive) result in the intent file being deleted.
+		result.IntentsGCd = gcResult.Removed + gcResult.RedriveCount
 	} else {
 		staleIntents, err := lifecycle.EnumerateStaleIntents(projectDir, daemonStartTime)
 		if err != nil {

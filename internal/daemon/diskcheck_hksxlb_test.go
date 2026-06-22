@@ -171,6 +171,11 @@ func TestDiskCheck_ProactiveReaper_SkipsWhenRunsInFlight(t *testing.T) {
 // fires when idle AND the proactive interval has elapsed.
 func TestDiskCheck_ProactiveReaper_RunsWhenIdle(t *testing.T) {
 	t.Parallel()
+	// Proactive reap disabled by hk-y3frr emergency stopgap
+	// (proactiveCacheReapEnabled=false in diskcheck_hksxlb.go).  Remove this
+	// skip and restore the want-1 assertion once the hk-y3frr mutex lands and
+	// the const is flipped back to true.
+	t.Skip("proactive go-cache reap disabled (hk-y3frr stopgap); un-skip when const restored")
 
 	cleanCount, cleanFn := diskCheckFixtureCounter()
 	deps := daemon.ExportedWorkLoopDeps(

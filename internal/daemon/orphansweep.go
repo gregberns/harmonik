@@ -81,6 +81,17 @@ type OrphanSweepResult struct {
 	// already merged to the target branch but were still marked in_progress.
 	BeadCat3cClosed int
 
+	// WorktreeDirsRemoved is the count of stale .harmonik/worktrees/ directories
+	// removed by [workspace.RemoveStaleWorktrees] during the orphan sweep.
+	// These are worktrees whose lease-lock recorded a dead PID (identified by
+	// [workspace.SweepStaleLeaseLocks]) that were then fully deregistered from
+	// git and deleted from disk via `git worktree remove --force --force`.
+	// `git worktree prune` alone cannot remove these because they remain
+	// registered in git until explicitly removed (hk-ldzp).
+	//
+	// Bead ref: hk-ldzp — daemon worktree/disk GC.
+	WorktreeDirsRemoved int
+
 	// ClaudeWorktreesSwept is the count of orphan .claude/worktrees/ entries
 	// identified by the Gap-11 parallel sweep (hk-yhq3m). Reported in both
 	// dry-run and live modes; when HARMONIK_SWEEP_CLAUDE_WORKTREES is not "1"
@@ -787,6 +798,19 @@ func RunOrphanSweep(
 		errs = append(errs, fmt.Sprintf("lease-locks: %v", err))
 	}
 	result.LocksCleared = len(sweepResult.Removed)
+
+	// (b2) Remove stale worktree directories identified by (b).
+	// `git worktree prune` cannot remove registered stale worktrees; each needs
+	// an explicit `git worktree remove --force --force` (hk-ldzp). Only paths
+	// whose lease-lock recorded a dead PID (sweepResult.Removed) are targeted —
+	// directories with live PIDs or absent lease-locks are not touched here.
+	if len(sweepResult.Removed) > 0 {
+		gcResult := workspace.RemoveStaleWorktrees(ctx, projectDir, sweepResult.Removed, cfg.Logger)
+		result.WorktreeDirsRemoved = len(gcResult.Removed)
+		if len(gcResult.Failed) > 0 {
+			errs = append(errs, fmt.Sprintf("worktree-dirs-gc: %d of %d removals failed", len(gcResult.Failed), len(sweepResult.Removed)))
+		}
+	}
 
 	// (c-i) Handler subprocesses.
 	handlersKilled, err := lifecycle.SweepOrphanHandlers(ctx, projectHash, cfg.HandlerLister, cfg.Logger)

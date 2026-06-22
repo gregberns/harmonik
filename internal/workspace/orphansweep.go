@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"log"
 	"os/exec"
 	"syscall"
 )
@@ -116,6 +117,69 @@ func SweepStaleLeaseLocks(ctx context.Context, repoRoot string, cfg WorktreeRoot
 // Spec ref: workspace-model.md §4.8 WM-033 — content-first, mtime tiebreaker.
 func IsLeaseLockStale(pid int) bool {
 	return isPIDDead(pid)
+}
+
+// RemoveStaleWorktreeResult holds the outcome of one [RemoveStaleWorktrees] pass.
+type RemoveStaleWorktreeResult struct {
+	// Removed is the list of worktree paths that were successfully removed
+	// by `git worktree remove --force --force`.
+	Removed []string
+
+	// Failed is the list of worktree paths where removal was attempted but
+	// the `git worktree remove` command failed. Non-fatal per-path.
+	Failed []string
+}
+
+// RemoveStaleWorktrees removes stale harmonik worktree directories from the
+// given paths by running `git worktree remove --force --force` against each.
+//
+// This is intended to be called with the Removed list from
+// [SweepStaleLeaseLocks]: paths whose lease-lock recorded a dead PID. Because
+// `git worktree prune` only removes worktree metadata for directories that
+// are no longer present on disk, registered stale worktrees require an
+// explicit `git worktree remove` to deregister from git AND delete the
+// directory simultaneously (hk-ldzp).
+//
+// For each path that is successfully removed, [PruneWorktreeTrust] is called
+// to GC the per-worktree trust key from ~/.claude.json, preventing unbounded
+// growth of the trust "projects" map (hk-bfvby).
+//
+// Errors are non-fatal per-path: a failure on one path does not prevent
+// attempting the remaining paths. All failures are collected in
+// RemoveStaleWorktreeResult.Failed.
+//
+// ctx is passed to exec.CommandContext for each `git worktree remove`
+// invocation. Cancellation stops processing the remaining paths.
+//
+// Bead ref: hk-ldzp — daemon worktree/disk GC.
+func RemoveStaleWorktrees(ctx context.Context, repoRoot string, paths []string, logger *log.Logger) RemoveStaleWorktreeResult {
+	var result RemoveStaleWorktreeResult
+	for _, p := range paths {
+		if err := ctx.Err(); err != nil {
+			// Context cancelled: stop processing.
+			break
+		}
+		cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", "--force", p)
+		cmd.Dir = repoRoot
+		if out, err := cmd.CombinedOutput(); err != nil {
+			if logger != nil {
+				logger.Printf("workspace: RemoveStaleWorktrees: git worktree remove %q: %v\noutput: %s", p, err, out)
+			}
+			result.Failed = append(result.Failed, p)
+			continue
+		}
+		// GC the per-worktree trust key from ~/.claude.json (hk-bfvby): each
+		// worktree gets an ephemeral trust entry and without this GC the map
+		// grows unbounded. Best-effort: failure is non-fatal.
+		if err := PruneWorktreeTrust(p); err != nil && logger != nil {
+			logger.Printf("workspace: RemoveStaleWorktrees: PruneWorktreeTrust %q: %v (non-fatal)", p, err)
+		}
+		if logger != nil {
+			logger.Printf("workspace: RemoveStaleWorktrees: removed stale worktree %q", p)
+		}
+		result.Removed = append(result.Removed, p)
+	}
+	return result
 }
 
 // isPIDDead reports whether pid is not running on this host.

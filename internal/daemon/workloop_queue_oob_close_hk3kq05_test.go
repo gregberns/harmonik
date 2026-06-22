@@ -36,8 +36,8 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-// queueOOBCloseLedger is a stub BeadLedger where ShowBead returns
-// CoarseStatusClosed for every bead (simulating out-of-band promote).
+// queueOOBCloseLedger is a stub BeadLedger where ShowBead returns a fixed
+// terminal status for every bead (simulating out-of-band promote or tombstone).
 // ClaimBead records any call so the test can assert it was never invoked.
 type queueOOBCloseLedger struct {
 	mu         sync.Mutex
@@ -45,12 +45,17 @@ type queueOOBCloseLedger struct {
 	showCalls  atomic.Int64
 	// showSeen is closed after ShowBead has been called at least once, letting
 	// the test wait until the BI-013c guard has fired.
-	showSeen chan struct{}
-	showOnce sync.Once
+	showSeen     chan struct{}
+	showOnce     sync.Once
+	returnStatus core.CoarseStatus
 }
 
 func newQueueOOBCloseLedger() *queueOOBCloseLedger {
-	return &queueOOBCloseLedger{showSeen: make(chan struct{})}
+	return &queueOOBCloseLedger{showSeen: make(chan struct{}), returnStatus: core.CoarseStatusClosed}
+}
+
+func newQueueOOBStatusLedger(status core.CoarseStatus) *queueOOBCloseLedger {
+	return &queueOOBCloseLedger{showSeen: make(chan struct{}), returnStatus: status}
 }
 
 func (l *queueOOBCloseLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
@@ -60,7 +65,7 @@ func (l *queueOOBCloseLedger) Ready(_ context.Context) ([]core.BeadRecord, error
 func (l *queueOOBCloseLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	l.showCalls.Add(1)
 	l.showOnce.Do(func() { close(l.showSeen) })
-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusClosed}, nil
+	return core.BeadRecord{BeadID: id, Status: l.returnStatus}, nil
 }
 
 func (l *queueOOBCloseLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
@@ -210,5 +215,103 @@ func TestWorkLoop_QueuePath_ClosedBeadReconciled(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("bead_claim_skipped event for bead %s not found in bus (hk-3kq05)", beadID)
+	}
+}
+
+// TestWorkLoop_QueuePath_TombstoneBeadReconciled verifies that the BI-013c
+// terminal path also fires for CoarseStatusTombstone (hk-3kq05).
+func TestWorkLoop_QueuePath_TombstoneBeadReconciled(t *testing.T) {
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	const beadID = core.BeadID("hk-3kq05-tombstone-oob")
+
+	now := time.Now()
+	q := &queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "3kq05-tombstone-oob-test",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindStream,
+				Status:     queue.GroupStatusActive,
+				Items: []queue.Item{
+					{BeadID: beadID, Status: queue.ItemStatusPending},
+				},
+				CreatedAt: now,
+			},
+		},
+	}
+
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(q)
+
+	ledger := newQueueOOBStatusLedger(core.CoarseStatusTombstone)
+	bus := &stubEventCollector{}
+
+	loopCtx, cancelLoop := context.WithCancel(context.Background())
+	defer cancelLoop()
+
+	p := daemon.WorkLoopDepsParams{
+		BrAdapter:        ledger,
+		Bus:              bus,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		QueueStore:       qs,
+		MaxConcurrent:    1,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+	}
+	deps := daemon.ExportedWorkLoopDeps(p)
+
+	testCtx, testCancel := context.WithTimeout(loopCtx, 30*time.Second)
+	defer testCancel()
+
+	loopDone := make(chan error, 1)
+	go func() {
+		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+	}()
+
+	select {
+	case <-ledger.showSeen:
+	case <-time.After(15 * time.Second):
+		t.Fatal("ShowBead was never called — BI-013c guard did not fire (hk-3kq05 tombstone path)")
+	}
+
+	var item queue.Item
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		inFlightQ := daemon.ExportedQueueStoreOf(deps).Queue()
+		if inFlightQ != nil && len(inFlightQ.Groups) > 0 && len(inFlightQ.Groups[0].Items) > 0 {
+			item = inFlightQ.Groups[0].Items[0]
+			if item.Status == queue.ItemStatusFailed {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if item.Status != queue.ItemStatusFailed {
+		t.Errorf("tombstone item status = %q; want %q — tombstone bead must be reconciled to failed (hk-3kq05)",
+			item.Status, queue.ItemStatusFailed)
+	}
+
+	cancelLoop()
+	select {
+	case err := <-loopDone:
+		if err != nil {
+			t.Errorf("runWorkLoop returned non-nil error: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runWorkLoop did not exit after context cancel (hk-3kq05 tombstone)")
+	}
+
+	if n := ledger.claimCalls.Load(); n != 0 {
+		t.Errorf("ClaimBead call count = %d; want 0 — tombstone bead must not be claimed (hk-3kq05)", n)
 	}
 }

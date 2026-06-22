@@ -1939,8 +1939,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 					preClaimRecord = rec
 					if preClaimRecord.Status != core.CoarseStatusOpen && preClaimRecord.Status != core.CoarseStatusBlocked {
-						// BI-013c: non-open status observed — skip claim, emit
-						// bead_claim_skipped, set item to deferred-for-ledger-dep.
+						// BI-013c: non-open status observed — skip claim, emit bead_claim_skipped.
 						fmt.Fprintf(os.Stderr,
 							"daemon: workloop: bead_claim_skipped %s observed_status=%s reason=status_changed_between_select_and_claim (BI-013c)\n",
 							snapItemBeadID, preClaimRecord.Status)
@@ -1953,31 +1952,41 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						if raw, mErr := json.Marshal(skipPayload); mErr == nil {
 							_ = deps.bus.Emit(ctx, core.EventTypeBeadClaimSkipped, raw)
 						}
-						// Set the queue item to deferred-for-ledger-dep under the write lock.
-						if deps.queueStore != nil {
-							lq := deps.queueStore.LockForMutation()
-							liveQ := lq.LockedQueueByName(snapQueueName)
-							if liveQ != nil {
-								for gi := range liveQ.Groups {
-									if liveQ.Groups[gi].Status != queue.GroupStatusActive {
-										continue
+						// BI-013c terminal path: closed/tombstone beads are done — fail the
+						// queue item directly via evaluateGroupAdvanceWithOutcome so the group
+						// can reach allItemsTerminal. Non-terminal statuses (in_progress, draft,
+						// deferred, pinned) remain deferred-for-ledger-dep to be re-evaluated
+						// on the next poll cycle (hk-3kq05).
+						if preClaimRecord.Status == core.CoarseStatusClosed ||
+							preClaimRecord.Status == core.CoarseStatusTombstone {
+							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+						} else {
+							// Set the queue item to deferred-for-ledger-dep under the write lock.
+							if deps.queueStore != nil {
+								lq := deps.queueStore.LockForMutation()
+								liveQ := lq.LockedQueueByName(snapQueueName)
+								if liveQ != nil {
+									for gi := range liveQ.Groups {
+										if liveQ.Groups[gi].Status != queue.GroupStatusActive {
+											continue
+										}
+										if liveQ.Groups[gi].GroupIndex != snapGroupIndex {
+											continue
+										}
+										if snapItemIdx < len(liveQ.Groups[gi].Items) &&
+											liveQ.Groups[gi].Items[snapItemIdx].BeadID == snapItemBeadID &&
+											liveQ.Groups[gi].Items[snapItemIdx].Status == queue.ItemStatusPending {
+											liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusDeferredForLedgerDep
+										}
 									}
-									if liveQ.Groups[gi].GroupIndex != snapGroupIndex {
-										continue
-									}
-									if snapItemIdx < len(liveQ.Groups[gi].Items) &&
-										liveQ.Groups[gi].Items[snapItemIdx].BeadID == snapItemBeadID &&
-										liveQ.Groups[gi].Items[snapItemIdx].Status == queue.ItemStatusPending {
-										liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusDeferredForLedgerDep
+									lq.LockedSetQueueByName(snapQueueName, liveQ)
+									if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+										fmt.Fprintf(os.Stderr, "daemon: workloop: Persist bead_claim_skipped deferred-for-ledger-dep queueID=%s: %v\n",
+											liveQ.QueueID, persistErr)
 									}
 								}
-								lq.LockedSetQueueByName(snapQueueName, liveQ)
-								if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
-									fmt.Fprintf(os.Stderr, "daemon: workloop: Persist bead_claim_skipped deferred-for-ledger-dep queueID=%s: %v\n",
-										liveQ.QueueID, persistErr)
-								}
+								lq.Done()
 							}
-							lq.Done()
 						}
 						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 							return exitClean()

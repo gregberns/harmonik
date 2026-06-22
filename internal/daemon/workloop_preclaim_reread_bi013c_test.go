@@ -81,10 +81,14 @@ func (l *bi013cLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutCo
 // bi013cRunTest is the shared test body for BI-013c pre-claim guard tests.
 // It asserts:
 //  1. ClaimBead is never called.
-//  2. The queue item transitions to deferred-for-ledger-dep with Attempts == 0.
+//  2. The queue item transitions to wantItemStatus with Attempts == 0.
 //  3. A bead_claim_skipped event is emitted with observed_status == wantStatus
 //     and reason == "status_changed_between_select_and_claim".
-func bi013cRunTest(t *testing.T, beadID core.BeadID, wantStatus core.CoarseStatus) {
+//
+// wantItemStatus is queue.ItemStatusDeferredForLedgerDep for non-terminal bead
+// statuses (e.g. in_progress), and queue.ItemStatusFailed for terminal bead
+// statuses (closed, tombstone) per the hk-3kq05 terminal-routing fix.
+func bi013cRunTest(t *testing.T, beadID core.BeadID, wantStatus core.CoarseStatus, wantItemStatus queue.ItemStatus) {
 	t.Helper()
 
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -146,23 +150,24 @@ func bi013cRunTest(t *testing.T, beadID core.BeadID, wantStatus core.CoarseStatu
 		t.Fatalf("ShowBead was never called within 15s — BI-013c guard did not fire (status=%s)", wantStatus)
 	}
 
-	// Poll for deferred-for-ledger-dep (write lock completes asynchronously).
+	// Poll for the expected item status (write lock / evaluateGroupAdvanceWithOutcome
+	// complete asynchronously).
 	var item queue.Item
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if liveQ := daemon.ExportedQueueStoreOf(deps).Queue(); liveQ != nil &&
 			len(liveQ.Groups) > 0 && len(liveQ.Groups[0].Items) > 0 {
 			item = liveQ.Groups[0].Items[0]
-			if item.Status == queue.ItemStatusDeferredForLedgerDep {
+			if item.Status == wantItemStatus {
 				break
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	if item.Status != queue.ItemStatusDeferredForLedgerDep {
-		t.Errorf("item status = %q; want %q — BI-013c: non-open bead must produce deferred-for-ledger-dep",
-			item.Status, queue.ItemStatusDeferredForLedgerDep)
+	if item.Status != wantItemStatus {
+		t.Errorf("item status = %q; want %q — BI-013c: bead status %s must produce item status %s",
+			item.Status, wantItemStatus, wantStatus, wantItemStatus)
 	}
 	if item.Attempts != 0 {
 		t.Errorf("item.Attempts = %d; want 0 — BI-013c guard must not consume attempts", item.Attempts)
@@ -224,13 +229,14 @@ func bi013cRunTest(t *testing.T, beadID core.BeadID, wantStatus core.CoarseStatu
 // event emitted, item set to deferred-for-ledger-dep.
 func TestBI013c_InProgressBeadSkipped(t *testing.T) {
 	t.Parallel()
-	bi013cRunTest(t, "hk-79x3v-in-progress", core.CoarseStatusInProgress)
+	bi013cRunTest(t, "hk-79x3v-in-progress", core.CoarseStatusInProgress, queue.ItemStatusDeferredForLedgerDep)
 }
 
 // TestBI013c_ClosedBeadSkipped verifies that a closed bead triggers the
 // BI-013c guard: no claim, bead_claim_skipped event emitted, item set to
-// deferred-for-ledger-dep.
+// failed (terminal routing per hk-3kq05 — closed beads route directly to
+// ItemStatusFailed via evaluateGroupAdvanceWithOutcome, not deferred-for-ledger-dep).
 func TestBI013c_ClosedBeadSkipped(t *testing.T) {
 	t.Parallel()
-	bi013cRunTest(t, "hk-79x3v-closed", core.CoarseStatusClosed)
+	bi013cRunTest(t, "hk-79x3v-closed", core.CoarseStatusClosed, queue.ItemStatusFailed)
 }

@@ -336,9 +336,9 @@ type Config struct {
 	// Bead ref: hk-7t9g1.
 	SkipRestartBackoff bool
 
-	// SkipBeadsMergeDriverConfig, when true, disables the beads-merge git driver
+	// SkipBeadsMergeDriverConfig, when true, disables the beads-union git driver
 	// auto-config pre-flight that runs at startup to register
-	// merge.beads-merge.{name,driver} in .git/config if absent.
+	// merge.beads-union.{name,driver} in .git/config if absent.
 	//
 	// The pre-flight is non-fatal and transparent in production. This field
 	// exists solely for unit tests that operate on temp directories without a
@@ -797,8 +797,8 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		bootBackoffDelay = applyBootBackoff(ctx, cfg.ProjectDir)
 	}
 
-	// Beads-merge driver auto-config pre-flight (hk-r0y1o): register
-	// merge.beads-merge.{name,driver} in .git/config once per clone so git
+	// Beads-union driver auto-config pre-flight (hk-r0y1o): register
+	// merge.beads-union.{name,driver} in .git/config once per clone so git
 	// invokes the union merge driver instead of the default text merge when
 	// merging .beads/issues.jsonl. The call is non-fatal. Skipped when
 	// SkipBeadsMergeDriverConfig is true (test isolation) or ProjectDir is empty.

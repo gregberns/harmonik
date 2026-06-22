@@ -27,9 +27,9 @@ package main
 //
 // Register via:
 //
-//	.gitattributes:   .beads/issues.jsonl  merge=beads-merge
-//	.git/config:      [merge "beads-merge"]
-//	                    name = Beads JSONL union merge driver
+//	.gitattributes:   .beads/issues.jsonl  merge=beads-union
+//	.git/config:      [merge "beads-union"]
+//	                    name = Bead Ledger Union Merge
 //	                    driver = harmonik beads-merge %O %A %B %P
 //
 // Post-merge, run `br sync --import-only` to refresh the SQLite ledger from

@@ -1,6 +1,6 @@
 # Custom merge driver for the bead ledger (hk-jon6r).
 # Union-by-bead-ID merge with last-writer-wins on updated_at.
 # Register the driver itself via:
-#   git config merge.beads-merge.name "Beads JSONL union merge driver"
-#   git config merge.beads-merge.driver "harmonik beads-merge %O %A %B %P"
-.beads/issues.jsonl merge=beads-merge
+#   git config merge.beads-union.name "Bead Ledger Union Merge"
+#   git config merge.beads-union.driver "harmonik beads-merge %O %A %B %P"
+.beads/issues.jsonl merge=beads-union

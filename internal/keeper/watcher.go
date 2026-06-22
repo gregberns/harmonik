@@ -237,7 +237,7 @@ type WatcherConfig struct {
 	// to verify injection without spawning real tmux commands.
 	InjectFn func(ctx context.Context, target string) error
 
-	// SelfHintInjectFn delivers the one-time 190K [KEEPER HINT] text into the
+	// SelfHintInjectFn delivers the one-time [KEEPER HINT] text into the
 	// pane (hk-lsk5). When nil, InjectText is used (the production path, which
 	// shells out to tmux). Set to a spy in unit tests so the hint path can be
 	// observed without real tmux. Mirrors InjectFn for the warn injection.
@@ -1267,7 +1267,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				// so the agent is nudged to wrap up. Only once per session —
 				// hintSentThisSession latches after delivery.
 				if !hintSentThisSession && w.cfg.TmuxTarget != "" {
-					if hintErr := w.cfg.SelfHintInjectFn(ctx, w.cfg.TmuxTarget, keeperHintText); hintErr != nil {
+					if hintErr := w.cfg.SelfHintInjectFn(ctx, w.cfg.TmuxTarget, keeperHintText(ctxFile.Tokens)); hintErr != nil {
 						slog.WarnContext(ctx, "keeper: inject self-hint", "err", hintErr)
 					} else {
 						hintSentThisSession = true
@@ -1385,9 +1385,18 @@ const noGaugeBackoff = DefaultNoGaugeBackoff
 // Alias of the exported DefaultWarnCooldown (thresholds.go single source). hk-gwz6.
 const warnCooldown = DefaultWarnCooldown
 
-// keeperHintText is the one-time self-hint injected on the first warn-threshold
-// crossing per session. Refs: hk-lsk5.
-const keeperHintText = "[KEEPER HINT] Context is at ~190K tokens. Consider wrapping up the current task and preparing a handoff soon."
+// keeperHintText renders the one-time self-hint injected on the first
+// warn-threshold crossing per session. The live token count from the gauge is
+// interpolated so the message reflects the actual context size. When tokens is
+// zero (pct-only gauge), falls back to the static ~190K approximation.
+// Refs: hk-lsk5.
+func keeperHintText(tokens int64) string {
+	approxK := int64(190)
+	if tokens > 0 {
+		approxK = (tokens + 500) / 1000
+	}
+	return fmt.Sprintf("[KEEPER HINT] Context is at ~%dK tokens. Consider wrapping up the current task and preparing a handoff soon.", approxK)
+}
 
 // maybeReemitNoGauge emits session_keeper_no_gauge if the re-emit interval
 // (noGaugeReemitInterval = 300s) has elapsed since the last emission. Updates

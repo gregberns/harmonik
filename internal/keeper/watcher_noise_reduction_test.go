@@ -144,7 +144,8 @@ func TestWatcher_WarnCooldown_SuppressesImmediateRefire(t *testing.T) {
 // TestWatcher_SelfHint_InjectedOncePerSession asserts that the [KEEPER HINT]
 // is injected exactly once — on the first warn crossing — and NOT on subsequent
 // ticks while above the threshold, even though the warn injection itself may
-// retry on each quiesced tick. Refs: hk-lsk5.
+// retry on each quiesced tick. Also verifies that the live token count from
+// the gauge is interpolated into the message. Refs: hk-lsk5.
 func TestWatcher_SelfHint_InjectedOncePerSession(t *testing.T) {
 	t.Parallel()
 
@@ -188,15 +189,15 @@ func TestWatcher_SelfHint_InjectedOncePerSession(t *testing.T) {
 		Staleness:        120 * time.Second,
 		TmuxTarget:       "dummy-pane", // non-empty → hint path is ENABLED
 		InjectFn:         func(_ context.Context, _ string) error { return nil },
-		SelfHintInjectFn: spyHint, // ← observe the one-time 190K self-hint
+		SelfHintInjectFn: spyHint, // ← observe the one-time self-hint
 		// WarnCooldown defaults to 30s; the gauge stays above threshold the
 		// whole run so there is no dip to re-arm the hint latch.
 	}
 
-	// Write gauge above threshold; the watcher crosses warn once and injects
-	// the hint exactly once. It stays above threshold for the whole run, so the
-	// hint must NOT re-fire on later ticks (hintSentThisSession latch).
-	writeCtxFile(t, projectDir, agent, 85.0, "")
+	// Write gauge above threshold with an explicit token count so we can verify
+	// the hint interpolates the live count. ~212K rounds to 212.
+	const hintTokens int64 = 212_345
+	writeCtxFileTokens(t, projectDir, agent, 85.0, hintTokens, 250_000, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -217,10 +218,17 @@ func TestWatcher_SelfHint_InjectedOncePerSession(t *testing.T) {
 	if n := hintCount(); n != 1 {
 		t.Errorf("want exactly 1 self-hint injection across sustained above-threshold; got %d", n)
 	}
-	// And the injected text must be the real 190K hint, not arbitrary content.
+	// The injected text must contain [KEEPER HINT] and interpolate the live
+	// token count (~212K for hintTokens=212_345).
 	hintMu.Lock()
-	if len(hintTexts) > 0 && !strings.Contains(hintTexts[0], "[KEEPER HINT]") {
-		t.Errorf("self-hint text = %q; want it to contain %q", hintTexts[0], "[KEEPER HINT]")
+	if len(hintTexts) > 0 {
+		got := hintTexts[0]
+		if !strings.Contains(got, "[KEEPER HINT]") {
+			t.Errorf("self-hint text = %q; want it to contain %q", got, "[KEEPER HINT]")
+		}
+		if !strings.Contains(got, "~212K") {
+			t.Errorf("self-hint text = %q; want live token count ~212K interpolated", got)
+		}
 	}
 	hintMu.Unlock()
 

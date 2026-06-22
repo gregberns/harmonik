@@ -299,6 +299,7 @@ failed_run_ids       = set() # run_ids whose terminal event is run_failed (merge
 # review node). node_id lives under .payload; run_id is top-level.
 review_requested_ts  = {}  # run_id -> epoch of the earliest review-node dispatch request
 run_last_event_ts    = {}  # run_id -> epoch of the most-recent event seen for that run (any type)
+run_last_event_type  = {}  # run_id -> event type of the most-recent event (used to detect active reviewer)
 
 def _ev_epoch(_tw, _dt):
     _ts_clean = _tw[:19].replace('T', ' ')
@@ -375,15 +376,18 @@ if _os.path.isfile(_events_path):
                             if _rid not in review_requested_ts or _e < review_requested_ts[_rid]:
                                 review_requested_ts[_rid] = _e
 
-                # Track the most-recent event timestamp per run_id (any event type).
-                # Used to detect abandoned reviewers: reviewer_launched with no subsequent
-                # verdict and no event at all for reviewer_stale_window seconds (hk-usz0).
+                # Track the most-recent event timestamp AND type per run_id (any event type).
+                # Timestamp used to detect abandoned reviewers (hk-usz0).
+                # Type used to detect actively-running reviewers: if reviewer_launched is
+                # the most-recent event and no verdict has arrived, the reviewer is still
+                # working — suppress the bypass alert (hk-oytx).
                 _any_rid = _ev.get('run_id') or (_payload.get('run_id') if isinstance(_payload, dict) else '') or ''
                 _any_tw = _ev.get('timestamp_wall', '')
                 if _any_rid and _any_tw:
                     _any_e = _ev_epoch(_any_tw, _dt)
                     if _any_e > run_last_event_ts.get(_any_rid, 0):
                         run_last_event_ts[_any_rid] = _any_e
+                        run_last_event_type[_any_rid] = _etype
             except Exception:
                 pass
     except Exception:
@@ -426,6 +430,13 @@ for _rid, _lts in _recent_review:
     _last_ev_ts = run_last_event_ts.get(_rid, _lts)
     if (ts_epoch - _last_ev_ts) > reviewer_stale_window and _rid not in verdict_run_ids:
         continue  # abandoned reviewer: silent past stale window, merged nothing
+    # Active reviewer: reviewer_launched is the most-recent event for this run and
+    # the reviewer is still within the stale window — the reviewer session is in
+    # progress, no verdict yet. The run cannot have merged (run_completed / merge_completed
+    # would have updated run_last_event_type). Suppresses cry-wolf IMMEDIATE alerts
+    # that fire during a long review (>180s grace but <3600s stale; hk-oytx).
+    if run_last_event_type.get(_rid) == 'reviewer_launched' and _rid not in verdict_run_ids:
+        continue  # reviewer actively working — verdict pending; not a bypass
     if _rid not in verdict_run_ids:
         review_bypass_run_ids.append(_rid)
 

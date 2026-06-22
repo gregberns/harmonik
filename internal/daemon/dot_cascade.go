@@ -306,6 +306,12 @@ func driveDotWorkflow(
 	// has run, so a gate-less graph can NEVER take the broadened exemption: it
 	// cannot assert the gate passes, so it preserves the prior fail behavior.
 	lastGatePassed := false
+	// lastGateNotes holds Outcome.Notes from the most recent gate failure
+	// (the actionable tail of build/test output). Captured alongside
+	// lastGatePassed so the commit_gate→implement back-edge can deliver the
+	// real failure reason instead of the misleading NO-commit nudge. Empty
+	// until a gate has run and failed (hk-778x9).
+	lastGateNotes := ""
 
 	// reviewerNoVerdictRetries counts how many times the current reviewer node
 	// invocation was retried after producing no verdict (stall / hang).
@@ -434,6 +440,9 @@ func driveDotWorkflow(
 				// only fires when HEAD is UNCHANGED, so the gate result reflects the
 				// exact tree under review.
 				lastGatePassed = outcome.Status == core.OutcomeStatusSuccess
+				if !lastGatePassed {
+					lastGateNotes = outcome.Notes
+				}
 
 			case node.ToolCommand != "" && node.HandlerRef != "shell":
 				// Path 3: non-agentic node bound to a non-shell handler — v1 stub.
@@ -746,20 +755,37 @@ func driveDotWorkflow(
 							}
 							priorSummary = rlTruncateUTF8(priorVerdictNotes, priorVerdictSummaryMaxBytes)
 						} else {
-							// (b) commit_gate → implement no-commit bounce: no review
-							// verdict yet. Deliver an explicit commit nudge so the
-							// resumed implementer knows its prior pass produced no
-							// commit and MUST commit its changes.
-							const commitNudge = "Your previous pass produced NO commit — the workflow bounced back to you because HEAD did not advance. " +
-								"Re-read .harmonik/agent-task.md, make the required changes if you have not already, and you MUST commit your changes before exiting. " +
-								"If your prior edits are still in the working tree, commit them now; an uncommitted change is invisible to the workflow and will loop forever."
-							rfPayload = workspace.ReviewerFeedbackPayload{
-								WorkspacePath:  wtPath,
-								PriorIteration: priorIter,
-								Verdict:        "NO_COMMIT",
-								Notes:          commitNudge,
+							// (b) commit_gate (or any non-reviewer) → implement back-edge.
+							// Disambiguate on the actual cause:
+							//   - commit_gate FAIL (lastGatePassed==false && prevNode is
+							//     commit_gate): the implementer DID commit cleanly but the
+							//     build/test gate failed. Deliver the gate failure output so
+							//     the resumed implementer knows what to fix (hk-778x9).
+							//   - genuine no-commit (anything else): HEAD did not advance;
+							//     deliver the original commit nudge.
+							fromGateFail := prevNode != nil && prevNode.ID == "commit_gate" && !lastGatePassed
+							if fromGateFail && lastGateNotes != "" {
+								gateFailMsg := "The commit gate failed — your commit was recorded but the build/test gate did not pass. " +
+									"Fix the failure and re-commit:\n\n" + lastGateNotes
+								rfPayload = workspace.ReviewerFeedbackPayload{
+									WorkspacePath:  wtPath,
+									PriorIteration: priorIter,
+									Verdict:        "GATE_FAIL",
+									Notes:          gateFailMsg,
+								}
+								priorSummary = rlTruncateUTF8(gateFailMsg, priorVerdictSummaryMaxBytes)
+							} else {
+								const commitNudge = "Your previous pass produced NO commit — the workflow bounced back to you because HEAD did not advance. " +
+									"Re-read .harmonik/agent-task.md, make the required changes if you have not already, and you MUST commit your changes before exiting. " +
+									"If your prior edits are still in the working tree, commit them now; an uncommitted change is invisible to the workflow and will loop forever."
+								rfPayload = workspace.ReviewerFeedbackPayload{
+									WorkspacePath:  wtPath,
+									PriorIteration: priorIter,
+									Verdict:        "NO_COMMIT",
+									Notes:          commitNudge,
+								}
+								priorSummary = rlTruncateUTF8(commitNudge, priorVerdictSummaryMaxBytes)
 							}
-							priorSummary = rlTruncateUTF8(commitNudge, priorVerdictSummaryMaxBytes)
 						}
 						if rfErr := workspace.WriteReviewerFeedback(rfPayload); rfErr != nil {
 							fmt.Fprintf(os.Stderr,

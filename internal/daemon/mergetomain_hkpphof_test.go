@@ -1,12 +1,13 @@
 package daemon_test
 
-// mergetomain_hkpphof_test.go — integration tests for the auto-resolve path
-// introduced by hk-pphof.
+// mergetomain_hkpphof_test.go — integration tests for .beads/issues.jsonl
+// conflict handling during daemon-driven rebase (BL-MRG-005 / hk-t48rg).
 //
 // Test assertions:
-//   (p)  When ONLY .beads/issues.jsonl conflicts during rebase, the daemon
-//        auto-resolves with --theirs and closes the bead (not reopens).
-//   (q)  When a real code file also conflicts, the daemon still escalates
+//   (p)  When ONLY .beads/issues.jsonl conflicts during rebase AND the
+//        beads-union git merge driver is registered, the driver resolves
+//        the conflict and the bead closes (not reopens).
+//   (q)  When a real code file also conflicts, the daemon escalates
 //        (ReopenBead, outcome_emitted{rejected, rebase_conflict}).
 //
 // Helper prefix: mergeToMainFixture (shared with sibling mergetomain_* tests;
@@ -14,8 +15,9 @@ package daemon_test
 //
 // Spec refs:
 //   - specs/execution-model.md §4.12 EM-052 step 2, EM-053
+//   - plans/2026-06-22-beads-integration-conformance-audit.md §BL-MRG-005
 //
-// Bead: hk-pphof.
+// Beads: hk-pphof, hk-t48rg.
 
 import (
 	"context"
@@ -33,6 +35,48 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture helpers for .beads/issues.jsonl conflict scenarios
 // ─────────────────────────────────────────────────────────────────────────────
+
+// mergeToMainFixtureRegisterBeadsUnionDriver writes a mock beads-union merge
+// driver script to repoRoot and registers it in the repo's git config.
+// The driver performs a simple union merge (unique lines from both sides),
+// mirroring what the real "harmonik beads-merge" driver does for JSONL ledgers.
+// It also writes and commits a .gitattributes file that routes .beads/issues.jsonl
+// through merge=beads-union, matching the production .gitattributes convention.
+func mergeToMainFixtureRegisterBeadsUnionDriver(t *testing.T, repoRoot string) {
+	t.Helper()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = repoRoot
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("mergeToMainFixtureRegisterBeadsUnionDriver: git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Write a mock union-merge driver. Git calls it as:
+	//   driver %O %A %B %P  ($1=ancestor, $2=ours/output, $3=theirs, $4=path)
+	// Exit 0 = conflict resolved; result written to $2.
+	scriptPath := filepath.Join(repoRoot, ".harmonik", "mock-beads-merge.sh")
+	scriptContent := "#!/bin/sh\nset -e\nsort -u \"$2\" \"$3\" > \"$2.tmp\" && mv \"$2.tmp\" \"$2\"\nexit 0\n"
+	//nolint:gosec // G306: 0755 required for executable script
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("mergeToMainFixtureRegisterBeadsUnionDriver: WriteFile driver: %v", err)
+	}
+
+	// Register the driver in the repo's local git config.
+	run("config", "merge.beads-union.name", "Bead Ledger Union Merge (mock)")
+	run("config", "merge.beads-union.driver", scriptPath+" %O %A %B %P")
+
+	// Write and commit .gitattributes so git uses the driver for the ledger file.
+	attrPath := filepath.Join(repoRoot, ".gitattributes")
+	//nolint:gosec // G306: 0644 is fine for a test fixture file
+	if err := os.WriteFile(attrPath, []byte(".beads/issues.jsonl merge=beads-union\n"), 0o644); err != nil {
+		t.Fatalf("mergeToMainFixtureRegisterBeadsUnionDriver: WriteFile .gitattributes: %v", err)
+	}
+	run("add", ".gitattributes")
+	run("commit", "-m", "test: register beads-union merge driver via .gitattributes")
+}
 
 // mergeToMainFixtureInitBeadsLedger writes a minimal .beads/issues.jsonl into
 // the repo root and commits it on main so that subsequent modifications produce
@@ -148,13 +192,14 @@ func mergeToMainBeadsCommittingFactory(t *testing.T) func(ctx context.Context, p
 
 // TestMergeToMain_BeadsLedgerOnlyConflict_AutoResolved verifies that when main
 // advances with a commit that modifies only .beads/issues.jsonl (same as the
-// run-branch), the daemon auto-resolves the conflict with --theirs and:
+// run-branch), git invokes the registered beads-union merge driver which
+// resolves the conflict transparently so the daemon:
 //
 //	(p1) CloseBead is called (not ReopenBead),
 //	(p2) outcome_emitted{kind=approved} is emitted,
 //	(p3) refs/heads/main advances to the rebased run-branch tip.
 //
-// Bead: hk-pphof.
+// Beads: hk-pphof, hk-t48rg.
 func TestMergeToMain_BeadsLedgerOnlyConflict_AutoResolved(t *testing.T) {
 	t.Parallel()
 
@@ -162,6 +207,7 @@ func TestMergeToMain_BeadsLedgerOnlyConflict_AutoResolved(t *testing.T) {
 
 	projectDir := mergeToMainFixtureProjectDir(t)
 	mergeToMainFixtureGitRepo(t, projectDir)
+	mergeToMainFixtureRegisterBeadsUnionDriver(t, projectDir) // register driver + .gitattributes
 	mergeToMainFixtureInitBeadsLedger(t, projectDir)
 
 	// Create a bare remote so git push succeeds.
@@ -240,10 +286,10 @@ func TestMergeToMain_BeadsLedgerOnlyConflict_AutoResolved(t *testing.T) {
 
 	// ── Assertion (p1): CloseBead called, ReopenBead NOT called. ─────────────
 	if got := ledger.getClosedCount(); got != 1 {
-		t.Errorf("CloseBead call count = %d; want 1 on beads-ledger auto-resolve path", got)
+		t.Errorf("CloseBead call count = %d; want 1 (beads-union driver resolved conflict)", got)
 	}
 	if got := ledger.getReopenedCount(); got != 0 {
-		t.Errorf("ReopenBead call count = %d; want 0 on beads-ledger auto-resolve path", got)
+		t.Errorf("ReopenBead call count = %d; want 0 (beads-union driver resolved conflict)", got)
 	}
 
 	// ── Assertion (p2): outcome_emitted{kind=approved}. ─────────────────────
@@ -260,10 +306,10 @@ func TestMergeToMain_BeadsLedgerOnlyConflict_AutoResolved(t *testing.T) {
 	// ── Assertion (p3): main advanced. ───────────────────────────────────────
 	mainSHAAfter := mergeToMainFixtureHeadSHA(t, projectDir, "main")
 	if mainSHAAfter == mainSHABefore {
-		t.Errorf("main HEAD unchanged after beads-ledger auto-resolve: still %s", mainSHABefore)
+		t.Errorf("main HEAD unchanged after beads-union driver resolved conflict: still %s", mainSHABefore)
 	}
 
-	t.Logf("merge-to-main beads-ledger auto-resolve OK: main %s → %s, events: %v",
+	t.Logf("merge-to-main beads-union driver OK: main %s → %s, events: %v",
 		mainSHABefore[:8], mainSHAAfter[:8], mergeToMainEventOrder(collector))
 }
 
@@ -272,14 +318,15 @@ func TestMergeToMain_BeadsLedgerOnlyConflict_AutoResolved(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestMergeToMain_RealConflictWithBeadsLedger_Escalates verifies that when
-// both work.txt AND .beads/issues.jsonl conflict during rebase, the daemon does
-// NOT auto-resolve and instead:
+// both work.txt AND .beads/issues.jsonl conflict during rebase, the rebase
+// fails (work.txt cannot be auto-resolved by the beads-union driver) and the
+// daemon escalates:
 //
 //	(q1) calls ReopenBead,
 //	(q2) emits outcome_emitted{kind=rejected, reason containing "rebase_conflict"},
 //	(q3) does NOT call CloseBead.
 //
-// Bead: hk-pphof.
+// Beads: hk-pphof, hk-t48rg.
 func TestMergeToMain_RealConflictWithBeadsLedger_Escalates(t *testing.T) {
 	t.Parallel()
 

@@ -619,9 +619,9 @@ type WatchdogConfig struct {
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
-	Daemon        rawDaemonConfig           `yaml:"daemon"`    // hk-rcp7: PL-004b daemon: block
-	Keeper        rawKeeperConfig           `yaml:"keeper"`    // hk-lhu2: keeper config block
-	Watchdog      rawWatchdogConfig         `yaml:"watchdog"`  // hk-sbitr: ctx-watchdog schedule gate
+	Daemon        rawDaemonConfig           `yaml:"daemon"`   // hk-rcp7: PL-004b daemon: block
+	Keeper        rawKeeperConfig           `yaml:"keeper"`   // hk-lhu2: keeper config block
+	Watchdog      rawWatchdogConfig         `yaml:"watchdog"` // hk-sbitr: ctx-watchdog schedule gate
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.

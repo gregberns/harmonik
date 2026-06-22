@@ -1204,6 +1204,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		var beadResetter lifecycle.BeadResetter
 		var beadCat3cCloser lifecycle.BeadCat3cCloser
 		var intentGCLedger lifecycle.IntentGCLedger
+		var intentRedriveWriter lifecycle.IntentRedriveWriter
 		var intentLogDir string
 		if cfg.BrPath != "" {
 			brAdapter, brAdapterErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
@@ -1221,8 +1222,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			} else {
 				beadLedger = brAdapter
 				beadResetter = brAdapter
-				beadCat3cCloser = brAdapter // Cat 3c auto-reconciler (hk-lgtq2)
-				intentGCLedger = brAdapter  // GCRetiredIntents ledger (hk-cizvu)
+				beadCat3cCloser = brAdapter       // Cat 3c auto-reconciler (hk-lgtq2)
+				intentGCLedger = brAdapter        // GCRetiredIntentsWithRedrive ledger (hk-cizvu)
+				intentRedriveWriter = brAdapter   // BI-031 step-4 re-drive (hk-aev8t)
 				intentLogDir = lifecycle.BeadsIntentsDir(cfg.ProjectDir)
 			}
 		}
@@ -1296,10 +1298,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			projectHash,
 			daemonStartTime,
 			OrphanSweepConfig{
-				BeadLedger:      beadLedger,
-				BeadResetter:    beadResetter,
-				BeadCat3cCloser: beadCat3cCloser,
-				IntentGCLedger:  intentGCLedger,
+				BeadLedger:          beadLedger,
+				BeadResetter:        beadResetter,
+				BeadCat3cCloser:     beadCat3cCloser,
+				IntentGCLedger:      intentGCLedger,
+				IntentRedriveWriter: intentRedriveWriter, // BI-031 step-4 re-drive (hk-aev8t)
 				// BeadProvenance: sentinel-file checker (hk-11xkn). Reads
 				// .harmonik/beads-owned/<bead-id> written by ClaimBead on
 				// successful claim. The sentinel outlives the BI-030 claim intent

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 )
 
@@ -406,54 +407,77 @@ type GCRetiredIntentsResult struct {
 	// pass because the per-boot cap (gcRetiredIntentsMaxScan) was reached.
 	// These files remain on disk and will be processed on subsequent boots.
 	Skipped int
+	// RedriveCount is the count of stale intent files where the bead was at
+	// the pre-state and the br write was successfully re-issued and the intent
+	// file was deleted. Zero when IntentRedriveWriter is nil.
+	//
+	// Spec ref: specs/beads-integration.md §4.10 BI-031 step 4 (4a success).
+	// Bead ref: hk-aev8t.
+	RedriveCount int
 }
 
-// GCRetiredIntents walks projectDir/.harmonik/beads-intents/, identifies
-// intent files with mtime before daemonStartTime, and for each checks whether
-// the target bead has already landed its op via ledger.ShowBead.
+// IntentRedriveWriter is the write surface consumed by
+// [GCRetiredIntentsWithRedrive] to re-issue a stale terminal-transition write
+// at daemon startup (BI-031 step 4). It is satisfied by *brcli.Adapter in
+// production (Adapter.ReissueTerminalTransition) and by a fake in tests.
 //
-// "Landed" means the bead has reached or advanced past the op's
-// IntendedPostState — see gcIntentOpLanded for the per-op decision.  If the
-// op has landed the intent file is deleted: it is a leftover from a crash
-// between BI-030 step 5 (br success) and step 6 (intent delete).  Removing
-// these files prevents stale_intents_observed from growing unboundedly across
-// daemon restarts (hk-cizvu F10, hk-hf9i8).
+// Spec ref: specs/beads-integration.md §4.10 BI-031 step 4.
+// Bead ref: hk-aev8t (G3 — step-4 re-drive missing).
+type IntentRedriveWriter interface {
+	// ReissueTerminalTransition re-issues the br write from entry using the
+	// same idempotency_key. On success the intent file is deleted (BI-031 step
+	// 6); on failure the intent file is retained for Cat 3a routing.
+	ReissueTerminalTransition(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, entry core.IntentLogEntry) error
+}
+
+// GCRetiredIntentsConfig holds the parameters for [GCRetiredIntentsWithRedrive].
 //
-// If the op has NOT landed the file is retained for the Cat 3a detector to
-// re-drive the br operation.
+// Bead ref: hk-aev8t.
+type GCRetiredIntentsConfig struct {
+	// ProjectDir is the harmonik project root (parent of .harmonik/).
+	ProjectDir string
+
+	// DaemonStartTime is the daemon's startup wall-clock timestamp. Only intent
+	// files with mtime strictly before this value are considered stale.
+	DaemonStartTime time.Time
+
+	// Ledger is the read surface for ShowBead status checks. REQUIRED (non-nil).
+	Ledger IntentGCLedger
+
+	// RedriveWriter, when non-nil, enables BI-031 step-4 re-drive: for stale
+	// intent files where the bead is still at the op's pre-state, the write is
+	// re-issued via ReissueTerminalTransition instead of being retained for
+	// Cat 3a. When nil, non-landed files are retained (the legacy behavior).
+	RedriveWriter IntentRedriveWriter
+
+	// BrTimeoutCfg is the BI-025c timeout configuration forwarded to
+	// RedriveWriter.ReissueTerminalTransition. Zero value → BI-025c defaults.
+	BrTimeoutCfg brcli.TimeoutConfig
+
+	// Logger receives diagnostic messages. Nil → silent.
+	Logger *log.Logger
+}
+
+// GCRetiredIntentsWithRedrive extends [GCRetiredIntents] with BI-031 step-4
+// re-drive: when cfg.RedriveWriter is non-nil and a stale intent file's bead
+// is still at the pre-state for the recorded op, the br write is re-issued
+// rather than retained for Cat 3a. Successfully re-driven files are counted in
+// [GCRetiredIntentsResult.RedriveCount].
 //
-// To bound startup latency (each ShowBead call shells out to `br show` at
-// ~0.24 s), at most gcRetiredIntentsMaxScan stale files are queried per boot.
-// Files beyond the cap are left on disk (result.Skipped) and processed on
-// subsequent boots.
+// When cfg.RedriveWriter is nil the behavior is identical to [GCRetiredIntents].
 //
-// Per-file errors (unreadable / malformed entry, ShowBead failure) are logged
-// and the file is conservatively retained (not removed). The returned error is
-// non-nil only when the intent-log directory itself cannot be enumerated.
-//
-// Returns (zero-value, nil) when the intent-log directory does not exist.
-//
-// Spec ref: specs/beads-integration.md §4.10 BI-031 — status-check-before-
-// reissue idempotency recovery: "if the bead is already in the intended state,
-// delete the intent file."
-// Bead ref: hk-cizvu — orphan-sweep stale_intents_observed GC.
-// Bead ref: hk-hf9i8 — retain/remove compare fix + per-boot cap.
-func GCRetiredIntents(
-	ctx context.Context,
-	projectDir string,
-	daemonStartTime time.Time,
-	ledger IntentGCLedger,
-	logger *log.Logger,
-) (GCRetiredIntentsResult, error) {
+// Spec ref: specs/beads-integration.md §4.10 BI-031 step 4.
+// Bead ref: hk-aev8t.
+func GCRetiredIntentsWithRedrive(ctx context.Context, cfg GCRetiredIntentsConfig) (GCRetiredIntentsResult, error) {
 	var result GCRetiredIntentsResult
 
-	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
+	intentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "beads-intents")
 	entries, err := os.ReadDir(intentsDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return result, nil
 		}
-		return result, fmt.Errorf("lifecycle: GCRetiredIntents: ReadDir %q: %w", intentsDir, err)
+		return result, fmt.Errorf("lifecycle: GCRetiredIntentsWithRedrive: ReadDir %q: %w", intentsDir, err)
 	}
 
 	scanned := 0
@@ -466,83 +490,149 @@ func GCRetiredIntents(
 			continue
 		}
 		if strings.Contains(name, ".tmp-") {
-			// BI-030 mid-rename temp file; skip.
 			continue
 		}
 
 		info, infoErr := entry.Info()
 		if infoErr != nil {
-			orphanLog(logger, "GCRetiredIntents: skipping %q: stat error: %v", name, infoErr)
+			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: skipping %q: stat error: %v", name, infoErr)
 			result.Retained++
 			continue
 		}
-		if !info.ModTime().Before(daemonStartTime) {
-			// Not stale — created after daemon start; not a GC target.
+		if !info.ModTime().Before(cfg.DaemonStartTime) {
 			continue
 		}
 
-		// Per-boot cap: bound the number of ShowBead calls to prevent a
-		// startup hang when many stale files have accumulated (hk-hf9i8).
 		if scanned >= gcRetiredIntentsMaxScan {
 			result.Skipped++
 			continue
 		}
 		scanned++
 
-		// Stale file: read intent entry to determine the bead and intended state.
 		intentPath := filepath.Join(intentsDir, name)
 		intentEntry, readErr := core.ReadIntentLogEntry(intentPath)
 		if readErr != nil {
-			// Malformed or unreadable — conservative: retain for Cat 3a.
-			orphanLog(logger, "GCRetiredIntents: %q unreadable (%v); retaining for Cat 3a", name, readErr)
+			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: %q unreadable (%v); retaining for Cat 3a", name, readErr)
 			result.Retained++
 			continue
 		}
 
-		// Query the ledger for the current bead status.
-		record, showErr := ledger.ShowBead(ctx, intentEntry.BeadID)
+		record, showErr := cfg.Ledger.ShowBead(ctx, intentEntry.BeadID)
 		if showErr != nil {
-			// ShowBead failure — conservative: retain for Cat 3a.
-			orphanLog(logger, "GCRetiredIntents: ShowBead(%s) failed (%v); retaining intent for Cat 3a", intentEntry.BeadID, showErr)
+			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: ShowBead(%s) failed (%v); retaining intent for Cat 3a", intentEntry.BeadID, showErr)
 			result.Retained++
 			continue
 		}
 
-		if !gcIntentOpLanded(intentEntry.Op, record.Status, intentEntry.IntendedPostState) {
-			// Op has NOT landed — leave the file for Cat 3a recovery.
-			orphanLog(logger, "GCRetiredIntents: bead %s status=%s (want op=%s to land); retaining for Cat 3a",
-				intentEntry.BeadID, record.Status, intentEntry.Op)
+		if gcIntentOpLanded(intentEntry.Op, record.Status, intentEntry.IntendedPostState) {
+			// Step 3: op has landed — delete the leftover intent file.
+			if removeErr := os.Remove(intentPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: remove %q failed (%v); retaining", name, removeErr)
+				result.Retained++
+				continue
+			}
+			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: removed retired intent %q (bead %s op=%s landed, now %s)",
+				name, intentEntry.BeadID, intentEntry.Op, record.Status)
+			result.Removed++
+			continue
+		}
+
+		// Op has NOT landed.  Decide between step 4 (pre-state: re-drive) and
+		// step 5 (diverged: neither pre-state nor post-state → Cat 3a retain).
+		if cfg.RedriveWriter == nil {
+			// No write surface — legacy behavior: retain for Cat 3a.
+			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: bead %s status=%s (want op=%s to land); retaining for Cat 3a (no RedriveWriter)", intentEntry.BeadID, record.Status, intentEntry.Op)
 			result.Retained++
 			continue
 		}
 
-		// Op has landed — the file is a leftover from a crash after step 5
-		// success but before step 6 delete.  Remove it per BI-031 GC path.
-		if removeErr := os.Remove(intentPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			orphanLog(logger, "GCRetiredIntents: remove %q failed (%v); retaining", name, removeErr)
+		preState, knownOp := gcIntentOpPreState(intentEntry.Op)
+		if !knownOp {
+			// Unknown op — cannot determine pre-state; retain conservatively.
+			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: bead %s unknown op %q; retaining for Cat 3a", intentEntry.BeadID, intentEntry.Op)
 			result.Retained++
 			continue
 		}
-		orphanLog(logger, "GCRetiredIntents: removed retired intent %q (bead %s op=%s landed, now %s)",
-			name, intentEntry.BeadID, intentEntry.Op, record.Status)
-		result.Removed++
+
+		if record.Status != preState {
+			// Step 5: bead is neither at pre-state nor post-state — torn write /
+			// external mutation.  Route to Cat 3a reconciliation.
+			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: bead %s status=%s is neither pre-state (%s) nor post-state (%s) for op=%s; retaining for Cat 3a (divergence)", intentEntry.BeadID, record.Status, preState, intentEntry.IntendedPostState, intentEntry.Op)
+			result.Retained++
+			continue
+		}
+
+		// Step 4: bead is at pre-state — re-issue the br write.
+		orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: bead %s at pre-state %s for op=%s; re-driving via BI-031 step 4", intentEntry.BeadID, preState, intentEntry.Op)
+		redriveErr := cfg.RedriveWriter.ReissueTerminalTransition(ctx, intentsDir, cfg.BrTimeoutCfg, intentEntry)
+		if redriveErr == nil {
+			// 4a success: intent file deleted by ReissueTerminalTransition.
+			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: re-drive succeeded for bead %s op=%s", intentEntry.BeadID, intentEntry.Op)
+			result.RedriveCount++
+		} else {
+			// 4b unconfirmed / 4d unavailable / 4e schema mismatch / 4f other:
+			// intent file retained; Cat 3a auto-resolver will handle it.
+			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: re-drive failed for bead %s op=%s (%v); retaining for Cat 3a", intentEntry.BeadID, intentEntry.Op, redriveErr)
+			result.Retained++
+		}
 	}
 
 	if result.Skipped > 0 {
-		orphanLog(logger, "GCRetiredIntents: cap reached (%d); deferred %d stale files to next boot",
+		orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: cap reached (%d); deferred %d stale files to next boot",
 			gcRetiredIntentsMaxScan, result.Skipped)
 	}
 
-	// fsync the parent directory once after all removals to ensure deletions are
-	// durable (mirrors the discipline in DeleteIntentLogAndSyncParent per BI-030).
+	// fsync the parent directory once after all removals.
 	if result.Removed > 0 {
 		if dirFd, openErr := os.Open(intentsDir); openErr == nil {
-			_ = dirFd.Sync()  //nolint:errcheck // fsync error after successful removes is non-fatal
+			_ = dirFd.Sync()  //nolint:errcheck
 			_ = dirFd.Close() //nolint:errcheck
 		}
 	}
 
 	return result, nil
+}
+
+// GCRetiredIntents is the backward-compatible entry point for intent-log GC.
+// It scans projectDir/.harmonik/beads-intents/ for stale intent files and
+// deletes those whose op has already landed (step 3). Non-landed files are
+// retained for Cat 3a — no step-4 re-drive is attempted (RedriveWriter = nil).
+//
+// Callers that want BI-031 step-4 re-drive SHOULD use [GCRetiredIntentsWithRedrive]
+// with a non-nil RedriveWriter instead.
+func GCRetiredIntents(
+	ctx context.Context,
+	projectDir string,
+	daemonStartTime time.Time,
+	ledger IntentGCLedger,
+	logger *log.Logger,
+) (GCRetiredIntentsResult, error) {
+	return GCRetiredIntentsWithRedrive(ctx, GCRetiredIntentsConfig{
+		ProjectDir:      projectDir,
+		DaemonStartTime: daemonStartTime,
+		Ledger:          ledger,
+		Logger:          logger,
+	})
+}
+
+// gcIntentOpPreState returns the Beads status that must hold BEFORE the op
+// can be issued (BI-031 step 4 pre-state check).
+//
+// Returns (preState, true) for known ops; (empty, false) for unknown ops.
+// The caller MUST treat an unknown op as ambiguous and retain the intent file.
+func gcIntentOpPreState(op core.TerminalOp) (core.CoarseStatus, bool) {
+	switch op {
+	case core.TerminalOpClaim:
+		return core.CoarseStatusOpen, true
+	case core.TerminalOpClose:
+		return core.CoarseStatusInProgress, true
+	case core.TerminalOpReopen:
+		return core.CoarseStatusClosed, true
+	case core.TerminalOpReset:
+		return core.CoarseStatusInProgress, true
+	default:
+		return "", false
+	}
 }
 
 // gcIntentOpLanded reports whether the op described by an intent file has

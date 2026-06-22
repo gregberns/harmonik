@@ -239,9 +239,9 @@ type OrphanSweepConfig struct {
 	// Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
 	BeadCat3cCloser lifecycle.BeadCat3cCloser
 
-	// IntentGCLedger, when non-nil, enables GCRetiredIntents: stale intent
-	// files whose bead has already reached IntendedPostState are deleted rather
-	// than accumulated indefinitely. When nil, the GC pass is skipped and
+	// IntentGCLedger, when non-nil, enables GCRetiredIntentsWithRedrive: stale
+	// intent files whose bead has already reached IntendedPostState are deleted
+	// rather than accumulated indefinitely. When nil, the GC pass is skipped and
 	// StaleIntentsObserved counts all stale files (old behavior).
 	//
 	// Production callers SHOULD supply this (typically the same *brcli.Adapter
@@ -250,6 +250,17 @@ type OrphanSweepConfig struct {
 	//
 	// Bead ref: hk-cizvu — stale_intents_observed grows unbounded without GC.
 	IntentGCLedger lifecycle.IntentGCLedger
+
+	// IntentRedriveWriter, when non-nil, enables BI-031 step-4 re-drive: for
+	// stale intent files where the bead is still at the op's pre-state, the br
+	// write is re-issued at startup instead of being retained for Cat 3a.
+	// Production callers SHOULD supply this (typically the same *brcli.Adapter
+	// that backs IntentGCLedger). Unit-test callers that do not exercise the
+	// re-drive path may leave it nil.
+	//
+	// Spec ref: specs/beads-integration.md §4.10 BI-031 step 4.
+	// Bead ref: hk-aev8t.
+	IntentRedriveWriter lifecycle.IntentRedriveWriter
 
 	// IntentLogDir is the absolute path of .harmonik/beads-intents/ — read by
 	// the bead-reset sweep to compute exclusion conditions (a) and (b).
@@ -839,15 +850,24 @@ func RunOrphanSweep(
 
 	// (d) Stale intent files.
 	//
-	// When IntentGCLedger is wired: call GCRetiredIntents to delete intent
-	// files whose op has already landed (BI-031 GC path). StaleIntentsObserved
-	// is set to the retained count; IntentsGCd is set to the removed count.
-	// This prevents stale_intents_observed from growing unboundedly (hk-cizvu).
+	// When IntentGCLedger is wired: call GCRetiredIntentsWithRedrive to delete
+	// intent files whose op has already landed (BI-031 step-3 GC path), and when
+	// IntentRedriveWriter is also non-nil, re-drive writes for files whose bead
+	// is still at the pre-state (BI-031 step-4). StaleIntentsObserved is set to
+	// the retained count; IntentsGCd is set to the removed count. This prevents
+	// stale_intents_observed from growing unboundedly (hk-cizvu). Bead: hk-aev8t.
 	//
 	// When IntentGCLedger is nil: fall back to EnumerateStaleIntents (count
 	// only, no removal — the legacy behavior).
 	if cfg.IntentGCLedger != nil {
-		gcResult, gcErr := lifecycle.GCRetiredIntents(ctx, projectDir, daemonStartTime, cfg.IntentGCLedger, cfg.Logger)
+		gcResult, gcErr := lifecycle.GCRetiredIntentsWithRedrive(ctx, lifecycle.GCRetiredIntentsConfig{
+			ProjectDir:      projectDir,
+			DaemonStartTime: daemonStartTime,
+			Ledger:          cfg.IntentGCLedger,
+			RedriveWriter:   cfg.IntentRedriveWriter,
+			BrTimeoutCfg:    cfg.BrTimeoutCfg,
+			Logger:          cfg.Logger,
+		})
 		if gcErr != nil {
 			errs = append(errs, fmt.Sprintf("intents-gc: %v", gcErr))
 		}

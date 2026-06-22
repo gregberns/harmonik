@@ -886,6 +886,12 @@ func ExportedCommitResidualDelta(ctx context.Context, wtPath string, runID core.
 	commitResidualDelta(ctx, wtPath, runID)
 }
 
+// ExportedCleanUntrackedFiles exposes cleanUntrackedFiles for the
+// integration-test artifact pre-rebase cleanup regression test (hk-g9zz).
+func ExportedCleanUntrackedFiles(ctx context.Context, wtPath string) {
+	cleanUntrackedFiles(ctx, wtPath)
+}
+
 // ExportedForceTeardownSession exposes forceTeardownSession for the hk-68pvl
 // worktree-teardown-ordering regression test.
 func ExportedForceTeardownSession(sess handler.Session) {

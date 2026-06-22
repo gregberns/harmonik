@@ -5464,6 +5464,21 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		// — so the rebase proceeds with the work intact instead of failing.
 		commitResidualDelta(ctx, wtPath, runID)
 
+		// hk-g9zz: remove untracked non-gitignored files left by //go:build
+		// integration tests. A bead whose agent ran an integration test (e.g.
+		// TestIntegration_TwinE2E_OperatorRealEnv) may leave build artifacts —
+		// binaries built without an explicit output path, temp objects, etc. —
+		// in the run worktree. `git rebase` aborts when an untracked file would
+		// be overwritten by a commit being replayed, producing:
+		//   "error: The following untracked working tree files would be
+		//    overwritten by checkout"
+		// At this point commitResidualDelta has already committed any genuine
+		// authored untracked files (new source files, etc.), so the files
+		// `git clean -fd` touches are only integration test artifacts.
+		// Non-fatal: errors are logged; the subsequent rebase surfaces the
+		// real dirty-state failure if any genuine artifacts remain.
+		cleanUntrackedFiles(ctx, wtPath)
+
 		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
 		rebaseCmd.Dir = wtPath
 		if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
@@ -6053,6 +6068,37 @@ func commitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 	commitCmd.Dir = wtPath
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: commitResidualDelta: git commit: %v\n%s", err, out)
+	}
+}
+
+// cleanUntrackedFiles removes untracked non-gitignored files and directories
+// from the run worktree using `git clean -fd`. Called after discardDirtyChurn
+// and commitResidualDelta as the final pre-rebase cleanup step so that
+// integration-test artifacts (binaries built without an output path, temp
+// objects, etc.) cannot abort the rebase.
+//
+// `git rebase` aborts when an untracked file in the working tree would be
+// overwritten by a commit being replayed ("error: The following untracked
+// working tree files would be overwritten by checkout"). `git clean -fd`
+// removes those files — it honours .gitignore, so platform/build artifacts
+// already covered by .gitignore are left untouched.
+//
+// Safety: at this point commitResidualDelta has already committed any genuine
+// authored untracked files (new source files the implementer added), so the
+// only files that survive to this step are integration-test artifacts, not
+// bead work. Gitignored files (*.test, /harmonik-twin-claude, /.harmonik/)
+// are unaffected and do not interfere with the rebase.
+//
+// Non-fatal and best-effort: errors are logged to stderr; the subsequent
+// rebase will surface the real dirty-state failure if cleaning did not fully
+// succeed.
+//
+// Bead: hk-g9zz.
+func cleanUntrackedFiles(ctx context.Context, wtPath string) {
+	cleanCmd := exec.CommandContext(ctx, "git", "clean", "-fd")
+	cleanCmd.Dir = wtPath
+	if out, err := cleanCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: cleanUntrackedFiles: git clean -fd: %v\n%s", err, out)
 	}
 }
 

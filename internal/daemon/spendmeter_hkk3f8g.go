@@ -156,8 +156,8 @@ func (m *DaemonSpendMeter) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "daemon-spend-meter-run-started",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeRunStarted): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeRunStarted: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
@@ -171,8 +171,8 @@ func (m *DaemonSpendMeter) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "daemon-spend-meter-budget-accrual",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeBudgetAccrual): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeBudgetAccrual: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

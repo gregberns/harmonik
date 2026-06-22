@@ -101,8 +101,8 @@ func (w *ReviewGateAnomalyWatcher) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "review-gate-anomaly-bead-closed",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeBeadClosed): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeBeadClosed: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
@@ -116,8 +116,8 @@ func (w *ReviewGateAnomalyWatcher) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "review-gate-anomaly-reviewer-verdict",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeReviewerVerdict): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeReviewerVerdict: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

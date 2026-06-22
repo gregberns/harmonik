@@ -149,8 +149,8 @@ func onNfrSubscribePauseStatus(t *testing.T, bus eventbus.EventBus) <-chan core.
 		ConsumerID:    "onNfr-pause-status-" + t.Name(),
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeOperatorPauseStatus): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeOperatorPauseStatus: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
@@ -182,8 +182,8 @@ func onNfrSubscribeResuming(t *testing.T, bus eventbus.EventBus) <-chan core.Ope
 		ConsumerID:    "onNfr-resuming-" + t.Name(),
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeOperatorResuming): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeOperatorResuming: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
@@ -215,8 +215,8 @@ func onNfrSubscribeQueuePaused(t *testing.T, bus eventbus.EventBus) <-chan core.
 		ConsumerID:    "onNfr-queue-paused-" + t.Name(),
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeQueuePaused): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeQueuePaused: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

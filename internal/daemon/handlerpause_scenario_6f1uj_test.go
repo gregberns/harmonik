@@ -129,8 +129,8 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 			ConsumerID:    "test-handler-paused-observer-hk6f1uj",
 			ConsumerClass: core.ConsumerClassAsynchronous,
 			EventPattern: core.EventPattern{
-				Types: map[string]struct{}{
-					string(core.EventTypeHandlerPaused): {},
+				Types: map[core.EventType]struct{}{
+					core.EventTypeHandlerPaused: {},
 				},
 			},
 			OnPanic: core.OnPanicRecoverAndLog,

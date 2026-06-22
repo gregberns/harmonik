@@ -54,8 +54,8 @@ func srSetup(t *testing.T) (ctrl *daemon.HandlerPauseController, watcher *daemon
 		ConsumerID:    "test-signal-resume-observer-bdvae",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeHandlerResumed): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeHandlerResumed: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

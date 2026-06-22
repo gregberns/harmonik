@@ -43,7 +43,7 @@ func commsFixtureBuildBus(t *testing.T) (eventbus.EventBus, *[]core.Event, *sync
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
 			Wildcard: false,
-			Types:    map[string]struct{}{"agent_message": {}},
+			Types:    map[core.EventType]struct{}{"agent_message": {}},
 		},
 		Handler: func(_ context.Context, evt core.Event) error {
 			mu.Lock()

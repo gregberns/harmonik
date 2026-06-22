@@ -48,10 +48,10 @@ func dx9FixtureBuildBus(t *testing.T) (eventbus.EventBus, *[]core.Event, *sync.M
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
 			Wildcard: false,
-			Types: map[string]struct{}{
-				"decision_needed":    {},
-				"decision_resolved":  {},
-				"decision_withdrawn": {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeDecisionNeeded:    {},
+				core.EventTypeDecisionResolved:  {},
+				core.EventTypeDecisionWithdrawn: {},
 			},
 		},
 		Handler: func(_ context.Context, evt core.Event) error {

@@ -103,8 +103,8 @@ func (p *HandlerPausePolicyGoroutine) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "handler-pause-policy-rate-limit-" + string(p.cfg.AgentType),
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeAgentRateLimitStatus): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeAgentRateLimitStatus: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
@@ -118,8 +118,8 @@ func (p *HandlerPausePolicyGoroutine) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "handler-pause-policy-budget-exhausted-" + string(p.cfg.AgentType),
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeBudgetExhausted): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeBudgetExhausted: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

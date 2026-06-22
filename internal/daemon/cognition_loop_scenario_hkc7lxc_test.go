@@ -93,8 +93,8 @@ func clScenarioCollectHandlerPaused(t *testing.T, bus eventbus.EventBus) <-chan 
 		ConsumerID:    "clScenario-handler-paused-" + t.Name(),
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeHandlerPaused): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeHandlerPaused: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
@@ -125,8 +125,8 @@ func clScenarioCollectBudgetExhausted(t *testing.T, bus eventbus.EventBus) <-cha
 		ConsumerID:    "clScenario-budget-exhausted-" + t.Name(),
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeBudgetExhausted): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeBudgetExhausted: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

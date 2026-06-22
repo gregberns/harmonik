@@ -150,7 +150,7 @@ func (b *reviewGateAnomalyFakeBus) Emit(ctx context.Context, eventType core.Even
 	b.mu.Unlock()
 
 	for _, sub := range subs {
-		if _, ok := sub.EventPattern.Types[string(eventType)]; ok {
+		if _, ok := sub.EventPattern.Types[eventType]; ok {
 			evt := core.Event{
 				EventID: core.EventID(uuid.New()),
 				Type:    string(eventType),

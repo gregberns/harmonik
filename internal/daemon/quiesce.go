@@ -237,8 +237,8 @@ func (a *QuiesceArbiter) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "quiesce-arbiter-epic-completed",
 		ConsumerClass: core.ConsumerClassObserver,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeEpicCompleted): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeEpicCompleted: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
@@ -252,7 +252,7 @@ func (a *QuiesceArbiter) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "quiesce-arbiter-agent-message",
 		ConsumerClass: core.ConsumerClassObserver,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
+			Types: map[core.EventType]struct{}{
 				"agent_message": {},
 			},
 		},

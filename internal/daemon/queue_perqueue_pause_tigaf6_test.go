@@ -283,7 +283,7 @@ func TestPerQueuePause_EmitsQueuePausedEventForTarget(t *testing.T) {
 		ConsumerID:    "test-capture-per-queue-paused",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{string(core.EventTypeQueuePaused): {}},
+			Types: map[core.EventType]struct{}{core.EventTypeQueuePaused: {}},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, evt core.Event) error {

@@ -437,7 +437,7 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 
 	// Step 6: dispatch per consumer class (EV-014a).
 	for _, sub := range subs {
-		if !sub.EventPattern.MatchesType(string(eventType)) {
+		if !sub.EventPattern.MatchesType(eventType) {
 			continue
 		}
 		if sub.Handler == nil {
@@ -556,7 +556,7 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 
 	// Step 6: dispatch per consumer class (EV-014a).
 	for _, sub := range subs {
-		if !sub.EventPattern.MatchesType(string(eventType)) {
+		if !sub.EventPattern.MatchesType(eventType) {
 			continue
 		}
 		if sub.Handler == nil {
@@ -662,7 +662,7 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 	b.mu.Unlock()
 
 	for _, sub := range subs {
-		if !sub.EventPattern.MatchesType(agentMessageType) {
+		if !sub.EventPattern.MatchesType(core.EventType(agentMessageType)) {
 			continue
 		}
 		if sub.Handler == nil {
@@ -756,7 +756,7 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 	b.mu.Unlock()
 
 	for _, sub := range subs {
-		if !sub.EventPattern.MatchesType(agentPresenceType) {
+		if !sub.EventPattern.MatchesType(core.EventType(agentPresenceType)) {
 			continue
 		}
 		if sub.Handler == nil {
@@ -858,7 +858,7 @@ func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, paylo
 	b.mu.Unlock()
 
 	for _, sub := range subs {
-		if !sub.EventPattern.MatchesType(typeName) {
+		if !sub.EventPattern.MatchesType(eventType) {
 			continue
 		}
 		if sub.Handler == nil {
@@ -1070,7 +1070,7 @@ func syncPatternOverlap(a, b core.EventPattern) (string, bool) {
 	// Both explicit: check for intersection.
 	for t := range a.Types {
 		if _, ok := b.Types[t]; ok {
-			return t, true
+			return string(t), true
 		}
 	}
 	return "", false
@@ -1117,7 +1117,7 @@ func (b *busImpl) checkSyncAcyclicity(incoming core.Subscription) error {
 	dfs = func(emitType core.EventType, visited map[string]bool, path []string) []string {
 		// First check: does emitType itself match the incoming consumer's subscription?
 		// If yes, a direct re-dispatch cycle is detected.
-		if incoming.EventPattern.MatchesType(string(emitType)) {
+		if incoming.EventPattern.MatchesType(emitType) {
 			return append(path, incoming.ConsumerID)
 		}
 
@@ -1127,7 +1127,7 @@ func (b *busImpl) checkSyncAcyclicity(incoming core.Subscription) error {
 			if s.ConsumerID == incoming.ConsumerID {
 				continue
 			}
-			if !s.EventPattern.MatchesType(string(emitType)) {
+			if !s.EventPattern.MatchesType(emitType) {
 				continue
 			}
 			if visited[s.ConsumerID] {

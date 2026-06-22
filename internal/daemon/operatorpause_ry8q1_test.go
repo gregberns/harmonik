@@ -35,9 +35,9 @@ func newOpPauseController(t *testing.T) (*daemon.OperatorPauseController, *stubE
 		ConsumerID:    "test-op-pause-collector-hk-hggxx",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeOperatorPauseStatus): {},
-				string(core.EventTypeOperatorResuming):    {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeOperatorPauseStatus: {},
+				core.EventTypeOperatorResuming:    {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

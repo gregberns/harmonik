@@ -135,8 +135,8 @@ func (m *PerQueueSpendMeter) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "per-queue-spend-meter-budget-accrual",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeBudgetAccrual): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeBudgetAccrual: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

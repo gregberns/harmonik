@@ -158,8 +158,8 @@ func TestIntegration_HandlerPausePolicyGoroutineWiredBeforeSeal(t *testing.T) {
 			ConsumerID:    "test-t3hp-handler-paused-observer-lz485",
 			ConsumerClass: core.ConsumerClassAsynchronous,
 			EventPattern: core.EventPattern{
-				Types: map[string]struct{}{
-					string(core.EventTypeHandlerPaused): {},
+				Types: map[core.EventType]struct{}{
+					core.EventTypeHandlerPaused: {},
 				},
 			},
 			OnPanic: core.OnPanicRecoverAndLog,

@@ -463,7 +463,7 @@ func TestCP014_HookOrderingBySubsystemPriority(t *testing.T) {
 		ConsumerID:    "test.order-collector",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{"hook_fired": {}},
+			Types: map[core.EventType]struct{}{core.EventTypeHookFired: {}},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, ev core.Event) error {
@@ -529,7 +529,7 @@ func TestCP014_HookOrderingByDeclarationOrderWithinSamePriority(t *testing.T) {
 		ConsumerID:    "test.decl-order-collector",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{"hook_fired": {}},
+			Types: map[core.EventType]struct{}{core.EventTypeHookFired: {}},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, ev core.Event) error {

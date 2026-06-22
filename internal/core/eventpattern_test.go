@@ -6,8 +6,8 @@ import (
 )
 
 // eventPatternFixtureTypes returns an EventPattern in explicit mode with the given types.
-func eventPatternFixtureTypes(types ...string) EventPattern {
-	m := make(map[string]struct{}, len(types))
+func eventPatternFixtureTypes(types ...EventType) EventPattern {
+	m := make(map[EventType]struct{}, len(types))
 	for _, t := range types {
 		m[t] = struct{}{}
 	}
@@ -16,7 +16,7 @@ func eventPatternFixtureTypes(types ...string) EventPattern {
 
 // eventPatternFixtureWildcard returns an EventPattern in wildcard mode.
 func eventPatternFixtureWildcard() EventPattern {
-	return EventPattern{Wildcard: true, Types: map[string]struct{}{}}
+	return EventPattern{Wildcard: true, Types: map[EventType]struct{}{}}
 }
 
 func TestEventPatternValidate(t *testing.T) {
@@ -36,7 +36,7 @@ func TestEventPatternValidate(t *testing.T) {
 		{
 			// Wildcard=false with non-empty types: valid per §6.1 invariant.
 			name:    "wildcard false non-empty types",
-			pattern: eventPatternFixtureTypes("run_started", "run_completed"),
+			pattern: eventPatternFixtureTypes(EventTypeRunStarted, EventTypeRunCompleted),
 			wantErr: false,
 		},
 		{
@@ -44,14 +44,14 @@ func TestEventPatternValidate(t *testing.T) {
 			name: "wildcard true non-empty types",
 			pattern: EventPattern{
 				Wildcard: true,
-				Types:    map[string]struct{}{"run_started": {}},
+				Types:    map[EventType]struct{}{EventTypeRunStarted: {}},
 			},
 			wantErr: true,
 		},
 		{
 			// Wildcard=false with empty types: invalid — explicit mode requires at least one type.
 			name:    "wildcard false empty types",
-			pattern: EventPattern{Wildcard: false, Types: map[string]struct{}{}},
+			pattern: EventPattern{Wildcard: false, Types: map[EventType]struct{}{}},
 			wantErr: true,
 		},
 		{
@@ -82,7 +82,7 @@ func TestEventPatternMatchesType(t *testing.T) {
 	t.Run("wildcard matches any type", func(t *testing.T) {
 		t.Parallel()
 		p := eventPatternFixtureWildcard()
-		for _, typ := range []string{"run_started", "run_completed", "unknown_future_type", ""} {
+		for _, typ := range []EventType{EventTypeRunStarted, EventTypeRunCompleted, "unknown_future_type", ""} {
 			if !p.MatchesType(typ) {
 				t.Errorf("wildcard pattern: MatchesType(%q) = false, want true", typ)
 			}
@@ -91,14 +91,14 @@ func TestEventPatternMatchesType(t *testing.T) {
 
 	t.Run("explicit matches listed types only", func(t *testing.T) {
 		t.Parallel()
-		p := eventPatternFixtureTypes("run_started", "run_completed")
-		if !p.MatchesType("run_started") {
+		p := eventPatternFixtureTypes(EventTypeRunStarted, EventTypeRunCompleted)
+		if !p.MatchesType(EventTypeRunStarted) {
 			t.Error("MatchesType(run_started) = false, want true")
 		}
-		if !p.MatchesType("run_completed") {
+		if !p.MatchesType(EventTypeRunCompleted) {
 			t.Error("MatchesType(run_completed) = false, want true")
 		}
-		if p.MatchesType("run_failed") {
+		if p.MatchesType(EventTypeRunFailed) {
 			t.Error("MatchesType(run_failed) = true, want false")
 		}
 		if p.MatchesType("") {
@@ -134,7 +134,7 @@ func TestEventPatternMarshalJSON(t *testing.T) {
 
 	t.Run("explicit types round-trip through JSON", func(t *testing.T) {
 		t.Parallel()
-		orig := eventPatternFixtureTypes("run_started", "agent_ready")
+		orig := eventPatternFixtureTypes(EventTypeRunStarted, EventTypeAgentReady)
 		if err := orig.Validate(); err != nil {
 			t.Fatalf("fixture invalid: %v", err)
 		}

@@ -44,7 +44,7 @@ func commsPresenceFixtureBuildBus(t *testing.T) (eventbus.EventBus, *[]core.Even
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
 			Wildcard: false,
-			Types:    map[string]struct{}{"agent_presence": {}},
+			Types:    map[core.EventType]struct{}{"agent_presence": {}},
 		},
 		Handler: func(_ context.Context, evt core.Event) error {
 			mu.Lock()

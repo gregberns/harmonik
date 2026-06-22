@@ -52,8 +52,8 @@ func smSetup(t *testing.T, maxRuns int, capBytes float64) (eventbus.EventBus, *d
 		ConsumerID:    "test-budget-exhausted-collector-" + t.Name(),
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeBudgetExhausted): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeBudgetExhausted: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

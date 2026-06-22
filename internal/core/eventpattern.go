@@ -18,21 +18,14 @@ import (
 // Invariants (enforced by Validate):
 //   - Wildcard == true  → len(Types) == 0
 //   - Wildcard == false → len(Types) >= 1
-//
-// Types uses string as the element type. The hoist to EventType is non-breaking
-// once the enum defined by hk-hqwn.59.82 lands (event-model.md §8.3 EventType table).
-//
-// TODO(hk-hqwn.59.82): replace string elements with core.EventType once the enum is defined.
 type EventPattern struct {
 	// Wildcard, when true, matches every current and future EventType.
 	// Types MUST be empty when Wildcard is true.
 	Wildcard bool
 
-	// Types is the explicit set of event type strings this pattern matches.
+	// Types is the explicit set of EventType values this pattern matches.
 	// Empty when Wildcard is true; non-empty when Wildcard is false.
-	//
-	// TODO(hk-hqwn.59.82): element type is string pending core.EventType (event-model.md §8.3).
-	Types map[string]struct{}
+	Types map[EventType]struct{}
 }
 
 // Validate reports whether p satisfies the EventPattern invariants from event-model.md §6.1:
@@ -48,9 +41,9 @@ func (p EventPattern) Validate() error {
 	return nil
 }
 
-// MatchesType reports whether p matches the given event type string.
+// MatchesType reports whether p matches the given event type.
 // It does not call Validate; callers should validate before relying on match semantics.
-func (p EventPattern) MatchesType(eventType string) bool {
+func (p EventPattern) MatchesType(eventType EventType) bool {
 	if p.Wildcard {
 		return true
 	}
@@ -70,7 +63,7 @@ type eventPatternJSON struct {
 func (p EventPattern) MarshalJSON() ([]byte, error) {
 	types := make([]string, 0, len(p.Types))
 	for t := range p.Types {
-		types = append(types, t)
+		types = append(types, string(t))
 	}
 	return json.Marshal(eventPatternJSON{
 		Wildcard: p.Wildcard,
@@ -85,9 +78,9 @@ func (p *EventPattern) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return fmt.Errorf("eventpattern: json decode: %w", err)
 	}
-	types := make(map[string]struct{}, len(wire.Types))
+	types := make(map[EventType]struct{}, len(wire.Types))
 	for _, t := range wire.Types {
-		types[t] = struct{}{}
+		types[EventType(t)] = struct{}{}
 	}
 	p.Wildcard = wire.Wildcard
 	p.Types = types

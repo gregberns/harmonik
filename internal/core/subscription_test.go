@@ -26,7 +26,7 @@ func subscriptionMinimal(t *testing.T) Subscription {
 	return Subscription{
 		ConsumerID:              "consumer-a",
 		ConsumerClass:           ConsumerClassAsynchronous,
-		EventPattern:            EventPattern{Wildcard: true, Types: map[string]struct{}{}},
+		EventPattern:            EventPattern{Wildcard: true, Types: map[EventType]struct{}{}},
 		Since:                   nil,
 		OffsetCheckpointEventID: nil,
 		OnPanic:                 OnPanicRecoverAndLog,
@@ -118,7 +118,7 @@ func TestSubscriptionValid_ExplicitEventPattern(t *testing.T) {
 	s := subscriptionMinimal(t)
 	s.EventPattern = EventPattern{
 		Wildcard: false,
-		Types:    map[string]struct{}{"run_started": {}, "run_completed": {}},
+		Types:    map[EventType]struct{}{EventTypeRunStarted: {}, EventTypeRunCompleted: {}},
 	}
 	if !s.Valid() {
 		t.Error("Valid() = false with explicit EventPattern, want true")
@@ -164,7 +164,7 @@ func TestSubscriptionValid_InvalidEventPattern(t *testing.T) {
 	// Wildcard=true with non-empty Types violates §6.1 invariant.
 	s.EventPattern = EventPattern{
 		Wildcard: true,
-		Types:    map[string]struct{}{"run_started": {}},
+		Types:    map[EventType]struct{}{EventTypeRunStarted: {}},
 	}
 	if s.Valid() {
 		t.Error("Valid() = true with invalid EventPattern (wildcard+types), want false")
@@ -176,7 +176,7 @@ func TestSubscriptionValid_InvalidEventPatternNoTypes(t *testing.T) {
 
 	s := subscriptionMinimal(t)
 	// Wildcard=false with empty Types violates §6.1 invariant.
-	s.EventPattern = EventPattern{Wildcard: false, Types: map[string]struct{}{}}
+	s.EventPattern = EventPattern{Wildcard: false, Types: map[EventType]struct{}{}}
 	if s.Valid() {
 		t.Error("Valid() = true with invalid EventPattern (explicit+empty types), want false")
 	}
@@ -262,7 +262,7 @@ func TestSubscriptionJSONRoundTrip_WildcardNoCheckpoints(t *testing.T) {
 	orig := subscriptionJSONWire{
 		ConsumerID:    "consumer-b",
 		ConsumerClass: "observer",
-		EventPattern:  EventPattern{Wildcard: true, Types: map[string]struct{}{}},
+		EventPattern:  EventPattern{Wildcard: true, Types: map[EventType]struct{}{}},
 		OnPanic:       "recover_and_log",
 	}
 
@@ -307,7 +307,7 @@ func TestSubscriptionJSONRoundTrip_WithCheckpoints(t *testing.T) {
 		ConsumerClass: "synchronous",
 		EventPattern: EventPattern{
 			Wildcard: false,
-			Types:    map[string]struct{}{"run_started": {}},
+			Types:    map[EventType]struct{}{EventTypeRunStarted: {}},
 		},
 		Since:                   &sinceID,
 		OffsetCheckpointEventID: &checkpointID,
@@ -348,7 +348,7 @@ func TestSubscriptionJSONRoundTrip_WithCheckpoints(t *testing.T) {
 	if len(got.EventPattern.Types) != 1 {
 		t.Errorf("EventPattern.Types len = %d, want 1", len(got.EventPattern.Types))
 	}
-	if _, ok := got.EventPattern.Types["run_started"]; !ok {
+	if _, ok := got.EventPattern.Types[EventTypeRunStarted]; !ok {
 		t.Error("EventPattern.Types missing \"run_started\" after round-trip")
 	}
 }

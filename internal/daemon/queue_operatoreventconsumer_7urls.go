@@ -89,8 +89,8 @@ func (c *QueueOperatorEventConsumer) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "queue-operator-drain-pause",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeOperatorPauseStatus): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeOperatorPauseStatus: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
@@ -104,8 +104,8 @@ func (c *QueueOperatorEventConsumer) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "queue-operator-drain-resume",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeOperatorResuming): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeOperatorResuming: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

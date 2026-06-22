@@ -67,8 +67,8 @@ func (b *bandwidthTunerBackstop) Subscribe(bus eventbus.EventBus) error {
 		ConsumerID:    "bandwidth-tuner-rate-limit-backstop",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeAgentRateLimitStatus): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeAgentRateLimitStatus: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

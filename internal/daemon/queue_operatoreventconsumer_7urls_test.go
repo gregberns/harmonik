@@ -318,8 +318,8 @@ func TestQueueOpDrain_QueuePausedEventEmitted(t *testing.T) {
 		ConsumerID:    "test-capture-queue-paused",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{
-				string(core.EventTypeQueuePaused): {},
+			Types: map[core.EventType]struct{}{
+				core.EventTypeQueuePaused: {},
 			},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,

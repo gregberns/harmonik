@@ -1144,7 +1144,7 @@ func TestBusImplSubscribe_DuplicateSynchronousConsumerReturnsError(t *testing.T)
 		ConsumerID:    "hqwn49-sync-first",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{string(syncEventType): {}},
+			Types: map[core.EventType]struct{}{syncEventType: {}},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, _ core.Event) error { return nil },
@@ -1158,7 +1158,7 @@ func TestBusImplSubscribe_DuplicateSynchronousConsumerReturnsError(t *testing.T)
 		ConsumerID:    "hqwn49-sync-second",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{string(syncEventType): {}},
+			Types: map[core.EventType]struct{}{syncEventType: {}},
 		},
 		OnPanic: core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, _ core.Event) error { return nil },
@@ -1218,7 +1218,7 @@ func TestBusImplSubscribe_ReentrantSynchronousConsumerReturnsAcyclicityError(t *
 		ConsumerID:    "hqwn49-acyclic-A",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{string(eventTypeX): {}},
+			Types: map[core.EventType]struct{}{eventTypeX: {}},
 		},
 		DeclaredEmitTypes: []core.EventType{eventTypeY},
 		OnPanic:           core.OnPanicRecoverAndLog,
@@ -1235,7 +1235,7 @@ func TestBusImplSubscribe_ReentrantSynchronousConsumerReturnsAcyclicityError(t *
 		ConsumerID:    "hqwn49-acyclic-B",
 		ConsumerClass: core.ConsumerClassSynchronous,
 		EventPattern: core.EventPattern{
-			Types: map[string]struct{}{string(eventTypeY): {}},
+			Types: map[core.EventType]struct{}{eventTypeY: {}},
 		},
 		DeclaredEmitTypes: []core.EventType{eventTypeX},
 		OnPanic:           core.OnPanicRecoverAndLog,

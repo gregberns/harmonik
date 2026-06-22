@@ -1247,9 +1247,9 @@ func TestRunQueueSubmit_BeadsCarryWorkflowModeReviewLoop(t *testing.T) {
 	if item.BeadID != "hk-tldws01" {
 		t.Errorf("RunQueueSubmit --beads: item bead_id = %q, want %q", item.BeadID, "hk-tldws01")
 	}
-	if item.WorkflowMode != "review-loop" {
-		t.Errorf("RunQueueSubmit --beads: item workflow_mode = %q, want %q (hk-tldws regression)",
-			item.WorkflowMode, "review-loop")
+	if item.WorkflowMode != "" {
+		t.Errorf("RunQueueSubmit --beads: item workflow_mode = %q, want %q (hk-y3o51: empty inherits daemon default)",
+			item.WorkflowMode, "")
 	}
 }
 

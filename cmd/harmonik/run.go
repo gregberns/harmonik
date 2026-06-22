@@ -119,7 +119,8 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	beadsFlag := ""    // --beads id1,id2,... (hk-w3cp1)
 	maxConcurrent := 1 // --max-concurrent N (hk-w3cp1); default 1 for back-compat
 	contextFlag := ""  // --context <inline|@file> (hk-boiwe)
-	reviewLoop := true // default ON per hk-g0ckv; --no-review-loop opts out
+	reviewLoop := true    // default ON per hk-g0ckv; --no-review-loop opts out
+	reviewLoopSet := false // tracks whether --review-loop or --no-review-loop was explicit
 	notifyStream := "" // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
 	notifyStreamSet := false
 	workflowModeFlag := ""                // --workflow-mode <builtin|single|review-loop|dot> (hk-qo9pq); empty = "builtin"
@@ -178,8 +179,10 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		// --no-review-loop (hk-g0ckv): opt out; --review-loop kept as deprecated alias
 		case arg == "--no-review-loop":
 			reviewLoop = false
+			reviewLoopSet = true
 		case arg == "--review-loop": // deprecated: review-loop is now the default (hk-g0ckv)
 			reviewLoop = true
+			reviewLoopSet = true
 
 		// --notify-stream[=path] (hk-ibilr)
 		case arg == "--notify-stream":
@@ -325,15 +328,20 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	// --workflow-mode takes precedence over --review-loop / --no-review-loop when set.
 	// Valid --workflow-mode values: "builtin" (default), "single", "review-loop", "dot".
 	// "builtin" defers to the --review-loop / --no-review-loop logic.
+	// When neither --workflow-mode nor --review-loop/--no-review-loop is explicit, leave
+	// itemWorkflowMode empty so the daemon-resolved default (dot/triple-review) wins (hk-y3o51).
 	var itemWorkflowMode string
 	var itemWorkflowRef string
 	switch workflowModeFlag {
 	case "", "builtin":
-		// Use the existing reviewLoop boolean (set by --review-loop / --no-review-loop).
-		if reviewLoop {
-			itemWorkflowMode = string(core.WorkflowModeReviewLoop)
-		} else {
-			itemWorkflowMode = string(core.WorkflowModeSingle)
+		// When --review-loop / --no-review-loop was explicitly passed, honour it.
+		// Otherwise leave empty so the daemon's config default applies.
+		if reviewLoopSet {
+			if reviewLoop {
+				itemWorkflowMode = string(core.WorkflowModeReviewLoop)
+			} else {
+				itemWorkflowMode = string(core.WorkflowModeSingle)
+			}
 		}
 		if workflowRefFlag != "" {
 			fmt.Fprintln(os.Stderr, "harmonik run: --workflow-ref requires --workflow-mode dot")

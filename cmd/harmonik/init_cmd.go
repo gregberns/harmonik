@@ -390,7 +390,7 @@ daemon:
   # Disk/CPU knee is ~4–5 on a 10-core machine.
   max_concurrent: 4
   # Default workflow mode: single, review-loop, dot
-  workflow_mode: review-loop
+  workflow_mode: dot
   # Per-project prefix folded into Claude Code --remote-control session LABELS
   # (e.g. "%[2]s" -> "%[2]s-captain", "%[2]s-paul") so concurrent projects are
   # distinguishable in the global Remote-Control session picker. Defaults to the

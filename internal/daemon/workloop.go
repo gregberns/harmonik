@@ -2999,7 +2999,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		runStartedWorkerName = rbc.worker.Name
 		runStartedWorkerOS = rbc.worker.OS
 	}
-	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS)
+	emitRunStarted(ctx, deps.bus, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS, string(workflowMode))
 
 	// hk-f38n: the pre-dispatch subsumption check (hk-ly0hg Fix-2 / hk-wcv) was
 	// REMOVED here. That check called beadAlreadySubsumedInMain — a bare
@@ -4773,6 +4773,8 @@ type workloopRunStartedPayload struct {
 	// WorkerName and WorkerOS are non-empty for remote runs (FR13); empty for local.
 	WorkerName string `json:"worker_name,omitempty"`
 	WorkerOS   string `json:"worker_os,omitempty"`
+	// WorkflowMode is the resolved workflow mode for this run (hk-y3o51).
+	WorkflowMode string `json:"workflow_mode,omitempty"`
 }
 
 // workloopRunCompletedPayload is the minimal run_completed / run_failed payload
@@ -4831,7 +4833,7 @@ func hasAPIKeyInEnv(env []string) bool {
 	return false
 }
 
-func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, queueID *string, queueGroupIndex *int, workerName, workerOS string) {
+func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, queueID *string, queueGroupIndex *int, workerName, workerOS, workflowMode string) {
 	pl := workloopRunStartedPayload{
 		RunID:           runID.String(),
 		BeadID:          string(beadID),
@@ -4841,6 +4843,7 @@ func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID
 		QueueGroupIndex: queueGroupIndex,
 		WorkerName:      workerName,
 		WorkerOS:        workerOS,
+		WorkflowMode:    workflowMode,
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {

@@ -29,8 +29,9 @@ import (
 //	--queue=<name>               equals form
 //	--beads hk-a,hk-b[,...]     comma-separated bead IDs (expands to stream group)
 //	--beads hk-a --beads hk-b   repeated form; accumulates across flags
-//	--workflow-mode <mode>       per-item workflow mode (default: review-loop); stamped on each
-//	                             minted item so the queue.json record is self-describing (hk-tldws)
+//	--workflow-mode <mode>       per-item workflow mode (default: empty = inherit daemon default,
+//	                             normally dot/triple-review); stamped on each minted item so the
+//	                             queue.json record is self-describing (hk-tldws)
 //	--workflow-mode=<mode>       equals form
 //	--project <dir>              project directory (default: cwd)
 //	--project=<dir>              equals form
@@ -45,7 +46,7 @@ import (
 func RunQueueSubmit(ctx context.Context, subArgs []string, out io.Writer, errOut io.Writer) int {
 	var beadIDs []string
 	var queueName string
-	workflowMode := "review-loop" // default: review-loop per hk-g0ckv / hk-rssrg / hk-tldws
+	workflowMode := "" // empty = inherit daemon-resolved default (hk-y3o51); omitempty drops it from wire
 	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
 		switch {
 		case args[i] == "--beads" && i+1 < len(args):

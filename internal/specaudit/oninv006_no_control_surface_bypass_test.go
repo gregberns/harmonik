@@ -319,6 +319,12 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// socket connection, no state mutation, side-effect-free. Mirror of
 	// project-hash (same bootstrap-only authorisation).
 	"remote-control-prefix": "operator-nfr.md §4.9 ON-055; read-only RC-prefix printer, no daemon connection, no run impact",
+	// hk-f4w7: interactive one-shot migration that adds daemon.remote_control_prefix
+	// to an existing project's .harmonik/config.yaml. Reads config + beads prefix,
+	// prompts operator, writes config file. No daemon socket connection; no in-flight
+	// run abort; side-effects limited to config.yaml. Authorised as an operator
+	// admin/bootstrap surface (same class as init, sync-assets).
+	"migrate-rc-prefix": "operator-nfr.md §4.9 ON-055; one-shot config migration, no daemon connection, no in-flight run abort",
 	// hk-gv04 (P2-a): typed StateSnapshot aggregator (specs/system-state.md
 	// §4 SS-001..SS-015). Daemon-up: live socket RPC ("state" op, read-only
 	// snapshot); daemon-down: disk fallback. No state mutation, no in-flight

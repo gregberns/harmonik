@@ -455,8 +455,9 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir 
 	out.HardCeilingCooldown = resolveDur(0, false, cfg.CadenceHardCeilingCooldown, keeper.DefaultHardCeilingCooldown)
 	out.BlindKeeperThreshold = resolveDur(0, false, cfg.BlindKeeperThreshold, keeper.DefaultBlindKeeperThreshold)
 	out.HeartbeatMaxMisses = resolveInt(0, false, cfg.HeartbeatMaxMisses, keeper.DefaultMaxHeartbeatMisses)
-	// ReapDecisionsCadence: CONFIG > DEFAULT (not required; applyDefaults fills
-	// DefaultReapDecisionsCadence when the resolved value is zero). Refs: hk-jrftk.
+	// ReapDecisionsCadence: CONFIG > DEFAULT. Not required — resolveDur fills
+	// DefaultReapDecisionsCadence when config is zero (same pattern as the other
+	// optional cadences above). Refs: hk-jrftk.
 	out.ReapDecisionsCadence = resolveDur(0, false, cfg.ReapDecisionsCadence, keeper.DefaultReapDecisionsCadence)
 
 	// ── Cycler timing/cadence/budget ──

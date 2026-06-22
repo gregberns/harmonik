@@ -313,12 +313,12 @@ func NewBusImplWithWriterAndHWM(
 		gen = core.NewEventIDGenerator()
 	}
 	return &busImpl{
-		registry:    registry,
-		jsonlWriter: w,
+		registry:       registry,
+		jsonlWriter:    w,
 		deadLetterSink: core.NoopDeadLetterSink{},
-		idGen:       gen,
-		hwmPath:     hwmPath,
-		runDrainers: make(map[string]*sync.WaitGroup),
+		idGen:          gen,
+		hwmPath:        hwmPath,
+		runDrainers:    make(map[string]*sync.WaitGroup),
 	}
 }
 

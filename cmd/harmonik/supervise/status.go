@@ -1,10 +1,13 @@
 package supervisecmd
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 )
@@ -27,6 +30,13 @@ type StatusResult struct {
 	// Spec ref: specs/operator-nfr.md §4.3 ON-008a.
 	LoopStatus  string `json:"loop_status,omitempty"`
 	PauseReason string `json:"pause_reason,omitempty"`
+	// PresenceSource indicates how liveness was established: "pidfile" when the
+	// cognition-shim pidfile was used, "keeper-loop" when a shell-based daemon-
+	// revive loop (hk-keeper.sh / hk-supervise.sh) was detected instead.
+	// Absent when Running=false.
+	//
+	// Bead ref: hk-yrnui — pen9 supervisor-up false positive fix.
+	PresenceSource string `json:"presence_source,omitempty"`
 }
 
 // RunStatus implements `harmonik supervise status`.
@@ -86,6 +96,9 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "pid:           %d\n", result.PID)
 	}
 	fmt.Fprintf(stdout, "sentinel:      %v\n", result.SentinelOK)
+	if result.PresenceSource != "" {
+		fmt.Fprintf(stdout, "presence_src:  %s\n", result.PresenceSource)
+	}
 	if result.StartedAt != "" {
 		fmt.Fprintf(stdout, "started_at:    %s\n", result.StartedAt)
 	}
@@ -106,6 +119,13 @@ func RunStatus(args []string, stdout, stderr io.Writer) int {
 
 // buildStatus constructs a StatusResult from the file surface.
 func buildStatus(projectDir string) StatusResult {
+	return buildStatusWithProbe(projectDir, keeperLoopAlive)
+}
+
+// buildStatusWithProbe is the testable core of buildStatus. keeperProbe is
+// called when the pidfile check fails; returning true means a shell-based
+// revive loop is live (hk-yrnui false-positive fix).
+func buildStatusWithProbe(projectDir string, keeperProbe func(string) bool) StatusResult {
 	result := StatusResult{
 		SchemaVersion: 1,
 		Status:        "stopped",
@@ -133,6 +153,17 @@ func buildStatus(projectDir string) StatusResult {
 	// Read pidfile and probe liveness.
 	pid, err := ReadPidfile(projectDir)
 	if err != nil {
+		// Pidfile absent or unreadable. Before declaring "stopped", check whether
+		// a shell-based daemon-revive loop (hk-keeper.sh / hk-supervise.sh) is
+		// running: those loops never write supervisor.pid (doing so would corrupt
+		// the orphansweep PL-006d sentinel logic), so pidfile absence alone does
+		// not mean "no supervisor" when a keeper loop is live (hk-yrnui).
+		if keeperProbe(projectDir) {
+			result.Running = true
+			result.Status = "running"
+			result.PresenceSource = "keeper-loop"
+			return result
+		}
 		result.Status = "stopped"
 		return result
 	}
@@ -140,6 +171,15 @@ func buildStatus(projectDir string) StatusResult {
 
 	// kill(pid, 0) probes liveness.
 	if err := syscall.Kill(pid, 0); err != nil {
+		// Stale pidfile. Same fallback: a keeper loop may have already relaunched
+		// the supervisor and be running while the new shim hasn't written its
+		// fresh pidfile yet.
+		if keeperProbe(projectDir) {
+			result.Running = true
+			result.Status = "running"
+			result.PresenceSource = "keeper-loop"
+			return result
+		}
 		result.Status = "stopped"
 		result.PID = 0
 		return result
@@ -147,7 +187,52 @@ func buildStatus(projectDir string) StatusResult {
 
 	result.Running = true
 	result.Status = "running"
+	result.PresenceSource = "pidfile"
 	return result
+}
+
+// keeperLoopAlive returns true when a shell-based daemon-revive loop
+// (hk-keeper.sh or hk-supervise.sh) is detectable either as a live process
+// or via its project-scoped tmux session name. These loops never write
+// supervisor.pid (it would corrupt the orphansweep PL-006d flywheel-session
+// protection), so their presence must be inferred from process/session
+// signature instead of the pidfile.
+//
+// Bead ref: hk-yrnui — pen9 supervisor-up false positive.
+func keeperLoopAlive(projectDir string) bool {
+	// 1. Process signature: pgrep -f "hk-keeper.sh" or "hk-supervise.sh".
+	for _, pattern := range []string{"hk-keeper.sh", "hk-supervise.sh"} {
+		cmd := exec.Command("pgrep", "-f", pattern) //nolint:gosec // G204: fixed literals
+		if err := cmd.Run(); err == nil {
+			return true
+		}
+	}
+
+	// 2. Session signature: hk-<hash>-daemon-supervise (hk-supervise.sh) and
+	//    hk-<hash>-keeper (hk-keeper.sh). The hash uses the same SHA256 digest
+	//    as FlywheelSessionName so session names match what the scripts produce.
+	hash := supervisorProjectHash(projectDir)
+	for _, suffix := range []string{"daemon-supervise", "keeper"} {
+		sessionName := "hk-" + hash + "-" + suffix
+		cmd := exec.Command("tmux", "has-session", "-t", sessionName) //nolint:gosec // G204: fixed prefix
+		if err := cmd.Run(); err == nil {
+			return true
+		}
+	}
+
+	return false
+}
+
+// supervisorProjectHash returns the 6-byte SHA256 hex digest of projectDir's
+// real path, matching the hash produced by FlywheelSessionName and by the
+// project-hash subcommand used in hk-keeper.sh / hk-supervise.sh.
+func supervisorProjectHash(projectDir string) string {
+	resolved, err := filepath.EvalSymlinks(projectDir)
+	if err != nil {
+		resolved = projectDir
+	}
+	sum := sha256.Sum256([]byte(resolved))
+	return fmt.Sprintf("%x", sum[:6])
 }
 
 const statusUsage = `harmonik supervise status — show supervisor process state

@@ -473,6 +473,10 @@ func registerKeeperEvents() {
 	// hk-4pnv: keeper refused to start because threshold config / flags failed the
 	// fail-loud precedence resolver (bad value or band inversion).
 	mustRegister("session_keeper_config_rejected", func() EventPayload { return &SessionKeeperConfigRejectedPayload{} })
+	// hk-wqdc: live-pane recovery attempt after a cleared pane is detected.
+	mustRegister("session_keeper_live_pane_recover", func() EventPayload { return &SessionKeeperLivePaneRecoverPayload{} })
+	// hk-wqdc: ack timeout when keeper sent a clear but received no confirmation.
+	mustRegister("session_keeper_ack_timeout", func() EventPayload { return &SessionKeeperAckTimeoutPayload{} })
 }
 
 // registerAlarmEvents registers §8.14 alarm / self-check event payload

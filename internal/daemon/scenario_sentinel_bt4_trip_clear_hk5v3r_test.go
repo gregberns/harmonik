@@ -374,8 +374,8 @@ func TestScenario_Sentinel_BT4_B10A_BeadClosed_ClearsTrip(t *testing.T) {
 	cfg := bt4TripConfig()
 	input := bt4TripInput(projectDir, []string{"hk-bt4-gamma"}, now)
 
-	sentinel.Evaluate(ctx, state, input, cfg)               // window 1: WATCHING
-	sig := sentinel.Evaluate(ctx, state, input, cfg)        // window 2: ACTIVE
+	sentinel.Evaluate(ctx, state, input, cfg)        // window 1: WATCHING
+	sig := sentinel.Evaluate(ctx, state, input, cfg) // window 2: ACTIVE
 	if sig.Level != sentinel.ActivationActive {
 		t.Fatalf("B10A setup: expected ACTIVE, got %s", sig.Level)
 	}

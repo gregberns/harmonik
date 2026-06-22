@@ -194,9 +194,11 @@ For pre-1.0, the ledger is a Go slice literal in `internal/release/manifest.go`,
 
 | Gate | What it runs | Pass criterion |
 |------|--------------|----------------|
-| CI Tier 2 | `make check-full` (unit + integration) on the tagged commit | Exit 0 |
-| Scenario tests | Full scenario suite (`go test -tags=scenario ./tests/scenarios/...`) | Exit 0, zero failures |
-| `--version` smoke | Download the published binary, run `harmonik --version`, parse output | Matches `harmonik v<semver> (commit: <sha>)` with the correct semver and commit hash |
+| Build + tests | `make release-validate` core: `fmt-check` + `go vet` + `go test -short -race ./...` on the tagged commit | Exit 0 |
+| Scenario tests | Full scenario suite (`go test -tags=scenario ./test/scenario/... ./internal/daemon/...`) | Exit 0, zero failures |
+| `--version` smoke | Run the built binary, `harmonik --version`, parse output | Matches `harmonik v<semver> (commit: <sha>)` with the correct semver and commit hash |
+
+> **Lint is a merge-time gate, not a release-time gate.** golangci-lint is enforced on every commit to `main` by CI Tier 1/2 via `--new-from-rev`, so code reaching a release tag is already linted against new issues. The VALIDATE stage deliberately does **not** re-run full `golangci-lint`: the repo carries a large pre-existing legacy-lint backlog (a clean-lint release bar was assumed here but never achieved), and `--new-from-rev` cannot resolve its base ref in the tag-triggered (detached-HEAD) release runner. Raising the release bar to clean-lint is a separate lint-paydown initiative, tracked independently.
 
 **Failure contract:**
 

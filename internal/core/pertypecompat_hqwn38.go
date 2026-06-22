@@ -293,6 +293,37 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-sxlb: disk_low — emitted when free disk falls below the 10 GiB watermark;
 	// daemon pauses dispatch and attempts go clean -cache.
 	{TypeName: "disk_low", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
+	// ── §8.2.13–14 Gate-definition drift (hk-u3q6o, v0.3.4) ───────────────
+	// gate_definition_drift (§8.2.13, F): mechanism-tagged Gate envelope drift
+	// at replay time (CP-038a). Payload: run_id, gate_name,
+	// prior_envelope_hash, current_envelope_hash, changed_inputs.
+	{TypeName: "gate_definition_drift", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// gate_redefined_under_cat_6 (§8.2.14, F): Cat 6 authorized Gate
+	// re-evaluation under a drifted definition (CP-038a). Payload: run_id,
+	// gate_name, prior_decision, new_decision, cat_6_verdict_id.
+	{TypeName: "gate_redefined_under_cat_6", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
+	// ── §8.12 Decision-required lifecycle (hk-u3q6o, v0.6.0) ──────────────
+	// decision_required (§8.12.1, F): daemon dispatch-blocking escalation on
+	// 4 canonical conditions (bead double-failure, iteration_cap_hit,
+	// merge_conflict_escalation, queue_group_failure). Idempotency-keyed on
+	// triggering_event_id; dispatch-blocking per EV-043. Payload: subject,
+	// reason, suggested_action, ack_required, ack_token, triggering_event_id.
+	{TypeName: "decision_required", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// decision_acknowledged (§8.12.2, F): ACK for a decision_required; unblocks
+	// dispatch atomically. Payload: ack_token, subject, ack_method, acked_at.
+	{TypeName: "decision_acknowledged", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
+	// ── §8.15 Bead-ledger merge lifecycle (hk-u3q6o, v0.6.4) ─────────────
+	// bead_sync_failed (§8.15.1, F): `br sync --import-only` failure after
+	// a rebase/merge touching .beads/issues.jsonl; must precede Cat-BL2 routing
+	// per BL-MRG-004. Payload: run_id, error, timestamp.
+	{TypeName: "bead_sync_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// bead_ledger_conflict_audit (§8.15.2, O): reconciliation-investigator
+	// audit batch from .beads/merge-conflicts.log per BL-MRG-003. Payload:
+	// run_id, bead_ids, conflicts, timestamp.
+	{TypeName: "bead_ledger_conflict_audit", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 }
 
 // LookupPayloadCompatEntry returns the PayloadCompatEntry for the given

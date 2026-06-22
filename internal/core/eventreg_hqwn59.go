@@ -42,6 +42,8 @@ func init() {
 	registerKeeperEvents()
 	registerAlarmEvents()
 	registerHITLDecisionEvents()
+	registerDecisionRequiredEvents()
+	registerBeadLedgerEvents()
 }
 
 // registerRunLifecycle registers all §8.1 run-lifecycle event payload constructors,
@@ -104,18 +106,20 @@ func registerRunLifecycle() {
 // registerControlPoints registers all §8.2 control-point-lifecycle event payload constructors.
 //
 // Durability classes per §8.2 table:
-//   - hook_fired (§8.2.1):                          O (ordinary — observability)
-//   - hook_failed (§8.2.2):                         O (ordinary — observability)
-//   - hook_verdict_persisted (§8.2.3):              O (ordinary — observability)
-//   - gate_allowed (§8.2.4):                        O (ordinary — observability)
-//   - gate_denied (§8.2.5):                         O (ordinary — observability)
-//   - gate_escalated (§8.2.6):                      O (ordinary — observability)
-//   - guard_reordered (§8.2.7):                     O (ordinary — observability)
-//   - guard_failed (§8.2.8):                        O (ordinary — observability)
-//   - control_points_registered (§8.2.9):           O (ordinary — observability)
+//   - hook_fired (§8.2.1):                           O (ordinary — observability)
+//   - hook_failed (§8.2.2):                          O (ordinary — observability)
+//   - hook_verdict_persisted (§8.2.3):               O (ordinary — observability)
+//   - gate_allowed (§8.2.4):                         O (ordinary — observability)
+//   - gate_denied (§8.2.5):                          O (ordinary — observability)
+//   - gate_escalated (§8.2.6):                       O (ordinary — observability)
+//   - guard_reordered (§8.2.7):                      O (ordinary — observability)
+//   - guard_failed (§8.2.8):                         O (ordinary — observability)
+//   - control_points_registered (§8.2.9):            O (ordinary — observability)
 //   - control_points_registration_started (§8.2.10): O (ordinary — observability)
-//   - verdict_envelope_mismatch (§8.2.11):          O (ordinary — reconciliation input)
-//   - policy_expression_exceeded_cost (§8.2.12):    F (fsync-boundary per CP-034b durability-pair)
+//   - verdict_envelope_mismatch (§8.2.11):           O (ordinary — reconciliation input)
+//   - policy_expression_exceeded_cost (§8.2.12):     F (fsync-boundary per CP-034b durability-pair)
+//   - gate_definition_drift (§8.2.13):               F (fsync-boundary — Cat 6 escalation landmark)
+//   - gate_redefined_under_cat_6 (§8.2.14):          F (fsync-boundary — re-evaluation lifecycle boundary)
 func registerControlPoints() {
 	mustRegister("hook_fired", func() EventPayload { return &HookFiredPayload{} })
 	mustRegister("hook_failed", func() EventPayload { return &HookFailedPayload{} })
@@ -129,6 +133,12 @@ func registerControlPoints() {
 	mustRegister("control_points_registration_started", func() EventPayload { return &ControlPointsRegistrationStartedPayload{} })
 	mustRegister("verdict_envelope_mismatch", func() EventPayload { return &VerdictEnvelopeMismatchPayload{} })
 	mustRegister("policy_expression_exceeded_cost", func() EventPayload { return &PolicyExpressionExceededCostPayload{} })
+	// gate_definition_drift (§8.2.13, hk-u3q6o): F-class; emitted when a
+	// mechanism-tagged Gate's envelope inputs drift at replay time (CP-038a).
+	mustRegister("gate_definition_drift", func() EventPayload { return &GateDefinitionDriftPayload{} })
+	// gate_redefined_under_cat_6 (§8.2.14, hk-u3q6o): F-class; emitted when
+	// Cat 6 authorizes Gate re-evaluation under a drifted definition (CP-038a).
+	mustRegister("gate_redefined_under_cat_6", func() EventPayload { return &GateRedefinedUnderCat6Payload{} })
 }
 
 // registerAgentEvents registers all §8.3 agent/handler-lifecycle event payload constructors,
@@ -508,6 +518,35 @@ func registerHITLDecisionEvents() {
 	mustRegister("decision_needed", func() EventPayload { return &DecisionNeededPayload{} })
 	mustRegister("decision_resolved", func() EventPayload { return &DecisionResolvedPayload{} })
 	mustRegister("decision_withdrawn", func() EventPayload { return &DecisionWithdrawnPayload{} })
+}
+
+// registerDecisionRequiredEvents registers the §8.12 decision-required
+// lifecycle event payload constructors (event-model.md §8.12, v0.6.0, hk-u3q6o).
+//
+// These are the daemon-core dispatch-blocking escalation pair. Both are F-class
+// (fsync-boundary):
+//   - decision_required (§8.12.1): F — loss silently leaves a double-failed
+//     bead eligible for re-dispatch (EV-042/EV-043).
+//   - decision_acknowledged (§8.12.2): F — loss breaks JSONL observability for
+//     the ACK (ack-state file remains authoritative per EV-043a).
+//
+// DISTINCT from the §8.14 hitl-decisions family (registerHITLDecisionEvents).
+func registerDecisionRequiredEvents() {
+	mustRegister("decision_required", func() EventPayload { return &DecisionRequiredPayload{} })
+	mustRegister("decision_acknowledged", func() EventPayload { return &DecisionAcknowledgedPayload{} })
+}
+
+// registerBeadLedgerEvents registers the §8.15 bead-ledger merge lifecycle
+// event payload constructors (event-model.md §8.15, v0.6.4, hk-u3q6o).
+//
+// Durability classes per §8.15 table:
+//   - bead_sync_failed (§8.15.1):          F (fsync-boundary — loss silences Cat-BL2
+//     routing obligation per BL-MRG-004)
+//   - bead_ledger_conflict_audit (§8.15.2): O (ordinary — conflict log is authoritative;
+//     investigator can re-emit on recovery per BL-MRG-003)
+func registerBeadLedgerEvents() {
+	mustRegister("bead_sync_failed", func() EventPayload { return &BeadSyncFailedPayload{} })
+	mustRegister("bead_ledger_conflict_audit", func() EventPayload { return &BeadLedgerConflictAuditPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

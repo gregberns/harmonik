@@ -183,6 +183,24 @@ const (
 	// per [control-points.md §4.13 CP-057].
 	// Durability class: O.
 	EventTypeSkillsResolved EventType = "skills_resolved"
+
+	// EventTypeGateDefinitionDrift is the gate_definition_drift event type (§8.2.13).
+	// Emitted during replay when a mechanism-tagged Gate's envelope inputs differ
+	// between the original evaluation and the replay attempt (CP-038a). The run
+	// MUST NOT silently re-evaluate; Cat 6 reconciliation is required.
+	// Durability class: F (the replay is blocked on this event reaching JSONL
+	// durability before the Cat 6 escalation fires).
+	// Payload: run_id, gate_name, prior_envelope_hash, current_envelope_hash, changed_inputs.
+	// Bead ref: hk-u3q6o.
+	EventTypeGateDefinitionDrift EventType = "gate_definition_drift"
+
+	// EventTypeGateRedefinedUnderCat6 is the gate_redefined_under_cat_6 event
+	// type (§8.2.14). Emitted when a Cat 6 reconciliation verdict authorizes
+	// mechanism-tagged Gate re-evaluation under a drifted definition (CP-038a).
+	// Durability class: F (the re-evaluation outcome is a lifecycle boundary).
+	// Payload: run_id, gate_name, prior_decision, new_decision, cat_6_verdict_id.
+	// Bead ref: hk-u3q6o.
+	EventTypeGateRedefinedUnderCat6 EventType = "gate_redefined_under_cat_6"
 )
 
 // ---------------------------------------------------------------------------
@@ -772,6 +790,42 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// §8.12 Decision-required lifecycle event types (event-model.md §8.12, v0.6.0)
+// ---------------------------------------------------------------------------
+//
+// These are the daemon-core escalation pair emitted when the daemon hits a
+// condition that requires operator intervention before dispatch can continue.
+// Both are F-class (fsync-boundary): loss of decision_required silently leaves
+// a double-failed bead eligible for re-dispatch; loss of decision_acknowledged
+// breaks JSONL observability for the ACK (ack-state file remains authoritative
+// per EV-043a). Dispatch-blocking rule: EV-042/EV-043.
+//
+// DISTINCT from the §8.14 HITL-decisions family (decision_needed/resolved/
+// withdrawn) — different emitter, different purpose, different payload shape.
+//
+// Bead ref: hk-u3q6o.
+
+const (
+	// EventTypeDecisionRequired is the decision_required event type (§8.12.1).
+	// Emitted by the daemon on 4 canonical conditions (bead double-failure,
+	// iteration_cap_hit with REQUEST_CHANGES/BLOCK verdict,
+	// merge_conflict_escalation, queue_group_failure). Idempotency-keyed on
+	// triggering_event_id. Dispatch-blocking while unacknowledged (EV-043).
+	// Durability class: F.
+	// Payload: subject{kind, id}, reason, suggested_action, ack_required,
+	//   ack_token, triggering_event_id.
+	EventTypeDecisionRequired EventType = "decision_required"
+
+	// EventTypeDecisionAcknowledged is the decision_acknowledged event type
+	// (§8.12.2). Emitted after the operator ACKs via `harmonik decision ack
+	// <token>` or the cognition-loop implicitly ACKs via a note(). Unblocks
+	// dispatch for the subject atomically.
+	// Durability class: F.
+	// Payload: ack_token, subject{kind, id}, ack_method, acked_at.
+	EventTypeDecisionAcknowledged EventType = "decision_acknowledged"
+)
+
+// ---------------------------------------------------------------------------
 // §8.2a Gate-node dispatch event types (hk-jtxnr)
 // ---------------------------------------------------------------------------
 
@@ -1124,6 +1178,38 @@ const (
 	// JSON-serialised sentinel.GovernorSignal. No action is taken on the signal
 	// in this mode — it is purely for audit / falsify-early validation.
 	EventTypeGovernorSignal EventType = "governor_signal"
+)
+
+// ---------------------------------------------------------------------------
+// §8.15 Bead-ledger merge lifecycle event types (event-model.md §8.15, v0.6.4)
+// ---------------------------------------------------------------------------
+//
+// Two event types emitted during the bead-ledger union-merge path
+// (normative: beads-integration.md §4.8b BL-MRG-003/BL-MRG-004).
+// bead_sync_failed is F-class: its loss silences the Cat-BL2 routing
+// obligation; bead_ledger_conflict_audit is O-class because the conflict log
+// is the authoritative source and the investigator can re-emit on recovery.
+// NOT a paired-phase per §8.9(h).
+//
+// Bead ref: hk-u3q6o.
+
+const (
+	// EventTypeBeadSyncFailed is the bead_sync_failed event type (§8.15.1).
+	// Emitted by the daemon (beads-adapter, post-merge) when `br sync
+	// --import-only` fails following a rebase or merge that touches
+	// .beads/issues.jsonl per BL-MRG-004. MUST be emitted and fsynced before
+	// the daemon routes to Cat-BL2.
+	// Durability class: F.
+	// Payload: run_id, error, timestamp.
+	EventTypeBeadSyncFailed EventType = "bead_sync_failed"
+
+	// EventTypeBeadLedgerConflictAudit is the bead_ledger_conflict_audit event
+	// type (§8.15.2). Emitted by the reconciliation-investigator for each
+	// .beads/merge-conflicts.log batch read during a Cat-BL3 audit per
+	// BL-MRG-003. Observational — the conflict log is authoritative.
+	// Durability class: O.
+	// Payload: run_id, bead_ids, conflicts, timestamp.
+	EventTypeBeadLedgerConflictAudit EventType = "bead_ledger_conflict_audit"
 )
 
 // ---------------------------------------------------------------------------

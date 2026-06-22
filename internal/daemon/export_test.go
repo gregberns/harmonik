@@ -462,9 +462,20 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		followUpLedgerMu:          &sync.Mutex{},
 		spawnSubstrateReadyCh:     p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
 		allowedRepos:              p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
-		diskFreeBytesFunc:         p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
-		goCacheCleanFunc:          p.GoCacheCleanFunc,      // hk-guez: merge-aware reaper test seam
-		cacheReapMu:               cacheReapMu,             // hk-y3frr: reap↔dispatch exclusion
+		diskFreeBytesFunc: p.DiskFreeBytesFunc, // hk-guez: merge-aware reaper test seam
+		// hk-y3frr: default to a no-op clean in tests so that the now-enabled
+		// proactive reap never calls real `go clean -cache` in scenario tests
+		// (which have no goCacheCleanFunc set and would wipe the build cache on
+		// the first work-loop tick, stalling long-running scenarios).
+		// Disk-check unit tests always supply their own stub via GoCacheCleanFunc,
+		// which overrides this default.
+		goCacheCleanFunc: func() error {
+			if p.GoCacheCleanFunc != nil {
+				return p.GoCacheCleanFunc()
+			}
+			return nil // no-op: tests must not wipe the shared go-build cache
+		},
+		cacheReapMu: cacheReapMu, // hk-y3frr: reap↔dispatch exclusion
 	}
 }
 

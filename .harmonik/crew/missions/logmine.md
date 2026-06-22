@@ -71,10 +71,12 @@ lingering idle and holding a slot.
 
 **When ALL of the following are true:**
 
-1. logmine-q is genuinely drained — `br ready --limit 0 --label codename:hk-mhmaw`
-   returns empty AND no bead is in-flight on your queue. Never treat an empty
-   `br ready` as drained without the `--limit 0` check; bare `br ready` caps at 20
-   and can falsely appear empty.
+1. logmine-q is genuinely drained — `br ready --limit 0 --label codename:logmine`
+   returns empty AND no bead is in-flight on your queue. (`codename:logmine` is
+   the label logmine-filed beads carry; `hk-mhmaw` is the epic ID used in comms
+   and journal entries, but the bead label filter is `codename:logmine`.) Never
+   treat an empty `br ready` as drained without the `--limit 0` check; bare
+   `br ready` caps at 20 and can falsely appear empty.
 2. No re-task is pending — your `comms recv --follow` inbox has no unprocessed
    `topic == assign` message assigning a new epic.
 3. The final daily digest has been posted to captain on BOTH surfaces:

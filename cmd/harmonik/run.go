@@ -116,12 +116,12 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	// --- Parse flags ---
 
 	projectDirFlag := ""
-	beadsFlag := ""    // --beads id1,id2,... (hk-w3cp1)
-	maxConcurrent := 1 // --max-concurrent N (hk-w3cp1); default 1 for back-compat
-	contextFlag := ""  // --context <inline|@file> (hk-boiwe)
-	reviewLoop := true    // default ON per hk-g0ckv; --no-review-loop opts out
+	beadsFlag := ""        // --beads id1,id2,... (hk-w3cp1)
+	maxConcurrent := 1     // --max-concurrent N (hk-w3cp1); default 1 for back-compat
+	contextFlag := ""      // --context <inline|@file> (hk-boiwe)
+	reviewLoop := true     // default ON per hk-g0ckv; --no-review-loop opts out
 	reviewLoopSet := false // tracks whether --review-loop or --no-review-loop was explicit
-	notifyStream := "" // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
+	notifyStream := ""     // --notify-stream[=path] (hk-ibilr); empty = disabled, "-" = stdout, else file path
 	notifyStreamSet := false
 	workflowModeFlag := ""                // --workflow-mode <builtin|single|review-loop|dot> (hk-qo9pq); empty = "builtin"
 	workflowRefFlag := ""                 // --workflow-ref <path> (hk-qo9pq); required when --workflow-mode dot

@@ -107,7 +107,6 @@ func NewForProject(brPath, projectDir string) (*Adapter, error) {
 // observing BrOther MUST record a structured-log entry at level=warn per
 // [operator-nfr.md §4.9 ON-035] with subsystem=beads-adapter until the event
 // bus is available.
-//
 type Result struct {
 	Stdout   []byte
 	Stderr   []byte

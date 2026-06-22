@@ -82,12 +82,14 @@ func TestClassifyRepresentativePaths(t *testing.T) {
 		want AssetClass
 	}{
 		{"assets/skills/keeper/SKILL.md", Managed},
+		{"assets/scripts/keeper-statusline.sh", Script},
 		{"assets/templates/AGENTS.template.md", ManagedRegion},
 		{"assets/context/project.yaml.tmpl", ContentOwned},
 		{"assets/scaffolds/STATUS.md", Scaffold},
 		{"assets/something/unknown.txt", Unclassified},
 		// Pre-stripped (root-relative) form classifies identically.
 		{"skills/keeper/SKILL.md", Managed},
+		{"scripts/keeper-statusline.sh", Script},
 	}
 	for _, c := range cases {
 		if got := Classify(c.path); got != c.want {

@@ -1016,15 +1016,23 @@ func appendHookGroup(settings map[string]interface{}, eventName, cmd string) {
 
 // ── Misc helpers ──────────────────────────────────────────────────────────────
 
+// keeperScriptNames is the canonical list of keeper hook script filenames.
+var keeperScriptNames = []string{
+	"keeper-statusline.sh",
+	"keeper-stop-hook.sh",
+	"keeper-precompact-hook.sh",
+	"keeper-sessionstart-hook.sh",
+}
+
 // autoDetectScriptsDir tries to find the keeper scripts. It checks, in order:
 // any caller-supplied hint dir's scripts/ subdir (the project root / cwd), then
-// paths relative to the running harmonik binary. Returns "" if none contain the
-// keeper hook scripts.
+// paths relative to the running harmonik binary. If still not found, it extracts
+// the embedded copies to <projectDir>/.harmonik/scripts/ and returns that path.
 //
 // The binary-relative candidates only work when harmonik is built into the repo
 // (./bin/harmonik adjacent to ./scripts). A `go install`'d binary lands in
-// $GOPATH/bin with no scripts/ nearby, so the hint dirs are the path that lets
-// `harmonik start captain` (run from the repo) wire keeper hooks.
+// $GOPATH/bin with no scripts/ nearby; the embedded-extract fallback handles that
+// case so `harmonik start captain` works on any foreign project without --scripts-dir.
 func autoDetectScriptsDir(hints ...string) string {
 	var candidates []string
 
@@ -1057,7 +1065,38 @@ func autoDetectScriptsDir(hints ...string) string {
 			return abs
 		}
 	}
+
+	// Fallback: extract the embedded keeper scripts to <projectDir>/.harmonik/scripts/
+	// so a go-install'd binary on a foreign project can still wire keeper hooks.
+	if len(hints) > 0 && hints[0] != "" {
+		if dir, err := extractEmbeddedKeeperScripts(hints[0]); err == nil {
+			return dir
+		}
+	}
 	return ""
+}
+
+// extractEmbeddedKeeperScripts extracts the 4 embedded keeper hook scripts to
+// <projectDir>/.harmonik/scripts/ and returns that directory path. It is called
+// as a fallback by autoDetectScriptsDir when no on-disk scripts/ directory is
+// found — the typical case for a go-install'd binary on a foreign project.
+func extractEmbeddedKeeperScripts(projectDir string) (string, error) {
+	destDir := filepath.Join(projectDir, ".harmonik", "scripts")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", fmt.Errorf("create %s: %w", destDir, err)
+	}
+	for _, name := range keeperScriptNames {
+		data, err := initSkillAssets.ReadFile("assets/scripts/" + name)
+		if err != nil {
+			return "", fmt.Errorf("read embedded scripts/%s: %w", name, err)
+		}
+		dest := filepath.Join(destDir, name)
+		//nolint:gosec // G306: hook scripts need +x so the shell can execute them
+		if err := os.WriteFile(dest, data, 0o755); err != nil {
+			return "", fmt.Errorf("write %s: %w", dest, err)
+		}
+	}
+	return destDir, nil
 }
 
 // buildKeeperRunCmd returns the `harmonik keeper` run command string for the

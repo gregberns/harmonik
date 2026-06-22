@@ -65,6 +65,13 @@ const (
 	// left to the project; they carry no managed body to keep in sync.
 	Scaffold AssetClass = "scaffold"
 
+	// Script assets are binary-embedded hook scripts under assets/scripts/ (e.g.
+	// the keeper hook scripts). They have no project-level sync destination —
+	// extractEmbeddedKeeperScripts writes them to <project>/.harmonik/scripts/ on
+	// demand, not as part of harmonik init / sync-assets. They are classified so
+	// the manifest is total-cover and the no-unclassified guard passes.
+	Script AssetClass = "script"
+
 	// Unclassified is the fallback for any embedded path that matches no known
 	// class prefix. The manifest still records it (so coverage is total), but a
 	// reconcile engine should treat it conservatively (create-if-missing only).
@@ -83,6 +90,8 @@ func Classify(path string) AssetClass {
 	switch {
 	case strings.HasPrefix(rel, "skills/"):
 		return Managed
+	case strings.HasPrefix(rel, "scripts/"):
+		return Script
 	case strings.HasPrefix(rel, "templates/"):
 		return ManagedRegion
 	case strings.HasPrefix(rel, "context/"):

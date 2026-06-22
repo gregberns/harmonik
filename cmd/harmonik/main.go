@@ -34,6 +34,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -50,6 +51,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	queuecli "github.com/gregberns/harmonik/internal/queue/cli"
 	"github.com/gregberns/harmonik/internal/release"
+	"github.com/gregberns/harmonik/internal/supervise"
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
@@ -1161,6 +1163,21 @@ EXAMPLES
 		}
 	}
 
+	// Supervisor watchdog: daemon-side liveness monitor for the flywheel supervisor
+	// (hk-dqlkz). When the supervisor is found dead the daemon revives it via
+	// 'harmonik supervise restart --watch-restart', closing the gap where the
+	// supervisor's own DaemonWatchdog dies with it and leaves no auto-revive path
+	// for the daemon itself (hk-pen9: 7h11m undetected outage).
+	{
+		swLog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		sw := supervise.NewSupervisorWatchdog(buildSupervisorWatchdogSpec(projectDir, daemonBinaryPath), swLog)
+		go func() {
+			if err := sw.Run(ctx); err != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "supervisor-watchdog: exited: %v\n", err)
+			}
+		}()
+	}
+
 	// F56 (hk-86eh): wire signal ctx as StopDispatchCtx so SIGTERM halts new
 	// dispatch immediately; in-flight goroutines continue on runCtx.
 	cfg.StopDispatchCtx = ctx
@@ -1214,6 +1231,18 @@ func inFlightDrainGoroutine(sigCtx, runCtx context.Context, cancelRun context.Ca
 		case <-runCtx.Done():
 		}
 	case <-runCtx.Done():
+	}
+}
+
+// buildSupervisorWatchdogSpec returns the SupervisorWatchdogSpec used by the
+// daemon-side supervisor liveness watchdog (hk-dqlkz). Factored out for
+// testability.
+func buildSupervisorWatchdogSpec(projectDir, binaryPath string) supervise.SupervisorWatchdogSpec {
+	return supervise.SupervisorWatchdogSpec{
+		PidfilePath: filepath.Join(projectDir, ".harmonik", "cognition", "supervisor.pid"),
+		ReviveCmd:   []string{binaryPath, "supervise", "restart", "--watch-restart", "--project", projectDir},
+		WorkDir:     projectDir,
+		MaxRevives:  3,
 	}
 }
 

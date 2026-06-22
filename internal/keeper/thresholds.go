@@ -172,6 +172,12 @@ const (
 	// (covers operator-walk-away / crash / daemon-restart that the session-id key
 	// misses). Configurable via the keeper config block (cadence.hold_ttl). Refs: hk-9waz.
 	DefaultHoldTTL = 45 * time.Minute
+
+	// DefaultDeriveCacheTTL is the WatcherConfig heartbeat derive-cache TTL: how
+	// long a successful transcript token-count is reused before the JSONL is
+	// re-scanned. Combined with the tail-window scan (deriveContextTailBytes) this
+	// eliminates O(filesize) hotness on long-running sessions. Refs: hk-div6c.
+	DefaultDeriveCacheTTL = 30 * time.Second
 )
 
 // minAbsOrPctCeil returns the effective absolute-token threshold for windowSize:

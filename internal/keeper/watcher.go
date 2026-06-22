@@ -411,6 +411,12 @@ type WatcherConfig struct {
 	// miss-budget path without waiting 12 real ticks. Refs: hk-lal8.
 	HeartbeatMaxMisses int
 
+	// DeriveCacheTTL is how long a successful deriveContextTokens result is
+	// reused before the transcript is re-scanned. Zero uses DefaultDeriveCacheTTL
+	// (30 s). Tests may set a small positive value to exercise cache expiry
+	// without waiting 30 real seconds. Refs: hk-div6c.
+	DeriveCacheTTL time.Duration
+
 	// ── Gauge-independent live-pane recovery (hk-75mr) ───────────────────────
 	// The respawn path (RespawnCmd) only fires when the pane has gone IDLE (the
 	// agent exited). It cannot recover an agent that is hung MID-TURN: the pane
@@ -592,6 +598,12 @@ func (c *WatcherConfig) applyDefaults() {
 	// smaller value to exercise the miss-budget path quickly. Refs: hk-lal8.
 	if c.HeartbeatMaxMisses <= 0 {
 		c.HeartbeatMaxMisses = DefaultMaxHeartbeatMisses
+	}
+	// DeriveCacheTTL defaults to DefaultDeriveCacheTTL (30 s). Tests set a
+	// smaller value to exercise cache expiry without long wall-clock delays.
+	// Refs: hk-div6c.
+	if c.DeriveCacheTTL <= 0 {
+		c.DeriveCacheTTL = DefaultDeriveCacheTTL
 	}
 	if c.ReadManagedSessionFn == nil {
 		c.ReadManagedSessionFn = ReadManagedSessionID
@@ -831,6 +843,15 @@ type Watcher struct {
 	// no_gauge:stale path fires loudly. Reset to 0 on any successful derive.
 	// Refs: hk-lal8.
 	heartbeatMissCount int
+
+	// Heartbeat derive cache — avoids O(filesize) JSONL re-scans on consecutive
+	// heartbeat ticks for the same session. Only hits are cached; misses always
+	// hit the disk so the miss-budget counter works correctly. Single-threaded:
+	// only the Run goroutine calls deriveCachedTokens via maybeHeartbeat.
+	// Refs: hk-div6c.
+	deriveCacheSID    string
+	deriveCacheTokens int64
+	deriveCacheExpiry time.Time
 
 	// ── Backstop 1: blind-keeper alarm (hk-34ac) ─────────────────────────────
 	// blindSince is the time of the FIRST foreign_session tick in the current

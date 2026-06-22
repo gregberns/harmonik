@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -61,6 +62,13 @@ func transcriptDirFor(projectDir string) string {
 	return filepath.Join(home, ".claude", "projects", munged)
 }
 
+// deriveContextTailBytes is the tail window read by deriveContextTokens.
+// The last usage-bearing assistant turn is always near EOF (the transcript is
+// append-only), so scanning only the last 512 KB reduces scan cost from
+// O(filesize) to O(1) for sessions with large transcripts. For files smaller
+// than this window the scan is equivalent to a full read. Refs: hk-div6c.
+const deriveContextTailBytes = 512 * 1024
+
 // deriveContextTokens scans the Claude Code transcript JSONL for sessionID under
 // transcriptDir and returns the effective context-token count of the most recent
 // assistant turn that carries a usage block: input_tokens + cache_read_input_tokens +
@@ -70,6 +78,10 @@ func transcriptDirFor(projectDir string) string {
 // post-turn context occupancy. Returns (0, false) when the transcript is absent,
 // unreadable, or carries no usage — callers then carry the last-good reading
 // forward, so a derivation miss never breaks gauge liveness.
+//
+// Scan is bounded to the tail window (deriveContextTailBytes) because the last
+// usage turn is always near EOF; scanning the full file on every heartbeat tick
+// caused sustained 20-47% CPU on long captain sessions. Refs: hk-div6c.
 func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 	if transcriptDir == "" || sessionID == "" {
 		return 0, false
@@ -94,6 +106,26 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 		} `json:"message"`
 	}
 
+	// Seek to the tail window so the scan is O(deriveContextTailBytes) not O(filesize).
+	partialStart := false
+	size, seekErr := f.Seek(0, io.SeekEnd)
+	if seekErr == nil {
+		if size > deriveContextTailBytes {
+			if _, err2 := f.Seek(size-deriveContextTailBytes, io.SeekStart); err2 == nil {
+				partialStart = true
+			}
+		}
+		if !partialStart {
+			if _, err2 := f.Seek(0, io.SeekStart); err2 != nil {
+				return 0, false
+			}
+		}
+	} else {
+		if _, err2 := f.Seek(0, io.SeekStart); err2 != nil {
+			return 0, false
+		}
+	}
+
 	var (
 		tokens int64
 		found  bool
@@ -102,6 +134,11 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 	// Transcript lines embed tool results and can far exceed the 64KB default;
 	// allow up to 16MB per line so a long line is not silently truncated.
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	// When seeked into the middle of the file, the first read may be a partial
+	// line; discard it so we only parse complete JSON objects.
+	if partialStart {
+		sc.Scan()
+	}
 	for sc.Scan() {
 		raw := sc.Bytes()
 		if len(raw) == 0 {
@@ -126,6 +163,25 @@ func deriveContextTokens(transcriptDir, sessionID string) (int64, bool) {
 		return tokens, found
 	}
 	return tokens, found
+}
+
+// deriveCachedTokens returns the derive result for (transcriptDir, sid), using
+// the Watcher's in-memory cache when the session and TTL match. Only successful
+// derives are cached; misses always call deriveContextTokens directly so the
+// miss-budget counter (heartbeatMissCount) increments correctly per tick.
+// Single-threaded: only the Run goroutine calls this via maybeHeartbeat.
+// Refs: hk-div6c.
+func (w *Watcher) deriveCachedTokens(transcriptDir, sid string, now time.Time) (int64, bool) {
+	if w.deriveCacheSID == sid && now.Before(w.deriveCacheExpiry) {
+		return w.deriveCacheTokens, true
+	}
+	tokens, ok := deriveContextTokens(transcriptDir, sid)
+	if ok {
+		w.deriveCacheSID = sid
+		w.deriveCacheTokens = tokens
+		w.deriveCacheExpiry = now.Add(w.cfg.DeriveCacheTTL)
+	}
+	return tokens, ok
 }
 
 // WriteCtxFile atomically writes the gauge file for the given agent (tmp-write +
@@ -213,16 +269,22 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 		transcriptDir = transcriptDirFor(w.cfg.ProjectDir)
 	}
 
+	now := time.Now()
 	fresh := CtxFile{
 		Pct:        last.Pct,
 		Tokens:     last.Tokens,
 		WindowSize: last.WindowSize,
 		SessionID:  sid,
-		Ts:         time.Now().UTC().Format(time.RFC3339),
+		Ts:         now.UTC().Format(time.RFC3339),
 	}
-	if tokens, ok := deriveContextTokens(transcriptDir, sid); ok {
+	// Use cached token count when available (same session, within TTL) to avoid
+	// O(filesize) JSONL re-scans on consecutive heartbeat ticks. Misses bypass
+	// the cache so the miss-budget counter increments correctly per tick.
+	// Refs: hk-div6c.
+	derivedTokens, derivedOk := w.deriveCachedTokens(transcriptDir, sid, now)
+	if derivedOk {
 		w.heartbeatMissCount = 0
-		fresh.Tokens = tokens
+		fresh.Tokens = derivedTokens
 		// Recompute pct from the fresh token count when a window size is known so
 		// the gauge tracks live growth, not just the last repaint's percentage.
 		windowSize := fresh.WindowSize
@@ -230,7 +292,7 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 			windowSize = w.cfg.FallbackWindowSize
 		}
 		if windowSize > 0 {
-			fresh.Pct = float64(tokens) / float64(windowSize) * 100.0
+			fresh.Pct = float64(derivedTokens) / float64(windowSize) * 100.0
 		}
 	} else {
 		w.heartbeatMissCount++

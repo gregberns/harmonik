@@ -3,8 +3,10 @@ package keeper_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -203,6 +205,142 @@ func joinLines(ls []string) string {
 		out += l + "\n"
 	}
 	return out
+}
+
+// writeTranscriptTokens writes a minimal transcript JSONL with a single
+// usage-bearing assistant turn reporting the given token count.
+func writeTranscriptTokens(t *testing.T, dir, sid string, tokens int64) {
+	t.Helper()
+	line := fmt.Sprintf(
+		`{"type":"assistant","message":{"usage":{"input_tokens":%d,"output_tokens":0}}}`+"\n",
+		tokens,
+	)
+	path := filepath.Join(dir, sid+".jsonl")
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+}
+
+// TestDeriveContextTokens_TailWindow_LargeFile verifies that deriveContextTokens
+// correctly returns the LAST usage-bearing line even when the file is larger than
+// the 512 KB tail window. A large padding block pushes old usage outside the window;
+// only the fresh usage near EOF must be returned. Refs: hk-div6c.
+func TestDeriveContextTokens_TailWindow_LargeFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sid := "bbbbbbbb-1234-4567-89ab-bbbbbbbbbbbb"
+
+	// Build a file > 512 KB with old usage at the top and fresh usage at the tail.
+	var sb strings.Builder
+	// Old usage (should be outside the tail window after padding).
+	sb.WriteString(`{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}` + "\n")
+	// Padding: ~600 KB of non-usage lines to exceed the 512 KB tail window.
+	pad := `{"type":"user","message":{"content":"` + strings.Repeat("x", 200) + `"}}` + "\n"
+	for i := 0; i < 3000; i++ {
+		sb.WriteString(pad) // 3000 × ~215 B ≈ 645 KB
+	}
+	// Fresh usage near EOF — must be returned by the tail scan.
+	sb.WriteString(`{"type":"assistant","message":{"usage":{"input_tokens":77777,"output_tokens":222}}}` + "\n")
+
+	path := filepath.Join(dir, sid+".jsonl")
+	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	got, ok := keeper.DeriveContextTokensForTest(dir, sid)
+	if !ok {
+		t.Fatalf("expected derivation to succeed on large file")
+	}
+	const want = int64(77777 + 222)
+	if got != want {
+		t.Fatalf("derived tokens = %d, want %d (last usage in tail must win)", got, want)
+	}
+}
+
+// TestHeartbeat_Cache_SkipsRederiveWithinTTL verifies that the heartbeat uses a
+// cached token count within DeriveCacheTTL rather than re-scanning the transcript.
+// Observable: after the first successful derive, the transcript is replaced with
+// a different token count; within the cache window the gauge still reflects the
+// original (cached) value. Refs: hk-div6c.
+func TestHeartbeat_Cache_SkipsRederiveWithinTTL(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	transcriptDir := t.TempDir()
+	agent := "cache-test-agent"
+	managedSID := "cccccccc-1111-4222-8333-444444444444"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := keeper.WriteManagedSessionID(projectDir, agent, managedSID); err != nil {
+		t.Fatalf("WriteManagedSessionID: %v", err)
+	}
+
+	// First transcript: tokens = 12345.
+	writeTranscriptTokens(t, transcriptDir, managedSID, 12345)
+
+	// Seed a gauge aged past HeartbeatThreshold so the heartbeat fires immediately.
+	writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
+		Pct:       50.0,
+		Tokens:    0,
+		SessionID: managedSID,
+		Ts:        time.Now().UTC().Format(time.RFC3339),
+	}, 20*time.Millisecond)
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:          agent,
+		ProjectDir:         projectDir,
+		TranscriptDir:      transcriptDir,
+		PollInterval:       5 * time.Millisecond,
+		Staleness:          300 * time.Millisecond,
+		HeartbeatThreshold: 15 * time.Millisecond,
+		HeartbeatEnabled:   true,
+		TmuxTarget:         "fake:0.0",
+		IsPaneIdleFn:       func(context.Context, string) bool { return false },
+		// Long enough cache to outlive the test; allows re-aging without expiry.
+		DeriveCacheTTL: 10 * time.Second,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		w := keeper.NewWatcher(cfg, em)
+		done <- w.Run(ctx)
+	}()
+
+	// Wait for the first heartbeat to fire and cache tokens=12345.
+	time.Sleep(60 * time.Millisecond)
+
+	cf1, _ := readCtxFor(t, projectDir, agent)
+	if cf1.Tokens != 12345 {
+		t.Fatalf("first heartbeat: tokens = %d, want 12345", cf1.Tokens)
+	}
+
+	// Replace transcript with a DIFFERENT token count (99999).
+	// Within the cache TTL the watcher must NOT re-scan and must carry 12345.
+	writeTranscriptTokens(t, transcriptDir, managedSID, 99999)
+
+	// Re-age the gauge so a second heartbeat fires (while cache is still valid).
+	writeStaleCtx(t, projectDir, agent, cf1, 20*time.Millisecond)
+
+	time.Sleep(60 * time.Millisecond)
+
+	cf2, _ := readCtxFor(t, projectDir, agent)
+	// Cache hit → 12345 is reused even though the transcript now has 99999.
+	// Carry-forward alone would also yield 12345 (from cf1.Tokens), but the
+	// cache is the only path that avoids re-scanning the transcript file.
+	if cf2.Tokens != 12345 {
+		t.Fatalf("second heartbeat (cache): tokens = %d, want 12345 (cache must suppress re-scan)", cf2.Tokens)
+	}
+
+	cancel()
+	<-done
 }
 
 // TestHeartbeat_DeriveMissBudget_SuppressesCarryForward verifies hk-lal8: when

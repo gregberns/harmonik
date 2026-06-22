@@ -126,7 +126,7 @@ keeper:
 	checkDur(t, "IdleRestartCooldown", k.IdleRestartCooldown, 11*time.Minute)
 	checkDur(t, "CadenceHardCeilingCooldown", k.CadenceHardCeilingCooldown, 31*time.Minute)
 	checkDur(t, "BlindKeeperThreshold", k.BlindKeeperThreshold, 20*time.Minute)
-	checkDur(t, "HoldTTL", k.HoldTTL, 33*time.Minute) // hk-9waz
+	checkDur(t, "HoldTTL", k.HoldTTL, 33*time.Minute)                           // hk-9waz
 	checkDur(t, "ReapDecisionsCadence", k.ReapDecisionsCadence, 45*time.Second) // hk-jrftk
 
 	// budgets

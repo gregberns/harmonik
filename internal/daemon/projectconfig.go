@@ -261,18 +261,18 @@ type rawKeeperTimings struct {
 // rawKeeperCadence holds the keeper.cadence block. All fields are Go duration
 // STRINGS; empty = not configured, a bare number = error.
 type rawKeeperCadence struct {
-	WarnCooldown           string `yaml:"warn_cooldown"`
-	NoGaugeBackoff         string `yaml:"no_gauge_backoff"`
-	RespawnGrace           string `yaml:"respawn_grace"`
-	RespawnCooldown        string `yaml:"respawn_cooldown"`
-	LiveRecoverGrace       string `yaml:"live_recover_grace"`
-	LiveRecoverCooldown    string `yaml:"live_recover_cooldown"`
-	ForceRetryInterval     string `yaml:"force_retry_interval"`
-	IdleRestartCooldown    string `yaml:"idle_restart_cooldown"`
-	HardCeilingCooldown    string `yaml:"hard_ceiling_cooldown"`
-	BlindKeeperThreshold   string `yaml:"blind_keeper_threshold"`
-	HoldTTL                string `yaml:"hold_ttl"`
-	ReapDecisionsCadence   string `yaml:"reap_decisions_cadence"`
+	WarnCooldown         string `yaml:"warn_cooldown"`
+	NoGaugeBackoff       string `yaml:"no_gauge_backoff"`
+	RespawnGrace         string `yaml:"respawn_grace"`
+	RespawnCooldown      string `yaml:"respawn_cooldown"`
+	LiveRecoverGrace     string `yaml:"live_recover_grace"`
+	LiveRecoverCooldown  string `yaml:"live_recover_cooldown"`
+	ForceRetryInterval   string `yaml:"force_retry_interval"`
+	IdleRestartCooldown  string `yaml:"idle_restart_cooldown"`
+	HardCeilingCooldown  string `yaml:"hard_ceiling_cooldown"`
+	BlindKeeperThreshold string `yaml:"blind_keeper_threshold"`
+	HoldTTL              string `yaml:"hold_ttl"`
+	ReapDecisionsCadence string `yaml:"reap_decisions_cadence"`
 }
 
 // rawKeeperBudgets holds the keeper.budgets block. Values ≤ 0 = not configured.
@@ -454,18 +454,18 @@ type KeeperConfigPresence struct {
 	ClearSettle        bool
 	BootGrace          bool // true even for "0s" (explicit disable)
 
-	WarnCooldown           bool
-	NoGaugeBackoff         bool
-	RespawnGrace           bool
-	RespawnCooldown        bool
-	LiveRecoverGrace       bool
-	LiveRecoverCooldown    bool
-	ForceRetryInterval     bool
-	IdleRestartCooldown    bool
-	HardCeilingCooldown    bool
-	BlindKeeperThreshold   bool
-	HoldTTL                bool
-	ReapDecisionsCadence   bool
+	WarnCooldown         bool
+	NoGaugeBackoff       bool
+	RespawnGrace         bool
+	RespawnCooldown      bool
+	LiveRecoverGrace     bool
+	LiveRecoverCooldown  bool
+	ForceRetryInterval   bool
+	IdleRestartCooldown  bool
+	HardCeilingCooldown  bool
+	BlindKeeperThreshold bool
+	HoldTTL              bool
+	ReapDecisionsCadence bool
 
 	HeartbeatMaxMisses bool
 	MaxHandoffTimeouts bool

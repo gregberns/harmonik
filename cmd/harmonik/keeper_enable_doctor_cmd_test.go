@@ -781,6 +781,49 @@ func TestKeeperDoctor_StatusLineAgentPollutionShellExpansionOK(t *testing.T) {
 	}
 }
 
+// TestKeeperDoctor_LiveWatcherAbsentIsRed verifies that doctor exits non-zero
+// and reports the live-watcher check when no keeper process holds the flock.
+func TestKeeperDoctor_LiveWatcherAbsentIsRed(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+	cfg.liveKeeperFn = func(_, _ string) bool { return false }
+
+	var stdout, stderr bytes.Buffer
+	code := runKeeperDoctor(cfg, &stdout, &stderr)
+
+	out := stdout.String()
+	if !strings.Contains(out, "live-watcher") {
+		t.Errorf("doctor output missing live-watcher check: %s", out)
+	}
+	if code == 0 {
+		t.Errorf("want non-zero exit (no live watcher), got 0\nstdout: %s", out)
+	}
+	if strings.Contains(out, "✓ live-watcher") {
+		t.Errorf("live-watcher must not be green when no watcher is running: %s", out)
+	}
+}
+
+// TestKeeperDoctor_LiveWatcherPresentIsGreen verifies that doctor reports a
+// green live-watcher check when a keeper process holds the flock.
+func TestKeeperDoctor_LiveWatcherPresentIsGreen(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+	cfg.liveKeeperFn = func(_, _ string) bool { return true }
+
+	var stdout, _ bytes.Buffer
+	runKeeperDoctor(cfg, &stdout, &stdout)
+
+	out := stdout.String()
+	if !strings.Contains(out, "live-watcher") {
+		t.Errorf("doctor output missing live-watcher check: %s", out)
+	}
+	if strings.Contains(out, "✗ live-watcher") {
+		t.Errorf("live-watcher must not be red when watcher is present: %s", out)
+	}
+}
+
 // ── Settings merge helpers tests ──────────────────────────────────────────────
 
 // TestMergeStatusLineStanza_Add verifies adding a fresh stanza.

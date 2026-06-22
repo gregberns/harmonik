@@ -379,6 +379,9 @@ type doctorConfig struct {
 	// paneExistsFn is injected in tests to avoid real tmux calls.
 	// When nil, tmuxPaneExists is used.
 	paneExistsFn func(target string) (bool, error)
+	// liveKeeperFn is injected in tests to avoid real flock calls.
+	// When nil, keeper.LiveKeeperPresent is used.
+	liveKeeperFn func(projectDir, agent string) bool
 }
 
 // runKeeperDoctorSubcommand is the entry point for `harmonik keeper doctor`.
@@ -674,6 +677,21 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 			} else {
 				check("managed", true, ".managed present (handoff cycle is LIVE)")
 			}
+		}
+	}
+
+	// 7c. Live keeper watcher: does a live keeper process hold the exclusive flock?
+	// Uses LiveKeeperPresent (shared-flock probe) so it correctly distinguishes a
+	// running keeper from a stale corpse lockfile.
+	{
+		fn := cfg.liveKeeperFn
+		if fn == nil {
+			fn = keeper.LiveKeeperPresent
+		}
+		if fn(cfg.projectDir, cfg.agentName) {
+			check("live-watcher", true, "live keeper process is running")
+		} else {
+			check("live-watcher", false, "no live keeper watcher detected — start with: harmonik keeper --agent "+cfg.agentName)
 		}
 	}
 
@@ -1163,6 +1181,7 @@ CHECKS (all read-only; no filesystem mutations)
   sid channel    .harmonik/keeper/<agent>.sid present and a well-formed primary id
   idle marker    .harmonik/keeper/<agent>.idle has been written (Stop hook fired)
   managed        .harmonik/keeper/<agent>.managed present (handoff cycle live)
+  live-watcher   live keeper process holds the flock (watcher is actually running)
   api-key-risk   ANTHROPIC_API_KEY not set in environment
 
 EXIT CODES

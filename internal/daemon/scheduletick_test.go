@@ -456,6 +456,44 @@ func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 	_ = deps // satisfy unused import
 }
 
+// TestScheduleTick_EnsureCtxWatchdog verifies ensureCtxWatchdogSchedule registers
+// the ctx-watchdog job when absent and is a no-op when already present (hk-sbitr).
+func TestScheduleTick_EnsureCtxWatchdog(t *testing.T) {
+	deps, store, _ := newTickDeps(t)
+
+	// enabled=true path: job absent before the first call.
+	if _, ok := store.Get(ctxWatchdogJobID); ok {
+		t.Fatal("ctx-watchdog job unexpectedly present before ensure call")
+	}
+
+	ensureCtxWatchdogSchedule(store, true)
+
+	j, ok := store.Get(ctxWatchdogJobID)
+	if !ok {
+		t.Fatal("ctx-watchdog job not registered after ensureCtxWatchdogSchedule(enabled=true)")
+	}
+	if j.Schedule.Kind != schedule.ScheduleKindEvery {
+		t.Errorf("kind = %q, want %q", j.Schedule.Kind, schedule.ScheduleKindEvery)
+	}
+	if j.Schedule.Interval != "5m" {
+		t.Errorf("interval = %q, want %q", j.Schedule.Interval, "5m")
+	}
+	if !j.Enabled {
+		t.Errorf("ctx-watchdog job should be enabled by default")
+	}
+
+	// Second call is a no-op (idempotent).
+	ensureCtxWatchdogSchedule(store, true)
+
+	// enabled=false path: a fresh store should NOT register the job.
+	_, store2, _ := newTickDeps(t)
+	ensureCtxWatchdogSchedule(store2, false)
+	if _, ok := store2.Get(ctxWatchdogJobID); ok {
+		t.Error("ctx-watchdog job registered despite enabled=false")
+	}
+	_ = deps // satisfy unused import
+}
+
 // TestParseCommsWho_NDJSONContract pins the FIX-3 `comms who --json` contract:
 // NDJSON rows; only status=="online" agents are reported; stale/dead rows are
 // excluded; and a JSON-array fallback is honoured so a future shape change fails

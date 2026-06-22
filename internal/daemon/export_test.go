@@ -1746,6 +1746,12 @@ type ExportedDaemonConfig = DaemonConfig
 // Bead ref: hk-lhu2.
 type ExportedKeeperConfig = KeeperConfig
 
+// ExportedWatchdogConfig is a type alias for WatchdogConfig so tests in
+// package daemon_test can read parsed watchdog config fields directly.
+//
+// Bead ref: hk-sbitr.
+type ExportedWatchdogConfig = WatchdogConfig
+
 // ExportedLoadProjectConfig exposes LoadProjectConfig for tests in package daemon_test.
 //
 // Bead ref: hk-bfvk7.

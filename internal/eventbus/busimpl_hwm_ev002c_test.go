@@ -66,7 +66,7 @@ func TestBusImpl_HWM_UpdatedAfterFClassEmit(t *testing.T) {
 	hwmPath := filepath.Join(dir, "event_id_hwm")
 	writer, _ := hwmFixtureOpenWriter(t)
 
-	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath)
+	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "")
 	if sealErr := bus.Seal(); sealErr != nil {
 		t.Fatalf("Seal: %v", sealErr)
 	}
@@ -93,7 +93,7 @@ func TestBusImpl_HWM_NotWrittenAfterOClassEmit(t *testing.T) {
 	hwmPath := filepath.Join(dir, "event_id_hwm")
 	writer, _ := hwmFixtureOpenWriter(t)
 
-	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath)
+	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "")
 	if sealErr := bus.Seal(); sealErr != nil {
 		t.Fatalf("Seal: %v", sealErr)
 	}
@@ -120,7 +120,7 @@ func TestBusImpl_HWM_UpdatedAfterEmitWithRunID(t *testing.T) {
 	hwmPath := filepath.Join(dir, "event_id_hwm")
 	writer, _ := hwmFixtureOpenWriter(t)
 
-	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath)
+	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "")
 	if sealErr := bus.Seal(); sealErr != nil {
 		t.Fatalf("Seal: %v", sealErr)
 	}
@@ -148,7 +148,7 @@ func TestBusImpl_HWM_UpdatedAfterEmitAgentMsg(t *testing.T) {
 	hwmPath := filepath.Join(dir, "event_id_hwm")
 	writer, _ := hwmFixtureOpenWriter(t)
 
-	commsEmitter, ok := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath).(eventbus.CommsMessageEmitter)
+	commsEmitter, ok := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "").(eventbus.CommsMessageEmitter)
 	if !ok {
 		t.Fatal("EV-002c: bus does not implement CommsMessageEmitter")
 	}
@@ -182,7 +182,7 @@ func TestBusImpl_HWM_MonotonicAcrossEmits(t *testing.T) {
 	hwmPath := filepath.Join(dir, "event_id_hwm")
 	writer, _ := hwmFixtureOpenWriter(t)
 
-	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath)
+	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, hwmPath, "")
 	if sealErr := bus.Seal(); sealErr != nil {
 		t.Fatalf("Seal: %v", sealErr)
 	}
@@ -207,7 +207,7 @@ func TestBusImpl_HWM_MonotonicAcrossEmits(t *testing.T) {
 func TestBusImpl_HWM_EmptyPathNoWrite(t *testing.T) {
 	writer, _ := hwmFixtureOpenWriter(t)
 
-	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, "" /* no HWM */)
+	bus := eventbus.NewBusImplWithWriterAndHWM(nil, writer, nil, "" /* no HWM */, "")
 	if sealErr := bus.Seal(); sealErr != nil {
 		t.Fatalf("Seal: %v", sealErr)
 	}

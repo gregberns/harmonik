@@ -75,6 +75,15 @@ type Subscription struct {
 	// Optional; nil means no checkpoint is available.
 	OffsetCheckpointEventID *EventID
 
+	// OnTailTruncation is the optional callback the bus invokes immediately
+	// after startup replay when the JSONL tail was truncated by the
+	// read-recovery rule (specs/event-model.md §6.1 TailTruncationCallback).
+	// lastDurableEventID is the event_id of the last successfully parsed
+	// event before the torn tail was discarded. When nil, no signal is
+	// delivered; the consumer operates under EV-INV-002's tolerate-loss
+	// obligation alone.
+	OnTailTruncation func(ctx context.Context, lastDurableEventID EventID)
+
 	// OnPanic is the policy for consumer-goroutine panics per OQ-EV-007.
 	// Must be one of: OnPanicRecoverAndLog (default), OnPanicQuarantineConsumer,
 	// OnPanicFailDaemon.

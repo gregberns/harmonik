@@ -1,11 +1,15 @@
 package eventbus
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -111,6 +115,11 @@ type busImpl struct {
 	hwmPath string
 	hwmMu   sync.Mutex
 	hwmLast [16]byte
+
+	// jsonlPath is the absolute path of the primary JSONL event log used for
+	// replay operations (EV-014d, EV-011). Empty string disables replay
+	// (test mode / no project dir configured).
+	jsonlPath string
 }
 
 // fsyncBoundaryEventTypes is the static set of F-class (fsync-boundary)
@@ -282,25 +291,28 @@ func NewBusImplWithSink(registry *core.RedactionRegistry, writer *JSONLWriter, s
 }
 
 // NewBusImplWithWriterAndHWM constructs a busImpl with a RedactionRegistry, a
-// JSONLWriter, a pre-seeded EventIDGenerator, and an HWM file path for
-// EV-002c cross-restart monotonicity.
+// JSONLWriter, a pre-seeded EventIDGenerator, an HWM file path for EV-002c
+// cross-restart monotonicity, and a JSONL path for EV-014d startup replay.
 //
 // gen is the EventIDGenerator to use; when nil, NewEventIDGenerator() is used.
 // Callers SHOULD supply a generator seeded from the persisted HWM file via
 // [core.NewEventIDGeneratorWithHWM] so that event_ids are strictly greater
 // than any pre-restart ids. hwmPath is the absolute path of the
 // event_id_hwm file (lifecycle.EventIDHWMPath); when empty, HWM writes are
-// disabled (no-op, suitable for unit tests).
+// disabled (no-op, suitable for unit tests). jsonlPath is the absolute path
+// of the primary JSONL event log; when empty, startup replay and ReplayFrom
+// are disabled (no-op, suitable for unit tests).
 //
 // The returned bus is unsealed; callers MUST Subscribe all consumers before
 // calling Seal (EV-009).
 //
-// Spec ref: event-model.md §4.1 EV-002c.
+// Spec ref: event-model.md §4.1 EV-002c; §4.3 EV-014d.
 func NewBusImplWithWriterAndHWM(
 	registry *core.RedactionRegistry,
 	writer *JSONLWriter,
 	gen *core.EventIDGenerator,
 	hwmPath string,
+	jsonlPath string,
 ) EventBus {
 	if registry == nil {
 		registry = core.NewRedactionRegistry()
@@ -318,6 +330,7 @@ func NewBusImplWithWriterAndHWM(
 		deadLetterSink: core.NoopDeadLetterSink{},
 		idGen:          gen,
 		hwmPath:        hwmPath,
+		jsonlPath:      jsonlPath,
 		runDrainers:    make(map[string]*sync.WaitGroup),
 	}
 }
@@ -1157,29 +1170,228 @@ func (b *busImpl) checkSyncAcyclicity(incoming core.Subscription) error {
 	return nil
 }
 
-// Seal closes the subscription-registration window.
+// Seal closes the subscription-registration window and runs the EV-014d
+// startup replay phase for every consumer whose Since or
+// OffsetCheckpointEventID is non-nil.
 //
-// Spec ref: specs/event-model.md §6.1, §4.2 EV-009.
+// Replay is synchronous and completes before Seal returns, so live-stream
+// delivery (the first Emit after Seal) never races with replay events.
+// Synchronous consumers are skipped (EV-014d: their critical-path contract
+// ended when the producer returned from Emit; re-invoking risks double
+// side-effects).
+//
+// Spec ref: specs/event-model.md §6.1, §4.2 EV-009, EV-014d.
 func (b *busImpl) Seal() error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.sealed = true
+	// Copy subscriptions while holding the lock so replay sees a stable
+	// snapshot without holding the mutex across potentially slow handler calls.
+	subs := make([]core.Subscription, len(b.subscriptions))
+	copy(subs, b.subscriptions)
+	b.mu.Unlock()
+
+	if b.jsonlPath == "" {
+		return nil // no JSONL path; startup replay disabled (test / no project dir)
+	}
+
+	ctx := context.Background()
+	for _, sub := range subs {
+		var effectiveSince core.EventID
+		switch {
+		case sub.Since != nil:
+			effectiveSince = *sub.Since
+		case sub.OffsetCheckpointEventID != nil:
+			effectiveSince = *sub.OffsetCheckpointEventID
+		default:
+			continue // no replay checkpoint; consumer starts from live stream
+		}
+		if sub.ConsumerClass == core.ConsumerClassSynchronous {
+			continue // synchronous consumers do not participate in replay per EV-014d
+		}
+		lastDurable, truncated, err := replayAndDetectTrunc(ctx, b.jsonlPath, effectiveSince, func(ctx context.Context, ev core.Event) error {
+			if !sub.EventPattern.MatchesType(core.EventType(ev.Type)) {
+				return nil
+			}
+			return sub.Handler(ctx, ev)
+		})
+		if err != nil {
+			log.Printf("eventbus: startup replay for consumer %q failed: %v", sub.ConsumerID, err)
+		}
+		if truncated && sub.OnTailTruncation != nil {
+			sub.OnTailTruncation(ctx, lastDurable)
+		}
+	}
 	return nil
 }
 
-// ReplayFrom re-issues JSONL events to the named consumer (stub — JSONL path
-// wiring is deferred to the JSONL bead).
+// ReplayFrom re-issues JSONL events whose event_id is strictly greater than
+// since to the named consumer's handler, filtered by the consumer's
+// EventPattern. Synchronous consumers are skipped (EV-014d). A missing JSONL
+// path is a no-op (test/no-project-dir mode).
 //
 // Spec ref: specs/event-model.md §6.1, §4.2 EV-014b.
-func (b *busImpl) ReplayFrom(_ string, _ core.EventID) error {
-	return nil
+func (b *busImpl) ReplayFrom(consumerID string, since core.EventID) error {
+	if b.jsonlPath == "" {
+		return nil
+	}
+
+	b.mu.Lock()
+	var found *core.Subscription
+	for i := range b.subscriptions {
+		if b.subscriptions[i].ConsumerID == consumerID {
+			s := b.subscriptions[i]
+			found = &s
+			break
+		}
+	}
+	b.mu.Unlock()
+
+	if found == nil {
+		return fmt.Errorf("eventbus.ReplayFrom: consumer %q not registered", consumerID)
+	}
+	if found.ConsumerClass == core.ConsumerClassSynchronous {
+		return nil
+	}
+
+	ctx := context.Background()
+	_, _, err := replayAndDetectTrunc(ctx, b.jsonlPath, since, func(ctx context.Context, ev core.Event) error {
+		if !found.EventPattern.MatchesType(core.EventType(ev.Type)) {
+			return nil
+		}
+		return found.Handler(ctx, ev)
+	})
+	return err
 }
 
-// DeadLetterReplay replays events from the dead-letter log (stub).
+// deadLetterEntry is the JSON shape of one entry in the dead-letter JSONL file.
+// Mirrors the unexported deadLetterRecord written by core.jsonlDeadLetterSink.
+type deadLetterEntry struct {
+	Envelope core.Event `json:"envelope"`
+}
+
+// DeadLetterReplay replays events from the dead-letter log to the named
+// consumer. filter, when non-nil, constrains which event types are replayed;
+// nil replays all dead-letter entries that match the consumer's EventPattern.
+// A missing dead-letter file or JSONL path is a no-op.
 //
-// Spec ref: specs/event-model.md §6.1, §6.2, §4.2 EV-011.
-func (b *busImpl) DeadLetterReplay(_ string, _ *core.EventPattern) error {
-	return nil
+// Spec ref: specs/event-model.md §6.1, §6.2, §4.2 EV-011, EV-014b.
+func (b *busImpl) DeadLetterReplay(consumerName string, filter *core.EventPattern) error {
+	if b.jsonlPath == "" {
+		return nil
+	}
+
+	b.mu.Lock()
+	var found *core.Subscription
+	for i := range b.subscriptions {
+		if b.subscriptions[i].ConsumerID == consumerName {
+			s := b.subscriptions[i]
+			found = &s
+			break
+		}
+	}
+	b.mu.Unlock()
+
+	if found == nil {
+		return fmt.Errorf("eventbus.DeadLetterReplay: consumer %q not registered", consumerName)
+	}
+	if found.ConsumerClass == core.ConsumerClassSynchronous {
+		return nil
+	}
+
+	dlPath := filepath.Join(filepath.Dir(b.jsonlPath), "dead-letters.jsonl")
+	//nolint:gosec // G304: path is derived from daemon-startup-resolved jsonlPath; not user input.
+	f, err := os.Open(dlPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("eventbus.DeadLetterReplay: open %s: %w", dlPath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	ctx := context.Background()
+	reader := bufio.NewReader(f)
+	for {
+		lineBytes, readErr := reader.ReadBytes('\n')
+		if len(lineBytes) > 0 {
+			var entry deadLetterEntry
+			if decodeErr := json.Unmarshal(bytes.TrimRight(lineBytes, "\n"), &entry); decodeErr != nil {
+				log.Printf("eventbus.DeadLetterReplay: malformed line (skipping): %v", decodeErr)
+			} else {
+				evType := core.EventType(entry.Envelope.Type)
+				matches := found.EventPattern.MatchesType(evType)
+				if matches && filter != nil {
+					matches = filter.MatchesType(evType)
+				}
+				if matches {
+					if handlerErr := found.Handler(ctx, entry.Envelope); handlerErr != nil {
+						return fmt.Errorf("eventbus.DeadLetterReplay: consumer %q: %w", consumerName, handlerErr)
+					}
+				}
+			}
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return fmt.Errorf("eventbus.DeadLetterReplay: read %s: %w", dlPath, readErr)
+		}
+	}
+}
+
+// replayAndDetectTrunc scans the JSONL file at path for events with event_id
+// strictly greater than sinceID (UUIDv7 byte-lexicographic order per EV-002),
+// dispatches them in file order to handler, and detects a torn tail.
+//
+// Returns:
+//   - lastDurable: event_id of the last successfully parsed event (zero if none)
+//   - tailTruncated: true when the file ends with a partial line without '\n'
+//   - err: first handler error or scan error; a torn tail is not an error
+//
+// A missing file is treated as an empty log (no error, no events, no truncation).
+//
+//nolint:gosec // G304: path is daemon-startup-resolved; not user input.
+func replayAndDetectTrunc(ctx context.Context, path string, sinceID core.EventID, handler func(context.Context, core.Event) error) (lastDurable core.EventID, tailTruncated bool, err error) {
+	f, openErr := os.Open(path)
+	if openErr != nil {
+		if os.IsNotExist(openErr) {
+			return core.EventID{}, false, nil
+		}
+		return core.EventID{}, false, fmt.Errorf("eventbus: open %s: %w", path, openErr)
+	}
+	defer func() { _ = f.Close() }()
+
+	since := [16]byte(sinceID)
+	reader := bufio.NewReader(f)
+	for {
+		lineBytes, readErr := reader.ReadBytes('\n')
+		if len(lineBytes) > 0 {
+			hasTerm := lineBytes[len(lineBytes)-1] == '\n'
+			if !hasTerm && readErr == io.EOF {
+				// Torn tail: non-empty partial line at EOF without newline terminator.
+				return lastDurable, true, nil
+			}
+			trimmed := bytes.TrimRight(lineBytes, "\n")
+			var ev core.Event
+			if decodeErr := json.Unmarshal(trimmed, &ev); decodeErr != nil {
+				log.Printf("eventbus: malformed line in %s (skipping): %v", path, decodeErr)
+			} else {
+				lastDurable = ev.EventID
+				evUID := [16]byte(ev.EventID)
+				if bytes.Compare(evUID[:], since[:]) > 0 {
+					if handlerErr := handler(ctx, ev); handlerErr != nil {
+						return lastDurable, false, handlerErr
+					}
+				}
+			}
+		}
+		if readErr == io.EOF {
+			return lastDurable, false, nil
+		}
+		if readErr != nil {
+			return lastDurable, false, fmt.Errorf("eventbus: read %s: %w", path, readErr)
+		}
+	}
 }
 
 // runDrainer returns the WaitGroup for runID, creating it if it does not exist.

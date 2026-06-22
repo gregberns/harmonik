@@ -865,7 +865,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Subscribers MUST be registered before Seal (EV-009). The
 	// HandlerPausePolicyGoroutine (hk-37zy8) is the first production subscriber;
 	// it is wired below before bus.Seal() is called.
-	bus := eventbus.NewBusImplWithWriterAndHWM(registry, jsonlWriter, hwmGen, hwmPath)
+	bus := eventbus.NewBusImplWithWriterAndHWM(registry, jsonlWriter, hwmGen, hwmPath, cfg.JSONLLogPath)
 
 	// PL-005 step 0 (hk-m0k0a, hk-37zy8, hk-7urls): construct HandlerPauseController,
 	// RunRegistry, and QueueStore at the composition root so all are available

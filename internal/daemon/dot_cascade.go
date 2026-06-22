@@ -288,6 +288,14 @@ func driveDotWorkflow(
 	// Bead ref: hk-m1wqp.
 	var priorVerdictFlags []string
 
+	// priorVerdictNotes is the full notes text from the most recent reviewer
+	// verdict, parallel to priorVerdict / priorVerdictFlags. It feeds the
+	// reviewer-feedback.iter-<N-1>.md file written before an implementer-resume
+	// back-edge (hk-wixms) so the resumed implementer receives the reviewer's
+	// REQUEST_CHANGES notes — mirroring reviewloop.go's WriteReviewerFeedback
+	// path. Empty before any reviewer has run.
+	priorVerdictNotes := ""
+
 	// lastGatePassed records whether the MOST RECENT shell commit-gate node
 	// (build + vet + test-compile + scenario tests) produced a SUCCESS outcome.
 	// hk-w2ow: the broadened completion exemption in the no-progress block
@@ -367,6 +375,17 @@ func driveDotWorkflow(
 	// By gating the exemption on !prevAgenticNodeWasReviewer instead of !isReviewer
 	// we allow case (b) to complete while preserving case (a).
 	prevAgenticNodeWasReviewer := false
+
+	// prevNodeID is the node ID processed in the IMMEDIATELY preceding loop
+	// iteration (the edge source that routed into the current node). hk-wixms
+	// uses it to pick the correct implementer-resume message: a re-entry whose
+	// inbound edge came from a reviewer node delivers the reviewer's verdict,
+	// while a re-entry from a commit_gate (or any non-reviewer) node delivers the
+	// "no commit" nudge — distinguishing the two even in the production
+	// review[RC]→implement[commits]→commit_gate[FAIL]→implement trace, where
+	// priorVerdict alone would carry stale REQUEST_CHANGES state. Empty on the
+	// first iteration. Updated at the end of each loop iteration.
+	prevNodeID := ""
 
 	for visits := 0; visits < dotMaxNodeVisits; visits++ {
 		node := nodesByID[currentNodeID]
@@ -669,6 +688,90 @@ func driveDotWorkflow(
 				// implementer node. A new implementer dispatch resets the override so
 				// stale values from prior implementer cycles do not bleed into the next.
 				lastImplementerReviewerHarness = core.AgentType(node.ReviewerHarness)
+
+				// hk-wixms: deliver an ACTIONABLE instruction to the resumed
+				// implementer on a back-edge re-entry (iterationCount >= 2). The
+				// implementer-resume paste-inject (pasteInjectImplementerResume) reads
+				// .harmonik/reviewer-feedback.iter-<N-1>.md from the worktree; without
+				// this file it degrades to a bare "read agent-task.md and begin" —
+				// the resumed session (which already produced satisfying work in its
+				// prior pass) then has nothing concrete to do, sits idle until the
+				// budget watchdog kills it, and the run thrashes (no commit →
+				// no_progress → re-dispatch). This mirrors reviewloop.go's
+				// WriteReviewerFeedback path, which the builtin review loop already
+				// does correctly.
+				//
+				// Two distinct re-entry causes need two distinct messages:
+				// Disambiguated by the INBOUND EDGE SOURCE (prevNodeID), not by
+				// priorVerdict alone — priorVerdict carries stale REQUEST_CHANGES
+				// state across an intervening implementer commit + commit_gate bounce
+				// in the production review[RC]→implement[commits]→commit_gate[FAIL]→
+				// implement trace.
+				//   (a) reviewer → implement: the inbound edge came from a reviewer
+				//       node that returned REQUEST_CHANGES — deliver the prior
+				//       reviewer's verdict, flags, and notes verbatim.
+				//   (b) commit_gate (or any non-reviewer) → implement: a deterministic
+				//       gate FAIL / no-commit bounce — deliver an explicit "your
+				//       previous pass produced NO commit — you MUST commit" nudge.
+				//
+				// Written to PriorIteration = iterationCount - 1 because the resume's
+				// paste-inject looks for reviewer-feedback.iter-<iterationCount-1>.md
+				// (priorIter = iterCount - 1 in pasteInjectImplementerResume).
+				//
+				// LOCAL only: WriteReviewerFeedback is a box-A-local os.WriteFile. For
+				// a REMOTE DOT run wtPath is on the worker, so the write would not
+				// reach the worker's worktree; the resume would still degrade. There
+				// is no WriteReviewerFeedbackVia yet, so we log loudly and continue —
+				// symmetric with reviewloop.go's REMOTE limitation (FLAGGED follow-up).
+				if iterationCount >= 2 {
+					priorIter := iterationCount - 1
+					var priorSummary string
+					if runner != nil {
+						fmt.Fprintf(os.Stderr,
+							"daemon: dot: REMOTE run iter %d: implementer-resume feedback NOT routed to worker worktree (no WriteReviewerFeedbackVia); resume will run without feedback/commit-nudge — multi-iteration remote DOT runs are not yet supported (FLAGGED follow-up) [hk-wixms]\n",
+							iterationCount)
+					} else {
+						var rfPayload workspace.ReviewerFeedbackPayload
+						prevNode := nodesByID[prevNodeID]
+						fromReviewerRC := prevNode != nil && nodeIsReviewer(prevNode) &&
+							priorVerdict == workspace.ReviewVerdictRequestChanges
+						if fromReviewerRC {
+							// (a) reviewer REQUEST_CHANGES back-edge: deliver the verdict.
+							rfPayload = workspace.ReviewerFeedbackPayload{
+								WorkspacePath:  wtPath,
+								PriorIteration: priorIter,
+								Verdict:        priorVerdict,
+								Flags:          priorVerdictFlags,
+								Notes:          priorVerdictNotes,
+							}
+							priorSummary = rlTruncateUTF8(priorVerdictNotes, priorVerdictSummaryMaxBytes)
+						} else {
+							// (b) commit_gate → implement no-commit bounce: no review
+							// verdict yet. Deliver an explicit commit nudge so the
+							// resumed implementer knows its prior pass produced no
+							// commit and MUST commit its changes.
+							const commitNudge = "Your previous pass produced NO commit — the workflow bounced back to you because HEAD did not advance. " +
+								"Re-read .harmonik/agent-task.md, make the required changes if you have not already, and you MUST commit your changes before exiting. " +
+								"If your prior edits are still in the working tree, commit them now; an uncommitted change is invisible to the workflow and will loop forever."
+							rfPayload = workspace.ReviewerFeedbackPayload{
+								WorkspacePath:  wtPath,
+								PriorIteration: priorIter,
+								Verdict:        "NO_COMMIT",
+								Notes:          commitNudge,
+							}
+							priorSummary = rlTruncateUTF8(commitNudge, priorVerdictSummaryMaxBytes)
+						}
+						if rfErr := workspace.WriteReviewerFeedback(rfPayload); rfErr != nil {
+							fmt.Fprintf(os.Stderr,
+								"daemon: dot: WriteReviewerFeedback iter %d: %v (non-fatal) [hk-wixms]\n",
+								iterationCount, rfErr)
+						}
+					}
+					// Emit implementer_resumed (§8.1a.1) BEFORE dispatch, mirroring the
+					// review-loop path, so the resume carries prior_verdict_summary for
+					// observability. WorkflowMode is DOT.
+					emitDotImplementerResumed(ctx, deps.bus, runID, claudeSessionID, iterationCount, priorSummary)
+				}
 			}
 			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, deps, runID, beadID, beadRecord,
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
@@ -772,6 +875,9 @@ func driveDotWorkflow(
 					flags = []string{}
 				}
 				priorVerdictFlags = flags
+				// hk-wixms: capture the verdict notes so the next implementer-resume
+				// back-edge can deliver them via reviewer-feedback.iter-<N-1>.md.
+				priorVerdictNotes = outcome.Notes
 				reviewerNoVerdictRetries = 0
 			}
 
@@ -917,6 +1023,10 @@ func driveDotWorkflow(
 			// capped edges are tracked; uncapped edges Increment is harmless but
 			// we restrict to capped edges to bound the counter map.
 			incrementCapIfBounded(graph, cycles, runID, currentNodeID, decision.NextNodeID)
+			// hk-wixms: record the node we just finished as the predecessor of the
+			// next node, so an implementer re-entry can tell whether its inbound edge
+			// came from a reviewer (deliver verdict) or a commit_gate (deliver nudge).
+			prevNodeID = currentNodeID
 			currentNodeID = decision.NextNodeID
 
 		default:
@@ -1452,7 +1562,8 @@ func dispatchDotAgenticNode(
 		return core.Outcome{
 			Status:              core.OutcomeStatusSuccess,
 			PreferredLabel:      &label,
-			PreferredLabelFlags: flags, // hk-m1wqp: carries reviewer flags to driveDotWorkflow for review_fixup_stalled
+			PreferredLabelFlags: flags,         // hk-m1wqp: carries reviewer flags to driveDotWorkflow for review_fixup_stalled
+			Notes:               verdict.Notes, // hk-wixms: carry verdict notes so the next implementer-resume back-edge can deliver them via reviewer-feedback.iter-<N-1>.md
 		}, nil
 	}
 
@@ -2101,4 +2212,33 @@ func emitDotReviewerVerdict(
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerVerdict, b)
+}
+
+// emitDotImplementerResumed emits implementer_resumed (§8.1a.1) before an
+// implementer-resume back-edge dispatch (iterationCount >= 2), matching the
+// builtin review-loop path (reviewloop.go emitImplementerResumed). WorkflowMode
+// is WorkflowModeDot so consumers filtering on workflow_mode=dot see the resume
+// event with prior_verdict_summary populated from the prior reviewer notes or
+// the commit-nudge (hk-wixms).
+func emitDotImplementerResumed(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
+	claudeSessionID string,
+	iterationCount int,
+	priorVerdictSummary string,
+) {
+	pl := core.ImplementerResumedPayload{
+		RunID:               runID,
+		WorkflowMode:        core.WorkflowModeDot,
+		SessionID:           handlercontract.NewSessionID(),
+		ClaudeSessionID:     claudeSessionID,
+		IterationCount:      iterationCount,
+		PriorVerdictSummary: priorVerdictSummary,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerResumed, b)
 }

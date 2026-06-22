@@ -139,7 +139,7 @@ type ReleaseEntry struct {
     // Tag is the git tag name, e.g. "v0.2.0".
     Tag string
 
-    // Prerelease is true from CREATE through VALIDATE. CERTIFY flips it false.
+    // Prerelease is true from CREATE through the dogfooding soak. CERTIFY flips it false.
     Prerelease bool
 
     // CertifiedAt is the RFC3339 timestamp when CERTIFY ran. Zero value means

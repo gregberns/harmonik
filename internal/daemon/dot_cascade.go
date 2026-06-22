@@ -611,6 +611,26 @@ func driveDotWorkflow(
 						summary: fmt.Sprintf("dot: completed at iteration %d — REQUEST_CHANGES was advisory-only (commit gate green; HEAD final, nothing committable remained) (hk-w2ow)", iterationCount),
 					}
 				}
+				// hk-du455 — committed + gate-green, no reviewer verdict yet: COMPLETION.
+				//
+				//   (4) COMMITTED + GATE-GREEN + NO VERDICT YET: there IS a committed
+				//       result (HEAD is past parentSHA) AND no reviewer has produced a
+				//       verdict yet (priorVerdict == "") AND the most-recent build/test
+				//       gate passed (lastGatePassed). The no-progress guard fires here
+				//       because the implementer re-entered without a new commit — e.g. a
+				//       transient gate failure bounced the bead back to the implementer,
+				//       which made no new commit since the committed tree was already
+				//       correct, and Gate-2 then passed on the same tree.
+				//       Firing no_progress here discards valid, gate-green committed work
+				//       before the reviewer can even run. The run instead COMPLETES so
+				//       the caller preserves the committed work.
+				//       Defense-in-depth for hk-7xgu4; precedent: cap-hit salvage above.
+				if committedResult && priorVerdict == "" && lastGatePassed {
+					return dotWorkflowResult{
+						success: true,
+						summary: fmt.Sprintf("dot: completed at iteration %d — committed work is gate-green with no prior reviewer verdict; preserving committed tree (hk-du455)", iterationCount),
+					}
+				}
 				// hk-nvd3 — configurable no-progress guard.
 				// The completion exemptions above (APPROVE + committed, advisory
 				// RC + green gate) are evaluated BEFORE this knob and remain in

@@ -40,9 +40,11 @@ package daemon
 // Spec: remote-substrate B8 (hk-rs-b8-codesync-3fk0); rework hk-7bwx.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workspace"
@@ -78,6 +80,26 @@ func workerSSHURL(host, repoPath string) string {
 	return "ssh://" + host + "/" + strings.TrimPrefix(repoPath, "/")
 }
 
+// isRefNotFoundError reports whether git's combined output indicates a transient
+// "couldn't find remote ref" condition. This specific message is produced by
+// git-fetch when git-upload-pack successfully serves the remote but the
+// requested ref is absent from the advertised list — distinct from SSH
+// connection errors (which appear before this string). The condition is
+// transient for remote-substrate runs: the agent has committed and exited (so
+// the ref exists on the worker's disk) but git-upload-pack may not yet serve
+// the newly-written ref due to filesystem flush timing across a real network
+// link (hk-zsn7 push/visibility gap). A short retry bridges the gap.
+func isRefNotFoundError(out []byte) bool {
+	return bytes.Contains(out, []byte("couldn't find remote ref"))
+}
+
+// fetchRunBranchRetryCount is the number of additional attempts after an
+// initial "couldn't find remote ref" failure in fetchRunBranchBoxA. Three
+// retries (four total attempts) with delays 2 s / 4 s / 8 s cover the
+// observed visibility window (≤ ~14 s) while bounding the worst case under
+// 30 s (hk-zsn7).
+const fetchRunBranchRetryCount = 3
+
 // fetchRunBranchBoxA fetches the run branch DIRECTLY from the worker's local repo
 // into box A's local ref namespace over SSH:
 //
@@ -99,6 +121,13 @@ func workerSSHURL(host, repoPath string) string {
 //
 // Step (c) of the DD1 code-sync sequence; MUST run before mergeRunBranchToMain
 // so the merge can resolve refs/heads/run/<runID> locally.
+//
+// Transient "couldn't find remote ref" errors are retried with exponential
+// backoff (2 s / 4 s / 8 s, up to fetchRunBranchRetryCount additional
+// attempts). This bridges the push/visibility gap where the agent has committed
+// and exited on the worker but git-upload-pack has not yet flushed the new ref
+// to its advertisement (hk-zsn7). Hard errors (connection failure, wrong path)
+// are not retried.
 func fetchRunBranchBoxA(ctx context.Context, r tmux.CommandRunner, projectDir, runID, workerHost, workerRepoPath string, sshOpts []string) error {
 	if r == nil {
 		r = tmux.LocalRunner{}
@@ -114,11 +143,33 @@ func fetchRunBranchBoxA(ctx context.Context, r tmux.CommandRunner, projectDir, r
 	}
 	args = append(args, "fetch", url, refspec)
 
-	cmd := r.Command(ctx, "git", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("codesync: fetchRunBranchBoxA (project=%s url=%s refspec=%s): %w\ngit: %s",
-			projectDir, url, refspec, err, out)
+	var (
+		out []byte
+		err error
+	)
+	for attempt := 0; attempt <= fetchRunBranchRetryCount; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 2 s, 4 s, 8 s. The agent has committed and
+			// exited; the branch exists on the worker but git-upload-pack may not
+			// yet advertise the newly-created ref (hk-zsn7 push/visibility gap).
+			delay := time.Duration(2<<uint(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("codesync: fetchRunBranchBoxA (project=%s url=%s refspec=%s): context cancelled on retry %d: %w",
+					projectDir, url, refspec, attempt, ctx.Err())
+			case <-time.After(delay):
+			}
+		}
+		cmd := r.Command(ctx, "git", args...)
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		if !isRefNotFoundError(out) {
+			// Hard error (connection failure, wrong path, etc.): do not retry.
+			break
+		}
 	}
-	return nil
+	return fmt.Errorf("codesync: fetchRunBranchBoxA (project=%s url=%s refspec=%s): %w\ngit: %s",
+		projectDir, url, refspec, err, out)
 }

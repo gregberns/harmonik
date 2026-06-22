@@ -199,6 +199,97 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 	})
 }
 
+// TestRSB8_IsRefNotFoundError verifies the transient-gap detector recognises
+// git's "couldn't find remote ref" output and rejects unrelated error strings.
+func TestRSB8_IsRefNotFoundError(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		out  string
+		want bool
+	}{
+		{"error: couldn't find remote ref run/019ee849-7df0\n", true},
+		{"fatal: couldn't find remote ref run/abc-123\n", true},
+		{"ssh: connect to host 100.87.151.114 port 22: Connection refused\n", false},
+		{"fatal: repository 'ssh://host/path' not found\n", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		got := isRefNotFoundError([]byte(tc.out))
+		if got != tc.want {
+			t.Errorf("isRefNotFoundError(%q) = %v, want %v", tc.out, got, tc.want)
+		}
+	}
+}
+
+// TestRSB8_FetchRunBranchRetries verifies that fetchRunBranchBoxA retries on
+// "couldn't find remote ref" and succeeds once the ref becomes visible.
+func TestRSB8_FetchRunBranchRetries(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		projectDir     = "/home/boxa/harmonik"
+		runID          = "019ec83c-rsb8-retry-0001-000000000001"
+		workerHost     = "100.87.151.114"
+		workerRepoPath = "/Users/gb/harmonik-worker/repo"
+		failCount      = 2 // first 2 attempts fail with "ref not found"
+	)
+
+	callN := 0
+	rr := &tmux.RecordingRunner{
+		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+			callN++
+			if callN <= failCount {
+				// Return a command that exits non-zero with the ref-not-found message.
+				return exec.Command("/bin/sh", "-c",
+					"printf \"error: couldn't find remote ref run/xxx\\n\" >&2; exit 128")
+			}
+			return exec.Command("true")
+		},
+	}
+
+	if err := fetchRunBranchBoxA(ctx, rr, projectDir, runID, workerHost, workerRepoPath, nil); err != nil {
+		t.Fatalf("fetchRunBranchBoxA: expected success after %d retries, got: %v", failCount, err)
+	}
+	// Expect failCount failures + 1 success = failCount+1 total calls.
+	if callN != failCount+1 {
+		t.Errorf("CmdFunc called %d times, want %d", callN, failCount+1)
+	}
+}
+
+// TestRSB8_FetchRunBranchNoRetryOnHardError verifies that fetchRunBranchBoxA
+// does NOT retry when the error is a hard failure (not a transient ref-not-found).
+func TestRSB8_FetchRunBranchNoRetryOnHardError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		projectDir     = "/home/boxa/harmonik"
+		runID          = "019ec83c-rsb8-noretry-0001-000000000001"
+		workerHost     = "100.87.151.114"
+		workerRepoPath = "/Users/gb/harmonik-worker/repo"
+	)
+
+	callN := 0
+	rr := &tmux.RecordingRunner{
+		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+			callN++
+			// Connection-refused — a hard error, must not retry.
+			return exec.Command("/bin/sh", "-c",
+				"printf \"ssh: connect to host 100.87.151.114 port 22: Connection refused\\n\" >&2; exit 128")
+		},
+	}
+
+	err := fetchRunBranchBoxA(ctx, rr, projectDir, runID, workerHost, workerRepoPath, nil)
+	if err == nil {
+		t.Fatal("expected error on hard failure, got nil")
+	}
+	// Must fail after exactly 1 call (no retry).
+	if callN != 1 {
+		t.Errorf("CmdFunc called %d times on hard error, want 1 (no retry)", callN)
+	}
+}
+
 // argvSliceEqual reports whether a and b have identical elements.
 func argvSliceEqual(a, b []string) bool {
 	if len(a) != len(b) {

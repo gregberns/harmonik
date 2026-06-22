@@ -1289,6 +1289,14 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// occurred — but per bead spec, do NOT abort Start on sweep error.
 		_ = sweepErr
 
+		// Reconcile pre-restart in-flight runs: for any run that had run_started
+		// but no terminal event, emit run_failed so the ops-monitor review-gate
+		// does not see a dangling reviewer_launched/no-verdict state after every
+		// restart (hk-r73qr).
+		if cfg.JSONLLogPath != "" {
+			_ = reconcileOrphanedRunsOnResume(ctx, cfg.JSONLLogPath, bus)
+		}
+
 		// RC-020a dispatch point (a): emit reconciliation_started{trigger:"startup"}
 		// after the orphan sweep and before the daemon transitions to `ready`.
 		// This marks the boundary at which the startup detector scan runs per

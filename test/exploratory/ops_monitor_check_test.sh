@@ -26,6 +26,9 @@
 #   [x] backlog-ready        → digest signal (br ready beads + free slot)
 #   [x] backlog suppressed   → no flag when all slots busy
 #   [x] checks map present, schema_version=2
+#   [x] critical-component re-alert after 5 min (daemon-down re-alerts at 6 min,
+#                                                 would be suppressed under old 30 min cd)
+#   [x] non-critical suppressed within 30 min   (paused-queue at 6 min stays suppressed)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -787,6 +790,70 @@ if [[ -f "$LOG" && -s "$LOG" ]]; then
   assert_contains "fleet-down comms signal"      "fleet-down"   "$(cat "$LOG")"
 else
   fail "fleet-down: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 18: critical signal re-alerts after 5 min (CRITICAL_IMMEDIATE_COOLDOWN) ─
+# daemon-down alerted 6 min ago → 6 min > 5 min critical cd → MUST re-alert.
+# This would be SUPPRESSED under the old 30 min global cooldown.
+echo ""
+echo "=== Test 18: daemon-down re-alerts after 5 min (critical cooldown) ==="
+EPOCH_6M_AGO=$(python3 -c "import time; print(int(time.time()) - 360)")
+STATE_18='{"stale_crew_misses":{},"last_digest_ts":0,"alerted_immediate":{"daemon-down":'"$EPOCH_6M_AGO"'}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-exit 17 \
+  --hk-comms-who-json '' \
+  --state-json "$STATE_18" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "critical re-alert: stdout IMMEDIATE" "IMMEDIATE"   "$OUTPUT"
+assert_contains "critical re-alert: stdout daemon-down" "daemon-down" "$OUTPUT"
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+SEND_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
+if echo "$SEND_SIGS" | grep -qF "daemon-down"; then
+  pass "critical re-alert: daemon-down in send_immediate_signals"
+else
+  fail "critical re-alert: daemon-down missing from send_immediate_signals (got $SEND_SIGS)"
+fi
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "critical re-alert: comms sent"
+  assert_contains "critical re-alert: comms [IMMEDIATE]" "[IMMEDIATE]"   "$(cat "$LOG")"
+  assert_contains "critical re-alert: comms daemon-down" "daemon-down"   "$(cat "$LOG")"
+else
+  fail "critical re-alert: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 19: non-critical signal suppressed at 5 min (uses 30 min cooldown) ──
+# paused-queue alerted 6 min ago → 6 min < 30 min global cd → MUST be suppressed.
+echo ""
+echo "=== Test 19: paused-queue suppressed at 6 min (non-critical 30 min cooldown) ==="
+CREW_TS=$(ts_ago 10)
+COMMS_WHO_19='{"agent":"myagent","status":"online","last_seen":"'"$CREW_TS"'"}'
+QLIST_19='{"queues":[{"name":"myagent-q","status":"paused-by-failure","workers":0,"pending_items":0,"failed_items":1}],"max_concurrent":4}'
+EPOCH_6M_AGO=$(python3 -c "import time; print(int(time.time()) - 360)")
+# paused-queue signal key includes the queue name
+STATE_19='{"stale_crew_misses":{},"last_digest_ts":0,"alerted_immediate":{"paused-queue:myagent-q":'"$EPOCH_6M_AGO"'}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json "$QLIST_19" \
+  --hk-comms-who-json "$COMMS_WHO_19" \
+  --state-json "$STATE_19" \
+)
+OUTPUT=$(run_check "$PROJ")
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+SEND_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
+if [[ "$SEND_SIGS" == "[]" ]]; then
+  pass "non-critical suppressed: send_immediate_signals empty (still within 30 min cd)"
+else
+  fail "non-critical suppressed: expected empty send_immediate_signals, got $SEND_SIGS"
+fi
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  fail "non-critical suppressed: no comms should be sent within 30 min cooldown"
+else
+  pass "non-critical suppressed: no comms sent (cooldown active)"
 fi
 rm -rf "$PROJ"
 

@@ -95,6 +95,9 @@ INERT_SUPPRESS_JSON='["main","remote-substrate","chani-q*","duncan-q*","liet-q*"
 LIVE_ALLOW_JSON='[]'
 # Re-alert cooldown for the SAME still-active immediate signal (seconds).
 IMMEDIATE_COOLDOWN=1800  # 30 minutes
+# Shorter re-alert cooldown for critical-component down signals (daemon / supervisor / fleet /
+# captain). A component that stays down should produce ~6 alerts in 30 min, not 1.
+CRITICAL_IMMEDIATE_COOLDOWN=300  # 5 minutes
 
 mkdir -p "$OUT_DIR"
 
@@ -264,7 +267,8 @@ last_run_ts             = int('$LAST_RUN_EVENT_TS')
 prev_misses             = json.loads('$PREV_STALE_MISSES')
 prev_digest             = int('$PREV_LAST_DIGEST')
 prev_alerted            = json.loads('''$PREV_ALERTED_IMMEDIATE''')
-immediate_cooldown      = int('$IMMEDIATE_COOLDOWN')
+immediate_cooldown          = int('$IMMEDIATE_COOLDOWN')
+critical_immediate_cooldown = int('$CRITICAL_IMMEDIATE_COOLDOWN')
 inert_suppress     = json.loads('''$INERT_SUPPRESS_JSON''')
 live_allow         = json.loads('''$LIVE_ALLOW_JSON''')
 comms_raw          = '''$COMMS_WHO_NDJSON'''
@@ -608,13 +612,21 @@ checks = {
 # Build new_alerted: {signal_key: first_alert_epoch} persisted across runs.
 # A signal is sent only on its first occurrence (edge) or when the cooldown
 # has expired and it is still active. Clear entries when the condition resolves.
+#
+# Critical-component signals (daemon-down / supervisor-down / fleet-down /
+# captain-down) use CRITICAL_IMMEDIATE_COOLDOWN (5 min) instead of the global
+# 30 min so a downed component re-alerts every ~5 min. captain-down arrives in
+# sibling bead hk-mttt8; the prefix is listed here for forward-compatibility.
+CRITICAL_PREFIXES = ('daemon-down', 'supervisor-down', 'fleet-down', 'captain-down')
+
 new_alerted = {}
 send_immediate_signals = []
 
 for sig in immediate_signals:
+    cd = critical_immediate_cooldown if any(sig.startswith(p) for p in CRITICAL_PREFIXES) else immediate_cooldown
     if sig in prev_alerted:
         age = ts_epoch - prev_alerted[sig]
-        if age >= immediate_cooldown:
+        if age >= cd:
             send_immediate_signals.append(sig)
             new_alerted[sig] = ts_epoch  # reset timer on re-alert
         else:

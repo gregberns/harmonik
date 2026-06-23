@@ -244,15 +244,11 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	}
 
 	// Twin-search-path precedence: CLI flag > env > <cwd>/twins/ (SH-009).
-	if twinSearchPath == "" {
-		if env := os.Getenv("HARMONIK_TWIN_SEARCH_PATH"); env != "" {
-			twinSearchPath = env
-		} else {
-			twinSearchPath = filepath.Join(cwd, "twins")
-		}
+	// Resolved paths are passed to BootstrapFixture per scenario in the G-02 loop.
+	twinSearchPaths := resolveTwinSearchPaths(twinSearchPath, os.Getenv("HARMONIK_TWIN_SEARCH_PATH"), cwd)
+	if verboseFlag {
+		fmt.Fprintf(stderr, "harness: twin-search-paths: %v\n", twinSearchPaths)
 	}
-	// twinSearchPath is wired to the execution layer (G-02); not consumed here.
-	_ = twinSearchPath
 
 	// Discover + load scenarios (SH-006/SH-007).
 	// Duplicate-name detection (SH-005) and wrong-extension rejection (SH-002)
@@ -303,7 +299,8 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	//
 	// TODO(G-02): replace the stub below with the actual per-scenario
 	// orchestration loop (DriveOrchestration + TeardownFixture + result
-	// emission). Each completed scenario's ScenarioResult appends to
+	// emission). Pass twinSearchPaths to BootstrapFixture for each scenario
+	// per SH-009. Each completed scenario's ScenarioResult appends to
 	// completedResults. The loop MUST check ctx.Done() between scenarios to
 	// detect operator interruption.
 	//
@@ -532,6 +529,28 @@ func harnessDiscoverScenarios(
 	})
 
 	return scenarios, loadErrs
+}
+
+// resolveTwinSearchPaths returns the ordered twin-binary search-path list per
+// the three-level precedence rule in specs/scenario-harness.md §4.3 SH-009:
+//
+//   (i)  CLI flag --twin-search-path (flagValue non-empty)
+//   (ii) environment variable HARMONIK_TWIN_SEARCH_PATH (envValue non-empty)
+//   (iii) in-tree default: <cwd>/twins/
+//
+// The resolved path is returned as a one-element slice because BootstrapFixture
+// accepts []string; multiple search directories may be supported in a future
+// iteration per OQ-SH-009.
+//
+// Spec ref: specs/scenario-harness.md §4.3 SH-009.
+func resolveTwinSearchPaths(flagValue, envValue, cwd string) []string {
+	if flagValue != "" {
+		return []string{flagValue}
+	}
+	if envValue != "" {
+		return []string{envValue}
+	}
+	return []string{filepath.Join(cwd, "twins")}
 }
 
 // harnessMatrixCellCount returns the cartesian-product cell count for a matrix

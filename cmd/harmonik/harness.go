@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 
 	"github.com/gregberns/harmonik/internal/scenario"
@@ -181,6 +182,8 @@ func runHarness(args []string, stdout, stderr io.Writer) int {
 	_ = fixtureRootFlag
 
 	// Discover + load scenarios (SH-006/SH-007).
+	// Duplicate-name detection (SH-005) and wrong-extension rejection (SH-002)
+	// are performed inside harnessDiscoverScenarios.
 	discovered, loadErrs := harnessDiscoverScenarios(
 		cwd,
 		[]string(scenarioFiles),
@@ -192,12 +195,6 @@ func runHarness(args []string, stdout, stderr io.Writer) int {
 		for _, e := range loadErrs {
 			fmt.Fprintln(stderr, "harmonik harness:", e)
 		}
-		return harnessExitSuiteLoadAbort
-	}
-
-	// Suite-wide name uniqueness check (SH-005).
-	if dupErr := harnessCheckDuplicateNames(discovered); dupErr != nil {
-		fmt.Fprintln(stderr, "harmonik harness:", dupErr)
 		return harnessExitSuiteLoadAbort
 	}
 
@@ -240,15 +237,20 @@ func runHarness(args []string, stdout, stderr io.Writer) int {
 	return harnessExitInternalError
 }
 
-// harnessDiscoverScenarios discovers scenario YAML files and returns them in
-// byte-lexicographic order per SH-007.
+// harnessDiscoverScenarios discovers scenario YAML files and returns them
+// sorted in byte-lexicographic order of their name field per SH-007.
 //
 // If scenarioPaths is non-empty only those files are loaded (--scenario flag).
 // Otherwise all .yaml files under <projectRoot>/scenarios/ are discovered
-// (SH-002, SH-006) and filtered by cadenceFilter.
+// recursively (SH-002, SH-006) and filtered by cadenceFilter. Files with a
+// .yml or .YAML extension are rejected as scenario-load-failure per SH-002;
+// all other non-.yaml extensions are silently skipped.
 //
-// Any file that fails ParseScenarioFile is collected into the returned error
-// slice. If any error is present the caller MUST abort with exit code 2.
+// Suite-wide name uniqueness (SH-005) is enforced across all parsed files
+// before cadence filtering; conflicting paths are included in the error.
+//
+// Any rejection produces an entry in the returned error slice. If any error
+// is present the caller MUST abort with exit code 2.
 func harnessDiscoverScenarios(
 	projectRoot string,
 	scenarioPaths []string,
@@ -257,6 +259,7 @@ func harnessDiscoverScenarios(
 	stderr io.Writer,
 ) ([]scenario.ScenarioFile, []error) {
 	var paths []string
+	var loadErrs []error
 
 	if len(scenarioPaths) > 0 {
 		paths = make([]string, len(scenarioPaths))
@@ -275,33 +278,66 @@ func harnessDiscoverScenarios(
 			fmt.Fprintf(stderr, "harness: discovering scenarios under %s\n", scenariosDir)
 		}
 		var walkErr error
+		var wrongExt []error
 		_ = filepath.WalkDir(scenariosDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				walkErr = err
 				return err
 			}
-			if !d.IsDir() && filepath.Ext(path) == ".yaml" {
-				paths = append(paths, path)
+			if d.IsDir() {
+				return nil
 			}
+			ext := filepath.Ext(path)
+			if ext == ".yaml" {
+				paths = append(paths, path)
+				return nil
+			}
+			// SH-002: .yml and uppercase variants look like YAML but use the
+			// wrong extension; reject without opening.
+			if ext == ".yml" || strings.ToLower(ext) == ".yaml" {
+				wrongExt = append(wrongExt, fmt.Errorf(
+					"scenario-load-failure: %q has extension %q; scenario files MUST use .yaml (SH-002)",
+					path, ext,
+				))
+			}
+			// Other extensions (.dot, .md, etc.) are silently skipped.
 			return nil
 		})
 		if walkErr != nil {
 			return nil, []error{fmt.Errorf("walk scenarios dir %q: %w", scenariosDir, walkErr)}
 		}
-		// Byte-lexicographic path order drives execution order per SH-007.
+		loadErrs = append(loadErrs, wrongExt...)
+		// Stable parse order for deterministic error reporting across platforms.
 		sort.Strings(paths)
 	}
 
-	var (
-		scenarios []scenario.ScenarioFile
-		loadErrs  []error
-	)
+	// Parse all files. Track name→path for suite-wide duplicate detection (SH-005).
+	// Duplicate detection spans all parsed files, before cadence filtering,
+	// so a name collision between scenarios of different cadences is caught.
+	nameToPath := make(map[string]string, len(paths))
+	var allLoaded []scenario.ScenarioFile
+
 	for _, path := range paths {
 		sf, err := scenario.ParseScenarioFile(path)
 		if err != nil {
 			loadErrs = append(loadErrs, err)
 			continue
 		}
+		// SH-005: suite-wide name uniqueness; report both conflicting paths.
+		if prev, exists := nameToPath[sf.Name]; exists {
+			loadErrs = append(loadErrs, fmt.Errorf(
+				"scenario-load-failure: duplicate scenario name %q in %q and %q (SH-005)",
+				sf.Name, prev, path,
+			))
+			continue
+		}
+		nameToPath[sf.Name] = path
+		allLoaded = append(allLoaded, sf)
+	}
+
+	// Apply cadence filter.
+	var scenarios []scenario.ScenarioFile
+	for _, sf := range allLoaded {
 		if !cadenceFilter.Includes(sf.CadenceTag) {
 			if verbose {
 				fmt.Fprintf(stderr, "harness: skip %q (cadence=%s not in filter=%s)\n",
@@ -311,20 +347,14 @@ func harnessDiscoverScenarios(
 		}
 		scenarios = append(scenarios, sf)
 	}
-	return scenarios, loadErrs
-}
 
-// harnessCheckDuplicateNames returns an error if any two scenarios share the
-// same name, violating SH-005 (suite-wide name uniqueness).
-func harnessCheckDuplicateNames(scenarios []scenario.ScenarioFile) error {
-	seen := make(map[string]struct{}, len(scenarios))
-	for _, sf := range scenarios {
-		if _, exists := seen[sf.Name]; exists {
-			return fmt.Errorf("scenario-load-failure: duplicate scenario name %q (SH-005)", sf.Name)
-		}
-		seen[sf.Name] = struct{}{}
-	}
-	return nil
+	// SH-007: execute in byte-lexicographic order of the name field.
+	// This is locale-independent UTF-8 byte comparison, not file-path order.
+	sort.Slice(scenarios, func(i, j int) bool {
+		return scenarios[i].Name < scenarios[j].Name
+	})
+
+	return scenarios, loadErrs
 }
 
 // harnessMatrixCellCount returns the cartesian-product cell count for a matrix

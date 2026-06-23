@@ -1,27 +1,27 @@
 package main
 
-// harness.go — `harmonik harness` subcommand (hk-nwqa0).
+// harness.go — `harmonik harness` subcommand (hk-nwqa0, hk-5ec1s).
 //
 // Implements the scenario-harness CLI surface declared in
-// specs/scenario-harness.md §4.12 SH-032.
+// specs/scenario-harness.md §4.12 SH-032 and §4.13 SH-033.
 //
 // At this iteration the subcommand supports:
 //   - Flag parsing for all 8 MVH flags (SH-032).
 //   - --list: discover scenarios, filter by cadence, print name+cadence.
 //   - --dry-run: suite-load + matrix-expansion validation; no orchestration.
-//   - Signal setup for SIGINT/SIGTERM (SH-033 partial — infrastructure only;
-//     graceful-shutdown teardown requires G-02/G-03 which are future beads).
+//   - SIGINT/SIGTERM graceful shutdown with partial SuiteResult emission (SH-033).
+//   - Double-SIGINT hard exit: os.Exit(130) immediately (SH-033).
 //
 // The full execution path (suite orchestration, assertion evaluation, result
-// emission) depends on G-02 (orchestration drive), G-03 (fixture teardown),
-// G-05 (assertion evaluator), and G-06 (result emission) — all separate beads.
-// Attempting full execution returns exit code 3 (harness-internal-error) with
-// an explicit "not yet implemented" message until those beads land.
+// emission) depends on G-02 (orchestration drive) which is a future bead.
+// Until G-02 lands the harness blocks on ctx cancellation in the execution
+// phase so that SH-033 signal handling is exercisable without a real loop.
 //
 // Spec refs: specs/scenario-harness.md §4.12 SH-032, §4.13 SH-033.
-// Bead ref: hk-nwqa0.
+// Beads: hk-nwqa0 (CLI surface), hk-5ec1s (signal handling).
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -32,7 +32,11 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/scenario"
 )
 
@@ -42,7 +46,8 @@ const (
 	harnessExitFail              = 1   // SuiteResult.suite_verdict = fail
 	harnessExitSuiteLoadAbort    = 2   // Suite-load aborted (parse/duplicate/schema error)
 	harnessExitInternalError     = 3   // Harness-internal error (panic, unrecoverable I/O)
-	harnessExitOperatorInterrupt = 130 // Operator interrupt (SIGINT)
+	harnessExitOperatorInterrupt = 130 // Operator interrupt (SIGINT); 128 + signal 2
+	harnessExitSIGTERM           = 143 // Operator interrupt (SIGTERM); 128 + signal 15
 )
 
 const harnessTopUsage = `harmonik harness — run the scenario harness against a project
@@ -65,7 +70,8 @@ EXIT CODES
   1    SuiteResult.suite_verdict = fail (one or more scenarios failed)
   2    Suite-load aborted (duplicate name, parse error, or schema error per SH-006)
   3    Harness-internal error (panic or unrecoverable I/O failure)
-  130  Operator interrupt (SIGINT)
+  130  Operator interrupt (SIGINT); partial SuiteResult emitted to stdout
+  143  Operator interrupt (SIGTERM); partial SuiteResult emitted to stdout
 
 NOTES
   Two concurrent harmonik harness invocations against the same project are
@@ -101,10 +107,24 @@ func runHarnessSubcommand(args []string) int {
 	return runHarness(args, os.Stdout, os.Stderr)
 }
 
-// runHarness is the testable core of the harness subcommand.
+// runHarness registers OS signal handlers and delegates to runHarnessWithSigs.
 //
-// Spec ref: specs/scenario-harness.md §4.12 SH-032.
+// Spec ref: specs/scenario-harness.md §4.12 SH-032, §4.13 SH-033.
 func runHarness(args []string, stdout, stderr io.Writer) int {
+	// Buffered 2: first slot absorbs the interrupt signal; second slot captures
+	// a double-SIGINT for the hard-exit path (SH-033).
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	return runHarnessWithSigs(args, stdout, stderr, sigCh)
+}
+
+// runHarnessWithSigs is the testable core of the harness subcommand. Callers
+// supply the signal channel so that tests can pre-load signals without sending
+// real OS signals.
+//
+// Spec refs: specs/scenario-harness.md §4.12 SH-032, §4.13 SH-033.
+func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os.Signal) int {
 	fset := flag.NewFlagSet("harness", flag.ContinueOnError)
 	fset.SetOutput(stderr)
 	fset.Usage = func() { fmt.Fprint(stdout, harnessTopUsage) }
@@ -153,11 +173,67 @@ func runHarness(args []string, stdout, stderr io.Writer) int {
 		return harnessExitInternalError
 	}
 
-	// Set up signal handling per SH-033. The channel is buffered so that a
-	// second SIGINT during shutdown is captured for hard-exit (SH-033 §2).
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
+	// suiteStart and suiteID are captured at invocation so they are available
+	// even if the harness exits early due to a signal.
+	suiteStart := time.Now().UTC().Truncate(time.Millisecond)
+	suiteUUID, suiteIDErr := uuid.NewV7()
+	if suiteIDErr != nil {
+		fmt.Fprintf(stderr, "harmonik harness: generate suite ID: %v\n", suiteIDErr)
+		return harnessExitInternalError
+	}
+	suiteID := core.SuiteID(suiteUUID)
+
+	// ctx is cancelled by the signal goroutine on the first SIGINT/SIGTERM so
+	// that the execution loop (when G-02 is wired) can detect interruption.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// interruptCh carries the first received signal to the main goroutine.
+	// Buffered 1 so the goroutine never blocks writing while the main goroutine
+	// is between its ctx.Done() wakeup and the select below.
+	interruptCh := make(chan os.Signal, 1)
+
+	// shutdownComplete is closed by defer when runHarnessWithSigs returns,
+	// marking the end of the graceful-shutdown window. The signal goroutine
+	// watches it so it does not block indefinitely after execution completes.
+	shutdownComplete := make(chan struct{})
+	defer close(shutdownComplete)
+
+	// SH-033: signal goroutine — handle SIGINT/SIGTERM.
+	//
+	// First signal: cancel the execution context and notify the main goroutine.
+	// Second SIGINT during graceful shutdown: hard-exit immediately per SH-033.
+	//
+	// The goroutine uses shutdownComplete (not ctx.Done()) for the hard-exit
+	// window because ctx is already cancelled by the first signal; selecting
+	// on ctx.Done() would close the window immediately.
+	go func() {
+		select {
+		case sig, ok := <-sigCh:
+			if !ok {
+				return
+			}
+			cancel()           // cancel execution context for graceful shutdown
+			interruptCh <- sig // deliver signal to main goroutine
+
+			// Wait for a second SIGINT (double-SIGINT hard-exit per SH-033).
+			// The window stays open until shutdownComplete is closed (function
+			// return), so a second SIGINT at any point during graceful shutdown
+			// triggers the immediate hard-exit.
+			select {
+			case sig2, ok2 := <-sigCh:
+				if ok2 && sig2 == syscall.SIGINT {
+					// SH-033: second SIGINT during graceful shutdown overrides
+					// the cleanup invariant — exit immediately.
+					os.Exit(harnessExitOperatorInterrupt)
+				}
+			case <-shutdownComplete:
+				// Graceful shutdown completed; double-SIGINT window closed.
+			}
+		case <-ctx.Done():
+			// Normal exit (no signal arrived before execution completed).
+		}
+	}()
 
 	// Resolve working directory for scenario discovery and twin-search-path
 	// default.
@@ -177,9 +253,6 @@ func runHarness(args []string, stdout, stderr io.Writer) int {
 	}
 	// twinSearchPath is wired to the execution layer (G-02); not consumed here.
 	_ = twinSearchPath
-	// fixtureRootFlag is wired to SH-016 via NewFixtureRoot; not consumed for
-	// list/dry-run paths which do not create a fixture root.
-	_ = fixtureRootFlag
 
 	// Discover + load scenarios (SH-006/SH-007).
 	// Duplicate-name detection (SH-005) and wrong-extension rejection (SH-002)
@@ -226,15 +299,107 @@ func runHarness(args []string, stdout, stderr io.Writer) int {
 		return harnessExitPass
 	}
 
-	// Full execution path: fixture teardown (G-03), assertion evaluator (G-05),
-	// and result emitter (G-06) are not yet implemented. The orchestration drive
-	// (G-02) is implemented via scenario.DriveOrchestration but cannot be wired
-	// into the full pipeline until G-03/G-05/G-06 land. Return
-	// harness-internal-error per the exit-code table (SH-032, code 3).
-	fmt.Fprintf(stderr, "harmonik harness: full scenario execution not yet implemented\n")
-	fmt.Fprintf(stderr, "harmonik harness: fixture teardown (G-03), assertion evaluator (G-05), and result emitter (G-06) are required\n")
-	fmt.Fprintf(stderr, "harmonik harness: use --list to discover scenarios or --dry-run to validate\n")
-	return harnessExitInternalError
+	// Full execution path.
+	//
+	// TODO(G-02): replace the stub below with the actual per-scenario
+	// orchestration loop (DriveOrchestration + TeardownFixture + result
+	// emission). Each completed scenario's ScenarioResult appends to
+	// completedResults. The loop MUST check ctx.Done() between scenarios to
+	// detect operator interruption.
+	//
+	// The stub blocks until ctx is cancelled (by a signal) so that SH-033
+	// signal handling is exercisable before the real loop lands. Operators
+	// see the "not yet implemented" message and can Ctrl-C to exit.
+	var completedResults []scenario.ScenarioResult // populated by G-02 loop
+
+	fmt.Fprintf(stderr, "harmonik harness: full scenario execution not yet implemented (G-02 pending)\n")
+	fmt.Fprintf(stderr, "harmonik harness: use --list or --dry-run; send SIGINT/SIGTERM to exit\n")
+
+	// Block until a signal cancels ctx. When G-02 lands this becomes the
+	// scenario execution loop that selects on ctx.Done() to detect interrupts.
+	<-ctx.Done()
+
+	// Determine whether cancellation was signal-driven.
+	select {
+	case sig := <-interruptCh:
+		// SH-033: graceful shutdown — emit partial SuiteResult and exit.
+		harnessEmitInterruptResult(
+			stdout, stderr,
+			scenario.SuiteResultOutputFormat(outputFlag),
+			suiteID, suiteStart, fixtureRootFlag, cadenceFilter,
+			completedResults, sig,
+		)
+		return harnessInterruptExitCode(sig)
+	default:
+		// ctx cancelled by some other means (e.g. deferred cancel after a
+		// future internal error). Should not occur in the current stub.
+		return harnessExitInternalError
+	}
+}
+
+// harnessInterruptExitCode returns the exit code for a received signal per
+// specs/scenario-harness.md §4.12 SH-032:
+//   - SIGINT  → 130 (128 + signal number 2)
+//   - SIGTERM → 143 (128 + signal number 15)
+//   - other   → 130 (treat as SIGINT-equivalent)
+func harnessInterruptExitCode(sig os.Signal) int {
+	if sig == syscall.SIGTERM {
+		return harnessExitSIGTERM
+	}
+	return harnessExitOperatorInterrupt
+}
+
+// harnessEmitInterruptResult builds and emits a partial SuiteResult to stdout
+// per the SH-033 graceful-shutdown protocol. The partial result contains
+// completed is the list of ScenarioResult values collected before the interrupt.
+//
+// The SuiteResult is not structurally fully valid when fixtureRoot is empty
+// (fixture root not yet created at interrupt time), but it is emitted regardless
+// so that operators can inspect completed scenario results.
+//
+// Spec ref: specs/scenario-harness.md §4.13 SH-033.
+func harnessEmitInterruptResult(
+	stdout, stderr io.Writer,
+	format scenario.SuiteResultOutputFormat,
+	suiteID core.SuiteID,
+	startedAt time.Time,
+	fixtureRoot string,
+	cadenceFilter scenario.CadenceFilter,
+	completed []scenario.ScenarioResult,
+	sig os.Signal,
+) {
+	sigName := "SIGINT"
+	if sig == syscall.SIGTERM {
+		sigName = "SIGTERM"
+	}
+	fmt.Fprintf(stderr, "harmonik harness: %s received — emitting partial SuiteResult\n", sigName)
+
+	// Suite verdict is fail if any completed scenario failed; otherwise pass
+	// (the vacuous case of zero completed scenarios is pass per SH-029).
+	suiteVerdict := scenario.SuiteVerdictPass
+	for _, r := range completed {
+		if r.Verdict != scenario.ScenarioVerdictPass {
+			suiteVerdict = scenario.SuiteVerdictFail
+			break
+		}
+	}
+
+	sr := scenario.SuiteResult{
+		SuiteID:       suiteID,
+		StartedAt:     startedAt,
+		CompletedAt:   time.Now().UTC().Truncate(time.Millisecond),
+		FixtureRoot:   fixtureRoot,
+		CadenceFilter: cadenceFilter,
+		Results:       completed,
+		SuiteVerdict:  suiteVerdict,
+	}
+
+	if !format.Valid() {
+		format = scenario.SuiteResultOutputFormatHuman
+	}
+	if emitErr := scenario.EmitSuiteResult(stdout, format, sr); emitErr != nil {
+		fmt.Fprintf(stderr, "harmonik harness: emit partial SuiteResult: %v\n", emitErr)
+	}
 }
 
 // harnessDiscoverScenarios discovers scenario YAML files and returns them

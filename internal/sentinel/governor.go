@@ -37,6 +37,11 @@ import (
 // DefaultHighWeight is the movement score awarded for each terminal-progress event.
 const DefaultHighWeight = 10
 
+// DefaultSentinelEvalCadence is the default minimum interval between consecutive
+// sentinel.Evaluate calls from the daemon workloop. Prevents computeWindowMovement
+// from scanning events.jsonl on every 2s workloop tick (hk-usn8o).
+const DefaultSentinelEvalCadence = 2 * time.Minute
+
 // DefaultWeights is the default per-event-type weight table (spec §1.1).
 // Terminal-progress events carry DefaultHighWeight; all other events carry 0
 // (enforced by the zero-value default in ComputeWindowMovement).
@@ -123,6 +128,11 @@ type Config struct {
 	// bead_closed, no run_completed, no reviewer_verdict{APPROVE}).
 	// 0 (default) disables the G-liveness gate entirely.
 	LivenessNoProgressN int
+
+	// EvalCadence is the minimum interval between consecutive Evaluate calls.
+	// Zero uses DefaultSentinelEvalCadence (2 minutes). The daemon workloop reads
+	// this field to cadence-gate the O(events.jsonl) scan (hk-usn8o).
+	EvalCadence time.Duration
 }
 
 func (c Config) window() time.Duration {
@@ -303,7 +313,12 @@ func computeWindowMovement(
 	}
 
 	// --- events.jsonl scan ---
-	for ev := range eventbus.ScanAfter(eventsPath, core.EventID{}) {
+	// Derive a cursor near windowStart so ScanAfter skips all events older than
+	// the window, bounding the I/O to the trailing window instead of the full
+	// file (hk-usn8o). The wall-clock guard below is kept as a safety net for
+	// the rare case where UUIDv7 timestamp and wall-clock differ by <1ms.
+	cursor := eventIDFloorForTime(windowStart)
+	for ev := range eventbus.ScanAfter(eventsPath, cursor) {
 		// Filter to events within the window by wall-clock time.
 		// UUIDv7 ordering would be more correct but wall-clock is sufficient
 		// for a ~30-minute window and avoids timestamp parsing from EventIDs.
@@ -348,6 +363,29 @@ func computeWindowMovement(
 	}
 
 	return sample
+}
+
+// eventIDFloorForTime returns the lexicographically minimum UUIDv7 that could
+// represent the given instant. Passed as the 'after' cursor to ScanAfter so
+// the events.jsonl scan starts near the window rather than from offset zero,
+// bounding the per-Evaluate I/O to trailing-window events (hk-usn8o).
+//
+// The floor embeds the ms-precision Unix timestamp in the 48 most-significant
+// bits (RFC 9562 §5.7) and zeros all random/variant bits. Any real UUIDv7 at
+// the same millisecond (with non-zero random bits) is strictly greater, so
+// ScanAfter correctly yields events at or after t.
+func eventIDFloorForTime(t time.Time) core.EventID {
+	ms := t.UnixMilli()
+	var b [16]byte
+	b[0] = byte(ms >> 40)
+	b[1] = byte(ms >> 32)
+	b[2] = byte(ms >> 24)
+	b[3] = byte(ms >> 16)
+	b[4] = byte(ms >> 8)
+	b[5] = byte(ms)
+	b[6] = 0x70 // version nibble = 7, rand_a high nibble = 0
+	// bytes 7-15: all zero (minimum possible random/variant bits)
+	return core.EventID(b)
 }
 
 // countHeadAdvances counts commits on origin/main whose committer date falls

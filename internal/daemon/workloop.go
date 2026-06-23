@@ -1323,6 +1323,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// calls exitClean() — halting dispatch while allowing in-flight runs to drain.
 	var governorHalted bool
 
+	// lastSentinelEval is the wall-clock time of the most recent sentinel.Evaluate
+	// call. Zero triggers on the first iteration. Shared by FW2/FW3 (they are
+	// mutually exclusive on sentinelMode). Bead ref: hk-usn8o.
+	var lastSentinelEval time.Time
+
 	// dispatchCtx is the context checked by the outer poll loop to decide
 	// whether to halt dispatch. It is separate from ctx (the main daemon context)
 	// so that CancelOnQueueDrain/CancelOnQueueExit can stop the dispatch loop
@@ -1492,40 +1497,46 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 
 		// FW2 (hk-z1lr): sentinel governor observe-only evaluation.
 		//
-		// Fires every tick when the governor is wired (governorState non-nil) and
-		// sentinel.mode is "observe" (the default). Emits a governor_signal typed
-		// event so operators can watch the staircase decisions against the real
-		// event stream before the governor has teeth.
+		// Cadence-gated (hk-usn8o): computeWindowMovement scans events.jsonl on each
+		// call; running on every 2s workloop tick caused 25-50% daemon CPU on large
+		// logs. Only evaluate when the configured cadence has elapsed.
 		//
 		// OBSERVE-ONLY CONTRACT: no EmitTrip, no halt, no dispatch side-effects.
 		// ACT mode (hk-4toh FW3) wires the trip/halt/all-clear block separately.
 		//
 		// Spec ref: flywheel-motion.md §§1, 6.1. Bead ref: hk-z1lr (FW2).
 		if deps.governorState != nil && (deps.sentinelMode == "" || deps.sentinelMode == "observe") {
-			now := time.Now()
-
-			// Snapshot hasReadyBeads: ≥1 unblocked open bead exists (§1.3).
-			var hasReadyBeads bool
-			if readyRecs, readyErr := deps.brAdapter.Ready(ctx); readyErr == nil {
-				hasReadyBeads = len(readyRecs) > 0
+			evalCad := deps.governorCfg.EvalCadence
+			if evalCad <= 0 {
+				evalCad = sentinel.DefaultSentinelEvalCadence
 			}
+			if time.Since(lastSentinelEval) >= evalCad {
+				lastSentinelEval = time.Now()
+				now := time.Now()
 
-			// HasUndeployedTail: closed Phase-2-class bead present (§1.3, §5.2).
-			// Skip the br call when no Phase-2 classes are configured (fast path).
-			var hasUndeployedTail bool
-			if len(deps.sentinelPhase2Classes) > 0 && deps.brPath != "" {
-				hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
-			}
+				// Snapshot hasReadyBeads: ≥1 unblocked open bead exists (§1.3).
+				var hasReadyBeads bool
+				if readyRecs, readyErr := deps.brAdapter.Ready(ctx); readyErr == nil {
+					hasReadyBeads = len(readyRecs) > 0
+				}
 
-			sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
-				ProjectDir:        deps.projectDir,
-				Now:               now,
-				HasReadyBeads:     hasReadyBeads,
-				HasUndeployedTail: hasUndeployedTail,
-			}, deps.governorCfg)
+				// HasUndeployedTail: closed Phase-2-class bead present (§1.3, §5.2).
+				// Skip the br call when no Phase-2 classes are configured (fast path).
+				var hasUndeployedTail bool
+				if len(deps.sentinelPhase2Classes) > 0 && deps.brPath != "" {
+					hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
+				}
 
-			if raw, mErr := json.Marshal(sig); mErr == nil {
-				_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw)
+				sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
+					ProjectDir:        deps.projectDir,
+					Now:               now,
+					HasReadyBeads:     hasReadyBeads,
+					HasUndeployedTail: hasUndeployedTail,
+				}, deps.governorCfg)
+
+				if raw, mErr := json.Marshal(sig); mErr == nil {
+					_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw)
+				}
 			}
 		}
 
@@ -1543,128 +1554,136 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		//
 		// Spec ref: flywheel-motion.md §§2, 6.1. Bead ref: hk-4toh (FW3).
 		if deps.governorState != nil && deps.sentinelMode == "act" {
-			now := time.Now()
-
-			var hasReadyBeads bool
-			var readyBeadIDs []string
-			if readyRecs, readyErr := deps.brAdapter.Ready(ctx); readyErr == nil {
-				hasReadyBeads = len(readyRecs) > 0
-				for _, rec := range readyRecs {
-					readyBeadIDs = append(readyBeadIDs, string(rec.BeadID))
-				}
+			evalCad := deps.governorCfg.EvalCadence
+			if evalCad <= 0 {
+				evalCad = sentinel.DefaultSentinelEvalCadence
 			}
+			// Cadence gate (hk-usn8o): skip O(events.jsonl) scan on this tick.
+			if time.Since(lastSentinelEval) >= evalCad {
+				lastSentinelEval = time.Now()
+				now := time.Now()
 
-			var hasUndeployedTail bool
-			if len(deps.sentinelPhase2Classes) > 0 && deps.brPath != "" {
-				hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
-			}
-
-			sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
-				ProjectDir:        deps.projectDir,
-				Now:               now,
-				HasReadyBeads:     hasReadyBeads,
-				HasUndeployedTail: hasUndeployedTail,
-			}, deps.governorCfg)
-
-			if raw, mErr := json.Marshal(sig); mErr == nil {
-				_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw)
-			}
-
-			switch {
-			case sig.Level == sentinel.ActivationHalt:
-				// G-liveness doom-loop: halt dispatch + emit liveness_halt page event.
-				// Set governorHalted=true so the next iteration calls exitClean().
-				governorHalted = true
-				halPayload, _ := json.Marshal(map[string]interface{}{
-					"consecutive_zero_cycles": sig.ConsecutiveZeroCycles,
-					"liveness_no_progress_n":  deps.governorCfg.LivenessNoProgressN,
-				})
-				_ = deps.bus.Emit(ctx, core.EventTypeLivenessHalt, halPayload)
-				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: sentinel: G-liveness halt fired after %d zero-progress cycles (threshold=%d); halting dispatch\n",
-					sig.ConsecutiveZeroCycles, deps.governorCfg.LivenessNoProgressN)
-
-			case sig.Level == sentinel.ActivationActive && sig.SuppressedBy == "":
-				// Sustained low movement with opportunity: emit decision_required trip.
-				//
-				// AC4 (hk-jvul): reconcile the in-memory pending token against the
-				// on-disk ack file. A captain legitimate-halt (record-halt CLI) may
-				// have externally acknowledged the file between ticks. When that
-				// happens, clear the in-memory token and the DecisionBlocker so the
-				// next ActivationActive emits a fresh trip for re-adjudication (spec
-				// §2.2 clause 2 — "subject to re-adjudication next pass").
-				if sentinelPendingAckToken != "" {
-					if externallyAcked, checkErr := sentinel.IsTripAcknowledged(deps.projectDir, sentinelPendingAckToken); checkErr == nil && externallyAcked {
-						if deps.decisionBlocker != nil {
-							deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
-						}
-						sentinelPendingAckToken = ""
+				var hasReadyBeads bool
+				var readyBeadIDs []string
+				if readyRecs, readyErr := deps.brAdapter.Ready(ctx); readyErr == nil {
+					hasReadyBeads = len(readyRecs) > 0
+					for _, rec := range readyRecs {
+						readyBeadIDs = append(readyBeadIDs, string(rec.BeadID))
 					}
 				}
-				// Idempotent: EmitTrip returns the existing ack_token if one is pending.
-				if sentinelPendingAckToken == "" {
-					tok, tripErr := sentinel.EmitTrip(ctx, sentinel.TripInput{
-						ProjectDir:        deps.projectDir,
-						ReadyBeadIDs:      readyBeadIDs,
-						HasUndeployedTail: hasUndeployedTail,
-						Now:               now,
+
+				var hasUndeployedTail bool
+				if len(deps.sentinelPhase2Classes) > 0 && deps.brPath != "" {
+					hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
+				}
+
+				sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
+					ProjectDir:        deps.projectDir,
+					Now:               now,
+					HasReadyBeads:     hasReadyBeads,
+					HasUndeployedTail: hasUndeployedTail,
+				}, deps.governorCfg)
+
+				if raw, mErr := json.Marshal(sig); mErr == nil {
+					_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw)
+				}
+
+				switch {
+				case sig.Level == sentinel.ActivationHalt:
+					// G-liveness doom-loop: halt dispatch + emit liveness_halt page event.
+					// Set governorHalted=true so the next iteration calls exitClean().
+					governorHalted = true
+					halPayload, _ := json.Marshal(map[string]interface{}{
+						"consecutive_zero_cycles": sig.ConsecutiveZeroCycles,
+						"liveness_no_progress_n":  deps.governorCfg.LivenessNoProgressN,
 					})
-					if tripErr != nil {
-						fmt.Fprintf(os.Stderr,
-							"daemon: workloop: sentinel: EmitTrip failed (non-fatal): %v\n", tripErr)
-					} else if tok != "" {
-						sentinelPendingAckToken = tok
-						if deps.decisionBlocker != nil {
-							deps.decisionBlocker.AddQueueBlock(sentinelSubjectIDACT, tok)
+					_ = deps.bus.Emit(ctx, core.EventTypeLivenessHalt, halPayload)
+					fmt.Fprintf(os.Stderr,
+						"daemon: workloop: sentinel: G-liveness halt fired after %d zero-progress cycles (threshold=%d); halting dispatch\n",
+						sig.ConsecutiveZeroCycles, deps.governorCfg.LivenessNoProgressN)
+
+				case sig.Level == sentinel.ActivationActive && sig.SuppressedBy == "":
+					// Sustained low movement with opportunity: emit decision_required trip.
+					//
+					// AC4 (hk-jvul): reconcile the in-memory pending token against the
+					// on-disk ack file. A captain legitimate-halt (record-halt CLI) may
+					// have externally acknowledged the file between ticks. When that
+					// happens, clear the in-memory token and the DecisionBlocker so the
+					// next ActivationActive emits a fresh trip for re-adjudication (spec
+					// §2.2 clause 2 — "subject to re-adjudication next pass").
+					if sentinelPendingAckToken != "" {
+						if externallyAcked, checkErr := sentinel.IsTripAcknowledged(deps.projectDir, sentinelPendingAckToken); checkErr == nil && externallyAcked {
+							if deps.decisionBlocker != nil {
+								deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
+							}
+							sentinelPendingAckToken = ""
 						}
 					}
-				}
-
-				// FW4 (hk-jsvc): spawn a fresh-context adversary crew to adjudicate
-				// the trip. The adversary reviews captain comms/commits as a foreign
-				// artifact and emits sentinel emit-trip if it confirms the governor's
-				// verdict. Overlap-skip: SpawnAdversary is a no-op when the adversary
-				// crew is already online (prevents stacked sessions on consecutive trips).
-				if deps.crewHandler != nil {
-					var onlineAgents map[string]struct{}
-					if deps.commsWhoQuerier != nil {
-						if agents, whoErr := deps.commsWhoQuerier(ctx); whoErr == nil {
-							onlineAgents = agents
+					// Idempotent: EmitTrip returns the existing ack_token if one is pending.
+					if sentinelPendingAckToken == "" {
+						tok, tripErr := sentinel.EmitTrip(ctx, sentinel.TripInput{
+							ProjectDir:        deps.projectDir,
+							ReadyBeadIDs:      readyBeadIDs,
+							HasUndeployedTail: hasUndeployedTail,
+							Now:               now,
+						})
+						if tripErr != nil {
+							fmt.Fprintf(os.Stderr,
+								"daemon: workloop: sentinel: EmitTrip failed (non-fatal): %v\n", tripErr)
+						} else if tok != "" {
+							sentinelPendingAckToken = tok
+							if deps.decisionBlocker != nil {
+								deps.decisionBlocker.AddQueueBlock(sentinelSubjectIDACT, tok)
+							}
 						}
 					}
-					if onlineAgents == nil {
-						onlineAgents = map[string]struct{}{}
-					}
-					if _, spawnErr := sentinel.SpawnAdversary(ctx, sentinel.AdversaryInput{
-						ProjectDir: deps.projectDir,
-					}, deps.crewHandler, onlineAgents); spawnErr != nil {
-						fmt.Fprintf(os.Stderr,
-							"daemon: workloop: sentinel: SpawnAdversary failed (non-fatal): %v\n", spawnErr)
-					}
-				}
 
-			case sig.Level == sentinel.ActivationDormant && sentinelPendingAckToken != "":
-				// Real movement detected: clear the pending trip automatically.
-				// ClearTrip writes decision_acknowledged to events.jsonl + updates the
-				// ack file. Only governor movement (bead_closed / run_completed /
-				// HEAD-advance) can clear the trip — not the captain's say-so alone.
-				//
-				// AC4 (hk-jvul): if the ack was already acknowledged externally (e.g.
-				// RecordLegitimateHalt), skip ClearTrip to avoid a spurious
-				// governor_movement event on top of the existing legitimate_halt clear.
-				// Always clear in-memory state and DecisionBlocker so dispatch resumes.
-				alreadyAcked, _ := sentinel.IsTripAcknowledged(deps.projectDir, sentinelPendingAckToken)
-				if !alreadyAcked {
-					if clearErr := sentinel.ClearTrip(ctx, deps.projectDir, sentinelPendingAckToken, now); clearErr != nil {
-						fmt.Fprintf(os.Stderr,
-							"daemon: workloop: sentinel: ClearTrip failed (non-fatal): %v\n", clearErr)
-						break // preserve sentinelPendingAckToken for retry next tick
+					// FW4 (hk-jsvc): spawn a fresh-context adversary crew to adjudicate
+					// the trip. The adversary reviews captain comms/commits as a foreign
+					// artifact and emits sentinel emit-trip if it confirms the governor's
+					// verdict. Overlap-skip: SpawnAdversary is a no-op when the adversary
+					// crew is already online (prevents stacked sessions on consecutive trips).
+					if deps.crewHandler != nil {
+						var onlineAgents map[string]struct{}
+						if deps.commsWhoQuerier != nil {
+							if agents, whoErr := deps.commsWhoQuerier(ctx); whoErr == nil {
+								onlineAgents = agents
+							}
+						}
+						if onlineAgents == nil {
+							onlineAgents = map[string]struct{}{}
+						}
+						if _, spawnErr := sentinel.SpawnAdversary(ctx, sentinel.AdversaryInput{
+							ProjectDir: deps.projectDir,
+						}, deps.crewHandler, onlineAgents); spawnErr != nil {
+							fmt.Fprintf(os.Stderr,
+								"daemon: workloop: sentinel: SpawnAdversary failed (non-fatal): %v\n", spawnErr)
+						}
 					}
+
+				case sig.Level == sentinel.ActivationDormant && sentinelPendingAckToken != "":
+					// Real movement detected: clear the pending trip automatically.
+					// ClearTrip writes decision_acknowledged to events.jsonl + updates the
+					// ack file. Only governor movement (bead_closed / run_completed /
+					// HEAD-advance) can clear the trip — not the captain's say-so alone.
+					//
+					// AC4 (hk-jvul): if the ack was already acknowledged externally (e.g.
+					// RecordLegitimateHalt), skip ClearTrip to avoid a spurious
+					// governor_movement event on top of the existing legitimate_halt clear.
+					// Always clear in-memory state and DecisionBlocker so dispatch resumes.
+					alreadyAcked, _ := sentinel.IsTripAcknowledged(deps.projectDir, sentinelPendingAckToken)
+					if !alreadyAcked {
+						if clearErr := sentinel.ClearTrip(ctx, deps.projectDir, sentinelPendingAckToken, now); clearErr != nil {
+							fmt.Fprintf(os.Stderr,
+								"daemon: workloop: sentinel: ClearTrip failed (non-fatal): %v\n", clearErr)
+							break // preserve sentinelPendingAckToken for retry next tick
+						}
+					}
+					if deps.decisionBlocker != nil {
+						deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
+					}
+					sentinelPendingAckToken = ""
 				}
-				if deps.decisionBlocker != nil {
-					deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, sentinelPendingAckToken)
-				}
-				sentinelPendingAckToken = ""
 			}
 		}
 

@@ -242,6 +242,32 @@ func buildCaptainKeeperConfig(name, projectDir string) (enableConfig, error) {
 	}, nil
 }
 
+// ensureBootAssets provisions the skills, scaffolds, context tiers, and AGENTS.md
+// router that a captain or crew needs at boot. All steps are create-if-missing
+// (force=false) so existing files are never overwritten. Non-fatal: failures WARN
+// but never block the launch. Called on every start captain/crew to close the
+// portability gap on foreign projects that have not run harmonik init (hk-2nmbq).
+// Mirrors the keeper-scripts embed-and-extract approach (hk-ybmqp).
+func ensureBootAssets(projectDir string, stdout, stderr io.Writer) {
+	if code := provisionSkills(projectDir, false, stdout, stderr); code != 0 {
+		fmt.Fprintf(stderr, "harmonik: warning: skill provisioning failed (code %d) — agent may lack .claude/skills/\n", code)
+	}
+	if code := provisionScaffolds(projectDir, false, stdout, stderr); code != 0 {
+		fmt.Fprintf(stderr, "harmonik: warning: scaffold provisioning failed (code %d)\n", code)
+	}
+	if code := provisionContextTiers(projectDir, false, stdout, stderr); code != 0 {
+		fmt.Fprintf(stderr, "harmonik: warning: context-tier provisioning failed (code %d)\n", code)
+	}
+	// renderAgentsMD substitutes $TARGET_BRANCH; read from config when available.
+	targetBranch := "main"
+	if pc, err := daemon.LoadProjectConfig(projectDir); err == nil && pc.Daemon.TargetBranch != "" {
+		targetBranch = pc.Daemon.TargetBranch
+	}
+	if code := renderAgentsMD(projectDir, targetBranch, false, stdout, stderr); code != 0 {
+		fmt.Fprintf(stderr, "harmonik: warning: AGENTS.md provisioning failed (code %d)\n", code)
+	}
+}
+
 // runCaptainLaunch keeps the hk-ly0n/hk-igek signature for back-compat with the
 // existing argv + keeper-enable tests. It delegates to runCaptainLaunchWithOps
 // with the production tmux ops.
@@ -400,6 +426,13 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 			return 1
 		}
 	}
+
+	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
+	// before launching so a foreign project (never run harmonik init) has the
+	// files the agent reads at boot. Create-if-missing (force=false): existing
+	// files are never overwritten. Non-fatal: failures WARN, never block launch.
+	// Mirrors the keeper-scripts embed-and-extract approach (hk-ybmqp, hk-2nmbq).
+	ensureBootAssets(project, os.Stdout, os.Stderr)
 
 	// Wire keeper hooks BEFORE launching tmux so the new `claude` session reads
 	// the statusLine + Stop + PreCompact stanzas at session start. A failure here

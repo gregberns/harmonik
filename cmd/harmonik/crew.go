@@ -208,6 +208,25 @@ func runCrewStartSubcommand(subArgs []string) int {
 		return 1
 	}
 
+	// Resolve project dir before the RPC so boot assets can be provisioned first.
+	absProject := args.ProjectFlag
+	if absProject == "" {
+		wd, wdErr := os.Getwd()
+		if wdErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik crew start: cannot determine cwd: %v\n", wdErr)
+			return 1
+		}
+		absProject = wd
+	}
+	if ap, apErr := filepath.Abs(absProject); apErr == nil {
+		absProject = ap
+	}
+
+	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
+	// before the daemon spawns the crew so a foreign project (never run harmonik
+	// init) has the files the crew agent reads at boot. (hk-2nmbq)
+	ensureBootAssets(absProject, os.Stdout, os.Stderr)
+
 	payload := map[string]any{
 		"name":         name,
 		"queue":        args.Queue,
@@ -240,20 +259,6 @@ func runCrewStartSubcommand(subArgs []string) int {
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: decode result: %v\n", err)
 		return 1
-	}
-
-	// Resolve the absolute project dir so keeper paths are stable.
-	absProject := args.ProjectFlag
-	if absProject == "" {
-		wd, wdErr := os.Getwd()
-		if wdErr != nil {
-			fmt.Fprintf(os.Stderr, "harmonik crew start: cannot determine cwd: %v\n", wdErr)
-			return 1
-		}
-		absProject = wd
-	}
-	if ap, apErr := filepath.Abs(absProject); apErr == nil {
-		absProject = ap
 	}
 
 	// Seed the .sid file so the keeper can find the session immediately (before

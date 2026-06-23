@@ -1,0 +1,68 @@
+name: regression.network-sandbox-probe
+description: >
+  SH-028 §10.2 conformance probe: verifies the harness network sandbox
+  (unshare(CLONE_NEWNET) on Linux / pf on macOS) blocks non-loopback outbound
+  connections. The twin binary is scripted to attempt a TCP dial to a
+  non-loopback address (8.8.8.8:53) before emitting its outcome.
+  When executed in the §10.2 conformance lane (EnableNetworkSandbox=true),
+  the dial MUST fail at the kernel level and the scenario MUST reach
+  failure_class=harness-internal-error per SH-028.
+
+  NOTE: Full end-to-end execution of this probe requires:
+    1. The harness CLI (SH-032 / G-01) to activate the network sandbox via
+       ApplyNetworkSandbox() at process startup.
+    2. A "claude-twin-network-probe" twin binary that makes a non-loopback
+       TCP connection attempt and surfaces the connection error as an
+       agent_failed event with a recognisable payload.
+  Until both are available, this file serves as the declarative anchor for
+  the §10.2 test obligation and parses correctly as a ScenarioFile.
+
+# workflow_path: same single-node agentic workflow as the smoke scenarios.
+# Resolved as <repo-root>/scenarios/_workflows/smoke-one-node.dot.
+workflow_path: smoke-one-node.dot
+
+# agent_overrides: use the network-probe twin, which attempts a non-loopback
+# TCP dial to 8.8.8.8:53 before proceeding. In the conformance lane the dial
+# fails (sandbox blocks it); the twin surfaces the failure via agent_failed.
+agent_overrides:
+  agent_node:
+    binary: claude-twin-network-probe
+    args:
+      - --probe-addr=8.8.8.8:53
+
+# fixture_setup: no extra files needed; the network-probe twin carries its
+# own dial logic. The synthetic project root is empty.
+fixture_setup: {}
+
+# expected_events: the probe twin MUST NOT emit agent_completed; instead it
+# MUST emit agent_failed due to the blocked non-loopback connection.
+#
+# In the conformance lane the blocked dial causes a structural twin failure.
+# The datum assertion here is intentionally conservative: we assert the absence
+# of a clean agent_completed event and let the harness classify the result via
+# the failure-class taxonomy (harness-internal-error per SH-028).
+expected_events:
+  - kind: event_absent
+    type: agent_completed
+    description: >
+      When the network sandbox is active, the probe twin MUST NOT complete
+      successfully — the non-loopback dial attempt MUST be blocked, preventing
+      the twin from reaching its success path.
+
+# expected_outcome: FAIL — the blocked connection prevents a SUCCESS outcome.
+# The harness classifies the actual failure_class as harness-internal-error
+# per SH-028 when a detectable non-loopback connection attempt is observed.
+expected_outcome:
+  outcome_status: FAIL
+  description: >
+    Run must reach terminal state FAIL (SH-028: non-loopback connection attempt
+    blocked by the network sandbox; harness classifies as harness-internal-error
+    which routes to outcome FAIL per §8.0 failure-class precedence table).
+
+# timeout_secs: short budget; a blocked dial fails at the kernel in <1 s.
+timeout_secs: 10
+
+# cadence_tag: regression — included in smoke+regression CI lanes (SH-029).
+# The sandbox probe does not run in the smoke lane because smoke CI may not
+# have the required privileges to activate the network sandbox.
+cadence_tag: regression

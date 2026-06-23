@@ -93,6 +93,18 @@ type OrchestrationConfig struct {
 	// call DriveOrchestration with TimeoutSecs==0 when the scenario file
 	// declares a budget.
 	TimeoutSecs int
+
+	// EnableNetworkSandbox, when true, requires the network sandbox to be
+	// active (IsNetworkSandboxActive() == true) before orchestration begins.
+	// If the sandbox is not active, DriveOrchestration returns
+	// ErrNetworkSandboxNotApplied immediately.
+	//
+	// The caller is responsible for activating the sandbox via
+	// ApplyNetworkSandbox() before calling DriveOrchestration. The harness
+	// CLI (SH-032) sets this field to true for the §10.2 conformance lane.
+	//
+	// Spec ref: specs/scenario-harness.md §4.8 SH-028.
+	EnableNetworkSandbox bool
 }
 
 // DriveOrchestration invokes the production daemon entry-point against the
@@ -139,6 +151,14 @@ func DriveOrchestration(ctx context.Context, cfg OrchestrationConfig) error {
 	mode := cfg.WorkflowMode
 	if mode == "" {
 		mode = core.WorkflowModeReviewLoop
+	}
+
+	// Network sandbox enforcement (SH-028): when requested, verify the sandbox
+	// is active before proceeding. The CLI (SH-032) activates the sandbox via
+	// ApplyNetworkSandbox() at process startup; this check is a fail-fast
+	// guard that prevents scenario execution without the required isolation.
+	if cfg.EnableNetworkSandbox && !IsNetworkSandboxActive() {
+		return ErrNetworkSandboxNotApplied
 	}
 
 	// Create a child context that the daemon cancels via CancelOnQueueExit

@@ -73,11 +73,11 @@ func TestWatcher_OperatorWarnFn_FiredAtCrossingNotEveryTick(t *testing.T) {
 	t.Parallel()
 
 	const (
-		sid          = "11111111-2222-4333-8444-555555555555"
-		warnAbs      = int64(200_000)
-		gaugeTokens  = int64(205_000)
-		gaugeWindow  = int64(200_000)
-		gaugePct     = 85.0
+		sid         = "11111111-2222-4333-8444-555555555555"
+		warnAbs     = int64(200_000)
+		gaugeTokens = int64(205_000)
+		gaugeWindow = int64(200_000)
+		gaugePct    = 85.0
 	)
 
 	projectDir := t.TempDir()

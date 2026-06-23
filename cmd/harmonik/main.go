@@ -729,6 +729,21 @@ EXAMPLES
 		return runMigrateRCPrefixSubcommand(subArgs)
 	}
 
+	// harmonik harness [flags] — scenario harness runner (hk-nwqa0).
+	//
+	// Implements the MVH CLI surface: 8 flags (--cadence, --scenario,
+	// --fixture-root, --twin-search-path, --list, --dry-run, --output,
+	// --verbose) and 5 exit codes (0/1/2/3/130).
+	//
+	// Spec ref: specs/scenario-harness.md §4.12 SH-032.
+	if len(os.Args) >= 2 && os.Args[1] == "harness" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runHarnessSubcommand(subArgs)
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for MVH:

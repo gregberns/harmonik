@@ -38,6 +38,7 @@ SUBCOMMANDS
   wake             Wake sleeping LLM sessions (--agent <name> or --all; fleet-stall escape hatch)
   beads-merge      Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
   smoke            5-signal end-to-end verification of a live daemon (hk-4rkrg)
+  harness          Run the scenario harness (--list, --dry-run, --cadence, --scenario)
   goal-keeper      Update .harmonik/intent/goal-state.json from operator comms (flywheel V6)
   project-hash     Print the PL-006a project hash for a directory (no daemon required)
   remote-control-prefix  Print the per-project Claude RC label prefix (no daemon required)

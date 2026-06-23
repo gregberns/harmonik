@@ -825,8 +825,8 @@ func TestSH023_AssertionOrder(t *testing.T) {
 	}
 	events := readEventsFromLines(t, lines)
 	sf := scenario.ScenarioFile{
-		Name:        "order-test",
-		Description: "test",
+		Name:         "order-test",
+		Description:  "test",
 		WorkflowPath: ptr("test.dot"),
 		ExpectedEvents: []scenario.EventExpectation{
 			{Kind: scenario.EventExpectationKindPresent, Type: "agent_ready", Description: "evt1"},
@@ -868,11 +868,11 @@ func TestSH023_AssertionOrder(t *testing.T) {
 func TestEvaluateAssertions_Vacuous(t *testing.T) {
 	t.Parallel()
 	sf := scenario.ScenarioFile{
-		Name:        "vacuous",
-		Description: "no assertions",
+		Name:         "vacuous",
+		Description:  "no assertions",
 		WorkflowPath: ptr("test.dot"),
-		TimeoutSecs: 30,
-		CadenceTag:  "smoke",
+		TimeoutSecs:  30,
+		CadenceTag:   "smoke",
 	}
 	results, verdict, fc := scenario.EvaluateAssertions(sf, nil, "")
 	if len(results) != 0 {

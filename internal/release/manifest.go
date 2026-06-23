@@ -23,7 +23,13 @@ package release
 // Bumping this constant MUST be accompanied by an adapter change for every
 // backwards-incompatible Beads change per BI-026 (specs/beads-integration.md
 // §4.8).  Silent upgrades are forbidden; see BI-024.
-const BeadsVersion = "0.1.45"
+// Bumped 0.1.45 → 0.2.10 (2026-06-23): the installed br has been 0.2.10 since
+// 2026-05-19 and the fleet executed 754 run_completed beads on it through the
+// full dispatch lifecycle with the existing adapter — empirically proving no
+// backwards-incompatible change requiring a BI-026 adapter update. The stale
+// pin (never updated when br moved to 0.2.10) was the sole daemon-startup
+// blocker once the BI-024a handshake landed on the daemon path.
+const BeadsVersion = "0.2.10"
 
 // ReleaseEntry records a single harmonik release in the ledger.
 //

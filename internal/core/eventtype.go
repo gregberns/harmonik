@@ -980,6 +980,16 @@ const (
 	// Durability class: O (ordinary — safety action; observability).
 	// Refs: hk-34ac.
 	EventTypeSessionKeeperHardCeiling EventType = "session_keeper_hard_ceiling"
+
+	// EventTypeSessionKeeperWatcherDead is the session_keeper_watcher_dead event
+	// type. Emitted by the daemon when an async post-spawn liveness probe finds the
+	// crew keeper watcher NOT holding its exclusive flock lock after waiting for the
+	// keeper.timings.flock_acquire_grace window. The crew agent remains live; this
+	// event signals to the captain/operator that the crew is monitor-less. The crew
+	// start RPC has already returned a live agent by the time this fires.
+	// Durability class: O (ordinary — operator attention; crew is unmonitored).
+	// Refs: hk-qgfme.
+	EventTypeSessionKeeperWatcherDead EventType = "session_keeper_watcher_dead"
 )
 
 // ---------------------------------------------------------------------------

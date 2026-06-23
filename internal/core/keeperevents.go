@@ -370,6 +370,27 @@ type SessionKeeperAckTimeoutPayload struct {
 	Reason string `json:"reason"`
 }
 
+// SessionKeeperWatcherDeadPayload is the payload for session_keeper_watcher_dead
+// (hk-qgfme).
+//
+// Emitted by the daemon when an async post-spawn liveness probe finds the crew
+// keeper watcher NOT holding its exclusive flock lock after the configured
+// keeper.timings.flock_acquire_grace window. The crew agent is still live; this
+// event signals the captain/operator that the crew is monitor-less.
+//
+// Durability class: O (ordinary — operator attention).
+// Refs: hk-qgfme.
+type SessionKeeperWatcherDeadPayload struct {
+	// AgentName is the crew name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// GracePeriodSeconds is the configured flock_acquire_grace in seconds.
+	GracePeriodSeconds float64 `json:"grace_period_seconds"`
+
+	// Reason is a human-readable description of why the check failed.
+	Reason string `json:"reason"`
+}
+
 // SessionKeeperConfigRejectedPayload is the typed payload for
 // session_keeper_config_rejected (hk-4pnv).
 //

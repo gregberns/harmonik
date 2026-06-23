@@ -280,6 +280,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "session_keeper_idle_crew", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-4pnv: session_keeper_config_rejected — keeper refused to start on bad threshold config / flags.
 	{TypeName: "session_keeper_config_rejected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-qgfme: session_keeper_watcher_dead — crew keeper watcher dead post-spawn (flock not acquired within flock_acquire_grace).
+	{TypeName: "session_keeper_watcher_dead", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-wqdc: session_keeper_live_pane_recover — live-pane recovery attempt after a cleared pane is detected.
 	{TypeName: "session_keeper_live_pane_recover", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-wqdc: session_keeper_ack_timeout — ack timeout when keeper sent a clear but received no confirmation.

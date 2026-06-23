@@ -22,11 +22,32 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 )
+
+// crewKeeperEventBus is the minimal event-emission seam used by the crew keeper
+// post-spawn probe. Satisfied by eventbus.EventBus. May be nil in tests that do
+// not assert on event emission.
+type crewKeeperEventBus interface {
+	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
+}
+
+// crewKeeperCommsBus is the minimal comms-emission seam used by the crew keeper
+// post-spawn probe. Satisfied by eventbus.CommsMessageEmitter (busImpl). May be
+// nil in tests that do not assert on keeper-alert comms.
+type crewKeeperCommsBus interface {
+	EmitAgentMessage(ctx context.Context, payload core.AgentMessagePayload) (core.EventID, error)
+}
+
+// keeperProbePollInterval is the interval between LiveKeeperPresent polls during
+// the post-spawn liveness probe. 1s is fine for a startup check: short enough to
+// confirm a live watcher quickly, long enough not to busy-spin.
+const keeperProbePollInterval = time.Second
 
 // CrewHandler is the interface the daemon registers to process crew-start and
 // crew-stop socket ops.
@@ -105,6 +126,34 @@ type crewHandlerImpl struct {
 	rcPrefix     string                 // per-project --remote-control label prefix (hk-igpg); "" = bare label
 	substrate    handler.Substrate      // spawns crew windows
 	opPauseCtrl  OperatorControlHandler // for --pause-queue in crew-stop; may be nil
+
+	// keeper probe fields (hk-qgfme): async post-spawn liveness check.
+	// All fields are optional; nil = feature disabled (probe skipped).
+	keeperCfg    KeeperConfig        // FlockAcquireGrace drives the probe; zero = disabled
+	eventBus     crewKeeperEventBus  // for emitting session_keeper_watcher_dead; may be nil
+	commsBus     crewKeeperCommsBus  // for keeper-alert comms to operator; may be nil
+	liveKeeperFn func(projectDir, agent string) bool // injectable for testing; nil = keeper.LiveKeeperPresent
+}
+
+// CrewHandlerOpt is a functional option for NewCrewHandler.
+type CrewHandlerOpt func(*crewHandlerImpl)
+
+// WithKeeperProbe configures the async post-spawn keeper liveness probe
+// (hk-qgfme). The probe polls LiveKeeperPresent for up to
+// keeperCfg.FlockAcquireGrace after SpawnCrewSession; if the keeper watcher
+// flock is never held within that window, a session_keeper_watcher_dead event
+// and a keeper-alert comms message are emitted to the operator. The crew agent
+// is always kept live; this is warn-loud, never a hard-block.
+//
+// Either bus argument may be nil (disables that emission path). If
+// keeperCfg.FlockAcquireGrace == 0 the probe is entirely disabled and no
+// goroutine is launched.
+func WithKeeperProbe(keeperCfg KeeperConfig, eventBus crewKeeperEventBus, commsBus crewKeeperCommsBus) CrewHandlerOpt {
+	return func(h *crewHandlerImpl) {
+		h.keeperCfg = keeperCfg
+		h.eventBus = eventBus
+		h.commsBus = commsBus
+	}
 }
 
 // NewCrewHandler constructs a CrewHandler implementation.
@@ -119,16 +168,21 @@ type crewHandlerImpl struct {
 // that don't exercise the actual spawn path.
 // opPauseCtrl is the operator-pause controller used when --pause-queue is set;
 // may be nil (crew-stop will skip the pause step).
+// opts are optional CrewHandlerOpt functional options (e.g. WithKeeperProbe).
 //
-// Bead ref: hk-5tg5o, hk-igpg.
-func NewCrewHandler(claudeBinary, projectDir, rcPrefix string, substrate handler.Substrate, opPauseCtrl OperatorControlHandler) CrewHandler {
-	return &crewHandlerImpl{
+// Bead ref: hk-5tg5o, hk-igpg, hk-qgfme.
+func NewCrewHandler(claudeBinary, projectDir, rcPrefix string, substrate handler.Substrate, opPauseCtrl OperatorControlHandler, opts ...CrewHandlerOpt) CrewHandler {
+	h := &crewHandlerImpl{
 		claudeBinary: claudeBinary,
 		projectDir:   projectDir,
 		rcPrefix:     rcPrefix,
 		substrate:    substrate,
 		opPauseCtrl:  opPauseCtrl,
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,6 +287,14 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 			if err != nil {
 				_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
 				return nil, fmt.Errorf("spawn crew session: %w", err)
+			}
+			// ── Async keeper liveness probe (hk-qgfme) ──
+			// Run off the synchronous RPC so the caller always gets a live agent
+			// back immediately. If the keeper watcher fails to acquire its flock
+			// within flock_acquire_grace, the goroutine emits an event + comms
+			// alert. Probe is DISABLED when FlockAcquireGrace == 0 (not configured).
+			if h.keeperCfg.FlockAcquireGrace > 0 {
+				go h.probeKeeperLiveness(req.Name, h.keeperCfg.FlockAcquireGrace)
 			}
 			if wh, ok2 := sess.(windowHandleExposer); ok2 {
 				windowHandle = wh.WindowHandle()
@@ -527,6 +589,87 @@ func frontMatterBlock(content string) string {
 		return ""
 	}
 	return rest[:end]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keeper post-spawn liveness probe (hk-qgfme)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// probeKeeperLiveness polls LiveKeeperPresent for up to grace after a crew
+// session is spawned. Called as a goroutine (async, off the HandleCrewStart RPC)
+// so the caller always receives a live agent immediately.
+//
+// If the keeper watcher flock is not held by the end of the grace window,
+// reportKeeperWatcherDead emits a session_keeper_watcher_dead event and a
+// keeper-alert comms message. The crew agent is ALWAYS kept live; this path
+// is warn-loud, never a hard-block.
+//
+// The probe is disabled (not called) when keeperCfg.FlockAcquireGrace == 0.
+func (h *crewHandlerImpl) probeKeeperLiveness(crewName string, grace time.Duration) {
+	fn := h.liveKeeperFn
+	if fn == nil {
+		fn = keeper.LiveKeeperPresent
+	}
+
+	deadline := time.Now().Add(grace)
+	for {
+		if fn(h.projectDir, crewName) {
+			return // keeper watcher flock confirmed live
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			h.reportKeeperWatcherDead(crewName, grace)
+			return
+		}
+		sleep := keeperProbePollInterval
+		if sleep > remaining {
+			sleep = remaining
+		}
+		time.Sleep(sleep)
+	}
+}
+
+// reportKeeperWatcherDead fires when the post-spawn probe finds the keeper
+// watcher flock unheld after the grace window. It logs to stderr (always),
+// emits a session_keeper_watcher_dead event (when eventBus != nil), and sends
+// a keeper-alert comms message to the operator (when commsBus != nil).
+//
+// The crew agent remains live; the captain/operator is responsible for
+// remediation (e.g. running `harmonik keeper --agent <crew>`).
+func (h *crewHandlerImpl) reportKeeperWatcherDead(crewName string, grace time.Duration) {
+	ctx := context.Background()
+	fmt.Fprintf(os.Stderr,
+		"daemon: crew %q keeper watcher NOT live after %.0fs grace — crew is monitor-less; "+
+			"check keeper config and run 'harmonik keeper --agent %s'\n",
+		crewName, grace.Seconds(), crewName)
+
+	// Emit durable session_keeper_watcher_dead event.
+	if h.eventBus != nil {
+		payload := core.SessionKeeperWatcherDeadPayload{
+			AgentName:          crewName,
+			GracePeriodSeconds: grace.Seconds(),
+			Reason:             "flock not acquired within flock_acquire_grace",
+		}
+		if b, marshalErr := json.Marshal(payload); marshalErr == nil {
+			//nolint:errcheck // best-effort diagnostic event; failure logged by bus
+			_ = h.eventBus.Emit(ctx, core.EventTypeSessionKeeperWatcherDead, b)
+		}
+	}
+
+	// Send keeper-alert comms to operator.
+	if h.commsBus != nil {
+		msg := core.AgentMessagePayload{
+			From:  "daemon",
+			To:    "operator",
+			Topic: "keeper-alert",
+			Body: fmt.Sprintf(
+				"crew %q keeper window spawned but watcher NOT live (flock unheld after %.0fs) — "+
+					"crew is monitor-less; run 'harmonik keeper --agent %s' to attach a watcher",
+				crewName, grace.Seconds(), crewName),
+		}
+		//nolint:errcheck // best-effort alert; non-fatal
+		_, _ = h.commsBus.EmitAgentMessage(ctx, msg)
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1724,7 +1724,18 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// rcPrefix (hk-igpg): the per-project Claude RC label prefix, read from the
 		// cached .harmonik/config.yaml daemon block (loaded at Start, ~L745). Empty =
 		// bare label. Cosmetic only — crew identity keys stay bare.
-		crewHandler = NewCrewHandler(cfg.HandlerBinary, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RemoteControlPrefix, cfg.Substrate, opPauseCtrl)
+		// Wire the keeper probe (hk-qgfme). The event bus satisfies crewKeeperEventBus
+		// directly (eventbus.EventBus.Emit). For comms we need EmitAgentMessage, which
+		// lives on the optional CommsMessageEmitter capability — type-assert the bus,
+		// mirroring the quiesceCommsBus pattern above.
+		var crewCommsEmitter crewKeeperCommsBus
+		if ce, ok := bus.(crewKeeperCommsBus); ok {
+			crewCommsEmitter = ce
+		}
+		crewHandler = NewCrewHandler(
+			cfg.HandlerBinary, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RemoteControlPrefix, cfg.Substrate, opPauseCtrl,
+			WithKeeperProbe(cfg.ProjectCfg.Keeper, bus, crewCommsEmitter),
+		)
 
 		// Build the live state handler (hk-gv04 P2-a: `harmonik state`).
 		// drainDet may be nil if ProjectDir was empty above — LiveStateBuilder

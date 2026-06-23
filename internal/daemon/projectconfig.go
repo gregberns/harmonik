@@ -256,6 +256,7 @@ type rawKeeperTimings struct {
 	ClearSettle        string `yaml:"clear_settle"`
 	BootGrace          string `yaml:"boot_grace"`
 	MaxBootGraceTotal  string `yaml:"max_boot_grace_total"`
+	FlockAcquireGrace  string `yaml:"flock_acquire_grace"` // hk-qgfme: crew keeper post-spawn liveness probe bound
 }
 
 // rawKeeperCadence holds the keeper.cadence block. All fields are Go duration
@@ -395,6 +396,7 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		tm.ClearSettle == "" &&
 		tm.BootGrace == "" &&
 		tm.MaxBootGraceTotal == "" &&
+		tm.FlockAcquireGrace == "" &&
 		// cadence
 		c.WarnCooldown == "" &&
 		c.NoGaugeBackoff == "" &&
@@ -458,6 +460,7 @@ type KeeperConfigPresence struct {
 	HandoffTimeout     bool
 	ClearSettle        bool
 	BootGrace          bool // true even for "0s" (explicit disable)
+	FlockAcquireGrace  bool // true even for "0s" (explicit disable); hk-qgfme
 
 	WarnCooldown         bool
 	NoGaugeBackoff       bool
@@ -526,6 +529,12 @@ type KeeperConfig struct {
 	ClearSettle        time.Duration
 	BootGrace          time.Duration
 	MaxBootGraceTotal  time.Duration
+	// FlockAcquireGrace is the post-spawn liveness probe bound for crew keepers.
+	// The daemon polls LiveKeeperPresent for up to this duration after
+	// SpawnCrewSession; if the flock is never held, a session_keeper_watcher_dead
+	// event + keeper-alert comms fire. Zero = probe disabled (not configured).
+	// Refs: hk-qgfme.
+	FlockAcquireGrace time.Duration
 
 	// Cadence (all zero = not configured).
 	WarnCooldown               time.Duration
@@ -1072,6 +1081,7 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		{"timings.clear_settle", tm.ClearSettle, &cfg.ClearSettle, &cfg.Present.ClearSettle},
 		{"timings.boot_grace", tm.BootGrace, &cfg.BootGrace, &cfg.Present.BootGrace},
 		{"timings.max_boot_grace_total", tm.MaxBootGraceTotal, &cfg.MaxBootGraceTotal, nil},
+		{"timings.flock_acquire_grace", tm.FlockAcquireGrace, &cfg.FlockAcquireGrace, &cfg.Present.FlockAcquireGrace},
 	} {
 		dv, derr := parseDurationField(path, f.key, f.val)
 		if derr != nil {

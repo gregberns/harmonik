@@ -483,6 +483,8 @@ func registerKeeperEvents() {
 	// hk-4pnv: keeper refused to start because threshold config / flags failed the
 	// fail-loud precedence resolver (bad value or band inversion).
 	mustRegister("session_keeper_config_rejected", func() EventPayload { return &SessionKeeperConfigRejectedPayload{} })
+	// hk-qgfme: crew keeper watcher dead post-spawn — flock not acquired within flock_acquire_grace.
+	mustRegister("session_keeper_watcher_dead", func() EventPayload { return &SessionKeeperWatcherDeadPayload{} })
 	// hk-wqdc: live-pane recovery attempt after a cleared pane is detected.
 	mustRegister("session_keeper_live_pane_recover", func() EventPayload { return &SessionKeeperLivePaneRecoverPayload{} })
 	// hk-wqdc: ack timeout when keeper sent a clear but received no confirmation.

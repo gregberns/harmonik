@@ -142,8 +142,10 @@ func TestSH030_CartesianProductCoverage(t *testing.T) {
 	}
 
 	want := []pair{
-		{"staging", "v1"}, {"staging", "v2"},
-		{"prod", "v1"}, {"prod", "v2"},
+		{"staging", "v1"},
+		{"staging", "v2"},
+		{"prod", "v1"},
+		{"prod", "v2"},
 	}
 	for _, p := range want {
 		if seen[p] != 1 {

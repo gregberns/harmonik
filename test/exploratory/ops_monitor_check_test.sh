@@ -29,6 +29,12 @@
 #   [x] critical-component re-alert after 5 min (daemon-down re-alerts at 6 min,
 #                                                 would be suppressed under old 30 min cd)
 #   [x] non-critical suppressed within 30 min   (paused-queue at 6 min stays suppressed)
+#   [x] escalation tier-1 — first alert: count=1, [IMMEDIATE], no ops-CRITICAL
+#   [x] escalation tier-2 — second alert: count=2, [ESCALATION], no ops-CRITICAL
+#   [x] escalation tier-3 by count — count>=6: [ESCALATION] + ops-CRITICAL topic
+#   [x] escalation tier-3 by elapsed — elapsed>=1800s: ops-CRITICAL topic
+#   [x] escalation resolved — signal clears count+state, no comms
+#   [x] backward-compat — bare int alerted entry normalized to count=1 on re-alert
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -201,13 +207,17 @@ case "\$*" in
   comms\ send\ *)
     args=("\$@")
     body=""
+    topic="ops-monitor"
     for ((i=0; i<\${#args[@]}; i++)); do
+      if [[ "\${args[i]}" == "--topic" ]]; then
+        topic="\${args[i+1]}"
+      fi
       if [[ "\${args[i]}" == "--" ]]; then
         body="\${args[i+1]}"
         break
       fi
     done
-    printf '%s\n' "\$body" >> "\$COMMS_LOG"
+    printf 'topic=%s -- %s\n' "\$topic" "\$body" >> "\$COMMS_LOG"
     ;;
   *)
     echo "stub: unhandled harmonik \$*" >&2
@@ -794,10 +804,11 @@ fi
 rm -rf "$PROJ"
 
 # ── Test 18: critical signal re-alerts after 5 min (CRITICAL_IMMEDIATE_COOLDOWN) ─
-# daemon-down alerted 6 min ago → 6 min > 5 min critical cd → MUST re-alert.
-# This would be SUPPRESSED under the old 30 min global cooldown.
+# daemon-down alerted 6 min ago as a bare-int (old format) → backward-compat:
+# normalized to count=1, re-alert increments to count=2 → tier-2 → [ESCALATION].
+# Verifies: cooldown works AND escalation tier advances correctly from a bare-int state.
 echo ""
-echo "=== Test 18: daemon-down re-alerts after 5 min (critical cooldown) ==="
+echo "=== Test 18: daemon-down re-alerts after 5 min (critical cooldown, tier-2) ==="
 EPOCH_6M_AGO=$(python3 -c "import time; print(int(time.time()) - 360)")
 STATE_18='{"stale_crew_misses":{},"last_digest_ts":0,"alerted_immediate":{"daemon-down":'"$EPOCH_6M_AGO"'}}'
 PROJ=$(setup_fixture \
@@ -815,11 +826,19 @@ if echo "$SEND_SIGS" | grep -qF "daemon-down"; then
 else
   fail "critical re-alert: daemon-down missing from send_immediate_signals (got $SEND_SIGS)"
 fi
+# After re-alert count = 2 → tier 2 → [ESCALATION]
+TIER=$(python3 -c "
+import json
+d = json.load(open('$LATEST'))
+print(d.get('escalations', {}).get('daemon-down', {}).get('tier', 'missing'))
+" 2>/dev/null || echo "missing")
+assert_eq "critical re-alert: escalation tier=2 (count=2)" "2" "$TIER"
 LOG=$(comms_log "$PROJ")
 if [[ -f "$LOG" && -s "$LOG" ]]; then
   pass "critical re-alert: comms sent"
-  assert_contains "critical re-alert: comms [IMMEDIATE]" "[IMMEDIATE]"   "$(cat "$LOG")"
-  assert_contains "critical re-alert: comms daemon-down" "daemon-down"   "$(cat "$LOG")"
+  assert_contains "critical re-alert: comms [ESCALATION]" "[ESCALATION]" "$(cat "$LOG")"
+  assert_contains "critical re-alert: comms daemon-down"  "daemon-down"  "$(cat "$LOG")"
+  assert_not_contains "critical re-alert: no ops-CRITICAL yet (count=2)" "topic=ops-CRITICAL" "$(cat "$LOG")"
 else
   fail "critical re-alert: expected comms send, got none"
 fi
@@ -854,6 +873,164 @@ if [[ -f "$LOG" && -s "$LOG" ]]; then
   fail "non-critical suppressed: no comms should be sent within 30 min cooldown"
 else
   pass "non-critical suppressed: no comms sent (cooldown active)"
+fi
+rm -rf "$PROJ"
+
+# ── Test 20: escalation tier-1 — first alert: count=1, [IMMEDIATE], no ops-CRITICAL ─
+echo ""
+echo "=== Test 20: escalation tier-1 (fresh daemon-down, count=1, [IMMEDIATE]) ==="
+PROJ=$(setup_fixture --hk-queue-status-exit 17 --hk-comms-who-json '')
+run_check "$PROJ" > /dev/null 2>&1
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+COUNT=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+e = d.get('alerted_immediate', {}).get('daemon-down')
+print(e.get('count', 0) if isinstance(e, dict) else 'bare-int')
+")
+assert_eq "tier-1: count=1 in state" "1" "$COUNT"
+TIER=$(python3 -c "
+import json; d=json.load(open('$LATEST'))
+print(d.get('escalations', {}).get('daemon-down', {}).get('tier', 'missing'))
+")
+assert_eq "tier-1: escalations.daemon-down.tier=1" "1" "$TIER"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  assert_contains     "tier-1: [IMMEDIATE] in comms"     "[IMMEDIATE]"   "$(cat "$LOG")"
+  assert_not_contains "tier-1: no [ESCALATION]"          "[ESCALATION]"  "$(cat "$LOG")"
+  assert_not_contains "tier-1: no ops-CRITICAL"          "topic=ops-CRITICAL" "$(cat "$LOG")"
+else
+  fail "tier-1: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 21: escalation tier-2 — count=2, [ESCALATION], no ops-CRITICAL ─────
+echo ""
+echo "=== Test 21: escalation tier-2 (count=1→2, [ESCALATION], no ops-CRITICAL) ==="
+EPOCH_6M_AGO=$(python3 -c "import time; print(int(time.time()) - 360)")
+STATE_21=$(python3 -c "
+import json, time
+now = int(time.time())
+entry = {'first_ts': now - 360, 'last_ts': now - 360, 'count': 1}
+print(json.dumps({'stale_crew_misses': {}, 'last_digest_ts': 0,
+                  'alerted_immediate': {'daemon-down': entry}}))
+")
+PROJ=$(setup_fixture --hk-queue-status-exit 17 --hk-comms-who-json '' --state-json "$STATE_21")
+run_check "$PROJ" > /dev/null 2>&1
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+COUNT=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+e = d.get('alerted_immediate', {}).get('daemon-down')
+print(e.get('count', 0) if isinstance(e, dict) else 'bare-int')
+")
+assert_eq "tier-2: count=2 in state" "2" "$COUNT"
+TIER=$(python3 -c "
+import json; d=json.load(open('$LATEST'))
+print(d.get('escalations', {}).get('daemon-down', {}).get('tier', 'missing'))
+")
+assert_eq "tier-2: escalations.daemon-down.tier=2" "2" "$TIER"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  assert_contains     "tier-2: [ESCALATION] in comms"    "[ESCALATION]"       "$(cat "$LOG")"
+  assert_contains     "tier-2: alert #2 in body"         "alert #2"           "$(cat "$LOG")"
+  assert_not_contains "tier-2: no ops-CRITICAL"          "topic=ops-CRITICAL" "$(cat "$LOG")"
+else
+  fail "tier-2: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 22: escalation tier-3 by count — count>=6 sends ops-CRITICAL ────────
+echo ""
+echo "=== Test 22: escalation tier-3 by count (count=5→6, ops-CRITICAL sent) ==="
+STATE_22=$(python3 -c "
+import json, time
+now = int(time.time())
+entry = {'first_ts': now - 1500, 'last_ts': now - 360, 'count': 5}
+print(json.dumps({'stale_crew_misses': {}, 'last_digest_ts': 0,
+                  'alerted_immediate': {'daemon-down': entry}}))
+")
+PROJ=$(setup_fixture --hk-queue-status-exit 17 --hk-comms-who-json '' --state-json "$STATE_22")
+run_check "$PROJ" > /dev/null 2>&1
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+COUNT=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+e = d.get('alerted_immediate', {}).get('daemon-down')
+print(e.get('count', 0) if isinstance(e, dict) else 'bare-int')
+")
+assert_eq "tier-3-count: count=6 in state" "6" "$COUNT"
+TIER=$(python3 -c "
+import json; d=json.load(open('$LATEST'))
+print(d.get('escalations', {}).get('daemon-down', {}).get('tier', 'missing'))
+")
+assert_eq "tier-3-count: escalations.daemon-down.tier=3" "3" "$TIER"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  assert_contains "tier-3-count: [ESCALATION] in ops-monitor message" "[ESCALATION]"       "$(cat "$LOG")"
+  assert_contains "tier-3-count: ops-CRITICAL topic sent"             "topic=ops-CRITICAL" "$(cat "$LOG")"
+  assert_contains "tier-3-count: [ops-CRITICAL] in body"             "[ops-CRITICAL]"     "$(cat "$LOG")"
+else
+  fail "tier-3-count: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 23: escalation tier-3 by elapsed — elapsed>=1800s sends ops-CRITICAL ─
+echo ""
+echo "=== Test 23: escalation tier-3 by elapsed (elapsed>1800s, ops-CRITICAL sent) ==="
+STATE_23=$(python3 -c "
+import json, time
+now = int(time.time())
+entry = {'first_ts': now - 1900, 'last_ts': now - 360, 'count': 3}
+print(json.dumps({'stale_crew_misses': {}, 'last_digest_ts': 0,
+                  'alerted_immediate': {'daemon-down': entry}}))
+")
+PROJ=$(setup_fixture --hk-queue-status-exit 17 --hk-comms-who-json '' --state-json "$STATE_23")
+run_check "$PROJ" > /dev/null 2>&1
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+TIER=$(python3 -c "
+import json; d=json.load(open('$LATEST'))
+print(d.get('escalations', {}).get('daemon-down', {}).get('tier', 'missing'))
+")
+assert_eq "tier-3-elapsed: escalations.daemon-down.tier=3" "3" "$TIER"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  assert_contains "tier-3-elapsed: ops-CRITICAL topic sent" "topic=ops-CRITICAL" "$(cat "$LOG")"
+else
+  fail "tier-3-elapsed: expected ops-CRITICAL comms, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 24: resolved critical signal — state cleared, no comms ───────────────
+echo ""
+echo "=== Test 24: resolved critical signal — state cleared, no comms ==="
+STATE_24=$(python3 -c "
+import json, time
+now = int(time.time())
+entry = {'first_ts': now - 600, 'last_ts': now - 360, 'count': 3}
+print(json.dumps({'stale_crew_misses': {}, 'last_digest_ts': 0,
+                  'alerted_immediate': {'daemon-down': entry}}))
+")
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --state-json "$STATE_24" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "resolved: all-green" "all-green" "$OUTPUT"
+ENTRY=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+e = d.get('alerted_immediate', {}).get('daemon-down')
+print('present' if e is not None else 'cleared')
+")
+assert_eq "resolved: daemon-down entry cleared from state" "cleared" "$ENTRY"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  fail "resolved: no comms should be sent after resolution"
+else
+  pass "resolved: no comms sent after resolution"
 fi
 rm -rf "$PROJ"
 

@@ -98,6 +98,10 @@ IMMEDIATE_COOLDOWN=1800  # 30 minutes
 # Shorter re-alert cooldown for critical-component down signals (daemon / supervisor / fleet /
 # captain). A component that stays down should produce ~6 alerts in 30 min, not 1.
 CRITICAL_IMMEDIATE_COOLDOWN=300  # 5 minutes
+# Escalation thresholds: when a critical signal has been down long enough, escalate to the
+# ops-CRITICAL operator-wake topic (tier 3). Either condition triggers tier 3.
+OPS_CRITICAL_COUNT=6        # alert-count at which we escalate (≈ 30 min at 5-min critical cadence)
+OPS_CRITICAL_ELAPSED=1800   # OR: seconds a critical signal has been down before operator-wake
 
 mkdir -p "$OUT_DIR"
 
@@ -269,6 +273,8 @@ prev_digest             = int('$PREV_LAST_DIGEST')
 prev_alerted            = json.loads('''$PREV_ALERTED_IMMEDIATE''')
 immediate_cooldown          = int('$IMMEDIATE_COOLDOWN')
 critical_immediate_cooldown = int('$CRITICAL_IMMEDIATE_COOLDOWN')
+ops_critical_count   = int('$OPS_CRITICAL_COUNT')
+ops_critical_elapsed = int('$OPS_CRITICAL_ELAPSED')
 inert_suppress     = json.loads('''$INERT_SUPPRESS_JSON''')
 live_allow         = json.loads('''$LIVE_ALLOW_JSON''')
 comms_raw          = '''$COMMS_WHO_NDJSON'''
@@ -389,7 +395,7 @@ if _os.path.isfile(_events_path):
                 _any_tw = _ev.get('timestamp_wall', '')
                 if _any_rid and _any_tw:
                     _any_e = _ev_epoch(_any_tw, _dt)
-                    if _any_e > run_last_event_ts.get(_any_rid, 0):
+                    if _any_e >= run_last_event_ts.get(_any_rid, 0):
                         run_last_event_ts[_any_rid] = _any_e
                         run_last_event_type[_any_rid] = _etype
             except Exception:
@@ -609,9 +615,20 @@ checks = {
 }
 
 # ── De-dup + cooldown for immediate signals ──────────────────────────────────
-# Build new_alerted: {signal_key: first_alert_epoch} persisted across runs.
-# A signal is sent only on its first occurrence (edge) or when the cooldown
-# has expired and it is still active. Clear entries when the condition resolves.
+# Build new_alerted: persisted across runs.
+# Non-critical signals: {signal_key: last_alert_epoch} (bare int, unchanged).
+# Critical signals: {signal_key: {first_ts, last_ts, count}} (dict).
+#   first_ts — epoch of the FIRST alert; never reset across re-alerts (measures total downtime).
+#   last_ts  — epoch of the most recent send; used for cooldown math.
+#   count    — incremented by 1 every time the signal is actually sent (including first edge).
+# Back-compat: old bare-int entries for critical signals are normalized to
+#   {first_ts: val, last_ts: val, count: 1} on first read.
+#
+# Escalation tiers (see escalations map below):
+#   tier 1 = count == 1    — normal [IMMEDIATE]
+#   tier 2 = count >= 2    — [ESCALATION] on ops-monitor
+#   tier 3 = count >= OPS_CRITICAL_COUNT OR elapsed_s >= OPS_CRITICAL_ELAPSED
+#            — additionally emit to --topic ops-CRITICAL (operator-wake channel)
 #
 # Critical-component signals (daemon-down / supervisor-down / fleet-down /
 # captain-down) use CRITICAL_IMMEDIATE_COOLDOWN (5 min) instead of the global
@@ -619,21 +636,71 @@ checks = {
 # sibling bead hk-mttt8; the prefix is listed here for forward-compatibility.
 CRITICAL_PREFIXES = ('daemon-down', 'supervisor-down', 'fleet-down', 'captain-down')
 
+def _norm_alerted(val, is_crit):
+    if val is None:
+        return None
+    if is_crit and isinstance(val, int):
+        return {'first_ts': val, 'last_ts': val, 'count': 1}
+    return val
+
 new_alerted = {}
 send_immediate_signals = []
 
 for sig in immediate_signals:
-    cd = critical_immediate_cooldown if any(sig.startswith(p) for p in CRITICAL_PREFIXES) else immediate_cooldown
-    if sig in prev_alerted:
-        age = ts_epoch - prev_alerted[sig]
-        if age >= cd:
-            send_immediate_signals.append(sig)
-            new_alerted[sig] = ts_epoch  # reset timer on re-alert
+    is_crit = any(sig.startswith(p) for p in CRITICAL_PREFIXES)
+    cd = critical_immediate_cooldown if is_crit else immediate_cooldown
+    prev_val = prev_alerted.get(sig)
+    prev_entry = _norm_alerted(prev_val, is_crit)
+    if prev_entry is not None:
+        if is_crit:
+            last_ts = prev_entry.get('last_ts', prev_entry['first_ts'])
+            if ts_epoch - last_ts >= cd:
+                send_immediate_signals.append(sig)
+                new_alerted[sig] = {
+                    'first_ts': prev_entry['first_ts'],
+                    'last_ts': ts_epoch,
+                    'count': prev_entry.get('count', 1) + 1,
+                }
+            else:
+                new_alerted[sig] = prev_entry  # cooldown active; keep state
         else:
-            new_alerted[sig] = prev_alerted[sig]  # keep original timestamp
+            age = ts_epoch - prev_entry
+            if age >= cd:
+                send_immediate_signals.append(sig)
+                new_alerted[sig] = ts_epoch  # reset timer on re-alert
+            else:
+                new_alerted[sig] = prev_entry  # keep original timestamp
     else:
         send_immediate_signals.append(sig)  # new edge: send immediately
-        new_alerted[sig] = ts_epoch
+        if is_crit:
+            new_alerted[sig] = {'first_ts': ts_epoch, 'last_ts': ts_epoch, 'count': 1}
+        else:
+            new_alerted[sig] = ts_epoch
+
+# ── Escalation metadata for critical signals being sent ──────────────────────
+# Keyed to send_immediate_signals so the bash send section can build per-tier messages.
+escalations = {}
+for sig in send_immediate_signals:
+    if not any(sig.startswith(p) for p in CRITICAL_PREFIXES):
+        continue
+    entry = new_alerted.get(sig)
+    if not isinstance(entry, dict):
+        continue
+    count = entry.get('count', 1)
+    first_ts = entry.get('first_ts', ts_epoch)
+    elapsed_s = ts_epoch - first_ts
+    if count >= ops_critical_count or elapsed_s >= ops_critical_elapsed:
+        tier = 3
+    elif count >= 2:
+        tier = 2
+    else:
+        tier = 1
+    escalations[sig] = {
+        'count': count,
+        'first_ts': first_ts,
+        'elapsed_s': elapsed_s,
+        'tier': tier,
+    }
 
 # Drop resolved signals (not in this run's immediate_signals) from alerted set.
 # They will re-alert fresh if the condition recurs.
@@ -666,6 +733,7 @@ snapshot = {
     'checks': checks,
     'immediate_signals': immediate_signals,
     'send_immediate_signals': send_immediate_signals,
+    'escalations': escalations,
     'digest_signals': digest_signals,
     'all_green': all_green,
     'send_digest': send_digest,
@@ -703,23 +771,61 @@ print(json.dumps(d['state'], indent=2))
 
 IMMEDIATE=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d['snapshot']['immediate_signals']))" <<< "$ANALYSIS")
 SEND_IMMEDIATE=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d['snapshot']['send_immediate_signals']))" <<< "$ANALYSIS")
+ESCALATIONS_JSON=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d['snapshot'].get('escalations', {})))" <<< "$ANALYSIS")
 DIGEST=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d['snapshot']['digest_signals']))" <<< "$ANALYSIS")
 SEND_DIGEST=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(d['snapshot']['send_digest'])" <<< "$ANALYSIS")
 ALL_GREEN=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(d['snapshot']['all_green'])" <<< "$ANALYSIS")
 
 send_comms() {
   local body="$1"
+  local topic="${2:-ops-monitor}"
   (cd "$PROJ" && harmonik comms send \
     --from ops-monitor \
     --to captain \
-    --topic ops-monitor \
+    --topic "$topic" \
     -- "$body") 2>&1 || true
 }
 
-# Send [IMMEDIATE] only for signals that are new or whose cooldown has expired.
+# Send immediate signals with tier-based escalation.
+# Tier 1 (count==1): [IMMEDIATE] prefix on ops-monitor.
+# Tier 2 (count>=2): [ESCALATION] prefix with count + elapsed on ops-monitor.
+# Tier 3 (count>=OPS_CRITICAL_COUNT or elapsed>=OPS_CRITICAL_ELAPSED): also sends
+#   a separate message to ops-CRITICAL (operator-wake channel).
 if [[ "$SEND_IMMEDIATE" != "[]" ]]; then
-  SIGNALS_TEXT=$(py3 "import json; sigs=json.loads('$SEND_IMMEDIATE'); print(' | '.join(sigs))")
-  send_comms "[IMMEDIATE] ops-monitor: $SIGNALS_TEXT | ts=$TS | see .harmonik/ops-monitor/latest.json"
+  SIGNALS_TEXT=$(py3 "
+import json
+sigs = json.loads('$SEND_IMMEDIATE')
+escs = json.loads('''$ESCALATIONS_JSON''')
+parts = []
+for s in sigs:
+    e = escs.get(s)
+    if e and e.get('tier', 1) >= 2:
+        m = e['elapsed_s'] // 60
+        n = e['count']
+        parts.append(f'[ESCALATION] {s} for >{m}m — alert #{n} — no self-healing path')
+    else:
+        parts.append('[IMMEDIATE] ' + s)
+print(' | '.join(parts))
+")
+  send_comms "ops-monitor: $SIGNALS_TEXT | ts=$TS | see .harmonik/ops-monitor/latest.json"
+
+  # Tier-3: additional operator-wake message on ops-CRITICAL.
+  TIER3_PARTS=$(py3 "
+import json
+sigs = json.loads('$SEND_IMMEDIATE')
+escs = json.loads('''$ESCALATIONS_JSON''')
+parts = []
+for s in sigs:
+    e = escs.get(s)
+    if e and e.get('tier', 1) >= 3:
+        m = e['elapsed_s'] // 60
+        n = e['count']
+        parts.append(f'{s} persistent >{m}m — alert #{n}')
+print(' | '.join(parts))
+")
+  if [[ -n "$TIER3_PARTS" ]]; then
+    send_comms "[ops-CRITICAL] $TIER3_PARTS — operator intervention required | ts=$TS | see .harmonik/ops-monitor/latest.json" "ops-CRITICAL"
+  fi
 elif [[ "$SEND_DIGEST" == "True" && "$DIGEST" != "[]" ]]; then
   SIGNALS_TEXT=$(py3 "import json; sigs=json.loads('$DIGEST'); print(' | '.join(sigs))")
   send_comms "[DIGEST] ops-monitor: $SIGNALS_TEXT | ts=$TS | see .harmonik/ops-monitor/latest.json"
@@ -730,7 +836,19 @@ fi
 if [[ "$ALL_GREEN" == "True" ]]; then
   echo "ops-monitor: all-green @ $TS"
 elif [[ "$IMMEDIATE" != "[]" ]]; then
-  SIGNALS_TEXT=$(py3 "import json; sigs=json.loads('$IMMEDIATE'); print(' | '.join(sigs))")
+  SIGNALS_TEXT=$(py3 "
+import json
+sigs = json.loads('$IMMEDIATE')
+escs = json.loads('''$ESCALATIONS_JSON''')
+parts = []
+for s in sigs:
+    e = escs.get(s)
+    if e:
+        parts.append(s + '(tier-' + str(e.get('tier',1)) + ',alert#' + str(e.get('count',1)) + ')')
+    else:
+        parts.append(s)
+print(' | '.join(parts))
+")
   SEND_TEXT=$(py3 "import json; sigs=json.loads('$SEND_IMMEDIATE'); print('(suppressed)' if not sigs else '')")
   echo "ops-monitor: IMMEDIATE: $SIGNALS_TEXT $SEND_TEXT@ $TS"
 else

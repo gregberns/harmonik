@@ -216,7 +216,7 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 			cancel()           // cancel execution context for graceful shutdown
 			interruptCh <- sig // deliver signal to main goroutine
 
-			// Wait for a second SIGINT (double-SIGINT hard-exit per SH-033).
+			// Wait for a second SIGINT during graceful shutdown (SH-033).
 			// The window stays open until shutdownComplete is closed (function
 			// return), so a second SIGINT at any point during graceful shutdown
 			// triggers the immediate hard-exit.
@@ -322,6 +322,18 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	// Determine whether cancellation was signal-driven.
 	select {
 	case sig := <-interruptCh:
+		// SH-033: check for a second SIGINT already buffered (operator pressed
+		// Ctrl-C twice in rapid succession) before starting teardown. If found,
+		// exit immediately without emitting a SuiteResult — the hard-exit path
+		// per SH-033. A second SIGINT that arrives later (after this check) is
+		// caught by the signal goroutine's second select above.
+		select {
+		case sig2 := <-sigCh:
+			if sig2 == syscall.SIGINT {
+				return harnessExitOperatorInterrupt
+			}
+		default:
+		}
 		// SH-033: graceful shutdown — emit partial SuiteResult and exit.
 		harnessEmitInterruptResult(
 			stdout, stderr,

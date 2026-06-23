@@ -220,16 +220,19 @@ func TestHarnessSH033_StderrMentionsSignal(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // sh033SubprocessRoleDoubleSIGINT is the subprocess worker for
-// TestHarnessSH033_DoubleSIGINTHardExit. It runs the harness in blocking mode
-// and awaits two SIGINT signals from the parent process.
+// TestHarnessSH033_DoubleSIGINTHardExit. It pre-loads both SIGINT signals into
+// the harness signal channel before calling runHarnessWithSigs so the
+// double-SIGINT detection is deterministic (no OS signal timing races).
 //
-// The parent sends both SIGINTs with minimal delay so both are in the buffered
-// signal channel when the goroutine processes them. The first triggers
-// graceful shutdown; the second triggers os.Exit(130) from the goroutine's
-// double-SIGINT select.
+// The first signal triggers the graceful-shutdown path; the main goroutine's
+// non-blocking pre-check reads the second signal from the buffer and returns
+// harnessExitOperatorInterrupt (130) before writing any SuiteResult to stdout.
 //
-// This function MUST be called only from the subprocess role and never returns
-// normally (it either exits via os.Exit or blocks indefinitely).
+// In a concurrent race (goroutine's second select wins the sigCh read instead),
+// os.Exit(harnessExitOperatorInterrupt) fires — same exit code, same empty stdout.
+//
+// This function MUST be called only from the subprocess role; it always exits
+// via os.Exit and never returns normally.
 func sh033SubprocessRoleDoubleSIGINT() {
 	// Create a temp dir with a valid scenario file so discovery succeeds.
 	dir, err := os.MkdirTemp("", "harmonik-sh033-dbl-")
@@ -253,16 +256,14 @@ func sh033SubprocessRoleDoubleSIGINT() {
 		os.Exit(99)
 	}
 
-	// runHarness registers real OS signal.Notify so the parent's kill calls
-	// deliver signals to the harness's signal channel (buffer size 2).
-	// Both SIGINTs are sent quickly by the parent, so both may already be in
-	// the buffer when the signal goroutine processes them: first SIGINT triggers
-	// graceful shutdown; second triggers os.Exit(130).
-	code := runHarness([]string{"--scenario", scenarioFile}, os.Stdout, os.Stderr)
+	// Pre-load both signals so the main goroutine's non-blocking sigCh check
+	// reads the second SIGINT deterministically before calling
+	// harnessEmitInterruptResult. No OS signals from the parent are needed.
+	sigCh := make(chan os.Signal, 2)
+	sigCh <- syscall.SIGINT // first signal — triggers graceful shutdown
+	sigCh <- syscall.SIGINT // second signal — caught by main's pre-check → return 130
 
-	// Should not reach here if double-SIGINT hard-exit fires. If only the first
-	// SIGINT arrived before runHarness returned, exit with the graceful-shutdown
-	// code so the parent can see what happened.
+	code := runHarnessWithSigs([]string{"--scenario", scenarioFile}, os.Stdout, os.Stderr, sigCh)
 	os.Exit(code)
 }
 
@@ -280,6 +281,10 @@ func TestHarnessSH033_DoubleSIGINTHardExit(t *testing.T) {
 	}
 
 	// Parent role: locate and spawn the test binary as a subprocess.
+	// The subprocess role pre-loads both signals into the harness channel, so
+	// the parent does NOT need to send any OS signals or wait for the child to
+	// reach a blocking state. Without -test.v the test framework emits nothing
+	// to stdout before the subprocess role runs.
 	testBin, lookErr := exec.LookPath(os.Args[0])
 	if lookErr != nil {
 		testBin = os.Args[0]
@@ -289,33 +294,18 @@ func TestHarnessSH033_DoubleSIGINTHardExit(t *testing.T) {
 		context.Background(),
 		testBin,
 		"-test.run=TestHarnessSH033_DoubleSIGINTHardExit",
-		"-test.v",
 	)
 	cmd.Env = append(os.Environ(), sh033SubprocessEnv+"=1")
-	cmd.Stdout = os.Stdout
+	var subStdout bytes.Buffer
+	cmd.Stdout = &subStdout
 	cmd.Stderr = os.Stderr
 
 	if startErr := cmd.Start(); startErr != nil {
 		t.Fatalf("subprocess start: %v", startErr)
 	}
 
-	// Give the subprocess time to install signal handlers and reach the
-	// blocking <-ctx.Done() in the execution stub.
-	time.Sleep(300 * time.Millisecond)
-
-	// Send both SIGINTs with minimal delay so both land in the buffered
-	// signal channel (capacity 2) before the goroutine processes either.
-	// The goroutine picks the first (graceful shutdown) then immediately
-	// sees the second already buffered → os.Exit(130).
-	if sigErr := cmd.Process.Signal(syscall.SIGINT); sigErr != nil {
-		t.Fatalf("send first SIGINT: %v", sigErr)
-	}
-	time.Sleep(5 * time.Millisecond) // minimal; both end up in the buffer
-	if sigErr := cmd.Process.Signal(syscall.SIGINT); sigErr != nil {
-		t.Fatalf("send second SIGINT: %v", sigErr)
-	}
-
-	// Assert the process exits within 5 seconds with code 130.
+	// Wait for the subprocess to exit. It pre-loads both SIGINTs so it exits
+	// almost immediately (no signals or sleeps needed from the parent side).
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
@@ -329,9 +319,17 @@ func TestHarnessSH033_DoubleSIGINTHardExit(t *testing.T) {
 		if exitErr.ExitCode() != 130 {
 			t.Errorf("double-SIGINT: want exit 130, got %d", exitErr.ExitCode())
 		}
+		// Hard-exit path must NOT write a SuiteResult to stdout. Any SuiteResult
+		// content proves the graceful-shutdown path ran instead (the two paths
+		// produce the same exit code 130, so stdout is the only distinguishing
+		// observable).
+		if strings.Contains(subStdout.String(), "suite_id:") || strings.Contains(subStdout.String(), `"suite_id"`) {
+			t.Errorf("double-SIGINT hard-exit: stdout contains SuiteResult (graceful-shutdown path ran):\n%s",
+				subStdout.String())
+		}
 	case <-time.After(deadline):
 		_ = cmd.Process.Kill()
-		t.Errorf("subprocess did not exit within %s after double-SIGINT", deadline)
+		t.Errorf("subprocess did not exit within %s", deadline)
 	}
 }
 

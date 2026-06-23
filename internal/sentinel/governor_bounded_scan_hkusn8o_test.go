@@ -111,8 +111,8 @@ func TestGovernor_BoundedScan_SkipsOldEvents(t *testing.T) {
 		windowStart,
 		now,
 		sentinel.DefaultWeights,
-		"",  // gitPath: empty skips git
-		"",  // projectDir: empty skips countHeadAdvances
+		"", // gitPath: empty skips git
+		"", // projectDir: empty skips countHeadAdvances
 	)
 
 	wantScore := 3 * sentinel.DefaultHighWeight

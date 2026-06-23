@@ -331,6 +331,13 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// run abort. Authorised by operator-nfr.md §4.9 ON-055 (read-only
 	// observation surface).
 	"state": "specs/system-state.md §4 SS-001; read-only state snapshot aggregator, no in-flight run abort",
+	// hk-nwqa0 (SH-032): scenario harness runner. Operates against per-suite
+	// ephemeral fixture roots (SH-016a synthetic project roots) that are
+	// entirely separate from any operator project's .harmonik/ tree. No daemon
+	// socket connection; no in-flight run state is read, mutated, or aborted.
+	// Authorised by operator-nfr.md §4.9 ON-055 (standalone test tool, no
+	// control-surface impact on any in-flight harmonik run).
+	"harness": "operator-nfr.md §4.9 ON-055; standalone scenario harness, synthetic fixture roots (SH-016a), no daemon connection, no in-flight run abort",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled

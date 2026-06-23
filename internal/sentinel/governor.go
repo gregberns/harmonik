@@ -313,10 +313,12 @@ func computeWindowMovement(
 	}
 
 	// --- events.jsonl scan ---
-	// Derive a cursor near windowStart so ScanAfter skips all events older than
-	// the window, bounding the I/O to the trailing window instead of the full
-	// file (hk-usn8o). The wall-clock guard below is kept as a safety net for
-	// the rare case where UUIDv7 timestamp and wall-clock differ by <1ms.
+	// Derive a cursor near windowStart so ScanAfter yields only events whose
+	// UUIDv7 is ≥ windowStart, skipping pre-window events at the Go iterator
+	// layer (hk-usn8o). Note: ScanAfter still reads every byte in the file
+	// sequentially; the cursor reduces events yielded/processed, not bytes read.
+	// The wall-clock guard below handles the rare case where UUIDv7 timestamp
+	// and wall-clock differ by <1ms.
 	cursor := eventIDFloorForTime(windowStart)
 	for ev := range eventbus.ScanAfter(eventsPath, cursor) {
 		// Filter to events within the window by wall-clock time.
@@ -366,9 +368,11 @@ func computeWindowMovement(
 }
 
 // eventIDFloorForTime returns the lexicographically minimum UUIDv7 that could
-// represent the given instant. Passed as the 'after' cursor to ScanAfter so
-// the events.jsonl scan starts near the window rather than from offset zero,
-// bounding the per-Evaluate I/O to trailing-window events (hk-usn8o).
+// represent the given instant. Used as the 'after' cursor to ScanAfter so the
+// iterator yields only events at or after t — skipping pre-window events at the
+// Go layer rather than passing them to the switch (hk-usn8o). ScanAfter still
+// reads every line sequentially; the cursor reduces events yielded/processed, not
+// bytes read from disk.
 //
 // The floor embeds the ms-precision Unix timestamp in the 48 most-significant
 // bits (RFC 9562 §5.7) and zeros all random/variant bits. Any real UUIDv7 at

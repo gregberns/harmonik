@@ -129,9 +129,9 @@ type crewHandlerImpl struct {
 
 	// keeper probe fields (hk-qgfme): async post-spawn liveness check.
 	// All fields are optional; nil = feature disabled (probe skipped).
-	keeperCfg    KeeperConfig        // FlockAcquireGrace drives the probe; zero = disabled
-	eventBus     crewKeeperEventBus  // for emitting session_keeper_watcher_dead; may be nil
-	commsBus     crewKeeperCommsBus  // for keeper-alert comms to operator; may be nil
+	keeperCfg    KeeperConfig                        // FlockAcquireGrace drives the probe; zero = disabled
+	eventBus     crewKeeperEventBus                  // for emitting session_keeper_watcher_dead; may be nil
+	commsBus     crewKeeperCommsBus                  // for keeper-alert comms to operator; may be nil
 	liveKeeperFn func(projectDir, agent string) bool // injectable for testing; nil = keeper.LiveKeeperPresent
 }
 

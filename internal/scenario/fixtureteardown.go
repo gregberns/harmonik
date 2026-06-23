@@ -107,11 +107,11 @@ func (e *TeardownError) FailureClass() FailureClass {
 // TeardownFixture executes the five ordered sub-steps of the fixture teardown
 // phase declared in specs/scenario-harness.md §4.4 SH-015:
 //
-//   (a) Terminate any still-live handler subprocesses (HandlerCancels).
-//   (b) Release the per-scenario worktree lease per WM-013b.
-//   (c) Fsync then close the event-log file.
-//   (d) Stop the per-scenario daemon per PL-003a (StopDaemon).
-//   (e) Record the workspace_snapshot_path (pure: no filesystem mutation).
+//	(a) Terminate any still-live handler subprocesses (HandlerCancels).
+//	(b) Release the per-scenario worktree lease per WM-013b.
+//	(c) Fsync then close the event-log file.
+//	(d) Stop the per-scenario daemon per PL-003a (StopDaemon).
+//	(e) Record the workspace_snapshot_path (pure: no filesystem mutation).
 //
 // Teardown is run-to-completion best-effort: a failure in any sub-step is
 // accumulated into the returned *TeardownError but MUST NOT halt the remaining

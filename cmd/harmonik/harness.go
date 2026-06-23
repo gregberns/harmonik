@@ -534,9 +534,9 @@ func harnessDiscoverScenarios(
 // resolveTwinSearchPaths returns the ordered twin-binary search-path list per
 // the three-level precedence rule in specs/scenario-harness.md §4.3 SH-009:
 //
-//   (i)  CLI flag --twin-search-path (flagValue non-empty)
-//   (ii) environment variable HARMONIK_TWIN_SEARCH_PATH (envValue non-empty)
-//   (iii) in-tree default: <cwd>/twins/
+//	(i)  CLI flag --twin-search-path (flagValue non-empty)
+//	(ii) environment variable HARMONIK_TWIN_SEARCH_PATH (envValue non-empty)
+//	(iii) in-tree default: <cwd>/twins/
 //
 // The resolved path is returned as a one-element slice because BootstrapFixture
 // accepts []string; multiple search directories may be supported in a future

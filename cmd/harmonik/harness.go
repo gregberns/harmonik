@@ -229,12 +229,13 @@ func runHarness(args []string, stdout, stderr io.Writer) int {
 		return harnessExitPass
 	}
 
-	// Full execution path: the orchestration drive (G-02), fixture teardown
-	// (G-03), assertion evaluator (G-05), and result emitter (G-06) are not
-	// yet implemented. Return harness-internal-error per the exit-code table
-	// (SH-032, code 3) until those beads land.
-	fmt.Fprintf(stderr, "harmonik harness: execution not yet implemented\n")
-	fmt.Fprintf(stderr, "harmonik harness: orchestration drive (G-02) is required for full execution\n")
+	// Full execution path: fixture teardown (G-03), assertion evaluator (G-05),
+	// and result emitter (G-06) are not yet implemented. The orchestration drive
+	// (G-02) is implemented via scenario.DriveOrchestration but cannot be wired
+	// into the full pipeline until G-03/G-05/G-06 land. Return
+	// harness-internal-error per the exit-code table (SH-032, code 3).
+	fmt.Fprintf(stderr, "harmonik harness: full scenario execution not yet implemented\n")
+	fmt.Fprintf(stderr, "harmonik harness: fixture teardown (G-03), assertion evaluator (G-05), and result emitter (G-06) are required\n")
 	fmt.Fprintf(stderr, "harmonik harness: use --list to discover scenarios or --dry-run to validate\n")
 	return harnessExitInternalError
 }

@@ -132,8 +132,8 @@ func TestSH028_IsNetworkSandboxActiveReturnsFalseByDefault(t *testing.T) {
 	}
 
 	if scenario.IsNetworkSandboxActive() {
-		t.Errorf("SH-028: IsNetworkSandboxActive() = true on a normal test host; "+
-			"expected false (tests run outside a network sandbox by default). "+
+		t.Errorf("SH-028: IsNetworkSandboxActive() = true on a normal test host; " +
+			"expected false (tests run outside a network sandbox by default). " +
 			"If this host IS intentionally sandboxed, the test environment is unusual.")
 	}
 }

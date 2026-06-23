@@ -22,6 +22,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -29,10 +30,10 @@ import (
 	supervisecmd "github.com/gregberns/harmonik/cmd/harmonik/supervise"
 )
 
-// init installs the supervisor's skew-check hook. The supervisor (supervisecmd)
-// is imported BY main and cannot import main back, so we bridge the detection logic
-// (which needs the embedded manifest + reconcile planner, both here in main) via this
-// registration. supervisecmd.RunAssetSkewCheck calls SkewCheckHook at boot.
+// init installs the supervisor's skew-check and auto-apply hooks. The supervisor
+// (supervisecmd) is imported BY main and cannot import main back, so we bridge the
+// detection + apply logic (which needs the embedded manifest, reconcile planner, and
+// daemon-lull gate, all in main) via these registrations.
 func init() {
 	supervisecmd.SkewCheckHook = func(projectDir string) (supervisecmd.AssetSkewVerdict, error) {
 		res, err := CheckAssetSkew(
@@ -54,6 +55,61 @@ func init() {
 			BinaryDigest:        res.BinaryDigest,
 			LockDigest:          res.LockDigest,
 		}, nil
+	}
+
+	// AutoApplyGateHook wraps daemonDispatchGate so the supervisecmd package can
+	// check for an active dispatch without importing package main.
+	supervisecmd.AutoApplyGateHook = func(projectDir string) (bool, string, error) {
+		return daemonDispatchGate(projectDir)
+	}
+
+	// AutoApplyHook applies only the safe (Managed + FastForward) reconcile items,
+	// re-stamps the lock, and returns the count of files written.
+	supervisecmd.AutoApplyHook = func(projectDir string) (int, error) {
+		m, err := BuildManifest()
+		if err != nil {
+			return 0, fmt.Errorf("auto-apply: build manifest: %w", err)
+		}
+		lock, err := ReadLock(projectDir)
+		if err != nil {
+			return 0, fmt.Errorf("auto-apply: read lock: %w", err)
+		}
+		disk, err := buildDiskHashes(projectDir, m, io.Discard)
+		if err != nil {
+			return 0, fmt.Errorf("auto-apply: hash project files: %w", err)
+		}
+
+		fullPlan := Reconcile(m, lock, disk)
+
+		// Filter to Managed + FastForward ONLY — conflicts and non-managed changes
+		// are surfaced via notify, never applied here.
+		var filtered []ReconcileItem
+		for _, item := range fullPlan {
+			if item.Class == Managed && item.Action == ActionFastForward {
+				filtered = append(filtered, item)
+			}
+		}
+		if len(filtered) == 0 {
+			return 0, nil
+		}
+
+		outcomes, code := applyPlan(projectDir, m, filtered, io.Discard, io.Discard)
+		if code != 0 {
+			return 0, fmt.Errorf("auto-apply: apply failed (exit %d)", code)
+		}
+
+		newLock := lockFromOutcomes(lock, outcomes)
+		if err := WriteLock(projectDir, newLock); err != nil {
+			return 0, fmt.Errorf("auto-apply: write lock: %w", err)
+		}
+
+		applied := 0
+		for _, o := range outcomes {
+			if o.written {
+				applied++
+			}
+		}
+		return applied, nil
 	}
 }
 

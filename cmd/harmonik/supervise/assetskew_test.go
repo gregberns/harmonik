@@ -61,3 +61,78 @@ func TestRunAssetSkewCheckHookInvoked(t *testing.T) {
 		t.Fatal("expected SkewCheckHook to be invoked")
 	}
 }
+
+// TestAutoApplyHookInvokedWhenEnabled — with AutoApply=true and safe candidates,
+// AutoApplyHook IS invoked (and AutoApplyGateHook=nil is treated as not dispatching).
+func TestAutoApplyHookInvokedWhenEnabled(t *testing.T) {
+	savedHook := AutoApplyHook
+	savedGate := AutoApplyGateHook
+	defer func() {
+		AutoApplyHook = savedHook
+		AutoApplyGateHook = savedGate
+	}()
+
+	called := false
+	AutoApplyHook = func(_ string) (int, error) {
+		called = true
+		return 1, nil
+	}
+	AutoApplyGateHook = nil // nil gate → not dispatching
+
+	v := AssetSkewVerdict{Skewed: true, AutoApplyCandidates: 2, ChangedCount: 2}
+	cfg := Config{AssetSync: AssetSyncConfig{AutoApply: true}}
+	maybeAutoApply(t.TempDir(), cfg, v, nil, nil)
+
+	if !called {
+		t.Fatal("expected AutoApplyHook to be invoked when AutoApply=true with safe candidates")
+	}
+}
+
+// TestAutoApplyHookNotInvokedWhenDisabled — with AutoApply=false, AutoApplyHook
+// is never called regardless of candidate count.
+func TestAutoApplyHookNotInvokedWhenDisabled(t *testing.T) {
+	saved := AutoApplyHook
+	defer func() { AutoApplyHook = saved }()
+
+	called := false
+	AutoApplyHook = func(_ string) (int, error) {
+		called = true
+		return 0, nil
+	}
+
+	v := AssetSkewVerdict{Skewed: true, AutoApplyCandidates: 3}
+	cfg := Config{} // AutoApply is false by default
+	maybeAutoApply(t.TempDir(), cfg, v, nil, nil)
+
+	if called {
+		t.Fatal("AutoApplyHook must NOT be invoked when AutoApply=false")
+	}
+}
+
+// TestAutoApplyHookNotInvokedWhenDispatching — when AutoApplyGateHook reports
+// the daemon is dispatching, AutoApplyHook is NOT invoked.
+func TestAutoApplyHookNotInvokedWhenDispatching(t *testing.T) {
+	savedHook := AutoApplyHook
+	savedGate := AutoApplyGateHook
+	defer func() {
+		AutoApplyHook = savedHook
+		AutoApplyGateHook = savedGate
+	}()
+
+	called := false
+	AutoApplyHook = func(_ string) (int, error) {
+		called = true
+		return 0, nil
+	}
+	AutoApplyGateHook = func(_ string) (bool, string, error) {
+		return true, "queue has in-flight work", nil // dispatching
+	}
+
+	v := AssetSkewVerdict{Skewed: true, AutoApplyCandidates: 2, ChangedCount: 2}
+	cfg := Config{AssetSync: AssetSyncConfig{AutoApply: true}}
+	maybeAutoApply(t.TempDir(), cfg, v, nil, nil)
+
+	if called {
+		t.Fatal("AutoApplyHook must NOT be invoked when the lull gate reports dispatching")
+	}
+}

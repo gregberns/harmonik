@@ -13,8 +13,8 @@ package supervisecmd
 // startup (not every loop — the supervisee runs as a long-lived exec, there is no
 // fast tick here to spam from), logs the verdict, and on skew posts a single comms
 // notice to the captain telling someone to run `harmonik sync-assets`. Auto-apply is
-// config-gated (AssetSyncConfig.AutoApply, OFF by default) and DEFERRED — see the
-// TODO in maybeAutoApply.
+// config-gated (AssetSyncConfig.AutoApply, OFF by default); AutoApplyHook executes
+// the apply when AutoApplyGateHook confirms the daemon is quiescent.
 
 import (
 	"fmt"
@@ -42,6 +42,18 @@ type AssetSkewVerdict struct {
 // computation for a project dir. nil when not installed (e.g. in a supervise-package
 // unit test) — RunAssetSkewCheck then no-ops safely.
 var SkewCheckHook func(projectDir string) (AssetSkewVerdict, error)
+
+// AutoApplyGateHook is installed by package main to check the daemon-lull gate
+// before invoking AutoApplyHook. Returns (true, reason, nil) when the daemon is
+// actively dispatching — auto-apply is skipped (notify-only). When nil, the gate
+// is skipped (treated as not dispatching).
+var AutoApplyGateHook func(projectDir string) (dispatching bool, reason string, err error)
+
+// AutoApplyHook is installed by package main to execute the actual auto-apply
+// (Managed+FastForward only) for a project dir. Returns the count of files applied.
+// Called only when AutoApply is enabled, there are safe candidates, and the lull
+// gate confirms the daemon is quiescent.
+var AutoApplyHook func(projectDir string) (applied int, err error)
 
 // RunAssetSkewCheck runs the boot-time asset version-skew check for projectDir and,
 // on skew, notifies the captain. It is best-effort: any error is logged and
@@ -132,64 +144,64 @@ func notifyCaptainSkew(projectDir string, v AssetSkewVerdict, log *slog.Logger, 
 	}
 }
 
-// maybeAutoApply is the config-gated, OFF-by-default auto-apply gate (doc 10
+// maybeAutoApply is the config-gated, OFF-by-default auto-apply path (doc 10
 // §Daemon-safety: "may auto-apply only the FAST-FORWARD, MANAGED (skill) files
 // during a quiescent window, surfacing every CONFLICT and every content-owned change
 // for human review").
 //
-// DEFERRED: per hk-yqx9, the shippable core is detection + notify. Wiring the actual
-// apply into the running supervisor loop is intentionally NOT done in this pass — it
-// would have the supervisor write the project's main working tree, which is exactly
-// the hazard the daemon-lull gate guards against, and doing it safely mid-supervision
-// needs a confirmed-lull handshake with the daemon that is larger than this bead.
-//
-// What this DOES today: when AutoApply is explicitly enabled AND there are safe
-// (Managed + FastForward) candidates, it NOTIFIES what WOULD be auto-applied so the
-// behaviour is visible, and leaves a clear marker that execution is deferred. When
-// AutoApply is OFF (the default) it is a no-op beyond a debug log.
-//
-// TODO(hk-yqx9 follow-up): execute the auto-apply by invoking the sync-assets apply
-// path filtered to (class==Managed && action==FastForward) ONLY, gated on the SAME
-// daemonDispatchGate lull check sync-assets uses, after which re-stamp the lock. Every
-// Conflict and every non-managed change must still be surfaced (notified), never
-// applied. Until then, the operator runs `harmonik sync-assets --apply` manually.
-func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog.Logger, stderr io.Writer) {
+// When AutoApply is OFF (the default) it is a no-op. When ON, it checks the
+// daemon-lull gate (AutoApplyGateHook) before delegating the actual apply to
+// AutoApplyHook (both installed by package main at init time).
+func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog.Logger, _ io.Writer) {
 	if !cfg.AssetSync.AutoApply {
 		if log != nil {
 			log.Debug("asset-skew: auto-apply disabled (default); notify-only")
 		}
 		return
 	}
-	// Enabled, but execution is deferred this pass: report what WOULD be applied.
 	if v.AutoApplyCandidates == 0 {
 		if log != nil {
 			log.Info("asset-skew: auto-apply enabled but no safe (Managed+FastForward) candidates")
 		}
 		return
 	}
-	if log != nil {
-		log.Warn("asset-skew: auto-apply ENABLED but execution is DEFERRED (hk-yqx9 follow-up); "+
-			"run 'harmonik sync-assets --apply' manually",
-			"would_apply", v.AutoApplyCandidates,
-			"conflicts_held_for_review", v.ConflictCount)
+
+	// Lull-gate: refuse to apply while the daemon is actively dispatching.
+	if AutoApplyGateHook != nil {
+		dispatching, reason, err := AutoApplyGateHook(projectDir)
+		if err != nil {
+			if log != nil {
+				log.Warn("asset-skew: auto-apply lull-gate check failed; skipping apply", "err", err)
+			}
+			return
+		}
+		if dispatching {
+			if log != nil {
+				log.Warn("asset-skew: auto-apply skipped — daemon is dispatching; notify-only",
+					"reason", reason, "would_apply", v.AutoApplyCandidates)
+			}
+			return
+		}
 	}
-	// Surface the deferred-auto-apply state to the captain too, so it is not silent.
-	exe, err := os.Executable()
-	if err != nil {
+
+	if AutoApplyHook == nil {
+		if log != nil {
+			log.Warn("asset-skew: auto-apply enabled but AutoApplyHook not installed")
+		}
 		return
 	}
-	body := fmt.Sprintf(
-		"asset auto-apply is ENABLED but deferred: %d safe skill fast-forwards would apply, %d conflicts held for review — run 'harmonik sync-assets --apply' (in a lull)",
-		v.AutoApplyCandidates, v.ConflictCount)
-	//nolint:gosec // G204: exe is os.Executable(), projectDir operator-controlled.
-	cmd := exec.Command(exe,
-		"comms", "send",
-		"--project", projectDir,
-		"--from", "supervisor",
-		"--to", "captain",
-		"--topic", "status",
-		"--", body)
-	cmd.Stdout = stderr
-	cmd.Stderr = stderr
-	_ = cmd.Run() // best-effort
+
+	applied, err := AutoApplyHook(projectDir)
+	if err != nil {
+		if log != nil {
+			log.Warn("asset-skew: auto-apply failed", "err", err,
+				"conflicts_held_for_review", v.ConflictCount)
+		}
+		return
+	}
+	if log != nil {
+		log.Info("asset-skew: auto-apply complete",
+			"applied", applied,
+			"conflicts_held_for_review", v.ConflictCount)
+	}
 }

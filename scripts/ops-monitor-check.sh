@@ -104,6 +104,7 @@ CRITICAL_IMMEDIATE_COOLDOWN=300  # 5 minutes
 # ops-CRITICAL operator-wake topic (tier 3). Either condition triggers tier 3.
 OPS_CRITICAL_COUNT=6        # alert-count at which we escalate (≈ 30 min at 5-min critical cadence)
 OPS_CRITICAL_ELAPSED=1800   # OR: seconds a critical signal has been down before operator-wake
+RELEASE_DUE_COMMIT_THRESHOLD=50  # unreleased commits on main since last vX.Y.Z tag (per spec §202)
 
 mkdir -p "$OUT_DIR"
 
@@ -280,6 +281,38 @@ fi
 # N per-crew shell-outs (hk-hnk4j).
 KEEPER_PROCS_RAW=$(ps -axo command= 2>/dev/null | grep -F "harmonik keeper --agent" || true)
 
+# ── Check release-due: unreleased commits since last vX.Y.Z tag ──────────────
+# Soft prompt only — never tags or releases anything; captain decides.
+# Degrade gracefully: git/gh errors → count=0 / CI_STATUS=unknown → no signal.
+RELEASE_COMMIT_COUNT=0
+CI_STATUS=unknown
+_LAST_TAG=""
+_LAST_TAG=$(git -C "$PROJ" tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname 2>/dev/null | head -1) || true
+if [[ -n "$_LAST_TAG" ]]; then
+  RELEASE_COMMIT_COUNT=$(git -C "$PROJ" rev-list --count "${_LAST_TAG}..origin/main" 2>/dev/null || echo 0)
+else
+  RELEASE_COMMIT_COUNT=$(git -C "$PROJ" rev-list --count origin/main 2>/dev/null || echo 0)
+fi
+[[ "$RELEASE_COMMIT_COUNT" =~ ^[0-9]+$ ]] || RELEASE_COMMIT_COUNT=0
+if command -v gh >/dev/null 2>&1; then
+  _GH_OUT=""
+  _GH_OUT=$( (cd "$PROJ" && gh run list --branch main --limit 1 --json conclusion 2>/dev/null) ) || true
+  _GH_CONCLUSION=""
+  _GH_CONCLUSION=$(printf '%s' "$_GH_OUT" | python3 -c "
+import json, sys
+try:
+    items = json.load(sys.stdin)
+    print(items[0].get('conclusion', '') if items else '')
+except Exception:
+    print('')
+" 2>/dev/null) || true
+  if [[ "$_GH_CONCLUSION" == "success" ]]; then
+    CI_STATUS=green
+  elif [[ -n "$_GH_CONCLUSION" ]]; then
+    CI_STATUS=not-green
+  fi
+fi
+
 # ── Python analysis: produce JSON snapshot ────────────────────────────────────
 
 ANALYSIS=$(py3 "
@@ -315,6 +348,9 @@ review_grace       = int('$REVIEW_GATE_GRACE')
 reviewer_stale_window = int('$REVIEWER_STALE_WINDOW')
 keeper_procs_raw      = '''$KEEPER_PROCS_RAW'''
 prev_keeper_misses    = json.loads('$PREV_KEEPER_COVERAGE_MISSES')
+release_commit_count  = int('$RELEASE_COMMIT_COUNT')
+ci_status             = '$CI_STATUS'
+release_due_threshold = int('$RELEASE_DUE_COMMIT_THRESHOLD')
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -646,6 +682,11 @@ if captain_info:
 # If the tmux session is alive, captain is UP regardless of stale comms presence.
 captain_down = not captain_present and not captain_tmux_alive
 
+# ── Release-due check ─────────────────────────────────────────────────────────
+# Soft prompt only; never automatic. Normal IMMEDIATE_COOLDOWN applies (NOT a
+# critical-component signal — release-due is not an infra failure).
+release_due = release_commit_count >= release_due_threshold and ci_status == 'green'
+
 # ── Build signal lists ───────────────────────────────────────────────────────
 immediate_signals = []
 digest_signals    = []
@@ -667,6 +708,8 @@ if captain_down:
     immediate_signals.append('captain-down')
 if keeper_missing_crews:
     immediate_signals.append('keeper-missing:' + ','.join(sorted(keeper_missing_crews)))
+if release_due:
+    immediate_signals.append('release-due:' + str(release_commit_count))
 
 if stale_signal_crews:
     names = ','.join(c['crew'] for c in stale_signal_crews)
@@ -718,6 +761,8 @@ checks = {
                       'detail': ('idle ' + str(idle_age_s) + 's') if idle_fleet else 'active' if total_workers > 0 else 'idle<thresh'},
     'keepers-covered': {'state': 'flag' if keeper_missing_crews else 'ok',
                         'detail': ','.join(sorted(keeper_missing_crews)) if keeper_missing_crews else 'all online crews have keepers'},
+    'release-due':     {'state': 'flag' if release_due else 'ok',
+                        'detail': str(release_commit_count) + ' unreleased commits, CI=' + ci_status},
 }
 
 # ── De-dup + cooldown for immediate signals ──────────────────────────────────
@@ -837,6 +882,9 @@ snapshot = {
     'ready_count': ready_count,
     'backlog_ready': backlog_ready,
     'review_bypass_run_ids': review_bypass_run_ids,
+    'release_due': release_due,
+    'release_commit_count': release_commit_count,
+    'ci_status': ci_status,
     'checks': checks,
     'immediate_signals': immediate_signals,
     'send_immediate_signals': send_immediate_signals,

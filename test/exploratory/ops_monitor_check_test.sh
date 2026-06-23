@@ -42,6 +42,11 @@
 #   [x] keeper-missing debounce: 1st miss no signal; >=miss_limit → immediate 'keeper-missing' (Test 26b)
 #   [x] keeper-missing NON_CREW: captain etc never produce keeper-missing (Test 26c)
 #   [x] keeper-missing clears: keeper reappears → signal gone, state reset (Test 26d)
+#   [x] release-due: count < threshold → no signal (Test 27a)
+#   [x] release-due: count >= threshold AND CI green → immediate 'release-due:<count>', checks flag (Test 27b)
+#   [x] release-due: count >= threshold, CI not-green → no signal (Test 27c)
+#   [x] release-due: count >= threshold, CI unknown (gh unavailable) → no signal, no crash (Test 27d)
+#   [x] release-due NOT in CRITICAL_PREFIXES: alerted 6m ago still suppressed (30-min cooldown) (Test 27e)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -150,6 +155,9 @@ setup_fixture() {
   local events_content=''
   local br_ready_json='[]'   # `br ready --limit 0 --json` output for the stub
   local keeper_procs_raw=''  # lines matching "harmonik keeper --agent"; default: none
+  local git_release_count=0  # value returned by `git rev-list --count` stub
+  local git_last_tag='v0.0.1' # value returned by `git tag --list` stub ('' = no tag yet)
+  local gh_run_conclusion=''  # gh run list conclusion ('success'/'failure'/''=gh unavailable)
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -164,6 +172,9 @@ setup_fixture() {
       --events-jsonl)              events_content="$2";shift 2 ;;
       --br-ready-json)             br_ready_json="$2"; shift 2 ;;
       --keeper-procs-raw)          keeper_procs_raw="$2"; shift 2 ;;
+      --git-release-count)         git_release_count="$2"; shift 2 ;;
+      --git-last-tag)              git_last_tag="$2";  shift 2 ;;
+      --gh-run-conclusion)         gh_run_conclusion="$2"; shift 2 ;;
       *) echo "setup_fixture: unknown arg $1" >&2; return 1 ;;
     esac
   done
@@ -293,6 +304,44 @@ EOF
 printf '%s\n' '${keeper_procs_escaped}'
 EOF
   chmod +x "$ps_bin"
+
+  # Stub `git` for release-due probe.
+  # Handles: git -C <proj> tag --list 'v[0-9]*...' → configured last tag
+  #          git -C <proj> rev-list --count <range> → configured count
+  # All other git commands exit 128 (not-a-repo) so the script degrades gracefully.
+  local git_bin="$tmpdir/bin/git"
+  local git_tag_escaped
+  git_tag_escaped=$(printf '%s' "$git_last_tag" | sed "s/'/'\\\\''/g")
+  cat > "$git_bin" <<EOF
+#!/usr/bin/env bash
+# Stub git for ops-monitor release-due test
+GIT_LAST_TAG='${git_tag_escaped}'
+GIT_RELEASE_COUNT='${git_release_count}'
+args_str="\$*"
+if [[ "\$args_str" == *"tag --list"* ]]; then
+  printf '%s\n' "\$GIT_LAST_TAG"
+elif [[ "\$args_str" == *"rev-list --count"* ]]; then
+  printf '%s\n' "\$GIT_RELEASE_COUNT"
+else
+  exit 128
+fi
+EOF
+  chmod +x "$git_bin"
+
+  # Stub `gh` for CI-status probe — only created when gh_run_conclusion is non-empty.
+  # When absent from PATH the script detects gh unavailable and sets CI_STATUS=unknown.
+  if [[ -n "$gh_run_conclusion" ]]; then
+    local gh_bin="$tmpdir/bin/gh"
+    local gh_concl_escaped
+    gh_concl_escaped=$(printf '%s' "$gh_run_conclusion" | sed "s/'/'\\\\''/g")
+    cat > "$gh_bin" <<EOF
+#!/usr/bin/env bash
+# Stub gh for ops-monitor CI-status test
+GH_CONCLUSION='${gh_concl_escaped}'
+printf '[{"conclusion":"%s"}]\n' "\$GH_CONCLUSION"
+EOF
+    chmod +x "$gh_bin"
+  fi
 
   printf '%s' "$tmpdir"
 }
@@ -788,7 +837,7 @@ PROJ=$(setup_fixture \
 run_check "$PROJ" > /dev/null 2>&1
 SCHEMA=$(python3 -c "import json; print(json.load(open('$PROJ/.harmonik/ops-monitor/latest.json')).get('schema_version'))")
 assert_eq "schema_version=2" "2" "$SCHEMA"
-for CHK in daemon-up supervisor-up paused-queues single-mode crew-fresh review-gate captain-up backlog-ready lull keepers-covered; do
+for CHK in daemon-up supervisor-up paused-queues single-mode crew-fresh review-gate captain-up backlog-ready lull keepers-covered release-due; do
   assert_check_state "checks.$CHK present (green)" \
     "$PROJ/.harmonik/ops-monitor/latest.json" "$CHK" "ok"
 done
@@ -1296,6 +1345,166 @@ d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
 print(d.get('keeper_coverage_misses', {}).get('jamis', 'missing'))
 ")
 assert_eq "26d: jamis keeper_coverage_misses reset to 0" "0" "$JAMIS_KMISS"
+rm -rf "$PROJ"
+
+# ── Test 27a: release-due — count < threshold → no signal ────────────────────
+echo ""
+echo "=== Test 27a: release-due count < threshold (30 commits < 50) — no signal ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --git-release-count 30 \
+  --git-last-tag 'v1.0.0' \
+  --gh-run-conclusion 'success' \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_not_contains "27a: no release-due in stdout" "release-due" "$OUTPUT"
+assert_json_list_empty "27a: no immediate_signals" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals"
+assert_check_state "27a: checks.release-due=ok (count<threshold)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "release-due" "ok"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  if grep -qF "release-due" "$LOG"; then
+    fail "27a: should NOT send release-due comms when count < threshold"
+  else
+    pass "27a: no release-due comms (other signal may exist)"
+  fi
+else
+  pass "27a: no comms sent (count below threshold)"
+fi
+rm -rf "$PROJ"
+
+# ── Test 27b: release-due — count >= threshold AND CI green → immediate signal ─
+echo ""
+echo "=== Test 27b: release-due (count=55 >= 50, CI=green) — immediate signal ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --git-release-count 55 \
+  --git-last-tag 'v1.0.0' \
+  --gh-run-conclusion 'success' \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "27b: IMMEDIATE in stdout"      "IMMEDIATE"    "$OUTPUT"
+assert_contains "27b: release-due in stdout"    "release-due"  "$OUTPUT"
+assert_contains "27b: count in stdout"          "55"           "$OUTPUT"
+assert_json_list_contains "27b: immediate_signals has release-due" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "release-due:55"
+assert_check_state "27b: checks.release-due=flag" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "release-due" "flag"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "27b: comms sent"
+  assert_contains "27b: comms [IMMEDIATE]"    "[IMMEDIATE]"  "$(cat "$LOG")"
+  assert_contains "27b: comms release-due"   "release-due"  "$(cat "$LOG")"
+  assert_contains "27b: comms count"         "55"           "$(cat "$LOG")"
+else
+  fail "27b: expected comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 27c: release-due — count >= threshold, CI not-green → no signal ──────
+echo ""
+echo "=== Test 27c: release-due (count=55, CI=not-green) — no signal ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --git-release-count 55 \
+  --git-last-tag 'v1.0.0' \
+  --gh-run-conclusion 'failure' \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_not_contains "27c: no release-due in stdout" "release-due" "$OUTPUT"
+assert_json_list_empty "27c: no immediate_signals" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals"
+assert_check_state "27c: checks.release-due=ok (CI not-green)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "release-due" "ok"
+CI_DETAIL=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/latest.json'))
+print(d.get('checks', {}).get('release-due', {}).get('detail', ''))
+" 2>/dev/null || echo "")
+assert_contains "27c: checks detail shows CI=not-green" "CI=not-green" "$CI_DETAIL"
+rm -rf "$PROJ"
+
+# ── Test 27d: release-due — CI unknown (gh unavailable) → no signal, no crash ─
+# gh is not present in the fixture PATH (no --gh-run-conclusion arg).
+echo ""
+echo "=== Test 27d: release-due (count=55, CI=unknown/gh-unavailable) — no signal, no crash ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --git-release-count 55 \
+  --git-last-tag 'v1.0.0' \
+)
+# No --gh-run-conclusion: gh stub not created → CI_STATUS=unknown
+if HK_PROJECT="$PROJ" PATH="$PROJ/bin:$PATH" bash "$SCRIPT" > /dev/null 2>&1; then
+  pass "27d: script exits 0 with gh unavailable (no crash)"
+else
+  fail "27d: script crashed when gh unavailable"
+fi
+assert_not_contains "27d: no release-due in stdout" "release-due" \
+  "$(HK_PROJECT="$PROJ" PATH="$PROJ/bin:$PATH" bash "$SCRIPT" 2>&1)"
+assert_json_list_empty "27d: no immediate_signals" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals"
+assert_check_state "27d: checks.release-due=ok (CI=unknown)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "release-due" "ok"
+CI_DETAIL_D=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/latest.json'))
+print(d.get('checks', {}).get('release-due', {}).get('detail', ''))
+" 2>/dev/null || echo "")
+assert_contains "27d: checks detail shows CI=unknown" "CI=unknown" "$CI_DETAIL_D"
+rm -rf "$PROJ"
+
+# ── Test 27e: release-due NOT in CRITICAL_PREFIXES (30-min cooldown, not 5-min) ─
+# Pre-seed state with release-due:55 alerted 6 min ago. The script computes
+# count=55 >= threshold AND CI=green → condition is true, BUT cooldown is active
+# (6 min < 30 min IMMEDIATE_COOLDOWN). Signal must be suppressed (NOT in
+# CRITICAL_PREFIXES → 5-min critical cooldown does NOT apply).
+echo ""
+echo "=== Test 27e: release-due NOT in CRITICAL_PREFIXES (suppressed at 6 min, 30-min cooldown) ==="
+EPOCH_6M_AGO=$(python3 -c "import time; print(int(time.time()) - 360)")
+STATE_27E='{"stale_crew_misses":{},"last_digest_ts":0,"alerted_immediate":{"release-due:55":'"$EPOCH_6M_AGO"'}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --git-release-count 55 \
+  --git-last-tag 'v1.0.0' \
+  --gh-run-conclusion 'success' \
+  --state-json "$STATE_27E" \
+)
+OUTPUT=$(run_check "$PROJ")
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+SEND_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
+if echo "$SEND_SIGS" | grep -qF "release-due"; then
+  fail "27e: release-due should be suppressed at 6 min (30-min IMMEDIATE_COOLDOWN, not 5-min critical)"
+else
+  pass "27e: release-due suppressed within 30-min cooldown (NOT a critical-component signal)"
+fi
+# Verify there is no escalation entry for release-due (not in CRITICAL_PREFIXES)
+ESC=$(python3 -c "
+import json
+d = json.load(open('$LATEST'))
+print(json.dumps(d.get('escalations', {}).get('release-due', 'absent')))
+" 2>/dev/null || echo "absent")
+assert_eq "27e: release-due not in escalations (not critical)" "\"absent\"" "$ESC"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  if grep -qF "release-due" "$LOG"; then
+    fail "27e: no release-due comms should be sent within 30-min cooldown"
+  else
+    pass "27e: no release-due comms (suppressed; other signal may exist)"
+  fi
+else
+  pass "27e: no comms sent (release-due cooldown active)"
+fi
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

@@ -1,9 +1,10 @@
 // Package release holds the harmonik release manifest constants and ledger.
 //
 // These values are the structured artifact required by BI-024: each harmonik
-// release MUST name the Beads version it tested against, and the compatibility
-// window at MVH is exact-match (isCompatible(pinned, observed) ≡ pinned ==
-// observed).
+// release MUST name the Beads version it tested against. The compatibility
+// window (amended by hk-m6243): a version delta between BeadsVersion and the
+// installed br is a loud warning at daemon startup, NOT a fatal error. Only
+// exec failure or unparseable `br --version` output blocks startup.
 //
 // Callers of internal/brcli.(*Adapter).CheckBrVersion should pass
 // [BeadsVersion] as the pinnedVersion argument.  Daemon-startup wiring is
@@ -15,10 +16,9 @@
 package release
 
 // BeadsVersion is the Beads CLI version that this harmonik release was tested
-// against.  At MVH the compatibility window is exact-match per BI-024
-// (specs/beads-integration.md §4.8): the observed `br --version` output MUST
-// equal this value (after pre-release suffix stripping) or daemon startup MUST
-// fail with exit code 8 (beads-unavailable).
+// against. Amended by hk-m6243 (BI-024a): a mismatch between this value and
+// the installed br version is a loud warning at daemon startup, not a fatal
+// error. Only exec failure or unparseable `br --version` output blocks startup.
 //
 // Bumping this constant MUST be accompanied by an adapter change for every
 // backwards-incompatible Beads change per BI-026 (specs/beads-integration.md

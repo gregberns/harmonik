@@ -3,17 +3,19 @@ package daemon
 // bi024a_startup_test.go — composition-root tests for the BI-024a explicit
 // br --version handshake at daemon startup (hk-3pbox).
 //
-// BI-024a requires that daemon.Start invoke CheckBrVersion before accepting
-// any queue-submit RPC and that a failure (exec error OR version mismatch)
-// causes a fatal return with daemon_startup_failed{failure_mode=
-// "br-version-incompatible"} emitted to the JSONL log.
+// BI-024a (amended by hk-m6243) requires that daemon.Start invoke
+// CheckBrVersion before accepting any queue-submit RPC. Policy:
+//   - Exec failure OR unparseable output → fatal; emit daemon_startup_failed.
+//   - Version mismatch (br usable but wrong version) → loud WARNING; daemon
+//     continues WITHOUT emitting daemon_startup_failed.
 //
 // Spec ref: specs/beads-integration.md §4.8a BI-024a.
-// Bead ref: hk-3pbox.
+// Bead ref: hk-3pbox, hk-m6243.
 
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,5 +135,70 @@ func TestDaemonStart_CheckBrVersion_ExecFail_FatalReturn(t *testing.T) {
 		t.Errorf("JSONL log does not contain %q event with failure_mode=br-version-incompatible; "+
 			"BI-024a requires daemon_startup_failed emission on CheckBrVersion failure; log lines: %v",
 			startupFailedType, lines)
+	}
+}
+
+// bi024aVersionMismatchAdapterFactory returns a br-adapter factory that
+// constructs a real *brcli.Adapter pointing at a mock binary that outputs a
+// version string different from the daemon's pinned release.BeadsVersion.
+// This exercises the hk-m6243 warn-only path in CheckBrVersion.
+func bi024aVersionMismatchAdapterFactory(t *testing.T) func(brPath, projectDir string) (*brcli.Adapter, error) {
+	t.Helper()
+	// Write a shell script that prints a deliberately mismatched version.
+	dir := t.TempDir()
+	mockPath := filepath.Join(dir, "br")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' %q\nexit 0\n", "br 99.0.0\n")
+	//nolint:gosec // G306: test fixture mock binary
+	if err := os.WriteFile(mockPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("bi024aVersionMismatchAdapterFactory: write mock: %v", err)
+	}
+	return func(_, _ string) (*brcli.Adapter, error) {
+		return brcli.New(mockPath)
+	}
+}
+
+// TestDaemonStart_CheckBrVersion_VersionMismatch_WarnOnly verifies that when
+// the br adapter factory returns a valid adapter whose `br --version` output
+// differs from the pinned version, daemon.Start does NOT emit
+// daemon_startup_failed{failure_mode="br-version-incompatible"} and does NOT
+// return a fatal error due to the version mismatch.
+//
+// The daemon may still return an error from a later startup phase (socket,
+// queue, etc.); what matters is that the br-version-incompatible startup-failed
+// event is absent from the JSONL log.
+//
+// Spec ref: specs/beads-integration.md §4.8a BI-024a (amended by hk-m6243).
+// Bead ref: hk-m6243.
+func TestDaemonStart_CheckBrVersion_VersionMismatch_WarnOnly(t *testing.T) {
+	t.Parallel()
+
+	projectDir, jsonlPath := bi024aFixtureProjectDir(t)
+
+	cfg := Config{
+		ProjectDir:   projectDir,
+		JSONLLogPath: jsonlPath,
+		BrPath:       "/stub/br-bi024a-mismatch", // non-empty so BrPath guard fires
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Run with a br adapter that outputs a mismatched version.
+	// We do not assert on the error return value — the daemon may fail later
+	// for reasons unrelated to the br version check (missing socket, etc.).
+	_ = StartForTesting(ctx, cfg,
+		WithBrAdapterFactory(bi024aVersionMismatchAdapterFactory(t)),
+	)
+
+	// The JSONL log MUST NOT contain daemon_startup_failed with
+	// br-version-incompatible — a version delta is a warning, not a fatal.
+	lines := bi024aFixtureReadJSONLLines(t, jsonlPath)
+	startupFailedType := string(core.EventTypeDaemonStartupFailed)
+	for _, line := range lines {
+		if strings.Contains(line, startupFailedType) && strings.Contains(line, "br-version-incompatible") {
+			t.Errorf("JSONL log contains %q{failure_mode=br-version-incompatible} on a benign "+
+				"version mismatch; BI-024a (hk-m6243) requires warn-only, not fatal; log line: %s",
+				startupFailedType, line)
+		}
 	}
 }

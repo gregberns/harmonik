@@ -29,6 +29,8 @@ func TestCheckBrVersionMatchesExact(t *testing.T) {
 }
 
 func TestCheckBrVersionMismatch(t *testing.T) {
+	// BI-024a (amended by hk-m6243): a version delta MUST return ErrBrVersionMismatch
+	// (warn-only sentinel), NOT BrSchemaMismatch (fatal sentinel).
 	pinned := "0.5.2"
 	observed := "0.5.3"
 	path := brcliFixtureMockBinary(t, versionFixtureOutput(observed), "", 0)
@@ -40,10 +42,14 @@ func TestCheckBrVersionMismatch(t *testing.T) {
 
 	err = adapter.CheckBrVersion(context.Background(), pinned)
 	if err == nil {
-		t.Fatal("expected BrSchemaMismatch for version mismatch, got nil")
+		t.Fatal("expected ErrBrVersionMismatch for version mismatch, got nil")
 	}
-	if !errors.Is(err, brcli.BrSchemaMismatch) {
-		t.Errorf("errors.Is(err, BrSchemaMismatch) = false; got %v", err)
+	if !errors.Is(err, brcli.ErrBrVersionMismatch) {
+		t.Errorf("errors.Is(err, ErrBrVersionMismatch) = false; got %v", err)
+	}
+	// Must NOT wrap BrSchemaMismatch — that sentinel is fatal, version delta is not.
+	if errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("version mismatch MUST NOT wrap BrSchemaMismatch (fatal); got %v", err)
 	}
 }
 
@@ -118,7 +124,7 @@ func TestCheckBrVersionWithPrereleaseObserved(t *testing.T) {
 
 func TestCheckBrVersionPrereleaseMismatch(t *testing.T) {
 	// Even with a pre-release suffix, if the numeric part doesn't match,
-	// it must return BrSchemaMismatch.
+	// the error MUST be ErrBrVersionMismatch (warn-only), NOT BrSchemaMismatch (fatal).
 	path := brcliFixtureMockBinary(t, "br 0.5.3-alpha\n", "", 0)
 
 	adapter, err := brcli.New(path)
@@ -128,10 +134,13 @@ func TestCheckBrVersionPrereleaseMismatch(t *testing.T) {
 
 	err = adapter.CheckBrVersion(context.Background(), "0.5.2")
 	if err == nil {
-		t.Fatal("expected BrSchemaMismatch for pre-release mismatch, got nil")
+		t.Fatal("expected ErrBrVersionMismatch for pre-release mismatch, got nil")
 	}
-	if !errors.Is(err, brcli.BrSchemaMismatch) {
-		t.Errorf("errors.Is(err, BrSchemaMismatch) = false; got %v", err)
+	if !errors.Is(err, brcli.ErrBrVersionMismatch) {
+		t.Errorf("errors.Is(err, ErrBrVersionMismatch) = false; got %v", err)
+	}
+	if errors.Is(err, brcli.BrSchemaMismatch) {
+		t.Errorf("pre-release version mismatch MUST NOT wrap BrSchemaMismatch (fatal); got %v", err)
 	}
 }
 

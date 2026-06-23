@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1221,22 +1222,29 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brAdapterErr, "br-new-for-project-sweep", bus)
 			} else {
 				// BI-024a: explicit br --version handshake before any bead
-				// operations (PL-005 step 4 Cat 0 pre-check). Fatal: a mismatch
-				// means submit-time validation (§4.5a) would run against an
-				// incompatible br version.
+				// operations (PL-005 step 4 Cat 0 pre-check). Policy amended by
+				// hk-m6243: a version delta is a loud WARNING (log + continue);
+				// only exec-failure or unparseable output is fatal (exit code 8).
 				//
 				// Spec ref: specs/beads-integration.md §4.8a BI-024a.
-				// Bead ref: hk-3pbox.
+				// Bead ref: hk-3pbox, hk-m6243.
 				if versionErr := brAdapter.CheckBrVersion(ctx, release.BeadsVersion); versionErr != nil {
-					failedPayload := core.DaemonStartupFailedPayload{
-						FailedAt:    time.Now().UTC().Format(time.RFC3339),
-						ExitCode:    8,
-						FailureMode: "br-version-incompatible",
+					if errors.Is(versionErr, brcli.ErrBrVersionMismatch) {
+						// Non-fatal: br version differs from pin but br is usable.
+						// Log loudly so operators know to bump the pin; do NOT exit.
+						log.Printf("WARNING: daemon.Start: br version mismatch (BI-024a): %v — daemon continues; update release.BeadsVersion to silence", versionErr)
+					} else {
+						// Fatal: br binary is unavailable or version output is unparseable.
+						failedPayload := core.DaemonStartupFailedPayload{
+							FailedAt:    time.Now().UTC().Format(time.RFC3339),
+							ExitCode:    8,
+							FailureMode: "br-version-incompatible",
+						}
+						if failedBytes, marshalErr := json.Marshal(failedPayload); marshalErr == nil {
+							_ = bus.Emit(context.Background(), core.EventTypeDaemonStartupFailed, failedBytes)
+						}
+						return fmt.Errorf("daemon.Start: br --version handshake failed (BI-024a, exit code 8): %w", versionErr)
 					}
-					if failedBytes, marshalErr := json.Marshal(failedPayload); marshalErr == nil {
-						_ = bus.Emit(context.Background(), core.EventTypeDaemonStartupFailed, failedBytes)
-					}
-					return fmt.Errorf("daemon.Start: br --version handshake failed (BI-024a, exit code 8): %w", versionErr)
 				}
 				beadLedger = brAdapter
 				beadResetter = brAdapter

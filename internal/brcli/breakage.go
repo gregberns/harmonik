@@ -38,12 +38,12 @@ package brcli
 // # Version-pin relationship
 //
 // BI-026 and BI-024 (version-pin) are co-enforced: the [CheckBrVersion]
-// handshake (BI-024a) catches version drift at daemon startup. If the
-// observed `br` version does not match the pinned version, the adapter
-// fails immediately (exit code 8) rather than attempting to call a
-// potentially incompatible `br`. This means breakage can only arise in
-// non-pathological configurations (pin bypassed, upgrade without harmonik
-// release), which are detected as BrSchemaMismatch or BrOther at call time.
+// handshake (BI-024a, amended by hk-m6243) catches version drift at daemon
+// startup. A version delta (observed != pinned) is a loud WARNING — the daemon
+// logs and continues. Hard-failure (exit code 8) is reserved for exec failure
+// or unparseable output. Schema breakage arising from an actual incompatible
+// `br` surface change surfaces as BrSchemaMismatch or BrOther at call time,
+// regardless of the version pin.
 //
 // Tags: mechanism
 // Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent

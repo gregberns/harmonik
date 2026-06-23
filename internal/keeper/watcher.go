@@ -575,6 +575,23 @@ type WatcherConfig struct {
 	// keepers: the captain, not the keeper, decides when to restart a crew.
 	// Set via --warn-only on `harmonik keeper`. Refs: hk-yfcc.
 	WarnOnly bool
+
+	// ── Backstop B: operator-visible WARN channel (hk-ehm8s) ─────────────────
+	//
+	// OperatorWarnFn, when non-nil, is called at the WARN upward crossing to
+	// deliver an out-of-band operator notification — so operators watching via
+	// remote-control / iOS / a pane they are not actively watching see the
+	// 200K warning before any ACT cycle fires.
+	//
+	// Called in the same warnArmed && !warnFired block as emitWarn, so it
+	// inherits the existing warn_cooldown throttle: exactly once per upward
+	// crossing, never on every poll tick while the context remains above warn.
+	// Pane injection is unchanged (additive, not replacing).
+	//
+	// Nil → no operator-channel notification (fail-closed). In production, set
+	// to keeperOperatorWarnFn(projectDir, agentName) in keeper_cmd.go. In
+	// tests, wire a recording spy. Refs: hk-ehm8s.
+	OperatorWarnFn func(ctx context.Context, sessionID string, tokens, warnTokens, actTokens int64)
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -1301,6 +1318,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 				// before the inject lands or the retry path is permanently
 				// cut off (BUG-1: hk-g4ei7).
 				w.emitWarn(ctx, ctxFile)
+				// Backstop B (hk-ehm8s): operator-visible out-of-pane notification
+				// at the crossing. Subject to the same warnArmed/warnFired gate as
+				// emitWarn — fires exactly once per upward crossing, never every tick.
+				if w.cfg.OperatorWarnFn != nil {
+					w.cfg.OperatorWarnFn(ctx, ctxFile.SessionID, ctxFile.Tokens, w.cfg.WarnAbsTokens, w.cfg.actEffectiveTokens())
+				}
 				warnFired = true
 				warnArmed = false
 				lastWarnFiredAt = time.Now()

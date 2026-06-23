@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -126,6 +127,7 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		ReapDecisions:                   true,
 		ReapDecisionsCadence:            resolved.ReapDecisionsCadence,
 		HeartbeatEnabled:                true,
+		OperatorWarnFn:                  keeperOperatorWarnFn(p.ProjectDir, p.AgentName),
 	}
 	return cyclerCfg, watcherCfg
 }
@@ -535,6 +537,36 @@ func keeperHardCeilingRestartFn(mode keeper.HardCeilingMode, tmuxTarget, project
 		return nil
 	}
 	return keeper.NewLiveRecoverViaRespawn(projectDir, respawnCmd)
+}
+
+// keeperOperatorWarnFn returns the OperatorWarnFn for WatcherConfig backstop B
+// (hk-ehm8s): at each warn-threshold upward crossing the keeper emits an
+// out-of-band notification via `harmonik comms send --to operator --topic
+// keeper-warn`, so operators watching via remote-control / iOS / a detached pane
+// see the warning before any ACT cycle fires. Best-effort: a comms-send error
+// (e.g. daemon not running) is printed to stderr and pane injection continues
+// unaffected. os.Executable resolves the current binary so the same binary
+// handles the comms send (no PATH lookup needed). Refs: hk-ehm8s.
+func keeperOperatorWarnFn(projectDir, agentName string) func(ctx context.Context, sessionID string, tokens, warnTokens, actTokens int64) {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = "harmonik"
+	}
+	return func(ctx context.Context, _ string, tokens, warnTokens, actTokens int64) {
+		msg := fmt.Sprintf("%s approaching ACT band: %dk / warn=%dk act=%dk",
+			agentName, tokens/1000, warnTokens/1000, actTokens/1000)
+		//nolint:gosec // G204: args are operator-supplied agentName + runtime token counts
+		cmd := exec.CommandContext(ctx, exe,
+			"comms", "send",
+			"--from", "keeper",
+			"--to", "operator",
+			"--topic", "keeper-warn",
+			"--", msg)
+		cmd.Dir = projectDir
+		if runErr := cmd.Run(); runErr != nil {
+			fmt.Fprintf(os.Stderr, "keeper: operator warn comms send: %v\n", runErr)
+		}
+	}
 }
 
 // newKeeperMarkerFlags builds the flag set shared by the keeper marker/action

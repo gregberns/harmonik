@@ -118,6 +118,7 @@ py3() { python3 -c "$@"; }
 PREV_STALE_MISSES='{}'
 PREV_LAST_DIGEST=0
 PREV_ALERTED_IMMEDIATE='{}'
+PREV_KEEPER_COVERAGE_MISSES='{}'
 if [[ -f "$STATE_FILE" ]]; then
   PREV_STALE_MISSES=$(py3 "
 import json, sys
@@ -140,6 +141,14 @@ import json
 try:
     d = json.load(open('$STATE_FILE'))
     print(json.dumps(d.get('alerted_immediate', {})))
+except Exception:
+    print('{}')
+")
+  PREV_KEEPER_COVERAGE_MISSES=$(py3 "
+import json
+try:
+    d = json.load(open('$STATE_FILE'))
+    print(json.dumps(d.get('keeper_coverage_misses', {})))
 except Exception:
     print('{}')
 ")
@@ -265,6 +274,12 @@ print(last_ts)
 " 2>/dev/null || echo 0)
 fi
 
+# ── Capture keeper process list (keeper-coverage check) ──────────────────────
+# One ps scan captures all harmonik keeper cmdlines; passed into the python block.
+# macOS pgrep -a/-l cannot inspect args; ps -axo command= is portable and avoids
+# N per-crew shell-outs (hk-hnk4j).
+KEEPER_PROCS_RAW=$(ps -axo command= 2>/dev/null | grep -F "harmonik keeper --agent" || true)
+
 # ── Python analysis: produce JSON snapshot ────────────────────────────────────
 
 ANALYSIS=$(py3 "
@@ -298,6 +313,8 @@ ready_count        = int('$READY_COUNT')
 review_window      = int('$REVIEW_GATE_WINDOW')
 review_grace       = int('$REVIEW_GATE_GRACE')
 reviewer_stale_window = int('$REVIEWER_STALE_WINDOW')
+keeper_procs_raw      = '''$KEEPER_PROCS_RAW'''
+prev_keeper_misses    = json.loads('$PREV_KEEPER_COVERAGE_MISSES')
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -566,6 +583,38 @@ for name, info in crew_status.items():
     else:
         new_misses[name] = 0  # reset on recovery
 
+# ── Keeper coverage check (hk-hnk4j) ────────────────────────────────────────
+# Parse live keeper process cmdlines (ps -axo command= | grep -F 'harmonik keeper --agent').
+# Token following --agent gives the watched agent name. One scan; no per-crew shell-outs.
+live_keeper_agents = set()
+for _kline in keeper_procs_raw.strip().splitlines():
+    _kline = _kline.strip()
+    if 'harmonik keeper --agent' not in _kline:
+        continue
+    _parts = _kline.split()
+    for _ki, _ktok in enumerate(_parts):
+        if _ktok == '--agent' and _ki + 1 < len(_parts):
+            live_keeper_agents.add(_parts[_ki + 1])
+            break
+
+# For each online crew (NON_CREW excluded — keeper coverage is for CREWS; captain's own
+# keeper is out of scope), debounce consecutive misses before signalling (cry-wolf guard
+# analogous to stale_crew_misses, same miss_limit).
+new_keeper_misses = {}
+keeper_missing_crews = []
+if daemon_up:  # when daemon is down comms data is empty; skip (daemon-down already alerts)
+    for _kname in online_crews:
+        if _kname in NON_CREW:
+            continue
+        _kmiss = prev_keeper_misses.get(_kname, 0)
+        if _kname not in live_keeper_agents:
+            _kmiss += 1
+            new_keeper_misses[_kname] = _kmiss
+            if _kmiss >= miss_limit:
+                keeper_missing_crews.append(_kname)
+        else:
+            new_keeper_misses[_kname] = 0  # reset on keeper reappearance
+
 # ── Single-mode check ────────────────────────────────────────────────────────
 single_mode = daemon_up and max_concurrent == 1
 
@@ -616,6 +665,8 @@ if review_bypass_run_ids:
     immediate_signals.append('review-bypass:' + ','.join(review_bypass_run_ids))
 if captain_down:
     immediate_signals.append('captain-down')
+if keeper_missing_crews:
+    immediate_signals.append('keeper-missing:' + ','.join(sorted(keeper_missing_crews)))
 
 if stale_signal_crews:
     names = ','.join(c['crew'] for c in stale_signal_crews)
@@ -665,6 +716,8 @@ checks = {
                       'detail': ('ready=' + str(ready_count) + ' free_slot') if backlog_ready else 'ready=' + str(ready_count)},
     'lull':          {'state': 'flag' if idle_fleet else 'ok',
                       'detail': ('idle ' + str(idle_age_s) + 's') if idle_fleet else 'active' if total_workers > 0 else 'idle<thresh'},
+    'keepers-covered': {'state': 'flag' if keeper_missing_crews else 'ok',
+                        'detail': ','.join(sorted(keeper_missing_crews)) if keeper_missing_crews else 'all online crews have keepers'},
 }
 
 # ── De-dup + cooldown for immediate signals ──────────────────────────────────
@@ -798,6 +851,7 @@ new_state = {
     'schema_version': 1,
     'ts': ts,
     'stale_crew_misses': new_misses,
+    'keeper_coverage_misses': new_keeper_misses,
     'last_digest_ts': new_last_digest,
     'alerted_immediate': new_alerted,
 }

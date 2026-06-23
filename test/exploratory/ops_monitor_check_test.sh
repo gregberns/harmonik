@@ -38,6 +38,10 @@
 #   [x] captain absent from comms-who, tmux alive → no captain-down (Test 25a)
 #   [x] captain absent from comms-who AND no tmux session → captain-down immediate (Test 25b)
 #   [x] stale captain in comms-who NOT in crew-stale signal (NON_CREW exclusion) (Test 25c)
+#   [x] keepers-covered: crew WITH keeper → no signal (Test 26a)
+#   [x] keeper-missing debounce: 1st miss no signal; >=miss_limit → immediate 'keeper-missing' (Test 26b)
+#   [x] keeper-missing NON_CREW: captain etc never produce keeper-missing (Test 26c)
+#   [x] keeper-missing clears: keeper reappears → signal gone, state reset (Test 26d)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -145,6 +149,7 @@ setup_fixture() {
   local state_json=''
   local events_content=''
   local br_ready_json='[]'   # `br ready --limit 0 --json` output for the stub
+  local keeper_procs_raw=''  # lines matching "harmonik keeper --agent"; default: none
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -158,6 +163,7 @@ setup_fixture() {
       --state-json)                state_json="$2";    shift 2 ;;
       --events-jsonl)              events_content="$2";shift 2 ;;
       --br-ready-json)             br_ready_json="$2"; shift 2 ;;
+      --keeper-procs-raw)          keeper_procs_raw="$2"; shift 2 ;;
       *) echo "setup_fixture: unknown arg $1" >&2; return 1 ;;
     esac
   done
@@ -274,6 +280,19 @@ case "\$*" in
 esac
 EOF
   chmod +x "$br_bin"
+
+  # Stub `ps` for keeper-coverage probe.
+  # The script runs: ps -axo command= 2>/dev/null | grep -F "harmonik keeper --agent"
+  # The stub emits keeper_procs_raw; grep then filters to matching lines naturally.
+  local ps_bin="$tmpdir/bin/ps"
+  local keeper_procs_escaped
+  keeper_procs_escaped=$(printf '%s' "$keeper_procs_raw" | sed "s/'/'\\\\''/g")
+  cat > "$ps_bin" <<EOF
+#!/usr/bin/env bash
+# Stub ps: returns configured keeper proc cmdlines regardless of flags
+printf '%s\n' '${keeper_procs_escaped}'
+EOF
+  chmod +x "$ps_bin"
 
   printf '%s' "$tmpdir"
 }
@@ -397,6 +416,7 @@ PROJ=$(setup_fixture \
   --hk-queue-status-json '{"status":"ok"}' \
   --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
   --hk-comms-who-json "$CW" \
+  --keeper-procs-raw "harmonik keeper --agent alice --tmux hk-aabb1122ccdd-alice" \
 )
 
 # Run 1: first miss — should NOT signal yet
@@ -768,7 +788,7 @@ PROJ=$(setup_fixture \
 run_check "$PROJ" > /dev/null 2>&1
 SCHEMA=$(python3 -c "import json; print(json.load(open('$PROJ/.harmonik/ops-monitor/latest.json')).get('schema_version'))")
 assert_eq "schema_version=2" "2" "$SCHEMA"
-for CHK in daemon-up supervisor-up paused-queues single-mode crew-fresh review-gate captain-up backlog-ready lull; do
+for CHK in daemon-up supervisor-up paused-queues single-mode crew-fresh review-gate captain-up backlog-ready lull keepers-covered; do
   assert_check_state "checks.$CHK present (green)" \
     "$PROJ/.harmonik/ops-monitor/latest.json" "$CHK" "ok"
 done
@@ -1143,6 +1163,139 @@ d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
 print(d.get('stale_crew_misses', {}).get('captain', 0))
 ")
 assert_eq "25c: captain not in stale_crew_misses" "0" "$CAPTAIN_MISSES"
+rm -rf "$PROJ"
+
+# ── Test 26a: keeper-covered — online crew has matching keeper → no signal ────
+echo ""
+echo "=== Test 26a: keeper-covered (crew has keeper) — no keeper-missing signal ==="
+CREW_TS=$(ts_ago 10)
+CW_26A='{"agent":"paul","status":"online","last_seen":"'"$CREW_TS"'"}'
+KEEPER_LINE_26A='harmonik keeper --agent paul --tmux harmonik-xxx-crew-paul:agent --warn-abs-tokens 200000 --act-abs-tokens 215000'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_26A" \
+  --keeper-procs-raw "$KEEPER_LINE_26A" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "26a: all-green" "all-green" "$OUTPUT"
+assert_not_contains "26a: no keeper-missing in stdout" "keeper-missing" "$OUTPUT"
+assert_check_state "26a: checks.keepers-covered=ok" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "keepers-covered" "ok"
+assert_json_list_empty "26a: no immediate_signals" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals"
+rm -rf "$PROJ"
+
+# ── Test 26b: keeper-missing debounce — 1st miss silent; >=miss_limit → immediate ─
+echo ""
+echo "=== Test 26b: keeper-missing debounce (1st miss silent, 2nd miss → immediate) ==="
+CREW_TS=$(ts_ago 10)
+CW_26B='{"agent":"paul","status":"online","last_seen":"'"$CREW_TS"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_26B" \
+  --keeper-procs-raw '' \
+)
+
+# Run 1: first miss — must NOT signal yet (debounce, miss_count=1 < miss_limit=2)
+run_check "$PROJ" > /dev/null 2>&1
+K_MISSES=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+print(d.get('keeper_coverage_misses', {}).get('paul', 0))
+")
+assert_eq "26b: keeper miss count after run 1 = 1" "1" "$K_MISSES"
+LOG_26B=$(comms_log "$PROJ")
+if [[ -f "$LOG_26B" && -s "$LOG_26B" ]]; then
+  if grep -qF "keeper-missing" "$LOG_26B"; then
+    fail "26b: run1 should NOT signal keeper-missing on first miss"
+  else
+    pass "26b: run1 no keeper-missing comms (other signal may exist)"
+  fi
+else
+  pass "26b: run1 no comms sent"
+fi
+
+# Run 2: second miss — must emit immediate keeper-missing:paul
+OUTPUT_26B=$(run_check "$PROJ")
+K_MISSES2=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+print(d.get('keeper_coverage_misses', {}).get('paul', 0))
+")
+assert_eq "26b: keeper miss count after run 2 = 2" "2" "$K_MISSES2"
+assert_contains "26b: run2 IMMEDIATE in stdout"       "IMMEDIATE"      "$OUTPUT_26B"
+assert_contains "26b: run2 keeper-missing in stdout"  "keeper-missing" "$OUTPUT_26B"
+assert_json_list_contains "26b: immediate_signals has keeper-missing" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "keeper-missing"
+assert_check_state "26b: checks.keepers-covered=flag" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "keepers-covered" "flag"
+if [[ -f "$LOG_26B" && -s "$LOG_26B" ]]; then
+  pass "26b: run2 comms sent"
+  assert_contains "26b: comms [IMMEDIATE]"      "[IMMEDIATE]"     "$(cat "$LOG_26B")"
+  assert_contains "26b: comms keeper-missing"   "keeper-missing"  "$(cat "$LOG_26B")"
+  assert_contains "26b: comms names paul"       "paul"            "$(cat "$LOG_26B")"
+else
+  fail "26b: expected comms send on second miss, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 26c: NON_CREW exclusion — captain never produces keeper-missing ──────
+echo ""
+echo "=== Test 26c: NON_CREW exclusion (captain online, no keeper) — no keeper-missing ==="
+STALE_CAPT=$(ts_ago 10)
+CW_26C='{"agent":"captain","status":"online","last_seen":"'"$STALE_CAPT"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_26C" \
+  --keeper-procs-raw '' \
+  --tmux-captain-alive true \
+)
+# Run twice to ensure misses don't accumulate for NON_CREW agents
+run_check "$PROJ" > /dev/null 2>&1
+OUTPUT_26C=$(run_check "$PROJ")
+assert_not_contains "26c: no keeper-missing for captain" "keeper-missing" "$OUTPUT_26C"
+CAP_KMISS=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+print(d.get('keeper_coverage_misses', {}).get('captain', 0))
+")
+assert_eq "26c: captain not in keeper_coverage_misses" "0" "$CAP_KMISS"
+assert_check_state "26c: checks.keepers-covered=ok (no crew)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "keepers-covered" "ok"
+rm -rf "$PROJ"
+
+# ── Test 26d: keeper-missing clears — keeper reappears → signal gone + state reset ─
+echo ""
+echo "=== Test 26d: keeper-missing clears (keeper reappears → signal gone, state reset) ==="
+CREW_TS=$(ts_ago 10)
+CW_26D='{"agent":"jamis","status":"online","last_seen":"'"$CREW_TS"'"}'
+# Pre-seed state with miss_count=2 (already at signal threshold)
+STATE_26D=$(python3 -c "
+import json
+print(json.dumps({'stale_crew_misses': {}, 'keeper_coverage_misses': {'jamis': 2},
+                  'last_digest_ts': 0, 'alerted_immediate': {}}))
+")
+KEEPER_LINE_26D='harmonik keeper --agent jamis --tmux harmonik-xxx-crew-jamis:agent --warn-abs-tokens 200000 --act-abs-tokens 215000'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_26D" \
+  --keeper-procs-raw "$KEEPER_LINE_26D" \
+  --state-json "$STATE_26D" \
+)
+OUTPUT_26D=$(run_check "$PROJ")
+assert_not_contains "26d: no keeper-missing after keeper reappears" "keeper-missing" "$OUTPUT_26D"
+assert_check_state "26d: checks.keepers-covered=ok after recovery" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "keepers-covered" "ok"
+JAMIS_KMISS=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+print(d.get('keeper_coverage_misses', {}).get('jamis', 'missing'))
+")
+assert_eq "26d: jamis keeper_coverage_misses reset to 0" "0" "$JAMIS_KMISS"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

@@ -80,6 +80,8 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		SendEscapeFn:         keeper.SendEscapeKey,
 		BootGracePeriod:      resolvedBootGrace,
 		ForceRestartFn:       keeperForceRestartFn(p.ForceRestart, p.ProjectDir, p.RespawnCmd),
+		OperatorTurnLookback: resolved.OperatorTurnLookback,
+		PostAnswerGrace:      resolved.PostAnswerGrace,
 	}
 
 	watcherCfg := keeper.WatcherConfig{

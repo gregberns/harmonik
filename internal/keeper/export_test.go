@@ -41,3 +41,9 @@ func SetCyclerLastFiredSID(c *Cycler, sid string) {
 func DeriveContextTokensForTest(transcriptDir, sessionID string) (int64, bool) {
 	return deriveContextTokens(transcriptDir, sessionID)
 }
+
+// RecentTranscriptTurnForTest exposes recentTranscriptTurn to the keeper_test
+// package for deterministic transcript-detection testing. Refs: hk-74iyd.
+func RecentTranscriptTurnForTest(transcriptDir, sessionID, role string) (time.Time, bool) {
+	return recentTranscriptTurn(transcriptDir, sessionID, role)
+}

@@ -273,6 +273,9 @@ type rawKeeperCadence struct {
 	BlindKeeperThreshold string `yaml:"blind_keeper_threshold"`
 	HoldTTL              string `yaml:"hold_ttl"`
 	ReapDecisionsCadence string `yaml:"reap_decisions_cadence"`
+	// hk-74iyd: conversation-aware ACT suppression.
+	OperatorTurnLookback string `yaml:"operator_turn_lookback"`
+	PostAnswerGrace      string `yaml:"post_answer_grace"`
 }
 
 // rawKeeperBudgets holds the keeper.budgets block. Values ≤ 0 = not configured.
@@ -405,6 +408,8 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		c.BlindKeeperThreshold == "" &&
 		c.HoldTTL == "" &&
 		c.ReapDecisionsCadence == "" &&
+		c.OperatorTurnLookback == "" &&
+		c.PostAnswerGrace == "" &&
 		// budgets
 		b.HeartbeatMaxMisses == 0 &&
 		b.MaxHandoffTimeouts == 0 &&
@@ -466,6 +471,8 @@ type KeeperConfigPresence struct {
 	BlindKeeperThreshold bool
 	HoldTTL              bool
 	ReapDecisionsCadence bool
+	OperatorTurnLookback bool // hk-74iyd: auto-hold on recent operator turn
+	PostAnswerGrace      bool // hk-74iyd: grace delay after agent's last text response
 
 	HeartbeatMaxMisses bool
 	MaxHandoffTimeouts bool
@@ -533,6 +540,13 @@ type KeeperConfig struct {
 	BlindKeeperThreshold       time.Duration
 	HoldTTL                    time.Duration
 	ReapDecisionsCadence       time.Duration
+	// OperatorTurnLookback is the max age of an inbound operator user turn that
+	// triggers an auto-hold: ACT is deferred when a real user turn landed within
+	// this window. Zero = not configured (hk-74iyd).
+	OperatorTurnLookback time.Duration
+	// PostAnswerGrace is the min duration after the agent's last real assistant
+	// text response before ACT may fire. Zero = not configured (hk-74iyd).
+	PostAnswerGrace time.Duration
 
 	// Budgets (zero = not configured).
 	HeartbeatMaxMisses int
@@ -1089,6 +1103,8 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 		{"cadence.blind_keeper_threshold", c.BlindKeeperThreshold, &cfg.BlindKeeperThreshold, &cfg.Present.BlindKeeperThreshold},
 		{"cadence.hold_ttl", c.HoldTTL, &cfg.HoldTTL, &cfg.Present.HoldTTL},
 		{"cadence.reap_decisions_cadence", c.ReapDecisionsCadence, &cfg.ReapDecisionsCadence, &cfg.Present.ReapDecisionsCadence},
+		{"cadence.operator_turn_lookback", c.OperatorTurnLookback, &cfg.OperatorTurnLookback, &cfg.Present.OperatorTurnLookback},
+		{"cadence.post_answer_grace", c.PostAnswerGrace, &cfg.PostAnswerGrace, &cfg.Present.PostAnswerGrace},
 	} {
 		dv, derr := parseDurationField(path, f.key, f.val)
 		if derr != nil {

@@ -1,9 +1,13 @@
 package keeper
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -205,4 +209,146 @@ func operatorActiveSince(listClientsOutput string, now time.Time, window time.Du
 		}
 	}
 	return false
+}
+
+// recentTranscriptTailBytes is the tail window for recentTranscriptTurn. Most
+// recent turns are near EOF (the transcript is append-only), so bounding the
+// read to 256 KB keeps the scan O(1) for large sessions. Refs: hk-74iyd.
+const recentTranscriptTailBytes = 256 * 1024
+
+// recentTranscriptTurn scans the tail of the Claude Code transcript JSONL for
+// sessionID under transcriptDir and returns the timestamp of the most recent
+// "real" entry whose "type" field equals role:
+//
+//   - "user":      message content is NOT exclusively tool_result items (the
+//     operator typed something, rather than Claude Code returning a tool result)
+//   - "assistant": message content includes at least one "text" item (a real
+//     response to the operator, not a pure tool_use / thinking turn)
+//
+// Returns (zero, false) when no matching entry exists or the file is unreadable.
+// Pure (no time.Now() call) — the caller compares the returned timestamp to now.
+// Refs: hk-74iyd.
+func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, bool) {
+	if transcriptDir == "" || sessionID == "" {
+		return time.Time{}, false
+	}
+	path := filepath.Join(transcriptDir, sessionID+".jsonl")
+	//nolint:gosec // G304: transcriptDir derived from operator-controlled projectDir; sessionID is a latched UUID
+	f, err := os.Open(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	defer func() { _ = f.Close() }()
+
+	// Seek to the tail so the scan is O(recentTranscriptTailBytes), not O(filesize).
+	partialStart := false
+	size, seekErr := f.Seek(0, io.SeekEnd)
+	if seekErr == nil && size > recentTranscriptTailBytes {
+		if _, err2 := f.Seek(size-recentTranscriptTailBytes, io.SeekStart); err2 == nil {
+			partialStart = true
+		}
+	}
+	if !partialStart {
+		if _, err2 := f.Seek(0, io.SeekStart); err2 != nil {
+			return time.Time{}, false
+		}
+	}
+
+	type transcriptEntry struct {
+		Type      string          `json:"type"`
+		Timestamp string          `json:"timestamp"`
+		Message   json.RawMessage `json:"message"`
+	}
+	type transcriptMessage struct {
+		Content json.RawMessage `json:"content"`
+	}
+
+	var (
+		lastTs time.Time
+		found  bool
+	)
+	sc := bufio.NewScanner(f)
+	// Transcript lines can be very large (tool results embedded inline); allow up
+	// to 16 MB per line — matching the heartbeat.go scan limit.
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	if partialStart {
+		sc.Scan() // discard the partial first line
+	}
+	for sc.Scan() {
+		raw := sc.Bytes()
+		if len(raw) == 0 {
+			continue
+		}
+		var e transcriptEntry
+		if err := json.Unmarshal(raw, &e); err != nil || e.Type != role || e.Timestamp == "" {
+			continue
+		}
+		// Extract the message.content sub-document to classify the turn.
+		var msg transcriptMessage
+		if err := json.Unmarshal(e.Message, &msg); err != nil {
+			continue
+		}
+		if !isRealTranscriptTurn(role, msg.Content) {
+			continue
+		}
+		// Try RFC3339Nano first (Claude Code timestamps include fractional seconds),
+		// then fall back to plain RFC3339.
+		ts, parseErr := time.Parse(time.RFC3339Nano, e.Timestamp)
+		if parseErr != nil {
+			ts, parseErr = time.Parse(time.RFC3339, e.Timestamp)
+			if parseErr != nil {
+				continue
+			}
+		}
+		lastTs = ts
+		found = true
+	}
+	return lastTs, found
+}
+
+// isRealTranscriptTurn reports whether a transcript entry with the given role
+// is a "real" operator or agent turn:
+//
+//   - "user":      NOT exclusively tool_result content items (operator text)
+//   - "assistant": includes at least one "text" content item (real response)
+//
+// An empty or nil content is treated conservatively: real for "user" (bare
+// text), not real for "assistant" (no text visible to operator). A plain JSON
+// string content is always real (old transcript format). Refs: hk-74iyd.
+func isRealTranscriptTurn(role string, content json.RawMessage) bool {
+	if len(content) == 0 {
+		return role == "user"
+	}
+	// Plain string content (old format) → always a real turn.
+	if content[0] == '"' {
+		return true
+	}
+	if content[0] != '[' {
+		return role == "user" // unknown format → conservative
+	}
+	type contentItem struct {
+		Type string `json:"type"`
+	}
+	var items []contentItem
+	if err := json.Unmarshal(content, &items); err != nil {
+		return role == "user"
+	}
+	switch role {
+	case "user":
+		for _, it := range items {
+			if it.Type != "tool_result" {
+				return true // at least one non-tool_result → real operator turn
+			}
+		}
+		return false
+	case "assistant":
+		for _, it := range items {
+			if it.Type == "text" {
+				return true // real text response to operator
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }

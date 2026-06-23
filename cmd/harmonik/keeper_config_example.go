@@ -71,6 +71,8 @@ const keeperConfigExampleBlock = `keeper:
     blind_keeper_threshold: 5m       # blind-keeper alarm threshold
     hold_ttl: 45m                    # HOLD-marker backstop TTL (co-working override expiry)
     reap_decisions_cadence: 90s      # orphan-decision reaper scan interval (default 90s; 0 uses default)
+    operator_turn_lookback: 5m       # auto-hold ACT when a real operator turn landed within this window; 0s disables
+    post_answer_grace: 30s           # suppress ACT for this long after the agent's last text response; 0s disables
   # budgets — integer counts.
   budgets:
     heartbeat_max_misses: 12         # watcher heartbeat miss budget

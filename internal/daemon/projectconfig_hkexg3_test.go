@@ -96,6 +96,15 @@ func TestKeeperBlockAbsent_AnyFieldSet_False(t *testing.T) {
 				WarnMessages: daemon.ExportedRawKeeperWarnMessages{OnDemandWarnText: "restart now"},
 			},
 		},
+		// hk-74iyd: conversation-aware ACT suppression cadence fields.
+		{
+			name: "OperatorTurnLookback",
+			raw:  daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{OperatorTurnLookback: "5m"}},
+		},
+		{
+			name: "PostAnswerGrace",
+			raw:  daemon.ExportedRawKeeperConfig{Cadence: daemon.ExportedRawKeeperCadence{PostAnswerGrace: "30s"}},
+		},
 	}
 
 	for _, tc := range cases {

@@ -197,6 +197,34 @@ type CyclerConfig struct {
 	// (keyed by the re-minted session-id) plus a timer backstop. When nil, a
 	// closure over IsHeld(.,.,HoldTTL) is used. Refs: hk-9waz.
 	HeldCheckFn func(projectDir, agent string) bool
+
+	// TranscriptDir is the Claude Code transcript projects directory (~/.claude/projects/<munged>).
+	// When empty the cycler derives it from ProjectDir via transcriptDirFor.
+	// Set explicitly in tests to avoid touching the real transcript directory.
+	// Refs: hk-74iyd.
+	TranscriptDir string
+
+	// OperatorTurnLookback is the maximum age of a real inbound operator user
+	// turn in the session transcript that triggers Gate 5d auto-hold: when a
+	// user turn (not exclusively tool_result content) landed within this window,
+	// SetHold is called and ACT is deferred for this tick. The hold auto-reverts
+	// via the existing session-id keying and TTL backstop (Gates.go). Zero
+	// disables Gate 5d. Refs: hk-74iyd.
+	OperatorTurnLookback time.Duration
+
+	// PostAnswerGrace is the minimum duration after the agent's most recent real
+	// assistant text turn (content includes a "text" item) before ACT may fire.
+	// Gate 5e: the operator may still be reading the response. Unlike Gate 5d
+	// this does NOT write a hold marker; it is a transient tick-level deferral
+	// that lifts automatically when the grace window expires. Zero disables
+	// Gate 5e. Refs: hk-74iyd.
+	PostAnswerGrace time.Duration
+
+	// RecentTranscriptTurnFn returns the timestamp of the most recent "real"
+	// transcript entry with the given role ("user" or "assistant") under
+	// transcriptDir/sessionID.jsonl. Nil → recentTranscriptTurn (production).
+	// Injectable for tests that write controlled transcript files. Refs: hk-74iyd.
+	RecentTranscriptTurnFn func(transcriptDir, sessionID, role string) (time.Time, bool)
 }
 
 // defaultOperatorAttachedSampleInterval is the default Gate-7 emission sample
@@ -742,6 +770,44 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	if c.cfg.HeldCheckFn(c.cfg.ProjectDir, c.cfg.AgentName) {
 		return nil
 	}
+	// Gate 5d: auto-hold on a recent inbound operator user turn (hk-74iyd).
+	// When the transcript shows a real user turn (not exclusively tool_result
+	// content) within OperatorTurnLookback, auto-engage a co-working hold via the
+	// existing SetHold machinery so ACT never fires mid-conversation. The hold
+	// auto-reverts via session-id keying (/clear re-mints .sid) plus the TTL
+	// backstop — identical to the manual hold (Gate 5c). WARN still fires
+	// (watcher path). The hard-ceiling watcher path calls HardCeilingRestartFn
+	// directly, bypassing MaybeRun, so this gate never defeats it.
+	// NOTE: this gate is placed AFTER the Gate 4 CrispIdle/force-act bypass
+	// (line above), so it ALSO suppresses the unconditional forced-clear that
+	// fires when aboveForceThreshold. That is intentional: an operator who just
+	// sent a message should not be force-cleared even if context is critical.
+	if c.cfg.OperatorTurnLookback > 0 && cf.SessionID != "" {
+		if t, ok := c.recentTurnFn()(c.resolvedTranscriptDir(), cf.SessionID, "user"); ok {
+			if time.Since(t) <= c.cfg.OperatorTurnLookback {
+				// Best-effort: arm the hold so Gate 5c fires on the next tick too.
+				// Ignore errors (SetHold fails silently when .sid is absent).
+				_, _ = SetHold(c.cfg.ProjectDir, c.cfg.AgentName)
+				slog.DebugContext(ctx, "keeper: auto-hold: recent operator turn suppresses ACT",
+					"agent", c.cfg.AgentName, "turn_age", time.Since(t).Round(time.Second))
+				return nil
+			}
+		}
+	}
+	// Gate 5e: post-answer grace delay (hk-74iyd). Do NOT fire ACT within
+	// PostAnswerGrace of the agent's most recent real assistant text turn — the
+	// operator may still be reading the response. Unlike Gate 5d this does NOT
+	// write a hold marker; it is a transient tick-level deferral that lifts
+	// automatically when the grace window expires. WARN still fires (watcher path).
+	if c.cfg.PostAnswerGrace > 0 && cf.SessionID != "" {
+		if t, ok := c.recentTurnFn()(c.resolvedTranscriptDir(), cf.SessionID, "assistant"); ok {
+			if time.Since(t) <= c.cfg.PostAnswerGrace {
+				slog.DebugContext(ctx, "keeper: post-answer grace: recent assistant turn suppresses ACT",
+					"agent", c.cfg.AgentName, "turn_age", time.Since(t).Round(time.Second))
+				return nil
+			}
+		}
+	}
 	// Gate 6: full anti-loop suppression (only applies after the first fire).
 	//
 	// Forced-clear exception (Refs: hk-qoz): when above the hard force threshold
@@ -801,6 +867,25 @@ func (c *Cycler) operatorAttached() bool {
 		return false
 	}
 	return c.cfg.OperatorAttachedFn(c.cfg.TmuxTarget)
+}
+
+// resolvedTranscriptDir returns the effective transcript directory: the
+// configured TranscriptDir when set, otherwise derived from ProjectDir.
+// Refs: hk-74iyd.
+func (c *Cycler) resolvedTranscriptDir() string {
+	if c.cfg.TranscriptDir != "" {
+		return c.cfg.TranscriptDir
+	}
+	return transcriptDirFor(c.cfg.ProjectDir)
+}
+
+// recentTurnFn returns the effective RecentTranscriptTurnFn: the configured
+// one when set, otherwise the production recentTranscriptTurn. Refs: hk-74iyd.
+func (c *Cycler) recentTurnFn() func(transcriptDir, sessionID, role string) (time.Time, bool) {
+	if c.cfg.RecentTranscriptTurnFn != nil {
+		return c.cfg.RecentTranscriptTurnFn
+	}
+	return recentTranscriptTurn
 }
 
 // runCycle executes the full 7-step reset cycle.

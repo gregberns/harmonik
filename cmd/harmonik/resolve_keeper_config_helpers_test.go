@@ -53,6 +53,9 @@ func completeTestKeeperConfig() daemon.KeeperConfig {
 		CadenceHardCeilingCooldown: keeper.DefaultHardCeilingCooldown,
 		BlindKeeperThreshold:       keeper.DefaultBlindKeeperThreshold,
 		HoldTTL:                    keeper.DefaultHoldTTL,
+		// hk-74iyd: conversation-aware ACT suppression.
+		OperatorTurnLookback: 5 * time.Minute,
+		PostAnswerGrace:      30 * time.Second,
 		// ── budgets ──
 		HeartbeatMaxMisses: keeper.DefaultMaxHeartbeatMisses,
 		MaxHandoffTimeouts: keeper.DefaultMaxHandoffTimeouts,
@@ -84,6 +87,8 @@ func completeTestKeeperConfig() daemon.KeeperConfig {
 		HardCeilingCooldown:  true,
 		BlindKeeperThreshold: true,
 		HoldTTL:              true,
+		OperatorTurnLookback: true, // hk-74iyd
+		PostAnswerGrace:      true, // hk-74iyd
 		HeartbeatMaxMisses:   true,
 		MaxHandoffTimeouts:   true,
 	}

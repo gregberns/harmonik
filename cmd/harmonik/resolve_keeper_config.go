@@ -207,6 +207,12 @@ type ResolvedKeeperConfig struct {
 	// optional — zero resolves to DefaultReapDecisionsCadence via applyDefaults).
 	// Refs: hk-jrftk.
 	ReapDecisionsCadence time.Duration
+	// OperatorTurnLookback is the max age of an inbound operator user turn that
+	// auto-engages a hold (Gate 5d). Zero disables the gate. Refs: hk-74iyd.
+	OperatorTurnLookback time.Duration
+	// PostAnswerGrace is the min duration after the agent's last real text response
+	// before ACT may fire (Gate 5e). Zero disables the gate. Refs: hk-74iyd.
+	PostAnswerGrace time.Duration
 
 	// ── Cycler timing / cadence / budget (hk-4gtu) ───────────────────────────
 	HandoffTimeout       time.Duration
@@ -314,6 +320,8 @@ func checkMissingKeeperValues(flags KeeperFlags, cfg daemon.KeeperConfig) []stri
 		{"keeper.cadence.hard_ceiling_cooldown", p.HardCeilingCooldown},
 		{"keeper.cadence.blind_keeper_threshold", p.BlindKeeperThreshold},
 		{"keeper.cadence.hold_ttl", p.HoldTTL},
+		{"keeper.cadence.operator_turn_lookback", p.OperatorTurnLookback},
+		{"keeper.cadence.post_answer_grace", p.PostAnswerGrace},
 		// ── budgets ──
 		{"keeper.budgets.heartbeat_max_misses", p.HeartbeatMaxMisses},
 		{"keeper.budgets.max_handoff_timeouts", p.MaxHandoffTimeouts},
@@ -453,6 +461,10 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir 
 	out.NoGaugeBackoff = resolveDur(0, false, cfg.NoGaugeBackoff, keeper.DefaultNoGaugeBackoff)
 	out.HoldTTL = resolveDur(0, false, cfg.HoldTTL, keeper.DefaultHoldTTL)
 	out.HardCeilingCooldown = resolveDur(0, false, cfg.CadenceHardCeilingCooldown, keeper.DefaultHardCeilingCooldown)
+	// OperatorTurnLookback / PostAnswerGrace: operator-required (missing-value gate
+	// already guaranteed they are present). 0s is a valid explicit "disabled" choice.
+	out.OperatorTurnLookback = resolveDur(0, false, cfg.OperatorTurnLookback, 0)
+	out.PostAnswerGrace = resolveDur(0, false, cfg.PostAnswerGrace, 0)
 	out.BlindKeeperThreshold = resolveDur(0, false, cfg.BlindKeeperThreshold, keeper.DefaultBlindKeeperThreshold)
 	out.HeartbeatMaxMisses = resolveInt(0, false, cfg.HeartbeatMaxMisses, keeper.DefaultMaxHeartbeatMisses)
 	// ReapDecisionsCadence: CONFIG > DEFAULT. Not required — resolveDur fills

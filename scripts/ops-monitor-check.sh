@@ -87,6 +87,8 @@ REVIEW_GATE_GRACE=180 # seconds: a run_completed younger than this is skipped (i
 REVIEWER_STALE_WINDOW=3600 # seconds: a reviewer that launched but produced no verdict
                             # and has emitted no event for this long is considered
                             # abandoned — suppress bypass alert (hk-usz0 follow-up to hk-ijtw)
+CAPTAIN_ABSENT_THRESHOLD=600   # seconds the captain may be absent from comms-who before we
+                                # tmux-probe and (if also no session) alert captain-down
 
 # Inert queues / dead-crew glob patterns — paused-by-failure on these NEVER fires an
 # immediate alert. Add exact names or fnmatch-style globs. Editable here.
@@ -178,6 +180,17 @@ except Exception:
   fi
 fi
 
+# ── Check captain liveness: tmux probe (authoritative confirm) ───────────────
+# comms presence alone is unreliable: a quietly-monitoring captain's presence
+# ages out of comms who while its tmux session stays alive and attached.
+# Require BOTH comms absence AND no tmux session before concluding captain is down.
+CAPTAIN_TMUX_ALIVE=false
+_CAPTAIN_HASH=$( (cd "$PROJ" && harmonik project-hash) 2>/dev/null ) || true
+if [[ -n "$_CAPTAIN_HASH" ]]; then
+  tmux has-session -t "harmonik-${_CAPTAIN_HASH}-captain" 2>/dev/null \
+    && CAPTAIN_TMUX_ALIVE=true || true
+fi
+
 # ── Collect data (skip if daemon is down) ─────────────────────────────────────
 
 if [[ "$DAEMON_UP" == "true" ]]; then
@@ -262,6 +275,8 @@ ts                 = '$TS'
 ts_epoch           = int('$TS_EPOCH')
 daemon_up          = '$DAEMON_UP' == 'true'
 supervisor_up      = '$SUPERVISOR_UP' == 'true'
+captain_tmux_alive = '$CAPTAIN_TMUX_ALIVE' == 'true'
+captain_absent_thresh = int('$CAPTAIN_ABSENT_THRESHOLD')
 stale_thresh            = int('$STALE_THRESHOLD')
 miss_limit              = int('$MISS_LIMIT')
 idle_thresh             = int('$IDLE_THRESHOLD')
@@ -522,9 +537,15 @@ if daemon_up and qlist_raw.strip().startswith('{'):
 total_workers = sum(q['workers'] for q in queues)
 
 # ── Crew staleness with consecutive miss tracking ────────────────────────────
+# Names that are NOT fleet crews — excluded from this loop to prevent bogus
+# crew-stale signals. captain is covered by captain-up; the service agents
+# (ops-monitor, ctx-watchdog, daemon, operator) are never crews.
+NON_CREW = {'captain', 'ops-monitor', 'ctx-watchdog', 'daemon', 'operator'}
 new_misses = {}
 stale_signal_crews = []
 for name, info in crew_status.items():
+    if name in NON_CREW:
+        continue
     miss_count = prev_misses.get(name, 0)
     # comms send does NOT refresh presence, so fall back to agent_message
     # recency: if the agent posted a message within crew_msg_active_window
@@ -558,6 +579,24 @@ if daemon_up and total_workers == 0:
             idle_fleet = True
     # No events at all = unknown; don't signal (avoids false positive on fresh project)
 
+# ── Captain liveness (captain-up check) ─────────────────────────────────────
+# captain_present: the captain has a comms-who record within captain_absent_thresh
+# AND is online. Apply the same agent_message fallback the crew-staleness loop uses.
+# When the daemon is down, comms data is unavailable (crew_status empty) — rely on
+# the tmux probe alone; if tmux is alive, the captain is up.
+captain_info = crew_status.get('captain')
+captain_present = False
+if captain_info:
+    _cap_stale = captain_info['last_seen_s'] > captain_absent_thresh
+    if _cap_stale:
+        _cap_msg_ts = last_msg_ts.get('captain', 0)
+        if _cap_msg_ts and (ts_epoch - _cap_msg_ts) <= crew_msg_active_window:
+            _cap_stale = False
+    captain_present = captain_info['online'] and not _cap_stale
+# captain_down requires BOTH comms absence/staleness AND no tmux session.
+# If the tmux session is alive, captain is UP regardless of stale comms presence.
+captain_down = not captain_present and not captain_tmux_alive
+
 # ── Build signal lists ───────────────────────────────────────────────────────
 immediate_signals = []
 digest_signals    = []
@@ -575,6 +614,8 @@ if single_mode:
     immediate_signals.append('single-mode:max_concurrent=1')
 if review_bypass_run_ids:
     immediate_signals.append('review-bypass:' + ','.join(review_bypass_run_ids))
+if captain_down:
+    immediate_signals.append('captain-down')
 
 if stale_signal_crews:
     names = ','.join(c['crew'] for c in stale_signal_crews)
@@ -592,6 +633,16 @@ if backlog_ready:
 
 all_green = not immediate_signals and not digest_signals
 
+# captain-up detail string
+if captain_down:
+    _cap_detail = 'absent from comms-who and no tmux session'
+elif not captain_present and captain_tmux_alive:
+    _cap_detail = 'tmux session alive (comms absent or stale)'
+elif captain_info:
+    _cap_detail = 'online (last_seen %ds)' % captain_info['last_seen_s']
+else:
+    _cap_detail = 'ok (tmux session alive)'
+
 # ── Checks digest map (signal-vs-digest; one structured object for the captain) ─
 # Each deterministic check -> {state: 'ok'|'flag', detail: <str>}. The captain reads
 # this single map and escalates only on the JUDGMENT-flagged items (D6).
@@ -608,6 +659,8 @@ checks = {
                       'detail': ','.join(c['crew'] for c in stale_signal_crews) if stale_signal_crews else 'all <150s'},
     'review-gate':   {'state': 'flag' if review_bypass_run_ids else 'ok',
                       'detail': ('unreviewed:' + ','.join(review_bypass_run_ids)) if review_bypass_run_ids else 'all review-launched/requested runs have a verdict'},
+    'captain-up':    {'state': 'ok' if not captain_down else 'flag',
+                      'detail': _cap_detail},
     'backlog-ready': {'state': 'flag' if backlog_ready else 'ok',
                       'detail': ('ready=' + str(ready_count) + ' free_slot') if backlog_ready else 'ready=' + str(ready_count)},
     'lull':          {'state': 'flag' if idle_fleet else 'ok',
@@ -717,6 +770,7 @@ snapshot = {
     'ts': ts,
     'daemon_up': daemon_up,
     'supervisor_up': supervisor_up,
+    'captain_down': captain_down,
     'max_concurrent': max_concurrent,
     'single_mode': single_mode,
     'queues': queues,

@@ -35,6 +35,9 @@
 #   [x] escalation tier-3 by elapsed — elapsed>=1800s: ops-CRITICAL topic
 #   [x] escalation resolved — signal clears count+state, no comms
 #   [x] backward-compat — bare int alerted entry normalized to count=1 on re-alert
+#   [x] captain absent from comms-who, tmux alive → no captain-down (Test 25a)
+#   [x] captain absent from comms-who AND no tmux session → captain-down immediate (Test 25b)
+#   [x] stale captain in comms-who NOT in crew-stale signal (NON_CREW exclusion) (Test 25c)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -137,6 +140,8 @@ setup_fixture() {
   local hk_ql_json='{"queues":[],"max_concurrent":4}'
   local hk_cw_json=''
   local hk_sv_json='{"schema_version":1,"running":true,"status":"running"}'
+  local hk_project_hash='aabb1122ccdd'
+  local tmux_captain_alive=true   # default: captain tmux session alive (happy path)
   local state_json=''
   local events_content=''
   local br_ready_json='[]'   # `br ready --limit 0 --json` output for the stub
@@ -148,6 +153,8 @@ setup_fixture() {
       --hk-queue-list-json)        hk_ql_json="$2";    shift 2 ;;
       --hk-comms-who-json)         hk_cw_json="$2";    shift 2 ;;
       --hk-supervise-status-json)  hk_sv_json="$2";    shift 2 ;;
+      --hk-project-hash)           hk_project_hash="$2"; shift 2 ;;
+      --tmux-captain-alive)        tmux_captain_alive="$2"; shift 2 ;;
       --state-json)                state_json="$2";    shift 2 ;;
       --events-jsonl)              events_content="$2";shift 2 ;;
       --br-ready-json)             br_ready_json="$2"; shift 2 ;;
@@ -188,6 +195,7 @@ HK_QS_JSON='${qs_json_escaped}'
 HK_QL_JSON='${ql_json_escaped}'
 HK_CW_JSON='${cw_json_escaped}'
 HK_SV_JSON='${sv_json_escaped}'
+HK_PROJECT_HASH='${hk_project_hash}'
 COMMS_LOG='${comms_log}'
 
 case "\$*" in
@@ -203,6 +211,9 @@ case "\$*" in
     ;;
   "supervise status --json"|"supervise status")
     printf '%s\n' "\$HK_SV_JSON"
+    ;;
+  "project-hash")
+    printf '%s\n' "\$HK_PROJECT_HASH"
     ;;
   comms\ send\ *)
     args=("\$@")
@@ -226,6 +237,24 @@ case "\$*" in
 esac
 EOF
   chmod +x "$stub_bin"
+
+  # Stub `tmux` for captain-liveness probe (has-session -t harmonik-*-captain).
+  local tmux_alive_val="${tmux_captain_alive}"
+  local tmux_bin="$tmpdir/bin/tmux"
+  cat > "$tmux_bin" <<EOF
+#!/usr/bin/env bash
+# Stub tmux for ops-monitor captain-liveness test
+TMUX_CAPTAIN_ALIVE=${tmux_alive_val}
+if [[ "\$1" == "has-session" ]]; then
+  if [[ "\$TMUX_CAPTAIN_ALIVE" == "true" ]]; then
+    exit 0
+  else
+    exit 1
+  fi
+fi
+exit 0
+EOF
+  chmod +x "$tmux_bin"
 
   # Stub `br` so the backlog-readiness check is deterministic in tests.
   local br_ready_escaped
@@ -739,7 +768,7 @@ PROJ=$(setup_fixture \
 run_check "$PROJ" > /dev/null 2>&1
 SCHEMA=$(python3 -c "import json; print(json.load(open('$PROJ/.harmonik/ops-monitor/latest.json')).get('schema_version'))")
 assert_eq "schema_version=2" "2" "$SCHEMA"
-for CHK in daemon-up supervisor-up paused-queues single-mode crew-fresh review-gate backlog-ready lull; do
+for CHK in daemon-up supervisor-up paused-queues single-mode crew-fresh review-gate captain-up backlog-ready lull; do
   assert_check_state "checks.$CHK present (green)" \
     "$PROJ/.harmonik/ops-monitor/latest.json" "$CHK" "ok"
 done
@@ -1032,6 +1061,88 @@ if [[ -f "$LOG" && -s "$LOG" ]]; then
 else
   pass "resolved: no comms sent after resolution"
 fi
+rm -rf "$PROJ"
+
+# ── Test 25a: captain absent from comms-who, tmux alive → no captain-down ────
+# The "live false-negative": comms presence ages out while the captain is still
+# attached to its tmux session. tmux probe confirms alive → must NOT alert.
+echo ""
+echo "=== Test 25a: captain absent from comms-who, tmux session alive → no captain-down ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --tmux-captain-alive true \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_not_contains "25a: no captain-down in stdout" "captain-down" "$OUTPUT"
+assert_json_list_empty "25a: immediate_signals empty" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals"
+assert_check_state "25a: checks.captain-up=ok (tmux alive)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "captain-up" "ok"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  fail "25a: no comms should be sent when captain tmux is alive"
+else
+  pass "25a: no comms sent (captain alive via tmux)"
+fi
+rm -rf "$PROJ"
+
+# ── Test 25b: captain absent from comms-who AND no tmux session → captain-down ─
+# Both indicators absent: alert captain-down on the 5-min critical cooldown.
+echo ""
+echo "=== Test 25b: captain absent from comms-who AND no tmux session → captain-down ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --tmux-captain-alive false \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "25b: captain-down stdout IMMEDIATE" "IMMEDIATE"    "$OUTPUT"
+assert_contains "25b: captain-down in stdout"        "captain-down" "$OUTPUT"
+assert_json_list_contains "25b: immediate_signals has captain-down" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "captain-down"
+assert_check_state "25b: checks.captain-up=flag" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "captain-up" "flag"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "25b: comms sent for captain-down"
+  assert_contains "25b: comms [IMMEDIATE]"    "[IMMEDIATE]"    "$(cat "$LOG")"
+  assert_contains "25b: comms captain-down"   "captain-down"   "$(cat "$LOG")"
+else
+  fail "25b: expected comms send for captain-down, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 25c: stale captain in comms-who is NOT emitted as crew-stale ─────────
+# captain is in comms-who but aged past stale_thresh (150s) yet within
+# captain_absent_thresh (600s). With NON_CREW exclusion the crew-stale loop
+# must not fire for captain. tmux alive → captain_down = False.
+echo ""
+echo "=== Test 25c: stale captain in comms-who NOT emitted as crew-stale (NON_CREW exclusion) ==="
+STALE_CAPTAIN_TS=$(ts_ago 300)   # 300s > stale_thresh(150s) but < captain_absent_thresh(600s)
+CW_WITH_CAPTAIN='{"agent":"captain","status":"online","last_seen":"'"$STALE_CAPTAIN_TS"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_WITH_CAPTAIN" \
+  --tmux-captain-alive true \
+)
+# Run twice to ensure misses don't accumulate for captain
+run_check "$PROJ" > /dev/null 2>&1
+OUTPUT=$(run_check "$PROJ")
+assert_not_contains "25c: no crew-stale for captain"    "crew-stale"   "$OUTPUT"
+assert_not_contains "25c: no captain-down (tmux alive)" "captain-down" "$OUTPUT"
+assert_contains     "25c: all-green"                    "all-green"    "$OUTPUT"
+assert_check_state "25c: checks.captain-up=ok (within absent-thresh)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "captain-up" "ok"
+CAPTAIN_MISSES=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+print(d.get('stale_crew_misses', {}).get('captain', 0))
+")
+assert_eq "25c: captain not in stale_crew_misses" "0" "$CAPTAIN_MISSES"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

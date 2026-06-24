@@ -338,6 +338,10 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// Authorised by operator-nfr.md §4.9 ON-055 (standalone test tool, no
 	// control-surface impact on any in-flight harmonik run).
 	"harness": "operator-nfr.md §4.9 ON-055; standalone scenario harness, synthetic fixture roots (SH-016a), no daemon connection, no in-flight run abort",
+	// hk-b89kk (Phase-0 token-usage join): reads ~/.claude/projects/.../session.jsonl
+	// transcripts and .harmonik/events/events.jsonl; no daemon socket connection,
+	// no state mutation, no in-flight run impact. Offline cost-analysis surface.
+	"usage": "operator-nfr.md §4.9 ON-055; offline transcript+event cost analysis, no daemon connection, no in-flight run abort",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled

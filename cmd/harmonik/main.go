@@ -729,6 +729,18 @@ EXAMPLES
 		return runMigrateRCPrefixSubcommand(subArgs)
 	}
 
+	// harmonik usage [--since DURATION|ISO] [--until ISO] [--format json|summary] [--project DIR]
+	// Token cost analysis: join Claude transcripts × events.jsonl on run/<run_id>.
+	// No daemon required; reads files directly.
+	// Bead ref: hk-b89kk (Phase-0 token-usage join).
+	if len(os.Args) >= 2 && os.Args[1] == "usage" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runUsageSubcommand(subArgs)
+	}
+
 	// harmonik harness [flags] — scenario harness runner (hk-nwqa0).
 	//
 	// Implements the MVH CLI surface: 8 flags (--cadence, --scenario,

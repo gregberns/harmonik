@@ -23,15 +23,29 @@
 > triple-review runs don't hit spawn_cap_blocked (memory hk-vfeeo). Keep 4 file-disjoint
 > lanes staffed.
 
+> **OPERATOR DIRECTIVE 2026-06-23 (STANDING, via admiral, recorded 2026-06-24):**
+> **TOKEN-OPTIMIZATION IS NOW THE PRIMARY PRIORITY — especially the CAPTAIN'S OWN token
+> burn (ranks HIGHEST of all).** Reprioritize kerf-next ranking + crew staffing so
+> token-burn-reducing work LEADS; token-opt WINS staffing/sequencing ties. Order:
+> (1) **WATCH** initiative (captain's own wake-burn cut, hk-var9b) = TOP — sequence its MVP
+> (coupled watch-standup + sender-redirect) ahead of other new work; (2) leanfleet
+> token-efficiency (epic hk-itoc: restart-earlier, idle-restart, model-tiering); (3) keeper
+> restart-earlier (hk-8hr1 — NOTE now CLOSED as no-op, band already on main); (4) per-crew
+> model-fit; (5) codex re-prove→soak (ChatGPT-billed = throughput OFF the Anthropic budget).
+> Other lanes MAY continue but yield ties to token-opt. Apply going forward.
+
 | crew | epic_id / scope | lane (plain English) | queue | model |
 |---|---|---|---|---|
-| paul | hk-var9b / codename:wake-economy | captain wake-economy + watch-officer tier — DESIGN as kerf work (spec-first). Design draft DONE 2026-06-24; critic review dispatched (operator hard-req critics-before-build). Net-new = a Sonnet watch-officer SESSION (CE4 already offloaded the deterministic checks). Await critic verdicts → build-or-revise. hk-drygf HELD (awaiting operator) | paul-logmine | opus |
-| jamis | hk-98jju / codename:supervisor-revive | scenario-harness DONE 15/15 → re-tasked: mute supervisor-down page (hk-xr46t) FIRST, then investigate supervise-dies-on-launch + daemon-auto-revive (hk-f2j0o) + flywheel keep-vs-remove (hk-zv6j3, hk-drygf folded/HELD). Adopts on G-15 land | jamis-sh | — |
-| gurney | hk-b89kk + hk-z8fp | cmd/harmonik tools: `harmonik usage` verb + Manifest.Digest map-order flaky fix | gurney-cmd | sonnet (escalate-on-fail) |
-| leto | epic hk-0639 codename:codex | codex re-canary PASSED 2026-06-24 (hk-n05u2 e2e GREEN through production DOT; ef64h validated) → re-tasked to the codex SOAK (hk-0639). PROVEN RECIPE (load-bearing): select codex per-node via tier-3 DOT node attr (implement node harness=codex) + reviewer_harness=claude-code, NOT the harness:codex bead label (that forces the reviewer to codex → no verdict; durable fix filed hk-2jxqg P2). ChatGPT-billing guard ON every run | leto-ev | opus |
+| paul | hk-var9b / codename:wake-economy | **WATCH** (captain wake-burn cut) — TOP PRIORITY per token-opt directive. Design revised for operator's 4 rulings + the A/B follow-ups (WE1 = COUPLED watch-session-standup + sender-redirect MVP so captain never goes blind; scheduled-send = NATIVE comms-send action, bash-wrapper dropped). Critic gate on revised sequencing → build WE1-8. hk-8hr1 CLOSED (reconcile no-op, band already warn200K/act215K/force240K on main). hk-drygf governor HELD | paul-logmine | opus |
+| jamis | hk-e3fy / daemon run_failed auto-reset | daemon: run_failed STILL strands bead in_progress on uncovered terminal paths (reviewer-pane-hang/verdict-silence) — auto-reset is partial post-c7062bb7; writing the real fix. `internal/daemon` | jamis-sh | — |
+| gurney | hk-tef1s / codename:leanfleet | TOKEN-OPT (re-tasked from idle 2026-06-24): Mission front-matter `model:` field — make clean-drain crews explicitly Sonnet. Parser already exists (crewstart.go:494); WORK = markdown edits to `.harmonik/crew/missions/*.md`. hk-vfeeo (spawn-cap refuse-oversubscription) LANDED+CLOSED 7a8db433; live-resize half captured as backlog hk-omvan | gurney-q | sonnet |
+| leto | epic hk-0639 codename:codex / Pi-design-on-hold | HELD for the Pi universal-model-gateway DESIGN crew (greenlit-pending-operator-go; brief plans/2026-06-23-pi-openrouter-harness). Codex soak CONCLUSIVE all shapes + ChatGPT-billing proven; no file-disjoint bead left to feed codex (gurney took the one available) | leto-ev | opus |
 
 - **Fleet = daemon + captain + 4 work-crews + admiral (operator-engaged) + ctx-watchdog + ops-monitor.**
-- All 4 lanes are file-disjoint: paul=`internal/daemon/*`, jamis=`scripts/ops-monitor` + supervisor subsystem, gurney=`cmd/harmonik/*`, leto=codex harness (LOCAL run). HARD GUARD: jamis must not edit paul's daemon hold files.
+- Lanes file-disjoint: paul=`internal/keeper` + watch design, jamis=`internal/daemon`, gurney=`.harmonik/crew/missions/*.md` (markdown), leto=codex harness (LOCAL, held). HARD GUARD: gurney's daemon ledger follow-up hk-zgt4u is internal/daemon = collides with jamis — do NOT staff until jamis hk-e3fy lands.
+
+### 2026-06-24 closures (reconciled this session)
+- **hk-98jju (supervisor-revive epic) CLOSED:** daemon/supervisor auto-revive fix complete + live (watchdog-only mode decouples watchdog from the dropped flywheel; 5f18ba5e+d2b4f020; supervisor up). Operator DROPPED the flywheel keep-vs-remove scope → hk-zv6j3 CLOSED. Governor hk-drygf stays PARKED; decouple-idea captured as hk-qaqtl (low-pri, NOT dispatched). FLYWHEEL = dead cognition-loop, do NOT investigate; distinct from the live Pi gateway harness.
 
 ### 2026-06-24 admiral directive resolutions (operator-authorized)
 - **Remote worker re-enable — APPROVED**, GATED on hk-92ih3 (paul) landing+verified. Then flip `workers.yaml` enabled:true + daemon restart + fix the stale re-enable comment (real gate = hk-scndr DONE + hk-92ih3, NOT hk-9a7rt) + raise spawn cap in that restart. Prove ONE remote DOT run on gb-mbp before scaling remote. Local stays 4.

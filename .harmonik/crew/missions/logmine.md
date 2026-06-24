@@ -5,6 +5,7 @@ queue: logmine-q
 epic_id: hk-mhmaw
 goal: "logmine iter-11 harvest: mine the 06-18→now window (incl. the 06-20 135-commit burst); file/route new defect beads; digest daemon-lane to captain."
 captain_name: captain
+model: sonnet
 ---
 
 ## ⚡ iter-11 harvest 2026-06-21 ~17:28Z (captain staffing into a free slot)

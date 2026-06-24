@@ -1637,6 +1637,25 @@ func dispatchDotAgenticNode(
 		}, nil
 	}
 
+	// codex --sandbox workspace-write cannot commit inside a worktree (.git points
+	// outside the sandbox root → self-commit fails 100%). After the process exits,
+	// the daemon stages+commits any changes codex produced via ensureCodexRefsTrailer
+	// (codexcommit.go, hk-gd9r). Mirrors workloop.go:4007-4019. Must run before
+	// resolveDotWorktreeHEAD so the no-commit guard below sees any commit we create.
+	if deps.harnessRegistry != nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil &&
+			h.Completion() == handlercontract.CompletionProcessExit {
+			codexOutcome, ensureErr := ensureCodexRefsTrailer(ctx, runner, wtPath, preHeadSHA, beadID)
+			if ensureErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
+					beadID, ensureErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "daemon: dot: ensureCodexRefsTrailer bead %s: %s\n",
+					beadID, codexOutcome)
+			}
+		}
+	}
+
 	// Implementer-class node: require HEAD to have advanced past its pre-launch
 	// state (per EM-015d). Gate on node.NonCommitting per WG-041 §I.4 /
 	// EM-058 non-committing sub-note (§II.8): when non_committing="true", a

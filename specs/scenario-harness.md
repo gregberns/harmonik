@@ -8,10 +8,10 @@ requirement-prefix: SH
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.2.2
+version: 0.2.3
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-14
+last-updated: 2026-06-23
 depends-on:
   - architecture
   - handler-contract
@@ -680,6 +680,35 @@ A non-zero `exit_code` does NOT cause the twin to exit — the daemon-side outco
 
 Assertion scenarios MAY use `event_present` with `type: twin_hook_called` and `payload_match` predicates to verify that a Stop hook was called and received an expected exit code during a run.
 
+#### `twin_committed`
+
+Emitted **after the `commit_on_cue` script step** executes `git add -A && git commit` in the worktree. Provides observability into whether the commit step succeeded and what SHA was produced. Implemented by bead **hk-8ys88**.
+
+A non-zero `exit_code` does NOT cause the twin to exit — the script continues per the bead error policy (same as `call_stop_hook`). The `stderr_excerpt` field is omitted from the JSON object entirely when `exit_code` is 0; its presence in a message is a reliable discriminator for failure paths.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `string` | Always `"twin_committed"`. |
+| `commit_sha` | `string` | Full SHA of the new HEAD commit produced by `git commit`. Empty string when `exit_code` is non-zero. |
+| `exit_code` | `int` | OS exit code from the `git add + git commit` sequence. `0` = success; non-zero = commit failed. |
+| `duration_ms` | `int` | Wall-clock duration of the combined `git add + git commit` execution in milliseconds. |
+| `stderr_excerpt` | `string` | First 200 characters of combined stdout+stderr from the git command on failure. Omitted from the message when `exit_code` is `0`. The 200-char ceiling is a log-readability guard; full output is available in process capture. |
+
+Assertion scenarios MAY use `event_present` with `type: twin_committed` and `payload_match` predicates to verify that a commit step ran and produced a specific SHA, or to assert that a commit failure occurred with an expected exit code.
+
+#### `twin_error`
+
+Emitted when the twin encounters an **unrecoverable internal error** that must be visible on the wire stream. Examples include: `call_stop_hook` invoked without a prior settings load, `commit_on_cue` invoked without `--worktree-path`, malformed `settings.json`, or `signal_interrupt` invoked with missing required fields. The twin exits with code 1 immediately after emitting this message.
+
+`twin_error` is a terminal event for the twin process: exactly one `twin_error` is emitted per fatal condition, and no further script steps are attempted after it is emitted.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `string` | Always `"twin_error"`. |
+| `reason` | `string` | Short human-readable description of the unrecoverable error. Identifies the script step that failed and the specific condition (e.g., `"call_stop_hook: settings not loaded (--worktree-path was not supplied)"`). |
+
+Assertion scenarios MAY use `event_present` with `type: twin_error` to assert that a specific internal error was surfaced, or use the absence of this message (via `event_absent`) to verify a clean execution path.
+
 ## 7. Protocols and state machines
 
 ### 7.1 Scenario-execution lifecycle
@@ -993,5 +1022,6 @@ Default-if-unresolved: `pf`-based sandbox on macOS at v0.2; revisit if `pf` prov
 |---|---|---|---|
 | 2026-05-05 | 0.1.0 | foundation-author | Initial draft per `docs/subsystems/scenario-harness.md` seed + `docs/bootstrap.md` §5 step 8 framing. Authored as peer to the 10 existing reviewed specs. SH prefix reserved in `specs/_registry.yaml`. v0.1 declares YAML-only scenario format, four-kind assertion vocabulary, three-tag cadence (smoke / regression / nightly), eight-class failure taxonomy, sequential execution, and a three-scenario conformance floor. |
 | 2026-05-05 | 0.2.0 | foundation-author | R1 review integration. Inputs: `docs/reviews/2026-05-05-scenario-harness-r1/{implementer,cross-spec-architect,critic}-r1.md`. Three convergent themes resolved: (1) per-scenario synthetic project root (new SH-016a) reconciles SH-014's no-mutation rule with SH-017's production-daemon-entry-point requirement and PL-001's one-daemon-per-project; (2) twin-binary identity (SH-009 + SH-INV-003) now defers to HC-043 commit-hash check unchanged with a path-prefix predicate that excludes name-only heuristics; (3) per-run cancellation surface uses `daemon stop` per-scenario at v0.2 with OQ-SH-012 tracking suite-mode efficiency post-MVH. New normative requirements: SH-015a (workspace-snapshot mechanism), SH-016a (synthetic project root), SH-032 (CLI surface), SH-033 (signal handling), SH-034 (result emission/durability). New §8.0 failure-class precedence table. Cite repairs: WM-007→WM-019/WM-021 in §10.1, HC-043/HC-045 in SH-009, EV §8.1.8 + EM-005 alignment for `OutcomeExpectation`, AR-INV-007 for centralized-controller, ON-029 for drain-timeout, PL-006/PL-006a for SH-INV-002 sensor. `operator-nfr` added to depends-on. Schema fixes: split `workflow_ref` into `workflow_path`/`workflow_id`; new `GitSeedOp` and `FileSeed` records; `JSONValue` defined; per-kind `WorkspacePredicate.expected` table at §6.3; `ScenarioResult.source_path` + relative `event_log_path` / `workspace_snapshot_path` + role-keyed stdout/stderr capture maps. Three new OQs (OQ-SH-011/-012/-013); OQ-SH-005's default-if-unresolved promoted into SH-027 normatively. Status: draft → reviewed. |
+| 2026-06-23 | 0.2.3 | foundation-author | Extend §6.4 "Twin-extension wire messages" to add `twin_committed` and `twin_error`. Both were implemented in `cmd/harmonik-twin-claude/wire.go` (lines 530, 557) but were absent from the spec, leaving §6.4's claim of "matches wire.go exactly" false. `twin_committed` is emitted by the `commit_on_cue` script step (hk-8ys88) and carries `commit_sha`, `exit_code`, `duration_ms`, and optional `stderr_excerpt`; `twin_error` is a terminal-event message emitted before the twin exits 1 on any unrecoverable internal error, carrying a `reason` string. No requirement IDs added (descriptive section only); no existing content changed. Refs: hk-ho9qu, hk-8ys88, hk-ffw3h (conformance audit). |
 | 2026-05-14 | 0.2.2 | foundation-author | Add §6.4 "Twin-extension wire messages" enumerating `twin_settings_loaded` and `twin_hook_called`. These two additive, optional, twin-emitted message types were implemented by hk-e66ht (settings reader + Stop-hook caller) but were not documented in this spec. §6.4 declares field names, types, and semantics matching `cmd/harmonik-twin-claude/wire.go` exactly. Front matter `version` advanced to 0.2.2 and `last-updated` to 2026-05-14. No requirement IDs added (descriptive section only); no existing content changed. Refs: hk-1encw, hk-e66ht. |
 | 2026-05-06 | 0.2.1 | foundation-author | Backfill patch closing F-pilot-SH-4 (sh-pilot.md §7) per the discipline v0.10 §3.2 §4.a envelope grandfather carve-out FROZEN decision (SH is the 11th spec, drafted post-AR-053-2026-04-24, and is NOT in the grandfathered set `{EM, HC, CP, WM, PL, RC, EV}`). **Front matter:** added `spec-category: runtime-subsystem` per [architecture.md §4.0 AR-052]; `last-updated` advanced to 2026-05-06. **New §4.a Subsystem envelope with SH-ENV-001** declaring the eight envelope elements of [architecture.md §4.4 AR-013] per [architecture.md §4.0 AR-053] using the reserved `SH-ENV-NNN` requirement-ID range. (a) events produced = none (SH §6.2 framing); (b) events consumed = the [event-model.md §8] taxonomy via observational replay reader per SH-020 with explicit calls-out for `outcome_status` (EV-§8.1.8), `workspace_merge_status` (EV-§8.5.3), agent-state events (EV-§8.3), and `checkpoint_written` (EV-§8.4); (c) types introduced = `ScenarioFile`, `AgentOverride`, `FixtureSetup`, `GitSeedOp`, `FileSeed`, `EventExpectation`, `WorkspacePredicate`, `OutcomeExpectation`, `ScenarioResult`, `AssertionResult`, `SuiteResult`, `FailureClass` (CLI-surface types, not bus payloads); (d) handlers implemented = none (twin substitution drives via HC-003); (e) state owned = per-suite ephemeral fixture root + per-scenario synthetic project root + worktree + captured JSONL + stdout/stderr capture + workspace-snapshot in-place pointer + `ScenarioResult`/`SuiteResult` durable records; (f) control points = none; (g) NFRs inherited = ON-018 (schema compat) + ON-029 (drain timeout); none overridden; (h) boundary classification = 12 operations spanning `suite_load`, `parse_scenario_file`, `resolve_twin_binary`, `fixture_setup`, `synthesize_project_root`, `drive_orchestration`, `capture_event_log`, `evaluate_assertions`, `enforce_scenario_timeout`, `fixture_teardown` (best-effort axis), and the `emit_scenario_result` / `emit_suite_result` durability operations. No other content changed; no requirement IDs renumbered; no IDs retired; no OQs added or closed. Status remains `reviewed`. F-pilot-SH-4 self-flag transitions from "class lane" to "resolved by spec patch." |

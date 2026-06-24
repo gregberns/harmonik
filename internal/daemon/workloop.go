@@ -3178,7 +3178,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
 				}
 			}
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -3386,7 +3386,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
 				}
 			}
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -4170,7 +4170,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (agent_completed): %s", syncReason))
 			return
 		}
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -4220,7 +4220,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (auto-close): %s", syncReason))
 			return
 		}
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -4283,7 +4283,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// does not abort the merge sequence.
 				bgCtx := context.Background()
 				if curHeadSHA, headErr := resolveWorktreeHEAD(bgCtx, wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
-					mergeRes := lockedMergeRunBranchToMain(bgCtx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches)
+					mergeRes := lockedMergeRunBranchToMain(bgCtx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 					if mergeRes.success || mergeRes.noChange {
 						drainTID, _ := deps.tidGen.Next()
 						if closeErr := deps.closeBeadWithHistoryTrim(bgCtx, runID, drainTID, beadID, false); closeErr != nil {
@@ -5385,12 +5385,12 @@ type mergeBuildFailedPayload struct {
 // need real merge serialisation), the call runs unguarded.
 //
 // Bead ref: hk-bnm89, hk-yyso7.
-func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string, targetBranch string, protectBranches []string) mergeOutcome {
+func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string, targetBranch string, protectBranches []string, brPath string) mergeOutcome {
 	if mu != nil {
 		mu.Lock()
 		defer mu.Unlock()
 	}
-	return mergeRunBranchToMain(ctx, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches)
+	return mergeRunBranchToMain(ctx, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches, brPath)
 }
 
 // mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence:
@@ -5403,17 +5403,21 @@ func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir 
 //     merge_build_failed → EM-053 reopen path).
 //  5. git push origin main.
 //  6. git reset --hard HEAD (working-tree refresh, EM-054).
+//  7. br sync --import-only when .beads/issues.jsonl is in the diff (BL-MRG-004/005).
 //
 // Returns a mergeOutcome. The caller is responsible for all event emission
 // and the CloseBead call; this function is a pure git-operation helper.
 //
-// The bus and beadID parameters are used only for the EM-054 refresh path:
+// The bus and beadID parameters are used for the EM-054 refresh path:
 // if git reset --hard HEAD fails, a working_tree_refresh_failed event is
 // emitted and the function still returns success=true (the merge succeeded).
+// They are also used for the BL-MRG-004 path: if br sync --import-only fails
+// after a merge touching .beads/issues.jsonl, a bead_sync_failed event is
+// emitted and the function still returns success=true.
 //
 // Spec ref: specs/execution-model.md §4.12 EM-052, EM-053, EM-054.
-// Bead: hk-ftyvo, hk-4goy3, hk-6r6xv.
-func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string, targetBranch string, protectBranches []string) mergeOutcome {
+// Bead: hk-ftyvo, hk-4goy3, hk-6r6xv, hk-zgt4u.
+func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string, targetBranch string, protectBranches []string, brPath string) mergeOutcome {
 	// Fail-closed guard (hk-6r6xv): refuse before any update-ref/push when
 	// targetBranch is empty or appears in the protect-set.
 	if targetBranch == "" {
@@ -5817,6 +5821,28 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		emitWorkingTreeRefreshFailed(ctx, bus, runID, beadID, resetErr)
 	}
 
+	// BL-MRG-004/005: when the merge touched .beads/issues.jsonl, reconcile the
+	// SQLite DB by running `br sync --import-only` in the project directory.
+	// This is non-fatal: a failure emits bead_sync_failed but does not revert the
+	// merge or change the returned outcome. brPath == "" disables the step (tests
+	// that do not have a real `br` binary).
+	if brPath != "" {
+		diffCmd := exec.CommandContext(ctx, "git", "diff", "--name-only", mainTip, runTip)
+		diffCmd.Dir = projectDir
+		if diffOut, diffErr := diffCmd.Output(); diffErr == nil {
+			for _, p := range strings.Split(strings.TrimRight(string(diffOut), "\n"), "\n") {
+				if p == ".beads/issues.jsonl" {
+					syncCmd := exec.CommandContext(ctx, brPath, "sync", "--import-only")
+					syncCmd.Dir = projectDir
+					if syncOut, syncErr := syncCmd.CombinedOutput(); syncErr != nil {
+						emitBeadSyncFailed(ctx, bus, runID, syncErr, syncOut)
+					}
+					break
+				}
+			}
+		}
+	}
+
 	return mergeOutcome{success: true}
 }
 
@@ -6119,6 +6145,30 @@ func emitMergeBuildFailed(ctx context.Context, bus handlercontract.EventEmitter,
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeMergeBuildFailed, b)
+}
+
+// emitBeadSyncFailed emits a bead_sync_failed event when `br sync --import-only`
+// fails after a merge touching .beads/issues.jsonl (BL-MRG-004). The merge is
+// already durable; this event flags that the SQLite DB is out of sync with the
+// JSONL so the Cat-BL2 routing obligation can be fulfilled.
+//
+// Spec ref: event-model.md §8.15.1 BL-MRG-004.
+// Bead: hk-zgt4u.
+func emitBeadSyncFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, syncErr error, output []byte) {
+	errMsg := syncErr.Error()
+	if len(output) > 0 {
+		errMsg = fmt.Sprintf("%s\n%s", errMsg, strings.TrimRight(string(output), "\n"))
+	}
+	pl := core.BeadSyncFailedPayload{
+		RunID:     runID.String(),
+		Error:     errMsg,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeBeadSyncFailed, b)
 }
 
 // runMergeFmtCheck detects formatting drift (gofumpt, gci) on buildDir before

@@ -1,1 +1,2 @@
 2026-06-24T02:31:31Z — codex re-canary single-mode
+2026-06-24T04:08:46Z — codex re-canary DOT-prod v2

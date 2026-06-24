@@ -9,7 +9,35 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
-## active_lanes  (as of 2026-06-24 — 4-lane fleet, concurrency=4 per operator directive)
+## ⭐ CURRENT TRUTH (2026-06-24 ~22:50Z — POST FULL-FLEET-RESTART + lull-deploy)
+> The fleet was torn down + re-deployed off latest `main`. **The lane table + directives
+> further down this file are PRE-RESTART and STALE — read THIS block as authoritative.**
+>
+> **Priority #1 DONE:** leanfleet (`hk-itoc`) CLOSED + codex re-prove/soak (`hk-0639`) PROVEN
+> 5/5 green (harness re-proven e2e under load, ChatGPT-billed off the Anthropic budget).
+> hk-0639 epic still technically OPEN (open-ended soak charter) — operator's close-or-keep call.
+>
+> **Priority #2 — NOW ACTIVE: Remote Worker validation.** Was gated on this restart; now
+> ungating. Stand up `workers.yaml enabled:true` (in the deploy batch) → prove ONE remote DOT
+> run on gb-mbp before scaling. **gurney was reserved SPARE for this lane.** Gate = hk-scndr DONE
+> + hk-92ih3 (paul) — verify both landed. Local concurrency stays 4.
+>
+> **Priority #3 — WAIT, do NOT start:** Pi universal-model-gateway (`plans/2026-06-23-pi-openrouter-harness/`)
+> + de-hardcode-messages. Not before remote-worker proven consistent.
+>
+> **Operator-pending:** (a) `hk-4u1mb` reviewer diff-budget CONFLICTS with shipped `hk-sj6a`
+> heartbeat contract (internal/daemon RED) — captain recommends C (progress-aware discriminator);
+> **operator leaning DEFER**; jamis held off. (b) Governor `liveness_no_progress_n` now SET to 10
+> in config.yaml:63 (was the boot-blocking landmine — RESOLVED); 10 = observe/emit-only default,
+> operator's policy call to change to 0.
+>
+> **Deploy batch that rode this restart:** set-concurrency 4 + raise spawn cap (8→~16) + go-install
+> main + governor key set + workers.yaml remote-enable + sync-assets --apply + tag/release-after-soak.
+>
+> **Crew missions STALE (4/5):** gurney/jamis/leto/paul mission files describe OLD lanes — RE-STAFF
+> on fresh boot (refresh missions or re-task on adopt). Only watch.md is accurate.
+
+## active_lanes  (PRE-RESTART — STALE as of the 22:50Z restart; see CURRENT TRUTH block above)
 
 > **DURABILITY NOTE:** this file MUST be COMMITTED, not left uncommitted-modified — an
 > uncommitted tier-2 edit was clobbered 2026-06-24 when a worktree merge (a8d4591b) reset

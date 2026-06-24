@@ -2,14 +2,12 @@ package main
 
 import (
 	"bytes"
-	"sort"
 	"strings"
 	"testing"
 )
 
 // fakeManifest builds a Manifest from a path→sha map for test injection.
-// Files are sorted by path to match BuildManifest's guarantee (Manifest.Digest
-// iterates Files in order and is therefore order-dependent).
+// Files order does not matter — Manifest.Digest sorts internally.
 func fakeManifest(entries map[string]struct {
 	sha   string
 	class AssetClass
@@ -19,7 +17,6 @@ func fakeManifest(entries map[string]struct {
 	for p, e := range entries {
 		m.Files = append(m.Files, FileEntry{Path: p, Sha256: e.sha, Class: e.class})
 	}
-	sort.Slice(m.Files, func(i, j int) bool { return m.Files[i].Path < m.Files[j].Path })
 	return m
 }
 
@@ -29,6 +26,29 @@ func lockFromPairs(pairs map[string]string) Lock {
 		l.Files[p] = LockEntry{Path: p, Sha256: s}
 	}
 	return l
+}
+
+// TestManifestDigestOrderIndependent verifies Manifest.Digest is stable regardless
+// of m.Files order (root fix for hk-z8fp: Digest now sorts internally).
+func TestManifestDigestOrderIndependent(t *testing.T) {
+	// Same two entries in opposite order — digest must be identical.
+	a := Manifest{
+		FormatVersion: ManifestFormatVersion,
+		Files: []FileEntry{
+			{Path: "assets/templates/AGENTS.template.md", Sha256: "bbb", Class: ManagedRegion},
+			{Path: "assets/skills/keeper/SKILL.md", Sha256: "aaa", Class: Managed},
+		},
+	}
+	b := Manifest{
+		FormatVersion: ManifestFormatVersion,
+		Files: []FileEntry{
+			{Path: "assets/skills/keeper/SKILL.md", Sha256: "aaa", Class: Managed},
+			{Path: "assets/templates/AGENTS.template.md", Sha256: "bbb", Class: ManagedRegion},
+		},
+	}
+	if a.Digest() != b.Digest() {
+		t.Fatalf("Manifest.Digest must be order-independent: a=%s b=%s", a.Digest(), b.Digest())
+	}
 }
 
 // TestLockDigestMatchesManifestDigest — a lock recording exactly the manifest's

@@ -162,12 +162,24 @@ func BuildManifest() (Manifest, error) {
 // with byte-identical assets produce the same digest, and any asset change moves
 // it. The supervisor's version-skew check (hk, doc 10 §Daemon-safety) can compare
 // this against the project's recorded digest to detect "assets N behind".
+//
+// Paths are sorted before hashing so the digest is independent of m.Files order,
+// matching Lock.Digest() which also sorts. Two manifests with the same entries in
+// any order produce the same digest.
 func (m Manifest) Digest() string {
-	var b strings.Builder
+	paths := make([]string, 0, len(m.Files))
+	shaByPath := make(map[string]string, len(m.Files))
 	for _, f := range m.Files {
-		b.WriteString(f.Path)
+		paths = append(paths, f.Path)
+		shaByPath[f.Path] = f.Sha256
+	}
+	sort.Strings(paths)
+
+	var b strings.Builder
+	for _, p := range paths {
+		b.WriteString(p)
 		b.WriteByte(':')
-		b.WriteString(f.Sha256)
+		b.WriteString(shaByPath[p])
 		b.WriteByte('\n')
 	}
 	sum := sha256.Sum256([]byte(b.String()))

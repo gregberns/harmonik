@@ -1,0 +1,36 @@
+name: regression.inv003-outside-search-path
+description: >
+  SH-INV-003 conformance scenario (specs/scenario-harness.md §5 SH-INV-003).
+  Declares an agent_overrides.agent_node.binary of /usr/bin/claude, which is
+  outside any configured twin-search-path prefix. The harness MUST reject this
+  at handler-config resolution (pre-launch check) with
+  failure_class=harness-internal-error, and MUST NOT proceed to orchestration.
+  This scenario exists to document and anchor the must-fail path; its binary
+  would never pass CheckTwinBinaryPath against a typical /twins prefix.
+
+# workflow_path: same shared one-node agentic workflow used by other regression
+# scenarios. Resolved as <repo-root>/scenarios/_workflows/smoke-one-node.dot
+# per specs/scenario-harness.md §6.1 workflow_path resolution rule (ii).
+workflow_path: smoke-one-node.dot
+
+# agent_overrides: /usr/bin/claude is a real-model binary outside any
+# twin-search-path prefix. The harness must refuse to launch it per SH-INV-003.
+agent_overrides:
+  agent_node:
+    binary: /usr/bin/claude
+
+# fixture_setup: no seeding required; the harness must reject the run before
+# fixture bootstrap completes.
+
+# expected_events: none — the daemon never starts; no events are emitted.
+# The pre-launch check fires before DriveOrchestration is called.
+
+# expected_outcome: none declared here. The harness emits a ScenarioResult
+# with verdict=error and failure_class=harness-internal-error at the
+# handler-config resolution stage, before any outcome assertion evaluation.
+
+# timeout_secs: 10 s ceiling (pre-launch failure is instantaneous).
+timeout_secs: 10
+
+# cadence_tag: regression — runs in the smoke+regression CI lane (SH-029).
+cadence_tag: regression

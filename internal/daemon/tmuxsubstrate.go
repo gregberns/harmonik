@@ -1210,6 +1210,23 @@ type substrateWithKeepalive interface {
 // any *tmuxSubstrate — it exits immediately for the non-keepalive path.
 var _ substrateWithKeepalive = (*tmuxSubstrate)(nil)
 
+// substrateWithSpawnCap is an optional interface a Substrate may implement to
+// expose the user-configured non-terminal spawn ceiling (cap(nonTerminalSem)).
+// daemon.Start probes cfg.Substrate for this interface when wiring the
+// HandlerAdapter so that HandleQueueSetConcurrency can reject set-concurrency
+// requests that would oversubscribe the spawn cap (hk-vfeeo).
+//
+// Returns 0 when no cap is configured.
+//
+// Bead ref: hk-vfeeo.
+type substrateWithSpawnCap interface {
+	SpawnCapSize() int
+}
+
+// Compile-time assertion: *tmuxSubstrate satisfies substrateWithSpawnCap.
+// SpawnCapSize returns 0 when no cap is configured (nonTerminalSem is nil).
+var _ substrateWithSpawnCap = (*tmuxSubstrate)(nil)
+
 // substrateSpawnReadier is an optional interface a Substrate may implement to
 // expose a lightweight pre-dispatch spawn-readiness probe. daemon.Start probes
 // cfg.Substrate for this interface after a restart-backoff boot (hk-bk33):

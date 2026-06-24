@@ -551,12 +551,17 @@ type QueueSetConcurrencyRequest struct {
 
 // QueueSetConcurrencyResponse is the response for queue-set-concurrency.
 //
-// Bead ref: hk-ohiaf.
+// Bead ref: hk-ohiaf, hk-vfeeo.
 type QueueSetConcurrencyResponse struct {
 	// OldN is the previous concurrency ceiling.
 	OldN int `json:"old_n"`
 	// NewN is the new concurrency ceiling (echoes the request N).
 	NewN int `json:"new_n"`
+	// SpawnCap is the substrate's non-terminal session ceiling (hk-vfeeo).
+	// 0 means uncapped or the daemon has no cap configured. The safe
+	// max_concurrent ceiling is SpawnCap/2 (each bead uses 2 sessions).
+	// Raise SpawnCap by restarting with a higher --max-concurrent value.
+	SpawnCap int `json:"spawn_cap,omitempty"`
 }
 
 // QueueDryRunRequest is the payload for the queue-dry-run JSON-RPC method

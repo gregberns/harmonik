@@ -734,6 +734,12 @@ type HandlerAdapter struct {
 	// controller was not wired; HandleQueueSetConcurrency returns -32099 in that
 	// case.
 	concurrencySet func(n int) (old int, err error)
+
+	// spawnCapGet returns the substrate's non-terminal session ceiling
+	// (hk-vfeeo). HandleQueueSetConcurrency uses it to refuse requests that
+	// would oversubscribe the spawn cap. Nil when no cap is configured or the
+	// substrate does not expose SpawnCapSize.
+	spawnCapGet func() int
 }
 
 // SetGlobalMaxConcurrent records the daemon-wide --max-concurrent ceiling so
@@ -755,6 +761,17 @@ func (a *HandlerAdapter) SetGlobalMaxConcurrent(n int) {
 func (a *HandlerAdapter) SetConcurrencyFuncs(get func() int, set func(int) (int, error)) {
 	a.concurrencyGet = get
 	a.concurrencySet = set
+}
+
+// SetSpawnCapFunc wires the spawn-cap reader from the substrate so that
+// HandleQueueSetConcurrency can refuse requests that would oversubscribe the
+// hardware session ceiling (hk-vfeeo). fn returns the non-terminal spawn cap
+// (cap(nonTerminalSem)); 0 means uncapped. Called by daemon.Start when the
+// substrate implements substrateWithSpawnCap.
+//
+// Bead ref: hk-vfeeo.
+func (a *HandlerAdapter) SetSpawnCapFunc(fn func() int) {
+	a.spawnCapGet = fn
 }
 
 // DefaultWorkers resolves the effective per-queue worker count for a queue
@@ -1054,6 +1071,30 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 			Detail: map[string]any{"error": "concurrency controller not wired; daemon may not support set-concurrency"},
 		}
 	}
+	// hk-vfeeo: refuse when the requested ceiling would oversubscribe the spawn
+	// cap. Each in-flight bead occupies 2 non-terminal sessions (implementer +
+	// reviewer), so the safe dispatch ceiling is spawnCap/2. Setting
+	// max_concurrent above that starves the spawn semaphore and produces
+	// spawn_cap_blocked run_failures. The spawn cap is fixed at daemon startup
+	// (--max-concurrent × 2); raise it by restarting with a higher value or
+	// setting HARMONIK_MAX_CONCURRENT_SESSIONS.
+	spawnCap := 0
+	if a.spawnCapGet != nil {
+		spawnCap = a.spawnCapGet()
+	}
+	if spawnCap > 0 && req.N*2 > spawnCap {
+		safeMax := spawnCap / 2
+		return nil, &RPCError{
+			Code: -32099, Message: "spawn_cap_exceeded",
+			Detail: map[string]any{
+				"error":      fmt.Sprintf("set-concurrency %d would oversubscribe the spawn cap: each bead needs 2 sessions, cap = %d non-terminal slots (safe max_concurrent = %d); restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap", req.N, spawnCap, safeMax, req.N, req.N*2),
+				"requested":  req.N,
+				"spawn_cap":  spawnCap,
+				"safe_max":   safeMax,
+			},
+		}
+	}
+
 	oldN, err := a.concurrencySet(req.N)
 	if err != nil {
 		return nil, &RPCError{
@@ -1061,7 +1102,7 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 			Detail: map[string]any{"error": err.Error()},
 		}
 	}
-	resp := QueueSetConcurrencyResponse{OldN: oldN, NewN: req.N}
+	resp := QueueSetConcurrencyResponse{OldN: oldN, NewN: req.N, SpawnCap: spawnCap}
 	data, marshalErr := json.Marshal(resp)
 	if marshalErr != nil {
 		return nil, &RPCError{

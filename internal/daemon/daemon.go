@@ -1686,6 +1686,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		concurrencyCtrl = NewConcurrencyController(cfg.MaxConcurrent)
 		if ha, ok := queueHandler.(*queue.HandlerAdapter); ok {
 			ha.SetConcurrencyFuncs(concurrencyCtrl.Get, concurrencyCtrl.Set)
+			// hk-vfeeo: wire spawn cap so set-concurrency can refuse requests
+			// that would oversubscribe the substrate's session ceiling.
+			if ss, ok := cfg.Substrate.(substrateWithSpawnCap); ok {
+				ha.SetSpawnCapFunc(ss.SpawnCapSize)
+			}
 		}
 
 		// Start the bandwidth tuner when --subscription-token-ceiling is set

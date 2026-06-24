@@ -68,14 +68,18 @@ func RunQueueSetConcurrency(ctx context.Context, subArgs []string, out io.Writer
 
 	return handleResponse(resp, out, outputJSON, func(result json.RawMessage, w io.Writer) int {
 		var r struct {
-			OldN int `json:"old_n"`
-			NewN int `json:"new_n"`
+			OldN     int `json:"old_n"`
+			NewN     int `json:"new_n"`
+			SpawnCap int `json:"spawn_cap"`
 		}
 		if jsonErr := json.Unmarshal(result, &r); jsonErr != nil {
 			fmt.Fprintf(w, "set-concurrency: ok\n") //nolint:errcheck
 			return exitSuccess
 		}
 		fmt.Fprintf(w, "max_concurrent: %d → %d\n", r.OldN, r.NewN) //nolint:errcheck
+		if r.SpawnCap > 0 {
+			fmt.Fprintf(w, "spawn_cap: %d non-terminal sessions (safe max_concurrent = %d; restart to raise)\n", r.SpawnCap, r.SpawnCap/2) //nolint:errcheck
+		}
 		return exitSuccess
 	})
 }

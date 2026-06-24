@@ -117,7 +117,7 @@ digraph "standard-bead" {
         agent_type="reviewer",
         handler_ref="claude-reviewer",
         idempotency_class="idempotent",
-        model="claude-opus-4-5",
+        model="claude-opus-4-8",
         role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on the change"
     ];
 

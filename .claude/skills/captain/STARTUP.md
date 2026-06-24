@@ -87,8 +87,13 @@ Read, in this order. The handoff is the LAST input, and it is INPUT not gospel �
 ground-truth (Step 2) overrides anything it claims about live state.
 
 1. `.claude/skills/captain/SKILL.md` — per-crew mechanics (spawn / mission schema
-   / mail / attribution / surface-and-await). Load alongside `agent-comms`,
-   `beads-cli`, `harmonik-dispatch`.
+   / mail / attribution / surface-and-await). Load `beads-cli` alongside it (write
+   discipline is used immediately). **SLIM COLD-BOOT (boot-spike Lever 2):** do NOT
+   eager-load the full `agent-comms` and `harmonik-dispatch` SKILL.md bodies at boot
+   — their boot-critical content (comms join/send/recv; the daily-loop summary) is
+   already carried by `orchestrator-rules` (item 3). Load each in FULL on first use
+   of its surface (first `harmonik comms` op / first queue dispatch). Deferral ≠ skip:
+   load before the first call, not after.
 2. **THIS file** (`.claude/skills/captain/STARTUP.md`) — the boot checklist.
 3. the `orchestrator-rules` skill (`.claude/skills/orchestrator-rules/SKILL.md`) — the
    canonical standing rules (permanent dispatch/priority/review directives).

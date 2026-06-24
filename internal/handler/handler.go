@@ -99,6 +99,14 @@ type LaunchSpec struct {
 	// Bead: hk-rpr6.
 	StdinDevNull bool
 
+	// Terminal, when true, is forwarded to SubstrateSpawn.Terminal to mark this
+	// launch as a terminal/consolidate node that must not be starved by ordinary
+	// non-terminal sessions. Only meaningful when Substrate is non-nil.
+	// See SubstrateSpawn.Terminal for semantics.
+	//
+	// Bead: hk-x882o.
+	Terminal bool
+
 	// Substrate, when non-nil, indicates the subprocess MUST be hosted inside
 	// a substrate-managed environment (e.g. a tmux window) rather than spawned
 	// directly via exec.CommandContext.
@@ -302,6 +310,7 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 		Env:          spec.Env,
 		Argv:         argv,
 		StdinDevNull: spec.StdinDevNull, // hk-rpr6: ProcessExit harnesses need /dev/null stdin
+		Terminal:     spec.Terminal,     // hk-x882o: consolidate nodes get reserved-slot priority
 	}
 
 	subSess, err := spec.Substrate.SpawnWindow(ctx, spawn)

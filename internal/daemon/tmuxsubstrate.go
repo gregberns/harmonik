@@ -125,13 +125,22 @@ type tmuxSubstrate struct {
 	// is idempotent on a non-existent window so re-killing is harmless).
 	spawnedHandles []tmux.WindowHandle
 
-	// spawnSem, when non-nil, is a buffered-channel semaphore that bounds the
-	// number of concurrently active sessions. Each SpawnWindow acquires a slot;
-	// the slot is released when the session's Kill() is called (once per session
-	// via killOnce). Nil when no cap is configured (WithSpawnCap was not passed).
+	// spawnSem, when non-nil, is a buffered-channel semaphore of size cap+1 that
+	// bounds the total number of concurrently active sessions. The +1 is the
+	// reserved slot for terminal/consolidate nodes (hk-x882o). Nil when no cap
+	// is configured (WithSpawnCap was not passed).
 	//
-	// Bead ref: hk-xb5yi (concurrent-spawn cap).
+	// Bead ref: hk-xb5yi (concurrent-spawn cap), hk-x882o (terminal reserve).
 	spawnSem chan struct{}
+
+	// nonTerminalSem, when non-nil, gates ordinary (non-terminal) spawns to the
+	// user-configured cap. It has size cap — one fewer slot than spawnSem — so
+	// that non-terminal sessions can never occupy the reserved +1 slot in
+	// spawnSem. Terminal spawns bypass nonTerminalSem entirely and draw from
+	// the reserved slot. Nil when no cap is configured.
+	//
+	// Bead ref: hk-x882o.
+	nonTerminalSem chan struct{}
 
 	// spawnAcquireTimeout bounds how long SpawnWindow waits for a free spawn
 	// slot before treating the launch as failed (hk-4l7zs). A run sitting at
@@ -216,21 +225,29 @@ type TmuxSubstrateOption func(*tmuxSubstrate)
 // Typical production default: maxConcurrent*2 (one implementer + one reviewer
 // per in-flight bead). Override via HARMONIK_MAX_CONCURRENT_SESSIONS env var.
 //
-// Bead ref: hk-xb5yi.
+// hk-x882o: internally the semaphore is sized at n+1 and a second semaphore of
+// size n gates non-terminal spawns. The +1 slot is reserved exclusively for
+// terminal/consolidate nodes so that a completed+reviewed run can always get
+// its final merge node scheduled even when all ordinary slots are occupied.
+//
+// Bead ref: hk-xb5yi, hk-x882o.
 func WithSpawnCap(n int) TmuxSubstrateOption {
 	return func(s *tmuxSubstrate) {
 		if n > 0 {
-			s.spawnSem = make(chan struct{}, n)
+			s.spawnSem = make(chan struct{}, n+1) // +1 reserved for terminal spawns (hk-x882o)
+			s.nonTerminalSem = make(chan struct{}, n)
 		}
 	}
 }
 
-// ErrSpawnCapTimeout is the sentinel wrapped by SpawnWindow when it cannot
-// acquire a spawn-semaphore slot within spawnAcquireTimeout (hk-4l7zs). The
-// daemon launch paths detect it via errors.Is to emit a spawn_cap_blocked event
-// with run context. It is also wrapped with handler.ErrStructural so existing
-// structural-error handling continues to apply.
-var ErrSpawnCapTimeout = errors.New("daemon: spawn cap acquire timed out (possible slot leak)")
+// ErrSpawnCapTimeout is the sentinel wrapped by SpawnWindow when a non-terminal
+// spawn cannot acquire a slot within spawnAcquireTimeout (hk-4l7zs, hk-x882o).
+// Terminal spawns never return this error — they use a ctx-bounded wait that
+// draws from the reserved +1 slot. The daemon launch paths detect it via
+// errors.Is to emit a spawn_cap_blocked event with run context. It is also
+// wrapped with handler.ErrStructural so existing structural-error handling
+// continues to apply.
+var ErrSpawnCapTimeout = errors.New("daemon: spawn cap acquire timed out")
 
 // defaultSpawnAcquireTimeout is the default bound on how long SpawnWindow waits
 // for a free spawn slot before failing the launch (hk-4l7zs). Generous enough to
@@ -520,13 +537,16 @@ func (s *tmuxSubstrate) SpawnSlotsInUse() int {
 	return len(s.spawnSem)
 }
 
-// SpawnCapSize reports the configured spawn-cap ceiling (the channel capacity).
-// Returns 0 when no cap is configured. Diagnostic accessor (hk-4l7zs).
+// SpawnCapSize reports the user-configured spawn-cap ceiling for non-terminal
+// sessions (cap(nonTerminalSem)). Returns 0 when no cap is configured.
+// Diagnostic accessor (hk-4l7zs). hk-x882o: returns the non-terminal cap (n),
+// not the total semaphore capacity (n+1), so diagnostics report the value the
+// operator configured rather than the internal oversized semaphore.
 func (s *tmuxSubstrate) SpawnCapSize() int {
-	if s.spawnSem == nil {
+	if s.nonTerminalSem == nil {
 		return 0
 	}
-	return cap(s.spawnSem)
+	return cap(s.nonTerminalSem)
 }
 
 // substrateSpawnStats reports (slotsInUse, capSize) for a substrate that is, or
@@ -544,18 +564,132 @@ func substrateSpawnStats(sub handler.Substrate) (slotsInUse, capSize int) {
 	return 0, 0
 }
 
-// releaseSpawnSlot returns a slot to the spawn semaphore. Called exactly once
-// per session via the callback stored in tmuxSubstrateSession.releaseSlot.
-// No-op when spawnSem is nil.
+// releaseSpawnSlot returns a slot to the spawn semaphore for a non-terminal
+// session. Kept for call sites that predate the terminal-reserve split (e.g.
+// crew sessions outside the cap, and early-return error paths that haven't
+// acquired nonTerminalSem). Callers that track terminality should prefer
+// releaseSpawnSlotFor.
 func (s *tmuxSubstrate) releaseSpawnSlot() {
+	s.releaseSpawnSlotFor(false /* non-terminal: also release nonTerminalSem */)
+}
+
+// releaseSpawnSlotFor returns the slot(s) acquired by a spawn back to the
+// semaphores. For non-terminal sessions it releases both spawnSem and
+// nonTerminalSem. For terminal sessions it releases only spawnSem (the reserved
+// slot). Called exactly once per session via the closure in
+// tmuxSubstrateSession.releaseSlot. No-op when spawnSem is nil (hk-x882o).
+func (s *tmuxSubstrate) releaseSpawnSlotFor(terminal bool) {
 	if s.spawnSem == nil {
 		return
 	}
 	select {
 	case <-s.spawnSem:
 	default:
-		// Already released (should not happen under normal operation since
-		// releaseSpawnSlot is called inside killOnce.Do, but guard defensively).
+		// Already released (should not happen since this is called inside
+		// killOnce.Do, but guard defensively).
+	}
+	if !terminal && s.nonTerminalSem != nil {
+		select {
+		case <-s.nonTerminalSem:
+		default:
+			// Guard defensively.
+		}
+	}
+}
+
+// makeReleaseSlotFn returns a closure that releases the slot(s) acquired for a
+// spawn. For non-terminal sessions the closure releases both spawnSem and
+// nonTerminalSem. For terminal sessions it releases only spawnSem. The closure
+// is stored in tmuxSubstrateSession.releaseSlot and called exactly once inside
+// killOnce.Do (hk-x882o).
+//
+// Returns a no-op when spawnSem is nil (no cap configured).
+func (s *tmuxSubstrate) makeReleaseSlotFn(terminal bool) func() {
+	if s.spawnSem == nil {
+		return func() {}
+	}
+	return func() {
+		s.releaseSpawnSlotFor(terminal)
+	}
+}
+
+// acquireSpawnSlot acquires the semaphore slot(s) required for a spawn.
+//
+// Non-terminal spawns (terminal==false): acquires nonTerminalSem first
+// (bounded by spawnAcquireTimeout) then spawnSem (fast-path only — always
+// available when non-terminal count ≤ cap, because spawnSem has cap+1 slots).
+// Returns ErrSpawnCapTimeout (wrapped in ErrStructural) if nonTerminalSem is
+// saturated and the timeout fires.
+//
+// Terminal spawns (terminal==true): acquires only spawnSem, bounded by ctx
+// only (no timeout). The reserved +1 slot guarantees that a terminal spawn
+// succeeds immediately whenever all non-terminal cap slots are occupied by
+// non-terminal sessions — the incident scenario (hk-x882o).
+//
+// Returns nil when spawnSem is nil (no cap configured — no-op).
+func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) error {
+	if s.spawnSem == nil {
+		return nil
+	}
+
+	if !terminal && s.nonTerminalSem != nil {
+		// Non-terminal path: acquire nonTerminalSem first to prevent occupying
+		// the reserved slot. Fast path first.
+		select {
+		case s.nonTerminalSem <- struct{}{}:
+		default:
+			// Slow path: wait, bounded by ctx and (when set) the acquire timeout.
+			var timeoutCh <-chan time.Time
+			if s.spawnAcquireTimeout > 0 {
+				t := time.NewTimer(s.spawnAcquireTimeout)
+				defer t.Stop()
+				timeoutCh = t.C
+			}
+			start := time.Now()
+			select {
+			case s.nonTerminalSem <- struct{}{}:
+			case <-ctx.Done():
+				return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
+					ctx.Err(), handler.ErrStructural)
+			case <-timeoutCh:
+				waited := time.Since(start)
+				if s.spawnCapBlocked != nil {
+					s.spawnCapBlocked(waited, s.SpawnSlotsInUse(), s.SpawnCapSize())
+				}
+				return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: no slot within %s (cap=%d in_use=%d): %w: %w",
+					s.spawnAcquireTimeout, s.SpawnCapSize(), s.SpawnSlotsInUse(), ErrSpawnCapTimeout, handler.ErrStructural)
+			}
+		}
+		// nonTerminalSem acquired. spawnSem must have room (non-terminal count ≤
+		// cap; spawnSem capacity = cap+1). Fast-path acquire only.
+		select {
+		case s.spawnSem <- struct{}{}:
+			return nil
+		default:
+			// Unexpected: nonTerminalSem was acquired but spawnSem is full. Release
+			// nonTerminalSem to avoid a permanent hold, then return a structural error.
+			select {
+			case <-s.nonTerminalSem:
+			default:
+			}
+			return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: unexpected spawnSem saturation after nonTerminalSem acquired: %w",
+				handler.ErrStructural)
+		}
+	}
+
+	// Terminal path: acquire only spawnSem, bounded by ctx only (no timeout so
+	// reviewed work is never discarded due to spawn-slot starvation). Fast path first.
+	select {
+	case s.spawnSem <- struct{}{}:
+		return nil
+	default:
+	}
+	select {
+	case s.spawnSem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
+			ctx.Err(), handler.ErrStructural)
 	}
 }
 
@@ -597,45 +731,19 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 // worker-side liveness instead of a local kill(s.pid,0) (hk-r1zq). Local callers
 // pass false ⇒ unchanged behaviour (NFR7).
 func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.SubstrateSpawn, adapter tmux.Adapter, sessionName string, remote bool) (handler.SubstrateSession, error) {
-	// Acquire a spawn semaphore slot before creating the window. This enforces
+	// Acquire spawn semaphore slot(s) before creating the window. This enforces
 	// the concurrent-session ceiling (hk-xb5yi). When the cap is not configured
 	// (spawnSem is nil) this block is a no-op.
 	//
-	// hk-4l7zs: the acquire is bounded by spawnAcquireTimeout. Before the fix,
-	// SpawnWindow blocked here forever when every slot was held by a leaked
-	// (acquired-but-never-released) session — the run sat at launch_initiated
-	// with no tmux window until the 30-min implementer budget expired and it
-	// failed no_commit. A bounded wait turns that indefinite wedge into a prompt,
-	// observable launch failure (spawn_cap_blocked diagnostic + ErrStructural).
-	if s.spawnSem != nil {
-		// Fast path: slot immediately available.
-		select {
-		case s.spawnSem <- struct{}{}:
-			// Slot acquired; proceed.
-		default:
-			// Slow path: wait, bounded by ctx and (when set) the acquire timeout.
-			var timeoutCh <-chan time.Time
-			if s.spawnAcquireTimeout > 0 {
-				t := time.NewTimer(s.spawnAcquireTimeout)
-				defer t.Stop()
-				timeoutCh = t.C
-			}
-			start := time.Now()
-			select {
-			case s.spawnSem <- struct{}{}:
-				// Slot acquired after waiting; proceed.
-			case <-ctx.Done():
-				return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
-					ctx.Err(), handler.ErrStructural)
-			case <-timeoutCh:
-				waited := time.Since(start)
-				if s.spawnCapBlocked != nil {
-					s.spawnCapBlocked(waited, s.SpawnSlotsInUse(), s.SpawnCapSize())
-				}
-				return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: no slot within %s (cap=%d in_use=%d): %w: %w",
-					s.spawnAcquireTimeout, s.SpawnCapSize(), s.SpawnSlotsInUse(), ErrSpawnCapTimeout, handler.ErrStructural)
-			}
-		}
+	// hk-4l7zs: bounded acquire so a slot-saturated pool surfaces as a prompt
+	// launch failure rather than an indefinite hang.
+	//
+	// hk-x882o: terminal/consolidate nodes use a reserved +1 slot so a
+	// completed+reviewed run can always get its final merge node scheduled even
+	// when all ordinary non-terminal slots are occupied. See acquireSpawnSlot.
+	releaseSlotFn := s.makeReleaseSlotFn(in.Terminal)
+	if err := s.acquireSpawnSlot(ctx, in.Terminal); err != nil {
+		return nil, err
 	}
 	windowName := in.WindowName
 	if windowName == "" {
@@ -696,7 +804,7 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 	// path so the leak does not compound.
 	outcome, timeoutErr := s.callNewWindowBounded(ctx, adapter, params)
 	if timeoutErr != nil {
-		s.releaseSpawnSlot()
+		releaseSlotFn()
 		return nil, timeoutErr
 	}
 	if outcome.Err != nil {
@@ -716,7 +824,7 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 				if ensErr := se.EnsureSession(ctx, sessionName, ""); ensErr == nil {
 					retryOutcome, retryTimeoutErr := s.callNewWindowBounded(ctx, adapter, params)
 					if retryTimeoutErr != nil {
-						s.releaseSpawnSlot()
+						releaseSlotFn()
 						return nil, retryTimeoutErr
 					}
 					if retryOutcome.Err == nil {
@@ -727,9 +835,9 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 			}
 		}
 		if !recovered {
-			// Release the semaphore slot before returning the error — the window was
-			// never created so the slot is immediately available for reuse.
-			s.releaseSpawnSlot()
+			// Release the semaphore slot(s) before returning the error — the window
+			// was never created so the slot is immediately available for reuse.
+			releaseSlotFn()
 			return nil, fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: %w: %w", outcome.Err, handler.ErrStructural)
 		}
 	}
@@ -798,9 +906,11 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 	// not the channel allocation — the channel is always valid after SpawnWindow
 	// returns.  See architectural review R2 (hk-9to6j).
 	//
-	// releaseSlot is the spawn-cap slot release callback (hk-xb5yi). It is called
-	// exactly once inside killOnce.Do so the semaphore slot is returned when the
-	// session ends. When no cap was configured, releaseSpawnSlot is a no-op.
+	// releaseSlot is the spawn-cap slot release callback (hk-xb5yi, hk-x882o).
+	// It is called exactly once inside killOnce.Do so the semaphore slot(s) are
+	// returned when the session ends. The closure captures in.Terminal so that
+	// terminal sessions release only spawnSem and non-terminal sessions release
+	// both spawnSem and nonTerminalSem.
 	sess := &tmuxSubstrateSession{
 		adapter:     adapter,
 		handle:      outcome.Handle,
@@ -809,7 +919,7 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 		pid:         pid,
 		remote:      remote,
 		waitDone:    make(chan struct{}),
-		releaseSlot: s.releaseSpawnSlot,
+		releaseSlot: releaseSlotFn,
 	}
 	return sess, nil
 }

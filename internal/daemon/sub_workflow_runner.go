@@ -344,6 +344,7 @@ func dispatchSubWorkflowExpandedNode(
 			r.workerBinaryPath,  // hk-538l: worker harmonik path for the node hook command
 			r.workerSessionName, // hk-538l: worker tmux session to ensure + spawn into
 			r.workerSessionCwd,  // hk-538l: worker repo cwd for the worker tmux session
+			false,               // isTerminalSpawn: sub-workflow expanded nodes use non-terminal path; consolidate detection requires de-namespacing (hk-x882o follow-up)
 		)
 
 	case core.NodeTypeGate:

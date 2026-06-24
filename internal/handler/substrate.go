@@ -72,6 +72,19 @@ type SubstrateSpawn struct {
 	//
 	// Bead: hk-rpr6.
 	StdinDevNull bool
+
+	// Terminal, when true, marks this spawn as a terminal/consolidate node that
+	// must not be starved by ordinary non-terminal sessions. The substrate
+	// reserves one slot in the spawn semaphore exclusively for terminal spawns so
+	// that a consolidate node can always acquire a slot even when the configured
+	// cap is fully occupied by non-terminal (implementer/reviewer) sessions.
+	//
+	// Set only for consolidate-style join nodes in DOT workflows and the
+	// single-mode merge spawn. Ordinary implementer and per-axis reviewer spawns
+	// leave this false.
+	//
+	// Bead: hk-x882o.
+	Terminal bool
 }
 
 // SubstrateSession is the daemon's handle on a subprocess hosted by a Substrate.

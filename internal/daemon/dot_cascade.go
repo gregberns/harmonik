@@ -819,12 +819,20 @@ func driveDotWorkflow(
 					emitDotImplementerResumed(ctx, deps.bus, runID, claudeSessionID, iterationCount, priorSummary)
 				}
 			}
+			// hk-x882o: mark the consolidate (verdict-join) node as a terminal
+			// spawn so the substrate allocates the reserved +1 slot for it,
+			// preventing starvation when all non-terminal slots are occupied.
+			// The check is graph-structural and pure — safe to evaluate before
+			// dispatch. The result is also used post-dispatch (line 883), so
+			// computing it here avoids a second call.
+			_, isConsolidate := isConsolidateJoinNode(graph, nodesByID, currentNodeID)
 			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, deps, runID, beadID, beadRecord,
 				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
 				isReviewer, iterationCount, &claudeSessionID,
 				resolvedModel, resolvedEffort, extraContext, baseBranch,
 				lastImplementerReviewerHarness, runner,
-				workerBinaryPath, workerSessionName, workerSessionCwd)
+				workerBinaryPath, workerSessionName, workerSessionCwd,
+				isConsolidate)
 			if nodeErr != nil {
 				if errors.Is(nodeErr, errDotNoChangeSubsumed) {
 					return dotWorkflowResult{
@@ -1133,6 +1141,10 @@ func dispatchDotAgenticNode(
 	workerBinaryPath string,
 	workerSessionName string,
 	workerSessionCwd string,
+	// hk-x882o: isTerminalSpawn marks the consolidate/join node as terminal so the
+	// substrate allocates the reserved +1 slot, preventing starvation when all
+	// non-terminal slots are occupied.
+	isTerminalSpawn bool,
 ) (core.Outcome, error) {
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
 	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
@@ -1302,6 +1314,7 @@ func dispatchDotAgenticNode(
 		pasteTarget = prs
 	}
 	spec.Substrate = substrate
+	spec.Terminal = isTerminalSpawn // hk-x882o: terminal/consolidate nodes draw from the reserved +1 slot
 
 	preHeadSHA, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 

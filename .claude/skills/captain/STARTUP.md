@@ -242,7 +242,7 @@ Write the plan as a **lane table** (one lane = one epic = one crew). For each:
   on an open epic or an in-flight keystone change — it will silently insta-fail at
   dispatch (group_failure, no run_started). Mark those "BLOCKED — do not dispatch
   yet." Only *safe-now* beads get dispatched this session.
-- Aim to fill **every** non-conflicting lane — idle lanes are wasted throughput.
+- Fill every non-conflicting lane **that has ready beads** — idle lanes are wasted throughput. **LAZY BOOT (boot-spike Lever 3):** a lane whose epic has ZERO ready beads (`br ready` shows none) AND no in-flight run is marked **PARKED — no ready beads** in the lane table and is NOT staffed at boot. Booting a crew for an empty-backlog lane spends Opus cache_creation for a session that will immediately idle (the boot spike). The ops-monitor **backlog-ready flag** (Step 6 / CE4) re-staffs a PARKED lane the moment ready work + a free slot coexist — so lazy boot loses no throughput, it just defers the cost to when there is work.
 
 SURFACE the plan to the operator (dual-channel — status line AND `comms send --to
 operator --topic status`) for VISIBILITY, then proceed to Step 5 to staff every
@@ -256,6 +256,8 @@ KNOWN ready lane. Do NOT block on a lane-assignment reply for work already ranke
 For **EVERY** lane in the plan (not just the first), do all five sub-steps. A lane
 is not "done" until it passes **5d verification**. `crew start` exiting 0 is NOT
 verification.
+
+**5·0 — Lazy-boot gate (boot-spike Lever 3):** before 5a–5c for a lane, confirm it has ready work: `br ready --limit 0` filtered to the lane's epic (or its `codename:` label). If ZERO ready beads AND no in-flight run for that epic, mark the lane **PARKED — no ready beads** and SKIP 5a–5d — do NOT `crew start`. The ops-monitor backlog-ready flag re-staffs it when ready beads appear. Only lanes with ready work proceed to 5a.
 
 **5a — Write the mission handoff FIRST** (captain skill §3; locked 6-field schema
 `{schema_version, crew_name, queue, epic_id, goal, captain_name}`):

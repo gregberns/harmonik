@@ -113,6 +113,50 @@ func init() {
 	}
 }
 
+// PrintSkewHintIfStale checks whether the project's on-disk managed assets are
+// behind the running binary and, when they are, prints a loud, actionable hint
+// to stderr telling the operator to run 'harmonik sync-assets'. Best-effort:
+// any detection error or zero-change result is silently ignored so a skew check
+// never blocks start or init.
+//
+// Called from 'harmonik start' (before launching) and 'harmonik init' (after
+// provisioning). The supervisor→captain comms channel (RunAssetSkewCheck /
+// notifyCaptainSkew) is the complementary notify path that reaches a running
+// captain; this one reaches the operator at the CLI directly.
+//
+// Single implementation: delegates to CheckAssetSkew (the pure detection func)
+// with the same closure pattern the supervisor wiring uses, so detection logic
+// is never duplicated.
+func PrintSkewHintIfStale(projectDir string, stderr io.Writer) {
+	res, err := CheckAssetSkew(
+		BuildManifest,
+		func() (Lock, error) { return ReadLock(projectDir) },
+		func(m Manifest) (map[string]string, error) {
+			return buildDiskHashes(projectDir, m, io.Discard)
+		},
+	)
+	if err != nil || !res.Skewed || res.ChangedCount == 0 {
+		return
+	}
+
+	switch {
+	case res.NeverSynced:
+		fmt.Fprintf(stderr,
+			"harmonik: WARNING  %d on-disk instruction file(s) have not been synced to this binary version\n",
+			res.ChangedCount)
+	case res.ConflictCount > 0:
+		fmt.Fprintf(stderr,
+			"harmonik: WARNING  %d on-disk instruction file(s) are stale vs the running binary (%d conflict(s) require manual review)\n",
+			res.ChangedCount, res.ConflictCount)
+	default:
+		fmt.Fprintf(stderr,
+			"harmonik: WARNING  %d on-disk instruction file(s) are stale vs the running binary\n",
+			res.ChangedCount)
+	}
+	fmt.Fprintln(stderr, "harmonik:   → run: harmonik sync-assets --dry-run   (review what would change)")
+	fmt.Fprintln(stderr, "harmonik:          harmonik sync-assets --apply      (apply updates)")
+}
+
 // Digest returns a single sha256 (hex) over the lock's sorted "path:sha\n" lines,
 // computed the SAME way Manifest.Digest does so the two are directly comparable:
 // a project whose lock records exactly the bytes the binary ships produces the same

@@ -63,6 +63,11 @@ import (
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
+// initSkewHintFn is the injectable hook that prints the stale-assets hint after
+// provisioning. Set to PrintSkewHintIfStale in production; can be overridden in
+// tests that do not want filesystem side-effects.
+var initSkewHintFn func(projectDir string, stderr io.Writer) = PrintSkewHintIfStale
+
 // runInitSubcommand dispatches `harmonik init [flags]`.
 //
 // Exit codes:
@@ -221,6 +226,14 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		if code := runSmokeTest(projectDir, stdout, stderr); code != 0 {
 			return code
 		}
+	}
+
+	// Emit the stale-assets hint when existing managed files are behind the
+	// running binary. Fires on re-init of an existing project (--no-force skips
+	// provisioning but the operator needs to know to run sync-assets).
+	// Best-effort: errors and zero-change results are silently suppressed.
+	if initSkewHintFn != nil {
+		initSkewHintFn(projectDir, stderr)
 	}
 
 	fmt.Fprintln(stdout, "harmonik init: done")

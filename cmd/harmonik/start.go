@@ -7,14 +7,36 @@ import (
 	"strings"
 )
 
+// startResolveProjectDir scans args (everything after "start") for a --project
+// flag, falling back to the cwd. Used to resolve the project directory for the
+// skew hint before the role-specific arg parser runs.
+func startResolveProjectDir(args []string) string {
+	for i, arg := range args {
+		if arg == "--project" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, "--project=") {
+			return strings.TrimPrefix(arg, "--project=")
+		}
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return wd
+}
+
 // startDispatch is the injectable seam for the two downstream launchers so the
 // parser can be table-tested without spawning tmux or hitting the daemon RPC.
 // captain receives the captain subArgs (everything after `start captain`);
 // crew receives a fully-formed `crew start …` argv (verb included) so it lands
 // on the existing runCrewSubcommand entry point unchanged.
+// skewHint is called with the resolved project dir before dispatching; nil skips
+// the check (used in tests that do not want filesystem side-effects).
 type startDispatch struct {
-	captain func(subArgs []string) int
-	crew    func(subArgs []string) int
+	captain   func(subArgs []string) int
+	crew      func(subArgs []string) int
+	skewHint  func(projectDir string, stderr io.Writer)
 }
 
 // defaultStartDispatch wires the real downstream launchers. captain routes to
@@ -24,8 +46,9 @@ type startDispatch struct {
 // either internal.
 func defaultStartDispatch() startDispatch {
 	return startDispatch{
-		captain: runCaptainSubcommand,
-		crew:    runCrewSubcommand,
+		captain:  runCaptainSubcommand,
+		crew:     runCrewSubcommand,
+		skewHint: PrintSkewHintIfStale,
 	}
 }
 
@@ -56,6 +79,11 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 
 	switch role {
 	case "captain":
+		// Emit the stale-assets hint before launching so the operator sees it
+		// in the launch log. Fires only for valid roles. Best-effort: nil skips.
+		if dispatch.skewHint != nil {
+			dispatch.skewHint(startResolveProjectDir(args), stderr)
+		}
 		return runStartRole(roleArgs, startRoleSpec{
 			role:           "captain",
 			takesName:      false,
@@ -67,6 +95,9 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 			},
 		}, stderr)
 	case "crew":
+		if dispatch.skewHint != nil {
+			dispatch.skewHint(startResolveProjectDir(args), stderr)
+		}
 		return runStartRole(roleArgs, startRoleSpec{
 			role:           "crew",
 			takesName:      true,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -204,6 +205,41 @@ func TestRunStart_HelpForwarding(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cap.crewArgv, []string{"start", "--help"}) {
 		t.Fatalf("crew argv = %#v, want [start --help]", cap.crewArgv)
+	}
+}
+
+// TestRunStart_SkewHintCalledForValidRoles — when skewHint is wired, it fires
+// for captain and crew (valid roles) but NOT for missing/unknown-role errors.
+func TestRunStart_SkewHintCalledForValidRoles(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantHint bool
+	}{
+		{"captain", []string{"captain"}, true},
+		{"crew paul", []string{"crew", "paul"}, true},
+		{"missing role", []string{}, false},
+		{"unknown role", []string{"keeper"}, false},
+		{"help", []string{"--help"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cap := &captureDispatch{}
+			d := cap.dispatch()
+			hintCalled := false
+			var hintDir string
+			d.skewHint = func(projectDir string, _ io.Writer) {
+				hintCalled = true
+				hintDir = projectDir
+			}
+			var stdout, stderr bytes.Buffer
+			runStartWith(tc.args, d, &stdout, &stderr)
+			if hintCalled != tc.wantHint {
+				t.Fatalf("skewHint called=%v, want %v", hintCalled, tc.wantHint)
+			}
+			if tc.wantHint && hintDir == "" {
+				t.Fatal("skewHint must receive a non-empty project dir")
+			}
+		})
 	}
 }
 

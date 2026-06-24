@@ -127,10 +127,10 @@ type busImpl struct {
 // F-class events require Append(line, sync=true) per EV-016 / EV-016a.
 //
 // This set is exhaustive for the §8 rows marked "F" as of event-model.md
-// v0.3.4. Additions to the §8 taxonomy MUST update this map.
+// v0.6.4. Additions to the §8 taxonomy MUST update this map.
 //
 // Spec ref: specs/event-model.md §4.4 EV-016, EV-016a; §8 taxonomy table.
-// Bead ref: hk-8mup.63.
+// Bead ref: hk-8mup.63, hk-uunpf (G1 gap — 15 missing F-class entries added).
 var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
 	// §8.1 Run lifecycle (F-class rows).
 	core.EventType("run_started"):        {},
@@ -138,12 +138,32 @@ var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
 	core.EventType("run_failed"):         {},
 	core.EventType("transition_event"):   {},
 	core.EventType("checkpoint_written"): {},
+	// §8.1a Review-loop lifecycle (F-class rows; added v0.4.0, hk-uunpf G1).
+	core.EventTypeReviewerVerdict:         {},
+	core.EventTypeReviewLoopCycleComplete: {},
+	// §8.2 Control-point lifecycle (F-class rows; added v0.3.4/v0.5.3, hk-uunpf G1).
+	core.EventTypePolicyExpressionExceededCost: {},
+	core.EventTypeGateDefinitionDrift:          {},
+	core.EventTypeGateRedefinedUnderCat6:       {},
+	// §8.5 Workspace lifecycle (F-class rows; added v0.5.0, hk-uunpf G1).
+	core.EventTypeWorkspaceMergeStatus: {},
 	// §8.7 Daemon lifecycle (F-class rows).
 	core.EventType("daemon_started"):             {},
 	core.EventType("daemon_ready"):               {},
 	core.EventType("daemon_shutdown"):            {},
 	core.EventType("daemon_startup_failed"):      {},
 	core.EventType("operator_upgrade_completed"): {},
+	// §8.10 Queue lifecycle (F-class rows; added v0.5.0–v0.5.1, hk-uunpf G1).
+	core.EventTypeQueueSubmitted:      {},
+	core.EventTypeQueueGroupCompleted: {},
+	core.EventTypeQueuePaused:         {},
+	core.EventTypeQueueItemReconciled: {},
+	// §8.11 Handler-pause lifecycle (F-class rows; added v0.5.2, hk-uunpf G1).
+	core.EventTypeHandlerPaused:  {},
+	core.EventTypeHandlerResumed: {},
+	// §8.12 Daemon escalation (F-class rows; added v0.6.0, hk-uunpf G1).
+	core.EventTypeDecisionRequired:     {},
+	core.EventTypeDecisionAcknowledged: {},
 	// agent-comms §1.1 (hk-djqc9): agent_message is F-class so comms-send is
 	// durable before returning OK ("no silent drops" goal G2).
 	core.EventType("agent_message"): {},
@@ -154,6 +174,8 @@ var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
 	core.EventType("decision_needed"):    {},
 	core.EventType("decision_resolved"):  {},
 	core.EventType("decision_withdrawn"): {},
+	// §8.15 Beads adapter (F-class rows; added v0.6.4, hk-uunpf G1).
+	core.EventTypeBeadSyncFailed: {},
 }
 
 // isFsyncBoundaryEvent reports whether eventType is an F-class (fsync-boundary)

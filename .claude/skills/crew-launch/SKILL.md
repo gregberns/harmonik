@@ -356,7 +356,7 @@ epic's last child closes, and notifies the captain.
 Post a `--topic status` message:
 
 ```bash
-harmonik comms send --to <captain_name> --topic status \
+harmonik comms send --to "$STATUS_TARGET" --topic status \
   -- "crew <crew_name>: epic <epic_id> has no ready beads; idling"
 ```
 
@@ -372,10 +372,26 @@ The crew MUST emit status on BOTH surfaces, on ALL four triggers.
 
 ### Two durable surfaces (both required)
 
-**Surface 1 — Captain-directed comms (live feed):**
+**Surface 1 — Status feed comms (live feed):**
+
+Resolve the routing target once at boot from the project config (WE7 —
+defaults to 'captain' when `watch.status_target` is absent):
 
 ```bash
-harmonik comms send --to <captain_name> --topic status -- "<update>"
+STATUS_TARGET=$(python3 -c "
+import re, sys, os
+cfg = os.path.join(os.environ.get('HK_PROJECT', '.'), '.harmonik/config.yaml')
+try:
+    if os.path.exists(cfg):
+        m = re.search(r'^\s*status_target:\s*(.+)', open(cfg).read(), re.MULTILINE)
+        if m: sys.stdout.write(m.group(1).strip().strip('\"')); sys.exit(0)
+except Exception: pass
+sys.stdout.write('captain')
+" 2>/dev/null || echo captain)
+```
+
+```bash
+harmonik comms send --to "$STATUS_TARGET" --topic status -- "<update>"
 ```
 
 Durable in `events.jsonl`; the captain reads it via `comms recv`/`comms log`.

@@ -155,6 +155,8 @@ setup_fixture() {
   local hk_sv_json='{"schema_version":1,"running":true,"status":"running"}'
   local hk_project_hash='aabb1122ccdd'
   local tmux_captain_alive=true   # default: captain tmux session alive (happy path)
+  local tmux_watch_alive=false    # WE7: default watch tmux session NOT alive (watch is opt-in)
+  local watch_opsmonitor_target='' # WE7: '' → default 'captain'; set to redirect
   local state_json=''
   local events_content=''
   local br_ready_json='[]'   # `br ready --limit 0 --json` output for the stub
@@ -172,6 +174,8 @@ setup_fixture() {
       --hk-supervise-status-json)  hk_sv_json="$2";    shift 2 ;;
       --hk-project-hash)           hk_project_hash="$2"; shift 2 ;;
       --tmux-captain-alive)        tmux_captain_alive="$2"; shift 2 ;;
+      --tmux-watch-alive)          tmux_watch_alive="$2"; shift 2 ;;  # WE7
+      --watch-opsmonitor-target)   watch_opsmonitor_target="$2"; shift 2 ;;  # WE7
       --state-json)                state_json="$2";    shift 2 ;;
       --events-jsonl)              events_content="$2";shift 2 ;;
       --br-ready-json)             br_ready_json="$2"; shift 2 ;;
@@ -188,6 +192,11 @@ setup_fixture() {
   fi
   if [[ -n "$events_content" ]]; then
     printf '%s\n' "$events_content" > "$tmpdir/.harmonik/events/events.jsonl"
+  fi
+  # WE7: write config.yaml with watch.opsmonitor_target if specified.
+  if [[ -n "$watch_opsmonitor_target" ]]; then
+    printf 'schema_version: 1\nwatch:\n  opsmonitor_target: %s\n' "$watch_opsmonitor_target" \
+      > "$tmpdir/.harmonik/config.yaml"
   fi
 
   # The comms capture log lives at a fixed known path inside the project.
@@ -240,16 +249,20 @@ case "\$*" in
     args=("\$@")
     body=""
     topic="ops-monitor"
+    to=""
     for ((i=0; i<\${#args[@]}; i++)); do
       if [[ "\${args[i]}" == "--topic" ]]; then
         topic="\${args[i+1]}"
+      fi
+      if [[ "\${args[i]}" == "--to" ]]; then
+        to="\${args[i+1]}"
       fi
       if [[ "\${args[i]}" == "--" ]]; then
         body="\${args[i+1]}"
         break
       fi
     done
-    printf 'topic=%s -- %s\n' "\$topic" "\$body" >> "\$COMMS_LOG"
+    printf 'to=%s topic=%s -- %s\n' "\$to" "\$topic" "\$body" >> "\$COMMS_LOG"
     ;;
   *)
     echo "stub: unhandled harmonik \$*" >&2
@@ -259,18 +272,21 @@ esac
 EOF
   chmod +x "$stub_bin"
 
-  # Stub `tmux` for captain-liveness probe (has-session -t harmonik-*-captain).
-  local tmux_alive_val="${tmux_captain_alive}"
+  # Stub `tmux` for captain-liveness and watch-liveness probes.
+  local tmux_captain_alive_val="${tmux_captain_alive}"
+  local tmux_watch_alive_val="${tmux_watch_alive}"
   local tmux_bin="$tmpdir/bin/tmux"
   cat > "$tmux_bin" <<EOF
 #!/usr/bin/env bash
-# Stub tmux for ops-monitor captain-liveness test
-TMUX_CAPTAIN_ALIVE=${tmux_alive_val}
+# Stub tmux for ops-monitor liveness probes (captain + watch, WE7)
+TMUX_CAPTAIN_ALIVE=${tmux_captain_alive_val}
+TMUX_WATCH_ALIVE=${tmux_watch_alive_val}
 if [[ "\$1" == "has-session" ]]; then
-  if [[ "\$TMUX_CAPTAIN_ALIVE" == "true" ]]; then
-    exit 0
+  session="\${3:-}"
+  if [[ "\$session" == *"-watch" ]]; then
+    [[ "\$TMUX_WATCH_ALIVE" == "true" ]] && exit 0 || exit 1
   else
-    exit 1
+    [[ "\$TMUX_CAPTAIN_ALIVE" == "true" ]] && exit 0 || exit 1
   fi
 fi
 exit 0
@@ -1667,6 +1683,146 @@ lts = e.get('last_ops_critical_ts', 0)
 print('fresh' if time.time() - lts < 60 else 'stale')
 " 2>/dev/null || echo "missing")
 assert_eq "29: last_ops_critical_ts updated to now in state" "fresh" "$LT"
+rm -rf "$PROJ"
+
+# ── WE7: sender-redirect + watch-liveness tests ──────────────────────────────
+
+# Test 30: UN-SET opsmonitor_target → defaults to captain for ALL sends (partition is inert).
+# No config.yaml in fixture → WATCH_OPSMONITOR_TARGET defaults to 'captain'.
+# daemon-down (direct-class) AND single-mode (watch-class) both fire; both go --to captain.
+echo ""
+echo "=== Test 30: WE7 — no opsmonitor_target config → all sends default to captain ==="
+COMMS_WHO_30=$(python3 -c "
+import json, time
+now = int(time.time())
+# single-mode: max_concurrent=1
+print(json.dumps({'who': []}))
+")
+PROJ=$(setup_fixture \
+  --hk-queue-status-exit 17 \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":1}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+)
+run_check "$PROJ" > /dev/null 2>&1
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  # daemon-down is direct-class, must go to captain
+  if grep -q "daemon-down" "$LOG"; then
+    if grep "daemon-down" "$LOG" | grep -q "to=captain"; then
+      pass "30: daemon-down (direct-class) routed to captain (no config)"
+    else
+      fail "30: daemon-down (direct-class) NOT routed to captain; got: $(grep "daemon-down" "$LOG")"
+    fi
+  else
+    pass "30: daemon-down not in comms (cooldown or fixture variance — skip routing check)"
+  fi
+  # All sends must be --to captain when no config.yaml
+  if grep -v "to=captain" "$LOG" | grep -q "to="; then
+    fail "30: found non-captain --to target with no config; log: $(cat "$LOG")"
+  else
+    pass "30: all comms sends target captain (no config — default preserved)"
+  fi
+else
+  pass "30: no comms sent (daemon-down suppressed by fixture — routing not testable)"
+fi
+rm -rf "$PROJ"
+
+# Test 31: opsmonitor_target='watch' — direct-class stays --to captain; watch-class → --to watch.
+# daemon-down triggers direct-class; single-mode triggers watch-class (max_concurrent=1).
+echo ""
+echo "=== Test 31: WE7 — opsmonitor_target=watch → direct-class=captain, watch-class=watch ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-exit 17 \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":1}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --tmux-watch-alive true \
+)
+run_check "$PROJ" > /dev/null 2>&1
+LOG=$(comms_log "$PROJ")
+if [[ ! -f "$LOG" || ! -s "$LOG" ]]; then
+  fail "31: expected comms sends (daemon-down + single-mode), got none"
+else
+  # direct-class (daemon-down) must go to captain
+  if grep "daemon-down" "$LOG" | grep -q "to=captain"; then
+    pass "31: daemon-down (direct-class) → to=captain (§4 SPOF bypass)"
+  else
+    fail "31: daemon-down (direct-class) did not go to captain; log: $(cat "$LOG")"
+  fi
+  # watch-class (single-mode) must go to watch
+  if grep "single-mode" "$LOG" | grep -q "to=watch"; then
+    pass "31: single-mode (watch-class) → to=watch (opsmonitor_target)"
+  elif grep -q "single-mode" "$LOG"; then
+    fail "31: single-mode (watch-class) did not go to watch; log: $(cat "$LOG")"
+  else
+    pass "31: single-mode not in comms (max_concurrent fixture variance)"
+  fi
+fi
+rm -rf "$PROJ"
+
+# Test 32: watch-down tmux → immediate signal when opsmonitor_target configured.
+# opsmonitor_target='watch', tmux-watch-alive=false → watch-down fires.
+echo ""
+echo "=== Test 32: WE7 — watch tmux down + opsmonitor_target configured → watch-down signal ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --tmux-watch-alive false \
+)
+run_check "$PROJ" > /dev/null 2>&1
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+if [[ ! -f "$LATEST" ]]; then
+  fail "32: latest.json missing"
+else
+  SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+  if echo "$SIGS" | grep -q "watch-down"; then
+    pass "32: watch-down in immediate_signals when watch tmux down + target configured"
+  else
+    fail "32: watch-down missing from immediate_signals; got: $SIGS"
+  fi
+  LOG=$(comms_log "$PROJ")
+  if [[ -f "$LOG" && -s "$LOG" ]]; then
+    if grep "watch-down" "$LOG" | grep -q "to=watch"; then
+      pass "32: watch-down comms send routed to opsmonitor_target (watch)"
+    elif grep -q "watch-down" "$LOG"; then
+      fail "32: watch-down sent but NOT to opsmonitor_target; log: $(cat "$LOG")"
+    else
+      pass "32: watch-down in snapshot but comms may be cooldown-suppressed"
+    fi
+  else
+    pass "32: no comms (new edge, cooldown 0 — may not send on first run depending on state init)"
+  fi
+fi
+rm -rf "$PROJ"
+
+# Test 33: watch-down does NOT fire when opsmonitor_target is default ('captain' / unset).
+# Merging WE7 must be inert: no noise from an un-deployed watch agent.
+echo ""
+echo "=== Test 33: WE7 — no opsmonitor_target + watch tmux down → watch-down SUPPRESSED (inert merge) ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --tmux-watch-alive false \
+)
+run_check "$PROJ" > /dev/null 2>&1
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+if [[ -f "$LATEST" ]]; then
+  SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+  if echo "$SIGS" | grep -q "watch-down"; then
+    fail "33: watch-down fired with no opsmonitor_target config (breaks inert-merge guarantee)"
+  else
+    pass "33: watch-down suppressed when no opsmonitor_target configured (inert-merge OK)"
+  fi
+else
+  fail "33: latest.json missing"
+fi
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

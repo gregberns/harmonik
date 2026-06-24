@@ -205,6 +205,35 @@ if [[ -n "$_CAPTAIN_HASH" ]]; then
     && CAPTAIN_TMUX_ALIVE=true || true
 fi
 
+# ── Read watch routing target (WE7) ──────────────────────────────────────────
+# watch.opsmonitor_target defaults to 'captain' (§7 exception: NOT fail-loud).
+# Flip to 'watch' ONLY after MVP-standup AND 'keeper doctor watch' is green.
+WATCH_OPSMONITOR_TARGET=captain
+if [[ -f "$PROJ/.harmonik/config.yaml" ]]; then
+  _watch_target=$(py3 "
+import re, sys
+try:
+    txt = open('$PROJ/.harmonik/config.yaml').read()
+    m = re.search(r'^\s*opsmonitor_target:\s*(.+)', txt, re.MULTILINE)
+    if m:
+        sys.stdout.write(m.group(1).strip().strip('\"'))
+        sys.exit(0)
+except Exception:
+    pass
+sys.stdout.write('captain')
+" 2>/dev/null || echo captain)
+  WATCH_OPSMONITOR_TARGET="${_watch_target:-captain}"
+fi
+
+# ── Check watch liveness: tmux probe (basic) ─────────────────────────────────
+# WE7: basic process/tmux-down → escalate. Alive-but-stalled dual-probe+cursor
+# advancement is a follow-on (WE9).
+WATCH_TMUX_ALIVE=false
+if [[ -n "$_CAPTAIN_HASH" ]]; then
+  tmux has-session -t "harmonik-${_CAPTAIN_HASH}-watch" 2>/dev/null \
+    && WATCH_TMUX_ALIVE=true || true
+fi
+
 # ── Collect data (skip if daemon is down) ─────────────────────────────────────
 
 if [[ "$DAEMON_UP" == "true" ]]; then
@@ -327,7 +356,9 @@ ts                 = '$TS'
 ts_epoch           = int('$TS_EPOCH')
 daemon_up          = '$DAEMON_UP' == 'true'
 supervisor_up      = '$SUPERVISOR_UP' == 'true'
-captain_tmux_alive = '$CAPTAIN_TMUX_ALIVE' == 'true'
+captain_tmux_alive      = '$CAPTAIN_TMUX_ALIVE' == 'true'
+watch_tmux_alive        = '$WATCH_TMUX_ALIVE' == 'true'
+watch_opsmonitor_target = '$WATCH_OPSMONITOR_TARGET'
 captain_absent_thresh = int('$CAPTAIN_ABSENT_THRESHOLD')
 stale_thresh            = int('$STALE_THRESHOLD')
 miss_limit              = int('$MISS_LIMIT')
@@ -652,7 +683,7 @@ total_workers = sum(q['workers'] for q in queues)
 # Names that are NOT fleet crews — excluded from this loop to prevent bogus
 # crew-stale signals. captain is covered by captain-up; the service agents
 # (ops-monitor, ctx-watchdog, daemon, operator) are never crews.
-NON_CREW = {'captain', 'ops-monitor', 'ctx-watchdog', 'daemon', 'operator'}
+NON_CREW = {'captain', 'ops-monitor', 'ctx-watchdog', 'daemon', 'operator', 'watch'}
 new_misses = {}
 stale_signal_crews = []
 for name, info in crew_status.items():
@@ -740,6 +771,12 @@ if captain_info:
 # captain_down requires BOTH comms absence/staleness AND no tmux session.
 # If the tmux session is alive, captain is UP regardless of stale comms presence.
 captain_down = not captain_present and not captain_tmux_alive
+# watch-down: basic tmux probe. Only fires when watch is configured as a routing
+# target (watch.opsmonitor_target != 'captain') — if still at default, watch
+# isn't expected to be running and a probe would fire constant noise on vanilla
+# deployments. This preserves the 'merging WE7 is inert' guarantee (§11 WE7).
+# Alive-but-stalled cursor-advancement check is WE9.
+watch_down = watch_opsmonitor_target != 'captain' and not watch_tmux_alive
 
 # ── Release-due check ─────────────────────────────────────────────────────────
 # Soft prompt only; never automatic. Normal IMMEDIATE_COOLDOWN applies (NOT a
@@ -769,6 +806,8 @@ if keeper_missing_crews:
     immediate_signals.append('keeper-missing:' + ','.join(sorted(keeper_missing_crews)))
 if release_due:
     immediate_signals.append('release-due:' + str(release_commit_count))
+if watch_down:
+    immediate_signals.append('watch-down')
 
 if stale_signal_crews:
     names = ','.join(c['crew'] for c in stale_signal_crews)
@@ -844,7 +883,7 @@ checks = {
 # captain-down) use CRITICAL_IMMEDIATE_COOLDOWN (5 min) instead of the global
 # 30 min so a downed component re-alerts every ~5 min. captain-down arrives in
 # sibling bead hk-mttt8; the prefix is listed here for forward-compatibility.
-CRITICAL_PREFIXES = ('daemon-down', 'supervisor-down', 'fleet-down', 'captain-down')
+CRITICAL_PREFIXES = ('daemon-down', 'supervisor-down', 'fleet-down', 'captain-down', 'watch-down')
 
 def _norm_alerted(val, is_crit):
     if val is None:
@@ -958,6 +997,12 @@ snapshot = {
     'checks': checks,
     'immediate_signals': immediate_signals,
     'send_immediate_signals': send_immediate_signals,
+    # WE7 partition: direct-class (§4 SPOF bypass) → always --to captain;
+    # watch-class → --to watch.opsmonitor_target (default 'captain').
+    'direct_signals': [s for s in send_immediate_signals if any(
+        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue'))],
+    'watch_signals': [s for s in send_immediate_signals if not any(
+        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue'))],
     'escalations': escalations,
     'digest_signals': digest_signals,
     'all_green': all_green,
@@ -1002,7 +1047,9 @@ DIGEST=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(
 SEND_DIGEST=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(d['snapshot']['send_digest'])" <<< "$ANALYSIS")
 ALL_GREEN=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(d['snapshot']['all_green'])" <<< "$ANALYSIS")
 
-send_comms() {
+# send_direct: always --to captain (§4 SPOF bypass for daemon/supervisor/paused).
+# Used for direct-class signals: daemon-down, supervisor-down, fleet-down, paused-queue.
+send_direct() {
   local body="$1"
   local topic="${2:-ops-monitor}"
   (cd "$PROJ" && harmonik comms send \
@@ -1012,15 +1059,34 @@ send_comms() {
     -- "$body") 2>&1 || true
 }
 
+# send_watch: routes to watch.opsmonitor_target (WE7 — defaults to 'captain').
+# Used for watch-class signals (single-mode, review-bypass, captain-down,
+# keeper-missing, release-due, watch-down), DIGEST, and ops-CRITICAL.
+send_watch() {
+  local body="$1"
+  local topic="${2:-ops-monitor}"
+  (cd "$PROJ" && harmonik comms send \
+    --from ops-monitor \
+    --to "$WATCH_OPSMONITOR_TARGET" \
+    --topic "$topic" \
+    -- "$body") 2>&1 || true
+}
+
+# ── Extract WE7 signal partitions ─────────────────────────────────────────────
+SEND_DIRECT=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d['snapshot']['direct_signals']))" <<< "$ANALYSIS")
+SEND_WATCH_SIGS=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(json.dumps(d['snapshot']['watch_signals']))" <<< "$ANALYSIS")
+
 # Send immediate signals with tier-based escalation.
 # Tier 1 (count==1): [IMMEDIATE] prefix on ops-monitor.
 # Tier 2 (count>=2): [ESCALATION] prefix with count + elapsed on ops-monitor.
 # Tier 3 (count>=OPS_CRITICAL_COUNT or elapsed>=OPS_CRITICAL_ELAPSED): also sends
-#   a separate message to ops-CRITICAL (operator-wake channel).
+#   a separate message to ops-CRITICAL (operator-wake channel, always send_watch).
 if [[ "$SEND_IMMEDIATE" != "[]" ]]; then
-  SIGNALS_TEXT=$(py3 "
+  # Direct-class (daemon/supervisor/paused) → always --to captain (§4 SPOF bypass).
+  if [[ "$SEND_DIRECT" != "[]" ]]; then
+    DIRECT_TEXT=$(py3 "
 import json
-sigs = json.loads('$SEND_IMMEDIATE')
+sigs = json.loads('$SEND_DIRECT')
 escs = json.loads('''$ESCALATIONS_JSON''')
 parts = []
 for s in sigs:
@@ -1033,9 +1099,30 @@ for s in sigs:
         parts.append('[IMMEDIATE] ' + s)
 print(' | '.join(parts))
 ")
-  send_comms "ops-monitor: $SIGNALS_TEXT | ts=$TS | see .harmonik/ops-monitor/latest.json"
+    send_direct "ops-monitor: $DIRECT_TEXT | ts=$TS | see .harmonik/ops-monitor/latest.json"
+  fi
 
-  # Tier-3: additional operator-wake message on ops-CRITICAL.
+  # Watch-class (single-mode, review-bypass, captain-down, etc.) → send_watch.
+  if [[ "$SEND_WATCH_SIGS" != "[]" ]]; then
+    WATCH_TEXT=$(py3 "
+import json
+sigs = json.loads('$SEND_WATCH_SIGS')
+escs = json.loads('''$ESCALATIONS_JSON''')
+parts = []
+for s in sigs:
+    e = escs.get(s)
+    if e and e.get('tier', 1) >= 2:
+        m = e['elapsed_s'] // 60
+        n = e['count']
+        parts.append(f'[ESCALATION] {s} for >{m}m — alert #{n} — no self-healing path')
+    else:
+        parts.append('[IMMEDIATE] ' + s)
+print(' | '.join(parts))
+")
+    send_watch "ops-monitor: $WATCH_TEXT | ts=$TS | see .harmonik/ops-monitor/latest.json"
+  fi
+
+  # Tier-3: operator-wake on ops-CRITICAL (always send_watch per WE7 §4).
   TIER3_PARTS=$(py3 "
 import json
 sigs = json.loads('$SEND_IMMEDIATE')
@@ -1050,11 +1137,11 @@ for s in sigs:
 print(' | '.join(parts))
 ")
   if [[ -n "$TIER3_PARTS" ]]; then
-    send_comms "[ops-CRITICAL] $TIER3_PARTS — operator intervention required | ts=$TS | see .harmonik/ops-monitor/latest.json" "ops-CRITICAL"
+    send_watch "[ops-CRITICAL] $TIER3_PARTS — operator intervention required | ts=$TS | see .harmonik/ops-monitor/latest.json" "ops-CRITICAL"
   fi
 elif [[ "$SEND_DIGEST" == "True" && "$DIGEST" != "[]" ]]; then
   SIGNALS_TEXT=$(py3 "import json; sigs=json.loads('$DIGEST'); print(' | '.join(sigs))")
-  send_comms "[DIGEST] ops-monitor: $SIGNALS_TEXT | ts=$TS | see .harmonik/ops-monitor/latest.json"
+  send_watch "[DIGEST] ops-monitor: $SIGNALS_TEXT | ts=$TS | see .harmonik/ops-monitor/latest.json"
 fi
 
 # ── Summary line (stdout for operator visibility) ─────────────────────────────

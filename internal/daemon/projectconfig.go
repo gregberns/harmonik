@@ -642,6 +642,29 @@ type WatchdogConfig struct {
 	Enabled bool
 }
 
+// rawWatchConfig is the watch: block in config.yaml (WE7 — captain-wake-economy).
+// Unknown keys at this level are silently ignored (forward-compat, matches daemon: block).
+// Both target fields default to "captain" when absent (NOT fail-loud — §7 exception).
+type rawWatchConfig struct {
+	StatusTarget     string `yaml:"status_target"`
+	OpsmonitorTarget string `yaml:"opsmonitor_target"`
+}
+
+// WatchConfig holds the watch-level routing configuration read from the
+// watch: block in .harmonik/config.yaml. Both target fields default to "captain"
+// (NOT fail-loud — §7 exception, WE7 load-bearing: preserves existing routing
+// when the watch: block is absent).
+//
+// Bead ref: hk-we7-sender-redirect-clhh8.
+type WatchConfig struct {
+	// StatusTarget is the comms --to target for crew status feeds.
+	// Empty = not configured → callers resolve to "captain".
+	StatusTarget string
+	// OpsmonitorTarget is the comms --to target for ops-monitor watch-class signals.
+	// Empty = not configured → callers resolve to "captain".
+	OpsmonitorTarget string
+}
+
 // rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
@@ -649,6 +672,7 @@ type rawProjectConfig struct {
 	Daemon        rawDaemonConfig           `yaml:"daemon"`   // hk-rcp7: PL-004b daemon: block
 	Keeper        rawKeeperConfig           `yaml:"keeper"`   // hk-lhu2: keeper config block
 	Watchdog      rawWatchdogConfig         `yaml:"watchdog"` // hk-sbitr: ctx-watchdog schedule gate
+	Watch         rawWatchConfig            `yaml:"watch"`    // hk-we7: watch routing targets
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.
@@ -689,6 +713,11 @@ type ProjectConfig struct {
 	//
 	// Bead ref: hk-sbitr.
 	Watchdog WatchdogConfig
+
+	// Watch holds the watch-level routing config read from the watch: block.
+	// When the block is absent, both target fields are empty strings (callers
+	// default to "captain"). Bead ref: hk-we7-sender-redirect-clhh8.
+	Watch WatchConfig
 }
 
 // LookupAgent returns the (model, effort) pair configured for agentType, or
@@ -746,8 +775,9 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		raw.Daemon.TargetBranch == "" && len(raw.Daemon.AllowedRepos) == 0 &&
 		raw.Daemon.RemoteControlPrefix == ""
 	watchdogAbsent := raw.Watchdog.Enabled == nil
+	watchBlockAbsent := raw.Watch.StatusTarget == "" && raw.Watch.OpsmonitorTarget == ""
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
-		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent {
+		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent && watchBlockAbsent {
 		return ProjectConfig{}, nil
 	}
 
@@ -781,11 +811,16 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	// hk-sbitr: parse the watchdog: block. Absent → Enabled defaults to true.
 	watchdogCfg := parseWatchdogBlock(raw.Watchdog)
 
+	// hk-we7: parse the watch: block. Absent → both target fields are empty strings
+	// (callers default to "captain").
+	watchCfg := parseWatchBlock(raw.Watch)
+
 	cfg := ProjectConfig{
 		entries:  make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
 		Daemon:   daemonCfg,
 		Keeper:   keeperCfg,
 		Watchdog: watchdogCfg,
+		Watch:    watchCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
@@ -1181,4 +1216,15 @@ func parseWatchdogBlock(raw rawWatchdogConfig) WatchdogConfig {
 		return WatchdogConfig{Enabled: true}
 	}
 	return WatchdogConfig{Enabled: *raw.Enabled}
+}
+
+// parseWatchBlock converts a rawWatchConfig into a WatchConfig.
+// Both target fields are optional; empty strings mean "not configured"
+// and callers apply the "captain" default (NOT here — so callers can
+// distinguish "absent" from an explicit "captain").
+func parseWatchBlock(raw rawWatchConfig) WatchConfig {
+	return WatchConfig{
+		StatusTarget:     raw.StatusTarget,
+		OpsmonitorTarget: raw.OpsmonitorTarget,
+	}
 }

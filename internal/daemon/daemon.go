@@ -1097,6 +1097,28 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		)
 	}
 
+	// Wire the Cat-BL2 reactive ledger-import-failure handler (§8.BL2, hk-k7va9).
+	//
+	// CatBL2Handler subscribes to bead_sync_failed events (emitted by the
+	// post-merge br-sync path in mergeRunBranchToMain, hk-zgt4u) and retries
+	// `br sync --import-only` once. On success it emits bead_ledger_recovered;
+	// on persistent failure it emits bead_ledger_corrupt + operator_escalation_required
+	// {reason=cat_6b_auto_escalated}. Only wired when ProjectDir is set (BrPath
+	// is always paired with ProjectDir in production).
+	//
+	// Spec ref: specs/reconciliation/spec.md §8.BL2.
+	// Bead ref: hk-k7va9.
+	if cfg.ProjectDir != "" && cfg.BrPath != "" {
+		catBL2Handler := NewCatBL2Handler(CatBL2HandlerConfig{
+			ProjectDir: cfg.ProjectDir,
+			BrPath:     cfg.BrPath,
+			Emitter:    bus,
+		})
+		if subscribeErr := catBL2Handler.Subscribe(bus); subscribeErr != nil {
+			return fmt.Errorf("daemon.Start: CatBL2Handler.Subscribe: %w", subscribeErr)
+		}
+	}
+
 	// Notify the test-only observer (when set) so tests can inspect bus
 	// subscription state before Seal locks it.  Only reachable via
 	// StartForTesting; production Start always passes a zero-value daemonTestHooks.

@@ -1,20 +1,22 @@
 package daemon
 
-// reconciliation.go — Cat-BL1 and Cat-BL3 startup sweep detectors.
+// reconciliation.go — Cat-BL1, Cat-BL2, and Cat-BL3 detectors.
 //
 // Cat-BL1 (§8.BL1): child-bead orphan detector. At startup, enumerates beads
 // with parent:hk-* labels, checks git for parent-run merge commits, closes
 // orphans; escalates to operator if orphan is in_progress.
 //
+// Cat-BL2 (§8.BL2): bead-ledger import-failure reactive handler. Subscribes to
+// bead_sync_failed events; retries `br sync --import-only` once; emits
+// bead_ledger_recovered on success or bead_ledger_corrupt + Cat 6b escalation
+// on persistent failure.
+//
 // Cat-BL3 (§8.BL3): merge-conflict-log audit. At startup, checks for a
 // non-empty .beads/merge-conflicts.log, emits bead_ledger_conflict_audit, and
 // truncates the log file.
 //
-// Cat-BL2 (§8.BL2) is reactive — triggered by bead_sync_failed events
-// arriving at the daemon event bus — and has no startup detector.
-//
 // Spec ref: specs/reconciliation/spec.md §8.BL1, §8.BL2, §8.BL3.
-// Bead ref: hk-27ghc.
+// Bead ref: hk-27ghc, hk-k7va9.
 
 import (
 	"bufio"
@@ -30,6 +32,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
 // parentLabelPrefix is the label prefix used by child beads to record their
@@ -393,4 +396,135 @@ func parseConflictLine(line string) (core.BeadLedgerConflict, bool) {
 		return core.BeadLedgerConflict{}, false
 	}
 	return c, true
+}
+
+// ---------------------------------------------------------------------------
+// Cat-BL2: bead-ledger import-failure reactive handler (§8.BL2)
+// ---------------------------------------------------------------------------
+
+// CatBL2HandlerConfig holds the construction-time parameters for the
+// Cat-BL2 reactive bead-ledger import-failure handler.
+type CatBL2HandlerConfig struct {
+	// ProjectDir is the harmonik project root. Must be non-empty.
+	ProjectDir string
+
+	// BrPath is the absolute path to the `br` binary. Must be non-empty.
+	BrPath string
+
+	// Emitter is used to emit bead_ledger_recovered, bead_ledger_corrupt, and
+	// operator_escalation_required events. Required.
+	Emitter interface {
+		Emit(ctx context.Context, eventType core.EventType, payload []byte) error
+	}
+
+	// LogWriter receives non-fatal handler status messages. Nil → os.Stderr.
+	LogWriter io.Writer
+}
+
+// CatBL2Handler is the reactive Cat-BL2 detector: it subscribes to
+// bead_sync_failed events and, for each one:
+//  1. Retries `br sync --import-only` once.
+//  2. On success: emits bead_ledger_recovered{run_id, timestamp}.
+//  3. On persistent failure: emits bead_ledger_corrupt{run_id, error, timestamp}
+//     and operator_escalation_required{reason=cat_6b_auto_escalated}.
+//
+// Spec ref: specs/reconciliation/spec.md §8.BL2 — Cat-BL2 bead-ledger import failure.
+// Bead ref: hk-k7va9.
+type CatBL2Handler struct {
+	cfg    CatBL2HandlerConfig
+	logWriter io.Writer
+}
+
+// NewCatBL2Handler constructs a CatBL2Handler from cfg.
+func NewCatBL2Handler(cfg CatBL2HandlerConfig) *CatBL2Handler {
+	logW := cfg.LogWriter
+	if logW == nil {
+		logW = os.Stderr
+	}
+	return &CatBL2Handler{cfg: cfg, logWriter: logW}
+}
+
+// Subscribe registers the Cat-BL2 asynchronous bead_sync_failed consumer with
+// the bus. Must be called before bus.Seal per EV-009.
+//
+// DeclaredEmitTypes: bead_ledger_recovered, bead_ledger_corrupt,
+// operator_escalation_required (emitted back to the bus).
+func (h *CatBL2Handler) Subscribe(bus eventbus.EventBus) error {
+	sub := core.Subscription{
+		ConsumerID:    "cat-bl2-ledger-import-failure",
+		ConsumerClass: core.ConsumerClassAsynchronous,
+		EventPattern: core.EventPattern{
+			Types: map[core.EventType]struct{}{
+				core.EventTypeBeadSyncFailed: {},
+			},
+		},
+		OnPanic: core.OnPanicRecoverAndLog,
+		Handler: h.handleBeadSyncFailed,
+	}
+	if _, err := bus.Subscribe(sub); err != nil {
+		return fmt.Errorf("CatBL2Handler.Subscribe: %w", err)
+	}
+	return nil
+}
+
+// handleBeadSyncFailed is the Cat-BL2 event handler. It retries `br sync
+// --import-only` once and emits the appropriate outcome event.
+func (h *CatBL2Handler) handleBeadSyncFailed(ctx context.Context, evt core.Event) error {
+	var pl core.BeadSyncFailedPayload
+	if err := json.Unmarshal(evt.Payload, &pl); err != nil {
+		fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: unmarshal bead_sync_failed: %v (skipping)\n", err)
+		return nil
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	//nolint:gosec // G204: BrPath resolved from harmonik config, not user input
+	retryCmd := exec.CommandContext(ctx, h.cfg.BrPath, "sync", "--import-only")
+	retryCmd.Dir = h.cfg.ProjectDir
+	retryOut, retryErr := retryCmd.CombinedOutput()
+
+	if retryErr == nil {
+		// Retry succeeded: emit bead_ledger_recovered.
+		recovered := core.BeadLedgerRecoveredPayload{
+			RunID:     pl.RunID,
+			Timestamp: now,
+		}
+		if b, marshalErr := json.Marshal(recovered); marshalErr == nil {
+			if emitErr := h.cfg.Emitter.Emit(ctx, core.EventTypeBeadLedgerRecovered, b); emitErr != nil {
+				fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit bead_ledger_recovered: %v\n", emitErr)
+			}
+		}
+		fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: ledger recovered for run %s\n", pl.RunID)
+		return nil
+	}
+
+	// Retry failed: emit bead_ledger_corrupt + Cat 6b escalation.
+	errMsg := retryErr.Error()
+	if len(retryOut) > 0 {
+		errMsg = fmt.Sprintf("%s\n%s", errMsg, strings.TrimRight(string(retryOut), "\n"))
+	}
+	corrupt := core.BeadLedgerCorruptPayload{
+		RunID:     pl.RunID,
+		Error:     errMsg,
+		Timestamp: now,
+	}
+	if b, marshalErr := json.Marshal(corrupt); marshalErr == nil {
+		if emitErr := h.cfg.Emitter.Emit(ctx, core.EventTypeBeadLedgerCorrupt, b); emitErr != nil {
+			fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit bead_ledger_corrupt: %v\n", emitErr)
+		}
+	}
+
+	escalate := core.OperatorEscalationRequiredPayload{
+		Reason: core.OperatorEscalationReasonCat6bAutoEscalated,
+	}
+	if b, marshalErr := json.Marshal(escalate); marshalErr == nil {
+		if emitErr := h.cfg.Emitter.Emit(ctx, core.EventTypeOperatorEscalationRequired, b); emitErr != nil {
+			fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit operator_escalation_required: %v\n", emitErr)
+		}
+	}
+
+	fmt.Fprintf(h.logWriter,
+		"reconciliation Cat-BL2: ledger corrupt for run %s — escalated to operator (Cat 6b): %s\n",
+		pl.RunID, retryErr)
+	return nil
 }

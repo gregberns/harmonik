@@ -544,12 +544,18 @@ func registerDecisionRequiredEvents() {
 // Durability classes per §8.15 table:
 //   - bead_sync_failed (§8.15.1):          F (fsync-boundary — loss silences Cat-BL2
 //     routing obligation per BL-MRG-004)
+//   - bead_ledger_recovered (§8.BL2):       O (ordinary — Cat-BL2 retry succeeded;
+//     ledger back in sync per reconciliation/spec.md §8.BL2)
+//   - bead_ledger_corrupt (§8.BL2):         O (ordinary — Cat-BL2 retry failed;
+//     triggers Cat 6b operator escalation per reconciliation/spec.md §8.BL2)
 //   - bead_ledger_conflict_audit (§8.15.2): O (ordinary — conflict log is authoritative;
 //     investigator can re-emit on recovery per BL-MRG-003)
 //   - orphaned_child_bead (§8.15.3):        O (ordinary — informational; bead closed
 //     or escalated immediately after emission per reconciliation/spec.md §8.BL1)
 func registerBeadLedgerEvents() {
 	mustRegister("bead_sync_failed", func() EventPayload { return &BeadSyncFailedPayload{} })
+	mustRegister("bead_ledger_recovered", func() EventPayload { return &BeadLedgerRecoveredPayload{} })
+	mustRegister("bead_ledger_corrupt", func() EventPayload { return &BeadLedgerCorruptPayload{} })
 	mustRegister("bead_ledger_conflict_audit", func() EventPayload { return &BeadLedgerConflictAuditPayload{} })
 	mustRegister("orphaned_child_bead", func() EventPayload { return &OrphanedChildBeadPayload{} })
 }

@@ -322,6 +322,14 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// a rebase/merge touching .beads/issues.jsonl; must precede Cat-BL2 routing
 	// per BL-MRG-004. Payload: run_id, error, timestamp.
 	{TypeName: "bead_sync_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// bead_ledger_recovered (§8.BL2, O): Cat-BL2 retry succeeded; ledger back
+	// in sync after a bead_sync_failed event per reconciliation/spec.md §8.BL2.
+	// Payload: run_id, timestamp.
+	{TypeName: "bead_ledger_recovered", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// bead_ledger_corrupt (§8.BL2, O): Cat-BL2 retry failed persistently;
+	// triggers Cat 6b operator escalation per reconciliation/spec.md §8.BL2.
+	// Payload: run_id, error, timestamp.
+	{TypeName: "bead_ledger_corrupt", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// bead_ledger_conflict_audit (§8.15.2, O): reconciliation-investigator
 	// audit batch from .beads/merge-conflicts.log per BL-MRG-003. Payload:
 	// run_id, bead_ids, conflicts, timestamp.

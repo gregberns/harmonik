@@ -362,6 +362,74 @@ func (p BeadSyncFailedPayload) Valid() bool {
 }
 
 // ---------------------------------------------------------------------------
+// §8.BL2 bead_ledger_recovered
+// ---------------------------------------------------------------------------
+
+// BeadLedgerRecoveredPayload is the typed event payload for the
+// bead_ledger_recovered event (reconciliation/spec.md §8.BL2).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — observability; ledger state is authoritative).
+//
+// Emitted by the Cat-BL2 reactive handler when a `br sync --import-only` retry
+// succeeds after a bead_sync_failed event. Signals that the SQLite ledger is
+// back in sync with .beads/issues.jsonl.
+//
+// # Payload fields (§8.BL2)
+//
+//   - run_id    — UUID of the run whose failed sync triggered the retry (REQUIRED)
+//   - timestamp — RFC 3339 wall-clock time at recovery (REQUIRED)
+type BeadLedgerRecoveredPayload struct {
+	// RunID is the UUID of the run whose failed sync triggered the Cat-BL2 retry.
+	RunID string `json:"run_id"`
+
+	// Timestamp is the RFC 3339 wall-clock time at recovery.
+	Timestamp string `json:"timestamp"`
+}
+
+// Valid reports whether p is a well-formed BeadLedgerRecoveredPayload.
+func (p BeadLedgerRecoveredPayload) Valid() bool {
+	return p.RunID != "" && p.Timestamp != ""
+}
+
+// ---------------------------------------------------------------------------
+// §8.BL2 bead_ledger_corrupt
+// ---------------------------------------------------------------------------
+
+// BeadLedgerCorruptPayload is the typed event payload for the
+// bead_ledger_corrupt event (reconciliation/spec.md §8.BL2).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — observability; triggers Cat 6b escalation).
+//
+// Emitted by the Cat-BL2 reactive handler when a `br sync --import-only` retry
+// fails persistently after a bead_sync_failed event. Triggers Cat 6b
+// auto-escalation to operator.
+//
+// # Payload fields (§8.BL2)
+//
+//   - run_id    — UUID of the run whose failed sync triggered the retry (REQUIRED)
+//   - error     — free-form error from the retry `br sync` stderr or exit code (REQUIRED)
+//   - timestamp — RFC 3339 wall-clock time at the persistent failure (REQUIRED)
+type BeadLedgerCorruptPayload struct {
+	// RunID is the UUID of the run whose failed sync triggered the Cat-BL2 retry.
+	RunID string `json:"run_id"`
+
+	// Error is the free-form error string from the retry `br sync` subprocess stderr or exit code.
+	Error string `json:"error"`
+
+	// Timestamp is the RFC 3339 wall-clock time at the persistent failure.
+	Timestamp string `json:"timestamp"`
+}
+
+// Valid reports whether p is a well-formed BeadLedgerCorruptPayload.
+func (p BeadLedgerCorruptPayload) Valid() bool {
+	return p.RunID != "" && p.Error != "" && p.Timestamp != ""
+}
+
+// ---------------------------------------------------------------------------
 // §8.15.2 bead_ledger_conflict_audit
 // ---------------------------------------------------------------------------
 

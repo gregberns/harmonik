@@ -1213,6 +1213,22 @@ const (
 	// Payload: run_id, error, timestamp.
 	EventTypeBeadSyncFailed EventType = "bead_sync_failed"
 
+	// EventTypeBeadLedgerRecovered is the bead_ledger_recovered event type
+	// (reconciliation/spec.md §8.BL2). Emitted by the Cat-BL2 reactive handler
+	// when a `br sync --import-only` retry succeeds after a bead_sync_failed
+	// event. Signals that the SQLite ledger is back in sync with .beads/issues.jsonl.
+	// Durability class: O.
+	// Payload: run_id, timestamp.
+	EventTypeBeadLedgerRecovered EventType = "bead_ledger_recovered"
+
+	// EventTypeBeadLedgerCorrupt is the bead_ledger_corrupt event type
+	// (reconciliation/spec.md §8.BL2). Emitted by the Cat-BL2 reactive handler
+	// when a `br sync --import-only` retry fails persistently after a
+	// bead_sync_failed event. Triggers Cat 6b auto-escalation to operator.
+	// Durability class: O.
+	// Payload: run_id, error, timestamp.
+	EventTypeBeadLedgerCorrupt EventType = "bead_ledger_corrupt"
+
 	// EventTypeBeadLedgerConflictAudit is the bead_ledger_conflict_audit event
 	// type (§8.15.2). Emitted by the reconciliation-investigator for each
 	// .beads/merge-conflicts.log batch read during a Cat-BL3 audit per

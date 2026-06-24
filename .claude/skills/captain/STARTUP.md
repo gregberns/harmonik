@@ -281,6 +281,8 @@ harmonik crew start <crew> --queue <crew>-q --mission .harmonik/crew/missions/<c
 # other  → name/queue collision or launch failure → SURFACE exact error, AWAIT (no auto-retry)
 ```
 
+**5c STAGGER RULE (boot-spike Lever 1 — token-opt):** After each `crew start`, wait for `comms who` to show the crew online (~30–60s), THEN wait an additional **2 minutes** before launching the next crew. Do NOT batch `crew start` calls. The 2-min gap lets each crew's cache prefix warm against the captain's already-warm shared prefix instead of all crews creating cold `cache_creation` prefixes simultaneously (the boot spike). The existing 5d verification (comms-online + pane-truth) still gates moving to the next lane; the stagger adds the explicit 2-min cache-warm wait on top of it.
+
 For an ALREADY-LIVE crew that just needs a new epic, this is a **comms re-task,
 NOT a new `crew start`** (captain skill §4):
 

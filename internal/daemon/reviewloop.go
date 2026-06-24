@@ -48,6 +48,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -940,6 +941,42 @@ func runReviewLoop(
 				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
 				return result
 			}
+
+			// hk-30jd: Churn-only commit guard.
+			//
+			// The harness materializes .claude/settings.json into every worktree via
+			// MaterializeClaudeSettings before the implementer runs. Because the file
+			// is tracked in the main repo, the materialization write leaves it as a
+			// dirty tracked file. An implementer that commits before making any real
+			// changes ends up committing ONLY that harness-injected settings.json —
+			// HEAD advances, the no-commit guard above passes, and the reviewer is
+			// launched with a churn-only diff. The reviewer correctly flags this as a
+			// no-op (REQUEST_CHANGES), burning a review cycle for zero progress.
+			//
+			// Fix: after the HEAD-advance check, inspect the diff between
+			// noCommitBaseline and headSHA. If EVERY changed path is isHarmonikChurn
+			// (e.g. .claude/settings.json, .harmonik/…), treat the commit as a
+			// no-commit — fail the run and never launch the reviewer.
+			//
+			// Error-tolerance: a git failure in the churn probe is non-fatal; we log
+			// it and fall through to the reviewer dispatch so the reviewer can make
+			// the call, preserving the pre-fix behaviour on probe failure.
+			if churnOnly, churnErr := isChurnOnlyCommitVia(ctx, runner, wtPath, noCommitBaseline, headSHA); churnErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: review-loop: hk-30jd churn-only probe failed (non-fatal): bead %s run %s: %v\n",
+					beadID, runID.String(), churnErr)
+			} else if churnOnly {
+				summary := fmt.Sprintf(
+					"no_commit_during_implementer: iter-1 commit only modified harness churn files (e.g. .claude/settings.json); no real implementation; HEAD %s parent %s",
+					headSHA, noCommitBaseline)
+				result := reviewLoopResult{
+					success:          false,
+					completionReason: core.ReviewLoopCompletionReasonError,
+					summary:          summary,
+					needsAttention:   true,
+				}
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
 		}
 
 		// Capture claude_session_id for iteration 1.
@@ -1673,6 +1710,47 @@ func rlErrorResult(summary string) reviewLoopResult {
 		summary:          summary,
 		needsAttention:   true,
 	}
+}
+
+// isChurnOnlyCommitVia reports whether ALL files changed between baseSHA and
+// headSHA in the worktree at wtPath are harness-owned churn paths (isHarmonikChurn).
+//
+// Returns (true, nil) when the diff is non-empty and every path is churn.
+// Returns (false, nil) when at least one non-churn path appears, or when the
+// diff is empty (that case belongs to the headSHA==baseline no-commit guard).
+// Returns (false, err) on git failure.
+//
+// Runner routing follows the same nil=local / non-nil=remote-runner convention
+// as resolveWorktreeHEADVia and rlComputeDiffHashVia (NFR7).
+//
+// Bead: hk-30jd.
+func isChurnOnlyCommitVia(ctx context.Context, runner tmux.CommandRunner, wtPath, baseSHA, headSHA string) (bool, error) {
+	args := []string{"git", "-C", wtPath, "diff", "--name-only", baseSHA + ".." + headSHA}
+	var out []byte
+	var err error
+	if runner == nil {
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+		out, err = cmd.Output()
+	} else {
+		out, err = runner.Command(ctx, args[0], args[1:]...).Output()
+	}
+	if err != nil {
+		return false, fmt.Errorf("daemon: isChurnOnlyCommitVia: git diff --name-only %s..%s: %w", baseSHA, headSHA, err)
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return false, nil
+	}
+	for _, f := range strings.Split(raw, "\n") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if !isHarmonikChurn(f) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // rlComputeDiffHash resolves the current HEAD of the worktree and computes the

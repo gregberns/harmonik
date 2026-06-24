@@ -654,6 +654,87 @@ func TestSleepMarkerSourceLevelWritten(t *testing.T) {
 	}
 }
 
+// TestQuiesceArbiterAgentMessageToWatchWakesWatch is the WE5 RED→GREEN test:
+// a parked watch session (a.sleeping["watch"]) must be woken when an agent_message
+// with To=="watch" arrives.  The existing captain-wake path must remain unchanged.
+func TestQuiesceArbiterAgentMessageToWatchWakesWatch(t *testing.T) {
+	watchPane := "harmonik-test0000-watch:hk-crew-watch.0"
+	captainPane := "harmonik-test0000-captain:0.0"
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, 5*time.Second, time.Hour)
+
+	// Park both watch and captain.
+	forceSleepRecord(arbiter, sessionSleepRecord{
+		agentName:  watchAgentName,
+		paneTarget: watchPane,
+		sessionID:  "watch-sess",
+		sleptAt:    time.Now(),
+	})
+	forceSleepRecord(arbiter, sessionSleepRecord{
+		agentName:  captainAgentName,
+		paneTarget: captainPane,
+		sessionID:  "captain-sess",
+		sleptAt:    time.Now(),
+	})
+
+	// An agent_message directed at "watch" (not captain) should wake the watch.
+	mustEmitAgentMessage(t, arbiter, "paul", watchAgentName)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	arbiter.Start(ctx)
+
+	nudges.awaitNudge(t, 1, 2*time.Second)
+
+	// Watch pane must be nudged.
+	if !nudges.hasTarget(watchPane) {
+		t.Errorf("watch pane %q not nudged; got %v", watchPane, nudges.targets)
+	}
+	// Captain must NOT be nudged.
+	if nudges.hasTarget(captainPane) {
+		t.Errorf("captain pane %q should NOT be nudged by a message to watch; got %v", captainPane, nudges.targets)
+	}
+
+	// Watch should be removed from sleeping map; captain should remain sleeping.
+	arbiter.mu.Lock()
+	_, watchStillSleeping := arbiter.sleeping[watchAgentName]
+	_, captainStillSleeping := arbiter.sleeping[captainAgentName]
+	arbiter.mu.Unlock()
+	if watchStillSleeping {
+		t.Error("watch still in sleeping map after wake")
+	}
+	if !captainStillSleeping {
+		t.Error("captain should still be sleeping after a watch-directed message")
+	}
+}
+
+// TestQuiesceArbiterAgentMessageToWatchDoesNotWakeCaptain verifies the
+// routing-isolation invariant: a message to "watch" must not wake the captain.
+func TestQuiesceArbiterAgentMessageToWatchDoesNotWakeCaptain(t *testing.T) {
+	captainPane := "harmonik-test0000-captain:0.0"
+	arbiter, nudges, _ := newTestQuiesceArbiter(t, t.TempDir(), nil, 5*time.Second, time.Hour)
+
+	forceSleepRecord(arbiter, sessionSleepRecord{
+		agentName:  captainAgentName,
+		paneTarget: captainPane,
+		sessionID:  "captain-sess",
+		sleptAt:    time.Now(),
+	})
+
+	mustEmitAgentMessage(t, arbiter, "paul", watchAgentName)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	arbiter.Start(ctx)
+
+	time.Sleep(200 * time.Millisecond)
+	nudges.mu.Lock()
+	got := len(nudges.targets)
+	nudges.mu.Unlock()
+	if got != 0 {
+		t.Errorf("captain must not be woken by a message to watch; got %d nudge(s) to %v", got, nudges.targets)
+	}
+}
+
 // TestSleepMarkerBackwardCompatDefaults verifies that a legacy marker carrying
 // only session_id + parked_at (written by an older daemon) parses cleanly and
 // receives the backward-compatible defaults: operator source, L1 drain level

@@ -77,6 +77,10 @@ const (
 	// captainAgentName is the conventional captain agent name used by
 	// lifecycle.TmuxSessionName and crew registries.
 	captainAgentName = "captain"
+
+	// watchAgentName is the conventional watch agent name (WE5): the always-on
+	// triage-and-relay session that sits between the event bus and the captain.
+	watchAgentName = "watch"
 )
 
 // SleepSource identifies who initiated a park (hk-caaf / codename:fleet-state).
@@ -211,6 +215,10 @@ type wakeSignal struct {
 	queueName string
 	// captainWake, when true, routes the wake to the captain regardless of queue.
 	captainWake bool
+	// agentName, when non-empty, routes the wake to the named sleeping agent
+	// directly (e.g. "watch" — WE5).  Checked only when captainWake is false
+	// and queueName is empty.
+	agentName string
 	// reason is a human-readable label for logging.
 	reason string
 }
@@ -636,19 +644,28 @@ func (a *QuiesceArbiter) handleEpicCompleted(ctx context.Context, evt core.Event
 }
 
 // handleAgentMessage is the event handler for agent_message (Risk 4 / captain interlock).
-// Wakes the captain only when the message is directed at the captain.
+// Wakes the captain when the message is directed at the captain; wakes the watch
+// session when the message is directed at "watch" (WE5 — parked-watch wake path).
+// All other destinations are silently ignored (no fleet-wide wake).
 func (a *QuiesceArbiter) handleAgentMessage(ctx context.Context, evt core.Event) error {
 	var payload core.AgentMessagePayload
 	if err := json.Unmarshal(evt.Payload, &payload); err != nil {
 		return nil // malformed payload; skip silently
 	}
-	if payload.To != captainAgentName {
-		return nil
-	}
-	select {
-	case a.wakeC <- wakeSignal{captainWake: true, reason: fmt.Sprintf("agent_message from %q to captain", payload.From)}:
-	default:
-		// Channel full: best-effort.
+	switch payload.To {
+	case captainAgentName:
+		select {
+		case a.wakeC <- wakeSignal{captainWake: true, reason: fmt.Sprintf("agent_message from %q to captain", payload.From)}:
+		default:
+			// Channel full: best-effort.
+		}
+	case watchAgentName:
+		// WE5: a message directed at the watch wakes the parked watch session.
+		select {
+		case a.wakeC <- wakeSignal{agentName: watchAgentName, reason: fmt.Sprintf("agent_message from %q to watch", payload.From)}:
+		default:
+			// Channel full: best-effort.
+		}
 	}
 	return nil
 }
@@ -658,6 +675,7 @@ func (a *QuiesceArbiter) handleAgentMessage(ctx context.Context, evt core.Event)
 // Wake routing:
 //   - sig.captainWake → wake captain (if sleeping).
 //   - sig.queueName non-empty → wake crew for that queue (if sleeping).
+//   - sig.agentName non-empty → wake the named sleeping agent directly (WE5).
 func (a *QuiesceArbiter) executeWake(ctx context.Context, sig wakeSignal) {
 	a.mu.Lock()
 	var targets []sessionSleepRecord
@@ -671,6 +689,10 @@ func (a *QuiesceArbiter) executeWake(ctx context.Context, sig wakeSignal) {
 				targets = append(targets, rec)
 				break
 			}
+		}
+	} else if sig.agentName != "" {
+		if rec, ok := a.sleeping[sig.agentName]; ok {
+			targets = append(targets, rec)
 		}
 	}
 	// Remove from sleeping map before releasing lock so concurrent wakes don't double-nudge.

@@ -167,3 +167,29 @@ func (l *Ledger) WriteDigest(d WatchDigest) error {
 	//nolint:gosec // G306: digest file is operator-readable status; world-readable is fine.
 	return os.WriteFile(l.digestPath, b, 0o644)
 }
+
+// ReadDigest reads .harmonik/watch/latest.json and returns its contents.
+// A missing file is not an error — an empty WatchDigest with initialized maps is returned.
+func (l *Ledger) ReadDigest() (WatchDigest, error) {
+	raw, err := os.ReadFile(l.digestPath)
+	if os.IsNotExist(err) {
+		return WatchDigest{
+			CrewLastSeen: make(map[string]string),
+			PendingFlags: []string{},
+		}, nil
+	}
+	if err != nil {
+		return WatchDigest{}, err
+	}
+	var d WatchDigest
+	if unmarshalErr := json.Unmarshal(raw, &d); unmarshalErr != nil {
+		return WatchDigest{}, unmarshalErr
+	}
+	if d.CrewLastSeen == nil {
+		d.CrewLastSeen = make(map[string]string)
+	}
+	if d.PendingFlags == nil {
+		d.PendingFlags = []string{}
+	}
+	return d, nil
+}

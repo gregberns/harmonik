@@ -682,7 +682,7 @@ Assertion scenarios MAY use `event_present` with `type: twin_hook_called` and `p
 
 #### `twin_committed`
 
-Emitted **after the `commit_on_cue` script step** executes `git add -A && git commit` in the worktree. Provides observability into whether the commit step succeeded and what SHA was produced. Implemented by bead **hk-8ys88**.
+Emitted **after the `commit_on_cue` script step** writes a sentinel file and runs `git add <sentinel> && git commit` in the worktree. Provides observability into whether the commit step succeeded and what SHA was produced. Implemented by bead **hk-8ys88**.
 
 A non-zero `exit_code` does NOT cause the twin to exit — the script continues per the bead error policy (same as `call_stop_hook`). The `stderr_excerpt` field is omitted from the JSON object entirely when `exit_code` is 0; its presence in a message is a reliable discriminator for failure paths.
 
@@ -690,8 +690,8 @@ A non-zero `exit_code` does NOT cause the twin to exit — the script continues 
 |---|---|---|
 | `type` | `string` | Always `"twin_committed"`. |
 | `commit_sha` | `string` | Full SHA of the new HEAD commit produced by `git commit`. Empty string when `exit_code` is non-zero. |
-| `exit_code` | `int` | OS exit code from the `git add + git commit` sequence. `0` = success; non-zero = commit failed. |
-| `duration_ms` | `int` | Wall-clock duration of the combined `git add + git commit` execution in milliseconds. |
+| `exit_code` | `int` | OS exit code from the `git add <sentinel> + git commit` sequence. `0` = success; non-zero = commit failed. |
+| `duration_ms` | `int` | Wall-clock duration of the `git add <sentinel> + git commit` execution in milliseconds. |
 | `stderr_excerpt` | `string` | First 200 characters of combined stdout+stderr from the git command on failure. Omitted from the message when `exit_code` is `0`. The 200-char ceiling is a log-readability guard; full output is available in process capture. |
 
 Assertion scenarios MAY use `event_present` with `type: twin_committed` and `payload_match` predicates to verify that a commit step ran and produced a specific SHA, or to assert that a commit failure occurred with an expected exit code.

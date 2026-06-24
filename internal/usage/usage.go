@@ -37,14 +37,14 @@ type modelPrice struct {
 }
 
 var pricingTable = map[string]modelPrice{
-	"claude-opus-4-8":  {15.0, 75.0, 18.75, 1.50},
-	"claude-opus-4":    {15.0, 75.0, 18.75, 1.50},
+	"claude-opus-4-8":   {15.0, 75.0, 18.75, 1.50},
+	"claude-opus-4":     {15.0, 75.0, 18.75, 1.50},
 	"claude-sonnet-4-6": {3.0, 15.0, 3.75, 0.30},
 	"claude-sonnet-4-5": {3.0, 15.0, 3.75, 0.30},
-	"claude-sonnet-4":  {3.0, 15.0, 3.75, 0.30},
-	"claude-haiku-4-8": {0.80, 4.00, 1.00, 0.08},
-	"claude-haiku-3-5": {0.80, 4.00, 1.00, 0.08},
-	"claude-haiku-3":   {0.25, 1.25, 0.30, 0.03},
+	"claude-sonnet-4":   {3.0, 15.0, 3.75, 0.30},
+	"claude-haiku-4-8":  {0.80, 4.00, 1.00, 0.08},
+	"claude-haiku-3-5":  {0.80, 4.00, 1.00, 0.08},
+	"claude-haiku-3":    {0.25, 1.25, 0.30, 0.03},
 }
 
 var defaultPrice = modelPrice{3.0, 15.0, 3.75, 0.30}
@@ -118,19 +118,19 @@ func modelTier(model string) string {
 
 // RunRecord is the per-daemon-run result after joining events + transcripts.
 type RunRecord struct {
-	RunID         string            `json:"run_id"`
-	BeadID        string            `json:"bead_id"`
-	NodeID        string            `json:"node_id,omitempty"`
-	QueueID       string            `json:"queue_id,omitempty"`
-	StartedAt     string            `json:"started_at,omitempty"`
-	EndedAt       string            `json:"ended_at,omitempty"`
-	Success       bool              `json:"success"`
-	TurnCount     int               `json:"turn_count"`
-	Models        map[string]int    `json:"models"`
-	DominantModel string            `json:"dominant_model"`
-	Usage         TokenUsage        `json:"usage"`
-	CostUSD       float64           `json:"cost_usd"`
-	HourBuckets   map[string]bool   `json:"-"`
+	RunID         string          `json:"run_id"`
+	BeadID        string          `json:"bead_id"`
+	NodeID        string          `json:"node_id,omitempty"`
+	QueueID       string          `json:"queue_id,omitempty"`
+	StartedAt     string          `json:"started_at,omitempty"`
+	EndedAt       string          `json:"ended_at,omitempty"`
+	Success       bool            `json:"success"`
+	TurnCount     int             `json:"turn_count"`
+	Models        map[string]int  `json:"models"`
+	DominantModel string          `json:"dominant_model"`
+	Usage         TokenUsage      `json:"usage"`
+	CostUSD       float64         `json:"cost_usd"`
+	HourBuckets   map[string]bool `json:"-"`
 }
 
 // BeadRecord aggregates all runs for one bead.
@@ -162,15 +162,15 @@ type OrchestratorSession struct {
 
 // ModelStat holds aggregated cost + tokens for one model across the window.
 type ModelStat struct {
-	Cost     float64    `json:"cost_usd"`
-	CostPct  float64    `json:"cost_pct"`
-	Tokens   TokenUsage `json:"tokens"`
+	Cost    float64    `json:"cost_usd"`
+	CostPct float64    `json:"cost_pct"`
+	Tokens  TokenUsage `json:"tokens"`
 }
 
 // TierStat holds aggregated cost for one model tier (opus/sonnet/haiku/other).
 type TierStat struct {
-	Cost    float64 `json:"cost_usd"`
-	Pct     float64 `json:"pct"`
+	Cost float64 `json:"cost_usd"`
+	Pct  float64 `json:"pct"`
 }
 
 // HourStat holds cost + tokens for one UTC hour bucket.
@@ -283,16 +283,16 @@ func parseDurationShorthand(s string) (time.Duration, error) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 type eventRun struct {
-	RunID          string
-	BeadID         string
-	NodeID         string
-	QueueID        string
-	LogPaths       []string
-	SessionIDs     []string
-	StartedAt      string
-	EndedAt        string
-	Success        bool
-	SuccessSet     bool
+	RunID      string
+	BeadID     string
+	NodeID     string
+	QueueID    string
+	LogPaths   []string
+	SessionIDs []string
+	StartedAt  string
+	EndedAt    string
+	Success    bool
+	SuccessSet bool
 }
 
 type eventIndex struct {

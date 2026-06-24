@@ -9,17 +9,35 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
-## active_lanes  (as of 2026-06-20 — re-derived after the 2026-06-20 nine-initiative burst, 135 commits)
+## active_lanes  (as of 2026-06-24 — 4-lane fleet, concurrency=4 per operator directive)
 
-# This re-derive reflects the 2026-06-20 burst (biggest single-day landing in the project).
-# Source synthesis: plans/2026-06-20-state-reassessment-and-doc-sync/README.md.
-# Next phase is TESTING / live-validation — most 2026-06-20 work shipped as code but was NEVER exercised live.
+> **DURABILITY NOTE:** this file MUST be COMMITTED, not left uncommitted-modified — an
+> uncommitted tier-2 edit was clobbered 2026-06-24 when a worktree merge (a8d4591b) reset
+> the working tree. Commit tier-2 changes the same session you make them.
 
-| crew | epic_id | epic_title (plain English) | queue | model |
+> **OPERATOR DIRECTIVE 2026-06-24 (standing, via admiral):** the daemon must run **4
+> concurrent instances always** on this box — "1-2 is not enough." Live `queue
+> set-concurrency 4` is set. There is NO config field for default concurrency (reverts on
+> restart), so the RESTART RECIPE must re-apply `set-concurrency 4` AND raise the spawn cap
+> (HARMONIK_MAX_CONCURRENT_SESSIONS 8 → ~16) at the next daemon restart so 4 concurrent DOT
+> triple-review runs don't hit spawn_cap_blocked (memory hk-vfeeo). Keep 4 file-disjoint
+> lanes staffed.
+
+| crew | epic_id / scope | lane (plain English) | queue | model |
 |---|---|---|---|---|
-| _(none — 0-crew lean park; ready to stand up for the testing phase)_ | — | — | — | — |
+| paul | daemon-core (logmine fixes) | daemon-reliability: spawn-cap (hk-x882o running) → remote-reviewer-hang (hk-92ih3, LAST remote-worker re-enable blocker; investigation done = locally-testable, will implement) | paul-logmine | (serialized 1-wide) |
+| jamis | hk-98jju / codename:supervisor-revive | scenario-harness DONE 15/15 → re-tasked: mute supervisor-down page (hk-xr46t) FIRST, then investigate supervise-dies-on-launch + daemon-auto-revive (hk-f2j0o) + flywheel keep-vs-remove (hk-zv6j3, hk-drygf folded/HELD). Adopts on G-15 land | jamis-sh | — |
+| gurney | hk-b89kk + hk-z8fp | cmd/harmonik tools: `harmonik usage` verb + Manifest.Digest map-order flaky fix | gurney-cmd | sonnet (escalate-on-fail) |
+| leto | hk-n05u2 / epic hk-0639 codename:codex | event-model lane DRAINED (hk-uunpf landed a8d4591b; hk-0wvmv closed redundant) → re-tasked: codex LOCAL re-canary, single-turn no-review, `harness:codex` label, verify ChatGPT-billing-guard first; flag captain if a daemon restart is needed | leto-ev | opus |
 
-- **Fleet currently = daemon + captain + supervisor (minimal burn).** No crews up. The 2026-06-20 burst landed via worktree agents + daemon; the immediate next move is the live-validation lanes below, not new feature crews.
+- **Fleet = daemon + captain + 4 work-crews + admiral (operator-engaged) + ctx-watchdog + ops-monitor.**
+- All 4 lanes are file-disjoint: paul=`internal/daemon/*`, jamis=`scripts/ops-monitor` + supervisor subsystem, gurney=`cmd/harmonik/*`, leto=codex harness (LOCAL run). HARD GUARD: jamis must not edit paul's daemon hold files.
+
+### 2026-06-24 admiral directive resolutions (operator-authorized)
+- **Remote worker re-enable — APPROVED**, GATED on hk-92ih3 (paul) landing+verified. Then flip `workers.yaml` enabled:true + daemon restart + fix the stale re-enable comment (real gate = hk-scndr DONE + hk-92ih3, NOT hk-9a7rt) + raise spawn cap in that restart. Prove ONE remote DOT run on gb-mbp before scaling remote. Local stays 4.
+- **Codex — UNPAUSED** (the "not daemon-runnable" framing was stale; ran e2e via daemon 2026-06-17). One LOCAL re-canary first (hk-n05u2 via leto). Codex bills ChatGPT, LOCAL-only (not on gb-mbp).
+- **Supervisor / hk-drygf:** epic hk-98jju investigates (i) why `harmonik supervise` (the daemon auto-revive watchdog) dies on launch — REAL reliability gap, daemon has NO auto-revive now — and (ii) flywheel/sentinel keep-vs-remove. hk-drygf (governor-liveness) FOLDED in + stays HELD; do NOT apply FIX-A/FIX-B.
+- **Supervisor-down alert spam:** mute the every-5m CRITICAL page only (hk-xr46t); the underlying check STAYS.
 
 ## Recently CLOSED / COMPLETED (2026-06-20 burst)
 
@@ -114,5 +132,5 @@ Runner-up: **L2 disk GC** — urgent (90% disk) but must coordinate with chani.
 
 ## paused
 
-- **codex (hk-0639)** — operator PAUSED 2026-06-19 (do not staff).
+- **codex (hk-0639)** — ⚠️ UNPAUSED 2026-06-24 (admiral/operator). LOCAL re-canary first (hk-n05u2 via leto), report before any soak. Codex bills ChatGPT, LOCAL-only.
 - **gh-bugs** — only do beads that ALREADY EXIST and do NOT need GitHub (no gh access / flaky internet).

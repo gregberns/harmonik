@@ -1041,7 +1041,11 @@ func driveDotWorkflow(
 			// This covers the live failure class: implementer commits N times, gate
 			// keeps failing, cap fires — the most-recent commit is salvaged rather
 			// than stranded on the run branch (hk-3js5m).
-			if decision.CompletionReason == "cap_hit" && currentNodeID == "commit_gate" {
+			// hk-a8xjg: only salvage when the graph has NO reviewer node. When
+			// a reviewer node exists the cap-hit is a triage outcome (the graph
+			// defines a review stage that was never visited), NOT an approval —
+			// fall through to the needs-attention reopen path below.
+			if decision.CompletionReason == "cap_hit" && currentNodeID == "commit_gate" && !graphHasReviewerNode(nodesByID) {
 				if salvageHead, salvageErr := resolveDotWorktreeHEAD(ctx, runner, wtPath); salvageErr == nil &&
 					salvageHead != "" && salvageHead != parentSHA {
 					return dotWorkflowResult{
@@ -2021,6 +2025,18 @@ func nodeIsReviewer(node *dot.Node) bool {
 		return true
 	}
 	return node.HandlerRef == "claude-reviewer"
+}
+
+// graphHasReviewerNode reports whether any node in the graph is a reviewer-class
+// node. Used by the F42 cap-hit salvage gate (hk-a8xjg): when a reviewer exists
+// the cap-hit is a triage outcome, not an approval, and must NOT auto-merge.
+func graphHasReviewerNode(nodesByID map[string]*dot.Node) bool {
+	for _, n := range nodesByID {
+		if nodeIsReviewer(n) {
+			return true
+		}
+	}
+	return false
 }
 
 // verdictSeverity ranks a reviewer verdict on the BLOCK > REQUEST_CHANGES >

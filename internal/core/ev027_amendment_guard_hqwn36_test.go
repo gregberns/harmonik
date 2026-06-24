@@ -23,7 +23,7 @@ import "testing"
 // taxonomy per EV-027. Changing wantCount requires a foundation amendment per
 // event-model.md §4.6 EV-027 and architecture.md §4.6.
 //
-// Current taxonomy breakdown (111 types total):
+// Current taxonomy breakdown (116 types total):
 //
 //	§8.1  Run lifecycle (17 types including bead_closed, working_tree_refresh_failed,
 //	      implementer_escaped_worktree, implementer_phase_complete,
@@ -40,8 +40,11 @@ import "testing"
 //	§8.10 Queue lifecycle (7 types)
 //	§8.11 Handler-pause lifecycle (3 types)
 //	§8.12 Staleness-detection (1 type: run_stale)
+//	§8.15 Bead-ledger merge lifecycle (5 types: bead_sync_failed [hk-u3q6o],
+//	      bead_ledger_recovered, bead_ledger_corrupt [hk-k7va9],
+//	      bead_ledger_conflict_audit [hk-u3q6o], orphaned_child_bead [hk-27ghc])
 //
-// Total: 111 EventType constants registered in allEventTypeCohort.
+// Total: 121 EventType constants registered in allEventTypeCohort.
 // Amendment: merge_build_failed added for post-merge build gate (hk-o68j3;
 // EV-027 foundation amendment — new F-class event emitted when go build+vet
 // fails on the freshly fast-forwarded merged tree before push).
@@ -53,6 +56,12 @@ import "testing"
 // emitted when pasteInjectQuitOnCommit force-kills an implementer session for
 // exhausting its commit budget — makes a previously-silent no_commit explain
 // elapsed time and last-progress time).
+// Amendment: §8.15 bead-ledger merge lifecycle added (hk-u3q6o, hk-27ghc,
+// hk-k7va9; 5 types): bead_sync_failed (F-class, fsync-boundary — loss silences
+// Cat-BL2 routing), bead_ledger_recovered (O-class, Cat-BL2 retry success),
+// bead_ledger_corrupt (O-class, Cat-BL2 persistent failure + Cat 6b escalation),
+// bead_ledger_conflict_audit (O-class, Cat-BL3 merge-conflict audit batch),
+// orphaned_child_bead (O-class, Cat-BL1 child-bead orphan detection).
 //
 // To add an EventType: update allEventTypeCohort in eventtype_coverage_gjyks_test.go,
 // add the constant to eventtype.go, register the constructor in eventreg_hqwn59.go
@@ -69,7 +78,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 116 // +1 for harness_selected (hk-lr5t EV-027 amendment)
+	const wantCount = 121 // +5 for §8.15 bead-ledger types (hk-u3q6o/hk-27ghc/hk-k7va9 EV-027 amendment)
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

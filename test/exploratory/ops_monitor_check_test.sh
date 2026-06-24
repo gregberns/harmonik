@@ -31,9 +31,11 @@
 #   [x] non-critical suppressed within 30 min   (paused-queue at 6 min stays suppressed)
 #   [x] escalation tier-1 — first alert: count=1, [IMMEDIATE], no ops-CRITICAL
 #   [x] escalation tier-2 — second alert: count=2, [ESCALATION], no ops-CRITICAL
-#   [x] escalation tier-3 by count — count>=6: [ESCALATION] + ops-CRITICAL topic
-#   [x] escalation tier-3 by elapsed — elapsed>=1800s: ops-CRITICAL topic
+#   [x] escalation tier-3 by count — count>=6: [ESCALATION] + ops-CRITICAL topic (first send)
+#   [x] escalation tier-3 by elapsed — elapsed>=1800s: ops-CRITICAL topic (first send)
 #   [x] escalation resolved — signal clears count+state, no comms
+#   [x] ops-CRITICAL cooldown: tier-3, last_ops_critical_ts 6m ago → NO ops-CRITICAL re-send (Test 28)
+#   [x] ops-CRITICAL cooldown: tier-3, last_ops_critical_ts 35m ago → ops-CRITICAL re-fires (Test 29)
 #   [x] backward-compat — bare int alerted entry normalized to count=1 on re-alert
 #   [x] captain absent from comms-who, tmux alive → no captain-down (Test 25a)
 #   [x] captain absent from comms-who AND no tmux session → captain-down immediate (Test 25b)
@@ -1505,6 +1507,101 @@ if [[ -f "$LOG" && -s "$LOG" ]]; then
 else
   pass "27e: no comms sent (release-due cooldown active)"
 fi
+rm -rf "$PROJ"
+
+# ── Test 28: ops-CRITICAL cooldown — tier-3 but ops-CRITICAL recently sent → no re-send ─
+# supervisor-down has been down for 1h (count=10, tier-3) but ops-CRITICAL was sent 6 min
+# ago. OPS_CRITICAL_COOLDOWN=30m → cooldown active → no ops-CRITICAL this run.
+# The captain still gets the regular [ESCALATION] on ops-monitor (not suppressed).
+echo ""
+echo "=== Test 28: ops-CRITICAL cooldown — tier-3 + recent last_ops_critical_ts → no re-send ==="
+STATE_28=$(python3 -c "
+import json, time
+now = int(time.time())
+entry = {'first_ts': now - 3600, 'last_ts': now - 360, 'count': 10,
+         'last_ops_critical_ts': now - 360}
+print(json.dumps({'stale_crew_misses': {}, 'last_digest_ts': 0,
+                  'alerted_immediate': {'supervisor-down': entry}}))
+")
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":false,"status":"stopped"}' \
+  --state-json "$STATE_28" \
+)
+run_check "$PROJ" > /dev/null 2>&1
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+# Verify supervisor-down is still in send_immediate_signals (captain still alerted)
+SEND_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
+if echo "$SEND_SIGS" | grep -qF "supervisor-down"; then
+  pass "28: supervisor-down in send_immediate_signals (captain alert unaffected)"
+else
+  fail "28: supervisor-down missing from send_immediate_signals (expected captain alert)"
+fi
+# Verify ops-CRITICAL NOT sent (cooldown active)
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  assert_not_contains "28: no ops-CRITICAL re-send within cooldown" "topic=ops-CRITICAL" "$(cat "$LOG")"
+  # The [ESCALATION] tier-2+ message on ops-monitor IS sent
+  assert_contains "28: [ESCALATION] on ops-monitor still sent" "[ESCALATION]" "$(cat "$LOG")"
+else
+  fail "28: expected at least the ops-monitor escalation comms, got none"
+fi
+# Verify send_ops_critical=False in escalations snapshot
+SC=$(python3 -c "
+import json
+d = json.load(open('$LATEST'))
+print(str(d.get('escalations', {}).get('supervisor-down', {}).get('send_ops_critical', 'missing')).lower())
+" 2>/dev/null || echo "missing")
+assert_eq "28: send_ops_critical=false (cooldown active)" "false" "$SC"
+rm -rf "$PROJ"
+
+# ── Test 29: ops-CRITICAL cooldown elapsed — tier-3 + stale last_ops_critical_ts → re-fires ─
+# supervisor-down, count=10, ops-CRITICAL last sent 35 min ago (> 30 min OPS_CRITICAL_COOLDOWN).
+# Cooldown has elapsed → ops-CRITICAL must fire again.
+echo ""
+echo "=== Test 29: ops-CRITICAL cooldown elapsed (35m > 30m) → ops-CRITICAL re-fires ==="
+STATE_29=$(python3 -c "
+import json, time
+now = int(time.time())
+entry = {'first_ts': now - 3600, 'last_ts': now - 360, 'count': 10,
+         'last_ops_critical_ts': now - 2100}  # 35 min ago > OPS_CRITICAL_COOLDOWN(30m)
+print(json.dumps({'stale_crew_misses': {}, 'last_digest_ts': 0,
+                  'alerted_immediate': {'supervisor-down': entry}}))
+")
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":false,"status":"stopped"}' \
+  --state-json "$STATE_29" \
+)
+run_check "$PROJ" > /dev/null 2>&1
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  assert_contains "29: ops-CRITICAL re-fires after cooldown" "topic=ops-CRITICAL" "$(cat "$LOG")"
+  assert_contains "29: [ops-CRITICAL] in body"               "[ops-CRITICAL]"    "$(cat "$LOG")"
+else
+  fail "29: expected ops-CRITICAL re-send after cooldown, got none"
+fi
+# send_ops_critical=True in escalations snapshot
+SC=$(python3 -c "
+import json
+d = json.load(open('$LATEST'))
+print(str(d.get('escalations', {}).get('supervisor-down', {}).get('send_ops_critical', 'missing')).lower())
+" 2>/dev/null || echo "missing")
+assert_eq "29: send_ops_critical=true (cooldown elapsed)" "true" "$SC"
+# last_ops_critical_ts updated in state (fresh timestamp, not 2100s ago)
+LT=$(python3 -c "
+import json, time
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+e = d.get('alerted_immediate', {}).get('supervisor-down', {})
+lts = e.get('last_ops_critical_ts', 0)
+print('fresh' if time.time() - lts < 60 else 'stale')
+" 2>/dev/null || echo "missing")
+assert_eq "29: last_ops_critical_ts updated to now in state" "fresh" "$LT"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

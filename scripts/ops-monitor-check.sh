@@ -105,6 +105,10 @@ CRITICAL_IMMEDIATE_COOLDOWN=300  # 5 minutes
 OPS_CRITICAL_COUNT=6        # alert-count at which we escalate (≈ 30 min at 5-min critical cadence)
 OPS_CRITICAL_ELAPSED=1800   # OR: seconds a critical signal has been down before operator-wake
 RELEASE_DUE_COMMIT_THRESHOLD=50  # unreleased commits on main since last vX.Y.Z tag (per spec §202)
+# Minimum gap between consecutive ops-CRITICAL operator-wake sends for a persistent signal.
+# The underlying check and the captain's every-5m [ESCALATION] on ops-monitor are unaffected;
+# only the operator-page channel is throttled.
+OPS_CRITICAL_COOLDOWN=1800  # 30 minutes
 
 mkdir -p "$OUT_DIR"
 
@@ -351,6 +355,7 @@ prev_keeper_misses    = json.loads('$PREV_KEEPER_COVERAGE_MISSES')
 release_commit_count  = int('$RELEASE_COMMIT_COUNT')
 ci_status             = '$CI_STATUS'
 release_due_threshold = int('$RELEASE_DUE_COMMIT_THRESHOLD')
+ops_critical_cooldown = int('$OPS_CRITICAL_COOLDOWN')
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -811,6 +816,7 @@ for sig in immediate_signals:
                     'first_ts': prev_entry['first_ts'],
                     'last_ts': ts_epoch,
                     'count': prev_entry.get('count', 1) + 1,
+                    'last_ops_critical_ts': prev_entry.get('last_ops_critical_ts', 0),
                 }
             else:
                 new_alerted[sig] = prev_entry  # cooldown active; keep state
@@ -846,11 +852,21 @@ for sig in send_immediate_signals:
         tier = 2
     else:
         tier = 1
+    # Throttle the ops-CRITICAL operator-wake: even at tier 3, only page the operator
+    # once per ops_critical_cooldown (30 min). The captain's every-5m [ESCALATION] on
+    # the ops-monitor topic is unaffected; only the operator-wake channel is muted.
+    send_ops_critical = False
+    if tier >= 3:
+        last_ops_crit_ts = entry.get('last_ops_critical_ts', 0)
+        if ts_epoch - last_ops_crit_ts >= ops_critical_cooldown:
+            send_ops_critical = True
+            new_alerted[sig]['last_ops_critical_ts'] = ts_epoch
     escalations[sig] = {
         'count': count,
         'first_ts': first_ts,
         'elapsed_s': elapsed_s,
         'tier': tier,
+        'send_ops_critical': send_ops_critical,
     }
 
 # Drop resolved signals (not in this run's immediate_signals) from alerted set.
@@ -973,7 +989,7 @@ escs = json.loads('''$ESCALATIONS_JSON''')
 parts = []
 for s in sigs:
     e = escs.get(s)
-    if e and e.get('tier', 1) >= 3:
+    if e and e.get('send_ops_critical', False):
         m = e['elapsed_s'] // 60
         n = e['count']
         parts.append(f'{s} persistent >{m}m — alert #{n}')

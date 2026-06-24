@@ -184,6 +184,9 @@ This is the canonical detection-rule + action-mapping table. The duplicate in [s
 | Cat 5 | Nothing in-flight for this run (includes orphaned branches from prior reopened runs per RC-010). | normal startup; proceed to `ready` | No | Yes (no-op) | — |
 | Cat 6a | Workspace missing AND transition-record absent; OR trailer-vs-sibling-file mismatch; OR worktree has uncommitted git-in-progress op (rebase/merge/cherry-pick/bisect); OR bead `in_progress` with two+ task branches each advertising `Harmonik-Run-ID` without `Harmonik-Verdict-Executed`. | investigator workflow | Yes | No | `escalate-to-human` (default; investigator MAY downgrade) |
 | Cat 6b | JSONL corrupt past byte offset; OR JSONL references checkpoint hash missing from git object database; OR `git fsck` fails. | auto-escalate to operator without investigator spawn | No | N/A (operator intervention) | — |
+| Cat-BL1 | Bead with `parent:hk-*` label is `open` or `in_progress` AND no `Refs: hk-<parent-id>` commit exists on the target branch (parent run discarded/incomplete). | startup sweep: emit `orphaned_child_bead`; auto-close open orphans via `br close`; escalate `in_progress` orphans to human | No (startup sweep) | Yes (open orphans auto-closed) | `accept-close-with-note` / `escalate-to-human` |
+| Cat-BL2 | Daemon received `bead_sync_failed` event after post-merge `br sync --import-only` (BL-MRG-004). | reactive (event-driven): investigator workflow to repair/retry ledger import | Yes | No | `retry-ledger-import` / `escalate-to-human` |
+| Cat-BL3 | `.beads/merge-conflicts.log` is non-empty at startup (conflicts recorded during union-merge per BL-MRG-003). | startup sweep: emit `bead_ledger_conflict_audit`; truncate log | No (startup sweep) | Yes (audit-only; no bead state change) | — (audit only) |
 
 ### 6.4 Verdict-executed commit trailers
 

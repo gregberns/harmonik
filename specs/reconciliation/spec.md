@@ -235,7 +235,7 @@ Detectors below assume the orphan sweep of [process-lifecycle.md §4.2 PL-005] h
 
 ### 8.BL1 Cat-BL1 — Child-bead orphan
 
-**Detection rule.** A bead exists in the Beads ledger with label `parent:hk-<parent-id>` AND status `open` or `in_progress`, AND `git log --all --grep="Refs: hk-<parent-id>"` returns no merge commit on main (parent run was discarded or never completed). The detector enumerates all beads carrying any `parent:hk-*` label, extracts the parent-ID suffix, and checks git for a corresponding `Refs:` commit.
+**Detection rule.** A bead exists in the Beads ledger with label `parent:hk-<parent-id>` AND status `open` or `in_progress`, AND `git log <target-branch> -1 --grep="Refs: hk-<parent-id>"` returns no match (parent run was discarded or never completed). The `<target-branch>` is the project's merge target (defaults to `main`); `--all` is intentionally excluded to avoid false positives from in-flight worktree branches. The detector enumerates all beads carrying any `parent:hk-*` label, extracts the parent-ID suffix, and checks git for a corresponding `Refs:` commit on the target branch.
 
 **Priority.** Cat-BL1 runs after Cat 5 in the priority ordering (RC-003a). Rationale: the orphan sweep (Cat 5 + PL-006) runs first to clean up run-level artifacts; Cat-BL1 then sweeps bead-level orphans that the run-level sweep does not reach.
 

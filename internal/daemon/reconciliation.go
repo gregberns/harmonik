@@ -292,7 +292,7 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 	if openErr != nil {
 		return fmt.Errorf("reconciliation Cat-BL3: open %s: %w", logPath, openErr)
 	}
-	conflicts, bead_ids := parseConflictLog(f)
+	conflicts, beadIDs := parseConflictLog(f)
 	_ = f.Close()
 
 	if len(conflicts) == 0 {
@@ -307,7 +307,7 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 	// Emit bead_ledger_conflict_audit event.
 	payload := core.BeadLedgerConflictAuditPayload{
 		RunID:     cfg.RunID,
-		BeadIDs:   bead_ids,
+		BeadIDs:   beadIDs,
 		Conflicts: conflicts,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -320,7 +320,7 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 	}
 
 	fmt.Fprintf(logW, "reconciliation Cat-BL3: emitted bead_ledger_conflict_audit (%d conflicts, %d beads)\n",
-		len(conflicts), len(bead_ids))
+		len(conflicts), len(beadIDs))
 
 	// Truncate the log — conflicts are now durable in the event log.
 	if err := os.Truncate(logPath, 0); err != nil {
@@ -331,16 +331,16 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 	return nil
 }
 
-// parseConflictLog reads lines from r and returns (conflicts, bead_ids).
+// parseConflictLog reads lines from r and returns (conflicts, beadIDs).
 // Each line follows the format written by harmonik beads-merge:
 //
 //	<iso8601-timestamp> CONFLICT bead=<id> field=<field> a=<a_val> b=<b_val> resolution=<res>
 //
-// Malformed lines are silently skipped. bead_ids is deduplicated.
+// Malformed lines are silently skipped. beadIDs is deduplicated.
 func parseConflictLog(r io.Reader) ([]core.BeadLedgerConflict, []string) {
 	var conflicts []core.BeadLedgerConflict
 	seen := make(map[string]struct{})
-	var bead_ids []string
+	var beadIDs []string
 
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
@@ -355,10 +355,10 @@ func parseConflictLog(r io.Reader) ([]core.BeadLedgerConflict, []string) {
 		conflicts = append(conflicts, c)
 		if _, already := seen[c.BeadID]; !already {
 			seen[c.BeadID] = struct{}{}
-			bead_ids = append(bead_ids, c.BeadID)
+			beadIDs = append(beadIDs, c.BeadID)
 		}
 	}
-	return conflicts, bead_ids
+	return conflicts, beadIDs
 }
 
 // parseConflictLine parses one merge-conflicts.log line into a BeadLedgerConflict.

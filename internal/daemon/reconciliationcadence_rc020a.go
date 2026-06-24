@@ -217,10 +217,18 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 // runScheduledClassBRepair implements the Class B orphan repair pass for the
 // scheduled reconciliation cadence.
 //
-// It loads all live queue files to build a beadsInQueue set, then for each
-// in-flight bead absent from the queue:
+// It loads all live queue files to build a beadsActivelyDispatched set (beads
+// with at least one item in dispatched state), then for each in-flight bead
+// NOT actively dispatched:
 //  1. Emits a reconciliation_mismatch_observed event (always, for visibility).
 //  2. Resets the bead to open via ResetBead (in_progress → open, BI-010d).
+//
+// Two mismatch classes are distinguished:
+//   - bead_inprogress_queue_absent: bead has no queue record at all.
+//   - bead_inprogress_queue_terminal: bead is in a queue but its item is in a
+//     terminal state (failed/completed), meaning the run ended but ReopenBead
+//     failed (e.g. cancelled per-run context). hk-e3fy: prior code skipped this
+//     class because it only checked presence-in-any-queue, not item status.
 //
 // The BI-030 intent-log idempotency key uses the repair-pass timestamp (not
 // the daemon start time) so that each hourly tick can re-attempt beads that
@@ -230,6 +238,7 @@ func runScheduledReconciliationScan(ctx context.Context, cfg ReconciliationSched
 // Non-fatal: failures for individual beads are logged and skipped.
 //
 // Spec ref: hk-m3ydd — reconciliation must repair bead_inprogress_queue_absent.
+// Bead ref: hk-e3fy — extend to also repair bead_inprogress_queue_terminal.
 func runScheduledClassBRepair(
 	ctx context.Context,
 	cfg ReconciliationSchedulerConfig,
@@ -246,8 +255,18 @@ func runScheduledClassBRepair(
 	observedAt := time.Now().UTC()
 	observedAtStr := observedAt.Format(time.RFC3339Nano)
 
-	// Build beadsInQueue from the live queue files.
-	beadsInQueue := make(map[core.BeadID]struct{})
+	// Build beadsActivelyDispatched: bead IDs with at least one item in
+	// dispatched state (i.e., the run is live). Items in terminal states
+	// (failed/completed) do NOT block the repair — their run has ended.
+	//
+	// Also build beadsInAnyQueue to distinguish the two mismatch classes.
+	//
+	// hk-e3fy: prior code used beadsInQueue (all items regardless of status).
+	// A bead in a complete-with-failures group with a failed item was skipped
+	// even though its run had ended and ReopenBead had failed (cancelled ctx).
+	// Narrowing to dispatched items closes this strand class.
+	beadsActivelyDispatched := make(map[core.BeadID]struct{})
+	beadsInAnyQueue := make(map[core.BeadID]struct{})
 	names, enumErr := queue.EnumerateQueueNames(cfg.ProjectDir)
 	if enumErr != nil {
 		fmt.Fprintf(logW, "reconciliation scheduler (Class B): EnumerateQueueNames: %v (skipping repair)\n", enumErr)
@@ -260,7 +279,10 @@ func runScheduledClassBRepair(
 		}
 		for gi := range q.Groups {
 			for _, item := range q.Groups[gi].Items {
-				beadsInQueue[item.BeadID] = struct{}{}
+				beadsInAnyQueue[item.BeadID] = struct{}{}
+				if item.Status == queue.ItemStatusDispatched {
+					beadsActivelyDispatched[item.BeadID] = struct{}{}
+				}
 			}
 		}
 	}
@@ -274,11 +296,17 @@ func runScheduledClassBRepair(
 	repairNS := observedAt.UnixNano()
 
 	for _, rec := range inFlight {
-		if _, inQueue := beadsInQueue[rec.BeadID]; inQueue {
-			continue // has a queue record — not a Class B orphan
+		if _, activelyDispatched := beadsActivelyDispatched[rec.BeadID]; activelyDispatched {
+			continue // run is live — not a Class B orphan
 		}
 
-		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s in_progress but absent from queue (bead_inprogress_queue_absent)\n", rec.BeadID)
+		// Determine the mismatch class for observability.
+		mismatchClass := "bead_inprogress_queue_absent"
+		if _, inAnyQueue := beadsInAnyQueue[rec.BeadID]; inAnyQueue {
+			mismatchClass = "bead_inprogress_queue_terminal"
+		}
+
+		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s in_progress but %s\n", rec.BeadID, mismatchClass)
 
 		// Emit reconciliation_mismatch_observed for operator visibility.
 		if cfg.Emitter != nil {
@@ -286,7 +314,7 @@ func runScheduledClassBRepair(
 				QueueID:       "",
 				GroupIndex:    -1,
 				BeadID:        string(rec.BeadID),
-				MismatchClass: "bead_inprogress_queue_absent",
+				MismatchClass: mismatchClass,
 				LedgerStatus:  string(rec.Status),
 				QueueStatus:   "",
 				ObservedAt:    observedAtStr,
@@ -315,7 +343,7 @@ func runScheduledClassBRepair(
 			continue
 		}
 		resetCount++
-		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s reset to open (queue_absent_reap)\n", rec.BeadID)
+		fmt.Fprintf(logW, "reconciliation scheduler (Class B): bead %s reset to open (%s)\n", rec.BeadID, mismatchClass)
 	}
 	return resetCount
 }

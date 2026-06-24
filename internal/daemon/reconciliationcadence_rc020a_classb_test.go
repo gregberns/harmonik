@@ -82,8 +82,27 @@ func (e *classBStubEmitter) count(t core.EventType) int {
 
 // classBFixtureDir creates a temp project dir with .harmonik/queues/ and
 // .harmonik/beads-intents/ sub-trees. Optionally writes a queue JSON file
-// containing the given bead IDs as pending items.
+// containing the given bead IDs as dispatched items in an active group.
+// Using dispatched status models an actively running run (the only state
+// in which Class B must NOT reset the bead).
 func classBFixtureDir(t *testing.T, queueBeadIDs ...core.BeadID) string {
+	t.Helper()
+	return classBFixtureWithGroupStatusDir(t, "dispatched", "active", queueBeadIDs...)
+}
+
+// classBFixtureWithTerminalGroupDir creates a queue with the given bead ID in
+// a complete-with-failures group (item status: failed). Models the in-queue
+// strand that hk-e3fy Class B widening is designed to catch: the run ended
+// but ReopenBead failed (e.g. cancelled per-run context), leaving the bead
+// in_progress while the item has already advanced to failed.
+func classBFixtureWithTerminalGroupDir(t *testing.T, beadID core.BeadID) string {
+	t.Helper()
+	return classBFixtureWithGroupStatusDir(t, "failed", "complete-with-failures", beadID)
+}
+
+// classBFixtureWithGroupStatusDir is the shared fixture builder. itemStatus and
+// groupStatus are written as-is into the queue JSON.
+func classBFixtureWithGroupStatusDir(t *testing.T, itemStatus, groupStatus string, queueBeadIDs ...core.BeadID) string {
 	t.Helper()
 	projectDir := t.TempDir()
 
@@ -92,7 +111,7 @@ func classBFixtureDir(t *testing.T, queueBeadIDs ...core.BeadID) string {
 	for _, d := range []string{queuesDir, intentsDir} {
 		//nolint:gosec // G301: test-only temp directory
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatalf("classBFixtureDir: mkdir %s: %v", d, err)
+			t.Fatalf("classBFixtureWithGroupStatusDir: mkdir %s: %v", d, err)
 		}
 	}
 
@@ -123,7 +142,7 @@ func classBFixtureDir(t *testing.T, queueBeadIDs ...core.BeadID) string {
 
 	items := make([]itemJSON, len(queueBeadIDs))
 	for i, id := range queueBeadIDs {
-		items[i] = itemJSON{BeadID: string(id), Status: "pending"}
+		items[i] = itemJSON{BeadID: string(id), Status: itemStatus}
 	}
 	q := queueJSON{
 		SchemaVersion: 1,
@@ -135,7 +154,7 @@ func classBFixtureDir(t *testing.T, queueBeadIDs ...core.BeadID) string {
 			{
 				GroupIndex: 0,
 				Kind:       "stream",
-				Status:     "active",
+				Status:     groupStatus,
 				Items:      items,
 				CreatedAt:  time.Now().UTC(),
 			},
@@ -143,12 +162,12 @@ func classBFixtureDir(t *testing.T, queueBeadIDs ...core.BeadID) string {
 	}
 	data, err := json.Marshal(q)
 	if err != nil {
-		t.Fatalf("classBFixtureDir: marshal queue: %v", err)
+		t.Fatalf("classBFixtureWithGroupStatusDir: marshal queue: %v", err)
 	}
 	queuePath := filepath.Join(queuesDir, "main.json")
 	//nolint:gosec // G306: test-only temp file
 	if err := os.WriteFile(queuePath, data, 0o644); err != nil {
-		t.Fatalf("classBFixtureDir: write queue file: %v", err)
+		t.Fatalf("classBFixtureWithGroupStatusDir: write queue file: %v", err)
 	}
 
 	return projectDir
@@ -200,7 +219,9 @@ func TestRunScheduledClassBRepair_AbsentBeadIsReset(t *testing.T) {
 }
 
 // TestRunScheduledClassBRepair_PresentBeadIsSkipped verifies that an
-// in_progress bead that appears in a live queue file is NOT reset.
+// in_progress bead with a dispatched item (i.e., an active run) is NOT reset.
+// Post-hk-e3fy: only dispatched items suppress the reset; the fixture uses
+// "dispatched" to correctly model a live run.
 func TestRunScheduledClassBRepair_PresentBeadIsSkipped(t *testing.T) {
 	t.Parallel()
 
@@ -319,6 +340,97 @@ func TestRunScheduledClassBRepair_MixedBeads(t *testing.T) {
 	}
 	if n := emitter.count(core.EventTypeReconciliationMismatchObserved); n != 1 {
 		t.Errorf("reconciliation_mismatch_observed count = %d, want 1", n)
+	}
+}
+
+// TestRunScheduledClassBRepair_InProgressInTerminalGroupIsReset covers
+// path (a) of the hk-e3fy strand class: a bead is in_progress but its queue
+// item has already advanced to failed (group: complete-with-failures).
+//
+// This happens when evaluateGroupAdvanceWithOutcome runs (daemon ctx ok) but
+// ReopenBead failed because the per-run ctx was cancelled by the stale watcher
+// between waitWithSocketGrace returning and the noChange-timeout branch.
+//
+// Before hk-e3fy: Class B skipped the bead (item present in queue → skip).
+// After hk-e3fy: Class B resets the bead (item not dispatched → not active).
+func TestRunScheduledClassBRepair_InProgressInTerminalGroupIsReset(t *testing.T) {
+	t.Parallel()
+
+	strandedBead := core.BeadID("hk-e3fy-path-a-terminal-group")
+	projectDir := classBFixtureWithTerminalGroupDir(t, strandedBead)
+
+	resetter := &classBStubResetter{}
+	emitter := &classBStubEmitter{}
+
+	cfg := ReconciliationSchedulerConfig{
+		ProjectDir: projectDir,
+		Emitter:    emitter,
+		LogWriter:  io.Discard,
+	}
+
+	runScheduledClassBRepair(
+		context.Background(),
+		cfg,
+		resetter,
+		[]core.BeadRecord{classBInFlightRecord(strandedBead)},
+		io.Discard,
+	)
+
+	// Class B must reset the bead: its item is in a terminal state, not dispatched.
+	calls := resetter.resetCalls()
+	if len(calls) != 1 || calls[0] != strandedBead {
+		t.Errorf("path (a): ResetBead calls = %v, want [%s]; bead in complete-with-failures group must be reset (hk-e3fy)", calls, strandedBead)
+	}
+	if n := emitter.count(core.EventTypeReconciliationMismatchObserved); n != 1 {
+		t.Errorf("path (a): reconciliation_mismatch_observed count = %d, want 1", n)
+	}
+}
+
+// TestRunScheduledClassBRepair_ReaperKillStrandIsReset covers path (b) of the
+// hk-e3fy strand class: a run terminated via the HB-staleness / reaper-kill
+// path without emitting run_failed.
+//
+// Timeline: T=8min HB-staleness kills the session, closes noChangeTimeoutCh.
+// T~8.5min waitWithSocketGrace returns; per-run abort check passes (stale
+// watcher not yet fired). T=10min+ stale watcher fires, cancels per-run ctx.
+// At that point the noChange-timeout branch's ReopenBead(ctx) fails; bead
+// stays in_progress. evaluateGroupAdvanceWithOutcome (daemon ctx ok) still
+// runs, advancing the item to failed / group to complete-with-failures.
+//
+// Class B must catch and reset this bead so it is re-dispatchable.
+func TestRunScheduledClassBRepair_ReaperKillStrandIsReset(t *testing.T) {
+	t.Parallel()
+
+	strandedBead := core.BeadID("hk-e3fy-path-b-reaper-kill")
+	// Same final state as path (a): bead in_progress, item failed, group
+	// complete-with-failures. The distinction is how the state was reached.
+	projectDir := classBFixtureWithTerminalGroupDir(t, strandedBead)
+
+	resetter := &classBStubResetter{}
+	emitter := &classBStubEmitter{}
+
+	cfg := ReconciliationSchedulerConfig{
+		ProjectDir: projectDir,
+		Emitter:    emitter,
+		LogWriter:  io.Discard,
+	}
+
+	runScheduledClassBRepair(
+		context.Background(),
+		cfg,
+		resetter,
+		[]core.BeadRecord{classBInFlightRecord(strandedBead)},
+		io.Discard,
+	)
+
+	// Class B must reset the bead: reaper-kill strand with no run_failed must
+	// still end with bead open and re-dispatchable.
+	calls := resetter.resetCalls()
+	if len(calls) != 1 || calls[0] != strandedBead {
+		t.Errorf("path (b): ResetBead calls = %v, want [%s]; reaper-kill strand must be reset by Class B (hk-e3fy)", calls, strandedBead)
+	}
+	if n := emitter.count(core.EventTypeReconciliationMismatchObserved); n != 1 {
+		t.Errorf("path (b): reconciliation_mismatch_observed count = %d, want 1", n)
 	}
 }
 

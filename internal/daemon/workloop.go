@@ -2630,7 +2630,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if runSucceeded != nil {
 			*runSucceeded = success
 		}
-		emitRunCompleted(ctx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, success, summary, queueID, queueGroupIndex, runTipSHA)
+		// hk-e3fy: use background ctx if the per-run ctx is already cancelled
+		// (e.g. stale watcher fired) so run_failed is always emitted. The
+		// daemon is still running; only this run's context is done.
+		emitCtx := ctx
+		if emitCtx.Err() != nil {
+			emitCtx = context.Background()
+		}
+		emitRunCompleted(emitCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, success, summary, queueID, queueGroupIndex, runTipSHA)
 	}
 
 	// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
@@ -4257,7 +4264,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					emitDone(true, "noChange-subsumed: bead found in main")
 				}
 			} else {
-				if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, "noChange-timeout"); reopenErr != nil {
+				// hk-e3fy: use context.Background() so the reopen succeeds even
+				// when the stale watcher has cancelled the per-run ctx between
+				// waitWithSocketGrace returning and this branch executing.
+				if reopenErr := deps.brAdapter.ReopenBead(context.Background(), deps.intentLogDir, deps.brTimeoutCfg, runID, transitionTID, beadID, "noChange-timeout"); reopenErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED (noChange-timeout) bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually (hk-1h5q)\n",
 						beadID, runID.String(), reopenErr)
 				}

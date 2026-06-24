@@ -65,21 +65,26 @@ func (a *terminalReserveFixtureAdapter) ProbeTmux(_ context.Context) error { ret
 func (a *terminalReserveFixtureAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *terminalReserveFixtureAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *terminalReserveFixtureAdapter) NewWindowIn(_ context.Context, _ tmux.NewWindowIn) tmux.Outcome {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.windowCount++
 	return tmux.Outcome{Handle: tmux.WindowHandle("termres-session:win" + string(rune('a'+a.windowCount%26)))}
 }
+
 func (a *terminalReserveFixtureAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error {
 	return nil
 }
+
 func (a *terminalReserveFixtureAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *terminalReserveFixtureAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "", nil
 }
@@ -87,9 +92,11 @@ func (a *terminalReserveFixtureAdapter) KillSession(_ context.Context, _ string)
 func (a *terminalReserveFixtureAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
+
 func (a *terminalReserveFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *terminalReserveFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
 	return nil
 }

@@ -239,11 +239,11 @@ Detectors below assume the orphan sweep of [process-lifecycle.md §4.2 PL-005] h
 
 **Priority.** Cat-BL1 runs after Cat 5 in the priority ordering (RC-003a). Rationale: the orphan sweep (Cat 5 + PL-006) runs first to clean up run-level artifacts; Cat-BL1 then sweeps bead-level orphans that the run-level sweep does not reach.
 
-**Default response.** Dispatch a Cat-BL1 investigator workflow:
-1. Collect all orphaned child bead IDs (label `parent:hk-<parent-id>` + no git `Refs:` commit for parent).
+**Default response.** Direct startup sweep (no LLM investigator):
+1. Collect all orphaned child bead IDs (label `parent:hk-<parent-id>` + no git `Refs:` commit for parent on target branch).
 2. For each orphan: emit `orphaned_child_bead{bead_id, parent_id}` event.
-3. Default verdict: `br close <child-id> --reason="Orphaned: parent bead hk-<parent-id> run discarded (Cat-BL1)"`.
-4. Exception: if the child bead is `in_progress` (another run has claimed it), escalate to human rather than auto-closing.
+3. If bead is `open`: auto-close via `br close <child-id>` (sweep close, no intent log).
+4. If bead is `in_progress`: escalate to human via `operator_escalation_required` (do not auto-close).
 
 **Detection point.** Daemon startup sweep (automatic), after PL-006 orphan sweep. Also triggered on-demand via `harmonik reconcile`.
 
@@ -295,7 +295,7 @@ The table below is the dispatch contract. RC-007 makes it normative; RC-008 make
 | Cat 5 (clean restart) | normal startup; proceed to `ready` | No | — | Yes (no-op) |
 | Cat 6a (integrity, LLM-triageable) | investigator workflow | Yes | `escalate-to-human` (usually) | No (investigator required) |
 | Cat 6b (integrity, mechanically unrecoverable) | auto-escalate without investigator | No | — | N/A (operator intervention) |
-| Cat-BL1 (child-bead orphan) | investigator workflow | No | `br close` (orphan) / `escalate-to-human` (if in_progress) | No (investigator required) |
+| Cat-BL1 (child-bead orphan) | startup sweep: auto-close open orphans; escalate in_progress orphans to human | No | `br close` (open orphan) / `operator_escalation_required` (in_progress orphan) | Yes (auto-close for open orphans / escalate-to-human for in_progress) |
 | Cat-BL2 (ledger import failure) | retry → Cat 6b escalation | No (retry auto) | — | Yes (retry); then operator |
 | Cat-BL3 (merge-conflict audit) | operator notification only | No | — | Yes (no-op; audit notification) |
 

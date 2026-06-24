@@ -19,9 +19,12 @@ import (
 // A 1M-window session at tokens=200001/pct=20 must emit ZERO session_keeper_warn.
 // The abs-token gate (defaultWarnAbsTokens=200k) resolves to 200k on a 1M window
 // (min(200k,700k)=200k). With the BUGGY gate:
-//   200001 < 200000 → false → belowWarnThreshold=false → warn fires at pct=20.
+//
+//	200001 < 200000 → false → belowWarnThreshold=false → warn fires at pct=20.
+//
 // With the FIX (pct<WarnPct is a necessary condition):
-//   20 < 80 → true → belowWarnThreshold=true → no warn.
+//
+//	20 < 80 → true → belowWarnThreshold=true → no warn.
 func TestWatcher_LargeWindow_NoWarnBelowWarnPct(t *testing.T) {
 	t.Parallel()
 

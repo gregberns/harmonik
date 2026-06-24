@@ -264,7 +264,8 @@ type CatBL3StartupSweepConfig struct {
 //  1. Reads .beads/merge-conflicts.log; skips if absent or empty.
 //  2. Parses conflict lines and collects BeadLedgerConflict records.
 //  3. Emits bead_ledger_conflict_audit{run_id, bead_ids, conflicts, timestamp}.
-//  4. Truncates the log file (it is ephemeral; conflicts are now in the event log).
+//  4. Emits operator_escalation_required with reason=merge_conflict (audit notification; no data loss).
+//  5. Truncates the log file (it is ephemeral; conflicts are now in the event log).
 //
 // Spec ref: specs/reconciliation/spec.md §8.BL3 — Cat-BL3 merge-conflict-log audit.
 func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) error {
@@ -324,6 +325,16 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 
 	fmt.Fprintf(logW, "reconciliation Cat-BL3: emitted bead_ledger_conflict_audit (%d conflicts, %d beads)\n",
 		len(conflicts), len(beadIDs))
+
+	// Emit operator_escalation_required — audit notification; no data loss.
+	escalatePayload := core.OperatorEscalationRequiredPayload{
+		Reason: core.OperatorEscalationReasonMergeConflict,
+	}
+	if escalateBytes, marshalErr := json.Marshal(escalatePayload); marshalErr == nil {
+		if emitErr := cfg.Emitter.Emit(ctx, core.EventTypeOperatorEscalationRequired, escalateBytes); emitErr != nil {
+			fmt.Fprintf(logW, "reconciliation Cat-BL3: emit operator_escalation_required: %v\n", emitErr)
+		}
+	}
 
 	// Truncate the log — conflicts are now durable in the event log.
 	if err := os.Truncate(logPath, 0); err != nil {

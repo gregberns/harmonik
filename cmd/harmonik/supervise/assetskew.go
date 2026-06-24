@@ -22,6 +22,8 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 )
 
 // AssetSkewVerdict is the supervisor-facing projection of the main-package skew
@@ -54,6 +56,35 @@ var AutoApplyGateHook func(projectDir string) (dispatching bool, reason string, 
 // Called only when AutoApply is enabled, there are safe candidates, and the lull
 // gate confirms the daemon is quiescent.
 var AutoApplyHook func(projectDir string) (applied int, err error)
+
+// CommsSendNotifier is the function used by notifyCaptainSkew and the auto-apply
+// success path to post a comms message to the captain. In production it shells out to
+// 'harmonik comms send' via execCommsSend. Tests replace it with a no-op stub to
+// prevent a fork-bomb: under 'go test', os.Executable() returns the test binary, so
+// exec'ing it would re-run the entire test suite.
+var CommsSendNotifier func(projectDir, body string) error = execCommsSend
+
+// execCommsSend is the production implementation of CommsSendNotifier.
+func execCommsSend(projectDir, body string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	// Belt-and-suspenders: a test binary (name ends in .test) must never exec
+	// itself for comms send — it would re-run the entire test suite.
+	if strings.HasSuffix(filepath.Base(exe), ".test") {
+		return fmt.Errorf("supervisecmd: refusing comms send from test binary %q", exe)
+	}
+	//nolint:gosec // G204: exe is os.Executable(), projectDir operator-controlled.
+	cmd := exec.Command(exe,
+		"comms", "send",
+		"--project", projectDir,
+		"--from", "supervisor",
+		"--to", "captain",
+		"--topic", "status",
+		"--", body)
+	return cmd.Run()
+}
 
 // RunAssetSkewCheck runs the boot-time asset version-skew check for projectDir and,
 // on skew, notifies the captain. It is best-effort: any error is logged and
@@ -97,21 +128,11 @@ func RunAssetSkewCheck(projectDir string, cfg Config, log *slog.Logger, stderr i
 }
 
 // notifyCaptainSkew posts a single status notice to the captain over the comms bus
-// telling someone to run sync-assets. It shells out to `harmonik comms send` (the
-// same self-invocation pattern the shim already uses for the daemon revival argv):
-// the comms surface is a daemon-socket RPC, and the daemon is up under the
-// supervisor, so the directed message lands in the captain's inbox / the comms log.
+// telling someone to run sync-assets. Delegates to CommsSendNotifier (injectable for
+// tests) so a 'go test' binary never exec's itself and fork-bombs the worker.
 //
 // Best-effort: a send failure (no daemon socket, no captain) is logged, not fatal.
-func notifyCaptainSkew(projectDir string, v AssetSkewVerdict, log *slog.Logger, stderr io.Writer) {
-	exe, err := os.Executable()
-	if err != nil {
-		if log != nil {
-			log.Warn("asset-skew: cannot resolve executable for comms notify", "err", err)
-		}
-		return
-	}
-
+func notifyCaptainSkew(projectDir string, v AssetSkewVerdict, log *slog.Logger, _ io.Writer) {
 	var body string
 	if v.NeverSynced {
 		body = fmt.Sprintf(
@@ -123,19 +144,9 @@ func notifyCaptainSkew(projectDir string, v AssetSkewVerdict, log *slog.Logger, 
 			v.ChangedCount, v.ConflictCount)
 	}
 
-	//nolint:gosec // G204: exe is os.Executable(), projectDir operator-controlled.
-	cmd := exec.Command(exe,
-		"comms", "send",
-		"--project", projectDir,
-		"--from", "supervisor",
-		"--to", "captain",
-		"--topic", "status",
-		"--", body)
-	cmd.Stdout = stderr // comms send writes nothing useful to stdout; merge to stderr log
-	cmd.Stderr = stderr
-	if runErr := cmd.Run(); runErr != nil {
+	if err := CommsSendNotifier(projectDir, body); err != nil {
 		if log != nil {
-			log.Warn("asset-skew: comms notify failed (daemon down or no captain?)", "err", runErr)
+			log.Warn("asset-skew: comms notify failed (daemon down or no captain?)", "err", err)
 		}
 		return
 	}
@@ -198,6 +209,12 @@ func maybeAutoApply(projectDir string, cfg Config, v AssetSkewVerdict, log *slog
 				"conflicts_held_for_review", v.ConflictCount)
 		}
 		return
+	}
+	successBody := fmt.Sprintf("auto-applied %d managed skill fast-forward(s)", applied)
+	if notifyErr := CommsSendNotifier(projectDir, successBody); notifyErr != nil {
+		if log != nil {
+			log.Warn("asset-skew: auto-apply success notify failed", "err", notifyErr)
+		}
 	}
 	if log != nil {
 		log.Info("asset-skew: auto-apply complete",

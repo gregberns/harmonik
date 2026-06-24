@@ -2,6 +2,7 @@ package supervisecmd
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -134,5 +135,41 @@ func TestAutoApplyHookNotInvokedWhenDispatching(t *testing.T) {
 
 	if called {
 		t.Fatal("AutoApplyHook must NOT be invoked when the lull gate reports dispatching")
+	}
+}
+
+// TestMaybeAutoApplySuccessHookCalled — after a successful auto-apply, CommsSendNotifier
+// is called exactly once with a body mentioning the apply count, and NO subprocess is
+// exec'd (verifies the fork-bomb fix: a test binary running os.Executable() must never
+// shell out to itself).
+func TestMaybeAutoApplySuccessHookCalled(t *testing.T) {
+	savedNotifier := CommsSendNotifier
+	savedHook := AutoApplyHook
+	savedGate := AutoApplyGateHook
+	defer func() {
+		CommsSendNotifier = savedNotifier
+		AutoApplyHook = savedHook
+		AutoApplyGateHook = savedGate
+	}()
+
+	var notified []string
+	CommsSendNotifier = func(_, body string) error {
+		notified = append(notified, body)
+		return nil
+	}
+	AutoApplyHook = func(_ string) (int, error) {
+		return 3, nil
+	}
+	AutoApplyGateHook = nil // nil gate → not dispatching
+
+	v := AssetSkewVerdict{Skewed: true, AutoApplyCandidates: 3, ChangedCount: 3}
+	cfg := Config{AssetSync: AssetSyncConfig{AutoApply: true}}
+	maybeAutoApply(t.TempDir(), cfg, v, nil, nil)
+
+	if len(notified) != 1 {
+		t.Fatalf("CommsSendNotifier called %d time(s), want exactly 1", len(notified))
+	}
+	if !strings.Contains(notified[0], "auto-applied") || !strings.Contains(notified[0], "3") {
+		t.Errorf("unexpected notify body %q: want 'auto-applied' and '3'", notified[0])
 	}
 }

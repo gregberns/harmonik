@@ -66,6 +66,17 @@ Every comms op requires an agent identity. Resolution order:
 
 If both are absent, the command exits with code 1.
 
+> **FLAG-SPLIT TRAP — identity flags differ per subcommand**
+>
+> | Subcommand | Identity flag |
+> |------------|---------------|
+> | `recv`     | `--agent NAME` |
+> | `join`, `leave` | `--name NAME` |
+> | `send`     | `--from NAME` (recipient is `--to`, not identity) |
+> | `who`      | no identity flag (read-only, no cursor) |
+>
+> `harmonik comms recv --name X` fails with `unknown flag --name` — use `--agent` instead. Passing the wrong flag to any subcommand produces the same error. Rely on `$HARMONIK_AGENT` (set at launch) to avoid flag spelling entirely.
+
 ---
 
 ## CLI surface
@@ -294,6 +305,7 @@ cross-reference.)
 - Do NOT use `comms log` as a substitute for `recv` — `log` does not advance
   any cursor and ignores per-agent addressing.
 - Do NOT parse the human-readable output of `comms recv` — use `--json`.
+- Do NOT pass --name to recv — it takes --agent. (--name works for join/leave; send uses --from; who needs no identity flag.)
 
 ---
 

@@ -1410,6 +1410,22 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				_ = bus.Emit(context.Background(), core.EventTypeReconciliationCompleted, startupCompBytes)
 			}
 		}
+
+		// RC-020a Cat-BL1 (§8.BL1): child-bead orphan startup sweep.
+		// Non-fatal: does not block daemon startup.
+		_ = RunCatBL1StartupSweep(ctx, CatBL1StartupSweepConfig{
+			ProjectDir:   cfg.ProjectDir,
+			BrPath:       cfg.BrPath,
+			TargetBranch: resolvedTargetBranch,
+			Emitter:      bus,
+		})
+
+		// RC-020a Cat-BL3 (§8.BL3): merge-conflict-log audit startup sweep.
+		// Non-fatal: does not block daemon startup.
+		_ = RunCatBL3StartupSweep(ctx, CatBL3StartupSweepConfig{
+			ProjectDir: cfg.ProjectDir,
+			Emitter:    bus,
+		})
 	}
 
 	// hk-9ptu: proactive keepalive for the daemon-owned spawn-target session.

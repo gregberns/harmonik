@@ -180,12 +180,16 @@ ordered checklist; this paragraph is the contract it enforces:
    then **VERIFY** the crew is real on BOTH axes: comms-online (`comms who`) AND
    pane-truth (`capture-pane` shows a boot status / dispatch). A 0-exit from
    `crew start` is NOT verification (STARTUP.md Anti-pattern E).
-5. **Arm watchers — EXACTLY two (M3/hk-039z):** `comms recv --follow` (operator +
-   crew feed) and the `/loop 12m` health tick. **Do NOT arm a `run_stale,heartbeat`
-   standing subscribe** — that short-heartbeat run-level subscribe re-invokes the
-   captain every minute and burns the context the captain role exists to protect
-   (the operator-flagged "observe everything" failure). The `/loop 12m` tick is the
-   superset; run-level telemetry is the CREWS' job. See STARTUP.md Step 6.
+5. **Arm watchers — EXACTLY two, plus external liveness (M3/hk-039z):**
+   `comms recv --follow` (Watcher 1 — operator + crew feed + ops-monitor flags) and
+   `harmonik subscribe --types epic_completed` (Watcher 2 — structural completion
+   trigger). **Do NOT arm a `run_stale,heartbeat` standing subscribe** — that
+   short-heartbeat run-level subscribe re-invokes the captain every minute and burns
+   the context the captain role exists to protect (the operator-flagged "observe
+   everything" failure). **Do NOT arm any self-polling health timer** — captain liveness is
+   ops-monitor-owned (WE4/§5); the ops-monitor captain-liveness probe fires the
+   external long-heartbeat fallback and posts to Watcher 1 on state change.
+   Run-level telemetry is the CREWS' job. See STARTUP.md Step 6.
 6. **THEN monitor** — only after the FULL fleet passes verification do you settle
    into the monitor loop (§5–§9).
 
@@ -396,8 +400,8 @@ agent submitted the underlying work. It is independent of any crew self-report.
 > **Scope (M3/hk-039z):** this is an `epic_completed`-ONLY subscribe — it is NOT a
 > heartbeat stream and does NOT add `run_stale`/`heartbeat`. Do not widen it to
 > run-level telemetry (that is the forbidden context-burn — STARTUP.md Step 6).
-> If you prefer, fold `epic_completed` into the `/loop 12m` tick + `comms recv
-> --follow` feed rather than running a third always-on subscribe.
+> If you prefer, fold `epic_completed` into the `comms recv --follow` feed
+> (Watcher 1) rather than running a separate always-on subscribe.
 
 On each `epic_completed{epic_id, last_child_bead_id, closed_at}` (dedupe on
 `event_id`):

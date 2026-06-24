@@ -489,7 +489,9 @@ time would burn the very context the lower band saves. So:
   this is a ONCE-per-restart read, not a persistent prompt fragment. If no
   `goal-state.json` exists yet (FW5 not yet scheduled), skip silently.
 - Re-arm watchers (Step 6 below) — keeper arming survives the cycle, but the
-  `comms recv --follow` and `/loop` health tick must be re-armed after `/clear`.
+  `comms recv --follow` (Watcher 1) and `epic_completed` subscribe (Watcher 2) must
+  be re-armed after `/clear`. Captain liveness is ops-monitor-owned — do NOT arm
+  any self-polling health timer.
 
 > This reconciles the two pulls the operator flagged: "restart earlier" (lower band)
 > vs "re-ground every resume." Cached tier-2/3 is TRUSTED input; the digest is the one
@@ -511,39 +513,55 @@ time would burn the very context the lower band saves. So:
 harmonik comms recv --agent captain --follow --json
 ```
 
-```text
-# Watcher 2 — a SPARSE health tick via /loop (NOT a short-heartbeat subscribe).
-#   Paste this ONCE after the fleet is verified; it self-paces and survives keeper resets:
-/loop 12m Captain health tick (CE4 — read the ops-monitor digest, DON'T re-run the deterministic checks): (A) READ .harmonik/ops-monitor/latest.json — the daemon-owned every@5m ops-monitor (scripts/ops-monitor-check.sh) already ran daemon-up, paused-queues, crew comms-freshness, the review-gate run_id↔reviewer_verdict join, backlog-readiness, and lull detection. Read its `checks` map ONCE (jq '.checks'); each entry is {state: ok|flag, detail}. If latest.json is missing or its ts is >15m stale, the monitor schedule is down — surface to operator and fall back to running steps (1)-(3) by hand THIS tick only. (B) drain comms for epic_completed/errors/operator and act. (C) For each check whose state==flag, take the JUDGMENT action — do NOT re-derive the green ones: daemon-up flag ⇒ rebuild+restart the daemon; paused-queues flag ⇒ surface+resume; crew-fresh flag ⇒ capture-pane the named crew, nudge/reconcile; review-gate flag ⇒ a completed run has NO reviewer_verdict (review BYPASSED) — surface to operator with the run_ids from .review_bypass_run_ids; backlog-ready flag ⇒ STAFF: run `kerf next` for the ranked lane, assign a free crew/queue slot (the monitor flags WHEN ready work + a free slot coexist; the staffing DECISION is yours); lull flag ⇒ if a true lull, deploy+verify own merged work (ff-after-push, mind the non-ff race). (D) self-audit: is any initiative stalled for a reason other than a genuine §8 surface-and-await case? If so, unblock it. An all-`ok` digest = a healthy fleet: ack nothing, do NOT narrate, just idle to the next tick. A digest with backlog-ready==flag AND a free slot that you do NOT staff is a FAILED tick. Do NOT read run ages, do NOT re-run the green deterministic checks, do NOT call a launch wedge before launch+30min.
+```bash
+# Watcher 2 — epic_completed direct subscribe (structural completion trigger).
+#   Re-arm if the daemon restarts. Fold into comms recv --follow if preferred —
+#   the daemon also delivers epic_completed over the comms bus.
+harmonik subscribe --types epic_completed --json
 ```
 
-> **CE4 — the deterministic slice is offloaded; only the JUDGMENT slice wakes Opus.**
+> **Captain liveness is ops-monitor-owned (WE4 / §5).** The every@5m ops-monitor
+> (`scripts/ops-monitor-check.sh`) runs the captain-liveness probe and posts an
+> `[IMMEDIATE]` comms message on a state change — that message reaches Watcher 1.
+> The captain does **NOT** arm any self-polling health timer. Captain-liveness
+> monitoring is **external** (ops-monitor); the long-heartbeat liveness fallback is a
+> probe owned by the ops-monitor, not a self-scheduling captain timer.
+
+> **CE4 — the deterministic slice is offloaded; only the JUDGMENT slice is captain-owned.**
 > The six deterministic checks (daemon-up, paused-queues, crew-freshness, review-gate,
 > backlog-readiness, lull) run in the every@5m bash ops-monitor and land in
-> `.harmonik/ops-monitor/latest.json`. The captain tick is now ONE cheap read of that
-> `checks` map plus action ONLY on the flagged items — it no longer spends an Opus
-> reasoning pass re-deriving green signals every 12m. The ops-monitor also sends an
-> `[IMMEDIATE]`/`[DIGEST]` comms (Watcher 1) on a state change, so a flag often reaches
-> you via comms before the next tick. The judgment-only responsibilities (staffing
-> decision, lull-deploy, stalled-initiative unblock, review-bypass escalation) STAY on
-> the captain (leanfleet D6).
+> `.harmonik/ops-monitor/latest.json`. When a check flips state, the ops-monitor posts
+> an `[IMMEDIATE]`/`[DIGEST]` comms (Watcher 1), waking the captain. On each such comms
+> event, read the `checks` map once (`jq '.checks' .harmonik/ops-monitor/latest.json`;
+> each entry is `{state: ok|flag, detail}`) and take the JUDGMENT action on each
+> flagged item — do NOT re-derive the green ones: daemon-up flag ⇒ rebuild+restart the
+> daemon; paused-queues flag ⇒ surface+resume; crew-fresh flag ⇒ capture-pane the named
+> crew, nudge/reconcile; review-gate flag ⇒ a completed run has NO reviewer_verdict
+> (review BYPASSED) — surface to operator with the run_ids from `.review_bypass_run_ids`;
+> backlog-ready flag ⇒ STAFF: run `kerf next` for the ranked lane, assign a free
+> crew/queue slot (the monitor flags WHEN ready work + a free slot coexist; the staffing
+> DECISION is yours); lull flag ⇒ if a true lull, deploy+verify own merged work
+> (ff-after-push, mind the non-ff race). If `latest.json` is missing or its `ts` is
+> >15m stale, the monitor schedule is down — surface to the operator. A self-audit
+> question: is any initiative stalled for a reason other than a genuine §8
+> surface-and-await case? If so, unblock it. An all-`ok` digest = a healthy fleet:
+> do NOT narrate. The judgment-only responsibilities (staffing decision, lull-deploy,
+> stalled-initiative unblock, review-bypass escalation) STAY on the captain (leanfleet D6).
 
-The health tick IS the "periodic lightweight Step 2": each fire re-checks daemon +
-`comms who` + a spot `capture-pane`, so a crew going silent is caught without
-staring at runs. **Between ticks, idle** — a verified crew self-manages its beads,
-wedges, and failures. React only to: `epic_completed` (re-task the crew to its
-next lane), crew error posts (investigate/decide), operator messages (answer), or
-a FAILED health tick (daemon down / crew silent / ready work unassigned). Everything
-else is the crews' job.
+React only to comms events (operator direction, crew status, ops-monitor flags),
+`epic_completed` (re-task the crew to its next lane), and crew error posts
+(investigate/decide). A verified crew self-manages its beads, wedges, and failures.
+Everything else is the crews' job.
 
 ### Idle-triggered realign (§4.4 — replaces the dropped 12m focus-check)
 
 Goal realignment fires on **genuine system idle**, NOT on a fixed clock timer (the
 12-minute focus-check was dropped per operator steer 2026-06-14 — a busy captain
-already knows its initiatives). The CE4 health tick is the natural detection point.
+already knows its initiatives). An all-`ok` ops-monitor comms event (or absence of
+any flagged item in the latest ops-monitor digest) is the natural detection point.
 
 **Idle conditions (ALL must hold before firing):**
-1. Ops-monitor all checks `ok` (no flagged items in the CE4 tick).
+1. Ops-monitor all checks `ok` (no flagged items in the latest ops-monitor digest).
 2. `br ready --limit 0` empty (no unblocked ready beads) and no undeployed code.
 3. No crew actively dispatching (no in-flight runs in the comms feed).
 
@@ -559,7 +577,7 @@ cat .harmonik/intent/goal-state.json 2>/dev/null
 ```
 
 **Guards (do NOT fire when):**
-- **Warm-up grace:** within the first 2 health ticks after a cold boot or
+- **Warm-up grace:** within the first 2 ops-monitor cycles after a cold boot or
   restart — the system may be spinning up naturally.
 - **Work truly exhausted:** backlog is genuinely empty with no undeployed code and
   no defined unblocked initiatives — that is a different surface (tell the operator
@@ -567,12 +585,13 @@ cat .harmonik/intent/goal-state.json 2>/dev/null
 - **No goal-state file:** if `.harmonik/intent/goal-state.json` does not exist yet
   (FW5 not yet scheduled), skip silently.
 
-> **FAILED-tick definition (tightened):** a tick is FAILED if: (a) the daemon is
-> down, OR (b) any crew is comms-silent past 150s, OR **(c) `br ready --limit 0`
-> shows ready beads AND a free crew/queue slot exists AND the tick did not staff
-> them.** A quiet all-green tick while (c) holds is NOT a healthy tick — it is a
-> MISSED STAFFING FAILURE. The captain's job is to maximize throughput; idling with
-> ready work in the feed is the same failure mode as watching a zombie crew.
+> **FAILED-monitoring definition (tightened):** a monitoring cycle is FAILED if:
+> (a) the daemon is down, OR (b) any crew is comms-silent past 150s, OR
+> **(c) `br ready --limit 0` shows ready beads AND a free crew/queue slot exists
+> AND the captain did not staff them.** A quiet all-green ops-monitor digest while
+> (c) holds is NOT a healthy cycle — it is a MISSED STAFFING FAILURE. The captain's
+> job is to maximize throughput; idling with ready work in the feed is the same
+> failure mode as watching a zombie crew.
 
 > **Idle-crew wake (load-bearing):** a `comms send` does NOT wake an idle crew that
 > isn't running `comms recv --follow`. After re-tasking an idle crew, NUDGE its pane
@@ -662,9 +681,9 @@ The fleet is healthy when, for the plan's intended set of lanes, ALL hold:
    `paused-by-failure`** — run Step 2g (`harmonik queue list --json`) to sweep
    all named queues; a `paused-by-failure` queue is NOT dispatching even though
    exit ≠ 17. Surface the paused set and resume before declaring the daemon
-   healthy. HEALTH watchers are armed: `comms recv --agent captain --follow` +
-   the `/loop 12m` health tick (NOT a short-heartbeat run-level subscribe — see
-   Step 6).
+   healthy. HEALTH watchers are armed: `comms recv --agent captain --follow` (Watcher 1)
+   + `harmonik subscribe --types epic_completed` (Watcher 2). Captain liveness is
+   ops-monitor-owned (see Step 6).
 
 Quick one-liner to spot the #1 zombie signature (registered but not online):
 
@@ -693,7 +712,7 @@ The captain MUST NOT self-exit (R-C4.11). Only its loops quiesce.
 
 ### PARK procedure
 
-1. **Cancel the `/loop 12m` health tick.** Do not let it re-arm.
+1. **Stop Watcher 2** (`epic_completed` subscribe). Do not let it re-arm.
 2. **Do NOT re-arm `comms recv --follow`.** The Monitor self-exited on the park
    message; leave it stopped.
 3. Captain pane remains open but idle. Zero scheduled wakes = zero token burn.
@@ -722,7 +741,7 @@ On pane nudge (daemon injects Enter into your pane):
    exactly like a fresh session start — re-derive live state, do NOT trust the
    pre-sleep snapshot.
 2. Re-arm `comms recv --agent captain --follow --json` (Watcher 1, Step 6).
-3. Re-arm the `/loop 12m` health tick (Watcher 2, Step 6).
+3. Re-arm `harmonik subscribe --types epic_completed --json` (Watcher 2, Step 6).
 4. Re-start each crew (`harmonik crew start <name>`) and staff all ready lanes.
 
 Spec ref: `specs/park-resume-protocol.md` §3.3 and §4.1.

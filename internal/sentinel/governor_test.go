@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
@@ -510,6 +511,63 @@ func TestGLiveness_TripsAfterNZeroCycles(t *testing.T) {
 	}
 	if sig.ConsecutiveZeroCycles != 3 {
 		t.Errorf("cycle 3: expected ConsecutiveZeroCycles=3, got %d", sig.ConsecutiveZeroCycles)
+	}
+}
+
+// TestGLiveness_ConfiguredN_TripsAfterN proves the gate trips after N zero-cycles
+// when N is supplied through the PRODUCTION config bridge (hk-drygf FIX-B): the
+// Config is built from a real .harmonik/config.yaml via
+// digest.LoadSentinelConfig(...).GovernorConfig(), NOT a hand-set
+// sentinel.Config{LivenessNoProgressN: N}. Hand-set Config is exactly why the
+// pre-FIX-B G-liveness tests passed while production stayed broken — the bridge
+// dropped the value. With the bridge fixed, a configured N must reach the gate.
+func TestGLiveness_ConfiguredN_TripsAfterN(t *testing.T) {
+	const n = 5
+
+	// Build the Config the way the daemon does: write a config.yaml, load it
+	// through the digest bridge.
+	projectDir := makeEventsFile(t)
+	configPath := filepath.Join(projectDir, ".harmonik", "config.yaml")
+	configYAML := fmt.Sprintf("sentinel:\n  window: 30m\n  liveness_no_progress_n: %d\n", n)
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	sentinelCfg, err := digest.LoadSentinelConfig(projectDir)
+	if err != nil {
+		t.Fatalf("LoadSentinelConfig: %v", err)
+	}
+	cfg, err := sentinelCfg.GovernorConfig()
+	if err != nil {
+		t.Fatalf("GovernorConfig: %v", err)
+	}
+	if cfg.LivenessNoProgressN != n {
+		t.Fatalf("production bridge dropped the value: LivenessNoProgressN=%d, want %d", cfg.LivenessNoProgressN, n)
+	}
+
+	now := time.Now()
+	// Zero DaemonStartedAt → no warmup suppression; MovementScore=0 (no events);
+	// HasOpportunity=true via HasReadyBeads.
+	state := &sentinel.GovernorState{}
+	input := sentinel.GovernorInput{
+		ProjectDir:    projectDir,
+		Now:           now,
+		HasReadyBeads: true,
+	}
+
+	var sig sentinel.GovernorSignal
+	for i := 1; i <= n; i++ {
+		sig = sentinel.Evaluate(context.Background(), state, input, cfg)
+		if i < n && sig.LivenessViolated {
+			t.Errorf("cycle %d: premature LivenessViolated (expected after cycle %d)", i, n)
+		}
+	}
+
+	if !sig.LivenessViolated {
+		t.Errorf("cycle %d: expected LivenessViolated=true via production-configured N", n)
+	}
+	if sig.Level != sentinel.ActivationHalt {
+		t.Errorf("cycle %d: expected Level=ActivationHalt, got %s", n, sig.Level)
 	}
 }
 

@@ -1818,13 +1818,32 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		}
 
 		// FW1 (hk-y9fn): init sentinel governor deps from config.
-		// LoadSentinelConfig returns a zero-value SentinelConfig (all defaults) when
-		// the sentinel: block is absent — nil-safe; GovernorConfig() is always valid.
 		// A non-nil governorState signals to FW2 (wire-Evaluate) that the governor
 		// is wired; DaemonStartedAt seeds the cold-start warmup gate (spec §1.4).
+		// hk-drygf (FIX-B): liveness_no_progress_n is a REQUIRED operator key with
+		// no compiled default. When the operator HAS a .harmonik/config.yaml, an
+		// absent key (GovernorConfig returns *ErrMissingLivenessNoProgressN) — or a
+		// read error — fails the daemon load loud rather than silently running with
+		// the G-liveness gate disabled (the live hk-drygf bug). When no config.yaml
+		// exists at all (fresh project / unit-test bootstrap), the operator has not
+		// opted into sentinel config: keep the prior behaviour (governor wired but
+		// the gate disabled) instead of refusing to start.
 		if cfg.ProjectDir != "" {
-			sentinelCfg, _ := digest.LoadSentinelConfig(cfg.ProjectDir)
-			deps.governorCfg = sentinelCfg.GovernorConfig()
+			sentinelCfg, sentinelErr := digest.LoadSentinelConfig(cfg.ProjectDir)
+			if sentinelErr != nil {
+				return fmt.Errorf("daemon.Start: sentinel config: %w", sentinelErr)
+			}
+			governorCfg, govErr := sentinelCfg.GovernorConfig()
+			if govErr != nil {
+				// Fail loud only when the operator actually has a config.yaml;
+				// absence means "sentinel not configured", not "misconfigured".
+				configPath := filepath.Join(cfg.ProjectDir, ".harmonik", "config.yaml")
+				if _, statErr := os.Stat(configPath); statErr == nil {
+					return fmt.Errorf("daemon.Start: governor config: %w", govErr)
+				}
+				// No config.yaml: leave governorCfg zero-valued (gate disabled).
+			}
+			deps.governorCfg = governorCfg
 			deps.governorState = &sentinel.GovernorState{
 				DaemonStartedAt: daemonStartTime,
 			}

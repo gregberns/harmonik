@@ -2,6 +2,7 @@ package digest
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,8 +56,12 @@ sentinel:
 		}
 	}
 
-	if got := cfg.GovernorLivenessNoProgressN(); got != 7 {
-		t.Errorf("GovernorLivenessNoProgressN: got %d, want 7", got)
+	gcfg, gerr := cfg.GovernorConfig()
+	if gerr != nil {
+		t.Fatalf("unexpected GovernorConfig error: %v", gerr)
+	}
+	if got := gcfg.LivenessNoProgressN; got != 7 {
+		t.Errorf("LivenessNoProgressN: got %d, want 7", got)
 	}
 
 	if got := cfg.DoneDefinitionFor("default"); got != "merged" {
@@ -89,8 +94,10 @@ func TestParseSentinelConfig_GovernorDefaults(t *testing.T) {
 	if weights := cfg.GovernorMovementWeights(); weights != nil {
 		t.Errorf("GovernorMovementWeights default: expected nil (use compiled defaults), got %v", weights)
 	}
-	if got := cfg.GovernorLivenessNoProgressN(); got != DefaultLivenessNoProgressN {
-		t.Errorf("GovernorLivenessNoProgressN default: got %d, want %d", got, DefaultLivenessNoProgressN)
+	// liveness_no_progress_n has NO compiled default under FIX-B (hk-drygf):
+	// an absent key must fail loud at GovernorConfig(), not fall back to a literal.
+	if _, gerr := cfg.GovernorConfig(); gerr == nil {
+		t.Error("GovernorConfig with no liveness_no_progress_n: expected fail-loud error, got nil")
 	}
 	if got := cfg.DoneDefinitionFor("any-class"); got != DefaultDoneDefinition {
 		t.Errorf("DoneDefinitionFor default: got %q, want %q", got, DefaultDoneDefinition)
@@ -193,7 +200,10 @@ sentinel:
 		t.Fatalf("unexpected parse error: %v", err)
 	}
 
-	gcfg := cfg.GovernorConfig()
+	gcfg, gerr := cfg.GovernorConfig()
+	if gerr != nil {
+		t.Fatalf("unexpected GovernorConfig error: %v", gerr)
+	}
 
 	if gcfg.Window != 15*time.Minute {
 		t.Errorf("Window: got %v, want 15m", gcfg.Window)
@@ -225,14 +235,69 @@ sentinel:
 func TestSentinelConfig_GovernorConfig_NilWeights(t *testing.T) {
 	t.Parallel()
 
-	cfg, err := parseSentinelConfig([]byte(`sentinel: {}`))
+	// liveness_no_progress_n must be present (any explicit value) for GovernorConfig
+	// to succeed under FIX-B; an explicit 0 is the minimal valid form here.
+	cfg, err := parseSentinelConfig([]byte("sentinel:\n  liveness_no_progress_n: 0\n"))
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
 	}
 
-	gcfg := cfg.GovernorConfig()
+	gcfg, gerr := cfg.GovernorConfig()
+	if gerr != nil {
+		t.Fatalf("unexpected GovernorConfig error: %v", gerr)
+	}
 	if gcfg.Weights != nil {
 		t.Errorf("Weights: expected nil for empty config, got %v", gcfg.Weights)
+	}
+}
+
+// TestSentinelConfig_GovernorConfig_MissingLivenessN_FailsLoud verifies the
+// FIX-B contract (hk-drygf): when liveness_no_progress_n is UNSET on the
+// production parse path (as the live config.yaml had it commented out), the
+// governor-config resolution fails loud with an error that NAMES the missing
+// key, so the daemon cannot silently run with the G-liveness gate disabled.
+func TestSentinelConfig_GovernorConfig_MissingLivenessN_FailsLoud(t *testing.T) {
+	t.Parallel()
+
+	// A sentinel block WITHOUT liveness_no_progress_n (mirrors the live config:
+	// the key commented out, other keys like mode present).
+	cfg, err := parseSentinelConfig([]byte("sentinel:\n  mode: observe\n"))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	_, gerr := cfg.GovernorConfig()
+	if gerr == nil {
+		t.Fatal("expected fail-loud error for missing liveness_no_progress_n, got nil")
+	}
+	var target *ErrMissingLivenessNoProgressN
+	if !errors.As(gerr, &target) {
+		t.Errorf("expected *ErrMissingLivenessNoProgressN, got %T: %v", gerr, gerr)
+	}
+	if !strings.Contains(gerr.Error(), "liveness_no_progress_n") {
+		t.Errorf("error message must name the key liveness_no_progress_n, got: %q", gerr.Error())
+	}
+}
+
+// TestSentinelConfig_GovernorConfig_ExplicitZeroHonored verifies that an
+// explicit liveness_no_progress_n: 0 is honored as a valid operator choice
+// (the gate is explicitly disabled) — NOT treated as "absent". GovernorConfig
+// returns no error and carries the 0 through verbatim. Guards against
+// over-failing on the explicit-disable case.
+func TestSentinelConfig_GovernorConfig_ExplicitZeroHonored(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := parseSentinelConfig([]byte("sentinel:\n  liveness_no_progress_n: 0\n"))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	gcfg, gerr := cfg.GovernorConfig()
+	if gerr != nil {
+		t.Fatalf("explicit liveness_no_progress_n: 0 must be honored, got error: %v", gerr)
+	}
+	if gcfg.LivenessNoProgressN != 0 {
+		t.Errorf("LivenessNoProgressN: got %d, want 0 (explicit disable)", gcfg.LivenessNoProgressN)
 	}
 }
 
@@ -323,8 +388,12 @@ sentinel:
 	if got := cfg.GovernorWindow(); got != 20*time.Minute {
 		t.Errorf("GovernorWindow: got %v, want 20m", got)
 	}
-	if got := cfg.GovernorLivenessNoProgressN(); got != 5 {
-		t.Errorf("GovernorLivenessNoProgressN: got %d, want 5", got)
+	gcfg, gerr := cfg.GovernorConfig()
+	if gerr != nil {
+		t.Fatalf("unexpected GovernorConfig error: %v", gerr)
+	}
+	if got := gcfg.LivenessNoProgressN; got != 5 {
+		t.Errorf("LivenessNoProgressN: got %d, want 5", got)
 	}
 }
 

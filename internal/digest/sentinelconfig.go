@@ -47,11 +47,6 @@ const DefaultGovernorSustainedWindows = 2
 // terminal-progress event (matches sentinel.DefaultHighWeight).
 const DefaultGovernorHighWeight = 10
 
-// DefaultLivenessNoProgressN is the default number of consecutive governor
-// cycles with no terminal progress before G-liveness triggers self-kill
-// (flywheel-motion.md §6.1). Operator-tunable via sentinel.liveness_no_progress_n.
-const DefaultLivenessNoProgressN = 10
-
 // DefaultDoneDefinition is the default per-class completion definition:
 // "merged" means the bead is done when its Refs: trailer lands on origin/main
 // (flywheel-motion.md §5.2).
@@ -103,8 +98,13 @@ type SentinelConfig struct {
 
 	// LivenessNoProgressN is the number of consecutive governor cycles with
 	// no terminal progress before G-liveness triggers a self-kill
-	// (flywheel-motion.md §6.1). Default: DefaultLivenessNoProgressN (10).
-	LivenessNoProgressN int
+	// (flywheel-motion.md §6.1). It is a REQUIRED operator config key with NO
+	// compiled default: nil means the operator never set liveness_no_progress_n
+	// and GovernorConfig() fails loud (see ErrMissingLivenessNoProgressN); a
+	// non-nil pointer is honored verbatim, including an explicit 0 (0 = operator
+	// explicitly disables the G-liveness gate, a valid choice). This mirrors the
+	// keeper "no hardcoded thresholds — fail loud on a missing required key" mandate.
+	LivenessNoProgressN *int
 
 	// DoneDefinition is the per-class completion definition
 	// (flywheel-motion.md §5.2). Keys are class names; values are
@@ -169,13 +169,18 @@ func (c SentinelConfig) GovernorMovementWeights() map[string]int {
 	return c.MovementWeights
 }
 
-// GovernorLivenessNoProgressN returns the effective G-liveness cycle threshold,
-// falling back to DefaultLivenessNoProgressN.
-func (c SentinelConfig) GovernorLivenessNoProgressN() int {
-	if c.LivenessNoProgressN > 0 {
-		return c.LivenessNoProgressN
-	}
-	return DefaultLivenessNoProgressN
+// ErrMissingLivenessNoProgressN is returned by GovernorConfig when the operator
+// never set sentinel.liveness_no_progress_n. The governor's G-liveness threshold
+// has NO compiled default (the "no hardcoded sentinel thresholds" mandate, the
+// governor analogue of the keeper fail-loud-on-missing-key rule): an absent key
+// must halt the daemon load loud, not silently run with the gate disabled.
+type ErrMissingLivenessNoProgressN struct{}
+
+func (e *ErrMissingLivenessNoProgressN) Error() string {
+	return "digest: sentinel config: required key `liveness_no_progress_n` is not set; " +
+		"set it under the sentinel: block in .harmonik/config.yaml " +
+		"(e.g. `liveness_no_progress_n: 10`, or `liveness_no_progress_n: 0` to explicitly " +
+		"disable the G-liveness gate) — there is no compiled default"
 }
 
 // GovernorConfig converts the digest SentinelConfig into a sentinel.Config
@@ -187,8 +192,16 @@ func (c SentinelConfig) GovernorLivenessNoProgressN() int {
 // When MovementWeights is nil the returned Config.Weights is also nil, which
 // causes sentinel.Evaluate to fall back to sentinel.DefaultWeights.
 //
-// Bead: hk-y9fn (FW1 config-adapter).
-func (c SentinelConfig) GovernorConfig() sentinel.Config {
+// LivenessNoProgressN is REQUIRED with no compiled default: when it was absent
+// from config (c.LivenessNoProgressN == nil) GovernorConfig returns
+// *ErrMissingLivenessNoProgressN so the daemon load fails loud; an explicit
+// value (including 0 = operator-disabled) is carried through verbatim.
+//
+// Bead: hk-y9fn (FW1 config-adapter); hk-drygf (FIX-B fail-loud).
+func (c SentinelConfig) GovernorConfig() (sentinel.Config, error) {
+	if c.LivenessNoProgressN == nil {
+		return sentinel.Config{}, &ErrMissingLivenessNoProgressN{}
+	}
 	var weights map[core.EventType]int
 	if len(c.MovementWeights) > 0 {
 		weights = make(map[core.EventType]int, len(c.MovementWeights))
@@ -201,8 +214,8 @@ func (c SentinelConfig) GovernorConfig() sentinel.Config {
 		WarmupWindow:        c.WarmupWindow,
 		SustainedWindows:    c.SustainedWindows,
 		Weights:             weights,
-		LivenessNoProgressN: c.LivenessNoProgressN,
-	}
+		LivenessNoProgressN: *c.LivenessNoProgressN,
+	}, nil
 }
 
 // DoneDefinitionFor returns the completion definition for the given class name,
@@ -275,7 +288,7 @@ type rawSentinelConfig struct {
 	WarmupWindow            string            `yaml:"warmup_window"`
 	SustainedWindows        int               `yaml:"sustained_windows"`
 	MovementWeights         map[string]int    `yaml:"movement_weights"`
-	LivenessNoProgressN     int               `yaml:"liveness_no_progress_n"`
+	LivenessNoProgressN     *int              `yaml:"liveness_no_progress_n"`
 	DoneDefinition          map[string]string `yaml:"done_definition"`
 	Mode                    string            `yaml:"mode"`
 }
@@ -375,9 +388,10 @@ func parseSentinelConfig(data []byte) (SentinelConfig, error) {
 		cfg.MovementWeights = s.MovementWeights
 	}
 
-	if s.LivenessNoProgressN > 0 {
-		cfg.LivenessNoProgressN = s.LivenessNoProgressN
-	}
+	// Carry the pointer through verbatim: nil = key absent (GovernorConfig fails
+	// loud), &0 = operator explicitly disables the gate (valid), &N = configured
+	// threshold. No compiled default is ever applied here.
+	cfg.LivenessNoProgressN = s.LivenessNoProgressN
 
 	if len(s.DoneDefinition) > 0 {
 		for class, cmd := range s.DoneDefinition {

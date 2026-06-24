@@ -23,9 +23,11 @@ import (
 //  1. Acquires the supervisor.lock flock (fd-lifetime, released on exit).
 //  2. Writes its own PID to supervisor.pid.
 //  3. Reads config.json for supervisor parameters.
-//  4. If --watch-restart: runs internal/supervise.Supervisor with the configured command.
-//  5. Otherwise: exec-replaces itself with the configured command directly.
-//  6. On exit: removes sentinel and pidfile.
+//  4. If config.Command is empty: watchdog-only mode — runs DaemonWatchdog,
+//     no supervisee started (hk-5gdqu).
+//  5. If --watch-restart: runs internal/supervise.Supervisor with the configured command.
+//  6. Otherwise: exec-replaces itself with the configured command directly.
+//  7. On exit: removes sentinel and pidfile.
 //
 // This is an internal subcommand not meant for direct operator use.
 //
@@ -80,10 +82,10 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if len(cfg.Command) == 0 {
-		fmt.Fprintf(stderr,
-			"harmonik supervise _shim: config.json missing 'command' field — nothing to run\n"+
-				"  Set config.command to the supervisee argv (e.g. [\"claude\", \"--pi\"])\n")
-		return 1
+		// No supervisee configured: watchdog-only mode — revive the daemon but
+		// start no cognition/flywheel process. This is the expected state when
+		// the operator has dropped the flywheel command (hk-5gdqu).
+		return runWatchdogOnly(cfg, projectDir, stdout, stderr)
 	}
 
 	if !watchRestart {
@@ -217,6 +219,39 @@ func runWithSupervisor(cfg Config, projectDir string, stdout, stderr io.Writer) 
 		} else {
 			fmt.Fprintf(stderr, "harmonik supervise: supervisor exited: %v\n", err)
 		}
+		return 1
+	}
+	return 0
+}
+
+// runWatchdogOnly runs only the DaemonWatchdog (no supervisee) and blocks until
+// SIGINT/SIGTERM. Used when config.json has no Command field — the operator
+// dropped the flywheel supervisee but still wants daemon auto-revive (hk-5gdqu).
+func runWatchdogOnly(cfg Config, projectDir string, stdout, stderr io.Writer) int {
+	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	ctx, stop := setupSignals()
+	defer stop()
+
+	RunAssetSkewCheck(projectDir, cfg, log, stderr)
+
+	daemonCmd := buildDaemonCmd(projectDir, cfg.MaxConcurrent)
+	if len(daemonCmd) == 0 {
+		fmt.Fprintf(stderr, "harmonik supervise _shim: watchdog-only: cannot resolve daemon binary\n")
+		return 1
+	}
+
+	dw := supervise.NewDaemonWatchdog(supervise.DaemonWatchdogSpec{
+		SocketPath:   lifecycle.SocketPath(projectDir),
+		Command:      daemonCmd,
+		WorkDir:      projectDir,
+		LedgerPath:   release.LedgerPath(projectDir),
+		LastGoodPath: release.LastGoodStatePath(projectDir),
+	}, log)
+
+	fmt.Fprintln(stdout, "harmonik supervise: watchdog-only mode (no supervisee configured)")
+	if err := dw.Run(ctx); err != nil && ctx.Err() == nil {
+		fmt.Fprintf(stderr, "daemon-watchdog: exited: %v\n", err)
 		return 1
 	}
 	return 0

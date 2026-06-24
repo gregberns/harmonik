@@ -382,9 +382,11 @@ func (c *CyclerConfig) belowActThreshold(cf *CtxFile) bool {
 
 // belowWarnThreshold reports whether cf is below the warn/re-arm threshold.
 // Uses absolute tokens when available, otherwise falls back to Pct vs WarnPct.
+// pct<WarnPct is a NECESSARY condition — see WatcherConfig.belowWarnThreshold
+// (watcher.go) for the rationale. Byte-identical logic. Refs: hk-lbo9w.
 func (c *CyclerConfig) belowWarnThreshold(cf *CtxFile) bool {
 	if cf.Tokens > 0 && cf.WindowSize > 0 {
-		return cf.Tokens < c.warnThreshold(cf.WindowSize)
+		return cf.Pct < c.WarnPct || cf.Tokens < c.warnThreshold(cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct
 }

@@ -753,8 +753,12 @@ func (c *WatcherConfig) applyDefaults() {
 // the only trustworthy signal, matching the cycler. Refs: hk-jgzg (F45), hk-bpkv.
 func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
 	if cf.Tokens > 0 && cf.WindowSize > 0 {
-		// Shared min(abs, pctCeil*window) formula — single impl in thresholds.go.
-		return cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, cf.WindowSize)
+		// pct<WarnPct is a NECESSARY condition: even if tokens exceed the abs gate,
+		// we must not warn below the configured warn_pct. On a 1M-context (Opus)
+		// session the abs gate resolves to min(200k,700k)=200k = ~20% of the
+		// window, so without the pct guard, warn fires at pct=20 instead of 80.
+		// Refs: hk-lbo9w. Byte-identical logic with CyclerConfig.belowWarnThreshold.
+		return cf.Pct < c.WarnPct || cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct
 }

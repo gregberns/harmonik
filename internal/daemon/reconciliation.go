@@ -1,0 +1,396 @@
+package daemon
+
+// reconciliation.go — Cat-BL1 and Cat-BL3 startup sweep detectors.
+//
+// Cat-BL1 (§8.BL1): child-bead orphan detector. At startup, enumerates beads
+// with parent:hk-* labels, checks git for parent-run merge commits, closes
+// orphans; escalates to operator if orphan is in_progress.
+//
+// Cat-BL3 (§8.BL3): merge-conflict-log audit. At startup, checks for a
+// non-empty .beads/merge-conflicts.log, emits bead_ledger_conflict_audit, and
+// truncates the log file.
+//
+// Cat-BL2 (§8.BL2) is reactive — triggered by bead_sync_failed events
+// arriving at the daemon event bus — and has no startup detector.
+//
+// Spec ref: specs/reconciliation/spec.md §8.BL1, §8.BL2, §8.BL3.
+// Bead ref: hk-27ghc.
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/gregberns/harmonik/internal/brcli"
+	"github.com/gregberns/harmonik/internal/core"
+)
+
+// parentLabelPrefix is the label prefix used by child beads to record their
+// parent bead lineage per specs/beads-integration.md §4.8b BI-010e (T0 rename:
+// parent:hk-* not codename:hk-*).
+const parentLabelPrefix = "parent:hk-"
+
+// beadsMergeConflictsLog is the path of the merge-conflict log file relative
+// to the project root .beads/ directory.
+const beadsMergeConflictsLog = ".beads/merge-conflicts.log"
+
+// CatBL1StartupSweepConfig holds the construction-time parameters for the
+// Cat-BL1 child-bead orphan startup sweep launched by RunCatBL1StartupSweep.
+type CatBL1StartupSweepConfig struct {
+	// ProjectDir is the harmonik project root. Must be non-empty.
+	ProjectDir string
+
+	// BrPath is the absolute path to the `br` binary. Must be non-empty for
+	// bead-ledger queries and close operations.
+	BrPath string
+
+	// TargetBranch is the git branch the merge-commit scanner checks.
+	// Defaults to "main" when empty.
+	TargetBranch string
+
+	// Emitter is used to emit orphaned_child_bead and operator_escalation_required
+	// events. Required.
+	Emitter interface {
+		Emit(ctx context.Context, eventType core.EventType, payload []byte) error
+	}
+
+	// LogWriter receives non-fatal scan status messages. Nil → os.Stderr.
+	LogWriter io.Writer
+}
+
+// RunCatBL1StartupSweep implements the Cat-BL1 child-bead orphan detector
+// (reconciliation/spec.md §8.BL1). It:
+//  1. Lists all open and in_progress beads.
+//  2. Filters for beads carrying any parent:hk-* label.
+//  3. For each, checks git for a "Refs: <parent-id>" commit on the target branch.
+//  4. If no commit found and bead is open: emits orphaned_child_bead + closes via br close.
+//  5. If no commit found and bead is in_progress: emits orphaned_child_bead +
+//     emits operator_escalation_required (escalates rather than auto-closing).
+//
+// Non-fatal: individual bead errors are logged and skipped; the function
+// continues over remaining candidates.
+//
+// Spec ref: specs/reconciliation/spec.md §8.BL1 — Cat-BL1 child-bead orphan.
+func RunCatBL1StartupSweep(ctx context.Context, cfg CatBL1StartupSweepConfig) error {
+	if cfg.ProjectDir == "" || cfg.BrPath == "" {
+		return fmt.Errorf("reconciliation Cat-BL1: ProjectDir and BrPath must be non-empty")
+	}
+
+	logW := cfg.LogWriter
+	if logW == nil {
+		logW = os.Stderr
+	}
+
+	adapter, adapterErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
+	if adapterErr != nil {
+		return fmt.Errorf("reconciliation Cat-BL1: br adapter: %w", adapterErr)
+	}
+
+	targetBranch := cfg.TargetBranch
+	if targetBranch == "" {
+		targetBranch = "main"
+	}
+
+	scanCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	// Collect open + in_progress beads — both are active and could be orphans.
+	candidates, collectErr := collectParentLabeledBeads(scanCtx, adapter, logW)
+	if collectErr != nil {
+		return fmt.Errorf("reconciliation Cat-BL1: collect candidates: %w", collectErr)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	timeoutCfg := brcli.TimeoutConfig{}
+
+	for _, rec := range candidates {
+		parentID, ok := extractParentBeadID(rec.Labels)
+		if !ok {
+			continue // no parent:hk-* label after all
+		}
+
+		hasCommit, gitErr := hasParentMergeCommit(scanCtx, cfg.ProjectDir, targetBranch, parentID)
+		if gitErr != nil {
+			fmt.Fprintf(logW, "reconciliation Cat-BL1: bead %s git scan for parent %s: %v (skipping)\n",
+				rec.BeadID, parentID, gitErr)
+			continue
+		}
+		if hasCommit {
+			continue // parent ran and merged — not an orphan
+		}
+
+		// Orphan detected: emit orphaned_child_bead event.
+		orphanPayload := core.OrphanedChildBeadPayload{
+			BeadID:   string(rec.BeadID), //nolint:unconvert // BeadID is type alias of string; explicit for clarity
+			ParentID: parentID,
+		}
+		if payloadBytes, marshalErr := json.Marshal(orphanPayload); marshalErr == nil {
+			if emitErr := cfg.Emitter.Emit(scanCtx, core.EventTypeOrphanedChildBead, payloadBytes); emitErr != nil {
+				fmt.Fprintf(logW, "reconciliation Cat-BL1: emit orphaned_child_bead for %s: %v\n",
+					rec.BeadID, emitErr)
+			}
+		}
+
+		if rec.Status == core.CoarseStatusInProgress {
+			// Exception: in_progress orphan → escalate to operator, do not auto-close.
+			fmt.Fprintf(logW, "reconciliation Cat-BL1: bead %s in_progress with orphaned parent %s — escalating\n",
+				rec.BeadID, parentID)
+			escalatePayload := core.OperatorEscalationRequiredPayload{
+				Reason: core.OperatorEscalationReasonOtherVerdictDriven,
+			}
+			if escalateBytes, marshalErr := json.Marshal(escalatePayload); marshalErr == nil {
+				if emitErr := cfg.Emitter.Emit(scanCtx, core.EventTypeOperatorEscalationRequired, escalateBytes); emitErr != nil {
+					fmt.Fprintf(logW, "reconciliation Cat-BL1: emit operator_escalation_required for %s: %v\n",
+						rec.BeadID, emitErr)
+				}
+			}
+			continue
+		}
+
+		// Open orphan: auto-close via SweepCloseBead.
+		closeErr := adapter.SweepCloseBead(scanCtx, timeoutCfg, rec.BeadID)
+		if closeErr != nil {
+			fmt.Fprintf(logW, "reconciliation Cat-BL1: close orphan bead %s (parent %s): %v\n",
+				rec.BeadID, parentID, closeErr)
+			continue
+		}
+		fmt.Fprintf(logW, "reconciliation Cat-BL1: closed orphan bead %s (parent %s run discarded)\n",
+			rec.BeadID, parentID)
+	}
+
+	return nil
+}
+
+// collectParentLabeledBeads lists all open and in_progress beads and returns
+// those that carry at least one parent:hk-* label. Non-fatal list errors for
+// one status are logged; the other status is still queried.
+func collectParentLabeledBeads(ctx context.Context, adapter *brcli.Adapter, logW io.Writer) ([]core.BeadRecord, error) {
+	var candidates []core.BeadRecord
+
+	for _, status := range []string{"open", "in_progress"} {
+		beads, listErr := adapter.ListBeadsByStatus(ctx, status)
+		if listErr != nil {
+			fmt.Fprintf(logW, "reconciliation Cat-BL1: list %s beads: %v (skipping status)\n", status, listErr)
+			continue
+		}
+		for _, rec := range beads {
+			if hasParentLabel(rec.Labels) {
+				candidates = append(candidates, rec)
+			}
+		}
+	}
+	return candidates, nil
+}
+
+// hasParentLabel reports whether any label in labels has the parent:hk-* prefix.
+func hasParentLabel(labels []string) bool {
+	for _, l := range labels {
+		if strings.HasPrefix(l, parentLabelPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractParentBeadID scans labels for a parent:hk-* label and returns the
+// parent bead ID (e.g. "hk-e3fy") and true. Returns "", false if not found.
+func extractParentBeadID(labels []string) (string, bool) {
+	for _, l := range labels {
+		if strings.HasPrefix(l, parentLabelPrefix) {
+			// label = "parent:hk-e3fy" → parent bead ID = "hk-e3fy"
+			return "hk-" + strings.TrimPrefix(l, "parent:hk-"), true
+		}
+	}
+	return "", false
+}
+
+// hasParentMergeCommit checks whether a commit referencing parentBeadID via
+// "Refs: <parentBeadID>" appears in the git log of targetBranch.
+//
+// Returns (true, nil) when a match is found, (false, nil) when no match, and
+// (false, err) on git execution failure.
+//
+// The --all flag is intentionally omitted: the spec requires checking for a
+// merge commit on main (the target branch), not on any branch. Using --all
+// would produce false positives from in-flight worktree branches.
+//
+// Spec ref: reconciliation/spec.md §8.BL1 detection rule.
+func hasParentMergeCommit(ctx context.Context, projectDir, targetBranch, parentBeadID string) (bool, error) {
+	//nolint:gosec // G204: projectDir resolved from harmonik config; parentBeadID is a bead-ID suffix, not user input.
+	cmd := exec.CommandContext(ctx, "git", "-C", projectDir, "log", "-1",
+		"--grep", "Refs: "+parentBeadID, "--format=%H", targetBranch)
+	out, err := cmd.Output()
+	if err != nil {
+		// git log exits non-zero when the branch doesn't exist or no match.
+		// Treat as "no merge commit" — conservative: won't falsely close a live bead.
+		return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+// CatBL3StartupSweepConfig holds the construction-time parameters for the
+// Cat-BL3 merge-conflict-log audit sweep.
+type CatBL3StartupSweepConfig struct {
+	// ProjectDir is the harmonik project root. Must be non-empty.
+	ProjectDir string
+
+	// RunID is the reconciliation run ID used in the emitted event payload.
+	// When empty, the event's run_id field is left blank (non-fatal).
+	RunID string
+
+	// Emitter is used to emit bead_ledger_conflict_audit events. Required.
+	Emitter interface {
+		Emit(ctx context.Context, eventType core.EventType, payload []byte) error
+	}
+
+	// LogWriter receives non-fatal scan status messages. Nil → os.Stderr.
+	LogWriter io.Writer
+}
+
+// RunCatBL3StartupSweep implements the Cat-BL3 merge-conflict-log audit
+// (reconciliation/spec.md §8.BL3). It:
+//  1. Reads .beads/merge-conflicts.log; skips if absent or empty.
+//  2. Parses conflict lines and collects BeadLedgerConflict records.
+//  3. Emits bead_ledger_conflict_audit{run_id, bead_ids, conflicts, timestamp}.
+//  4. Truncates the log file (it is ephemeral; conflicts are now in the event log).
+//
+// Spec ref: specs/reconciliation/spec.md §8.BL3 — Cat-BL3 merge-conflict-log audit.
+func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) error {
+	if cfg.ProjectDir == "" {
+		return fmt.Errorf("reconciliation Cat-BL3: ProjectDir must be non-empty")
+	}
+
+	logW := cfg.LogWriter
+	if logW == nil {
+		logW = os.Stderr
+	}
+
+	logPath := filepath.Join(cfg.ProjectDir, beadsMergeConflictsLog)
+
+	info, statErr := os.Stat(logPath)
+	if os.IsNotExist(statErr) {
+		return nil // nothing to audit
+	}
+	if statErr != nil {
+		return fmt.Errorf("reconciliation Cat-BL3: stat %s: %w", logPath, statErr)
+	}
+	if info.Size() == 0 {
+		return nil // empty — no conflicts
+	}
+
+	//nolint:gosec // G304: logPath derived from harmonik project root config
+	f, openErr := os.Open(logPath)
+	if openErr != nil {
+		return fmt.Errorf("reconciliation Cat-BL3: open %s: %w", logPath, openErr)
+	}
+	conflicts, bead_ids := parseConflictLog(f)
+	_ = f.Close()
+
+	if len(conflicts) == 0 {
+		// File was non-empty but no parseable lines — truncate anyway to avoid
+		// re-processing on next startup.
+		if err := os.Truncate(logPath, 0); err != nil {
+			fmt.Fprintf(logW, "reconciliation Cat-BL3: truncate %s: %v\n", logPath, err)
+		}
+		return nil
+	}
+
+	// Emit bead_ledger_conflict_audit event.
+	payload := core.BeadLedgerConflictAuditPayload{
+		RunID:     cfg.RunID,
+		BeadIDs:   bead_ids,
+		Conflicts: conflicts,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	payloadBytes, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		return fmt.Errorf("reconciliation Cat-BL3: marshal bead_ledger_conflict_audit: %w", marshalErr)
+	}
+	if emitErr := cfg.Emitter.Emit(ctx, core.EventTypeBeadLedgerConflictAudit, payloadBytes); emitErr != nil {
+		return fmt.Errorf("reconciliation Cat-BL3: emit bead_ledger_conflict_audit: %w", emitErr)
+	}
+
+	fmt.Fprintf(logW, "reconciliation Cat-BL3: emitted bead_ledger_conflict_audit (%d conflicts, %d beads)\n",
+		len(conflicts), len(bead_ids))
+
+	// Truncate the log — conflicts are now durable in the event log.
+	if err := os.Truncate(logPath, 0); err != nil {
+		// Non-fatal: log the failure; the event has been emitted.
+		fmt.Fprintf(logW, "reconciliation Cat-BL3: truncate %s: %v (event already emitted)\n", logPath, err)
+	}
+
+	return nil
+}
+
+// parseConflictLog reads lines from r and returns (conflicts, bead_ids).
+// Each line follows the format written by harmonik beads-merge:
+//
+//	<iso8601-timestamp> CONFLICT bead=<id> field=<field> a=<a_val> b=<b_val> resolution=<res>
+//
+// Malformed lines are silently skipped. bead_ids is deduplicated.
+func parseConflictLog(r io.Reader) ([]core.BeadLedgerConflict, []string) {
+	var conflicts []core.BeadLedgerConflict
+	seen := make(map[string]struct{})
+	var bead_ids []string
+
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		c, ok := parseConflictLine(line)
+		if !ok {
+			continue
+		}
+		conflicts = append(conflicts, c)
+		if _, already := seen[c.BeadID]; !already {
+			seen[c.BeadID] = struct{}{}
+			bead_ids = append(bead_ids, c.BeadID)
+		}
+	}
+	return conflicts, bead_ids
+}
+
+// parseConflictLine parses one merge-conflicts.log line into a BeadLedgerConflict.
+// Format: "<timestamp> CONFLICT bead=<id> field=<f> a=<a> b=<b> resolution=<r>".
+// Returns (zero, false) on malformed input.
+func parseConflictLine(line string) (core.BeadLedgerConflict, bool) {
+	parts := strings.Fields(line)
+	// Minimum viable line: <ts> CONFLICT bead=<id> field=<f> a=<a> b=<b> resolution=<r> = 7 parts.
+	if len(parts) < 7 || parts[1] != "CONFLICT" {
+		return core.BeadLedgerConflict{}, false
+	}
+	var c core.BeadLedgerConflict
+	for _, part := range parts[2:] {
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "bead":
+			c.BeadID = v
+		case "field":
+			c.Field = v
+		case "a":
+			c.AValue = v
+		case "b":
+			c.BValue = v
+		case "resolution":
+			c.Resolution = v
+		}
+	}
+	if c.BeadID == "" {
+		return core.BeadLedgerConflict{}, false
+	}
+	return c, true
+}

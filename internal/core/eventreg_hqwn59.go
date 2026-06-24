@@ -546,9 +546,12 @@ func registerDecisionRequiredEvents() {
 //     routing obligation per BL-MRG-004)
 //   - bead_ledger_conflict_audit (§8.15.2): O (ordinary — conflict log is authoritative;
 //     investigator can re-emit on recovery per BL-MRG-003)
+//   - orphaned_child_bead (§8.15.3):        O (ordinary — informational; bead closed
+//     or escalated immediately after emission per reconciliation/spec.md §8.BL1)
 func registerBeadLedgerEvents() {
 	mustRegister("bead_sync_failed", func() EventPayload { return &BeadSyncFailedPayload{} })
 	mustRegister("bead_ledger_conflict_audit", func() EventPayload { return &BeadLedgerConflictAuditPayload{} })
+	mustRegister("orphaned_child_bead", func() EventPayload { return &OrphanedChildBeadPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.

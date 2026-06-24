@@ -326,6 +326,10 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// audit batch from .beads/merge-conflicts.log per BL-MRG-003. Payload:
 	// run_id, bead_ids, conflicts, timestamp.
 	{TypeName: "bead_ledger_conflict_audit", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// orphaned_child_bead (§8.15.3, O): Cat-BL1 startup sweep emits one event
+	// per child bead whose parent:hk-* label has no parent-run merge commit on
+	// main (reconciliation/spec.md §8.BL1). Payload: bead_id, parent_id.
+	{TypeName: "orphaned_child_bead", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 }
 
 // LookupPayloadCompatEntry returns the PayloadCompatEntry for the given

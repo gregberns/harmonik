@@ -8,10 +8,10 @@ requirement-prefix: RC
 status: reviewed
 spec-shape: taxonomy-first
 spec-category: foundation-cross-cutting
-version: 0.4.5
+version: 0.4.7
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-06-01
+last-updated: 2026-06-24
 depends-on:
   - execution-model
   - event-model
@@ -205,7 +205,7 @@ Detectors below assume the orphan sweep of [process-lifecycle.md §4.2 PL-005] h
 - Workspace path referenced by in-flight bead does not exist on disk AND the sibling's transition-record file is absent.
 - Trailer-vs-sibling-file mismatch on a checkpoint commit (e.g., `Harmonik-Transition-ID` trailer present but sibling file missing per [execution-model.md §4.4 EM-018]).
 
-  Precedence with Cat 3: "workspace path missing + sibling transition-record absent" classifies here (Cat 6a) only when priority-ordering per RC-003a routes it here. The priority order (Cat 0 → Cat 6b → Cat 6a → Cat 5 → Cat 3c → Cat 3b → Cat 3a → Cat 3 → Cat 2 → Cat 4 → Cat 1) ensures Cat 6a fires first on workspace-missing + sibling-absent, since integrity-violation evidence dominates generic store disagreement.
+  Precedence with Cat 3: "workspace path missing + sibling transition-record absent" classifies here (Cat 6a) only when priority-ordering per RC-003a routes it here. The priority order (Cat 0 → Cat 6b → Cat-BL2 → Cat 6a → Cat 5 → Cat-BL1 → Cat 3c → Cat 3b → Cat 3a → Cat 3 → Cat 2 → Cat-BL3 → Cat 4 → Cat 1) ensures Cat 6a fires first on workspace-missing + sibling-absent, since integrity-violation evidence dominates generic store disagreement.
 - Worktree has in-progress git operation (rebase, merge, cherry-pick, bisect) that is not the work product being tracked by harmonik — detected by checking for `.git/rebase-merge`, `.git/rebase-apply`, `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`, `.git/BISECT_LOG` in the run's worktree.
 - A bead in `in_progress` with two or more task branches each advertising an `Harmonik-Run-ID` without a `Harmonik-Verdict-Executed` marker (reopen-bead landed, Beads audit entry missing).
 
@@ -233,6 +233,51 @@ Detectors below assume the orphan sweep of [process-lifecycle.md §4.2 PL-005] h
 
 **Investigator?** No (spawning an investigator to "explain why git is corrupt" burns tokens on an operator-only problem). **Auto-resolver?** N/A (operator intervention).
 
+### 8.BL1 Cat-BL1 — Child-bead orphan
+
+**Detection rule.** A bead exists in the Beads ledger with label `parent:hk-<parent-id>` AND status `open` or `in_progress`, AND `git log --all --grep="Refs: hk-<parent-id>"` returns no merge commit on main (parent run was discarded or never completed). The detector enumerates all beads carrying any `parent:hk-*` label, extracts the parent-ID suffix, and checks git for a corresponding `Refs:` commit.
+
+**Priority.** Cat-BL1 runs after Cat 5 in the priority ordering (RC-003a). Rationale: the orphan sweep (Cat 5 + PL-006) runs first to clean up run-level artifacts; Cat-BL1 then sweeps bead-level orphans that the run-level sweep does not reach.
+
+**Default response.** Dispatch a Cat-BL1 investigator workflow:
+1. Collect all orphaned child bead IDs (label `parent:hk-<parent-id>` + no git `Refs:` commit for parent).
+2. For each orphan: emit `orphaned_child_bead{bead_id, parent_id}` event.
+3. Default verdict: `br close <child-id> --reason="Orphaned: parent bead hk-<parent-id> run discarded (Cat-BL1)"`.
+4. Exception: if the child bead is `in_progress` (another run has claimed it), escalate to human rather than auto-closing.
+
+**Detection point.** Daemon startup sweep (automatic), after PL-006 orphan sweep. Also triggered on-demand via `harmonik reconcile`.
+
+Tags: mechanism
+
+### 8.BL2 Cat-BL2 — Bead-ledger import failure
+
+**Detection rule.** Daemon received a `bead_sync_failed` event in `.harmonik/events/events.jsonl` (emitted by the post-merge `br sync --import-only` call per BL-MRG-004). The event carries the run-id, error message, and timestamp.
+
+**Default response.**
+1. Retry `br sync --import-only` once.
+2. If retry succeeds: emit `bead_ledger_recovered{run_id}` event; resume normal operations.
+3. If retry fails: emit `bead_ledger_corrupt{run_id, error}` escalation event. Route to Cat 6b (auto-escalate to operator without investigator). Operator must restore `.beads/issues.jsonl` from git history (`git checkout HEAD -- .beads/issues.jsonl && br sync --import-only`) or repair.
+
+**Detection point.** Triggered by `bead_sync_failed` event arrival — reactive, not polling. Runs at next startup if daemon crashed before handling the event.
+
+Tags: mechanism
+
+### 8.BL3 Cat-BL3 — Merge-conflict-log audit
+
+**Detection rule.** `.beads/merge-conflicts.log` is non-empty after a merge that touches `.beads/issues.jsonl` (written by `harmonik beads-merge` per BL-MRG-003).
+
+**Default response.**
+1. Parse `.beads/merge-conflicts.log`; extract conflicted bead IDs and field values.
+2. Emit `bead_ledger_conflict_audit{bead_ids, conflicts}` event with severity `low`.
+3. Emit `operator_escalation_required` with the conflict list (audit notification; no data loss — ours/main won in all cases per BL-MRG-003).
+4. Truncate `.beads/merge-conflicts.log` after emitting (it is ephemeral; conflicts are now in the event log).
+
+**No auto-resolution.** Cat-BL3 is purely an audit notification. The merge already resolved without error (BL-MRG-003 guarantees exit 0). The operator reviews the conflict list and manually corrects if needed (e.g., `br update <id> --status=open` if a bead was incorrectly closed by LWW).
+
+**Detection point.** Daemon startup sweep (check for non-empty log file). Also triggered after each merge via the post-merge hook if implemented.
+
+Tags: mechanism
+
 ### 8.12 Action-mapping layer — default resolution per category
 
 The table below is the dispatch contract. RC-007 makes it normative; RC-008 makes auto-resolvers mandatory for auto-resolver categories.
@@ -250,6 +295,9 @@ The table below is the dispatch contract. RC-007 makes it normative; RC-008 make
 | Cat 5 (clean restart) | normal startup; proceed to `ready` | No | — | Yes (no-op) |
 | Cat 6a (integrity, LLM-triageable) | investigator workflow | Yes | `escalate-to-human` (usually) | No (investigator required) |
 | Cat 6b (integrity, mechanically unrecoverable) | auto-escalate without investigator | No | — | N/A (operator intervention) |
+| Cat-BL1 (child-bead orphan) | investigator workflow | No | `br close` (orphan) / `escalate-to-human` (if in_progress) | No (investigator required) |
+| Cat-BL2 (ledger import failure) | retry → Cat 6b escalation | No (retry auto) | — | Yes (retry); then operator |
+| Cat-BL3 (merge-conflict audit) | operator notification only | No | — | Yes (no-op; audit notification) |
 
 > INFORMATIVE: Dual-table ownership. [spec.md §8.12] (this table) is **authoritative on semantics** — the prose interpretation of each category's default action, escalation path, and investigator handoff. [schemas.md §6.3] is **authoritative on mechanical dispatch** — the tabular schema consumed by the daemon's action-mapping code and lint suite. The two MUST stay in sync; divergence is a lint failure. When the two disagree, the semantics side (§8.12 here) governs the specification's meaning; implementers adjust the mechanical table to match.
 
@@ -311,9 +359,9 @@ Tags: mechanism
 
 Detection categories are NOT mutually exclusive on evidence: a single in-flight run may satisfy the detection rules of multiple §8 categories. Detectors MUST apply the following priority order and emit the first category whose rule fires:
 
-    Cat 0 → Cat 6b → Cat 6a → Cat 5 → Cat 3c → Cat 3b → Cat 3a → Cat 3 → Cat 2 → Cat 4 → Cat 1
+    Cat 0 → Cat 6b → Cat-BL2 → Cat 6a → Cat 5 → Cat-BL1 → Cat 3c → Cat 3b → Cat 3a → Cat 3 → Cat 2 → Cat-BL3 → Cat 4 → Cat 1
 
-Rationale: infrastructure and integrity evidence (Cat 0, 6b, 6a) dominates because the lower-priority detectors cannot be trusted in their presence; clean-restart (Cat 5) dominates reopened-run orphans; specific Cat 3 sub-cases (3c, 3b, 3a) dominate generic Cat 3; non-idempotent in-flight (Cat 2) dominates recoverable retry state (Cat 4) because the investigator rubric for Cat 2 subsumes Cat 4's auto-resume for non-idempotent work; idempotent-rerun (Cat 1) is terminal in the order because it is the cheapest auto-resume and should not mask higher-severity evidence. This rule resolves the Cat 3 vs Cat 6a "workspace missing" tension and the Cat 3c vs Cat 3b "verdict-unexecuted on a merged run" tension; both route by priority.
+Rationale: infrastructure and integrity evidence (Cat 0, 6b, 6a) dominates because the lower-priority detectors cannot be trusted in their presence; Cat-BL2 (ledger import failure) follows Cat 6b because both are infrastructure-class failures — BL2 is reactive (event-driven) rather than integrity-violation, but must precede normal classification since a corrupt SQLite state would invalidate all subsequent `br` reads; clean-restart (Cat 5) dominates reopened-run orphans; Cat-BL1 (child-bead orphan) follows Cat 5 — run-level orphan sweep (Cat 5) runs first; bead-level orphan sweep (BL1) follows; specific Cat 3 sub-cases (3c, 3b, 3a) dominate generic Cat 3; non-idempotent in-flight (Cat 2) dominates recoverable retry state (Cat 4) because the investigator rubric for Cat 2 subsumes Cat 4's auto-resume for non-idempotent work; Cat-BL3 (merge conflict audit) after Cat 2 — purely an audit notification; low severity; does not block classification of in-flight runs; idempotent-rerun (Cat 1) is terminal in the order because it is the cheapest auto-resume and should not mask higher-severity evidence. This rule resolves the Cat 3 vs Cat 6a "workspace missing" tension and the Cat 3c vs Cat 3b "verdict-unexecuted on a merged run" tension; both route by priority.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -991,6 +1039,7 @@ Legacy citations into `reconciliation/spec.md` used the pre-taxonomy-first secti
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-06-24 | 0.4.7 | agent (hk-27ghc) | **Cat-BL1/BL2/BL3 added (T4).** New §8.BL1 (child-bead orphan), §8.BL2 (ledger import failure), §8.BL3 (merge-conflict-log audit) inserted after §8.11a. RC-003a priority ordering updated to `Cat 0 → Cat 6b → Cat-BL2 → Cat 6a → Cat 5 → Cat-BL1 → Cat 3c → Cat 3b → Cat 3a → Cat 3 → Cat 2 → Cat-BL3 → Cat 4 → Cat 1`. §8.12 action-mapping table extended with three new rows. §8.11 inline priority-order mention updated. Label prefix corrected per T0: `parent:hk-*` (not `codename:hk-*`). Refs: hk-27ghc. |
 | 2026-06-01 | 0.4.6 | agent (hk-63oh.38) | **RC-026a fulfilled — Cat 3b re-execution retry cap shipped.** Pure logic layer in `internal/core/verdictretrycap_rc026a.go`: `VerdictExecutionAttemptRecord` (JSON record for `.harmonik/reconciliation-attempts/<target_run_id>.json`; Valid() requires non-empty TargetRunID, Attempt ≥ 1, non-empty LastAttemptAt), `VerdictRetryCapDefault = 5`, `VerdictRetryDecision` (Allowed / NextAttempt / CapExceeded), `CheckVerdictRetryCap(record, cap)` pure function (nil record = 0 prior retries; next > cap → CapExceeded=true → Cat 6b; next ≤ cap → Allowed=true). I/O layer in `internal/lifecycle/verdictretrycap_rc026a.go`: `WriteVerdictAttemptAtomic(projectDir, record)` (WM-026 atomic temp+fsync+rename+parent-dir-fsync discipline), `ReadVerdictAttempt(projectDir, targetRunID)` (nil on absent = no retries recorded). Path helpers added to `internal/lifecycle/daemonpaths.go`: `ReconciliationAttemptsDir(projectDir)` (.harmonik/reconciliation-attempts/), `ReconciliationAttemptPath(projectDir, targetRunID)` (…/<targetRunID>.json). Tests cover: Valid() shape invariants, VerdictRetryCapDefault=5, nil-record first retry allowed at attempt=1, boundary (attempt 4→5 within cap), cap-at-5 exceeded, beyond-cap still-exceeded, NextAttempt always = current+1, Allowed/CapExceeded mutually exclusive, custom cap. No spec text or requirement IDs changed. Refs: hk-63oh.38. |
 | 2026-06-01 | 0.4.5 | agent (hk-63oh.39) | **RC-027 fulfilled — Operator verdict-override surface shipped.** Core type layer: `OperatorVerdictOverridePolicy` (ConfirmRequired bool), `VerdictOverrideDecision` enum (confirm / veto), `VetoPromotion` enum (none / escalate-to-human), `OperatorVerdictOverrideRequest` struct (TargetRunID + Decision + VetoPromotion + Valid()), `PolicyRequiresConfirmation` pure function, `ApplyVetoPromotion` pure function mapping VetoPromotion → Verdict (none → no-op-accept; escalate-to-human → escalate-to-human). CLI commands added to harmonik binary: `harmonik confirm-verdict <run_id> [--project DIR]` and `harmonik veto-verdict <run_id> [--promote-to escalate-to-human] [--project DIR]`; both communicate via the daemon socket (op `confirm_verdict` / `veto_verdict`); exit 17 when daemon not running; exit 16 (operator-control-invalid-state) when no pending verdict exists for the run_id; exit 0 on success. Commands wired into main.go subcommand dispatch and listed in top-level usage. Tests cover: policy default (false), per-category S01 defaults (Cat 2 / Cat 3 = false; Cat 6a = true per OQ-RC-012), enum validity, OperatorVerdictOverrideRequest.Valid invariants (empty run_id; unknown decision; confirm-with-promotion forbidden), ApplyVetoPromotion mapping, wire-value alignment between VetoPromotionEscalateToHuman and VerdictEscalateToHuman, help-flag exit codes. No spec text or requirement IDs changed; no schemas touched. Refs: hk-63oh.39. |
 | 2026-06-02 | 0.4.4 | agent (hk-63oh.24) | **RC-015a canonical role corrected: `investigator` (not `Researcher`).** RC-015a and RC-015 informative text updated: the canonical `(agent_type, role)` pair for the investigator subprocess is now `(claude-code, investigator)` — correcting a transcription error in v0.4.0 (the changelog had `role=investigator` but the spec text was written with `role=Researcher`). S01 library aligned: three DOT workflows (`cat-2.dot`, `cat-3.dot`, `cat-6a.dot`), three YAML policies (`cat-2.yaml`, `cat-3.yaml`, `cat-6a.yaml`), three prompt templates, and `README.md` all updated from `Researcher` to `investigator`. No new requirement IDs; no schemas touched. Refs: hk-63oh.24. |

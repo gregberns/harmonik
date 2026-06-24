@@ -419,3 +419,35 @@ type BeadLedgerConflictAuditPayload struct {
 func (p BeadLedgerConflictAuditPayload) Valid() bool {
 	return p.RunID != "" && p.Timestamp != ""
 }
+
+// ---------------------------------------------------------------------------
+// §8.15.3 orphaned_child_bead
+// ---------------------------------------------------------------------------
+
+// OrphanedChildBeadPayload is the typed event payload for the
+// orphaned_child_bead event (reconciliation/spec.md §8.BL1, v0.4.7).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+// Durability class: O (ordinary — informational; bead is closed or escalated
+// immediately after emission; event is not flight-critical).
+//
+// Emitted once per orphaned child bead by the Cat-BL1 startup sweep when a
+// bead carrying a parent:hk-* label has no parent-run merge commit on main.
+//
+// # Payload fields
+//
+//   - bead_id   — ID of the orphaned child bead (REQUIRED)
+//   - parent_id — ID of the parent bead extracted from the parent:hk-* label (REQUIRED)
+type OrphanedChildBeadPayload struct {
+	// BeadID is the ID of the orphaned child bead.
+	BeadID string `json:"bead_id"`
+
+	// ParentID is the parent bead ID extracted from the parent:hk-* label.
+	ParentID string `json:"parent_id"`
+}
+
+// Valid reports whether p is a well-formed OrphanedChildBeadPayload.
+func (p OrphanedChildBeadPayload) Valid() bool {
+	return p.BeadID != "" && p.ParentID != ""
+}

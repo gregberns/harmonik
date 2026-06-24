@@ -1220,6 +1220,15 @@ const (
 	// Durability class: O.
 	// Payload: run_id, bead_ids, conflicts, timestamp.
 	EventTypeBeadLedgerConflictAudit EventType = "bead_ledger_conflict_audit"
+
+	// EventTypeOrphanedChildBead is the orphaned_child_bead event type.
+	// Emitted by the Cat-BL1 startup sweep (reconciliation/spec.md §8.BL1)
+	// for each child bead carrying a parent:hk-* label when no parent-run
+	// merge commit exists on main. One event per orphaned bead.
+	// Durability class: O (informational — the bead is closed or escalated
+	// immediately after emission).
+	// Payload: bead_id, parent_id.
+	EventTypeOrphanedChildBead EventType = "orphaned_child_bead"
 )
 
 // ---------------------------------------------------------------------------

@@ -23,6 +23,8 @@
 #   [x] review-gate short-circuit → immediate signal (node_dispatch_requested node_id=review*,
 #                                   NO reviewer_launched, NO reviewer_verdict) [hk-orni / hk-2vpj]
 #   [x] review-gate req+verdict   → no flag (review node requested AND a matching verdict)
+#   [x] review-gate request-changes in-flight → no flag (triple-review relaunch still live) [hk-spx63]
+#   [x] review-gate request-changes completed → immediate signal (completed without APPROVE) [hk-spx63]
 #   [x] backlog-ready        → digest signal (br ready beads + free slot)
 #   [x] backlog suppressed   → no flag when all slots busy
 #   [x] checks map present, schema_version=2
@@ -777,6 +779,69 @@ if [[ -f "$LOG" && -s "$LOG" ]]; then
   fail "request+verdict: no comms should be sent"
 else
   pass "request+verdict: no comms sent"
+fi
+rm -rf "$PROJ"
+
+# ── Test 12e: review-gate REQUEST_CHANGES still in flight — no flag ───────────
+# DOT triple-review can emit reviewer_verdict{REQUEST_CHANGES}, then relaunch the
+# implementer/reviewer loop. Until a later run_completed appears, that non-approving
+# verdict is active review state, not an unreviewed merge.
+echo ""
+echo "=== Test 12e: review-gate request-changes in flight — no flag ==="
+OLD_WALL=$(ts_ago 600)
+EVENTS='{"type":"node_dispatch_requested","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-rc-live","payload":{"node_id":"review_correctness","run_id":"r-rc-live"}}
+{"type":"reviewer_launched","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-rc-live","payload":{"run_id":"r-rc-live"}}
+{"type":"reviewer_verdict","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-rc-live","payload":{"run_id":"r-rc-live","verdict":"REQUEST_CHANGES"}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$EVENTS" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "request-changes in-flight all-green" "all-green" "$OUTPUT"
+assert_json_list_empty "request-changes in-flight: review_bypass_run_ids empty" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review_bypass_run_ids"
+assert_check_state "request-changes in-flight: checks.review-gate=ok" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review-gate" "ok"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  fail "request-changes in-flight: no comms should be sent"
+else
+  pass "request-changes in-flight: no comms sent"
+fi
+rm -rf "$PROJ"
+
+# ── Test 12f: review-gate REQUEST_CHANGES then completed without APPROVE — flag ─
+echo ""
+echo "=== Test 12f: review-gate request-changes completed without approve — immediate ==="
+OLD_WALL=$(ts_ago 600)
+EVENTS='{"type":"node_dispatch_requested","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-rc-done","payload":{"node_id":"review_tests","run_id":"r-rc-done"}}
+{"type":"reviewer_launched","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-rc-done","payload":{"run_id":"r-rc-done"}}
+{"type":"reviewer_verdict","timestamp_wall":"'"$OLD_WALL"'","run_id":"r-rc-done","payload":{"run_id":"r-rc-done","verdict":"REQUEST_CHANGES"}}
+{"type":"run_completed","timestamp_wall":"'"$OLD_WALL"'","payload":{"run_id":"r-rc-done","success":true}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$EVENTS" \
+)
+OUTPUT=$(run_check "$PROJ")
+assert_contains "request-changes completed stdout IMMEDIATE" "IMMEDIATE"     "$OUTPUT"
+assert_contains "request-changes completed stdout signal"    "review-bypass" "$OUTPUT"
+assert_json_list_contains "immediate_signals has review-bypass (request-changes completed)" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "immediate_signals" "review-bypass"
+assert_json_list_contains "review_bypass_run_ids has r-rc-done" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review_bypass_run_ids" "r-rc-done"
+assert_check_state "request-changes completed: checks.review-gate=flag" \
+  "$PROJ/.harmonik/ops-monitor/latest.json" "review-gate" "flag"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "request-changes completed: comms sent"
+  assert_contains "request-changes completed comms [IMMEDIATE]" "[IMMEDIATE]"   "$(cat "$LOG")"
+  assert_contains "request-changes completed comms signal"      "review-bypass" "$(cat "$LOG")"
+else
+  fail "request-changes completed: expected comms send, got none"
 fi
 rm -rf "$PROJ"
 

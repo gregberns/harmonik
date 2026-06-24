@@ -367,13 +367,16 @@ ops_critical_cooldown = int('$OPS_CRITICAL_COOLDOWN')
 import os as _os
 last_msg_ts = {}  # agent_name -> epoch of most recent agent_message
 # Review-gate (M2 code-half; R6 fix): a run is review-BYPASSED only if it actually
-# ENTERED a review path (emitted reviewer_launched) yet produced NO reviewer_verdict.
+# ENTERED a review path (emitted reviewer_launched) yet completed without APPROVE.
 # Runs that auto-closed / made no change / were subsumed never launch a reviewer (by
 # design — workloop.go ~:3811) so they must NOT be flagged. We therefore join
-# reviewer_launched -> reviewer_verdict by run_id, NOT run_completed -> verdict.
+# reviewer_launched -> reviewer_verdict{APPROVE} by run_id, not bare run_completed.
 reviewer_launched_ts = {}  # run_id -> epoch of the reviewer_launched event (review entered)
-verdict_run_ids      = set() # run_ids that have a reviewer_verdict event
+verdict_run_ids      = set() # run_ids that have any reviewer_verdict event
+approving_verdict_run_ids = set() # run_ids that have reviewer_verdict{APPROVE}
 failed_run_ids       = set() # run_ids whose terminal event is run_failed (merged nothing)
+completed_run_ts     = {} # run_id -> epoch of the most-recent run_completed event
+completed_run_seq    = {} # run_id -> event-order index of most-recent run_completed event
 # Short-circuit signal (hk-orni / hk-2vpj follow-up): a run that REQUESTED a review node
 # (node_dispatch_requested with node_id starting 'review' — review / review_correctness /
 # review_design / review_tests / reviewer) but for which the reviewer never launched (no
@@ -383,6 +386,10 @@ failed_run_ids       = set() # run_ids whose terminal event is run_failed (merge
 review_requested_ts  = {}  # run_id -> epoch of the earliest review-node dispatch request
 run_last_event_ts    = {}  # run_id -> epoch of the most-recent event seen for that run (any type)
 run_last_event_type  = {}  # run_id -> event type of the most-recent event (used to detect active reviewer)
+latest_review_event_ts      = {} # run_id -> epoch of latest reviewer_launched/reviewer_verdict
+latest_review_event_seq     = {} # run_id -> event-order index of latest reviewer_launched/reviewer_verdict
+latest_review_event_type    = {} # run_id -> reviewer_launched|reviewer_verdict
+latest_review_event_verdict = {} # run_id -> verdict string for reviewer_verdict, else ''
 
 def _ev_epoch(_tw, _dt):
     _ts_clean = _tw[:19].replace('T', ' ')
@@ -399,10 +406,12 @@ if _os.path.isfile(_events_path):
             _read_start = max(0, _file_size - 256 * 1024)  # last 256 KB
             _ef.seek(_read_start)
             _raw = _ef.read()
+        _event_seq = 0
         for _line in _raw.decode('utf-8', errors='replace').splitlines():
             _line = _line.strip()
             if not _line:
                 continue
+            _event_seq += 1
             try:
                 _ev = json.loads(_line)
                 _etype = _ev.get('type', '')
@@ -428,13 +437,30 @@ if _os.path.isfile(_events_path):
                     _rid = _ev.get('run_id') or (_payload.get('run_id') if isinstance(_payload, dict) else '') or ''
                     _tw = _ev.get('timestamp_wall', '')
                     if _rid and _tw:
-                        reviewer_launched_ts[_rid] = _ev_epoch(_tw, _dt)
+                        _e = _ev_epoch(_tw, _dt)
+                        reviewer_launched_ts[_rid] = _e
+                        if _e >= latest_review_event_ts.get(_rid, 0):
+                            latest_review_event_ts[_rid] = _e
+                            latest_review_event_seq[_rid] = _event_seq
+                            latest_review_event_type[_rid] = 'reviewer_launched'
+                            latest_review_event_verdict[_rid] = ''
 
                 elif _etype == 'reviewer_verdict':
                     # reviewer_verdict carries run_id at top level AND in payload.
                     _rid = _ev.get('run_id') or _payload.get('run_id') or ''
                     if _rid:
                         verdict_run_ids.add(_rid)
+                        _verdict = _payload.get('verdict', '') if isinstance(_payload, dict) else ''
+                        if _verdict == 'APPROVE':
+                            approving_verdict_run_ids.add(_rid)
+                        _tw = _ev.get('timestamp_wall', '')
+                        if _tw:
+                            _e = _ev_epoch(_tw, _dt)
+                            if _e >= latest_review_event_ts.get(_rid, 0):
+                                latest_review_event_ts[_rid] = _e
+                                latest_review_event_seq[_rid] = _event_seq
+                                latest_review_event_type[_rid] = 'reviewer_verdict'
+                                latest_review_event_verdict[_rid] = _verdict
 
                 elif _etype == 'run_failed':
                     # run_failed = terminal failure; the run merged nothing. Collect so the
@@ -443,6 +469,18 @@ if _os.path.isfile(_events_path):
                     _rid = _ev.get('run_id') or (_payload.get('run_id') if isinstance(_payload, dict) else '') or ''
                     if _rid:
                         failed_run_ids.add(_rid)
+
+                elif _etype == 'run_completed':
+                    # Judge review-bypass only after the daemon says the run completed.
+                    # In DOT triple-review, REQUEST_CHANGES relaunches implementation/review;
+                    # until a later run_completed arrives, the review loop is still active.
+                    _rid = _ev.get('run_id') or (_payload.get('run_id') if isinstance(_payload, dict) else '') or ''
+                    _tw = _ev.get('timestamp_wall', '')
+                    if _rid and _tw:
+                        _e = _ev_epoch(_tw, _dt)
+                        if _e >= completed_run_ts.get(_rid, 0):
+                            completed_run_ts[_rid] = _e
+                            completed_run_seq[_rid] = _event_seq
 
                 elif _etype == 'node_dispatch_requested':
                     # The engine requested a node for this run. node_id is under .payload.
@@ -476,10 +514,10 @@ if _os.path.isfile(_events_path):
     except Exception:
         pass
 
-# ── Review-gate: runs that ENTERED-OR-REQUESTED review (window, past grace) w/o verdict ──
+# ── Review-gate: runs that ENTERED-OR-REQUESTED review (window, past grace) w/o approval ──
 # A run is review-BYPASSED if it either (a) emitted reviewer_launched (entered a review
 # path) OR (b) requested a review node via node_dispatch_requested node_id=review* (the
-# engine asked for review) — yet has NO matching reviewer_verdict. Case (b) catches the
+# engine asked for review) — yet completed with NO matching APPROVE verdict. Case (b) catches the
 # hk-2vpj engine-short-circuit class: the engine REQUESTS a review node but the reviewer
 # never launches, so no reviewer_launched event exists and the change merges UNREVIEWED.
 # Auto-close / noChange / subsumed runs neither launch nor request a reviewer, so they are
@@ -488,7 +526,8 @@ if _os.path.isfile(_events_path):
 # review event (launch or request) for the grace check, window over the most-recent such
 # run_ids, and skip any younger than review_grace — its verdict may still be in flight.
 # MEDIUM (multi-iteration DOT): launch/request and reviewer_verdict are joined on the SAME
-# run_id; if ANY iteration of a run emits a verdict under that run_id the run is cleared. A
+# run_id; only a terminal APPROVE clears the run. A REQUEST_CHANGES verdict remains in-flight
+# unless a subsequent run_completed arrives without an approving verdict. A
 # terminal-close run_id that never launched OR requested a reviewer is in neither map, so
 # unmatched `dot: reached terminal node close` run_ids never false-flag.
 _review_anchor_ts = {}  # run_id -> earliest review-related epoch (launch or request)
@@ -506,6 +545,21 @@ for _rid, _lts in _recent_review:
         continue  # too young to judge — verdict may still arrive
     if _rid in failed_run_ids:
         continue  # run_failed terminal: merged nothing, cannot be a bypass
+    if _rid in approving_verdict_run_ids:
+        continue  # terminal approving verdict exists: reviewed
+    # Judge only completed runs. A latest reviewer_launched OR REQUEST_CHANGES verdict
+    # without a subsequent run_completed is an active review/fixup loop, not a bypass.
+    _completed_ts = completed_run_ts.get(_rid, 0)
+    _latest_review_ts = latest_review_event_ts.get(_rid, _lts)
+    _completed_seq = completed_run_seq.get(_rid, 0)
+    _latest_review_seq = latest_review_event_seq.get(_rid, 0)
+    if not _completed_ts:
+        continue
+    if _completed_seq and _latest_review_seq:
+        if _completed_seq <= _latest_review_seq:
+            continue
+    elif _completed_ts < _latest_review_ts:
+        continue
     # Stale/abandoned reviewer: reviewer_launched but no verdict AND no event for
     # reviewer_stale_window seconds — the reviewer session died without a terminal
     # event (no run_failed, no reviewer_verdict). Not a merge-safety hole; suppress
@@ -520,7 +574,7 @@ for _rid, _lts in _recent_review:
     # that fire during a long review (>180s grace but <3600s stale; hk-oytx).
     if run_last_event_type.get(_rid) == 'reviewer_launched' and _rid not in verdict_run_ids:
         continue  # reviewer actively working — verdict pending; not a bypass
-    if _rid not in verdict_run_ids:
+    if _rid not in approving_verdict_run_ids:
         review_bypass_run_ids.append(_rid)
 
 # ── Parse comms who ──────────────────────────────────────────────────────────

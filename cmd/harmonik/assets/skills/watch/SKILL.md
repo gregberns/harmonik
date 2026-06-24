@@ -165,6 +165,48 @@ loop forever:
 
 ---
 
+## § WE8 Launch gate (captain procedure — not the watch's own duty)
+
+This section is addressed to the **captain** launching the watch, not to the watch session itself.
+
+### Keeper-doctor gate (MANDATORY — do not skip)
+
+`harmonik start crew watch` does **not** reliably auto-launch a keeper watcher
+(memory `reference_crew_start_no_auto_keeper_watcher`). A keeper-less watch silently
+loses context and dies → captain starved of escalations.
+
+After crew-start, the captain MUST run:
+
+```bash
+# T = the watch's tmux target, e.g. "harmonik-<hash>-watch:agent"
+keeper enable --agent watch --tmux <T> --yes-destructive
+keeper doctor watch
+```
+
+The watch is only live when `keeper doctor watch` exits green. Do not flip
+`watch.status_target` / `watch.opsmonitor_target` from `captain` to `watch` until
+this gate passes.
+
+### Respawn owner (no in-daemon auto-respawn)
+
+There is **no in-daemon crew auto-respawn** (`crewstart.go:281-284`). If the watch
+goes down, the respawn path is:
+
+1. ops-monitor detects watch-down (component-liveness probe: last_seen >10 min OR
+   tmux pane absent) → escalates IMMEDIATE to captain.
+2. Captain respawns:
+   `harmonik start crew watch --queue watch-q --mission .harmonik/crew/missions/watch.md`
+3. Captain re-runs keeper enable + doctor gate before resuming normal operation.
+
+### Restart-survival
+
+The watch survives keeper-restart and host reboots via:
+- **Durable queue** — `watch-q` persists; any queued wake-tasks are not lost.
+- **Beads assignee re-hydration** — on boot and every epic re-adoption, the watch
+  runs `br update <watch-epic-id> --assignee watch` (crew-handoff-schema.md §4).
+
+---
+
 ## § Progress feed (mandatory)
 
 - Post `harmonik comms send --from watch --to captain --topic status` on boot, on each genuine IMMEDIATE escalation, and on a ≤15-min idle timer while monitoring.

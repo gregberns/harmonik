@@ -38,7 +38,8 @@ import (
 // Returns nil, nil when executedRunIDs is empty.
 //
 // Spec ref: specs/scenario-harness.md §5 SH-INV-002(i);
-//           specs/process-lifecycle.md §4.1 PL-006a.
+//
+//	specs/process-lifecycle.md §4.1 PL-006a.
 func checkLeakedProcesses(ctx context.Context, executedRunIDs []core.RunID) ([]LeakDescriptor, error) {
 	if len(executedRunIDs) == 0 {
 		return nil, nil

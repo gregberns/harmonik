@@ -650,7 +650,7 @@ type rawWatchConfig struct {
 	StatusTarget     string `yaml:"status_target"`
 	OpsmonitorTarget string `yaml:"opsmonitor_target"`
 	AbsentThreshSec  int    `yaml:"absent_thresh_s"` // WE9: seconds before watch-down fires (fail-loud)
-	StallTicks       int    `yaml:"stall_ticks"`      // WE9: frozen-cursor ticks before watch-stalled (fail-loud)
+	StallTicks       int    `yaml:"stall_ticks"`     // WE9: frozen-cursor ticks before watch-stalled (fail-loud)
 }
 
 // WatchConfig holds the watch-level routing configuration read from the

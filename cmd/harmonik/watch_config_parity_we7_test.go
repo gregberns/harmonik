@@ -86,10 +86,10 @@ func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
 
 	// Fully populated config (all WE7 + WE9 keys set) must have no missing entries.
 	cfg := daemon.WatchConfig{
-		StatusTarget:    "watch",
+		StatusTarget:     "watch",
 		OpsmonitorTarget: "watch",
-		AbsentThreshSec: 600,
-		StallTicks:      3,
+		AbsentThreshSec:  600,
+		StallTicks:       3,
 	}
 	missing = checkMissingWatchValues(cfg)
 	if len(missing) != 0 {

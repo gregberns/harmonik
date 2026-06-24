@@ -179,6 +179,13 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeQueueAppended, func() EventPayload { return &QueueAppendedPayload{} }},
 	{EventTypeQueueItemDeferredForLedgerDep, func() EventPayload { return &QueueItemDeferredForLedgerDepPayload{} }},
 	{EventTypeQueueItemReconciled, func() EventPayload { return &QueueItemReconciledPayload{} }},
+
+	// §8.15 Bead-ledger merge lifecycle (hk-u3q6o, hk-k7va9)
+	{EventTypeBeadSyncFailed, func() EventPayload { return &BeadSyncFailedPayload{} }},
+	{EventTypeBeadLedgerRecovered, func() EventPayload { return &BeadLedgerRecoveredPayload{} }},
+	{EventTypeBeadLedgerCorrupt, func() EventPayload { return &BeadLedgerCorruptPayload{} }},
+	{EventTypeBeadLedgerConflictAudit, func() EventPayload { return &BeadLedgerConflictAuditPayload{} }},
+	{EventTypeOrphanedChildBead, func() EventPayload { return &OrphanedChildBeadPayload{} }},
 }
 
 // TestAllEventTypeConstantsHaveRegistryEntries asserts that every EventType

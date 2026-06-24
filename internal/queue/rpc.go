@@ -1087,10 +1087,10 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 		return nil, &RPCError{
 			Code: -32099, Message: "spawn_cap_exceeded",
 			Detail: map[string]any{
-				"error":      fmt.Sprintf("set-concurrency %d would oversubscribe the spawn cap: each bead needs 2 sessions, cap = %d non-terminal slots (safe max_concurrent = %d); restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap", req.N, spawnCap, safeMax, req.N, req.N*2),
-				"requested":  req.N,
-				"spawn_cap":  spawnCap,
-				"safe_max":   safeMax,
+				"error":     fmt.Sprintf("set-concurrency %d would oversubscribe the spawn cap: each bead needs 2 sessions, cap = %d non-terminal slots (safe max_concurrent = %d); restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap", req.N, spawnCap, safeMax, req.N, req.N*2),
+				"requested": req.N,
+				"spawn_cap": spawnCap,
+				"safe_max":  safeMax,
 			},
 		}
 	}

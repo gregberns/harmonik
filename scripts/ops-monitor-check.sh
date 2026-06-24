@@ -830,7 +830,7 @@ for sig in immediate_signals:
     else:
         send_immediate_signals.append(sig)  # new edge: send immediately
         if is_crit:
-            new_alerted[sig] = {'first_ts': ts_epoch, 'last_ts': ts_epoch, 'count': 1}
+            new_alerted[sig] = {'first_ts': ts_epoch, 'last_ts': ts_epoch, 'count': 1, 'last_ops_critical_ts': 0}
         else:
             new_alerted[sig] = ts_epoch
 

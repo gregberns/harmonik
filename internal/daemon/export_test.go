@@ -711,6 +711,17 @@ func ExportedDriveDotWorkflowFull(
 	}
 }
 
+// ExportedMinimalLaunchSpecBuilder returns a launchSpecBuilder stub that
+// produces a handler.LaunchSpec with a no-op binary (/bin/true) and
+// zero-value claudeRunArtifacts. Used in tests that inject a spy substrate
+// and need handler.Launch to reach Substrate.SpawnWindow without the full
+// Claude build infrastructure (e.g. hk-wnqos single-mode terminal-spawn test).
+func ExportedMinimalLaunchSpecBuilder() func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return func(_ context.Context, _ claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+		return handler.LaunchSpec{Binary: "/bin/true"}, claudeRunArtifacts{}, nil
+	}
+}
+
 // ExportedCaptureExtraContextBuilder returns a launchSpecBuilder stub that
 // sends the extraContext from the FIRST call into ch (non-blocking), then
 // returns an error to short-circuit the dispatch. Tests use this to assert

@@ -3591,6 +3591,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		runPasteTarget = prs
 	}
 	spec.Substrate = runSubstrate
+	// hk-wnqos: single-mode implementer is the terminal/merge spawn — it draws
+	// from the reserved +1 slot in spawnSem so a saturated non-terminal pool
+	// cannot starve a single-mode run (codex or otherwise) at launch.
+	spec.Terminal = true
 
 	// Step 2: register the hook session so incoming Stop-hook relays are routed
 	// to this run's hookSessionStore entry (CHB-025).

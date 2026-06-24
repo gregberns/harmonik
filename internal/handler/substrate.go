@@ -79,12 +79,12 @@ type SubstrateSpawn struct {
 	// that a consolidate node can always acquire a slot even when the configured
 	// cap is fully occupied by non-terminal (implementer/reviewer) sessions.
 	//
-	// Currently set only for consolidate-style join nodes in DOT workflows
-	// (detected via isConsolidateJoinNode in dot_cascade.go). The single-mode
-	// merge spawn is not yet wired — see hk-x882o follow-up. Ordinary
-	// implementer and per-axis reviewer spawns leave this false.
+	// Set for consolidate-style join nodes in DOT workflows (detected via
+	// isConsolidateJoinNode in dot_cascade.go, hk-x882o) and for the
+	// single-mode implementer spawn (workloop.go single-mode dispatch, hk-wnqos).
+	// Ordinary DOT per-axis reviewer spawns leave this false.
 	//
-	// Bead: hk-x882o.
+	// Beads: hk-x882o (DOT consolidate), hk-wnqos (single-mode).
 	Terminal bool
 }
 

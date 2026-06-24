@@ -684,13 +684,12 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 		}
 
 		// Fallback: claude_session_id scan.
-		if len(allTurns) == 0 {
+		if len(allTurns) == 0 && len(r.SessionIDs) > 0 {
+			//nolint:gosec // G304: ClaudeProjectsDir is operator-supplied config, not user input.
+			projectEntries, _ := os.ReadDir(cfg.ClaudeProjectsDir)
 			for _, csid := range r.SessionIDs {
 				knownSessionIDs[csid] = true
-				// Find the file.
-				//nolint:gosec // G304: ClaudeProjectsDir is operator-supplied config, not user input.
-		entries, _ := os.ReadDir(cfg.ClaudeProjectsDir)
-				for _, e := range entries {
+				for _, e := range projectEntries {
 					if !e.IsDir() {
 						continue
 					}

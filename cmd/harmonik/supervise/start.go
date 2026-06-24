@@ -175,7 +175,7 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		RestartCapMS:     60000,
 		StartedAt:        now,
 		DaemonInstanceID: instanceID,
-		Command:          command, // may be nil; shim will error if Command is empty
+		Command:          command, // may be nil; empty Command triggers watchdog-only mode in the shim (hk-5gdqu)
 		APIKey:           apiKey,
 	}
 	if err := WriteConfigAtomic(projectDir, cfg); err != nil {

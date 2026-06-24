@@ -32,10 +32,10 @@ import (
 // WatchDigest is the minimal pull-digest written to .harmonik/watch/latest.json.
 // The captain reads this file on its own idle — it is never pushed via comms.
 type WatchDigest struct {
-	UpdatedAt                         string            `json:"updated_at"`
-	Cursor                            string            `json:"cursor"`
-	CrewLastSeen                      map[string]string `json:"crew_last_seen"`
-	PendingFlags                      []string          `json:"pending_flags"`
+	UpdatedAt                          string            `json:"updated_at"`
+	Cursor                             string            `json:"cursor"`
+	CrewLastSeen                       map[string]string `json:"crew_last_seen"`
+	PendingFlags                       []string          `json:"pending_flags"`
 	ImmediateCountSinceLastCaptainWake int               `json:"immediate_count_since_last_captain_wake"`
 }
 

@@ -25,10 +25,10 @@
 
 | crew | epic_id / scope | lane (plain English) | queue | model |
 |---|---|---|---|---|
-| paul | daemon-core (logmine fixes) | daemon-reliability: spawn-cap (hk-x882o running) → remote-reviewer-hang (hk-92ih3, LAST remote-worker re-enable blocker; investigation done = locally-testable, will implement) | paul-logmine | (serialized 1-wide) |
+| paul | hk-var9b / codename:wake-economy | captain wake-economy + watch-officer tier — DESIGN as kerf work (spec-first). Design draft DONE 2026-06-24; critic review dispatched (operator hard-req critics-before-build). Net-new = a Sonnet watch-officer SESSION (CE4 already offloaded the deterministic checks). Await critic verdicts → build-or-revise. hk-drygf HELD (awaiting operator) | paul-logmine | opus |
 | jamis | hk-98jju / codename:supervisor-revive | scenario-harness DONE 15/15 → re-tasked: mute supervisor-down page (hk-xr46t) FIRST, then investigate supervise-dies-on-launch + daemon-auto-revive (hk-f2j0o) + flywheel keep-vs-remove (hk-zv6j3, hk-drygf folded/HELD). Adopts on G-15 land | jamis-sh | — |
 | gurney | hk-b89kk + hk-z8fp | cmd/harmonik tools: `harmonik usage` verb + Manifest.Digest map-order flaky fix | gurney-cmd | sonnet (escalate-on-fail) |
-| leto | hk-n05u2 / epic hk-0639 codename:codex | event-model lane DRAINED (hk-uunpf landed a8d4591b; hk-0wvmv closed redundant) → re-tasked: codex LOCAL re-canary, single-turn no-review, `harness:codex` label, verify ChatGPT-billing-guard first; flag captain if a daemon restart is needed | leto-ev | opus |
+| leto | epic hk-0639 codename:codex | codex re-canary PASSED 2026-06-24 (hk-n05u2 e2e GREEN through production DOT; ef64h validated) → re-tasked to the codex SOAK (hk-0639). PROVEN RECIPE (load-bearing): select codex per-node via tier-3 DOT node attr (implement node harness=codex) + reviewer_harness=claude-code, NOT the harness:codex bead label (that forces the reviewer to codex → no verdict; durable fix filed hk-2jxqg P2). ChatGPT-billing guard ON every run | leto-ev | opus |
 
 - **Fleet = daemon + captain + 4 work-crews + admiral (operator-engaged) + ctx-watchdog + ops-monitor.**
 - All 4 lanes are file-disjoint: paul=`internal/daemon/*`, jamis=`scripts/ops-monitor` + supervisor subsystem, gurney=`cmd/harmonik/*`, leto=codex harness (LOCAL run). HARD GUARD: jamis must not edit paul's daemon hold files.
@@ -54,6 +54,11 @@ These epics are fully landed — moved out of the in-progress table. Verify agai
 
 ## LIVE FLEET STATE (snapshot 2026-06-20 ~22:30 — verify at boot)
 
+> ⚠️ **STALE (2026-06-20) — SUPERSEDED. As of 2026-06-24: daemon UP & healthy (concurrency=4,
+> spawn cap 16), NOT wedged; the `chani` session and the disk-90% firefight are over; the only
+> live infra flag is `supervisor-down` (no daemon auto-revive) owned by jamis hk-f2j0o. Trust the
+> active_lanes table + 2026-06-24 admiral directives above, not this block.**
+>
 > **Daemon is UP but WEDGED — clear before staffing crews.**
 > - Main queue is `paused-by-failure` on `hk-tagp` (old remote e2e). Submit fresh named queues per lane; do NOT resume main.
 > - Disk at **90% (≈19 GiB free; daemon paused dispatch at 2.5 GiB earlier and self-GC'd)**. `.claude/worktrees` = 3.1 GiB across **88 registered git worktrees** — worktree GC (lane L2) is a real prerequisite for reliable spawns.

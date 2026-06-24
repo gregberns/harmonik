@@ -53,12 +53,8 @@ func RunRestart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Re-read config.json: validate parseability and carry forward the command.
-	// Without forwarding, RunStart writes config.json with Command=nil and the
-	// shim exits immediately ("config.json missing 'command' field"), killing
-	// the DaemonWatchdog before it can auto-revive the daemon (hk-f2j0o).
-	oldCfg, err := ReadConfig(projectDir)
-	if err != nil {
+	// Re-read config.json to validate it's parseable before re-launch.
+	if _, err := ReadConfig(projectDir); err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise restart: read config: %v\n", err)
 		return 1
 	}
@@ -67,10 +63,6 @@ func RunRestart(args []string, stdout, stderr io.Writer) int {
 	startArgs := []string{"--project", projectDir}
 	if watchRestart {
 		startArgs = append(startArgs, "--watch-restart")
-	}
-	if len(oldCfg.Command) > 0 {
-		startArgs = append(startArgs, "--command")
-		startArgs = append(startArgs, oldCfg.Command...)
 	}
 	return RunStart(startArgs, stdout, stderr)
 }

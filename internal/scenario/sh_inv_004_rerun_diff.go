@@ -98,7 +98,8 @@ type RerunDiffReport struct {
 	Uniform bool
 
 	// Divergences lists each contract-field-set divergence found. Empty when
-	// all runs are uniform. Ordered by run index then by field name.
+	// all runs are uniform. Within each run index, fields appear in declaration
+	// order: verdict, failure_class, assertion_tuples, event_type_multiset.
 	Divergences []RerunDivergence
 }
 

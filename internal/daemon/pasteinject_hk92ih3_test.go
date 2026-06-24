@@ -121,13 +121,13 @@ func TestPasteInjectQuitOnReviewFile_RemoteRunner_DetectsVerdictViaRunner(t *tes
 		pasteInjectQuitOnReviewFile(
 			ctx,
 			qs,
-			nil,  // killer — nil is safe; function handles nil
-			nil,  // inj — nil disables re-seed (irrelevant here)
-			"",   // claudeSessID
+			nil, // killer — nil is safe; function handles nil
+			nil, // inj — nil disables re-seed (irrelevant here)
+			"",  // claudeSessID
 			wtPath,
-			nil,  // briefDelivered
-			nil,  // eventCh
-			0,    // overrideCeiling
+			nil, // briefDelivered
+			nil, // eventCh
+			0,   // overrideCeiling
 		)
 	}()
 

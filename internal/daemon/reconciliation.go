@@ -431,7 +431,7 @@ type CatBL2HandlerConfig struct {
 // Spec ref: specs/reconciliation/spec.md §8.BL2 — Cat-BL2 bead-ledger import failure.
 // Bead ref: hk-k7va9.
 type CatBL2Handler struct {
-	cfg    CatBL2HandlerConfig
+	cfg       CatBL2HandlerConfig
 	logWriter io.Writer
 }
 

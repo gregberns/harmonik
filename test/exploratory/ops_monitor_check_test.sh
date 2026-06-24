@@ -51,6 +51,9 @@
 #   [x] release-due: count >= threshold, CI not-green → no signal (Test 27c)
 #   [x] release-due: count >= threshold, CI unknown (gh unavailable) → no signal, no crash (Test 27d)
 #   [x] release-due NOT in CRITICAL_PREFIXES: alerted 6m ago still suppressed (30-min cooldown) (Test 27e)
+#   [x] watch-down → direct-class → --to captain (not opsmonitor_target) (Test 32)
+#   [x] watch tmux alive (crew-watch session) + opsmonitor_target=watch → no watch-down (Test 34a)
+#   [x] watch tmux absent + opsmonitor_target=watch → watch-down emitted --to captain (Test 34b)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -1762,10 +1765,11 @@ else
 fi
 rm -rf "$PROJ"
 
-# Test 32: watch-down tmux → immediate signal when opsmonitor_target configured.
-# opsmonitor_target='watch', tmux-watch-alive=false → watch-down fires.
+# Test 32: watch-down → direct-class → always --to captain (SPOF bypass).
+# opsmonitor_target='watch', tmux-watch-alive=false → watch-down fires and goes to captain,
+# NOT to opsmonitor_target (watch). Sending it to a dead watch would be useless.
 echo ""
-echo "=== Test 32: WE7 — watch tmux down + opsmonitor_target configured → watch-down signal ==="
+echo "=== Test 32: WE7 — watch tmux down → watch-down is direct-class → --to captain ==="
 PROJ=$(setup_fixture \
   --hk-queue-status-json '{"status":"ok"}' \
   --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
@@ -1785,17 +1789,30 @@ else
   else
     fail "32: watch-down missing from immediate_signals; got: $SIGS"
   fi
+  # watch-down must appear in direct_signals (captain-routed), NOT watch_signals.
+  DIRECT=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('direct_signals', [])))" 2>/dev/null || echo "[]")
+  WATCH_SIG=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('watch_signals', [])))" 2>/dev/null || echo "[]")
+  if echo "$DIRECT" | grep -q "watch-down"; then
+    pass "32: watch-down in direct_signals (captain-routed)"
+  else
+    fail "32: watch-down NOT in direct_signals; direct=$DIRECT watch=$WATCH_SIG"
+  fi
+  if echo "$WATCH_SIG" | grep -q "watch-down"; then
+    fail "32: watch-down leaked into watch_signals (must be direct-class only)"
+  else
+    pass "32: watch-down absent from watch_signals (correct)"
+  fi
   LOG=$(comms_log "$PROJ")
   if [[ -f "$LOG" && -s "$LOG" ]]; then
-    if grep "watch-down" "$LOG" | grep -q "to=watch"; then
-      pass "32: watch-down comms send routed to opsmonitor_target (watch)"
+    if grep "watch-down" "$LOG" | grep -q "to=captain"; then
+      pass "32: watch-down comms send routed to captain (direct-class SPOF bypass)"
     elif grep -q "watch-down" "$LOG"; then
-      fail "32: watch-down sent but NOT to opsmonitor_target; log: $(cat "$LOG")"
+      fail "32: watch-down sent but NOT to captain; log: $(cat "$LOG")"
     else
-      pass "32: watch-down in snapshot but comms may be cooldown-suppressed"
+      pass "32: watch-down in snapshot but comms cooldown-suppressed (routing verified via direct_signals)"
     fi
   else
-    pass "32: no comms (new edge, cooldown 0 — may not send on first run depending on state init)"
+    pass "32: no comms on first run (cooldown); routing verified via direct_signals"
   fi
 fi
 rm -rf "$PROJ"
@@ -1822,6 +1839,70 @@ if [[ -f "$LATEST" ]]; then
   fi
 else
   fail "33: latest.json missing"
+fi
+rm -rf "$PROJ"
+
+# ── Tests 34a/34b: probe name RED→GREEN (crew-watch session naming) ──────────
+# The probe was broken: it probed "harmonik-<hash>-watch" but the crew launcher
+# creates "harmonik-<hash>-crew-watch". The tmux stub matches *"-watch" (both
+# endings), so these tests verify the conditional (watch alive→no signal /
+# watch absent→signal to captain) independently of the exact session suffix.
+
+# Test 34a: watch tmux alive + opsmonitor_target=watch → no watch-down.
+echo ""
+echo "=== Test 34a: watch tmux alive + opsmonitor_target=watch → no watch-down ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --tmux-watch-alive true \
+)
+OUTPUT_34A=$(run_check "$PROJ")
+LATEST_34A="$PROJ/.harmonik/ops-monitor/latest.json"
+SIGS_34A=$(python3 -c "import json; d=json.load(open('$LATEST_34A')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+if echo "$SIGS_34A" | grep -q "watch-down"; then
+  fail "34a: watch-down fired when watch tmux is alive (false positive)"
+else
+  pass "34a: no watch-down when watch tmux is alive"
+fi
+assert_not_contains "34a: no watch-down in stdout" "watch-down" "$OUTPUT_34A"
+rm -rf "$PROJ"
+
+# Test 34b: watch tmux absent + opsmonitor_target=watch → watch-down emitted --to captain.
+echo ""
+echo "=== Test 34b: watch tmux absent + opsmonitor_target=watch → watch-down --to captain ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --tmux-watch-alive false \
+)
+OUTPUT_34B=$(run_check "$PROJ")
+LATEST_34B="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_contains "34b: watch-down in stdout"     "watch-down" "$OUTPUT_34B"
+assert_contains "34b: IMMEDIATE in stdout"      "IMMEDIATE"  "$OUTPUT_34B"
+DIRECT_34B=$(python3 -c "import json; d=json.load(open('$LATEST_34B')); print(json.dumps(d.get('direct_signals', [])))" 2>/dev/null || echo "[]")
+if echo "$DIRECT_34B" | grep -q "watch-down"; then
+  pass "34b: watch-down in direct_signals (→ captain)"
+else
+  fail "34b: watch-down not in direct_signals; got: $DIRECT_34B"
+fi
+LOG_34B=$(comms_log "$PROJ")
+if [[ -f "$LOG_34B" && -s "$LOG_34B" ]]; then
+  if grep "watch-down" "$LOG_34B" | grep -q "to=captain"; then
+    pass "34b: watch-down comms routed to captain (not to watch)"
+  elif grep -q "watch-down" "$LOG_34B"; then
+    fail "34b: watch-down sent but NOT to captain; log: $(cat "$LOG_34B")"
+  else
+    pass "34b: watch-down in snapshot; routing confirmed via direct_signals"
+  fi
+else
+  # Cooldown may suppress first send; routing is confirmed via direct_signals above.
+  pass "34b: no comms on first run; routing confirmed via direct_signals"
 fi
 rm -rf "$PROJ"
 

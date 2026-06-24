@@ -230,7 +230,7 @@ fi
 # advancement is a follow-on (WE9).
 WATCH_TMUX_ALIVE=false
 if [[ -n "$_CAPTAIN_HASH" ]]; then
-  tmux has-session -t "harmonik-${_CAPTAIN_HASH}-watch" 2>/dev/null \
+  tmux has-session -t "harmonik-${_CAPTAIN_HASH}-crew-watch" 2>/dev/null \
     && WATCH_TMUX_ALIVE=true || true
 fi
 
@@ -999,10 +999,11 @@ snapshot = {
     'send_immediate_signals': send_immediate_signals,
     # WE7 partition: direct-class (§4 SPOF bypass) → always --to captain;
     # watch-class → --to watch.opsmonitor_target (default 'captain').
+    # watch-down is direct-class: routing it to watch is useless if watch is dead.
     'direct_signals': [s for s in send_immediate_signals if any(
-        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue'))],
+        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down'))],
     'watch_signals': [s for s in send_immediate_signals if not any(
-        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue'))],
+        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down'))],
     'escalations': escalations,
     'digest_signals': digest_signals,
     'all_green': all_green,
@@ -1061,7 +1062,7 @@ send_direct() {
 
 # send_watch: routes to watch.opsmonitor_target (WE7 — defaults to 'captain').
 # Used for watch-class signals (single-mode, review-bypass, captain-down,
-# keeper-missing, release-due, watch-down), DIGEST, and ops-CRITICAL.
+# keeper-missing, release-due), DIGEST, and ops-CRITICAL.
 send_watch() {
   local body="$1"
   local topic="${2:-ops-monitor}"

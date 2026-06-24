@@ -1,8 +1,10 @@
 package supervisecmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -50,7 +52,7 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 
 	pid, err := ReadPidfile(projectDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			fmt.Fprintln(stdout, "harmonik supervise stop: supervisor not running (no pidfile)")
 			return 0
 		}

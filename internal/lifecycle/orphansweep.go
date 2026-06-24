@@ -519,6 +519,17 @@ func GCRetiredIntentsWithRedrive(ctx context.Context, cfg GCRetiredIntentsConfig
 
 		record, showErr := cfg.Ledger.ShowBead(ctx, intentEntry.BeadID)
 		if showErr != nil {
+			if errors.Is(showErr, brcli.ErrBeadNotFound) {
+				// Bead was purged from the ledger; its terminal op is moot — nothing to reconcile.
+				if removeErr := os.Remove(intentPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+					orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: remove purged-bead intent %q failed (%v); retaining", name, removeErr)
+					result.Retained++
+					continue
+				}
+				orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: removed intent %q for purged bead %s", name, intentEntry.BeadID)
+				result.Removed++
+				continue
+			}
 			orphanLog(cfg.Logger, "GCRetiredIntentsWithRedrive: ShowBead(%s) failed (%v); retaining intent for Cat 3a", intentEntry.BeadID, showErr)
 			result.Retained++
 			continue

@@ -8,25 +8,32 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 )
 
 // fakeIntentGCLedger is a deterministic IntentGCLedger fake for tests.
 // It returns a pre-configured BeadRecord for each bead ID; unknown bead IDs
-// return an error.
+// return errForUnknown (if set) or fakeShowBeadNotFoundError (a generic
+// transient-style error — NOT brcli.ErrBeadNotFound) by default.
 type fakeIntentGCLedger struct {
-	records map[core.BeadID]core.BeadRecord
+	records       map[core.BeadID]core.BeadRecord
+	errForUnknown error // if non-nil, returned for unrecognised bead IDs
 }
 
 func (f *fakeIntentGCLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	if r, ok := f.records[id]; ok {
 		return r, nil
+	}
+	if f.errForUnknown != nil {
+		return core.BeadRecord{}, f.errForUnknown
 	}
 	return core.BeadRecord{}, &fakeShowBeadNotFoundError{id: id}
 }
@@ -268,7 +275,9 @@ func TestGCRetiredIntents_RetainsMalformed(t *testing.T) {
 }
 
 // TestGCRetiredIntents_RetainsOnShowBeadError verifies that a stale intent
-// file is retained when ShowBead returns an error (conservative path).
+// file is retained when ShowBead returns a TRANSIENT (non-not-found) error
+// (conservative Cat-3a path).  Only brcli.ErrBeadNotFound flips to remove;
+// all other errors must retain.
 func TestGCRetiredIntents_RetainsOnShowBeadError(t *testing.T) {
 	t.Parallel()
 
@@ -278,8 +287,12 @@ func TestGCRetiredIntents_RetainsOnShowBeadError(t *testing.T) {
 
 	gcIntentsFixtureWriteResetIntent(t, intentsDir, "proj_hk-test-showbead-err_reset_1", beadID)
 
-	// Ledger has no record for this bead — ShowBead will return error.
-	ledger := &fakeIntentGCLedger{records: map[core.BeadID]core.BeadRecord{}}
+	// Explicit transient error — distinct from brcli.ErrBeadNotFound so the
+	// not-found special-case is NOT triggered and the intent is retained.
+	ledger := &fakeIntentGCLedger{
+		records:       map[core.BeadID]core.BeadRecord{},
+		errForUnknown: errors.New("transient-br-error"),
+	}
 
 	daemonStart := time.Now()
 	result, err := GCRetiredIntents(context.Background(), projectDir, daemonStart, ledger, nil)
@@ -287,10 +300,48 @@ func TestGCRetiredIntents_RetainsOnShowBeadError(t *testing.T) {
 		t.Fatalf("GCRetiredIntents showbead-err: unexpected error: %v", err)
 	}
 	if result.Removed != 0 {
-		t.Errorf("GCRetiredIntents showbead-err: Removed = %d, want 0 (ShowBead error → retain)", result.Removed)
+		t.Errorf("GCRetiredIntents showbead-err: Removed = %d, want 0 (transient ShowBead error → retain)", result.Removed)
 	}
 	if result.Retained != 1 {
 		t.Errorf("GCRetiredIntents showbead-err: Retained = %d, want 1", result.Retained)
+	}
+}
+
+// TestGCRetiredIntents_RemovesWhenBeadNotFound verifies that a stale intent
+// file is REMOVED when ShowBead returns brcli.ErrBeadNotFound (bead purged
+// from the ledger).  A purged bead's terminal op is moot — nothing to
+// reconcile — so the leftover file is garbage and must be GC'd.
+//
+// Bead ref: hk-6umeh — intents_gc_d=0 for purged-bead cohort.
+func TestGCRetiredIntents_RemovesWhenBeadNotFound(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
+	beadID := core.BeadID("hk-purged-bead")
+
+	// Use a close intent to match the real on-disk cohort (all op=close, bead purged).
+	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "key-close-purged", beadID, "close", "closed")
+
+	// Ledger returns the production sentinel for a missing bead.
+	ledger := &fakeIntentGCLedger{
+		records:       map[core.BeadID]core.BeadRecord{},
+		errForUnknown: brcli.ErrBeadNotFound,
+	}
+
+	daemonStart := time.Now()
+	result, err := GCRetiredIntents(context.Background(), projectDir, daemonStart, ledger, nil)
+	if err != nil {
+		t.Fatalf("GCRetiredIntents purged-bead: unexpected error: %v", err)
+	}
+	if result.Removed != 1 {
+		t.Errorf("GCRetiredIntents purged-bead: Removed = %d, want 1 (bead purged → intent is garbage)", result.Removed)
+	}
+	if result.Retained != 0 {
+		t.Errorf("GCRetiredIntents purged-bead: Retained = %d, want 0", result.Retained)
+	}
+	if _, statErr := os.Stat(intentPath); !os.IsNotExist(statErr) {
+		t.Errorf("GCRetiredIntents purged-bead: intent file still exists at %q; must be removed", intentPath)
 	}
 }
 

@@ -645,17 +645,20 @@ type WatchdogConfig struct {
 // rawWatchConfig is the watch: block in config.yaml (WE7 — captain-wake-economy).
 // Unknown keys at this level are silently ignored (forward-compat, matches daemon: block).
 // Both target fields default to "captain" when absent (NOT fail-loud — §7 exception).
+// WE9 behavioral keys (absent_thresh_s, stall_ticks) are fail-loud when zero/absent.
 type rawWatchConfig struct {
 	StatusTarget     string `yaml:"status_target"`
 	OpsmonitorTarget string `yaml:"opsmonitor_target"`
+	AbsentThreshSec  int    `yaml:"absent_thresh_s"` // WE9: seconds before watch-down fires (fail-loud)
+	StallTicks       int    `yaml:"stall_ticks"`      // WE9: frozen-cursor ticks before watch-stalled (fail-loud)
 }
 
 // WatchConfig holds the watch-level routing configuration read from the
 // watch: block in .harmonik/config.yaml. Both target fields default to "captain"
 // (NOT fail-loud — §7 exception, WE7 load-bearing: preserves existing routing
-// when the watch: block is absent).
+// when the watch: block is absent). WE9 behavioral keys are fail-loud when absent.
 //
-// Bead ref: hk-we7-sender-redirect-clhh8.
+// Bead refs: hk-we7-sender-redirect-clhh8, hk-we9-watch-spof-4dmac.
 type WatchConfig struct {
 	// StatusTarget is the comms --to target for crew status feeds.
 	// Empty = not configured → callers resolve to "captain".
@@ -663,6 +666,12 @@ type WatchConfig struct {
 	// OpsmonitorTarget is the comms --to target for ops-monitor watch-class signals.
 	// Empty = not configured → callers resolve to "captain".
 	OpsmonitorTarget string
+	// AbsentThreshSec is seconds watch may be absent from comms-who before watch-down fires.
+	// Zero = not configured; fail-loud via checkMissingWatchValues when watch is deployed.
+	AbsentThreshSec int
+	// StallTicks is consecutive ops-monitor ticks the watch cursor may be frozen (with pending
+	// events) before watch-stalled fires. Zero = not configured; fail-loud when watch is deployed.
+	StallTicks int
 }
 
 // rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
@@ -1226,5 +1235,7 @@ func parseWatchBlock(raw rawWatchConfig) WatchConfig {
 	return WatchConfig{
 		StatusTarget:     raw.StatusTarget,
 		OpsmonitorTarget: raw.OpsmonitorTarget,
+		AbsentThreshSec:  raw.AbsentThreshSec,
+		StallTicks:       raw.StallTicks,
 	}
 }

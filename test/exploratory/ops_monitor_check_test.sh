@@ -54,6 +54,9 @@
 #   [x] watch-down → direct-class → --to captain (not opsmonitor_target) (Test 32)
 #   [x] watch tmux alive (crew-watch session) + opsmonitor_target=watch → no watch-down (Test 34a)
 #   [x] watch tmux absent + opsmonitor_target=watch → watch-down emitted --to captain (Test 34b)
+#   [x] watch present+tmux-alive, cursor frozen N ticks with pending events → watch-stalled IMMEDIATE (Test 35a)
+#   [x] cursor advancing → no watch-stalled signal (Test 35b)
+#   [x] watch absent-from-comms but tmux-alive → NOT watch_down (dual-probe) (Test 35c)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -160,6 +163,9 @@ setup_fixture() {
   local tmux_captain_alive=true   # default: captain tmux session alive (happy path)
   local tmux_watch_alive=false    # WE7: default watch tmux session NOT alive (watch is opt-in)
   local watch_opsmonitor_target='' # WE7: '' → default 'captain'; set to redirect
+  local watch_absent_threshold=600 # WE9: absent_thresh_s written to config when watch is target
+  local watch_stall_ticks=3        # WE9: stall_ticks written to config when watch is target
+  local watch_cursor=''            # WE9: content of .harmonik/watch/cursor ('' = no cursor file)
   local state_json=''
   local events_content=''
   local br_ready_json='[]'   # `br ready --limit 0 --json` output for the stub
@@ -179,6 +185,9 @@ setup_fixture() {
       --tmux-captain-alive)        tmux_captain_alive="$2"; shift 2 ;;
       --tmux-watch-alive)          tmux_watch_alive="$2"; shift 2 ;;  # WE7
       --watch-opsmonitor-target)   watch_opsmonitor_target="$2"; shift 2 ;;  # WE7
+      --watch-absent-threshold)    watch_absent_threshold="$2"; shift 2 ;;  # WE9
+      --watch-stall-ticks)         watch_stall_ticks="$2"; shift 2 ;;        # WE9
+      --watch-cursor)              watch_cursor="$2"; shift 2 ;;              # WE9
       --state-json)                state_json="$2";    shift 2 ;;
       --events-jsonl)              events_content="$2";shift 2 ;;
       --br-ready-json)             br_ready_json="$2"; shift 2 ;;
@@ -196,10 +205,18 @@ setup_fixture() {
   if [[ -n "$events_content" ]]; then
     printf '%s\n' "$events_content" > "$tmpdir/.harmonik/events/events.jsonl"
   fi
-  # WE7: write config.yaml with watch.opsmonitor_target if specified.
+  # WE7/WE9: write config.yaml with watch block if opsmonitor_target is specified.
+  # WE9 behavioral keys (absent_thresh_s, stall_ticks) are included — they are
+  # config-or-fail-loud when opsmonitor_target != 'captain'.
   if [[ -n "$watch_opsmonitor_target" ]]; then
-    printf 'schema_version: 1\nwatch:\n  opsmonitor_target: %s\n' "$watch_opsmonitor_target" \
+    printf 'schema_version: 1\nwatch:\n  opsmonitor_target: %s\n  absent_thresh_s: %s\n  stall_ticks: %s\n' \
+      "$watch_opsmonitor_target" "$watch_absent_threshold" "$watch_stall_ticks" \
       > "$tmpdir/.harmonik/config.yaml"
+  fi
+  # WE9: write watch cursor file if specified.
+  if [[ -n "$watch_cursor" ]]; then
+    mkdir -p "$tmpdir/.harmonik/watch"
+    printf '%s' "$watch_cursor" > "$tmpdir/.harmonik/watch/cursor"
   fi
 
   # The comms capture log lives at a fixed known path inside the project.
@@ -1903,6 +1920,141 @@ if [[ -f "$LOG_34B" && -s "$LOG_34B" ]]; then
 else
   # Cooldown may suppress first send; routing is confirmed via direct_signals above.
   pass "34b: no comms on first run; routing confirmed via direct_signals"
+fi
+rm -rf "$PROJ"
+
+# ── WE9 Tests ─────────────────────────────────────────────────────────────────
+
+# Test 35a: watch present+tmux-alive but cursor frozen N ticks with pending events
+# → exactly ONE 'watch-stalled' IMMEDIATE emitted (both comms-who + tmux alive, so
+#   watch_down must NOT fire; only the cursor stall check fires).
+echo ""
+echo "=== Test 35a: WE9 — cursor frozen N ticks with pending events → watch-stalled IMMEDIATE ==="
+EID_CURSOR="eid-cursor-aaa-001"
+EID_LATEST="eid-latest-bbb-002"
+WATCH_TS_OLD=$(ts_ago 300)
+WATCH_TS_NEW=$(ts_ago 200)
+EVENTS_35A='{"event_id":"'"$EID_CURSOR"'","type":"run_completed","timestamp_wall":"'"$WATCH_TS_OLD"'","run_id":"run-aaa"}
+{"event_id":"'"$EID_LATEST"'","type":"run_completed","timestamp_wall":"'"$WATCH_TS_NEW"'","run_id":"run-bbb"}'
+# prev state: cursor already frozen for (stall_ticks - 1) = 2 ticks; one more → fires
+STATE_35A='{"schema_version":1,"ts":"2026-06-24T00:00:00Z","stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{},"watch_cursor":"'"$EID_CURSOR"'","watch_stall_misses":2}'
+# comms-who: watch is present and online (so watch_down stays False — testing stall only)
+WATCH_TS_RECENT=$(ts_ago 30)
+CW_35A='{"agent":"watch","status":"online","last_seen":"'"$WATCH_TS_RECENT"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_35A" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 3 \
+  --watch-cursor "$EID_CURSOR" \
+  --state-json "$STATE_35A" \
+  --events-jsonl "$EVENTS_35A" \
+  --tmux-watch-alive true \
+)
+OUTPUT_35A=$(run_check "$PROJ")
+LATEST_35A="$PROJ/.harmonik/ops-monitor/latest.json"
+if [[ ! -f "$LATEST_35A" ]]; then
+  fail "35a: latest.json missing"
+else
+  SIGS_35A=$(python3 -c "import json; d=json.load(open('$LATEST_35A')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+  if echo "$SIGS_35A" | grep -q "watch-stalled"; then
+    pass "35a: watch-stalled in immediate_signals (cursor frozen with pending events)"
+  else
+    fail "35a: watch-stalled NOT in immediate_signals; got: $SIGS_35A"
+  fi
+  # watch_down must NOT fire (watch is present + tmux alive)
+  if echo "$SIGS_35A" | grep -q "watch-down"; then
+    fail "35a: watch-down must NOT fire when watch is comms-present + tmux alive"
+  else
+    pass "35a: watch-down correctly absent (watch is present, dual-probe holds)"
+  fi
+  # watch-stalled is direct-class: must appear in direct_signals, not watch_signals
+  DIRECT_35A=$(python3 -c "import json; d=json.load(open('$LATEST_35A')); print(json.dumps(d.get('direct_signals', [])))" 2>/dev/null || echo "[]")
+  WSIG_35A=$(python3 -c "import json; d=json.load(open('$LATEST_35A')); print(json.dumps(d.get('watch_signals', [])))" 2>/dev/null || echo "[]")
+  if echo "$DIRECT_35A" | grep -q "watch-stalled"; then
+    pass "35a: watch-stalled in direct_signals (→ captain)"
+  else
+    fail "35a: watch-stalled not in direct_signals; direct=$DIRECT_35A watch=$WSIG_35A"
+  fi
+  if echo "$WSIG_35A" | grep -q "watch-stalled"; then
+    fail "35a: watch-stalled leaked into watch_signals (must be direct-class)"
+  else
+    pass "35a: watch-stalled absent from watch_signals (correct direct-class routing)"
+  fi
+  assert_contains "35a: IMMEDIATE in stdout" "IMMEDIATE" "$OUTPUT_35A"
+  assert_contains "35a: watch-stalled in stdout" "watch-stalled" "$OUTPUT_35A"
+fi
+rm -rf "$PROJ"
+
+# Test 35b: cursor advancing → ZERO watch-stalled signals.
+# prev cursor differs from current cursor → miss counter resets → no stall.
+echo ""
+echo "=== Test 35b: WE9 — cursor advancing → no watch-stalled ==="
+EID_OLD_35B="eid-old-aaa-001"
+EID_NEW_35B="eid-new-bbb-002"
+EVENTS_35B='{"event_id":"'"$EID_OLD_35B"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 300)"'","run_id":"run-x"}
+{"event_id":"'"$EID_NEW_35B"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 200)"'","run_id":"run-y"}'
+# prev state had cursor at old id; current cursor file has the new id (advanced)
+STATE_35B='{"schema_version":1,"ts":"2026-06-24T00:00:00Z","stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{},"watch_cursor":"'"$EID_OLD_35B"'","watch_stall_misses":2}'
+CW_35B='{"agent":"watch","status":"online","last_seen":"'"$(ts_ago 30)"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_35B" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 3 \
+  --watch-cursor "$EID_NEW_35B" \
+  --state-json "$STATE_35B" \
+  --events-jsonl "$EVENTS_35B" \
+  --tmux-watch-alive true \
+)
+OUTPUT_35B=$(run_check "$PROJ" 2>&1)
+LATEST_35B="$PROJ/.harmonik/ops-monitor/latest.json"
+if [[ ! -f "$LATEST_35B" ]]; then
+  fail "35b: latest.json missing"
+else
+  SIGS_35B=$(python3 -c "import json; d=json.load(open('$LATEST_35B')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+  if echo "$SIGS_35B" | grep -q "watch-stalled"; then
+    fail "35b: watch-stalled fired despite cursor advancing (false positive)"
+  else
+    pass "35b: no watch-stalled when cursor is advancing"
+  fi
+  if echo "$SIGS_35B" | grep -q "watch-down"; then
+    fail "35b: watch-down must not fire (watch is comms-present + tmux alive)"
+  else
+    pass "35b: no watch-down when watch is present and tmux alive"
+  fi
+fi
+rm -rf "$PROJ"
+
+# Test 35c: watch absent-from-comms BUT tmux-alive → NOT watch_down (dual-probe semantics).
+# WE9 dual-probe: watch_down requires BOTH comms-absence AND no-tmux.
+# A process alive in tmux but absent from comms-who is suspicious (may be bus-pinned)
+# but must NOT trigger watch-down — that's what the cursor-stall check catches.
+echo ""
+echo "=== Test 35c: WE9 — watch absent-from-comms but tmux-alive → NOT watch_down (dual-probe) ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --tmux-watch-alive true \
+)
+OUTPUT_35C=$(run_check "$PROJ" 2>&1)
+LATEST_35C="$PROJ/.harmonik/ops-monitor/latest.json"
+if [[ ! -f "$LATEST_35C" ]]; then
+  fail "35c: latest.json missing"
+else
+  SIGS_35C=$(python3 -c "import json; d=json.load(open('$LATEST_35C')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+  if echo "$SIGS_35C" | grep -q "watch-down"; then
+    fail "35c: watch-down fired when tmux is alive (violates dual-probe — must require BOTH absent+no-tmux)"
+  else
+    pass "35c: watch-down suppressed when tmux is alive (dual-probe correct)"
+  fi
 fi
 rm -rf "$PROJ"
 

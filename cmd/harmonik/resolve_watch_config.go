@@ -81,6 +81,16 @@ func allWatchValues(cfg daemon.WatchConfig) []requiredWatchValue {
 			description: "comms --to target for ops-monitor watch-class signals; defaults to 'captain' when absent",
 			satisfied:   true, // always: defaults to "captain" (§7 exception, WE7)
 		},
+		{
+			keyPath:     "watch.absent_thresh_s",
+			description: "seconds watch may be absent from comms-who before watch-down fires (WE9 dual-probe; fail-loud when unset)",
+			satisfied:   cfg.AbsentThreshSec > 0,
+		},
+		{
+			keyPath:     "watch.stall_ticks",
+			description: "consecutive ops-monitor ticks the watch cursor may be frozen (with pending events) before watch-stalled fires (WE9 cursor-advancement; fail-loud when unset)",
+			satisfied:   cfg.StallTicks > 0,
+		},
 	}
 }
 
@@ -128,6 +138,11 @@ const watchConfigExampleBlock = `watch:
   status_target: captain
   # watch.opsmonitor_target: comms --to target for ops-monitor watch-class signals; defaults to 'captain' when absent
   opsmonitor_target: captain
+  # Liveness thresholds (WE9 — fail-loud when unset with opsmonitor_target=watch).
+  # watch.absent_thresh_s: seconds watch may be absent from comms-who before watch-down fires (WE9 dual-probe; fail-loud when unset)
+  absent_thresh_s: 600
+  # watch.stall_ticks: consecutive ops-monitor ticks the watch cursor may be frozen (with pending events) before watch-stalled fires (WE9 cursor-advancement; fail-loud when unset)
+  stall_ticks: 3
 `
 
 // watchConfigExampleYAML returns the complete watch: example block.

@@ -61,16 +61,36 @@ func TestResolveWatchTargets_ConfigOverrides(t *testing.T) {
 	}
 }
 
-// TestCheckMissingWatchValues_WE7AlwaysEmpty verifies that WE7 target keys never
-// produce missing-value errors (they default to "captain", not fail-loud).
-func TestCheckMissingWatchValues_WE7AlwaysEmpty(t *testing.T) {
-	// With empty config (no watch: block)
+// TestCheckMissingWatchValues_WE7TargetKeysNeverMissing verifies that WE7 target keys
+// (status_target, opsmonitor_target) are never fail-loud — they default to "captain".
+// WE9 behavioral keys (absent_thresh_s, stall_ticks) ARE fail-loud when zero/absent.
+func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
+	// With empty config: WE7 target keys must NOT appear in missing; WE9 keys must.
 	missing := checkMissingWatchValues(daemon.WatchConfig{})
-	if len(missing) != 0 {
-		t.Errorf("WE7 target keys must never be missing (they default to captain); got: %v", missing)
+	missingPaths := map[string]bool{}
+	for _, m := range missing {
+		missingPaths[m.keyPath] = true
 	}
-	// With fully populated config
-	cfg := daemon.WatchConfig{StatusTarget: "watch", OpsmonitorTarget: "watch"}
+	if missingPaths["watch.status_target"] {
+		t.Error("WE7: watch.status_target must never be missing (defaults to captain)")
+	}
+	if missingPaths["watch.opsmonitor_target"] {
+		t.Error("WE7: watch.opsmonitor_target must never be missing (defaults to captain)")
+	}
+	if !missingPaths["watch.absent_thresh_s"] {
+		t.Error("WE9: watch.absent_thresh_s must be missing when AbsentThreshSec=0 (fail-loud)")
+	}
+	if !missingPaths["watch.stall_ticks"] {
+		t.Error("WE9: watch.stall_ticks must be missing when StallTicks=0 (fail-loud)")
+	}
+
+	// Fully populated config (all WE7 + WE9 keys set) must have no missing entries.
+	cfg := daemon.WatchConfig{
+		StatusTarget:    "watch",
+		OpsmonitorTarget: "watch",
+		AbsentThreshSec: 600,
+		StallTicks:      3,
+	}
 	missing = checkMissingWatchValues(cfg)
 	if len(missing) != 0 {
 		t.Errorf("fully populated watch config must have no missing keys; got: %v", missing)

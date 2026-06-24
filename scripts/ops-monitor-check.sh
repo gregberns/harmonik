@@ -124,6 +124,8 @@ PREV_STALE_MISSES='{}'
 PREV_LAST_DIGEST=0
 PREV_ALERTED_IMMEDIATE='{}'
 PREV_KEEPER_COVERAGE_MISSES='{}'
+PREV_WATCH_CURSOR=''
+PREV_WATCH_STALL_MISSES=0
 if [[ -f "$STATE_FILE" ]]; then
   PREV_STALE_MISSES=$(py3 "
 import json, sys
@@ -156,6 +158,22 @@ try:
     print(json.dumps(d.get('keeper_coverage_misses', {})))
 except Exception:
     print('{}')
+")
+  PREV_WATCH_CURSOR=$(py3 "
+import json
+try:
+    d = json.load(open('$STATE_FILE'))
+    print(d.get('watch_cursor', ''))
+except Exception:
+    print('')
+")
+  PREV_WATCH_STALL_MISSES=$(py3 "
+import json
+try:
+    d = json.load(open('$STATE_FILE'))
+    print(d.get('watch_stall_misses', 0))
+except Exception:
+    print(0)
 ")
 fi
 
@@ -227,11 +245,61 @@ fi
 
 # ── Check watch liveness: tmux probe (basic) ─────────────────────────────────
 # WE7: basic process/tmux-down → escalate. Alive-but-stalled dual-probe+cursor
-# advancement is a follow-on (WE9).
+# advancement is WE9 (below).
 WATCH_TMUX_ALIVE=false
 if [[ -n "$_CAPTAIN_HASH" ]]; then
   tmux has-session -t "harmonik-${_CAPTAIN_HASH}-crew-watch" 2>/dev/null \
     && WATCH_TMUX_ALIVE=true || true
+fi
+
+# ── WE9: watch absent threshold + stall ticks (config-or-fail-loud) ──────────
+# These only matter when the watch is the routing target (opsmonitor_target != captain).
+# Unlike CAPTAIN_ABSENT_THRESHOLD (hardcoded 600s), watch thresholds have no safe default
+# — they MUST be explicit so operators know what they're tuning.
+WATCH_ABSENT_THRESHOLD=0
+WATCH_STALL_TICKS=0
+if [[ "$WATCH_OPSMONITOR_TARGET" != "captain" ]]; then
+  _wat=$(py3 "
+import re, sys
+try:
+    txt = open('$PROJ/.harmonik/config.yaml').read()
+    m = re.search(r'^\s*absent_thresh_s:\s*(\d+)', txt, re.MULTILINE)
+    if m:
+        print(m.group(1).strip())
+        sys.exit(0)
+except Exception:
+    pass
+print('MISSING')
+" 2>/dev/null || echo MISSING)
+  if [[ "$_wat" == "MISSING" || -z "$_wat" ]]; then
+    echo "ops-monitor-check: FAIL — watch.absent_thresh_s not set in $PROJ/.harmonik/config.yaml; run: harmonik watch config --example" >&2
+    exit 1
+  fi
+  WATCH_ABSENT_THRESHOLD="$_wat"
+
+  _wst=$(py3 "
+import re, sys
+try:
+    txt = open('$PROJ/.harmonik/config.yaml').read()
+    m = re.search(r'^\s*stall_ticks:\s*(\d+)', txt, re.MULTILINE)
+    if m:
+        print(m.group(1).strip())
+        sys.exit(0)
+except Exception:
+    pass
+print('MISSING')
+" 2>/dev/null || echo MISSING)
+  if [[ "$_wst" == "MISSING" || -z "$_wst" ]]; then
+    echo "ops-monitor-check: FAIL — watch.stall_ticks not set in $PROJ/.harmonik/config.yaml; run: harmonik watch config --example" >&2
+    exit 1
+  fi
+  WATCH_STALL_TICKS="$_wst"
+fi
+
+# ── WE9: read watch escalation cursor (for cursor-advancement stall check) ───
+WATCH_CURSOR=""
+if [[ -f "$PROJ/.harmonik/watch/cursor" ]]; then
+  WATCH_CURSOR=$(tr -d '[:space:]' < "$PROJ/.harmonik/watch/cursor" 2>/dev/null || echo "")
 fi
 
 # ── Collect data (skip if daemon is down) ─────────────────────────────────────
@@ -387,6 +455,11 @@ release_commit_count  = int('$RELEASE_COMMIT_COUNT')
 ci_status             = '$CI_STATUS'
 release_due_threshold = int('$RELEASE_DUE_COMMIT_THRESHOLD')
 ops_critical_cooldown = int('$OPS_CRITICAL_COOLDOWN')
+watch_absent_thresh   = int('$WATCH_ABSENT_THRESHOLD')
+watch_stall_ticks     = int('$WATCH_STALL_TICKS')
+prev_watch_cursor     = '$PREV_WATCH_CURSOR'
+prev_watch_stall_misses = int('$PREV_WATCH_STALL_MISSES')
+watch_cursor          = '$WATCH_CURSOR'
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -426,6 +499,11 @@ def _ev_epoch(_tw, _dt):
     _ts_clean = _tw[:19].replace('T', ' ')
     _d = _dt.datetime.strptime(_ts_clean, '%Y-%m-%d %H:%M:%S')
     return int(_d.replace(tzinfo=_dt.timezone.utc).timestamp())
+
+# WE9: cursor-advancement tracking (initialised before events loop; updated inside)
+latest_event_id = ''  # last event_id seen in the scan window
+_cursor_seq = -1      # _event_seq where watch_cursor was found; -1 = not in window
+events_past_cursor = False
 
 _events_path = _os.path.join(proj, '.harmonik', 'events', 'events.jsonl')
 if _os.path.isfile(_events_path):
@@ -540,8 +618,23 @@ if _os.path.isfile(_events_path):
                     if _any_e >= run_last_event_ts.get(_any_rid, 0):
                         run_last_event_ts[_any_rid] = _any_e
                         run_last_event_type[_any_rid] = _etype
+
+                # WE9: track latest event_id and cursor position for cursor-advancement check
+                _eid_any = _ev.get('event_id', '') or ''
+                if _eid_any:
+                    latest_event_id = _eid_any
+                    if _eid_any == watch_cursor:
+                        _cursor_seq = _event_seq
             except Exception:
                 pass
+        # WE9: compute events_past_cursor after scanning the window
+        if watch_cursor:
+            if _cursor_seq >= 0:
+                # cursor found in window; events past it if any were processed after
+                events_past_cursor = _event_seq > _cursor_seq
+            else:
+                # cursor not in last 256KB: either too old (events past it) or file empty
+                events_past_cursor = bool(latest_event_id and latest_event_id != watch_cursor)
     except Exception:
         pass
 
@@ -771,12 +864,40 @@ if captain_info:
 # captain_down requires BOTH comms absence/staleness AND no tmux session.
 # If the tmux session is alive, captain is UP regardless of stale comms presence.
 captain_down = not captain_present and not captain_tmux_alive
-# watch-down: basic tmux probe. Only fires when watch is configured as a routing
-# target (watch.opsmonitor_target != 'captain') — if still at default, watch
-# isn't expected to be running and a probe would fire constant noise on vanilla
-# deployments. This preserves the 'merging WE7 is inert' guarantee (§11 WE7).
-# Alive-but-stalled cursor-advancement check is WE9.
-watch_down = watch_opsmonitor_target != 'captain' and not watch_tmux_alive
+
+# ── WE9: watch comms presence + dual-probe ────────────────────────────────────
+# watch_present: mirror of captain_present above (:758-770). Apply the same
+# agent_message fallback: comms send does NOT refresh presence, so a watch posting
+# within crew_msg_active_window is treated as present even when last_seen is stale.
+watch_info = crew_status.get('watch')
+watch_present = False
+if watch_info:
+    _watch_stale = watch_info['last_seen_s'] > watch_absent_thresh
+    if _watch_stale:
+        _watch_msg_ts = last_msg_ts.get('watch', 0)
+        if _watch_msg_ts and (ts_epoch - _watch_msg_ts) <= crew_msg_active_window:
+            _watch_stale = False
+    watch_present = watch_info['online'] and not _watch_stale
+# watch_down requires BOTH comms absence AND no tmux session (WE9 dual-probe, mirror of
+# captain_down :773). A process pinned on the bus still refreshes last_seen while
+# buffering every escalation — last_seen alone is insufficient (design §5).
+# Only fires when watch is the routing target (opsmonitor_target != 'captain').
+watch_down = watch_opsmonitor_target != 'captain' and not watch_present and not watch_tmux_alive
+
+# ── WE9: cursor-advancement stall check ─────────────────────────────────────
+# A watch alive but not advancing its escalation cursor while events accumulate →
+# ops-monitor IMMEDIATE 'watch-stalled' after watch_stall_ticks consecutive ticks.
+# Reuses the stale_crew_misses/prev_misses pattern (:692, :369).
+new_watch_stall_misses = 0
+watch_stalled = False
+if watch_opsmonitor_target != 'captain' and watch_cursor:
+    cursor_frozen = prev_watch_cursor != '' and watch_cursor == prev_watch_cursor
+    if cursor_frozen and events_past_cursor:
+        new_watch_stall_misses = prev_watch_stall_misses + 1
+        if new_watch_stall_misses >= watch_stall_ticks:
+            watch_stalled = True
+    else:
+        new_watch_stall_misses = 0
 
 # ── Release-due check ─────────────────────────────────────────────────────────
 # Soft prompt only; never automatic. Normal IMMEDIATE_COOLDOWN applies (NOT a
@@ -808,6 +929,8 @@ if release_due:
     immediate_signals.append('release-due:' + str(release_commit_count))
 if watch_down:
     immediate_signals.append('watch-down')
+if watch_stalled:
+    immediate_signals.append('watch-stalled')
 
 if stale_signal_crews:
     names = ','.join(c['crew'] for c in stale_signal_crews)
@@ -835,6 +958,18 @@ elif captain_info:
 else:
     _cap_detail = 'ok (tmux session alive)'
 
+# WE9: watch-up detail string
+if watch_stalled:
+    _watch_detail = 'cursor frozen %d ticks with pending events' % new_watch_stall_misses
+elif watch_down:
+    _watch_detail = 'absent from comms-who and no tmux session'
+elif not watch_present and watch_tmux_alive:
+    _watch_detail = 'tmux session alive (comms absent or stale)'
+elif watch_info:
+    _watch_detail = 'online (last_seen %ds)' % watch_info['last_seen_s']
+else:
+    _watch_detail = 'ok (tmux alive)' if watch_tmux_alive else 'not deployed'
+
 # ── Checks digest map (signal-vs-digest; one structured object for the captain) ─
 # Each deterministic check -> {state: 'ok'|'flag', detail: <str>}. The captain reads
 # this single map and escalates only on the JUDGMENT-flagged items (D6).
@@ -853,6 +988,8 @@ checks = {
                       'detail': ('unreviewed:' + ','.join(review_bypass_run_ids)) if review_bypass_run_ids else 'all review-launched/requested runs have a verdict'},
     'captain-up':    {'state': 'ok' if not captain_down else 'flag',
                       'detail': _cap_detail},
+    'watch-up':      {'state': 'ok' if not watch_down and not watch_stalled else 'flag',
+                      'detail': _watch_detail},
     'backlog-ready': {'state': 'flag' if backlog_ready else 'ok',
                       'detail': ('ready=' + str(ready_count) + ' free_slot') if backlog_ready else 'ready=' + str(ready_count)},
     'lull':          {'state': 'flag' if idle_fleet else 'ok',
@@ -883,7 +1020,7 @@ checks = {
 # captain-down) use CRITICAL_IMMEDIATE_COOLDOWN (5 min) instead of the global
 # 30 min so a downed component re-alerts every ~5 min. captain-down arrives in
 # sibling bead hk-mttt8; the prefix is listed here for forward-compatibility.
-CRITICAL_PREFIXES = ('daemon-down', 'supervisor-down', 'fleet-down', 'captain-down', 'watch-down')
+CRITICAL_PREFIXES = ('daemon-down', 'supervisor-down', 'fleet-down', 'captain-down', 'watch-down', 'watch-stalled')
 
 def _norm_alerted(val, is_crit):
     if val is None:
@@ -997,13 +1134,13 @@ snapshot = {
     'checks': checks,
     'immediate_signals': immediate_signals,
     'send_immediate_signals': send_immediate_signals,
-    # WE7 partition: direct-class (§4 SPOF bypass) → always --to captain;
+    # WE7/WE9 partition: direct-class (§4 SPOF bypass) → always --to captain;
     # watch-class → --to watch.opsmonitor_target (default 'captain').
-    # watch-down is direct-class: routing it to watch is useless if watch is dead.
+    # watch-down and watch-stalled are direct-class: routing either to a dead/stalled watch is useless.
     'direct_signals': [s for s in send_immediate_signals if any(
-        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down'))],
+        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down', 'watch-stalled'))],
     'watch_signals': [s for s in send_immediate_signals if not any(
-        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down'))],
+        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down', 'watch-stalled'))],
     'escalations': escalations,
     'digest_signals': digest_signals,
     'all_green': all_green,
@@ -1018,6 +1155,8 @@ new_state = {
     'keeper_coverage_misses': new_keeper_misses,
     'last_digest_ts': new_last_digest,
     'alerted_immediate': new_alerted,
+    'watch_cursor': watch_cursor,                  # WE9: persisted for next-tick frozen-cursor check
+    'watch_stall_misses': new_watch_stall_misses,  # WE9: consecutive frozen-cursor miss count
 }
 
 print(json.dumps({'snapshot': snapshot, 'state': new_state}))

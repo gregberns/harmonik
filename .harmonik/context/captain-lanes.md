@@ -23,6 +23,17 @@
 > triple-review runs don't hit spawn_cap_blocked (memory hk-vfeeo). Keep 4 file-disjoint
 > lanes staffed.
 
+> **RESTART-RECIPE MANDATORY STEP — hk-drygf deploy landmine (added 2026-06-24, captain):**
+> hk-drygf LANDED on main (SHA a0af5152) made `liveness_no_progress_n` a **REQUIRED** config
+> key, but live `.harmonik/config.yaml:63` has it COMMENTED OUT (`# liveness_no_progress_n: 10`).
+> The running daemon + auto-revive use the OLD installed binary so it is NOT bricking now — but
+> the moment this binary is `go install`ed and the daemon restarts (the SAME lull-deploy restart),
+> `GovernorConfig()` fails loud and **the daemon REFUSES TO BOOT** until the key is set. BEFORE that
+> restart: (1) set `config.yaml:63` to `liveness_no_progress_n: 10` (jamis RECOMMEND — enables the
+> liveness detection axis at historical default, observe/emit-only, low risk) OR `: 0` (explicit
+> keep-disabled). The VALUE is the operator's threshold-policy call by design; default to 10 unless
+> operator says 0. (2) Fix the now-false `'all fields optional'` block-header comment.
+
 > **OPERATOR DIRECTIVE 2026-06-23 (STANDING, via admiral, recorded 2026-06-24):**
 > **TOKEN-OPTIMIZATION IS NOW THE PRIMARY PRIORITY — especially the CAPTAIN'S OWN token
 > burn (ranks HIGHEST of all).** Reprioritize kerf-next ranking + crew staffing so

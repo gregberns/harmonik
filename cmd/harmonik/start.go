@@ -34,9 +34,9 @@ func startResolveProjectDir(args []string) string {
 // skewHint is called with the resolved project dir before dispatching; nil skips
 // the check (used in tests that do not want filesystem side-effects).
 type startDispatch struct {
-	captain   func(subArgs []string) int
-	crew      func(subArgs []string) int
-	skewHint  func(projectDir string, stderr io.Writer)
+	captain  func(subArgs []string) int
+	crew     func(subArgs []string) int
+	skewHint func(projectDir string, stderr io.Writer)
 }
 
 // defaultStartDispatch wires the real downstream launchers. captain routes to

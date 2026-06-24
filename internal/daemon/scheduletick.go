@@ -71,6 +71,11 @@ type crewStarter interface {
 	HandleCrewStart(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
 }
 
+// commsSendFunc fires a comms-send schedule action. Production: shellCommsSend
+// (execs harmonik comms send directly — no bash -c wrapper, per WE6 operator ruling 3).
+// Tests: inject a recording double via workLoopDeps.commsSend.
+type commsSendFunc func(ctx context.Context, to, from, body, topic string) error
+
 // commsWhoQuerier returns the set of presence-online agent names. Production
 // shells out to `harmonik comms who --json`; tests inject a double. Returning a
 // set keeps the spawn-crew overlap check a simple membership test.
@@ -185,6 +190,10 @@ func overlapBlocks(ctx context.Context, deps workLoopDeps, job schedule.Schedule
 			return true, fmt.Sprintf("crew %q presence-online", job.Action.Crew)
 		}
 		return false, ""
+	case schedule.ActionKindCommsSend:
+		// comms-send is a fire-and-forget message: no PID or crew-presence concept;
+		// overlap policy is always allow regardless of the job's OverlapPolicy field.
+		return false, ""
 	default:
 		return false, ""
 	}
@@ -204,6 +213,11 @@ func doFireAction(ctx context.Context, deps workLoopDeps, job schedule.Scheduled
 		firedPID = pid
 	case schedule.ActionKindSpawnCrew:
 		if err := fireSpawnCrewAction(ctx, deps, job); err != nil {
+			return err
+		}
+		firedPID = 0
+	case schedule.ActionKindCommsSend:
+		if err := fireCommsSendAction(ctx, deps, job); err != nil {
 			return err
 		}
 		firedPID = 0
@@ -273,6 +287,46 @@ func fireSpawnCrewAction(ctx context.Context, deps workLoopDeps, job schedule.Sc
 		return fmt.Errorf("crew-start: %w", err)
 	}
 	return nil
+}
+
+// fireCommsSendAction sends a comms message via deps.commsSend (WE6). The
+// commsSend func is the production shellCommsSend (execs harmonik comms send
+// directly) or a test double. No PID is recorded (firedPID=0): comms-send is
+// fire-and-forget, and the overlap policy is always allow for this action kind
+// (overlapBlocks returns false unconditionally for ActionKindCommsSend).
+func fireCommsSendAction(ctx context.Context, deps workLoopDeps, job schedule.ScheduledJob) error {
+	if deps.commsSend == nil {
+		return fmt.Errorf("comms-send action but no commsSend func wired")
+	}
+	if job.Action.To == "" {
+		return fmt.Errorf("comms-send action: To is required")
+	}
+	return deps.commsSend(ctx, job.Action.To, job.Action.From, job.Action.Body, job.Action.Topic)
+}
+
+// shellCommsSend returns the production commsSendFunc: execs `harmonik comms send`
+// directly (not via bash -c) with the action's To/From/Body/Topic as typed flags.
+// This is the native comms-send action per WE6 operator ruling 3 — no shell wrapper.
+func shellCommsSend(daemonBinaryPath, projectDir string) commsSendFunc {
+	bin := daemonBinaryPath
+	if bin == "" {
+		bin = "harmonik"
+	}
+	return func(ctx context.Context, to, from, body, topic string) error {
+		args := []string{"comms", "send", "--to", to, "--body", body, "--project", projectDir}
+		if from != "" {
+			args = append(args, "--from", from)
+		}
+		if topic != "" {
+			args = append(args, "--topic", topic)
+		}
+		//nolint:gosec // G204: bin is the resolved daemon binary; to/body/topic are operator-authored schedule config.
+		cmd := exec.CommandContext(ctx, bin, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("comms send --to %q: %w (output: %s)", to, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
 }
 
 // pidAlive reports whether pid refers to a live process (signal 0 probe).

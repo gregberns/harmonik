@@ -40,6 +40,10 @@ const (
 	ActionKindCommand = "command"
 	// ActionKindSpawnCrew starts a crew via the daemon's crew-start path.
 	ActionKindSpawnCrew = "spawn-crew"
+	// ActionKindCommsSend sends a message via the harmonik comms bus.
+	// Uses Action.To, Action.From (optional), Action.Body, Action.Topic (optional).
+	// The daemon fires it by calling harmonik comms send directly — no bash -c wrapper.
+	ActionKindCommsSend = "comms-send"
 )
 
 // OverlapPolicy values. The default is "skip".
@@ -91,8 +95,10 @@ type Schedule struct {
 // Kind="command" uses Argv (Argv[0] is the binary; Argv[1:] its arguments).
 // Kind="spawn-crew" uses Crew/Queue/Mission to drive the daemon's crew-start
 // path (the same entry point `harmonik crew start` uses).
+// Kind="comms-send" uses To/From/Body/Topic to send a comms bus message via
+// `harmonik comms send` (native action — no bash -c wrapper).
 type Action struct {
-	// Kind is "command" or "spawn-crew".
+	// Kind is "command", "spawn-crew", or "comms-send".
 	Kind string `json:"kind"`
 	// Argv is the command and its arguments for Kind="command".
 	Argv []string `json:"argv,omitempty"`
@@ -102,6 +108,14 @@ type Action struct {
 	Queue string `json:"queue,omitempty"`
 	// Mission is the handoff/mission path the crew seeds from for Kind="spawn-crew".
 	Mission string `json:"mission,omitempty"`
+	// To is the comms --to target for Kind="comms-send". Required.
+	To string `json:"to,omitempty"`
+	// From is the comms --from sender identity for Kind="comms-send". Optional.
+	From string `json:"from,omitempty"`
+	// Body is the message body for Kind="comms-send".
+	Body string `json:"body,omitempty"`
+	// Topic is the optional comms topic label for Kind="comms-send".
+	Topic string `json:"topic,omitempty"`
 }
 
 // ScheduledJob is one durable recurring-job row.

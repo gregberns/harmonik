@@ -64,8 +64,9 @@ func TestResolveWatchTargets_ConfigOverrides(t *testing.T) {
 // TestCheckMissingWatchValues_WE7TargetKeysNeverMissing verifies that WE7 target keys
 // (status_target, opsmonitor_target) are never fail-loud — they default to "captain".
 // WE9 behavioral keys (absent_thresh_s, stall_ticks) ARE fail-loud when zero/absent.
+// WE6 schedule interval keys (liveness_interval, digest_interval) ARE fail-loud when absent.
 func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
-	// With empty config: WE7 target keys must NOT appear in missing; WE9 keys must.
+	// With empty config: WE7 target keys must NOT appear in missing; WE9+WE6 keys must.
 	missing := checkMissingWatchValues(daemon.WatchConfig{})
 	missingPaths := map[string]bool{}
 	for _, m := range missing {
@@ -83,17 +84,63 @@ func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
 	if !missingPaths["watch.stall_ticks"] {
 		t.Error("WE9: watch.stall_ticks must be missing when StallTicks=0 (fail-loud)")
 	}
+	if !missingPaths["watch.liveness_interval"] {
+		t.Error("WE6: watch.liveness_interval must be missing when LivenessInterval='' (fail-loud)")
+	}
+	if !missingPaths["watch.digest_interval"] {
+		t.Error("WE6: watch.digest_interval must be missing when DigestInterval='' (fail-loud)")
+	}
 
-	// Fully populated config (all WE7 + WE9 keys set) must have no missing entries.
+	// Fully populated config (all WE7 + WE9 + WE6 keys set) must have no missing entries.
 	cfg := daemon.WatchConfig{
 		StatusTarget:     "watch",
 		OpsmonitorTarget: "watch",
 		AbsentThreshSec:  600,
 		StallTicks:       3,
+		LivenessInterval: "1h",
+		DigestInterval:   "1h",
 	}
 	missing = checkMissingWatchValues(cfg)
 	if len(missing) != 0 {
 		t.Errorf("fully populated watch config must have no missing keys; got: %v", missing)
+	}
+}
+
+// TestCheckMissingWatchValues_WE6IntervalKeysFail is the WE6 RED test (b): a
+// missing interval key fails loud naming the key + description + 'see --example'.
+func TestCheckMissingWatchValues_WE6IntervalKeysFail(t *testing.T) {
+	// Only interval keys absent — all WE7+WE9 keys set.
+	cfg := daemon.WatchConfig{
+		StatusTarget:     "watch",
+		OpsmonitorTarget: "watch",
+		AbsentThreshSec:  600,
+		StallTicks:       3,
+		// LivenessInterval and DigestInterval intentionally left empty.
+	}
+	missing := checkMissingWatchValues(cfg)
+	missingPaths := map[string]string{}
+	for _, m := range missing {
+		missingPaths[m.keyPath] = m.description
+	}
+
+	if _, ok := missingPaths["watch.liveness_interval"]; !ok {
+		t.Error("WE6: watch.liveness_interval must appear in missing when LivenessInterval is empty")
+	}
+	if _, ok := missingPaths["watch.digest_interval"]; !ok {
+		t.Error("WE6: watch.digest_interval must appear in missing when DigestInterval is empty")
+	}
+
+	// The WatchConfigMissingError must render "KeyPath — Description" and "see --example".
+	err := &WatchConfigMissingError{ProjectDir: "/tmp/proj", Missing: missing}
+	msg := err.Error()
+	if !strings.Contains(msg, "watch.liveness_interval") {
+		t.Errorf("error must name watch.liveness_interval; got: %s", msg)
+	}
+	if !strings.Contains(msg, "watch.digest_interval") {
+		t.Errorf("error must name watch.digest_interval; got: %s", msg)
+	}
+	if !strings.Contains(msg, "--example") {
+		t.Errorf("error must reference '--example'; got: %s", msg)
 	}
 }
 

@@ -494,6 +494,119 @@ func TestScheduleTick_EnsureCtxWatchdog(t *testing.T) {
 	_ = deps // satisfy unused import
 }
 
+// TestScheduleTick_CommsSendActionFires is the WE6 RED test (a): a registered
+// comms-send schedule fires the native comms-send action to the configured target.
+// An injected recording double (deps.commsSend) captures the call so no real daemon
+// socket or harmonik binary is needed.
+func TestScheduleTick_CommsSendActionFires(t *testing.T) {
+	deps, store, _ := newTickDeps(t)
+
+	type call struct{ to, from, body, topic string }
+	var mu sync.Mutex
+	var calls []call
+	deps.commsSend = func(_ context.Context, to, from, body, topic string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, call{to, from, body, topic})
+		return nil
+	}
+
+	job := schedule.ScheduledJob{
+		ID:            "comms-j1",
+		Schedule:      schedule.Schedule{Kind: schedule.ScheduleKindEvery, Interval: "1s"},
+		Action:        schedule.Action{Kind: schedule.ActionKindCommsSend, To: "captain", Body: "watch-liveness-ping", Topic: "liveness"},
+		Enabled:       true,
+		OverlapPolicy: schedule.OverlapPolicyAllow,
+		Catchup:       schedule.CatchupOff,
+	}
+	if err := store.Add(job); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	runScheduleTick(context.Background(), deps)
+
+	mu.Lock()
+	n := len(calls)
+	var c call
+	if n > 0 {
+		c = calls[0]
+	}
+	mu.Unlock()
+
+	if n != 1 {
+		t.Fatalf("commsSend called %d times, want 1", n)
+	}
+	if c.to != "captain" {
+		t.Errorf("commsSend to = %q, want 'captain'", c.to)
+	}
+	if c.body != "watch-liveness-ping" {
+		t.Errorf("commsSend body = %q, want 'watch-liveness-ping'", c.body)
+	}
+	if c.topic != "liveness" {
+		t.Errorf("commsSend topic = %q, want 'liveness'", c.topic)
+	}
+
+	// LastFire must be recorded after a successful comms-send fire.
+	got, _ := store.Get("comms-j1")
+	if got.LastFire == "" {
+		t.Fatalf("LastFire not recorded after comms-send fire")
+	}
+}
+
+// TestScheduleTick_EnsureWatchLiveness verifies ensureWatchLivenessSchedule
+// registers liveness-ping and verify-services jobs when intervals are set (WE6).
+func TestScheduleTick_EnsureWatchLiveness(t *testing.T) {
+	_, store, _ := newTickDeps(t)
+
+	cfg := WatchConfig{LivenessInterval: "1h", DigestInterval: "1h"}
+	ensureWatchLivenessSchedule(store, cfg, "")
+
+	j1, ok := store.Get(watchLivenessPingJobID)
+	if !ok {
+		t.Fatal("watch-liveness-ping job not registered after ensureWatchLivenessSchedule")
+	}
+	if j1.Action.Kind != schedule.ActionKindCommsSend {
+		t.Errorf("liveness-ping action kind = %q, want %q", j1.Action.Kind, schedule.ActionKindCommsSend)
+	}
+	if j1.Schedule.Interval != "1h" {
+		t.Errorf("liveness-ping interval = %q, want '1h' (from config, no Go literal)", j1.Schedule.Interval)
+	}
+	if j1.Action.To != "captain" {
+		t.Errorf("liveness-ping to = %q, want 'captain' (WE7 default)", j1.Action.To)
+	}
+
+	j2, ok := store.Get(watchVerifyServicesJobID)
+	if !ok {
+		t.Fatal("watch-verify-services job not registered after ensureWatchLivenessSchedule")
+	}
+	if j2.Action.Kind != schedule.ActionKindCommsSend {
+		t.Errorf("verify-services action kind = %q, want %q", j2.Action.Kind, schedule.ActionKindCommsSend)
+	}
+	if j2.Schedule.Interval != "1h" {
+		t.Errorf("verify-services interval = %q, want '1h' (from config, no Go literal)", j2.Schedule.Interval)
+	}
+
+	// Second call is a no-op (idempotent).
+	ensureWatchLivenessSchedule(store, cfg, "")
+	if _, ok := store.Get(watchLivenessPingJobID); !ok {
+		t.Error("idempotent: watch-liveness-ping missing after second call")
+	}
+}
+
+// TestScheduleTick_WatchLivenessSkippedWhenNotConfigured verifies that
+// ensureWatchLivenessSchedule is a no-op when interval fields are empty (WE6).
+// The fail-loud gate is checkMissingWatchValues (cmd/harmonik), not this function.
+func TestScheduleTick_WatchLivenessSkippedWhenNotConfigured(t *testing.T) {
+	_, store, _ := newTickDeps(t)
+	ensureWatchLivenessSchedule(store, WatchConfig{}, "")
+	if _, ok := store.Get(watchLivenessPingJobID); ok {
+		t.Error("watch-liveness-ping registered despite missing LivenessInterval")
+	}
+	if _, ok := store.Get(watchVerifyServicesJobID); ok {
+		t.Error("watch-verify-services registered despite missing DigestInterval")
+	}
+}
+
 // TestParseCommsWho_NDJSONContract pins the FIX-3 `comms who --json` contract:
 // NDJSON rows; only status=="online" agents are reported; stale/dead rows are
 // excluded; and a JSON-array fallback is honoured so a future shape change fails

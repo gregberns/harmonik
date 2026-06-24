@@ -1908,10 +1908,12 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		}
 		ensureOpsMonitorSchedule(scheduleStore)
 		ensureCtxWatchdogSchedule(scheduleStore, cfg.ProjectCfg.Watchdog.Enabled)
+		ensureWatchLivenessSchedule(scheduleStore, cfg.ProjectCfg.Watch, deps.daemonBinaryPath)
 		deps.scheduleStore = scheduleStore
 		deps.scheduleWakeC = scheduleStore.WakeCh()
 		deps.crewHandler = crewHandler // may be nil in unit-test mode (no socket)
 		deps.commsWhoQuerier = shellCommsWho(deps.daemonBinaryPath, cfg.ProjectDir)
+		deps.commsSend = shellCommsSend(deps.daemonBinaryPath, cfg.ProjectDir)
 
 		// Inject the HandlerPauseController so the dispatcher skip-on-paused gate
 		// (hk-kac8g) can consult pause state before claiming each item.

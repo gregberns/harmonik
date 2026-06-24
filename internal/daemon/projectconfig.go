@@ -646,19 +646,23 @@ type WatchdogConfig struct {
 // Unknown keys at this level are silently ignored (forward-compat, matches daemon: block).
 // Both target fields default to "captain" when absent (NOT fail-loud — §7 exception).
 // WE9 behavioral keys (absent_thresh_s, stall_ticks) are fail-loud when zero/absent.
+// WE6 schedule interval keys (liveness_interval, digest_interval) are fail-loud when absent.
 type rawWatchConfig struct {
 	StatusTarget     string `yaml:"status_target"`
 	OpsmonitorTarget string `yaml:"opsmonitor_target"`
-	AbsentThreshSec  int    `yaml:"absent_thresh_s"` // WE9: seconds before watch-down fires (fail-loud)
-	StallTicks       int    `yaml:"stall_ticks"`     // WE9: frozen-cursor ticks before watch-stalled (fail-loud)
+	AbsentThreshSec  int    `yaml:"absent_thresh_s"`   // WE9: seconds before watch-down fires (fail-loud)
+	StallTicks       int    `yaml:"stall_ticks"`       // WE9: frozen-cursor ticks before watch-stalled (fail-loud)
+	LivenessInterval string `yaml:"liveness_interval"` // WE6: Go duration string for mutual-liveness ping (fail-loud)
+	DigestInterval   string `yaml:"digest_interval"`   // WE6: Go duration string for verify-services-up (fail-loud)
 }
 
 // WatchConfig holds the watch-level routing configuration read from the
 // watch: block in .harmonik/config.yaml. Both target fields default to "captain"
 // (NOT fail-loud — §7 exception, WE7 load-bearing: preserves existing routing
 // when the watch: block is absent). WE9 behavioral keys are fail-loud when absent.
+// WE6 schedule interval keys are fail-loud when absent.
 //
-// Bead refs: hk-we7-sender-redirect-clhh8, hk-we9-watch-spof-4dmac.
+// Bead refs: hk-we7-sender-redirect-clhh8, hk-we9-watch-spof-4dmac, hk-we6-watch-scheduled-send-6onfu.
 type WatchConfig struct {
 	// StatusTarget is the comms --to target for crew status feeds.
 	// Empty = not configured → callers resolve to "captain".
@@ -672,6 +676,12 @@ type WatchConfig struct {
 	// StallTicks is consecutive ops-monitor ticks the watch cursor may be frozen (with pending
 	// events) before watch-stalled fires. Zero = not configured; fail-loud when watch is deployed.
 	StallTicks int
+	// LivenessInterval is the Go duration string (e.g. "1h") for the watch<->captain
+	// mutual-liveness ping schedule. Empty = not configured; fail-loud when watch is deployed (WE6).
+	LivenessInterval string
+	// DigestInterval is the Go duration string (e.g. "1h") for the verify-services-up schedule.
+	// Empty = not configured; fail-loud when watch is deployed (WE6).
+	DigestInterval string
 }
 
 // rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
@@ -1237,5 +1247,7 @@ func parseWatchBlock(raw rawWatchConfig) WatchConfig {
 		OpsmonitorTarget: raw.OpsmonitorTarget,
 		AbsentThreshSec:  raw.AbsentThreshSec,
 		StallTicks:       raw.StallTicks,
+		LivenessInterval: raw.LivenessInterval,
+		DigestInterval:   raw.DigestInterval,
 	}
 }

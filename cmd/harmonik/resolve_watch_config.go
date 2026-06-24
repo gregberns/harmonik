@@ -69,6 +69,7 @@ func (e *WatchConfigMissingError) Error() string {
 //
 // TARGET KEYS (WE7): satisfied=true always (default "captain", NOT fail-loud).
 // BEHAVIORAL KEYS (WE9+): satisfied based on config presence (fail-loud when absent).
+// SCHEDULE INTERVAL KEYS (WE6): satisfied based on config presence (fail-loud when absent).
 func allWatchValues(cfg daemon.WatchConfig) []requiredWatchValue {
 	return []requiredWatchValue{
 		{
@@ -90,6 +91,16 @@ func allWatchValues(cfg daemon.WatchConfig) []requiredWatchValue {
 			keyPath:     "watch.stall_ticks",
 			description: "consecutive ops-monitor ticks the watch cursor may be frozen (with pending events) before watch-stalled fires (WE9 cursor-advancement; fail-loud when unset)",
 			satisfied:   cfg.StallTicks > 0,
+		},
+		{
+			keyPath:     "watch.liveness_interval",
+			description: "Go duration string (e.g. '1h') for the watch<->captain mutual-liveness ping schedule (WE6; fail-loud when unset)",
+			satisfied:   cfg.LivenessInterval != "",
+		},
+		{
+			keyPath:     "watch.digest_interval",
+			description: "Go duration string (e.g. '1h') for the watch verify-services-up schedule (WE6; fail-loud when unset)",
+			satisfied:   cfg.DigestInterval != "",
 		},
 	}
 }
@@ -143,6 +154,11 @@ const watchConfigExampleBlock = `watch:
   absent_thresh_s: 600
   # watch.stall_ticks: consecutive ops-monitor ticks the watch cursor may be frozen (with pending events) before watch-stalled fires (WE9 cursor-advancement; fail-loud when unset)
   stall_ticks: 3
+  # Schedule intervals (WE6 — fail-loud when unset; NO literal fallback in daemon).
+  # watch.liveness_interval: Go duration string (e.g. '1h') for the watch<->captain mutual-liveness ping schedule (WE6; fail-loud when unset)
+  liveness_interval: 1h
+  # watch.digest_interval: Go duration string (e.g. '1h') for the watch verify-services-up schedule (WE6; fail-loud when unset)
+  digest_interval: 1h
 `
 
 // watchConfigExampleYAML returns the complete watch: example block.

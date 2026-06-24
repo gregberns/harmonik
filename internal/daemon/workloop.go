@@ -634,6 +634,14 @@ type workLoopDeps struct {
 	// Bead ref: hk-0es.
 	commsWhoQuerier commsWhoQuerier
 
+	// commsSend fires a comms-send schedule action (WE6). Production wires
+	// shellCommsSend (execs harmonik comms send directly — no bash -c wrapper);
+	// tests inject a recording double. nil → comms-send actions return an error
+	// (no sender configured).
+	//
+	// Bead ref: hk-we6-watch-scheduled-send-6onfu.
+	commsSend commsSendFunc
+
 	// scheduleWakeC, when non-nil, is the channel returned by scheduleStore.WakeCh().
 	// The work loop selects on it alongside submitWakeC so a schedule mutation made
 	// against the in-memory store wakes the idle loop immediately.

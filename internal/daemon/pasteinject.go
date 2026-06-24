@@ -2120,6 +2120,18 @@ func pasteInjectQuitOnReviewFile(
 	livenessChecker, _ := qs.(paneLivenessChecker)
 	hardDeadline := loopStart.Add(effectiveCeiling)
 
+	// hk-92ih3: resolve runner for remote-aware verdict-detection stat.
+	// For remote runs the worktree lives on the worker, so os.Stat(verdictPath)
+	// on box A never succeeds.  When qs carries a non-local runner (e.g.
+	// SSHRunner), verdictRunner is set; statTaskFileVia routes both stat sites
+	// through the runner.  nil → local os.Stat (NFR7 byte-identical).
+	var verdictRunner tmux.CommandRunner
+	if crp, ok := qs.(commandRunnerProvider); ok {
+		if r := crp.commandRunner(); !runnerIsLocalFS(r) {
+			verdictRunner = r
+		}
+	}
+
 	// hk-60t8: track the most-recent agent_heartbeat time.  When a heartbeat
 	// arrived within reviewerHeartbeatActiveGrace the reviewer is considered
 	// actively reasoning; the budget is extended even when pane-liveness is
@@ -2193,7 +2205,7 @@ func pasteInjectQuitOnReviewFile(
 			// redundant brief at an already-working reviewer is a harmless extra
 			// prompt it ignores.
 			if !reseeded && now.After(reseedDeadline) {
-				if _, err := os.Stat(verdictPath); err == nil {
+				if statTaskFileVia(ctx, verdictRunner, verdictPath) == nil {
 					// Verdict already present — no re-seed needed.
 					reseeded = true
 				} else if livenessChecker == nil || livenessChecker.PaneHasActiveProcess(ctx) {
@@ -2268,7 +2280,7 @@ func pasteInjectQuitOnReviewFile(
 				return
 			}
 
-			if info, err := os.Stat(verdictPath); err == nil && info.Size() > 0 {
+			if statTaskFileVia(ctx, verdictRunner, verdictPath) == nil {
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-review-file: verdict detected at %s; sending /quit\n",
 					verdictPath)

@@ -3677,9 +3677,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 		// hk-o85ye (Move 3): route this run through an independent tmux session so
 		// it survives a daemon SIGKILL. Only for local runs (rbc == nil) where the
-		// substrate implements runSessionSpawner. Remote runs keep their worker-session path.
+		// substrate implements runSessionSpawner AND the underlying tmux adapter
+		// supports independent session creation (sessionCreator). Adapters that lack
+		// sessionCreator (e.g. test stubs, the $TMUX-reuse mode) fall through to the
+		// standard shared-session path — no behavior change for them.
 		if rbc == nil && deps.projectDir != "" {
-			if _, ok := deps.substrate.(runSessionSpawner); ok {
+			canIndepSession := false
+			if ts, tsOK := deps.substrate.(*tmuxSubstrate); tsOK {
+				_, canIndepSession = ts.adapter.(sessionCreator)
+			}
+			if _, ok := deps.substrate.(runSessionSpawner); ok && canIndepSession {
 				prs.runSessionID = runID.String()
 				useIndepSession = true
 				// Pre-compute session name for the registry (best-effort; empty is fine).

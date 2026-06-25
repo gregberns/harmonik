@@ -174,6 +174,21 @@ A `run_stale` during legitimate slow recovery is NOT a wedge.
 
 **HARNESS BLOCKS `.md` WRITES FOR SUB-AGENTS.** The orchestrator must persist markdown files via the Write tool.
 
+## Planning artifact placement
+
+When writing or moving planning artifacts, choose the home by time horizon:
+
+| Horizon | File or location | Belongs there |
+|---|---|---|
+| Current session / current run | `HANDOFF.md` | Immediate state: in-flight work, monitor state, blockers, next action, recovery notes. |
+| Days / active lanes | `.harmonik/context/captain-lanes.md` | Lane and epic registry, crew-to-queue mapping, parked work, dated operator directives. |
+| Weeks / durable guardrails | `.harmonik/context/project.yaml` | Phase, locked decisions, forbidden actions, durable project guardrails. |
+| Months / milestone history | `ROADMAP.md` | Long-horizon progress, completed campaigns, milestone narrative. |
+| Normative behavior | `specs/` | Requirements the code must satisfy; specs override plans and docs. |
+| Kerf work-in-progress | Global kerf bench path printed by `kerf show` | Problem, research, design, task, and review pass artifacts before finalize. |
+
+Do not use AGENTS.md or this skill as operational state. They are routing and behavioral contracts.
+
 <!-- END harmonik:managed -->
 
 ---

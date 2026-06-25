@@ -44,7 +44,7 @@
       "gate": {
         "owner": "operator",
         "reason": "not before remote-worker proven reliable (priority sequence 2026-06-25)",
-        "expires": "2026-07-09"
+        "expires": "2026-07-09T00:00:00Z"
       },
       "note": "Pi universal-model-gateway design. Epic-less (lives only as a plan dir) => GATED-by-definition until decomposed into an epic; gate is required while epic_id is null. Correctly the operator's to rank (genuinely brand-new initiative)."
     }

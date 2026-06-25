@@ -11,6 +11,9 @@
   OPERATOR-DIRECTIVES block (priority ordering).
 - `lanes.json` — MACHINE-READABLE lane→epic index the ops-monitor reads (lane, epic_id,
   status, gate). Keep it in sync with the prose docs in the SAME action you change a lane.
+  **Gate `expires` MUST be full RFC3339 (`2026-07-09T00:00:00Z`), not date-only** — the
+  ops-monitor's `fromdateiso8601` parse needs the time component (a date-only value is
+  treated as expired and would let a still-gated lane fire the stall wake).
 - `admiral-initiatives.md` — the big-rocks registry (status snapshot).
 - `direction-log.md` (tier-2) — APPEND-ONLY sequencing intent: one entry per direction
   CHANGE (WHAT / WHY / RETURN-PATH / expires). The file a fresh /clear reads to recover

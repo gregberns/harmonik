@@ -1,97 +1,100 @@
 ---
 schema_version: 1
 crew_name: leto
-queue: leto-ev
-epic_id: hk-uunpf
+queue: leto-codex
+epic_id: hk-8dtyk
 captain_name: captain
 model: sonnet
 ---
 
-# Crew mission — leto (event-model conformance lane)
+# Crew mission — leto (codex-tier concurrency pilot)
 
-> NOTE: this mission file was REPURPOSED 2026-06-24 from the old flywheel-wiring
-> lane to the event-model conformance lane (captain directive: fill the 4-instance
-> capacity with file-disjoint work). The old flywheel scope is recoverable from
-> `codename:flywheel`.
+> RE-TASKED 2026-06-25 from the codex SOAK lane (hk-0639, complete) to the
+> codex-tier CONCURRENCY PILOT (hk-8dtyk). admiral-greenlit; operator directive =
+> keep the daemon's 4 slots utilized. The soak PROVED codex e2e; this lane USES it
+> to fill idle slots with real production beads + offload Opus/Sonnet implements.
 
 ## goal
 
-Event-model durability/replay conformance (Phase 1): close the two
-`internal/eventbus` conformance gaps from the event-model audit.
+Drain FILE-DISJOINT clean beads through the proven codex recipe to keep daemon
+slots hot, without colliding with gurney's active remote-worker lane.
 
 ## On boot
 1. `harmonik comms join` + confirm identity = leto.
-2. `br update hk-uunpf --assignee leto` (mirror for attribution — load-bearing).
+2. `br update hk-8dtyk --assignee leto` (mirror for attribution — load-bearing).
 3. Post a boot status to captain (`--topic status`) + a journal comment.
-4. Arm `harmonik comms recv --agent leto --follow --json`.
+4. Arm `harmonik comms recv --agent leto --follow --json` (dedupe on event_id).
+5. Re-arm a Monitor: `harmonik subscribe --types run_completed,run_failed,run_stale --json | grep -v heartbeat`.
 
-## Dispatch scope = TWO beads, STRICT SERIAL (both edit busimpl.go)
+## THE PROVEN RECIPE (use ONLY this — load-bearing; full detail in `.harmonik/crew/HANDOFF-leto.md`)
+Select codex via **tier-3 DOT NODE attr, NOT a tier-1 bead label** (the label forces
+the reviewer to codex too → no verdict → review fails; that was hk-slvko).
+- Graph (durable): `.harmonik/crew/codex-soak-recipe.dot` = standard-bead.dot with the
+  implement node carrying `harness="codex"` + `reviewer_harness="claude-code"`. Reuse as-is.
+- **Billing guard BEFORE dispatch** (must pass; report it): `codex login status` ==
+  "Logged in using ChatGPT"; `~/.codex/config.toml` forced_login_method==chatgpt;
+  `~/.codex/auth.json` OPENAI_API_KEY null; env has no OPENAI_API_KEY/CODEX_API_KEY.
+- Submit JSON (queue `leto-codex`) with workflow_mode=dot + workflow_ref=<ABS path to
+  codex-soak-recipe.dot> per item. `harmonik queue resume leto-codex` first if it
+  paused-by-failure.
 
-These two beads BOTH edit `internal/eventbus/busimpl.go`, so they CANNOT run
-concurrently — dispatch ONE, let it CLOSE + merge, THEN dispatch the next:
+## Dispatch scope = SEED BATCH (3 beads, ALL FILE-DISJOINT → run CONCURRENTLY)
 
-1. **hk-uunpf FIRST** (P1, G1, EV-016) — the static `fsyncBoundaryEventTypes` map
-   (`busimpl.go:115-138`) is missing ≥15 spec-declared F-class event types
-   (reviewer_verdict, review_loop_cycle_complete, queue_*, handler_*,
-   decision_required/acknowledged, bead_sync_failed, …). They silently downgrade
-   to O-class (no fsync) → loss on hard crash violates EV-016/EV-INV-002. Register
-   the missing F-class types. G4 (hk-u3q6o, the EventType constants) is ALREADY
-   CLOSED, so the constants exist — use them.
-2. **hk-0wvmv SECOND** (P2, G3, EV-014d) — `ReplayFrom`/`DeadLetterReplay`
-   (`busimpl.go:1085-1092`) both return nil; startup subscriptions with a
-   since/offset_checkpoint must get a JSONL-tail replay before live delivery.
-   `jsonlwriter.go:ScanAfter` exists but is unwired; `TailTruncationCallback`
-   declared but never invoked. Reference the original impl approach in commit
-   `fc249711` (eventbus changes ONLY — that commit wedged because it edited
-   daemon.go). Supersedes hk-9duau.
+Unlike the soak (which ran serial to test shapes one at a time), this lane WANTS
+concurrency — these 3 are file-disjoint from gurney AND each other, so submit them
+as ONE stream group (`kind:"stream"`, 3 items) so the daemon dispatches all 3
+CONCURRENTLY to fill the idle slots:
 
-## HARD GUARD (load-bearing — fc249711 violated it and wedged on rebase)
-Do **NOT** edit paul's daemon hold files: `dot_cascade.go`, `workloop.go`,
-`daemon.go`, `stalewatch.go`, `reviewloop.go`. Implement the `internal/eventbus` +
-`internal/core` portion ONLY. If daemon-side wiring is genuinely needed, leave a
-clear TODO + commit-body note and file a follow-up bead — do NOT block, do NOT
-edit those files. This is what keeps the lane file-disjoint from paul.
+1. **hk-x6j6r** (P3) — move RedactionRegistry + DeadLetterSink from handlercontract
+   to core (fix eventbus layering). Touches `internal/core/eventtype.go` +
+   `internal/handler/handler.go`. LEAD (P3, low-stakes).
+2. **hk-dyqy** (P3) — swap captain-launch.sh examples → native launcher syntax in
+   `specs/process-lifecycle.md`. Docs-only (proven codex md shape).
+3. **hk-gx46b** (P2) — add `harmonik supervise ps` command (print process signatures
+   + tmux sessions). Touches `cmd/harmonik/supervise_cmd.go` + tests. Low blast radius.
+
+Report whether 3 CONCURRENT codex runs work cleanly (pilot signal — the soak never
+ran codex concurrently; watch for billing-guard races / codex-login contention).
+
+## HARD DISJOINT GUARD (load-bearing — keeps the lane collision-free)
+gurney owns the remote-worker lane: do **NOT** dispatch any bead touching
+`internal/daemon/` (esp. scenariogate, workloop, worker selection), `internal/workers/`,
+or anything remote/SSH/gate-base/worker-pool. If a candidate's scope reaches those
+files, SKIP it and pick another. Also keep seed beads disjoint from EACH OTHER.
 
 ## queue
-Use your OWN named queue `leto-ev` for every `harmonik queue submit`. NEVER the
-main queue, NEVER another crew's queue.
+Use your OWN named queue `leto-codex` for every submit. NEVER `main`, NEVER gurney-q.
 
 ## review + test discipline
-Every bead dispatches through the daemon's DOT (sonnet triple-review) graph — do
-NOT override to single/no-review mode. The spec (`specs/event-model.md`) is
-normative; implement to EV-016 / EV-014d / EV-INV-002, do not redesign the bus.
-Reviewed AND tested before it counts landed.
+EVERY codex run goes through the DOT review gate via the recipe (harness=codex
+implement + claude-code reviewer). Do NOT override to single/no-review. Reviewed AND
+tested before it counts landed. Verify per run (events.jsonl): harness_selected
+implement=codex tier=3 AND review=claude-code tier=3 → reviewer_verdict APPROVE;
+merged commit carries `Refs:<BEAD>`; bead closed; billing clean.
 
 ## failure handling (escalate, do not self-classify)
-On ANY `run_failed` / `run_stale` past launch+30min / unexpected wedge — or if a
-fix seems to REQUIRE touching a paul hold file — post to the captain over comms
-(`--topic status` or `--topic error`) and HOLD. The captain owns failure triage
-and any hold-file routing decision for this lane.
+On ANY run_failed / run_stale past launch+30min / unexpected wedge / billing-guard
+fail → post to captain (`--topic status` or `--topic error`) and HOLD. Captain owns
+failure triage. (Sonnet rule: escalate, don't self-classify.)
+
+## When the seed batch drains — STANDING LANE
+This is a STANDING lane: when the 3 seed beads land, pull the NEXT file-disjoint
+clean P3/P2 beads (`br ready --limit 0`; EXCLUDE crew:* / hold:* / daemon-core /
+remote / kerf-tool beads) and keep slots full via the same recipe. Post a status
+when you re-fill. Do NOT self-terminate; idle on comms inbox if no disjoint work.
 
 ## progress feed (mandatory)
-Post `--topic status` to captain AND a `br comment` on each bead close, plus a
-timer tick (≤10 min while dispatching, ≤15 min idle/draining) and boot/drain
-bookends.
+Post `--topic status` to captain AND a `br comment` on each bead close, plus a timer
+tick (≤10 min while dispatching, ≤15 min idle/draining) and boot/drain bookends.
 
 ## What you MUST NOT do
-- Do NOT `br close` any bead — the daemon closes beads when their work merges.
-- Do NOT submit to `main`. Use `--queue leto-ev`.
-- Do NOT run hk-uunpf and hk-0wvmv concurrently (busimpl.go collision).
-- Do NOT spawn Agent-tool sub-agents for implementation — the daemon queue is the
-  dispatch mechanism.
+- Do NOT `br close` any bead — the daemon closes beads when work merges.
+- Do NOT submit to `main` or gurney-q. Use `--queue leto-codex`.
+- Do NOT use the tier-1 `harness:codex` bead label (breaks the reviewer). Node-attr ONLY.
+- Do NOT touch gurney's remote-worker files (HARD DISJOINT GUARD above).
+- Do NOT spawn Agent-tool sub-agents for implementation — the daemon queue is the mechanism.
 
-## When the lane drains
-Both beads landed → post a completion status and idle on your comms inbox for the
-next assignment. Do NOT self-terminate.
-
-## Current State (2026-06-24, batch 2 COMPLETE — HOLDING)
-
-queue_id: (none — leto-ev drained; paused-by-failure from T7's expected run_failed, resume before any next submit)
-epic: hk-0639 (CODEX SOAK) — assignee=leto. Original event-model lane (hk-uunpf/hk-0wvmv) DONE; re-tasked to codex soak.
-in_flight: none
-monitor: re-arm subscribe + comms recv --follow on boot
-next_action: **HOLD — idle on comms inbox for next fill-slot pick (operator away).** Batch 2 DONE 3/3 + real-fix shape DONE. Soak shapes ALL proven: md-append (b1 x4), .go-edit (T2 edc871df), with-tests (T5 0c26f5f1), no-op (T7 hk-a8yve correct no_commit), real-bug-fix-with-tests (hk-spx63 → 74f72098, scripts/ops-monitor-check.sh + ops_monitor_check_test.go, full suite 232/0). Captain captured batches 1+2 as conclusive PASS. If captain re-tasks fill-slot: pull next file-disjoint logmine follow-up (not crew:paul / not hold:* / not daemon-core) via the proven recipe.
-blockers: none
-**FULL handoff incl. the PROVEN RECIPE + per-run steps: `.harmonik/crew/HANDOFF-leto.md` — READ IT FIRST.** Recipe graph (durable): `.harmonik/crew/codex-soak-recipe.dot` (node-attr harness=codex + reviewer_harness=claude-code; NO bead label). Submit DOT mode + workflow_ref, sequential, resume leto-ev before each submit.
-translations: hk-0639 = "codex soak epic"; hk-n05u2 = "codex re-canary (PASS)"; ef64h/04cbea35 = "DOT-path codex commit-fallback fix (landed)"; hk-2jxqg = "durable label-vs-node-pin fix (captain-owned)"
-stranded (leave for GC, do NOT br close): hk-9cj9f, hk-slvko, hk-a8yve (T7 expected-fail no-op)
+## translations
+hk-8dtyk = "codex-tier concurrency pilot epic" · leto-codex = "your codex queue" ·
+codex-soak-recipe.dot = "the proven tier-3 node-attr codex workflow" · gurney =
+"remote-worker crew (do not collide)" · hk-0639 = "the completed codex soak (history)".

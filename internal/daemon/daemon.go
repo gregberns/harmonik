@@ -54,12 +54,15 @@ type Config struct {
 	// at PL-005 step 0 per §PL-004a.  It is the second-lowest-precedence tier
 	// of the four-tier resolution chain (execution-model.md §4.3 EM-012a):
 	// per-bead label → per-project → daemon-default (this field) → built-in
-	// fallback (review-loop).
+	// fallback (dot, hk-30vlb).
 	//
 	// The zero value (empty string) is a startup error (fail-closed, hk-81n9r):
-	// callers must set an explicit mode. Use [core.WorkflowModeReviewLoop] for
-	// the standard default. Any unrecognised non-empty value is also rejected at
-	// startup so the daemon fails fast rather than silently degrading.
+	// callers must set an explicit mode. Use [core.WorkflowModeDot] for the
+	// standard default (the embedded standard-bead.dot). When the embedded DOT
+	// graph fails to load, workloop demotes to review-loop as a safety floor
+	// (EM-012a-FLOOR) — NEVER to single. Any unrecognised non-empty value is
+	// also rejected at startup so the daemon fails fast rather than silently
+	// degrading.
 	//
 	// The field is immutable for the daemon's lifetime; mid-run changes require
 	// a daemon restart (or exec-replacement via harmonik upgrade per PL-027).
@@ -698,7 +701,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Bead ref: hk-7om2q.8, hk-81n9r.
 	workflowModeDefault := cfg.WorkflowModeDefault
 	if workflowModeDefault == "" {
-		return fmt.Errorf("daemon.Start: WorkflowModeDefault must be set (PL-004a); set cfg.WorkflowModeDefault = core.WorkflowModeReviewLoop for the review-loop default")
+		return fmt.Errorf("daemon.Start: WorkflowModeDefault must be set (PL-004a); set cfg.WorkflowModeDefault = core.WorkflowModeDot for the standard dot default")
 	} else if !workflowModeDefault.Valid() {
 		return fmt.Errorf("daemon.Start: invalid workflow_mode_default %q: must be one of single, review-loop, dot (PL-004a)", workflowModeDefault)
 	}

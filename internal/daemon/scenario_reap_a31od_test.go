@@ -399,10 +399,11 @@ func TestScenario_Reap_BootOrphanSweepCounts(t *testing.T) {
 		LogWriter:             testLogWriter{t: t},
 		// WorkflowModeDefault is required by daemon.Start since hk-81n9r
 		// (9835491b). This sweep-only test cancels before any dispatch, so the
-		// value is never exercised by a workloop run; review-loop matches the
-		// daemon's documented default. Without it, daemon.Start returns the
-		// "WorkflowModeDefault must be set (PL-004a)" error (hk-4f5ua).
-		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		// value is never exercised by a workloop run; the standard default is
+		// dot (hk-30vlb) but any valid mode is immaterial here. Without it,
+		// daemon.Start returns the "WorkflowModeDefault must be set (PL-004a)"
+		// error (hk-4f5ua).
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// Launch daemon.Start in a goroutine.

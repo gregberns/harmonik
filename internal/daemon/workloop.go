@@ -1152,7 +1152,7 @@ func resolveTargetBranch(branch string) string {
 // Goroutine dispatch path:
 //  1. resolveHEAD + CreateWorktree.
 //  2. emitRunStarted (with optional queue_id + queue_group_index).
-//  3. Route to mode-specific driver (review-loop or single).
+//  3. Route to mode-specific driver (dot, review-loop, or single).
 //  4. CloseBead or ReopenBead based on outcome.
 //  5. On queue-dispatched run: update item status + evaluate EM-015f group advance.
 //  6. removeWorktree.

@@ -9,7 +9,7 @@ package daemon_test
 // without producing NDJSON output. The review-loop path
 // (reviewloop.go ~ implementer wait site) discarded the exit info via
 // `_ = implEI`, so when the implementer claude crashed silently in
-// review-loop mode (now the default since hk-g0ckv), the daemon had
+// review-loop mode (the default at the time of hk-g0ckv; dot is the default since hk-30vlb), the daemon had
 // zero diagnostic context to surface.
 //
 // On 2026-05-21 dispatches for hk-xegej / hk-yejfj / hk-g0ckv first try

@@ -66,9 +66,11 @@ func (a *runAdoptionFakeAdapter) ListSessions(_ context.Context) ([]string, erro
 
 // All remaining ltmux.Adapter methods are no-ops.
 func (a *runAdoptionFakeAdapter) ProbeTmux(_ context.Context) error { return nil }
+
 func (a *runAdoptionFakeAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *runAdoptionFakeAdapter) NewWindowIn(_ context.Context, _ ltmux.NewWindowIn) ltmux.Outcome {
 	return ltmux.Outcome{}
 }
@@ -76,19 +78,22 @@ func (a *runAdoptionFakeAdapter) KillSession(_ context.Context, _ string) error 
 func (a *runAdoptionFakeAdapter) KillWindow(_ context.Context, _ ltmux.WindowHandle) error {
 	return nil
 }
+
 func (a *runAdoptionFakeAdapter) WindowPanePID(_ context.Context, _ ltmux.WindowHandle) (int, error) {
 	return 0, nil
 }
+
 func (a *runAdoptionFakeAdapter) WindowPaneID(_ context.Context, _ ltmux.WindowHandle) (string, error) {
 	return "", nil
 }
+
 func (a *runAdoptionFakeAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
-func (a *runAdoptionFakeAdapter) PasteBuffer(_ context.Context, _, _ string) error  { return nil }
+func (a *runAdoptionFakeAdapter) PasteBuffer(_ context.Context, _, _ string) error     { return nil }
 func (a *runAdoptionFakeAdapter) SendKeysLiteral(_ context.Context, _, _ string) error { return nil }
-func (a *runAdoptionFakeAdapter) SendKeysEnter(_ context.Context, _ string) error    { return nil }
-func (a *runAdoptionFakeAdapter) SendKeysQuit(_ context.Context, _ string) error     { return nil }
+func (a *runAdoptionFakeAdapter) SendKeysEnter(_ context.Context, _ string) error      { return nil }
+func (a *runAdoptionFakeAdapter) SendKeysQuit(_ context.Context, _ string) error       { return nil }
 func (a *runAdoptionFakeAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }
@@ -152,28 +157,33 @@ func runAdoptionFixtureRecord(t *testing.T, projectDir, runID, beadID, sessionNa
 // It is defined here (not reusing workloop_test.go's stubBeadLedger) because this
 // file is in package daemon — stubBeadLedger lives in package daemon_test.
 type runAdoptionFakeLedger struct {
-	mu      sync.Mutex
-	opened  []core.BeadID
+	mu     sync.Mutex
+	opened []core.BeadID
 }
 
 func (l *runAdoptionFakeLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	return nil, nil
 }
+
 func (l *runAdoptionFakeLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	return core.BeadRecord{BeadID: id}, nil
 }
+
 func (l *runAdoptionFakeLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	return nil
 }
+
 func (l *runAdoptionFakeLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
 	return nil
 }
+
 func (l *runAdoptionFakeLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.opened = append(l.opened, beadID)
 	return nil
 }
+
 func (l *runAdoptionFakeLedger) reopenedIDs() []core.BeadID {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -402,12 +412,12 @@ func TestAdoptDeadRunSessions_MultipleEntries_LiveSkippedDeadReset(t *testing.T)
 	t.Parallel()
 
 	const (
-		runIDDead   = "019eff0a-0006-7000-8000-000000000006"
-		beadIDDead  = "hk-78tji-multi-dead"
-		sessDead    = "harmonik-multi-dead-sess"
-		runIDLive   = "019eff0a-0007-7000-8000-000000000007"
-		beadIDLive  = "hk-78tji-multi-live"
-		sessLive    = "harmonik-multi-live-sess"
+		runIDDead  = "019eff0a-0006-7000-8000-000000000006"
+		beadIDDead = "hk-78tji-multi-dead"
+		sessDead   = "harmonik-multi-dead-sess"
+		runIDLive  = "019eff0a-0007-7000-8000-000000000007"
+		beadIDLive = "hk-78tji-multi-live"
+		sessLive   = "harmonik-multi-live-sess"
 	)
 
 	projectDir := runAdoptionFixtureProjectDir(t)

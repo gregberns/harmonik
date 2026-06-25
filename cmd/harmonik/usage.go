@@ -37,6 +37,7 @@ SUBCOMMANDS
   sleep            Park all LLM sessions now (manual quiesce override; gated on GenuineDrain unless --force)
   wake             Wake sleeping LLM sessions (--agent <name> or --all; fleet-stall escape hatch)
   beads-merge      Git merge-driver for .beads/issues.jsonl (union-by-bead-ID)
+  beads-dedup      Deduplicate .beads/issues.jsonl in-place (keeps newest record per bead ID)
   smoke            5-signal end-to-end verification of a live daemon (hk-4rkrg)
   harness          Run the scenario harness (--list, --dry-run, --cadence, --scenario)
   goal-keeper      Update .harmonik/intent/goal-state.json from operator comms (flywheel V6)

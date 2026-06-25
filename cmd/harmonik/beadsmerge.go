@@ -270,10 +270,14 @@ func mergeBeadRows(ancestor, current, other []beadRow) (merged []beadRow, confli
 }
 
 // rowsToMap converts a slice of beadRow to a map keyed by id.
+// When the same id appears more than once in the input (within-file duplicates),
+// the row with the newest updated_at is kept (LWW by timestamp).
 func rowsToMap(rows []beadRow) map[string]beadRow {
 	m := make(map[string]beadRow, len(rows))
 	for _, r := range rows {
-		m[r.id] = r
+		if existing, seen := m[r.id]; !seen || r.updatedAt.After(existing.updatedAt) {
+			m[r.id] = r
+		}
 	}
 	return m
 }

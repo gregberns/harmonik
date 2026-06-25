@@ -339,6 +339,16 @@ EXAMPLES
 		return runBeadsMergeSubcommand(os.Args[2:])
 	}
 
+	// harmonik beads-dedup [--path FILE] [--dry-run]
+	// One-time dedup of .beads/issues.jsonl: keeps the newest record per bead ID.
+	// Fixes ghost "open" beads left by older-open + newer-closed duplicate JSONL
+	// records that caused br show / br list to over-report open work.
+	//
+	// Bead ref: hk-0f35x.
+	if len(os.Args) >= 2 && os.Args[1] == "beads-dedup" {
+		return runBeadsDedupSubcommand(os.Args[2:])
+	}
+
 	// harmonik sleep [--force] [--project DIR]
 	// Manual operator override to quiesce (park) all LLM sessions now.
 	// Without --force, the daemon's GenuineDrain oracle is consulted first.

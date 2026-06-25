@@ -16,8 +16,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/workers"
 	"pgregory.net/rapid"
+
+	"github.com/gregberns/harmonik/internal/workers"
 )
 
 // drawWorkerName generates a non-empty worker name that is a valid DNS-label

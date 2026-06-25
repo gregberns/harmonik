@@ -1276,12 +1276,14 @@ func dispatchDotAgenticNode(
 		effectiveNodeHarness = core.AgentType(node.Harness)
 	}
 	if effectiveNodeHarness.Valid() && deps.harnessRegistry != nil {
-		specBuilder = routedLaunchSpecBuilder(
+		// hk-2jxqg: use pinnedHarnessLaunchSpecBuilder so the node-level pin wins
+		// unconditionally. routedLaunchSpecBuilder calls resolveHarness which lets a
+		// tier-1 bead label (e.g. harness:codex) override the pin, silently routing
+		// the reviewer to the wrong harness and producing no verdict.
+		specBuilder = pinnedHarnessLaunchSpecBuilder(
 			deps.harnessRegistry,
 			beadRecord,
-			core.AgentType(""),   // queue default: hk-4x3rg
-			effectiveNodeHarness, // tier-3: reviewer override or node harness attr (T5/T12/T14)
-			core.AgentType(""),   // global default: built-in fallback = claude-code
+			effectiveNodeHarness,
 			deps.bus,
 		)
 	}

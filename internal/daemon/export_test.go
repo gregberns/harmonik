@@ -2544,6 +2544,50 @@ func ExportedRoutedLaunchSpecBuilder(
 	}
 }
 
+// ExportedPinnedHarnessLaunchSpecBuilder exposes pinnedHarnessLaunchSpecBuilder
+// for tests in package daemon_test. It returns a builder that uses agentType
+// directly (bypassing resolveHarness) so tests can assert the node-level pin
+// wins unconditionally over any bead label (hk-2jxqg).
+func ExportedPinnedHarnessLaunchSpecBuilder(
+	reg *handlercontract.HarnessRegistry,
+	bead core.BeadRecord,
+	agentType core.AgentType,
+	bus handlercontract.EventEmitter,
+) func(context.Context, ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
+	builder := pinnedHarnessLaunchSpecBuilder(reg, bead, agentType, bus)
+	return func(ctx context.Context, rc ExportedClaudeRunCtx) (handler.LaunchSpec, ExportedClaudeRunArtifacts, error) {
+		internal := claudeRunCtx{
+			runID:             rc.RunID,
+			beadID:            rc.BeadID,
+			workspacePath:     rc.WorkspacePath,
+			daemonSocket:      rc.DaemonSocket,
+			workflowMode:      rc.WorkflowMode,
+			phase:             rc.Phase,
+			iterationCount:    rc.IterationCount,
+			priorClaudeSessID: rc.PriorClaudeSessID,
+			handlerBinary:     rc.HandlerBinary,
+			daemonBinaryPath:  rc.DaemonBinaryPath,
+			baseEnv:           rc.BaseEnv,
+			model:             rc.Model,
+			effort:            rc.Effort,
+			worktreeRootPath:  rc.WorktreeRootPath,
+			beadDescription:   rc.BeadDescription,
+			nodePrompt:        rc.NodePrompt,
+		}
+		spec, arts, err := builder(ctx, internal)
+		if err != nil {
+			return handler.LaunchSpec{}, ExportedClaudeRunArtifacts{}, err
+		}
+		return spec, ExportedClaudeRunArtifacts{
+			ClaudeSessionID:  arts.claudeSessionID,
+			SessionLogPath:   arts.sessionLogPath,
+			HandlerSessionID: arts.handlerSessionID,
+			PreExecMsgs:      arts.preExecMsgs,
+			Substrate:        arts.substrate,
+		}, nil
+	}
+}
+
 // ExportedRunCtxFromClaudeRunCtx converts an ExportedClaudeRunCtx into the
 // handlercontract.RunCtx shape expected by ClaudeHarness.LaunchSpec.  This
 // allows harness-golden tests to use the same fixture builders as the

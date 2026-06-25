@@ -101,6 +101,30 @@ func routedLaunchSpecBuilder(
 	}
 }
 
+// pinnedHarnessLaunchSpecBuilder is like routedLaunchSpecBuilder but bypasses
+// resolveHarness entirely: the caller has already determined agentType (e.g. via
+// a DOT node-level harness/reviewer_harness pin) and it MUST NOT be overridden by
+// a coarse bead label. Emits harness_selected at tier 3. (hk-2jxqg)
+func pinnedHarnessLaunchSpecBuilder(
+	reg *handlercontract.HarnessRegistry,
+	bead core.BeadRecord,
+	agentType core.AgentType,
+	bus handlercontract.EventEmitter,
+) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return func(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+		emitHarnessSelected(ctx, bus, bead, agentType, 3)
+		h, err := reg.ForAgent(agentType)
+		if err != nil {
+			return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+				"daemon: pinnedHarnessLaunchSpecBuilder: resolve harness %q: %w", agentType, err)
+		}
+		if _, ok := h.(*ClaudeHarness); ok {
+			return buildClaudeLaunchSpec(ctx, rc)
+		}
+		return buildCodexRoutedLaunchSpec(ctx, rc, h, agentType)
+	}
+}
+
 // buildCodexRoutedLaunchSpec assembles a handler.LaunchSpec + claudeRunArtifacts
 // for non-claude harnesses (currently only CodexHarness).
 //

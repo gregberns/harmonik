@@ -11,7 +11,7 @@
 # ISOLATION (all derived per-project, automatically — no shared global state):
 #   socket   <scratch>/.harmonik/daemon.sock          (internal/daemon/daemon.go)
 #   pidfile  <scratch>/.harmonik/daemon.pid           (internal/lifecycle/pidfile.go)
-#   tmux     harmonik-<projecthash>-default           (tmux.DefaultSessionName)
+#   tmux     harmonik-<projecthash>-default           (DefaultSessionName, internal/lifecycle/tmux)
 #            projecthash = first 12 hex of SHA-256(realpath(scratch))  (PL-006a)
 #   binary   <scratch>/.harmonik/bin/harmonik         (built FROM the scratch clone)
 # Because every handle is keyed off the scratch path, a second daemon on a
@@ -52,24 +52,64 @@ echo "[scratch-daemon] SAFETY: operates ONLY on the scratch clone you name; neve
 
 die() { echo "[scratch-daemon] ERROR: $*" >&2; exit 1; }
 
-# guard_path: reject an empty path or "/" so a typo can never turn a kill/rm into
-# a catastrophe. Echoes the absolute, normalized path on success.
+# fleet_root: the canonical, symlink-resolved path of THIS script's own git repo
+# (the live fleet/production checkout). Empty if the script is not inside a repo.
+# Used by guard_path to hard-refuse operating on the fleet checkout itself.
+fleet_root() {
+    local d
+    d="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null)" || return 0
+    [ -n "$d" ] || return 0
+    ( cd "$d" && pwd -P )
+}
+
+# guard_path: reject an empty path, "/", or this script's own fleet repo root, so
+# a typo (or a symlink-to-fleet) can never turn a kill/rm into a catastrophe.
+# Canonicalizes via `pwd -P` (resolves symlinks) so the path used for the pidfile,
+# the argv ownership check, and the project-hash-derived tmux session identity all
+# agree with harmonik's own filepath.EvalSymlinks (PL-006a). Echoes the resolved
+# absolute path on success.
 guard_path() {
     local p="${1:-}"
     [ -n "$p" ] || die "scratch-path is required"
     case "$p" in
         /) die "refusing to operate on '/'";;
     esac
-    # Normalize to an absolute path. The dir may not exist yet (init), so resolve
-    # the parent and re-append the leaf rather than requiring the full path.
+    # Resolve to an absolute, symlink-free path. The dir may not exist yet (init),
+    # so resolve the parent (symlinks and all) and re-append the leaf.
+    local resolved
     if [ -d "$p" ]; then
-        ( cd "$p" && pwd )
+        resolved="$( cd "$p" && pwd -P )"
     else
         local parent leaf
         parent="$(dirname "$p")"
         leaf="$(basename "$p")"
         [ -d "$parent" ] || die "parent directory of '$p' does not exist"
-        echo "$( cd "$parent" && pwd )/$leaf"
+        resolved="$( cd "$parent" && pwd -P )/$leaf"
+    fi
+    # scratch≠fleet guard: never operate on this script's own repo root (the live
+    # fleet checkout). Both sides are symlink-resolved, so a scratch path that is a
+    # symlink pointing at the fleet repo is also caught here.
+    local fleet
+    fleet="$(fleet_root)"
+    if [ -n "$fleet" ] && [ "$resolved" = "$fleet" ]; then
+        die "refusing: '$resolved' is this script's own repo root (the fleet checkout) — point at a SEPARATE scratch clone. Drive the loop from your fleet checkout's copy of this script."
+    fi
+    echo "$resolved"
+}
+
+# assert_not_supervised: defense-in-depth atop guard_path. Refuse to start/stop a
+# daemon for a project that has a LIVE auto-revive supervisor (hk-<hash>-supervise)
+# — that is a supervised fleet deployment, never a throwaway scratch clone. Needs
+# the scratch binary to derive the hash; skips silently if it is not built yet
+# (build/init are non-killing ops, and `up` builds before this runs in `cycle`).
+assert_not_supervised() {
+    local scratch="$1" bin hash
+    bin="$(scratch_bin "$scratch")"
+    [ -x "$bin" ] || return 0
+    hash="$("$bin" project-hash --project "$scratch" 2>/dev/null)" || return 0
+    [ -n "$hash" ] || return 0
+    if tmux has-session -t "hk-${hash}-supervise" 2>/dev/null; then
+        die "refusing: project has a live supervisor session (hk-${hash}-supervise) — looks like a supervised fleet daemon, not a scratch clone"
     fi
 }
 
@@ -125,7 +165,10 @@ cmd_init() {
     if [ ! -f "$scratch/.harmonik/config.yaml" ]; then
         echo "[scratch-daemon] no .harmonik/config.yaml — running harmonik init"
         cmd_build "$scratch"
-        "$(scratch_bin "$scratch")" init "$scratch" --force --no-supervise
+        # --project is REQUIRED: `harmonik init` reads the project ONLY from
+        # --project and otherwise falls back to os.Getwd() (cmd/harmonik/init_cmd.go),
+        # which would re-init the CWD repo's beads DB. A positional path is ignored.
+        "$(scratch_bin "$scratch")" init --project "$scratch" --force --no-supervise
     else
         echo "[scratch-daemon] .harmonik/config.yaml present — no init needed"
     fi
@@ -156,6 +199,7 @@ cmd_build() {
 cmd_up() {
     local scratch bin sess log sock
     scratch="$(guard_path "${1:-}")"
+    assert_not_supervised "$scratch"
     bin="$(scratch_bin "$scratch")"
     [ -x "$bin" ] || die "scratch binary not built — run: $0 build $scratch"
     sess="$(session_name "$scratch")"
@@ -234,8 +278,9 @@ cmd_status() {
 # Subcommand: down  (SAFE — kills ONLY the scratch daemon)
 # ---------------------------------------------------------------------------
 cmd_down() {
-    local scratch pf sock pid
+    local scratch pf sock pid confirmed_scratch=0
     scratch="$(guard_path "${1:-}")"
+    assert_not_supervised "$scratch"
     pf="$(scratch_pidfile "$scratch")"
     sock="$(scratch_sock "$scratch")"
     pid="$(read_pid "$pf")"
@@ -255,6 +300,8 @@ cmd_down() {
         cmdline="$(ps -p "$pid" -o command= 2>/dev/null || true)"
         case "$cmdline" in
             *"$scratch"*)
+                # Argv contains the scratch path → provably the scratch daemon.
+                confirmed_scratch=1
                 echo "[scratch-daemon] stopping scratch daemon pid $pid"
                 kill -TERM "$pid" 2>/dev/null || true
                 local i
@@ -273,12 +320,22 @@ cmd_down() {
         esac
     fi
 
-    # Tear down the tmux session for this scratch clone (best-effort; targeted by
-    # the deterministic per-project session name, never a wildcard).
-    if [ -x "$(scratch_bin "$scratch")" ]; then
+    # Tear down the tmux session ONLY when we provably confirmed (via the live
+    # process's argv above) that this is the scratch daemon. The session name is a
+    # per-project hash, and harmonik freezes a `harmonik-<hash>-default` session as
+    # the SINGLE spawn target for a project — killing one we did NOT confirm could,
+    # in the stale-pidfile + symlinked-to-fleet tail case, take down the FLEET's
+    # spawn-target session. So this is gated on the SAME ownership proof as the kill.
+    if [ "$confirmed_scratch" = "1" ] && [ -x "$(scratch_bin "$scratch")" ]; then
         local sess
         sess="$(session_name "$scratch")"
         tmux kill-session -t "$sess" 2>/dev/null && echo "[scratch-daemon] killed tmux session $sess" || true
+    elif [ -x "$(scratch_bin "$scratch")" ]; then
+        local sess
+        sess="$(session_name "$scratch")"
+        if tmux has-session -t "$sess" 2>/dev/null; then
+            echo "[scratch-daemon] NOTE: tmux session $sess exists but scratch-ownership was NOT confirmed (no live argv match) — leaving it untouched. Verify and 'tmux kill-session -t $sess' by hand if you are sure it is the scratch one." >&2
+        fi
     fi
 
     # Remove a stale socket only after the process is confirmed gone.

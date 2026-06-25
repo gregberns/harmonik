@@ -76,7 +76,9 @@ path against a localhost worker (no second machine needed):
 go test -tags=scenario -run TestScenario_RemoteSubstrate_Localhost_E2E ./internal/daemon/
 ```
 
-Use `scripts/scratch-daemon.sh` for the daemon side:
+Use `scripts/scratch-daemon.sh` for the daemon side. Drive it from your fleet
+checkout (the commands below pass the scratch path explicitly — you edit and build
+the scratch clone, but you do not need to `cd` into it):
 
 ```bash
 # One-time: clone harmonik into a scratch dir (default source = this repo's origin).
@@ -101,19 +103,32 @@ daemon can never collide with the fleet):
   for the scratch loop.)
 - **Own socket:** `<scratch>/.harmonik/daemon.sock`.
 - **Own tmux session:** `harmonik-<projecthash>-default`
-  (`tmux.DefaultSessionName`; projecthash = first 12 hex of
-  SHA-256(realpath(scratch)) per PL-006a). Derived via `harmonik project-hash`.
+  (`DefaultSessionName` in `internal/lifecycle/tmux`; projecthash = first 12 hex
+  of SHA-256(realpath(scratch)) per PL-006a). Derived via `harmonik project-hash`.
 - **Own binary:** `<scratch>/.harmonik/bin/harmonik`, built from the scratch
   clone's own source — so the daemon runs exactly the code you just edited, fully
   decoupled from `$GOPATH/bin/harmonik`.
 
-**SAFETY RULE — scratch daemon only, never the fleet.** `down` kills ONLY the PID
-named in `<scratch>/.harmonik/daemon.pid`, and only after confirming that live
-process's command line actually contains the scratch path. It refuses an empty
-path or `/`. It never runs a blanket `pkill harmonik` (nor even `pkill -f
-"harmonik --project"`), either of which would take down the fleet daemon. If you
-ever stop a daemon by hand while a scratch daemon is also running, kill by the
-exact PID from the relevant `.harmonik/daemon.pid`, not by name.
+**SAFETY RULE — scratch daemon only, never the fleet.** The script has four
+guards, all aimed at making it impossible to touch the fleet daemon:
+
+1. `down` kills ONLY the PID named in `<scratch>/.harmonik/daemon.pid`, and only
+   after confirming that live process's command line actually contains the scratch
+   path (the argv ownership check). The tmux `-default` session teardown is gated
+   behind that SAME ownership proof — an unconfirmed session is left untouched, so
+   the fleet's frozen spawn-target session can never be killed.
+2. The scratch path is canonicalized with symlink resolution (`pwd -P`), matching
+   harmonik's own `filepath.EvalSymlinks`, so the pidfile path, the argv check, and
+   the project-hash-derived session name all agree even for a symlinked path.
+3. It hard-refuses an empty path, `/`, or this script's own repo root (the fleet
+   checkout) — both sides symlink-resolved, so a symlink-to-fleet is caught too.
+4. `up`/`down` refuse a project that has a live `hk-<hash>-supervise` session —
+   that is a supervised (fleet) deployment, never a throwaway scratch clone.
+
+It never runs a blanket `pkill harmonik` (nor even `pkill -f "harmonik
+--project"`), either of which would take down the fleet daemon. If you ever stop a
+daemon by hand while a scratch daemon is also running, kill by the exact PID from
+the relevant `.harmonik/daemon.pid`, not by name.
 
 ---
 

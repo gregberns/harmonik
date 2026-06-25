@@ -186,6 +186,20 @@ func (r *RunRegistry) Snapshot() []*RunHandle {
 	return out
 }
 
+// HasBeadRun reports whether any currently in-flight run is executing beadID.
+// Used by the stranded-bead auto-reset path (hk-l2xd1) to confirm there is
+// no active dispatch goroutine before resetting an in_progress bead.
+func (r *RunRegistry) HasBeadRun(beadID core.BeadID) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, h := range r.handles {
+		if h.BeadID == beadID {
+			return true
+		}
+	}
+	return false
+}
+
 // snapshotWithKeys returns a stable map copy of all currently registered
 // (runID → *RunHandle) entries.  This is the key-preserving variant of
 // Snapshot, used internally by HandlerPausePolicyGoroutine to build the

@@ -536,6 +536,28 @@ type workLoopDeps struct {
 	// Bead ref: hk-rnsjs.
 	staleBlockerCloser lifecycle.BeadCat3cCloser
 
+	// strandedInProgressResetter, when non-nil, auto-resets an in_progress bead
+	// observed at pre-claim with no active run — breaking the bead_claim_skipped
+	// live-lock that starves sibling queue items (hk-l2xd1). Nil in test stubs
+	// that do not exercise this path (backward-compat default).
+	//
+	// Bead ref: hk-l2xd1.
+	strandedInProgressResetter strandedInProgressResetter
+
+	// strandedResetProjectHash is the project hash used in ResetBead idempotency
+	// keys for stranded-bead auto-resets (hk-l2xd1). Same value as
+	// coordinatorReapProjectHash; stored separately for clarity.
+	//
+	// Bead ref: hk-l2xd1.
+	strandedResetProjectHash core.ProjectHash
+
+	// strandedResetDaemonNS is the daemon-session epoch (nanoseconds since the
+	// Unix epoch, captured once at newWorkLoopDeps time) used to scope ResetBead
+	// idempotency keys to a single daemon session (hk-l2xd1).
+	//
+	// Bead ref: hk-l2xd1.
+	strandedResetDaemonNS int64
+
 	// operatorPauseCtrl, when non-nil, is checked at every br-ready dispatch
 	// to gate dispatch when the daemon is in an operator-pause state. When nil
 	// the gate is disabled (backward-compat for tests that do not exercise
@@ -858,6 +880,20 @@ type beadLedger interface {
 	ReopenBead(ctx context.Context, intentLogDir string, cfg brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, beadID core.BeadID, reason string) error
 }
 
+// strandedInProgressResetter is the subset of brcli.Adapter used to auto-reset
+// an in_progress bead that has no active run (hk-l2xd1). Separated from
+// beadLedger so existing test stubs do not need to implement ResetBead.
+type strandedInProgressResetter interface {
+	ResetBead(
+		ctx context.Context,
+		intentLogDir string,
+		cfg brcli.TimeoutConfig,
+		beadID core.BeadID,
+		projectHash core.ProjectHash,
+		daemonStartNS int64,
+	) error
+}
+
 // newWorkLoopDeps constructs the production workLoopDeps from daemon.Config,
 // the shared event bus, the pre-resolved workflowModeDefault, and the shared
 // hookSessionStore.
@@ -980,6 +1016,9 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		queueStore:                 nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
 		queueLedger:                newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
 		staleBlockerCloser:         adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
+		strandedInProgressResetter: adapter,                   // hk-l2xd1: auto-reset in_progress bead with no run
+		strandedResetProjectHash:   projectHash,               // hk-l2xd1: idempotency key component
+		strandedResetDaemonNS:      time.Now().UnixNano(),     // hk-l2xd1: daemon-session epoch for idempotency key scoping
 		kerfPath:                   cfg.KerfPath,              // hk-9321v: kerf next for EM-062/EM-063 eager-refill
 		brPath:                     cfg.BrPath,                // hk-f722: staged-bead generator br create
 		followUpLedger:             make(map[string]struct{}), // hk-f722: at-most-once guard per daemon session
@@ -2025,6 +2064,41 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 							preClaimRecord.Status == core.CoarseStatusTombstone {
 							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 						} else {
+							// hk-l2xd1: in_progress with no active run → auto-reset to break
+							// the bead_claim_skipped live-lock that starves sibling queue items.
+							// The queue item is still pending (claim was skipped); setting it to
+							// deferred-for-ledger-dep is ineffective because ReevaluateDeferred
+							// sees no blocking siblings and immediately un-defers it, causing a
+							// ~2.5s spin loop. Instead, detect the stranded state and reset the
+							// bead to open so the next tick claims it normally.
+							if preClaimRecord.Status == core.CoarseStatusInProgress &&
+								deps.strandedInProgressResetter != nil &&
+								!deps.runRegistry.HasBeadRun(snapItemBeadID) &&
+								!strandedBeadHasOnDiskRun(deps.projectDir, snapItemBeadID) {
+								if resetErr := deps.strandedInProgressResetter.ResetBead(
+									ctx, deps.intentLogDir, deps.brTimeoutCfg,
+									snapItemBeadID,
+									deps.strandedResetProjectHash,
+									deps.strandedResetDaemonNS,
+								); resetErr != nil {
+									fmt.Fprintf(os.Stderr,
+										"daemon: workloop: stranded_bead_auto_reset FAILED bead=%s: %v — bead stays in_progress until next restart\n",
+										snapItemBeadID, resetErr)
+									// Fall through: set DeferredForLedgerDep to slow the spin
+									// even though ReevaluateDeferred will un-defer it quickly.
+								} else {
+									fmt.Fprintf(os.Stderr,
+										"daemon: workloop: stranded_bead_auto_reset bead=%s reason=in_progress_with_no_run (hk-l2xd1)\n",
+										snapItemBeadID)
+									// Queue item is still pending; the next dispatch tick will
+									// see the bead as open and claim it normally. No state
+									// change needed here — skip the deferred-for-ledger-dep path.
+									if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+										return exitClean()
+									}
+									continue
+								}
+							}
 							// Set the queue item to deferred-for-ledger-dep under the write lock.
 							if deps.queueStore != nil {
 								lq := deps.queueStore.LockForMutation()
@@ -7043,4 +7117,25 @@ func adoptLiveRunSession(ctx context.Context, deps workLoopDeps, rec runpkg.Reco
 	if deps.projectDir != "" {
 		_ = runpkg.Remove(deps.projectDir, rec.RunID)
 	}
+}
+
+// strandedBeadHasOnDiskRun reports whether any record in .harmonik/runs/ is
+// associated with beadID. An on-disk record means an adoptLiveRunSession
+// goroutine is monitoring the independent tmux session; resetting the bead
+// in that case would race the live session, so the stranded-bead auto-reset
+// (hk-l2xd1) must skip.
+func strandedBeadHasOnDiskRun(projectDir string, beadID core.BeadID) bool {
+	if projectDir == "" {
+		return false
+	}
+	recs, err := runpkg.List(projectDir)
+	if err != nil || len(recs) == 0 {
+		return false
+	}
+	for _, r := range recs {
+		if r.BeadID == string(beadID) {
+			return true
+		}
+	}
+	return false
 }

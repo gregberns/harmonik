@@ -226,6 +226,21 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-rnsjs.
 	StaleBlockerCloser lifecycle.BeadCat3cCloser
 
+	// StrandedInProgressResetter, when non-nil, enables the stranded-bead
+	// auto-reset path (hk-l2xd1). When nil the behaviour is disabled (safe
+	// default for tests that do not exercise this path).
+	//
+	// Bead ref: hk-l2xd1.
+	StrandedInProgressResetter strandedInProgressResetter
+
+	// StrandedResetDaemonNS is the daemon-session epoch threaded into ResetBead
+	// idempotency keys when StrandedInProgressResetter is set (hk-l2xd1).
+	// Zero is valid (becomes the epoch at ExportedWorkLoopDeps call time in
+	// production; tests that check the idempotency key shape set this explicitly).
+	//
+	// Bead ref: hk-l2xd1.
+	StrandedResetDaemonNS int64
+
 	// OperatorPauseCtrl, when non-nil, gates br-ready dispatch on operator
 	// pause state (hk-ry8q1). When nil the gate is disabled.
 	//
@@ -422,55 +437,57 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	}
 
 	return workLoopDeps{
-		brAdapter:                 p.BrAdapter,
-		bus:                       p.Bus,
-		h:                         h,
-		intentLogDir:              p.IntentLogDir,
-		projectDir:                p.ProjectDir,
-		handlerBinary:             binary,
-		handlerArgs:               p.HandlerArgs,
-		handlerEnv:                nil,
-		brTimeoutCfg:              brcli.TimeoutConfig{},
-		tidGen:                    core.NewTransitionIDGenerator(),
-		workflowModeDefault:       wmd,
-		runRegistry:               reg,
-		maxConcurrent:             maxConcurrent,
-		cpRegistry:                p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
-		hookStore:                 hookStore,
-		launchSpecBuilder:         lsb,
-		worktreeFactory:           wtf,
-		adapterRegistry:           p.AdapterRegistry2,
-		harnessRegistry:           p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
-		substrate:                 p.Substrate,
-		agentReadyTimeout:         p.AgentReadyTimeout,
-		postAgentReadyHangTimeout: p.PostAgentReadyHangTimeout,
-		projectCfg:                p.ProjectCfg,
-		queueStore:                p.QueueStore,
-		queueLedger:               p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
-		submitWakeC:               submitWakeC,
-		cancelOnQueueDrain:        p.CancelOnQueueDrain,
-		cancelOnQueueExit:         p.CancelOnQueueExit,
-		stopDispatchCtx:           p.StopDispatchCtx,
-		handlerPauseController:    p.HandlerPauseController,
-		staleBlockerCloser:        p.StaleBlockerCloser, // hk-rnsjs
-		operatorPauseCtrl:         p.OperatorPauseCtrl,  // hk-ry8q1
-		decisionBlocker:           p.DecisionBlocker,    // hk-a6e24 EV-043
-		noAutoPull:                p.NoAutoPull,         // hk-h5lv2 / EM-066
-		concurrencyCtrl:           p.ConcurrencyCtrl,    // hk-ohiaf
-		skipBrHistoryRotation:     true,                 // hk-hypbi: tests use temp dirs without real .br_history
-		targetBranch:              resolveTargetBranch(p.TargetBranch),
-		protectBranches:           p.ProtectBranches,
-		mergeMu:                   mergeMu,
-		emittedEpics:              make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
-		emittedEpicsMu:            &sync.Mutex{},
-		beadAuditLogger:           p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption
-		workerRegistry:            p.WorkerRegistry,  // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
-		brPath:                    p.BrPath,          // hk-f722: staged-bead generator; empty → disabled
-		followUpLedger:            make(map[string]struct{}),
-		followUpLedgerMu:          &sync.Mutex{},
-		spawnSubstrateReadyCh:     p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
-		allowedRepos:              p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
-		diskFreeBytesFunc:         p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
+		brAdapter:                  p.BrAdapter,
+		bus:                        p.Bus,
+		h:                          h,
+		intentLogDir:               p.IntentLogDir,
+		projectDir:                 p.ProjectDir,
+		handlerBinary:              binary,
+		handlerArgs:                p.HandlerArgs,
+		handlerEnv:                 nil,
+		brTimeoutCfg:               brcli.TimeoutConfig{},
+		tidGen:                     core.NewTransitionIDGenerator(),
+		workflowModeDefault:        wmd,
+		runRegistry:                reg,
+		maxConcurrent:              maxConcurrent,
+		cpRegistry:                 p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
+		hookStore:                  hookStore,
+		launchSpecBuilder:          lsb,
+		worktreeFactory:            wtf,
+		adapterRegistry:            p.AdapterRegistry2,
+		harnessRegistry:            p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
+		substrate:                  p.Substrate,
+		agentReadyTimeout:          p.AgentReadyTimeout,
+		postAgentReadyHangTimeout:  p.PostAgentReadyHangTimeout,
+		projectCfg:                 p.ProjectCfg,
+		queueStore:                 p.QueueStore,
+		queueLedger:                p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
+		submitWakeC:                submitWakeC,
+		cancelOnQueueDrain:         p.CancelOnQueueDrain,
+		cancelOnQueueExit:          p.CancelOnQueueExit,
+		stopDispatchCtx:            p.StopDispatchCtx,
+		handlerPauseController:     p.HandlerPauseController,
+		staleBlockerCloser:         p.StaleBlockerCloser,         // hk-rnsjs
+		strandedInProgressResetter: p.StrandedInProgressResetter, // hk-l2xd1
+		strandedResetDaemonNS:      p.StrandedResetDaemonNS,      // hk-l2xd1
+		operatorPauseCtrl:          p.OperatorPauseCtrl,          // hk-ry8q1
+		decisionBlocker:            p.DecisionBlocker,            // hk-a6e24 EV-043
+		noAutoPull:                 p.NoAutoPull,                 // hk-h5lv2 / EM-066
+		concurrencyCtrl:            p.ConcurrencyCtrl,            // hk-ohiaf
+		skipBrHistoryRotation:      true,                         // hk-hypbi: tests use temp dirs without real .br_history
+		targetBranch:               resolveTargetBranch(p.TargetBranch),
+		protectBranches:            p.ProtectBranches,
+		mergeMu:                    mergeMu,
+		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
+		emittedEpicsMu:             &sync.Mutex{},
+		beadAuditLogger:            p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption
+		workerRegistry:             p.WorkerRegistry,  // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
+		brPath:                     p.BrPath,          // hk-f722: staged-bead generator; empty → disabled
+		followUpLedger:             make(map[string]struct{}),
+		followUpLedgerMu:           &sync.Mutex{},
+		spawnSubstrateReadyCh:      p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
+		allowedRepos:               p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
+		diskFreeBytesFunc:          p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
 		// hk-y3frr: default to a no-op clean in tests so that the now-enabled
 		// proactive reap never calls real `go clean -cache` in scenario tests
 		// (which have no goCacheCleanFunc set and would wipe the build cache on

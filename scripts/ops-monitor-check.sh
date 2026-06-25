@@ -379,15 +379,24 @@ if [[ -f "$LANES_FILE" ]]; then
     echo "ops-monitor-check: WARN — lanes.json missing/unparseable; skipping known-ready-lane check (SD-1)" >&2
   else
     # Emit "lane<TAB>epic_id" for each candidate lane: non-null epic_id AND gate is
-    # null OR its expires is absent OR expired (gate.expires < now). gate.expires is
-    # RFC3339/ISO-8601 'Z'; fromdateiso8601 parses it to epoch for comparison with now.
+    # null OR its expires is absent OR expired (gate.expires < now). gate.expires may be
+    # DATE-ONLY (the live index writes "2026-07-09") OR full RFC3339 ("2026-07-09T00:00:00Z");
+    # fromdateiso8601 needs the full form, so try (expires + "T00:00:00Z") FIRST (parses a
+    # date-only value), fall back to the raw value (parses an already-full RFC3339), and
+    # only if BOTH fail (missing/null/malformed) default to 0 == past == candidate (the
+    # safe LAPSE->autonomous default). A well-formed FUTURE gate in either format EXCLUDES
+    # the lane; only a genuinely past or unparseable expires INCLUDES it.
     _LANE_CANDIDATES=$(jq -r --argjson now "$TS_EPOCH" '
       (.lanes // [])[]
       | select(.epic_id != null)
       | select(
           (.gate == null)
           or ((.gate.expires // null) == null)
-          or (((.gate.expires | fromdateiso8601?) // 0) < $now)
+          or (
+              ( ((.gate.expires + "T00:00:00Z") | fromdateiso8601?)
+                // (.gate.expires | fromdateiso8601?)
+                // 0 ) < $now
+            )
         )
       | "\(.lane)\t\(.epic_id)"
     ' "$LANES_FILE" 2>/dev/null) || _LANE_CANDIDATES=""

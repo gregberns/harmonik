@@ -61,6 +61,9 @@
 #                      IMMEDIATE 'program-drained-stall' NAMES wake-economy (Test 36)
 #   [x] SD-4 NEGATIVE: same lane ZERO ready beads → no program-drained-stall (Test 37)
 #   [x] SD-4 DEFENSIVE: lanes.json missing → no crash, no stall wake (Test 38)
+#   [x] SD-4 GATE-EXPIRY: epic-bearing ready lane w/ FUTURE date-only gate ("2099-01-01")
+#                         AND future RFC3339 gate ("2099-01-01T00:00:00Z") → EXCLUDED, no wake;
+#                         PAST gate ("2000-01-01") → LAPSES to candidate, wake fires (Test 39a/b/c)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -2207,6 +2210,88 @@ else
 fi
 assert_not_contains "SD4-defensive no program-drained-stall in stdout" "program-drained-stall" "$OUTPUT"
 assert_json_bool "SD4-defensive program_drained_stall=false" "$LATEST" "program_drained_stall" "false"
+rm -rf "$PROJ"
+
+# ── Test 39: SD-4 GATE-EXPIRY — future gate (date-only AND RFC3339) excludes lane ─
+# An EPIC-BEARING lane (non-null epic_id) WITH ready beads under its epic but an
+# UNEXPIRED gate must NOT fire program-drained-stall — the gate excludes it. The live
+# index writes gate.expires DATE-ONLY ("2099-01-01"); fromdateiso8601 needs the full
+# RFC3339 form, so the jq must tolerate BOTH. A genuinely PAST gate, by contrast,
+# LAPSES to candidate (Part 1b autonomous default) and DOES fire. This is the case
+# that would have caught the date-only false-fire bug.
+echo ""
+echo "=== Test 39: SD-4 gate-expiry — future date-only + future RFC3339 gates EXCLUDE; past gate INCLUDES ==="
+
+# 39a — FUTURE DATE-ONLY gate on an epic-bearing, ready lane → NO wake (excluded).
+GATED_LANES_DATEONLY='{"schema_version":1,"lanes":[{"lane":"gated-lane","epic_id":"hk-gated","status":"parked","gate":{"owner":"operator","reason":"held","expires":"2099-01-01"}}]}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+  --lanes-json "$GATED_LANES_DATEONLY" \
+  --br-parent-json '{"hk-gated":[{"id":"hk-g-1"},{"id":"hk-g-2"}]}' \
+)
+OUTPUT=$(run_check "$PROJ")
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_not_contains "39a future date-only gate: no program-drained-stall in stdout" \
+  "program-drained-stall" "$OUTPUT"
+assert_json_bool "39a future date-only gate: program_drained_stall=false" \
+  "$LATEST" "program_drained_stall" "false"
+KL_39A=$(python3 -c "import json;print(json.load(open('$LATEST')).get('known_ready_lane',''))")
+assert_eq "39a future date-only gate: known_ready_lane empty (excluded)" "" "$KL_39A"
+LOG=$(comms_log "$PROJ")
+if grep -q "program-drained-stall" "$LOG" 2>/dev/null; then
+  fail "39a: future date-only gate must EXCLUDE the lane (no wake)"
+else
+  pass "39a: future date-only gate excludes lane — no program-drained-stall wake"
+fi
+rm -rf "$PROJ"
+
+# 39b — FUTURE RFC3339 gate on the same lane → NO wake (excluded).
+GATED_LANES_RFC='{"schema_version":1,"lanes":[{"lane":"gated-lane","epic_id":"hk-gated","status":"parked","gate":{"owner":"operator","reason":"held","expires":"2099-01-01T00:00:00Z"}}]}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+  --lanes-json "$GATED_LANES_RFC" \
+  --br-parent-json '{"hk-gated":[{"id":"hk-g-1"}]}' \
+)
+OUTPUT=$(run_check "$PROJ")
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_not_contains "39b future RFC3339 gate: no program-drained-stall in stdout" \
+  "program-drained-stall" "$OUTPUT"
+assert_json_bool "39b future RFC3339 gate: program_drained_stall=false" \
+  "$LATEST" "program_drained_stall" "false"
+LOG=$(comms_log "$PROJ")
+if grep -q "program-drained-stall" "$LOG" 2>/dev/null; then
+  fail "39b: future RFC3339 gate must EXCLUDE the lane (no wake)"
+else
+  pass "39b: future RFC3339 gate excludes lane — no program-drained-stall wake"
+fi
+rm -rf "$PROJ"
+
+# 39c — PAST gate on the same ready lane → LAPSES to candidate, wake DOES fire + names it.
+GATED_LANES_PAST='{"schema_version":1,"lanes":[{"lane":"lapsed-lane","epic_id":"hk-lapsed","status":"parked","gate":{"owner":"operator","reason":"held","expires":"2000-01-01"}}]}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+  --lanes-json "$GATED_LANES_PAST" \
+  --br-parent-json '{"hk-lapsed":[{"id":"hk-l-1"}]}' \
+)
+OUTPUT=$(run_check "$PROJ")
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_contains "39c past gate: program-drained-stall fires (lapsed→candidate)" \
+  "program-drained-stall" "$OUTPUT"
+assert_json_bool "39c past gate: program_drained_stall=true" \
+  "$LATEST" "program_drained_stall" "true"
+KL_39C=$(python3 -c "import json;print(json.load(open('$LATEST')).get('known_ready_lane',''))")
+assert_eq "39c past gate: known_ready_lane == lapsed-lane" "lapsed-lane" "$KL_39C"
+assert_json_list_contains "39c past gate: immediate_signals names lapsed-lane" \
+  "$LATEST" "immediate_signals" "lane=lapsed-lane"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

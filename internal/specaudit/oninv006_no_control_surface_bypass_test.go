@@ -210,6 +210,10 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// merge (harmonik beads-merge %O %A %B %P). A file-merge helper; not a daemon
 	// control surface and cannot abort runs.
 	"beads-merge": "operator-nfr.md §4.9 ON-055; git merge-driver helper, no run impact",
+	// hk-0f35x: one-time dedup of .beads/issues.jsonl; reads and rewrites the
+	// JSONL file in-place keeping the newest record per bead ID. No daemon
+	// interaction, no run-state mutation, cannot abort runs.
+	"beads-dedup": "operator-nfr.md §4.9 ON-055; JSONL file dedup helper, no run impact",
 	// hk-39ryh: read-only handler-pause status surface; reads
 	// .harmonik/handler-state.json directly (no daemon). No state mutation.
 	"handler": "operator-nfr.md §4.9 ON-055; read-only handler status, no run impact",

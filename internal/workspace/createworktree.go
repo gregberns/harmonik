@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // ReviewerWorktreePath returns the canonical path for a reviewer's isolated
@@ -136,6 +138,19 @@ func isTransientWorktreeAddRace(output []byte) bool {
 	return strings.Contains(s, "commondir") && strings.Contains(s, "Undefined error")
 }
 
+// resolveWorktreeHEADViaRunner resolves `git -C <wtPath> rev-parse HEAD` through
+// the same runner used for worktree creation and returns the trimmed SHA. It
+// mirrors the daemon-side resolveWorktreeHEADVia check so the post-add HEAD
+// validation in CreateWorktree (hk-iaj1w) shares identical semantics: an error
+// or an empty SHA both indicate an un-checked-out / uninitialised worktree.
+func resolveWorktreeHEADViaRunner(ctx context.Context, runner tmux.CommandRunner, wtPath string) (string, error) {
+	out, err := runner.Command(ctx, "git", "-C", wtPath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, cfg WorktreeRootConfig) error {
 	worktreePath := WorktreePath(repoRoot, runID, cfg)
 	branch := TaskBranchName(runID)
@@ -161,8 +176,46 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 		}
 	}
 
+	// cleanupPartialState removes any partial worktree dir, stale worktree
+	// metadata, and leftover branch so the next retry attempt starts from a clean
+	// slate. For remote runs (cfg.runner != nil) the worktree dir lives on the
+	// worker, so os.RemoveAll (which runs LOCALLY on box A) is a no-op and leaves
+	// the stale dir behind — the next dispatch then collides with "branch/reference
+	// already exists", which is NOT matched as a transient race, so no retry fires
+	// and the dispatch fails silently. Route the directory removal through the same
+	// runner as the sibling worktree prune / branch -D calls so remote partial
+	// state is actually cleaned. Best-effort: ignore errors, matching the siblings.
+	// (hk-3vbc; reused by the empty-HEAD retry path in hk-iaj1w.)
+	//
+	// ORDER MATTERS (hk-iaj1w): rm dir → worktree prune → branch -D. In the
+	// empty-HEAD case `git worktree add -b` exited 0, so the branch ref AND the
+	// worktree registration both exist (only HEAD is unusable). `git branch -D`
+	// REFUSES a branch still referenced by a registered worktree — and removing
+	// the dir alone does NOT deregister it; only `git worktree prune` does. So the
+	// prune MUST run before branch -D, or branch -D fails (swallowed), the branch
+	// survives, and the retry's `git worktree add -b <branch>` dies with "already
+	// exists" — un-retried, defeating the whole retry. (For the hk-3vbc commondir
+	// path the failing add exits before creating a branch, so this order is a
+	// harmless no-op there.)
+	cleanupPartialState := func() {
+		if cfg.runner != nil {
+			rmCmd := runner.Command(ctx, "rm", "-rf", worktreePath)
+			_ = rmCmd.Run()
+		} else {
+			_ = os.RemoveAll(worktreePath)
+		}
+		// Deregister the now-removed worktree FIRST so the branch is no longer
+		// "used by worktree" and branch -D can succeed.
+		pruneCmd := runner.Command(ctx, "git", "-C", repoRoot, "worktree", "prune")
+		_ = pruneCmd.Run()
+		// Remove the branch git created for the failed / empty-HEAD attempt.
+		delBranch := runner.Command(ctx, "git", "-C", repoRoot, "branch", "-D", branch)
+		_ = delBranch.Run()
+	}
+
 	// Issue `git -C <repoRoot> worktree add -b <branch> <path> <parentCommit>`
-	// with bounded retry for the transient macOS/APFS commondir race (hk-gq3my).
+	// with bounded retry for the transient macOS/APFS commondir race (hk-gq3my)
+	// and for the empty-HEAD remote create race (hk-iaj1w).
 	var (
 		out []byte
 		err error
@@ -170,35 +223,41 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 	for attempt := 0; attempt <= worktreeAddMaxRetries; attempt++ {
 		cmd := runner.Command(ctx, "git", "-C", repoRoot, "worktree", "add", "-b", branch, worktreePath, parentCommit)
 		out, err = cmd.CombinedOutput()
+
+		// emptyHEADRace flags the hk-iaj1w condition: `git worktree add` exits 0 but
+		// leaves a worktree whose HEAD never resolves. Treated like the commondir
+		// race below — same cleanup, same bounded retry.
+		emptyHEADRace := false
 		if err == nil {
-			return nil
-		}
-		if ctx.Err() != nil {
+			// LOCAL runs (nil runner) keep byte-identical behaviour: a successful
+			// add is sufficient, return immediately without the extra rev-parse.
+			if cfg.runner == nil {
+				return nil
+			}
+			// REMOTE path (hk-iaj1w): concurrent `git worktree add` on a worker can
+			// race and leave the worktree dir created but un-checked-out, so a later
+			// `git -C <wtPath> rev-parse HEAD` returns empty and the run fast-fails
+			// ~2s after run_started ("git rev-parse HEAD returned empty"). Validate
+			// HEAD here, at create time, where the failure is still retryable —
+			// reusing the same rev-parse-HEAD check as the daemon. A non-empty HEAD
+			// means the worktree is genuinely ready; anything else is the race.
+			head, headErr := resolveWorktreeHEADViaRunner(ctx, runner, worktreePath)
+			if headErr == nil && head != "" {
+				return nil
+			}
+			emptyHEADRace = true
+			// Synthesise an error/output pair so an exhausted-retry exit returns a
+			// clear, attributable error instead of a downstream silent symptom.
+			err = fmt.Errorf("git worktree add exited 0 but HEAD did not resolve in %q (concurrent remote create race): %v",
+				worktreePath, headErr)
+			out = []byte("(empty HEAD after git worktree add — hk-iaj1w)")
+		} else if ctx.Err() != nil {
 			// Context cancelled; do not retry.
 			break
 		}
-		if attempt < worktreeAddMaxRetries && isTransientWorktreeAddRace(out) {
-			// Clean up any partial state so the next attempt starts fresh.
-			// For remote runs (cfg.runner != nil) the worktree dir lives on the
-			// worker, so os.RemoveAll (which runs LOCALLY on box A) is a no-op and
-			// leaves the stale dir behind — the next dispatch then collides with
-			// "branch/reference already exists", which is NOT matched as a transient
-			// race, so no retry fires and the dispatch fails silently. Route the
-			// directory removal through the same runner as the sibling branch -D /
-			// worktree prune calls so remote partial state is actually cleaned.
-			// Best-effort: ignore the error, matching the sibling calls. (hk-3vbc)
-			if cfg.runner != nil {
-				rmCmd := runner.Command(ctx, "rm", "-rf", worktreePath)
-				_ = rmCmd.Run()
-			} else {
-				_ = os.RemoveAll(worktreePath)
-			}
-			// Remove the branch if git created it before failing.
-			delBranch := runner.Command(ctx, "git", "-C", repoRoot, "branch", "-D", branch)
-			_ = delBranch.Run()
-			// Prune stale worktree metadata entries.
-			pruneCmd := runner.Command(ctx, "git", "-C", repoRoot, "worktree", "prune")
-			_ = pruneCmd.Run()
+
+		if attempt < worktreeAddMaxRetries && (emptyHEADRace || isTransientWorktreeAddRace(out)) {
+			cleanupPartialState()
 
 			delay := time.Duration(50*(1<<attempt)) * time.Millisecond // 50ms, 100ms, 200ms
 			select {

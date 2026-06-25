@@ -69,6 +69,7 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -447,7 +448,166 @@ func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
 			originMainSHA, boxAMainSHA)
 	}
 
-	t.Logf("remote-substrate e2e OK: worker commit synced over ssh localhost and landed on box A main (%s)", boxAMainSHA)
+	// ── Assert the run was actually ROUTED to the worker (not silently run LOCAL).
+	// The emitted run_started event must carry worker_name == "localhost" — the
+	// single registered worker. A silent route-to-LOCAL regression (SelectWorker
+	// returns nil → rbc==nil → local path, workloop.go ~2055) would land the same
+	// commit on main yet leave worker_name empty: the merge assertions above would
+	// still pass and the routing regression would slip through. This makes the
+	// routing observable and fails it loud (hk-mcf1z). The NoWorker negative guard
+	// below proves this assertion is load-bearing.
+	gotWorker, ok := rsb12RunStartedWorkerName(t, collector)
+	if !ok {
+		t.Fatalf("no run_started event captured; events=%v", collector.eventTypes())
+	}
+	if gotWorker != "localhost" {
+		t.Errorf("run_started.worker_name = %q, want %q — the run was NOT routed to the ssh worker (silent route-to-LOCAL regression)", gotWorker, "localhost")
+	}
+
+	t.Logf("remote-substrate e2e OK: worker commit synced over ssh localhost and landed on box A main (%s); run_started.worker_name=%q", boxAMainSHA, gotWorker)
+}
+
+// rsb12RunStartedWorkerName scans the recorded bus events for the run_started
+// event and returns its worker_name field (false when none was captured). The
+// emitted payload is workloopRunStartedPayload, which is package-internal to
+// daemon; from this external _test package we decode only the load-bearing
+// worker_name field. Mirrors the b10 unit test's worker_name decode, but off the
+// real emitted bus event rather than a hand-built payload struct.
+func rsb12RunStartedWorkerName(t *testing.T, col *stubEventCollector) (string, bool) {
+	t.Helper()
+	for _, e := range col.allEvents() {
+		if e.EventType != string(core.EventTypeRunStarted) {
+			continue
+		}
+		var pl struct {
+			WorkerName string `json:"worker_name"`
+		}
+		if err := json.Unmarshal(e.Payload, &pl); err != nil {
+			t.Fatalf("rsb12: decode run_started payload: %v\nraw: %s", err, e.Payload)
+		}
+		return pl.WorkerName, true
+	}
+	return "", false
+}
+
+// TestScenario_RemoteSubstrate_NoWorker_RunStartedWorkerNameEmpty is the NEGATIVE
+// GUARD for the worker_name assertion in the e2e above. With NO worker registered
+// the WorkerRegistry is empty, beadRunOne's SelectWorker() returns nil, rbc==nil,
+// and the run takes the LOCAL substrate path — so run_started.worker_name MUST be
+// empty (NOT "localhost"). This locks the positive assertion as load-bearing: if
+// worker_name were ever emitted unconditionally, this test fails.
+//
+// Unlike the e2e, this runs entirely on box A's local git (the production local
+// worktree factory) and needs NO ssh, so it executes even on boxes where
+// `ssh localhost` is unavailable and the e2e above skips.
+//
+// Bead: hk-mcf1z (guarding hk-rs-b12-e2e-localhost).
+func TestScenario_RemoteSubstrate_NoWorker_RunStartedWorkerNameEmpty(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
+	t.Parallel()
+
+	const bead = core.BeadID("hk-rs-noworker-local")
+
+	// ── origin (bare) + box A (projectDir) — same fixture as the e2e, minus the
+	//    worker clone and the worker registry. ────────────────────────────────
+	originDir := t.TempDir()
+	rsb12Git(t, originDir, "init", "--bare", "--initial-branch=main")
+
+	projectDir := t.TempDir()
+	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); err != nil {
+		t.Fatalf("mkdir beads-intents: %v", err)
+	}
+	//nolint:gosec // G301
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); err != nil {
+		t.Fatalf("mkdir events: %v", err)
+	}
+	rsb12Git(t, projectDir, "init", "--initial-branch=main")
+	rsb12GitConfig(t, projectDir)
+	//nolint:gosec // G306: test fixture file
+	if err := os.WriteFile(filepath.Join(projectDir, "README"), []byte("initial\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile README: %v", err)
+	}
+	rsb12Git(t, projectDir, "add", "README")
+	rsb12Git(t, projectDir, "commit", "-m", "init")
+	rsb12Git(t, projectDir, "remote", "add", "origin", originDir)
+	rsb12Git(t, projectDir, "push", "origin", "main")
+
+	// ── LOCAL worktree factory (production): worktree on box A, commit the agent's
+	//    `Refs:` work in it. No worker registry is wired, so the work loop runs the
+	//    LOCAL substrate and the unchanged local merge path. ──────────────────
+	worktreeFactory := func(ctx context.Context, _, runID, headSHA string) (string, func(), error) {
+		wtPath, cleanup, err := daemon.ExportedProductionWorktreeFactory(ctx, projectDir, runID, headSHA)
+		if err != nil {
+			return "", nil, err
+		}
+		relPath := "local-work.txt"
+		//nolint:gosec // G306: test fixture file in a throwaway worktree
+		if err := os.WriteFile(filepath.Join(wtPath, relPath), []byte("work from the local substrate\n"), 0o644); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+		for _, args := range [][]string{
+			{"-C", wtPath, "add", relPath},
+			{"-C", wtPath, "commit", "-m", "feat: local-substrate work\n\nRefs: " + string(bead), "--trailer", "Harmonik-Run-ID: " + runID},
+		} {
+			cmd := exec.CommandContext(ctx, "git", args...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				cleanup()
+				return "", nil, &rsb12CommitError{argv: args, out: string(out), err: err}
+			}
+		}
+		return wtPath, cleanup, nil
+	}
+
+	collector := &stubEventCollector{}
+	ledger := newRSB12Ledger([]core.BeadID{bead})
+
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		MaxConcurrent:    1,
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		WorktreeFactory:  worktreeFactory,
+		// WorkerRegistry intentionally omitted (nil) — SelectWorker() returns nil →
+		// rbc==nil → LOCAL substrate path; run_started.worker_name must be empty.
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
+	defer cancel()
+
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		daemon.ExportedRunWorkLoop(ctx, deps)
+	}()
+
+	select {
+	case <-ledger.doneCh:
+		cancel()
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for bead %s to reach a terminal state; events=%v", bead, collector.eventTypes())
+	}
+
+	select {
+	case <-loopDone:
+	case <-time.After(15 * time.Second):
+		t.Error("work loop did not exit within 15s of cancel")
+	}
+
+	// ── The run took the LOCAL path: run_started.worker_name MUST be empty. ────
+	gotWorker, ok := rsb12RunStartedWorkerName(t, collector)
+	if !ok {
+		t.Fatalf("no run_started event captured; events=%v", collector.eventTypes())
+	}
+	if gotWorker != "" {
+		t.Errorf("run_started.worker_name = %q, want empty — a no-worker run must take the LOCAL substrate, not report a worker (hk-mcf1z)", gotWorker)
+	}
+	t.Logf("remote-substrate no-worker guard OK: local run emitted run_started.worker_name=%q (empty as required)", gotWorker)
 }
 
 // rsb12CommitError carries argv + git output for a worktree-factory commit failure

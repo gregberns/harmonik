@@ -1150,6 +1150,9 @@ type queueSelection struct {
 	itemTemplateMap  map[string]string
 	anyEligible      bool // true if any queue had an active group with eligible items
 	anyPausedOrEmpty bool // true if at least one queue existed but contributed nothing
+	// Per-queue routing fields (hk-f10xl [L5 Move 2]).
+	queueLocalOnly    bool   // mirrors Queue.LocalOnly — skip SelectWorker when true
+	queueWorkerTarget string // mirrors Queue.WorkerTarget — pin to named worker when non-empty
 }
 
 // effectiveQueueWorkers resolves the per-queue worker ceiling for q, defaulting
@@ -1263,16 +1266,18 @@ func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor
 			it := &q.Groups[gi].Items[j]
 			if it.BeadID == head.BeadID && it.Status == queue.ItemStatusPending {
 				return queueSelection{
-					queueName:       chosen,
-					queueID:         q.QueueID,
-					groupIndex:      q.Groups[gi].GroupIndex,
-					itemIdx:         j,
-					itemBeadID:      it.BeadID,
-					itemContext:     it.Context,
-					itemWFMode:      it.WorkflowMode,
-					itemWFRef:       it.WorkflowRef,
-					itemTemplateMap: it.TemplateParams,
-					anyEligible:     true,
+					queueName:         chosen,
+					queueID:           q.QueueID,
+					groupIndex:        q.Groups[gi].GroupIndex,
+					itemIdx:           j,
+					itemBeadID:        it.BeadID,
+					itemContext:       it.Context,
+					itemWFMode:        it.WorkflowMode,
+					itemWFRef:         it.WorkflowRef,
+					itemTemplateMap:   it.TemplateParams,
+					anyEligible:       true,
+					queueLocalOnly:    q.LocalOnly,
+					queueWorkerTarget: q.WorkerTarget,
 				}, true
 			}
 		}
@@ -1725,6 +1730,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			capturedItemWFMode         string            // hk-hiqrl: per-item workflow mode from queue.Item.WorkflowMode
 			capturedItemWFRef          string            // hk-qo9pq: per-item workflow ref from queue.Item.WorkflowRef
 			capturedItemTemplateParams map[string]string // hk-55zv2 / WG-045: template params from queue.Item.TemplateParams
+			capturedQueueLocalOnly     bool              // hk-f10xl [L5 Move 2]: per-queue local-only routing gate
+			capturedQueueWorkerTarget  string            // hk-f10xl [L5 Move 2]: per-queue worker-target pin
 		)
 		queueItemIndex = -1 // sentinel: not queue-dispatched
 
@@ -1887,6 +1894,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					snapGroupIndex = sel.groupIndex
 					snapQueueID = sel.queueID
 					snapQueueName = sel.queueName
+					// hk-f10xl [L5 Move 2]: capture per-queue routing fields.
+					capturedQueueLocalOnly = sel.queueLocalOnly
+					capturedQueueWorkerTarget = sel.queueWorkerTarget
 				}
 			}
 
@@ -2532,6 +2542,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		capturedWFMode := capturedItemWFMode             // hk-hiqrl
 		capturedWFRef := capturedItemWFRef               // hk-qo9pq
 		capturedTmplParams := capturedItemTemplateParams // hk-55zv2 / WG-045
+		// hk-f10xl [L5 Move 2]: per-queue routing gate captured for the goroutine.
+		capturedLocalOnly := capturedQueueLocalOnly
+		capturedWorkerTarget := capturedQueueWorkerTarget
 
 		// Register the run and spawn a goroutine to handle it end-to-end.
 		// The goroutine owns Unregister on exit; the outer loop may proceed to
@@ -2567,14 +2580,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		// the review-loop-failure budget (beadRunOne) updates the right queue.
 		// Without this both default to the main-only shim and a non-"main" queue
 		// never marks its item terminal → the group stalls forever (hk-tigaf.4).
-		go func(runID core.RunID, beadRecord core.BeadRecord, qname string, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string) {
+		go func(runID core.RunID, beadRecord core.BeadRecord, qname string, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string, localOnly bool, workerTarget string) {
 			defer wg.Done()
 			defer runCancel() // always release the per-run context, even on panic
 			defer deps.runRegistry.Unregister(runID)
 			// runSucceeded is set by the emitDone closure inside beadRunOne
 			// and read here after beadRunOne returns for EM-015f group-advance.
 			var runSucceeded bool
-			beadRunOne(runCtx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams)
+			beadRunOne(runCtx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				// hk-ly0hg Fix-1: if the daemon context was cancelled (shutdown),
@@ -2593,7 +2606,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			if runSucceeded && ctx.Err() == nil {
 				stagedBeadGeneratorEval(ctx, deps, beadRecord.BeadID, beadRecord.Labels)
 			}
-		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams)
+		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams, capturedLocalOnly, capturedWorkerTarget)
 	}
 }
 
@@ -2616,7 +2629,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // evaluation. When nil (legacy callers), success is not tracked.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string) {
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string, itemLocalOnly bool, itemWorkerTarget string) {
 	beadID := beadRecord.BeadID
 
 	// runTipSHA is set (in the DOT failure path) to the worktree HEAD SHA when
@@ -2820,8 +2833,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		workerHookSock string
 	}
 	var rbc *remoteBeadCtx
-	if deps.workerRegistry != nil {
-		if w := deps.workerRegistry.SelectWorker(); w != nil {
+	// hk-f10xl [L5 Move 2]: per-queue routing gate.
+	// itemLocalOnly=true skips SelectWorker entirely (force local).
+	// itemWorkerTarget non-empty pins to the named worker via SelectWorkerByName;
+	// if unavailable, falls back to local (nil). Otherwise SelectWorker picks any.
+	if !itemLocalOnly && deps.workerRegistry != nil {
+		var w *workers.Worker
+		if itemWorkerTarget != "" {
+			w = deps.workerRegistry.SelectWorkerByName(itemWorkerTarget)
+		} else {
+			w = deps.workerRegistry.SelectWorker()
+		}
+		if w != nil {
 			rbc = &remoteBeadCtx{
 				worker:    *w,
 				sshRunner: tmuxpkg.SSHRunner{Host: w.Host},

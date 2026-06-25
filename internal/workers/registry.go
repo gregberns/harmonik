@@ -49,6 +49,36 @@ func (r *Registry) SelectWorker() *Worker {
 	return &w
 }
 
+// SelectWorkerByName returns the configured worker when its Name matches
+// target, it is enabled, and has a free slot — atomically reserving that slot.
+// Returns nil when target is empty, no worker is configured, the worker's Name
+// does not match target, the worker is disabled, or all slots are occupied.
+//
+// The caller MUST call ReleaseSlot after the remote run completes.
+// Bead ref: hk-f10xl [L5 Move 2 — per-queue WorkerTarget pin].
+func (r *Registry) SelectWorkerByName(target string) *Worker {
+	if target == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasWorker {
+		return nil
+	}
+	if r.worker.Name != target {
+		return nil
+	}
+	if !r.worker.Enabled {
+		return nil
+	}
+	if r.worker.MaxSlots > 0 && r.inFlight >= r.worker.MaxSlots {
+		return nil
+	}
+	r.inFlight++
+	w := r.worker
+	return &w
+}
+
 // ReleaseSlot decrements the in-flight count when a remote run finishes.
 // It is a no-op if no worker is configured or the count is already zero.
 func (r *Registry) ReleaseSlot() {

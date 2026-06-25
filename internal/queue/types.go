@@ -331,6 +331,26 @@ type Queue struct {
 	// Bead ref: hk-4x3rg [C4/T6].
 	DefaultHarness core.AgentType `json:"default_harness,omitempty"`
 
+	// LocalOnly forces every bead dispatched from this queue to run locally,
+	// bypassing remote-worker selection entirely. When true the SelectWorker call
+	// is skipped and the run executes on box A, even when a worker is configured
+	// and available. This permanently kills "can't land a local fix while remote
+	// is enabled" — the queue itself is the routing gate, not a daemon restart.
+	//
+	// omitempty: absent/false = default behaviour (remote when available).
+	// Bead ref: hk-f10xl [L5 Move 2].
+	LocalOnly bool `json:"local_only,omitempty"`
+
+	// WorkerTarget pins every bead dispatched from this queue to the named remote
+	// worker. When non-empty and the named worker is enabled with a free slot, the
+	// run is dispatched there; when the worker is absent, disabled, or at capacity
+	// the run falls back to local (same semantics as a nil SelectWorker result).
+	// Empty = no pinning; any available worker is eligible (default behaviour).
+	//
+	// omitempty: absent/empty = default behaviour.
+	// Bead ref: hk-f10xl [L5 Move 2].
+	WorkerTarget string `json:"worker_target,omitempty"`
+
 	// SubmittedAt is set at queue-submit accept; ISO 8601 / UTC.
 	SubmittedAt time.Time `json:"submitted_at"`
 

@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -56,6 +58,18 @@ type DaemonWatchdogSpec struct {
 	// Spec ref: specs/release-pipeline.md §7.2 — "persist path to last
 	// known-good binary in a state file".
 	LastGoodPath string
+
+	// CrashLogPath is the base path for the rotating daemon crash log
+	// (e.g., <projectDir>/.harmonik/state/daemon.crash.log). On each revival,
+	// stdout and stderr of the spawned daemon are redirected to this file.
+	// Previous boots are kept at <CrashLogPath>.1, .2, ..., .{CrashLogKeep-1}.
+	// Empty disables capture (output falls to /dev/null as before).
+	CrashLogPath string
+
+	// CrashLogKeep is the total number of crash logs to retain (current boot
+	// plus this many numbered backups). Default: 5. No effect when
+	// CrashLogPath is empty.
+	CrashLogKeep int
 }
 
 func (s *DaemonWatchdogSpec) applyDefaults() {
@@ -74,6 +88,9 @@ func (s *DaemonWatchdogSpec) applyDefaults() {
 	if s.ReviveWindow == 0 {
 		// 15m covers restartBackoffCap (10m) plus margin for socket-bind latency.
 		s.ReviveWindow = 15 * time.Minute
+	}
+	if s.CrashLogKeep == 0 {
+		s.CrashLogKeep = 5
 	}
 }
 
@@ -366,9 +383,9 @@ func (dw *DaemonWatchdog) pollUntilAlive(ctx context.Context, window, interval t
 }
 
 // reviveWith spawns the daemon using argv as a detached process (setsid) so
-// it can outlive the supervisor/shim pane. Stdout and stderr are not inherited
-// (connected to os.DevNull); the daemon writes its own events to
-// .harmonik/events/events.jsonl.
+// it can outlive the supervisor/shim pane. When CrashLogPath is set, stdout
+// and stderr are redirected to a rotating crash log; otherwise output falls to
+// /dev/null. The daemon writes structured events to .harmonik/events/events.jsonl.
 func (dw *DaemonWatchdog) reviveWith(argv []string) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("daemon-watchdog: reviveWith: empty argv")
@@ -381,5 +398,38 @@ func (dw *DaemonWatchdog) reviveWith(argv []string) error {
 	if dw.spec.WorkDir != "" {
 		cmd.Dir = dw.spec.WorkDir
 	}
+	if dw.spec.CrashLogPath != "" {
+		f, err := openCrashLog(dw.spec.CrashLogPath, dw.spec.CrashLogKeep, argv)
+		if err != nil {
+			dw.log.Warn("daemon-watchdog: failed to open crash log; daemon output will be lost",
+				"path", dw.spec.CrashLogPath, "err", err)
+		} else {
+			cmd.Stdout = f
+			cmd.Stderr = f
+			defer f.Close() //nolint:errcheck // parent closes its copy; child retains its own fd
+		}
+	}
 	return cmd.Start()
+}
+
+// openCrashLog rotates existing crash logs and opens a new log file at path.
+// Rotation: path.{keep-1} is discarded, path.{i} → path.{i+1} for each i
+// from keep-2 down to 1, then path → path.1, then a fresh path is created.
+// The new file begins with a one-line header identifying the boot command.
+// The parent directory is created if absent (permissions 0o750).
+func openCrashLog(path string, keep int, argv []string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, fmt.Errorf("crash log dir: %w", err)
+	}
+	_ = os.Remove(path + "." + strconv.Itoa(keep-1))
+	for i := keep - 2; i >= 1; i-- {
+		_ = os.Rename(path+"."+strconv.Itoa(i), path+"."+strconv.Itoa(i+1))
+	}
+	_ = os.Rename(path, path+".1")
+	f, err := os.Create(path) //nolint:gosec // G304: operator-configured path
+	if err != nil {
+		return nil, err
+	}
+	_, _ = fmt.Fprintf(f, "=== daemon boot cmd=%s\n", strings.Join(argv, " "))
+	return f, nil
 }

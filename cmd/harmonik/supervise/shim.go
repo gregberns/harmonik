@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -203,6 +204,7 @@ func runWithSupervisor(cfg Config, projectDir string, stdout, stderr io.Writer) 
 			WorkDir:      projectDir,
 			LedgerPath:   release.LedgerPath(projectDir),
 			LastGoodPath: release.LastGoodStatePath(projectDir),
+			CrashLogPath: filepath.Join(projectDir, ".harmonik", "state", "daemon.crash.log"),
 		}, log)
 		go func() {
 			if err := dw.Run(ctx); err != nil && ctx.Err() == nil {

@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -322,5 +323,80 @@ func TestDaemonWatchdog_PhantomReviveGuard(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected exactly 1 revive() call (boot-backoff covered by ReviveWindow), got %d", count)
+	}
+}
+
+// TestDaemonWatchdog_CrashLogCapture verifies that daemon stdout/stderr are
+// written to the crash log file when CrashLogPath is configured.
+func TestDaemonWatchdog_CrashLogCapture(t *testing.T) {
+	tmpDir := socketDir(t)
+	sockPath := filepath.Join(tmpDir, "daemon.sock")
+	crashLog := filepath.Join(tmpDir, "state", "daemon.crash.log")
+
+	spec := supervise.DaemonWatchdogSpec{
+		SocketPath:    sockPath,
+		Command:       []string{"sh", "-c", "echo daemon-output-sentinel"},
+		CheckInterval: 30 * time.Millisecond,
+		DialTimeout:   20 * time.Millisecond,
+		MaxRevives:    1,
+		ReviveBackoff: 5 * time.Millisecond,
+		ReviveWindow:  100 * time.Millisecond,
+		CrashLogPath:  crashLog,
+		CrashLogKeep:  3,
+	}
+
+	dw := supervise.NewDaemonWatchdog(spec, silentLogger())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_ = dw.Run(ctx)
+	// Give the detached sh process time to flush its output.
+	time.Sleep(200 * time.Millisecond)
+
+	data, err := os.ReadFile(crashLog)
+	if err != nil {
+		t.Fatalf("crash log not created at %s: %v", crashLog, err)
+	}
+	if !strings.Contains(string(data), "daemon-output-sentinel") {
+		t.Errorf("crash log does not contain expected sentinel; got:\n%s", string(data))
+	}
+}
+
+// TestDaemonWatchdog_CrashLogRotation verifies that crash logs rotate and that
+// the total number of retained logs does not exceed CrashLogKeep.
+func TestDaemonWatchdog_CrashLogRotation(t *testing.T) {
+	tmpDir := socketDir(t)
+	sockPath := filepath.Join(tmpDir, "daemon.sock")
+	crashLog := filepath.Join(tmpDir, "state", "daemon.crash.log")
+
+	const keep = 3
+	spec := supervise.DaemonWatchdogSpec{
+		SocketPath:    sockPath,
+		Command:       []string{"sh", "-c", "echo x"},
+		CheckInterval: 20 * time.Millisecond,
+		DialTimeout:   10 * time.Millisecond,
+		MaxRevives:    keep + 1, // more revives than keep to exercise discard of oldest
+		ReviveBackoff: 5 * time.Millisecond,
+		ReviveWindow:  30 * time.Millisecond,
+		CrashLogPath:  crashLog,
+		CrashLogKeep:  keep,
+	}
+
+	dw := supervise.NewDaemonWatchdog(spec, silentLogger())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_ = dw.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+
+	// Expect: crashLog (current), crashLog.1, crashLog.2 — exactly keep=3 files.
+	for _, name := range []string{crashLog, crashLog + ".1", crashLog + ".2"} {
+		if _, err := os.Stat(name); err != nil {
+			t.Errorf("expected crash log %s to exist: %v", name, err)
+		}
+	}
+	// crashLog.3 must not exist — oldest was discarded by rotation.
+	if _, err := os.Stat(crashLog + ".3"); !os.IsNotExist(err) {
+		t.Errorf("crash log .3 should not exist (keep=%d), but Stat returned: %v", keep, err)
 	}
 }

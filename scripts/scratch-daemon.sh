@@ -32,6 +32,7 @@
 #   ./scripts/scratch-daemon.sh cycle  <scratch-path>   # down + build + up (the fast loop)
 #   ./scripts/scratch-daemon.sh batch  <scratch-path> <name> --beads id1,id2,...  # submit + structured pass/fail
 #   ./scripts/scratch-daemon.sh batch  <scratch-path> <name> --file  <queue.json> # submit a queue-file batch
+#   ./scripts/scratch-daemon.sh feedback <results-json> [--batch <name>] [--dry-run] # scratch FAILURES -> deduped MAIN-repo beads
 #
 # Options (env vars):
 #   SCRATCH_MAX_CONCURRENT  — daemon --max-concurrent      (default: 1)
@@ -138,6 +139,18 @@ read_pid() {
     local pf="$1"
     [ -f "$pf" ] || return 0
     head -n1 "$pf" 2>/dev/null | tr -d '[:space:]'
+}
+
+# prov_hash: stable 12-hex provenance key from arbitrary bytes on stdin. Used by
+# `feedback` to derive a deterministic dedupe label (prov:<hash>) from
+# batch-name + fail-signature, so a re-run UPDATES rather than DUPLICATES a bead.
+# Prefers sha256sum; falls back to `shasum -a 256` (macOS) — both are pre-installed.
+prov_hash() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | cut -c1-12
+    else
+        shasum -a 256 | cut -c1-12
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -537,6 +550,170 @@ def oneline: (. // "") | gsub("[\r\n\t]+"; " ") | .[0:200];
 }
 
 # ---------------------------------------------------------------------------
+# Subcommand: feedback  (scratch batch FAILURES -> deduped MAIN/fleet-repo beads)
+# ---------------------------------------------------------------------------
+# Reads a batch results artifact (the JSON array `batch` writes — an array of
+#   { "bead", "run_id"|null, "verdict": pass|fail|incomplete, "fail_signature"|null })
+# and, for every FAIL item, creates-or-updates an actionable bead on the MAIN/FLEET
+# repo's beads DB so a scratch-run failure becomes work the real daemon can pick up.
+# `pass` and `incomplete` items are ignored.
+#
+# DELIBERATE FLEET WRITE: unlike every other subcommand (which targets ONLY the
+# scratch clone), THIS command intentionally writes to the fleet repo's ledger —
+# that is its entire purpose. The target is made explicit: `br` is run with the
+# fleet repo (located via fleet_root) as its CWD in an isolated subshell, so it
+# auto-discovers the fleet's .beads/*.db and NEVER the scratch clone's.
+#
+# IDEMPOTENCY / DEDUPE: each fail maps to a stable provenance key
+#   hash = sha256(<batch-name> 0x1f <fail_signature>)[:12]   ->   label `prov:<hash>`
+# Before creating, we `br list --label prov:<hash>` (default excludes closed). A hit
+# means this (batch, signature) failure already has an OPEN bead → we UPDATE it
+# (refresh --notes with the latest run_id/excerpt + append a recurrence comment)
+# instead of filing a second one. Re-running this command on the same artifact never
+# spawns a duplicate bead. (A previously-CLOSED bead is intentionally NOT reused: a
+# failure that recurs after being marked resolved files a fresh, actionable bead.)
+# Within a single invocation, an in-memory set collapses multiple beads that share
+# one signature to a single create, independent of DB read-after-write timing.
+#
+# Hard project rules honored: NEVER --assignee (the daemon owns claiming) and NEVER
+# status=in_progress — beads are created OPEN. Codename label `codename:test-daemon-harness`
+# + topical `scratch-feedback` make the work traceable.
+#
+# Arg surface:
+#   feedback <results-json> [--batch <name>] [--priority N] [--dry-run]
+#     <results-json>  the batch artifact (e.g. <scratch>/.harmonik/batch-<name>-<qid>.json)
+#     --batch <name>  override the batch name used in the provenance key + title/body.
+#                     Default: parsed from the artifact filename ('batch-<name>-<qid>.json').
+#                     The queue_id is deliberately EXCLUDED from the key so re-runs dedupe.
+#     --priority N    priority for newly-created beads (0-4; default 2).
+#     --dry-run       print the create/update plan (FEEDBACK_DRYRUN lines); touch no DB.
+#
+# Stable stdout (grep-able, tab-separated where noted):
+#   FEEDBACK_ITEM\t<create|update>\t<scratch-bead>\t<prov-label>\t<fleet-bead-id>
+#   FEEDBACK_SUMMARY batch=<name> fail_items=<n> created=<c> updated=<u> db=<fleet>/.beads
+cmd_feedback() {
+    local results_file batch_name="" priority="2" dry_run=0
+    results_file="${1:-}"
+    [ -n "$results_file" ] || die "feedback: <results-json> is required (a batch results artifact)"
+    case "$results_file" in --*) die "feedback: <results-json> must come before flags, got '$results_file'";; esac
+    shift || true
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --batch)      [ $# -ge 2 ] || die "feedback: --batch needs a value"; batch_name="$2"; shift 2;;
+            --batch=*)    batch_name="${1#--batch=}"; shift;;
+            --priority)   [ $# -ge 2 ] || die "feedback: --priority needs a value"; priority="$2"; shift 2;;
+            --priority=*) priority="${1#--priority=}"; shift;;
+            --dry-run)    dry_run=1; shift;;
+            *) die "feedback: unknown flag '$1' (use --batch <name>, --priority N, --dry-run)";;
+        esac
+    done
+
+    [ -f "$results_file" ] || die "feedback: results file '$results_file' not found"
+    command -v jq >/dev/null 2>&1 || die "feedback: jq is required to parse the results artifact"
+    jq -e 'type=="array"' "$results_file" >/dev/null 2>&1 \
+        || die "feedback: '$results_file' is not a JSON array (expected the batch results artifact)"
+
+    # Locate the FLEET beads DB. This command writes there ON PURPOSE (see header).
+    local fleet
+    fleet="$(fleet_root)"
+    [ -n "$fleet" ] || die "feedback: cannot locate the fleet repo root (script not inside a git repo) — no beads DB to target"
+    [ -d "$fleet/.beads" ] || die "feedback: no .beads dir under fleet root '$fleet' — is this a beads-managed repo?"
+
+    # Derive the batch name (used in the provenance key, title, and body). Prefer
+    # --batch; else parse the artifact filename 'batch-<name>-<queue_id>.json' by
+    # stripping the 'batch-' prefix and the trailing '-<queue_id>.json'.
+    if [ -z "$batch_name" ]; then
+        local base="${results_file##*/}"
+        base="${base%.json}"
+        case "$base" in
+            batch-*) batch_name="${base#batch-}"; batch_name="${batch_name%-*}";;
+            *)       batch_name="$base";;
+        esac
+        [ -n "$batch_name" ] || die "feedback: could not derive a batch name from '$results_file' — pass --batch <name>"
+    fi
+
+    # Pull just the FAIL items as compact NDJSON. pass/incomplete are skipped entirely.
+    local fails
+    fails="$(jq -c '.[] | select(.verdict=="fail")' "$results_file")"
+    if [ -z "$fails" ]; then
+        echo "[scratch-daemon] feedback: no failed items in $results_file — nothing to file"
+        echo "FEEDBACK_SUMMARY batch=$batch_name fail_items=0 created=0 updated=0 db=$fleet/.beads"
+        return 0
+    fi
+
+    # Portable (bash-3.2, no associative arrays) in-invocation dedupe set: a string of
+    # space-padded provenance hashes already filed this run.
+    local seen_hashes=" "
+    local created=0 updated=0 nfail=0
+    local item bead run_id sig hash label_prov title body found existing
+    while IFS= read -r item; do
+        [ -n "$item" ] || continue
+        nfail=$((nfail + 1))
+        bead="$(printf '%s' "$item"   | jq -r '.bead // "?"')"
+        run_id="$(printf '%s' "$item" | jq -r '.run_id // "-"')"
+        sig="$(printf '%s' "$item"    | jq -r '.fail_signature // empty')"
+        [ -n "$sig" ] || sig="(no signature; bead $bead)"
+
+        # Stable dedupe key: batch-name + 0x1f + signature (queue_id deliberately excluded).
+        hash="$(printf '%s\x1f%s' "$batch_name" "$sig" | prov_hash)"
+        label_prov="prov:$hash"
+
+        # In-invocation dedupe: a second fail sharing this provenance key was already
+        # filed/updated above — skip so we never create twice nor double-count.
+        case "$seen_hashes" in
+            *" $hash "*) continue;;
+        esac
+        seen_hashes="$seen_hashes$hash "
+
+        title="[scratch-fail] ${batch_name}: ${sig}"
+        title="${title:0:160}"
+        body="$(printf 'Auto-filed from a scratch-daemon batch failure (scripts/scratch-daemon.sh feedback).\n\nbatch: %s\nscratch_bead: %s\nscratch_run_id: %s\nprovenance: %s\nfail_signature: %s\n' \
+            "$batch_name" "$bead" "$run_id" "$label_prov" "$sig")"
+
+        # Look up an existing OPEN feedback bead by the provenance label (fleet DB).
+        found="$( cd "$fleet" && br list --label "$label_prov" --json 2>/dev/null )" || found=""
+        existing="$(printf '%s' "$found" | jq -r '(.issues // [])[0].id // empty' 2>/dev/null)"
+
+        if [ -n "$existing" ]; then
+            # Dedupe hit → UPDATE in place: refresh the latest run_id/excerpt in --notes
+            # (idempotent) and append a recurrence comment (the audit trail). NO new bead.
+            if [ "$dry_run" = "1" ]; then
+                echo "FEEDBACK_DRYRUN action=update scratch_bead=$bead prov=$label_prov target=$existing"
+            else
+                ( cd "$fleet" && br update "$existing" --notes "$body" >/dev/null ) \
+                    || die "feedback: br update $existing failed"
+                ( cd "$fleet" && br comments add "$existing" \
+                    --message "Recurrence: scratch batch '$batch_name' bead $bead run $run_id — $sig" >/dev/null ) || true
+            fi
+            updated=$((updated + 1))
+            printf 'FEEDBACK_ITEM\tupdate\t%s\t%s\t%s\n' "$bead" "$label_prov" "$existing"
+            continue
+        fi
+
+        # No existing bead → CREATE one, OPEN, never assigned (daemon owns claiming).
+        if [ "$dry_run" = "1" ]; then
+            echo "FEEDBACK_DRYRUN action=create scratch_bead=$bead prov=$label_prov title=$title"
+            created=$((created + 1))
+            continue
+        fi
+        local out newid
+        out="$( cd "$fleet" && br create \
+            --title "$title" \
+            --type bug \
+            --priority "$priority" \
+            --labels "codename:test-daemon-harness,scratch-feedback,$label_prov" \
+            --description "$body" \
+            --json )" || die "feedback: br create failed for scratch bead $bead"
+        newid="$(printf '%s' "$out" | jq -r '.id // empty')"
+        [ -n "$newid" ] || die "feedback: br create returned no id (output: $out)"
+        created=$((created + 1))
+        printf 'FEEDBACK_ITEM\tcreate\t%s\t%s\t%s\n' "$bead" "$label_prov" "$newid"
+    done <<< "$fails"
+
+    echo "FEEDBACK_SUMMARY batch=$batch_name fail_items=$nfail created=$created updated=$updated db=$fleet/.beads"
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 usage() {
@@ -554,6 +731,7 @@ main() {
         down)   cmd_down   "$@";;
         cycle)  cmd_cycle  "$@";;
         batch)  cmd_batch  "$@";;
+        feedback) cmd_feedback "$@";;
         ""|-h|--help|help) usage;;
         *) die "unknown subcommand '$sub' — run '$0 --help'";;
     esac

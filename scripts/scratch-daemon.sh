@@ -388,7 +388,13 @@ cmd_cycle() {
 # Arg surface (the <name> is the named queue AND the summary label — never hardcoded):
 #   batch <scratch-path> <name> --beads hk-a,hk-b,...   submit those bead IDs
 #   batch <scratch-path> <name> --file  <queue.json>    submit a queue-submit JSON doc
-# Exactly one of --beads / --file is required. The in-file `queue` field is ignored by
+#   batch <scratch-path> <name> --from-events <ndjson>  OFFLINE: fold a captured event
+#       stream into the SAME results artifact + BATCH_SUMMARY, with NO live daemon /
+#       subscribe / submit. Test seam (hk-6eqv9) so the end-to-end smoke can exercise
+#       the REAL fold + fail_signature derivation hermetically (a live batch needs a
+#       claude binary spawning agents — slow + non-deterministic). Expected bead set is
+#       taken from --beads if given, else derived from the stream's run_started events.
+# Exactly one of --beads / --file is required (or --from-events). The in-file `queue` field is ignored by
 # `queue submit`, so we always pass --queue <name> explicitly (named-queue route).
 #
 # Output contract (stable + parseable — documented for the reviewer and hk-1gkc8):
@@ -404,7 +410,7 @@ cmd_cycle() {
 #
 # Exit: 0 if every item passed; 1 if any item failed or stayed incomplete.
 cmd_batch() {
-    local scratch name mode="" beads_csv="" file="" timeout
+    local scratch name mode="" beads_csv="" file="" events_file="" timeout
     scratch="$(guard_path "${1:-}")"
     shift || true
     name="${1:-}"
@@ -422,34 +428,53 @@ cmd_batch() {
             --beads=*) beads_csv="${1#--beads=}"; mode="beads"; shift;;
             --file)    [ $# -ge 2 ] || die "batch: --file needs a value";  file="$2";       mode="file";  shift 2;;
             --file=*)  file="${1#--file=}";       mode="file";  shift;;
-            *) die "batch: unknown flag '$1' (use --beads id,id,... or --file <queue.json>)";;
+            --from-events)   [ $# -ge 2 ] || die "batch: --from-events needs a value"; events_file="$2"; shift 2;;
+            --from-events=*) events_file="${1#--from-events=}"; shift;;
+            *) die "batch: unknown flag '$1' (use --beads id,id,... | --file <queue.json> | --from-events <ndjson>)";;
         esac
     done
-    [ -n "$mode" ] || die "batch: one of --beads <ids> or --file <queue.json> is required"
+    # --from-events is the OFFLINE fold mode; it wins over --beads (which, if also given,
+    # only supplies the expected bead set). One of the three input modes is required.
+    if [ -n "$events_file" ]; then
+        mode="events"
+        [ -f "$events_file" ] || die "batch: --from-events file '$events_file' not found"
+    fi
+    [ -n "$mode" ] || die "batch: one of --beads <ids>, --file <queue.json>, or --from-events <ndjson> is required"
 
     timeout="${SCRATCH_BATCH_TIMEOUT:-1800}"
     command -v jq >/dev/null 2>&1 || die "batch: jq is required to parse the event stream"
 
     # Fleet-safety: same guard the kill/stop paths use, even on the already-up path.
-    assert_not_supervised "$scratch"
-
+    # The live (daemon) path needs the scratch binary + the not-supervised guard; the
+    # OFFLINE --from-events path touches no daemon, so it skips both.
     local bin sock
-    bin="$(scratch_bin "$scratch")"
-    [ -x "$bin" ] || die "scratch binary not built — run: $0 build $scratch"
-    sock="$(scratch_sock "$scratch")"
+    if [ "$mode" != "events" ]; then
+        assert_not_supervised "$scratch"
+        bin="$(scratch_bin "$scratch")"
+        [ -x "$bin" ] || die "scratch binary not built — run: $0 build $scratch"
+        sock="$(scratch_sock "$scratch")"
 
-    # 1) Ensure the scratch daemon is up — reuse cmd_up; never duplicate up-logic.
-    if [ -S "$sock" ]; then
-        echo "[scratch-daemon] batch: scratch daemon already up (socket $sock)"
-    else
-        echo "[scratch-daemon] batch: scratch daemon not up — bringing it up"
-        cmd_up "$scratch"
+        # 1) Ensure the scratch daemon is up — reuse cmd_up; never duplicate up-logic.
+        if [ -S "$sock" ]; then
+            echo "[scratch-daemon] batch: scratch daemon already up (socket $sock)"
+        else
+            echo "[scratch-daemon] batch: scratch daemon not up — bringing it up"
+            cmd_up "$scratch"
+        fi
     fi
 
     # 2) Compute the expected bead set (drives the wait + the summary rows).
     local expected_json item_count
     if [ "$mode" = "beads" ]; then
         expected_json="$(printf '%s' "$beads_csv" | jq -R -c 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0))')"
+    elif [ "$mode" = "events" ]; then
+        if [ -n "$beads_csv" ]; then
+            expected_json="$(printf '%s' "$beads_csv" | jq -R -c 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0))')"
+        else
+            # Derive the expected set from the captured stream's run_started events.
+            expected_json="$(jq -s -c '[.[] | select(.type=="run_started") | (.payload.bead_id // .bead_id // "?")] | unique' "$events_file")" \
+                || die "batch: cannot derive bead IDs from --from-events '$events_file'"
+        fi
     else
         [ -f "$file" ] || die "batch: queue file '$file' not found"
         expected_json="$(jq -c '[.groups[].items[].bead_id]' "$file")" || die "batch: cannot read bead IDs from '$file'"
@@ -457,38 +482,75 @@ cmd_batch() {
     item_count="$(printf '%s' "$expected_json" | jq 'length')"
     [ "$item_count" -gt 0 ] || die "batch: no bead IDs resolved from the $mode input"
 
-    # 3) Arm the terminal-event reader BEFORE submitting (no missed-event race), on the
-    #    scratch socket ONLY. One subscribe sees every run regardless of submitter.
-    local raw sub_pid
-    raw="$(mktemp "${TMPDIR:-/tmp}/scratch-batch.XXXXXX")"
-    "$bin" subscribe --socket "$sock" \
-        --types run_started,run_completed,run_failed --heartbeat 30s \
-        >"$raw" 2>>"$(scratch_log "$scratch")" &
-    sub_pid=$!
-    # Tear down the background reader + temp stream on any exit; keep the results file.
-    trap 'kill "$sub_pid" 2>/dev/null || true; rm -f "$raw" 2>/dev/null || true' EXIT
-
-    # 4) Submit the named batch to the SCRATCH queue (always pass --queue: the in-file
-    #    queue field is ignored, so a named route requires the explicit flag).
-    echo "[scratch-daemon] batch: submitting $item_count item(s) to queue '$name' (project=$scratch)"
-    local submit_out queue_id
-    if [ "$mode" = "beads" ]; then
-        submit_out="$("$bin" queue submit --project "$scratch" --queue "$name" --beads "$beads_csv" --json)" \
-            || die "batch: queue submit failed (--beads)"
+    # 3+4) Acquire the event stream + announce the batch.
+    #   live  : arm a subscribe reader BEFORE submitting (no missed-event race), then
+    #           submit the named batch to the SCRATCH queue (always --queue: the in-file
+    #           queue field is ignored, so a named route requires the explicit flag).
+    #   events: the stream is already captured on disk — fold it directly, no daemon.
+    local raw sub_pid="" queue_id
+    if [ "$mode" = "events" ]; then
+        raw="$events_file"
+        queue_id="events"
+        echo "[scratch-daemon] batch: OFFLINE fold of captured events ($raw) — no live daemon/subscribe/submit (hk-6eqv9 test seam)"
+        echo "BATCH_SUBMIT name=$name queue_id=$queue_id items=$item_count"
     else
-        submit_out="$("$bin" queue submit --project "$scratch" --queue "$name" "$file" --json)" \
-            || die "batch: queue submit failed (--file)"
+        raw="$(mktemp "${TMPDIR:-/tmp}/scratch-batch.XXXXXX")"
+        "$bin" subscribe --socket "$sock" \
+            --types run_started,run_completed,run_failed --heartbeat 30s \
+            >"$raw" 2>>"$(scratch_log "$scratch")" &
+        sub_pid=$!
+        # Tear down the background reader + temp stream on any exit; keep the results file.
+        trap 'kill "$sub_pid" 2>/dev/null || true; rm -f "$raw" 2>/dev/null || true' EXIT
+
+        echo "[scratch-daemon] batch: submitting $item_count item(s) to queue '$name' (project=$scratch)"
+        local submit_out
+        if [ "$mode" = "beads" ]; then
+            submit_out="$("$bin" queue submit --project "$scratch" --queue "$name" --beads "$beads_csv" --json)" \
+                || die "batch: queue submit failed (--beads)"
+        else
+            submit_out="$("$bin" queue submit --project "$scratch" --queue "$name" "$file" --json)" \
+                || die "batch: queue submit failed (--file)"
+        fi
+        queue_id="$(printf '%s' "$submit_out" | jq -r '.queue_id // empty')"
+        [ -n "$queue_id" ] || queue_id="noqid"
+        echo "BATCH_SUBMIT name=$name queue_id=$queue_id items=$item_count"
     fi
-    queue_id="$(printf '%s' "$submit_out" | jq -r '.queue_id // empty')"
-    [ -n "$queue_id" ] || queue_id="noqid"
-    echo "BATCH_SUBMIT name=$name queue_id=$queue_id items=$item_count"
 
     # jq program: fold the NDJSON event stream into one result row per expected bead.
     # Builds run_id→bead_id from run_started, takes the LAST terminal per bead (review-
     # loop may retry), and marks any bead with no terminal as 'incomplete'.
     local jq_filter
     jq_filter='
-def oneline: (. // "") | gsub("[\r\n\t]+"; " ") | .[0:200];
+# oneline: collapse a run summary into the <=200ch fail_signature used as the
+# cross-run dedup key (feedback derives prov:<hash> = sha256(batch 0x1f signature)).
+# fail_signature STABILITY (hk-6eqv9): the SAME logical failure MUST yield the SAME
+# signature run-to-run (so feedback UPDATES, not duplicates), while DIFFERENT logical
+# failures MUST stay distinct (so two real bugs become two beads, never one). We redact
+# only VOLATILE tokens and, for filesystem paths, only the volatile PREFIX — the
+# identity-bearing tail (package/file/test name) is preserved, so e.g.
+# ".../foo.go missing return" and ".../bar.go missing return" do NOT false-merge.
+# Redacted classes: ISO-8601 + epoch timestamps, UUIDs, hex addresses (0x…), Go panic
+# "goroutine N", worktree-agent run-ids, bare run-/wt-ids, pid/port numbers, duration
+# literals (Ns/N.Ns/Nms), git SHAs (7–40 lowercase hex), and tmpdir roots (/tmp,
+# /var/folders/…/T) collapsed to <TMP> while keeping the path tail. Order matters: the
+# tmpdir-root rule runs LAST so earlier rules see the full path; SHA runs after UUID/0x
+# so it never eats a UUID/address. Single shared def — used by BOTH the live subscribe
+# fold and the offline --from-events fold.
+def oneline:
+  (. // "")
+  | gsub("[\r\n\t]+"; " ")
+  | gsub("(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:?[0-9]{2})?)"; "<TS>")  # ISO-8601 timestamps
+  | gsub("(?<uuid>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"; "<UUID>")                    # UUIDs (incl. UUID-form run-ids)
+  | gsub("0x[0-9a-fA-F]+"; "0x<ADDR>")                                                                                        # hex pointers/addresses (panic dumps)
+  | gsub("goroutine [0-9]+"; "goroutine <N>")                                                                                 # Go panic goroutine ids
+  | gsub("worktree-agent-[0-9A-Za-z._-]+"; "worktree-agent-<ID>")                                                             # run-id embedded in a worktree path segment
+  | gsub("\\b(run|wt)[-_][0-9A-Za-z]{6,}\\b"; "<RUNID>")                                                                      # bare run-/wt-ids
+  | gsub("(?<k>[Pp][Ii][Dd]|[Pp]ort) [0-9]+"; "\(.k) <N>")                                                                    # pids / ports
+  | gsub("\\b[0-9]+(\\.[0-9]+)?m?s\\b"; "<DUR>")                                                                              # durations: 1800s / 1.3s / 30ms
+  | gsub("\\b[0-9]{10,13}\\b"; "<TS>")                                                                                        # epoch-style timestamps
+  | gsub("\\b(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}\\b"; "<SHA>")                                                                   # git SHAs (7–40 lowercase hex, ≥1 digit — spares pure-hex words/basenames e.g. deadbeef, cafebabe.log)
+  | gsub("(?<vr>(/private)?(/var/folders/[A-Za-z0-9_]+/[A-Za-z0-9_]+/T|/tmp))/[A-Za-z0-9._@%+-]+"; "<TMP>")                   # tmpdir ROOT only — path tail preserved
+  | .[0:200];
 [inputs] as $events
 | ( [ $events[] | select(.type=="run_started")
       | { key: (.payload.run_id // (.run_id | tostring)), value: (.payload.bead_id // "?") } ]
@@ -525,6 +587,12 @@ def oneline: (. // "") | gsub("[\r\n\t]+"; " ") | .[0:200];
             results="$parsed"
             incomplete="$(printf '%s' "$results" | jq '[.[] | select(.verdict=="incomplete")] | length')"
             if [ "$incomplete" -eq 0 ]; then break; fi
+        fi
+        # OFFLINE fold: the captured stream is FINAL — no more events will arrive, so
+        # fold once and stop (don't burn the live-path timeout waiting on absent events).
+        if [ "$mode" = "events" ]; then
+            incomplete="$(printf '%s' "$results" | jq '[.[] | select(.verdict=="incomplete")] | length')"
+            break
         fi
         if [ "$(date +%s)" -ge "$deadline" ]; then
             incomplete="$(printf '%s' "$results" | jq '[.[] | select(.verdict=="incomplete")] | length')"
@@ -614,8 +682,21 @@ cmd_feedback() {
         || die "feedback: '$results_file' is not a JSON array (expected the batch results artifact)"
 
     # Locate the FLEET beads DB. This command writes there ON PURPOSE (see header).
+    #
+    # HERMETIC TEST SEAM (hk-6eqv9): SCRATCH_FEEDBACK_FLEET_ROOT, when set, redirects
+    # the fleet write to a THROWAWAY beads-managed repo instead of this script's own
+    # live fleet checkout — so the end-to-end smoke can prove the create/dedup loop
+    # WITHOUT ever touching the live fleet beads DB. Unset (the normal case) it falls
+    # back to fleet_root() exactly as before. Kept tiny and fail-loud on a bad path.
     local fleet
-    fleet="$(fleet_root)"
+    if [ -n "${SCRATCH_FEEDBACK_FLEET_ROOT:-}" ]; then
+        [ -d "$SCRATCH_FEEDBACK_FLEET_ROOT" ] \
+            || die "feedback: SCRATCH_FEEDBACK_FLEET_ROOT='$SCRATCH_FEEDBACK_FLEET_ROOT' is not a directory"
+        fleet="$( cd "$SCRATCH_FEEDBACK_FLEET_ROOT" && pwd -P )"
+        echo "[scratch-daemon] feedback: SCRATCH_FEEDBACK_FLEET_ROOT override → targeting throwaway fleet '$fleet' (NOT the live fleet DB)" >&2
+    else
+        fleet="$(fleet_root)"
+    fi
     [ -n "$fleet" ] || die "feedback: cannot locate the fleet repo root (script not inside a git repo) — no beads DB to target"
     [ -d "$fleet/.beads" ] || die "feedback: no .beads dir under fleet root '$fleet' — is this a beads-managed repo?"
 

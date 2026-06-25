@@ -208,6 +208,14 @@ Runner-up: **L2 disk GC** — urgent (90% disk) but must coordinate with chani.
 
 ## Active operator directives (dated)
 
+> **EXPIRY MECHANISM (admiral-framework, 2026-06-25 — ships now, independent of any ranker lock):**
+> EVERY dated directive in this file MUST carry `expires:` AND an owner. **ON EXPIRY the DEFAULT is
+> LAPSE → revert to the standing autonomous posture — NEVER a hold.** The admiral audit OWNS flagging
+> an expired-but-present directive and either re-confirming with the operator or striking it. An
+> expired block left in place is a FINDING (this is exactly how the 2026-06-19 scale-out block lapsed
+> into a silent lean-park). A dated directive with no matching `direction-log.md` entry is also a
+> FINDING. See `.harmonik/context/AGENTS.md` (forced-write/forced-read) + orchestrator-rules §Autonomy.
+
 > set: 2026-06-19 · expires: ~2026-06-22 (3-day scale-out push — re-confirm or expire after the window)
 > STANDING for EVERY captain across ALL restarts within the window. These OVERRIDE any
 > stale "lean park / one-at-a-time / operator away" posture in a handoff. On conflict, THESE win.

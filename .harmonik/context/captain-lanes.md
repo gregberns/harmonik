@@ -9,6 +9,20 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
+## ⭐ OPERATOR-CONFIRMED PRIORITY SEQUENCE (set:2026-06-25 expires:~2026-06-29 — via admiral, survives /clear)
+> The fleet ALREADY honors this — recorded so it survives a captain restart; NO reshuffle on read.
+> Lanes run PARALLEL where slots + disjoint work allow. WIP-first is a TIEBREAKER, never serial gating.
+> 1. **REMOTE-WORKER RELIABLE** — the headline (gurney STAGE-3 real e2e on gb-mbp). GOAL behind it:
+>    once remote is PROVEN reliable, raise daemon `max_concurrent` 4→8 (remote adds the capacity).
+>    **Do NOT bump concurrency now — GATED on remote-reliable.** Un-park gb-mbp + re-validate serialized
+>    only after BOTH remote code bugs land (review.json read-retry = LANDED e4122ac9; worktree-HEAD race
+>    = hk-iaj1w, gurney fixing offline).
+> 2. **TOKEN-OPT** (epic hk-var9b / wake-economy) — currently ZERO ready beads (all blocked/deferred/in-flight)
+>    = correctly idle, NOT a stall. Resume the moment ready file-disjoint work appears.
+> 3. **CODEX** (leto pilot, queue leto-codex) — correctly filling idle local slots + offloads model cost.
+> 4. **FLYWHEEL/FRAMEWORK** (admiral/captain framework: PLAN-v2 + stall-detector) — admiral drives;
+>    artifact + skill edits, does NOT compete for daemon slots.
+
 ## ⭐ CURRENT TRUTH (2026-06-25 ~19:07Z — gb-mbp DISABLED again; fleet LOCAL; 2 lanes)
 > **Live remote STAGE-3 (gb-mbp re-enabled 18:46Z for the headline) found TWO remote bugs that
 > paused BOTH lanes — a RECURRENCE of the 2026-06-23T21:55Z concurrent-remote-failure pattern:**

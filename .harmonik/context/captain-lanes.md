@@ -21,8 +21,8 @@
 > **THE PROGRAM — kerf work `remote-test-pyramid`, epic `hk-6l941` (assignee gurney). Bead set filed + ranked:**
 > - `hk-hd2w6` **L0** — runner-seam contract: add `daemon.Config.Runner`, thread to DOT gate/cascade,
 >   add the 3 missing `…Via` read variants (gate-verdict `dot_gate.go:551/686` + `autostatusmarker.go:70`
->   are STILL bare `os.*` = unfixed hk-f3u6o class), + static no-bare-os.* audit + RecordingRunner contract test. **BUILDING on gurney-q.**
-> - `hk-52xnr` **L1** (blocked-by L0) — twin harness on SEPARATED worker FS + Runner injection; deterministic verdict/gate-bug reproduction.
+>   are STILL bare `os.*` = unfixed hk-f3u6o class), + static no-bare-os.* audit + RecordingRunner contract test. **✅ LANDED 2026-06-25 (02da6...c940a8a5, DOT triple-review clean) — CLOSED.**
+> - `hk-52xnr` **L1** (←L0) — twin harness on SEPARATED worker FS + Runner injection; deterministic verdict/gate-bug reproduction. **IN PROGRESS on gurney-q.**
 > - `hk-8u2al` **L2** (←L1) ssh-localhost isolated · `hk-3q92c` **L4** (←L1) fault/chaos+replay ·
 >   `hk-f10xl` **L5** (←L0) per-queue routing (move ②, gate `SelectWorker` workloop.go:2813) + scheduler property tests ·
 >   `hk-yflqo` **L3** (←L2, P2, **LAST**) Docker/Lima containers + Linux-remote · `hk-o85ye` **move-③** (←L0, P2) bead-runs survive daemon restart.
@@ -33,13 +33,19 @@
 > NOT the slow pipeline. Crews MAY use sub-agents but EVERY change reviewed. Review gate = multi-agent
 > consensus of ≥2 DIVERSE agent types, NOT human signoff; split → admiral adjudicates.
 >
-> **Crew state:** gurney = remote-test-pyramid (LOCAL gurney-q, building L0). admiral = oversight + hourly
-> watchdog (holds no beads). watch = resumed. **paul DOWN — HELD** (wake-economy parked). All other
+> **Crew state:** gurney = remote-test-pyramid (LOCAL gurney-q; L0 landed, NOW running L1+L5 = 2 workers, M3 held).
+> admiral = oversight + hourly watchdog (holds no beads). **watch = OFFLINE/wedged** (absent from comms who,
+> pane frozen at "Sautéed 4m36s" w/ unsubmitted prompt @114k — flagged, NOT critical-path; captain armed
+> direct on comms recv; let ops-monitor crew-fresh flag catch it). **paul DOWN — HELD** (wake-economy parked). All other
 > initiatives PARKED behind this program (Pi gateway, codex-on-remote, de-hardcode-messages, wake-economy).
 > hk-f3u6o LANDED on main (5999a39a) + CLOSED. gb-mbp re-enable is a later phase (L2/real-remote smoke), not now.
 >
-> **Next staffing decision (when L0 lands):** L5/M3 (←L0) + L2/L4 (←L1) unblock; consider a 2nd crew to
-> parallelize file-disjoint layers (test-harness L2/L4 vs daemon-feature L5/M3) once L0 frees internal/daemon.
+> **Staffing decision (RESOLVED 2026-06-25 on L0 land):** did NOT split to a 2nd crew. L5/M3 are children
+> of gurney's epic hk-6l941, so a 2nd crew would collide on epic ownership + cost an Opus boot for marginal
+> gain (daemon parallelizes either way at max-concurrent=4). Instead gurney fans out the file-disjoint
+> unblocked layers into gurney-q: L1 (test-harness) ‖ L5 (daemon-routing) running concurrently; M3
+> (hk-o85ye, runs-survive-restart) sequenced AFTER L5 since both touch internal/daemon (worktree-merge
+> collision guard). L2/L4 unblock when L1 lands — gurney continues them on the same queue.
 
 ## active_lanes  (PRE-RESTART — STALE as of the 22:50Z restart; see CURRENT TRUTH block above)
 

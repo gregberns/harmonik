@@ -2006,13 +2006,44 @@ func ReadReviewerBudgetSentinel(wtPath string) (*reviewerBudgetSentinel, error) 
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return nil, nil //nolint:nilnil // absent marker = normal case (successful/true-no-verdict review)
 		}
 		return nil, fmt.Errorf("daemon: ReadReviewerBudgetSentinel: read %s: %w", path, err)
 	}
 	var pl reviewerBudgetSentinel
 	if uErr := json.Unmarshal(b, &pl); uErr != nil {
 		return nil, fmt.Errorf("daemon: ReadReviewerBudgetSentinel: unmarshal %s: %w", path, uErr)
+	}
+	return &pl, nil
+}
+
+// ReadReviewerBudgetSentinelVia is like ReadReviewerBudgetSentinel but routes the
+// marker-file read through runner (e.g. an SSHRunner for a remote-substrate worker
+// whose worktree lives on a separate filesystem). For a remote run the marker is
+// written into the reviewer's worktree ON THE WORKER, so a box-A os.ReadFile never
+// finds it → the daemon can't distinguish a budget-kill from a true no-verdict.
+// Routing through the runner (cat the file over the transport) reads the
+// worker-side marker and applies the identical unmarshal.
+//
+// Callers pass nil to use ReadReviewerBudgetSentinel's byte-identical bare-local
+// path (NFR7); a local-FS runner (tmux.LocalRunner) is also treated as local.
+//
+// Bead: hk-f3u6o.
+func ReadReviewerBudgetSentinelVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (*reviewerBudgetSentinel, error) {
+	if runner == nil || runnerIsLocalFS(runner) {
+		return ReadReviewerBudgetSentinel(wtPath)
+	}
+	path := reviewerBudgetSentinelPath(wtPath)
+	out, err := runner.Command(ctx, "cat", path).Output()
+	if err != nil {
+		// Absent marker (cat: no such file) or transport hiccup → treat as absent,
+		// mirroring ReadReviewerBudgetSentinel's os.ErrNotExist branch (nil,nil).
+		//nolint:nilnil,nilerr // absent marker = normal case; cat-fail = absent, mirrors readAutoStatusMarkerVia
+		return nil, nil
+	}
+	var pl reviewerBudgetSentinel
+	if uErr := json.Unmarshal(out, &pl); uErr != nil {
+		return nil, fmt.Errorf("daemon: ReadReviewerBudgetSentinelVia: unmarshal %s: %w", path, uErr)
 	}
 	return &pl, nil
 }

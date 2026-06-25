@@ -275,6 +275,12 @@ linters:
             - "github.com/gregberns/harmonik/internal/adapter/br"
             - "github.com/gregberns/harmonik/internal/handlercontract"
             - "github.com/google/uuid"
+            # lifecycle/tmux: the remote-substrate-aware "…Via(runner)" workspace
+            # helpers (ComputeDiffHashVia, ReadReviewVerdictVia — hk-f3u6o) take a
+            # tmux.CommandRunner so a REMOTE run's worktree reads route through the
+            # worker's SSHRunner instead of a box-A os.ReadFile. diffhash.go,
+            # remotematerialize.go, worktreepath.go already depend on it.
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 
         # Agent runner: core + eventbus + handler contract + adapter-ntm.
         agentrunner:

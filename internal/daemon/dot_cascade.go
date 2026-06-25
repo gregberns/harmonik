@@ -579,7 +579,11 @@ func driveDotWorkflow(
 					// Reviewed-By / Review-Verdict trailers before merge.
 					// Non-fatal: a missing/unreadable file yields nil, which the
 					// caller's trailer-stamp guard already skips.
-					dotApproveVerdict, _ := workspace.ReadReviewVerdict(wtPath)
+					// hk-f3u6o: route through runner so a REMOTE run reads the
+					// worker-side review.json (a box-A os.ReadFile would miss it and
+					// silently drop the merge trailers); nil/local → bare-local (NFR7).
+					//nolint:errcheck // non-fatal: a missing/unreadable file yields nil, which the trailer-stamp guard skips
+					dotApproveVerdict, _ := workspace.ReadReviewVerdictVia(ctx, runner, wtPath)
 					return dotWorkflowResult{
 						success:        true,
 						approveVerdict: dotApproveVerdict,
@@ -1600,7 +1604,14 @@ func dispatchDotAgenticNode(
 	if isReviewer {
 		// Read the produced verdict; its value becomes the preferred_label that
 		// drives the reviewer cascade (APPROVE / REQUEST_CHANGES / BLOCK).
-		verdict, verdictErr := workspace.ReadReviewVerdict(wtPath)
+		// hk-f3u6o: route the verdict + budget-sentinel reads through the run's
+		// runner. For a REMOTE run (runner == SSHRunner) the reviewer writes
+		// review.json / the budget marker on the WORKER, so a box-A os.ReadFile
+		// never finds it → the run false-failed as "verdict absent". The …Via
+		// variants cat the file over the transport; nil/local runner → byte-identical
+		// bare-local read (NFR7). runner is the same value already threaded to the
+		// node launch (e.g. resolveDotWorktreeHEAD above).
+		verdict, verdictErr := workspace.ReadReviewVerdictVia(ctx, runner, wtPath)
 		if verdictErr != nil {
 			return core.Outcome{}, fmt.Errorf("read reviewer verdict for node %q: %w", node.ID, verdictErr)
 		}
@@ -1608,7 +1619,7 @@ func dispatchDotAgenticNode(
 			// hk-da3rr: distinguish a BUDGET kill from a true no-verdict, mirroring
 			// the builtin review-loop path (reviewloop.go). The marker file is written
 			// into the reviewer's worktree by writeReviewerBudgetSentinel.
-			if sentinel, sErr := ReadReviewerBudgetSentinel(wtPath); sErr == nil && sentinel != nil {
+			if sentinel, sErr := ReadReviewerBudgetSentinelVia(ctx, runner, wtPath); sErr == nil && sentinel != nil {
 				fmt.Fprintf(os.Stderr,
 					"daemon: dot: reviewer node %q budget exceeded (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
 					node.ID, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)

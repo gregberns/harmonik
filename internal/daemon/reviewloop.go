@@ -1522,7 +1522,12 @@ func runReviewLoop(
 		// The reviewer wrote review.json to its isolated worktree (revWtPath).
 		// Read from there, then copy to wtPath so the archive and implementer
 		// worktree keep the verdict for post-run inspection (hk-dut6b).
-		verdict, verdictErr := workspace.ReadReviewVerdict(revWtPath)
+		//
+		// hk-f3u6o: for a REMOTE run revWtPath lives on the WORKER, so a box-A
+		// os.ReadFile never finds review.json → the run false-failed as "verdict
+		// absent". Route through the per-run runner (cat over the transport);
+		// nil/local runner → byte-identical bare-local read (NFR7).
+		verdict, verdictErr := workspace.ReadReviewVerdictVia(ctx, runner, revWtPath)
 		if verdictErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ReadReviewVerdict iter %d: %v\n", state.iterationCount, verdictErr)
 			result := rlErrorResult(fmt.Sprintf("verdict malformed at iteration %d: %v", state.iterationCount, verdictErr))
@@ -1534,7 +1539,9 @@ func runReviewLoop(
 			// ran out of its diff-scaled verdict budget on a heavy diff — see
 			// pasteInjectQuitOnReviewFile) from a true no-verdict.  The marker is
 			// written into the reviewer's worktree, so read from revWtPath.
-			if sentinel, sErr := ReadReviewerBudgetSentinel(revWtPath); sErr == nil && sentinel != nil {
+			// hk-f3u6o: route via runner so a REMOTE run reads the worker-side
+			// marker (nil/local → bare-local read, NFR7).
+			if sentinel, sErr := ReadReviewerBudgetSentinelVia(ctx, runner, revWtPath); sErr == nil && sentinel != nil {
 				fmt.Fprintf(os.Stderr,
 					"daemon: reviewloop: reviewer budget exceeded at iteration %d (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
 					state.iterationCount, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)

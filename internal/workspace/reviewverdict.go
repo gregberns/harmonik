@@ -1,11 +1,14 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // ReviewVerdict is the typed struct returned by ReadReviewVerdict.
@@ -98,6 +101,64 @@ func ReadReviewVerdict(workspacePath string) (*ReviewVerdict, error) {
 		return nil, fmt.Errorf("workspace: ReadReviewVerdict: ReadFile %q: %w", target, err)
 	}
 
+	return parseReviewVerdict(data, target)
+}
+
+// ReadReviewVerdictVia is like ReadReviewVerdict but routes the verdict-file read
+// through runner (e.g. an SSHRunner for a remote-substrate worker whose worktree
+// lives on a separate filesystem). For a remote run the reviewer writes
+// review.json on the WORKER, so a box-A os.ReadFile never finds it → the run
+// false-fails as "verdict absent". Routing through the runner (cat the file over
+// the transport) reads the worker-side file and applies the identical schema
+// validation via parseReviewVerdict.
+//
+// Callers pass nil to use ReadReviewVerdict's byte-identical bare-local path
+// (NFR7). For symmetry with the rest of the remote-aware surface, a local-FS
+// runner (tmux.LocalRunner) is also treated as local.
+//
+// Return contract matches ReadReviewVerdict:
+//   - (*ReviewVerdict, nil) when the file is present and valid.
+//   - (nil, ErrMalformed) (wrapping) for any schema violation.
+//   - (nil, nil) when the file does not exist (cat exits non-zero on the worker),
+//     interpreted by the caller as the inconclusive condition per WM-027a §(e).
+//
+// Bead: hk-f3u6o.
+func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, workspacePath string) (*ReviewVerdict, error) {
+	if runner == nil || runnerIsLocalFS(runner) {
+		return ReadReviewVerdict(workspacePath)
+	}
+	target := ReviewVerdictPath(workspacePath)
+	out, err := runner.Command(ctx, "cat", target).Output()
+	if err != nil {
+		// Absent verdict (cat: no such file) or transport hiccup → treat as absent,
+		// mirroring ReadReviewVerdict's os.IsNotExist branch (nil,nil = inconclusive).
+		//nolint:nilnil,nilerr // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
+		return nil, nil
+	}
+	return parseReviewVerdict(out, target)
+}
+
+// runnerIsLocalFS reports whether r operates on the daemon box's local filesystem
+// — i.e. the worktree paths it is given are directly readable with os.ReadFile.
+// A nil runner (defensive) and tmux.LocalRunner both qualify; an SSHRunner (or
+// any other transport) does NOT, because its worktree lives on a remote worker.
+// Mirrors the daemon-package runnerIsLocalFS so the workspace remote-aware
+// readers share the same local/remote classification.
+func runnerIsLocalFS(r tmux.CommandRunner) bool {
+	switch r.(type) {
+	case nil, tmux.LocalRunner:
+		return true
+	default:
+		return false
+	}
+}
+
+// parseReviewVerdict validates raw verdict-file bytes against the agent-reviewer
+// JSON schema v1 and returns the typed verdict. target is used only for error
+// messages (the path the bytes came from). Shared by ReadReviewVerdict (local
+// os.ReadFile) and ReadReviewVerdictVia (runner-routed read) so both paths apply
+// byte-identical validation (NFR7).
+func parseReviewVerdict(data []byte, target string) (*ReviewVerdict, error) {
 	// Unmarshal into a raw map first so we can detect missing keys vs. zero values.
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {

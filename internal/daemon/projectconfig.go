@@ -847,6 +847,11 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 	// validation/length cap (operator decision hk-igpg: short default, no hard cap).
 	cfg.RemoteControlPrefix = raw.RemoteControlPrefix
 
+	// worktree_provision_files: stored as-is; nil/empty = no provisioning (the
+	// backward-compatible default). Copied into each fresh LOCAL run worktree
+	// after creation (hk-z8u).
+	cfg.WorktreeProvisionFiles = raw.WorktreeProvisionFiles
+
 	return cfg, nil
 }
 

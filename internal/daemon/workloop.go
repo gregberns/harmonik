@@ -169,6 +169,16 @@ type workLoopDeps struct {
 	// no cross-repo dispatch is allowed. See docs/cross-repo-dispatch.md.
 	allowedRepos []string
 
+	// worktreeProvisionFiles is the list of repo-root-relative paths copied from
+	// the project root into each freshly created LOCAL run worktree after the
+	// worktree is created (hk-z8u). Sourced from .harmonik/config.yaml
+	// daemon.worktree_provision_files at startup. Empty = no provisioning (the
+	// backward-compatible default). Used to materialise gitignored-but-required
+	// files (e.g. a `.env` consumed by a docker compose test gate) that
+	// `git worktree add` does not check out. Skipped for remote/SSH-worker runs
+	// (those worktrees live on another host).
+	worktreeProvisionFiles []string
+
 	// kerfPath is the absolute path to the `kerf` CLI binary, or empty when
 	// kerf is not installed. When empty, eagerRefillEval returns immediately
 	// without calling kerf next (EM-062 disabled for this daemon instance).
@@ -975,7 +985,8 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		emittedEpicsMu:             &sync.Mutex{},
 		targetBranch:               resolveTargetBranch(cfg.TargetBranch),
 		protectBranches:            cfg.ProtectBranches,
-		allowedRepos:               cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
+		allowedRepos:               cfg.ProjectCfg.Daemon.AllowedRepos,           // hk-xfuc: cross-repo dispatch safelist
+		worktreeProvisionFiles:     cfg.ProjectCfg.Daemon.WorktreeProvisionFiles, // hk-z8u: gitignored-but-required files copied into each fresh local worktree
 		beadAuditLogger:            adapter.AuditLog,                   // hk-wcv / hk-f38n: retained for tests; pre-dispatch block removed
 		workerRegistry:             workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
 		coordinatorReapAdapter:     coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
@@ -2988,6 +2999,21 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	}
 	if wtCleanup != nil {
 		defer wtCleanup()
+	}
+
+	// hk-z8u: provision gitignored-but-required files (e.g. a `.env` consumed by a
+	// docker compose test gate) into the freshly created worktree. `git worktree
+	// add` checks out only TRACKED files, so such files are otherwise absent and a
+	// gate that needs them fails before any work runs. LOCAL runs only: remote
+	// (SSH-worker) worktrees live on another host and are not reachable through the
+	// local filesystem, so they are skipped (rbc != nil). Empty config = no-op (the
+	// backward-compatible default). A provision error is non-fatal — warn and
+	// continue so a stray config entry never wedges dispatch; ProvisionWorktreeFiles
+	// already warn-skips a missing source itself.
+	if rbc == nil && len(deps.worktreeProvisionFiles) > 0 {
+		if provErr := workspace.ProvisionWorktreeFiles(activeRepo, wtPath, deps.worktreeProvisionFiles); provErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ProvisionWorktreeFiles for bead %s run %s: %v (continuing)\n", beadID, runID.String(), provErr)
+		}
 	}
 
 	// hk-ooexj: snapshot the active repo's pre-existing untracked files at run-start

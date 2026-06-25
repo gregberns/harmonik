@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	supervisecmd "github.com/gregberns/harmonik/cmd/harmonik/supervise"
 )
 
 // fakeManifest builds a Manifest from a path→sha map for test injection.
@@ -333,5 +337,63 @@ func TestSkewNilDiskHashesOverEstimate(t *testing.T) {
 	}
 	if res.AutoApplyCandidates != 0 {
 		t.Fatalf("over-estimate path cannot flag auto-apply, got %d", res.AutoApplyCandidates)
+	}
+}
+
+func TestAutoApplyHookFastForwardsManagedSkillAndRestampsLock(t *testing.T) {
+	dir := t.TempDir()
+	m := seedCurrentProject(t, dir)
+	skill := firstEmbedPathOfClass(t, m, Managed)
+	dest, ok := destFor(skill.Path)
+	if !ok {
+		t.Fatalf("no destination for %s", skill.Path)
+	}
+	full := filepath.Join(dir, dest)
+
+	embedData, err := initSkillAssets.ReadFile(skill.Path)
+	if err != nil {
+		t.Fatalf("read embed %s: %v", skill.Path, err)
+	}
+	embedSha := hexSha(embedData)
+
+	staleData := []byte("stale managed skill content\n")
+	staleSha := hexSha(staleData)
+	writeFileT(t, full, staleData)
+
+	lock, err := ReadLock(dir)
+	if err != nil {
+		t.Fatalf("ReadLock: %v", err)
+	}
+	le := lock.Files[skill.Path]
+	le.Sha256 = staleSha
+	lock.Files[skill.Path] = le
+	if err := WriteLock(dir, lock); err != nil {
+		t.Fatalf("WriteLock: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".harmonik", "daemon.sock")); !os.IsNotExist(err) {
+		t.Fatalf("precondition: daemon socket should be absent, stat err=%v", err)
+	}
+	if supervisecmd.AutoApplyHook == nil {
+		t.Fatal("AutoApplyHook not registered")
+	}
+
+	applied, err := supervisecmd.AutoApplyHook(dir)
+	if err != nil {
+		t.Fatalf("AutoApplyHook: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("AutoApplyHook applied %d files, want 1", applied)
+	}
+	if got := readFileT(t, full); !bytes.Equal(got, embedData) {
+		t.Fatalf("managed skill was not fast-forwarded to embed bytes")
+	}
+
+	gotLock, err := ReadLock(dir)
+	if err != nil {
+		t.Fatalf("ReadLock after auto-apply: %v", err)
+	}
+	if got := gotLock.Files[skill.Path].Sha256; got != embedSha {
+		t.Fatalf("lock sha for %s = %s, want embed sha %s", skill.Path, got, embedSha)
 	}
 }

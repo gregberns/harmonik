@@ -281,7 +281,7 @@ func TestGateVerdictExistsVia_NilRunner_LocalStat(t *testing.T) {
 }
 
 // TestGateVerdictExistsVia_RemoteRunner_RoutesViaRunner verifies that for a non-local
-// runner the existence check routes through runner.Command("test", "-f", ...).
+// runner the existence check routes through runner.Command("test", "-s", ...).
 func TestGateVerdictExistsVia_RemoteRunner_RoutesViaRunner(t *testing.T) {
 	t.Parallel()
 	workerFile := filepath.Join(t.TempDir(), "present-gate-verdict.json")

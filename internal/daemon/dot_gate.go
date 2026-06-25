@@ -598,7 +598,8 @@ func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdict
 // gateVerdictExistsVia reports whether the gate-verdict.json file exists and is
 // non-empty. Routes the stat check through runner on remote runs so the check
 // lands on the worker's filesystem (hk-hd2w6). NFR7: nil/local runner falls back
-// to os.Stat on box A.
+// to os.Stat on box A. Both paths guard against an empty/truncated file
+// (local: info.Size() > 0; remote: test -s which is POSIX "exists and non-empty").
 //
 // Bead: hk-hd2w6.
 func gateVerdictExistsVia(ctx context.Context, runner ltmux.CommandRunner, path string) bool {
@@ -606,7 +607,7 @@ func gateVerdictExistsVia(ctx context.Context, runner ltmux.CommandRunner, path 
 		info, err := os.Stat(path)
 		return err == nil && info.Size() > 0
 	}
-	return runner.Command(ctx, "test", "-f", path).Run() == nil
+	return runner.Command(ctx, "test", "-s", path).Run() == nil
 }
 
 // pasteInjectCognitionGate delivers the gate-evaluator kick-off message.

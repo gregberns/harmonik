@@ -1154,14 +1154,14 @@ func runReviewLoop(
 		// always sees the latest implementer commit. The later preMergeSync is then
 		// a harmless no-op re-fetch.
 		var reviewHeadSHA string
-		if runner != nil {
+		workerHost, sshOpts, isSSHRunner := sshHostOpts(runner)
+		if runner != nil && isSSHRunner {
 			// hk-7bwx: fetch the run branch DIRECTLY from the worker's repo over SSH
 			// (ssh://<host><repoPath>) instead of the old worker→GitHub→box-A
 			// round-trip, which failed when the worker had no valid GitHub push
 			// credential. The branch lives in the worker repo (worktree add -b), and
 			// box A reaches the worker over the same SSH transport (workerSessionCwd
 			// is the worker's repo_path; the host/opts come from the worker SSHRunner).
-			workerHost, sshOpts, _ := sshHostOpts(runner)
 			if fetchErr := fetchRunBranchBoxA(ctx, nil, deps.projectDir, runID.String(), workerHost, workerSessionCwd, sshOpts); fetchErr != nil {
 				result := rlErrorResult(fmt.Sprintf("fetch run branch worker→box-A (direct SSH) before reviewer at iteration %d: %v", state.iterationCount, fetchErr))
 				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)

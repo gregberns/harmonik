@@ -9,33 +9,37 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
-## ⭐ CURRENT TRUTH (2026-06-24 ~22:50Z — POST FULL-FLEET-RESTART + lull-deploy)
-> The fleet was torn down + re-deployed off latest `main`. **The lane table + directives
-> further down this file are PRE-RESTART and STALE — read THIS block as authoritative.**
+## ⭐ CURRENT TRUTH (2026-06-25 ~06:28Z — COURSE CHANGE: remote test-hardening program)
+> **Operator settled a new strategy (asleep now; admiral oversees, captain OWNS execution).**
+> Stop chasing real-remote runs (feedback loop too slow). Instead build a **test pyramid
+> (L0–L5)** that reproduces remote "separation" (filesystem / git-ref / tmux-process /
+> SSH-transport) cheaply at rising fidelity. Daemon repointed **LOCAL** (gb-mbp DISABLED in
+> workers.yaml, concurrency=4). Plan: `.harmonik/crew/designs/remote-test-strategy-plan.md`
+> (+ `remote-iteration-impasse-plan.md` for moves ①②③, ④ skipped). **THIS block is authoritative;
+> the lane table + directives below are PRE-COURSE-CHANGE and STALE.**
 >
-> **Priority #1 DONE:** leanfleet (`hk-itoc`) CLOSED + codex re-prove/soak (`hk-0639`) PROVEN
-> 5/5 green (harness re-proven e2e under load, ChatGPT-billed off the Anthropic budget).
-> hk-0639 epic still technically OPEN (open-ended soak charter) — operator's close-or-keep call.
+> **THE PROGRAM — kerf work `remote-test-pyramid`, epic `hk-6l941` (assignee gurney). Bead set filed + ranked:**
+> - `hk-hd2w6` **L0** — runner-seam contract: add `daemon.Config.Runner`, thread to DOT gate/cascade,
+>   add the 3 missing `…Via` read variants (gate-verdict `dot_gate.go:551/686` + `autostatusmarker.go:70`
+>   are STILL bare `os.*` = unfixed hk-f3u6o class), + static no-bare-os.* audit + RecordingRunner contract test. **BUILDING on gurney-q.**
+> - `hk-52xnr` **L1** (blocked-by L0) — twin harness on SEPARATED worker FS + Runner injection; deterministic verdict/gate-bug reproduction.
+> - `hk-8u2al` **L2** (←L1) ssh-localhost isolated · `hk-3q92c` **L4** (←L1) fault/chaos+replay ·
+>   `hk-f10xl` **L5** (←L0) per-queue routing (move ②, gate `SelectWorker` workloop.go:2813) + scheduler property tests ·
+>   `hk-yflqo` **L3** (←L2, P2, **LAST**) Docker/Lima containers + Linux-remote · `hk-o85ye` **move-③** (←L0, P2) bead-runs survive daemon restart.
+> - `hk-t1t00` REWRITTEN (premise was wrong: affected-set is `headSHA..HEAD` per scenariogate.go:325-333, `HK_GATE_BASE_SHA` doesn't exist) — folded in, blocked-by L1.
 >
-> **Priority #2 — NOW ACTIVE: Remote Worker validation.** Was gated on this restart; now
-> ungating. Stand up `workers.yaml enabled:true` (in the deploy batch) → prove ONE remote DOT
-> run on gb-mbp before scaling. **gurney was reserved SPARE for this lane.** Gate = hk-scndr DONE
-> + hk-92ih3 (paul) — verify both landed. Local concurrency stays 4.
+> **OPERATING RULES (operator, this program):** all TESTING → low blast-radius, keep moving.
+> Blocking bug mid-stream → SMALL fixes done DIRECTLY out-of-daemon (isolated worktree→review→ff-land),
+> NOT the slow pipeline. Crews MAY use sub-agents but EVERY change reviewed. Review gate = multi-agent
+> consensus of ≥2 DIVERSE agent types, NOT human signoff; split → admiral adjudicates.
 >
-> **Priority #3 — WAIT, do NOT start:** Pi universal-model-gateway (`plans/2026-06-23-pi-openrouter-harness/`)
-> + de-hardcode-messages. Not before remote-worker proven consistent.
+> **Crew state:** gurney = remote-test-pyramid (LOCAL gurney-q, building L0). admiral = oversight + hourly
+> watchdog (holds no beads). watch = resumed. **paul DOWN — HELD** (wake-economy parked). All other
+> initiatives PARKED behind this program (Pi gateway, codex-on-remote, de-hardcode-messages, wake-economy).
+> hk-f3u6o LANDED on main (5999a39a) + CLOSED. gb-mbp re-enable is a later phase (L2/real-remote smoke), not now.
 >
-> **Operator-pending:** (a) `hk-4u1mb` reviewer diff-budget CONFLICTS with shipped `hk-sj6a`
-> heartbeat contract (internal/daemon RED) — captain recommends C (progress-aware discriminator);
-> **operator leaning DEFER**; jamis held off. (b) Governor `liveness_no_progress_n` now SET to 10
-> in config.yaml:63 (was the boot-blocking landmine — RESOLVED); 10 = observe/emit-only default,
-> operator's policy call to change to 0.
->
-> **Deploy batch that rode this restart:** set-concurrency 4 + raise spawn cap (8→~16) + go-install
-> main + governor key set + workers.yaml remote-enable + sync-assets --apply + tag/release-after-soak.
->
-> **Crew missions STALE (4/5):** gurney/jamis/leto/paul mission files describe OLD lanes — RE-STAFF
-> on fresh boot (refresh missions or re-task on adopt). Only watch.md is accurate.
+> **Next staffing decision (when L0 lands):** L5/M3 (←L0) + L2/L4 (←L1) unblock; consider a 2nd crew to
+> parallelize file-disjoint layers (test-harness L2/L4 vs daemon-feature L5/M3) once L0 frees internal/daemon.
 
 ## active_lanes  (PRE-RESTART — STALE as of the 22:50Z restart; see CURRENT TRUTH block above)
 

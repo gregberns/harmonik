@@ -30,11 +30,14 @@
 #   ./scripts/scratch-daemon.sh status <scratch-path>
 #   ./scripts/scratch-daemon.sh down   <scratch-path>
 #   ./scripts/scratch-daemon.sh cycle  <scratch-path>   # down + build + up (the fast loop)
+#   ./scripts/scratch-daemon.sh batch  <scratch-path> <name> --beads id1,id2,...  # submit + structured pass/fail
+#   ./scripts/scratch-daemon.sh batch  <scratch-path> <name> --file  <queue.json> # submit a queue-file batch
 #
 # Options (env vars):
 #   SCRATCH_MAX_CONCURRENT  — daemon --max-concurrent      (default: 1)
 #   SCRATCH_WORKFLOW_MODE   — daemon --workflow-mode        (default: review-loop)
 #   SCRATCH_DAEMON_FLAGS    — extra flags appended verbatim to the daemon start
+#   SCRATCH_BATCH_TIMEOUT   — batch: max seconds to await terminal events (default: 1800)
 #
 # Pairs with the fast remote reproducer:
 #   go test -tags=scenario -run TestScenario_RemoteSubstrate_Localhost_E2E ./internal/daemon/
@@ -358,10 +361,186 @@ cmd_cycle() {
 }
 
 # ---------------------------------------------------------------------------
+# Subcommand: batch  (submit a NAMED batch + collect a structured pass/fail summary)
+# ---------------------------------------------------------------------------
+# Submits a named batch of beads to the SCRATCH daemon's queue, waits for every item
+# to reach a terminal transition, then emits a structured pass/fail summary so a later
+# step (hk-1gkc8) can turn failures into feedback beads.
+#
+# Targets ONLY the scratch socket — `queue submit --project <scratch>` resolves the
+# socket to <scratch>/.harmonik/daemon.sock, and `subscribe --socket <scratch-sock>`
+# reads only that socket. The fleet daemon is never addressed. guard_path (scratch≠
+# fleet) and assert_not_supervised run exactly as the other commands' do.
+#
+# Arg surface (the <name> is the named queue AND the summary label — never hardcoded):
+#   batch <scratch-path> <name> --beads hk-a,hk-b,...   submit those bead IDs
+#   batch <scratch-path> <name> --file  <queue.json>    submit a queue-submit JSON doc
+# Exactly one of --beads / --file is required. The in-file `queue` field is ignored by
+# `queue submit`, so we always pass --queue <name> explicitly (named-queue route).
+#
+# Output contract (stable + parseable — documented for the reviewer and hk-1gkc8):
+#   - A JSON artifact at <scratch>/.harmonik/batch-<name>-<queue_id>.json: an array of
+#       { "bead", "run_id"|null, "verdict": pass|fail|incomplete, "fail_signature"|null }
+#     where fail_signature is a one-line (<=200ch) excerpt of the run's failure summary.
+#     This artifact is the authoritative machine input for the feedback-bead step.
+#   - Stable stdout lines (grep-able), one BATCH_ITEM per item, tab-separated:
+#       BATCH_SUBMIT  name=<name> queue_id=<id> items=<n>
+#       BATCH_ITEM\t<bead>\t<verdict>\t<run_id|->\t<fail_signature|->
+#       BATCH_SUMMARY name=<name> total=<n> pass=<p> fail=<f> incomplete=<i> results=<path>
+#   - 'incomplete' = no terminal event before SCRATCH_BATCH_TIMEOUT elapsed.
+#
+# Exit: 0 if every item passed; 1 if any item failed or stayed incomplete.
+cmd_batch() {
+    local scratch name mode="" beads_csv="" file="" timeout
+    scratch="$(guard_path "${1:-}")"
+    shift || true
+    name="${1:-}"
+    [ -n "$name" ] || die "batch: <name> is required (the named queue / summary label)"
+    case "$name" in --*) die "batch: <name> must come before flags, got '$name'";; esac
+    # <name> becomes both a --queue value and a path segment of the results file, so
+    # restrict it to a safe charset (rejects '/', '..', etc. — no writes outside .harmonik).
+    case "$name" in *[!A-Za-z0-9._-]*) die "batch: <name> must match ^[A-Za-z0-9._-]+\$ (got '$name')";; esac
+    shift || true
+
+    # Parse the input-mode flags. Exactly one of --beads / --file is accepted.
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --beads)   [ $# -ge 2 ] || die "batch: --beads needs a value"; beads_csv="$2"; mode="beads"; shift 2;;
+            --beads=*) beads_csv="${1#--beads=}"; mode="beads"; shift;;
+            --file)    [ $# -ge 2 ] || die "batch: --file needs a value";  file="$2";       mode="file";  shift 2;;
+            --file=*)  file="${1#--file=}";       mode="file";  shift;;
+            *) die "batch: unknown flag '$1' (use --beads id,id,... or --file <queue.json>)";;
+        esac
+    done
+    [ -n "$mode" ] || die "batch: one of --beads <ids> or --file <queue.json> is required"
+
+    timeout="${SCRATCH_BATCH_TIMEOUT:-1800}"
+    command -v jq >/dev/null 2>&1 || die "batch: jq is required to parse the event stream"
+
+    # Fleet-safety: same guard the kill/stop paths use, even on the already-up path.
+    assert_not_supervised "$scratch"
+
+    local bin sock
+    bin="$(scratch_bin "$scratch")"
+    [ -x "$bin" ] || die "scratch binary not built — run: $0 build $scratch"
+    sock="$(scratch_sock "$scratch")"
+
+    # 1) Ensure the scratch daemon is up — reuse cmd_up; never duplicate up-logic.
+    if [ -S "$sock" ]; then
+        echo "[scratch-daemon] batch: scratch daemon already up (socket $sock)"
+    else
+        echo "[scratch-daemon] batch: scratch daemon not up — bringing it up"
+        cmd_up "$scratch"
+    fi
+
+    # 2) Compute the expected bead set (drives the wait + the summary rows).
+    local expected_json item_count
+    if [ "$mode" = "beads" ]; then
+        expected_json="$(printf '%s' "$beads_csv" | jq -R -c 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length>0))')"
+    else
+        [ -f "$file" ] || die "batch: queue file '$file' not found"
+        expected_json="$(jq -c '[.groups[].items[].bead_id]' "$file")" || die "batch: cannot read bead IDs from '$file'"
+    fi
+    item_count="$(printf '%s' "$expected_json" | jq 'length')"
+    [ "$item_count" -gt 0 ] || die "batch: no bead IDs resolved from the $mode input"
+
+    # 3) Arm the terminal-event reader BEFORE submitting (no missed-event race), on the
+    #    scratch socket ONLY. One subscribe sees every run regardless of submitter.
+    local raw sub_pid
+    raw="$(mktemp "${TMPDIR:-/tmp}/scratch-batch.XXXXXX")"
+    "$bin" subscribe --socket "$sock" \
+        --types run_started,run_completed,run_failed --heartbeat 30s \
+        >"$raw" 2>>"$(scratch_log "$scratch")" &
+    sub_pid=$!
+    # Tear down the background reader + temp stream on any exit; keep the results file.
+    trap 'kill "$sub_pid" 2>/dev/null || true; rm -f "$raw" 2>/dev/null || true' EXIT
+
+    # 4) Submit the named batch to the SCRATCH queue (always pass --queue: the in-file
+    #    queue field is ignored, so a named route requires the explicit flag).
+    echo "[scratch-daemon] batch: submitting $item_count item(s) to queue '$name' (project=$scratch)"
+    local submit_out queue_id
+    if [ "$mode" = "beads" ]; then
+        submit_out="$("$bin" queue submit --project "$scratch" --queue "$name" --beads "$beads_csv" --json)" \
+            || die "batch: queue submit failed (--beads)"
+    else
+        submit_out="$("$bin" queue submit --project "$scratch" --queue "$name" "$file" --json)" \
+            || die "batch: queue submit failed (--file)"
+    fi
+    queue_id="$(printf '%s' "$submit_out" | jq -r '.queue_id // empty')"
+    [ -n "$queue_id" ] || queue_id="noqid"
+    echo "BATCH_SUBMIT name=$name queue_id=$queue_id items=$item_count"
+
+    # jq program: fold the NDJSON event stream into one result row per expected bead.
+    # Builds run_id→bead_id from run_started, takes the LAST terminal per bead (review-
+    # loop may retry), and marks any bead with no terminal as 'incomplete'.
+    local jq_filter
+    jq_filter='
+def oneline: (. // "") | gsub("[\r\n\t]+"; " ") | .[0:200];
+[inputs] as $events
+| ( [ $events[] | select(.type=="run_started")
+      | { key: (.payload.run_id // (.run_id | tostring)), value: (.payload.bead_id // "?") } ]
+    | from_entries ) as $r2b
+| ( [ $events[] | select(.type=="run_completed" or .type=="run_failed")
+      | { bead: ($r2b[(.payload.run_id // (.run_id | tostring))] // "?"),
+          run_id: (.payload.run_id // (.run_id | tostring)),
+          success: (.payload.success // false),
+          summary: (.payload.summary // "") } ]
+    | group_by(.bead) | map(.[-1]) | map({ (.bead): . }) | add // {} ) as $byBead
+| [ $expected[] | . as $b | ($byBead[$b] // null) as $t
+    | if $t == null
+      then { bead: $b, run_id: null, verdict: "incomplete", fail_signature: null }
+      else { bead: $b, run_id: $t.run_id,
+             verdict: (if $t.success then "pass" else "fail" end),
+             fail_signature: (if $t.success then null else ($t.summary | oneline) end) }
+      end ]'
+
+    # 5) Poll the growing stream until every expected bead is terminal, or timeout.
+    # The background subscribe is concurrently appending to $raw, so a poll can catch a
+    # half-written trailing line and make jq error. A transient parse error MUST NOT be
+    # read as "all complete" (that would write an empty results file and exit 0 — a
+    # silent false-pass that corrupts the verdict hk-1gkc8 consumes). So we ONLY accept a
+    # poll whose parse SUCCEEDED and yields all $item_count rows; anything else keeps
+    # waiting until the deadline. The baseline 'results' (every item incomplete) is kept
+    # until the first clean parse, so a real timeout still reports incompletes + exits 1.
+    echo "[scratch-daemon] batch: awaiting terminal transitions (timeout ${timeout}s)..."
+    local deadline results parsed incomplete
+    deadline=$(( $(date +%s) + timeout ))
+    results="$(printf '%s' "$expected_json" | jq -c 'map({bead: ., run_id: null, verdict: "incomplete", fail_signature: null})')"
+    while :; do
+        if parsed="$(jq -n --argjson expected "$expected_json" "$jq_filter" "$raw" 2>/dev/null)" \
+            && [ "$(printf '%s' "$parsed" | jq 'length')" -eq "$item_count" ]; then
+            results="$parsed"
+            incomplete="$(printf '%s' "$results" | jq '[.[] | select(.verdict=="incomplete")] | length')"
+            if [ "$incomplete" -eq 0 ]; then break; fi
+        fi
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            incomplete="$(printf '%s' "$results" | jq '[.[] | select(.verdict=="incomplete")] | length')"
+            echo "[scratch-daemon] batch: timeout after ${timeout}s — $incomplete item(s) still incomplete" >&2
+            break
+        fi
+        sleep 3
+    done
+
+    # 6) Emit the structured summary: JSON artifact + stable stdout lines.
+    local results_file total pass fail
+    results_file="$scratch/.harmonik/batch-${name}-${queue_id}.json"
+    printf '%s\n' "$results" >"$results_file"
+    total="$(printf '%s' "$results" | jq 'length')"
+    pass="$(printf '%s' "$results" | jq '[.[] | select(.verdict=="pass")] | length')"
+    fail="$(printf '%s' "$results" | jq '[.[] | select(.verdict=="fail")] | length')"
+    printf '%s' "$results" \
+        | jq -r '.[] | "BATCH_ITEM\t\(.bead)\t\(.verdict)\t\(.run_id // "-")\t\(.fail_signature // "-")"'
+    echo "BATCH_SUMMARY name=$name total=$total pass=$pass fail=$fail incomplete=$incomplete results=$results_file"
+
+    # Non-zero exit if anything failed or stayed incomplete, so callers can branch on it.
+    [ "$fail" -eq 0 ] && [ "$incomplete" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 usage() {
-    sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 main() {
@@ -374,6 +553,7 @@ main() {
         status) cmd_status "$@";;
         down)   cmd_down   "$@";;
         cycle)  cmd_cycle  "$@";;
+        batch)  cmd_batch  "$@";;
         ""|-h|--help|help) usage;;
         *) die "unknown subcommand '$sub' — run '$0 --help'";;
     esac

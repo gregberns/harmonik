@@ -25,9 +25,10 @@ Boot files per AGENTS.md §"Per-role load map" + STARTUP.md Steps 0a/0b/0c/1. Fi
 | 1d | `.claude/skills/orchestrator-rules/SKILL.md` | 19,584 | 4,896 | standing-rules contract |
 | 1e | `HANDOFF.md` | absent | 0 | (variable; typical ~1,250–3,750 tokens when present) |
 | — | `AGENTS.md` (always injected by harness) | 10,380 | 2,595 | project CLAUDE.md |
+| — | `~/.claude/CLAUDE.md` (global user instructions, always injected) | 7,356 | 1,839 | cross-project behavioral guidelines; same for every role |
 
-**Captain cold boot total (excluding HANDOFF): ~40,509 tokens**  
-With a typical HANDOFF (~8k chars): **~42,509 tokens**
+**Captain cold boot total (excluding HANDOFF): ~42,348 tokens**  
+With a typical HANDOFF (~8k chars): **~44,348 tokens**
 
 Not loaded at cold boot per STARTUP.md §1 "SLIM COLD-BOOT": `agent-comms/SKILL.md` (2,730 tokens) and `harmonik-dispatch/SKILL.md` (2,303 tokens) are deferred to first use of each surface.
 
@@ -42,8 +43,9 @@ Per STARTUP.md "On resume after a restart-now cycle": tier-3 + tier-2 (Steps 0a/
 | direction-log.md | 699 |
 | HANDOFF.md (prior session) | ~2,500 variable |
 | AGENTS.md (injected) | 2,595 |
+| `~/.claude/CLAUDE.md` (injected) | 1,839 |
 
-**Resume total: ~13,016 tokens** (the remainder re-hydrates from cached context)
+**Resume total (without HANDOFF): ~12,355 tokens**; with HANDOFF: **~14,855 tokens** (the remainder re-hydrates from cached context)
 
 ### 1.3 Crew (cold boot)
 
@@ -57,9 +59,10 @@ Per AGENTS.md §"Per-role load map": mission file + crew-launch + agent-comms + 
 | `.claude/skills/beads-cli/SKILL.md` | 7,624 | 1,906 |
 | `.claude/skills/harmonik-dispatch/SKILL.md` | 9,210 | 2,303 |
 | `AGENTS.md` (injected) | 10,380 | 2,595 |
+| `~/.claude/CLAUDE.md` (injected) | 7,356 | 1,839 |
 
-**Crew cold boot total: ~16,515 tokens** (with typical mission file)  
-Admiral mission (14,276 chars = 3,569 tokens) pushes admiral boot to ~19,061 tokens.
+**Crew cold boot total: ~18,354 tokens** (with typical mission file)  
+Admiral mission (14,276 chars = 3,569 tokens) pushes admiral boot to ~20,900 tokens.
 
 ### 1.4 Implementer-Orchestrator (session-resume)
 
@@ -73,20 +76,23 @@ Per AGENTS.md §"Per-role load map": AGENT_INDEX + STATUS + HANDOFF + orchestrat
 | `.claude/skills/orchestrator-rules/SKILL.md` | 19,584 | 4,896 |
 | `.claude/skills/harmonik-dispatch/SKILL.md` | 9,210 | 2,303 |
 | `AGENTS.md` (injected) | 10,380 | 2,595 |
+| `~/.claude/CLAUDE.md` (injected) | 7,356 | 1,839 |
 
-**Implementer-orchestrator total (without HANDOFF): ~16,045 tokens**  
-With typical HANDOFF (~8k chars): **~18,045 tokens**
+**Implementer-orchestrator total (without HANDOFF): ~17,884 tokens**  
+With typical HANDOFF (~8k chars): **~19,884 tokens**
 
 ### 1.5 Summary
 
+All roles include two always-injected files not specific to any role: `AGENTS.md` (2,595 tokens) and `~/.claude/CLAUDE.md` (1,839 tokens) = **4,434 tokens of fixed cross-role overhead**.
+
 | Role | Boot tokens (no HANDOFF) | With HANDOFF |
 |------|------------------------:|-------------:|
-| Captain — cold boot | ~40,509 | ~42,509 |
-| Captain — keeper-restart resume | ~13,016 | ~15,516 |
-| Crew — cold boot (typical mission) | ~15,492 | N/A (mission IS the handoff) |
-| Implementer-orchestrator | ~16,045 | ~18,045 |
+| Captain — cold boot | ~42,348 | ~44,348 |
+| Captain — keeper-restart resume | ~12,355 | ~14,855 |
+| Crew — cold boot (no mission) | ~17,331 | ~18,354 (with typical mission) |
+| Implementer-orchestrator | ~17,884 | ~19,884 |
 
-Captain cold boot is **2.5× crew boot**, driven mainly by STARTUP.md (11,768 tokens) + SKILL.md (11,423 tokens) comprising 57% of captain's total.
+Captain cold boot is **2.4× crew cold boot** (with mission), driven mainly by STARTUP.md (11,768 tokens) + SKILL.md (11,423 tokens) comprising 54% of captain's total load.
 
 ---
 

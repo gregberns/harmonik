@@ -123,6 +123,35 @@ When a submitted batch returns failures (a group reaches complete-with-failures,
 
 **MAJOR-ISSUE FAN-OUT (HARD RULE).** When a wedge/failure has survived ≥2 fix attempts OR the root cause has flip-flopped ≥2×: STOP single-thread investigation and trigger the fan-out — 10–15 agents at DISTINCT angles + ≥2 adversarial verifiers that can OVERRULE a wrong synthesis. **NEVER hand-grep `events.jsonl` by `run_id`** — use `jq 'select(.run_id == "<id>")'` or `harmonik subscribe --json`. Full protocol: the **major-issue-fanout** skill.
 
+## §Autonomy
+
+**The CANONICAL home of the KNOWN-vs-brand-new definition (stated ONCE here; every role file — captain, admiral, watch — carries only a one-line POINTER back to this section).** These are principles, not rules: each names the intent + the tiebreaker and trusts the agent. They dissolve the stall class where "resume a known, parked, already-ranked lane" gets mis-classified as "rank a brand-new initiative" (the operator-only class) and the fleet sits idle on standing authority.
+
+### Self-authorization (the KNOWN-vs-brand-new definition)
+
+A lane recorded in **any durable doc** (`captain-lanes.md`, `admiral-initiatives.md`, `lanes.json`, the direction-log, a prior HANDOFF, or any past `kerf next`) — or **ever ranked** — is a **KNOWN** lane. Resuming it, un-parking it, or re-staffing it is the orchestrator's (captain's and admiral's) **own call** — *even when it is currently parked or shows zero ready beads in the live feed this instant.* Only a **never-before-recorded** initiative is the operator's to rank. A lane is **GATED only when a named, dated, owned, expiring gate is present**; absence of a live named gate means KNOWN/resumable.
+
+Ambiguity guidance: if unsure whether a lane is "known" or "brand-new" and it appears in any durable doc, **treat it as KNOWN and act.**
+
+### WIP-first is a TIEBREAKER, never a veto
+
+When picking the next thing, default to advancing started work before unstarted epics. This is a TIEBREAKER for "all else equal," NOT a rule.
+
+- The operator can reprioritize anything, anytime. WIP-first never overrides a fresh operator directive.
+- **EXPLICIT GUARDRAIL: no agent may EVER cite started-work as a reason it "can't" reshuffle priorities.** "We can't drop this, it's in-flight" is a **forbidden sentence.** Catching yourself about to refuse a reprioritization on WIP grounds IS the signal you've turned a tiebreaker into a veto — don't.
+
+### Refresh-then-act is LIGHT
+
+Re-derive the **ONE fact you're about to act on** — NOT re-audit everything.
+
+Act on the **boot-digest's live numbers**, never on a claim carried in a doc or handoff. STARTUP already says this for HANDOFF; **generalize it to ALL durable docs.** The digest output IS the fresh fact, by construction. For a one-off in-loop action between boots, re-derive only the single fact you're betting on (e.g. `br ready --parent <epic> --limit 0` for the lane you're about to staff) — a glance, not a re-audit.
+
+### "Operator away" is NOT a HOLD trigger
+
+"Operator away" is NOT a HOLD trigger. Away + ready KNOWN work = staff it (autonomous). "Lean" means don't SPECULATIVELY spin up NEW crews for empty-backlog lanes — it does NOT mean leave ready, already-ranked work unstaffed.
+
+> **Project-only override.** This corrects the `feedback_captain_lean_while_operator_away` memory note's over-read ("away → HOLD ready work") at the project layer. Do NOT amend the cross-project `~/.claude/CLAUDE.md`.
+
 ## Review and quality gates
 
 **REVIEW GATE IS NOT OPTIONAL.** Before merging substantive work, a separate reviewer (or a fresh-context re-read) must approve. Anything beyond a typo / one-line fix gets the gate.

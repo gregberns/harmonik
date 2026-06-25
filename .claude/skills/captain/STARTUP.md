@@ -74,9 +74,32 @@ cat .harmonik/context/captain-lanes.md
 # If missing: treat active_lanes as unknown — Step 2 ground-truth derives it.
 ```
 
+**0c — Tier-2 direction-log (READ BEFORE acting):**
+
+```bash
+cat .harmonik/context/direction-log.md
+# Append-only sequencing intent: one entry per direction CHANGE
+# (WHAT / WHY / RETURN-PATH / expires). This is the file a fresh /clear reads to
+# recover "why we paused X for Y and in what order we resume." READ it before you
+# form or act on any plan — its RETURN-PATH is ground truth for SEQUENCING intent.
+# An entry past its `expires:` LAPSES to "resume the standing autonomous posture"
+# (NEVER a hold) — surface an expired-but-present entry; do not obey it.
+# Folder-scoped how-to-use directives: .harmonik/context/AGENTS.md (CLAUDE.md symlink).
+# If missing: no recorded direction change — proceed from tier-2/tier-3 + the digest.
+```
+
+> **`lanes.json` is NOT a boot-read.** `.harmonik/context/lanes.json` (the
+> machine-readable lane→epic index) is read by the every@5m ops-monitor, not by the
+> captain at boot. You keep it in sync when you add/retask/park a lane (per
+> `.harmonik/context/AGENTS.md`), but you do not cat it during boot.
+
+> **Boot-read order (Track C):** tier-3 (project.yaml) → tier-2 (captain-lanes.md)
+> → direction-log.md → orchestrator-rules. Read direction-log.md BEFORE acting.
+
 > **Update discipline:** the tier-3 file changes rarely (phase shifts, new locked
-> decisions). The tier-2 file changes per session (lane assignments, epic
-> handoffs). Update captain-lanes.md at the END of each session before writing
+> decisions). The tier-2 files change per session (lane assignments, epic
+> handoffs; a direction-log entry on every direction CHANGE). Update captain-lanes.md
+> and append any direction-log entry at the END of each session before writing
 > HANDOFF.md so the next boot reads accurate lane state.
 
 ---
@@ -227,8 +250,13 @@ bead and react" is the failure mode — this step forbids it.
 
 > kerf is the priority source of truth — and **executing that existing ranking is
 > AUTONOMOUS** (captain skill §0 / R-C4.6). Organize the KNOWN `kerf next` / `br
-> ready` feed into lanes and STAFF them without asking. You surface-and-await ONLY
-> to rank a brand-NEW initiative that has no existing `kerf next` priority (§8).
+> ready` feed into lanes and STAFF them without asking. **Resuming / un-parking /
+> re-staffing a KNOWN parked or drained lane is equally AUTONOMOUS** — a lane
+> recorded in ANY durable doc (captain-lanes / admiral-initiatives / lanes.json /
+> direction-log / a prior HANDOFF) or ever ranked is KNOWN, even when it is parked or
+> shows zero ready beads right now. You surface-and-await ONLY to rank a brand-NEW
+> initiative **never recorded in any durable doc and never ranked** (§8). Canonical:
+> orchestrator-rules §Autonomy.
 
 Write the plan as a **lane table** (one lane = one epic = one crew). For each:
 
@@ -247,7 +275,7 @@ Write the plan as a **lane table** (one lane = one epic = one crew). For each:
   on an open epic or an in-flight keystone change — it will silently insta-fail at
   dispatch (group_failure, no run_started). Mark those "BLOCKED — do not dispatch
   yet." Only *safe-now* beads get dispatched this session.
-- Fill every non-conflicting lane **that has ready beads** — idle lanes are wasted throughput. **LAZY BOOT (boot-spike Lever 3):** a lane whose epic has ZERO ready beads (`br ready` shows none) AND no in-flight run is marked **PARKED — no ready beads** in the lane table and is NOT staffed at boot. Booting a crew for an empty-backlog lane spends Opus cache_creation for a session that will immediately idle (the boot spike). The ops-monitor **backlog-ready flag** (Step 6 / CE4) re-staffs a PARKED lane the moment ready work + a free slot coexist — so lazy boot loses no throughput, it just defers the cost to when there is work.
+- Fill every non-conflicting lane **that has ready beads** — idle lanes are wasted throughput. **LAZY BOOT (boot-spike Lever 3):** a lane whose epic has ZERO ready beads (`br ready` shows none) AND no in-flight run is marked **PARKED — no ready beads** in the lane table and is NOT staffed at boot. Booting a crew for an empty-backlog lane spends Opus cache_creation for a session that will immediately idle (the boot spike). The ops-monitor **backlog-ready flag** (Step 6 / CE4) re-staffs a PARKED lane the moment ready work + a free slot coexist — so lazy boot loses no throughput, it just defers the cost to when there is work. **"PARKED — no ready beads" is a FACT, fully decoupled from "operator-GATED."** It does NOT mean the lane is held for the operator: resuming it the instant ready work + a free slot coexist is AUTONOMOUS (§0). A lane is GATED only when a named, dated, owned, expiring gate is present (in `lanes.json`, a non-null unexpired `gate`); absence of a live named gate means KNOWN/resumable. Canonical: orchestrator-rules §Autonomy.
 
 SURFACE the plan to the operator (dual-channel — status line AND `comms send --to
 operator --topic status`) for VISIBILITY, then proceed to Step 5 to staff every
@@ -476,10 +504,13 @@ and more often, so the resume MUST be cheap — re-running the full heavy STARTU
 time would burn the very context the lower band saves. So:
 
 - Re-drain comms (`comms recv --follow --json | head -60`) before forming any plan.
-- **Read tier-3/tier-2 (Steps 0a/0b) + run `scripts/captain-boot-digest.sh` ONCE.**
-  The digest is the SINGLE verification pass. **TRUST the cached tier-2/tier-3 state
-  as INPUT** — mid epics and long-horizon goals are stable across a restart and you do
-  NOT re-derive them. The handoff carries INTENT only; trust that intent.
+- **Read tier-3/tier-2 (Steps 0a/0b/0c — incl. `direction-log.md`) + run
+  `scripts/captain-boot-digest.sh` ONCE.** The digest is the SINGLE verification pass.
+  **TRUST the cached tier-2/tier-3 state as INPUT** — mid epics and long-horizon goals
+  are stable across a restart and you do NOT re-derive them. The handoff carries INTENT
+  only; trust that intent. The direction-log's RETURN-PATH is the sequencing intent
+  `/clear` would otherwise destroy — read it before acting (an expired entry LAPSES to
+  the standing autonomous posture, never a hold).
 - **Full Step-2 re-derivation (the individual reference commands) is only for a COLD
   boot or a digest-flagged discrepancy** — if the digest shows a crew/queue/daemon
   state that conflicts with tier-2, reconcile that specific item; otherwise proceed

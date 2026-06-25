@@ -12,6 +12,17 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-06-25 ~19:39Z — operator (via admiral) · expires: 2026-07-02
+WHAT: 3 parallel side-quests added ALONGSIDE the headline (remote stays #1). (a) NOW: stand up an
+      orphan-backlog SCAVENGER — one standing crew, 1-item serial queue, codex-first + DOT review,
+      drains the starved low-pri/orphan tail. (b) NEXT: DECOMPOSE token-opt #2 into ready beads. (c)
+      WHEN-SLOTS: SCOPE (not build) a separated test-daemon kerf harness (test codex/daemon changes
+      without restarting the live daemon; unifies with the remote test-daemon spike).
+WHY:  ~125 ready beads / 71 P2 sit starved; fill slots + drain backlog in parallel while remote deploys.
+ORDER: scavenger NOW → token-opt #2 decomposed/staged → test-daemon harness scoped when slots free.
+RETURN-PATH: scavenger=thufir LIVE (epic hk-0kr4j); token-opt #2 decomposed (hk-017sc/hk-ln48u; AO held
+      for scope-reconcile vs live watch cutover); test-daemon scope = NOT STARTED (resume here when slots free).
+
 ## 2026-06-25 ~19:10Z — operator (via admiral) · expires: 2026-07-09
 WHAT: confirmed the active priority SEQUENCE (lanes run PARALLEL where slots + disjoint work allow).
 WHY:  get remote working RELIABLY first — it is the unlock to raise concurrency 4→8 (more active work).

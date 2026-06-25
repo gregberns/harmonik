@@ -109,6 +109,15 @@ RELEASE_DUE_COMMIT_THRESHOLD=50  # unreleased commits on main since last vX.Y.Z 
 # The underlying check and the captain's every-5m [ESCALATION] on ops-monitor are unaffected;
 # only the operator-page channel is throttled.
 OPS_CRITICAL_COOLDOWN=1800  # 30 minutes
+# hk-ohb8p Fix B: persistent-condition throttle. A critical signal re-alerts at the
+# 5-min CRITICAL_IMMEDIATE_COOLDOWN cadence ONLY while it is fresh. Once it has been
+# firing continuously past the persistence threshold (tier-3: count>=OPS_CRITICAL_COUNT
+# OR elapsed>=OPS_CRITICAL_ELAPSED — i.e. the fix has had ~30 min to land and the
+# condition is clearly known/acknowledged), its captain-facing re-alert cadence drops
+# to PERSISTENT_IMMEDIATE_COOLDOWN so a known-and-in-flight condition stops flooding the
+# bus every 5 min for hours. A NEW distinct signal-identity still fires at the fast 5-min
+# cadence; when this condition clears its state is dropped and it re-alerts fresh.
+PERSISTENT_IMMEDIATE_COOLDOWN=1800  # 30 minutes (was 5 min before the condition persisted)
 
 mkdir -p "$OUT_DIR"
 
@@ -525,6 +534,7 @@ prev_digest             = int('$PREV_LAST_DIGEST')
 prev_alerted            = json.loads('''$PREV_ALERTED_IMMEDIATE''')
 immediate_cooldown          = int('$IMMEDIATE_COOLDOWN')
 critical_immediate_cooldown = int('$CRITICAL_IMMEDIATE_COOLDOWN')
+persistent_immediate_cooldown = int('$PERSISTENT_IMMEDIATE_COOLDOWN')
 ops_critical_count   = int('$OPS_CRITICAL_COUNT')
 ops_critical_elapsed = int('$OPS_CRITICAL_ELAPSED')
 inert_suppress     = json.loads('''$INERT_SUPPRESS_JSON''')
@@ -601,6 +611,39 @@ def _ev_epoch(_tw, _dt):
 latest_event_id = ''  # last event_id seen in the scan window
 _cursor_seq = -1      # _event_seq where watch_cursor was found; -1 = not in window
 events_past_cursor = False
+# WE9 / hk-ohb8p Fix A: actionable-event tracking for the cursor-stall check.
+# A frozen cursor while only BENIGN churn (run lifecycle, heartbeats, bead create/
+# close, agent_message) flows past it is the watch CORRECTLY declining to escalate a
+# healthy fleet — NOT a stall. watch-stalled must fire only when escalation-WORTHY
+# work is accumulating past the cursor and the watch is ignoring it. We reuse the
+# watch's own notion of "actionable" — the failure / halt / decision / safety event
+# classes the watch exists to escalate — rather than inventing a new taxonomy.
+#   _last_actionable_seq — _event_seq of the LAST actionable event in the window
+#                          (-1 = none). Compared to _cursor_seq below: an actionable
+#                          event AFTER the cursor means the watch is sitting on real work.
+_last_actionable_seq = -1
+actionable_events_past_cursor = False
+# Escalation-worthy event types (the watch's escalation surface). Deliberately EXCLUDES
+# routine churn: run_started / run_completed / agent_message / agent_heartbeat /
+# agent_ready / bead_closed / queue_* / node_dispatch_* / metric / *_completed lifecycle.
+ACTIONABLE_EVENT_TYPES = frozenset((
+    'run_failed', 'run_stale', 'run_canceled',
+    'agent_failed', 'agent_ready_timeout', 'agent_warning_silent_hang',
+    'post_agent_ready_hang', 'launch_stall_detected', 'tmux_new_window_timeout',
+    'liveness_halt', 'no_progress_detected', 'loop_observed_phantom_done',
+    'worker_unhealthy', 'worker_offline', 'worker_tunnel_failed',
+    'merge_build_failed', 'merge_conflict_escalation',
+    'review_bypassed', 'review_fixup_stalled', 'review_gate_anomaly',
+    'reviewer_budget_exceeded', 'verdict_envelope_mismatch',
+    'spawn_cap_blocked', 'budget_exhausted', 'disk_low',
+    'infrastructure_unavailable', 'daemon_degraded', 'daemon_startup_failed',
+    'resource_breach', 'bus_overflow', 'governor_signal', 'liveness_violated',
+    'operator_escalation_required', 'gate_escalated',
+    'decision_required', 'decision_needed',
+    'store_divergence_detected', 'bead_ledger_corrupt', 'bead_sync_failed',
+    'session_keeper_watcher_dead', 'session_keeper_blind', 'session_keeper_hard_ceiling',
+    'session_keeper_cycle_aborted',
+))
 
 _events_path = _os.path.join(proj, '.harmonik', 'events', 'events.jsonl')
 if _os.path.isfile(_events_path):
@@ -734,6 +777,9 @@ if _os.path.isfile(_events_path):
                     latest_event_id = _eid_any
                     if _eid_any == watch_cursor:
                         _cursor_seq = _event_seq
+                # hk-ohb8p Fix A: record the position of the last escalation-worthy event.
+                if _etype in ACTIONABLE_EVENT_TYPES:
+                    _last_actionable_seq = _event_seq
             except Exception:
                 pass
         # WE9: compute events_past_cursor after scanning the window
@@ -741,9 +787,16 @@ if _os.path.isfile(_events_path):
             if _cursor_seq >= 0:
                 # cursor found in window; events past it if any were processed after
                 events_past_cursor = _event_seq > _cursor_seq
+                # hk-ohb8p Fix A: of those, is any ESCALATION-WORTHY? Only an actionable
+                # event strictly after the cursor means the watch is ignoring real work.
+                actionable_events_past_cursor = _last_actionable_seq > _cursor_seq
             else:
                 # cursor not in last 256KB: either too old (events past it) or file empty
                 events_past_cursor = bool(latest_event_id and latest_event_id != watch_cursor)
+                # Cursor scrolled out of the 256KB window. If there is ANY actionable
+                # event in the visible window, the watch is behind on escalation-worthy
+                # work; benign-only churn past an out-of-window cursor is not a stall.
+                actionable_events_past_cursor = events_past_cursor and _last_actionable_seq >= 0
     except Exception:
         pass
 
@@ -996,14 +1049,24 @@ if watch_info:
 watch_down = watch_opsmonitor_target != 'captain' and not watch_present and not watch_tmux_alive
 
 # ── WE9: cursor-advancement stall check ─────────────────────────────────────
-# A watch alive but not advancing its escalation cursor while events accumulate →
-# ops-monitor IMMEDIATE 'watch-stalled' after watch_stall_ticks consecutive ticks.
-# Reuses the stale_crew_misses/prev_misses pattern (:692, :369).
+# A watch alive but not advancing its escalation cursor while ESCALATION-WORTHY
+# events accumulate → ops-monitor IMMEDIATE 'watch-stalled' after watch_stall_ticks
+# consecutive ticks. Reuses the stale_crew_misses/prev_misses pattern (:692, :369).
+#
+# hk-ohb8p Fix A: the gate is actionable_events_past_cursor, NOT events_past_cursor.
+# On a QUIET fleet the watch's escalation cursor legitimately stays frozen (there is
+# nothing actionable to escalate) while benign backlog churn — bead create/close and
+# routine run lifecycle (run_started / run_completed / agent_message / heartbeats) —
+# keeps pushing events past the cursor. Gating on bare events_past_cursor fired an
+# every-tick (~5 min) watch-stalled IMMEDIATE on a HEALTHY fleet (54% of bus traffic
+# in the worst incident). We now only count the stall when at least one escalation-
+# worthy event (failure / halt / decision / safety class — see ACTIONABLE_EVENT_TYPES)
+# is sitting past the cursor unescalated. Benign churn no longer trips the counter.
 new_watch_stall_misses = 0
 watch_stalled = False
 if watch_opsmonitor_target != 'captain' and watch_cursor:
     cursor_frozen = prev_watch_cursor != '' and watch_cursor == prev_watch_cursor
-    if cursor_frozen and events_past_cursor:
+    if cursor_frozen and actionable_events_past_cursor:
         new_watch_stall_misses = prev_watch_stall_misses + 1
         if new_watch_stall_misses >= watch_stall_ticks:
             watch_stalled = True
@@ -1179,6 +1242,16 @@ for sig in immediate_signals:
     if prev_entry is not None:
         if is_crit:
             last_ts = prev_entry.get('last_ts', prev_entry['first_ts'])
+            # hk-ohb8p Fix B: persistent-condition throttle. Once THIS signal-identity
+            # has been firing continuously long enough to reach tier-3 (count or elapsed
+            # threshold) — i.e. it is a known, acknowledged, presumably-fix-in-flight
+            # condition — drop its captain-facing re-alert cadence from 5 min to 30 min.
+            # A NEW distinct signal (no prev_entry, or not yet persistent) keeps the fast
+            # 5-min cadence. Keyed per-signal because prev_entry is per signal-identity.
+            _prev_count   = prev_entry.get('count', 1)
+            _prev_elapsed = ts_epoch - prev_entry.get('first_ts', ts_epoch)
+            if _prev_count >= ops_critical_count or _prev_elapsed >= ops_critical_elapsed:
+                cd = max(cd, persistent_immediate_cooldown)
             if ts_epoch - last_ts >= cd:
                 send_immediate_signals.append(sig)
                 new_alerted[sig] = {

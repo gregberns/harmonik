@@ -1227,10 +1227,13 @@ rm -rf "$PROJ"
 # ── Test 23: escalation tier-3 by elapsed — elapsed>=1800s sends ops-CRITICAL ─
 echo ""
 echo "=== Test 23: escalation tier-3 by elapsed (elapsed>1800s, ops-CRITICAL sent) ==="
+# hk-ohb8p Fix B: a signal persistent past tier-3 re-alerts on the SLOW 30-min cadence,
+# not the 5-min one. last_ts must be >=30 min old for this run to actually send (and
+# thus produce a tier-3 escalation entry). first_ts 32 min ago → elapsed>1800 → tier 3.
 STATE_23=$(python3 -c "
 import json, time
 now = int(time.time())
-entry = {'first_ts': now - 1900, 'last_ts': now - 360, 'count': 3}
+entry = {'first_ts': now - 1920, 'last_ts': now - 1920, 'count': 7}
 print(json.dumps({'stale_crew_misses': {}, 'last_digest_ts': 0,
                   'alerted_immediate': {'daemon-down': entry}}))
 ")
@@ -1658,12 +1661,14 @@ else
 fi
 rm -rf "$PROJ"
 
-# ── Test 28: ops-CRITICAL cooldown — tier-3 but ops-CRITICAL recently sent → no re-send ─
-# supervisor-down has been down for 1h (count=10, tier-3) but ops-CRITICAL was sent 6 min
-# ago. OPS_CRITICAL_COOLDOWN=30m → cooldown active → no ops-CRITICAL this run.
-# The captain still gets the regular [ESCALATION] on ops-monitor (not suppressed).
+# ── Test 28: persistent-condition throttle — tier-3 + recent last_ts → SUPPRESSED (hk-ohb8p Fix B) ─
+# supervisor-down has been down for 1h (count=10 → tier-3 / persistent) and the LAST captain
+# alert went out 6 min ago. Under the persistent-condition throttle, a known/persistent signal
+# re-alerts on the 30-min cadence, NOT the 5-min one. 6 min < 30 min → NO send this run at all:
+# no captain re-alert AND no ops-CRITICAL. This is the core of hk-ohb8p — a known, fix-in-flight
+# condition must stop flooding the bus every 5 min for hours.
 echo ""
-echo "=== Test 28: ops-CRITICAL cooldown — tier-3 + recent last_ops_critical_ts → no re-send ==="
+echo "=== Test 28: persistent-condition throttle — tier-3 + recent last_ts → suppressed (Fix B) ==="
 STATE_28=$(python3 -c "
 import json, time
 now = int(time.time())
@@ -1681,41 +1686,49 @@ PROJ=$(setup_fixture \
 )
 run_check "$PROJ" > /dev/null 2>&1
 LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
-# Verify supervisor-down is still in send_immediate_signals (captain still alerted)
+# supervisor-down must STILL be detected (in immediate_signals — the condition is real)…
+IMM_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+if echo "$IMM_SIGS" | grep -qF "supervisor-down"; then
+  pass "28: supervisor-down still detected in immediate_signals (condition is real)"
+else
+  fail "28: supervisor-down missing from immediate_signals (should still be detected)"
+fi
+# …but NOT re-sent this tick (persistent throttle: 6 min < 30 min).
 SEND_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
 if echo "$SEND_SIGS" | grep -qF "supervisor-down"; then
-  pass "28: supervisor-down in send_immediate_signals (captain alert unaffected)"
+  fail "28: supervisor-down re-sent within persistent throttle (Fix B regression: 5-min flood)"
 else
-  fail "28: supervisor-down missing from send_immediate_signals (expected captain alert)"
+  pass "28: supervisor-down NOT re-sent within 30-min persistent throttle (Fix B)"
 fi
-# Verify ops-CRITICAL NOT sent (cooldown active)
+# No comms at all this tick (neither captain re-alert nor ops-CRITICAL).
 LOG=$(comms_log "$PROJ")
 if [[ -f "$LOG" && -s "$LOG" ]]; then
-  assert_not_contains "28: no ops-CRITICAL re-send within cooldown" "topic=ops-CRITICAL" "$(cat "$LOG")"
-  # The [ESCALATION] tier-2+ message on ops-monitor IS sent
-  assert_contains "28: [ESCALATION] on ops-monitor still sent" "[ESCALATION]" "$(cat "$LOG")"
+  assert_not_contains "28: no captain re-alert within persistent throttle" "supervisor-down" "$(cat "$LOG")"
+  assert_not_contains "28: no ops-CRITICAL within persistent throttle"     "topic=ops-CRITICAL" "$(cat "$LOG")"
 else
-  fail "28: expected at least the ops-monitor escalation comms, got none"
+  pass "28: no comms emitted within persistent throttle (correct)"
 fi
-# Verify send_ops_critical=False in escalations snapshot
-SC=$(python3 -c "
-import json
-d = json.load(open('$LATEST'))
-print(str(d.get('escalations', {}).get('supervisor-down', {}).get('send_ops_critical', 'missing')).lower())
+# last_ts preserved (cooldown active → state kept, not advanced).
+LT28=$(python3 -c "
+import json, time
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+e = d.get('alerted_immediate', {}).get('supervisor-down', {})
+print('kept' if abs((time.time() - 360) - e.get('last_ts', 0)) < 30 else 'changed')
 " 2>/dev/null || echo "missing")
-assert_eq "28: send_ops_critical=false (cooldown active)" "false" "$SC"
+assert_eq "28: last_ts preserved while throttled (state kept)" "kept" "$LT28"
 rm -rf "$PROJ"
 
-# ── Test 29: ops-CRITICAL cooldown elapsed — tier-3 + stale last_ops_critical_ts → re-fires ─
-# supervisor-down, count=10, ops-CRITICAL last sent 35 min ago (> 30 min OPS_CRITICAL_COOLDOWN).
-# Cooldown has elapsed → ops-CRITICAL must fire again.
+# ── Test 29: persistent throttle elapsed — tier-3 + stale last_ts → re-fires (hk-ohb8p Fix B) ─
+# supervisor-down, count=10 (persistent), last captain alert 31 min ago (> 30-min persistent
+# throttle). The throttle window has elapsed → the signal re-alerts the captain AND, being
+# tier-3, fires ops-CRITICAL again. Proves the throttle SLOWS rather than silences the signal.
 echo ""
-echo "=== Test 29: ops-CRITICAL cooldown elapsed (35m > 30m) → ops-CRITICAL re-fires ==="
+echo "=== Test 29: persistent throttle elapsed (31m > 30m) → re-fires captain + ops-CRITICAL (Fix B) ==="
 STATE_29=$(python3 -c "
 import json, time
 now = int(time.time())
-entry = {'first_ts': now - 3600, 'last_ts': now - 360, 'count': 10,
-         'last_ops_critical_ts': now - 2100}  # 35 min ago > OPS_CRITICAL_COOLDOWN(30m)
+entry = {'first_ts': now - 5400, 'last_ts': now - 1860, 'count': 10,
+         'last_ops_critical_ts': now - 1860}  # 31 min ago > persistent throttle (30m)
 print(json.dumps({'stale_crew_misses': {}, 'last_digest_ts': 0,
                   'alerted_immediate': {'supervisor-down': entry}}))
 ")
@@ -1728,12 +1741,19 @@ PROJ=$(setup_fixture \
 )
 run_check "$PROJ" > /dev/null 2>&1
 LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+# supervisor-down re-sent this tick (throttle elapsed).
+SEND_SIGS_29=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
+if echo "$SEND_SIGS_29" | grep -qF "supervisor-down"; then
+  pass "29: supervisor-down re-sent after persistent throttle elapsed"
+else
+  fail "29: supervisor-down not re-sent though 31m > 30m throttle"
+fi
 LOG=$(comms_log "$PROJ")
 if [[ -f "$LOG" && -s "$LOG" ]]; then
-  assert_contains "29: ops-CRITICAL re-fires after cooldown" "topic=ops-CRITICAL" "$(cat "$LOG")"
-  assert_contains "29: [ops-CRITICAL] in body"               "[ops-CRITICAL]"    "$(cat "$LOG")"
+  assert_contains "29: ops-CRITICAL re-fires after throttle elapsed" "topic=ops-CRITICAL" "$(cat "$LOG")"
+  assert_contains "29: [ops-CRITICAL] in body"                       "[ops-CRITICAL]"    "$(cat "$LOG")"
 else
-  fail "29: expected ops-CRITICAL re-send after cooldown, got none"
+  fail "29: expected ops-CRITICAL re-send after throttle elapsed, got none"
 fi
 # send_ops_critical=True in escalations snapshot
 SC=$(python3 -c "
@@ -1751,6 +1771,50 @@ lts = e.get('last_ops_critical_ts', 0)
 print('fresh' if time.time() - lts < 60 else 'stale')
 " 2>/dev/null || echo "missing")
 assert_eq "29: last_ops_critical_ts updated to now in state" "fresh" "$LT"
+rm -rf "$PROJ"
+
+# ── Test 29b: persistent throttle is PER-SIGNAL — a fresh distinct signal still fires now ─
+# hk-ohb8p Fix B: the throttle is keyed per signal-identity. A persistent supervisor-down
+# (count=10, last alert 6 min ago → throttled this tick) is in flight, but the SAME run also
+# detects a BRAND-NEW distinct condition (a newly paused queue, never alerted). The new signal
+# must fire IMMEDIATELY (no prev_entry → fast path) while the persistent one stays suppressed.
+echo ""
+echo "=== Test 29b: persistent throttle is PER-SIGNAL — new distinct signal fires immediately (Fix B) ==="
+STATE_29B=$(python3 -c "
+import json, time
+now = int(time.time())
+# supervisor-down persistent + recently alerted (would be throttled);
+# the paused-queue:chani-newq signal has NEVER alerted (absent from alerted_immediate).
+sup = {'first_ts': now - 3600, 'last_ts': now - 360, 'count': 10, 'last_ops_critical_ts': now - 360}
+print(json.dumps({'stale_crew_misses': {}, 'last_digest_ts': 0,
+                  'alerted_immediate': {'supervisor-down': sup}}))
+")
+# A non-inert queue paused-by-failure with its crew online → paused-queue:<name> (immediate,
+# fresh). Mirrors Test 3's known-good shape (myagent-q + myagent online; NOT an inert glob).
+QLIST_29B='{"queues":[{"name":"myagent-q","status":"paused-by-failure","workers":0,"pending_items":0,"failed_items":1}],"max_concurrent":4}'
+CW_29B='{"agent":"myagent","status":"online","last_seen":"'"$(ts_ago 30)"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json "$QLIST_29B" \
+  --hk-comms-who-json "$CW_29B" \
+  --hk-supervise-status-json '{"schema_version":1,"running":false,"status":"stopped"}' \
+  --state-json "$STATE_29B" \
+)
+run_check "$PROJ" > /dev/null 2>&1
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+SEND_29B=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
+# The fresh paused-queue signal MUST be sent this tick.
+if echo "$SEND_29B" | grep -q "paused-queue"; then
+  pass "29b: fresh distinct paused-queue signal fires immediately (per-signal keying)"
+else
+  fail "29b: fresh paused-queue signal NOT sent; send_immediate=$SEND_29B"
+fi
+# The persistent supervisor-down MUST stay throttled (not in send list this tick).
+if echo "$SEND_29B" | grep -q "supervisor-down"; then
+  fail "29b: persistent supervisor-down leaked a re-send within throttle; send=$SEND_29B"
+else
+  pass "29b: persistent supervisor-down stays throttled while new signal fires"
+fi
 rm -rf "$PROJ"
 
 # ── WE7: sender-redirect + watch-liveness tests ──────────────────────────────
@@ -1973,17 +2037,20 @@ rm -rf "$PROJ"
 
 # ── WE9 Tests ─────────────────────────────────────────────────────────────────
 
-# Test 35a: watch present+tmux-alive but cursor frozen N ticks with pending events
-# → exactly ONE 'watch-stalled' IMMEDIATE emitted (both comms-who + tmux alive, so
-#   watch_down must NOT fire; only the cursor stall check fires).
+# Test 35a: watch present+tmux-alive but cursor frozen N ticks with ACTIONABLE pending
+# events → exactly ONE 'watch-stalled' IMMEDIATE emitted (both comms-who + tmux alive,
+# so watch_down must NOT fire; only the cursor stall check fires).
+# hk-ohb8p Fix A: the event PAST the cursor is now a run_failed (escalation-worthy) — a
+# genuine actionable backlog the watch is ignoring. A frozen cursor over benign churn is
+# tested separately (Test 35d) and must NOT fire.
 echo ""
-echo "=== Test 35a: WE9 — cursor frozen N ticks with pending events → watch-stalled IMMEDIATE ==="
+echo "=== Test 35a: WE9 — cursor frozen N ticks with ACTIONABLE pending events → watch-stalled IMMEDIATE ==="
 EID_CURSOR="eid-cursor-aaa-001"
 EID_LATEST="eid-latest-bbb-002"
 WATCH_TS_OLD=$(ts_ago 300)
 WATCH_TS_NEW=$(ts_ago 200)
 EVENTS_35A='{"event_id":"'"$EID_CURSOR"'","type":"run_completed","timestamp_wall":"'"$WATCH_TS_OLD"'","run_id":"run-aaa"}
-{"event_id":"'"$EID_LATEST"'","type":"run_completed","timestamp_wall":"'"$WATCH_TS_NEW"'","run_id":"run-bbb"}'
+{"event_id":"'"$EID_LATEST"'","type":"run_failed","timestamp_wall":"'"$WATCH_TS_NEW"'","run_id":"run-bbb"}'
 # prev state: cursor already frozen for (stall_ticks - 1) = 2 ticks; one more → fires
 STATE_35A='{"schema_version":1,"ts":"2026-06-24T00:00:00Z","stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{},"watch_cursor":"'"$EID_CURSOR"'","watch_stall_misses":2}'
 # comms-who: watch is present and online (so watch_down stays False — testing stall only)
@@ -2103,6 +2170,55 @@ else
   else
     pass "35c: watch-down suppressed when tmux is alive (dual-probe correct)"
   fi
+fi
+rm -rf "$PROJ"
+
+# Test 35d (hk-ohb8p Fix A): QUIET fleet — cursor frozen N ticks but ONLY benign churn
+# (run_started / run_completed / agent_message / bead_closed) past the cursor → NO
+# watch-stalled. This is the false-positive hk-ohb8p reported: a healthy fleet whose
+# watch correctly has nothing to escalate, while routine lifecycle events keep flowing
+# past the frozen escalation cursor, used to fire watch-stalled every ~5 min. The stall
+# counter must NOT increment when no escalation-worthy event is past the cursor.
+echo ""
+echo "=== Test 35d: WE9 Fix A — frozen cursor + ONLY benign churn → NO watch-stalled (quiet fleet) ==="
+EID_CURSOR_35D="eid-cursor-quiet-001"
+WATCH_TS_OLD_35D=$(ts_ago 300)
+EVENTS_35D='{"event_id":"'"$EID_CURSOR_35D"'","type":"run_completed","timestamp_wall":"'"$WATCH_TS_OLD_35D"'","run_id":"run-q0"}
+{"event_id":"eid-quiet-002","type":"run_started","timestamp_wall":"'"$(ts_ago 250)"'","run_id":"run-q1"}
+{"event_id":"eid-quiet-003","type":"agent_message","timestamp_wall":"'"$(ts_ago 200)"'","payload":{"from":"chani"}}
+{"event_id":"eid-quiet-004","type":"run_completed","timestamp_wall":"'"$(ts_ago 150)"'","run_id":"run-q1"}
+{"event_id":"eid-quiet-005","type":"bead_closed","timestamp_wall":"'"$(ts_ago 100)"'","run_id":"run-q1"}'
+# prev state: cursor already frozen for (stall_ticks - 1) = 2 ticks — one MORE benign tick
+# would fire under the OLD buggy logic; under Fix A it must NOT (no actionable event past cursor).
+STATE_35D='{"schema_version":1,"ts":"2026-06-24T00:00:00Z","stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{},"watch_cursor":"'"$EID_CURSOR_35D"'","watch_stall_misses":2}'
+CW_35D='{"agent":"watch","status":"online","last_seen":"'"$(ts_ago 30)"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_35D" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 3 \
+  --watch-cursor "$EID_CURSOR_35D" \
+  --state-json "$STATE_35D" \
+  --events-jsonl "$EVENTS_35D" \
+  --tmux-watch-alive true \
+)
+OUTPUT_35D=$(run_check "$PROJ" 2>&1)
+LATEST_35D="$PROJ/.harmonik/ops-monitor/latest.json"
+if [[ ! -f "$LATEST_35D" ]]; then
+  fail "35d: latest.json missing"
+else
+  SIGS_35D=$(python3 -c "import json; d=json.load(open('$LATEST_35D')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+  if echo "$SIGS_35D" | grep -q "watch-stalled"; then
+    fail "35d: watch-stalled FALSE-POSITIVE on benign churn (Fix A regression); got: $SIGS_35D"
+  else
+    pass "35d: no watch-stalled when only benign churn is past the frozen cursor (Fix A)"
+  fi
+  # The miss counter must RESET (no actionable event past cursor → not a stall tick).
+  WSM_35D=$(python3 -c "import json; d=json.load(open('$PROJ/.harmonik/ops-monitor/state.json')); print(d.get('watch_stall_misses', 'missing'))" 2>/dev/null || echo "missing")
+  assert_eq "35d: watch_stall_misses reset to 0 on benign-only churn" "0" "$WSM_35D"
+  assert_not_contains "35d: no watch-stalled in stdout" "watch-stalled" "$OUTPUT_35D"
 fi
 rm -rf "$PROJ"
 

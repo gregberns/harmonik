@@ -694,7 +694,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// PL-004a: resolve and cache workflow_mode_default once at step 0.
 	//
 	// The zero value (empty string) is now a startup error (fail-closed per
-	// hk-81n9r). Callers must set an explicit mode; use core.WorkflowModeReviewLoop
+	// hk-81n9r). Callers must set an explicit mode; use core.WorkflowModeDot
 	// for the recommended default. Any unrecognised non-empty value is also
 	// rejected so the daemon fails fast rather than silently using a wrong mode.
 	//

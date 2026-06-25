@@ -12,6 +12,23 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-06-25 ~21:29Z — operator (via admiral) · expires: 2026-07-02
+WHAT: TWO additions elevated INTO the active remote lane (out of parked/on-deck). (1) CONCURRENT
+      LOCAL+REMOTE: routing mechanism already LANDED today (hk-f10xl — Queue.LocalOnly/WorkerTarget
+      gate SelectWorker); remaining = LIVE concurrent-run proof + live worker on/off toggle (hk-xjbvi).
+      (2) TEST-DAEMON HARNESS: operator clarified the long-misread "two daemons" idea = a STANDING
+      isolated test daemon in a separate worktree/clone pinned to remote (submit issues to main daemon)
+      = MOVE ① (scratch-clone), NOT the skipped move ④ (two daemons on the SAME repo dir). PROMOTE
+      from scope-only to BUILT.
+WHY:  per-queue routing landed makes "run on both at once" a validation+polish task, not a build; the
+      standing test-daemon is the fast-loop unblock that ACCELERATES the remote last-mile (move ① was
+      always the #1 do-now), so building it now serves the headline rather than competing.
+ORDER: remote reviewer-consistency last-mile → live concurrent local+remote proof (same path) ‖ build
+      test-daemon harness (parallel, scratch-clone). hk-xjbvi toggle folds in. Multi-remote scheduler = later.
+RETURN-PATH: captain scoping both (directive comms 019f00af); admiral-initiatives.md STALE on routing
+      (listed "not designed/on-deck" — it's LANDED) → admiral to correct. Resume by checking captain's
+      kerf-work + bead set for the test-daemon harness + the concurrent-validation bead.
+
 ## 2026-06-25 ~19:39Z — operator (via admiral) · expires: 2026-07-02
 WHAT: 3 parallel side-quests added ALONGSIDE the headline (remote stays #1). (a) NOW: stand up an
       orphan-backlog SCAVENGER — one standing crew, 1-item serial queue, codex-first + DOT review,

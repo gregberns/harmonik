@@ -233,9 +233,9 @@ func TestPinnedHarnessLaunchSpecBuilder_RoutedWouldResolveCodex(t *testing.T) {
 	got := daemon.ExportedResolveHarness(
 		context.Background(),
 		bead,
-		core.AgentType(""),   // no queue default
+		core.AgentType(""),       // no queue default
 		core.AgentTypeClaudeCode, // node default = claude-code (the intended pin)
-		core.AgentType(""),   // no global default
+		core.AgentType(""),       // no global default
 		bus,
 	)
 

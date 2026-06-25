@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-06-25T19:42:34Z",
+  "updated": "2026-06-25T19:58:00Z",
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned: update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
     {
@@ -26,6 +26,14 @@
       "status": "active",
       "gate": null,
       "note": "Leto codex-tier concurrency pilot (queue leto-codex). Fills idle local slots with file-disjoint clean P2/P3 work; offloads model cost to ChatGPT billing."
+    },
+    {
+      "lane": "scavenger",
+      "label": "codename:scavenger",
+      "epic_id": "hk-0kr4j",
+      "status": "active",
+      "gate": null,
+      "note": "Operator experiment (admiral 2026-06-25 19:39Z 'see if it works'): crew thufir on queue thufir-q, 1-item SERIAL, codex-first + mandatory DOT review = the vetting. Continuously drains the starved low-pri/orphan backlog one heavily-vetted bead at a time. File-disjoint from gurney (internal/daemon|workers|scenariogate) + leto's active set."
     },
     {
       "lane": "pi-gateway",

@@ -1402,6 +1402,20 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// occurred — but per bead spec, do NOT abort Start on sweep error.
 		_ = sweepErr
 
+		// hk-o85ye: reset beads for bead-runs whose independent tmux sessions
+		// have already exited. Must run before LoadQueueAtStartup (QM-002a) so
+		// QM-002a sees open (not in_progress) and reverts the queue item to
+		// pending. Non-fatal — errors logged inside adoptDeadRunSessions.
+		adoptDeadRunSessions(
+			ctx,
+			cfg.ProjectDir,
+			projectHash,
+			daemonStartTime.UnixNano(),
+			intentLogDir,
+			sweepTmuxAdapter,
+			beadResetter,
+		)
+
 		// Reconcile pre-restart in-flight runs: for any run that had run_started
 		// but no terminal event, emit run_failed so the ops-monitor review-gate
 		// does not see a dangling reviewer_launched/no-verdict state after every

@@ -54,6 +54,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/workers"
@@ -1418,6 +1419,22 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		case <-deps.spawnSubstrateReadyCh:
 		case <-ctx.Done():
 			return exitClean()
+		}
+	}
+
+	// hk-o85ye: adopt surviving run sessions from the prior daemon instance.
+	// Dead sessions were already reset by adoptDeadRunSessions in daemon.Start
+	// (before QM-002a so their queue items get reverted to pending).
+	// Live sessions need a monitor goroutine: when Claude eventually exits, reset
+	// the bead and revert the queue item so the dispatch loop re-dispatches it.
+	if deps.projectDir != "" {
+		if tmuxAdp := extractTmuxAdapterFromSubstrate(deps.substrate); tmuxAdp != nil {
+			if liveRecs, listErr := runpkg.List(deps.projectDir); listErr == nil {
+				for _, rec := range liveRecs {
+					rec := rec // capture loop variable
+					go adoptLiveRunSession(ctx, deps, rec, tmuxAdp)
+				}
+			}
 		}
 	}
 
@@ -3053,8 +3070,26 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			fmt.Sprintf("create worktree failed: %v", wtErr))
 		return
 	}
+	// useIndepSession is set true when this run is launched in an independent tmux
+	// session (runSessionSpawner path, hk-o85ye). Deferred cleanup (wtCleanup,
+	// forceTeardownSession) is skipped on daemon shutdown so the session and its
+	// worktree survive SIGKILL; on normal exit cleanup runs as usual.
+	useIndepSession := false
+
+	// Remove the run registry entry on normal exit (session completed).
+	// Registered first (LIFO) so it runs LAST — after session teardown + worktree removal.
+	defer func() {
+		if useIndepSession && ctx.Err() == nil && deps.projectDir != "" {
+			_ = runpkg.Remove(deps.projectDir, runID.String())
+		}
+	}()
+
 	if wtCleanup != nil {
-		defer wtCleanup()
+		defer func() {
+			if !useIndepSession || ctx.Err() == nil {
+				wtCleanup()
+			}
+		}()
 	}
 
 	// hk-ooexj: snapshot the active repo's pre-existing untracked files at run-start
@@ -3639,6 +3674,47 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 		runSubstrate = prs
 		runPasteTarget = prs
+
+		// hk-o85ye (Move 3): route this run through an independent tmux session so
+		// it survives a daemon SIGKILL. Only for local runs (rbc == nil) where the
+		// substrate implements runSessionSpawner. Remote runs keep their worker-session path.
+		if rbc == nil && deps.projectDir != "" {
+			if _, ok := deps.substrate.(runSessionSpawner); ok {
+				prs.runSessionID = runID.String()
+				useIndepSession = true
+				// Pre-compute session name for the registry (best-effort; empty is fine).
+				sessName := ""
+				if ts, tsOK := deps.substrate.(*tmuxSubstrate); tsOK {
+					if sn, snErr := ts.runSessionName(runID.String()); snErr == nil {
+						sessName = sn
+					}
+				}
+				queueIDStr := ""
+				if queueID != nil {
+					queueIDStr = *queueID
+				}
+				queueGroupIdx := -1
+				if queueGroupIndex != nil {
+					queueGroupIdx = *queueGroupIndex
+				}
+				if writeErr := runpkg.Write(deps.projectDir, runpkg.Record{
+					SchemaVersion: 1,
+					RunID:         runID.String(),
+					BeadID:        string(beadID),
+					QueueName:     queueName,
+					QueueID:       queueIDStr,
+					GroupIndex:    queueGroupIdx,
+					ItemIndex:     queueItemIndex,
+					SessionName:   sessName,
+					StartedAt:     time.Now(),
+				}); writeErr != nil {
+					// Registry write failed: fall back to shared-session path (no survive-restart).
+					fmt.Fprintf(os.Stderr, "daemon: workloop: run registry write failed for %s: %v (using shared session)\n", runID.String(), writeErr)
+					prs.runSessionID = ""
+					useIndepSession = false
+				}
+			}
+		}
 	}
 	spec.Substrate = runSubstrate
 	// hk-wnqos: single-mode implementer is the terminal/merge spawn — it draws
@@ -3717,7 +3793,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// from under a still-live claude mid-`go test`, producing a false
 	// no_commit_during_implementer exit=0. Kill is idempotent, so this is a
 	// no-op backstop on the normal exit path where the session already exited.
-	defer forceTeardownSession(sess)
+	//
+	// hk-o85ye: skip teardown on daemon shutdown for independent-session runs;
+	// the session must survive so the adoption pass on next boot can monitor it.
+	defer func() {
+		if !useIndepSession || ctx.Err() == nil {
+			forceTeardownSession(sess)
+		}
+	}()
 
 	// hk-xnnd: register the implementer identity on the comms bus so peers can
 	// attribute escalation messages sent under "<beadID>-impl". Retire on run-end
@@ -4319,6 +4402,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		default:
 			// hk-ly0hg Fix-1: context-cancel path — daemon is shutting down.
 			if ctx.Err() != nil {
+				// hk-o85ye: independent session path — leave session and worktree alive.
+				// The session survives SIGKILL; on next boot the adoption pass detects
+				// it, waits for Claude to finish, then resets the bead for re-dispatch.
+				// The deferred cleanup (wtCleanup, forceTeardownSession) is skipped by
+				// the useIndepSession guard. No ReopenBead: bead stays in_progress so
+				// QM-002a on next boot leaves the queue item dispatched (alive) ✓.
+				if useIndepSession {
+					return
+				}
 				// hk-dnrg: drain committed-but-unmerged runs on shutdown instead of
 				// abandoning. A run that already committed in its worktree must be
 				// merged before exit — abandoning it causes re-dispatch (wasted or
@@ -6856,4 +6948,92 @@ func emitImplementerEscapedWorktree(ctx context.Context, bus handlercontract.Eve
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerEscapedWorktree, b)
+}
+
+// ── hk-o85ye: run-session adoption helpers ───────────────────────────────────
+
+// extractTmuxAdapterFromSubstrate returns the tmux.Adapter from the substrate
+// if it implements substrateWithAdapter, or nil otherwise.
+func extractTmuxAdapterFromSubstrate(sub handler.Substrate) tmuxpkg.Adapter {
+	if sa, ok := sub.(substrateWithAdapter); ok {
+		return sa.tmuxAdapter()
+	}
+	return nil
+}
+
+// adoptLiveRunSession monitors a surviving run session that was alive when
+// runWorkLoop started. When the session exits (Claude finishes), it resets the
+// bead to open and reverts the queue item to pending so the dispatch loop can
+// re-dispatch the work. This handles the "daemon SIGKILL'd while Claude ran in
+// an independent session" recovery path (hk-o85ye).
+//
+// The goroutine exits without action when the daemon context is cancelled
+// (another daemon shutdown) — the next boot's adoption pass handles it again.
+func adoptLiveRunSession(ctx context.Context, deps workLoopDeps, rec runpkg.Record, adapter tmuxpkg.Adapter) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return // daemon shutting down; leave for next boot's adoption pass
+		case <-ticker.C:
+		}
+		sessions, listErr := adapter.ListSessions(ctx)
+		if listErr != nil {
+			continue // transient error; retry on next tick
+		}
+		found := false
+		for _, s := range sessions {
+			if s == rec.SessionName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			break // session gone — Claude has exited
+		}
+	}
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	// Session is dead. Reset bead to open so the dispatch loop can re-dispatch.
+	bgCtx := context.Background()
+	runUUID, parseErr := uuid.Parse(rec.RunID)
+	if parseErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: adoptLiveRunSession: parse runID %q: %v\n", rec.RunID, parseErr)
+	} else {
+		adoptRunID := core.RunID(runUUID)
+		reopenTID, _ := deps.tidGen.Next()
+		if reopenErr := deps.brAdapter.ReopenBead(bgCtx, deps.intentLogDir, deps.brTimeoutCfg, adoptRunID, reopenTID, core.BeadID(rec.BeadID), "run_session_adopted_dead"); reopenErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: adoptLiveRunSession: ReopenBead %s: %v\n", rec.BeadID, reopenErr)
+		}
+	}
+
+	// Revert the queue item from dispatched → pending so the dispatch loop picks it up.
+	if rec.QueueName != "" && rec.QueueID != "" && rec.GroupIndex >= 0 && rec.ItemIndex >= 0 && deps.queueStore != nil {
+		qname := queue.NormaliseQueueName(rec.QueueName)
+		lq := deps.queueStore.LockForMutation()
+		q := lq.LockedQueueByName(qname)
+		if q != nil && rec.GroupIndex < len(q.Groups) && rec.ItemIndex < len(q.Groups[rec.GroupIndex].Items) {
+			item := &q.Groups[rec.GroupIndex].Items[rec.ItemIndex]
+			if string(item.BeadID) == rec.BeadID && item.Status == queue.ItemStatusDispatched {
+				item.Status = queue.ItemStatusPending
+				item.RunID = nil
+				if persistErr := queue.Persist(bgCtx, deps.projectDir, q); persistErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: adoptLiveRunSession: persist queue %q: %v\n", rec.QueueName, persistErr)
+				} else {
+					deps.queueStore.Wake()
+				}
+			}
+		}
+		lq.Done()
+	}
+
+	// Remove the registry entry now that the session is gone.
+	if deps.projectDir != "" {
+		_ = runpkg.Remove(deps.projectDir, rec.RunID)
+	}
 }

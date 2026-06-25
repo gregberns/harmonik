@@ -1103,6 +1103,13 @@ type perRunSubstrate struct {
 	// default cwd.
 	workerSessionCwd string
 
+	// runSessionID, when non-empty, routes SpawnWindow to SpawnRunSession on the
+	// inner tmuxSubstrate instead of the shared daemon session. Set by beadRunOne
+	// when the substrate supports runSessionSpawner and the run is local.
+	// This produces an independent tmux session that survives daemon SIGKILL
+	// (hk-o85ye). Empty means the shared-session path (unchanged behaviour).
+	runSessionID string
+
 	// remoteAdapter caches the SSH-backed adapter built once at SpawnWindow time
 	// from the inner adapter via WithRunner(runner). Paste-inject calls
 	// (WriteLastPane / SendEnter / SendQuit) and PaneHasActiveProcess's PID
@@ -1380,6 +1387,21 @@ type crewSessionStopper interface {
 	StopCrewSession(ctx context.Context, crewName string, handle string) error
 }
 
+// runSessionSpawner is an optional interface implemented by *tmuxSubstrate that
+// creates an independent tmux session for a single bead run (hk-o85ye).
+//
+// When a perRunSubstrate has runSessionID set, SpawnWindow delegates here
+// instead of to the shared daemon session, so the run survives a daemon SIGKILL.
+// Parallel to crewSessionSpawner but lighter-weight (no keeper window).
+//
+// *tmuxSubstrate implements runSessionSpawner.
+type runSessionSpawner interface {
+	// SpawnRunSession creates an independent tmux session named
+	// "harmonik-<hash>-run-<shortID>" and returns a session handle. The session
+	// is outside the daemon's process group so it persists across daemon SIGKILL.
+	SpawnRunSession(ctx context.Context, runID string, spawn handler.SubstrateSpawn) (handler.SubstrateSession, error)
+}
+
 // crewSessionName returns the deterministic tmux session name for crewName.
 //
 // The name is ALWAYS the project-qualified form
@@ -1487,6 +1509,77 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 		pid:         pid,
 		waitDone:    make(chan struct{}),
 		releaseSlot: func() {}, // crew sessions are outside the daemon spawn-cap
+	}
+	return sess, nil
+}
+
+// runSessionName returns the deterministic tmux session name for a bead run:
+// "harmonik-<hash>-run-<shortID>" where shortID is the first 12 hex chars of
+// the runID UUID (hyphens stripped). Parallel to crewSessionName.
+func (s *tmuxSubstrate) runSessionName(runID string) (string, error) {
+	if s.projectHash == "" {
+		return "", fmt.Errorf("daemon: runSessionName: project hash unavailable"+
+			" (NewTmuxSubstrate must be built with WithCrewProjectHash): %w", handler.ErrStructural)
+	}
+	short := strings.ReplaceAll(runID, "-", "")
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	return lifecycle.TmuxSessionName(s.projectHash, "run-"+short), nil
+}
+
+// SpawnRunSession creates an independent tmux session for a bead run so the
+// run survives a daemon SIGKILL (hk-o85ye). The session is named via
+// runSessionName and lives outside the daemon's shared session. Unlike
+// SpawnCrewSession, no keeper window is added; the run's normal lifecycle
+// (wtCleanup, forceTeardownSession, run registry removal) handles teardown.
+//
+// Implements runSessionSpawner. Called by perRunSubstrate.SpawnWindow when
+// runSessionID is set (local runs only; remote runs keep their worker-session path).
+func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	sc, ok := s.adapter.(sessionCreator)
+	if !ok {
+		return nil, fmt.Errorf("daemon: SpawnRunSession: adapter does not support session creation: %w", handler.ErrStructural)
+	}
+
+	sessName, nameErr := s.runSessionName(runID)
+	if nameErr != nil {
+		return nil, fmt.Errorf("daemon: SpawnRunSession: %w", nameErr)
+	}
+
+	command := ""
+	if len(spawn.Argv) > 0 {
+		command = strings.Join(spawn.Argv, " ")
+	}
+
+	params := tmux.NewWindowIn{
+		Session:    sessName,
+		WindowName: tmux.WindowAgent, // fixed name; avoids the hk-<hash6>- orphan-window sweep
+		Env:        spawn.Env,
+		WorkDir:    spawn.Cwd,
+		Command:    command,
+	}
+
+	outcome := sc.NewSessionIn(ctx, params)
+	if outcome.Err != nil {
+		return nil, fmt.Errorf("daemon: SpawnRunSession %q: %w", runID, outcome.Err)
+	}
+
+	paneID := outcome.PaneID
+	pidTarget := outcome.Handle
+	if paneID != "" {
+		pidTarget = tmux.WindowHandle(paneID)
+	}
+	pid, _ := s.adapter.WindowPanePID(ctx, pidTarget)
+
+	sess := &tmuxSubstrateSession{
+		adapter:     s.adapter,
+		handle:      outcome.Handle,
+		paneID:      paneID,
+		pidTarget:   pidTarget,
+		pid:         pid,
+		waitDone:    make(chan struct{}),
+		releaseSlot: func() {}, // run sessions are outside the daemon spawn-cap
 	}
 	return sess, nil
 }
@@ -1689,6 +1782,24 @@ func newPerRunSubstrate(sub handler.Substrate, handlerBinary string, runner tmux
 // returned session does not implement paneTargeter, the pane target remains
 // empty and paste-inject calls will fail gracefully.
 func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	// Independent-session path (hk-o85ye): runSessionID non-empty → spawn a
+	// dedicated tmux session so this run survives a daemon SIGKILL. The resulting
+	// session is outside the daemon's shared session and the orphan-window sweep.
+	if p.runSessionID != "" {
+		sess, err := p.inner.SpawnRunSession(ctx, p.runSessionID, in)
+		if err != nil {
+			return nil, err
+		}
+		if pt, ok := sess.(paneTargeter); ok {
+			if target := pt.PaneTarget(); target != "" {
+				p.paneTargetMu.Lock()
+				p.cachedPaneTarget = target
+				p.paneTargetMu.Unlock()
+			}
+		}
+		return sess, nil
+	}
+
 	// Remote path: a non-nil runner marks this as a remote run. Route the spawn
 	// through an SSH-backed adapter + worker-scoped session so `tmux new-window`,
 	// pane-PID resolution, and the spawned session's Wait/Kill all execute on the

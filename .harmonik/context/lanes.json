@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "updated": "2026-06-25T19:42:34Z",
+  "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned: update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
+  "lanes": [
+    {
+      "lane": "wake-economy",
+      "label": "codename:wake-economy",
+      "epic_id": "hk-var9b",
+      "status": "active",
+      "gate": null,
+      "note": "Standing #1 token-opt lane (MVP done/live). Zero ready beads right now = parked-as-fact, NOT gated; resume the instant ready file-disjoint work appears. This is the lane the 2026-06-25 ~2h stall mis-classified as operator-gated."
+    },
+    {
+      "lane": "remote-hardening",
+      "label": "codename:remote-hardening",
+      "epic_id": "hk-gx0dl",
+      "status": "active",
+      "gate": null,
+      "note": "Gurney's live remote-worker reliability lane (durable gate-base + remote bug fixes). The 4->8 concurrency bump is gated on remote-proven, but the hardening WORK itself is ungated."
+    },
+    {
+      "lane": "codex",
+      "label": "codename:codex",
+      "epic_id": "hk-8dtyk",
+      "status": "active",
+      "gate": null,
+      "note": "Leto codex-tier concurrency pilot (queue leto-codex). Fills idle local slots with file-disjoint clean P2/P3 work; offloads model cost to ChatGPT billing."
+    },
+    {
+      "lane": "pi-gateway",
+      "label": "codename:pi-openrouter",
+      "epic_id": null,
+      "plan_path": "plans/2026-06-23-pi-openrouter-harness/",
+      "status": "parked",
+      "gate": {
+        "owner": "operator",
+        "reason": "not before remote-worker proven reliable (priority sequence 2026-06-25)",
+        "expires": "2026-07-09"
+      },
+      "note": "Pi universal-model-gateway design. Epic-less (lives only as a plan dir) => GATED-by-definition until decomposed into an epic; gate is required while epic_id is null. Correctly the operator's to rank (genuinely brand-new initiative)."
+    }
+  ]
+}

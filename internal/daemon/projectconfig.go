@@ -216,11 +216,12 @@ func (e *ErrWorkflowModeFloorViolation) Error() string {
 // rawDaemonConfig is the per-daemon block in the config.yaml daemon: mapping.
 // Unknown keys at this level are silently ignored (forward-compat per PL-004b).
 type rawDaemonConfig struct {
-	WorkflowMode        string   `yaml:"workflow_mode"`
-	MaxConcurrent       int      `yaml:"max_concurrent"`
-	TargetBranch        string   `yaml:"target_branch"`         // observability/symmetry only per PL-004b
-	AllowedRepos        []string `yaml:"allowed_repos"`         // cross-repo dispatch safelist (hk-xfuc)
-	RemoteControlPrefix string   `yaml:"remote_control_prefix"` // per-project Claude RC session-label prefix (hk-igpg)
+	WorkflowMode           string   `yaml:"workflow_mode"`
+	MaxConcurrent          int      `yaml:"max_concurrent"`
+	TargetBranch           string   `yaml:"target_branch"`            // observability/symmetry only per PL-004b
+	AllowedRepos           []string `yaml:"allowed_repos"`            // cross-repo dispatch safelist (hk-xfuc)
+	RemoteControlPrefix    string   `yaml:"remote_control_prefix"`    // per-project Claude RC session-label prefix (hk-igpg)
+	WorktreeProvisionFiles []string `yaml:"worktree_provision_files"` // gitignored-but-required files copied into each fresh worktree (hk-z8u)
 }
 
 // rawKeeperContextThresholds holds configurable threshold values in the
@@ -624,6 +625,18 @@ type DaemonConfig struct {
 	// --session-id) stay bare. Use JoinRemoteControlName to build the label so the
 	// format never drifts between launch sites. (hk-igpg)
 	RemoteControlPrefix string
+
+	// WorktreeProvisionFiles is the list of repo-root-relative paths to copy from
+	// the canonical project directory into each fresh run worktree right after it
+	// is created (hk-z8u). It exists because `git worktree add` checks out only
+	// TRACKED files: a gitignored-but-required file (e.g. a `.env` consumed by a
+	// `docker compose --env-file` test gate) is absent from the new worktree, so a
+	// gate that needs it fails instantly and the bead fails before doing any work.
+	//
+	// Empty/absent (the default) = no provisioning, behaviour unchanged. Applies to
+	// LOCAL runs only; remote (SSH-worker) worktrees are skipped. See
+	// workspace.ProvisionWorktreeFiles.
+	WorktreeProvisionFiles []string
 }
 
 // rawWatchdogConfig is the watchdog: block in config.yaml (hk-sbitr).
@@ -896,6 +909,11 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 	// remote_control_prefix: stored as-is; empty = not configured (bare label). No
 	// validation/length cap (operator decision hk-igpg: short default, no hard cap).
 	cfg.RemoteControlPrefix = raw.RemoteControlPrefix
+
+	// worktree_provision_files: stored as-is; nil/empty = no provisioning (the
+	// backward-compatible default). Copied into each fresh LOCAL run worktree
+	// after creation (hk-z8u).
+	cfg.WorktreeProvisionFiles = raw.WorktreeProvisionFiles
 
 	return cfg, nil
 }

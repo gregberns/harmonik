@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"syscall"
 	"testing"
@@ -58,6 +59,31 @@ func TestPidfileAcquire_Success(t *testing.T) {
 	}
 	if gotInstanceID != instanceID {
 		t.Errorf("ReadPidfile instanceID = %q, want %q", gotInstanceID, instanceID)
+	}
+}
+
+func TestIsDeadPID_RunningProcess(t *testing.T) {
+	t.Parallel()
+
+	if IsDeadPID(os.Getpid()) {
+		t.Fatal("IsDeadPID(os.Getpid()) = true, want false")
+	}
+}
+
+func TestIsDeadPID_DeadProcess(t *testing.T) {
+	t.Parallel()
+
+	cmd := exec.CommandContext(t.Context(), "true")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start true: %v", err)
+	}
+	pid := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("Wait true: %v", err)
+	}
+
+	if !IsDeadPID(pid) {
+		t.Fatalf("IsDeadPID(%d) = false, want true", pid)
 	}
 }
 

@@ -168,6 +168,12 @@ func writeAll(w *os.File, buf []byte) error {
 	return nil
 }
 
+// IsDeadPID reports whether kill(pid, 0) returns ESRCH for pid.
+func IsDeadPID(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return errors.Is(err, syscall.ESRCH)
+}
+
 // ReadPidfile reads <projectDir>/.harmonik/daemon.pid and parses its content
 // with backward-compatibility tolerance for one-line (v0.2.x), two-line
 // (v0.4.0), and three-line (v0.4.1+) formats:

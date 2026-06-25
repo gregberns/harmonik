@@ -9,7 +9,31 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
-## ⭐ CURRENT TRUTH (2026-06-25 ~06:28Z — COURSE CHANGE: remote test-hardening program)
+## ⭐ CURRENT TRUTH (2026-06-25 ~19:07Z — gb-mbp DISABLED again; fleet LOCAL; 2 lanes)
+> **Live remote STAGE-3 (gb-mbp re-enabled 18:46Z for the headline) found TWO remote bugs that
+> paused BOTH lanes — a RECURRENCE of the 2026-06-23T21:55Z concurrent-remote-failure pattern:**
+> 1. 3/3 leto codex beads raced worktree-create on the worker → `git rev-parse HEAD returned
+>    empty` (concurrent-worktree-HEAD race; proof beads hk-k0pz/xbpm/tzfw).
+> 2. gurney hk-h106 → truncated remote `review.json` ErrMalformed (bead **hk-clrts**; root cause
+>    diagnosed: `reviewverdict.go:126-139` does ONE cat-over-SSH, no retry/completion-wait).
+>
+> **RECOVERY (captain, this session):** disabled gb-mbp in workers.yaml (gitignored — persists, NOT
+> committed), restarted daemon PID3214→28967 (brick-safe: config has `max_concurrent:4` +
+> `liveness_no_progress_n:10`), routed LOCAL, resumed both queues. Execution+routing on gb-mbp WERE
+> proven (commit a4ec1612) before the race surfaced — the headline's core proof holds.
+>
+> **CURRENT LANES (both LOCAL):**
+> - **leto** (codex concurrency pilot, epic hk-8dtyk, queue leto-codex): ACTIVE — hk-vo31l + hk-dyqy
+>   + hk-gx46b in implement LOCAL; standing lane, pulls file-disjoint clean P3/P2 when it drains.
+> - **gurney** (remote-test-pyramid epic hk-6l941 / hardening hk-gx0dl, queue gurney-q): pivoted to
+>   OFFLINE remote-bug fixes — hk-clrts (review.json, FIX-READY) + the worktree-HEAD race — fixed
+>   out-of-daemon (isolated worktree→review→ff-land) + local L-series test layers.
+> - **Headline hk-nepva (live remote e2e) PARKED** until both remote bugs land + a quiet-window
+>   SERIALIZED (max_slots:1) re-validation. RE-ENABLE gb-mbp only then.
+> - watch = online, triaging correctly (escalated + confirmed recovery). admiral = oversight (no beads).
+>
+> ---
+> ## (SUPERSEDED) CURRENT TRUTH (2026-06-25 ~06:28Z — COURSE CHANGE: remote test-hardening program)
 > **Operator settled a new strategy (asleep now; admiral oversees, captain OWNS execution).**
 > Stop chasing real-remote runs (feedback loop too slow). Instead build a **test pyramid
 > (L0–L5)** that reproduces remote "separation" (filesystem / git-ref / tmux-process /

@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
@@ -507,6 +508,26 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 
 	check := func(name string, ok bool, msg string) {
 		results = append(results, checkResult{name: name, ok: ok, message: msg})
+	}
+
+	// 0. Config completeness: .harmonik/config.yaml has all required keeper keys.
+	// Missing file = all keys absent (run `harmonik keeper config --example`).
+	// A load error (malformed YAML, unsupported version) is also a hard gap.
+	// Uses empty KeeperFlags so the check reflects the config alone, matching
+	// the typical crew keeper invocation (no per-key CLI flags). Refs: hk-zou19.
+	{
+		projCfg, cfgErr := daemon.LoadProjectConfig(cfg.projectDir)
+		if cfgErr != nil {
+			check("config", false, fmt.Sprintf("config.yaml load error: %v — run 'harmonik keeper config --example'", cfgErr))
+		} else {
+			missing := checkMissingKeeperValues(KeeperFlags{}, projCfg.Keeper)
+			if len(missing) > 0 {
+				check("config", false, fmt.Sprintf("config.yaml missing %d required keeper key(s): %s — run 'harmonik keeper config --example'",
+					len(missing), strings.Join(missing, ", ")))
+			} else {
+				check("config", true, "config.yaml has all required keeper keys")
+			}
+		}
 	}
 
 	// 1. Binary currency: harmonik on PATH and executable.

@@ -1263,3 +1263,64 @@ func TestKeeperDoctorEntry_RejectsUnknownFlag(t *testing.T) {
 		t.Errorf("entry --bogus: want exit 2, got %d", code)
 	}
 }
+
+// TestKeeperDoctor_MissingConfigReported verifies that doctor reports the
+// "config" check as failed when .harmonik/config.yaml is absent (all required
+// keeper keys missing). This is the hk-zou19 "required-keys landmine" scenario:
+// a new binary added required keys but the project config was not updated.
+func TestKeeperDoctor_MissingConfigReported(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+	// projectDir has no .harmonik/config.yaml — all keeper keys are absent.
+	var stdout, stderr bytes.Buffer
+	code := runKeeperDoctor(cfg, &stdout, &stderr)
+
+	if code == 0 {
+		t.Errorf("want non-zero exit (config gaps), got 0")
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "config") {
+		t.Errorf("doctor output missing 'config' check; stdout: %s", out)
+	}
+	// The failure symbol must appear on the config line.
+	if !strings.Contains(out, "✗") {
+		t.Errorf("doctor output missing failure symbol; stdout: %s", out)
+	}
+	// Doctor must point at the fix command.
+	if !strings.Contains(out, "keeper config --example") {
+		t.Errorf("doctor config output must mention 'keeper config --example'; stdout: %s", out)
+	}
+}
+
+// TestKeeperDoctor_CompleteConfigPassesCheck verifies that the "config" check
+// passes when .harmonik/config.yaml contains all required keeper keys. Uses the
+// canonical `keeper config --example` block as the fixture — the same source of
+// truth the round-trip test in resolve_keeper_required_test.go validates.
+func TestKeeperDoctor_CompleteConfigPassesCheck(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+
+	// Write a complete config.yaml using the canonical example block.
+	cfgDir := filepath.Join(cfg.projectDir, ".harmonik")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	content := "schema_version: 1\n" + keeperConfigExampleYAML()
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	runKeeperDoctor(cfg, &stdout, &stderr)
+
+	// The config check must pass (no "✗ config" line).
+	out := stdout.String()
+	if strings.Contains(out, "✗ config") {
+		t.Errorf("doctor should not report config failure when all keys are present; stdout: %s", out)
+	}
+	if !strings.Contains(out, "✓ config") {
+		t.Errorf("doctor should report config success; stdout: %s", out)
+	}
+}

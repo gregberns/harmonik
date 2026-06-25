@@ -316,6 +316,19 @@ func runKeeperSubcommand(args []string) int {
 		}
 	})
 
+	// Pre-flight doctor: runs BEFORE ResolveKeeperConfig so config gaps are
+	// visible in the keeper's output even when the config-missing-key error
+	// causes an early exit. Non-fatal: the resolve below is the hard gate.
+	// The new "config" check in runKeeperDoctor directly reports missing keys.
+	// Refs: hk-zou19.
+	{
+		home, homeErr := os.UserHomeDir()
+		if homeErr == nil {
+			settingsPath := home + "/.claude/settings.json"
+			runKeeperDoctorAtBoot(projectDir, agentFlag, settingsPath)
+		}
+	}
+
 	// Resolve the effective threshold band through the SINGLE precedence resolver
 	// (hk-4pnv): FLAG > CONFIG > DEFAULT per field, tighten-only pct, force-act
 	// precedence (abs wins over offset), defaults read from internal/keeper's
@@ -386,22 +399,13 @@ func runKeeperSubcommand(args []string) int {
 	}
 	defer func() { _ = lock.Release() }() //nolint:errcheck // best-effort on shutdown
 
-	// Step 2: run doctor at boot as a loud diagnostic (non-fatal).
-	{
-		home, homeErr := os.UserHomeDir()
-		if homeErr == nil {
-			settingsPath := home + "/.claude/settings.json"
-			runKeeperDoctorAtBoot(projectDir, agentFlag, settingsPath)
-		}
-	}
-
-	// Step 3: check .managed opt-in guard (fail-safe: absent = no-op).
+	// Step 2: check .managed opt-in guard (fail-safe: absent = no-op).
 	if !keeper.IsManaged(projectDir, agentFlag) {
 		fmt.Fprintf(os.Stderr, "keeper: %s not opted-in (.managed marker missing); no-op\n", agentFlag)
 		return 0
 	}
 
-	// Step 4: resolve the effective tmux target.
+	// Step 3: resolve the effective tmux target.
 	// If --tmux was provided, use it as-is. Otherwise attempt to auto-derive the
 	// session name from the harmonik convention: "harmonik-<hash12>-<agent>".
 	resolvedTmux := keeper.ResolveTmuxTarget(projectDir, agentFlag, tmuxFlag, nil)
@@ -409,7 +413,7 @@ func runKeeperSubcommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "keeper: auto-resolved tmux target from convention: %q\n", resolvedTmux)
 	}
 
-	// Step 5: agent is managed — start the watcher and block until signal.
+	// Step 4: agent is managed — start the watcher and block until signal.
 	// W7 (hk-x7s): print the EFFECTIVE resolved band (the abs tokens the gate
 	// actually fires on, tighten-only-clamped by any explicit pct ceil) rather than
 	// the raw pct flag — the old banner printed warn-pct=80/act-pct=90 even when the

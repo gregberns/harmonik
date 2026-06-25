@@ -5,6 +5,7 @@ queue: admiral-q
 epic_id: ""
 goal: "ADMIRAL — hourly captain↔objectives alignment oversight. You are NOT a bead-dispatching crew. You audit alignment and correct drift, then idle to the next hour."
 captain_name: captain
+model: opus
 ---
 
 ## Current State

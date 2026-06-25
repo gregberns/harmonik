@@ -75,6 +75,11 @@ overstepping:
     (after verifying pane-truth that it's actually dead, not just presence-stale).
   - Re-task a crew whose lane is **COMPLETE** to the next-ranked KNOWN lane (a
     comms re-task, §4 — not a new `crew start`).
+  - **Resume / un-park / re-staff a KNOWN parked or drained lane.** A lane recorded
+    in any durable doc (or ever ranked) is KNOWN — resuming it is YOUR call even when
+    it is currently parked or shows zero ready beads this instant. "Parked" is a fact
+    (no ready beads now), NOT an operator gate. (Canonical: orchestrator-rules
+    §Autonomy.) Only a lane GATED by a named, dated, owned, expiring gate is held.
   - Fill every non-conflicting free slot. Keep the fleet moving; do NOT park it
     "in case."
   - **BACKLOG-PULL:** run `kerf next` + `br ready --limit 0` and staff ALL ready
@@ -223,6 +228,16 @@ on its own named queue. Two crews never share an epic or touch the same files.
 > **Session-keeper arming band:** see STARTUP.md Step 6 "Keeper arming" for the
 > canonical `--warn-abs-tokens 200000 --act-abs-tokens 215000` flags. The pct flags
 > are inert on the captain's 1M window — do NOT use them (M1/hk-039z).
+
+### PARKED is a fact; GATED is a named live gate (decoupled)
+
+A lane is **PARKED** when it simply has zero ready beads right now — that is a pure
+FACT, not an operator hold, and resuming it the moment ready work + a free slot
+coexist is AUTONOMOUS (§0). A lane is **GATED** only when a NAMED, DATED, OWNED,
+EXPIRING gate is present (in `lanes.json`, a non-null unexpired `gate` object); an
+expired gate is treated as absent. Do NOT read "parked" as "operator-gated" — that
+conflation is the stall this decoupling removes. Canonical: orchestrator-rules
+§Autonomy.
 
 ### Assignment rule (LOAD-BEARING)
 
@@ -491,8 +506,12 @@ harmonik comms recv --follow --json     # drains backlog then streams live
 Surface-and-await is the **rare exception**. The four cases where the captain stops
 and awaits the operator are EXHAUSTIVE — **everything else is DECIDE+DO:**
 
-1. **Ranking a brand-NEW initiative** not already in the known `kerf next` / `br`
-   feed (no existing priority to execute — a never-before-seen body of work).
+1. **Ranking a brand-NEW initiative** — work **never recorded in any durable doc
+   (`captain-lanes.md`, `admiral-initiatives.md`, `lanes.json`, the direction-log, a
+   prior HANDOFF) and never ranked** in any past `kerf next`. A lane is brand-NEW
+   only by that test — NOT because it is parked or shows zero ready beads in the live
+   feed right now. Resuming/un-parking/re-staffing a KNOWN parked or drained lane is
+   AUTONOMOUS (§0), not this case. Canonical definition: orchestrator-rules §Autonomy.
 2. **Declaring a crew FAILED** / killing or re-homing its work. (Re-establishing a
    presence-stale crew whose lane is still open, after pane-truth confirms it is dead,
    is AUTONOMOUS reconciliation — that is NOT "declaring failed.")

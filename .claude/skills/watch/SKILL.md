@@ -99,10 +99,12 @@ The captain **pulls** the digest by reading `.harmonik/watch/latest.json` on its
 |---|---|---|
 | **IMMEDIATE — escalate now** | single-mode, review-bypass, `decision_required` needing judgment, `run_failed` needing captain judgment, crew-failure/kill, captain liveness breach | `comms send --to captain --wake --topic escalation` |
 | **IMMEDIATE — DIRECT bypass (NOT through you)** | daemon-down, supervisor-down, paused-queue | ops-monitor keeps a DIRECT path to captain — you are never in the critical path for "the fleet is down" |
-| **PULL-DIGEST (no wake)** | backlog-ready + free slot (staffing flag), idle-fleet / lull, crew-staleness (slow-recovery) | accumulate into `.harmonik/watch/latest.json`; never timed-send; optionally fold into the next genuine IMMEDIATE |
+| **PULL-DIGEST (no wake)** | idle-fleet / lull, crew-staleness (slow-recovery) | accumulate into `.harmonik/watch/latest.json`; never timed-send; optionally fold into the next genuine IMMEDIATE |
 | **LEDGER-ONLY (never wake)** | `epic_completed`, routine crew status posts, `run_started`/`run_completed`, `agent_output_chunk`, `metric`, `agent_heartbeat`, `session_keeper_warn`/`cycle_complete` | record cursor advance only |
 
 **`epic_completed` is LEDGER-ONLY at the watch.** The daemon already wakes a parked captain on `epic_completed` (`quiesce.go`) AND the captain subscribes to it directly. Escalating it too would triple-wake. Record it; do not escalate it.
+
+> **The staffing wake is now ops-monitor-PUSHED (Part-0 signal (a)) — NOT the watch's no-wake digest.** The "program drained + a KNOWN ready lane exists + a free slot exists" signal is the one thing that un-sticks an idle fleet, and routing it to a no-wake PULL-DIGEST channel exactly when the captain is idle is what stranded the 2026-06-25 2h stall. It is now owned by `scripts/ops-monitor-check.sh`, which computes the predicate deterministically (reading `.harmonik/context/lanes.json` + `br ready --parent`) and PUSHES a lane-named `[IMMEDIATE]` wake straight to the captain — the same DIRECT-bypass path as "the fleet is down." The watch is **not** in the critical path for it: record it to the ledger; do not duplicate or gate it. (This supersedes the old "backlog-ready + free slot → PULL-DIGEST no-wake" carve-out.)
 
 ---
 
@@ -118,7 +120,7 @@ The captain **pulls** the digest by reading `.harmonik/watch/latest.json` on its
 
 **MUST escalate (never decides):**
 - **Crew-failure or kill** — you flag it; the captain decides whether to respawn, reassign, or close the lane.
-- **New-initiative ranking** — work not already in `kerf next` ranking. Flag "ready work + free slot exists"; the captain picks which crew + which epic.
+- **New-initiative ranking** — a brand-NEW initiative **never recorded in any durable doc and never ranked** (NOT a KNOWN parked/drained lane, which is the captain's own autonomous resume — orchestrator-rules §Autonomy). Surface it; the captain (or operator) ranks it. **Staffing-readiness for a KNOWN lane is no longer your flag** — that is the ops-monitor's lane-named `[IMMEDIATE]` (Part-0 signal (a), pushed direct to the captain); record it, do not escalate it.
 - **Locked-decision reversal** — any event that would reopen a decision locked in `STATUS.md`. Surface it; never act on it.
 - **Destructive ops** — force-push, branch -D on shared refs, `--no-verify`, `rm -rf` patterns. Escalate; never authorize.
 - **Staffing** — which crew handles which epic. The watch may *flag* staffing readiness; the captain decides.

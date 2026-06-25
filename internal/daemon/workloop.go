@@ -600,6 +600,15 @@ type workLoopDeps struct {
 	// Bead ref: hk-rs-b8-codesync-3fk0.
 	workerRegistry *workers.Registry
 
+	// runner is the CommandRunner threaded into the DOT run path for remote-aware
+	// marker-file reads (hk-hd2w6). nil for local runs (NFR7: byte-identical
+	// box-A path). Set from Config.Runner at startup so the contract test can
+	// inject a RecordingRunner without a full remote-substrate setup; overridden
+	// at dispatch time by rbc.sshRunner for live remote runs.
+	//
+	// Bead ref: hk-hd2w6.
+	runner tmuxpkg.CommandRunner
+
 	// beadAuditLogger is retained for the beadExplicitlyReopened predicate and
 	// its associated tests (hk-wcv).  The pre-dispatch subsume block that called
 	// it was removed by hk-f38n (bare Refs-grep false-positives on partial
@@ -988,6 +997,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		workerRegistry:             workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
 		coordinatorReapAdapter:     coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
 		coordinatorReapProjectHash: projectHash,                        // hk-t08m: pre-computed for session name derivation
+		runner:                     cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
 	}, nil
 }
 
@@ -3358,6 +3368,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			if ts, ok := deps.substrate.(*tmuxSubstrate); ok {
 				dotWorkerSession = ts.workerSpawnSessionName(rbc.worker.Name)
 			}
+		} else if deps.runner != nil {
+			dotRunner = deps.runner // hk-hd2w6: Config.Runner injection (test seam)
 		}
 
 		// Drive the cascade: walk start → … → terminal, dispatching each node by

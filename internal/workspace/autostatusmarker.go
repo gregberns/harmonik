@@ -1,12 +1,14 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/gregberns/harmonik/internal/core"
+	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // AutoStatusMarker is the typed struct returned by ReadAutoStatusMarker.
@@ -76,6 +78,31 @@ func ReadAutoStatusMarker(workspacePath string) (*AutoStatusMarker, error) {
 	}
 
 	return ParseAutoStatusMarker(data), nil
+}
+
+// ReadAutoStatusMarkerVia is like ReadAutoStatusMarker but routes the file read
+// through runner on remote runs so the marker is read from the worker's
+// filesystem rather than box A's (hk-hd2w6). When runner is nil or a local-FS
+// runner (tmux.LocalRunner), delegates to ReadAutoStatusMarker for a
+// byte-identical local path (NFR7). When runner is non-local (e.g. SSHRunner),
+// reads the worker-side auto_status.json via cat and applies identical
+// validation via ParseAutoStatusMarker.
+//
+// Returns (nil, nil) when the marker file is absent on the worker (cat exits
+// non-zero), matching ReadAutoStatusMarker's os.IsNotExist behavior.
+//
+// Bead: hk-hd2w6.
+func ReadAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, workspacePath string) (*AutoStatusMarker, error) {
+	if runner == nil || runnerIsLocalFS(runner) {
+		return ReadAutoStatusMarker(workspacePath)
+	}
+	out, err := runner.Command(ctx, "cat", AutoStatusMarkerPath(workspacePath)).Output()
+	if err != nil {
+		// Absent marker (cat: no such file) or transport hiccup → treat as absent,
+		// preserving C1-only pass-through (the local not-exist path returns nil,nil).
+		return nil, nil //nolint:nilnil // absent/unreadable marker = C1-only gate per HC-068
+	}
+	return ParseAutoStatusMarker(out), nil
 }
 
 // ParseAutoStatusMarker validates raw auto_status.json bytes and applies the

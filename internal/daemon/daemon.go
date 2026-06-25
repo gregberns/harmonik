@@ -533,6 +533,20 @@ type Config struct {
 	//
 	// Bead ref: hk-rs-b4-bootwire-b44z.
 	Workers workers.Config
+
+	// Runner is the CommandRunner used for remote-aware marker-file reads on the
+	// DOT run path (hk-hd2w6). At runtime, local runs set it to nil (NFR7:
+	// byte-identical local path) and remote runs override it with rbc.sshRunner
+	// at dispatch time in beadRunOne. This field is a test-injection seam: tests
+	// supply a tmux.RecordingRunner via Config.Runner to capture Command calls and
+	// assert that gate-verdict.json, auto_status.json, review.json, and budget-
+	// sentinel reads are ALL routed through the runner, not bare os.*.
+	//
+	// The zero value (nil) is safe for production: all Via functions fall back to
+	// the local-FS path when runner is nil per their nil-guard.
+	//
+	// Bead ref: hk-hd2w6.
+	Runner ltmux.CommandRunner
 }
 
 // daemonTestHooks carries test-only injection points that are absent from the

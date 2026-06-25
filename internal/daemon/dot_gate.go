@@ -32,6 +32,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -103,6 +104,7 @@ func dispatchDotGateNode(
 	beadDescription string,
 	extraContext string,
 	baseBranch string,
+	runner ltmux.CommandRunner,
 ) (core.Outcome, error) {
 	gateRef := core.GateRef(node.GateRef)
 
@@ -127,7 +129,7 @@ func dispatchDotGateNode(
 		evalFn = buildMechanismGateEval(cp)
 	case core.ModeTagCognition:
 		var cogErr error
-		evalFn, cogErr = buildCognitionGateEval(deps, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch)
+		evalFn, cogErr = buildCognitionGateEval(deps, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, runner)
 		if cogErr != nil {
 			return core.Outcome{}, fmt.Errorf("dot: gate node %q: build cognition eval: %w", node.ID, cogErr)
 		}
@@ -236,6 +238,7 @@ func buildCognitionGateEval(
 	beadDescription string,
 	extraContext string,
 	baseBranch string,
+	runner ltmux.CommandRunner,
 ) (handler.GateEvalFunc, error) {
 	dp := cp.Evaluator.DelegationPath
 	if dp == nil {
@@ -243,7 +246,7 @@ func buildCognitionGateEval(
 	}
 
 	return func(ctx context.Context, run *core.Run, nodeID core.NodeID, gateRef core.GateRef) (*core.GateDecisionPayload, error) {
-		return executeCognitionGate(ctx, deps, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, gateRef)
+		return executeCognitionGate(ctx, deps, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, gateRef, runner)
 	}, nil
 }
 
@@ -268,6 +271,7 @@ func executeCognitionGate(
 	extraContext string,
 	baseBranch string,
 	gateRef core.GateRef,
+	runner ltmux.CommandRunner,
 ) (*core.GateDecisionPayload, error) {
 	// Remove any stale verdict from a prior attempt.
 	verdictPath := filepath.Join(wtPath, gateVerdictRelPath)
@@ -428,7 +432,7 @@ func executeCognitionGate(
 	// Deliver gate-evaluator kick-off message and watch for verdict file.
 	briefDelivered := pasteInjectCognitionGate(ctx, pasteTarget, artifacts.claudeSessionID, wtPath, deps.bus, runID)
 	if qs, ok := pasteTarget.(quitSender); ok {
-		go pasteInjectQuitOnGateFile(ctx, qs, sess, wtPath, briefDelivered)
+		go pasteInjectQuitOnGateFile(ctx, runner, qs, sess, wtPath, briefDelivered)
 	}
 
 	_, _ = waitWithSocketGrace(ctx, deps.hookStore, watcher, sess,
@@ -446,8 +450,8 @@ func executeCognitionGate(
 		return nil, fmt.Errorf("cognition gate %q: context cancelled", gateRef)
 	}
 
-	// Read and parse the gate verdict.
-	decision, readErr := readGateVerdict(verdictPath)
+	// Read and parse the gate verdict via runner for remote runs (hk-hd2w6).
+	decision, readErr := readGateVerdictVia(ctx, runner, verdictPath)
 	if readErr != nil {
 		return nil, fmt.Errorf("cognition gate %q: read verdict: %w", gateRef, readErr)
 	}
@@ -546,28 +550,63 @@ Write the JSON file now, then exit with /quit.
 	return os.WriteFile(taskPath, []byte(content), 0o644)
 }
 
+// parseGateVerdict parses raw gate-verdict.json bytes into a GateAction.
+// Factored out of readGateVerdict so both local and remote (Via) paths share
+// byte-identical validation (NFR7).
+func parseGateVerdict(data []byte) (core.GateAction, error) {
+	var v gateVerdictJSON
+	if err := json.Unmarshal(data, &v); err != nil {
+		return "", fmt.Errorf("unmarshal gate-verdict.json: %w", err)
+	}
+	if v.SchemaVersion != gateVerdictSchemaVersion {
+		return "", fmt.Errorf("gate-verdict.json: schema_version=%d, want %d", v.SchemaVersion, gateVerdictSchemaVersion)
+	}
+	action := core.GateAction(v.Decision)
+	if !action.Valid() {
+		return "", fmt.Errorf("gate-verdict.json: decision=%q is not a valid GateAction (must be allow, deny, or escalate-to-human)", v.Decision)
+	}
+	return action, nil
+}
+
 // readGateVerdict reads and parses gate-verdict.json, returning the GateAction.
 func readGateVerdict(verdictPath string) (core.GateAction, error) {
 	data, err := os.ReadFile(verdictPath)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", verdictPath, err)
 	}
+	return parseGateVerdict(data)
+}
 
-	var v gateVerdictJSON
-	if err := json.Unmarshal(data, &v); err != nil {
-		return "", fmt.Errorf("unmarshal gate-verdict.json: %w", err)
+// readGateVerdictVia is like readGateVerdict but routes the file read through
+// runner for remote runs (hk-hd2w6). When runner is nil or local-FS, delegates
+// to readGateVerdict (NFR7: byte-identical local path). When runner is non-local
+// (e.g. SSHRunner), reads the worker-side gate-verdict.json via cat and applies
+// identical parsing via parseGateVerdict.
+//
+// Bead: hk-hd2w6.
+func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdictPath string) (core.GateAction, error) {
+	if runner == nil || runnerIsLocalFS(runner) {
+		return readGateVerdict(verdictPath)
 	}
-
-	if v.SchemaVersion != gateVerdictSchemaVersion {
-		return "", fmt.Errorf("gate-verdict.json: schema_version=%d, want %d", v.SchemaVersion, gateVerdictSchemaVersion)
+	out, err := runner.Command(ctx, "cat", verdictPath).Output()
+	if err != nil {
+		return "", fmt.Errorf("read %s via runner: %w", verdictPath, err)
 	}
+	return parseGateVerdict(out)
+}
 
-	action := core.GateAction(v.Decision)
-	if !action.Valid() {
-		return "", fmt.Errorf("gate-verdict.json: decision=%q is not a valid GateAction (must be allow, deny, or escalate-to-human)", v.Decision)
+// gateVerdictExistsVia reports whether the gate-verdict.json file exists and is
+// non-empty. Routes the stat check through runner on remote runs so the check
+// lands on the worker's filesystem (hk-hd2w6). NFR7: nil/local runner falls back
+// to os.Stat on box A.
+//
+// Bead: hk-hd2w6.
+func gateVerdictExistsVia(ctx context.Context, runner ltmux.CommandRunner, path string) bool {
+	if runner == nil || runnerIsLocalFS(runner) {
+		info, err := os.Stat(path)
+		return err == nil && info.Size() > 0
 	}
-
-	return action, nil
+	return runner.Command(ctx, "test", "-f", path).Run() == nil
 }
 
 // pasteInjectCognitionGate delivers the gate-evaluator kick-off message.
@@ -644,6 +683,7 @@ func pasteInjectCognitionGate(
 // pasteInjectQuitOnReviewFile for the reviewer path.
 func pasteInjectQuitOnGateFile(
 	ctx context.Context,
+	runner ltmux.CommandRunner,
 	qs quitSender,
 	killer sessionKiller,
 	wtPath string,
@@ -683,7 +723,7 @@ func pasteInjectQuitOnGateFile(
 				}
 				return
 			}
-			if info, err := os.Stat(verdictPath); err == nil && info.Size() > 0 {
+			if gateVerdictExistsVia(ctx, runner, verdictPath) {
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-gate-file: verdict detected at %s; sending /quit\n", verdictPath)
 				_ = qs.SendQuitToLastPane(ctx)

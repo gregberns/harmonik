@@ -332,6 +332,14 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-y3frr.
 	CacheReapMu *sync.RWMutex
+
+	// Runner, when non-nil, is threaded into workLoopDeps.runner and used as the
+	// fallback dotRunner on the DOT run path when no remote worker is selected
+	// (hk-hd2w6). Inject a *tmuxPkg.RecordingRunner to capture Command calls in
+	// the contract test.
+	//
+	// Bead ref: hk-hd2w6.
+	Runner tmuxPkg.CommandRunner
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -476,6 +484,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 			return nil // no-op: tests must not wipe the shared go-build cache
 		},
 		cacheReapMu: cacheReapMu, // hk-y3frr: reap↔dispatch exclusion
+		runner:      p.Runner,    // hk-hd2w6: Config.Runner injection seam
 	}
 }
 
@@ -2710,4 +2719,22 @@ func NewLiveStateBuilderForTest(projectDir string, projectHash core.ProjectHash,
 // Bead ref: hk-jay1.
 func (lb *LiveStateBuilder) BuildCognitionForTest(agent, liveSID, declaredSID string, now time.Time) *SessionCognition {
 	return lb.buildCognition(agent, liveSID, declaredSID, now)
+}
+
+// ExportedReadGateVerdictVia exposes readGateVerdictVia for tests in package
+// daemon_test. It allows the contract test to verify that the gate-verdict.json
+// read routes through runner on remote runs (hk-hd2w6).
+//
+// Bead ref: hk-hd2w6.
+func ExportedReadGateVerdictVia(ctx context.Context, runner tmuxPkg.CommandRunner, verdictPath string) (core.GateAction, error) {
+	return readGateVerdictVia(ctx, runner, verdictPath)
+}
+
+// ExportedGateVerdictExistsVia exposes gateVerdictExistsVia for tests in
+// package daemon_test. Allows the contract test to assert that the os.Stat
+// check on gate-verdict.json routes through runner on remote runs (hk-hd2w6).
+//
+// Bead ref: hk-hd2w6.
+func ExportedGateVerdictExistsVia(ctx context.Context, runner tmuxPkg.CommandRunner, path string) bool {
+	return gateVerdictExistsVia(ctx, runner, path)
 }

@@ -952,7 +952,7 @@ func driveDotWorkflow(
 			gateOutcome, gateErr := dispatchDotGateNode(
 				ctx, deps, runID, run, wtPath, daemonSocket, node,
 				iterationCount, resolvedModel, resolvedEffort,
-				beadID, beadTitle, beadDescription, extraContext, baseBranch,
+				beadID, beadTitle, beadDescription, extraContext, baseBranch, runner,
 			)
 			if gateErr != nil {
 				return dotWorkflowResult{
@@ -1802,22 +1802,11 @@ func autoStatusHasGoMod(ctx context.Context, runner tmux.CommandRunner, wtPath s
 
 // readAutoStatusMarkerVia reads + validates the C2 auto_status marker, routing
 // the read through runner on a remote run so the marker is read from the worker's
-// filesystem. NFR7: the LOCAL (runner == nil) branch calls the unchanged
-// workspace.ReadAutoStatusMarker. The remote branch streams the file bytes over
-// the runner (cat) and applies the identical validation via
-// workspace.ParseAutoStatusMarker; a missing file (cat exits non-zero) yields a
-// nil marker = C1-only pass-through, matching the local not-exist behavior.
+// filesystem. Delegates to workspace.ReadAutoStatusMarkerVia which is the single
+// source of truth for this logic (hk-hd2w6). NFR7: nil/local runner → local read,
+// byte-identical to the pre-remote-substrate path.
 func readAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, wtPath string) (*workspace.AutoStatusMarker, error) {
-	if runner == nil {
-		return workspace.ReadAutoStatusMarker(wtPath)
-	}
-	out, err := runner.Command(ctx, "cat", workspace.AutoStatusMarkerPath(wtPath)).Output()
-	if err != nil {
-		// Absent marker (cat: no such file) or transport hiccup → treat as absent,
-		// preserving C1-only pass-through (the local not-exist path returns nil,nil).
-		return nil, nil //nolint:nilnil // absent/unreadable marker = C1-only gate per HC-068
-	}
-	return workspace.ParseAutoStatusMarker(out), nil
+	return workspace.ReadAutoStatusMarkerVia(ctx, runner, wtPath)
 }
 
 // dispatchDotToolNode executes a non-agentic shell node's tool_command in-process

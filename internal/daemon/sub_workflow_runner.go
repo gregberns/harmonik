@@ -351,7 +351,7 @@ func dispatchSubWorkflowExpandedNode(
 		return dispatchDotGateNode(
 			ctx, r.deps, r.runID, r.run, r.wtPath, r.daemonSocket, n,
 			*r.iterationCount, r.resolvedModel, r.resolvedEffort,
-			r.beadID, r.beadTitle, r.beadDescription, r.extraContext, r.baseBranch,
+			r.beadID, r.beadTitle, r.beadDescription, r.extraContext, r.baseBranch, r.runner,
 		)
 
 	case core.NodeTypeSubWorkflow:

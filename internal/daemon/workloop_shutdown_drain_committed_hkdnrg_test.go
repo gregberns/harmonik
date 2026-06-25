@@ -103,6 +103,7 @@ func (l *drainDnrgLedger) reopenedIDs() []core.BeadID {
 // has already committed in its worktree is drained (merged + closed) rather
 // than abandoned when the daemon context is cancelled (F56 / hk-dnrg).
 func TestWorkLoop_ShutdownDrainsCommittedRun_hkdnrg(t *testing.T) {
+	skipRealDaemonE2EInShort(t) // spawns sleep 60 + real git worktrees — heavy under parallel load
 	t.Parallel()
 
 	projectDir, _ := workloopFixtureProjectDir(t)

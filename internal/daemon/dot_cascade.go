@@ -423,7 +423,21 @@ func driveDotWorkflow(
 				// run_stale, re-dispatching the gate without killing the prior shell
 				// (hk-vjsv). dispatchDotToolNode now ticks agent_heartbeat for the run
 				// while the gate command runs (both local and remote paths).
-				toolOutcome, toolErr := dispatchDotToolNode(ctx, deps.bus, runID, runner, wtPath, node, deps.handlerEnv)
+				//
+				// hk-t1t00: augment the gate env with HK_GATE_BASE_SHA=parentSHA so
+				// scripts/scenario-gate.sh uses the run's own branch-point as the diff
+				// base rather than falling back to `git merge-base origin/main HEAD`.
+				// On a remote worker origin/main lags real main, inflating the diff to
+				// hundreds of files → the full test suite exceeds the 900s gate timeout
+				// → transient self-loop → cap. parentSHA is the exact commit the
+				// worktree was branched from, so the affected-set is bounded to what
+				// this bead actually changed. LOCAL runs benefit too (correctness), but
+				// the problem is acute for remote workers whose ref is stale.
+				gateEnv := deps.handlerEnv
+				if parentSHA != "" {
+					gateEnv = append(append(make([]string, 0, len(deps.handlerEnv)+1), deps.handlerEnv...), "HK_GATE_BASE_SHA="+parentSHA)
+				}
+				toolOutcome, toolErr := dispatchDotToolNode(ctx, deps.bus, runID, runner, wtPath, node, gateEnv)
 				if toolErr != nil {
 					return dotWorkflowResult{
 						success:        false,

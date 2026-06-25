@@ -346,6 +346,11 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// transcripts and .harmonik/events/events.jsonl; no daemon socket connection,
 	// no state mutation, no in-flight run impact. Offline cost-analysis surface.
 	"usage": "operator-nfr.md §4.9 ON-055; offline transcript+event cost analysis, no daemon connection, no in-flight run abort",
+	// hk-qpzsv: installs/uninstalls/shows a macOS launchd LaunchAgent plist that
+	// runs scripts/ops-monitor-check.sh every 5m independent of any Claude session.
+	// Writes to ~/Library/LaunchAgents/ + calls launchctl; no daemon socket
+	// connection, no harmonik run-state mutation, no in-flight run abort.
+	"ops-monitor": "operator-nfr.md §4.9 ON-055; offline launchd LaunchAgent install, no daemon connection, no in-flight run abort",
 }
 
 // oninv006FixtureSocketOpAllowlist is the exhaustive set of op codes handled

@@ -611,6 +611,18 @@ EXAMPLES
 		return runCrewSubcommand(os.Args[2:])
 	}
 
+	// harmonik ops-monitor <verb> — launchd LaunchAgent management for the
+	// ops-monitor-check.sh fleet health probe (hk-qpzsv). Verbs: install,
+	// uninstall, status. Installs a per-project LaunchAgent so the probe runs
+	// every 5 min independent of any Claude or captain session. No daemon required.
+	if len(os.Args) >= 2 && os.Args[1] == "ops-monitor" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runOpsMonitorSubcommand(subArgs)
+	}
+
 	// harmonik schedule <verb> — generic recurring-job primitive (codename:schedule,
 	// hk-0es). All verbs mutate/read .harmonik/schedules.json directly and work
 	// whether or not the daemon is running; a running daemon picks up changes on

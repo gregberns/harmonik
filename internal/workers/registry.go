@@ -1,6 +1,9 @@
 package workers
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // Registry wraps a loaded Config and provides per-bead worker selection with
 // slot tracking and live-disable support (remote-substrate B5).
@@ -97,6 +100,29 @@ func (r *Registry) SetEnabled(v bool) {
 	if r.hasWorker {
 		r.worker.Enabled = v
 	}
+}
+
+// SetEnabledByName flips the Enabled flag on the configured worker iff its Name
+// matches name, returning the worker's name on success. It is the operator-facing
+// live toggle behind `harmonik worker enable/disable` (hk-xjbvi): unlike
+// SetEnabled(bool) — used by the boot health check, which knows it is acting on
+// the single configured worker — this validates the caller-supplied name so an
+// unknown name is rejected rather than silently flipping the wrong (only) worker.
+//
+// Returns an error when no worker is configured, or when name does not match the
+// (single, v1) configured worker's Name. On success the next SelectWorker call
+// observes the new Enabled state immediately (no restart), exactly like SetEnabled.
+func (r *Registry) SetEnabledByName(name string, v bool) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasWorker {
+		return "", fmt.Errorf("no remote worker configured")
+	}
+	if r.worker.Name != name {
+		return "", fmt.Errorf("no such worker %q (configured worker is %q)", name, r.worker.Name)
+	}
+	r.worker.Enabled = v
+	return r.worker.Name, nil
 }
 
 // InFlight returns the current count of reserved remote slots.

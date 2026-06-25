@@ -54,6 +54,10 @@ func (s *socketQueueFixtureStub) HandleQueueSetConcurrency(_ context.Context, _ 
 	return json.RawMessage(`{"old_n":4,"new_n":6}`), nil
 }
 
+func (s *socketQueueFixtureStub) HandleWorkerSetEnabled(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
+	return json.RawMessage(`{"name":"gb-mbp","enabled":true}`), nil
+}
+
 // ---------------------------------------------------------------------------
 // Fixture helper: start listener with optional QueueHandler
 // ---------------------------------------------------------------------------
@@ -99,7 +103,7 @@ func TestSocketListener_QueueMethodsRegistered(t *testing.T) {
 	socketQueueFixtureStartListenerWithQH(t, sockPath, h, qh)
 	socketFixtureWaitReady(t, sockPath)
 
-	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run", "queue-list", "queue-set-concurrency"}
+	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run", "queue-list", "queue-set-concurrency", "worker-set-enabled"}
 	for _, op := range queueOps {
 		op := op
 		t.Run(op, func(t *testing.T) {
@@ -150,7 +154,7 @@ func TestSocketListener_QueueMethodsNilHandler(t *testing.T) {
 	socketQueueFixtureStartListenerWithQH(t, sockPath, h, nil)
 	socketFixtureWaitReady(t, sockPath)
 
-	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run", "queue-list", "queue-set-concurrency"}
+	queueOps := []string{"queue-submit", "queue-append", "queue-status", "queue-dry-run", "queue-list", "queue-set-concurrency", "worker-set-enabled"}
 	for _, op := range queueOps {
 		op := op
 		t.Run(op, func(t *testing.T) {

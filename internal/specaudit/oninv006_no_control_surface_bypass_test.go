@@ -179,6 +179,11 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 	// socket listener serialises all mutations through the QueueStore write lock
 	// (QM-060) which is ON-008-drain-safe.
 	"queue": "queue-model.md §8; drain-safe via QM-060 single-writer; ON-008 compliant",
+	// hk-xjbvi: worker enable/disable flips the remote worker's enabled flag in
+	// the live registry via socket RPC. It gates FUTURE remote dispatch only —
+	// SelectWorker skips a disabled worker; in-flight remote runs complete and
+	// release their slot normally. Cannot abort an in-flight run. Drain-safe ON-008.
+	"worker": "operator-nfr.md §4.3 ON-008; live remote-worker dispatch toggle, gates future dispatch only, no in-flight run abort",
 	// hk-icecw: harmonik run <bead-id> submits a single-item queue and starts
 	// the daemon in-process; the daemon exit is driven by queue drain
 	// (CompleteAndUnlink + cancelOnQueueDrain), not by operator abort; fully
@@ -390,6 +395,11 @@ var oninv006FixtureSocketOpAllowlist = map[string]string{
 	// Raising/lowering the ceiling gates future dispatch only — in-flight runs
 	// complete normally; it cannot abort an in-flight run. Drain-safe per ON-008.
 	"queue-set-concurrency": "operator-nfr.md §4.3 ON-008; concurrency-ceiling gate, no mid-run abort",
+	// hk-xjbvi: worker-set-enabled flips the remote worker's enabled flag in the
+	// live registry (HandleWorkerSetEnabled → registry.SetEnabledByName). Gates
+	// future remote dispatch only — SelectWorker skips a disabled worker; in-flight
+	// runs complete and release their slot. It cannot abort an in-flight run. ON-008.
+	"worker-set-enabled": "operator-nfr.md §4.3 ON-008; live remote-worker dispatch toggle, no mid-run abort",
 	// hk-nbrmf/hk-7t27s: agent-comms ops route through the comms event handlers
 	// only; they write/read agent_message + presence events and never touch daemon
 	// run state. No in-flight run abort.

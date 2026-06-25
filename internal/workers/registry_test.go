@@ -42,6 +42,61 @@ func TestRegistry_DisabledWorkerNil(t *testing.T) {
 	}
 }
 
+// TestRegistry_SetEnabledByName_FlipsSelectabilityLive proves the operator-facing
+// live toggle (hk-xjbvi): a disabled worker is not selectable; SetEnabledByName
+// with the matching name flips it selectable immediately (no rebuild); a second
+// flip back to false makes it unselectable again.
+func TestRegistry_SetEnabledByName_FlipsSelectabilityLive(t *testing.T) {
+	r := workers.NewRegistry(newRegistryCfg(false, 4))
+	if w := r.SelectWorker(); w != nil {
+		t.Fatalf("precondition: disabled worker must not be selectable, got %+v", *w)
+	}
+
+	name, err := r.SetEnabledByName("test-worker", true)
+	if err != nil {
+		t.Fatalf("SetEnabledByName(test-worker, true): unexpected error %v", err)
+	}
+	if name != "test-worker" {
+		t.Fatalf("SetEnabledByName resolved name = %q, want %q", name, "test-worker")
+	}
+	w := r.SelectWorker()
+	if w == nil {
+		t.Fatal("SelectWorker after live enable: expected non-nil, got nil")
+	}
+	r.ReleaseSlot()
+
+	if _, err := r.SetEnabledByName("test-worker", false); err != nil {
+		t.Fatalf("SetEnabledByName(test-worker, false): unexpected error %v", err)
+	}
+	if w := r.SelectWorker(); w != nil {
+		t.Fatalf("SelectWorker after live disable: expected nil, got %+v", *w)
+	}
+}
+
+// TestRegistry_SetEnabledByName_UnknownName proves an unknown worker name is
+// rejected (not a silent flip of the only configured worker).
+func TestRegistry_SetEnabledByName_UnknownName(t *testing.T) {
+	r := workers.NewRegistry(newRegistryCfg(true, 4))
+	if _, err := r.SetEnabledByName("ghost", false); err == nil {
+		t.Fatal("SetEnabledByName(ghost): expected an error for an unknown name, got nil")
+	}
+	// The real worker is untouched (still selectable).
+	if w := r.SelectWorker(); w == nil {
+		t.Fatal("SelectWorker: the configured worker must be unaffected by a rejected unknown-name toggle")
+	} else {
+		r.ReleaseSlot()
+	}
+}
+
+// TestRegistry_SetEnabledByName_NoWorkerConfigured proves a registry built from
+// an empty config rejects any toggle with a clear error.
+func TestRegistry_SetEnabledByName_NoWorkerConfigured(t *testing.T) {
+	r := workers.NewRegistry(workers.Config{})
+	if _, err := r.SetEnabledByName("anything", true); err == nil {
+		t.Fatal("SetEnabledByName on empty registry: expected an error, got nil")
+	}
+}
+
 func TestRegistry_SlotsExhaustedNil(t *testing.T) {
 	r := workers.NewRegistry(newRegistryCfg(true, 2))
 	w1 := r.SelectWorker()

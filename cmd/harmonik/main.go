@@ -111,6 +111,34 @@ EXAMPLES
   harmonik queue set-concurrency 4
 `
 
+const workerTopUsage = `harmonik worker — toggle a remote worker live (no restart)
+
+USAGE
+  harmonik worker <verb> <name> [flags]
+
+VERBS
+  enable <name>    Enable a configured remote worker in the live daemon (remote dispatch on)
+  disable <name>   Disable a configured remote worker in the live daemon (remote dispatch off)
+
+NOTES
+  Both verbs require the daemon to be running and a worker configured in
+  .harmonik/workers.yaml. The toggle flips the worker's enabled flag in the
+  LIVE registry over the daemon socket — no restart, no workers.yaml edit.
+  An enabled worker becomes selectable for remote dispatch on the next tick;
+  a disabled worker stops taking new remote runs (in-flight runs complete).
+  An unknown worker name is rejected.
+
+EXIT CODES
+  0   Success (worker state echoed to stdout)
+  2   Transport/protocol error, unknown worker name, or unrecognised verb
+  17  Daemon not running
+
+EXAMPLES
+  harmonik worker enable gb-mbp
+  harmonik worker disable gb-mbp
+  harmonik worker enable gb-mbp --json
+`
+
 // run is the testable entry-point. It constructs the composition root and
 // starts the daemon. It returns an exit code.
 //
@@ -429,6 +457,40 @@ EXAMPLES
 			return queuecli.RunQueueSetConcurrency(ctx, subArgs, os.Stdout, os.Stderr)
 		default:
 			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, dry-run, cancel, set-concurrency\n", verb)
+			return 2
+		}
+	}
+
+	// harmonik worker enable|disable <name> [--project DIR] [--json]
+	// Live operator toggle for the remote worker registry (hk-xjbvi): flips a
+	// worker's enabled flag in the running daemon via socket RPC so remote
+	// dispatch can be turned on/off WITHOUT a restart. Mirrors `queue
+	// set-concurrency`.
+	if len(os.Args) >= 2 && os.Args[1] == "worker" {
+		verb := ""
+		if len(os.Args) >= 3 {
+			verb = os.Args[2]
+		}
+		if verb == "--help" || verb == "-h" {
+			fmt.Print(workerTopUsage)
+			return 0
+		}
+		subArgs := []string{}
+		if len(os.Args) >= 4 {
+			subArgs = os.Args[3:]
+		}
+		if len(subArgs) >= 1 && (subArgs[0] == "--help" || subArgs[0] == "-h") {
+			fmt.Print(workerTopUsage)
+			return 0
+		}
+		ctx := context.Background()
+		switch verb {
+		case "enable":
+			return queuecli.RunWorkerEnable(ctx, subArgs, os.Stdout, os.Stderr)
+		case "disable":
+			return queuecli.RunWorkerDisable(ctx, subArgs, os.Stdout, os.Stderr)
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik worker: unrecognised verb %q; verbs are: enable, disable\n", verb)
 			return 2
 		}
 	}

@@ -1677,6 +1677,16 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Bead ref: hk-ohiaf.
 	var concurrencyCtrl *ConcurrencyController
 
+	// queueHandlerAdapter holds the concrete *queue.HandlerAdapter (when one was
+	// constructed in the socket block) so the work-loop block can wire the live
+	// worker-toggle func into it once deps.workerRegistry exists (hk-xjbvi). The
+	// registry is built inside newWorkLoopDeps (after the socket block), so unlike
+	// the concurrency setter — which is wired pre-listener — the worker toggle is
+	// wired just after deps is built; a worker-set-enabled RPC that races the few
+	// microseconds before that gets a clean "no worker registry wired" error and
+	// is retried, never a panic. Nil in unit-test mode (no socket / no adapter).
+	var queueHandlerAdapter *queue.HandlerAdapter
+
 	// drainDet is the daemon-singleton DrainDetector. Constructed inside the
 	// ProjectDir/BrPath block and reused by both the quiesce arbiter (P1-c)
 	// and the state handler (hk-gv04 P2-a). Nil in unit-test mode.
@@ -1733,6 +1743,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				// (hk-tigaf.4 NQ-B1). cfg.MaxConcurrent zero → 1 inside the adapter.
 				adapter.SetGlobalMaxConcurrent(cfg.MaxConcurrent)
 				queueHandler = adapter
+				// Retain the concrete adapter so the work-loop block can wire the
+				// live worker-toggle func once deps.workerRegistry exists (hk-xjbvi).
+				queueHandlerAdapter = adapter
 
 				// Wire the SS-INV-005 veto gate into the quiesce arbiter (P1-c,
 				// hk-zqb3): non-force `harmonik sleep` is refused when GatherDrainFacts
@@ -1989,6 +2002,23 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// ceiling on every tick (hk-ohiaf). nil falls back to the static
 		// maxConcurrent field (unit-test mode / legacy callers).
 		deps.concurrencyCtrl = concurrencyCtrl
+
+		// Wire the live worker enable/disable toggle (hk-xjbvi). The work loop's
+		// deps.workerRegistry — built by newWorkLoopDeps from .harmonik/workers.yaml
+		// — is the SAME registry the dispatch path reads via SelectWorker, so a
+		// `harmonik worker enable <name>` RPC flips selectability with no restart.
+		// The closure captures that exact registry pointer; SetEnabledByName mutates
+		// it under the registry mutex. A nil registry (no workers.yaml) yields a
+		// clean "no such worker configured" error rather than a panic.
+		if queueHandlerAdapter != nil {
+			workerReg := deps.workerRegistry
+			queueHandlerAdapter.SetWorkerToggleFunc(func(name string, enabled bool) (string, error) {
+				if workerReg == nil {
+					return "", fmt.Errorf("no such worker %q: no remote worker configured (.harmonik/workers.yaml is empty)", name)
+				}
+				return workerReg.SetEnabledByName(name, enabled)
+			})
+		}
 
 		// Inject the shared RunRegistry so the work loop and the
 		// HandlerPausePolicyGoroutine operate on the same in-flight snapshot.

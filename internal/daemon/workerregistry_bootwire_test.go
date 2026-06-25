@@ -97,22 +97,70 @@ func TestBuildWorkerRegistry_EnabledWorkerActivatesRemoteRouting(t *testing.T) {
 	}
 }
 
-// TestBuildWorkerRegistry_NoWorkerStaysLocal proves NFR7: an empty config (no
-// workers) yields a nil registry, so the dispatch path keeps the existing
-// local-only branch (deps.workerRegistry == nil ⇒ SelectWorker is never called).
+// TestBuildWorkerRegistry_NoWorkerStaysLocal proves NFR7: an EMPTY config (no
+// workers configured) yields a nil registry, so the dispatch path keeps the
+// existing local-only branch (deps.workerRegistry == nil ⇒ SelectWorker is never
+// called). Note: a configured-but-disabled worker is NO LONGER nil (hk-xjbvi) —
+// see TestBuildWorkerRegistry_DisabledWorkerBuildsRegistryButStaysLocal.
 func TestBuildWorkerRegistry_NoWorkerStaysLocal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	bus := &handlercontract.CollectingEmitter{}
 
-	// Zero-value config (the missing-workers.yaml case).
+	// Zero-value config (the missing-workers.yaml case) — the ONLY nil case.
 	if reg := buildWorkerRegistryWithRunner(ctx, workers.Config{}, bus, passingRunner()); reg != nil {
 		t.Fatalf("buildWorkerRegistry: expected nil registry for empty config (NFR7 local-only), got %#v", reg)
 	}
+}
 
-	// A configured-but-disabled worker is also local-only.
-	if reg := buildWorkerRegistryWithRunner(ctx, oneWorkerCfg(false), bus, passingRunner()); reg != nil {
-		t.Fatalf("buildWorkerRegistry: expected nil registry for a disabled worker (NFR7 local-only), got %#v", reg)
+// TestBuildWorkerRegistry_DisabledWorkerBuildsRegistryButStaysLocal proves the
+// hk-xjbvi nil-registry fix: a CONFIGURED-but-disabled worker now builds a
+// non-nil registry (so a later live `worker enable` has something to flip),
+// while dispatch behaviour is byte-identical to the old nil-for-disabled case —
+// SelectWorker returns nil because the worker is disabled, so beads run local.
+// Enabling the worker live (SetEnabledByName) then makes it selectable with no
+// rebuild, the property a daemon restart used to be required for.
+func TestBuildWorkerRegistry_DisabledWorkerBuildsRegistryButStaysLocal(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	bus := &handlercontract.CollectingEmitter{}
+
+	reg := buildWorkerRegistryWithRunner(ctx, oneWorkerCfg(false), bus, passingRunner())
+	if reg == nil {
+		t.Fatal("buildWorkerRegistry: expected NON-nil registry for a configured-but-disabled worker (hk-xjbvi: live-enable needs a registry to flip), got nil")
+	}
+	// Dispatch is local-only while disabled: SelectWorker must return nil,
+	// identical to the old nil-registry path.
+	if w := reg.SelectWorker(); w != nil {
+		t.Fatalf("SelectWorker: expected nil for a disabled worker (local-only, unchanged dispatch), got %q", w.Name)
+	}
+	// A boot health check must NOT have run (no enabled worker → nil runner →
+	// no probes), so no worker_unhealthy event is emitted.
+	for _, et := range bus.EventTypes() {
+		if et == string(core.EventTypeWorkerUnhealthy) {
+			t.Fatalf("all-disabled config ran a boot health check (emitted %q) — probes must be skipped when no worker is enabled", et)
+		}
+	}
+	// Live-enable: now selectable WITHOUT a restart/rebuild.
+	name, err := reg.SetEnabledByName("gb-mbp", true)
+	if err != nil {
+		t.Fatalf("SetEnabledByName(gb-mbp, true): unexpected error %v", err)
+	}
+	if name != "gb-mbp" {
+		t.Fatalf("SetEnabledByName: resolved name %q, want %q", name, "gb-mbp")
+	}
+	w := reg.SelectWorker()
+	if w == nil {
+		t.Fatal("SelectWorker: expected the worker to be selectable after live enable, got nil")
+	}
+	if w.Name != "gb-mbp" {
+		t.Fatalf("SelectWorker: got %q, want %q", w.Name, "gb-mbp")
+	}
+	reg.ReleaseSlot()
+
+	// Unknown-name toggle is rejected.
+	if _, err := reg.SetEnabledByName("nope", true); err == nil {
+		t.Fatal("SetEnabledByName(nope, true): expected an error for an unknown worker name, got nil")
 	}
 }
 

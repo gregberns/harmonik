@@ -166,6 +166,14 @@ type QueueHandler interface {
 	//
 	// Bead ref: hk-ohiaf.
 	HandleQueueSetConcurrency(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
+
+	// HandleWorkerSetEnabled dispatches a worker-set-enabled request — the live
+	// `harmonik worker enable/disable` toggle. Flips the named worker's enabled
+	// state in the daemon's live worker registry (no restart) and returns the
+	// resolved worker name + new state.
+	//
+	// Bead ref: hk-xjbvi.
+	HandleWorkerSetEnabled(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
 }
 
 // noopRequestHandler is a minimal RequestHandler that rejects every request
@@ -472,6 +480,15 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 	case "queue-set-concurrency":
 		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
 			return h.HandleQueueSetConcurrency(ctx, reEncoded)
+		})
+
+	case "worker-set-enabled":
+		// hk-xjbvi: live `harmonik worker enable/disable`. Routed through the
+		// QueueHandler (HandlerAdapter) like queue-set-concurrency; flips the
+		// worker's enabled flag in the live registry — gates future dispatch only,
+		// never aborts an in-flight run (drain-safe per ON-008).
+		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
+			return h.HandleWorkerSetEnabled(ctx, reEncoded)
 		})
 
 	case "subscribe":

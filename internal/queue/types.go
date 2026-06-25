@@ -584,6 +584,30 @@ type QueueSetConcurrencyResponse struct {
 	SpawnCap int `json:"spawn_cap,omitempty"`
 }
 
+// WorkerSetEnabledRequest is the payload for the worker-set-enabled JSON-RPC
+// method — the live operator toggle behind `harmonik worker enable/disable`
+// (hk-xjbvi). It flips the named worker's Enabled flag in the daemon's LIVE
+// worker registry so remote dispatch can be turned on/off without a restart.
+//
+// Bead ref: hk-xjbvi.
+type WorkerSetEnabledRequest struct {
+	// Name selects which configured worker to toggle (must match a worker in
+	// .harmonik/workers.yaml; v1 allows a single worker).
+	Name string `json:"name"`
+	// Enabled is the new state: true for `worker enable`, false for `worker disable`.
+	Enabled bool `json:"enabled"`
+}
+
+// WorkerSetEnabledResponse is the response for worker-set-enabled.
+//
+// Bead ref: hk-xjbvi.
+type WorkerSetEnabledResponse struct {
+	// Name echoes the resolved worker name the daemon toggled.
+	Name string `json:"name"`
+	// Enabled is the worker's new Enabled state (echoes the request).
+	Enabled bool `json:"enabled"`
+}
+
 // QueueDryRunRequest is the payload for the queue-dry-run JSON-RPC method
 // (specs/queue-model.md §2.10 RECORD QueueDryRunRequest).
 //

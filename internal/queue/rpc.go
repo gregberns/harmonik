@@ -740,6 +740,13 @@ type HandlerAdapter struct {
 	// would oversubscribe the spawn cap. Nil when no cap is configured or the
 	// substrate does not expose SpawnCapSize.
 	spawnCapGet func() int
+
+	// workerToggle flips the named worker's enabled state in the daemon's LIVE
+	// worker registry (hk-xjbvi). It returns the resolved worker name on success
+	// or an error (unknown name / no worker configured). Nil when the daemon did
+	// not wire a worker registry (no .harmonik/workers.yaml); HandleWorkerSetEnabled
+	// returns -32099 in that case.
+	workerToggle func(name string, enabled bool) (string, error)
 }
 
 // SetGlobalMaxConcurrent records the daemon-wide --max-concurrent ceiling so
@@ -772,6 +779,17 @@ func (a *HandlerAdapter) SetConcurrencyFuncs(get func() int, set func(int) (int,
 // Bead ref: hk-vfeeo.
 func (a *HandlerAdapter) SetSpawnCapFunc(fn func() int) {
 	a.spawnCapGet = fn
+}
+
+// SetWorkerToggleFunc wires the live worker enable/disable setter from the
+// daemon's worker registry (hk-xjbvi). fn flips the named worker's Enabled flag
+// and returns the resolved worker name, or an error for an unknown name / no
+// worker configured. Called by daemon.Start once the worker registry exists.
+// When not called, HandleWorkerSetEnabled returns -32099 (no worker registry).
+//
+// Bead ref: hk-xjbvi.
+func (a *HandlerAdapter) SetWorkerToggleFunc(fn func(name string, enabled bool) (string, error)) {
+	a.workerToggle = fn
 }
 
 // DefaultWorkers resolves the effective per-queue worker count for a queue
@@ -1108,6 +1126,56 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 		return nil, &RPCError{
 			Code: -32099, Message: "internal_error",
 			Detail: map[string]any{"error": fmt.Sprintf("encode queue-set-concurrency response: %v", marshalErr)},
+		}
+	}
+	return data, nil
+}
+
+// HandleWorkerSetEnabled flips the named worker's enabled state in the daemon's
+// LIVE worker registry — the operator-facing `harmonik worker enable/disable`
+// toggle (hk-xjbvi). Satisfies daemon.QueueHandler.
+//
+// Decodes {name, enabled} from params and calls the wired toggle func, which
+// reaches registry.SetEnabledByName on the live registry. Mirrors
+// HandleQueueSetConcurrency: returns -32099 when the toggle is not wired (daemon
+// started without a worker registry / no .harmonik/workers.yaml), and a typed
+// error when the name is unknown. On success a `worker enable` makes the worker
+// selectable on the next dispatch tick with no restart.
+//
+// Bead ref: hk-xjbvi.
+func (a *HandlerAdapter) HandleWorkerSetEnabled(_ context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
+	var req WorkerSetEnabledRequest
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("decode worker-set-enabled request: %v", err)},
+		}
+	}
+	if req.Name == "" {
+		return nil, &RPCError{
+			Code: -32099, Message: "invalid_worker",
+			Detail: map[string]any{"error": "worker name is required"},
+		}
+	}
+	if a.workerToggle == nil {
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": "no remote worker registry wired; daemon has no .harmonik/workers.yaml configured"},
+		}
+	}
+	name, err := a.workerToggle(req.Name, req.Enabled)
+	if err != nil {
+		return nil, &RPCError{
+			Code: -32099, Message: "invalid_worker",
+			Detail: map[string]any{"error": err.Error()},
+		}
+	}
+	resp := WorkerSetEnabledResponse{Name: name, Enabled: req.Enabled}
+	data, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode worker-set-enabled response: %v", marshalErr)},
 		}
 	}
 	return data, nil

@@ -57,6 +57,64 @@ The pasteinject quit-on-commit hang (hk-trjef, `internal/daemon/pasteinject.go:1
 3. Tail `.harmonik/events/events.jsonl` filtered by `run_id` — which event types fired, which expected ones did not?
 4. If the implementer claude already exited but the daemon is hung: kill the daemon PID (`pkill -f "harmonik --project"`), ff-merge the worktree branch by hand, push, close the bead, then re-start the daemon. File a friction bead with the missing-event signature.
 
+> SAFETY: `pkill -f "harmonik --project"` matches **every** harmonik daemon, including a scratch test-daemon (below). When more than one daemon is running, kill by the exact PID from `<project>/.harmonik/daemon.pid` instead — never a blanket pkill.
+
+---
+
+## Fast iteration via a scratch-clone standalone daemon
+
+**THE WIN: a real-daemon reproducer round-trip drops from ~30 minutes to seconds.**
+Instead of churning the production ("fleet") daemon — or your main checkout's git
+history — to test a daemon-core change, run a SECOND, fully-isolated harmonik
+daemon on a separate git clone, then `down → build → up` it in one command. The
+fleet daemon is never touched.
+
+This pairs with the fast remote reproducer, which exercises the remote-substrate
+path against a localhost worker (no second machine needed):
+
+```bash
+go test -tags=scenario -run TestScenario_RemoteSubstrate_Localhost_E2E ./internal/daemon/
+```
+
+Use `scripts/scratch-daemon.sh` for the daemon side:
+
+```bash
+# One-time: clone harmonik into a scratch dir (default source = this repo's origin).
+./scripts/scratch-daemon.sh init   /tmp/hk-scratch
+# Build the scratch binary FROM the clone, then start the standalone daemon.
+./scripts/scratch-daemon.sh build  /tmp/hk-scratch
+./scripts/scratch-daemon.sh up     /tmp/hk-scratch
+# Edit code in /tmp/hk-scratch, then the fast loop (down + build + up in seconds):
+./scripts/scratch-daemon.sh cycle  /tmp/hk-scratch
+# Inspect / stop:
+./scripts/scratch-daemon.sh status /tmp/hk-scratch
+./scripts/scratch-daemon.sh down   /tmp/hk-scratch
+```
+
+How the isolation works (every handle is keyed off the scratch path, so a second
+daemon can never collide with the fleet):
+
+- **Standalone start, no supervisor.** `up` runs the bare `harmonik --project
+  <scratch>` binary inside its own tmux session. It does NOT use `harmonik
+  supervise`, so there is no auto-revive — a `down`/pkill stays down for a clean
+  rebuild. (`harmonik supervise` is the auto-reviving fleet path; do not use it
+  for the scratch loop.)
+- **Own socket:** `<scratch>/.harmonik/daemon.sock`.
+- **Own tmux session:** `harmonik-<projecthash>-default`
+  (`tmux.DefaultSessionName`; projecthash = first 12 hex of
+  SHA-256(realpath(scratch)) per PL-006a). Derived via `harmonik project-hash`.
+- **Own binary:** `<scratch>/.harmonik/bin/harmonik`, built from the scratch
+  clone's own source — so the daemon runs exactly the code you just edited, fully
+  decoupled from `$GOPATH/bin/harmonik`.
+
+**SAFETY RULE — scratch daemon only, never the fleet.** `down` kills ONLY the PID
+named in `<scratch>/.harmonik/daemon.pid`, and only after confirming that live
+process's command line actually contains the scratch path. It refuses an empty
+path or `/`. It never runs a blanket `pkill harmonik` (nor even `pkill -f
+"harmonik --project"`), either of which would take down the fleet daemon. If you
+ever stop a daemon by hand while a scratch daemon is also running, kill by the
+exact PID from the relevant `.harmonik/daemon.pid`, not by name.
+
 ---
 
 ## Crew context management

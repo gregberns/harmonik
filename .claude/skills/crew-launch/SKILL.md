@@ -440,10 +440,9 @@ Context-full wind-down is the **keeper's** job, not yours. When the keeper cycle
 you, it writes a handoff, clears context, and resumes your **same** `session_id`.
 
 > For the gauge thresholds (warn vs act and their real default values),
-> `keeper doctor`, and the deployment-state caveat (the gauge is not yet wired
-> for crews on the live deployment — confirm with `keeper doctor`), see the
-> **`keeper` skill** (`.claude/skills/keeper/SKILL.md`). This section only covers
-> what a crew does on restart; the keeper skill owns the mechanism.
+> `keeper doctor`, and confirming liveness (`live-watcher` check in `doctor`),
+> see the **`keeper` skill** (`.claude/skills/keeper/SKILL.md`). This section
+> only covers what a crew does on restart; the keeper skill owns the mechanism.
 
 On restart, re-run the full boot sequence from Step 1:
 1. Re-read your handoff / re-derive `{queue, epic_id}` from beads (`assignee ==

@@ -9,9 +9,9 @@ description: >
   any keeper-watched session — captain, crew, flywheel, orchestrator. Covers:
   the two thresholds (warn vs act) and their REAL default values, the command
   surface (enable / doctor / set-dispatching / clear-dispatching / the watcher
-  itself), crew-restart re-hydration, and the KNOWN drift that the gauge is not
-  wired for crews on the live deployment (confirm with `keeper doctor`).
-  Load-bearing: must not rot. Composes with crew-launch
+  itself), crew-restart re-hydration, and verifying gauge + watcher liveness with
+  `keeper doctor` (use `live-watcher` check — confirms a running keeper, not just a
+  fresh gauge file). Load-bearing: must not rot. Composes with crew-launch
   (§ Self-restart via the keeper) and captain (§10 restart continuity).
 
 sources:
@@ -446,45 +446,23 @@ re-`crew start`; the crew returns under the same name.
 
 ---
 
-## § KNOWN DRIFT — the keeper is NOT wired for crews on the live deployment
+## § Confirming keeper status — always check before relying on it
 
-There is a documented inconsistency in the docs, and the source ships the gauge
-**OFF by default**:
+The gauge writer and the watcher are **fully decoupled**: the statusLine hook writes
+`<agent>.ctx` on every Claude Code render regardless of whether any watcher is
+running. A fresh gauge file does NOT mean a keeper is active.
 
-- The watcher is **`.managed`-gated and no-op without the markers**: absent
-  `.managed`, `keeper --agent ...` logs and exits 0; absent `statusLine.command`
-  in `~/.claude/settings.json`, **no `.ctx` gauge file is ever written** and the
-  keeper emits `session_keeper_no_gauge`. The wiring is NOT automatic — it
-  requires an explicit, destructive `keeper enable ... --yes-destructive`
-  (`keeper_enable_doctor_cmd.go`).
+**Always confirm the actual state with `harmonik keeper doctor --agent <agent>`**
+(flag-only, hk-nbft). The `live-watcher` check uses `LiveKeeperPresent` (flock
+probe) to distinguish a running keeper from a stale corpse lockfile — it is the
+authoritative liveness signal, not gauge mtime.
 
-- **`docs/captain-restart.md §Current deployment state (2026-06-09)` confirms
-  the live fleet ships WITHOUT the gauge:** no `statusLine.command` wired, no
-  Stop/PreCompact stanzas, no watcher running, no `.ctx` files for any crew.
-
-- **`docs/known-workarounds.md` (line 57, "SESSION-KEEPER NOT DEPLOYED FOR
-  CREWS")** documents the operational consequence: when a crew's context fills
-  (~200k tokens) the pane stops accepting keystrokes and the auto-clear/reseed
-  cycle does NOT fire because the statusLine hook is not wired. **Current
-  workaround: manual `harmonik crew stop <name>` then `crew start <name>` with a
-  fresh mission file.** (Refs hk-ekap1, hk-njetn; enablement deferred to an
-  operator-supervised session.)
-
-- Meanwhile the **captain** skill (STARTUP.md Step 6 "Keeper arming") instructs
-  relaunching the captain watcher with `--warn-abs-tokens 200000 --act-abs-tokens
-  215000` (the canonical absolute band; pct flags are inert on the 1M window) — an
-  **armed** posture that assumes the gauge IS wired. These two coexist: the captain
-  note describes how to arm it; the deployment-state docs say it is not currently
-  armed for crews.
-
-**KNOWN DRIFT:** whether the gauge is armed for a given agent on YOUR box is not
-something to assume from the docs — they disagree. **Confirm the ACTUAL state
-with `harmonik keeper doctor --agent <agent>`** (flag-only — hk-nbft) before relying on the keeper to clear
-that session. If `doctor` reports the `statusLine` / `gauge` / `managed` checks
-failing, the keeper is passive and you must fall back to manual
-stop/start. Source-verified facts: the gauge is OFF unless `keeper enable
---yes-destructive` has wired it; everything else about whether a specific live
-session is armed is a deployment fact to check, not infer.
+Crew keepers are auto-armed by the daemon (`HandleCrewStart → SpawnCrewSession`,
+hk-rmy1, hk-lcga, hk-tt9q). On `crew start` the daemon adds a sibling `keeper`
+window in the crew session running full force-cut mode. The `.managed` gate is still
+required — the daemon writes it as part of `HandleCrewStart`. If a crew was spawned
+by a pre-wiring binary it will be unwatched; `doctor` detects this via the
+`live-watcher` check.
 
 ---
 

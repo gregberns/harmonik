@@ -269,11 +269,10 @@ func runCrewStartSubcommand(subArgs []string) int {
 		seedSID(absProject, name, result.SessionID)
 	}
 
-	// The crew's warn-only keeper is launched by the DAEMON as a sibling `keeper`
-	// window inside the crew session (HandleCrewStart → SpawnCrewSession,
-	// hk-rmy1), targeting the crew's `agent` window via `--tmux <session>:agent`.
-	// The CLI no longer spawns a separate hk-keeper-<name> session — doing so would
-	// run two keepers per crew. Refs: hk-rmy1 / hk-yfcc.
+	// The crew's keeper is launched by the DAEMON as a sibling `keeper` window
+	// inside the crew session (HandleCrewStart → SpawnCrewSession, hk-rmy1),
+	// targeting `agent` window. Full force-cut band (D4, hk-lcga). The CLI does
+	// not spawn a separate keeper session. Refs: hk-rmy1 / hk-lcga / hk-tt9q.
 
 	fmt.Println(result.SessionID)
 	return 0

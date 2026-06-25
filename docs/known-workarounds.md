@@ -61,9 +61,7 @@ The pasteinject quit-on-commit hang (hk-trjef, `internal/daemon/pasteinject.go:1
 
 ## Crew context management
 
-**SESSION-KEEPER NOT DEPLOYED FOR CREWS (first seen 2026-06-09, ongoing).**
-Symptom: when a crew's context fills (~200k tokens), the pane stops accepting keystrokes — `harmonik keeper` auto-clear/reseed cycle does NOT fire because the statusLine hook is not wired.
-Resolution: manual restart — `harmonik crew stop <name>` followed by `crew start <name>` with a fresh mission file. Full enablement procedure: `docs/retro/2026-06-10/A6-session-keeper-enable.md`. Decision to defer: `docs/captain-restart.md §Current deployment state`. Refs: hk-ekap1, hk-njetn.
+Crew keepers are auto-armed by the daemon on `crew start`: `HandleCrewStart → SpawnCrewSession` adds a sibling `keeper` window running full force-cut mode (hk-rmy1, hk-lcga, hk-tt9q). Run `harmonik keeper doctor --agent <name>` to confirm any crew is armed and the watcher is live. If doctor reports no live watcher: `harmonik crew stop <name>` then `crew start <name>` re-arms it.
 
 ---
 

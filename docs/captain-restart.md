@@ -111,65 +111,21 @@ A mistimed `/clear` during a deploy / crew-spawn / merge would strand state. Gua
   NO auto-clear, to dogfood the signal on the captain for a few cycles. Only after
   that, and after the crew abort-case + idle-gate tests PASS, arm Phase-2 full-cycle.
 
-## Current deployment state (2026-06-09)
+## Current deployment state (2026-06-20+)
 
-**Captain & crew ships WITHOUT the session-keeper gauge.** The following are
-confirmed absent on the live 2026-06-09 deployment:
+**Captain and crew keepers are LIVE.** The gauge, watcher, and auto-clear cycle are
+active for both:
 
-- `statusLine.command` not wired in `~/.claude/settings.json` (global) — no `.ctx`
-  gauge files are being written for any crew (chani / duncan / liet / stilgar).
-- No Stop or PreCompact hook stanzas wired.
-- No keeper watcher process running.
+- `statusLine.command` wired globally in `~/.claude/settings.json` — all sessions
+  write `.ctx` gauge files.
+- Stop and PreCompact hook stanzas wired.
+- Captain keeper started manually (or by the captain's own boot sequence).
+- Crew keepers auto-armed by the daemon: `HandleCrewStart → SpawnCrewSession` adds a
+  sibling `keeper` window running full force-cut mode (hk-rmy1, hk-lcga, hk-tt9q).
 
-**Implication:** c2-spec §6 Step 0 "preflight unknown #2" (does the statusLine hook
-fire under `--remote-control`?) is **unvalidated**. AC-1's keeper-attach
-sub-criterion is correspondingly weakened — only the env-vars-set + `.managed`
-marker components apply to the current fleet.
+Verify any agent with: `harmonik keeper doctor --agent <name>`. The `live-watcher`
+check uses `LiveKeeperPresent` (flock probe) — distinguishes a running keeper from a
+stale corpse lockfile.
 
-**Operational consequence:** crews have no automated context-clear. When a crew's
-context fills (~200k tokens), it stops accepting keystrokes and requires manual
-restart: `harmonik crew stop <name>` followed by `crew start <name>` with a fresh
-mission file. This is the current captain operating cost documented in the
-2026-06-10 retrospective (Pattern 6).
-
-**Decision (logged hk-njetn):** keeper enablement is deferred to an
-operator-supervised session. Crews run correctly without it — fleet and sandbox
-smokes all booted and idled. Refer to `docs/retro/2026-06-10/A6-session-keeper-enable.md`
-for the exact enablement procedure and rollout sequence.
-
----
-
-## Enablement steps
-
-**Crew keeper test: PASSED 2026-06-10** (abort / happy / idle-gate all green; the
-"never `/clear` without a confirmed handoff nonce" invariant held three ways). The
-mechanism is validated. Two findings gate the captain enablement:
-
-1. **`keeper enable --yes-destructive` rewrites the GLOBAL `~/.claude/settings.json`
-   statusLine** — a machine-wide change that side-effects EVERY claude session
-   (the captain, the churning gurney, future crews). This is why the test forged
-   markers directly instead. **Implication:** enabling the captain keeper is not a
-   private, captain-only act — do it deliberately (ideally when no crew is mid-task,
-   and with operator awareness), not unattended mid-churn. (Productization gap filed.)
-2. **The abort path can only be tested by making the agent REFUSE to write the
-   nonce** — a capable claude will defeat file-locks to produce the handoff (it owns
-   its files). Not a keeper bug; the keeper correctly confirms a genuinely-written
-   nonce. Means: the captain's own self-handoff will essentially always succeed.
-
-```
-harmonik keeper enable captain --tmux captain --yes-destructive   # ⚠ rewrites GLOBAL statusline
-harmonik keeper doctor captain                                     # expect all green
-harmonik keeper --agent captain --tmux captain                    # start watcher (warn-only Phase-1)
-```
-
-**Status: DEFERRED to operator-supervised.** Arming an auto-`/clear` on the captain
-itself, unattended, with a global-config side-effect, is the one step worth doing
-with the operator present (a misfire strands the orchestrator with no one to
-recover it). Until then the backstop below keeps the captain restartable.
-
-## Open question for the operator
-
-Who restarts the captain if the keeper *itself* fails (the keeper is un-dogfooded
-on the captain)? Interim backstop: the hourly heartbeat cron + a fresh `HANDOFF.md`
-kept current — a human (or a cron) can always `/session-resume captain` manually.
-That backstop is live TODAY regardless of keeper enablement.
+**`keeper enable --yes-destructive` rewrites the GLOBAL `~/.claude/settings.json`
+statusLine** — do this deliberately (not mid-churn, with operator awareness).

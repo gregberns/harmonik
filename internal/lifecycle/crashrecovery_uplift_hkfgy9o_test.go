@@ -19,7 +19,9 @@ package lifecycle
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -50,6 +52,51 @@ func reconLockUpliftOpenForRead(t *testing.T, path string) *os.File {
 	}
 	t.Cleanup(func() { _ = f.Close() }) //nolint:errcheck // cleanup error unactionable
 	return f
+}
+
+// reconLockUpliftFindDeadPID returns a PID that kill(pid, 0) reports as absent.
+func reconLockUpliftFindDeadPID(t *testing.T) int {
+	t.Helper()
+	for pid := os.Getpid() + 100_000; pid < os.Getpid()+101_000; pid++ {
+		if !plFixtureIsPidLive(pid) {
+			return pid
+		}
+	}
+	t.Fatal("could not find a non-existent PID for stale-lock test")
+	return 0
+}
+
+// reconLockUpliftStartExitedChild starts a child that exits immediately and
+// returns after observing EOF from its stdout pipe. At that point the child has
+// exited but cmd.Wait has not been called, so POSIX kernels keep it as a zombie
+// until the registered cleanup reaps it.
+func reconLockUpliftStartExitedChild(t *testing.T) (*exec.Cmd, int) {
+	t.Helper()
+
+	testBin := os.Args[0]
+	//nolint:gosec // G204: testBin is the current test binary.
+	cmd := exec.CommandContext(t.Context(), testBin, "-test.run=^TestReconLockZombieChildStub$")
+	cmd.Env = append(os.Environ(), "GO_RECON_LOCK_ZOMBIE_CHILD=1")
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("reconLock zombie child: StdoutPipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("reconLock zombie child: Start: %v", err)
+	}
+	childPID := cmd.Process.Pid
+	t.Cleanup(func() {
+		_ = cmd.Wait() //nolint:errcheck // reap the intentionally delayed child
+	})
+
+	if _, err := io.ReadAll(stdout); err != nil {
+		t.Fatalf("reconLock zombie child: read stdout: %v", err)
+	}
+	if !plFixtureIsPidLive(childPID) {
+		t.Fatalf("reconLock zombie child: PID %d was not visible before Wait", childPID)
+	}
+	return cmd, childPID
 }
 
 // TestReconLockReadCreatorPID_WellFormed verifies that reconLockReadCreatorPID
@@ -197,10 +244,7 @@ func TestReconLockIsStale_LivePIDNotStale(t *testing.T) {
 func TestReconLockIsStale_DeadPIDIsStale(t *testing.T) {
 	t.Parallel()
 
-	const deadPID = 99988
-	if plFixtureIsPidLive(deadPID) {
-		t.Skipf("reconLockIsStale dead-PID: PID %d is live on this host; skipping", deadPID)
-	}
+	deadPID := reconLockUpliftFindDeadPID(t)
 
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "run-dead.lock")
@@ -212,6 +256,28 @@ func TestReconLockIsStale_DeadPIDIsStale(t *testing.T) {
 	}
 	if !stale {
 		t.Errorf("reconLockIsStale dead-PID: got stale=false for dead PID %d; want true", deadPID)
+	}
+}
+
+// TestReconLockIsStale_ZombiePIDNotStale verifies the current PL-024 liveness
+// contract for defunct children: a zombie remains visible to kill(pid, 0), so
+// reconLockIsStale must not classify the lock as stale until the child is
+// reaped and disappears from the process table.
+func TestReconLockIsStale_ZombiePIDNotStale(t *testing.T) {
+	t.Parallel()
+
+	_, zombiePID := reconLockUpliftStartExitedChild(t)
+
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "run-zombie.lock")
+	reconLockUpliftWriteFile(t, lockPath, fmt.Sprintf("creator_pid=%d\n", zombiePID))
+
+	stale, err := reconLockIsStale(lockPath)
+	if err != nil {
+		t.Fatalf("reconLockIsStale zombie-PID: unexpected error: %v", err)
+	}
+	if stale {
+		t.Errorf("reconLockIsStale zombie-PID: got stale=true for defunct but in-table PID %d; want false", zombiePID)
 	}
 }
 
@@ -420,6 +486,36 @@ func TestProbePidfileLock_Ambiguous_OwnPIDNoLock(t *testing.T) {
 	}
 }
 
+// TestProbePidfileLock_NonExistentPIDIsDefinitivelyStale verifies that an
+// acquirable pidfile whose recorded PID is absent returns a definitive Stale
+// result, not the conservative AmbiguousStatus path.
+func TestProbePidfileLock_NonExistentPIDIsDefinitivelyStale(t *testing.T) {
+	t.Parallel()
+
+	projectDir := plFixtureTempProjectDir(t)
+	pidfilePath := plFixturePidfilePath(projectDir)
+	deadPID := reconLockUpliftFindDeadPID(t)
+
+	content := fmt.Sprintf("%d\n%d\nunknown\n", deadPID, deadPID)
+	if err := os.WriteFile(pidfilePath, []byte(content), 0o600); err != nil {
+		t.Fatalf("ProbePidfileLock dead-PID: WriteFile: %v", err)
+	}
+
+	status, probedPID, probeErr := ProbePidfileLock(projectDir)
+	if probeErr != nil {
+		t.Fatalf("ProbePidfileLock dead-PID: unexpected error: %v", probeErr)
+	}
+	if status == PidfileLockStatusAmbiguous {
+		t.Fatalf("ProbePidfileLock dead-PID: status = Ambiguous; want definitive Stale")
+	}
+	if status != PidfileLockStatusStale {
+		t.Fatalf("ProbePidfileLock dead-PID: status = %d, want Stale (%d)", status, PidfileLockStatusStale)
+	}
+	if probedPID != deadPID {
+		t.Errorf("ProbePidfileLock dead-PID: probedPID = %d, want %d", probedPID, deadPID)
+	}
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // AcquirePidfile: missing .harmonik directory error path
 // ──────────────────────────────────────────────────────────────────────────────
@@ -510,4 +606,15 @@ func TestPidfileLock_CrossProjectIsolation(t *testing.T) {
 	if id1 == id2 {
 		t.Errorf("cross-project isolation: both pidfiles have same instanceID %q; each must be distinct", id1)
 	}
+}
+
+// TestReconLockZombieChildStub is a self-exec child for the zombie-PID
+// reconciliation-lock test. It exits immediately when the sentinel is set.
+func TestReconLockZombieChildStub(t *testing.T) {
+	t.Parallel()
+
+	if os.Getenv("GO_RECON_LOCK_ZOMBIE_CHILD") != "1" {
+		return
+	}
+	os.Exit(0)
 }

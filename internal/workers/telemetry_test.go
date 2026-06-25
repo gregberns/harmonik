@@ -594,3 +594,95 @@ func TestParseWorkerReport_WorktreeCount(t *testing.T) {
 		t.Errorf("WorktreeCount: got %d, want 0 when line absent", got2.WorktreeCount)
 	}
 }
+
+// sampleLinuxReport is a realistic block from linuxCollectorScript output running
+// in a Linux container (e.g. alpine or debian). The key differences from darwin:
+//   - load= has no braces: "0.52 0.31 0.22" (awk '{print $1,$2,$3}' /proc/loadavg)
+//   - No vmstat<< block; no pagesize= line.
+//   - memfree= (MemAvailable bytes) replaces the darwin vm_stat page-count path.
+//   - swapused= (bytes) replaces the darwin `swap=total... used=...` format.
+//
+// Values:
+//   - load: 0.52 / 0.31
+//   - ncpu: 4
+//   - memtotal: 8589934592 bytes → 8192 MB
+//   - memfree: 7516192768 bytes → 7168 MB
+//   - swapused: 536870912 bytes → 512 MB
+//   - disk: 250000 MB available (3rd numeric column)
+//   - claude: 0, worktrees: 2
+const sampleLinuxReport = `load=0.52 0.31 0.22
+ncpu=4
+memtotal=8589934592
+memfree=7516192768
+swapused=536870912
+disk=overlay         102400  51200  51200  50% /
+claude=0
+worktrees=2
+`
+
+// TestParseWorkerReport_Linux verifies that parseWorkerReport correctly handles
+// the Linux collector format: no braces in load=, memfree= + swapused= keys
+// replace the darwin vm_stat block, and backward-compat darwin keys are unaffected.
+// Bead: hk-yflqo (L3 Linux OS target, decision 4).
+func TestParseWorkerReport_Linux(t *testing.T) {
+	t.Run("linux format with memfree and swapused", func(t *testing.T) {
+		got, err := parseWorkerReport(sampleLinuxReport)
+		if err != nil {
+			t.Fatalf("parseWorkerReport Linux: unexpected error: %v", err)
+		}
+		if got.Load1 != 0.52 {
+			t.Errorf("Load1: got %v, want 0.52", got.Load1)
+		}
+		if got.Load5 != 0.31 {
+			t.Errorf("Load5: got %v, want 0.31", got.Load5)
+		}
+		if got.NCPU != 4 {
+			t.Errorf("NCPU: got %d, want 4", got.NCPU)
+		}
+		if got.MemTotalMB != 8192 {
+			t.Errorf("MemTotalMB: got %d, want 8192", got.MemTotalMB)
+		}
+		if got.MemFreeMB != 7168 {
+			t.Errorf("MemFreeMB: got %d, want 7168 (from memfree= key)", got.MemFreeMB)
+		}
+		if got.SwapUsedMB != 512 {
+			t.Errorf("SwapUsedMB: got %d, want 512 (from swapused= key)", got.SwapUsedMB)
+		}
+		if got.DiskFreeMB != 51200 {
+			t.Errorf("DiskFreeMB: got %d, want 51200 (3rd numeric col of df -m)", got.DiskFreeMB)
+		}
+		if got.ClaudeProcs != 0 {
+			t.Errorf("ClaudeProcs: got %d, want 0", got.ClaudeProcs)
+		}
+		if got.WorktreeCount != 2 {
+			t.Errorf("WorktreeCount: got %d, want 2", got.WorktreeCount)
+		}
+		// Parser must not populate metadata fields.
+		if got.WorkerName != "" || got.SampledAt != "" || got.Problems != nil {
+			t.Errorf("parser must leave WorkerName/SampledAt/Problems empty, got %+v", got)
+		}
+	})
+
+	t.Run("memfree= wins over vm_stat page counts when both present", func(t *testing.T) {
+		// Mixing both keys in one report (e.g. a test that emits both by accident):
+		// memfree= must win; the vm_stat block must be silently ignored.
+		mixed := "load=1.0 1.0 1.0\n" +
+			"ncpu=2\n" +
+			"memtotal=4294967296\n" + // 4096 MB
+			"memfree=2147483648\n" + // 2048 MB — must be used
+			"vmstat<<Mach Virtual Memory Statistics: (page size of 4096 bytes)\n" +
+			"Pages free:                              999999.\n" + // would give >>2048 MB — must be ignored
+			"Pages inactive:                          999999.\n" +
+			"\n" +
+			"swap=total = 1024.00M  used = 0.00M  free = 1024.00M\n" +
+			"disk=/dev/sda1 200000 100000 100000 50% /\n" +
+			"claude=0\n"
+		got, err := parseWorkerReport(mixed)
+		if err != nil {
+			t.Fatalf("parseWorkerReport mixed: unexpected error: %v", err)
+		}
+		if got.MemFreeMB != 2048 {
+			t.Errorf("MemFreeMB: got %d, want 2048 (memfree= key must win over vm_stat)", got.MemFreeMB)
+		}
+	})
+}

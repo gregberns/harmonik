@@ -107,6 +107,35 @@ func darwinCollectorScript(repoPath string) string {
 	}, "\n")
 }
 
+// linuxCollectorScript builds the inline `sh -c` collector body for a Linux
+// worker (e.g. a Docker/Lima container), substituting repoPath into the `df`
+// and `git` invocations. It emits key=value lines parsed by parseWorkerReport.
+//
+// Linux-specific sources:
+//   - /proc/loadavg  → load= (space-separated triplet, no braces)
+//   - /proc/cpuinfo  → ncpu= (grep -c '^processor'; no nproc dependency)
+//   - /proc/meminfo  → memtotal= (MemTotal×1024 bytes)
+//   - /proc/meminfo  → memfree= (MemAvailable×1024 bytes; new Linux key)
+//   - /proc/meminfo  → swapused= ((SwapTotal−SwapFree)×1024 bytes; new Linux key)
+//   - df -m          → disk=
+//   - ps+grep        → claude= (pgrep -f is not universal in Alpine/minimal images)
+//   - git worktree   → worktrees=
+//
+// parseWorkerReport handles memfree= and swapused= directly (bytes → MB),
+// bypassing the darwin vm_stat block. Bead: hk-yflqo (L3 Linux OS target).
+func linuxCollectorScript(repoPath string) string {
+	return strings.Join([]string{
+		`echo "load=$(awk '{print $1, $2, $3}' /proc/loadavg)"`,
+		`echo "ncpu=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 1)"`,
+		`echo "memtotal=$(awk '/^MemTotal:/{print $2*1024}' /proc/meminfo)"`,
+		`echo "memfree=$(awk '/^MemAvailable:/{print $2*1024}' /proc/meminfo)"`,
+		`echo "swapused=$(awk 'BEGIN{st=0;sf=0}/^SwapTotal:/{st=$2}/^SwapFree:/{sf=$2}END{print (st-sf)*1024}' /proc/meminfo)"`,
+		`echo "disk=$(df -m '` + repoPath + `' | tail -1)"`,
+		`echo "claude=$(ps 2>/dev/null | grep 'claude --session-id' | grep -v grep | wc -l | tr -d ' ')"`,
+		`echo "worktrees=$(git -C '` + repoPath + `' worktree list --porcelain 2>/dev/null | grep -c '^worktree ' || echo 0)"`,
+	}, "\n")
+}
+
 // CollectReport runs the inline darwin resource collector on worker w via runner,
 // parses its output into a WorkerReportPayload, stamps WorkerName + SampledAt
 // (RFC 3339 UTC), and emits a worker_report event via emit.
@@ -129,7 +158,13 @@ func darwinCollectorScript(repoPath string) string {
 //
 // Bead refs: hk-ec9v (WR2), hk-b2f9 (WR4).
 func CollectReport(ctx context.Context, runner tmux.CommandRunner, w Worker, reg *Registry, diskFloorMB int64, emit EmitFunc) (WorkerReportPayload, error) {
-	cmd := runner.Command(ctx, "sh", "-c", darwinCollectorScript(w.RepoPath))
+	var script string
+	if w.OS == "linux" {
+		script = linuxCollectorScript(w.RepoPath)
+	} else {
+		script = darwinCollectorScript(w.RepoPath)
+	}
+	cmd := runner.Command(ctx, "sh", "-c", script)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -319,10 +354,11 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 	var p WorkerReportPayload
 
 	var (
-		sawLoad  bool
-		freePg   int64
-		inactPg  int64
-		inVMStat bool
+		sawLoad    bool
+		sawMemFree bool // set when memfree= key seen (Linux); prevents vm_stat overwrite
+		freePg     int64
+		inactPg    int64
+		inVMStat   bool
 		// pageSize is the vm_stat page size in bytes. The collector now emits an
 		// authoritative `pagesize=` line (sysctl -n hw.pagesize, WR2); when that is
 		// absent it is parsed from the vm_stat header ("page size of N bytes"); and
@@ -404,6 +440,23 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 			if n > 0 {
 				pageSize = n
 			}
+		case "memfree":
+			// Linux: MemAvailable×1024 bytes from /proc/meminfo (linuxCollectorScript).
+			// Sets MemFreeMB directly; prevents the vm_stat page-count path from
+			// overwriting it (sawMemFree flag). Bead: hk-yflqo (L3 Linux OS target).
+			b, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: memfree: %w", err)
+			}
+			p.MemFreeMB = b / bytesPerMB
+			sawMemFree = true
+		case "swapused":
+			// Linux: (SwapTotal−SwapFree)×1024 bytes from /proc/meminfo.
+			b, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: swapused: %w", err)
+			}
+			p.SwapUsedMB = b / bytesPerMB
 		case "load":
 			l1, l5, err := parseLoadavg(val)
 			if err != nil {
@@ -462,7 +515,12 @@ func parseWorkerReport(raw string) (WorkerReportPayload, error) {
 		return WorkerReportPayload{}, fmt.Errorf("parseWorkerReport: missing required load= line")
 	}
 
-	p.MemFreeMB = (freePg + inactPg) * pageSize / bytesPerMB
+	// Only compute MemFreeMB from vm_stat page counts when the Linux memfree= key
+	// was not seen. On darwin, memfree= is absent so this path always fires.
+	// On Linux, memfree= (MemAvailable bytes) was already set above.
+	if !sawMemFree {
+		p.MemFreeMB = (freePg + inactPg) * pageSize / bytesPerMB
+	}
 
 	return p, nil
 }

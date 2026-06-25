@@ -569,6 +569,12 @@ last_msg_ts = {}  # agent_name -> epoch of most recent agent_message
 reviewer_launched_ts = {}  # run_id -> epoch of the reviewer_launched event (review entered)
 verdict_run_ids      = set() # run_ids that have any reviewer_verdict event
 approving_verdict_run_ids = set() # run_ids that have reviewer_verdict{APPROVE}
+# Codex-DOT path (hk-346mi): single-reviewer DOT (harness=codex + reviewer_harness=claude-code)
+# closes the bead via CHB protocol (outcome_emitted kind=approved + bead_closed) rather than
+# emitting reviewer_launched / reviewer_verdict. outcome_emitted(kind=approved) is the daemon
+# merge-sequence event and confirms the review path was honored. The review-gate check skips
+# any run_id present in this set (same treatment as approving_verdict_run_ids).
+outcome_approved_run_ids = set() # run_ids with outcome_emitted{kind=approved}
 failed_run_ids       = set() # run_ids whose terminal event is run_failed (merged nothing)
 completed_run_ts     = {} # run_id -> epoch of the most-recent run_completed event
 completed_run_seq    = {} # run_id -> event-order index of most-recent run_completed event
@@ -670,6 +676,18 @@ if _os.path.isfile(_events_path):
                     if _rid:
                         failed_run_ids.add(_rid)
 
+                elif _etype == 'outcome_emitted':
+                    # Codex-DOT path (hk-346mi): single-reviewer DOT with reviewer_harness=claude-code
+                    # closes the bead via CHB protocol, emitting outcome_emitted(kind=approved) without
+                    # ever emitting reviewer_launched / reviewer_verdict. Capture run_ids here; the
+                    # review-gate check treats review_requested_ts + outcome_approved_run_ids as reviewed.
+                    # Note: run_id lives in the payload (bus.Emit with no run_id in the envelope).
+                    _rid = _ev.get('run_id') or (_payload.get('run_id') if isinstance(_payload, dict) else '') or ''
+                    if _rid:
+                        _kind = _payload.get('kind', '') if isinstance(_payload, dict) else ''
+                        if _kind == 'approved':
+                            outcome_approved_run_ids.add(_rid)
+
                 elif _etype == 'run_completed':
                     # Judge review-bypass only after the daemon says the run completed.
                     # In DOT triple-review, REQUEST_CHANGES relaunches implementation/review;
@@ -744,7 +762,7 @@ if _os.path.isfile(_events_path):
 # run_id; only a terminal APPROVE clears the run. A REQUEST_CHANGES verdict remains in-flight
 # unless a subsequent run_completed arrives without an approving verdict. A
 # terminal-close run_id that never launched OR requested a reviewer is in neither map, so
-# unmatched `dot: reached terminal node close` run_ids never false-flag.
+# unmatched 'dot: reached terminal node close' run_ids never false-flag.
 _review_anchor_ts = {}  # run_id -> earliest review-related epoch (launch or request)
 for _rid, _e in reviewer_launched_ts.items():
     if _rid not in _review_anchor_ts or _e < _review_anchor_ts[_rid]:
@@ -762,6 +780,8 @@ for _rid, _lts in _recent_review:
         continue  # run_failed terminal: merged nothing, cannot be a bypass
     if _rid in approving_verdict_run_ids:
         continue  # terminal approving verdict exists: reviewed
+    if _rid in outcome_approved_run_ids:
+        continue  # approved via merge-outcome (codex single-reviewer DOT path — no reviewer_verdict emitted)
     # Judge only completed runs. A latest reviewer_launched OR REQUEST_CHANGES verdict
     # without a subsequent run_completed is an active review/fixup loop, not a bypass.
     _completed_ts = completed_run_ts.get(_rid, 0)

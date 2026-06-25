@@ -57,6 +57,10 @@
 #   [x] watch present+tmux-alive, cursor frozen N ticks with pending events → watch-stalled IMMEDIATE (Test 35a)
 #   [x] cursor advancing → no watch-stalled signal (Test 35b)
 #   [x] watch absent-from-comms but tmux-alive → NOT watch_down (dual-probe) (Test 35c)
+#   [x] SD-4 POSITIVE: program drained + KNOWN lane wake-economy ready + free slot →
+#                      IMMEDIATE 'program-drained-stall' NAMES wake-economy (Test 36)
+#   [x] SD-4 NEGATIVE: same lane ZERO ready beads → no program-drained-stall (Test 37)
+#   [x] SD-4 DEFENSIVE: lanes.json missing → no crash, no stall wake (Test 38)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -169,6 +173,13 @@ setup_fixture() {
   local state_json=''
   local events_content=''
   local br_ready_json='[]'   # `br ready --limit 0 --json` output for the stub
+  # SD-1: `br ready --parent <epic> --limit 0 --json` per-epic output. JSON object
+  # mapping epic_id -> ready-bead list, e.g. '{"hk-var9b":[{"id":"hk-1"}]}'. Any epic
+  # not present returns '[]' (zero ready). Default '{}' => every parent returns '[]'.
+  local br_parent_json='{}'
+  # SD-1: content written to .harmonik/context/lanes.json. Empty => no lanes.json file
+  # (exercises the defensive missing-file skip path).
+  local lanes_json=''
   local keeper_procs_raw=''  # lines matching "harmonik keeper --agent"; default: none
   local git_release_count=0  # value returned by `git rev-list --count` stub
   local git_last_tag='v0.0.1' # value returned by `git tag --list` stub ('' = no tag yet)
@@ -191,6 +202,8 @@ setup_fixture() {
       --state-json)                state_json="$2";    shift 2 ;;
       --events-jsonl)              events_content="$2";shift 2 ;;
       --br-ready-json)             br_ready_json="$2"; shift 2 ;;
+      --br-parent-json)            br_parent_json="$2"; shift 2 ;;  # SD-1
+      --lanes-json)                lanes_json="$2"; shift 2 ;;      # SD-1
       --keeper-procs-raw)          keeper_procs_raw="$2"; shift 2 ;;
       --git-release-count)         git_release_count="$2"; shift 2 ;;
       --git-last-tag)              git_last_tag="$2";  shift 2 ;;
@@ -217,6 +230,11 @@ setup_fixture() {
   if [[ -n "$watch_cursor" ]]; then
     mkdir -p "$tmpdir/.harmonik/watch"
     printf '%s' "$watch_cursor" > "$tmpdir/.harmonik/watch/cursor"
+  fi
+  # SD-1: write lanes.json if specified (empty => no file, defensive skip path).
+  if [[ -n "$lanes_json" ]]; then
+    mkdir -p "$tmpdir/.harmonik/context"
+    printf '%s\n' "$lanes_json" > "$tmpdir/.harmonik/context/lanes.json"
   fi
 
   # The comms capture log lives at a fixed known path inside the project.
@@ -313,17 +331,44 @@ exit 0
 EOF
   chmod +x "$tmux_bin"
 
-  # Stub `br` so the backlog-readiness check is deterministic in tests.
+  # Stub `br` so the backlog-readiness AND known-ready-lane (SD-1) checks are
+  # deterministic in tests. Distinguishes `br ready --parent <epic> --json` (SD-1,
+  # per-epic lookup in BR_PARENT_JSON) from the bare `br ready --limit 0 --json`
+  # (Check 8, returns BR_READY_JSON).
   local br_ready_escaped
   br_ready_escaped=$(printf '%s' "$br_ready_json" | sed "s/'/'\\\\''/g")
+  local br_parent_escaped
+  br_parent_escaped=$(printf '%s' "$br_parent_json" | sed "s/'/'\\\\''/g")
   local br_bin="$tmpdir/bin/br"
   cat > "$br_bin" <<EOF
 #!/usr/bin/env bash
 # Stub br
 BR_READY_JSON='${br_ready_escaped}'
+BR_PARENT_JSON='${br_parent_escaped}'
+# Detect a --parent <epic> arg (SD-1 known-ready-lane lookup).
+parent_epic=""
+args=("\$@")
+for ((i=0; i<\${#args[@]}; i++)); do
+  if [[ "\${args[i]}" == "--parent" ]]; then
+    parent_epic="\${args[i+1]}"
+    break
+  fi
+done
 case "\$*" in
   ready*--json*|*ready*--json*)
-    printf '%s\n' "\$BR_READY_JSON"
+    if [[ -n "\$parent_epic" ]]; then
+      # Look up this epic in the parent map; absent => '[]' (zero ready beads).
+      printf '%s' "\$BR_PARENT_JSON" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(json.dumps(d.get('\$parent_epic', [])))
+except Exception:
+    print('[]')
+"
+    else
+      printf '%s\n' "\$BR_READY_JSON"
+    fi
     ;;
   *)
     exit 0
@@ -2056,6 +2101,112 @@ else
     pass "35c: watch-down suppressed when tmux is alive (dual-probe correct)"
   fi
 fi
+rm -rf "$PROJ"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SD-4: program-drained-stall detector (PLAN-v2 Part 0 signal (a)) — reproduce the
+# actual 2026-06-25 ~2h stall shape and assert the IMMEDIATE fires AND NAMES the lane.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Lane index mirroring the real .harmonik/context/lanes.json: wake-economy (the lane
+# the 2026-06-25 stall mis-classified) with epic hk-var9b and a NULL gate (KNOWN /
+# resumable), plus pi-gateway (epic_id null + gate => epic-less, can never fire).
+SD4_LANES='{"schema_version":1,"lanes":[{"lane":"wake-economy","label":"codename:wake-economy","epic_id":"hk-var9b","status":"active","gate":null},{"lane":"pi-gateway","label":"codename:pi-openrouter","epic_id":null,"status":"parked","gate":{"owner":"operator","reason":"not before remote-worker proven","expires":"2026-07-09"}}]}'
+
+# ── Test 36: SD-4 POSITIVE — program drained + wake-economy ready + free slot ──
+# Reproduces the 2026-06-25 stall: the remote-pyramid PROGRAM has drained (fleet idle,
+# 0 active workers, last run event >20m ago), the KNOWN parked lane wake-economy
+# (epic hk-var9b) has ready beads, and a free slot exists (max_concurrent 4, 0 busy).
+# Assert: an IMMEDIATE 'program-drained-stall' fires AND the wake NAMES wake-economy.
+echo ""
+echo "=== Test 36: SD-4 POSITIVE — program drained + KNOWN ready lane + free slot → IMMEDIATE names wake-economy ==="
+OLD_TS=$(ts_ago 1500)   # 25 min > 20-min idle threshold → program_drained (== idle_fleet)
+SD4_EVENTS='{"type":"run_completed","ts":"'"$OLD_TS"'","run_id":"r-pyramid-last"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+  --lanes-json "$SD4_LANES" \
+  --br-parent-json '{"hk-var9b":[{"id":"hk-we-1"},{"id":"hk-we-2"}]}' \
+)
+OUTPUT=$(run_check "$PROJ")
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_contains "SD4+ stdout IMMEDIATE"        "IMMEDIATE"               "$OUTPUT"
+assert_contains "SD4+ stdout signal"           "program-drained-stall"   "$OUTPUT"
+assert_json_bool "SD4+ latest.json program_drained_stall=true" \
+  "$LATEST" "program_drained_stall" "true"
+assert_json_list_contains "SD4+ immediate_signals has program-drained-stall" \
+  "$LATEST" "immediate_signals" "program-drained-stall"
+# The wake (signal text AND snapshot field) must NAME wake-economy + its epic + count.
+assert_json_list_contains "SD4+ immediate_signals names wake-economy" \
+  "$LATEST" "immediate_signals" "lane=wake-economy"
+KNOWN_LANE=$(python3 -c "import json;print(json.load(open('$LATEST')).get('known_ready_lane',''))")
+assert_eq "SD4+ known_ready_lane == wake-economy" "wake-economy" "$KNOWN_LANE"
+KNOWN_EPIC=$(python3 -c "import json;print(json.load(open('$LATEST')).get('known_ready_lane_epic',''))")
+assert_eq "SD4+ known_ready_lane_epic == hk-var9b" "hk-var9b" "$KNOWN_EPIC"
+assert_check_state "SD4+ checks.program-stall=flag" "$LATEST" "program-stall" "flag"
+LOG=$(comms_log "$PROJ")
+if [[ -f "$LOG" && -s "$LOG" ]]; then
+  pass "SD4+ comms sent"
+  assert_contains "SD4+ comms [IMMEDIATE]"            "[IMMEDIATE]"             "$(cat "$LOG")"
+  assert_contains "SD4+ comms NAMES wake-economy"     "wake-economy"            "$(cat "$LOG")"
+  assert_contains "SD4+ comms signal program-drained-stall" "program-drained-stall" "$(cat "$LOG")"
+  # The wake must reach the captain (default opsmonitor_target).
+  assert_contains "SD4+ comms routed --to captain"    "to=captain"              "$(cat "$LOG")"
+else
+  fail "SD4+ expected IMMEDIATE comms send, got none"
+fi
+rm -rf "$PROJ"
+
+# ── Test 37: SD-4 NEGATIVE — same lane, ZERO ready beads → wake does NOT fire ──
+# The real CURRENT fleet state: wake-economy is parked-as-fact (zero ready beads).
+# The program may be drained + slot free, but with no KNOWN ready lane the
+# deterministic predicate is FALSE — no program-drained-stall wake.
+echo ""
+echo "=== Test 37: SD-4 NEGATIVE — KNOWN lane has ZERO ready beads → no program-drained-stall ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+  --lanes-json "$SD4_LANES" \
+  --br-parent-json '{"hk-var9b":[]}' \
+)
+OUTPUT=$(run_check "$PROJ")
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+assert_not_contains "SD4- no program-drained-stall in stdout" "program-drained-stall" "$OUTPUT"
+assert_json_bool "SD4- program_drained_stall=false" "$LATEST" "program_drained_stall" "false"
+assert_json_list_empty "SD4- immediate_signals empty" "$LATEST" "immediate_signals"
+assert_check_state "SD4- checks.program-stall=ok" "$LATEST" "program-stall" "ok"
+LOG=$(comms_log "$PROJ")
+if grep -q "program-drained-stall" "$LOG" 2>/dev/null; then
+  fail "SD4- program-drained-stall must NOT be sent when lane has zero ready beads"
+else
+  pass "SD4- no program-drained-stall comms when lane has zero ready beads"
+fi
+rm -rf "$PROJ"
+
+# ── Test 38: SD-4 DEFENSIVE — lanes.json missing → no crash, no stall wake ─────
+# When lanes.json is absent the known-ready-lane predicate cannot be computed; the
+# check skips silently (the health pass must not crash) and the wake never fires.
+echo ""
+echo "=== Test 38: SD-4 DEFENSIVE — lanes.json missing → no crash, no program-drained-stall ==="
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json '' \
+  --events-jsonl "$SD4_EVENTS" \
+)
+OUTPUT=$(run_check "$PROJ")
+LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
+if [[ -f "$LATEST" ]]; then
+  pass "SD4-defensive: latest.json written (no crash with missing lanes.json)"
+else
+  fail "SD4-defensive: latest.json missing — health pass crashed"
+fi
+assert_not_contains "SD4-defensive no program-drained-stall in stdout" "program-drained-stall" "$OUTPUT"
+assert_json_bool "SD4-defensive program_drained_stall=false" "$LATEST" "program_drained_stall" "false"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

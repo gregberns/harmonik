@@ -342,6 +342,83 @@ except Exception:
   fi
 fi
 
+# ── Check 9: known-ready-lane (lanes.json + br ready --parent) — SD-1 ──────────
+# SD-1 (admiral-operating-framework, PLAN-v2 Part 0 signal (a)): the DETERMINISTIC,
+# agent-EXTERNAL stall detector. The 2026-06-25 ~2h stall happened because the
+# admiral mis-CLASSIFIED a known, parked, already-ranked lane (token-opt /
+# wake-economy) as "a brand-new initiative only the operator may rank," and every
+# self-scored audit (C3 / anti-pattern G) ratified the idle fleet through that wrong
+# frame. The fix removes the JUDGMENT from the trigger: a script computes the fact
+# and pushes a lane-NAMED wake the captain cannot self-score its way out of.
+#
+# This block computes, for each lane in .harmonik/context/lanes.json:
+#   - the lane is a candidate iff its epic_id is non-null AND its gate is null OR
+#     EXPIRED (gate.expires < now == absent; LAPSE→autonomous default, Part 1b), AND
+#   - `br ready --parent <epic_id> --limit 0 --json` returns >=1 ready bead.
+# "KNOWN" = present in the index (a fact read from a file), NOT "in the live kerf-next
+# feed right now." Lanes with epic_id:null contribute ZERO (the index invariant
+# guarantees an epic-less lane carries a gate, so it can never fire the wake).
+#
+# The first matching lane's name + epic + ready-count are passed into the python
+# analysis, which AND-combines them with program_drained (== idle_fleet, Check 6)
+# and free_slot (== the backlog-ready free-slot computation) to push the SD-1
+# [IMMEDIATE] wake naming the lane.
+#
+# Defensive: missing/unparseable lanes.json OR no jq/br → log a WARN, skip the check
+# (KNOWN_READY_LANE stays empty), never crash the health pass.
+LANES_FILE="$PROJ/.harmonik/context/lanes.json"
+KNOWN_READY_LANE=""        # first candidate lane name with >=1 ready bead (empty = none)
+KNOWN_READY_LANE_EPIC=""   # its epic_id
+KNOWN_READY_LANE_COUNT=0   # its ready-bead count
+if [[ -f "$LANES_FILE" ]]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "ops-monitor-check: WARN — jq not found; skipping known-ready-lane check (SD-1)" >&2
+  elif ! command -v br >/dev/null 2>&1; then
+    echo "ops-monitor-check: WARN — br not found; skipping known-ready-lane check (SD-1)" >&2
+  elif ! jq -e . "$LANES_FILE" >/dev/null 2>&1; then
+    echo "ops-monitor-check: WARN — lanes.json missing/unparseable; skipping known-ready-lane check (SD-1)" >&2
+  else
+    # Emit "lane<TAB>epic_id" for each candidate lane: non-null epic_id AND gate is
+    # null OR its expires is absent OR expired (gate.expires < now). gate.expires is
+    # RFC3339/ISO-8601 'Z'; fromdateiso8601 parses it to epoch for comparison with now.
+    _LANE_CANDIDATES=$(jq -r --argjson now "$TS_EPOCH" '
+      (.lanes // [])[]
+      | select(.epic_id != null)
+      | select(
+          (.gate == null)
+          or ((.gate.expires // null) == null)
+          or (((.gate.expires | fromdateiso8601?) // 0) < $now)
+        )
+      | "\(.lane)\t\(.epic_id)"
+    ' "$LANES_FILE" 2>/dev/null) || _LANE_CANDIDATES=""
+    while IFS=$'\t' read -r _lane _epic; do
+      [[ -z "$_lane" || -z "$_epic" ]] && continue
+      _PARENT_JSON=$( (cd "$PROJ" && br ready --parent "$_epic" --limit 0 --json) 2>/dev/null ) || _PARENT_JSON=""
+      [[ -z "$_PARENT_JSON" ]] && continue
+      _CNT=$(printf '%s' "$_PARENT_JSON" | py3 "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    if isinstance(d, dict):
+        items = d.get('issues') or d.get('ready') or d.get('beads') or []
+    elif isinstance(d, list):
+        items = d
+    else:
+        items = []
+    print(len(items))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+      if [[ "$_CNT" =~ ^[0-9]+$ ]] && (( _CNT >= 1 )); then
+        KNOWN_READY_LANE="$_lane"
+        KNOWN_READY_LANE_EPIC="$_epic"
+        KNOWN_READY_LANE_COUNT="$_CNT"
+        break
+      fi
+    done <<< "$_LANE_CANDIDATES"
+  fi
+fi
+
 # ── Check events for idle-fleet ───────────────────────────────────────────────
 
 LAST_RUN_EVENT_TS=0
@@ -460,6 +537,11 @@ watch_stall_ticks     = int('$WATCH_STALL_TICKS')
 prev_watch_cursor     = '$PREV_WATCH_CURSOR'
 prev_watch_stall_misses = int('$PREV_WATCH_STALL_MISSES')
 watch_cursor          = '$WATCH_CURSOR'
+# SD-1: first KNOWN ready lane (non-null epic, ungated/expired-gate, >=1 ready bead).
+# Empty lane name == no known-ready lane this tick (the predicate is false).
+known_ready_lane       = '''$KNOWN_READY_LANE'''
+known_ready_lane_epic  = '''$KNOWN_READY_LANE_EPIC'''
+known_ready_lane_count = int('$KNOWN_READY_LANE_COUNT')
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -946,6 +1028,28 @@ backlog_ready = daemon_up and ready_count > 0 and total_workers < max(max_concur
 if backlog_ready:
     digest_signals.append('backlog-ready:count=' + str(ready_count))
 
+# ── SD-1: program-drained-stall (DETERMINISTIC, agent-external) ───────────────
+# PLAN-v2 Part 0 signal (a). Fires the lane-NAMED [IMMEDIATE] wake the captain
+# cannot self-score its way out of, ON all three machine-computable predicates:
+#   program_drained          == idle_fleet (Check 6: daemon up + 0 active workers +
+#                               last run event >20m ago — the fleet-idle / queues-
+#                               drained signal; PLAN: treat fleet-idle as the drain).
+#   a-free-slot-exists       == total_workers < max(max_concurrent,1)  (the SAME
+#                               free-slot computation backlog_ready uses; trivially
+#                               true under idle_fleet but stated explicitly).
+#   a-known-ready-lane-exists== KNOWN_READY_LANE is non-empty (computed in bash from
+#                               lanes.json: a non-null-epic, ungated/expired-gate lane
+#                               whose br-ready-parent epic query returned >=1 bead).
+# Unlike backlog-ready (a low-priority DIGEST judgment hint that fires on ANY ready
+# count + free slot), this is an [IMMEDIATE] that NAMES the lane + epic + ready count,
+# so the captain has the staffing answer in hand on receipt — the audit is bypassed.
+free_slot = total_workers < max(max_concurrent, 1)
+program_drained_stall = bool(idle_fleet and free_slot and known_ready_lane)
+if program_drained_stall:
+    immediate_signals.append(
+        'program-drained-stall:lane=%s,epic=%s,ready=%d' % (
+            known_ready_lane, known_ready_lane_epic, known_ready_lane_count))
+
 all_green = not immediate_signals and not digest_signals
 
 # captain-up detail string
@@ -998,6 +1102,12 @@ checks = {
                         'detail': ','.join(sorted(keeper_missing_crews)) if keeper_missing_crews else 'all online crews have keepers'},
     'release-due':     {'state': 'flag' if release_due else 'ok',
                         'detail': str(release_commit_count) + ' unreleased commits, CI=' + ci_status},
+    'program-stall':   {'state': 'flag' if program_drained_stall else 'ok',
+                        'detail': ('drained; KNOWN lane ' + known_ready_lane + ' (epic ' +
+                                   known_ready_lane_epic + ') has ' + str(known_ready_lane_count) +
+                                   ' ready + free slot') if program_drained_stall
+                                  else ('known-ready-lane=' + (known_ready_lane or 'none') +
+                                        ' idle=' + str(idle_fleet))},
 }
 
 # ── De-dup + cooldown for immediate signals ──────────────────────────────────
@@ -1127,6 +1237,11 @@ snapshot = {
     'total_active_workers': total_workers,
     'ready_count': ready_count,
     'backlog_ready': backlog_ready,
+    # SD-1 deterministic program-drained stall detector (PLAN-v2 Part 0 signal (a)).
+    'program_drained_stall': program_drained_stall,
+    'known_ready_lane': known_ready_lane,
+    'known_ready_lane_epic': known_ready_lane_epic,
+    'known_ready_lane_count': known_ready_lane_count,
     'review_bypass_run_ids': review_bypass_run_ids,
     'release_due': release_due,
     'release_commit_count': release_commit_count,

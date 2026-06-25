@@ -160,7 +160,6 @@ func resolveOpsMonitorProjectDir(args []string) (projectDir string, remaining []
 	return real, remaining, nil
 }
 
-
 func opsMonitorPlistPath(projectDir string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

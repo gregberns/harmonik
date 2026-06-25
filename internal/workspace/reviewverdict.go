@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -42,6 +43,18 @@ type ReviewVerdict struct {
 // ReviewVerdictSchemaVersion is the current agent-reviewer JSON schema version.
 // ReadReviewVerdict rejects any file whose schema_version field differs from this.
 const ReviewVerdictSchemaVersion = 1
+
+// Remote verdict read-retry bounds (hk-clrts). A cat-over-SSH read of the
+// worker's review.json can observe a partially-written / not-yet-durable file,
+// so parseReviewVerdict returns ErrMalformed on a transient truncated read. The
+// remote path (ReadReviewVerdictVia) retries ONLY on ErrMalformed with bounded
+// exponential backoff: 100/200/400/800ms between attempts → total wait cap
+// ~1.5s across reviewVerdictRemoteMaxAttempts tries. The local os.ReadFile path
+// is unaffected (NFR7).
+const (
+	reviewVerdictRemoteMaxAttempts = 5
+	reviewVerdictRemoteBaseBackoff = 100 * time.Millisecond
+)
 
 // Accepted verdict strings for ReviewVerdict.Verdict per schema v1.
 const (
@@ -116,6 +129,13 @@ func ReadReviewVerdict(workspacePath string) (*ReviewVerdict, error) {
 // (NFR7). For symmetry with the rest of the remote-aware surface, a local-FS
 // runner (tmux.LocalRunner) is also treated as local.
 //
+// On the remote path a cat-over-SSH read can observe a truncated, not-yet-durable
+// review.json mid-write, so the read is retried on a transient ErrMalformed parse
+// failure with bounded exponential backoff (up to ~1.5s total; see the
+// reviewVerdictRemote* constants) — honoring ctx cancellation. A genuinely
+// malformed verdict still returns ErrMalformed after the retry budget is spent.
+// The local path does NOT retry. Bead: hk-clrts.
+//
 // Return contract matches ReadReviewVerdict:
 //   - (*ReviewVerdict, nil) when the file is present and valid.
 //   - (nil, ErrMalformed) (wrapping) for any schema violation.
@@ -128,14 +148,44 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 		return ReadReviewVerdict(workspacePath)
 	}
 	target := ReviewVerdictPath(workspacePath)
-	out, err := runner.Command(ctx, "cat", target).Output()
-	if err != nil {
-		// Absent verdict (cat: no such file) or transport hiccup → treat as absent,
-		// mirroring ReadReviewVerdict's os.IsNotExist branch (nil,nil = inconclusive).
-		//nolint:nilnil,nilerr // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
-		return nil, nil
+
+	// Remote read-retry (hk-clrts): a cat-over-SSH read can observe a
+	// partially-written / not-yet-durable review.json on the worker, so a
+	// transient truncated read makes parseReviewVerdict return ErrMalformed and
+	// the run false-fails fast. Retry ONLY on ErrMalformed with bounded
+	// exponential backoff; cat-error (absent) and a clean parse short-circuit
+	// with the existing contract, and a genuinely-malformed verdict still fails
+	// after the cap (no false positives — just bounded extra latency).
+	var lastErr error
+	backoff := reviewVerdictRemoteBaseBackoff
+	for attempt := 0; attempt < reviewVerdictRemoteMaxAttempts; attempt++ {
+		out, err := runner.Command(ctx, "cat", target).Output()
+		if err != nil {
+			// Absent verdict (cat: no such file) or transport hiccup → treat as absent,
+			// mirroring ReadReviewVerdict's os.IsNotExist branch (nil,nil = inconclusive).
+			//nolint:nilnil,nilerr // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
+			return nil, nil
+		}
+		v, perr := parseReviewVerdict(out, target)
+		if perr == nil || !errors.Is(perr, ErrMalformed) {
+			// Clean parse → (verdict, nil); a non-ErrMalformed error (defensive — parse
+			// only ever wraps ErrMalformed) is returned as-is. Neither is retryable.
+			return v, perr
+		}
+		lastErr = perr
+		if attempt == reviewVerdictRemoteMaxAttempts-1 {
+			break // exhausted; don't sleep after the final attempt
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff *= 2
 	}
-	return parseReviewVerdict(out, target)
+	// Exhausted all attempts on transient-looking ErrMalformed reads; surface the
+	// last ErrMalformed-wrapped error so a genuinely-malformed verdict still fails.
+	return nil, lastErr
 }
 
 // runnerIsLocalFS reports whether r operates on the daemon box's local filesystem

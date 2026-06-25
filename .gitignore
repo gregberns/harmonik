@@ -35,6 +35,7 @@
 !/.harmonik/context
 !/.harmonik/crew
 !/.harmonik/crew/missions
+!/.harmonik/release-ledger.json
 # Daemon-written task files in worktrees (hk-ynn8u)
 .harmonik/agent-task*
 

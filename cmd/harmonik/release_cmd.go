@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -39,6 +40,8 @@ USAGE
 
 VERBS
   ledger               List all release ledger entries
+  record-create <semver>
+                       Record a CREATE-stage pre-release entry
   certify <semver>     Certify a pre-release (flip prerelease:false, stamp certified_at)
   yank    <semver>     Yank a certified release (requires --reason)
   rollback             Restore the last-good binary (supervisor last-good pin)
@@ -48,6 +51,10 @@ FLAGS (all verbs)
 
 FLAGS (yank only)
   --reason TEXT        Human-readable reason for the yank (required)
+
+FLAGS (record-create only)
+  --commit SHA         Full tagged commit SHA (required)
+  --tag TAG            Git tag name (default: semver)
 
 FLAGS (rollback only)
   --bin PATH           Target binary path to restore (default: current executable)
@@ -61,6 +68,7 @@ EXIT CODES
 
 EXAMPLES
   harmonik release ledger
+  harmonik release record-create v0.2.0 --commit <sha>
   harmonik release certify v0.2.0
   harmonik release yank v0.2.0 --reason "critical regression in merge logic"
   harmonik release ledger --project /path/to/project
@@ -82,6 +90,8 @@ func runReleaseSubcommand(subArgs []string) int {
 	switch verb {
 	case "ledger":
 		return runReleaseLedger(rest)
+	case "record-create":
+		return runReleaseRecordCreate(rest)
 	case "certify":
 		return runReleaseCertify(rest)
 	case "yank":
@@ -89,7 +99,7 @@ func runReleaseSubcommand(subArgs []string) int {
 	case "rollback":
 		return runReleaseRollback(rest)
 	default:
-		fmt.Fprintf(os.Stderr, "harmonik release: unrecognised verb %q; verbs are: ledger, certify, yank, rollback\n", verb)
+		fmt.Fprintf(os.Stderr, "harmonik release: unrecognised verb %q; verbs are: ledger, record-create, certify, yank, rollback\n", verb)
 		return 1
 	}
 }
@@ -110,6 +120,16 @@ func parseReleaseFlags(args []string) (projectDir string, positional []string, e
 			extraFlags["reason"] = args[i]
 		case strings.HasPrefix(args[i], "--reason="):
 			extraFlags["reason"] = strings.TrimPrefix(args[i], "--reason=")
+		case args[i] == "--commit" && i+1 < len(args):
+			i++
+			extraFlags["commit"] = args[i]
+		case strings.HasPrefix(args[i], "--commit="):
+			extraFlags["commit"] = strings.TrimPrefix(args[i], "--commit=")
+		case args[i] == "--tag" && i+1 < len(args):
+			i++
+			extraFlags["tag"] = args[i]
+		case strings.HasPrefix(args[i], "--tag="):
+			extraFlags["tag"] = strings.TrimPrefix(args[i], "--tag=")
 		case args[i] == "--bin" && i+1 < len(args):
 			i++
 			extraFlags["bin"] = args[i]
@@ -185,6 +205,71 @@ FLAGS
 	return 0
 }
 
+// runReleaseRecordCreate implements
+// `harmonik release record-create <semver> --commit <sha> [--tag <tag>]`.
+func runReleaseRecordCreate(args []string) int {
+	projectDir, positional, flags, err := parseReleaseFlags(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik release record-create: %v\n", err)
+		return 1
+	}
+	if flags["help"] != "" {
+		fmt.Print(`harmonik release record-create — record a CREATE-stage pre-release
+
+USAGE
+  harmonik release record-create <semver> --commit <sha> [--tag <tag>] [--project DIR]
+
+ARGUMENTS
+  semver  The semver string to record, e.g. v0.2.0
+
+FLAGS
+  --commit SHA   Full tagged commit SHA (required)
+  --tag TAG      Git tag name (default: semver)
+  --project DIR  Project directory (default: current working directory)
+`)
+		return 0
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(os.Stderr, "harmonik release record-create: requires exactly one argument: <semver>")
+		return 1
+	}
+	semver := positional[0]
+	commit := flags["commit"]
+	if commit == "" {
+		fmt.Fprintln(os.Stderr, "harmonik release record-create: --commit is required")
+		return 1
+	}
+	tag := flags["tag"]
+	if tag == "" {
+		tag = semver
+	}
+
+	path := release.LedgerPath(projectDir)
+	entries, loadErr := release.LoadLedgerFile(path)
+	if loadErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik release record-create: %v\n", loadErr)
+		return 3
+	}
+
+	updated := release.RecordCreate(entries, release.ReleaseEntry{
+		Semver:     semver,
+		CommitHash: commit,
+		Tag:        tag,
+		Prerelease: true,
+	})
+	if saveErr := release.SaveLedgerFile(path, updated); saveErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik release record-create: %v\n", saveErr)
+		return 3
+	}
+
+	if len(updated) == len(entries) {
+		fmt.Printf("harmonik release record-create: %s already present in ledger\n", semver)
+	} else {
+		fmt.Printf("harmonik release record-create: recorded %s as pre-release\n", semver)
+	}
+	return 0
+}
+
 // runReleaseCertify implements `harmonik release certify <semver> [--project DIR]`.
 func runReleaseCertify(args []string) int {
 	projectDir, positional, flags, err := parseReleaseFlags(args)
@@ -230,6 +315,10 @@ FLAGS
 		return 2
 	}
 
+	if ghErr := promoteGitHubRelease(projectDir, semver); ghErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik release certify: %v\n", ghErr)
+		return 3
+	}
 	if saveErr := release.SaveLedgerFile(path, updated); saveErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik release certify: %v\n", saveErr)
 		return 3
@@ -237,6 +326,24 @@ FLAGS
 
 	fmt.Printf("harmonik release certify: %s certified at %s\n", semver, certifiedAt)
 	return 0
+}
+
+func promoteGitHubRelease(projectDir, semver string) error {
+	if os.Getenv("GH_TOKEN") == "" && os.Getenv("GITHUB_TOKEN") == "" {
+		fmt.Fprintln(os.Stderr, "harmonik release certify: skipped GitHub release promotion (GH_TOKEN/GITHUB_TOKEN not set)")
+		return nil
+	}
+	if _, err := exec.LookPath("gh"); err != nil {
+		fmt.Fprintln(os.Stderr, "harmonik release certify: skipped GitHub release promotion (gh CLI not found)")
+		return nil
+	}
+	cmd := exec.Command("gh", "release", "edit", semver, "--prerelease=false") //nolint:gosec // fixed executable + args
+	cmd.Dir = projectDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("promote GitHub release %s to stable: %w: %s", semver, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // runReleaseYank implements `harmonik release yank <semver> --reason <reason> [--project DIR]`.

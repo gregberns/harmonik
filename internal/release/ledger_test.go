@@ -35,6 +35,49 @@ func certifiedFixture() []release.ReleaseEntry {
 
 // --- Certify tests ---
 
+func TestRecordCreate_AppendsPrereleaseEntry(t *testing.T) {
+	entries := []release.ReleaseEntry{}
+	result := release.RecordCreate(entries, release.ReleaseEntry{
+		Semver:      "v0.3.0",
+		CommitHash:  "0123456789abcdef0123456789abcdef01234567",
+		Tag:         "v0.3.0",
+		Prerelease:  false,
+		CertifiedAt: "should be cleared",
+		Yanked:      true,
+	})
+	if len(result) != 1 {
+		t.Fatalf("RecordCreate: want 1 entry, got %d", len(result))
+	}
+	e := result[0]
+	if e.Semver != "v0.3.0" || e.Tag != "v0.3.0" {
+		t.Fatalf("RecordCreate entry mismatch: %+v", e)
+	}
+	if !e.Prerelease {
+		t.Error("RecordCreate: CREATE entries must be pre-release")
+	}
+	if e.CertifiedAt != "" || e.Yanked || e.YankedReason != "" {
+		t.Errorf("RecordCreate: CREATE-only state not normalized: %+v", e)
+	}
+}
+
+func TestRecordCreate_ExistingSemverIsNoOp(t *testing.T) {
+	entries := certifiedFixture()
+	result := release.RecordCreate(entries, release.ReleaseEntry{
+		Semver:     "v0.2.0",
+		CommitHash: "ffffffffffffffffffffffffffffffffffffffff",
+		Tag:        "v0.2.0",
+	})
+	if len(result) != 1 {
+		t.Fatalf("RecordCreate existing: want 1 entry, got %d", len(result))
+	}
+	if result[0].CommitHash != entries[0].CommitHash {
+		t.Errorf("RecordCreate existing changed commit: got %q want %q", result[0].CommitHash, entries[0].CommitHash)
+	}
+	if result[0].Prerelease {
+		t.Error("RecordCreate existing rolled certified release back to prerelease")
+	}
+}
+
 func TestCertify_UncertifiedToStable(t *testing.T) {
 	entries := fixture()
 	result, err := release.Certify(entries, "v0.2.0", "2026-06-10T12:00:00Z")

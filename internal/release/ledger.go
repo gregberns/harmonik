@@ -37,6 +37,26 @@ var (
 	ErrAlreadyYanked = errors.New("release: entry is already yanked")
 )
 
+// RecordCreate appends a CREATE-stage pre-release entry when semver is absent.
+// If the semver is already present, the input ledger is returned unchanged so
+// rerunning the tag workflow cannot roll a certified release back to pre-release.
+func RecordCreate(entries []ReleaseEntry, entry ReleaseEntry) []ReleaseEntry {
+	if indexBySemver(entries, entry.Semver) >= 0 {
+		result := make([]ReleaseEntry, len(entries))
+		copy(result, entries)
+		return result
+	}
+	entry.Prerelease = true
+	entry.CertifiedAt = ""
+	entry.Yanked = false
+	entry.YankedReason = ""
+
+	result := make([]ReleaseEntry, 0, len(entries)+1)
+	result = append(result, entries...)
+	result = append(result, entry)
+	return result
+}
+
 // Certify flips the prerelease flag to false and stamps the certified_at
 // timestamp on the entry matching semver. Returns a new slice (does not mutate
 // the input) and an error if the transition is invalid.

@@ -354,11 +354,12 @@ harmonik promote --pr --from integration --title "Sprint 23"
 | Verb | Meaning |
 |---|---|
 | `ledger` | List all release ledger entries |
+| `record-create <semver>` | Record a CREATE-stage pre-release entry in the release ledger |
 | `certify <semver>` | Certify a pre-release (flip `prerelease:false`, stamp `certified_at`) |
 | `yank <semver>` | Yank a certified release (requires `--reason`) |
 | `rollback` | Restore the last-good binary (supervisor last-good pin) |
 
-**Flags:** `--project DIR` (all verbs) · `--reason TEXT` (required for `yank`) · `--bin PATH` (for `rollback`; default current executable).
+**Flags:** `--project DIR` (all verbs) · `--commit SHA` and `--tag TAG` (for `record-create`) · `--reason TEXT` (required for `yank`) · `--bin PATH` (for `rollback`; default current executable).
 
 **Exit codes:** 0 success · 1 arg/flag error · 2 ledger invariant violation (already certified/yanked, not found, etc.) · 3 file I/O error · 4 no last-good binary recorded.
 

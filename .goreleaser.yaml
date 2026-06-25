@@ -85,5 +85,5 @@ checksum:
   algorithm: sha256
 
 release:
-  prerelease: auto
+  prerelease: true
   draft: false

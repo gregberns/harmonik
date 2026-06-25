@@ -1,6 +1,7 @@
 // Package supervisecmd implements the harmonik supervise subcommand family.
 //
-// Verbs: start, stop, status, attach, restart, logs (PL-028d).
+// Verbs: start, stop, status, ps, attach, restart, logs, pause, resume, reap
+// (PL-028d plus operational extensions).
 //
 // File surface under .harmonik/cognition/:
 //

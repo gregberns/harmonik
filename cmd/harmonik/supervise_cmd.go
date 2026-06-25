@@ -46,6 +46,8 @@ func runSuperviseSubcommand(args []string) int {
 		return supervisecmd.RunStop(subArgs, os.Stdout, os.Stderr)
 	case "status":
 		return supervisecmd.RunStatus(subArgs, os.Stdout, os.Stderr)
+	case "ps":
+		return supervisecmd.RunPs(subArgs, os.Stdout, os.Stderr)
 	case "attach":
 		return supervisecmd.RunAttach(subArgs, os.Stdout, os.Stderr)
 	case "restart":
@@ -63,7 +65,7 @@ func runSuperviseSubcommand(args []string) int {
 		return supervisecmd.RunShim(subArgs, os.Stdout, os.Stderr)
 	default:
 		fmt.Fprintf(os.Stderr,
-			"harmonik supervise: unrecognised verb %q; verbs are: start, stop, status, attach, restart, logs, pause, resume, reap\n",
+			"harmonik supervise: unrecognised verb %q; verbs are: start, stop, status, ps, attach, restart, logs, pause, resume, reap\n",
 			verb)
 		return 2
 	}
@@ -78,6 +80,7 @@ VERBS
   start    Launch the supervisor in a tmux session
   stop     Terminate the supervisor
   status   Show supervisor process state (file-surface, no daemon required)
+  ps       Print canonical supervisor process signatures and tmux sessions
   attach   Attach terminal to the flywheel tmux session
   restart  Stop and restart the supervisor (re-reads config.json)
   logs     Capture recent flywheel pane output
@@ -96,6 +99,7 @@ EXIT CODES
 EXAMPLES
   harmonik supervise start --watch-restart
   harmonik supervise status --json
+  harmonik supervise ps
   harmonik supervise logs --lines 500
   harmonik supervise attach
   harmonik supervise stop

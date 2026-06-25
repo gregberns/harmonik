@@ -123,7 +123,7 @@ The captain **pulls** the digest by reading `.harmonik/watch/latest.json` on its
 - **New-initiative ranking** — a brand-NEW initiative **never recorded in any durable doc and never ranked** (NOT a KNOWN parked/drained lane, which is the captain's own autonomous resume — orchestrator-rules §Autonomy). Surface it; the captain (or operator) ranks it. **Staffing-readiness for a KNOWN lane is no longer your flag** — that is the ops-monitor's lane-named `[IMMEDIATE]` (Part-0 signal (a), pushed direct to the captain); record it, do not escalate it.
 - **Locked-decision reversal** — any event that would reopen a decision locked in `STATUS.md`. Surface it; never act on it.
 - **Destructive ops** — force-push, branch -D on shared refs, `--no-verify`, `rm -rf` patterns. Escalate; never authorize.
-- **Staffing** — which crew handles which epic. The watch may *flag* staffing readiness; the captain decides.
+- **Staffing** — which crew handles which epic. Staffing-readiness for a KNOWN lane is NOT your flag — it is the ops-monitor's lane-named `[IMMEDIATE]` (see New-initiative ranking above). You may flag staffing for cases the ops-monitor does not cover; the captain decides.
 
 No escalation summary is a directive — it always names the decision for the captain to make.
 

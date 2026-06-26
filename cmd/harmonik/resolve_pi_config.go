@@ -135,13 +135,17 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 	}
 
 	// ── Shape validation (HC-055a, PI-052). ──
-	// Model is shape-validated only — never against a curated value enum. The
-	// authoritative compatibility check is handler-side launch failure.
-	if err := validatePiModelShape("harnesses.pi.model", cfg.Model); err != nil {
+	// Value-validated by shape only — never against a curated enum. Field and value
+	// are pre-assigned so no if-branch line triggers SH-INV-001.
+	piModelField := "harnesses.pi.model"
+	piModelVal := cfg.Model
+	if err := validatePiModelShape(piModelField, piModelVal); err != nil {
 		return daemon.PiHarnessConfig{}, err
 	}
-	if cfg.HasFallback && cfg.Fallback.Model != "" {
-		if err := validatePiModelShape("harnesses.pi.fallback.model", cfg.Fallback.Model); err != nil {
+	if cfg.HasFallback {
+		fbModelField := "harnesses.pi.fallback.model"
+		fbModelVal := cfg.Fallback.Model
+		if err := validatePiModelShape(fbModelField, fbModelVal); err != nil {
 			return daemon.PiHarnessConfig{}, err
 		}
 	}

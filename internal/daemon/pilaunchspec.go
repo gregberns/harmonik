@@ -1,0 +1,317 @@
+package daemon
+
+// pilaunchspec.go — buildPiLaunchSpec helper (codename:pilot, hk-1c16h).
+//
+// Builds the argv/env spec for launching a Pi subprocess for any workflow phase:
+//
+//   - Initial turn (priorSessionID == nil):
+//       pi --mode json --provider <prov> --model <prov/id> "<seed-prompt>"
+//   - Resume turn (priorSessionID != nil):
+//       pi --mode json --session <session-id> "<seed-prompt>"
+//
+// No --sandbox flag (Pi is unsandboxed — PI-015). WorkDir is set via
+// LaunchSpec.WorkDir, NOT a -C flag. The API key MUST NOT be passed as
+// --api-key (ps/argv leak); env injection only (PI-020).
+//
+// Env (buildPiEnv, PI-021 allowlist strip, review B1):
+//
+//   - Empty-overrides EVERY provider credential env var whose key is in the
+//     maintained piProviderCredentialKeys table OR matches the *_API_KEY suffix
+//     pattern, EXCEPT the operator-selected api_key_env. An enumerated denylist
+//     cannot be complete against Pi's open provider set (MISTRAL_API_KEY,
+//     GROQ_API_KEY, DEEPSEEK_API_KEY, … would survive); allowlist-strip is the
+//     correct semantics.
+//   - Injects ONLY the selected provider's key from the operator environment via
+//     resolvePiAPIKeyValue.
+//   - Sets shell rc-prompt suppression vars (oh-my-zsh anti-hang).
+//
+// resolvePiAPIKeyValue is the ONE shared key-resolution helper feeding BOTH
+// buildPiEnv (for injection) and the billing guard (PI-040, pibillingguard.go)
+// so they can never disagree about which value Pi receives at launch.
+//
+// Spec refs: specs/pi-harness.md §2 (PI-015, PI-020, PI-021).
+// Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.2.
+// Codename: pilot. Bead: hk-1c16h.
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/gregberns/harmonik/internal/handler"
+)
+
+// piProviderCredentialKeys is the maintained table of known provider API key
+// environment variable names. All entries are empty-overridden in the Pi child
+// environment EXCEPT the operator-selected api_key_env.
+//
+// The *_API_KEY suffix pattern in buildPiEnv handles keys not yet listed here
+// (e.g. new providers), so forward-compatibility is preserved without requiring
+// table updates. Together they enforce the PI-021 allowlist-strip invariant.
+//
+// Spec: PI-021 (allowlist strip); design §3.2.
+var piProviderCredentialKeys = []string{
+	"OPENROUTER_API_KEY",
+	"ANTHROPIC_API_KEY",
+	"OPENAI_API_KEY",
+	"GEMINI_API_KEY",
+	"GOOGLE_API_KEY",
+	"MISTRAL_API_KEY",
+	"GROQ_API_KEY",
+	"DEEPSEEK_API_KEY",
+	"COHERE_API_KEY",
+	"XAI_API_KEY",
+	"TOGETHER_API_KEY",
+	"PERPLEXITY_API_KEY",
+	"FIREWORKS_API_KEY",
+	"AZURE_OPENAI_API_KEY",
+	"CODEX_API_KEY",
+}
+
+// piSeedPromptTemplate is the seed prompt template passed to Pi as the
+// positional task argument. It instructs Pi to read agent-task.md (written by
+// the shared launch path before buildPiLaunchSpec is called), implement the
+// task, and commit with the required Refs: trailer.
+//
+// The trailer instruction is load-bearing: harmonik detects bead completion by
+// a git commit whose body carries an exact "Refs: <bead-id>" trailer line
+// (workloop.go beadAlreadySubsumedInMain). Pi is unsandboxed (PI-015) so it
+// can git-commit itself; ensurePiRefsTrailer (picommit.go) is the deterministic
+// backstop for when Pi edits but does not produce a trailer-carrying commit.
+//
+// %s is replaced with the bead ID. Spec: PI-015.
+const piSeedPromptTemplate = `Read .harmonik/agent-task.md to understand your task. Implement the changes described. When you are done, commit ALL your changes in a single git commit, and the commit message MUST include the line "Refs: %s" on its own line in the commit body. This trailer is required — without it the system cannot detect that your work is complete.`
+
+// piRunCtx carries the per-launch inputs to buildPiLaunchSpec.
+type piRunCtx struct {
+	// piBinary is the pi executable path. Empty is normalised to "pi".
+	piBinary string
+
+	// workspacePath is the absolute path to the run worktree. Set as WorkDir in
+	// the returned LaunchSpec. Pi's file tools (read/write/edit/bash/grep/find/ls)
+	// operate relative to CWD; no -C flag (unlike codex exec). Required.
+	workspacePath string
+
+	// beadID is the bead correlation identifier embedded in the seed prompt's
+	// Refs: trailer instruction. Required.
+	beadID string
+
+	// provider is the Pi provider string (from harnesses.pi.provider config).
+	// Required on the initial turn. Ignored on resume turns.
+	provider string
+
+	// model is the Pi model string in "provider/id" form (from harnesses.pi.model).
+	// Required on the initial turn. Ignored on resume turns.
+	model string
+
+	// apiKeyEnv is the name of the env var carrying the provider API key
+	// (from harnesses.pi.api_key_env). Its VALUE is read from the operator
+	// environment at launch time via resolvePiAPIKeyValue — the value is never
+	// stored in config (PI-020). Required.
+	apiKeyEnv string
+
+	// priorSessionID is non-nil for resume turns (iteration >= 2). It holds the
+	// Pi session ID captured from the prior turn's first {"type":"session",...}
+	// NDJSON line. Nil means this is the initial turn.
+	priorSessionID *string
+
+	// baseEnv is the base environment inherited from daemon Config.HandlerEnv.
+	// buildPiEnv strips all credential keys (allowlist semantics, PI-021) and
+	// injects only the selected provider's key.
+	baseEnv []string
+
+	// skipBillingGuard disables the pre-flight billing guard (PI-040,
+	// pibillingguard.go). Exists SOLELY so unit tests that exercise argv/env
+	// shape do not require a real api key in the environment. Production callers
+	// MUST leave it false so the fail-closed guard runs.
+	skipBillingGuard bool
+}
+
+// resolvePiAPIKeyValue reads the Pi API key value from the operator environment.
+//
+// This is the ONE shared key-resolution helper: BOTH buildPiEnv (for key
+// injection into the child env) and the billing guard (PI-040, pibillingguard.go,
+// for the fail-closed pre-flight assert) MUST call this function so they can
+// never disagree about which value Pi receives at launch.
+//
+// An empty return means the key is absent or explicitly empty in the operator
+// environment. The billing guard treats absence as a launch refusal (PI-040).
+//
+// Spec: PI-021 (allowlist strip); PI-040 (fail-closed guard). Design §3.2.
+func resolvePiAPIKeyValue(apiKeyEnv string) string {
+	return os.Getenv(apiKeyEnv)
+}
+
+// buildPiLaunchSpec constructs a handler.LaunchSpec for launching a Pi
+// subprocess for one turn (initial or resume).
+//
+// The returned spec is suitable for passing directly to handler.Launch. The
+// caller is responsible for writing agent-task.md into the worktree before
+// calling this function (the spec does not write it).
+//
+// Spec: PI-015, PI-020, PI-021.
+func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
+	if rc.workspacePath == "" {
+		return handler.LaunchSpec{}, fmt.Errorf(
+			"buildPiLaunchSpec: workspacePath must be non-empty")
+	}
+	if rc.beadID == "" {
+		return handler.LaunchSpec{}, fmt.Errorf(
+			"buildPiLaunchSpec: beadID must be non-empty")
+	}
+	if rc.apiKeyEnv == "" {
+		return handler.LaunchSpec{}, fmt.Errorf(
+			"buildPiLaunchSpec: apiKeyEnv must be non-empty")
+	}
+	if rc.priorSessionID != nil && *rc.priorSessionID == "" {
+		return handler.LaunchSpec{}, fmt.Errorf(
+			"buildPiLaunchSpec: priorSessionID must not be an empty string (pass nil for initial turn)")
+	}
+	if rc.priorSessionID == nil {
+		if rc.provider == "" {
+			return handler.LaunchSpec{}, fmt.Errorf(
+				"buildPiLaunchSpec: provider must be non-empty on the initial turn")
+		}
+		if rc.model == "" {
+			return handler.LaunchSpec{}, fmt.Errorf(
+				"buildPiLaunchSpec: model must be non-empty on the initial turn")
+		}
+	}
+
+	binary := rc.piBinary
+	if binary == "" {
+		binary = "pi"
+	}
+
+	// Build argv.
+	//
+	// Initial: pi --mode json --provider <prov> --model <prov/id> "<seed>"
+	// Resume:  pi --mode json --session <session-id> "<seed>"
+	//
+	// No --sandbox flag: Pi is unsandboxed (PI-015). WorkDir in the returned
+	// LaunchSpec sets the subprocess CWD; no -C flag. The key is NEVER passed
+	// as --api-key (PI-020 — ps/argv leak).
+	seedPrompt := fmt.Sprintf(piSeedPromptTemplate, rc.beadID)
+	var args []string
+	if rc.priorSessionID != nil {
+		args = []string{
+			"--mode", "json",
+			"--session", *rc.priorSessionID,
+			seedPrompt,
+		}
+	} else {
+		args = []string{
+			"--mode", "json",
+			"--provider", rc.provider,
+			"--model", rc.model,
+			seedPrompt,
+		}
+	}
+
+	// Build env: allowlist-strip all provider credential keys except the selected
+	// one, then inject only the selected provider's key (PI-021).
+	env := buildPiEnv(rc.baseEnv, rc.apiKeyEnv)
+
+	// Pre-flight billing guard hook point (PI-040, pibillingguard.go).
+	// When pibillingguard.go lands it will call runPiBillingGuard here using
+	// resolvePiAPIKeyValue(rc.apiKeyEnv) and rc.skipBillingGuard.
+
+	return handler.LaunchSpec{
+		Binary:       binary,
+		Args:         args,
+		Env:          env,
+		WorkDir:      rc.workspacePath,
+		Role:         "implementer",
+		StdinDevNull: true, // PI-020 / #4303: Pi (ProcessExit) may hang on pane PTY stdin with /dev/null
+	}, nil
+}
+
+// buildPiEnv constructs the Pi child environment from baseEnv.
+//
+// Allowlist-strip semantics (PI-021, review B1):
+//
+//  1. Every key in the maintained piProviderCredentialKeys table EXCEPT the
+//     selected apiKeyEnv is added to strippedSet and emitted as KEY= (empty
+//     override). This pre-seeds from the full table to guard against the tmux
+//     server's additive -e mechanism, which would inject a key from the server
+//     env even if it is absent from baseEnv.
+//  2. Any additional *_API_KEY key found in baseEnv (not in the maintained table,
+//     not apiKeyEnv) is also added to strippedSet and emitted as KEY=. This
+//     catches provider keys not yet in the maintained table (e.g. a future
+//     HYPOTHETICAL_API_KEY).
+//  3. Non-credential baseEnv entries are passed through unchanged.
+//  4. Only the selected provider's key (apiKeyEnv) is injected, using the value
+//     from the operator environment via resolvePiAPIKeyValue.
+//
+// An enumerated denylist (codex's 2-key approach) cannot be complete against
+// Pi's open provider set; this allowlist approach is correct belt-and-suspenders
+// regardless of whether Pi auto-detects a provider from env.
+func buildPiEnv(baseEnv []string, apiKeyEnv string) []string {
+	// knownCredSet: the maintained table for O(1) lookup.
+	knownCredSet := make(map[string]bool, len(piProviderCredentialKeys))
+	for _, k := range piProviderCredentialKeys {
+		knownCredSet[k] = true
+	}
+
+	// strippedSet: all keys to empty-override. Pre-seeded with the full
+	// maintained table (EXCEPT apiKeyEnv) to handle the tmux additive -e path.
+	strippedSet := make(map[string]bool, len(piProviderCredentialKeys))
+	for k := range knownCredSet {
+		if k != apiKeyEnv {
+			strippedSet[k] = true
+		}
+	}
+	// Extend with any *_API_KEY vars in baseEnv not already in the table.
+	for _, kv := range baseEnv {
+		key := envKey(kv)
+		if key == apiKeyEnv {
+			continue
+		}
+		if !knownCredSet[key] && isPiAPIKeyPattern(key) {
+			strippedSet[key] = true
+		}
+	}
+
+	env := make([]string, 0, len(baseEnv)+len(strippedSet)+3)
+
+	// Pass through non-credential, non-apiKeyEnv entries from baseEnv.
+	for _, kv := range baseEnv {
+		key := envKey(kv)
+		if key == apiKeyEnv || strippedSet[key] {
+			continue
+		}
+		env = append(env, kv)
+	}
+
+	// Emit empty overrides for all stripped credential keys (PI-021 / CI-INV-002
+	// pattern). The tmux server's additive -e mechanism means merely omitting a
+	// key leaves the server env value intact; only KEY= zeros it.
+	for k := range strippedSet {
+		env = append(env, k+"=")
+	}
+
+	// Inject ONLY the selected provider's key (PI-021). resolvePiAPIKeyValue is
+	// the shared helper: the billing guard (PI-040) calls the same function to
+	// verify presence, so both agree on the exact value Pi receives.
+	apiKeyValue := resolvePiAPIKeyValue(apiKeyEnv)
+	env = append(env, apiKeyEnv+"="+apiKeyValue)
+
+	// Shell rc-prompt suppression (oh-my-zsh anti-hang — same as codex harness,
+	// hk-5s6re). Pi spawns through the exec substrate; the launch shell can still
+	// source ~/.zshrc and hang at an interactive update prompt.
+	env = append(env,
+		"DISABLE_AUTO_UPDATE=true",
+		"DISABLE_UPDATE_PROMPT=true",
+	)
+
+	return env
+}
+
+// isPiAPIKeyPattern returns true when the env var name ends with "_API_KEY" —
+// the catch-all suffix for provider credential variables not yet listed in
+// piProviderCredentialKeys. Prevents forward-compat gaps (new providers).
+//
+// Spec: PI-021 (allowlist strip).
+func isPiAPIKeyPattern(key string) bool {
+	return strings.HasSuffix(key, "_API_KEY")
+}

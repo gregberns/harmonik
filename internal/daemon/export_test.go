@@ -2803,3 +2803,61 @@ func ExportedReadGateVerdictVia(ctx context.Context, runner tmuxPkg.CommandRunne
 func ExportedGateVerdictExistsVia(ctx context.Context, runner tmuxPkg.CommandRunner, path string) bool {
 	return gateVerdictExistsVia(ctx, runner, path)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildPiLaunchSpec test seams (hk-1c16h PI-015/020/021)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedPiRunCtx is the exported shape of piRunCtx for tests.
+// Fields mirror piRunCtx verbatim with exported names.
+//
+// Bead ref: hk-1c16h.
+type ExportedPiRunCtx struct {
+	PiBinary       string
+	WorkspacePath  string
+	BeadID         string
+	Provider       string
+	Model          string
+	APIKeyEnv      string
+	PriorSessionID *string
+	BaseEnv        []string
+	// SkipBillingGuard disables the pre-flight billing guard hook (PI-040).
+	// Set to true in argv/env-shape tests that do not require a real key.
+	SkipBillingGuard bool
+}
+
+// ExportedBuildPiLaunchSpec exposes buildPiLaunchSpec for tests in package
+// daemon_test. The ExportedPiRunCtx is translated to the internal piRunCtx
+// before calling.
+//
+// Bead ref: hk-1c16h.
+func ExportedBuildPiLaunchSpec(rc ExportedPiRunCtx) (handler.LaunchSpec, error) {
+	return buildPiLaunchSpec(piRunCtx{
+		piBinary:         rc.PiBinary,
+		workspacePath:    rc.WorkspacePath,
+		beadID:           rc.BeadID,
+		provider:         rc.Provider,
+		model:            rc.Model,
+		apiKeyEnv:        rc.APIKeyEnv,
+		priorSessionID:   rc.PriorSessionID,
+		baseEnv:          rc.BaseEnv,
+		skipBillingGuard: rc.SkipBillingGuard,
+	})
+}
+
+// ExportedBuildPiEnv exposes buildPiEnv for tests in package daemon_test.
+// Allows direct verification of the allowlist-strip semantics (PI-021).
+//
+// Bead ref: hk-1c16h.
+func ExportedBuildPiEnv(baseEnv []string, apiKeyEnv string) []string {
+	return buildPiEnv(baseEnv, apiKeyEnv)
+}
+
+// ExportedResolvePiAPIKeyValue exposes resolvePiAPIKeyValue for tests in
+// package daemon_test. Allows tests to verify the shared key-resolution helper
+// reads the correct env var (PI-021).
+//
+// Bead ref: hk-1c16h.
+func ExportedResolvePiAPIKeyValue(apiKeyEnv string) string {
+	return resolvePiAPIKeyValue(apiKeyEnv)
+}

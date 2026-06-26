@@ -67,7 +67,6 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
-	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -220,7 +219,7 @@ func TestHC034_SecretNamedFieldAbsentFromJSONL(t *testing.T) {
 				"  want: value replaced by %q before JSONL append\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034 — no secret value MAY appear in "+
 				"any persisted event record",
-			hc034FixtureSecretFieldValue, handlercontract.RedactedSentinel,
+			hc034FixtureSecretFieldValue, core.RedactedSentinel,
 		)
 	}
 
@@ -230,12 +229,12 @@ func TestHC034_SecretNamedFieldAbsentFromJSONL(t *testing.T) {
 	tokenVal, ok := got["token"]
 	if !ok {
 		t.Error("HC-034: decoded payload missing 'token' key; redaction MUST preserve the key, only replacing the value")
-	} else if tokenVal != handlercontract.RedactedSentinel {
+	} else if tokenVal != core.RedactedSentinel {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-031 path): decoded payload[\"token\"] = %q, want %q;\n"+
 				"  the redacted sentinel MUST be the stored value, not the original secret\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034, §4.7.HC-031",
-			tokenVal, handlercontract.RedactedSentinel,
+			tokenVal, core.RedactedSentinel,
 		)
 	}
 
@@ -273,7 +272,7 @@ func TestHC034_SecretValuePatternAbsentFromJSONL(t *testing.T) {
 	defer func() { _ = writer.Close() }()
 
 	// Register the Anthropic key-shape pattern for one subsystem.
-	registry := handlercontract.NewRedactionRegistry()
+	registry := core.NewRedactionRegistry()
 	registry.RegisterPattern("hc034_test_subsystem", []*regexp.Regexp{hc034FixtureAnthropicPattern})
 
 	bus := eventbus.NewBusImplWithWriter(registry, writer)
@@ -309,7 +308,7 @@ func TestHC034_SecretValuePatternAbsentFromJSONL(t *testing.T) {
 				"  want: value replaced by %q before JSONL append\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034 — no secret value MAY appear in "+
 				"any persisted event record",
-			hc034FixtureAnthropicKeyStub, handlercontract.RedactedSentinel,
+			hc034FixtureAnthropicKeyStub, core.RedactedSentinel,
 		)
 	}
 
@@ -319,12 +318,12 @@ func TestHC034_SecretValuePatternAbsentFromJSONL(t *testing.T) {
 	providerVal, providerOK := got["provider_key"]
 	if !providerOK {
 		t.Error("HC-034: decoded payload missing 'provider_key' key; redaction MUST preserve the key")
-	} else if providerVal != handlercontract.RedactedSentinel {
+	} else if providerVal != core.RedactedSentinel {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-032 path): decoded payload[\"provider_key\"] = %q, want %q;\n"+
 				"  HC-032 value-pattern redaction MUST fire before JSONL append\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034, §4.7.HC-032",
-			providerVal, handlercontract.RedactedSentinel,
+			providerVal, core.RedactedSentinel,
 		)
 	}
 
@@ -361,7 +360,7 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 	defer func() { _ = writer.Close() }()
 
 	// Registry with Anthropic key pattern (HC-032 path).
-	registry := handlercontract.NewRedactionRegistry()
+	registry := core.NewRedactionRegistry()
 	registry.RegisterPattern("hc034_composed_subsystem", []*regexp.Regexp{hc034FixtureAnthropicPattern})
 
 	bus := eventbus.NewBusImplWithWriter(registry, writer)
@@ -399,7 +398,7 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 			"HC-034 VIOLATED (HC-031 path, composed): raw JSONL bytes contain secret %q;\n"+
 				"  want: value replaced by %q\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034",
-			hc034FixtureSecretFieldValue, handlercontract.RedactedSentinel,
+			hc034FixtureSecretFieldValue, core.RedactedSentinel,
 		)
 	}
 
@@ -409,7 +408,7 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 			"HC-034 VIOLATED (HC-032 path, composed): raw JSONL bytes contain secret %q;\n"+
 				"  want: value replaced by %q\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034",
-			hc034FixtureAnthropicKeyStub, handlercontract.RedactedSentinel,
+			hc034FixtureAnthropicKeyStub, core.RedactedSentinel,
 		)
 	}
 
@@ -419,20 +418,20 @@ func TestHC034_BothHC031AndHC032SecretAbsentFromJSONL(t *testing.T) {
 	// "token" (HC-031): MUST be sentinel.
 	if tokenVal, tokenOK := got["token"]; !tokenOK {
 		t.Error("HC-034 composed: decoded payload missing 'token' key")
-	} else if tokenVal != handlercontract.RedactedSentinel {
+	} else if tokenVal != core.RedactedSentinel {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-031, composed): decoded payload[\"token\"] = %q, want %q",
-			tokenVal, handlercontract.RedactedSentinel,
+			tokenVal, core.RedactedSentinel,
 		)
 	}
 
 	// "provider_key" (HC-032): MUST be sentinel.
 	if providerVal, providerOK := got["provider_key"]; !providerOK {
 		t.Error("HC-034 composed: decoded payload missing 'provider_key' key")
-	} else if providerVal != handlercontract.RedactedSentinel {
+	} else if providerVal != core.RedactedSentinel {
 		t.Errorf(
 			"HC-034 VIOLATED (HC-032, composed): decoded payload[\"provider_key\"] = %q, want %q",
-			providerVal, handlercontract.RedactedSentinel,
+			providerVal, core.RedactedSentinel,
 		)
 	}
 
@@ -468,7 +467,7 @@ func TestHC034_SafeFieldsPreservedInJSONL(t *testing.T) {
 	defer func() { _ = writer.Close() }()
 
 	// Registry with Anthropic pattern — neither field name nor value matches here.
-	registry := handlercontract.NewRedactionRegistry()
+	registry := core.NewRedactionRegistry()
 	registry.RegisterPattern("hc034_safe_subsystem", []*regexp.Regexp{hc034FixtureAnthropicPattern})
 
 	bus := eventbus.NewBusImplWithWriter(registry, writer)
@@ -521,11 +520,11 @@ func TestHC034_SafeFieldsPreservedInJSONL(t *testing.T) {
 
 	// The redaction sentinel MUST NOT appear in the decoded payload values.
 	for k, v := range got {
-		if fmt.Sprint(v) == handlercontract.RedactedSentinel {
+		if fmt.Sprint(v) == core.RedactedSentinel {
 			t.Errorf(
 				"HC-034 over-redaction: decoded payload[%q] = %q for a safe-only payload;\n"+
 					"  the redaction pipeline MUST NOT redact fields whose names and values are safe",
-				k, handlercontract.RedactedSentinel,
+				k, core.RedactedSentinel,
 			)
 		}
 	}
@@ -600,12 +599,12 @@ func TestHC034_EmitWithRunID_SecretAbsentFromJSONL(t *testing.T) {
 	// "password" (HC-031): MUST be sentinel.
 	if pwdVal, pwdOK := got["password"]; !pwdOK {
 		t.Error("HC-034 EmitWithRunID: decoded payload missing 'password' key; redaction MUST preserve the key")
-	} else if pwdVal != handlercontract.RedactedSentinel {
+	} else if pwdVal != core.RedactedSentinel {
 		t.Errorf(
 			"HC-034 VIOLATED (EmitWithRunID path): decoded payload[\"password\"] = %q, want %q;\n"+
 				"  HC-031 MUST redact the 'password' field via EmitWithRunID\n"+
 				"  spec: specs/handler-contract.md §4.7.HC-034",
-			pwdVal, handlercontract.RedactedSentinel,
+			pwdVal, core.RedactedSentinel,
 		)
 	}
 

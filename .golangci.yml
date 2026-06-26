@@ -197,12 +197,6 @@ linters:
             - "github.com/gregberns/harmonik/internal/lifecycle"
 
         # eventbus / policy / handler-contract: may import core only.
-        #
-        # KNOWN SPEC DRIFT (hk-obb5w): eventbus currently imports handlercontract
-        # for RedactionRegistry and DeadLetterSink. The architecture intends eventbus
-        # to depend on core only; these types should move to core so the layering is
-        # preserved. Tracked in follow-up bead hk-x6j6r. Until then, handlercontract
-        # and uuid are allowed here with this comment as the record of the debt.
         # Self-imports (internal/eventbus) are required for _test.go files in the
         # same module that import the package under test.
         eventbus:
@@ -210,7 +204,6 @@ linters:
           allow:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/core"
-            - "github.com/gregberns/harmonik/internal/handlercontract"
             - "github.com/gregberns/harmonik/internal/eventbus"
             - "github.com/google/uuid"
         policy:

@@ -48,7 +48,6 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
-	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // busImplFixtureEventType is a synthetic event type string used in busimpl
@@ -267,7 +266,7 @@ func TestBusImplEmit_RegistryValuePatternRedactedBeforeDispatch(t *testing.T) {
 	// Register a value pattern that matches the literal string "ghp_TOKENVALUE".
 	// Using a fixed literal keeps the sensor deterministic; real tokens use
 	// the HC-032 regex shapes declared by each handler subsystem.
-	registry := handlercontract.NewRedactionRegistry()
+	registry := core.NewRedactionRegistry()
 	registry.RegisterPattern("busimpl_test_subsystem", []*regexp.Regexp{
 		regexp.MustCompile(`^ghp_TOKENVALUE$`),
 	})

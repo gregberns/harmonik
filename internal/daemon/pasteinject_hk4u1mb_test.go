@@ -65,11 +65,11 @@ func hk4u1mbHeartbeatEnv() core.EventEnvelope {
 // extension ceiling), not at the flat hard ceiling.
 func TestQuitOnReviewFile_HeartbeatCeiling_BoundsExtension_hk4u1mb(t *testing.T) {
 	const (
-		budget      = 20 * time.Millisecond
-		grace       = 50 * time.Millisecond // > budget so HB would extend past budget
-		hardCeiling = 200 * time.Millisecond // 10× budget — far above 2×budget=40ms
+		budget       = 20 * time.Millisecond
+		grace        = 50 * time.Millisecond  // > budget so HB would extend past budget
+		hardCeiling  = 200 * time.Millisecond // 10× budget — far above 2×budget=40ms
 		pollInterval = 3 * time.Millisecond
-		killDelay   = 2 * time.Millisecond
+		killDelay    = 2 * time.Millisecond
 	)
 
 	// Override timing vars.

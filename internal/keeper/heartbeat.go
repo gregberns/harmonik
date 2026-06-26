@@ -285,14 +285,14 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 	if derivedOk {
 		w.heartbeatMissCount = 0
 		fresh.Tokens = derivedTokens
-		// Recompute pct from the fresh token count when a window size is known so
-		// the gauge tracks live growth, not just the last repaint's percentage.
-		windowSize := fresh.WindowSize
-		if windowSize == 0 {
-			windowSize = w.cfg.FallbackWindowSize
-		}
-		if windowSize > 0 {
-			fresh.Pct = float64(derivedTokens) / float64(windowSize) * 100.0
+		// Recompute pct only when the window size is authoritative (written by the
+		// statusline script). When WindowSize==0 the statusline hasn't confirmed the
+		// window yet; substituting FallbackWindowSize (200k default) overestimates pct
+		// for large-context sessions (e.g. 210k/200k=105%) which causes
+		// belowWarnThreshold to return false and fires session_keeper_warn below the
+		// configured warn_pct. Carry last.Pct forward instead. Refs: hk-eovln.
+		if fresh.WindowSize > 0 {
+			fresh.Pct = float64(derivedTokens) / float64(fresh.WindowSize) * 100.0
 		}
 	} else {
 		w.heartbeatMissCount++

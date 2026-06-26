@@ -90,15 +90,19 @@ func TestCheckMissingWatchValues_WE7TargetKeysNeverMissing(t *testing.T) {
 	if !missingPaths["watch.digest_interval"] {
 		t.Error("WE6: watch.digest_interval must be missing when DigestInterval='' (fail-loud)")
 	}
+	if !missingPaths["watch.staffing_starvation_grace"] {
+		t.Error("staffing-starvation backstop: watch.staffing_starvation_grace must be missing when StaffingStarvationGrace=0 (fail-loud)")
+	}
 
 	// Fully populated config (all WE7 + WE9 + WE6 keys set) must have no missing entries.
 	cfg := daemon.WatchConfig{
-		StatusTarget:     "watch",
-		OpsmonitorTarget: "watch",
-		AbsentThreshSec:  600,
-		StallTicks:       3,
-		LivenessInterval: "1h",
-		DigestInterval:   "1h",
+		StatusTarget:            "watch",
+		OpsmonitorTarget:        "watch",
+		AbsentThreshSec:         600,
+		StallTicks:              3,
+		LivenessInterval:        "1h",
+		DigestInterval:          "1h",
+		StaffingStarvationGrace: 3,
 	}
 	missing = checkMissingWatchValues(cfg)
 	if len(missing) != 0 {

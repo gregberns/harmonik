@@ -397,6 +397,11 @@ the operator).
 > are consistent on it. An ops-monitor `backlog-ready` flag is a CONVENIENCE trigger,
 > not the only trigger — the captain pulls the backlog on its own timer even when no
 > flag fires.
+> This ≤5-minute backlog pull runs ONLY while the captain is already AWAKE in its
+> active loop; it does NOT re-introduce a dormant poll or 24/7 token burn. A DORMANT
+> captain is still woken solely by the wake-economy push paths (ops-monitor `[IMMEDIATE]`
+> + the watch staffing-starvation backstop / escalations + operator messages) — that
+> wake path is unchanged (see watch SKILL.md: no health tick).
 
 ### Keeper cheatsheet (the ~15 lines the captain needs — M5/hk-039z)
 

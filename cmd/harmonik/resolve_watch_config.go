@@ -102,6 +102,11 @@ func allWatchValues(cfg daemon.WatchConfig) []requiredWatchValue {
 			description: "Go duration string (e.g. '1h') for the watch verify-services-up schedule (WE6; fail-loud when unset)",
 			satisfied:   cfg.DigestInterval != "",
 		},
+		{
+			keyPath:     "watch.staffing_starvation_grace",
+			description: "consecutive ops-monitor digests a 'ready lane + free slot' condition may persist with NO captain staffing action before the watch escalates the staffing-starvation backstop (fail-loud when unset)",
+			satisfied:   cfg.StaffingStarvationGrace > 0,
+		},
 	}
 }
 
@@ -159,6 +164,9 @@ const watchConfigExampleBlock = `watch:
   liveness_interval: 1h
   # watch.digest_interval: Go duration string (e.g. '1h') for the watch verify-services-up schedule (WE6; fail-loud when unset)
   digest_interval: 1h
+  # Staffing-starvation backstop (fail-loud when unset).
+  # watch.staffing_starvation_grace: consecutive ops-monitor digests a 'ready lane + free slot' condition may persist with NO captain staffing action before the watch escalates the staffing-starvation backstop (fail-loud when unset)
+  staffing_starvation_grace: 3
 `
 
 // watchConfigExampleYAML returns the complete watch: example block.

@@ -648,12 +648,13 @@ type WatchdogConfig struct {
 // WE9 behavioral keys (absent_thresh_s, stall_ticks) are fail-loud when zero/absent.
 // WE6 schedule interval keys (liveness_interval, digest_interval) are fail-loud when absent.
 type rawWatchConfig struct {
-	StatusTarget     string `yaml:"status_target"`
-	OpsmonitorTarget string `yaml:"opsmonitor_target"`
-	AbsentThreshSec  int    `yaml:"absent_thresh_s"`   // WE9: seconds before watch-down fires (fail-loud)
-	StallTicks       int    `yaml:"stall_ticks"`       // WE9: frozen-cursor ticks before watch-stalled (fail-loud)
-	LivenessInterval string `yaml:"liveness_interval"` // WE6: Go duration string for mutual-liveness ping (fail-loud)
-	DigestInterval   string `yaml:"digest_interval"`   // WE6: Go duration string for verify-services-up (fail-loud)
+	StatusTarget            string `yaml:"status_target"`
+	OpsmonitorTarget        string `yaml:"opsmonitor_target"`
+	AbsentThreshSec         int    `yaml:"absent_thresh_s"`           // WE9: seconds before watch-down fires (fail-loud)
+	StallTicks              int    `yaml:"stall_ticks"`               // WE9: frozen-cursor ticks before watch-stalled (fail-loud)
+	LivenessInterval        string `yaml:"liveness_interval"`         // WE6: Go duration string for mutual-liveness ping (fail-loud)
+	DigestInterval          string `yaml:"digest_interval"`           // WE6: Go duration string for verify-services-up (fail-loud)
+	StaffingStarvationGrace int    `yaml:"staffing_starvation_grace"` // consecutive ops-monitor digests before staffing-starvation backstop escalates (fail-loud)
 }
 
 // WatchConfig holds the watch-level routing configuration read from the
@@ -682,6 +683,10 @@ type WatchConfig struct {
 	// DigestInterval is the Go duration string (e.g. "1h") for the verify-services-up schedule.
 	// Empty = not configured; fail-loud when watch is deployed (WE6).
 	DigestInterval string
+	// StaffingStarvationGrace is how many consecutive ops-monitor digests a "ready lane + free
+	// slot" condition may persist with NO captain staffing action before the watch escalates the
+	// staffing-starvation backstop. Zero = not configured; fail-loud when watch is deployed.
+	StaffingStarvationGrace int
 }
 
 // rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
@@ -1243,11 +1248,12 @@ func parseWatchdogBlock(raw rawWatchdogConfig) WatchdogConfig {
 // distinguish "absent" from an explicit "captain").
 func parseWatchBlock(raw rawWatchConfig) WatchConfig {
 	return WatchConfig{
-		StatusTarget:     raw.StatusTarget,
-		OpsmonitorTarget: raw.OpsmonitorTarget,
-		AbsentThreshSec:  raw.AbsentThreshSec,
-		StallTicks:       raw.StallTicks,
-		LivenessInterval: raw.LivenessInterval,
-		DigestInterval:   raw.DigestInterval,
+		StatusTarget:            raw.StatusTarget,
+		OpsmonitorTarget:        raw.OpsmonitorTarget,
+		AbsentThreshSec:         raw.AbsentThreshSec,
+		StallTicks:              raw.StallTicks,
+		LivenessInterval:        raw.LivenessInterval,
+		DigestInterval:          raw.DigestInterval,
+		StaffingStarvationGrace: raw.StaffingStarvationGrace,
 	}
 }

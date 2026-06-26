@@ -38,22 +38,26 @@ package specaudit_test
 //
 // # Allowlist discipline
 //
-// The allowlists below are the ONLY authorised control-surface entries as of
-// the commit that introduces this sensor. Adding a new CLI subcommand, socket
-// op, or daemon signal MUST include a corresponding allowlist update in this
-// file AND a cross-reference to the operator-nfr.md section that authorises
-// it (ON-008, ON-009, or a new numbered requirement). This makes every
-// extension an explicit, reviewable change.
+// The allowlists below record control-surface entries that predate local
+// authorization annotations. New CLI subcommands, socket ops, and daemon
+// signals MAY instead carry an immediately-preceding
+// `// ON-INV-006-AUTH: ...` comment at the dispatch site. The comment must cite
+// the requirement that authorizes the surface and explain why it cannot abort
+// an in-flight run. This keeps new-surface review local to the file that adds
+// the surface, avoiding concurrent merge conflicts in this central sensor.
 //
 // # Failure modes
 //
 //   - spec-text-binding: ON-INV-006 heading or key obligation phrase absent.
-//   - cli-unlisted-verb: a top-level subcommand in main.go is not in the CLI
-//     allowlist; it may be a local escape-hatch bypassing the invariant.
-//   - socket-unlisted-op: a case label in the socket op switch is not in the
-//     socket-op allowlist; it may expose an undocumented run-abort path.
+//   - cli-unlisted-verb: a top-level subcommand in main.go is neither in the
+//     CLI allowlist nor locally annotated; it may be a local escape-hatch
+//     bypassing the invariant.
+//   - socket-unlisted-op: a case label in the socket op switch is neither in
+//     the socket-op allowlist nor locally annotated; it may expose an
+//     undocumented run-abort path.
 //   - signal-unlisted: a signal registered via signal.NotifyContext in main.go
-//     is not in the signal allowlist; a new signal may bypass the drain gate.
+//     is neither in the signal allowlist nor locally annotated; a new signal
+//     may bypass the drain gate.
 //
 // # Helper prefix
 //
@@ -155,9 +159,10 @@ func oninv006FixtureONINV006Body(t *testing.T, lines []string) (body []string, h
 // ─── Allowlists ─────────────────────────────────────────────────────────────
 //
 // MAINTENANCE: when adding a new CLI subcommand, socket op, or daemon signal,
-// you MUST update the relevant allowlist below AND cite the operator-nfr.md
-// section that authorises the new control surface. The allowlist comment is the
-// audit trail; keep it precise.
+// cite the requirement that authorizes the new control surface either in the
+// relevant legacy allowlist below or in an immediately-preceding
+// `// ON-INV-006-AUTH: ...` comment at the dispatch site. Keep the citation
+// precise; it is the audit trail.
 
 // oninv006FixtureCLIAllowlist is the exhaustive set of top-level subcommands
 // declared in cmd/harmonik/main.go as of the commit introducing this sensor.
@@ -168,9 +173,8 @@ func oninv006FixtureONINV006Body(t *testing.T, lines []string) (body []string, h
 //   - "hook-relay": specs/claude-hook-bridge.md §4.4 CHB-010..017; hook delivery
 //     path — does not affect in-flight runs.
 //
-// Adding a new entry here requires cross-reference to the operator-nfr.md
-// section (ON-008 drain path, ON-009 stop-immediate, or a new ON-NNN) that
-// routes the verb through the state machine of §7.1.
+// New entries may instead use a local ON-INV-006-AUTH comment at the dispatch
+// site when that avoids central allowlist churn.
 var oninv006FixtureCLIAllowlist = map[string]string{
 	"tmux-start": "process-lifecycle.md §4.10 PL-028; bootstrap-only, no run impact",
 	"hook-relay": "claude-hook-bridge.md §4.4 CHB-010..017; hook delivery, no run abort",
@@ -367,8 +371,8 @@ var oninv006FixtureCLIAllowlist = map[string]string{
 //   - "claim-next": MVH_ROADMAP row #5; agent requests the next ready bead.
 //     Reads queue state — does not affect in-flight runs.
 //
-// Adding a new entry here requires cross-reference to the operator-nfr.md
-// section that authorises the new op (ON-008, ON-009, or a new ON-NNN).
+// New entries may instead use a local ON-INV-006-AUTH comment at the dispatch
+// site when that avoids central allowlist churn.
 var oninv006FixtureSocketOpAllowlist = map[string]string{
 	"emit-outcome": "MVH_ROADMAP row #5; run-completion report, no mid-run abort",
 	"claim-next":   "MVH_ROADMAP row #5; queue read, no run impact",
@@ -452,15 +456,19 @@ var oninv006FixtureSocketOpAllowlist = map[string]string{
 //   - "syscall.SIGTERM": standard termination signal; routes identically to
 //     SIGINT via signal.NotifyContext context cancellation → drain path.
 //
-// Adding a new entry here requires cross-reference to the operator-nfr.md
-// section (ON-009 for abort, ON-008 drain gate for graceful, or a new ON-NNN)
-// and confirmation that the signal routes through the state machine of §7.1.
+// New entries may instead use a local ON-INV-006-AUTH comment at the dispatch
+// site when that avoids central allowlist churn.
 var oninv006FixtureSignalAllowlist = map[string]string{
 	"syscall.SIGINT":  "operator interrupt; routes via context cancel → ON-027 drain",
 	"syscall.SIGTERM": "termination signal; routes via context cancel → ON-027 drain",
 }
 
 // ─── Matchers ───────────────────────────────────────────────────────────────
+
+const (
+	oninv006FixtureAuthPrefix     = "ON-INV-006-AUTH:"
+	oninv006FixtureLocalAuthDepth = 8
+)
 
 // oninv006FixtureCLIVerbLine matches a line in cmd/harmonik/main.go that
 // dispatches a top-level subcommand by checking os.Args[1].
@@ -484,6 +492,42 @@ var (
 	oninv006FixtureSignalNotifyLine = regexp.MustCompile(`signal\.NotifyContext\b`)
 	oninv006FixtureSyscallSigToken  = regexp.MustCompile(`\bsyscall\.(SIG[A-Z]+)\b`)
 )
+
+// oninv006FixtureHasAuthorization reports whether a discovered control surface
+// is authorized by the legacy central allowlist or by a local dispatch-site
+// `// ON-INV-006-AUTH: ...` comment. Local comments let new surfaces satisfy
+// ON-INV-006 without forcing unrelated concurrent beads to edit this file.
+func oninv006FixtureHasAuthorization(allowlist map[string]string, key string, lines []string, lineIdx int) bool {
+	if _, ok := allowlist[key]; ok {
+		return true
+	}
+	return oninv006FixtureLocalAuthorization(lines, lineIdx) != ""
+}
+
+// oninv006FixtureLocalAuthorization finds the nearest immediately-preceding
+// ON-INV-006 authorization comment for the dispatch site at lineIdx. It scans
+// only contiguous `//` comments and blank spacer lines directly above the site;
+// encountering code or a block comment stops the search.
+func oninv006FixtureLocalAuthorization(lines []string, lineIdx int) string {
+	start := lineIdx - oninv006FixtureLocalAuthDepth
+	if start < 0 {
+		start = 0
+	}
+	for i := lineIdx - 1; i >= start; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "//") {
+			break
+		}
+		comment := strings.TrimSpace(strings.TrimPrefix(trimmed, "//"))
+		if strings.HasPrefix(comment, oninv006FixtureAuthPrefix) {
+			return strings.TrimSpace(strings.TrimPrefix(comment, oninv006FixtureAuthPrefix))
+		}
+	}
+	return ""
+}
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
@@ -559,11 +603,51 @@ func TestONINV006SpecTextBinding(t *testing.T) {
 	}
 }
 
+func TestONINV006LocalAuthorization(t *testing.T) {
+	t.Parallel()
+
+	lines := []string{
+		"func run() int {",
+		"\t// harmonik frobnicate -- read-only state viewer.",
+		"\t// ON-INV-006-AUTH: operator-nfr.md §4.9 ON-055; read-only, no run impact",
+		"\tif len(os.Args) >= 2 && os.Args[1] == \"frobnicate\" {",
+		"\t\treturn runFrobnicate(os.Args[2:])",
+		"\t}",
+		"}",
+	}
+
+	if !oninv006FixtureHasAuthorization(map[string]string{}, "frobnicate", lines, 3) {
+		t.Fatal("expected local ON-INV-006-AUTH comment to authorize unlisted control surface")
+	}
+	if got := oninv006FixtureLocalAuthorization(lines, 3); !strings.Contains(got, "ON-055") {
+		t.Fatalf("expected local authorization text to be returned, got %q", got)
+	}
+}
+
+func TestONINV006LocalAuthorizationRequiresAdjacentCommentBlock(t *testing.T) {
+	t.Parallel()
+
+	lines := []string{
+		"func run() int {",
+		"\t// ON-INV-006-AUTH: operator-nfr.md §4.9 ON-055; stale comment",
+		"\t_ = computeSomething()",
+		"\tif len(os.Args) >= 2 && os.Args[1] == \"frobnicate\" {",
+		"\t\treturn runFrobnicate(os.Args[2:])",
+		"\t}",
+		"}",
+	}
+
+	if oninv006FixtureHasAuthorization(map[string]string{}, "frobnicate", lines, 3) {
+		t.Fatal("did not expect non-adjacent ON-INV-006-AUTH comment to authorize dispatch site")
+	}
+}
+
 // TestONINV006CLISubcommands scans cmd/harmonik/main.go for top-level
 // subcommand dispatch sites (os.Args[1] == "<verb>") and asserts that every
-// verb is present in oninv006FixtureCLIAllowlist.  An unlisted verb is a
-// candidate ON-INV-006 violation: it may introduce a run-abort path that does
-// not route through the state machine of §7.1.
+// verb is either present in oninv006FixtureCLIAllowlist or has a local
+// ON-INV-006-AUTH comment. An unlisted/unannotated verb is a candidate
+// ON-INV-006 violation: it may introduce a run-abort path that does not route
+// through the state machine of §7.1.
 func TestONINV006CLISubcommands(t *testing.T) {
 	t.Parallel()
 
@@ -578,11 +662,12 @@ func TestONINV006CLISubcommands(t *testing.T) {
 			continue
 		}
 		verb := ms[1]
-		if _, ok := oninv006FixtureCLIAllowlist[verb]; !ok {
+		if !oninv006FixtureHasAuthorization(oninv006FixtureCLIAllowlist, verb, lines, i) {
 			violations = append(violations, fmt.Sprintf(
 				"cmd/harmonik/main.go line %d: unlisted CLI subcommand %q — "+
-					"add to oninv006FixtureCLIAllowlist with an operator-nfr.md citation "+
-					"(ON-008, ON-009, or new ON-NNN) confirming it routes through §7.1 state machine",
+					"add an immediately-preceding `// ON-INV-006-AUTH: ...` comment "+
+					"or add to oninv006FixtureCLIAllowlist with a requirement citation "+
+					"(ON-008, ON-009, system-state SS-..., or new ON-NNN) confirming it cannot abort an in-flight run",
 				i+1, verb,
 			))
 		}
@@ -610,9 +695,10 @@ func oninv006FixtureCountCLIVerbs(lines []string) int {
 }
 
 // TestONINV006SocketOps scans internal/daemon/socket.go for case labels in the
-// SocketRequest op switch and asserts that every op is present in
-// oninv006FixtureSocketOpAllowlist.  An unlisted op may expose a run-abort
-// path bypassing the drain gate or state machine of §7.1.
+// SocketRequest op switch and asserts that every op is either present in
+// oninv006FixtureSocketOpAllowlist or has a local ON-INV-006-AUTH comment. An
+// unlisted/unannotated op may expose a run-abort path bypassing the drain gate
+// or state machine of §7.1.
 func TestONINV006SocketOps(t *testing.T) {
 	t.Parallel()
 
@@ -654,11 +740,12 @@ func TestONINV006SocketOps(t *testing.T) {
 			continue
 		}
 		op := ms[1]
-		if _, ok := oninv006FixtureSocketOpAllowlist[op]; !ok {
+		if !oninv006FixtureHasAuthorization(oninv006FixtureSocketOpAllowlist, op, lines, i) {
 			violations = append(violations, fmt.Sprintf(
 				"internal/daemon/socket.go line %d: unlisted socket op %q — "+
-					"add to oninv006FixtureSocketOpAllowlist with an operator-nfr.md citation "+
-					"(ON-008, ON-009, or new ON-NNN) confirming it routes through §7.1 state machine",
+					"add an immediately-preceding `// ON-INV-006-AUTH: ...` comment "+
+					"or add to oninv006FixtureSocketOpAllowlist with a requirement citation "+
+					"(ON-008, ON-009, system-state SS-..., or new ON-NNN) confirming it cannot abort an in-flight run",
 				i+1, op,
 			))
 		}
@@ -673,10 +760,11 @@ func TestONINV006SocketOps(t *testing.T) {
 }
 
 // TestONINV006SignalHandlers scans cmd/harmonik/main.go for signals registered
-// via signal.NotifyContext and asserts that every syscall.SIG* token is present
-// in oninv006FixtureSignalAllowlist.  An unlisted signal may introduce a
-// daemon-termination path that skips the drain gate (ON-027) and bypasses
-// the between-task invariant (ON-INV-006).
+// via signal.NotifyContext and asserts that every syscall.SIG* token is either
+// present in oninv006FixtureSignalAllowlist or has a local ON-INV-006-AUTH
+// comment. An unlisted/unannotated signal may introduce a daemon-termination
+// path that skips the drain gate (ON-027) and bypasses the between-task
+// invariant (ON-INV-006).
 func TestONINV006SignalHandlers(t *testing.T) {
 	t.Parallel()
 
@@ -694,11 +782,12 @@ func TestONINV006SignalHandlers(t *testing.T) {
 		tokens := oninv006FixtureSyscallSigToken.FindAllStringSubmatch(line, -1)
 		for _, tok := range tokens {
 			sigKey := "syscall." + tok[1]
-			if _, ok := oninv006FixtureSignalAllowlist[sigKey]; !ok {
+			if !oninv006FixtureHasAuthorization(oninv006FixtureSignalAllowlist, sigKey, lines, i) {
 				violations = append(violations, fmt.Sprintf(
 					"cmd/harmonik/main.go line %d: unlisted signal %s in signal.NotifyContext — "+
-						"add to oninv006FixtureSignalAllowlist with an operator-nfr.md citation "+
-						"confirming it routes through ON-027 drain or ON-009 stop-immediate",
+						"add an immediately-preceding `// ON-INV-006-AUTH: ...` comment "+
+						"or add to oninv006FixtureSignalAllowlist with a requirement citation "+
+						"confirming it routes through ON-027 drain, ON-009 stop-immediate, or cannot abort an in-flight run",
 					i+1, sigKey,
 				))
 			}

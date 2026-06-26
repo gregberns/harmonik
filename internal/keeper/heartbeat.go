@@ -225,12 +225,9 @@ func WriteCtxFile(projectDir, agent string, cf *CtxFile) error {
 }
 
 // heartbeatSessionID picks the session_id the heartbeat should stamp into .ctx.
-// Preference: the latched managed UUIDv4 (corrects a transient UUIDv7/uppercase
-// poisoning in the gauge), falling back to the last gauge value. An uppercase or
-// UUIDv7 managed value is rejected in favour of the last gauge value so the
-// heartbeat never propagates a known-bad form.
+// Preference: the latched managed session, falling back to the last gauge value.
 func heartbeatSessionID(managedSID string, last *CtxFile) string {
-	if managedSID != "" && !isUUIDv7(managedSID) && !isUppercaseUUID(managedSID) {
+	if managedSID != "" {
 		return managedSID
 	}
 	return last.SessionID

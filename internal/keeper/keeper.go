@@ -178,24 +178,6 @@ func ReadManagedSessionID(projectDir, agent string) (string, error) {
 	return "", nil // empty or whitespace-only file — no binding in effect
 }
 
-// IsUUIDv7 reports whether sid is a well-formed UUIDv7.
-// UUID layout: xxxxxxxx-xxxx-Vxxx-Sxxx-xxxxxxxxxxxx (36 bytes).
-// The version digit V occupies index 14. Daemon-spawned implementers write
-// UUIDv7 session IDs; interactive captain sessions write UUIDv4. (Refs: hk-lap)
-func IsUUIDv7(sid string) bool {
-	return len(sid) == 36 && sid[14] == '7'
-}
-
-// isUUIDv7 is a package-internal alias for IsUUIDv7.
-func isUUIDv7(sid string) bool { return IsUUIDv7(sid) }
-
-// IsUppercaseUUID is the exported form of isUppercaseUUID. Reports whether s
-// is a UUID-shaped string that contains at least one uppercase hex digit (A–F),
-// characteristic of the conversation/transcript-dir UUID that Claude Code
-// occasionally emits as session_id. Used by keeper_cmd.go to guard 'keeper
-// rebind'. Refs: hk-mzdm, hk-0tvm.
-func IsUppercaseUUID(s string) bool { return isUppercaseUUID(s) }
-
 // WriteManagedSessionID writes sessionID into the .managed marker file for the
 // given agent, establishing or updating the session binding. The .managed file
 // is created if absent (which also makes IsManaged return true). Passing an

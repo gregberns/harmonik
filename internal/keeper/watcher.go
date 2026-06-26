@@ -842,33 +842,6 @@ func containsRestartNowCmd(s string) bool {
 	return strings.Contains(s, "harmonik keeper restart-now")
 }
 
-// isUppercaseUUID reports whether s is a UUID-shaped string (36 bytes,
-// hyphens at the canonical positions) that contains at least one uppercase
-// hex digit (A–F). This is characteristic of the conversation/transcript-dir
-// UUID that Claude Code occasionally emits as session_id instead of the actual
-// (lowercase) session UUID. Non-UUID strings (len≠36 or wrong hyphen layout)
-// are never considered uppercase UUIDs so short test/label strings like
-// "sess-C" are not rejected. Used as defense-in-depth at the watcher latch
-// point; the primary source fix is the lowercase-normalisation in
-// keeper-statusline.sh. Refs: hk-mzdm.
-func isUppercaseUUID(s string) bool {
-	if len(s) != 36 {
-		return false
-	}
-	if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
-		return false
-	}
-	for i, r := range s {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			continue
-		}
-		if r >= 'A' && r <= 'F' {
-			return true
-		}
-	}
-	return false
-}
-
 // Watcher polls the gauge file and manages the warn-injection state machine.
 // It is safe to construct a Watcher and call Run once.
 //

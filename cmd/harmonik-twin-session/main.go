@@ -501,8 +501,7 @@ func runIdleHook(cfg config) {
 }
 
 // newUUIDv4 mints a random RFC-4122 version-4 UUID. The version nibble (index 14
-// of the canonical string) is forced to '4' so it is NEVER mistaken for the
-// UUIDv7 the keeper rejects (isUUIDv7: sid[14]=='7', keeper.go:148-150).
+// of the canonical string) is forced to '4'.
 func newUUIDv4() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])      //nolint:errcheck // crypto/rand on these platforms does not fail

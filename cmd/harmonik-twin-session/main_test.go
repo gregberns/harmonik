@@ -414,7 +414,7 @@ func TestNewUUIDv4_IsV4AndUnique(t *testing.T) {
 		if id[14] != '4' {
 			t.Fatalf("version nibble %q != '4' in %q", string(id[14]), id)
 		}
-		if isUUIDv7Local(id) {
+		if hasUUIDVersion7(id) {
 			t.Fatalf("newUUIDv4 produced a v7-shaped id: %q", id)
 		}
 		if seen[id] {
@@ -454,8 +454,7 @@ func isValidUUIDv4(s string) bool {
 	return false
 }
 
-// isUUIDv7Local mirrors internal/keeper.isUUIDv7 (sid[14]=='7') for the test.
-func isUUIDv7Local(s string) bool { return len(s) == 36 && s[14] == '7' }
+func hasUUIDVersion7(s string) bool { return len(s) == 36 && s[14] == '7' }
 
 func isHex(r rune) bool {
 	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')

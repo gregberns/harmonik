@@ -641,6 +641,71 @@ type DaemonConfig struct {
 	RemoteControlPrefix string
 }
 
+// rawHarnessesPiFallbackConfig is the optional harnesses.pi.fallback block.
+// All fields are stored as strings; absence is the empty string.
+type rawHarnessesPiFallbackConfig struct {
+	Provider  string `yaml:"provider"`
+	Model     string `yaml:"model"`
+	APIKeyEnv string `yaml:"api_key_env"`
+}
+
+// rawHarnessesPiConfig is the harnesses.pi block in config.yaml.
+// REQUIRED: provider, model, api_key_env. OPTIONAL: fallback.
+// No defaults — ResolvePiConfig (cmd/harmonik/resolve_pi_config.go) enforces
+// fail-loud on any missing required field (PI-050/PI-051).
+type rawHarnessesPiConfig struct {
+	Provider  string                        `yaml:"provider"`
+	Model     string                        `yaml:"model"`
+	APIKeyEnv string                        `yaml:"api_key_env"`
+	Fallback  rawHarnessesPiFallbackConfig  `yaml:"fallback"`
+}
+
+// rawHarnessesConfig is the top-level harnesses: block in config.yaml.
+type rawHarnessesConfig struct {
+	Pi rawHarnessesPiConfig `yaml:"pi"`
+}
+
+// PiFallbackConfig holds the optional harnesses.pi.fallback sub-block.
+// V1 has no automatic fallback — this block exists for operator convenience
+// (manual lane flip); PI-072.
+type PiFallbackConfig struct {
+	// Provider is the fallback provider string.
+	Provider string
+	// Model is the fallback model string.
+	Model string
+	// APIKeyEnv is the name of the env var carrying the fallback provider key.
+	APIKeyEnv string
+}
+
+// PiHarnessConfig holds the harnesses.pi block read from .harmonik/config.yaml.
+// REQUIRED fields are provider, model, api_key_env; missing required fields are
+// caught by ResolvePiConfig (cmd/harmonik/resolve_pi_config.go, PI-051).
+// The product imposes ZERO baked Pi defaults — PI-050 / R1 de-hardcode mandate.
+//
+// Spec refs: PI-050, PI-051, PI-052, specs/pi-harness.md §5.
+// Bead ref: hk-v7q5u.
+type PiHarnessConfig struct {
+	// Provider is the Pi provider string. REQUIRED — no default.
+	Provider string
+	// Model is the Pi model string. REQUIRED — no default. Shape-validated only
+	// (HC-055a: ^[A-Za-z0-9._:/-]+$, ≤128 chars). Never value-validated.
+	Model string
+	// APIKeyEnv is the name of the env var carrying the provider API key.
+	// REQUIRED — no default. The KEY VALUE is never stored in config.
+	APIKeyEnv string
+	// Fallback is the optional paid-fallback target (V1 manual flip; PI-072).
+	Fallback PiFallbackConfig
+	// HasFallback is true when the fallback: sub-block was present in config.
+	HasFallback bool
+}
+
+// HarnessesConfig holds the harnesses: top-level block. Zero value when absent.
+//
+// Bead ref: hk-v7q5u.
+type HarnessesConfig struct {
+	Pi PiHarnessConfig
+}
+
 // rawWatchdogConfig is the watchdog: block in config.yaml (hk-sbitr).
 // Unknown keys at this level are silently ignored (forward-compat, matches daemon: block behaviour).
 // Enabled is a *bool so that nil (absent) resolves to the default (true) while an explicit
@@ -760,11 +825,12 @@ type WatchConfig struct {
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
-	Daemon        rawDaemonConfig           `yaml:"daemon"`   // hk-rcp7: PL-004b daemon: block
-	Keeper        rawKeeperConfig           `yaml:"keeper"`   // hk-lhu2: keeper config block
-	Watchdog      rawWatchdogConfig         `yaml:"watchdog"` // hk-sbitr: ctx-watchdog schedule gate
-	Watch         rawWatchConfig            `yaml:"watch"`    // hk-we7: watch routing targets
+	Daemon        rawDaemonConfig           `yaml:"daemon"`     // hk-rcp7: PL-004b daemon: block
+	Keeper        rawKeeperConfig           `yaml:"keeper"`     // hk-lhu2: keeper config block
+	Watchdog      rawWatchdogConfig         `yaml:"watchdog"`   // hk-sbitr: ctx-watchdog schedule gate
+	Watch         rawWatchConfig            `yaml:"watch"`      // hk-we7: watch routing targets
 	Supervise     rawSuperviseConfig        `yaml:"supervise"`
+	Harnesses     rawHarnessesConfig        `yaml:"harnesses"`  // hk-v7q5u: per-harness config (PI-050)
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.
@@ -815,6 +881,10 @@ type ProjectConfig struct {
 	// When the block is absent, both target fields are empty strings (callers
 	// default to "captain"). Bead ref: hk-we7-sender-redirect-clhh8.
 	Watch WatchConfig
+
+	// Harnesses holds the per-harness config read from the harnesses: block.
+	// Zero value when the block is absent. Bead ref: hk-v7q5u (PI-050).
+	Harnesses HarnessesConfig
 }
 
 // LookupAgent returns the (model, effort) pair configured for agentType, or
@@ -874,8 +944,12 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	watchdogAbsent := raw.Watchdog.Enabled == nil
 	watchBlockAbsent := raw.Watch.StatusTarget == "" && raw.Watch.OpsmonitorTarget == ""
 	superviseAbsent := superviseBlockAbsent(raw.Supervise)
+	harnessesAbsent := raw.Harnesses.Pi.Provider == "" && raw.Harnesses.Pi.Model == "" &&
+		raw.Harnesses.Pi.APIKeyEnv == "" &&
+		raw.Harnesses.Pi.Fallback == (rawHarnessesPiFallbackConfig{})
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
-		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent && watchBlockAbsent && superviseAbsent {
+		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent && watchBlockAbsent &&
+		superviseAbsent && harnessesAbsent {
 		return ProjectConfig{}, nil
 	}
 
@@ -918,13 +992,18 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		return ProjectConfig{}, err
 	}
 
+	// hk-v7q5u: parse the harnesses: block (PI-050). All fields are optional at
+	// the YAML level; ResolvePiConfig enforces fail-loud on missing required values.
+	harnessesCfg := parseHarnessesBlock(raw.Harnesses)
+
 	cfg := ProjectConfig{
-		entries:   make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
-		Daemon:    daemonCfg,
-		Keeper:    keeperCfg,
-		Watchdog:  watchdogCfg,
-		Supervise: superviseCfg,
-		Watch:     watchCfg,
+		entries:    make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
+		Daemon:     daemonCfg,
+		Keeper:     keeperCfg,
+		Watchdog:   watchdogCfg,
+		Supervise:  superviseCfg,
+		Watch:      watchCfg,
+		Harnesses:  harnessesCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
@@ -1381,5 +1460,35 @@ func parseWatchBlock(raw rawWatchConfig) WatchConfig {
 		LivenessInterval:        raw.LivenessInterval,
 		DigestInterval:          raw.DigestInterval,
 		StaffingStarvationGrace: raw.StaffingStarvationGrace,
+	}
+}
+
+// parseHarnessesBlock converts a rawHarnessesConfig into a HarnessesConfig.
+//
+// All Pi fields are stored verbatim from the YAML; no validation and no defaults
+// are applied here — ResolvePiConfig (cmd/harmonik/resolve_pi_config.go) is the
+// operator-facing enforcement gate that aggregates missing required fields and
+// validates the model shape (HC-055a). This matches the keeper: block pattern
+// where parsing is tolerant and the resolver is the chokepoint.
+//
+// HasFallback is set to true when any fallback sub-field is non-empty (i.e. the
+// operator wrote at least one key under harnesses.pi.fallback:).
+//
+// Spec refs: PI-050. Bead ref: hk-v7q5u.
+func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
+	pi := raw.Pi
+	hasFallback := pi.Fallback.Provider != "" || pi.Fallback.Model != "" || pi.Fallback.APIKeyEnv != ""
+	return HarnessesConfig{
+		Pi: PiHarnessConfig{
+			Provider:  pi.Provider,
+			Model:     pi.Model,
+			APIKeyEnv: pi.APIKeyEnv,
+			HasFallback: hasFallback,
+			Fallback: PiFallbackConfig{
+				Provider:  pi.Fallback.Provider,
+				Model:     pi.Fallback.Model,
+				APIKeyEnv: pi.Fallback.APIKeyEnv,
+			},
+		},
 	}
 }

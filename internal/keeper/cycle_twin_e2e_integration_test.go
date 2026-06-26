@@ -531,8 +531,8 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 	twin := twBuildTwin(t, project)
 	statusline, idleHook := twScripts(t)
 
-	// Opt the agent in (.managed) so the REAL IsManaged gate passes; start with an
-	// empty binding (the watcher would latch the first gauge tick in production).
+	// Opt the agent in (.managed) so the REAL IsManaged gate passes. The binding
+	// starts empty; the .sid channel is responsible for populating .managed.
 	if err := keeper.WriteManagedSessionID(project, agent, ""); err != nil {
 		t.Fatalf("tw: WriteManagedSessionID: %v", err)
 	}

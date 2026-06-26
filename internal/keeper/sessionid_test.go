@@ -68,8 +68,8 @@ func TestReadCtxFile_SidChannelIsPrimary(t *testing.T) {
 }
 
 // TestReadCtxFile_FallsBackWhenSidAbsent: with no .sid the keeper uses the
-// gauge's session_id (the FALLBACK path; the watcher's latch heuristics still
-// apply downstream).
+// gauge's session_id as a fallback. The watcher no longer writes that fallback
+// into .managed on first sighting.
 func TestReadCtxFile_FallsBackWhenSidAbsent(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -260,9 +260,10 @@ type WatcherConfig struct {
 	// Refs: hk-igt (session_id clobber fix).
 	ReadManagedSessionFn func(projectDir, agent string) (string, error)
 
-	// WriteManagedSessionFn, when non-nil, is called when the watcher latches the
-	// first observed session_id into .managed. When nil, WriteManagedSessionID is
-	// used. Set to a no-op in unit tests that do not need latch side-effects.
+	// WriteManagedSessionFn, when non-nil, is called when the watcher adopts a
+	// same-agent session_id after an external /clear. When nil,
+	// WriteManagedSessionID is used. Set to a no-op in unit tests that do not
+	// need adoption side-effects.
 	// Refs: hk-igt (session_id clobber fix).
 	WriteManagedSessionFn func(projectDir, agent, sessionID string) error
 
@@ -1065,11 +1066,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// is present and well-formed. The daemon never writes .sid, so a real
 			// session's SessionID here is already the authoritative interactive id.
 			// The old keeper rebind surface was removed with hk-3391; identity logic
-			// now uses a single cheap guard plus the latch:
+			// now uses a single cheap guard:
 			//   - foreign session: .managed is bound and the live id differs (two
 			//     concurrent same-agent sessions, last-writer on the shared .sid) —
 			//     treat as absent so warn/cycle logic stays consistent.
-			//   - latch: no binding yet — bind the first observed id into .managed.
 			// Stale-binding recovery is handled by the cycler's re-arm on
 			// clear→resume (it clears .managed), not by an in-watcher auto-clear.
 			// (Refs: hk-3391, hk-8prq; supersedes hk-igt/hk-mejt/hk-mzdm/hk-lap/hk-0tvm heuristics.)
@@ -1182,14 +1182,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 					}
 
 					continue
-				}
-			} else if managedSID == "" && ctxFile.SessionID != "" {
-				// Latch: first valid gauge seen — bind its session_id into .managed.
-				slog.InfoContext(ctx, "keeper: latching session_id into .managed",
-					"agent", w.cfg.AgentName, "session_id", ctxFile.SessionID)
-				if latchErr := w.cfg.WriteManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName, ctxFile.SessionID); latchErr != nil {
-					slog.WarnContext(ctx, "keeper: latch managed session_id", "agent", w.cfg.AgentName, "err", latchErr)
-					// Non-fatal: continue monitoring without persisting the binding.
 				}
 			}
 

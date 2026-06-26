@@ -190,8 +190,9 @@ func ReadManagedSessionID(projectDir, agent string) (string, error) {
 // before rename closes the power-loss partial-write window. The rename itself
 // is atomic on POSIX for same-filesystem paths (TOCTOU guard). Refs: hk-mzdm, hk-b5e2.
 //
-// Called by the watcher when it latches the first observed session_id, and by
-// the cycler after a cycle completes to bind to the resumed session.
+// Called by the watcher when it adopts a same-agent session after an external
+// /clear, and by the cycler after a cycle completes to bind to the resumed
+// session.
 //
 // Refs: hk-igt (session_id clobber fix — two same-agent sessions writing to .ctx).
 func WriteManagedSessionID(projectDir, agent, sessionID string) error {

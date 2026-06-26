@@ -11,7 +11,7 @@ package keeper_test
 //   1. ClearSettleUnconfirmed   — /clear IS injected but no new SID ever
 //      appears (flipOnClear=false). The non-fatal clear_unconfirmed path:
 //      clear_unconfirmed emitted, managed binding cleared (empty) so the
-//      watcher re-latches, and complete carries NO bogus new SID.
+//      .sid channel can rebind it, and complete carries NO bogus new SID.
 //   2. ForcedClearAboveHardThreshold — context above the FORCE threshold with
 //      CrispIdle FALSE: cycle fires anyway (CrispIdle bypassed), Escape lands
 //      BEFORE /session-handoff, and /clear is STILL gated on the nonce.
@@ -52,8 +52,8 @@ import (
 // This proves END-TO-END what the unit tests only fake on a gauge call-count:
 //   - /clear WAS injected (the handoff was confirmed, so the safety gate opened).
 //   - session_keeper_clear_unconfirmed is emitted (no new SID observed).
-//   - the .managed binding is cleared to "" so the watcher re-latches on the
-//     next valid gauge tick (Refs: hk-igt, hk-uxu).
+//   - the .managed binding is cleared to "" so the .sid channel can rebind it
+//     on the next session-start signal (Refs: hk-igt, hk-uxu).
 //   - cycle_complete still fires but carries an EMPTY new_session_id — the
 //     cycle does NOT fabricate a bogus new SID.
 func TestKeeperCycle_ClearSettleUnconfirmed(t *testing.T) {
@@ -104,9 +104,9 @@ func TestKeeperCycle_ClearSettleUnconfirmed(t *testing.T) {
 		t.Errorf("clear_unconfirmed.session_id = %q; want %q (S1 — never rotated)", up.SessionID, s1)
 	}
 
-	// (c) the .managed binding is CLEARED ("") so the watcher re-latches.
+	// (c) the .managed binding is CLEARED ("") so the .sid channel can rebind it.
 	if managedBinding != "" {
-		t.Errorf("managed binding = %q; want \"\" (cleared so watcher re-latches; not a bogus new SID)", managedBinding)
+		t.Errorf("managed binding = %q; want \"\" (cleared for .sid rebind; not a bogus new SID)", managedBinding)
 	}
 
 	// (d) cycle_complete fired but carries an EMPTY new_session_id — no bogus SID.

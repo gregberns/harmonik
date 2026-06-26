@@ -89,8 +89,8 @@ type CyclerConfig struct {
 	// SetManagedSessionFn writes the new session_id into .managed after a cycle
 	// completes post-/clear. This unblocks the watcher's session_id binding so it
 	// resumes monitoring the resumed session. Called unconditionally: an empty
-	// sessionID clears the binding so the watcher re-latches on the next valid
-	// gauge tick (IsManaged stays true; only the binding is cleared). Nil →
+	// sessionID clears the binding so the .sid channel can rebind the next
+	// session (IsManaged stays true; only the binding is cleared). Nil →
 	// WriteManagedSessionID. (Refs: hk-igt, hk-uxu)
 	SetManagedSessionFn func(projectDir, agent, sessionID string) error
 
@@ -967,11 +967,11 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 		// does NOT re-arm on a post-abort gauge dip (no /clear was issued).
 		c.lastFireWasAbort = true
 
-		// Re-arm: clear .managed so the watcher re-latches on the next valid
-		// gauge after this abort — but ONLY when a real session-id change was
+		// Re-arm: clear .managed so the .sid channel can rebind after this abort
+		// — but ONLY when a real session-id change was
 		// previously observed (currentSessionIDSince non-zero). When the keeper
 		// has never seen a session change (first monitored session), clearing
-		// .managed prematurely allows a new SID to latch and trigger boot-grace,
+		// .managed prematurely allows a new SID to rebind and trigger boot-grace,
 		// creating a Gate-6 suppression stall where the force-retry exception
 		// never fires (different SID, no low-pct observation). Gating this on
 		// !currentSessionIDSince.IsZero() ensures the watcher stays bound to the
@@ -1043,7 +1043,7 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	// new session's gauge data after /clear. Without this update the watcher would
 	// continue filtering the new session as "foreign". Called unconditionally:
 	// when newSID=="" (ClearSettle timeout), writing "" clears the stale binding
-	// so the watcher re-latches on the next valid gauge tick. (Refs: hk-igt, hk-uxu)
+	// so the .sid channel can rebind the next session. (Refs: hk-igt, hk-uxu)
 	if err := c.cfg.SetManagedSessionFn(c.cfg.ProjectDir, c.cfg.AgentName, newSID); err != nil {
 		slog.WarnContext(ctx, "keeper: update managed session_id after cycle",
 			"agent", c.cfg.AgentName, "new_sid", newSID, "err", err)

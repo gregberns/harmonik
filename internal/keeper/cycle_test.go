@@ -1459,8 +1459,8 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 // TestCycler_ClearSettleTimeout_ClearsManagedSessionID verifies that when
 // waitForNewSessionID times out (ClearSettle deadline expires without a new
 // session_id), SetManagedSessionFn is still called — with an empty string —
-// so the watcher's stale binding is cleared and the watcher can re-latch on
-// the new session's first valid gauge tick. (Refs: hk-uxu)
+// so the stale binding is cleared and the .sid channel can rebind the next
+// session. (Refs: hk-uxu)
 func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 	t.Parallel()
 
@@ -2275,7 +2275,7 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 // TestCycler_AbortClearsManaged verifies the hk-4f8 no-re-arm fix (Defect B)
 // as refined by hk-ibb fix 3: after a handoff_timeout abort that follows a REAL
 // session_id change, SetManagedSessionFn must be called with an empty string.
-// This clears the watcher's .managed binding so it can re-latch on a new
+// This clears the .managed binding so the .sid channel can rebind a new
 // session_id (post-/session-resume). The clear is gated on currentSessionIDSince
 // being non-zero — i.e., a session change was previously observed. The test
 // establishes a prior session (prevSID) at low pct before triggering the abort
@@ -2368,7 +2368,7 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 
 	// SetManagedSessionFn must have been called once with empty string: a real
 	// session change was observed (currentSessionIDSince != zero) so managed is
-	// cleared to allow the watcher to re-latch on the post-resume session.
+	// cleared to allow the .sid channel to rebind the post-resume session.
 	managedMu.Lock()
 	count := managedCallCount
 	last := managedLastValue
@@ -2794,22 +2794,22 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 	}
 }
 
-// TestCycler_AbortToRelatchToGraceToRefire is an integration test for the
+// TestCycler_AbortToResumeGraceToRefire is an integration test for the
 // three-fix combination (hk-ibb): abort fires on the first post-resume session
 // (with a real prior session change), managed is cleared, a novel resumeSID
 // appears (gets grace), and after grace the cycle fires. This exercises fix 1
 // (force-path bypass of grace), fix 2 (novel-SID grace arm), and fix 3 (abort
 // clears managed only after real session change).
-func TestCycler_AbortToRelatchToGraceToRefire(t *testing.T) {
+func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 	t.Parallel()
 
 	const (
-		agent     = "abort-relatch-agent"
-		cycleID1  = "cyc-relatch-001"
-		cycleID2  = "cyc-relatch-002"
-		prevSID   = "sess-relatch-prev"
-		abortSID  = "sess-relatch-abort"
-		resumeSID = "sess-relatch-resume"
+		agent     = "abort-resume-agent"
+		cycleID1  = "cyc-resume-001"
+		cycleID2  = "cyc-resume-002"
+		prevSID   = "sess-resume-prev"
+		abortSID  = "sess-resume-abort"
+		resumeSID = "sess-resume-next"
 	)
 
 	em := &keeper.RecordingEmitter{}
@@ -2922,7 +2922,7 @@ func TestCycler_AbortToRelatchToGraceToRefire(t *testing.T) {
 			abortManagedCalls, abortManagedLast)
 	}
 
-	// ── Phase B: simulate watcher latching resumeSID; grace fires; cycle re-fires ──
+	// ── Phase B: observe resumeSID; grace fires; cycle re-fires ──
 	cycleCount = 1 // advance to second cycle so IDs and handoff behavior change
 
 	// 4. resumeSID at 92% (below ForceActPct) — novel SID, grace arms (fix 2).

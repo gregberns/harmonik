@@ -165,11 +165,13 @@ func runWithSupervisor(cfg Config, projectDir string, stdout, stderr io.Writer) 
 	}
 
 	spec := supervise.Spec{
-		Command:         cfg.Command,
-		Policy:          policy,
-		StartTimeout:    30 * time.Second,
-		CrashLoopWindow: 60 * time.Second,
-		StopTimeout:     10 * time.Second,
+		Command:             cfg.Command,
+		Policy:              policy,
+		HeartbeatTTL:        durationFromMS(cfg.HeartbeatTTLMS),
+		StartTimeout:        durationFromMS(cfg.StartTimeoutMS),
+		CrashLoopWindow:     durationFromMS(cfg.CrashLoopWindowMS),
+		HealthProbeInterval: durationFromMS(cfg.HealthProbeMS),
+		StopTimeout:         durationFromMS(cfg.StopTimeoutMS),
 		Backoff: supervise.BackoffConfig{
 			Base:        time.Duration(baseMS) * time.Millisecond,
 			Cap:         time.Duration(capMS) * time.Millisecond,
@@ -198,14 +200,9 @@ func runWithSupervisor(cfg Config, projectDir string, stdout, stderr io.Writer) 
 	// revival). The daemon command is built from the current executable and the
 	// project directory known to the shim.
 	if daemonCmd := buildDaemonCmd(projectDir, cfg.MaxConcurrent); len(daemonCmd) > 0 {
-		dw := supervise.NewDaemonWatchdog(supervise.DaemonWatchdogSpec{
-			SocketPath:   lifecycle.SocketPath(projectDir),
-			Command:      daemonCmd,
-			WorkDir:      projectDir,
-			LedgerPath:   release.LedgerPath(projectDir),
-			LastGoodPath: release.LastGoodStatePath(projectDir),
-			CrashLogPath: filepath.Join(projectDir, ".harmonik", "state", "daemon.crash.log"),
-		}, log)
+		dwSpec := daemonWatchdogSpecFromConfig(cfg, projectDir, daemonCmd)
+		dwSpec.CrashLogPath = filepath.Join(projectDir, ".harmonik", "state", "daemon.crash.log")
+		dw := supervise.NewDaemonWatchdog(dwSpec, log)
 		go func() {
 			if err := dw.Run(ctx); err != nil && ctx.Err() == nil {
 				fmt.Fprintf(stderr, "daemon-watchdog: exited: %v\n", err)
@@ -243,13 +240,7 @@ func runWatchdogOnly(cfg Config, projectDir string, stdout, stderr io.Writer) in
 		return 1
 	}
 
-	dw := supervise.NewDaemonWatchdog(supervise.DaemonWatchdogSpec{
-		SocketPath:   lifecycle.SocketPath(projectDir),
-		Command:      daemonCmd,
-		WorkDir:      projectDir,
-		LedgerPath:   release.LedgerPath(projectDir),
-		LastGoodPath: release.LastGoodStatePath(projectDir),
-	}, log)
+	dw := supervise.NewDaemonWatchdog(daemonWatchdogSpecFromConfig(cfg, projectDir, daemonCmd), log)
 
 	fmt.Fprintln(stdout, "harmonik supervise: watchdog-only mode (no supervisee configured)")
 	if err := dw.Run(ctx); err != nil && ctx.Err() == nil {
@@ -274,6 +265,27 @@ func buildDaemonCmd(projectDir string, maxConcurrent int) []string {
 		cmd = append(cmd, "--max-concurrent", fmt.Sprintf("%d", maxConcurrent))
 	}
 	return cmd
+}
+
+func daemonWatchdogSpecFromConfig(cfg Config, projectDir string, daemonCmd []string) supervise.DaemonWatchdogSpec {
+	return supervise.DaemonWatchdogSpec{
+		SocketPath:    lifecycle.SocketPath(projectDir),
+		Command:       daemonCmd,
+		WorkDir:       projectDir,
+		CheckInterval: durationFromMS(cfg.DWCheckIntervalMS),
+		DialTimeout:   durationFromMS(cfg.DWDialTimeoutMS),
+		ReviveBackoff: durationFromMS(cfg.DWReviveBackoffMS),
+		ReviveWindow:  durationFromMS(cfg.DWReviveWindowMS),
+		LedgerPath:    release.LedgerPath(projectDir),
+		LastGoodPath:  release.LastGoodStatePath(projectDir),
+	}
+}
+
+func durationFromMS(ms int) time.Duration {
+	if ms <= 0 {
+		return 0
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 // setupSignals returns a context cancelled on SIGINT/SIGTERM and a stop func.

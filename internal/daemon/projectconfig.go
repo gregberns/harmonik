@@ -86,6 +86,20 @@ package daemon
 //	    default_warn_text: ""          # warn injection text for non-captain agents; empty = compiled default
 //	    actionable_warn_text: ""       # actionable self-service restart-handshake advisory override; empty = compiled default (hk-9kgf, hk-vs4u)
 //	    on_demand_warn_text: ""        # DEPRECATED alias of actionable_warn_text (kept RECOGNIZED so old strict configs don't hard-error); mapped with a log warning (hk-vs4u)
+//	supervise:                         # all duration fields are Go duration STRINGS; empty = compiled default
+//	  heartbeat_ttl: 90s
+//	  start_timeout: 30s
+//	  crash_loop_window: 60s
+//	  health_probe_interval: 15s
+//	  stop_timeout: 10s
+//	  restart_backoff:
+//	    base: 1s
+//	    cap: 60s
+//	  daemon_watchdog:
+//	    check_interval: 30s
+//	    dial_timeout: 3s
+//	    revive_backoff: 10s
+//	    revive_window: 15m
 //
 // Unknown agent keys are silently ignored (forward-compat).
 // Unknown sibling keys under daemon: are silently ignored (forward-compat per PL-004b).
@@ -116,6 +130,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -634,6 +649,58 @@ type rawWatchdogConfig struct {
 	Enabled *bool `yaml:"enabled"`
 }
 
+// rawSuperviseBackoffConfig is the supervise.restart_backoff: block.
+// All fields are Go duration strings; empty = compiled default.
+type rawSuperviseBackoffConfig struct {
+	Base string `yaml:"base"`
+	Cap  string `yaml:"cap"`
+}
+
+// rawSuperviseDaemonWatchdogConfig is the supervise.daemon_watchdog: block.
+// All fields are Go duration strings; empty = compiled default.
+type rawSuperviseDaemonWatchdogConfig struct {
+	CheckInterval string `yaml:"check_interval"`
+	DialTimeout   string `yaml:"dial_timeout"`
+	ReviveBackoff string `yaml:"revive_backoff"`
+	ReviveWindow  string `yaml:"revive_window"`
+}
+
+// rawSuperviseConfig is the supervise: block in config.yaml.
+// Unknown keys at this level are silently ignored (forward-compat, matches daemon: block).
+type rawSuperviseConfig struct {
+	HeartbeatTTL        string                           `yaml:"heartbeat_ttl"`
+	StartTimeout        string                           `yaml:"start_timeout"`
+	CrashLoopWindow     string                           `yaml:"crash_loop_window"`
+	HealthProbeInterval string                           `yaml:"health_probe_interval"`
+	StopTimeout         string                           `yaml:"stop_timeout"`
+	RestartBackoff      rawSuperviseBackoffConfig        `yaml:"restart_backoff"`
+	DaemonWatchdog      rawSuperviseDaemonWatchdogConfig `yaml:"daemon_watchdog"`
+}
+
+// SuperviseDaemonWatchdogConfig holds the daemon-watchdog timings read from
+// .harmonik/config.yaml supervise.daemon_watchdog. Zero means not configured:
+// callers defer to the compiled defaults in internal/supervise.
+type SuperviseDaemonWatchdogConfig struct {
+	CheckInterval time.Duration
+	DialTimeout   time.Duration
+	ReviveBackoff time.Duration
+	ReviveWindow  time.Duration
+}
+
+// SuperviseConfig holds supervisor/flywheel timings read from the supervise:
+// block in .harmonik/config.yaml. All fields are optional; zero means not
+// configured so callers keep the existing compiled defaults.
+type SuperviseConfig struct {
+	HeartbeatTTL        time.Duration
+	StartTimeout        time.Duration
+	CrashLoopWindow     time.Duration
+	HealthProbeInterval time.Duration
+	StopTimeout         time.Duration
+	RestartBackoffBase  time.Duration
+	RestartBackoffCap   time.Duration
+	DaemonWatchdog      SuperviseDaemonWatchdogConfig
+}
+
 // WatchdogConfig holds the resolved watchdog configuration (hk-sbitr).
 // Enabled is true by default (absent watchdog: block → watchdog runs).
 type WatchdogConfig struct {
@@ -697,6 +764,7 @@ type rawProjectConfig struct {
 	Keeper        rawKeeperConfig           `yaml:"keeper"`   // hk-lhu2: keeper config block
 	Watchdog      rawWatchdogConfig         `yaml:"watchdog"` // hk-sbitr: ctx-watchdog schedule gate
 	Watch         rawWatchConfig            `yaml:"watch"`    // hk-we7: watch routing targets
+	Supervise     rawSuperviseConfig        `yaml:"supervise"`
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.
@@ -737,6 +805,11 @@ type ProjectConfig struct {
 	//
 	// Bead ref: hk-sbitr.
 	Watchdog WatchdogConfig
+
+	// Supervise holds supervisor/flywheel and daemon-watchdog timings read from
+	// the supervise: block. Zero values mean "not configured"; callers keep the
+	// compiled defaults.
+	Supervise SuperviseConfig
 
 	// Watch holds the watch-level routing config read from the watch: block.
 	// When the block is absent, both target fields are empty strings (callers
@@ -800,8 +873,9 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		raw.Daemon.RemoteControlPrefix == ""
 	watchdogAbsent := raw.Watchdog.Enabled == nil
 	watchBlockAbsent := raw.Watch.StatusTarget == "" && raw.Watch.OpsmonitorTarget == ""
+	superviseAbsent := superviseBlockAbsent(raw.Supervise)
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
-		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent && watchBlockAbsent {
+		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent && watchBlockAbsent && superviseAbsent {
 		return ProjectConfig{}, nil
 	}
 
@@ -839,12 +913,18 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	// (callers default to "captain").
 	watchCfg := parseWatchBlock(raw.Watch)
 
+	superviseCfg, err := parseSuperviseBlock(path, raw.Supervise)
+	if err != nil {
+		return ProjectConfig{}, err
+	}
+
 	cfg := ProjectConfig{
-		entries:  make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
-		Daemon:   daemonCfg,
-		Keeper:   keeperCfg,
-		Watchdog: watchdogCfg,
-		Watch:    watchCfg,
+		entries:   make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
+		Daemon:    daemonCfg,
+		Keeper:    keeperCfg,
+		Watchdog:  watchdogCfg,
+		Supervise: superviseCfg,
+		Watch:     watchCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
@@ -1020,9 +1100,13 @@ func parseDurationField(path, key, value string) (time.Duration, error) {
 	}
 	d, err := time.ParseDuration(value)
 	if err != nil {
+		fullKey := "keeper." + key
+		if strings.HasPrefix(key, "supervise.") {
+			fullKey = key
+		}
 		return 0, &ErrMalformedConfigYAML{
 			Path:  path,
-			Cause: fmt.Errorf("keeper.%s %q: not a valid Go duration string (e.g. %q); a bare number is rejected — never silently coerced", key, value, "5m"),
+			Cause: fmt.Errorf("%s %q: not a valid Go duration string (e.g. %q); a bare number is rejected — never silently coerced", fullKey, value, "5m"),
 		}
 	}
 	return d, nil
@@ -1240,6 +1324,48 @@ func parseWatchdogBlock(raw rawWatchdogConfig) WatchdogConfig {
 		return WatchdogConfig{Enabled: true}
 	}
 	return WatchdogConfig{Enabled: *raw.Enabled}
+}
+
+func superviseBlockAbsent(raw rawSuperviseConfig) bool {
+	return raw.HeartbeatTTL == "" &&
+		raw.StartTimeout == "" &&
+		raw.CrashLoopWindow == "" &&
+		raw.HealthProbeInterval == "" &&
+		raw.StopTimeout == "" &&
+		raw.RestartBackoff.Base == "" &&
+		raw.RestartBackoff.Cap == "" &&
+		raw.DaemonWatchdog.CheckInterval == "" &&
+		raw.DaemonWatchdog.DialTimeout == "" &&
+		raw.DaemonWatchdog.ReviveBackoff == "" &&
+		raw.DaemonWatchdog.ReviveWindow == ""
+}
+
+func parseSuperviseBlock(path string, raw rawSuperviseConfig) (SuperviseConfig, error) {
+	cfg := SuperviseConfig{}
+	for _, f := range []struct {
+		key string
+		val string
+		dst *time.Duration
+	}{
+		{"heartbeat_ttl", raw.HeartbeatTTL, &cfg.HeartbeatTTL},
+		{"start_timeout", raw.StartTimeout, &cfg.StartTimeout},
+		{"crash_loop_window", raw.CrashLoopWindow, &cfg.CrashLoopWindow},
+		{"health_probe_interval", raw.HealthProbeInterval, &cfg.HealthProbeInterval},
+		{"stop_timeout", raw.StopTimeout, &cfg.StopTimeout},
+		{"restart_backoff.base", raw.RestartBackoff.Base, &cfg.RestartBackoffBase},
+		{"restart_backoff.cap", raw.RestartBackoff.Cap, &cfg.RestartBackoffCap},
+		{"daemon_watchdog.check_interval", raw.DaemonWatchdog.CheckInterval, &cfg.DaemonWatchdog.CheckInterval},
+		{"daemon_watchdog.dial_timeout", raw.DaemonWatchdog.DialTimeout, &cfg.DaemonWatchdog.DialTimeout},
+		{"daemon_watchdog.revive_backoff", raw.DaemonWatchdog.ReviveBackoff, &cfg.DaemonWatchdog.ReviveBackoff},
+		{"daemon_watchdog.revive_window", raw.DaemonWatchdog.ReviveWindow, &cfg.DaemonWatchdog.ReviveWindow},
+	} {
+		dv, err := parseDurationField(path, "supervise."+f.key, f.val)
+		if err != nil {
+			return SuperviseConfig{}, err
+		}
+		*f.dst = dv
+	}
+	return cfg, nil
 }
 
 // parseWatchBlock converts a rawWatchConfig into a WatchConfig.

@@ -1795,6 +1795,10 @@ type ExportedKeeperConfig = KeeperConfig
 // Bead ref: hk-sbitr.
 type ExportedWatchdogConfig = WatchdogConfig
 
+// ExportedSuperviseConfig is a type alias for SuperviseConfig so tests in
+// package daemon_test can read parsed supervise config fields directly.
+type ExportedSuperviseConfig = SuperviseConfig
+
 // ExportedLoadProjectConfig exposes LoadProjectConfig for tests in package daemon_test.
 //
 // Bead ref: hk-bfvk7.

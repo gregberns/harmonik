@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
@@ -80,6 +81,12 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		projectDir = wd
+	}
+
+	projectCfg, err := daemon.LoadProjectConfig(projectDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "harmonik supervise start: load .harmonik/config.yaml: %v\n", err)
+		return 1
 	}
 
 	// (b) Probe daemon socket — exit 17 if missing / refused.
@@ -178,6 +185,7 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 		Command:          command, // may be nil; empty Command triggers watchdog-only mode in the shim (hk-5gdqu)
 		APIKey:           apiKey,
 	}
+	applySuperviseProjectConfig(&cfg, projectCfg.Supervise)
 	if err := WriteConfigAtomic(projectDir, cfg); err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise start: write config: %v\n", err)
 		_ = RemoveSentinel(projectDir)
@@ -292,6 +300,46 @@ func resolveAPIKey(projectDir string, require bool) (string, error) {
 		return "", fmt.Errorf("no ANTHROPIC_API_KEY source resolved: neither operator env nor .env file contains the key; set the key or omit --require-api-key for OAuth auth")
 	}
 	return "", nil
+}
+
+func applySuperviseProjectConfig(cfg *Config, sc daemon.SuperviseConfig) {
+	if sc.HeartbeatTTL > 0 {
+		cfg.HeartbeatTTLMS = durationMS(sc.HeartbeatTTL)
+	}
+	if sc.StartTimeout > 0 {
+		cfg.StartTimeoutMS = durationMS(sc.StartTimeout)
+	}
+	if sc.CrashLoopWindow > 0 {
+		cfg.CrashLoopWindowMS = durationMS(sc.CrashLoopWindow)
+	}
+	if sc.HealthProbeInterval > 0 {
+		cfg.HealthProbeMS = durationMS(sc.HealthProbeInterval)
+	}
+	if sc.StopTimeout > 0 {
+		cfg.StopTimeoutMS = durationMS(sc.StopTimeout)
+	}
+	if sc.RestartBackoffBase > 0 {
+		cfg.RestartBaseMS = durationMS(sc.RestartBackoffBase)
+	}
+	if sc.RestartBackoffCap > 0 {
+		cfg.RestartCapMS = durationMS(sc.RestartBackoffCap)
+	}
+	if sc.DaemonWatchdog.CheckInterval > 0 {
+		cfg.DWCheckIntervalMS = durationMS(sc.DaemonWatchdog.CheckInterval)
+	}
+	if sc.DaemonWatchdog.DialTimeout > 0 {
+		cfg.DWDialTimeoutMS = durationMS(sc.DaemonWatchdog.DialTimeout)
+	}
+	if sc.DaemonWatchdog.ReviveBackoff > 0 {
+		cfg.DWReviveBackoffMS = durationMS(sc.DaemonWatchdog.ReviveBackoff)
+	}
+	if sc.DaemonWatchdog.ReviveWindow > 0 {
+		cfg.DWReviveWindowMS = durationMS(sc.DaemonWatchdog.ReviveWindow)
+	}
+}
+
+func durationMS(d time.Duration) int {
+	return int(d / time.Millisecond)
 }
 
 func isSocketAbsent(err error) bool {

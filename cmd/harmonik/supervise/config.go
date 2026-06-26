@@ -82,6 +82,15 @@ type Config struct {
 	RestartMax         int      `json:"restart_max,omitempty"`
 	RestartBaseMS      int      `json:"restart_base_ms,omitempty"`
 	RestartCapMS       int      `json:"restart_cap_ms,omitempty"`
+	HeartbeatTTLMS     int      `json:"heartbeat_ttl_ms,omitempty"`
+	StartTimeoutMS     int      `json:"start_timeout_ms,omitempty"`
+	CrashLoopWindowMS  int      `json:"crash_loop_window_ms,omitempty"`
+	HealthProbeMS      int      `json:"health_probe_interval_ms,omitempty"`
+	StopTimeoutMS      int      `json:"stop_timeout_ms,omitempty"`
+	DWCheckIntervalMS  int      `json:"daemon_watchdog_check_interval_ms,omitempty"`
+	DWDialTimeoutMS    int      `json:"daemon_watchdog_dial_timeout_ms,omitempty"`
+	DWReviveBackoffMS  int      `json:"daemon_watchdog_revive_backoff_ms,omitempty"`
+	DWReviveWindowMS   int      `json:"daemon_watchdog_revive_window_ms,omitempty"`
 	StartedAt          string   `json:"started_at,omitempty"` // RFC3339
 	DaemonInstanceID   string   `json:"daemon_instance_id,omitempty"`
 	// Command is the supervisee argv; Command[0] is the binary. Not in the

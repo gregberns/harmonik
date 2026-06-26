@@ -2151,6 +2151,18 @@ func pasteInjectQuitOnReviewFile(
 	livenessChecker, _ := qs.(paneLivenessChecker)
 	hardDeadline := loopStart.Add(effectiveCeiling)
 
+	// hk-4u1mb: heartbeat-extension ceiling — the maximum total elapsed time the
+	// recentHB / pane-active extension may push the deadline. Bounded at 2×budget
+	// (capped by hardDeadline) so the per-KLine diff budget is not defeated by
+	// continuous heartbeating. Without this cap a reviewer with a tiny diff (small
+	// budget) could heartbeat its way to the flat hard ceiling, making the
+	// diff-scaled budget irrelevant. For large diffs where 2×budget ≥ effectiveCeiling
+	// the hard ceiling is the cap (same behaviour as before the fix).
+	heartbeatExtensionCeiling := loopStart.Add(2 * budget)
+	if heartbeatExtensionCeiling.After(hardDeadline) {
+		heartbeatExtensionCeiling = hardDeadline
+	}
+
 	// hk-92ih3: resolve runner for remote-aware verdict-detection stat.
 	// For remote runs the worktree lives on the worker, so os.Stat(verdictPath)
 	// on box A never succeeds.  When qs carries a non-local runner (e.g.
@@ -2261,19 +2273,27 @@ func pasteInjectQuitOnReviewFile(
 			}
 
 			if now.After(deadline) {
-				// hk-sah87 / hk-60t8: before killing, check whether the reviewer
-				// is still actively working.  Two independent signals qualify:
+				// hk-sah87 / hk-60t8 / hk-4u1mb: before killing, check whether the
+				// reviewer is still actively working.  Two independent signals qualify:
 				//   1. Pane liveness: the OS-level probe detects an active child
-				//      process in the tmux pane (hk-sah87).
-				//   2. Recent heartbeat: an agent_heartbeat arrived within
-				//      reviewerHeartbeatActiveGrace, indicating active reasoning
-				//      at the LLM level — more reliable than pane-liveness under
-				//      concurrent dispatch (hk-60t8).
-				// When either signal fires AND we have not yet reached the absolute
-				// hard ceiling, extend the budget by one base window.
+				//      process in the tmux pane (hk-sah87).  OS-visible process is
+				//      a strong signal — extends to hardDeadline (unchanged by hk-4u1mb).
+				//   2. Recent heartbeat only (pane NOT active): an agent_heartbeat
+				//      arrived within reviewerHeartbeatActiveGrace (hk-60t8).  This
+				//      is a softer signal — the LLM may be alive but stalled.
+				//      Extends only to heartbeatExtensionCeiling (hk-4u1mb: 2×budget,
+				//      capped at hardDeadline) to prevent an alive-but-not-progressing-
+				//      toward-verdict reviewer from riding heartbeats to the flat hard
+				//      ceiling when the diff is small.
 				recentHB := !lastHeartbeatAt.IsZero() && now.Sub(lastHeartbeatAt) < heartbeatActiveGrace
 				paneActive := livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx)
-				if (paneActive || recentHB) && now.Before(hardDeadline) {
+				// extCeiling governs this extension step: pane-active uses hardDeadline;
+				// heartbeat-only (softer signal) is bounded at 2×budget.
+				extCeiling := hardDeadline
+				if !paneActive {
+					extCeiling = heartbeatExtensionCeiling
+				}
+				if (paneActive || recentHB) && now.Before(extCeiling) {
 					signal := "pane-active"
 					if recentHB && !paneActive {
 						signal = "heartbeat"
@@ -2281,17 +2301,19 @@ func pasteInjectQuitOnReviewFile(
 						signal = "pane-active+heartbeat"
 					}
 					fmt.Fprintf(os.Stderr,
-						"daemon: pasteinject: quit-on-review-file: budget %v elapsed but reviewer active (%s) in %s; extending (hard ceiling %v) [hk-60t8]\n",
-						budget, signal, wtPath, effectiveCeiling)
+						"daemon: pasteinject: quit-on-review-file: budget %v elapsed but reviewer active (%s) in %s; extending (ceiling %v, hard ceiling %v) [hk-60t8/hk-4u1mb]\n",
+						budget, signal, wtPath, extCeiling.Sub(loopStart), effectiveCeiling)
 					deadline = now.Add(reviewFileTimeout)
-					if deadline.After(hardDeadline) {
-						deadline = hardDeadline
+					if deadline.After(extCeiling) {
+						deadline = extCeiling
 					}
 					continue
 				}
 				reason := "budget-exceeded"
 				if !now.Before(hardDeadline) {
 					reason = "hard-ceiling"
+				} else if !now.Before(heartbeatExtensionCeiling) {
+					reason = "heartbeat-ceiling"
 				}
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-review-file: %s after %v waiting for %s (budget=%v, changed_lines=%d); sending /quit\n",

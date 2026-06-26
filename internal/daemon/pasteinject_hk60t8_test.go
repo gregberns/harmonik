@@ -235,15 +235,17 @@ func TestReviewerTimeout_RecentHeartbeat_ExtendsDeadlineAndCompletes(t *testing.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestReviewerTimeout_OverrideCeiling_UsedInsteadOfDefault verifies that when
-// overrideCeiling > 0 is passed, the watchdog uses it as the hard ceiling
-// instead of reviewFileHardCeiling.  A reviewer that would be killed under the
-// default ceiling completes when a larger override is provided.
+// overrideCeiling > 0 is passed, the watchdog uses it as the effective ceiling
+// instead of reviewFileHardCeiling, which raises the heartbeat-extension ceiling
+// (hk-4u1mb: min(2×budget, overrideCeiling)) above the default.
 //
-// Scenario:
-//   - budget=40ms, default hard ceiling overridden to 50ms (< 100ms)
-//   - overrideCeiling=200ms → reviewer can complete at 80ms (> 50ms but < 200ms)
+// Scenario (updated for hk-4u1mb):
+//   - budget=40ms, default hard ceiling set to 50ms
+//   - Without override: heartbeatExtensionCeiling = min(2×40ms, 50ms) = 50ms → Kill at ~50ms
+//   - overrideCeiling=200ms → heartbeatExtensionCeiling = min(2×40ms, 200ms) = 80ms
+//   - Reviewer writes verdict at ~60ms, which falls within the 80ms ceiling → completes
 //
-// Bead: hk-60t8.
+// Bead: hk-60t8, hk-4u1mb.
 func TestReviewerTimeout_OverrideCeiling_UsedInsteadOfDefault(t *testing.T) {
 	restore := hk60t8ShortTimeouts(
 		40*time.Millisecond,  // reviewFileTimeout (base budget)
@@ -254,8 +256,11 @@ func TestReviewerTimeout_OverrideCeiling_UsedInsteadOfDefault(t *testing.T) {
 	)
 	defer restore()
 
-	// Set package default ceiling to 50ms (budget 40ms → extension to ~80ms would
-	// exceed 50ms → kill under the default ceiling).
+	// Set package default ceiling to 50ms.
+	// Without override: heartbeatExtensionCeiling = min(2×40ms=80ms, 50ms) = 50ms →
+	// Kill fires at ~50ms before the verdict at ~60ms.
+	// With override (200ms): heartbeatExtensionCeiling = min(80ms, 200ms) = 80ms →
+	// verdict at ~60ms is detected in time.
 	origCeiling := *daemon.ExportedReviewFileHardCeiling
 	*daemon.ExportedReviewFileHardCeiling = 50 * time.Millisecond
 	defer func() { *daemon.ExportedReviewFileHardCeiling = origCeiling }()
@@ -283,10 +288,11 @@ func TestReviewerTimeout_OverrideCeiling_UsedInsteadOfDefault(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	sendHB()
 
-	// Write verdict at 80ms (> 50ms default ceiling, < 200ms override ceiling).
+	// Write verdict at ~60ms (> budget=40ms, < heartbeatExtensionCeiling=80ms).
 	// Without the override the kill would have fired at the 50ms hard ceiling.
-	// With the override the reviewer can complete.
-	time.Sleep(60 * time.Millisecond) // total ~80ms from start
+	// With the override heartbeatExtensionCeiling = min(2×40ms, 200ms) = 80ms,
+	// so the verdict at ~60ms is detected before Kill fires.
+	time.Sleep(40 * time.Millisecond) // total ~60ms from start
 	hk60t8WriteVerdict(t, wtPath)
 
 	select {

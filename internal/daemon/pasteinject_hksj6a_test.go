@@ -123,23 +123,27 @@ func TestQuitOnReviewFile_KillsAfterHeartbeatGraceExpires(t *testing.T) {
 	}
 }
 
-// TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget verifies that Kill does
-// NOT fire while heartbeats keep arriving on eventCh (reviewer is active).
+// TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget verifies that Kill fires
+// at the heartbeat-extension ceiling (2×budget, hk-4u1mb), NOT at the flat hard
+// ceiling, even when heartbeats keep arriving continuously.
 //
-// This models the CORRECT case: when the reviewer claude is genuinely running
-// and sending heartbeats, the budget is extended.  After heartbeats stop,
-// Kill fires within the grace window.
+// Prior to hk-4u1mb, continuous heartbeats could drive the deadline all the way
+// to reviewFileHardCeiling (300ms here), making the per-KLine diff budget
+// irrelevant.  After the fix the effective extension ceiling is 2×budget=40ms, so
+// Kill fires around 40ms regardless of whether heartbeats continue beyond that.
 func TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget(t *testing.T) {
 	const (
+		budget      = 20 * time.Millisecond
 		grace       = 60 * time.Millisecond
 		hardCeiling = 300 * time.Millisecond
+		// heartbeatExtensionCeiling = 2×budget = 40ms (computed inside the function)
 	)
 	restore := hksj6aSetBudget(
-		20*time.Millisecond, // base budget
-		grace,               // heartbeatActiveGrace
-		hardCeiling,         // hard ceiling — ultimate backstop
-		5*time.Millisecond,  // poll
-		5*time.Millisecond,  // noChangeKillDelay
+		budget,             // base budget (no diff → changedLines=-1 → base applies)
+		grace,              // heartbeatActiveGrace
+		hardCeiling,        // hard ceiling — absolute backstop
+		5*time.Millisecond, // poll
+		5*time.Millisecond, // noChangeKillDelay
 	)
 	defer restore()
 
@@ -149,12 +153,12 @@ func TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget(t *testing.T) {
 	qs := &hksj6aQuitSender{}
 	kl := &hksj6aKiller{}
 
-	// Goroutine: pump heartbeats every 15ms for 120ms, then stop.
-	// Kill should NOT fire while heartbeats arrive; after they stop it fires
-	// once the grace window (60ms) elapses.
+	// Goroutine: pump heartbeats every 5ms indefinitely (well past any budget).
+	// Prior to hk-4u1mb this would have kept the reviewer alive until hardCeiling
+	// (300ms).  After the fix it is killed at heartbeatExtensionCeiling (~40ms).
 	stopHB := make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(15 * time.Millisecond)
+		ticker := time.NewTicker(5 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
@@ -168,9 +172,7 @@ func TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget(t *testing.T) {
 			}
 		}
 	}()
-
-	// Let heartbeats pump for a short window, then stop them.
-	time.AfterFunc(120*time.Millisecond, func() { close(stopHB) })
+	defer close(stopHB)
 
 	startedAt := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -179,12 +181,18 @@ func TestQuitOnReviewFile_ContinuousHeartbeatsExtendBudget(t *testing.T) {
 	daemon.ExportedPasteInjectQuitOnReviewFile(ctx, qs, kl, nil, "", wtPath, nil, eventCh, 0)
 
 	elapsed := time.Since(startedAt)
-	// Kill must fire — but NOT before the heartbeat pump stopped (~120ms).
+	// Kill must fire.
 	if got := kl.calls.Load(); got != 1 {
 		t.Errorf("Kill: want 1, got %d", got)
 	}
-	// Must have run at least until heartbeats stopped (120ms).
-	if elapsed < 100*time.Millisecond {
-		t.Errorf("Kill fired too early (%v): should have waited for heartbeats to stop", elapsed)
+	// Must fire after the initial budget period.
+	if elapsed < budget-5*time.Millisecond {
+		t.Errorf("Kill fired too early (%v): expected >= budget (%v)", elapsed, budget)
+	}
+	// Must fire well before the hard ceiling — the heartbeat extension ceiling
+	// (2×budget=40ms) prevents riding to the flat 300ms hardCeiling (hk-4u1mb).
+	if elapsed > hardCeiling/2 {
+		t.Errorf("Kill fired too late (%v): heartbeat ceiling (2×budget=%v) should have applied, not hard ceiling (%v)",
+			elapsed, 2*budget, hardCeiling)
 	}
 }

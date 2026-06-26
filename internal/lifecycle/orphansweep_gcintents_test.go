@@ -558,11 +558,11 @@ func TestGcIntentOpLanded(t *testing.T) {
 		{"claim", core.CoarseStatusClosed, core.CoarseStatusInProgress, true},     // advanced past
 		{"claim", core.CoarseStatusTombstone, core.CoarseStatusInProgress, true},  // advanced past
 		{"claim", core.CoarseStatusOpen, core.CoarseStatusInProgress, false},      // not claimed yet
-		// close (→ closed): landed if status = closed or tombstone
+		// close (→ closed): landed if status = closed, tombstone, or open
 		{"close", core.CoarseStatusClosed, core.CoarseStatusClosed, true},      // exact match
-		{"close", core.CoarseStatusTombstone, core.CoarseStatusClosed, true},   // advanced past
-		{"close", core.CoarseStatusOpen, core.CoarseStatusClosed, false},       // ambiguous
-		{"close", core.CoarseStatusInProgress, core.CoarseStatusClosed, false}, // not closed yet
+		{"close", core.CoarseStatusTombstone, core.CoarseStatusClosed, true},   // purged after close
+		{"close", core.CoarseStatusOpen, core.CoarseStatusClosed, true},        // bead reset to open (hk-birxh)
+		{"close", core.CoarseStatusInProgress, core.CoarseStatusClosed, false}, // close not yet landed
 		// reopen (→ open): landed if status = open, in_progress, or tombstone
 		{"reopen", core.CoarseStatusOpen, core.CoarseStatusOpen, true},       // exact match
 		{"reopen", core.CoarseStatusInProgress, core.CoarseStatusOpen, true}, // advanced past
@@ -585,6 +585,78 @@ func TestGcIntentOpLanded(t *testing.T) {
 					tc.op, tc.currentStatus, tc.intendedPostState, got, tc.wantLanded)
 			}
 		})
+	}
+}
+
+// TestGCRetiredIntents_CloseBeadResetToOpen is the regression test for hk-birxh:
+// a close intent (in_progress → closed) whose bead has since been reset to open
+// was permanently stuck in step 5 "diverged" and never GC'd.  After the fix,
+// gcIntentOpLanded returns true for close+open and the file must be REMOVED.
+func TestGCRetiredIntents_CloseBeadResetToOpen(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
+	beadID := core.BeadID("hk-close-reset-to-open")
+
+	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "key-close-reset", beadID, "close", "closed")
+
+	// Ledger reports bead as "open" — it was reset from in_progress back to open
+	// after the close intent was written (the run was abandoned).
+	ledger := &fakeIntentGCLedger{
+		records: map[core.BeadID]core.BeadRecord{
+			beadID: {BeadID: beadID, Status: core.CoarseStatusOpen},
+		},
+	}
+
+	daemonStart := time.Now()
+	result, err := GCRetiredIntents(context.Background(), projectDir, daemonStart, ledger, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Removed != 1 {
+		t.Errorf("Removed = %d, want 1 (close intent, bead reset to open → stale, must GC)", result.Removed)
+	}
+	if result.Retained != 0 {
+		t.Errorf("Retained = %d, want 0", result.Retained)
+	}
+	if _, statErr := os.Stat(intentPath); !os.IsNotExist(statErr) {
+		t.Errorf("intent file still exists at %q; should have been deleted", intentPath)
+	}
+}
+
+// TestGCRetiredIntents_CloseBeadReopenedToOpen verifies that a close intent whose
+// bead was closed and then reopened (now open) is also GC'd — the close already
+// landed, and the reopen brought the bead back to open (hk-birxh).
+func TestGCRetiredIntents_CloseBeadReopenedToOpen(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
+	beadID := core.BeadID("hk-close-then-reopened")
+
+	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "key-close-reopened", beadID, "close", "closed")
+
+	// Ledger reports bead as "open" — it was closed (close landed) then reopened.
+	ledger := &fakeIntentGCLedger{
+		records: map[core.BeadID]core.BeadRecord{
+			beadID: {BeadID: beadID, Status: core.CoarseStatusOpen},
+		},
+	}
+
+	daemonStart := time.Now()
+	result, err := GCRetiredIntents(context.Background(), projectDir, daemonStart, ledger, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Removed != 1 {
+		t.Errorf("Removed = %d, want 1 (close intent, bead reopened to open → stale, must GC)", result.Removed)
+	}
+	if result.Retained != 0 {
+		t.Errorf("Retained = %d, want 0", result.Retained)
+	}
+	if _, statErr := os.Stat(intentPath); !os.IsNotExist(statErr) {
+		t.Errorf("intent file still exists at %q; should have been deleted", intentPath)
 	}
 }
 

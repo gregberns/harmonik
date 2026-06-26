@@ -666,7 +666,7 @@ func gcIntentOpPreState(op core.TerminalOp) (core.CoarseStatus, bool) {
 // Per-op rules (conservative — retain on any ambiguity):
 //
 //	claim  (→ in_progress): landed if status ≠ open (bead left the pre-claim state)
-//	close  (→ closed):      landed if status = closed or tombstone
+//	close  (→ closed):      landed if status = closed, tombstone, or open
 //	reopen (→ open):        landed if status = open, in_progress, or tombstone
 //	reset  (→ open):        same as reopen
 func gcIntentOpLanded(op core.TerminalOp, currentStatus, intendedPostState core.CoarseStatus) bool {
@@ -681,8 +681,15 @@ func gcIntentOpLanded(op core.TerminalOp, currentStatus, intendedPostState core.
 		return currentStatus != core.CoarseStatusOpen
 	case core.TerminalOpClose:
 		// close: in_progress → closed.
-		// tombstone is the only state reachable after closed.
-		return currentStatus == core.CoarseStatusTombstone
+		// tombstone: purged after close.
+		// open: the bead was reset from in_progress back to open (the run was
+		// abandoned), OR the close landed and the bead was subsequently reopened.
+		// In either case the close intent for the original run is no longer
+		// actionable and must be GC'd. Without this, close intents for
+		// reset-to-open beads are permanently stuck in step 5 "diverged"
+		// because their pre-state (in_progress) no longer matches.
+		// Bead ref: hk-birxh.
+		return currentStatus == core.CoarseStatusTombstone || currentStatus == core.CoarseStatusOpen
 	case core.TerminalOpReopen, core.TerminalOpReset:
 		// reopen/reset: closed → open.
 		// If the bead is in_progress the reopen ran and the bead was claimed.

@@ -226,17 +226,17 @@ func TestGCRetiredIntentsWithRedrive_DivergedStatus(t *testing.T) {
 	beadID := core.BeadID("hk-rd-diverged")
 	// close (in_progress→closed):
 	//   pre-state  = in_progress
-	//   post-state = closed
-	//   bead is at "open" → neither pre- nor post-state → divergence → step 5 retain.
+	//   post-states = closed, tombstone, open (hk-birxh)
+	//   bead is at "blocked" → neither pre-state nor any post-state → divergence → step 5 retain.
 	//
-	// gcIntentOpLanded(close, open, closed) = false (NOT landed: open != closed and open != tombstone).
-	// gcIntentOpPreState(close) = in_progress.  in_progress != open → divergence → retain. ✓
+	// gcIntentOpLanded(close, blocked, closed) = false.
+	// gcIntentOpPreState(close) = in_progress.  in_progress != blocked → divergence → retain. ✓
 	intentPath := gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rd-diverged_close_1", beadID,
 		"close", "closed")
 
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
-			beadID: {BeadID: beadID, Status: core.CoarseStatusOpen},
+			beadID: {BeadID: beadID, Status: core.CoarseStatusBlocked},
 		},
 	}
 	writer := &fakeRedriveWriter{
@@ -354,16 +354,17 @@ func TestGCRetiredIntentsWithRedrive_MixedBatch(t *testing.T) {
 	gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rdmix-redrive_claim_1", redriveID,
 		"claim", "in_progress")
 
-	// 3. close (in_progress→closed): bead at open → divergence → retained (step 5).
+	// 3. close (in_progress→closed): bead at blocked → divergence → retained (step 5).
+	// (open would be GC'd as landed since hk-birxh; use blocked as a genuinely diverged state.)
 	retainedID := core.BeadID("hk-rdmix-retained")
 	gcIntentsFixtureWriteIntent(t, intentsDir, "proj_hk-rdmix-retained_close_1", retainedID,
 		"close", "closed")
 
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
-			landedID:   {BeadID: landedID, Status: core.CoarseStatusOpen},   // reopen landed (open==post-state)
-			redriveID:  {BeadID: redriveID, Status: core.CoarseStatusOpen},  // claim pre-state
-			retainedID: {BeadID: retainedID, Status: core.CoarseStatusOpen}, // close diverged (open≠pre-state=in_progress)
+			landedID:   {BeadID: landedID, Status: core.CoarseStatusOpen},     // reopen landed (open==post-state)
+			redriveID:  {BeadID: redriveID, Status: core.CoarseStatusOpen},    // claim pre-state
+			retainedID: {BeadID: retainedID, Status: core.CoarseStatusBlocked}, // close diverged (blocked≠pre/post-state)
 		},
 	}
 	writer := &fakeRedriveWriter{

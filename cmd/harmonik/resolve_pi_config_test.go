@@ -274,4 +274,3 @@ func TestResolvePiConfig_Fallback_ModelShape_Invalid(t *testing.T) {
 		t.Errorf("expected field harnesses.pi.fallback.model; got %q", pe.Field)
 	}
 }
-

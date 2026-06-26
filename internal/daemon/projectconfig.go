@@ -654,10 +654,10 @@ type rawHarnessesPiFallbackConfig struct {
 // No defaults — ResolvePiConfig (cmd/harmonik/resolve_pi_config.go) enforces
 // fail-loud on any missing required field (PI-050/PI-051).
 type rawHarnessesPiConfig struct {
-	Provider  string                        `yaml:"provider"`
-	Model     string                        `yaml:"model"`
-	APIKeyEnv string                        `yaml:"api_key_env"`
-	Fallback  rawHarnessesPiFallbackConfig  `yaml:"fallback"`
+	Provider  string                       `yaml:"provider"`
+	Model     string                       `yaml:"model"`
+	APIKeyEnv string                       `yaml:"api_key_env"`
+	Fallback  rawHarnessesPiFallbackConfig `yaml:"fallback"`
 }
 
 // rawHarnessesConfig is the top-level harnesses: block in config.yaml.
@@ -825,12 +825,12 @@ type WatchConfig struct {
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
-	Daemon        rawDaemonConfig           `yaml:"daemon"`     // hk-rcp7: PL-004b daemon: block
-	Keeper        rawKeeperConfig           `yaml:"keeper"`     // hk-lhu2: keeper config block
-	Watchdog      rawWatchdogConfig         `yaml:"watchdog"`   // hk-sbitr: ctx-watchdog schedule gate
-	Watch         rawWatchConfig            `yaml:"watch"`      // hk-we7: watch routing targets
+	Daemon        rawDaemonConfig           `yaml:"daemon"`   // hk-rcp7: PL-004b daemon: block
+	Keeper        rawKeeperConfig           `yaml:"keeper"`   // hk-lhu2: keeper config block
+	Watchdog      rawWatchdogConfig         `yaml:"watchdog"` // hk-sbitr: ctx-watchdog schedule gate
+	Watch         rawWatchConfig            `yaml:"watch"`    // hk-we7: watch routing targets
 	Supervise     rawSuperviseConfig        `yaml:"supervise"`
-	Harnesses     rawHarnessesConfig        `yaml:"harnesses"`  // hk-v7q5u: per-harness config (PI-050)
+	Harnesses     rawHarnessesConfig        `yaml:"harnesses"` // hk-v7q5u: per-harness config (PI-050)
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.
@@ -997,13 +997,13 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	harnessesCfg := parseHarnessesBlock(raw.Harnesses)
 
 	cfg := ProjectConfig{
-		entries:    make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
-		Daemon:     daemonCfg,
-		Keeper:     keeperCfg,
-		Watchdog:   watchdogCfg,
-		Supervise:  superviseCfg,
-		Watch:      watchCfg,
-		Harnesses:  harnessesCfg,
+		entries:   make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
+		Daemon:    daemonCfg,
+		Keeper:    keeperCfg,
+		Watchdog:  watchdogCfg,
+		Supervise: superviseCfg,
+		Watch:     watchCfg,
+		Harnesses: harnessesCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
@@ -1480,9 +1480,9 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 	hasFallback := pi.Fallback.Provider != "" || pi.Fallback.Model != "" || pi.Fallback.APIKeyEnv != ""
 	return HarnessesConfig{
 		Pi: PiHarnessConfig{
-			Provider:  pi.Provider,
-			Model:     pi.Model,
-			APIKeyEnv: pi.APIKeyEnv,
+			Provider:    pi.Provider,
+			Model:       pi.Model,
+			APIKeyEnv:   pi.APIKeyEnv,
 			HasFallback: hasFallback,
 			Fallback: PiFallbackConfig{
 				Provider:  pi.Fallback.Provider,

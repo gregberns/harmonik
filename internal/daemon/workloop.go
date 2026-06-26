@@ -88,6 +88,14 @@ const workloopPollInterval = 2 * time.Second
 // Bead ref: hk-vlkh4.
 const shutdownDrainTimeout = 10 * time.Second
 
+// claimSkipInProgressCooldown is the minimum interval between ShowBead calls
+// for a bead that is in_progress with an active run. After the first
+// bead_claim_skipped detection, subsequent selection attempts for the same
+// bead are skipped without calling ShowBead or emitting another event, until
+// this TTL expires. This prevents the ~2.5s spin-loop that produces hundreds
+// of bead_claim_skipped events while a run is still in flight. Bead ref: hk-403fw.
+const claimSkipInProgressCooldown = 5 * time.Minute
+
 // windowCleaner is the optional interface implemented by substrates that track
 // spawned tmux windows. exitClean probes deps.substrate for this interface and
 // calls KillAllWindows after wg.Wait() to clean up orphan tmux windows on wave
@@ -1374,6 +1382,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// fairness (QM-067; weighting deferred to v0.2).
 	rrCursor := 0
 
+	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
+	// in_progress with an active run. Entries suppress the item from the
+	// ShowBead + bead_claim_skipped path until the TTL expires, preventing the
+	// ~2.5s spin-loop that emits hundreds of bead_claim_skipped events while a
+	// run is in flight. Arms in the non-stranded BI-013c path; expires naturally.
+	// Bead ref: hk-403fw.
+	claimSkipInProgressUntil := make(map[core.BeadID]time.Time)
+
 	// readyPathAttempts tracks dispatch attempts for each bead on the br-ready
 	// fallback path (no queue). Bounded by maxItemAttempts. Resets on daemon
 	// restart (acceptable — the br-ready path is the backward-compat fallback).
@@ -1962,6 +1978,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			}
 
 			if snapItemIdx >= 0 {
+				// hk-403fw: cooldown guard — skip items whose bead is known to be
+				// in_progress with an active run, suppressing repeated ShowBead calls
+				// and bead_claim_skipped emissions at poll cadence. The cooldown is
+				// armed in the BI-013c non-stranded path below; it expires after
+				// claimSkipInProgressCooldown (5 min) and re-evaluates naturally.
+				if expiry, ok := claimSkipInProgressUntil[snapItemBeadID]; ok && time.Now().Before(expiry) {
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						return exitClean()
+					}
+					continue
+				}
+
 				// Phase 2 — handler-pause gate (hk-kac8g): check whether the resolved
 				// agent type is paused before claiming/dispatching the item.  At MVH all
 				// beads map to AgentTypeClaudeCode; multi-agent resolution is post-MVH.
@@ -2103,6 +2131,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 									}
 									continue
 								}
+							}
+							// hk-403fw: arm cooldown for in_progress beads to prevent the
+							// poll-cadence spin loop. DeferredForLedgerDep (set below) is
+							// immediately un-deferred by ReevaluateDeferred when the item has
+							// no in-group blockers, causing repeated ShowBead + claim_skipped
+							// at ~2.5s. The cooldown suppresses re-selection for 5 min.
+							// Purge stale entries while arming to bound map growth.
+							if preClaimRecord.Status == core.CoarseStatusInProgress {
+								now := time.Now()
+								for id, exp := range claimSkipInProgressUntil {
+									if now.After(exp) {
+										delete(claimSkipInProgressUntil, id)
+									}
+								}
+								claimSkipInProgressUntil[snapItemBeadID] = now.Add(claimSkipInProgressCooldown)
 							}
 							// Set the queue item to deferred-for-ledger-dep under the write lock.
 							if deps.queueStore != nil {

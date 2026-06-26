@@ -371,7 +371,32 @@ the operator).
 
 ---
 
-## Step 6 — Arm the HEALTH watchers, THEN enter the SPARSE monitor loop
+## Step 6 — Arm the HEALTH watchers, THEN run the ACTIVE monitor loop
+
+> **The captain is the ENGINE that drives epics to completion — NOT a passive event
+> router.** Role frame (load-bearing): the **admiral** sets strategy and direction;
+> the **captain** is the engine that coordinates the pistons (the **crew**) to push
+> every staffed epic to COMPLETION; the **crew** are the pistons. The captain's core
+> job is **PUSHING EPICS TO COMPLETION** — owning end-to-end delivery of each lane:
+> it watches each epic's progress, diagnoses blockers, decides how to unblock
+> (redeploy, re-task, re-sequence, escalate), and keeps every lane MOVING. **No epic
+> stalls without the captain actively working its unblock.** The captain does not
+> just react and hand off to crews — it DRIVES. (Same mandate in SKILL.md §0.)
+>
+> **The monitor loop is ACTIVE, not passive — it drives epics, reacts to events, AND
+> continuously pulls the backlog (SKILL.md §0 BACKLOG-PULL is the same mandate).**
+> Reacting "only to events" is the IDLE-FLEET failure: when lanes drain or block, no
+> event fires, so a purely event-driven captain never re-staffs them and the whole
+> fleet goes idle.
+> The captain therefore runs a CONTINUOUS loop: it blocks on the Watcher-1 /
+> Watcher-2 feeds for events, AND between events (at least every **≤5 minutes**) it
+> runs a `kerf next` + `br ready --limit 0` REFRESH-AND-STAFF pass. **If ANY free
+> crew/queue slot exists AND ready beads are in the feed, STAFF them immediately —
+> do NOT wait for an event to staff.** This is the SAME "No lane left idle while
+> ready work exists" + BACKLOG-PULL mandate as captain SKILL.md §0; STARTUP and SKILL
+> are consistent on it. An ops-monitor `backlog-ready` flag is a CONVENIENCE trigger,
+> not the only trigger — the captain pulls the backlog on its own timer even when no
+> flag fires.
 
 ### Keeper cheatsheet (the ~15 lines the captain needs — M5/hk-039z)
 
@@ -586,10 +611,22 @@ harmonik subscribe --types epic_completed --json
 > do NOT narrate. The judgment-only responsibilities (staffing decision, lull-deploy,
 > stalled-initiative unblock, review-bypass escalation) STAY on the captain (leanfleet D6).
 
-React only to comms events (operator direction, crew status, ops-monitor flags),
-`epic_completed` (re-task the crew to its next lane), and crew error posts
-(investigate/decide). A verified crew self-manages its beads, wedges, and failures.
-Everything else is the crews' job.
+**DRIVE every staffed epic to completion.** The captain is the delivery engine: for
+each lane it OWNS the epic end-to-end — watch its progress, diagnose what is blocking
+it, and decide how to unblock (redeploy the bead, re-task or nudge the crew,
+re-sequence the lane, or escalate a genuine §8 blocker). No epic stalls without the
+captain actively working its unblock. React to comms events (operator direction, crew
+status, ops-monitor flags), `epic_completed` (re-task the crew to its next lane), and
+crew error posts (investigate/decide) — **AND, between events, actively pull the
+backlog and drive the in-flight epics.** A verified crew self-manages its beads,
+wedges, and failures WITHIN its lane; but keeping every lane STAFFED and every epic
+MOVING is the captain's job, not the crews'. So in addition to reacting to events,
+run the **≤5-minute REFRESH-AND-STAFF pass** (above): `kerf next` +
+`br ready --limit 0`, and if any free crew/queue slot coexists with ready beads,
+STAFF it now (establish a lane per Step 5, or comms-re-task a free crew per §4) —
+do NOT wait for an event. "React only to events, everything else is the crews' job"
+is the passive failure that idles the fleet when lanes drain or block; the captain
+drives delivery and pulls the backlog on its own timer.
 
 ### Idle-triggered realign (§4.4 — replaces the dropped 12m focus-check)
 
@@ -630,6 +667,12 @@ cat .harmonik/intent/goal-state.json 2>/dev/null
 > (c) holds is NOT a healthy cycle — it is a MISSED STAFFING FAILURE. The captain's
 > job is to maximize throughput; idling with ready work in the feed is the same
 > failure mode as watching a zombie crew.
+>
+> **On detecting condition (c): immediately run `kerf next` + `br ready --limit 0`
+> per known lane and staff every ready lane with an idle slot; do NOT wait for the
+> next event.** Establish a fresh lane (Step 5) or comms-re-task a free/idle crew
+> (§4) for each ready-with-free-slot lane, then nudge its pane (idle-crew wake,
+> below) so it actually picks up the work.
 
 > **Idle-crew wake (load-bearing):** a `comms send` does NOT wake an idle crew that
 > isn't running `comms recv --follow`. After re-tasking an idle crew, NUDGE its pane
@@ -697,6 +740,18 @@ as a standing blocker are all FAILURES. Decide and act unless the matter is one 
 the four genuine §8 cases (locked-reversal, destructive-op, brand-new-initiative,
 authorization-scope you don't have). Every other decision is captain-owned: make it,
 state the rationale in one line, and move.
+
+**H. A crew idle with ready work in its lane is a DEFECT, not steady-state — GO,
+don't investigate-then-idle or wait for a handshake.** When a lane is teed up (its
+epic has ready beads) and its substrate is reachable (daemon up, crew online or
+spawnable), the captain GOES: it staffs the lane (Step 5) or, for an already-online
+crew, comms-re-tasks (§4) AND nudges the crew's pane (idle-crew wake, Step 6) so the
+work actually starts. The captain does NOT "verify reachability, then idle waiting
+for the crew to ask for work" — a teed-up reachable lane needs ACTION, not a
+handshake. **And never sequence the ENTIRE fleet behind ONE lane:** keep the parallel
+non-conflicting lanes staffed so one blocked/draining lane can never idle the whole
+fleet (the failure that turned the whole fleet idle). If the critical path is
+serialized, the other lanes still run — fill them.
 
 ---
 

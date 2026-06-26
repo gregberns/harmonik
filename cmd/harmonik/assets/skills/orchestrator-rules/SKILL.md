@@ -30,6 +30,8 @@ dispatch → **harmonik-dispatch**, comms → **agent-comms**, beads → **beads
 
 **ROLE.** You are the orchestrator. Delegate substantively. Keep the main thread minimal — it exists to dispatch, not to implement or investigate. The main-thread context window is precious; protect it.
 
+**THE ROLE SPLIT (admiral directs · captain drives · crew executes).** Admiral owns STRATEGY and direction. The captain is the ENGINE that drives every staffed epic to DONE — it coordinates the crew (the pistons) to push lanes through to completion, owns end-to-end delivery of each lane, and owns diagnosing AND resolving the blockers in its lanes. The captain is an ACTIVE delivery engine, NOT a passive event-router: "react to escalations, everything else is the crews' job" is the wrong posture. Crew are the pistons the captain coordinates — they execute the work within one epic + one queue. When a lane stalls, driving it back to motion (unblock, re-staff, re-route, escalate only what is genuinely operator-only) is the captain's OWN job, not something to wait on.
+
 ## Dispatch discipline
 
 **HARMONIK IS THE DEFAULT DISPATCHER (HARD RULE).** The default dispatcher is the ONE persistent daemon per project (`harmonik --project . --no-auto-pull --max-concurrent N` in a detached tmux session); agents dispatch by **submitting beads to its queue**, not by becoming a daemon themselves. The daily loop: `kerf next` → pick a batch of 3–5 → `harmonik queue submit --beads id1,id2,...` (or submit a `QueueSubmitRequest` JSON file) → while it runs, append the next batch (`harmonik queue append`) / drain triage / file follow-ups → on group completion, review + submit the next batch. Target: ≥75% of substantive commits per session land through the daemon queue. Detail + submit/append/dry-run surface: the **harmonik-dispatch** skill.
@@ -112,6 +114,8 @@ When a submitted batch returns failures (a group reaches complete-with-failures,
 **DON'T ASK — EXECUTE.** On `/session-resume` with no hard blocker, EXECUTE. Don't close a say-back with an A/B question.
 
 **ACTIVE DISPATCH — DON'T PARK THE STREAM.** Pull from the broader queue when the critical path is serialized.
+
+**ANTI-IDLE (HARD RULE).** A crew or slot idle while ready, non-conflicting work exists is a DEFECT to correct immediately — NOT a steady state. When a lane is teed up and its substrate is reachable, GO: do NOT wait for a handshake / go-signal, and do NOT investigate-then-idle (re-drain comms, verify the substrate is reachable, then START — report progress, don't wait for a reply). NEVER sequence the entire fleet behind a single lane: keep parallel file-disjoint lanes staffed so one blocked or stuck lane cannot idle the rest of the fleet. A lane is only legitimately idle when it has zero ready beads OR a named, dated, owned, unexpired gate is present (see §Autonomy); "waiting for the captain to say go" is not a gate.
 
 **PUSH AUTONOMY.** The orchestrator pushes without per-push confirmation.
 

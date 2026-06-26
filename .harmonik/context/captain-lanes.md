@@ -12,6 +12,10 @@
 ## ⭐ OPERATOR-CONFIRMED PRIORITY SEQUENCE (set:2026-06-25 expires:~2026-06-29 — via admiral, survives /clear)
 > The fleet ALREADY honors this — recorded so it survives a captain restart; NO reshuffle on read.
 > Lanes run PARALLEL where slots + disjoint work allow. WIP-first is a TIEBREAKER, never serial gating.
+> **This is a PRIORITY order, NOT a sequence: the #1 headline being blocked/gated NEVER idles #2–4.**
+> If the remote-worker headline is parked behind a substrate/quiet-window gate, the OTHER lanes keep
+> running — a single gated lane must never sequence or idle the rest of the fleet (orchestrator-rules
+> §ANTI-IDLE). A lane is only idle on zero ready beads OR a named/dated/owned/unexpired gate.
 > 1. **REMOTE-WORKER RELIABLE** — the headline (gurney STAGE-3 real e2e on gb-mbp). GOAL behind it:
 >    once remote is PROVEN reliable, raise daemon `max_concurrent` 4→8 (remote adds the capacity).
 >    **Do NOT bump concurrency now — GATED on remote-reliable.** Un-park gb-mbp + re-validate serialized
@@ -42,8 +46,13 @@
 > - **gurney** (remote-test-pyramid epic hk-6l941 / hardening hk-gx0dl, queue gurney-q): pivoted to
 >   OFFLINE remote-bug fixes — hk-clrts (review.json, FIX-READY) + the worktree-HEAD race — fixed
 >   out-of-daemon (isolated worktree→review→ff-land) + local L-series test layers.
-> - **Headline hk-nepva (live remote e2e) PARKED** until both remote bugs land + a quiet-window
->   SERIALIZED (max_slots:1) re-validation. RE-ENABLE gb-mbp only then.
+> - **Headline hk-nepva (live remote e2e) PARKED — explicit un-gate condition:** un-park the
+>   MOMENT (a) both remote bugs are landed on main (review.json read-retry = e4122ac9 LANDED;
+>   worktree-HEAD race = hk-iaj1w) AND (b) a quiet window is available for the SERIALIZED
+>   (max_slots:1) re-validation. When both hold, gurney RE-ENABLES gb-mbp and GOES — this is a
+>   KNOWN ranked lane, not an operator escalation. This park is a substrate/quiet-window gate, NOT
+>   "wait for captain to say go"; it must never sequence the whole fleet (leto + STAGE-1/local
+>   gurney work run in parallel meanwhile).
 > - watch = online, triaging correctly (escalated + confirmed recovery). admiral = oversight (no beads).
 >
 > ---

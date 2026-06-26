@@ -204,11 +204,39 @@ two things is true:
    `comms send --to <crew> --wake` (see the agent-comms skill, § Waking an idle
    peer), or the captain pokes the pane manually.
 
-**Rule:** keep `comms recv --follow --json` running continuously. If a crew has
-gone fully idle WITHOUT an armed `--follow`, it may miss a wake until something
-nudges it — a bare `send` alone is not guaranteed to rouse it. (This reflects
-observed behavior: idle crews do not reliably wake on a bare send.) If you ever
-find your `--follow` stream has died, re-arm it immediately as part of your loop.
+**Rule (load-bearing):** keep `comms recv --follow --json` running continuously —
+**this obligation does NOT relax when you drain or go idle.** A drained / idle crew
+is the EXACT case the captain re-tasks with an `assign` `comms send`, so the
+`--follow` stream is most load-bearing precisely when you have no work. Concretely:
+
+1. **Never stop `--follow` on drain.** When you exhaust your epic's ready beads
+   (§ Operating loop step 6/7) you post the drain status and idle — but you KEEP
+   `comms recv --follow --json` armed the whole time. Stopping it on drain is the
+   bug that strands a re-task: the captain's `assign` arrives, nothing is listening,
+   and the crew sleeps through its own re-staffing. (The ONLY case where you may
+   stop `--follow` is a genuine `park` message from the daemon — § Park/wake — and
+   even then you do NOT re-arm until the pane nudge.)
+2. **Re-arm on every keeper-restart / resume.** The `/clear` tears down your
+   `--follow` stream. Re-arming it is part of the boot sequence (Step 5) and you
+   MUST re-run it on EVERY restart/resume, not just first boot — see § Self-restart
+   via the keeper. A resumed crew that forgets to re-arm `--follow` is deaf to the
+   captain until something nudges its pane.
+3. **Re-arm on stream death mid-session.** If you ever find your `--follow` stream
+   has died (disconnect exit with NO `park` line), re-arm it immediately as part of
+   your loop — do not wait for the next bead event to notice.
+
+If a crew has gone fully idle WITHOUT an armed `--follow`, it may miss a wake until
+something nudges it — a bare `send` alone is **not** guaranteed to rouse an idle
+Claude pane. (This reflects observed behavior: idle crews do not reliably wake on a
+bare send.)
+
+**Captain side (the complement — documented here so both ends are explicit):** when
+the captain re-tasks an IDLE crew, a bare `comms send --to <crew> --topic assign`
+does NOT wake an idle Claude pane on its own. The captain MUST **pane-nudge** the
+crew — use `comms send --to <crew> --wake` (which capture-panes + injects the
+nudge; see the agent-comms skill § Waking an idle peer) or poke the pane manually —
+otherwise the re-task lands in the inbox unread. The crew's armed `--follow` plus
+the captain's `--wake` are the two halves of the same guarantee; both are required.
 
 ### Message handling
 
@@ -347,9 +375,11 @@ close`** — doing so breaks the C1 event chain and the captain's attribution.
 ### 6. Loop until the epic's beads are exhausted
 
 When no ready beads remain under the epic, post a drain status (§ Progress feed,
-drain trigger) and idle on the comms inbox waiting for the next assignment. You do
-NOT need to detect epic completion yourself — C1 does that structurally when the
-epic's last child closes, and notifies the captain.
+drain trigger) and idle on the comms inbox waiting for the next assignment. **Keep
+`comms recv --follow --json` armed while idle** — this is the case the captain
+re-tasks you, so a dropped `--follow` here strands the re-task (§ Idle-crew-wake
+protocol, Rule 1). You do NOT need to detect epic completion yourself — C1 does that
+structurally when the epic's last child closes, and notifies the captain.
 
 ### 7. When no ready beads are available (all blocked / draft)
 
@@ -516,9 +546,11 @@ before leaving.
   idle or draining, drain).
 - Re-hydrate from durable state on restart (handoff frontmatter AND/OR beads
   `assignee`; prefer beads if they disagree).
-- Keep `comms recv --follow --json` armed for the whole life of the session —
-  idle crews do not reliably wake on a bare `send` without it (§ Idle-crew-wake
-  protocol).
+- Keep `comms recv --follow --json` armed for the whole life of the session,
+  **including while drained/idle**, and **RE-ARM it on every keeper-restart/resume
+  and on any mid-session stream death** — idle crews do not reliably wake on a bare
+  `send` without it, and a dropped `--follow` strands a captain re-task
+  (§ Idle-crew-wake protocol — load-bearing).
 - Use `--json` output for all `comms recv` and `br` parsing.
 
 ### MUST NOT

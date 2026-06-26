@@ -35,14 +35,17 @@ separation predictions + all landed fixes hold live. Headline bead: **hk-nepva**
   the e2e (without it, remote commit_gate hits the 900s stale-origin/main loop).
   RED-then-GREEN, ≥2 diverse reviewers. Report the verdict to captain.
 
-**STAGE 2 — CAPTAIN-owned (you WAIT for captain's "remote live" signal):**
-- Once hk-t1t00 lands, **captain** deploys the daemon (rebuild+restart, sets the
-  hk-drygf config key `liveness_no_progress_n`, re-applies concurrency) to activate
-  the landed reviewer fix (hk-f3u6o, 5999a39a) + gate-base, and re-enables gb-mbp in
+**STAGE 2 — CAPTAIN-owned fleet infra (the REAL gate is "gb-mbp not yet enabled", NOT a handshake):**
+- Once hk-t1t00 lands, the daemon must be deployed (rebuild+restart, set the
+  hk-drygf config key `liveness_no_progress_n`, re-apply concurrency) to activate
+  the landed reviewer fix (hk-f3u6o, 5999a39a) + gate-base, and gb-mbp re-enabled in
   workers.yaml. Do NOT restart the daemon or edit workers.yaml yourself — that is
-  fleet-wide infra, captain owns it.
+  fleet-wide infra, captain owns it. **Your gate is the OBSERVABLE substrate state**
+  (is gb-mbp reachable+enabled?), not a captain go-signal: if it's already live, GO to
+  STAGE 3; if not, mail captain to request the deploy + `worker enable gb-mbp` AND keep
+  doing STAGE-1 / local-validatable work in the meantime — do NOT sit idle waiting.
 
-**STAGE 3 — you, after captain signals remote is live:**
+**STAGE 3 — you, the moment gb-mbp is reachable+enabled (verify it; don't wait to be told):**
 - Run the e2e validation on the REAL gb-mbp remote: re-run **hk-h106** (worker
   hostname proof file + commit) and **hk-4lrj** (triple-review remote run lands on
   main), then close out the headline **hk-nepva** by confirming the pyramid's
@@ -71,5 +74,7 @@ review-consensus split — otherwise self-manage and keep landing.
 ## Current State
 RE-TASK 2026-06-25 ~17:25Z → remote-worker lane (hk-gx0dl). hk-f3u6o reviewer fix
 CLOSED (on main, NOT yet daemon-deployed). NEXT ACTION: adopt hk-gx0dl → STAGE 1:
-submit hk-t1t00 to gurney-q (DOT triple-review) → report verdict → WAIT for captain's
-"remote live" signal before STAGE 3 e2e.
+submit hk-t1t00 to gurney-q (DOT triple-review) → report verdict → then check whether
+gb-mbp is reachable+enabled; if it is, GO STAGE 3; if not, request the deploy +
+`worker enable gb-mbp` from captain and keep doing STAGE-1/local-validatable work
+meanwhile — do NOT idle waiting for a "remote live" handshake.

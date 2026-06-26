@@ -71,7 +71,9 @@ Record every event to the ledger of record: `events.jsonl` already persists even
   "cursor": "<event_id>",
   "crew_last_seen": {"paul": "<ts>", "irulan": "<ts>"},
   "pending_flags": ["<plain-summary>"],
-  "immediate_count_since_last_captain_wake": 0
+  "immediate_count_since_last_captain_wake": 0,
+  "staffing_starvation_streak": 0,
+  "last_captain_staffing_action": "<ISO-8601 or null>"
 }
 ```
 
@@ -104,7 +106,9 @@ The captain **pulls** the digest by reading `.harmonik/watch/latest.json` on its
 
 **`epic_completed` is LEDGER-ONLY at the watch.** The daemon already wakes a parked captain on `epic_completed` (`quiesce.go`) AND the captain subscribes to it directly. Escalating it too would triple-wake. Record it; do not escalate it.
 
-> **The staffing wake is now ops-monitor-PUSHED (Part-0 signal (a)) — NOT the watch's no-wake digest.** The "program drained + a KNOWN ready lane exists + a free slot exists" signal is the one thing that un-sticks an idle fleet, and routing it to a no-wake PULL-DIGEST channel exactly when the captain is idle is what stranded the 2026-06-25 2h stall. It is now owned by `scripts/ops-monitor-check.sh`, which computes the predicate deterministically (reading `.harmonik/context/lanes.json` + `br ready --parent`) and PUSHES a lane-named `[IMMEDIATE]` wake straight to the captain — the same DIRECT-bypass path as "the fleet is down." The watch is **not** in the critical path for it: record it to the ledger; do not duplicate or gate it. (This supersedes the old "backlog-ready + free slot → PULL-DIGEST no-wake" carve-out.)
+> **The staffing wake is now ops-monitor-PUSHED (Part-0 signal (a)) — NOT the watch's no-wake digest.** The "program drained + a KNOWN ready lane exists + a free slot exists" signal is the one thing that un-sticks an idle fleet, and routing it to a no-wake PULL-DIGEST channel exactly when the captain is idle is what stranded the 2026-06-25 2h stall. It is now owned by `scripts/ops-monitor-check.sh`, which computes the predicate deterministically (reading `.harmonik/context/lanes.json` + `br ready --parent`) and PUSHES a lane-named `[IMMEDIATE]` wake straight to the captain — the same DIRECT-bypass path as "the fleet is down." **The captain MUST act on that lane-named `[IMMEDIATE]`** (staff the named lane onto a free slot); it is a wake, not a no-op digest. The watch is **not** in the primary critical path for it: in the normal case, record it to the ledger; do not duplicate or gate it. (This supersedes the old "backlog-ready + free slot → PULL-DIGEST no-wake" carve-out.)
+>
+> **Backstop (staffing-starvation IS escalation-worthy when the captain demonstrably has not acted).** The ledger-only posture above holds ONLY while the captain is acting on the ops-monitor's pushes. If the SAME "ready lane + free slot" condition persists across **`watch.staffing_starvation_grace` consecutive ops-monitor digests** (config-or-fail-loud; e.g. 3) with **NO captain staffing action observed** in the interim — no new crew spawned on that lane, no `assign` re-task, the free slot still free — the staffing signal has fallen through the gap and the watch **ESCALATES it** as an IMMEDIATE: `comms send --from watch --to captain --wake --topic escalation` naming the starved lane and the free slot, AND pane-nudges the captain (capture-pane + `--wake`) so an idle captain pane actually wakes. Track the consecutive-digest count and the "captain acted?" observation in `.harmonik/watch/latest.json` (`staffing_starvation_streak`, `last_captain_staffing_action`). This is the one staffing case the watch DOES escalate — it is a backstop for a starved fleet, not a duplicate of the working push path.
 
 ---
 
@@ -120,10 +124,10 @@ The captain **pulls** the digest by reading `.harmonik/watch/latest.json` on its
 
 **MUST escalate (never decides):**
 - **Crew-failure or kill** — you flag it; the captain decides whether to respawn, reassign, or close the lane.
-- **New-initiative ranking** — a brand-NEW initiative **never recorded in any durable doc and never ranked** (NOT a KNOWN parked/drained lane, which is the captain's own autonomous resume — orchestrator-rules §Autonomy). Surface it; the captain (or operator) ranks it. **Staffing-readiness for a KNOWN lane is no longer your flag** — that is the ops-monitor's lane-named `[IMMEDIATE]` (Part-0 signal (a), pushed direct to the captain); record it, do not escalate it.
+- **New-initiative ranking** — a brand-NEW initiative **never recorded in any durable doc and never ranked** (NOT a KNOWN parked/drained lane, which is the captain's own autonomous resume — orchestrator-rules §Autonomy). Surface it; the captain (or operator) ranks it. **Staffing-readiness for a KNOWN lane is normally NOT your flag** — that is the ops-monitor's lane-named `[IMMEDIATE]` (Part-0 signal (a), pushed direct to the captain, which the captain MUST act on); in the normal case record it, do not escalate it. **EXCEPTION (backstop):** if that condition persists across `watch.staffing_starvation_grace` consecutive ops-monitor digests with NO captain staffing action observed, the watch DOES escalate it (and pane-nudges the captain) — see § Escalation taxonomy, "Backstop." Staffing-starvation IS escalation-worthy once the captain has demonstrably not acted.
 - **Locked-decision reversal** — any event that would reopen a decision locked in `STATUS.md`. Surface it; never act on it.
 - **Destructive ops** — force-push, branch -D on shared refs, `--no-verify`, `rm -rf` patterns. Escalate; never authorize.
-- **Staffing** — which crew handles which epic. Staffing-readiness for a KNOWN lane is NOT your flag — it is the ops-monitor's lane-named `[IMMEDIATE]` (see New-initiative ranking above). You may flag staffing for cases the ops-monitor does not cover; the captain decides.
+- **Staffing** — which crew handles which epic. Staffing-readiness for a KNOWN lane is normally the ops-monitor's lane-named `[IMMEDIATE]` (see New-initiative ranking above), NOT your flag — but you ARE the backstop: escalate it (with a captain pane-nudge) once it has persisted across `watch.staffing_starvation_grace` consecutive ops-monitor digests with no captain staffing action observed. You may also flag staffing for cases the ops-monitor does not cover; the captain decides.
 
 No escalation summary is a directive — it always names the decision for the captain to make.
 
@@ -159,6 +163,13 @@ loop forever:
   7. On subscription_gap: re-scan events.jsonl from cursor; reprocess with dedupe.
   8. On ops-monitor [IMMEDIATE]/[DIGEST] receipt: read latest.json, classify content,
        escalate or accumulate per table.
+       - Staffing backstop: if the report still shows a KNOWN ready lane + free slot,
+         increment staffing_starvation_streak UNLESS a captain staffing action was
+         observed since the last digest (new crew on that lane / topic==assign re-task /
+         the slot got filled) — in which case reset the streak and record
+         last_captain_staffing_action. When the streak reaches
+         watch.staffing_starvation_grace, ESCALATE IMMEDIATE (name the lane + free slot)
+         AND pane-nudge the captain (capture-pane + comms --wake), then reset the streak.
   9. On a stale-crew signal (crew last_seen > threshold): nudge once (capture-pane +
        comms --wake); set a flag. If still stale after one nudge → escalate IMMEDIATE.
 ```
@@ -226,6 +237,7 @@ These keys are resolved via the config-or-fail-loud accessor (fail with key name
 | `watch.escalation_target` | comms name to escalate to (e.g. `captain`) |
 | `watch.liveness_interval` | how often ops-monitor's bidirectional ping fires (e.g. `1h`) — **WE6 follow-on** |
 | `watch.digest_interval` | how often the watch refreshes the captain's pull-digest (e.g. `30m`) — **WE6 follow-on** |
+| `watch.staffing_starvation_grace` | how many consecutive ops-monitor digests a "ready lane + free slot" condition may persist with NO captain staffing action before the watch escalates the staffing-starvation backstop (e.g. `3`) — config-or-fail-loud |
 | `watch.status_target` | crew status feed redirect target; **defaults to `captain`** (not fail-loud — load-bearing for the coupling guarantee) |
 | `watch.opsmonitor_target` | ops-monitor watch-class send target; **defaults to `captain`** (not fail-loud — load-bearing for the coupling guarantee) |
 

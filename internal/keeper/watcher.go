@@ -1062,12 +1062,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// ── session_id binding ────────────────────────────────────────────
 			// Identity is sourced from the single-writer <agent>.sid channel
 			// (hk-8prq), which ReadCtxFile folds into ctxFile.SessionID whenever it
-			// is present and well-formed (a lowercase UUIDv4). The daemon never
-			// writes .sid, so the multi-writer gauge ambiguity that the old
-			// latch/flap/UUIDv7/uppercase disambiguation heuristics worked around no
-			// longer exists: a real session's SessionID here is already the
-			// authoritative interactive id. Identity logic therefore collapses to a
-			// single cheap guard plus the latch:
+			// is present and well-formed. The daemon never writes .sid, so a real
+			// session's SessionID here is already the authoritative interactive id.
+			// The old keeper rebind surface was removed with hk-3391; identity logic
+			// now uses a single cheap guard plus the latch:
 			//   - foreign session: .managed is bound and the live id differs (two
 			//     concurrent same-agent sessions, last-writer on the shared .sid) —
 			//     treat as absent so warn/cycle logic stays consistent.

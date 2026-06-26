@@ -184,9 +184,9 @@ func ReadManagedSessionID(projectDir, agent string) (string, error) {
 // empty sessionID clears the binding while preserving the managed marker.
 //
 // The write is performed atomically via a unique temp-file (os.CreateTemp) +
-// fsync + rename. Using os.CreateTemp prevents the watcher, cycler, and
-// 'keeper rebind' CLI (separate processes) from clobbering each other's
-// in-flight content, since each writer gets a distinct temp path. The fsync
+// fsync + rename. Using os.CreateTemp prevents the watcher and cycler from
+// clobbering each other's in-flight content, since each writer gets a distinct
+// temp path. The retired keeper rebind surface was removed with hk-3391. The fsync
 // before rename closes the power-loss partial-write window. The rename itself
 // is atomic on POSIX for same-filesystem paths (TOCTOU guard). Refs: hk-mzdm, hk-b5e2.
 //
@@ -209,8 +209,8 @@ func WriteManagedSessionID(projectDir, agent, sessionID string) error {
 		content += "\n"
 	}
 	// os.CreateTemp gives each concurrent writer a unique temp path so no two
-	// concurrent writes (watcher, cycler, rebind CLI) can publish each other's
-	// partial content. Refs: hk-b5e2.
+	// concurrent writes can publish each other's partial content. The retired
+	// keeper rebind surface was removed with hk-3391. Refs: hk-b5e2.
 	//nolint:gosec // G304: keeperDir derived from operator-controlled projectDir; pattern uses validated agent name
 	tmp, err := os.CreateTemp(keeperDir, agent+".managed.*.tmp")
 	if err != nil {

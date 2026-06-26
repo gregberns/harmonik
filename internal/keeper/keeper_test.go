@@ -228,7 +228,7 @@ func TestWriteAndReadManagedSessionID(t *testing.T) {
 }
 
 // TestWriteManagedSessionID_ConcurrentWrites verifies that multiple goroutines
-// (simulating concurrent watcher/cycler/rebind-CLI writers) can call
+// (simulating concurrent watcher/cycler writers) can call
 // WriteManagedSessionID concurrently without leaving the .managed file in a
 // partial or corrupt state. Each writer uses a unique temp path (os.CreateTemp)
 // so writers never trample each other's in-flight content. After all goroutines

@@ -362,8 +362,8 @@ func TestGCRetiredIntentsWithRedrive_MixedBatch(t *testing.T) {
 
 	ledger := &fakeIntentGCLedger{
 		records: map[core.BeadID]core.BeadRecord{
-			landedID:   {BeadID: landedID, Status: core.CoarseStatusOpen},     // reopen landed (open==post-state)
-			redriveID:  {BeadID: redriveID, Status: core.CoarseStatusOpen},    // claim pre-state
+			landedID:   {BeadID: landedID, Status: core.CoarseStatusOpen},      // reopen landed (open==post-state)
+			redriveID:  {BeadID: redriveID, Status: core.CoarseStatusOpen},     // claim pre-state
 			retainedID: {BeadID: retainedID, Status: core.CoarseStatusBlocked}, // close diverged (blocked≠pre/post-state)
 		},
 	}

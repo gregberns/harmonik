@@ -44,15 +44,17 @@ type ReviewVerdict struct {
 // ReadReviewVerdict rejects any file whose schema_version field differs from this.
 const ReviewVerdictSchemaVersion = 1
 
-// Remote verdict read-retry bounds (hk-clrts). A cat-over-SSH read of the
-// worker's review.json can observe a partially-written / not-yet-durable file,
-// so parseReviewVerdict returns ErrMalformed on a transient truncated read. The
-// remote path (ReadReviewVerdictVia) retries ONLY on ErrMalformed with bounded
-// exponential backoff: 100/200/400/800ms between attempts → total wait cap
-// ~1.5s across reviewVerdictRemoteMaxAttempts tries. The local os.ReadFile path
-// is unaffected (NFR7).
+// Remote verdict read-retry bounds (hk-clrts, widened hk-l489f). A cat-over-SSH
+// read of the worker's review.json can observe a partially-written /
+// not-yet-durable file, so parseReviewVerdict returns ErrMalformed on a
+// transient truncated read. The remote path (ReadReviewVerdictVia) retries ONLY
+// on ErrMalformed with bounded exponential backoff:
+// 100/200/400/800/1600/3200ms between attempts → total wait cap ~6.3s across
+// reviewVerdictRemoteMaxAttempts tries. The wider window (was 5 attempts/~1.5s)
+// handles slow-flush remote paths where the worker's fsync takes 2–4s. The
+// local os.ReadFile path is unaffected (NFR7).
 const (
-	reviewVerdictRemoteMaxAttempts = 5
+	reviewVerdictRemoteMaxAttempts = 7
 	reviewVerdictRemoteBaseBackoff = 100 * time.Millisecond
 )
 
@@ -131,10 +133,10 @@ func ReadReviewVerdict(workspacePath string) (*ReviewVerdict, error) {
 //
 // On the remote path a cat-over-SSH read can observe a truncated, not-yet-durable
 // review.json mid-write, so the read is retried on a transient ErrMalformed parse
-// failure with bounded exponential backoff (up to ~1.5s total; see the
+// failure with bounded exponential backoff (up to ~6.3s total; see the
 // reviewVerdictRemote* constants) — honoring ctx cancellation. A genuinely
 // malformed verdict still returns ErrMalformed after the retry budget is spent.
-// The local path does NOT retry. Bead: hk-clrts.
+// The local path does NOT retry. Beads: hk-clrts, hk-l489f.
 //
 // Return contract matches ReadReviewVerdict:
 //   - (*ReviewVerdict, nil) when the file is present and valid.

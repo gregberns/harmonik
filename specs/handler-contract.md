@@ -130,7 +130,7 @@ A non-zero exit is a `FAIL` `Outcome` the cascade routes on per [execution-model
 
 **Boundary-classification tags.** The `shell` handler's default four-axis tags per [execution-model.md §4.2 EM-011] are `io-determinism = non-deterministic` (shell commands have side effects) and `replay-safety = unsafe` (re-running a side-effecting command may double-apply). A tool node's author MAY declare tighter `axis_tags` per [workflow-graph.md §4 WG-039] when the specific command is known-idempotent.
 
-**Trust boundary.** Per [workflow-graph.md §4 WG-039], `tool_command` is a literal shell string from the trusted `.dot` author; the `shell` handler performs no sandboxing or escaping at v1.
+**Trust boundary.** Per [workflow-graph.md §4 WG-039], the `tool_command` *literal* is a shell string from the trusted `.dot` author; the `shell` handler runs it verbatim (`/bin/sh -c`) with no sandboxing or escaping at v1. But any **template-param value substituted into `tool_command` is UNTRUSTED** and is POSIX shell-quoted at load time (per [workflow-graph.md §4 WG-045]) before the handler ever sees the command, so the `shell` handler receives an already-neutralised string and an untrusted param value cannot inject — the quoting is upstream, at substitution, not in the handler.
 
 **Observability.** A tool node reuses the existing node-lifecycle observability surface: `node_dispatch_requested` ([event-model.md §8.1.11]) fires before dispatch, and the command's result flows through the standard `Outcome` surface and run-terminal events. No `tool_command_completed` event is introduced at v1 (per the integration-pass observability decision; per-command lifecycle events are deliberately excluded by [event-model.md §8]'s lifecycle-boundary discipline).
 

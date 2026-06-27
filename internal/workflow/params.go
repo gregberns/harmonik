@@ -1,20 +1,25 @@
 package workflow
 
-// params.go — template-parameter substitution for .dot workflow sources (WG-045/WG-046).
+// params.go — raw-source template-parameter substitution primitive (WG-045).
 //
 // SubstituteTemplateParams applies one non-recursive substitution pass over a raw
-// .dot source string before it reaches the parser.  Token grammar: __[A-Z][A-Z0-9_]*__
-// (uppercase letter followed by zero or more uppercase letters, digits, or underscores,
-// enclosed in double-underscores).
+// .dot source string.  Token grammar: __[A-Z][A-Z0-9_]*__ (uppercase letter
+// followed by zero or more uppercase letters, digits, or underscores, enclosed in
+// double-underscores).  After substitution any residual __TOKEN__ is a launch-time
+// error naming the offending token.  Token-free source is returned byte-identical.
 //
-// After substitution any residual __TOKEN__ is a launch-time error naming the
-// offending token.  Token-free source is returned byte-identical (no-op).
-//
-// Ordering invariant (WG-046): read → substitute → parse → validate → dispatch.
+// SECURITY / ORDERING (WG-046, reversed): production loaders NO LONGER substitute
+// over raw source before parse — that context-blind splice was the command- and
+// DOT-structure-injection vector.  The new ordering is read → parse(template) →
+// substitute(per-attribute, context-aware) → validate → dispatch, implemented by
+// substituteGraphParams (params_graph.go), which shell-quotes tool_command values.
+// SubstituteTemplateParams is retained as the lower-level raw-string primitive
+// (exported API + its unit tests); it MUST NOT be reintroduced on a load path that
+// feeds a shell sink.  The shared ErrResidualToken type below is used by both.
 //
 // Spec refs:
-//   - specs/workflow-graph.md §I.8 WG-045 — --param KEY=VALUE surface.
-//   - specs/workflow-graph.md §I.9 WG-046 — ordering invariant.
+//   - specs/workflow-graph.md §4 WG-045 — template-param trust boundary (untrusted).
+//   - specs/workflow-graph.md §4 WG-046 — post-parse per-attribute ordering.
 //
 // Bead ref: hk-55zv2 (T5).
 // Tags: mechanism

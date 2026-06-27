@@ -20,11 +20,13 @@ package workflow_test
 //  (c) TokenFreeNoOp: a token-free .dot template is a byte-identical no-op
 //      pass; no error, graph is parsed normally.
 //
-//  (d) TrustBoundaryMalformedDot: a --param value containing DOT syntax (e.g.
-//      a closing quote) is substituted raw (un-sanitized); if the resulting
-//      text is syntactically invalid DOT the error surfaces as a normal parse
-//      error (*ErrWorkflowLoad with "parse failed" reason), not a substitution
-//      error.
+//  (d) TrustBoundaryNeutralized: a --param value containing DOT syntax (e.g.
+//      a closing quote) is now SAFE. WG-045/WG-046 were reversed for security:
+//      the template is parsed FIRST (tokens intact), then the value is
+//      substituted into the already-parsed, typed attribute. A value that used
+//      to break the DOT tokenizer (`172"`) is now an inert literal inside
+//      Graph.Goal — the run loads successfully and the value cannot alter graph
+//      shape (DOT-structure injection closed). Pre-fix this raised a parse error.
 //
 //  (e) GoalNoTokensThreaded: goal="..." with no template tokens parses into
 //      Graph.Goal and is non-empty (threads into agentic briefs via the
@@ -170,40 +172,36 @@ func TestParamTemplate_TokenFreeNoOp(t *testing.T) {
 
 // ── (d) TrustBoundaryMalformedDot ────────────────────────────────────────────
 
-// TestParamTemplate_TrustBoundaryMalformedDot verifies the trust boundary:
-// a --param value containing DOT syntax (e.g. a quote character that breaks
-// the attribute string) is substituted raw, and the resulting malformed DOT
-// surfaces as a normal parse error (*ErrWorkflowLoad with "parse failed" in
-// the reason), NOT a substitution error (WG-045 trust-boundary normative).
-func TestParamTemplate_TrustBoundaryMalformedDot(t *testing.T) {
+// TestParamTemplate_TrustBoundaryNeutralized verifies the REVERSED trust boundary
+// (WG-045/WG-046 security fix): a --param value containing DOT syntax (a quote
+// character that previously broke the attribute string) is now neutralized.
+// Because the template is parsed BEFORE substitution, the value lands in the
+// already-parsed, typed Graph.Goal field as an inert literal — it cannot terminate
+// an attribute string or alter graph shape. The run loads successfully; pre-fix
+// this raised a "parse failed" error.
+func TestParamTemplate_TrustBoundaryNeutralized(t *testing.T) {
 	dotPath := writeTempDot(t, paramTemplateDot)
 
-	// A param value that injects a bare double-quote, breaking the DOT string
-	// tokenizer.  After substitution the goal attribute becomes:
-	//   goal="Fix #172"
-	// where the injected `"` terminates the string early, leaving the trailing
-	// `"` (the original closing quote) to start a new unterminated string
-	// literal → tokenizer error.
-	malformedValue := `172"`
-	_, err := workflow.LoadDotWorkflowWithParams(dotPath, map[string]string{"ISSUE_NUMBER": malformedValue})
-	if err == nil {
-		t.Fatal("expected parse error from malformed substituted DOT, got nil")
+	// A param value carrying a bare double-quote. Under the OLD pre-parse splice
+	// this broke the DOT tokenizer (parse error). Under the new post-parse
+	// substitution it is harmless: Graph.Goal becomes the literal `Fix #172"`.
+	injectedValue := `172"`
+	graph, err := workflow.LoadDotWorkflowWithParams(dotPath, map[string]string{"ISSUE_NUMBER": injectedValue})
+	if err != nil {
+		t.Fatalf("expected the value to be neutralized and the run to load, got error: %v", err)
 	}
 
-	var loadErr *workflow.ErrWorkflowLoad
-	if !errors.As(err, &loadErr) {
-		t.Fatalf("expected *ErrWorkflowLoad, got %T: %v", err, err)
+	// The value is substituted verbatim into the typed goal field — no parse error,
+	// no graph-shape change, just an inert literal containing the quote character.
+	wantGoal := `Fix #172"`
+	if graph.Goal != wantGoal {
+		t.Errorf("Graph.Goal = %q, want %q (value neutralized as an inert literal)", graph.Goal, wantGoal)
 	}
 
-	// The error must be a parse failure, not a substitution failure.
-	if !strings.Contains(loadErr.Reason, "parse failed") {
-		t.Errorf("expected reason to contain \"parse failed\", got %q", loadErr.Reason)
-	}
-
-	// Confirm it is NOT an ErrResidualToken — the substitution pass itself succeeded.
-	var rte *workflow.ErrResidualToken
-	if errors.As(err, &rte) {
-		t.Error("error should be a parse error, not ErrResidualToken — substitution succeeded but output was malformed DOT")
+	// Exactly one node survives — the injected `"` did NOT spawn or alter a node
+	// (DOT-structure injection closed by construction).
+	if len(graph.Nodes) != 1 {
+		t.Errorf("graph has %d nodes, want 1 — injected DOT syntax must not alter graph shape", len(graph.Nodes))
 	}
 }
 

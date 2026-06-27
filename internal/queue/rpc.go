@@ -177,6 +177,24 @@ func HandleQueueSubmit(
 		return QueueSubmitResponse{}, nil, nil, rpcErrorFromValidation(verrs[0])
 	}
 
+	// WG-045 (security): validate launch template params at the ingestion boundary.
+	// Params arrive over the queue-submit RPC and are settable by any local agent;
+	// they MAY carry external data. Reject malformed keys, control characters
+	// (NUL/newline/tab — the highest-leverage injection primitives), and over-length
+	// values BEFORE persist, so a poison value never reaches the substitution path.
+	// (queue-append carries no template_params, so submit is the sole chokepoint.)
+	for _, g := range req.Groups {
+		for _, item := range g.Items {
+			if vErr := core.ValidateTemplateParams(item.TemplateParams); vErr != nil {
+				return QueueSubmitResponse{}, nil, nil, &RPCError{
+					Code:    -32602, // JSON-RPC Invalid params
+					Message: "invalid_template_param",
+					Detail:  map[string]any{"error": vErr.Error(), "bead_id": item.BeadID},
+				}
+			}
+		}
+	}
+
 	// Mint queue_id per QM-010.
 	queueUUID, err := uuid.NewV7()
 	if err != nil {

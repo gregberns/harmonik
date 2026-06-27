@@ -2025,12 +2025,12 @@ const dotGateOutputTailBytes = 4096
 var dotGateHeartbeatInterval = handler.HeartbeatInterval
 
 // shellQuote wraps s in single quotes for safe interpolation into a remote
-// `/bin/sh -lc '<script>'` string, escaping any embedded single quotes via the
-// standard '\” idiom. Used only for the worktree path on the REMOTE gate path,
-// so a worker worktree path containing spaces (or other shell metacharacters)
-// survives the cd intact. The local path never shell-interpolates wtPath.
+// `/bin/sh -lc '<script>'` string. It delegates to the canonical, single-source
+// workflow.ShellQuote (WG-045 security primitive) so there is exactly one quoting
+// implementation to audit: the same helper neutralises substituted tool_command
+// param values at load time and worktree-path/env values on this remote gate path.
 func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return workflow.ShellQuote(s)
 }
 
 // tailString returns the last n bytes of s (rune-boundary-safe at the cut),

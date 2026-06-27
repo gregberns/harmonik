@@ -86,7 +86,11 @@ func TestAttractionParityAllThreeSitesSubstituted(t *testing.T) {
 				t.Errorf("impl.prompt: got %q, want %q", n.Prompt, "Implement "+wantValue)
 			}
 		case "verify":
-			wantCmd := "echo " + wantValue + " && exit 0"
+			// WG-045 (security, reversed): a param value substituted into a
+			// tool_command is now POSIX shell-quoted (one inert shell word), while
+			// the author's `&& exit 0` is untouched. Pre-fix this was verbatim
+			// ("echo issue-172 && exit 0").
+			wantCmd := "echo '" + wantValue + "' && exit 0"
 			if n.ToolCommand != wantCmd {
 				t.Errorf("verify.tool_command: got %q, want %q", n.ToolCommand, wantCmd)
 			}

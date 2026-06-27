@@ -141,15 +141,12 @@ func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.G
 		}
 	}
 
-	substituted, subErr := SubstituteTemplateParams(string(src), params)
-	if subErr != nil {
-		return nil, &ErrWorkflowLoad{
-			Path:   dotPath,
-			Reason: fmt.Sprintf("template substitution failed: %v", subErr),
-		}
-	}
-
-	graph, parseErr := dot.Parse(substituted, dotPath)
+	// WG-046 (security): parse the TEMPLATE with __TOKEN__ placeholders intact,
+	// then substitute per-attribute AFTER parse (substituteGraphParams below). The
+	// DOT lexer preserves __TOKEN__ verbatim inside quoted attribute values, so a
+	// param value can never alter graph shape (DOT-structure injection is closed by
+	// construction) and tool_command values can be context-aware shell-quoted.
+	graph, parseErr := dot.Parse(string(src), dotPath)
 	if parseErr != nil {
 		if strings.Contains(parseErr.Error(), "CP-056") {
 			fmt.Fprintf(os.Stderr,
@@ -164,6 +161,17 @@ func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.G
 		return nil, &ErrWorkflowLoad{
 			Path:   dotPath,
 			Reason: fmt.Sprintf("parse failed: %v", parseErr),
+		}
+	}
+
+	// WG-045 (security): substitute params into the parsed graph per-attribute —
+	// tool_command values shell-quoted, all others verbatim — applying ingestion
+	// hygiene + the residual-token launch check. Runs BEFORE Validate so typed-field
+	// checks see substituted values.
+	if subErr := substituteGraphParams(graph, params); subErr != nil {
+		return nil, &ErrWorkflowLoad{
+			Path:   dotPath,
+			Reason: fmt.Sprintf("template substitution failed: %v", subErr),
 		}
 	}
 
@@ -192,15 +200,9 @@ func LoadDotWorkflowWithParams(dotPath string, params map[string]string) (*dot.G
 // (hk-30vlb): same pipeline as LoadDotWorkflowWithParams but without the
 // os.ReadFile call.
 func LoadDotWorkflowFromBytes(src []byte, sourceName string, params map[string]string) (*dot.Graph, error) {
-	substituted, subErr := SubstituteTemplateParams(string(src), params)
-	if subErr != nil {
-		return nil, &ErrWorkflowLoad{
-			Path:   sourceName,
-			Reason: fmt.Sprintf("template substitution failed: %v", subErr),
-		}
-	}
-
-	graph, parseErr := dot.Parse(substituted, sourceName)
+	// WG-046 (security): parse the TEMPLATE with __TOKEN__ placeholders intact,
+	// then substitute per-attribute AFTER parse (substituteGraphParams below).
+	graph, parseErr := dot.Parse(string(src), sourceName)
 	if parseErr != nil {
 		if strings.Contains(parseErr.Error(), "CP-056") {
 			fmt.Fprintf(os.Stderr,
@@ -215,6 +217,16 @@ func LoadDotWorkflowFromBytes(src []byte, sourceName string, params map[string]s
 		return nil, &ErrWorkflowLoad{
 			Path:   sourceName,
 			Reason: fmt.Sprintf("parse failed: %v", parseErr),
+		}
+	}
+
+	// WG-045 (security): substitute params into the parsed graph per-attribute —
+	// tool_command values shell-quoted, all others verbatim — applying ingestion
+	// hygiene + the residual-token launch check. Runs BEFORE Validate.
+	if subErr := substituteGraphParams(graph, params); subErr != nil {
+		return nil, &ErrWorkflowLoad{
+			Path:   sourceName,
+			Reason: fmt.Sprintf("template substitution failed: %v", subErr),
 		}
 	}
 

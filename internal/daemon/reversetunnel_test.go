@@ -69,6 +69,10 @@ func TestReverseTunnel_ArgvExact(t *testing.T) {
 	want := []string{
 		"-N", "-R", "127.0.0.1:51234:" + dsock,
 		"-o", "ExitOnForwardFailure=yes",
+		"-o", "ControlMaster=no",
+		"-o", "ControlPath=none",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=4",
 		host,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -84,7 +88,9 @@ func TestReverseTunnel_ArgvExact(t *testing.T) {
 	// Full ssh argv (with the command name prepended, as the runner sees it).
 	full := append([]string{"ssh"}, got...)
 	if joined := strings.Join(full, " "); joined !=
-		"ssh -N -R 127.0.0.1:51234:"+dsock+" -o ExitOnForwardFailure=yes "+host {
+		"ssh -N -R 127.0.0.1:51234:"+dsock+" -o ExitOnForwardFailure=yes "+
+			"-o ControlMaster=no -o ControlPath=none "+
+			"-o ServerAliveInterval=15 -o ServerAliveCountMax=4 "+host {
 		t.Errorf("full ssh argv = %q", joined)
 	}
 }
@@ -103,6 +109,10 @@ func TestReverseTunnel_ArgvWithOpts(t *testing.T) {
 	want := []string{
 		"-N", "-R", "127.0.0.1:2200:" + dsock,
 		"-o", "ExitOnForwardFailure=yes",
+		"-o", "ControlMaster=no",
+		"-o", "ControlPath=none",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=4",
 		"-p", "2222",
 		host,
 	}
@@ -113,6 +123,21 @@ func TestReverseTunnel_ArgvWithOpts(t *testing.T) {
 	if got[len(got)-1] != host {
 		t.Errorf("host not last token: %v", got)
 	}
+	// hk-cnp17: the forced multiplexing opt-outs must precede the worker opts so
+	// ssh's "first value wins" rule means worker opts cannot override them.
+	cmIdx, pIdx := indexOf(got, "ControlMaster=no"), indexOf(got, "2222")
+	if cmIdx < 0 || pIdx < 0 || cmIdx > pIdx {
+		t.Errorf("ControlMaster=no must appear before worker opts: %v", got)
+	}
+}
+
+func indexOf(ss []string, target string) int {
+	for i, s := range ss {
+		if s == target {
+			return i
+		}
+	}
+	return -1
 }
 
 // TestReverseTunnel_WorkerTCPEndpoint asserts the per-run worker-side endpoint is
@@ -238,6 +263,10 @@ func TestReverseTunnel_SeamRecordsArgvAndProcessKilled(t *testing.T) {
 	wantArg := []string{
 		"-N", "-R", "127.0.0.1:51234:" + dsock,
 		"-o", "ExitOnForwardFailure=yes",
+		"-o", "ControlMaster=no",
+		"-o", "ControlPath=none",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=4",
 		host,
 	}
 	if !reflect.DeepEqual(gotArg, wantArg) {

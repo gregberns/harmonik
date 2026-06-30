@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -114,27 +115,74 @@ func tcpEndpointAddr(endpoint string) (addr string, ok bool) {
 	return "", false
 }
 
+// reservedTunnelPorts tracks the worker-side reverse-tunnel ports currently
+// HELD by in-flight remote runs on THIS daemon, guarded by reservedTunnelPortsMu.
+// allocateReverseTunnelPort reserves a port here for the duration of a run;
+// releaseReverseTunnelPort frees it at tunnel teardown.
+var (
+	reservedTunnelPortsMu sync.Mutex
+	reservedTunnelPorts   = make(map[int]bool)
+)
+
 // allocateReverseTunnelPort picks a free TCP port to hand sshd for the worker-side
-// `-R 127.0.0.1:<port>:…` loopback bind.
+// `-R 127.0.0.1:<port>:…` loopback bind, and RESERVES it (in reservedTunnelPorts)
+// until releaseReverseTunnelPort frees it at tunnel teardown.
 //
-// CONCURRENCY SAFETY (we run waves of 4+ simultaneous remote runs): each run binds
+// CONCURRENCY SAFETY (we run waves of 4+ simultaneous remote runs): each call binds
 // a TCP listener on box A's 127.0.0.1:0, lets the OS assign a currently-free
-// ephemeral port, reads it, and immediately closes the listener — so two
-// concurrent runs get DISTINCT ports from the kernel's allocator. The port is a
-// HINT for sshd's worker-side bind (the worker's free-port space is independent of
-// box A's), so we pair it with `-o ExitOnForwardFailure=yes` in
-// buildReverseTunnelArgs: if the hinted port is already taken on the worker, the
-// tunnel FAILS FAST instead of silently binding nothing, and the connect-probe
-// readiness gate (waitWorkerSocketLive) then reopens the bead for re-dispatch
-// rather than launching claude into a dead tunnel. This avoids any shared mutable
-// port counter and the TOCTOU false-green of "test -S exists".
+// ephemeral port, reads it, and immediately closes the listener. The kernel hands
+// distinct ports to two SIMULTANEOUS Listen calls, but it will re-hand a port the
+// instant a sibling run closes its listener (the Listen→Close→worker-bind gap is a
+// TOCTOU window): two runs whose alloc/close interleave could otherwise be handed
+// the SAME port, and `-o ExitOnForwardFailure=yes` would then kill the losing
+// tunnel (hk-cnp17). The in-process reserved-port set closes that window — a port
+// just handed out is checked against (and added to) reservedTunnelPorts under a
+// mutex, so a port held by a live run is never re-handed; on a collision we simply
+// re-Listen for another. The port remains a HINT for sshd's worker-side bind (the
+// worker's free-port space is independent of box A's), so ExitOnForwardFailure=yes
+// still guards a clash on the worker itself, and the connect-probe readiness gate
+// (waitWorkerSocketLive) reopens the bead rather than launching claude into a dead
+// tunnel. This avoids any monotonic counter and the TOCTOU false-green of
+// "test -S exists".
+//
+// Residual race: the set only de-conflicts allocations on THIS daemon; a port the
+// kernel hands here could in principle be grabbed by an unrelated box-A process in
+// the gap before the worker binds it — but box A never binds these ports itself
+// (they are hints for the worker's sshd), so that case is still caught on the
+// worker by ExitOnForwardFailure=yes + the readiness gate.
 func allocateReverseTunnelPort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("allocateReverseTunnelPort: %w", err)
+	// Bounded retry: in practice a collision resolves on the first re-Listen,
+	// since the kernel's free-ephemeral pool is large relative to in-flight runs.
+	const maxAttempts = 50
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return 0, fmt.Errorf("allocateReverseTunnelPort: %w", err)
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		// Close before reserving: the port is only a HINT for sshd's worker-side
+		// bind; box A does not hold the listener.
+		l.Close()
+
+		reservedTunnelPortsMu.Lock()
+		if !reservedTunnelPorts[port] {
+			reservedTunnelPorts[port] = true
+			reservedTunnelPortsMu.Unlock()
+			return port, nil
+		}
+		reservedTunnelPortsMu.Unlock()
+		// Collided with a port a concurrent run already holds; try again.
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
+	return 0, fmt.Errorf("allocateReverseTunnelPort: no free port after %d attempts", maxAttempts)
+}
+
+// releaseReverseTunnelPort frees a port previously reserved by
+// allocateReverseTunnelPort so a later run may reuse it. Called at per-run tunnel
+// teardown. Safe to call with a port that was never reserved (no-op).
+func releaseReverseTunnelPort(port int) {
+	reservedTunnelPortsMu.Lock()
+	delete(reservedTunnelPorts, port)
+	reservedTunnelPortsMu.Unlock()
 }
 
 // buildReverseTunnelArgs constructs the argv for the long-lived reverse tunnel:
@@ -156,14 +204,43 @@ func allocateReverseTunnelPort() (int, error) {
 //	with no forward — so the readiness gate observes a non-connectable endpoint and
 //	fails the run rather than launching the agent into a dead tunnel.
 //
+// ControlMaster=no + ControlPath=none : pin THIS tunnel onto its OWN dedicated,
+//
+//	NON-multiplexed ssh connection (hk-cnp17). SSH connection-sharing is CLIENT-side,
+//	so the relevant config is box A's ssh client config (the daemon host that dials
+//	the worker) — which recommends `ControlMaster auto` + a shared `ControlPath` (one
+//	master connection per worker). At max_slots>1, every per-run `-R` reverse forward would otherwise
+//	collapse onto that single shared master, whose lifetime is unrelated to any one
+//	run — so under concurrent ssh churn the distinct-port forward is not durably
+//	established by the time Claude's SessionStart hook dials it, agent_ready never
+//	reaches the daemon, and every run dies at agent_ready_timeout. (At slots:1 —
+//	one tunnel, no churn — it happens to work.) Forcing a private connection per
+//	tunnel removes the shared-master collision.
+//
+// ServerAliveInterval=15 / ServerAliveCountMax=4 : keep the dedicated link warm for
+//
+//	the run's lifetime (probe every 15s, tolerate 4 misses ≈ 60s) so an idle tunnel
+//	is not dropped mid-run by an intermediary.
+//
+// The forced -o options are placed BEFORE opts so the worker's bare opts cannot
+// override them: ssh uses the FIRST value obtained for each configuration option.
+//
 // opts mirror the SSHRunner.Opts argv pattern (extra flags BEFORE the host, e.g.
 // ["-p", "2222"]); host is the SSH destination (user@host or bare host). The
 // returned slice does NOT include the leading "ssh" token — callers pass it as
 // the command name to the runner (matching exec.CommandContext / SSHRunner).
 func buildReverseTunnelArgs(port int, daemonSock, host string, opts []string) []string {
 	forward := net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) + ":" + daemonSock
-	args := make([]string, 0, 5+len(opts)+1)
+	args := make([]string, 0, 13+len(opts)+1)
 	args = append(args, "-N", "-R", forward, "-o", "ExitOnForwardFailure=yes")
+	// hk-cnp17: force a dedicated, non-multiplexed, kept-warm connection. These
+	// precede opts so the worker's opts cannot override them (ssh: first value wins).
+	args = append(args,
+		"-o", "ControlMaster=no",
+		"-o", "ControlPath=none",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=4",
+	)
 	args = append(args, opts...)
 	args = append(args, host)
 	return args

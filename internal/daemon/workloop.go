@@ -3023,6 +3023,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					beadID, runID.String(), portErr)
 			} else {
 				rbc.workerHookSock = workerTCPEndpoint(tunnelPort)
+				// hk-cnp17: free the reserved port when this run ends, so a later
+				// run may reuse it (the reservation prevents two concurrent runs
+				// from being handed the same worker-side hint port).
+				defer releaseReverseTunnelPort(tunnelPort)
 			}
 
 			if mkErr := ensureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {

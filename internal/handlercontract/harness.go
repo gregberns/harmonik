@@ -9,7 +9,11 @@
 // See also: C1-harness-interface-spec.md for the full AC set.
 package handlercontract
 
-import "github.com/gregberns/harmonik/internal/core"
+import (
+	"io"
+
+	"github.com/gregberns/harmonik/internal/core"
+)
 
 // CompletionMode declares how a harness run signals completion to the shared loop.
 //
@@ -200,4 +204,18 @@ type Harness interface {
 	// Completion reports how this harness signals run completion.
 	// Governs whether the shared loop runs the heartbeat-staleness kill path (N2).
 	Completion() CompletionMode
+
+	// NewSessionIDInterceptor returns an io.Reader that wraps inner, fires cb
+	// exactly once with the captured session identifier, and passes all bytes
+	// through unchanged. It is called by the shared loop in the
+	// implIsSessionIDCaptured block to obtain the harness-appropriate NDJSON
+	// interceptor without the loop branching on a concrete harness type.
+	//
+	// Each SessionIDCaptured harness implements this with its own parser (e.g.
+	// PiHarness parses {"type":"session","id":"..."}, CodexHarness parses
+	// {"type":"thread.started","thread_id":"..."}). Non-SessionIDCaptured
+	// harnesses (e.g. ClaudeHarness) MUST return inner unchanged — the method
+	// will never be called for those harnesses because the implIsSessionIDCaptured
+	// gate prevents entry, but the interface requires an implementation.
+	NewSessionIDInterceptor(inner io.Reader, cb func(string)) io.Reader
 }

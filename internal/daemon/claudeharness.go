@@ -12,6 +12,7 @@ package daemon
 
 import (
 	"context"
+	"io"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -141,4 +142,14 @@ func (h *ClaudeHarness) SessionIDPolicy() handlercontract.SessionIDPolicy {
 // /quit + kill grace to the session and waits for sess.Wait.
 func (h *ClaudeHarness) Completion() handlercontract.CompletionMode {
 	return handlercontract.CompletionEventStreamThenQuit
+}
+
+// NewSessionIDInterceptor returns inner unchanged for the claude harness.
+//
+// ClaudeHarness is SessionIDMinted, not SessionIDCaptured, so the shared
+// loop's implIsSessionIDCaptured gate prevents this method from ever being
+// called in production. The no-op passthrough satisfies the interface contract
+// so no concrete-type branching is needed in the shared loop.
+func (h *ClaudeHarness) NewSessionIDInterceptor(inner io.Reader, _ func(string)) io.Reader {
+	return inner
 }

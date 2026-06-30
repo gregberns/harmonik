@@ -2760,6 +2760,37 @@ func ExportedNewCodexThreadIDInterceptor(inner io.Reader, cb func(string)) io.Re
 	return newCodexThreadIDInterceptor(inner, cb)
 }
 
+// ExportedNewPiHarness re-exports NewPiHarness for tests in package daemon_test.
+//
+// Bead ref: hk-4rmj1 (PI-010/012/013).
+var ExportedNewPiHarness = NewPiHarness
+
+// ExportedNewPiSessionIDInterceptor exposes newPiSessionIDInterceptor for
+// tests in package daemon_test.
+//
+// Bead ref: hk-4rmj1 (PI-012).
+func ExportedNewPiSessionIDInterceptor(inner io.Reader, cb func(string)) io.Reader {
+	return newPiSessionIDInterceptor(inner, cb)
+}
+
+// ExportedParsePiNDJSONEvent exposes parsePiNDJSONEvent for tests in package
+// daemon_test.
+//
+// Bead ref: hk-4rmj1 (PI-012).
+func ExportedParsePiNDJSONEvent(line []byte) (piEventKind, string, string, error) {
+	ev, err := parsePiNDJSONEvent(line)
+	return ev.Kind, ev.RawType, ev.SessionID, err
+}
+
+// ExportedPiEventKindSession re-exports piEventKindSession for tests.
+const ExportedPiEventKindSession = piEventKindSession
+
+// ExportedPiEventKindAgentEnd re-exports piEventKindAgentEnd for tests.
+const ExportedPiEventKindAgentEnd = piEventKindAgentEnd
+
+// ExportedPiEventKindOther re-exports piEventKindOther for tests.
+const ExportedPiEventKindOther = piEventKindOther
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Cognition signal test seams (hk-jay1 P2-c: SS-012)
 // ─────────────────────────────────────────────────────────────────────────────

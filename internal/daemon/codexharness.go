@@ -37,6 +37,7 @@ package daemon
 
 import (
 	"context"
+	"io"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -169,4 +170,14 @@ func (h *CodexHarness) SessionIDPolicy() handlercontract.SessionIDPolicy {
 // §2 N2).
 func (h *CodexHarness) Completion() handlercontract.CompletionMode {
 	return handlercontract.CompletionProcessExit
+}
+
+// NewSessionIDInterceptor returns a codexThreadIDInterceptor wrapping inner.
+//
+// The interceptor fires cb exactly once with the captured thread_id from the
+// first thread.started event in the codex JSONL stream, and passes all bytes
+// through unchanged. Called by the shared loop's implIsSessionIDCaptured block
+// to capture the thread_id without branching on the concrete harness type.
+func (h *CodexHarness) NewSessionIDInterceptor(inner io.Reader, cb func(string)) io.Reader {
+	return newCodexThreadIDInterceptor(inner, cb)
 }

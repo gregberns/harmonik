@@ -429,24 +429,17 @@ func runReviewLoop(
 				// checkpoint commit and no version_selected ACK (these harnesses
 				// communicate only via argv/NDJSON, not the hook-bridge handshake).
 				//
-				// Dispatch to the harness-appropriate interceptor:
-				//   - Pi: piSessionIDInterceptor captures `id` from the first
-				//     {"type":"session",...} NDJSON line (pijsonlparser.go).
-				//   - Codex (default): codexThreadIDInterceptor captures thread_id
-				//     from the first thread.started JSONL event (codexjsonlparser.go).
+				// The interceptor is harness-supplied via NewSessionIDInterceptor,
+				// eliminating concrete-type branching in the shared loop. Each
+				// SessionIDCaptured harness returns its own parser (Pi: {"type":"session"}
+				// id field; Codex: thread.started thread_id). Non-SessionIDCaptured
+				// harnesses return a no-op passthrough but are never called here.
 				capturedSessionIDCh := sessionIDFromCapabilities
-				if _, isPi := implHarness.(*PiHarness); isPi {
-					implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
-						return newPiSessionIDInterceptor(r, func(sessionID string) {
-							capturedSessionIDCh <- sessionID
-						})
-					}
-				} else {
-					implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
-						return newCodexThreadIDInterceptor(r, func(threadID string) {
-							capturedSessionIDCh <- threadID
-						})
-					}
+				capturedH := implHarness
+				implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
+					return capturedH.NewSessionIDInterceptor(r, func(id string) {
+						capturedSessionIDCh <- id
+					})
 				}
 			} else {
 				// Claude path: wire a SessionIDInterceptor on the progress stream so the

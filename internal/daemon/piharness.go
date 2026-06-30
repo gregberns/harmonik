@@ -33,6 +33,7 @@ package daemon
 
 import (
 	"context"
+	"io"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -187,4 +188,18 @@ func (h *PiHarness) SessionIDPolicy() handlercontract.SessionIDPolicy {
 // unreliable process exit (#4303). PI-011.
 func (h *PiHarness) Completion() handlercontract.CompletionMode {
 	return handlercontract.CompletionProcessExit
+}
+
+// NewSessionIDInterceptor returns a piSessionIDInterceptor wrapping inner.
+//
+// The interceptor fires cb exactly once with the Pi session id captured from the
+// first `{"type":"session","id":"<uuid>",...}` NDJSON line, and passes all bytes
+// through unchanged. Called by the shared loop's implIsSessionIDCaptured block
+// without concrete-type branching. PI-012.
+//
+// PI-014 (agent_end watcher, a later bead) will extend piSessionIDInterceptor
+// to also call Teardown on agent_end; the factory method will remain this one
+// entry point so the shared loop stays unchanged.
+func (h *PiHarness) NewSessionIDInterceptor(inner io.Reader, cb func(string)) io.Reader {
+	return newPiSessionIDInterceptor(inner, cb)
 }

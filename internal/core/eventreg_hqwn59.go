@@ -221,6 +221,11 @@ func registerAgentEvents() {
 	// forced_login_method=chatgpt, pre-flight assert allowed, pre-flight assert
 	// denied = fail-closed). Durability class: O.
 	mustRegister("codex_billing_guard", func() EventPayload { return &CodexBillingGuardPayload{} })
+	// pi_billing_guard (hk-l1bkp, PI-040/042/043): emitted by the Pi launch
+	// path's fail-closed billing guard (inverted from codex: Pi refuses if the
+	// configured provider key is ABSENT). PI-042 on-disk credential check also
+	// fires each launch. Durability class: O.
+	mustRegister("pi_billing_guard", func() EventPayload { return &PiBillingGuardPayload{} })
 	// agent_message (hk-djqc9, agent-comms spec §1.1): directed/broadcast message
 	// between agents. Durability class: F (fsync-boundary — durable delivery G2).
 	mustRegister("agent_message", func() EventPayload { return &AgentMessagePayload{} })

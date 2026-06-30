@@ -2876,6 +2876,11 @@ type ExportedPiRunCtx struct {
 	APIKeyEnv      string
 	PriorSessionID *string
 	BaseEnv        []string
+	// BillingEmitter receives pi_billing_guard events from the guard (PI-040/042/043).
+	// Nil disables event emission; enforcement still runs unless SkipBillingGuard.
+	BillingEmitter handlercontract.EventEmitter
+	// RunID correlates pi_billing_guard events with a run. Zero is valid (run-unscoped).
+	RunID core.RunID
 	// SkipBillingGuard disables the pre-flight billing guard hook (PI-040).
 	// Set to true in argv/env-shape tests that do not require a real key.
 	SkipBillingGuard bool
@@ -2896,6 +2901,8 @@ func ExportedBuildPiLaunchSpec(rc ExportedPiRunCtx) (handler.LaunchSpec, error) 
 		apiKeyEnv:        rc.APIKeyEnv,
 		priorSessionID:   rc.PriorSessionID,
 		baseEnv:          rc.BaseEnv,
+		billingEmitter:   rc.BillingEmitter,
+		runID:            rc.RunID,
 		skipBillingGuard: rc.SkipBillingGuard,
 	})
 }
@@ -2915,4 +2922,33 @@ func ExportedBuildPiEnv(baseEnv []string, apiKeyEnv string) []string {
 // Bead ref: hk-1c16h.
 func ExportedResolvePiAPIKeyValue(apiKeyEnv string) string {
 	return resolvePiAPIKeyValue(apiKeyEnv)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pi billing guard test seams (hk-l1bkp PI-040/042/043)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedRunPiBillingGuard exposes runPiBillingGuard for tests in package
+// daemon_test. Allows direct verification of the fail-closed guard without going
+// through buildPiLaunchSpec.
+//
+// Bead ref: hk-l1bkp.
+func ExportedRunPiBillingGuard(bus handlercontract.EventEmitter, beadID, apiKeyEnv string) error {
+	return runPiBillingGuard(context.Background(), bus, core.RunID{}, beadID, apiKeyEnv)
+}
+
+// ExportedPiAuthIndicatesPersistentCredential exposes
+// piAuthIndicatesPersistentCredential for tests in package daemon_test. Allows
+// direct testing of the PI-042 on-disk credential check with a controlled piHome.
+//
+// Bead ref: hk-l1bkp.
+func ExportedPiAuthIndicatesPersistentCredential(piHome string) (bool, error) {
+	return piAuthIndicatesPersistentCredential(piHome)
+}
+
+// ExportedPiDefaultHome exposes piDefaultHome for tests in package daemon_test.
+//
+// Bead ref: hk-l1bkp.
+func ExportedPiDefaultHome() string {
+	return piDefaultHome()
 }

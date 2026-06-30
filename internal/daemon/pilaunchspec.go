@@ -34,11 +34,14 @@ package daemon
 // Codename: pilot. Bead: hk-1c16h.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // piProviderCredentialKeys is the maintained table of known provider API key
@@ -119,6 +122,17 @@ type piRunCtx struct {
 	// buildPiEnv strips all credential keys (allowlist semantics, PI-021) and
 	// injects only the selected provider's key.
 	baseEnv []string
+
+	// billingEmitter, when non-nil, receives pi_billing_guard events from the
+	// fail-closed billing guard (PI-040/PI-042/PI-043, pibillingguard.go). Nil
+	// disables event emission; the guard's enforcement (fail-closed assert) still
+	// runs regardless.
+	billingEmitter handlercontract.EventEmitter
+
+	// runID correlates the pi_billing_guard events with a run. May be the zero
+	// (uuid.Nil) RunID when the spec is built before a run_id is minted, in which
+	// case the events are emitted run-unscoped.
+	runID core.RunID
 
 	// skipBillingGuard disables the pre-flight billing guard (PI-040,
 	// pibillingguard.go). Exists SOLELY so unit tests that exercise argv/env
@@ -212,9 +226,16 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	// one, then inject only the selected provider's key (PI-021).
 	env := buildPiEnv(rc.baseEnv, rc.apiKeyEnv)
 
-	// Pre-flight billing guard hook point (PI-040, pibillingguard.go).
-	// When pibillingguard.go lands it will call runPiBillingGuard here using
-	// resolvePiAPIKeyValue(rc.apiKeyEnv) and rc.skipBillingGuard.
+	// Pre-flight billing guard (PI-040/PI-042/PI-043, pibillingguard.go).
+	// Fail-closed: absent/empty provider key → error → launch refused BEFORE
+	// agent_ready. Also checks for a persisted on-disk credential (PI-042).
+	// skipBillingGuard is false in production (see piRunCtx); tests that only
+	// exercise argv/env shape set it to avoid requiring a real key.
+	if !rc.skipBillingGuard {
+		if err := runPiBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, rc.apiKeyEnv); err != nil {
+			return handler.LaunchSpec{}, err
+		}
+	}
 
 	return handler.LaunchSpec{
 		Binary:       binary,

@@ -386,6 +386,22 @@ const (
 	// Refs: hk-tu48u.
 	EventTypeCodexBillingGuard EventType = "codex_billing_guard"
 
+	// EventTypePiBillingGuard is the pi_billing_guard event type. Emitted by the
+	// Pi launch path's fail-closed billing guard (PI-040/PI-042/PI-043, hk-l1bkp)
+	// at each observable step. Pi's guard is the INVERSE of the codex guard: Pi
+	// refuses if the configured provider API key env var is ABSENT (fail closed
+	// without a key), whereas codex refuses if an API key is PRESENT. A PI-042
+	// on-disk credential check (speculative until Pi's no-persist posture is
+	// confirmed) is also run at each launch.
+	//
+	// Events name the env-var NAME, never its value (PI-040 / ps-argv leak).
+	//
+	// Payload fields: run_id (optional), bead_id, api_key_env, outcome, reason.
+	// Durability class: O (ordinary — observability; a denied launch is also
+	// surfaced via the buildPiLaunchSpec error to the caller).
+	// Refs: hk-l1bkp (PI-040/PI-042/PI-043, codename:pilot).
+	EventTypePiBillingGuard EventType = "pi_billing_guard"
+
 	// EventTypeReviewerBudgetExceeded is the reviewer_budget_exceeded event
 	// type. Emitted when pasteInjectQuitOnReviewFile force-kills a hosted
 	// reviewer session that exhausted its diff-scaled verdict budget without

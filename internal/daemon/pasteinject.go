@@ -104,6 +104,46 @@ var (
 	resumeSubmitRetryDelay = 400 * time.Millisecond
 )
 
+// pasteVerifyAttempts, pasteVerifyBackoff and pasteVerifyScrollback govern the
+// seed-paste land-verification loop (hk-zexsj).
+//
+// Root cause: on a REMOTE SSH worker under concurrent cold-boots, ~1/3 of runs
+// hang because the seed paste is silently lost.  The seed is delivered via
+// `tmux load-buffer` + `tmux paste-buffer` (bracketed paste); tmux returns exit
+// 0 once it has handed the buffer to the pane, NOT once claude's React/ink TUI
+// has rendered it.  When the TUI reaches input-ready later than the blind
+// 750ms splash wait (common under load), the paste lands on a not-ready TUI and
+// is discarded — claude idles at an empty prompt, never emits agent_ready, and
+// the run burns the full 30-min timeout before failing.  (The shared SSH
+// ControlMaster dropping a multiplexed load/paste is the second, hardening-only
+// cause — see workloop.go SSHRunner Opts.)
+//
+// Fix: after WriteLastPane injects the seed (and BEFORE the submit Enter),
+// capture the pane and confirm a stable marker from the seed text actually
+// rendered into the input box.  If it is absent, re-run the paste — bounded to
+// pasteVerifyAttempts total attempts with pasteVerifyBackoff between them.  A
+// re-paste at a TUI that already absorbed the first copy is harmless (claude
+// reads the task file regardless of a duplicated instruction); the common case
+// is a fully-discarded first paste, where the retry delivers a clean single
+// copy once the TUI is ready.  If every attempt fails to land the marker, the
+// helper returns a non-empty failure reason so pasteInjectOnLaunch emits
+// pasteinject_failed and the run fails loud/fast instead of waiting out the
+// 30-min timeout.
+//
+// LOCAL runs are unaffected: a local paste lands instantly, so the first capture
+// passes and the loop is a single iteration (no extra wall time).  A substrate
+// without CaptureLastPane (test doubles) skips verification entirely.
+//
+// Declared as vars (not consts) so tests can override them without waiting real
+// wall time.
+//
+// Bead: hk-zexsj.
+var (
+	pasteVerifyAttempts   = 3
+	pasteVerifyBackoff    = 1500 * time.Millisecond
+	pasteVerifyScrollback = 200
+)
+
 // enterSender is an optional interface for tmux-backed Substrates that can
 // send a bare Enter keypress to the last spawned pane via
 // `tmux send-keys -t <pane> Enter` (NOT the -l literal form).
@@ -122,6 +162,37 @@ type enterSender interface {
 	// has been spawned yet or if the underlying send-keys call fails.
 	SendEnterToLastPane(ctx context.Context) error
 }
+
+// paneCapturer is an optional interface implemented by tmux-backed Substrates
+// that can read the rendered text of the most recently spawned pane (plus a
+// bounded scrollback tail).  It is the read seam behind the seed-paste
+// land-verification (hk-zexsj): after WriteLastPane injects a kick-off seed the
+// caller captures the pane and checks for a marker substring to confirm the
+// bracketed paste actually rendered into the TUI input box.
+//
+// A substrate that does not implement this interface (e.g. a minimal test
+// double) makes the verify step a no-op — the paste is trusted after the first
+// successful WriteLastPane, preserving prior behaviour.
+//
+// Bead: hk-zexsj.
+type paneCapturer interface {
+	// CaptureLastPane returns the rendered pane text plus scrollback lines of
+	// history tail for the most recently spawned window's first pane.  Returns a
+	// non-nil error if no window has been spawned yet or the capture fails.
+	// Returns an error wrapping errPaneCaptureUnsupported when the underlying
+	// adapter cannot capture panes at all (a minimal/test substrate).
+	CaptureLastPane(ctx context.Context, scrollback int) (string, error)
+}
+
+// errPaneCaptureUnsupported is returned (wrapped) by a paneCapturer whose
+// underlying adapter lacks pane-capture entirely — distinct from a transient
+// capture invocation failure.  The seed-verify loop treats it as "verification
+// unavailable" and trusts the paste (prior behaviour), rather than retrying to
+// exhaustion.  In production the adapter is always tmux.OSAdapter (capture
+// supported), so this only affects test doubles and exotic substrates.
+//
+// Bead: hk-zexsj.
+var errPaneCaptureUnsupported = errors.New("daemon: pane capture unsupported by adapter")
 
 // quitSender is an optional interface implemented by tmux-backed Substrates
 // that can send `/quit Enter` to the most recently spawned pane as real
@@ -1456,9 +1527,11 @@ func pasteInjectImplementerInitial(ctx context.Context, inj pasteInjecter, claud
 
 	bufName := bufferName(claudeSessID, "task")
 	msg := "Please read .harmonik/agent-task.md and begin.\n"
-	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-		reason := fmt.Sprintf("implementer-initial WriteLastPane: %v", err)
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
+	// Verify the seed actually rendered into the input box, re-pasting on a
+	// silently-dropped paste, before submitting (hk-zexsj).  Marker "agent-task.md"
+	// is on the first line of the seed and guaranteed present on a successful
+	// render.  A non-empty reason means the paste never landed → fail loud/fast.
+	if reason := injectAndVerifySeed(ctx, inj, bufName, []byte(msg), "agent-task.md", "implementer-initial"); reason != "" {
 		return reason
 	}
 	// Settle after the paste before submitting (hk-76n5g, mirrors hk-jzpqo).
@@ -1538,9 +1611,10 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 	}
 
 	bufName := bufferName(claudeSessID, "task")
-	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-		reason := fmt.Sprintf("implementer-resume WriteLastPane: %v", err)
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
+	// Verify the combined task+feedback seed rendered into the input box before
+	// submitting, re-pasting on a silently-dropped paste (hk-zexsj).  Marker
+	// "agent-task.md" is on the first line of the seed and guaranteed present.
+	if reason := injectAndVerifySeed(ctx, inj, bufName, []byte(msg), "agent-task.md", "implementer-resume"); reason != "" {
 		return reason
 	}
 	// Settle after the paste before submitting (hk-76n5g).
@@ -1567,6 +1641,71 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 		sendResumeSubmitEnter(ctx, es)
 	}
 	return ""
+}
+
+// injectAndVerifySeed writes payload to the run's pane via WriteLastPane and
+// then confirms the seed landed by capturing the pane and checking for marker —
+// a substring guaranteed present in the seed text on a successful render (e.g.
+// the task-file path).  If the marker is absent (the paste was discarded by a
+// not-yet-ready TUI, or silently dropped by a churning SSH ControlMaster), it
+// re-runs the paste up to pasteVerifyAttempts total attempts with
+// pasteVerifyBackoff between them.
+//
+// Returns "" on success (marker observed, or the substrate cannot capture so the
+// paste is trusted after the first successful write).  Returns a non-empty
+// failure reason when every attempt either failed to write or failed to land the
+// marker; the caller emits pasteinject_failed for a non-empty reason.
+//
+// The capture+verify happens BEFORE the submit Enter, so the marker is matched
+// against the seed sitting unsubmitted in the input box.
+//
+// Bead: hk-zexsj.
+func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string, payload []byte, marker, phase string) string {
+	pc, canCapture := inj.(paneCapturer)
+	var lastErr error
+	for attempt := 1; attempt <= pasteVerifyAttempts; attempt++ {
+		if err := inj.WriteLastPane(ctx, bufName, payload); err != nil {
+			// A hard paste error is already loud (non-zero tmux/ssh exit) and is
+			// surfaced immediately, matching the pre-hk-zexsj contract.  The
+			// silent-discard case the verify loop targets is the OPPOSITE: tmux
+			// returns exit 0 (WriteLastPane == nil) yet nothing rendered.
+			reason := fmt.Sprintf("%s WriteLastPane: %v", phase, err)
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
+			return reason
+		}
+		if !canCapture {
+			// No capture capability (e.g. a minimal test double): trust the paste
+			// after the first successful write — prior behaviour, unchanged.
+			return ""
+		}
+		pane, capErr := pc.CaptureLastPane(ctx, pasteVerifyScrollback)
+		if errors.Is(capErr, errPaneCaptureUnsupported) {
+			// The substrate cannot capture this pane (e.g. a minimal test double):
+			// trust the paste that just succeeded — prior behaviour, unchanged.
+			return ""
+		}
+		switch {
+		case capErr != nil:
+			lastErr = capErr
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s CaptureLastPane attempt %d/%d: %v\n", phase, attempt, pasteVerifyAttempts, capErr)
+		case strings.Contains(pane, marker):
+			if attempt > 1 {
+				fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s seed landed on attempt %d/%d\n", phase, attempt, pasteVerifyAttempts)
+			}
+			return ""
+		default:
+			lastErr = fmt.Errorf("seed marker %q absent from pane", marker)
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s seed marker %q not yet in pane (attempt %d/%d)\n", phase, marker, attempt, pasteVerifyAttempts)
+		}
+		if attempt < pasteVerifyAttempts {
+			select {
+			case <-ctx.Done():
+				return fmt.Sprintf("%s: ctx cancelled during paste-verify: %v", phase, ctx.Err())
+			case <-time.After(pasteVerifyBackoff):
+			}
+		}
+	}
+	return fmt.Sprintf("%s: seed paste unverified after %d attempts: %v", phase, pasteVerifyAttempts, lastErr)
 }
 
 // sendSubmitEnterWithRetry delivers the post-paste submit Enter with a bounded
@@ -1655,9 +1794,11 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 		" READ-ONLY CONSTRAINT: you MUST NOT run git reset, git checkout, git cherry-pick, git merge," +
 		" git push, git rebase, or any other state-mutating git command. You are on a detached-HEAD" +
 		" reviewer worktree; mutating git state can corrupt the implementer's task branch.\n"
-	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-		reason := fmt.Sprintf("reviewer WriteLastPane: %v", err)
-		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
+	// Verify the reviewer seed rendered into the input box before submitting,
+	// re-pasting on a silently-dropped paste (hk-zexsj).  Marker "review-target.md"
+	// is on the first line of the seed and guaranteed present on a successful
+	// render.  A non-empty reason means the paste never landed → fail loud/fast.
+	if reason := injectAndVerifySeed(ctx, inj, bufName, []byte(msg), "review-target.md", "reviewer"); reason != "" {
 		return reason
 	}
 	// Send Enter after paste to submit the message regardless of terminal

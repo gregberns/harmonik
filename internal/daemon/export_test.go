@@ -1366,6 +1366,21 @@ var ExportedImplementerReseedGrace = &implementerReseedGrace
 // Bead: hk-7rgqs.
 var ExportedSplashDismissDelay = &splashDismissDelay
 
+// PaneCapturerExported is an exported alias for the unexported paneCapturer
+// interface so tests can supply a stub that drives the seed-paste
+// land-verification + re-paste loop (hk-zexsj).
+type PaneCapturerExported = paneCapturer
+
+// ExportedPasteVerifyAttempts, ExportedPasteVerifyBackoff and
+// ExportedPasteVerifyScrollback are pointers to the package-level seed-paste
+// verify knobs so tests can bound the attempts and shrink the backoff without
+// waiting real wall time (hk-zexsj).
+var (
+	ExportedPasteVerifyAttempts   = &pasteVerifyAttempts
+	ExportedPasteVerifyBackoff    = &pasteVerifyBackoff
+	ExportedPasteVerifyScrollback = &pasteVerifyScrollback
+)
+
 // ExportedPasteInjectReviewer exposes pasteInjectReviewer for unit tests that
 // assert the reviewer kick-off delivery (splash-dismiss → paste → bounded submit
 // Enter) directly (hk-7rgqs).

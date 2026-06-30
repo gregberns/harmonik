@@ -2987,7 +2987,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if w != nil {
 			rbc = &remoteBeadCtx{
 				worker:    *w,
-				sshRunner: tmuxpkg.SSHRunner{Host: w.Host},
+				// hk-zexsj: pin the tmux SSHRunner off the shared SSH ControlMaster
+				// (mirroring reversetunnel.go's tunnel opts). A churning multiplexed
+				// master can silently drop a multiplexed load-buffer / paste-buffer
+				// mid-write (the hk-cnp17 truncation family), discarding the seed
+				// paste → agent never starts → 30-min timeout. A dedicated,
+				// non-multiplexed connection per tmux command removes that failure
+				// mode. ssh uses the first value per option, so these precede any
+				// worker opts.
+				sshRunner: tmuxpkg.SSHRunner{Host: w.Host, Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"}},
 			}
 			defer deps.workerRegistry.ReleaseSlot()
 

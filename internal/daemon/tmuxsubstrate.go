@@ -2011,6 +2011,34 @@ func (p *perRunSubstrate) SendQuitToLastPane(ctx context.Context) error {
 	return p.pasteAdapter().SendKeysQuit(ctx, target)
 }
 
+// paneCaptureAdapter is the optional capability (satisfied by tmux.OSAdapter and
+// its WithRunner SSH-backed copies) for reading rendered pane text.  It is the
+// read seam behind the seed-paste land-verification (hk-zexsj).
+type paneCaptureAdapter interface {
+	CapturePane(ctx context.Context, paneTarget string, scrollback int) (string, error)
+}
+
+// CaptureLastPane returns the rendered text (plus scrollback lines of tail) of
+// this run's pane — the pane captured at SpawnWindow time, NOT the shared "last
+// pane".  For a remote run pasteAdapter() reads the pane on the WORKER's tmux
+// server over the same SSH runner used for the paste, so the verification sees
+// exactly what the seed paste targeted.
+//
+// Implements paneCapturer (consumed by the seed-paste verify-and-retry loop).
+//
+// Bead: hk-zexsj.
+func (p *perRunSubstrate) CaptureLastPane(ctx context.Context, scrollback int) (string, error) {
+	target := p.paneTarget()
+	if target == "" {
+		return "", fmt.Errorf("daemon: perRunSubstrate.CaptureLastPane: no window spawned yet: %w", tmux.ErrStructural)
+	}
+	pa, ok := p.pasteAdapter().(paneCaptureAdapter)
+	if !ok {
+		return "", fmt.Errorf("daemon: perRunSubstrate.CaptureLastPane: adapter %T lacks CapturePane: %w", p.pasteAdapter(), errPaneCaptureUnsupported)
+	}
+	return pa.CapturePane(ctx, target, scrollback)
+}
+
 // PaneHasActiveProcess returns true when the tmux pane shell (identified by the
 // pane target captured at SpawnWindow time) has at least one child process, or
 // when the pane PID itself is the handler process (exec'd shell with no

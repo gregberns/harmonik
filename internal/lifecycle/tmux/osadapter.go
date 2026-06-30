@@ -493,6 +493,35 @@ func (o OSAdapter) SendKeysQuit(ctx context.Context, paneTarget string) error {
 	return nil
 }
 
+// CapturePane returns the rendered text of paneTarget plus a bounded scrollback
+// tail via `tmux capture-pane -p -t <paneTarget> -S -<scrollback>`.
+//
+// It routes through effectiveRunner(), so a remote SSHRunner reads the pane on
+// the WORKER's tmux server for free (the same seam WriteToPane / SendKeysEnter
+// use).  scrollback is the number of history lines to include before the visible
+// region (negative values are clamped to 0); enough scrollback lets the caller
+// see text that has already scrolled off the visible area.
+//
+// This is the read-side primitive behind the seed-paste land-verification
+// (hk-zexsj): after WriteToPane injects a kick-off seed, the caller captures the
+// pane and checks for a marker substring to confirm the bracketed paste actually
+// rendered into the TUI input box rather than being silently discarded by a
+// not-yet-ready React/ink TUI (the fire-and-forget exit-0 trap).
+//
+// Returns [*ErrTmuxFailure] on tmux invocation errors.
+func (o OSAdapter) CapturePane(ctx context.Context, paneTarget string, scrollback int) (string, error) {
+	if scrollback < 0 {
+		scrollback = 0
+	}
+	//nolint:gosec // G204: paneTarget is a daemon-managed pane address; scrollback is an int
+	cmd := o.effectiveRunner().Command(ctx, "tmux", "capture-pane", "-p", "-t", paneTarget, "-S", fmt.Sprintf("-%d", scrollback))
+	out, err := cmd.Output()
+	if err != nil {
+		return "", &ErrTmuxFailure{Op: "capture-pane", ExitCode: exitCodeOf(err), Stderr: extractStderr(err)}
+	}
+	return string(out), nil
+}
+
 // WriteToPane is the preferred high-level helper for daemon→pane writes. It
 // executes the full PL-021d sequence:
 //

@@ -43,6 +43,7 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -88,16 +89,20 @@ func (e *ErrMissingCodexStaleWALMaxBytes) Error() string {
 //
 // Behavior:
 //   - projectRoot == "" or .harmonik/config.yaml absent => no-op, returns nil.
+//   - config.yaml present but UNREADABLE (permission/IO, not fs.ErrNotExist) =>
+//     best-effort no-op (slog.Warn + return nil); a read error does not block a
+//     launch.
 //   - config.yaml present but codex.stale_wal_max_bytes absent => returns
 //     *ErrMissingCodexStaleWALMaxBytes (fail loud). A YAML parse error is also
 //     returned.
 //   - Otherwise: for each $CODEX_HOME/state_*.sqlite-wal larger than the
 //     threshold AND not held open by any process, back up the wal + matching
-//     -shm into $CODEX_HOME/.wal-backup-<unixnano>/ and remove them.
+//     -shm into $CODEX_HOME/.wal-backup-<unixnano>/ and remove them — with a
+//     pre-backup AND post-backup (TOCTOU) unheld + unchanged re-check.
 //
 // The ONLY errors returned are the missing-required-key error and a YAML parse
-// error. All cleanup IO (stat/lsof/backup/remove) is best-effort and logged via
-// slog; a cleanup hiccup never blocks a codex launch.
+// error. All other paths (config read/IO, stat/lsof/backup/remove) are
+// best-effort and logged via slog; a cleanup hiccup never blocks a codex launch.
 func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 	if projectRoot == "" {
 		return nil
@@ -106,13 +111,15 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 	//nolint:gosec // G304: configPath is built from operator-supplied projectRoot; not user input.
 	raw, readErr := os.ReadFile(configPath)
 	if readErr != nil {
-		if os.IsNotExist(readErr) {
+		if errors.Is(readErr, fs.ErrNotExist) {
 			// No project config => guard disabled (governor "no config.yaml" rule).
 			return nil
 		}
-		// A config.yaml exists but is unreadable — surface it as a parse-class
-		// error so the launch fails loud rather than silently skipping the guard.
-		return fmt.Errorf("daemon: codex stale-WAL guard: read %s: %w", configPath, readErr)
+		// config.yaml is present but unreadable (permission/IO). Only a
+		// missing-key or YAML-parse failure is allowed to block a codex launch;
+		// a read/IO error is best-effort — log and no-op rather than fail loud.
+		slog.Warn("codex_wal_guard_config_read_error", "path", configPath, "error", readErr.Error())
+		return nil
 	}
 
 	var cfg codexWALGuardConfig
@@ -186,6 +193,32 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 			}
 		}
 
+		// TOCTOU re-check (data-corruption guard). $HOME/.codex is shared across
+		// all concurrent codex runs, and the backup copy above is slow. During it
+		// a freshly-dispatched codex can open the same state_*.sqlite and start
+		// writing a LIVE -wal/-shm at these exact paths. Removing them now would
+		// delete a live writer's sidecars — the exact corruption this guard
+		// exists to prevent. So immediately before os.Remove, re-validate both
+		// "unheld" (lsof) and "unchanged-stale" (re-stat) within a syscall pair;
+		// only then remove. flock would not help — codex takes no such lock, so a
+		// lock only serializes guard runs against each other, not guard-vs-codex.
+		reWalHeld, reWalErr := fileHasOpenHandle(wal)
+		if reWalErr != nil || reWalHeld {
+			slog.Warn("codex_wal_guard_skip_held_after_backup", "wal", wal, "held", reWalHeld, "uncertain", reWalErr != nil)
+			continue
+		}
+		reBaseHeld, reBaseErr := fileHasOpenHandle(base)
+		if reBaseErr != nil || reBaseHeld {
+			slog.Warn("codex_wal_guard_skip_held_after_backup", "file", base, "held", reBaseHeld, "uncertain", reBaseErr != nil)
+			continue
+		}
+		if !walUnchangedStale(info, wal, maxBytes) {
+			// A live writer touched the WAL after our pre-backup stat (gone,
+			// shrank to/below threshold, or mtime changed). Leave it.
+			slog.Warn("codex_wal_guard_skip_changed_after_backup", "wal", wal)
+			continue
+		}
+
 		if rmErr := os.Remove(wal); rmErr != nil {
 			slog.Warn("codex_wal_guard_remove_failed", "wal", wal, "error", rmErr.Error())
 			continue
@@ -203,6 +236,24 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 	}
 
 	return nil
+}
+
+// walUnchangedStale reports whether wal is still the same stale file that pre
+// described (same mtime), still exists, and is still larger than maxBytes. It is
+// the re-stat half of the TOCTOU re-check: a true result means no live writer
+// touched the WAL between the pre-backup stat and now, so removal is safe.
+//
+// Returns false if the file is gone, has shrunk to/below the threshold, or its
+// ModTime differs from pre — any of which indicates a concurrent writer.
+func walUnchangedStale(pre os.FileInfo, wal string, maxBytes int64) bool {
+	cur, err := os.Stat(wal)
+	if err != nil {
+		return false
+	}
+	if cur.Size() <= maxBytes {
+		return false
+	}
+	return cur.ModTime().Equal(pre.ModTime())
 }
 
 // fileHasOpenHandle reports whether any process holds path open, via `lsof`.

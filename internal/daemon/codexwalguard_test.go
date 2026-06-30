@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // writeConfigYAML writes a minimal .harmonik/config.yaml under projectRoot with
@@ -120,6 +121,59 @@ func TestCleanCodexStaleWAL_MissingKey_FailsLoud(t *testing.T) {
 	}
 	if _, statErr := os.Stat(wal); statErr != nil {
 		t.Fatalf("expected wal untouched on missing-key fail, stat err = %v", statErr)
+	}
+}
+
+func TestCleanCodexStaleWAL_CodexBlockNoKey_FailsLoud(t *testing.T) {
+	projectRoot := t.TempDir()
+	codexHome := t.TempDir()
+	// A `codex:` block is present but stale_wal_max_bytes is absent.
+	writeConfigYAML(t, projectRoot, "codex:\n  model: gpt-5\n")
+	wal := writeWAL(t, codexHome, 4096)
+
+	err := cleanCodexStaleWAL(projectRoot, codexHome)
+	var target *ErrMissingCodexStaleWALMaxBytes
+	if !errors.As(err, &target) {
+		t.Fatalf("expected ErrMissingCodexStaleWALMaxBytes for codex block w/o key, got %T: %v", err, err)
+	}
+	if _, statErr := os.Stat(wal); statErr != nil {
+		t.Fatalf("expected wal untouched on missing-key fail, stat err = %v", statErr)
+	}
+}
+
+// TestWALUnchangedStale exercises the re-stat half of the TOCTOU re-check
+// directly (no lsof dependency). The lsof half + the full concurrent race are
+// covered by inspection — see the re-check block in cleanCodexStaleWAL.
+func TestWALUnchangedStale(t *testing.T) {
+	codexHome := t.TempDir()
+	wal := writeWAL(t, codexHome, 4096)
+	pre, err := os.Stat(wal)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+
+	// Unchanged + still over threshold => safe to remove.
+	if !walUnchangedStale(pre, wal, 1024) {
+		t.Fatalf("expected unchanged-stale to be true for untouched over-threshold wal")
+	}
+	// Now below threshold (size 4096 <= maxBytes 8192) => not stale, skip.
+	if walUnchangedStale(pre, wal, 8192) {
+		t.Fatalf("expected false when size no longer exceeds threshold")
+	}
+	// A live writer rewrites the wal => mtime changes => skip.
+	future := pre.ModTime().Add(time.Hour)
+	if err := os.Chtimes(wal, future, future); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	if walUnchangedStale(pre, wal, 1024) {
+		t.Fatalf("expected false when mtime changed after pre-stat")
+	}
+	// Gone entirely => skip.
+	if err := os.Remove(wal); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if walUnchangedStale(pre, wal, 1024) {
+		t.Fatalf("expected false when wal no longer exists")
 	}
 }
 

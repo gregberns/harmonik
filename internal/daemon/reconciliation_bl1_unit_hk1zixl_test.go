@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -190,6 +191,32 @@ func bl1Contains(ids []string, want string) bool {
 	return false
 }
 
+// bl1InitGitRepo creates a git repo with one commit that carries no "Refs:" line,
+// so git log --grep "Refs: hk-*" returns empty output (exit 0, clean no-match).
+func bl1InitGitRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
+	// Commit without any "Refs:" line so the --grep scan finds nothing.
+	dummy := filepath.Join(dir, "dummy")
+	if err := os.WriteFile(dummy, []byte("x"), 0o600); err != nil {
+		t.Fatalf("bl1InitGitRepo: write dummy: %v", err)
+	}
+	run("add", "dummy")
+	run("commit", "-m", "initial commit (no Refs line)")
+	return dir
+}
+
 // TestRunCatBL1StartupSweep_OpenOrphanClosed_InProgressEscalated drives the
 // Cat-BL1 sweep with one OPEN orphan and one IN_PROGRESS orphan (both with no
 // parent merge commit) and asserts:
@@ -203,7 +230,9 @@ func bl1Contains(ids []string, want string) bool {
 func TestRunCatBL1StartupSweep_OpenOrphanClosed_InProgressEscalated(t *testing.T) {
 	t.Parallel()
 
-	projectDir := t.TempDir() // NOT a git repo → git log fails → every candidate is an orphan
+	// Real git repo with no "Refs:" commit → git log exits 0 with empty output
+	// (clean no-match) → hasParentMergeCommit returns (false, nil) → orphan detected.
+	projectDir := bl1InitGitRepo(t)
 	closeMarker := filepath.Join(t.TempDir(), "br-close-invocations.txt")
 	brPath := bl1WriteDispatchingMockBr(t, closeMarker)
 
@@ -242,5 +271,52 @@ func TestRunCatBL1StartupSweep_OpenOrphanClosed_InProgressEscalated(t *testing.T
 	if bl1Contains(closed, bl1InProgressOrphanID) {
 		t.Errorf("IN_PROGRESS orphan %s was closed; it must be escalated, not auto-closed; close-marker: %v",
 			bl1InProgressOrphanID, closed)
+	}
+}
+
+// TestRunCatBL1StartupSweep_GitError_BeadsSkipped verifies that when git exits
+// non-zero (e.g. the directory is not a git repo), the sweep skips affected
+// beads rather than treating the exec failure as a clean no-match and
+// auto-closing them.
+//
+// Spec ref: specs/reconciliation/spec.md §8.BL1.
+// Bead ref: hk-jjbwj.
+func TestRunCatBL1StartupSweep_GitError_BeadsSkipped(t *testing.T) {
+	t.Parallel()
+
+	// Non-git directory → git log exits non-zero → hasParentMergeCommit returns error
+	// → sweep logs and skips each bead (no close, no escalation).
+	projectDir := t.TempDir()
+	closeMarker := filepath.Join(t.TempDir(), "br-close-invocations.txt")
+	brPath := bl1WriteDispatchingMockBr(t, closeMarker)
+
+	emitter := &bl1RecordingEmitter{}
+	cfg := daemon.CatBL1StartupSweepConfig{
+		ProjectDir:   projectDir,
+		BrPath:       brPath,
+		TargetBranch: "main",
+		Emitter:      emitter,
+		LogWriter:    os.Stderr,
+	}
+
+	if err := daemon.RunCatBL1StartupSweep(context.Background(), cfg); err != nil {
+		t.Fatalf("RunCatBL1StartupSweep returned error: %v", err)
+	}
+
+	// Git error → all beads skipped: no orphaned_child_bead events.
+	orphanIDs := emitter.orphanBeadIDs(t)
+	if len(orphanIDs) != 0 {
+		t.Errorf("expected no orphaned_child_bead events on git error, got %v", orphanIDs)
+	}
+
+	// No beads should have been closed.
+	closed := bl1ReadCloseMarker(t, closeMarker)
+	if len(closed) != 0 {
+		t.Errorf("expected no br close calls on git error, got %v", closed)
+	}
+
+	// No operator escalation either.
+	if emitter.has(core.EventTypeOperatorEscalationRequired) {
+		t.Errorf("expected no operator_escalation_required on git error, but one was emitted")
 	}
 }

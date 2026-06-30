@@ -233,9 +233,11 @@ func hasParentMergeCommit(ctx context.Context, projectDir, targetBranch, parentB
 		"--grep", "Refs: "+parentBeadID, "--format=%H", targetBranch)
 	out, err := cmd.Output()
 	if err != nil {
-		// git log exits non-zero when the branch doesn't exist or no match.
-		// Treat as "no merge commit" — conservative: won't falsely close a live bead.
-		return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
+		// Return the error so the caller can skip this bead rather than treating
+		// exec failure (missing repo, absent target branch) as a clean no-match.
+		// A clean no-match exits 0 with empty output; a non-zero exit is a distinct
+		// signal that the git state is unknown — skipping is safer than auto-closing.
+		return false, err
 	}
 	return strings.TrimSpace(string(out)) != "", nil
 }

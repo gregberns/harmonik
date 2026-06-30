@@ -118,6 +118,21 @@ OPS_CRITICAL_COOLDOWN=1800  # 30 minutes
 # bus every 5 min for hours. A NEW distinct signal-identity still fires at the fast 5-min
 # cadence; when this condition clears its state is dropped and it re-alerts fresh.
 PERSISTENT_IMMEDIATE_COOLDOWN=1800  # 30 minutes (was 5 min before the condition persisted)
+# hk-7o4i0 Fix A: flap-resistant retention window for flap-prone critical signals
+# (watch-stalled). When such a signal clears for a tick its {first_ts,count} is NOT
+# discarded immediately (the old behavior re-fired a fresh count=1 IMMEDIATE on every
+# re-trip, bypassing the persistence throttle and producing the ~57-IMMEDIATE post-deploy
+# storm). Instead the state is RETAINED across this wall-clock window so intermittent
+# re-trips ACCUMULATE toward the cooldown/persistence throttle above. ~3 ticks at the
+# 5-min ops-monitor cadence: long enough to bridge a one-tick flap, short enough that a
+# genuinely-resolved signal still ages out and re-alerts fresh on real recurrence.
+WATCH_STALL_FLAP_GRACE=900  # 15 minutes (~3 ops-monitor ticks)
+# hk-7o4i0 Fix B: deploy/restart suppression window. While the watch is BOOTING — its
+# tmux session (re)started this recently, OR the daemon emitted a restart/startup marker
+# this recently — its escalation cursor is frozen because it is coming up, NOT because it
+# is stalled. Suppress watch-stalled for this window so a post-deploy actionable backlog
+# past the (legitimately) frozen cursor does not storm the bus during the boot.
+WATCH_RESTART_SUPPRESS_WINDOW=600  # 10 minutes
 
 mkdir -p "$OUT_DIR"
 
@@ -259,6 +274,18 @@ WATCH_TMUX_ALIVE=false
 if [[ -n "$_CAPTAIN_HASH" ]]; then
   tmux has-session -t "harmonik-${_CAPTAIN_HASH}-crew-watch" 2>/dev/null \
     && WATCH_TMUX_ALIVE=true || true
+fi
+
+# ── hk-7o4i0 Fix B: watch tmux session start epoch (deploy/restart suppression) ─
+# A watch whose tmux session (re)started within WATCH_RESTART_SUPPRESS_WINDOW is booting,
+# not stalled. session_created is epoch seconds; 0 == unknown (no session / probe failed)
+# → no suppression from this source.
+WATCH_SESSION_CREATED=0
+if [[ -n "$_CAPTAIN_HASH" && "$WATCH_TMUX_ALIVE" == "true" ]]; then
+  _wsc=$(tmux display-message -p -t "harmonik-${_CAPTAIN_HASH}-crew-watch" '#{session_created}' 2>/dev/null || echo "")
+  if [[ "$_wsc" =~ ^[0-9]+$ ]]; then
+    WATCH_SESSION_CREATED="$_wsc"
+  fi
 fi
 
 # ── WE9: watch absent threshold + stall ticks (config-or-fail-loud) ──────────
@@ -556,6 +583,10 @@ watch_stall_ticks     = int('$WATCH_STALL_TICKS')
 prev_watch_cursor     = '$PREV_WATCH_CURSOR'
 prev_watch_stall_misses = int('$PREV_WATCH_STALL_MISSES')
 watch_cursor          = '$WATCH_CURSOR'
+# hk-7o4i0: flap-retention grace + deploy/restart suppression inputs.
+watch_session_created = int('$WATCH_SESSION_CREATED')
+watch_restart_suppress_window = int('$WATCH_RESTART_SUPPRESS_WINDOW')
+watch_stall_flap_grace = int('$WATCH_STALL_FLAP_GRACE')
 # SD-1: first KNOWN ready lane (non-null epic, ungated/expired-gate, >=1 ready bead).
 # Empty lane name == no known-ready lane this tick (the predicate is false).
 known_ready_lane       = '''$KNOWN_READY_LANE'''
@@ -607,6 +638,8 @@ def _ev_epoch(_tw, _dt):
     _d = _dt.datetime.strptime(_ts_clean, '%Y-%m-%d %H:%M:%S')
     return int(_d.replace(tzinfo=_dt.timezone.utc).timestamp())
 
+# hk-7o4i0 Fix B: most-recent daemon (re)start marker epoch (0 = none in window).
+daemon_restart_ts = 0
 # WE9: cursor-advancement tracking (initialised before events loop; updated inside)
 latest_event_id = ''  # last event_id seen in the scan window
 _cursor_seq = -1      # _event_seq where watch_cursor was found; -1 = not in window
@@ -742,6 +775,17 @@ if _os.path.isfile(_events_path):
                         if _e >= completed_run_ts.get(_rid, 0):
                             completed_run_ts[_rid] = _e
                             completed_run_seq[_rid] = _event_seq
+
+                elif _etype in ('daemon_started', 'daemon_ready', 'daemon_startup'):
+                    # hk-7o4i0 Fix B: a daemon (re)start / startup marker. Used to suppress
+                    # watch-stalled during the post-deploy boot window — the watch's cursor
+                    # is frozen because it is coming up with the daemon, not because it is
+                    # ignoring escalation-worthy work.
+                    _tw = _ev.get('timestamp_wall', '')
+                    if _tw:
+                        _e = _ev_epoch(_tw, _dt)
+                        if _e > daemon_restart_ts:
+                            daemon_restart_ts = _e
 
                 elif _etype == 'node_dispatch_requested':
                     # The engine requested a node for this run. node_id is under .payload.
@@ -1064,9 +1108,23 @@ watch_down = watch_opsmonitor_target != 'captain' and not watch_present and not 
 # is sitting past the cursor unescalated. Benign churn no longer trips the counter.
 new_watch_stall_misses = 0
 watch_stalled = False
+# hk-7o4i0 Fix B: deploy/restart suppression. While the watch is BOOTING — its tmux
+# session (re)started within watch_restart_suppress_window, OR the daemon emitted a
+# restart/startup marker that recently — its escalation cursor is frozen because it is
+# coming up, not because it is stalled. Suppress watch-stalled (and hold the miss counter
+# at 0) for that window so a post-deploy actionable backlog past the frozen cursor does
+# not storm. The counter resets, so after the window it takes watch_stall_ticks fresh
+# frozen ticks to (re)trip — a real post-boot stall is still caught.
+watch_recently_restarted = (
+    watch_session_created > 0
+    and 0 <= ts_epoch - watch_session_created <= watch_restart_suppress_window)
+daemon_recently_restarted = (
+    daemon_restart_ts > 0
+    and 0 <= ts_epoch - daemon_restart_ts <= watch_restart_suppress_window)
+watch_restart_suppressed = watch_recently_restarted or daemon_recently_restarted
 if watch_opsmonitor_target != 'captain' and watch_cursor:
     cursor_frozen = prev_watch_cursor != '' and watch_cursor == prev_watch_cursor
-    if cursor_frozen and actionable_events_past_cursor:
+    if cursor_frozen and actionable_events_past_cursor and not watch_restart_suppressed:
         new_watch_stall_misses = prev_watch_stall_misses + 1
         if new_watch_stall_misses >= watch_stall_ticks:
             watch_stalled = True
@@ -1261,7 +1319,11 @@ for sig in immediate_signals:
                     'last_ops_critical_ts': prev_entry.get('last_ops_critical_ts', 0),
                 }
             else:
-                new_alerted[sig] = prev_entry  # cooldown active; keep state
+                # cooldown active; keep state. Drop any flap-grace marker — the signal is
+                # active again, so a later clear should restart its grace window (Fix A).
+                _kept = dict(prev_entry)
+                _kept.pop('cleared_ts', None)
+                new_alerted[sig] = _kept
         else:
             age = ts_epoch - prev_entry
             if age >= cd:
@@ -1312,7 +1374,37 @@ for sig in send_immediate_signals:
     }
 
 # Drop resolved signals (not in this run's immediate_signals) from alerted set.
-# They will re-alert fresh if the condition recurs.
+# They will re-alert fresh if the condition recurs — EXCEPT flap-prone signals, retained
+# briefly below so an intermittent flap does not re-fire fresh every tick.
+#
+# ── hk-7o4i0 Fix A: flap-resistant retention for flap-prone critical signals ──
+# A signal absent from this tick's immediate_signals is normally not copied into
+# new_alerted, so it is DROPPED and re-alerts as a fresh count=1 edge if it recurs. For a
+# FLAPPING signal (watch-stalled during a deploy: the escalation cursor advances one tick
+# then re-freezes, or the actionable backlog momentarily drains) that fresh-edge re-fire
+# bypasses the persistence throttle and storms the bus (~1 IMMEDIATE/tick across the whole
+# post-deploy window — the observed ~57 storm). Retain such a signal's {first_ts,count}
+# across watch_stall_flap_grace so intermittent re-trips ACCUMULATE toward the
+# cooldown/persistence throttle instead of resetting. A genuinely-resolved signal still
+# ages out after the grace window and re-alerts fresh on real recurrence. Scoped to
+# FLAP_RETAIN_PREFIXES so non-flap criticals (daemon-down etc.) keep drop-on-resolve.
+FLAP_RETAIN_PREFIXES = ('watch-stalled',)
+_immediate_set = set(immediate_signals)
+for _sig, _pv in prev_alerted.items():
+    if _sig in new_alerted or _sig in _immediate_set:
+        continue  # active this tick — already handled above
+    if not any(_sig.startswith(p) for p in FLAP_RETAIN_PREFIXES):
+        continue  # non-flap signal: drop on resolve (unchanged behavior)
+    _pe = _norm_alerted(_pv, True)
+    if not isinstance(_pe, dict):
+        continue
+    # First clear tick stamps cleared_ts=now; subsequent clear ticks measure age from it.
+    _cleared_since = _pe.get('cleared_ts', ts_epoch)
+    if ts_epoch - _cleared_since <= watch_stall_flap_grace:
+        _retained = dict(_pe)
+        _retained.setdefault('cleared_ts', ts_epoch)
+        new_alerted[_sig] = _retained
+    # else: grace expired → omit (drop); re-alerts fresh on recurrence.
 
 # ── Determine whether to send digest (cooldown) ──────────────────────────────
 # send_digest: would send digest (no immediate preemption, cooldown expired)
@@ -1345,6 +1437,9 @@ snapshot = {
     'known_ready_lane_epic': known_ready_lane_epic,
     'known_ready_lane_count': known_ready_lane_count,
     'review_bypass_run_ids': review_bypass_run_ids,
+    # hk-7o4i0 Fix B: true when watch-stalled was suppressed because the watch / daemon
+    # was within its post-deploy restart window this tick.
+    'watch_restart_suppressed': watch_restart_suppressed,
     'release_due': release_due,
     'release_commit_count': release_commit_count,
     'ci_status': ci_status,

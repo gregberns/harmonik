@@ -64,6 +64,18 @@
 #   [x] SD-4 GATE-EXPIRY: epic-bearing ready lane w/ FUTURE date-only gate ("2099-01-01")
 #                         AND future RFC3339 gate ("2099-01-01T00:00:00Z") → EXCLUDED, no wake;
 #                         PAST gate ("2000-01-01") → LAPSES to candidate, wake fires (Test 39a/b/c)
+#   [x] hk-7o4i0 Fix A FLAP STORM: watch-stalled flapping (trip/clear/trip...) re-fires a FRESH
+#                         tier-1 IMMEDIATE every trip under the old drop-on-clear logic (~1/tick =
+#                         the 57-IMMEDIATE post-deploy storm). After the fix the cleared signal's
+#                         {first_ts,count} is RETAINED across the grace window so re-trips fall under
+#                         the cooldown/persistence throttle → <=1 send across N flap cycles (Test 40)
+#   [x] hk-7o4i0 Fix B DEPLOY SUPPRESS: cursor frozen + ACTIONABLE backlog but daemon recently
+#                         emitted a restart marker (daemon_started within window) → watch-stalled
+#                         SUPPRESSED (the watch is booting, not stalled) (Test 41a)
+#   [x] hk-7o4i0 Fix B WATCH-RESTART SUPPRESS: same, but suppression driven by the watch tmux
+#                         session_created being within the restart window (Test 41b)
+#   [x] hk-7o4i0 Fix B NEGATIVE: daemon restart marker OUTSIDE the window → NOT suppressed →
+#                         watch-stalled fires normally (Test 41c)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -173,6 +185,8 @@ setup_fixture() {
   local watch_absent_threshold=600 # WE9: absent_thresh_s written to config when watch is target
   local watch_stall_ticks=3        # WE9: stall_ticks written to config when watch is target
   local watch_cursor=''            # WE9: content of .harmonik/watch/cursor ('' = no cursor file)
+  local watch_session_created=''   # hk-7o4i0: epoch returned by `tmux display-message ... session_created`
+                                   # ('' = probe returns nothing → script treats start time as unknown)
   local state_json=''
   local events_content=''
   local br_ready_json='[]'   # `br ready --limit 0 --json` output for the stub
@@ -202,6 +216,7 @@ setup_fixture() {
       --watch-absent-threshold)    watch_absent_threshold="$2"; shift 2 ;;  # WE9
       --watch-stall-ticks)         watch_stall_ticks="$2"; shift 2 ;;        # WE9
       --watch-cursor)              watch_cursor="$2"; shift 2 ;;              # WE9
+      --watch-session-created)     watch_session_created="$2"; shift 2 ;;    # hk-7o4i0 Fix B
       --state-json)                state_json="$2";    shift 2 ;;
       --events-jsonl)              events_content="$2";shift 2 ;;
       --br-ready-json)             br_ready_json="$2"; shift 2 ;;
@@ -316,12 +331,14 @@ EOF
   # Stub `tmux` for captain-liveness and watch-liveness probes.
   local tmux_captain_alive_val="${tmux_captain_alive}"
   local tmux_watch_alive_val="${tmux_watch_alive}"
+  local tmux_watch_session_created_val="${watch_session_created}"
   local tmux_bin="$tmpdir/bin/tmux"
   cat > "$tmux_bin" <<EOF
 #!/usr/bin/env bash
 # Stub tmux for ops-monitor liveness probes (captain + watch, WE7)
 TMUX_CAPTAIN_ALIVE=${tmux_captain_alive_val}
 TMUX_WATCH_ALIVE=${tmux_watch_alive_val}
+TMUX_WATCH_SESSION_CREATED='${tmux_watch_session_created_val}'
 if [[ "\$1" == "has-session" ]]; then
   session="\${3:-}"
   if [[ "\$session" == *"-watch" ]]; then
@@ -329,6 +346,14 @@ if [[ "\$1" == "has-session" ]]; then
   else
     [[ "\$TMUX_CAPTAIN_ALIVE" == "true" ]] && exit 0 || exit 1
   fi
+fi
+# hk-7o4i0 Fix B: 'display-message -p -t <session> #{session_created}' → watch start epoch.
+if [[ "\$1" == "display-message" ]]; then
+  if [[ -n "\$TMUX_WATCH_SESSION_CREATED" ]]; then
+    printf '%s\n' "\$TMUX_WATCH_SESSION_CREATED"
+    exit 0
+  fi
+  exit 1
 fi
 exit 0
 EOF
@@ -2408,6 +2433,164 @@ KL_39C=$(python3 -c "import json;print(json.load(open('$LATEST')).get('known_rea
 assert_eq "39c past gate: known_ready_lane == lapsed-lane" "lapsed-lane" "$KL_39C"
 assert_json_list_contains "39c past gate: immediate_signals names lapsed-lane" \
   "$LATEST" "immediate_signals" "lane=lapsed-lane"
+rm -rf "$PROJ"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# hk-7o4i0: watch-stalled flap STORM + deploy/restart suppression.
+#
+# RED repro: when watch.opsmonitor_target=watch and the watch is restarting after a
+# deploy, its escalation cursor freezes while an actionable post-deploy backlog sits
+# past the cursor. The cursor intermittently advances (or the backlog momentarily
+# drains) for one tick, so watch-stalled FLAPS on/off. Under the old logic each clear
+# DROPPED the signal's {first_ts,count}, so each re-trip was a fresh count=1 edge that
+# fired an IMMEDIATE instantly and never reached the persistence throttle — ~1 IMMEDIATE
+# per 5-min tick across the whole post-deploy window (the observed ~57 storm).
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Test 40: flap STORM → retained-state throttle (Fix A) ─────────────────────
+# stall_ticks=1 so a single frozen tick with an ACTIONABLE event past the cursor trips
+# watch-stalled; a tick with only benign churn past the (still-frozen) cursor clears it.
+# We drive N TRIP ticks interleaved with CLEAR ticks (cursor stays frozen the whole
+# time — only the actionable-vs-benign backlog toggles, the real flap shape) and count
+# how many watch-stalled IMMEDIATEs actually land on the bus.
+echo ""
+echo "=== Test 40: hk-7o4i0 Fix A — watch-stalled flap storm → retained-state throttle ==="
+FLAP_CURSOR="eid-flap-cursor-001"
+# Seed: cursor already frozen (prev==current), no prior alert state, 0 prior misses.
+STATE_40='{"schema_version":1,"ts":"2026-06-24T00:00:00Z","stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{},"watch_cursor":"'"$FLAP_CURSOR"'","watch_stall_misses":0}'
+CW_40='{"agent":"watch","status":"online","last_seen":"'"$(ts_ago 30)"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_40" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 1 \
+  --watch-cursor "$FLAP_CURSOR" \
+  --state-json "$STATE_40" \
+  --tmux-watch-alive true \
+)
+# Cursor stays fixed/frozen; we only rewrite events.jsonl to toggle the backlog.
+EVENTS_PATH="$PROJ/.harmonik/events/events.jsonl"
+write_trip_events() {   # actionable (run_failed) past the frozen cursor → stalled
+  printf '%s\n%s\n' \
+    '{"event_id":"'"$FLAP_CURSOR"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 300)"'","run_id":"r0"}' \
+    '{"event_id":"eid-flap-act","type":"run_failed","timestamp_wall":"'"$(ts_ago 100)"'","run_id":"r1"}' \
+    > "$EVENTS_PATH"
+}
+write_clear_events() {  # only benign churn past the frozen cursor → not stalled
+  printf '%s\n%s\n' \
+    '{"event_id":"'"$FLAP_CURSOR"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 300)"'","run_id":"r0"}' \
+    '{"event_id":"eid-flap-ben","type":"run_completed","timestamp_wall":"'"$(ts_ago 100)"'","run_id":"r1"}' \
+    > "$EVENTS_PATH"
+}
+N_FLAP=4
+for ((c=0; c<N_FLAP; c++)); do
+  write_trip_events
+  run_check "$PROJ" > /dev/null 2>&1
+  if (( c < N_FLAP - 1 )); then
+    write_clear_events
+    run_check "$PROJ" > /dev/null 2>&1
+  fi
+done
+LOG_40=$(comms_log "$PROJ")
+SENDS_40=0
+if [[ -f "$LOG_40" ]]; then
+  SENDS_40=$(grep -c 'watch-stalled' "$LOG_40" 2>/dev/null || echo 0)
+fi
+# RED (pre-fix): each of the N trip ticks re-fires a fresh IMMEDIATE → SENDS_40 == N (storm).
+# GREEN (post-fix): the retained {first_ts,count} routes re-trips through the cooldown/
+# persistence throttle → SENDS_40 <= 1 across N back-to-back flap cycles.
+if (( SENDS_40 <= 1 )); then
+  pass "40: flap storm throttled — $SENDS_40 watch-stalled IMMEDIATE(s) across $N_FLAP flap cycles (<=1)"
+else
+  fail "40: flap storm NOT throttled — $SENDS_40 watch-stalled IMMEDIATEs across $N_FLAP flap cycles (expected <=1)"
+fi
+rm -rf "$PROJ"
+
+# ── Test 41a: deploy suppression via recent daemon restart marker (Fix B) ─────
+# Cursor frozen + an ACTIONABLE event past it (would normally stall), BUT the daemon
+# emitted a daemon_started marker 60s ago → the watch is booting, not stalled → suppress.
+echo ""
+echo "=== Test 41a: hk-7o4i0 Fix B — recent daemon_started suppresses watch-stalled ==="
+SUP_CURSOR="eid-sup-cursor-001"
+EVENTS_41A='{"event_id":"'"$SUP_CURSOR"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 300)"'","run_id":"r0"}
+{"event_id":"eid-daemon-boot","type":"daemon_started","timestamp_wall":"'"$(ts_ago 60)"'"}
+{"event_id":"eid-sup-act","type":"run_failed","timestamp_wall":"'"$(ts_ago 40)"'","run_id":"r1"}'
+STATE_41='{"schema_version":1,"ts":"2026-06-24T00:00:00Z","stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{},"watch_cursor":"'"$SUP_CURSOR"'","watch_stall_misses":2}'
+CW_41='{"agent":"watch","status":"online","last_seen":"'"$(ts_ago 30)"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_41" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 3 \
+  --watch-cursor "$SUP_CURSOR" \
+  --state-json "$STATE_41" \
+  --events-jsonl "$EVENTS_41A" \
+  --tmux-watch-alive true \
+)
+OUTPUT_41A=$(run_check "$PROJ" 2>&1)
+LATEST_41A="$PROJ/.harmonik/ops-monitor/latest.json"
+SIGS_41A=$(python3 -c "import json; d=json.load(open('$LATEST_41A')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+assert_not_contains "41a: watch-stalled suppressed during daemon restart window" "watch-stalled" "$SIGS_41A"
+assert_json_bool "41a: watch_restart_suppressed=true" "$LATEST_41A" "watch_restart_suppressed" "true"
+rm -rf "$PROJ"
+
+# ── Test 41b: deploy suppression via recent watch tmux session start (Fix B) ──
+# Same stall conditions but the suppression is driven by the watch tmux session_created
+# being 90s ago (no daemon marker in events) → still suppressed.
+echo ""
+echo "=== Test 41b: hk-7o4i0 Fix B — recent watch tmux session_created suppresses watch-stalled ==="
+EVENTS_41B='{"event_id":"'"$SUP_CURSOR"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 300)"'","run_id":"r0"}
+{"event_id":"eid-sup-act","type":"run_failed","timestamp_wall":"'"$(ts_ago 40)"'","run_id":"r1"}'
+WATCH_CREATED_RECENT=$(python3 -c "import time;print(int(time.time())-90)")
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_41" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 3 \
+  --watch-cursor "$SUP_CURSOR" \
+  --state-json "$STATE_41" \
+  --events-jsonl "$EVENTS_41B" \
+  --tmux-watch-alive true \
+  --watch-session-created "$WATCH_CREATED_RECENT" \
+)
+OUTPUT_41B=$(run_check "$PROJ" 2>&1)
+LATEST_41B="$PROJ/.harmonik/ops-monitor/latest.json"
+SIGS_41B=$(python3 -c "import json; d=json.load(open('$LATEST_41B')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+assert_not_contains "41b: watch-stalled suppressed during watch tmux restart window" "watch-stalled" "$SIGS_41B"
+assert_json_bool "41b: watch_restart_suppressed=true" "$LATEST_41B" "watch_restart_suppressed" "true"
+rm -rf "$PROJ"
+
+# ── Test 41c: NEGATIVE — restart marker OUTSIDE the window → NOT suppressed ────
+# daemon_started 30 min ago (outside the 10-min suppression window) and no recent watch
+# tmux start → genuine stall → watch-stalled MUST fire.
+echo ""
+echo "=== Test 41c: hk-7o4i0 Fix B NEGATIVE — old daemon restart does NOT suppress ==="
+EVENTS_41C='{"event_id":"'"$SUP_CURSOR"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 300)"'","run_id":"r0"}
+{"event_id":"eid-daemon-old","type":"daemon_started","timestamp_wall":"'"$(ts_ago 1800)"'"}
+{"event_id":"eid-sup-act","type":"run_failed","timestamp_wall":"'"$(ts_ago 40)"'","run_id":"r1"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_41" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 3 \
+  --watch-cursor "$SUP_CURSOR" \
+  --state-json "$STATE_41" \
+  --events-jsonl "$EVENTS_41C" \
+  --tmux-watch-alive true \
+)
+OUTPUT_41C=$(run_check "$PROJ" 2>&1)
+LATEST_41C="$PROJ/.harmonik/ops-monitor/latest.json"
+SIGS_41C=$(python3 -c "import json; d=json.load(open('$LATEST_41C')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+assert_contains "41c: watch-stalled fires (old restart, outside window)" "watch-stalled" "$SIGS_41C"
+assert_json_bool "41c: watch_restart_suppressed=false" "$LATEST_41C" "watch_restart_suppressed" "false"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

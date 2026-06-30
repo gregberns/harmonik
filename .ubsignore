@@ -1,0 +1,37 @@
+# .ubsignore — directories/files the Ultimate Bug Scanner (ubs) must not scan or
+# copy into /tmp. Without this, `ubs .` measures the working tree at ~12.7GB
+# (mostly local operational state, NOT tracked in git) and refuses to run.
+# Format: gitignore-style globs. See plans/2026-06-27-repo-bloat.md for the
+# size breakdown and plans/2026-06-27-bash-version-fix.md for the bash wrapper.
+
+# --- Operational state & local working dirs (huge, never source code) ---
+.beads/                 # ~8GB: .br_history-archive ledger snapshots (no retention)
+.harmonik/              # daemon run state + live run worktrees (~2.4GB)
+.claude/worktrees/      # orchestrator-spawned agent worktrees (~2GB, mostly orphaned)
+.kerf/                  # kerf bench mirror + regenerable diagnostics cache (~97MB)
+.tools/                 # pinned dev-tool binaries (~104MB)
+.pi/                    # node_modules etc. (~271MB)
+.beads.bak.*            # ledger backups (~75MB)
+twins/                  # built twin binaries
+scratchpad-ubs/         # this integration's scratch output
+
+# --- Build artifacts / generated ---
+*.test                  # stray compiled go test binaries at repo root
+/harmonik
+/harmonik-twin-generic
+*.out
+coverage.*
+
+# --- Docs / plans / research: prose, not code to scan ---
+plans/
+research/
+specs/
+refs/
+
+# --- Test files: ~83% of all ubs findings on this repo are test-fixture
+# name-matches (fake secrets, test inputs compared with !=, etc.). Excluding
+# them removes the dominant false-positive source. Re-include for a deep audit
+# by running ubs without this ignore file.
+**/*_test.go
+internal/testhelpers/
+testdata/

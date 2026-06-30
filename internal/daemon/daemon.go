@@ -1511,6 +1511,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	if regErr := handler.RegisterCodex(adapterReg); regErr != nil {
 		return fmt.Errorf("daemon.Start: register CodexAdapter: %w", regErr)
 	}
+	if regErr := handler.RegisterPi(adapterReg); regErr != nil {
+		return fmt.Errorf("daemon.Start: register PiAdapter: %w", regErr)
+	}
 	// Seal the registry: no further adapters.
 	// The first ForAgent call would seal it anyway; explicit seal here makes the
 	// ordering contract observable.

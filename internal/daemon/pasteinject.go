@@ -45,6 +45,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // splashDismissDelay is the grace period between the Enter keypress (splash
@@ -1634,6 +1635,12 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 	msg := "Read .harmonik/review-target.md in this worktree." +
 		" It contains the bead context, the diff range to review, and any prior-iteration verdicts." +
 		" Produce your verdict by writing .harmonik/review.json conforming to the agent-reviewer schema v1." +
+		// hk-qts7r: atomic-write the verdict so a remote watchdog never observes a
+		// half-written file. Write to a temp file in .harmonik/ then rename it over
+		// review.json (e.g. write review.json.tmp then `mv review.json.tmp review.json`).
+		" IMPORTANT: write .harmonik/review.json ATOMICALLY — write the JSON to a temp file in" +
+		" .harmonik/ (e.g. review.json.tmp) and then rename it over review.json, so a partial file is" +
+		" never observed." +
 		" CRITICAL: when the bead body's '## Implementation Notes' section names exact field/struct names" +
 		" (e.g. 'MUST be SessionID string — NOT SessID'), grep the diff for every named identifier and" +
 		" verify the exact name appears. When a prior verdict has flag 'spec-field-name' or notes naming" +
@@ -2333,9 +2340,21 @@ func pasteInjectQuitOnReviewFile(
 				return
 			}
 
-			if statTaskFileVia(ctx, verdictRunner, verdictPath) == nil {
+			// hk-qts7r (remote-hardening): gate the quit-watchdog on a VALID,
+			// COMPLETE verdict — not mere existence. statTaskFileVia only checks
+			// existence, so on a remote worker it sees review.json the instant
+			// claude's Write tool creates the file (before flush/close) and kills
+			// claude mid-write → the worker's review.json is permanently truncated
+			// → the daemon's later SSH read fails ErrMalformed. Parsing here with
+			// ReadReviewVerdictVia means we only /quit+kill once a fully valid
+			// verdict has landed, so claude is never killed mid-write.
+			// ReadReviewVerdictVia returns (nil, nil) when the file is absent and a
+			// (nil, ErrMalformed) while it is partial — in BOTH cases we do NOT
+			// kill: keep polling so the reviewer can finish, and let the budget
+			// path handle a genuinely-stuck reviewer.
+			if v, verr := workspace.ReadReviewVerdictVia(ctx, verdictRunner, wtPath); verr == nil && v != nil {
 				fmt.Fprintf(os.Stderr,
-					"daemon: pasteinject: quit-on-review-file: verdict detected at %s; sending /quit\n",
+					"daemon: pasteinject: quit-on-review-file: valid verdict detected at %s; sending /quit\n",
 					verdictPath)
 				_ = qs.SendQuitToLastPane(ctx)
 				// Grace period for claude to process /quit before force-kill.

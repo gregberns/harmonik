@@ -44,18 +44,24 @@ type ReviewVerdict struct {
 // ReadReviewVerdict rejects any file whose schema_version field differs from this.
 const ReviewVerdictSchemaVersion = 1
 
-// Remote verdict read-retry bounds (hk-clrts, widened hk-l489f). A cat-over-SSH
-// read of the worker's review.json can observe a partially-written /
-// not-yet-durable file, so parseReviewVerdict returns ErrMalformed on a
-// transient truncated read. The remote path (ReadReviewVerdictVia) retries ONLY
-// on ErrMalformed with bounded exponential backoff:
-// 100/200/400/800/1600/3200ms between attempts → total wait cap ~6.3s across
-// reviewVerdictRemoteMaxAttempts tries. The wider window (was 5 attempts/~1.5s)
-// handles slow-flush remote paths where the worker's fsync takes 2–4s. The
-// local os.ReadFile path is unaffected (NFR7).
-const (
-	reviewVerdictRemoteMaxAttempts = 7
+// Remote verdict read-retry bounds (hk-clrts, widened hk-l489f, deadline-bounded
+// hk-qts7r). A cat-over-SSH read of the worker's review.json can observe a
+// partially-written / not-yet-durable file, so parseReviewVerdict returns
+// ErrMalformed on a transient truncated read. The remote path
+// (ReadReviewVerdictVia) retries-until-valid ONLY on ErrMalformed with bounded
+// exponential backoff (100ms base, doubling, capped at
+// reviewVerdictRemoteMaxBackoff) up to reviewVerdictRemoteRetryBudget of total
+// elapsed time — a DEADLINE rather than a fixed attempt count, so a slow-flush
+// remote path whose fsync takes several seconds still recovers, while a
+// genuinely-malformed verdict fails once the budget is spent. ctx cancellation /
+// deadline is honored in every inter-attempt wait. The local os.ReadFile path is
+// unaffected (NFR7).
+//
+// Declared as vars so tests can shrink the budget for fast, deterministic runs.
+var (
+	reviewVerdictRemoteRetryBudget = 6300 * time.Millisecond
 	reviewVerdictRemoteBaseBackoff = 100 * time.Millisecond
+	reviewVerdictRemoteMaxBackoff  = 3200 * time.Millisecond
 )
 
 // Accepted verdict strings for ReviewVerdict.Verdict per schema v1.
@@ -151,16 +157,18 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 	}
 	target := ReviewVerdictPath(workspacePath)
 
-	// Remote read-retry (hk-clrts): a cat-over-SSH read can observe a
-	// partially-written / not-yet-durable review.json on the worker, so a
-	// transient truncated read makes parseReviewVerdict return ErrMalformed and
-	// the run false-fails fast. Retry ONLY on ErrMalformed with bounded
-	// exponential backoff; cat-error (absent) and a clean parse short-circuit
-	// with the existing contract, and a genuinely-malformed verdict still fails
-	// after the cap (no false positives — just bounded extra latency).
+	// Remote read-retry (hk-clrts, deadline-bounded hk-qts7r): a cat-over-SSH read
+	// can observe a partially-written / not-yet-durable review.json on the worker,
+	// so a transient truncated read makes parseReviewVerdict return ErrMalformed
+	// and the run false-fails fast. Retry-until-valid ONLY on ErrMalformed with
+	// bounded exponential backoff up to reviewVerdictRemoteRetryBudget of total
+	// elapsed time; cat-error (absent) and a clean parse short-circuit with the
+	// existing contract, and a genuinely-malformed verdict still fails once the
+	// budget is spent (no false positives — just bounded extra latency).
 	var lastErr error
 	backoff := reviewVerdictRemoteBaseBackoff
-	for attempt := 0; attempt < reviewVerdictRemoteMaxAttempts; attempt++ {
+	deadline := time.Now().Add(reviewVerdictRemoteRetryBudget)
+	for {
 		out, err := runner.Command(ctx, "cat", target).Output()
 		if err != nil {
 			// Absent verdict (cat: no such file) or transport hiccup → treat as absent,
@@ -175,18 +183,28 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 			return v, perr
 		}
 		lastErr = perr
-		if attempt == reviewVerdictRemoteMaxAttempts-1 {
-			break // exhausted; don't sleep after the final attempt
+
+		// Deadline-bounded retry: stop once the retry budget is spent, surfacing
+		// the last ErrMalformed-wrapped error so a genuinely-malformed verdict still
+		// fails. Don't sleep past the deadline.
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		wait := backoff
+		if wait > remaining {
+			wait = remaining
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(backoff):
+		case <-time.After(wait):
 		}
 		backoff *= 2
+		if backoff > reviewVerdictRemoteMaxBackoff {
+			backoff = reviewVerdictRemoteMaxBackoff
+		}
 	}
-	// Exhausted all attempts on transient-looking ErrMalformed reads; surface the
-	// last ErrMalformed-wrapped error so a genuinely-malformed verdict still fails.
 	return nil, lastErr
 }
 

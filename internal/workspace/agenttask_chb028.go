@@ -359,6 +359,8 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 		sb.WriteString("Forbidden commands: `git reset`, `git checkout`, `git cherry-pick`, `git merge`, `git branch -d`, `git push`, `git rebase`, or any other state-mutating git operation.\n")
 		sb.WriteString("You operate on a detached-HEAD reviewer worktree. The only files you may write are `.harmonik/review.json` (your verdict) and any analysis scratch files under `.harmonik/`.\n")
 		sb.WriteString("Violating this constraint can corrupt the implementer's task branch and break the merge pipeline.\n")
+		// hk-qts7r: atomic-write the verdict so a remote watchdog never reads a half-written file.
+		sb.WriteString("ATOMIC WRITE: write `.harmonik/review.json` atomically — write the JSON to a temp file in `.harmonik/` (e.g. `review.json.tmp`) and then rename it over `review.json` (`mv review.json.tmp review.json`), so a partial file is never observed.\n")
 
 		sb.WriteString("\n## Prior-Iteration Context\n\n")
 		sb.WriteString(fmt.Sprintf("review_base_sha: %s\n", p.ReviewBaseSHA))
@@ -569,7 +571,9 @@ func buildReviewTargetContent(p ReviewTargetPayload) string {
 	sb.WriteString("You are a READ-ONLY reviewer. You MUST NOT run any git command that changes repository state.\n")
 	sb.WriteString("Forbidden commands: `git reset`, `git checkout`, `git cherry-pick`, `git merge`, `git branch -d`, `git push`, `git rebase`, or any other state-mutating git operation.\n")
 	sb.WriteString("You operate on a detached-HEAD reviewer worktree. The only files you may write are `.harmonik/review.json` (your verdict) and any analysis scratch files under `.harmonik/`.\n")
-	sb.WriteString("Violating this constraint can corrupt the implementer's task branch and break the merge pipeline.\n\n")
+	sb.WriteString("Violating this constraint can corrupt the implementer's task branch and break the merge pipeline.\n")
+	// hk-qts7r: atomic-write the verdict so a remote watchdog never reads a half-written file.
+	sb.WriteString("ATOMIC WRITE: write `.harmonik/review.json` atomically — write the JSON to a temp file in `.harmonik/` (e.g. `review.json.tmp`) and then rename it over `review.json` (`mv review.json.tmp review.json`), so a partial file is never observed.\n\n")
 
 	// hk-hay: coverage-check instruction — detect "claims ALL, missed one" gaps.
 	sb.WriteString("## Coverage Check (CRITICAL — all-X completeness)\n\n")

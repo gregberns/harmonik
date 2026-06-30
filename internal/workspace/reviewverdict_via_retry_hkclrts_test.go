@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // sequenceCatRunner is a non-local CommandRunner stub whose successive Command()
@@ -111,24 +112,76 @@ func TestReadReviewVerdictVia_Retry_TruncatedThenValid(t *testing.T) {
 
 // TestReadReviewVerdictVia_Retry_AlwaysTruncated proves the retry is bounded: when
 // every attempt returns truncated JSON, ReadReviewVerdictVia returns ErrMalformed
-// after the attempt cap (no infinite loop, no false success).
+// once the deadline retry budget is spent (no infinite loop, no false success).
+// hk-qts7r converted the fixed 7-attempt cap into a deadline-bounded
+// retry-until-valid loop, so the assertion is "ErrMalformed + retried at least
+// once + terminated within the budget" rather than an exact attempt count. The
+// budget is shrunk so the test resolves in milliseconds.
 func TestReadReviewVerdictVia_Retry_AlwaysTruncated(t *testing.T) {
-	t.Parallel()
+	// NOT t.Parallel(): mutates the package-level retry-budget vars.
+	origBudget := reviewVerdictRemoteRetryBudget
+	origBase := reviewVerdictRemoteBaseBackoff
+	reviewVerdictRemoteRetryBudget = 60 * time.Millisecond
+	reviewVerdictRemoteBaseBackoff = 5 * time.Millisecond
+	t.Cleanup(func() {
+		reviewVerdictRemoteRetryBudget = origBudget
+		reviewVerdictRemoteBaseBackoff = origBase
+	})
 
 	truncated := writeTempVerdictFile(t, "truncated.json", truncatedVerdictJSON(t))
 	boxAWorkspace := t.TempDir()
 
 	runner := &sequenceCatRunner{paths: []string{truncated}} // repeats truncated forever
 
+	start := time.Now()
 	v, err := ReadReviewVerdictVia(context.Background(), runner, boxAWorkspace)
+	elapsed := time.Since(start)
 	if !errors.Is(err, ErrMalformed) {
-		t.Fatalf("ReadReviewVerdictVia(always-truncated) err = %v; want ErrMalformed after the retry cap", err)
+		t.Fatalf("ReadReviewVerdictVia(always-truncated) err = %v; want ErrMalformed after the retry budget", err)
 	}
 	if v != nil {
 		t.Errorf("ReadReviewVerdictVia(always-truncated) verdict = %+v; want nil", v)
 	}
-	if got := runner.callCount(); got != reviewVerdictRemoteMaxAttempts {
-		t.Errorf("cat call count = %d; want %d (the bounded attempt cap)", got, reviewVerdictRemoteMaxAttempts)
+	if got := runner.callCount(); got < 2 {
+		t.Errorf("cat call count = %d; want ≥2 (retried at least once before the budget elapsed)", got)
+	}
+	// Terminated within a small multiple of the budget — proves the loop is bounded.
+	if elapsed > 2*time.Second {
+		t.Errorf("ReadReviewVerdictVia(always-truncated) took %v; want a bounded deadline (no unbounded retry)", elapsed)
+	}
+}
+
+// TestReadReviewVerdictVia_Retry_MultipleTruncatedThenValid (hk-qts7r) proves the
+// deadline-bounded retry-until-valid loop recovers when the worker file is
+// observed truncated across SEVERAL successive reads before it finally lands
+// complete and durable — as long as that happens within the retry budget.
+func TestReadReviewVerdictVia_Retry_MultipleTruncatedThenValid(t *testing.T) {
+	// NOT t.Parallel(): mutates the package-level retry-budget vars.
+	origBudget := reviewVerdictRemoteRetryBudget
+	origBase := reviewVerdictRemoteBaseBackoff
+	reviewVerdictRemoteRetryBudget = 2 * time.Second
+	reviewVerdictRemoteBaseBackoff = 2 * time.Millisecond
+	t.Cleanup(func() {
+		reviewVerdictRemoteRetryBudget = origBudget
+		reviewVerdictRemoteBaseBackoff = origBase
+	})
+
+	truncated := writeTempVerdictFile(t, "truncated.json", truncatedVerdictJSON(t))
+	valid := writeTempVerdictFile(t, "valid.json", reviewVerdictFixtureValidJSON(t))
+	boxAWorkspace := t.TempDir()
+
+	// Four truncated reads, then the durable valid file.
+	runner := &sequenceCatRunner{paths: []string{truncated, truncated, truncated, truncated, valid}}
+
+	v, err := ReadReviewVerdictVia(context.Background(), runner, boxAWorkspace)
+	if err != nil {
+		t.Fatalf("ReadReviewVerdictVia(multi-truncated-then-valid): %v; want recovery within the budget", err)
+	}
+	if v == nil || v.Verdict != ReviewVerdictApprove {
+		t.Fatalf("verdict = %+v; want a valid APPROVE recovered via retry", v)
+	}
+	if got := runner.callCount(); got != 5 {
+		t.Errorf("cat call count = %d; want 5 (four truncated reads + one successful retry)", got)
 	}
 }
 

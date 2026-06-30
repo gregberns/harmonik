@@ -28,8 +28,14 @@ import (
 // Stubs
 // ─────────────────────────────────────────────────────────────────────────────
 
-// hk92ih3Runner records Command() calls.  By default every command exits 0
-// (simulating a remote worker where the verdict file IS present).
+// hk92ih3Runner records Command() calls.  A `cat …/review.json` returns a
+// COMPLETE valid verdict on stdout (simulating a remote worker whose review.json
+// is present and fully written); every other command exits 0.
+//
+// hk-qts7r: the verdict-detect gate now parses the file via
+// workspace.ReadReviewVerdictVia (a `cat` over the runner) instead of merely
+// stat'ing it, so the runner must yield a parseable verdict rather than an empty
+// `true` exit for the detection to fire.
 type hk92ih3Runner struct {
 	mu    sync.Mutex
 	calls []tmux.RecordingCall
@@ -41,6 +47,11 @@ func (r *hk92ih3Runner) Command(ctx context.Context, name string, args ...string
 	r.mu.Lock()
 	r.calls = append(r.calls, tmux.RecordingCall{Name: name, Args: cp})
 	r.mu.Unlock()
+	if name == "cat" && len(args) > 0 && strings.HasSuffix(args[0], "review.json") {
+		// Emit a complete, valid verdict JSON on stdout.
+		return exec.CommandContext(ctx, "printf", "%s",
+			`{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"ok"}`)
+	}
 	return exec.CommandContext(ctx, "true")
 }
 
@@ -82,12 +93,13 @@ func (q *hk92ih3QuitSender) commandRunner() tmux.CommandRunner { return q.runner
 //     whose review.json IS present.
 //
 // Assertions:
-//  1. The runner receives at least one "stat …/.harmonik/review.json" call.
-//  2. SendQuitToLastPane is called (verdict was detected via the runner).
+//  1. The runner receives at least one "cat …/.harmonik/review.json" call
+//     (hk-qts7r: the verdict-detect gate now reads+parses the file via the runner).
+//  2. SendQuitToLastPane is called (a valid verdict was detected via the runner).
 //
 // FAILS before the fix (os.Stat on box A never finds the file → spins to budget kill
-// without calling SendQuitToLastPane promptly); PASSES after (statTaskFileVia routes
-// through the runner → exit 0 → verdict detected → /quit sent).
+// without calling SendQuitToLastPane promptly); PASSES after (ReadReviewVerdictVia
+// cats the worker file → valid verdict → /quit sent).
 func TestPasteInjectQuitOnReviewFile_RemoteRunner_DetectsVerdictViaRunner(t *testing.T) {
 	// Shrink poll interval so the test resolves in milliseconds.
 	origPoll := reviewFilePollInterval
@@ -137,16 +149,17 @@ func TestPasteInjectQuitOnReviewFile_RemoteRunner_DetectsVerdictViaRunner(t *tes
 		t.Fatal("pasteInjectQuitOnReviewFile did not return after remote verdict detected")
 	}
 
-	// Assert runner received a stat call for review.json.
-	var foundStat bool
+	// Assert runner received a cat call for review.json (verdict read+parse routed
+	// through the runner per hk-qts7r).
+	var foundCat bool
 	for _, c := range runner.recorded() {
-		if c.Name == "stat" && len(c.Args) > 0 && strings.HasSuffix(c.Args[0], "review.json") {
-			foundStat = true
+		if c.Name == "cat" && len(c.Args) > 0 && strings.HasSuffix(c.Args[0], "review.json") {
+			foundCat = true
 			break
 		}
 	}
-	if !foundStat {
-		t.Errorf("runner calls = %v; expected a 'stat …/review.json' call routed through the runner", runner.recorded())
+	if !foundCat {
+		t.Errorf("runner calls = %v; expected a 'cat …/review.json' call routed through the runner", runner.recorded())
 	}
 
 	// Assert /quit was sent — verdict was detected via the runner.

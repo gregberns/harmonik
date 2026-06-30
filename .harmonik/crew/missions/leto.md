@@ -1,13 +1,19 @@
 ---
 schema_version: 1
 crew_name: leto
-queue: leto-codex
-epic_id: hk-8dtyk
+queue: leto-q
+epic_id: hk-94c3t
 captain_name: captain
 model: sonnet
 ---
 
-# Crew mission — leto (codex-tier concurrency pilot)
+> ⚠️ ACTIVE MISSION = **Pi+OpenRouter per-bead harness Phase-0 BUILD** (epic `hk-94c3t`,
+> queue `leto-q`). Re-tasked 2026-06-30. The authoritative current state — in-flight bead,
+> next-action sequence, progress — is the **## Current State** block at the BOTTOM of this
+> file. The codex-tier concurrency-pilot body BELOW is HISTORICAL (the prior mission,
+> kept for recipe reference only); ignore its queue/epic/seed-batch on re-hydration.
+
+# Crew mission — leto (codex-tier concurrency pilot) — HISTORICAL, see banner above
 
 > RE-TASKED 2026-06-25 from the codex SOAK lane (hk-0639, complete) to the
 > codex-tier CONCURRENCY PILOT (hk-8dtyk). admiral-greenlit; operator directive =
@@ -98,3 +104,21 @@ tick (≤10 min while dispatching, ≤15 min idle/draining) and boot/drain booke
 hk-8dtyk = "codex-tier concurrency pilot epic" · leto-codex = "your codex queue" ·
 codex-soak-recipe.dot = "the proven tier-3 node-attr codex workflow" · gurney =
 "remote-worker crew (do not collide)" · hk-0639 = "the completed codex soak (history)".
+
+---
+
+## Current State (Pi harness re-task — 2026-06-30)
+
+> NOTE: Front-matter NOW corrected to the Pi-harness lane (queue leto-q, epic hk-94c3t)
+> and committed by captain 2026-06-30. These overrides remain the authoritative detail
+> for re-hydration (in-flight bead, next-action sequence, progress).
+
+actual_queue: leto-q
+actual_queue_id: 019f19fa-7e1e-7d90-9b8c-988c40c352fc
+actual_epic: hk-94c3t
+in_flight: [hk-l1bkp]
+monitor: armed (bkxoqbncy)
+next_action: on B6 (hk-l1bkp) close → submit B7 (hk-ro1dr adapter_pi.go PI-010/060/071) to leto-q; then B8 (hk-o0hpm) on B7 close; then B9 (hk-ypxwl) on B8 close
+blockers: none — B6 in-flight at ~63m, running clean
+progress: 5/9 Pi beads done (B1-B5 CLOSED); B4 closed 18:28Z; B5 closed via worktree salvage (cherry-pick be2fbba5)
+translations: hk-94c3t = "Pi+OpenRouter harness Phase-0 epic" · hk-l1bkp = "B6 pibillingguard.go PI-040-043" · hk-ro1dr = "B7 adapter_pi.go PI-010/060/071" · hk-o0hpm = "B8 Pi queue cap PI-069-073" · hk-ypxwl = "B9 scenario + acceptance tests PI-100/101"

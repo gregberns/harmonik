@@ -776,8 +776,8 @@ if _os.path.isfile(_events_path):
                             completed_run_ts[_rid] = _e
                             completed_run_seq[_rid] = _event_seq
 
-                elif _etype in ('daemon_started', 'daemon_ready', 'daemon_startup'):
-                    # hk-7o4i0 Fix B: a daemon (re)start / startup marker. Used to suppress
+                elif _etype in ('daemon_started', 'daemon_ready'):
+                    # hk-7o4i0 Fix B: a daemon (re)start marker. Used to suppress
                     # watch-stalled during the post-deploy boot window — the watch's cursor
                     # is frozen because it is coming up with the daemon, not because it is
                     # ignoring escalation-worthy work.

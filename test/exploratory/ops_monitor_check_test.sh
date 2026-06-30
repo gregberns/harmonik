@@ -76,6 +76,13 @@
 #                         session_created being within the restart window (Test 41b)
 #   [x] hk-7o4i0 Fix B NEGATIVE: daemon restart marker OUTSIDE the window → NOT suppressed →
 #                         watch-stalled fires normally (Test 41c)
+#   [x] hk-7o4i0 Fix A GRACE-EXPIRY: a watch-stalled entry that clears and STAYS cleared past
+#                         WATCH_STALL_FLAP_GRACE (cleared_ts older than 900s) AGES OUT of state,
+#                         and a later recurrence re-alerts as a FRESH edge (permanent-mute
+#                         safety valve; pairs with Test 40's within-grace retention) (Test 42)
+#   [x] hk-7o4i0 Fix B BOUNDED-SUPPRESS: suppression resets the miss counter, but it is bounded —
+#                         a genuine frozen-cursor stall that PERSISTS past WATCH_RESTART_SUPPRESS_WINDOW
+#                         is re-detected after the window + stall_ticks fresh ticks (Test 43)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -2591,6 +2598,120 @@ LATEST_41C="$PROJ/.harmonik/ops-monitor/latest.json"
 SIGS_41C=$(python3 -c "import json; d=json.load(open('$LATEST_41C')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
 assert_contains "41c: watch-stalled fires (old restart, outside window)" "watch-stalled" "$SIGS_41C"
 assert_json_bool "41c: watch_restart_suppressed=false" "$LATEST_41C" "watch_restart_suppressed" "false"
+rm -rf "$PROJ"
+
+# ── Test 42: Fix A grace EXPIRY → drop + re-alert fresh (safety valve) ─────────
+# Test 40 covers WITHIN-grace retention. This covers the other edge: a watch-stalled
+# entry that clears and STAYS cleared past WATCH_STALL_FLAP_GRACE (900s) must AGE OUT of
+# state (so a permanently-resolved signal is never muted forever), and a later recurrence
+# must re-alert as a FRESH edge. We simulate the advanced clock by seeding the retained
+# entry's cleared_ts older than 900s, run a CLEAR tick (cursor frozen, only benign churn
+# past it → not stalled) and assert the entry is dropped, then run a TRIP tick and assert
+# watch-stalled fires fresh.
+echo ""
+echo "=== Test 42: hk-7o4i0 Fix A — grace expiry drops stale entry + re-alerts fresh ==="
+EXP_CURSOR="eid-exp-cursor-001"
+NOW_42=$(python3 -c "import time;print(int(time.time()))")
+CLEARED_OLD_42=$((NOW_42 - 1000))   # > WATCH_STALL_FLAP_GRACE (900s) → must age out
+# Seed: cursor frozen; a retained watch-stalled entry whose cleared_ts is past the grace.
+STATE_42='{"schema_version":1,"ts":"2026-06-24T00:00:00Z","stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{"watch-stalled":{"first_ts":'"$((NOW_42-1600))"',"last_ts":'"$((NOW_42-1600))"',"count":3,"cleared_ts":'"$CLEARED_OLD_42"'}},"watch_cursor":"'"$EXP_CURSOR"'","watch_stall_misses":0}'
+CW_42='{"agent":"watch","status":"online","last_seen":"'"$(ts_ago 30)"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_42" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 1 \
+  --watch-cursor "$EXP_CURSOR" \
+  --state-json "$STATE_42" \
+  --tmux-watch-alive true \
+)
+EVENTS_PATH_42="$PROJ/.harmonik/events/events.jsonl"
+# CLEAR tick: only benign churn past the (still-frozen) cursor → watch_stalled False.
+printf '%s\n%s\n' \
+  '{"event_id":"'"$EXP_CURSOR"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 300)"'","run_id":"r0"}' \
+  '{"event_id":"eid-exp-ben","type":"run_completed","timestamp_wall":"'"$(ts_ago 100)"'","run_id":"r1"}' \
+  > "$EVENTS_PATH_42"
+run_check "$PROJ" > /dev/null 2>&1
+DROPPED_42=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+e = d.get('alerted_immediate', {}).get('watch-stalled')
+print('present' if e is not None else 'dropped')
+" 2>/dev/null || echo "error")
+assert_eq "42: stale watch-stalled entry aged out past grace" "dropped" "$DROPPED_42"
+# TRIP tick: actionable event past the frozen cursor → must fire FRESH (no prior state).
+printf '%s\n%s\n' \
+  '{"event_id":"'"$EXP_CURSOR"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 300)"'","run_id":"r0"}' \
+  '{"event_id":"eid-exp-act","type":"run_failed","timestamp_wall":"'"$(ts_ago 100)"'","run_id":"r1"}' \
+  > "$EVENTS_PATH_42"
+run_check "$PROJ" > /dev/null 2>&1
+LOG_42=$(comms_log "$PROJ")
+if grep -q 'watch-stalled' "$LOG_42" 2>/dev/null; then
+  pass "42: recurrence after grace expiry re-alerts fresh"
+else
+  fail "42: recurrence after grace expiry did NOT re-alert"
+fi
+FRESH_COUNT_42=$(python3 -c "
+import json
+d = json.load(open('$PROJ/.harmonik/ops-monitor/state.json'))
+e = d.get('alerted_immediate', {}).get('watch-stalled', {})
+print(e.get('count','none') if isinstance(e, dict) else 'none')
+" 2>/dev/null || echo "error")
+assert_eq "42: re-alert is a fresh edge (count==1)" "1" "$FRESH_COUNT_42"
+rm -rf "$PROJ"
+
+# ── Test 43: Fix B bounded suppression → re-detect after window + stall_ticks ──
+# Concern: the suppression window resets the miss counter to 0, so after it expires a
+# genuine stall needs full stall_ticks to re-detect. Assert suppression is BOUNDED (not
+# permanent): a genuine frozen-cursor stall that persists past WATCH_RESTART_SUPPRESS_WINDOW
+# (600s) is re-detected after the window + stall_ticks fresh ticks. Distinct from Test 41c
+# (which only checks a single tick with an already-old restart marker).
+echo ""
+echo "=== Test 43: hk-7o4i0 Fix B — bounded suppression re-detects genuine stall after window ==="
+RD_CURSOR="eid-rd-cursor-001"
+STATE_43='{"schema_version":1,"ts":"2026-06-24T00:00:00Z","stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{},"watch_cursor":"'"$RD_CURSOR"'","watch_stall_misses":0}'
+CW_43='{"agent":"watch","status":"online","last_seen":"'"$(ts_ago 30)"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_43" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 2 \
+  --watch-cursor "$RD_CURSOR" \
+  --state-json "$STATE_43" \
+  --tmux-watch-alive true \
+)
+EVENTS_PATH_43="$PROJ/.harmonik/events/events.jsonl"
+# Cursor stays frozen + an actionable event past it the WHOLE time (genuine stall shape).
+# Only the daemon_started marker age changes: recent (within window) → suppressed.
+write_rd_events() {  # $1 = seconds-ago of the daemon_started marker
+  printf '%s\n%s\n%s\n' \
+    '{"event_id":"'"$RD_CURSOR"'","type":"run_completed","timestamp_wall":"'"$(ts_ago 300)"'","run_id":"r0"}' \
+    '{"event_id":"eid-rd-daemon","type":"daemon_started","timestamp_wall":"'"$(ts_ago "$1")"'"}' \
+    '{"event_id":"eid-rd-act","type":"run_failed","timestamp_wall":"'"$(ts_ago 40)"'","run_id":"r1"}' \
+    > "$EVENTS_PATH_43"
+}
+# Tick A — within window (restart 60s ago) → SUPPRESSED, miss counter held at 0.
+write_rd_events 60
+run_check "$PROJ" > /dev/null 2>&1
+LATEST_43A="$PROJ/.harmonik/ops-monitor/latest.json"
+SIGS_43A=$(python3 -c "import json; d=json.load(open('$LATEST_43A')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+assert_not_contains "43: tick A within window → suppressed" "watch-stalled" "$SIGS_43A"
+assert_json_bool "43: tick A watch_restart_suppressed=true" "$LATEST_43A" "watch_restart_suppressed" "true"
+# Tick B — restart now 700s ago (outside 600s window) → NOT suppressed; misses 0→1 (<2) → no fire yet.
+write_rd_events 700
+run_check "$PROJ" > /dev/null 2>&1
+SIGS_43B=$(python3 -c "import json; d=json.load(open('$LATEST_43A')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+assert_not_contains "43: tick B (window expired, 1st post-window tick) → not yet firing" "watch-stalled" "$SIGS_43B"
+assert_json_bool "43: tick B watch_restart_suppressed=false" "$LATEST_43A" "watch_restart_suppressed" "false"
+# Tick C — still frozen + actionable; misses 1→2 (>=stall_ticks) → genuine stall RE-DETECTED.
+write_rd_events 700
+run_check "$PROJ" > /dev/null 2>&1
+SIGS_43C=$(python3 -c "import json; d=json.load(open('$LATEST_43A')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+assert_contains "43: tick C → genuine stall re-detected (suppression is bounded)" "watch-stalled" "$SIGS_43C"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

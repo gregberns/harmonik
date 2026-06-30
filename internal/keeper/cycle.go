@@ -1165,8 +1165,8 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 //     load-bearing invariant keeping this state current without re-computing it
 //     here. Force-path exception: above ForceActPct, bypass grace.
 //  3. NOT HoldingDispatch (fail-closed: skip cycle, clear marker → next PreCompact is fail-open).
-//  3b. NOT operator HOLD — skip cycle while co-working hold is active (clear
-//      marker so the next PreCompact fire gets a clean slate). Refs: hk-4rago.
+//     3b. NOT operator HOLD — skip cycle while co-working hold is active (clear
+//     marker so the next PreCompact fire gets a clean slate). Refs: hk-4rago.
 //  4. Anti-loop suppression (same policy as MaybeRun).
 //
 // The .precompact marker is ALWAYS cleared regardless of which gate fires, so
@@ -1301,8 +1301,8 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 //  3. Tokens < effective act threshold: don't double-fire with MaybeRun.
 //  4. CrispIdle (pane quiescent).
 //  5. NOT HoldingDispatch (fail-closed: in-flight work → skip).
-//  5b. NOT operator HOLD — skip idle restart while co-working hold is active.
-//      Refs: hk-4rago.
+//     5b. NOT operator HOLD — skip idle restart while co-working hold is active.
+//     Refs: hk-4rago.
 //  6. IdleRestartCooldown: time since last idle restart >= cooldown.
 //  7. Anti-loop: session_id must differ from lastFiredSID.
 //

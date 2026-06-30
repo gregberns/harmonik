@@ -601,24 +601,24 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 		nonce := "<!-- KEEPER:" + cycleID + " -->"
 
 		cfg := keeper.CyclerConfig{
-			AgentName:   agent,
-			ProjectDir:  dir,
-			TmuxTarget:  "fake-pane",
-			ActPct:      90.0,
-			WarnPct:     80.0,
+			AgentName:      agent,
+			ProjectDir:     dir,
+			TmuxTarget:     "fake-pane",
+			ActPct:         90.0,
+			WarnPct:        80.0,
 			HandoffTimeout: 200 * time.Millisecond,
 			ClearSettle:    20 * time.Millisecond,
 			PollInterval:   10 * time.Millisecond,
-			CycleIDGen:  func() string { return cycleID },
-			IsManagedFn: func(_, _ string) bool { return true },
+			CycleIDGen:     func() string { return cycleID },
+			IsManagedFn:    func(_, _ string) bool { return true },
 			HandoffFilePath: func(_, a string) string {
 				return filepath.Join(dir, "HANDOFF-"+a+".md")
 			},
 			ReadHandoff: func(_ string) (string, error) {
 				return "# Handoff\n\n" + nonce + "\n", nil
 			},
-			TruncateHandoffFn:        func(_ string) error { return nil },
-			InjectFn:                 spy.inject,
+			TruncateHandoffFn: func(_ string) error { return nil },
+			InjectFn:          spy.inject,
 			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 				return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
 			},
@@ -684,17 +684,17 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 		nonce := "<!-- KEEPER:" + cycleID + " -->"
 
 		cfg := keeper.CyclerConfig{
-			AgentName:   agent,
-			ProjectDir:  dir,
-			TmuxTarget:  "fake-pane",
-			ActAbsTokens: 300_000,
-			ActPct:      90.0,
-			WarnPct:     80.0,
+			AgentName:      agent,
+			ProjectDir:     dir,
+			TmuxTarget:     "fake-pane",
+			ActAbsTokens:   300_000,
+			ActPct:         90.0,
+			WarnPct:        80.0,
 			HandoffTimeout: 200 * time.Millisecond,
 			ClearSettle:    20 * time.Millisecond,
 			PollInterval:   10 * time.Millisecond,
-			CycleIDGen:  func() string { return cycleID },
-			IsManagedFn: func(_, _ string) bool { return true },
+			CycleIDGen:     func() string { return cycleID },
+			IsManagedFn:    func(_, _ string) bool { return true },
 			HandoffFilePath: func(_, a string) string {
 				return filepath.Join(dir, "HANDOFF-"+a+".md")
 			},

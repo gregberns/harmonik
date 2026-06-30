@@ -146,12 +146,15 @@ func (n5md3Ledger) Ready(context.Context) ([]core.BeadRecord, error) { return ni
 func (n5md3Ledger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	return core.BeadRecord{BeadID: id}, nil
 }
+
 func (n5md3Ledger) ClaimBead(context.Context, string, brcli.TimeoutConfig, core.RunID, core.TransitionID, core.BeadID) error {
 	return nil
 }
+
 func (n5md3Ledger) CloseBead(context.Context, string, brcli.TimeoutConfig, core.RunID, core.TransitionID, core.BeadID, bool) error {
 	return nil
 }
+
 func (n5md3Ledger) ReopenBead(context.Context, string, brcli.TimeoutConfig, core.RunID, core.TransitionID, core.BeadID, string) error {
 	return nil
 }

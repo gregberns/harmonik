@@ -531,10 +531,10 @@ func TestPiHarness_LaunchSpec_SkipBillingGuardIsFalseInProduction(t *testing.T) 
 	t.Setenv(envVarName, "") // no key → guard denies if it runs
 
 	harness := daemon.NewPiHarness(
-		"pi",             // binary
-		"openrouter",     // provider
-		"openrouter/m1",  // model
-		envVarName,       // apiKeyEnv
+		"pi",            // binary
+		"openrouter",    // provider
+		"openrouter/m1", // model
+		envVarName,      // apiKeyEnv
 	)
 
 	rc := handlercontract.RunCtx{
@@ -593,8 +593,8 @@ func TestPiBillingGuardPayload_Valid(t *testing.T) {
 
 	// Missing required fields.
 	cases := []struct {
-		name    string
-		mutate  func(p *core.PiBillingGuardPayload)
+		name   string
+		mutate func(p *core.PiBillingGuardPayload)
 	}{
 		{"empty BeadID", func(p *core.PiBillingGuardPayload) { p.BeadID = "" }},
 		{"empty EnvVarName", func(p *core.PiBillingGuardPayload) { p.EnvVarName = "" }},

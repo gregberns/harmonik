@@ -2986,7 +2986,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 		if w != nil {
 			rbc = &remoteBeadCtx{
-				worker:    *w,
+				worker: *w,
 				// hk-zexsj: pin the tmux SSHRunner off the shared SSH ControlMaster
 				// (mirroring reversetunnel.go's tunnel opts). A churning multiplexed
 				// master can silently drop a multiplexed load-buffer / paste-buffer

@@ -1663,6 +1663,14 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string, payload []byte, marker, phase string) string {
 	pc, canCapture := inj.(paneCapturer)
 	var lastErr error
+	// captureEverSucceeded records whether we ever captured the pane cleanly
+	// enough to actually judge marker presence (capErr == nil on some attempt).
+	// hk-89dye: distinguish a transient capture-INFRA failure (capErr != nil on
+	// EVERY attempt — e.g. a fresh ControlPath=none SSH connection that churns
+	// under concurrency) from a genuine marker-ABSENT (we saw the pane and the
+	// seed wasn't there).  The former must NOT fail-loud a run whose paste
+	// actually landed; the latter is a real discard and must.
+	captureEverSucceeded := false
 	for attempt := 1; attempt <= pasteVerifyAttempts; attempt++ {
 		if err := inj.WriteLastPane(ctx, bufName, payload); err != nil {
 			// A hard paste error is already loud (non-zero tmux/ssh exit) and is
@@ -1694,6 +1702,11 @@ func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string,
 			}
 			return ""
 		default:
+			// Capture succeeded (capErr == nil) but the marker is genuinely
+			// absent — a real paste discard.  hk-89dye: record that we DID
+			// observe the pane, so the trust-the-write fallback below does not
+			// mask a true marker-absent as a capture-infra failure.
+			captureEverSucceeded = true
 			lastErr = fmt.Errorf("seed marker %q absent from pane", marker)
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s seed marker %q not yet in pane (attempt %d/%d)\n", phase, marker, attempt, pasteVerifyAttempts)
 		}
@@ -1704,6 +1717,17 @@ func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string,
 			case <-time.After(pasteVerifyBackoff):
 			}
 		}
+	}
+	// hk-89dye: every capture attempt failed at the infra level (transient
+	// SSH/tmux capture error) while EVERY WriteLastPane (paste) returned exit 0.
+	// We never actually observed the pane, so we cannot say the marker is absent
+	// — and failing loud here would kill a run whose seed very likely landed
+	// (the paste uses the SAME SSH path and succeeded each attempt).  Trust the
+	// write.  This is strictly the capture-infra-down case: a genuine
+	// marker-absent sets captureEverSucceeded and falls through to fail-loud.
+	if canCapture && !captureEverSucceeded {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s pane capture failed on all %d attempts but every paste write succeeded; trusting the write: %v\n", phase, pasteVerifyAttempts, lastErr)
+		return ""
 	}
 	return fmt.Sprintf("%s: seed paste unverified after %d attempts: %v", phase, pasteVerifyAttempts, lastErr)
 }

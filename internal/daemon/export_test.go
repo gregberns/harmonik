@@ -2749,6 +2749,30 @@ func ExportedShellQuoteArg(s string) string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pi Refs:<bead> trailer guarantee test seams (PI-030/PI-031, hk-mazln)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedPiRefsOutcome mirrors the internal piRefsOutcome enum for tests.
+type ExportedPiRefsOutcome = piRefsOutcome
+
+// Exported piRefsOutcome constants for ensurePiRefsTrailer assertions.
+const (
+	ExportedPiRefsAlreadyPresent = piRefsAlreadyPresent
+	ExportedPiRefsAmended        = piRefsAmended
+	ExportedPiRefsCommitted      = piRefsCommitted
+	ExportedPiRefsNoChange       = piRefsNoChange
+)
+
+// ExportedEnsurePiRefsTrailer exposes ensurePiRefsTrailer (VERIFY + deterministic
+// commit-after-exit FALLBACK) for tests. Passes nil runner (local path) so tests
+// exercise the byte-identical local-substrate behaviour (NFR7).
+//
+// Bead ref: hk-mazln.
+func ExportedEnsurePiRefsTrailer(ctx context.Context, wtPath, parentSHA string, beadID core.BeadID) (ExportedPiRefsOutcome, error) {
+	return ensurePiRefsTrailer(ctx, nil, wtPath, parentSHA, beadID)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // codex thread_id interceptor test seams (hk-mzgh)
 // ─────────────────────────────────────────────────────────────────────────────
 

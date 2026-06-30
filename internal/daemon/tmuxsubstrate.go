@@ -1452,8 +1452,12 @@ func (s *tmuxSubstrate) workerSpawnSessionName(workerName string) string {
 // supports this interface (production path with OSAdapter).
 //
 // When the session already exists (ErrWindowCollision — the crew survived a
-// prior daemon restart), SpawnCrewSession returns an error so the caller can
-// decide whether to stop-and-restart or leave the existing crew running.
+// prior daemon restart, or crew-stop removed the registry but failed to kill
+// the session), SpawnCrewSession recovers gracefully: it calls
+// ensureCrewKeeperWindow to re-arm the keeper if the "keeper" window is absent,
+// then returns the existing session via existingCrewSession so that
+// HandleCrewStart can update the registry handle and run the keeper liveness
+// probe (hk-u5tgh).
 func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, spawn handler.SubstrateSpawn) (handler.SubstrateSession, error) {
 	sc, ok := s.adapter.(sessionCreator)
 	if !ok {

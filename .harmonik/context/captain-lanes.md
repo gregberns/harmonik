@@ -29,6 +29,29 @@
 > Lanes run PARALLEL (file-disjoint). Stale `paused-by-failure` queues (main, paul-q, leto-codex) =
 > pre-sleep cruft; reconcile, do NOT resume main.
 
+## ⭐ CURRENT TRUTH (2026-06-30 ~12:05Z — captain staffed the 3 lanes; all verified live)
+> Cold boot after the ~4-day sleep. Daemon UP. Reconciled pre-sleep cruft: cleared 8 ghost crew
+> records (adam, bob, gurney, kynes, leto, paul, stilgar, thufir); left `main` + `leto-codex` PAUSED
+> (did NOT resume main); `paul-q` stuck paused-by-failure (1 failed item, resume wouldn't clear) so
+> paul runs on a FRESH queue `paulk-q`. admiral online (operator).
+>
+> **3 LANES STAFFED + VERIFIED (comms-online AND working pane):**
+> | crew | epic | queue | model | lane | state |
+> |---|---|---|---|---|---|
+> | gurney | hk-gx0dl | gurney-q | opus | REMOTE e2e proof (#1) — LOCAL L0-L5 pyramid + isolated test-daemon FIRST (no live-daemon restart), then live hk-nepva on gb-mbp (confirm worker_name=gb-mbp via events.jsonl). Blocker hk-t1t00 CLOSED. | ACTIVE |
+> | leto | hk-94c3t | leto-q | sonnet | PI-HARNESS Phase-0 build (codename:pilot) — B3 hk-4rmj1 → B4-B9. B2 hk-1c16h CLOSED. UNGATED. | ACTIVE |
+> | paul | hk-tswe0 | paulk-q | opus | KEEPER reliability — dispatch hk-xxcv9 (crew-boot auto-arm, clean P2) NOW. | ACTIVE |
+>
+> **HELD — operator design call (surfaced 2026-06-30):** hk-u5tgh (watchdog tmux-restart bypasses
+> daemon → crews come back keeper-LESS). Captain confirmed synthesis NOT-settled — open question
+> (item f): standalone ctx-watchdog as canonical crew governor vs flip crews to per-keeper auto-restart.
+> Paul holds hk-u5tgh until operator decides; lane 3 runs hk-xxcv9 meanwhile.
+>
+> **PARKED (crews cleared on wake; known/resumable):** codex (hk-8dtyk — leto re-tasked to pilot),
+> wake-economy (hk-var9b — MVP live, zero ready), scavenger (hk-0kr4j — thufir cleared).
+> Note: gurney/leto `model:` in their missions = the CREW-orchestrator model; implementers still run
+> sonnet-via-DOT. leto=sonnet with strict "escalate on ANY run_failed, don't self-classify".
+
 ## ⭐ OPERATOR-CONFIRMED PRIORITY SEQUENCE (set:2026-06-25 expires:~2026-06-29 — via admiral, survives /clear)
 > The fleet ALREADY honors this — recorded so it survives a captain restart; NO reshuffle on read.
 > Lanes run PARALLEL where slots + disjoint work allow. WIP-first is a TIEBREAKER, never serial gating.

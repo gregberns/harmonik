@@ -1,60 +1,66 @@
 {
   "schema_version": 1,
-  "updated": "2026-06-30T11:40:00Z",
-  "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned: update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
+  "updated": "2026-06-30T12:05:00Z",
+  "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
-    {
-      "lane": "wake-economy",
-      "label": "codename:wake-economy",
-      "epic_id": "hk-var9b",
-      "status": "active",
-      "gate": null,
-      "note": "Standing #1 token-opt lane (MVP done/live). Zero ready beads right now = parked-as-fact, NOT gated; resume the instant ready file-disjoint work appears. This is the lane the 2026-06-25 ~2h stall mis-classified as operator-gated."
-    },
     {
       "lane": "remote-hardening",
       "label": "codename:remote-hardening",
       "epic_id": "hk-gx0dl",
+      "crew": "gurney",
+      "queue": "gurney-q",
       "status": "active",
       "gate": null,
-      "note": "Gurney's live remote-worker reliability lane (durable gate-base + remote bug fixes). The 4->8 concurrency bump is gated on remote-proven, but the hardening WORK itself is ungated."
-    },
-    {
-      "lane": "codex",
-      "label": "codename:codex",
-      "epic_id": "hk-8dtyk",
-      "status": "active",
-      "gate": null,
-      "note": "Leto codex-tier concurrency pilot (queue leto-codex). Fills idle local slots with file-disjoint clean P2/P3 work; offloads model cost to ChatGPT billing."
-    },
-    {
-      "lane": "scavenger",
-      "label": "codename:scavenger",
-      "epic_id": "hk-0kr4j",
-      "status": "active",
-      "gate": null,
-      "note": "Operator experiment (admiral 2026-06-25 19:39Z 'see if it works'): crew thufir on queue thufir-q, 1-item SERIAL, codex-first + mandatory DOT review = the vetting. Continuously drains the starved low-pri/orphan backlog one heavily-vetted bead at a time. File-disjoint from gurney (internal/daemon|workers|scenariogate) + leto's active set."
+      "note": "STAFFED 2026-06-30 (crew gurney, #1 priority). Local L0-L5 test pyramid + isolated test-daemon harness FIRST (no live-daemon restart), then live hk-nepva on gb-mbp (confirm worker_name=gb-mbp via events.jsonl). Blocker hk-t1t00 CLOSED."
     },
     {
       "lane": "pilot",
       "label": "codename:pilot",
       "epic_id": "hk-94c3t",
+      "crew": "leto",
+      "queue": "leto-q",
       "plan_path": "plans/2026-06-23-pi-openrouter-harness/",
       "status": "active",
       "gate": null,
-      "note": "Pi+OpenRouter harness Phase-0 BUILD epic (mirrors codex). Operator UNGATED 2026-06-30 (was parked behind remote-reliable). Lead bead hk-4rmj1 (B3 core); its blocker hk-1c16h (B2) is CLOSED."
+      "note": "STAFFED 2026-06-30 (crew leto, re-tasked from codex). Pi+OpenRouter harness Phase-0 BUILD (mirrors codex). Operator UNGATED. Lead bead hk-4rmj1 (B3); blocker hk-1c16h (B2) CLOSED. Fresh queue leto-q (old leto-codex retired/paused)."
     },
     {
       "lane": "keeper-reliability",
       "label": "codename:keeper-redesign",
-      "epic_id": null,
+      "epic_id": "hk-tswe0",
+      "crew": "paul",
+      "queue": "paulk-q",
       "status": "active",
       "gate": {
-        "owner": "captain",
-        "reason": "loose bugs (hk-u5tgh + hk-xxcv9), no umbrella epic yet; hk-u5tgh also holds hold:operator-design-decision pending plans/2026-06-22-keeper-coverage-investigation/00-SYNTHESIS.md. Captain to confirm design + optionally file an epic.",
+        "owner": "operator",
+        "reason": "hk-u5tgh (watchdog-bypass fix) is design-gated: synthesis (plans/2026-06-22-keeper-coverage-investigation/00-SYNTHESIS.md) confirmed NOT-settled by captain — open question (item f): standalone ctx-watchdog as canonical crew governor vs flip crews to per-keeper auto-restart. Surfaced to operator 2026-06-30. This gate is ONLY on the hk-u5tgh expansion; the lane is ACTIVE on hk-xxcv9.",
         "expires": "2026-07-04T00:00:00Z"
       },
-      "note": "Operator-staffed 2026-06-30: crews come back keeper-LESS after watchdog tmux-restart (hk-u5tgh) and crew boot doesn't auto-arm keeper (hk-xxcv9, P2, clean). Gate is a captain-side design-confirm checkpoint, NOT an operator hold."
+      "note": "STAFFED 2026-06-30 (crew paul). Dispatching hk-xxcv9 (crew-boot keeper auto-arm, clean P2) now via paulk-q. hk-u5tgh HELD pending operator design call. epic hk-tswe0 used for attribution (no umbrella keeper epic)."
+    },
+    {
+      "lane": "codex",
+      "label": "codename:codex",
+      "epic_id": "hk-8dtyk",
+      "status": "parked",
+      "gate": null,
+      "note": "PARKED 2026-06-30: crew leto re-tasked to the pilot lane per operator directive. Known/resumable lane (codex concurrency pilot); restaff if slots free + operator wants codex offload back online."
+    },
+    {
+      "lane": "wake-economy",
+      "label": "codename:wake-economy",
+      "epic_id": "hk-var9b",
+      "status": "parked",
+      "gate": null,
+      "note": "PARKED 2026-06-30 (no crew; MVP done/live). Standing token-opt lane. Zero ready beads = parked-as-fact, NOT gated; resume the instant ready file-disjoint work appears."
+    },
+    {
+      "lane": "scavenger",
+      "label": "codename:scavenger",
+      "epic_id": "hk-0kr4j",
+      "status": "parked",
+      "gate": null,
+      "note": "PARKED 2026-06-30 (crew thufir cleared on wake). Standing serial orphan-backlog drainer (codex-first + DOT review). Known/resumable; restaff if operator wants the backlog drain back online + a free slot exists."
     }
   ]
 }

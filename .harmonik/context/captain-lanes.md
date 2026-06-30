@@ -9,6 +9,26 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
+## ⭐⭐ OPERATOR DIRECTIVE 2026-06-30 (via admiral) — FRESH WAKE, STAFF 3 LANES · expires: 2026-07-04
+> Fleet woke from a ~4-day sleep onto the security-fix daemon (7a9bf2e5, deploy daemon-20260630-01).
+> Operator confirmed: **staff all THREE lanes below; REMOTE is the top priority.** This block
+> SUPERSEDES every 2026-06-25 priority/lane block below (those directives are EXPIRED — treat as history).
+> 1. **REMOTE-WORKER e2e proof** (`hk-nepva`, epic remote-hardening `hk-gx0dl`) — #1 PRIORITY.
+>    Blocker `hk-t1t00` is CLOSED, so nepva is UNBLOCKED.
+>    **OPERATOR TESTING CONSTRAINT (load-bearing):** do **VERY THOROUGH LOCAL testing** first via the
+>    L0–L5 test pyramid / isolated test-daemon harness — testing that does **NOT require restarting the
+>    live daemon**. **gb-mbp is UP and available for the live-remote portion** once local is solid.
+>    Confirm routing via events.jsonl `run_started.worker_name=gb-mbp`, NOT daemon stderr.
+> 2. **Pi-harness core build** (`hk-4rmj1`, codename:pilot) — the new OpenRouter-based implementer harness,
+>    Phase-0 (mirrors codex). Operator-UNGATED now (was parked behind remote-reliable). Blocked-by `hk-1c16h`
+>    (pilot B2) — verify that landed before dispatching B3; if not, staff B2 first.
+> 3. **Keeper reliability** — `hk-u5tgh` (watchdog tmux-restart bypasses daemon → crews come back keeper-LESS)
+>    + `hk-xxcv9` (crew boot doesn't auto-arm keeper). ⚠️ `hk-u5tgh` carries `hold:operator-design-decision`
+>    — CHECK whether that design decision is settled (plans/2026-06-22-keeper-coverage-investigation/00-SYNTHESIS.md)
+>    before dispatching it; `hk-xxcv9` (P2) is clean to staff now.
+> Lanes run PARALLEL (file-disjoint). Stale `paused-by-failure` queues (main, paul-q, leto-codex) =
+> pre-sleep cruft; reconcile, do NOT resume main.
+
 ## ⭐ OPERATOR-CONFIRMED PRIORITY SEQUENCE (set:2026-06-25 expires:~2026-06-29 — via admiral, survives /clear)
 > The fleet ALREADY honors this — recorded so it survives a captain restart; NO reshuffle on read.
 > Lanes run PARALLEL where slots + disjoint work allow. WIP-first is a TIEBREAKER, never serial gating.

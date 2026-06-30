@@ -12,6 +12,20 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-06-30 ~11:40Z — operator (via admiral) · expires: 2026-07-04
+WHAT: Fleet woke from a ~4-day operator-directed sleep onto the security-fix daemon (7a9bf2e5,
+      deploy daemon-20260630-01). Operator confirmed STAFF 3 LANES, remote #1: (1) remote-worker
+      e2e proof (hk-nepva, blocker hk-t1t00 now CLOSED) — but VERY THOROUGH LOCAL testing FIRST via
+      the L0–L5 pyramid / isolated test-daemon (NO live-daemon restart needed); gb-mbp is UP for the
+      live portion. (2) Pi-harness core build (hk-4rmj1, codename:pilot) — operator-UNGATED now. (3)
+      Keeper reliability (hk-u5tgh + hk-xxcv9). All 2026-06-25 priority blocks EXPIRED → history.
+WHY:  remote reliability is the unlock to raise concurrency 4→8; pi-harness adds a 2nd implementer
+      harness; keeper-less crew restarts are a recurring fleet-reliability tax. Local-first remote
+      testing keeps blast radius low and the live daemon untouched.
+ORDER: remote LOCAL pyramid → remote live on gb-mbp ‖ pi-harness build ‖ keeper fixes (file-disjoint).
+RETURN-PATH: captain spawned (harmonik-a3dc45482890-captain); admiral relayed via comms. Resume by
+      checking the captain's crew/queue staffing for the 3 lanes + nepva's local-pyramid progress.
+
 ## 2026-06-25 ~21:29Z — operator (via admiral) · expires: 2026-07-02
 WHAT: TWO additions elevated INTO the active remote lane (out of parked/on-deck). (1) CONCURRENT
       LOCAL+REMOTE: routing mechanism already LANDED today (hk-f10xl — Queue.LocalOnly/WorkerTarget

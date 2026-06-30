@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-06-25T19:58:00Z",
+  "updated": "2026-06-30T11:40:00Z",
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned: update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
     {
@@ -36,17 +36,25 @@
       "note": "Operator experiment (admiral 2026-06-25 19:39Z 'see if it works'): crew thufir on queue thufir-q, 1-item SERIAL, codex-first + mandatory DOT review = the vetting. Continuously drains the starved low-pri/orphan backlog one heavily-vetted bead at a time. File-disjoint from gurney (internal/daemon|workers|scenariogate) + leto's active set."
     },
     {
-      "lane": "pi-gateway",
-      "label": "codename:pi-openrouter",
-      "epic_id": null,
+      "lane": "pilot",
+      "label": "codename:pilot",
+      "epic_id": "hk-94c3t",
       "plan_path": "plans/2026-06-23-pi-openrouter-harness/",
-      "status": "parked",
+      "status": "active",
+      "gate": null,
+      "note": "Pi+OpenRouter harness Phase-0 BUILD epic (mirrors codex). Operator UNGATED 2026-06-30 (was parked behind remote-reliable). Lead bead hk-4rmj1 (B3 core); its blocker hk-1c16h (B2) is CLOSED."
+    },
+    {
+      "lane": "keeper-reliability",
+      "label": "codename:keeper-redesign",
+      "epic_id": null,
+      "status": "active",
       "gate": {
-        "owner": "operator",
-        "reason": "not before remote-worker proven reliable (priority sequence 2026-06-25)",
-        "expires": "2026-07-09T00:00:00Z"
+        "owner": "captain",
+        "reason": "loose bugs (hk-u5tgh + hk-xxcv9), no umbrella epic yet; hk-u5tgh also holds hold:operator-design-decision pending plans/2026-06-22-keeper-coverage-investigation/00-SYNTHESIS.md. Captain to confirm design + optionally file an epic.",
+        "expires": "2026-07-04T00:00:00Z"
       },
-      "note": "Pi universal-model-gateway design. Epic-less (lives only as a plan dir) => GATED-by-definition until decomposed into an epic; gate is required while epic_id is null. Correctly the operator's to rank (genuinely brand-new initiative)."
+      "note": "Operator-staffed 2026-06-30: crews come back keeper-LESS after watchdog tmux-restart (hk-u5tgh) and crew boot doesn't auto-arm keeper (hk-xxcv9, P2, clean). Gate is a captain-side design-confirm checkpoint, NOT an operator hold."
     }
   ]
 }

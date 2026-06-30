@@ -14,6 +14,7 @@ package daemon_test
 //   - Teardown: nil session is a no-op; live session is Kill()ed.
 
 import (
+	"context"
 	"io"
 	"strings"
 	"testing"
@@ -287,6 +288,34 @@ func TestPiHarness_Teardown_NilSession(t *testing.T) {
 	h := daemon.ExportedNewPiHarness("", "", "", "")
 	if err := h.Teardown(nil); err != nil {
 		t.Errorf("Teardown(nil) returned error: %v", err)
+	}
+}
+
+// killTrackingSession is a minimal handlercontract.Session implementation that
+// records Kill calls for Teardown verification (PI-100).
+type killTrackingSession struct {
+	killCalled int
+}
+
+func (s *killTrackingSession) ID() core.SessionID                              { return "test-pi-session" }
+func (s *killTrackingSession) SendInput(_ context.Context, _ string) error     { return nil }
+func (s *killTrackingSession) Attach(_ context.Context) (io.Reader, error)     { return nil, nil }
+func (s *killTrackingSession) Kill(_ context.Context) error                    { s.killCalled++; return nil }
+func (s *killTrackingSession) Wait(_ context.Context) (core.Outcome, error)    { return core.Outcome{}, nil }
+func (s *killTrackingSession) LogLocation() string                             { return "" }
+
+// TestPiHarness_Teardown_LiveSession_Kill verifies Teardown calls Kill on a
+// live (non-nil) session — PI-100 "live session is Kill()ed" coverage.
+func TestPiHarness_Teardown_LiveSession_Kill(t *testing.T) {
+	t.Parallel()
+
+	h := daemon.ExportedNewPiHarness("", "", "", "")
+	sess := &killTrackingSession{}
+	if err := h.Teardown(sess); err != nil {
+		t.Errorf("Teardown(live session) returned error: %v", err)
+	}
+	if sess.killCalled != 1 {
+		t.Errorf("Kill called %d times; want 1 (Teardown must Kill live session)", sess.killCalled)
 	}
 }
 

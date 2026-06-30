@@ -2787,6 +2787,16 @@ func ExportedEnsurePiRefsTrailer(ctx context.Context, wtPath, parentSHA string, 
 	return ensurePiRefsTrailer(ctx, nil, wtPath, parentSHA, beadID)
 }
 
+// ExportedEnsurePiRefsTrailerViaRunner exposes ensurePiRefsTrailer with a
+// caller-supplied runner so tests can exercise the runner-routed remote path
+// (PI-031/PI-100). Use tmux.RecordingRunner with nil CmdFunc to run real git
+// commands while recording every call.
+//
+// Bead ref: hk-ypxwl (PI-100).
+func ExportedEnsurePiRefsTrailerViaRunner(ctx context.Context, runner tmuxPkg.CommandRunner, wtPath, parentSHA string, beadID core.BeadID) (ExportedPiRefsOutcome, error) {
+	return ensurePiRefsTrailer(ctx, runner, wtPath, parentSHA, beadID)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // codex thread_id interceptor test seams (hk-mzgh)
 // ─────────────────────────────────────────────────────────────────────────────

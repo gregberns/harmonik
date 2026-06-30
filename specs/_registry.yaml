@@ -30,3 +30,4 @@ prefixes:
   CLS: {spec-id: claude-launchspec, reserved: 2026-05-19, status: draft}
   CL: {spec-id: cognition-loop,    reserved: 2026-05-30, status: draft}
   HN: {spec-id: harness-contract,  reserved: 2026-06-10, status: draft}
+  PI: {spec-id: pi-harness,        reserved: 2026-06-30, status: draft}

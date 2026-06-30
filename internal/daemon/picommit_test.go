@@ -22,6 +22,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,6 +229,39 @@ func TestPiFallback_EmptyBeadIDErrors(t *testing.T) {
 	dir, parentSHA := piCommitRepo(t)
 	if _, err := daemon.ExportedEnsurePiRefsTrailer(context.Background(), dir, parentSHA, ""); err == nil {
 		t.Error("ensurePiRefsTrailer with empty beadID: want error, got nil")
+	}
+}
+
+// TestPiFallback_RunnerRoutedAmend verifies that ensurePiRefsTrailer routes all
+// git operations through the runner when one is provided (PI-031 remote-safe
+// path, PI-100 runner-routed coverage). Uses RecordingRunner with nil CmdFunc
+// so real git runs while every call is recorded.
+func TestPiFallback_RunnerRoutedAmend(t *testing.T) {
+	t.Parallel()
+
+	dir, parentSHA := piCommitRepo(t)
+	beadID := core.BeadID("hk-pi-runner-amend")
+	piCommitWriteFile(t, dir, "work.txt", "pi edit via runner")
+	piCommitGit(t, dir, "add", ".")
+	piCommitGit(t, dir, "commit", "-m", "feat: pi did work but forgot the trailer")
+
+	rr := &tmux.RecordingRunner{}
+	outcome, err := daemon.ExportedEnsurePiRefsTrailerViaRunner(context.Background(), rr, dir, parentSHA, beadID)
+	if err != nil {
+		t.Fatalf("ensurePiRefsTrailerViaRunner: %v", err)
+	}
+	if outcome != daemon.ExportedPiRefsAmended {
+		t.Errorf("outcome = %v; want amended", outcome)
+	}
+	if len(rr.Calls) == 0 {
+		t.Error("runner recorded zero calls — git commands must route through runner (PI-031)")
+	}
+	has, err := daemon.ExportedWorktreeHEADHasRefsTrailer(context.Background(), dir, beadID)
+	if err != nil {
+		t.Fatalf("verify trailer: %v", err)
+	}
+	if !has {
+		t.Errorf("amended commit missing 'Refs: %s' trailer", beadID)
 	}
 }
 

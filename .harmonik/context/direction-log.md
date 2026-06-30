@@ -12,6 +12,22 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-06-30 ~20:40Z — operator (via admiral) · expires: 2026-07-04
+WHAT: NEXT-PHASE TRIGGER for gurney's remote lane (gurney's separate-daemon pivot is making progress —
+      scratch-daemon.sh harness up, conc 3, hardening). ONCE the gb-mbp proof is solid (beads reliably +
+      3-concurrent execute ON gb-mbp, not local-fallback), gurney routes a LARGE BATCH of the scavenger/
+      orphan backlog (~120 ready) through THIS separate daemon -> gb-mbp at volume (start conc 3, push
+      higher to find the break point). Purpose: drain real backlog through remote AND load-test remote to
+      surface issues (launch-gap stall, review.json truncation, worktree races, worker overload, tunnel
+      flake). thufir/codex STAYS paused on the main daemon — the backlog WORK moves to gurney's separate
+      remote daemon, NOT a revived scavenger crew.
+WHY:  decoupled separate daemon makes a high-volume real-load remote stress test cheap + safe (no prod
+      restart); doubles as backlog drain. Volume is how the remaining intermittent remote bugs surface.
+ORDER: gurney harden harness -> prove gb-mbp reliable+concurrent -> THEN volume scavenger-through-separate
+       -daemon (report throughput + failure-mode tally + break-point concurrency).
+RETURN-PATH: queued to gurney (topic remote, no-wake) + captain heads-up. Resume by checking whether the
+      gb-mbp proof holds yet, then whether the volume backlog batch is flowing through the separate daemon.
+
 ## 2026-06-30 ~20:20Z — operator (via admiral) · expires: 2026-07-04
 WHAT: REMOTE APPROACH CHANGE + slot reallocation (operator, frustrated — ~2wk, can't get remote right).
       STOP testing remote by toggling gb-mbp in the LIVE primary daemon's workers.yaml + restarting it
@@ -88,23 +104,3 @@ ORDER: remote reviewer-consistency last-mile → live concurrent local+remote pr
 RETURN-PATH: captain scoping both (directive comms 019f00af); admiral-initiatives.md STALE on routing
       (listed "not designed/on-deck" — it's LANDED) → admiral to correct. Resume by checking captain's
       kerf-work + bead set for the test-daemon harness + the concurrent-validation bead.
-
-## 2026-06-25 ~19:39Z — operator (via admiral) · expires: 2026-07-02
-WHAT: 3 parallel side-quests added ALONGSIDE the headline (remote stays #1). (a) NOW: stand up an
-      orphan-backlog SCAVENGER — one standing crew, 1-item serial queue, codex-first + DOT review,
-      drains the starved low-pri/orphan tail. (b) NEXT: DECOMPOSE token-opt #2 into ready beads. (c)
-      WHEN-SLOTS: SCOPE (not build) a separated test-daemon kerf harness (test codex/daemon changes
-      without restarting the live daemon; unifies with the remote test-daemon spike).
-WHY:  ~125 ready beads / 71 P2 sit starved; fill slots + drain backlog in parallel while remote deploys.
-ORDER: scavenger NOW → token-opt #2 decomposed/staged → test-daemon harness scoped when slots free.
-RETURN-PATH: scavenger=thufir LIVE (epic hk-0kr4j); token-opt #2 decomposed (hk-017sc/hk-ln48u; AO held
-      for scope-reconcile vs live watch cutover); test-daemon scope = NOT STARTED (resume here when slots free).
-
-## 2026-06-25 ~19:10Z — operator (via admiral) · expires: 2026-07-09
-WHAT: confirmed the active priority SEQUENCE (lanes run PARALLEL where slots + disjoint work allow).
-WHY:  get remote working RELIABLY first — it is the unlock to raise concurrency 4→8 (more active work).
-ORDER: (1) remote-worker reliable  [gurney, headline; GOAL = bump concurrency 4→8 once proven]
-       (2) token-opt               [resume as ready beads appear]
-       (3) codex production routing [leto pilot live; also offloads Opus/Sonnet cost]
-       (4) flywheel = the admiral/captain framework changes (PLAN-v2 + the stall-detector)
-RETURN-PATH: remote proven reliable → raise 4→8 → staff token-opt when ready → codex scales → framework lands.

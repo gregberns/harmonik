@@ -77,9 +77,12 @@ type PiBillingGuardPayload struct {
 	// BeadID is the bead correlation id. Required (non-empty).
 	BeadID string `json:"bead_id"`
 
-	// APIKeyEnv is the NAME of the env var carrying the selected provider key.
+	// EnvVarName is the NAME of the env var carrying the selected provider key.
 	// Required (non-empty). NEVER the key VALUE — PI-040 (ps/argv leak).
-	APIKeyEnv string `json:"api_key_env"`
+	// Named EnvVarName (not APIKeyEnv) to satisfy EV-036 secret-prefix rule
+	// (hk-6x7dw): "api[_-]?key" matches the scanner; the bare env-var-name
+	// label does not.
+	EnvVarName string `json:"env_var_name"`
 
 	// Outcome is the guard step outcome. Required (must be a valid declared value).
 	Outcome PiBillingGuardOutcome `json:"outcome"`
@@ -94,7 +97,7 @@ type PiBillingGuardPayload struct {
 //
 // Rules:
 //   - BeadID must be non-empty.
-//   - APIKeyEnv must be non-empty.
+//   - EnvVarName must be non-empty.
 //   - Outcome must be one of the declared PiBillingGuardOutcome values.
 //   - Reason must be non-empty.
 //
@@ -104,7 +107,7 @@ func (p PiBillingGuardPayload) Valid() bool {
 	if p.BeadID == "" {
 		return false
 	}
-	if p.APIKeyEnv == "" {
+	if p.EnvVarName == "" {
 		return false
 	}
 	if !p.Outcome.Valid() {

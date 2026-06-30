@@ -135,10 +135,10 @@ func emitPiBillingGuard(
 		return
 	}
 	pl := core.PiBillingGuardPayload{
-		BeadID:    beadID,
-		APIKeyEnv: apiKeyEnv,
-		Outcome:   outcome,
-		Reason:    reason,
+		BeadID:     beadID,
+		EnvVarName: apiKeyEnv,
+		Outcome:    outcome,
+		Reason:     reason,
 	}
 	if !piRunIDIsNil(runID) {
 		pl.RunID = runID.String()

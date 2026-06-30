@@ -272,8 +272,8 @@ func TestRunPiBillingGuard_AllowedEmitsAllowedOutcome(t *testing.T) {
 		t.Fatalf("expected 1 decoded guard payload; got %d", len(em.guards))
 	}
 	pl := em.guards[0]
-	if pl.APIKeyEnv != envVarName {
-		t.Errorf("APIKeyEnv = %q; want env var NAME %q (PI-040 leak prevention)", pl.APIKeyEnv, envVarName)
+	if pl.EnvVarName != envVarName {
+		t.Errorf("EnvVarName = %q; want env var NAME %q (PI-040 leak prevention)", pl.EnvVarName, envVarName)
 	}
 	if strings.Contains(pl.Reason, "sk-or-real-key-value") {
 		t.Errorf("event Reason must NOT contain the key VALUE; got: %q", pl.Reason)
@@ -306,8 +306,8 @@ func TestRunPiBillingGuard_AbsentKeyEmitsDeniedOutcome(t *testing.T) {
 	if outcomes[0] != core.PiBillingGuardDenied {
 		t.Errorf("outcome = %q; want %q", outcomes[0], core.PiBillingGuardDenied)
 	}
-	if em.guards[0].APIKeyEnv != envVarName {
-		t.Errorf("APIKeyEnv = %q; want %q", em.guards[0].APIKeyEnv, envVarName)
+	if em.guards[0].EnvVarName != envVarName {
+		t.Errorf("EnvVarName = %q; want %q", em.guards[0].EnvVarName, envVarName)
 	}
 }
 
@@ -487,10 +487,10 @@ func TestPiBillingGuardPayload_Valid(t *testing.T) {
 
 	// Payload Valid() — happy path.
 	happy := core.PiBillingGuardPayload{
-		BeadID:    "hk-test",
-		APIKeyEnv: "OPENROUTER_API_KEY",
-		Outcome:   core.PiBillingGuardAllowed,
-		Reason:    "key present and no on-disk credential",
+		BeadID:     "hk-test",
+		EnvVarName: "OPENROUTER_API_KEY",
+		Outcome:    core.PiBillingGuardAllowed,
+		Reason:     "key present and no on-disk credential",
 	}
 	if !happy.Valid() {
 		t.Error("happy payload should be Valid(); got false")
@@ -508,7 +508,7 @@ func TestPiBillingGuardPayload_Valid(t *testing.T) {
 		mutate  func(p *core.PiBillingGuardPayload)
 	}{
 		{"empty BeadID", func(p *core.PiBillingGuardPayload) { p.BeadID = "" }},
-		{"empty APIKeyEnv", func(p *core.PiBillingGuardPayload) { p.APIKeyEnv = "" }},
+		{"empty EnvVarName", func(p *core.PiBillingGuardPayload) { p.EnvVarName = "" }},
 		{"invalid Outcome", func(p *core.PiBillingGuardPayload) { p.Outcome = "bad" }},
 		{"empty Reason", func(p *core.PiBillingGuardPayload) { p.Reason = "" }},
 	}
@@ -552,8 +552,8 @@ func TestRunPiBillingGuard_EventDoesNotLeakKeyValue(t *testing.T) {
 		if strings.Contains(pl.Reason, keyValue) {
 			t.Errorf("event Reason MUST NOT contain key value; got Reason=%q", pl.Reason)
 		}
-		if pl.APIKeyEnv != envVarName {
-			t.Errorf("event APIKeyEnv = %q; want env-var NAME %q", pl.APIKeyEnv, envVarName)
+		if pl.EnvVarName != envVarName {
+			t.Errorf("event EnvVarName = %q; want env-var NAME %q", pl.EnvVarName, envVarName)
 		}
 	}
 }

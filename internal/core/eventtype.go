@@ -396,7 +396,9 @@ const (
 	//
 	// Events name the env-var NAME, never its value (PI-040 / ps-argv leak).
 	//
-	// Payload fields: run_id (optional), bead_id, api_key_env, outcome, reason.
+	// Payload fields: run_id (optional), bead_id, env_var_name, outcome, reason.
+	// (Field is named EnvVarName/env_var_name, not APIKeyEnv/api_key_env, per
+	// EV-036 secret-prefix rule — hk-6x7dw.)
 	// Durability class: O (ordinary — observability; a denied launch is also
 	// surfaced via the buildPiLaunchSpec error to the caller).
 	// Refs: hk-l1bkp (PI-040/PI-042/PI-043, codename:pilot).

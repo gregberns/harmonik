@@ -68,8 +68,10 @@ import (
 // edit) projectconfig.go.
 type codexWALGuardConfig struct {
 	Codex struct {
-		// StaleWALMaxBytes is the size threshold. A pointer so an absent key
-		// (nil) is distinguishable from an explicit 0 (clean any non-empty WAL).
+		// StaleWALMaxBytes is the secondary log-classification threshold (hk-xisvb:
+		// NOT a cleanup gate — every unheld stale WAL is cleaned regardless of
+		// size). A pointer so an absent key (nil → fail loud) is distinguishable
+		// from an explicit 0 (a valid, required choice).
 		StaleWALMaxBytes *int64 `yaml:"stale_wal_max_bytes"`
 	} `yaml:"codex"`
 }

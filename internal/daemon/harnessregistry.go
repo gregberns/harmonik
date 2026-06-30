@@ -30,11 +30,11 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// newHarnessRegistry builds the daemon's HarnessRegistry with ClaudeHarness and
-// CodexHarness registered.
+// newHarnessRegistry builds the daemon's HarnessRegistry with ClaudeHarness,
+// CodexHarness, and PiHarness registered.
 //
 // Returns a non-nil error only if Register fails (a duplicate or sealed-registry
-// defect), which is impossible for these two distinct registrations but surfaced
+// defect), which is impossible for these three distinct registrations but surfaced
 // so callers fail-closed if this grows.
 func newHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
 	reg := handlercontract.NewHarnessRegistry()

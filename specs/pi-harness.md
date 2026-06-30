@@ -86,7 +86,51 @@ depends-on:
   when non-nil (and fall back to local `exec` when nil), so the remote SSH substrate works. It MUST be
   gated at the existing `Completion()==ProcessExit` seam.
 
-## §4 Billing/auth guard (fail-closed)
+## §4 Architecture
+
+### 4.a Subsystem envelope
+
+#### PI-ENV-001 — Envelope declaration
+
+Envelope for the Pi harness subsystem per [architecture.md §4.0 AR-053]. The Pi harness is a daemon-owned, per-run, per-bead subsystem that drives the `pi` binary (OpenRouter-backed) as a `handlercontract.Harness` implementation. It owns argv construction, env isolation, NDJSON session-id capture, the `agent_end` watcher, the `ensurePiRefsTrailer` commit fallback, and the `pibillingguard` pre-launch gate.
+
+(a) Events produced:
+  - `pi_billing_guard` — emitted by `pibillingguard` before each Pi launch; outcome is `allowed` or `denied`; payload schema `PiBillingGuardPayload` in `core/pibillingguard.go` (registered in `core/eventreg_hqwn59.go`). Class O.
+
+(b) Events consumed:
+  - none — the Pi harness does not subscribe to the event bus; it processes the Pi process's NDJSON stdout stream directly via `piSessionIDInterceptor`.
+
+(c) Types introduced (cross-subsystem):
+  | Type | `Tags:` | `Axes:` (if non-baseline) |
+  |---|---|---|
+  | `PiBillingGuardPayload` (`core/pibillingguard.go`) | mechanism | baseline |
+  | `PiBillingGuardOutcome` enum (`core/pibillingguard.go`) | mechanism | baseline |
+
+(d) Handlers implemented:
+  - `PiHarness` implementing the 8-method `handlercontract.Harness` interface — cited from [handler-contract.md §4 HC-001].
+
+(e) State owned:
+  - none — `PiHarness` struct fields are read-only after construction; no persistent state file is owned by this subsystem.
+
+(f) Control points provided:
+  - `pibillingguard` per-launch gate (PI-040) — a fail-closed pre-flight assertion that blocks launch when the configured key is absent or an on-disk credential is detected; cited from [control-points.md §4.4].
+
+(g) NFRs inherited / overridden:
+  - Inherited: `ON-004` (configuration required; missing keys aggregate to one error pointing at `harmonik pi config --example`, PI-051).
+  - Overridden: none.
+
+(h) Boundary classification per operation:
+  | Operation | `Tags:` | Axes |
+  |---|---|---|
+  | `pibillingguard` (PI-040) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `buildPiLaunchSpec` initial (PI-020) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `buildPiLaunchSpec` resume (PI-020) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `ensurePiRefsTrailer` (PI-030/031) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `Teardown`/`Kill` (PI-014) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+
+Tags: mechanism
+
+## §5 Billing/auth guard (fail-closed)
 
 - **PI-040** Before launch, the guard MUST assert the env var named by the resolved `api_key_env` is
   present and non-empty; if absent/empty, it MUST refuse to launch (return a typed error before
@@ -102,7 +146,7 @@ depends-on:
   reopen, NEVER a silent re-route to claude. A `harness:pi` label resolves hard at tier-1, so the
   tier-4 claude fallback (`harnessresolve.go:109–117`) cannot fire on a Pi config failure.
 
-## §5 Configuration (no hardcoded defaults)
+## §6 Configuration (no hardcoded defaults)
 
 - **PI-050** Config MUST add a top-level `harnesses.pi` block with REQUIRED `provider`, `model`,
   `api_key_env` and OPTIONAL `fallback{provider,model,api_key_env}`. The product MUST NOT bake any
@@ -113,7 +157,7 @@ depends-on:
 - **PI-052** `model` MUST be validated by shape only (HC-055a: `^[A-Za-z0-9._:/-]+$`, ≤128 chars),
   never against a curated value enum; Pi's full provider/model range MUST be selectable.
 
-## §6 Selection & fence
+## §7 Selection & fence
 
 - **PI-060** A `harness:pi` label (tier-1) MUST select the Pi harness; tier-4 `daemon.default_harness:
   pi` MUST select it globally. An unregistered/unknown selector MUST hard-error (no silent claude
@@ -121,7 +165,7 @@ depends-on:
 - **PI-061** Operator discipline (NOT code) MUST fence Pi to mechanical, deterministically-checkable
   beads via a dedicated `pi` queue/lane; the DOT test+review gate MUST remain the correctness check.
 
-## §7 Rate-limit & failure handling (paid-first)
+## §8 Rate-limit & failure handling (paid-first)
 
 - **PI-069 (production substrate = paid)** The unattended-fleet production substrate MUST be a PAID
   provider/model (operator config). **Free OpenRouter is an explicitly-labelled, hand-attended
@@ -149,7 +193,7 @@ depends-on:
   global `bandwidthtuner` (`NotifyRateLimit()` snaps global `max_concurrent` to 1). A free-tier Pi 429
   MUST NOT throttle the paid Claude fleet; Pi rate-limit handling MUST use per-queue backoff only.
 
-## §8 Phase 1 — crew shim — **DESIGN SPIKE REQUIRED (PI-080/081 are GOALS, not yet normative)**
+## §9 Phase 1 — crew shim — **DESIGN SPIKE REQUIRED (PI-080/081 are GOALS, not yet normative)**
 
 > Per the crew-shim review, Phase 1's premise is unverified and three leaned-on subsystems break on a
 > non-claude pane. PI-080/081 below are **goals** held until a Phase-1 design spike resolves the named
@@ -177,14 +221,14 @@ depends-on:
   (5) `HandlerBinary` config-wiring (`daemon.go:116–123`) — Phase 1 depends on this Phase-2 capability,
   resolved via a narrow global-binary override or by moving the wiring earlier.
 
-## §9 Phase 2 — crew-launch provider abstraction (gated on Phase 1)
+## §10 Phase 2 — crew-launch provider abstraction (gated on Phase 1)
 
 - **PI-090** Crew launch MUST be routed through a provider/harness abstraction resolved by the same
   tier mechanism as the per-bead path, replacing the hard-coded `claude` at `crewlaunchspec.go:100`
   and `captain.go:208`. The binary MUST be selectable per-crew/per-lane (not a global swap). The
   captain MUST remain Claude unconditionally.
 
-## §10 Tests (acceptance)
+## §11 Tests (acceptance)
 
 - **PI-100** Unit tests MUST cover: argv (initial/resume); env strip+inject; HC-041 DetectReady;
   session-id capture; the `agent_end` watcher firing Teardown under a simulated non-exit hang;
@@ -194,7 +238,7 @@ depends-on:
   mechanical bead, implements, commits with a `Refs:` trailer, the DOT gate passes, the daemon
   merges and closes the bead — with the configured provider and a fail-closed guard."
 
-## §11 Conformance
+## §12 Conformance
 
 **Phase 0 v0.1.** Conformant when PI-001..PI-073 (incl. sub-requirements) pass. Acceptance scenarios:
 

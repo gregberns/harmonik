@@ -1483,6 +1483,19 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 
 	outcome := sc.NewSessionIn(ctx, params)
 	if outcome.Err != nil {
+		if errors.Is(outcome.Err, tmux.ErrWindowCollision) {
+			// Session already exists (crew survived a prior daemon restart, or
+			// crew-stop removed the registry but failed to kill the session).
+			// Instead of failing, re-arm the keeper window if it is absent and
+			// return the existing session so HandleCrewStart can update the
+			// registry handle and run the keeper liveness probe. This is the
+			// ctx-watchdog collision-recovery path (hk-u5tgh).
+			fmt.Fprintf(os.Stderr,
+				"daemon: SpawnCrewSession: crew %q session already exists — re-arming keeper if absent\n",
+				crewName)
+			s.ensureCrewKeeperWindow(ctx, crewName, sessName, spawn)
+			return s.existingCrewSession(ctx, sessName)
+		}
 		return nil, fmt.Errorf("daemon: SpawnCrewSession: new-session for crew %q: %w", crewName, outcome.Err)
 	}
 
@@ -1677,6 +1690,54 @@ func (s *tmuxSubstrate) spawnCrewKeeperWindow(ctx context.Context, crewName, ses
 		fmt.Fprintf(os.Stderr, "daemon: SpawnCrewSession: launch keeper window for crew %q (%s:%s): %v (non-fatal)\n",
 			crewName, sessName, tmux.WindowKeeper, outcome.Err)
 	}
+}
+
+// ensureCrewKeeperWindow checks whether a "keeper" window already exists in
+// sessName and calls spawnCrewKeeperWindow only when it is absent. Called from
+// SpawnCrewSession on a session-collision to re-arm a keeper-less surviving
+// crew (hk-u5tgh). Best-effort: if ListWindows fails, spawnCrewKeeperWindow is
+// attempted anyway (it logs its own failure as non-fatal).
+func (s *tmuxSubstrate) ensureCrewKeeperWindow(ctx context.Context, crewName, sessName string, spawn handler.SubstrateSpawn) {
+	windows, listErr := s.adapter.ListWindows(ctx, sessName)
+	if listErr != nil {
+		s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn)
+		return
+	}
+	for _, w := range windows {
+		if w == tmux.WindowKeeper {
+			fmt.Fprintf(os.Stderr,
+				"daemon: SpawnCrewSession: crew %q session already has keeper window — no re-arm needed\n",
+				crewName)
+			return
+		}
+	}
+	fmt.Fprintf(os.Stderr,
+		"daemon: SpawnCrewSession: crew %q keeper window absent from existing session — re-arming\n",
+		crewName)
+	s.spawnCrewKeeperWindow(ctx, crewName, sessName, spawn)
+}
+
+// existingCrewSession builds a tmuxSubstrateSession for a crew session that
+// already exists. Called from SpawnCrewSession on a session-collision so that
+// HandleCrewStart can update the registry handle and run the keeper probe
+// without re-creating the agent pane (hk-u5tgh).
+func (s *tmuxSubstrate) existingCrewSession(ctx context.Context, sessName string) (handler.SubstrateSession, error) {
+	handle := tmux.WindowHandle(sessName + ":" + tmux.WindowAgent)
+	paneID, _ := s.adapter.WindowPaneID(ctx, handle)
+	pidTarget := handle
+	if paneID != "" {
+		pidTarget = tmux.WindowHandle(paneID)
+	}
+	pid, _ := s.adapter.WindowPanePID(ctx, pidTarget)
+	return &tmuxSubstrateSession{
+		adapter:     s.adapter,
+		handle:      handle,
+		paneID:      paneID,
+		pidTarget:   pidTarget,
+		pid:         pid,
+		waitDone:    make(chan struct{}),
+		releaseSlot: func() {},
+	}, nil
 }
 
 // shellJoinArgv single-quotes each argv element and joins with spaces so the

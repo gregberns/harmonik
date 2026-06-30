@@ -297,12 +297,14 @@ type killTrackingSession struct {
 	killCalled int
 }
 
-func (s *killTrackingSession) ID() core.SessionID                              { return "test-pi-session" }
-func (s *killTrackingSession) SendInput(_ context.Context, _ string) error     { return nil }
-func (s *killTrackingSession) Attach(_ context.Context) (io.Reader, error)     { return nil, nil }
-func (s *killTrackingSession) Kill(_ context.Context) error                    { s.killCalled++; return nil }
-func (s *killTrackingSession) Wait(_ context.Context) (core.Outcome, error)    { return core.Outcome{}, nil }
-func (s *killTrackingSession) LogLocation() string                             { return "" }
+func (s *killTrackingSession) ID() core.SessionID                          { return "test-pi-session" }
+func (s *killTrackingSession) SendInput(_ context.Context, _ string) error { return nil }
+func (s *killTrackingSession) Attach(_ context.Context) (io.Reader, error) { return nil, nil }
+func (s *killTrackingSession) Kill(_ context.Context) error                { s.killCalled++; return nil }
+func (s *killTrackingSession) Wait(_ context.Context) (core.Outcome, error) {
+	return core.Outcome{}, nil
+}
+func (s *killTrackingSession) LogLocation() string { return "" }
 
 // TestPiHarness_Teardown_LiveSession_Kill verifies Teardown calls Kill on a
 // live (non-nil) session — PI-100 "live session is Kill()ed" coverage.

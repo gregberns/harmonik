@@ -102,6 +102,15 @@ overstepping:
     stalled crew, or escalate a genuine §8 blocker). No epic stalls without the
     captain actively working its unblock; this is the engine's core job, not the
     crews'.
+  - **CREW PROCESS-LIVENESS:** a verified crew self-manages its OWN beads/wedges,
+    EXCEPT two shapes it cannot self-recover from because it is NOT executing — a
+    **submit-wedge** (directive typed into its pane but the Enter never registered) and
+    a **dead wake-trigger** (its in-flight bead closed out-of-band, e.g. an operator
+    `br close`, so its `run_completed` wake never fires). The comms bus is BLIND to a
+    silent crew. So run the lightweight ≤15–20m crew-liveness sweep (STARTUP.md §4.3):
+    capture each crew pane; healthy = active spinner OR empty `❯ ` input box; FLAG +
+    re-drive (C-u → resend literal → Enter) any crew with stable non-empty input and no
+    spinner across two ~15s samples. Distinct from the captain's-OWN liveness (ops-monitor-owned).
   - **NO-IDLE-WITH-READY-WORK:** a crew idle while ready work sits in its lane is a
     DEFECT, not steady-state. When a lane is teed up and its substrate is reachable,
     the captain GOES (staff / re-task + nudge the crew's pane) — it does NOT

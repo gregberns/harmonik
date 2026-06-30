@@ -604,7 +604,9 @@ harmonik subscribe --types epic_completed --json
 > each entry is `{state: ok|flag, detail}`) and take the JUDGMENT action on each
 > flagged item — do NOT re-derive the green ones: daemon-up flag ⇒ rebuild+restart the
 > daemon; paused-queues flag ⇒ surface+resume; crew-fresh flag ⇒ capture-pane the named
-> crew, nudge/reconcile; review-gate flag ⇒ a completed run has NO reviewer_verdict
+> crew, nudge/reconcile (CONVENIENCE trigger, NOT a guarantee — it misses the silent
+> submit-wedge / dead-wake-trigger shapes, which the §4.3 crew process-liveness sweep
+> owns); review-gate flag ⇒ a completed run has NO reviewer_verdict
 > (review BYPASSED) — surface to operator with the run_ids from `.review_bypass_run_ids`;
 > backlog-ready flag ⇒ STAFF: run `kerf next` for the ranked lane, assign a free
 > crew/queue slot (the monitor flags WHEN ready work + a free slot coexist; the staffing
@@ -624,14 +626,57 @@ captain actively working its unblock. React to comms events (operator direction,
 status, ops-monitor flags), `epic_completed` (re-task the crew to its next lane), and
 crew error posts (investigate/decide) — **AND, between events, actively pull the
 backlog and drive the in-flight epics.** A verified crew self-manages its beads,
-wedges, and failures WITHIN its lane; but keeping every lane STAFFED and every epic
-MOVING is the captain's job, not the crews'. So in addition to reacting to events,
+wedges, and failures WITHIN its lane — **with TWO carve-outs it CANNOT self-recover
+from, because in both the crew is NOT executing:** a **submit-wedge** (a directive was
+typed into the crew's pane but the Enter never registered — the text sits unsubmitted,
+nothing runs) and a **dead wake-trigger** (the crew armed a queue-completion monitor
+and went idle, but its in-flight bead was closed/lost OUT-OF-BAND — e.g. an operator
+`br close`, not via the daemon queue — so no `run_completed` ever fires and its wake
+never comes). A crew in either state cannot rescue itself; catching it is the
+captain's job (the crew process-liveness sweep, §4.3 below). Keeping every lane
+STAFFED and every epic MOVING is also the captain's job, not the crews'. So in addition to reacting to events,
 run the **≤5-minute REFRESH-AND-STAFF pass** (above): `kerf next` +
 `br ready --limit 0`, and if any free crew/queue slot coexists with ready beads,
 STAFF it now (establish a lane per Step 5, or comms-re-task a free crew per §4) —
 do NOT wait for an event. "React only to events, everything else is the crews' job"
 is the passive failure that idles the fleet when lanes drain or block; the captain
 drives delivery and pulls the backlog on its own timer.
+
+### Crew process-liveness sweep (§4.3 — the MIDDLE GROUND, catches the silent crew)
+
+> **Principle: once a crew is GOING it self-manages; this sweep exists ONLY to catch
+> the ones that have gone silent.** Watcher 1 (the comms bus) is structurally BLIND to
+> a silent crew — a submit-wedged or dead-wake-triggered crew sends nothing, so no
+> event ever fires and a purely event-driven captain never notices. This is a
+> SEPARATE, lightweight captain duty — NOT the captain's-OWN liveness (that stays
+> ops-monitor-owned, §5 — do not arm a self-polling health timer for it), and NOT a
+> revival of the dropped 12-minute focus-check or the per-minute run-level heartbeat
+> the orchestrator-rules correctly forbid. The ops-monitor `crew-fresh` probe is a
+> CONVENIENCE trigger, not a guarantee — it misses both silent shapes below.
+
+On a **≤15–20-minute** cadence while crews are staffed, capture each crew's agent pane
+(`tmux capture-pane -p -t <session>:1`). A crew is HEALTHY if it shows EITHER an
+**active spinner** (Cooked / Crunched / Reticulating / Running / thinking / Pouncing /
+… that is advancing) OR an **EMPTY `❯ ` input box** (idle-armed, waiting on a wake).
+
+**FLAG** any crew with **stable non-whitespace text after `❯ ` AND no active spinner**
+— no human types into a crew pane, so leftover input means a submit that didn't take.
+Use the **two-sample rule** to avoid tripping on a prompt caught mid-submit: re-capture
+~15s later and flag ONLY if the same non-empty input box persists with no spinner
+across both samples. A FROZEN spinner line (e.g. "Crunched for 45s" that never
+increments) over stale input is the same wedge.
+
+**Recovery (submit-wedge or dead wake-trigger — re-drive the pane):**
+```bash
+tmux send-keys -t <session>:1 C-u                     # clear stale/unsubmitted input
+tmux send-keys -t <session>:1 -l "<fresh directive>"  # retype the directive literally (-l)
+tmux send-keys -t <session>:1 Enter                   # submit
+tmux capture-pane -p -t <session>:1 | tail -5         # confirm: spinner up, input box EMPTY
+```
+A bare `Enter` on the stale buffer often fails to register — clear-and-retype is what
+works. For a **dead wake-trigger**, re-drive with the crew's next directive (or
+re-point it at its queue) so it stops waiting on a `run_completed` that will never
+fire because its bead was closed out-of-band.
 
 ### Idle-triggered realign (§4.4 — replaces the dropped 12m focus-check)
 

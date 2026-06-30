@@ -201,6 +201,8 @@ harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartb
 
 A `run_stale` during legitimate slow recovery is NOT a wedge.
 
+**Slow-but-live RUN vs SILENT-WEDGED CREW — opposite responses.** A slow run emits a `run_stale` and is grinding (wait the ~30-min ceiling, above). A **silent-wedged crew** emits NOTHING — a submit-wedge (a directive typed into the crew pane that never submitted) or a dead wake-trigger (in-flight bead closed out-of-band so its `run_completed` never fires) — and waits forever; INTERVENE (re-drive the pane). Discriminator: a healthy crew shows an active spinner OR an empty `❯ ` input box; stable non-empty input with no spinner = wedged. Detail + recovery: captain STARTUP.md §4.3.
+
 ## Operational rules
 
 **NO CI.** Do not propose GitHub Actions.

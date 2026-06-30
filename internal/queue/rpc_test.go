@@ -185,6 +185,64 @@ func TestHandleQueueSubmit_ValidationError_AlreadyActive(t *testing.T) {
 	}
 }
 
+// TestHandleQueueSubmit_PiQueue_MissingWorkersCap verifies PI-070: a Pi queue
+// submitted without an explicit Workers cap is rejected with
+// "pi_queue_missing_workers_cap" before any validation runs.
+func TestHandleQueueSubmit_PiQueue_MissingWorkersCap(t *testing.T) {
+	t.Parallel()
+
+	const beadA core.BeadID = "hk-pi070a"
+
+	projectDir := rpcFixtureTempProjectDir(t)
+	ledger := rpcFixtureOpenLedger(beadA)
+
+	req := queue.QueueSubmitRequest{
+		SchemaVersion:  1,
+		DefaultHarness: core.AgentTypePi,
+		// Workers deliberately omitted (zero) — must fail.
+		Groups: []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+	}
+	_, _, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 4)
+	if rpcErr == nil {
+		t.Fatal("expected RPCError for Pi queue with no Workers cap, got nil")
+	}
+	if rpcErr.Code != -32602 {
+		t.Errorf("RPCError.Code = %d, want -32602 (invalid_params)", rpcErr.Code)
+	}
+	const wantMsg = "pi_queue_missing_workers_cap"
+	if rpcErr.Message != wantMsg {
+		t.Errorf("RPCError.Message = %q, want %q", rpcErr.Message, wantMsg)
+	}
+}
+
+// TestHandleQueueSubmit_PiQueue_ExplicitWorkersCap verifies PI-070: a Pi queue
+// with an explicit Workers cap is accepted (no error).
+func TestHandleQueueSubmit_PiQueue_ExplicitWorkersCap(t *testing.T) {
+	t.Parallel()
+
+	const beadA core.BeadID = "hk-pi070b"
+
+	projectDir := rpcFixtureTempProjectDir(t)
+	ledger := rpcFixtureOpenLedger(beadA)
+
+	req := queue.QueueSubmitRequest{
+		SchemaVersion:  1,
+		DefaultHarness: core.AgentTypePi,
+		Workers:        2, // explicit cap — must succeed
+		Groups:         []queue.Group{rpcFixtureWaveGroup(0, beadA)},
+	}
+	_, q, _, rpcErr := queue.HandleQueueSubmit(t.Context(), req, ledger, projectDir, 4)
+	if rpcErr != nil {
+		t.Fatalf("HandleQueueSubmit: unexpected error for Pi queue with explicit Workers cap: %v", rpcErr)
+	}
+	if q == nil {
+		t.Fatal("returned Queue is nil")
+	}
+	if q.Workers != 2 {
+		t.Errorf("Queue.Workers = %d, want 2", q.Workers)
+	}
+}
+
 // TestHandleQueueSubmit_RetainsPerItemWorkflowFields is the hk-u6zp regression
 // guard. The submit handler rebuilds every Item; before the fix it copied only
 // BeadID/Status/RunID/AppendedAt and SILENTLY DROPPED the per-item workflow

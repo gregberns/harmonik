@@ -3740,6 +3740,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		emitDone(false, fmt.Sprintf("build launch spec error: %v", specErr))
 		return
 	}
+	// PI-073: record the resolved agent type on the RunHandle so that
+	// bandwidthTunerBackstop can filter Pi rate-limit events from the global
+	// tuner. The type is only known after specBuilder resolves the harness.
+	if rh, ok := deps.runRegistry.Get(runID); ok && rh != nil {
+		rh.SetAgentType(artifactAgentType(artifacts))
+	}
 
 	// In production HandlerArgs is always nil and spec.Args already contains the
 	// bridge flags (--session-id or --resume) from buildClaudeLaunchSpec.

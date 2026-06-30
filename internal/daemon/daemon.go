@@ -1059,6 +1059,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	if subscribeErr := tunerBackstop.Subscribe(bus); subscribeErr != nil {
 		return fmt.Errorf("daemon.Start: bandwidth-tuner backstop subscribe: %w", subscribeErr)
 	}
+	tunerBackstop.SetRunRegistry(sharedRunRegistry) // PI-073: isolate Pi events from global tuner
 
 	// Wire the QuiesceArbiter (hk-jeby, M1 of hk-rl4b / codename:sleep-wake).
 	//

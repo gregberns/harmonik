@@ -46,14 +46,27 @@ const (
 // bus.Seal (EV-009); SetTuner wires the live tuner after it is constructed.
 // This two-phase wiring avoids restructuring the daemon init order: the tuner
 // depends on concurrencyCtrl, which is built after Seal.
+//
+// PI-073: reg (optional) lets handle() look up the run's agent type so that
+// Pi rate-limit events are isolated from the global tuner.
 type bandwidthTunerBackstop struct {
 	tuner atomic.Pointer[BandwidthTuner]
+	reg   atomic.Pointer[RunRegistry]
 }
 
 // SetTuner stores the running tuner so the bus handler can forward events.
 // Must be called after NewBandwidthTuner and before beads are dispatched.
 func (b *bandwidthTunerBackstop) SetTuner(t *BandwidthTuner) {
 	b.tuner.Store(t)
+}
+
+// SetRunRegistry wires the run registry so that handle() can look up the
+// agent type for incoming rate-limit events. PI-073: Pi runs must be
+// isolated from the global tuner. Called from daemon init before beads
+// are dispatched. Optional — if nil, no filtering is applied (safe default:
+// all events reach the tuner, Pi is not yet in production).
+func (b *bandwidthTunerBackstop) SetRunRegistry(r *RunRegistry) {
+	b.reg.Store(r)
 }
 
 // Subscribe registers an asynchronous consumer for agent_rate_limit_status bus
@@ -93,6 +106,18 @@ func (b *bandwidthTunerBackstop) handle(_ context.Context, evt core.Event) error
 	}
 	if pl.Status != core.AgentRateLimitStatusActive {
 		return nil // only act on the active (rate-limited) transition
+	}
+	// PI-073: Pi rate-limit events MUST NOT reach the global tuner — a
+	// free-tier Pi 429 must never throttle the paid Claude fleet.
+	// Look up the agent type via the run registry. If the registry is not yet
+	// wired (nil) or the run is not found (race window before registration),
+	// fall through to the tuner — safe default for non-Pi harnesses.
+	if r := b.reg.Load(); r != nil && pl.RunID != (core.RunID{}) {
+		if h, ok := r.Get(pl.RunID); ok && h != nil {
+			if h.GetAgentType() == core.AgentTypePi {
+				return nil // Pi: per-queue backoff only (PI-073)
+			}
+		}
 	}
 	var d time.Duration
 	if pl.RetryAfterSeconds != nil && *pl.RetryAfterSeconds > 0 {

@@ -134,6 +134,22 @@ func HandleQueueSubmit(
 	// the QM-002/2.1 name-validity pre-check inside Validate.
 	queueName := NormaliseQueueName(req.Name)
 
+	// PI-070: A Pi queue MUST carry an explicit Workers cap — fail loud if absent.
+	// Omitting Workers causes DefaultWorkers to inherit global max_concurrent and
+	// multiply the Pi request rate. Checked before the validation pipeline so the
+	// operator gets a clear, actionable error at submit time.
+	if req.DefaultHarness == core.AgentTypePi && req.Workers <= 0 {
+		return QueueSubmitResponse{}, nil, nil, &RPCError{
+			Code:    -32602,
+			Message: "pi_queue_missing_workers_cap",
+			Detail: map[string]any{
+				"error": "a Pi queue (default_harness=pi) MUST set an explicit workers cap; " +
+					"omitting it silently inherits global max_concurrent and multiplies the Pi request rate (PI-070)",
+				"field": "workers",
+			},
+		}
+	}
+
 	// Run the validation pipeline.
 	vreq := ValidationRequest{
 		Groups:    req.Groups,

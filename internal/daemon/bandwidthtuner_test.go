@@ -350,6 +350,95 @@ func TestBandwidthTunerBackstop_EndToEndBusDelivery(t *testing.T) {
 	}
 }
 
+// TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner verifies PI-073: a
+// rate-limit event from a Pi run MUST NOT snap the global concurrency ceiling.
+// The backstop must skip NotifyRateLimit when the RunHandle's agent type is Pi.
+func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl := NewConcurrencyController(4)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+
+	// Register a Pi run in the registry.
+	piRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000010"))
+	reg := NewRunRegistry()
+	handle := &RunHandle{}
+	handle.SetAgentType(core.AgentTypePi)
+	reg.Register(piRunID, handle)
+
+	b := &bandwidthTunerBackstop{}
+	b.SetTuner(tuner)
+	b.SetRunRegistry(reg)
+
+	// Build a status=active payload for the Pi run.
+	retry := 60
+	pl := core.AgentRateLimitStatusPayload{
+		RunID:             piRunID,
+		SessionID:         "pi-test-session",
+		Status:            core.AgentRateLimitStatusActive,
+		RetryAfterSeconds: &retry,
+		ChangedAt:         time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
+	}
+	plBytes, _ := json.Marshal(pl)
+	evt := core.Event{Payload: plBytes}
+
+	if err := b.handle(context.Background(), evt); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	// Concurrency MUST NOT have been snapped — Pi events are isolated (PI-073).
+	if got := ctrl.Get(); got != 4 {
+		t.Errorf("concurrency after Pi rate-limit event = %d, want 4 (Pi event must not reach global tuner)", got)
+	}
+}
+
+// TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner verifies PI-073
+// complementary case: a non-Pi run's rate-limit event still reaches the
+// global tuner and snaps concurrency to 1.
+func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctrl := NewConcurrencyController(4)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+
+	// Register a Claude (non-Pi) run.
+	claudeRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000011"))
+	reg := NewRunRegistry()
+	handle := &RunHandle{}
+	handle.SetAgentType(core.AgentTypeClaudeCode)
+	reg.Register(claudeRunID, handle)
+
+	b := &bandwidthTunerBackstop{}
+	b.SetTuner(tuner)
+	b.SetRunRegistry(reg)
+
+	retry := 60
+	pl := core.AgentRateLimitStatusPayload{
+		RunID:             claudeRunID,
+		SessionID:         "claude-test-session",
+		Status:            core.AgentRateLimitStatusActive,
+		RetryAfterSeconds: &retry,
+		ChangedAt:         time.Now().UTC().Format("2006-01-02T15:04:05.000Z07:00"),
+	}
+	plBytes, _ := json.Marshal(pl)
+	evt := core.Event{Payload: plBytes}
+
+	if err := b.handle(context.Background(), evt); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	// Concurrency MUST be snapped to 1 for a non-Pi run.
+	if got := ctrl.Get(); got != 1 {
+		t.Errorf("concurrency after Claude rate-limit event = %d, want 1", got)
+	}
+}
+
 func TestBandwidthTuner_NotifyRateLimit_SnapsToOne(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {

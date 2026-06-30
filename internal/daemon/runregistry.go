@@ -86,6 +86,11 @@ type RunHandle struct {
 	// a daemon-wide shutdown when ctx.Err() != nil.
 	// Bead ref: hk-0z5x.
 	aborted atomic.Bool
+
+	// agentType is the resolved agent type for this run. Zero until SetAgentType is
+	// called (after the launchSpecBuilder resolves the harness). Used by
+	// bandwidthTunerBackstop to skip global-tuner notification for Pi runs (PI-073).
+	agentType atomic.Pointer[core.AgentType]
 }
 
 // SetMachine stores m as the lifecycle Machine for this run. Thread-safe.
@@ -98,6 +103,21 @@ func (h *RunHandle) SetMachine(m *hclifecycle.Machine) {
 // handler has not yet launched. Thread-safe.
 func (h *RunHandle) GetMachine() *hclifecycle.Machine {
 	return h.machine.Load()
+}
+
+// SetAgentType stores the resolved agent type for this run. Called by beadRunOne
+// after the launchSpecBuilder resolves the harness. Thread-safe.
+func (h *RunHandle) SetAgentType(at core.AgentType) {
+	h.agentType.Store(&at)
+}
+
+// GetAgentType returns the resolved agent type for this run, or the empty
+// AgentType if not yet set (before launchSpecBuilder resolves). Thread-safe.
+func (h *RunHandle) GetAgentType() core.AgentType {
+	if p := h.agentType.Load(); p != nil {
+		return *p
+	}
+	return core.AgentType("")
 }
 
 // RunRegistry is a concurrency-safe map of run_id → *RunHandle.

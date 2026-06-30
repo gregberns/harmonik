@@ -12,6 +12,20 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-06-30 ~12:00Z — operator (via admiral) · expires: 2026-07-04
+WHAT: Operator has codex/ChatGPT session tokens available — MAXIMIZE implementer work through the
+      codex harness to offload cost OFF the Anthropic budget. ADDITIVE + LOWER PRIORITY than the 3
+      lanes: must NOT disrupt remote/pilot/keeper staffing (operator: "hold off if it gets in the way").
+      Two fits (captain's call): (a) route file-disjoint build/bugfix beads through the codex harness
+      as implementer; (b) revive the codex-first scavenger crew (thufir, queue thufir-q, 1-item serial
+      + DOT review) to drain the ~120-bead backlog on ChatGPT tokens. CAVEAT: codex asleep ~4 days →
+      RE-CANARY one local run before leaning on it. Codex is LOCAL-only (not gb-mbp), bills ChatGPT.
+WHY:  cost-per-landed-outcome + model-fit: ChatGPT-billed throughput is free against the Anthropic
+      budget; the backlog is starved (~120 ready) so codex is pure additive throughput.
+ORDER: 3 lanes first (unchanged) → codex re-canary → route codex-eligible work / revive scavenger.
+RETURN-PATH: relayed to captain over comms (topic directive). Resume by checking whether codex is
+      re-canaried + running (leto-codex / thufir-q active with codex harness), throughput off-budget.
+
 ## 2026-06-30 ~11:40Z — operator (via admiral) · expires: 2026-07-04
 WHAT: Fleet woke from a ~4-day operator-directed sleep onto the security-fix daemon (7a9bf2e5,
       deploy daemon-20260630-01). Operator confirmed STAFF 3 LANES, remote #1: (1) remote-worker

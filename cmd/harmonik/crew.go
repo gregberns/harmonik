@@ -191,6 +191,14 @@ func resolveCrewStartArgs(subArgs []string) (args crewStartArgs, help bool, usag
 // the on-disk default mission — see resolveCrewStartArgs for the mission-split
 // rule (hk-sn4n / D3). subArgs is os.Args[3:].
 func runCrewStartSubcommand(subArgs []string) int {
+	return runCrewStartCore(subArgs, runKeeperEnable)
+}
+
+// runCrewStartCore is the testable inner function for crew start. enableKeeper
+// is injected so tests can verify keeper wiring without touching the real
+// ~/.claude/settings.json. Production callers pass runKeeperEnable.
+// Bead ref: hk-xxcv9.
+func runCrewStartCore(subArgs []string, enableKeeper keeperEnableFn) int {
 	args, help, usageErr := resolveCrewStartArgs(subArgs)
 	if help {
 		crewStartUsage()
@@ -226,6 +234,17 @@ func runCrewStartSubcommand(subArgs []string) int {
 	// before the daemon spawns the crew so a foreign project (never run harmonik
 	// init) has the files the crew agent reads at boot. (hk-2nmbq)
 	ensureBootAssets(absProject, os.Stdout, os.Stderr)
+
+	// Wire keeper hooks BEFORE sending the RPC so the new crew session reads the
+	// statusLine + Stop + PreCompact + SessionStart stanzas at session start.
+	// Mirrors the captain path (runCaptainLaunchWithOps). Non-fatal: a failure
+	// WARNS but does not block the crew start. Bead: hk-xxcv9.
+	if keeperCfg, cerr := buildCrewKeeperConfig(name, absProject); cerr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik crew start: build keeper config: %v\n", cerr)
+	} else if rc := enableKeeper(keeperCfg, os.Stdout, os.Stderr); rc != 0 {
+		fmt.Fprintf(os.Stderr, "harmonik crew start: keeper enable returned %d — continuing; "+
+			"run `harmonik keeper enable --agent %s` manually to wire keeper hooks\n", rc, name)
+	}
 
 	payload := map[string]any{
 		"name":         name,
@@ -293,6 +312,23 @@ func seedSID(projectDir, name, sessionID string) {
 	if writeErr := os.WriteFile(sidPath, []byte(sessionID+"\n"), 0o644); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik crew start: seed .sid: write %q: %v\n", sidPath, writeErr)
 	}
+}
+
+// buildCrewKeeperConfig assembles the enableConfig used to wire keeper hooks
+// for a freshly-started crew member. Mirrors buildCaptainKeeperConfig in
+// captain.go. No --yes-destructive gate is needed: the daemon creates the
+// .managed marker in HandleCrewStart (createCrewManagedMarker). Bead: hk-xxcv9.
+func buildCrewKeeperConfig(name, projectDir string) (enableConfig, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return enableConfig{}, fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	return enableConfig{
+		agentName:    name,
+		projectDir:   projectDir,
+		scriptsDir:   autoDetectScriptsDir(projectDir),
+		settingsPath: filepath.Join(home, ".claude", "settings.json"),
+	}, nil
 }
 
 // runCrewStopSubcommand implements `harmonik crew stop <name> [--pause-queue]`.

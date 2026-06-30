@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-06-30T14:50:00Z",
+  "updated": "2026-06-30T20:20:00Z",
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
     {
@@ -11,7 +11,7 @@
       "queue": "gurney-q",
       "status": "active",
       "gate": null,
-      "note": "STAFFED 2026-06-30 (crew gurney, #1 priority). Local L0-L5 test pyramid + isolated test-daemon harness FIRST (no live-daemon restart), then live hk-nepva on gb-mbp (confirm worker_name=gb-mbp via events.jsonl). Blocker hk-t1t00 CLOSED."
+      "note": "STAFFED 2026-06-30 (crew gurney, #1 priority, 3 slots). APPROACH CHANGED 2026-06-30 ~20:20Z (operator): do NOT toggle gb-mbp in the LIVE primary daemon + restart (done 8+ times, brittle). Run a SEPARATE standing test daemon (own worktree/clone + own .harmonik/sock/workers.yaml) PINNED to gb-mbp (enabled there only, max_slots:3, conc 3); hammer SMALL THROWAWAY no-merge beads to exercise the remote path fast + concurrent, decoupled from production. Goal: beads provably execute on gb-mbp (hostname + remote worktree path) reliably + concurrently. Recurring failure to chase: launch_initiated->agent_ready stall (hk-1s1or). Data: only 3 clean single-run gb-mbp proofs ever; ZERO via a separate daemon."
     },
     {
       "lane": "pilot",
@@ -56,7 +56,7 @@
       "epic_id": "hk-0kr4j",
       "status": "parked",
       "gate": null,
-      "note": "PARKED 2026-06-30 (crew thufir cleared on wake). Standing serial orphan-backlog drainer (codex-first + DOT review). Known/resumable; restaff if operator wants the backlog drain back online + a free slot exists."
+      "note": "RE-PAUSED 2026-06-30 ~20:20Z (operator: pause the codex channel to focus capacity on remote — gurney=3 slots, leto=1). thufir-q paused live. Was briefly revived this session. Standing serial orphan-backlog drainer (codex-first + DOT review). Known/resumable; un-pause when operator wants codex offload back + remote no longer needs the capacity."
     }
   ]
 }

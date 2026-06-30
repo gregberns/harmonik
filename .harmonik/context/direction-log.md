@@ -12,6 +12,23 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-06-30 ~20:20Z — operator (via admiral) · expires: 2026-07-04
+WHAT: REMOTE APPROACH CHANGE + slot reallocation (operator, frustrated — ~2wk, can't get remote right).
+      STOP testing remote by toggling gb-mbp in the LIVE primary daemon's workers.yaml + restarting it
+      (done 8+ times, each a fresh failure + revert; risks health-window false-revert). INSTEAD: gurney
+      runs a SEPARATE standing test daemon (own worktree/clone, own .harmonik/sock/workers.yaml) PINNED
+      to gb-mbp (enabled there only, max_slots:3, concurrency 3) and HAMMERS small THROWAWAY no-merge
+      beads to exercise the remote path fast + concurrently — decoupled from production. SLOTS: gurney=3,
+      leto=1, codex/scavenger PAUSED (thufir-q paused). DATA backing the change: only 3 clean single-run
+      gb-mbp proofs ever (proof-dot/rfix/ssh-fetch); ZERO runs ever through a separate test daemon; every
+      concurrent attempt fell back to local or hung in the launch_initiated->agent_ready gap (hk-1s1or).
+WHY:  the main-daemon restart-toggle loop is slow + brittle + risks bricking production; a standing
+      remote-pinned test daemon turns a 2-week stall into a tight reproduce-and-fix loop, no merge needed.
+ORDER: gurney aborts STAGE-2 primary-daemon cycle NOW -> stands up remote-pinned test daemon ->
+       throwaway-bead hammer until gb-mbp execution is reliable + concurrent -> THEN fold fixes back.
+RETURN-PATH: directed gurney directly (--wake) + captain (topic remote). Resume by checking the test
+      daemon's gb-mbp landings/30min + which failure mode recurs (launch-gap stall / review.json / wt-HEAD).
+
 ## 2026-06-30 ~14:50Z — operator (via admiral) · expires: 2026-07-04
 WHAT: Operator SETTLED the keeper-architecture open question (synthesis item f). Decision = HYBRID:
       keep the per-crew DETERMINISTIC keepers (skeleton) AND add a PROBABILISTIC overseer ON TOP that

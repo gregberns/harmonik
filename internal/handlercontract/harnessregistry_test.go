@@ -9,6 +9,7 @@ package handlercontract_test
 // discipline).
 
 import (
+	"io"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -49,6 +50,10 @@ func (harnessRegistryFixtureHarness) SessionIDPolicy() handlercontract.SessionID
 
 func (harnessRegistryFixtureHarness) Completion() handlercontract.CompletionMode {
 	return handlercontract.CompletionEventStreamThenQuit
+}
+
+func (harnessRegistryFixtureHarness) NewSessionIDInterceptor(inner io.Reader, _ func(string)) io.Reader {
+	return inner
 }
 
 // Compile-time assertion: the fixture satisfies Harness.

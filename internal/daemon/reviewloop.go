@@ -1544,11 +1544,17 @@ func runReviewLoop(
 		// Read from there, then copy to wtPath so the archive and implementer
 		// worktree keep the verdict for post-run inspection (hk-dut6b).
 		//
-		// hk-f3u6o: for a REMOTE run revWtPath lives on the WORKER, so a box-A
-		// os.ReadFile never finds review.json → the run false-failed as "verdict
-		// absent". Route through the per-run runner (cat over the transport);
-		// nil/local runner → byte-identical bare-local read (NFR7).
-		verdict, verdictErr := workspace.ReadReviewVerdictVia(ctx, runner, revWtPath)
+		// hk-177oz: revWtPath is ALWAYS box-A-local. Since fix-D (hk-fxy9) the
+		// reviewer worktree is created on box A via CreateReviewerWorktree, so
+		// review.json sits on the local filesystem even for a REMOTE run. Reading
+		// it via the per-run worker runner turns into `ssh <worker> cat <box-A-path>`,
+		// which TRUNCATES under concurrent SSH ControlMaster churn → "review verdict
+		// ErrMalformed: unexpected end of JSON input" (hk-cnp17 class; reproduced
+		// 3/3 at 3 concurrent on real gb-mbp, clean single-slot). Read locally (nil),
+		// matching the quit-watchdog which already reads revWtPath with a nil runner
+		// above. The old hk-f3u6o "revWtPath lives on the WORKER" rationale is
+		// obsolete post fix-D.
+		verdict, verdictErr := workspace.ReadReviewVerdictVia(ctx, nil, revWtPath)
 		if verdictErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ReadReviewVerdict iter %d: %v\n", state.iterationCount, verdictErr)
 			result := rlErrorResult(fmt.Sprintf("verdict malformed at iteration %d: %v", state.iterationCount, verdictErr))
@@ -1559,10 +1565,12 @@ func runReviewLoop(
 			// hk-sah87: disambiguate a BUDGET kill (the reviewer was working but
 			// ran out of its diff-scaled verdict budget on a heavy diff — see
 			// pasteInjectQuitOnReviewFile) from a true no-verdict.  The marker is
-			// written into the reviewer's worktree, so read from revWtPath.
-			// hk-f3u6o: route via runner so a REMOTE run reads the worker-side
-			// marker (nil/local → bare-local read, NFR7).
-			if sentinel, sErr := ReadReviewerBudgetSentinelVia(ctx, runner, revWtPath); sErr == nil && sentinel != nil {
+			// written into the reviewer's box-A-local worktree (revWtPath).
+			// hk-177oz: like the verdict read above, revWtPath is box-A-local since
+			// fix-D, so read locally (nil) — routing via the worker runner would
+			// SSH-cat a local file and truncate under concurrent ControlMaster churn,
+			// same root cause as the verdict read.
+			if sentinel, sErr := ReadReviewerBudgetSentinelVia(ctx, nil, revWtPath); sErr == nil && sentinel != nil {
 				fmt.Fprintf(os.Stderr,
 					"daemon: reviewloop: reviewer budget exceeded at iteration %d (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
 					state.iterationCount, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)

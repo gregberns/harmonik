@@ -18,13 +18,20 @@ package daemon_test
 //
 // Each test pair runs ~3–6 s total (reviewloop hook-grace × 2 calls).
 //
-// # Scenario A — review-verdict class (AC3A + AC5)
+// # Scenario A — review-verdict class (AC5 negative guard + hk-177oz)
 //
 // The reviewer handler exits 0 WITHOUT writing review.json locally. The file is
 // seeded ONLY on the worker:
-//   - nil runner   → ReadReviewVerdictVia falls back to os.ReadFile on box-A
+//   - nil runner   → ReadReviewVerdictVia reads os.ReadFile on box-A
 //                    → verdict absent → result.Success == false  (NEGATIVE GUARD)
-//   - path runner  → read routed to workerDir → APPROVE → result.Success == true
+//   - path runner  → hk-177oz: the reviewer verdict read is now box-A-local
+//                    UNCONDITIONALLY (the reviewer worktree lives on box A since
+//                    fix-D / hk-fxy9), so runReviewLoop reads revWtPath with a nil
+//                    runner regardless of the per-run runner. A worker-only verdict
+//                    stays unreachable → result.Success == false even WITH a runner
+//                    (regression guard: the verdict read must NOT honor the runner).
+//                    The gate-verdict class (Scenario B) still routes via the
+//                    runner — that seam is unchanged.
 //
 // # Scenario B — gate-verdict class (AC3B)
 //
@@ -323,10 +330,17 @@ func TestScenario_FSIsolation_ReviewVerdict_NilRunner_hk52xnr(t *testing.T) {
 	}
 }
 
-// TestScenario_FSIsolation_ReviewVerdict_WithRunner_hk52xnr confirms that injecting
-// the path-remapping runner causes ReadReviewVerdictVia to route the cat call to
-// workerDir/.harmonik/review.json (where APPROVE is seeded) instead of the
-// absent box-A reviewer worktree file → result.Success == true.
+// TestScenario_FSIsolation_ReviewVerdict_WithRunner_hk52xnr is the hk-177oz
+// regression guard. Post fix-D (hk-fxy9) the reviewer worktree (revWtPath) is
+// always box-A-local, so runReviewLoop reads the verdict with a NIL runner even
+// when a per-run worker runner is present — reading a box-A-local file over the
+// worker's SSH transport (`ssh <worker> cat <box-A-path>`) truncates under
+// concurrent ControlMaster churn (the concurrent review.json ErrMalformed bug).
+// Here review.json is seeded ONLY on the worker; injecting a fully-working
+// path-remapping runner (the same runner Scenario B proves DOES route gate reads)
+// must NOT make the verdict reachable — the verdict read ignores it → box-A read →
+// verdict absent → result.Success == false. If this ever flips to success, the
+// verdict read has regressed to honoring the runner again.
 func TestScenario_FSIsolation_ReviewVerdict_WithRunner_hk52xnr(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
@@ -362,15 +376,17 @@ func TestScenario_FSIsolation_ReviewVerdict_WithRunner_hk52xnr(t *testing.T) {
 		hk52xnrFixtureRunID(t),
 		core.BeadID("hk-52xnr-runner-approve"),
 		wtPath, parentSHA,
-		runner, // remaps revWtPath → workerDir → APPROVE
+		runner, // hk-177oz: verdict read ignores this runner (box-A-local read)
 	)
 
-	if !result.Success {
-		t.Fatalf("FSIsolation WithRunner: expected success (APPROVE from worker); summary=%q", result.Summary)
+	if result.Success {
+		t.Fatalf("FSIsolation WithRunner (hk-177oz): expected failure (verdict absent — "+
+			"the box-A-local verdict read must ignore the worker runner) but got success; summary=%q",
+			result.Summary)
 	}
-	if result.CompletionReason != string(core.ReviewLoopCompletionReasonApproved) {
-		t.Errorf("FSIsolation WithRunner: CompletionReason=%q; want %q",
-			result.CompletionReason, core.ReviewLoopCompletionReasonApproved)
+	if result.CompletionReason != string(core.ReviewLoopCompletionReasonError) {
+		t.Errorf("FSIsolation WithRunner (hk-177oz): CompletionReason=%q; want %q",
+			result.CompletionReason, core.ReviewLoopCompletionReasonError)
 	}
 }
 

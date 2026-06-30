@@ -288,6 +288,32 @@ FAILURES into deduped OPEN beads on the fleet ledger, so a reproduced failure
 becomes tracked work the fleet daemon can pick up. That's the one deliberate
 fleet write; everything else stays in the sandbox.
 
+### Variant: validate a fix that lives in a git WORKTREE, not in the scratch clone
+
+Steps 3–4 above assume you edit the code *in the scratch clone* and `cycle`. But
+often the fix already lives in a **fleet git worktree** — the branch a fleet
+agent / your own review-loop produced — and you want to validate *that exact
+commit* (the one that will land), not a hand-copy of it into the clone. The
+clean way is to **build the binary from the worktree and run it under the scratch
+project**, leaving the scratch clone's own (unfixed) source untouched:
+
+```bash
+# WT = the worktree holding the fix commit (e.g. .claude/worktrees/agent-<id>)
+go build -C "$WT" -o /tmp/hk-scratch/.harmonik/bin/harmonik ./cmd/harmonik
+SCRATCH_MAX_CONCURRENT=3 ./scripts/scratch-daemon.sh up /tmp/hk-scratch   # runs the binary as-is
+```
+
+> **TRAP — do NOT `cycle` in this mode.** `cycle`/`build` rebuild from the
+> *scratch clone's* source, which does NOT have the fix — that silently reverts
+> the binary to unfixed and you'll "validate" nothing. In worktree-build mode use
+> `up`/`down` only (`up` runs the existing binary, no rebuild). Tag the binary
+> mentally with the commit it came from, and verify GROUND TRUTH (the commit on
+> `main` after landing), not just the scratch daemon's verdict.
+
+This mode is what you want when the fix went through review in a worktree and you
+just need a real-daemon concurrency proof before the fast-forward land — the
+binary under test is byte-for-byte the reviewed commit.
+
 ---
 
 ## 7. Lessons learned — concurrency is the discriminator
@@ -330,6 +356,19 @@ they tell you nothing about whether the substrate path works. (This is also why
 §2(b)'s throwaway origin matters: merge failures are harmless when they land in a
 disposable bare repo.)
 
+> **But know the root cause before you dismiss it.** The hammer surfaces
+> `non_ff_merge: <branch> advanced concurrently` because the daemon's merge has
+> rebase-retry on the *push* rejection path (`workloop.go` ~6010-6078) but the
+> earlier **local fast-forward check** (`workloop.go:5922-5930`) returns
+> `non_ff_merge` *terminally, with no rebase* when the target advanced between a
+> run's rebase and its merge. It is self-healing (the bead reopens and re-runs)
+> but wastes a full run per collision. Whether that asymmetry is intentional
+> (terminal + reopen) or wants a local rebase-retry is a real product judgment
+> call — tracked in **hk-1u4wp**. The point for *substrate* validation stands:
+> it's not a substrate-path failure, so don't let it mask the signal you came
+> for. But if your hammer is for *merge-path* hardening rather than substrate
+> hardening, this is the bug, not noise.
+
 ### Rapid-boot backoff
 
 Cycling the scratch daemon many times in quick succession trips a **restart
@@ -354,6 +393,46 @@ commands in a **contained subshell**:
 The parentheses confine the `cd` to the subshell; the main shell's CWD never
 moves. (The script itself uses this pattern internally — `feedback` runs `br` in
 a `( cd "$fleet" && ... )` subshell precisely so the target DB is unambiguous.)
+
+### When a fix reads back the TUI: verify the rendering, don't assume it (the "pill test")
+
+Some daemon fixes work by **reading the agent's pane** (`tmux capture-pane`) and
+checking for a marker string — e.g. the seed-injection verify (`hk-zexsj`)
+confirms the kick-off prompt landed by capturing the pane and matching a known
+substring (`agent-task.md` / `review-target.md`) BEFORE submitting. Any such fix
+rests on an assumption about **what Claude's TUI actually renders into the pane**,
+and that assumption must be *empirically verified*, not reasoned about — a wrong
+guess silently converts a working launch into a verify false-negative.
+
+The specific landmine: Claude Code's TUI **collapses a large bracketed paste into
+a `[Pasted text #N +M lines]` pill** instead of showing the literal text. If your
+marker sits in pilled text, `capture-pane` never shows it and the verify fails
+forever. (Reviewed concern on `hk-zexsj`; tested and **refuted** — ordinary
+multi-line seeds of ~3 lines / ~280 chars render literally; the pill only
+triggers on very large pastes. But the *next* seed might be bigger.)
+
+This is a **Claude-TUI behavior, not a substrate behavior** — so test it LOCALLY,
+in seconds, no remote box needed. Replicate the daemon's exact paste mechanism
+(`tmux load-buffer` + `paste-buffer -d`) into a real `claude` TUI and capture:
+
+```bash
+tmux new-session -d -s pilltest -x 200 -y 50
+tmux send-keys -t pilltest 'cd /Users/gb/github/harmonik && claude' Enter   # trusted dir → no trust prompt
+sleep 9   # let the input box render; capture -S -50 to confirm the `>` box is up
+printf 'YOUR EXACT SEED BYTES\n\nincluding blank lines\n' > /tmp/seed.txt
+tmux load-buffer  -b b /tmp/seed.txt
+tmux paste-buffer -b b -t pilltest -d           # the daemon's exact path (incl -d)
+sleep 1
+tmux capture-pane -p -t pilltest -S -200 | grep -c 'YOUR_MARKER'   # >0 = LITERAL, 0 + a 'Pasted text' line = PILL
+tmux kill-session -t pilltest
+```
+
+Always run a **single-line control** (a seed you KNOW renders literally, e.g. the
+production implementer-initial seed) in the same harness first: if the control
+doesn't come out literal, your method is wrong, not the seed. The capture scrollback
+(`-S -200`) must be deep enough to include the input box. The takeaway generalizes:
+**before trusting any capture-pane-derived verify, prove what the TUI shows for the
+exact bytes you'll feed it.**
 
 ---
 

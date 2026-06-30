@@ -38,6 +38,7 @@ package daemon
 import (
 	"context"
 	"io"
+	"os"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -87,6 +88,17 @@ func (h *CodexHarness) AgentType() core.AgentType {
 // Returns a non-nil error on any buildCodexLaunchSpec failure; the caller MUST
 // NOT call handler.Launch on error.
 func (h *CodexHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
+	// Per-launch stale-WAL guard (hk-2pb79): clean a stale, unheld codex
+	// state_*.sqlite-wal left by a killed codex run before this launch, so the
+	// new codex session is not corrupted into a <10s "exited without advancing
+	// HEAD" fast-fail. No-op when there is no .harmonik/config.yaml; fails loud
+	// only when config.yaml exists but omits the required codex.stale_wal_max_bytes
+	// key. projectRoot is the daemon CWD (== ProjectDir).
+	projectRoot, _ := os.Getwd()
+	if err := cleanCodexStaleWAL(projectRoot, h.codexHome); err != nil {
+		return handlercontract.SpawnSpec{}, err
+	}
+
 	internal := codexRunCtx{
 		codexBinary:   h.codexBinary,
 		workspacePath: rc.WorkspacePath,

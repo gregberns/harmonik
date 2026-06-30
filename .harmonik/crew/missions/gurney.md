@@ -27,32 +27,41 @@ separation predictions + all landed fixes hold live. Headline bead: **hk-nepva**
 3. Post a boot/adopt status to captain (`--topic status`) + a journal comment on hk-gx0dl.
 4. Keep `harmonik comms recv --agent gurney --follow --json` armed.
 
-## Staged plan (respect the gate chain)
+## CURRENT LANE (2026-06-30) — remote-reliability follow-ups
 
-**STAGE 1 — you, NOW (local, no remote needed):**
-- Dispatch **hk-t1t00** (durable `HK_GATE_BASE_SHA` export for remote commit_gate;
-  reviews LOCALLY fine) to **gurney-q** in DOT sonnet-triple-review mode. This blocks
-  the e2e (without it, remote commit_gate hits the 900s stale-origin/main loop).
-  RED-then-GREEN, ≥2 diverse reviewers. Report the verdict to captain.
+> The remote e2e HEADLINE is DONE: epic **hk-gx0dl CLOSED**, hk-nepva + hk-qts7r +
+> hk-t1t00 all landed/closed. The lane is now the remaining remote-reliability
+> follow-ups, NOT the old STAGE 1-3 e2e plan (that is history — do not re-run it).
 
-**STAGE 2 — CAPTAIN-owned fleet infra (the REAL gate is "gb-mbp not yet enabled", NOT a handshake):**
-- Once hk-t1t00 lands, the daemon must be deployed (rebuild+restart, set the
-  hk-drygf config key `liveness_no_progress_n`, re-apply concurrency) to activate
-  the landed reviewer fix (hk-f3u6o, 5999a39a) + gate-base, and gb-mbp re-enabled in
-  workers.yaml. Do NOT restart the daemon or edit workers.yaml yourself — that is
-  fleet-wide infra, captain owns it. **Your gate is the OBSERVABLE substrate state**
-  (is gb-mbp reachable+enabled?), not a captain go-signal: if it's already live, GO to
-  STAGE 3; if not, mail captain to request the deploy + `worker enable gb-mbp` AND keep
-  doing STAGE-1 / local-validatable work in the meantime — do NOT sit idle waiting.
+**WORK ITEM 1 (in-flight) — hk-1s1or** remote launch_initiated→agent_ready stall
+blind-spot. Daemon-run on gurney-q (gb-mbp). Scope found: `internal/daemon/stalewatch.go`
+suppresses the launch-stall check once `launchInitiatedSeen=true`, so a remote hang in
+the launch_initiated→agent_ready gap goes undetected. Fix = bounded stall threshold for
+that gap + a RED repro test. Run-watcher armed for its terminal.
 
-**STAGE 3 — you, the moment gb-mbp is reachable+enabled (verify it; don't wait to be told):**
-- Run the e2e validation on the REAL gb-mbp remote: re-run **hk-h106** (worker
-  hostname proof file + commit) and **hk-4lrj** (triple-review remote run lands on
-  main), then close out the headline **hk-nepva** by confirming the pyramid's
-  separation predictions + ALL landed fixes hold live.
-- **CONFIRM routing via events.jsonl** `run_started.worker_name == "gb-mbp"` — NOT
-  daemon stderr (grepping stderr for SelectWorker/gb-mbp always returns 0, a false
-  "ran local" signal). See evidence beads hk-rs-validate-remote-898a, hk-tagp.
+**WORK ITEM 2 (gated on item 1 landing) — the 6 concurrent-under-load proofs**
+(hk-icdz/3zij/d2z1/tzfw/xbpm/k0pz). These are the GATE for the operator's daemon
+`max_concurrent` 4→8 bump. The proof-run sequence (captain-approved 2026-06-30):
+
+1. Wait for hk-1s1or to land (frees the gb-mbp slot). Do NOT interrupt it.
+2. Check leto's in-flight B4 (hk-mkcwg) state — restart the daemon when B4 is BETWEEN
+   runs if possible (the restart abandons/re-dispatches in-flight runs per two-phase
+   shutdown — minimize that loss).
+3. **Before the restart:** confirm `config.yaml` has `liveness_no_progress_n` set
+   (restart landmine — daemon refuses boot if a freshly-installed binary requires it
+   but it is commented out).
+4. Edit `workers.yaml`: gb-mbp `max_slots: 3` + `enabled: true` → restart.
+5. Clear assignees + submit the 6 proofs concurrently.
+6. Overload guard: ≥2 fast failures → kill orphans + drop to `max_slots: 1` + surface.
+7. Confirm each `proof-N.md` lands on main with line 1 = the gb-mbp hostname
+   (`run_started.worker_name == "gb-mbp"` in events.jsonl — NOT daemon stderr).
+8. **HARD CONSTRAINT — revert after:** `workers.yaml` back to `enabled: false` +
+   `max_slots: 1` → restart. Do NOT persistently enable gb-mbp — the 4→8 bump it
+   serves is still operator-GATED; gb-mbp stays off until the operator approves.
+
+**WORK ITEM 3 (triaged, done) — hk-q54s8** "STAGE-2 daemon-boot crash" assessed as the
+daemon-selffix-bootstrap-trap / watchdog health-window false-revert; the real defect is
+tracked as hk-uzvt9. No further action from you.
 
 ## Operating rules (apply them)
 - Your queue is **gurney-q** ONLY. Never the main queue.
@@ -72,9 +81,10 @@ timer while dispatching / ≤15-min idle. Surface only genuine blockers or a
 review-consensus split — otherwise self-manage and keep landing.
 
 ## Current State
-RE-TASK 2026-06-25 ~17:25Z → remote-worker lane (hk-gx0dl). hk-f3u6o reviewer fix
-CLOSED (on main, NOT yet daemon-deployed). NEXT ACTION: adopt hk-gx0dl → STAGE 1:
-submit hk-t1t00 to gurney-q (DOT triple-review) → report verdict → then check whether
-gb-mbp is reachable+enabled; if it is, GO STAGE 3; if not, request the deploy +
-`worker enable gb-mbp` from captain and keep doing STAGE-1/local-validatable work
-meanwhile — do NOT idle waiting for a "remote live" handshake.
+2026-06-30 ~18:15Z (keeper-restart resume, captain): IDLE-ARMED, standing by for
+hk-1s1or (WORK ITEM 1) to land on gb-mbp (in implementer phase ~40min, heartbeating
+normally — substantial stalewatch fix + RED test). NEXT ACTION on its terminal: execute
+the WORK ITEM 2 proof-run sequence above, honoring all HARD CONSTRAINTS (temporary
+gb-mbp enable for the proofs ONLY → revert to enabled:false+max_slots:1 after; restart
+landmine check; coordinate the restart with leto's B4). Run-watcher + recv --follow both
+armed. Nothing to do until hk-1s1or frees the slot.

@@ -29,6 +29,61 @@
 > Lanes run PARALLEL (file-disjoint). Stale `paused-by-failure` queues (main, paul-q, leto-codex) =
 > pre-sleep cruft; reconcile, do NOT resume main.
 
+## ⭐⭐ CURRENT TRUTH (2026-06-30 ~18:20Z — keeper-restart resume; codex UNBLOCKED, durable fix in flight)
+> Lean keeper-restart resume. Fleet clean, 3 lanes moving; nothing blocked on operator.
+> Cleared the recurring submit-wedge on BOTH gurney AND paul panes (stale unsubmitted directives;
+> C-u + retype + Enter per §4.3). Persisted gurney's proof-run directive into its MISSION file
+> (was only in-pane → would vanish on compact; gurney is at ~3%-until-auto-compact, keeper healthy).
+>
+> **LANES NOW:**
+> | crew | lane | queue | model | state |
+> |---|---|---|---|---|
+> | gurney | remote-reliability follow-ups | gurney-q | opus | HEALTHY — IDLE-ARMED for hk-1s1or (launch-hang stall blind-spot, in-flight on gb-mbp ~40min) to land → then the 6 concurrent-under-load proofs (hk-icdz/3zij/d2z1/tzfw/xbpm/k0pz) that GATE the 4→8 bump. Proof-run sequence + HARD constraints (temp gb-mbp enable for proofs ONLY → revert enabled:false+slots:1 after; restart-landmine check; coordinate restart w/ leto B4) now DURABLE in gurney.md mission. |
+> | leto | pi-harness Phase-0 (hk-94c3t) | leto-q | sonnet | HEALTHY — B4 (hk-mkcwg) in-flight ~62min, advancing normally. No action. |
+> | paul | codex durable self-heal (hk-2pb79) | paulk-q | opus | hk-2pb79 RESOLVED per-incident (root = stale-WAL recurrence, NOT auth; removed 3.9MB ~/.codex/state_5.sqlite-wal; canary commits, HEAD→2e8c3c1). Captain APPROVED Option A: build per-launch stale-WAL self-heal INSIDE CodexHarness.LaunchSpec (codexharness.go/codexlaunchspec.go = paul's files, file-disjoint from gurney stalewatch/leto pi*.go, threshold via config), out-of-daemon + 2 reviewers + ff-land → close hk-2pb79. hk-u5tgh (keeper lane) CLOSED. |
+>
+> **CODEX OFFLOAD (operator additive directive, now unblocked) — SEQUENCED, not yet:** spawn the
+> scavenger (thufir, hk-0kr4j) for backlog drain on codex tokens AFTER (a) paul lands the durable
+> self-heal AND (b) gurney's proof+restart cycle settles. Rationale: gurney's imminent daemon restart
+> kills codex mid-run → re-triggers stale-WAL; adding codex load now = "getting in the way" (operator
+> said hold off if so). Run scavenger on now-robust self-healing codex post-restart.
+> **CONCURRENCY 4→8: still GATED** on gurney's proofs (operator's call) — unchanged. Daemon UP.
+> paused main/leto-codex/paul-q + active-queue paused-on-hk-0lwje = pre-sleep/known-P2 cruft, left as-is.
+
+## ⭐⭐ CURRENT TRUTH (2026-06-30 ~18:08Z — keeper-restart resume; paul re-tasked to codex-unblock)
+> Lean keeper-restart resume. Fleet clean, all 3 lanes moving; nothing blocked on operator.
+> Verified all 4 crews ALIVE via pane-truth (comms-who absence was presence-aging, not zombies).
+>
+> **LANES NOW:**
+> | crew | lane | queue | model | state |
+> |---|---|---|---|---|
+> | gurney | remote-reliability follow-ups | gurney-q | opus | HEALTHY — monitoring hk-1s1or daemon run (remote launch-hang stall blind-spot); triaged hk-q54s8 (✔); planning the 6 concurrent-under-load proofs (hk-icdz/3zij/d2z1/tzfw/xbpm/k0pz) that GATE the 4→8 bump. |
+> | leto | pi-harness Phase-0 (hk-94c3t) | leto-q | sonnet | HEALTHY — B4 (hk-mkcwg) in-flight ~52m, 4th dispatch, advancing normally (B3 ran 89m; equally complex). No action. |
+> | paul | codex-harness UNBLOCK (hk-2pb79) | paulk-q | opus | RE-TASKED 18:05Z from the DRAINED keeper lane (hk-xxcv9 + hk-u5tgh both landed/closed). Now diagnosing the systemic codex fast-fail (7-9s no-commit, regressed 06-26 04:00-05:28Z; leading hypothesis = expired codex auth post-4-day-sleep). Enacts the operator codex-offload directive (direction-log 12:00Z); local canary = the required re-canary. COLLISION GUARD: shared internal/harness w/ leto pilot → shared-file edits gated on captain. |
+>
+> **Why paul→codex (autonomous, KNOWN bead):** the handoff weighed only daemon-core candidates (collide w/ gurney) and kept paul idle. The disjoint ready lane it missed = the codex-harness blocker hk-2pb79, which gates the operator's explicit additive codex directive. Idle opus crew + P1 investigation bead = clean model-fit. hk-2pb79 fix is the prereq before any codex/scavenger backlog drain or re-canary (a re-canary now would just reproduce the failure).
+> **CONCURRENCY 4→8: still GATED** (operator's call) on gurney's concurrent-under-load proofs — unchanged, surfaced. Daemon UP. paused main/leto-codex/paul-q = pre-sleep cruft, left paused (NOT main).
+> **Note:** active queue is paused-by-failure on hk-0lwje (de-hardcode scheduled-comms-send --body bug, P2) — this is why ops-monitor shows stale (scheduled watch-pings broken). Known P2, daemon-core-ish (collides w/ gurney), left for now.
+
+## ⭐⭐ CURRENT TRUTH (2026-06-30 ~17:30Z — keeper-restart resume; REMOTE HEADLINE CLOSED)
+> Lean keeper-restart resume. **MILESTONE: remote-worker e2e HEADLINE proven + closed.**
+> Captain reconcile-closed hk-nepva (live gb-mbp e2e, commit 2f07fd9e) + hk-qts7r (review.json
+> race fix, 4 clean APPROVE reads, commit 9860e8a2) and closed the now-complete epic hk-gx0dl
+> (its 3 pieces — gate-base-SHA hk-t1t00, verdict-consistency hk-qts7r, headline hk-nepva — all done).
+> Cleared a misdirected unsubmitted "close hk-nepva and hk-qts7r" sitting in gurney's pane (gurney
+> correctly refuses br close; closing validated out-of-daemon work is the captain's job).
+>
+> **LANES NOW:**
+> | crew | epic/lane | queue | model | state |
+> |---|---|---|---|---|
+> | gurney | remote-reliability follow-ups (hk-gx0dl CLOSED) | gurney-q | opus | RE-TASKED + woke + scoping. Lead hk-1s1or (P1 remote launch-hang stall blind-spot — found scope: stalewatch.go suppresses stall once launchInitiatedSeen=true); triage hk-q54s8 (P1 deploy daemon-boot crash, DAEMON-CORE/risky) + hk-icdz concurrent-proof set (gates 4→8 bump). |
+> | leto | hk-94c3t pi-harness Phase-0 | leto-q | sonnet | HEALTHY — B4 (hk-mkcwg) in-flight ~24m, advancing normally. No action. |
+> | paul | hk-tswe0 (keeper/daemon defect cluster — DRAINED) | paulk-q | opus | IDLE-ARMED. No CLEAN file-disjoint ready lane (candidates daemon-core → collide w/ gurney). Correctly idle, NOT a missed-staffing-failure. Re-task only on a disjoint lane appearing. |
+>
+> **CONCURRENCY 4→8: still GATED** (operator's call). Headline proves remote works; the e2e-concurrent-
+> UNDER-LOAD proofs (hk-icdz family) aren't done — gurney picking those up. Surfaced to operator.
+> Watchers W1 (comms recv --follow) + W2 (epic_completed) re-armed. Daemon UP.
+
 ## ⭐ CURRENT TRUTH (2026-06-30 ~12:05Z — captain staffed the 3 lanes; all verified live)
 > Cold boot after the ~4-day sleep. Daemon UP. Reconciled pre-sleep cruft: cleared 8 ghost crew
 > records (adam, bob, gurney, kynes, leto, paul, stilgar, thufir); left `main` + `leto-codex` PAUSED

@@ -44,6 +44,9 @@ func newHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
 	if err := reg.Register(core.AgentTypeCodex, NewCodexHarness("", "")); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register codex harness: %w", err)
 	}
+	if err := reg.Register(core.AgentTypePi, NewPiHarness("", "", "", "")); err != nil {
+		return nil, fmt.Errorf("daemon: newHarnessRegistry: register pi harness: %w", err)
+	}
 	return reg, nil
 }
 

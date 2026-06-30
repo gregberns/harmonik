@@ -99,17 +99,17 @@ func TestHarnessRegistry_ForAgent_Claude(t *testing.T) {
 	}
 }
 
-// TestHarnessRegistry_RegisteredTypes_BothHarnesses verifies that after T12 both
-// claude-code and codex harnesses are registered in newHarnessRegistry.
-func TestHarnessRegistry_RegisteredTypes_BothHarnesses(t *testing.T) {
+// TestHarnessRegistry_RegisteredTypes_AllHarnesses verifies that claude-code,
+// codex, and pi harnesses are all registered in newHarnessRegistry.
+func TestHarnessRegistry_RegisteredTypes_AllHarnesses(t *testing.T) {
 	reg, err := daemon.ExportedNewHarnessRegistry()
 	if err != nil {
 		t.Fatalf("ExportedNewHarnessRegistry: %v", err)
 	}
 
 	types := reg.RegisteredTypes()
-	if len(types) != 2 {
-		t.Fatalf("RegisteredTypes = %v; want exactly [claude-code codex] (T12 adds codex)", types)
+	if len(types) != 3 {
+		t.Fatalf("RegisteredTypes = %v; want exactly [claude-code codex pi]", types)
 	}
 	typeSet := make(map[core.AgentType]bool, len(types))
 	for _, at := range types {
@@ -120,6 +120,9 @@ func TestHarnessRegistry_RegisteredTypes_BothHarnesses(t *testing.T) {
 	}
 	if !typeSet[core.AgentTypeCodex] {
 		t.Errorf("RegisteredTypes missing codex; got %v", types)
+	}
+	if !typeSet[core.AgentTypePi] {
+		t.Errorf("RegisteredTypes missing pi; got %v", types)
 	}
 }
 

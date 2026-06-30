@@ -373,9 +373,11 @@ func runReviewLoop(
 		// Paste injection and waitAgentReady are already gated on CompletionProcessExit
 		// so they are safe to skip without a tmux pane.
 		implIsSessionIDCaptured := false
+		var implHarness handlercontract.Harness
 		if deps.harnessRegistry != nil {
 			if implH, implHErr := deps.harnessRegistry.ForAgent(artifactAgentType(implArtifacts)); implHErr == nil {
 				implIsSessionIDCaptured = implH.SessionIDPolicy() == handlercontract.SessionIDCaptured
+				implHarness = implH
 			}
 		}
 		if implIsSessionIDCaptured {
@@ -422,15 +424,29 @@ func runReviewLoop(
 
 		if state.iterationCount == 1 {
 			if implIsSessionIDCaptured {
-				// hk-mzgh: Codex path — capture thread_id from the first thread.started
-				// JSONL event on the exec-path stdout pipe. No CHB-023 checkpoint commit
-				// (codex uses no context persist) and no version_selected ACK (codex
-				// communicates only via argv/JSONL, not the hook-bridge handshake).
+				// hk-mzgh / PI-012: SessionIDCaptured harness path — capture the
+				// session identifier from the exec-path stdout pipe. No CHB-023
+				// checkpoint commit and no version_selected ACK (these harnesses
+				// communicate only via argv/NDJSON, not the hook-bridge handshake).
+				//
+				// Dispatch to the harness-appropriate interceptor:
+				//   - Pi: piSessionIDInterceptor captures `id` from the first
+				//     {"type":"session",...} NDJSON line (pijsonlparser.go).
+				//   - Codex (default): codexThreadIDInterceptor captures thread_id
+				//     from the first thread.started JSONL event (codexjsonlparser.go).
 				capturedSessionIDCh := sessionIDFromCapabilities
-				implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
-					return newCodexThreadIDInterceptor(r, func(threadID string) {
-						capturedSessionIDCh <- threadID
-					})
+				if _, isPi := implHarness.(*PiHarness); isPi {
+					implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
+						return newPiSessionIDInterceptor(r, func(sessionID string) {
+							capturedSessionIDCh <- sessionID
+						})
+					}
+				} else {
+					implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
+						return newCodexThreadIDInterceptor(r, func(threadID string) {
+							capturedSessionIDCh <- threadID
+						})
+					}
 				}
 			} else {
 				// Claude path: wire a SessionIDInterceptor on the progress stream so the

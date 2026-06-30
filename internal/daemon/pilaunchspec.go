@@ -232,7 +232,7 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	// skipBillingGuard is false in production (see piRunCtx); tests that only
 	// exercise argv/env shape set it to avoid requiring a real key.
 	if !rc.skipBillingGuard {
-		if err := runPiBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, rc.apiKeyEnv); err != nil {
+		if err := runPiBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, rc.apiKeyEnv, piDefaultHome()); err != nil {
 			return handler.LaunchSpec{}, err
 		}
 	}

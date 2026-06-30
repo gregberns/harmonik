@@ -161,10 +161,12 @@ func emitPiBillingGuard(
 // buildPiEnv also calls, so both agree on the key value Pi receives).
 // Absent/empty → error → caller MUST NOT launch Pi.
 //
-// PI-042 (UNCONFIRMED): piDefaultHome()/auth.json must not carry a persisted
-// provider API key. A populated key signals that a prior Pi session wrote
-// credentials to disk; we refuse to launch over a persisted credential.
-// If Pi does not persist (file absent → no-op), this check is free.
+// PI-042 (UNCONFIRMED): piHome/auth.json must not carry a persisted provider API
+// key. A populated key signals that a prior Pi session wrote credentials to disk;
+// we refuse to launch over a persisted credential. If Pi does not persist (file
+// absent → no-op), this check is free. piHome is accepted as a parameter
+// (mirroring runCodexBillingGuard's codexHome) so tests can supply a fake home
+// dir and exercise the deny path without touching the real ~/.pi.
 //
 // Returns nil only when the launch may proceed. A non-nil error means the guard
 // failed closed (PI-043): the caller MUST NOT launch Pi. PI-043 is enforced
@@ -174,7 +176,7 @@ func runPiBillingGuard(
 	ctx context.Context,
 	bus handlercontract.EventEmitter,
 	runID core.RunID,
-	beadID, apiKeyEnv string,
+	beadID, apiKeyEnv, piHome string,
 ) error {
 	// PI-040: assert env var named by apiKeyEnv is present and non-empty.
 	keyValue := resolvePiAPIKeyValue(apiKeyEnv)
@@ -186,10 +188,9 @@ func runPiBillingGuard(
 		return fmt.Errorf("pi billing guard: %s", reason)
 	}
 
-	// PI-042 (UNCONFIRMED on-disk check): assert piDefaultHome()/auth.json does
-	// not carry a persisted provider key. Fail closed on any read/parse error
-	// (consistent with the "when in doubt, do not launch" posture).
-	piHome := piDefaultHome()
+	// PI-042 (UNCONFIRMED on-disk check): assert piHome/auth.json does not carry
+	// a persisted provider key. Fail closed on any read/parse error (consistent
+	// with the "when in doubt, do not launch" posture).
 	persisted, err := piAuthIndicatesPersistentCredential(piHome)
 	if err != nil {
 		reason := fmt.Sprintf(

@@ -8,9 +8,9 @@ package daemon_test
 //     (PI-040).
 //   - runPiBillingGuard allows when the key is present and no on-disk credential
 //     exists (PI-040 + PI-042 happy path).
-//   - runPiBillingGuard fails closed when piDefaultHome()/auth.json carries a
-//     populated api_key (PI-042 on-disk check).
-//   - runPiBillingGuard fails closed on an auth.json read/parse error (PI-042
+//   - runPiBillingGuard fails closed when the supplied piHome/auth.json carries a
+//     populated api_key (PI-042 on-disk check — exercised via injected piHome).
+//   - runPiBillingGuard fails closed when piHome/auth.json is malformed (PI-042
 //     fail-closed posture).
 //   - runPiBillingGuard with a nil emitter does not panic.
 //   - runPiBillingGuard emits pi_billing_guard events with allowed/denied outcomes.
@@ -20,7 +20,8 @@ package daemon_test
 //   - Production wiring: PiHarness.LaunchSpec does NOT set skipBillingGuard.
 //
 // All filesystem state uses t.TempDir() as a fake Pi home; the real ~/.pi is
-// never touched.
+// never touched. runPiBillingGuard accepts piHome as a parameter (mirroring
+// runCodexBillingGuard's codexHome) so all PI-042 paths are exercisable in tests.
 
 import (
 	"context"
@@ -168,6 +169,94 @@ func TestPiAuthIndicatesPersistentCredential_EmptyHome(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// runPiBillingGuard — PI-042 on-disk deny path (injected piHome)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestRunPiBillingGuard_PI042_PersistentCredentialDenies verifies that when
+// piHome/auth.json carries a populated api_key, runPiBillingGuard fails closed
+// even when the PI-040 env-var check passes. This tests the PI-042 on-disk deny
+// path via an injected piHome (not the real ~/.pi).
+//
+// Not parallel: uses t.Setenv.
+func TestRunPiBillingGuard_PI042_PersistentCredentialDenies(t *testing.T) {
+	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
+
+	const envVarName = "TEST_PI_PI042_DENY_KEY"
+	t.Setenv(envVarName, "sk-or-real-key") // PI-040 passes
+
+	piHome := t.TempDir()
+	mustWritePi(t, filepath.Join(piHome, "auth.json"), `{"api_key":"sk-or-persisted-key"}`)
+
+	em := &capturingPiBillingEmitter{}
+	err := daemon.ExportedRunPiBillingGuard(em, "hk-pi042-deny", envVarName, piHome)
+	if err == nil {
+		t.Fatal("expected PI-042 fail-closed error for populated on-disk api_key; got nil")
+	}
+	if !strings.Contains(err.Error(), "billing guard") {
+		t.Errorf("error %q does not mention billing guard", err.Error())
+	}
+
+	outcomes := em.guardOutcomes()
+	if len(outcomes) != 1 {
+		t.Fatalf("expected 1 pi_billing_guard event; got %d: %v", len(outcomes), outcomes)
+	}
+	if outcomes[0] != core.PiBillingGuardDenied {
+		t.Errorf("outcome = %q; want %q", outcomes[0], core.PiBillingGuardDenied)
+	}
+}
+
+// TestRunPiBillingGuard_PI042_MalformedAuthJsonDenies verifies that when
+// piHome/auth.json is malformed (cannot parse), runPiBillingGuard fails closed
+// on the read/parse error — consistent with the "when in doubt, do not launch"
+// posture. PI-040 env-var check passes; PI-042 parse error triggers deny.
+//
+// Not parallel: uses t.Setenv.
+func TestRunPiBillingGuard_PI042_MalformedAuthJsonDenies(t *testing.T) {
+	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
+
+	const envVarName = "TEST_PI_PI042_MALFORMED_KEY"
+	t.Setenv(envVarName, "sk-or-real-key") // PI-040 passes
+
+	piHome := t.TempDir()
+	mustWritePi(t, filepath.Join(piHome, "auth.json"), "{not-valid-json")
+
+	em := &capturingPiBillingEmitter{}
+	err := daemon.ExportedRunPiBillingGuard(em, "hk-pi042-malformed", envVarName, piHome)
+	if err == nil {
+		t.Fatal("expected PI-042 fail-closed error for malformed auth.json; got nil")
+	}
+
+	outcomes := em.guardOutcomes()
+	if len(outcomes) != 1 || outcomes[0] != core.PiBillingGuardDenied {
+		t.Errorf("outcomes = %v; want [denied]", outcomes)
+	}
+}
+
+// TestRunPiBillingGuard_PI042_AbsentAuthJsonAllows verifies that when
+// piHome/auth.json is absent (Pi has not persisted a credential), runPiBillingGuard
+// allows the launch — PI-042 is a no-op when the file is absent.
+//
+// Not parallel: uses t.Setenv.
+func TestRunPiBillingGuard_PI042_AbsentAuthJsonAllows(t *testing.T) {
+	// Not calling t.Parallel(): t.Setenv is incompatible with t.Parallel in Go 1.22+.
+
+	const envVarName = "TEST_PI_PI042_ABSENT_KEY"
+	t.Setenv(envVarName, "sk-or-real-key") // PI-040 passes
+
+	piHome := t.TempDir() // no auth.json written → absent
+
+	em := &capturingPiBillingEmitter{}
+	if err := daemon.ExportedRunPiBillingGuard(em, "hk-pi042-absent", envVarName, piHome); err != nil {
+		t.Fatalf("expected allowed for absent auth.json; got: %v", err)
+	}
+
+	outcomes := em.guardOutcomes()
+	if len(outcomes) != 1 || outcomes[0] != core.PiBillingGuardAllowed {
+		t.Errorf("outcomes = %v; want [allowed]", outcomes)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // runPiBillingGuard — fail-closed table test (PI-040 + PI-042)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -222,7 +311,7 @@ func TestRunPiBillingGuard_FailClosed(t *testing.T) {
 			}
 
 			em := &capturingPiBillingEmitter{}
-			err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-test", envVarName)
+			err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-test", envVarName, "")
 
 			if tc.wantErr && err == nil {
 				t.Errorf("%s: expected fail-closed error; got nil", tc.name)
@@ -255,7 +344,7 @@ func TestRunPiBillingGuard_AllowedEmitsAllowedOutcome(t *testing.T) {
 	t.Setenv(envVarName, "sk-or-real-key-value")
 
 	em := &capturingPiBillingEmitter{}
-	if err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-allow", envVarName); err != nil {
+	if err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-allow", envVarName, ""); err != nil {
 		t.Fatalf("guard returned error on a clean env+disk: %v", err)
 	}
 
@@ -294,7 +383,7 @@ func TestRunPiBillingGuard_AbsentKeyEmitsDeniedOutcome(t *testing.T) {
 	t.Setenv(envVarName, "") // absent/empty
 
 	em := &capturingPiBillingEmitter{}
-	err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-deny", envVarName)
+	err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-deny", envVarName, "")
 	if err == nil {
 		t.Fatal("expected fail-closed error for absent key; got nil")
 	}
@@ -326,7 +415,7 @@ func TestRunPiBillingGuard_NilEmitterNoPanic(t *testing.T) {
 			t.Errorf("runPiBillingGuard with nil emitter panicked: %v", r)
 		}
 	}()
-	err := daemon.ExportedRunPiBillingGuard(nil, "hk-nil-emitter", envVarName)
+	err := daemon.ExportedRunPiBillingGuard(nil, "hk-nil-emitter", envVarName, "")
 	if err == nil {
 		t.Error("expected error for absent key even with nil emitter; got nil")
 	}
@@ -347,7 +436,7 @@ func TestRunPiBillingGuard_NilEmitterAllowNoPanic(t *testing.T) {
 			t.Errorf("runPiBillingGuard with nil emitter (allow path) panicked: %v", r)
 		}
 	}()
-	if err := daemon.ExportedRunPiBillingGuard(nil, "hk-nil-emitter-allow", envVarName); err != nil {
+	if err := daemon.ExportedRunPiBillingGuard(nil, "hk-nil-emitter-allow", envVarName, ""); err != nil {
 		t.Errorf("expected nil for present key with nil emitter; got: %v", err)
 	}
 }
@@ -541,7 +630,7 @@ func TestRunPiBillingGuard_EventDoesNotLeakKeyValue(t *testing.T) {
 	t.Setenv(envVarName, keyValue)
 
 	em := &capturingPiBillingEmitter{}
-	if err := daemon.ExportedRunPiBillingGuard(em, "hk-noleak", envVarName); err != nil {
+	if err := daemon.ExportedRunPiBillingGuard(em, "hk-noleak", envVarName, ""); err != nil {
 		t.Fatalf("guard returned error on a clean env: %v", err)
 	}
 

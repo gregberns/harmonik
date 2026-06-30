@@ -2929,12 +2929,13 @@ func ExportedResolvePiAPIKeyValue(apiKeyEnv string) string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedRunPiBillingGuard exposes runPiBillingGuard for tests in package
-// daemon_test. Allows direct verification of the fail-closed guard without going
-// through buildPiLaunchSpec.
+// daemon_test. piHome is forwarded as-is so tests can supply a fake home dir and
+// exercise the PI-042 on-disk deny path without touching the real ~/.pi.
+// Pass "" or piDefaultHome() for production-equivalent behavior.
 //
 // Bead ref: hk-l1bkp.
-func ExportedRunPiBillingGuard(bus handlercontract.EventEmitter, beadID, apiKeyEnv string) error {
-	return runPiBillingGuard(context.Background(), bus, core.RunID{}, beadID, apiKeyEnv)
+func ExportedRunPiBillingGuard(bus handlercontract.EventEmitter, beadID, apiKeyEnv, piHome string) error {
+	return runPiBillingGuard(context.Background(), bus, core.RunID{}, beadID, apiKeyEnv, piHome)
 }
 
 // ExportedPiAuthIndicatesPersistentCredential exposes

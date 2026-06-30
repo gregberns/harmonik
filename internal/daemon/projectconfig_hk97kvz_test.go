@@ -93,3 +93,54 @@ supervise:
 		t.Fatalf("error %q does not name supervise.daemon_watchdog.check_interval", err.Error())
 	}
 }
+
+func TestDaemonRestartBackoffConfig_ParsesTimings(t *testing.T) {
+	t.Parallel()
+
+	root := projCfgFixtureDir(t, `
+schema_version: 1
+daemon:
+  restart_backoff:
+    base: 5s
+    cap: 2m
+    window: 45m
+`)
+	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	if err != nil {
+		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
+	}
+
+	got := cfg.Daemon.RestartBackoff
+	assertDuration := func(name string, got, want time.Duration) {
+		t.Helper()
+		if got != want {
+			t.Errorf("%s = %v, want %v", name, got, want)
+		}
+	}
+
+	assertDuration("RestartBackoff.Base", got.Base, 5*time.Second)
+	assertDuration("RestartBackoff.Cap", got.Cap, 2*time.Minute)
+	assertDuration("RestartBackoff.Window", got.Window, 45*time.Minute)
+}
+
+func TestDaemonRestartBackoffConfig_BadDurationFailsLoud(t *testing.T) {
+	t.Parallel()
+
+	root := projCfgFixtureDir(t, `
+schema_version: 1
+daemon:
+  restart_backoff:
+    window: not-a-duration
+`)
+	_, err := daemon.ExportedLoadProjectConfig(root)
+	if err == nil {
+		t.Fatal("LoadProjectConfig: expected malformed duration error, got nil")
+	}
+	var malformed *daemon.ExportedErrMalformedConfigYAML
+	if !errors.As(err, &malformed) {
+		t.Fatalf("LoadProjectConfig: error type = %T (%v), want *ErrMalformedConfigYAML", err, err)
+	}
+	if !strings.Contains(err.Error(), "daemon.restart_backoff.window") {
+		t.Fatalf("error %q does not name daemon.restart_backoff.window", err.Error())
+	}
+}

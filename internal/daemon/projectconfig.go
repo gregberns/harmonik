@@ -42,6 +42,10 @@ package daemon
 //	  max_concurrent: 4        # > 0 to override --max-concurrent default
 //	  target_branch: main      # observability/symmetry only; authoritative source is branching.yaml
 //	  remote_control_prefix: hk # cosmetic Claude RC session-label prefix (empty = bare name); hk-igpg
+//	  restart_backoff:         # rapid daemon-boot delay; Go duration STRINGS; empty = compiled default
+//	    base: 30s
+//	    cap: 10m
+//	    window: 1h
 //	keeper:
 //	  context_thresholds:
 //	    warn_abs_tokens: 200000        # absolute warn gate (default 200000); ≤0 = not configured
@@ -231,11 +235,20 @@ func (e *ErrWorkflowModeFloorViolation) Error() string {
 // rawDaemonConfig is the per-daemon block in the config.yaml daemon: mapping.
 // Unknown keys at this level are silently ignored (forward-compat per PL-004b).
 type rawDaemonConfig struct {
-	WorkflowMode        string   `yaml:"workflow_mode"`
-	MaxConcurrent       int      `yaml:"max_concurrent"`
-	TargetBranch        string   `yaml:"target_branch"`         // observability/symmetry only per PL-004b
-	AllowedRepos        []string `yaml:"allowed_repos"`         // cross-repo dispatch safelist (hk-xfuc)
-	RemoteControlPrefix string   `yaml:"remote_control_prefix"` // per-project Claude RC session-label prefix (hk-igpg)
+	WorkflowMode        string                        `yaml:"workflow_mode"`
+	MaxConcurrent       int                           `yaml:"max_concurrent"`
+	TargetBranch        string                        `yaml:"target_branch"`         // observability/symmetry only per PL-004b
+	AllowedRepos        []string                      `yaml:"allowed_repos"`         // cross-repo dispatch safelist (hk-xfuc)
+	RemoteControlPrefix string                        `yaml:"remote_control_prefix"` // per-project Claude RC session-label prefix (hk-igpg)
+	RestartBackoff      rawDaemonRestartBackoffConfig `yaml:"restart_backoff"`       // rapid boot-record backoff (hk-b82kn)
+}
+
+// rawDaemonRestartBackoffConfig is the daemon.restart_backoff: block.
+// All fields are Go duration strings; empty = compiled default.
+type rawDaemonRestartBackoffConfig struct {
+	Base   string `yaml:"base"`
+	Cap    string `yaml:"cap"`
+	Window string `yaml:"window"`
 }
 
 // rawKeeperContextThresholds holds configurable threshold values in the
@@ -639,6 +652,20 @@ type DaemonConfig struct {
 	// --session-id) stay bare. Use JoinRemoteControlName to build the label so the
 	// format never drifts between launch sites. (hk-igpg)
 	RemoteControlPrefix string
+
+	// RestartBackoff configures the persistent boot-record backoff applied when
+	// the daemon restarts rapidly. Zero fields mean "not configured"; startup
+	// resolves each missing field to the compiled defaults in restartbackoff.go.
+	// Refs: hk-b82kn.
+	RestartBackoff DaemonRestartBackoffConfig
+}
+
+// DaemonRestartBackoffConfig holds daemon.restart_backoff duration overrides.
+// Zero fields mean not configured and resolve to current compiled defaults.
+type DaemonRestartBackoffConfig struct {
+	Base   time.Duration
+	Cap    time.Duration
+	Window time.Duration
 }
 
 // rawHarnessesPiFallbackConfig is the optional harnesses.pi.fallback block.
@@ -940,7 +967,10 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	// ErrUnsupportedConfigVersion (fail-fast).
 	daemonAbsent := raw.Daemon.WorkflowMode == "" && raw.Daemon.MaxConcurrent == 0 &&
 		raw.Daemon.TargetBranch == "" && len(raw.Daemon.AllowedRepos) == 0 &&
-		raw.Daemon.RemoteControlPrefix == ""
+		raw.Daemon.RemoteControlPrefix == "" &&
+		raw.Daemon.RestartBackoff.Base == "" &&
+		raw.Daemon.RestartBackoff.Cap == "" &&
+		raw.Daemon.RestartBackoff.Window == ""
 	watchdogAbsent := raw.Watchdog.Enabled == nil
 	watchBlockAbsent := raw.Watch.StatusTarget == "" && raw.Watch.OpsmonitorTarget == ""
 	superviseAbsent := superviseBlockAbsent(raw.Supervise)
@@ -1061,6 +1091,22 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 	// validation/length cap (operator decision hk-igpg: short default, no hard cap).
 	cfg.RemoteControlPrefix = raw.RemoteControlPrefix
 
+	for _, f := range []struct {
+		key string
+		val string
+		dst *time.Duration
+	}{
+		{"daemon.restart_backoff.base", raw.RestartBackoff.Base, &cfg.RestartBackoff.Base},
+		{"daemon.restart_backoff.cap", raw.RestartBackoff.Cap, &cfg.RestartBackoff.Cap},
+		{"daemon.restart_backoff.window", raw.RestartBackoff.Window, &cfg.RestartBackoff.Window},
+	} {
+		dv, err := parseDurationField(path, f.key, f.val)
+		if err != nil {
+			return DaemonConfig{}, err
+		}
+		*f.dst = dv
+	}
+
 	return cfg, nil
 }
 
@@ -1180,7 +1226,7 @@ func parseDurationField(path, key, value string) (time.Duration, error) {
 	d, err := time.ParseDuration(value)
 	if err != nil {
 		fullKey := "keeper." + key
-		if strings.HasPrefix(key, "supervise.") {
+		if strings.HasPrefix(key, "supervise.") || strings.HasPrefix(key, "daemon.") {
 			fullKey = key
 		}
 		return 0, &ErrMalformedConfigYAML{

@@ -12,8 +12,8 @@ package daemon
 //
 // Algorithm (applyBootBackoff):
 //
-//	n = number of boot times in the record that fall within restartBackoffWindow
-//	delay = base × 2^(n−1), capped at restartBackoffCap (0 when n == 0)
+//	n = number of boot times in the record that fall within defaultRestartBackoffWindow
+//	delay = base × 2^(n−1), capped at defaultRestartBackoffCap (0 when n == 0)
 //	record current boot, write state, sleep delay (ctx-interruptible)
 //
 // All I/O errors are non-fatal: the function logs and skips the delay rather
@@ -32,16 +32,40 @@ import (
 	"time"
 )
 
-// restartBackoffBase is the initial startup delay applied on the second
+// defaultRestartBackoffBase is the initial startup delay applied on the second
 // rapid daemon boot (n == 1 prior boot in window).
-const restartBackoffBase = 30 * time.Second
+const defaultRestartBackoffBase = 30 * time.Second
 
-// restartBackoffCap is the maximum startup delay imposed by boot-record backoff.
-const restartBackoffCap = 10 * time.Minute
+// defaultRestartBackoffCap is the maximum startup delay imposed by boot-record backoff.
+const defaultRestartBackoffCap = 10 * time.Minute
 
-// restartBackoffWindow is the sliding window within which boot times are
+// defaultRestartBackoffWindow is the sliding window within which boot times are
 // counted. Boots older than this are pruned from the record and not considered.
-const restartBackoffWindow = 1 * time.Hour
+const defaultRestartBackoffWindow = 1 * time.Hour
+
+type resolvedRestartBackoffConfig struct {
+	Base   time.Duration
+	Cap    time.Duration
+	Window time.Duration
+}
+
+func resolveRestartBackoffConfig(raw DaemonRestartBackoffConfig) resolvedRestartBackoffConfig {
+	cfg := resolvedRestartBackoffConfig{
+		Base:   defaultRestartBackoffBase,
+		Cap:    defaultRestartBackoffCap,
+		Window: defaultRestartBackoffWindow,
+	}
+	if raw.Base > 0 {
+		cfg.Base = raw.Base
+	}
+	if raw.Cap > 0 {
+		cfg.Cap = raw.Cap
+	}
+	if raw.Window > 0 {
+		cfg.Window = raw.Window
+	}
+	return cfg
+}
 
 // restartRecordPath returns the absolute path of the persistent boot-record
 // file for the given project directory.
@@ -59,8 +83,8 @@ type restartRecord struct {
 // applyBootBackoff records the current daemon boot in the persistent
 // boot-record file and sleeps for the computed exponential backoff delay before
 // returning. The delay is 0 on the first rapid boot within the window; it
-// grows as base × 2^(n−1), capped at restartBackoffCap, where n is the number
-// of prior boots recorded within restartBackoffWindow.
+// grows as base × 2^(n−1), capped at the configured cap, where n is the number
+// of prior boots recorded within the configured window.
 //
 // The sleep is cancelled early if ctx expires.
 //
@@ -70,10 +94,11 @@ type restartRecord struct {
 // The cognition/ directory under projectDir is created on demand.
 //
 // Bead ref: hk-7t9g1.
-func applyBootBackoff(ctx context.Context, projectDir string) time.Duration {
+func applyBootBackoff(ctx context.Context, projectDir string, rawCfg DaemonRestartBackoffConfig) time.Duration {
 	if projectDir == "" {
 		return 0
 	}
+	cfg := resolveRestartBackoffConfig(rawCfg)
 
 	path := restartRecordPath(projectDir)
 	now := time.Now()
@@ -91,7 +116,7 @@ func applyBootBackoff(ctx context.Context, projectDir string) time.Duration {
 	}
 
 	// Prune boot times outside the sliding window.
-	windowStart := now.Add(-restartBackoffWindow)
+	windowStart := now.Add(-cfg.Window)
 	recent := make([]int64, 0, len(rec.BootTimesUnix)+1)
 	for _, t := range rec.BootTimesUnix {
 		if time.Unix(t, 0).After(windowStart) {
@@ -101,7 +126,7 @@ func applyBootBackoff(ctx context.Context, projectDir string) time.Duration {
 
 	// Compute delay from the count of prior boots in the window.
 	n := len(recent) // boots before this one
-	delay := computeRestartBackoffDelay(n, restartBackoffBase, restartBackoffCap)
+	delay := computeRestartBackoffDelay(n, cfg.Base, cfg.Cap)
 
 	// Append this boot and persist.
 	rec.SchemaVersion = 1
@@ -113,8 +138,8 @@ func applyBootBackoff(ctx context.Context, projectDir string) time.Duration {
 
 	if delay > 0 {
 		fmt.Fprintf(os.Stderr,
-			"daemon: restart-backoff: %d rapid boot(s) in the last hour — delaying startup by %s\n",
-			n, delay)
+			"daemon: restart-backoff: %d rapid boot(s) in the last %s — delaying startup by %s\n",
+			n, cfg.Window, delay)
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():

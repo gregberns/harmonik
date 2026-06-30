@@ -336,7 +336,7 @@ type Config struct {
 	//
 	// Default (false): backoff applies when ProjectDir is set and the
 	// boot-record at <ProjectDir>/.harmonik/cognition/restart-record.json
-	// contains recent boot times within restartBackoffWindow.
+	// contains recent boot times within the configured restart-backoff window.
 	//
 	// Bead ref: hk-7t9g1.
 	SkipRestartBackoff bool
@@ -813,7 +813,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// (test isolation) or when ProjectDir is empty (unit-test mode).
 	var bootBackoffDelay time.Duration
 	if cfg.ProjectDir != "" && !cfg.SkipRestartBackoff {
-		bootBackoffDelay = applyBootBackoff(ctx, cfg.ProjectDir)
+		bootBackoffDelay = applyBootBackoff(ctx, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RestartBackoff)
 	}
 
 	// Beads-union driver auto-config pre-flight (hk-r0y1o): register

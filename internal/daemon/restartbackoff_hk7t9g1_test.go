@@ -42,7 +42,7 @@ func TestComputeRestartBackoffDelay(t *testing.T) {
 func TestApplyBootBackoff_FirstBoot(t *testing.T) {
 	dir := t.TempDir()
 
-	delay := applyBootBackoff(context.Background(), dir)
+	delay := applyBootBackoff(context.Background(), dir, DaemonRestartBackoffConfig{})
 	if delay != 0 {
 		t.Errorf("first boot: want 0 delay, got %s", delay)
 	}
@@ -63,7 +63,7 @@ func TestApplyBootBackoff_FirstBoot(t *testing.T) {
 }
 
 // TestApplyBootBackoff_SecondBoot verifies that one prior boot in the window
-// produces a delay equal to restartBackoffBase.
+// produces a delay equal to defaultRestartBackoffBase.
 func TestApplyBootBackoff_SecondBoot(t *testing.T) {
 	dir := t.TempDir()
 
@@ -81,9 +81,9 @@ func TestApplyBootBackoff_SecondBoot(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	delay := applyBootBackoff(ctx, dir)
-	if delay != restartBackoffBase {
-		t.Errorf("second boot: want %s delay, got %s", restartBackoffBase, delay)
+	delay := applyBootBackoff(ctx, dir, DaemonRestartBackoffConfig{})
+	if delay != defaultRestartBackoffBase {
+		t.Errorf("second boot: want %s delay, got %s", defaultRestartBackoffBase, delay)
 	}
 }
 
@@ -106,15 +106,15 @@ func TestApplyBootBackoff_ThirdBoot(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	delay := applyBootBackoff(ctx, dir)
-	want := 2 * restartBackoffBase
+	delay := applyBootBackoff(ctx, dir, DaemonRestartBackoffConfig{})
+	want := 2 * defaultRestartBackoffBase
 	if delay != want {
 		t.Errorf("third boot: want %s delay, got %s", want, delay)
 	}
 }
 
 // TestApplyBootBackoff_OldBootsIgnored verifies that boot times outside
-// restartBackoffWindow are pruned and do not contribute to the delay.
+// defaultRestartBackoffWindow are pruned and do not contribute to the delay.
 func TestApplyBootBackoff_OldBootsIgnored(t *testing.T) {
 	dir := t.TempDir()
 
@@ -127,7 +127,7 @@ func TestApplyBootBackoff_OldBootsIgnored(t *testing.T) {
 		t.Fatalf("seed record: %v", err)
 	}
 
-	delay := applyBootBackoff(context.Background(), dir)
+	delay := applyBootBackoff(context.Background(), dir, DaemonRestartBackoffConfig{})
 	if delay != 0 {
 		t.Errorf("stale boot: want 0 delay, got %s", delay)
 	}
@@ -136,7 +136,7 @@ func TestApplyBootBackoff_OldBootsIgnored(t *testing.T) {
 // TestApplyBootBackoff_EmptyProjectDir verifies the nil-safe path: an empty
 // project directory returns 0 immediately without touching the filesystem.
 func TestApplyBootBackoff_EmptyProjectDir(t *testing.T) {
-	delay := applyBootBackoff(context.Background(), "")
+	delay := applyBootBackoff(context.Background(), "", DaemonRestartBackoffConfig{})
 	if delay != 0 {
 		t.Errorf("empty dir: want 0, got %s", delay)
 	}
@@ -155,7 +155,7 @@ func TestApplyBootBackoff_CorruptRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	delay := applyBootBackoff(context.Background(), dir)
+	delay := applyBootBackoff(context.Background(), dir, DaemonRestartBackoffConfig{})
 	if delay != 0 {
 		t.Errorf("corrupt record: want 0 delay, got %s", delay)
 	}
@@ -188,7 +188,7 @@ func TestApplyBootBackoff_RecordGrowsThenPrunes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	applyBootBackoff(ctx, dir)
+	applyBootBackoff(ctx, dir, DaemonRestartBackoffConfig{})
 
 	// After the call the record should contain only entries within the window
 	// plus the current boot (5 recent + 1 new = 6).
@@ -202,7 +202,7 @@ func TestApplyBootBackoff_RecordGrowsThenPrunes(t *testing.T) {
 }
 
 // TestApplyBootBackoff_CapEnforced verifies that six or more rapid boots result
-// in a delay equal to restartBackoffCap rather than an unbounded value.
+// in a delay equal to defaultRestartBackoffCap rather than an unbounded value.
 func TestApplyBootBackoff_CapEnforced(t *testing.T) {
 	dir := t.TempDir()
 
@@ -222,8 +222,50 @@ func TestApplyBootBackoff_CapEnforced(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	delay := applyBootBackoff(ctx, dir)
-	if delay != restartBackoffCap {
-		t.Errorf("cap: want %s, got %s", restartBackoffCap, delay)
+	delay := applyBootBackoff(ctx, dir, DaemonRestartBackoffConfig{})
+	if delay != defaultRestartBackoffCap {
+		t.Errorf("cap: want %s, got %s", defaultRestartBackoffCap, delay)
+	}
+}
+
+func TestResolveRestartBackoffConfig_DefaultsAndPartialOverride(t *testing.T) {
+	got := resolveRestartBackoffConfig(DaemonRestartBackoffConfig{Base: 5 * time.Second})
+
+	if got.Base != 5*time.Second {
+		t.Errorf("Base = %s, want 5s", got.Base)
+	}
+	if got.Cap != defaultRestartBackoffCap {
+		t.Errorf("Cap = %s, want %s", got.Cap, defaultRestartBackoffCap)
+	}
+	if got.Window != defaultRestartBackoffWindow {
+		t.Errorf("Window = %s, want %s", got.Window, defaultRestartBackoffWindow)
+	}
+}
+
+func TestApplyBootBackoff_CustomConfig(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	priorRec := restartRecord{
+		SchemaVersion: 1,
+		BootTimesUnix: []int64{
+			now.Add(-2 * time.Minute).Unix(),
+			now.Add(-90 * time.Second).Unix(),
+			now.Add(-30 * time.Second).Unix(),
+		},
+	}
+	if err := writeRestartRecord(restartRecordPath(dir), priorRec); err != nil {
+		t.Fatalf("seed record: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	delay := applyBootBackoff(ctx, dir, DaemonRestartBackoffConfig{
+		Base:   2 * time.Second,
+		Cap:    5 * time.Second,
+		Window: 3 * time.Minute,
+	})
+	if delay != 5*time.Second {
+		t.Errorf("custom config: want capped 5s delay, got %s", delay)
 	}
 }

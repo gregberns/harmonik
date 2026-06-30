@@ -1,27 +1,33 @@
 package daemon
 
-// pijsonlparser.go — Pi `--mode json` NDJSON event parser (codename:pilot, PI-012).
+// pijsonlparser.go — Pi `--mode json` NDJSON event parser (codename:pilot, PI-012/014).
 //
 // Pi `--mode json` streams newline-delimited JSON (NDJSON) to stdout. The first
 // line is always a session header:
 //
 //	{"type":"session","version":3,"id":"<uuid>","cwd":"..."}
 //
+// The terminal event is agent_end:
+//
+//	{"type":"agent_end","messages":[...]}
+//
 // This file owns two units (mirroring codexjsonlparser.go for codex):
 //
 //  1. parsePiNDJSONEvent — decodes a single NDJSON line into a piEvent.
-//  2. newPiSessionIDInterceptor — an io.Reader wrapper that fires a callback
-//     exactly once when it captures the session `id` from the first
-//     `{"type":"session",...}` line. All bytes are passed through unchanged.
+//  2. newPiSessionIDInterceptor — an io.Reader wrapper that:
+//       - fires sessionIDCb once on the first {"type":"session",...} line (PI-012).
+//       - fires agentEndCb once on {"type":"agent_end",...} (PI-014).
+//     All bytes are passed through unchanged.
 //
 // The session id is the Pi analog of codex's thread_id. SessionIDPolicy() ==
 // SessionIDCaptured; the captured id is passed as --session <id> on the next
-// turn (resume argv, buildPiLaunchSpec). PI-014 (agent_end watcher) will
-// extend this same interceptor type.
+// turn (resume argv, buildPiLaunchSpec). agentEndCb invokes Teardown→Kill because
+// Pi's process exit is unreliable (#4303/#161/#4942); the 90m ceiling is backstop
+// only (PI-014).
 //
-// Spec: specs/pi-harness.md §1 PI-012.
-// Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.3.
-// Bead: hk-4rmj1 (PI-012).
+// Spec: specs/pi-harness.md §1 PI-012/PI-014.
+// Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.3/§3.4.
+// Bead: hk-mkcwg (PI-014).
 
 import (
 	"bytes"
@@ -107,44 +113,55 @@ func parsePiNDJSONEvent(line []byte) (piEvent, error) {
 	return ev, nil
 }
 
-// piSessionIDInterceptor wraps an io.Reader (Pi NDJSON stdout) and fires a
-// callback exactly once when it captures a non-empty session id from the first
-// `{"type":"session",...}` line in the stream. All bytes are passed through to
-// callers unchanged so the SpawnWatcher can process them normally.
+// piSessionIDInterceptor wraps an io.Reader (Pi NDJSON stdout) and fires two
+// optional callbacks as Pi events arrive, passing all bytes through unchanged
+// so the SpawnWatcher can process them normally.
 //
-// This is the Pi analog of codexThreadIDInterceptor. It is line-buffered:
-// bytes accumulate until a '\n' boundary is found, then the complete NDJSON
-// line is parsed by parsePiNDJSONEvent. The callback fires at most once (first
-// non-empty session id wins).
+//   - sessionIDCb fires at most once on the first {"type":"session",...} line
+//     that carries a non-empty "id" field (PI-012). May be nil.
+//   - agentEndCb fires at most once on the first {"type":"agent_end",...} line
+//     (PI-014). Invokes Teardown→Kill so a hung Pi does not burn the 90m ceiling.
+//     May be nil.
 //
-// PI-014 (agent_end watcher, a later bead) will extend this struct with an
-// additional callback for the agent_end event, so it is NOT unexported via
-// embedding — the type must remain extensible.
+// This is the Pi analog of codexThreadIDInterceptor (which only captures a
+// thread_id; codex self-exits reliably and has no agent_end event to watch).
+// The interceptor continues scanning after sessionIDCb fires because agentEndCb
+// may fire later; it stops only when both have fired (or the stream ends).
 //
 // Usage:
 //
-//	cb := func(sessionID string) { sessionIDCh <- sessionID }
+//	sessionIDCh := make(chan string, 1)
+//	agentEndCb := func() { _ = harness.Teardown(sess) }
 //	implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
-//	    return newPiSessionIDInterceptor(r, cb)
+//	    return newPiSessionIDInterceptor(r, func(id string) { sessionIDCh <- id }, agentEndCb)
 //	}
 //
-// Spec: PI-012. Bead: hk-4rmj1.
+// Spec: PI-012 (session-id capture); PI-014 (agent_end watcher).
+// Bead: hk-mkcwg.
 type piSessionIDInterceptor struct {
-	mu        sync.Mutex
-	inner     io.Reader
-	buf       bytes.Buffer
-	firedOnce bool
-	cb        func(string)
+	mu                 sync.Mutex
+	inner              io.Reader
+	buf                bytes.Buffer
+	sessionIDFiredOnce bool
+	agentEndFiredOnce  bool
+	sessionIDCb        func(string)
+	agentEndCb         func()
 }
 
-// newPiSessionIDInterceptor wraps inner and fires cb with the captured session
-// id on the first `{"type":"session",...}` Pi NDJSON event.
-func newPiSessionIDInterceptor(inner io.Reader, cb func(string)) *piSessionIDInterceptor {
-	return &piSessionIDInterceptor{inner: inner, cb: cb}
+// newPiSessionIDInterceptor wraps inner and wires both callbacks.
+// sessionIDCb fires on the first {"type":"session",...} line with a non-empty id.
+// agentEndCb fires on the first {"type":"agent_end",...} line (PI-014).
+// Either callback may be nil.
+func newPiSessionIDInterceptor(inner io.Reader, sessionIDCb func(string), agentEndCb func()) *piSessionIDInterceptor {
+	return &piSessionIDInterceptor{
+		inner:       inner,
+		sessionIDCb: sessionIDCb,
+		agentEndCb:  agentEndCb,
+	}
 }
 
 // Read implements io.Reader. Bytes are passed through unchanged; each complete
-// NDJSON line is also parsed for the session-id side-effect.
+// NDJSON line is parsed for the session-id and agent_end side-effects (PI-012/014).
 func (p *piSessionIDInterceptor) Read(b []byte) (int, error) {
 	n, err := p.inner.Read(b)
 	if n > 0 {
@@ -156,10 +173,13 @@ func (p *piSessionIDInterceptor) Read(b []byte) (int, error) {
 	return n, err
 }
 
-// checkBuffer scans p.buf for complete NDJSON lines and fires the callback on
-// the first line that yields a non-empty session id. Called with p.mu held.
+// checkBuffer scans p.buf for complete NDJSON lines and fires callbacks.
+// Called with p.mu held.
+//
+// Scanning continues after sessionIDCb fires because agentEndCb fires later.
+// Stops when both have fired or no more complete lines are available.
 func (p *piSessionIDInterceptor) checkBuffer() {
-	if p.firedOnce {
+	if p.sessionIDFiredOnce && p.agentEndFiredOnce {
 		return
 	}
 	for {
@@ -180,9 +200,19 @@ func (p *piSessionIDInterceptor) checkBuffer() {
 		if err != nil {
 			continue
 		}
-		if ev.Kind == piEventKindSession && ev.SessionID != "" {
-			p.firedOnce = true
-			p.cb(ev.SessionID)
+		if !p.sessionIDFiredOnce && ev.Kind == piEventKindSession && ev.SessionID != "" {
+			p.sessionIDFiredOnce = true
+			if p.sessionIDCb != nil {
+				p.sessionIDCb(ev.SessionID)
+			}
+		}
+		if !p.agentEndFiredOnce && ev.Kind == piEventKindAgentEnd {
+			p.agentEndFiredOnce = true
+			if p.agentEndCb != nil {
+				p.agentEndCb()
+			}
+		}
+		if p.sessionIDFiredOnce && p.agentEndFiredOnce {
 			return
 		}
 	}

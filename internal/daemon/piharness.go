@@ -1,6 +1,6 @@
 package daemon
 
-// piharness.go — PiHarness: handlercontract.Harness impl for Pi (codename:pilot, PI-010/011/012/013).
+// piharness.go — PiHarness: handlercontract.Harness impl for Pi (codename:pilot, PI-010/011/012/013/014).
 //
 // Pi's shape is a ProcessExit + SessionIDCaptured harness, mirroring codex
 // (specs/harness-contract.md §2 N2/N3):
@@ -8,28 +8,28 @@ package daemon
 //   - Completion = CompletionProcessExit. `pi --mode json` is a one-shot
 //     run-to-exit invocation: it streams NDJSON and nominally self-terminates
 //     on turn completion. The shared loop bypasses pasteInjectQuitOnCommit and
-//     relies on sess.Wait + the absolute commitHardCeiling. PI-014 (a later
-//     bead) adds the agent_end watcher as an event-driven kill, because Pi's
-//     process exit is unreliable (#4303/#161/#4942).
+//     relies on sess.Wait + the absolute commitHardCeiling. PI-014 adds the
+//     agent_end watcher as an event-driven Kill because Pi's process exit is
+//     unreliable (#4303/#161/#4942); the 90m ceiling is backstop only.
 //
 //   - SessionIDPolicy = SessionIDCaptured. Pi emits, as the FIRST NDJSON line,
 //     `{"type":"session","version":3,"id":"<uuid>","cwd":"..."}`. The session
 //     id is captured via piSessionIDInterceptor (pijsonlparser.go) wired into
-//     reviewloop.go's implIsSessionIDCaptured block (PI-012a: forced-exec
+//     the shared loop's implIsSessionIDCaptured block (PI-012a: forced-exec
 //     substrate). On the resume turn the captured id is passed as --session
 //     <id> in the argv (buildPiLaunchSpec, pilaunchspec.go).
 //
-// Because Pi delivers its task via argv and self-terminates, Seed and Retask
-// are no-ops (no TUI/paste path). Teardown is a load-bearing Kill — Pi may not
-// self-exit (#4303), so a defensive Kill is always correct (PI-014 builds on
-// this). The real retask mechanism is the resume argv: on iteration ≥2 the
-// next turn's RunCtx carries PriorSessionID (the captured session id) and
-// buildPiLaunchSpec emits `pi --mode json --session <id> "<feedback>"`.
+// Because Pi delivers its task via argv, Seed and Retask are no-ops. Teardown
+// is load-bearing (PI-014): the agent_end watcher in piSessionIDInterceptor
+// calls Teardown→Kill on the terminal NDJSON event so a hung Pi does not burn
+// the full 90-minute ceiling. The real retask mechanism is the resume argv: on
+// iteration ≥2 the next turn's RunCtx carries PriorSessionID (the captured
+// session id) and buildPiLaunchSpec emits `pi --mode json --session <id> ...`.
 //
-// Spec: specs/pi-harness.md §1 (PI-010/011/012/013).
-// Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.1/§3.3.
+// Spec: specs/pi-harness.md §1 (PI-010/011/012/013/014).
+// Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.1/§3.3/§3.4.
 // See also: codexharness.go (structural template), pilaunchspec.go, pijsonlparser.go.
-// Bead: hk-4rmj1.
+// Beads: hk-4rmj1 (PI-010/012/013); hk-mkcwg (PI-014).
 
 import (
 	"context"
@@ -141,13 +141,12 @@ func (h *PiHarness) Retask(_ handlercontract.Session, _ string, _ handlercontrac
 
 // Teardown ends the session so the shared loop's sess.Wait returns.
 //
-// Pi nominally self-terminates on turn completion (CompletionProcessExit), but
-// its process exit is unreliable (#4303/#161/#4942 — `--mode json` may hang in
-// epoll_wait with /dev/null stdin). Teardown is therefore load-bearing: Kill is
-// always invoked so a hung Pi cannot burn the 90-minute commitHardCeiling.
-//
-// PI-014 (a later bead) adds an agent_end watcher that calls Teardown
-// event-driven; this method is its target. A nil session is a no-op. PI-010.
+// Pi's process exit is unreliable (#4303/#161/#4942 — `--mode json` may hang in
+// epoll_wait with /dev/null stdin). Teardown is load-bearing: Kill is always
+// invoked so a hung Pi does not burn the 90-minute commitHardCeiling. This is
+// the target of the PI-014 agent_end watcher (piSessionIDInterceptor fires
+// Teardown on {"type":"agent_end"}); it is also called defensively by the shared
+// loop on timeout/ceiling paths. A nil session is a no-op. PI-010/PI-014.
 func (h *PiHarness) Teardown(sess handlercontract.Session) error {
 	if sess == nil {
 		return nil
@@ -192,14 +191,15 @@ func (h *PiHarness) Completion() handlercontract.CompletionMode {
 
 // NewSessionIDInterceptor returns a piSessionIDInterceptor wrapping inner.
 //
-// The interceptor fires cb exactly once with the Pi session id captured from the
-// first `{"type":"session","id":"<uuid>",...}` NDJSON line, and passes all bytes
-// through unchanged. Called by the shared loop's implIsSessionIDCaptured block
-// without concrete-type branching. PI-012.
+// The interceptor handles two callbacks (PI-012 + PI-014):
 //
-// PI-014 (agent_end watcher, a later bead) will extend piSessionIDInterceptor
-// to also call Teardown on agent_end; the factory method will remain this one
-// entry point so the shared loop stays unchanged.
-func (h *PiHarness) NewSessionIDInterceptor(inner io.Reader, cb func(string)) io.Reader {
-	return newPiSessionIDInterceptor(inner, cb)
+//   - sessionIDCb fires once on the first {"type":"session","id":"<uuid>",...}
+//     NDJSON line, supplying the captured session id for the resume turn argv.
+//   - agentEndCb fires once on {"type":"agent_end",...}; the caller wires it to
+//     Teardown→Kill so a hung Pi does not burn the 90-minute ceiling (PI-014).
+//
+// All bytes pass through unchanged. Called by the shared loop's
+// implIsSessionIDCaptured block without concrete-type branching. PI-012/PI-014.
+func (h *PiHarness) NewSessionIDInterceptor(inner io.Reader, sessionIDCb func(string), agentEndCb func()) io.Reader {
+	return newPiSessionIDInterceptor(inner, sessionIDCb, agentEndCb)
 }

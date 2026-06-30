@@ -111,7 +111,7 @@ func TestPiSessionIDInterceptor_FiresOnSessionHeader(t *testing.T) {
 	var gotID string
 	cb := func(id string) { gotID = id }
 
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), cb)
+	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), cb, nil)
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestPiSessionIDInterceptor_PassesThrough(t *testing.T) {
 	input := `{"type":"session","id":"` + wantID + `"}` + "\n" +
 		`{"type":"tool_use","name":"bash"}` + "\n"
 
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(input), func(string) {})
+	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(input), func(string) {}, nil)
 	got, err := io.ReadAll(interceptor)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -152,7 +152,7 @@ func TestPiSessionIDInterceptor_FirstSessionWins(t *testing.T) {
 	var captured []string
 	cb := func(id string) { captured = append(captured, id) }
 
-	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), cb)
+	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), cb, nil)
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestPiSessionIDInterceptor_NoSessionLine(t *testing.T) {
 	fired := false
 	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {
 		fired = true
-	})
+	}, nil)
 	if _, err := io.ReadAll(interceptor); err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -287,5 +287,88 @@ func TestPiHarness_Teardown_NilSession(t *testing.T) {
 	h := daemon.ExportedNewPiHarness("", "", "", "")
 	if err := h.Teardown(nil); err != nil {
 		t.Errorf("Teardown(nil) returned error: %v", err)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PI-014: agent_end watcher tests (hk-mkcwg)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestPiSessionIDInterceptor_AgentEndCb_Fires verifies agentEndCb fires on the
+// first {"type":"agent_end",...} line, even when no session line appears.
+func TestPiSessionIDInterceptor_AgentEndCb_Fires(t *testing.T) {
+	t.Parallel()
+
+	ndjson := `{"type":"tool_use","name":"bash"}` + "\n" +
+		`{"type":"agent_end","messages":[]}` + "\n"
+
+	var fired int
+	agentEndCb := func() { fired++ }
+
+	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, agentEndCb)
+	if _, err := io.ReadAll(interceptor); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if fired != 1 {
+		t.Errorf("agentEndCb fired %d times; want 1", fired)
+	}
+}
+
+// TestPiSessionIDInterceptor_AgentEndCb_AfterSessionID verifies both callbacks
+// fire independently: sessionIDCb on the session header, agentEndCb on agent_end.
+func TestPiSessionIDInterceptor_AgentEndCb_AfterSessionID(t *testing.T) {
+	t.Parallel()
+
+	const wantID = "test-session-uuid"
+	ndjson := `{"type":"session","id":"` + wantID + `"}` + "\n" +
+		`{"type":"tool_use","name":"bash"}` + "\n" +
+		`{"type":"agent_end","messages":[]}` + "\n"
+
+	var gotID string
+	var agentEndFired int
+	interceptor := daemon.ExportedNewPiSessionIDInterceptor(
+		strings.NewReader(ndjson),
+		func(id string) { gotID = id },
+		func() { agentEndFired++ },
+	)
+	if _, err := io.ReadAll(interceptor); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if gotID != wantID {
+		t.Errorf("sessionIDCb got %q; want %q", gotID, wantID)
+	}
+	if agentEndFired != 1 {
+		t.Errorf("agentEndCb fired %d times; want 1", agentEndFired)
+	}
+}
+
+// TestPiSessionIDInterceptor_AgentEndCb_FiringOnce verifies agentEndCb fires at
+// most once even when multiple agent_end lines appear in the stream.
+func TestPiSessionIDInterceptor_AgentEndCb_FiringOnce(t *testing.T) {
+	t.Parallel()
+
+	ndjson := `{"type":"agent_end","messages":[]}` + "\n" +
+		`{"type":"agent_end","messages":[]}` + "\n"
+
+	var fired int
+	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, func() { fired++ })
+	if _, err := io.ReadAll(interceptor); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if fired != 1 {
+		t.Errorf("agentEndCb fired %d times; want 1", fired)
+	}
+}
+
+// TestPiSessionIDInterceptor_NilAgentEndCb_Safe verifies a nil agentEndCb does
+// not panic on an agent_end event.
+func TestPiSessionIDInterceptor_NilAgentEndCb_Safe(t *testing.T) {
+	t.Parallel()
+
+	ndjson := `{"type":"agent_end","messages":[]}` + "\n"
+
+	interceptor := daemon.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, nil)
+	if _, err := io.ReadAll(interceptor); err != nil {
+		t.Fatalf("ReadAll: %v (nil agentEndCb must not panic)", err)
 	}
 }

@@ -434,12 +434,24 @@ func runReviewLoop(
 				// SessionIDCaptured harness returns its own parser (Pi: {"type":"session"}
 				// id field; Codex: thread.started thread_id). Non-SessionIDCaptured
 				// harnesses return a no-op passthrough but are never called here.
+				//
+				// PI-014 (agent_end watcher): agentEndCb is wired into the same
+				// interceptor. It captures implSess by Go closure reference — safe
+				// because implSess is set by handler.Launch before any agent_end
+				// event can appear in the NDJSON stream. On agent_end it calls
+				// Kill so a hung Pi does not burn the 90m ceiling. codex ignores
+				// agentEndCb (no agent_end event in codex JSONL).
 				capturedSessionIDCh := sessionIDFromCapabilities
 				capturedH := implHarness
+				agentEndCb := func() {
+					if implSess != nil {
+						_ = implSess.Kill(context.Background())
+					}
+				}
 				implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
 					return capturedH.NewSessionIDInterceptor(r, func(id string) {
 						capturedSessionIDCh <- id
-					})
+					}, agentEndCb)
 				}
 			} else {
 				// Claude path: wire a SessionIDInterceptor on the progress stream so the

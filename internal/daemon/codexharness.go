@@ -174,10 +174,11 @@ func (h *CodexHarness) Completion() handlercontract.CompletionMode {
 
 // NewSessionIDInterceptor returns a codexThreadIDInterceptor wrapping inner.
 //
-// The interceptor fires cb exactly once with the captured thread_id from the
-// first thread.started event in the codex JSONL stream, and passes all bytes
-// through unchanged. Called by the shared loop's implIsSessionIDCaptured block
-// to capture the thread_id without branching on the concrete harness type.
-func (h *CodexHarness) NewSessionIDInterceptor(inner io.Reader, cb func(string)) io.Reader {
-	return newCodexThreadIDInterceptor(inner, cb)
+// The interceptor fires sessionIDCb exactly once with the captured thread_id from
+// the first thread.started event in the codex JSONL stream, and passes all bytes
+// through unchanged. agentEndCb is ignored — codex has no agent_end event;
+// CompletionProcessExit for codex relies on self-exit, not an event-driven kill.
+// Called by the shared loop's implIsSessionIDCaptured block without branching.
+func (h *CodexHarness) NewSessionIDInterceptor(inner io.Reader, sessionIDCb func(string), _ func()) io.Reader {
+	return newCodexThreadIDInterceptor(inner, sessionIDCb)
 }

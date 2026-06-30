@@ -205,17 +205,23 @@ type Harness interface {
 	// Governs whether the shared loop runs the heartbeat-staleness kill path (N2).
 	Completion() CompletionMode
 
-	// NewSessionIDInterceptor returns an io.Reader that wraps inner, fires cb
-	// exactly once with the captured session identifier, and passes all bytes
-	// through unchanged. It is called by the shared loop in the
-	// implIsSessionIDCaptured block to obtain the harness-appropriate NDJSON
-	// interceptor without the loop branching on a concrete harness type.
+	// NewSessionIDInterceptor returns an io.Reader that wraps inner, passes all
+	// bytes through unchanged, and fires two optional callbacks:
 	//
-	// Each SessionIDCaptured harness implements this with its own parser (e.g.
-	// PiHarness parses {"type":"session","id":"..."}, CodexHarness parses
-	// {"type":"thread.started","thread_id":"..."}). Non-SessionIDCaptured
-	// harnesses (e.g. ClaudeHarness) MUST return inner unchanged — the method
-	// will never be called for those harnesses because the implIsSessionIDCaptured
-	// gate prevents entry, but the interface requires an implementation.
-	NewSessionIDInterceptor(inner io.Reader, cb func(string)) io.Reader
+	//   - sessionIDCb is fired exactly once with the captured session identifier
+	//     (the harness-specific NDJSON field). May be nil.
+	//   - agentEndCb is fired exactly once on the terminal agent_end event (PI-014).
+	//     May be nil; only PiHarness fires it — codex has no agent_end event.
+	//
+	// Called by the shared loop in the implIsSessionIDCaptured block to wire both
+	// callbacks into a single harness-supplied interceptor without the loop
+	// branching on a concrete harness type. Each SessionIDCaptured harness supplies
+	// its own parser (PiHarness: {"type":"session","id":"..."} and
+	// {"type":"agent_end"}; CodexHarness: {"type":"thread.started","thread_id":"..."}).
+	// Non-SessionIDCaptured harnesses (e.g. ClaudeHarness) MUST return inner
+	// unchanged — the implIsSessionIDCaptured gate prevents entry in production,
+	// but the interface requires an implementation.
+	//
+	// Spec: PI-012 (session-id capture); PI-014 (agent_end watcher).
+	NewSessionIDInterceptor(inner io.Reader, sessionIDCb func(string), agentEndCb func()) io.Reader
 }

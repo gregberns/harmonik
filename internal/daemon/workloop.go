@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -3845,11 +3846,48 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 		}
 	}
-	spec.Substrate = runSubstrate
+	// PI-012a / hk-mzgh workloop analog: for SessionIDCaptured harnesses (Pi,
+	// codex) the tmux substrate returns Stdout()==nil, so StdoutWrapper is never
+	// called and neither the session-id capture nor the PI-014 agent_end watcher
+	// fires. Force implSpec.Substrate=nil to select the exec path, which wires a
+	// real stdout pipe. Mirrors the reviewloop implIsSessionIDCaptured block.
+	implIsSessionIDCapturedWL := false
+	var implHarnessWL handlercontract.Harness
+	if deps.harnessRegistry != nil {
+		if implH, implHErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); implHErr == nil {
+			implIsSessionIDCapturedWL = implH.SessionIDPolicy() == handlercontract.SessionIDCaptured
+			implHarnessWL = implH
+		}
+	}
+	if implIsSessionIDCapturedWL {
+		spec.Substrate = nil
+	} else {
+		spec.Substrate = runSubstrate
+	}
 	// hk-wnqos: single-mode implementer is the terminal/merge spawn — it draws
 	// from the reserved +1 slot in spawnSem so a saturated non-terminal pool
 	// cannot starve a single-mode run (codex or otherwise) at launch.
 	spec.Terminal = true
+
+	// PI-014 workloop analog: predeclare sess so agentEndCb can capture it by
+	// reference. Go's `:=` redeclaration (below, at Launch) assigns to this same
+	// variable since watcher/launchErr are new in this scope; the closure is safe
+	// because agent_end can only arrive after Launch returns and sets sess.
+	var sess handler.Session
+	if implIsSessionIDCapturedWL {
+		capturedH := implHarnessWL
+		capturedSessionIDCh := make(chan string, 1) // buffered; single-mode has no resume reader
+		agentEndCb := func() {
+			if sess != nil {
+				_ = sess.Kill(context.Background())
+			}
+		}
+		spec.StdoutWrapper = func(r io.Reader) io.Reader {
+			return capturedH.NewSessionIDInterceptor(r, func(id string) {
+				capturedSessionIDCh <- id
+			}, agentEndCb)
+		}
+	}
 
 	// Step 2: register the hook session so incoming Stop-hook relays are routed
 	// to this run's hookSessionStore entry (CHB-025).

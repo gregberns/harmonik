@@ -2768,9 +2768,9 @@ var ExportedNewPiHarness = NewPiHarness
 // ExportedNewPiSessionIDInterceptor exposes newPiSessionIDInterceptor for
 // tests in package daemon_test.
 //
-// Bead ref: hk-4rmj1 (PI-012).
-func ExportedNewPiSessionIDInterceptor(inner io.Reader, cb func(string)) io.Reader {
-	return newPiSessionIDInterceptor(inner, cb)
+// Bead ref: hk-4rmj1 (PI-012); hk-mkcwg (PI-014 agentEndCb param added).
+func ExportedNewPiSessionIDInterceptor(inner io.Reader, sessionIDCb func(string), agentEndCb func()) io.Reader {
+	return newPiSessionIDInterceptor(inner, sessionIDCb, agentEndCb)
 }
 
 // ExportedParsePiNDJSONEvent exposes parsePiNDJSONEvent for tests in package

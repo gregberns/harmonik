@@ -52,7 +52,7 @@ func (harnessRegistryFixtureHarness) Completion() handlercontract.CompletionMode
 	return handlercontract.CompletionEventStreamThenQuit
 }
 
-func (harnessRegistryFixtureHarness) NewSessionIDInterceptor(inner io.Reader, _ func(string)) io.Reader {
+func (harnessRegistryFixtureHarness) NewSessionIDInterceptor(inner io.Reader, _ func(string), _ func()) io.Reader {
 	return inner
 }
 

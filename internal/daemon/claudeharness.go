@@ -150,6 +150,6 @@ func (h *ClaudeHarness) Completion() handlercontract.CompletionMode {
 // loop's implIsSessionIDCaptured gate prevents this method from ever being
 // called in production. The no-op passthrough satisfies the interface contract
 // so no concrete-type branching is needed in the shared loop.
-func (h *ClaudeHarness) NewSessionIDInterceptor(inner io.Reader, _ func(string)) io.Reader {
+func (h *ClaudeHarness) NewSessionIDInterceptor(inner io.Reader, _ func(string), _ func()) io.Reader {
 	return inner
 }

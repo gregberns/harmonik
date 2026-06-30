@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-06-30T12:05:00Z",
+  "updated": "2026-06-30T14:50:00Z",
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
     {
@@ -31,12 +31,8 @@
       "crew": "paul",
       "queue": "paulk-q",
       "status": "active",
-      "gate": {
-        "owner": "operator",
-        "reason": "hk-u5tgh (watchdog-bypass fix) is design-gated: synthesis (plans/2026-06-22-keeper-coverage-investigation/00-SYNTHESIS.md) confirmed NOT-settled by captain — open question (item f): standalone ctx-watchdog as canonical crew governor vs flip crews to per-keeper auto-restart. Surfaced to operator 2026-06-30. This gate is ONLY on the hk-u5tgh expansion; the lane is ACTIVE on hk-xxcv9.",
-        "expires": "2026-07-04T00:00:00Z"
-      },
-      "note": "STAFFED 2026-06-30 (crew paul). Dispatching hk-xxcv9 (crew-boot keeper auto-arm, clean P2) now via paulk-q. hk-u5tgh HELD pending operator design call. epic hk-tswe0 used for attribution (no umbrella keeper epic)."
+      "gate": null,
+      "note": "STAFFED 2026-06-30 (crew paul). hk-u5tgh UNGATED 2026-06-30: operator SETTLED the keeper architecture (HYBRID — keep per-crew deterministic keepers AND a probabilistic overseer on top that re-arms when a keeper fails; the hk-u5tgh fix routes overseer/watchdog restarts THROUGH the daemon crew-start path so the keeper window survives). Both hk-xxcv9 (crew-boot keeper auto-arm) and hk-u5tgh now dispatchable on paulk-q. epic hk-tswe0 used for attribution (no umbrella keeper epic)."
     },
     {
       "lane": "codex",

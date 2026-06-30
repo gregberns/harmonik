@@ -12,6 +12,21 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-06-30 ~14:50Z — operator (via admiral) · expires: 2026-07-04
+WHAT: Operator SETTLED the keeper-architecture open question (synthesis item f). Decision = HYBRID:
+      keep the per-crew DETERMINISTIC keepers (skeleton) AND add a PROBABILISTIC overseer ON TOP that
+      intervenes when a keeper fails. "Centralized" = overseer sits on top of keepers, not instead of.
+      The hk-u5tgh fix = route the overseer/watchdog restart THROUGH the daemon crew-start path
+      (HandleCrewStart -> spawnCrewKeeperWindow) so the keeper window survives a restart instead of
+      being stripped. This UN-GATES hk-u5tgh (P1). Also: killed the dead orphan ctx-watchdog tmux
+      session (never seeded, wrong CWD, ran no loop — half-failed boot spawn).
+WHY:  per-crew keepers are reliable locally but a tmux-level restart bypasses them; the overseer adds
+      a recovery layer, and daemon-routed restarts make that layer durable rather than hand-armed.
+ORDER: paul finishes hk-xxcv9 (crew-boot auto-arm) → takes hk-u5tgh (daemon-routed overseer restart);
+      keeper lane otherwise unchanged. Interim seeded overseer optional, lower priority than the fix.
+RETURN-PATH: hold:operator-design-decision label removed from hk-u5tgh; lanes.json keeper gate -> null;
+      settled design relayed to captain over comms (topic keeper). Resume by checking paul's hk-u5tgh progress.
+
 ## 2026-06-30 ~12:00Z — operator (via admiral) · expires: 2026-07-04
 WHAT: Operator has codex/ChatGPT session tokens available — MAXIMIZE implementer work through the
       codex harness to offload cost OFF the Anthropic budget. ADDITIVE + LOWER PRIORITY than the 3

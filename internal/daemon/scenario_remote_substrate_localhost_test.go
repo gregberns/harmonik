@@ -284,7 +284,21 @@ func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
 	rsb12Git(t, originDir, "init", "--bare", "--initial-branch=main")
 
 	// ── box A (projectDir): the daemon's repo. ───────────────────────────────
-	projectDir := t.TempDir()
+	// Rooted under a SHORT /tmp path (not t.TempDir()) so the reverse tunnel's
+	// forward target <projectDir>/.harmonik/daemon.sock fits inside the macOS
+	// 104-byte sockaddr_un.sun_path limit. t.TempDir() on macOS yields a
+	// ~90–127-byte /private/var/folders/... path, which overflows once the
+	// /.harmonik/daemon.sock suffix is appended — `ssh -R` then rejects the
+	// forward spec ("Bad remote forwarding specification") and exits instantly,
+	// so the worker-side listener never binds and the readiness gate times out.
+	// Mirrors cc14ProjectDir in scenario_captain_crew_e2e_hkzi4ej_test.go; the
+	// EvalSymlinks keeps the path canonical (/tmp → /private/tmp on macOS).
+	projectDir, err := os.MkdirTemp("/tmp", "rsb12-")
+	if err != nil {
+		t.Fatalf("MkdirTemp /tmp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(projectDir) })
+	projectDir = cc14EvalSymlinks(t, projectDir)
 	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
 	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); err != nil {
 		t.Fatalf("mkdir beads-intents: %v", err)

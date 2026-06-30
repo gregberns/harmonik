@@ -1,14 +1,16 @@
 package daemon
 
-// codexwalguard_test.go — unit tests for cleanCodexStaleWAL (hk-2pb79).
+// codexwalguard_test.go — unit tests for cleanCodexStaleWAL (hk-2pb79, hk-xisvb).
 //
 // Covered:
 //   - WAL larger than threshold, no open handle => removed AND backup exists.
-//   - WAL <= threshold => left in place.
+//   - SMALL WAL (well under threshold), no open handle => removed (hk-xisvb
+//     regression: the old size-gate left it in place; staleness is size-free).
 //   - config.yaml present but stale_wal_max_bytes absent => returns an error
 //     that wraps ErrMissingCodexStaleWALMaxBytes; WAL untouched.
 //   - No config.yaml in projectRoot => returns nil; WAL untouched.
 //   - Explicit stale_wal_max_bytes: 0 => a non-empty WAL is removed.
+//   - walUnchanged re-check: size-change OR mtime-change => skip removal.
 //
 // The lsof-held case is environment-dependent (it requires a real process
 // holding a real handle) and is deliberately NOT exercised here to avoid
@@ -90,17 +92,40 @@ func TestCleanCodexStaleWAL_LargerThanThreshold_Removed(t *testing.T) {
 	}
 }
 
-func TestCleanCodexStaleWAL_WithinThreshold_Left(t *testing.T) {
+// TestCleanCodexStaleWAL_SmallUnheldWAL_Removed pins the hk-xisvb regression: a
+// small (234 KB) stale WAL, well UNDER the 1 MiB threshold, must now be removed
+// and backed up. Under the OLD size-gate (`if info.Size() <= maxBytes { continue
+// }`) this exact file was skipped (234*1024 = 239616 <= 1048576), making the
+// guard a no-op while codex fast-failed fleet-wide. Staleness is a function of
+// being left by a killed/slept run, not of size — so the only safety gate is now
+// "unheld" + the TOCTOU re-check, and this small WAL is cleaned.
+func TestCleanCodexStaleWAL_SmallUnheldWAL_Removed(t *testing.T) {
+	if !lsofAvailable() {
+		t.Skip("lsof not on PATH: guard conservatively skips removal")
+	}
 	projectRoot := t.TempDir()
 	codexHome := t.TempDir()
-	writeConfigYAML(t, projectRoot, "codex:\n  stale_wal_max_bytes: 1048576\n")
-	wal := writeWAL(t, codexHome, 1024) // <= threshold
+	writeConfigYAML(t, projectRoot, "codex:\n  stale_wal_max_bytes: 1048576\n") // 1 MiB threshold
+	const small = 234 * 1024                                                    // 239616 bytes, well under 1 MiB
+	wal := writeWAL(t, codexHome, small)
+
+	// Sanity: this WAL would have been SKIPPED under the old size-gate.
+	if info, err := os.Stat(wal); err != nil {
+		t.Fatalf("stat wal: %v", err)
+	} else if info.Size() > 1048576 {
+		t.Fatalf("test setup: small WAL is not actually under the threshold (size=%d)", info.Size())
+	}
 
 	if err := cleanCodexStaleWAL(projectRoot, codexHome); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, err := os.Stat(wal); err != nil {
-		t.Fatalf("expected wal left in place, stat err = %v", err)
+	if _, err := os.Stat(wal); !os.IsNotExist(err) {
+		t.Fatalf("expected small under-threshold wal REMOVED (hk-xisvb), stat err = %v", err)
+	}
+	// A backup copy of the small wal must exist.
+	entries, _ := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*", filepath.Base(wal)))
+	if len(entries) == 0 {
+		t.Fatalf("expected a backup copy of the small wal, found none")
 	}
 }
 
@@ -141,10 +166,13 @@ func TestCleanCodexStaleWAL_CodexBlockNoKey_FailsLoud(t *testing.T) {
 	}
 }
 
-// TestWALUnchangedStale exercises the re-stat half of the TOCTOU re-check
-// directly (no lsof dependency). The lsof half + the full concurrent race are
-// covered by inspection — see the re-check block in cleanCodexStaleWAL.
-func TestWALUnchangedStale(t *testing.T) {
+// TestWALUnchanged exercises the re-stat half of the TOCTOU re-check directly (no
+// lsof dependency). It is now byte-threshold-FREE (hk-xisvb): the helper's sole
+// job is "did a live writer touch this file between the lsof check and the
+// remove?", detected via size OR mtime change. The lsof half + the full
+// concurrent race are covered by inspection — see the re-check block in
+// cleanCodexStaleWAL.
+func TestWALUnchanged(t *testing.T) {
 	codexHome := t.TempDir()
 	wal := writeWAL(t, codexHome, 4096)
 	pre, err := os.Stat(wal)
@@ -152,27 +180,33 @@ func TestWALUnchangedStale(t *testing.T) {
 		t.Fatalf("stat: %v", err)
 	}
 
-	// Unchanged + still over threshold => safe to remove.
-	if !walUnchangedStale(pre, wal, 1024) {
-		t.Fatalf("expected unchanged-stale to be true for untouched over-threshold wal")
+	// Untouched => safe to remove (regardless of size — no threshold arg).
+	if !walUnchanged(pre, wal) {
+		t.Fatalf("expected walUnchanged to be true for an untouched wal")
 	}
-	// Now below threshold (size 4096 <= maxBytes 8192) => not stale, skip.
-	if walUnchangedStale(pre, wal, 8192) {
-		t.Fatalf("expected false when size no longer exceeds threshold")
+	// A live writer grows the wal => size changes => skip.
+	if err := os.WriteFile(wal, make([]byte, 8192), 0o644); err != nil {
+		t.Fatalf("rewrite wal larger: %v", err)
 	}
-	// A live writer rewrites the wal => mtime changes => skip.
+	if walUnchanged(pre, wal) {
+		t.Fatalf("expected false when size changed after pre-stat")
+	}
+	// Restore original size, then change only the mtime => skip.
+	if err := os.WriteFile(wal, make([]byte, 4096), 0o644); err != nil {
+		t.Fatalf("restore wal size: %v", err)
+	}
 	future := pre.ModTime().Add(time.Hour)
 	if err := os.Chtimes(wal, future, future); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
-	if walUnchangedStale(pre, wal, 1024) {
+	if walUnchanged(pre, wal) {
 		t.Fatalf("expected false when mtime changed after pre-stat")
 	}
 	// Gone entirely => skip.
 	if err := os.Remove(wal); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if walUnchangedStale(pre, wal, 1024) {
+	if walUnchanged(pre, wal) {
 		t.Fatalf("expected false when wal no longer exists")
 	}
 }

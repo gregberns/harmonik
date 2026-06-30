@@ -11,8 +11,13 @@ package daemon
 // symptom is a fast-fail: codex exits in <10s with "exited without advancing
 // HEAD" because it never gets a usable session.
 //
-// This guard runs once per codex launch (CodexHarness.LaunchSpec) and removes a
-// stale, UNHELD WAL before codex starts. It is deliberately conservative:
+// This guard runs once per codex launch (CodexHarness.LaunchSpec) and cleans ANY
+// present, unheld stale WAL regardless of size. Staleness is a function of being
+// LEFT BEHIND BY A KILLED/SLEPT RUN, not of size — a SMALL stale WAL fast-fails
+// codex just as hard as a large one (field incident hk-xisvb: a 234 KB stale
+// state WAL, well under the 1 MiB threshold, made the old size-gated guard a
+// no-op and codex fast-failed fleet-wide). The ONLY safety gate is "unheld"
+// (lsof) plus a TOCTOU re-check. It is deliberately conservative:
 //
 //   - It NEVER touches a WAL that a live process holds open (confirmed via
 //     lsof). If lsof is unavailable or errors, the WAL is LEFT IN PLACE — we
@@ -21,14 +26,17 @@ package daemon
 //     mis-classified file can be recovered from $CODEX_HOME/.wal-backup-<ns>/.
 //   - It leaves the base state_*.sqlite untouched; only the sidecars are removed.
 //
-// # Threshold (config, fail-loud, zero-defaults)
+// # Threshold (config, fail-loud, zero-defaults — secondary signal only)
 //
-// The size threshold is REQUIRED and has NO compiled default — the same
+// `codex.stale_wal_max_bytes` is REQUIRED and has NO compiled default — the same
 // fail-loud-on-missing-key / zero-hardcoded-thresholds mandate the governor and
-// keeper follow. The operator must set `codex.stale_wal_max_bytes` under a
-// `codex:` block in .harmonik/config.yaml. A WAL with size <= the threshold is
-// left in place; one larger is a removal candidate. `0` is an explicit valid
-// value meaning "any non-empty WAL is stale".
+// keeper follow. The operator must set it under a `codex:` block in
+// .harmonik/config.yaml. Its ROLE, however, is NOT a cleanup gate: every present,
+// unheld stale WAL is cleaned regardless of size. The threshold is a SECONDARY
+// SIGNAL used only to classify the cleanup log line — a cleaned WAL larger than
+// the threshold is flagged as a notably-large stale WAL
+// (codex_wal_guard_removed_large_stale), otherwise it logs as a normal cleanup
+// (codex_wal_guard_removed_stale). Cleanup happens either way.
 //
 // # No-config no-op
 //
@@ -68,16 +76,18 @@ type codexWALGuardConfig struct {
 
 // ErrMissingCodexStaleWALMaxBytes is returned by cleanCodexStaleWAL when a
 // .harmonik/config.yaml exists but the required key codex.stale_wal_max_bytes is
-// absent. The threshold has NO compiled default (the "no hardcoded thresholds"
+// absent. The key has NO compiled default (the "no hardcoded thresholds"
 // mandate): an absent key must fail the codex launch loud, not silently run with
-// the guard disabled.
+// the guard disabled. The key is a SECONDARY SIGNAL (it classifies the cleanup
+// log as large-vs-normal), NOT a cleanup gate — cleanup is unconditional on size.
 type ErrMissingCodexStaleWALMaxBytes struct{}
 
 func (e *ErrMissingCodexStaleWALMaxBytes) Error() string {
 	return "daemon: codex stale-WAL guard: required key `codex.stale_wal_max_bytes` is not set; " +
 		"set it under a `codex:` block in .harmonik/config.yaml " +
-		"(e.g. `stale_wal_max_bytes: 1048576`, or `stale_wal_max_bytes: 0` to clean any " +
-		"non-empty WAL) — there is no compiled default"
+		"(e.g. `stale_wal_max_bytes: 1048576`) — there is no compiled default. " +
+		"Note: this key is a secondary signal that flags notably-large stale WALs in " +
+		"logs; it is NOT a cleanup gate (every unheld stale WAL is cleaned regardless of size)"
 }
 
 // cleanCodexStaleWAL removes a stale, unheld codex state WAL from CODEX_HOME
@@ -95,10 +105,11 @@ func (e *ErrMissingCodexStaleWALMaxBytes) Error() string {
 //   - config.yaml present but codex.stale_wal_max_bytes absent => returns
 //     *ErrMissingCodexStaleWALMaxBytes (fail loud). A YAML parse error is also
 //     returned.
-//   - Otherwise: for each $CODEX_HOME/state_*.sqlite-wal larger than the
-//     threshold AND not held open by any process, back up the wal + matching
+//   - Otherwise: for each $CODEX_HOME/state_*.sqlite-wal that is present AND not
+//     held open by any process (regardless of size), back up the wal + matching
 //     -shm into $CODEX_HOME/.wal-backup-<unixnano>/ and remove them — with a
-//     pre-backup AND post-backup (TOCTOU) unheld + unchanged re-check.
+//     pre-backup AND post-backup (TOCTOU) unheld + unchanged re-check. The byte
+//     threshold is NOT a cleanup gate; it only classifies the cleanup log line.
 //
 // The ONLY errors returned are the missing-required-key error and a YAML parse
 // error. All other paths (config read/IO, stat/lsof/backup/remove) are
@@ -146,10 +157,9 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 			slog.Warn("codex_wal_guard_stat_error", "wal", wal, "error", statErr.Error())
 			continue
 		}
-		if info.Size() <= maxBytes {
-			// Within threshold — leave it.
-			continue
-		}
+		// NO size gate (hk-xisvb): staleness is a function of being left behind by
+		// a killed/slept run, not of size. Every present, unheld WAL is a cleanup
+		// candidate; the byte threshold is consulted later only to classify the log.
 
 		base := strings.TrimSuffix(wal, "-wal") // state_*.sqlite
 		shm := base + "-shm"
@@ -212,9 +222,9 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 			slog.Warn("codex_wal_guard_skip_held_after_backup", "file", base, "held", reBaseHeld, "uncertain", reBaseErr != nil)
 			continue
 		}
-		if !walUnchangedStale(info, wal, maxBytes) {
+		if !walUnchanged(info, wal) {
 			// A live writer touched the WAL after our pre-backup stat (gone,
-			// shrank to/below threshold, or mtime changed). Leave it.
+			// changed size, or mtime changed). Leave it.
 			slog.Warn("codex_wal_guard_skip_changed_after_backup", "wal", wal)
 			continue
 		}
@@ -227,33 +237,45 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 		if rmErr := os.Remove(shm); rmErr != nil && !os.IsNotExist(rmErr) {
 			slog.Warn("codex_wal_guard_remove_failed", "shm", shm, "error", rmErr.Error())
 		}
-		slog.Info("codex_wal_guard_cleaned",
-			"wal", wal,
-			"size_bytes", info.Size(),
-			"max_bytes", maxBytes,
-			"backup_dir", backupDir,
-		)
+		// Secondary signal: the byte threshold no longer gates cleanup; it only
+		// classifies this log line. A cleaned WAL larger than the threshold is
+		// flagged as notably-large; everything else is a normal stale cleanup.
+		if info.Size() > maxBytes {
+			slog.Warn("codex_wal_guard_removed_large_stale",
+				"wal", wal,
+				"size_bytes", info.Size(),
+				"max_bytes", maxBytes,
+				"backup_dir", backupDir,
+			)
+		} else {
+			slog.Info("codex_wal_guard_removed_stale",
+				"wal", wal,
+				"size_bytes", info.Size(),
+				"max_bytes", maxBytes,
+				"backup_dir", backupDir,
+			)
+		}
 	}
 
 	return nil
 }
 
-// walUnchangedStale reports whether wal is still the same stale file that pre
-// described (same mtime), still exists, and is still larger than maxBytes. It is
-// the re-stat half of the TOCTOU re-check: a true result means no live writer
-// touched the WAL between the pre-backup stat and now, so removal is safe.
+// walUnchanged reports whether wal still exists and is byte-for-byte the same
+// file pre described (same size AND same mtime). It is the re-stat half of the
+// TOCTOU re-check: its sole purpose is "did a live writer touch this file between
+// the lsof check and the remove?". A true result means no live writer touched the
+// WAL between the pre-backup stat and now, so removal is safe.
 //
-// Returns false if the file is gone, has shrunk to/below the threshold, or its
-// ModTime differs from pre — any of which indicates a concurrent writer.
-func walUnchangedStale(pre os.FileInfo, wal string, maxBytes int64) bool {
+// Returns false if the file is gone, its size differs from pre, or its ModTime
+// differs from pre — any of which indicates a concurrent writer. It is
+// deliberately size-threshold-FREE (hk-xisvb): staleness no longer depends on
+// size, so the re-check must not reintroduce a byte gate.
+func walUnchanged(pre os.FileInfo, wal string) bool {
 	cur, err := os.Stat(wal)
 	if err != nil {
 		return false
 	}
-	if cur.Size() <= maxBytes {
-		return false
-	}
-	return cur.ModTime().Equal(pre.ModTime())
+	return cur.Size() == pre.Size() && cur.ModTime().Equal(pre.ModTime())
 }
 
 // fileHasOpenHandle reports whether any process holds path open, via `lsof`.

@@ -317,6 +317,20 @@ const (
 	// Refs: hk-fra5l.
 	EventTypeLaunchStallDetected EventType = "launch_stall_detected"
 
+	// EventTypeAgentReadyStallDetected is the agent_ready_stall_detected event type.
+	// Emitted by the stale watcher when launch_initiated has been observed for a
+	// run but agent_ready does NOT arrive within agentReadyStallThreshold (a few
+	// minutes). This covers the launch_initiated → agent_ready blind spot: the
+	// agent process spawned but never reported ready, and before this event the
+	// run sat silently until the ~30-min agent_ready_timeout / never-spawned
+	// reaper. Emitting a bounded-window detection event makes the hang observable
+	// (and operator-recoverable) long before that 30-min deadline. Fired at most
+	// once per run.
+	// Payload: run_id, bead_id, stall_seconds.
+	// Durability class: O.
+	// Refs: hk-1s1or.
+	EventTypeAgentReadyStallDetected EventType = "agent_ready_stall_detected"
+
 	// EventTypeSpawnCapBlocked is the spawn_cap_blocked event type.
 	// Emitted by the daemon when tmuxSubstrate.SpawnWindow cannot acquire a
 	// spawn-semaphore slot within the bounded acquire timeout — the symptom of a

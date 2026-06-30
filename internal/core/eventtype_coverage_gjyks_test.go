@@ -171,6 +171,9 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeImplementerBudgetExceeded, func() EventPayload { return &ImplementerBudgetExceededPayload{} }},
 	{EventTypeReviewerBudgetExceeded, func() EventPayload { return &ReviewerBudgetExceededPayload{} }},
 
+	// Launch_initiated → agent_ready stall detector (hk-1s1or)
+	{EventTypeAgentReadyStallDetected, func() EventPayload { return &AgentReadyStallDetectedPayload{} }},
+
 	// §8.10 Queue lifecycle
 	{EventTypeQueueSubmitted, func() EventPayload { return &QueueSubmittedPayload{} }},
 	{EventTypeQueueGroupStarted, func() EventPayload { return &QueueGroupStartedPayload{} }},

@@ -78,7 +78,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 121 // +5 for §8.15 bead-ledger types (hk-u3q6o/hk-27ghc/hk-k7va9 EV-027 amendment)
+	const wantCount = 122 // +5 for §8.15 bead-ledger types (hk-u3q6o/hk-27ghc/hk-k7va9 EV-027 amendment); +1 agent_ready_stall_detected (hk-1s1or launch_initiated→agent_ready stall detector)
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

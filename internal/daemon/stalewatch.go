@@ -84,6 +84,28 @@ var neverSpawnedReaperDefaultTimeout = 30 * time.Minute
 // Declared as var so tests can override without waiting real wall time.
 var launchStallThreshold = 30 * time.Second
 
+// agentReadyStallThreshold is the maximum time allowed between launch_initiated
+// and agent_ready.  If agent_ready does not appear within this window the stale
+// watcher emits agent_ready_stall_detected once per run.
+//
+// This is the safety-net detector for the launch_initiated → agent_ready blind
+// spot (hk-1s1or): once launch_initiated arrives the launch-stall check
+// (launchStallThreshold) is suppressed, and the never-spawned reaper (hk-0z5x)
+// only CANCELS the run after a much larger window (~30 min). Between those two
+// there was NO observable event for a hung launch→ready transition. This
+// threshold is deliberately SEPARATE from launchStallThreshold (different phase,
+// larger window) and from NeverSpawnedReaperTimeout (the reaper still cancels at
+// its own, larger deadline): it emits a detection event in a bounded few-minute
+// window so the hang is visible and recoverable long before the 30-min reaper.
+//
+// 3 min is generous: under normal operation agent_ready follows launch_initiated
+// within seconds (the relay synthesizes it on first SessionStart). A 3-min gap
+// therefore indicates the agent process never started or its session was
+// orphaned, not normal latency.
+//
+// Declared as var so tests can override without waiting real wall time.
+var agentReadyStallThreshold = 3 * time.Minute
+
 // runStaleState tracks per-run staleness accounting inside StaleWatcher.
 type runStaleState struct {
 	// beadID is the bead being executed in this run.
@@ -115,6 +137,11 @@ type runStaleState struct {
 	// launchStallEmitted is true once a launch_stall_detected event has been
 	// emitted for this run.  The event is emitted at most once per run.
 	launchStallEmitted bool
+
+	// agentReadyStallEmitted is true once an agent_ready_stall_detected event has
+	// been emitted for this run.  The event is emitted at most once per run.
+	// Used by the launch_initiated → agent_ready stall detector (hk-1s1or).
+	agentReadyStallEmitted bool
 
 	// launchInitiatedAt is the wall-clock time when launch_initiated was first
 	// observed. Zero until the event is seen. Used as the reference timestamp
@@ -189,6 +216,16 @@ type StaleWatcherConfig struct {
 	// Zero → neverSpawnedReaperDefaultTimeout (30 min).
 	NeverSpawnedReaperTimeout time.Duration
 
+	// AgentReadyStallThreshold is the bounded detection window for the
+	// launch_initiated → agent_ready blind spot (hk-1s1or): when launch_initiated
+	// has been observed but agent_ready has not arrived within this window, the
+	// stale watcher emits agent_ready_stall_detected once per run.  This is a
+	// detection-only event (it does NOT cancel the run — the never-spawned reaper
+	// still cancels at its own, larger NeverSpawnedReaperTimeout deadline); it
+	// makes the hang observable in a bounded few-minute window.
+	// Zero → agentReadyStallThreshold (3 min).
+	AgentReadyStallThreshold time.Duration
+
 	// Now is the wall-clock source. Nil → time.Now.
 	Now func() time.Time
 }
@@ -240,6 +277,9 @@ func NewStaleWatcher(cfg StaleWatcherConfig) *StaleWatcher {
 	}
 	if cfg.NeverSpawnedReaperTimeout <= 0 {
 		cfg.NeverSpawnedReaperTimeout = neverSpawnedReaperDefaultTimeout
+	}
+	if cfg.AgentReadyStallThreshold <= 0 {
+		cfg.AgentReadyStallThreshold = agentReadyStallThreshold
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -407,6 +447,35 @@ func (w *StaleWatcher) checkRun(
 		st.launchStallEmitted = true
 		w.mu.Unlock()
 		w.emitLaunchStallDetected(ctx, runID, beadIDForStall, now.Sub(runStartedAt))
+		w.mu.Lock()
+		// Re-acquire st after unlock/lock cycle.
+		st = w.states[runID]
+		if st == nil {
+			w.mu.Unlock()
+			return
+		}
+	}
+
+	// hk-1s1or: launch_initiated → agent_ready stall detection.  Once
+	// launch_initiated arrives the launch-stall check above is suppressed
+	// (launchInitiatedSeen=true), and the never-spawned reaper below only CANCELS
+	// the run after the much larger NeverSpawnedReaperTimeout (~30 min).  Between
+	// those two there was no observable event for a hung launch→ready transition.
+	// Emit agent_ready_stall_detected exactly once per run when agent_ready has
+	// not arrived within AgentReadyStallThreshold (a few minutes) so the hang is
+	// detectable long before the reaper fires.  This is detection-only — it does
+	// NOT cancel the run; the never-spawned reaper still owns the abort.
+	//
+	// Reference timestamp is launchInitiatedAt (the FIRST launch_initiated) so
+	// that subsequent events (e.g. daemon heartbeats) do not delay the window.
+	if st.launchInitiatedSeen && !st.agentReadySeen && !st.agentReadyStallEmitted &&
+		!st.launchInitiatedAt.IsZero() &&
+		now.Sub(st.launchInitiatedAt) > w.cfg.AgentReadyStallThreshold {
+		st.agentReadyStallEmitted = true
+		beadIDForARS := st.beadID
+		arsStall := now.Sub(st.launchInitiatedAt)
+		w.mu.Unlock()
+		w.emitAgentReadyStallDetected(ctx, runID, beadIDForARS, arsStall)
 		w.mu.Lock()
 		// Re-acquire st after unlock/lock cycle.
 		st = w.states[runID]
@@ -649,6 +718,25 @@ func (w *StaleWatcher) emitLaunchStallDetected(ctx context.Context, runID core.R
 		return
 	}
 	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeLaunchStallDetected, b)
+}
+
+// emitAgentReadyStallDetected emits an agent_ready_stall_detected warning event.
+// Called at most once per run by checkRun when launch_initiated has been seen
+// for longer than AgentReadyStallThreshold without a subsequent agent_ready.
+//
+// Bead: hk-1s1or.
+func (w *StaleWatcher) emitAgentReadyStallDetected(ctx context.Context, runID core.RunID, beadID core.BeadID, stall time.Duration) {
+	pl := core.AgentReadyStallDetectedPayload{
+		RunID:        runID.String(),
+		BeadID:       string(beadID),
+		StallSeconds: int64(stall.Seconds()),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: stalewatch: marshal agent_ready_stall_detected for run %s: %v\n", runID, err)
+		return
+	}
+	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeAgentReadyStallDetected, b)
 }
 
 // fireNeverSpawnedReaper is called (at most once per run) when launch_initiated

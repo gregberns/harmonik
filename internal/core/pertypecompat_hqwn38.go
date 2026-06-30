@@ -155,6 +155,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-fra5l: launch-diagnostic events (pasteinject_failed, launch_stall_detected).
 	{TypeName: "pasteinject_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "launch_stall_detected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-1s1or: agent_ready_stall_detected — launch_initiated → agent_ready blind-spot detector.
+	{TypeName: "agent_ready_stall_detected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-4l7zs: spawn-cap-blocked diagnostic (slot-leak signature).
 	{TypeName: "spawn_cap_blocked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-9vp51: implementer-budget-exceeded diagnostic (commit-budget kill).

@@ -1165,6 +1165,8 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 //     load-bearing invariant keeping this state current without re-computing it
 //     here. Force-path exception: above ForceActPct, bypass grace.
 //  3. NOT HoldingDispatch (fail-closed: skip cycle, clear marker → next PreCompact is fail-open).
+//  3b. NOT operator HOLD — skip cycle while co-working hold is active (clear
+//      marker so the next PreCompact fire gets a clean slate). Refs: hk-4rago.
 //  4. Anti-loop suppression (same policy as MaybeRun).
 //
 // The .precompact marker is ALWAYS cleared regardless of which gate fires, so
@@ -1238,6 +1240,17 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 		return nil
 	}
 
+	// Gate 3b: operator HOLD (D5/hk-9waz, Refs: hk-4rago) — skip the PreCompact
+	// cycle while a fresh, session-scoped hold is active. A precompact trigger
+	// does not override co-working intent: the hold signals the operator is
+	// actively using this session. Clear the marker so native compaction can
+	// proceed and the next PreCompact fire gets a clean slate.
+	if c.cfg.HeldCheckFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		c.emitPrecompactBlocked(ctx, sessionID, "hold_skip")
+		_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
+		return nil
+	}
+
 	// Gate 4: anti-loop suppression.
 	if c.lastFiredSID != "" {
 		if sessionID == c.lastFiredSID {
@@ -1288,6 +1301,8 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 //  3. Tokens < effective act threshold: don't double-fire with MaybeRun.
 //  4. CrispIdle (pane quiescent).
 //  5. NOT HoldingDispatch (fail-closed: in-flight work → skip).
+//  5b. NOT operator HOLD — skip idle restart while co-working hold is active.
+//      Refs: hk-4rago.
 //  6. IdleRestartCooldown: time since last idle restart >= cooldown.
 //  7. Anti-loop: session_id must differ from lastFiredSID.
 //
@@ -1326,6 +1341,13 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 
 	// Gate 5: no in-flight dispatch (fail-closed).
 	if c.cfg.HoldingDispatchFn(c.cfg.ProjectDir, c.cfg.AgentName) {
+		return nil
+	}
+
+	// Gate 5b: operator HOLD (D5/hk-9waz, Refs: hk-4rago) — skip the idle
+	// restart while a fresh, session-scoped hold is active. WARN still fires
+	// (watcher path); only the idle-restart action is suspended.
+	if c.cfg.HeldCheckFn(c.cfg.ProjectDir, c.cfg.AgentName) {
 		return nil
 	}
 

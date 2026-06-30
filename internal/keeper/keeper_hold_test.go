@@ -14,6 +14,10 @@ package keeper_test
 //     This guards against the keying TRAP (agent-name keying would survive a
 //     restart).
 //
+// hk-4rago: RunForPrecompact and RunForIdle now also check HeldCheckFn so a
+// co-working hold prevents cycles on those entry points too (the "rehydration gap"
+// bug where those paths silently dropped in-flight hold directives).
+//
 // Reuses writeSidFile / primarySID / gaugeSID (sessionid_test.go), writeCtxFile /
 // runWatcherFor / RecordingEmitter (watcher_test.go), all package keeper_test.
 
@@ -573,5 +577,160 @@ func TestWatcher_WarnFiresUnderHold(t *testing.T) {
 
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperWarn)); n == 0 {
 		t.Error("WARN must still fire under a hold; got 0 session_keeper_warn events")
+	}
+}
+
+// ── RunForPrecompact gate 3b: hold suppresses precompact cycle (hk-4rago) ──────
+
+// TestRunForPrecompact_SuppressedWhenHeld verifies that RunForPrecompact emits
+// a "hold_skip" precompact_blocked event and does NOT inject (cycle suppressed)
+// when HeldCheckFn returns true. Control: hold off → cycle proceeds (inject fires).
+// Refs: hk-4rago ("rehydration gap silently drops in-flight directives").
+func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
+	t.Parallel()
+
+	run := func(t *testing.T, held bool) (injects int, precompactActions []string) {
+		t.Helper()
+		dir := t.TempDir()
+		agent := "prec-hold-agent"
+
+		em := &keeper.RecordingEmitter{}
+		spy := &cycleSpyInjector{}
+		jc := &journalCapture{}
+		const cycleID = "cyc-prec-hold"
+		nonce := "<!-- KEEPER:" + cycleID + " -->"
+
+		cfg := keeper.CyclerConfig{
+			AgentName:   agent,
+			ProjectDir:  dir,
+			TmuxTarget:  "fake-pane",
+			ActPct:      90.0,
+			WarnPct:     80.0,
+			HandoffTimeout: 200 * time.Millisecond,
+			ClearSettle:    20 * time.Millisecond,
+			PollInterval:   10 * time.Millisecond,
+			CycleIDGen:  func() string { return cycleID },
+			IsManagedFn: func(_, _ string) bool { return true },
+			HandoffFilePath: func(_, a string) string {
+				return filepath.Join(dir, "HANDOFF-"+a+".md")
+			},
+			ReadHandoff: func(_ string) (string, error) {
+				return "# Handoff\n\n" + nonce + "\n", nil
+			},
+			TruncateHandoffFn:        func(_ string) error { return nil },
+			InjectFn:                 spy.inject,
+			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+				return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
+			},
+			CrispIdleFn:              func(_, _ string) bool { return false },
+			HoldingDispatchFn:        func(_, _ string) bool { return false },
+			HeldCheckFn:              func(_, _ string) bool { return held },
+			WriteJournalFn:           jc.write,
+			ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
+		}
+		cycler := keeper.NewCycler(cfg, em)
+		cf := &keeper.CtxFile{Pct: 95.0, SessionID: "sess-abc"}
+		if err := cycler.RunForPrecompact(context.Background(), cf); err != nil {
+			t.Fatalf("RunForPrecompact: unexpected error: %v", err)
+		}
+
+		for _, ev := range em.EventsOfType(core.EventTypeSessionKeeperPrecompactBlocked) {
+			precompactActions = append(precompactActions, precompactAction(t, ev))
+		}
+		return len(spy.texts()), precompactActions
+	}
+
+	t.Run("held_suppresses", func(t *testing.T) {
+		t.Parallel()
+		injects, actions := run(t, true)
+		if injects != 0 {
+			t.Errorf("RunForPrecompact fired %d inject(s) while HELD; want 0", injects)
+		}
+		if len(actions) != 1 || actions[0] != "hold_skip" {
+			t.Errorf("want [hold_skip] precompact_blocked event, got %v", actions)
+		}
+	})
+
+	t.Run("not_held_proceeds", func(t *testing.T) {
+		t.Parallel()
+		_, actions := run(t, false)
+		// Gate 4 (anti-loop) hasn't fired before, so the cycle proceeds to
+		// cycle_triggered. Verify no hold_skip was emitted.
+		for _, a := range actions {
+			if a == "hold_skip" {
+				t.Errorf("hold_skip emitted while NOT held; want it absent")
+			}
+		}
+	})
+}
+
+// ── RunForIdle gate 5b: hold suppresses idle restart (hk-4rago) ─────────────────
+
+// TestRunForIdle_SuppressedWhenHeld verifies that RunForIdle does NOT fire the
+// cycle when HeldCheckFn returns true, even with all other gates satisfied.
+// Control: hold off → cycle proceeds (inject fires). Refs: hk-4rago.
+func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
+	t.Parallel()
+
+	run := func(t *testing.T, held bool) int {
+		t.Helper()
+		dir := t.TempDir()
+		agent := "idle-hold-agent"
+
+		em := &keeper.RecordingEmitter{}
+		spy := &cycleSpyInjector{}
+		jc := &journalCapture{}
+		const cycleID = "cyc-idle-hold"
+		nonce := "<!-- KEEPER:" + cycleID + " -->"
+
+		cfg := keeper.CyclerConfig{
+			AgentName:   agent,
+			ProjectDir:  dir,
+			TmuxTarget:  "fake-pane",
+			ActAbsTokens: 300_000,
+			ActPct:      90.0,
+			WarnPct:     80.0,
+			HandoffTimeout: 200 * time.Millisecond,
+			ClearSettle:    20 * time.Millisecond,
+			PollInterval:   10 * time.Millisecond,
+			CycleIDGen:  func() string { return cycleID },
+			IsManagedFn: func(_, _ string) bool { return true },
+			HandoffFilePath: func(_, a string) string {
+				return filepath.Join(dir, "HANDOFF-"+a+".md")
+			},
+			ReadHandoff: func(_ string) (string, error) {
+				return "# Handoff\n\n" + nonce + "\n", nil
+			},
+			TruncateHandoffFn: func(_ string) error { return nil },
+			InjectFn:          spy.inject,
+			// WindowSize=400k: actThreshold = min(300k, 0.85×400k=340k) = 300k,
+			// so tokens=200k is below the act threshold and Gate 3 passes.
+			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+				return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 400_000, SessionID: "sess-new"}, time.Now(), nil
+			},
+			CrispIdleFn:              func(_, _ string) bool { return true },
+			HoldingDispatchFn:        func(_, _ string) bool { return false },
+			HeldCheckFn:              func(_, _ string) bool { return held },
+			WriteJournalFn:           jc.write,
+			AppendHandoffFn:          func(_, _ string) error { return nil },
+			SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
+			ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
+			IdleRestartAbsTokens:     150_000,
+			IdleRestartCooldown:      0,
+		}
+		cycler := keeper.NewCycler(cfg, em)
+		// Tokens above IdleRestartAbsTokens (150k) but below actThreshold (300k).
+		cf := &keeper.CtxFile{Pct: 80.0, Tokens: 200_000, WindowSize: 400_000, SessionID: "sess-idle"}
+		if err := cycler.RunForIdle(context.Background(), cf); err != nil {
+			t.Fatalf("RunForIdle: unexpected error: %v", err)
+		}
+		return len(spy.texts())
+	}
+
+	if n := run(t, true); n != 0 {
+		t.Errorf("RunForIdle fired %d inject(s) while HELD; want 0", n)
+	}
+	if n := run(t, false); n == 0 {
+		t.Error("control (hold off): RunForIdle did NOT fire; want ≥1 inject")
 	}
 }

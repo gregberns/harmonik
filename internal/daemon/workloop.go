@@ -979,8 +979,9 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 
 	// Build the harness route registry (codex-harness C1/T3, hk-hj9ld). The
 	// production single-mode dispatch path routes the launchSpecBuilder lookup
-	// through this registry. CLAUDE-ONLY: only ClaudeHarness is registered.
-	harnessReg, hErr := newHarnessRegistry()
+	// through this registry. Pi config is threaded from the decoded
+	// .harmonik/config.yaml harnesses.pi block (hk-f8u5j: config→harness seam).
+	harnessReg, hErr := newHarnessRegistry(cfg.ProjectCfg.Harnesses.Pi)
 	if hErr != nil {
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: newHarnessRegistry: %w", hErr)
 	}

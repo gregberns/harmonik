@@ -2477,11 +2477,25 @@ var ExportedNewClaudeHarness = NewClaudeHarness
 
 // ExportedNewHarnessRegistry exposes newHarnessRegistry for tests in package
 // daemon_test. It returns the daemon's HarnessRegistry with ClaudeHarness
-// registered for core.AgentTypeClaudeCode (claude-only in C1/T3).
+// registered for core.AgentTypeClaudeCode. Pi harness is registered with an
+// empty PiHarnessConfig (test-only; Pi fields are non-empty only in production
+// when harnesses.pi is configured).
 //
 // Bead ref: hk-hj9ld.
 func ExportedNewHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
-	return newHarnessRegistry()
+	return newHarnessRegistry(PiHarnessConfig{})
+}
+
+// ExportedNewHarnessRegistryWithPi exposes newHarnessRegistry with a configured
+// PiHarnessConfig for tests that verify the config→harness seam (hk-f8u5j).
+func ExportedNewHarnessRegistryWithPi(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry, error) {
+	return newHarnessRegistry(piCfg)
+}
+
+// ExportedPiHarnessFields returns the provider, model, and apiKeyEnv fields from
+// a PiHarness for test assertions on the config→harness seam (hk-f8u5j).
+func ExportedPiHarnessFields(h *PiHarness) (provider, model, apiKeyEnv string) {
+	return h.provider, h.model, h.apiKeyEnv
 }
 
 // ExportedCodexProcessExitLaunchSpecBuilder returns a launchSpecBuilder that

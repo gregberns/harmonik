@@ -33,10 +33,18 @@ import (
 // newHarnessRegistry builds the daemon's HarnessRegistry with ClaudeHarness,
 // CodexHarness, and PiHarness registered.
 //
+// piCfg carries the resolved harnesses.pi block from .harmonik/config.yaml
+// (loaded by daemon.Start and stored in Config.ProjectCfg.Harnesses.Pi).
+// Its provider, model, and api_key_env fields are threaded into NewPiHarness so
+// that a bead labelled harness:pi can launch without hitting the
+// "apiKeyEnv must be non-empty" gate in buildPiLaunchSpec.  Pass a zero
+// PiHarnessConfig when Pi config is absent; buildPiLaunchSpec will then surface
+// a descriptive error naming the missing yaml keys and 'harmonik pi config --example'.
+//
 // Returns a non-nil error only if Register fails (a duplicate or sealed-registry
 // defect), which is impossible for these three distinct registrations but surfaced
 // so callers fail-closed if this grows.
-func newHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
+func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry, error) {
 	reg := handlercontract.NewHarnessRegistry()
 	if err := reg.Register(core.AgentTypeClaudeCode, NewClaudeHarness()); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register claude harness: %w", err)
@@ -44,7 +52,7 @@ func newHarnessRegistry() (*handlercontract.HarnessRegistry, error) {
 	if err := reg.Register(core.AgentTypeCodex, NewCodexHarness("", "")); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register codex harness: %w", err)
 	}
-	if err := reg.Register(core.AgentTypePi, NewPiHarness("", "", "", "")); err != nil {
+	if err := reg.Register(core.AgentTypePi, NewPiHarness("", piCfg.Provider, piCfg.Model, piCfg.APIKeyEnv)); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register pi harness: %w", err)
 	}
 	return reg, nil

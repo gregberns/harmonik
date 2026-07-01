@@ -175,7 +175,11 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	}
 	if rc.apiKeyEnv == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
-			"buildPiLaunchSpec: apiKeyEnv must be non-empty")
+			"Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
+				"missing: harnesses.pi.api_key_env. " +
+				"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
+				"then add it to .harmonik/config.yaml. " +
+				"(R1 de-hardcode mandate: the product imposes ZERO baked Pi defaults.)")
 	}
 	if rc.priorSessionID != nil && *rc.priorSessionID == "" {
 		return handler.LaunchSpec{}, fmt.Errorf(
@@ -184,11 +188,17 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	if rc.priorSessionID == nil {
 		if rc.provider == "" {
 			return handler.LaunchSpec{}, fmt.Errorf(
-				"buildPiLaunchSpec: provider must be non-empty on the initial turn")
+				"Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
+					"missing: harnesses.pi.provider. " +
+					"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
+					"then add it to .harmonik/config.yaml.")
 		}
 		if rc.model == "" {
 			return handler.LaunchSpec{}, fmt.Errorf(
-				"buildPiLaunchSpec: model must be non-empty on the initial turn")
+				"Pi harness: refusing to start — harnesses.pi config is absent or incomplete; " +
+					"missing: harnesses.pi.model. " +
+					"Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, " +
+					"then add it to .harmonik/config.yaml.")
 		}
 	}
 

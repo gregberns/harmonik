@@ -1032,6 +1032,20 @@ EXAMPLES
 		return 1
 	}
 
+	// hk-f8u5j: Pi harness config validation at daemon boot (PI-051).
+	// When harnesses.pi is present (any required field non-empty), validate it
+	// fully via ResolvePiConfig so the operator sees a clear PiConfigMissingError
+	// before the daemon accepts beads rather than at first Pi dispatch.
+	// When harnesses.pi is entirely absent, no validation — Pi is simply
+	// unavailable and buildPiLaunchSpec surfaces the error at dispatch time.
+	piBlock := projCfg.Harnesses.Pi
+	if piBlock.Provider != "" || piBlock.Model != "" || piBlock.APIKeyEnv != "" {
+		if _, piCfgErr := ResolvePiConfig(piBlock, projectDir); piCfgErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik: %v\n", piCfgErr)
+			return 1
+		}
+	}
+
 	// Load branching.yaml for the authoritative target_branch precedence source
 	// (config.yaml daemon.target_branch is observability/symmetry only per PL-004b).
 	branchDflt, branchErr := branching.Load(projectDir)

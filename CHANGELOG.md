@@ -10,6 +10,10 @@ Sections: **Added** / **Changed** / **Fixed** / **Removed** / **Security** / **S
 
 > Tracks changes on `main` not yet tagged. Items marked _(pipeline)_ are part of the goreleaser+ledger+rollback release pipeline defined in `specs/release-pipeline.md`.
 
+---
+
+## [0.4.0] — 2026-06-30
+
 ### Added
 
 - _(pipeline)_ Tag-triggered 4-stage release pipeline (CREATE → VALIDATE → CERTIFY → ROLLBACK) per `specs/release-pipeline.md`. Tag push triggers goreleaser; release becomes stable only after VALIDATE passes and CERTIFY flips the ledger entry.

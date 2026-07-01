@@ -132,11 +132,12 @@ Tags: mechanism
 
 ## §5 Billing/auth guard (fail-closed)
 
-- **PI-040** Before launch, the guard MUST assert the env var named by the resolved `api_key_env` is
-  present and non-empty; if absent/empty, it MUST refuse to launch (return a typed error before
-  `agent_ready`). It MUST NOT fall back to any default provider/model/key. Guard events and error
-  `Reason` strings MUST name the env-var **name, never its value**. The `skipBillingGuard` test-escape
-  MUST be `false` in production, asserted by a wiring test.
+- **PI-040** Before launch, the guard MUST assert the provider API key is present and non-empty —
+  resolved via the shared `resolvePiAPIKeyValue` helper (file-first: reads `api_key_file` when set,
+  else reads the ambient env var named by `api_key_env`); if absent/empty it MUST refuse to launch
+  (return a typed error before `agent_ready`). It MUST NOT fall back to any default provider/model/key.
+  Guard events and error `Reason` strings MUST name the env-var **name, never its value**. The
+  `skipBillingGuard` test-escape MUST be `false` in production, asserted by a wiring test.
 - **PI-041** The guard MUST strip all non-selected provider keys (per PI-021) so a mis-set env cannot
   bill a provider other than the configured one.
 - **PI-042 (on-disk credential)** The guard MUST either (a) establish-and-cite that Pi persists **no**
@@ -149,11 +150,19 @@ Tags: mechanism
 ## §6 Configuration (no hardcoded defaults)
 
 - **PI-050** Config MUST add a top-level `harnesses.pi` block with REQUIRED `provider`, `model`,
-  `api_key_env` and OPTIONAL `fallback{provider,model,api_key_env}`. The product MUST NOT bake any
-  default provider, model, or key.
+  `api_key_env` and OPTIONAL `fallback{provider,model,api_key_env}` and OPTIONAL `api_key_file`.
+  The product MUST NOT bake any default provider, model, or key.
+  - **`api_key_file` (OPTIONAL, PI-050):** path (tilde-expanded) to a file holding the raw provider
+    API key. When set, `ResolvePiConfig` validates the file is readable and non-empty at resolve time
+    (fail loud with `*PiConfigError` if set-but-unreadable/empty; R1 mandate — no silent default).
+    At launch time, `resolvePiAPIKeyValue` reads the file and injects `<api_key_env-name>=<file-value>`
+    into the Pi **child process env ONLY**. The daemon ambient env MUST NEVER carry the secret.
+    Precedence: `api_key_file` (when set) > ambient env named by `api_key_env`.
+    When `api_key_file` is unset, current behavior is preserved (read from ambient env).
 - **PI-051** `ResolvePiConfig` MUST aggregate **all** missing required keys into one error, refuse to
   start, name the dotted yaml paths, and point at `harmonik pi config --example` (mirroring
-  `ResolveKeeperConfig`).
+  `ResolveKeeperConfig`). When `api_key_file` is set-but-invalid (unreadable or empty), it MUST
+  return `*PiConfigError` naming `harnesses.pi.api_key_file` — not aggregate into `PiConfigMissingError`.
 - **PI-052** `model` MUST be validated by shape only (HC-055a: `^[A-Za-z0-9._:/-]+$`, ≤128 chars),
   never against a curated value enum; Pi's full provider/model range MUST be selectable.
 

@@ -29,6 +29,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -134,6 +136,34 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 		}
 	}
 
+	// ── api_key_file validation (PI-040/PI-050, hk-xmfoi). ──
+	// OPTIONAL: when set, expand ~ and validate the file is readable and non-empty
+	// at resolve time. Fail loud (PiConfigError) if set-but-unreadable/empty —
+	// R1 mandate: no silent default. Store the expanded path for use at launch time.
+	if cfg.APIKeyFile != "" {
+		expanded, expErr := expandHomePath(cfg.APIKeyFile)
+		if expErr != nil {
+			return daemon.PiHarnessConfig{}, &PiConfigError{
+				Field:  "harnesses.pi.api_key_file",
+				Reason: fmt.Sprintf("path expansion failed: %v", expErr),
+			}
+		}
+		data, readErr := os.ReadFile(expanded)
+		if readErr != nil {
+			return daemon.PiHarnessConfig{}, &PiConfigError{
+				Field:  "harnesses.pi.api_key_file",
+				Reason: fmt.Sprintf("file is not readable: %v", readErr),
+			}
+		}
+		if strings.TrimSpace(string(data)) == "" {
+			return daemon.PiHarnessConfig{}, &PiConfigError{
+				Field:  "harnesses.pi.api_key_file",
+				Reason: "file is set but contains no key (file is empty or whitespace-only)",
+			}
+		}
+		cfg.APIKeyFile = expanded
+	}
+
 	// ── Shape validation (HC-055a, PI-052). ──
 	// Value-validated by shape only — never against a curated enum. Field and value
 	// are pre-assigned so no if-branch line triggers SH-INV-001.
@@ -173,6 +203,22 @@ func validatePiModelShape(field, model string) error {
 	return nil
 }
 
+// expandHomePath expands a leading ~ to the user's home directory.
+// Returns the path unchanged when it does not start with ~.
+func expandHomePath(p string) (string, error) {
+	if p != "~" && !strings.HasPrefix(p, "~/") && !strings.HasPrefix(p, `~\`) {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	if p == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, p[2:]), nil
+}
+
 // piConfigExampleYAML returns the complete harnesses.pi: block template for
 // 'harmonik pi config --example'. The comment text serves as operator documentation;
 // no value here is a baked runtime default.
@@ -186,9 +232,14 @@ func piConfigExampleYAML() string {
     # harnesses.pi.model: Pi model string — shape-validated only (HC-055a: ^[A-Za-z0-9._:/-]+$, ≤128 chars)
     # Use a PAID model for unattended fleet work; ':free' models are hand-attended experiments only (PI-069).
     model: openrouter/qwen/qwen3-coder
-    # harnesses.pi.api_key_env: name of the env var carrying the provider API key.
-    # The key VALUE is never stored in config — it lives in the operator environment (PI-020/PI-040).
+    # harnesses.pi.api_key_env: name of the env var the Pi child expects for the provider key. REQUIRED.
+    # The key VALUE is never stored in config — it comes from api_key_file (preferred) or the operator env.
     api_key_env: OPENROUTER_API_KEY
+    # harnesses.pi.api_key_file: OPTIONAL path to a file holding the raw key value. Expand ~.
+    # When set: the file is read at launch time and the value is injected into the Pi child env ONLY
+    # (the daemon ambient env never carries the secret). Precedence: file > ambient env.
+    # Validated readable+non-empty at config-load time — fail loud if set-but-unreadable/empty (PI-040).
+    # api_key_file: ~/.config/harmonik/openrouter.key
     # fallback: optional paid-fallback target. V1 has NO automatic fallback (PI-072) —
     # this block exists for operator convenience (manual lane flip on cap exhaustion).
     # fallback:

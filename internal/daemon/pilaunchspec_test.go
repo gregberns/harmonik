@@ -185,7 +185,7 @@ func TestBuildPiEnv_AllowlistStrip(t *testing.T) {
 		"HOME=/root",
 	}
 
-	env := daemon.ExportedBuildPiEnv(baseEnv, selectedKey)
+	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
 
 	// Non-credential entries must pass through.
 	assertEnvContains(t, env, "PATH=/usr/bin")
@@ -225,7 +225,7 @@ func TestBuildPiEnv_MaintainedTableStrippedEvenIfAbsentFromBaseEnv(t *testing.T)
 	// baseEnv contains ONLY PATH; none of the maintained-table keys are present.
 	baseEnv := []string{"PATH=/usr/bin"}
 
-	env := daemon.ExportedBuildPiEnv(baseEnv, selectedKey)
+	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
 
 	// ANTHROPIC_API_KEY is in the maintained table but not in baseEnv.
 	// It must still be emitted as an empty override (tmux additive -e guard).
@@ -256,7 +256,7 @@ func TestBuildPiEnv_AllowlistStrip_ProcessEnvForwarded(t *testing.T) {
 		t.Fatal("test setup: expected ANTHROPIC_API_KEY to be set")
 	}
 
-	env := daemon.ExportedBuildPiEnv(os.Environ(), selectedKey)
+	env := daemon.ExportedBuildPiEnv(os.Environ(), "", selectedKey)
 
 	// No live value must leak for non-selected credential keys.
 	strippedKeys := []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MYSTERY_API_KEY"}
@@ -292,7 +292,7 @@ func TestBuildPiEnv_InjectsOnlySelectedKey(t *testing.T) {
 		"ANTHROPIC_API_KEY=ant-should-be-stripped",
 	}
 
-	env := daemon.ExportedBuildPiEnv(baseEnv, selectedKey)
+	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
 
 	// Selected key must have its value.
 	assertEnvContains(t, env, selectedKey+"="+selectedVal)
@@ -334,7 +334,7 @@ func TestResolvePiAPIKeyValue(t *testing.T) {
 	const testVal = "or-resolver-sentinel"
 	t.Setenv(testKey, testVal)
 
-	got := daemon.ExportedResolvePiAPIKeyValue(testKey)
+	got := daemon.ExportedResolvePiAPIKeyValue("", testKey)
 	if got != testVal {
 		t.Errorf("resolvePiAPIKeyValue(%q) = %q; want %q", testKey, got, testVal)
 	}
@@ -344,7 +344,7 @@ func TestResolvePiAPIKeyValue(t *testing.T) {
 func TestResolvePiAPIKeyValue_AbsentKey(t *testing.T) {
 	t.Parallel()
 	// Use a key that should never be set in the test environment.
-	got := daemon.ExportedResolvePiAPIKeyValue("HARMONIK_TEST_NEVER_SET_XYZ_API_KEY")
+	got := daemon.ExportedResolvePiAPIKeyValue("", "HARMONIK_TEST_NEVER_SET_XYZ_API_KEY")
 	if got != "" {
 		t.Errorf("absent key: expected empty string; got %q", got)
 	}
@@ -504,4 +504,127 @@ func assertEnvContains(t *testing.T, env []string, want string) {
 		}
 	}
 	t.Errorf("env missing %q; have %v", want, env)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// api_key_file tests (PI-050, hk-xmfoi)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestResolvePiAPIKeyValue_FromFile_UsesFileValueOverEnv verifies that when
+// apiKeyFile is set and readable, resolvePiAPIKeyValue returns the file value
+// and ignores the ambient env — file-first precedence (PI-050).
+func TestResolvePiAPIKeyValue_FromFile_UsesFileValueOverEnv(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const envKey = "TEST_PI_FILE_PREFERS_FILE_OVER_ENV"
+	t.Setenv(envKey, "env-value-must-not-be-used")
+
+	dir := t.TempDir()
+	keyFile := dir + "/openrouter.key"
+	if err := os.WriteFile(keyFile, []byte("file-value-wins\n"), 0o600); err != nil {
+		t.Fatalf("setup: write key file: %v", err)
+	}
+
+	got := daemon.ExportedResolvePiAPIKeyValue(keyFile, envKey)
+	if got != "file-value-wins" {
+		t.Errorf("resolvePiAPIKeyValue(file, env) = %q; want %q (file-first precedence)", got, "file-value-wins")
+	}
+}
+
+// TestResolvePiAPIKeyValue_FileAbsent_FallsBackToEnv verifies that when
+// apiKeyFile is set but the file does not exist, the helper falls back to the
+// ambient env value.
+func TestResolvePiAPIKeyValue_FileAbsent_FallsBackToEnv(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const envKey = "TEST_PI_FILE_FALLBACK_TO_ENV"
+	t.Setenv(envKey, "env-fallback-value")
+
+	got := daemon.ExportedResolvePiAPIKeyValue("/nonexistent-harmonik-test-xmfoi/key", envKey)
+	if got != "env-fallback-value" {
+		t.Errorf("resolvePiAPIKeyValue(missing file, env) = %q; want env fallback %q", got, "env-fallback-value")
+	}
+}
+
+// TestBuildPiEnv_APIKeyFile_InjectsFileValueOverEnv verifies that buildPiEnv
+// injects the key value from the file (not the ambient env) when apiKeyFile is
+// set — child env carries the file value, daemon env stays clean (PI-050).
+func TestBuildPiEnv_APIKeyFile_InjectsFileValueOverEnv(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const selectedKey = "OPENROUTER_API_KEY"
+	t.Setenv(selectedKey, "env-value-must-not-be-used")
+
+	dir := t.TempDir()
+	keyFile := dir + "/openrouter.key"
+	if err := os.WriteFile(keyFile, []byte("file-key-sentinel"), 0o600); err != nil {
+		t.Fatalf("setup: write key file: %v", err)
+	}
+
+	baseEnv := []string{"PATH=/usr/bin"}
+	env := daemon.ExportedBuildPiEnv(baseEnv, keyFile, selectedKey)
+
+	// PI-050: the file value must appear in the child env.
+	assertEnvContains(t, env, selectedKey+"=file-key-sentinel")
+
+	// The env-value must NOT appear (file takes precedence).
+	for _, kv := range env {
+		if kv == selectedKey+"=env-value-must-not-be-used" {
+			t.Error("PI-050: child env carries env value instead of file value; file-first precedence violated")
+		}
+	}
+}
+
+// TestBuildPiEnv_APIKeyFile_Unset_UsesEnvValue verifies that when apiKeyFile is
+// empty, buildPiEnv falls back to the ambient env value (existing behavior).
+func TestBuildPiEnv_APIKeyFile_Unset_UsesEnvValue(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const selectedKey = "OPENROUTER_API_KEY"
+	const envVal = "sk-or-env-only-sentinel"
+	t.Setenv(selectedKey, envVal)
+
+	baseEnv := []string{"PATH=/usr/bin", selectedKey + "=" + envVal}
+	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
+
+	// When apiKeyFile is unset, the ambient env value is injected.
+	assertEnvContains(t, env, selectedKey+"="+envVal)
+}
+
+// TestBuildPiLaunchSpec_APIKeyFile_DaemonEnvClean verifies end-to-end: when
+// apiKeyFile is set, buildPiLaunchSpec injects the file value into the child env
+// keyed by apiKeyEnv, and the daemon ambient env (which would be present via
+// baseEnv) is NOT used. The daemon must not carry the secret itself (PI-050).
+func TestBuildPiLaunchSpec_APIKeyFile_DaemonEnvClean(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const envKey = "OPENROUTER_API_KEY"
+	t.Setenv(envKey, "daemon-env-value-must-not-appear")
+
+	dir := t.TempDir()
+	keyFile := dir + "/openrouter.key"
+	if err := os.WriteFile(keyFile, []byte("file-key-child-only"), 0o600); err != nil {
+		t.Fatalf("setup: write key file: %v", err)
+	}
+
+	rc := daemon.ExportedPiRunCtx{
+		WorkspacePath:    "/tmp/wt-test-pi-apikeyfile",
+		BeadID:           "hk-xmfoi-test",
+		Provider:         "openrouter",
+		Model:            "openrouter/minimax/minimax-m3",
+		APIKeyEnv:        envKey,
+		APIKeyFile:       keyFile,
+		BaseEnv:          []string{"PATH=/usr/bin"},
+		SkipBillingGuard: true,
+	}
+
+	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Child env must carry the file value (not the daemon env value).
+	assertEnvContains(t, spec.Env, envKey+"=file-key-child-only")
+
+	// The daemon env value must not appear in the child env.
+	for _, kv := range spec.Env {
+		if kv == envKey+"=daemon-env-value-must-not-appear" {
+			t.Error("PI-050: child env carries daemon-env value; file-first precedence violated")
+		}
+	}
 }

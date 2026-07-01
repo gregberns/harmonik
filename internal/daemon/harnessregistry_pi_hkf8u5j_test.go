@@ -46,7 +46,7 @@ func TestHarnessRegistry_PiHarness_ConfiguredFields_NonEmpty(t *testing.T) {
 		t.Fatalf("ForAgent(pi) returned %T; want *daemon.PiHarness", h)
 	}
 
-	provider, model, apiKeyEnv := daemon.ExportedPiHarnessFields(ph)
+	provider, model, apiKeyEnv, _ := daemon.ExportedPiHarnessFields(ph)
 
 	if provider == "" {
 		t.Error("PiHarness.provider is empty after config wiring; want non-empty")
@@ -92,7 +92,7 @@ func TestHarnessRegistry_PiHarness_EmptyConfig_FieldsEmpty(t *testing.T) {
 		t.Fatalf("ForAgent(pi) returned %T; want *daemon.PiHarness", h)
 	}
 
-	provider, model, apiKeyEnv := daemon.ExportedPiHarnessFields(ph)
+	provider, model, apiKeyEnv, _ := daemon.ExportedPiHarnessFields(ph)
 
 	if provider != "" {
 		t.Errorf("PiHarness.provider = %q; want empty when config absent", provider)

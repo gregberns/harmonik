@@ -57,6 +57,7 @@ func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry
 		piCfg.Provider,
 		piCfg.Model,
 		piCfg.APIKeyEnv,
+		piCfg.APIKeyFile,
 	)
 	if err := reg.Register(core.AgentTypePi, piH); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register pi harness: %w", err)

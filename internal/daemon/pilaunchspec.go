@@ -107,11 +107,16 @@ type piRunCtx struct {
 	// Required on the initial turn. Ignored on resume turns.
 	model string
 
-	// apiKeyEnv is the name of the env var carrying the provider API key
-	// (from harnesses.pi.api_key_env). Its VALUE is read from the operator
-	// environment at launch time via resolvePiAPIKeyValue — the value is never
-	// stored in config (PI-020). Required.
+	// apiKeyEnv is the name of the env var the Pi child expects for the provider
+	// API key (from harnesses.pi.api_key_env). REQUIRED — name only, no secret.
+	// The VALUE comes from apiKeyFile (when set) or the operator env (PI-020).
 	apiKeyEnv string
+
+	// apiKeyFile is the OPTIONAL path (pre-expanded by ResolvePiConfig) to a file
+	// holding the raw provider API key. When non-empty, resolvePiAPIKeyValue reads
+	// the file in preference to the ambient env. The daemon ambient env MUST NOT
+	// carry the secret (PI-050/hk-xmfoi). Absent → fall back to ambient env.
+	apiKeyFile string
 
 	// priorSessionID is non-nil for resume turns (iteration >= 2). It holds the
 	// Pi session ID captured from the prior turn's first {"type":"session",...}
@@ -141,18 +146,29 @@ type piRunCtx struct {
 	skipBillingGuard bool
 }
 
-// resolvePiAPIKeyValue reads the Pi API key value from the operator environment.
+// resolvePiAPIKeyValue reads the Pi API key value, preferring an explicit file
+// (api_key_file, PI-050/hk-xmfoi) over the ambient env (api_key_env).
 //
 // This is the ONE shared key-resolution helper: BOTH buildPiEnv (for key
 // injection into the child env) and the billing guard (PI-040, pibillingguard.go,
 // for the fail-closed pre-flight assert) MUST call this function so they can
 // never disagree about which value Pi receives at launch.
 //
-// An empty return means the key is absent or explicitly empty in the operator
-// environment. The billing guard treats absence as a launch refusal (PI-040).
+// Precedence: apiKeyFile (when non-empty) > ambient env named by apiKeyEnv.
+// File content is trimmed of leading/trailing whitespace. An empty return means
+// the key is absent from both sources. The billing guard treats absence as a
+// launch refusal (PI-040 fail closed).
 //
-// Spec: PI-021 (allowlist strip); PI-040 (fail-closed guard). Design §3.2.
-func resolvePiAPIKeyValue(apiKeyEnv string) string {
+// Spec: PI-021 (allowlist strip); PI-040 (fail-closed guard); PI-050 (api_key_file).
+func resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv string) string {
+	if apiKeyFile != "" {
+		data, err := os.ReadFile(apiKeyFile)
+		if err == nil {
+			if v := strings.TrimSpace(string(data)); v != "" {
+				return v
+			}
+		}
+	}
 	return os.Getenv(apiKeyEnv)
 }
 
@@ -233,8 +249,9 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	}
 
 	// Build env: allowlist-strip all provider credential keys except the selected
-	// one, then inject only the selected provider's key (PI-021).
-	env := buildPiEnv(rc.baseEnv, rc.apiKeyEnv)
+	// one, then inject only the selected provider's key (PI-021/PI-050).
+	// apiKeyFile takes precedence over the ambient env when set (file-first).
+	env := buildPiEnv(rc.baseEnv, rc.apiKeyFile, rc.apiKeyEnv)
 
 	// Pre-flight billing guard (PI-040/PI-042/PI-043, pibillingguard.go).
 	// Fail-closed: absent/empty provider key → error → launch refused BEFORE
@@ -242,7 +259,7 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	// skipBillingGuard is false in production (see piRunCtx); tests that only
 	// exercise argv/env shape set it to avoid requiring a real key.
 	if !rc.skipBillingGuard {
-		if err := runPiBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, rc.apiKeyEnv, piDefaultHome()); err != nil {
+		if err := runPiBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, rc.apiKeyFile, rc.apiKeyEnv, piDefaultHome()); err != nil {
 			return handler.LaunchSpec{}, err
 		}
 	}
@@ -271,13 +288,13 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 //     catches provider keys not yet in the maintained table (e.g. a future
 //     HYPOTHETICAL_API_KEY).
 //  3. Non-credential baseEnv entries are passed through unchanged.
-//  4. Only the selected provider's key (apiKeyEnv) is injected, using the value
-//     from the operator environment via resolvePiAPIKeyValue.
+//  4. Only the selected provider's key (apiKeyEnv) is injected: the VALUE is
+//     resolved via resolvePiAPIKeyValue (file-first, env fallback — PI-050).
 //
 // An enumerated denylist (codex's 2-key approach) cannot be complete against
 // Pi's open provider set; this allowlist approach is correct belt-and-suspenders
 // regardless of whether Pi auto-detects a provider from env.
-func buildPiEnv(baseEnv []string, apiKeyEnv string) []string {
+func buildPiEnv(baseEnv []string, apiKeyFile, apiKeyEnv string) []string {
 	// knownCredSet: the maintained table for O(1) lookup.
 	knownCredSet := make(map[string]bool, len(piProviderCredentialKeys))
 	for _, k := range piProviderCredentialKeys {
@@ -324,7 +341,8 @@ func buildPiEnv(baseEnv []string, apiKeyEnv string) []string {
 	// Inject ONLY the selected provider's key (PI-021). resolvePiAPIKeyValue is
 	// the shared helper: the billing guard (PI-040) calls the same function to
 	// verify presence, so both agree on the exact value Pi receives.
-	apiKeyValue := resolvePiAPIKeyValue(apiKeyEnv)
+	// File-first precedence: apiKeyFile (when set) > ambient env (PI-050).
+	apiKeyValue := resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv)
 	env = append(env, apiKeyEnv+"="+apiKeyValue)
 
 	// Shell rc-prompt suppression (oh-my-zsh anti-hang — same as codex harness,

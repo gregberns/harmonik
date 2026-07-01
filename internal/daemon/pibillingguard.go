@@ -156,10 +156,10 @@ func emitPiBillingGuard(
 
 // runPiBillingGuard runs the full fail-closed guard for one Pi launch.
 //
-// PI-040: The env var named by apiKeyEnv must be present and non-empty in the
-// operator environment (read via resolvePiAPIKeyValue — the shared helper that
-// buildPiEnv also calls, so both agree on the key value Pi receives).
-// Absent/empty → error → caller MUST NOT launch Pi.
+// PI-040: The provider API key must be present and non-empty — resolved via the
+// shared resolvePiAPIKeyValue helper (file-first: apiKeyFile when set, else
+// ambient env named by apiKeyEnv) so this guard and buildPiEnv agree exactly on
+// the value Pi receives. Absent/empty → error → caller MUST NOT launch Pi.
 //
 // PI-042 (UNCONFIRMED): piHome/auth.json must not carry a persisted provider API
 // key. A populated key signals that a prior Pi session wrote credentials to disk;
@@ -176,10 +176,12 @@ func runPiBillingGuard(
 	ctx context.Context,
 	bus handlercontract.EventEmitter,
 	runID core.RunID,
-	beadID, apiKeyEnv, piHome string,
+	beadID, apiKeyFile, apiKeyEnv, piHome string,
 ) error {
-	// PI-040: assert env var named by apiKeyEnv is present and non-empty.
-	keyValue := resolvePiAPIKeyValue(apiKeyEnv)
+	// PI-040: assert the provider key is present and non-empty.
+	// resolvePiAPIKeyValue applies file-first precedence (PI-050) so this guard
+	// and buildPiEnv see the exact same value Pi will receive at launch.
+	keyValue := resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv)
 	if strings.TrimSpace(keyValue) == "" {
 		reason := fmt.Sprintf(
 			"env var %s is absent or empty; Pi cannot launch without a provider API key (PI-040 fail closed)",

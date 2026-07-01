@@ -677,14 +677,15 @@ type rawHarnessesPiFallbackConfig struct {
 }
 
 // rawHarnessesPiConfig is the harnesses.pi block in config.yaml.
-// REQUIRED: provider, model, api_key_env. OPTIONAL: fallback.
+// REQUIRED: provider, model, api_key_env. OPTIONAL: fallback, api_key_file.
 // No defaults — ResolvePiConfig (cmd/harmonik/resolve_pi_config.go) enforces
 // fail-loud on any missing required field (PI-050/PI-051).
 type rawHarnessesPiConfig struct {
-	Provider  string                       `yaml:"provider"`
-	Model     string                       `yaml:"model"`
-	APIKeyEnv string                       `yaml:"api_key_env"`
-	Fallback  rawHarnessesPiFallbackConfig `yaml:"fallback"`
+	Provider   string                       `yaml:"provider"`
+	Model      string                       `yaml:"model"`
+	APIKeyEnv  string                       `yaml:"api_key_env"`
+	APIKeyFile string                       `yaml:"api_key_file"` // OPTIONAL; PI-050/hk-xmfoi
+	Fallback   rawHarnessesPiFallbackConfig `yaml:"fallback"`
 }
 
 // rawHarnessesConfig is the top-level harnesses: block in config.yaml.
@@ -720,6 +721,13 @@ type PiHarnessConfig struct {
 	// APIKeyEnv is the name of the env var carrying the provider API key.
 	// REQUIRED — no default. The KEY VALUE is never stored in config.
 	APIKeyEnv string
+	// APIKeyFile is the OPTIONAL path to a file holding the raw provider API key.
+	// When set (expanded from ~ by ResolvePiConfig), the key is read from this
+	// file at launch time and injected into the Pi child env ONLY — the daemon
+	// ambient env never carries the secret. Precedence: file > ambient env.
+	// ResolvePiConfig validates readable+non-empty at resolve time (fail loud).
+	// Spec: PI-050 (api_key_file). Bead: hk-xmfoi.
+	APIKeyFile string
 	// Fallback is the optional paid-fallback target (V1 manual flip; PI-072).
 	Fallback PiFallbackConfig
 	// HasFallback is true when the fallback: sub-block was present in config.
@@ -1529,6 +1537,7 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 			Provider:    pi.Provider,
 			Model:       pi.Model,
 			APIKeyEnv:   pi.APIKeyEnv,
+			APIKeyFile:  pi.APIKeyFile,
 			HasFallback: hasFallback,
 			Fallback: PiFallbackConfig{
 				Provider:  pi.Fallback.Provider,

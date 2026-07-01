@@ -42,9 +42,9 @@ import (
 // PiHarness implements handlercontract.Harness for the Pi agent.
 //
 // The zero value is not valid; construct via NewPiHarness. The struct carries
-// Pi config fields (piBinary, provider, model, apiKeyEnv) that buildPiLaunchSpec
-// requires; all default sensibly when empty (piBinary defaults to "pi";
-// provider/model/apiKeyEnv are validated by buildPiLaunchSpec on use).
+// Pi config fields (piBinary, provider, model, apiKeyEnv, apiKeyFile) that
+// buildPiLaunchSpec requires; all default sensibly when empty (piBinary defaults
+// to "pi"; provider/model/apiKeyEnv are validated by buildPiLaunchSpec on use).
 type PiHarness struct {
 	// piBinary is the pi executable path. Empty is normalised to "pi".
 	piBinary string
@@ -57,10 +57,15 @@ type PiHarness struct {
 	// Required for initial-turn launches.
 	model string
 
-	// apiKeyEnv is the name of the env var carrying the provider API key
-	// (from harnesses.pi.api_key_env). The KEY VALUE is read from the operator
-	// environment at launch time; it is never stored in the harness struct (PI-020).
+	// apiKeyEnv is the name of the env var the Pi child expects for the provider
+	// API key (from harnesses.pi.api_key_env). Name only — no secret stored here.
 	apiKeyEnv string
+
+	// apiKeyFile is the OPTIONAL expanded path to a file holding the raw provider
+	// API key (from harnesses.pi.api_key_file, pre-expanded by ResolvePiConfig).
+	// When non-empty, the key is read from this file at launch time; the daemon
+	// ambient env never carries the secret (PI-050/hk-xmfoi).
+	apiKeyFile string
 }
 
 // NewPiHarness returns a ready PiHarness.
@@ -68,12 +73,14 @@ type PiHarness struct {
 // All parameters may be empty; buildPiLaunchSpec validates them at launch time
 // (missing provider/model on initial turn → launch error, not panic). The
 // default empty piBinary is normalised to "pi" by buildPiLaunchSpec.
-func NewPiHarness(piBinary, provider, model, apiKeyEnv string) *PiHarness {
+// apiKeyFile is optional; pass empty string when api_key_file is not configured.
+func NewPiHarness(piBinary, provider, model, apiKeyEnv, apiKeyFile string) *PiHarness {
 	return &PiHarness{
-		piBinary:  piBinary,
-		provider:  provider,
-		model:     model,
-		apiKeyEnv: apiKeyEnv,
+		piBinary:   piBinary,
+		provider:   provider,
+		model:      model,
+		apiKeyEnv:  apiKeyEnv,
+		apiKeyFile: apiKeyFile,
 	}
 }
 
@@ -104,6 +111,7 @@ func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Spawn
 		provider:       h.provider,
 		model:          h.model,
 		apiKeyEnv:      h.apiKeyEnv,
+		apiKeyFile:     h.apiKeyFile,
 		priorSessionID: rc.PriorSessionID,
 		baseEnv:        rc.BaseEnv,
 	}

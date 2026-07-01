@@ -2492,10 +2492,11 @@ func ExportedNewHarnessRegistryWithPi(piCfg PiHarnessConfig) (*handlercontract.H
 	return newHarnessRegistry(piCfg)
 }
 
-// ExportedPiHarnessFields returns the provider, model, and apiKeyEnv fields from
-// a PiHarness for test assertions on the config→harness seam (hk-f8u5j).
-func ExportedPiHarnessFields(h *PiHarness) (provider, model, apiKeyEnv string) {
-	return h.provider, h.model, h.apiKeyEnv
+// ExportedPiHarnessFields returns the provider, model, apiKeyEnv, and apiKeyFile
+// fields from a PiHarness for test assertions on the config→harness seam
+// (hk-f8u5j; apiKeyFile added by hk-xmfoi).
+func ExportedPiHarnessFields(h *PiHarness) (provider, model, apiKeyEnv, apiKeyFile string) {
+	return h.provider, h.model, h.apiKeyEnv, h.apiKeyFile
 }
 
 // ExportedCodexProcessExitLaunchSpecBuilder returns a launchSpecBuilder that
@@ -2913,6 +2914,11 @@ type ExportedPiRunCtx struct {
 	Provider       string
 	Model          string
 	APIKeyEnv      string
+	// APIKeyFile is the OPTIONAL expanded path to a file holding the raw provider
+	// API key. When non-empty, resolvePiAPIKeyValue reads this file in preference
+	// to the ambient env. Pass empty string when api_key_file is not configured.
+	// Spec: PI-050 (api_key_file). Bead: hk-xmfoi.
+	APIKeyFile     string
 	PriorSessionID *string
 	BaseEnv        []string
 	// BillingEmitter receives pi_billing_guard events from the guard (PI-040/042/043).
@@ -2938,6 +2944,7 @@ func ExportedBuildPiLaunchSpec(rc ExportedPiRunCtx) (handler.LaunchSpec, error) 
 		provider:         rc.Provider,
 		model:            rc.Model,
 		apiKeyEnv:        rc.APIKeyEnv,
+		apiKeyFile:       rc.APIKeyFile,
 		priorSessionID:   rc.PriorSessionID,
 		baseEnv:          rc.BaseEnv,
 		billingEmitter:   rc.BillingEmitter,
@@ -2947,20 +2954,23 @@ func ExportedBuildPiLaunchSpec(rc ExportedPiRunCtx) (handler.LaunchSpec, error) 
 }
 
 // ExportedBuildPiEnv exposes buildPiEnv for tests in package daemon_test.
-// Allows direct verification of the allowlist-strip semantics (PI-021).
+// Allows direct verification of the allowlist-strip semantics (PI-021) and
+// the file-first key resolution (PI-050/hk-xmfoi).
+// Pass empty string for apiKeyFile when api_key_file is not configured.
 //
 // Bead ref: hk-1c16h.
-func ExportedBuildPiEnv(baseEnv []string, apiKeyEnv string) []string {
-	return buildPiEnv(baseEnv, apiKeyEnv)
+func ExportedBuildPiEnv(baseEnv []string, apiKeyFile, apiKeyEnv string) []string {
+	return buildPiEnv(baseEnv, apiKeyFile, apiKeyEnv)
 }
 
 // ExportedResolvePiAPIKeyValue exposes resolvePiAPIKeyValue for tests in
 // package daemon_test. Allows tests to verify the shared key-resolution helper
-// reads the correct env var (PI-021).
+// applies file-first precedence (PI-050) and falls back to the env var (PI-021).
+// Pass empty string for apiKeyFile when api_key_file is not configured.
 //
 // Bead ref: hk-1c16h.
-func ExportedResolvePiAPIKeyValue(apiKeyEnv string) string {
-	return resolvePiAPIKeyValue(apiKeyEnv)
+func ExportedResolvePiAPIKeyValue(apiKeyFile, apiKeyEnv string) string {
+	return resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2970,11 +2980,12 @@ func ExportedResolvePiAPIKeyValue(apiKeyEnv string) string {
 // ExportedRunPiBillingGuard exposes runPiBillingGuard for tests in package
 // daemon_test. piHome is forwarded as-is so tests can supply a fake home dir and
 // exercise the PI-042 on-disk deny path without touching the real ~/.pi.
-// Pass "" or piDefaultHome() for production-equivalent behavior.
+// Pass "" for apiKeyFile when api_key_file is not configured (uses env var only).
+// Pass "" or piDefaultHome() for piHome for production-equivalent behavior.
 //
 // Bead ref: hk-l1bkp.
-func ExportedRunPiBillingGuard(bus handlercontract.EventEmitter, beadID, apiKeyEnv, piHome string) error {
-	return runPiBillingGuard(context.Background(), bus, core.RunID{}, beadID, apiKeyEnv, piHome)
+func ExportedRunPiBillingGuard(bus handlercontract.EventEmitter, beadID, apiKeyFile, apiKeyEnv, piHome string) error {
+	return runPiBillingGuard(context.Background(), bus, core.RunID{}, beadID, apiKeyFile, apiKeyEnv, piHome)
 }
 
 // ExportedPiAuthIndicatesPersistentCredential exposes

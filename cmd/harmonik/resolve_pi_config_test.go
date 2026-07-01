@@ -1,6 +1,7 @@
 package main
 
-// resolve_pi_config_test.go — unit tests for ResolvePiConfig (hk-v7q5u, PI-051/PI-052).
+// resolve_pi_config_test.go — unit tests for ResolvePiConfig (hk-v7q5u, PI-051/PI-052;
+// api_key_file validation added by hk-xmfoi, PI-040/PI-050).
 //
 // Verifies:
 //   - all required fields present → returns cfg unchanged.
@@ -17,6 +18,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -272,5 +275,107 @@ func TestResolvePiConfig_Fallback_ModelShape_Invalid(t *testing.T) {
 	}
 	if pe.Field != "harnesses.pi.fallback.model" {
 		t.Errorf("expected field harnesses.pi.fallback.model; got %q", pe.Field)
+	}
+}
+
+// ── api_key_file tests (PI-040/PI-050, hk-xmfoi) ──────────────────────────────
+
+// TestResolvePiConfig_APIKeyFile_Unset_OK verifies that an absent (empty) api_key_file
+// is accepted without error — the field is optional.
+func TestResolvePiConfig_APIKeyFile_Unset_OK(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.APIKeyFile = ""
+	if _, err := ResolvePiConfig(cfg, "/proj"); err != nil {
+		t.Fatalf("absent api_key_file: unexpected error: %v", err)
+	}
+}
+
+// TestResolvePiConfig_APIKeyFile_SetReadableNonEmpty_OK verifies that a set, readable,
+// non-empty file is accepted and the expanded path is stored in the returned config.
+func TestResolvePiConfig_APIKeyFile_SetReadableNonEmpty_OK(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "openrouter.key")
+	if err := os.WriteFile(keyFile, []byte("sk-or-test-key-value"), 0o600); err != nil {
+		t.Fatalf("setup: write key file: %v", err)
+	}
+	cfg := fullPiCfg()
+	cfg.APIKeyFile = keyFile
+	got, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Fatalf("readable non-empty file: unexpected error: %v", err)
+	}
+	if got.APIKeyFile != keyFile {
+		t.Errorf("APIKeyFile = %q; want %q (expanded path stored)", got.APIKeyFile, keyFile)
+	}
+}
+
+// TestResolvePiConfig_APIKeyFile_SetButMissing_FailsLoud verifies that a configured
+// api_key_file path that does not exist fails with *PiConfigError (R1 fail-loud).
+func TestResolvePiConfig_APIKeyFile_SetButMissing_FailsLoud(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.APIKeyFile = "/nonexistent-path-harmonik-test-xmfoi/openrouter.key"
+	_, err := ResolvePiConfig(cfg, "/proj")
+	var pe *PiConfigError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *PiConfigError for missing file; got %T: %v", err, err)
+	}
+	if pe.Field != "harnesses.pi.api_key_file" {
+		t.Errorf("PiConfigError.Field = %q; want %q", pe.Field, "harnesses.pi.api_key_file")
+	}
+	if !strings.Contains(pe.Reason, "not readable") {
+		t.Errorf("PiConfigError.Reason should mention readable; got: %s", pe.Reason)
+	}
+}
+
+// TestResolvePiConfig_APIKeyFile_SetButEmpty_FailsLoud verifies that a configured
+// api_key_file that exists but is empty (or whitespace-only) fails with *PiConfigError.
+func TestResolvePiConfig_APIKeyFile_SetButEmpty_FailsLoud(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "empty.key")
+	if err := os.WriteFile(keyFile, []byte("   \n"), 0o600); err != nil {
+		t.Fatalf("setup: write empty key file: %v", err)
+	}
+	cfg := fullPiCfg()
+	cfg.APIKeyFile = keyFile
+	_, err := ResolvePiConfig(cfg, "/proj")
+	var pe *PiConfigError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *PiConfigError for empty file; got %T: %v", err, err)
+	}
+	if pe.Field != "harnesses.pi.api_key_file" {
+		t.Errorf("PiConfigError.Field = %q; want %q", pe.Field, "harnesses.pi.api_key_file")
+	}
+	if !strings.Contains(pe.Reason, "empty") {
+		t.Errorf("PiConfigError.Reason should mention empty; got: %s", pe.Reason)
+	}
+}
+
+// TestResolvePiConfig_APIKeyFile_TildeExpanded verifies that a ~ prefix is expanded
+// to the user home directory and the expanded path is stored in the returned config.
+func TestResolvePiConfig_APIKeyFile_TildeExpanded(t *testing.T) {
+	t.Parallel()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir:", err)
+	}
+	// Write a real key file under home so the validation passes.
+	keyFile := filepath.Join(home, ".harmonik-test-xmfoi-expand.key")
+	if err := os.WriteFile(keyFile, []byte("sk-or-tilde-test"), 0o600); err != nil {
+		t.Fatalf("setup: write key file: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(keyFile) })
+
+	cfg := fullPiCfg()
+	cfg.APIKeyFile = "~/.harmonik-test-xmfoi-expand.key"
+	got, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Fatalf("tilde path: unexpected error: %v", err)
+	}
+	if got.APIKeyFile != keyFile {
+		t.Errorf("APIKeyFile = %q; want expanded path %q", got.APIKeyFile, keyFile)
 	}
 }

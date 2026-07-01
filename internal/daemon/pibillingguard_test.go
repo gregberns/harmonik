@@ -188,7 +188,7 @@ func TestRunPiBillingGuard_PI042_PersistentCredentialDenies(t *testing.T) {
 	mustWritePi(t, filepath.Join(piHome, "auth.json"), `{"api_key":"sk-or-persisted-key"}`)
 
 	em := &capturingPiBillingEmitter{}
-	err := daemon.ExportedRunPiBillingGuard(em, "hk-pi042-deny", envVarName, piHome)
+	err := daemon.ExportedRunPiBillingGuard(em, "hk-pi042-deny", "", envVarName, piHome)
 	if err == nil {
 		t.Fatal("expected PI-042 fail-closed error for populated on-disk api_key; got nil")
 	}
@@ -221,7 +221,7 @@ func TestRunPiBillingGuard_PI042_MalformedAuthJsonDenies(t *testing.T) {
 	mustWritePi(t, filepath.Join(piHome, "auth.json"), "{not-valid-json")
 
 	em := &capturingPiBillingEmitter{}
-	err := daemon.ExportedRunPiBillingGuard(em, "hk-pi042-malformed", envVarName, piHome)
+	err := daemon.ExportedRunPiBillingGuard(em, "hk-pi042-malformed", "", envVarName, piHome)
 	if err == nil {
 		t.Fatal("expected PI-042 fail-closed error for malformed auth.json; got nil")
 	}
@@ -246,7 +246,7 @@ func TestRunPiBillingGuard_PI042_AbsentAuthJsonAllows(t *testing.T) {
 	piHome := t.TempDir() // no auth.json written → absent
 
 	em := &capturingPiBillingEmitter{}
-	if err := daemon.ExportedRunPiBillingGuard(em, "hk-pi042-absent", envVarName, piHome); err != nil {
+	if err := daemon.ExportedRunPiBillingGuard(em, "hk-pi042-absent", "", envVarName, piHome); err != nil {
 		t.Fatalf("expected allowed for absent auth.json; got: %v", err)
 	}
 
@@ -311,7 +311,7 @@ func TestRunPiBillingGuard_FailClosed(t *testing.T) {
 			}
 
 			em := &capturingPiBillingEmitter{}
-			err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-test", envVarName, "")
+			err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-test", "", envVarName, "")
 
 			if tc.wantErr && err == nil {
 				t.Errorf("%s: expected fail-closed error; got nil", tc.name)
@@ -344,7 +344,7 @@ func TestRunPiBillingGuard_AllowedEmitsAllowedOutcome(t *testing.T) {
 	t.Setenv(envVarName, "sk-or-real-key-value")
 
 	em := &capturingPiBillingEmitter{}
-	if err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-allow", envVarName, ""); err != nil {
+	if err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-allow", "", envVarName, ""); err != nil {
 		t.Fatalf("guard returned error on a clean env+disk: %v", err)
 	}
 
@@ -383,7 +383,7 @@ func TestRunPiBillingGuard_AbsentKeyEmitsDeniedOutcome(t *testing.T) {
 	t.Setenv(envVarName, "") // absent/empty
 
 	em := &capturingPiBillingEmitter{}
-	err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-deny", envVarName, "")
+	err := daemon.ExportedRunPiBillingGuard(em, "hk-guard-deny", "", envVarName, "")
 	if err == nil {
 		t.Fatal("expected fail-closed error for absent key; got nil")
 	}
@@ -415,7 +415,7 @@ func TestRunPiBillingGuard_NilEmitterNoPanic(t *testing.T) {
 			t.Errorf("runPiBillingGuard with nil emitter panicked: %v", r)
 		}
 	}()
-	err := daemon.ExportedRunPiBillingGuard(nil, "hk-nil-emitter", envVarName, "")
+	err := daemon.ExportedRunPiBillingGuard(nil, "hk-nil-emitter", "", envVarName, "")
 	if err == nil {
 		t.Error("expected error for absent key even with nil emitter; got nil")
 	}
@@ -436,7 +436,7 @@ func TestRunPiBillingGuard_NilEmitterAllowNoPanic(t *testing.T) {
 			t.Errorf("runPiBillingGuard with nil emitter (allow path) panicked: %v", r)
 		}
 	}()
-	if err := daemon.ExportedRunPiBillingGuard(nil, "hk-nil-emitter-allow", envVarName, ""); err != nil {
+	if err := daemon.ExportedRunPiBillingGuard(nil, "hk-nil-emitter-allow", "", envVarName, ""); err != nil {
 		t.Errorf("expected nil for present key with nil emitter; got: %v", err)
 	}
 }
@@ -535,6 +535,7 @@ func TestPiHarness_LaunchSpec_SkipBillingGuardIsFalseInProduction(t *testing.T) 
 		"openrouter",    // provider
 		"openrouter/m1", // model
 		envVarName,      // apiKeyEnv
+		"",              // apiKeyFile: not set
 	)
 
 	rc := handlercontract.RunCtx{
@@ -630,7 +631,7 @@ func TestRunPiBillingGuard_EventDoesNotLeakKeyValue(t *testing.T) {
 	t.Setenv(envVarName, keyValue)
 
 	em := &capturingPiBillingEmitter{}
-	if err := daemon.ExportedRunPiBillingGuard(em, "hk-noleak", envVarName, ""); err != nil {
+	if err := daemon.ExportedRunPiBillingGuard(em, "hk-noleak", "", envVarName, ""); err != nil {
 		t.Fatalf("guard returned error on a clean env: %v", err)
 	}
 

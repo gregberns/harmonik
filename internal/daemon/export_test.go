@@ -2908,12 +2908,12 @@ func ExportedGateVerdictExistsVia(ctx context.Context, runner tmuxPkg.CommandRun
 //
 // Bead ref: hk-1c16h.
 type ExportedPiRunCtx struct {
-	PiBinary       string
-	WorkspacePath  string
-	BeadID         string
-	Provider       string
-	Model          string
-	APIKeyEnv      string
+	PiBinary      string
+	WorkspacePath string
+	BeadID        string
+	Provider      string
+	Model         string
+	APIKeyEnv     string
 	// APIKeyFile is the OPTIONAL expanded path to a file holding the raw provider
 	// API key. When non-empty, resolvePiAPIKeyValue reads this file in preference
 	// to the ambient env. Pass empty string when api_key_file is not configured.

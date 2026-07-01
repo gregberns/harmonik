@@ -52,7 +52,13 @@ func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry
 	if err := reg.Register(core.AgentTypeCodex, NewCodexHarness("", "")); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register codex harness: %w", err)
 	}
-	if err := reg.Register(core.AgentTypePi, NewPiHarness("", piCfg.Provider, piCfg.Model, piCfg.APIKeyEnv)); err != nil {
+	piH := NewPiHarness(
+		"", // piBinary: normalised to "pi" by buildPiLaunchSpec
+		piCfg.Provider,
+		piCfg.Model,
+		piCfg.APIKeyEnv,
+	)
+	if err := reg.Register(core.AgentTypePi, piH); err != nil {
 		return nil, fmt.Errorf("daemon: newHarnessRegistry: register pi harness: %w", err)
 	}
 	return reg, nil

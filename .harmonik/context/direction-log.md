@@ -12,6 +12,26 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-07-03 ~10:30Z — operator (via admiral) · expires: 2026-07-07
+WHAT: Pi+DGX ornith PROVEN (operator thrilled). Two tracks now: (A) CAPTAIN OWNS the granular end-to-end +
+      sandbox close-out (operator: 'push it all onto the captain') — fix Claude-reviewer ErrMalformed (e2e
+      blocker), fix hk-r4p0l (srt no-op: pi runs tagged claude-code so sandbox never engages -> make it
+      actually sandbox + TEST), land the api code-fix, then a clean e2e SANDBOXED ornith run. (B) ADMIRAL
+      designed the EVAL PROGRAM via 5 subagents -> kerf work codename:eval-program, 23 beads / 6 workstreams:
+      ws:metrics (P1 FOUNDATIONAL — product always extracts per-run time+tokens at emitDone; codex/pi
+      parsers currently DROP tokens, only claude parsed), ws:matrix (same problem run per model combo:
+      Claude Sonnet/Opus concurrent via node model=, Pi+minimax / Pi+ornith / Codex = sequential config-swap
+      passes), ws:quality (blind rubric+judge), ws:problems (6 new HARD tasks + 8 existing = 14), ws:dgx
+      (model-swap + monitoring + load-ramp to find max queue-slots — GATED on operator SSH), ws:tools
+      (Terminal-Bench/Aider later). 14-task set + hybrid tool strategy. OPERATOR-GATED: DGX SSH pubkey
+      (hk-eval-prog-dgx-ssh-x7tzo) — admiral surfaced the pubkey; blocks most of ws:dgx.
+WHY:  operator wants a rigorous cross-model + DGX-scaling eval to compare models on time/tokens/quality +
+      size the DGX. Metrics-infra is the reusable product feature under it all.
+ORDER: close-out FIRST (e2e depends on it) -> ws:metrics(P1) + ws:problems(P1, independent, parallel) ->
+       ws:matrix + ws:quality -> ws:dgx (when SSH opens) -> ws:tools. Design docs: plans/2026-07-03-eval-program/.
+RETURN-PATH: captain handed the bead set (topic eval-program) + owns close-out. Resume by checking: e2e green?
+      ws:metrics started? DGX SSH authorized (unblocks ws:dgx)? Full state in HANDOFF-admiral.md.
+
 ## 2026-07-02 ~06:15Z — operator (via admiral) · expires: 2026-07-04
 WHAT: OVERNIGHT AUTONOMOUS OP (operator asleep, 8h target). P1 (must-deliver): sandbox implemented+tested
       + Pi running IN it with NUMEROUS test runs against the DGX local model. DGX VERIFIED: dgx.local:8551/v1,

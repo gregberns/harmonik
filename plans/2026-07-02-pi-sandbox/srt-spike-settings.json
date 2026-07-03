@@ -1,0 +1,17 @@
+{
+  "network": {
+    "allowedDomains": ["openrouter.ai"],
+    "deniedDomains": [],
+    "allowUnixSockets": ["/Users/gb/github/harmonik/.harmonik/daemon.sock"],
+    "allowLocalBinding": false
+  },
+  "filesystem": {
+    "denyRead": ["~/.ssh"],
+    "allowRead": [],
+    "allowWrite": ["/tmp", "/private/tmp", "/Users/gb/github/harmonik/.beads", "/Users/gb/github/harmonik/.harmonik"],
+    "denyWrite": []
+  },
+  "enableWeakerNestedSandbox": false,
+  "enableWeakerNetworkIsolation": false,
+  "allowAppleEvents": false
+}

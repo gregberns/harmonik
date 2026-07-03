@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -1023,6 +1024,34 @@ func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, adapter tmux.A
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SrtSpawnConfig — per-run srt argv-wrap configuration (hk-rlxgx)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// SrtSpawnConfig carries the per-run configuration for an srt argv-wrap.
+//
+// When perRunSubstrate.sandboxSpawn is non-nil, SpawnWindow:
+//  1. Calls GenerateSandboxProfile(ProfileInput) to produce the settings JSON.
+//  2. Writes the JSON to a temp file (harmonik-srt-<RunID>.json in os.TempDir()).
+//  3. Prepends [SrtBinary, "--settings", <profilePath>] to in.Argv so the
+//     agent runs under srt's filesystem + network policy.
+//
+// A nil sandboxSpawn is a strict no-op (today's behaviour for all harnesses).
+//
+// Set by the workloop (hk-6596l) for harnesses listed in sandbox.harnesses
+// when sandbox.backend = "srt". All other runs leave sandboxSpawn nil.
+//
+// Bead: hk-rlxgx.
+type SrtSpawnConfig struct {
+	// SrtBinary is the path to the srt executable.
+	// Empty → "srt" resolved via the process PATH at spawn time.
+	SrtBinary string
+	// ProfileInput carries the per-run filesystem coordinates for
+	// GenerateSandboxProfile. WorktreePath, GitDir, RunID, and DaemonSockPath
+	// are REQUIRED; omitting any causes SpawnWindow to return ErrStructural.
+	ProfileInput SandboxProfileInput
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // perRunSubstrate — per-bead-run substrate wrapper (hk-012af)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1125,6 +1154,20 @@ type perRunSubstrate struct {
 	//
 	// Bead: hk-rs-b11-offline-dh57.
 	onConnectionFailure func(ctx context.Context, detail string)
+
+	// sandboxSpawn, when non-nil, wraps in.Argv with srt before SpawnWindow
+	// delegates to the inner substrate. SpawnWindow calls GenerateSandboxProfile,
+	// writes the result to a temp file, then prepends
+	// [SrtBinary, "--settings", <path>] to in.Argv.
+	//
+	// Nil for runs where sandbox.backend != "srt" or the harness is not in
+	// sandbox.harnesses — preserves today's behaviour for all existing harnesses.
+	//
+	// Set by the workloop (hk-6596l) when the project config activates srt for
+	// the current run's harness.
+	//
+	// Bead: hk-rlxgx.
+	sandboxSpawn *SrtSpawnConfig
 }
 
 // commandRunner returns the effective CommandRunner for this run: the
@@ -1847,6 +1890,17 @@ func newPerRunSubstrate(sub handler.Substrate, handlerBinary string, runner tmux
 // returned session does not implement paneTargeter, the pane target remains
 // empty and paste-inject calls will fail gracefully.
 func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	// srt argv-wrap (hk-rlxgx): when sandbox.backend=srt and this run's harness
+	// is in sandbox.harnesses, prepend 'srt --settings <profile>' to in.Argv.
+	// Nil sandboxSpawn is the strict no-op gate — today's behaviour unchanged.
+	if p.sandboxSpawn != nil {
+		wrapped, wrapErr := p.buildSrtArgv(in.Argv)
+		if wrapErr != nil {
+			return nil, fmt.Errorf("daemon: perRunSubstrate.SpawnWindow: srt argv-wrap: %w: %w", wrapErr, handler.ErrStructural)
+		}
+		in.Argv = wrapped
+	}
+
 	// Independent-session path (hk-o85ye): runSessionID non-empty → spawn a
 	// dedicated tmux session so this run survives a daemon SIGKILL. The resulting
 	// session is outside the daemon's shared session and the orphan-window sweep.
@@ -1903,6 +1957,40 @@ func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateS
 		}
 	}
 	return sess, nil
+}
+
+// buildSrtArgv generates a per-run srt settings profile, writes it to a temp
+// file, and returns the srt-prefixed argv:
+//
+//	[SrtBinary, "--settings", profilePath, agentArgv...]
+//
+// The profile JSON is produced by GenerateSandboxProfile(p.sandboxSpawn.ProfileInput)
+// and written to os.TempDir()/harmonik-srt-<RunID>.json (mode 0600). The file is
+// NOT cleaned up here — srt reads it at startup and the OS reclaims it at reboot;
+// the daemon may arrange teardown cleanup in hk-6596l.
+//
+// Returns an error (NOT wrapped with ErrStructural — the caller wraps) when
+// profile generation or file write fails.
+//
+// Bead: hk-rlxgx.
+func (p *perRunSubstrate) buildSrtArgv(agentArgv []string) ([]string, error) {
+	profileBytes, err := GenerateSandboxProfile(p.sandboxSpawn.ProfileInput)
+	if err != nil {
+		return nil, fmt.Errorf("generate srt profile: %w", err)
+	}
+	profilePath := filepath.Join(os.TempDir(), "harmonik-srt-"+p.sandboxSpawn.ProfileInput.RunID+".json")
+	//nolint:gosec // G306: 0600 is correct — profile contains literal filesystem paths, readable only by daemon uid.
+	if err := os.WriteFile(profilePath, profileBytes, 0600); err != nil {
+		return nil, fmt.Errorf("write srt profile to %s: %w", profilePath, err)
+	}
+	srtBin := p.sandboxSpawn.SrtBinary
+	if srtBin == "" {
+		srtBin = "srt"
+	}
+	result := make([]string, 0, 3+len(agentArgv))
+	result = append(result, srtBin, "--settings", profilePath)
+	result = append(result, agentArgv...)
+	return result, nil
 }
 
 // spawnWindowRemote performs the remote-run spawn: it builds an SSH-backed

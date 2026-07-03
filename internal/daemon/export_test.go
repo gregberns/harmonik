@@ -2779,6 +2779,32 @@ func ExportedShellQuoteArg(s string) string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// srt argv-wrap test seams (hk-rlxgx)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ExportedSrtSpawnConfig is a type alias for SrtSpawnConfig so tests in
+// package daemon_test can reference the type without importing internal symbols.
+//
+// Bead: hk-rlxgx.
+type ExportedSrtSpawnConfig = SrtSpawnConfig
+
+// ExportedNewPerRunSubstrateWithSandbox wraps newPerRunSubstrate and sets
+// sandboxSpawn for tests exercising the srt argv-wrap path (hk-rlxgx).
+//
+// Returns nil when sub is nil or is not a *tmuxSubstrate (matching
+// newPerRunSubstrate semantics).
+//
+// Bead: hk-rlxgx.
+func ExportedNewPerRunSubstrateWithSandbox(sub handler.Substrate, cfg *SrtSpawnConfig) handler.Substrate {
+	prs := newPerRunSubstrate(sub, "", nil)
+	if prs == nil {
+		return nil
+	}
+	prs.sandboxSpawn = cfg
+	return prs
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Pi Refs:<bead> trailer guarantee test seams (PI-030/PI-031, hk-mazln)
 // ─────────────────────────────────────────────────────────────────────────────
 

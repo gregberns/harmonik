@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -178,6 +179,19 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 			// mirroring ReadReviewVerdict's os.IsNotExist branch (nil,nil = inconclusive).
 			//nolint:nilnil,nilerr // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
 			return nil, nil
+		}
+		// Empty (whitespace-only) stdout → treat as absent. ROOT CAUSE: on some
+		// remote workers the ssh login shell rc (e.g. a `-zsh` login profile that
+		// resets $?) masks the exit code, so `ssh cat <absent-file>` returns err==nil
+		// with EMPTY stdout instead of the expected non-zero — the err != nil
+		// absent-branch above never fires. A real verdict is never empty, so an empty
+		// read is a genuinely-absent file; short-circuit to absent (nil,nil =
+		// inconclusive) INSIDE the retried closure rather than feeding "" to
+		// parseReviewVerdict, which would return ErrMalformed ("unexpected end of
+		// JSON input") and false-fail the run. Mirrors ParseAutoStatusMarker's
+		// len(data)==0 treat-as-absent guard.
+		if len(bytes.TrimSpace(out)) == 0 {
+			return nil, nil //nolint:nilnil // empty read = absent verdict per WM-027a §(e); ssh-exit-0 masking
 		}
 		return parseReviewVerdict(out, target)
 	})

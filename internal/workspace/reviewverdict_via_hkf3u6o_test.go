@@ -113,6 +113,37 @@ func TestReadReviewVerdictVia_RemoteRunner_ReadsViaRunner(t *testing.T) {
 	}
 }
 
+// emptyExit0Runner is a non-local CommandRunner stub whose Command() ALWAYS
+// exits 0 with EMPTY stdout (it runs `true`). It reproduces the gb-mbp remote
+// worker whose `-zsh` login rc resets $?, so `ssh cat <absent-file>` returns
+// err==nil with empty stdout instead of a non-zero exit — the exit-code-masking
+// root cause. Being a distinct (non-LocalRunner) type, it is classified as
+// non-local, so ReadReviewVerdictVia routes through it.
+type emptyExit0Runner struct{}
+
+func (emptyExit0Runner) Command(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "true") // exit 0, empty stdout
+}
+
+// TestReadReviewVerdictVia_RemoteRunner_EmptyExit0ReturnsNil is the regression
+// test for the ssh-exit-0-masking false-fail: the runner returns (empty stdout,
+// nil err) for an absent verdict. The correct interpretation is absent
+// (nil,nil = inconclusive), NOT ErrMalformed from feeding "" to the parser.
+func TestReadReviewVerdictVia_RemoteRunner_EmptyExit0ReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	boxAWorkspace := t.TempDir()
+	runner := emptyExit0Runner{}
+
+	v, err := ReadReviewVerdictVia(context.Background(), runner, boxAWorkspace)
+	if err != nil {
+		t.Fatalf("ReadReviewVerdictVia(empty-exit0) error = %v; want nil (absent, not ErrMalformed)", err)
+	}
+	if v != nil {
+		t.Errorf("ReadReviewVerdictVia(empty-exit0) = %+v; want nil (absent)", v)
+	}
+}
+
 // TestReadReviewVerdictVia_RemoteRunner_AbsentReturnsNil verifies that when the
 // runner's cat fails (worker file absent), the result is (nil,nil) — the
 // inconclusive condition per WM-027a §(e), matching the local not-exist branch.

@@ -7,13 +7,19 @@ captain_name: captain
 model: sonnet
 ---
 
-# Crew mission — leto — PI LIVE-TESTING (operator-greenlit via admiral 2026-07-03)
+# Crew mission — leto — PI LIVE-TESTING → HELD (2026-07-03)
 
-> RE-TASKED 2026-07-03 from the Pi Phase-0 BUILD (hk-94c3t, DONE — all 9 beads landed;
-> the ~-expansion auth fix hk-sv3vg also landed, commit 37a4df93 on main) to PI
-> LIVE-TESTING. Prove the Pi harness runs live on a GPT model end-to-end, then route
-> mechanical scavenger beads through it. Your LIVE mission is also the captain comms
-> thread (topic=assign) — trust that if this file and comms ever disagree.
+> ⛔ CURRENT STATE = **HELD / IDLE ON-CALL.** Pi is PROVEN end-to-end (hk-d5q5l merged
+> by a pi agent on gpt-5.4-mini — goal DONE). The scavenger DRAIN is HELD pending an
+> operator model decision: gpt-5.4-mini commits trivial doc/string changes but EXITS
+> WITHOUT COMMITTING on real Go code (capability ceiling). Do NOT submit any more Pi
+> beads until the operator picks doc-only-scope vs a stronger model. On boot: join
+> comms, post a boot status, then IDLE on your inbox. Do NOT drain. The history below
+> is reference only.
+>
+> RE-TASKED 2026-07-03 from the Pi Phase-0 BUILD (hk-94c3t, DONE) to PI LIVE-TESTING
+> (proven). Your LIVE mission is also the captain comms thread (topic=assign) — trust
+> that if this file and comms ever disagree.
 
 ## On boot
 1. `harmonik comms join` + confirm identity = leto.

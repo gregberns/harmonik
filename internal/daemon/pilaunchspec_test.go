@@ -647,13 +647,13 @@ func TestPiHarness_BaseURL_ProductionPath_Present(t *testing.T) {
 	workDir := t.TempDir()
 
 	harness := daemon.NewPiHarness(
-		"pi",                         // piBinary
-		"mylocal",                    // provider
-		"mylocal/ornith",             // model ("ornith" after last "/")
-		apiKeyEnv,                    // apiKeyEnv
-		"",                           // apiKeyFile
-		"http://dgx.local:8551/v1",   // baseURL
-		"",                           // api: empty → defaults to "openai"
+		"pi",                       // piBinary
+		"mylocal",                  // provider
+		"mylocal/ornith",           // model ("ornith" after last "/")
+		apiKeyEnv,                  // apiKeyEnv
+		"",                         // apiKeyFile
+		"http://dgx.local:8551/v1", // baseURL
+		"",                         // api: empty → defaults to "openai"
 	)
 
 	rc := daemon.ExportedRunCtxForPi(workDir, "hk-z13jz-prod")
@@ -719,13 +719,13 @@ func TestPiHarness_BaseURL_ProductionPath_Absent(t *testing.T) {
 	workDir := t.TempDir()
 
 	harness := daemon.NewPiHarness(
-		"pi",         // piBinary
-		"openrouter", // provider
+		"pi",                          // piBinary
+		"openrouter",                  // provider
 		"openrouter/qwen/qwen3-coder", // model
-		apiKeyEnv,    // apiKeyEnv
-		"",           // apiKeyFile
-		"",           // baseURL: absent
-		"",           // api: absent
+		apiKeyEnv,                     // apiKeyEnv
+		"",                            // apiKeyFile
+		"",                            // baseURL: absent
+		"",                            // api: absent
 	)
 
 	rc := daemon.ExportedRunCtxForPi(workDir, "hk-z13jz-absent")
@@ -805,8 +805,8 @@ func TestPiHarness_BaseURL_APIOverride(t *testing.T) {
 func TestBuildPiModelsJSON_ModelIDExtraction(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		model   string
-		wantID  string
+		model  string
+		wantID string
 	}{
 		{"mylocal/ornith", "ornith"},
 		{"openrouter/qwen/qwen3-coder", "qwen3-coder"},

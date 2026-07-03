@@ -1056,7 +1056,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		coordinatorReapAdapter:     coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
 		coordinatorReapProjectHash: projectHash,                        // hk-t08m: pre-computed for session name derivation
 		runner:                     cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
-		sandboxCfg:                 cfg.ProjectCfg.Sandbox,            // hk-6596l: srt sandbox config block
+		sandboxCfg:                 cfg.ProjectCfg.Sandbox,             // hk-6596l: srt sandbox config block
 	}, nil
 }
 

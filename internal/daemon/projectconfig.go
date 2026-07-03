@@ -689,8 +689,8 @@ type rawSandboxCacheConfig struct {
 // backend is REQUIRED when the block is present (fail-loud per the
 // no-hardcoded-defaults principle). Unknown keys are silently ignored.
 type rawSandboxConfig struct {
-	Backend   string                 `yaml:"backend"`
-	Harnesses []string               `yaml:"harnesses"`
+	Backend   string                  `yaml:"backend"`
+	Harnesses []string                `yaml:"harnesses"`
 	Network   rawSandboxNetworkConfig `yaml:"network"`
 	Cache     rawSandboxCacheConfig   `yaml:"cache"`
 }

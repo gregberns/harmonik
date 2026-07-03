@@ -1,18 +1,28 @@
 {
   "schema_version": 1,
-  "updated": "2026-07-03T01:20:00Z",
+  "updated": "2026-07-03T03:05:00Z",
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
+    {
+      "lane": "pi-sandbox",
+      "label": "codename:pi-sandbox",
+      "epic_id": null,
+      "crew": "leto",
+      "queue": "sandbox-q",
+      "status": "active",
+      "gate": null,
+      "note": "STAFFED 2026-07-02 (crew leto re-tasked from pilot; operator made sandbox THE priority — it's the unlock for Pi + DGX local models). Pi-in-a-sandbox via @anthropic-ai/sandbox-runtime (srt); both platforms mac-first; v1 network=OPEN. SPIKE FIRST = hk-f39ny (P1 GATE): sandboxed process reaches local daemon over unix socket + one model API call + resolve Go-CLI-TLS. Then hk-p7smp profile-gen -> hk-rlxgx argv-wrap -> hk-6596l config -> hk-i0377 acceptance (commit-inside-succeeds/write-to-main-denied/branch-merges); hk-ryi34 attach + hk-5zviv linux (P2). Artifacts: .kerf/works/pi-sandbox/. Brief: plans/2026-07-02-pi-sandbox/HANDOFF.md. epic_id:null (kerf work, not a bead-epic) — ready-count tracked via label codename:pi-sandbox."
+    },
     {
       "lane": "pilot",
       "label": "codename:pilot",
       "epic_id": "hk-94c3t",
-      "crew": "leto",
+      "crew": null,
       "queue": "pi-q",
       "plan_path": "plans/2026-06-23-pi-openrouter-harness/",
-      "status": "active",
+      "status": "parked",
       "gate": null,
-      "note": "PHASE = TESTING (2026-07-02). Build epic hk-94c3t CLOSED + 4-reviewer-approved, but Pi has NEVER run live. Fresh mission (operator-greenlit): prove Pi live on a GPT model (openai/gpt-5.4-mini via openrouter) then feed scavenger beads. ONE gate = auth: use the FILE-KEY path (hk-sv3vg ~-expansion fix + daemon redeploy of that binary) so PI-040 passes without env-var-in-revive fragility. Canary = hk-nxjwo (throwaway) on pi-q. fork-bomb hk-9s5fx primary fix DONE (353fc3c1). Open: design epic hk-ag97p (P2); local-model base_url gap hk-z13jz (P2, DGX-Spark enabler, HELD for operator sandbox details)."
+      "note": "PROVEN + PARKED 2026-07-02. Pi runs live end-to-end: hk-d5q5l (1-line doc bead) ran on agent_type=pi (gpt-5.4-mini via OpenRouter), committed + merged in 2min. CAPABILITY FINDING: gpt-5.4-mini commits trivial doc/string beads but exits-without-committing on real Go code (config struct+wiring) — below the ceiling for the scavenger drain. OPERATOR DIRECTIVE: HOLD all Pi running until the sandbox is built, then test DGX/local + a couple models via the sandbox; model/provider decision (OpenAI-subscription-direct vs OpenRouter vs local) deferred to then. ROUTING FOOTGUN: pi-q default_harness did NOT route unlabeled beads to pi; the harness:pi LABEL is required (else silent claude fallback) — needs fix/doc bead."
     },
     {
       "lane": "remote-hardening",
@@ -22,7 +32,7 @@
       "queue": "gurney-q",
       "status": "done",
       "gate": null,
-      "note": "DONE/BANKED 2026-07-02. Epic hk-gx0dl CLOSED. 98 gb-mbp jobs total; 2 hard blockers FIXED+validated live (review.json truncation 9860e8a2, launch->agent_ready stall d737d20a+cnp17); hk-nepva landed a REAL bead on main from gb-mbp; proven at conc-3. Residual = benign non_ff merge churn hk-1u4wp (P3, self-healing). Scratch daemon still up (pid 40647). NEXT (operator): route REAL beads (work incoming) to gb-mbp at volume rather than a synthetic test. gurney STOOD DOWN; re-spawn to route real work when it lands."
+      "note": "DONE/BANKED 2026-07-02. Epic hk-gx0dl CLOSED. 98 gb-mbp jobs; 2 hard blockers fixed+validated live; hk-nepva landed a real bead on main from gb-mbp; proven conc-3. Residual = benign non_ff merge churn hk-1u4wp (P3). gurney STOOD DOWN + RESERVED to route the operator's incoming REAL work to gb-mbp when it lands."
     },
     {
       "lane": "keeper-reliability",
@@ -32,7 +42,7 @@
       "queue": "paulk-q",
       "status": "done",
       "gate": null,
-      "note": "DRAINED 2026-07-02. All beads closed (hk-2pb79, hk-xisvb, hk-ymyhj, hk-7o4i0). Crew paul STOPPED 2026-06-30 (idle, reversible). Durable keeper-launcher fix hk-5266t (P1, zsh :a target bug) still OPEN + carried. One P3 follow-up hk-os0hq (reap .wal-backup-* dirs) unranked."
+      "note": "DRAINED 2026-07-02. All beads closed. Crew paul STOPPED. Durable keeper-launcher fix hk-5266t (P1, zsh :a target bug) still OPEN + carried (it's the no_tmux_target/keeper-missing bug class that bit leto tonight). P3 follow-up hk-os0hq unranked."
     },
     {
       "lane": "scavenger",
@@ -42,20 +52,7 @@
       "queue": "thufir-q",
       "status": "parked",
       "gate": null,
-      "note": "PARKED 2026-07-02 (thufir wound down; codex paused). Standing serial orphan-backlog drainer (~110 ready P2/P3). ABOUT TO BECOME FUEL: scavenger beads are the load source for BOTH the Pi-testing lane (feed mechanical beads to pi-q on gpt-5.4-mini) and remote (route to gb-mbp). Un-park/re-route per operator alignment on fresh missions."
-    },
-    {
-      "lane": "pi-sandbox",
-      "label": "codename:pi-sandbox",
-      "epic_id": null,
-      "crew": null,
-      "status": "on-deck",
-      "gate": {
-        "reason": "NEW initiative kicked into kerf 2026-07-02 (work codename:pi-sandbox, 7 build-order beads filed, spike hk-f39ny gates rest). Planning done; NOT staffed. Operator sending sandbox details soon + may want to review the kerf plan before build starts. Un-gate to staff the spike when operator confirms or when a crew frees.",
-        "owner": "operator",
-        "expires": "2026-07-09T00:00:00Z"
-      },
-      "note": "Pi-in-a-sandbox via @anthropic-ai/sandbox-runtime (srt). Both platforms, macOS first, v1 network=OPEN (admiral call). Beads: hk-f39ny SPIKE (P1 GATE), hk-p7smp profile-gen, hk-rlxgx argv-wrap, hk-6596l config, hk-i0377 acceptance, hk-ryi34 attach (P2), hk-5zviv linux (P2). Artifacts: .kerf/works/pi-sandbox/ (repo-local authoritative here). Brief: plans/2026-07-02-pi-sandbox/HANDOFF.md."
+      "note": "PARKED 2026-07-02. Standing serial orphan-backlog drainer (~110 ready). Was briefly the fuel source for the Pi drain (now held). Un-park per operator alignment."
     },
     {
       "lane": "codex",
@@ -73,7 +70,7 @@
       "crew": null,
       "status": "parked",
       "gate": null,
-      "note": "PARKED (MVP done/live). Standing token-opt lane. Zero ready beads = parked-as-fact, not gated; resume when ready file-disjoint work appears."
+      "note": "PARKED (MVP done/live). Standing token-opt lane. Resume when ready file-disjoint work appears."
     }
   ]
 }

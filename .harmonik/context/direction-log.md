@@ -12,6 +12,25 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-07-02 ~03:05Z — operator (via admiral) · expires: 2026-07-06
+WHAT: Pi PROVEN end-to-end (hk-d5q5l ran on agent_type=pi, gpt-5.4-mini, committed+merged in 2min) — the
+      operator's 'test Pi' goal is DONE. Capability finding: gpt-5.4-mini commits trivial doc beads but
+      exits-without-committing on real Go code (below the ceiling for the scavenger drain). OPERATOR
+      DIRECTIVE: HOLD all Pi running until the SANDBOX is built; then push the DGX + test a couple local
+      models via the sandbox; model/provider choice deferred to then. Also: Pi auth is on OpenRouter
+      (sk-or- key), NOT the operator's OpenAI subscription (no openai key configured) — resolve at model-
+      setup time. NEW DIRECTION: SANDBOX is now THE priority (unlock for Pi+DGX). RETASK leto (clean
+      restart, fixes its keeper-missing+97%-ctx) from pilot -> pi-sandbox lane, queue sandbox-q, SPIKE
+      FIRST (hk-f39ny). pilot -> parked (proven). gurney stays reserved for operator's incoming real work
+      -> gb-mbp. CORRECTED (operator feedback): stop justifying model choice as 'off the Anthropic budget'
+      — money is money; metric = cost-per-landed-outcome + capability-fit, any vendor.
+WHY:  Pi works but weak/cheap models can't do real code — so the sandbox (which enables safe local-model
+      testing on the DGX) is the true unlock, and running Pi more now (on a too-weak model, low-pri drain)
+      just burns budget. Prove isolation first, then test capable models behind it.
+RETURN-PATH: captain parking Pi (after in-flight claude runs finish) + restarting leto onto the sandbox
+      spike hk-f39ny (report spike findings before proceeding). Resume by checking: sandbox spike GREEN
+      (sandboxed proc reaches local daemon + one API call, Go-CLI-TLS resolved)? then the srt build order.
+
 ## 2026-07-02 ~01:20Z — operator (via admiral) · expires: 2026-07-06
 WHAT: Fleet warm-up + re-alignment after a ~2-day quiet run; operator delegated crew-allocation authority
       then stepped away. Both CORE lanes reached DONE: remote-hardening (hk-gx0dl CLOSED, 98 gb-mbp jobs,

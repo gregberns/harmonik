@@ -1177,8 +1177,13 @@ func dispatchDotAgenticNode(
 		// from the prior iteration's reviewer, making ReadReviewVerdict return the old
 		// verdict instead of nil — bypassing errDotReviewerNoVerdict and the retry
 		// logic added by hk-bqf1q. Non-fatal: if the file doesn't exist, ignore.
-		_ = os.Remove(workspace.ReviewVerdictPath(wtPath))
-		rtErr := workspace.WriteReviewTarget(workspace.ReviewTargetPayload{
+		// On a remote run wtPath is the WORKER's path, so route both the stale-
+		// verdict removal and the review-target write through the runner; a box-A
+		// os.Remove / WriteReviewTarget would no-op / orphan on box A and the worker
+		// reviewer would never see its brief (produces no verdict). runner == nil for
+		// a local run, restoring the byte-identical box-A path (NFR7).
+		_ = workspace.RemoveReviewVerdictVia(ctx, runner, wtPath)
+		rtErr := workspace.WriteReviewTargetVia(ctx, runner, workspace.ReviewTargetPayload{
 			WorkspacePath: wtPath,
 			BeadID:        string(beadID),
 			Iteration:     iterationCount,

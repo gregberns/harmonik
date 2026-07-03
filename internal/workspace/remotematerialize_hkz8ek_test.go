@@ -321,6 +321,122 @@ func TestEnsureWorktreeTrustVia_RealPythonWritesTrust(t *testing.T) {
 	}
 }
 
+// TestWriteReviewTargetVia_Remote asserts the reviewer brief is routed THROUGH
+// the runner onto the worker-side worktree with content byte-identical to the
+// local builder (the DOT-mode remote reviewer defect: WriteReviewTarget wrote the
+// brief box-A-local, so the worker reviewer never saw it → no verdict).
+func TestWriteReviewTargetVia_Remote(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	rr := newNoOpRecorder()
+
+	payload := ReviewTargetPayload{
+		WorkspacePath: z8ekWorkerWt,
+		BeadID:        "hk-z8ek",
+		Iteration:     2,
+		BeadTitle:     "remote reviewer brief",
+		BeadBody:      "Review the SSH-aware review-target routing.",
+		BaseSHA:       "aaaaaaa",
+		HeadSHA:       "bbbbbbb",
+	}
+	if err := WriteReviewTargetVia(ctx, rr, payload); err != nil {
+		t.Fatalf("WriteReviewTargetVia (remote): %v", err)
+	}
+
+	if len(rr.Calls) != 1 {
+		t.Fatalf("expected exactly 1 runner call, got %d: %v", len(rr.Calls), rr.Calls)
+	}
+	content, dest := decodeRemoteWriteContent(t, rr.Calls[0])
+
+	wantDest := filepath.Join(z8ekWorkerWt, ".harmonik", "review-target.md")
+	if dest != wantDest {
+		t.Errorf("review-target dest = %q, want %q", dest, wantDest)
+	}
+	// Parity: byte-identical to the local builder output.
+	if content != buildReviewTargetContent(payload) {
+		t.Errorf("remote review-target content differs from local builder output")
+	}
+	for _, want := range []string{"Review target — bead hk-z8ek, iteration 2", "READ-ONLY reviewer"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("review-target.md missing %q:\n%s", want, content)
+		}
+	}
+}
+
+// TestWriteReviewTargetVia_LocalDelegates asserts that with a nil runner the
+// helper writes to box A's local filesystem (byte-identical to WriteReviewTarget)
+// and issues NO runner call.
+func TestWriteReviewTargetVia_LocalDelegates(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	wt := t.TempDir()
+
+	payload := ReviewTargetPayload{
+		WorkspacePath: wt,
+		BeadID:        "hk-z8ek",
+		Iteration:     1,
+		BeadTitle:     "local reviewer brief",
+		BeadBody:      "local body",
+	}
+	if err := WriteReviewTargetVia(ctx, nil, payload); err != nil {
+		t.Fatalf("WriteReviewTargetVia (local): %v", err)
+	}
+	got, err := os.ReadFile(ReviewTargetPath(wt))
+	if err != nil {
+		t.Fatalf("local review-target.md not written: %v", err)
+	}
+	if string(got) != buildReviewTargetContent(payload) {
+		t.Errorf("local review-target content differs from builder output")
+	}
+}
+
+// TestRemoveReviewVerdictVia_Remote asserts stale-verdict cleanup is routed as an
+// `rm -f` of the worker-side review.json THROUGH the runner (box-A os.Remove would
+// no-op on the worker, leaving a stale verdict for the reviewer's next iteration).
+func TestRemoveReviewVerdictVia_Remote(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	rr := newNoOpRecorder()
+
+	if err := RemoveReviewVerdictVia(ctx, rr, z8ekWorkerWt); err != nil {
+		t.Fatalf("RemoveReviewVerdictVia (remote): %v", err)
+	}
+	if len(rr.Calls) != 1 {
+		t.Fatalf("expected exactly 1 runner call, got %d: %v", len(rr.Calls), rr.Calls)
+	}
+	call := rr.Calls[0]
+	if call.Name != "sh" || len(call.Args) != 2 || call.Args[0] != "-lc" {
+		t.Fatalf("remove call = %s %v, want sh [-lc <script>]", call.Name, call.Args)
+	}
+	wantPath := ReviewVerdictPath(z8ekWorkerWt)
+	if !strings.Contains(call.Args[1], "rm -f") || !strings.Contains(call.Args[1], wantPath) {
+		t.Errorf("remove script = %q, want `rm -f` of %q", call.Args[1], wantPath)
+	}
+}
+
+// TestRemoveReviewVerdictVia_LocalDelegates asserts the nil-runner path uses
+// os.Remove on box A and issues NO runner call (tolerating a missing file).
+func TestRemoveReviewVerdictVia_LocalDelegates(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	wt := t.TempDir()
+
+	// Create a stale verdict, then remove it via the local path.
+	verdictPath := ReviewVerdictPath(wt)
+	if err := os.MkdirAll(filepath.Dir(verdictPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(verdictPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write stale verdict: %v", err)
+	}
+	if err := RemoveReviewVerdictVia(ctx, nil, wt); err != nil {
+		t.Fatalf("RemoveReviewVerdictVia (local): %v", err)
+	}
+	if _, err := os.Stat(verdictPath); !os.IsNotExist(err) {
+		t.Errorf("local review.json not removed: stat err = %v", err)
+	}
+}
+
 // TestVia_LocalDelegatesToLocalFS asserts that with a nil runner each *Via
 // helper writes to box A's local filesystem (NFR7 byte-identical path) and
 // issues NO runner call.

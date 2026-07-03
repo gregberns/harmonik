@@ -80,4 +80,15 @@ HANDOFF-*.md
 # Scratch/exploratory docs not intended for permanent tracking
 docs/qa-scratch/
 
+# Local AI-tool search indexes / caches — kept on disk for the tools that use
+# them, but regenerable and never committed (.ee = ee search index incl. binary
+# tantivy files; .cass = CASS cache; .codex = local codex rules/cache).
+.ee/
+.cass/
+.codex/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
 HANDOFF.md

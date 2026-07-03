@@ -214,43 +214,101 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 // ensureWorktreeTrustAt's contract: realpath-normalize the key, set
 // projects[key].hasTrustDialogAccepted = true, preserve all other content, write
 // atomically, and skip the rewrite when already trusted.
+//
+// # Cross-process lost-update safety (concurrent-slot race)
+//
+// Under max_slots>1 the daemon launches several remote runs at once and EACH
+// spawns this program against the SAME worker ~/.claude.json. The naive
+// read-modify-write below (read cfg, add only THIS run's worktree key,
+// os.replace) is a classic lost-update race: two copies both read the config
+// BEFORE either writes, each adds only its own key to its in-memory copy, and the
+// last os.replace CLOBBERS the other's key. The clobbered run's worktree is then
+// NOT trusted → Claude Code shows the folder-trust dialog → the launch hangs →
+// agent_ready never fires → the run stalls (and --dangerously-skip-permissions
+// does NOT suppress that trust dialog). A prior run PROVED this: 5 concurrent
+// unlocked writers → only 1 worktree survived trusted.
+//
+// The fix mirrors the LOCAL Go writer's contract (see
+// claudetrust_hkbfvby_test.go — sidecar lockfile, lock-free fast path, LOCK_EX
+// write path): the read-modify-write is made atomic across processes with an
+// fcntl.flock(LOCK_EX) held on a SIDECAR lockfile (~/.claude.json.lock) — NOT on
+// ~/.claude.json itself, because os.replace() swaps the inode out from under any
+// lock held on the config file, which is unsound. The exclusive lock is acquired
+// BEFORE the read and held through os.replace(), so each writer sees the previous
+// writer's committed keys and merges onto them; no update is lost.
+//
+// The already-trusted fast path stays cheap: it probes the config WITHOUT the
+// lock and exits 0 when the key is already trusted (mirroring the local writer's
+// mtime/quick-read fast path). Only a run that must WRITE takes the lock; and
+// because a concurrent writer may have trusted this same key between the probe
+// and the lock acquisition, the program RE-READS the config under the lock and
+// re-checks the fast-path condition before writing.
 const workerTrustUpsertProgram = `
-import json, os, sys, tempfile
+import fcntl, json, os, sys, tempfile
 arg = sys.argv[1]
 if len(arg) >= 2 and arg[0] == "'" and arg[-1] == "'":
     arg = arg[1:-1]
 wt = os.path.realpath(arg)
 cfg_path = os.path.join(os.path.expanduser("~"), ".claude.json")
-cfg = {}
-try:
-    with open(cfg_path) as f:
-        cfg = json.load(f)
-except FileNotFoundError:
-    cfg = {}
-if not isinstance(cfg, dict):
-    cfg = {}
-projects = cfg.get("projects")
-if not isinstance(projects, dict):
-    projects = {}
-    cfg["projects"] = projects
-entry = projects.get(wt)
-if not isinstance(entry, dict):
-    entry = {}
-    projects[wt] = entry
-if entry.get("hasTrustDialogAccepted") is True:
-    sys.exit(0)
-entry["hasTrustDialogAccepted"] = True
-d = os.path.dirname(cfg_path) or "."
-fd, tmp = tempfile.mkstemp(dir=d, prefix=".claude.json.tmp-")
-try:
-    with os.fdopen(fd, "w") as f:
-        json.dump(cfg, f, indent=2)
-        f.write("\n")
-    os.replace(tmp, cfg_path)
-except BaseException:
+lock_path = cfg_path + ".lock"
+
+def load_cfg():
     try:
-        os.unlink(tmp)
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except ValueError:
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+def is_trusted(cfg):
+    projects = cfg.get("projects")
+    if not isinstance(projects, dict):
+        return False
+    entry = projects.get(wt)
+    return isinstance(entry, dict) and entry.get("hasTrustDialogAccepted") is True
+
+# Fast path: probe WITHOUT the lock; a no-op when already trusted.
+if is_trusted(load_cfg()):
+    sys.exit(0)
+
+# Write path: hold LOCK_EX on the sidecar lockfile across the whole
+# read-modify-write so concurrent writers never lose each other's keys.
+lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+try:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    # Re-read UNDER the lock: another writer may have trusted this key (or added
+    # other keys) between the lock-free probe and acquiring the lock.
+    cfg = load_cfg()
+    if is_trusted(cfg):
+        sys.exit(0)
+    projects = cfg.get("projects")
+    if not isinstance(projects, dict):
+        projects = {}
+        cfg["projects"] = projects
+    entry = projects.get(wt)
+    if not isinstance(entry, dict):
+        entry = {}
+        projects[wt] = entry
+    entry["hasTrustDialogAccepted"] = True
+    d = os.path.dirname(cfg_path) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".claude.json.tmp-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, cfg_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+finally:
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
     except OSError:
         pass
-    raise
+    os.close(lock_fd)
 `

@@ -90,6 +90,9 @@ package daemon
 //	    default_warn_text: ""          # warn injection text for non-captain agents; empty = compiled default
 //	    actionable_warn_text: ""       # actionable self-service restart-handshake advisory override; empty = compiled default (hk-9kgf, hk-vs4u)
 //	    on_demand_warn_text: ""        # DEPRECATED alias of actionable_warn_text (kept RECOGNIZED so old strict configs don't hard-error); mapped with a log warning (hk-vs4u)
+//	opsmonitor:                        # hk-bi4bg: ops-monitor schedule overrides; absent = compiled defaults
+//	  interval: 5m                     # Go duration STRING; empty/absent = "5m"
+//	  script_path: scripts/ops-monitor-check.sh  # path passed to bash; empty/absent = default
 //	supervise:                         # all duration fields are Go duration STRINGS; empty = compiled default
 //	  heartbeat_ttl: 90s
 //	  start_timeout: 30s
@@ -123,7 +126,7 @@ package daemon
 // specs/process-lifecycle.md §4.1 PL-004a — review floor (never single from config).
 // specs/process-lifecycle.md §4.1 PL-004b — flag > config > default precedence chain.
 //
-// Beads: hk-bfvk7, hk-rcp7, hk-lhu2, hk-exg3, hk-9kgf.
+// Beads: hk-bfvk7, hk-rcp7, hk-lhu2, hk-exg3, hk-9kgf, hk-bi4bg.
 
 import (
 	"bytes"
@@ -741,6 +744,29 @@ type HarnessesConfig struct {
 	Pi PiHarnessConfig
 }
 
+// rawOpsmonitorConfig is the opsmonitor: block in config.yaml (hk-bi4bg).
+// Unknown keys at this level are silently ignored (forward-compat, matches daemon: block behaviour).
+// Absent fields resolve to the compiled defaults in ensureOpsMonitorSchedule.
+type rawOpsmonitorConfig struct {
+	Interval   string `yaml:"interval"`    // Go duration string; empty = default "5m"
+	ScriptPath string `yaml:"script_path"` // script path; empty = default "scripts/ops-monitor-check.sh"
+}
+
+// OpsmonitorConfig holds the opsmonitor schedule overrides read from the
+// opsmonitor: block in .harmonik/config.yaml. Zero values mean "not configured";
+// callers apply the compiled defaults ("5m" interval, "scripts/ops-monitor-check.sh" path).
+//
+// Bead ref: hk-bi4bg.
+type OpsmonitorConfig struct {
+	// Interval is the Go duration string for the ops-monitor schedule tick.
+	// Empty = not configured → callers use the "5m" default.
+	Interval string
+	// ScriptPath is the path to the ops-monitor check script (passed as the
+	// second argument to bash). Empty = not configured → callers use
+	// "scripts/ops-monitor-check.sh".
+	ScriptPath string
+}
+
 // rawWatchdogConfig is the watchdog: block in config.yaml (hk-sbitr).
 // Unknown keys at this level are silently ignored (forward-compat, matches daemon: block behaviour).
 // Enabled is a *bool so that nil (absent) resolves to the default (true) while an explicit
@@ -860,10 +886,11 @@ type WatchConfig struct {
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
-	Daemon        rawDaemonConfig           `yaml:"daemon"`   // hk-rcp7: PL-004b daemon: block
-	Keeper        rawKeeperConfig           `yaml:"keeper"`   // hk-lhu2: keeper config block
-	Watchdog      rawWatchdogConfig         `yaml:"watchdog"` // hk-sbitr: ctx-watchdog schedule gate
-	Watch         rawWatchConfig            `yaml:"watch"`    // hk-we7: watch routing targets
+	Daemon        rawDaemonConfig           `yaml:"daemon"`       // hk-rcp7: PL-004b daemon: block
+	Keeper        rawKeeperConfig           `yaml:"keeper"`       // hk-lhu2: keeper config block
+	Watchdog      rawWatchdogConfig         `yaml:"watchdog"`     // hk-sbitr: ctx-watchdog schedule gate
+	Watch         rawWatchConfig            `yaml:"watch"`        // hk-we7: watch routing targets
+	Opsmonitor    rawOpsmonitorConfig       `yaml:"opsmonitor"`   // hk-bi4bg: ops-monitor schedule overrides
 	Supervise     rawSuperviseConfig        `yaml:"supervise"`
 	Harnesses     rawHarnessesConfig        `yaml:"harnesses"` // hk-v7q5u: per-harness config (PI-050)
 }
@@ -916,6 +943,11 @@ type ProjectConfig struct {
 	// When the block is absent, both target fields are empty strings (callers
 	// default to "captain"). Bead ref: hk-we7-sender-redirect-clhh8.
 	Watch WatchConfig
+
+	// Opsmonitor holds the ops-monitor schedule overrides read from the
+	// opsmonitor: block. Zero value when the block is absent; callers apply
+	// compiled defaults ("5m", "scripts/ops-monitor-check.sh"). Bead ref: hk-bi4bg.
+	Opsmonitor OpsmonitorConfig
 
 	// Harnesses holds the per-harness config read from the harnesses: block.
 	// Zero value when the block is absent. Bead ref: hk-v7q5u (PI-050).
@@ -981,13 +1013,14 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		raw.Daemon.RestartBackoff.Window == ""
 	watchdogAbsent := raw.Watchdog.Enabled == nil
 	watchBlockAbsent := raw.Watch.StatusTarget == "" && raw.Watch.OpsmonitorTarget == ""
+	opsmonitorAbsent := raw.Opsmonitor.Interval == "" && raw.Opsmonitor.ScriptPath == ""
 	superviseAbsent := superviseBlockAbsent(raw.Supervise)
 	harnessesAbsent := raw.Harnesses.Pi.Provider == "" && raw.Harnesses.Pi.Model == "" &&
 		raw.Harnesses.Pi.APIKeyEnv == "" &&
 		raw.Harnesses.Pi.Fallback == (rawHarnessesPiFallbackConfig{})
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
 		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent && watchBlockAbsent &&
-		superviseAbsent && harnessesAbsent {
+		opsmonitorAbsent && superviseAbsent && harnessesAbsent {
 		return ProjectConfig{}, nil
 	}
 
@@ -1025,6 +1058,10 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	// (callers default to "captain").
 	watchCfg := parseWatchBlock(raw.Watch)
 
+	// hk-bi4bg: parse the opsmonitor: block. Both fields are optional; absent =
+	// empty string → callers apply the compiled defaults.
+	opsmonitorCfg := parseOpsmonitorBlock(raw.Opsmonitor)
+
 	superviseCfg, err := parseSuperviseBlock(path, raw.Supervise)
 	if err != nil {
 		return ProjectConfig{}, err
@@ -1035,13 +1072,14 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	harnessesCfg := parseHarnessesBlock(raw.Harnesses)
 
 	cfg := ProjectConfig{
-		entries:   make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
-		Daemon:    daemonCfg,
-		Keeper:    keeperCfg,
-		Watchdog:  watchdogCfg,
-		Supervise: superviseCfg,
-		Watch:     watchCfg,
-		Harnesses: harnessesCfg,
+		entries:    make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
+		Daemon:     daemonCfg,
+		Keeper:     keeperCfg,
+		Watchdog:   watchdogCfg,
+		Supervise:  superviseCfg,
+		Watch:      watchCfg,
+		Opsmonitor: opsmonitorCfg,
+		Harnesses:  harnessesCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
@@ -1514,6 +1552,19 @@ func parseWatchBlock(raw rawWatchConfig) WatchConfig {
 		LivenessInterval:        raw.LivenessInterval,
 		DigestInterval:          raw.DigestInterval,
 		StaffingStarvationGrace: raw.StaffingStarvationGrace,
+	}
+}
+
+// parseOpsmonitorBlock converts a rawOpsmonitorConfig into an OpsmonitorConfig.
+// Both fields are optional; empty strings mean "not configured" and callers
+// apply the compiled defaults in ensureOpsMonitorSchedule ("5m" interval,
+// "scripts/ops-monitor-check.sh" script path).
+//
+// Bead ref: hk-bi4bg.
+func parseOpsmonitorBlock(raw rawOpsmonitorConfig) OpsmonitorConfig {
+	return OpsmonitorConfig{
+		Interval:   raw.Interval,
+		ScriptPath: raw.ScriptPath,
 	}
 }
 

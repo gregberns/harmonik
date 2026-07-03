@@ -1954,7 +1954,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		if loadErr := scheduleStore.Load(); loadErr != nil {
 			return fmt.Errorf("daemon.Start: load schedule store: %w", loadErr)
 		}
-		ensureOpsMonitorSchedule(scheduleStore)
+		ensureOpsMonitorSchedule(scheduleStore, cfg.ProjectCfg.Opsmonitor)
 		ensureCtxWatchdogSchedule(scheduleStore, cfg.ProjectCfg.Watchdog.Enabled)
 		ensureWatchLivenessSchedule(scheduleStore, cfg.ProjectCfg.Watch, deps.daemonBinaryPath)
 		deps.scheduleStore = scheduleStore

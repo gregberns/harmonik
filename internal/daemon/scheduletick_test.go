@@ -435,7 +435,7 @@ func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 		t.Fatal("ops-monitor job unexpectedly present before ensure call")
 	}
 
-	ensureOpsMonitorSchedule(store)
+	ensureOpsMonitorSchedule(store, OpsmonitorConfig{})
 
 	j, ok := store.Get(opsMonitorJobID)
 	if !ok {
@@ -452,7 +452,7 @@ func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 	}
 
 	// Second call is a no-op (idempotent).
-	ensureOpsMonitorSchedule(store)
+	ensureOpsMonitorSchedule(store, OpsmonitorConfig{})
 	_ = deps // satisfy unused import
 }
 

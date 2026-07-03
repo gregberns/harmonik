@@ -28,17 +28,29 @@ import (
 // opsMonitorJobID is the stable id for the ops-monitor scheduled job.
 const opsMonitorJobID = "ops-monitor"
 
+const opsMonitorDefaultInterval = "5m"
+const opsMonitorDefaultScript = "scripts/ops-monitor-check.sh"
+
 // opsMonitorJob returns the canonical ops-monitor scheduled job definition.
-func opsMonitorJob() schedule.ScheduledJob {
+// cfg fields are optional: empty strings resolve to the compiled defaults.
+func opsMonitorJob(cfg OpsmonitorConfig) schedule.ScheduledJob {
+	interval := cfg.Interval
+	if interval == "" {
+		interval = opsMonitorDefaultInterval
+	}
+	scriptPath := cfg.ScriptPath
+	if scriptPath == "" {
+		scriptPath = opsMonitorDefaultScript
+	}
 	return schedule.ScheduledJob{
 		ID: opsMonitorJobID,
 		Schedule: schedule.Schedule{
 			Kind:     schedule.ScheduleKindEvery,
-			Interval: "5m",
+			Interval: interval,
 		},
 		Action: schedule.Action{
 			Kind: schedule.ActionKindCommand,
-			Argv: []string{"bash", "scripts/ops-monitor-check.sh"},
+			Argv: []string{"bash", scriptPath},
 		},
 		Enabled:       true,
 		OverlapPolicy: schedule.OverlapPolicySkip,
@@ -48,13 +60,15 @@ func opsMonitorJob() schedule.ScheduledJob {
 
 // ensureOpsMonitorSchedule registers the ops-monitor watchdog in store if it is
 // not already present. It is idempotent: a second call (or a second daemon boot)
-// with an existing entry is a no-op. Errors are logged to stderr and do not abort
-// daemon startup — a missing ops-monitor schedule is an ops concern, not a fatal.
-func ensureOpsMonitorSchedule(store *schedule.Store) {
+// with an existing entry is a no-op. cfg fields are optional: empty strings
+// resolve to the compiled defaults ("5m", "scripts/ops-monitor-check.sh").
+// Errors are logged to stderr and do not abort daemon startup — a missing
+// ops-monitor schedule is an ops concern, not a fatal.
+func ensureOpsMonitorSchedule(store *schedule.Store, cfg OpsmonitorConfig) {
 	if _, ok := store.Get(opsMonitorJobID); ok {
 		return
 	}
-	if err := store.Add(opsMonitorJob()); err != nil {
+	if err := store.Add(opsMonitorJob(cfg)); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: ops-monitor: register schedule: %v\n", err)
 	}
 }

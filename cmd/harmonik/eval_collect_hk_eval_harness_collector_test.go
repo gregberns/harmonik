@@ -86,10 +86,15 @@ func TestEvalReadEvents_GradePass(t *testing.T) {
 			"commit_landed":    true,
 			"duration_seconds": 191.2,
 		}),
+		evalEventLine("node_dispatch_requested", runID, map[string]any{
+			"run_id":       runID,
+			"node_id":      "grade",
+			"requested_at": "2026-07-02T22:02:00Z",
+		}),
 		evalEventLine("outcome_emitted", runID, map[string]any{
 			"run_id":         runID,
 			"session_id":     "00000000-0000-0000-0000-000000000002",
-			"node_id":        "grade",
+			"node_id":        "judge",
 			"outcome_status": "SUCCESS",
 		}),
 		evalEventLine("checkpoint_written", runID, map[string]any{
@@ -119,11 +124,11 @@ func TestEvalReadEvents_GradePass(t *testing.T) {
 	if st.harness != "pi" {
 		t.Errorf("harness = %q, want pi", st.harness)
 	}
-	if st.gradePass == nil {
-		t.Fatal("gradePass is nil, want non-nil")
+	if !st.gradeDispatched {
+		t.Fatal("gradeDispatched = false, want true")
 	}
-	if !*st.gradePass {
-		t.Error("gradePass = false, want true")
+	if !st.judgeOutcome {
+		t.Error("judgeOutcome = false, want true (grade passed)")
 	}
 	if st.implSecs != 191.2 {
 		t.Errorf("implSecs = %f, want 191.2", st.implSecs)
@@ -150,12 +155,13 @@ func TestEvalReadEvents_GradeFail(t *testing.T) {
 			"bead_id":    "hk-def",
 			"started_at": "2026-07-02T22:00:00Z",
 		}),
-		evalEventLine("outcome_emitted", runID, map[string]any{
-			"run_id":         runID,
-			"session_id":     "00000000-0000-0000-0000-000000000006",
-			"node_id":        "grade",
-			"outcome_status": "FAIL",
+		// Grade was dispatched (non-agentic shell node — no outcome_emitted).
+		evalEventLine("node_dispatch_requested", runID, map[string]any{
+			"run_id":       runID,
+			"node_id":      "grade",
+			"requested_at": "2026-07-02T22:01:00Z",
 		}),
+		// Grade failed → DOT topology routes to record-fail, never reaches judge.
 	})
 
 	states, err := evalReadEvents(evPath, "")
@@ -166,16 +172,16 @@ func TestEvalReadEvents_GradeFail(t *testing.T) {
 	if st == nil {
 		t.Fatal("run not in states")
 	}
-	if st.gradePass == nil {
-		t.Fatal("gradePass is nil, want non-nil")
+	if !st.gradeDispatched {
+		t.Fatal("gradeDispatched = false, want true")
 	}
-	if *st.gradePass {
-		t.Error("gradePass = true, want false for FAIL grade")
+	if st.judgeOutcome {
+		t.Error("judgeOutcome = true, want false for failed grade (judge never ran)")
 	}
 }
 
-// TestEvalReadEvents_NonEvalRun verifies non-eval runs (no grade node) get
-// gradePass=nil and are skipped during output.
+// TestEvalReadEvents_NonEvalRun verifies non-eval runs (no grade node dispatch) get
+// gradeDispatched=false and are skipped during output.
 func TestEvalReadEvents_NonEvalRun(t *testing.T) {
 	dir := t.TempDir()
 	evPath := filepath.Join(dir, "events.jsonl")
@@ -202,8 +208,8 @@ func TestEvalReadEvents_NonEvalRun(t *testing.T) {
 	if st == nil {
 		t.Fatal("run not in states")
 	}
-	if st.gradePass != nil {
-		t.Errorf("gradePass = %v, want nil for non-eval run", *st.gradePass)
+	if st.gradeDispatched {
+		t.Error("gradeDispatched = true, want false for non-eval run (no grade node)")
 	}
 }
 
@@ -250,16 +256,16 @@ func TestEvalLabelValue(t *testing.T) {
 
 // TestEvalBuildRecord_WallTime verifies wall_time_s calculation.
 func TestEvalBuildRecord_WallTime(t *testing.T) {
-	pass := true
 	st := &evalRunState{
-		beadID:    "hk-test",
-		startedAt: "2026-07-02T22:00:00Z",
-		endedAt:   "2026-07-02T22:03:34Z", // 214 seconds
-		harness:   "claude-code",
-		implSecs:  191.2,
-		gradePass: &pass,
-		commitSHA: "abc123",
-		completedWall: time.Date(2026, 7, 2, 22, 3, 34, 0, time.UTC),
+		beadID:          "hk-test",
+		startedAt:       "2026-07-02T22:00:00Z",
+		endedAt:         "2026-07-02T22:03:34Z", // 214 seconds
+		harness:         "claude-code",
+		implSecs:        191.2,
+		gradeDispatched: true,
+		judgeOutcome:    true,
+		commitSHA:       "abc123",
+		completedWall:   time.Date(2026, 7, 2, 22, 3, 34, 0, time.UTC),
 	}
 	// Use empty projectDir so br show fails gracefully.
 	rec, err := evalBuildRecord("run-id-1", st, t.TempDir(), "")
@@ -347,10 +353,15 @@ func TestRunEvalCollect_EndToEnd(t *testing.T) {
 			"commit_landed":    true,
 			"duration_seconds": 100.0,
 		}),
+		evalEventLine("node_dispatch_requested", runID, map[string]any{
+			"run_id":       runID,
+			"node_id":      "grade",
+			"requested_at": "2026-07-02T22:01:30Z",
+		}),
 		evalEventLine("outcome_emitted", runID, map[string]any{
 			"run_id":         runID,
 			"session_id":     "00000000-0000-0000-0000-000000000011",
-			"node_id":        "grade",
+			"node_id":        "judge",
 			"outcome_status": "SUCCESS",
 		}),
 		evalEventLineAt("run_completed", runID, "2026-07-02T22:02:00Z", map[string]any{

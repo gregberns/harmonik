@@ -6,9 +6,11 @@ package main
 // groups by run_id, and for each eval run emits one flat JSON record
 // (DESIGN.md §1.3 schema) to .harmonik/eval-results.jsonl.
 //
-// An eval run is identified by the presence of an outcome_emitted event
-// for the "grade" node. All timing and harness data come from the event
-// log; bead labels (task_id, difficulty, check_kind) come from `br show`.
+// An eval run is identified by the presence of a node_dispatch_requested
+// event for the "grade" node (dot_cascade.go emits this for ALL node types,
+// including non-agentic shell nodes). Grade pass/fail is inferred from
+// whether outcome_emitted for the "judge" node appears — judge only executes
+// when grade succeeds per the eval DOT topology.
 //
 // Read-only over the log, off the daemon hot path, deterministic.
 // Bead: hk-eval-harness-collector-uavgd (EH1).
@@ -58,8 +60,10 @@ DESCRIPTION
   (a run that passed through a "grade" node) emits one flat JSON record to
   the output file. Appends to the output file (existing records are preserved).
 
-  Eval runs are identified by the presence of an outcome_emitted event for
-  the "grade" node. Bead labels (task_id, difficulty, check_kind) are fetched
+  Eval runs are identified by the presence of a node_dispatch_requested event
+  for the "grade" node. Grade pass/fail is inferred from whether an
+  outcome_emitted event for the "judge" node appears (judge only runs when
+  grade succeeds). Bead labels (task_id, difficulty, check_kind) are fetched
   via "br show". The Pi model name is read from .harmonik/config.yaml.
 
 OUTPUT SCHEMA
@@ -84,14 +88,15 @@ type evalEnvelope struct {
 
 // evalRunState accumulates events for one run_id.
 type evalRunState struct {
-	beadID         string
-	startedAt      string  // from run_started payload
-	endedAt        string  // from run_completed or run_failed payload
-	completedWall  time.Time
-	harness        string  // from harness_selected.agent_type
-	implSecs       float64 // from implementer_phase_complete.duration_seconds
-	gradePass      *bool   // outcome_emitted where node_id=="grade"; nil = not seen
-	commitSHA      string  // last checkpoint_written.commit_hash
+	beadID          string
+	startedAt       string    // from run_started payload
+	endedAt         string    // from run_completed or run_failed payload
+	completedWall   time.Time
+	harness         string    // from harness_selected.agent_type
+	implSecs        float64   // from implementer_phase_complete.duration_seconds
+	gradeDispatched bool      // node_dispatch_requested where node_id=="grade" → eval run
+	judgeOutcome    bool      // outcome_emitted where node_id=="judge" → grade passed
+	commitSHA       string    // last checkpoint_written.commit_hash
 }
 
 // evalResultRecord is the output schema (DESIGN.md §1.3).
@@ -168,7 +173,7 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 
 	written := 0
 	for runID, st := range states {
-		if st.gradePass == nil {
+		if !st.gradeDispatched {
 			continue // not an eval run
 		}
 		rec, err := evalBuildRecord(runID, st, absProject, piModel)
@@ -273,14 +278,23 @@ func evalReadEvents(path, filterRunID string) (map[string]*evalRunState, error) 
 				st.implSecs = p.DurationSeconds
 			}
 
-		case "outcome_emitted":
+		case "node_dispatch_requested":
 			var p struct {
-				NodeID        string `json:"node_id"`
-				OutcomeStatus string `json:"outcome_status"`
+				NodeID string `json:"node_id"`
 			}
 			if err := json.Unmarshal(env.Payload, &p); err == nil && p.NodeID == "grade" {
-				pass := p.OutcomeStatus == "SUCCESS"
-				st.gradePass = &pass
+				st.gradeDispatched = true
+			}
+
+		case "outcome_emitted":
+			// Judge is an agentic node — it emits outcome_emitted.
+			// Judge only executes when grade succeeds (DOT topology), so
+			// its outcome_emitted is the grade-pass signal.
+			var p struct {
+				NodeID string `json:"node_id"`
+			}
+			if err := json.Unmarshal(env.Payload, &p); err == nil && p.NodeID == "judge" {
+				st.judgeOutcome = true
 			}
 
 		case "checkpoint_written":
@@ -308,9 +322,7 @@ func evalBuildRecord(runID string, st *evalRunState, projectDir, piModel string)
 		CommitSHA:     st.commitSHA,
 	}
 
-	if st.gradePass != nil {
-		rec.Pass = *st.gradePass
-	}
+	rec.Pass = st.judgeOutcome
 
 	// wall_time_s from run_started.started_at and run_completed.ended_at.
 	if st.startedAt != "" && st.endedAt != "" {

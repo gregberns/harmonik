@@ -1,124 +1,72 @@
 ---
 schema_version: 1
 crew_name: leto
-queue: leto-q
-epic_id: hk-94c3t
+queue: pi-q
+epic_id: hk-nxjwo
 captain_name: captain
 model: sonnet
 ---
 
-> ⚠️ ACTIVE MISSION = **Pi+OpenRouter per-bead harness Phase-0 BUILD** (epic `hk-94c3t`,
-> queue `leto-q`). Re-tasked 2026-06-30. The authoritative current state — in-flight bead,
-> next-action sequence, progress — is the **## Current State** block at the BOTTOM of this
-> file. The codex-tier concurrency-pilot body BELOW is HISTORICAL (the prior mission,
-> kept for recipe reference only); ignore its queue/epic/seed-batch on re-hydration.
+# Crew mission — leto — PI LIVE-TESTING (operator-greenlit via admiral 2026-07-03)
 
-# Crew mission — leto (codex-tier concurrency pilot) — HISTORICAL, see banner above
-
-> RE-TASKED 2026-06-25 from the codex SOAK lane (hk-0639, complete) to the
-> codex-tier CONCURRENCY PILOT (hk-8dtyk). admiral-greenlit; operator directive =
-> keep the daemon's 4 slots utilized. The soak PROVED codex e2e; this lane USES it
-> to fill idle slots with real production beads + offload Opus/Sonnet implements.
-
-## goal
-
-Drain FILE-DISJOINT clean beads through the proven codex recipe to keep daemon
-slots hot, without colliding with gurney's active remote-worker lane.
+> RE-TASKED 2026-07-03 from the Pi Phase-0 BUILD (hk-94c3t, DONE — all 9 beads landed;
+> the ~-expansion auth fix hk-sv3vg also landed, commit 37a4df93 on main) to PI
+> LIVE-TESTING. Prove the Pi harness runs live on a GPT model end-to-end, then route
+> mechanical scavenger beads through it. Your LIVE mission is also the captain comms
+> thread (topic=assign) — trust that if this file and comms ever disagree.
 
 ## On boot
 1. `harmonik comms join` + confirm identity = leto.
-2. `br update hk-8dtyk --assignee leto` (mirror for attribution — load-bearing).
+2. `br update hk-nxjwo --assignee leto` (mirror for attribution — load-bearing).
 3. Post a boot status to captain (`--topic status`) + a journal comment.
 4. Arm `harmonik comms recv --agent leto --follow --json` (dedupe on event_id).
-5. Re-arm a Monitor: `harmonik subscribe --types run_completed,run_failed,run_stale --json | grep -v heartbeat`.
 
-## THE PROVEN RECIPE (use ONLY this — load-bearing; full detail in `.harmonik/crew/HANDOFF-leto.md`)
-Select codex via **tier-3 DOT NODE attr, NOT a tier-1 bead label** (the label forces
-the reviewer to codex too → no verdict → review fails; that was hk-slvko).
-- Graph (durable): `.harmonik/crew/codex-soak-recipe.dot` = standard-bead.dot with the
-  implement node carrying `harness="codex"` + `reviewer_harness="claude-code"`. Reuse as-is.
-- **Billing guard BEFORE dispatch** (must pass; report it): `codex login status` ==
-  "Logged in using ChatGPT"; `~/.codex/config.toml` forced_login_method==chatgpt;
-  `~/.codex/auth.json` OPENAI_API_KEY null; env has no OPENAI_API_KEY/CODEX_API_KEY.
-- Submit JSON (queue `leto-codex`) with workflow_mode=dot + workflow_ref=<ABS path to
-  codex-soak-recipe.dot> per item. `harmonik queue resume leto-codex` first if it
-  paused-by-failure.
+## goal — SEQUENCED (do in order)
 
-## Dispatch scope = SEED BATCH (3 beads, ALL FILE-DISJOINT → run CONCURRENTLY)
+1. **hk-sv3vg has LANDED** (37a4df93 on main — daemon expands ~ in api_key_file at
+   config parse). That fix IS the durable auth path. leto-q is drained.
 
-Unlike the soak (which ran serial to test shapes one at a time), this lane WANTS
-concurrency — these 3 are file-disjoint from gurney AND each other, so submit them
-as ONE stream group (`kind:"stream"`, 3 items) so the daemon dispatches all 3
-CONCURRENTLY to fill the idle slots:
+2. **REDEPLOY the daemon** to 37a4df93 (runbook `docs/daemon-redeploy.md`; fleet idle =
+   ideal window). You own daemon ops + supervisor-env coordination + are authorized to
+   restart.
+   - **AUTH — prefer the FILE-KEY path** (daemon reads api_key_file
+     `~/.config/harmonik/openrouter.key`, ~ now expands). SUPERIOR to env-var because it
+     **survives supervisor revives**. Only if the PI-040 guard still checks env
+     EXCLUSIVELY, fall back to exporting `OPENROUTER_API_KEY` in BOTH the daemon launch
+     AND the supervisor's revive command (else the next auto-revive drops it).
+   - DO NOT read the key contents.
 
-1. **hk-x6j6r** (P3) — move RedactionRegistry + DeadLetterSink from handlercontract
-   to core (fix eventbus layering). Touches `internal/core/eventtype.go` +
-   `internal/handler/handler.go`. LEAD (P3, low-stakes).
-2. **hk-dyqy** (P3) — swap captain-launch.sh examples → native launcher syntax in
-   `specs/process-lifecycle.md`. Docs-only (proven codex md shape).
-3. **hk-gx46b** (P2) — add `harmonik supervise ps` command (print process signatures
-   + tmux sessions). Touches `cmd/harmonik/supervise_cmd.go` + tests. Low blast radius.
+3. **Set model:** `.harmonik/config.yaml` `harnesses.pi.model` -> `openai/gpt-5.4-mini`
+   (admiral correction — gpt-4o is STALE; gpt-5.4-mini is the current OpenRouter OpenAI
+   mini, released 2026-03, tuned for high-throughput coding+tool-use). Use gpt-5.4-mini
+   for the canary AND the scavenger load. Provider stays openrouter.
 
-Report whether 3 CONCURRENT codex runs work cleanly (pilot signal — the soak never
-ran codex concurrently; watch for billing-guard races / codex-login contention).
+4. **Canary:** submit `hk-nxjwo` to a DEDICATED `pi-q` (PI-070 needs an explicit
+   per-queue cap). Verify it reaches `dot:close` authenticating via GPT.
 
-## HARD DISJOINT GUARD (load-bearing — keeps the lane collision-free)
-gurney owns the remote-worker lane: do **NOT** dispatch any bead touching
-`internal/daemon/` (esp. scenariogate, workloop, worker selection), `internal/workers/`,
-or anything remote/SSH/gate-base/worker-pool. If a candidate's scope reaches those
-files, SKIP it and pick another. Also keep seed beads disjoint from EACH OTHER.
+5. **ONCE GREEN:** route a batch of mechanical scavenger beads (grep=0 /
+   failing-test->green, deterministically checkable — the ~110 banked scavenger beads are
+   the FUEL) through `pi-q` on gpt-5.4-mini, behind the DOT test+review gate. Keep them
+   file-disjoint from any other active lane.
 
-## queue
-Use your OWN named queue `leto-codex` for every submit. NEVER `main`, NEVER gurney-q.
+## Not a gate
+- fork-bomb blocker hk-9s5fx: PRIMARY FIX DONE (353fc3c1 — dead `.pi/extensions/flywheel`
+  deleted+pushed; worktrees no longer inherit it). Optional `pi -ne` hardening remains,
+  NOT a gate.
 
-## review + test discipline
-EVERY codex run goes through the DOT review gate via the recipe (harness=codex
-implement + claude-code reviewer). Do NOT override to single/no-review. Reviewed AND
-tested before it counts landed. Verify per run (events.jsonl): harness_selected
-implement=codex tier=3 AND review=claude-code tier=3 → reviewer_verdict APPROVE;
-merged commit carries `Refs:<BEAD>`; bead closed; billing clean.
-
-## failure handling (escalate, do not self-classify)
-On ANY run_failed / run_stale past launch+30min / unexpected wedge / billing-guard
-fail → post to captain (`--topic status` or `--topic error`) and HOLD. Captain owns
-failure triage. (Sonnet rule: escalate, don't self-classify.)
-
-## When the seed batch drains — STANDING LANE
-This is a STANDING lane: when the 3 seed beads land, pull the NEXT file-disjoint
-clean P3/P2 beads (`br ready --limit 0`; EXCLUDE crew:* / hold:* / daemon-core /
-remote / kerf-tool beads) and keep slots full via the same recipe. Post a status
-when you re-fill. Do NOT self-terminate; idle on comms inbox if no disjoint work.
-
-## progress feed (mandatory)
-Post `--topic status` to captain AND a `br comment` on each bead close, plus a timer
-tick (≤10 min while dispatching, ≤15 min idle/draining) and boot/drain bookends.
-
-## What you MUST NOT do
-- Do NOT `br close` any bead — the daemon closes beads when work merges.
-- Do NOT submit to `main` or gurney-q. Use `--queue leto-codex`.
-- Do NOT use the tier-1 `harness:codex` bead label (breaks the reviewer). Node-attr ONLY.
-- Do NOT touch gurney's remote-worker files (HARD DISJOINT GUARD above).
+## Do NOT
+- Do NOT build hk-z13jz (base_url passthrough for local OpenAI endpoints / DGX-Spark)
+  yet — operator sending sandbox details soon.
+- Do NOT `br close` any bead — the daemon closes on merge.
 - Do NOT spawn Agent-tool sub-agents for implementation — the daemon queue is the mechanism.
 
+## progress feed (mandatory)
+Post `--topic status` to captain on: daemon redeployed, canary submitted, canary
+GREEN/RED. Plus a ≤15-min idle tick. **Report to captain when the canary is GREEN.**
+
 ## translations
-hk-8dtyk = "codex-tier concurrency pilot epic" · leto-codex = "your codex queue" ·
-codex-soak-recipe.dot = "the proven tier-3 node-attr codex workflow" · gurney =
-"remote-worker crew (do not collide)" · hk-0639 = "the completed codex soak (history)".
-
----
-
-## Current State (Pi harness re-task — 2026-06-30)
-
-> NOTE: Front-matter NOW corrected to the Pi-harness lane (queue leto-q, epic hk-94c3t)
-> and committed by captain 2026-06-30. These overrides remain the authoritative detail
-> for re-hydration (in-flight bead, next-action sequence, progress).
-
-actual_queue: leto-q
-actual_queue_id: 019f19fa-7e1e-7d90-9b8c-988c40c352fc
-actual_epic: hk-94c3t
-in_flight: [hk-l1bkp]
-monitor: armed (bkxoqbncy)
-next_action: on B6 (hk-l1bkp) close → submit B7 (hk-ro1dr adapter_pi.go PI-010/060/071) to leto-q; then B8 (hk-o0hpm) on B7 close; then B9 (hk-ypxwl) on B8 close
-blockers: none — B6 in-flight at ~63m, running clean
-progress: 5/9 Pi beads done (B1-B5 CLOSED); B4 closed 18:28Z; B5 closed via worktree salvage (cherry-pick be2fbba5)
-translations: hk-94c3t = "Pi+OpenRouter harness Phase-0 epic" · hk-l1bkp = "B6 pibillingguard.go PI-040-043" · hk-ro1dr = "B7 adapter_pi.go PI-010/060/071" · hk-o0hpm = "B8 Pi queue cap PI-069-073" · hk-ypxwl = "B9 scenario + acceptance tests PI-100/101"
+hk-nxjwo = "the Pi canary bead (throwaway, proves file-key auth + dot:close)" ·
+hk-sv3vg = "daemon ~-expansion fix (the durable auth path) — LANDED 37a4df93" ·
+pi-q = "your new dedicated Pi queue (per-queue cap, PI-070)" ·
+hk-9s5fx = "flywheel fork-bomb bead (primary fix already done)" ·
+hk-z13jz = "base_url passthrough for local OpenAI endpoints — DO NOT build yet".

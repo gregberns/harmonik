@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -1974,23 +1973,10 @@ func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateS
 //
 // Bead: hk-rlxgx.
 func (p *perRunSubstrate) buildSrtArgv(agentArgv []string) ([]string, error) {
-	profileBytes, err := GenerateSandboxProfile(p.sandboxSpawn.ProfileInput)
-	if err != nil {
-		return nil, fmt.Errorf("generate srt profile: %w", err)
-	}
-	profilePath := filepath.Join(os.TempDir(), "harmonik-srt-"+p.sandboxSpawn.ProfileInput.RunID+".json")
-	//nolint:gosec // G306: 0600 is correct — profile contains literal filesystem paths, readable only by daemon uid.
-	if err := os.WriteFile(profilePath, profileBytes, 0o600); err != nil {
-		return nil, fmt.Errorf("write srt profile to %s: %w", profilePath, err)
-	}
-	srtBin := p.sandboxSpawn.SrtBinary
-	if srtBin == "" {
-		srtBin = "srt"
-	}
-	result := make([]string, 0, 3+len(agentArgv))
-	result = append(result, srtBin, "--settings", profilePath)
-	result = append(result, agentArgv...)
-	return result, nil
+	// hk-r4p0l: delegate to the package-level srtWrapArgv so the substrate path
+	// and the exec path (workloop, SessionIDCaptured harnesses) share ONE wrap
+	// implementation and cannot drift.
+	return srtWrapArgv(p.sandboxSpawn, agentArgv)
 }
 
 // spawnWindowRemote performs the remote-run spawn: it builds an SSH-backed

@@ -618,6 +618,14 @@ func ExportedSandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in 
 	return sandboxSpawnForRun(cfg, agentType, in)
 }
 
+// ExportedSandboxWrapExecArgv exposes sandboxWrapExecArgv for tests in package
+// daemon_test — the EXEC-path srt argv-wrap applied to a SessionIDCaptured
+// (pi) run's LaunchSpec (spec.Substrate==nil). Returns (binary, args) unchanged
+// when spawn is nil (strict no-op). See sandboxgate.go (hk-r4p0l part 2).
+func ExportedSandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []string) (string, []string, error) {
+	return sandboxWrapExecArgv(spawn, binary, args)
+}
+
 // ExportedModelPreferenceError is a type alias for ModelPreferenceError so tests
 // in package daemon_test can use errors.As without importing internal types.
 //

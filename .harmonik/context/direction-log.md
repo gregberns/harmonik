@@ -12,6 +12,24 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-07-02 ~06:15Z — operator (via admiral) · expires: 2026-07-04
+WHAT: OVERNIGHT AUTONOMOUS OP (operator asleep, 8h target). P1 (must-deliver): sandbox implemented+tested
+      + Pi running IN it with NUMEROUS test runs against the DGX local model. DGX VERIFIED: dgx.local:8551/v1,
+      model 'ornith' (Ornith-1.0-35B, vLLM/OpenAI-compat, 256K), dummy key OK. Critical path: leto finishes
+      sandbox (hk-6596l config -> hk-i0377 acceptance) ‖ gurney builds Pi base_url passthrough (hk-z13jz,
+      elevated P1, via CLAUDE) -> wire Pi->ornith (openai-compat, base_url dgx.local, dummy key) + sandbox
+      backend=srt harnesses:[pi] + redeploy -> run 8 eval fuel beads (codename:eval) capturing pass/fail +
+      wall-time. P2: eval/grading harness DESIGNED + kerf'd (codename:eval-harness, 5 beads EH1-5; DOT that
+      generates->grades->judges->records toward a task->model ROUTER). P3: distributed-fleet planning
+      (plans/2026-06-30-distributed-fleet). AUTONOMY: genuine decisions via 3-AGENT CONSENSUS -> proceed,
+      never stall-and-wait; admiral is the manual stall-watch overnight.
+WHY:  operator wants to know if the local ornith model is any good for agentic coding + build the eval/router
+      capability; sandbox is the safe-isolation unlock for running the (untrusted) local model.
+RETURN-PATH: captain driving P1 (leto sandbox-finish + gurney base_url, wires integration on both-land);
+      admiral running P2/P3 planning + heartbeat-monitoring the P1 tracks. Full state in HANDOFF-admiral.md
+      (🌙 OVERNIGHT OP section). Resume by checking: base_url + sandbox landed? Pi wired to ornith? eval
+      runs done (pass/fail + speed)? Deliver the morning report.
+
 ## 2026-07-02 ~03:05Z — operator (via admiral) · expires: 2026-07-06
 WHAT: Pi PROVEN end-to-end (hk-d5q5l ran on agent_type=pi, gpt-5.4-mini, committed+merged in 2min) — the
       operator's 'test Pi' goal is DONE. Capability finding: gpt-5.4-mini commits trivial doc beads but

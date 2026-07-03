@@ -15,7 +15,12 @@ import (
 //  2. lost-update race: Allow must be safe under concurrent callers.
 //
 // Run with: go test -race ./evaltasks/eval-bugfix-rate-limiter/... -run TestLimiter
+// Skipped under -short so the scenario-gate does not see the intentional failure.
 func TestLimiter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("held-out eval test — run explicitly without -short and with -race")
+	}
+
 	t.Run("burst_does_not_exceed_capacity", func(t *testing.T) {
 		const cap = 5
 		// Slow refill ensures no tokens are added during the burst.

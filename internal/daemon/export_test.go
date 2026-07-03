@@ -605,6 +605,19 @@ func ExportedResolveHarness(
 	return resolveHarness(ctx, bead, queueDefault, nodeDefault, globalDefault, bus)
 }
 
+// ExportedResolveGateAgentType exposes resolveGateAgentType for tests in package
+// daemon_test. See sandboxgate.go for semantics (hk-r4p0l).
+func ExportedResolveGateAgentType(implHarness handlercontract.Harness, fromArtifacts core.AgentType) core.AgentType {
+	return resolveGateAgentType(implHarness, fromArtifacts)
+}
+
+// ExportedSandboxSpawnForRun exposes sandboxSpawnForRun for tests in package
+// daemon_test, returning whether a SrtSpawnConfig would be attached (non-nil)
+// for the given config + resolved agent type. See sandboxgate.go (hk-r4p0l).
+func ExportedSandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxProfileInput) *SrtSpawnConfig {
+	return sandboxSpawnForRun(cfg, agentType, in)
+}
+
 // ExportedModelPreferenceError is a type alias for ModelPreferenceError so tests
 // in package daemon_test can use errors.As without importing internal types.
 //

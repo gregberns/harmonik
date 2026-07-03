@@ -827,7 +827,8 @@ EXAMPLES
 
 	// harmonik eval <verb> — eval-harness tooling (EH1).
 	// harmonik eval collect: post-run collector, reads events.jsonl,
-	// writes per-run records to eval-results.jsonl.
+	// writes per-run records to eval-results.jsonl. No daemon connection.
+	// ON-INV-006-AUTH: operator-nfr.md §4.9 ON-055; offline post-run collector, read-only over events.jsonl, no daemon connection, no in-flight run abort
 	if len(os.Args) >= 2 && os.Args[1] == "eval" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {

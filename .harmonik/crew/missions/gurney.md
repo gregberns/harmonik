@@ -2,89 +2,70 @@
 schema_version: 1
 crew_name: gurney
 queue: gurney-q
-epic_id: hk-gx0dl
+epic_id: hk-z13jz
 captain_name: captain
-model: sonnet
+model: opus
 ---
 
-# Mission — gurney — Remote-worker hardening + LIVE e2e validation (epic hk-gx0dl)
+# Crew mission — gurney — PI base_url PASSTHROUGH (overnight P1, admiral 2026-07-03)
 
-You are crew **gurney**, owning epic **hk-gx0dl** (codename `remote-hardening`) on
-queue **gurney-q**. Report to **captain**. You built the remote-separation test
-pyramid (L0–L5) — you own the remote context. Re-tasked 2026-06-25 by captain on
-admiral directive (the remote-test-pyramid epic hk-6l941 is COMPLETE + closed).
+> RE-TASKED 2026-07-03 for the **overnight P1 push** (operator asleep, 8h target).
+> Your ONE bead is **hk-z13jz** — it is the last blocker before Pi can run coding beads
+> against the DGX local model. leto is finishing the sandbox in parallel (sandbox-q); the
+> moment BOTH land, captain wires Pi→Ornith + turns the sandbox on + runs numerous test beads.
+> This is the critical path. Move fast; build via CLAUDE (this crew), model = Opus.
+> Your prior remote-reliability lane is PARKED for the overnight — do not touch gb-mbp / workers.yaml.
 
-## The point of this lane (operator nuance — do NOT lose it again)
+## On boot
+1. `harmonik comms join` + confirm identity = gurney.
+2. `br update hk-z13jz --assignee gurney` (attribution).
+3. Post a boot status to captain (`--topic status`).
+4. Arm `harmonik comms recv --agent gurney --follow --json`.
 
-The pyramid + the landed remote fixes were built to be **PROVEN against a REAL
-remote end-to-end**, not just unit-reproduced. The owed, deferred step is to
-**actually run the worker e2e on gb-mbp** and prove the pyramid's FS/git/tmux/SSH
-separation predictions + all landed fixes hold live. Headline bead: **hk-nepva**.
+## THE BEAD — hk-z13jz (P1)
+**"Pi harness must pass base_url/api_base through to the Pi child for locally-hosted
+OpenAI-format endpoints (DGX Spark local models)."**
 
-## On boot / re-task
-1. `harmonik comms join --name gurney` + confirm identity = gurney.
-2. `br update hk-gx0dl --assignee gurney` (re-affirm the mirror on adopt — load-bearing).
-3. Post a boot/adopt status to captain (`--topic status`) + a journal comment on hk-gx0dl.
-4. Keep `harmonik comms recv --agent gurney --follow --json` armed.
+**Target endpoint (what this unblocks):** DGX at `http://dgx.local:8551/v1`, model `ornith`,
+256K ctx, vLLM / OpenAI-compatible, dummy api_key accepted.
 
-## CURRENT LANE (2026-06-30) — remote-reliability follow-ups
+**The seam (from captain's read of the code):**
+- `cmd/harmonik/resolve_pi_config.go` — the Pi config resolver. Today it requires
+  `provider`, `model`, `api_key_env` and imposes ZERO baked defaults (R1 de-hardcode mandate —
+  KEEP that invariant). Add an **optional** `base_url` (a.k.a. api_base) field here, shape-validated
+  (a URL/host shape, ≤ sane length; do NOT value-validate reachability). Optional = absent is valid
+  (today's cloud-provider behavior unchanged); present = passed through.
+- `internal/daemon/pilaunchspec.go` — builds the Pi child argv
+  (`pi --mode json --provider <prov> --model <prov/id> "<seed>"`). Thread the resolved `base_url`
+  to the Pi child **only when set**.
+- **DETERMINE how the Pi child accepts a custom base_url** — check `pi --help` and the installed
+  `@earendil-works/pi-coding-agent` package (`/opt/homebrew/bin/pi` → its node script /
+  node_modules). It's likely either a `--base-url` / `--api-base` CLI flag OR an env var
+  (`OPENAI_BASE_URL` / `OPENAI_API_BASE`). Use whatever Pi actually honors; if it's an env var,
+  inject it into the Pi child env in pilaunchspec.go (mirror how api_key_env is injected). Prove
+  the mechanism, don't guess.
+- Config-driven, **fail-loud** if referenced-but-malformed; absent base_url = no-op. No hard-coded URL.
+- **Tests** covering: absent base_url (today's behavior, no flag/env emitted), present base_url
+  (flag/env correctly emitted to the Pi child). Reviewer gate required (DOT).
 
-> The remote e2e HEADLINE is DONE: epic **hk-gx0dl CLOSED**, hk-nepva + hk-qts7r +
-> hk-t1t00 all landed/closed. The lane is now the remaining remote-reliability
-> follow-ups, NOT the old STAGE 1-3 e2e plan (that is history — do not re-run it).
+## queue / discipline
+- Submit hk-z13jz to **gurney-q** (`harmonik queue submit --queue gurney-q ...`). NEVER main.
+- Do NOT `br close` — the daemon closes on merge.
+- Do NOT spawn Agent-tool sub-agents for the implementation — the daemon queue is the mechanism.
+- Do NOT touch leto's sandbox lane, gb-mbp, or workers.yaml.
+- **CONCURRENT-EDIT WARNING (load-bearing, cost us 47min tonight):** if another bead merges to main
+  while your run is in flight and touches the SAME file (esp. config structs), your merge will
+  rebase-conflict and the run fails. resolve_pi_config.go + pilaunchspec.go are Pi-specific and
+  unlikely to collide with leto's sandbox work, but if a merge-fail happens, re-submit fresh (it
+  re-branches off new main) and tell captain.
 
-**WORK ITEM 1 (in-flight) — hk-1s1or** remote launch_initiated→agent_ready stall
-blind-spot. Daemon-run on gurney-q (gb-mbp). Scope found: `internal/daemon/stalewatch.go`
-suppresses the launch-stall check once `launchInitiatedSeen=true`, so a remote hang in
-the launch_initiated→agent_ready gap goes undetected. Fix = bounded stall threshold for
-that gap + a RED repro test. Run-watcher armed for its terminal.
+## progress feed
+Post `--topic status` to captain on: boot, the base_url mechanism you found (flag vs env),
+bead close/merge, and a ≤15-min idle/working tick. This is the overnight critical path —
+if you wedge or hit a real blocker, escalate to captain IMMEDIATELY (don't sit).
 
-**WORK ITEM 2 (gated on item 1 landing) — the 6 concurrent-under-load proofs**
-(hk-icdz/3zij/d2z1/tzfw/xbpm/k0pz). These are the GATE for the operator's daemon
-`max_concurrent` 4→8 bump. The proof-run sequence (captain-approved 2026-06-30):
-
-1. Wait for hk-1s1or to land (frees the gb-mbp slot). Do NOT interrupt it.
-2. Check leto's in-flight B4 (hk-mkcwg) state — restart the daemon when B4 is BETWEEN
-   runs if possible (the restart abandons/re-dispatches in-flight runs per two-phase
-   shutdown — minimize that loss).
-3. **Before the restart:** confirm `config.yaml` has `liveness_no_progress_n` set
-   (restart landmine — daemon refuses boot if a freshly-installed binary requires it
-   but it is commented out).
-4. Edit `workers.yaml`: gb-mbp `max_slots: 3` + `enabled: true` → restart.
-5. Clear assignees + submit the 6 proofs concurrently.
-6. Overload guard: ≥2 fast failures → kill orphans + drop to `max_slots: 1` + surface.
-7. Confirm each `proof-N.md` lands on main with line 1 = the gb-mbp hostname
-   (`run_started.worker_name == "gb-mbp"` in events.jsonl — NOT daemon stderr).
-8. **HARD CONSTRAINT — revert after:** `workers.yaml` back to `enabled: false` +
-   `max_slots: 1` → restart. Do NOT persistently enable gb-mbp — the 4→8 bump it
-   serves is still operator-GATED; gb-mbp stays off until the operator approves.
-
-**WORK ITEM 3 (triaged, done) — hk-q54s8** "STAGE-2 daemon-boot crash" assessed as the
-daemon-selffix-bootstrap-trap / watchdog health-window false-revert; the real defect is
-tracked as hk-uzvt9. No further action from you.
-
-## Operating rules (apply them)
-- Your queue is **gurney-q** ONLY. Never the main queue.
-- **All testing/hardening → low blast-radius, keep moving.** Small blocking fix:
-  out-of-daemon isolated worktree → review → ff-land, NOT the slow pipeline.
-- **You MAY use sub-agents** — but **EVERY change is REVIEWED** (≥2 diverse agent
-  types; consensus APPROVE → land; split → escalate to captain → admiral adjudicates).
-- Use `isolation: worktree` for any code-mutating sub-agent (they branch from
-  origin/main — push each merge before a dependent sub-agent starts).
-- **Escalate to captain on ANY run_failed** — do not self-classify a remote failure
-  (remote substrate has many false-wedge signals; captain triages). Never `br close`
-  (daemon owns terminal transitions).
-
-## Report cadence
-Status to captain (`--topic status`) on bead-close + boot/drain bookends + a ≤10-min
-timer while dispatching / ≤15-min idle. Surface only genuine blockers or a
-review-consensus split — otherwise self-manage and keep landing.
-
-## Current State
-2026-06-30 ~18:15Z (keeper-restart resume, captain): IDLE-ARMED, standing by for
-hk-1s1or (WORK ITEM 1) to land on gb-mbp (in implementer phase ~40min, heartbeating
-normally — substantial stalewatch fix + RED test). NEXT ACTION on its terminal: execute
-the WORK ITEM 2 proof-run sequence above, honoring all HARD CONSTRAINTS (temporary
-gb-mbp enable for the proofs ONLY → revert to enabled:false+max_slots:1 after; restart
-landmine check; coordinate the restart with leto's B4). Run-watcher + recv --follow both
-armed. Nothing to do until hk-1s1or frees the slot.
+## translations
+hk-z13jz = "your bead: pass a custom base_url through to the Pi child so it can hit the DGX
+local model instead of a cloud provider" · Ornith = "the DGX-hosted local model (ornith @
+http://dgx.local:8551/v1, OpenAI-compatible)" · gurney-q = "your queue" · Pi = the
+@earendil-works/pi-coding-agent harness · the sandbox = leto's parallel build (srt FS isolation).

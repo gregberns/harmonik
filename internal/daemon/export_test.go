@@ -2492,11 +2492,18 @@ func ExportedNewHarnessRegistryWithPi(piCfg PiHarnessConfig) (*handlercontract.H
 	return newHarnessRegistry(piCfg)
 }
 
-// ExportedPiHarnessFields returns the provider, model, apiKeyEnv, and apiKeyFile
-// fields from a PiHarness for test assertions on the config→harness seam
-// (hk-f8u5j; apiKeyFile added by hk-xmfoi).
+// ExportedPiHarnessFields returns the provider, model, apiKeyEnv, apiKeyFile,
+// baseURL, and api fields from a PiHarness for test assertions on the
+// config→harness seam (hk-f8u5j; apiKeyFile added by hk-xmfoi;
+// baseURL/api added by hk-z13jz).
 func ExportedPiHarnessFields(h *PiHarness) (provider, model, apiKeyEnv, apiKeyFile string) {
 	return h.provider, h.model, h.apiKeyEnv, h.apiKeyFile
+}
+
+// ExportedPiHarnessBaseURLFields returns the baseURL and api fields from a
+// PiHarness for test assertions on the base_url wiring (hk-z13jz).
+func ExportedPiHarnessBaseURLFields(h *PiHarness) (baseURL, api string) {
+	return h.baseURL, h.api
 }
 
 // ExportedCodexProcessExitLaunchSpecBuilder returns a launchSpecBuilder that
@@ -2955,6 +2962,14 @@ type ExportedPiRunCtx struct {
 	// SkipBillingGuard disables the pre-flight billing guard hook (PI-040).
 	// Set to true in argv/env-shape tests that do not require a real key.
 	SkipBillingGuard bool
+	// BaseURL is the OPTIONAL base URL for locally-hosted OpenAI-compatible
+	// endpoints (from harnesses.pi.base_url). When non-empty and initial turn,
+	// buildPiLaunchSpec generates models.json and injects PI_CODING_AGENT_DIR.
+	// Bead: hk-z13jz.
+	BaseURL string
+	// API is the OPTIONAL Pi wire-format string for the models.json "api" field.
+	// Defaults to "openai" at launch when empty and BaseURL is set. Bead: hk-z13jz.
+	API string
 }
 
 // ExportedBuildPiLaunchSpec exposes buildPiLaunchSpec for tests in package
@@ -2971,12 +2986,33 @@ func ExportedBuildPiLaunchSpec(rc ExportedPiRunCtx) (handler.LaunchSpec, error) 
 		model:            rc.Model,
 		apiKeyEnv:        rc.APIKeyEnv,
 		apiKeyFile:       rc.APIKeyFile,
+		baseURL:          rc.BaseURL,
+		api:              rc.API,
 		priorSessionID:   rc.PriorSessionID,
 		baseEnv:          rc.BaseEnv,
 		billingEmitter:   rc.BillingEmitter,
 		runID:            rc.RunID,
 		skipBillingGuard: rc.SkipBillingGuard,
 	})
+}
+
+// ExportedBuildPiModelsJSON exposes buildPiModelsJSON for tests in package
+// daemon_test. Allows direct verification of the models.json content generated
+// for locally-hosted OpenAI-compatible endpoints (hk-z13jz).
+func ExportedBuildPiModelsJSON(provider, baseURL, api, apiKeyFile, apiKeyEnv, model string) ([]byte, error) {
+	return buildPiModelsJSON(provider, baseURL, api, apiKeyFile, apiKeyEnv, model)
+}
+
+// ExportedRunCtxForPi builds a minimal handlercontract.RunCtx suitable for
+// calling PiHarness.LaunchSpec in production-path tests (hk-z13jz).
+// workspacePath is the run worktree; beadID is the bead correlation id.
+// PriorSessionID is nil (initial turn). BaseEnv is PATH=/usr/bin.
+func ExportedRunCtxForPi(workspacePath, beadID string) handlercontract.RunCtx {
+	return handlercontract.RunCtx{
+		WorkspacePath: workspacePath,
+		BeadID:        beadID,
+		BaseEnv:       []string{"PATH=/usr/bin"},
+	}
 }
 
 // ExportedBuildPiEnv exposes buildPiEnv for tests in package daemon_test.

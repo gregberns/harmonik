@@ -536,6 +536,8 @@ func TestPiHarness_LaunchSpec_SkipBillingGuardIsFalseInProduction(t *testing.T) 
 		"openrouter/m1", // model
 		envVarName,      // apiKeyEnv
 		"",              // apiKeyFile: not set
+		"",              // baseURL: not set
+		"",              // api: not set
 	)
 
 	rc := handlercontract.RunCtx{

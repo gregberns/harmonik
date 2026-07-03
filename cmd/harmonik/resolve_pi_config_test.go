@@ -379,3 +379,112 @@ func TestResolvePiConfig_APIKeyFile_TildeExpanded(t *testing.T) {
 		t.Errorf("APIKeyFile = %q; want expanded path %q", got.APIKeyFile, keyFile)
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// base_url validation tests (hk-z13jz)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestResolvePiConfig_BaseURL_Absent_OK verifies absent base_url passes validation
+// (the normal cloud-provider case).
+func TestResolvePiConfig_BaseURL_Absent_OK(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	// BaseURL not set — must resolve without error.
+	_, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Errorf("absent base_url: unexpected error: %v", err)
+	}
+}
+
+// TestResolvePiConfig_BaseURL_ValidURL_OK verifies a well-formed base_url passes.
+func TestResolvePiConfig_BaseURL_ValidURL_OK(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.BaseURL = "http://dgx.local:8551/v1"
+	got, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Fatalf("valid base_url: unexpected error: %v", err)
+	}
+	if got.BaseURL != cfg.BaseURL {
+		t.Errorf("BaseURL = %q; want %q", got.BaseURL, cfg.BaseURL)
+	}
+}
+
+// TestResolvePiConfig_BaseURL_ValidHTTPS_OK verifies an https base_url passes.
+func TestResolvePiConfig_BaseURL_ValidHTTPS_OK(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.BaseURL = "https://myserver.example.com/openai/v1"
+	_, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Fatalf("https base_url: unexpected error: %v", err)
+	}
+}
+
+// TestResolvePiConfig_BaseURL_Malformed_Error verifies a malformed base_url returns
+// *PiConfigError (fail loud — R1 de-hardcode mandate, hk-z13jz).
+func TestResolvePiConfig_BaseURL_Malformed_Error(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.BaseURL = "not a url"
+	_, err := ResolvePiConfig(cfg, "/proj")
+	if err == nil {
+		t.Fatal("malformed base_url: expected PiConfigError, got nil")
+	}
+	var pe *PiConfigError
+	if !errors.As(err, &pe) {
+		t.Fatalf("malformed base_url: want *PiConfigError; got %T: %v", err, err)
+	}
+	if pe.Field != "harnesses.pi.base_url" {
+		t.Errorf("PiConfigError.Field = %q; want %q", pe.Field, "harnesses.pi.base_url")
+	}
+}
+
+// TestResolvePiConfig_BaseURL_TooLong_Error verifies base_url >512 chars is rejected.
+func TestResolvePiConfig_BaseURL_TooLong_Error(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.BaseURL = "http://host/" + strings.Repeat("a", 502)
+	_, err := ResolvePiConfig(cfg, "/proj")
+	if err == nil {
+		t.Fatal("too-long base_url: expected PiConfigError, got nil")
+	}
+	var pe *PiConfigError
+	if !errors.As(err, &pe) {
+		t.Fatalf("too-long base_url: want *PiConfigError; got %T: %v", err, err)
+	}
+	if pe.Field != "harnesses.pi.base_url" {
+		t.Errorf("PiConfigError.Field = %q; want %q", pe.Field, "harnesses.pi.base_url")
+	}
+}
+
+// TestResolvePiConfig_BaseURL_NoScheme_Error verifies base_url without a scheme
+// (no "://") is rejected.
+func TestResolvePiConfig_BaseURL_NoScheme_Error(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.BaseURL = "dgx.local:8551/v1"
+	_, err := ResolvePiConfig(cfg, "/proj")
+	if err == nil {
+		t.Fatal("no-scheme base_url: expected PiConfigError, got nil")
+	}
+	var pe *PiConfigError
+	if !errors.As(err, &pe) {
+		t.Fatalf("no-scheme base_url: want *PiConfigError; got %T: %v", err, err)
+	}
+}
+
+// TestResolvePiConfig_API_PassesThrough verifies the api field passes through
+// unchanged (no validation needed — hk-z13jz).
+func TestResolvePiConfig_API_PassesThrough(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.API = "openai"
+	got, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Fatalf("api field: unexpected error: %v", err)
+	}
+	if got.API != "openai" {
+		t.Errorf("API = %q; want %q", got.API, "openai")
+	}
+}

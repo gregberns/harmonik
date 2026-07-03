@@ -29,6 +29,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -164,6 +165,25 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 		cfg.APIKeyFile = expanded
 	}
 
+	// ── base_url shape validation (hk-z13jz). ──
+	// OPTIONAL: when set, must look like scheme://host[:port][/path] and be ≤512
+	// chars. Absent is always valid. API needs no validation.
+	if cfg.BaseURL != "" {
+		if len(cfg.BaseURL) > 512 {
+			return daemon.PiHarnessConfig{}, &PiConfigError{
+				Field:  "harnesses.pi.base_url",
+				Reason: fmt.Sprintf("base_url is %d chars; must be ≤512 chars", len(cfg.BaseURL)),
+			}
+		}
+		parsed, parseErr := url.Parse(cfg.BaseURL)
+		if parseErr != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return daemon.PiHarnessConfig{}, &PiConfigError{
+				Field:  "harnesses.pi.base_url",
+				Reason: fmt.Sprintf("base_url %q is not a valid URL; must be scheme://host[:port][/path] (e.g. http://dgx.local:8551/v1)", cfg.BaseURL),
+			}
+		}
+	}
+
 	// ── Shape validation (HC-055a, PI-052). ──
 	// Value-validated by shape only — never against a curated enum. Field and value
 	// are pre-assigned so no if-branch line triggers SH-INV-001.
@@ -240,6 +260,14 @@ func piConfigExampleYAML() string {
     # (the daemon ambient env never carries the secret). Precedence: file > ambient env.
     # Validated readable+non-empty at config-load time — fail loud if set-but-unreadable/empty (PI-040).
     # api_key_file: ~/.config/harmonik/openrouter.key
+    # harnesses.pi.base_url: OPTIONAL base URL for locally-hosted OpenAI-compatible endpoints only.
+    # When set: buildPiLaunchSpec generates a models.json and sets PI_CODING_AGENT_DIR so Pi uses
+    # this endpoint. Must be scheme://host[:port][/path], ≤512 chars. Absent = cloud-provider behavior.
+    # Example: http://dgx.local:8551/v1 (DGX Spark vLLM endpoint)
+    # base_url: http://dgx.local:8551/v1
+    # harnesses.pi.api: OPTIONAL Pi wire-format string for the models.json "api" field.
+    # Defaults to "openai" when base_url is set and this field is absent.
+    # api: openai
     # fallback: optional paid-fallback target. V1 has NO automatic fallback (PI-072) —
     # this block exists for operator convenience (manual lane flip on cap exhaustion).
     # fallback:

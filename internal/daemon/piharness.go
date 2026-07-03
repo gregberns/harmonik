@@ -66,6 +66,17 @@ type PiHarness struct {
 	// When non-empty, the key is read from this file at launch time; the daemon
 	// ambient env never carries the secret (PI-050/hk-xmfoi).
 	apiKeyFile string
+
+	// baseURL is the OPTIONAL base URL for locally-hosted OpenAI-compatible
+	// endpoints (from harnesses.pi.base_url). When non-empty, buildPiLaunchSpec
+	// generates a models.json and injects PI_CODING_AGENT_DIR. Absent = today's
+	// cloud-provider behavior unchanged. Bead: hk-z13jz.
+	baseURL string
+
+	// api is the OPTIONAL Pi wire-format string for the models.json "api" field
+	// (from harnesses.pi.api). When empty and baseURL is set, defaults to "openai"
+	// at launch time. Bead: hk-z13jz.
+	api string
 }
 
 // NewPiHarness returns a ready PiHarness.
@@ -74,13 +85,18 @@ type PiHarness struct {
 // (missing provider/model on initial turn → launch error, not panic). The
 // default empty piBinary is normalised to "pi" by buildPiLaunchSpec.
 // apiKeyFile is optional; pass empty string when api_key_file is not configured.
-func NewPiHarness(piBinary, provider, model, apiKeyEnv, apiKeyFile string) *PiHarness {
+// baseURL is optional; when non-empty buildPiLaunchSpec generates a models.json
+// and injects PI_CODING_AGENT_DIR so Pi uses the locally-hosted endpoint.
+// api is optional; defaults to "openai" at launch when empty and baseURL is set.
+func NewPiHarness(piBinary, provider, model, apiKeyEnv, apiKeyFile, baseURL, api string) *PiHarness {
 	return &PiHarness{
 		piBinary:   piBinary,
 		provider:   provider,
 		model:      model,
 		apiKeyEnv:  apiKeyEnv,
 		apiKeyFile: apiKeyFile,
+		baseURL:    baseURL,
+		api:        api,
 	}
 }
 
@@ -112,6 +128,8 @@ func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Spawn
 		model:          h.model,
 		apiKeyEnv:      h.apiKeyEnv,
 		apiKeyFile:     h.apiKeyFile,
+		baseURL:        h.baseURL,
+		api:            h.api,
 		priorSessionID: rc.PriorSessionID,
 		baseEnv:        rc.BaseEnv,
 	}

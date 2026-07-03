@@ -773,7 +773,7 @@ type rawHarnessesPiFallbackConfig struct {
 }
 
 // rawHarnessesPiConfig is the harnesses.pi block in config.yaml.
-// REQUIRED: provider, model, api_key_env. OPTIONAL: fallback, api_key_file.
+// REQUIRED: provider, model, api_key_env. OPTIONAL: fallback, api_key_file, base_url, api.
 // No defaults — ResolvePiConfig (cmd/harmonik/resolve_pi_config.go) enforces
 // fail-loud on any missing required field (PI-050/PI-051).
 type rawHarnessesPiConfig struct {
@@ -781,6 +781,8 @@ type rawHarnessesPiConfig struct {
 	Model      string                       `yaml:"model"`
 	APIKeyEnv  string                       `yaml:"api_key_env"`
 	APIKeyFile string                       `yaml:"api_key_file"` // OPTIONAL; PI-050/hk-xmfoi
+	BaseURL    string                       `yaml:"base_url"`     // OPTIONAL; locally-hosted OpenAI-compatible endpoints (hk-z13jz)
+	API        string                       `yaml:"api"`          // OPTIONAL; Pi wire format, defaults to "openai" at launch when empty (hk-z13jz)
 	Fallback   rawHarnessesPiFallbackConfig `yaml:"fallback"`
 }
 
@@ -824,6 +826,17 @@ type PiHarnessConfig struct {
 	// ResolvePiConfig validates readable+non-empty at resolve time (fail loud).
 	// Spec: PI-050 (api_key_file). Bead: hk-xmfoi.
 	APIKeyFile string
+	// BaseURL is the OPTIONAL base URL for locally-hosted OpenAI-compatible
+	// endpoints (e.g. http://dgx.local:8551/v1). When set, buildPiLaunchSpec
+	// generates a models.json with this baseUrl and injects PI_CODING_AGENT_DIR.
+	// Absent = today's cloud-provider behavior unchanged. Shape-validated by
+	// ResolvePiConfig when present (scheme://host[:port][/path], ≤512 chars).
+	// Bead: hk-z13jz.
+	BaseURL string
+	// API is the OPTIONAL Pi wire-format string (e.g. "openai"). When empty and
+	// BaseURL is set, buildPiLaunchSpec defaults to "openai" in the generated
+	// models.json. No validation needed. Bead: hk-z13jz.
+	API string
 	// Fallback is the optional paid-fallback target (V1 manual flip; PI-072).
 	Fallback PiFallbackConfig
 	// HasFallback is true when the fallback: sub-block was present in config.
@@ -1699,6 +1712,8 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 			Model:       pi.Model,
 			APIKeyEnv:   pi.APIKeyEnv,
 			APIKeyFile:  apiKeyFile,
+			BaseURL:     pi.BaseURL,
+			API:         pi.API,
 			HasFallback: hasFallback,
 			Fallback: PiFallbackConfig{
 				Provider:  pi.Fallback.Provider,

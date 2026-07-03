@@ -16,6 +16,7 @@ package daemon_test
 //   - Error cases: empty workspacePath, beadID, apiKeyEnv, emptySessionID
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -627,4 +628,265 @@ func TestBuildPiLaunchSpec_APIKeyFile_DaemonEnvClean(t *testing.T) {
 			t.Error("PI-050: child env carries daemon-env value; file-first precedence violated")
 		}
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// base_url passthrough tests — production call chain (hk-z13jz)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestPiHarness_BaseURL_ProductionPath_Present verifies the production call chain
+// (NewPiHarness → LaunchSpec) writes models.json and injects PI_CODING_AGENT_DIR
+// when baseURL is set and this is the initial turn. Must NOT use
+// ExportedBuildPiLaunchSpec — exercises the full production path.
+func TestPiHarness_BaseURL_ProductionPath_Present(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const apiKeyEnv = "TEST_PI_BASE_URL_PROD_KEY"
+	const apiKeyVal = "sk-or-testkey-sentinel"
+	t.Setenv(apiKeyEnv, apiKeyVal)
+
+	workDir := t.TempDir()
+
+	harness := daemon.NewPiHarness(
+		"pi",                         // piBinary
+		"mylocal",                    // provider
+		"mylocal/ornith",             // model ("ornith" after last "/")
+		apiKeyEnv,                    // apiKeyEnv
+		"",                           // apiKeyFile
+		"http://dgx.local:8551/v1",   // baseURL
+		"",                           // api: empty → defaults to "openai"
+	)
+
+	rc := daemon.ExportedRunCtxForPi(workDir, "hk-z13jz-prod")
+	spec, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	// PI_CODING_AGENT_DIR must be in the child env.
+	piAgentDir := findEnvValue(t, spec.Env, "PI_CODING_AGENT_DIR")
+	if piAgentDir == "" {
+		t.Fatal("PI_CODING_AGENT_DIR not injected into child env; want non-empty")
+	}
+
+	// models.json must exist under the pi-agent dir.
+	modelsPath := piAgentDir + "/models.json"
+	modelsBytes, readErr := os.ReadFile(modelsPath)
+	if readErr != nil {
+		t.Fatalf("models.json not found at %q: %v", modelsPath, readErr)
+	}
+
+	// Deserialize and verify content.
+	var parsed struct {
+		Providers map[string]struct {
+			BaseURL string `json:"baseUrl"`
+			API     string `json:"api"`
+			APIKey  string `json:"apiKey"`
+			Models  []struct {
+				ID string `json:"id"`
+			} `json:"models"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(modelsBytes, &parsed); err != nil {
+		t.Fatalf("models.json JSON parse failed: %v\ncontent: %s", err, modelsBytes)
+	}
+
+	prov, ok := parsed.Providers["mylocal"]
+	if !ok {
+		t.Fatalf("models.json has no 'mylocal' provider; got providers: %v", parsed.Providers)
+	}
+	if prov.BaseURL != "http://dgx.local:8551/v1" {
+		t.Errorf("baseUrl = %q; want %q", prov.BaseURL, "http://dgx.local:8551/v1")
+	}
+	if prov.API != "openai" {
+		t.Errorf("api = %q; want %q (default when empty)", prov.API, "openai")
+	}
+	if prov.APIKey != apiKeyVal {
+		t.Errorf("apiKey = %q; want %q", prov.APIKey, apiKeyVal)
+	}
+	if len(prov.Models) != 1 || prov.Models[0].ID != "ornith" {
+		t.Errorf("models = %v; want [{id:ornith}]", prov.Models)
+	}
+}
+
+// TestPiHarness_BaseURL_ProductionPath_Absent verifies the production call chain
+// emits NO PI_CODING_AGENT_DIR and writes NO models.json when baseURL is absent.
+// Today's cloud-provider behavior must be byte-for-byte unchanged.
+func TestPiHarness_BaseURL_ProductionPath_Absent(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const apiKeyEnv = "TEST_PI_BASE_URL_ABSENT_KEY"
+	t.Setenv(apiKeyEnv, "sk-or-absent-test")
+
+	workDir := t.TempDir()
+
+	harness := daemon.NewPiHarness(
+		"pi",         // piBinary
+		"openrouter", // provider
+		"openrouter/qwen/qwen3-coder", // model
+		apiKeyEnv,    // apiKeyEnv
+		"",           // apiKeyFile
+		"",           // baseURL: absent
+		"",           // api: absent
+	)
+
+	rc := daemon.ExportedRunCtxForPi(workDir, "hk-z13jz-absent")
+	spec, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	// PI_CODING_AGENT_DIR must NOT be present.
+	for _, kv := range spec.Env {
+		if strings.HasPrefix(kv, "PI_CODING_AGENT_DIR=") {
+			t.Errorf("PI_CODING_AGENT_DIR injected when baseURL is absent: %q", kv)
+		}
+	}
+
+	// models.json must NOT have been created.
+	piAgentDir := workDir + "/.harmonik/pi-agent"
+	if _, statErr := os.Stat(piAgentDir + "/models.json"); statErr == nil {
+		t.Errorf("models.json written when baseURL is absent; pi-agent dir should not exist")
+	}
+}
+
+// TestPiHarness_BaseURL_APIOverride verifies the api field flows into models.json
+// correctly when explicitly set.
+func TestPiHarness_BaseURL_APIOverride(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const apiKeyEnv = "TEST_PI_BASE_URL_API_OVERRIDE_KEY"
+	t.Setenv(apiKeyEnv, "sk-override-test")
+
+	workDir := t.TempDir()
+
+	harness := daemon.NewPiHarness(
+		"pi",
+		"localprov",
+		"localprov/mymodel",
+		apiKeyEnv,
+		"",
+		"http://localhost:11434/v1",
+		"openai", // explicit api override
+	)
+
+	rc := daemon.ExportedRunCtxForPi(workDir, "hk-z13jz-api-override")
+	spec, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	piAgentDir := findEnvValue(t, spec.Env, "PI_CODING_AGENT_DIR")
+	if piAgentDir == "" {
+		t.Fatal("PI_CODING_AGENT_DIR not injected into child env")
+	}
+
+	modelsBytes, readErr := os.ReadFile(piAgentDir + "/models.json")
+	if readErr != nil {
+		t.Fatalf("models.json not found: %v", readErr)
+	}
+
+	var parsed struct {
+		Providers map[string]struct {
+			API string `json:"api"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(modelsBytes, &parsed); err != nil {
+		t.Fatalf("models.json parse: %v", err)
+	}
+	prov, ok := parsed.Providers["localprov"]
+	if !ok {
+		t.Fatal("models.json has no 'localprov' provider")
+	}
+	if prov.API != "openai" {
+		t.Errorf("api = %q; want %q", prov.API, "openai")
+	}
+}
+
+// TestBuildPiModelsJSON_ModelIDExtraction verifies that buildPiModelsJSON extracts
+// the model-id correctly from both "provider/id" and bare "id" forms.
+func TestBuildPiModelsJSON_ModelIDExtraction(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		model   string
+		wantID  string
+	}{
+		{"mylocal/ornith", "ornith"},
+		{"openrouter/qwen/qwen3-coder", "qwen3-coder"},
+		{"ornith", "ornith"}, // no slash → whole string
+		{"", ""},             // empty → empty
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.model, func(t *testing.T) {
+			t.Parallel()
+			raw, err := daemon.ExportedBuildPiModelsJSON("prov", "http://host/v1", "openai", "", "", tc.model)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var parsed struct {
+				Providers map[string]struct {
+					Models []struct {
+						ID string `json:"id"`
+					} `json:"models"`
+				} `json:"providers"`
+			}
+			if jsonErr := json.Unmarshal(raw, &parsed); jsonErr != nil {
+				t.Fatalf("parse: %v", jsonErr)
+			}
+			prov := parsed.Providers["prov"]
+			if len(prov.Models) != 1 || prov.Models[0].ID != tc.wantID {
+				t.Errorf("model id = %v; want %q", prov.Models, tc.wantID)
+			}
+		})
+	}
+}
+
+// TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn verifies that when this is
+// a resume turn (priorSessionID != nil), NO models.json is written and no
+// PI_CODING_AGENT_DIR is injected — even if baseURL is set.
+func TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const apiKeyEnv = "TEST_PI_BASE_URL_RESUME_KEY"
+	t.Setenv(apiKeyEnv, "sk-resume-test")
+
+	workDir := t.TempDir()
+	sessionID := "pi-resume-session-id"
+
+	rc := daemon.ExportedPiRunCtx{
+		WorkspacePath:    workDir,
+		BeadID:           "hk-z13jz-resume",
+		Provider:         "mylocal",
+		Model:            "mylocal/ornith",
+		APIKeyEnv:        apiKeyEnv,
+		BaseURL:          "http://dgx.local:8551/v1",
+		PriorSessionID:   &sessionID, // resume turn
+		BaseEnv:          []string{"PATH=/usr/bin"},
+		SkipBillingGuard: true,
+	}
+	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("ExportedBuildPiLaunchSpec: unexpected error: %v", err)
+	}
+
+	// On a resume turn: no PI_CODING_AGENT_DIR injected.
+	for _, kv := range spec.Env {
+		if strings.HasPrefix(kv, "PI_CODING_AGENT_DIR=") {
+			t.Errorf("PI_CODING_AGENT_DIR injected on resume turn: %q", kv)
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// helpers for base_url tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+// findEnvValue scans env for key= and returns the value portion.
+// Returns "" when not found; fails the test when found with empty value.
+func findEnvValue(t *testing.T, env []string, key string) string {
+	t.Helper()
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return kv[len(prefix):]
+		}
+	}
+	return ""
 }

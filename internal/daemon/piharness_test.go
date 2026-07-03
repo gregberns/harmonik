@@ -192,7 +192,7 @@ func TestPiSessionIDInterceptor_NoSessionLine(t *testing.T) {
 func TestPiHarness_AgentType(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if got := h.AgentType(); got != core.AgentTypePi {
 		t.Errorf("AgentType = %q; want %q", got, core.AgentTypePi)
 	}
@@ -201,7 +201,7 @@ func TestPiHarness_AgentType(t *testing.T) {
 func TestPiHarness_SessionIDPolicy(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if got := h.SessionIDPolicy(); got != handlercontract.SessionIDCaptured {
 		t.Errorf("SessionIDPolicy = %v; want SessionIDCaptured", got)
 	}
@@ -210,7 +210,7 @@ func TestPiHarness_SessionIDPolicy(t *testing.T) {
 func TestPiHarness_Completion(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if got := h.Completion(); got != handlercontract.CompletionProcessExit {
 		t.Errorf("Completion = %v; want CompletionProcessExit", got)
 	}
@@ -225,7 +225,7 @@ func TestPiHarness_Completion(t *testing.T) {
 func TestPiHarness_DetectReady_LaunchInitiated(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeLaunchInitiated)}
 	if h.DetectReady(ev) {
 		t.Error("DetectReady(launch_initiated) = true; want false (HC-041)")
@@ -237,7 +237,7 @@ func TestPiHarness_DetectReady_LaunchInitiated(t *testing.T) {
 func TestPiHarness_DetectReady_AgentReady(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeAgentReady)}
 	if !h.DetectReady(ev) {
 		t.Error("DetectReady(agent_ready) = false; want true")
@@ -249,7 +249,7 @@ func TestPiHarness_DetectReady_AgentReady(t *testing.T) {
 func TestPiHarness_DetectReady_OtherEvent(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	ev := handlercontract.EventEnvelope{Type: "run_started"}
 	if h.DetectReady(ev) {
 		t.Error("DetectReady(run_started) = true; want false")
@@ -263,7 +263,7 @@ func TestPiHarness_DetectReady_OtherEvent(t *testing.T) {
 func TestPiHarness_Seed_NoOp(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if err := h.Seed(nil, handlercontract.RunCtx{}); err != nil {
 		t.Errorf("Seed returned error: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestPiHarness_Seed_NoOp(t *testing.T) {
 func TestPiHarness_Retask_NoOp(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if err := h.Retask(nil, "feedback", handlercontract.RunCtx{}); err != nil {
 		t.Errorf("Retask returned error: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestPiHarness_Retask_NoOp(t *testing.T) {
 func TestPiHarness_Teardown_NilSession(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	if err := h.Teardown(nil); err != nil {
 		t.Errorf("Teardown(nil) returned error: %v", err)
 	}
@@ -311,7 +311,7 @@ func (s *killTrackingSession) LogLocation() string { return "" }
 func TestPiHarness_Teardown_LiveSession_Kill(t *testing.T) {
 	t.Parallel()
 
-	h := daemon.ExportedNewPiHarness("", "", "", "", "")
+	h := daemon.ExportedNewPiHarness("", "", "", "", "", "", "")
 	sess := &killTrackingSession{}
 	if err := h.Teardown(sess); err != nil {
 		t.Errorf("Teardown(live session) returned error: %v", err)

@@ -35,8 +35,10 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -117,6 +119,18 @@ type piRunCtx struct {
 	// the file in preference to the ambient env. The daemon ambient env MUST NOT
 	// carry the secret (PI-050/hk-xmfoi). Absent → fall back to ambient env.
 	apiKeyFile string
+
+	// baseURL is the OPTIONAL base URL for a locally-hosted OpenAI-compatible
+	// endpoint (from harnesses.pi.base_url). When non-empty and this is the
+	// initial turn, buildPiLaunchSpec generates a models.json under the run's
+	// pi-agent dir and injects PI_CODING_AGENT_DIR into the child env. Absent =
+	// today's cloud-provider behavior byte-for-byte unchanged. Bead: hk-z13jz.
+	baseURL string
+
+	// api is the OPTIONAL Pi wire-format string written into the generated
+	// models.json "api" field. When empty and baseURL is set, defaults to "openai"
+	// at launch time. Bead: hk-z13jz.
+	api string
 
 	// priorSessionID is non-nil for resume turns (iteration >= 2). It holds the
 	// Pi session ID captured from the prior turn's first {"type":"session",...}
@@ -264,6 +278,34 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 		}
 	}
 
+	// base_url passthrough (hk-z13jz): when baseURL is set AND this is the
+	// initial turn (priorSessionID == nil), generate a models.json so Pi can
+	// target the locally-hosted OpenAI-compatible endpoint.
+	//
+	// The generated models.json is written to a deterministic per-run pi-agent
+	// dir under the run worktree (<workspacePath>/.harmonik/pi-agent/). Pi
+	// reads it via PI_CODING_AGENT_DIR, which is injected into the child env
+	// only (never argv — mirror the api-key injection pattern). When baseURL is
+	// absent this block is a no-op: today's behavior unchanged.
+	if rc.baseURL != "" && rc.priorSessionID == nil {
+		piAgentDir := filepath.Join(rc.workspacePath, ".harmonik", "pi-agent")
+		if mkdirErr := os.MkdirAll(piAgentDir, 0o755); mkdirErr != nil {
+			return handler.LaunchSpec{}, fmt.Errorf(
+				"buildPiLaunchSpec: create pi-agent dir %q: %w", piAgentDir, mkdirErr)
+		}
+		modelsJSON, buildErr := buildPiModelsJSON(rc.provider, rc.baseURL, rc.api, rc.apiKeyFile, rc.apiKeyEnv, rc.model)
+		if buildErr != nil {
+			return handler.LaunchSpec{}, fmt.Errorf(
+				"buildPiLaunchSpec: build models.json: %w", buildErr)
+		}
+		modelsPath := filepath.Join(piAgentDir, "models.json")
+		if writeErr := os.WriteFile(modelsPath, modelsJSON, 0o644); writeErr != nil {
+			return handler.LaunchSpec{}, fmt.Errorf(
+				"buildPiLaunchSpec: write models.json to %q: %w", modelsPath, writeErr)
+		}
+		env = append(env, "PI_CODING_AGENT_DIR="+piAgentDir)
+	}
+
 	return handler.LaunchSpec{
 		Binary:       binary,
 		Args:         args,
@@ -272,6 +314,48 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 		Role:         "implementer",
 		StdinDevNull: true, // PI-020 / #4303: Pi (ProcessExit) may hang on pane PTY stdin with /dev/null
 	}, nil
+}
+
+// buildPiModelsJSON generates the models.json content for a Pi agent dir targeting
+// a locally-hosted OpenAI-compatible endpoint (hk-z13jz). The structure follows
+// Pi's ModelsConfigSchema (core/model-registry.js) for a custom provider:
+//
+//	{"providers":{"<provider>":{"baseUrl":"<baseURL>","api":"<api>","apiKey":"<key>","models":[{"id":"<modelID>"}]}}}
+//
+// api defaults to "openai" when empty. modelID is the substring of model after
+// the last "/" (whole string when no "/"). The key value is resolved via
+// resolvePiAPIKeyValue (file-first, env fallback — same as buildPiEnv).
+func buildPiModelsJSON(provider, baseURL, api, apiKeyFile, apiKeyEnv, model string) ([]byte, error) {
+	if api == "" {
+		api = "openai"
+	}
+	modelID := model
+	if idx := strings.LastIndex(model, "/"); idx >= 0 {
+		modelID = model[idx+1:]
+	}
+	apiKeyValue := resolvePiAPIKeyValue(apiKeyFile, apiKeyEnv)
+	type modelEntry struct {
+		ID string `json:"id"`
+	}
+	type providerConfig struct {
+		BaseURL string       `json:"baseUrl"`
+		API     string       `json:"api"`
+		APIKey  string       `json:"apiKey"`
+		Models  []modelEntry `json:"models"`
+	}
+	payload := struct {
+		Providers map[string]providerConfig `json:"providers"`
+	}{
+		Providers: map[string]providerConfig{
+			provider: {
+				BaseURL: baseURL,
+				API:     api,
+				APIKey:  apiKeyValue,
+				Models:  []modelEntry{{ID: modelID}},
+			},
+		},
+	}
+	return json.Marshal(payload)
 }
 
 // buildPiEnv constructs the Pi child environment from baseEnv.

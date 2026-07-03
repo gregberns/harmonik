@@ -456,6 +456,32 @@ func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 	_ = deps // satisfy unused import
 }
 
+// TestScheduleTick_EnsureOpsMonitor_Override verifies that non-empty OpsmonitorConfig
+// fields override the compiled defaults for interval and script_path (hk-bi4bg).
+func TestScheduleTick_EnsureOpsMonitor_Override(t *testing.T) {
+	_, store, _ := newTickDeps(t)
+
+	cfg := OpsmonitorConfig{Interval: "10m", ScriptPath: "scripts/custom-ops.sh"}
+	ensureOpsMonitorSchedule(store, cfg)
+
+	j, ok := store.Get(opsMonitorJobID)
+	if !ok {
+		t.Fatal("ops-monitor job not registered")
+	}
+	if j.Schedule.Interval != "10m" {
+		t.Errorf("interval = %q, want %q", j.Schedule.Interval, "10m")
+	}
+	wantArgv := []string{"bash", "scripts/custom-ops.sh"}
+	if len(j.Action.Argv) != len(wantArgv) {
+		t.Fatalf("argv len = %d, want %d", len(j.Action.Argv), len(wantArgv))
+	}
+	for i, v := range wantArgv {
+		if j.Action.Argv[i] != v {
+			t.Errorf("argv[%d] = %q, want %q", i, j.Action.Argv[i], v)
+		}
+	}
+}
+
 // TestScheduleTick_EnsureCtxWatchdog verifies ensureCtxWatchdogSchedule registers
 // the ctx-watchdog job when absent and is a no-op when already present (hk-sbitr).
 func TestScheduleTick_EnsureCtxWatchdog(t *testing.T) {

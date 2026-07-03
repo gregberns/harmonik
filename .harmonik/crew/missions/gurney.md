@@ -2,70 +2,53 @@
 schema_version: 1
 crew_name: gurney
 queue: gurney-q
-epic_id: hk-z13jz
+epic_id: eval-program
 captain_name: captain
 model: opus
 ---
 
-# Crew mission — gurney — PI base_url PASSTHROUGH (overnight P1, admiral 2026-07-03)
+# Crew mission — gurney — eval-program ws:problems (author the hard tasks)
 
-> RE-TASKED 2026-07-03 for the **overnight P1 push** (operator asleep, 8h target).
-> Your ONE bead is **hk-z13jz** — it is the last blocker before Pi can run coding beads
-> against the DGX local model. leto is finishing the sandbox in parallel (sandbox-q); the
-> moment BOTH land, captain wires Pi→Ornith + turns the sandbox on + runs numerous test beads.
-> This is the critical path. Move fast; build via CLAUDE (this crew), model = Opus.
-> Your prior remote-reliability lane is PARKED for the overnight — do not touch gb-mbp / workers.yaml.
+> RE-TASKED 2026-07-03 (~17:30Z). Your prior bead (hk-z13jz, Pi base_url passthrough) is
+> LANDED (commit c10c193b). New lane = the eval-program **problem set** (ws:problems), the
+> parallelable P1 the admiral flagged. This runs IN PARALLEL with leto's close-out lane and
+> is FILE-DISJOINT from it (you author task fixtures; leto touches reviewer/sandbox Go code).
+
+## The lane — author the NEW HARD eval tasks
+Read the spec FIRST: `plans/2026-07-03-eval-program/05-problem-set-and-tools.md` (the problem-set
+design). Target set = **6 new HARD tasks + 8 existing = 14** curated coding tasks used to compare
+models on time/tokens/quality.
+
+Existing fixtures live under `evaltasks/` (e.g. `eval-expr-eval/`, `eval-interval-schedule/`,
+`eval-lru-cache/`). MIRROR that structure for each new task: a self-contained task dir with the
+prompt/spec + a committed test that defines the contract (exercise stub + held-out test), plus the
+per-task metric fields the quality rubric needs (`expected_big_o`, `reference_line_budget` — see
+WS3f hk-eval-prog-task-metric-fields-bpx4n and doc 02-quality-assessment.md).
+
+For EACH of the 6 new tasks:
+1. Author the task fixture dir under `evaltasks/` per doc 05 (hard = genuinely exercises a capable
+   model: non-trivial algorithm/refactor/concurrency, unambiguous contract, deterministic test).
+2. File a bead (`br create --type task --label codename:eval-program`) describing it, with the
+   metric fields, so the run-matrix can dispatch it later.
+3. Commit the fixture (this is authoring work, done directly — NOT through the daemon queue).
+
+You MAY fan out sub-agents to draft candidate tasks in parallel, but YOU curate/verify each test
+compiles + the contract is sound before committing. Post the task list + rationale to captain.
+
+## Discipline
+- FILE-DISJOINT from leto: do NOT touch `internal/daemon/`, reviewer/finalize code, or the sandbox
+  pkg. Stay in `evaltasks/` + beads + docs. If you find yourself editing daemon Go, STOP and tell captain.
+- Do NOT `br close` (daemon/captain owns terminal transitions) — though authored-task beads you create
+  stay open for the run-matrix.
+- Progress feed: `--topic status` to captain on boot, each task authored, the full set done, any blocker,
+  ≤15-min idle tick.
 
 ## On boot
 1. `harmonik comms join` + confirm identity = gurney.
-2. `br update hk-z13jz --assignee gurney` (attribution).
-3. Post a boot status to captain (`--topic status`).
-4. Arm `harmonik comms recv --agent gurney --follow --json`.
-
-## THE BEAD — hk-z13jz (P1)
-**"Pi harness must pass base_url/api_base through to the Pi child for locally-hosted
-OpenAI-format endpoints (DGX Spark local models)."**
-
-**Target endpoint (what this unblocks):** DGX at `http://dgx.local:8551/v1`, model `ornith`,
-256K ctx, vLLM / OpenAI-compatible, dummy api_key accepted.
-
-**The seam (from captain's read of the code):**
-- `cmd/harmonik/resolve_pi_config.go` — the Pi config resolver. Today it requires
-  `provider`, `model`, `api_key_env` and imposes ZERO baked defaults (R1 de-hardcode mandate —
-  KEEP that invariant). Add an **optional** `base_url` (a.k.a. api_base) field here, shape-validated
-  (a URL/host shape, ≤ sane length; do NOT value-validate reachability). Optional = absent is valid
-  (today's cloud-provider behavior unchanged); present = passed through.
-- `internal/daemon/pilaunchspec.go` — builds the Pi child argv
-  (`pi --mode json --provider <prov> --model <prov/id> "<seed>"`). Thread the resolved `base_url`
-  to the Pi child **only when set**.
-- **DETERMINE how the Pi child accepts a custom base_url** — check `pi --help` and the installed
-  `@earendil-works/pi-coding-agent` package (`/opt/homebrew/bin/pi` → its node script /
-  node_modules). It's likely either a `--base-url` / `--api-base` CLI flag OR an env var
-  (`OPENAI_BASE_URL` / `OPENAI_API_BASE`). Use whatever Pi actually honors; if it's an env var,
-  inject it into the Pi child env in pilaunchspec.go (mirror how api_key_env is injected). Prove
-  the mechanism, don't guess.
-- Config-driven, **fail-loud** if referenced-but-malformed; absent base_url = no-op. No hard-coded URL.
-- **Tests** covering: absent base_url (today's behavior, no flag/env emitted), present base_url
-  (flag/env correctly emitted to the Pi child). Reviewer gate required (DOT).
-
-## queue / discipline
-- Submit hk-z13jz to **gurney-q** (`harmonik queue submit --queue gurney-q ...`). NEVER main.
-- Do NOT `br close` — the daemon closes on merge.
-- Do NOT spawn Agent-tool sub-agents for the implementation — the daemon queue is the mechanism.
-- Do NOT touch leto's sandbox lane, gb-mbp, or workers.yaml.
-- **CONCURRENT-EDIT WARNING (load-bearing, cost us 47min tonight):** if another bead merges to main
-  while your run is in flight and touches the SAME file (esp. config structs), your merge will
-  rebase-conflict and the run fails. resolve_pi_config.go + pilaunchspec.go are Pi-specific and
-  unlikely to collide with leto's sandbox work, but if a merge-fail happens, re-submit fresh (it
-  re-branches off new main) and tell captain.
-
-## progress feed
-Post `--topic status` to captain on: boot, the base_url mechanism you found (flag vs env),
-bead close/merge, and a ≤15-min idle/working tick. This is the overnight critical path —
-if you wedge or hit a real blocker, escalate to captain IMMEDIATELY (don't sit).
+2. Post a boot/re-task status to captain (`--topic status`).
+3. Arm `harmonik comms recv --agent gurney --follow --json`.
 
 ## translations
-hk-z13jz = "your bead: pass a custom base_url through to the Pi child so it can hit the DGX
-local model instead of a cloud provider" · Ornith = "the DGX-hosted local model (ornith @
-http://dgx.local:8551/v1, OpenAI-compatible)" · gurney-q = "your queue" · Pi = the
-@earendil-works/pi-coding-agent harness · the sandbox = leto's parallel build (srt FS isolation).
+ws:problems = "the eval problem set — the coding tasks models are graded on" · evaltasks/ = "where
+task fixtures live" · the run-matrix = "later WS2 work that runs each task through each model" ·
+close-out lane = "leto's parallel work fixing the reviewer bug + sandbox so the e2e runs clean".

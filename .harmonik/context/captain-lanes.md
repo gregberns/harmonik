@@ -9,6 +9,30 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
+## ⭐⭐ CURRENT TRUTH (2026-07-03 ~17:35Z — cold-boot after keeper /clear; close-out + eval staffed)
+> Captain cold-booted from a keeper-placeholder handoff; recovered real state from own pre-/clear
+> comms (17:15Z) + boot digest. Daemon UP @ max_concurrent=10 (spawn_cap=20). Per operator direction-log
+> 07-03 10:30Z: **captain OWNS the close-out** ("push it all onto the captain"); close-out sequences FIRST,
+> eval-program (23 beads) after. Fleet healthy, 2 lanes + volume moving; nothing blocked on operator.
+>
+> **LANES NOW:**
+> | crew | lane | queue | model | state |
+> |---|---|---|---|---|
+> | leto | CLOSE-OUT chain (P0, captain-owned) | leto-q | opus | ACTIVE — Step1 hk-1hgjr (reviewer local review_correctness ErrMalformed, the e2e keystone). Diagnosed: finalize read short-circuits to a NON-retrying local read → transient review.json truncation → ErrMalformed post-commit false-fail; only the finalize read needs the remote path's retry-until-valid (mirror hk-qts7r / 9860e8a2). Isolated fix agent in flight, then 2 independent worktree reviewers → ff-land. THEN hk-r4p0l (srt no-op for pi) → api-fix branch worktree-agent-a6e56ba9b90b2c320 → clean e2e sandboxed ornith run. Fix OUT-OF-DAEMON (self-review bootstrap trap). |
+> | gurney | eval-program ws:problems | gurney-q | opus | ACTIVE — author 6 new HARD eval tasks under evaltasks/ per plans/2026-07-03-eval-program/05-problem-set-and-tools.md + a codename:eval-program bead each. FILE-DISJOINT from leto (evaltasks/ + beads only; NOT internal/daemon). |
+> | (daemon) | evalvol volume | evalvol | — | ACTIVE/healthy — 14 self-contained eval beads (claude harness), 3 clean completions, 0 fails. Fills admiral's 10-concurrent volume target. |
+> | thufir | scavenger (on-call) | thufir-q | opus | IDLE-armed. NOT staffed — box already ~10 concurrent (overload guard); hold codex/scavenger volume until close-out settles. |
+> | watch | triage tier | watch-q | sonnet | ONLINE. admiral = oversight/operator. |
+>
+> **NEXT (staged, after WS4 land / close-out settles):** eval-program WS1 metrics — but WS1a/WS1b touch
+> workloop.go = COLLISION risk w/ leto's finalize-read close-out work; hold WS1 until leto's workloop
+> changes land, or route WS1c/WS1d (codex/pi jsonl PARSER token-extraction, file-disjoint) first.
+> **DGX-SSH GATE (hk-eval-prog-dgx-ssh-x7tzo) likely UNBLOCKED:** operator told admiral "DGX login user is
+> gb — I already added your key" — verify + un-gate ws:dgx when close-out done. **NOTE:** leto.md AND
+> gurney.md are BOTH git-tracked → commit mission edits immediately (daemon worktree-checkout reverts
+> uncommitted tracked-file edits under concurrent merges; hit twice this boot). Paused cruft queues
+> (main/pi-q/sandbox-q/paul-q/leto-codex/pi-scav-2) = pre-existing, left as-is.
+
 ## ⭐⭐ OPERATOR DIRECTIVE 2026-06-30 (via admiral) — FRESH WAKE, STAFF 3 LANES · expires: 2026-07-04
 > Fleet woke from a ~4-day sleep onto the security-fix daemon (7a9bf2e5, deploy daemon-20260630-01).
 > Operator confirmed: **staff all THREE lanes below; REMOTE is the top priority.** This block

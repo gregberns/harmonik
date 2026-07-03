@@ -2506,6 +2506,33 @@ func ExportedPiHarnessBaseURLFields(h *PiHarness) (baseURL, api string) {
 	return h.baseURL, h.api
 }
 
+// ExportedPiProcessExitLaunchSpecBuilder returns a launchSpecBuilder that
+// produces a handler.LaunchSpec for the provided shell script and stamps
+// resolvedAgentType = core.AgentTypePi on the returned artifacts.
+//
+// Use in tests that exercise the hk-j6wm7 Pi retain-on-failure + stdout/stderr
+// capture behaviour: wire an AdapterRegistry (empty or claude-only, so
+// waitAgentReady is skipped for the shell fixture) and a HarnessRegistry from
+// ExportedNewHarnessRegistry (which registers the Pi harness →
+// SessionIDPolicy() == SessionIDCaptured → the exec path + StdoutWrapper fire),
+// then supply this builder so beadRunOne resolves the run as a Pi run.
+//
+// Bead ref: hk-j6wm7.
+func ExportedPiProcessExitLaunchSpecBuilder(scriptPath string) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return func(_ context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+		spec := handler.LaunchSpec{
+			Binary:  "/bin/sh",
+			Args:    []string{scriptPath},
+			WorkDir: rc.workspacePath,
+			Role:    string(rc.phase),
+		}
+		arts := claudeRunArtifacts{
+			resolvedAgentType: core.AgentTypePi,
+		}
+		return spec, arts, nil
+	}
+}
+
 // ExportedCodexProcessExitLaunchSpecBuilder returns a launchSpecBuilder that
 // produces a handler.LaunchSpec for the provided shell script and stamps
 // resolvedAgentType = core.AgentTypeCodex on the returned artifacts.

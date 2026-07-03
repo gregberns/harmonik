@@ -3221,6 +3221,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// worktree survive SIGKILL; on normal exit cleanup runs as usual.
 	useIndepSession := false
 
+	// hk-j6wm7: retain the run worktree (which contains the pi-agent dir + the
+	// captured stdout/stderr, see below) on FAILURE for Pi runs so the fast-fail
+	// error — e.g. the ~4.5s exit0-no-commit against a locally-hosted
+	// OpenAI-compatible endpoint (ornith) — is observable post-mortem. runIsPi is
+	// set true once the harness resolves to Pi (below); runSucceeded is set by
+	// emitDone on the terminal path. This mirrors the hk-o85ye survive-cleanup
+	// gate: skip the deferred wtCleanup on an abnormal outcome so the artifacts
+	// survive, instead of deleting the only evidence of why the run failed.
+	// Successful Pi runs and ALL non-Pi runs clean up exactly as before, so there
+	// is no disk-leak regression on the happy path.
+	runIsPi := false
+
 	// Remove the run registry entry on normal exit (session completed).
 	// Registered first (LIFO) so it runs LAST — after session teardown + worktree removal.
 	defer func() {
@@ -3231,6 +3243,15 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	if wtCleanup != nil {
 		defer func() {
+			// hk-j6wm7: on a Pi FAILURE, retain the worktree (skip cleanup) and log
+			// where the retained artifacts live so an operator/captain can inspect
+			// the pi-agent dir + captured pi-stdout.log / pi-stderr.log.
+			if runIsPi && (runSucceeded == nil || !*runSucceeded) {
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: hk-j6wm7: Pi run %s (bead %s) FAILED — retaining worktree for post-mortem inspection at %s (pi output under %s/.harmonik/pi-agent/)\n",
+					runID.String(), beadID, wtPath, wtPath)
+				return
+			}
 			if !useIndepSession || ctx.Err() == nil {
 				wtCleanup()
 			}
@@ -3764,6 +3785,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if rh, ok := deps.runRegistry.Get(runID); ok && rh != nil {
 		rh.SetAgentType(artifactAgentType(artifacts))
 	}
+	// hk-j6wm7: record whether this run is a Pi run so the deferred wtCleanup can
+	// retain the worktree (and the captured pi output under it) on failure.
+	if artifactAgentType(artifacts) == core.AgentTypePi {
+		runIsPi = true
+	}
 
 	// In production HandlerArgs is always nil and spec.Args already contains the
 	// bridge flags (--session-id or --resume) from buildClaudeLaunchSpec.
@@ -3929,6 +3955,26 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// variable since watcher/launchErr are new in this scope; the closure is safe
 	// because agent_end can only arrive after Launch returns and sets sess.
 	var sess handler.Session
+	// hk-j6wm7: for a Pi run, capture a COPY of the child's stdout to a file under
+	// the run worktree so the fast-fail NDJSON output is observable post-mortem
+	// when the worktree is retained on failure. The pi-agent dir is where
+	// buildPiLaunchSpec writes models.json; co-locate the captured output there.
+	// The stdout is TEE'd (not redirected) so the session-id interceptor below
+	// still sees every byte — session-id capture is unaffected.
+	var piCaptureDir string
+	var piStdoutFile *os.File
+	if runIsPi {
+		piCaptureDir = filepath.Join(wtPath, ".harmonik", "pi-agent")
+		if mkErr := os.MkdirAll(piCaptureDir, 0o755); mkErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: create pi capture dir %q: %v (stdout capture disabled)\n", piCaptureDir, mkErr)
+			piCaptureDir = ""
+		} else if f, ferr := os.Create(filepath.Join(piCaptureDir, "pi-stdout.log")); ferr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: create pi-stdout.log: %v (stdout capture disabled)\n", ferr)
+		} else {
+			piStdoutFile = f
+			defer func() { _ = piStdoutFile.Close() }()
+		}
+	}
 	if implIsSessionIDCapturedWL {
 		capturedH := implHarnessWL
 		capturedSessionIDCh := make(chan string, 1) // buffered; single-mode has no resume reader
@@ -3938,7 +3984,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 		}
 		spec.StdoutWrapper = func(r io.Reader) io.Reader {
-			return capturedH.NewSessionIDInterceptor(r, func(id string) {
+			src := r
+			if piStdoutFile != nil {
+				src = io.TeeReader(r, piStdoutFile)
+			}
+			return capturedH.NewSessionIDInterceptor(src, func(id string) {
 				capturedSessionIDCh <- id
 			}, agentEndCb)
 		}
@@ -4005,6 +4055,34 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// emitting run_stale (SPEC_ACCEPTANCE_GAP fix per hk-xrygh iter-2).
 	if handle, ok := deps.runRegistry.Get(runID); ok {
 		handle.SetMachine(sess.Machine())
+	}
+
+	// hk-j6wm7: on a Pi FAILURE, persist the session's stderr tail alongside the
+	// captured stdout so the fast-fail error output survives with the retained
+	// worktree. Registered after Launch so it runs BEFORE the deferred wtCleanup
+	// (LIFO: wtCleanup was registered earlier at the worktree-factory step). On
+	// success this is a no-op — the worktree is cleaned up so no capture is
+	// needed. sess.Outcome() blocks until the run's Wait completes, which has
+	// already happened by the time this defer fires.
+	if runIsPi && piCaptureDir != "" {
+		capturedSess := sess
+		capturedCaptureDir := piCaptureDir
+		defer func() {
+			if runSucceeded != nil && *runSucceeded {
+				return
+			}
+			if capturedSess == nil {
+				return
+			}
+			tail := capturedSess.Outcome().StderrTail
+			if len(tail) == 0 {
+				return
+			}
+			stderrPath := filepath.Join(capturedCaptureDir, "pi-stderr.log")
+			if wErr := os.WriteFile(stderrPath, tail, 0o644); wErr != nil { //nolint:gosec // G306: post-mortem log, not a secret
+				fmt.Fprintf(os.Stderr, "daemon: workloop: hk-j6wm7: write pi-stderr.log: %v\n", wErr)
+			}
+		}()
 	}
 
 	// hk-68pvl: force-tear-down the implementer session before beadRunOne

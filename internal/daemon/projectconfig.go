@@ -1519,25 +1519,25 @@ func parseWatchBlock(raw rawWatchConfig) WatchConfig {
 
 // parseHarnessesBlock converts a rawHarnessesConfig into a HarnessesConfig.
 //
-// All Pi fields are stored verbatim from the YAML; no validation and no defaults
-// are applied here — ResolvePiConfig (cmd/harmonik/resolve_pi_config.go) is the
-// operator-facing enforcement gate that aggregates missing required fields and
-// validates the model shape (HC-055a). This matches the keeper: block pattern
-// where parsing is tolerant and the resolver is the chokepoint.
+// All Pi fields are stored verbatim from the YAML except APIKeyFile, where a
+// leading ~ is expanded to the user's home directory (PI-050/hk-sv3vg). All
+// other validation and required-field enforcement is left to ResolvePiConfig
+// (cmd/harmonik/resolve_pi_config.go), the operator-facing chokepoint.
 //
 // HasFallback is set to true when any fallback sub-field is non-empty (i.e. the
 // operator wrote at least one key under harnesses.pi.fallback:).
 //
-// Spec refs: PI-050. Bead ref: hk-v7q5u.
+// Spec refs: PI-050. Bead refs: hk-v7q5u, hk-sv3vg.
 func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 	pi := raw.Pi
 	hasFallback := pi.Fallback.Provider != "" || pi.Fallback.Model != "" || pi.Fallback.APIKeyEnv != ""
+	apiKeyFile, _ := daemonExpandHomePath(pi.APIKeyFile)
 	return HarnessesConfig{
 		Pi: PiHarnessConfig{
 			Provider:    pi.Provider,
 			Model:       pi.Model,
 			APIKeyEnv:   pi.APIKeyEnv,
-			APIKeyFile:  pi.APIKeyFile,
+			APIKeyFile:  apiKeyFile,
 			HasFallback: hasFallback,
 			Fallback: PiFallbackConfig{
 				Provider:  pi.Fallback.Provider,
@@ -1546,4 +1546,22 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 			},
 		},
 	}
+}
+
+// daemonExpandHomePath expands a leading ~ to the user's home directory.
+// Returns the path unchanged when it does not start with ~.
+// Mirrors expandHomePath in cmd/harmonik/resolve_pi_config.go (CLI path);
+// kept separate to avoid a cmd→internal import cycle. Bead: hk-sv3vg.
+func daemonExpandHomePath(p string) (string, error) {
+	if p != "~" && !strings.HasPrefix(p, "~/") && !strings.HasPrefix(p, `~\`) {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p, fmt.Errorf("cannot determine home directory: %w", err)
+	}
+	if p == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, p[2:]), nil
 }

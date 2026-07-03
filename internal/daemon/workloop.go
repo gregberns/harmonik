@@ -3913,35 +3913,71 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			implHarnessWL = implH
 		}
 	}
-	// hk-6596l: srt sandbox argv-wrap wiring.
-	// When sandbox.backend=srt and this run's harness is in sandbox.harnesses,
-	// attach SrtSpawnConfig to the perRunSubstrate so SpawnWindow prepends the
-	// srt argv-wrap (hk-rlxgx). The profile input is populated with per-run
-	// coordinates available at this point: worktree path, git dir, run ID, daemon
-	// socket, and the config-driven cache + network fields.
-	// No-op when sandboxCfg.Backend == "" (block absent) or backend == "none".
-	if deps.sandboxCfg.Backend == "srt" {
-		agentTypeName := string(artifactAgentType(artifacts))
-		if deps.sandboxCfg.HasHarness(agentTypeName) {
-			if prs, ok := runSubstrate.(*perRunSubstrate); ok {
-				prs.sandboxSpawn = &SrtSpawnConfig{
-					ProfileInput: SandboxProfileInput{
-						WorktreePath:          wtPath,
-						GitDir:                filepath.Join(deps.projectDir, ".git"),
-						RunID:                 runID.String(),
-						DaemonSockPath:        agentDaemonSock,
-						AllowedDomains:        deps.sandboxCfg.Network.AllowedDomains,
-						TmpDirs:               sandboxOSTmpDirs(),
-						SharedReadCacheDirs:   deps.sandboxCfg.Cache.WarmRead,
-						PrivateWriteCacheDirs: deps.sandboxCfg.Cache.PrivateWrite,
-					},
-				}
-			}
-		}
+	// hk-6596l: srt sandbox argv-wrap wiring. hk-r4p0l: key the gate off the
+	// resolved harness identity (implHarnessWL.AgentType()), NOT the
+	// artifacts-derived agent type. The originally-shipped gate matched
+	// string(artifactAgentType(artifacts)); for a pi run that value could read
+	// "claude-code" and the wrap silently no-op'd even with backend=srt +
+	// harnesses:[pi]. resolveGateAgentType prefers implHarnessWL (the concrete
+	// Harness resolved via HarnessRegistry.ForAgent just above) whose AgentType()
+	// is the guaranteed-correct identity, falling back to the artifacts value only
+	// when no resolved Harness is in scope.
+	//
+	// When backend=srt and the resolved harness is in sandbox.harnesses,
+	// sandboxSpawnForRun returns the SrtSpawnConfig to attach to the
+	// perRunSubstrate so SpawnWindow prepends the srt argv-wrap (hk-rlxgx). The
+	// profile input is populated with per-run coordinates available here: worktree
+	// path, git dir, run ID, daemon socket, and the config-driven cache + network
+	// fields. Strict no-op when backend == "" (block absent) or backend == "none",
+	// or when the harness is not listed.
+	//
+	// hk-r4p0l part 2: the gate decision is computed ONCE here into sandboxSpawn
+	// (the single source of truth for "should this run be srt-wrapped + with what
+	// profile") and then applied on whichever launch path this run takes:
+	//   - substrate path (non-SessionIDCaptured harnesses, e.g. claude/codex):
+	//     attach to prs.sandboxSpawn; perRunSubstrate.SpawnWindow prepends the
+	//     srt argv-wrap when the tmux window is spawned.
+	//   - exec path (SessionIDCaptured harnesses, e.g. pi): spec.Substrate is
+	//     forced nil below (to capture stdout/session-id), so SpawnWindow never
+	//     runs. The wrap is instead applied directly to spec.Binary/spec.Args in
+	//     the SessionIDCaptured branch below. The two branches are mutually
+	//     exclusive, so there is no double-wrap.
+	sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(implHarnessWL, artifactAgentType(artifacts)), SandboxProfileInput{
+		WorktreePath:          wtPath,
+		GitDir:                filepath.Join(deps.projectDir, ".git"),
+		RunID:                 runID.String(),
+		DaemonSockPath:        agentDaemonSock,
+		AllowedDomains:        deps.sandboxCfg.Network.AllowedDomains,
+		TmpDirs:               sandboxOSTmpDirs(),
+		SharedReadCacheDirs:   deps.sandboxCfg.Cache.WarmRead,
+		PrivateWriteCacheDirs: deps.sandboxCfg.Cache.PrivateWrite,
+	})
+	if prs, ok := runSubstrate.(*perRunSubstrate); ok && sandboxSpawn != nil {
+		prs.sandboxSpawn = sandboxSpawn
 	}
 
 	if implIsSessionIDCapturedWL {
 		spec.Substrate = nil
+		// hk-r4p0l part 2: exec-path srt argv-wrap. A SessionIDCaptured harness
+		// (pi) runs via exec.CommandContext(spec.Binary, spec.Args...) — the
+		// substrate's SpawnWindow (which wraps the substrate path) is never
+		// invoked, so without this the gate would attach sandboxSpawn to a
+		// discarded substrate and pi would launch UN-sandboxed. Prepend
+		// 'srt --settings <profile>' to the final argv so the run is actually
+		// sandboxed. Strict no-op when sandboxSpawn is nil (backend != srt or
+		// harness not listed).
+		wrapBin, wrapArgs, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
+		if wrapErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: srt argv-wrap bead %s run %s: %v (reopening)\n",
+				beadID, runID.String(), wrapErr)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("srt argv-wrap error: %v", wrapErr))
+			emitDone(false, fmt.Sprintf("srt argv-wrap error: %v", wrapErr))
+			return
+		}
+		spec.Binary = wrapBin
+		spec.Args = wrapArgs
 	} else {
 		spec.Substrate = runSubstrate
 	}

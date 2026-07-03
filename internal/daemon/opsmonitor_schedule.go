@@ -28,8 +28,10 @@ import (
 // opsMonitorJobID is the stable id for the ops-monitor scheduled job.
 const opsMonitorJobID = "ops-monitor"
 
-const opsMonitorDefaultInterval = "5m"
-const opsMonitorDefaultScript = "scripts/ops-monitor-check.sh"
+const (
+	opsMonitorDefaultInterval = "5m"
+	opsMonitorDefaultScript   = "scripts/ops-monitor-check.sh"
+)
 
 // opsMonitorJob returns the canonical ops-monitor scheduled job definition.
 // cfg fields are optional: empty strings resolve to the compiled defaults.

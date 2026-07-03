@@ -672,3 +672,113 @@ func TestParseCommsWho_NDJSONContract(t *testing.T) {
 		}
 	})
 }
+
+// TestCommsSendArgv_PositionalBodyAndFromDefault verifies that commsSendArgv
+// emits body after "--" (not as a --body flag) and always supplies --from
+// (defaulting to "daemon" when the caller passes empty), fixing the two bugs
+// that made every watch scheduled comms-send fail (hk-0lwje).
+func TestCommsSendArgv_PositionalBodyAndFromDefault(t *testing.T) {
+	cases := []struct {
+		name       string
+		to         string
+		from       string
+		body       string
+		topic      string
+		projectDir string
+		wantFrom   string
+	}{
+		{
+			name:       "empty from defaults to daemon",
+			to:         "captain",
+			from:       "",
+			body:       "watch-liveness-ping",
+			topic:      "liveness",
+			projectDir: "/proj",
+			wantFrom:   "daemon",
+		},
+		{
+			name:       "explicit from preserved",
+			to:         "captain",
+			from:       "watch",
+			body:       "watch-verify-services",
+			topic:      "liveness",
+			projectDir: "/proj",
+			wantFrom:   "watch",
+		},
+		{
+			name:       "no topic omits --topic flag",
+			to:         "captain",
+			from:       "daemon",
+			body:       "ping",
+			topic:      "",
+			projectDir: "/proj",
+			wantFrom:   "daemon",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := commsSendArgv(tc.to, tc.from, tc.body, tc.topic, tc.projectDir)
+
+			// Must not contain --body flag (CLI has no such flag).
+			for _, a := range args {
+				if a == "--body" {
+					t.Errorf("argv contains --body flag; body must be positional: %v", args)
+				}
+			}
+
+			// Body must appear as positional arg after "--".
+			ddIdx := -1
+			for i, a := range args {
+				if a == "--" {
+					ddIdx = i
+					break
+				}
+			}
+			if ddIdx < 0 {
+				t.Fatalf("argv missing -- separator: %v", args)
+			}
+			if ddIdx+1 >= len(args) || args[ddIdx+1] != tc.body {
+				t.Errorf("body not at args[ddIdx+1]: args=%v", args)
+			}
+
+			// --from must be present with the correct value.
+			fromVal := ""
+			for i, a := range args {
+				if a == "--from" && i+1 < len(args) {
+					fromVal = args[i+1]
+				}
+			}
+			if fromVal != tc.wantFrom {
+				t.Errorf("--from=%q, want %q; args=%v", fromVal, tc.wantFrom, args)
+			}
+
+			// --to must be present with the correct value.
+			toVal := ""
+			for i, a := range args {
+				if a == "--to" && i+1 < len(args) {
+					toVal = args[i+1]
+				}
+			}
+			if toVal != tc.to {
+				t.Errorf("--to=%q, want %q; args=%v", toVal, tc.to, args)
+			}
+
+			// --topic must be present iff tc.topic != "".
+			hasTopic := false
+			for i, a := range args {
+				if a == "--topic" && i+1 < len(args) {
+					hasTopic = true
+					if args[i+1] != tc.topic {
+						t.Errorf("--topic=%q, want %q; args=%v", args[i+1], tc.topic, args)
+					}
+				}
+			}
+			if tc.topic != "" && !hasTopic {
+				t.Errorf("--topic missing for non-empty topic %q; args=%v", tc.topic, args)
+			}
+			if tc.topic == "" && hasTopic {
+				t.Errorf("--topic present but topic is empty; args=%v", args)
+			}
+		})
+	}
+}

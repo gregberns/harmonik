@@ -304,8 +304,27 @@ func fireCommsSendAction(ctx context.Context, deps workLoopDeps, job schedule.Sc
 	return deps.commsSend(ctx, job.Action.To, job.Action.From, job.Action.Body, job.Action.Topic)
 }
 
+// commsSendArgv builds the argv slice for `harmonik comms send`.  Body is
+// emitted as a positional arg after "--" because the CLI's runCommsSendSubcommand
+// has no --body flag (it treats any unrecognised flag as an error).  From
+// defaults to "daemon" when empty so the CLI's --from-required check always
+// passes, even for watch jobs that set no explicit sender.
+func commsSendArgv(to, from, body, topic, projectDir string) []string {
+	effectiveFrom := from
+	if effectiveFrom == "" {
+		effectiveFrom = "daemon"
+	}
+	args := []string{"comms", "send", "--to", to, "--from", effectiveFrom, "--project", projectDir}
+	if topic != "" {
+		args = append(args, "--topic", topic)
+	}
+	args = append(args, "--", body)
+	return args
+}
+
 // shellCommsSend returns the production commsSendFunc: execs `harmonik comms send`
-// directly (not via bash -c) with the action's To/From/Body/Topic as typed flags.
+// directly (not via bash -c) with body as a positional arg (after "--") and
+// --from defaulted to "daemon" when the action carries no explicit sender.
 // This is the native comms-send action per WE6 operator ruling 3 — no shell wrapper.
 func shellCommsSend(daemonBinaryPath, projectDir string) commsSendFunc {
 	bin := daemonBinaryPath
@@ -313,13 +332,7 @@ func shellCommsSend(daemonBinaryPath, projectDir string) commsSendFunc {
 		bin = "harmonik"
 	}
 	return func(ctx context.Context, to, from, body, topic string) error {
-		args := []string{"comms", "send", "--to", to, "--body", body, "--project", projectDir}
-		if from != "" {
-			args = append(args, "--from", from)
-		}
-		if topic != "" {
-			args = append(args, "--topic", topic)
-		}
+		args := commsSendArgv(to, from, body, topic, projectDir)
 		//nolint:gosec // G204: bin is the resolved daemon binary; to/body/topic are operator-authored schedule config.
 		cmd := exec.CommandContext(ctx, bin, args...)
 		if out, err := cmd.CombinedOutput(); err != nil {

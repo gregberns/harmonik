@@ -1,67 +1,65 @@
 ---
 schema_version: 1
 crew_name: leto
-queue: sandbox-q
-epic_id: hk-f39ny
+queue: leto-q
+epic_id: hk-ag97p
 captain_name: captain
 model: opus
 ---
 
-# Crew mission — leto — PI-SANDBOX BUILD (operator priority, admiral 2026-07-03)
+# Crew mission — leto — Pi/ornith + sandbox CLOSE-OUT chain (P0, captain-owned)
 
-> RE-TASKED 2026-07-03 to the **pi-sandbox** lane (codename:pi-sandbox, queue sandbox-q).
-> This is now THE priority — the unlock for running Pi (and later DGX/local models) in an
-> OS-level sandbox so a non-Claude harness can't touch the host main repo/branch.
-> Pi itself is FULLY HELD until this lands. Model = Opus (this is investigative GATE work).
+> RE-TASKED 2026-07-03 (~17:20Z) from pi-sandbox BUILD (landed: 3/7, acceptance hk-i0377
+> committed c09c4c03) to the **CLOSE-OUT LANE**. The operator pushed close-out ownership
+> onto the captain ("push it all onto the captain"); leto is the executing crew. Deliverable
+> = a clean e2e SANDBOXED ornith run. Model = Opus (diagnostic gate work).
 
-## On boot
+## On boot / re-task
 1. `harmonik comms join` + confirm identity = leto.
-2. `br update hk-f39ny --assignee leto` (mirror for attribution).
-3. Post a boot status to captain (`--topic status`).
+2. `br update hk-1hgjr --assignee leto` (mirror for attribution; re-mirror on each step's bead).
+3. Post a boot/re-task status to captain (`--topic status`).
 4. Arm `harmonik comms recv --agent leto --follow --json`.
-5. READ THE BRIEF FIRST: `plans/2026-07-02-pi-sandbox/HANDOFF.md` (self-contained; §5 = the
-   Go-CLI-TLS problem, §8.1 = the spike). Companion research: `README.md` in that folder.
 
-## STEP 1 — THE SPIKE (GATE — do this FIRST, report BEFORE proceeding)
+## HARD rule — fix OUT-OF-DAEMON, not through the pipeline
+The keystone bug is IN the review pipeline. Do NOT route these fixes through the daemon's
+DOT review — it would fail its own review on the very bug it repairs (the self-fix
+bootstrap trap). For each code fix: isolated worktree off origin/main → build + test
+(`go build ./...` + `go test` the touched packages, `-race` where relevant) → INDEPENDENT
+review (≥2 diverse review sub-agents, isolation:worktree so they never mutate main) →
+fast-forward land on main → push. Report the SHA to captain; the captain closes the bead
+(NEVER `br close` yourself — daemon/captain owns terminal transitions).
 
-**hk-f39ny** (P1, GATE — blocks all other pi-sandbox beads). Manually srt-wrap
-(`@anthropic-ai/sandbox-runtime`, `npm i -g @anthropic-ai/sandbox-runtime`) a shell that:
-  (a) runs `br ready` + `harmonik comms recv --json` against the LIVE local daemon over the
-      unix socket (`.harmonik/daemon.sock`), AND
-  (b) makes ONE live OpenRouter model API call.
-**Resolve the Go-CLI-TLS question** (br/harmonik/gh are Go binaries that FAIL TLS under srt's
-MITM proxy — brief §5). Decide among: (a) enableWeakerNetworkIsolation=true (exfil caveat),
-(b) Go CLIs on the local unix socket only + allowlist remote domains, (c) run local-only tools
-outside the network sandbox. **Land the working srt settings recipe + the TLS decision, documented.**
-v1 network mode = OPEN (locked) — rely on the FS boundary; the spike proves the MECHANISM, not egress lockdown.
+Work the chain IN ORDER. Report to captain (topic status) after EACH step.
 
-**REPORT spike findings to captain BEFORE proceeding to the build.** This is a hard gate.
+## Step 1 (KEYSTONE) — hk-1hgjr: reviewer local review_correctness ErrMalformed
+Local twin of the ALREADY-FIXED remote bug hk-qts7r (commit 9860e8a2 — gate the kill on a
+valid-complete verdict; mirror that pattern). Symptom: `review verdict ErrMalformed`
+(schema_version missing / reviewer produced no verdict) + agent_ready_stall, failing runs
+POST-commit. This is what cascade-failed the eval queue (watch escalation 17:13Z). Reproduce
+first, then fix, then prove a local review run reaches a valid verdict. UNBLOCKS the e2e.
 
-## STEP 2 — the dependency-ordered build (ONLY after spike findings are reviewed)
+## Step 2 — hk-r4p0l: srt sandbox is a no-op for pi
+Run agent-type tags `claude-code`, so `sandbox.harnesses:[pi]` never matches → no srt-wrap.
+Make the sandbox ACTUALLY engage for pi runs and TEST it (a pi run is demonstrably
+srt-wrapped). Sandbox pkg is yours — file-disjoint from gurney.
 
-Dispatch through `sandbox-q` in this order (each blocks the next):
-1. **hk-p7smp** — profile/settings generator (`internal/daemon/sandboxprofile.go`)
-2. **hk-rlxgx** — argv-wrap srt in the substrate (`internal/daemon/tmuxsubstrate.go`)
-3. **hk-6596l** — sandbox config block + threading (`projectconfig.go`, `workloop.go`, composition root)
-4. **hk-i0377** — acceptance: commit-inside-SUCCEEDS / write-to-main-DENIED / branch-merges
+## Step 3 — land the api code-fix
+In-flight api fix on branch `worktree-agent-a6e56ba9b90b2c320` (Pi vs ornith needs
+`api:"openai-completions"`, NOT `"openai"` — wrong value = 4.5s exit0 no-commit fast-fail;
+related: hk-j6wm7 artifact-retention, hk-u69my intermittent fast-fail). Locate the branch,
+verify, build+test, review, ff-land. If the branch is gone, re-derive from the bead(s) and land.
 
-## Locked design (from the brief — do NOT relitigate)
-- Mechanism = **srt** (`@anthropic-ai/sandbox-runtime`); do NOT hand-roll SBPL/bubblewrap.
-- Both platforms, **macOS first**; v1 network = **OPEN** (FS boundary is the isolation).
-- Config-driven backend `sandbox: {backend: srt|none}` — NO hard-coded framework/creds; fail loud if unset.
-- Warm cache = read-only warm base + per-run private writable area (never a shared concurrent writer —
-  avoids the cache-reaper TOCTOU class).
+## Step 4 — clean e2e SANDBOXED ornith run
+With 1-3 landed: run ONE bead end-to-end Pi → ornith (dgx.local:8551/v1, model `ornith`,
+api:openai-completions, dummy key) INSIDE the srt sandbox. Prove: sandbox engaged, commit
+landed, review reached a valid verdict, no ErrMalformed. Report run_id + evidence. This is
+the close-out deliverable.
 
-## queue / discipline
-- Use `sandbox-q` for every submit. NEVER main. Do NOT `br close` (daemon closes on merge).
-- Do NOT spawn Agent-tool sub-agents for implementation — the daemon queue is the mechanism.
-- gurney STAYS stood down (reserved for the operator's incoming real work → gb-mbp) — do not touch its lane.
-
-## progress feed
-Post `--topic status` to captain on: boot, spike findings (the gate report), each build bead close,
-and a ≤15-min idle/working tick.
+## Discipline
+- Do NOT touch gurney's lane (eval-program WS1/WS4). File-disjoint.
+- Progress feed: `--topic status` to captain on boot, each step done, any blocker, ≤15-min idle tick.
 
 ## translations
-hk-f39ny = "the GATE spike (srt reaches daemon + model call + Go-CLI-TLS decision)" ·
-srt = "@anthropic-ai/sandbox-runtime, the argv-wrapper sandbox" · sandbox-q = "your queue" ·
-hk-p7smp/hk-rlxgx/hk-6596l/hk-i0377 = "the 4 dependency-ordered build beads (profile→argv-wrap→config→acceptance)".
+hk-1hgjr = "reviewer local ErrMalformed bug — the e2e keystone" · hk-r4p0l = "srt sandbox
+is a no-op for pi runs" · srt = "@anthropic-ai/sandbox-runtime argv-wrapper sandbox" ·
+ornith = "local DGX model at dgx.local:8551, OpenAI-compat, api:openai-completions".

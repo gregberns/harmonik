@@ -21,33 +21,33 @@ model: sonnet
 3. Post a boot status to captain (`--topic status`) + a journal comment.
 4. Arm `harmonik comms recv --agent leto --follow --json` (dedupe on event_id).
 
-## goal — SEQUENCED (do in order)
+## PROGRESS (2026-07-03) — DONE so far
+- ✅ hk-sv3vg (~-expansion fix) LANDED (37a4df93).
+- ✅ Daemon REDEPLOYED by captain to c5771a5e (includes the fix); last-good pinned;
+  tagged daemon-20260703-01. File-key auth path is LIVE.
+- ✅ config `harnesses.pi.model` = `openai/gpt-5.4-mini` (set).
+- ✅ AUTH PROVEN LIVE: canary hk-nxjwo selected harness=pi, billing guard PASSED,
+  authenticated to OpenRouter, reasoned on gpt-5.4-mini ~1min. PI-040 blocker GONE.
+  It "failed" only because the canary bead has NO committable task (design gap, not a
+  Pi defect). hk-nxjwo is CLOSED-OUT as a canary; pi-q went paused-by-failure from it.
 
-1. **hk-sv3vg has LANDED** (37a4df93 on main — daemon expands ~ in api_key_file at
-   config parse). That fix IS the durable auth path. leto-q is drained.
+## goal — THE LAST MILE (do this now)
 
-2. **REDEPLOY the daemon** to 37a4df93 (runbook `docs/daemon-redeploy.md`; fleet idle =
-   ideal window). You own daemon ops + supervisor-env coordination + are authorized to
-   restart.
-   - **AUTH — prefer the FILE-KEY path** (daemon reads api_key_file
-     `~/.config/harmonik/openrouter.key`, ~ now expands). SUPERIOR to env-var because it
-     **survives supervisor revives**. Only if the PI-040 guard still checks env
-     EXCLUSIVELY, fall back to exporting `OPENROUTER_API_KEY` in BOTH the daemon launch
-     AND the supervisor's revive command (else the next auto-revive drops it).
-   - DO NOT read the key contents.
+Prove full dot:close with a REAL bead, which also STARTS the scavenger drain:
 
-3. **Set model:** `.harmonik/config.yaml` `harnesses.pi.model` -> `openai/gpt-5.4-mini`
-   (admiral correction — gpt-4o is STALE; gpt-5.4-mini is the current OpenRouter OpenAI
-   mini, released 2026-03, tuned for high-throughput coding+tool-use). Use gpt-5.4-mini
-   for the canary AND the scavenger load. Provider stays openrouter.
+1. **Clear pi-q** (paused-by-failure from the no-op canary): resume it or submit a
+   fresh group; do NOT let hk-nxjwo re-dispatch (it will re-fail).
+2. **Pick 1-2 SMALL REAL MECHANICAL scavenger beads** — grep=0 / failing-test->green,
+   deterministically checkable, file-disjoint from any active lane (the ~110 banked
+   scavenger beads are the FUEL). YOU own selection.
+3. **Submit to pi-q on `openai/gpt-5.4-mini` behind the DOT test+review gate.**
+4. **The FIRST bead that reaches dot:close + passes review + MERGES = the true
+   end-to-end proof AND the start of the scavenger drain.** Report GREEN with the
+   bead id + commit SHA.
+5. **Keep it to 1-2 while the operator is away** (prove it, don't flood — we scale the
+   batch when they're back).
 
-4. **Canary:** submit `hk-nxjwo` to a DEDICATED `pi-q` (PI-070 needs an explicit
-   per-queue cap). Verify it reaches `dot:close` authenticating via GPT.
-
-5. **ONCE GREEN:** route a batch of mechanical scavenger beads (grep=0 /
-   failing-test->green, deterministically checkable — the ~110 banked scavenger beads are
-   the FUEL) through `pi-q` on gpt-5.4-mini, behind the DOT test+review gate. Keep them
-   file-disjoint from any other active lane.
+Re-arm `comms recv --agent leto --follow` so the captain can reach you without a pane nudge.
 
 ## Not a gate
 - fork-bomb blocker hk-9s5fx: PRIMARY FIX DONE (353fc3c1 — dead `.pi/extensions/flywheel`

@@ -1980,7 +1980,7 @@ func (p *perRunSubstrate) buildSrtArgv(agentArgv []string) ([]string, error) {
 	}
 	profilePath := filepath.Join(os.TempDir(), "harmonik-srt-"+p.sandboxSpawn.ProfileInput.RunID+".json")
 	//nolint:gosec // G306: 0600 is correct — profile contains literal filesystem paths, readable only by daemon uid.
-	if err := os.WriteFile(profilePath, profileBytes, 0600); err != nil {
+	if err := os.WriteFile(profilePath, profileBytes, 0o600); err != nil {
 		return nil, fmt.Errorf("write srt profile to %s: %w", profilePath, err)
 	}
 	srtBin := p.sandboxSpawn.SrtBinary

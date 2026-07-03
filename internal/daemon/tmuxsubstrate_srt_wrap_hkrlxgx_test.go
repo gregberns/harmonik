@@ -46,13 +46,15 @@ type hkrlxgxAdapter struct {
 	panePIDResult   int
 }
 
-func (a *hkrlxgxAdapter) ProbeTmux(_ context.Context) error       { return nil }
+func (a *hkrlxgxAdapter) ProbeTmux(_ context.Context) error { return nil }
 func (a *hkrlxgxAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hkrlxgxAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
+
 func (a *hkrlxgxAdapter) NewWindowIn(_ context.Context, params tmux.NewWindowIn) tmux.Outcome {
 	a.capturedCommand = params.Command
 	return tmux.Outcome{Handle: tmux.WindowHandle("hkrlxgx-session:hkrlxgx-window")}
@@ -61,15 +63,16 @@ func (a *hkrlxgxAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) erro
 func (a *hkrlxgxAdapter) WindowPanePID(_ context.Context, _ tmux.WindowHandle) (int, error) {
 	return a.panePIDResult, nil
 }
+
 func (a *hkrlxgxAdapter) WindowPaneID(_ context.Context, _ tmux.WindowHandle) (string, error) {
 	return "", nil
 }
-func (a *hkrlxgxAdapter) KillSession(_ context.Context, _ string) error  { return nil }
-func (a *hkrlxgxAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error { return nil }
-func (a *hkrlxgxAdapter) PasteBuffer(_ context.Context, _, _ string) error       { return nil }
-func (a *hkrlxgxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error   { return nil }
-func (a *hkrlxgxAdapter) SendKeysEnter(_ context.Context, _ string) error        { return nil }
-func (a *hkrlxgxAdapter) SendKeysQuit(_ context.Context, _ string) error         { return nil }
+func (a *hkrlxgxAdapter) KillSession(_ context.Context, _ string) error              { return nil }
+func (a *hkrlxgxAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error     { return nil }
+func (a *hkrlxgxAdapter) PasteBuffer(_ context.Context, _, _ string) error           { return nil }
+func (a *hkrlxgxAdapter) SendKeysLiteral(_ context.Context, _, _ string) error       { return nil }
+func (a *hkrlxgxAdapter) SendKeysEnter(_ context.Context, _ string) error            { return nil }
+func (a *hkrlxgxAdapter) SendKeysQuit(_ context.Context, _ string) error             { return nil }
 func (a *hkrlxgxAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error { return nil }
 
 var _ tmux.Adapter = (*hkrlxgxAdapter)(nil)

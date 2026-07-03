@@ -27,13 +27,13 @@ import (
 // fields populated. Tests override individual fields as needed.
 func sandboxProfileFixture() daemon.SandboxProfileInput {
 	return daemon.SandboxProfileInput{
-		WorktreePath:   "/repo/.harmonik/worktrees/0196f000-0000-7000-8000-000000000001",
-		GitDir:         "/repo/.git",
-		RunID:          "0196f000-0000-7000-8000-000000000001",
-		BranchName:     "run/0196f000-0000-7000-8000-000000000001",
-		DaemonSockPath: "/repo/.harmonik/daemon.sock",
-		AllowedDomains: []string{"openrouter.ai"},
-		TmpDirs:        []string{"/tmp", "/private/tmp"},
+		WorktreePath:          "/repo/.harmonik/worktrees/0196f000-0000-7000-8000-000000000001",
+		GitDir:                "/repo/.git",
+		RunID:                 "0196f000-0000-7000-8000-000000000001",
+		BranchName:            "run/0196f000-0000-7000-8000-000000000001",
+		DaemonSockPath:        "/repo/.harmonik/daemon.sock",
+		AllowedDomains:        []string{"openrouter.ai"},
+		TmpDirs:               []string{"/tmp", "/private/tmp"},
 		SharedReadCacheDirs:   []string{"/Users/gb/.cache/go-build"},
 		PrivateWriteCacheDirs: []string{"/repo/.harmonik/worktrees/0196f000-0000-7000-8000-000000000001/.cache"},
 	}

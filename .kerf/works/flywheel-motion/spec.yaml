@@ -1,0 +1,30 @@
+codename: flywheel-motion
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: spec-draft
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-06-14T13:30:34Z
+updated: 2026-06-15T12:36:47Z
+sessions:
+    - id: null
+      started: 2026-06-14T13:30:34Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads:
+    - hk-0oca
+implementation:
+    branch: null
+    pr: null
+    commits: []

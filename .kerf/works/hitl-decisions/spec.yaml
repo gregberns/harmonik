@@ -1,0 +1,36 @@
+codename: hitl-decisions
+type: plan
+project:
+    id: gregberns-harmonik
+jig: plan
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - analyze
+    - decompose
+    - research
+    - change-spec
+    - integration
+    - tasks
+    - ready
+created: 2026-06-03T01:19:05Z
+updated: 2026-06-13T05:45:16Z
+sessions:
+    - id: null
+      started: 2026-06-03T01:19:05Z
+      ended: 2026-06-11T20:53:16Z
+    - id: null
+      started: 2026-06-11T20:53:16Z
+      ended: 2026-06-11T21:09:36Z
+    - id: null
+      started: 2026-06-13T05:24:18Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:hitl-decisions
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

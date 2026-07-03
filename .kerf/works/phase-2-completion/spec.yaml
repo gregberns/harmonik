@@ -1,0 +1,45 @@
+codename: phase-2-completion
+type: spec
+project:
+  id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: problem-space
+status_values:
+  - problem-space
+  - decompose
+  - research
+  - change-design
+  - spec-draft
+  - integration
+  - tasks
+  - ready
+created: 2026-05-18T19:17:15Z
+updated: 2026-05-22T15:01:08Z
+sessions:
+  - id: null
+    started: 2026-05-18T19:17:15Z
+active_session: anonymous
+depends_on: []
+pinned_beads:
+  - hk-7uasg
+  - hk-pcgms
+  - hk-cd8yu
+  - hk-loga9
+  - hk-9c1v4
+  - hk-mtm0w
+  - hk-930o3
+  - hk-0xmwq
+  - hk-ortkx
+  - hk-mmh8f
+  - hk-7srrd
+  - hk-6zylj
+implementation:
+  branch: null
+  pr: null
+  commits: []
+bead_filter:
+  any:
+    - label: phase2-dogfood-friction
+    - label: harmonik-cli
+    - label: phase-1-acceptance

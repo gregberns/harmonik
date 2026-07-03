@@ -36,13 +36,13 @@ func evalWriteEvents(t *testing.T, path string, lines []string) {
 // evalEventLine builds a minimal event JSONL line.
 func evalEventLine(eventType, runID string, payload map[string]any) string {
 	env := map[string]any{
-		"event_id":        "00000000-0000-0000-0000-000000000001",
-		"schema_version":  1,
-		"type":            eventType,
-		"timestamp_wall":  "2026-07-02T22:00:00Z",
-		"run_id":          runID,
+		"event_id":         "00000000-0000-0000-0000-000000000001",
+		"schema_version":   1,
+		"type":             eventType,
+		"timestamp_wall":   "2026-07-02T22:00:00Z",
+		"run_id":           runID,
 		"source_subsystem": "test",
-		"payload":         payload,
+		"payload":          payload,
 	}
 	b, _ := json.Marshal(env)
 	return string(b)
@@ -51,13 +51,13 @@ func evalEventLine(eventType, runID string, payload map[string]any) string {
 // evalEventLineAt builds an event line with a specific wall timestamp.
 func evalEventLineAt(eventType, runID, wallTS string, payload map[string]any) string {
 	env := map[string]any{
-		"event_id":        "00000000-0000-0000-0000-000000000001",
-		"schema_version":  1,
-		"type":            eventType,
-		"timestamp_wall":  wallTS,
-		"run_id":          runID,
+		"event_id":         "00000000-0000-0000-0000-000000000001",
+		"schema_version":   1,
+		"type":             eventType,
+		"timestamp_wall":   wallTS,
+		"run_id":           runID,
 		"source_subsystem": "test",
-		"payload":         payload,
+		"payload":          payload,
 	}
 	b, _ := json.Marshal(env)
 	return string(b)
@@ -98,15 +98,15 @@ func TestEvalReadEvents_GradePass(t *testing.T) {
 			"outcome_status": "SUCCESS",
 		}),
 		evalEventLine("checkpoint_written", runID, map[string]any{
-			"run_id":       runID,
-			"state_id":     "00000000-0000-0000-0000-000000000003",
+			"run_id":        runID,
+			"state_id":      "00000000-0000-0000-0000-000000000003",
 			"transition_id": "00000000-0000-0000-0000-000000000004",
-			"commit_hash":  "abcd1234567890",
+			"commit_hash":   "abcd1234567890",
 		}),
 		evalEventLineAt("run_completed", runID, "2026-07-02T22:03:34Z", map[string]any{
-			"run_id":          runID,
+			"run_id":            runID,
 			"terminal_state_id": "00000000-0000-0000-0000-000000000005",
-			"ended_at":        "2026-07-02T22:03:34Z",
+			"ended_at":          "2026-07-02T22:03:34Z",
 		}),
 	})
 

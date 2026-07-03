@@ -89,33 +89,33 @@ type evalEnvelope struct {
 // evalRunState accumulates events for one run_id.
 type evalRunState struct {
 	beadID          string
-	startedAt       string    // from run_started payload
-	endedAt         string    // from run_completed or run_failed payload
+	startedAt       string // from run_started payload
+	endedAt         string // from run_completed or run_failed payload
 	completedWall   time.Time
-	harness         string    // from harness_selected.agent_type
-	implSecs        float64   // from implementer_phase_complete.duration_seconds
-	gradeDispatched bool      // node_dispatch_requested where node_id=="grade" → eval run
-	judgeOutcome    bool      // outcome_emitted where node_id=="judge" → grade passed
-	commitSHA       string    // last checkpoint_written.commit_hash
+	harness         string  // from harness_selected.agent_type
+	implSecs        float64 // from implementer_phase_complete.duration_seconds
+	gradeDispatched bool    // node_dispatch_requested where node_id=="grade" → eval run
+	judgeOutcome    bool    // outcome_emitted where node_id=="judge" → grade passed
+	commitSHA       string  // last checkpoint_written.commit_hash
 }
 
 // evalResultRecord is the output schema (DESIGN.md §1.3).
 type evalResultRecord struct {
-	SchemaVersion  int      `json:"schema_version"`
-	RunID          string   `json:"run_id"`
-	BeadID         string   `json:"bead_id"`
-	TaskID         string   `json:"task_id"`
-	Difficulty     string   `json:"difficulty"`
-	Model          string   `json:"model"`
-	Harness        string   `json:"harness"`
-	Pass           bool     `json:"pass"`
-	CheckKind      string   `json:"check_kind"`
-	WallTimeS      float64  `json:"wall_time_s"`
-	ImplementTimeS float64  `json:"implement_time_s"`
-	JudgeGrade     *int     `json:"judge_grade"`
-	JudgeNotes     *string  `json:"judge_notes"`
-	CommitSHA      string   `json:"commit_sha"`
-	Timestamp      string   `json:"timestamp"`
+	SchemaVersion  int     `json:"schema_version"`
+	RunID          string  `json:"run_id"`
+	BeadID         string  `json:"bead_id"`
+	TaskID         string  `json:"task_id"`
+	Difficulty     string  `json:"difficulty"`
+	Model          string  `json:"model"`
+	Harness        string  `json:"harness"`
+	Pass           bool    `json:"pass"`
+	CheckKind      string  `json:"check_kind"`
+	WallTimeS      float64 `json:"wall_time_s"`
+	ImplementTimeS float64 `json:"implement_time_s"`
+	JudgeGrade     *int    `json:"judge_grade"`
+	JudgeNotes     *string `json:"judge_notes"`
+	CommitSHA      string  `json:"commit_sha"`
+	Timestamp      string  `json:"timestamp"`
 }
 
 // runEvalCollect is the testable entry-point for `harmonik eval collect`.

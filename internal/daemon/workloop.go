@@ -820,6 +820,14 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-z1lr (FW2).
 	sentinelPhase2Classes []string
+
+	// sandboxCfg holds the sandbox: block from .harmonik/config.yaml (hk-6596l).
+	// When Backend == "" the block was absent and no sandboxing occurs. When
+	// Backend == "srt", beadRunOne wires SrtSpawnConfig onto the perRunSubstrate
+	// for every harness listed in Harnesses. Zero value = no sandboxing.
+	//
+	// Bead ref: hk-6596l.
+	sandboxCfg SandboxConfig
 }
 
 // closeBeadWithHistoryTrim trims .beads/.br_history to brHistoryCloseTrimKeep
@@ -1048,6 +1056,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		coordinatorReapAdapter:     coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
 		coordinatorReapProjectHash: projectHash,                        // hk-t08m: pre-computed for session name derivation
 		runner:                     cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
+		sandboxCfg:                 cfg.ProjectCfg.Sandbox,            // hk-6596l: srt sandbox config block
 	}, nil
 }
 
@@ -3878,6 +3887,33 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			implHarnessWL = implH
 		}
 	}
+	// hk-6596l: srt sandbox argv-wrap wiring.
+	// When sandbox.backend=srt and this run's harness is in sandbox.harnesses,
+	// attach SrtSpawnConfig to the perRunSubstrate so SpawnWindow prepends the
+	// srt argv-wrap (hk-rlxgx). The profile input is populated with per-run
+	// coordinates available at this point: worktree path, git dir, run ID, daemon
+	// socket, and the config-driven cache + network fields.
+	// No-op when sandboxCfg.Backend == "" (block absent) or backend == "none".
+	if deps.sandboxCfg.Backend == "srt" {
+		agentTypeName := string(artifactAgentType(artifacts))
+		if deps.sandboxCfg.HasHarness(agentTypeName) {
+			if prs, ok := runSubstrate.(*perRunSubstrate); ok {
+				prs.sandboxSpawn = &SrtSpawnConfig{
+					ProfileInput: SandboxProfileInput{
+						WorktreePath:          wtPath,
+						GitDir:                filepath.Join(deps.projectDir, ".git"),
+						RunID:                 runID.String(),
+						DaemonSockPath:        agentDaemonSock,
+						AllowedDomains:        deps.sandboxCfg.Network.AllowedDomains,
+						TmpDirs:               sandboxOSTmpDirs(),
+						SharedReadCacheDirs:   deps.sandboxCfg.Cache.WarmRead,
+						PrivateWriteCacheDirs: deps.sandboxCfg.Cache.PrivateWrite,
+					},
+				}
+			}
+		}
+	}
+
 	if implIsSessionIDCapturedWL {
 		spec.Substrate = nil
 	} else {
@@ -7241,6 +7277,18 @@ func adoptLiveRunSession(ctx context.Context, deps workLoopDeps, rec runpkg.Reco
 // goroutine is monitoring the independent tmux session; resetting the bead
 // in that case would race the live session, so the stranded-bead auto-reset
 // (hk-l2xd1) must skip.
+// sandboxOSTmpDirs returns the OS temp directories to include in the srt sandbox
+// allowWrite set (hk-6596l). On macOS /tmp is a symlink to /private/tmp; srt
+// requires the canonical path, so both are included when os.TempDir() returns "/tmp".
+func sandboxOSTmpDirs() []string {
+	tmpDir := os.TempDir()
+	dirs := []string{tmpDir}
+	if tmpDir == "/tmp" {
+		dirs = append(dirs, "/private/tmp")
+	}
+	return dirs
+}
+
 func strandedBeadHasOnDiskRun(projectDir string, beadID core.BeadID) bool {
 	if projectDir == "" {
 		return false

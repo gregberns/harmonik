@@ -671,6 +671,99 @@ type DaemonRestartBackoffConfig struct {
 	Window time.Duration
 }
 
+// rawSandboxNetworkConfig is the sandbox.network block in config.yaml.
+// Unknown keys are silently ignored (forward-compat, matches daemon: block behaviour).
+type rawSandboxNetworkConfig struct {
+	Mode                   string   `yaml:"mode"`
+	AllowedDomains         []string `yaml:"allowed_domains"`
+	WeakerNetworkIsolation bool     `yaml:"weaker_network_isolation"`
+}
+
+// rawSandboxCacheConfig is the sandbox.cache block in config.yaml.
+type rawSandboxCacheConfig struct {
+	WarmRead     []string `yaml:"warm_read"`
+	PrivateWrite []string `yaml:"private_write"`
+}
+
+// rawSandboxConfig is the sandbox: block in config.yaml (hk-6596l).
+// backend is REQUIRED when the block is present (fail-loud per the
+// no-hardcoded-defaults principle). Unknown keys are silently ignored.
+type rawSandboxConfig struct {
+	Backend   string                 `yaml:"backend"`
+	Harnesses []string               `yaml:"harnesses"`
+	Network   rawSandboxNetworkConfig `yaml:"network"`
+	Cache     rawSandboxCacheConfig   `yaml:"cache"`
+}
+
+// SandboxNetworkConfig holds the network sub-block of the sandbox: config.
+type SandboxNetworkConfig struct {
+	// Mode is the network mode. v1 value = "open" (locked).
+	Mode string
+	// AllowedDomains is the list of HTTPS domains permitted outbound by the sandbox.
+	// Nil/empty = no outbound HTTPS.
+	AllowedDomains []string
+	// WeakerNetworkIsolation, when true, enables srt's weaker-network-isolation mode.
+	// Per the TLS decision (plans/2026-07-02-pi-sandbox/SPIKE-FINDINGS-hk-f39ny.md §TLS
+	// DECISION), v1 keeps this false; the field is stored verbatim from config.
+	WeakerNetworkIsolation bool
+}
+
+// SandboxCacheConfig holds the cache sub-block of the sandbox: config.
+type SandboxCacheConfig struct {
+	// WarmRead is the list of shared read-only toolchain cache directories included in
+	// srt's allowRead set. These are NEVER writable from inside the sandbox to avoid
+	// the concurrent-writer TOCTOU class (cache-reaper TOCTOU incident).
+	WarmRead []string
+	// PrivateWrite is the list of per-run private cache directories included in srt's
+	// allowWrite set. Unlike WarmRead these are per-run: they are never shared with
+	// concurrent runs, eliminating concurrent-write races.
+	PrivateWrite []string
+}
+
+// SandboxConfig holds the sandbox: top-level config block read from
+// .harmonik/config.yaml. Absent = zero value (Backend==""); callers check
+// Backend != "" to determine whether the block was present.
+//
+// When present, Backend is REQUIRED (fail-loud per the no-hardcoded-defaults
+// principle). Valid values: "srt" (argv-wrap via @anthropic-ai/sandbox-runtime)
+// and "none" (explicit opt-out, equivalent to absent block but auditable).
+//
+// Bead ref: hk-6596l.
+type SandboxConfig struct {
+	// Backend is the sandbox mechanism: "srt" or "none". REQUIRED when the
+	// sandbox: block is present; empty only when the block is absent.
+	Backend string
+	// Harnesses is the list of harness names (agent types) that run under the
+	// sandbox. E.g. ["pi"]. Empty = no runs are sandboxed even when Backend="srt".
+	Harnesses []string
+	// Network holds the network isolation sub-config.
+	Network SandboxNetworkConfig
+	// Cache holds the cache access sub-config.
+	Cache SandboxCacheConfig
+}
+
+// HasHarness reports whether name is in the sandbox.harnesses list.
+func (c SandboxConfig) HasHarness(name string) bool {
+	for _, h := range c.Harnesses {
+		if h == name {
+			return true
+		}
+	}
+	return false
+}
+
+// sandboxBlockAbsent reports whether the sandbox: block is at its zero value,
+// i.e. no sandbox config was supplied in .harmonik/config.yaml.
+func sandboxBlockAbsent(raw rawSandboxConfig) bool {
+	return raw.Backend == "" &&
+		len(raw.Harnesses) == 0 &&
+		raw.Network.Mode == "" &&
+		len(raw.Network.AllowedDomains) == 0 &&
+		!raw.Network.WeakerNetworkIsolation &&
+		len(raw.Cache.WarmRead) == 0 &&
+		len(raw.Cache.PrivateWrite) == 0
+}
+
 // rawHarnessesPiFallbackConfig is the optional harnesses.pi.fallback block.
 // All fields are stored as strings; absence is the empty string.
 type rawHarnessesPiFallbackConfig struct {
@@ -893,6 +986,7 @@ type rawProjectConfig struct {
 	Opsmonitor    rawOpsmonitorConfig       `yaml:"opsmonitor"` // hk-bi4bg: ops-monitor schedule overrides
 	Supervise     rawSuperviseConfig        `yaml:"supervise"`
 	Harnesses     rawHarnessesConfig        `yaml:"harnesses"` // hk-v7q5u: per-harness config (PI-050)
+	Sandbox       rawSandboxConfig          `yaml:"sandbox"`   // hk-6596l: sandbox backend config
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.
@@ -952,6 +1046,10 @@ type ProjectConfig struct {
 	// Harnesses holds the per-harness config read from the harnesses: block.
 	// Zero value when the block is absent. Bead ref: hk-v7q5u (PI-050).
 	Harnesses HarnessesConfig
+
+	// Sandbox holds the sandbox: config block read from the sandbox: block.
+	// Zero value (Backend=="") when the block is absent. Bead ref: hk-6596l.
+	Sandbox SandboxConfig
 }
 
 // LookupAgent returns the (model, effort) pair configured for agentType, or
@@ -1020,7 +1118,7 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		raw.Harnesses.Pi.Fallback == (rawHarnessesPiFallbackConfig{})
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
 		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent && watchBlockAbsent &&
-		opsmonitorAbsent && superviseAbsent && harnessesAbsent {
+		opsmonitorAbsent && superviseAbsent && harnessesAbsent && sandboxBlockAbsent(raw.Sandbox) {
 		return ProjectConfig{}, nil
 	}
 
@@ -1071,6 +1169,17 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	// the YAML level; ResolvePiConfig enforces fail-loud on missing required values.
 	harnessesCfg := parseHarnessesBlock(raw.Harnesses)
 
+	// hk-6596l: parse the sandbox: block. backend is REQUIRED when the block is
+	// present; absent block → zero SandboxConfig (Backend=="", no sandboxing).
+	var sandboxCfg SandboxConfig
+	if !sandboxBlockAbsent(raw.Sandbox) {
+		var sErr error
+		sandboxCfg, sErr = parseSandboxBlock(path, raw.Sandbox)
+		if sErr != nil {
+			return ProjectConfig{}, sErr
+		}
+	}
+
 	cfg := ProjectConfig{
 		entries:    make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
 		Daemon:     daemonCfg,
@@ -1080,6 +1189,7 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		Watch:      watchCfg,
 		Opsmonitor: opsmonitorCfg,
 		Harnesses:  harnessesCfg,
+		Sandbox:    sandboxCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
@@ -1597,6 +1707,49 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 			},
 		},
 	}
+}
+
+// parseSandboxBlock converts a rawSandboxConfig into a SandboxConfig.
+//
+// Validation:
+//   - backend MUST be present when the block is present (fail-loud per the
+//     no-hardcoded-defaults principle; the caller checks sandboxBlockAbsent before
+//     calling here so we only arrive when at least one field is non-zero).
+//   - backend must be one of "srt" or "none".
+//   - All other fields are optional; nil slices are preserved as nil.
+//
+// v1 network mode is "open" (locked per SPIKE-FINDINGS §TLS DECISION); the value
+// is stored verbatim from config for forward-compat but not further validated here.
+//
+// Bead ref: hk-6596l.
+func parseSandboxBlock(path string, raw rawSandboxConfig) (SandboxConfig, error) {
+	if raw.Backend == "" {
+		return SandboxConfig{}, &ErrMalformedConfigYAML{
+			Path:  path,
+			Cause: fmt.Errorf("sandbox.backend is required when the sandbox: block is present; set to \"srt\" or \"none\""),
+		}
+	}
+	switch raw.Backend {
+	case "srt", "none":
+	default:
+		return SandboxConfig{}, &ErrMalformedConfigYAML{
+			Path:  path,
+			Cause: fmt.Errorf("sandbox.backend %q: unknown value; must be one of srt, none", raw.Backend),
+		}
+	}
+	return SandboxConfig{
+		Backend:   raw.Backend,
+		Harnesses: raw.Harnesses,
+		Network: SandboxNetworkConfig{
+			Mode:                   raw.Network.Mode,
+			AllowedDomains:         raw.Network.AllowedDomains,
+			WeakerNetworkIsolation: raw.Network.WeakerNetworkIsolation,
+		},
+		Cache: SandboxCacheConfig{
+			WarmRead:     raw.Cache.WarmRead,
+			PrivateWrite: raw.Cache.PrivateWrite,
+		},
+	}, nil
 }
 
 // daemonExpandHomePath expands a leading ~ to the user's home directory.

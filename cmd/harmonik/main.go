@@ -825,6 +825,17 @@ EXAMPLES
 		return runUsageSubcommand(subArgs)
 	}
 
+	// harmonik eval <verb> — eval-harness tooling (EH1).
+	// harmonik eval collect: post-run collector, reads events.jsonl,
+	// writes per-run records to eval-results.jsonl.
+	if len(os.Args) >= 2 && os.Args[1] == "eval" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runEvalCmd(subArgs, os.Stdout, os.Stderr)
+	}
+
 	// harmonik harness [flags] — scenario harness runner (hk-nwqa0).
 	//
 	// Implements the MVH CLI surface: 8 flags (--cadence, --scenario,

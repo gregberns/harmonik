@@ -1554,7 +1554,16 @@ func runReviewLoop(
 		// matching the quit-watchdog which already reads revWtPath with a nil runner
 		// above. The old hk-f3u6o "revWtPath lives on the WORKER" rationale is
 		// obsolete post fix-D.
-		verdict, verdictErr := workspace.ReadReviewVerdictVia(ctx, nil, revWtPath)
+		//
+		// hk-1hgjr (local twin of the remote hk-qts7r fix): the daemon can read
+		// review.json at the instant the reviewer's claude is still flushing / has
+		// not yet made the write durable, so a local os.ReadFile observes a
+		// truncated file → parseReviewVerdict ErrMalformed → the run false-fails
+		// fast. Use the retrying local reader so a transient truncated read recovers
+		// (retry-until-valid ONLY on ErrMalformed, ctx/deadline-bounded); a
+		// genuinely-malformed verdict still fails once the budget is spent, and an
+		// absent/clean read short-circuits immediately.
+		verdict, verdictErr := workspace.ReadReviewVerdictLocalRetry(ctx, revWtPath)
 		if verdictErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ReadReviewVerdict iter %d: %v\n", state.iterationCount, verdictErr)
 			result := rlErrorResult(fmt.Sprintf("verdict malformed at iteration %d: %v", state.iterationCount, verdictErr))

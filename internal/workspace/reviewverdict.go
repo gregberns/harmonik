@@ -44,18 +44,24 @@ type ReviewVerdict struct {
 // ReadReviewVerdict rejects any file whose schema_version field differs from this.
 const ReviewVerdictSchemaVersion = 1
 
-// Remote verdict read-retry bounds (hk-clrts, widened hk-l489f, deadline-bounded
-// hk-qts7r). A cat-over-SSH read of the worker's review.json can observe a
-// partially-written / not-yet-durable file, so parseReviewVerdict returns
-// ErrMalformed on a transient truncated read. The remote path
-// (ReadReviewVerdictVia) retries-until-valid ONLY on ErrMalformed with bounded
-// exponential backoff (100ms base, doubling, capped at
-// reviewVerdictRemoteMaxBackoff) up to reviewVerdictRemoteRetryBudget of total
-// elapsed time — a DEADLINE rather than a fixed attempt count, so a slow-flush
-// remote path whose fsync takes several seconds still recovers, while a
-// genuinely-malformed verdict fails once the budget is spent. ctx cancellation /
-// deadline is honored in every inter-attempt wait. The local os.ReadFile path is
-// unaffected (NFR7).
+// Verdict read-retry bounds (hk-clrts, widened hk-l489f, deadline-bounded
+// hk-qts7r; local finalize path hk-1hgjr). A verdict read — whether a cat-over-SSH
+// read of a worker's review.json (remote) or an os.ReadFile of the reviewer's
+// box-A-local worktree (local finalize) — can observe a partially-written /
+// not-yet-durable file while the reviewer's claude is still flushing it, so
+// parseReviewVerdict returns ErrMalformed on a transient truncated read. The
+// retrying readers (ReadReviewVerdictVia remote branch, ReadReviewVerdictLocalRetry)
+// retry-until-valid ONLY on ErrMalformed with bounded exponential backoff (100ms
+// base, doubling, capped at reviewVerdictRemoteMaxBackoff) up to
+// reviewVerdictRemoteRetryBudget of total elapsed time — a DEADLINE rather than a
+// fixed attempt count, so a slow-flush read whose fsync takes several seconds
+// still recovers, while a genuinely-malformed verdict fails once the budget is
+// spent. ctx cancellation / deadline is honored in every inter-attempt wait.
+//
+// NFR7 note: the bare ReadReviewVerdict and the ReadReviewVerdictVia nil/local
+// branch stay byte-identical no-retry — the retry is opt-in via the dedicated
+// retrying readers, so the quit-watchdog gate and other pollers keep their fast
+// absent/malformed return.
 //
 // Declared as vars so tests can shrink the budget for fast, deterministic runs.
 var (
@@ -165,10 +171,7 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 	// elapsed time; cat-error (absent) and a clean parse short-circuit with the
 	// existing contract, and a genuinely-malformed verdict still fails once the
 	// budget is spent (no false positives — just bounded extra latency).
-	var lastErr error
-	backoff := reviewVerdictRemoteBaseBackoff
-	deadline := time.Now().Add(reviewVerdictRemoteRetryBudget)
-	for {
+	return retryVerdictReadOnMalformed(ctx, func(ctx context.Context) (*ReviewVerdict, error) {
 		out, err := runner.Command(ctx, "cat", target).Output()
 		if err != nil {
 			// Absent verdict (cat: no such file) or transport hiccup → treat as absent,
@@ -176,13 +179,73 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 			//nolint:nilnil,nilerr // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
 			return nil, nil
 		}
-		v, perr := parseReviewVerdict(out, target)
-		if perr == nil || !errors.Is(perr, ErrMalformed) {
-			// Clean parse → (verdict, nil); a non-ErrMalformed error (defensive — parse
-			// only ever wraps ErrMalformed) is returned as-is. Neither is retryable.
-			return v, perr
+		return parseReviewVerdict(out, target)
+	})
+}
+
+// ReadReviewVerdictLocalRetry reads the LOCAL reviewer verdict file at
+// ${workspace_path}/.harmonik/review.json with the same bounded
+// retry-until-valid-on-ErrMalformed behavior as the remote path in
+// ReadReviewVerdictVia (bead hk-1hgjr — the local twin of the remote hk-qts7r
+// fix).
+//
+// Motivation: the reviewloop finalize read (reviewloop.go) reads the reviewer's
+// box-A-local worktree with a nil runner. If the daemon reads review.json at the
+// instant the reviewer's claude is still flushing / has not yet made the write
+// durable, os.ReadFile observes a truncated file and parseReviewVerdict returns
+// ErrMalformed — and the plain ReadReviewVerdict does NOT retry, so the run
+// false-fails fast. This retrying reader closes that gap for the finalize read.
+//
+// Contract (mirrors ReadReviewVerdict / ReadReviewVerdictVia):
+//   - (*ReviewVerdict, nil) when the file is present and valid — a clean parse
+//     short-circuits immediately (no retry, no added latency).
+//   - (nil, nil) when the file is absent — short-circuits immediately per
+//     WM-027a §(e).
+//   - (nil, ErrMalformed) (wrapping) ONLY after the retry budget is spent, so a
+//     genuinely-malformed verdict still fails (no false positives — just bounded
+//     extra latency).
+//   - (nil, ctx.Err()) if ctx is cancelled during an inter-attempt wait.
+//
+// This does NOT change ReadReviewVerdict or the ReadReviewVerdictVia nil/local
+// branch — those stay byte-identical no-retry (NFR7); the retry is opt-in via
+// this dedicated entry point, so the quit-watchdog gate and other local pollers
+// keep their fast return.
+func ReadReviewVerdictLocalRetry(ctx context.Context, workspacePath string) (*ReviewVerdict, error) {
+	return retryVerdictReadOnMalformed(ctx, func(context.Context) (*ReviewVerdict, error) {
+		return ReadReviewVerdict(workspacePath)
+	})
+}
+
+// verdictRead performs a single verdict read attempt. It returns:
+//   - (*ReviewVerdict, nil) on a clean parse (valid verdict).
+//   - (nil, nil) when the file is absent — the inconclusive condition.
+//   - (nil, err) wrapping ErrMalformed for a transient/genuine malformed read.
+//
+// It should honor ctx for the read itself where applicable.
+type verdictRead func(ctx context.Context) (*ReviewVerdict, error)
+
+// retryVerdictReadOnMalformed runs read repeatedly, retrying ONLY on an
+// ErrMalformed result with bounded exponential backoff up to
+// reviewVerdictRemoteRetryBudget of total elapsed time (deadline-bounded, not a
+// fixed attempt count), honoring ctx cancellation in every inter-attempt wait.
+//
+// A clean parse and an absent (nil,nil) read short-circuit immediately with the
+// existing contract; a genuinely-malformed read still returns its last
+// ErrMalformed-wrapped error once the budget is spent. Shared by the remote
+// ReadReviewVerdictVia branch and the local ReadReviewVerdictLocalRetry so both
+// apply byte-identical retry semantics.
+func retryVerdictReadOnMalformed(ctx context.Context, read verdictRead) (*ReviewVerdict, error) {
+	var lastErr error
+	backoff := reviewVerdictRemoteBaseBackoff
+	deadline := time.Now().Add(reviewVerdictRemoteRetryBudget)
+	for {
+		v, err := read(ctx)
+		if err == nil || !errors.Is(err, ErrMalformed) {
+			// Clean parse / absent (nil,nil), or a non-ErrMalformed error (defensive):
+			// none is retryable — return as-is.
+			return v, err
 		}
-		lastErr = perr
+		lastErr = err
 
 		// Deadline-bounded retry: stop once the retry budget is spent, surfacing
 		// the last ErrMalformed-wrapped error so a genuinely-malformed verdict still

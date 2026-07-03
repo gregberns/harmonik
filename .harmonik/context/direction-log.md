@@ -12,6 +12,27 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-07-02 ~01:20Z — operator (via admiral) · expires: 2026-07-06
+WHAT: Fleet warm-up + re-alignment after a ~2-day quiet run; operator delegated crew-allocation authority
+      then stepped away. Both CORE lanes reached DONE: remote-hardening (hk-gx0dl CLOSED, 98 gb-mbp jobs,
+      2 hard blockers fixed+validated, proven conc-3) and pilot BUILD (hk-94c3t CLOSED). NEW DIRECTION:
+      (1) pilot RETASKED build->TESTING — leto proves Pi live on openai/gpt-5.4-mini (web-verified current;
+      gpt-4o was stale) via the FILE-KEY auth path (hk-sv3vg fix + redeploy), then feeds scavenger beads;
+      queue pi-q. (2) remote BANKED; route REAL incoming work to gb-mbp (skip synthetic volume test);
+      gurney STOOD DOWN. (3) v0.4.0 SHIPPED — admiral made SSH signing key (~/.harmonik/releases/signing.key),
+      chani cut+signed+pushed at eaaa390d (Good sig gregberns@gmail.com), release flow triggered, chani
+      closed. STANDING RULE: captain+admiral self-serve releases/daemon/signing, never stall the fleet on an
+      operator-only call (park-don't-halt). (4) SANDBOX (plans/2026-07-02-pi-sandbox/HANDOFF.md, srt, both
+      platforms mac-first, v1 network=OPEN=admiral call) KICKED INTO KERF (codename:pi-sandbox, 7 beads,
+      spike hk-f39ny gates rest) — planning done, NOT staffed (on-deck, gated for operator review/details).
+      CREW LOCKED: leto=Pi test, gurney=stand-down, thufir=parked-as-fuel, watch=on-call, paul=stopped.
+WHY:  the two multi-week priorities landed; capacity frees for proving Pi end-to-end (never run live) and
+      the operator's incoming real workload (the true remote load-test). Autonomy fix: the 40h chani
+      release-stall must never recur — self-serve anything we're authorized to do.
+RETURN-PATH: v0.4.0 PUSHED (done). leto driving Pi canary hk-nxjwo on pi-q (file-key auth, gpt-5.4-mini).
+      sandbox in kerf (on-deck, spike gates rest). Resume by checking: Pi canary GREEN? then route scavenger
+      to pi-q; await operator real workload (->gb-mbp) + sandbox details/staffing green-light.
+
 ## 2026-06-30 ~20:40Z — operator (via admiral) · expires: 2026-07-04
 WHAT: NEXT-PHASE TRIGGER for gurney's remote lane (gurney's separate-daemon pivot is making progress —
       scratch-daemon.sh harness up, conc 3, hardening). ONCE the gb-mbp proof is solid (beads reliably +

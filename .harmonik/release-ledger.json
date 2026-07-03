@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "semver": "v0.4.0",
+      "commit_hash": "eaaa390d1f1b0180b9f931de6e5c8ae681ad5211",
+      "tag": "v0.4.0",
+      "prerelease": true
+    }
+  ]
+}

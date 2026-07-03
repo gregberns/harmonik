@@ -1,0 +1,29 @@
+codename: attractor-parity
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-05-28T16:12:32Z
+updated: 2026-05-28T17:01:26Z
+sessions:
+    - id: null
+      started: 2026-05-28T16:12:32Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

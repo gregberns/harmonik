@@ -61,6 +61,17 @@ This jig guides you through a structured process for planning a change to an exi
 
 Each pass produces one or more files. If work is not captured in a file, it is lost when the session ends.
 
+**Commit each pass (durability).** Artifacts under `.kerf/works/<codename>/` are git-tracked so planning knowledge survives a machine loss. Do all of this work on a per-work branch `kerf/<codename>`, and at the END of every pass — after writing that pass's files and advancing status — commit and push:
+
+```
+git checkout -b kerf/<codename>   # first pass only; `git checkout kerf/<codename>` thereafter
+git add .kerf/works/<codename>
+git commit -m "kerf(<codename>): <pass name>"
+git push -u origin kerf/<codename>
+```
+
+This keeps in-progress planning off `main` while still pushing to origin every pass. Never end a session with uncommitted bench artifacts. On `kerf finalize` the `kerf/<codename>` branch merges to `main`, landing the full reasoning chain alongside the finalized spec.
+
 ## Pass 1: Problem Space (problem-space)
 
 **Output:** `01-problem-space.md`

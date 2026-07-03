@@ -1,0 +1,14 @@
+jigs:
+    - bug
+    - implementation
+    - plan
+    - retrofit
+    - spec
+    - spike
+passes:
+    implementation:
+        - Breakdown
+        - Dispatch
+        - Implement
+        - Verify
+        - Complete

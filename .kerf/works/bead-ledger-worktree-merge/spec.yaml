@@ -1,0 +1,29 @@
+codename: bead-ledger-worktree-merge
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-05-22T00:31:17Z
+updated: 2026-05-30T22:09:17Z
+sessions:
+    - id: null
+      started: 2026-05-22T00:31:17Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

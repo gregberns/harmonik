@@ -1,0 +1,31 @@
+codename: wake-economy
+title: Watch-officer tier + captain wake-economy
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: decompose
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-06-24T03:55:56Z
+updated: 2026-06-24T04:05:15Z
+sessions:
+    - id: null
+      started: 2026-06-24T03:55:56Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:wake-economy
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

@@ -1,0 +1,28 @@
+codename: remote-test-pyramid
+title: Remote separation test pyramid (L0-L5)
+type: implementation
+project:
+    id: gregberns-harmonik
+jig: implementation
+jig_version: 1
+status: breakdown
+status_values:
+    - breakdown
+    - dispatch
+    - implementing
+    - verify
+    - complete
+created: 2026-06-25T06:15:08Z
+updated: 2026-06-25T06:15:08Z
+sessions:
+    - id: null
+      started: 2026-06-25T06:15:08Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:remote-test-pyramid
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

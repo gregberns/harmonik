@@ -1,0 +1,29 @@
+codename: remote-substrate-phase2
+type: plan
+project:
+    id: gregberns-harmonik
+jig: plan
+jig_version: 1
+status: problem-space
+status_values:
+    - problem-space
+    - analyze
+    - decompose
+    - research
+    - change-spec
+    - integration
+    - tasks
+    - ready
+created: 2026-06-15T12:00:02Z
+updated: 2026-06-15T12:00:02Z
+sessions:
+    - id: null
+      started: 2026-06-15T12:00:02Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

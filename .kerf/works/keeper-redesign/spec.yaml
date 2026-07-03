@@ -1,0 +1,31 @@
+codename: keeper-redesign
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: decompose
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-06-16T12:52:08Z
+updated: 2026-06-16T13:08:03Z
+sessions:
+    - id: null
+      started: 2026-06-16T12:52:08Z
+      ended: 2026-06-16T13:08:03Z
+active_session: null
+depends_on: []
+bead_filter:
+    label: codename:keeper-redesign
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

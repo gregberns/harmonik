@@ -1,0 +1,29 @@
+codename: sdlc-workflows
+type: plan
+project:
+    id: gregberns-harmonik
+jig: plan
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - analyze
+    - decompose
+    - research
+    - change-spec
+    - integration
+    - tasks
+    - ready
+created: 2026-05-28T16:24:29Z
+updated: 2026-05-28T16:36:27Z
+sessions:
+    - id: null
+      started: 2026-05-28T16:24:29Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

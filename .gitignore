@@ -3,11 +3,25 @@
 *.swo
 *~
 
-# kerf working state — tracked project identifier and local jig overrides only
+# kerf working state.
+# We TRACK the design-reasoning knowledge (works/ + the standard-bead process
+# template + project metadata) so it survives a machine loss and merges to main
+# via the per-work `kerf/<codename>` branch convention (see
+# docs/components/internal/kerf.md §"Artifact durability & commit convention").
+# We still IGNORE: the large local caches (diagnostics-cache.json ~56MB,
+# sync-cache.json) and kerf's internal per-edit .history/ snapshot trail (git is
+# our history now — tracking it would bloat the repo with thousands of dup files).
 .kerf/*
 !.kerf/project-identifier
 !.kerf/jigs/
 !.kerf/jigs/*.md
+!.kerf/works/
+!.kerf/standard-bead-dot/
+!.kerf/config.yaml
+!.kerf/project.yaml
+# Re-ignore caches and history-snapshots inside the now-tracked subtrees.
+.kerf/works/**/.history/
+.kerf/**/*-cache.json
 
 # Beads task ledger — ignore SQLite DB / WAL / locks / backups; track only test fixtures
 # issues.jsonl is gitignored: `br sync --flush-only` writes it continuously, so tracking it

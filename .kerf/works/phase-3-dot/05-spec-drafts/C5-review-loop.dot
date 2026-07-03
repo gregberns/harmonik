@@ -1,0 +1,116 @@
+// review-loop.dot — canonical harmonik workflow example (v1)
+//
+// Pinned by:
+//   - specs/execution-model.md §EM-015d (review-loop topology)
+//   - specs/execution-model.md §EM-015e (iteration cap + no-progress detector)
+//   - specs/workflow-graph.md §8 WG-021..WG-023 (terminal-node declaration)
+//
+// This file is the DOT expression of the EM-015d/EM-015e hardcoded review-loop
+// that lives in internal/daemon/workloop.go. It is the dogfood-migration target:
+// once the C2 dispatch driver subsumes the hardcoded Go path, this file becomes
+// the source of truth and the Go path is deleted.
+//
+// Design notes (from phase-3-dot pass-4, C5):
+//   - All edge conditions use the D5 v1 dialect (equality + && only). NO `<`/`>`.
+//   - The iteration cap (EM-015e, cap=3) is enforced exclusively by the daemon;
+//     the cascade falls through to the unconditional `close-needs-attention`
+//     edge when the cap fires. This is the D-edge-cascade-invariant fallback.
+//   - Verdict routing uses `outcome.preferred_label` per D-verdict-surfacing
+//     and the D4 LHS whitelist (row 3). Values are uppercase per the EM-015d
+//     verdict enum and the agent-reviewer JSON schema v1 (APPROVE /
+//     REQUEST_CHANGES / BLOCK).
+//   - Terminal IDs use the hyphenated form `close-needs-attention` (not the
+//     underscored form) per the C1 terminal-node-id convention.
+
+digraph "review-loop-example" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    // schema_version pins the DOT dialect (D10: v1 examples ship at schema 1).
+    // start_node names the unique entry point per WG-027.
+    // terminal_node_ids is encoded as a semicolon-delimited string per C1's
+    // attribute-value convention; C1 §11 WG-033 normatively defines the
+    // parse rule.
+    schema_version="1";
+    workflow_id="review-loop-example";
+    start_node="start";
+    terminal_node_ids="close;close-needs-attention";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    // start: the workflow entry point. Declared non-agentic with the noop
+    // handler — dispatcher fires the start event and follows the single
+    // outbound edge without invoking an agent.
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        role="workflow entry point"
+    ];
+
+    // implementer: agentic node bound to the claude-implementer handler.
+    // Session-resume semantics are inherited from C3 (the handler decides
+    // whether to resume a prior session vs. fresh-start on each visit).
+    implementer [
+        type="agentic",
+        handler_ref="claude-implementer",
+        role="produce or revise the change"
+    ];
+
+    // reviewer: agentic node bound to the claude-reviewer handler.
+    // Reviewer is fresh-session per iteration per C3 reviewer conventions.
+    // Emits an Outcome whose preferred_label drives the cascade below.
+    reviewer [
+        type="agentic",
+        handler_ref="claude-reviewer",
+        role="render verdict on the change"
+    ];
+
+    // close: terminal node for the APPROVE path. The change merged cleanly.
+    // Terminal-by-list (terminal_node_ids) plus type=non-agentic + noop
+    // handler so every node satisfies WG-024 (type attribute required).
+    close [
+        type="non-agentic",
+        handler_ref="noop",
+        role="APPROVE path — change accepted"
+    ];
+
+    // close-needs-attention: terminal node for BLOCK, cap-hit, and no-progress
+    // paths. Operator attention required to decide disposition.
+    "close-needs-attention" [
+        type="non-agentic",
+        handler_ref="noop",
+        role="BLOCK / cap-hit / no-progress — needs operator attention"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    // (1) Entry edge — unconditional.
+    start -> implementer;
+
+    // (2) Implementer hands off to reviewer — unconditional.
+    implementer -> reviewer;
+
+    // (3) APPROVE → close. First conditional in the reviewer cascade.
+    reviewer -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (4) REQUEST_CHANGES → loop back to implementer. NOTE: no inline
+    // iteration_count bound — D5 v1 dialect is equality + && only. The
+    // EM-015e cap is enforced daemon-side; when the cap fires, this edge
+    // is suppressed by the daemon and the cascade falls through to the
+    // unconditional fallback edge (6) below.
+    reviewer -> implementer [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'"
+    ];
+
+    // (5) BLOCK → close-needs-attention. Reviewer signalled the change
+    // cannot proceed without operator input.
+    reviewer -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (6) Unconditional fallback edge — REQUIRED by D-edge-cascade-invariant.
+    // Catches the EM-015e cap-hit path (cap=3, daemon-suppressed retry) and
+    // the no-progress path (bit-identical diff hash). Without this edge the
+    // reviewer node has no valid outbound edge at cap-hit and the workflow
+    // would error out. MUST appear last in the reviewer cascade so the
+    // dispatcher evaluates conditional edges before falling back.
+    reviewer -> "close-needs-attention";
+}

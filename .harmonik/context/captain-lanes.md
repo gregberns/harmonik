@@ -20,8 +20,8 @@
 > | crew | lane | queue | model | state |
 > |---|---|---|---|---|
 > | duncan | cache-reaper GOCACHE-wipe fix (hk-44ab2, P1) — re-tasked off wake-economy epic hk-var9b to this reliability bead | duncan-q2 | opus | ACTIVE — hk-44ab2 in-flight (worker live). hk-whru3 HELD (prior fail was a false-fail of this same reaper bug; re-sub after hk-44ab2 lands). |
-> | jessica | daemon-reliability (logmine iter-20 P1 register) | jessica-q2 | opus | ACTIVE — hk-lt091 (empty-HEAD worktree-create race, RESURRECTED — the gb-mbp idle-hang culprit) leads, ALONE first; then hk-rnkuy (crash-loop + daemon-death EventType), hk-qe736 (worktree-leak reaper LOCKED blind-spot), hk-gf59k (ledger-dep false-defer) serialized. All touch daemon/worktree internals → do NOT fan all four. |
-> | stilgar | eval-metrics WS1 (epic hk-9jdid, codename:eval-program) | stilgar-q2 | opus | ACTIVE — B1 hk-eval-prog-model-on-log-bh2o7 (model string onto run log) first; hold B2 hk-eval-prog-sessiondata-hook-vmxrk (session-data.jsonl collector) until B1 lands (shared metrics surface). |
+> | jessica | daemon-reliability (logmine iter-20 P1 register) | jessica-q2 | opus | ACTIVE — hk-rnkuy (crash-loop + daemon-death EventType) in-flight; then hk-gf59k (ledger-dep false-defer). hk-lt091 (empty-HEAD worktree-create race) already off her queue. **hk-qe736 REASSIGNED to stilgar** (see below) — jessica told 23:49Z to SKIP it despite her mission file still listing it. |
+> | stilgar | worktree-leak reaper (hk-qe736) — RE-TASKED after the bounce off its eval-metrics lane (epic hk-9jdid); took the worktree-reaper LOCKED-blind-spot fix instead | stilgar-q2 | opus | ACTIVE — hk-qe736 fix committed in worktree (force-remove git-locked agent worktrees older than N days; targets the 11-day locked agent + 58 stale), in merge-gate. Eval-metrics WS1 (B1/B2) is now UNSTAFFED — re-staff when a slot frees. |
 > | watch | triage tier | watch-q | sonnet | ONLINE — escalates actionable events to captain event-driven. |
 > | ops-monitor | ops probe | — | — | presence-stale (~6m at resume); session-hosted bg loop, no scheduler — verify liveness if it stays absent. |
 >

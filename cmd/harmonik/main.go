@@ -673,6 +673,12 @@ EXAMPLES
 		return runCrewSubcommand(os.Args[2:])
 	}
 
+	// harmonik agent <verb> — agent type folder management (agent-manifest SPEC §3).
+	// Verbs: check (schema/layout validation). Bead: hk-9cheh (T5).
+	if len(os.Args) >= 2 && os.Args[1] == "agent" {
+		return runAgentSubcommand(os.Args[2:])
+	}
+
 	// harmonik ops-monitor <verb> — launchd LaunchAgent management for the
 	// ops-monitor-check.sh fleet health probe (hk-qpzsv). Verbs: install,
 	// uninstall, status. Installs a per-project LaunchAgent so the probe runs

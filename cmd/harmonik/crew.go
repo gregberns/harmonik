@@ -52,6 +52,8 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/crew"
+	"github.com/gregberns/harmonik/internal/lifecycle"
+	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // runCrewSubcommand routes `harmonik crew <verb> [args]`.
@@ -185,6 +187,55 @@ func resolveCrewStartArgs(subArgs []string) (args crewStartArgs, help bool, usag
 	return args, false, ""
 }
 
+// crewBriefSeedFn is the injectable seam for pasting the agent-brief boot seed
+// to the crew's agent pane after a successful crew-start RPC (T10/hk-ncg9m).
+// Production passes pasteCrewBriefSeedViaTmux; tests inject a capturing stub.
+type crewBriefSeedFn func(project, name, sessionID string)
+
+// crewBriefSeedDelay mirrors captainSplashDismissDelay in captain.go: the
+// settle period between the splash-dismiss Enter and the boot-seed paste, and
+// between the paste and the submit Enter (T10/hk-ncg9m).
+const crewBriefSeedDelay = 750 * time.Millisecond
+
+// pasteCrewBriefSeedViaTmux is the production crewBriefSeedFn. It derives the
+// crew's tmux session name (harmonik-<project-hash>-crew-<name>) and pastes
+// "Please run `harmonik agent brief` and begin your operating loop." to the
+// crew's agent pane, mirroring captain.go PasteSeedToAgentPane (T10/hk-ncg9m).
+// Best-effort: all errors are logged to stderr but never returned.
+func pasteCrewBriefSeedViaTmux(project, name, sessionID string) {
+	realDir, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		realDir = project
+	}
+	hash := lifecycle.ComputeProjectHash(realDir)
+	sessName := lifecycle.TmuxSessionName(hash, "crew-"+name)
+	paneTarget := sessName + ":" + ltmux.WindowAgent
+	adapter := ltmux.OSAdapter{}
+	ctx := context.Background()
+	if err := adapter.SendKeysEnter(ctx, paneTarget); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik crew start: boot-seed splash dismiss: %v\n", err)
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(crewBriefSeedDelay):
+	}
+	bufName := fmt.Sprintf("harmonik-%s-crew-boot", sessionID)
+	const bootSeedMsg = "Please run `harmonik agent brief` and begin your operating loop.\n"
+	if err := adapter.WriteToPane(ctx, bufName, paneTarget, []byte(bootSeedMsg)); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik crew start: boot-seed paste: %v\n", err)
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(crewBriefSeedDelay):
+	}
+	if err := adapter.SendKeysEnter(ctx, paneTarget); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik crew start: boot-seed submit: %v\n", err)
+	}
+}
+
 // runCrewStartSubcommand implements `harmonik crew start <name> [--queue <q>] [--mission <path>]`.
 //
 // Defaults --queue to "<name>-q" and treats --mission as optional, never reusing
@@ -199,6 +250,14 @@ func runCrewStartSubcommand(subArgs []string) int {
 // ~/.claude/settings.json. Production callers pass runKeeperEnable.
 // Bead ref: hk-xxcv9.
 func runCrewStartCore(subArgs []string, enableKeeper keeperEnableFn) int {
+	return runCrewStartCoreWith(subArgs, enableKeeper, pasteCrewBriefSeedViaTmux)
+}
+
+// runCrewStartCoreWith is runCrewStartCore with an injectable brief-seed seam
+// (T10/hk-ncg9m). briefSeed is called after a successful crew-start RPC to paste
+// the agent-brief boot seed to the crew's agent pane. nil skips the paste (tests
+// that do not want tmux side-effects pass nil or a capturing stub).
+func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSeed crewBriefSeedFn) int {
 	args, help, usageErr := resolveCrewStartArgs(subArgs)
 	if help {
 		crewStartUsage()
@@ -286,6 +345,13 @@ func runCrewStartCore(subArgs []string, enableKeeper keeperEnableFn) int {
 	// Refs: hk-yfcc, hk-8prq.
 	if result.SessionID != "" {
 		seedSID(absProject, name, result.SessionID)
+	}
+
+	// Paste the agent-brief boot seed to the crew's agent pane so the crew runs
+	// `harmonik agent brief` as its first action (T10/hk-ncg9m — symmetric seed
+	// paste mirroring captain.go PasteSeedToAgentPane). Best-effort: never blocks.
+	if briefSeed != nil && result.SessionID != "" {
+		briefSeed(absProject, name, result.SessionID)
 	}
 
 	// The crew's keeper is launched by the DAEMON as a sibling `keeper` window

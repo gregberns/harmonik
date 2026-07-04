@@ -1,0 +1,28 @@
+type: captain
+cardinality:   { min: 0, max: 1 }          # singleton
+harness:       claude
+
+identity:
+  soul: soul.md                             # provenance master — re-pinned every restart
+  parent_intent: admiral                    # graft the admiral's 1-line intent
+
+context:
+  - { ref: operating.md,      as: instruction, presence: injected }
+  - { ref: captain,           as: skill,       presence: injected }   # boot runbook + crew mechanics
+  - { ref: orchestrator-rules, as: skill,      presence: injected }   # standing rules contract
+  - { ref: harmonik-dispatch, as: skill,       presence: retrieved }
+  - { ref: agent-comms,       as: skill,       presence: retrieved }
+  - { ref: beads-cli,         as: skill,       presence: retrieved }
+  - { ref: keeper,            as: skill,       presence: retrieved }
+
+triggers:                                   # launched via `harmonik start captain`
+  - { id: comms,       source: comms,  enabled: true }   # crew status + operator messages
+  - { id: escalations, source: comms,  enabled: true }   # watch escalations + direct IMMEDIATEs
+
+handoff:
+  channel: private                          # own HANDOFF.md (episodic state only)
+
+keeper:      { thresholds: default }
+lifecycle:   { self_restart: true }         # keeper drives handoff → /clear → resume
+markers:
+  never_emits: []

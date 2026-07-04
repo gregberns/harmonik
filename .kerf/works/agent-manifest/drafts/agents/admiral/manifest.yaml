@@ -1,0 +1,32 @@
+type: admiral
+cardinality: { min: 0, max: 1 }
+harness: claude
+
+identity:
+  soul: soul.md
+  parent_intent: operator
+
+context:
+  - { ref: operating.md,        as: instruction, presence: injected }
+  - { ref: orchestrator-rules,  as: skill,       presence: injected }
+  - { ref: agent-comms,         as: skill,       presence: retrieved }
+  - { ref: beads-cli,           as: skill,       presence: retrieved }
+
+triggers:
+  - { id: comms,    source: comms,    enabled: true }
+  - { id: operator, source: operator, enabled: true }
+  - id: priorities-report
+    source: cron
+    every: 6h
+    enabled: true
+    deliver: comms
+    message: "It is time to summarize what the fleet is doing — publish a priorities/status update: post to comms and note it in your handoff."
+
+handoff:
+  channel: private
+
+keeper:    { thresholds: default }
+lifecycle: { self_restart: true }
+
+markers:
+  never_emits: [crew_start, queue_submit:main]

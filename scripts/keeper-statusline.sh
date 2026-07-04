@@ -121,9 +121,9 @@ if [ "${WINDOW_SIZE}" -eq 0 ]; then
             WINDOW_SIZE="$(awk "BEGIN {printf \"%d\n\", 1000000 * ${_1M_FRACTION}}")"
             # Recompute pct relative to the effective window so the pct guard fires at
             # the correct fill level. Skip when TOKENS==0 (older Claude Code that omits
-            # total_input_tokens); in that case pct-only gating still uses the original
-            # used_percentage from the payload.
-            if [ "${TOKENS}" -gt 0 ]; then
+            # total_input_tokens) or when WINDOW_SIZE==0 (awk produced 0 for a zero
+            # fraction — avoids division by zero and leaves pct at the payload value).
+            if [ "${TOKENS}" -gt 0 ] && [ "${WINDOW_SIZE}" -gt 0 ]; then
                 PCT="$(jq -rn "${TOKENS} / ${WINDOW_SIZE} * 100 | [., 100] | min")"
             fi
         fi

@@ -26,8 +26,10 @@ package keeper_test
 // scripts/keeper-statusline.sh fixes this with a fallback: when
 // context_window_size is absent, it (1) honors an explicit
 // HARMONIK_KEEPER_WINDOW_SIZE env override, else (2) detects the `[1m]` token in
-// the model id and sets window_size=1000000. This file proves that fallback
-// end-to-end through the REAL script + REAL twin.
+// the model id and sets window_size = floor(1M * HARMONIK_KEEPER_1M_EFFECTIVE_FRACTION)
+// (default 500k, per hk-d8dj0). It also recomputes pct = tokens/window so the
+// keeper's pct guard fires at the correct effective-fill level. This file proves
+// that fallback end-to-end through the REAL script + REAL twin.
 //
 // # Why this is the ONLY way to regression-test the bug end-to-end
 //
@@ -40,13 +42,13 @@ package keeper_test
 // # Non-vacuous proof (how this catches the regression)
 //
 // twWriteBrokenStatusline writes a COPY of keeper-statusline.sh with the [1m]
-// inference disabled (the model-detection branch's `WINDOW_SIZE=1000000` is
-// rewritten to `WINDOW_SIZE=0`). TestIntegration_Twin1mGauge_RegressionGuard_CatchesBug
-// drives the twin through that broken copy and asserts the .ctx carries the BUGGY
-// window_size=0 — proving the assertion in the main test (window_size==1000000)
-// would FAIL on the buggy path, so the guard is real, not vacuous. (Verified
-// out-of-band too: the broken copy yields window_size=0 while the real script
-// yields window_size=1000000 for the identical [1m] no-window input.)
+// inference disabled (the awk assignment is rewritten to `WINDOW_SIZE=0`).
+// TestIntegration_Twin1mGauge_RegressionGuard_CatchesBug drives the twin through
+// that broken copy and asserts the .ctx carries the BUGGY window_size=0 — proving
+// the assertion in the main test (window_size==500k) would FAIL on the buggy path,
+// so the guard is real, not vacuous. (Verified out-of-band too: the broken copy
+// yields window_size=0 while the real script yields window_size=500000 for the
+// identical [1m] no-window input.)
 //
 // Safety + teardown discipline: identical to Part B — uniquely-named
 // "hksav-twin-" sessions, killed by EXACT name, blocked-on before the temp dir
@@ -67,13 +69,14 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// twWindowSizeMillion is the inferred window for a [1m] model.
-const twWindowSizeMillion = int64(1_000_000)
+// twWindowSizeMillion is the effective inferred window for a [1m] model:
+// floor(1M * default_fraction=0.5) = 500k (hk-d8dj0).
+const twWindowSizeMillion = int64(500_000)
 
 // twWriteBrokenStatusline writes, into dir, a copy of the real
 // scripts/keeper-statusline.sh with the [1m] model-id inference DISABLED: the
-// branch that sets WINDOW_SIZE=1000000 on a [1m] model is rewritten to leave it
-// at 0. The env-override branch (HARMONIK_KEEPER_WINDOW_SIZE) is left intact, so
+// awk assignment that computes the effective window is replaced with WINDOW_SIZE=0.
+// The env-override branch (HARMONIK_KEEPER_WINDOW_SIZE) is left intact, so
 // the broken copy reproduces EXACTLY the pre-fix bug: a [1m] model with no
 // context_window_size and no env override yields window_size=0. Returns the
 // broken script path.
@@ -83,7 +86,10 @@ func twWriteBrokenStatusline(t *testing.T, dir string) string {
 	if err != nil {
 		t.Fatalf("tw: read real statusline: %v", err)
 	}
-	const marker = "WINDOW_SIZE=1000000"
+	// Match the awk assignment that computes the effective [1m] window. The
+	// WINDOW_SIZE guard in the pct-recompute block (`&& [ "${WINDOW_SIZE}" -gt 0 ]`)
+	// prevents division-by-zero when the replacement sets WINDOW_SIZE=0.
+	const marker = `WINDOW_SIZE="$(awk "BEGIN {printf \"%d\n\", 1000000 * ${_1M_FRACTION}}")"`
 	if !strings.Contains(string(src), marker) {
 		t.Fatalf("tw: real statusline no longer contains %q — the [1m] inference moved; update this guard", marker)
 	}
@@ -127,8 +133,8 @@ func twReadCtxWithWindow(t *testing.T, project, agent string, timeout time.Durat
 // TestIntegration_Twin1mGauge_RealScriptInfersWindow drives the twin with a
 // [1m] model and NO context_window_size (--window 0) through the REAL
 // keeper-statusline.sh, and asserts the script's [1m] model-id inference
-// computes the gauge correctly: window_size == 1000000 (NOT 0/garbage), and the
-// absolute token count passes through intact.
+// computes the gauge correctly: window_size == 500000 (floor(1M*0.5), NOT 0/garbage),
+// and the absolute token count passes through intact (hk-d8dj0).
 //
 // This is the positive regression assertion. The companion
 // ..._RegressionGuard_CatchesBug test proves it is non-vacuous.
@@ -279,7 +285,8 @@ func TestIntegration_Twin1mGauge_CycleFiresOnInferredWindow(t *testing.T) {
 	}
 
 	// [1m] model, NO context_window_size, growing tokens. The script must infer
-	// window_size=1M for the absolute-token gate (215k default) to ever trip.
+	// window_size=500k (effective window, hk-d8dj0) for the absolute-token gate
+	// (215k default) to ever trip.
 	sess := twStartTwin(t, twTwinSpec{
 		project:     project,
 		agent:       agent,
@@ -299,11 +306,12 @@ func TestIntegration_Twin1mGauge_CycleFiresOnInferredWindow(t *testing.T) {
 		t.Fatalf("tw: pre-cycle .ctx window_size = %d; want %d (inference must have fired for the gate to trip)",
 			seed.WindowSize, twWindowSizeMillion)
 	}
-	if seed.Pct != 0 {
-		// The twin reports pct=0 for a [1m]/no-window session; if pct were
-		// non-zero the cycle could fire via the pct fallback and this test would
-		// not actually prove the absolute-token path. Guard against that.
-		t.Logf("tw: note: pct=%v (expected 0 for a [1m] twin; cycle below relies on the absolute-token gate)", seed.Pct)
+	// The script now recomputes pct = tokens/effective_window (hk-d8dj0), so pct
+	// is expected to be non-zero once tokens > 0. The cycle always uses the
+	// absolute-token gate when both Tokens>0 and WindowSize>0 (belowActThreshold
+	// in cycle.go), so the pct value does not determine whether MaybeRun fires.
+	if seed.Pct <= 0 {
+		t.Logf("tw: note: pct=%v — expected > 0 (script should have recomputed pct = tokens/500k)", seed.Pct)
 	}
 
 	em := &keeper.RecordingEmitter{}

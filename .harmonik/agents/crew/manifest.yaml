@@ -1,0 +1,32 @@
+type: crew
+cardinality: { min: 0, max: n }
+harness: claude
+
+identity:
+  soul: soul.md
+  parent_intent: captain
+
+context:
+  - { ref: operating.md,              as: instruction, presence: injected }
+  - { ref: crew-launch,               as: skill,       presence: injected }
+  - { ref: beads-cli,                 as: skill,       presence: retrieved }
+  - { ref: agent-comms,               as: skill,       presence: retrieved }
+  - { ref: harmonik-dispatch,         as: skill,       presence: retrieved }
+  - { ref: docs/orchestration-protocol-v2.md, as: doc, presence: retrieved }
+
+triggers:
+  - { id: queue, source: queue, enabled: true }
+
+handoff:
+  channel: private
+
+keeper:
+  thresholds: default
+
+lifecycle:
+  self_restart: true
+
+tools_dir: null
+
+markers:
+  never_emits: []

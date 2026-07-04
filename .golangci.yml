@@ -162,6 +162,15 @@ linters:
           allow:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/schedule"
+
+        # agentmanifest: leaf package loading .harmonik/agents/<type>/manifest.yaml.
+        # Depends only on stdlib + yaml.v3. Self-import for external test pattern.
+        agentmanifest:
+          files: ["**/internal/agentmanifest/**"]
+          allow:
+            - "$gostd"
+            - "gopkg.in/yaml.v3"
+            - "github.com/gregberns/harmonik/internal/agentmanifest"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "schedule MUST NOT import daemon (hk-0es: leaf primitive)" }
 

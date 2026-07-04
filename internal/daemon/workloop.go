@@ -3166,23 +3166,6 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 
-	// Step (a): for remote runs, ensure baseSHA is on the worker before the
-	// worktree is created there (DD1 code-sync, remote-substrate B8).
-	if rbc != nil {
-		if fetchErr := fetchBaseOnWorker(ctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA); fetchErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: fetchBaseOnWorker bead %s run %s: %v (reopening)\n",
-				beadID, runID.String(), fetchErr)
-			// B11: SSH connection failure → emit worker_offline + disable worker.
-			if tmuxpkg.IsSSHConnectionFailure(fetchErr) {
-				notifyWorkerOffline("spawn", fmt.Sprintf("fetchBaseOnWorker: %v", fetchErr))
-			}
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-				fmt.Sprintf("fetch base on worker failed: %v", fetchErr))
-			return
-		}
-	}
-
 	// preMergeSync brings the run branch onto box A before the merge. For remote
 	// runs it fetches the branch DIRECTLY from the worker repo over SSH
 	// (ssh://<host><repoPath>) — hk-7bwx — rather than the old worker→GitHub→box-A
@@ -3236,13 +3219,42 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			wtFactory = productionWorktreeFactory
 		}
 	}
-	// Serialize 'git worktree add' under mergeMu so concurrent beadRunOne
-	// goroutines do not race on projectDir/.git/index.lock (hk-h8u7p).
-	// mergeMu already guards all git operations on the main repo
-	// (merge/rebase/push); worktree creation touches the same index.lock,
-	// so it belongs under the same serialisation boundary.
+	// Serialize fetchBaseOnWorker (step a, DD1 code-sync) + 'git worktree add'
+	// under mergeMu so concurrent beadRunOne goroutines do not run concurrent
+	// git operations on the same remote worker (hk-lt091) or race on
+	// projectDir/.git/index.lock (hk-h8u7p).
+	//
+	// hk-lt091: before hk-zexsj added -o ControlMaster=no, all SSH commands to a
+	// worker shared one TCP connection, so the remote OS serialised them naturally.
+	// With ControlMaster=no each SSH command is an independent TCP connection; a
+	// sibling bead's fetchBaseOnWorker (git-fetch) can therefore race git-worktree-add
+	// at the remote-OS level, leaving the worktree dir created but HEAD uninitialised
+	// — the empty-HEAD race that hk-iaj1w retries cannot fix because the race persists
+	// across all retry attempts. Placing fetchBaseOnWorker inside mergeMu eliminates
+	// the race at its source.
 	if deps.mergeMu != nil {
 		deps.mergeMu.Lock()
+	}
+	// Step (a): for remote runs, ensure baseSHA is on the worker before the
+	// worktree is created there (DD1 code-sync, remote-substrate B8).
+	// Runs inside mergeMu so it does not overlap with a sibling bead's
+	// git-worktree-add (hk-lt091).
+	if rbc != nil {
+		if fetchErr := fetchBaseOnWorker(ctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA); fetchErr != nil {
+			if deps.mergeMu != nil {
+				deps.mergeMu.Unlock()
+			}
+			fmt.Fprintf(os.Stderr, "daemon: workloop: fetchBaseOnWorker bead %s run %s: %v (reopening)\n",
+				beadID, runID.String(), fetchErr)
+			// B11: SSH connection failure → emit worker_offline + disable worker.
+			if tmuxpkg.IsSSHConnectionFailure(fetchErr) {
+				notifyWorkerOffline("spawn", fmt.Sprintf("fetchBaseOnWorker: %v", fetchErr))
+			}
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("fetch base on worker failed: %v", fetchErr))
+			return
+		}
 	}
 	wtPath, wtCleanup, wtErr := wtFactory(ctx, activeRepo, runID.String(), headSHA)
 	if deps.mergeMu != nil {

@@ -55,7 +55,7 @@ func ClearPrecompactTrigger(projectDir, agent string) error {
 // HasRestartNowTrigger, ClearRestartNowTrigger, WriteRestartNowMarker,
 // ReadRestartNowMarker) were REMOVED. restart-now no longer hands work to the
 // watcher via a marker file — `harmonik keeper restart-now` drives the
-// ack→/clear→/session-resume synchronously in-process
+// ack→/clear→agent-brief synchronously in-process
 // (internal/keeper/restartnow.go). The marker write/poll indirection was the
 // silent-no-op bug (CLI wrote under os.Getwd()'s project dir; the watcher polled
 // a different fixed dir, so the marker landed where nobody looked).

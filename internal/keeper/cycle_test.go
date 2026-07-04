@@ -206,7 +206,7 @@ func newTestCyclerManaged(
 
 // TestCycler_HappyPath verifies the full 7-step ordering:
 // journal(opened) → handoff inject → nonce confirmed → /clear inject →
-// session-resume inject → journal(complete) → cycle_complete event.
+// agent-brief inject → journal(complete) → cycle_complete event.
 func TestCycler_HappyPath(t *testing.T) {
 	t.Parallel()
 

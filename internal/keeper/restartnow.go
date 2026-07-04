@@ -124,7 +124,7 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	// Step 4: inject the ACK line FIRST so the agent can verify receipt before
 	// the /clear wipes its context. A failure here is load-bearing: if we can't
 	// reach the pane, fail loudly rather than silently /clear into the void.
-	// Routed through cfg.Inject (same surface as /clear and /session-resume) so
+	// Routed through cfg.Inject (same surface as /clear and agent brief) so
 	// the whole sequence is one injectable seam.
 	if err := inject(ctx, cfg.TmuxTarget, AckLine(nonce, "restart")); err != nil {
 		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "ack_inject_failed", "err", err)

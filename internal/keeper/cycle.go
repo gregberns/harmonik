@@ -122,7 +122,7 @@ type CyclerConfig struct {
 	// BootGracePeriod is the minimum duration after a session_id CHANGE before
 	// the keeper starts a cycle on the new session. During the grace window all
 	// cycle-gate checks return immediately, preventing forced-clear cycles from
-	// firing while the agent is still booting after a /session-resume (the
+	// firing while the agent is still booting after an agent-brief restart (the
 	// agent cannot respond to /session-handoff during boot).
 	// Zero (the package default) disables boot-grace; set to a positive value
 	// in production (e.g. 5 * time.Minute). The grace applies only when the
@@ -160,7 +160,7 @@ type CyclerConfig struct {
 	// OperatorAttachedFn reports whether a human operator is currently attached
 	// to the target tmux session. When it returns true the act-path goes
 	// warn-only: the destructive reset-cycle injection (/session-handoff,
-	// /clear, /session-resume) is suppressed so the keeper never races the
+	// /clear, agent brief) is suppressed so the keeper never races the
 	// operator's own keystrokes and clobbers an in-flight turn. The watcher's
 	// warn/gauge emissions continue, and the cycle resumes on the next tick
 	// once the operator detaches. Nil → OperatorAttached (real tmux
@@ -657,7 +657,7 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	// Boot-grace gate (Refs: hk-4f8 — bad-trigger-timing fix, hk-ibb — follow-up).
 	// Track when the session_id last changed to a NEVER-SEEN SID. Apply a grace
 	// window after each novel session_id transition so cycles cannot fire while
-	// an agent is still booting after a /session-resume. The grace applies ONLY
+	// an agent is still booting after an agent-brief restart. The grace applies ONLY
 	// when a previous session_id was evicted AND the new SID is novel (never
 	// observed before), preventing flapping SIDs from perpetually re-arming the
 	// timer. On initial Cycler startup (currentSessionID == "") no grace is armed

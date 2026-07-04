@@ -15,7 +15,7 @@ import (
 // marker → RunOnDemand state machine.
 
 // recordingInjector captures every (target,text) injection in order so a test
-// can assert the exact ack→/clear→/session-resume sequence.
+// can assert the exact ack→/clear→agent-brief sequence.
 type recordingInjector struct {
 	mu    sync.Mutex
 	calls [][2]string

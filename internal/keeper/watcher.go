@@ -1253,7 +1253,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 			// NOTE: restart-now (captain-initiated) is NO LONGER a watcher-detected
 			// marker path. `harmonik keeper restart-now` now drives the
-			// ack→/clear→/session-resume SYNCHRONOUSLY in its own process
+			// ack→/clear→agent-brief SYNCHRONOUSLY in its own process
 			// (internal/keeper/restartnow.go) — there is no .restart-now marker for
 			// the watcher to poll, which removes the silent-no-op project-dir
 			// divergence. Refs: hk-5da7 (was hk-wjzf/ON-059 marker path).

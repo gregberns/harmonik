@@ -1,0 +1,24 @@
+type: watch
+cardinality:   { min: 0, max: 1 }
+harness:       claude                    # sonnet ok
+
+identity:
+  soul:          soul.md
+  parent_intent: captain
+
+context:
+  - { ref: operating.md,  as: instruction, presence: injected }
+  - { ref: watch,         as: skill,       presence: injected }
+  - { ref: agent-comms,   as: skill,       presence: retrieved }
+
+triggers:
+  - { id: bus-firehose, source: event, enabled: true }   # full bus subscription
+
+handoff:   { channel: private }
+keeper:    { thresholds: default }
+lifecycle: { self_restart: true }
+
+tools_dir: tools/                        # writable — watch's self-built scripts
+
+markers:
+  never_emits: []

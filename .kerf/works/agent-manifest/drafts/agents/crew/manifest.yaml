@@ -1,0 +1,24 @@
+type: crew
+cardinality:   { min: 0, max: n }
+harness:       claude
+
+identity:
+  soul:          soul.md
+  parent_intent: captain
+
+context:
+  - { ref: operating.md,      as: instruction, presence: injected }
+  - { ref: crew-launch,       as: skill,       presence: injected }
+  - { ref: harmonik-dispatch, as: skill,       presence: retrieved }
+  - { ref: beads-cli,         as: skill,       presence: retrieved }
+  - { ref: agent-comms,       as: skill,       presence: retrieved }
+
+triggers:
+  - { id: queue, source: queue, enabled: true }
+
+handoff:   { channel: private }        # own HANDOFF-<name> / mission file
+keeper:    { thresholds: default }
+lifecycle: { self_restart: true }
+
+markers:
+  never_emits: [queue_submit:main, crew_start]

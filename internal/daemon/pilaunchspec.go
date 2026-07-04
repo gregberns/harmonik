@@ -142,6 +142,12 @@ type piRunCtx struct {
 	// injects only the selected provider's key.
 	baseEnv []string
 
+	// piHome is the Pi home directory used by the PI-042 billing guard check.
+	// When empty, piDefaultHome() is used (production behaviour). Injectable
+	// for tests to exercise the PI-042 deny path through buildPiLaunchSpec
+	// without touching the real ~/.pi. Bead: hk-6g5iu.
+	piHome string
+
 	// billingEmitter, when non-nil, receives pi_billing_guard events from the
 	// fail-closed billing guard (PI-040/PI-042/PI-043, pibillingguard.go). Nil
 	// disables event emission; the guard's enforcement (fail-closed assert) still
@@ -273,7 +279,11 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	// skipBillingGuard is false in production (see piRunCtx); tests that only
 	// exercise argv/env shape set it to avoid requiring a real key.
 	if !rc.skipBillingGuard {
-		if err := runPiBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, rc.apiKeyFile, rc.apiKeyEnv, piDefaultHome()); err != nil {
+		piHome := rc.piHome
+		if piHome == "" {
+			piHome = piDefaultHome()
+		}
+		if err := runPiBillingGuard(context.Background(), rc.billingEmitter, rc.runID, rc.beadID, rc.apiKeyFile, rc.apiKeyEnv, piHome); err != nil {
 			return handler.LaunchSpec{}, err
 		}
 	}

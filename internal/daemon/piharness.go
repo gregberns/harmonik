@@ -139,6 +139,7 @@ func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Spawn
 		api:            h.api,
 		priorSessionID: rc.PriorSessionID,
 		baseEnv:        rc.BaseEnv,
+		runID:          rc.RunID,
 	}
 
 	spec, err := buildPiLaunchSpec(prc)

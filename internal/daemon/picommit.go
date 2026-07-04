@@ -26,61 +26,34 @@ package daemon
 //
 // LOAD-BEARING (PI-031): every git operation routes through the run's runner when
 // non-nil and falls back to local exec when nil, so the remote SSH substrate
-// works identically to local. All runner-routing mirrors codexcommit.go exactly:
-// worktreeHEADHasRefsTrailer (129–149), codexWorktreeDirty (161–175),
-// commitAllWithPiRefsTrailer (mirrors 266–291), amendHEADAddRefsTrailer (302–338).
+// works identically to local. Runner-routing is shared via
+// commitAllWithHarnessRefsTrailer (codexcommit.go); amendHEADAddRefsTrailer and
+// worktreeHEADHasRefsTrailer are also shared from codexcommit.go.
 //
 // Spec: specs/pi-harness.md §3 (PI-030/PI-031).
 // Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.5.
-// Mirrors: codexcommit.go:204–255 (ensureCodexRefsTrailer decision table).
+// Mirrors: codexcommit.go ensureCodexRefsTrailer (decision table identical).
 // Bead: hk-mazln.
 
 import (
 	"context"
 	"fmt"
-	"os/exec"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
-// piRefsOutcome classifies what ensurePiRefsTrailer did so the caller can route
-// the run (success → merge path; piRefsNoChange → no_commit failure path).
-type piRefsOutcome int
+// piRefsOutcome is a type alias for codexRefsOutcome — the pi and codex harness
+// commit-fallback states are semantically identical. String() is inherited from
+// codexRefsOutcome (codexcommit.go). Bead: hk-6g5iu.
+type piRefsOutcome = codexRefsOutcome
 
 const (
-	// piRefsAlreadyPresent: HEAD already carried the trailer; no action taken.
-	piRefsAlreadyPresent piRefsOutcome = iota
-
-	// piRefsAmended: an existing turn commit lacked the trailer and was amended
-	// to append it.
-	piRefsAmended
-
-	// piRefsCommitted: Pi edited files but produced no commit; the fallback staged
-	// the changes and created a trailer-carrying commit.
-	piRefsCommitted
-
-	// piRefsNoChange: HEAD did not advance past parent and the worktree is clean —
-	// Pi did no work. The caller routes this to the standard no_commit failure
-	// path; the fallback deliberately does NOT fabricate a commit.
-	piRefsNoChange
+	piRefsAlreadyPresent = codexRefsAlreadyPresent
+	piRefsAmended        = codexRefsAmended
+	piRefsCommitted      = codexRefsCommitted
+	piRefsNoChange       = codexRefsNoChange
 )
-
-// String renders the outcome for log/event diagnostics.
-func (o piRefsOutcome) String() string {
-	switch o {
-	case piRefsAlreadyPresent:
-		return "already_present"
-	case piRefsAmended:
-		return "amended"
-	case piRefsCommitted:
-		return "committed"
-	case piRefsNoChange:
-		return "no_change"
-	default:
-		return fmt.Sprintf("piRefsOutcome(%d)", int(o))
-	}
-}
 
 // ensurePiRefsTrailer guarantees the worktree HEAD carries a "Refs: <beadID>"
 // trailer after a Pi turn exits, creating or amending a commit deterministically
@@ -150,34 +123,10 @@ func ensurePiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath,
 	return piRefsCommitted, nil
 }
 
-// commitAllWithPiRefsTrailer stages every change in the worktree (tracked,
-// untracked, deletions) and creates a commit carrying the Refs: trailer.
-//
-// Mirrors commitAllWithRefsTrailer (codexcommit.go:266–291) with a Pi-specific
-// fallback commit message. Runner-routing is identical (PI-031).
+// commitAllWithPiRefsTrailer is the pi harness wrapper around
+// commitAllWithHarnessRefsTrailer (codexcommit.go) with the pi-specific
+// fallback commit message. Runner-routing is shared (PI-031).
 func commitAllWithPiRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath string, beadID core.BeadID) error {
-	msg := fmt.Sprintf(
-		"feat(pi): pi turn output (auto-committed by daemon fallback)\n\n%s",
-		codexRefsTrailerLine(beadID),
-	)
-	if runner != nil {
-		if out, err := runner.Command(ctx, "git", "-C", wtPath, "add", "-A").CombinedOutput(); err != nil {
-			return fmt.Errorf("git add -A: %w\ngit output: %s", err, out)
-		}
-		if out, err := runner.Command(ctx, "git", "-C", wtPath, "commit", "-m", msg).CombinedOutput(); err != nil {
-			return fmt.Errorf("git commit: %w\ngit output: %s", err, out)
-		}
-		return nil
-	}
-	addCmd := exec.CommandContext(ctx, "git", "add", "-A")
-	addCmd.Dir = wtPath
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git add -A: %w\ngit output: %s", err, out)
-	}
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg)
-	commitCmd.Dir = wtPath
-	if out, err := commitCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git commit: %w\ngit output: %s", err, out)
-	}
-	return nil
+	return commitAllWithHarnessRefsTrailer(ctx, runner, wtPath, beadID,
+		"feat(pi): pi turn output (auto-committed by daemon fallback)")
 }

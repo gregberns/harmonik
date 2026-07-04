@@ -3035,6 +3035,11 @@ type ExportedPiRunCtx struct {
 	// API is the OPTIONAL Pi wire-format string for the models.json "api" field.
 	// Defaults to "openai" at launch when empty and BaseURL is set. Bead: hk-z13jz.
 	API string
+	// PiHome is the optional Pi home directory for the PI-042 billing guard
+	// check. When empty, piDefaultHome() is used (production behaviour). Set in
+	// tests to a t.TempDir() to exercise the PI-042 deny path through
+	// buildPiLaunchSpec without touching the real ~/.pi. Bead: hk-6g5iu.
+	PiHome string
 }
 
 // ExportedBuildPiLaunchSpec exposes buildPiLaunchSpec for tests in package
@@ -3058,6 +3063,7 @@ func ExportedBuildPiLaunchSpec(rc ExportedPiRunCtx) (handler.LaunchSpec, error) 
 		billingEmitter:   rc.BillingEmitter,
 		runID:            rc.RunID,
 		skipBillingGuard: rc.SkipBillingGuard,
+		piHome:           rc.PiHome,
 	})
 }
 

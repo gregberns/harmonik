@@ -254,20 +254,15 @@ func ensureCodexRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPa
 	return codexRefsCommitted, nil
 }
 
-// commitAllWithRefsTrailer stages every change in the worktree (tracked,
-// untracked, deletions) and creates a commit carrying the Refs: trailer.
-//
-// Mirrors the git-commit mechanics of persistClaudeSessionID
-// (sessioncontext_chb023.go): `git add -A` then `git commit -m`. The message is
-// a deterministic codex-fallback message; the load-bearing line is the trailer.
+// commitAllWithHarnessRefsTrailer stages every change in the worktree (tracked,
+// untracked, deletions) and creates a commit with a harness-specific message
+// prefix and the Refs: trailer. Shared by the codex and pi harness fallbacks so
+// the runner-routing logic (PI-031 / NFR7) has one authoritative copy.
 //
 // When runner is non-nil the git commands are routed through it (remote worker);
 // when nil they fall back to bare local exec (NFR7 — byte-identical for local).
-func commitAllWithRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath string, beadID core.BeadID) error {
-	msg := fmt.Sprintf(
-		"feat(codex): codex turn output (auto-committed by daemon fallback)\n\n%s",
-		codexRefsTrailerLine(beadID),
-	)
+func commitAllWithHarnessRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath string, beadID core.BeadID, msgPrefix string) error {
+	msg := fmt.Sprintf("%s\n\n%s", msgPrefix, codexRefsTrailerLine(beadID))
 	if runner != nil {
 		if out, err := runner.Command(ctx, "git", "-C", wtPath, "add", "-A").CombinedOutput(); err != nil {
 			return fmt.Errorf("git add -A: %w\ngit output: %s", err, out)
@@ -288,6 +283,13 @@ func commitAllWithRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wt
 		return fmt.Errorf("git commit: %w\ngit output: %s", err, out)
 	}
 	return nil
+}
+
+// commitAllWithRefsTrailer is the codex harness wrapper around
+// commitAllWithHarnessRefsTrailer with the codex-specific fallback message.
+func commitAllWithRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtPath string, beadID core.BeadID) error {
+	return commitAllWithHarnessRefsTrailer(ctx, runner, wtPath, beadID,
+		"feat(codex): codex turn output (auto-committed by daemon fallback)")
 }
 
 // amendHEADAddRefsTrailer appends the Refs: trailer to the existing HEAD commit

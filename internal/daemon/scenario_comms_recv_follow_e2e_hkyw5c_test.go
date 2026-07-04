@@ -129,8 +129,8 @@ func hkyw5cCommsRecv(t *testing.T, sockPath, agent string) CommsRecvResult {
 // TestCommsRecvFollowE2E_GapDelivery_ScanAnchorFix is the primary GH #8 E2E
 // regression guard. It exercises the full path:
 //
-//   comms-recv drain (no messages for alice) → scan_anchor set →
-//   gap message written → subscribe with since_event_id=scan_anchor → delivered.
+//	comms-recv drain (no messages for alice) → scan_anchor set →
+//	gap message written → subscribe with since_event_id=scan_anchor → delivered.
 //
 // Pre-fix: cursor_after="" → CLI omits since_event_id → replay skipped → gap message
 // lost. Post-fix: scan_anchor populated → CLI passes since_event_id=scan_anchor →

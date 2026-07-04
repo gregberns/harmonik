@@ -74,6 +74,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -569,8 +570,9 @@ EXAMPLES
 //
 // --since accepts either:
 //   - a UUIDv7 event_id string (scan after that event)
-//   - a Go duration string (e.g. "30m", "1h") — delivers events whose TimestampWall
-//     is at or after now minus the given duration
+//   - a duration string — delivers events whose TimestampWall is at or after now
+//     minus the given duration. Accepts Go units (e.g. "30m", "1h", "200h") plus
+//     d (days) and w (weeks): "8d" = 192h, "2w" = 336h.
 //
 // subArgs is os.Args[3:].
 func runCommsLogSubcommand(subArgs []string) int {
@@ -646,8 +648,8 @@ func runCommsLogSubcommand(subArgs []string) int {
 		if err := sinceID.UnmarshalText([]byte(sinceFlag)); err == nil {
 			// Parsed as event_id — sinceID is set; ScanAfter will skip events ≤ sinceID.
 		} else {
-			// Try as a duration.
-			dur, durErr := time.ParseDuration(sinceFlag)
+			// Try as a duration (Go units + d/w via parseFriendlyDuration).
+			dur, durErr := parseFriendlyDuration(sinceFlag)
 			if durErr != nil {
 				fmt.Fprintf(os.Stderr, "harmonik comms log: --since %q is not a valid event_id or duration: %v\n", sinceFlag, durErr)
 				return 1
@@ -727,8 +729,9 @@ Does NOT advance any agent cursor. No daemon connection required.
 
 FLAGS
   --since EVENT_ID|DURATION
-                  Start from: an event_id (scan after that event) OR a duration (e.g. 30m, 1h,
-                  12h) meaning "events in the last <duration>". Without --since, scans all events.
+                  Start from: an event_id (scan after that event) OR a duration meaning "events in
+                  the last <duration>". Accepts Go units (30m, 1h, 200h) plus d (days) and w
+                  (weeks): 8d, 2w. Without --since, scans all events.
   --to NAME       Filter: only messages directed to NAME or broadcast ("*").
   --from NAME     Filter: only messages from NAME.
   --topic T       Filter: only messages with topic T.
@@ -742,10 +745,31 @@ EXIT CODES
 EXAMPLES
   harmonik comms log                          # all agent_message events
   harmonik comms log --since 30m              # last 30 minutes
+  harmonik comms log --since 8d               # last 8 days
   harmonik comms log --since 1h --to alice    # last hour, directed to alice or broadcast
   harmonik comms log --from orchestrator      # all messages from orchestrator
   harmonik comms log --json                   # machine-readable NDJSON
 `)
+}
+
+// parseFriendlyDuration wraps time.ParseDuration with support for d (days) and
+// w (weeks) suffixes that Go's standard parser rejects: "8d" → 192h, "2w" → 336h.
+// Compound forms with mixed units still use time.ParseDuration directly, so "1h30m"
+// works as before. Only a bare integer followed by d or w is expanded.
+func parseFriendlyDuration(s string) (time.Duration, error) {
+	if len(s) >= 2 {
+		last := s[len(s)-1]
+		if last == 'd' || last == 'w' {
+			n, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
+			if err == nil && n > 0 {
+				if last == 'w' {
+					return time.Duration(n) * 7 * 24 * time.Hour, nil
+				}
+				return time.Duration(n) * 24 * time.Hour, nil
+			}
+		}
+	}
+	return time.ParseDuration(s)
 }
 
 // Presence projection — CANONICAL HOME MOVED to internal/presence (hitl-decisions

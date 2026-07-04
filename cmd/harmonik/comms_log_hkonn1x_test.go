@@ -341,3 +341,38 @@ func TestCommsLogDoesNotAdvanceCursor(t *testing.T) {
 		t.Errorf("comms log must not create cursor directory at %s", cursorsDir)
 	}
 }
+
+// TestParseFriendlyDuration verifies d/w suffix expansion (hk-qcd9g).
+func TestParseFriendlyDuration(t *testing.T) {
+	cases := []struct {
+		in      string
+		wantErr bool
+		want    time.Duration
+	}{
+		{"8d", false, 8 * 24 * time.Hour},
+		{"1d", false, 24 * time.Hour},
+		{"2w", false, 2 * 7 * 24 * time.Hour},
+		{"1w", false, 7 * 24 * time.Hour},
+		{"30m", false, 30 * time.Minute},
+		{"1h", false, time.Hour},
+		{"200h", false, 200 * time.Hour},
+		{"0d", true, 0}, // n must be > 0
+		{"d", true, 0},  // no leading integer
+		{"w", true, 0},
+		{"1x", true, 0}, // unknown suffix falls through to time.ParseDuration
+	}
+	for _, tc := range cases {
+		got, err := parseFriendlyDuration(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parseFriendlyDuration(%q): expected error, got %v", tc.in, got)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("parseFriendlyDuration(%q): unexpected error: %v", tc.in, err)
+			} else if got != tc.want {
+				t.Errorf("parseFriendlyDuration(%q): got %v, want %v", tc.in, got, tc.want)
+			}
+		}
+	}
+}

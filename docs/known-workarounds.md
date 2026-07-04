@@ -264,3 +264,23 @@ Five hard-won operational failures, relocated here from the retired AGENT_OPERAT
 1. After any harmonik code change: `go install ./cmd/harmonik`
 2. **Then restart the daemon** — kill its tmux session (`tmux kill-session -t harmonik-daemon`) or `pkill -f "harmonik --project"`, then wait for the supervisor to revive it (or relaunch manually).
 3. Pair with Gotcha #2's reset-before-install: `git fetch && git reset --hard origin/main` first so you build from the latest merged code.
+
+### Gotcha 6 — PI BILLING GUARD: OPENROUTER_API_KEY absent
+
+**Symptom:** A bead labelled `harness:pi` emits `run_failed` with reason:
+```
+pi billing guard: env var OPENROUTER_API_KEY is absent or empty; Pi cannot launch without a provider API key (PI-040 fail closed)
+```
+The bead is reopened automatically (PI-043). No agent spawns.
+
+**Cause:** The Pi harness requires the API key named by `harnesses.pi.api_key_env` (default: `OPENROUTER_API_KEY`) to be present and non-empty in the daemon's environment at launch time. The daemon inherits the environment of its parent shell. If the key was not exported before the daemon started, it will not be available to Pi agents.
+
+**Fix — two options:**
+1. **Env var (simplest):** Export the key in your shell before starting the daemon:
+   ```sh
+   export OPENROUTER_API_KEY=sk-or-...
+   harmonik --project .   # or restart the daemon
+   ```
+2. **File-based key (more stable):** Write the key to a file and reference it in `.harmonik/config.yaml` under `harnesses.pi.api_key_file`. The daemon reads the file at each launch, so no shell export is needed. See `harmonik pi config --example`.
+
+**Note:** Beads intended for the codex harness should carry a `harness:codex` label (or rely on the global `default_harness: codex` config) to avoid reaching the Pi billing guard when `OPENROUTER_API_KEY` is absent.

@@ -36,16 +36,16 @@ var ErrWriteFailed = errors.New("crew: atomic write to registry file failed")
 // Record is a single crew-member registry entry.
 // Schema-versioned per project convention; schema_version == 1.
 type Record struct {
-	SchemaVersion int       `json:"schema_version"`
-	Name          string    `json:"name"`
+	SchemaVersion int    `json:"schema_version"`
+	Name          string `json:"name"`
 	// Type is the agent type folder name (e.g. "crew"). Omitted in legacy records;
 	// EffectiveType() returns "crew" when the field is absent.
-	Type          string    `json:"type,omitempty"`
-	SessionID     string    `json:"session_id"`
-	Queue         string    `json:"queue"`
-	Epic          string    `json:"epic"`
-	Handle        string    `json:"handle"`
-	StartedAt     time.Time `json:"started_at"`
+	Type      string    `json:"type,omitempty"`
+	SessionID string    `json:"session_id"`
+	Queue     string    `json:"queue"`
+	Epic      string    `json:"epic"`
+	Handle    string    `json:"handle"`
+	StartedAt time.Time `json:"started_at"`
 }
 
 // EffectiveType returns the record's agent type.

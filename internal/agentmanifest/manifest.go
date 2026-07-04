@@ -87,7 +87,7 @@ type ContextEntry struct {
 
 // Trigger is a declared, toggleable wake subscription in the boot document.
 type Trigger struct {
-	ID      string `yaml:"id"`
+	ID string `yaml:"id"`
 	// Source is the wake origin: queue | cron | interval | event | comms | manual | operator.
 	Source  string `yaml:"source"`
 	Enabled bool   `yaml:"enabled"`
@@ -124,19 +124,19 @@ type Markers struct {
 // It mirrors the schema in SPEC.md §2.
 type Manifest struct {
 	// Type must equal the folder name.
-	Type        string         `yaml:"type"`
-	Cardinality Cardinality    `yaml:"cardinality"`
+	Type        string      `yaml:"type"`
+	Cardinality Cardinality `yaml:"cardinality"`
 	// Harness is the default actor: claude | codex | pi.
-	Harness     string         `yaml:"harness"`
-	Identity    Identity       `yaml:"identity"`
-	Context     []ContextEntry `yaml:"context"`
-	Triggers    []Trigger      `yaml:"triggers"`
-	Handoff     Handoff        `yaml:"handoff"`
-	Keeper      Keeper         `yaml:"keeper"`
-	Lifecycle   Lifecycle      `yaml:"lifecycle"`
+	Harness   string         `yaml:"harness"`
+	Identity  Identity       `yaml:"identity"`
+	Context   []ContextEntry `yaml:"context"`
+	Triggers  []Trigger      `yaml:"triggers"`
+	Handoff   Handoff        `yaml:"handoff"`
+	Keeper    Keeper         `yaml:"keeper"`
+	Lifecycle Lifecycle      `yaml:"lifecycle"`
 	// ToolsDir is an inert forward-compatibility affordance (SPEC §8 — deferred).
-	ToolsDir    *string        `yaml:"tools_dir"`
-	Markers     Markers        `yaml:"markers"`
+	ToolsDir *string `yaml:"tools_dir"`
+	Markers  Markers `yaml:"markers"`
 }
 
 // TypeFolder holds the loaded manifest and the identity file contents for a type.

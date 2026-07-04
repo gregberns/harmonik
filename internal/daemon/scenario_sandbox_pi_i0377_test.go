@@ -91,7 +91,7 @@ func i0377SetupRepo(t *testing.T) (mainDir, worktreeDir, gitDir, runID, runBranc
 	runGit(mainDir, "config", "commit.gpgsign", "false")
 
 	// Seed main-file.txt so main has a real initial commit.
-	if err := os.WriteFile(filepath.Join(mainDir, "main-file.txt"), []byte("main content\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(mainDir, "main-file.txt"), []byte("main content\n"), 0o644); err != nil {
 		t.Fatalf("i0377SetupRepo: write main-file.txt: %v", err)
 	}
 	runGit(mainDir, "add", "main-file.txt")
@@ -104,7 +104,7 @@ func i0377SetupRepo(t *testing.T) (mainDir, worktreeDir, gitDir, runID, runBranc
 	worktreeDir = filepath.Join(mainDir, ".harmonik", "worktrees", runID)
 
 	// git worktree add creates the final dir but not its parents.
-	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
 		t.Fatalf("i0377SetupRepo: mkdirall worktree parent: %v", err)
 	}
 	runGit(mainDir, "worktree", "add", "-b", runBranch, worktreeDir)
@@ -166,7 +166,7 @@ func i0377GenerateProfile(t *testing.T, mainDir, worktreeDir, gitDir, runID, run
 	}
 
 	profilePath := filepath.Join(t.TempDir(), "srt-settings-i0377.json")
-	if err := os.WriteFile(profilePath, profileJSON, 0644); err != nil {
+	if err := os.WriteFile(profilePath, profileJSON, 0o644); err != nil {
 		t.Fatalf("i0377GenerateProfile: write settings file: %v", err)
 	}
 	return profilePath
@@ -195,7 +195,7 @@ func TestSandbox_CommitInsideSucceeds_i0377(t *testing.T) {
 
 	// Seed a file inside the run worktree for the agent to commit.
 	agentFile := filepath.Join(worktreeDir, "agent-work.txt")
-	if err := os.WriteFile(agentFile, []byte("agent work output\n"), 0644); err != nil {
+	if err := os.WriteFile(agentFile, []byte("agent work output\n"), 0o644); err != nil {
 		t.Fatalf("write agent-work.txt: %v", err)
 	}
 
@@ -299,7 +299,7 @@ func TestSandbox_BranchMerges_i0377(t *testing.T) {
 
 	// Create a commit on the run branch (no sandbox — this is the merge test).
 	agentFile := filepath.Join(worktreeDir, "agent-work.txt")
-	if err := os.WriteFile(agentFile, []byte("agent work\n"), 0644); err != nil {
+	if err := os.WriteFile(agentFile, []byte("agent work\n"), 0o644); err != nil {
 		t.Fatalf("write agent-work.txt: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

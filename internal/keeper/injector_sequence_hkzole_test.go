@@ -95,7 +95,7 @@ func TestInjectText_RunsFullPasteSequence(t *testing.T) {
 	f := installFakeTmux(t, nil)
 
 	const target = "sess:0.0"
-	const text = "/session-resume\n"
+	const text = "harmonik agent brief --wake keeper-restart\n"
 	if err := InjectText(context.Background(), target, text); err != nil {
 		t.Fatalf("InjectText: unexpected error: %v", err)
 	}

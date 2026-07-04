@@ -209,7 +209,6 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy → force path
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		AppendHandoffFn:   func(_, _ string) error { return nil },
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, sid string) error {
 			managedBinding = sid
@@ -416,7 +415,6 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return false }, // NOT idle — precompact must skip this gate
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		AppendHandoffFn:   func(_, _ string) error { return nil },
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, sid string) error {
 			managedBinding = sid

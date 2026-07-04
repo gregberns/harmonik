@@ -35,6 +35,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,10 +197,10 @@ func TestSmoke_RestartNow_Integration(t *testing.T) {
 			t.Fatalf("smoke: HappyPath: RestartNow returned unexpected error: %v", err)
 		}
 
-		// Assert the full injection sequence: ack → /clear → /session-resume
+		// Assert the full injection sequence: ack → /clear → agent brief (T8/I1).
 		wantLen := 3
 		if len(injected) != wantLen {
-			t.Fatalf("smoke: HappyPath: got %d injections %v, want %d (ack + /clear + /session-resume)", len(injected), injected, wantLen)
+			t.Fatalf("smoke: HappyPath: got %d injections %v, want %d (ack + /clear + agent brief)", len(injected), injected, wantLen)
 		}
 		wantACK := keeper.AckLine("smoke-nonce-hp", "restart")
 		if injected[0] != wantACK {
@@ -208,9 +209,9 @@ func TestSmoke_RestartNow_Integration(t *testing.T) {
 		if injected[1] != "/clear" {
 			t.Errorf("smoke: HappyPath: inject[1] = %q, want \"/clear\"", injected[1])
 		}
-		// inject[2] is /session-resume <handoff-path> — check the prefix.
-		if len(injected[2]) < len("/session-resume ") || injected[2][:len("/session-resume ")] != "/session-resume " {
-			t.Errorf("smoke: HappyPath: inject[2] = %q, want prefix \"/session-resume \"", injected[2])
+		// inject[2] is agent brief — re-pins identity from soul.md (I1).
+		if !strings.Contains(injected[2], "agent brief") || !strings.Contains(injected[2], "keeper-restart") {
+			t.Errorf("smoke: HappyPath: inject[2] = %q, want 'agent brief ... keeper-restart'", injected[2])
 		}
 
 		t.Logf("smoke: HappyPath: RestartNow succeeded; injected sequence: %v", injected)

@@ -712,7 +712,6 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 			HoldingDispatchFn:        func(_, _ string) bool { return false },
 			HeldCheckFn:              func(_, _ string) bool { return held },
 			WriteJournalFn:           jc.write,
-			AppendHandoffFn:          func(_, _ string) error { return nil },
 			SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
 			ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
 			IdleRestartAbsTokens:     150_000,

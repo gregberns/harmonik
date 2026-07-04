@@ -11,19 +11,18 @@ import (
 // restartnow.go — the DEAD-SIMPLE restart-now / ping path (hk-5da7).
 //
 // Operator design (authoritative): restart-now must be "the session id is
-// verified, and you push the /clear and the captain skill (/session-resume,
-// which reloads HANDOFF-<agent>.md + boots the captain) into the context, and be
-// done." This replaces the elaborate marker → watcher-poll → nonce-poll → cycle
-// state machine (RunOnDemand + runOnDemandCycleTail + the .restart-now marker)
-// that was the source of the silent no-op bug: the CLI wrote a marker under
-// os.Getwd()'s .harmonik/keeper while the watcher polled a DIFFERENT fixed
-// project dir, so the marker landed where nobody looked — "marker written",
-// exit 0, nothing ever happened.
+// verified, and you push the /clear and the agent brief command into the
+// context, and be done." This replaces the elaborate marker → watcher-poll →
+// nonce-poll → cycle state machine (RunOnDemand + runOnDemandCycleTail + the
+// .restart-now marker) that was the source of the silent no-op bug: the CLI
+// wrote a marker under os.Getwd()'s .harmonik/keeper while the watcher polled a
+// DIFFERENT fixed project dir, so the marker landed where nobody looked —
+// "marker written", exit 0, nothing ever happened.
 //
 // The new path runs SYNCHRONOUSLY in the `harmonik keeper restart-now` process
 // itself: resolve the pane, verify the session id, ONE freshness check (handoff
 // present and not stale), inject an ACK line (so the agent can verify receipt),
-// then inject /clear and /session-resume. Every step logs at INFO; any failure
+// then inject /clear and agent brief. Every step logs at INFO; any failure
 // returns an error so the CLI exits non-zero and the reason is in the log. A
 // silent no-op is impossible.
 
@@ -61,8 +60,8 @@ type RestartNowConfig struct {
 // match it. RestartNow/Ping do not invent it — they only echo it.
 //
 // RestartNow performs the dead-simple restart-now path. Returns nil on success
-// (ACK + /clear + /session-resume all injected) or an error naming the first
-// step that failed (logged at WARN with the reason; the CLI maps any error to a
+// (ACK + /clear + agent brief all injected) or an error naming the first step
+// that failed (logged at WARN with the reason; the CLI maps any error to a
 // non-zero exit). It does NOT consult or write any marker file — there is no
 // marker in this path.
 func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
@@ -140,14 +139,12 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	}
 	log.InfoContext(ctx, "keeper: restart-now: /clear injected")
 
-	// Step 6: /session-resume <handoff> — reloads HANDOFF-<agent>.md and boots
-	// the captain/crew skill. This is "the captain skill into the context."
-	resumeCmd := fmt.Sprintf("/session-resume %s", handoffPath)
-	if err := inject(ctx, cfg.TmuxTarget, resumeCmd); err != nil {
-		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "resume_inject_failed", "err", err)
-		return fmt.Errorf("keeper: restart-now: inject /session-resume: %w", err)
+	// Step 6: agent brief re-pins identity from soul.md (I1, provenance rule).
+	if err := inject(ctx, cfg.TmuxTarget, briefRestartCmd); err != nil {
+		log.WarnContext(ctx, "keeper: restart-now: aborted", "reason", "brief_inject_failed", "err", err)
+		return fmt.Errorf("keeper: restart-now: inject agent brief: %w", err)
 	}
-	log.InfoContext(ctx, "keeper: restart-now: /session-resume injected; done")
+	log.InfoContext(ctx, "keeper: restart-now: agent brief injected; done")
 	return nil
 }
 

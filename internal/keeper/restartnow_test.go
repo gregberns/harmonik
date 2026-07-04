@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -71,14 +72,14 @@ func writeFreshHandoff(t *testing.T, dir, agent string, mtime time.Time) string 
 
 const goodSID = "11111111-1111-4111-8111-111111111111"
 
-// TestRestartNow_HappyPath asserts the full ack→/clear→/session-resume sequence
+// TestRestartNow_HappyPath asserts the full ack→/clear→agent-brief sequence
 // is injected, in order, when sid is verified and the handoff is fresh.
 func TestRestartNow_HappyPath(t *testing.T) {
 	dir := t.TempDir()
 	agent := "captain"
 	writeSidAndCtx(t, dir, agent, goodSID)
 	requested := time.Now()
-	handoffPath := writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
+	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
 
 	rec := &recordingInjector{}
 	err := RestartNow(context.Background(), RestartNowConfig{
@@ -92,18 +93,20 @@ func TestRestartNow_HappyPath(t *testing.T) {
 		t.Fatalf("RestartNow: unexpected error: %v", err)
 	}
 	got := rec.texts()
-	want := []string{
-		AckLine("nonceXYZ", "restart"),
-		"/clear",
-		"/session-resume " + handoffPath,
+	if len(got) != 3 {
+		t.Fatalf("injected %d lines %v, want 3 (ack+/clear+agent brief)", len(got), got)
 	}
-	if len(got) != len(want) {
-		t.Fatalf("injected %d lines %v, want %d %v", len(got), got, len(want), want)
+	if got[0] != AckLine("nonceXYZ", "restart") {
+		t.Errorf("inject[0] = %q, want ack line", got[0])
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("inject[%d] = %q, want %q", i, got[i], want[i])
-		}
+	if got[1] != "/clear" {
+		t.Errorf("inject[1] = %q, want /clear", got[1])
+	}
+	if !strings.Contains(got[2], "agent brief") {
+		t.Errorf("inject[2] = %q, want 'agent brief'", got[2])
+	}
+	if !strings.Contains(got[2], "keeper-restart") {
+		t.Errorf("inject[2] = %q, want '--wake keeper-restart'", got[2])
 	}
 }
 

@@ -395,7 +395,6 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		// (hk-fan), so the E2E exercises the maximally-faithful path. Everything
 		// else (ReadGaugeFn, ReadHandoff, CrispIdleFn, HoldingDispatchFn,
 		// IsManagedFn, SetManagedSessionFn, HandoffFilePath, TruncateHandoffFn,
-		// AppendHandoffFn, SetTmuxEnvFn, WriteJournalFn) uses the production
 		// defaults.
 		InjectFn: keeper.InjectText,
 	}
@@ -509,7 +508,7 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 // It then asserts the full cycle COMPLETES and REBINDS IDENTITY:
 //
 //	handoff → confirm-nonce → /clear → session-id FLIP (a fresh, valid UUIDv4,
-//	NOT v7) → /session-resume, with .managed rebound to the rotated session_id.
+//	NOT v7) → agent brief (T8/I1), with .managed rebound to the rotated session_id.
 //
 // Plus the standing invariants that the redesign locks in:
 //   - no-auto-clear: EXACTLY ONE /clear is injected, and only AFTER the handoff
@@ -726,7 +725,7 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 	// (g) NO-AUTO-CLEAR invariant: EXACTLY ONE /clear, injected only AFTER the
 	// handoff and before the resume — the deterministic 7-step cycle, with the old
 	// heuristic auto-clear loop dead.
-	handoffIdx, clearIdx, resumeIdx := -1, -1, -1
+	handoffIdx, clearIdx, briefIdx := -1, -1, -1
 	clears := 0
 	for i, text := range injects {
 		switch {
@@ -734,8 +733,8 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 			if handoffIdx < 0 {
 				handoffIdx = i
 			}
-		case strings.Contains(text, "/session-resume"):
-			resumeIdx = i
+		case strings.Contains(text, "agent brief"):
+			briefIdx = i
 		case strings.Contains(text, "/clear"):
 			clears++
 			clearIdx = i
@@ -744,8 +743,8 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 	if clears != 1 {
 		t.Errorf("tw: want exactly 1 /clear injection (no-auto-clear); got %d (%v)", clears, injects)
 	}
-	if !(handoffIdx >= 0 && handoffIdx < clearIdx && clearIdx < resumeIdx) {
-		t.Errorf("tw: inject order must be handoff(%d) < clear(%d) < resume(%d): %v", handoffIdx, clearIdx, resumeIdx, injects)
+	if !(handoffIdx >= 0 && handoffIdx < clearIdx && clearIdx < briefIdx) {
+		t.Errorf("tw: inject order must be handoff(%d) < clear(%d) < brief(%d): %v", handoffIdx, clearIdx, briefIdx, injects)
 	}
 
 	// (h) SetManagedSession called EXACTLY ONCE, with the rotated SID.

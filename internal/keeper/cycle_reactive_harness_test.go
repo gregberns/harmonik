@@ -22,7 +22,7 @@ package keeper_test
 //   - text contains "/clear" -> rotate the gauge SessionID from the seed S1 to a
 //     fresh UUIDv4 S2 (distinct, NOT a UUIDv7 — so waitForNewSessionID accepts
 //     it) and drop pct/tokens below warn. Toggleable via flipOnClear.
-//   - text contains "/session-resume" -> keep S2, steady low pct.
+//   - text contains "agent brief" -> keep S2, steady low pct (T8/I1).
 //
 // ALL shared scenario helpers live in THIS ONE file so later scenario authors
 // reuse them without redeclare collisions when the suite fans out.
@@ -124,9 +124,9 @@ func (rs *reactiveSession) inject(_ context.Context, _ /*target*/, text string) 
 			rs.gauge.Pct = 8.0
 			rs.gauge.Tokens = 12_000
 		}
-	case containsSubstr(text, "/session-resume"):
-		// Resume keeps the post-clear session and steady-low context. No-op on
-		// the gauge beyond what /clear already set.
+	case containsSubstr(text, "agent brief"):
+		// agent brief re-pins identity from soul.md (T8/I1). Keeps the
+		// post-clear session and steady-low context — no gauge change needed.
 	}
 
 	// Causality witness: if THIS command's reaction changed the SID away from the
@@ -244,7 +244,6 @@ func newReactiveCycler(
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		AppendHandoffFn:   func(_, _ string) error { return nil },
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, sid string) error {
 			mu.Lock()

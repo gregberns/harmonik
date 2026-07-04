@@ -278,7 +278,6 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 		CrispIdleFn:        func(_, _ string) bool { return true },
 		HoldingDispatchFn:  func(_, _ string) bool { return false },
 		WriteJournalFn:     func(_ string, _ *CycleJournal) error { return nil },
-		AppendHandoffFn:    func(_, _ string) error { return nil },
 		SetTmuxEnvFn:       func(_ context.Context, _, _, _ string) error { return nil },
 		OperatorAttachedFn: func(_ string) bool { return false },
 	}

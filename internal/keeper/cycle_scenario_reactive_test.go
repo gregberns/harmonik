@@ -130,25 +130,25 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 	if rs.sidViolatedCausality() {
 		t.Error("a new SID appeared in the gauge BEFORE /clear was injected — flip was not caused by /clear")
 	}
-	// (f4) Injection ordering: handoff before /clear before /session-resume, and
-	// the live gauge ended on S2.
+	// (f4) Injection ordering: handoff before /clear before agent brief (T8/I1),
+	// and the live gauge ended on S2.
 	inj := rs.snapshotInjected()
-	handoffIdx, clearIdx, resumeIdx := -1, -1, -1
+	handoffIdx, clearIdx, briefIdx := -1, -1, -1
 	for i, txt := range inj {
 		switch {
 		case handoffIdx == -1 && containsSubstr(txt, "/session-handoff"):
 			handoffIdx = i
 		case clearIdx == -1 && txt == "/clear":
 			clearIdx = i
-		case resumeIdx == -1 && containsSubstr(txt, "/session-resume"):
-			resumeIdx = i
+		case briefIdx == -1 && containsSubstr(txt, "agent brief"):
+			briefIdx = i
 		}
 	}
-	if handoffIdx == -1 || clearIdx == -1 || resumeIdx == -1 {
-		t.Fatalf("missing injected commands: handoff=%d clear=%d resume=%d (%v)", handoffIdx, clearIdx, resumeIdx, inj)
+	if handoffIdx == -1 || clearIdx == -1 || briefIdx == -1 {
+		t.Fatalf("missing injected commands: handoff=%d clear=%d brief=%d (%v)", handoffIdx, clearIdx, briefIdx, inj)
 	}
-	if !(handoffIdx < clearIdx && clearIdx < resumeIdx) {
-		t.Errorf("injection order wrong: handoff=%d clear=%d resume=%d; want handoff<clear<resume", handoffIdx, clearIdx, resumeIdx)
+	if !(handoffIdx < clearIdx && clearIdx < briefIdx) {
+		t.Errorf("injection order wrong: handoff=%d clear=%d brief=%d; want handoff<clear<brief", handoffIdx, clearIdx, briefIdx)
 	}
 	if rs.liveSID() != s2 {
 		t.Errorf("live gauge SID = %q after cycle; want %q (S2)", rs.liveSID(), s2)

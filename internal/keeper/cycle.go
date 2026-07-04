@@ -15,6 +15,10 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
+// briefRestartCmd is injected after /clear to re-orient the agent via the
+// agent-manifest boot command. Identity re-pins from soul.md (I1, SPEC §4).
+const briefRestartCmd = "harmonik agent brief --wake keeper-restart"
+
 // CycleJournal is the on-disk state for an in-progress keeper reset cycle.
 // Written atomically to .harmonik/keeper/<agent>.cycle before any injection.
 //
@@ -79,12 +83,6 @@ type CyclerConfig struct {
 	WriteJournalFn           func(path string, j *CycleJournal) error
 	ReadJournalFn            func(path string) (*CycleJournal, error)
 	ClearPrecompactTriggerFn func(projectDir, agentName string) error
-
-	// AppendHandoffFn appends text to the handoff file after the nonce is
-	// confirmed. Used to pin keeper-authoritative identity into the handoff so
-	// the resumed agent reads the correct name rather than guessing from context.
-	// Nil → default OS append.
-	AppendHandoffFn func(path, text string) error
 
 	// SetManagedSessionFn writes the new session_id into .managed after a cycle
 	// completes post-/clear. This unblocks the watcher's session_id binding so it
@@ -325,9 +323,6 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.ClearPrecompactTriggerFn == nil {
 		c.ClearPrecompactTriggerFn = ClearPrecompactTrigger
 	}
-	if c.AppendHandoffFn == nil {
-		c.AppendHandoffFn = defaultAppendHandoff
-	}
 	if c.SetManagedSessionFn == nil {
 		c.SetManagedSessionFn = WriteManagedSessionID
 	}
@@ -435,32 +430,6 @@ func defaultReadHandoff(path string) (string, error) {
 func defaultTruncateHandoff(path string) error {
 	//nolint:gosec // G304,G306: path is operator-controlled; 0600 — keeper-owned
 	return os.WriteFile(path, []byte{}, 0o600)
-}
-
-func defaultAppendHandoff(path, text string) error {
-	//nolint:gosec // G304,G306: path derived from operator-controlled projectDir + agentName; 0600 keeper-owned
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
-	if err != nil {
-		return fmt.Errorf("keeper: append handoff %q: %w", path, err)
-	}
-	defer func() { _ = f.Close() }() //nolint:errcheck
-	if _, err := fmt.Fprint(f, text); err != nil {
-		return fmt.Errorf("keeper: write handoff append %q: %w", path, err)
-	}
-	return nil
-}
-
-// identityBlock returns the keeper-authoritative identity section to be
-// appended to the handoff file after the nonce is confirmed.
-// The resumed agent reads this and anchors its self-concept to the correct name.
-func identityBlock(agentName string) string {
-	return fmt.Sprintf("\n\n<!-- KEEPER-IDENTITY -->\n"+
-		"**Agent identity (keeper-authoritative):** You are `%s`. "+
-		"Your HARMONIK_AGENT environment variable is `%s`. "+
-		"Use `harmonik comms send --from %s` (or rely on $HARMONIK_AGENT). "+
-		"Do not reconstruct identity from conversation history — trust this line.\n"+
-		"<!-- /KEEPER-IDENTITY -->\n",
-		agentName, agentName, agentName)
 }
 
 func writeJournalFile(path string, j *CycleJournal) error {
@@ -1010,12 +979,7 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	j.UpdatedAt = time.Now().UTC()
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 
-	// Step 3b: pin identity — append keeper-authoritative identity block to the
-	// handoff file so the resumed agent reads the correct name rather than
-	// reconstructing it from context. Non-fatal: /session-resume can still run.
-	_ = c.cfg.AppendHandoffFn(handoffPath, identityBlock(c.cfg.AgentName)) //nolint:errcheck
-
-	// Step 3c: set HARMONIK_AGENT in the tmux session environment so the new
+	// Step 3b: set HARMONIK_AGENT in the tmux session environment so the new
 	// Claude process started after /clear inherits the correct agent name.
 	// Non-fatal: the handoff identity block is the primary anchor.
 	if c.cfg.TmuxTarget != "" {
@@ -1051,9 +1015,9 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 		// the latch path on the next tick.
 	}
 
-	// Step 6: inject /session-resume.
+	// Step 6: inject agent brief — re-pins identity from soul.md (I1, SPEC §4).
 	if c.cfg.TmuxTarget != "" {
-		_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, fmt.Sprintf("/session-resume %s", handoffPath)) //nolint:errcheck
+		_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, briefRestartCmd) //nolint:errcheck
 	}
 	j.Phase = "resumed"
 	j.UpdatedAt = time.Now().UTC()
@@ -1085,17 +1049,17 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 // RecoverFromCrash checks for an in-progress cycle journal on boot and takes
 // corrective action based on the last recorded phase.
 //
-//   - phase "cleared": /clear was issued before the crash; inject /session-resume
+//   - phase "cleared": /clear was issued before the crash; inject briefRestartCmd
 //     to complete the interrupted cycle, update journal to "complete", emit
 //     session_keeper_cycle_recovered.
 //   - phase "opened" / "handoff_injected" / "confirmed": /clear was NOT issued;
 //     update journal to "aborted" with reason "crash_before_clear", no injection.
-//   - phase "resumed": /session-resume was already injected; close journal.
+//   - phase "resumed": brief was already injected; close journal.
 //   - phase "complete" / "aborted": terminal state; no-op.
 //
 // Respects the .managed guard: no injection if not managed.
 // Does NOT reuse the stale cycle_id nonce from the journal (DEFECT-2): the
-// recovery path injects /session-resume directly without a nonce poll, so a
+// recovery path injects briefRestartCmd directly without a nonce poll, so a
 // stale nonce cannot trigger unintended behaviour.
 func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 	// Fail-closed: only act on a managed agent.
@@ -1112,13 +1076,11 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 		return fmt.Errorf("keeper: read recovery journal: %w", err)
 	}
 
-	handoffPath := c.cfg.HandoffFilePath(c.cfg.ProjectDir, c.cfg.AgentName)
-
 	switch j.Phase {
 	case "cleared":
-		// /clear was issued; agent needs resume injected.
+		// /clear was issued; inject agent brief to re-pin identity (I1).
 		if c.cfg.TmuxTarget != "" {
-			_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, fmt.Sprintf("/session-resume %s", handoffPath)) //nolint:errcheck
+			_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, briefRestartCmd) //nolint:errcheck
 		}
 		j.Phase = "complete"
 		j.UpdatedAt = time.Now().UTC()
@@ -1127,7 +1089,7 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 		c.emitCycleRecovered(ctx, j.CycleID, "cleared")
 
 	case "resumed":
-		// /session-resume was already injected; just close the journal.
+		// brief was already injected; just close the journal.
 		j.Phase = "complete"
 		j.UpdatedAt = time.Now().UTC()
 		j.Reason = "recovered_from_crash"

@@ -4,7 +4,7 @@ package keeper_test
 // guard on the keeper act-path (hk-6qf).
 //
 // When a human operator is attached to the managed tmux session, the keeper's
-// reset-cycle injection (/session-handoff, /clear, /session-resume) would race
+// reset-cycle injection (/session-handoff, /clear, agent brief) would race
 // the operator's own keystrokes and could clobber an in-flight turn. The guard
 // makes the act-path warn-only while attached: it SUPPRESSES the destructive
 // injection (no inject calls, no handoff_started event) and emits a
@@ -80,7 +80,6 @@ func newAttachTestCycler(
 		CrispIdleFn:        func(_, _ string) bool { return true },
 		HoldingDispatchFn:  func(_, _ string) bool { return false },
 		WriteJournalFn:     jc.write,
-		AppendHandoffFn:    func(_, _ string) error { return nil },
 		SetTmuxEnvFn:       func(_ context.Context, _, _, _ string) error { return nil },
 		OperatorAttachedFn: attachFn,
 	}
@@ -165,7 +164,7 @@ func TestCycler_OperatorDetached_Proceeds(t *testing.T) {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// Cycle ran: handoff, /clear, /session-resume.
+	// Cycle ran: handoff, /clear, agent brief (T8/I1).
 	texts := spy.texts()
 	if len(texts) < 3 {
 		t.Fatalf("want >=3 inject calls when detached; got %d: %v", len(texts), texts)
@@ -285,7 +284,6 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 		CrispIdleFn:              func(_, _ string) bool { return true },
 		HoldingDispatchFn:        func(_, _ string) bool { return false },
 		WriteJournalFn:           jc.write,
-		AppendHandoffFn:          func(_, _ string) error { return nil },
 		SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
 		ClearPrecompactTriggerFn: func(_, _ string) error { cleared++; return nil },
 		OperatorAttachedFn:       attach.fn,

@@ -49,7 +49,6 @@ func realHandoffCycler(t *testing.T, agent, projectDir, cycleID string, spy *cyc
 			return handoffPath
 		},
 		// Use the package defaults for ReadHandoff / TruncateHandoffFn /
-		// AppendHandoffFn (real disk I/O) — that is the seam under test.
 		InjectFn: spy.inject,
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-act"}, time.Now(), nil

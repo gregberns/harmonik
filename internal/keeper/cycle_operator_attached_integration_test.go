@@ -283,7 +283,6 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    func(_ string, _ *CycleJournal) error { return nil },
-		AppendHandoffFn:   func(_, _ string) error { return nil },
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		// OperatorAttachedFn left nil → real OperatorAttached (tmux list-clients).
 	}

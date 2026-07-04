@@ -67,7 +67,6 @@ func newIdleCycler(
 		CrispIdleFn:              func(_, _ string) bool { return crispIdle },
 		HoldingDispatchFn:        func(_, _ string) bool { return holdingDispatch },
 		WriteJournalFn:           jc.write,
-		AppendHandoffFn:          func(_, _ string) error { return nil },
 		SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
 		ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
 		IdleRestartAbsTokens:     idleRestartAbsTokens,

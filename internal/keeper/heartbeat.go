@@ -260,6 +260,24 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 		managedSID = "" // fall back to the last gauge session_id
 	}
 	sid := heartbeatSessionID(managedSID, last)
+	// When .managed is empty (e.g., after a ClearSettle-timeout cycle clears the
+	// binding), fall back to the authoritative .sid channel for the current session
+	// id. Without this, derive targets the previous session's JSONL and exhausts
+	// MaxHeartbeatMisses, suppressing writes and causing gauge-death on a live
+	// agent (K1 of hk-4xni9 — leto gauge stale 23h post-ClearSettle-timeout).
+	if managedSID == "" {
+		if liveSID, _, sidErr := w.cfg.ReadSidFn(w.cfg.ProjectDir, w.cfg.AgentName); sidErr == nil && isPrimarySID(liveSID) {
+			sid = liveSID
+		}
+	}
+	// Reset the miss budget when the derive target changes (new session detected).
+	// This unblocks a heartbeat that exhausted its budget against a prior
+	// session's transcript and allows the new session a fresh derive window.
+	// Refs: hk-4xni9 K1.
+	if sid != w.heartbeatLastSID {
+		w.heartbeatMissCount = 0
+		w.heartbeatLastSID = sid
+	}
 
 	transcriptDir := w.cfg.TranscriptDir
 	if transcriptDir == "" {

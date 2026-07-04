@@ -66,8 +66,8 @@ type CyclerConfig struct {
 	WarnPct     float64 // re-arm threshold; default 80
 	ForceActPct float64 // forced-clear fallback pct; default 95
 
-	HandoffTimeout time.Duration // wait for handoff nonce; default 180s
-	ClearSettle    time.Duration // best-effort wait for new session_id; default 3s
+	HandoffTimeout time.Duration // wait for handoff nonce; default 300s (hk-4xni9 K2)
+	ClearSettle    time.Duration // best-effort wait for new session_id; default 10s (hk-4xni9 K3)
 	PollInterval   time.Duration // polling cadence for nonce + settle; default 200ms
 
 	// Injectable dependencies. Nil → production default.

@@ -152,9 +152,14 @@ const (
 	DefaultMaxHeartbeatMisses = 12
 
 	// DefaultHandoffTimeout is the CyclerConfig handoff-nonce wait.
-	DefaultHandoffTimeout = 180 * time.Second
+	// Raised 180s→300s (hk-4xni9 K2): 24% abort rate on gurney/captain/leto showed
+	// agents in heavy turns need more than 3 min to write the handoff nonce.
+	DefaultHandoffTimeout = 300 * time.Second
 	// DefaultClearSettle is the CyclerConfig post-/clear settle wait for a new sid.
-	DefaultClearSettle = 3 * time.Second
+	// Raised 3s→10s (hk-4xni9 K3): 48 clear_unconfirmed events showed the new
+	// session's first statusline repaint takes >3s on loaded machines, leaving
+	// .managed empty and triggering the heartbeat-derive cascade in K1.
+	DefaultClearSettle = 10 * time.Second
 	// DefaultCyclerPollInterval is the CyclerConfig nonce/settle poll cadence.
 	DefaultCyclerPollInterval = 200 * time.Millisecond
 	// DefaultForceRetryInterval is the CyclerConfig forced-clear retry interval.

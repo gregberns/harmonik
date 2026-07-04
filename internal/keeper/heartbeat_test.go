@@ -456,3 +456,103 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 		}
 	})
 }
+
+// TestHeartbeat_SIDChange_ResetsMissBudget verifies hk-4xni9 K1: when the
+// heartbeat has exhausted its derive-miss budget against a prior session's
+// transcript, writing a new session_id to the .sid channel must reset the miss
+// count and resume gauge writes — preventing the 23h gauge-death seen on leto
+// after a ClearSettle-timeout cycle cleared .managed.
+//
+// Scenario:
+//  1. Heartbeat runs with HeartbeatMaxMisses=2 and no transcript → budget exhausted → gauge goes stale.
+//  2. A new UUIDv4 is written to the .sid channel (simulating the new session after /clear).
+//  3. The gauge must recover: the heartbeat detects the SID change, resets its miss
+//     count, and resumes carry-forward writes so the gauge stays below Staleness.
+func TestHeartbeat_SIDChange_ResetsMissBudget(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	agent := "test-agent"
+	newSID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+
+	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// .managed is empty (cleared by ClearSettle-timeout), mirroring the K1 scenario.
+
+	// Seed an aged gauge with the old SID so the heartbeat fires immediately.
+	writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
+		Pct:       50.0,
+		Tokens:    180_000,
+		SessionID: "11111111-2222-4333-8444-555555555555",
+		Ts:        time.Now().UTC().Format(time.RFC3339),
+	}, 60*time.Millisecond)
+
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:  agent,
+		ProjectDir: projectDir,
+
+		PollInterval:       5 * time.Millisecond,
+		Staleness:          80 * time.Millisecond,
+		HeartbeatThreshold: 30 * time.Millisecond,
+		HeartbeatEnabled:   true,
+		// Small budget so it exhausts quickly without long wall-clock delays.
+		HeartbeatMaxMisses: 2,
+
+		TmuxTarget:   "fake:0.0",
+		WarnPct:      80.0,
+		IdleQuiesce:  1 * time.Millisecond,
+		IsPaneIdleFn: func(context.Context, string) bool { return false }, // pane alive
+
+		// No transcript → derive always fails for both SIDs.
+		TranscriptDir: filepath.Join(projectDir, "no-such-transcript-dir"),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runWatcherFor(ctx, cfg, em, 2*time.Second)
+	}()
+
+	// Phase 1: let the budget exhaust — gauge goes stale.
+	time.Sleep(300 * time.Millisecond)
+	if noGaugeStaleCount(em) == 0 {
+		cancel()
+		<-done
+		t.Fatalf("phase 1: expected ≥1 no_gauge:stale after budget exceeded, got 0")
+	}
+
+	// Phase 2: write new SID to .sid channel — heartbeat must detect the SID
+	// change, reset its miss count, and resume carry-forward writes.
+	sidWriteTime := time.Now()
+	sidPath := filepath.Join(keeperDir, agent+".sid")
+	if err := os.WriteFile(sidPath, []byte(newSID+"\n"), 0o600); err != nil {
+		cancel()
+		<-done
+		t.Fatalf("write .sid: %v", err)
+	}
+	// Re-age the gauge so the heartbeat threshold fires immediately on the next tick.
+	writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
+		Pct:       50.0,
+		Tokens:    180_000,
+		SessionID: newSID,
+		Ts:        time.Now().UTC().Format(time.RFC3339),
+	}, 60*time.Millisecond)
+
+	// Allow time for one heartbeat tick (PollInterval=5ms, HeartbeatThreshold=30ms).
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	// After the SID change the heartbeat must have written at least one carry-forward:
+	// the gauge mod-time must be AFTER the moment the new SID was written.
+	_, modTime := readCtxFor(t, projectDir, agent)
+	if !modTime.After(sidWriteTime) {
+		t.Fatalf("phase 2: gauge not refreshed after SID change: mod-time %v is not after sidWriteTime %v — heartbeat miss-count was not reset on SID change", modTime, sidWriteTime)
+	}
+}

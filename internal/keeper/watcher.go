@@ -858,6 +858,12 @@ type Watcher struct {
 	// Refs: hk-lal8.
 	heartbeatMissCount int
 
+	// heartbeatLastSID is the session_id the heartbeat last targeted for derive.
+	// When the effective SID changes (new session detected via .managed or .sid),
+	// heartbeatMissCount is reset so the new session gets a fresh derive budget.
+	// Refs: hk-4xni9 K1.
+	heartbeatLastSID string
+
 	// Heartbeat derive cache — avoids O(filesize) JSONL re-scans on consecutive
 	// heartbeat ticks for the same session. Only hits are cached; misses always
 	// hit the disk so the miss-budget counter works correctly. Single-threaded:

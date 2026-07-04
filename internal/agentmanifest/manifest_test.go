@@ -469,6 +469,38 @@ triggers:
 	}
 }
 
+func TestLoad_CronTrigger_ActivityGuard(t *testing.T) {
+	t.Parallel()
+	agentsDir := t.TempDir()
+	m := `
+type: mytype
+harness: claude
+identity:
+  soul: soul.md
+  parent_intent: captain
+triggers:
+  - id: alignment-audit
+    source: cron
+    every: 1h
+    enabled: true
+    deliver: comms
+    message: "Run the hourly audit."
+    activity_guard: 24h
+`
+	makeTypeFolder(t, agentsDir, "mytype", m, validSoul, validOperating)
+	tf, err := agentmanifest.Load(agentsDir, "mytype")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tr := tf.Manifest.Triggers[0]
+	if tr.Source != "cron" {
+		t.Errorf("Source = %q, want %q", tr.Source, "cron")
+	}
+	if tr.ActivityGuard != "24h" {
+		t.Errorf("ActivityGuard = %q, want %q", tr.ActivityGuard, "24h")
+	}
+}
+
 // --- ResolveRef tests ---
 
 func TestResolveRef_PathBearingIsLiteral(t *testing.T) {

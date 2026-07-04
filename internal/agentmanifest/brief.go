@@ -304,10 +304,17 @@ func RenderToon(doc *BootDoc, w io.Writer) {
 		fmt.Fprintln(w, "(no active triggers)")
 	} else {
 		for _, t := range doc.ActiveTriggers {
+			meta := t.Source
+			if t.Every != "" {
+				meta += ", every " + t.Every
+			}
+			if t.ActivityGuard != "" {
+				meta += ", activity_guard " + t.ActivityGuard
+			}
 			if t.Message != "" {
-				fmt.Fprintf(w, "  • %s [%s, every %s]: %s\n", t.ID, t.Source, t.Every, t.Message)
+				fmt.Fprintf(w, "  • %s [%s]: %s\n", t.ID, meta, t.Message)
 			} else {
-				fmt.Fprintf(w, "  • %s [%s]\n", t.ID, t.Source)
+				fmt.Fprintf(w, "  • %s [%s]\n", t.ID, meta)
 			}
 		}
 	}
@@ -355,9 +362,16 @@ func renderSkillLine(w io.Writer, s SkillEntry) {
 
 // renderTriggerLine renders a single trigger as a markdown list item.
 func renderTriggerLine(w io.Writer, t Trigger) {
+	meta := "source: " + t.Source
+	if t.Every != "" {
+		meta += ", every: " + t.Every
+	}
+	if t.ActivityGuard != "" {
+		meta += ", activity_guard: " + t.ActivityGuard
+	}
 	if t.Message != "" {
-		fmt.Fprintf(w, "- **%s** (source: %s, every: %s): %s\n", t.ID, t.Source, t.Every, t.Message)
+		fmt.Fprintf(w, "- **%s** (%s): %s\n", t.ID, meta, t.Message)
 	} else {
-		fmt.Fprintf(w, "- **%s** (source: %s)\n", t.ID, t.Source)
+		fmt.Fprintf(w, "- **%s** (%s)\n", t.ID, meta)
 	}
 }

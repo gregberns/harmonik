@@ -14,8 +14,13 @@ context:
   - { ref: docs/components/internal/kerf.md,            as: doc,         presence: retrieved }
 
 triggers:
-  - { id: alignment-audit, source: interval, every: 1h, enabled: true, deliver: comms,
-      message: "Run the hourly alignment audit." }
+  - id: alignment-audit
+    source: cron
+    every: 1h
+    enabled: true
+    deliver: comms
+    message: "Run the hourly alignment audit."
+    activity_guard: 24h
 
 handoff:
   channel: private

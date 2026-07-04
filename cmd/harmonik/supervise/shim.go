@@ -240,7 +240,13 @@ func runWatchdogOnly(cfg Config, projectDir string, stdout, stderr io.Writer) in
 		return 1
 	}
 
-	dw := supervise.NewDaemonWatchdog(daemonWatchdogSpecFromConfig(cfg, projectDir, daemonCmd), log)
+	dwSpec := daemonWatchdogSpecFromConfig(cfg, projectDir, daemonCmd)
+	// Capture daemon crash output in watchdog-only mode too — without this the
+	// child's fd 1/2 go to /dev/null and every panic stack is silently discarded,
+	// leaving the very failures the watchdog exists to recover from undiagnosable
+	// (mirrors the full-supervisor path above).
+	dwSpec.CrashLogPath = filepath.Join(projectDir, ".harmonik", "state", "daemon.crash.log")
+	dw := supervise.NewDaemonWatchdog(dwSpec, log)
 
 	fmt.Fprintln(stdout, "harmonik supervise: watchdog-only mode (no supervisee configured)")
 	if err := dw.Run(ctx); err != nil && ctx.Err() == nil {

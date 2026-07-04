@@ -6218,6 +6218,21 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 				buildCmd := exec.CommandContext(ctx, "go", buildArgs...)
 				buildCmd.Dir = buildDir
 				if out, buildErr := buildCmd.CombinedOutput(); buildErr != nil {
+					// Cold-cache retry (hk-44ab2): the proactive go-cache reaper
+					// can wipe the build cache between the idle check and the
+					// merge-build start (TOCTOU window). When the output matches
+					// the cold-cache signature, retry once — the first attempt
+					// repopulates enough cache for the second to succeed.
+					if isMergeBuildColdCacheError(out) {
+						retryCmd := exec.CommandContext(ctx, "go", buildArgs...)
+						retryCmd.Dir = buildDir
+						if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
+							continue
+						} else {
+							out = retryOut
+							buildErr = retryErr
+						}
+					}
 					rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
 					rollbackCmd.Dir = projectDir
 					_ = rollbackCmd.Run()
@@ -6695,6 +6710,21 @@ func emitWorkingTreeRefreshFailed(ctx context.Context, bus handlercontract.Event
 		return
 	}
 	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeWorkingTreeRefreshFailed, b)
+}
+
+// isMergeBuildColdCacheError reports whether the go build/vet output matches
+// the cold-build-cache failure signature observed after the proactive go-cache
+// reaper runs in the TOCTOU window before the merge-build starts (hk-44ab2):
+//
+//   - "go-build cache" in output: Go toolchain references the deleted cache path
+//   - "could not import" + "no such file": stdlib lookup fails against cold cache
+//
+// These are transient: a single retry almost always succeeds because the first
+// attempt repopulates cache entries for subsequent compilations.
+func isMergeBuildColdCacheError(out []byte) bool {
+	s := string(out)
+	return strings.Contains(s, "go-build cache") ||
+		(strings.Contains(s, "could not import") && strings.Contains(s, "no such file"))
 }
 
 // emitMergeBuildFailed emits a merge_build_failed event when go build or go

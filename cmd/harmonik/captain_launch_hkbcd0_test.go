@@ -37,12 +37,15 @@ type fakeCaptainOps struct {
 	aliveResult bool  // what AgentPaneAlive returns (default false: agent dead/reapable)
 	aliveErr    error // optional AgentPaneAlive error (ambiguous-probe path)
 
-	existsCalls   int
-	aliveCalls    int
-	killCalls     int
-	killedSession string
-	keeperOpts    *agentlaunch.KeeperWindowOpts // nil until SpawnKeeperWindow called
-	keeperOutcome ltmux.Outcome                 // what SpawnKeeperWindow returns
+	existsCalls    int
+	aliveCalls     int
+	killCalls      int
+	killedSession  string
+	keeperOpts     *agentlaunch.KeeperWindowOpts // nil until SpawnKeeperWindow called
+	keeperOutcome  ltmux.Outcome                 // what SpawnKeeperWindow returns
+	pasteSeedCalls int
+	pasteSeedSessID string
+	pasteSeedPane   string
 }
 
 func (f *fakeCaptainOps) SessionExists(_ context.Context, _ string) (bool, error) {
@@ -72,6 +75,44 @@ func (f *fakeCaptainOps) AgentPanePID(_ context.Context, _ string) (int, error) 
 func (f *fakeCaptainOps) AgentPaneAlive(_ context.Context, _ string) (bool, error) {
 	f.aliveCalls++
 	return f.aliveResult, f.aliveErr
+}
+
+func (f *fakeCaptainOps) PasteSeedToAgentPane(_ context.Context, sessionID, paneTarget string) {
+	f.pasteSeedCalls++
+	f.pasteSeedSessID = sessionID
+	f.pasteSeedPane = paneTarget
+}
+
+// TestCaptainLaunch_PastesSeedToAgentPane_T10 verifies that a successful launch
+// delivers the boot seed to the captain's agent pane (T10/hk-02jsj): the seed
+// paste is called once, with the supplied session-id and the agent pane target
+// <tmuxSession>:agent.
+func TestCaptainLaunch_PastesSeedToAgentPane_T10(t *testing.T) {
+	run, captured := captureRunHkly0n()
+	ops := &fakeCaptainOps{}
+	proj := t.TempDir()
+	const fixedSID = "550e8400-e29b-41d4-a716-446655440000"
+
+	code := runCaptainLaunchWithOps(
+		[]string{"--project", proj, "--session-id", fixedSID},
+		run, noopKeeperHkly0n, ops,
+	)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if *captured == nil {
+		t.Fatal("agent window not launched")
+	}
+	if ops.pasteSeedCalls != 1 {
+		t.Fatalf("PasteSeedToAgentPane called %d times, want 1", ops.pasteSeedCalls)
+	}
+	if ops.pasteSeedSessID != fixedSID {
+		t.Errorf("PasteSeedToAgentPane sessionID = %q, want %q", ops.pasteSeedSessID, fixedSID)
+	}
+	wantPane := expectedHashedSession(t, proj) + ":" + ltmux.WindowAgent
+	if ops.pasteSeedPane != wantPane {
+		t.Errorf("PasteSeedToAgentPane paneTarget = %q, want %q", ops.pasteSeedPane, wantPane)
+	}
 }
 
 // expectedHashedSession mirrors the launcher's in-process hash derivation so the

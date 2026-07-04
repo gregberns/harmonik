@@ -64,6 +64,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -73,6 +74,10 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
+
+// captainSplashDismissDelay is the wait between the splash-dismiss Enter and the
+// boot-seed paste (mirrors daemon.splashDismissDelay = 750ms).
+const captainSplashDismissDelay = 750 * time.Millisecond
 
 // captainLaunchRunFn is the seam tests inject to capture the assembled
 // agent-window tmux new-session command without spawning a real session.
@@ -116,6 +121,11 @@ type captainTmuxOps interface {
 	// (false, err) only when liveness could not be determined at all; a resolvable
 	// but dead/absent pane returns (false, nil).
 	AgentPaneAlive(ctx context.Context, sess string) (bool, error)
+	// PasteSeedToAgentPane delivers the boot seed to the captain's agent pane
+	// after launch so the captain knows to run `harmonik agent brief`. Best-effort:
+	// failures WARN to stderr but never block the launch (mirrors crewstart.go
+	// pasteCrewMission, T10/hk-02jsj).
+	PasteSeedToAgentPane(ctx context.Context, sessionID, paneTarget string)
 }
 
 // osCaptainTmuxOps is the production captainTmuxOps backed by tmux.OSAdapter.
@@ -180,6 +190,39 @@ func (o osCaptainTmuxOps) AgentPaneAlive(ctx context.Context, sess string) (bool
 		return false, nil
 	}
 	return true, nil
+}
+
+// PasteSeedToAgentPane delivers the boot seed to the captain's agent pane via
+// the bracketed-paste mechanism (mirrors crewstart.go pasteCrewMission).
+//
+// Message: "Please run `harmonik agent brief` and begin your operating loop."
+// HARMONIK_AGENT is set by the launcher so brief auto-resolves the captain type.
+//
+// Best-effort: errors WARN to stderr but never block the launch (T10/hk-02jsj).
+func (o osCaptainTmuxOps) PasteSeedToAgentPane(ctx context.Context, sessionID, paneTarget string) {
+	// Dismiss the welcome splash before the paste (hk-rf4ux).
+	if err := o.adapter.SendKeysEnter(ctx, paneTarget); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik captain: boot-seed splash dismiss: %v\n", err)
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(captainSplashDismissDelay):
+	}
+	bufName := fmt.Sprintf("harmonik-%s-captain-boot", sessionID)
+	const bootSeedMsg = "Please run `harmonik agent brief` and begin your operating loop.\n"
+	if err := o.adapter.WriteToPane(ctx, bufName, paneTarget, []byte(bootSeedMsg)); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik captain: boot-seed paste: %v\n", err)
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(captainSplashDismissDelay):
+	}
+	if err := o.adapter.SendKeysEnter(ctx, paneTarget); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik captain: boot-seed submit: %v\n", err)
+	}
 }
 
 // buildCaptainTmuxCmd assembles the exec.Cmd for the captain's agent-window
@@ -457,6 +500,12 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 		fmt.Fprintf(os.Stderr, "harmonik captain: launch tmux session %q: %v\n", tmuxSession, rerr)
 		return 1
 	}
+
+	// 1.5) Paste the boot seed into the captain's agent pane so the captain runs
+	//      `harmonik agent brief` as its first action (T10/hk-02jsj — symmetric seed
+	//      paste mirroring crewstart.go pasteCrewMission). Best-effort: never blocks.
+	agentPane := tmuxSession + ":" + ltmux.WindowAgent
+	ops.PasteSeedToAgentPane(ctx, sessionID, agentPane)
 
 	// 2) Write captain.sentinel + captain.pid to .harmonik/cognition/ so the
 	//    daemon orphan sweep skips the captain session while it is live

@@ -26,5 +26,6 @@ Identity is `$HARMONIK_AGENT` (== `crew_name`). Use it as `--from`/`--agent` on 
 
 ## Bounds
 - Keep `comms recv --follow --json` armed for the whole session, INCLUDING when idle/drained; re-arm on every restart and on any mid-session stream death.
+- Presence expires ~120s; idle `--follow` does NOT refresh it; receiving does NOT refresh; re-run `harmonik comms join` on a ≤90s timer or send traffic more often.
 - Never self-`/quit` or `/clear` on a keeper WARN — only the keeper's ACT path resets.
 - Never re-dispatch the same bead twice without reporting to the captain first.

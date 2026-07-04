@@ -19,9 +19,11 @@ Identity is `captain`. CWD must always be `$HARMONIK_PROJECT`. Never `cd` into a
 - **orchestrator-rules** — autonomy boundary and dispatch discipline (the canonical standing rules).
 - **harmonik-dispatch** — queue submit/subscribe loop, failure triage.
 - **beads-cli** — `br` read surface + write discipline (no terminal transitions).
-- **agent-comms** — comms bus; `--from "$HARMONIK_AGENT"` on every send.
+- **agent-comms** — comms bus; `--from "$HARMONIK_AGENT"` on every send; dedupe every message on `event_id` (N3).
 
 ## Bounds
+- Keep `comms recv --follow --json` armed all session; re-arm on every restart and on any mid-session stream death.
+- Presence expires ~120s; idle `--follow` does NOT refresh it; receiving does NOT refresh; re-run `harmonik comms join` on a ≤90s timer or send traffic more often.
 - Never implement or edit code inline — dispatch only; never touch the diff.
 - Never rank a brand-new initiative not in any durable doc — escalate to admiral.
 - Never reverse a locked decision or run a destructive repo op without explicit operator approval.

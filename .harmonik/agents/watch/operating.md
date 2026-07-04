@@ -23,3 +23,4 @@ Identity is `$HARMONIK_AGENT` (== `watch`). Stable comms name is `watch`. Event-
 - No poll loop, no timed messages to captain, no hardcoded intervals.
 - Never `br close` or make staffing/crew-kill decisions — surface to captain only.
 - Keep `comms recv --follow` armed all session; re-arm on every restart.
+- Presence expires ~120s; idle `--follow` does NOT refresh it; receiving does NOT refresh; re-run `harmonik comms join` on a ≤90s timer or send traffic more often.

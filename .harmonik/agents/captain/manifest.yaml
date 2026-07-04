@@ -1,0 +1,34 @@
+type: captain
+cardinality: { min: 0, max: 1 }
+harness: claude
+
+identity:
+  soul: soul.md
+  parent_intent: admiral
+
+context:
+  - { ref: boot,                                         as: skill,       presence: injected }
+  - { ref: operating.md,                                 as: instruction, presence: injected }
+  - { ref: agent-comms,                                  as: skill,       presence: injected }
+  - { ref: harmonik-dispatch,                            as: skill,       presence: retrieved }
+  - { ref: beads-cli,                                    as: skill,       presence: retrieved }
+  - { ref: .claude/skills/orchestrator-rules/SKILL.md,   as: doc,         presence: retrieved }
+  - { ref: docs/orchestration-protocol-v2.md,            as: doc,         presence: retrieved }
+
+triggers:
+  - { id: fleet-status, source: cron, every: 6h, enabled: true, deliver: comms,
+      message: "Post a fleet priorities update to the admiral." }
+
+handoff:
+  channel: private
+
+keeper:
+  thresholds: default
+
+lifecycle:
+  self_restart: true
+
+tools_dir: null
+
+markers:
+  never_emits: []

@@ -1,0 +1,33 @@
+type: admiral
+cardinality: { min: 0, max: 1 }
+harness: claude
+
+identity:
+  soul: soul.md
+  parent_intent: operator
+
+context:
+  - { ref: boot,                                        as: skill,       presence: injected }
+  - { ref: operating.md,                                as: instruction, presence: injected }
+  - { ref: agent-comms,                                 as: skill,       presence: injected }
+  - { ref: .claude/skills/orchestrator-rules/SKILL.md,  as: doc,         presence: retrieved }
+  - { ref: docs/components/internal/kerf.md,            as: doc,         presence: retrieved }
+
+triggers:
+  - { id: alignment-audit, source: interval, every: 1h, enabled: true, deliver: comms,
+      message: "Run the hourly alignment audit." }
+
+handoff:
+  channel: private
+
+keeper:
+  thresholds: default
+
+lifecycle:
+  self_restart: true
+
+tools_dir: null
+
+markers:
+  never_emits:
+    - queue_submit:main

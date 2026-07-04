@@ -91,9 +91,9 @@ type Trigger struct {
 	// Source is the wake origin: queue | cron | interval | event | comms | manual | operator.
 	Source  string `yaml:"source"`
 	Enabled bool   `yaml:"enabled"`
-	Every   string `yaml:"every,omitempty"`           // cron/interval period (e.g. "6h")
-	Deliver string `yaml:"deliver,omitempty"`          // delivery target for scheduled triggers ("comms")
-	Message string `yaml:"message,omitempty"`          // message to deliver on a cron/interval trigger
+	Every   string `yaml:"every,omitempty"`   // cron/interval period (e.g. "6h")
+	Deliver string `yaml:"deliver,omitempty"` // delivery target for scheduled triggers ("comms")
+	Message string `yaml:"message,omitempty"` // message to deliver on a cron/interval trigger
 	// ActivityGuard is the fleet-activity window for cron/interval triggers.
 	// When set (e.g. "24h"), the daemon fires this trigger only if fleet activity was
 	// observed within the window. Empty means fire unconditionally on schedule.

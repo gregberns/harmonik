@@ -31,7 +31,7 @@ func TestLRU(t *testing.T) {
 		c := evallrucache.NewLRU(2)
 		c.Put(1, 10)
 		c.Put(2, 20)
-		c.Get(1)    // 1 is now MRU, 2 is LRU
+		c.Get(1)     // 1 is now MRU, 2 is LRU
 		c.Put(3, 30) // evicts key 2 (LRU)
 		if _, ok := c.Get(2); ok {
 			t.Error("key 2 should have been evicted (it was LRU after Get(1))")

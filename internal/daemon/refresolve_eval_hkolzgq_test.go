@@ -35,7 +35,7 @@ func TestResolveWorkflowRef_EvalTier15(t *testing.T) {
 			wantRef:    "eval-bead.dot",
 		},
 		{
-			name: "dot: label wins over codename:eval (tier 1 before tier 1.5)",
+			name:       "dot: label wins over codename:eval (tier 1 before tier 1.5)",
 			beadLabels: []string{"codename:eval", "dot:custom-eval"},
 			wantRef:    "custom-eval.dot",
 		},

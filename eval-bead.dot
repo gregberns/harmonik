@@ -1,0 +1,115 @@
+// eval-bead.dot — lightweight eval-task workflow (hk-olzgq / hk-eval-harness-dot-flbj3)
+//
+// Routes eval coding-task beads (codename:eval) away from the project-level
+// workflow.dot (sonnet-triple-review) whose 3-reviewer cascade times out on the
+// small diffs produced by eval tasks. Implements the EH2 spec from
+// plans/2026-07-02-eval-harness/DESIGN.md §1.2.
+//
+// Topology:
+//   start → implement → grade → judge (non-gating) → close-pass
+//                            ↓ fail
+//                          close-fail
+//
+// Design choices (per DESIGN.md §1.2):
+//   - No fix-loop: eval measures one-shot capability; a loop contaminates the signal.
+//   - grade is deterministic (shell): exit 0 = pass, exit ≠ 0 = fail.
+//   - judge is a lightweight Haiku-based quality scorer (non-gating): always routes
+//     to close-pass so a low quality score never blocks landing. Its outcome_emitted
+//     is the signal the eval collector (EH1) reads to mark pass=true.
+//   - harness selection: per-bead harness:pi label (or default) is honoured for the
+//     implement node — eval-bead.dot does not override harness.
+
+digraph "eval-bead" {
+    // ─── Graph-level attributes ──────────────────────────────────────────────
+    schema_version="1";
+    version="1.0";
+    workflow_id="eval-bead";
+    start_node="start";
+    terminal_node_ids="close-pass,close-fail";
+    context_keys="bead_id";
+
+    // ─── Nodes ───────────────────────────────────────────────────────────────
+    start [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="entry"
+    ];
+
+    // implement: model-under-test (harness selected from bead label, e.g. harness:pi).
+    // One-shot: no fix-loop after grade failure.
+    implement [
+        type="agentic",
+        agent_type="implementer",
+        handler_ref="claude-implementer",
+        idempotency_class="non-idempotent",
+        role="implement the eval task; commit required. Create the solution file(s) as described in the task. COMMIT the solution AND any provided test files. Do NOT modify or delete pre-committed test files."
+    ];
+
+    // grade: deterministic shell check. Runs the task's own go test.
+    // exit 0 = pass → judge; exit ≠ 0 = fail → close-fail (no fix-loop).
+    grade [
+        type="non-agentic",
+        handler_ref="shell",
+        idempotency_class="idempotent",
+        tool_command="bash scripts/eval-grade.sh",
+        timeout="120",
+        role="deterministic grade: run the task's go test; exit 0 = pass"
+    ];
+
+    // judge: lightweight quality scorer (non-gating). Haiku model for speed.
+    // Writes .harmonik/review.json with a 1-5 quality grade + notes.
+    // Its outcome_emitted event is what the eval collector (EH1) reads as pass=true.
+    // Never loops back: every verdict routes unconditionally to close-pass.
+    judge [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        model="claude-haiku-4-5-20251001",
+        effort="low",
+        role="eval quality judge (non-gating): score the solution 1-5 on correctness-beyond-tests, idiomatic Go, clarity, and over-engineering. Write .harmonik/review.json with preferred_label=APPROVE and a brief notes field. Do NOT loop back — this verdict is recorded only, never acted on."
+    ];
+
+    "close-pass" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="grade PASS — solution passed the deterministic check"
+    ];
+
+    "close-fail" [
+        type="non-agentic",
+        handler_ref="noop",
+        idempotency_class="idempotent",
+        role="grade FAIL — solution did not pass the deterministic check (no fix-loop)"
+    ];
+
+    // ─── Edges ───────────────────────────────────────────────────────────────
+    start -> implement;
+    implement -> grade;
+
+    // grade SUCCESS → judge (quality score, then unconditional close-pass).
+    grade -> judge [
+        condition="outcome.status == 'SUCCESS'"
+    ];
+    // grade FAIL → close-fail immediately (no fix-loop per eval design).
+    grade -> "close-fail" [
+        condition="outcome.status == 'FAIL'"
+    ];
+    // grade fallback (WG-011: mandatory unconditional fallback must appear last).
+    grade -> "close-fail";
+
+    // judge is non-gating: ALL verdict paths → close-pass.
+    judge -> "close-pass" [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+    judge -> "close-pass" [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'"
+    ];
+    judge -> "close-pass" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+    // Unconditional fallback — REQUIRED by WG-011.
+    judge -> "close-pass";
+}

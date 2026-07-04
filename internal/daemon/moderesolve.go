@@ -165,6 +165,30 @@ func resolveWorkflowRef(bead core.BeadRecord, itemWorkflowRef string) string {
 		}
 	}
 
+	// Tier 1.5: codename:eval → eval-bead.dot (hk-olzgq).
+	//
+	// Eval coding-task beads carry codename:eval but are not expected to carry an
+	// explicit dot: label (they predate eval-bead.dot). Without this tier they fall
+	// through to the project-level workflow.dot — currently sonnet-triple-review —
+	// whose heavyweight 3-reviewer cascade times out on the small diffs produced by
+	// eval tasks. Route them to the lightweight eval-bead.dot instead.
+	//
+	// This tier fires only when:
+	//   a) tier 0 is absent (no per-item WorkflowRef), AND
+	//   b) tier 1 is absent (no dot: label), AND
+	//   c) the bead carries exactly the label "codename:eval" (exact-match, not prefix).
+	//
+	// eval-bead.dot must exist in the project dir; if it does not, beadRunOne's
+	// DOT-load step will reopen the bead with a workflow_load error — same as any
+	// missing dot: ref. The project-level workflow.dot is NOT a fallback here: once
+	// tier 1.5 fires we return the eval ref, and the caller skips the workflow.dot
+	// fall-through (beadRunOne checks itemWorkflowRef != "" before using workflow.dot).
+	for _, lbl := range bead.Labels {
+		if lbl == "codename:eval" {
+			return "eval-bead.dot"
+		}
+	}
+
 	// Tier 2–4: no label present (or ambiguous / empty value); let caller fall
 	// through to the project-level workflow.dot or the embedded standard-bead.dot.
 	return ""

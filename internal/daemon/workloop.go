@@ -58,6 +58,7 @@ import (
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
+	"github.com/gregberns/harmonik/internal/sessiondata"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -2800,6 +2801,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		handle.OwningEpicAssignee = owningEpicAssignee
 	}
 
+	// sdStartedAt, sdModel, sdHarness are captured by emitDone for the
+	// sessiondata.Collect goroutine. They are assigned after their respective
+	// resolutions below (ResolveModelPreference, implHarnessWL).
+	sdStartedAt := time.Now()
+	var sdModel, sdHarness string
+
 	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
 	// every run_completed / run_failed event emitted from this function. Using a
 	// closure avoids threading the optional queue fields through every call site.
@@ -2819,6 +2826,28 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitCtx = context.Background()
 		}
 		emitRunCompleted(emitCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, success, summary, queueID, queueGroupIndex, runTipSHA)
+		// Fire sessiondata.Collect off the hot path (hk-eval-prog-sessiondata-hook-vmxrk).
+		// Best-effort: errors are silently discarded — a missed record is preferable
+		// to a panicking goroutine that could affect the daemon.
+		sdEndedAt := time.Now()
+		sdQID := ""
+		if queueID != nil {
+			sdQID = *queueID
+		}
+		go func() { //nolint:errcheck // best-effort; see comment above.
+			_ = sessiondata.Collect(sessiondata.CollectParams{
+				RunID:             runID.String(),
+				BeadID:            string(beadID),
+				QueueID:           sdQID,
+				Harness:           sdHarness,
+				Model:             sdModel,
+				Success:           success,
+				StartedAt:         sdStartedAt,
+				EndedAt:           sdEndedAt,
+				ProjectDir:        deps.projectDir,
+				ClaudeProjectsDir: filepath.Join(os.Getenv("HOME"), ".claude", "projects"),
+			})
+		}()
 	}
 
 	// Resolve workflow_mode per execution-model.md §4.3.EM-012a.
@@ -2854,6 +2883,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		deps.bus,
 		string(beadID),
 	)
+	sdModel = resolvedModel
 
 	// Determine activeRepo: the repository where the per-bead worktree lives,
 	// commits happen, and merges are pushed (hk-xfuc cross-repo dispatch).
@@ -3911,6 +3941,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if implH, implHErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); implHErr == nil {
 			implIsSessionIDCapturedWL = implH.SessionIDPolicy() == handlercontract.SessionIDCaptured
 			implHarnessWL = implH
+			sdHarness = string(implH.AgentType())
 		}
 	}
 	// hk-6596l: srt sandbox argv-wrap wiring. hk-r4p0l: key the gate off the

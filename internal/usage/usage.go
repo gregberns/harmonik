@@ -1,10 +1,10 @@
-// Package usage implements the harmonik token-usage join analysis.
+// Package usage implements the harmonik token-usage report.
 //
-// It joins Claude-Code session transcripts (~/.claude/projects/…/*.jsonl)
-// against harmonik events.jsonl on run_id, producing per-run, per-bead, and
-// per-model cost rollups. Daemon worktree runs are attributed via the
-// gitBranch="run/<run_id>" field in each transcript turn; always-on
-// orchestrator sessions (captain/crew) are surfaced as the idle-burn bucket.
+// harmonik usage is a VIEW over <project>/.harmonik/session-data.jsonl, which
+// the daemon populates at the end of every run via sessiondata.Collect. Per-run
+// token counts and cost are pre-computed by the collector; this package only
+// aggregates and formats them. Orchestrator sessions (captain/crew) are still
+// derived live by scanning Claude transcripts because they are not run-dispatched.
 //
 // No daemon connection required; this package reads files only.
 //
@@ -23,100 +23,18 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/sessiondata"
 )
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Pricing table (per 1M tokens, USD) — Anthropic pricing as of June 2026.
-// ──────────────────────────────────────────────────────────────────────────────
-
-type modelPrice struct {
-	Input         float64
-	Output        float64
-	CacheCreation float64
-	CacheRead     float64
-}
-
-var pricingTable = map[string]modelPrice{
-	"claude-opus-4-8":   {15.0, 75.0, 18.75, 1.50},
-	"claude-opus-4":     {15.0, 75.0, 18.75, 1.50},
-	"claude-sonnet-4-6": {3.0, 15.0, 3.75, 0.30},
-	"claude-sonnet-4-5": {3.0, 15.0, 3.75, 0.30},
-	"claude-sonnet-4":   {3.0, 15.0, 3.75, 0.30},
-	"claude-haiku-4-8":  {0.80, 4.00, 1.00, 0.08},
-	"claude-haiku-3-5":  {0.80, 4.00, 1.00, 0.08},
-	"claude-haiku-3":    {0.25, 1.25, 0.30, 0.03},
-}
-
-var defaultPrice = modelPrice{3.0, 15.0, 3.75, 0.30}
-
-func priceFor(model string) modelPrice {
-	// Try exact match, then prefix/suffix scan for known families.
-	if p, ok := pricingTable[model]; ok {
-		return p
-	}
-	ml := strings.ToLower(model)
-	for k, p := range pricingTable {
-		if strings.Contains(ml, strings.ToLower(k)) {
-			return p
-		}
-	}
-	return defaultPrice
-}
+// TokenUsage is the four-category token count; type is owned by sessiondata.
+type TokenUsage = sessiondata.TokenUsage
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Core data structures
 // ──────────────────────────────────────────────────────────────────────────────
 
-// TokenUsage holds the four token categories from a Claude turn or rollup.
-type TokenUsage struct {
-	Input         int64 `json:"input"`
-	Output        int64 `json:"output"`
-	CacheCreation int64 `json:"cache_creation"`
-	CacheRead     int64 `json:"cache_read"`
-}
-
-func (u TokenUsage) Total() int64 {
-	return u.Input + u.Output + u.CacheCreation + u.CacheRead
-}
-
-func (u TokenUsage) CacheReadPct() float64 {
-	t := u.Total()
-	if t == 0 {
-		return 0
-	}
-	return 100.0 * float64(u.CacheRead) / float64(t)
-}
-
-func (u *TokenUsage) Add(other TokenUsage) {
-	u.Input += other.Input
-	u.Output += other.Output
-	u.CacheCreation += other.CacheCreation
-	u.CacheRead += other.CacheRead
-}
-
-func computeCost(u TokenUsage, model string) float64 {
-	p := priceFor(model)
-	return float64(u.Input)*p.Input/1_000_000 +
-		float64(u.Output)*p.Output/1_000_000 +
-		float64(u.CacheCreation)*p.CacheCreation/1_000_000 +
-		float64(u.CacheRead)*p.CacheRead/1_000_000
-}
-
-func modelTier(model string) string {
-	ml := strings.ToLower(model)
-	switch {
-	case strings.Contains(ml, "opus"):
-		return "opus"
-	case strings.Contains(ml, "sonnet"):
-		return "sonnet"
-	case strings.Contains(ml, "haiku"):
-		return "haiku"
-	default:
-		return "other"
-	}
-}
-
-// RunRecord is the per-daemon-run result after joining events + transcripts.
+// RunRecord is the per-daemon-run result in AnalysisResult.
 type RunRecord struct {
 	RunID         string          `json:"run_id"`
 	BeadID        string          `json:"bead_id"`
@@ -210,10 +128,14 @@ type Config struct {
 	// Since / Until are normalized ISO UTC timestamps ("YYYY-MM-DDTHH:MM:SSZ").
 	Since string
 	Until string
-	// EventsFile is the absolute path to events.jsonl.
+	// EventsFile is the absolute path to events.jsonl (kept for compat; not
+	// used by RunAnalysis when session-data.jsonl is present).
 	EventsFile string
 	// ClaudeProjectsDir is ~/.claude/projects.
 	ClaudeProjectsDir string
+	// ProjectDir is the harmonik project root (for session-data.jsonl).
+	// Defaults to the directory containing .harmonik/ when derived from EventsFile.
+	ProjectDir string
 }
 
 // DefaultConfig returns a Config with paths set to the standard harmonik
@@ -226,6 +148,7 @@ func DefaultConfig(projectDir string) Config {
 		Until:             normTS(now.Format(time.RFC3339)),
 		EventsFile:        filepath.Join(projectDir, ".harmonik", "events", "events.jsonl"),
 		ClaudeProjectsDir: filepath.Join(os.Getenv("HOME"), ".claude", "projects"),
+		ProjectDir:        projectDir,
 	}
 }
 
@@ -235,7 +158,7 @@ func DefaultConfig(projectDir string) Config {
 
 var tsRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})`)
 
-// NormTS normalizes any ISO timestamp to a comparable UTC string (strip tz offset).
+// NormTS normalizes any ISO timestamp to a comparable UTC string.
 func NormTS(ts string) string { return normTS(ts) }
 
 func normTS(ts string) string {
@@ -256,11 +179,9 @@ func ParseSince(s string) (string, error) {
 	if s == "" {
 		return "", fmt.Errorf("empty --since value")
 	}
-	// Try duration shorthand first: ends with h, d, m, s.
 	if d, err := parseDurationShorthand(s); err == nil {
 		return normTS(time.Now().UTC().Add(-d).Format(time.RFC3339)), nil
 	}
-	// Try ISO parse: must match the YYYY-MM-DDTHH:MM:SS prefix.
 	if m := tsRe.FindStringSubmatch(s); m != nil {
 		return m[1] + "Z", nil
 	}
@@ -268,7 +189,6 @@ func ParseSince(s string) (string, error) {
 }
 
 func parseDurationShorthand(s string) (time.Duration, error) {
-	// Support Nd (N days) as well as Go duration strings.
 	if strings.HasSuffix(s, "d") {
 		n := 0
 		if _, err := fmt.Sscanf(s[:len(s)-1], "%d", &n); err == nil && n > 0 {
@@ -279,366 +199,12 @@ func parseDurationShorthand(s string) (time.Duration, error) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Phase 1 — Build event index from events.jsonl
+// Main analysis — VIEW over session-data.jsonl
 // ──────────────────────────────────────────────────────────────────────────────
 
-type eventRun struct {
-	RunID      string
-	BeadID     string
-	NodeID     string
-	QueueID    string
-	LogPaths   []string
-	SessionIDs []string
-	StartedAt  string
-	EndedAt    string
-	Success    bool
-	SuccessSet bool
-}
-
-type eventIndex struct {
-	Runs     map[string]*eventRun
-	Warnings []string
-}
-
-func buildEventIndex(eventsFile, since, until string) (*eventIndex, error) {
-	//nolint:gosec // G304: eventsFile derived from operator-provided projectDir; not user input.
-	f, err := os.Open(eventsFile)
-	if err != nil {
-		return &eventIndex{Runs: map[string]*eventRun{}}, nil // events file absent = no runs
-	}
-	defer f.Close()
-
-	idx := &eventIndex{Runs: map[string]*eventRun{}}
-	sessionIDSeen := map[string]map[string]bool{} // run_id → set of session_ids
-
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var ev map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			continue
-		}
-
-		ts := jsonStr(ev["timestamp_wall"])
-		tsNorm := normTS(ts)
-		if tsNorm < since || tsNorm > until {
-			continue
-		}
-
-		runID := jsonStr(ev["run_id"])
-		evType := jsonStr(ev["type"])
-
-		r, ok := idx.Runs[runID]
-		if !ok {
-			r = &eventRun{RunID: runID}
-			idx.Runs[runID] = r
-			sessionIDSeen[runID] = map[string]bool{}
-		}
-
-		var payload map[string]json.RawMessage
-		if ev["payload"] != nil {
-			_ = json.Unmarshal(ev["payload"], &payload)
-		}
-
-		switch evType {
-		case "run_started":
-			if r.BeadID == "" {
-				r.BeadID = jsonStr(payload["bead_id"])
-			}
-			if r.QueueID == "" {
-				r.QueueID = jsonStr(payload["queue_id"])
-			}
-			if r.StartedAt == "" {
-				r.StartedAt = jsonStr(payload["started_at"])
-			}
-		case "run_completed", "run_failed":
-			if r.BeadID == "" {
-				r.BeadID = jsonStr(payload["bead_id"])
-			}
-			if r.QueueID == "" {
-				r.QueueID = jsonStr(payload["queue_id"])
-			}
-			if r.EndedAt == "" {
-				r.EndedAt = jsonStr(payload["ended_at"])
-			}
-			if !r.SuccessSet {
-				if evType == "run_completed" {
-					r.Success = true
-				} else {
-					// check payload.success
-					if s := jsonStr(payload["success"]); s == "true" {
-						r.Success = true
-					}
-				}
-				r.SuccessSet = true
-			}
-		case "launch_initiated", "handler_capabilities":
-			csid := jsonStr(payload["claude_session_id"])
-			if csid != "" && !sessionIDSeen[runID][csid] {
-				sessionIDSeen[runID][csid] = true
-				r.SessionIDs = append(r.SessionIDs, csid)
-			}
-		case "session_log_location":
-			if r.NodeID == "" {
-				r.NodeID = jsonStr(payload["node_id"])
-			}
-			lp := jsonStr(payload["log_path"])
-			if lp != "" {
-				dup := false
-				for _, existing := range r.LogPaths {
-					if existing == lp {
-						dup = true
-						break
-					}
-				}
-				if !dup {
-					r.LogPaths = append(r.LogPaths, lp)
-				}
-			}
-		}
-	}
-	return idx, sc.Err()
-}
-
-func jsonStr(raw json.RawMessage) string {
-	if raw == nil {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return strings.Trim(string(raw), `"`)
-	}
-	return s
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Phase 2 — Read Claude transcripts
-// ──────────────────────────────────────────────────────────────────────────────
-
-type transcriptTurn struct {
-	Timestamp string
-	Model     string
-	Usage     TokenUsage
-	GitBranch string
-}
-
-func readTranscript(path, since, until string) ([]transcriptTurn, error) {
-	//nolint:gosec // G304: path is operator-controlled (eventsFile log_path or ClaudeProjectsDir scan).
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var turns []transcriptTurn
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var entry map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			continue
-		}
-		if jsonStr(entry["type"]) != "assistant" {
-			continue
-		}
-		ts := jsonStr(entry["timestamp"])
-		tsNorm := normTS(ts)
-		if tsNorm < since || tsNorm > until {
-			continue
-		}
-		var msg map[string]json.RawMessage
-		if err := json.Unmarshal(entry["message"], &msg); err != nil {
-			continue
-		}
-		var rawUsage map[string]json.RawMessage
-		if msg["usage"] == nil {
-			continue
-		}
-		if err := json.Unmarshal(msg["usage"], &rawUsage); err != nil {
-			continue
-		}
-		u := TokenUsage{
-			Input:         jsonInt64(rawUsage["input_tokens"]),
-			Output:        jsonInt64(rawUsage["output_tokens"]),
-			CacheCreation: jsonInt64(rawUsage["cache_creation_input_tokens"]),
-			CacheRead:     jsonInt64(rawUsage["cache_read_input_tokens"]),
-		}
-		turns = append(turns, transcriptTurn{
-			Timestamp: ts,
-			Model:     jsonStr(msg["model"]),
-			Usage:     u,
-			GitBranch: jsonStr(entry["gitBranch"]),
-		})
-	}
-	return turns, sc.Err()
-}
-
-func jsonInt64(raw json.RawMessage) int64 {
-	if raw == nil {
-		return 0
-	}
-	var n int64
-	if err := json.Unmarshal(raw, &n); err != nil {
-		return 0
-	}
-	return n
-}
-
-// resolveTranscriptPath translates a log_path from events.jsonl (which may use
-// a different slug encoding than actual disk paths) to the real file path.
-func resolveTranscriptPath(logPath, claudeProjectsDir string) string {
-	if logPath == "" {
-		return ""
-	}
-	if _, err := os.Stat(logPath); err == nil {
-		return logPath
-	}
-	fname := filepath.Base(logPath)
-
-	// Pattern: .../worktrees-<run_id>/<session.jsonl>
-	if m := regexp.MustCompile(`worktrees-([0-9a-f-]{36})/([^/]+\.jsonl)$`).FindStringSubmatch(logPath); m != nil {
-		runID := m[1]
-		candidate := filepath.Join(claudeProjectsDir,
-			fmt.Sprintf("-Users-%s-github-harmonik--harmonik-worktrees-%s",
-				os.Getenv("USER"), runID), fname)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-		// reviewer variants
-		for _, suffix := range []string{"-reviewer-1", "-reviewer-2", "-reviewer-3"} {
-			c2 := filepath.Join(claudeProjectsDir,
-				fmt.Sprintf("-Users-%s-github-harmonik--harmonik-worktrees-%s%s",
-					os.Getenv("USER"), runID, suffix), fname)
-			if _, err := os.Stat(c2); err == nil {
-				return c2
-			}
-		}
-	}
-
-	// Generic fallback: scan all project dirs for the session file name.
-	entries, _ := os.ReadDir(claudeProjectsDir)
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		fp := filepath.Join(claudeProjectsDir, e.Name(), fname)
-		if _, err := os.Stat(fp); err == nil {
-			return fp
-		}
-	}
-	return ""
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Phase 3 — Find long-lived orchestrator sessions
-// ──────────────────────────────────────────────────────────────────────────────
-
-func findOrchestratorSessions(claudeProjectsDir, since, until string, knownSessionIDs map[string]bool) ([]OrchestratorSession, error) {
-	// Main harmonik project dir: -Users-<user>-github-harmonik
-	user := os.Getenv("USER")
-	mainProjectDir := filepath.Join(claudeProjectsDir, fmt.Sprintf("-Users-%s-github-harmonik", user))
-	if _, err := os.Stat(mainProjectDir); err != nil {
-		return nil, nil
-	}
-
-	//nolint:gosec // G304: mainProjectDir derived from ClaudeProjectsDir (operator config) + USER env.
-	entries, err := os.ReadDir(mainProjectDir)
-	if err != nil {
-		return nil, err
-	}
-
-	var sessions []OrchestratorSession
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		sessionID := strings.TrimSuffix(e.Name(), ".jsonl")
-		if knownSessionIDs[sessionID] {
-			continue
-		}
-
-		fpath := filepath.Join(mainProjectDir, e.Name())
-		sess, err := analyzeOrchSession(fpath, sessionID, since, until)
-		if err != nil || sess.TurnCount == 0 {
-			continue
-		}
-		// Only non-run branches qualify as orchestrators.
-		allRunBranches := true
-		for _, b := range sess.Branches {
-			if !strings.HasPrefix(b, "run/") {
-				allRunBranches = false
-				break
-			}
-		}
-		if allRunBranches && len(sess.Branches) > 0 {
-			continue // all run/ branches → daemon run, not an orchestrator
-		}
-		sessions = append(sessions, sess)
-	}
-	return sessions, nil
-}
-
-func analyzeOrchSession(fpath, sessionID, since, until string) (OrchestratorSession, error) {
-	sess := OrchestratorSession{
-		SessionID:   sessionID,
-		SessionFile: fpath,
-		Type:        "orchestrator",
-		Models:      map[string]int{},
-	}
-	branchSet := map[string]bool{}
-
-	turns, err := readTranscript(fpath, since, until)
-	if err != nil {
-		return sess, err
-	}
-	for _, t := range turns {
-		sess.TurnCount++
-		sess.Models[t.Model]++
-		sess.Usage.Add(t.Usage)
-		if t.GitBranch != "" {
-			branchSet[t.GitBranch] = true
-		}
-		if sess.FirstTS == "" {
-			sess.FirstTS = t.Timestamp
-		}
-		sess.LastTS = t.Timestamp
-	}
-
-	for b := range branchSet {
-		sess.Branches = append(sess.Branches, b)
-	}
-	sort.Strings(sess.Branches)
-
-	if len(sess.Models) > 0 {
-		sess.DominantModel = dominantKey(sess.Models)
-	}
-
-	// Compute cost weighted by model share.
-	totalTurns := 0
-	for _, c := range sess.Models {
-		totalTurns += c
-	}
-	for m, cnt := range sess.Models {
-		frac := float64(cnt) / math.Max(1, float64(totalTurns))
-		sess.CostUSD += computeCost(sess.Usage, m) * frac
-	}
-
-	return sess, nil
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Main analysis
-// ──────────────────────────────────────────────────────────────────────────────
-
-// RunAnalysis performs the full transcript × events join for the given window.
+// RunAnalysis performs the token-usage analysis for the given window.
+// Primary source: <ProjectDir>/.harmonik/session-data.jsonl (pre-computed by the daemon).
+// Orchestrator sessions (captain/crew) are always derived live from transcripts.
 func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	result := &AnalysisResult{
 		ByModel: map[string]ModelStat{},
@@ -648,126 +214,68 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	result.Window.Since = cfg.Since
 	result.Window.Until = cfg.Until
 
-	// Phase 1: event index.
-	idx, err := buildEventIndex(cfg.EventsFile, cfg.Since, cfg.Until)
-	if err != nil {
-		return nil, fmt.Errorf("read events: %w", err)
+	// Resolve project dir from EventsFile when ProjectDir is not set.
+	projectDir := cfg.ProjectDir
+	if projectDir == "" && cfg.EventsFile != "" {
+		// EventsFile is <projectDir>/.harmonik/events/events.jsonl
+		projectDir = filepath.Dir(filepath.Dir(filepath.Dir(cfg.EventsFile)))
 	}
-	result.Warnings = append(result.Warnings, idx.Warnings...)
 
-	// Phase 2: join transcripts.
+	// Phase 1: read pre-computed run records from session-data.jsonl.
+	sdRecords, sdErr := sessiondata.ReadAll(projectDir, cfg.Since, cfg.Until)
+	if sdErr != nil {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("session-data.jsonl read error: %v", sdErr))
+	}
+
 	runRecords := map[string]*RunRecord{}
 	beadRecords := map[string]*BeadRecord{}
-	knownSessionIDs := map[string]bool{}
 
-	for runID, r := range idx.Runs {
-		if r.BeadID == "" {
-			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("run %s: no bead_id in events", runID))
-			continue
+	for i := range sdRecords {
+		r := &sdRecords[i]
+		model := r.Model
+		if model == "" {
+			model = "unknown"
 		}
-
-		var allTurns []transcriptTurn
-
-		// Primary: session_log_location paths.
-		for _, lp := range r.LogPaths {
-			resolved := resolveTranscriptPath(lp, cfg.ClaudeProjectsDir)
-			if resolved == "" {
-				result.Warnings = append(result.Warnings,
-					fmt.Sprintf("run %s bead %s: transcript not found: %s", runID, r.BeadID, lp))
-				continue
-			}
-			sid := strings.TrimSuffix(filepath.Base(resolved), ".jsonl")
-			knownSessionIDs[sid] = true
-			turns, _ := readTranscript(resolved, cfg.Since, cfg.Until)
-			allTurns = append(allTurns, turns...)
+		costUSD := 0.0
+		if r.CostUSD != nil {
+			costUSD = *r.CostUSD
 		}
-
-		// Fallback: claude_session_id scan.
-		if len(allTurns) == 0 && len(r.SessionIDs) > 0 {
-			//nolint:gosec // G304: ClaudeProjectsDir is operator-supplied config, not user input.
-			projectEntries, _ := os.ReadDir(cfg.ClaudeProjectsDir)
-			for _, csid := range r.SessionIDs {
-				knownSessionIDs[csid] = true
-				for _, e := range projectEntries {
-					if !e.IsDir() {
-						continue
-					}
-					fp := filepath.Join(cfg.ClaudeProjectsDir, e.Name(), csid+".jsonl")
-					if _, statErr := os.Stat(fp); statErr == nil {
-						turns, _ := readTranscript(fp, cfg.Since, cfg.Until)
-						allTurns = append(allTurns, turns...)
-						break
-					}
-				}
-			}
-		}
-
-		if len(allTurns) == 0 {
-			result.Warnings = append(result.Warnings,
-				fmt.Sprintf("run %s bead %s: no transcript data found", runID, r.BeadID))
-		}
-
-		// Aggregate per run.
-		var usageTotal TokenUsage
-		models := map[string]int{}
-		var costTotal float64
-		for _, t := range allTurns {
-			usageTotal.Add(t.Usage)
-			models[t.Model]++
-			costTotal += computeCost(t.Usage, t.Model)
-		}
-		dominantModel := dominantKey(models)
-
 		rr := &RunRecord{
-			RunID:         runID,
+			RunID:         r.RunID,
 			BeadID:        r.BeadID,
-			NodeID:        r.NodeID,
 			QueueID:       r.QueueID,
 			StartedAt:     r.StartedAt,
 			EndedAt:       r.EndedAt,
 			Success:       r.Success,
-			TurnCount:     len(allTurns),
-			Models:        models,
-			DominantModel: dominantModel,
-			Usage:         usageTotal,
-			CostUSD:       costTotal,
+			TurnCount:     r.TurnCount,
+			Models:        map[string]int{model: r.TurnCount},
+			DominantModel: model,
+			Usage:         r.TokensTotal,
+			CostUSD:       costUSD,
 		}
-		runRecords[runID] = rr
+		runRecords[r.RunID] = rr
 
-		// Roll up per bead.
 		br, ok := beadRecords[r.BeadID]
 		if !ok {
 			br = &BeadRecord{BeadID: r.BeadID, Models: map[string]int{}}
 			beadRecords[r.BeadID] = br
 		}
 		br.RunCount++
-		br.Usage.Add(usageTotal)
-		br.CostUSD += costTotal
-		for m, c := range models {
-			br.Models[m] += c
-		}
-		if r.NodeID != "" {
-			found := false
-			for _, nid := range br.NodeIDs {
-				if nid == r.NodeID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				br.NodeIDs = append(br.NodeIDs, r.NodeID)
-			}
-		}
+		br.Usage.Add(r.TokensTotal)
+		br.CostUSD += costUSD
+		br.Models[model] += r.TurnCount
 	}
 
-	// Finalize bead records.
 	for _, br := range beadRecords {
 		br.DominantModel = dominantKey(br.Models)
 		br.CacheReadPct = br.Usage.CacheReadPct()
 	}
 
-	// Phase 3: orchestrator sessions.
+	// Collect session IDs attributed to daemon runs (to exclude from orchestrator scan).
+	knownSessionIDs := map[string]bool{}
+
+	// Phase 2: orchestrator sessions — live transcript scan (not in session-data.jsonl).
 	orchSessions, _ := findOrchestratorSessions(cfg.ClaudeProjectsDir, cfg.Since, cfg.Until, knownSessionIDs)
 
 	// Global rollups.
@@ -850,7 +358,7 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 		result.ByTier[tier] = TierStat{Cost: c, Pct: pct}
 	}
 
-	// By-hour (approximate: use run start_at or orch first_ts).
+	// By-hour (use run start_at for daemon runs; orch first_ts for sessions).
 	byHour := map[string]*HourStat{}
 	accumHour := func(ts string, usage TokenUsage, cost float64) {
 		hour := "unknown"
@@ -904,6 +412,188 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	result.TopOrchestrators = orchSessions
 
 	return result, nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Phase 2 — Find long-lived orchestrator sessions
+// ──────────────────────────────────────────────────────────────────────────────
+
+func findOrchestratorSessions(claudeProjectsDir, since, until string, knownSessionIDs map[string]bool) ([]OrchestratorSession, error) {
+	user := os.Getenv("USER")
+	mainProjectDir := filepath.Join(claudeProjectsDir, fmt.Sprintf("-Users-%s-github-harmonik", user))
+	if _, err := os.Stat(mainProjectDir); err != nil {
+		return nil, nil
+	}
+
+	//nolint:gosec // G304: mainProjectDir derived from ClaudeProjectsDir (operator config) + USER env.
+	entries, err := os.ReadDir(mainProjectDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var sessions []OrchestratorSession
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		sessionID := strings.TrimSuffix(e.Name(), ".jsonl")
+		if knownSessionIDs[sessionID] {
+			continue
+		}
+
+		fpath := filepath.Join(mainProjectDir, e.Name())
+		sess, err := analyzeOrchSession(fpath, sessionID, since, until)
+		if err != nil || sess.TurnCount == 0 {
+			continue
+		}
+		allRunBranches := true
+		for _, b := range sess.Branches {
+			if !strings.HasPrefix(b, "run/") {
+				allRunBranches = false
+				break
+			}
+		}
+		if allRunBranches && len(sess.Branches) > 0 {
+			continue
+		}
+		sessions = append(sessions, sess)
+	}
+	return sessions, nil
+}
+
+func analyzeOrchSession(fpath, sessionID, since, until string) (OrchestratorSession, error) {
+	sess := OrchestratorSession{
+		SessionID:   sessionID,
+		SessionFile: fpath,
+		Type:        "orchestrator",
+		Models:      map[string]int{},
+	}
+	branchSet := map[string]bool{}
+
+	turns, err := readTranscript(fpath, since, until)
+	if err != nil {
+		return sess, err
+	}
+	for _, t := range turns {
+		sess.TurnCount++
+		sess.Models[t.Model]++
+		sess.Usage.Add(t.Usage)
+		if t.GitBranch != "" {
+			branchSet[t.GitBranch] = true
+		}
+		if sess.FirstTS == "" {
+			sess.FirstTS = t.Timestamp
+		}
+		sess.LastTS = t.Timestamp
+	}
+
+	for b := range branchSet {
+		sess.Branches = append(sess.Branches, b)
+	}
+	sort.Strings(sess.Branches)
+
+	if len(sess.Models) > 0 {
+		sess.DominantModel = dominantKey(sess.Models)
+	}
+
+	totalTurns := 0
+	for _, c := range sess.Models {
+		totalTurns += c
+	}
+	for m, cnt := range sess.Models {
+		frac := float64(cnt) / math.Max(1, float64(totalTurns))
+		sess.CostUSD += sessiondata.ComputeCost(sess.Usage, m) * frac
+	}
+
+	return sess, nil
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Transcript reader (for orchestrator sessions only)
+// ──────────────────────────────────────────────────────────────────────────────
+
+type transcriptTurn struct {
+	Timestamp string
+	Model     string
+	Usage     TokenUsage
+	GitBranch string
+}
+
+func readTranscript(path, since, until string) ([]transcriptTurn, error) {
+	//nolint:gosec // G304: path is operator-controlled (ClaudeProjectsDir scan).
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close() //nolint:errcheck // read-only file.
+
+	var turns []transcriptTurn
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var entry map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if jsonStr(entry["type"]) != "assistant" {
+			continue
+		}
+		ts := jsonStr(entry["timestamp"])
+		tsNorm := normTS(ts)
+		if tsNorm < since || tsNorm > until {
+			continue
+		}
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(entry["message"], &msg); err != nil {
+			continue
+		}
+		if msg["usage"] == nil {
+			continue
+		}
+		var rawUsage map[string]json.RawMessage
+		if err := json.Unmarshal(msg["usage"], &rawUsage); err != nil {
+			continue
+		}
+		u := TokenUsage{
+			Input:         jsonInt64(rawUsage["input_tokens"]),
+			Output:        jsonInt64(rawUsage["output_tokens"]),
+			CacheCreation: jsonInt64(rawUsage["cache_creation_input_tokens"]),
+			CacheRead:     jsonInt64(rawUsage["cache_read_input_tokens"]),
+		}
+		turns = append(turns, transcriptTurn{
+			Timestamp: ts,
+			Model:     jsonStr(msg["model"]),
+			Usage:     u,
+			GitBranch: jsonStr(entry["gitBranch"]),
+		})
+	}
+	return turns, sc.Err()
+}
+
+func jsonStr(raw json.RawMessage) string {
+	if raw == nil {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return strings.Trim(string(raw), `"`)
+	}
+	return s
+}
+
+func jsonInt64(raw json.RawMessage) int64 {
+	if raw == nil {
+		return 0
+	}
+	var n int64
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return 0
+	}
+	return n
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1068,6 +758,20 @@ func PrintSummary(r *AnalysisResult, w io.Writer) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
+
+func modelTier(model string) string {
+	ml := strings.ToLower(model)
+	switch {
+	case strings.Contains(ml, "opus"):
+		return "opus"
+	case strings.Contains(ml, "sonnet"):
+		return "sonnet"
+	case strings.Contains(ml, "haiku"):
+		return "haiku"
+	default:
+		return "other"
+	}
+}
 
 func dominantKey(m map[string]int) string {
 	best, bestCount := "unknown", -1

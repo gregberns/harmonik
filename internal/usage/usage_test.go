@@ -1,12 +1,13 @@
 package usage
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/sessiondata"
 )
 
 // TestNormTS verifies timestamp normalization.
@@ -71,18 +72,18 @@ func TestParseSince(t *testing.T) {
 // TestRunAnalysis_NoData verifies that RunAnalysis succeeds even with no data.
 func TestRunAnalysis_NoData(t *testing.T) {
 	dir := t.TempDir()
-	// Create empty events directory.
+	// Create empty events directory (kept for interface compat).
 	evDir := filepath.Join(dir, ".harmonik", "events")
 	//nolint:gosec // G301: 0755 matches .harmonik dir conventions; path is t.TempDir()-based.
 	if err := os.MkdirAll(evDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// No events file → should not error, just return zero counts.
 	cfg := Config{
 		Since:             "2026-01-01T00:00:00Z",
 		Until:             "2026-01-02T00:00:00Z",
 		EventsFile:        filepath.Join(evDir, "events.jsonl"),
 		ClaudeProjectsDir: filepath.Join(dir, "projects"),
+		ProjectDir:        dir,
 	}
 	result, err := RunAnalysis(cfg)
 	if err != nil {
@@ -93,90 +94,37 @@ func TestRunAnalysis_NoData(t *testing.T) {
 	}
 }
 
-// TestRunAnalysis_WithEvents verifies event parsing and transcript join.
-func TestRunAnalysis_WithEvents(t *testing.T) {
+// TestRunAnalysis_WithSessionData verifies that RunAnalysis is a VIEW over session-data.jsonl.
+func TestRunAnalysis_WithSessionData(t *testing.T) {
 	dir := t.TempDir()
-	evDir := filepath.Join(dir, ".harmonik", "events")
-	//nolint:gosec // G301: 0755 matches .harmonik dir conventions; path is t.TempDir()-based.
-	if err := os.MkdirAll(evDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	projDir := filepath.Join(dir, "projects")
-	sessionDir := filepath.Join(projDir, "-test-main")
-	//nolint:gosec // G301: 0755 matches project dir conventions; path is t.TempDir()-based.
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Write a minimal events.jsonl.
-	runID := "aabbccdd-0000-0000-0000-000000000001"
 	beadID := "hk-test01"
-	sessionID := "sess-0001"
-	transcriptFile := filepath.Join(sessionDir, sessionID+".jsonl")
-
-	eventsLines := []map[string]any{
-		{
-			"timestamp_wall": "2026-06-21T12:00:00Z",
-			"run_id":         runID,
-			"type":           "run_started",
-			"payload": map[string]any{
-				"bead_id":    beadID,
-				"queue_id":   "q1",
-				"started_at": "2026-06-21T12:00:00Z",
-			},
-		},
-		{
-			"timestamp_wall": "2026-06-21T12:01:00Z",
-			"run_id":         runID,
-			"type":           "session_log_location",
-			"payload": map[string]any{
-				"log_path": transcriptFile,
-				"node_id":  "implement",
-			},
-		},
-		{
-			"timestamp_wall": "2026-06-21T12:30:00Z",
-			"run_id":         runID,
-			"type":           "run_completed",
-			"payload": map[string]any{
-				"bead_id":  beadID,
-				"ended_at": "2026-06-21T12:30:00Z",
-				"success":  true,
-			},
-		},
+	model := "claude-sonnet-4-6"
+	usage := sessiondata.TokenUsage{Input: 100, Output: 50, CacheCreation: 200, CacheRead: 5000}
+	cost := sessiondata.ComputeCost(usage, model)
+	rec := sessiondata.Record{
+		SchemaVersion: 1,
+		RunID:         "aabbccdd-0000-0000-0000-000000000001",
+		BeadID:        beadID,
+		QueueID:       "q1",
+		Harness:       "claude-code",
+		Model:         model,
+		Success:       true,
+		StartedAt:     "2026-06-21T12:00:00Z",
+		EndedAt:       "2026-06-21T12:30:00Z",
+		WallTimeS:     1800.0,
+		TokensTotal:   usage,
+		CostUSD:       &cost,
+		TurnCount:     1,
 	}
-	evF, _ := os.Create(filepath.Join(evDir, "events.jsonl"))
-	enc := json.NewEncoder(evF)
-	for _, ev := range eventsLines {
-		_ = enc.Encode(ev)
+	if err := sessiondata.Append(dir, rec); err != nil {
+		t.Fatal(err)
 	}
-	evF.Close()
-
-	// Write a transcript with one assistant turn.
-	turnLine := map[string]any{
-		"type":      "assistant",
-		"timestamp": "2026-06-21T12:05:00Z",
-		"gitBranch": "run/" + runID,
-		"cwd":       "/tmp/work",
-		"message": map[string]any{
-			"model": "claude-sonnet-4-6",
-			"usage": map[string]any{
-				"input_tokens":                100,
-				"output_tokens":               50,
-				"cache_creation_input_tokens": 200,
-				"cache_read_input_tokens":     5000,
-			},
-		},
-	}
-	tF, _ := os.Create(transcriptFile)
-	_ = json.NewEncoder(tF).Encode(turnLine)
-	tF.Close()
 
 	cfg := Config{
 		Since:             "2026-06-21T11:00:00Z",
 		Until:             "2026-06-21T13:00:00Z",
-		EventsFile:        filepath.Join(evDir, "events.jsonl"),
-		ClaudeProjectsDir: projDir,
+		ClaudeProjectsDir: filepath.Join(dir, "projects"),
+		ProjectDir:        dir,
 	}
 	result, err := RunAnalysis(cfg)
 	if err != nil {

@@ -1,6 +1,9 @@
 package crew_test
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -141,6 +144,163 @@ func TestRemove(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load after Remove: expected error, got nil")
 	}
+}
+
+// TestEffectiveType verifies the legacy-default and explicit-type cases.
+func TestEffectiveType(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty_defaults_to_crew", func(t *testing.T) {
+		t.Parallel()
+		r := crew.Record{Name: "leto"}
+		if got := r.EffectiveType(); got != "crew" {
+			t.Errorf("EffectiveType() = %q, want %q", got, "crew")
+		}
+	})
+
+	t.Run("explicit_type_returned", func(t *testing.T) {
+		t.Parallel()
+		r := crew.Record{Name: "remus", Type: "captain"}
+		if got := r.EffectiveType(); got != "captain" {
+			t.Errorf("EffectiveType() = %q, want %q", got, "captain")
+		}
+	})
+}
+
+// TestTypeFieldRoundTrip verifies the Type field survives Write → Load and that
+// legacy records (no type field in JSON) load without migration errors with default "crew".
+func TestTypeFieldRoundTrip(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	r := makeRecord("remus")
+	r.Type = "captain"
+	if err := crew.Write(dir, r); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := crew.Load(dir, "remus")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Type != "captain" {
+		t.Errorf("Type = %q, want %q", got.Type, "captain")
+	}
+	if got.EffectiveType() != "captain" {
+		t.Errorf("EffectiveType() = %q, want %q", got.EffectiveType(), "captain")
+	}
+}
+
+// TestLegacyRecordNoTypeField simulates loading a JSON record that was written
+// before the type field existed (no "type" key in the JSON).
+func TestLegacyRecordNoTypeField(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Write the record without the type field (legacy format).
+	legacyJSON := `{"schema_version":1,"name":"oldcrew","session_id":"s1","queue":"main","epic":"","handle":"h1","started_at":"2026-01-01T00:00:00Z"}`
+	crewDir := filepath.Join(dir, ".harmonik", "crew")
+	//nolint:gosec // G301: test fixture directory
+	if err := os.MkdirAll(crewDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(crewDir, "oldcrew.json"), []byte(legacyJSON), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := crew.Load(dir, "oldcrew")
+	if err != nil {
+		t.Fatalf("Load legacy record: %v", err)
+	}
+	if got.Type != "" {
+		t.Errorf("Type = %q, want empty string for legacy record", got.Type)
+	}
+	if got.EffectiveType() != "crew" {
+		t.Errorf("EffectiveType() = %q, want %q for legacy record", got.EffectiveType(), "crew")
+	}
+}
+
+// TestResolveType verifies all four resolution branches.
+func TestResolveType(t *testing.T) {
+	t.Parallel()
+
+	// Shared fixture: a project dir with crew records + an agents dir with type folders.
+	setup := func(t *testing.T) (projectDir, agentsDir string) {
+		t.Helper()
+		base := t.TempDir()
+		projectDir = base
+		agentsDir = filepath.Join(base, ".harmonik", "agents")
+
+		// Create a crew type folder (bare type).
+		//nolint:gosec // G301: test fixture directory
+		if err := os.MkdirAll(filepath.Join(agentsDir, "crew"), 0o755); err != nil {
+			t.Fatalf("mkdir agents/crew: %v", err)
+		}
+		// Create an admiral type folder.
+		//nolint:gosec // G301: test fixture directory
+		if err := os.MkdirAll(filepath.Join(agentsDir, "admiral"), 0o755); err != nil {
+			t.Fatalf("mkdir agents/admiral: %v", err)
+		}
+		// Write a crew instance record for "leto" (no explicit type → defaults to crew).
+		letoRec := makeRecord("leto")
+		if err := crew.Write(projectDir, letoRec); err != nil {
+			t.Fatalf("Write leto: %v", err)
+		}
+		// Write a crew instance record for "remus" with explicit type "admiral".
+		remusRec := makeRecord("remus")
+		remusRec.Type = "admiral"
+		if err := crew.Write(projectDir, remusRec); err != nil {
+			t.Fatalf("Write remus: %v", err)
+		}
+		return projectDir, agentsDir
+	}
+
+	t.Run("bare_type_name_resolves_to_itself", func(t *testing.T) {
+		t.Parallel()
+		projectDir, agentsDir := setup(t)
+		got, err := crew.ResolveType(projectDir, agentsDir, "crew")
+		if err != nil {
+			t.Fatalf("ResolveType(crew): %v", err)
+		}
+		if got != "crew" {
+			t.Errorf("got %q, want %q", got, "crew")
+		}
+	})
+
+	t.Run("instance_name_default_type_is_crew", func(t *testing.T) {
+		t.Parallel()
+		projectDir, agentsDir := setup(t)
+		got, err := crew.ResolveType(projectDir, agentsDir, "leto")
+		if err != nil {
+			t.Fatalf("ResolveType(leto): %v", err)
+		}
+		if got != "crew" {
+			t.Errorf("got %q, want %q", got, "crew")
+		}
+	})
+
+	t.Run("instance_with_explicit_type", func(t *testing.T) {
+		t.Parallel()
+		projectDir, agentsDir := setup(t)
+		got, err := crew.ResolveType(projectDir, agentsDir, "remus")
+		if err != nil {
+			t.Fatalf("ResolveType(remus): %v", err)
+		}
+		if got != "admiral" {
+			t.Errorf("got %q, want %q", got, "admiral")
+		}
+	})
+
+	t.Run("unknown_name_returns_not_found", func(t *testing.T) {
+		t.Parallel()
+		projectDir, agentsDir := setup(t)
+		_, err := crew.ResolveType(projectDir, agentsDir, "ghost")
+		if err == nil {
+			t.Fatal("expected error for unknown name, got nil")
+		}
+		if !errors.Is(err, crew.ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %v", err)
+		}
+	})
 }
 
 // TestInvalidNames verifies Write rejects invalid crew names.

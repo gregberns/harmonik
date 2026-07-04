@@ -38,11 +38,23 @@ var ErrWriteFailed = errors.New("crew: atomic write to registry file failed")
 type Record struct {
 	SchemaVersion int       `json:"schema_version"`
 	Name          string    `json:"name"`
+	// Type is the agent type folder name (e.g. "crew"). Omitted in legacy records;
+	// EffectiveType() returns "crew" when the field is absent.
+	Type          string    `json:"type,omitempty"`
 	SessionID     string    `json:"session_id"`
 	Queue         string    `json:"queue"`
 	Epic          string    `json:"epic"`
 	Handle        string    `json:"handle"`
 	StartedAt     time.Time `json:"started_at"`
+}
+
+// EffectiveType returns the record's agent type.
+// Legacy records with no Type field read as "crew" (the original and only type).
+func (r Record) EffectiveType() string {
+	if r.Type == "" {
+		return "crew"
+	}
+	return r.Type
 }
 
 // validateName rejects names that contain '/' or '..', fail the charset check,
@@ -203,6 +215,28 @@ func UpdateSessionID(projectDir, name, sessionID string) error {
 	}
 	r.SessionID = sessionID
 	return Write(projectDir, r)
+}
+
+// ResolveType maps an agent name to its type folder name.
+//
+// Resolution order (SPEC §1 + T2):
+//  1. If agentsDir/<name> is a directory → name is itself a type; return name.
+//  2. Load the crew record for name → return record.EffectiveType().
+//  3. If the crew record is not found → return ErrNotFound.
+//
+// agentsDir is the absolute path to .harmonik/agents/ (the type registry root).
+func ResolveType(projectDir, agentsDir, name string) (string, error) {
+	// Bare type name: resolve to itself when the type folder exists.
+	typeDir := filepath.Join(agentsDir, name)
+	if st, err := os.Stat(typeDir); err == nil && st.IsDir() {
+		return name, nil
+	}
+	// Instance name: look up the crew record.
+	r, err := Load(projectDir, name)
+	if err != nil {
+		return "", fmt.Errorf("crew: resolve type for %q: %w", name, ErrNotFound)
+	}
+	return r.EffectiveType(), nil
 }
 
 // Remove deletes .harmonik/crew/<name>.json.

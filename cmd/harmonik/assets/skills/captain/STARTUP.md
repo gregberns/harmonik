@@ -25,6 +25,16 @@ while believing "a crew is working," and never established or verified the full
 fleet (lanes left idle / zombie / unassigned). Every step below exists to make
 that impossible. Do not skip a step because "the handoff already says so."
 
+> **AUTONOMY DEFAULT (read first).** You act on your own authority. You do NOT ask
+> the operator to confirm operational calls — lane execution, crew dispatch/staffing,
+> reconciling zombies, rerouting, and daemon restart/redeploy are ALL yours to decide
+> and do. Coordinate (announce intent, pick a lull) but never wait for a reply.
+> Surface-and-await is ONLY for the three genuine escalations: (1) ranking a
+> brand-NEW initiative never recorded in any durable doc and never ranked,
+> (2) reversing a locked decision, or (3) a truly destructive op (force-push,
+> `branch -D` on shared refs, `rm -rf`, `--no-verify` on shared history). A daemon
+> restart is NOT destructive. Everything else: decide, act, post a status.
+
 ---
 
 ## Step 0 — Anchor your identity & CWD
@@ -83,7 +93,7 @@ cat .harmonik/context/direction-log.md
 # recover "why we paused X for Y and in what order we resume." READ it before you
 # form or act on any plan — its RETURN-PATH is ground truth for SEQUENCING intent.
 # An entry past its `expires:` LAPSES to "resume the standing autonomous posture"
-# (NEVER a hold) — surface an expired-but-present entry; do not obey it.
+# (NEVER a hold) — note an expired-but-present entry in a status and proceed; do not obey it.
 # Folder-scoped how-to-use directives: .harmonik/context/AGENTS.md (CLAUDE.md symlink).
 # If missing: no recorded direction change — proceed from tier-2/tier-3 + the digest.
 ```
@@ -215,7 +225,7 @@ Classify every crew from the Step 2 table:
 | Classification | Signature | Action |
 |---|---|---|
 | **HEALTHY** | in `crew list` ∧ in `comms who` ∧ tmux window alive ∧ has an epic ∧ recently dispatched | Keep. It is a real working lane. |
-| **ZOMBIE (offline-registered)** | in `crew list` ∧ tmux window alive **∧ NOT in `comms who`** past the 120s TTL | Stale/wedged session. SURFACE it, then `harmonik crew stop <name>` to clean the registry record + pane. Re-establish the lane fresh in Step 5. |
+| **ZOMBIE (offline-registered)** | in `crew list` ∧ tmux window alive **∧ NOT in `comms who`** past the 120s TTL | Stale/wedged session. Act on your own authority: `harmonik crew stop <name>` to clean the registry record + pane, then re-establish the lane fresh in Step 5. Reconciling a zombie is a routine operational call — do it, don't ask. |
 | **IDLE (online, no work)** | in `comms who` ∧ in `crew list` ∧ has an epic **but dispatched nothing** | Not a zombie — re-task it via comms (Step 5 mail path), do NOT `crew stop`. |
 | **GHOST RECORD** | in `crew list` ∧ **no tmux window** ∧ NOT in `comms who` | Dead session, orphan record. `harmonik crew stop <name>` to clear it. |
 | **STRAY WORKTREE WINDOW** | a tmux window named `.../worktrees/<uuid>` (NOT `hk-crew-<name>`) | This is a **daemon bead worktree**, NOT a crew. Leave it — the daemon owns it. It is NOT evidence a crew is working (see Anti-patterns A). |
@@ -235,9 +245,12 @@ harmonik comms who --json    # is the operator online and mid-operation?
 ```
 
 If the operator is actively tearing down or relaunching a crew, **do NOT
-spawn-collide** — announce your intent and AWAIT. `crew start` into a name/queue
-already bound to a live crew returns non-zero (C2 §7); never auto-retry under a
-different name (that is a judgment call → SURFACE + AWAIT, captain skill §8).
+spawn-collide** — announce your intent, let the in-flight teardown finish, re-check,
+then proceed on your own authority (this is coordination, not a permission gate — no
+reply is required). `crew start` into a name/queue already bound to a live crew
+returns non-zero (C2 §7): resolve it yourself — pick a distinct free name/queue and
+proceed. A name/queue collision is an operational call the captain owns; do not stop
+to ask.
 
 ---
 
@@ -317,7 +330,9 @@ br update <epic_id> --assignee <crew>    # metadata-only; NOT a terminal transit
 harmonik crew start <crew> --queue <crew>-q --mission .harmonik/crew/missions/<crew>.md
 # exit 0  → session_id printed (informational; do NOT persist it in the handoff)
 # exit 17 → daemon down → Step 2.1
-# other  → name/queue collision or launch failure → SURFACE exact error, AWAIT (no auto-retry)
+# other  → name/queue collision or launch failure → diagnose and act on your own authority:
+#          collision ⇒ pick a distinct free name/queue and re-launch; genuine launch failure ⇒
+#          investigate and retry. Post the exact error as a status; do NOT stop to ask permission.
 ```
 
 **5c STAGGER RULE (boot-spike Lever 1 — token-opt):** After each `crew start`, wait for `comms who` to show the crew online (~30–60s), THEN wait an additional **2 minutes** before launching the next crew. Do NOT batch `crew start` calls. The 2-min gap lets each crew's cache prefix warm against the captain's already-warm shared prefix instead of all crews creating cold `cache_creation` prefixes simultaneously (the boot spike). The existing 5d verification (comms-online + pane-truth) still gates moving to the next lane; the stagger adds the explicit 2-min cache-warm wait on top of it.
@@ -357,17 +372,22 @@ for rid in $(jq -r 'select(.type=="run_completed") | .payload.run_id' \
         .harmonik/events/events.jsonl | head -1)
   [[ -z "$vc" ]] && echo "WARN: run $rid completed with NO reviewer_verdict (review bypassed)"
 done
-# Any output = surface to operator; do NOT let review-bypassed runs accumulate.
+# Any output = post a status flagging the review-bypassed run_ids AND act to stop the
+#   accumulation (re-run through review / fix the workflow-mode config). This is a
+#   report-and-act, not a wait-for-reply.
 # NOTE (CE4): this deterministic check should MOVE to the Sonnet ops-monitor; it is
 # here as an interim until that monitor absorbs it.
 ```
 
 A lane passes verification only when **(a) comms-online AND (b) pane-truth shows
-it dispatched a bead (or posted a boot status and is finding ready beads).** If
-(a) fails past ~120s → SURFACE "crew <crew> never came online" (do NOT declare it
-failed, do NOT re-home its epic — captain skill §9). If (a) passes but (b) shows
-the pane wedged at a prompt / no dispatch → SURFACE "crew <crew> online but not
-dispatching" and AWAIT.
+it dispatched a bead (or posted a boot status and is finding ready beads).** Recovery
+is a routine operational call — act on your own authority, don't wait:
+- If (a) fails past ~120s → re-drive the crew (re-launch it / nudge its pane per the
+  idle-crew wake in Step 6); post a status. Do NOT sit idle waiting. Only if a crew
+  repeatedly fails to come online — a genuine crew-failure DECLARATION (killing its
+  work) — is that an escalation (captain skill §9); the recovery attempts are yours.
+- If (a) passes but (b) shows the pane wedged at a prompt / no dispatch → re-drive the
+  pane (clear-and-retype per §4.3 recovery), then re-verify. Post a status; don't await.
 
 **Repeat 5a–5d for every lane.** Do not move on with half the fleet up. The boot
 is complete only when the plan's lanes ALL pass 5d (or are explicitly parked by
@@ -510,10 +530,6 @@ restart earlier (the current 200k/215k band) is operator-directed and correct**
 > If the injected text ends in `/quit` (or the config block's `on_demand_warn_text`
 > is the shared fatal advisory), do NOT trust auto-restart — the "NEVER self-quit"
 > rule below overrides ANY injected `/quit`; surface the misconfiguration.
-
-> ~~**Old guidance (OBSOLETE — hk-4zy9):** "On a WARN, just keep holding / do nothing
-> extra — wait for the keeper's ACT cycle."~~ This caused 40+ idle warn-cycles with
-> context re-narration. `restart-now` at the next clean checkpoint is now REQUIRED.
 
 **TERSE-ACK / NO-RE-NARRATION rule (HARD — hk-4zy9, ON-059):** On receiving a WARN,
 ack with ONE terse line then keep working. **DO NOT** re-summarize or re-narrate

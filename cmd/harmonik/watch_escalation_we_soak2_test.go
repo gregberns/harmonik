@@ -138,15 +138,15 @@ func TestOpsMonitorWatchPresentUsesAbsentThresh_WE_SOAK2_P5a(t *testing.T) {
 
 	// The old gating expression must be gone.
 	if strings.Contains(content, "watch_info['online'] and not _watch_stale") {
-		t.Errorf("P5a: ops-monitor-check.sh still gates watch_present on "+
-			"watch_info['online'] — the 120s comms TTL is shorter than the 270s "+
+		t.Errorf("P5a: ops-monitor-check.sh still gates watch_present on " +
+			"watch_info['online'] — the 120s comms TTL is shorter than the 270s " +
 			"liveness-beat interval; fix: use 'watch_present = not _watch_stale'")
 	}
 
 	// The threshold-only expression must be present.
 	if !strings.Contains(content, "watch_present = not _watch_stale") {
-		t.Errorf("P5a: ops-monitor-check.sh does not contain "+
-			"'watch_present = not _watch_stale'; "+
+		t.Errorf("P5a: ops-monitor-check.sh does not contain " +
+			"'watch_present = not _watch_stale'; " +
 			"the watch_absent_thresh-only gate is missing")
 	}
 }
@@ -171,7 +171,7 @@ func TestOpsMonitorWatchDownBootWarmup_WE_SOAK2_P5b(t *testing.T) {
 
 	// The watch_down assignment must include watch_restart_suppressed.
 	if !strings.Contains(content, "watch_restart_suppressed") {
-		t.Errorf("P5b: ops-monitor-check.sh does not contain 'watch_restart_suppressed'; "+
+		t.Errorf("P5b: ops-monitor-check.sh does not contain 'watch_restart_suppressed'; " +
 			"the boot-warmup suppression variable is missing")
 		return
 	}

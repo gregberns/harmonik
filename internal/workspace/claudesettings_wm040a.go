@@ -213,7 +213,8 @@ func marshalSettings(merged map[string]interface{}) ([]byte, error) {
 
 // buildBridgeOnlySettings returns a settings map containing only the
 // bridge-required hook entries per CHB-003, plus the permissions.allow
-// pre-authorization array per WM-040a (hk-53y35).
+// pre-authorization array per WM-040a (hk-53y35), plus the skill-autoload
+// disable setting per T6 (hk-j79ny).
 // daemonBinaryPath is used as the hook "command" field per hk-kqdpf.6.
 func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 	hooks := make(map[string]interface{}, len(bridgeEventKinds))
@@ -225,6 +226,11 @@ func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 		"permissions": map[string]interface{}{
 			"allow": harmonikAllowedTools,
 		},
+		// Disable Claude Code's default skill autoload from ancestor .claude/skills/
+		// directories so worker agents only see skills explicitly requested via their
+		// manifest context[]. Fleet orchestration skills must not leak into implementer
+		// or reviewer panes. Empty array = zero auto-loaded directories (T6/hk-j79ny).
+		"autoLoadedSkillsDirectories": []interface{}{},
 	}
 }
 
@@ -292,6 +298,16 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 		// else: user already has permissions.allow — leave it as-is.
 	}
 	// If permissions is present but not a map (unexpected shape), leave it alone.
+
+	// Force-set autoLoadedSkillsDirectories to [] so worker agent panes never
+	// see fleet orchestration skills auto-loaded from ancestor .claude/skills/
+	// directories. This is a hard invariant, not a user-overridable default:
+	// harmonik controls which skills reach each agent via required_skills[] in
+	// the LaunchSpec + manifest context[]; ambient autoload would bypass that
+	// scoping. Always overwrite — similar to how disableAllHooks is stripped.
+	//
+	// Spec ref: T6/hk-j79ny; agent-manifest SPEC.md §6.
+	merged["autoLoadedSkillsDirectories"] = []interface{}{}
 
 	return merged
 }

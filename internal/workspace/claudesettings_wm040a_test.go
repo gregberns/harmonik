@@ -746,3 +746,107 @@ func TestWM040a_PermissionsAllowPreservedOnMerge(t *testing.T) {
 		t.Errorf("TestWM040a_PermissionsAllowPreservedOnMerge: user tool 'MyCustomTool' was overwritten; must be preserved")
 	}
 }
+
+// TestWM040a_AutoLoadedSkillsDisabled verifies that MaterializeClaudeSettings
+// always writes "autoLoadedSkillsDirectories": [] into the materialized
+// settings.json, both on fresh write and on merge, so fleet orchestration skills
+// in .claude/skills/ cannot auto-load into worker agent panes.
+//
+// This is a hard invariant (always-overwrite, not user-overridable): harmonik
+// controls skill scoping via required_skills[] + manifest context[]; ambient
+// autoload would bypass that per-agent scoping.
+//
+// Spec ref: T6/hk-j79ny; agent-manifest SPEC.md §6.
+func TestWM040a_AutoLoadedSkillsDisabled(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fresh workspace", func(t *testing.T) {
+		t.Parallel()
+		workspacePath := t.TempDir()
+		if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+			t.Fatalf("MaterializeClaudeSettings (fresh): %v", err)
+		}
+		settingsPath := claudeSettingsFixturePath(workspacePath)
+		m := claudeSettingsFixtureReadJSON(t, settingsPath)
+		assertAutoLoadedSkillsDisabled(t, m, "fresh workspace")
+	})
+
+	t.Run("merge preserves hard override", func(t *testing.T) {
+		t.Parallel()
+		workspacePath := t.TempDir()
+		settingsPath := claudeSettingsFixturePath(workspacePath)
+		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		// Pre-existing settings WITHOUT the autoload key (simulates the committed
+		// .claude/settings.json that lacks the field before T6 ships).
+		existing := map[string]interface{}{
+			"hooks": map[string]interface{}{},
+			"theme": "dark",
+		}
+		raw, err := json.Marshal(existing)
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+			t.Fatalf("MaterializeClaudeSettings (merge): %v", err)
+		}
+		m := claudeSettingsFixtureReadJSON(t, settingsPath)
+		assertAutoLoadedSkillsDisabled(t, m, "merge over existing without key")
+		// Unrelated key must be preserved.
+		if _, ok := m["theme"]; !ok {
+			t.Errorf("merge: 'theme' key was removed; user settings must be preserved")
+		}
+	})
+
+	t.Run("user value overwritten", func(t *testing.T) {
+		t.Parallel()
+		workspacePath := t.TempDir()
+		settingsPath := claudeSettingsFixturePath(workspacePath)
+		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		// Pre-existing settings with autoLoadedSkillsDirectories set to a
+		// non-empty list — harmonik MUST override this to [].
+		existing := map[string]interface{}{
+			"hooks":                       map[string]interface{}{},
+			"autoLoadedSkillsDirectories": []interface{}{"/some/skills/dir"},
+		}
+		raw, err := json.Marshal(existing)
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+			t.Fatalf("MaterializeClaudeSettings (override): %v", err)
+		}
+		m := claudeSettingsFixtureReadJSON(t, settingsPath)
+		assertAutoLoadedSkillsDisabled(t, m, "user non-empty value overwritten")
+	})
+}
+
+// assertAutoLoadedSkillsDisabled is a helper that asserts the settings map
+// contains "autoLoadedSkillsDirectories": [] (the T6 hard invariant).
+func assertAutoLoadedSkillsDisabled(t *testing.T, m map[string]interface{}, ctx string) {
+	t.Helper()
+	raw, ok := m["autoLoadedSkillsDirectories"]
+	if !ok {
+		t.Errorf("%s: 'autoLoadedSkillsDirectories' key absent; MUST be present and empty", ctx)
+		return
+	}
+	arr, ok := raw.([]interface{})
+	if !ok {
+		t.Errorf("%s: 'autoLoadedSkillsDirectories' is not an array, got %T", ctx, raw)
+		return
+	}
+	if len(arr) != 0 {
+		t.Errorf("%s: 'autoLoadedSkillsDirectories' = %v; want empty []", ctx, arr)
+	}
+}

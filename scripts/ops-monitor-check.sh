@@ -1282,6 +1282,16 @@ checks = {
 # sibling bead hk-mttt8; the prefix is listed here for forward-compatibility.
 CRITICAL_PREFIXES = ('daemon-down', 'supervisor-down', 'fleet-down', 'captain-down', 'watch-down', 'watch-stalled')
 
+def _dedup_key(sig):
+    # release-due:<N> has a dynamic commit-count suffix that changes every tick.
+    # Each new count was a fresh key, bypassing the 30-min cooldown and producing
+    # 7 escalations in SOAK-1 (counts 102/174/207/212/216/265/266). Normalize to
+    # 'release-due' so the cooldown persists across count increments. The full sig
+    # (with count) is still used in send_immediate_signals and the comms body.
+    if sig.startswith('release-due:'):
+        return 'release-due'
+    return sig
+
 def _norm_alerted(val, is_crit):
     if val is None:
         return None
@@ -1293,9 +1303,10 @@ new_alerted = {}
 send_immediate_signals = []
 
 for sig in immediate_signals:
+    dedup_key = _dedup_key(sig)
     is_crit = any(sig.startswith(p) for p in CRITICAL_PREFIXES)
     cd = critical_immediate_cooldown if is_crit else immediate_cooldown
-    prev_val = prev_alerted.get(sig)
+    prev_val = prev_alerted.get(dedup_key)
     prev_entry = _norm_alerted(prev_val, is_crit)
     if prev_entry is not None:
         if is_crit:
@@ -1312,7 +1323,7 @@ for sig in immediate_signals:
                 cd = max(cd, persistent_immediate_cooldown)
             if ts_epoch - last_ts >= cd:
                 send_immediate_signals.append(sig)
-                new_alerted[sig] = {
+                new_alerted[dedup_key] = {
                     'first_ts': prev_entry['first_ts'],
                     'last_ts': ts_epoch,
                     'count': prev_entry.get('count', 1) + 1,
@@ -1323,20 +1334,20 @@ for sig in immediate_signals:
                 # active again, so a later clear should restart its grace window (Fix A).
                 _kept = dict(prev_entry)
                 _kept.pop('cleared_ts', None)
-                new_alerted[sig] = _kept
+                new_alerted[dedup_key] = _kept
         else:
             age = ts_epoch - prev_entry
             if age >= cd:
                 send_immediate_signals.append(sig)
-                new_alerted[sig] = ts_epoch  # reset timer on re-alert
+                new_alerted[dedup_key] = ts_epoch  # reset timer on re-alert
             else:
-                new_alerted[sig] = prev_entry  # keep original timestamp
+                new_alerted[dedup_key] = prev_entry  # keep original timestamp
     else:
         send_immediate_signals.append(sig)  # new edge: send immediately
         if is_crit:
-            new_alerted[sig] = {'first_ts': ts_epoch, 'last_ts': ts_epoch, 'count': 1, 'last_ops_critical_ts': 0}
+            new_alerted[dedup_key] = {'first_ts': ts_epoch, 'last_ts': ts_epoch, 'count': 1, 'last_ops_critical_ts': 0}
         else:
-            new_alerted[sig] = ts_epoch
+            new_alerted[dedup_key] = ts_epoch
 
 # ── Escalation metadata for critical signals being sent ──────────────────────
 # Keyed to send_immediate_signals so the bash send section can build per-tier messages.
@@ -1389,7 +1400,11 @@ for sig in send_immediate_signals:
 # ages out after the grace window and re-alerts fresh on real recurrence. Scoped to
 # FLAP_RETAIN_PREFIXES so non-flap criticals (daemon-down etc.) keep drop-on-resolve.
 FLAP_RETAIN_PREFIXES = ('watch-stalled',)
-_immediate_set = set(immediate_signals)
+# Use normalized dedup keys so 'release-due' (stored key) matches even when the raw
+# signal this tick is 'release-due:N' (different count). Without this, a still-active
+# release-due signal would be dropped from new_alerted as 'resolved' on every tick,
+# causing the next tick to treat it as a fresh edge and re-alert.
+_immediate_set = set(_dedup_key(s) for s in immediate_signals)
 for _sig, _pv in prev_alerted.items():
     if _sig in new_alerted or _sig in _immediate_set:
         continue  # active this tick — already handled above

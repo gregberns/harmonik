@@ -113,16 +113,26 @@ type windowCleaner interface {
 // Bead ref: hk-6pspu.
 const maxItemAttempts = queue.MaxItemAttempts
 
-// agentReadyKillReapTimeout is the maximum time to wait for watcher.Done()
-// after Kill() in the HC-056 agent_ready_timeout path. Kill() itself sends
-// SIGTERM then SIGKILL (3 s grace); this additional 10 s covers watcher
-// teardown after SIGKILL lands. If the watcher does not exit within this
-// window, reaping is abandoned and the bead is still reopened — the stuck
-// watcher goroutine will eventually unblock when ctx is cancelled.
+// agentReadyKillReapTimeout bounds two operations in the HC-056
+// agent_ready_timeout path:
+//
+//  1. Watcher-reap: maximum time to wait for watcher.Done() after Kill().
+//     Kill() itself sends SIGTERM then SIGKILL (3 s grace); this 10 s covers
+//     watcher teardown after SIGKILL lands. If the watcher does not exit, the
+//     bead is still reopened — the stuck goroutine eventually unblocks when ctx
+//     is cancelled.
+//
+//  2. Session-reap (hk-4hso5): bounds sess.Wait in the ErrAgentReadyTimeout
+//     branch. For remote sessions where the pane stays alive after Kill,
+//     runWait polls WindowPanePID until ctx is cancelled (up to 30 min). This
+//     timeout caps that wait so ReopenBead is reached promptly regardless of
+//     pane liveness.
+//
+// Declared as var so tests can override without waiting real wall time.
 //
 // Spec ref: specs/handler-contract.md §4.9 HC-056.
-// Bead ref: hk-do7te.
-const agentReadyKillReapTimeout = 10 * time.Second
+// Bead ref: hk-do7te, hk-4hso5.
+var agentReadyKillReapTimeout = 10 * time.Second
 
 // periodicCoordinatorReapInterval is the default minimum interval between
 // successive periodic coordinator-session reap passes in the work loop
@@ -4325,9 +4335,21 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 							beadID, runID.String())
 					}
 				}
-				_ = sess.Wait(ctx)
+				// hk-4hso5: bound sess.Wait so a remote pane that stays alive after
+				// Kill cannot hold this goroutine up to 30 min (never-spawned reaper
+				// deadline). agentReadyKillReapTimeout gives the pane time to close
+				// after SIGKILL; if not closed by then, proceed to ReopenBead anyway.
+				// context.Background() as parent makes this independent of the per-run
+				// ctx that the reaper may have already cancelled.
+				{
+					waitCtx, waitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
+					_ = sess.Wait(waitCtx)
+					waitCancel()
+				}
 				reopenTID, _ := deps.tidGen.Next()
-				if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				// hk-4hso5: use context.Background() so ReopenBead succeeds even when
+				// the never-spawned reaper has cancelled the per-run ctx before this point.
+				if reopenErr := deps.brAdapter.ReopenBead(context.Background(), deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
 					"agent_ready_timeout"); reopenErr != nil {
 					// ReopenBead failed: the bead remains in_progress and will NOT be
 					// re-dispatched by the poll loop (Ready only returns open beads).
@@ -4342,7 +4364,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// received agent_ready. Previously the only evidence of this failure
 				// was a stderr log line and ErrAgentReadyTimeout return; neither was
 				// captured in the durable event stream.
-				emitAgentReadyTimeout(ctx, deps.bus, runID, cbClaudeSessionID, deps.agentReadyTimeout)
+				// hk-4hso5: use context.Background() for the same reason as ReopenBead.
+				emitAgentReadyTimeout(context.Background(), deps.bus, runID, cbClaudeSessionID, deps.agentReadyTimeout)
 				emitDone(false, "agent_ready_timeout")
 				return
 			}

@@ -569,6 +569,17 @@ func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	return runWorkLoop(ctx, deps)
 }
 
+// ExportedSetAgentReadyKillReapTimeout overrides the package-level
+// agentReadyKillReapTimeout for tests. Returns a restore function; pass it to
+// t.Cleanup. NOT safe for use with t.Parallel() — modifies a package global.
+//
+// Bead ref: hk-4hso5.
+func ExportedSetAgentReadyKillReapTimeout(d time.Duration) func() {
+	orig := agentReadyKillReapTimeout
+	agentReadyKillReapTimeout = d
+	return func() { agentReadyKillReapTimeout = orig }
+}
+
 // ExportedResolveWorkflowMode exposes resolveWorkflowMode for tests in package
 // daemon_test. See moderesolve.go for semantics.
 //

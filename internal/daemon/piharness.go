@@ -117,15 +117,22 @@ func (h *PiHarness) AgentType() core.AgentType {
 // header, and buildPiLaunchSpec emits `pi --mode json --session <id> "<prompt>"`.
 // For the initial turn PriorSessionID is nil and the initial argv is built.
 //
+// rc.Model, when non-empty, overrides the harness-level h.model so concurrent
+// Pi runs can target different models (mirrors ClaudeHarness.LaunchSpec). hk-oqlgw.
+//
 // Returns a non-nil error on any buildPiLaunchSpec failure; the caller MUST NOT
 // call handler.Launch on error. PI-010/PI-020.
 func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
+	model := h.model
+	if rc.Model != "" {
+		model = rc.Model
+	}
 	prc := piRunCtx{
 		piBinary:       h.piBinary,
 		workspacePath:  rc.WorkspacePath,
 		beadID:         rc.BeadID,
 		provider:       h.provider,
-		model:          h.model,
+		model:          model,
 		apiKeyEnv:      h.apiKeyEnv,
 		apiKeyFile:     h.apiKeyFile,
 		baseURL:        h.baseURL,

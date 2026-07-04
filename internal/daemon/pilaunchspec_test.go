@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -872,6 +873,88 @@ func TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn(t *testing.T) {
 			t.Errorf("PI_CODING_AGENT_DIR injected on resume turn: %q", kv)
 		}
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rc.Model override tests — per-run model override (hk-oqlgw)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestPiHarness_LaunchSpec_RcModelOverridesHarnessModel verifies that a non-empty
+// rc.Model takes precedence over the harness-level model in argv (hk-oqlgw).
+// Uses the full production call chain: NewPiHarness → LaunchSpec.
+func TestPiHarness_LaunchSpec_RcModelOverridesHarnessModel(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const apiKeyEnv = "TEST_PI_RC_MODEL_OVERRIDE_KEY"
+	t.Setenv(apiKeyEnv, "sk-rc-model-override-sentinel")
+
+	workDir := t.TempDir()
+	const harnessModel = "openrouter/qwen/qwen3-coder" // harness-level default
+	const rcModel = "openrouter/deepseek/deepseek-r1"  // per-run override
+
+	harness := daemon.NewPiHarness(
+		"pi",
+		"openrouter",
+		harnessModel,
+		apiKeyEnv,
+		"",
+		"",
+		"",
+	)
+
+	rc := handlercontract.RunCtx{
+		WorkspacePath: workDir,
+		BeadID:        "hk-oqlgw-override",
+		BaseEnv:       []string{"PATH=/usr/bin"},
+		Model:         rcModel,
+	}
+
+	spec, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	piLaunchSpecAssertFlagValue(t, spec.Args, "--model", rcModel)
+
+	for i, arg := range spec.Args {
+		if arg == "--model" && i+1 < len(spec.Args) && spec.Args[i+1] == harnessModel {
+			t.Error("harness-level model appeared in argv; rc.Model override must take precedence")
+		}
+	}
+}
+
+// TestPiHarness_LaunchSpec_EmptyRcModelFallsBackToHarnessModel verifies that when
+// rc.Model is empty, LaunchSpec uses h.model (the harness-level default). hk-oqlgw.
+func TestPiHarness_LaunchSpec_EmptyRcModelFallsBackToHarnessModel(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const apiKeyEnv = "TEST_PI_RC_MODEL_FALLBACK_KEY"
+	t.Setenv(apiKeyEnv, "sk-rc-model-fallback-sentinel")
+
+	workDir := t.TempDir()
+	const harnessModel = "openrouter/qwen/qwen3-coder"
+
+	harness := daemon.NewPiHarness(
+		"pi",
+		"openrouter",
+		harnessModel,
+		apiKeyEnv,
+		"",
+		"",
+		"",
+	)
+
+	rc := handlercontract.RunCtx{
+		WorkspacePath: workDir,
+		BeadID:        "hk-oqlgw-fallback",
+		BaseEnv:       []string{"PATH=/usr/bin"},
+		// Model empty → must fall back to h.model
+	}
+
+	spec, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	piLaunchSpecAssertFlagValue(t, spec.Args, "--model", harnessModel)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

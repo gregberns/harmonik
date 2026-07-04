@@ -67,6 +67,42 @@ func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry
 	return reg, nil
 }
 
+// effectiveModel returns the model string that will actually be used for a
+// launch given the resolved harness h and the run context rc.
+//
+//   - Claude / Codex: rc.model (Claude = DOT node model= attr or run-level
+//     default; Codex = empty, not harmonik-controlled).
+//   - Pi: h.(*PiHarness).model (from harnesses.pi.model config) — Pi ignores
+//     rc.model in its LaunchSpec and uses its own config field.
+func effectiveModel(h handlercontract.Harness, rc claudeRunCtx) string {
+	if piH, ok := h.(*PiHarness); ok {
+		return piH.model
+	}
+	return rc.model
+}
+
+// emitModelSelected emits a model_selected event (hk-eval-prog-model-on-log-bh2o7)
+// recording the effective model keyed on run_id. Best-effort: emit errors are
+// silently discarded (the launch result is already determined before this call).
+func emitModelSelected(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
+	model string,
+	agentType core.AgentType,
+) {
+	pl := core.ModelSelectedPayload{
+		RunID:   runID.String(),
+		Model:   model,
+		Harness: string(agentType),
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.Emit(ctx, core.EventTypeModelSelected, b)
+}
+
 // routedLaunchSpecBuilder returns a launchSpecBuilder (the workLoopDeps hook
 // shape: func(ctx, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error))
 // that routes through resolveHarness + reg.ForAgent before building the spec.
@@ -108,6 +144,8 @@ func routedLaunchSpecBuilder(
 				"daemon: routedLaunchSpecBuilder: resolve harness %q: %w", agentType, err)
 		}
 
+		emitModelSelected(ctx, bus, core.RunID(rc.runID), effectiveModel(h, rc), agentType)
+
 		// Claude path: delegate to buildClaudeLaunchSpec directly so the returned
 		// LaunchSpec AND claudeRunArtifacts are byte-identical to the pre-T3 call.
 		// buildClaudeLaunchSpec also sets artifacts.resolvedAgentType = claude-code.
@@ -138,6 +176,7 @@ func pinnedHarnessLaunchSpecBuilder(
 			return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
 				"daemon: pinnedHarnessLaunchSpecBuilder: resolve harness %q: %w", agentType, err)
 		}
+		emitModelSelected(ctx, bus, core.RunID(rc.runID), effectiveModel(h, rc), agentType)
 		if _, ok := h.(*ClaudeHarness); ok {
 			return buildClaudeLaunchSpec(ctx, rc)
 		}

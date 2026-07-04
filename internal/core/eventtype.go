@@ -751,6 +751,19 @@ const (
 	// precedence walk returns. Carries bead_id, agent_type, and the tier that
 	// resolved it (1=per-bead label, 2=queue default, 3=DOT node, 4=global/fallback).
 	EventTypeHarnessSelected EventType = "harness_selected"
+
+	// EventTypeModelSelected is the model_selected event type
+	// (hk-eval-prog-model-on-log-bh2o7).
+	// Durability class: O (ordinary — dispatch-time observability; records the
+	// effective model string for each run so the model is IN the log keyed on
+	// run_id without requiring a config snapshot).
+	//
+	// Emitted by routedLaunchSpecBuilder and pinnedHarnessLaunchSpecBuilder
+	// immediately after harness selection, once the effective model is known:
+	// Claude → rc.model (DOT node model= attr or run-level default); Pi → the
+	// harnesses.pi.model config value; Codex → empty (model is not
+	// harmonik-controlled). Carries run_id, model, and harness (agent_type).
+	EventTypeModelSelected EventType = "model_selected"
 )
 
 // ---------------------------------------------------------------------------

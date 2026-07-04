@@ -237,6 +237,11 @@ func registerAgentEvents() {
 	// Closes the observability gap where silent claude-code fallback was invisible.
 	// Durability class: O.
 	mustRegister("harness_selected", func() EventPayload { return &HarnessSelectedPayload{} })
+	// model_selected (hk-eval-prog-model-on-log-bh2o7): emitted by routedLaunchSpecBuilder
+	// and pinnedHarnessLaunchSpecBuilder after harness selection, recording the effective
+	// model string keyed on run_id. Enables trustworthy cross-model run records without
+	// config snapshots. Durability class: O.
+	mustRegister("model_selected", func() EventPayload { return &ModelSelectedPayload{} })
 }
 
 // registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.

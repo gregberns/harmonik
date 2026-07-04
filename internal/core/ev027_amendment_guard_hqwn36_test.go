@@ -44,7 +44,7 @@ import "testing"
 //	      bead_ledger_recovered, bead_ledger_corrupt [hk-k7va9],
 //	      bead_ledger_conflict_audit [hk-u3q6o], orphaned_child_bead [hk-27ghc])
 //
-// Total: 121 EventType constants registered in allEventTypeCohort.
+// Total: 123 EventType constants registered in allEventTypeCohort.
 // Amendment: merge_build_failed added for post-merge build gate (hk-o68j3;
 // EV-027 foundation amendment — new F-class event emitted when go build+vet
 // fails on the freshly fast-forwarded merged tree before push).
@@ -62,6 +62,9 @@ import "testing"
 // bead_ledger_corrupt (O-class, Cat-BL2 persistent failure + Cat 6b escalation),
 // bead_ledger_conflict_audit (O-class, Cat-BL3 merge-conflict audit batch),
 // orphaned_child_bead (O-class, Cat-BL1 child-bead orphan detection).
+// Amendment: model_selected added (hk-eval-prog-model-on-log-bh2o7; O-class
+// dispatch-time event recording the effective model keyed on run_id — enables
+// trustworthy cross-model run records without config snapshots).
 //
 // To add an EventType: update allEventTypeCohort in eventtype_coverage_gjyks_test.go,
 // add the constant to eventtype.go, register the constructor in eventreg_hqwn59.go
@@ -78,7 +81,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 122 // +5 for §8.15 bead-ledger types (hk-u3q6o/hk-27ghc/hk-k7va9 EV-027 amendment); +1 agent_ready_stall_detected (hk-1s1or launch_initiated→agent_ready stall detector)
+	const wantCount = 123 // +1 model_selected (hk-eval-prog-model-on-log-bh2o7 EV-027 amendment; O-class dispatch-time observability recording effective model keyed on run_id)
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

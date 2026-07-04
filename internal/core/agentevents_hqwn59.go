@@ -828,3 +828,47 @@ type HarnessSelectedPayload struct {
 func (p HarnessSelectedPayload) Valid() bool {
 	return p.BeadID != "" && p.AgentType != "" && p.Tier >= 1 && p.Tier <= 4
 }
+
+// ModelSelectedPayload is the typed event payload for the model_selected event
+// (hk-eval-prog-model-on-log-bh2o7).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — dispatch-time observability; records the
+// effective model string keyed on run_id so the model is in the log without
+// requiring a config snapshot across passes).
+//
+// Emitted by routedLaunchSpecBuilder and pinnedHarnessLaunchSpecBuilder
+// immediately after harness selection, once the effective model is resolved:
+//   - Claude: rc.model (DOT node model= attr or run-level default)
+//   - Pi: harnesses.pi.model config value (from PiHarness struct)
+//   - Codex: empty string (model is not harmonik-controlled; set by $CODEX_HOME/config.toml)
+//
+// # Payload fields
+//
+//   - run_id  — UUID of the run this launch belongs to (RunID.String())
+//   - model   — effective model string; empty when not harmonik-controlled (codex)
+//   - harness — the resolved agent_type (AR-025); e.g. "claude-code", "pi", "codex"
+type ModelSelectedPayload struct {
+	// RunID is the run identifier this launch belongs to (UUID string).
+	// Required (non-empty).
+	RunID string `json:"run_id"`
+
+	// Model is the effective model string for this launch.
+	// Empty when the model is not harmonik-controlled (e.g. codex).
+	Model string `json:"model"`
+
+	// Harness is the resolved agent_type (AR-025).
+	// Required (non-empty, valid per AR-025 regex).
+	Harness string `json:"harness"`
+}
+
+// Valid reports whether p is a well-formed ModelSelectedPayload.
+//
+// Rules:
+//   - RunID must be non-empty.
+//   - Harness must be non-empty.
+//   - Model may be empty (codex case).
+func (p ModelSelectedPayload) Valid() bool {
+	return p.RunID != "" && p.Harness != ""
+}

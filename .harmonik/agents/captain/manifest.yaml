@@ -16,6 +16,8 @@ context:
   - { ref: docs/orchestration-protocol-v2.md,            as: doc,         presence: retrieved }
 
 triggers:
+  - { id: comms,        source: comms, enabled: true }
+  - { id: escalations,  source: comms, enabled: true }
   - { id: fleet-status, source: cron, every: 6h, enabled: true, deliver: comms,
       message: "Post a fleet priorities update to the admiral." }
 

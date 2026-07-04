@@ -30,4 +30,4 @@ lifecycle:
 tools_dir: null
 
 markers:
-  never_emits: []
+  never_emits: [queue_submit:main, crew_start]

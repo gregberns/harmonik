@@ -1217,7 +1217,8 @@ do_selfheal = False
 new_last_watch_selfheal_ts = prev_last_watch_selfheal_ts
 if watch_zombie and not watch_restart_suppressed:
     # Require persistent stall (tier-3) to avoid premature self-heal on a transient issue.
-    _ws_entry = new_alerted.get('watch-stalled')
+    # Use prev_alerted (the persisted previous-tick state): new_alerted is not yet built here.
+    _ws_entry = prev_alerted.get('watch-stalled')
     _ws_persistent = isinstance(_ws_entry, dict) and _ws_entry.get('count', 0) >= ops_critical_count
     if _ws_persistent and (ts_epoch - prev_last_watch_selfheal_ts) >= watch_selfheal_cooldown:
         do_selfheal = True

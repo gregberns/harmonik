@@ -398,6 +398,11 @@ func (dw *DaemonWatchdog) reviveWith(argv []string) error {
 	if dw.spec.WorkDir != "" {
 		cmd.Dir = dw.spec.WorkDir
 	}
+	// GOTRACEBACK=all so a nil-deref/panic dump includes every goroutine stack,
+	// not just the crashing one — needed to pin a load-triggered fatal (a
+	// concurrent-map fatal already prints both racing stacks; this widens the
+	// rest). Paired with CrashLogPath, which captures that output.
+	cmd.Env = append(os.Environ(), "GOTRACEBACK=all")
 	if dw.spec.CrashLogPath != "" {
 		f, err := openCrashLog(dw.spec.CrashLogPath, dw.spec.CrashLogKeep, argv)
 		if err != nil {

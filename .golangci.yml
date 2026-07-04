@@ -162,6 +162,8 @@ linters:
           allow:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/schedule"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "schedule MUST NOT import daemon (hk-0es: leaf primitive)" }
 
         # agentmanifest: leaf package loading .harmonik/agents/<type>/manifest.yaml.
         # Depends only on stdlib + yaml.v3. Self-import for external test pattern.
@@ -172,7 +174,7 @@ linters:
             - "gopkg.in/yaml.v3"
             - "github.com/gregberns/harmonik/internal/agentmanifest"
           deny:
-            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "schedule MUST NOT import daemon (hk-0es: leaf primitive)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "agentmanifest MUST NOT import daemon (leaf primitive)" }
 
         # BI-004: The handler subsystem MUST NOT import internal/brcli.
         # The daemon invokes br directly (as a subprocess via the brcli adapter);

@@ -1196,6 +1196,14 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		return fmt.Errorf("daemon.Start: emit daemon_started: %w", emitErr)
 	}
 
+	// hk-rnkuy: emit supervisor_revival when the prior daemon session lacked a
+	// daemon_shutdown event (SIGKILL / OOM / panic). daemon_started is F-class
+	// (fsynced above) so the current session is already in the log before we scan.
+	// Non-fatal: startup continues regardless of detection or emit outcome.
+	if cfg.JSONLLogPath != "" {
+		detectAndEmitSupervisorRevival(context.Background(), cfg.JSONLLogPath, bus)
+	}
+
 	// hk-sul12: emit daemon_config stating the resolved merge-target and active
 	// branch-protection policy. Emitted immediately after daemon_started so the
 	// resolved config is observable before any dispatch work begins.

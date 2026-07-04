@@ -134,6 +134,8 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeOperatorCommandFailed, func() EventPayload { return &OperatorCommandFailedPayload{} }},
 	{EventTypeOperatorEscalationCleared, func() EventPayload { return &OperatorEscalationClearedPayload{} }},
 	{EventTypeDaemonConfig, func() EventPayload { return &DaemonConfigPayload{} }},
+	// supervisor_revival (§8.7.20, hk-rnkuy): emitted at startup when prior session lacked daemon_shutdown.
+	{EventTypeSupervisorRevival, func() EventPayload { return &SupervisorRevivalPayload{} }},
 
 	// §8.1a Review-loop cycle + §8.8.6 bead label conflict
 	{EventTypeImplementerResumed, func() EventPayload { return &ImplementerResumedPayload{} }},

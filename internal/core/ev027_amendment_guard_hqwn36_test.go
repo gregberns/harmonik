@@ -81,7 +81,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 123 // +1 model_selected (hk-eval-prog-model-on-log-bh2o7 EV-027 amendment; O-class dispatch-time observability recording effective model keyed on run_id)
+	const wantCount = 124 // +1 supervisor_revival (hk-rnkuy EV-027 amendment; O-class daemon-startup event emitted when prior session ended without daemon_shutdown — fills logmine gap for unexplained daemon deaths)
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

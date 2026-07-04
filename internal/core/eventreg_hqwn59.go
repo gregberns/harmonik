@@ -356,6 +356,11 @@ func registerDaemonLifecycleEvents() {
 	// disk_low (§8.7.19, hk-sxlb): emitted when available disk falls below the
 	// configured watermark; daemon pauses dispatch and attempts go clean -cache.
 	mustRegister("disk_low", func() EventPayload { return &DiskLowPayload{} })
+	// supervisor_revival (§8.7.20, hk-rnkuy): emitted at daemon startup when the
+	// prior daemon session ended without a daemon_shutdown event — i.e., the daemon
+	// was killed by SIGKILL, OOM, or panic. Fills the logmine gap that previously
+	// required stderr correlation to detect unexplained daemon deaths. Durability: O.
+	mustRegister("supervisor_revival", func() EventPayload { return &SupervisorRevivalPayload{} })
 }
 
 // registerBusEvents registers all §8.8 observability and bus-internal event

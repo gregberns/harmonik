@@ -645,6 +645,18 @@ const (
 	// once disk space is restored).
 	// Bead ref: hk-sxlb.
 	EventTypeDiskLow EventType = "disk_low"
+
+	// EventTypeSupervisorRevival is the supervisor_revival event type (§8.7.20).
+	// Emitted by daemon-core at startup when the JSONL log shows the prior daemon
+	// session ended without a daemon_shutdown event — i.e., the daemon was killed
+	// by SIGKILL, OOM, or panic with no graceful drain. The supervisor (or OS
+	// process manager) restarted the daemon without the daemon itself issuing a
+	// shutdown. Fills the logmine gap that previously required stderr correlation
+	// to detect unexplained daemon deaths.
+	// Durability class: O (ordinary — observability; reconstructible from JSONL;
+	// emitted once per revival on startup, before orphan sweep).
+	// Bead ref: hk-rnkuy.
+	EventTypeSupervisorRevival EventType = "supervisor_revival"
 )
 
 // ---------------------------------------------------------------------------

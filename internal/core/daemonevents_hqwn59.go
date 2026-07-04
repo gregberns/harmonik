@@ -1056,6 +1056,84 @@ func (p OperatorEscalationClearedPayload) Valid() bool {
 	return true
 }
 
+// SupervisorRevivalCause is the typed discriminator for the `cause` field of
+// supervisor_revival (§8.7.20).
+//
+// Values: unexpected_exit (no daemon_shutdown preceded the current daemon_started
+// in the JSONL log — the prior session was killed by SIGKILL, OOM, or panic).
+type SupervisorRevivalCause string
+
+const (
+	// SupervisorRevivalCauseUnexpectedExit indicates the prior daemon session
+	// ended without emitting a daemon_shutdown event. The daemon was terminated
+	// by SIGKILL, OOM, or a panic whose defer-recover never ran (or the daemon
+	// binary replaced itself). Root cause is invisible in the event stream alone;
+	// correlate with daemon stderr for the specific signal or panic trace.
+	SupervisorRevivalCauseUnexpectedExit SupervisorRevivalCause = "unexpected_exit"
+)
+
+// Valid reports whether c is one of the declared SupervisorRevivalCause constants.
+func (c SupervisorRevivalCause) Valid() bool {
+	return c == SupervisorRevivalCauseUnexpectedExit
+}
+
+// SupervisorRevivalPayload is the typed event payload for the supervisor_revival
+// event (event-model.md §8.7.20).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+// Durability class: O (ordinary — observability; reconstructible by checking whether
+// daemon_started has a subsequent daemon_shutdown in the JSONL; emitted once per
+// unclean revival so loss only affects logmine, not daemon correctness).
+//
+// Emitted by daemon-core at startup when the JSONL log reveals that the prior
+// daemon session did NOT end with a daemon_shutdown event (i.e., the daemon
+// was killed without a chance to drain — SIGKILL, OOM, or panic with no
+// defer-recover). Correlates with stderr for the specific cause.
+//
+// # Payload fields (event-model.md §8.7.20)
+//
+//   - revived_at              — RFC 3339 wall-clock at detection (current startup)
+//   - cause                   — SupervisorRevivalCause enum (currently: unexpected_exit)
+//   - prior_pid               — OS PID of the prior daemon instance (from its daemon_started)
+//   - prior_binary_commit_hash — binary commit hash of the prior instance (from its daemon_started)
+//
+// Bead ref: hk-rnkuy.
+type SupervisorRevivalPayload struct {
+	// RevivedAt is the RFC 3339 wall-clock timestamp at which the revival was
+	// detected (i.e., the current daemon startup). Required (non-empty).
+	RevivedAt string `json:"revived_at"`
+
+	// Cause identifies why the prior session ended without a daemon_shutdown.
+	// Required; must be a valid SupervisorRevivalCause constant.
+	Cause SupervisorRevivalCause `json:"cause"`
+
+	// PriorPID is the OS process ID of the prior daemon instance, as reported in
+	// its daemon_started event payload. Zero when the prior daemon_started payload
+	// could not be decoded.
+	PriorPID int `json:"prior_pid,omitempty"`
+
+	// PriorBinaryCommitHash is the git commit hash of the prior daemon binary,
+	// as reported in its daemon_started event payload. Empty when the prior
+	// daemon_started payload could not be decoded.
+	PriorBinaryCommitHash string `json:"prior_binary_commit_hash,omitempty"`
+}
+
+// Valid reports whether p is a well-formed SupervisorRevivalPayload.
+//
+// Rules per event-model.md §8.7.20:
+//   - RevivedAt must be non-empty.
+//   - Cause must be a valid SupervisorRevivalCause constant.
+func (p SupervisorRevivalPayload) Valid() bool {
+	if p.RevivedAt == "" {
+		return false
+	}
+	if !p.Cause.Valid() {
+		return false
+	}
+	return true
+}
+
 // DaemonConfigPayload is the typed event payload for the daemon_config event
 // (event-model.md §8.7.18).
 //

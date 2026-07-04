@@ -9,7 +9,28 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
-## ⭐⭐ CURRENT TRUTH (2026-07-03 ~17:35Z — cold-boot after keeper /clear; close-out + eval staffed)
+## ⭐⭐ CURRENT TRUTH (2026-07-04 ~23:32Z — keeper /clear resume; fleet self-recovered from a fleet-wide wedge)
+> Captain resumed after a context /clear. A fleet-wide wedge (API hang stranding runs) hit ~23:22Z and
+> the daemon self-recovered: it **bounced 23:27:33Z** (single clean restart, no crash-loop), swept 3 wedged
+> runs; fresh runs healthy. All three crews re-adopted after the bounce and re-submitted their beads onto
+> FRESH `-q2` queues (the old `-q` queues are paused-by-failure cruft — leave them). Verified live: three
+> queues ACTIVE with `workers=1` each (dispatched + running). Nothing blocked on operator; watchers armed.
+>
+> **LANES NOW:**
+> | crew | lane | queue | model | state |
+> |---|---|---|---|---|
+> | duncan | cache-reaper GOCACHE-wipe fix (hk-44ab2, P1) — re-tasked off wake-economy epic hk-var9b to this reliability bead | duncan-q2 | opus | ACTIVE — hk-44ab2 in-flight (worker live). hk-whru3 HELD (prior fail was a false-fail of this same reaper bug; re-sub after hk-44ab2 lands). |
+> | jessica | daemon-reliability (logmine iter-20 P1 register) | jessica-q2 | opus | ACTIVE — hk-lt091 (empty-HEAD worktree-create race, RESURRECTED — the gb-mbp idle-hang culprit) leads, ALONE first; then hk-rnkuy (crash-loop + daemon-death EventType), hk-qe736 (worktree-leak reaper LOCKED blind-spot), hk-gf59k (ledger-dep false-defer) serialized. All touch daemon/worktree internals → do NOT fan all four. |
+> | stilgar | eval-metrics WS1 (epic hk-9jdid, codename:eval-program) | stilgar-q2 | opus | ACTIVE — B1 hk-eval-prog-model-on-log-bh2o7 (model string onto run log) first; hold B2 hk-eval-prog-sessiondata-hook-vmxrk (session-data.jsonl collector) until B1 lands (shared metrics surface). |
+> | watch | triage tier | watch-q | sonnet | ONLINE — escalates actionable events to captain event-driven. |
+> | ops-monitor | ops probe | — | — | presence-stale (~6m at resume); session-hosted bg loop, no scheduler — verify liveness if it stays absent. |
+>
+> **COLLISION WATCH:** duncan (cache-reaper, hk-44ab2) and jessica (worktree-reaper, hk-qe736) both touch
+> "reaper" code — different reapers (GOCACHE-wipe vs worktree-LOCKED-reap), likely file-disjoint, but verify
+> before both land near-simultaneously. **Many paused-by-failure queues** (pi-q, leto-q/-codex, crashrepro,
+> loadtest, gbmbp-val/-val2, sandbox-q, spread-pi, paul-q, pi-scav-2) = pre-existing cruft, left as-is; do NOT resume.
+
+## ⭐⭐ (SUPERSEDED) CURRENT TRUTH (2026-07-03 ~17:35Z — cold-boot after keeper /clear; close-out + eval staffed)
 > Captain cold-booted from a keeper-placeholder handoff; recovered real state from own pre-/clear
 > comms (17:15Z) + boot digest. Daemon UP @ max_concurrent=10 (spawn_cap=20). Per operator direction-log
 > 07-03 10:30Z: **captain OWNS the close-out** ("push it all onto the captain"); close-out sequences FIRST,

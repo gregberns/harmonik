@@ -107,6 +107,14 @@ type busImpl struct {
 	// goroutines. Entries are created lazily on first EmitWithRunID for a run
 	// and are never removed (they become no-ops once the run drains).
 	runDrainers map[string]*sync.WaitGroup
+	// runSealed marks run_ids whose DrainRun has begun. Once sealed,
+	// EmitWithRunID stops per-run WaitGroup tracking for that run so a late
+	// emit from a lingering per-run goroutine cannot call runWG.Add
+	// concurrently with DrainRun's runWG.Wait — the Go WaitGroup contract
+	// violation that aborts the whole process ("fatal error: sync: WaitGroup
+	// misuse: Add called concurrently with Wait"). Guarded by runDrainersMu;
+	// lazily initialised so the five constructors need no change.
+	runSealed map[string]bool
 
 	// HWM persistence fields (EV-002c). hwmPath is the absolute path of the
 	// event_id_hwm file; empty string disables HWM writes (test mode / no
@@ -609,12 +617,18 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 			// the per-run WaitGroup (for DrainRun/per-run fair termination).
 			// Bead: hk-fx6zl.
 			sub := sub // capture loop variable
-			runWG := b.runDrainer(evt.RunID.String())
+			// addRunDrainer does runWG.Add(1) while holding runDrainersMu, so it
+			// cannot race a DrainRun that has already sealed this run; it returns
+			// nil when the run is sealed (teardown in progress), in which case we
+			// skip per-run tracking (the global b.wg still accounts for the
+			// goroutine).
+			runWG := b.addRunDrainer(evt.RunID.String())
 			b.wg.Add(1)
-			runWG.Add(1)
 			go func() {
 				defer b.wg.Done()
-				defer runWG.Done()
+				if runWG != nil {
+					defer runWG.Done()
+				}
 				// Panic recovery (hk-xvpwb): recover observer panics and record
 				// them to the dead-letter sink with reason "observer_panic".
 				// deadLetterSink is never nil (NoopDeadLetterSink when no sink configured).
@@ -1416,17 +1430,24 @@ func replayAndDetectTrunc(ctx context.Context, path string, sinceID core.EventID
 	}
 }
 
-// runDrainer returns the WaitGroup for runID, creating it if it does not exist.
-// The returned pointer is stable for the lifetime of busImpl; callers may call
-// Add/Done/Wait without holding runDrainersMu.
-func (b *busImpl) runDrainer(runID string) *sync.WaitGroup {
+// addRunDrainer registers one in-flight per-run goroutine: it returns the
+// run's WaitGroup after calling Add(1) on it WHILE HOLDING runDrainersMu, so
+// the Add is serialised against DrainRun's seal-then-Wait. It returns nil when
+// the run is already sealed (DrainRun has begun) — the caller then skips
+// per-run Done, relying on the global b.wg. Doing Add under the lock is what
+// prevents "Add called concurrently with Wait".
+func (b *busImpl) addRunDrainer(runID string) *sync.WaitGroup {
 	b.runDrainersMu.Lock()
 	defer b.runDrainersMu.Unlock()
+	if b.runSealed[runID] {
+		return nil
+	}
 	wg, ok := b.runDrainers[runID]
 	if !ok {
 		wg = &sync.WaitGroup{}
 		b.runDrainers[runID] = wg
 	}
+	wg.Add(1)
 	return wg
 }
 
@@ -1443,7 +1464,22 @@ func (b *busImpl) runDrainer(runID string) *sync.WaitGroup {
 //
 // Bead: hk-fx6zl.
 func (b *busImpl) DrainRun(ctx context.Context, runID core.RunID) error {
-	wg := b.runDrainer(runID.String())
+	// Seal the run under runDrainersMu, then read its WaitGroup. After the seal
+	// is set, addRunDrainer returns nil for this run (no further Add); any Add
+	// already performed happened under the same lock before this point, so it
+	// happens-before the Wait below. This closes the Add-concurrent-with-Wait
+	// race that otherwise aborts the process under concurrent dispatch.
+	b.runDrainersMu.Lock()
+	if b.runSealed == nil {
+		b.runSealed = make(map[string]bool)
+	}
+	b.runSealed[runID.String()] = true
+	wg := b.runDrainers[runID.String()]
+	b.runDrainersMu.Unlock()
+	if wg == nil {
+		// No per-run goroutine was ever tracked for this run — nothing to wait on.
+		return nil
+	}
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()

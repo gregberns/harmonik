@@ -174,6 +174,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "agent_presence", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-lr5t: harness-selected observability event (dispatch-time harness selection audit).
 	{TypeName: "harness_selected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-eval-prog-model-on-log-bh2o7: model-selected observability event (effective model keyed on run_id).
+	{TypeName: "model_selected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-33p: hitl-decisions typed events (hitl-decisions SPEC §1, component K1).
 	{TypeName: "decision_needed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "decision_resolved", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

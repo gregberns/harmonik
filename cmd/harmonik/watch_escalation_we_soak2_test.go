@@ -67,7 +67,7 @@ func TestWatchSkillKeeperMissingRedirect_WE_SOAK2_P1(t *testing.T) {
 
 	hasRedirect := strings.Contains(content, "REDIRECT") || strings.Contains(content, "autonomous")
 	if !hasRedirect {
-		t.Errorf("P1: SKILL.md contains 'keeper-missing' but neither 'REDIRECT' nor 'autonomous' appears; "+
+		t.Errorf("P1: SKILL.md contains 'keeper-missing' but neither 'REDIRECT' nor 'autonomous' appears; " +
 			"the skill must describe the autonomous redirect path (not a pure captain IMMEDIATE escalation)")
 	}
 }
@@ -85,7 +85,7 @@ func TestOpsMonitorReleaseDueDedupKeyNormalized_WE_SOAK2_P2(t *testing.T) {
 	}
 
 	if !strings.Contains(string(raw), "_dedup_key") {
-		t.Errorf("P2: ops-monitor-check.sh does not contain '_dedup_key'; "+
+		t.Errorf("P2: ops-monitor-check.sh does not contain '_dedup_key'; " +
 			"the release_due dedup-key normalization helper is missing")
 	}
 }
@@ -104,7 +104,7 @@ func TestWatchSkillPausedQueueStateTracking_WE_SOAK2_P6(t *testing.T) {
 	}
 
 	if !strings.Contains(string(raw), "pending_paused_queues") {
-		t.Errorf("P6: SKILL.md does not contain 'pending_paused_queues'; "+
+		t.Errorf("P6: SKILL.md does not contain 'pending_paused_queues'; " +
 			"the paused-queue state-tracking field is not documented")
 	}
 }

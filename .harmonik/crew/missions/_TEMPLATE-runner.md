@@ -13,6 +13,7 @@ model: sonnet
 You are crew **<NAME>**, owning epic **<BEAD_ID>** on queue **<NAME>-q**. Report status to **captain**.
 
 ## On boot
+0. `harmonik agent brief` — pull current operating context (operating.md + project state).
 1. `harmonik comms join` + confirm identity = <NAME>.
 2. `br update <BEAD_ID> --assignee <NAME>` (re-affirm the mirror on adopt — load-bearing for attribution).
 3. Post a boot status to captain (`--topic status`) + a journal comment on <BEAD_ID>.

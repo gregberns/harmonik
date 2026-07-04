@@ -15,6 +15,7 @@ Your `<NAME>-q` queue is a formality so the launcher is happy — never put work
 Report to **captain**.
 
 ## On boot
+0. `harmonik agent brief` — pull current operating context (operating.md + project state).
 1. `harmonik comms join` + confirm identity = <NAME>.
 2. Post a one-line boot status: `harmonik comms send --from <NAME> --to operator --topic status -- "<NAME> online"`.
 3. Arm the operating loop appropriate to your role (periodic audit, design review, etc.).

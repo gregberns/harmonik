@@ -37,13 +37,13 @@ type fakeCaptainOps struct {
 	aliveResult bool  // what AgentPaneAlive returns (default false: agent dead/reapable)
 	aliveErr    error // optional AgentPaneAlive error (ambiguous-probe path)
 
-	existsCalls    int
-	aliveCalls     int
-	killCalls      int
-	killedSession  string
-	keeperOpts     *agentlaunch.KeeperWindowOpts // nil until SpawnKeeperWindow called
-	keeperOutcome  ltmux.Outcome                 // what SpawnKeeperWindow returns
-	pasteSeedCalls int
+	existsCalls     int
+	aliveCalls      int
+	killCalls       int
+	killedSession   string
+	keeperOpts      *agentlaunch.KeeperWindowOpts // nil until SpawnKeeperWindow called
+	keeperOutcome   ltmux.Outcome                 // what SpawnKeeperWindow returns
+	pasteSeedCalls  int
 	pasteSeedSessID string
 	pasteSeedPane   string
 }

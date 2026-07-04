@@ -675,6 +675,7 @@ EXAMPLES
 
 	// harmonik agent <verb> — agent type folder management (agent-manifest SPEC §3).
 	// Verbs: check (schema/layout validation). Bead: hk-9cheh (T5).
+	// ON-INV-006-AUTH: agent-manifest SPEC §3; read-only filesystem validation, no daemon connection, no queue or run mutation, cannot abort an in-flight run
 	if len(os.Args) >= 2 && os.Args[1] == "agent" {
 		return runAgentSubcommand(os.Args[2:])
 	}

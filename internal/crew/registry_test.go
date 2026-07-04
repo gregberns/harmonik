@@ -301,6 +301,29 @@ func TestResolveType(t *testing.T) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
+
+	t.Run("corrupted_record_propagates_non_notfound_error", func(t *testing.T) {
+		t.Parallel()
+		projectDir, agentsDir := setup(t)
+
+		// Write a record file with invalid JSON to simulate corruption.
+		crewDir := filepath.Join(projectDir, ".harmonik", "crew")
+		//nolint:gosec // G301: test fixture directory
+		if err := os.MkdirAll(crewDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(crewDir, "corrupt.json"), []byte("{not valid json"), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		_, err := crew.ResolveType(projectDir, agentsDir, "corrupt")
+		if err == nil {
+			t.Fatal("expected error for corrupted record, got nil")
+		}
+		if errors.Is(err, crew.ErrNotFound) {
+			t.Errorf("corrupted record must NOT return ErrNotFound, got %v", err)
+		}
+	})
 }
 
 // TestInvalidNames verifies Write rejects invalid crew names.

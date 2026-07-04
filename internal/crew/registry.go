@@ -234,7 +234,10 @@ func ResolveType(projectDir, agentsDir, name string) (string, error) {
 	// Instance name: look up the crew record.
 	r, err := Load(projectDir, name)
 	if err != nil {
-		return "", fmt.Errorf("crew: resolve type for %q: %w", name, ErrNotFound)
+		if errors.Is(err, ErrNotFound) {
+			return "", fmt.Errorf("crew: resolve type for %q: %w", name, ErrNotFound)
+		}
+		return "", err
 	}
 	return r.EffectiveType(), nil
 }

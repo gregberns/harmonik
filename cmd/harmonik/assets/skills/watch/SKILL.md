@@ -73,9 +73,18 @@ Record every event to the ledger of record: `events.jsonl` already persists even
   "pending_flags": ["<plain-summary>"],
   "immediate_count_since_last_captain_wake": 0,
   "staffing_starvation_streak": 0,
-  "last_captain_staffing_action": "<ISO-8601 or null>"
+  "last_captain_staffing_action": "<ISO-8601 or null>",
+  "pending_paused_queues": {"<qname>": "<first_seen_ISO-8601>"},
+  "keeper_rearm_attempts": {"<crew>": "<attempted_ISO-8601>"}
 }
 ```
+
+**`pending_paused_queues`** tracks queues that ops-monitor has reported as `paused-by-failure` but which have not yet been resolved (resumed). On each ops-monitor report:
+- **Add** any queue newly appearing in the `paused_queues` list (with `first_seen = now`).
+- **Remove** any queue no longer in the `paused_queues` list (it resumed).
+- **Re-escalate** to captain (IMMEDIATE) if any queue has been in `pending_paused_queues` for more than two ops-monitor cadences (~10 min) with no resolution. This closes the P6 latency gap: paused queues were caught ~55 min late because the ops-monitor's 30-min `immediate_cooldown` combined with the crew-online filter could suppress all re-alerts when the crew cycled between online and offline. The watch's independent tracking fires independent of the ops-monitor cooldown.
+
+**`keeper_rearm_attempts`** records when the watch last issued `keeper enable` for a crew (P1 REDIRECT). Used to detect repeated failure on the next ops-monitor tick.
 
 ### Escalations (actionable only — event-driven, no polling)
 Send **only** when a genuine decision is needed:
@@ -101,6 +110,7 @@ The captain **pulls** the digest by reading `.harmonik/watch/latest.json` on its
 |---|---|---|
 | **IMMEDIATE — escalate now** | single-mode, review-bypass, `decision_required` needing judgment, `run_failed` needing captain judgment, crew-failure/kill, captain liveness breach | `comms send --to captain --wake --topic escalation` |
 | **IMMEDIATE — DIRECT bypass (NOT through you)** | daemon-down, supervisor-down, paused-queue | ops-monitor keeps a DIRECT path to captain — you are never in the critical path for "the fleet is down" |
+| **REDIRECT — autonomous first attempt, then escalate on failure** | `keeper-missing:<crew>` (first occurrence, tmux target known) | Issue `keeper enable --agent <crew> --tmux <T> --yes-destructive` or forward to admiral; escalate to captain ONLY on (a) re-arm fails on the next check, OR (b) `no_tmux_target` signal (target unknown — canned re-arm not possible). Record each attempt in `latest.json` under `keeper_rearm_attempts: {crew: ts}` so failure detection works across keeper-restarts. |
 | **PULL-DIGEST (no wake)** | idle-fleet / lull, crew-staleness (slow-recovery) | accumulate into `.harmonik/watch/latest.json`; never timed-send; optionally fold into the next genuine IMMEDIATE |
 | **LEDGER-ONLY (never wake)** | `epic_completed`, routine crew status posts, `run_started`/`run_completed`, `agent_output_chunk`, `metric`, `agent_heartbeat`, `session_keeper_warn`/`cycle_complete` | record cursor advance only |
 
@@ -126,11 +136,12 @@ Old guidance let the watch read `commit_landed:true` and infer the work was on m
 
 **MAY (autonomous):**
 - Record every event to the ledger.
-- Classify event severity (IMMEDIATE / PULL-DIGEST / LEDGER-ONLY).
+- Classify event severity (IMMEDIATE / REDIRECT / PULL-DIGEST / LEDGER-ONLY).
 - Batch and summarize multiple related events into a single escalation message.
 - Nudge a **stale crew** (capture-pane + `comms --wake`) **once** before escalating — after one nudge, escalate to the captain regardless of outcome.
 - De-duplicate redundant events before escalating.
 - Suppress all-green noise (nothing actionable → nothing sent).
+- **Re-arm a missing keeper (REDIRECT)**: when ops-monitor reports `keeper-missing:<crew>` and no prior re-arm attempt has been recorded for that crew in `latest.json`, autonomously issue `keeper enable --agent <crew> --tmux <T> --yes-destructive`. Do NOT wake the captain. Record the attempt under `keeper_rearm_attempts: {crew: ts}` in `latest.json`. On the NEXT ops-monitor report: if the crew still shows `keeper-missing` (re-arm failed), THEN escalate IMMEDIATE to captain. The `no_tmux_target` case (target unknown) is always escalated immediately — the canned command requires a known tmux target.
 
 **MUST escalate (never decides):**
 - **Crew-failure or kill** — you flag it; the captain decides whether to respawn, reassign, or close the lane.

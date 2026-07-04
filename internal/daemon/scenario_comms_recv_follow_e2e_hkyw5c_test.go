@@ -64,18 +64,20 @@ func hkyw5cStartSocket(t *testing.T, hub *SubscribeHub, ch *commsSendHandlerImpl
 		<-done
 	})
 
-	// Wait for socket to bind.
-	deadline := time.Now().Add(3 * time.Second)
+	// Wait until the socket is accepting connections (dial-based, not stat-based).
+	// File-existence alone races: the socket file appears after net.Listen but
+	// before the accept loop starts. A dial confirms the accept loop is live.
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, statErr := os.Stat(sockPath); statErr == nil {
-			break
+		conn, dialErr := net.Dial("unix", sockPath)
+		if dialErr == nil {
+			_ = conn.Close()
+			return sockPath
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
-	if _, statErr := os.Stat(sockPath); statErr != nil {
-		t.Fatalf("hkyw5cStartSocket: socket not ready after 3s: %v", statErr)
-	}
-	return sockPath
+	t.Fatalf("hkyw5cStartSocket: socket not accepting within 5s")
+	return ""
 }
 
 // hkyw5cCommsRecv dials sockPath, sends a comms-recv request for agent, and

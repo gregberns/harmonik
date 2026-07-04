@@ -54,8 +54,12 @@
 # Daemon-written task files in worktrees (hk-ynn8u)
 .harmonik/agent-task*
 
-# Dev tools installed locally (subsystem-organization.md §Decisions #10)
-/.tools/
+# Dev tools installed locally (subsystem-organization.md §Decisions #10).
+# Pattern without trailing slash so git also ignores a worktree-local symlink
+# that productionWorktreeFactory creates to make these tools accessible in
+# worktrees (hk-gb3ln). A trailing slash only matches directories; without it
+# the pattern matches files, symlinks, and directories alike.
+/.tools
 
 # Orchestrator-spawned implementer worktrees (HANDOFF v23 friction note)
 /.claude/worktrees/

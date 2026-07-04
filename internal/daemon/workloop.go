@@ -5119,12 +5119,30 @@ func hasEnabledScheduledJob(s *schedule.Store) bool {
 // worktree under the project's .harmonik/worktrees/ directory and returns the
 // path plus a cleanup function that removes it.
 //
-// Bead ref: hk-kqdpf.1.
+// After the git worktree is ready, it symlinks <projectDir>/.tools into the
+// worktree so that Makefile fmt/lint targets (gci, golangci-lint, gofumpt) can
+// resolve their pinned binaries. .tools/ is gitignored and only installed in the
+// main repo; without this link agents skip formatting silently and codex
+// auto-commits land unchecked (hk-gb3ln). The symlink itself is ignored by
+// /.tools in the root .gitignore (no trailing slash) so git add -A in the
+// worktree never stages it. Creation is best-effort: if .tools/ is absent from
+// projectDir (e.g. a fresh clone without `make tools`) the worktree still
+// launches normally.
+//
+// Bead ref: hk-kqdpf.1, hk-gb3ln.
 func productionWorktreeFactory(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 	if err := workspace.CreateWorktree(ctx, projectDir, runID, headSHA, workspace.NoWorktreeRootOverride()); err != nil {
 		return "", nil, err
 	}
 	wtPath := workspace.WorktreePath(projectDir, runID, workspace.NoWorktreeRootOverride())
+
+	// Symlink .tools from the project root into the worktree so Makefile
+	// fmt/lint targets resolve their pinned binaries (hk-gb3ln).
+	toolsSrc := filepath.Join(projectDir, ".tools")
+	if _, statErr := os.Lstat(toolsSrc); statErr == nil {
+		_ = os.Symlink(toolsSrc, filepath.Join(wtPath, ".tools"))
+	}
+
 	// The cleanup uses background context so removal is attempted even when the
 	// per-bead context has been cancelled (e.g. on daemon shutdown or test
 	// cancellation). This mirrors the intent of the original `defer removeWorktree`

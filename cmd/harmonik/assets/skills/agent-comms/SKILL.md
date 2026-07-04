@@ -221,6 +221,11 @@ Call `join` at session start; call `leave` at clean shutdown. An agent that
 crashes without calling `leave` expires naturally when its last presence beat
 ages past the TTL (~120s).
 
+**Presence-refresh (CRITICAL):** Presence expires ~120s; idle `--follow` does
+NOT refresh it; receiving messages does NOT refresh it. Re-run
+`harmonik comms join` on a ≤90s timer, or send traffic more often — otherwise
+`comms who` will drop you even while your stream is open.
+
 ---
 
 ### `harmonik comms who` — presence registry (no daemon needed)
@@ -298,6 +303,7 @@ cross-reference.)
 - Use `$HARMONIK_AGENT` as identity (already set in the launch environment).
 - Use `--follow` for persistent message loops; without it `recv` is one-shot.
 - Call `comms join` at startup and `comms leave` at clean shutdown.
+- **Refresh presence** — re-run `comms join` on a ≤90s timer; idle `--follow` and receiving do NOT refresh it; presence expires ~120s.
 
 ## What agents MUST NOT do
 

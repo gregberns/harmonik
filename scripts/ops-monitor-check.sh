@@ -1085,12 +1085,31 @@ if watch_info:
         _watch_msg_ts = last_msg_ts.get('watch', 0)
         if _watch_msg_ts and (ts_epoch - _watch_msg_ts) <= crew_msg_active_window:
             _watch_stale = False
-    watch_present = watch_info['online'] and not _watch_stale
+    # hk-8yh32.3 P5a: use absent_thresh directly (not the 120s comms TTL). The watch
+    # beats comms presence every 270s via ScheduleWakeup; gating on 'online' (120s TTL)
+    # marks it absent for the 150s gap between t+120 and t+270, causing false watch-down
+    # between beats. Use the operator-configured watch_absent_thresh (must be > 270s) as
+    # the sole staleness gate so the watch reads as present across its full beat cycle.
+    watch_present = not _watch_stale
+# hk-8yh32.3 P5b: compute restart-suppressed early so watch_down can also suppress
+# during the post-join boot warmup window. Previously only watch_stalled used this;
+# extending it to watch_down eliminates the one-tick false-positive at boot when the
+# watch session has not yet joined comms (tmux session absent or fresh).
+watch_recently_restarted = (
+    watch_session_created > 0
+    and 0 <= ts_epoch - watch_session_created <= watch_restart_suppress_window)
+daemon_recently_restarted = (
+    daemon_restart_ts > 0
+    and 0 <= ts_epoch - daemon_restart_ts <= watch_restart_suppress_window)
+watch_restart_suppressed = watch_recently_restarted or daemon_recently_restarted
 # watch_down requires BOTH comms absence AND no tmux session (WE9 dual-probe, mirror of
 # captain_down :773). A process pinned on the bus still refreshes last_seen while
 # buffering every escalation — last_seen alone is insufficient (design §5).
 # Only fires when watch is the routing target (opsmonitor_target != 'captain').
-watch_down = watch_opsmonitor_target != 'captain' and not watch_present and not watch_tmux_alive
+# hk-8yh32.3 P5b: additionally suppress during post-join boot warmup window so a
+# one-tick gap at deploy time does not generate false watch-down immediates.
+watch_down = (watch_opsmonitor_target != 'captain' and not watch_present
+              and not watch_tmux_alive and not watch_restart_suppressed)
 
 # ── WE9: cursor-advancement stall check ─────────────────────────────────────
 # A watch alive but not advancing its escalation cursor while ESCALATION-WORTHY
@@ -1108,20 +1127,14 @@ watch_down = watch_opsmonitor_target != 'captain' and not watch_present and not 
 # is sitting past the cursor unescalated. Benign churn no longer trips the counter.
 new_watch_stall_misses = 0
 watch_stalled = False
-# hk-7o4i0 Fix B: deploy/restart suppression. While the watch is BOOTING — its tmux
-# session (re)started within watch_restart_suppress_window, OR the daemon emitted a
-# restart/startup marker that recently — its escalation cursor is frozen because it is
-# coming up, not because it is stalled. Suppress watch-stalled (and hold the miss counter
-# at 0) for that window so a post-deploy actionable backlog past the frozen cursor does
-# not storm. The counter resets, so after the window it takes watch_stall_ticks fresh
+# hk-7o4i0 Fix B / hk-8yh32.3 P5b: deploy/restart suppression. watch_restart_suppressed
+# is computed above (shared by watch_down and watch_stalled). While the watch is BOOTING
+# — its tmux session (re)started within watch_restart_suppress_window, OR the daemon
+# emitted a restart/startup marker that recently — its escalation cursor is frozen because
+# it is coming up, not because it is stalled. Suppress watch-stalled (and hold the miss
+# counter at 0) for that window so a post-deploy actionable backlog past the frozen cursor
+# does not storm. The counter resets, so after the window it takes watch_stall_ticks fresh
 # frozen ticks to (re)trip — a real post-boot stall is still caught.
-watch_recently_restarted = (
-    watch_session_created > 0
-    and 0 <= ts_epoch - watch_session_created <= watch_restart_suppress_window)
-daemon_recently_restarted = (
-    daemon_restart_ts > 0
-    and 0 <= ts_epoch - daemon_restart_ts <= watch_restart_suppress_window)
-watch_restart_suppressed = watch_recently_restarted or daemon_recently_restarted
 if watch_opsmonitor_target != 'captain' and watch_cursor:
     cursor_frozen = prev_watch_cursor != '' and watch_cursor == prev_watch_cursor
     if cursor_frozen and actionable_events_past_cursor and not watch_restart_suppressed:

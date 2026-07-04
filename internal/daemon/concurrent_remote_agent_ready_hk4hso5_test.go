@@ -60,6 +60,7 @@ func (a *remoteAgentReadyFixtureAdapter) ProbeTmux(_ context.Context) error { re
 func (a *remoteAgentReadyFixtureAdapter) ListSessions(_ context.Context) ([]string, error) {
 	return nil, nil
 }
+
 func (a *remoteAgentReadyFixtureAdapter) ListWindows(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
@@ -91,18 +92,23 @@ func (a *remoteAgentReadyFixtureAdapter) KillSession(_ context.Context, _ string
 func (a *remoteAgentReadyFixtureAdapter) LoadBuffer(_ context.Context, _ string, _ []byte) error {
 	return nil
 }
+
 func (a *remoteAgentReadyFixtureAdapter) PasteBuffer(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *remoteAgentReadyFixtureAdapter) SendKeysLiteral(_ context.Context, _, _ string) error {
 	return nil
 }
+
 func (a *remoteAgentReadyFixtureAdapter) SendKeysEnter(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *remoteAgentReadyFixtureAdapter) SendKeysQuit(_ context.Context, _ string) error {
 	return nil
 }
+
 func (a *remoteAgentReadyFixtureAdapter) WriteToPane(_ context.Context, _, _ string, _ []byte) error {
 	return nil
 }

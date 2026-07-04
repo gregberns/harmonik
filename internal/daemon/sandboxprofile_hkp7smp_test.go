@@ -4,10 +4,11 @@ package daemon_test
 //
 // Key invariants tested:
 //   W1: allowWrite contains EXACTLY the mandated set (worktree, git worktree metadata,
-//       git objects, branch ref, packed-refs, tmp dirs, private caches).
+//       git objects, branch ref dir, packed-refs, reflog dir, tmp dirs, private caches).
 //   W2: All paths in allowWrite are LITERAL (no "*", "{", "?", or "[" characters).
-//   W3: When BranchName is set, allowWrite includes <gitDir>/refs/heads/<branch>
-//       (tight scope) rather than the broader <gitDir>/refs/heads/ subtree.
+//   W3: When BranchName is set, allowWrite includes the DIRECTORY containing the ref
+//       (filepath.Dir(<gitDir>/refs/heads/<branch>)) — not the exact ref file — so
+//       git can create <ref>.lock as a sibling during commit.
 //   W4: When BranchName is empty, allowWrite includes <gitDir>/refs/heads/ subtree.
 //   W5: Shared read caches appear in allowRead, NOT in allowWrite.
 //   W6: enableWeakerNetworkIsolation is always false.
@@ -121,6 +122,7 @@ func TestSandboxProfile_AllowWriteExactSet(t *testing.T) {
 	allowWrite := stringSlice(t, fs["allowWrite"], "allowWrite")
 
 	// Mandated entries (W1).
+	// BranchName = "run/0196f000-..." → dir = "/repo/.git/refs/heads/run"
 	mandated := []struct {
 		desc string
 		path string
@@ -128,8 +130,10 @@ func TestSandboxProfile_AllowWriteExactSet(t *testing.T) {
 		{"run worktree checkout", in.WorktreePath},
 		{"git worktree metadata", "/repo/.git/worktrees/" + in.RunID},
 		{"shared git objects", "/repo/.git/objects"},
-		{"branch ref (tight scope)", "/repo/.git/refs/heads/" + in.BranchName},
+		{"branch ref dir (tight scope)", "/repo/.git/refs/heads/run"},
 		{"packed-refs", "/repo/.git/packed-refs"},
+		{"packed-refs lock", "/repo/.git/packed-refs.lock"},
+		{"reflog dir (tight scope)", "/repo/.git/logs/refs/heads/run"},
 		{"tmpdir /tmp", "/tmp"},
 		{"tmpdir /private/tmp", "/private/tmp"},
 		{"private cache", "/repo/.harmonik/worktrees/0196f000-0000-7000-8000-000000000001/.cache"},
@@ -172,9 +176,10 @@ func TestSandboxProfile_BranchRefTightScope(t *testing.T) {
 	fs := fsSection(t, m)
 	allowWrite := stringSlice(t, fs["allowWrite"], "allowWrite")
 
-	tightRef := "/repo/.git/refs/heads/run/0196f000-0000-7000-8000-000000000001"
-	if !containsPath(allowWrite, tightRef) {
-		t.Errorf("hk-p7smp W3: allowWrite missing tight branch ref %q (got %v)", tightRef, allowWrite)
+	// "run/0196f000-..." → dir = "refs/heads/run" (tight: excludes other namespaces)
+	tightDir := "/repo/.git/refs/heads/run"
+	if !containsPath(allowWrite, tightDir) {
+		t.Errorf("hk-p7smp W3: allowWrite missing tight branch-ref dir %q (got %v)", tightDir, allowWrite)
 	}
 	// The broader heads/ subtree MUST NOT appear when the branch name is known.
 	broaderRef := "/repo/.git/refs/heads"

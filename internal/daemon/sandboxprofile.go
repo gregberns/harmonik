@@ -11,9 +11,11 @@ package daemon
 //   - The run worktree checkout directory.
 //   - The git worktree metadata entry (<gitDir>/worktrees/<runID>/).
 //   - The shared git object store (<gitDir>/objects/).
-//   - The run branch's ref path (<gitDir>/refs/heads/<branchName> when known;
-//     <gitDir>/refs/heads/ subtree as fallback when branch name is unknown).
-//   - <gitDir>/packed-refs (single file; git uses this when refs are packed).
+//   - The directory containing the run branch's ref (<gitDir>/refs/heads/<dir>/
+//     for namespaced branches; <gitDir>/refs/heads/ as both the path and the
+//     fallback for flat branch names).  The directory (not the ref file) is
+//     required because git creates <ref>.lock as a sibling during commit.
+//   - <gitDir>/packed-refs and <gitDir>/packed-refs.lock (git pack-refs atomic pair).
 //   - OS temp directories (TmpDirs).
 //   - Per-run private cache areas (PrivateWriteCacheDirs — never shared).
 //
@@ -123,9 +125,9 @@ type srtSettings struct {
 //   - WorktreePath (run checkout)
 //   - <GitDir>/worktrees/<RunID>/ (git worktree metadata)
 //   - <GitDir>/objects/ (shared git object store)
-//   - <GitDir>/refs/heads/<BranchName> when BranchName is set (tightest scope),
-//     or <GitDir>/refs/heads/ subtree as fallback
-//   - <GitDir>/packed-refs (packed refs support)
+//   - directory containing the run branch ref: filepath.Dir(<GitDir>/refs/heads/<BranchName>)
+//     when BranchName is set, or <GitDir>/refs/heads/ as fallback
+//   - <GitDir>/packed-refs and <GitDir>/packed-refs.lock (atomic update pair)
 //   - TmpDirs (OS temp directories)
 //   - PrivateWriteCacheDirs (per-run private cache areas)
 //
@@ -166,17 +168,30 @@ func GenerateSandboxProfile(in SandboxProfileInput) ([]byte, error) {
 	// 3. Shared git object store (blobs, trees, commits — content-addressed).
 	allowWrite = append(allowWrite, filepath.Join(in.GitDir, "objects"))
 
-	// 4. Branch ref path — scoped as tightly as possible.
-	//    With a known branch name: single literal file path.
-	//    Without: the heads/ subtree (coarser but still excludes tags/, remotes/).
+	// 4. Branch ref directory — git creates <ref>.lock as a sibling of the ref
+	//    file during commit (not inside it), so we need the DIRECTORY containing
+	//    the ref, not the ref file itself.  For a branch like "run/abc" the
+	//    directory is refs/heads/run/; for a flat branch like "main" it equals
+	//    refs/heads/ (same as the no-name fallback).
 	if in.BranchName != "" {
-		allowWrite = append(allowWrite, filepath.Join(in.GitDir, "refs", "heads", in.BranchName))
+		allowWrite = append(allowWrite, filepath.Dir(filepath.Join(in.GitDir, "refs", "heads", in.BranchName)))
 	} else {
 		allowWrite = append(allowWrite, filepath.Join(in.GitDir, "refs", "heads"))
 	}
 
-	// 5. Packed-refs file — a single file git updates when refs are packed.
+	// 5. Packed-refs file and its lock sibling (created atomically by git pack-refs).
 	allowWrite = append(allowWrite, filepath.Join(in.GitDir, "packed-refs"))
+	allowWrite = append(allowWrite, filepath.Join(in.GitDir, "packed-refs.lock"))
+
+	// 5a. Reflog directory for the branch.  Git appends a log entry to
+	//     logs/refs/heads/<branch> on every commit; we need write access to
+	//     the directory containing that file (not just the file itself, so new
+	//     entries for sub-branches can be created).
+	if in.BranchName != "" {
+		allowWrite = append(allowWrite, filepath.Dir(filepath.Join(in.GitDir, "logs", "refs", "heads", in.BranchName)))
+	} else {
+		allowWrite = append(allowWrite, filepath.Join(in.GitDir, "logs", "refs", "heads"))
+	}
 
 	// 6. OS temp directories.
 	allowWrite = append(allowWrite, in.TmpDirs...)

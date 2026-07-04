@@ -282,8 +282,8 @@ func TestMarkerChecker_UnrelatedEventNoViolation(t *testing.T) {
 	}
 
 	ev := markerEvent(t, "epic_completed", map[string]any{
-		"from":  "admiral",
-		"epic":  "hk-abc",
+		"from": "admiral",
+		"epic": "hk-abc",
 	})
 
 	if reminder := mc.Check(ev); reminder != "" {

@@ -142,7 +142,9 @@ func TestKeeperStatuslineScript_WithTokenCounts(t *testing.T) {
 }
 
 // TestKeeperStatuslineScript_1MModelInference verifies that the script infers
-// window_size=1000000 when the model contains "[1m]" and context_window_size is absent.
+// the effective window_size (500k by default) when the model contains "[1m]" and
+// context_window_size is absent, and recomputes pct relative to that effective window
+// so the keeper's pct guard fires at the correct fill level (hk-d8dj0).
 func TestKeeperStatuslineScript_1MModelInference(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available; skipping script test")
@@ -180,14 +182,16 @@ func TestKeeperStatuslineScript_1MModelInference(t *testing.T) {
 		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
 	}
 
-	if cf.Pct != 15.0 {
-		t.Errorf("pct = %v; want 15.0", cf.Pct)
+	// pct is recomputed as tokens/effective_window: 150000/500000*100 = 30.
+	if cf.Pct != 30.0 {
+		t.Errorf("pct = %v; want 30.0 (150000/500000*100, effective fill)", cf.Pct)
 	}
 	if cf.Tokens != 150000 {
 		t.Errorf("tokens = %d; want 150000", cf.Tokens)
 	}
-	if cf.WindowSize != 1000000 {
-		t.Errorf("window_size = %d; want 1000000 (inferred from [1m] model)", cf.WindowSize)
+	// Default effective fraction 0.5 → floor(1000000*0.5) = 500000.
+	if cf.WindowSize != 500000 {
+		t.Errorf("window_size = %d; want 500000 (effective [1m] window, hk-d8dj0)", cf.WindowSize)
 	}
 }
 
@@ -237,8 +241,8 @@ func TestKeeperStatuslineScript_EnvWindowSizeOverride(t *testing.T) {
 }
 
 // TestKeeperStatuslineScript_1MModelObjectFormInference verifies that the script infers
-// window_size=1000000 when .model is a nested {id, display_name} object and the id
-// contains "[1m]" (the object form used by newer Claude Code versions).
+// the effective window_size (500k) when .model is a nested {id, display_name} object
+// and the id contains "[1m]" (the object form used by newer Claude Code versions).
 func TestKeeperStatuslineScript_1MModelObjectFormInference(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available; skipping script test")
@@ -277,11 +281,16 @@ func TestKeeperStatuslineScript_1MModelObjectFormInference(t *testing.T) {
 		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
 	}
 
-	if cf.WindowSize != 1000000 {
-		t.Errorf("window_size = %d; want 1000000 (inferred from nested model.id containing [1m])", cf.WindowSize)
+	// Default effective fraction 0.5 → floor(1000000*0.5) = 500000.
+	if cf.WindowSize != 500000 {
+		t.Errorf("window_size = %d; want 500000 (effective [1m] window, hk-d8dj0)", cf.WindowSize)
 	}
 	if cf.Tokens != 120000 {
 		t.Errorf("tokens = %d; want 120000", cf.Tokens)
+	}
+	// pct recomputed: 120000/500000*100 = 24.
+	if cf.Pct != 24.0 {
+		t.Errorf("pct = %v; want 24.0 (120000/500000*100, effective fill)", cf.Pct)
 	}
 }
 
@@ -331,6 +340,114 @@ func TestKeeperStatuslineScript_NestedContextWindowSize(t *testing.T) {
 	}
 	if cf.Tokens != 250000 {
 		t.Errorf("tokens = %d; want 250000", cf.Tokens)
+	}
+}
+
+// TestKeeperStatuslineScript_1M_EffectivePct verifies the hk-d8dj0 fix: a [1m] session
+// at 372k tokens reports pct ~74.4 (tokens/500k*100) and window_size=500k, not the
+// Claude-Code-reported 37.2 (tokens/1M*100). This is the concrete scenario that caused
+// admiral to run keeper-less to 372k: with window=1M the pct guard (cf.Pct < 80%)
+// always evaluated TRUE (37.2 < 80), so warn/act never fired despite tokens > 200k abs.
+func TestKeeperStatuslineScript_1M_EffectivePct(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping script test")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available; skipping script test")
+	}
+
+	script := repoScriptPath(t)
+	projectDir := t.TempDir()
+
+	// 372k tokens; Claude Code reports 37.2% against the nominal 1M window.
+	// After the fix: pct = 372000/500000*100 = 74.4, window_size = 500000.
+	sampleJSON := `{"session_id":"1m-effective-pct","model":"claude-opus-4-8 [1m]","context_window":{"used_percentage":37.2,"total_input_tokens":372000}}`
+
+	cmd := exec.Command("bash", script)
+	cmd.Env = append(os.Environ(),
+		"HARMONIK_PROJECT="+projectDir,
+		"HARMONIK_AGENT=effective-pct-agent",
+	)
+	cmd.Stdin = strings.NewReader(sampleJSON)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script exited with error: %v\noutput: %s", err, out)
+	}
+
+	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "effective-pct-agent.ctx")
+	raw, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
+	}
+
+	var cf keeper.CtxFile
+	if err := json.Unmarshal(raw, &cf); err != nil {
+		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
+	}
+
+	if cf.WindowSize != 500000 {
+		t.Errorf("window_size = %d; want 500000 (effective [1m] window)", cf.WindowSize)
+	}
+	if cf.Tokens != 372000 {
+		t.Errorf("tokens = %d; want 372000", cf.Tokens)
+	}
+	// pct must reflect the effective window, not the nominal 1M:
+	// 372000 / 500000 * 100 = 74.4. Tolerance ±0.1 for floating-point representation.
+	const wantPct = 74.4
+	if cf.Pct < wantPct-0.1 || cf.Pct > wantPct+0.1 {
+		t.Errorf("pct = %v; want ~%.1f (372000/500000*100, effective fill — must not be 37.2)", cf.Pct, wantPct)
+	}
+}
+
+// TestKeeperStatuslineScript_1M_FractionOverride verifies that
+// HARMONIK_KEEPER_1M_EFFECTIVE_FRACTION overrides the default 0.5 fraction, allowing
+// operators to tune the effective window without a code change.
+func TestKeeperStatuslineScript_1M_FractionOverride(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available; skipping script test")
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available; skipping script test")
+	}
+
+	script := repoScriptPath(t)
+	projectDir := t.TempDir()
+
+	// 600k tokens; with fraction=0.6 → effective window = floor(1M*0.6) = 600000.
+	sampleJSON := `{"session_id":"fraction-override","model":"claude-opus-4-8 [1m]","context_window":{"used_percentage":60.0,"total_input_tokens":600000}}`
+
+	cmd := exec.Command("bash", script)
+	cmd.Env = append(os.Environ(),
+		"HARMONIK_PROJECT="+projectDir,
+		"HARMONIK_AGENT=fraction-agent",
+		"HARMONIK_KEEPER_1M_EFFECTIVE_FRACTION=0.6",
+	)
+	cmd.Stdin = strings.NewReader(sampleJSON)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script exited with error: %v\noutput: %s", err, out)
+	}
+
+	ctxPath := filepath.Join(projectDir, ".harmonik", "keeper", "fraction-agent.ctx")
+	raw, err := os.ReadFile(ctxPath)
+	if err != nil {
+		t.Fatalf("ctx file not created at %q: %v", ctxPath, err)
+	}
+
+	var cf keeper.CtxFile
+	if err := json.Unmarshal(raw, &cf); err != nil {
+		t.Fatalf("ctx file is not valid JSON: %v\ncontent: %s", err, raw)
+	}
+
+	// floor(1000000 * 0.6) = 600000
+	if cf.WindowSize != 600000 {
+		t.Errorf("window_size = %d; want 600000 (floor(1M*0.6))", cf.WindowSize)
+	}
+	// pct = 600000/600000*100 = 100 (clamped)
+	if cf.Pct != 100.0 {
+		t.Errorf("pct = %v; want 100.0 (600000/600000*100, clamped to 100)", cf.Pct)
 	}
 }
 

@@ -28,6 +28,12 @@
 # Environment
 #   HARMONIK_PROJECT   Absolute path to the project root (fallback: $PWD).
 #   HARMONIK_AGENT     Agent name to namespace the .ctx file (fallback: "default").
+#   HARMONIK_KEEPER_1M_EFFECTIVE_FRACTION
+#                      Effective fraction of the nominal 1M context window for [1m]
+#                      models (default: 0.5, i.e. ~500k tokens). window_size is set to
+#                      floor(1000000 * fraction) and pct is recomputed as tokens/window
+#                      so the keeper's pct guard fires at the correct fill level instead
+#                      of the nominal-1M under-reported value (hk-d8dj0).
 #
 # Output
 #   Atomically writes (via a rename-to-final) to:
@@ -104,7 +110,22 @@ if [ "${WINDOW_SIZE}" -eq 0 ]; then
             else ((.model.id // "") + " " + (.model.display_name // ""))
             end' 2>/dev/null || true)"
         if printf '%s' "${MODEL_STR}" | grep -qF '[1m]'; then
-            WINDOW_SIZE=1000000
+            # Compute effective window as a fraction of the nominal 1M (hk-d8dj0).
+            # The keeper's pct guard (cf.Pct < WarnPct) is a NECESSARY condition for
+            # warn/act to fire. Claude Code reports pct = tokens/1M, so a session at
+            # 372k tokens reads as 37% — permanently below the 80% WarnPct — even
+            # though tokens (372k) already exceed the abs warn threshold (200k).
+            # Expressing the window as floor(1M * fraction) lets operators tune the
+            # effective size via env without a code change.
+            _1M_FRACTION="${HARMONIK_KEEPER_1M_EFFECTIVE_FRACTION:-0.5}"
+            WINDOW_SIZE="$(awk "BEGIN {printf \"%d\n\", 1000000 * ${_1M_FRACTION}}")"
+            # Recompute pct relative to the effective window so the pct guard fires at
+            # the correct fill level. Skip when TOKENS==0 (older Claude Code that omits
+            # total_input_tokens); in that case pct-only gating still uses the original
+            # used_percentage from the payload.
+            if [ "${TOKENS}" -gt 0 ]; then
+                PCT="$(jq -rn "${TOKENS} / ${WINDOW_SIZE} * 100 | [., 100] | min")"
+            fi
         fi
     fi
 fi

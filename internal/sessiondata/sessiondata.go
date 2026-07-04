@@ -143,6 +143,7 @@ type CollectParams struct {
 	Harness           string // resolved agent type (e.g. "claude-code", "pi", "codex")
 	Model             string // effective model string (empty for codex)
 	Success           bool
+	CommitSHA         string // HEAD SHA of the run branch after a successful commit (empty on failure)
 	StartedAt         time.Time
 	EndedAt           time.Time
 	ProjectDir        string
@@ -220,6 +221,7 @@ func Collect(p CollectParams) error {
 		Harness:       p.Harness,
 		Model:         p.Model,
 		Success:       p.Success,
+		CommitSHA:     p.CommitSHA,
 		StartedAt:     startedAt.UTC().Format(time.RFC3339),
 		EndedAt:       endedAt.UTC().Format(time.RFC3339),
 		WallTimeS:     wallTimeS,

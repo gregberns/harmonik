@@ -2834,6 +2834,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		if queueID != nil {
 			sdQID = *queueID
 		}
+		sdCommitSHA := ""
+		if runTipSHA != nil {
+			sdCommitSHA = *runTipSHA
+		}
 		go func() { //nolint:errcheck // best-effort; see comment above.
 			_ = sessiondata.Collect(sessiondata.CollectParams{
 				RunID:             runID.String(),
@@ -2842,6 +2846,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				Harness:           sdHarness,
 				Model:             sdModel,
 				Success:           success,
+				CommitSHA:         sdCommitSHA,
 				StartedAt:         sdStartedAt,
 				EndedAt:           sdEndedAt,
 				ProjectDir:        deps.projectDir,

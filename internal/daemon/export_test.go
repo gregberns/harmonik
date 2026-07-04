@@ -2527,6 +2527,12 @@ func ExportedPiHarnessBaseURLFields(h *PiHarness) (baseURL, api string) {
 	return h.baseURL, h.api
 }
 
+// ExportedEffectiveModel exposes effectiveModel for tests in package daemon_test.
+// Bead ref: hk-7z6l8.
+func ExportedEffectiveModel(h handlercontract.Harness, model string) string {
+	return effectiveModel(h, claudeRunCtx{model: model})
+}
+
 // ExportedPiProcessExitLaunchSpecBuilder returns a launchSpecBuilder that
 // produces a handler.LaunchSpec for the provided shell script and stamps
 // resolvedAgentType = core.AgentTypePi on the returned artifacts.

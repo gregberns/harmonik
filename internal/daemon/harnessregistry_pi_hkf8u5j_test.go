@@ -104,3 +104,60 @@ func TestHarnessRegistry_PiHarness_EmptyConfig_FieldsEmpty(t *testing.T) {
 		t.Errorf("PiHarness.apiKeyEnv = %q; want empty when config absent", apiKeyEnv)
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// effectiveModel — override-with-fallback (hk-7z6l8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestEffectiveModel_Pi_RcModelOverride verifies that effectiveModel returns
+// rc.model when it is non-empty, even when the PiHarness has its own model set.
+// This is the override half of the fix (hk-7z6l8).
+func TestEffectiveModel_Pi_RcModelOverride(t *testing.T) {
+	t.Parallel()
+
+	piCfg := daemon.PiHarnessConfig{
+		Provider:  "openrouter",
+		Model:     "openrouter/qwen/qwen3-coder",
+		APIKeyEnv: "OPENROUTER_API_KEY",
+	}
+	reg, err := daemon.ExportedNewHarnessRegistryWithPi(piCfg)
+	if err != nil {
+		t.Fatalf("ExportedNewHarnessRegistryWithPi: %v", err)
+	}
+	h, err := reg.ForAgent(core.AgentTypePi)
+	if err != nil {
+		t.Fatalf("ForAgent(pi): %v", err)
+	}
+
+	const rcModel = "openrouter/anthropic/claude-opus-4"
+	got := daemon.ExportedEffectiveModel(h, rcModel)
+	if got != rcModel {
+		t.Errorf("effectiveModel(pi, rc.model=%q) = %q; want rc.model as override", rcModel, got)
+	}
+}
+
+// TestEffectiveModel_Pi_ConfigFallback verifies that effectiveModel returns
+// piH.model when rc.model is empty — the config fallback half of the fix (hk-7z6l8).
+func TestEffectiveModel_Pi_ConfigFallback(t *testing.T) {
+	t.Parallel()
+
+	const configModel = "openrouter/qwen/qwen3-coder"
+	piCfg := daemon.PiHarnessConfig{
+		Provider:  "openrouter",
+		Model:     configModel,
+		APIKeyEnv: "OPENROUTER_API_KEY",
+	}
+	reg, err := daemon.ExportedNewHarnessRegistryWithPi(piCfg)
+	if err != nil {
+		t.Fatalf("ExportedNewHarnessRegistryWithPi: %v", err)
+	}
+	h, err := reg.ForAgent(core.AgentTypePi)
+	if err != nil {
+		t.Fatalf("ForAgent(pi): %v", err)
+	}
+
+	got := daemon.ExportedEffectiveModel(h, "" /* empty rc.model → fallback */)
+	if got != configModel {
+		t.Errorf("effectiveModel(pi, rc.model=%q) = %q; want config model %q as fallback", "", got, configModel)
+	}
+}

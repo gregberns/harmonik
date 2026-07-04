@@ -72,10 +72,14 @@ func newHarnessRegistry(piCfg PiHarnessConfig) (*handlercontract.HarnessRegistry
 //
 //   - Claude / Codex: rc.model (Claude = DOT node model= attr or run-level
 //     default; Codex = empty, not harmonik-controlled).
-//   - Pi: h.(*PiHarness).model (from harnesses.pi.model config) — Pi ignores
-//     rc.model in its LaunchSpec and uses its own config field.
+//   - Pi: rc.model when non-empty (per-run override), else h.(*PiHarness).model
+//     (harnesses.pi.model config fallback) — same override-with-fallback pattern
+//     as PiHarness.LaunchSpec and the claude harness.
 func effectiveModel(h handlercontract.Harness, rc claudeRunCtx) string {
 	if piH, ok := h.(*PiHarness); ok {
+		if rc.model != "" {
+			return rc.model
+		}
 		return piH.model
 	}
 	return rc.model

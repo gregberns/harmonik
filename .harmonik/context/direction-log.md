@@ -12,6 +12,32 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-07-04 ~17:00Z — operator (via admiral) · expires: 2026-07-08
+WHAT: Day's operating posture (medium-term, 5 parts). (1) AGENT-MANIFEST: roll out + STABILIZE by ~noon PDT
+      (19:00Z). Remediation epic hk-bl93n is 3/4 landed (skill-bodies f8f09a28, manifest-fields 2a5ff76d,
+      comms-instructions in flight); GATE = crew-boot wiring hk-ncg9m (wire `start crew` -> `agent brief`)
+      still in flight w/ jessica — throw MORE crews at it if it stalls. THEN verify a real crew boots from
+      soul.md + run the behavior observation (plans/2026-07-04-agent-manifest-rollout-retro). (2) THROUGHPUT:
+      keep the system running 5-10 jobs CONCURRENTLY — raise daemon max_concurrent 4->10 (config.yaml:33
+      durable) AND lift the spawn cap (live `set-concurrency 10` currently returns spawn_cap_exceeded); fill
+      slots from the READY backlog. (3) MODEL SPREAD (intelligent, a little each): Claude + Codex run
+      CONCURRENTLY via per-bead `harness:` label. dgx/ornith is LIVE + VERIFIED (ssh gb@dgx OK + curl
+      http://dgx.local:8551/v1/models returns model `ornith`, 2026-07-04 — NOT gated, the old SSH-gate is
+      CLEARED). NOTE the Pi harness is currently ONE model daemon-global per pass (MiniMax openrouter
+      minimax/minimax-m3 vs dgx/ornith), so today they rotate; whether that single-model limit is config-only
+      or a systematic restriction is UNDER INVESTIGATION (operator: mid-priority; problematic if systematic).
+      (4) REMOTE gb-mbp: bring it back online SAFELY — captain disabled it TODAY 17:14Z after the idle-hang/
+      launch-gap RECURRED (4 runs silent 18-60m); root-cause + serialized quiet-window re-validate BEFORE
+      volume. (5) FOCUS: finish partially-complete epics before opening NEW initiatives (many open P1/P2 half-done).
+WHY:  operator wants sustained multi-model throughput at 5-10 concurrency, the manifest actually reaching
+      crews, existing initiatives DRAINED rather than more started, and dgx/ornith in the model mix now.
+ORDER: manifest gate hk-ncg9m -> raise concurrency+spawn-cap & fill slots (Claude || Codex) -> gb-mbp safe
+       re-validate -> dgx/ornith into Pi rotation (unblocked) + investigate the single-model limit (mid-pri)
+       -> observation scoring. Finish-before-start throughout.
+RETURN-PATH: directed captain over comms (topic directive). Resume by checking: crew boots from soul.md?
+      max_concurrent=10 + 5-10 active? Claude+Codex both dispatching? gb-mbp re-validated? dgx in rotation?
+      Pi single-model verdict in? partial-epic burn-down vs new-epic starts. Full state in HANDOFF-admiral.md.
+
 ## 2026-07-03 ~10:30Z — operator (via admiral) · expires: 2026-07-07
 WHAT: Pi+DGX ornith PROVEN (operator thrilled). Two tracks now: (A) CAPTAIN OWNS the granular end-to-end +
       sandbox close-out (operator: 'push it all onto the captain') — fix Claude-reviewer ErrMalformed (e2e

@@ -85,9 +85,10 @@ func TestWatchDownInFlapRetain_SOAK3_P7(t *testing.T) {
 }
 
 // TestWatchZombieSignal_SOAK3_P8 asserts that ops-monitor-check.sh:
-//   (a) includes 'watch-zombie' in FLAP_RETAIN_PREFIXES,
-//   (b) includes 'watch-zombie' in CRITICAL_PREFIXES (5-min re-alert cadence),
-//   (c) normalises the 'watch-zombie:silent=<N>s' dynamic suffix in _dedup_key.
+//
+//	(a) includes 'watch-zombie' in FLAP_RETAIN_PREFIXES,
+//	(b) includes 'watch-zombie' in CRITICAL_PREFIXES (5-min re-alert cadence),
+//	(c) normalises the 'watch-zombie:silent=<N>s' dynamic suffix in _dedup_key.
 //
 // (RED until P8 is fixed.)
 func TestWatchZombieSignal_SOAK3_P8(t *testing.T) {
@@ -131,9 +132,10 @@ func TestWatchZombieSignal_SOAK3_P8(t *testing.T) {
 }
 
 // TestWatchZombieCarryForward_SOAK3_P9 asserts that ops-monitor-check.sh:
-//   (a) loads last_watch_msg_ts from state.json (PREV_LAST_WATCH_MSG_TS),
-//   (b) initialises the Python variable to the carry-forward value before the events scan,
-//   (c) saves last_watch_msg_ts to new_state so it persists across ticks.
+//
+//	(a) loads last_watch_msg_ts from state.json (PREV_LAST_WATCH_MSG_TS),
+//	(b) initialises the Python variable to the carry-forward value before the events scan,
+//	(c) saves last_watch_msg_ts to new_state so it persists across ticks.
 //
 // Without carry-forward, a zombie silent for >256KB of events has last_watch_msg_ts==0
 // and the zombie check mistakenly treats it as a fresh session (not yet a zombie).

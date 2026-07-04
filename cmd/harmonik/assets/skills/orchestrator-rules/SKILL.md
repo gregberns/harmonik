@@ -156,6 +156,10 @@ Act on the **boot-digest's live numbers**, never on a claim carried in a doc or 
 
 > **Project-only override.** This corrects the `feedback_captain_lean_while_operator_away` memory note's over-read ("away → HOLD ready work") at the project layer. Do NOT amend the cross-project `~/.claude/CLAUDE.md`.
 
+### Daemon restart/redeploy is self-authorized — never operator-gated
+
+**The captain and admiral restart/redeploy the daemon on their OWN authority.** It is routine, self-authorized work — NOT operator-gated, NOT a "destructive op," NOT a "surface-and-await" item. They coordinate but NEVER ask permission: announce over comms (especially during an active fan-out); pick a true lull so an in-flight bead isn't stranded; if the supervisor is actively reviving, let it win; if the supervisor is confirmed dead, restart the daemon yourself; disable the operator's in-use worker box first only if the redeploy touches that shared machine. These are TIMING/COORDINATION conditions, not a gate. "Destructive op" (the operator-only escalate-first class) means force-push, `branch -D` on shared refs, `rm -rf`, `--no-verify` on shared history — a daemon restart/redeploy is NOT one of them.
+
 ## Review and quality gates
 
 **REVIEW GATE IS NOT OPTIONAL.** Before merging substantive work, a separate reviewer (or a fresh-context re-read) must approve. Anything beyond a typo / one-line fix gets the gate.

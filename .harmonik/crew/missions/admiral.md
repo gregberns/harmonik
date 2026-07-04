@@ -210,6 +210,9 @@ ownership):
   **ranking a brand-NEW initiative never recorded in any durable doc and never ranked**
   (NOT a parked/drained KNOWN lane), reversing a locked decision, or a destructive op →
   escalate to operator with concrete options + each option's consequence. Then STOP.
+  ("Destructive op" = force-push, `branch -D` on shared refs, `rm -rf`, `--no-verify`
+  on shared history. A daemon restart/redeploy is NOT one — it's routine self-authorized
+  work the captain/admiral do on their own authority; see orchestrator-rules §Autonomy.)
 
 **(E) STOP.** Do not narrate a clean audit beyond the one-line status. Do not poll
 between fires. The `/loop 1h` re-fires you in an hour.

@@ -196,11 +196,15 @@ The intersection of columns 2–4 classifies each crew (Step 3).
 If `queue status` / `subscribe` / any `crew`/`comms send` RPC returns **exit 17**:
 the daemon is down. The supervisor (`hk-daemon-supervise` tmux session) usually
 auto-revives it — restart-backoff can delay socket-bind 30s–1m+, so "(no socket)"
-right after a deploy is EXPECTED. Do NOT pile on kills and do NOT hand-launch a
-daemon (races the pidfile, you get the supervisor's copy too). SURFACE
-"daemon not running; awaiting supervisor revive" to the operator, wait, re-check.
-The local reads (`crew list`, `comms who`, `comms log`) still work daemon-down —
-use them to report state. Do NOT spawn or mail until the daemon is back.
+right after a deploy is EXPECTED. If the supervisor is actively reviving, don't
+pile on kills or hand-launch a daemon (races the pidfile — you get the supervisor's
+copy too); wait for IT, then re-check. If the supervisor is confirmed dead (no
+`hk-daemon-supervise` session, backoff window elapsed with no socket), restart the
+daemon yourself on your own authority — `harmonik supervise start` (per
+docs/daemon-redeploy.md). This is routine self-authorized work; you don't wait on
+the operator for it. The local reads (`crew list`, `comms who`, `comms log`) still
+work daemon-down — use them to report state. Do NOT spawn or mail until the daemon
+is back.
 
 ---
 

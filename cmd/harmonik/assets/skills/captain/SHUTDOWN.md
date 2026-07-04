@@ -58,7 +58,9 @@ Any commit on a `worktree-agent-*` or `bank/*` branch that passed review but was
 not yet cherry-picked to `main` must be deployed **before** the session ends. A
 stood-down crew cannot re-bank or re-review; deploy now.
 
-**Deploy only in a TRUE lull (0 reviewers active, 0 in-flight merges).**
+**Timing: deploy only in a TRUE lull (0 reviewers active, 0 in-flight merges)** —
+the deploy itself is routine self-authorized work; the lull is only so an in-flight
+bead isn't stranded.
 
 ```bash
 # List banked branches
@@ -103,10 +105,11 @@ git worktree remove --force /tmp/cap-deploy
 br close <bead_id> --reason "Manually deployed: <sha> on main (bypass-SOP)"
 ```
 
-> **NEVER redeploy the daemon mid-run** (while a bead is merging or a reviewer is
-> active). It strands the in-flight bead. Deploy binaries only in a true lull;
-> restart the daemon (supervisor auto-revives) and wait for the supervisor restart
-> backoff (~30s–1m) before considering it down.
+> **TIMING — don't redeploy the daemon mid-run** (while a bead is merging or a
+> reviewer is active): it strands the in-flight bead. The redeploy is your own call;
+> just wait for a true lull so nothing in flight is lost. After restarting (supervisor
+> auto-revives), wait out the supervisor restart backoff (~30s–1m) before considering
+> it down.
 
 ---
 
@@ -325,8 +328,11 @@ harmonik comms leave
 Run this final check before the session exits. All six must hold:
 
 1. **Daemon up:** `harmonik queue status` exits 0 (not 17). If the daemon is down,
-   note it in HANDOFF.md — do NOT attempt to restart it yourself without surfacing
-   (supervisor should revive it; see STARTUP.md §2.1).
+   restarting it is your own routine call — just don't fight the supervisor's
+   auto-revive: check whether the supervisor is actively reviving it (restart-backoff
+   can delay socket-bind ~30s–1m); if it is, let it win. If the supervisor is
+   confirmed dead, restart the daemon yourself (see STARTUP.md §2.1). Note the state
+   in HANDOFF.md either way.
 
 2. **No stranded in-flight beads:** `harmonik queue status --json` shows no
    `active_runs` that will be orphaned. If a bead is mid-merge or a reviewer is
@@ -368,9 +374,10 @@ comm -23 \
   it is down). Verify the new scope is live by re-running the blocked bead as a
   canary.
 
-- **Never redeploy the daemon while a bead is in-flight.** A mid-merge or mid-review
-  daemon restart strands the run (the daemon loses the pane handle; bead fails at
-  `run_stale`). Deploy only in a true lull (0 `active_runs` in `queue status --json`).
+- **Timing: don't redeploy the daemon while a bead is in-flight.** A mid-merge or
+  mid-review daemon restart strands the run (the daemon loses the pane handle; bead
+  fails at `run_stale`). Redeploy is routine self-authorized work — just do it in a
+  true lull (0 `active_runs` in `queue status --json`) so nothing in flight is lost.
 
 - **The ff-after-push step is load-bearing for captain cherry-pick deploys.** After
   pushing banked commits out-of-band, run `git -C <repo> merge --ff-only origin/main`

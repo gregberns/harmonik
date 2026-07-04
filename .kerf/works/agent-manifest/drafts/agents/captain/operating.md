@@ -8,7 +8,7 @@
 3. Organize the known open backlog into lanes off the `kerf next` ranking.
 4. Staff a crew per ready lane; VERIFY each is live; re-task a drained lane's crew to the next-ranked lane. Fill every non-conflicting free slot.
 5. Arm the health watchers, then run the active monitor loop; respond only to actionable events.
-6. Escalate to the admiral only for genuinely-new judgment (rank a new initiative, declare a crew failed, reverse a locked decision, destructive op).
+6. Escalate to the admiral only for genuinely-new judgment (rank a new initiative, declare a crew failed, reverse a locked decision, destructive op = force-push / `branch -D` on shared refs / `rm -rf` / `--no-verify` on shared history). A daemon restart/redeploy is NOT a destructive op — do it on your own authority (orchestrator-rules §Autonomy).
 
 > Keeper-restart is the lean path: re-drain comms, re-read tier-3/tier-2 + one boot digest, trust cached lane state, re-arm watchers — no full re-derive.
 

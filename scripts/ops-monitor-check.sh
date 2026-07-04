@@ -133,6 +133,17 @@ WATCH_STALL_FLAP_GRACE=900  # 15 minutes (~3 ops-monitor ticks)
 # is stalled. Suppress watch-stalled for this window so a post-deploy actionable backlog
 # past the (legitimately) frozen cursor does not storm the bus during the boot.
 WATCH_RESTART_SUPPRESS_WINDOW=600  # 10 minutes
+# hk-unwzh (iter20) F1/F2: zombie detection + self-heal.
+# A zombie watch sends presence beacons (comms join every ~270s) but does not relay
+# any escalation messages. Presence looks alive; cursor stays frozen. Two fixes:
+#   F1 — WATCH_ZOMBIE_THRESHOLD: seconds since last watch comms-send before watch-zombie
+#        fires. Distinct from watch-stalled (cursor frozen) — a zombie fires even between
+#        stall ticks and correctly routes around the dead watch directly to captain.
+#   F2 — WATCH_SELFHEAL_COOLDOWN: minimum gap between self-heal attempts. When watch-zombie
+#        is confirmed and the stall is persistent (tier-3), ops-monitor kills the zombie
+#        session and restarts it via `harmonik start crew watch`.
+WATCH_ZOMBIE_THRESHOLD=7200   # 2h: no comms-send from watch = zombie-suspected
+WATCH_SELFHEAL_COOLDOWN=3600  # 1h: minimum between self-heal kill+restart attempts
 
 mkdir -p "$OUT_DIR"
 
@@ -199,7 +210,25 @@ try:
 except Exception:
     print(0)
 ")
+  PREV_LAST_WATCH_MSG_TS=$(py3 "
+import json
+try:
+    d = json.load(open('$STATE_FILE'))
+    print(d.get('last_watch_msg_ts', 0))
+except Exception:
+    print(0)
+")
+  PREV_LAST_WATCH_SELFHEAL_TS=$(py3 "
+import json
+try:
+    d = json.load(open('$STATE_FILE'))
+    print(d.get('last_watch_selfheal_ts', 0))
+except Exception:
+    print(0)
+")
 fi
+PREV_LAST_WATCH_MSG_TS=${PREV_LAST_WATCH_MSG_TS:-0}
+PREV_LAST_WATCH_SELFHEAL_TS=${PREV_LAST_WATCH_SELFHEAL_TS:-0}
 
 # ── Check 1: Daemon up ────────────────────────────────────────────────────────
 
@@ -592,6 +621,11 @@ watch_stall_flap_grace = int('$WATCH_STALL_FLAP_GRACE')
 known_ready_lane       = '''$KNOWN_READY_LANE'''
 known_ready_lane_epic  = '''$KNOWN_READY_LANE_EPIC'''
 known_ready_lane_count = int('$KNOWN_READY_LANE_COUNT')
+# hk-unwzh (iter20) F1/F2: zombie detection + self-heal inputs.
+prev_last_watch_msg_ts    = int('$PREV_LAST_WATCH_MSG_TS')
+prev_last_watch_selfheal_ts = int('$PREV_LAST_WATCH_SELFHEAL_TS')
+watch_zombie_threshold    = int('$WATCH_ZOMBIE_THRESHOLD')
+watch_selfheal_cooldown   = int('$WATCH_SELFHEAL_COOLDOWN')
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -602,6 +636,11 @@ known_ready_lane_count = int('$KNOWN_READY_LANE_COUNT')
 # buffer (hk-gu3v).
 import os as _os
 last_msg_ts = {}  # agent_name -> epoch of most recent agent_message
+# hk-unwzh F2: carry-forward the last time the watch sent an actual comms message
+# (not just a presence beacon / comms join). The 256KB events window may not contain
+# a recent watch message (zombie: watch has been silent for hours), so the previous
+# tick's value is carried forward and only updated if a newer timestamp is found.
+last_watch_msg_ts = prev_last_watch_msg_ts
 # Review-gate (M2 code-half; R6 fix): a run is review-BYPASSED only if it actually
 # ENTERED a review path (emitted reviewer_launched) yet completed without APPROVE.
 # Runs that auto-closed / made no change / were subsumed never launch a reviewer (by
@@ -712,6 +751,12 @@ if _os.path.isfile(_events_path):
                     _sender = _payload.get('from', '')
                     if _sender and _epoch > last_msg_ts.get(_sender, 0):
                         last_msg_ts[_sender] = _epoch
+                    # hk-unwzh F2: track the watch's last actual comms-send (carry-forward).
+                    # This distinguishes a zombie (sends comms join but no real messages) from
+                    # a healthy watch. Any agent_message from 'watch' counts — liveness pings
+                    # from the daemon-fired schedule are still real comms activity.
+                    if _sender == 'watch' and _epoch > last_watch_msg_ts:
+                        last_watch_msg_ts = _epoch
 
                 elif _etype == 'reviewer_launched':
                     # A reviewer/DOT review node WAS started for this run_id. run_id is
@@ -1149,6 +1194,35 @@ if watch_opsmonitor_target != 'captain' and watch_cursor:
 # critical-component signal — release-due is not an infra failure).
 release_due = release_commit_count >= release_due_threshold and ci_status == 'green'
 
+# ── hk-unwzh F1/F2: zombie watch detection ────────────────────────────────────
+# A zombie watch sends presence beacons (comms join every ~270s refreshes last_seen)
+# but does not relay any escalation messages. Presence looks alive; cursor stays frozen.
+# Two conditions must BOTH hold for zombie status:
+#   1. watch is the routing target AND present (beacon alive) AND tmux session exists.
+#      A truly-dead watch (no beacon, no tmux) is watch-down — not a zombie.
+#   2. The watch has previously sent at least one real comms message (last_watch_msg_ts>0)
+#      but has not sent ANY in >watch_zombie_threshold seconds. If last_watch_msg_ts==0
+#      we have no baseline to judge (fresh session) — skip zombie to avoid false positives.
+# Self-heal: when zombie is confirmed AND stall is persistent (tier-3 alert count) AND
+# enough time has elapsed since the last self-heal, kill and restart the session.
+# do_selfheal is a flag consumed by the shell self-heal block after state.json is written.
+watch_zombie = (
+    watch_opsmonitor_target != 'captain'
+    and watch_present
+    and watch_tmux_alive
+    and last_watch_msg_ts > 0
+    and (ts_epoch - last_watch_msg_ts) > watch_zombie_threshold
+)
+do_selfheal = False
+new_last_watch_selfheal_ts = prev_last_watch_selfheal_ts
+if watch_zombie and not watch_restart_suppressed:
+    # Require persistent stall (tier-3) to avoid premature self-heal on a transient issue.
+    _ws_entry = new_alerted.get('watch-stalled')
+    _ws_persistent = isinstance(_ws_entry, dict) and _ws_entry.get('count', 0) >= ops_critical_count
+    if _ws_persistent and (ts_epoch - prev_last_watch_selfheal_ts) >= watch_selfheal_cooldown:
+        do_selfheal = True
+        new_last_watch_selfheal_ts = ts_epoch
+
 # ── Build signal lists ───────────────────────────────────────────────────────
 immediate_signals = []
 digest_signals    = []
@@ -1176,6 +1250,11 @@ if watch_down:
     immediate_signals.append('watch-down')
 if watch_stalled:
     immediate_signals.append('watch-stalled')
+if watch_zombie:
+    # hk-unwzh F2: zombie watch — presence beacon alive but no real comms-send in >2h.
+    # Always direct-class (to captain, not through the possibly-zombie watch) and
+    # flap-retained so restart cycles don't drop-and-re-fire as fresh edges.
+    immediate_signals.append('watch-zombie:silent=%ds' % (ts_epoch - last_watch_msg_ts))
 
 if stale_signal_crews:
     names = ','.join(c['crew'] for c in stale_signal_crews)
@@ -1225,8 +1304,12 @@ elif captain_info:
 else:
     _cap_detail = 'ok (tmux session alive)'
 
-# WE9: watch-up detail string
-if watch_stalled:
+# WE9 / hk-unwzh: watch-up detail string
+if watch_zombie:
+    _watch_silent_s = ts_epoch - last_watch_msg_ts if last_watch_msg_ts > 0 else -1
+    _watch_detail = 'zombie: beacon alive (last_seen %ds) but no comms-send for %ds' % (
+        watch_info['last_seen_s'] if watch_info else 0, _watch_silent_s)
+elif watch_stalled:
     _watch_detail = 'cursor frozen %d ticks with pending events' % new_watch_stall_misses
 elif watch_down:
     _watch_detail = 'absent from comms-who and no tmux session'
@@ -1255,7 +1338,7 @@ checks = {
                       'detail': ('unreviewed:' + ','.join(review_bypass_run_ids)) if review_bypass_run_ids else 'all review-launched/requested runs have a verdict'},
     'captain-up':    {'state': 'ok' if not captain_down else 'flag',
                       'detail': _cap_detail},
-    'watch-up':      {'state': 'ok' if not watch_down and not watch_stalled else 'flag',
+    'watch-up':      {'state': 'ok' if not watch_down and not watch_stalled and not watch_zombie else 'flag',
                       'detail': _watch_detail},
     'backlog-ready': {'state': 'flag' if backlog_ready else 'ok',
                       'detail': ('ready=' + str(ready_count) + ' free_slot') if backlog_ready else 'ready=' + str(ready_count)},
@@ -1293,7 +1376,7 @@ checks = {
 # captain-down) use CRITICAL_IMMEDIATE_COOLDOWN (5 min) instead of the global
 # 30 min so a downed component re-alerts every ~5 min. captain-down arrives in
 # sibling bead hk-mttt8; the prefix is listed here for forward-compatibility.
-CRITICAL_PREFIXES = ('daemon-down', 'supervisor-down', 'fleet-down', 'captain-down', 'watch-down', 'watch-stalled')
+CRITICAL_PREFIXES = ('daemon-down', 'supervisor-down', 'fleet-down', 'captain-down', 'watch-down', 'watch-stalled', 'watch-zombie')
 
 def _dedup_key(sig):
     # release-due:<N> has a dynamic commit-count suffix that changes every tick.
@@ -1303,6 +1386,10 @@ def _dedup_key(sig):
     # (with count) is still used in send_immediate_signals and the comms body.
     if sig.startswith('release-due:'):
         return 'release-due'
+    # watch-zombie:silent=<N>s has a dynamic elapsed-seconds suffix that changes every tick.
+    # Normalize to 'watch-zombie' so the cooldown/persistence throttle persists across ticks.
+    if sig.startswith('watch-zombie:'):
+        return 'watch-zombie'
     return sig
 
 def _norm_alerted(val, is_crit):
@@ -1412,7 +1499,15 @@ for sig in send_immediate_signals:
 # cooldown/persistence throttle instead of resetting. A genuinely-resolved signal still
 # ages out after the grace window and re-alerts fresh on real recurrence. Scoped to
 # FLAP_RETAIN_PREFIXES so non-flap criticals (daemon-down etc.) keep drop-on-resolve.
-FLAP_RETAIN_PREFIXES = ('watch-stalled',)
+FLAP_RETAIN_PREFIXES = ('watch-stalled', 'watch-down', 'watch-zombie')
+# hk-unwzh F1: watch-down and watch-zombie are added alongside watch-stalled.
+# watch-down: when the watch session cycles (keeper kill + restart), watch-down clears
+#   briefly then re-fires as a fresh count=1 IMMEDIATE, bypassing the persistence throttle.
+#   The restart gap is short (<60s typically), well within the 900s flap-grace window.
+#   With flap-retain, the accumulated count/first_ts persists across the restart, so the
+#   next trip still accumulates toward the persistence throttle (not re-fire at 5-min cadence).
+# watch-zombie: the zombie state may briefly clear if the watch sends one message then
+#   goes silent again. Flap-retain prevents that brief activity from resetting the clock.
 # Use normalized dedup keys so 'release-due' (stored key) matches even when the raw
 # signal this tick is 'release-due:N' (different count). Without this, a still-active
 # release-due signal would be dropped from new_alerted as 'resolved' on every tick,
@@ -1468,6 +1563,10 @@ snapshot = {
     # hk-7o4i0 Fix B: true when watch-stalled was suppressed because the watch / daemon
     # was within its post-deploy restart window this tick.
     'watch_restart_suppressed': watch_restart_suppressed,
+    # hk-unwzh F1/F2: zombie watch state.
+    'watch_zombie': watch_zombie,
+    'last_watch_msg_ts': last_watch_msg_ts,
+    'do_selfheal': do_selfheal,
     'release_due': release_due,
     'release_commit_count': release_commit_count,
     'ci_status': ci_status,
@@ -1476,11 +1575,12 @@ snapshot = {
     'send_immediate_signals': send_immediate_signals,
     # WE7/WE9 partition: direct-class (§4 SPOF bypass) → always --to captain;
     # watch-class → --to watch.opsmonitor_target (default 'captain').
-    # watch-down and watch-stalled are direct-class: routing either to a dead/stalled watch is useless.
+    # watch-down, watch-stalled, and watch-zombie are direct-class: routing through the
+    # possibly-zombie/dead watch is useless and would drop the alert entirely.
     'direct_signals': [s for s in send_immediate_signals if any(
-        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down', 'watch-stalled'))],
+        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down', 'watch-stalled', 'watch-zombie'))],
     'watch_signals': [s for s in send_immediate_signals if not any(
-        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down', 'watch-stalled'))],
+        s.startswith(p) for p in ('daemon-down', 'supervisor-down', 'fleet-down', 'paused-queue', 'watch-down', 'watch-stalled', 'watch-zombie'))],
     'escalations': escalations,
     'digest_signals': digest_signals,
     'all_green': all_green,
@@ -1497,6 +1597,9 @@ new_state = {
     'alerted_immediate': new_alerted,
     'watch_cursor': watch_cursor,                  # WE9: persisted for next-tick frozen-cursor check
     'watch_stall_misses': new_watch_stall_misses,  # WE9: consecutive frozen-cursor miss count
+    # hk-unwzh F1/F2: zombie tracking — persisted across ticks.
+    'last_watch_msg_ts': last_watch_msg_ts,           # carry-forward: last epoch watch sent a real comms message
+    'last_watch_selfheal_ts': new_last_watch_selfheal_ts,  # last epoch a self-heal was attempted
 }
 
 print(json.dumps({'snapshot': snapshot, 'state': new_state}))
@@ -1517,6 +1620,18 @@ import json, sys
 d = json.loads(sys.stdin.read())
 print(json.dumps(d['state'], indent=2))
 " <<< "$ANALYSIS" > "$STATE_FILE"
+
+# ── hk-unwzh F1: self-heal zombie watch (after state.json committed) ──────────
+# When the watch is confirmed zombie (alive beacon, no messages, cursor frozen) AND the
+# stall is persistent (tier-3) AND the self-heal cooldown has elapsed, kill the zombie
+# session and restart it via `harmonik start crew watch`. The self-heal timestamp is
+# already persisted in state.json above, so a crash here does not re-attempt next tick.
+DO_SELFHEAL=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(str(d['snapshot'].get('do_selfheal', False)).lower())" <<< "$ANALYSIS")
+if [[ "$DO_SELFHEAL" == "true" && -n "$_CAPTAIN_HASH" ]]; then
+  echo "ops-monitor: self-heal zombie watch: killing session harmonik-${_CAPTAIN_HASH}-crew-watch and restarting @ $TS" >&2
+  tmux kill-session -t "harmonik-${_CAPTAIN_HASH}-crew-watch" 2>/dev/null || true
+  (cd "$PROJ" && harmonik start crew watch 2>/dev/null) || true
+fi
 
 # ── Send comms if signals present ─────────────────────────────────────────────
 

@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
@@ -199,7 +200,10 @@ func (l *Ledger) writeCursor() error {
 }
 
 // WriteDigest writes d to .harmonik/watch/latest.json.
+// updated_at is always stamped with the current UTC time so that no caller
+// can produce a stale liveness timestamp by omission (P3 fix, hk-8yh32.2).
 func (l *Ledger) WriteDigest(d WatchDigest) error {
+	d.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err

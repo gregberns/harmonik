@@ -17,10 +17,41 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
+
+// PendingFlagsMaxLen is the maximum number of active (non-terminal) flags
+// retained in pending_flags after each append.  Oldest entries are evicted
+// first when the cap is exceeded.
+const PendingFlagsMaxLen = 20
+
+// pendingFlagsTerminalMarkers are the substrings that mark a flag as resolved
+// or noted.  Flags matching any marker are evicted on every append.
+var pendingFlagsTerminalMarkers = []string{"RESOLVED", "NOTED"}
+
+// prunePendingFlags evicts terminal flags (containing any marker from
+// pendingFlagsTerminalMarkers) and caps the result at PendingFlagsMaxLen,
+// retaining the most-recent entries.
+func prunePendingFlags(flags []string) []string {
+	out := make([]string, 0, len(flags))
+	for _, f := range flags {
+		terminal := false
+		for _, m := range pendingFlagsTerminalMarkers {
+			if strings.Contains(f, m) {
+				terminal = true
+				break
+			}
+		}
+		if !terminal {
+			out = append(out, f)
+		}
+	}
+	if len(out) > PendingFlagsMaxLen {
+		out = out[len(out)-PendingFlagsMaxLen:]
+	}
+	return out
+}
 
 // EscalationClass is the triage decision for a ledger event (design.md §4).
 type EscalationClass int
@@ -135,19 +166,18 @@ func (e *EscalationEngine) ProcessOpsMonitorReceipt(ev core.Event) (bool, error)
 		return true, fmt.Errorf("escalation: read digest: %w", err)
 	}
 	d.LastOpsMonitorReceipt = &receipt
-	d.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	d.Cursor = e.Ledger.Cursor().String()
 	return true, e.Ledger.WriteDigest(d)
 }
 
-// appendDigestFlag reads latest.json, appends flag to pending_flags, and writes it back.
+// appendDigestFlag reads latest.json, appends flag to pending_flags (pruning
+// terminal entries and enforcing the cap), and writes it back.
 func (e *EscalationEngine) appendDigestFlag(flag string) error {
 	d, err := e.Ledger.ReadDigest()
 	if err != nil {
 		return fmt.Errorf("escalation: read digest: %w", err)
 	}
-	d.PendingFlags = append(d.PendingFlags, flag)
-	d.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	d.PendingFlags = prunePendingFlags(append(d.PendingFlags, flag))
 	d.Cursor = e.Ledger.Cursor().String()
 	return e.Ledger.WriteDigest(d)
 }
@@ -158,7 +188,6 @@ func (e *EscalationEngine) recordImmediate(summary string) error {
 		return fmt.Errorf("escalation: read digest: %w", err)
 	}
 	d.ImmediateCountSinceLastCaptainWake = 0
-	d.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	d.Cursor = e.Ledger.Cursor().String()
 	return e.Ledger.WriteDigest(d)
 }

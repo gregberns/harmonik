@@ -329,7 +329,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 	// Valid --workflow-mode values: "builtin" (default), "single", "review-loop", "dot".
 	// "builtin" defers to the --review-loop / --no-review-loop logic.
 	// When neither --workflow-mode nor --review-loop/--no-review-loop is explicit, leave
-	// itemWorkflowMode empty so the daemon-resolved default (dot/triple-review) wins (hk-y3o51).
+	// itemWorkflowMode empty so the daemon-resolved default (dot/triple-review) wins (hk-zhysl).
 	var itemWorkflowMode string
 	var itemWorkflowRef string
 	switch workflowModeFlag {

@@ -21,7 +21,7 @@ package main
 // Helper prefix: wfDefaultFixture (per implementer-protocol.md §Helper-prefix
 // discipline; bead hk-rssrg).
 //
-// Bead ref: hk-rssrg, hk-y3o51.
+// Bead ref: hk-rssrg, hk-y3o51, hk-zhysl.
 
 import (
 	"flag"
@@ -127,7 +127,7 @@ func TestWfDefaultRunItemsInheritDaemon(t *testing.T) {
 // --review-loop / --no-review-loop flags produces "" (inherit daemon default).
 // Explicit --review-loop → "review-loop"; --no-review-loop → "single".
 //
-// Bead ref: hk-rssrg, hk-y3o51.
+// Bead ref: hk-rssrg, hk-y3o51, hk-zhysl.
 func resolveItemWorkflowModeFromArgs(subArgs []string) string {
 	reviewLoop := true     // default ON per hk-g0ckv
 	reviewLoopSet := false // tracks whether --review-loop or --no-review-loop was explicit

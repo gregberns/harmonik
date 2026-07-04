@@ -5316,7 +5316,7 @@ type workloopRunStartedPayload struct {
 	// WorkerName and WorkerOS are non-empty for remote runs (FR13); empty for local.
 	WorkerName string `json:"worker_name,omitempty"`
 	WorkerOS   string `json:"worker_os,omitempty"`
-	// WorkflowMode is the resolved workflow mode for this run (hk-y3o51).
+	// WorkflowMode is the resolved workflow mode for this run (hk-zhysl observability).
 	WorkflowMode string `json:"workflow_mode,omitempty"`
 }
 

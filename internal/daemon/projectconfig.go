@@ -1077,11 +1077,11 @@ func stallSentinelBlockAbsent(raw rawStallSentinelConfig) bool {
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
-	Daemon        rawDaemonConfig           `yaml:"daemon"`          // hk-rcp7: PL-004b daemon: block
-	Keeper        rawKeeperConfig           `yaml:"keeper"`          // hk-lhu2: keeper config block
-	Watchdog      rawWatchdogConfig         `yaml:"watchdog"`        // hk-sbitr: ctx-watchdog schedule gate
-	Watch         rawWatchConfig            `yaml:"watch"`           // hk-we7: watch routing targets
-	Opsmonitor    rawOpsmonitorConfig       `yaml:"opsmonitor"`      // hk-bi4bg: ops-monitor schedule overrides
+	Daemon        rawDaemonConfig           `yaml:"daemon"`     // hk-rcp7: PL-004b daemon: block
+	Keeper        rawKeeperConfig           `yaml:"keeper"`     // hk-lhu2: keeper config block
+	Watchdog      rawWatchdogConfig         `yaml:"watchdog"`   // hk-sbitr: ctx-watchdog schedule gate
+	Watch         rawWatchConfig            `yaml:"watch"`      // hk-we7: watch routing targets
+	Opsmonitor    rawOpsmonitorConfig       `yaml:"opsmonitor"` // hk-bi4bg: ops-monitor schedule overrides
 	Supervise     rawSuperviseConfig        `yaml:"supervise"`
 	Harnesses     rawHarnessesConfig        `yaml:"harnesses"`      // hk-v7q5u: per-harness config (PI-050)
 	Sandbox       rawSandboxConfig          `yaml:"sandbox"`        // hk-6596l: sandbox backend config

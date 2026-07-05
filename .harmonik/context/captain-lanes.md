@@ -25,17 +25,25 @@
 >   until hk-xkou8 lands + a serialized quiet-window re-validate (fix-first; no quiet window while 3 local lanes run).
 > - Manifest rollout gate **hk-ncg9m = CLOSED/landed** (its merge_build_failed note was the transient cache-wipe, cleared).
 
-## ⭐⭐ CURRENT TRUTH (2026-07-05 ~01:25Z — keeper /clear resume + handoff; 3 beads landed, critical-path fix in flight)
-> Lean keeper-restart resume. Fleet CLEAN, nothing blocked on operator. This cycle landed 3 beads and
-> recovered 3 crew wedges (duncan submit-wedge, watch idle-submit-wedge x2 ~30min apart).
+## ⭐⭐ CURRENT TRUTH (2026-07-05 ~01:35Z — keeper /clear resume; duncan RE-STAFFED, watch recovered)
+> Lean keeper-restart resume. Ground-truth reconciled: daemon UP, jessica-q2 + stilgar-q2 both active 1w
+> (critical beads in flight, as claimed). Recovered watch (idle-submit-wedge → re-joined comms). RE-STAFFED
+> the drained duncan onto eval-metrics WS1 parser tail. Fleet now 3/4 local active. Nothing blocked on operator.
 >
-> **LANES NOW (local 2/4 active; duncan DRAINED + free):**
+> **CHANGES this resume:**
+> - **duncan RE-STAFFED** (was DRAINED/free): eval-metrics WS1 epic hk-9jdid (its WS1a/WS1b landed+closed;
+>   mirrored assignee stilgar→duncan). Dispatching WS1c hk-eval-prog-codex-tokens-fbhir (codexjsonlparser.go)
+>   + WS1d hk-eval-prog-pi-tokens-sr316 (pijsonlparser.go) to duncan-q2 — file-disjoint parser-only, no
+>   workloop.go (jessica collision guard held). WS1e (per-node-attr) HELD until jessica drains. Queue = duncan-q2.
+> - **watch** re-joined comms after a submit-wedge nudge (back online 01:34Z).
+>
+> **LANES NOW (local 3/4 active):**
 > | crew | lane | queue | state |
 > |---|---|---|---|
 > | jessica | daemon-reliability | jessica-q2 | ACTIVE — **hk-xkou8 in_progress** (gb-mbp concurrent-slot idle-hang = THROUGHPUT CRITICAL PATH; reproduce-first daemon fix, long quiet window expected). Her LAST bead → lane DRAINS on merge. Landed this cycle: hk-rnkuy (daemon-death event) + hk-gf59k (ledger false-defer, commit 00543657). |
 > | stilgar | keeper reliability (re-tasked off drained worktree-reaper lane) | stilgar-q2 | ACTIVE — **hk-5266t in_progress** (P1: crew-start keeper `--tmux` target mangled by zsh `:a` modifier on unbraced `$session:agent` → nonexistent pane → keepers can't inject restart → THE recurring watch-wedge root cause). File-disjoint from jessica. Landed this cycle: hk-qe736 (worktree-leak reaper). |
-> | duncan | cache-reaper (DRAINED) | — | **FREE** — hk-44ab2 (GOCACHE-wipe fix) + hk-whru3 (follow-up) both LANDED+CLOSED. Idle-armed. RE-STAFF when picking up: eval-metrics WS1 (epic hk-9jdid) is the candidate BUT (a) route file-disjoint parser beads first — WS1c hk-eval-prog-codex-tokens-fbhir / WS1d hk-eval-prog-pi-tokens-sr316 (codex/pijsonlparser.go) — NOT WS1a/WS1b (workloop.go = COLLIDES with jessica's live internal/daemon hk-xkou8); (b) VERIFY epic hk-9jdid open-dep won't insta-fail the children before dispatch. |
-> | watch | triage tier | watch-q | ⚠️ STILL FLAKY — re-wedged ~every 20-30min (hk-5266t root cause, now IN FLIGHT via stilgar). Hand-nudge on each ops-monitor watch-stalled page (`send-keys C-u` + retype `comms join --name watch` + Enter). Does NOT blind you — Watcher-1 reads the bus directly. Once hk-5266t lands, this should stop. |
+> | duncan | eval-metrics WS1 (RE-STAFFED 01:35Z off drained cache-reaper) | duncan-q2 | ACTIVE — epic hk-9jdid (WS1a/WS1b landed+closed; assignee mirrored stilgar→duncan). Dispatching WS1c hk-eval-prog-codex-tokens-fbhir (codexjsonlparser.go) + WS1d hk-eval-prog-pi-tokens-sr316 (pijsonlparser.go) as a wave — both P2/ready/no-blocker (verified won't insta-fail). File-disjoint parser-only, NOT workloop.go (jessica collision guard). WS1e (per-node-attr) HELD until jessica drains. Prior lane: hk-44ab2 + hk-whru3 both LANDED+CLOSED. |
+> | watch | triage tier | watch-q | ⚠️ FLAKY — re-wedges ~every 20-30min (hk-5266t root cause, IN FLIGHT via stilgar). Recovered this resume (01:34Z re-join). Hand-nudge on each ops-monitor watch-stalled page (`send-keys C-u` + retype `comms join --name watch` + Enter). Does NOT blind you — Watcher-1 reads the bus directly. Stops once hk-5266t lands. |
 >
 > **NEXT STEP:** watch hk-xkou8 (jessica) → on merge, gb-mbp serialized quiet-window re-validate becomes available (the throughput unlock; likely admiral-coordinated). Re-staff duncan (see its row). gb-mbp stays enabled:false until hk-xkou8 lands + re-validate.
 > **Paused-by-failure cruft** (crashrepro, gbmbp-val/-val2, leto-codex, leto-q, loadtest, paul-q, pi-q, pi-scav-2, sandbox-q, spread-pi) = pre-existing, leave as-is.

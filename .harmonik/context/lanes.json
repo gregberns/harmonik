@@ -4,6 +4,16 @@
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
     {
+      "lane": "eval-metrics-ws1",
+      "label": "codename:eval-program",
+      "epic_id": "hk-9jdid",
+      "crew": "duncan",
+      "queue": "duncan-q2",
+      "status": "active",
+      "gate": null,
+      "note": "STAFFED 2026-07-05 01:35Z (duncan re-tasked off drained cache-reaper). WS1a/WS1b landed+closed; duncan owns the token-parser tail: WS1c hk-eval-prog-codex-tokens-fbhir (codexjsonlparser.go) + WS1d hk-eval-prog-pi-tokens-sr316 (pijsonlparser.go), file-disjoint parser-only. WS1e (per-node-attr) HELD until jessica's workloop.go lane (hk-xkou8) drains."
+    },
+    {
       "lane": "pi-sandbox",
       "label": "codename:pi-sandbox",
       "epic_id": null,

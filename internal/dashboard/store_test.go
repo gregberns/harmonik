@@ -26,12 +26,16 @@ func TestRoundtrip(t *testing.T) {
 		Updated:   updated,
 		UpdatedBy: "captain",
 		PrioritiesCurrent: []dashboard.PriorityCurrent{
-			{Rank: 1, Lane: "pi-sandbox", Crew: "leto",
-				Headline: "Pi-in-a-sandbox via srt", Expected: "acceptance test green by EOD"},
+			{
+				Rank: 1, Lane: "pi-sandbox", Crew: "leto",
+				Headline: "Pi-in-a-sandbox via srt", Expected: "acceptance test green by EOD",
+			},
 		},
 		PrioritiesFuture: []dashboard.PriorityFuture{
-			{Lane: "stall-sentinel", Headline: "deterministic stall detector",
-				Gate: "after sandbox completes"},
+			{
+				Lane: "stall-sentinel", Headline: "deterministic stall detector",
+				Gate: "after sandbox completes",
+			},
 		},
 		ThroughputExpected: []dashboard.ThroughputExpected{
 			{Lane: "pi-sandbox", BeadsExpected: 4, By: by},

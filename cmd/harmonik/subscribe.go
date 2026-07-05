@@ -12,6 +12,7 @@ package main
 //	--types t1,t2,...      Comma-separated event-type filter (default: all)
 //	--heartbeat <dur>      Idle heartbeat cadence (default 60s; clamped 10s..600s)
 //	--since-event-id <id>  Resume cursor: replay events strictly after this event_id before delivering live stream
+//	--follow               Auto-reconnect on daemon-restart/EOF (hk-5hs5b); resumes from last cursor
 //	--to <name>            Agent-message addressing filter: only deliver agent_message events addressed to <name> or "*"
 //	--from <name>          Agent-message addressing filter: only deliver agent_message events sent by <name>
 //	--topic <topic>        Agent-message addressing filter: only deliver agent_message events with matching topic
@@ -39,12 +40,21 @@ import (
 	"time"
 )
 
+// subscribeFollowReconnectInitialBackoff / Max mirror the comms-recv follow
+// constants (hk-5hs5b): start at 1 s, double up to 10 s so an agent is never
+// more than ~10 s away from picking up the live stream after a daemon revive.
+const (
+	subscribeFollowReconnectInitialBackoff = time.Second
+	subscribeFollowReconnectMaxBackoff     = 10 * time.Second
+)
+
 // runSubscribeSubcommand implements `harmonik subscribe [flags]`.
 // subArgs is os.Args[2:].
 func runSubscribeSubcommand(subArgs []string) int {
 	typesFlag := ""
 	heartbeatFlag := 60 * time.Second
 	sinceFlag := ""
+	followFlag := false
 	toFlag := ""
 	fromFlag := ""
 	topicFlag := ""
@@ -82,6 +92,8 @@ func runSubscribeSubcommand(subArgs []string) int {
 			sinceFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--since-event-id="):
 			sinceFlag = strings.TrimPrefix(arg, "--since-event-id=")
+		case arg == "--follow":
+			followFlag = true
 		case arg == "--to" && i+1 < len(subArgs):
 			i++
 			toFlag = subArgs[i]
@@ -147,27 +159,33 @@ func runSubscribeSubcommand(subArgs []string) int {
 		}
 	}
 
-	// Build request.
-	reqBody := map[string]any{
+	// Build the base request body (without since_event_id, which may advance on reconnect).
+	reqBodyBase := map[string]any{
 		"op":                "subscribe",
 		"heartbeat_seconds": int(heartbeatFlag.Seconds()),
 	}
 	if len(types) > 0 {
-		reqBody["types"] = types
-	}
-	if sinceFlag != "" {
-		reqBody["since_event_id"] = sinceFlag
+		reqBodyBase["types"] = types
 	}
 	if toFlag != "" {
-		reqBody["to"] = toFlag
+		reqBodyBase["to"] = toFlag
 	}
 	if fromFlag != "" {
-		reqBody["from"] = fromFlag
+		reqBodyBase["from"] = fromFlag
 	}
 	if topicFlag != "" {
-		reqBody["topic"] = topicFlag
+		reqBodyBase["topic"] = topicFlag
 	}
-	reqBytes, err := json.Marshal(reqBody)
+
+	if followFlag {
+		return runSubscribeFollowIO(reqBodyBase, sockPath, sinceFlag, os.Stdout)
+	}
+
+	// Non-follow: single connection, stream to stdout until EOF or signal.
+	if sinceFlag != "" {
+		reqBodyBase["since_event_id"] = sinceFlag
+	}
+	reqBytes, err := json.Marshal(reqBodyBase)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik subscribe: marshal request: %v\n", err)
 		return 1
@@ -218,6 +236,169 @@ func runSubscribeSubcommand(subArgs []string) int {
 	return 0
 }
 
+// runSubscribeFollowIO is the testable core of `harmonik subscribe --follow`
+// (hk-5hs5b). It streams events to w, auto-reconnecting on daemon-restart or
+// EOF with exponential backoff (1 s → 2 s → … → 10 s). It resumes from the
+// last seen event_id so no events are missed or duplicated across reconnects.
+//
+// Reconnect behaviour mirrors runCommsRecvFollowIO:
+//   - First dial failure (socket absent / ECONNREFUSED) → return 17.
+//   - Subsequent dial failures → wait backoff, retry (daemon is restarting).
+//   - Connection drop (EOF / "use of closed") → wait backoff, reconnect.
+//   - SIGINT / SIGTERM → exit 0.
+//
+// Watermark: lastSeen advances from event_id on each received event and from
+// heartbeat.last_event_id (EV-037a) so reconnects in quiet periods do not
+// replay events already delivered.
+func runSubscribeFollowIO(reqBodyBase map[string]any, sockPath, sinceEventID string, w io.Writer) int {
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// lastSeen is the watermark: highest event_id delivered so far. It is
+	// forwarded as since_event_id on every reconnect so the daemon replays
+	// only events strictly after the last delivered one.
+	lastSeen := sinceEventID
+	backoff := subscribeFollowReconnectInitialBackoff
+	firstDial := true
+
+	for {
+		if sigCtx.Err() != nil {
+			return 0
+		}
+
+		// Build subscribe request anchored at lastSeen.
+		req := make(map[string]any, len(reqBodyBase)+1)
+		for k, v := range reqBodyBase {
+			req[k] = v
+		}
+		if lastSeen != "" {
+			req["since_event_id"] = lastSeen
+		}
+		reqBytes, marshalErr := json.Marshal(req)
+		if marshalErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: marshal request: %v\n", marshalErr)
+			return 1
+		}
+
+		// Dial — use sigCtx so the dial itself is cancelled on signal.
+		dialCtx, cancelDial := context.WithTimeout(sigCtx, 5*time.Second)
+		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
+		cancelDial()
+
+		if sigCtx.Err() != nil {
+			return 0 // signal fired during dial
+		}
+
+		if dialErr != nil {
+			if commsIsSocketAbsent(dialErr) || commsIsConnRefused(dialErr) {
+				if firstDial {
+					fmt.Fprintf(os.Stderr, "harmonik subscribe: daemon not running (socket %s missing or refused)\n", sockPath)
+					return 17
+				}
+				fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: daemon offline, reconnecting in %v...\n", backoff)
+				select {
+				case <-time.After(backoff):
+				case <-sigCtx.Done():
+					return 0
+				}
+				if backoff < subscribeFollowReconnectMaxBackoff {
+					backoff *= 2
+					if backoff > subscribeFollowReconnectMaxBackoff {
+						backoff = subscribeFollowReconnectMaxBackoff
+					}
+				}
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: dial %s: %v\n", sockPath, dialErr)
+			return 1
+		}
+
+		// Successful connection — reset backoff.
+		backoff = subscribeFollowReconnectInitialBackoff
+		firstDial = false
+
+		if _, writeErr := conn.Write(reqBytes); writeErr != nil {
+			_ = conn.Close()
+			fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: write request: %v\n", writeErr)
+			return 1
+		}
+
+		// Close conn on signal so the decode loop exits cleanly.
+		connCloseOnce := make(chan struct{})
+		go func() {
+			select {
+			case <-sigCtx.Done():
+				_ = conn.Close()
+			case <-connCloseOnce:
+			}
+		}()
+
+		// Stream events: decode each as a raw JSON message (preserving bytes
+		// for forwarding), extract event_id / heartbeat watermark fields, then
+		// write the raw JSON line to w.
+		reconnect := false
+		dec := json.NewDecoder(conn)
+		for {
+			var rawMsg json.RawMessage
+			if decErr := dec.Decode(&rawMsg); decErr != nil {
+				close(connCloseOnce)
+				_ = conn.Close()
+				if sigCtx.Err() != nil {
+					return 0
+				}
+				if errors.Is(decErr, io.EOF) || strings.Contains(decErr.Error(), "use of closed") {
+					fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: connection dropped, reconnecting in %v...\n", backoff)
+					select {
+					case <-time.After(backoff):
+					case <-sigCtx.Done():
+						return 0
+					}
+					if backoff < subscribeFollowReconnectMaxBackoff {
+						backoff *= 2
+						if backoff > subscribeFollowReconnectMaxBackoff {
+							backoff = subscribeFollowReconnectMaxBackoff
+						}
+					}
+					reconnect = true
+					break
+				}
+				fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: decode event: %v\n", decErr)
+				return 1
+			}
+
+			// Extract watermark fields without re-marshaling the full event.
+			var env struct {
+				Type        string `json:"type"`
+				EventID     string `json:"event_id"`
+				LastEventID string `json:"last_event_id"` // heartbeat payload; EV-037a
+			}
+			_ = json.Unmarshal(rawMsg, &env)
+
+			// EV-037a: advance watermark from heartbeat.last_event_id so reconnects
+			// in quiet periods do not re-replay already-delivered events.
+			if env.Type == "heartbeat" && env.LastEventID != "" {
+				if lastSeen == "" || env.LastEventID > lastSeen {
+					lastSeen = env.LastEventID
+				}
+			} else if env.EventID != "" && (lastSeen == "" || env.EventID > lastSeen) {
+				lastSeen = env.EventID
+			}
+
+			// Forward the raw event line to the caller's writer.
+			if _, writeErr := fmt.Fprintln(w, string(rawMsg)); writeErr != nil {
+				// Writer closed (e.g. pipe broken) — exit cleanly.
+				close(connCloseOnce)
+				_ = conn.Close()
+				return 0
+			}
+		}
+
+		if !reconnect {
+			return 0
+		}
+	}
+}
+
 func subscribeUsage() {
 	fmt.Print(`harmonik subscribe — stream daemon events on the Unix socket
 
@@ -228,6 +409,7 @@ FLAGS
   --types t1,t2,...      Comma-separated event-type filter (default: all)
   --heartbeat DUR        Idle heartbeat cadence (default 60s; clamped 10s..600s)
   --since-event-id ID    Replay cursor: replay events strictly after this event_id before delivering live stream
+  --follow               Auto-reconnect on daemon-restart or EOF; resumes from last cursor so no events are lost
   --to NAME              Agent-message filter: only agent_message events addressed to NAME or "*"
   --from NAME            Agent-message filter: only agent_message events sent by NAME
   --topic TOPIC          Agent-message filter: only agent_message events with matching topic
@@ -246,5 +428,7 @@ EXAMPLES
   harmonik subscribe --heartbeat 30s --types heartbeat,run_completed
   harmonik subscribe --types agent_message --to alice
   harmonik subscribe --types agent_message --to alice --from bob --topic status
+  harmonik subscribe --since-event-id <id> --follow
+  harmonik subscribe --types run_completed,run_failed --follow
 `)
 }

@@ -25,7 +25,31 @@
 >   until hk-xkou8 lands + a serialized quiet-window re-validate (fix-first; no quiet window while 3 local lanes run).
 > - Manifest rollout gate **hk-ncg9m = CLOSED/landed** (its merge_build_failed note was the transient cache-wipe, cleared).
 
-## ⭐⭐ CURRENT TRUTH (2026-07-05 ~01:35Z — keeper /clear resume; duncan RE-STAFFED, watch recovered)
+## ⭐⭐ CURRENT TRUTH (2026-07-05 ~04:08Z — keeper /clear resume; fleet reconciled, critical path intact)
+> Lean keeper-restart resume. Daemon UP. Critical path intact. Nothing blocked on operator.
+> (Committed immediately — a prior uncommitted edit was clobbered by a daemon worktree-merge checkout.)
+>
+> **CRITICAL PATH (direction-log 07-04 18:10Z + 17:00Z):** local HARD-capped 4; gb-mbp = throughput
+> critical path. THE fix = **hk-hs7ex** (codename:concurrency-split, OPEN): split the single daemon gate
+> into local hard sub-cap (4) + total admission ceiling (local + Σ worker.max_slots), hoisting SelectWorker
+> to admission so remote isn't throttled by the local 4. Assigned **jessica**, sequenced NEXT after her
+> in-flight **hk-up1pk** (max_slots>1 regression test) — both internal/daemon, SERIALIZED. On land →
+> deploy daemon binary → cycle daemon (activates gb-mbp staged max_slots:6 + the hk-5266t keeper fix) →
+> serialized quiet-window gb-mbp re-validate → drive to 10 concurrent on gb-mbp → fill remote slots.
+>
+> **LANES NOW:**
+> | crew | lane | queue | state |
+> |---|---|---|---|
+> | jessica | daemon concurrency-split (CRITICAL PATH) | jessica-q2 | ACTIVE — hk-up1pk in-flight ~44min (VERIFIED healthy: steady reasoning heartbeats + agent_ready, not wedged; iterating on deterministic Kill-surviving-pane sim). **hk-hs7ex QUEUED NEXT.** Will flag terminal-fail vs merge. |
+> | stilgar | sleep-teardown bug (hk-xjr1n) | stilgar-q2 | ACTIVE — hk-xjr1n in-flight (~healthy, heartbeat-confirmed), idle-armed watching. |
+> | duncan | eval-metrics WS1 (WS1c+WS1d LANDED+CLOSED) | duncan-q2 | **HELD/idle-armed** — WS1e (per-node-attr) now unblocked (WS1b closed) BUT edits workloop.go = COLLIDES with jessica's hk-hs7ex. Was submit-wedged ("boot WS1e now" — wedge SAVED the collision); re-driven 03:48Z to hold, ACK'd. RE-TASK to WS1e the moment jessica's workloop.go lands. |
+> | watch | triage tier | watch-q | 🔄 RESTARTED 04:07Z (session 12525305…). `watch-up` probe keys on watch's event-CONSUMER CURSOR advancing past pending events, NOT the registry — so STOPPING watch freezes the cursor forever (WRONG lever). RIGHT lever = RESTART: fresh session hits WATCH_RESTART_SUPPRESS_WINDOW=600 (10min boot suppress) + its fresh consumer drains the backlog → clears watch-up. Keeper NOT armed (hk-5266t broken until redeploy; watch holds no critical context). If it re-wedges before redeploy: `harmonik start crew watch` again, NEVER `crew stop`. |
+>
+> **NOTE:** WS3b feeders (hk-eval-prog-quality-feeders-k5bxl) COMPLETED success 03:47Z. Paused-by-failure
+> cruft (crashrepro, gbmbp-*, leto-*, loadtest, paul-q, pi-*, sandbox-q, spread-pi) = pre-existing. gb-mbp
+> stays enabled:false until the post-hk-hs7ex serialized re-validate. Local pinned 4.
+
+## ⭐⭐ (SUPERSEDED) CURRENT TRUTH (2026-07-05 ~01:35Z — keeper /clear resume; duncan RE-STAFFED, watch recovered)
 > Lean keeper-restart resume. Ground-truth reconciled: daemon UP, jessica-q2 + stilgar-q2 both active 1w
 > (critical beads in flight, as claimed). Recovered watch (idle-submit-wedge → re-joined comms). RE-STAFFED
 > the drained duncan onto eval-metrics WS1 parser tail. Fleet now 3/4 local active. Nothing blocked on operator.

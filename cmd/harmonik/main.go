@@ -785,6 +785,9 @@ EXAMPLES
 	// harmonik dashboard [--json] — DashboardSnapshot operator panel (hk-2exz9).
 	// Joins live StateSnapshot + dashboard.json + lanes.json + decisions + stalls.
 	// Daemon-up: live socket RPC ("dashboard" op); daemon-down: exits 1.
+	// ON-INV-006-AUTH: read-only operator panel; delegates to "dashboard" socket RPC
+	// which is a pure-read projection (no state mutation, no in-flight run abort).
+	// Same invariant as "state" subcommand (specs/system-state.md SS-001/SS-INV-007).
 	if len(os.Args) >= 2 && os.Args[1] == "dashboard" {
 		return runDashboardSubcommand(os.Args[2:])
 	}

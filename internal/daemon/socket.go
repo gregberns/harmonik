@@ -753,6 +753,10 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 
 	// -----------------------------------------------------------------------
 	// Dashboard snapshot op (plans/2026-07-03-operator-dashboard/DESIGN.md §2).
+	// ON-INV-006-AUTH: read-only DashboardSnapshot RPC; joins LiveStateBuilder.Build()
+	// with dashboard.json, lanes.json, open decisions, and stall events — pure reads,
+	// no state mutation, no in-flight run abort. Same read-only invariant as "state"
+	// (specs/system-state.md §4 SS-001 / SS-INV-007). Bead: hk-2exz9.
 	// -----------------------------------------------------------------------
 
 	case "dashboard":

@@ -1170,6 +1170,19 @@ watch_down = (watch_opsmonitor_target != 'captain' and not watch_present
 # in the worst incident). We now only count the stall when at least one escalation-
 # worthy event (failure / halt / decision / safety class — see ACTIONABLE_EVENT_TYPES)
 # is sitting past the cursor unescalated. Benign churn no longer trips the counter.
+# ── hk-gioct: subscribe stream-liveness gate ────────────────────────────────
+# watch_stream_live: True when the watch subscription stream appears alive.
+# Proxy: the watch sent any agent_message (escalation, daemon-fired liveness ping,
+# etc.) within watch_zombie_threshold seconds. This is the same evidence used by
+# watch_zombie (hk-unwzh F2), making the two flags complementary:
+#   watch_stream_live = True  → stream alive → cursor frozen = long agent turn, not stall
+#   watch_stream_live = False → stream dead  → cursor frozen = genuine stall candidate
+# When last_watch_msg_ts == 0 (new session, no messages yet), stream_live is False;
+# new sessions are already covered by watch_restart_suppressed during the boot window.
+watch_stream_live = (
+    last_watch_msg_ts > 0
+    and (ts_epoch - last_watch_msg_ts) <= watch_zombie_threshold
+)
 new_watch_stall_misses = 0
 watch_stalled = False
 # hk-7o4i0 Fix B / hk-8yh32.3 P5b: deploy/restart suppression. watch_restart_suppressed
@@ -1180,12 +1193,22 @@ watch_stalled = False
 # counter at 0) for that window so a post-deploy actionable backlog past the frozen cursor
 # does not storm. The counter resets, so after the window it takes watch_stall_ticks fresh
 # frozen ticks to (re)trip — a real post-boot stall is still caught.
+# hk-gioct: stream-liveness gate. When watch_stream_live=True the cursor is frozen
+# because the watch is busy in a long agent turn, not stuck. The counter holds at its
+# current value (no increment, no reset) so no false debt accumulates; it resets
+# naturally when the cursor advances. When stream appears dead, the counter increments
+# toward the stall threshold as before.
 if watch_opsmonitor_target != 'captain' and watch_cursor:
     cursor_frozen = prev_watch_cursor != '' and watch_cursor == prev_watch_cursor
     if cursor_frozen and actionable_events_past_cursor and not watch_restart_suppressed:
-        new_watch_stall_misses = prev_watch_stall_misses + 1
-        if new_watch_stall_misses >= watch_stall_ticks:
-            watch_stalled = True
+        if watch_stream_live:
+            # Stream alive: frozen cursor = watch busy in a long turn, not stuck.
+            # Hold the counter; the cursor advance on recovery resets it naturally.
+            new_watch_stall_misses = prev_watch_stall_misses
+        else:
+            new_watch_stall_misses = prev_watch_stall_misses + 1
+            if new_watch_stall_misses >= watch_stall_ticks:
+                watch_stalled = True
     else:
         new_watch_stall_misses = 0
 
@@ -1311,7 +1334,9 @@ if watch_zombie:
     _watch_detail = 'zombie: beacon alive (last_seen %ds) but no comms-send for %ds' % (
         watch_info['last_seen_s'] if watch_info else 0, _watch_silent_s)
 elif watch_stalled:
-    _watch_detail = 'cursor frozen %d ticks with pending events' % new_watch_stall_misses
+    _stall_msg_age = (ts_epoch - last_watch_msg_ts) if last_watch_msg_ts > 0 else -1
+    _watch_detail = 'cursor frozen %d ticks; stream dead (last_msg %ds ago)' % (
+        new_watch_stall_misses, _stall_msg_age)
 elif watch_down:
     _watch_detail = 'absent from comms-who and no tmux session'
 elif not watch_present and watch_tmux_alive:
@@ -1568,6 +1593,8 @@ snapshot = {
     'watch_zombie': watch_zombie,
     'last_watch_msg_ts': last_watch_msg_ts,
     'do_selfheal': do_selfheal,
+    # hk-gioct: stream-liveness gate result (True = stream alive, False = stream dead).
+    'watch_stream_live': watch_stream_live,
     'release_due': release_due,
     'release_commit_count': release_commit_count,
     'ci_status': ci_status,

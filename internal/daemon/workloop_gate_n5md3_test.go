@@ -341,9 +341,13 @@ func TestBeadRunOne_RoutingGate_N5md3(t *testing.T) {
 			}
 
 			// Drive the gate directly with this case's (localOnly, target).
+			// hk-hs7ex: pass nil preSelectedWorker and localSlotHeld=false
+			// so beadRunOne falls through to its own SelectWorker fallback
+			// (the pre-selection block in the outer dispatch loop is not used
+			// when calling beadRunOne directly from a test).
 			beadRunOne(ctx, deps, runID, beadRecord,
 				"", nil, nil, 0, nil, "", "", "", nil,
-				tc.itemLocalOnly, tc.workerTarget)
+				tc.itemLocalOnly, tc.workerTarget, nil, false)
 
 			gotWorker, sawTunnelFailed := collector.tunnelFailedWorkerName(t)
 

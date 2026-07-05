@@ -82,6 +82,19 @@ func (r *Registry) SelectWorkerByName(target string) *Worker {
 	return &w
 }
 
+// HasFreeSlot returns true when the configured worker is enabled and has at
+// least one free slot. It does NOT reserve the slot — use SelectWorker to
+// atomically check and reserve. Used by the split capacity gate (hk-hs7ex)
+// as a non-consuming peek.
+func (r *Registry) HasFreeSlot() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasWorker || !r.worker.Enabled {
+		return false
+	}
+	return r.worker.MaxSlots <= 0 || r.inFlight < r.worker.MaxSlots
+}
+
 // ReleaseSlot decrements the in-flight count when a remote run finishes.
 // It is a no-op if no worker is configured or the count is already zero.
 func (r *Registry) ReleaseSlot() {

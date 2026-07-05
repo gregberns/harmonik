@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -474,6 +475,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		decisionBlocker:            p.DecisionBlocker,            // hk-a6e24 EV-043
 		noAutoPull:                 p.NoAutoPull,                 // hk-h5lv2 / EM-066
 		concurrencyCtrl:            p.ConcurrencyCtrl,            // hk-ohiaf
+		localInFlight:              new(atomic.Int32),            // hk-hs7ex: split gate — fresh counter for each test
 		skipBrHistoryRotation:      true,                         // hk-hypbi: tests use temp dirs without real .br_history
 		targetBranch:               resolveTargetBranch(p.TargetBranch),
 		protectBranches:            p.ProtectBranches,

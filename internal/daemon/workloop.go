@@ -42,6 +42,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -300,6 +301,18 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-ohiaf.
 	concurrencyCtrl *ConcurrencyController
+
+	// localInFlight counts bead runs currently executing locally (not routed to
+	// a remote worker). The split capacity gate (hk-hs7ex) uses this to enforce
+	// the local hard sub-cap (= maxConcurrent) independently of remote-worker
+	// slot accounting. Incremented in the outer poll loop before the goroutine
+	// starts; decremented by the goroutine's defer (or corrected in beadRunOne
+	// when a fallback SelectWorker succeeds and turns a "local" dispatch remote).
+	//
+	// Pointer so all goroutines spawned by runWorkLoop share the same atomic.
+	//
+	// Bead ref: hk-hs7ex.
+	localInFlight *atomic.Int32
 
 	// hookStore is the daemon-wide hook-session registry. It implements
 	// HookRelayHandler and is passed to RunSocketListener as the hr argument so
@@ -1034,6 +1047,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		workflowModeDefault:        workflowModeDefault,
 		runRegistry:                newLocalRunRegistry(),
 		maxConcurrent:              maxConcurrent,
+		localInFlight:              new(atomic.Int32), // hk-hs7ex: split gate — local sub-cap counter
 		hookStore:                  store,
 		cpRegistry:                 cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
 		adapterRegistry:            registry,
@@ -1591,21 +1605,28 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			continue
 		}
 
-		// Step 2: capacity gate — if at the concurrent limit, sleep and retry.
-		// Read from the controller on every tick when set (hk-ohiaf), so that
-		// queue-set-concurrency adjustments take effect without a restart.
-		// Raising n lets the gate admit up to n; lowering lets in-flight runs
-		// drain naturally and only stops new dispatch once running < n.
+		// Step 2: split capacity gate (hk-hs7ex) — local hard sub-cap separate from
+		// remote-worker capacity. Read from the controller on every tick when set
+		// (hk-ohiaf) so that queue-set-concurrency adjustments take effect without a
+		// restart. Raising n lets the local gate admit up to n local runs; remote
+		// runs are bounded only by worker.MaxSlots (enforced by SelectWorker).
+		//
+		// Block only when local is full AND no remote worker has a free slot. When a
+		// worker has a free slot the loop proceeds: SelectWorker (hoisted to after
+		// ClaimBead in the pre-selection block below) will route the run remotely.
+		//
 		// Spec ref: specs/execution-model.md §4.11 EM-049 (in-flight-run capacity gate).
 		gateMax := effectiveMax
 		if deps.concurrencyCtrl != nil {
 			gateMax = deps.concurrencyCtrl.Get()
 		}
-		if deps.runRegistry.Len() >= gateMax {
-			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
-				return exitClean()
+		if int(deps.localInFlight.Load()) >= gateMax {
+			if deps.workerRegistry == nil || !deps.workerRegistry.HasFreeSlot() {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					return exitClean()
+				}
+				continue
 			}
-			continue
 		}
 
 		// EM-062: eager-refill fires on every poll tick (as well as after every
@@ -2758,20 +2779,38 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		if deps.cacheReapMu != nil {
 			deps.cacheReapMu.RUnlock()
 		}
+
+		// hk-hs7ex: hoist SelectWorker to dispatch time (before goroutine start) so
+		// the split gate at Step 2 sees the correct local-vs-remote count on the next
+		// tick. Pre-select a worker based on per-item routing flags. If non-nil, this
+		// run executes remotely and does NOT increment localInFlight.
+		var preSelectedWorker *workers.Worker
+		if !capturedLocalOnly && deps.workerRegistry != nil {
+			if capturedWorkerTarget != "" {
+				preSelectedWorker = deps.workerRegistry.SelectWorkerByName(capturedWorkerTarget)
+			} else {
+				preSelectedWorker = deps.workerRegistry.SelectWorker()
+			}
+		}
+		isLocalDispatch := preSelectedWorker == nil
+		if isLocalDispatch && deps.localInFlight != nil {
+			deps.localInFlight.Add(1)
+		}
+
 		wg.Add(1)
 		// NQ-B1: capture the dispatching queue's name so the completion path can
 		// resolve the right queue by name (evaluateGroupAdvanceWithOutcome) and
 		// the review-loop-failure budget (beadRunOne) updates the right queue.
 		// Without this both default to the main-only shim and a non-"main" queue
 		// never marks its item terminal → the group stalls forever (hk-tigaf.4).
-		go func(runID core.RunID, beadRecord core.BeadRecord, qname string, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string, localOnly bool, workerTarget string) {
+		go func(runID core.RunID, beadRecord core.BeadRecord, qname string, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string, localOnly bool, workerTarget string, preSelected *workers.Worker, localSlotHeld bool) {
 			defer wg.Done()
 			defer runCancel() // always release the per-run context, even on panic
 			defer deps.runRegistry.Unregister(runID)
 			// runSucceeded is set by the emitDone closure inside beadRunOne
 			// and read here after beadRunOne returns for EM-015f group-advance.
 			var runSucceeded bool
-			beadRunOne(runCtx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget)
+			beadRunOne(runCtx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget, preSelected, localSlotHeld)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				// hk-ly0hg Fix-1: if the daemon context was cancelled (shutdown),
@@ -2790,7 +2829,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			if runSucceeded && ctx.Err() == nil {
 				stagedBeadGeneratorEval(ctx, deps, beadRecord.BeadID, beadRecord.Labels)
 			}
-		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams, capturedLocalOnly, capturedWorkerTarget)
+		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, preSelectedWorker, isLocalDispatch)
 	}
 }
 
@@ -2813,8 +2852,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // evaluation. When nil (legacy callers), success is not tracked.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string, itemLocalOnly bool, itemWorkerTarget string) {
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string, itemLocalOnly bool, itemWorkerTarget string, preSelectedWorker *workers.Worker, localSlotHeld bool) {
 	beadID := beadRecord.BeadID
+
+	// hk-hs7ex: release the local slot on exit when the outer loop incremented
+	// localInFlight for this run. relLocalSlot is a mutable flag: if the fallback
+	// SelectWorker path below succeeds and turns a "local" dispatch into a remote
+	// one, it sets relLocalSlot=false and decrements localInFlight immediately so
+	// the outer loop's increment is balanced by this call rather than the deferred
+	// cleanup.
+	relLocalSlot := localSlotHeld
+	defer func() {
+		if relLocalSlot && deps.localInFlight != nil {
+			deps.localInFlight.Add(-1)
+		}
+	}()
 
 	// runTipSHA is set (in the DOT failure path) to the worktree HEAD SHA when
 	// HEAD has advanced past the parent commit — meaning the implementer produced
@@ -3051,11 +3103,24 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		workerHookSock string
 	}
 	var rbc *remoteBeadCtx
-	// hk-f10xl [L5 Move 2]: per-queue routing gate.
-	// itemLocalOnly=true skips SelectWorker entirely (force local).
-	// itemWorkerTarget non-empty pins to the named worker via SelectWorkerByName;
-	// if unavailable, falls back to local (nil). Otherwise SelectWorker picks any.
-	if !itemLocalOnly && deps.workerRegistry != nil {
+	// hk-hs7ex: use the worker pre-selected at dispatch time when provided. This
+	// avoids a double SelectWorker call and keeps slot accounting consistent with
+	// the split gate. The pre-selection was performed by the outer dispatch loop
+	// after ClaimBead and before runRegistry.Register.
+	if preSelectedWorker != nil {
+		rbc = &remoteBeadCtx{
+			worker: *preSelectedWorker,
+			// hk-zexsj: pin the tmux SSHRunner off the shared SSH ControlMaster.
+			sshRunner: tmuxpkg.SSHRunner{Host: preSelectedWorker.Host, Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"}},
+		}
+		defer deps.workerRegistry.ReleaseSlot()
+	}
+	// hk-f10xl [L5 Move 2]: per-queue routing gate fallback. Applies when
+	// preSelectedWorker is nil (e.g. br-ready path with no available worker at
+	// dispatch time, or a race where a worker slot freed up after the outer loop's
+	// HasFreeSlot peek). This path is rare after the hk-hs7ex hoist but kept for
+	// correctness.
+	if rbc == nil && !itemLocalOnly && deps.workerRegistry != nil {
 		var w *workers.Worker
 		if itemWorkerTarget != "" {
 			w = deps.workerRegistry.SelectWorkerByName(itemWorkerTarget)
@@ -3076,103 +3141,114 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				sshRunner: tmuxpkg.SSHRunner{Host: w.Host, Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"}},
 			}
 			defer deps.workerRegistry.ReleaseSlot()
+			// hk-hs7ex: the outer loop incremented localInFlight thinking this was
+			// a local run. A worker slot became available between the gate and here
+			// so this run is actually remote. Correct the count immediately and
+			// disable the deferred cleanup.
+			if localSlotHeld && deps.localInFlight != nil {
+				deps.localInFlight.Add(-1)
+				relLocalSlot = false
+			}
+		}
+	}
+	// gap #7 Option A: ensure the worker's .harmonik/ dir exists, then
+	// start the per-run SSH reverse tunnel — BOTH before any agent Launch.
+	//
+	//  1. workerHookSock is the per-run worker-side TCP endpoint the tunnel
+	//     binds (tcp://127.0.0.1:<port>), shared by beads 1, 2, and 3. The
+	//     port is allocated from box A's free ephemeral space as a HINT for
+	//     sshd's worker-side bind (collision-safe: see
+	//     allocateReverseTunnelPort + ExitOnForwardFailure=yes).
+	//  2. ensureWorkerHarmonikDir (bead 2) mkdir-p's the worker's .harmonik/
+	//     dir for other per-run artifacts; non-fatal — the readiness gate
+	//     (bead 3) is the authority.
+	//  3. The tunnel (bead 1) is a SEPARATE long-lived `ssh -N -R`
+	//     process: the implementer agent is spawned via a DETACHED ssh
+	//     (tmux new-window -d) that returns immediately, so a -R flag on
+	//     THAT ssh would tear the tunnel down before the agent's first
+	//     hook. The tunnel is keyed to this run and held open for its
+	//     lifetime, forwarding the worker-side per-run socket back to box
+	//     A's daemon hook socket. Start is non-fatal; teardown defers a
+	//     Kill+Wait.
+	//
+	// hk-hs7ex: this block is now outside both the pre-selected and fallback
+	// worker selection blocks, so it runs for ALL remote runs (rbc != nil)
+	// regardless of which selection path set rbc. NFR7: local runs (rbc == nil)
+	// skip this block entirely — byte-identical to prior behavior.
+	if rbc != nil {
+		// Allocate a free TCP port (hint for sshd's worker-side loopback bind)
+		// and form the per-run worker TCP endpoint the hook relay will dial.
+		tunnelPort, portErr := allocateReverseTunnelPort()
+		if portErr != nil {
+			// Non-fatal: log and skip the tunnel; the readiness gate below would
+			// fail an empty endpoint, so guard the gate on workerHookSock != "".
+			fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel port alloc bead %s run %s: %v\n",
+				beadID, runID.String(), portErr)
+		} else {
+			rbc.workerHookSock = workerTCPEndpoint(tunnelPort)
+			// hk-cnp17: free the reserved port when this run ends, so a later
+			// run may reuse it (the reservation prevents two concurrent runs
+			// from being handed the same worker-side hint port).
+			defer releaseReverseTunnelPort(tunnelPort)
+		}
 
-			// gap #7 Option A: ensure the worker's .harmonik/ dir exists, then
-			// start the per-run SSH reverse tunnel — BOTH before any agent Launch.
-			//
-			//  1. workerHookSock is the per-run worker-side TCP endpoint the tunnel
-			//     binds (tcp://127.0.0.1:<port>), shared by beads 1, 2, and 3. The
-			//     port is allocated from box A's free ephemeral space as a HINT for
-			//     sshd's worker-side bind (collision-safe: see
-			//     allocateReverseTunnelPort + ExitOnForwardFailure=yes).
-			//  2. ensureWorkerHarmonikDir (bead 2) mkdir-p's the worker's .harmonik/
-			//     dir for other per-run artifacts; non-fatal — the readiness gate
-			//     (bead 3) is the authority.
-			//  3. The tunnel (bead 1) is a SEPARATE long-lived `ssh -N -R`
-			//     process: the implementer agent is spawned via a DETACHED ssh
-			//     (tmux new-window -d) that returns immediately, so a -R flag on
-			//     THAT ssh would tear the tunnel down before the agent's first
-			//     hook. The tunnel is keyed to this run and held open for its
-			//     lifetime, forwarding the worker-side per-run socket back to box
-			//     A's daemon hook socket. Start is non-fatal; teardown defers a
-			//     Kill+Wait.
-			//
-			// NFR7: this block runs only for remote runs (rbc != nil); local runs
-			// are byte-identical (no mkdir, no tunnel, no new behaviour).
-			// Allocate a free TCP port (hint for sshd's worker-side loopback bind)
-			// and form the per-run worker TCP endpoint the hook relay will dial.
-			tunnelPort, portErr := allocateReverseTunnelPort()
-			if portErr != nil {
-				// Non-fatal: log and skip the tunnel; the readiness gate below would
-				// fail an empty endpoint, so guard the gate on workerHookSock != "".
-				fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel port alloc bead %s run %s: %v\n",
-					beadID, runID.String(), portErr)
-			} else {
-				rbc.workerHookSock = workerTCPEndpoint(tunnelPort)
-				// hk-cnp17: free the reserved port when this run ends, so a later
-				// run may reuse it (the reservation prevents two concurrent runs
-				// from being handed the same worker-side hint port).
-				defer releaseReverseTunnelPort(tunnelPort)
-			}
+		if mkErr := ensureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"daemon: workloop: ensureWorkerHarmonikDir bead %s run %s: %v (non-fatal; readiness gate is authority)\n",
+				beadID, runID.String(), mkErr)
+		}
 
-			if mkErr := ensureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
-				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: ensureWorkerHarmonikDir bead %s run %s: %v (non-fatal; readiness gate is authority)\n",
-					beadID, runID.String(), mkErr)
+		daemonHookSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+		// Mirror the SSHRunner host/opts argv pattern (runner.go SSHRunner.Command):
+		// extra opts BEFORE the host. Fall back to the worker record's Host when
+		// the runner is not an SSHRunner (e.g. a test double).
+		tunnelHost, tunnelOpts, hostOK := sshHostOpts(rbc.sshRunner)
+		if !hostOK {
+			tunnelHost = rbc.worker.Host
+		}
+		tunnelArgs := buildReverseTunnelArgs(tunnelPort, daemonHookSock, tunnelHost, tunnelOpts)
+		rbc.tunnelCmd = reverseTunnelRunner(ctx, "ssh", tunnelArgs...)
+		if startErr := rbc.tunnelCmd.Start(); startErr != nil {
+			// Non-fatal: a failed tunnel start means the worker-side agent's hooks
+			// will not reach box A, but the readiness gate (bead 3) is the
+			// authority that fails the run. Log and clear tunnelCmd so the
+			// teardown defer is a no-op.
+			fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel start bead %s run %s: %v\n",
+				beadID, runID.String(), startErr)
+			rbc.tunnelCmd = nil
+		}
+		defer func() {
+			if rbc.tunnelCmd != nil && rbc.tunnelCmd.Process != nil {
+				_ = rbc.tunnelCmd.Process.Kill()
+				_ = rbc.tunnelCmd.Wait()
 			}
+		}()
 
-			daemonHookSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
-			// Mirror the SSHRunner host/opts argv pattern (runner.go SSHRunner.Command):
-			// extra opts BEFORE the host. Fall back to the worker record's Host when
-			// the runner is not an SSHRunner (e.g. a test double).
-			tunnelHost, tunnelOpts, hostOK := sshHostOpts(rbc.sshRunner)
-			if !hostOK {
-				tunnelHost = rbc.worker.Host
-			}
-			tunnelArgs := buildReverseTunnelArgs(tunnelPort, daemonHookSock, tunnelHost, tunnelOpts)
-			rbc.tunnelCmd = reverseTunnelRunner(ctx, "ssh", tunnelArgs...)
-			if startErr := rbc.tunnelCmd.Start(); startErr != nil {
-				// Non-fatal: a failed tunnel start means the worker-side agent's hooks
-				// will not reach box A, but the readiness gate (bead 3) is the
-				// authority that fails the run. Log and clear tunnelCmd so the
-				// teardown defer is a no-op.
-				fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel start bead %s run %s: %v\n",
-					beadID, runID.String(), startErr)
-				rbc.tunnelCmd = nil
-			}
-			defer func() {
-				if rbc.tunnelCmd != nil && rbc.tunnelCmd.Process != nil {
-					_ = rbc.tunnelCmd.Process.Kill()
-					_ = rbc.tunnelCmd.Wait()
-				}
-			}()
-
-			// gap #7 bead 3: tunnel readiness gate. The worker-side implementer
-			// agent can fire its first agent_ready hook BEFORE the `ssh -N -R`
-			// forward above is actually live; the hook relay retries only on
-			// daemon_not_ready, NOT on a dial failure, so launching the agent
-			// before the forward is live yields a silent bridge_dial_failed →
-			// agent_ready_timeout. Block until the worker-side per-run TCP listener
-			// is confirmed CONNECTABLE (nc -z over the SSHRunner, as the worker
-			// user) before any Launch — an existence-only check would false-green a
-			// non-connectable endpoint (hk-ege6). On timeout/failure (including a
-			// failed port alloc that left workerHookSock empty), do NOT launch:
-			// emit worker_tunnel_failed, reopen
-			// the bead for re-dispatch, and return — the deferred tunnel teardown
-			// (above) and ReleaseSlot run on the way out, so the `ssh -N` process
-			// does not leak. The gate runs ONLY here, inside the remote branch
-			// (NFR7: local runs never construct a tunnel and never reach it).
-			if waitErr := waitWorkerSocketLive(ctx, rbc.sshRunner, rbc.workerHookSock, workerSocketReadyTimeout); waitErr != nil {
-				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: reverse-tunnel readiness gate bead %s run %s: %v (reopening, not launching)\n",
-					beadID, runID.String(), waitErr)
-				workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
-					rbc.worker.Name, rbc.worker.Host, rbc.workerHookSock, waitErr.Error(), deps.bus.Emit)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					fmt.Sprintf("reverse-tunnel not ready: %v", waitErr))
-				return
-			}
+		// gap #7 bead 3: tunnel readiness gate. The worker-side implementer
+		// agent can fire its first agent_ready hook BEFORE the `ssh -N -R`
+		// forward above is actually live; the hook relay retries only on
+		// daemon_not_ready, NOT on a dial failure, so launching the agent
+		// before the forward is live yields a silent bridge_dial_failed →
+		// agent_ready_timeout. Block until the worker-side per-run TCP listener
+		// is confirmed CONNECTABLE (nc -z over the SSHRunner, as the worker
+		// user) before any Launch — an existence-only check would false-green a
+		// non-connectable endpoint (hk-ege6). On timeout/failure (including a
+		// failed port alloc that left workerHookSock empty), do NOT launch:
+		// emit worker_tunnel_failed, reopen
+		// the bead for re-dispatch, and return — the deferred tunnel teardown
+		// (above) and ReleaseSlot run on the way out, so the `ssh -N` process
+		// does not leak. The gate runs ONLY here, inside the remote branch
+		// (NFR7: local runs never construct a tunnel and never reach it).
+		if waitErr := waitWorkerSocketLive(ctx, rbc.sshRunner, rbc.workerHookSock, workerSocketReadyTimeout); waitErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"daemon: workloop: reverse-tunnel readiness gate bead %s run %s: %v (reopening, not launching)\n",
+				beadID, runID.String(), waitErr)
+			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
+				rbc.worker.Name, rbc.worker.Host, rbc.workerHookSock, waitErr.Error(), deps.bus.Emit)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("reverse-tunnel not ready: %v", waitErr))
+			return
 		}
 	}
 

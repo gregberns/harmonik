@@ -741,8 +741,15 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 	// hk-x882o: terminal/consolidate nodes use a reserved +1 slot so a
 	// completed+reviewed run can always get its final merge node scheduled even
 	// when all ordinary non-terminal slots are occupied. See acquireSpawnSlot.
+	//
+	// hk-hs7ex: remote runs spawn tmux on the WORKER box, not locally. They must
+	// NOT consume the local spawnSem — the cap is sized for local sessions only
+	// (spawnCap = localCap*2). Override releaseSlotFn with a no-op and skip the
+	// acquire entirely for remote runs. NFR7: local path is byte-identical.
 	releaseSlotFn := s.makeReleaseSlotFn(in.Terminal)
-	if err := s.acquireSpawnSlot(ctx, in.Terminal); err != nil {
+	if remote {
+		releaseSlotFn = func() {}
+	} else if err := s.acquireSpawnSlot(ctx, in.Terminal); err != nil {
 		return nil, err
 	}
 	windowName := in.WindowName

@@ -1124,12 +1124,13 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 		}
 	}
 	// hk-vfeeo: refuse when the requested ceiling would oversubscribe the spawn
-	// cap. Each in-flight bead occupies 2 non-terminal sessions (implementer +
-	// reviewer), so the safe dispatch ceiling is spawnCap/2. Setting
-	// max_concurrent above that starves the spawn semaphore and produces
-	// spawn_cap_blocked run_failures. The spawn cap is fixed at daemon startup
-	// (--max-concurrent × 2); raise it by restarting with a higher value or
-	// setting HARMONIK_MAX_CONCURRENT_SESSIONS.
+	// cap. Each LOCAL in-flight bead occupies 2 non-terminal sessions
+	// (implementer + reviewer), so the safe local dispatch ceiling is
+	// spawnCap/2. Remote runs (hk-hs7ex) spawn tmux on the WORKER, not locally,
+	// so they do not consume the local spawnSem. This guard protects the local
+	// sub-cap only — remote slots are not counted here. The spawn cap is fixed
+	// at daemon startup (--max-concurrent × 2); raise it by restarting with a
+	// higher value or setting HARMONIK_MAX_CONCURRENT_SESSIONS.
 	spawnCap := 0
 	if a.spawnCapGet != nil {
 		spawnCap = a.spawnCapGet()
@@ -1139,7 +1140,7 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 		return nil, &RPCError{
 			Code: -32099, Message: "spawn_cap_exceeded",
 			Detail: map[string]any{
-				"error":     fmt.Sprintf("set-concurrency %d would oversubscribe the spawn cap: each bead needs 2 sessions, cap = %d non-terminal slots (safe max_concurrent = %d); restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap", req.N, spawnCap, safeMax, req.N, req.N*2),
+				"error":     fmt.Sprintf("set-concurrency %d would oversubscribe the local spawn cap: each LOCAL bead needs 2 sessions, cap = %d non-terminal slots (safe local max_concurrent = %d); restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap; remote worker runs are not subject to this limit", req.N, spawnCap, safeMax, req.N, req.N*2),
 				"requested": req.N,
 				"spawn_cap": spawnCap,
 				"safe_max":  safeMax,

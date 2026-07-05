@@ -782,6 +782,13 @@ EXAMPLES
 		return runStateSubcommand(os.Args[2:])
 	}
 
+	// harmonik dashboard [--json] — DashboardSnapshot operator panel (hk-2exz9).
+	// Joins live StateSnapshot + dashboard.json + lanes.json + decisions + stalls.
+	// Daemon-up: live socket RPC ("dashboard" op); daemon-down: exits 1.
+	if len(os.Args) >= 2 && os.Args[1] == "dashboard" {
+		return runDashboardSubcommand(os.Args[2:])
+	}
+
 	// Missing .harmonik/ → exit 7. Spec: specs/digest-command.md; CL-030..033.
 	// Bead ref: hk-1qrty.
 	if len(os.Args) >= 2 && os.Args[1] == "digest" {

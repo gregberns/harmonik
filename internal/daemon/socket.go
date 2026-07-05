@@ -355,7 +355,7 @@ func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h Requ
 			}
 			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh, sleepWakeh, nil)
+		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh, sleepWakeh, nil, nil)
 	}
 }
 
@@ -373,7 +373,7 @@ func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h Requ
 // terminator), json.Decoder.Decode returns an error and the connection is dropped
 // with no response after writing a bad_envelope ack — the relay will have exited
 // already in this case, so the write is best-effort.
-func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, stateh StateHandler) {
+func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, stateh StateHandler, dashh DashboardHandler) {
 	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	// Decode into a raw map first to detect the message format (type vs op).
@@ -747,6 +747,22 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 		result, err := stateh.HandleState(ctx)
 		if err != nil {
 			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: state: %v", err)}
+		} else {
+			resp = SocketResponse{Ok: true, Result: result}
+		}
+
+	// -----------------------------------------------------------------------
+	// Dashboard snapshot op (plans/2026-07-03-operator-dashboard/DESIGN.md §2).
+	// -----------------------------------------------------------------------
+
+	case "dashboard":
+		if dashh == nil {
+			resp = SocketResponse{Ok: false, Error: "daemon: DashboardHandler not registered"}
+			break
+		}
+		result, err := dashh.HandleDashboard(ctx)
+		if err != nil {
+			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: dashboard: %v", err)}
 		} else {
 			resp = SocketResponse{Ok: true, Result: result}
 		}

@@ -81,6 +81,6 @@ func RunSocketListenerWithState(ctx context.Context, sockPath string, h RequestH
 			}
 			return fmt.Errorf("daemon: RunSocketListenerWithState: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh, sleepWakeh, stateh)
+		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh, sleepWakeh, stateh, nil)
 	}
 }

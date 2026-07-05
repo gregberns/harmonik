@@ -1850,6 +1850,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		stateBuilder := NewLiveStateBuilder(sharedRunRegistry, qs, drainDet, concurrencyCtrl, cfg.MaxConcurrent, cfg.ProjectDir, cfg.ProjectCfg.Keeper)
 		stateHandler := NewLiveStateSocketHandler(stateBuilder)
 
+		dashBuilder := NewDashboardBuilder(stateBuilder, cfg.ProjectDir, cfg.JSONLLogPath)
+		dashHandler := NewLiveDashboardSocketHandler(dashBuilder)
+
 		// Start the poll-gate goroutine (SS-007, hk-w6q7 P2-b): evaluates the
 		// fleet ActivityLabel every pollGateInterval and gates StaleWatcher and
 		// BandwidthTuner when INACTIVE.  Must start after stateBuilder is ready.
@@ -1861,7 +1864,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// reasoning as defer ln.Close() discards errors in RunSocketListener.
 		socketDone := make(chan error, 1)
 		go func() {
-			socketDone <- RunSocketListenerWithState(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, crewHandler, quiesceArbiter, stateHandler, queueHandler)
+			socketDone <- RunSocketListenerWithDashboard(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, crewHandler, quiesceArbiter, stateHandler, dashHandler, queueHandler)
 		}()
 		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 	}

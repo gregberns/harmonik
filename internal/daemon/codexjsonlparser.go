@@ -246,10 +246,15 @@ type codexRunArtifacts struct {
 // thread.started event in the stream. All bytes are passed through to callers
 // unchanged so the SpawnWatcher can process them normally.
 //
+// The interceptor continues scanning all lines even after the thread_id callback
+// fires, so later events (turn.completed with usage, turn.failed) are also
+// captured in arts. Call TokenUsage() after the stream is exhausted to read the
+// token counts from turn.completed.
+//
 // This is the codex analog of SessionIDInterceptor (sessioncontext_chb023.go) for
 // the claude harness. It is line-buffered: bytes accumulate until a '\n' boundary
 // is found, then the complete JSONL line is parsed by parseCodexJSONLEvent +
-// captureCodexThreadID. The callback fires at most once (first thread_id wins).
+// captureCodexThreadID. The thread_id callback fires at most once (first wins).
 //
 // Usage:
 //
@@ -260,12 +265,12 @@ type codexRunArtifacts struct {
 //
 // Bead: hk-mzgh (G2 — codex thread_id capture into resume path).
 type codexThreadIDInterceptor struct {
-	mu        sync.Mutex
-	inner     io.Reader
-	buf       bytes.Buffer
-	firedOnce bool
-	arts      codexRunArtifacts
-	cb        func(string)
+	mu            sync.Mutex
+	inner         io.Reader
+	buf           bytes.Buffer
+	cbFiredOnce   bool // guards thread_id callback; does NOT stop scanning
+	arts          codexRunArtifacts
+	cb            func(string)
 }
 
 // newCodexThreadIDInterceptor wraps inner and fires cb with the captured
@@ -287,12 +292,12 @@ func (c *codexThreadIDInterceptor) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// checkBuffer scans c.buf for complete JSONL lines and fires the callback on
-// the first line that yields a non-empty capturedThreadID. Called with c.mu held.
+// checkBuffer scans c.buf for complete JSONL lines, folds each into c.arts via
+// captureCodexThreadID, and fires the thread_id callback exactly once on the
+// first line that yields a non-empty capturedThreadID. Scanning continues for
+// all subsequent lines so turn.completed usage is captured even though it
+// arrives after thread.started. Called with c.mu held.
 func (c *codexThreadIDInterceptor) checkBuffer() {
-	if c.firedOnce {
-		return
-	}
 	for {
 		b := c.buf.Bytes()
 		idx := bytes.IndexByte(b, '\n')
@@ -312,12 +317,21 @@ func (c *codexThreadIDInterceptor) checkBuffer() {
 			continue
 		}
 		captureCodexThreadID(&c.arts, ev)
-		if c.arts.capturedThreadID != "" {
-			c.firedOnce = true
+		if !c.cbFiredOnce && c.arts.capturedThreadID != "" {
+			c.cbFiredOnce = true
 			c.cb(c.arts.capturedThreadID)
-			return
 		}
 	}
+}
+
+// TokenUsage returns the input and output token counts captured from the
+// turn.completed usage object in the JSONL stream. Both values are zero until
+// a turn.completed event with a usage field is observed. Safe to call
+// concurrently or after the stream is exhausted.
+func (c *codexThreadIDInterceptor) TokenUsage() (inputTokens, outputTokens int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.arts.inputTokens, c.arts.outputTokens
 }
 
 // captureCodexThreadID folds a parsed codexEvent into the run artifacts.

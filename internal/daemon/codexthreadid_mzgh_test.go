@@ -129,6 +129,54 @@ func TestCodexThreadIDInterceptor_NoThreadStarted_mzgh(t *testing.T) {
 	}
 }
 
+// TestCodexThreadIDInterceptor_TokenUsage_mzgh verifies that token counts from
+// a turn.completed usage object are accessible via TokenUsage() after the
+// stream is drained. This exercises the production I/O path — checkBuffer must
+// continue scanning after the thread_id callback fires.
+func TestCodexThreadIDInterceptor_TokenUsage_mzgh(t *testing.T) {
+	t.Parallel()
+
+	jsonlStream := strings.Join([]string{
+		`{"type":"thread.started","thread_id":"th_tokens"}`,
+		`{"type":"turn.started","turn_id":"tr_1"}`,
+		`{"type":"turn.completed","turn_id":"tr_1","usage":{"input_tokens":24763,"output_tokens":122}}`,
+	}, "\n") + "\n"
+
+	interceptor := daemon.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {})
+	if _, err := io.ReadAll(interceptor); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+
+	in, out := interceptor.TokenUsage()
+	if in != 24763 {
+		t.Errorf("InputTokens = %d; want 24763", in)
+	}
+	if out != 122 {
+		t.Errorf("OutputTokens = %d; want 122", out)
+	}
+}
+
+// TestCodexThreadIDInterceptor_TokenUsage_NoUsage_mzgh verifies that TokenUsage
+// returns zero when the turn.completed event carries no usage object.
+func TestCodexThreadIDInterceptor_TokenUsage_NoUsage_mzgh(t *testing.T) {
+	t.Parallel()
+
+	jsonlStream := strings.Join([]string{
+		`{"type":"thread.started","thread_id":"th_nousage"}`,
+		`{"type":"turn.completed","turn_id":"tr_1"}`,
+	}, "\n") + "\n"
+
+	interceptor := daemon.ExportedNewCodexThreadIDInterceptor(strings.NewReader(jsonlStream), func(string) {})
+	if _, err := io.ReadAll(interceptor); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+
+	in, out := interceptor.TokenUsage()
+	if in != 0 || out != 0 {
+		t.Errorf("TokenUsage() = (%d, %d); want (0, 0) when usage absent", in, out)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // buildCodexLaunchSpec resume argv tests (hk-mzgh — -C removal)
 // ─────────────────────────────────────────────────────────────────────────────

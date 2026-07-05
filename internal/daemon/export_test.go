@@ -2927,10 +2927,11 @@ func ExportedEnsurePiRefsTrailerViaRunner(ctx context.Context, runner tmuxPkg.Co
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ExportedNewCodexThreadIDInterceptor exposes newCodexThreadIDInterceptor for
-// tests in package daemon_test.
+// tests in package daemon_test. It returns the concrete type so tests can call
+// TokenUsage() after draining the stream.
 //
 // Bead ref: hk-mzgh.
-func ExportedNewCodexThreadIDInterceptor(inner io.Reader, cb func(string)) io.Reader {
+func ExportedNewCodexThreadIDInterceptor(inner io.Reader, cb func(string)) *codexThreadIDInterceptor {
 	return newCodexThreadIDInterceptor(inner, cb)
 }
 

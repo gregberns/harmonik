@@ -270,6 +270,14 @@ func buildDaemonCmd(projectDir string, maxConcurrent int) []string {
 	if maxConcurrent > 0 {
 		cmd = append(cmd, "--max-concurrent", fmt.Sprintf("%d", maxConcurrent))
 	}
+	// Env-gated tier-4 global default harness override (hk-y01k6 flag is
+	// launch-only with no config/env path of its own). Lets an operator flip the
+	// whole fleet's default implementer/reviewer off Claude (e.g. HARMONIK_DEFAULT_HARNESS=pi
+	// during a token crunch) without a code change: set/unset the env + restart the
+	// supervisor. Empty (unset) preserves the built-in claude-code fallback.
+	if dh := os.Getenv("HARMONIK_DEFAULT_HARNESS"); dh != "" {
+		cmd = append(cmd, "--default-harness", dh)
+	}
 	return cmd
 }
 

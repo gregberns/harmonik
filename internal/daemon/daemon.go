@@ -159,8 +159,8 @@ type Config struct {
 	// AgentReadyTimeout is the maximum duration the daemon waits for an
 	// agent_ready event after launching a handler subprocess per HC-056.
 	//
-	// A zero value falls back to the defaultAgentReadyTimeout constant (90s as of
-	// hk-hzj) declared in agentready.go. Operators may reduce this value in
+	// A zero value falls back to the defaultAgentReadyTimeout constant (150s as of
+	// hk-5z1f0) declared in agentready.go. Operators may reduce this value in
 	// environments with fast cold-start paths or increase it for slow disk-cache
 	// warm-up or high-concurrency burst scenarios. The timeout is applied
 	// per-dispatch (not per-daemon lifetime).

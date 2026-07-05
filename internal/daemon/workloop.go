@@ -399,6 +399,29 @@ type workLoopDeps struct {
 	// Bead ref: hk-5qp7z.
 	worktreeCreateMu *sync.Mutex
 
+	// agentSpawnSem, when non-nil, is a counting semaphore (capacity 3) that
+	// bounds how many claude cold-start agent spawns may be in flight
+	// concurrently on a single remote worker (hk-5z1f0). Acquired immediately
+	// before the remote agent Launch and released once agent_ready resolves
+	// (success, failure, or timeout).
+	//
+	// Rationale: under the 10-concurrent ramp a worker may host up to 6
+	// simultaneous agents (implementer + reviewer per run). The 2nd cold-start
+	// claude spawn — the REVIEW-stage agent — competes for CPU/disk/tunnel
+	// readiness and recurrently trips agent_ready_timeout over the reverse SSH
+	// tunnel. Bounding concurrent cold-starts per worker to 3 keeps each spawn's
+	// warm-up window inside the agent_ready deadline without serialising the
+	// whole run (the semaphore is released as soon as the agent is ready, so it
+	// gates cold-start only, not the run body).
+	//
+	// Remote-only: acquisition is guarded on rbc != nil, mirroring the
+	// reverse-tunnel readiness gate — local runs never construct a tunnel and
+	// are never gated.
+	//
+	// Production: newWorkLoopDeps always sets this to a non-nil channel of cap 3.
+	// Bead ref: hk-5z1f0.
+	agentSpawnSem chan struct{}
+
 	// emittedEpics tracks parent epic IDs for which epic_completed has already
 	// been emitted this daemon session, providing the at-most-once guard (AC-1).
 	// Concurrent access is serialised by emittedEpicsMu.
@@ -1101,6 +1124,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,                                          // hk-hypbi: per-close .br_history trim
 		mergeMu:                    &sync.Mutex{},                                                      // hk-yyso7: global merge-serialisation across all queues
 		worktreeCreateMu:           &sync.Mutex{},                                                      // hk-5qp7z: global worktree-create serialisation for remote runs
+		agentSpawnSem:              make(chan struct{}, 3),                                             // hk-5z1f0: per-worker cold-start spawn semaphore (cap 3, remote-only)
 		cacheReapMu:                &sync.RWMutex{},                                                    // hk-y3frr: reap↔dispatch exclusion
 		emittedEpics:               make(map[core.BeadID]struct{}),                                     // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:             &sync.Mutex{},
@@ -4296,6 +4320,31 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).
 	runH := handler.NewHandler(tap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
+	// hk-5z1f0: per-worker cold-start spawn semaphore. Acquire immediately before
+	// the remote agent Launch so no more than cap (3) claude cold-starts run
+	// concurrently on a single worker — the 2nd (reviewer) cold-start over the
+	// reverse tunnel otherwise trips agent_ready_timeout under 6-concurrent remote
+	// load. Remote-only (rbc != nil): local runs never construct a tunnel and are
+	// never gated, mirroring the reverse-tunnel readiness gate above. Released once
+	// agent_ready resolves (success/failure/timeout); the sync.Once + defer backstop
+	// guarantees the slot is returned on every exit path so it can never leak.
+	releaseSpawnSlot := func() {}
+	if rbc != nil && deps.agentSpawnSem != nil {
+		select {
+		case deps.agentSpawnSem <- struct{}{}:
+		case <-ctx.Done():
+			// ctx cancelled while waiting for a slot — reopen and bail before Launch.
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("cancelled awaiting cold-start spawn slot: %v", ctx.Err()))
+			emitDone(false, fmt.Sprintf("cancelled awaiting cold-start spawn slot: %v", ctx.Err()))
+			return
+		}
+		var once sync.Once
+		releaseSpawnSlot = func() { once.Do(func() { <-deps.agentSpawnSem }) }
+		defer releaseSpawnSlot() // leak backstop; explicit release after agent_ready below
+	}
+
 	implementerLaunchedAt := time.Now()
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
@@ -4574,6 +4623,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// CompletionProcessExit: process self-terminates; fall through directly to
 		// waitWithSocketGrace without the agent_ready handshake.
 	}
+
+	// hk-5z1f0: agent_ready has resolved (or was skipped for a ProcessExit
+	// harness / missing adapter) — the cold-start window is over, so release the
+	// spawn semaphore now rather than holding it for the whole run body. The
+	// deferred backstop above already guarantees release on the early-return
+	// error paths (launch failure, agent_ready_timeout); this prompt release
+	// keeps the gate scoped to cold-start only. No-op for local runs.
+	releaseSpawnSlot()
 
 	// Steps 6a/6b: paste-inject — only for interactive TUI harnesses (not ProcessExit).
 	// hk-zlo8: CodexHarness (CompletionProcessExit) has no tmux pane; calling

@@ -296,6 +296,11 @@ type WorkLoopDepsParams struct {
 	// ExportedWorkLoopDeps installs a fresh mutex (mirrors production default).
 	WorktreeCreateMu *sync.Mutex
 
+	// AgentSpawnSem, when non-nil, is the per-worker cold-start spawn semaphore
+	// (cap 3) that bounds concurrent remote claude cold-starts (hk-5z1f0). When
+	// nil, ExportedWorkLoopDeps installs a fresh cap-3 channel (production default).
+	AgentSpawnSem chan struct{}
+
 	// BeadAuditLogger, when non-nil, overrides the beadAuditLogger function
 	// used by the pre-dispatch subsume check to detect reopen-for-fix beads
 	// (hk-wcv). When nil (the test default), the check is skipped and the
@@ -433,6 +438,12 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		worktreeCreateMu = &sync.Mutex{}
 	}
 
+	// AgentSpawnSem: default to a fresh cap-3 semaphore (mirrors newWorkLoopDeps, hk-5z1f0).
+	agentSpawnSem := p.AgentSpawnSem
+	if agentSpawnSem == nil {
+		agentSpawnSem = make(chan struct{}, 3)
+	}
+
 	// CacheReapMu: default to a fresh RWMutex (hk-y3frr).
 	cacheReapMu := p.CacheReapMu
 	if cacheReapMu == nil {
@@ -493,6 +504,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		protectBranches:            p.ProtectBranches,
 		mergeMu:                    mergeMu,
 		worktreeCreateMu:           worktreeCreateMu,
+		agentSpawnSem:              agentSpawnSem,                  // hk-5z1f0: per-worker cold-start spawn semaphore
 		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
 		emittedEpicsMu:             &sync.Mutex{},
 		beadAuditLogger:            p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption

@@ -13,7 +13,7 @@ package daemon
 // on each event; on first true it closes the ready channel.
 //
 // The outer function resolves the effective timeout (Config.AgentReadyTimeout
-// → defaultAgentReadyTimeout = 90s) and performs the three-way select:
+// → defaultAgentReadyTimeout = 150s) and performs the three-way select:
 //   - ready: return nil
 //   - time.After(timeout): return ErrAgentReadyTimeout
 //   - ctx.Done(): return ctx.Err()
@@ -39,7 +39,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// defaultAgentReadyTimeout is the HC-056 default: 90 seconds.
+// defaultAgentReadyTimeout is the HC-056 default: 150 seconds.
 // Informed by claude cold-start latency (≤5s typical, 10–15s cold disk cache)
 // plus margin for skill provisioning, one-time .claude/ filesystem warm-up,
 // and concurrent-burst CPU/disk contention under --max-concurrent ≥ 4.
@@ -47,13 +47,21 @@ import (
 // The prior 30s default was tuned for single-instance cold-start; under
 // concurrent dispatch bursts with high disk utilisation (≥90%) multiple
 // agents compete for I/O and CPU during cold-start, pushing the longest-
-// waiting agent past 30s. 90s provides headroom for a 4-wide burst under
+// waiting agent past 30s. 90s provided headroom for a 4-wide burst under
 // moderate disk pressure while remaining far below the 30-min implementer
 // commit budget (hk-hzj). Operators may adjust per-environment via
 // --agent-ready-timeout.
 //
+// hk-5z1f0: raised 90s→150s. Under the 10-concurrent ramp a remote worker
+// hosts a 2nd (REVIEW-stage) cold-start claude spawn that must additionally
+// clear reverse-SSH-tunnel readiness while competing with up to 6 concurrent
+// agents; 90s was too tight for that second spawn and recurrently tripped
+// agent_ready_timeout only on the remote worker. 150s covers the reviewer
+// cold-start over the tunnel; a companion per-worker cold-start spawn
+// semaphore (workLoopDeps.agentSpawnSem) bounds how many such spawns overlap.
+//
 // Spec ref: specs/handler-contract.md §4.9 HC-056.
-const defaultAgentReadyTimeout = 90 * time.Second
+const defaultAgentReadyTimeout = 150 * time.Second
 
 // ErrAgentReadyTimeout is the typed sentinel returned when no agent_ready event
 // arrives within the configured timeout window.

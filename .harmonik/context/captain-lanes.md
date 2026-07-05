@@ -25,7 +25,16 @@
 >   until hk-xkou8 lands + a serialized quiet-window re-validate (fix-first; no quiet window while 3 local lanes run).
 > - Manifest rollout gate **hk-ncg9m = CLOSED/landed** (its merge_build_failed note was the transient cache-wipe, cleared).
 
-## ⭐⭐ CURRENT TRUTH (2026-07-05 ~07:27Z — RAMP TO 6 REVERTED: concurrent worktree-create race exposed; back to serialized-1)
+## ⭐⭐ CURRENT TRUTH (2026-07-05 ~09:00Z — hk-5qp7z FIX LANDED; concurrent re-validate IN FLIGHT on gb-mbp slots:3)
+> Keeper /clear resume. The concurrent-worktree-create race fix LANDED and is passing its concurrent re-validate right now.
+>
+> **THE FIX (jessica, LANDED):** hk-5qp7z — serialize worktree-add + HEAD-resolve under `createMu` on the worker (commits d92b16de + fd76a69e, now in HEAD 3a712140). This is the CODE-GAP fork (B): retry never serialized concurrent creates; createMu is a real mutex around the add+resolve, plus a widened-concurrency-window negative regression test. NOT the stale-binary fork.
+> **RE-VALIDATE (jessica, IN FLIGHT):** gb-mbp set enabled:true, max_slots:3 (validation setting) on the fixed binary. jessica dispatched a 7-canary concurrent wave; INTERIM = **STRONG PASS** — ≥3 dispatched concurrently, 4 run-worktrees live on the worker, ALL created cleanly, ZERO empty-HEAD/WorktreeCreationFailed (same wave shape that fast-failed 7/7 in ~7s under the bug now creates fine). Remaining before ramp: confirm MERGED-CLEAN landings (not just clean creates). jessica owns that confirmation.
+> **NEXT (throughput, jessica-owned):** on merged-clean confirmation → ramp gb-mbp 3→6, prove clean under sustained concurrent load, then 6→10 (operator's target). Split-gate keeps local pinned ≤4. Captain does NOT ramp ahead of jessica's merged-clean confirmation.
+>
+> **LANES NOW:** jessica = hk-5qp7z re-validate → ramp (critical path, active). duncan = eval-metrics WS1e (armed to report on drain). stilgar = hk-hm09z, driving to merge (armed to report on merge). watch = bus monitoring, healthy. Local pinned 4. Paused-by-failure queue list = pre-existing cruft.
+
+## ⭐⭐ (SUPERSEDED 09:00Z — fix landed, re-validating) CURRENT TRUTH (2026-07-05 ~07:27Z — RAMP TO 6 REVERTED: concurrent worktree-create race exposed; back to serialized-1)
 > The 6-slot ramp FAILED under real concurrent load and was reverted. gb-mbp is LIVE-DISABLED + durable workers.yaml back to max_slots:1.
 >
 > **WHAT HAPPENED:** consolidate-hang IS fixed (serialized canary hk-jd1oh landed clean remote as 7876081a — real). But ramping gb-mbp 1→6 exposed a SEPARATE recurring bug: **concurrent remote worktree-create race** — all 7 of jessica's fill-wave beads fast-failed ~7s each on `WorktreeCreationFailed: git worktree add exited 0 but HEAD did not resolve (empty HEAD, concurrent create race)` on the worker repo /Users/gb/harmonik-worker/repo. Peak concurrent clean-land = ZERO. This is the SAME class twice-"fixed" by RETRY (hk-iaj1w fb11aabd, hk-lt091) — retry never SERIALIZED concurrent creates, so it slipped both times; the serialized-1 re-validate was clean only because it never exercised concurrency.

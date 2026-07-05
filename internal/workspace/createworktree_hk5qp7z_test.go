@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -30,7 +31,7 @@ import (
 // This test verifies the mutex enforcement using an in-process concurrency
 // counter: the RecordingRunner's CmdFunc atomically increments an "active adds"
 // counter before git-worktree-add and decrements it after, recording the
-// peak concurrency. With a shared createMu the peak MUST be 1.
+// peak concurrency. With a shared createMu the peak MUST be ≤1.
 func TestHK5QP7Z_ConcurrentCreatesMutexSerializes(t *testing.T) {
 	t.Parallel()
 
@@ -61,8 +62,9 @@ func TestHK5QP7Z_ConcurrentCreatesMutexSerializes(t *testing.T) {
 			CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 				if name == "git" && containsArg(args, "worktree") && containsArg(args, "add") {
 					// This increment+peak-check runs WHILE the createMu is held
-					// by this goroutine (the mutex wraps the full retry loop).
-					// If two goroutines are ever here simultaneously, peak > 1.
+					// by this goroutine (the mutex wraps the full retry loop in
+					// CreateWorktree). If two goroutines are ever here simultaneously,
+					// peak > 1.
 					cur := atomic.AddInt64(&activeAdds, 1)
 					for {
 						old := atomic.LoadInt64(&peakAdds)
@@ -70,30 +72,8 @@ func TestHK5QP7Z_ConcurrentCreatesMutexSerializes(t *testing.T) {
 							break
 						}
 					}
-					// Run the real git so a valid worktree is created.
 					realCmd := exec.CommandContext(ctx, name, args...)
-					// Decrement after the git process exits; wrap via a helper
-					// command that runs real git then decrements.
-					// Since exec.Cmd has no post-run hook, we decrement after
-					// CombinedOutput in the goroutine that calls cmd.Wait. For
-					// the test, it is sufficient to decrement after the Cmd is
-					// returned (before Wait is called) — the intent is that the
-					// lock is held for the full `git worktree add` call including
-					// Wait, so two starts cannot overlap.
-					//
-					// We use a wrapper: produce a real Cmd but after it we need
-					// the decrement. Since tmux.RecordingRunner calls cmd.Run or
-					// cmd.CombinedOutput after CmdFunc returns, the decrement
-					// must happen in a goroutine that observes cmd completion.
-					// For simplicity (no way to hook post-Run from CmdFunc),
-					// we accept that the counter is decremented in a finalizer
-					// goroutine started here, which starts AFTER git's Wait.
-					//
-					// In practice the test proves the invariant via the peak:
-					// if two goroutines are BOTH inside the `if worktree+add`
-					// branch above simultaneously, peak will be 2. With the
-					// mutex that cannot happen.
-					_ = atomic.AddInt64(&activeAdds, -1)
+					atomic.AddInt64(&activeAdds, -1)
 					return realCmd
 				}
 				return exec.CommandContext(ctx, name, args...)
@@ -121,7 +101,7 @@ func TestHK5QP7Z_ConcurrentCreatesMutexSerializes(t *testing.T) {
 		}
 	}
 
-	// Peak concurrency must be exactly 1: the mutex must have prevented any two
+	// Peak concurrency must be ≤1: the mutex must have prevented any two
 	// git-worktree-add calls from being simultaneously active.
 	if peak := atomic.LoadInt64(&peakAdds); peak > 1 {
 		t.Errorf("hk-5qp7z: peak concurrent worktree-adds = %d, want ≤1 (createMu did not serialize)", peak)
@@ -133,10 +113,11 @@ func TestHK5QP7Z_ConcurrentCreatesMutexSerializes(t *testing.T) {
 // git-worktree-add operations. This confirms the test instrumentation is correct
 // (i.e. the peak-adds counter actually measures concurrency).
 //
-// Note: this test proves instrumentation correctness, not a bug — concurrent
-// local creates against DIFFERENT repos are harmless. The race only manifests
-// on a SHARED remote worker repo; the test uses separate temp repos per goroutine
-// to avoid actually failing, but it shows peak > 1 is reachable without the mutex.
+// Note: this test proves instrumentation correctness, not a production bug —
+// concurrent local creates against DIFFERENT repos are harmless. The race only
+// manifests on a SHARED remote worker repo; the test uses separate temp repos per
+// goroutine to avoid actual git conflicts, but it shows peak > 1 is reachable
+// without the mutex.
 func TestHK5QP7Z_WithoutMutexConcurrencyIsUnbounded(t *testing.T) {
 	t.Parallel()
 
@@ -169,7 +150,8 @@ func TestHK5QP7Z_WithoutMutexConcurrencyIsUnbounded(t *testing.T) {
 			rr := &tmux.RecordingRunner{
 				CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
 					if name == "git" && containsArg(args, "worktree") && containsArg(args, "add") {
-						// Signal ready and wait for all goroutines to reach here.
+						// Signal ready and wait for all goroutines to reach this point
+						// simultaneously before measuring concurrency.
 						startBarrier.Done()
 						startBarrier.Wait()
 
@@ -180,6 +162,13 @@ func TestHK5QP7Z_WithoutMutexConcurrencyIsUnbounded(t *testing.T) {
 								break
 							}
 						}
+						// Hold the "active" state open long enough for all barrier-
+						// synchronized goroutines to also increment before any decrement.
+						// Without this sleep, the scheduler may complete one goroutine's
+						// increment+decrement cycle before siblings are scheduled, giving
+						// a spuriously low peak even though all goroutines are logically
+						// concurrent (GOMAXPROCS < nConcurrent on typical hardware).
+						time.Sleep(5 * time.Millisecond)
 						cmd := exec.CommandContext(ctx, name, args...)
 						atomic.AddInt64(&activeAdds, -1)
 						return cmd
@@ -203,8 +192,9 @@ func TestHK5QP7Z_WithoutMutexConcurrencyIsUnbounded(t *testing.T) {
 	}
 
 	// Without a mutex, all N goroutines reach git-worktree-add simultaneously
-	// (the start barrier synchronises them). Peak should equal nConcurrent.
-	// If it does not, the instrumentation is broken — fail the test.
+	// (the start barrier synchronises them). The 5ms sleep ensures each goroutine
+	// holds activeAdds incremented long enough for all siblings to also increment
+	// before any decrement fires. Peak must equal nConcurrent.
 	if peak := atomic.LoadInt64(&peakAdds); peak < int64(nConcurrent) {
 		t.Errorf("hk-5qp7z/neg: peak concurrent worktree-adds = %d, want %d (instrumentation broken — concurrency not measured)", peak, nConcurrent)
 	}

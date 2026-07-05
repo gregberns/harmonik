@@ -180,29 +180,131 @@ func Collect(p CollectParams) error {
 		queueID = runData.QueueID
 	}
 
-	// Read Claude-style transcript logs (Pi/codex token extraction is P2).
+	// Build per-node time windows from node_dispatch_requested events.
+	// Each window spans from the node's dispatch time to the next node's dispatch
+	// time (or the run end time for the last node).
+	type nodeWindow struct {
+		NodeID  string
+		StartAt time.Time
+		EndAt   time.Time
+	}
+	var windows []nodeWindow
+	if len(runData.NodeDispatchEvents) > 0 {
+		for i, ev := range runData.NodeDispatchEvents {
+			w := nodeWindow{NodeID: ev.NodeID, StartAt: ev.RequestedAt}
+			if i+1 < len(runData.NodeDispatchEvents) {
+				w.EndAt = runData.NodeDispatchEvents[i+1].RequestedAt
+			} else {
+				w.EndAt = endedAt
+			}
+			windows = append(windows, w)
+		}
+	}
+
+	// Build node_id → log path from session_log_location events.
+	logByNodeID := make(map[string]string, len(runData.LogPaths))
+	for i, lp := range runData.LogPaths {
+		nid := runData.NodeIDs[i]
+		if nid == "" {
+			nid = "implement"
+		}
+		if _, exists := logByNodeID[nid]; !exists {
+			logByNodeID[nid] = lp
+		}
+	}
+
+	// Read Claude-style transcript logs; attribute turns to nodes by time window
+	// when dispatch events are available (DOT multi-node runs), or by transcript
+	// file (single-node / non-DOT runs). Pi/codex token extraction is P2.
 	var total TokenUsage
 	var turnCount int
 	var nodes []NodeRecord
-	for i, lp := range runData.LogPaths {
-		resolved := ResolveTranscriptPath(lp, p.ClaudeProjectsDir)
-		if resolved == "" {
-			continue
+
+	if len(windows) > 0 {
+		// DOT multi-node path: process in dispatch order with window-filtered attribution.
+		handledNodeIDs := make(map[string]bool, len(windows))
+		for _, w := range windows {
+			handledNodeIDs[w.NodeID] = true
+			wallTimeS := math.Round(w.EndAt.Sub(w.StartAt).Seconds()*10) / 10
+
+			lp := logByNodeID[w.NodeID]
+			if lp == "" {
+				// Non-agentic node (e.g. shell gate): WallTimeS only, no tokens.
+				nodes = append(nodes, NodeRecord{NodeID: w.NodeID, WallTimeS: wallTimeS})
+				continue
+			}
+			resolved := ResolveTranscriptPath(lp, p.ClaudeProjectsDir)
+			if resolved == "" {
+				nodes = append(nodes, NodeRecord{NodeID: w.NodeID, WallTimeS: wallTimeS})
+				continue
+			}
+			turns, _ := readTranscript(resolved)
+			var nodeTok TokenUsage
+			for _, t := range turns {
+				// Filter by window when the turn carries a timestamp.
+				if !t.Timestamp.IsZero() {
+					if t.Timestamp.Before(w.StartAt) || !t.Timestamp.Before(w.EndAt) {
+						continue
+					}
+				}
+				total.Add(t.Usage)
+				nodeTok.Add(t.Usage)
+				turnCount++
+			}
+			nr := NodeRecord{NodeID: w.NodeID, WallTimeS: wallTimeS}
+			if nodeTok.Total() > 0 {
+				nt := nodeTok
+				nr.Tokens = &nt
+			}
+			nodes = append(nodes, nr)
 		}
-		turns, _ := readTranscript(resolved)
-		var nodeTok TokenUsage
-		for _, t := range turns {
-			total.Add(t.Usage)
-			nodeTok.Add(t.Usage)
-			turnCount++
+		// Include any session_log nodes not covered by dispatch windows (edge case).
+		for i, lp := range runData.LogPaths {
+			nid := runData.NodeIDs[i]
+			if nid == "" {
+				nid = "implement"
+			}
+			if handledNodeIDs[nid] {
+				continue
+			}
+			resolved := ResolveTranscriptPath(lp, p.ClaudeProjectsDir)
+			if resolved == "" {
+				continue
+			}
+			turns, _ := readTranscript(resolved)
+			var nodeTok TokenUsage
+			for _, t := range turns {
+				total.Add(t.Usage)
+				nodeTok.Add(t.Usage)
+				turnCount++
+			}
+			if len(turns) > 0 {
+				nt := nodeTok
+				nodes = append(nodes, NodeRecord{NodeID: nid, Tokens: &nt})
+			}
 		}
-		nodeID := runData.NodeIDs[i]
-		if nodeID == "" {
-			nodeID = "implement"
-		}
-		if len(turns) > 0 {
-			nt := nodeTok
-			nodes = append(nodes, NodeRecord{NodeID: nodeID, Tokens: &nt})
+	} else {
+		// Non-DOT path: attribute all turns from each transcript to its node.
+		for i, lp := range runData.LogPaths {
+			resolved := ResolveTranscriptPath(lp, p.ClaudeProjectsDir)
+			if resolved == "" {
+				continue
+			}
+			turns, _ := readTranscript(resolved)
+			var nodeTok TokenUsage
+			for _, t := range turns {
+				total.Add(t.Usage)
+				nodeTok.Add(t.Usage)
+				turnCount++
+			}
+			nodeID := runData.NodeIDs[i]
+			if nodeID == "" {
+				nodeID = "implement"
+			}
+			if len(turns) > 0 {
+				nt := nodeTok
+				nodes = append(nodes, NodeRecord{NodeID: nodeID, Tokens: &nt})
+			}
 		}
 	}
 
@@ -293,12 +395,23 @@ func ReadAll(projectDir, since, until string) ([]Record, error) {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+// nodeDispatchEvent holds one node_dispatch_requested event's key fields.
+type nodeDispatchEvent struct {
+	NodeID      string
+	RequestedAt time.Time
+}
+
 type runEventData struct {
 	BeadID    string
 	QueueID   string
 	NodeIDs   []string
 	StartedAt string
 	LogPaths  []string
+	// NodeDispatchEvents is the ordered list of dispatched nodes (from
+	// node_dispatch_requested events), used for per-node time windows.
+	// Deduplicated by NodeID: only the first dispatch for a given node is kept
+	// so retried nodes do not produce duplicate windows.
+	NodeDispatchEvents []nodeDispatchEvent
 }
 
 // buildRunEventData scans events.jsonl for events belonging to runID.
@@ -360,14 +473,38 @@ func buildRunEventData(eventsFile, runID string) (*runEventData, error) {
 				nodeID := sdJsonStr(payload["node_id"])
 				d.NodeIDs = append(d.NodeIDs, nodeID)
 			}
+		case "node_dispatch_requested":
+			nodeID := sdJsonStr(payload["node_id"])
+			requestedAtStr := sdJsonStr(payload["requested_at"])
+			if nodeID == "" || requestedAtStr == "" {
+				continue
+			}
+			// Deduplicate by NodeID: skip retried dispatches for the same node.
+			alreadySeen := false
+			for _, ev := range d.NodeDispatchEvents {
+				if ev.NodeID == nodeID {
+					alreadySeen = true
+					break
+				}
+			}
+			if alreadySeen {
+				continue
+			}
+			if t, parseErr := time.Parse(time.RFC3339, requestedAtStr); parseErr == nil {
+				d.NodeDispatchEvents = append(d.NodeDispatchEvents, nodeDispatchEvent{
+					NodeID:      nodeID,
+					RequestedAt: t,
+				})
+			}
 		}
 	}
 	return d, sc.Err()
 }
 
 type transcriptTurn struct {
-	Model string
-	Usage TokenUsage
+	Model     string
+	Usage     TokenUsage
+	Timestamp time.Time // zero when the transcript entry carries no timestamp
 }
 
 // readTranscript reads ALL assistant turns from the given Claude transcript file.
@@ -414,10 +551,19 @@ func readTranscript(path string) ([]transcriptTurn, error) {
 			CacheCreation: sdJsonInt64(rawUsage["cache_creation_input_tokens"]),
 			CacheRead:     sdJsonInt64(rawUsage["cache_read_input_tokens"]),
 		}
-		turns = append(turns, transcriptTurn{
+		turn := transcriptTurn{
 			Model: sdJsonStr(msg["model"]),
 			Usage: u,
-		})
+		}
+		// Parse the top-level "timestamp" field (RFC3339 with optional sub-seconds).
+		if tsStr := sdJsonStr(entry["timestamp"]); tsStr != "" {
+			if t, parseErr := time.Parse(time.RFC3339Nano, tsStr); parseErr == nil {
+				turn.Timestamp = t
+			} else if t, parseErr = time.Parse(time.RFC3339, tsStr); parseErr == nil {
+				turn.Timestamp = t
+			}
+		}
+		turns = append(turns, turn)
 	}
 	return turns, sc.Err()
 }

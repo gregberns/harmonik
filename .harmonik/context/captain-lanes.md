@@ -25,7 +25,22 @@
 >   until hk-xkou8 lands + a serialized quiet-window re-validate (fix-first; no quiet window while 3 local lanes run).
 > - Manifest rollout gate **hk-ncg9m = CLOSED/landed** (its merge_build_failed note was the transient cache-wipe, cleared).
 
-## ⭐⭐ CURRENT TRUTH (2026-07-04 ~23:32Z — keeper /clear resume; fleet self-recovered from a fleet-wide wedge)
+## ⭐⭐ CURRENT TRUTH (2026-07-05 ~01:25Z — keeper /clear resume + handoff; 3 beads landed, critical-path fix in flight)
+> Lean keeper-restart resume. Fleet CLEAN, nothing blocked on operator. This cycle landed 3 beads and
+> recovered 3 crew wedges (duncan submit-wedge, watch idle-submit-wedge x2 ~30min apart).
+>
+> **LANES NOW (local 2/4 active; duncan DRAINED + free):**
+> | crew | lane | queue | state |
+> |---|---|---|---|
+> | jessica | daemon-reliability | jessica-q2 | ACTIVE — **hk-xkou8 in_progress** (gb-mbp concurrent-slot idle-hang = THROUGHPUT CRITICAL PATH; reproduce-first daemon fix, long quiet window expected). Her LAST bead → lane DRAINS on merge. Landed this cycle: hk-rnkuy (daemon-death event) + hk-gf59k (ledger false-defer, commit 00543657). |
+> | stilgar | keeper reliability (re-tasked off drained worktree-reaper lane) | stilgar-q2 | ACTIVE — **hk-5266t in_progress** (P1: crew-start keeper `--tmux` target mangled by zsh `:a` modifier on unbraced `$session:agent` → nonexistent pane → keepers can't inject restart → THE recurring watch-wedge root cause). File-disjoint from jessica. Landed this cycle: hk-qe736 (worktree-leak reaper). |
+> | duncan | cache-reaper (DRAINED) | — | **FREE** — hk-44ab2 (GOCACHE-wipe fix) + hk-whru3 (follow-up) both LANDED+CLOSED. Idle-armed. RE-STAFF when picking up: eval-metrics WS1 (epic hk-9jdid) is the candidate BUT (a) route file-disjoint parser beads first — WS1c hk-eval-prog-codex-tokens-fbhir / WS1d hk-eval-prog-pi-tokens-sr316 (codex/pijsonlparser.go) — NOT WS1a/WS1b (workloop.go = COLLIDES with jessica's live internal/daemon hk-xkou8); (b) VERIFY epic hk-9jdid open-dep won't insta-fail the children before dispatch. |
+> | watch | triage tier | watch-q | ⚠️ STILL FLAKY — re-wedged ~every 20-30min (hk-5266t root cause, now IN FLIGHT via stilgar). Hand-nudge on each ops-monitor watch-stalled page (`send-keys C-u` + retype `comms join --name watch` + Enter). Does NOT blind you — Watcher-1 reads the bus directly. Once hk-5266t lands, this should stop. |
+>
+> **NEXT STEP:** watch hk-xkou8 (jessica) → on merge, gb-mbp serialized quiet-window re-validate becomes available (the throughput unlock; likely admiral-coordinated). Re-staff duncan (see its row). gb-mbp stays enabled:false until hk-xkou8 lands + re-validate.
+> **Paused-by-failure cruft** (crashrepro, gbmbp-val/-val2, leto-codex, leto-q, loadtest, paul-q, pi-q, pi-scav-2, sandbox-q, spread-pi) = pre-existing, leave as-is.
+
+## ⭐⭐ (SUPERSEDED) CURRENT TRUTH (2026-07-04 ~23:32Z — keeper /clear resume; fleet self-recovered from a fleet-wide wedge)
 > Captain resumed after a context /clear. A fleet-wide wedge (API hang stranding runs) hit ~23:22Z and
 > the daemon self-recovered: it **bounced 23:27:33Z** (single clean restart, no crash-loop), swept 3 wedged
 > runs; fresh runs healthy. All three crews re-adopted after the bounce and re-submitted their beads onto

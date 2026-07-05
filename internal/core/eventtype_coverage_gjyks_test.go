@@ -188,6 +188,9 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 	{EventTypeQueueItemDeferredForLedgerDep, func() EventPayload { return &QueueItemDeferredForLedgerDepPayload{} }},
 	{EventTypeQueueItemReconciled, func() EventPayload { return &QueueItemReconciledPayload{} }},
 
+	// §8.19 Stall-sentinel Layer A detection (hk-l087e)
+	{EventTypeStallDetected, func() EventPayload { return &StallDetectedPayload{} }},
+
 	// §8.15 Bead-ledger merge lifecycle (hk-u3q6o, hk-k7va9)
 	{EventTypeBeadSyncFailed, func() EventPayload { return &BeadSyncFailedPayload{} }},
 	{EventTypeBeadLedgerRecovered, func() EventPayload { return &BeadLedgerRecoveredPayload{} }},

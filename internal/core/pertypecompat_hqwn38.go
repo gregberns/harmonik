@@ -326,6 +326,12 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// dispatch atomically. Payload: ack_token, subject, ack_method, acked_at.
 	{TypeName: "decision_acknowledged", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
+	// ── §8.19 Stall-sentinel Layer A detection (hk-l087e) ────────────────
+	// stall_detected (§8.19, O): per-run stall detector emits this when a
+	// heartbeat_gap, review_stall, or run_age signature fires. Payload:
+	// run_id, bead_id, signature, elapsed_ms.
+	{TypeName: "stall_detected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
 	// ── §8.15 Bead-ledger merge lifecycle (hk-u3q6o, v0.6.4) ─────────────
 	// bead_sync_failed (§8.15.1, F): `br sync --import-only` failure after
 	// a rebase/merge touching .beads/issues.jsonl; must precede Cat-BL2 routing

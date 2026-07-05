@@ -1326,3 +1326,28 @@ const (
 	// the halt) and LivenessNoProgressN (the configured threshold).
 	EventTypeLivenessHalt EventType = "liveness_halt"
 )
+
+// ---------------------------------------------------------------------------
+// §8.19 Stall-sentinel Layer A detection event types (hk-l087e)
+// ---------------------------------------------------------------------------
+//
+// stall_detected is emitted by the Layer A per-run stall detector when one of
+// three signatures fires: heartbeat_gap (class-2 silent hang), review_stall
+// (class-3 review-loop wedge), or run_age (backstop for novel hangs). Carries
+// run_id, bead_id, signature, and elapsed_ms so consumers (watch tier,
+// ops-monitor) can triage without re-reading events.jsonl.
+//
+// Durability class: O (ordinary — reconstructible by re-running DetectLayerA
+// over a fresh Snapshot; loss of one tick does not affect correctness).
+//
+// Bead ref: hk-l087e (Layer A detectors). Signal library: hk-mxxsl.
+
+const (
+	// EventTypeStallDetected is emitted by the Layer A per-run stall detector
+	// (DetectLayerA in the sentinel package) when a heartbeat_gap, review_stall,
+	// or run_age signature fires for an active run.
+	// Payload: run_id, bead_id, signature, elapsed_ms.
+	// Durability class: O.
+	// Refs: hk-l087e.
+	EventTypeStallDetected EventType = "stall_detected"
+)

@@ -518,6 +518,10 @@ func registerKeeperEvents() {
 //     from bead_closed + reviewer_verdict sequence in the JSONL log)
 func registerAlarmEvents() {
 	mustRegister("review_gate_anomaly", func() EventPayload { return &ReviewGateAnomalyPayload{} })
+
+	// §8.19 Stall-sentinel Layer A detection (hk-l087e).
+	// Durability class: O (ordinary — reconstructible from a fresh Snapshot).
+	mustRegister("stall_detected", func() EventPayload { return &StallDetectedPayload{} })
 }
 
 // registerHITLDecisionEvents registers the §8.15 hitl-decisions event payload

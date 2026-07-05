@@ -44,7 +44,10 @@ import "testing"
 //	      bead_ledger_recovered, bead_ledger_corrupt [hk-k7va9],
 //	      bead_ledger_conflict_audit [hk-u3q6o], orphaned_child_bead [hk-27ghc])
 //
-// Total: 123 EventType constants registered in allEventTypeCohort.
+// Total: 125 EventType constants registered in allEventTypeCohort.
+// Amendment: stall_detected added for stall-sentinel Layer A detection (hk-l087e;
+// EV-027 foundation amendment — new O-class event emitted when heartbeat_gap,
+// review_stall, or run_age fires for an active run; feeds watch tier + ops-monitor).
 // Amendment: merge_build_failed added for post-merge build gate (hk-o68j3;
 // EV-027 foundation amendment — new F-class event emitted when go build+vet
 // fails on the freshly fast-forwarded merged tree before push).
@@ -81,7 +84,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 124 // +1 supervisor_revival (hk-rnkuy EV-027 amendment; O-class daemon-startup event emitted when prior session ended without daemon_shutdown — fills logmine gap for unexplained daemon deaths)
+	const wantCount = 125 // +1 stall_detected (hk-l087e EV-027 amendment; O-class Layer A stall-sentinel event emitted when heartbeat_gap/review_stall/run_age fires for an active run)
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

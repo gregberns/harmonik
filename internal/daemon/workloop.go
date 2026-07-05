@@ -1327,8 +1327,13 @@ func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor
 			sawNonContributing = true
 			continue
 		}
-		// Per-queue cap: skip when this queue is already at its Workers ceiling.
-		if reg.LenForQueue(name) >= effectiveQueueWorkers(q, globalCap) {
+		// Per-queue cap: skip when this queue is already at its LOCAL Workers
+		// ceiling. Only local (non-remote) runs count here, mirroring the
+		// level-1 localInFlight asymmetry (hk-4tjt6): an all-remote queue
+		// admits up to its worker slot capacity rather than being capped at
+		// max_concurrent. Remote runs are bounded by the worker registry's
+		// slot accounting, not by this gate.
+		if reg.LenForQueueLocal(name) >= effectiveQueueWorkers(q, globalCap) {
 			sawNonContributing = true
 			continue
 		}
@@ -2809,16 +2814,18 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		if deps.cacheReapMu != nil {
 			deps.cacheReapMu.RLock()
 		}
-		deps.runRegistry.Register(runID, &RunHandle{
+		dispatchedHandle := &RunHandle{
 			BeadID: beadID,
 			// QueueName tags the run with its dispatching queue so the per-queue
-			// capacity tally (LenForQueue) bounds this queue independently of the
-			// global ceiling (NQ-B1). Empty for br-ready-fallback runs.
+			// capacity tally (LenForQueue/LenForQueueLocal) bounds this queue
+			// independently of the global ceiling (NQ-B1). Empty for
+			// br-ready-fallback runs.
 			QueueName: capturedQueueName,
 			Labels:    beadRecord.Labels,
 			StartedAt: time.Now(),
 			Cancel:    runCancel,
-		})
+		}
+		deps.runRegistry.Register(runID, dispatchedHandle)
 		if deps.cacheReapMu != nil {
 			deps.cacheReapMu.RUnlock()
 		}
@@ -2838,6 +2845,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		isLocalDispatch := preSelectedWorker == nil
 		if isLocalDispatch && deps.localInFlight != nil {
 			deps.localInFlight.Add(1)
+		} else if !isLocalDispatch {
+			// hk-4tjt6: tag as remote so LenForQueueLocal excludes it from the
+			// per-queue Workers ceiling gate in selectNextQueue.
+			dispatchedHandle.Remote.Store(true)
 		}
 
 		wg.Add(1)
@@ -3191,6 +3202,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			if localSlotHeld && deps.localInFlight != nil {
 				deps.localInFlight.Add(-1)
 				relLocalSlot = false
+			}
+			// hk-4tjt6: mirror the Remote flag update so LenForQueueLocal
+			// stops counting this run against the per-queue local cap.
+			if h, ok := deps.runRegistry.Get(runID); ok {
+				h.Remote.Store(true)
 			}
 		}
 	}

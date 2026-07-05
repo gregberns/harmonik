@@ -91,6 +91,15 @@ type RunHandle struct {
 	// called (after the launchSpecBuilder resolves the harness). Used by
 	// bandwidthTunerBackstop to skip global-tuner notification for Pi runs (PI-073).
 	agentType atomic.Pointer[core.AgentType]
+
+	// Remote is true when this run was routed to a remote worker (not local).
+	// Set by the outer dispatch loop after SelectWorker (or by the beadRunOne
+	// fallback path when a local-tagged run gets re-routed remotely). Used by
+	// LenForQueueLocal so the per-queue Workers ceiling gate counts only local
+	// in-flight runs, mirroring the level-1 localInFlight asymmetry (hk-4tjt6).
+	//
+	// Bead ref: hk-4tjt6.
+	Remote atomic.Bool
 }
 
 // SetMachine stores m as the lifecycle Machine for this run. Thread-safe.
@@ -185,6 +194,26 @@ func (r *RunRegistry) LenForQueue(name string) int {
 	n := 0
 	for _, h := range r.handles {
 		if h.QueueName == name {
+			n++
+		}
+	}
+	r.mu.RUnlock()
+	return n
+}
+
+// LenForQueueLocal returns the number of currently registered LOCAL (non-remote)
+// in-flight runs whose QueueName equals name. This is the per-queue tally used
+// by the level-2 capacity gate in selectNextQueue: only local runs count against
+// the per-queue Workers ceiling, mirroring the level-1 localInFlight asymmetry
+// so that an all-remote queue can admit up to its worker slot capacity rather
+// than being capped at max_concurrent (hk-4tjt6).
+//
+// Bead ref: hk-4tjt6.
+func (r *RunRegistry) LenForQueueLocal(name string) int {
+	r.mu.RLock()
+	n := 0
+	for _, h := range r.handles {
+		if h.QueueName == name && !h.Remote.Load() {
 			n++
 		}
 	}

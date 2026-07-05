@@ -278,3 +278,72 @@ func TestPerQueueRR_CursorResetWouldStarve(t *testing.T) {
 			picks["main"])
 	}
 }
+
+// ---------------------------------------------------------------------------
+// LenForQueueLocal — local-only per-queue tally (hk-4tjt6)
+// ---------------------------------------------------------------------------
+
+// perQueueRRRemoteHandle returns a *RunHandle tagged with queueName and Remote=true.
+func perQueueRRRemoteHandle(beadID, queueName string) *RunHandle {
+	h := &RunHandle{
+		BeadID:    core.BeadID(beadID),
+		QueueName: queueName,
+		StartedAt: time.Now(),
+	}
+	h.Remote.Store(true)
+	return h
+}
+
+// TestPerQueueRR_LenForQueueLocal_ExcludesRemote verifies that LenForQueueLocal
+// counts only local (non-remote) handles and that LenForQueue still counts all.
+func TestPerQueueRR_LenForQueueLocal_ExcludesRemote(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRunRegistry()
+	// 2 local runs on "jessica-sat", 3 remote runs on "jessica-sat".
+	reg.Register(perQueueRRRunID(t), perQueueRRHandle("hk-j-local-1", "jessica-sat"))
+	reg.Register(perQueueRRRunID(t), perQueueRRHandle("hk-j-local-2", "jessica-sat"))
+	reg.Register(perQueueRRRunID(t), perQueueRRRemoteHandle("hk-j-remote-1", "jessica-sat"))
+	reg.Register(perQueueRRRunID(t), perQueueRRRemoteHandle("hk-j-remote-2", "jessica-sat"))
+	reg.Register(perQueueRRRunID(t), perQueueRRRemoteHandle("hk-j-remote-3", "jessica-sat"))
+
+	if got := reg.LenForQueueLocal("jessica-sat"); got != 2 {
+		t.Errorf("LenForQueueLocal(jessica-sat) = %d, want 2 (local only)", got)
+	}
+	if got := reg.LenForQueue("jessica-sat"); got != 5 {
+		t.Errorf("LenForQueue(jessica-sat) = %d, want 5 (all runs)", got)
+	}
+}
+
+// TestPerQueueRR_AllRemoteQueueAdmitsBeyondMaxConcurrent is the hk-4tjt6
+// regression guard: an all-remote queue (local=0) must NOT be blocked by the
+// per-queue Workers ceiling even when remote runs >= max_concurrent. Before
+// this fix, LenForQueue counted remote runs and gated the queue at max_concurrent=4,
+// preventing remote slots 5-6 from ever being offered.
+func TestPerQueueRR_AllRemoteQueueAdmitsBeyondMaxConcurrent(t *testing.T) {
+	t.Parallel()
+
+	const globalCap = 4 // max_concurrent — the old gate would cap the queue here
+	qs := NewQueueStore()
+	// jessica-sat: no explicit Workers (defaults to globalCap), 3 pending items.
+	qs.SetQueueByName("jessica-sat", perQueueRRWaveQueue("jessica-sat", "qid-jsat", 3, 0 /*Workers=0 → default*/))
+
+	reg := NewRunRegistry()
+	// Simulate 4 remote runs already in-flight (local=0). This is the exact
+	// condition that caused the level-2 gate to block the queue before hk-4tjt6.
+	for i := range 4 {
+		reg.Register(perQueueRRRunID(t), perQueueRRRemoteHandle(
+			"hk-jsat-remote-"+string(rune('a'+i)), "jessica-sat"))
+	}
+
+	lq := qs.LockForMutation()
+	sel, ok := selectNextQueue(lq, reg, globalCap, 0)
+	lq.Done()
+
+	if !ok {
+		t.Fatal("selectNextQueue returned ok=false for all-remote queue at remote=4, local=0 — level-2 gate must NOT block on remote runs (hk-4tjt6)")
+	}
+	if sel.queueName != "jessica-sat" {
+		t.Errorf("selected queue = %q, want jessica-sat", sel.queueName)
+	}
+}

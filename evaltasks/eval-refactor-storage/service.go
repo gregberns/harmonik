@@ -1,11 +1,8 @@
 package refactorstorage
 
 // Service is the observable public API of the package.
-//
-// It currently holds a *memStore directly — this concrete coupling is what the
-// refactor must remove (the field should become a Store interface value).
 type Service struct {
-	store *memStore
+	store Store
 }
 
 // NewService builds a Service backed by the in-memory store.

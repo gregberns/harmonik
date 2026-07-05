@@ -20,6 +20,30 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
+// EnvHarmonikWorktreeMaxAgeDays is the environment variable that sets the
+// age threshold (in days) for .harmonik/worktrees/ directories with no
+// lease-lock. Directories older than this threshold are removed by the (b3)
+// age-prune step. Default: [DefaultHarmonikWorktreeMaxAgeDays].
+const EnvHarmonikWorktreeMaxAgeDays = "HARMONIK_WORKTREE_MAX_AGE_DAYS"
+
+// DefaultHarmonikWorktreeMaxAgeDays is the default age threshold for stale
+// .harmonik/worktrees/ directories with no lease-lock. 7 days is conservative
+// — any run-worktree without a lease-lock that has been sitting for a week is
+// almost certainly an orphan (active runs complete in hours).
+const DefaultHarmonikWorktreeMaxAgeDays = 7
+
+// harmonikWorktreeMaxAge returns the age threshold for .harmonik/worktrees/
+// no-lease-lock directories. Reads [EnvHarmonikWorktreeMaxAgeDays]; defaults
+// to [DefaultHarmonikWorktreeMaxAgeDays].
+func harmonikWorktreeMaxAge() time.Duration {
+	if v := os.Getenv(EnvHarmonikWorktreeMaxAgeDays); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * 24 * time.Hour
+		}
+	}
+	return DefaultHarmonikWorktreeMaxAgeDays * 24 * time.Hour
+}
+
 // OrphanSweepResult holds the outcome of a complete [RunOrphanSweep] pass.
 // The field names and JSON tags align with [core.DaemonOrphanSweepCompletedPayload].
 //
@@ -821,6 +845,20 @@ func RunOrphanSweep(
 		result.WorktreeDirsRemoved = len(gcResult.Removed)
 		if len(gcResult.Failed) > 0 {
 			errs = append(errs, fmt.Sprintf("worktree-dirs-gc: %d of %d removals failed", len(gcResult.Failed), len(sweepResult.Removed)))
+		}
+	}
+
+	// (b3) Age-prune .harmonik/worktrees/ directories with no lease-lock.
+	// These are orphaned run-worktrees that SweepStaleLeaseLocks skips because
+	// there is no lock to classify (leaked by SIGKILL, crashed before lock write,
+	// or stale reviewer worktrees). Age is a conservative proxy for liveness:
+	// any worktree without a lease-lock that is older than the threshold is
+	// almost certainly not an active run. hk-qe736.
+	if len(sweepResult.NoLock) > 0 {
+		agedResult := workspace.RemoveAgedNoLockWorktrees(ctx, projectDir, sweepResult.NoLock, harmonikWorktreeMaxAge(), cfg.Logger)
+		result.WorktreeDirsRemoved += len(agedResult.Removed)
+		if len(agedResult.Failed) > 0 {
+			errs = append(errs, fmt.Sprintf("worktree-aged-gc: %d of %d removals failed", len(agedResult.Failed), len(sweepResult.NoLock)))
 		}
 	}
 

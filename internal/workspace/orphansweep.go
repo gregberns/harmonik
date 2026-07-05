@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // SweepResult holds the outcome of one [SweepStaleLeaseLocks] pass.
@@ -17,6 +19,12 @@ type SweepResult struct {
 	// Skipped is the list of worktree paths that were examined but not swept
 	// (PID live, no lease-lock, or classification error).
 	Skipped []string
+
+	// NoLock is the subset of Skipped paths that had NO lease-lock file at all
+	// (absent, not leased). These are candidates for age-based removal via
+	// [RemoveAgedNoLockWorktrees] when their directory is older than a threshold.
+	// Paths with a live PID are in Skipped but NOT in NoLock.
+	NoLock []string
 }
 
 // SweepStaleLeaseLocks performs the WM-033 startup orphan sweep:
@@ -71,6 +79,7 @@ func SweepStaleLeaseLocks(ctx context.Context, repoRoot string, cfg WorktreeRoot
 			// No lease-lock — directory is either a WM-003a orphan or released.
 			// Routing is the caller's responsibility; sweep skips.
 			result.Skipped = append(result.Skipped, dw.WorktreePath)
+			result.NoLock = append(result.NoLock, dw.WorktreePath)
 			continue
 		}
 
@@ -180,6 +189,39 @@ func RemoveStaleWorktrees(ctx context.Context, repoRoot string, paths []string, 
 		result.Removed = append(result.Removed, p)
 	}
 	return result
+}
+
+// RemoveAgedNoLockWorktrees removes .harmonik/worktrees/ directories from
+// paths that have no lease-lock and whose directory mtime is older than maxAge.
+// These are orphaned worktrees whose lease-lock was already cleared by a prior
+// sweep pass (or never written, e.g., leaked reviewer worktrees) and that were
+// not caught by [RemoveStaleWorktrees] because they never had a dead-PID lock.
+//
+// Age is measured from directory mtime (os.Stat). maxAge == 0 disables the
+// pass and returns an empty result. This is the C1-simplified conservative
+// variant: it uses age as a proxy for "not an active run" rather than the full
+// DiscoverActiveRuns survive-check (hk-qe736).
+//
+// Errors are non-fatal per-path, consistent with [RemoveStaleWorktrees].
+func RemoveAgedNoLockWorktrees(ctx context.Context, repoRoot string, paths []string, maxAge time.Duration, logger *log.Logger) RemoveStaleWorktreeResult {
+	if maxAge == 0 {
+		return RemoveStaleWorktreeResult{}
+	}
+	now := time.Now()
+	var aged []string
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		if now.Sub(info.ModTime()) > maxAge {
+			aged = append(aged, p)
+		}
+	}
+	if len(aged) == 0 {
+		return RemoveStaleWorktreeResult{}
+	}
+	return RemoveStaleWorktrees(ctx, repoRoot, aged, logger)
 }
 
 // isPIDDead reports whether pid is not running on this host.

@@ -70,6 +70,13 @@ Some bead families all touch the same files (e.g. SDLC group hk-o52fm.* all touc
 
 ---
 
+## GATE / CI ENVIRONMENT
+
+### Go Build Cache Wipe → Stdlib Import Failures
+Gate runs against docs-only commits have failed twice (iters 1 and 2, hk-nlhys) with errors of the form `could not import os (open /Users/gb/Library/Caches/go-build/...no such file or directory)`. Different packages each time (`internal/specaudit`, `internal/workspace`, `internal/workflow/scenario`). All pass immediately with a warm cache. Pattern: the gate worker's build cache is being wiped between runs — likely proactive go-cache reaping (see disk-watch entry above) or a cold worker. Docs-only commits should not require a full go-cache warm-up; this is a gate infrastructure gap, not a code defect. Triage rule: if a gate fails with `could not import <stdlib-package>`, check for concurrent cache-reap activity before blaming the commit.
+
+---
+
 ## PROPOSED / IN-FLIGHT (idea capture only — not dispatched)
 
 ### Session-Keeper (hk-ekap1)
@@ -89,3 +96,4 @@ Context-threshold handoff → clear → resume cycle. Signal sources under consi
 |------------|-----------------|---------------|
 | 2026-07-05 | implementer-initial (hk-nlhys) | Initial capture from bead description |
 | 2026-07-05 | implementer-resume (hk-nlhys iter-2) | Confirmed gate failure was cache miss (stdlib import errors); no code changes; re-commit to clear gate |
+| 2026-07-05 | implementer-resume (hk-nlhys iter-3) | Added gate/CI environment section: go build cache wipe → stdlib import failures pattern |

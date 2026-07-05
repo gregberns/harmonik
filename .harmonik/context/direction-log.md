@@ -12,6 +12,22 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-07-04 ~18:10Z — operator (via admiral) · expires: 2026-07-08
+WHAT: CORRECTION to the ~17:00Z posture, part (2) THROUGHPUT. The LOCAL box can run ONLY 4
+      concurrently — that is a HARD ceiling, NOT a disk-pressure artifact and NOT to be raised.
+      Do NOT `set-concurrency 10` locally and do NOT bump config max_concurrent past 4. The
+      5-10 concurrency target lives ENTIRELY on gb-mbp (the remote machine): run 10 THERE.
+      That makes gb-mbp safe re-validation the SOLE path to higher throughput — it is now the
+      throughput critical path, not an optional offload. Local stays pinned at 4.
+WHY:  operator states the local machine cannot sustain more than 4 concurrent runs; pushing past
+      it just re-trips failures. Remote gb-mbp is the capacity. Disk recovering (28 GiB free) does
+      NOT change this — it was never the real local cap.
+ORDER: keep local at 4 -> bring gb-mbp back SAFELY (root-cause the idle-hang/launch-gap, serialized
+       quiet-window re-validate) -> once stable, drive concurrency to 10 ON gb-mbp -> fill remote
+       slots from the READY backlog. gb-mbp = throughput critical path.
+RETURN-PATH: directed captain over comms (topic directive). Resume by checking: local still 4?
+      gb-mbp re-validated + running toward 10 concurrent? remote slots filled from backlog?
+
 ## 2026-07-04 ~17:00Z — operator (via admiral) · expires: 2026-07-08
 WHAT: Day's operating posture (medium-term, 5 parts). (1) AGENT-MANIFEST: roll out + STABILIZE by ~noon PDT
       (19:00Z). Remediation epic hk-bl93n is 3/4 landed (skill-bodies f8f09a28, manifest-fields 2a5ff76d,

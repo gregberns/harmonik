@@ -45,6 +45,20 @@
 > | duncan | eval-metrics WS1 (WS1c+WS1d LANDED+CLOSED) | duncan-q2 | **HELD/idle-armed** — WS1e (per-node-attr) now unblocked (WS1b closed) BUT edits workloop.go = COLLIDES with jessica's hk-hs7ex. Was submit-wedged ("boot WS1e now" — wedge SAVED the collision); re-driven 03:48Z to hold, ACK'd. RE-TASK to WS1e the moment jessica's workloop.go lands. |
 > | watch | triage tier | watch-q | 🔄 RESTARTED 04:07Z (session 12525305…). `watch-up` probe keys on watch's event-CONSUMER CURSOR advancing past pending events, NOT the registry — so STOPPING watch freezes the cursor forever (WRONG lever). RIGHT lever = RESTART: fresh session hits WATCH_RESTART_SUPPRESS_WINDOW=600 (10min boot suppress) + its fresh consumer drains the backlog → clears watch-up. Keeper NOT armed (hk-5266t broken until redeploy; watch holds no critical context). If it re-wedges before redeploy: `harmonik start crew watch` again, NEVER `crew stop`. |
 >
+> **🔴 CRITICAL SALVAGE (04:30Z — jessica caught a self-inflicted regression):** the hk-xkou8 reap fix
+> (bounded impl+rev sess.Wait in the agent_ready-timeout reap path) was NOT actually on main — captain commit
+> **dc316cd6** (Jul-4 18:57, a tier-2 update) accidentally `git add`-ed the daemon-REVERTED reviewloop.go
+> alongside its doc edit, silently restoring the unbounded Wait. The deployed binary (79bcd740) was built after
+> that revert → the throughput critical path was running WITHOUT the fix; the earlier 2-slot proof passed only
+> because it exercised the happy launch→agent_ready path, never the reap-hang (remote pane surviving Kill).
+> **RESOLVED:** cherry-picked jessica's restore commit afdf184d3 → **29c74e89** (re-applies the bound + adds
+> TestConcurrentReviewLoop regression tests), build OK, test PASSES, pushed. origin/main greps 4 bounded-ctx
+> refs. hk-up1pk CLOSED (salvaged). **⚠️ DEPLOYED BINARY STILL LACKS THE FIX** — safe for now (gb-mbp
+> enabled:false so the reap-hang can't fire), but the post-hk-hs7ex redeploy MUST grep the binary for the
+> bound before ANY gb-mbp re-validate (jessica's tell: source looked fixed while the binary wasn't).
+> **RECURRENCE GUARD:** captain commits must `git add <specific-doc-path>` ONLY — NEVER `git add -A`/tracked
+> daemon source; the daemon reverts uncommitted tracked worktree edits, so a blanket add COMMITS the reverted state.
+>
 > **NOTE:** WS3b feeders (hk-eval-prog-quality-feeders-k5bxl) COMPLETED success 03:47Z. Paused-by-failure
 > cruft (crashrepro, gbmbp-*, leto-*, loadtest, paul-q, pi-*, sandbox-q, spread-pi) = pre-existing. gb-mbp
 > stays enabled:false until the post-hk-hs7ex serialized re-validate. Local pinned 4.

@@ -12,6 +12,17 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-07-05 ~06:30Z — captain (executing 18:10Z directive) · expires: 2026-07-08
+WHAT: hk-hs7ex concurrency-split LANDED (salvaged off a hung gb-mbp remote consolidate → main 60708048) + daemon
+      REDEPLOYED to 60708048 (split-gate + bounded-reap + keeper hk-5266t). CORRECTED a handoff error: gb-mbp was
+      actually enabled:true max_slots:6 (not disabled), which is why the critical bead hung remotely. Dialed gb-mbp
+      back to max_slots:1 for a serialized re-validate on the fixed binary before re-ramping.
+WHY:  the deployed binary lacked the reap bound → the remote consolidate hung silently; now fixed. Serialized-first
+      re-validate follows the 18:10Z "quiet-window re-validate before ramp" order rather than trusting the prior 6.
+ORDER: serialized (1-slot) gb-mbp canary on 60708048 → confirm full remote path lands incl consolidate → ramp 1→6
+       → drive to 10 → fill remote slots. Split-gate keeps local ≤4 independently. Local pinned 4.
+RETURN-PATH: resume by checking: gb-mbp canary landed clean on 60708048? max_slots ramped back toward 6/10? remote slots filling?
+
 ## 2026-07-04 ~18:10Z — operator (via admiral) · expires: 2026-07-08
 WHAT: CORRECTION to the ~17:00Z posture, part (2) THROUGHPUT. The LOCAL box can run ONLY 4
       concurrently — that is a HARD ceiling, NOT a disk-pressure artifact and NOT to be raised.

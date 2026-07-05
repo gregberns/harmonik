@@ -25,7 +25,39 @@
 >   until hk-xkou8 lands + a serialized quiet-window re-validate (fix-first; no quiet window while 3 local lanes run).
 > - Manifest rollout gate **hk-ncg9m = CLOSED/landed** (its merge_build_failed note was the transient cache-wipe, cleared).
 
-## ⭐⭐ CURRENT TRUTH (2026-07-05 ~04:08Z — keeper /clear resume; fleet reconciled, critical path intact)
+## ⭐⭐ CURRENT TRUTH (2026-07-05 ~06:30Z — hk-hs7ex LANDED via remote-salvage + daemon REDEPLOYED)
+> Post keeper /clear resume. The throughput-critical concurrency-split is DONE and the daemon is on the fixed binary.
+>
+> **WHAT HAPPENED:** hk-hs7ex (split the daemon concurrency gate: local hard-cap 4 vs remote capacity) ran ON
+> gb-mbp remotely (run_started worker_name=gb-mbp) and HUNG at the consolidate/merge-back node ~30min — agent
+> heartbeating but no progress, no run_stale, because the DEPLOYED binary (79bcd740) lacked the bounded-reap fix
+> (29c74e89 was on main but never deployed). Captain SALVAGED: ssh'd gb-mbp, cherry-picked the reviewed+committed
+> branch run/019f308d (bc5931b4+51780210, all 3 DOT reviews APPROVE, tests green) onto main → 997b98a4+60708048,
+> build+split-gate tests green, pushed origin/main, closed hk-hs7ex. Then REDEPLOYED the daemon to **60708048**
+> (tag daemon-20260705-01) — carries the split-gate + bounded-reap fix (implWaitCtx=2 verified in the deployed
+> commit) + keeper tmux-target fix hk-5266t. daemon_started SHA verified = 60708048. supervisor resumed, jessica-q3 resumed.
+>
+> **⚠️ HANDOFF CORRECTION (load-bearing):** the 04:35 handoff claimed gb-mbp was `enabled:false`/safe. GROUND TRUTH:
+> workers.yaml had gb-mbp **enabled:true, max_slots:6** (a captain re-enabled 02:38Z + ramped to 6 by 03:39Z per the
+> operator "drive to 10 on gb-mbp" directive) and it was actively running remote work. That is WHY the critical bead
+> hung remotely. Captain dialed gb-mbp back to **max_slots:1** for a SERIALIZED re-validate on the fixed binary before
+> re-ramping to 6 (per the standing 18:10Z "serialized quiet-window re-validate → drive to 10" directive).
+>
+> **LANES NOW:**
+> | crew | lane | queue | state |
+> |---|---|---|---|
+> | jessica | daemon-reliability — COMPLETE (all 4 iter-20 P1s + hk-hs7ex split-gate) | — | **FREE/idle-armed** — candidate to drive the gb-mbp serialized re-validate (she built the split-gate + knows the remote path). |
+> | stilgar | sleep-teardown (hk-xjr1n MERGED+CLOSED: sleep tears down scheduler/crons + keeper stop-hook, symmetric wake) | — | **FREE/idle-armed** — awaiting next lane. |
+> | duncan | eval-metrics WS1e (hk-eval-prog-per-node-attr-tqftl: per-node token attribution) | duncan-q2 | ACTIVE — RE-TASKED 06:27Z (collision guard cleared, jessica's workloop.go landed); dispatched, pending. |
+> | watch | triage tier | watch-q | ⚠️ recurring ~20-min submit-wedge (hk-5266t root cause) — nudged twice this session; PERMANENT FIX now in the deployed binary (60708048), should stop recurring. |
+>
+> **NEXT (throughput critical path):** gb-mbp serialized (max_slots:1) re-validate on 60708048 — dispatch ONE
+> self-contained canary, confirm run_started.worker_name=gb-mbp + full path lands INCL consolidate (the node that
+> just hung). If clean → ramp gb-mbp max_slots 1→6 (workers.yaml + daemon restart, boot-only registry) → drive to 10
+> → fill remote slots from ready backlog. Split-gate now keeps local ≤4 while remote fills independently. Local pinned 4.
+> **Paused-by-failure cruft** (crashrepro, gbmbp-*, leto-*, loadtest, paul-q, pi-*, sandbox-q, spread-pi) = pre-existing.
+
+## ⭐⭐ (SUPERSEDED) CURRENT TRUTH (2026-07-05 ~04:08Z — keeper /clear resume; fleet reconciled, critical path intact)
 > Lean keeper-restart resume. Daemon UP. Critical path intact. Nothing blocked on operator.
 > (Committed immediately — a prior uncommitted edit was clobbered by a daemon worktree-merge checkout.)
 >

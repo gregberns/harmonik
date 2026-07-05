@@ -354,3 +354,111 @@ func TestInvalidNames(t *testing.T) {
 		})
 	}
 }
+
+// TestHKAOAPQ_List_EmptyFile verifies that List returns a stub Record{Name: name}
+// when a crew JSON file is 0-byte (truncated write / partial fsync at restart).
+// The stub allows callers to probe the corresponding tmux session by name rather
+// than silently dropping all crew exemptions (hk-aoapq).
+func TestHKAOAPQ_List_EmptyFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Write a valid crew record first, then simulate a 0-byte crash of a second.
+	if err := crew.Write(dir, makeRecord("valid")); err != nil {
+		t.Fatalf("Write valid: %v", err)
+	}
+	crewDir := filepath.Join(dir, ".harmonik", "crew")
+	if err := os.WriteFile(filepath.Join(crewDir, "empty.json"), []byte{}, 0o600); err != nil {
+		t.Fatalf("WriteFile empty: %v", err)
+	}
+
+	records, err := crew.List(dir)
+	if err != nil {
+		t.Fatalf("List: unexpected error: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("List len = %d, want 2 (valid record + stub for empty file)", len(records))
+	}
+	// Find the stub.
+	var stub *crew.Record
+	for i := range records {
+		if records[i].Name == "empty" {
+			r := records[i]
+			stub = &r
+		}
+	}
+	if stub == nil {
+		t.Fatal("stub record for empty.json not found in List result")
+	}
+	if stub.SessionID != "" || stub.Queue != "" {
+		t.Errorf("stub record has non-empty fields: %+v; want Name-only stub", stub)
+	}
+}
+
+// TestHKAOAPQ_List_CorruptFile verifies that List returns a stub Record{Name: name}
+// when a crew JSON file contains invalid JSON (hk-aoapq).
+func TestHKAOAPQ_List_CorruptFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	crewDir := filepath.Join(dir, ".harmonik", "crew")
+	//nolint:gosec // G301: test fixture directory
+	if err := os.MkdirAll(crewDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(crewDir, "corrupt.json"), []byte("{not valid json"), 0o600); err != nil {
+		t.Fatalf("WriteFile corrupt: %v", err)
+	}
+
+	records, err := crew.List(dir)
+	if err != nil {
+		t.Fatalf("List: unexpected error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("List len = %d, want 1 (stub for corrupt file)", len(records))
+	}
+	if records[0].Name != "corrupt" {
+		t.Errorf("stub Name = %q, want %q", records[0].Name, "corrupt")
+	}
+	if records[0].SessionID != "" {
+		t.Errorf("stub SessionID = %q, want empty", records[0].SessionID)
+	}
+}
+
+// TestHKAOAPQ_List_OneGoodOneCorrupt verifies that List returns all valid records
+// PLUS a stub for the corrupt file — it does not abort on the first bad file (hk-aoapq).
+func TestHKAOAPQ_List_OneGoodOneCorrupt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	if err := crew.Write(dir, makeRecord("alpha")); err != nil {
+		t.Fatalf("Write alpha: %v", err)
+	}
+	crewDir := filepath.Join(dir, ".harmonik", "crew")
+	if err := os.WriteFile(filepath.Join(crewDir, "corrupt.json"), []byte("{not valid json"), 0o600); err != nil {
+		t.Fatalf("WriteFile corrupt: %v", err)
+	}
+
+	records, err := crew.List(dir)
+	if err != nil {
+		t.Fatalf("List: unexpected error: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("List len = %d, want 2", len(records))
+	}
+	// Both should be present (sort order: alpha < corrupt).
+	if records[0].Name != "alpha" {
+		t.Errorf("records[0].Name = %q, want %q", records[0].Name, "alpha")
+	}
+	if records[1].Name != "corrupt" {
+		t.Errorf("records[1].Name = %q, want %q", records[1].Name, "corrupt")
+	}
+	// The valid record must have its fields.
+	if records[0].SessionID != "sess-alpha" {
+		t.Errorf("alpha SessionID = %q, want %q", records[0].SessionID, "sess-alpha")
+	}
+	// The stub must have only the name.
+	if records[1].SessionID != "" {
+		t.Errorf("corrupt stub SessionID = %q, want empty", records[1].SessionID)
+	}
+}

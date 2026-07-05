@@ -629,9 +629,10 @@ func probeCrewRegistrySessions(
 	records, err := crew.List(projectDir)
 	if err != nil {
 		if logger != nil {
-			logger.Printf("daemon: probeCrewRegistrySessions: crew.List error (skipping crew exemption): %v", err)
+			logger.Printf("daemon: probeCrewRegistrySessions: crew.List error (%v); falling back to live-session scan", err)
 		}
-		return 0
+		// Fall through with nil records — the live-session scan below protects any
+		// crew sessions present in the snapshot despite the registry error (hk-aoapq).
 	}
 
 	skipped := 0
@@ -679,6 +680,35 @@ func probeCrewRegistrySessions(
 			logger.Printf("daemon: probeCrewRegistrySessions: crew %q session %q is live (PID %d); skipping (PL-006d iii)", rec.Name, sessionName, pid)
 		}
 	}
+
+	// Live-session-first fallback (hk-aoapq): exempt crew-suffixed sessions in the
+	// snapshot that were not already covered by the registry pass. Activates when the
+	// registry is empty, errored, or missing an entry for a live crew (cold registry /
+	// truncated JSON). A live crew-suffixed session with a live pane PID is
+	// presumptively a real crew — mirrors probeCaptainSentinel's live-session-first
+	// logic (hk-wuxg).
+	crewPrefix := lifecycle.TmuxSessionName(projectHash, "crew-")
+	for sessionName := range sessionSnapshot {
+		if _, alreadyExcluded := excludeSessions[sessionName]; alreadyExcluded {
+			continue
+		}
+		if !strings.HasPrefix(sessionName, crewPrefix) {
+			continue
+		}
+		pid, pidErr := adapter.WindowPanePID(ctx, ltmux.WindowHandle(sessionName+":"))
+		if pidErr != nil || pid <= 0 {
+			continue
+		}
+		if !pidIsLive(pid) {
+			continue
+		}
+		excludeSessions[sessionName] = struct{}{}
+		skipped++
+		if logger != nil {
+			logger.Printf("daemon: probeCrewRegistrySessions: live-session fallback: session %q is live (PID %d); skipping (hk-aoapq)", sessionName, pid)
+		}
+	}
+
 	return skipped
 }
 

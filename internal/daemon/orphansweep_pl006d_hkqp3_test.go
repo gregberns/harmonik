@@ -417,3 +417,155 @@ func TestHKQP3_ProbeCrewRegistrySessions_NilAdapter(t *testing.T) {
 		t.Errorf("nil adapter: skipped = %d, want 0", skipped)
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-aoapq: live-session fallback when registry is cold/empty/corrupt
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestHKAOAPQ_LiveSessionFallback_EmptyCrewDir reproduces the exact incident
+// scenario (hk-aoapq): a live crew tmux session exists in the snapshot but the
+// .harmonik/crew/ directory is empty (crew.json not written yet or wiped).
+// The live-session fallback MUST protect the session and return skipped >= 1.
+func TestHKAOAPQ_LiveSessionFallback_EmptyCrewDir(t *testing.T) {
+	t.Parallel()
+
+	projectDir := daemonOrphanSweepTempProjectDir(t)
+	// No crew JSON files — crew.List returns nil, nil.
+
+	crewSession := lifecycle.TmuxSessionName(hkqp3ProjectHash, "crew-leto")
+
+	sessionSnapshot := map[string]struct{}{crewSession: {}}
+	adapter := &hkqp3FakeAdapter{sessions: []string{crewSession}, panePID: os.Getpid()}
+	excludeSessions := map[string]struct{}{}
+
+	skipped := probeCrewRegistrySessions(
+		context.Background(), projectDir, hkqp3ProjectHash,
+		adapter, nil, sessionSnapshot, excludeSessions,
+	)
+
+	if skipped != 1 {
+		t.Errorf("empty crew dir + live session: skipped = %d, want 1 (live-session fallback must protect)", skipped)
+	}
+	if _, ok := excludeSessions[crewSession]; !ok {
+		t.Errorf("empty crew dir: %q not in excludeSessions; must be protected by live-session fallback", crewSession)
+	}
+}
+
+// TestHKAOAPQ_LiveSessionFallback_EmptyJSON reproduces the truncation scenario:
+// the crew JSON file exists on disk but is 0-byte (concurrent write / partial
+// fsync at restart time). crew.List returns a stub Record{Name: "leto"} which
+// allows the registry pass to probe the session directly. The session MUST be
+// protected and skipped = 1 returned.
+func TestHKAOAPQ_LiveSessionFallback_EmptyJSON(t *testing.T) {
+	t.Parallel()
+
+	projectDir := daemonOrphanSweepTempProjectDir(t)
+
+	// Write a 0-byte crew JSON to simulate truncation.
+	crewDir := filepath.Join(projectDir, ".harmonik", "crew")
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(crewDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll crew dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(crewDir, "leto.json"), []byte{}, 0o600); err != nil {
+		t.Fatalf("WriteFile empty crew json: %v", err)
+	}
+
+	crewSession := lifecycle.TmuxSessionName(hkqp3ProjectHash, "crew-leto")
+
+	sessionSnapshot := map[string]struct{}{crewSession: {}}
+	adapter := &hkqp3FakeAdapter{sessions: []string{crewSession}, panePID: os.Getpid()}
+	excludeSessions := map[string]struct{}{}
+
+	skipped := probeCrewRegistrySessions(
+		context.Background(), projectDir, hkqp3ProjectHash,
+		adapter, nil, sessionSnapshot, excludeSessions,
+	)
+
+	if skipped != 1 {
+		t.Errorf("empty crew json + live session: skipped = %d, want 1 (must not reap live crew on registry corruption)", skipped)
+	}
+	if _, ok := excludeSessions[crewSession]; !ok {
+		t.Errorf("empty crew json: %q not in excludeSessions; must be protected", crewSession)
+	}
+}
+
+// TestHKAOAPQ_LiveSessionFallback_CorruptJSON verifies that a corrupt (malformed)
+// crew JSON file does not cause the sweep to reap the live crew session.
+// crew.List returns a stub which the registry pass or the live-session fallback
+// converts to protection (hk-aoapq).
+func TestHKAOAPQ_LiveSessionFallback_CorruptJSON(t *testing.T) {
+	t.Parallel()
+
+	projectDir := daemonOrphanSweepTempProjectDir(t)
+
+	crewDir := filepath.Join(projectDir, ".harmonik", "crew")
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(crewDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll crew dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(crewDir, "admiral.json"), []byte("{not valid json"), 0o600); err != nil {
+		t.Fatalf("WriteFile corrupt crew json: %v", err)
+	}
+
+	crewSession := lifecycle.TmuxSessionName(hkqp3ProjectHash, "crew-admiral")
+
+	sessionSnapshot := map[string]struct{}{crewSession: {}}
+	adapter := &hkqp3FakeAdapter{sessions: []string{crewSession}, panePID: os.Getpid()}
+	excludeSessions := map[string]struct{}{}
+
+	skipped := probeCrewRegistrySessions(
+		context.Background(), projectDir, hkqp3ProjectHash,
+		adapter, nil, sessionSnapshot, excludeSessions,
+	)
+
+	if skipped != 1 {
+		t.Errorf("corrupt crew json + live session: skipped = %d, want 1", skipped)
+	}
+	if _, ok := excludeSessions[crewSession]; !ok {
+		t.Errorf("corrupt crew json: %q not in excludeSessions; must be protected", crewSession)
+	}
+}
+
+// TestHKAOAPQ_LiveSessionFallback_MultipleSessions verifies that multiple live
+// crew sessions are all protected when the crew directory is empty (hk-aoapq).
+func TestHKAOAPQ_LiveSessionFallback_MultipleSessions(t *testing.T) {
+	t.Parallel()
+
+	projectDir := daemonOrphanSweepTempProjectDir(t)
+	// No crew JSON files.
+
+	letoSession := lifecycle.TmuxSessionName(hkqp3ProjectHash, "crew-leto")
+	admiralSession := lifecycle.TmuxSessionName(hkqp3ProjectHash, "crew-admiral")
+	// Include an unrelated session to confirm the prefix filter works.
+	unrelatedSession := lifecycle.TmuxSessionName(hkqp3ProjectHash, "default")
+
+	sessionSnapshot := map[string]struct{}{
+		letoSession:      {},
+		admiralSession:   {},
+		unrelatedSession: {},
+	}
+	adapter := &hkqp3FakeAdapter{
+		sessions: []string{letoSession, admiralSession, unrelatedSession},
+		panePID:  os.Getpid(),
+	}
+	excludeSessions := map[string]struct{}{}
+
+	skipped := probeCrewRegistrySessions(
+		context.Background(), projectDir, hkqp3ProjectHash,
+		adapter, nil, sessionSnapshot, excludeSessions,
+	)
+
+	if skipped != 2 {
+		t.Errorf("two crew sessions: skipped = %d, want 2", skipped)
+	}
+	if _, ok := excludeSessions[letoSession]; !ok {
+		t.Errorf("%q not in excludeSessions", letoSession)
+	}
+	if _, ok := excludeSessions[admiralSession]; !ok {
+		t.Errorf("%q not in excludeSessions", admiralSession)
+	}
+	if _, ok := excludeSessions[unrelatedSession]; ok {
+		t.Errorf("unrelated session %q was incorrectly added to excludeSessions", unrelatedSession)
+	}
+}

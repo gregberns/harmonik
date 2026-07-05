@@ -195,7 +195,15 @@ func List(projectDir string) ([]Record, error) {
 		}
 		r, err := Load(projectDir, name)
 		if err != nil {
-			return nil, fmt.Errorf("crew: load %q: %w", name, err)
+			if errors.Is(err, ErrNotFound) {
+				// File vanished between ReadDir and Load (TOCTOU race); skip silently.
+				continue
+			}
+			// Corrupt or empty file: return a stub so callers can still probe the
+			// corresponding tmux session by name (hk-aoapq). Treat as unknown/protect,
+			// not absent/reap.
+			records = append(records, Record{Name: name})
+			continue
 		}
 		records = append(records, r)
 	}

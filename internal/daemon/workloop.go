@@ -3712,12 +3712,22 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 			if !mergeRes.noChange && !mergeRes.success {
-				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
-				emitDone(false, fmt.Sprintf("merge-failed (dot): %s", mergeRes.reason))
-				return
+				// hk-whru3: advisory-RC + rebase_dropped_commits → work already on main.
+				// A prior run merged the same patch; git rebase identifies it as "already
+				// applied" and drops the commit (hk-zmpd guard fires: runTip == mainTip).
+				// hk-zmpd fails-closed for the general case (salvage the run-branch), but
+				// for advisory-RC the work IS already on main. Fall through to CloseBead
+				// so the infinite re-dispatch loop terminates instead of re-queuing.
+				if dotResult.advisoryRC && strings.Contains(mergeRes.reason, "rebase_dropped_commits") {
+					// noChange-equivalent: run-branch commits already applied. Skip reopen.
+				} else {
+					emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
+					reopenTID, _ := deps.tidGen.Next()
+					_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+						fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
+					emitDone(false, fmt.Sprintf("merge-failed (dot): %s", mergeRes.reason))
+					return
+				}
 			}
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
 			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {

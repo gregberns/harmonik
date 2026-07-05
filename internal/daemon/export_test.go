@@ -715,6 +715,8 @@ type DotWorkflowResultExported struct {
 	TerminalNodeID string
 	NeedsAttention bool
 	Summary        string
+	// AdvisoryRC mirrors dotWorkflowResult.advisoryRC (hk-whru3).
+	AdvisoryRC bool
 	// ApproveVerdict mirrors dotWorkflowResult.approveVerdict (hk-tnui).
 	ApproveVerdict *workspace.ReviewVerdict
 }
@@ -740,6 +742,7 @@ func ExportedDriveDotWorkflow(
 		TerminalNodeID: r.terminalNodeID,
 		NeedsAttention: r.needsAttention,
 		Summary:        r.summary,
+		AdvisoryRC:     r.advisoryRC,
 		ApproveVerdict: r.approveVerdict,
 	}
 }
@@ -765,6 +768,7 @@ func ExportedDriveDotWorkflowFull(
 		TerminalNodeID: r.terminalNodeID,
 		NeedsAttention: r.needsAttention,
 		Summary:        r.summary,
+		AdvisoryRC:     r.advisoryRC,
 		ApproveVerdict: r.approveVerdict,
 	}
 }

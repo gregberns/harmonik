@@ -149,6 +149,14 @@ type dotWorkflowResult struct {
 	// bead rather than reopening it.
 	subsumed bool
 
+	// advisoryRC is true when the cascade completed via the advisory-RC exemption
+	// (hk-w2ow): REQUEST_CHANGES was advisory-only, committed work exists, gate
+	// green, HEAD final. The caller uses this to reconcile-close on
+	// rebase_dropped_commits instead of re-queuing — preventing the infinite
+	// re-dispatch loop where work already merged in a prior run is re-identified
+	// as advisory-RC and re-queued (hk-whru3).
+	advisoryRC bool
+
 	// approveVerdict carries the APPROVE verdict when the cascade succeeded via
 	// the explicit reviewer-APPROVE path (hk-8ps7q). Nil when success was via a
 	// non-reviewer terminal node, advisory-RC advisory-only, or cap-hit salvage.
@@ -625,8 +633,9 @@ func driveDotWorkflow(
 				// falls through to review_fixup_stalled below, exactly as before.
 				if committedResult && priorVerdict == workspace.ReviewVerdictRequestChanges && lastGatePassed {
 					return dotWorkflowResult{
-						success: true,
-						summary: fmt.Sprintf("dot: completed at iteration %d — REQUEST_CHANGES was advisory-only (commit gate green; HEAD final, nothing committable remained) (hk-w2ow)", iterationCount),
+						success:    true,
+						advisoryRC: true,
+						summary:    fmt.Sprintf("dot: completed at iteration %d — REQUEST_CHANGES was advisory-only (commit gate green; HEAD final, nothing committable remained) (hk-w2ow)", iterationCount),
 					}
 				}
 				// hk-du455 — committed + gate-green, no reviewer verdict yet: COMPLETION.

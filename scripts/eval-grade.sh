@@ -39,4 +39,13 @@ if [ ! -d "$EVALTASK_DIR" ]; then
 fi
 
 echo "eval-grade: running go test ./$EVALTASK_DIR/... (bead_id=$BEAD_ID task_id=$TASK_ID)"
-exec go test "./$EVALTASK_DIR/..." -timeout 120s
+go test "./$EVALTASK_DIR/..." -timeout 120s
+grade_status=$?
+
+if [ $grade_status -eq 0 ]; then
+    # Compute objective metrics for the judge (WS3b). Non-blocking: failure here
+    # must not change the grade outcome.
+    harmonik eval metrics >/dev/null 2>&1 || true
+fi
+
+exit $grade_status

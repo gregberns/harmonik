@@ -37,11 +37,14 @@ USAGE
 
 VERBS
   collect   Collect results from events.jsonl and write to eval-results.jsonl
+  metrics   Compute objective quality feeders and write .harmonik/metrics.json
 
 EXAMPLES
   harmonik eval collect
   harmonik eval collect --project /path/to/project
   harmonik eval collect --output /tmp/results.jsonl
+  harmonik eval metrics
+  harmonik eval metrics --workdir /path/to/worktree
 `
 
 const evalCollectHelp = `harmonik eval collect — collect eval run results from events.jsonl
@@ -431,6 +434,8 @@ func runEvalCmd(subArgs []string, stdout, stderr io.Writer) int {
 	switch subArgs[0] {
 	case "collect":
 		return runEvalCollect(subArgs[1:], stdout, stderr, os.Getwd)
+	case "metrics":
+		return runEvalMetrics(subArgs[1:], stdout, stderr, os.Getwd)
 	default:
 		fmt.Fprintf(stderr, "harmonik eval: unknown verb %q\n\n%s", subArgs[0], evalCmdHelp)
 		return 2

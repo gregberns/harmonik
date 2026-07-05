@@ -1,0 +1,1 @@
+- 2026-07-05 gb-mbp post-ramp merged-clean canary — daemon 60708048 max_slots:6

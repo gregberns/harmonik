@@ -32,7 +32,7 @@ func TestParsePiNDJSONEvent_SessionHeader(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"session","version":3,"id":"550e8400-e29b-41d4-a716-446655440000","cwd":"/tmp/wt"}`)
-	kind, rawType, sessionID, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, rawType, sessionID, _, err := daemon.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestParsePiNDJSONEvent_AgentEnd(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"agent_end","messages":[]}`)
-	kind, rawType, _, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, rawType, _, _, err := daemon.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestParsePiNDJSONEvent_UnknownType(t *testing.T) {
 	t.Parallel()
 
 	line := []byte(`{"type":"tool_use","name":"bash"}`)
-	kind, rawType, _, err := daemon.ExportedParsePiNDJSONEvent(line)
+	kind, rawType, _, _, err := daemon.ExportedParsePiNDJSONEvent(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestParsePiNDJSONEvent_UnknownType(t *testing.T) {
 func TestParsePiNDJSONEvent_Malformed(t *testing.T) {
 	t.Parallel()
 
-	_, _, _, err := daemon.ExportedParsePiNDJSONEvent([]byte("not json"))
+	_, _, _, _, err := daemon.ExportedParsePiNDJSONEvent([]byte("not json"))
 	if err == nil {
 		t.Error("expected error for malformed input; got nil")
 	}
@@ -91,7 +91,7 @@ func TestParsePiNDJSONEvent_Malformed(t *testing.T) {
 func TestParsePiNDJSONEvent_EmptyLine(t *testing.T) {
 	t.Parallel()
 
-	_, _, _, err := daemon.ExportedParsePiNDJSONEvent([]byte(""))
+	_, _, _, _, err := daemon.ExportedParsePiNDJSONEvent([]byte(""))
 	if err == nil {
 		t.Error("expected error for empty line; got nil")
 	}

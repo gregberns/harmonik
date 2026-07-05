@@ -2949,12 +2949,37 @@ func ExportedNewPiSessionIDInterceptor(inner io.Reader, sessionIDCb func(string)
 }
 
 // ExportedParsePiNDJSONEvent exposes parsePiNDJSONEvent for tests in package
-// daemon_test.
+// daemon_test. Returns (kind, rawType, sessionID, usage, err).
 //
-// Bead ref: hk-4rmj1 (PI-012).
-func ExportedParsePiNDJSONEvent(line []byte) (piEventKind, string, string, error) {
+// Bead ref: hk-4rmj1 (PI-012); hk-eval-prog-pi-tokens-sr316 (WS1d — usage added).
+func ExportedParsePiNDJSONEvent(line []byte) (piEventKind, string, string, ExportedPiTokenUsage, error) {
 	ev, err := parsePiNDJSONEvent(line)
-	return ev.Kind, ev.RawType, ev.SessionID, err
+	return ev.Kind, ev.RawType, ev.SessionID, ExportedPiTokenUsage{InputTokens: ev.Usage.InputTokens, OutputTokens: ev.Usage.OutputTokens}, err
+}
+
+// ExportedPiTokenUsage is the exported shape of piTokenUsage for tests.
+//
+// Bead ref: hk-eval-prog-pi-tokens-sr316 (WS1d).
+type ExportedPiTokenUsage struct {
+	InputTokens  int64
+	OutputTokens int64
+}
+
+// ExportedPiRunArtifacts is a type alias for piRunArtifacts so tests in package
+// daemon_test can inspect accumulated usage without exporting the internal type.
+//
+// Bead ref: hk-eval-prog-pi-tokens-sr316 (WS1d).
+type ExportedPiRunArtifacts = piRunArtifacts
+
+// ExportedCapturePiUsage exposes capturePiUsage for tests in package daemon_test.
+//
+// Bead ref: hk-eval-prog-pi-tokens-sr316 (WS1d).
+func ExportedCapturePiUsage(arts *piRunArtifacts, line []byte) bool {
+	ev, err := parsePiNDJSONEvent(line)
+	if err != nil {
+		return false
+	}
+	return capturePiUsage(arts, ev)
 }
 
 // ExportedPiEventKindSession re-exports piEventKindSession for tests.
@@ -2965,6 +2990,12 @@ const ExportedPiEventKindAgentEnd = piEventKindAgentEnd
 
 // ExportedPiEventKindOther re-exports piEventKindOther for tests.
 const ExportedPiEventKindOther = piEventKindOther
+
+// ExportedPiEventKindMessageStart re-exports piEventKindMessageStart for tests.
+const ExportedPiEventKindMessageStart = piEventKindMessageStart
+
+// ExportedPiEventKindMessageEnd re-exports piEventKindMessageEnd for tests.
+const ExportedPiEventKindMessageEnd = piEventKindMessageEnd
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cognition signal test seams (hk-jay1 P2-c: SS-012)

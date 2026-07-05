@@ -11,10 +11,17 @@ package daemon
 //
 //	{"type":"agent_end","messages":[...]}
 //
-// This file owns two units (mirroring codexjsonlparser.go for codex):
+// Usage events arrive as message_start and message_end lines:
+//
+//	{"type":"message_start","message":{"usage":{"input_tokens":N,"output_tokens":M}}}
+//	{"type":"message_end","usage":{"output_tokens":N}}
+//
+// This file owns three units (mirroring codexjsonlparser.go for codex):
 //
 //  1. parsePiNDJSONEvent — decodes a single NDJSON line into a piEvent.
-//  2. newPiSessionIDInterceptor — an io.Reader wrapper that:
+//  2. piRunArtifacts + capturePiUsage — per-run state holder for accumulated
+//     token usage, updated from message_start/message_end events in a NDJSON stream.
+//  3. newPiSessionIDInterceptor — an io.Reader wrapper that:
 //       - fires sessionIDCb once on the first {"type":"session",...} line (PI-012).
 //       - fires agentEndCb once on {"type":"agent_end",...} (PI-014).
 //     All bytes are passed through unchanged.
@@ -27,7 +34,7 @@ package daemon
 //
 // Spec: specs/pi-harness.md §1 PI-012/PI-014.
 // Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.3/§3.4.
-// Bead: hk-mkcwg (PI-014).
+// Bead: hk-mkcwg (PI-014); hk-eval-prog-pi-tokens-sr316 (WS1d — usage extraction).
 
 import (
 	"bytes"
@@ -56,9 +63,27 @@ const (
 	// piEventKindAgentEnd is the terminal Pi NDJSON event:
 	// `{"type":"agent_end","messages":[...]}`. PI-014 (agent_end watcher, a
 	// later bead) observes this to invoke Teardown because Pi's process exit is
-	// unreliable (#4303/#161/#4942).
+	// unreliable (#4303/#161/#4942). Usage carries token totals summed across all
+	// messages in the payload (WS1d).
 	piEventKindAgentEnd
+
+	// piEventKindMessageStart is the Pi NDJSON event emitted at the start of an
+	// assistant message: `{"type":"message_start","message":{"usage":{...}}}`.
+	// Usage.InputTokens carries the prompt token count for this message turn.
+	piEventKindMessageStart
+
+	// piEventKindMessageEnd is the Pi NDJSON event emitted at the end of an
+	// assistant message: `{"type":"message_end","usage":{...}}`.
+	// Usage.OutputTokens carries the completion token count for this message turn.
+	piEventKindMessageEnd
 )
+
+// piTokenUsage is the token consumption summary extracted from Pi NDJSON events.
+// Fields map directly to the on-wire "usage" object; absent fields decode to zero.
+type piTokenUsage struct {
+	InputTokens  int64
+	OutputTokens int64
+}
 
 // piEvent is the parsed form of a single Pi NDJSON line.
 //
@@ -75,13 +100,41 @@ type piEvent struct {
 	// SessionID is the Pi session identifier. Populated for piEventKindSession;
 	// empty otherwise.
 	SessionID string
+
+	// Usage carries the token counts extracted from this event. Populated for
+	// piEventKindMessageStart (input_tokens), piEventKindMessageEnd (output_tokens),
+	// and piEventKindAgentEnd (totals summed across all messages). Zero otherwise.
+	Usage piTokenUsage
+}
+
+// piUsageField is the on-wire JSON shape of a Pi usage object.
+type piUsageField struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+// piMessageStartBody is the "message" sub-object in a message_start event.
+type piMessageStartBody struct {
+	Usage *piUsageField `json:"usage"`
+}
+
+// piAgentMessage is one entry in the agent_end messages array.
+type piAgentMessage struct {
+	Role  string        `json:"role"`
+	Usage *piUsageField `json:"usage"`
 }
 
 // piNDJSONLine is the on-the-wire decode target for a Pi NDJSON line.
 // All fields are optional (absent fields decode to zero).
 type piNDJSONLine struct {
-	Type      string `json:"type"`
-	SessionID string `json:"id"`
+	Type      string              `json:"type"`
+	SessionID string              `json:"id"`
+	// message_start: usage is nested under "message"
+	Message   *piMessageStartBody `json:"message"`
+	// message_end: usage is at the top level
+	Usage     *piUsageField       `json:"usage"`
+	// agent_end: array of all conversation messages, each may carry usage
+	Messages  []piAgentMessage    `json:"messages"`
 }
 
 // parsePiNDJSONEvent decodes one Pi NDJSON line into a piEvent.
@@ -107,10 +160,79 @@ func parsePiNDJSONEvent(line []byte) (piEvent, error) {
 		ev.SessionID = raw.SessionID
 	case "agent_end":
 		ev.Kind = piEventKindAgentEnd
+		// Sum usage across all messages in the agent_end payload so callers get
+		// a single run-level total from the terminal event.
+		for _, msg := range raw.Messages {
+			if msg.Usage != nil {
+				ev.Usage.InputTokens += msg.Usage.InputTokens
+				ev.Usage.OutputTokens += msg.Usage.OutputTokens
+			}
+		}
+	case "message_start":
+		ev.Kind = piEventKindMessageStart
+		if raw.Message != nil && raw.Message.Usage != nil {
+			ev.Usage.InputTokens = raw.Message.Usage.InputTokens
+			ev.Usage.OutputTokens = raw.Message.Usage.OutputTokens
+		}
+	case "message_end":
+		ev.Kind = piEventKindMessageEnd
+		if raw.Usage != nil {
+			ev.Usage.InputTokens = raw.Usage.InputTokens
+			ev.Usage.OutputTokens = raw.Usage.OutputTokens
+		}
 	default:
 		ev.Kind = piEventKindOther
 	}
 	return ev, nil
+}
+
+// piRunArtifacts is the Pi analog of codexRunArtifacts: it holds the per-run
+// state captured from a Pi NDJSON stream so the session-data collector can
+// report token totals after the run completes.
+//
+// Usage is accumulated from message_start (input_tokens) and message_end
+// (output_tokens) events via capturePiUsage. The agent_end event also carries
+// a summed total in its messages array (accessible via the parsed piEvent.Usage
+// field) and can serve as a cross-check or fallback when per-turn events are
+// absent.
+//
+// WS1d (hk-eval-prog-pi-tokens-sr316).
+type piRunArtifacts struct {
+	// TotalUsage is the accumulated token consumption across all turns.
+	// InputTokens is summed from message_start events; OutputTokens from
+	// message_end events.
+	TotalUsage piTokenUsage
+}
+
+// capturePiUsage folds a parsed piEvent into the run artifacts.
+//
+// Accumulation split:
+//   - piEventKindMessageStart → only InputTokens (prompt cost for the turn;
+//     OutputTokens in message_start is an initial draft count, not the final
+//     completion cost and must not be double-counted with message_end).
+//   - piEventKindMessageEnd   → only OutputTokens (completion cost for the turn).
+//
+// All other event kinds are ignored and return false.
+// Returns true iff arts was mutated (i.e. the event carried non-zero usage).
+//
+// WS1d (hk-eval-prog-pi-tokens-sr316).
+func capturePiUsage(arts *piRunArtifacts, ev piEvent) bool {
+	switch ev.Kind {
+	case piEventKindMessageStart:
+		if ev.Usage.InputTokens == 0 {
+			return false
+		}
+		arts.TotalUsage.InputTokens += ev.Usage.InputTokens
+		return true
+	case piEventKindMessageEnd:
+		if ev.Usage.OutputTokens == 0 {
+			return false
+		}
+		arts.TotalUsage.OutputTokens += ev.Usage.OutputTokens
+		return true
+	default:
+		return false
+	}
 }
 
 // piSessionIDInterceptor wraps an io.Reader (Pi NDJSON stdout) and fires two

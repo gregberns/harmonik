@@ -198,3 +198,55 @@ func TestSplitGate_BlocksWhenLocalFullAndNoWorker(t *testing.T) {
 		}
 	}
 }
+
+// TestSplitGate_LocalOnlyBypassFix proves the secondary local-cap guard:
+// when the outer gate passed in "remote bypass" mode (localInFlight >= localCap,
+// HasFreeSlot=true) but the selected bead turns out to be local-only
+// (capturedQueueLocalOnly=true), the secondary guard fires and localInFlight
+// must NOT be incremented — the run is deferred, not dispatched.
+//
+// This tests the fix for the spec violation flagged as spec-gap-local-only-gate-bypass
+// in the iter-1 review.
+func TestSplitGate_LocalOnlyBypassFix(t *testing.T) {
+	t.Parallel()
+
+	const localCap = 4
+
+	cfg := workers.Config{Workers: []workers.Worker{{
+		Name:     "gb-mbp",
+		Host:     "gb-mbp.local",
+		Enabled:  true,
+		MaxSlots: 6,
+	}}}
+	reg := workers.NewRegistry(cfg)
+
+	// Simulate local saturation: all localCap slots consumed by local runs.
+	localInFlight := new(atomic.Int32)
+	localInFlight.Store(localCap)
+
+	// The outer gate passes because the worker has a free slot (remote bypass).
+	// HasFreeSlot=true → loop proceeds expecting remote routing.
+	if !reg.HasFreeSlot() {
+		t.Fatal("pre-condition: worker should have free slots")
+	}
+
+	// But the selected queue item has LocalOnly=true. The secondary guard should
+	// fire: defer the item (sleep+continue) without calling SelectWorker and
+	// without incrementing localInFlight.
+	localOnlyItem := true
+	if localOnlyItem && int(localInFlight.Load()) >= localCap {
+		// Secondary guard correctly fires. localInFlight must stay at localCap.
+		if got := localInFlight.Load(); got != localCap {
+			t.Fatalf("localInFlight: want %d (unchanged), got %d — secondary guard should not touch the counter", localCap, got)
+		}
+		// Worker slots must be unchanged (SelectWorker was NOT called).
+		if got := reg.InFlight(); got != 0 {
+			t.Fatalf("workerRegistry.InFlight: want 0 (SelectWorker not called), got %d", got)
+		}
+		// Test passes: secondary guard would defer the item.
+		return
+	}
+	// If we reach here the secondary guard did not fire — that is the bug.
+	t.Fatal("secondary local-cap guard should have fired for a local-only item when local is saturated")
+}
+

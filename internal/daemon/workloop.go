@@ -263,7 +263,9 @@ type workLoopDeps struct {
 	workflowModeDefault core.WorkflowMode
 
 	// runRegistry tracks in-flight bead runs (hk-e61c3.2). The outer poll loop
-	// gates goroutine creation on runRegistry.Len() < maxConcurrent. Each
+	// uses runRegistry.Len() for liveness/accounting, but the dispatch gate
+	// (hk-hs7ex) uses localInFlight (local-only sub-cap) rather than Len() so
+	// that remote worker runs are not counted against the local ceiling. Each
 	// dispatched goroutine calls Register on claim and Unregister on exit.
 	//
 	// MUST be a field on workLoopDeps — NOT a package-level variable (see
@@ -1187,7 +1189,10 @@ func resolveTargetBranch(branch string) string {
 //
 // Each iteration of the outer poll loop:
 //  1. Check context cancellation.
-//  2. If runRegistry.Len() >= maxConcurrent: sleep and retry (at capacity).
+//  2. Split capacity gate (hk-hs7ex): if localInFlight >= gateMax AND no
+//     remote worker has a free slot: sleep and retry (local at hard cap).
+//     When a worker has a free slot, admit — SelectWorker routes remotely
+//     and localInFlight is NOT incremented for that run.
 //  3. Queue-pull path (when queueStore is set and has an active queue):
 //     3a. If queue status is paused or completed, idle-wait.
 //     3b. Get the active group's eligible items via EligibleItems().
@@ -2635,6 +2640,20 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			beadRecord.Labels = showRecord.Labels
 			beadRecord.Title = showRecord.Title
 			beadRecord.Description = showRecord.Description
+		}
+
+		// hk-hs7ex: secondary local-cap guard. The split gate at Step 2 may have
+		// passed in "remote bypass" mode (localInFlight >= gateMax, HasFreeSlot=true),
+		// expecting this bead to route remotely. If the item turned out to be
+		// local-only (capturedQueueLocalOnly=true), SelectWorker will be skipped
+		// and localInFlight will be incremented — overrunning the HARD 4-session
+		// cap. Defer this item: sleep and re-evaluate. No state to undo at this
+		// point (ClaimBead not yet called, runRegistry not yet updated).
+		if capturedQueueLocalOnly && int(deps.localInFlight.Load()) >= gateMax {
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+				return exitClean()
+			}
+			continue
 		}
 
 		// Acquire the claim semaphore before the SQLite write (hk-e61c3.3).

@@ -112,12 +112,16 @@ digraph "standard-bead" {
 
     // review: agentic reviewer. Emits an Outcome whose preferred_label
     // (APPROVE / REQUEST_CHANGES / BLOCK) drives the cascade below.
+    // harness="claude-code" pins review to Claude at tier 3 so the reviewer
+    // stays on Claude even when the global default (tier 4) is pi — avoids
+    // the Pi-reviewer pane seed-paste bug (hk-z4nif). hk-ytzj2.
     review [
         type="agentic",
         agent_type="reviewer",
         handler_ref="claude-reviewer",
         idempotency_class="idempotent",
         model="claude-opus-4-8",
+        harness="claude-code",
         role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on the change"
     ];
 

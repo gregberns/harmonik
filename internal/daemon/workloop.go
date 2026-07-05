@@ -513,6 +513,15 @@ type workLoopDeps struct {
 	// Bead ref: hk-bfvk7.
 	projectCfg ProjectConfig
 
+	// defaultHarness is the tier-4 (global) default for the harness-selection
+	// precedence walk (resolveHarness in harnessresolve.go). Sourced from
+	// Config.DefaultHarness; empty means fall through to the built-in
+	// claude-code fallback. Wired from newWorkLoopDeps and threaded into
+	// routedLaunchSpecBuilder on every bead dispatch (hk-ytzj2).
+	//
+	// Bead ref: hk-ytzj2.
+	defaultHarness core.AgentType
+
 	// queueStore is the daemon-singleton holder for the active *queue.Queue.
 	// When non-nil and a queue is loaded, the dispatch loop pulls work from the
 	// active queue group rather than polling br ready. When nil or when no queue
@@ -1109,6 +1118,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		agentReadyTimeout:          cfg.AgentReadyTimeout,
 		cancelOnQueueDrain:         cfg.CancelOnQueueDrain,
 		projectCfg:                 cfg.ProjectCfg,
+		defaultHarness:             cfg.DefaultHarness,        // hk-ytzj2: tier-4 global harness default wired from Config
 		queueStore:                 nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
 		queueLedger:                newBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
 		staleBlockerCloser:         adapter,                   // hk-rnsjs: auto-close stale blockers on claim failure
@@ -3583,9 +3593,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			deps.launchSpecBuilder = routedLaunchSpecBuilder(
 				deps.harnessRegistry,
 				beadRecord,
-				core.AgentType(""), // queue default: per-queue harness field not yet landed (hk-4x3rg)
-				core.AgentType(""), // node default: overridden per-node in driveDotWorkflow (T5/T12)
-				core.AgentType(""), // global default: built-in fallback resolves to claude-code
+				core.AgentType(""),  // queue default: per-queue harness field not yet landed (hk-4x3rg)
+				core.AgentType(""),  // node default: overridden per-node in driveDotWorkflow (T5/T12)
+				deps.defaultHarness, // global default: Config.DefaultHarness (empty → built-in claude-code)
 				deps.bus,
 			)
 		} else {

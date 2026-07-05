@@ -367,6 +367,11 @@ type WorkLoopDepsParams struct {
 	//
 	// Bead ref: hk-hd2w6.
 	Runner tmuxPkg.CommandRunner
+
+	// DefaultHarness is the tier-4 global harness default for the
+	// harness-selection precedence walk. Mirrors Config.DefaultHarness;
+	// empty → built-in claude-code fallback (hk-ytzj2).
+	DefaultHarness core.AgentType
 }
 
 // ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
@@ -527,9 +532,23 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 			}
 			return nil // no-op: tests must not wipe the shared go-build cache
 		},
-		cacheReapMu: cacheReapMu, // hk-y3frr: reap↔dispatch exclusion
-		runner:      p.Runner,    // hk-hd2w6: Config.Runner injection seam
+		cacheReapMu:    cacheReapMu,      // hk-y3frr: reap↔dispatch exclusion
+		runner:         p.Runner,         // hk-hd2w6: Config.Runner injection seam
+		defaultHarness: p.DefaultHarness, // hk-ytzj2: tier-4 global harness default
 	}
+}
+
+// ExportedWorkLoopDefaultHarness returns the defaultHarness field from deps so
+// tests can assert Config.DefaultHarness is correctly wired into the dispatch
+// path (hk-ytzj2).
+func ExportedWorkLoopDefaultHarness(deps workLoopDeps) core.AgentType {
+	return deps.defaultHarness
+}
+
+// ExportedLoadStandardGraph parses the embedded standard-bead.dot so tests in
+// package daemon_test can inspect node attrs (e.g. review.Harness for hk-ytzj2).
+func ExportedLoadStandardGraph(params map[string]string) (*dot.Graph, error) {
+	return loadStandardGraph(params)
 }
 
 // ExportedRunPeriodicDiskCheck calls runPeriodicDiskCheck with the given deps.

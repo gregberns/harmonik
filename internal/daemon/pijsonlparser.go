@@ -127,14 +127,14 @@ type piAgentMessage struct {
 // piNDJSONLine is the on-the-wire decode target for a Pi NDJSON line.
 // All fields are optional (absent fields decode to zero).
 type piNDJSONLine struct {
-	Type      string              `json:"type"`
-	SessionID string              `json:"id"`
+	Type      string `json:"type"`
+	SessionID string `json:"id"`
 	// message_start: usage is nested under "message"
-	Message   *piMessageStartBody `json:"message"`
+	Message *piMessageStartBody `json:"message"`
 	// message_end: usage is at the top level
-	Usage     *piUsageField       `json:"usage"`
+	Usage *piUsageField `json:"usage"`
 	// agent_end: array of all conversation messages, each may carry usage
-	Messages  []piAgentMessage    `json:"messages"`
+	Messages []piAgentMessage `json:"messages"`
 }
 
 // parsePiNDJSONEvent decodes one Pi NDJSON line into a piEvent.

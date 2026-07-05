@@ -404,6 +404,56 @@ func TestExecuteVerdict_VerdictEmittedCommit_HasReconciliationTrailer(t *testing
 	}
 }
 
+// TestExecuteVerdict_ReopenBead_WIPCaptureWrittenToVerdictEmittedCommit
+// verifies that a reopen-bead verdict causes commitVerdictEmitted (step 3) to
+// write WIP capture files from the target run's worktree into the
+// .harmonik/reconciliation/<investigatorRunID>/wip-capture/ directory, which
+// are then included in the verdict-emitted commit (RC-019).
+//
+// The test deliberately passes a nil BrAdapter so ExecuteVerdict fails at
+// step 4 (reopen-bead requires BrAdapter). This is intentional: we assert
+// step 3 (verdict-emitted commit + WIP capture) succeeds without needing a
+// real Beads binary.
+func TestExecuteVerdict_ReopenBead_WIPCaptureWrittenToVerdictEmittedCommit(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	ve025aGitInit(t, projectDir)
+
+	ve := ve025aValidVerdictEvent(core.VerdictReopenBead)
+	ve025aSetupWorktree(t, projectDir, ve.InvestigatorRunID)
+	ve.SnapshotToken.GitHeadHash = ve025aCurrentGitHead(t, projectDir)
+
+	// Set up the target run's worktree with unstaged WIP (modified README).
+	// ve025aGitInit creates a README and commits it; modifying it without
+	// staging gives CaptureWIP something non-empty to capture.
+	targetWTPath := ve025aWorktreePath(projectDir, ve.TargetRunID.String())
+	if err := os.MkdirAll(targetWTPath, 0o755); err != nil {
+		t.Fatalf("TestExecuteVerdict_ReopenBead: setup target worktree mkdir: %v", err)
+	}
+	ve025aGitInit(t, targetWTPath)
+	readmePath := filepath.Join(targetWTPath, "README")
+	if err := os.WriteFile(readmePath, []byte("test repo with WIP changes\n"), 0o644); err != nil {
+		t.Fatalf("TestExecuteVerdict_ReopenBead: write WIP: %v", err)
+	}
+
+	lock := ve025aAcquireLock(t, projectDir, ve.TargetRunID.String())
+	// ExecuteVerdict fails at step 4 (reopen-bead requires BrAdapter) but
+	// step 3 (verdict-emitted commit with WIP capture) must succeed first.
+	_, _ = daemon.ExecuteVerdict(context.Background(), ve, lock, ve025aCfg(projectDir, &ve025aRecordingEmitter{}))
+
+	// RC-019: wip-capture/git-status.txt must exist in the investigator
+	// worktree after the verdict-emitted commit lands.
+	wtPath := ve025aWorktreePath(projectDir, ve.InvestigatorRunID.String())
+	statusFile := filepath.Join(wtPath, ".harmonik", "reconciliation",
+		ve.InvestigatorRunID.String(), "wip-capture", "git-status.txt")
+	if _, err := os.Stat(statusFile); err != nil {
+		t.Errorf("RC-019: %s not found in investigator worktree after reopen-bead "+
+			"verdict-emitted commit: %v (reopen-bead verdicts must capture WIP)",
+			statusFile, err)
+	}
+}
+
 // TestExecuteVerdict_VerdictExecutedCommit_HasExecutedTrailer verifies that the
 // verdict-executed commit carries the Harmonik-Verdict-Executed: true trailer
 // per schemas.md §6.4.

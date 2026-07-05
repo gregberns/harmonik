@@ -167,11 +167,12 @@ func ExecuteVerdict(
 
 	// ── Step 3: Commit reconciliation_verdict_emitted on investigator branch ──
 	worktreePath := workspace.WorktreePath(cfg.ProjectDir, ve.InvestigatorRunID.String(), workspace.NoWorktreeRootOverride())
+	targetWorktreePath := workspace.WorktreePath(cfg.ProjectDir, ve.TargetRunID.String(), workspace.NoWorktreeRootOverride())
 	verdictJSON, marshalErr := json.MarshalIndent(ve, "", "  ")
 	if marshalErr != nil {
 		return result, fmt.Errorf("daemon: ExecuteVerdict: marshal VerdictEvent: %w", marshalErr)
 	}
-	if commitErr := commitVerdictEmitted(ctx, worktreePath, ve, verdictJSON); commitErr != nil {
+	if commitErr := commitVerdictEmitted(ctx, worktreePath, ve, verdictJSON, targetWorktreePath); commitErr != nil {
 		return result, fmt.Errorf("daemon: ExecuteVerdict: commit verdict-emitted: %w", commitErr)
 	}
 
@@ -230,6 +231,12 @@ func ExecuteVerdict(
 // under .harmonik/reconciliation/<investigator_run_id>/verdict.json and
 // commits it with the canonical reconciliation trailers.
 //
+// For reopen-bead verdicts, it also captures WIP from the target run's
+// worktree (targetWorktreePath) into the wip-capture/ subdirectory before the
+// git add so the capture is included in the same commit (RC-019). WIP capture
+// failures are non-fatal: if the target worktree is inaccessible, the commit
+// proceeds without the capture.
+//
 // Trailers on the verdict-emitted commit per RC-025a / schemas.md §6.4:
 //   - Harmonik-Run-ID: <investigator_run_id>
 //   - Harmonik-Workflow-Class: reconciliation
@@ -237,7 +244,7 @@ func ExecuteVerdict(
 //   - Harmonik-Schema-Version: 1
 //   - Harmonik-State-ID: <fresh UUIDv7>
 //   - Harmonik-Transition-ID: <fresh UUIDv7>
-func commitVerdictEmitted(ctx context.Context, worktreePath string, ve core.VerdictEvent, verdictJSON []byte) error {
+func commitVerdictEmitted(ctx context.Context, worktreePath string, ve core.VerdictEvent, verdictJSON []byte, targetWorktreePath string) error {
 	// Write verdict JSON file.
 	reconDir := filepath.Join(worktreePath, ".harmonik", "reconciliation", ve.InvestigatorRunID.String())
 	//nolint:gosec // G301: 0755 matches .harmonik subdir conventions
@@ -248,6 +255,20 @@ func commitVerdictEmitted(ctx context.Context, worktreePath string, ve core.Verd
 	//nolint:gosec // G306: 0600 is appropriate for this daemon-written state file
 	if err := os.WriteFile(verdictFilePath, verdictJSON, 0o600); err != nil {
 		return fmt.Errorf("commitVerdictEmitted: write verdict.json: %w", err)
+	}
+
+	// RC-019: for reopen-bead verdicts, capture WIP from the target run's
+	// worktree into wip-capture/ before the git add so the files are included
+	// in the verdict-emitted commit. Non-fatal: if the target worktree is
+	// inaccessible (already cleaned up), the commit proceeds without capture.
+	if ve.Verdict == core.VerdictReopenBead && targetWorktreePath != "" {
+		wipDir := filepath.Join(reconDir, "wip-capture")
+		//nolint:gosec // G301: 0755 matches .harmonik subdir conventions
+		if mkErr := os.MkdirAll(wipDir, 0o755); mkErr == nil {
+			if capture, capErr := workspace.CaptureWIP(targetWorktreePath); capErr == nil {
+				_ = workspace.WriteWIPCapture(capture, wipDir)
+			}
+		}
 	}
 
 	// git add .harmonik/reconciliation/<investigator_run_id>/

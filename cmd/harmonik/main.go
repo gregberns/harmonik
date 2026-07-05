@@ -398,6 +398,7 @@ EXAMPLES
 	// Check whether the fleet is sleeping; exit 0 = sleeping (suppress cron/timer),
 	// exit 1 = awake (proceed normally). No daemon connection required.
 	// Bead ref: hk-xjr1n.
+	// ON-INV-006-AUTH: operator-nfr.md §4.3 ON-008; read-only filesystem check (.harmonik/.fleet-sleeping), no daemon connection, no run state mutation, no in-flight run abort
 	if len(os.Args) >= 2 && os.Args[1] == "sleep-gate" {
 		return runSleepGateSubcommand(os.Args[2:])
 	}

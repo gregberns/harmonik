@@ -93,7 +93,8 @@ func TestSplitGate_HasFreeSlot(t *testing.T) {
 // SelectWorker WITHOUT touching localInFlight.
 //
 // This is the regression case that would FAIL with the pre-hk-hs7ex single gate:
-//   runRegistry.Len() >= gateMax  (counted local+remote → remote starved)
+//
+//	runRegistry.Len() >= gateMax  (counted local+remote → remote starved)
 func TestSplitGate_LocalSaturationDoesNotBlockRemote(t *testing.T) {
 	t.Parallel()
 
@@ -249,4 +250,3 @@ func TestSplitGate_LocalOnlyBypassFix(t *testing.T) {
 	// If we reach here the secondary guard did not fire — that is the bug.
 	t.Fatal("secondary local-cap guard should have fired for a local-only item when local is saturated")
 }
-

@@ -198,11 +198,11 @@ type rlSessWaitBoundedRevImplSession struct {
 	stdout io.Reader
 }
 
-func (s *rlSessWaitBoundedRevImplSession) Kill(_ context.Context) error  { return nil }
-func (s *rlSessWaitBoundedRevImplSession) Wait(_ context.Context) error  { return nil }
-func (s *rlSessWaitBoundedRevImplSession) Outcome() handler.Outcome      { return handler.Outcome{} }
-func (s *rlSessWaitBoundedRevImplSession) PID() int                      { return 0 }
-func (s *rlSessWaitBoundedRevImplSession) Stdout() io.Reader             { return s.stdout }
+func (s *rlSessWaitBoundedRevImplSession) Kill(_ context.Context) error { return nil }
+func (s *rlSessWaitBoundedRevImplSession) Wait(_ context.Context) error { return nil }
+func (s *rlSessWaitBoundedRevImplSession) Outcome() handler.Outcome     { return handler.Outcome{} }
+func (s *rlSessWaitBoundedRevImplSession) PID() int                     { return 0 }
+func (s *rlSessWaitBoundedRevImplSession) Stdout() io.Reader            { return s.stdout }
 
 var _ handler.SubstrateSession = (*rlSessWaitBoundedRevImplSession)(nil)
 
@@ -237,6 +237,7 @@ func (h *rlSessWaitBoundedHookStore) LatestOutcome(_, _ string) *json.RawMessage
 	raw := json.RawMessage(`{"kind":"complete"}`)
 	return &raw
 }
+
 func (h *rlSessWaitBoundedHookStore) WaitForOutcome(_ context.Context, _, _ string) (json.RawMessage, error) {
 	return json.RawMessage(`{"kind":"complete"}`), nil
 }

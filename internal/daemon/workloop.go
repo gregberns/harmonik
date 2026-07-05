@@ -3854,9 +3854,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// A prior run merged the same patch; git rebase identifies it as "already
 				// applied" and drops the commit (hk-zmpd guard fires: runTip == mainTip).
 				// hk-zmpd fails-closed for the general case (salvage the run-branch), but
-				// for advisory-RC the work IS already on main. Fall through to CloseBead
-				// so the infinite re-dispatch loop terminates instead of re-queuing.
-				if dotResult.advisoryRC && strings.Contains(mergeRes.reason, "rebase_dropped_commits") {
+				// when the cascade completed with an APPROVE result the work IS already on
+				// main. Fall through to CloseBead so the infinite re-dispatch loop
+				// terminates instead of re-queuing.
+				//
+				// hk-vbv3b: extend to the genuine APPROVE terminal path
+				// (dotResult.terminalNodeID == "close") and the hk-8ps7q approved-and-done
+				// path (dotResult.approveVerdict != nil). Both indicate the reviewer
+				// APPROVEd and the cascade completed successfully; the only reason the
+				// merge failed is that the work is already on main from a prior run.
+				alreadyApprovedOnMain := dotResult.advisoryRC ||
+					dotResult.terminalNodeID == "close" ||
+					dotResult.approveVerdict != nil
+				if alreadyApprovedOnMain && strings.Contains(mergeRes.reason, "rebase_dropped_commits") {
 					// noChange-equivalent: run-branch commits already applied. Skip reopen.
 				} else {
 					emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)

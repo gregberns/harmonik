@@ -309,9 +309,9 @@ func TestCollect_TimestampFiltersTranscriptTurns(t *testing.T) {
 	// judge window:     [10:02:00, 10:03:00)
 	transcriptPath := filepath.Join(dir, "transcript.jsonl")
 	writeEventLines(t, transcriptPath, []string{
-		transcriptLine("2026-07-05T10:00:30Z", 500, 100),  // implement window
-		transcriptLine("2026-07-05T10:01:00Z", 300, 50),   // implement window
-		transcriptLine("2026-07-05T10:02:10Z", 800, 150),  // judge window
+		transcriptLine("2026-07-05T10:00:30Z", 500, 100), // implement window
+		transcriptLine("2026-07-05T10:01:00Z", 300, 50),  // implement window
+		transcriptLine("2026-07-05T10:02:10Z", 800, 150), // judge window
 	})
 
 	runID := "019f0000-0000-7000-0000-000000000005"

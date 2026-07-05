@@ -7,7 +7,7 @@ package scenario
 //   - specs/queue-model.md §9.3 QM-062 (capacity composition: min(pending, max_concurrent - running))
 //   - specs/queue-model.md §5.7 QM-036 (wave group: all pending items eligible simultaneously)
 //   - specs/queue-model.md §9.1 QM-060 (single-writer discipline on QueueStore)
-//   - specs/execution-model.md §4.3 EM-049 (capacity gate)
+//   - specs/execution-model.md §4.11 EM-049 (capacity gate)
 //
 // SC2 scenario:
 //  1. Two queues active: "main" (wave group with 3 pending items) and
@@ -267,7 +267,7 @@ func TestNamedQueuesWorkers_QM062_TotalNeverExceedsCap(t *testing.T) {
 // additional items from either queue.
 //
 // Spec ref: specs/queue-model.md §9.3 QM-062.
-// Spec ref: specs/execution-model.md §4.3 EM-049.
+// Spec ref: specs/execution-model.md §4.11 EM-049.
 func TestNamedQueuesWorkers_QM062_AtCapNoFurtherDispatch(t *testing.T) {
 	t.Parallel()
 

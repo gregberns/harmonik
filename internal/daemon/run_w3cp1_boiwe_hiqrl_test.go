@@ -56,6 +56,8 @@ func emptyCommitWorktreeFactory(ctx context.Context, projectDir, runID, headSHA 
 // with max-concurrent=2 dispatches both beads and closes them both, then fires
 // cancelOnQueueDrain (the harmonik run exit trigger).
 //
+// Spec ref: specs/execution-model.md §4.11 EM-049 (capacity gate: both items dispatch
+// concurrently up to max_concurrent=2); §4.11 EM-051 (max_concurrent configuration).
 // Bead ref: hk-w3cp1.
 func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 	t.Parallel()
@@ -143,6 +145,8 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 // TestMultiBead_MaxConcurrentOne verifies that max-concurrent=1 still dispatches
 // both beads (sequentially) and they both complete.
 //
+// Spec ref: specs/execution-model.md §4.11 EM-049 (capacity gate: at most 1 run
+// in-flight); §4.11 EM-051 (max_concurrent default 1 — single-threaded behavior).
 // Bead ref: hk-w3cp1.
 func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 	t.Parallel()
@@ -483,6 +487,8 @@ func TestReviewLoopFlag_WorkloopOverridesMode(t *testing.T) {
 // TestSmoke_MultiBead_MaxConcurrent2_BothComplete is the smoke test from the
 // bead brief: run --beads X,Y --max-concurrent 2 and verify both items complete.
 //
+// Spec ref: specs/execution-model.md §4.11 EM-049 (capacity gate); §4.11 EM-051
+// (max_concurrent configuration: --max-concurrent 2 accepted and honored).
 // Bead ref: hk-w3cp1 (smoke test requirement).
 func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 	t.Parallel()

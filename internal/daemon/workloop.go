@@ -18,6 +18,11 @@ package daemon
 // Anti-pattern (roadmap §6): do NOT use a worker-pool-fed-by-queue. One
 // goroutine per active bead — in-flight count MUST equal runRegistry.Len().
 //
+// Spec refs: specs/execution-model.md §4.11 EM-049 (in-flight-run capacity gate:
+// daemon MUST cap concurrent runs at max_concurrent); §4.11 EM-050 (claim-write
+// serialization: token-pool of size max_concurrent before ClaimBead);
+// §4.11 EM-051 (max_concurrent configuration: ≥ 1, default 1, sealed at startup).
+//
 // # Configurable binary
 //
 // HandlerBinary on daemon.Config controls which binary is spawned. The

@@ -25,7 +25,16 @@
 >   until hk-xkou8 lands + a serialized quiet-window re-validate (fix-first; no quiet window while 3 local lanes run).
 > - Manifest rollout gate **hk-ncg9m = CLOSED/landed** (its merge_build_failed note was the transient cache-wipe, cleared).
 
-## ⭐⭐ CURRENT TRUTH (2026-07-05 ~06:30Z — hk-hs7ex LANDED via remote-salvage + daemon REDEPLOYED)
+## ⭐⭐ CURRENT TRUTH (2026-07-05 ~07:22Z — gb-mbp RAMPED to 6 + MERGED-CLEAN CONFIRMED; THROUGHPUT CRITICAL PATH UNBLOCKED)
+> Keeper /clear resume → drove the gb-mbp serialized re-validate to completion and executed the ramp. COMMITTED immediately (daemon merge-checkout reverted a prior uncommitted copy of this block).
+>
+> **THE WIN:** gb-mbp (remote box) is LIVE at max_slots:6, validated end-to-end. (1) Serialized re-validate PASSED — run 019f30f5 (duncan WS1e) cleared the consolidate/merge-back node in seconds on binary 60708048 (the node that hung hk-hs7ex 30min on the OLD binary); jessica FORMAL CLEAN + captain independent read converged. (2) RAMPED workers.yaml max_slots 1→6, SIGTERM'd daemon (pid 81497) → supervisor revived clean (**pid 58559, binary 60708048, booted 07:14:32Z, gb-mbp registered 6 slots, healthy**). (3) MERGED-CLEAN TICK 07:21Z: canary hk-jd1oh routed REMOTE to gb-mbp, full path implement→review→consolidate→MERGE clean, landed origin/main as 7876081a (~5.5min), daemon-closed, no non_ff. Split-gate keeps local pinned ≤4 while remote scales independently.
+>
+> **NEXT (throughput):** jessica saturating the 6 remote slots from the 153-ready backlog (collision-safe, HEAD-advancing, non-epic). HOLD at 6 until it proves clean under 4-6 CONCURRENT remote load (only 1 remote run proven so far), THEN bump workers.yaml 6→10 + one daemon cycle → operator's 10-concurrent target. Operator notified (comms status; no action needed).
+>
+> **LANES NOW:** jessica = gb-mbp saturation/ramp-to-10 (critical path). duncan = eval-metrics WS1e, re-dispatching (3rd attempt: 2 benign non_ff races + 1 orphan from MY ramp-restart; fix is reviewed+APPROVE, needs to WIN a merge). stilgar FREE/idle-armed. watch = FIXED (recurring stall was a day-old stale tmux session; killed + fresh-spawned + un-wedged boot prompt 07:10Z → live consumer). Local pinned 4. Paused-by-failure cruft pre-existing.
+
+## ⭐⭐ (SUPERSEDED 07:22Z) CURRENT TRUTH (2026-07-05 ~06:30Z — hk-hs7ex LANDED via remote-salvage + daemon REDEPLOYED)
 > Post keeper /clear resume. The throughput-critical concurrency-split is DONE and the daemon is on the fixed binary.
 >
 > **WHAT HAPPENED:** hk-hs7ex (split the daemon concurrency gate: local hard-cap 4 vs remote capacity) ran ON

@@ -1918,6 +1918,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// group: transition any deferred-for-ledger-dep item whose blockers all
 				// resolved back to pending (hk-nbjht). Mutates groups in place under the
 				// write lock; persists the owning queue when any flip occurred.
+				//
+				// hk-gf59k S2-F-S2-2: also track whether any items remain deferred after
+				// re-evaluation so the idle path can use a bounded poll rather than an
+				// indefinite wait (see hasDeferredItems use below).
+				hasDeferredItems := false
 				for _, name := range lq.LockedAllQueueNames() {
 					q := lq.LockedQueueByName(name)
 					if q == nil || q.Status != queue.QueueStatusActive {
@@ -1934,6 +1939,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 							if persistErr := queue.Persist(ctx, deps.projectDir, q); persistErr != nil {
 								fmt.Fprintf(os.Stderr, "daemon: workloop: Persist after ReevaluateDeferred queueID=%s: %v\n",
 									q.QueueID, persistErr)
+							}
+						}
+						for _, item := range q.Groups[gi].Items {
+							if item.Status == queue.ItemStatusDeferredForLedgerDep {
+								hasDeferredItems = true
 							}
 						}
 						break // only the first active group per queue
@@ -1970,8 +1980,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						// scheduleAwareIdleWait bounds the wait by the poll interval in that
 						// case so runScheduleTick re-runs at sub-minute latency, while
 						// degrading to the indefinite block when no schedule is armed.
-						if sleepErr := scheduleAwareIdleWait(dispatchCtx, deps); sleepErr != nil {
-							return exitClean()
+						//
+						// hk-gf59k S2-F-S2-2: when deferred items remain after re-evaluation
+						// (their blockers are still open), use a bounded poll so
+						// ReevaluateDeferred re-checks blocker closure on the next tick.
+						// Without this, workloopIdleWait blocks indefinitely and deferred
+						// chains must be re-submitted to wake the loop — the re-submit churn
+						// logged in iter20 (4 full re-submits over 7.5h for a 7-bead chain).
+						if hasDeferredItems {
+							if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+								return exitClean()
+							}
+						} else {
+							if sleepErr := scheduleAwareIdleWait(dispatchCtx, deps); sleepErr != nil {
+								return exitClean()
+							}
 						}
 						continue
 					}

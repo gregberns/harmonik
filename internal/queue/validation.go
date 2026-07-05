@@ -712,14 +712,27 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 				if bErr != nil {
 					return nil, nil, fmt.Errorf("QM-025 ledger blocks-edge %q→%q: %w", a, b, bErr)
 				}
-				if blocks {
-					// a blocks b: b is the blocked item.
-					notices = append(notices, LedgerDepPair{
-						BeadID:        b,
-						BlockerBeadID: a,
-						GroupIndex:    groupIndex,
-					})
+				if !blocks {
+					continue
 				}
+				// hk-gf59k S2-F-S2-1: re-read blocker status at defer-decision time.
+				// The blocking edge may persist in the Beads dep-graph even after a is
+				// closed; deferring b against an already-closed blocker causes a
+				// false-defer that requires a re-submit to recover (stuck-defer if no
+				// re-submit follows). Only defer b when a is still open or in_progress.
+				blockerStatus, bsErr := ledger.LookupStatus(ctx, a)
+				if bsErr != nil {
+					return nil, nil, fmt.Errorf("QM-025 ledger status %q: %w", a, bsErr)
+				}
+				if blockerStatus != BeadStatusOpen && blockerStatus != BeadStatusInProgress {
+					continue // blocker already resolved — b does not need deferral
+				}
+				// a blocks b: b is the blocked item.
+				notices = append(notices, LedgerDepPair{
+					BeadID:        b,
+					BlockerBeadID: a,
+					GroupIndex:    groupIndex,
+				})
 			}
 		}
 	}

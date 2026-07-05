@@ -1,0 +1,1 @@
+- 2026-07-05 gb-mbp concurrent worktree-create re-validate #7 — daemon fd76a69e createMu

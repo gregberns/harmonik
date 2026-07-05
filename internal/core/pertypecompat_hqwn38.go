@@ -231,6 +231,9 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "daemon_config", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "merge_conflict_escalation", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "dispatch_deferred", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-rnkuy: supervisor_revival (§8.7.20) — emitted at daemon startup when the
+	// prior session ended without daemon_shutdown (SIGKILL, OOM, panic).
+	{TypeName: "supervisor_revival", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.8 Observability and bus-internal ────────────────────────────────
 	{TypeName: "consumer_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

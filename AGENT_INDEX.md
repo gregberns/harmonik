@@ -108,6 +108,9 @@ Core architectural principle: **deterministic skeleton, probabilistic organs**. 
 | I06 | [Agent Specialization Through Constraints](docs/ideas/agent-specialization-through-constraints.md) | Medium -- agent design |
 | I07 | [Filesystem as Coordination Substrate](docs/ideas/filesystem-as-coordination-substrate.md) | Medium -- coordination |
 
+### Emergent Tooling & Safety Patterns
+- [docs/emergent-tooling-inventory.md](docs/emergent-tooling-inventory.md) -- Living capture of ad-hoc watchdogs, safety guards, observability patterns, and coordination primitives that arose organically; append-only until formalization decision
+
 ### Collaboration Log
 [docs/log/INDEX.md](docs/log/INDEX.md)
 

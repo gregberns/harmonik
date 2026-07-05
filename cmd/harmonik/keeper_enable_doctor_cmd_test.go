@@ -824,6 +824,77 @@ func TestKeeperDoctor_LiveWatcherPresentIsGreen(t *testing.T) {
 	}
 }
 
+// TestKeeperDoctor_TmuxPaneMissing_IsRed verifies that doctor exits non-zero
+// and reports the tmux-pane check as red when the session is live but the pane
+// is not reachable (the zsh :a modifier bug — unbraced $session:agent mangled
+// to an absolute path that resolves to a nonexistent pane). hk-5266t.
+func TestKeeperDoctor_TmuxPaneMissing_IsRed(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+	cfg.resolveTargetFn = func(_, _ string) string { return "fake-session:agent" }
+	cfg.paneExistsFn = func(_ string) (bool, error) { return false, nil }
+	cfg.liveKeeperFn = func(_, _ string) bool { return true } // suppress unrelated failure
+
+	var stdout, stderr bytes.Buffer
+	code := runKeeperDoctor(cfg, &stdout, &stderr)
+
+	out := stdout.String()
+	if !strings.Contains(out, "tmux-pane") {
+		t.Errorf("doctor output missing tmux-pane check: %s", out)
+	}
+	if code == 0 {
+		t.Errorf("want non-zero exit (pane missing), got 0\nstdout: %s", out)
+	}
+	if strings.Contains(out, "✓ tmux-pane") {
+		t.Errorf("tmux-pane must not be green when pane is unreachable: %s", out)
+	}
+}
+
+// TestKeeperDoctor_TmuxPanePresent_IsGreen verifies that doctor reports a
+// green tmux-pane check when the resolved pane is reachable.
+func TestKeeperDoctor_TmuxPanePresent_IsGreen(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+	cfg.resolveTargetFn = func(_, _ string) string { return "fake-session:agent" }
+	cfg.paneExistsFn = func(_ string) (bool, error) { return true, nil }
+	cfg.liveKeeperFn = func(_, _ string) bool { return true }
+
+	var stdout bytes.Buffer
+	runKeeperDoctor(cfg, &stdout, &stdout)
+
+	out := stdout.String()
+	if !strings.Contains(out, "tmux-pane") {
+		t.Errorf("doctor output missing tmux-pane check: %s", out)
+	}
+	if strings.Contains(out, "✗ tmux-pane") {
+		t.Errorf("tmux-pane must not be red when pane is reachable: %s", out)
+	}
+}
+
+// TestKeeperDoctor_TmuxPaneSessionAbsent_Skips verifies that doctor skips
+// the tmux-pane check (emits it as green) when the agent session is not live —
+// an absent session is not a doctor failure (the agent may simply not be running).
+func TestKeeperDoctor_TmuxPaneSessionAbsent_Skips(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+	cfg.resolveTargetFn = func(_, _ string) string { return "" } // session not live
+	cfg.liveKeeperFn = func(_, _ string) bool { return true }
+
+	var stdout bytes.Buffer
+	runKeeperDoctor(cfg, &stdout, &stdout)
+
+	out := stdout.String()
+	if !strings.Contains(out, "tmux-pane") {
+		t.Errorf("doctor output missing tmux-pane check even when session absent: %s", out)
+	}
+	if strings.Contains(out, "✗ tmux-pane") {
+		t.Errorf("tmux-pane must not be red when session is not live (just skipped): %s", out)
+	}
+}
+
 // ── Settings merge helpers tests ──────────────────────────────────────────────
 
 // TestMergeStatusLineStanza_Add verifies adding a fresh stanza.

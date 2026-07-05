@@ -383,6 +383,9 @@ type doctorConfig struct {
 	// liveKeeperFn is injected in tests to avoid real flock calls.
 	// When nil, keeper.LiveKeeperPresent is used.
 	liveKeeperFn func(projectDir, agent string) bool
+	// resolveTargetFn is injected in tests to avoid real tmux session probes.
+	// When nil, keeper.ResolveTmuxTarget(projectDir, agentName, "", nil) is used.
+	resolveTargetFn func(projectDir, agentName string) string
 }
 
 // runKeeperDoctorSubcommand is the entry point for `harmonik keeper doctor`.
@@ -713,6 +716,39 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 			check("live-watcher", true, "live keeper process is running")
 		} else {
 			check("live-watcher", false, "no live keeper watcher detected — start with: harmonik keeper --agent "+cfg.agentName)
+		}
+	}
+
+	// 7d. Tmux pane liveness: verify the auto-resolved keeper inject-target
+	// (<session>:agent) is a reachable pane. An absent session is not a failure
+	// (the agent may simply not be running); only a live session with a missing
+	// pane is flagged — that is the zsh :a modifier bug (hk-5266t): an unbraced
+	// $session:agent in a zsh context gets its `:a` suffix treated as the
+	// absolute-path modifier, rewriting the target to abspath($session)+"gent",
+	// a nonexistent pane that silently swallows every keeper inject attempt.
+	{
+		resolveFn := cfg.resolveTargetFn
+		if resolveFn == nil {
+			resolveFn = func(pd, an string) string {
+				return keeper.ResolveTmuxTarget(pd, an, "", nil)
+			}
+		}
+		paneFn := cfg.paneExistsFn
+		if paneFn == nil {
+			paneFn = tmuxPaneExists
+		}
+		target := resolveFn(cfg.projectDir, cfg.agentName)
+		if target == "" {
+			check("tmux-pane", true, "agent session not live — pane check skipped")
+		} else {
+			ok, paneErr := paneFn(target)
+			if paneErr != nil {
+				check("tmux-pane", true, fmt.Sprintf("pane check skipped (%v)", paneErr))
+			} else if !ok {
+				check("tmux-pane", false, fmt.Sprintf("pane %q not found — keeper inject-target is unreachable; verify the keeper was launched with a braced tmux target (${session}:agent, not $session:agent — zsh :a modifier silently rewrites unbraced form; hk-5266t)", target))
+			} else {
+				check("tmux-pane", true, fmt.Sprintf("pane %q is live", target))
+			}
 		}
 	}
 

@@ -1348,6 +1348,20 @@ func dispatchDotAgenticNode(
 		pasteTarget = prs
 	}
 	spec.Substrate = substrate
+
+	// hk-z4nif: SessionIDCaptured harnesses (Pi, Codex) deliver their task via
+	// argv, not via tmux pane paste. Attempting paste injection yields "seed
+	// marker absent" (the terminal shows NDJSON, not the seed text) →
+	// pasteinject_failed → run_failed when no review.json appears. Nil out
+	// pasteTarget so pasteInjectOnLaunch is a no-op for these harnesses.
+	if deps.harnessRegistry != nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+			if h.SessionIDPolicy() == handlercontract.SessionIDCaptured {
+				pasteTarget = nil
+			}
+		}
+	}
+
 	spec.Terminal = isTerminalSpawn // hk-x882o: terminal/consolidate nodes draw from the reserved +1 slot
 
 	preHeadSHA, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)

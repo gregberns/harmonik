@@ -164,6 +164,7 @@ func supervisorReviveWaitDaemon(t *testing.T, done <-chan error, budget time.Dur
 // deterministic and does not require a real br binary.
 func TestScenario_SupervisorRevive_DaemonStart_WiresKeepaliveGoroutine(t *testing.T) {
 	t.Parallel()
+	skipRealDaemonE2EInShort(t)
 
 	projectDir, jsonlPath := supervisorReviveProjectDir(t)
 

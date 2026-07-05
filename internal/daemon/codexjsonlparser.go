@@ -265,12 +265,12 @@ type codexRunArtifacts struct {
 //
 // Bead: hk-mzgh (G2 — codex thread_id capture into resume path).
 type codexThreadIDInterceptor struct {
-	mu            sync.Mutex
-	inner         io.Reader
-	buf           bytes.Buffer
-	cbFiredOnce   bool // guards thread_id callback; does NOT stop scanning
-	arts          codexRunArtifacts
-	cb            func(string)
+	mu          sync.Mutex
+	inner       io.Reader
+	buf         bytes.Buffer
+	cbFiredOnce bool // guards thread_id callback; does NOT stop scanning
+	arts        codexRunArtifacts
+	cb          func(string)
 }
 
 // newCodexThreadIDInterceptor wraps inner and fires cb with the captured

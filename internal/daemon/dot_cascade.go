@@ -67,6 +67,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1349,15 +1350,73 @@ func dispatchDotAgenticNode(
 	}
 	spec.Substrate = substrate
 
+	// PI-014 DOT analog: predeclare sess so agentEndCb (inside the
+	// SessionIDCaptured block below) can capture it by reference. Go's `:=`
+	// redeclaration at Launch assigns to this same variable since watcher and
+	// launchErr are new in that scope; the closure is safe because agent_end
+	// can only arrive after Launch returns and sets sess.
+	var sess handler.Session
+
 	// hk-z4nif: SessionIDCaptured harnesses (Pi, Codex) deliver their task via
 	// argv, not via tmux pane paste. Attempting paste injection yields "seed
 	// marker absent" (the terminal shows NDJSON, not the seed text) →
 	// pasteinject_failed → run_failed when no review.json appears. Nil out
 	// pasteTarget so pasteInjectOnLaunch is a no-op for these harnesses.
+	// hk-ybuts: also port the single-mode exec-path wiring (workloop.go:4237-4308):
+	// force spec.Substrate=nil so the handler uses exec (not tmux SpawnWindow) to
+	// wire a real stdout pipe; apply srt argv-wrap; capture pi-stdout.log; set
+	// StdoutWrapper for session-id capture + PI-014 agent_end teardown.
 	if deps.harnessRegistry != nil {
 		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
 			if h.SessionIDPolicy() == handlercontract.SessionIDCaptured {
 				pasteTarget = nil
+				spec.Substrate = nil
+				sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(h, artifactAgentType(artifacts)), SandboxProfileInput{
+					WorktreePath:          wtPath,
+					GitDir:                filepath.Join(deps.projectDir, ".git"),
+					RunID:                 runID.String(),
+					DaemonSockPath:        daemonSocket,
+					AllowedDomains:        deps.sandboxCfg.Network.AllowedDomains,
+					TmpDirs:               sandboxOSTmpDirs(),
+					SharedReadCacheDirs:   deps.sandboxCfg.Cache.WarmRead,
+					PrivateWriteCacheDirs: deps.sandboxCfg.Cache.PrivateWrite,
+				})
+				wrapBin, wrapArgs, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
+				if wrapErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: dot: srt argv-wrap bead %s run %s: %v (reopening)\n",
+						beadID, runID.String(), wrapErr)
+					return core.Outcome{}, fmt.Errorf("srt argv-wrap error: %w", wrapErr)
+				}
+				spec.Binary = wrapBin
+				spec.Args = wrapArgs
+				var piStdoutFile *os.File
+				if artifactAgentType(artifacts) == core.AgentTypePi {
+					piCaptureDir := filepath.Join(wtPath, ".harmonik", "pi-agent")
+					if mkErr := os.MkdirAll(piCaptureDir, 0o755); mkErr != nil {
+						fmt.Fprintf(os.Stderr, "daemon: dot: hk-j6wm7: create pi capture dir %q: %v (stdout capture disabled)\n", piCaptureDir, mkErr)
+					} else if f, ferr := os.Create(filepath.Join(piCaptureDir, "pi-stdout.log")); ferr != nil {
+						fmt.Fprintf(os.Stderr, "daemon: dot: hk-j6wm7: create pi-stdout.log: %v (stdout capture disabled)\n", ferr)
+					} else {
+						piStdoutFile = f
+						defer func() { _ = piStdoutFile.Close() }()
+					}
+				}
+				capturedH := h
+				capturedSessionIDCh := make(chan string, 1) // buffered; DOT cascade has no resume reader
+				agentEndCb := func() {
+					if sess != nil {
+						_ = sess.Kill(context.Background())
+					}
+				}
+				spec.StdoutWrapper = func(r io.Reader) io.Reader {
+					src := r
+					if piStdoutFile != nil {
+						src = io.TeeReader(r, piStdoutFile)
+					}
+					return capturedH.NewSessionIDInterceptor(src, func(id string) {
+						capturedSessionIDCh <- id
+					}, agentEndCb)
+				}
 			}
 		}
 	}

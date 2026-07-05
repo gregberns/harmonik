@@ -9,6 +9,22 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
+## ⭐⭐ OPERATOR DIRECTIVE 2026-07-04 ~18:10Z (via admiral, relayed to captain ~00:05Z) — LOCAL CAPPED 4, gb-mbp = THROUGHPUT CRITICAL PATH · expires: 2026-07-08
+> Supersedes the 17:00Z throughput part-(2) (which said raise local 4→10). CORRECTION:
+> - **LOCAL box is HARD-CAPPED at 4 concurrent** — NOT a disk artifact, do NOT raise. Do NOT `set-concurrency`
+>   past 4, do NOT bump config max_concurrent past 4. (Captain reverted config.yaml 5→4 at ~00:05Z; live daemon
+>   already ran 4. config.yaml is gitignored so the on-disk value is durable across restart.)
+> - **The 5–10 concurrency target lives ENTIRELY on gb-mbp (remote).** gb-mbp safe re-validation is the **SOLE
+>   throughput path = critical path**, not optional offload.
+> - **SEQUENCE:** keep local 4 → root-cause the gb-mbp idle-hang/launch-gap + LAND the fix → serialized
+>   (max_slots:1) quiet-window re-validate → drive concurrency to 10 ON gb-mbp → fill remote slots from the READY backlog.
+> - **STATE (captain, ~00:10Z):** the idle-hang fix was NOT actually filed (workers.yaml note claimed it was) →
+>   captain FILED it as **hk-xkou8** (concurrent agent_ready blind-spot + stale-detector stuck on sess.Wait at
+>   max_slots>1; 1-slot is validated-good, failure is only at concurrent slots). Sequenced into jessica's
+>   daemon-reliability lane LAST (internal/daemon → serializes with her work). gb-mbp stays **enabled:false**
+>   until hk-xkou8 lands + a serialized quiet-window re-validate (fix-first; no quiet window while 3 local lanes run).
+> - Manifest rollout gate **hk-ncg9m = CLOSED/landed** (its merge_build_failed note was the transient cache-wipe, cleared).
+
 ## ⭐⭐ CURRENT TRUTH (2026-07-04 ~23:32Z — keeper /clear resume; fleet self-recovered from a fleet-wide wedge)
 > Captain resumed after a context /clear. A fleet-wide wedge (API hang stranding runs) hit ~23:22Z and
 > the daemon self-recovered: it **bounced 23:27:33Z** (single clean restart, no crash-loop), swept 3 wedged

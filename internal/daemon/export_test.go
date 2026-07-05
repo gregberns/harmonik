@@ -2755,6 +2755,8 @@ type ExportedCodexEvent struct {
 	ThreadID     string
 	TurnID       string
 	ErrorMessage string
+	InputTokens  int
+	OutputTokens int
 }
 
 // ExportedParseCodexJSONLEvent exposes parseCodexJSONLEvent for tests, returning
@@ -2772,6 +2774,8 @@ func ExportedParseCodexJSONLEvent(line []byte) (ExportedCodexEvent, error) {
 		ThreadID:     ev.ThreadID,
 		TurnID:       ev.TurnID,
 		ErrorMessage: ev.ErrorMessage,
+		InputTokens:  ev.Usage.InputTokens,
+		OutputTokens: ev.Usage.OutputTokens,
 	}, nil
 }
 
@@ -2782,6 +2786,8 @@ type ExportedCodexRunArtifacts struct {
 	TurnCompleted      bool
 	TurnFailed         bool
 	TurnFailureMessage string
+	InputTokens        int
+	OutputTokens       int
 }
 
 // ExportedCaptureCodexThreadStream folds an ordered slice of raw JSONL lines
@@ -2805,6 +2811,8 @@ func ExportedCaptureCodexThreadStream(lines [][]byte) (ExportedCodexRunArtifacts
 		TurnCompleted:      arts.turnCompleted,
 		TurnFailed:         arts.turnFailed,
 		TurnFailureMessage: arts.turnFailureMessage,
+		InputTokens:        arts.inputTokens,
+		OutputTokens:       arts.outputTokens,
 	}, nil
 }
 

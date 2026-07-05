@@ -118,6 +118,17 @@ type codexEvent struct {
 	// CodexEventKindTurnFailed when the line carries an error object; empty
 	// otherwise.
 	ErrorMessage string
+
+	// Usage holds the token counts from a turn.completed event. Zero for all
+	// other event kinds and when codex omits the usage object.
+	Usage codexTokenUsage
+}
+
+// codexTokenUsage holds the token counts reported on a turn.completed event.
+// Both fields are zero when the event carries no usage object.
+type codexTokenUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 // codexJSONLLine is the on-the-wire shape of a codex exec --json line. It is a
@@ -126,10 +137,12 @@ type codexEvent struct {
 //
 // codex nests the thread id directly on the thread.started line and the turn id
 // on turn.* lines. The error object on turn.failed carries a "message" string.
+// The usage object on turn.completed carries input_tokens and output_tokens.
 type codexJSONLLine struct {
-	Type     string `json:"type"`
-	ThreadID string `json:"thread_id"`
-	TurnID   string `json:"turn_id"`
+	Type     string           `json:"type"`
+	ThreadID string           `json:"thread_id"`
+	TurnID   string           `json:"turn_id"`
+	Usage    *codexTokenUsage `json:"usage"`
 	Error    *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -170,6 +183,9 @@ func parseCodexJSONLEvent(line []byte) (codexEvent, error) {
 	case "turn.completed":
 		ev.Kind = CodexEventKindTurnCompleted
 		ev.TurnID = raw.TurnID
+		if raw.Usage != nil {
+			ev.Usage = *raw.Usage
+		}
 	case "turn.failed":
 		ev.Kind = CodexEventKindTurnFailed
 		ev.TurnID = raw.TurnID
@@ -215,6 +231,14 @@ type codexRunArtifacts struct {
 	// event. Empty unless turnFailed is true (and even then may be empty if codex
 	// omitted the error message).
 	turnFailureMessage string
+
+	// inputTokens is the input token count from the turn.completed usage object.
+	// Zero when no usage was reported or the turn did not complete cleanly.
+	inputTokens int
+
+	// outputTokens is the output token count from the turn.completed usage object.
+	// Zero when no usage was reported or the turn did not complete cleanly.
+	outputTokens int
 }
 
 // codexThreadIDInterceptor wraps an io.Reader (codex JSONL stdout) and fires a
@@ -318,6 +342,8 @@ func captureCodexThreadID(arts *codexRunArtifacts, ev codexEvent) bool {
 	case CodexEventKindTurnCompleted:
 		if !arts.turnCompleted {
 			arts.turnCompleted = true
+			arts.inputTokens = ev.Usage.InputTokens
+			arts.outputTokens = ev.Usage.OutputTokens
 			return true
 		}
 		return false

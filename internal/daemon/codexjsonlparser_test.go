@@ -27,13 +27,15 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		line         string
-		wantKind     daemon.ExportedCodexEventKind
-		wantRawType  string
-		wantThreadID string
-		wantTurnID   string
-		wantErrMsg   string
+		name          string
+		line          string
+		wantKind      daemon.ExportedCodexEventKind
+		wantRawType   string
+		wantThreadID  string
+		wantTurnID    string
+		wantErrMsg    string
+		wantInTokens  int
+		wantOutTokens int
 	}{
 		{
 			name:         "thread.started captures thread_id",
@@ -50,11 +52,28 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 			wantTurnID:  "tr_1",
 		},
 		{
-			name:        "turn.completed carries turn_id",
-			line:        `{"type":"turn.completed","turn_id":"tr_1","usage":{"input_tokens":10}}`,
+			name:         "turn.completed carries turn_id and input tokens",
+			line:         `{"type":"turn.completed","turn_id":"tr_1","usage":{"input_tokens":10}}`,
+			wantKind:     daemon.ExportedCodexEventKindTurnCompleted,
+			wantRawType:  "turn.completed",
+			wantTurnID:   "tr_1",
+			wantInTokens: 10,
+		},
+		{
+			name:          "turn.completed carries both input and output tokens",
+			line:          `{"type":"turn.completed","turn_id":"tr_2","usage":{"input_tokens":24763,"output_tokens":122}}`,
+			wantKind:      daemon.ExportedCodexEventKindTurnCompleted,
+			wantRawType:   "turn.completed",
+			wantTurnID:    "tr_2",
+			wantInTokens:  24763,
+			wantOutTokens: 122,
+		},
+		{
+			name:        "turn.completed without usage object has zero token counts",
+			line:        `{"type":"turn.completed","turn_id":"tr_3"}`,
 			wantKind:    daemon.ExportedCodexEventKindTurnCompleted,
 			wantRawType: "turn.completed",
-			wantTurnID:  "tr_1",
+			wantTurnID:  "tr_3",
 		},
 		{
 			name:        "turn.failed carries error message",
@@ -123,6 +142,12 @@ func TestParseCodexJSONLEvent_Table(t *testing.T) {
 			if ev.ErrorMessage != tc.wantErrMsg {
 				t.Errorf("ErrorMessage = %q; want %q", ev.ErrorMessage, tc.wantErrMsg)
 			}
+			if ev.InputTokens != tc.wantInTokens {
+				t.Errorf("InputTokens = %d; want %d", ev.InputTokens, tc.wantInTokens)
+			}
+			if ev.OutputTokens != tc.wantOutTokens {
+				t.Errorf("OutputTokens = %d; want %d", ev.OutputTokens, tc.wantOutTokens)
+			}
 		})
 	}
 }
@@ -163,7 +188,7 @@ func TestParseCodexJSONLEvent_Errors(t *testing.T) {
 
 // TestCaptureCodexThreadStream_HappyPath verifies that a normal initial-turn
 // JSONL stream captures the thread_id from thread.started and records turn
-// completion.
+// completion including token counts.
 func TestCaptureCodexThreadStream_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -186,6 +211,63 @@ func TestCaptureCodexThreadStream_HappyPath(t *testing.T) {
 	}
 	if arts.TurnFailed {
 		t.Error("TurnFailed = true; want false on the happy path")
+	}
+	if arts.InputTokens != 100 {
+		t.Errorf("InputTokens = %d; want 100", arts.InputTokens)
+	}
+	if arts.OutputTokens != 0 {
+		t.Errorf("OutputTokens = %d; want 0 (not present in usage)", arts.OutputTokens)
+	}
+}
+
+// TestCaptureCodexThreadStream_TokensFullUsage verifies that both input and
+// output token counts are captured from a turn.completed usage object.
+func TestCaptureCodexThreadStream_TokensFullUsage(t *testing.T) {
+	t.Parallel()
+
+	lines := codexStreamLines(
+		`{"type":"thread.started","thread_id":"th_usage"}`,
+		`{"type":"turn.started","turn_id":"tr_1"}`,
+		`{"type":"turn.completed","turn_id":"tr_1","usage":{"input_tokens":24763,"output_tokens":122}}`,
+	)
+
+	arts, err := daemon.ExportedCaptureCodexThreadStream(lines)
+	if err != nil {
+		t.Fatalf("ExportedCaptureCodexThreadStream: unexpected error: %v", err)
+	}
+	if !arts.TurnCompleted {
+		t.Error("TurnCompleted = false; want true")
+	}
+	if arts.InputTokens != 24763 {
+		t.Errorf("InputTokens = %d; want 24763", arts.InputTokens)
+	}
+	if arts.OutputTokens != 122 {
+		t.Errorf("OutputTokens = %d; want 122", arts.OutputTokens)
+	}
+}
+
+// TestCaptureCodexThreadStream_NoUsageOnCompletion verifies that a
+// turn.completed event without a usage object leaves token counts at zero.
+func TestCaptureCodexThreadStream_NoUsageOnCompletion(t *testing.T) {
+	t.Parallel()
+
+	lines := codexStreamLines(
+		`{"type":"thread.started","thread_id":"th_nousage"}`,
+		`{"type":"turn.completed","turn_id":"tr_1"}`,
+	)
+
+	arts, err := daemon.ExportedCaptureCodexThreadStream(lines)
+	if err != nil {
+		t.Fatalf("ExportedCaptureCodexThreadStream: unexpected error: %v", err)
+	}
+	if !arts.TurnCompleted {
+		t.Error("TurnCompleted = false; want true")
+	}
+	if arts.InputTokens != 0 {
+		t.Errorf("InputTokens = %d; want 0 when usage absent", arts.InputTokens)
+	}
+	if arts.OutputTokens != 0 {
+		t.Errorf("OutputTokens = %d; want 0 when usage absent", arts.OutputTokens)
 	}
 }
 

@@ -738,7 +738,14 @@ func runReviewLoop(
 								beadID, state.iterationCount, runID.String())
 						}
 					}
-					_ = implSess.Wait(ctx)
+					// hk-xkou8: bound implSess.Wait so a remote pane that stays alive
+					// after Kill cannot hold this goroutine up to 30 min. Mirrors the
+					// hk-4hso5 fix in beadRunOne (workloop.go).
+					{
+						implWaitCtx, implWaitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
+						_ = implSess.Wait(implWaitCtx)
+						implWaitCancel()
+					}
 					if deps.hookStore != nil {
 						deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
 					}
@@ -1471,7 +1478,14 @@ func runReviewLoop(
 							beadID, state.iterationCount, runID.String())
 					}
 				}
-				_ = revSess.Wait(ctx)
+				// hk-xkou8: bound revSess.Wait so a remote pane that stays alive
+				// after Kill cannot hold this goroutine up to 30 min. Mirrors the
+				// hk-4hso5 fix in beadRunOne (workloop.go).
+				{
+					revWaitCtx, revWaitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
+					_ = revSess.Wait(revWaitCtx)
+					revWaitCancel()
+				}
 				if deps.hookStore != nil {
 					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
 				}

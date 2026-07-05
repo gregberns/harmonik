@@ -988,18 +988,104 @@ type WatchConfig struct {
 	StaffingStarvationGrace int
 }
 
+// rawStallSentinelEscalation is the stall_sentinel.escalation: sub-block.
+// All fields are Go duration strings. Bead: hk-hm09z.
+type rawStallSentinelEscalation struct {
+	Tier1Crew     string `yaml:"tier1_crew"`
+	Tier2Captain  string `yaml:"tier2_captain"`
+	Tier3Operator string `yaml:"tier3_operator"`
+}
+
+// rawStallSentinelDetection is the stall_sentinel.detection: sub-block.
+// All fields are Go duration strings. Bead: hk-hm09z.
+type rawStallSentinelDetection struct {
+	RunSilenceStall     string `yaml:"run_silence_stall"`
+	ReviewFinalizeStall string `yaml:"review_finalize_stall"`
+	RunMaxAge           string `yaml:"run_max_age"`
+	LaneNoprogressStall string `yaml:"lane_noprogress_stall"`
+}
+
+// rawStallSentinelConfig is the stall_sentinel: block in config.yaml.
+// All duration fields are Go duration strings (fail-loud on bare numbers via
+// parseDurationField). All fields are optional at the YAML level; the
+// fail-loud enforcement (for sentinel startup) is in
+// cmd/harmonik/resolve_stall_sentinel_config.go. Bead: hk-hm09z.
+type rawStallSentinelConfig struct {
+	Escalation rawStallSentinelEscalation `yaml:"escalation"`
+	Detection  rawStallSentinelDetection  `yaml:"detection"`
+}
+
+// StallSentinelConfig holds the stall_sentinel: config block decoded from
+// .harmonik/config.yaml. Zero-value durations mean "not configured";
+// ResolveStallSentinelConfig in cmd/harmonik is the fail-loud gate that
+// refuses startup when a required value is absent.
+//
+// Escalation tiers (X/Y/Z from the DESIGN.md brief):
+//   - Tier1Crew     (X) → escalate to the crew after this stall age
+//   - Tier2Captain  (Y) → escalate to the captain after this stall age
+//   - Tier3Operator (Z) → escalate to the operator mailbox after this stall age
+//
+// Detection thresholds:
+//   - RunSilenceStall     → Layer A heartbeat-gap trigger
+//   - ReviewFinalizeStall → Layer A review-stall trigger
+//   - RunMaxAge           → Layer A run-age backstop
+//   - LaneNoprogressStall → Layer B no-forward-progress trigger
+//
+// Bead ref: hk-hm09z.
+type StallSentinelConfig struct {
+	// Tier1Crew is the stall age after which Tier 1 (crew) escalation fires.
+	// Zero = not configured (fail-loud at sentinel startup).
+	Tier1Crew time.Duration
+	// Tier2Captain is the stall age after which Tier 2 (captain) escalation fires.
+	// Zero = not configured.
+	Tier2Captain time.Duration
+	// Tier3Operator is the stall age after which Tier 3 (operator mailbox) fires.
+	// Zero = not configured.
+	Tier3Operator time.Duration
+	// RunSilenceStall is the max silence (no agent_heartbeat/agent_message) before
+	// a Layer A heartbeat-gap stall fires. Zero = not configured.
+	RunSilenceStall time.Duration
+	// ReviewFinalizeStall is the max time after reviewer_verdict before a Layer A
+	// review-finalize stall fires. Zero = not configured.
+	ReviewFinalizeStall time.Duration
+	// RunMaxAge is the backstop max run age before a Layer A run-age stall fires.
+	// Zero = not configured.
+	RunMaxAge time.Duration
+	// LaneNoprogressStall is the max time a lane may have an expectation of
+	// progress with zero forward-progress events before Layer B fires.
+	// Zero = not configured.
+	LaneNoprogressStall time.Duration
+}
+
+// stallSentinelBlockAbsent reports whether the stall_sentinel: block is absent
+// (all fields at their zero values). Used by the empty-file fast path.
+// Field-by-field check avoids the struct-equality footgun (comparable constraint).
+// INVARIANT: extend whenever rawStallSentinelConfig gains a new field.
+func stallSentinelBlockAbsent(raw rawStallSentinelConfig) bool {
+	e := raw.Escalation
+	d := raw.Detection
+	return e.Tier1Crew == "" &&
+		e.Tier2Captain == "" &&
+		e.Tier3Operator == "" &&
+		d.RunSilenceStall == "" &&
+		d.ReviewFinalizeStall == "" &&
+		d.RunMaxAge == "" &&
+		d.LaneNoprogressStall == ""
+}
+
 // rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
 	Agents        map[string]rawAgentConfig `yaml:"agents"`
-	Daemon        rawDaemonConfig           `yaml:"daemon"`     // hk-rcp7: PL-004b daemon: block
-	Keeper        rawKeeperConfig           `yaml:"keeper"`     // hk-lhu2: keeper config block
-	Watchdog      rawWatchdogConfig         `yaml:"watchdog"`   // hk-sbitr: ctx-watchdog schedule gate
-	Watch         rawWatchConfig            `yaml:"watch"`      // hk-we7: watch routing targets
-	Opsmonitor    rawOpsmonitorConfig       `yaml:"opsmonitor"` // hk-bi4bg: ops-monitor schedule overrides
+	Daemon        rawDaemonConfig           `yaml:"daemon"`          // hk-rcp7: PL-004b daemon: block
+	Keeper        rawKeeperConfig           `yaml:"keeper"`          // hk-lhu2: keeper config block
+	Watchdog      rawWatchdogConfig         `yaml:"watchdog"`        // hk-sbitr: ctx-watchdog schedule gate
+	Watch         rawWatchConfig            `yaml:"watch"`           // hk-we7: watch routing targets
+	Opsmonitor    rawOpsmonitorConfig       `yaml:"opsmonitor"`      // hk-bi4bg: ops-monitor schedule overrides
 	Supervise     rawSuperviseConfig        `yaml:"supervise"`
-	Harnesses     rawHarnessesConfig        `yaml:"harnesses"` // hk-v7q5u: per-harness config (PI-050)
-	Sandbox       rawSandboxConfig          `yaml:"sandbox"`   // hk-6596l: sandbox backend config
+	Harnesses     rawHarnessesConfig        `yaml:"harnesses"`      // hk-v7q5u: per-harness config (PI-050)
+	Sandbox       rawSandboxConfig          `yaml:"sandbox"`        // hk-6596l: sandbox backend config
+	StallSentinel rawStallSentinelConfig    `yaml:"stall_sentinel"` // hk-hm09z: stall-sentinel detection thresholds
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.
@@ -1063,6 +1149,11 @@ type ProjectConfig struct {
 	// Sandbox holds the sandbox: config block read from the sandbox: block.
 	// Zero value (Backend=="") when the block is absent. Bead ref: hk-6596l.
 	Sandbox SandboxConfig
+
+	// StallSentinel holds the stall_sentinel: config block (bead hk-hm09z).
+	// Zero value (all durations 0) when the block is absent. All required
+	// values are enforced at sentinel startup via ResolveStallSentinelConfig.
+	StallSentinel StallSentinelConfig
 }
 
 // LookupAgent returns the (model, effort) pair configured for agentType, or
@@ -1131,7 +1222,8 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		raw.Harnesses.Pi.Fallback == (rawHarnessesPiFallbackConfig{})
 	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
 		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent && watchBlockAbsent &&
-		opsmonitorAbsent && superviseAbsent && harnessesAbsent && sandboxBlockAbsent(raw.Sandbox) {
+		opsmonitorAbsent && superviseAbsent && harnessesAbsent && sandboxBlockAbsent(raw.Sandbox) &&
+		stallSentinelBlockAbsent(raw.StallSentinel) {
 		return ProjectConfig{}, nil
 	}
 
@@ -1193,16 +1285,24 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		}
 	}
 
+	// hk-hm09z: parse the stall_sentinel: block. All fields are optional at the
+	// YAML level; fail-loud enforcement lives in ResolveStallSentinelConfig.
+	stallSentinelCfg, err := parseStallSentinelBlock(path, raw.StallSentinel)
+	if err != nil {
+		return ProjectConfig{}, err
+	}
+
 	cfg := ProjectConfig{
-		entries:    make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
-		Daemon:     daemonCfg,
-		Keeper:     keeperCfg,
-		Watchdog:   watchdogCfg,
-		Supervise:  superviseCfg,
-		Watch:      watchCfg,
-		Opsmonitor: opsmonitorCfg,
-		Harnesses:  harnessesCfg,
-		Sandbox:    sandboxCfg,
+		entries:       make(map[core.AgentType]agentConfigEntry, len(raw.Agents)),
+		Daemon:        daemonCfg,
+		Keeper:        keeperCfg,
+		Watchdog:      watchdogCfg,
+		Supervise:     superviseCfg,
+		Watch:         watchCfg,
+		Opsmonitor:    opsmonitorCfg,
+		Harnesses:     harnessesCfg,
+		Sandbox:       sandboxCfg,
+		StallSentinel: stallSentinelCfg,
 	}
 	for key, agentRaw := range raw.Agents {
 		at := core.AgentType(key)
@@ -1395,7 +1495,8 @@ func parseDurationField(path, key, value string) (time.Duration, error) {
 	d, err := time.ParseDuration(value)
 	if err != nil {
 		fullKey := "keeper." + key
-		if strings.HasPrefix(key, "supervise.") || strings.HasPrefix(key, "daemon.") {
+		if strings.HasPrefix(key, "supervise.") || strings.HasPrefix(key, "daemon.") ||
+			strings.HasPrefix(key, "stall_sentinel.") {
 			fullKey = key
 		}
 		return 0, &ErrMalformedConfigYAML{
@@ -1689,6 +1790,48 @@ func parseOpsmonitorBlock(raw rawOpsmonitorConfig) OpsmonitorConfig {
 		Interval:   raw.Interval,
 		ScriptPath: raw.ScriptPath,
 	}
+}
+
+// parseStallSentinelBlock converts a rawStallSentinelConfig into a
+// StallSentinelConfig. All duration fields are optional at the YAML level;
+// a bare number (not a Go duration string) fails loudly via parseDurationField.
+// Required-value enforcement (fail-loud when any field is zero at startup) is
+// delegated to cmd/harmonik/resolve_stall_sentinel_config.go.
+//
+// Bead ref: hk-hm09z.
+func parseStallSentinelBlock(path string, raw rawStallSentinelConfig) (StallSentinelConfig, error) {
+	e := raw.Escalation
+	d := raw.Detection
+	type pair struct {
+		key string
+		val string
+		dst *time.Duration
+	}
+	fields := []pair{
+		{"stall_sentinel.escalation.tier1_crew", e.Tier1Crew, new(time.Duration)},
+		{"stall_sentinel.escalation.tier2_captain", e.Tier2Captain, new(time.Duration)},
+		{"stall_sentinel.escalation.tier3_operator", e.Tier3Operator, new(time.Duration)},
+		{"stall_sentinel.detection.run_silence_stall", d.RunSilenceStall, new(time.Duration)},
+		{"stall_sentinel.detection.review_finalize_stall", d.ReviewFinalizeStall, new(time.Duration)},
+		{"stall_sentinel.detection.run_max_age", d.RunMaxAge, new(time.Duration)},
+		{"stall_sentinel.detection.lane_noprogress_stall", d.LaneNoprogressStall, new(time.Duration)},
+	}
+	for _, f := range fields {
+		dv, err := parseDurationField(path, f.key, f.val)
+		if err != nil {
+			return StallSentinelConfig{}, err
+		}
+		*f.dst = dv
+	}
+	return StallSentinelConfig{
+		Tier1Crew:           *fields[0].dst,
+		Tier2Captain:        *fields[1].dst,
+		Tier3Operator:       *fields[2].dst,
+		RunSilenceStall:     *fields[3].dst,
+		ReviewFinalizeStall: *fields[4].dst,
+		RunMaxAge:           *fields[5].dst,
+		LaneNoprogressStall: *fields[6].dst,
+	}, nil
 }
 
 // parseHarnessesBlock converts a rawHarnessesConfig into a HarnessesConfig.

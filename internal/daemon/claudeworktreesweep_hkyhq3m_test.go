@@ -289,8 +289,8 @@ func TestHkQe736_SweepClaudeWorktrees_AgedOrphan_RemovedWithoutEnvVar(t *testing
 		t.Fatalf("Chtimes: %v", err)
 	}
 
-	t.Setenv(EnvSweepClaudeWorktrees, "")         // env var NOT set
-	t.Setenv(EnvClaudeWorktreeMaxAgeDays, "3")     // explicit threshold
+	t.Setenv(EnvSweepClaudeWorktrees, "")      // env var NOT set
+	t.Setenv(EnvClaudeWorktreeMaxAgeDays, "3") // explicit threshold
 
 	result, err := SweepClaudeWorktrees(t.Context(), root, nil)
 	if err != nil {

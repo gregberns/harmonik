@@ -88,3 +88,4 @@ Context-threshold handoff → clear → resume cycle. Signal sources under consi
 | Date       | Agent/Source     | Pattern Added |
 |------------|-----------------|---------------|
 | 2026-07-05 | implementer-initial (hk-nlhys) | Initial capture from bead description |
+| 2026-07-05 | implementer-resume (hk-nlhys iter-2) | Confirmed gate failure was cache miss (stdlib import errors); no code changes; re-commit to clear gate |

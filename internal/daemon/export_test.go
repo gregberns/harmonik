@@ -290,6 +290,12 @@ type WorkLoopDepsParams struct {
 	// shared origin never race on refs/heads/main (hk-4f5ua / hk-bnm89).
 	MergeMu *sync.Mutex
 
+	// WorktreeCreateMu, when non-nil, is threaded into WorktreeRootConfig for
+	// remote bead runs so that workspace.CreateWorktree serialises the
+	// git-worktree-add + HEAD-resolve retry loop (hk-5qp7z). When nil,
+	// ExportedWorkLoopDeps installs a fresh mutex (mirrors production default).
+	WorktreeCreateMu *sync.Mutex
+
 	// BeadAuditLogger, when non-nil, overrides the beadAuditLogger function
 	// used by the pre-dispatch subsume check to detect reopen-for-fix beads
 	// (hk-wcv). When nil (the test default), the check is skipped and the
@@ -421,6 +427,12 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		mergeMu = &sync.Mutex{}
 	}
 
+	// WorktreeCreateMu: default to a fresh mutex (mirrors newWorkLoopDeps, hk-5qp7z).
+	worktreeCreateMu := p.WorktreeCreateMu
+	if worktreeCreateMu == nil {
+		worktreeCreateMu = &sync.Mutex{}
+	}
+
 	// CacheReapMu: default to a fresh RWMutex (hk-y3frr).
 	cacheReapMu := p.CacheReapMu
 	if cacheReapMu == nil {
@@ -480,6 +492,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		targetBranch:               resolveTargetBranch(p.TargetBranch),
 		protectBranches:            p.ProtectBranches,
 		mergeMu:                    mergeMu,
+		worktreeCreateMu:           worktreeCreateMu,
 		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
 		emittedEpicsMu:             &sync.Mutex{},
 		beadAuditLogger:            p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"path/filepath"
+	"sync"
 
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -38,6 +39,17 @@ type WorktreeRootConfig struct {
 	// CreateWorktree and CreateReviewerWorktree.  A nil value falls back to
 	// tmux.LocalRunner{} (exec.CommandContext, unchanged local behaviour).
 	runner tmux.CommandRunner
+
+	// createMu, when non-nil, is acquired at the start of CreateWorktree and
+	// held for the duration of the git-worktree-add + HEAD-resolve retry loop
+	// (hk-5qp7z). This serialises concurrent remote worktree-create calls that
+	// share the same mutex pointer, preventing the empty-HEAD race that fires
+	// when N concurrent "git worktree add" calls race on the worker's shared
+	// repo (the single-create retry guard in CreateWorktree cannot recover from
+	// N concurrent creates because the race persists across all retry attempts).
+	// Local creates (nil runner) SHOULD also pass nil here — local concurrency
+	// is governed by the existing mergeMu in the daemon workloop.
+	createMu *sync.Mutex
 }
 
 // NoWorktreeRootOverride returns a WorktreeRootConfig with no override set;
@@ -63,6 +75,16 @@ func WithWorktreeRootOverride(override string) WorktreeRootConfig {
 // tmux.LocalRunner{} (unchanged local behaviour).
 func (cfg WorktreeRootConfig) WithRunner(r tmux.CommandRunner) WorktreeRootConfig {
 	cfg.runner = r
+	return cfg
+}
+
+// WithCreateMutex returns a copy of cfg with mu installed as the create
+// serialisation lock (hk-5qp7z). All WorktreeRootConfig values that share the
+// same *sync.Mutex pointer will serialize their git-worktree-add + HEAD-resolve
+// loops. Pass nil (or omit) for local runs — they are already serialised by the
+// daemon's mergeMu and don't exhibit the concurrent remote empty-HEAD race.
+func (cfg WorktreeRootConfig) WithCreateMutex(mu *sync.Mutex) WorktreeRootConfig {
+	cfg.createMu = mu
 	return cfg
 }
 

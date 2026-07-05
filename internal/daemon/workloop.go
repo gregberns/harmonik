@@ -371,6 +371,29 @@ type workLoopDeps struct {
 	// Bead ref: hk-bnm89 (scenario-test harness hardening), hk-yyso7 (race fix).
 	mergeMu *sync.Mutex
 
+	// worktreeCreateMu, when non-nil, is threaded into workspace.WorktreeRootConfig
+	// for remote bead runs via WithCreateMutex so that the git-worktree-add +
+	// HEAD-resolve retry loop in workspace.CreateWorktree is serialised across all
+	// concurrent remote dispatch goroutines (hk-5qp7z).
+	//
+	// Rationale: N concurrent "git worktree add" calls against the same shared
+	// worker repo race on HEAD/index resolution even when each individual call is
+	// retried — the race persists across every retry attempt because the concurrent
+	// siblings are also running. A single mutex around the full retry loop prevents
+	// any two creates from overlapping on the worker, eliminating the empty-HEAD
+	// failure mode at its source.
+	//
+	// Distinct from mergeMu: mergeMu governs merge/rebase/push serialisation;
+	// worktreeCreateMu governs worktree creation only, so the two operations can
+	// proceed independently (a merge does not block a create, and vice versa —
+	// unlike the current implicit serialisation under mergeMu which also serialises
+	// fetchBaseOnWorker with the create for hk-lt091 correctness; that invariant is
+	// preserved because both fetch and create remain inside mergeMu).
+	//
+	// Production: newWorkLoopDeps always sets this to a non-nil &sync.Mutex{}.
+	// Bead ref: hk-5qp7z.
+	worktreeCreateMu *sync.Mutex
+
 	// emittedEpics tracks parent epic IDs for which epic_completed has already
 	// been emitted this daemon session, providing the at-most-once guard (AC-1).
 	// Concurrent access is serialised by emittedEpicsMu.
@@ -1072,6 +1095,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		noAutoPull:                 cfg.NoAutoPull,                                                     // hk-exd7m: queue-only mode for flywheel topology
 		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,                                          // hk-hypbi: per-close .br_history trim
 		mergeMu:                    &sync.Mutex{},                                                      // hk-yyso7: global merge-serialisation across all queues
+		worktreeCreateMu:           &sync.Mutex{},                                                      // hk-5qp7z: global worktree-create serialisation for remote runs
 		cacheReapMu:                &sync.RWMutex{},                                                    // hk-y3frr: reap↔dispatch exclusion
 		emittedEpics:               make(map[core.BeadID]struct{}),                                     // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:             &sync.Mutex{},
@@ -3316,7 +3340,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			sshRunner := rbc.sshRunner
 			workerRepoPath := rbc.worker.RepoPath
 			wtFactory = func(ctx context.Context, _, runID, headSHA string) (string, func(), error) {
-				cfg := workspace.NoWorktreeRootOverride().WithRunner(sshRunner)
+				// hk-5qp7z: thread worktreeCreateMu into the config so CreateWorktree
+				// serialises the git-worktree-add + HEAD-resolve loop across all
+				// concurrent remote dispatch goroutines (prevents empty-HEAD race).
+				cfg := workspace.NoWorktreeRootOverride().WithRunner(sshRunner).WithCreateMutex(deps.worktreeCreateMu)
 				if err := workspace.CreateWorktree(ctx, workerRepoPath, runID, headSHA, cfg); err != nil {
 					return "", nil, err
 				}

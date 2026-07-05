@@ -152,6 +152,19 @@ func resolveWorktreeHEADViaRunner(ctx context.Context, runner tmux.CommandRunner
 }
 
 func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, cfg WorktreeRootConfig) error {
+	// hk-5qp7z: serialize the worktree-add + HEAD-resolve retry loop under the
+	// caller-supplied create mutex when present. This prevents N concurrent
+	// "git worktree add" calls against the same shared worker repo from racing
+	// on HEAD/index resolution — a race the per-attempt retry cannot recover from
+	// because each retry also sees concurrent sibling adds. Holding the mutex for
+	// the full retry loop (not just one attempt) ensures cleanup + backoff + retry
+	// are also serialised, preventing a sibling's prune/add from interleaving with
+	// this goroutine's cleanup state.
+	if cfg.createMu != nil {
+		cfg.createMu.Lock()
+		defer cfg.createMu.Unlock()
+	}
+
 	worktreePath := WorktreePath(repoRoot, runID, cfg)
 	branch := TaskBranchName(runID)
 

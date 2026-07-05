@@ -255,6 +255,84 @@ func isSleepWakeConnRefused(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
+// runSleepGateSubcommand implements `harmonik sleep-gate [--project DIR]`.
+// No daemon connection required — checks for .harmonik/.fleet-sleeping on disk.
+//
+// Exit codes:
+//
+//	0   fleet is sleeping — cron / timer should suppress and exit early
+//	1   fleet is awake   — proceed normally
+//	2   argument error
+//
+// Bead ref: hk-xjr1n (harmonik sleep must tear down ALL timer-driven things).
+func runSleepGateSubcommand(subArgs []string) int {
+	var projectDir string
+	for i := 0; i < len(subArgs); {
+		arg := subArgs[i]
+		switch {
+		case arg == "--project" && i+1 < len(subArgs):
+			projectDir = subArgs[i+1]
+			i += 2
+		case strings.HasPrefix(arg, "--project="):
+			projectDir = strings.TrimPrefix(arg, "--project=")
+			i++
+		case arg == "--help" || arg == "-h":
+			sleepGateUsage()
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik sleep-gate: unrecognized argument %q\n", arg)
+			return 2
+		}
+	}
+	if projectDir == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik sleep-gate: cannot determine working directory: %v\n", err)
+			return 2
+		}
+		projectDir = wd
+	}
+	abs, err := filepath.Abs(projectDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik sleep-gate: cannot resolve project path %q: %v\n", projectDir, err)
+		return 2
+	}
+	markerPath := filepath.Join(abs, ".harmonik", ".fleet-sleeping")
+	if _, statErr := os.Stat(markerPath); statErr == nil {
+		return 0 // fleet is sleeping
+	}
+	return 1 // fleet is awake
+}
+
+func sleepGateUsage() {
+	_, _ = io.WriteString(os.Stdout, `harmonik sleep-gate — check whether the fleet is sleeping (for harness cron gates)
+
+USAGE
+  harmonik sleep-gate [--project DIR]
+
+FLAGS
+  --project DIR  project directory (default: cwd)
+
+EXIT CODES
+  0   fleet is sleeping — cron or timer should suppress / exit early
+  1   fleet is awake — proceed normally
+  2   argument error
+
+NOTES
+  No daemon connection required: checks .harmonik/.fleet-sleeping on disk.
+  Written by 'harmonik sleep', removed by 'harmonik wake --all'.
+
+  Add this one-liner at the top of Claude Code harness cron prompts to prevent
+  them from firing while the fleet is parked:
+
+    harmonik sleep-gate --project $HARMONIK_PROJECT && exit 0
+
+EXAMPLES
+  harmonik sleep-gate
+  harmonik sleep-gate --project /path/to/project
+`)
+}
+
 func sleepUsage() {
 	_, _ = io.WriteString(os.Stdout, `harmonik sleep — park all LLM sessions now (manual quiesce override)
 

@@ -1133,12 +1133,22 @@ func autoDetectScriptsDir(hints ...string) string {
 	return ""
 }
 
-// extractEmbeddedKeeperScripts extracts the 4 embedded keeper hook scripts to
-// <projectDir>/.harmonik/scripts/ and returns that directory path. It is called
-// as a fallback by autoDetectScriptsDir when no on-disk scripts/ directory is
-// found — the typical case for a go-install'd binary on a foreign project.
+// extractEmbeddedKeeperScripts extracts the 4 embedded keeper hook scripts to a
+// stable directory and returns that path. It is called as a fallback by
+// autoDetectScriptsDir when no on-disk scripts/ directory is found.
+//
+// Extraction target: ~/.harmonik/scripts/ (preferred) so the wired hook path
+// survives worktree and temp-directory cleanup. When HOME is unavailable the
+// fallback is <projectDir>/.harmonik/scripts/ (the original behaviour). Writing
+// to a worktree path is what caused the "missing temp path" stop-hook error:
+// worktrees are cleaned up after merging, leaving the hook pointing at a deleted
+// path. hk-xjr1n.
 func extractEmbeddedKeeperScripts(projectDir string) (string, error) {
+	// Prefer ~/.harmonik/scripts/ so the path outlives any worktree lifecycle.
 	destDir := filepath.Join(projectDir, ".harmonik", "scripts")
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		destDir = filepath.Join(home, ".harmonik", "scripts")
+	}
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return "", fmt.Errorf("create %s: %w", destDir, err)
 	}

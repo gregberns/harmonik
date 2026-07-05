@@ -1967,6 +1967,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		ensureWatchLivenessSchedule(scheduleStore, cfg.ProjectCfg.Watch, deps.daemonBinaryPath)
 		deps.scheduleStore = scheduleStore
 		deps.scheduleWakeC = scheduleStore.WakeCh()
+		// Wire the schedule store into the quiesce arbiter so `harmonik sleep`
+		// suspends all enabled jobs and `harmonik wake --all` restores them
+		// symmetrically (hk-xjr1n).
+		quiesceArbiter.SetScheduleStore(scheduleStore)
 		deps.crewHandler = crewHandler // may be nil in unit-test mode (no socket)
 		deps.commsWhoQuerier = shellCommsWho(deps.daemonBinaryPath, cfg.ProjectDir)
 		deps.commsSend = shellCommsSend(deps.daemonBinaryPath, cfg.ProjectDir)

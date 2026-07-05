@@ -385,6 +385,121 @@ func (s *Store) RequestRunNow(id string) (bool, error) {
 	return v.(bool), nil
 }
 
+// sleepSuspendedFileName is the sidecar file under .harmonik/ that records
+// which job IDs were disabled by SuspendAllForSleep so that RestoreFromSleep
+// can re-enable exactly those jobs — no more, no less.
+const sleepSuspendedFileName = "sleep-suspended-jobs.json"
+
+// SuspendAllForSleep atomically disables all currently-enabled jobs under the
+// cross-process flock, records their IDs in .harmonik/sleep-suspended-jobs.json,
+// and returns the list of IDs that were disabled. Jobs already disabled before
+// the sleep call are NOT recorded so that RestoreFromSleep does not inadvertently
+// re-enable them. Called by the daemon's QuiesceArbiter on `harmonik sleep`.
+func (s *Store) SuspendAllForSleep() ([]string, error) {
+	var suspended []string
+	_, err := s.mutate(func(jobs map[string]*ScheduledJob) (bool, any, error) {
+		var changed bool
+		for _, j := range jobs {
+			if j.Enabled {
+				j.Enabled = false
+				suspended = append(suspended, j.ID)
+				changed = true
+			}
+		}
+		return changed, nil, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(suspended) // deterministic order
+	if writeErr := s.writeSuspendedSet(suspended); writeErr != nil {
+		return suspended, fmt.Errorf("schedule: SuspendAllForSleep: persist suspended set: %w", writeErr)
+	}
+	return suspended, nil
+}
+
+// RestoreFromSleep reads .harmonik/sleep-suspended-jobs.json and re-enables
+// exactly the jobs recorded there. Jobs not in the suspended set (were already
+// disabled before sleep) are left disabled. The suspended-set file is removed
+// after a successful restore. Returns the list of IDs that were re-enabled.
+// Called by the daemon's QuiesceArbiter on `harmonik wake --all`.
+func (s *Store) RestoreFromSleep() ([]string, error) {
+	suspended, err := s.readSuspendedSet()
+	if err != nil {
+		return nil, fmt.Errorf("schedule: RestoreFromSleep: read suspended set: %w", err)
+	}
+	if len(suspended) == 0 {
+		return nil, nil
+	}
+	toEnable := make(map[string]struct{}, len(suspended))
+	for _, id := range suspended {
+		toEnable[id] = struct{}{}
+	}
+	var restored []string
+	_, mutErr := s.mutate(func(jobs map[string]*ScheduledJob) (bool, any, error) {
+		var changed bool
+		for _, j := range jobs {
+			if _, ok := toEnable[j.ID]; ok && !j.Enabled {
+				j.Enabled = true
+				restored = append(restored, j.ID)
+				changed = true
+			}
+		}
+		return changed, nil, nil
+	})
+	if mutErr != nil {
+		return nil, mutErr
+	}
+	sort.Strings(restored)
+	if rmErr := os.Remove(s.suspendedSetPath()); rmErr != nil && !os.IsNotExist(rmErr) {
+		return restored, fmt.Errorf("schedule: RestoreFromSleep: remove suspended set: %w", rmErr)
+	}
+	return restored, nil
+}
+
+// suspendedSetPath returns the path of the sleep-suspended-jobs sidecar file.
+func (s *Store) suspendedSetPath() string {
+	return filepath.Join(s.projectDir, ".harmonik", sleepSuspendedFileName)
+}
+
+// writeSuspendedSet persists the given job ID slice to the suspended-set file.
+func (s *Store) writeSuspendedSet(ids []string) error {
+	data, err := json.Marshal(ids)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	dir := filepath.Join(s.projectDir, ".harmonik")
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+		return fmt.Errorf("mkdir %q: %w", dir, mkErr)
+	}
+	path := s.suspendedSetPath()
+	//nolint:gosec // G306: 0644 intentional — marker is world-readable within the project
+	if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {
+		return fmt.Errorf("write %q: %w", path, writeErr)
+	}
+	return nil
+}
+
+// readSuspendedSet reads and parses the suspended-set file. Returns nil (not
+// an error) when the file is absent (no prior sleep or already restored).
+func (s *Store) readSuspendedSet() ([]string, error) {
+	path := s.suspendedSetPath()
+	//nolint:gosec // G304: path derived from projectDir/.harmonik
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %q: %w", path, err)
+	}
+	var ids []string
+	if jErr := json.Unmarshal(data, &ids); jErr != nil {
+		return nil, fmt.Errorf("parse %q: %w", path, jErr)
+	}
+	return ids, nil
+}
+
 // ClearForceNext clears a job's ForceNext flag under the cross-process flock,
 // persists, and signals the wake channel. Called by the daemon after consuming a
 // run-now request. Returns (false,nil) when the id is absent; (true,nil) with no

@@ -394,6 +394,14 @@ EXAMPLES
 		return runSleepSubcommand(context.Background(), subArgs)
 	}
 
+	// harmonik sleep-gate [--project DIR]
+	// Check whether the fleet is sleeping; exit 0 = sleeping (suppress cron/timer),
+	// exit 1 = awake (proceed normally). No daemon connection required.
+	// Bead ref: hk-xjr1n.
+	if len(os.Args) >= 2 && os.Args[1] == "sleep-gate" {
+		return runSleepGateSubcommand(os.Args[2:])
+	}
+
 	// harmonik wake (--agent <name> | --all) [--project DIR]
 	// Manual operator override to wake sleeping LLM sessions.
 	// --agent <name> wakes one specific session; --all wakes every sleeping session.

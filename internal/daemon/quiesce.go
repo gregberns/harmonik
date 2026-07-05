@@ -55,6 +55,7 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/schedule"
 )
 
 const (
@@ -73,6 +74,12 @@ const (
 	// .sleeping.<session_id> marker files are written.  The directory is created
 	// lazily; its absence simply means no sessions are sleeping.
 	sleepingMarkerDir = ".harmonik"
+
+	// fleetSleepingMarker is the file written to .harmonik/ on `harmonik sleep`
+	// and removed on `harmonik wake --all`. External agents — Claude Code harness
+	// crons, scripts, etc. — can check for this file via `harmonik sleep-gate`
+	// (exit 0 = sleeping → suppress; exit 1 = awake → proceed). hk-xjr1n.
+	fleetSleepingMarker = ".fleet-sleeping"
 
 	// captainAgentName is the conventional captain agent name used by
 	// lifecycle.TmuxSessionName and crew registries.
@@ -178,6 +185,11 @@ type QuiesceArbiterConfig struct {
 	// Optional: when nil the comms-send step is skipped (pane nudge is still
 	// issued on wake).
 	CommsBus eventbus.CommsMessageEmitter
+
+	// ScheduleStore, when non-nil, is used to suspend all enabled schedule jobs
+	// on sleep and restore them symmetrically on wake. Optional: when nil the
+	// schedule-suspend step is skipped. Set via SetScheduleStore after construction.
+	ScheduleStore *schedule.Store
 
 	// PollInterval overrides quiesceArbiterPollInterval for tests.  Zero → use default.
 	PollInterval time.Duration
@@ -785,6 +797,16 @@ func (a *QuiesceArbiter) SetDrain(d *DrainDetector) {
 	a.mu.Unlock()
 }
 
+// SetScheduleStore wires the schedule store used to suspend all enabled schedule
+// jobs on `harmonik sleep` and restore them symmetrically on `harmonik wake --all`
+// (hk-xjr1n). Called once from the daemon composition root after the schedule
+// store is loaded, before Start. Thread-safe (guarded by mu).
+func (a *QuiesceArbiter) SetScheduleStore(s *schedule.Store) {
+	a.mu.Lock()
+	a.cfg.ScheduleStore = s
+	a.mu.Unlock()
+}
+
 // HandleDaemonSleep implements QuiesceOverrideHandler.
 //
 // When force is false the SS-INV-005 veto gate runs: GatherDrainFacts is
@@ -803,6 +825,11 @@ func (a *QuiesceArbiter) HandleDaemonSleep(ctx context.Context, force bool) erro
 	// CLI `harmonik sleep` is an explicit operator command: source=operator so
 	// the resulting park is sticky against event-reflex auto-wake (hk-caaf).
 	a.parkAllSessions(ctx, SleepSourceOperator, SleepLevelDrain)
+	// Suspend all enabled schedule jobs so no timer-driven work fires while the
+	// fleet is parked. Write the fleet-sleeping marker for external gate checks
+	// (harness crons via `harmonik sleep-gate`). hk-xjr1n.
+	a.suspendScheduleJobs()
+	a.writeFleetSleepingMarker()
 	return nil
 }
 
@@ -911,6 +938,10 @@ func (a *QuiesceArbiter) wakeAllSessions(ctx context.Context) {
 		a.nudgePane(ctx, rec.agentName, rec.paneTarget)
 		a.clearSleepMarker(rec.sessionID)
 	}
+	// Restore schedule jobs that were suspended by sleep and remove the fleet
+	// marker so external gate checks (harness crons) resume normally. hk-xjr1n.
+	a.restoreScheduleJobs()
+	a.clearFleetSleepingMarker()
 }
 
 // listCrewRecords loads the current crew registry.  Returns nil on error
@@ -925,4 +956,69 @@ func (a *QuiesceArbiter) listCrewRecords() []crew.Record {
 		return nil
 	}
 	return records
+}
+
+// suspendScheduleJobs disables all currently-enabled schedule jobs and records
+// which ones were disabled in .harmonik/sleep-suspended-jobs.json. Best-effort:
+// errors are logged but never fatal (the session park already happened). hk-xjr1n.
+func (a *QuiesceArbiter) suspendScheduleJobs() {
+	a.mu.Lock()
+	store := a.cfg.ScheduleStore
+	a.mu.Unlock()
+	if store == nil {
+		return
+	}
+	suspended, err := store.SuspendAllForSleep()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: sleep: suspend schedule jobs: %v\n", err)
+		return
+	}
+	if len(suspended) > 0 {
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: sleep: suspended %d schedule job(s): %v\n", len(suspended), suspended)
+	}
+}
+
+// restoreScheduleJobs re-enables the schedule jobs that were suspended by sleep,
+// reading the suspended set from .harmonik/sleep-suspended-jobs.json. Best-effort:
+// errors are logged but never fatal. hk-xjr1n.
+func (a *QuiesceArbiter) restoreScheduleJobs() {
+	a.mu.Lock()
+	store := a.cfg.ScheduleStore
+	a.mu.Unlock()
+	if store == nil {
+		return
+	}
+	restored, err := store.RestoreFromSleep()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: wake: restore schedule jobs: %v\n", err)
+		return
+	}
+	if len(restored) > 0 {
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: wake: restored %d schedule job(s): %v\n", len(restored), restored)
+	}
+}
+
+// writeFleetSleepingMarker creates .harmonik/.fleet-sleeping so external agents
+// (harness crons, scripts) can detect the sleeping state via `harmonik sleep-gate`
+// without connecting to the daemon socket. Best-effort. hk-xjr1n.
+func (a *QuiesceArbiter) writeFleetSleepingMarker() {
+	if a.cfg.ProjectDir == "" {
+		return
+	}
+	path := filepath.Join(a.cfg.ProjectDir, sleepingMarkerDir, fleetSleepingMarker)
+	//nolint:gosec // G306: 0644 intentional — marker is world-readable within the project
+	if err := os.WriteFile(path, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: write fleet-sleeping marker: %v\n", err)
+	}
+}
+
+// clearFleetSleepingMarker removes .harmonik/.fleet-sleeping. Best-effort. hk-xjr1n.
+func (a *QuiesceArbiter) clearFleetSleepingMarker() {
+	if a.cfg.ProjectDir == "" {
+		return
+	}
+	path := filepath.Join(a.cfg.ProjectDir, sleepingMarkerDir, fleetSleepingMarker)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: clear fleet-sleeping marker: %v\n", err)
+	}
 }

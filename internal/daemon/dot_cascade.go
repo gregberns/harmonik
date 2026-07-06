@@ -1133,6 +1133,21 @@ func driveDotWorkflow(
 	}
 }
 
+// nodeModelForHarness applies a DOT per-node model= attribute with harness-family
+// scoping (hk-lfrub, codename:pi-model-leak). A node model= pin names a model for
+// the node's HARNESS; a claude model name (e.g. claude-sonnet-4-6) is meaningless
+// to a non-claude harness whose provider serves a different model set. The pin is
+// therefore honored ONLY when the node's effective harness is the claude-code
+// family; otherwise the run-level resolvedModel is returned unchanged (empty for a
+// pi run → effectiveModel() falls through to the pi config model, ornith). effort=
+// is harness-agnostic and is handled by the caller, not here.
+func nodeModelForHarness(resolvedModel, nodeModelAttr string, effHarness core.AgentType) string {
+	if nodeModelAttr != "" && effHarness == core.AgentTypeClaudeCode {
+		return nodeModelAttr
+	}
+	return resolvedModel
+}
+
 // dispatchDotAgenticNode dispatches a single agentic node into the substrate,
 // mirroring the single-mode / review-loop launch+wait machinery, and derives the
 // node's Outcome from the run result.
@@ -1241,10 +1256,36 @@ func dispatchDotAgenticNode(
 	// overrides (WG-042 §I.5, EM-012b-NODE). Independent: only-model inherits
 	// run-level effort, vice versa. NOT a second resolution walk — static graph
 	// data layered at dispatch.
-	nodeModel := resolvedModel
-	if node.Model != "" {
-		nodeModel = node.Model
+	//
+	// hk-lfrub (codename:pi-model-leak): the DOT per-node model= attribute names a
+	// model for the node's HARNESS, so it is HARNESS-FAMILY SCOPED. A claude model
+	// name (e.g. claude-sonnet-4-6, which every node of the sonnet-triple-review
+	// workflow.dot pins) is meaningless to a non-claude harness — the pi/codex
+	// provider serves a different model set. Apply the model= pin ONLY when this
+	// node's effective harness is the claude-code family; for a pi/codex effective
+	// harness leave rc.model = the run-level resolvedModel (empty for a pi run), so
+	// effectiveModel() falls through to the pi config model (ornith) instead of
+	// asking the DGX provider for a claude model and failing. effort= is
+	// harness-agnostic and stays unconditional below. A legitimate future pi/codex
+	// node model= pin is out of scope for this bead (minimal claude-scoped fix).
+	//
+	// Effective-harness precedence mirrors the specBuilder selection below
+	// (reviewer override > node harness= pin > run-level resolved harness);
+	// resolveHarnessAgentTypeQuiet is the same four-tier walk routedLaunchSpecBuilder
+	// performs at launch, run quietly here (no duplicate harness_selected events).
+	nodeModelHarness := core.AgentType(node.Harness)
+	if isReviewer && reviewerHarnessOverride.Valid() {
+		nodeModelHarness = reviewerHarnessOverride
 	}
+	if !nodeModelHarness.Valid() {
+		nodeModelHarness = resolveHarnessAgentTypeQuiet(
+			beadRecord,
+			core.AgentType(""), // queue default (hk-4x3rg not landed)
+			core.AgentType(""), // node default (already folded into node.Harness above)
+			deps.defaultHarness,
+		)
+	}
+	nodeModel := nodeModelForHarness(resolvedModel, node.Model, nodeModelHarness)
 	nodeEffort := resolvedEffort
 	if node.Effort != "" {
 		nodeEffort = node.Effort

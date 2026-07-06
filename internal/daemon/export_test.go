@@ -545,6 +545,13 @@ func ExportedWorkLoopDefaultHarness(deps workLoopDeps) core.AgentType {
 	return deps.defaultHarness
 }
 
+// ExportedNodeModelForHarness exposes nodeModelForHarness so tests can assert the
+// harness-family scoping of a DOT per-node model= pin (hk-lfrub,
+// codename:pi-model-leak).
+func ExportedNodeModelForHarness(resolvedModel, nodeModelAttr string, effHarness core.AgentType) string {
+	return nodeModelForHarness(resolvedModel, nodeModelAttr, effHarness)
+}
+
 // ExportedLoadStandardGraph parses the embedded standard-bead.dot so tests in
 // package daemon_test can inspect node attrs (e.g. review.Harness for hk-ytzj2).
 func ExportedLoadStandardGraph(params map[string]string) (*dot.Graph, error) {

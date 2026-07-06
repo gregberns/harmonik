@@ -188,17 +188,6 @@ func MaterializeClaudeSettings(workspacePath, daemonBinaryPath, sessionLogPath s
 	return nil
 }
 
-// harmonikAllowedTools is the set of Claude Code tools pre-authorized for
-// harmonik-spawned panes per workspace-model.md §4.7a WM-040a (hk-53y35
-// amendment) and claude-hook-bridge.md §4.12 CHB-029.
-//
-// These are blanket allows (no path restrictions). MCP tools are deliberately
-// excluded — they can be added per-project if needed.
-var harmonikAllowedTools = []interface{}{
-	"Read", "Write", "Edit", "Bash", "Glob", "Grep",
-	"WebFetch", "WebSearch", "NotebookEdit", "TodoWrite", "Task",
-}
-
 // marshalSettings serializes a merged settings map to the canonical on-disk
 // byte form (indented JSON + trailing newline). Shared by the local
 // MaterializeClaudeSettings write and the remote MaterializeClaudeSettingsVia
@@ -212,10 +201,23 @@ func marshalSettings(merged map[string]interface{}) ([]byte, error) {
 }
 
 // buildBridgeOnlySettings returns a settings map containing only the
-// bridge-required hook entries per CHB-003, plus the permissions.allow
-// pre-authorization array per WM-040a (hk-53y35), plus the skill-autoload
+// bridge-required hook entries per CHB-003, plus the skill-autoload
 // disable setting per T6 (hk-j79ny).
 // daemonBinaryPath is used as the hook "command" field per hk-kqdpf.6.
+//
+// NOTE (hk trust-modal fix, 2026-07-06): the permissions.allow pre-authorization
+// array (formerly written here per WM-040a/hk-53y35) is DELIBERATELY NOT written.
+// In a git-worktree context Claude Code >= 2.1.201 fires an interactive
+// "This folder pre-approves N tool permissions in .claude/settings.json" consent
+// modal whenever a project-local settings.json declares permissions.allow. That
+// modal is NOT suppressed by the ~/.claude.json trust keys (hasTrustDialogAccepted
+// / hasCompletedProjectOnboarding) NOR by --dangerously-skip-permissions, so a
+// daemon-spawned pane wedges at it and times out at agent_ready (HC-056). Since
+// every harmonik worktree launch already passes --dangerously-skip-permissions
+// (HC-055b), the allow-list is redundant — omitting it removes the modal. See
+// the workspace-model.md §4.7a note. Confirmed empirically: identical settings
+// boot clean in a non-git dir but wedge in a git worktree; stripping the block
+// boots the git worktree clean.
 func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 	hooks := make(map[string]interface{}, len(bridgeEventKinds))
 	for _, kind := range bridgeEventKinds {
@@ -223,9 +225,6 @@ func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 	}
 	return map[string]interface{}{
 		"hooks": hooks,
-		"permissions": map[string]interface{}{
-			"allow": harmonikAllowedTools,
-		},
 		// Disable Claude Code's default skill autoload from ancestor .claude/skills/
 		// directories so worker agents only see skills explicitly requested via their
 		// manifest context[]. Fleet orchestration skills must not leak into implementer
@@ -274,30 +273,19 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 
 	merged["hooks"] = hooksMap
 
-	// Inject permissions.allow unless the existing settings already declare a
-	// permissions.allow key. If permissions is absent or has no "allow" key,
-	// write the harmonik defaults. Existing user allows are preserved if already
-	// present (user settings win; harmonik adds only when the slot is empty).
-	//
-	// Spec ref: workspace-model.md §4.7a WM-040a (hk-53y35 amendment).
-	permRaw, hasPerm := merged["permissions"]
-	if !hasPerm || permRaw == nil {
-		merged["permissions"] = map[string]interface{}{
-			"allow": harmonikAllowedTools,
-		}
-	} else if permMap, ok := permRaw.(map[string]interface{}); ok {
-		if _, hasAllow := permMap["allow"]; !hasAllow {
-			// Clone to avoid mutating the original.
-			newPerm := make(map[string]interface{}, len(permMap)+1)
-			for k, v := range permMap {
-				newPerm[k] = v
-			}
-			newPerm["allow"] = harmonikAllowedTools
-			merged["permissions"] = newPerm
-		}
-		// else: user already has permissions.allow — leave it as-is.
-	}
-	// If permissions is present but not a map (unexpected shape), leave it alone.
+	// NOTE (hk trust-modal fix, 2026-07-06): harmonik NO LONGER injects a
+	// permissions.allow block. Formerly (WM-040a/hk-53y35) it wrote the harmonik
+	// default allow-list when the merged settings lacked one. But in a git-worktree
+	// context Claude Code >= 2.1.201 fires an interactive "pre-approves N tool
+	// permissions in .claude/settings.json" consent modal whenever project-local
+	// settings declare permissions.allow — a modal NOT suppressed by the
+	// ~/.claude.json trust keys or by --dangerously-skip-permissions, wedging the
+	// daemon-spawned pane at agent_ready (HC-056). Since every worktree launch
+	// already passes --dangerously-skip-permissions (HC-055b), the allow-list is
+	// redundant. Any permissions block the user committed in their own settings.json
+	// is left exactly as-is (harmonik neither adds nor edits it) — if a user opts to
+	// declare permissions.allow themselves, that is their choice. See
+	// buildBridgeOnlySettings for the full rationale.
 
 	// Force-set autoLoadedSkillsDirectories to [] so worker agent panes never
 	// see fleet orchestration skills auto-loaded from ancestor .claude/skills/

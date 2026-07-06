@@ -246,21 +246,21 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 
 	// Re-check under the lock: a concurrent writer may have trusted this path
 	// between our lock-free probe and acquiring the lock. If so, skip the rewrite.
-	// BOTH keys are required (see below) — an entry carrying only the legacy
-	// hasTrustDialogAccepted key must still fall through and gain the onboarding key.
 	if t, ok := projectEntry["hasTrustDialogAccepted"].(bool); ok && t {
-		if o, ok2 := projectEntry["hasCompletedProjectOnboarding"].(bool); ok2 && o {
-			return nil
-		}
+		return nil
 	}
 
+	// hasTrustDialogAccepted is the operative key for Claude Code's folder-trust
+	// gate — confirmed empirically on 2.1.201: seeding this key alone boots a
+	// daemon-spawned pane clean with no "Is this a project you trust?" modal
+	// (2026-07-06 trust-modal investigation). The separate "pre-approves N tool
+	// permissions" consent modal is NOT a trust-key concern — it is driven by the
+	// permissions.allow block in the worktree settings.json, which harmonik no
+	// longer writes (see claudesettings_wm040a.go). hasCompletedProjectOnboarding
+	// is NOT written here: it is not the operative key, and requiring it in the
+	// already-trusted probe would defeat the hk-bfvby lock-free fast path (every
+	// legacy single-key entry would take the LOCK_EX write path).
 	projectEntry["hasTrustDialogAccepted"] = true
-	// Claude Code >= 2.1.201 gates the interactive trust / pre-approved-permissions
-	// modal on hasCompletedProjectOnboarding, NOT hasTrustDialogAccepted. With only
-	// the legacy key, a fresh worktree still shows "Is this a project you trust?",
-	// SessionStart never fires, and the launch times out at agent_ready (HC-056).
-	// Writing both keys suppresses the modal across 2.1.201+. (2.1.201 regression)
-	projectEntry["hasCompletedProjectOnboarding"] = true
 	projects[worktreePath] = projectEntry
 	cfg["projects"] = projects
 
@@ -324,12 +324,7 @@ func alreadyTrustedAt(worktreePath, cfgPath string) (bool, error) {
 		return false, nil
 	}
 	trusted, _ := entry["hasTrustDialogAccepted"].(bool)
-	// Claude Code >= 2.1.201 requires hasCompletedProjectOnboarding to suppress the
-	// trust/permissions modal; hasTrustDialogAccepted alone is insufficient. Treat an
-	// entry as fully trusted only when BOTH keys are true, so legacy single-key
-	// entries fall through to the write path and gain the onboarding key.
-	onboarded, _ := entry["hasCompletedProjectOnboarding"].(bool)
-	return trusted && onboarded, nil
+	return trusted, nil
 }
 
 // acquireExclusiveBounded acquires an advisory exclusive flock on fd, retrying

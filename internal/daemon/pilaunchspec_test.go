@@ -241,6 +241,71 @@ func TestBuildPiEnv_MaintainedTableStrippedEvenIfAbsentFromBaseEnv(t *testing.T)
 	}
 }
 
+// TestBuildPiEnv_GuaranteesPathWhenBaseEnvHasNone verifies the hk-6atjk /
+// codename:pi-model-leak fix: when baseEnv carries NO PATH (the daemon's
+// unpopulated HandlerEnv case), buildPiEnv appends a non-empty PATH from the
+// daemon process env so the pi CLI's `env node` shebang can resolve node.
+func TestBuildPiEnv_GuaranteesPathWhenBaseEnvHasNone(t *testing.T) {
+	// No t.Parallel: t.Setenv mutates process env, which forbids parallel tests.
+	selectedKey := "OPENROUTER_API_KEY"
+	t.Setenv(selectedKey, "or-key-val")
+	t.Setenv("PATH", "/opt/homebrew/bin:/usr/bin:/bin")
+
+	// baseEnv has NO PATH entry — the leak scenario.
+	baseEnv := []string{"HK_PROVENANCE=daemon"}
+
+	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
+
+	// A PATH entry must be present and non-empty (falls back to process PATH).
+	var pathVal string
+	found := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			found = true
+			pathVal = kv[len("PATH="):]
+		}
+	}
+	if !found {
+		t.Fatalf("hk-6atjk: expected buildPiEnv to append a PATH when baseEnv has none; env=%v", env)
+	}
+	if pathVal == "" {
+		t.Errorf("hk-6atjk: PATH must be non-empty; got empty override")
+	}
+	if pathVal != "/opt/homebrew/bin:/usr/bin:/bin" {
+		t.Errorf("hk-6atjk: expected process PATH fallback, got %q", pathVal)
+	}
+}
+
+// TestBuildPiEnv_PreservesBaseEnvPath verifies the fix does NOT override an
+// existing PATH: when baseEnv already carries a PATH, that exact value is
+// preserved (not replaced by the daemon process PATH).
+func TestBuildPiEnv_PreservesBaseEnvPath(t *testing.T) {
+	// No t.Parallel: t.Setenv mutates process env, which forbids parallel tests.
+	selectedKey := "OPENROUTER_API_KEY"
+	t.Setenv(selectedKey, "or-key-val")
+	// Process PATH differs from baseEnv PATH to prove baseEnv wins.
+	t.Setenv("PATH", "/opt/homebrew/bin:/should/not/appear")
+
+	baseEnv := []string{"PATH=/usr/bin"}
+
+	env := daemon.ExportedBuildPiEnv(baseEnv, "", selectedKey)
+
+	// The baseEnv PATH must be preserved verbatim, and appear exactly once.
+	assertEnvContains(t, env, "PATH=/usr/bin")
+	count := 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			count++
+			if kv != "PATH=/usr/bin" {
+				t.Errorf("hk-6atjk: baseEnv PATH must not be overridden; got %q", kv)
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("hk-6atjk: expected exactly one PATH entry, got %d", count)
+	}
+}
+
 // TestBuildPiEnv_AllowlistStrip_ProcessEnvForwarded is the T10-analog regression
 // lock for Pi: the operator's process environment is forwarded unfiltered as
 // baseEnv (simulating a daemon that passes os.Environ() directly), and the

@@ -414,15 +414,35 @@ func buildPiEnv(baseEnv []string, apiKeyFile, apiKeyEnv string) []string {
 		}
 	}
 
-	env := make([]string, 0, len(baseEnv)+len(strippedSet)+3)
+	env := make([]string, 0, len(baseEnv)+len(strippedSet)+4)
 
 	// Pass through non-credential, non-apiKeyEnv entries from baseEnv.
+	hasPath := false
 	for _, kv := range baseEnv {
 		key := envKey(kv)
 		if key == apiKeyEnv || strippedSet[key] {
 			continue
 		}
+		if key == "PATH" {
+			hasPath = true
+		}
 		env = append(env, kv)
+	}
+
+	// Guarantee a working PATH (hk-6atjk / codename:pi-model-leak). The exec
+	// substrate FULLY replaces the child environment with this env (handler.go
+	// cmd.Env = spec.Env), and cfg.HandlerEnv is not populated at the composition
+	// root, so baseEnv can arrive with NO PATH. Without one, the pi CLI's
+	// `#!/usr/bin/env node` shebang resolves against the libc default PATH
+	// (/usr/bin:/bin) — which excludes /opt/homebrew/bin where node lives — and
+	// the child dies with `env: node: No such file or directory` (exit 127)
+	// before HEAD advances. Fall back to the daemon process PATH only when
+	// baseEnv did not already carry one (existing PATH is preserved above). PATH
+	// is not a credential, so this does not weaken the PI-021 allowlist-strip.
+	if !hasPath {
+		if procPath := os.Getenv("PATH"); procPath != "" {
+			env = append(env, "PATH="+procPath)
+		}
 	}
 
 	// Emit empty overrides for all stripped credential keys (PI-021 / CI-INV-002

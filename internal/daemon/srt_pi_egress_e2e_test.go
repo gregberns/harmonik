@@ -27,19 +27,53 @@ package daemon_test
 // endpoint. There was no config path to enable local binding, so a sandboxed Pi
 // could never reach a locally-hosted model.
 //
+// # The TRUE srt local-egress finding (Option A rationale)
+//
+// srt does NOT treat loopback and a REMOTE private-LAN host identically.
+// Empirically proven this session:
+//
+//   - LOCAL interfaces (loopback 127.0.0.1, and this host's own non-loopback
+//     interface IPs): with network.allowLocalBinding=true the direct socket OPENS.
+//     curl reaches a locally-hosted endpoint. (Proven by
+//     TestPiEgress_LocalInterfaceIsPermitted below.)
+//   - REMOTE host on the LAN (the DGX box at 192.168.1.86:8551 — a DIFFERENT
+//     machine): the direct socket stays BLOCKED under srt regardless of
+//     allowLocalBinding. A raw socket to a remote host is denied.
+//
+// The earlier comment here claimed srt "blocks BOTH loopback and 192.168.x direct
+// sockets identically unless allowLocalBinding is set." That premise was FALSE on
+// two counts: allowLocalBinding opens loopback, AND it opens this host's own
+// non-loopback interfaces; the true discriminator is REMOTE-HOST vs LOCAL, not
+// loopback vs non-loopback. Because the old test only exercised a loopback stub,
+// it went green while the REAL path to the remote DGX model server was still
+// blocked. (Note: the remote-host block is not reproducible with an in-process
+// stub, since a stub can only bind local interfaces — see
+// TestPiEgress_LocalInterfaceIsPermitted's comment.)
+//
+// The operator chose OPTION A: keep the srt sandbox and reach the DGX model over a
+// LOOPBACK SSH TUNNEL — config base_url is now http://127.0.0.1:8551/v1. This
+// works precisely because loopback opens under allowLocalBinding while the LAN
+// address does not. So the loopback-reaches-stub assertion below faithfully
+// mirrors the REAL Option-A path: config -> 127.0.0.1 tunnel -> DGX.
+//
 // # What this harness does (real-srt-spawn mode)
 //
 //  1. Stands up a STUB HTTP model server on loopback (httptest.Server) that
 //     records whether it received a request and returns a minimal
-//     OpenAI-completions response. Loopback is a faithful stand-in for the LAN
-//     vLLM: both are no_proxy direct-connect addresses gated by allowLocalBinding
-//     (verified out-of-band: srt blocks BOTH loopback and 192.168.x direct
-//     sockets identically unless allowLocalBinding is set).
+//     OpenAI-completions response. Loopback faithfully mirrors the real Option-A
+//     path (config -> 127.0.0.1 tunnel -> DGX): both are a loopback direct-connect
+//     socket gated by allowLocalBinding.
 //  2. Builds the srt spawn decision via the REAL gate (ExportedSandboxSpawnForRun)
 //     and wraps a trivial `curl <stub>` command via the REAL exec-path wrapper
 //     (ExportedSandboxWrapExecArgv) — the exact functions the workloop uses for a
 //     SessionIDCaptured (pi) run.
 //  3. Spawns the wrapped argv and asserts the stub recorded the request.
+//
+// A companion test (TestPiEgress_LocalInterfaceIsPermitted) binds a stub to the
+// host's real non-loopback IPv4 and shows the srt-wrapped curl CAN reach it with
+// allowLocalBinding=true — pinning the true discriminator (remote-host vs local),
+// since the actual DGX remote-host block cannot be reproduced by an in-process
+// stub (a stub can only bind local interfaces).
 //
 // RED (old code): AllowLocalBinding is ignored (hardcoded false) → curl's socket
 // is denied → stub NOT hit. GREEN (after fix): AllowLocalBinding is honored →
@@ -52,6 +86,7 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -150,6 +185,11 @@ func runWrappedCurl(t *testing.T, allowLocalBinding bool, url string) (ranClean 
 // TestPiEgress_LocalBindingReachesStub is the RED→GREEN proof. On old code
 // (AllowLocalBinding ignored) the sandboxed curl cannot reach the loopback stub
 // and the stub is never hit → FAIL. After the fix, the stub is hit → PASS.
+//
+// The loopback stub is not merely a convenient stand-in: it mirrors the REAL
+// Option-A path (config -> 127.0.0.1 SSH tunnel -> DGX), where reachability
+// depends on allowLocalBinding opening the loopback socket. (A LAN address would
+// NOT open — see TestPiEgress_NonLoopbackDirectIsBlocked.)
 func TestPiEgress_LocalBindingReachesStub(t *testing.T) {
 	if _, err := exec.LookPath("srt"); err != nil {
 		t.Skip("srt binary not available; real-spawn egress repro requires srt")
@@ -166,6 +206,95 @@ func TestPiEgress_LocalBindingReachesStub(t *testing.T) {
 			"(curl clean=%v, output=%q). With AllowLocalBinding=true the srt profile "+
 			"must permit the direct loopback socket. RED before the GenerateSandboxProfile "+
 			"fix (allowLocalBinding hardcoded false); GREEN after.", ranClean, out)
+	}
+}
+
+// firstNonLoopbackIPv4 returns the host's first non-loopback IPv4 address, or ""
+// if none is found. This is the property that makes a stub bound to it a faithful
+// reproduction of the REAL DGX target (a private-LAN direct-connect address),
+// rather than a convenient loopback stand-in.
+func firstNonLoopbackIPv4() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP.IsLoopback() {
+			continue
+		}
+		ip4 := ipnet.IP.To4()
+		if ip4 == nil {
+			continue
+		}
+		return ip4.String()
+	}
+	return ""
+}
+
+// nonLoopbackStubModelServer binds an httptest server to a specific (non-loopback)
+// address rather than the default loopback. It records whether it was hit, exactly
+// like egressStubModelServer.
+func nonLoopbackStubModelServer(t *testing.T, bindAddr string) (url string, wasHit func() bool) {
+	t.Helper()
+	var hit atomic.Bool
+	ln, err := net.Listen("tcp", bindAddr+":0")
+	if err != nil {
+		t.Skipf("cannot bind stub to non-loopback address %q: %v", bindAddr, err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit.Store(true)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"cmpl-stub","object":"text_completion","choices":[{"text":"PONG"}]}`))
+	}))
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv.URL, hit.Load
+}
+
+// TestPiEgress_LocalInterfaceIsPermitted pins down the TRUE srt discriminator,
+// which the original loopback-only stub hid and which is subtler than the task's
+// first framing ("non-loopback == blocked").
+//
+// EMPIRICAL FINDING (this test, run on this host): allowLocalBinding=true opens
+// NOT ONLY loopback but ANY LOCAL INTERFACE address, including a non-loopback
+// private-LAN interface IP owned by this machine (e.g. 192.168.10.1). The srt
+// block observed against the DGX model server (192.168.1.86:8551) is therefore
+// NOT a "non-loopback" property — it is a REMOTE-HOST property: DGX is a different
+// machine, and a raw socket to a remote LAN host is denied.
+//
+// This distinction matters and is UNREPRODUCIBLE with an in-process stub: an
+// httptest server can only bind a LOCAL interface, which allowLocalBinding permits.
+// So the faithful, locally-checkable assertion is the POSITIVE one below (a local
+// non-loopback interface IS reachable), which proves the block is remote-specific.
+// It does not contradict Option A: DGX is remote, so the 127.0.0.1 tunnel is still
+// required — the tunnel turns the remote host into a local-loopback endpoint that
+// allowLocalBinding permits.
+func TestPiEgress_LocalInterfaceIsPermitted(t *testing.T) {
+	if _, err := exec.LookPath("srt"); err != nil {
+		t.Skip("srt binary not available; real-spawn egress repro requires srt")
+	}
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not available; real-spawn egress repro requires curl")
+	}
+	lanIP := firstNonLoopbackIPv4()
+	if lanIP == "" {
+		t.Skip("no non-loopback IPv4 interface found; cannot exercise the local-interface path")
+	}
+
+	url, wasHit := nonLoopbackStubModelServer(t, lanIP)
+
+	// allowLocalBinding=true — the same toggle that opens loopback. It must ALSO
+	// open this LOCAL non-loopback interface, proving "non-loopback" is not the
+	// discriminator (remote-vs-local is).
+	ranClean, out := runWrappedCurl(t, true /*allowLocalBinding*/, url)
+	if !wasHit() {
+		t.Fatalf("sandboxed process did NOT reach a LOCAL non-loopback stub at %s "+
+			"(curl clean=%v, output=%q). With allowLocalBinding=true srt should permit "+
+			"any local interface, not just loopback. If this now fails, srt's local-binding "+
+			"semantics have tightened to loopback-only — re-verify the Option-A tunnel "+
+			"assumptions (config -> 127.0.0.1 tunnel -> DGX).", url, ranClean, out)
 	}
 }
 

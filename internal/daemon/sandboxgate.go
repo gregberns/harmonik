@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -48,12 +49,32 @@ func resolveGateAgentType(implHarness handlercontract.Harness, fromArtifacts cor
 //
 //	Returns a non-nil *SrtSpawnConfig (carrying in) when cfg.Backend == "srt"
 //	AND agentType is listed in cfg.Harnesses. Returns nil (strict no-op)
-//	otherwise: any non-"srt" backend, or a harness not in the list.
+//	otherwise: any non-"srt" backend, a harness not in the list, or a REMOTE
+//	run (see the DaemonSockPath guard below).
 func sandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxProfileInput) *SrtSpawnConfig {
 	if cfg.Backend != "srt" {
 		return nil
 	}
 	if !cfg.HasHarness(string(agentType)) {
+		return nil
+	}
+	// hk-ybuts: skip the srt wrap on a REMOTE worker run. srt is a box-A-LOCAL
+	// macOS sandbox; a remote run's agent executes on the WORKER's OS, outside
+	// box A entirely, so there is nothing local to sandbox. On a remote run
+	// DaemonSockPath is a reverse-tunnel TCP endpoint ("tcp://127.0.0.1:<port>",
+	// see resolveAgentDaemonSocket) rather than an absolute unix-socket path —
+	// so wrapping is not just pointless but FATAL: GenerateSandboxProfile rejects
+	// the non-absolute DaemonSockPath ("must be an absolute path"), killing every
+	// remote run in ~2s. Gating here — the single source of truth for "should
+	// this run be srt-wrapped" — means BOTH launch paths (single-mode's exec wrap
+	// and the DOT cascade's) inherit the no-op and cannot diverge. An empty
+	// DaemonSockPath is deliberately left to fall through so a misconfigured
+	// LOCAL run still surfaces the "must be non-empty" error downstream, and a
+	// (never-observed) relative LOCAL path stays fail-CLOSED via that same
+	// downstream "must be an absolute path" check — we key ONLY on the tcp://
+	// prefix, the sole signal resolveAgentDaemonSocket emits for a remote run,
+	// so this guard never trades a local run's sandbox for a fail-open skip.
+	if strings.HasPrefix(in.DaemonSockPath, "tcp://") {
 		return nil
 	}
 	return &SrtSpawnConfig{ProfileInput: in}

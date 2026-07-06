@@ -77,3 +77,45 @@ func TestSandboxSpawnForRun_GateInvariants(t *testing.T) {
 		t.Fatal("backend=\"\" (absent block): want nil (strict no-op); got non-nil")
 	}
 }
+
+// TestSandboxSpawnForRun_RemoteSocketSkipsWrap is the regression for hk-ybuts:
+// on a REMOTE worker run DaemonSockPath is a reverse-tunnel TCP endpoint, not an
+// absolute unix-socket path. srt is a box-A-local sandbox and cannot wrap a run
+// whose agent executes on the worker's OS; worse, GenerateSandboxProfile rejects
+// the non-absolute DaemonSockPath and every remote run dies in ~2s. The gate must
+// no-op for a remote socket while still wrapping a genuine local unix-socket run.
+func TestSandboxSpawnForRun_RemoteSocketSkipsWrap(t *testing.T) {
+	t.Parallel()
+
+	srtPiCfg := daemon.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
+
+	base := daemon.SandboxProfileInput{
+		WorktreePath: "/wt",
+		GitDir:       "/repo/.git",
+		RunID:        "run-1",
+	}
+
+	// (i) REMOTE run: tcp:// reverse-tunnel endpoint → gate no-ops (nil).
+	remote := base
+	remote.DaemonSockPath = "tcp://127.0.0.1:52345"
+	if sb := daemon.ExportedSandboxSpawnForRun(srtPiCfg, core.AgentTypePi, remote); sb != nil {
+		t.Fatal("remote tcp:// DaemonSockPath: want nil (srt skipped on remote run); got non-nil " +
+			"— GenerateSandboxProfile would reject the non-absolute path and kill the run (hk-ybuts)")
+	}
+
+	// (ii) LOCAL run: absolute unix-socket path → still wrapped (non-nil).
+	local := base
+	local.DaemonSockPath = "/repo/.harmonik/daemon.sock"
+	if sb := daemon.ExportedSandboxSpawnForRun(srtPiCfg, core.AgentTypePi, local); sb == nil {
+		t.Fatal("local absolute unix-socket DaemonSockPath: want non-nil SrtSpawnConfig; got nil (local run must still be sandboxed)")
+	}
+
+	// (iii) EMPTY DaemonSockPath (misconfigured local run): the gate must NOT
+	// swallow it as a remote skip — it falls through non-nil so GenerateSandboxProfile
+	// surfaces the downstream "must be non-empty" error (fail-CLOSED, hk-ybuts).
+	empty := base
+	empty.DaemonSockPath = ""
+	if sb := daemon.ExportedSandboxSpawnForRun(srtPiCfg, core.AgentTypePi, empty); sb == nil {
+		t.Fatal("empty DaemonSockPath: want non-nil (fall through to downstream must-be-non-empty error); got nil (a misconfigured local run must fail closed, not silently skip the sandbox)")
+	}
+}

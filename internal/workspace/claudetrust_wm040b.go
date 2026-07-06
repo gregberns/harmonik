@@ -246,11 +246,21 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 
 	// Re-check under the lock: a concurrent writer may have trusted this path
 	// between our lock-free probe and acquiring the lock. If so, skip the rewrite.
+	// BOTH keys are required (see below) — an entry carrying only the legacy
+	// hasTrustDialogAccepted key must still fall through and gain the onboarding key.
 	if t, ok := projectEntry["hasTrustDialogAccepted"].(bool); ok && t {
-		return nil
+		if o, ok2 := projectEntry["hasCompletedProjectOnboarding"].(bool); ok2 && o {
+			return nil
+		}
 	}
 
 	projectEntry["hasTrustDialogAccepted"] = true
+	// Claude Code >= 2.1.201 gates the interactive trust / pre-approved-permissions
+	// modal on hasCompletedProjectOnboarding, NOT hasTrustDialogAccepted. With only
+	// the legacy key, a fresh worktree still shows "Is this a project you trust?",
+	// SessionStart never fires, and the launch times out at agent_ready (HC-056).
+	// Writing both keys suppresses the modal across 2.1.201+. (2.1.201 regression)
+	projectEntry["hasCompletedProjectOnboarding"] = true
 	projects[worktreePath] = projectEntry
 	cfg["projects"] = projects
 
@@ -314,7 +324,12 @@ func alreadyTrustedAt(worktreePath, cfgPath string) (bool, error) {
 		return false, nil
 	}
 	trusted, _ := entry["hasTrustDialogAccepted"].(bool)
-	return trusted, nil
+	// Claude Code >= 2.1.201 requires hasCompletedProjectOnboarding to suppress the
+	// trust/permissions modal; hasTrustDialogAccepted alone is insufficient. Treat an
+	// entry as fully trusted only when BOTH keys are true, so legacy single-key
+	// entries fall through to the write path and gain the onboarding key.
+	onboarded, _ := entry["hasCompletedProjectOnboarding"].(bool)
+	return trusted && onboarded, nil
 }
 
 // acquireExclusiveBounded acquires an advisory exclusive flock on fd, retrying

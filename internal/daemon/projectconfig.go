@@ -677,6 +677,7 @@ type rawSandboxNetworkConfig struct {
 	Mode                   string   `yaml:"mode"`
 	AllowedDomains         []string `yaml:"allowed_domains"`
 	WeakerNetworkIsolation bool     `yaml:"weaker_network_isolation"`
+	AllowLocalBinding      bool     `yaml:"allow_local_binding"`
 }
 
 // rawSandboxCacheConfig is the sandbox.cache block in config.yaml.
@@ -706,6 +707,14 @@ type SandboxNetworkConfig struct {
 	// Per the TLS decision (plans/2026-07-02-pi-sandbox/SPIKE-FINDINGS-hk-f39ny.md §TLS
 	// DECISION), v1 keeps this false; the field is stored verbatim from config.
 	WeakerNetworkIsolation bool
+	// AllowLocalBinding, when true, sets srt's network.allowLocalBinding, permitting
+	// the sandboxed process to open direct sockets to local / private-LAN / loopback
+	// addresses. REQUIRED to reach a locally-hosted OpenAI-compatible model endpoint
+	// (e.g. a DGX vLLM on the LAN): such addresses fall in srt's no_proxy set and are
+	// connected to directly, so the allowedDomains proxy path does not cover them and
+	// Seatbelt denies the socket unless local binding is permitted. Default false.
+	// Bead: hk-ybuts / hk-u69my.
+	AllowLocalBinding bool
 }
 
 // SandboxCacheConfig holds the cache sub-block of the sandbox: config.
@@ -760,6 +769,7 @@ func sandboxBlockAbsent(raw rawSandboxConfig) bool {
 		raw.Network.Mode == "" &&
 		len(raw.Network.AllowedDomains) == 0 &&
 		!raw.Network.WeakerNetworkIsolation &&
+		!raw.Network.AllowLocalBinding &&
 		len(raw.Cache.WarmRead) == 0 &&
 		len(raw.Cache.PrivateWrite) == 0
 }
@@ -1902,6 +1912,7 @@ func parseSandboxBlock(path string, raw rawSandboxConfig) (SandboxConfig, error)
 			Mode:                   raw.Network.Mode,
 			AllowedDomains:         raw.Network.AllowedDomains,
 			WeakerNetworkIsolation: raw.Network.WeakerNetworkIsolation,
+			AllowLocalBinding:      raw.Network.AllowLocalBinding,
 		},
 		Cache: SandboxCacheConfig{
 			WarmRead:     raw.Cache.WarmRead,

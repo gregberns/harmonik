@@ -22,11 +22,21 @@ package daemon
 // Warm shared toolchain caches go in allowRead (read-only) to avoid the
 // concurrent-writer TOCTOU class (see cache-reaper TOCTOU incident).
 //
-// enableWeakerNetworkIsolation stays FALSE per the TLS decision in
+// enableWeakerNetworkIsolation defaults FALSE per the TLS decision in
 // plans/2026-07-02-pi-sandbox/SPIKE-FINDINGS-hk-f39ny.md §TLS DECISION:
 // Pi (node) honors the injected proxy CA; local Go CLIs reach the daemon over
 // the unix socket; `gh` (Go, TLS-broken under srt) is not needed inside the
-// sandbox in v1.
+// sandbox in v1. It is now driven by SandboxProfileInput.WeakerNetworkIsolation
+// (config: sandbox.network.weaker_network_isolation) rather than hardcoded, so
+// the parsed field is honored instead of silently ignored.
+//
+// allowLocalBinding is driven by SandboxProfileInput.AllowLocalBinding
+// (config: sandbox.network.allow_local_binding). It is REQUIRED to reach a
+// locally-hosted model endpoint (a LAN vLLM / loopback stub): those addresses
+// fall in srt's no_proxy set, so they are connected to directly and Seatbelt
+// denies the socket ("Operation not permitted") unless local binding is
+// permitted — the allowedDomains proxy path does not cover them. Bead hk-ybuts /
+// hk-u69my (Pi srt egress: sandboxed Pi could not reach the DGX vLLM).
 //
 // Spec: plans/2026-07-02-pi-sandbox/HANDOFF.md §4 (git writable-set),
 // §6 (cache read-only base + private write area), §8.2 (profile shape).
@@ -70,7 +80,32 @@ type SandboxProfileInput struct {
 
 	// AllowedDomains is the list of HTTPS domains the sandbox permits outbound
 	// connections to (network.allowedDomains). Nil/empty → no outbound HTTPS.
+	//
+	// NOTE: allowedDomains only covers PROXIED HTTPS to public domains (srt's
+	// MITM proxy path — the openrouter.ai spike). It does NOT cover a direct
+	// connection to a private-LAN / loopback address: srt's default no_proxy
+	// (localhost, 127.0.0.1, 10/8, 172.16/12, 192.168/16, 169.254/16) makes
+	// those bypass the proxy and connect directly, which macOS Seatbelt denies
+	// unless AllowLocalBinding is set. A locally-hosted model server (vLLM at
+	// e.g. http://192.168.1.86:8551) therefore needs AllowLocalBinding, NOT an
+	// allowedDomains entry. See hk-ybuts / hk-u69my (Pi srt egress).
 	AllowedDomains []string
+
+	// AllowLocalBinding, when true, permits the sandboxed process to open direct
+	// sockets to local / private-LAN / loopback network addresses
+	// (network.allowLocalBinding). REQUIRED to reach a locally-hosted, OpenAI-
+	// compatible model endpoint (e.g. a DGX vLLM on the LAN, or an httptest stub
+	// on 127.0.0.1) because those addresses fall in srt's no_proxy set and are
+	// connected to directly rather than through the MITM proxy. Default false
+	// keeps the tightest posture; the operator opts in via
+	// sandbox.network.allow_local_binding. Bead: hk-ybuts / hk-u69my.
+	AllowLocalBinding bool
+
+	// WeakerNetworkIsolation, when true, sets srt's enableWeakerNetworkIsolation
+	// (network.weaker_network_isolation config field). v1 default false per the
+	// TLS decision (SPIKE-FINDINGS-hk-f39ny §TLS DECISION); wired here so the
+	// already-parsed config field is honored rather than silently ignored.
+	WeakerNetworkIsolation bool
 
 	// TmpDirs are OS temp directories included in allowWrite.
 	// On macOS, both /tmp and /private/tmp are typically needed.
@@ -214,7 +249,7 @@ func GenerateSandboxProfile(in SandboxProfileInput) ([]byte, error) {
 			AllowedDomains:    allowedDomains,
 			DeniedDomains:     []string{},
 			AllowUnixSockets:  []string{in.DaemonSockPath},
-			AllowLocalBinding: false,
+			AllowLocalBinding: in.AllowLocalBinding,
 		},
 		Filesystem: srtFilesystemConfig{
 			DenyRead:   []string{"~/.ssh"},
@@ -223,7 +258,7 @@ func GenerateSandboxProfile(in SandboxProfileInput) ([]byte, error) {
 			DenyWrite:  []string{},
 		},
 		EnableWeakerNestedSandbox:    false,
-		EnableWeakerNetworkIsolation: false,
+		EnableWeakerNetworkIsolation: in.WeakerNetworkIsolation,
 		AllowAppleEvents:             false,
 	}
 

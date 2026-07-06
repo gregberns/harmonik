@@ -1372,14 +1372,19 @@ func dispatchDotAgenticNode(
 				pasteTarget = nil
 				spec.Substrate = nil
 				sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(h, artifactAgentType(artifacts)), SandboxProfileInput{
-					WorktreePath:          wtPath,
-					GitDir:                filepath.Join(deps.projectDir, ".git"),
-					RunID:                 runID.String(),
-					DaemonSockPath:        daemonSocket,
-					AllowedDomains:        deps.sandboxCfg.Network.AllowedDomains,
-					TmpDirs:               sandboxOSTmpDirs(),
-					SharedReadCacheDirs:   deps.sandboxCfg.Cache.WarmRead,
-					PrivateWriteCacheDirs: deps.sandboxCfg.Cache.PrivateWrite,
+					WorktreePath:   wtPath,
+					GitDir:         filepath.Join(deps.projectDir, ".git"),
+					RunID:          runID.String(),
+					DaemonSockPath: daemonSocket,
+					AllowedDomains: deps.sandboxCfg.Network.AllowedDomains,
+					// hk-ybuts/hk-u69my: the DOT cascade is the LIVE canary's launch path — it MUST
+					// mirror single-mode's egress wiring (workloop.go), else a config-permitted local
+					// binding never reaches the sandboxed Pi and the model connect is Seatbelt-denied.
+					AllowLocalBinding:      deps.sandboxCfg.Network.AllowLocalBinding,
+					WeakerNetworkIsolation: deps.sandboxCfg.Network.WeakerNetworkIsolation,
+					TmpDirs:                sandboxOSTmpDirs(),
+					SharedReadCacheDirs:    deps.sandboxCfg.Cache.WarmRead,
+					PrivateWriteCacheDirs:  deps.sandboxCfg.Cache.PrivateWrite,
 				})
 				wrapBin, wrapArgs, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
 				if wrapErr != nil {

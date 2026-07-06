@@ -4221,14 +4221,16 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//     the SessionIDCaptured branch below. The two branches are mutually
 	//     exclusive, so there is no double-wrap.
 	sandboxSpawn := sandboxSpawnForRun(deps.sandboxCfg, resolveGateAgentType(implHarnessWL, artifactAgentType(artifacts)), SandboxProfileInput{
-		WorktreePath:          wtPath,
-		GitDir:                filepath.Join(deps.projectDir, ".git"),
-		RunID:                 runID.String(),
-		DaemonSockPath:        agentDaemonSock,
-		AllowedDomains:        deps.sandboxCfg.Network.AllowedDomains,
-		TmpDirs:               sandboxOSTmpDirs(),
-		SharedReadCacheDirs:   deps.sandboxCfg.Cache.WarmRead,
-		PrivateWriteCacheDirs: deps.sandboxCfg.Cache.PrivateWrite,
+		WorktreePath:           wtPath,
+		GitDir:                 filepath.Join(deps.projectDir, ".git"),
+		RunID:                  runID.String(),
+		DaemonSockPath:         agentDaemonSock,
+		AllowedDomains:         deps.sandboxCfg.Network.AllowedDomains,
+		AllowLocalBinding:      deps.sandboxCfg.Network.AllowLocalBinding,
+		WeakerNetworkIsolation: deps.sandboxCfg.Network.WeakerNetworkIsolation,
+		TmpDirs:                sandboxOSTmpDirs(),
+		SharedReadCacheDirs:    deps.sandboxCfg.Cache.WarmRead,
+		PrivateWriteCacheDirs:  deps.sandboxCfg.Cache.PrivateWrite,
 	})
 	if prs, ok := runSubstrate.(*perRunSubstrate); ok && sandboxSpawn != nil {
 		prs.sandboxSpawn = sandboxSpawn

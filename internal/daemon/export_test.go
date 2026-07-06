@@ -662,6 +662,17 @@ func ExportedResolveHarness(
 	return resolveHarness(ctx, bead, queueDefault, nodeDefault, globalDefault, bus)
 }
 
+// ExportedResolveHarnessAgentTypeQuiet exposes resolveHarnessAgentTypeQuiet for
+// tests in package daemon_test. See harnessresolve.go (hk-pkugu).
+func ExportedResolveHarnessAgentTypeQuiet(
+	bead core.BeadRecord,
+	queueDefault core.AgentType,
+	nodeDefault core.AgentType,
+	globalDefault core.AgentType,
+) core.AgentType {
+	return resolveHarnessAgentTypeQuiet(bead, queueDefault, nodeDefault, globalDefault)
+}
+
 // ExportedResolveGateAgentType exposes resolveGateAgentType for tests in package
 // daemon_test. See sandboxgate.go for semantics (hk-r4p0l).
 func ExportedResolveGateAgentType(implHarness handlercontract.Harness, fromArtifacts core.AgentType) core.AgentType {

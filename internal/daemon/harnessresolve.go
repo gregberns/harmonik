@@ -117,6 +117,54 @@ func resolveHarness(
 	return core.AgentTypeClaudeCode
 }
 
+// resolveHarnessAgentTypeQuiet resolves the harness agent-type using the same
+// four-tier precedence walk as resolveHarness, but emits NO events (neither
+// harness_selected nor bead_label_conflict).
+//
+// It exists so the claim-time model-preference resolution (workloop.go) can learn
+// the ACTUAL harness agent-type — and therefore the correct tier-3 model default —
+// WITHOUT double-emitting the observability events that resolveHarness fires later
+// when routedLaunchSpecBuilder runs. For any given (bead, queueDefault, nodeDefault,
+// globalDefault) tuple this returns exactly the same AgentType resolveHarness would.
+//
+// Malformed / multiple / invalid tier-1 harness labels are treated as absent (the
+// walk continues to the next tier), matching resolveHarness — the conflict event is
+// still emitted by resolveHarness at launch, so nothing is lost.
+//
+// Bead: hk-pkugu (codename:pi-model-leak).
+func resolveHarnessAgentTypeQuiet(
+	bead core.BeadRecord,
+	queueDefault core.AgentType,
+	nodeDefault core.AgentType,
+	globalDefault core.AgentType,
+) core.AgentType {
+	// Tier 1: exactly one valid harness:<agent-type> label.
+	var harnessLabels []string
+	for _, lbl := range bead.Labels {
+		if strings.HasPrefix(lbl, harnessLabelPrefix) {
+			harnessLabels = append(harnessLabels, lbl)
+		}
+	}
+	if len(harnessLabels) == 1 {
+		at := core.AgentType(strings.TrimPrefix(harnessLabels[0], harnessLabelPrefix))
+		if at.Valid() {
+			return at
+		}
+	}
+	// Tier 2 / Tier 3 / Tier 4.
+	if queueDefault.Valid() {
+		return queueDefault
+	}
+	if nodeDefault.Valid() {
+		return nodeDefault
+	}
+	if globalDefault.Valid() {
+		return globalDefault
+	}
+	// Built-in fallback.
+	return core.AgentTypeClaudeCode
+}
+
 // emitHarnessSelected emits a harness_selected event (hk-lr5t) recording which
 // harness was chosen and at which tier. Best-effort: emit errors are silently
 // discarded (the selection result is already determined before this call).

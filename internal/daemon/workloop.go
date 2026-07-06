@@ -3055,13 +3055,28 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 
 	// Resolve (model, effort) per EM-012b four-tier precedence walk.
 	// Resolved once at claim time; sealed into the run for its lifetime.
-	// The agentType is claude-code for the production path at MVH; it is
-	// sourced from the handler binary convention (single adapter at MVH).
-	// See modelpreference.go for the resolver and tier-3 defaults.
+	//
+	// The agentType passed here MUST match the harness that will actually be
+	// selected at launch (resolveHarness in routedLaunchSpecBuilder), or the
+	// tier-3 model default leaks across harnesses. Previously this was hardcoded
+	// to core.AgentTypeClaudeCode, which sealed the claude tier-3 default
+	// (claude-sonnet-4-6) into rc.model even for pi/codex runs — a pi run then
+	// asked the pi provider for a claude model and failed. Resolve the harness
+	// agent-type up front (quiet: no events; routedLaunchSpecBuilder still emits
+	// harness_selected at launch) so the model default matches the real harness.
+	// queue/node defaults are "" here, matching what routedLaunchSpecBuilder is
+	// passed below, so the quiet resolution equals the launch-time resolution.
+	// hk-pkugu (codename:pi-model-leak). See modelpreference.go for tier-3 defaults.
+	resolvedAgentType := resolveHarnessAgentTypeQuiet(
+		beadRecord,
+		core.AgentType(""), // queue default (hk-4x3rg not landed)
+		core.AgentType(""), // node default (per-node override in driveDotWorkflow)
+		deps.defaultHarness,
+	)
 	resolvedModel, resolvedEffort := ResolveModelPreference(
 		ctx,
 		beadRecord.Labels,
-		core.AgentTypeClaudeCode,
+		resolvedAgentType,
 		deps.projectCfg,
 		deps.bus,
 		string(beadID),

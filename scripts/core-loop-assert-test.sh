@@ -44,6 +44,13 @@ check "pi node-pin LEAK gap1 fail (T4/hk-lfrub)" "$TD/pi-local-modelleak.ndjson"
 check "codex tier-leak gap1 fail" "$TD/codex-local-tierleak.ndjson" "$CODEX" gap1 fail
 check "codex missing gap1 fail"  "$TD/codex-local-missing.ndjson"   "$CODEX" gap1 fail
 
+# gap4 — dispatch field fidelity (T5). Spec carries expect.dispatch.
+DISP='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"single","workflow_id_present":true}},"gaps":["gap4"]}'
+check "codex gap4 dispatch pass"       "$TD/codex-local-dispatch-pass.ndjson"     "$DISP" gap4 pass
+check "codex gap4 review-loop override fail" "$TD/codex-local-dispatch-override.ndjson" "$DISP" gap4 fail
+check "codex gap4 no run_started fail" "$TD/codex-local-missing.ndjson"           "$DISP" gap4 fail
+check "codex gap4 pending when no expect.dispatch" "$TD/codex-local-pass.ndjson"  "$CODEX" gap4 pending
+
 echo "-----"
 echo "core-loop-assert self-test: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

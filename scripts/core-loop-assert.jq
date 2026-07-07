@@ -81,7 +81,27 @@ def assert_gap1:
 # per-gap task replaces the pending body with its real assertion over the same stream.
 def assert_gap2: result("gap2"; "pending"; "remote(tcp://)==local parity assertion — implemented by T7 (hk-wf9lv)");
 def assert_gap3: result("gap3"; "pending"; "provider-comms-through-sandbox assertion — implemented by T6 (hk-i21pt)");
-def assert_gap4: result("gap4"; "pending"; "queue-submit->dispatch field-fidelity assertion — implemented by T5 (hk-bkn5a)");
+# --- gap4 — queue-submit → dispatch field fidelity (C7) (T5, hk-bkn5a) -------
+# A fully-specified queue item (workflow_ref, workflow_mode, model, harness) must reach
+# the dispatched run with every field intact — in particular workflow_mode must NOT be
+# silently forced to review-loop (the hk-u6zp/hk-y3o51 hardcoded-override regression).
+# Cross-event: model/harness fidelity is gap1's job; gap4 owns the run_started dispatch
+# fields. spec.expect.dispatch.workflow_mode = the submitted mode; .workflow_id_present
+# = require workflow_ref to have resolved to a real (non-zero) workflow_id.
+def assert_gap4:
+  ($spec.expect.dispatch // {}) as $ed
+  | (of_type("run_started") | map(pl) | map(select((.bead_id // null) == $spec.seed_bead))) as $rs
+  | (($rs[-1].workflow_id // "") | tostring) as $wid
+  | if ($ed == {})
+    then result("gap4"; "pending"; "no expect.dispatch in spec — add {workflow_mode, workflow_id_present} to assert gap4")
+    elif ($rs | length) == 0
+    then result("gap4"; "fail"; "no run_started event for seed bead \($spec.seed_bead)")
+    elif ($ed.workflow_mode != null and ($rs[-1].workflow_mode != $ed.workflow_mode))
+    then result("gap4"; "fail"; "run_started.workflow_mode=\($rs[-1].workflow_mode) != submitted \($ed.workflow_mode) (hardcoded review-loop override?)")
+    elif ($ed.workflow_id_present == true and ($wid == "" or ($wid | test("^0+(-0+)*$"))))
+    then result("gap4"; "fail"; "run_started.workflow_id is absent/zero (\($wid)) — workflow_ref did not resolve at dispatch")
+    else result("gap4"; "pass"; "workflow_mode=\($rs[-1].workflow_mode) workflow_id=\($wid)")
+    end;
 def assert_gap5: result("gap5"; "pending"; "claude worktree->agent_ready assertion — implemented by T8 (hk-4vwlx)");
 
 # --- dispatcher ------------------------------------------------------------

@@ -20,7 +20,11 @@
             "deepseek-reasoner"
           ]
         },
-        "terminal": "pass"
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        }
       },
       "gaps": [
         "gap1",
@@ -46,7 +50,11 @@
             "deepseek-reasoner"
           ]
         },
-        "terminal": "pass"
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        }
       },
       "gaps": [
         "gap1",
@@ -72,7 +80,11 @@
             "claude-opus-4-8"
           ]
         },
-        "terminal": "pass"
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        }
       },
       "gaps": [
         "gap1",
@@ -97,7 +109,11 @@
             "claude-opus-4-8"
           ]
         },
-        "terminal": "pass"
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        }
       },
       "gaps": [
         "gap1",
@@ -123,7 +139,11 @@
             "deepseek-reasoner"
           ]
         },
-        "terminal": "pass"
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        }
       },
       "gaps": [
         "gap1",
@@ -149,7 +169,11 @@
             "deepseek-reasoner"
           ]
         },
-        "terminal": "pass"
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        }
       },
       "gaps": [
         "gap1",

@@ -89,7 +89,25 @@
   still succeeds) but noisy.
 - **Impact:** low (dev ergonomics). **Workaround:** `brew install bash`. **Candidate lane:** other/tooling.
 
+### B9 — fleet-wide simultaneous "context cancelled during node implement" wave, hits multiple queues
+- **Where:** daemon DOT-workflow execution ("implement" agentic node). **Subsystem:** dispatch/daemon.
+- **What:** at 2026-07-07T07:14:2x, ALL in-flight runs across MULTIPLE UNRELATED queues (jamis-q's
+  hk-420yr.1/.2/.3 AND a different queue's hk-4hnvi/hk-9cqtm) failed within the same ~1.5s window, all
+  with `dot: agentic node "implement" failed: context cancelled during node "..."`. A second, distinct
+  wave hit yet another queue (yueh-q: hk-mpel5/vm8ym/7n6o7/x8fc6/n0wb0) ~90s later, same error shape.
+  Daemon pid/socket were stable across both waves (no restart observed) — this isn't the daemon dying,
+  it looks like something is issuing a cancel to in-flight agentic-node contexts fleet-wide, periodically.
+- **Impact:** high if recurring — silently kills concurrent work across crews, forces resubmission,
+  wastes the elapsed build time (my B1/B2/B3 were ~25min in when cancelled).
+- **Workaround:** classify as transient, resubmit the failed batch. No root-cause fix identified yet.
+- **Candidate lane:** dispatch (daemon-core) — worth a major-issue fan-out if it recurs a 3rd time.
+
 ---
 
 ## Triaged / folded into corpus
 *(none yet — move entries here with their `→ bead` / `→ corpus` markers once done)*
+
+## hawat / hk-lgykq — 2026-07-06
+- **ubs unusable on macOS default shell:** `ubs` hard-fails "requires bash >= 4.0 (you have 3.2.57)". macOS ships bash 3.2; must invoke via `/opt/homebrew/bin/bash /Users/gb/.local/bin/ubs`. The CLAUDE.md UBS quick-ref gives the bare `ubs` command, which no agent on stock macOS can run. Fix candidate: wrapper shim or doc note.
+- **Latent bug found in situ (now fixed by hk-lgykq):** before this fix, a bead with a `## Branching target_branch: integration/X` directive was REBASED onto integration/X (baseBranch, reviewloop.go/workloop.go:~3668/4060) but MERGED into deps.targetBranch (main). Rebase base and merge target were inconsistent. The hk-lgykq wiring aligns them.
+- **Stale integration branch stub:** `integration/lgykq-targeting` already existed (0 commits ahead of origin/main, checked out nowhere) from a prior hawat session; `git worktree add -b` fails on it. Had to `git branch -f ... origin/main` then `worktree add` without -b. Minor.

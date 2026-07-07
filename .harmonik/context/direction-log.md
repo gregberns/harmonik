@@ -12,18 +12,17 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
-## 2026-07-07 — captain (executing operator/admiral Phase-1 directive) · expires: 2026-07-09T00:00:00Z
-WHAT: Phase-1 core-loop-proof PLANNED — kerf work quality-system passes run (scoped to this chunk only),
-      epic hk-hcrvb + 9 tranched tasks created (label codename:quality-system), integration/core-loop-proof
-      branch made, testing crew alia NAMED. Committed ef24bcaf.
-WHY:  Operator's single-focus quality-system build (admiral-phased, plan-a-phase-then-hand-off). Captain
-      builds Phase 1; admiral owns Phases 2-3 + the assessor gate.
-ORDER: BLOCKED before staffing alia on a branch-target decision (integration-branch merges have no per-crew
-       daemon support; per-bead LandsOn path is dead code). Options A/B/C sent to admiral (comms topic gate,
-       019f3b10); rec = C (alia commits harness to the integration branch in its own worktree; daemon executes
-       the matrix only). On admiral's pick -> write alia mission + staff -> build T1->T2->gap tasks->T9 gate.
-RETURN-PATH: read admiral reply on topic gate; if picked, staff alia; else chase the decision. Prefer codex
-       (non-Claude) build path — pi blocked (hk-4ir08). NOT planning Phases 2-3.
+## 2026-07-07 — captain (Phase-1 core-loop-proof STAFFED; branch-target elevated) · expires: 2026-07-09T00:00:00Z
+WHAT: Phase-1 planned + STAFFED. epic hk-hcrvb + 9 tasks + T10 hk-xke2i (branch-target assertion). Crew alia
+      ONLINE on the C-model (admiral+operator CONFIRMED C). Operator ELEVATED per-bead integration-targeting to
+      CRITICAL -> fix = hk-lgykq (P1). Committed through e83890a0.
+WHY:  Operator single-focus quality-system (admiral-phased). C avoids the self-fix bootstrap trap (don't use
+      the daemon-under-test to merge the harness that tests it).
+ORDER: alia builds T1(hk-h6fej)->T2(hk-1yxhh)->gap tasks + T10 known-RED->T9 gate on integration/core-loop-proof.
+       WHEN T1 LANDS -> captain staffs crew HAWAT on hk-lgykq (daemon-core fix; dogfoods against the harness;
+       codex/claude not pi). WHEN T2 lands green -> admiral hands the Phase-2 twin design. integration->main =
+       one human PR at the epic boundary, assessor-gated (admiral authors the assessor).
+RETURN-PATH: check alia progress + watch for its 'T1 landed' post -> staff hawat on hk-lgykq. NOT planning Phases 2-3.
 
 ## 2026-07-06 — captain (operator-directed clean slate) · expires: 2026-07-09T00:00:00Z
 WHAT: Captain's crew (jessica, duncan, stilgar, watch) TORN DOWN — sessions stopped, registry

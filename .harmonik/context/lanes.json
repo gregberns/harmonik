@@ -9,13 +9,9 @@
       "epic_id": "hk-hcrvb",
       "crew": "alia",
       "queue": "alia-q",
-      "status": "on-deck",
-      "gate": {
-        "reason": "Phase-1 planned + beads created (epic hk-hcrvb + 9 tasks). Crew alia NAMED but NOT staffed: blocked on the integration-branch merge-target decision (daemon merges daemon-wide, no per-crew target; per-bead LandsOn path is dead code). Options A/B/C sent to admiral on comms topic 'gate' (event 019f3b10); C=alia commits harness to integration/core-loop-proof in its own worktree, daemon executes matrix only. Staff alia the moment admiral picks.",
-        "owner": "admiral",
-        "expires": "2026-07-09T00:00:00Z"
-      },
-      "note": "Phase-1 core-loop-proof (operator single-focus, admiral-phased). Live-verify the real loop bead->queue->harness(correct model)->changes->sandbox provider-comms->DOT review-back across {claude,codex,pi}x{local,remote}; acceptance = top-5 coverage gaps. Bench .kerf/works/quality-system/; source plans/2026-07-06-quality-system/00-SYNTHESIS.md. Prefer non-Claude/codex build path (pi blocked hk-4ir08). Phases 2-3 admiral-owned."
+      "status": "active",
+      "gate": null,
+      "note": "STAFFED 2026-07-07 — alia ONLINE on the C-model (admiral+operator confirmed): builds harness on integration/core-loop-proof in its OWN worktree, daemon executes the matrix ONLY (never merges harness code), prefer codex/non-Claude (pi blocked hk-4ir08), assessor CR-gates integration->main. Phase-1 core-loop-proof: live-verify the real loop across {claude,codex,pi}x{local,remote}; acceptance = top-5 gaps + T10 hk-xke2i (branch-targeting assertion, known-RED, evidence for hk-lgykq). Epic hk-hcrvb; T1 hk-h6fej ready. HANDOFF TRIGGER: when T1 lands, staff crew HAWAT on hk-lgykq (P1 daemon-core fix — wire the dead LandsOn merge path; dogfoods against alia's harness; codex/claude not pi). When T2 lands green -> admiral's Phase-2 twin handoff. Bench .kerf/works/quality-system/; source plans/2026-07-06-quality-system/. Phases 2-3 admiral-owned."
     },
     {
       "lane": "eval-metrics-ws1",

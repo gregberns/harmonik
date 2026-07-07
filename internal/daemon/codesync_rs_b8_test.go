@@ -89,12 +89,13 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 
 		// ── Assert SSH call order ─────────────────────────────────────────
 		// Expected calls via sshRR (in order); NO push step (hk-7bwx):
-		//   [0] git -C <tmpWorkerRepo> fetch origin <baseSHA>  (fetch-base)
-		//   [1] mkdir -p <parentDir>                           (CreateWorktree remote mkdir, hk-eodo)
-		//   [2] git -C <tmpWorkerRepo> worktree add -b ...     (worktree-add, may retry)
+		//   [0] git -C <tmpWorkerRepo> fetch origin <baseSHA>   (fetch-base)
+		//   [1] git -C <tmpWorkerRepo> cat-file -t <baseSHA>    (verify SHA present; hk-2hfyt)
+		//   [2] mkdir -p <parentDir>                            (CreateWorktree remote mkdir, hk-eodo)
+		//   [3] git -C <tmpWorkerRepo> worktree add -b ...      (worktree-add, may retry)
 
-		if len(sshRR.Calls) < 3 {
-			t.Fatalf("RSB8/remote: expected at least 3 SSH calls, got %d: %v", len(sshRR.Calls), sshRR.Calls)
+		if len(sshRR.Calls) < 4 {
+			t.Fatalf("RSB8/remote: expected at least 4 SSH calls, got %d: %v", len(sshRR.Calls), sshRR.Calls)
 		}
 
 		// Call 0: fetch-base
@@ -107,25 +108,35 @@ func TestRSB8_CodeSyncArgvOrder(t *testing.T) {
 			t.Errorf("RSB8/remote: calls[0].Args = %v, want %v", c0.Args, wantC0)
 		}
 
-		// Call 1: remote mkdir -p <parentDir> (CreateWorktree routes mkdir through
-		// the runner for remote runs so the parent dir is created on the worker,
-		// not locally — hk-eodo TOCTOU fix).
+		// Call 1: cat-file -t verification (hk-2hfyt).
 		c1 := sshRR.Calls[1]
-		if c1.Name != "mkdir" {
-			t.Errorf("RSB8/remote: calls[1].Name = %q, want mkdir", c1.Name)
+		if c1.Name != "git" {
+			t.Errorf("RSB8/remote: calls[1].Name = %q, want git", c1.Name)
 		}
-		if len(c1.Args) < 2 || c1.Args[0] != "-p" {
-			t.Errorf("RSB8/remote: calls[1].Args = %v, want [-p <parentDir>]", c1.Args)
+		wantC1 := []string{"-C", tmpWorkerRepo, "cat-file", "-t", baseSHA}
+		if !argvSliceEqual(c1.Args, wantC1) {
+			t.Errorf("RSB8/remote: calls[1].Args = %v, want %v", c1.Args, wantC1)
 		}
 
-		// Call 2: worktree-add (first git command issued by CreateWorktree).
+		// Call 2: remote mkdir -p <parentDir> (CreateWorktree routes mkdir through
+		// the runner for remote runs so the parent dir is created on the worker,
+		// not locally — hk-eodo TOCTOU fix).
 		c2 := sshRR.Calls[2]
-		if c2.Name != "git" {
-			t.Errorf("RSB8/remote: calls[2].Name = %q, want git", c2.Name)
+		if c2.Name != "mkdir" {
+			t.Errorf("RSB8/remote: calls[2].Name = %q, want mkdir", c2.Name)
 		}
-		if len(c2.Args) < 4 || c2.Args[0] != "-C" || c2.Args[1] != tmpWorkerRepo ||
-			c2.Args[2] != "worktree" || c2.Args[3] != "add" {
-			t.Errorf("RSB8/remote: calls[2].Args = %v, want [-C <tmpWorkerRepo> worktree add ...]", c2.Args)
+		if len(c2.Args) < 2 || c2.Args[0] != "-p" {
+			t.Errorf("RSB8/remote: calls[2].Args = %v, want [-p <parentDir>]", c2.Args)
+		}
+
+		// Call 3: worktree-add (first git command issued by CreateWorktree).
+		c3 := sshRR.Calls[3]
+		if c3.Name != "git" {
+			t.Errorf("RSB8/remote: calls[3].Name = %q, want git", c3.Name)
+		}
+		if len(c3.Args) < 4 || c3.Args[0] != "-C" || c3.Args[1] != tmpWorkerRepo ||
+			c3.Args[2] != "worktree" || c3.Args[3] != "add" {
+			t.Errorf("RSB8/remote: calls[3].Args = %v, want [-C <tmpWorkerRepo> worktree add ...]", c3.Args)
 		}
 
 		// hk-7bwx: there is NO worker→origin push anymore — assert NO SSH call is a
@@ -287,6 +298,139 @@ func TestRSB8_FetchRunBranchNoRetryOnHardError(t *testing.T) {
 	// Must fail after exactly 1 call (no retry).
 	if callN != 1 {
 		t.Errorf("CmdFunc called %d times on hard error, want 1 (no retry)", callN)
+	}
+}
+
+// TestEnsureBaseOnWorker_PushFallback verifies that ensureBaseOnWorker falls
+// back to pushBaseToWorker when fetch origin exits 0 but the SHA is absent on
+// the worker (hk-2hfyt: unpushed base commit).
+//
+// Scenario:
+//   - The worker-side runner (sshRR) simulates `git fetch origin <sha>` exiting
+//     0 (silent no-op) followed by `git cat-file -t <sha>` exiting 128 (SHA
+//     absent). fetchBaseOnWorker returns errBaseSHAAbsent.
+//   - ensureBaseOnWorker detects errBaseSHAAbsent and calls pushBaseToWorker
+//     via the local runner (localRR).
+//   - Verify localRR received exactly one call: `git push ssh://<host>/<repo> <sha>:refs/harmonik/base`.
+func TestEnsureBaseOnWorker_PushFallback(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		workerRepoPath = "/Users/gb/harmonik-worker/repo"
+		workerHost     = "100.87.151.114"
+		boxAProjectDir = "/home/boxa/harmonik"
+		baseSHA        = "aabbccddaabbccddaabbccddaabbccddaabbccdd"
+	)
+
+	// sshRR simulates: fetch exits 0 (success) but cat-file exits 128 (SHA absent).
+	fetchCalled, catFileCalled := 0, 0
+	sshRR := &tmux.RecordingRunner{
+		CmdFunc: func(_ context.Context, name string, args ...string) *exec.Cmd {
+			for _, a := range args {
+				if a == "fetch" {
+					fetchCalled++
+					return exec.Command("true") // exit 0 — silent no-op
+				}
+				if a == "cat-file" {
+					catFileCalled++
+					// exit 128 — SHA not present in ODB
+					return exec.Command("/bin/sh", "-c",
+						"printf 'fatal: git cat-file: not in the object database\n' >&2; exit 128")
+				}
+			}
+			return exec.Command("true")
+		},
+	}
+
+	// localRR captures the push from box A to the worker (push fallback).
+	localRR := newNoOpRecorder()
+
+	err := ensureBaseOnWorker(ctx, sshRR, workerRepoPath, baseSHA,
+		localRR, boxAProjectDir, workerHost, nil)
+	if err != nil {
+		t.Fatalf("ensureBaseOnWorker: expected nil after push fallback, got: %v", err)
+	}
+
+	if fetchCalled != 1 {
+		t.Errorf("fetch called %d times, want 1", fetchCalled)
+	}
+	if catFileCalled != 1 {
+		t.Errorf("cat-file called %d times, want 1", catFileCalled)
+	}
+
+	// localRR should have received exactly one call: git push ssh://<host>/<repo> <sha>:refs/harmonik/base
+	if len(localRR.Calls) != 1 {
+		t.Fatalf("localRR: expected 1 push call, got %d: %v", len(localRR.Calls), localRR.Calls)
+	}
+	pushCall := localRR.Calls[0]
+	if pushCall.Name != "git" {
+		t.Errorf("localRR push call Name = %q, want git", pushCall.Name)
+	}
+	wantURL := "ssh://" + workerHost + workerRepoPath
+	wantRefspec := baseSHA + ":refs/harmonik/base"
+	wantArgs := []string{"-C", boxAProjectDir, "push", wantURL, wantRefspec}
+	if !argvSliceEqual(pushCall.Args, wantArgs) {
+		t.Errorf("localRR push call Args = %v\nwant %v", pushCall.Args, wantArgs)
+	}
+}
+
+// TestEnsureBaseOnWorker_NoFallbackOnConnectionError verifies that
+// ensureBaseOnWorker does NOT attempt the push fallback when fetchBaseOnWorker
+// returns a hard connection error (not errBaseSHAAbsent).
+func TestEnsureBaseOnWorker_NoFallbackOnConnectionError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	sshRR := &tmux.RecordingRunner{
+		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.Command("/bin/sh", "-c",
+				"printf 'ssh: connect to host 100.87.151.114 port 22: Connection refused\n' >&2; exit 128")
+		},
+	}
+	localRR := newNoOpRecorder()
+
+	err := ensureBaseOnWorker(ctx, sshRR, "/repo", "aabbccdd",
+		localRR, "/project", "100.87.151.114", nil)
+	if err == nil {
+		t.Fatal("expected error on SSH connection failure, got nil")
+	}
+	// No push should be attempted — the error is a connection failure, not errBaseSHAAbsent.
+	if len(localRR.Calls) != 0 {
+		t.Errorf("localRR: expected 0 calls on connection error, got %d: %v", len(localRR.Calls), localRR.Calls)
+	}
+}
+
+// TestPushBaseToWorker_ArgvShape verifies pushBaseToWorker produces the expected
+// git push argv for the direct box-A→worker transfer (hk-2hfyt).
+func TestPushBaseToWorker_ArgvShape(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		boxAProjectDir = "/home/boxa/harmonik"
+		workerHost     = "100.87.151.114"
+		workerRepoPath = "/Users/gb/harmonik-worker/repo"
+		baseSHA        = "aabbccddaabbccddaabbccddaabbccddaabbccdd"
+	)
+
+	rr := newNoOpRecorder()
+	if err := pushBaseToWorker(ctx, rr, boxAProjectDir, workerHost, workerRepoPath, baseSHA, nil); err != nil {
+		t.Fatalf("pushBaseToWorker: %v", err)
+	}
+
+	if len(rr.Calls) != 1 {
+		t.Fatalf("expected 1 call, got %d: %v", len(rr.Calls), rr.Calls)
+	}
+	c := rr.Calls[0]
+	if c.Name != "git" {
+		t.Errorf("Name = %q, want git", c.Name)
+	}
+	wantURL := "ssh://" + workerHost + workerRepoPath
+	wantRefspec := baseSHA + ":refs/harmonik/base"
+	want := []string{"-C", boxAProjectDir, "push", wantURL, wantRefspec}
+	if !argvSliceEqual(c.Args, want) {
+		t.Errorf("Args = %v\nwant %v", c.Args, want)
 	}
 }
 

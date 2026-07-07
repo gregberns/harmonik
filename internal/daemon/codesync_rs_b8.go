@@ -42,13 +42,20 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
+
+// errBaseSHAAbsent is returned by fetchBaseOnWorker when git fetch origin exits
+// 0 but the base SHA is not present in the worker's ODB afterward. The caller
+// (ensureBaseOnWorker) uses this to trigger the push-from-box-A fallback (hk-2hfyt).
+var errBaseSHAAbsent = errors.New("base SHA absent on worker after fetch")
 
 // fetchBaseOnWorker ensures baseSHA is present in the worker's repo clone by
 // running:
@@ -57,12 +64,87 @@ import (
 //
 // through r (typically an SSHRunner that tunnels the command to the worker).
 // Step (a) of the DD1 code-sync sequence; MUST run before worktree-add.
+//
+// After the fetch, a git cat-file -t check verifies the object actually landed.
+// git fetch origin <sha> can exit 0 without delivering the commit when the sha
+// is absent from origin (e.g. the base commit is unpushed from box A; hk-2hfyt).
+// Returns errBaseSHAAbsent when the fetch exits 0 but the object is absent, so
+// the caller (ensureBaseOnWorker) can trigger the push-from-box-A fallback.
 func fetchBaseOnWorker(ctx context.Context, r tmux.CommandRunner, repoPath, baseSHA string) error {
 	cmd := r.Command(ctx, "git", "-C", repoPath, "fetch", "origin", baseSHA)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("codesync: fetchBaseOnWorker (repo=%s sha=%s): %w\ngit: %s",
 			repoPath, baseSHA, err, out)
+	}
+	// Verify the SHA actually landed — git fetch origin <sha> exits 0 even when
+	// the remote does not carry the SHA (unpushed commit; hk-2hfyt). cat-file -t
+	// exits non-zero when the object is absent.
+	catOut, catErr := r.Command(ctx, "git", "-C", repoPath, "cat-file", "-t", baseSHA).CombinedOutput()
+	if catErr != nil {
+		return fmt.Errorf("%w: codesync: fetchBaseOnWorker (repo=%s sha=%s): SHA absent after fetch (base commit unpushed from box A?)\ngit cat-file: %s",
+			errBaseSHAAbsent, repoPath, baseSHA, catOut)
+	}
+	_ = catOut
+	return nil
+}
+
+// pushBaseToWorker transfers baseSHA from box A's local repo to the worker's
+// clone via a git push over SSH, bypassing origin. Used as the fallback when
+// git fetch origin <sha> exits 0 but delivers nothing (the SHA is unpushed from
+// box A to origin; hk-2hfyt).
+//
+// The commit is pushed to refs/harmonik/base on the worker — a stable scratch
+// ref that git-receive-pack accepts on a non-bare repo (it's not the checked-out
+// branch). A nil localRunner uses tmux.LocalRunner{}.
+func pushBaseToWorker(ctx context.Context, localRunner tmux.CommandRunner, boxAProjectDir, workerHost, workerRepoPath, baseSHA string, sshOpts []string) error {
+	if localRunner == nil {
+		localRunner = tmux.LocalRunner{}
+	}
+	url := workerSSHURL(workerHost, workerRepoPath)
+	refspec := baseSHA + ":refs/harmonik/base"
+
+	args := []string{"-C", boxAProjectDir}
+	if len(sshOpts) > 0 {
+		args = append(args, "-c", "core.sshCommand=ssh "+strings.Join(sshOpts, " "))
+	}
+	args = append(args, "push", url, refspec)
+
+	cmd := localRunner.Command(ctx, "git", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("codesync: pushBaseToWorker (boxA=%s worker=%s sha=%s): %w\ngit: %s",
+			boxAProjectDir, url, baseSHA, err, out)
+	}
+	return nil
+}
+
+// ensureBaseOnWorker ensures baseSHA is present on the worker before worktree
+// creation (DD1 code-sync step a; hk-2hfyt). It first tries git fetch origin
+// <sha> on the worker (fast path when the commit is pushed to origin). When the
+// SHA is absent after fetch (errBaseSHAAbsent; base commit is unpushed from box
+// A), it falls back to pushing the commit directly from box A to the worker over
+// SSH, bypassing origin.
+//
+// r runs commands on the worker (typically SSHRunner). localRunner runs commands
+// on box A (for the push fallback); nil uses tmux.LocalRunner{} (production
+// default). workerHost and sshOpts are used to construct the ssh:// push URL and
+// mirror the transport used elsewhere in the remote path.
+func ensureBaseOnWorker(ctx context.Context, r tmux.CommandRunner, workerRepoPath, baseSHA string,
+	localRunner tmux.CommandRunner, boxAProjectDir, workerHost string, sshOpts []string) error {
+	fetchErr := fetchBaseOnWorker(ctx, r, workerRepoPath, baseSHA)
+	if fetchErr == nil {
+		return nil
+	}
+	if !errors.Is(fetchErr, errBaseSHAAbsent) {
+		return fetchErr
+	}
+	// SHA absent after fetch — base commit is unpushed from box A to origin.
+	// Push directly from box A to the worker, bypassing origin (hk-2hfyt).
+	fmt.Fprintf(os.Stderr, "codesync: ensureBaseOnWorker: SHA %s absent on worker after fetch origin; pushing directly from box A\n", baseSHA)
+	if pushErr := pushBaseToWorker(ctx, localRunner, boxAProjectDir, workerHost, workerRepoPath, baseSHA, sshOpts); pushErr != nil {
+		return fmt.Errorf("codesync: ensureBaseOnWorker: fetch origin absent (%v); direct push also failed: %w",
+			fetchErr, pushErr)
 	}
 	return nil
 }

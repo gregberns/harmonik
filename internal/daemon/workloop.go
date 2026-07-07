@@ -3462,19 +3462,24 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// Runs inside mergeMu so it does not overlap with a sibling bead's
 	// git-worktree-add (hk-lt091).
 	if rbc != nil {
-		if fetchErr := fetchBaseOnWorker(ctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA); fetchErr != nil {
+		// hk-2hfyt: use ensureBaseOnWorker (not fetchBaseOnWorker directly) so
+		// an unpushed base commit triggers a direct push from box A to the worker
+		// rather than leaving an empty-HEAD worktree.
+		workerHostEBOW, sshOptsEBOW, _ := sshHostOpts(rbc.sshRunner)
+		if fetchErr := ensureBaseOnWorker(ctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA,
+			nil, deps.projectDir, workerHostEBOW, sshOptsEBOW); fetchErr != nil {
 			if deps.mergeMu != nil {
 				deps.mergeMu.Unlock()
 			}
-			fmt.Fprintf(os.Stderr, "daemon: workloop: fetchBaseOnWorker bead %s run %s: %v (reopening)\n",
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ensureBaseOnWorker bead %s run %s: %v (reopening)\n",
 				beadID, runID.String(), fetchErr)
 			// B11: SSH connection failure → emit worker_offline + disable worker.
 			if tmuxpkg.IsSSHConnectionFailure(fetchErr) {
-				notifyWorkerOffline("spawn", fmt.Sprintf("fetchBaseOnWorker: %v", fetchErr))
+				notifyWorkerOffline("spawn", fmt.Sprintf("ensureBaseOnWorker: %v", fetchErr))
 			}
 			reopenTID, _ := deps.tidGen.Next()
 			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-				fmt.Sprintf("fetch base on worker failed: %v", fetchErr))
+				fmt.Sprintf("ensure base on worker failed: %v", fetchErr))
 			return
 		}
 	}

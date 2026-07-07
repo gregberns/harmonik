@@ -144,6 +144,14 @@ WATCH_RESTART_SUPPRESS_WINDOW=600  # 10 minutes
 #        session and restarts it via `harmonik start crew watch`.
 WATCH_ZOMBIE_THRESHOLD=7200   # 2h: no comms-send from watch = zombie-suspected
 WATCH_SELFHEAL_COOLDOWN=3600  # 1h: minimum between self-heal kill+restart attempts
+# hk-ghcqn: idle-submit-wedge auto-nudge. When watch-stalled is confirmed (cursor
+# frozen + actionable events past it + stream dead) and the watch tmux session is
+# alive, inject Enter into the watch pane to unblock the /rc auto-submit-wedge.
+# Distinct from zombie self-heal (which kills and restarts the session): this is a
+# lightweight first-pass recovery — one keypress that unblocks a pending prompt.
+# Captain is still paged so they can verify recovery, but with "auto-nudged" note
+# rather than "no self-healing path."
+WATCH_NUDGE_COOLDOWN=600  # 10 minutes: minimum between consecutive nudge attempts
 
 mkdir -p "$OUT_DIR"
 
@@ -226,9 +234,18 @@ try:
 except Exception:
     print(0)
 ")
+  PREV_LAST_WATCH_NUDGE_TS=$(py3 "
+import json
+try:
+    d = json.load(open('$STATE_FILE'))
+    print(d.get('last_watch_nudge_ts', 0))
+except Exception:
+    print(0)
+")
 fi
 PREV_LAST_WATCH_MSG_TS=${PREV_LAST_WATCH_MSG_TS:-0}
 PREV_LAST_WATCH_SELFHEAL_TS=${PREV_LAST_WATCH_SELFHEAL_TS:-0}
+PREV_LAST_WATCH_NUDGE_TS=${PREV_LAST_WATCH_NUDGE_TS:-0}
 
 # ── Check 1: Daemon up ────────────────────────────────────────────────────────
 
@@ -626,6 +643,9 @@ prev_last_watch_msg_ts    = int('$PREV_LAST_WATCH_MSG_TS')
 prev_last_watch_selfheal_ts = int('$PREV_LAST_WATCH_SELFHEAL_TS')
 watch_zombie_threshold    = int('$WATCH_ZOMBIE_THRESHOLD')
 watch_selfheal_cooldown   = int('$WATCH_SELFHEAL_COOLDOWN')
+# hk-ghcqn: idle-submit-wedge auto-nudge inputs.
+prev_last_watch_nudge_ts  = int('$PREV_LAST_WATCH_NUDGE_TS')
+watch_nudge_cooldown      = int('$WATCH_NUDGE_COOLDOWN')
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -1247,6 +1267,20 @@ if watch_zombie and not watch_restart_suppressed:
         do_selfheal = True
         new_last_watch_selfheal_ts = ts_epoch
 
+# ── hk-ghcqn: idle-submit-wedge auto-nudge ───────────────────────────────────
+# When the watch is stalled (cursor frozen + actionable events past it + stream
+# dead) and the watch tmux session is alive, inject Enter into the watch pane to
+# unblock the /rc auto-submit-wedge. Lighter than zombie self-heal (no kill+restart);
+# fires on any stall detection subject to watch_nudge_cooldown. The captain is still
+# paged (they need to verify recovery), but now with "auto-nudged" note rather than
+# "no self-healing path" so they know recovery was attempted.
+do_nudge = (
+    watch_stalled
+    and watch_tmux_alive
+    and (ts_epoch - prev_last_watch_nudge_ts) >= watch_nudge_cooldown
+)
+new_last_watch_nudge_ts = ts_epoch if do_nudge else prev_last_watch_nudge_ts
+
 # ── Build signal lists ───────────────────────────────────────────────────────
 immediate_signals = []
 digest_signals    = []
@@ -1595,6 +1629,8 @@ snapshot = {
     'do_selfheal': do_selfheal,
     # hk-gioct: stream-liveness gate result (True = stream alive, False = stream dead).
     'watch_stream_live': watch_stream_live,
+    # hk-ghcqn: idle-submit-wedge auto-nudge (True = Enter injected into watch pane this tick).
+    'do_nudge': do_nudge,
     'release_due': release_due,
     'release_commit_count': release_commit_count,
     'ci_status': ci_status,
@@ -1628,6 +1664,8 @@ new_state = {
     # hk-unwzh F1/F2: zombie tracking — persisted across ticks.
     'last_watch_msg_ts': last_watch_msg_ts,           # carry-forward: last epoch watch sent a real comms message
     'last_watch_selfheal_ts': new_last_watch_selfheal_ts,  # last epoch a self-heal was attempted
+    # hk-ghcqn: nudge cooldown tracking — persisted across ticks.
+    'last_watch_nudge_ts': new_last_watch_nudge_ts,   # last epoch a stall-nudge Enter was injected
 }
 
 print(json.dumps({'snapshot': snapshot, 'state': new_state}))
@@ -1659,6 +1697,18 @@ if [[ "$DO_SELFHEAL" == "true" && -n "$_CAPTAIN_HASH" ]]; then
   echo "ops-monitor: self-heal zombie watch: killing session harmonik-${_CAPTAIN_HASH}-crew-watch and restarting @ $TS" >&2
   tmux kill-session -t "harmonik-${_CAPTAIN_HASH}-crew-watch" 2>/dev/null || true
   (cd "$PROJ" && harmonik start crew watch 2>/dev/null) || true
+fi
+
+# ── hk-ghcqn: stall-heal nudge (after state.json committed) ──────────────────
+# When watch-stalled is confirmed (cursor frozen + actionable events past it + stream
+# dead) and the watch tmux session is alive, inject Enter into the watch pane.
+# This unblocks the /rc idle-submit-wedge (loop typed a prompt but auto-submit
+# never fired). Lighter than zombie self-heal — no kill+restart. The nudge
+# timestamp is persisted in state.json above so a crash does not re-nudge next tick.
+DO_NUDGE=$(py3 "import json,sys; d=json.loads(sys.stdin.read()); print(str(d['snapshot'].get('do_nudge', False)).lower())" <<< "$ANALYSIS")
+if [[ "$DO_NUDGE" == "true" && -n "$_CAPTAIN_HASH" && "$WATCH_TMUX_ALIVE" == "true" ]]; then
+  echo "ops-monitor: stall-heal: injecting Enter into crew-watch pane to unblock idle-submit-wedge @ $TS" >&2
+  tmux send-keys -t "harmonik-${_CAPTAIN_HASH}-crew-watch" "" Enter 2>/dev/null || true
 fi
 
 # ── Send comms if signals present ─────────────────────────────────────────────
@@ -1717,7 +1767,10 @@ for s in sigs:
     if e and e.get('tier', 1) >= 2:
         m = e['elapsed_s'] // 60
         n = e['count']
-        parts.append(f'[ESCALATION] {s} for >{m}m — alert #{n} — no self-healing path')
+        # hk-ghcqn: watch-stalled now has auto-nudge (Enter injected into pane).
+        # Distinguish from truly-unrecoverable signals (daemon/supervisor/fleet).
+        heal_note = 'auto-nudged watch pane; verify recovery' if s == 'watch-stalled' else 'no self-healing path'
+        parts.append(f'[ESCALATION] {s} for >{m}m — alert #{n} — {heal_note}')
     else:
         parts.append('[IMMEDIATE] ' + s)
 print(' | '.join(parts))

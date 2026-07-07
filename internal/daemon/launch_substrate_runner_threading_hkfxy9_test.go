@@ -57,6 +57,7 @@ func hkfxy9HangHandlerScript(t *testing.T) string {
 // sshRunner) into newPerRunSubstrate, so the claude PROCESS spawns on the worker
 // (hk-fxy9). Pins against a regression to the previously-hardcoded nil.
 func TestReviewLoopThreadsRunnerIntoSubstrate_hkfxy9(t *testing.T) {
+	skipRealDaemonE2EInShort(t) // spawns real tmux pane (sleep 3600 hang-handler) — reap can time out, leaving zombie pane that wedges sibling tests
 	// NOT parallel: installs a process-global test seam + isolates ~/.claude.json.
 	rlIsolateClaudeConfig(t)
 
@@ -112,6 +113,7 @@ func TestReviewLoopThreadsRunnerIntoSubstrate_hkfxy9(t *testing.T) {
 // claude PROCESS spawns on the worker for a REMOTE DOT run (hk-538l). DOT already
 // threaded the SPEC runner (hk-3sus); this covers the SUBSTRATE runner.
 func TestDotThreadsRunnerIntoSubstrate_hkfxy9(t *testing.T) {
+	skipRealDaemonE2EInShort(t) // spawns real tmux pane (sleep 3600 hang-handler) — reap can time out, leaving zombie pane that wedges sibling tests
 	// NOT parallel: installs a process-global test seam + isolates ~/.claude.json.
 	rlIsolateClaudeConfig(t)
 

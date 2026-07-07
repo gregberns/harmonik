@@ -378,8 +378,8 @@ func TestBuildCodexLaunchSpec_EmptyModelInitialTurn(t *testing.T) {
 	t.Parallel()
 
 	rc := daemon.ExportedCodexRunCtx{
-		WorkspacePath:    "/tmp/wt-test-codex-nomodel",
-		BeadID:           "hk-test-empty-model",
+		WorkspacePath: "/tmp/wt-test-codex-nomodel",
+		BeadID:        "hk-test-empty-model",
 		// Model deliberately omitted: empty model on initial turn must fail loud.
 		SkipBillingGuard: true,
 	}

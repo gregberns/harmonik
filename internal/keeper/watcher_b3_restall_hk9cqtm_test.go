@@ -47,9 +47,9 @@ func b3Config(projectDir, agent string, recover func(context.Context, string) er
 		AgentName:           agent,
 		ProjectDir:          projectDir,
 		PollInterval:        10 * time.Millisecond,
-		Staleness:           5 * time.Millisecond,   // gauge immediately stale
-		LiveRecoverGrace:    10 * time.Millisecond,  // tiny for test speed
-		LiveRecoverCooldown: 10 * time.Second,       // long: at most one attempt per run
+		Staleness:           5 * time.Millisecond,  // gauge immediately stale
+		LiveRecoverGrace:    10 * time.Millisecond, // tiny for test speed
+		LiveRecoverCooldown: 10 * time.Second,      // long: at most one attempt per run
 		TmuxTarget:          b3MangledTarget,
 		IsPaneAliveFn: func(_ context.Context, target string) bool {
 			return target == b3ResolvedTarget // false for mangled, true for resolved

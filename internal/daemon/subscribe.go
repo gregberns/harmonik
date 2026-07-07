@@ -387,6 +387,12 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 	// flush it to the cursor at most every cursorFlushInterval (and once more on
 	// return). Advancing AFTER delivery preserves at-least-once (N3): a crash
 	// between deliver and flush re-delivers; clients dedup on event_id.
+	//
+	// B1 pin (hk-d65rb): a one-shot comms recv called AFTER a --follow session
+	// has advanced the cursor correctly drains 0 messages — not a bug. The shared
+	// cursor is the single source of truth for "what this agent has seen."
+	// Operators can audit the full message history cursor-independently via
+	// `comms log --since`, which scans events.jsonl without consulting the cursor.
 	cursorAdvanceEnabled := h.cursorStore != nil && req.To != ""
 	var pendingCursorID string // last agent_message event_id delivered but not yet flushed
 	flushCursor := func() {

@@ -77,6 +77,12 @@ func TestConformanceCorpus_SH101ScenariosParse(t *testing.T) {
 			wantCadence:       CadenceTagRegression,
 			wantMinAssertions: 2, // agent_failed + event_absent(outcome_emitted) + outcome
 		},
+		{
+			// hk-ifu19 (ST4): merge-race same-file regression scenario.
+			path:              filepath.Join("scenarios", "regression", "merge-race-samefile.yaml"),
+			wantCadence:       CadenceTagRegression,
+			wantMinAssertions: 6, // 4 expected_events + 1 expected_workspace + 1 expected_outcome
+		},
 	}
 
 	for _, tc := range cases {

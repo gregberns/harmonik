@@ -101,6 +101,15 @@
   wastes the elapsed build time (my B1/B2/B3 were ~25min in when cancelled).
 - **Workaround:** classify as transient, resubmit the failed batch. No root-cause fix identified yet.
 - **Candidate lane:** dispatch (daemon-core) — worth a major-issue fan-out if it recurs a 3rd time.
+- **UPDATE (same session, ~30min later):** jamis-q's B1/B2/B3 hit the IDENTICAL error again on the
+  RESUBMITTED batch, all three failing within the same second (07:45:2x), after ~30min elapsed run
+  time (first wave was ~25min elapsed). Two independent occurrences on two different bead sets, both
+  cancelled at roughly the 25-30min mark of the "implement" node — this now looks like a **timeout**,
+  not a random cancel-broadcast. Candidate root cause: an agentic-node or DOT-workflow context timeout
+  set to ~25-30min that's too short for these tasks, OR a resource/concurrency reaper killing
+  long-running contexts. Per crew-launch protocol (fails-twice rule), jamis is NOT re-dispatching a
+  3rd time — escalated to captain via `--topic error`, awaiting instructions. Worth a major-issue
+  fan-out per the fanout skill's "root cause refuted/recurred ≥2x" trigger.
 
 ---
 

@@ -17,7 +17,7 @@ package daemon_test
 //   - TestBeadNeverSpawnedTimeout_ZeroIgnored      — "=0" → falls back to default
 //   - TestBeadNeverSpawnedTimeout_NegativeIgnored  — "=-1" → falls back to default
 //   - TestBeadNeverSpawnedTimeout_InvalidIgnored   — "=abc" → falls back to default
-//   - TestBeadNeverSpawnedTimeout_LastWins         — duplicate labels → first wins
+//   - TestBeadNeverSpawnedTimeout_FirstLabelWins   — duplicate labels → first wins
 //   - TestBeadNeverSpawnedTimeout_PerRunOverride   — override applied in reaper
 
 import (

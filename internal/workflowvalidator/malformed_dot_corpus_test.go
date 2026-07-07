@@ -20,6 +20,10 @@ package workflowvalidator
 //   malformedDotFixtureMissingCapCycle         — EM-043: cycle without a per-edge traversal cap
 //   malformedDotFixtureMissingGateRef          — CP-036/CP-054: gate node without gate_ref
 //   malformedDotFixturePolicyRefDeprecated     — CP-056: node with deprecated policy_ref attribute
+//   malformedDotFixtureForbiddenHandlerRef     — EM-038: non-agentic node declares handler_ref
+//   malformedDotFixtureMissingSubWorkflowRef   — EM-038: sub-workflow node without sub_workflow_ref
+//   malformedDotFixtureBadLLMFreedom           — EM-038: node with unrecognised llm-freedom value
+//   malformedDotFixtureBadModeTag              — EM-038/AR-005: node with unrecognised mode tag
 
 // malformedDotFixtureBadEnum is a workflow whose node declares an unknown
 // type value ("human"). The validator MUST reject this per EM-006: the only
@@ -352,6 +356,137 @@ const malformedDotFixturePolicyRefDeprecated = `digraph workflow {
         idempotency        = "idempotent"
         mode               = "mechanism"
         policy_ref         = "some-deprecated-policy"
+    ]
+
+    node_b [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_a -> node_b
+}`
+
+// malformedDotFixtureForbiddenHandlerRef is a workflow whose non-agentic node
+// incorrectly declares handler_ref. The validator MUST reject this per EM-038:
+// handler_ref is only valid on agentic and gate nodes; declaring it on a
+// non-agentic node is a structural violation.
+const malformedDotFixtureForbiddenHandlerRef = `digraph workflow {
+    graph [
+        workflow_id       = "wf-forbidden-handler-ref-001"
+        name              = "forbidden-handler-ref-fixture"
+        version           = "0.1.0"
+        start_node_id     = "node_a"
+        terminal_node_ids = "node_b"
+    ]
+
+    node_a [
+        type               = "non-agentic"
+        handler_ref        = "handlers/should-not-be-here"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_b [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_a -> node_b
+}`
+
+// malformedDotFixtureMissingSubWorkflowRef is a workflow whose sub-workflow
+// node omits the required sub_workflow_ref attribute. The validator MUST reject
+// this per EM-038: every node with type=sub-workflow MUST declare
+// sub_workflow_ref.
+const malformedDotFixtureMissingSubWorkflowRef = `digraph workflow {
+    graph [
+        workflow_id       = "wf-missing-sub-workflow-ref-001"
+        name              = "missing-sub-workflow-ref-fixture"
+        version           = "0.1.0"
+        start_node_id     = "expand_node"
+        terminal_node_ids = "expand_node"
+    ]
+
+    expand_node [
+        type               = "sub-workflow"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+}`
+
+// malformedDotFixtureBadLLMFreedom is a workflow whose node declares an
+// unrecognised llm-freedom value ("partial"). The validator MUST reject this
+// per EM-038: the only accepted llm-freedom values are none, bounded, unbounded.
+const malformedDotFixtureBadLLMFreedom = `digraph workflow {
+    graph [
+        workflow_id       = "wf-bad-llm-freedom-001"
+        name              = "bad-llm-freedom-fixture"
+        version           = "0.1.0"
+        start_node_id     = "node_a"
+        terminal_node_ids = "node_b"
+    ]
+
+    node_a [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "partial"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_b [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_a -> node_b
+}`
+
+// malformedDotFixtureBadModeTag is a workflow whose node declares an
+// unrecognised mode value ("execution"). The validator MUST reject this per
+// EM-038 / AR-005: the only accepted mode values are mechanism and cognition.
+const malformedDotFixtureBadModeTag = `digraph workflow {
+    graph [
+        workflow_id       = "wf-bad-mode-tag-001"
+        name              = "bad-mode-tag-fixture"
+        version           = "0.1.0"
+        start_node_id     = "node_a"
+        terminal_node_ids = "node_b"
+    ]
+
+    node_a [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "execution"
     ]
 
     node_b [

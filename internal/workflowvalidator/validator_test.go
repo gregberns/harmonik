@@ -1010,3 +1010,59 @@ func hasCode(err error, code string) bool {
 	}
 	return false
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Corpus tests for new malformed_dot_corpus_test.go entries (hk-420yr.5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestPreRunValidator_CorpusForbiddenHandlerRef tests the
+// malformedDotFixtureForbiddenHandlerRef corpus constant. A non-agentic node
+// with handler_ref must be rejected per EM-038.
+func TestPreRunValidator_CorpusForbiddenHandlerRef(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixtureForbiddenHandlerRef)
+	if err == nil {
+		t.Fatal("Validate(malformedDotFixtureForbiddenHandlerRef) = nil, want validation error (EM-038: forbidden handler_ref on non-agentic)")
+	}
+	assertErrorCode(t, err, codeForbiddenHandlerRef)
+}
+
+// TestPreRunValidator_CorpusMissingSubWorkflowRef tests the
+// malformedDotFixtureMissingSubWorkflowRef corpus constant. A sub-workflow
+// node without sub_workflow_ref must be rejected per EM-038.
+func TestPreRunValidator_CorpusMissingSubWorkflowRef(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixtureMissingSubWorkflowRef)
+	if err == nil {
+		t.Fatal("Validate(malformedDotFixtureMissingSubWorkflowRef) = nil, want validation error (EM-038: sub-workflow node missing sub_workflow_ref)")
+	}
+	assertErrorCode(t, err, codeMissingSubWorkflowRef)
+}
+
+// TestPreRunValidator_CorpusBadLLMFreedom tests the malformedDotFixtureBadLLMFreedom
+// corpus constant. A node with an unrecognised llm-freedom value must be rejected
+// per EM-038.
+func TestPreRunValidator_CorpusBadLLMFreedom(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixtureBadLLMFreedom)
+	if err == nil {
+		t.Fatal("Validate(malformedDotFixtureBadLLMFreedom) = nil, want validation error (EM-038: bad llm-freedom value)")
+	}
+	assertErrorCode(t, err, codeBadLLMFreedom)
+}
+
+// TestPreRunValidator_CorpusBadModeTag tests the malformedDotFixtureBadModeTag
+// corpus constant. A node with an unrecognised mode value must be rejected per
+// EM-038 / AR-005.
+func TestPreRunValidator_CorpusBadModeTag(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixtureBadModeTag)
+	if err == nil {
+		t.Fatal("Validate(malformedDotFixtureBadModeTag) = nil, want validation error (EM-038/AR-005: bad mode tag)")
+	}
+	assertErrorCode(t, err, codeBadModeTag)
+}

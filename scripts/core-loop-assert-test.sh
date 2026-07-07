@@ -15,12 +15,23 @@ TD="$ROOT/scenarios/core-loop-proof/testdata"
 command -v jq >/dev/null 2>&1 || { echo "jq required" >&2; exit 2; }
 
 pass=0; fail=0
+# check_ref <name> <remote-ndjson> <local-ref-ndjson> <spec-json> <gap> <expected-verdict>
+# gap2 parity: the local reference stream is passed as $ref_events (a JSON array).
+check_ref() {
+    local name="$1" stream="$2" refstream="$3" spec="$4" gap="$5" want="$6" got ref
+    ref="$(jq -s '.' "$refstream")"
+    got="$(jq -n --slurpfile events "$stream" --argjson spec "$spec" --argjson ref_events "$ref" -f "$LIB" \
+             | jq -r --arg g "$gap" '.[] | select(.gap==$g) | .verdict')"
+    if [ "$got" = "$want" ]; then pass=$((pass+1)); echo "ok   — $name ($gap=$got)";
+    else fail=$((fail+1)); echo "FAIL — $name: $gap expected '$want' got '$got'" >&2; fi
+}
+
 # check <name> <ndjson> <spec-json> <gap> <expected-verdict>
 check() {
     local name="$1" stream="$2" spec="$3" gap="$4" want="$5" got
     # -f runs the library as THE program; the per-gap verdict is extracted by a second jq
     # (an inline filter alongside -f would be parsed as an input file, not a program).
-    got="$(jq -n --slurpfile events "$stream" --argjson spec "$spec" -f "$LIB" \
+    got="$(jq -n --slurpfile events "$stream" --argjson spec "$spec" --argjson ref_events null -f "$LIB" \
              | jq -r --arg g "$gap" '.[] | select(.gap==$g) | .verdict')"
     if [ "$got" = "$want" ]; then
         pass=$((pass+1)); echo "ok   — $name ($gap=$got)"
@@ -57,6 +68,14 @@ check "codex gap3 real commit pass"    "$TD/codex-provider-commit.ndjson"       
 check "codex gap3 explicit-fail pass"  "$TD/codex-provider-explicit-fail.ndjson"  "$PROV" gap3 pass
 check "codex gap3 silent no-commit fail" "$TD/codex-provider-silent-nocommit.ndjson" "$PROV" gap3 fail
 check "codex gap3 pending when no expect.provider" "$TD/codex-local-pass.ndjson"   "$CODEX" gap3 pending
+
+# gap2 — remote==local parity (T7). Remote cell spec + a local reference stream.
+REM='{"schema_version":1,"substrate":"remote","seed_bead":"hk-clp-codex","expect":{},"gaps":["gap2"]}'
+LOC='{"schema_version":1,"substrate":"local","seed_bead":"hk-clp-codex","expect":{},"gaps":["gap2"]}'
+check_ref "gap2 remote==local pass"        "$TD/gap2-remote-match.ndjson"   "$TD/gap2-local-ref.ndjson" "$REM" gap2 pass
+check_ref "gap2 remote diverges (terminal) fail" "$TD/gap2-remote-diverge.ndjson" "$TD/gap2-local-ref.ndjson" "$REM" gap2 fail
+check      "gap2 SKIP-LOUD pending (no ref)" "$TD/gap2-remote-match.ndjson"  "$REM" gap2 pending
+check      "gap2 pending on local cell"      "$TD/gap2-local-ref.ndjson"     "$LOC" gap2 pending
 
 echo "-----"
 echo "core-loop-assert self-test: pass=$pass fail=$fail"

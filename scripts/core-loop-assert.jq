@@ -10,9 +10,12 @@
 #     --argjson  spec    "$(cat <cell-spec.json>)" \
 #     -f scripts/core-loop-assert.jq
 #
-#   $events  — the array of NDJSON event objects captured for this cell (subscribe --json);
-#              --slurpfile binds one array element per NDJSON line.
-#   $spec    — one expected-cell object (see scenarios/core-loop-proof/expected-cell.example.json).
+#   $events      — the array of NDJSON event objects captured for this cell (subscribe
+#                  --json); --slurpfile binds one array element per NDJSON line.
+#   $spec        — one expected-cell object (see scenarios/core-loop-proof/expected-cell.example.json).
+#   $ref_events  — REQUIRED (may be null). The LOCAL reference stream (as a JSON array)
+#                  used by gap2 remote==local parity; null for non-remote cells or when no
+#                  tcp:// worker was reachable. Pass `--argjson ref_events null` when unused.
 #
 # OUTPUT — a JSON array of result records, one per gap the spec lists:
 #   { "gap": "gap1", "verdict": "pass"|"fail"|"pending", "detail": "<human string>" }
@@ -79,7 +82,34 @@ def assert_gap1:
 # --- gap2..gap5 — declared here, implemented by T4-T8 -----------------------
 # Each returns pending (honest: not yet asserted on this branch), NOT pass. The
 # per-gap task replaces the pending body with its real assertion over the same stream.
-def assert_gap2: result("gap2"; "pending"; "remote(tcp://)==local parity assertion — implemented by T7 (hk-wf9lv)");
+# --- gap2 — remote(tcp://) path == local path (C2) (T7, hk-wf9lv) -----------
+# The same seed bead run through the remote (tcp://) runner must yield the SAME event-type
+# sequence + terminal outcome as the local cell — no sandbox-wrap misapplied to tcp
+# (hk-ybuts). Compares this remote cell's $events against the local reference $ref_events.
+# SKIP-LOUD: when no local reference was captured (no reachable tcp:// worker), gap2 is
+# `pending` (never a false pass) — the matrix runner surfaces the skip reason.
+def norm_seq($evs):
+  [ $evs[] | (.type // "") ]
+  | map(select(. != "" and . != "agent_heartbeat" and . != "heartbeat"));
+def terminal_of($evs):
+  [ $evs[] | select(.type == "run_completed" or .type == "run_failed")
+    | { t: .type, s: ((.payload.success) // .success // null) } ] | last;
+def assert_gap2:
+  ($spec.substrate // "") as $sub
+  | ($ref_events) as $ref
+  | if $sub != "remote"
+    then result("gap2"; "pending"; "gap2 applies only to remote cells (substrate=\($sub))")
+    elif $ref == null
+    then result("gap2"; "pending"; "SKIP-LOUD: no local reference stream captured (no reachable tcp:// worker) — cannot prove remote==local")
+    else norm_seq($events) as $rseq | norm_seq($ref) as $lseq
+       | terminal_of($events) as $rterm | terminal_of($ref) as $lterm
+       | if $rseq == $lseq and $rterm == $lterm
+         then result("gap2"; "pass"; "remote event-type sequence + terminal outcome == local (\($rterm.t))")
+         elif $rterm != $lterm
+         then result("gap2"; "fail"; "remote terminal \($rterm) != local terminal \($lterm)")
+         else result("gap2"; "fail"; "remote path diverges from local: event-type sequence mismatch (remote=\($rseq | length) local=\($lseq | length) events)")
+         end
+    end;
 # --- gap3 — provider comms through the sandbox (C3/C6) (T6, hk-i21pt) --------
 # Proves the provider round-trip actually reached the sandbox and mutated the tree, AND
 # that a degenerate provider reply (content:null / no edit) surfaces LOUDLY rather than

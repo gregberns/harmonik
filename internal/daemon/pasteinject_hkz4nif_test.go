@@ -97,4 +97,3 @@ func TestPasteInjectOnLaunch_NilSubstrate_IsNoop(t *testing.T) {
 		t.Fatal("hk-z4nif: pasteInjectOnLaunch with nil substrate did not close briefDelivered promptly")
 	}
 }
-

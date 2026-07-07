@@ -90,6 +90,14 @@ type scriptRunConfig struct {
 	// worktreePath is the operator-supplied --worktree-path value.
 	// Used as cwd when executing hook commands.
 	worktreePath string
+
+	// sentinelName, when non-empty, overrides the auto-generated
+	// .harmonik-twin-commit-<unix-ns> sentinel file name in commit_on_cue.
+	// Set from the step's sentinel_name payload key via runScript.
+	// Use the same value in two twins to make both commit the same file,
+	// producing the rebase conflict that triggers the daemon's
+	// non_ff_merge / rebase_conflict path (hk-q3u57).
+	sentinelName string
 }
 
 // twinScriptFixture — per-bead helper prefix for test helpers in this file.
@@ -230,7 +238,18 @@ const callStopHookStep = "call_stop_hook"
 // commitOnCueStep is the type constant for the YAML step that writes a
 // sentinel file and runs git commit in the worktree. Declared as a constant
 // so tests and callers can reference it without magic strings.
-// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
+//
+// Payload fields (all read from ScriptMessage.Payload):
+//
+//	sentinel_name  string  Optional. When non-empty, use this basename as the
+//	                       sentinel file name instead of the default
+//	                       .harmonik-twin-commit-<unix-ns>. Setting the same
+//	                       value in two twins makes both commit the same file,
+//	                       producing a rebase conflict on merge — the condition
+//	                       the daemon's non_ff_merge / rebase_conflict path
+//	                       exercises (hk-q3u57).
+//
+// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88); hk-q3u57.
 const commitOnCueStep = "commit_on_cue"
 
 // signalInterruptStep is the type constant for the YAML step that emits
@@ -339,9 +358,15 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRu
 		// commit_on_cue is a special step that writes a sentinel file and runs
 		// git commit in the worktree, emitting twin_committed with the result.
 		// This lets pasteInjectQuitOnCommit detect a HEAD change and fire /quit.
+		// An optional sentinel_name payload key overrides the auto-generated
+		// file name (hk-q3u57 two-twin same-file race).
 		// Cite: docs/twin-parity-audit-2026-05-14.md §4 item 3 (hk-8ys88).
 		if msg.Type == commitOnCueStep {
-			if err := runCommitOnCue(ctx, e, cfg); err != nil {
+			stepCfg := cfg
+			if name, _ := msg.Payload["sentinel_name"].(string); name != "" {
+				stepCfg.sentinelName = name
+			}
+			if err := runCommitOnCue(ctx, e, stepCfg); err != nil {
 				return fmt.Errorf("runScript: message %d (type=%q): %w", i, msg.Type, err)
 			}
 			continue
@@ -425,8 +450,14 @@ func runCommitOnCue(ctx context.Context, e *wireEmitter, cfg scriptRunConfig) er
 	}
 
 	// Use nanosecond timestamp in the filename so parallel invocations don't collide.
+	// cfg.sentinelName overrides the generated name when set (hk-q3u57: two-twin
+	// same-file race — both twins supply the same sentinel_name so both commit the
+	// same file, producing a rebase conflict on merge).
 	ts := strconv.FormatInt(time.Now().UnixNano(), 10)
 	sentinelName := ".harmonik-twin-commit-" + ts
+	if cfg.sentinelName != "" {
+		sentinelName = cfg.sentinelName
+	}
 	sentinelPath := filepath.Join(cfg.worktreePath, sentinelName)
 	sentinelContent := "commit-on-cue " + ts + "\n"
 

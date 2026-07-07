@@ -1,0 +1,48 @@
+// merge-race-two-node.dot — two-node sequential workflow for same-file merge-race scenario
+//
+// Pinned by:
+//   - scenarios/regression/merge-race-samefile.yaml (ST2, hk-xybb7)
+//   - specs/scenario-harness.md §6.1 (workflow_path resolution)
+//   - specs/scenario-harness.md §SH-008..SH-011 (agent_overrides)
+//
+// Two agentic nodes (alpha_node → beta_node) represent the two concurrent actors
+// in the same-file merge race. In current MVH mode (EM-059) they execute
+// sequentially; the parallel fan-out that produces the actual race is post-MVH.
+// This DOT file is the workflow handle the scenario fixture binds agent_overrides
+// keys against — "alpha_node" maps to the winner twin, "beta_node" to the loser.
+
+digraph "merge-race-two-node" {
+    schema_version="1";
+    version="1.0";
+    workflow_id="merge-race-two-node";
+    start_node="alpha_node";
+    terminal_node_ids="beta_node";
+
+    alpha_node [
+        type="agentic",
+        agent_type="claude-twin",
+        handler_ref="twins/claude-twin",
+        idempotency_class="non-idempotent",
+        "llm-freedom"="unbounded",
+        "io-determinism"="nondeterministic",
+        "replay-safety"="unsafe",
+        idempotency="non-idempotent",
+        mode="cognition",
+        role="winner: first to commit merge-race-sentinel.txt; no startup delay"
+    ];
+
+    beta_node [
+        type="agentic",
+        agent_type="claude-twin",
+        handler_ref="twins/claude-twin",
+        idempotency_class="non-idempotent",
+        "llm-freedom"="unbounded",
+        "io-determinism"="nondeterministic",
+        "replay-safety"="unsafe",
+        idempotency="non-idempotent",
+        mode="cognition",
+        role="loser: 200 ms startup delay; merge rejected with non_ff_merge"
+    ];
+
+    alpha_node -> beta_node;
+}

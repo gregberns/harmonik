@@ -1,0 +1,243 @@
+name: regression.merge-race-samefile
+description: >
+  Regression scenario (specs/scenario-harness.md §ST2, hk-xybb7).
+  Two twins — alpha (winner) and beta (loser) — each commit the same sentinel
+  file via commit_on_cue (specs/handler-contract.md §HC-036a / ST3 sentinel_name
+  extension). Alpha has no startup delay; beta delays 200 ms, ensuring the
+  winner/loser ordering is deterministic. The expected merge path:
+    (1) Alpha's squash-merge lands cleanly → workspace_merge_status{merged}.
+    (2) Beta's squash-merge is rejected → outcome_emitted{kind=rejected,
+        reason=non_ff_merge} because alpha advanced the integration branch first.
+  The overall run outcome is FAIL (one merge rejected).
+  Depends on: ST1 (twin-scripts at scenarios/regression/merge-race-samefile/
+  twin-scripts/), ST3 (commit_on_cue sentinel_name two-twin support, hk-q3u57).
+  NOTE: The parallel fan-out that makes alpha and beta race concurrently is
+  post-MVH (EM-059). Under current sequential dispatch the workflow exercises the
+  commit_on_cue path but both commits land on the same task branch; the race and
+  the non_ff_merge rejection will fire once MaxConcurrent≥2 per-bead parallelism
+  ships. This file is a normative spec artifact per specs/scenario-harness.md §SH-032.
+
+# workflow_path: two-node DOT workflow whose node names match the agent_overrides
+# keys below. Resolved as <repo-root>/scenarios/_workflows/merge-race-two-node.dot
+# per specs/scenario-harness.md §6.1 resolution rule (ii).
+workflow_path: merge-race-two-node.dot
+
+# agent_overrides: bind each workflow node to its scripted twin binary.
+# Keys MUST match the node IDs in merge-race-two-node.dot (SH-008..SH-011).
+# binary "claude-twin" resolves via the twin-search-path prefix (SH-009 tier iii:
+# <repo-root>/twins/claude-twin). --script-path is relative to the synthetic
+# project root (SH-016a); the scripts are seeded by fixture_setup.files below.
+agent_overrides:
+  alpha_node:
+    binary: claude-twin
+    args:
+      - --script-path=twin-scripts/alpha.yaml
+  beta_node:
+    binary: claude-twin
+    args:
+      - --script-path=twin-scripts/beta.yaml
+
+# fixture_setup: seed the synthetic project root with an initial commit and both
+# twin scripts. The initial commit (WM-001) gives the daemon a base branch to
+# create the task branch from. Twin scripts are embedded verbatim so the scenario
+# is self-contained and byte-reproducible (SH-027 determinism contract).
+#
+# Alpha script: winner — no startup_delay_ms; commits merge-race-sentinel.txt.
+# Beta script:  loser  — startup_delay_ms: 200; commits merge-race-sentinel.txt.
+# Both scripts declare commit_on_cue capability and use the same sentinel_name so
+# the daemon's merge path sees a genuine same-file write from two separate agents.
+fixture_setup:
+  git_seed:
+    - op: commit
+      args:
+        message: "init: seed commit for merge-race-samefile scenario"
+  files:
+    twin-scripts/alpha.yaml:
+      encoding: utf8
+      contents: |
+        # Twin script: merge-race-samefile / alpha (winner)
+        #
+        # Role: alpha — first twin to commit; its squash-merge lands cleanly on
+        # the integration branch before beta attempts its merge.
+        # sentinel_name declares the shared filename so both twins write the same
+        # file, producing a genuine same-file conflict on the integration branch.
+        # Cite: specs/handler-contract.md §4.8 HC-036a; hk-xeqtv (ST1).
+        heartbeat_mode: scripted
+        messages:
+          - type: handler_capabilities
+            payload:
+              run_id: run-hkxeqtv-mr-alpha-001
+              session_id: sess-hkxeqtv-mr-alpha-001
+              protocol_versions_supported:
+                - 1
+              claude_session_id: claude-sess-hkxeqtv-alpha-001
+            relative_timestamp_ms: 0
+          - type: agent_ready
+            payload:
+              run_id: run-hkxeqtv-mr-alpha-001
+              session_id: sess-hkxeqtv-mr-alpha-001
+              capabilities:
+                - scripted
+                - commit_on_cue
+            relative_timestamp_ms: 10
+          - type: agent_output_chunk
+            payload:
+              run_id: run-hkxeqtv-mr-alpha-001
+              session_id: sess-hkxeqtv-mr-alpha-001
+              chunk_index: 0
+              bytes_emitted: 256
+            relative_timestamp_ms: 5
+          - type: commit_on_cue
+            payload:
+              sentinel_name: merge-race-sentinel.txt
+            relative_timestamp_ms: 0
+          - type: outcome_emitted
+            payload:
+              run_id: run-hkxeqtv-mr-alpha-001
+              session_id: sess-hkxeqtv-mr-alpha-001
+              node_id: alpha_node
+              outcome_status: WORK_COMPLETE
+            relative_timestamp_ms: 5
+          - type: agent_completed
+            payload:
+              run_id: run-hkxeqtv-mr-alpha-001
+              session_id: sess-hkxeqtv-mr-alpha-001
+              ended_at: "2026-01-01T00:00:00.200Z"
+              exit_code: 0
+              outcome_ref: run-hkxeqtv-mr-alpha-001/outcome
+            relative_timestamp_ms: 0
+    twin-scripts/beta.yaml:
+      encoding: utf8
+      contents: |
+        # Twin script: merge-race-samefile / beta (loser)
+        #
+        # Role: beta — second twin to commit; its squash-merge is rejected with
+        # non_ff_merge because alpha has already advanced the integration branch.
+        # startup_delay_ms: 200 makes beta start 200 ms after alpha, ensuring the
+        # winner/loser ordering is deterministic across harness runs.
+        # sentinel_name matches alpha's, producing the same-file write conflict.
+        # Cite: specs/handler-contract.md §4.8 HC-036a; hk-xeqtv (ST1).
+        heartbeat_mode: scripted
+        startup_delay_ms: 200
+        messages:
+          - type: handler_capabilities
+            payload:
+              run_id: run-hkxeqtv-mr-beta-001
+              session_id: sess-hkxeqtv-mr-beta-001
+              protocol_versions_supported:
+                - 1
+              claude_session_id: claude-sess-hkxeqtv-beta-001
+            relative_timestamp_ms: 0
+          - type: agent_ready
+            payload:
+              run_id: run-hkxeqtv-mr-beta-001
+              session_id: sess-hkxeqtv-mr-beta-001
+              capabilities:
+                - scripted
+                - commit_on_cue
+            relative_timestamp_ms: 10
+          - type: agent_output_chunk
+            payload:
+              run_id: run-hkxeqtv-mr-beta-001
+              session_id: sess-hkxeqtv-mr-beta-001
+              chunk_index: 0
+              bytes_emitted: 256
+            relative_timestamp_ms: 5
+          - type: commit_on_cue
+            payload:
+              sentinel_name: merge-race-sentinel.txt
+            relative_timestamp_ms: 0
+          - type: outcome_emitted
+            payload:
+              run_id: run-hkxeqtv-mr-beta-001
+              session_id: sess-hkxeqtv-mr-beta-001
+              node_id: beta_node
+              outcome_status: WORK_COMPLETE
+            relative_timestamp_ms: 5
+          - type: agent_completed
+            payload:
+              run_id: run-hkxeqtv-mr-beta-001
+              session_id: sess-hkxeqtv-mr-beta-001
+              ended_at: "2026-01-01T00:00:00.400Z"
+              exit_code: 0
+              outcome_ref: run-hkxeqtv-mr-beta-001/outcome
+            relative_timestamp_ms: 0
+
+# expected_events: asserted from the event stream, not stdout (SH-027).
+#
+# (1) Alpha's merge lands cleanly on the integration branch.
+# (2) Beta's merge is rejected — non_ff_merge because alpha advanced main first.
+# (3) Alpha node reaches terminal state (agent_completed{node_id=alpha_node}).
+# (4) Beta node reaches terminal state (agent_completed{node_id=beta_node}).
+#
+# The outcome_emitted events here are the DAEMON-SIDE merge-outcome events emitted
+# by mergeRunBranchToMain (workloop.go), not the twin-side outcome_emitted messages
+# above. Kind values: "approved" (winner) | "rejected" (loser).
+expected_events:
+  - kind: event_present
+    type: workspace_merge_status
+    payload_match:
+      status: merged
+    description: >
+      Alpha (winner) squash-merge must land on the integration branch
+      (workspace-model.md §4.5.WM-021). Asserts the winner path fires before
+      beta's merge attempt sees a non-fast-forward base.
+  - kind: event_present
+    type: outcome_emitted
+    payload_match:
+      kind: rejected
+    description: >
+      Beta (loser) merge must be rejected with kind=rejected (workloop.go
+      mergeRunBranchToMain → emitOutcomeEmitted). The reason field carries
+      "non_ff_merge: <branch> advanced concurrently" confirming the non-FF
+      detection path fired, not a rebase conflict.
+  - kind: event_present
+    type: agent_completed
+    payload_match:
+      node_id: alpha_node
+    description: >
+      Alpha node must reach a terminal transition (agent_completed) regardless
+      of beta's merge outcome. Satisfies "both beads reach terminal transition"
+      per ST2 contract (hk-xybb7).
+  - kind: event_present
+    type: agent_completed
+    payload_match:
+      node_id: beta_node
+    description: >
+      Beta node must reach a terminal transition (agent_completed) regardless
+      of its merge rejection. The subprocess exits cleanly (exit_code=0); the
+      rejection is a daemon-side merge decision, not a twin crash.
+
+# expected_workspace: assert no corrupt merge landed on the integration branch.
+# commit_trailer_present on refs/heads/main proves the squash-merge that DID land
+# (alpha's) carried the required Harmonik-Run-ID trailer (WM-019), and the HEAD
+# is a single clean commit — not a merge commit or conflict residue.
+expected_workspace:
+  - kind: commit_trailer_present
+    path: refs/heads/main
+    expected: Harmonik-Run-ID
+    description: >
+      Integration branch HEAD must carry Harmonik-Run-ID trailer after alpha's
+      squash-merge (workspace-model.md §4.5.WM-019). Proves no corrupt merge
+      landed: a missing or doubled trailer would indicate a conflict resolution
+      gone wrong during the same-file race.
+
+# expected_outcome: the run outcome is FAIL because beta's merge was rejected.
+# The rejection surfaces as a FAIL at the run level even though both twin
+# subprocesses exited cleanly (exit_code=0); the daemon marks the run failed
+# when mergeRunBranchToMain returns non_ff_merge for any node.
+expected_outcome:
+  outcome_status: FAIL
+  description: >
+    Run must end with FAIL because beta's squash-merge was rejected with
+    non_ff_merge (specs/scenario-harness.md §SH-024 outcome contract).
+    Alpha's merge SUCCESS is not enough to elevate the run to overall SUCCESS
+    when any concurrent actor's merge is rejected.
+
+# timeout_secs: generous budget covering two subprocess launches, the
+# commit_on_cue git operations for both twins, and the two squash-merge attempts.
+timeout_secs: 120
+
+# cadence_tag: regression — runs in the integration CI lane, not the fast smoke
+# lane (SH-029). The merge-race path is too slow for the smoke gate.
+cadence_tag: regression

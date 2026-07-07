@@ -90,6 +90,24 @@ const (
 	StateOffline
 )
 
+// GetStateAt returns the computed State for r at the given now time.
+// This is the clock-injection seam for deterministic testing (scenario 4, hk-x8fc6).
+// A clean leave beat (Status=="offline") short-circuits to StateOffline
+// immediately, bypassing the TTL check — so a departing agent never reads as stale.
+func GetStateAt(r Record, now time.Time) State {
+	if r.Status == "offline" {
+		return StateOffline
+	}
+	age := now.Sub(r.EffectiveLastSeen)
+	if age < TTL {
+		return StateOnline
+	}
+	if age < StaleCutoff {
+		return StateStale
+	}
+	return StateOffline
+}
+
 // GetState returns the computed State for r.
 //
 // A clean leave beat (Status=="offline") short-circuits to StateOffline
@@ -98,17 +116,7 @@ const (
 //
 // Lifted from cmd/harmonik/comms.go (was GetPresenceState, package main).
 func GetState(r Record) State {
-	if r.Status == "offline" {
-		return StateOffline
-	}
-	age := time.Since(r.EffectiveLastSeen)
-	if age < TTL {
-		return StateOnline
-	}
-	if age < StaleCutoff {
-		return StateStale
-	}
-	return StateOffline
+	return GetStateAt(r, time.Now())
 }
 
 // IsOnline reports whether r represents an agent that is currently online

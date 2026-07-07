@@ -37,6 +37,11 @@
 #     --no-cycle                 reuse an already-up scratch daemon (skip the clean reset)
 #     --feedback                 file a deduped FLEET bead per red cell via scratch-daemon.sh
 #                                feedback (T3, hk-9cw6q); green cells file nothing
+#     --assert                   (T9) capture each cell's FULL event stream and fold it through
+#                                the assertion library; the cell verdict is the per-gap fold
+#                                (green=all pass, red=any fail incl known-RED, pending=SKIP-LOUD)
+#     --specs <cells.json>       expected-cell specs for --assert (default:
+#                                scenarios/core-loop-proof/cells.json)
 #
 # ENV:
 #   MATRIX_REMOTE_WORKER   same as --remote-worker
@@ -70,6 +75,8 @@ SEED_BEAD=""
 KEEP=0
 NO_CYCLE=0
 FEEDBACK=0
+ASSERT=0
+SPECS=""
 
 [ $# -ge 1 ] || die "usage: $SELF <scratch-path> [flags] (see header)"
 SCRATCH="$1"; shift
@@ -89,6 +96,9 @@ while [ $# -gt 0 ]; do
         --keep)           KEEP=1; shift;;
         --no-cycle)       NO_CYCLE=1; shift;;
         --feedback)       FEEDBACK=1; shift;;
+        --assert)         ASSERT=1; shift;;
+        --specs)          [ $# -ge 2 ] || die "--specs needs a value"; SPECS="$2"; shift 2;;
+        --specs=*)        SPECS="${1#--specs=}"; shift;;
         *) die "unknown flag '$1' (see header for usage)";;
     esac
 done
@@ -169,6 +179,21 @@ GRID=()
 RED_ARTIFACTS=()
 had_red=0; n_green=0; n_red=0; n_pending=0; n_skip=0
 
+# ---- assert-mode wiring (T9) ----------------------------------------------
+# In --assert mode each cell's FULL event stream (not just batch's 3 terminal types) is
+# captured and folded through the assertion library; the cell verdict comes from the fold.
+ASSERT_CELL="$REPO_ROOT/scripts/core-loop-assert-cell.sh"
+SCRATCH_BIN="$SCRATCH/.harmonik/bin/harmonik"
+SCRATCH_SOCK="$SCRATCH/.harmonik/daemon.sock"
+CAP_TYPES="harness_selected,model_selected,run_started,run_completed,run_failed,workspace_merge_status,implementer_phase_complete,agent_ready,agent_ready_timeout,agent_ready_stall_detected,post_agent_ready_hang,launch_stall_detected"
+CAP_DIR="$SCRATCH/.harmonik/matrix-captures"
+if [ "$ASSERT" -eq 1 ]; then
+    [ -x "$ASSERT_CELL" ] || die "--assert needs $ASSERT_CELL"
+    [ -n "$SPECS" ] || SPECS="$REPO_ROOT/scenarios/core-loop-proof/cells.json"
+    [ -f "$SPECS" ] || die "--assert: specs file not found: $SPECS"
+    mkdir -p "$CAP_DIR"
+fi
+
 [ "${#HARNESSES[@]}" -gt 0 ] || die "no harnesses to run (empty --harnesses?)"
 [ "${#SUBSTRATES[@]}" -gt 0 ] || die "no substrates to run (empty --substrates?)"
 for h in "${HARNESSES[@]}"; do
@@ -197,15 +222,55 @@ for h in "${HARNESSES[@]}"; do
         # writes a results artifact whose path we echo for T2/T3 to consume.
         batch_name="matrix-${h}-${s}"
         log "RUN   $cell — batch '$batch_name' seed=$local_seed"
+
+        # --assert: arm a FULL-type capture BEFORE submitting (no missed-event race).
+        cap_pid=""; cap_file="$CAP_DIR/${h}-${s}.ndjson"
+        if [ "$ASSERT" -eq 1 ]; then
+            [ -x "$SCRATCH_BIN" ] || die "--assert: scratch binary not built ($SCRATCH_BIN)"
+            "$SCRATCH_BIN" subscribe --socket "$SCRATCH_SOCK" --types "$CAP_TYPES" --heartbeat 30s \
+                > "$cap_file" 2>/dev/null &
+            cap_pid=$!
+        fi
+
         batch_out=""
         if batch_out="$("$SCRATCH_DAEMON" batch "$SCRATCH" "$batch_name" --beads "$local_seed" 2>&1)"; then
-            cell_verdict="green"; n_green=$((n_green+1))
+            batch_verdict="green"
         else
-            cell_verdict="red"; n_red=$((n_red+1)); had_red=1
+            batch_verdict="red"
         fi
         results_path="$(printf '%s\n' "$batch_out" | sed -n 's/.*results=\([^ ]*\).*/\1/p' | tail -1)"
         printf '%s\n' "$batch_out" | grep -E '^BATCH_(ITEM|SUMMARY)' || true
-        GRID+=("$cell	$cell_verdict	${results_path:-no-artifact}")
+
+        # Determine the cell verdict. Without --assert it is the batch terminal outcome.
+        # With --assert it is the assertion fold over the full captured stream.
+        cell_verdict="$batch_verdict"; detail="${results_path:-no-artifact}"
+        if [ "$ASSERT" -eq 1 ]; then
+            [ -n "$cap_pid" ] && kill "$cap_pid" 2>/dev/null || true
+            # resolve the cell spec, overriding seed_bead with the real dispatched id.
+            spec="$(jq -c --arg c "$cell" --arg sb "$local_seed" \
+                      '.cells[] | select(.cell==$c) | .seed_bead=$sb' "$SPECS" 2>/dev/null || true)"
+            if [ -z "$spec" ]; then
+                cell_verdict="pending"; detail="no spec for cell in $SPECS"
+            else
+                # gap2 remote cells fold against the local cell's captured stream.
+                ref="-"; [ "$s" = "remote" ] && [ -f "$CAP_DIR/${h}-local.ndjson" ] && ref="$CAP_DIR/${h}-local.ndjson"
+                fold_out="$(bash "$ASSERT_CELL" "$cap_file" "$spec" "$ref" 2>&1)"; fold_rc=$?
+                printf '%s\n' "$fold_out" | grep '^GAP' || true
+                case "$fold_rc" in
+                    0) cell_verdict="green" ;;
+                    2) cell_verdict="pending" ;;
+                    *) cell_verdict="red" ;;
+                esac
+                detail="$(printf '%s\n' "$fold_out" | grep '^CELL_VERDICT' | tail -1)"
+            fi
+        fi
+
+        case "$cell_verdict" in
+            green)   n_green=$((n_green+1)) ;;
+            red)     n_red=$((n_red+1)); had_red=1 ;;
+            pending) n_pending=$((n_pending+1)) ;;
+        esac
+        GRID+=("$cell	$cell_verdict	$detail")
 
         # T3 (hk-9cw6q): red cells → deduped fleet bead. Stash the (batch,artifact) pair;
         # green cells file nothing. Feedback runs AFTER the grid (it reads the persisted

@@ -1,0 +1,5 @@
+{"type":"run_started","payload":{"bead_id":"hk-clp-codex","run_id":"0192aaaa-0000-7000-8000-000000000001","workflow_id":"0192bbbb-0000-7000-8000-000000000002","workflow_version":"1","workspace_path":"/w","input_ref":"ws:main","workflow_mode":"single"}}
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-codex","agent_type":"codex","tier":1}}
+{"type":"model_selected","payload":{"run_id":"0192aaaa-0000-7000-8000-000000000001","model":"","harness":"codex"}}
+{"type":"implementer_phase_complete","payload":{"bead_id":"hk-clp-codex","run_id":"0192aaaa-0000-7000-8000-000000000001","commit_landed":true}}
+{"type":"run_completed","payload":{"bead_id":"hk-clp-codex","run_id":"0192aaaa-0000-7000-8000-000000000001","success":true}}

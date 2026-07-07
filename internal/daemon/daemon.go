@@ -1301,7 +1301,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				}
 				beadLedger = brAdapter
 				beadResetter = brAdapter
-				orphanStatusReader = brAdapter // hk-mdus1 B3: in_progress guard reader
+				orphanStatusReader = brAdapter  // hk-mdus1 B3: in_progress guard reader
 				beadCat3cCloser = brAdapter     // Cat 3c auto-reconciler (hk-lgtq2)
 				intentGCLedger = brAdapter      // GCRetiredIntentsWithRedrive ledger (hk-cizvu)
 				intentRedriveWriter = brAdapter // BI-031 step-4 re-drive (hk-aev8t)

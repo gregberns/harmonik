@@ -1,0 +1,31 @@
+codename: comms-test-harness
+title: Comms bus test-validation harness (L0/L1/L2 acceptance corpus)
+type: plan
+project:
+    id: gregberns-harmonik
+jig: plan
+jig_version: 1
+status: problem-space
+status_values:
+    - problem-space
+    - analyze
+    - decompose
+    - research
+    - change-spec
+    - integration
+    - tasks
+    - ready
+created: 2026-07-07T06:13:56Z
+updated: 2026-07-07T06:13:56Z
+sessions:
+    - id: null
+      started: 2026-07-07T06:13:56Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:comms-test-harness
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

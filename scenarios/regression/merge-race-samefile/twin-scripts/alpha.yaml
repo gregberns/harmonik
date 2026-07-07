@@ -6,9 +6,9 @@
 # first and beta's merge attempt sees a non-fast-forward base → non_ff_merge.
 #
 # The commit_on_cue step writes a sentinel file and commits it.  The
-# sentinel_path payload field declares the shared path that BOTH twins write
-# to, so the daemon's merge path faces a genuine same-file conflict.
-# ST3 (hk-q3u57) confirms or extends commit_on_cue to honour sentinel_path.
+# sentinel_name payload field declares the shared filename that BOTH twins
+# write to, so the daemon's merge path faces a genuine same-file conflict.
+# ST3 (hk-q3u57) added sentinel_name support to runCommitOnCue.
 #
 # Cite: specs/handler-contract.md §4.8 HC-036a; hk-xeqtv (ST1).
 heartbeat_mode: scripted
@@ -38,7 +38,7 @@ messages:
     relative_timestamp_ms: 5
   - type: commit_on_cue
     payload:
-      sentinel_path: merge-race-sentinel.txt
+      sentinel_name: merge-race-sentinel.txt
     relative_timestamp_ms: 0
   - type: outcome_emitted
     payload:

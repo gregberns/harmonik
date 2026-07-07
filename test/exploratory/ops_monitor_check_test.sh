@@ -83,6 +83,8 @@
 #   [x] hk-7o4i0 Fix B BOUNDED-SUPPRESS: suppression resets the miss counter, but it is bounded —
 #                         a genuine frozen-cursor stall that PERSISTS past WATCH_RESTART_SUPPRESS_WINDOW
 #                         is re-detected after the window + stall_ticks fresh ticks (Test 43)
+#   [x] dquote-guard: latest.json is non-empty valid JSON even with double-quote-rich comms/state
+#                     (hk-2mw1x; guards against dquote-truncation landmine regression) (Test 44)
 #
 # Usage:
 #   bash test/exploratory/ops_monitor_check_test.sh
@@ -2712,6 +2714,42 @@ write_rd_events 700
 run_check "$PROJ" > /dev/null 2>&1
 SIGS_43C=$(python3 -c "import json; d=json.load(open('$LATEST_43A')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
 assert_contains "43: tick C → genuine stall re-detected (suppression is bounded)" "watch-stalled" "$SIGS_43C"
+rm -rf "$PROJ"
+
+# ── Test 44: dquote-guard — latest.json non-empty valid JSON (hk-2mw1x) ──────
+# Architecture guard against the dquote-truncation landmine: the analysis program
+# was formerly passed as python3 -c "...", so any literal " in the Python source or
+# from an expanded shell variable (comms NDJSON, state JSON) could truncate the arg
+# before the final print, yielding 0-byte latest.json (2026-07-07 ~34-min outage).
+# The fix (heredoc / temp file) eliminates this class. This test pins the guarantee:
+# latest.json is non-empty valid JSON even when comms-who and state carry
+# double-quote-rich JSON payloads (standard JSON uses " for every key and value).
+echo ""
+echo "=== Test 44: dquote-guard — latest.json non-empty valid JSON (hk-2mw1x) ==="
+RECENT_TS_44=$(ts_ago 5)
+# Comms payload with double-quotes in every key and value (standard NDJSON output).
+CW_44='{"agent":"captain","status":"online","last_seen":"'"$RECENT_TS_44"'"}'
+# State with alerted_immediate containing a JSON dict (double-quoted keys + values).
+STATE_44='{"stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{"daemon-down":{"first_ts":1751000000,"last_ts":1751000000,"count":1,"last_ops_critical_ts":0}}}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_44" \
+  --state-json "$STATE_44" \
+)
+OUTPUT_44=$(run_check "$PROJ")
+LATEST_44="$PROJ/.harmonik/ops-monitor/latest.json"
+if [[ -s "$LATEST_44" ]]; then
+  pass "dquote-guard: latest.json is non-empty"
+else
+  fail "dquote-guard: latest.json is empty (analysis program was truncated)"
+fi
+if python3 -c "import json,sys; json.load(sys.stdin)" < "$LATEST_44" 2>/dev/null; then
+  pass "dquote-guard: latest.json is valid JSON"
+else
+  fail "dquote-guard: latest.json is not valid JSON (content: $(head -c 120 "$LATEST_44" 2>/dev/null))"
+fi
+assert_json_bool "dquote-guard: daemon_up in snapshot" "$LATEST_44" "daemon_up" "true"
 rm -rf "$PROJ"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

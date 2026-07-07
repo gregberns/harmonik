@@ -583,8 +583,15 @@ except Exception:
 fi
 
 # ── Python analysis: produce JSON snapshot ────────────────────────────────────
-
-ANALYSIS=$(py3 "
+# Feed the program via a temp file (not py3 "..." double-quoted arg) to avoid
+# the dquote-truncation landmine (hk-2mw1x): any literal " in the Python source
+# or from an expanded shell variable (COMMS_WHO_NDJSON, PREV_ALERTED_IMMEDIATE,
+# etc.) truncates the -c arg before the final print, yielding 0-byte latest.json
+# (2026-07-07 ~34-min fleet-blind outage).
+_OM_PY=$(mktemp "${TMPDIR:-/tmp}/ops-monitor-XXXXXX.py")
+# Part 1: imports + variable bindings — shell expansion via heredoc (writing to a
+# file, not a -c arg, so double-quotes in expanded values are passed through safely).
+cat >> "$_OM_PY" << OM_VARS
 import json, sys, os, datetime, fnmatch
 
 proj               = '$PROJ'
@@ -646,6 +653,10 @@ watch_selfheal_cooldown   = int('$WATCH_SELFHEAL_COOLDOWN')
 # hk-ghcqn: idle-submit-wedge auto-nudge inputs.
 prev_last_watch_nudge_ts  = int('$PREV_LAST_WATCH_NUDGE_TS')
 watch_nudge_cooldown      = int('$WATCH_NUDGE_COOLDOWN')
+OM_VARS
+# Part 2: Python analysis logic — single-quoted heredoc (no shell expansion; " in
+# future Python string literals will never truncate the program).
+cat >> "$_OM_PY" << 'OM_LOGIC'
 
 # ── Parse events.jsonl for recent agent_message activity ────────────────────
 # Used as a presence fallback: comms send does NOT refresh the presence
@@ -1669,7 +1680,9 @@ new_state = {
 }
 
 print(json.dumps({'snapshot': snapshot, 'state': new_state}))
-")
+OM_LOGIC
+ANALYSIS=$(python3 "$_OM_PY")
+rm -f "$_OM_PY"
 
 # ── Write latest.json ─────────────────────────────────────────────────────────
 
@@ -1678,6 +1691,14 @@ import json, sys
 d = json.loads(sys.stdin.read())
 print(json.dumps(d['snapshot'], indent=2))
 " <<< "$ANALYSIS" > "$LATEST_FILE"
+
+# Guard: assert latest.json is non-empty valid JSON (hk-2mw1x hardening).
+# A truncated or failed analysis program yields an empty or malformed file;
+# fail loud so the probe never silently exits 0 with a dead snapshot.
+if [[ ! -s "$LATEST_FILE" ]] || ! python3 -c "import json,sys; json.load(sys.stdin)" < "$LATEST_FILE" 2>/dev/null; then
+  echo "ops-monitor: FATAL — latest.json empty or malformed; analysis failed @ $TS" >&2
+  exit 1
+fi
 
 # ── Update state.json ─────────────────────────────────────────────────────────
 

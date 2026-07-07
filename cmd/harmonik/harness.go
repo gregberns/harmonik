@@ -338,23 +338,19 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	// partial SuiteResult, and returns the appropriate exit code.
 	// It captures completedResults, fixtureRoot, and other locals by reference.
 	interruptExit := func() int {
+		sig := <-interruptCh
 		select {
-		case sig := <-interruptCh:
-			select {
-			case sig2 := <-sigCh:
-				if sig2 == syscall.SIGINT {
-					return harnessExitOperatorInterrupt
-				}
-			default:
+		case sig2 := <-sigCh:
+			if sig2 == syscall.SIGINT {
+				return harnessExitOperatorInterrupt
 			}
-			harnessEmitInterruptResult(stdout, stderr,
-				scenario.SuiteResultOutputFormat(outputFlag),
-				suiteID, suiteStart, fixtureRoot, cadenceFilter,
-				completedResults, sig)
-			return harnessInterruptExitCode(sig)
 		default:
-			return harnessExitInternalError
 		}
+		harnessEmitInterruptResult(stdout, stderr,
+			scenario.SuiteResultOutputFormat(outputFlag),
+			suiteID, suiteStart, fixtureRoot, cadenceFilter,
+			completedResults, sig)
+		return harnessInterruptExitCode(sig)
 	}
 
 	for _, entry := range discovered {
@@ -401,11 +397,14 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		if bootstrapErr != nil {
 			// Best-effort partial teardown per §8.3; do not escalate to cleanup-failed.
 			tdParams := scenario.TeardownParams{ScenarioName: scenarioName}
-			tdResult, _ := scenario.TeardownFixture(ctx, tdParams)
+			tdResult, tdErrPartial := scenario.TeardownFixture(ctx, tdParams)
 			result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
 				evLogRelPath,
 				scenario.BootstrapFixtureFailureClass(bootstrapErr), bootstrapErr.Error())
 			result.WorkspaceSnapshotPath = tdResult.WorkspaceSnapshotPath
+			if tdErrPartial != nil {
+				result.ErrorDetail += "; teardown: " + tdErrPartial.Error()
+			}
 			_ = scenario.WriteScenarioResult(fixtureRoot, result)
 			completedResults = append(completedResults, result)
 			continue
@@ -422,10 +421,13 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 				WorkspacePath: workspacePath,
 				EventLogPath:  absEvLogPath,
 			}
-			tdResult, _ := scenario.TeardownFixture(ctx, tdParams)
+			tdResult, tdErrPartial := scenario.TeardownFixture(ctx, tdParams)
 			result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
 				evLogRelPath, scenario.FailureClassFixtureSetupFailed, fileErr.Error())
 			result.WorkspaceSnapshotPath = tdResult.WorkspaceSnapshotPath
+			if tdErrPartial != nil {
+				result.ErrorDetail += "; teardown: " + tdErrPartial.Error()
+			}
 			_ = scenario.WriteScenarioResult(fixtureRoot, result)
 			completedResults = append(completedResults, result)
 			continue
@@ -439,10 +441,13 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 				WorkspacePath: workspacePath,
 				EventLogPath:  absEvLogPath,
 			}
-			tdResult, _ := scenario.TeardownFixture(ctx, tdParams)
+			tdResult, tdErrPartial := scenario.TeardownFixture(ctx, tdParams)
 			result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
 				evLogRelPath, scenario.FailureClassFixtureSetupFailed, dotErr.Error())
 			result.WorkspaceSnapshotPath = tdResult.WorkspaceSnapshotPath
+			if tdErrPartial != nil {
+				result.ErrorDetail += "; teardown: " + tdErrPartial.Error()
+			}
 			_ = scenario.WriteScenarioResult(fixtureRoot, result)
 			completedResults = append(completedResults, result)
 			continue
@@ -467,6 +472,12 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		)
 
 		switch {
+		case orchErr != nil && ctx.Err() != nil && !errors.Is(orchErr, scenario.ErrScenarioTimeout):
+			// Signal cancelled the orchestration context; classify as harness-internal-error
+			// (rank 1) per SH-033 and §8.7(v) rather than orchestration-internal-error (rank 2).
+			finalVerdict = scenario.ScenarioVerdictError
+			finalFC = scenario.FailureClassHarnessInternalError
+			finalErrDetail = fmt.Sprintf("operator interrupt: %v", orchErr)
 		case errors.Is(orchErr, scenario.ErrScenarioTimeout):
 			finalVerdict = scenario.ScenarioVerdictTimeout
 			finalFC = scenario.FailureClassScenarioTimeout

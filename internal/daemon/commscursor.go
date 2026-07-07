@@ -143,6 +143,13 @@ func (s *CursorStore) Advance(name, eventID string) error {
 	if eventID == "" {
 		return fmt.Errorf("commscursor: Advance %q: eventID must be non-empty", name)
 	}
+	// Validate eventID is a well-formed UUID unconditionally so a malformed string
+	// can never land in the cursor file. cursorStrictlyGreater also checks the
+	// candidate, but only when an existing cursor is present — a first-advance on
+	// an empty store would otherwise skip the check entirely.
+	if _, err := uuid.Parse(eventID); err != nil {
+		return fmt.Errorf("commscursor: Advance %q: malformed event_id %q: %w", name, eventID, err)
+	}
 
 	if err := os.MkdirAll(s.dir, 0o755); err != nil { //nolint:gosec // G301: 0755 matches .harmonik conventions
 		return fmt.Errorf("commscursor: Advance %q: mkdir %q: %w", name, s.dir, err)

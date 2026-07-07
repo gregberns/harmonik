@@ -20,6 +20,8 @@ package daemon
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -207,6 +209,94 @@ func TestCursorStore_AdvanceForwardStillWorks(t *testing.T) {
 		}
 		if got != id {
 			t.Fatalf("forward Advance #%d did not take: want %q, got %q", i, id, got)
+		}
+	}
+}
+
+// TestCursorStore_MalformedEventIDRejected verifies that Advance rejects a
+// non-UUID event_id unconditionally — including on a fresh store with no
+// existing cursor. Pre-fix, the UUID check was gated on current != "" so a
+// first advance on an empty store could write arbitrary bytes and bypass the
+// monotonic guard for that slot.
+func TestCursorStore_MalformedEventIDRejected(t *testing.T) {
+	t.Parallel()
+	t.Run("fresh_store", func(t *testing.T) {
+		t.Parallel()
+		cs := NewCursorStore(t.TempDir())
+		if err := cs.Advance("agent-x", "not-a-uuid"); err == nil {
+			t.Fatal("Advance with malformed event_id on empty store: want error, got nil")
+		}
+	})
+	t.Run("existing_cursor", func(t *testing.T) {
+		t.Parallel()
+		cs := NewCursorStore(t.TempDir())
+		if err := cs.Advance("agent-x", orderedV7(t, 1)[0]); err != nil {
+			t.Fatalf("initial Advance: %v", err)
+		}
+		if err := cs.Advance("agent-x", "still-not-a-uuid"); err == nil {
+			t.Fatal("Advance with malformed event_id over existing cursor: want error, got nil")
+		}
+	})
+}
+
+// TestCursorStore_CorruptCursorAllowsForwardWrite verifies that if the cursor
+// file on disk is corrupted (not a valid UUID — e.g. after a partial write or
+// filesystem corruption), a subsequent Advance with a well-formed event_id
+// still succeeds. The corrupt floor is treated as "no usable floor"
+// (cursorStrictlyGreater: parse failure on current → true, nil).
+func TestCursorStore_CorruptCursorAllowsForwardWrite(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cs := NewCursorStore(dir)
+
+	// Establish a valid cursor first (creates the directory and file).
+	initial := orderedV7(t, 1)[0]
+	if err := cs.Advance("agent-corrupt", initial); err != nil {
+		t.Fatalf("initial Advance: %v", err)
+	}
+	// Overwrite the cursor file with garbage to simulate corruption.
+	if err := os.WriteFile(filepath.Join(dir, "agent-corrupt"), []byte("corrupted\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile corrupt: %v", err)
+	}
+
+	next := orderedV7(t, 1)[0]
+	if err := cs.Advance("agent-corrupt", next); err != nil {
+		t.Fatalf("Advance after corruption: %v", err)
+	}
+	got, err := cs.Get("agent-corrupt")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != next {
+		t.Fatalf("corrupt floor blocked forward write: want %q, got %q", next, got)
+	}
+}
+
+// TestCursorStore_DescendingStormNeverRegresses verifies the monotonic invariant
+// under a sequential "descending storm": advance once to the maximum, then
+// attempt every predecessor in strictly descending order. The cursor must stay
+// at max after every backward attempt.
+func TestCursorStore_DescendingStormNeverRegresses(t *testing.T) {
+	t.Parallel()
+	cs := NewCursorStore(t.TempDir())
+
+	const n = 10
+	ids := orderedV7(t, n)
+	maxID := ids[n-1]
+
+	if err := cs.Advance("storm", maxID); err != nil {
+		t.Fatalf("Advance(max): %v", err)
+	}
+	for i := n - 2; i >= 0; i-- {
+		if err := cs.Advance("storm", ids[i]); err != nil {
+			t.Fatalf("Advance(ids[%d]): %v", i, err)
+		}
+		got, err := cs.Get("storm")
+		if err != nil {
+			t.Fatalf("Get after backward advance #%d: %v", i, err)
+		}
+		if got != maxID {
+			t.Fatalf("cursor regressed after backward advance #%d: want %q, got %q", i, maxID, got)
 		}
 	}
 }

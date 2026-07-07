@@ -1,0 +1,34 @@
+type: assessor
+cardinality: { min: 0, max: n }
+harness: claude
+
+identity:
+  soul: soul.md
+  parent_intent: admiral
+
+context:
+  - { ref: boot,                          as: skill,       presence: injected }
+  - { ref: operating.md,                  as: instruction, presence: injected }
+  - { ref: agent-comms,                   as: skill,       presence: injected }
+  - { ref: beads-cli,                     as: skill,       presence: retrieved }
+  - { ref: scripts/scratch-daemon.sh,     as: doc,         presence: retrieved }
+
+triggers:
+  - { id: spawn, source: manual,  enabled: true }
+  - { id: gate,  source: comms,   enabled: true }
+
+handoff:
+  channel: private
+
+keeper:
+  thresholds: default
+
+lifecycle:
+  self_restart: true
+
+tools_dir: null
+
+markers:
+  never_emits:
+    - queue_submit:main
+    - crew_start

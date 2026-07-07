@@ -23,7 +23,67 @@
 > below are 10 days STALE — full reconcile owed on the next hourly audit; treat MR1–MR3 + the
 > quality-process kerf pilot as the current front line.
 
+## ★ SINGLE FOCUS — QUALITY-SYSTEM (operator 2026-07-06): build the whole test/validation system
+
+> Vet the daemon after changes BEFORE it replaces the live binary. Full synthesis + 4 scoping passes:
+> `plans/2026-07-06-quality-system/` (00-SYNTHESIS is the map). Consolidate 4 overlapping efforts into
+> ONE kerf work `codename:quality-system` (tranched, NOT a mega-epic). Build spine = daemon-testbed-design
+> (Docker substrate → digital-twin agent seam → chaos generator). `remote-test-pyramid` (10/10) already
+> built the runner-seam foundation — close it out. Process mandates: branch-per-epic gate (test+review+
+> break-test at boundary), GATE-0 pre-deploy e2e, 24h rule (current binary; new build deploys only after
+> passing the test system), testing-crew builds+tests in own worktree+integration branch → then main.
+
+| Chunk (integration-branch epic) | Order | Proves |
+|---|---|---|
+| **core-loop-proof** | 1st, blocks all | real bead→queue→harness(correct model)→sandbox provider-comms→changes→DOT review-back, ×{claude,codex,pi}×{local,remote}. Closes bug-gaps 1/2/3/5. |
+| **scripted-twin** ‖ **scratch-substrate** | after 1, parallel | Layer-1 deterministic twin + first scenario ‖ Layer-0 Docker substrate + disk dial |
+| **adversarial-corpus** | after 2+3 | failure-corpus regression tests + Lane-1 XT break-testing |
+| **chaos-generator** | last | Layer-2 LLM generator, judged by the real daemon |
+
+**Org (APPROVED operator 2026-07-06):** NEW `assessor` agent-manifest = gate executor (spawned
+per epic, admiral-directed, separate from captain-the-builder); admiral = gate authority, captain =
+builder unchanged. Detail: `plans/2026-07-06-quality-system/04-testing-org-model.md`. Manifest AUTHORED +
+independently reviewed → APPROVE (`.harmonik/agents/assessor/`); NOT yet wired to a launcher.
+
+**PHASE PROGRESS (admiral drives; captain builds one phase at a time):**
+- **Phase 1 — core-loop-proof + gate bootstrap: KERF TASKED, BUILD STARTING.** Captain ran full kerf cycle
+  (problem-space→analysis→tasks) scoped to core-loop-proof ONLY → **epic `hk-hcrvb` + 9 tranched tasks**
+  (T1 skeleton → T2 assert-lib → gap tasks T4-8 → T9 gate), deps wired, committed+pushed `ef24bcaf`.
+  `integration/core-loop-proof` branch up. Acceptance = top-5 gaps in `02-bug-corpus`.
+  **BUILD MODEL DECISION (admiral, option C, 2026-07-06):** the 'own worktree + integration branch → then
+  main' rule has NO daemon support (daemon merges daemon-wide to main; per-bead LandsOn/landTaskBranch path
+  is DEAD CODE). Chose C: alia orchestrator commits harness code directly to `integration/core-loop-proof`
+  in its own worktree, uses the daemon ONLY to EXECUTE the matrix (the SUT), never to merge harness — avoids
+  the self-fix bootstrap trap. Option B ELEVATED by operator 2026-07-06 to CRITICAL-going-forward:
+  per-bead/DOT integration-branch targeting (the dead LandsOn/landTaskBranch path) filed **hk-lgykq (P1,
+  daemon-reliability, known-issue+found-by:admiral)** — the FIRST assigned-known-issue (proceed on the C
+  workaround, but on a funded fix track, not parked). Directed: (a) core-loop-proof harness ADDS an assertion
+  that a bead directed to integration branch X lands on X (REDs today = known-issue evidence); (b) captain
+  staffs a crew to fix hk-lgykq after T1 skeleton lands (daemon-core; must pass the gate it enables). See the
+  assigned-known-issue lifecycle in `07-assessor-severity-framework.md`. alia staffing now on C.
+  **T2 assert-lib landing green = the trigger to hand schmidhuber the Phase-2 Layer-1 twin chunk.**
+- **Phase 2 — deterministic testbed: PLANNED + independently reviewed + HARDENED.** Build-plan =
+  `plans/2026-07-06-quality-system/06-phase2-plan.md` (scripted-twin ‖ scratch-substrate → twin-replay +
+  corpus port). Adversarial review → NEEDS-FIXES; 6 fixes applied: (a) C3 scenario re-scoped to the LOCAL
+  same-file merge-race — hk-5qp7z/hk-lt091 are REMOTE worktree-create races, wrong target for a local twin;
+  (b) fixtures live at repo-root `scenarios/<group>/` (NORMATIVE), NOT `internal/scenario/`; (c) named the
+  twin-injection seam (`agent_overrides` SH-008–011); (d) dropped miscited hk-nlhys from C5; (e) Docker
+  substrate is Linux — validates the disk-dial mechanism, not darwin-fidelity; (f) entry precondition made
+  testable (chunk-1's assertion package path + green CI). Twin/scenario seam ALREADY EXISTS in-tree; only
+  chunk-3's Dockerfile is greenfield. Cannot BUILD until Phase-1 core-loop-proof merges (hard dep).
+- **assessor gate mechanics — DESIGNED + wire-up PLANNED.** Severity framework =
+  `07-assessor-severity-framework.md` (MAJOR→BLOCK all actions vs MINOR→open `found-by:assessor` known-issue
+  bead; per-action merge|release|redeploy matrix; ledger in the deploy-readiness report). Wire-up plan =
+  `08-assessor-wireup-plan.md`: BASIC SPAWN NEEDS ZERO CODE (`harmonik crew start assessor` resolves the type
+  folder). Two must-do-before-first-gate gaps, both pure spec/config: (A) author `specs/assessor-handoff-schema.md`
+  (branch/gate/commit/found_by_sources frontmatter — crew schema doesn't fit); (B) branch-scope the block query
+  (beads have no branch field → today's `found-by:*` query is fleet-wide; file + query with `--label <epic_id>`).
+- **Phase 3 — adversarial-corpus + chaos-generator: admiral to plan while captain builds Phase 2.**
+- Keeper defect filed: `hk-pp1in` (restart-now aborts no_tmux_target despite healthy pane-bound watcher).
+
 ## MODEL-ROUTING / PROVIDER-SPREAD PROGRAM (operator 2026-07-05 — NEW, token-crunch-driven)
+> NOTE 2026-07-06: MR1-3 are now EXERCISE epics for the quality-system above — build them, then validate
+> the binary through the test harness before deploy (operator's workstream 3).
 
 > Context: Anthropic tokens running LOW. Immediate stopgap already directed to captain (flip daemon
 > worker path off Claude → Pi/DeepSeek). These three are the DURABLE program that makes token-spread a

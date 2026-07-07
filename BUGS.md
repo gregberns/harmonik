@@ -71,6 +71,18 @@
   gap once more manifest-typed roles exist.
 - **Impact:** low. **Workaround:** use `crew start`. **Candidate lane:** lifecycle.
 
+### B8 — re-tasking an idle remote-control crew via tmux paste wedges (input not submitted)
+- **Where:** `tmux send-keys -l` into a crew's `--remote-control` pane. **Subsystem:** crew-launch / remote-control.
+- **What:** a long directive pasted into an idle crew pane gets captured as a *collapsed paste*
+  ("paste again to expand" → "Press up to edit queued messages") and the following `Enter` fails to
+  submit it — the crew stays idle, the directive lost/queued-but-not-run. Hit this re-tasking shannon
+  onto the comms-test lane; multiple retries with delays didn't reliably submit.
+- **Impact:** medium — makes hand-re-tasking my own idle crews unreliable; wasted several cycles.
+- **Workaround:** prefer a clean `harmonik crew start <name> --mission <file>` re-seed (the launcher
+  seeds+submits reliably) over hand-paste; or keep directives short. schmidhuber woke fine with the
+  same pattern, so it's a paste-timing race, not length alone.
+- **Candidate lane:** keeper / lifecycle (crew-launch reliability).
+
 ### B7 — UBS pre-commit bug scanner requires bash ≥4.0; macOS ships 3.2 → hook errors every commit
 - **Where:** UBS install / pre-commit path. **Subsystem:** tooling (not product).
 - **What:** every `git commit` prints a UBS bash-version error before completing. Non-blocking (commit

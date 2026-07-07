@@ -86,6 +86,21 @@ independently reviewed → APPROVE (`.harmonik/agents/assessor/`); NOT yet wired
   gate = the fix must flip its known-RED harness cell green + add a repo-root `scenarios/` regression (ratchet,
   not oscillate); (4) 2-cycle escalation bound so remediation can't silently wedge a held epic. Wires in at
   Phase-1's first epic boundary alongside `07`/`08`. `hk-lgykq` = the first end-to-end acceptance trace.
+- **⭐ OVERNIGHT PUSH LANE STRUCTURE (operator 2026-07-07, max-parallelism 9h window).** Program map =
+  `10-program-map.md`. Answer to 'is one crew all we can parallelize' = NO. FIVE concurrent lanes now:
+  (1) **alia** → core-loop-proof (dispatch, critical path) — T1-T4 landed+GREEN; runs gap tasks T5-T8/T10
+  via INTERNAL sub-agents (NOT fanned to crews — they all edit core-loop-assert.jq = same-file race,
+  captain's correct catch). (2) **hawat** → hk-lgykq (dead integration-branch-targeting fix; dogfoods
+  against alia's T10 known-RED cell). (3) **schmidhuber** → Phase-2 twin (epic/scripted-twin, ACTIVE —
+  fired by T2-green; Layer-1 scripted twin + local same-file merge-race scenario). (4) **captain crew** →
+  comms-test (`12-comms-test-design.md`, epic codename:comms-test-harness — ZERO substrate dep, highest
+  parallel candidate; T4 = surface B1/B2 semantics to operator, don't self-fix). (5) **captain crew** →
+  keeper-test (`11-keeper-test-design.md`, epic codename:keeper-test-harden — T1 fixes hk-pp1in + watch
+  re-stall). Token reality: Claude cap ~98% → orchestrators SONNET, build workers CODEX. **gb-mbp remote
+  RE-ENABLE authorized** (admiral, 2026-07-07): blocker hk-5qp7z proven-fixed → cycle to +6 (=10 daemon
+  slots) at a clean lull — the biggest throughput lever. Staged: Lane 4 (lightweight subsystems: DOT
+  verdict-parse, promote/reconcile, br-adapter) + Lane 5 (substrate-bound rows) per the program map.
+  BUGS.md (repo root) = live defect-capture inbox (8 entries). shannon = idle spare (paste-wedge, B8).
 - **Phase 3 — adversarial-corpus + chaos-generator: admiral to plan while captain builds Phase 2.**
 - Keeper defect filed: `hk-pp1in` (restart-now aborts no_tmux_target despite healthy pane-bound watcher).
 

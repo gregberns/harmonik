@@ -131,7 +131,8 @@ func pushBaseToWorker(ctx context.Context, localRunner tmux.CommandRunner, boxAP
 // default). workerHost and sshOpts are used to construct the ssh:// push URL and
 // mirror the transport used elsewhere in the remote path.
 func ensureBaseOnWorker(ctx context.Context, r tmux.CommandRunner, workerRepoPath, baseSHA string,
-	localRunner tmux.CommandRunner, boxAProjectDir, workerHost string, sshOpts []string) error {
+	localRunner tmux.CommandRunner, boxAProjectDir, workerHost string, sshOpts []string,
+) error {
 	fetchErr := fetchBaseOnWorker(ctx, r, workerRepoPath, baseSHA)
 	if fetchErr == nil {
 		return nil

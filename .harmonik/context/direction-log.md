@@ -12,6 +12,16 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-07-06 — captain (operator-directed clean slate) · expires: 2026-07-09T00:00:00Z
+WHAT: Captain's crew (jessica, duncan, stilgar, watch) TORN DOWN — sessions stopped, registry
+      cleared, keepers killed, dead flywheel session killed. Live registry = admiral + shannon +
+      schmidhuber only (admiral's new initiative). No work orphaned (fleet HELD, zero runs).
+WHY:  Operator wants a clean deck before the admiral's significant new initiative; the old lanes'
+      critical-path work had largely landed. Fresh captain missions to be written on revive.
+ORDER: hold clean-slate → admiral stands up its initiative → operator directs new captain crew.
+RETURN-PATH: revive from plans/2026-07-06-crew-teardown/PARKED-INITIATIVES.md (per-crew open threads);
+             open item = eval-metrics epic hk-9jdid still OPEN (confirm scope vs close).
+
 ## 2026-07-05 ~06:30Z — captain (executing 18:10Z directive) · expires: 2026-07-08
 WHAT: hk-hs7ex concurrency-split LANDED (salvaged off a hung gb-mbp remote consolidate → main 60708048) + daemon
       REDEPLOYED to 60708048 (split-gate + bounded-reap + keeper hk-5266t). CORRECTED a handoff error: gb-mbp was

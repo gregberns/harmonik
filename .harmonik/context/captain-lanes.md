@@ -9,6 +9,16 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
+## ⭐⭐ FLEET TORN DOWN 2026-07-06 — CLEAN SLATE before the admiral's new initiative · expires: 2026-07-09T00:00:00Z
+> Captain's crew (jessica, duncan, stilgar, watch) STOPPED + registry-cleared + keepers killed.
+> No work orphaned (fleet was HELD, zero runs). All lane blocks BELOW are HISTORY — do NOT
+> re-staff them off this file; the crews no longer exist. What each was working on + open
+> threads to revive later: **plans/2026-07-06-crew-teardown/PARKED-INITIATIVES.md**.
+> Live registry (`harmonik crew list`) = admiral + shannon + schmidhuber only (admiral's
+> initiative — NOT the captain's to touch). New captain missions get written on revive.
+> Open thread of note: duncan's eval-metrics epic **hk-9jdid** is still OPEN (WS1 token/attr
+> children landed) — confirm remaining scope vs close on revive.
+
 ## ⭐⭐ OPERATOR DIRECTIVE 2026-07-04 ~18:10Z (via admiral, relayed to captain ~00:05Z) — LOCAL CAPPED 4, gb-mbp = THROUGHPUT CRITICAL PATH · expires: 2026-07-08
 > Supersedes the 17:00Z throughput part-(2) (which said raise local 4→10). CORRECTION:
 > - **LOCAL box is HARD-CAPPED at 4 concurrent** — NOT a disk artifact, do NOT raise. Do NOT `set-concurrency`

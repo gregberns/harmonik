@@ -23,11 +23,6 @@ digraph "merge-race-two-node" {
         agent_type="claude-twin",
         handler_ref="twins/claude-twin",
         idempotency_class="non-idempotent",
-        "llm-freedom"="unbounded",
-        "io-determinism"="nondeterministic",
-        "replay-safety"="unsafe",
-        idempotency="non-idempotent",
-        mode="cognition",
         role="winner: first to commit merge-race-sentinel.txt; no startup delay"
     ];
 
@@ -36,11 +31,6 @@ digraph "merge-race-two-node" {
         agent_type="claude-twin",
         handler_ref="twins/claude-twin",
         idempotency_class="non-idempotent",
-        "llm-freedom"="unbounded",
-        "io-determinism"="nondeterministic",
-        "replay-safety"="unsafe",
-        idempotency="non-idempotent",
-        mode="cognition",
         role="loser: 200 ms startup delay; merge rejected with non_ff_merge"
     ];
 

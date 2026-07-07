@@ -207,6 +207,87 @@ func TestRunKeeperConfigExample_RoundTrips(t *testing.T) {
 	}
 }
 
+// TestKeeperBinaryUpgradeMigration_CorpusItem6 is acceptance corpus #6 / G5 —
+// binary-upgrade required-keys landmine. Proves two invariants end-to-end:
+//
+//  1. An "old" config.yaml (complete for a prior binary) causes the new binary's
+//     resolver to refuse-to-start with ONE *KeeperConfigMissingError listing ALL
+//     newly-missing keys — not just the first one.
+//
+//  2. The operator fix — `keeper config --example` replacing the keeper: block in
+//     config.yaml — produces a clean resolve with zero missing-key errors.
+//
+// The newly-required keys (operator_turn_lookback, post_answer_grace) stand in
+// for any required key a binary upgrade may add (hk-74iyd).
+func TestKeeperBinaryUpgradeMigration_CorpusItem6(t *testing.T) {
+	// ── Part 1: old config → refuse-to-start with aggregated error ──
+	oldCfg := completeTestKeeperConfig()
+	// Simulate the operator's deployed config before hk-74iyd added these keys.
+	oldCfg.OperatorTurnLookback = 0
+	oldCfg.Present.OperatorTurnLookback = false
+	oldCfg.PostAnswerGrace = 0
+	oldCfg.Present.PostAnswerGrace = false
+
+	projectDir := t.TempDir()
+	_, err := ResolveKeeperConfig(KeeperFlags{}, oldCfg, projectDir)
+	if err == nil {
+		t.Fatal("old config missing newly-required keys: expected refuse-to-start, got nil")
+	}
+	var kme *KeeperConfigMissingError
+	if !errors.As(err, &kme) {
+		t.Fatalf("expected *KeeperConfigMissingError (aggregated), got %T: %v", err, err)
+	}
+	// ONE error must include ALL missing keys — not just the first.
+	for _, want := range []string{
+		"keeper.cadence.operator_turn_lookback",
+		"keeper.cadence.post_answer_grace",
+	} {
+		found := false
+		for _, m := range kme.Missing {
+			if m == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("aggregated missing list must contain %q; got %v", want, kme.Missing)
+		}
+	}
+	if len(kme.Missing) != 2 {
+		t.Errorf("want exactly 2 missing keys for this upgrade scenario, got %d: %v", len(kme.Missing), kme.Missing)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "refusing to start") {
+		t.Errorf("error must say 'refusing to start'; got: %s", msg)
+	}
+	if !strings.Contains(msg, "keeper config --example") {
+		t.Errorf("error must point at 'keeper config --example'; got: %s", msg)
+	}
+
+	// ── Part 2: example-merge → clean start ──
+	// The fix the error message instructs: run `keeper config --example` and
+	// replace the keeper: block in config.yaml.
+	var exOut, exErr strings.Builder
+	if code := runKeeperConfigTo([]string{"--example"}, &exOut, &exErr); code != 0 {
+		t.Fatalf("keeper config --example exited %d; stderr=%s", code, exErr.String())
+	}
+	cfgDir := filepath.Join(projectDir, ".harmonik")
+	if mkErr := os.MkdirAll(cfgDir, 0o755); mkErr != nil {
+		t.Fatalf("MkdirAll: %v", mkErr)
+	}
+	content := "schema_version: 1\n" + exOut.String()
+	if wErr := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(content), 0o600); wErr != nil {
+		t.Fatalf("WriteFile: %v", wErr)
+	}
+	projCfg, parseErr := daemon.LoadProjectConfig(projectDir)
+	if parseErr != nil {
+		t.Fatalf("LoadProjectConfig after example-merge: %v", parseErr)
+	}
+	if _, rerr := ResolveKeeperConfig(KeeperFlags{}, projCfg.Keeper, projectDir); rerr != nil {
+		t.Fatalf("example-merge must yield clean start, got: %v", rerr)
+	}
+}
+
 // TestKeeperConfigExampleAndInitTemplateAreShared asserts init's generated config.yaml
 // embeds the SAME keeper block as `keeper config --example` (single source of truth,
 // no drift).

@@ -1,0 +1,31 @@
+codename: quality-system
+title: 'Quality system: phased core-loop-proof + gate bootstrap'
+type: plan
+project:
+    id: gregberns-harmonik
+jig: plan
+jig_version: 1
+status: tasks
+status_values:
+    - problem-space
+    - analyze
+    - decompose
+    - research
+    - change-spec
+    - integration
+    - tasks
+    - ready
+created: 2026-07-07T05:17:49Z
+updated: 2026-07-07T05:26:11Z
+sessions:
+    - id: null
+      started: 2026-07-07T05:17:49Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:quality-system
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

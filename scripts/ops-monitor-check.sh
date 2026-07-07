@@ -708,7 +708,7 @@ events_past_cursor = False
 # close, agent_message) flows past it is the watch CORRECTLY declining to escalate a
 # healthy fleet — NOT a stall. watch-stalled must fire only when escalation-WORTHY
 # work is accumulating past the cursor and the watch is ignoring it. We reuse the
-# watch's own notion of "actionable" — the failure / halt / decision / safety event
+# watch's own notion of actionable — the failure / halt / decision / safety event
 # classes the watch exists to escalate — rather than inventing a new taxonomy.
 #   _last_actionable_seq — _event_seq of the LAST actionable event in the window
 #                          (-1 = none). Compared to _cursor_seq below: an actionable
@@ -1272,8 +1272,8 @@ if watch_zombie and not watch_restart_suppressed:
 # dead) and the watch tmux session is alive, inject Enter into the watch pane to
 # unblock the /rc auto-submit-wedge. Lighter than zombie self-heal (no kill+restart);
 # fires on any stall detection subject to watch_nudge_cooldown. The captain is still
-# paged (they need to verify recovery), but now with "auto-nudged" note rather than
-# "no self-healing path" so they know recovery was attempted.
+# paged (they need to verify recovery), but now with an auto-nudged note rather than
+# a no-self-healing-path note so they know recovery was attempted.
 do_nudge = (
     watch_stalled
     and watch_tmux_alive

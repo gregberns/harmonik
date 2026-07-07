@@ -52,28 +52,30 @@ type hk7n6o7ReceivedEvent struct {
 
 // hk7n6o7Fixture is the standard 7-event backlog fixture used by all sub-tests.
 // Layout:
-//   B0: to=alice, from=captain                  (PRE-anchor — must never appear)
-//   B1: to=bob,   from=captain                  (the anchor itself — excluded by ScanAfter strict-after)
-//   B2: to=alice, from=captain                  (after anchor → replay window)
-//   B3: to=*,     from=captain                  (broadcast — matches any to-filter)
-//   B4: to=bob,   from=captain                  (excluded by to=alice filter)
-//   B5: to=alice, from=captain, topic=status    (topic-specific)
-//   B6: to=alice, from=eve                      (excluded by from=captain filter)
+//
+//	B0: to=alice, from=captain                  (PRE-anchor — must never appear)
+//	B1: to=bob,   from=captain                  (the anchor itself — excluded by ScanAfter strict-after)
+//	B2: to=alice, from=captain                  (after anchor → replay window)
+//	B3: to=*,     from=captain                  (broadcast — matches any to-filter)
+//	B4: to=bob,   from=captain                  (excluded by to=alice filter)
+//	B5: to=alice, from=captain, topic=status    (topic-specific)
+//	B6: to=alice, from=eve                      (excluded by from=captain filter)
 var hk7n6o7BacklogPayloads = []AgentMessagePayload{
-	{To: "alice", From: "captain", Body: "B0"},             // index 0: pre-anchor
-	{To: "bob", From: "captain", Body: "B1"},               // index 1: anchor
-	{To: "alice", From: "captain", Body: "B2"},             // index 2: replay
-	{To: "*", From: "captain", Body: "B3"},                 // index 3: replay, broadcast
-	{To: "bob", From: "captain", Body: "B4"},               // index 4: replay, to-filtered
+	{To: "alice", From: "captain", Body: "B0"},                  // index 0: pre-anchor
+	{To: "bob", From: "captain", Body: "B1"},                    // index 1: anchor
+	{To: "alice", From: "captain", Body: "B2"},                  // index 2: replay
+	{To: "*", From: "captain", Body: "B3"},                      // index 3: replay, broadcast
+	{To: "bob", From: "captain", Body: "B4"},                    // index 4: replay, to-filtered
 	{To: "alice", From: "captain", Topic: "status", Body: "B5"}, // index 5: replay, topic
-	{To: "alice", From: "eve", Body: "B6"},                 // index 6: replay, from-filtered
+	{To: "alice", From: "eve", Body: "B6"},                      // index 6: replay, from-filtered
 }
 
 // hk7n6o7LivePayloads are the four live events emitted through the bus in all scenarios.
-//   L1: to=alice, from=captain
-//   L2: to=bob,   from=captain  (excluded by to=alice filter)
-//   L3: to=*,     from=captain, topic=status  (broadcast)
-//   L4: to=alice, from=eve      (excluded by from=captain filter)
+//
+//	L1: to=alice, from=captain
+//	L2: to=bob,   from=captain  (excluded by to=alice filter)
+//	L3: to=*,     from=captain, topic=status  (broadcast)
+//	L4: to=alice, from=eve      (excluded by from=captain filter)
 var hk7n6o7LivePayloads = []AgentMessagePayload{
 	{To: "alice", From: "captain", Body: "L1"},
 	{To: "bob", From: "captain", Body: "L2"},
@@ -171,7 +173,9 @@ func hk7n6o7RunScenario(t *testing.T, eventsPath string, req SubscribeRequest, w
 		line, err := rdr.ReadBytes('\n')
 		if len(line) > 0 {
 			// Skip subscription_gap lines (drop-oldest notification, not a real event).
-			var probe struct{ Type string `json:"type"` }
+			var probe struct {
+				Type string `json:"type"`
+			}
 			if json.Unmarshal(line, &probe) == nil && probe.Type == "subscription_gap" {
 				if err != nil {
 					break
@@ -282,7 +286,7 @@ func TestScenario_Hk7n6o7_N1_PredicateUniformity(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name        string
+		name            string
 		to, from, topic string
 		// wantBodies is derived by applying MatchAgentMessage(payload, to, from, topic)
 		// to every fixture event (backlog[2..6] in replay + live[0..3]).

@@ -1,71 +1,88 @@
 ---
 schema_version: 1
 crew_name: jamis
-queue: jamis-sh
-epic_id: hk-i0tw
-goal: "Scenario-harness execution layer: build the 7 missing G-01..G-07 gaps (codename:scenario-harness)"
+queue: jamis-q
+epic_id: hk-420yr
+goal: "Subsystem proofs: file-disjoint unit lanes for DOT-verdict, promote/reconcile, and br-adapter (codename:subsystem-proofs)"
 captain_name: captain
 model: sonnet
 ---
 
-# Mission: Scenario-harness execution layer (crew jamis) — codename:scenario-harness
+# Mission: Subsystem proofs (crew jamis) — codename:subsystem-proofs
 
-You are crew member **jamis**, owning the **scenario-harness** lane on queue
-**jamis-sh**. Report status to **captain**.
+You are crew member **jamis**, owning the **subsystem-proofs** (Lane-4) lane on
+queue **jamis-q**. Report status to **captain**. Epic **hk-420yr**.
 
 ## On boot
-1. `harmonik comms join` + confirm identity = jamis.
-2. `br update hk-i0tw --assignee jamis` (mirror for attribution — load-bearing).
-3. Post a boot status to captain (`--topic status`) + a journal comment.
-4. Arm `harmonik comms recv --agent jamis --follow --json`.
+1. Confirm `$HARMONIK_AGENT == jamis`. If not, STOP and report.
+2. `harmonik comms join` + confirm identity = jamis.
+3. `br update hk-420yr --assignee jamis` (mirror for attribution — load-bearing).
+4. Arm inbox: `harmonik comms recv --agent jamis --follow --json`.
+5. Post a boot status to **captain** (`--topic status`) + a `br comment` on hk-420yr.
 
-## Context
+## What this lane is
 
-`specs/scenario-harness.md` defines harmonik's end-to-end orchestration regression
-harness. The DATA layer (`internal/scenario` records) conforms, but the
-**EXECUTION + CLI layer is 100% unbuilt** — 7 BLOCKER gaps from the conformance
-audit (`plans/2026-06-22-scenario-harness-conformance-audit.md`, spec v0.2.2).
-Epic `hk-i0tw` is marked complete but the execution layer is absent; the gap beads
-are tracked separately under the **`codename:scenario-harness`** label.
+A **lightweight batch of three FILE-DISJOINT sub-batches** turning scattered
+subsystem cases into repeatable acceptance + regression suites. Pure Go/shell.
+**NO Docker, NO twin, NO coreloop, NO scratch-daemon. Zero infra risk.** Does
+**NOT** wait on alia (hk-1yxhh coreloop assertion library).
 
-## Dispatch scope = the `codename:scenario-harness` label
+**READ FIRST:** `plans/2026-07-06-quality-system/13-substrate-and-lane4-plan.md`
+— the **LANE B — `codename:subsystem-proofs`** section (the file-disjointness
+table, and the B1/B2/B3 tranche detail). It is the authoritative design.
 
-Find ready beads with `br ready --format json` filtered to label
-`codename:scenario-harness`. The 7 gaps, in keystone order:
+## Step 1 — RUN YOUR OWN KERF PASSES to emit the sub-batches as beads
 
-1. **hk-nwqa0 (G-01, SH-032) FIRST** — the `harmonik harness` CLI subcommand is
-   absent (8 flags, 5 exit codes). `cmd/harmonik/main.go`. This is the entry point
-   everything else hangs off — dispatch it first.
-2. **hk-jjn9y (G-02, SH-017)** — orchestration drive absent.
-3. **hk-sna4x (G-03, SH-015)** — fixture teardown unimplemented.
-4. **hk-rsntf (G-04, SH-006/007)** — suite-load phase absent.
-5. **hk-0hw7g (G-05, SH-020..024)** — assertion evaluation engine absent.
-6. **hk-kveif (G-06, SH-034)** — result emission absent.
-7. **hk-5ec1s (G-07, SH-033)** — signal handling absent.
+Do NOT trust a pre-baked task list — **run your own kerf passes** over the
+design doc to emit the **3 file-disjoint sub-batches B1/B2/B3** as beads under
+label `codename:subsystem-proofs` (so they roll up to epic hk-420yr). The three,
+per the plan:
 
-After G-01 lands, dispatch the now-unblocked gaps in this order, file-disjoint.
-Several are independent (teardown / assertion / result / signal) and can batch if
-they touch disjoint files; the orchestration drive (G-02) likely gates the rest —
-check each bead's own deps before going wide.
+- **B1 — DOT verdict-parsing (pure unit).** `internal/workspace/reviewverdict.go`
+  (`parseReviewVerdict`, `retryVerdictReadOnMalformed`, ErrMalformed mid-write
+  salvage) + `internal/workflowvalidator` DOT parse/validate. Pure in-process
+  unit tests over byte/string literals — no files, no daemon. **Hand FIRST.**
+- **B2 — promote/reconcile on a temp git repo.** `cmd/harmonik/promote_cmd.go`
+  (push-mode `runPromotePush`, bead-ID trailer, non-ff rebase-retry) +
+  `internal/lifecycle/orphansweepbeads.go` `GitMergeCommitScanner` against a real
+  temp repo. Reuse the proven `setupPromoteRepo` fixture in
+  `promote_cmd_hkpk3p1_test.go`. PR-mode needs `gh` — scope to push-mode + PR-mode
+  arg-construction unit test; leave live-`gh` out.
+- **B3 — br-adapter on a temp `.beads/`.** `internal/brcli` `Adapter` against a
+  real `br` binary via `NewForProject(brPath, t.TempDir())` + `br init`. Read ops
+  + terminal-transition writes (Claim/Close/Reopen/ResetBead). Guard with
+  `LookPath("br")` skip (pattern: `internal/daemon/t5_realdb_concurrent_test.go`).
+  Prove daemon-owns-terminal-transitions + the ResetBead stranded-reset primitive
+  (adapter primitive only; daemon-loop wiring stays in alia's lane).
 
-## Operating parameters
-- Your queue: `jamis-sh` — submit ALL beads here, NEVER to `main`.
-- The work is greenfield from `specs/scenario-harness.md` — the spec is normative;
-  match it. These beads are well-specified (SH-xxx requirement IDs); implement to
-  spec, don't redesign the harness.
-- Every bead dispatches through the daemon's DOT review-loop graph — never
-  single/no-review mode. Work must be reviewed AND tested before it counts landed.
-- **Escalate to captain on ANY `run_failed` / unexpected wedge — do not
-  self-classify the failure.** Don't re-dispatch a bead >2× without investigating.
-- This lane is **file-disjoint from the keeper lane (paul)** — you touch
-  `cmd/harmonik/main.go` + `internal/scenario`/harness packages; do NOT touch
-  `internal/keeper`. If a bead would edit `cmd/harmonik/main.go` while paul is also
-  editing it, serialize — post `--topic status` to captain first.
-- Progress feed: `--topic status` to captain + a `br comment` on bead-close, on a
-  ≤10-min timer while dispatching / ≤15-min idle, plus boot/drain bookends.
+The three targets are **confirmed file-disjoint** from each other and from the
+dispatch (alia), keeper, and comms lanes — no merge contention.
 
-## What you MUST NOT do
-- Do NOT `br close` any bead — the daemon closes beads when their work merges.
-- Do NOT submit to the `main` queue.
-- Do NOT spawn Agent-tool sub-agents for implementation — the daemon queue is the
-  dispatch mechanism.
+## Step 2 — build discipline (C-model)
+
+- Build on branch **`integration/subsystem-proofs`** in your **OWN worktree**.
+  Commit to that branch — **NEVER main**. The **daemon executes** the queued
+  work; you orchestrate. `integration/subsystem-proofs → main` is **one
+  assessor-gated human PR** at the end.
+- **PREFER the CODEX build path** (Claude cap ~98%). Do **NOT** use pi — it is
+  blocked (hk-4ir08).
+- The 3 sub-batches are file-disjoint, so you **MAY run them as parallel internal
+  sub-agents** / concurrent queue dispatch on jamis-q with no cross-batch
+  contention.
+
+## Bug discipline
+
+On ANY defect you find (in code under test or elsewhere), append a **terse
+block** to repo-root `BUGS.md` (what, where, repro, severity). Do not derail the
+lane to fix out-of-scope bugs — log and continue.
+
+## Progress feed
+
+Post progress to **captain** (`--topic status`) AND as `br comment`s on the
+sub-beads / epic hk-420yr: on every bead close, on a ≤10-min timer while
+dispatching (≤15-min when idle/draining), and at boot + drain bookends.
+
+## Done
+
+All B1/B2/B3 beads closed with green tests on `integration/subsystem-proofs`;
+post a drain status to captain naming the branch ready for the assessor-gated PR.

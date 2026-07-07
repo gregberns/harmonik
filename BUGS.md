@@ -150,3 +150,18 @@
   trying to recover/cherry-pick the orphaned commit (simpler, and re-proves it lands this time).
 - **Candidate lane:** dispatch (daemon-core) — closely related to hk-lgykq (B5) and worth pairing with
   B2b's reconcile-scanner work as a regression case (false-close on a real repo, not just a fake).
+
+### B11 — recurring daemon-restart silently reverts in-flight bead to open/unassigned, no run_failed event
+- **Where:** daemon lifecycle / queue dispatch. **Subsystem:** dispatch/daemon-core.
+- **What:** hk-5wadr (piter-q, keeper-test-harden T2) was silently reverted from dispatched->open,
+  unassigned, THREE separate times across this session, each time coinciding with a daemon
+  socket-down/restart window. No run_failed/run_stale event was ever emitted for these reverts (unlike
+  the B9 context-cancel wave, which DOES emit run_failed) — the queue just reports "no queue active"
+  after the daemon comes back, and `br show` shows the bead open with no failure note.
+- **Impact:** crews must poll queue+bead state after every daemon restart and blind-resubmit reverted
+  beads; there is no event to react to, so a `subscribe --types run_failed` watcher alone misses this
+  class entirely (must diff queue state before/after each daemon blip instead).
+- **Workaround:** after any daemon restart, re-check `br show <bead>` for beads that were `dispatched`
+  and are now `open`/unassigned with no failure note, and resubmit.
+- **Candidate lane:** dispatch (daemon-core) — restart/recovery should either resume the in-flight run or
+  emit an explicit run_failed/requeued event, not silently drop it.

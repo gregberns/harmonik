@@ -130,3 +130,23 @@
   to captain instead of self-resubmitting again.
 - **Workaround:** none identified by me; escalating to captain per mission (twice-failed → error topic).
 - **Candidate lane:** dispatch (daemon-core) — see existing hk-iaj1w.
+
+### B11 — bead marked `closed` (success) but its commit never landed on main (false-close)
+- **Where:** daemon merge/close path, `lands_on`-default merge. **Subsystem:** dispatch/daemon-core.
+- **What:** hk-420yr.4 (B1a, DOT verdict-parsing happy-path split) reported `run_completed` success and
+  `br show` returned `status: closed` — but its commit (`63b5c2efe`, "B1a happy-path acceptance") is
+  stranded on an orphaned `run/019f3bc3-f5d5-...` branch and is NOT an ancestor of `main`. The other 5
+  of 6 sibling splits (hk-420yr.5/.6/.7/.8/.9) genuinely landed on `main` (confirmed via
+  `git merge-base --is-ancestor`). This is the exact false-close failure class my own B2b sub-batch's
+  reconcile-scanner test suite was written to guard against (hk-vbv3b/whru3 family) — ironic that B1a
+  hit it live in the same session. Also note: per BUGS.md B5, none of these 6 splits landed on the
+  intended `integration/subsystem-proofs` branch — the daemon's per-bead branch targeting is dead code,
+  so ALL 6 merged straight to `main` (bypassing the mission's planned assessor-gated PR step).
+- **Impact:** high — a bead can show `closed`/success while its code silently never merges; any
+  automation trusting bead status without checking the merge commit will believe test coverage exists
+  that doesn't. Also means "assessor gate at branch→main PR" was structurally bypassed here since there
+  was no PR step at all.
+- **Workaround:** jamis is re-authoring B1a's happy-path test content fresh and re-submitting rather than
+  trying to recover/cherry-pick the orphaned commit (simpler, and re-proves it lands this time).
+- **Candidate lane:** dispatch (daemon-core) — closely related to hk-lgykq (B5) and worth pairing with
+  B2b's reconcile-scanner work as a regression case (false-close on a real repo, not just a fake).

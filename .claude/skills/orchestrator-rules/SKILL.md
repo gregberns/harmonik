@@ -160,6 +160,17 @@ Act on the **boot-digest's live numbers**, never on a claim carried in a doc or 
 
 **The captain and admiral restart/redeploy the daemon on their OWN authority.** It is routine, self-authorized work — NOT operator-gated, NOT a "destructive op," NOT a "surface-and-await" item. They coordinate but NEVER ask permission: announce over comms (especially during an active fan-out); pick a true lull so an in-flight bead isn't stranded; if the supervisor is actively reviving, let it win; if the supervisor is confirmed dead, restart the daemon yourself; disable the operator's in-use worker box first only if the redeploy touches that shared machine. These are TIMING/COORDINATION conditions, not a gate. "Destructive op" (the operator-only escalate-first class) means force-push, `branch -D` on shared refs, `rm -rf`, `--no-verify` on shared history — a daemon restart/redeploy is NOT one of them.
 
+### PRE-DEPLOY END-TO-END TEST GATE — HARD RULE (operator-mandated 2026-07-05)
+
+**Deploying a new daemon binary WITHOUT first running end-to-end tests on the new code is FORBIDDEN.** Self-authorized to deploy ≠ deploy untested. The gate is NOT the unit suite passing (green units + broken behavior is exactly how we keep re-breaking working features) and it is NOT "cycle the live daemon and watch a canary" — **you must never stand up or bounce the PRIMARY daemon to test a change.** The gate is:
+
+1. **Before EVERY daemon deploy, ADD new end-to-end test(s)** that exercise the changed behavior against a REAL runtime path in ISOLATION from the live daemon — an ephemeral worktree / stub server / throwaway repo that reproduces the daemon's actual launch (argv, env, sandbox wrap, models.json, commit path), NOT a mock of the thing under test. Reproducing the exact launch out-of-daemon (as a diagnostic agent already demonstrated for the Pi/srt path) IS the pattern.
+2. The new test(s) must prove TWO things: (a) the new code actually does what we think (the fix works end-to-end, not just that a gate returns the right enum), and (b) NO regression in the paths around it.
+3. These can START simple and focused on the exact bug being fixed — a narrow, real, deterministic e2e check beats a broad mock. Breadth accretes deploy-over-deploy; every deploy leaves behind at least one more real test than it found.
+4. Run the new + existing e2e tests GREEN, in isolation, BEFORE `make install-harmonik` + the daemon cycle. A deploy whose behavior has no e2e coverage does not ship.
+
+This is the quality program's whole point: the primary daemon is production, not a test bench. If exercising a change requires the live daemon, the missing thing is the harness — build the harness (see the `codename:daemon-testbed` epic), do not test in prod.
+
 ## Review and quality gates
 
 **REVIEW GATE IS NOT OPTIONAL.** Before merging substantive work, a separate reviewer (or a fresh-context re-read) must approve. Anything beyond a typo / one-line fix gets the gate.

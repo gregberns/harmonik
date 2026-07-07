@@ -34,6 +34,17 @@ from a stale-binary daemon.
 - Supervisor session: tmux `harmonik-<projecthash>-flywheel`; `.harmonik/supervisor.{pid,lock}`
 - Daemon runtime: `.harmonik/daemon.sock`, `.harmonik/daemon.pid` — **never `rm` the live socket**.
 
+## GATE 0 (MANDATORY, operator-mandated 2026-07-05): end-to-end tests on the new code
+
+**Do NOT proceed to the runbook until this passes.** A green unit suite is NOT this gate, and cycling the live daemon to watch a canary is NOT this gate (never test on the primary daemon — see orchestrator-rules §"PRE-DEPLOY END-TO-END TEST GATE").
+
+1. For the behavior this deploy changes, ADD at least one **end-to-end test that reproduces the daemon's real launch path in ISOLATION** — ephemeral worktree / stub HTTP server / throwaway repo, exercising the actual argv+env+sandbox-wrap+models.json+commit path, not a mock of the thing under test.
+2. The test must prove the fix WORKS end-to-end (not just that a gate returns the right value) AND that neighbouring paths don't regress.
+3. Start simple + focused on the exact bug; breadth accretes every deploy. Every deploy leaves behind ≥1 more real e2e test than it found.
+4. Run new + existing e2e tests GREEN, isolated from the live daemon, BEFORE `make install-harmonik`. No e2e coverage of the changed behavior → no ship.
+
+If exercising the change needs the live daemon, the missing artifact is the harness — build it (`codename:daemon-testbed`, epic `hk-zk0v2`), don't test in prod.
+
 ## Runbook
 
 ```bash

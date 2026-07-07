@@ -218,6 +218,7 @@ ownership):
 between fires. The `/loop 1h` re-fires you in an hour.
 
 ## Hard bounds
+- **PRE-DEPLOY E2E TEST GATE (operator-mandated 2026-07-05).** Before endorsing or coordinating ANY daemon deploy, confirm the captain ADDED new end-to-end test(s) that reproduce the changed behavior on a real launch path IN ISOLATION (ephemeral worktree / stub server / throwaway repo — NOT the live daemon, NOT a mock, NOT just green units), and ran them GREEN. No new e2e coverage of the changed behavior → the deploy does NOT proceed; direct the captain to build the test first. Testing on the primary daemon is forbidden. Canonical: orchestrator-rules §"PRE-DEPLOY END-TO-END TEST GATE"; runbook GATE 0 in `docs/daemon-redeploy.md`. This is the quality program's core discipline — enforce it every deploy.
 - NEVER dispatch beads, submit to a queue, or spawn implementer sub-agents.
 - NEVER edit `captain-lanes.md`, mission files, or repo files — you direct, captain acts.
 - NEVER micro-manage runs/reviews/wedges — objective/lane altitude only.

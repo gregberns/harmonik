@@ -1,5 +1,7 @@
 # Admiral — Major-Initiatives Registry
 
+> **STANDING RULE (operator-mandated 2026-07-05) — PRE-DEPLOY E2E TEST GATE.** No daemon deploy ships without new end-to-end tests, added that deploy, that reproduce the changed behavior on a real launch path IN ISOLATION from the live daemon (never test on the primary daemon; green units are not the gate). Enforce every deploy. Canonical: orchestrator-rules §"PRE-DEPLOY END-TO-END TEST GATE" + `docs/daemon-redeploy.md` GATE 0 + admiral mission Hard bounds. Ties to the `codename:daemon-testbed` epic (hk-zk0v2) — that harness is what makes this gate cheap.
+
 > **Admiral-owned.** The complete set of major initiatives + their status. This is the
 > admiral's oversight anchor: every audit reconciles it against ground truth (captain-lanes.md
 > tier-2 + `kerf next` + comms). It complements captain-lanes.md (which tracks *which crew is on
@@ -16,8 +18,23 @@
 > OWNED, EXPIRING gate** — mirrors `lanes.json.gate`; absence of a live named gate means
 > KNOWN/resumable, see orchestrator-rules §Autonomy) · DONE (landed; kept briefly for context).
 >
-> Last reconciled: 2026-06-25 ~06:24Z (admiral). Fleet HEALTHY + ACTIVE — gap-time stall
-> self-healed; the remote test-hardening program is filed and dispatching (see TOP/ACTIVE).
+> Last reconciled: 2026-06-25 ~06:24Z (admiral). PARTIAL UPDATE 2026-07-05 ~15:2xZ: added the
+> MODEL-ROUTING / PROVIDER-SPREAD PROGRAM (operator, token-crunch). The 06-25 ACTIVE/ON-DECK rows
+> below are 10 days STALE — full reconcile owed on the next hourly audit; treat MR1–MR3 + the
+> quality-process kerf pilot as the current front line.
+
+## MODEL-ROUTING / PROVIDER-SPREAD PROGRAM (operator 2026-07-05 — NEW, token-crunch-driven)
+
+> Context: Anthropic tokens running LOW. Immediate stopgap already directed to captain (flip daemon
+> worker path off Claude → Pi/DeepSeek). These three are the DURABLE program that makes token-spread a
+> first-class capability instead of a manual switch. #3 IS shannon's routing research (verifier-cascade,
+> `plans/2026-07-05-model-selection/`) elevated to BUILD. Ranked by token leverage; captain scopes + kerfs.
+
+| # | Initiative (plain English) | Depends on / connects to | Status | Notes |
+|---|---|---|---|---|
+| **MR1** | **Crew can run on Codex or Pi (not just Claude)** — a crew orchestrator session can be backed by a non-Claude harness; cuts orchestration-tier Claude burn, not just the worker tier | builds on ON-DECK Codex-on-remote + Codex-vetting; crew-launch harness selection | **ON-DECK → captain to scope bead/kerf** | Operator 2026-07-05. Independent of MR2/MR3; directly cuts the standing crew/orchestrator Claude burn. |
+| **MR2** | **Multiple models/providers in Pi concurrently** — Pi is daemon-global ONE model today (deepseek). Enable using the local DGX (ornith) AND OpenRouter models AT THE SAME TIME so both substrates stay full | = the GATED "Pi universal-model-gateway" below, EXPANDED to concurrent-multi-provider. Gate ("not before remote proven") is now effectively MET (gb-mbp concurrent PROVEN) → recommend LIFT | **GATE-LIFT CANDIDATE → captain to scope** | Operator 2026-07-05. Prereq for good MR3 routing (need multiple live providers to route between). |
+| **MR3** | **Daemon dispatch-time model selection + configurable default skew** — the daemon picks the right model per task; default skew is operator-tunable. Default: fill Pi+local-DGX FIRST, then spread across Claude+Codex; when Claude tokens run low, CUT Claude off automatically | = shannon's verifier-cascade routing (`plans/2026-07-05-model-selection/`, thread 5) elevated to BUILD; needs MR2 (multi-provider) to route across; the objective merge-gate is the quality backstop | **BUILD (from research) → captain to kerf** | Operator 2026-07-05. Highest token leverage — this is the durable form of today's manual "cut Claude" switch. The "cut when low" auto-throttle is the acute win. |
 
 ## TOP / ACTIVE (being worked now)
 

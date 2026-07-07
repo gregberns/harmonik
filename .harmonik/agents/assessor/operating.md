@@ -11,8 +11,18 @@ Identity is `$HARMONIK_AGENT` (== `assessor`). CWD must always be `$HARMONIK_PRO
 2. **LT — live-verify:** drive the real task-processing loop on the scratch daemon; confirm the acceptance behavior the epic claims actually runs.
 3. **XT — exploratory break-testing:** run the adversarial fan-out against the branch; probe the failure-corpus scenarios.
 4. **CR — independent code review:** read the branch diff cold; I did not build it, so I review it as an outside party.
-5. File each confirmed defect as `br create ... --label found-by:assessor` at its true severity. Leave every finding UNASSIGNED; never `close`/`claim`/`reopen`.
-6. **Verdict is deterministic:** open P0/P1 `found-by:*` beads on the branch → BLOCK; none → PASS. I do not use judgment to override the bead set.
+5. **File findings, scoped + dispositioned.** Each confirmed defect: `br create ... --label found-by:assessor --label <epic_id> --priority <P>` at the P-level my severity rubric (`07-assessor-severity-framework.md` §2–3) assigns. Beads carry no branch field, so the `--label <epic_id>` scope label is what makes the block set per-branch — it is REQUIRED on every finding. Then attach the disposition label (`09-remediation-loop-design.md` §3):
+   - **MAJOR / blocking (P0/P1):** `--label remediation:blocking` — holds this epic's gate; top of the remediation queue.
+   - **ASSIGNED known-issue (worked around now, but critical-for-direction → on a funded fix track):** `--label known-issue --label remediation:assigned` at its true fix P-level.
+   - **PASSIVE known-issue (tolerable indefinitely):** `--label known-issue`, NO `remediation:*` (ledger-only, no owner).
+   Leave every finding UNASSIGNED; never `close`/`claim`/`reopen` (the daemon owns terminal transitions). I PROPOSE severity/disposition; the admiral adjudicates disputes and makes the critical-for-direction call.
+6. **Verdict is deterministic, branch-scoped.** `found-by:*` does NOT glob — I enumerate the known sources with `--label-any` and scope to this epic with `--label <epic_id>`:
+   ```
+   br list --status open --priority 0 --priority 1 \
+     --label-any found-by:assessor,found-by:admiral,found-by:fast-follow \
+     --label <epic_id> --json
+   ```
+   Any open P0/P1 row → BLOCK; empty → PASS. I do not use judgment to override the bead set. (`08-assessor-wireup-plan.md` §Gap B.)
 
 ## Deploy-gate (gate == deploy / GATE-0)
 1. On the named commit, run the isolated e2e that reproduces the changed behavior on a scratch daemon; it must be green.

@@ -51,6 +51,13 @@ check "codex gap4 review-loop override fail" "$TD/codex-local-dispatch-override.
 check "codex gap4 no run_started fail" "$TD/codex-local-missing.ndjson"           "$DISP" gap4 fail
 check "codex gap4 pending when no expect.dispatch" "$TD/codex-local-pass.ndjson"  "$CODEX" gap4 pending
 
+# gap3 — provider comms through the sandbox (T6). Spec carries expect.provider.
+PROV='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"provider":{"enabled":true}},"gaps":["gap3"]}'
+check "codex gap3 real commit pass"    "$TD/codex-provider-commit.ndjson"         "$PROV" gap3 pass
+check "codex gap3 explicit-fail pass"  "$TD/codex-provider-explicit-fail.ndjson"  "$PROV" gap3 pass
+check "codex gap3 silent no-commit fail" "$TD/codex-provider-silent-nocommit.ndjson" "$PROV" gap3 fail
+check "codex gap3 pending when no expect.provider" "$TD/codex-local-pass.ndjson"   "$CODEX" gap3 pending
+
 echo "-----"
 echo "core-loop-assert self-test: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

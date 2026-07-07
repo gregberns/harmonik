@@ -80,7 +80,28 @@ def assert_gap1:
 # Each returns pending (honest: not yet asserted on this branch), NOT pass. The
 # per-gap task replaces the pending body with its real assertion over the same stream.
 def assert_gap2: result("gap2"; "pending"; "remote(tcp://)==local parity assertion — implemented by T7 (hk-wf9lv)");
-def assert_gap3: result("gap3"; "pending"; "provider-comms-through-sandbox assertion — implemented by T6 (hk-i21pt)");
+# --- gap3 — provider comms through the sandbox (C3/C6) (T6, hk-i21pt) --------
+# Proves the provider round-trip actually reached the sandbox and mutated the tree, AND
+# that a degenerate provider reply (content:null / no edit) surfaces LOUDLY rather than
+# closing green with no change (the hk-4ir08/hk-u69my silent-no-commit regression).
+# Integrity holds iff EITHER a real change landed (implementer_phase_complete.commit_landed)
+# OR the run failed explicitly (run_failed). The ONLY violation is a silent no-commit:
+# a successful terminal with no commit landed. Enabled by spec.expect.provider.
+def assert_gap3:
+  ($spec.expect | has("provider")) as $on
+  | (of_type("implementer_phase_complete") | map(pl) | map(.commit_landed == true) | any) as $committed
+  | (of_type("run_completed") | map(pl) | map(select((.bead_id // null) == $spec.seed_bead and .success == true)) | length > 0) as $succeeded
+  | (of_type("run_failed")    | map(pl) | map(select((.bead_id // null) == $spec.seed_bead)) | length > 0) as $failed
+  | if ($on | not)
+    then result("gap3"; "pending"; "no expect.provider in spec — add it to assert gap3")
+    elif $committed
+    then result("gap3"; "pass"; "provider produced a real HEAD change (commit_landed)")
+    elif $failed
+    then result("gap3"; "pass"; "no commit, but an explicit run_failed surfaced (content-null handled loudly, not silent)")
+    elif $succeeded
+    then result("gap3"; "fail"; "SILENT no-commit: run_completed success with no commit_landed — provider reply produced no change yet no failure surfaced (cf hk-4ir08/hk-u69my)")
+    else result("gap3"; "fail"; "no commit, no terminal for seed bead \($spec.seed_bead) — provider round-trip incomplete")
+    end;
 # --- gap4 — queue-submit → dispatch field fidelity (C7) (T5, hk-bkn5a) -------
 # A fully-specified queue item (workflow_ref, workflow_mode, model, harness) must reach
 # the dispatched run with every field intact — in particular workflow_mode must NOT be

@@ -24,6 +24,9 @@
         "dispatch": {
           "workflow_mode": "single",
           "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
         }
       },
       "gaps": [
@@ -54,6 +57,9 @@
         "dispatch": {
           "workflow_mode": "single",
           "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
         }
       },
       "gaps": [
@@ -84,6 +90,9 @@
         "dispatch": {
           "workflow_mode": "single",
           "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
         }
       },
       "gaps": [
@@ -113,6 +122,9 @@
         "dispatch": {
           "workflow_mode": "single",
           "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
         }
       },
       "gaps": [
@@ -143,6 +155,9 @@
         "dispatch": {
           "workflow_mode": "single",
           "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
         }
       },
       "gaps": [
@@ -173,6 +188,9 @@
         "dispatch": {
           "workflow_mode": "single",
           "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
         }
       },
       "gaps": [

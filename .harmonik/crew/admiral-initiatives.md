@@ -78,6 +78,14 @@ independently reviewed → APPROVE (`.harmonik/agents/assessor/`); NOT yet wired
   folder). Two must-do-before-first-gate gaps, both pure spec/config: (A) author `specs/assessor-handoff-schema.md`
   (branch/gate/commit/found_by_sources frontmatter — crew schema doesn't fit); (B) branch-scope the block query
   (beads have no branch field → today's `found-by:*` query is fleet-wide; file + query with `--label <epic_id>`).
+- **assessor → REMEDIATION LOOP — DESIGNED (operator deliverable 2026-07-06).** `09-remediation-loop-design.md`:
+  how assessor findings (blocking + assigned known-issues like hk-lgykq) get ROUTED → TRACKED → DRIVEN to
+  closed as a SYSTEM, not admiral hand-routing each gate. Core: (1) the finding bead IS the fix unit (no
+  shadow bead); (2) a new `remediation:blocking`/`remediation:assigned` label pair encodes disposition at
+  file-time → `kerf next` ranks it into the captain's normal backlog (admiral does ZERO routing); (3) closure
+  gate = the fix must flip its known-RED harness cell green + add a repo-root `scenarios/` regression (ratchet,
+  not oscillate); (4) 2-cycle escalation bound so remediation can't silently wedge a held epic. Wires in at
+  Phase-1's first epic boundary alongside `07`/`08`. `hk-lgykq` = the first end-to-end acceptance trace.
 - **Phase 3 — adversarial-corpus + chaos-generator: admiral to plan while captain builds Phase 2.**
 - Keeper defect filed: `hk-pp1in` (restart-now aborts no_tmux_target despite healthy pane-bound watcher).
 

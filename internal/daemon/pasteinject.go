@@ -1315,12 +1315,15 @@ func pasteInjectQuitOnCommit(
 					// after the run returns.
 					grace := postQuitKillGrace
 					go func() {
-						select {
-						case <-ctx.Done():
-							return
-						case <-time.After(grace):
-						}
-						if kErr := killer.Kill(ctx); kErr != nil {
+						// hk-tvy3e: always fire Kill after grace — do NOT gate
+						// on ctx.Done(). The per-run ctx may be cancelled before
+						// the grace elapses (stale-watcher timeout, daemon
+						// shutdown) which would skip Kill entirely, leaving
+						// sess.Wait blocked indefinitely. Kill is idempotent
+						// (killOnce guard). Use context.Background() so the tmux
+						// KillWindow command cannot be cancelled mid-flight.
+						<-time.After(grace)
+						if kErr := killer.Kill(context.Background()); kErr != nil {
 							fmt.Fprintf(os.Stderr,
 								"daemon: pasteinject: quit-on-commit: post-quit Kill: %v\n", kErr)
 						}

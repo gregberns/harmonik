@@ -27,12 +27,14 @@
         },
         "provider": {
           "enabled": true
-        }
+        },
+        "lands_on": "main"
       },
       "gaps": [
         "gap1",
         "gap3",
-        "gap4"
+        "gap4",
+        "t10"
       ]
     },
     {
@@ -60,13 +62,15 @@
         },
         "provider": {
           "enabled": true
-        }
+        },
+        "lands_on": "main"
       },
       "gaps": [
         "gap1",
         "gap2",
         "gap3",
-        "gap4"
+        "gap4",
+        "t10"
       ]
     },
     {
@@ -93,12 +97,14 @@
         },
         "provider": {
           "enabled": true
-        }
+        },
+        "lands_on": "main"
       },
       "gaps": [
         "gap1",
         "gap3",
-        "gap4"
+        "gap4",
+        "t10"
       ]
     },
     {
@@ -125,13 +131,15 @@
         },
         "provider": {
           "enabled": true
-        }
+        },
+        "lands_on": "main"
       },
       "gaps": [
         "gap1",
         "gap2",
         "gap3",
-        "gap4"
+        "gap4",
+        "t10"
       ]
     },
     {
@@ -161,13 +169,15 @@
         },
         "agent_ready": {
           "required": true
-        }
+        },
+        "lands_on": "main"
       },
       "gaps": [
         "gap1",
         "gap3",
         "gap4",
-        "gap5"
+        "gap5",
+        "t10"
       ]
     },
     {
@@ -197,14 +207,16 @@
         },
         "agent_ready": {
           "required": true
-        }
+        },
+        "lands_on": "main"
       },
       "gaps": [
         "gap1",
         "gap2",
         "gap3",
         "gap4",
-        "gap5"
+        "gap5",
+        "t10"
       ]
     }
   ]

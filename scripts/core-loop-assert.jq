@@ -175,6 +175,27 @@ def assert_gap5:
     else result("gap5"; "pass"; "agent_ready reached; no timeout/stall/hang")
     end;
 
+# --- t10 — branch-targeting acceptance (KNOWN-RED today, hk-lgykq) -----------
+# A bead directed at integration branch X must LAND on X, not main. Asserts the merged
+# workspace_merge_status.target_branch == spec.expect.lands_on. This REDs today because
+# per-bead/DOT integration-branch targeting is DEAD CODE (LandsOn/landTaskBranch not wired
+# into the live workloop merge — internal/daemon/workloop.go:3153). The RED is the
+# recorded evidence for hk-lgykq; when that lands, this flips to pass and the self-test's
+# expected-fail row breaks loudly (prompting removal of the known-RED marker). t10 is
+# deliberately NOT in the default cells' `gaps` — T9's green gate excludes it (mission:
+# "known-RED cell, recorded, not a false-green pass").
+def assert_t10:
+  ($spec.expect.lands_on // null) as $want
+  | (of_type("workspace_merge_status") | map(pl) | map(select(.status == "merged"))) as $m
+  | if $want == null
+    then result("t10"; "pending"; "no expect.lands_on in spec — set it to the intended integration branch")
+    elif ($m | length) == 0
+    then result("t10"; "fail"; "no merged workspace_merge_status event — nothing landed")
+    elif ($m[-1].target_branch != $want)
+    then result("t10"; "fail"; "KNOWN-RED (hk-lgykq): landed on '\($m[-1].target_branch)' != intended '\($want)' — per-bead integration targeting is dead code")
+    else result("t10"; "pass"; "landed on intended branch '\($want)'")
+    end;
+
 # --- dispatcher ------------------------------------------------------------
 # Run only the gaps the spec lists, in gap-number order, de-duplicated.
 def run_gap($g):
@@ -183,6 +204,7 @@ def run_gap($g):
   elif $g == "gap3" then assert_gap3
   elif $g == "gap4" then assert_gap4
   elif $g == "gap5" then assert_gap5
+  elif $g == "t10"  then assert_t10
   else result($g; "fail"; "unknown gap id in spec: \($g)")
   end;
 

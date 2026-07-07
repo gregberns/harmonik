@@ -84,6 +84,15 @@ check "gap5 timeout fail"        "$TD/claude-agent-ready-timeout.ndjson" "$AR"  
 check "gap5 stall fail"          "$TD/claude-agent-ready-stall.ndjson"   "$AR"     gap5 fail
 check "gap5 pending when no expect.agent_ready" "$TD/claude-agent-ready-pass.ndjson" "$CLAUDE" gap5 pending
 
+# t10 — branch-targeting acceptance (KNOWN-RED, hk-lgykq). Expected-fail TODAY: per-bead
+# integration targeting is dead code. When hk-lgykq lands, the daemon will target the
+# intended branch, the t10-would-pass golden already proves the flip, and the KNOWN-RED
+# row below will break loudly (expected 'fail' but gets 'pass') — that is the signal to
+# retire the known-RED marker. See scenarios/core-loop-proof/known-red.md.
+T10='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"lands_on":"integration/core-loop-proof"},"gaps":["t10"]}'
+check "t10 KNOWN-RED today (hk-lgykq)"  "$TD/t10-known-red.ndjson"  "$T10" t10 fail
+check "t10 flips to pass once fixed"    "$TD/t10-would-pass.ndjson" "$T10" t10 pass
+
 echo "-----"
 echo "core-loop-assert self-test: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

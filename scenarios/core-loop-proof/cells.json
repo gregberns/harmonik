@@ -158,6 +158,9 @@
         },
         "provider": {
           "enabled": true
+        },
+        "agent_ready": {
+          "required": true
         }
       },
       "gaps": [
@@ -191,6 +194,9 @@
         },
         "provider": {
           "enabled": true
+        },
+        "agent_ready": {
+          "required": true
         }
       },
       "gaps": [

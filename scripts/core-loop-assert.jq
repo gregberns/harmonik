@@ -153,7 +153,27 @@ def assert_gap4:
     then result("gap4"; "fail"; "run_started.workflow_id is absent/zero (\($wid)) — workflow_ref did not resolve at dispatch")
     else result("gap4"; "pass"; "workflow_mode=\($rs[-1].workflow_mode) workflow_id=\($wid)")
     end;
-def assert_gap5: result("gap5"; "pending"; "claude worktree->agent_ready assertion — implemented by T8 (hk-4vwlx)");
+# --- gap5 — claude worktree startup → agent_ready (C8/PR-19) (T8, hk-4vwlx) --
+# A real git-worktree claude launch must reach agent_ready past the folder-trust /
+# permissions / onboarding modals, with NO agent_ready_timeout, agent_ready_stall_detected,
+# post_agent_ready_hang, or launch_stall_detected. Flag-gated at the runner (cap-thrift);
+# the assertion is enabled by spec.expect.agent_ready.
+def assert_gap5:
+  ($spec.expect | has("agent_ready")) as $on
+  | (of_type("agent_ready")                 | length > 0) as $ready
+  | (of_type("agent_ready_timeout")         | length > 0) as $timeout
+  | (of_type("agent_ready_stall_detected")  | length > 0) as $stall
+  | (of_type("post_agent_ready_hang")       | length > 0) as $hang
+  | (of_type("launch_stall_detected")       | length > 0) as $lstall
+  | if ($on | not)
+    then result("gap5"; "pending"; "no expect.agent_ready in spec — add it to assert gap5")
+    elif $timeout then result("gap5"; "fail"; "agent_ready_timeout — startup never reached AgentReady")
+    elif $stall   then result("gap5"; "fail"; "agent_ready_stall_detected during startup")
+    elif $lstall  then result("gap5"; "fail"; "launch_stall_detected — launch wedged before AgentReady")
+    elif $hang    then result("gap5"; "fail"; "post_agent_ready_hang after AgentReady")
+    elif ($ready | not) then result("gap5"; "fail"; "no agent_ready reached (gated by folder-trust/permissions/onboarding modal?)")
+    else result("gap5"; "pass"; "agent_ready reached; no timeout/stall/hang")
+    end;
 
 # --- dispatcher ------------------------------------------------------------
 # Run only the gaps the spec lists, in gap-number order, de-duplicated.

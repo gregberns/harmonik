@@ -77,6 +77,13 @@ check_ref "gap2 remote diverges (terminal) fail" "$TD/gap2-remote-diverge.ndjson
 check      "gap2 SKIP-LOUD pending (no ref)" "$TD/gap2-remote-match.ndjson"  "$REM" gap2 pending
 check      "gap2 pending on local cell"      "$TD/gap2-local-ref.ndjson"     "$LOC" gap2 pending
 
+# gap5 — claude worktree startup -> agent_ready (T8). Spec carries expect.agent_ready.
+AR='{"schema_version":1,"seed_bead":"hk-clp-claude","expect":{"agent_ready":{"required":true}},"gaps":["gap5"]}'
+check "gap5 agent_ready pass"    "$TD/claude-agent-ready-pass.ndjson"    "$AR"     gap5 pass
+check "gap5 timeout fail"        "$TD/claude-agent-ready-timeout.ndjson" "$AR"     gap5 fail
+check "gap5 stall fail"          "$TD/claude-agent-ready-stall.ndjson"   "$AR"     gap5 fail
+check "gap5 pending when no expect.agent_ready" "$TD/claude-agent-ready-pass.ndjson" "$CLAUDE" gap5 pending
+
 echo "-----"
 echo "core-loop-assert self-test: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

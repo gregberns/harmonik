@@ -347,11 +347,18 @@ func TestSHINV005CorpusLint(t *testing.T) {
 		t.Fatalf("SH-INV-005 corpus lint: stat %s: %v", scenariosDir, err)
 	}
 
-	// Collect all *.yaml files under scenarios/ recursively.
+	// Collect all *.yaml files under scenarios/ recursively, skipping twin-scripts/
+	// subdirectories. Files under twin-scripts/ are handler-protocol message streams
+	// (twin binary configuration), not ScenarioFile structs; including them in the
+	// corpus lint would misidentify them as scenario files and fail KnownFields(true)
+	// strict-mode parsing on their heartbeat_mode / messages fields.
 	var yamlFiles []string
 	walkErr := filepath.Walk(scenariosDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		if info.IsDir() && info.Name() == "twin-scripts" {
+			return filepath.SkipDir
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".yaml" {
 			yamlFiles = append(yamlFiles, path)

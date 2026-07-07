@@ -1,0 +1,56 @@
+# Twin script: merge-race-samefile / alpha (winner)
+#
+# Role: alpha — the first twin to commit; in the same-file merge race, alpha
+# is the winner whose squash-merge lands cleanly on the integration branch.
+# Beta (startup_delay_ms=200) starts later, so alpha's commit always arrives
+# first and beta's merge attempt sees a non-fast-forward base → non_ff_merge.
+#
+# The commit_on_cue step writes a sentinel file and commits it.  The
+# sentinel_path payload field declares the shared path that BOTH twins write
+# to, so the daemon's merge path faces a genuine same-file conflict.
+# ST3 (hk-q3u57) confirms or extends commit_on_cue to honour sentinel_path.
+#
+# Cite: specs/handler-contract.md §4.8 HC-036a; hk-xeqtv (ST1).
+heartbeat_mode: scripted
+messages:
+  - type: handler_capabilities
+    payload:
+      run_id: run-hkxeqtv-mr-alpha-001
+      session_id: sess-hkxeqtv-mr-alpha-001
+      protocol_versions_supported:
+        - 1
+      claude_session_id: claude-sess-hkxeqtv-alpha-001
+    relative_timestamp_ms: 0
+  - type: agent_ready
+    payload:
+      run_id: run-hkxeqtv-mr-alpha-001
+      session_id: sess-hkxeqtv-mr-alpha-001
+      capabilities:
+        - scripted
+        - commit_on_cue
+    relative_timestamp_ms: 10
+  - type: agent_output_chunk
+    payload:
+      run_id: run-hkxeqtv-mr-alpha-001
+      session_id: sess-hkxeqtv-mr-alpha-001
+      chunk_index: 0
+      bytes_emitted: 256
+    relative_timestamp_ms: 5
+  - type: commit_on_cue
+    payload:
+      sentinel_path: merge-race-sentinel.txt
+    relative_timestamp_ms: 0
+  - type: outcome_emitted
+    payload:
+      run_id: run-hkxeqtv-mr-alpha-001
+      session_id: sess-hkxeqtv-mr-alpha-001
+      node_id: node-hkxeqtv-mr-alpha-001
+      outcome_status: WORK_COMPLETE
+    relative_timestamp_ms: 5
+  - type: agent_completed
+    payload:
+      run_id: run-hkxeqtv-mr-alpha-001
+      session_id: sess-hkxeqtv-mr-alpha-001
+      exit_code: 0
+      outcome_ref: run-hkxeqtv-mr-alpha-001/outcome
+    relative_timestamp_ms: 0

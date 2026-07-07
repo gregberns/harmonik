@@ -35,6 +35,8 @@
 #                                actually exercises — real per-cell fixtures arrive in T2)
 #     --keep                     leave the scratch daemon up after the run (default: cycle only)
 #     --no-cycle                 reuse an already-up scratch daemon (skip the clean reset)
+#     --feedback                 file a deduped FLEET bead per red cell via scratch-daemon.sh
+#                                feedback (T3, hk-9cw6q); green cells file nothing
 #
 # ENV:
 #   MATRIX_REMOTE_WORKER   same as --remote-worker
@@ -67,6 +69,7 @@ REMOTE_WORKER="${MATRIX_REMOTE_WORKER:-}"
 SEED_BEAD=""
 KEEP=0
 NO_CYCLE=0
+FEEDBACK=0
 
 [ $# -ge 1 ] || die "usage: $SELF <scratch-path> [flags] (see header)"
 SCRATCH="$1"; shift
@@ -85,6 +88,7 @@ while [ $# -gt 0 ]; do
         --seed-bead=*)    SEED_BEAD="${1#--seed-bead=}"; shift;;
         --keep)           KEEP=1; shift;;
         --no-cycle)       NO_CYCLE=1; shift;;
+        --feedback)       FEEDBACK=1; shift;;
         *) die "unknown flag '$1' (see header for usage)";;
     esac
 done
@@ -162,6 +166,7 @@ fi
 # ---- iterate the matrix ---------------------------------------------------
 # Grid rows accumulate as: cell<TAB>verdict<TAB>detail  (verdict ∈ green|red|pending|skip)
 GRID=()
+RED_ARTIFACTS=()
 had_red=0; n_green=0; n_red=0; n_pending=0; n_skip=0
 
 [ "${#HARNESSES[@]}" -gt 0 ] || die "no harnesses to run (empty --harnesses?)"
@@ -201,6 +206,13 @@ for h in "${HARNESSES[@]}"; do
         results_path="$(printf '%s\n' "$batch_out" | sed -n 's/.*results=\([^ ]*\).*/\1/p' | tail -1)"
         printf '%s\n' "$batch_out" | grep -E '^BATCH_(ITEM|SUMMARY)' || true
         GRID+=("$cell	$cell_verdict	${results_path:-no-artifact}")
+
+        # T3 (hk-9cw6q): red cells → deduped fleet bead. Stash the (batch,artifact) pair;
+        # green cells file nothing. Feedback runs AFTER the grid (it reads the persisted
+        # results JSON and writes the FLEET beads DB — independent of the scratch daemon).
+        if [ "$cell_verdict" = "red" ] && [ -n "$results_path" ]; then
+            RED_ARTIFACTS+=("$batch_name	$results_path")
+        fi
     done
 done
 
@@ -228,6 +240,23 @@ echo "--------------------------------------------------------"
 echo "green=$n_green red=$n_red pending=$n_pending skip=$n_skip"
 echo "MATRIX_SUMMARY green=$n_green red=$n_red pending=$n_pending skip=$n_skip"
 echo "========================================================"
+
+# ---- T3 (hk-9cw6q): red-cell → deduped fleet bead -------------------------
+# For each red cell, hand its persisted results artifact to scratch-daemon.sh feedback,
+# which files-or-updates ONE fleet bead per distinct fail-signature (dedupe key =
+# sha256(batch-name 0x1f fail_signature)). Green cells were never stashed, so file
+# nothing. Best-effort: a feedback failure must not flip the matrix's own exit code.
+if [ "$FEEDBACK" -eq 1 ] && [ "${#RED_ARTIFACTS[@]}" -gt 0 ]; then
+    echo
+    log "feedback: filing deduped fleet beads for ${#RED_ARTIFACTS[@]} red cell(s)"
+    for pair in "${RED_ARTIFACTS[@]}"; do
+        IFS=$'\t' read -r fb_batch fb_path <<< "$pair"
+        [ -f "$fb_path" ] || { log "feedback: results artifact gone for $fb_batch ($fb_path) — skipping"; continue; }
+        "$SCRATCH_DAEMON" feedback "$fb_path" --batch "$fb_batch" || log "feedback: non-zero for $fb_batch (continuing)"
+    done
+elif [ "$FEEDBACK" -eq 1 ]; then
+    log "feedback: no red cells — nothing to file"
+fi
 
 # Exit non-zero on any red. PENDING/SKIP are surfaced but do not by themselves fail the
 # skeleton — the full-green gate (T9) is what forbids residual PENDING.

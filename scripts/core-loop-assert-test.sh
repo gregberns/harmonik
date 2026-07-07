@@ -29,13 +29,18 @@ check() {
     fi
 }
 
-CODEX='{"schema_version":1,"cell":"codex:local","seed_bead":"hk-clp-codex","expect":{"harness_selected":{"agent_type":"codex","tier":1},"model_selected":{"harness":"codex","model":null}},"gaps":["gap1","gap3","gap4"]}'
-PI='{"schema_version":1,"cell":"pi:local","seed_bead":"hk-clp-pi","expect":{"harness_selected":{"agent_type":"pi","tier":1},"model_selected":{"harness":"pi","model":"deepseek-reasoner"}},"gaps":["gap1"]}'
+# no_leak_models forbids a FOREIGN family's node-model pin on this cell's harness (T4).
+CODEX='{"schema_version":1,"cell":"codex:local","seed_bead":"hk-clp-codex","expect":{"harness_selected":{"agent_type":"codex","tier":1},"model_selected":{"harness":"codex","model":null,"no_leak_models":["claude-opus-4-8","deepseek-reasoner"]}},"gaps":["gap1","gap3","gap4"]}'
+PI='{"schema_version":1,"cell":"pi:local","seed_bead":"hk-clp-pi","expect":{"harness_selected":{"agent_type":"pi","tier":1},"model_selected":{"harness":"pi","model":"deepseek-reasoner","no_leak_models":["claude-opus-4-8"]}},"gaps":["gap1"]}'
+CLAUDE='{"schema_version":1,"cell":"claude:local","seed_bead":"hk-clp-claude","expect":{"harness_selected":{"agent_type":"claude-code","tier":1},"model_selected":{"harness":"claude-code","model":"claude-opus-4-8","no_leak_models":["deepseek-reasoner"]}},"gaps":["gap1","gap5"]}'
 
 check "codex gap1 pass"          "$TD/codex-local-pass.ndjson"      "$CODEX" gap1 pass
 check "codex gap3 pending"       "$TD/codex-local-pass.ndjson"      "$CODEX" gap3 pending
 check "codex gap4 pending"       "$TD/codex-local-pass.ndjson"      "$CODEX" gap4 pending
-check "pi model-leak gap1 fail"  "$TD/pi-local-modelleak.ndjson"    "$PI"    gap1 fail
+check "pi gap1 pass"             "$TD/pi-local-pass.ndjson"         "$PI"     gap1 pass
+check "claude gap1 pass"         "$TD/claude-local-pass.ndjson"     "$CLAUDE" gap1 pass
+check "claude gap5 pending"      "$TD/claude-local-pass.ndjson"     "$CLAUDE" gap5 pending
+check "pi node-pin LEAK gap1 fail (T4/hk-lfrub)" "$TD/pi-local-modelleak.ndjson" "$PI" gap1 fail
 check "codex tier-leak gap1 fail" "$TD/codex-local-tierleak.ndjson" "$CODEX" gap1 fail
 check "codex missing gap1 fail"  "$TD/codex-local-missing.ndjson"   "$CODEX" gap1 fail
 

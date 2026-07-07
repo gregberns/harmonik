@@ -1,34 +1,163 @@
 {
-  "//": "Default expected-cell specs for the core-loop-proof matrix (T2, hk-1yxhh).",
-  "//": "One object per {harness}×{substrate} cell; folded by scripts/core-loop-assert.jq.",
-  "//": "seed_bead values are the fixture keys in seed-beads.json, resolved to real bead ids",
-  "//": "by scripts/core-loop-seed.sh at seeding time. gap2 is added to the remote cells; gap5",
   "//": "to the claude cells. gap1 is asserted everywhere (it is the T2-implemented gap).",
-
   "schema_version": 1,
   "cells": [
-    { "cell": "codex:local",  "harness": "codex",  "substrate": "local",  "seed_bead": "codex",
-      "expect": { "harness_selected": { "agent_type": "codex", "tier": 1 }, "model_selected": { "harness": "codex", "model": null }, "terminal": "pass" },
-      "gaps": ["gap1", "gap3", "gap4"] },
-
-    { "cell": "codex:remote", "harness": "codex",  "substrate": "remote", "seed_bead": "codex",
-      "expect": { "harness_selected": { "agent_type": "codex", "tier": 1 }, "model_selected": { "harness": "codex", "model": null }, "terminal": "pass" },
-      "gaps": ["gap1", "gap2", "gap3", "gap4"] },
-
-    { "cell": "pi:local",     "harness": "pi",     "substrate": "local",  "seed_bead": "pi",
-      "expect": { "harness_selected": { "agent_type": "pi", "tier": 1 }, "model_selected": { "harness": "pi", "model": "deepseek-reasoner" }, "terminal": "pass" },
-      "gaps": ["gap1", "gap3", "gap4"] },
-
-    { "cell": "pi:remote",    "harness": "pi",     "substrate": "remote", "seed_bead": "pi",
-      "expect": { "harness_selected": { "agent_type": "pi", "tier": 1 }, "model_selected": { "harness": "pi", "model": "deepseek-reasoner" }, "terminal": "pass" },
-      "gaps": ["gap1", "gap2", "gap3", "gap4"] },
-
-    { "cell": "claude:local", "harness": "claude-code", "substrate": "local", "seed_bead": "claude",
-      "expect": { "harness_selected": { "agent_type": "claude-code", "tier": 1 }, "model_selected": { "harness": "claude-code", "model": "claude-opus-4-8" }, "terminal": "pass" },
-      "gaps": ["gap1", "gap3", "gap4", "gap5"] },
-
-    { "cell": "claude:remote", "harness": "claude-code", "substrate": "remote", "seed_bead": "claude",
-      "expect": { "harness_selected": { "agent_type": "claude-code", "tier": 1 }, "model_selected": { "harness": "claude-code", "model": "claude-opus-4-8" }, "terminal": "pass" },
-      "gaps": ["gap1", "gap2", "gap3", "gap4", "gap5"] }
+    {
+      "cell": "codex:local",
+      "harness": "codex",
+      "substrate": "local",
+      "seed_bead": "codex",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "codex",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "codex",
+          "model": null,
+          "no_leak_models": [
+            "claude-opus-4-8",
+            "deepseek-reasoner"
+          ]
+        },
+        "terminal": "pass"
+      },
+      "gaps": [
+        "gap1",
+        "gap3",
+        "gap4"
+      ]
+    },
+    {
+      "cell": "codex:remote",
+      "harness": "codex",
+      "substrate": "remote",
+      "seed_bead": "codex",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "codex",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "codex",
+          "model": null,
+          "no_leak_models": [
+            "claude-opus-4-8",
+            "deepseek-reasoner"
+          ]
+        },
+        "terminal": "pass"
+      },
+      "gaps": [
+        "gap1",
+        "gap2",
+        "gap3",
+        "gap4"
+      ]
+    },
+    {
+      "cell": "pi:local",
+      "harness": "pi",
+      "substrate": "local",
+      "seed_bead": "pi",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "pi",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "pi",
+          "model": "deepseek-reasoner",
+          "no_leak_models": [
+            "claude-opus-4-8"
+          ]
+        },
+        "terminal": "pass"
+      },
+      "gaps": [
+        "gap1",
+        "gap3",
+        "gap4"
+      ]
+    },
+    {
+      "cell": "pi:remote",
+      "harness": "pi",
+      "substrate": "remote",
+      "seed_bead": "pi",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "pi",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "pi",
+          "model": "deepseek-reasoner",
+          "no_leak_models": [
+            "claude-opus-4-8"
+          ]
+        },
+        "terminal": "pass"
+      },
+      "gaps": [
+        "gap1",
+        "gap2",
+        "gap3",
+        "gap4"
+      ]
+    },
+    {
+      "cell": "claude:local",
+      "harness": "claude-code",
+      "substrate": "local",
+      "seed_bead": "claude",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "claude-code",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "claude-code",
+          "model": "claude-opus-4-8",
+          "no_leak_models": [
+            "deepseek-reasoner"
+          ]
+        },
+        "terminal": "pass"
+      },
+      "gaps": [
+        "gap1",
+        "gap3",
+        "gap4",
+        "gap5"
+      ]
+    },
+    {
+      "cell": "claude:remote",
+      "harness": "claude-code",
+      "substrate": "remote",
+      "seed_bead": "claude",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "claude-code",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "claude-code",
+          "model": "claude-opus-4-8",
+          "no_leak_models": [
+            "deepseek-reasoner"
+          ]
+        },
+        "terminal": "pass"
+      },
+      "gaps": [
+        "gap1",
+        "gap2",
+        "gap3",
+        "gap4",
+        "gap5"
+      ]
+    }
   ]
 }

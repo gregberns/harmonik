@@ -49,11 +49,18 @@ def result($gap; $verdict; $detail): { gap: $gap, verdict: $verdict, detail: $de
 #       expected harness family and tier == the expected precedence tier;
 #   (b) a model_selected event exists whose harness == expected, and whose model ==
 #       the expected model when the spec pins one (codex pins none → skip the model check).
+#   (c) NODE-PIN NO-LEAK (T4, hk-qa1oo): no model_selected event on this cell's harness
+#       family carries a FOREIGN family's node-`model=` pin. spec.expect.model_selected
+#       .no_leak_models lists the models that must never reach this harness (e.g. a pi
+#       cell forbids "claude-opus-4-8" — the exact hk-lfrub/hk-pkugu regression where a
+#       claude node model= pin leaked into a pi launch). Any hit is a leak → fail.
 def assert_gap1:
   ($spec.expect.harness_selected // {}) as $eh
   | ($spec.expect.model_selected  // {}) as $em
+  | ($em.no_leak_models // []) as $forbidden
   | (of_type("harness_selected") | map(pl) | map(select(.bead_id == $spec.seed_bead))) as $hs
   | (of_type("model_selected")   | map(pl) | map(select(.harness == ($em.harness // $eh.agent_type)))) as $ms
+  | ($ms | map(.model) | map(select(. as $m | $forbidden | index($m))) | unique) as $leaks
   | if ($hs | length) == 0
     then result("gap1"; "fail"; "no harness_selected event for seed bead \($spec.seed_bead)")
     elif ($eh.agent_type != null and ($hs[-1].agent_type != $eh.agent_type))
@@ -62,6 +69,8 @@ def assert_gap1:
     then result("gap1"; "fail"; "harness_selected.tier=\($hs[-1].tier) != expected \($eh.tier) (harness pin leaked from wrong precedence tier)")
     elif ($ms | length) == 0
     then result("gap1"; "fail"; "no model_selected event for harness \($em.harness // $eh.agent_type)")
+    elif ($leaks | length) > 0
+    then result("gap1"; "fail"; "node-model pin LEAKED into harness \($em.harness // $eh.agent_type): forbidden model(s) \($leaks | join(",")) (cf pi-model-leak hk-lfrub/hk-pkugu)")
     elif ($em.model != null and ($ms[-1].model != $em.model))
     then result("gap1"; "fail"; "model_selected.model=\($ms[-1].model) != pinned \($em.model)")
     else result("gap1"; "pass"; "harness=\($hs[-1].agent_type) tier=\($hs[-1].tier) model=\(if ($ms[-1].model // "") == "" then "<uncontrolled>" else $ms[-1].model end)")

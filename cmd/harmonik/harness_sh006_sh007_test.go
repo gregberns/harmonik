@@ -23,8 +23,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/scenario"
 )
 
 // sh006sh007MinimalYAML returns a minimal valid scenario YAML that will pass
@@ -297,9 +295,9 @@ func TestHarnessDiscoverScenarios_DuplicateAcrossCadences_SH005(t *testing.T) {
 	}
 }
 
-// namesOf extracts the Name field from a slice of ScenarioFile for concise
-// test failure messages.
-func namesOf(sfs []scenario.ScenarioFile) []string {
+// namesOf extracts the Name field from a slice of harnessScenarioEntry for
+// concise test failure messages.
+func namesOf(sfs []harnessScenarioEntry) []string {
 	names := make([]string, len(sfs))
 	for i, sf := range sfs {
 		names[i] = sf.Name

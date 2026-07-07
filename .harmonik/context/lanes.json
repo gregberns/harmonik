@@ -4,6 +4,20 @@
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
     {
+      "lane": "quality-system-core-loop-proof",
+      "label": "codename:quality-system",
+      "epic_id": "hk-hcrvb",
+      "crew": "alia",
+      "queue": "alia-q",
+      "status": "on-deck",
+      "gate": {
+        "reason": "Phase-1 planned + beads created (epic hk-hcrvb + 9 tasks). Crew alia NAMED but NOT staffed: blocked on the integration-branch merge-target decision (daemon merges daemon-wide, no per-crew target; per-bead LandsOn path is dead code). Options A/B/C sent to admiral on comms topic 'gate' (event 019f3b10); C=alia commits harness to integration/core-loop-proof in its own worktree, daemon executes matrix only. Staff alia the moment admiral picks.",
+        "owner": "admiral",
+        "expires": "2026-07-09T00:00:00Z"
+      },
+      "note": "Phase-1 core-loop-proof (operator single-focus, admiral-phased). Live-verify the real loop bead->queue->harness(correct model)->changes->sandbox provider-comms->DOT review-back across {claude,codex,pi}x{local,remote}; acceptance = top-5 coverage gaps. Bench .kerf/works/quality-system/; source plans/2026-07-06-quality-system/00-SYNTHESIS.md. Prefer non-Claude/codex build path (pi blocked hk-4ir08). Phases 2-3 admiral-owned."
+    },
+    {
       "lane": "eval-metrics-ws1",
       "label": "codename:eval-program",
       "epic_id": "hk-9jdid",

@@ -12,6 +12,19 @@
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
+## 2026-07-07 — captain (executing operator/admiral Phase-1 directive) · expires: 2026-07-09T00:00:00Z
+WHAT: Phase-1 core-loop-proof PLANNED — kerf work quality-system passes run (scoped to this chunk only),
+      epic hk-hcrvb + 9 tranched tasks created (label codename:quality-system), integration/core-loop-proof
+      branch made, testing crew alia NAMED. Committed ef24bcaf.
+WHY:  Operator's single-focus quality-system build (admiral-phased, plan-a-phase-then-hand-off). Captain
+      builds Phase 1; admiral owns Phases 2-3 + the assessor gate.
+ORDER: BLOCKED before staffing alia on a branch-target decision (integration-branch merges have no per-crew
+       daemon support; per-bead LandsOn path is dead code). Options A/B/C sent to admiral (comms topic gate,
+       019f3b10); rec = C (alia commits harness to the integration branch in its own worktree; daemon executes
+       the matrix only). On admiral's pick -> write alia mission + staff -> build T1->T2->gap tasks->T9 gate.
+RETURN-PATH: read admiral reply on topic gate; if picked, staff alia; else chase the decision. Prefer codex
+       (non-Claude) build path — pi blocked (hk-4ir08). NOT planning Phases 2-3.
+
 ## 2026-07-06 — captain (operator-directed clean slate) · expires: 2026-07-09T00:00:00Z
 WHAT: Captain's crew (jessica, duncan, stilgar, watch) TORN DOWN — sessions stopped, registry
       cleared, keepers killed, dead flywheel session killed. Live registry = admiral + shannon +

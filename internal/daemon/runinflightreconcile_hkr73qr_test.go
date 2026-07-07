@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
@@ -145,7 +146,7 @@ func TestReconcileOrphanedRunsOnResume_EmitsRunFailedForOrphanedRuns(t *testing.
 	})
 
 	capBus := &hkr73qrCapturingBus{}
-	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, capBus)
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, capBus, nil, nil, "", core.ProjectHash(""), 0)
 	if got != 2 {
 		t.Errorf("reconcileOrphanedRunsOnResume returned %d, want 2", got)
 	}
@@ -176,7 +177,7 @@ func TestReconcileOrphanedRunsOnResume_EmptyLog(t *testing.T) {
 	// File does not exist — ScanAfter treats a missing file as an empty log.
 	jsonlPath := filepath.Join(t.TempDir(), "events.jsonl")
 	capBus := &hkr73qrCapturingBus{}
-	got := reconcileOrphanedRunsOnResume(context.Background(), jsonlPath, capBus)
+	got := reconcileOrphanedRunsOnResume(context.Background(), jsonlPath, capBus, nil, nil, "", core.ProjectHash(""), 0)
 	if got != 0 {
 		t.Errorf("got %d, want 0 for absent log", got)
 	}
@@ -188,7 +189,7 @@ func TestReconcileOrphanedRunsOnResume_EmptyLog(t *testing.T) {
 // TestReconcileOrphanedRunsOnResume_EmptyEventsPath returns zero for empty path.
 func TestReconcileOrphanedRunsOnResume_EmptyEventsPath(t *testing.T) {
 	capBus := &hkr73qrCapturingBus{}
-	got := reconcileOrphanedRunsOnResume(context.Background(), "", capBus)
+	got := reconcileOrphanedRunsOnResume(context.Background(), "", capBus, nil, nil, "", core.ProjectHash(""), 0)
 	if got != 0 {
 		t.Errorf("got %d, want 0 for empty path", got)
 	}
@@ -210,11 +211,174 @@ func TestReconcileOrphanedRunsOnResume_AllTerminated(t *testing.T) {
 	})
 
 	capBus := &hkr73qrCapturingBus{}
-	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, capBus)
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, capBus, nil, nil, "", core.ProjectHash(""), 0)
 	if got != 0 {
 		t.Errorf("got %d, want 0 when all runs have terminal events", got)
 	}
 	if len(capBus.events) != 0 {
 		t.Errorf("got %d emitted events, want 0", len(capBus.events))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-mdus1 — orphan queue-item advance (bead reset + queue-threaded run_failed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// hkr73qrPayloadBus captures the full run_failed payload so queue-threading can
+// be asserted.
+type hkr73qrPayloadBus struct {
+	failed []workloopRunCompletedPayload
+}
+
+func (b *hkr73qrPayloadBus) Emit(_ context.Context, _ core.EventType, _ []byte) error { return nil }
+func (b *hkr73qrPayloadBus) EmitWithRunID(_ context.Context, _ core.RunID, eventType core.EventType, payload []byte) error {
+	if eventType == core.EventTypeRunFailed {
+		var pl workloopRunCompletedPayload
+		if err := json.Unmarshal(payload, &pl); err == nil {
+			b.failed = append(b.failed, pl)
+		}
+	}
+	return nil
+}
+
+// hkr73qrFakeResetter records every ResetBead call so we can assert the orphan
+// bead was reset to open (which lets QM-002a revert its dispatched queue item).
+type hkr73qrFakeResetter struct {
+	reset []core.BeadID
+}
+
+func (r *hkr73qrFakeResetter) ResetBead(_ context.Context, _ string, _ brcli.TimeoutConfig, beadID core.BeadID, _ core.ProjectHash, _ int64) error {
+	r.reset = append(r.reset, beadID)
+	return nil
+}
+
+// hkr73qrFakeStatusLedger returns a per-bead coarse status for the B3 guard.
+type hkr73qrFakeStatusLedger struct {
+	status map[string]core.CoarseStatus
+}
+
+func (l *hkr73qrFakeStatusLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return core.BeadRecord{BeadID: id, Status: l.status[string(id)]}, nil
+}
+
+// hkr73qrWriteRunStartedQ appends a run_started event carrying queue coordinates.
+func hkr73qrWriteRunStartedQ(t *testing.T, bus eventbus.EventBus, runID core.RunID, beadID, queueID string, groupIndex int) {
+	t.Helper()
+	qid := queueID
+	gi := groupIndex
+	pl := workloopRunStartedPayload{
+		RunID:           runID.String(),
+		BeadID:          beadID,
+		WorkspacePath:   "/tmp/hkr73qr-q",
+		StartedAt:       "2026-01-01T00:00:00Z",
+		QueueID:         &qid,
+		QueueGroupIndex: &gi,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		t.Fatalf("hkr73qrWriteRunStartedQ: marshal: %v", err)
+	}
+	if err := bus.EmitWithRunID(context.Background(), runID, core.EventTypeRunStarted, b); err != nil {
+		t.Fatalf("hkr73qrWriteRunStartedQ: emit: %v", err)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_ResetsBeadAndThreadsQueue verifies the
+// hk-mdus1 fix: an orphaned run's bead is reset to open (so QM-002a can revert
+// its dispatched queue item) and its run_failed carries the queue coordinates.
+func TestReconcileOrphanedRunsOnResume_ResetsBeadAndThreadsQueue(t *testing.T) {
+	ctx := context.Background()
+
+	orphan := hkr73qrNewRunID(t)
+	done := hkr73qrNewRunID(t)
+
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, orphan, "hk-mdus1-orphan", "queue-xyz", 3)
+		// A non-orphan (terminated) run must NOT be reset.
+		hkr73qrWriteRunStartedQ(t, bus, done, "hk-mdus1-done", "queue-xyz", 0)
+		hkr73qrWriteRunCompleted(t, bus, done, "hk-mdus1-done")
+	})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	// The orphan bead is (still) in_progress → eligible for reset.
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-mdus1-orphan": core.CoarseStatusInProgress,
+	}}
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 12345)
+	if got != 1 {
+		t.Fatalf("reconcileOrphanedRunsOnResume returned %d, want 1", got)
+	}
+
+	// The orphan bead — and only it — must have been reset to open.
+	if len(resetter.reset) != 1 || resetter.reset[0] != core.BeadID("hk-mdus1-orphan") {
+		t.Fatalf("ResetBead calls = %v, want exactly [hk-mdus1-orphan]", resetter.reset)
+	}
+
+	// The emitted run_failed must carry the orphan run's queue coordinates.
+	if len(payBus.failed) != 1 {
+		t.Fatalf("captured %d run_failed payloads, want 1", len(payBus.failed))
+	}
+	pl := payBus.failed[0]
+	if pl.QueueID == nil || *pl.QueueID != "queue-xyz" {
+		t.Errorf("run_failed queue_id = %v, want queue-xyz", pl.QueueID)
+	}
+	if pl.QueueGroupIndex == nil || *pl.QueueGroupIndex != 3 {
+		t.Errorf("run_failed queue_group_index = %v, want 3", pl.QueueGroupIndex)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_B3GuardSkipsClosedBead verifies the hk-mdus1
+// review-B3 guard: an orphaned run whose bead already LANDED (closed — the
+// daemon crashed after close but before run_completed) must NOT be reset to
+// open, so completed work is never false-reopened. The run_failed is still
+// emitted for observers; only the reset is suppressed.
+func TestReconcileOrphanedRunsOnResume_B3GuardSkipsClosedBead(t *testing.T) {
+	ctx := context.Background()
+
+	landedOrphan := hkr73qrNewRunID(t) // orphaned run, but bead already closed
+	liveOrphan := hkr73qrNewRunID(t)   // orphaned run, bead still in_progress
+
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, landedOrphan, "hk-mdus1-landed", "q", 0)
+		hkr73qrWriteRunStartedQ(t, bus, liveOrphan, "hk-mdus1-live", "q", 1)
+	})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-mdus1-landed": core.CoarseStatusClosed,
+		"hk-mdus1-live":   core.CoarseStatusInProgress,
+	}}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1)
+
+	// Both orphans get a terminal run_failed (observability unaffected).
+	if got != 2 {
+		t.Fatalf("emitted %d run_failed, want 2", got)
+	}
+	// Only the still-in_progress bead is reset; the landed (closed) one is NOT.
+	if len(resetter.reset) != 1 || resetter.reset[0] != core.BeadID("hk-mdus1-live") {
+		t.Fatalf("ResetBead calls = %v, want exactly [hk-mdus1-live] (closed bead must be skipped)", resetter.reset)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_NilLedgerSkipsReset verifies that when no
+// status ledger is supplied the reset is skipped entirely (conservative: never
+// risk reopening a landed bead without confirming its status).
+func TestReconcileOrphanedRunsOnResume_NilLedgerSkipsReset(t *testing.T) {
+	ctx := context.Background()
+	orphan := hkr73qrNewRunID(t)
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, orphan, "hk-mdus1-nil", "q", 0)
+	})
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, nil, "/tmp/intents", core.ProjectHash("ph"), 1)
+	if got != 1 {
+		t.Fatalf("emitted %d run_failed, want 1", got)
+	}
+	if len(resetter.reset) != 0 {
+		t.Fatalf("ResetBead calls = %v, want none (nil ledger ⇒ skip reset)", resetter.reset)
 	}
 }

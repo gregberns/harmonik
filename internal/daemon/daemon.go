@@ -26,6 +26,7 @@ import (
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/release"
+	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/workers"
@@ -1251,6 +1252,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// Bead ref: hk-iuaed.4.
 		var beadLedger lifecycle.InFlightBeadLedger
 		var beadResetter lifecycle.BeadResetter
+		// orphanStatusReader gates the orphan bead-reset on current status
+		// (hk-mdus1 review B3). Stays nil when br is unavailable → the reconcile
+		// conservatively skips the reset (never risks reopening a landed bead).
+		var orphanStatusReader beadStatusReader
 		var beadCat3cCloser lifecycle.BeadCat3cCloser
 		var intentGCLedger lifecycle.IntentGCLedger
 		var intentRedriveWriter lifecycle.IntentRedriveWriter
@@ -1296,6 +1301,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				}
 				beadLedger = brAdapter
 				beadResetter = brAdapter
+				orphanStatusReader = brAdapter // hk-mdus1 B3: in_progress guard reader
 				beadCat3cCloser = brAdapter     // Cat 3c auto-reconciler (hk-lgtq2)
 				intentGCLedger = brAdapter      // GCRetiredIntentsWithRedrive ledger (hk-cizvu)
 				intentRedriveWriter = brAdapter // BI-031 step-4 re-drive (hk-aev8t)
@@ -1433,7 +1439,16 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// does not see a dangling reviewer_launched/no-verdict state after every
 		// restart (hk-r73qr).
 		if cfg.JSONLLogPath != "" {
-			_ = reconcileOrphanedRunsOnResume(ctx, cfg.JSONLLogPath, bus)
+			_ = reconcileOrphanedRunsOnResume(
+				ctx,
+				cfg.JSONLLogPath,
+				bus,
+				beadResetter,
+				orphanStatusReader,
+				intentLogDir,
+				projectHash,
+				daemonStartTime.UnixNano(),
+			)
 		}
 
 		// RC-020a dispatch point (a): emit reconciliation_started{trigger:"startup"}
@@ -2130,6 +2145,56 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that
 		// Ctrl-C / SIGTERM cancels the work loop without sending signals into
 		// the test process (hk-7oz2f).
+		// hk-mdus1: wire the StaleWatcher force-reap watchdog seams now that
+		// `deps` (queueStore, emitter) is fully built. Two-phase because the
+		// watcher is constructed and started (StartWatcher) far earlier, before
+		// workLoopDeps exists.
+		//
+		// ForceReap: when the watchdog force-Unregisters a wedged run's leaked
+		// slot, emit a terminal run_failed and drive the owning queue item
+		// terminal so the group advances (the wedged goroutine never runs the
+		// completion path itself).
+		staleWatcher.SetForceReap(func(runID core.RunID, handle *RunHandle) {
+			emitRunCompleted(ctx, bus, runID, string(handle.BeadID), handle.OwningEpicID, handle.OwningEpicAssignee, false,
+				"force-reaped: run wedged past cancel grace; concurrency slot reclaimed (hk-mdus1)",
+				handle.QueueID, handle.QueueGroupIndex, nil)
+			if handle.QueueName != "" && handle.QueueID != nil && handle.QueueGroupIndex != nil && handle.QueueItemIndex >= 0 {
+				evaluateGroupAdvanceWithOutcome(ctx, deps, handle.QueueName, *handle.QueueID, *handle.QueueGroupIndex, handle.QueueItemIndex, false)
+			}
+		})
+		// RunProcessDead: fast dead-process reap probe. Resolve the run's tmux
+		// session (from the .harmonik/runs/ record written for independent-session
+		// runs) and report whether its pane PID is gone via the substrate's
+		// #{pane_pid} liveness. Best-effort: any lookup error → "not dead" so a
+		// probe failure never triggers a spurious reap.
+		if sa, ok := cfg.Substrate.(substrateWithAdapter); ok {
+			if reapAdapter := sa.tmuxAdapter(); reapAdapter != nil && cfg.ProjectDir != "" {
+				staleWatcher.SetRunProcessDead(func(runID core.RunID, _ *RunHandle) bool {
+					recs, listErr := runpkg.List(cfg.ProjectDir)
+					if listErr != nil {
+						return false
+					}
+					for _, r := range recs {
+						if r.RunID != runID.String() {
+							continue
+						}
+						if r.SessionName == "" {
+							return false
+						}
+						pid, pidErr := reapAdapter.WindowPanePID(ctx, ltmux.WindowHandle(r.SessionName+":"))
+						if pidErr != nil {
+							return false
+						}
+						if pid == 0 {
+							return true
+						}
+						return processDead(pid)
+					}
+					return false
+				})
+			}
+		}
+
 		loopDone := make(chan error, 1)
 		go func() {
 			loopDone <- runWorkLoop(ctx, deps)

@@ -2860,9 +2860,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			// independently of the global ceiling (NQ-B1). Empty for
 			// br-ready-fallback runs.
 			QueueName: capturedQueueName,
-			Labels:    beadRecord.Labels,
-			StartedAt: time.Now(),
-			Cancel:    runCancel,
+			// hk-mdus1: denormalize the durable queue coordinates so the
+			// force-reap watchdog can advance the owning queue item terminal
+			// when this run's goroutine wedges and never runs the completion
+			// path itself.
+			QueueID:         capturedQueueID,
+			QueueGroupIndex: capturedQueueGroupIdx,
+			QueueItemIndex:  capturedItemIndex,
+			Labels:          beadRecord.Labels,
+			StartedAt:       time.Now(),
+			Cancel:          runCancel,
 		}
 		deps.runRegistry.Register(runID, dispatchedHandle)
 		if deps.cacheReapMu != nil {

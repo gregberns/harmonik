@@ -232,6 +232,15 @@ func TestStaleWatch_ExponentialBackoff(t *testing.T) {
 		StaleAfter:   staleAfter,
 		ScanInterval: time.Hour,
 		Now:          nowFn,
+		// hk-mdus1: isolate the run_stale re-emission SCHEDULE (M, 2M, 4M …)
+		// under test from the force-reap watchdog. This fixture keeps a bare
+		// handle registered indefinitely (no goroutine to unwind it), so with
+		// the production 90 s grace the watchdog would force-Unregister it ~90 s
+		// after the first stale (which triggers the kill-consumer cancel) and
+		// truncate the backoff. A huge grace keeps the emission cadence
+		// observable; force-reap behavior itself is covered by the dedicated
+		// stalewatch_forceReap_hkmdus1_test.go suite.
+		ForceReapGrace: 24 * time.Hour,
 	})
 	if err := w.Subscribe(); err != nil {
 		t.Fatalf("Subscribe: %v", err)
@@ -693,6 +702,9 @@ func TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff(t *testing.T) {
 		ReviewerLaunchStaleAfter: reviewerLaunchStaleAfter,
 		ScanInterval:             time.Hour,
 		Now:                      nowFn,
+		// hk-mdus1: isolate the re-emission schedule from the force-reap
+		// watchdog (see the note in TestStaleWatch_ExponentialBackoff).
+		ForceReapGrace: 24 * time.Hour,
 	})
 	if err := w.Subscribe(); err != nil {
 		t.Fatalf("Subscribe: %v", err)

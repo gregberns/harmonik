@@ -43,6 +43,20 @@ type RunHandle struct {
 	// Bead ref: hk-tigaf.4 (NQ-B1).
 	QueueName string
 
+	// QueueID, QueueGroupIndex, and QueueItemIndex denormalize the durable
+	// queue routing coordinates of this run so the force-reap watchdog
+	// (StaleWatcher, hk-mdus1) can drive the owning queue item terminal via
+	// evaluateGroupAdvanceWithOutcome WITHOUT the per-run goroutine — which is,
+	// by definition of a force-reap, wedged and never returns to run the
+	// completion-path advance itself. Set at dispatch time alongside QueueName.
+	// QueueID / QueueGroupIndex are nil and QueueItemIndex is -1 for
+	// br-ready-fallback runs (no queue).
+	//
+	// Bead ref: hk-mdus1.
+	QueueID         *string
+	QueueGroupIndex *int
+	QueueItemIndex  int
+
 	// Labels holds the raw bead label strings copied from BeadRecord.Labels at
 	// registration time. Used by StaleWatcher to apply per-bead overrides (e.g.
 	// "stale_after=<seconds>").

@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -106,6 +107,54 @@ var launchStallThreshold = 30 * time.Second
 // Declared as var so tests can override without waiting real wall time.
 var agentReadyStallThreshold = 3 * time.Minute
 
+// forceReapGraceDefault is the grace period (hk-mdus1) the force-reap watchdog
+// waits AFTER a run's per-run context Cancel has been invoked before it directly
+// Unregisters the leaked RunHandle from the RunRegistry.
+//
+// Rationale: the existing auto-cancellers (kill-consumer backstop, never-spawned
+// reaper) call handle.Cancel() exactly once, then rely on the per-run goroutine
+// unwinding via waitWithSocketGrace → beadRunOne return → deferred Unregister to
+// free the concurrency slot. When the goroutine is parked on a wait that does
+// NOT observe runCtx (a br/git subprocess on context.Background(), a mutex, a
+// merge-build), Cancel never unwinds it and the RunHandle — and thus the
+// concurrency slot it occupies in RunRegistry.Len()/LenForQueue — leaks forever,
+// eventually closing the global gate and gridlocking the fleet until a daemon
+// restart. The force-reap watchdog is the re-entrant backstop that closes that
+// leak: 90 s after Cancel, if the run is STILL registered, it force-Unregisters
+// the handle directly (freeing the slot) and drives the queue item terminal.
+//
+// 90 s is comfortably longer than the socket-grace / normal unwind window
+// (seconds) so a genuinely-unwinding run is never force-reaped prematurely, yet
+// short enough that a truly wedged slot is reclaimed long before the ~15-min
+// gridlock cadence.
+//
+// Declared as a var so tests can override without waiting real wall time; the
+// production default is const-like (never mutated outside tests).
+var forceReapGraceDefault = 90 * time.Second
+
+// deadProcessStaleAfterDefault is the minimum quiet window (hk-mdus1 fast dead-
+// process reap) a run must have been silent before the dead-process probe is
+// allowed to cancel it. It gates the fast-reap so that a run whose agent process
+// exited but whose goroutine is legitimately mid-post-processing is NOT reaped:
+// only a run that is BOTH process-dead AND event-silent past this window is
+// fast-cancelled, starting the force-reap grace immediately instead of waiting
+// out the 10–30 min stale thresholds.
+//
+// 5 min (widened from an initial 2 min per hk-mdus1 review B2) is deliberately
+// sized to comfortably exceed a worst-case COLD-CACHE post-merge build gate.
+// That gate (go build + vet ./...; workloop.go emitMergeThenBuild path) runs
+// SYNCHRONOUSLY inside the per-run goroutine AFTER the agent's claude pane has
+// exited but BEFORE beadRunOne returns and tears the pane down — so the pane PID
+// can read dead while a legitimate cold build is still compiling, and that phase
+// emits NO heartbeat to refresh lastEventAt. A window shorter than the cold
+// build would let the fast reap cancel a healthy run mid-build
+// (→ merge_build_failed → bead reopened), which is worse than the leak it
+// guards. 5 min clears the observed cold `go build+vet ./...` worst case with
+// margin. The truly-wedged case is still caught by the force-reap watchdog at
+// forceReapGrace (90 s) once ANY canceller fires, so this wider window does not
+// reintroduce the gridlock — it only defers the FAST path, not the backstop.
+var deadProcessStaleAfterDefault = 5 * time.Minute
+
 // runStaleState tracks per-run staleness accounting inside StaleWatcher.
 type runStaleState struct {
 	// beadID is the bead being executed in this run.
@@ -176,6 +225,34 @@ type runStaleState struct {
 	// fired for this run. Prevents repeated Cancel calls on subsequent scan
 	// ticks. Set to true on the first run_stale emission.
 	killConsumerFired bool
+
+	// cancelledAt is the wall-clock time the FIRST auto-cancel (kill-consumer
+	// backstop, never-spawned reaper, or fast dead-process reap) was invoked
+	// for this run — OR, when handle.Cancel was nil, the time that cancel was
+	// attempted. Zero until any cancel has been invoked. The force-reap watchdog
+	// (hk-mdus1) uses it as the grace-clock start: forceReapGrace after this
+	// timestamp, a still-registered run is force-Unregistered directly.
+	cancelledAt time.Time
+
+	// forceReapFired is true once the force-reap watchdog has force-Unregistered
+	// this run. Prevents a second force-reap on subsequent scan ticks (the run
+	// is normally gone from the registry after the first, but a concurrent
+	// re-register or slow delete must not double-emit the terminal event).
+	forceReapFired bool
+
+	// deadProcessCancelled is true once the fast dead-process reap (hk-mdus1)
+	// has cancelled this run. Prevents repeated Cancel calls on subsequent ticks.
+	deadProcessCancelled bool
+}
+
+// forceReapCB and runDeadCB wrap the two optional daemon-wired seams so they can
+// be published race-free via atomic.Pointer (they are set post-construction, in
+// a two-phase wiring, while the scan goroutine may already be running).
+type forceReapCB struct {
+	fn func(runID core.RunID, handle *RunHandle)
+}
+type runDeadCB struct {
+	fn func(runID core.RunID, handle *RunHandle) bool
 }
 
 // StaleWatcherConfig holds the construction-time parameters for StaleWatcher.
@@ -228,6 +305,33 @@ type StaleWatcherConfig struct {
 
 	// Now is the wall-clock source. Nil → time.Now.
 	Now func() time.Time
+
+	// ForceReapGrace is the grace period the force-reap watchdog waits after a
+	// run's Cancel was invoked before force-Unregistering a still-registered
+	// RunHandle (hk-mdus1). Zero → forceReapGraceDefault (90 s).
+	ForceReapGrace time.Duration
+
+	// DeadProcessStaleAfter gates the fast dead-process reap (hk-mdus1): a run
+	// must have been event-silent this long AND be process-dead before the
+	// dead-process probe cancels it. Zero → deadProcessStaleAfterDefault (2 min).
+	DeadProcessStaleAfter time.Duration
+
+	// ForceReap, when non-nil, is invoked by the force-reap watchdog immediately
+	// before the RunHandle is force-Unregistered (hk-mdus1). It is the seam the
+	// daemon wires to emit a terminal run_failed for the wedged run and to drive
+	// its owning queue item terminal (evaluateGroupAdvanceWithOutcome) — work
+	// the wedged per-run goroutine can no longer do itself. Nil (e.g. unit-test
+	// mode with no ProjectDir / queueStore) → the watchdog still frees the slot
+	// via Registry.Unregister; only the terminal-event/queue-advance is skipped.
+	// May also be set post-construction via SetForceReap.
+	ForceReap func(runID core.RunID, handle *RunHandle)
+
+	// RunProcessDead, when non-nil, reports whether the agent process/pane for a
+	// run is already gone (hk-mdus1 fast dead-process reap). The daemon wires it
+	// to the tmux substrate's #{pane_pid} liveness (processDead / WindowPanePID).
+	// Nil → the fast reap is inert and detection falls back to the stale
+	// thresholds. May also be set post-construction via SetRunProcessDead.
+	RunProcessDead func(runID core.RunID, handle *RunHandle) bool
 }
 
 // StaleWatcher subscribes to the event bus to track the most recent event time
@@ -238,6 +342,41 @@ type StaleWatcher struct {
 
 	mu     sync.Mutex
 	states map[core.RunID]*runStaleState
+
+	// forceReapPtr / runDeadPtr publish the two optional daemon-wired seams
+	// (hk-mdus1) race-free. They are stored at construction from cfg and may be
+	// re-published later via SetForceReap / SetRunProcessDead (two-phase wiring:
+	// the callbacks depend on workLoopDeps, which is built after StartWatcher).
+	forceReapPtr atomic.Pointer[forceReapCB]
+	runDeadPtr   atomic.Pointer[runDeadCB]
+}
+
+// SetForceReap publishes (or replaces) the force-reap seam after construction.
+// Safe to call while the scan goroutine is running (hk-mdus1).
+func (w *StaleWatcher) SetForceReap(fn func(runID core.RunID, handle *RunHandle)) {
+	w.forceReapPtr.Store(&forceReapCB{fn: fn})
+}
+
+// SetRunProcessDead publishes (or replaces) the dead-process liveness seam after
+// construction. Safe to call while the scan goroutine is running (hk-mdus1).
+func (w *StaleWatcher) SetRunProcessDead(fn func(runID core.RunID, handle *RunHandle) bool) {
+	w.runDeadPtr.Store(&runDeadCB{fn: fn})
+}
+
+// forceReapFn returns the currently-published force-reap seam, or nil.
+func (w *StaleWatcher) forceReapFn() func(core.RunID, *RunHandle) {
+	if p := w.forceReapPtr.Load(); p != nil {
+		return p.fn
+	}
+	return nil
+}
+
+// runProcessDeadFn returns the currently-published dead-process seam, or nil.
+func (w *StaleWatcher) runProcessDeadFn() func(core.RunID, *RunHandle) bool {
+	if p := w.runDeadPtr.Load(); p != nil {
+		return p.fn
+	}
+	return nil
 }
 
 // beadStaleAfter parses a "stale_after=<seconds>" or "stale_after:<seconds>"
@@ -284,11 +423,26 @@ func NewStaleWatcher(cfg StaleWatcherConfig) *StaleWatcher {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &StaleWatcher{
+	if cfg.ForceReapGrace <= 0 {
+		cfg.ForceReapGrace = forceReapGraceDefault
+	}
+	if cfg.DeadProcessStaleAfter <= 0 {
+		cfg.DeadProcessStaleAfter = deadProcessStaleAfterDefault
+	}
+	w := &StaleWatcher{
 		cfg:    cfg,
 		gate:   cfg.Gate,
 		states: make(map[core.RunID]*runStaleState),
 	}
+	// Seed the optional seams from cfg so tests can supply them at construction;
+	// production wires them post-construction via SetForceReap/SetRunProcessDead.
+	if cfg.ForceReap != nil {
+		w.forceReapPtr.Store(&forceReapCB{fn: cfg.ForceReap})
+	}
+	if cfg.RunProcessDead != nil {
+		w.runDeadPtr.Store(&runDeadCB{fn: cfg.RunProcessDead})
+	}
+	return w
 }
 
 // Subscribe registers the watcher as a wildcard observer on SubscribeBus.
@@ -432,6 +586,60 @@ func (w *StaleWatcher) checkRun(
 		st.beadID = handle.BeadID
 	}
 
+	// hk-mdus1 FORCE-REAP WATCHDOG (re-entrant backstop). The one-shot auto-
+	// cancellers (kill-consumer, never-spawned, fast dead-process) call
+	// handle.Cancel() once and then rely on the per-run goroutine unwinding to
+	// free the concurrency slot via its deferred Unregister. When the goroutine
+	// is parked on a wait that never observes runCtx (br/git subprocess on
+	// context.Background(), a mutex, a merge-build), Cancel never unwinds it and
+	// the RunHandle — and its slot in RunRegistry.Len()/LenForQueue — leaks
+	// forever, eventually closing the global gate and gridlocking the fleet.
+	// This watchdog closes that leak: forceReapGrace after Cancel was invoked,
+	// if the run is STILL registered (it is — we are iterating a registry
+	// snapshot), force-Unregister the handle directly and drive its queue item
+	// terminal. Runs FIRST so a wedged slot is reclaimed regardless of which
+	// canceller fired. Covers the Cancel==nil case: cancelledAt is recorded even
+	// when Cancel was nil, so the grace still elapses and the slot is freed.
+	if !st.cancelledAt.IsZero() && !st.forceReapFired && now.Sub(st.cancelledAt) >= w.cfg.ForceReapGrace {
+		st.forceReapFired = true
+		beadIDForReap := st.beadID
+		grace := now.Sub(st.cancelledAt)
+		w.mu.Unlock()
+		w.forceReap(ctx, runID, beadIDForReap, handle, grace)
+		return
+	}
+
+	// hk-mdus1 FAST DEAD-PROCESS REAP. When the run's agent process/pane is
+	// already gone (probed via the substrate's #{pane_pid} liveness) AND the run
+	// has been event-silent past DeadProcessStaleAfter, cancel it immediately
+	// instead of waiting out the 10–30 min stale thresholds. The silence gate
+	// protects normal post-agent-exit processing (merge/build emit their own
+	// events, refreshing lastEventAt) from being reaped. Cancelling here records
+	// cancelledAt, which starts the force-reap grace above so a wedged
+	// goroutine is still force-Unregistered even if Cancel does not unwind it.
+	if deadFn := w.runProcessDeadFn(); deadFn != nil &&
+		st.cancelledAt.IsZero() && !st.deadProcessCancelled {
+		ref := st.lastEventAt
+		if ref.IsZero() {
+			ref = handle.StartedAt
+		}
+		if now.Sub(ref) >= w.cfg.DeadProcessStaleAfter && deadFn(runID, handle) {
+			st.deadProcessCancelled = true
+			st.cancelledAt = now
+			beadIDForDead := st.beadID
+			silent := now.Sub(ref)
+			w.mu.Unlock()
+			fmt.Fprintf(os.Stderr,
+				"daemon: stalewatch: fast dead-process reap: bead %s run %s: agent process/pane gone and silent %s — cancelling; force-reap in %s if still registered\n",
+				beadIDForDead, runID, silent.Round(time.Second), w.cfg.ForceReapGrace)
+			if handle.Cancel != nil {
+				handle.aborted.Store(true)
+				handle.Cancel()
+			}
+			return
+		}
+	}
+
 	// hk-fra5l: launch-stall detection — emit launch_stall_detected (once per
 	// run) when run_started has been seen but launch_initiated has not arrived
 	// within launchStallThreshold (30 s).  This fires independently of the main
@@ -500,6 +708,10 @@ func (w *StaleWatcher) checkRun(
 	if st.launchInitiatedSeen && !agentReadySeen && !neverSpawnedFired && !launchInitiatedAt.IsZero() &&
 		now.Sub(launchInitiatedAt) > w.cfg.NeverSpawnedReaperTimeout {
 		st.neverSpawnedFired = true
+		// hk-mdus1: start the force-reap grace clock (covers Cancel==nil too).
+		if st.cancelledAt.IsZero() {
+			st.cancelledAt = now
+		}
 		beadIDForNSR := st.beadID
 		w.mu.Unlock()
 		w.fireNeverSpawnedReaper(ctx, runID, beadIDForNSR, handle, now.Sub(launchInitiatedAt))
@@ -530,6 +742,10 @@ func (w *StaleWatcher) checkRun(
 		!lastLaunchInitiatedAt.IsZero() &&
 		now.Sub(lastLaunchInitiatedAt) > w.cfg.NeverSpawnedReaperTimeout {
 		st.neverSpawnedFired = true
+		// hk-mdus1: start the force-reap grace clock (covers Cancel==nil too).
+		if st.cancelledAt.IsZero() {
+			st.cancelledAt = now
+		}
 		beadIDForNSR2 := st.beadID
 		w.mu.Unlock()
 		w.fireNeverSpawnedReaper(ctx, runID, beadIDForNSR2, handle, now.Sub(lastLaunchInitiatedAt))
@@ -583,6 +799,12 @@ func (w *StaleWatcher) checkRun(
 	shouldKillConsumer := !st.killConsumerFired
 	if shouldKillConsumer {
 		st.killConsumerFired = true
+		// hk-mdus1: start the force-reap grace clock. Recorded even though
+		// killConsumerBackstop may find Cancel==nil — the force-reap watchdog
+		// then frees the leaked slot after the grace regardless.
+		if st.cancelledAt.IsZero() {
+			st.cancelledAt = now
+		}
 	}
 	// Double the window for the next emission (exponential backoff).
 	// Use effectiveThreshold as the base so that the reviewer-launch gate
@@ -699,6 +921,42 @@ func (w *StaleWatcher) killConsumerBackstop(
 	}
 	handle.aborted.Store(true)
 	handle.Cancel()
+}
+
+// forceReap is the re-entrant force-reap watchdog action (hk-mdus1). It is
+// invoked by checkRun when a run remains registered in the RunRegistry
+// forceReapGrace after its per-run Cancel was first invoked — i.e. Cancel did
+// NOT unwind the goroutine (parked on a non-runCtx wait) or Cancel was nil.
+//
+// Two things happen, in order:
+//
+//  1. The optional daemon-wired ForceReap seam runs (when present): it emits a
+//     terminal run_failed for the wedged run and drives its owning queue item
+//     terminal via evaluateGroupAdvanceWithOutcome — work the wedged goroutine
+//     can no longer do itself, so absent this the queue group would stall
+//     forever (hk-mdus1 orphan-item path).
+//  2. The RunHandle is force-Unregistered directly. This is the LOAD-BEARING
+//     step: it frees the concurrency slot the leaked handle occupied in
+//     RunRegistry.Len()/LenForQueue, re-opening the global gate. It happens
+//     even when the seam is nil (unit-test mode), so the anti-gridlock
+//     guarantee never depends on the queue-advance wiring.
+//
+// The parked goroutine may still be alive; if it ever unwinds its deferred
+// Unregister is a harmless no-op (Unregister is idempotent). A double terminal
+// event (this one plus a late one from the goroutine) is possible but benign
+// and vanishingly rare (the goroutine is, by construction, wedged).
+//
+// Bead ref: hk-mdus1.
+func (w *StaleWatcher) forceReap(_ context.Context, runID core.RunID, beadID core.BeadID, handle *RunHandle, sinceCancel time.Duration) {
+	fmt.Fprintf(os.Stderr,
+		"daemon: stalewatch: FORCE-REAP: bead %s run %s: still registered %s after Cancel — force-Unregistering leaked slot (hk-mdus1)\n",
+		beadID, runID, sinceCancel.Round(time.Second))
+	// Step 1: terminal event + queue-item advance (best-effort; nil in tests).
+	if fn := w.forceReapFn(); fn != nil {
+		fn(runID, handle)
+	}
+	// Step 2: LOAD-BEARING — free the concurrency slot unconditionally.
+	w.cfg.Registry.Unregister(runID)
 }
 
 // emitLaunchStallDetected emits a launch_stall_detected warning event.

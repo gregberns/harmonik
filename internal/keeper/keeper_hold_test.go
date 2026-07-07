@@ -733,3 +733,62 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 		t.Error("control (hold off): RunForIdle did NOT fire; want ≥1 inject")
 	}
 }
+
+// ── Older binary silently ignores the hold marker (version-gated) ────────────
+
+// TestWatcher_OlderBinaryIgnoresHoldMarker is the version-gated assertion: a
+// hold marker on disk has NO effect on a binary that does not check it. The hold
+// feature was added 2026-06-20 (hk-9waz); older keeper binaries never call
+// IsHeld and so will ACT/restart regardless of what is on disk. This test
+// proves the marker is purely code-path-gated — it is NOT a global filesystem
+// lock that all keeper versions would consult.
+//
+// Invariant: an older binary (modelled here by HeldCheckFn that always returns
+// false, the behavior of a binary compiled before the hold gate existed) MUST
+// fire respawn even when a fresh, valid <agent>.hold.<sessionID> is present on
+// disk. Skill §hold: "An older keeper silently ignores the hold marker and will
+// ACT/restart anyway."
+func TestWatcher_OlderBinaryIgnoresHoldMarker(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	agent := "older-bin-agent"
+
+	// Write a live .sid so SetHold succeeds, then place a fresh hold on disk.
+	writeSidFile(t, dir, agent, primarySID)
+	if _, err := keeper.SetHold(dir, agent); err != nil {
+		t.Fatalf("SetHold: %v", err)
+	}
+	// Pre-condition: the CURRENT binary would see a hold (proves the marker is there).
+	if !keeper.IsHeld(dir, agent, keeper.DefaultHoldTTL) {
+		t.Fatal("pre-condition: hold must be active on disk for this test to be meaningful")
+	}
+
+	// Simulate an older binary: HeldCheckFn always returns false — it does not know
+	// about the hold gate and never inspects the marker file.
+	sentinel := filepath.Join(dir, "respawned.flag")
+	em := &keeper.RecordingEmitter{}
+	cfg := keeper.WatcherConfig{
+		AgentName:    agent,
+		ProjectDir:   dir,
+		PollInterval: 10 * time.Millisecond,
+		Staleness:    5 * time.Millisecond,
+		RespawnGrace: 5 * time.Millisecond,
+		RespawnCmd:   "printf RESPAWNED > " + sentinel,
+		TmuxTarget:   "dummy-pane",
+		IsPaneIdleFn: func(_ context.Context, _ string) bool { return true },
+		InjectFn:     func(_ context.Context, _ string) error { return nil },
+		// Older binary: hold gate absent — always returns false regardless of disk.
+		HeldCheckFn: func(_, _ string) bool { return false },
+	}
+	keeperDir := filepath.Join(dir, ".harmonik", "keeper")
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	runWatcherFor(context.Background(), cfg, em, 300*time.Millisecond)
+
+	if _, statErr := os.Stat(sentinel); statErr != nil {
+		t.Error("OLDER-BINARY REGRESSION: respawn did NOT fire despite a live hold marker " +
+			"— an older binary must ignore the hold marker and ACT/restart anyway; " +
+			"the marker must be purely code-path-gated")
+	}
+}

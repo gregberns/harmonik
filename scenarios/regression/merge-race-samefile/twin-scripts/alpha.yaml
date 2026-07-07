@@ -51,6 +51,7 @@ messages:
     payload:
       run_id: run-hkxeqtv-mr-alpha-001
       session_id: sess-hkxeqtv-mr-alpha-001
+      ended_at: "2026-01-01T00:00:00.200Z"
       exit_code: 0
       outcome_ref: run-hkxeqtv-mr-alpha-001/outcome
     relative_timestamp_ms: 0

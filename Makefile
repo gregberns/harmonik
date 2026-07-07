@@ -238,6 +238,31 @@ check-full:  ## Tier 3: everything in check + integration + scenario + crash tes
 	go test -tags=crash ./test/crash/...
 
 # ---------------------------------------------------------------------------
+# Keeper acceptance corpus — keeper conformance set (hk-urxa3)
+# Named conformance set for the keeper test-validation system.  Runs all
+# 6 corpus scenarios and the supporting floor without a real tmux session.
+# test-keeper-conformance-full additionally runs the L-twin integration tier
+# (requires tmux on PATH).
+#
+# Corpus map:
+#   floor: band-min / force-act / hard-ceiling SID-independent / pct-inert-warn-1m
+#          live-watcher flock vs corpse / operator-attached warn-only
+#   #1 restart-now does not abort no_tmux_target (B4 fix, L-fake-tmux + L-twin)
+#   #2 session_id survives /clear, rebinds same lane (L-twin only)
+#   #3 unconfirmed handoff not truncated, no second nonce (hk-vpnp)
+#   #4 watch re-stall auto-heals once, no alert storm (B3 fix, L-fake-tmux + L-twin)
+#   #5 hold dies on restart; hard-ceiling overrides hold; WARN fires under hold
+#   #6 binary-upgrade refuse-to-start + config --example restores
+# ---------------------------------------------------------------------------
+.PHONY: test-keeper-conformance
+test-keeper-conformance:  ## Keeper acceptance corpus: 6 scenarios + floor, zero real tmux (hk-urxa3)
+	go test -race -count=1 -run 'TestKeeperConformance' ./internal/keeper/ ./cmd/harmonik/
+
+.PHONY: test-keeper-conformance-full
+test-keeper-conformance-full: test-keeper-conformance  ## Keeper acceptance corpus + L-twin integration tier (requires real tmux)
+	go test -race -tags=integration -count=1 -run 'TestKeeperConformanceCorpus_Integration' ./internal/keeper/
+
+# ---------------------------------------------------------------------------
 # Release validation gate (hk-o4j13)
 # Invoked by the release CI workflow (hk-jdesv adds the .github/workflows step).
 # Runs each phase in order; any nonzero exit propagates immediately.

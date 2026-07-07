@@ -29,6 +29,7 @@ package daemon_test
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -131,10 +132,9 @@ func TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	loopDone := make(chan struct{})
+	loopDone := make(chan error, 1)
 	go func() {
-		defer close(loopDone)
-		daemon.ExportedRunWorkLoop(ctx, deps)
+		loopDone <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
 	select {
@@ -145,7 +145,10 @@ func TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch(t *testing.T) {
 	}
 
 	select {
-	case <-loopDone:
+	case err := <-loopDone:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Errorf("work loop returned unexpected error: %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("work loop did not exit within 5s")
 	}

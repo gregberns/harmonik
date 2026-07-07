@@ -1173,6 +1173,14 @@ func ExportedBeadStaleAfter(labels []string, defaultAfter time.Duration) time.Du
 	return beadStaleAfter(labels, defaultAfter)
 }
 
+// ExportedBeadNeverSpawnedTimeout exposes the package-private
+// beadNeverSpawnedTimeout helper for unit testing.
+//
+// Bead ref: hk-8gixi.
+func ExportedBeadNeverSpawnedTimeout(labels []string, defaultTimeout time.Duration) time.Duration {
+	return beadNeverSpawnedTimeout(labels, defaultTimeout)
+}
+
 // ExportedRunHandleIsAborted returns true if the RunHandle's aborted flag is set.
 // Used by the never-spawned reaper tests (hk-0z5x).
 func ExportedRunHandleIsAborted(h *RunHandle) bool {

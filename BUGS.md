@@ -110,6 +110,23 @@
   long-running contexts. Per crew-launch protocol (fails-twice rule), jamis is NOT re-dispatching a
   3rd time — escalated to captain via `--topic error`, awaiting instructions. Worth a major-issue
   fan-out per the fanout skill's "root cause refuted/recurred ≥2x" trigger.
+- **ROOT CAUSE IDENTIFIED (2026-07-07, hk-8gixi):** The never-spawned reaper in `stalewatch.go`
+  fires when `launch_initiated` was seen but `agent_ready` was NOT seen within
+  `neverSpawnedReaperDefaultTimeout = 30 * time.Minute`. With all runs launched in the same dispatch
+  wave, every run hits the 30-min deadline in the same 30s scan tick — explaining the ~1.5s window
+  where ALL runs cancelled simultaneously. The root cause of `agent_ready` remaining unseen in a
+  live-running implement node is a separate edge case (the hk-wths fix using `EmitWithRunID` in the
+  `SetAgentReadyCallback` DOT cascade path was supposed to close this; the edge case that let B9
+  slip through is not fully understood without runtime logs from the incident).
+- **FIX (hk-8gixi):** Added `never_spawned_timeout=<seconds>` per-bead label override (mirrors the
+  existing `stale_after=<seconds>` pattern). Operators can label long-running DOT beads with e.g.
+  `never_spawned_timeout=7200` to raise the ceiling to 2 h without touching daemon config or
+  triggering a live redeploy. The global `neverSpawnedReaperDefaultTimeout` (30 min) is unchanged —
+  per-bead override only. Implemented in `internal/daemon/stalewatch.go`; new helper
+  `beadNeverSpawnedTimeout()` reads the label; `checkRun` initialises `runStaleState.neverSpawnedTimeout`
+  from the bead's `RunHandle.Labels`; both reaper checks use the per-run value. 8 unit tests in
+  `stalewatch_neverSpawnedTimeout_hk8gixi_test.go` cover label parse, fallback, and the integration
+  path end-to-end.
 
 ---
 

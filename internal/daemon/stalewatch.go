@@ -13,6 +13,10 @@ package daemon
 //     Config.StaleAfterSeconds (per-daemon) or a per-bead label
 //     "stale_after=<seconds>" (per-bead override via beadStaleAfter).
 //   - scanInterval: how often the background goroutine wakes (default: 30 s).
+//   - neverSpawnedReaperDefaultTimeout: deadline for the never-spawned reaper
+//     (default: 30 min). Per-bead override via "never_spawned_timeout=<seconds>"
+//     label (beadNeverSpawnedTimeout).  Use this label on long-running DOT-mode
+//     implement beads that legitimately exceed the 30-min ceiling (B9, hk-8gixi).
 //
 // The watcher must be constructed and Subscribed BEFORE bus.Seal (EV-009).
 // StartWatcher is called after Seal to launch the background goroutine.
@@ -177,6 +181,14 @@ type runStaleState struct {
 	// this run.  Zero until the event is seen.
 	// Used by the launch-stall detector (hk-fra5l).
 	runStartedAt time.Time
+
+	// neverSpawnedTimeout is the per-run deadline for both the classic and
+	// per-dispatch never-spawned reapers.  Initialised from the bead's
+	// "never_spawned_timeout=<seconds>" label (beadNeverSpawnedTimeout);
+	// falls back to w.cfg.NeverSpawnedReaperTimeout when no label is set.
+	// Long-running DOT-mode implement beads should carry this label to avoid
+	// false-positive context cancellations (B9, hk-8gixi).
+	neverSpawnedTimeout time.Duration
 
 	// launchInitiatedSeen is true once launch_initiated has been observed.
 	// When true, the launch-stall check is suppressed for this run.
@@ -402,6 +414,34 @@ func beadStaleAfter(labels []string, defaultAfter time.Duration) time.Duration {
 	return defaultAfter
 }
 
+// beadNeverSpawnedTimeout parses a "never_spawned_timeout=<seconds>" or
+// "never_spawned_timeout:<seconds>" label from labels and returns the
+// corresponding duration.  Returns defaultTimeout when no such label is present
+// or the value is ≤0.
+//
+// Long-running DOT-mode implement beads that legitimately exceed the default
+// 30-min never-spawned-reaper ceiling (B9, hk-8gixi) should carry this label
+// to prevent false-positive context cancellations.
+func beadNeverSpawnedTimeout(labels []string, defaultTimeout time.Duration) time.Duration {
+	for _, l := range labels {
+		var val string
+		switch {
+		case strings.HasPrefix(l, "never_spawned_timeout="):
+			val = strings.TrimPrefix(l, "never_spawned_timeout=")
+		case strings.HasPrefix(l, "never_spawned_timeout:"):
+			val = strings.TrimPrefix(l, "never_spawned_timeout:")
+		default:
+			continue
+		}
+		secs, err := strconv.ParseInt(val, 10, 64)
+		if err != nil || secs <= 0 {
+			return defaultTimeout
+		}
+		return time.Duration(secs) * time.Second
+	}
+	return defaultTimeout
+}
+
 // NewStaleWatcher creates a StaleWatcher from cfg. Call Subscribe before
 // bus.Seal; call StartWatcher after Seal to launch the background goroutine.
 func NewStaleWatcher(cfg StaleWatcherConfig) *StaleWatcher {
@@ -575,11 +615,17 @@ func (w *StaleWatcher) checkRun(
 		// the payload carries consistent (both-empty) last_event fields. The age
 		// is computed from handle.StartedAt as the reference point.
 		//
-		// Apply per-bead stale_after=<seconds> label override if present.
+		// Apply per-bead label overrides if present.
 		st = &runStaleState{
-			nextEmitAfter: beadStaleAfter(handle.Labels, w.cfg.StaleAfter),
+			nextEmitAfter:       beadStaleAfter(handle.Labels, w.cfg.StaleAfter),
+			neverSpawnedTimeout: beadNeverSpawnedTimeout(handle.Labels, w.cfg.NeverSpawnedReaperTimeout),
 		}
 		w.states[runID] = st
+	} else if st.neverSpawnedTimeout == 0 {
+		// observe() may have initialised the state before checkRun had a chance
+		// to do so; it lacks access to handle.Labels and leaves neverSpawnedTimeout
+		// at its zero value.  Lazily apply the per-bead label override here.
+		st.neverSpawnedTimeout = beadNeverSpawnedTimeout(handle.Labels, w.cfg.NeverSpawnedReaperTimeout)
 	}
 	// Hydrate BeadID from the RunHandle (available even before first event).
 	if st.beadID == "" {
@@ -702,11 +748,17 @@ func (w *StaleWatcher) checkRun(
 	//
 	// Reference timestamp is launchInitiatedAt (not lastEventAt) so that
 	// subsequent events (e.g. daemon heartbeats) do not delay the deadline.
+	//
+	// The effective timeout is st.neverSpawnedTimeout (initialised at first
+	// event/check from the bead's "never_spawned_timeout=<seconds>" label;
+	// falls back to w.cfg.NeverSpawnedReaperTimeout when no label is present).
+	// Long-running DOT-mode implement beads should carry the label to avoid
+	// the fleet-wide simultaneous cancellation observed in B9 (hk-8gixi).
 	launchInitiatedAt := st.launchInitiatedAt
 	agentReadySeen := st.agentReadySeen
 	neverSpawnedFired := st.neverSpawnedFired
 	if st.launchInitiatedSeen && !agentReadySeen && !neverSpawnedFired && !launchInitiatedAt.IsZero() &&
-		now.Sub(launchInitiatedAt) > w.cfg.NeverSpawnedReaperTimeout {
+		now.Sub(launchInitiatedAt) > st.neverSpawnedTimeout {
 		st.neverSpawnedFired = true
 		// hk-mdus1: start the force-reap grace clock (covers Cancel==nil too).
 		if st.cancelledAt.IsZero() {
@@ -740,7 +792,7 @@ func (w *StaleWatcher) checkRun(
 	agentReadySinceLastLaunch := st.agentReadySeenSinceLastLaunch
 	if agentReadySeen && !agentReadySinceLastLaunch && !neverSpawnedFired &&
 		!lastLaunchInitiatedAt.IsZero() &&
-		now.Sub(lastLaunchInitiatedAt) > w.cfg.NeverSpawnedReaperTimeout {
+		now.Sub(lastLaunchInitiatedAt) > st.neverSpawnedTimeout {
 		st.neverSpawnedFired = true
 		// hk-mdus1: start the force-reap grace clock (covers Cancel==nil too).
 		if st.cancelledAt.IsZero() {

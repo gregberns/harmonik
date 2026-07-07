@@ -1110,9 +1110,10 @@ func pasteInjectQuitOnCommit(
 				// is still expired, no heartbeat arrived in this budget window.
 				// Require observable progress before extending (hk-ukx).
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
-					wtFP, wtOK := worktreeActivityFingerprintVia(ctx, probeRunner, wtPath)
-					budgetWorktreeProgressed := wtOK && wtFP != lastActivityFingerprint
-
+					// hk-ej7k6: check pane output FIRST (no git subprocess) so a
+					// streaming session short-circuits before paying the worktree
+					// fingerprint round-trip.  The production perRunSubstrate always
+					// implements paneOutputSizer, so this is the common path.
 					budgetPaneOutputProgressed := false
 					if outputSizer != nil {
 						if fp, ok := outputSizer.PaneOutputFingerprint(ctx); ok && fp != lastPaneOutputFP {
@@ -1121,15 +1122,28 @@ func pasteInjectQuitOnCommit(
 						}
 					}
 
-					if budgetWorktreeProgressed || budgetPaneOutputProgressed {
-						signal := "changed working tree"
-						if budgetPaneOutputProgressed && !budgetWorktreeProgressed {
-							signal = "pane output growth"
-						} else if budgetPaneOutputProgressed {
-							signal = "changed working tree + pane output growth"
-						}
-						if budgetWorktreeProgressed {
+					// Only probe the worktree fingerprint when pane output alone
+					// was inconclusive AND a pane-output sizer is present (the
+					// production path).  When outputSizer is nil the substrate
+					// cannot distinguish idle from active via pane output, so we
+					// treat active-but-no-output as "no observable progress" and
+					// fire the kill without running git subprocesses.  In
+					// production perRunSubstrate always implements paneOutputSizer,
+					// so worktree probing is preserved for the silent-implementer
+					// case (planning without streaming output).
+					budgetWorktreeProgressed := false
+					if !budgetPaneOutputProgressed && outputSizer != nil {
+						wtFP, wtOK := worktreeActivityFingerprintVia(ctx, probeRunner, wtPath)
+						if wtOK && wtFP != lastActivityFingerprint {
+							budgetWorktreeProgressed = true
 							lastActivityFingerprint = wtFP
+						}
+					}
+
+					if budgetWorktreeProgressed || budgetPaneOutputProgressed {
+						signal := "pane output growth"
+						if budgetWorktreeProgressed {
+							signal = "changed working tree"
 						}
 						fmt.Fprintf(os.Stderr,
 							"daemon: pasteinject: quit-on-commit: commit-budget %v elapsed but pane is making progress (%s) in %s; extending budget (hard ceiling %v)\n",

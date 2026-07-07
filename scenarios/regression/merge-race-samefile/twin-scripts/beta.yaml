@@ -47,7 +47,7 @@ messages:
     payload:
       run_id: run-hkxeqtv-mr-beta-001
       session_id: sess-hkxeqtv-mr-beta-001
-      node_id: node-hkxeqtv-mr-beta-001
+      node_id: beta_node
       outcome_status: WORK_COMPLETE
     relative_timestamp_ms: 5
   - type: agent_completed

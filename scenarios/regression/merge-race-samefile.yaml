@@ -167,12 +167,19 @@ fixture_setup:
 #
 # (1) Alpha's merge lands cleanly on the integration branch.
 # (2) Beta's merge is rejected — non_ff_merge because alpha advanced main first.
-# (3) Alpha node reaches terminal state (agent_completed{node_id=alpha_node}).
-# (4) Beta node reaches terminal state (agent_completed{node_id=beta_node}).
+# (3) Alpha node reaches terminal state via its twin-side outcome_emitted{node_id=alpha_node}.
+# (4) Beta node reaches terminal state via its twin-side outcome_emitted{node_id=beta_node}.
 #
-# The outcome_emitted events here are the DAEMON-SIDE merge-outcome events emitted
-# by mergeRunBranchToMain (workloop.go), not the twin-side outcome_emitted messages
-# above. Kind values: "approved" (winner) | "rejected" (loser).
+# Terminal-transition proof uses type:outcome_emitted (not agent_completed) because
+# agent_completed carries only {run_id, session_id, ended_at, exit_code, outcome_ref}
+# with no node_id field (confirmed: cmd/harmonik-twin-claude/wire.go emitAgentCompleted).
+# The twin-side outcome_emitted messages DO carry node_id (wire.go emitOutcomeEmitted).
+#
+# The daemon-side merge-outcome event (workloop.go mergeRunBranchToMain) is also of
+# type outcome_emitted but carries {run_id, bead_id, kind, reason} — no node_id.
+# Assertions (3) and (4) match on node_id; assertion (2) matches on kind=rejected.
+# The two sets are disjoint: daemon-side events have no node_id; twin-side events
+# have no kind field.
 expected_events:
   - kind: event_present
     type: workspace_merge_status
@@ -192,21 +199,23 @@ expected_events:
       "non_ff_merge: <branch> advanced concurrently" confirming the non-FF
       detection path fired, not a rebase conflict.
   - kind: event_present
-    type: agent_completed
+    type: outcome_emitted
     payload_match:
       node_id: alpha_node
     description: >
-      Alpha node must reach a terminal transition (agent_completed) regardless
-      of beta's merge outcome. Satisfies "both beads reach terminal transition"
-      per ST2 contract (hk-xybb7).
+      Alpha node must reach a terminal transition. Matched via the twin-side
+      outcome_emitted{node_id=alpha_node} emitted by the alpha twin script
+      (wire.go emitOutcomeEmitted path). Satisfies "both beads reach terminal
+      transition" per ST2 contract (hk-xybb7).
   - kind: event_present
-    type: agent_completed
+    type: outcome_emitted
     payload_match:
       node_id: beta_node
     description: >
-      Beta node must reach a terminal transition (agent_completed) regardless
-      of its merge rejection. The subprocess exits cleanly (exit_code=0); the
-      rejection is a daemon-side merge decision, not a twin crash.
+      Beta node must reach a terminal transition. Matched via the twin-side
+      outcome_emitted{node_id=beta_node} emitted by the beta twin script before
+      the daemon rejects its merge. The subprocess exits cleanly (exit_code=0);
+      the rejection is a daemon-side merge decision, not a twin crash.
 
 # expected_workspace: assert no corrupt merge landed on the integration branch.
 # commit_trailer_present on refs/heads/main proves the squash-merge that DID land

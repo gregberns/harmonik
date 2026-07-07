@@ -44,7 +44,7 @@ messages:
     payload:
       run_id: run-hkxeqtv-mr-alpha-001
       session_id: sess-hkxeqtv-mr-alpha-001
-      node_id: node-hkxeqtv-mr-alpha-001
+      node_id: alpha_node
       outcome_status: WORK_COMPLETE
     relative_timestamp_ms: 5
   - type: agent_completed

@@ -541,6 +541,15 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		}
 	}
 
+	// SH-033: signal may have arrived during a fast-completing scenario that
+	// exited via a `continue` (early-exit path) before the per-iteration
+	// ctx check below could fire. Catch it here before emitting the normal
+	// SuiteResult so the interrupt path runs consistently regardless of
+	// scenario execution speed.
+	if ctx.Err() != nil {
+		return interruptExit()
+	}
+
 	// All scenarios completed — build and emit SuiteResult (SH-034).
 	suiteVerdict := scenario.SuiteVerdictPass
 	for _, r := range completedResults {

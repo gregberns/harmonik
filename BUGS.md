@@ -120,3 +120,13 @@
 - **ubs unusable on macOS default shell:** `ubs` hard-fails "requires bash >= 4.0 (you have 3.2.57)". macOS ships bash 3.2; must invoke via `/opt/homebrew/bin/bash /Users/gb/.local/bin/ubs`. The CLAUDE.md UBS quick-ref gives the bare `ubs` command, which no agent on stock macOS can run. Fix candidate: wrapper shim or doc note.
 - **Latent bug found in situ (now fixed by hk-lgykq):** before this fix, a bead with a `## Branching target_branch: integration/X` directive was REBASED onto integration/X (baseBranch, reviewloop.go/workloop.go:~3668/4060) but MERGED into deps.targetBranch (main). Rebase base and merge target were inconsistent. The hk-lgykq wiring aligns them.
 - **Stale integration branch stub:** `integration/lgykq-targeting` already existed (0 commits ahead of origin/main, checked out nowhere) from a prior hawat session; `git worktree add -b` fails on it. Had to `git branch -f ... origin/main` then `worktree add` without -b. Minor.
+
+### B10 — worktree-create empty-HEAD race hits piter-q T1 beads (2nd failure, distinct from B9)
+- **Where:** daemon workspace/worktree-create path. **Subsystem:** dispatch/daemon-core.
+- **What:** `hk-4hnvi` and `hk-9cqtm` (piter-q, keeper-test-harden T1) both failed a second time (first
+  was the B9 fleet-wide context-cancel wave) with `WorktreeCreationFailed: git worktree add exited 0 but
+  HEAD did not resolve ... (concurrent remote create race)`. Referenced existing bead `hk-iaj1w`.
+- **Impact:** blocks T1 dispatch a second time; two-strikes rule (crew-launch mission) means I escalate
+  to captain instead of self-resubmitting again.
+- **Workaround:** none identified by me; escalating to captain per mission (twice-failed → error topic).
+- **Candidate lane:** dispatch (daemon-core) — see existing hk-iaj1w.

@@ -172,8 +172,8 @@ func TestPresenceTTL_SendExtendsEffectiveLastSeen(t *testing.T) {
 // more recent than the send, EffectiveLastSeen = beat (the max invariant holds
 // in both directions).
 func TestPresenceTTL_BeatWinsOverOlderSend(t *testing.T) {
-	sendTS := t0.Add(30 * time.Second)  // send at t0+30s
-	beatTS := t0.Add(60 * time.Second)  // join at t0+60s (more recent)
+	sendTS := t0.Add(30 * time.Second) // send at t0+30s
+	beatTS := t0.Add(60 * time.Second) // join at t0+60s (more recent)
 
 	path := writeMatrixFixture(t, []string{
 		matrixSendLine("01965b00-0000-7000-8000-000000000001", sendTS, "alice", "bob"),

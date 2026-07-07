@@ -441,8 +441,8 @@ func TestB3b_ResetBead_StrandedInProgressToOpen_RealBr(t *testing.T) {
 	// ResetBead: daemon startup orphan-sweep resets stranded bead to open.
 	// daemonStartNS scopes the idempotency key to this simulated daemon lifetime.
 	const (
-		b3bProjectHash    = core.ProjectHash("b3b0aabb1cdd")
-		b3bDaemonStartNS  = int64(1_747_000_000_000_420_009)
+		b3bProjectHash   = core.ProjectHash("b3b0aabb1cdd")
+		b3bDaemonStartNS = int64(1_747_000_000_000_420_009)
 	)
 	if err := adapter.ResetBead(ctx, intentLogDir, cfg, beadID, b3bProjectHash, b3bDaemonStartNS); err != nil {
 		t.Fatalf("ResetBead: %v", err)

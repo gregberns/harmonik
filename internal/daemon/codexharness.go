@@ -103,6 +103,7 @@ func (h *CodexHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Sp
 		codexBinary:   h.codexBinary,
 		workspacePath: rc.WorkspacePath,
 		beadID:        rc.BeadID,
+		model:         rc.Model,
 		priorThreadID: rc.PriorSessionID,
 		baseEnv:       rc.BaseEnv,
 		codexHome:     h.codexHome,

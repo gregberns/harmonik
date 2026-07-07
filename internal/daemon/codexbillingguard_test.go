@@ -399,6 +399,7 @@ func TestBuildCodexLaunchSpec_GuardFailClosed_NoSpec(t *testing.T) {
 	rc := daemon.ExportedCodexRunCtx{
 		WorkspacePath:  "/tmp/wt-test-codex-guard",
 		BeadID:         "hk-guard-e2e",
+		Model:          "o4-mini", // required; model guard runs before billing guard
 		CodexHome:      home,
 		BillingEmitter: em,
 		// SkipBillingGuard intentionally false: the guard MUST run.
@@ -429,6 +430,7 @@ func TestBuildCodexLaunchSpec_GuardAllows_ReturnsSpec(t *testing.T) {
 	rc := daemon.ExportedCodexRunCtx{
 		WorkspacePath:  "/tmp/wt-test-codex-guard-ok",
 		BeadID:         "hk-guard-e2e-ok",
+		Model:          "o4-mini", // required; model guard runs before billing guard
 		CodexHome:      home,
 		BaseEnv:        []string{"PATH=/usr/bin"},
 		BillingEmitter: em,

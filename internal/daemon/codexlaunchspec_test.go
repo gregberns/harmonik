@@ -30,6 +30,7 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 	rc := daemon.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-initial",
 		BeadID:           "hk-test001",
+		Model:            "o4-mini",
 		BaseEnv:          []string{"PATH=/usr/bin"},
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
@@ -48,12 +49,14 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 		t.Errorf("WorkDir = %q; want %q", spec.WorkDir, rc.WorkspacePath)
 	}
 
-	// argv: codex exec --json --sandbox workspace-write -C <wt> <seed>
+	// argv: codex exec --json --sandbox workspace-write --model <model> -C <wt> <seed>
 	// Note: -a/--ask-for-approval was removed in codex 0.139.0.
 	codexLaunchSpecAssertArgv(t, spec.Args, false, "")
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--json")
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--sandbox")
 	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "--sandbox", "workspace-write")
+	codexLaunchSpecAssertArgContains(t, spec.Args, "--model")
+	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "--model", rc.Model)
 	codexLaunchSpecAssertArgContains(t, spec.Args, "-C")
 	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "-C", rc.WorkspacePath)
 
@@ -70,6 +73,7 @@ func TestBuildCodexLaunchSpec_CustomBinary(t *testing.T) {
 		CodexBinary:      "/usr/local/bin/codex",
 		WorkspacePath:    "/tmp/wt-test-codex-bin",
 		BeadID:           "hk-test002",
+		Model:            "o4-mini",
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 
@@ -134,6 +138,7 @@ func TestBuildCodexLaunchSpec_CredentialStrip(t *testing.T) {
 	rc := daemon.ExportedCodexRunCtx{
 		WorkspacePath: "/tmp/wt-test-codex-cred",
 		BeadID:        "hk-test004",
+		Model:         "o4-mini",
 		BaseEnv: []string{
 			"PATH=/usr/bin",
 			"OPENAI_API_KEY=sk-test-must-not-leak",
@@ -215,6 +220,7 @@ func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
 	rc := daemon.ExportedCodexRunCtx{
 		WorkspacePath: "/tmp/wt-test-codex-procenv",
 		BeadID:        "hk-test-t10",
+		Model:         "o4-mini",
 		// Forward the real process environment unfiltered, exactly as a caller
 		// passing os.Environ() would. This is what makes the leak observable.
 		BaseEnv:          os.Environ(),
@@ -270,6 +276,7 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 	rc := daemon.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-home",
 		BeadID:           "hk-test005",
+		Model:            "o4-mini",
 		CodexHome:        explicitHome,
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
@@ -295,6 +302,7 @@ func TestBuildCodexLaunchSpec_CodexHomeSet(t *testing.T) {
 	rc2 := daemon.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-test-codex-home2",
 		BeadID:           "hk-test005b",
+		Model:            "o4-mini",
 		SkipBillingGuard: true, // argv/env-shape test only; T11 guard covered separately
 	}
 	spec2, err := daemon.ExportedBuildCodexLaunchSpec(rc2)
@@ -361,6 +369,86 @@ func TestBuildCodexLaunchSpec_EmptyPriorThreadID(t *testing.T) {
 	_, err := daemon.ExportedBuildCodexLaunchSpec(rc)
 	if err == nil {
 		t.Error("expected error for empty priorThreadID string; got nil")
+	}
+}
+
+// TestBuildCodexLaunchSpec_EmptyModelInitialTurn verifies that an empty model on an
+// initial (non-resume) turn returns an error instead of hanging for ~30 min (hk-heh3t).
+func TestBuildCodexLaunchSpec_EmptyModelInitialTurn(t *testing.T) {
+	t.Parallel()
+
+	rc := daemon.ExportedCodexRunCtx{
+		WorkspacePath:    "/tmp/wt-test-codex-nomodel",
+		BeadID:           "hk-test-empty-model",
+		// Model deliberately omitted: empty model on initial turn must fail loud.
+		SkipBillingGuard: true,
+	}
+	_, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	if err == nil {
+		t.Error("expected error for empty model on initial turn; got nil")
+	}
+}
+
+// TestBuildCodexLaunchSpec_EmptyModelResumeTurnOK verifies that an empty model is
+// allowed on a resume turn: the thread context already encodes the model.
+func TestBuildCodexLaunchSpec_EmptyModelResumeTurnOK(t *testing.T) {
+	t.Parallel()
+
+	threadID := "th_resume_nomodel"
+	rc := daemon.ExportedCodexRunCtx{
+		WorkspacePath: "/tmp/wt-test-codex-resume-nomodel",
+		BeadID:        "hk-test-resume-nomodel",
+		// Model omitted: resume turns do not require it.
+		PriorThreadID:    &threadID,
+		SkipBillingGuard: true,
+	}
+	_, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	if err != nil {
+		t.Errorf("empty model on resume turn must not error; got: %v", err)
+	}
+}
+
+// TestBuildCodexLaunchSpec_ModelInArgv verifies that the model is passed as
+// --model <model> in the initial-turn argv (hk-heh3t).
+func TestBuildCodexLaunchSpec_ModelInArgv(t *testing.T) {
+	t.Parallel()
+
+	rc := daemon.ExportedCodexRunCtx{
+		WorkspacePath:    "/tmp/wt-test-codex-model-argv",
+		BeadID:           "hk-test-model-argv",
+		Model:            "o4-mini",
+		SkipBillingGuard: true,
+	}
+	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	codexLaunchSpecAssertArgContains(t, spec.Args, "--model")
+	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "--model", "o4-mini")
+}
+
+// TestBuildCodexLaunchSpec_ModelNotInResumeArgv verifies that --model does NOT
+// appear in resume-turn argv (resume thread context already encodes the model).
+func TestBuildCodexLaunchSpec_ModelNotInResumeArgv(t *testing.T) {
+	t.Parallel()
+
+	threadID := "th_resume_model_check"
+	rc := daemon.ExportedCodexRunCtx{
+		WorkspacePath:    "/tmp/wt-test-codex-resume-model",
+		BeadID:           "hk-test-resume-model",
+		Model:            "o4-mini",
+		PriorThreadID:    &threadID,
+		SkipBillingGuard: true,
+	}
+	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, arg := range spec.Args {
+		if arg == "--model" {
+			t.Errorf("resume argv must not contain --model; got %v", spec.Args)
+			return
+		}
 	}
 }
 

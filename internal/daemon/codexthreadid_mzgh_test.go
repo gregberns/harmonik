@@ -237,6 +237,7 @@ func TestBuildCodexLaunchSpec_InitialHasCFlag_mzgh(t *testing.T) {
 	rc := daemon.ExportedCodexRunCtx{
 		WorkspacePath:    "/tmp/wt-mzgh-initial-cflag",
 		BeadID:           "hk-mzgh-test-initial-cflag",
+		Model:            "o4-mini",
 		SkipBillingGuard: true,
 	}
 

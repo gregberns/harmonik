@@ -78,6 +78,12 @@ type codexRunCtx struct {
 	// Refs: trailer instruction and in the WorkDir.
 	beadID string
 
+	// model is the codex model name passed as --model on the initial turn
+	// (e.g. "o4-mini", "o3"). REQUIRED for initial turns — an empty model
+	// causes codex to block on stdin for ~30 minutes before timing out (hk-heh3t).
+	// Ignored on resume turns (the thread context already encodes the model).
+	model string
+
 	// priorThreadID is non-nil for resume turns (iteration >= 2). It holds the
 	// codex thread_id captured from the prior turn's first thread.started event.
 	// Nil means this is the initial turn.
@@ -132,17 +138,31 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 			"buildCodexLaunchSpec: priorThreadID must not be an empty string (pass nil for initial turn)")
 	}
 
+	// Empty model on initial turn → fail loud instead of 30-min stdin hang (hk-heh3t).
+	// On resume turns the thread context already encodes the model; --model is only
+	// required on initial launch. Pass a model:<name> bead label (e.g. model:o4-mini)
+	// so the dispatcher populates rc.model.
+	if rc.priorThreadID == nil && rc.model == "" {
+		return handler.LaunchSpec{}, fmt.Errorf(
+			"codex harness: refusing to start — model is not set. " +
+				"Add a model:<name> label to the bead (e.g. model:o4-mini). " +
+				"Without a model codex blocks on stdin for ~30 minutes before timing out.")
+	}
+
 	binary := rc.codexBinary
 	if binary == "" {
 		binary = "codex"
 	}
 
 	// Build argv.
-	// Initial:  codex exec --json --sandbox workspace-write -C <wt> <seed>
+	// Initial:  codex exec --json --sandbox workspace-write --model <model> -C <wt> <seed>
 	// Resume:   codex exec resume <thread_id> --json --sandbox workspace-write <seed>
 	//
 	// Note: codex 0.139.0 removed the -a/--ask-for-approval flag. Sandboxing is
 	// controlled exclusively by --sandbox/-s. Do not add -a back.
+	//
+	// --model is emitted on the initial turn only (hk-heh3t): resume turns carry the
+	// model in the thread context so --model is redundant and may not be accepted.
 	seedPrompt := fmt.Sprintf(codexSeedPromptTemplate, rc.beadID)
 	var args []string
 	if rc.priorThreadID != nil {
@@ -159,6 +179,7 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 			"exec",
 			"--json",
 			"--sandbox", "workspace-write",
+			"--model", rc.model,
 			"-C", rc.workspacePath,
 			seedPrompt,
 		}

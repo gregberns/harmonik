@@ -113,6 +113,7 @@ func TestCodexHarness_LaunchSpec_InitialDelegates(t *testing.T) {
 	rc := handlercontract.RunCtx{
 		WorkspacePath: "/tmp/wt-codex-harness-initial",
 		BeadID:        "hk-m57va-test-initial",
+		Model:         "o4-mini",
 		BaseEnv:       []string{"PATH=/usr/bin"},
 	}
 
@@ -177,6 +178,7 @@ func TestCodexHarness_LaunchSpec_CustomBinary(t *testing.T) {
 	rc := handlercontract.RunCtx{
 		WorkspacePath: "/tmp/wt-codex-harness-bin",
 		BeadID:        "hk-m57va-test-bin",
+		Model:         "o4-mini",
 	}
 
 	h := daemon.ExportedNewCodexHarness("/usr/local/bin/codex", "")
@@ -197,6 +199,7 @@ func TestCodexHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 	rc := handlercontract.RunCtx{
 		WorkspacePath: "/tmp/wt-codex-harness-creds",
 		BeadID:        "hk-m57va-test-creds",
+		Model:         "o4-mini",
 		BaseEnv: []string{
 			"PATH=/usr/bin",
 			"OPENAI_API_KEY=sentinel-must-not-reach-child",
@@ -242,6 +245,7 @@ func TestCodexHarness_LaunchSpec_CodexHomePresent(t *testing.T) {
 	rc := handlercontract.RunCtx{
 		WorkspacePath: "/tmp/wt-codex-harness-home",
 		BeadID:        "hk-m57va-test-home",
+		Model:         "o4-mini",
 	}
 
 	// Use a writable temp dir as CODEX_HOME so the fail-closed billing guard
@@ -274,6 +278,46 @@ func TestCodexHarness_LaunchSpec_EmptyWorkspaceErrors(t *testing.T) {
 	if _, err := h.LaunchSpec(rc); err == nil {
 		t.Error("LaunchSpec with empty WorkspacePath: want error, got nil")
 	}
+}
+
+// TestCodexHarness_LaunchSpec_EmptyModelErrors verifies that an empty Model on an
+// initial turn returns a descriptive error (hk-heh3t: fail loud, not 30-min hang).
+func TestCodexHarness_LaunchSpec_EmptyModelErrors(t *testing.T) {
+	t.Parallel()
+
+	rc := handlercontract.RunCtx{
+		WorkspacePath: "/tmp/wt-codex-harness-nomodel",
+		BeadID:        "hk-m57va-test-nomodel",
+		// Model deliberately empty.
+	}
+
+	h := daemon.ExportedNewCodexHarness("", "")
+	_, err := h.LaunchSpec(rc)
+	if err == nil {
+		t.Error("LaunchSpec with empty Model on initial turn: want error, got nil")
+	}
+}
+
+// TestCodexHarness_LaunchSpec_ModelFlagInInitialArgv verifies that RunCtx.Model
+// flows through to --model <model> in the initial-turn argv (hk-heh3t).
+func TestCodexHarness_LaunchSpec_ModelFlagInInitialArgv(t *testing.T) {
+	t.Parallel()
+
+	rc := handlercontract.RunCtx{
+		WorkspacePath: "/tmp/wt-codex-harness-model-flag",
+		BeadID:        "hk-m57va-test-model-flag",
+		Model:         "o4-mini",
+	}
+
+	h := daemon.ExportedNewCodexHarness("", t.TempDir())
+	spawn, err := h.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: %v", err)
+	}
+	if !codexHarnessArgsContain(spawn.Args, "--model") {
+		t.Errorf("initial-turn argv missing --model; got %v", spawn.Args)
+	}
+	codexHarnessAssertArgValue(t, spawn.Args, "--model", "o4-mini")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

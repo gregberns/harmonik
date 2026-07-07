@@ -2352,11 +2352,14 @@ var _ tmuxPkg.Adapter = (*noopTmuxAdapter)(nil)
 // ExportedCodexRunCtx is the exported shape of codexRunCtx for tests.
 // Fields mirror codexRunCtx verbatim with exported names.
 //
-// Bead refs: hk-rgxwd (T7), hk-tu48u (T11 billing-guard fields).
+// Bead refs: hk-rgxwd (T7), hk-tu48u (T11 billing-guard fields), hk-heh3t (model guard).
 type ExportedCodexRunCtx struct {
 	CodexBinary   string
 	WorkspacePath string
 	BeadID        string
+	// Model is the codex model name (e.g. "o4-mini"). Required for initial turns;
+	// empty model on an initial turn is a fail-loud error (hk-heh3t).
+	Model         string
 	PriorThreadID *string
 	BaseEnv       []string
 	CodexHome     string
@@ -2377,6 +2380,7 @@ func ExportedBuildCodexLaunchSpec(rc ExportedCodexRunCtx) (handler.LaunchSpec, e
 		codexBinary:      rc.CodexBinary,
 		workspacePath:    rc.WorkspacePath,
 		beadID:           rc.BeadID,
+		model:            rc.Model,
 		priorThreadID:    rc.PriorThreadID,
 		baseEnv:          rc.BaseEnv,
 		codexHome:        rc.CodexHome,

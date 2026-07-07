@@ -22,6 +22,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -30,6 +32,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -100,6 +103,15 @@ func (s *harnessScenarioFlags) String() string {
 func (s *harnessScenarioFlags) Set(v string) error {
 	*s = append(*s, v)
 	return nil
+}
+
+// harnessScenarioEntry pairs a parsed ScenarioFile with the source YAML file
+// path so that ScenarioResult.SourcePath is populated without a separate
+// tracking data structure. The embedded ScenarioFile fields are promoted, so
+// callers can access entry.Name, entry.CadenceTag, etc. directly.
+type harnessScenarioEntry struct {
+	scenario.ScenarioFile
+	SourcePath string
 }
 
 // runHarnessSubcommand dispatches `harmonik harness [flags]`.
@@ -295,55 +307,271 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		return harnessExitPass
 	}
 
-	// Full execution path.
+	// Full execution path (G-02): per-scenario orchestration loop.
 	//
-	// TODO(G-02): replace the stub below with the actual per-scenario
-	// orchestration loop (DriveOrchestration + TeardownFixture + result
-	// emission). Pass twinSearchPaths to BootstrapFixture for each scenario
-	// per SH-009. Each completed scenario's ScenarioResult appends to
-	// completedResults. The loop MUST check ctx.Done() between scenarios to
-	// detect operator interruption.
-	//
-	// The stub blocks until ctx is cancelled (by a signal) so that SH-033
-	// signal handling is exercisable before the real loop lands. Operators
-	// see the "not yet implemented" message and can Ctrl-C to exit.
-	var completedResults []scenario.ScenarioResult // populated by G-02 loop
+	// Spec ref: specs/scenario-harness.md §7.1.
 
-	fmt.Fprintf(stderr, "harmonik harness: full scenario execution not yet implemented (G-02 pending)\n")
-	fmt.Fprintf(stderr, "harmonik harness: use --list or --dry-run; send SIGINT/SIGTERM to exit\n")
+	// Create or validate the per-suite fixture root (SH-016a / SH-034 durability).
+	// When --fixture-root is absent, allocate an OS temp directory. The fixture
+	// root is never removed automatically; the operator cleans it manually or via
+	// `harmonik harness clean`.
+	fixtureRoot := fixtureRootFlag
+	if fixtureRoot != "" {
+		if mkErr := os.MkdirAll(fixtureRoot, 0o755); mkErr != nil {
+			fmt.Fprintf(stderr, "harmonik harness: create fixture root %q: %v\n",
+				fixtureRoot, mkErr)
+			return harnessExitInternalError
+		}
+	} else {
+		var tmpErr error
+		fixtureRoot, tmpErr = os.MkdirTemp("", "harmonik-harness-*")
+		if tmpErr != nil {
+			fmt.Fprintf(stderr, "harmonik harness: create temp fixture root: %v\n", tmpErr)
+			return harnessExitInternalError
+		}
+	}
 
-	// Block until a signal cancels ctx. When G-02 lands this becomes the
-	// scenario execution loop that selects on ctx.Done() to detect interrupts.
-	<-ctx.Done()
+	var completedResults []scenario.ScenarioResult
 
-	// Determine whether cancellation was signal-driven.
-	select {
-	case sig := <-interruptCh:
-		// SH-033: check for a second SIGINT already buffered (operator pressed
-		// Ctrl-C twice in rapid succession) before starting teardown. If found,
-		// exit immediately without emitting a SuiteResult — the hard-exit path
-		// per SH-033. A second SIGINT that arrives later (after this check) is
-		// caught by the signal goroutine's second select above.
+	// interruptExit is called after detecting ctx.Done() inside the loop.
+	// It drains the interrupt signal, checks for double-SIGINT, emits a
+	// partial SuiteResult, and returns the appropriate exit code.
+	// It captures completedResults, fixtureRoot, and other locals by reference.
+	interruptExit := func() int {
 		select {
-		case sig2 := <-sigCh:
-			if sig2 == syscall.SIGINT {
-				return harnessExitOperatorInterrupt
+		case sig := <-interruptCh:
+			select {
+			case sig2 := <-sigCh:
+				if sig2 == syscall.SIGINT {
+					return harnessExitOperatorInterrupt
+				}
+			default:
 			}
+			harnessEmitInterruptResult(stdout, stderr,
+				scenario.SuiteResultOutputFormat(outputFlag),
+				suiteID, suiteStart, fixtureRoot, cadenceFilter,
+				completedResults, sig)
+			return harnessInterruptExitCode(sig)
+		default:
+			return harnessExitInternalError
+		}
+	}
+
+	for _, entry := range discovered {
+		sf := entry.ScenarioFile
+		scenarioName := sf.Name
+		scenarioSource := entry.SourcePath
+		startedAt := time.Now().UTC().Truncate(time.Millisecond)
+		// Fixture-root-relative path for ScenarioResult.EventLogPath (§6.1).
+		evLogRelPath := filepath.Join(scenarioName, "project", scenario.EventLogRelPath)
+
+		// SH-033: check for operator interruption before starting this scenario.
+		select {
+		case <-ctx.Done():
+			return interruptExit()
 		default:
 		}
-		// SH-033: graceful shutdown — emit partial SuiteResult and exit.
-		harnessEmitInterruptResult(
-			stdout, stderr,
-			scenario.SuiteResultOutputFormat(outputFlag),
-			suiteID, suiteStart, fixtureRootFlag, cadenceFilter,
-			completedResults, sig,
+
+		// §7.1 step 1: resolve twin binary (SH-008/SH-009).
+		resolvedBinary, handlerArgs, resolveErr := harnessResolveTwinBinary(
+			sf.AgentOverrides, twinSearchPaths)
+		if resolveErr != nil {
+			result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
+				evLogRelPath, scenario.FailureClassTwinBinaryNotFound, resolveErr.Error())
+			_ = scenario.WriteScenarioResult(fixtureRoot, result)
+			completedResults = append(completedResults, result)
+			continue
+		}
+
+		// SH-INV-003: resolved binary must lie under a declared search-path prefix.
+		// Violation is harness-internal-error (highest precedence, rank 1).
+		if resolvedBinary != "" {
+			if checkErr := scenario.CheckTwinBinaryPath(resolvedBinary, twinSearchPaths); checkErr != nil {
+				result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
+					evLogRelPath, scenario.FailureClassHarnessInternalError, checkErr.Error())
+				_ = scenario.WriteScenarioResult(fixtureRoot, result)
+				completedResults = append(completedResults, result)
+				continue
+			}
+		}
+
+		// §7.1 step 2: fixture setup — bootstrap, file seeding, workflow DOT seeding.
+		bootstrap, bootstrapErr := scenario.BootstrapFixture(
+			ctx, fixtureRoot, scenarioName, twinSearchPaths)
+		if bootstrapErr != nil {
+			// Best-effort partial teardown per §8.3; do not escalate to cleanup-failed.
+			tdParams := scenario.TeardownParams{ScenarioName: scenarioName}
+			tdResult, _ := scenario.TeardownFixture(ctx, tdParams)
+			result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
+				evLogRelPath,
+				scenario.BootstrapFixtureFailureClass(bootstrapErr), bootstrapErr.Error())
+			result.WorkspaceSnapshotPath = tdResult.WorkspaceSnapshotPath
+			_ = scenario.WriteScenarioResult(fixtureRoot, result)
+			completedResults = append(completedResults, result)
+			continue
+		}
+
+		projectRoot := bootstrap.ProjectRoot
+		absEvLogPath := scenario.EventLogPath(projectRoot)
+		workspacePath := scenario.ScenarioWorkspacePath(fixtureRoot, scenarioName)
+
+		// Seed fixture files into the synthetic project root.
+		if fileErr := harnessApplyFixtureFiles(projectRoot, sf.FixtureSetup.Files); fileErr != nil {
+			tdParams := scenario.TeardownParams{
+				ScenarioName:  scenarioName,
+				WorkspacePath: workspacePath,
+				EventLogPath:  absEvLogPath,
+			}
+			tdResult, _ := scenario.TeardownFixture(ctx, tdParams)
+			result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
+				evLogRelPath, scenario.FailureClassFixtureSetupFailed, fileErr.Error())
+			result.WorkspaceSnapshotPath = tdResult.WorkspaceSnapshotPath
+			_ = scenario.WriteScenarioResult(fixtureRoot, result)
+			completedResults = append(completedResults, result)
+			continue
+		}
+
+		// Resolve and seed the DOT workflow; determine daemon workflow mode.
+		workflowMode, dotErr := harnessApplyWorkflowDOT(projectRoot, cwd, sf)
+		if dotErr != nil {
+			tdParams := scenario.TeardownParams{
+				ScenarioName:  scenarioName,
+				WorkspacePath: workspacePath,
+				EventLogPath:  absEvLogPath,
+			}
+			tdResult, _ := scenario.TeardownFixture(ctx, tdParams)
+			result := harnessEarlyErrorResult(scenarioName, scenarioSource, startedAt,
+				evLogRelPath, scenario.FailureClassFixtureSetupFailed, dotErr.Error())
+			result.WorkspaceSnapshotPath = tdResult.WorkspaceSnapshotPath
+			_ = scenario.WriteScenarioResult(fixtureRoot, result)
+			completedResults = append(completedResults, result)
+			continue
+		}
+
+		// §7.1 step 3: drive orchestration (SH-025/SH-026).
+		orchErr := scenario.DriveOrchestration(ctx, scenario.OrchestrationConfig{
+			ProjectDir:    projectRoot,
+			JSONLLogPath:  absEvLogPath,
+			HandlerBinary: resolvedBinary,
+			HandlerArgs:   handlerArgs,
+			WorkflowMode:  workflowMode,
+			TimeoutSecs:   sf.TimeoutSecs,
+		})
+
+		// Classify orchestration outcome — timeout FIRST per §7.1 step 3 note.
+		var (
+			finalVerdict     scenario.ScenarioVerdict
+			finalFC          scenario.FailureClass
+			finalErrDetail   string
+			assertionResults []scenario.AssertionResult
 		)
-		return harnessInterruptExitCode(sig)
-	default:
-		// ctx cancelled by some other means (e.g. deferred cancel after a
-		// future internal error). Should not occur in the current stub.
-		return harnessExitInternalError
+
+		switch {
+		case errors.Is(orchErr, scenario.ErrScenarioTimeout):
+			finalVerdict = scenario.ScenarioVerdictTimeout
+			finalFC = scenario.FailureClassScenarioTimeout
+			finalErrDetail = orchErr.Error()
+		case orchErr != nil:
+			finalVerdict = scenario.ScenarioVerdictError
+			finalFC = scenario.FailureClassOrchestrationInternalError
+			finalErrDetail = orchErr.Error()
+		default:
+			// §7.1 step 4: read event log and evaluate assertions.
+			events, readErr := scenario.ReadEventLog(absEvLogPath)
+			if readErr != nil {
+				finalVerdict = scenario.ScenarioVerdictError
+				finalFC = scenario.FailureClassOrchestrationInternalError
+				finalErrDetail = fmt.Sprintf("read event log: %v", readErr)
+			} else {
+				var assertFC scenario.FailureClass
+				assertionResults, finalVerdict, assertFC = scenario.EvaluateAssertions(
+					sf, events, workspacePath)
+				finalFC = assertFC // empty iff verdict=pass
+			}
+		}
+
+		// §7.1 step 5: teardown fixture (SH-015) — run-to-completion best-effort.
+		tdParams := scenario.TeardownParams{
+			ScenarioName:  scenarioName,
+			WorkspacePath: workspacePath,
+			EventLogPath:  absEvLogPath,
+		}
+		tdResult, tdErr := scenario.TeardownFixture(ctx, tdParams)
+		completedAt := time.Now().UTC().Truncate(time.Millisecond)
+
+		// §8.0 cleanup-failed precedence: rank 8 (lowest) — never overwrites
+		// a prior fail/timeout/error verdict; downgrades pass→error only.
+		if tdErr != nil {
+			if finalVerdict == scenario.ScenarioVerdictPass {
+				finalVerdict = scenario.ScenarioVerdictError
+				finalFC = tdErr.FailureClass()
+				finalErrDetail = tdErr.Error()
+			} else {
+				if finalErrDetail != "" {
+					finalErrDetail += "; " + tdErr.Error()
+				} else {
+					finalErrDetail = tdErr.Error()
+				}
+			}
+		}
+
+		result := scenario.ScenarioResult{
+			ScenarioName:          scenarioName,
+			SourcePath:            scenarioSource,
+			StartedAt:             startedAt,
+			CompletedAt:           completedAt,
+			Verdict:               finalVerdict,
+			FailureClass:          finalFC,
+			AssertionResults:      assertionResults,
+			EventLogPath:          evLogRelPath,
+			WorkspaceSnapshotPath: tdResult.WorkspaceSnapshotPath,
+			ErrorDetail:           finalErrDetail,
+		}
+
+		// SH-034: write per-scenario result before advancing to the next scenario.
+		if writeErr := scenario.WriteScenarioResult(fixtureRoot, result); writeErr != nil {
+			fmt.Fprintf(stderr, "harness: write scenario result %q: %v\n",
+				scenarioName, writeErr)
+		}
+		completedResults = append(completedResults, result)
+
+		// SH-033: check for signal-driven cancellation after scenario completes.
+		if ctx.Err() != nil {
+			return interruptExit()
+		}
 	}
+
+	// All scenarios completed — build and emit SuiteResult (SH-034).
+	suiteVerdict := scenario.SuiteVerdictPass
+	for _, r := range completedResults {
+		if r.Verdict != scenario.ScenarioVerdictPass {
+			suiteVerdict = scenario.SuiteVerdictFail
+			break
+		}
+	}
+
+	sr := scenario.SuiteResult{
+		SuiteID:       suiteID,
+		StartedAt:     suiteStart,
+		CompletedAt:   time.Now().UTC().Truncate(time.Millisecond),
+		FixtureRoot:   fixtureRoot,
+		CadenceFilter: cadenceFilter,
+		Results:       completedResults,
+		SuiteVerdict:  suiteVerdict,
+	}
+
+	if writeErr := scenario.WriteSuiteResult(fixtureRoot, sr); writeErr != nil {
+		fmt.Fprintf(stderr, "harness: write suite result: %v\n", writeErr)
+	}
+	if emitErr := scenario.EmitSuiteResult(
+		stdout, scenario.SuiteResultOutputFormat(outputFlag), sr); emitErr != nil {
+		fmt.Fprintf(stderr, "harness: emit suite result: %v\n", emitErr)
+	}
+
+	if suiteVerdict == scenario.SuiteVerdictFail {
+		return harnessExitFail
+	}
+	return harnessExitPass
 }
 
 // harnessInterruptExitCode returns the exit code for a received signal per
@@ -431,7 +659,7 @@ func harnessDiscoverScenarios(
 	cadenceFilter scenario.CadenceFilter,
 	verbose bool,
 	stderr io.Writer,
-) ([]scenario.ScenarioFile, []error) {
+) ([]harnessScenarioEntry, []error) {
 	var paths []string
 	var loadErrs []error
 
@@ -489,7 +717,7 @@ func harnessDiscoverScenarios(
 	// Duplicate detection spans all parsed files, before cadence filtering,
 	// so a name collision between scenarios of different cadences is caught.
 	nameToPath := make(map[string]string, len(paths))
-	var allLoaded []scenario.ScenarioFile
+	var allLoaded []harnessScenarioEntry
 
 	for _, path := range paths {
 		sf, err := scenario.ParseScenarioFile(path)
@@ -506,20 +734,20 @@ func harnessDiscoverScenarios(
 			continue
 		}
 		nameToPath[sf.Name] = path
-		allLoaded = append(allLoaded, sf)
+		allLoaded = append(allLoaded, harnessScenarioEntry{ScenarioFile: sf, SourcePath: path})
 	}
 
 	// Apply cadence filter.
-	var scenarios []scenario.ScenarioFile
-	for _, sf := range allLoaded {
-		if !cadenceFilter.Includes(sf.CadenceTag) {
+	var scenarios []harnessScenarioEntry
+	for _, entry := range allLoaded {
+		if !cadenceFilter.Includes(entry.CadenceTag) {
 			if verbose {
 				fmt.Fprintf(stderr, "harness: skip %q (cadence=%s not in filter=%s)\n",
-					sf.Name, sf.CadenceTag, cadenceFilter)
+					entry.Name, entry.CadenceTag, cadenceFilter)
 			}
 			continue
 		}
-		scenarios = append(scenarios, sf)
+		scenarios = append(scenarios, entry)
 	}
 
 	// SH-007: execute in byte-lexicographic order of the name field.
@@ -566,4 +794,172 @@ func harnessMatrixCellCount(matrix map[string][]string) int {
 		cells *= len(vals)
 	}
 	return cells
+}
+
+// harnessResolveTwinBinary resolves the first declared AgentOverride binary
+// against the ordered twinSearchPaths list per specs/scenario-harness.md
+// §4.3 SH-009. Returns the resolved absolute path and forwarded args on
+// success, or an error classified as twin-binary-not-found by the caller.
+// Returns ("", nil, nil) when overrides is nil or empty.
+//
+// For G-02, only the first override (sorted by agent-role key for determinism)
+// is resolved; OrchestrationConfig supports a single HandlerBinary for now.
+//
+// Spec ref: specs/scenario-harness.md §4.3 SH-009, §4.4 SH-008.
+func harnessResolveTwinBinary(
+	overrides map[string]scenario.AgentOverride,
+	searchPaths []string,
+) (binary string, args []string, err error) {
+	if len(overrides) == 0 {
+		return "", nil, nil
+	}
+
+	// Deterministic iteration: sort keys so the caller always picks the same
+	// override when multiple roles are declared.
+	keys := make([]string, 0, len(overrides))
+	for k := range overrides {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	override := overrides[keys[0]]
+
+	binaryName := override.Binary
+	if binaryName == "" {
+		return "", nil, fmt.Errorf("agent_overrides[%q]: binary name is empty", keys[0])
+	}
+
+	// Absolute path: use directly without search-path lookup (SH-009 tier (i)).
+	if filepath.IsAbs(binaryName) {
+		if _, statErr := os.Stat(binaryName); statErr != nil {
+			return "", nil, fmt.Errorf("twin-binary-not-found: absolute path %q: %w",
+				binaryName, statErr)
+		}
+		return binaryName, override.Args, nil
+	}
+
+	// Relative name: walk each search path (SH-009 tiers (ii)/(iii)).
+	for _, sp := range searchPaths {
+		candidate := filepath.Join(sp, binaryName)
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			return candidate, override.Args, nil
+		}
+	}
+	return "", nil, fmt.Errorf("twin-binary-not-found: %q not found in search paths %v",
+		binaryName, searchPaths)
+}
+
+// harnessApplyFixtureFiles seeds the files declared in FixtureSetup.Files into
+// projectRoot per specs/scenario-harness.md §6.1 RECORD FixtureSetup.
+//
+// Each key is a repo-relative path; the value carries the content (utf8 or
+// base64) and an optional octal mode string. Absent Encoding defaults to utf8;
+// absent Mode defaults to 0644. Failure of any single file write is returned
+// immediately; the caller classifies it as fixture-setup-failed per §8.3.
+func harnessApplyFixtureFiles(projectRoot string, files map[string]scenario.FileSeed) error {
+	for relPath, seed := range files {
+		absPath := filepath.Join(projectRoot, relPath)
+		if mkErr := os.MkdirAll(filepath.Dir(absPath), 0o755); mkErr != nil {
+			return fmt.Errorf("create parent dir for %q: %w", relPath, mkErr)
+		}
+
+		var content []byte
+		switch seed.Encoding {
+		case scenario.FileSeedEncodingBase64:
+			decoded, decErr := base64.StdEncoding.DecodeString(seed.Contents)
+			if decErr != nil {
+				return fmt.Errorf("decode base64 content for %q: %w", relPath, decErr)
+			}
+			content = decoded
+		default: // utf8 or empty (defaults to utf8 per §6.1)
+			content = []byte(seed.Contents)
+		}
+
+		mode := fs.FileMode(0o644)
+		if seed.Mode != "" {
+			v, parseErr := strconv.ParseUint(seed.Mode, 8, 32)
+			if parseErr != nil {
+				return fmt.Errorf("parse mode %q for %q: %w", seed.Mode, relPath, parseErr)
+			}
+			mode = fs.FileMode(v)
+		}
+
+		//nolint:gosec // G306: mode is declared in the scenario file, not raw user input
+		if writeErr := os.WriteFile(absPath, content, mode); writeErr != nil {
+			return fmt.Errorf("write %q: %w", relPath, writeErr)
+		}
+	}
+	return nil
+}
+
+// harnessApplyWorkflowDOT resolves the DOT workflow declared by sf.WorkflowPath
+// and seeds it into <projectRoot>/.harmonik/workflow.dot so the daemon picks
+// it up at startup when WorkflowModeDefault=dot. Returns core.WorkflowModeDot
+// on success. When sf.WorkflowPath is nil (workflow_id case), returns
+// core.WorkflowModeReviewLoop with no filesystem mutation.
+//
+// Resolution order per specs/scenario-harness.md §6.1 WorkflowPath:
+//
+//	(i)  <projectRoot>/<WorkflowPath>
+//	(ii) <cwd>/scenarios/_workflows/<WorkflowPath>
+//
+// Failure is classified as fixture-setup-failed by the caller.
+func harnessApplyWorkflowDOT(
+	projectRoot, cwd string,
+	sf scenario.ScenarioFile,
+) (core.WorkflowMode, error) {
+	if sf.WorkflowPath == nil {
+		return core.WorkflowModeReviewLoop, nil
+	}
+	dotRelPath := *sf.WorkflowPath
+
+	var dotContent []byte
+	candidate1 := filepath.Join(projectRoot, dotRelPath)
+	if content, readErr := os.ReadFile(candidate1); readErr == nil {
+		dotContent = content
+	} else {
+		candidate2 := filepath.Join(cwd, "scenarios", "_workflows", dotRelPath)
+		content, readErr2 := os.ReadFile(candidate2)
+		if readErr2 != nil {
+			return "", fmt.Errorf("resolve workflow_path %q: not found at %q or %q",
+				dotRelPath, candidate1, candidate2)
+		}
+		dotContent = content
+	}
+
+	// Seed to <projectRoot>/.harmonik/workflow.dot (BootstrapFixture already
+	// created the .harmonik/ directory via MkdirAll for the event-log dir).
+	targetPath := filepath.Join(projectRoot, ".harmonik", "workflow.dot")
+	if mkErr := os.MkdirAll(filepath.Dir(targetPath), 0o755); mkErr != nil {
+		return "", fmt.Errorf("create .harmonik dir for workflow.dot: %w", mkErr)
+	}
+	//nolint:gosec // G306: workflow dot, not a user-controlled secret
+	if writeErr := os.WriteFile(targetPath, dotContent, 0o644); writeErr != nil {
+		return "", fmt.Errorf("write workflow.dot: %w", writeErr)
+	}
+	return core.WorkflowModeDot, nil
+}
+
+// harnessEarlyErrorResult builds a ScenarioResult for scenarios that terminate
+// before TeardownFixture can run (or ran with no filesystem access). The
+// WorkspaceSnapshotPath is computed via the pure formula WorkspaceSnapshotPath;
+// callers that obtained a tdResult from a partial teardown SHOULD override the
+// returned field with tdResult.WorkspaceSnapshotPath.
+func harnessEarlyErrorResult(
+	scenarioName, sourcePath string,
+	startedAt time.Time,
+	eventLogRelPath string,
+	fc scenario.FailureClass,
+	errorDetail string,
+) scenario.ScenarioResult {
+	return scenario.ScenarioResult{
+		ScenarioName:          scenarioName,
+		SourcePath:            sourcePath,
+		StartedAt:             startedAt,
+		CompletedAt:           time.Now().UTC().Truncate(time.Millisecond),
+		Verdict:               scenario.ScenarioVerdictError,
+		FailureClass:          fc,
+		EventLogPath:          eventLogRelPath,
+		WorkspaceSnapshotPath: scenario.WorkspaceSnapshotPath(scenarioName),
+		ErrorDetail:           errorDetail,
+	}
 }

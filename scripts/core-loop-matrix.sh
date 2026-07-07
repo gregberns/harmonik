@@ -254,14 +254,16 @@ for h in "${HARNESSES[@]}"; do
             else
                 # gap2 remote cells fold against the local cell's captured stream.
                 ref="-"; [ "$s" = "remote" ] && [ -f "$CAP_DIR/${h}-local.ndjson" ] && ref="$CAP_DIR/${h}-local.ndjson"
-                fold_out="$(bash "$ASSERT_CELL" "$cap_file" "$spec" "$ref" 2>&1)"; fold_rc=$?
+                # A red cell's fold exits non-zero; capture rc WITHOUT tripping `set -e`
+                # (a bare `x="$(cmd)"; rc=$?` aborts under errexit before rc is read).
+                if fold_out="$(bash "$ASSERT_CELL" "$cap_file" "$spec" "$ref" 2>&1)"; then fold_rc=0; else fold_rc=$?; fi
                 printf '%s\n' "$fold_out" | grep '^GAP' || true
                 case "$fold_rc" in
                     0) cell_verdict="green" ;;
                     2) cell_verdict="pending" ;;
                     *) cell_verdict="red" ;;
                 esac
-                detail="$(printf '%s\n' "$fold_out" | grep '^CELL_VERDICT' | tail -1)"
+                detail="$(printf '%s\n' "$fold_out" | grep '^CELL_VERDICT' | tail -1 || true)"
             fi
         fi
 

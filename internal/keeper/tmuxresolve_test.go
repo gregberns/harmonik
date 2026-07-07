@@ -186,3 +186,99 @@ func TestSplitTmuxTarget(t *testing.T) {
 		}
 	}
 }
+
+// TestHarmonikCrewSessionName verifies the crew-convention name formula.
+func TestHarmonikCrewSessionName(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	want := "harmonik-" + hashDir(t, dir) + "-crew-admiral"
+	got := keeper.HarmonikCrewSessionName(dir, "admiral")
+	if got != want {
+		t.Errorf("HarmonikCrewSessionName: got %q, want %q", got, want)
+	}
+}
+
+// TestHarmonikCrewSessionName_DifferentFromBare confirms the crew and bare forms
+// differ only in the "crew-" infix — they share the same project hash.
+func TestHarmonikCrewSessionName_DifferentFromBare(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	hash := hashDir(t, dir)
+	bare := keeper.HarmonikSessionName(dir, "admiral")
+	crew := keeper.HarmonikCrewSessionName(dir, "admiral")
+	wantBare := "harmonik-" + hash + "-admiral"
+	wantCrew := "harmonik-" + hash + "-crew-admiral"
+	if bare != wantBare {
+		t.Errorf("bare: got %q, want %q", bare, wantBare)
+	}
+	if crew != wantCrew {
+		t.Errorf("crew: got %q, want %q", crew, wantCrew)
+	}
+	if bare == crew {
+		t.Errorf("bare and crew session names must differ: both %q", bare)
+	}
+}
+
+// TestResolveTmuxTarget_CrewNaming_B4 is the RED→GREEN guard for B4 / hk-pp1in:
+// restart-now aborted no_tmux_target for crew agents whose tmux session is named
+// "harmonik-<hash>-crew-<name>" rather than the bare "harmonik-<hash>-<name>".
+//
+// The stub returns true ONLY for the crew-prefixed session name — exactly the
+// live incident where the admiral ran in "harmonik-<hash>-crew-admiral" but
+// ResolveTmuxTarget only checked "harmonik-<hash>-admiral" → empty → abort.
+//
+// Before the B4 fix: this test was RED (got == "").
+// After the fix: GREEN (got == crewSession + ":agent").
+func TestResolveTmuxTarget_CrewNaming_B4(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	crewSession := keeper.HarmonikCrewSessionName(dir, "admiral")
+
+	// Only the crew-prefixed session is live; bare convention is absent.
+	stub := func(name string) bool { return name == crewSession }
+
+	got := keeper.ResolveTmuxTarget(dir, "admiral", "", stub)
+	want := crewSession + ":agent"
+	if got != want {
+		t.Errorf("B4 crew-naming: got %q, want %q (no_tmux_target would fire)", got, want)
+	}
+}
+
+// TestResolveTmuxTarget_BareFirstThenCrew verifies priority: when BOTH sessions
+// exist, bare convention wins (captain wins over a hypothetical crew-captain).
+func TestResolveTmuxTarget_BareFirstThenCrew(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	bareSession := keeper.HarmonikSessionName(dir, "captain")
+	crewSession := keeper.HarmonikCrewSessionName(dir, "captain")
+
+	// Both sessions are live — bare must be returned first.
+	stub := func(name string) bool { return name == bareSession || name == crewSession }
+
+	got := keeper.ResolveTmuxTarget(dir, "captain", "", stub)
+	want := bareSession + ":agent"
+	if got != want {
+		t.Errorf("bare-first priority: got %q, want %q", got, want)
+	}
+}
+
+// TestResolveTmuxTarget_CrewOnlyNoBare confirms that a crew agent resolves
+// correctly when the bare session is absent (no false-empty from the bare miss).
+func TestResolveTmuxTarget_CrewOnlyNoBare(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	crewSession := keeper.HarmonikCrewSessionName(dir, "jamis")
+
+	stub := func(name string) bool { return name == crewSession }
+
+	got := keeper.ResolveTmuxTarget(dir, "jamis", "", stub)
+	want := crewSession + ":agent"
+	if got != want {
+		t.Errorf("crew-only: got %q, want %q", got, want)
+	}
+}

@@ -34,6 +34,26 @@ func HarmonikSessionName(projectDir, agentName string) string {
 	return "harmonik-" + hash12 + "-" + agentName
 }
 
+// HarmonikCrewSessionName returns the conventional tmux session name for a
+// harmonik-managed CREW agent: "harmonik-<hash12>-crew-<agentName>".
+//
+// The lifecycle layer spawns crew sessions with a "crew-" infix
+// (lifecycle.TmuxSessionName(hash, "crew-"+name)), so restart-now / ping must
+// also try this form when the bare convention misses. Mirror:
+// commsWakePaneCandidates in cmd/harmonik/comms.go (hk-y7v8/CE5), which already
+// handles the crew-vs-captain naming asymmetry by trying both forms in order.
+// B4 / hk-pp1in: the bare-only probe caused no_tmux_target for crew agents
+// (e.g. admiral running in "harmonik-<hash>-crew-admiral").
+func HarmonikCrewSessionName(projectDir, agentName string) string {
+	resolved, err := filepath.EvalSymlinks(projectDir)
+	if err != nil {
+		resolved = projectDir
+	}
+	sum := sha256.Sum256([]byte(resolved))
+	hash12 := fmt.Sprintf("%x", sum[:6])
+	return "harmonik-" + hash12 + "-crew-" + agentName
+}
+
 // windowAgent is the tmux window name carrying the LLM (agent) pane inside an
 // agent session, per the tmux-reorg session layout (CONTRACT.md). The keeper
 // runs in a sibling "keeper" window of the same session, so it must inject /
@@ -82,14 +102,20 @@ func SplitTmuxTarget(value string) (session, window string) {
 //     legacy session-active-pane behavior. The split rule lives in
 //     SplitTmuxTarget; tmux itself honours the "session:window" target form, so
 //     the explicit value passes through verbatim.
-//  2. convention — derives "harmonik-<hash12>-<agentName>", verifies the SESSION
-//     exists in tmux, and (when live) returns "<session>:agent" so the gauge /
-//     inject path targets the AGENT window's pane rather than whatever window is
-//     focused.
-//  3. "" — no usable target; caller proceeds without tmux injection.
+//  2. bare convention — derives "harmonik-<hash12>-<agentName>", verifies the
+//     SESSION exists in tmux, and (when live) returns "<session>:agent" so the
+//     gauge / inject path targets the AGENT window's pane. This is the canonical
+//     form for the captain and non-crew agents.
+//  3. crew convention — derives "harmonik-<hash12>-crew-<agentName>" and checks
+//     that session. Crew agents (admiral, any named crew) are spawned with this
+//     "crew-" infix by the lifecycle layer. B4 / hk-pp1in: the bare-only probe
+//     caused restart-now to abort no_tmux_target for crew agents even when a
+//     healthy watcher was bound to their crew-named pane. Mirrors the dual-probe
+//     in commsWakePaneCandidates (cmd/harmonik/comms.go, hk-y7v8/CE5).
+//  4. "" — no usable target; caller proceeds without tmux injection.
 //
-// sessionExistsFn may be nil, in which case a real tmux display-message check
-// is performed. Inject a stub for unit tests.
+// sessionExistsFn may be nil, in which case a real tmux has-session check is
+// performed. Inject a stub for unit tests.
 func ResolveTmuxTarget(projectDir, agentName, explicit string, sessionExistsFn func(string) bool) string {
 	if explicit != "" {
 		return explicit
@@ -97,15 +123,24 @@ func ResolveTmuxTarget(projectDir, agentName, explicit string, sessionExistsFn f
 	if agentName == "" || projectDir == "" {
 		return ""
 	}
-	session := HarmonikSessionName(projectDir, agentName)
 	if sessionExistsFn == nil {
 		sessionExistsFn = tmuxSessionLive
 	}
+	// Priority 2: bare convention (captain, non-crew agents).
 	// Liveness is checked against the bare SESSION name (tmuxSessionLive uses
 	// `has-session -t =<name>`, which matches a session, not a window).
+	session := HarmonikSessionName(projectDir, agentName)
 	if sessionExistsFn(session) {
 		// Target the AGENT window's active pane, not the session's focused window.
 		return session + ":" + windowAgent
+	}
+	// Priority 3: crew convention — "harmonik-<hash>-crew-<agentName>".
+	// B4 / hk-pp1in: crew agents (e.g. admiral) were missed by the bare-only
+	// probe, causing a false no_tmux_target abort in RunOnDemand despite a
+	// healthy pane-bound watcher.
+	crewSession := HarmonikCrewSessionName(projectDir, agentName)
+	if sessionExistsFn(crewSession) {
+		return crewSession + ":" + windowAgent
 	}
 	return ""
 }

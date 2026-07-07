@@ -211,3 +211,85 @@ func TestAckLine(t *testing.T) {
 		t.Errorf("AckLine ping = %q", got)
 	}
 }
+
+// TestRestartNow_CrewAgent_AccCorpus1_B4 asserts acceptance corpus item #1:
+// restart-now does NOT abort no_tmux_target for a crew agent (e.g. admiral)
+// whose pane is resolved via the crew convention "harmonik-<hash>-crew-<name>:agent".
+//
+// Layer: L-fake-tmux (recording injector; no real tmux required).
+// Bead: hk-pp1in / B4. Acceptance corpus #1 per 11-keeper-test-design.md §3.
+func TestRestartNow_CrewAgent_AccCorpus1_B4(t *testing.T) {
+	dir := t.TempDir()
+	agent := "admiral"
+	writeSidAndCtx(t, dir, agent, goodSID)
+	requested := time.Now()
+	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
+
+	// Simulate the crew-session target that ResolveTmuxTarget now returns after
+	// the B4 fix: "harmonik-<hash>-crew-admiral:agent".
+	crewTarget := HarmonikCrewSessionName(dir, agent) + ":" + windowAgent
+
+	rec := &recordingInjector{}
+	err := RestartNow(context.Background(), RestartNowConfig{
+		ProjectDir:  dir,
+		AgentName:   agent,
+		TmuxTarget:  crewTarget,
+		Inject:      rec.inject,
+		RequestedAt: requested,
+	}, "corpus1nonce")
+	if err != nil {
+		t.Fatalf("AccCorpus1 B4: RestartNow aborted for crew agent: %v", err)
+	}
+	got := rec.texts()
+	if len(got) != 3 {
+		t.Fatalf("AccCorpus1 B4: injected %d items, want 3 (ack+/clear+brief): %v", len(got), got)
+	}
+	if got[0] != AckLine("corpus1nonce", "restart") {
+		t.Errorf("AccCorpus1 B4: inject[0] = %q, want ack line", got[0])
+	}
+	if got[1] != "/clear" {
+		t.Errorf("AccCorpus1 B4: inject[1] = %q, want /clear", got[1])
+	}
+	if !strings.Contains(got[2], "agent brief") {
+		t.Errorf("AccCorpus1 B4: inject[2] = %q, want 'agent brief'", got[2])
+	}
+}
+
+// TestRestartNow_CrewAgent_ResolveThenRun_B4 exercises the full B4 fix path
+// end-to-end: ResolveTmuxTarget with a crew-only stub → target non-empty →
+// RestartNow drives ACK→/clear→resume (acceptance corpus #1, L-fake-tmux layer).
+func TestRestartNow_CrewAgent_ResolveThenRun_B4(t *testing.T) {
+	dir := t.TempDir()
+	agent := "admiral"
+	writeSidAndCtx(t, dir, agent, goodSID)
+	requested := time.Now()
+	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
+
+	crewSession := HarmonikCrewSessionName(dir, agent)
+
+	// Stub: only the crew-prefixed session is live.
+	sessionExistsFn := func(name string) bool { return name == crewSession }
+	target := ResolveTmuxTarget(dir, agent, "", sessionExistsFn)
+	if target == "" {
+		t.Fatal("B4 resolve: ResolveTmuxTarget returned empty for live crew session (no_tmux_target would fire)")
+	}
+	wantTarget := crewSession + ":agent"
+	if target != wantTarget {
+		t.Fatalf("B4 resolve: got %q, want %q", target, wantTarget)
+	}
+
+	rec := &recordingInjector{}
+	err := RestartNow(context.Background(), RestartNowConfig{
+		ProjectDir:  dir,
+		AgentName:   agent,
+		TmuxTarget:  target,
+		Inject:      rec.inject,
+		RequestedAt: requested,
+	}, "corpus1runnonce")
+	if err != nil {
+		t.Fatalf("B4 run: RestartNow aborted after crew resolution: %v", err)
+	}
+	if len(rec.texts()) != 3 {
+		t.Fatalf("B4 run: want 3 injections (ack+/clear+brief), got %d: %v", len(rec.texts()), rec.texts())
+	}
+}

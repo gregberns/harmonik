@@ -218,6 +218,62 @@ func TestSmoke_RestartNow_Integration(t *testing.T) {
 		t.Logf("smoke: HappyPath: session %q will be killed by t.Cleanup", sessName)
 	})
 
+	// B4 / hk-pp1in regression: crew-named session resolves correctly.
+	//
+	// Creates a real tmux session whose name matches the crew convention
+	// ("harmonik-<hash>-crew-<agent>"). Verifies that ResolveTmuxTarget (with
+	// the real tmuxSessionLive probe) returns the crew pane and that RestartNow
+	// drives the full ACK→/clear→resume sequence without aborting no_tmux_target.
+	// Layer: L-twin (real tmux session; spy injector; no daemon or Claude Code).
+	t.Run("CrewNamingB4", func(t *testing.T) {
+		project := t.TempDir()
+		agent := "smoke-crew-b4-" + strconv.Itoa(os.Getpid())
+
+		// Derive the crew session name that ResolveTmuxTarget now checks as
+		// fallback. The session must be created EXACTLY with this name so the
+		// real tmuxSessionLive `has-session -t "=<name>"` probe finds it.
+		crewSessName := keeper.HarmonikCrewSessionName(project, agent)
+		t.Cleanup(func() {
+			smokeKillSession(crewSessName)
+		})
+
+		smokeStartSession(t, crewSessName)
+		if !smokeSessionAlive(crewSessName) {
+			t.Fatalf("smoke: CrewNamingB4: session %q not alive after creation", crewSessName)
+		}
+
+		const primarySID = "ccccdddd-eeee-4fff-8000-111122223333"
+		smokeWriteGaugeAndSID(t, project, agent, primarySID)
+		smokeWriteFreshHandoff(t, project, agent)
+
+		// ResolveTmuxTarget with real tmuxSessionLive — must find the crew session.
+		resolved := keeper.ResolveTmuxTarget(project, agent, "", nil)
+		wantResolved := crewSessName + ":agent"
+		if resolved != wantResolved {
+			t.Fatalf("smoke: CrewNamingB4: ResolveTmuxTarget returned %q, want %q (B4 no_tmux_target regression)", resolved, wantResolved)
+		}
+
+		var injected []string
+		spyInject := func(_ context.Context, _ string, text string) error {
+			injected = append(injected, text)
+			return nil
+		}
+		err := keeper.RestartNow(context.Background(), keeper.RestartNowConfig{
+			ProjectDir:  project,
+			AgentName:   agent,
+			TmuxTarget:  resolved,
+			Inject:      spyInject,
+			RequestedAt: time.Now(),
+		}, "smoke-crew-b4-nonce")
+		if err != nil {
+			t.Fatalf("smoke: CrewNamingB4: RestartNow aborted for crew agent: %v", err)
+		}
+		if len(injected) != 3 {
+			t.Fatalf("smoke: CrewNamingB4: want 3 injections (ack+/clear+brief), got %d: %v", len(injected), injected)
+		}
+		t.Logf("smoke: CrewNamingB4: AccCorpus1 verified; session %q will be killed by t.Cleanup", crewSessName)
+	})
+
 	t.Run("GaugeMissing_SIDPresent", func(t *testing.T) {
 		// A common failure mode: the .sid is present but the .ctx gauge is missing.
 		// RestartNow must refuse at the no_gauge step and NOT inject anything.

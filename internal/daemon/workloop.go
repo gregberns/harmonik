@@ -3181,6 +3181,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 
+	// hk-lgykq: per-bead integration-branch targeting. The run branch must LAND
+	// on the same branch it was rebased onto (baseBranch = resolved lands_on),
+	// not the daemon-wide default target. baseBranch already carries the three-
+	// tier precedence (bead ## Branching > branching.yaml > default) resolved by
+	// resolveBranching above, and equals deps.targetBranch when no per-bead
+	// override is present. It is empty only when resolveBranching errored; fall
+	// back to the daemon-wide target in that case so the merge is never directed
+	// at an empty ref (mergeRunBranchToMain fail-closes on empty target).
+	mergeTarget := baseBranch
+	if mergeTarget == "" {
+		mergeTarget = deps.targetBranch
+	}
+
 	// ── DD1 code-sync: select remote worker (remote-substrate B8) ───────────
 	//
 	// When a worker is available, three new git steps wrap the existing
@@ -3692,7 +3705,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
 				}
 			}
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, mergeTarget, effectiveMergeProtectBranches, deps.brPath)
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -3902,7 +3915,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
 				}
 			}
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, mergeTarget, effectiveMergeProtectBranches, deps.brPath)
 			if !mergeRes.noChange && !mergeRes.success {
 				// hk-whru3: advisory-RC + rebase_dropped_commits → work already on main.
 				// A prior run merged the same patch; git rebase identifies it as "already
@@ -4985,7 +4998,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (agent_completed): %s", syncReason))
 			return
 		}
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, mergeTarget, effectiveMergeProtectBranches, deps.brPath)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -5035,7 +5048,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (auto-close): %s", syncReason))
 			return
 		}
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, mergeTarget, effectiveMergeProtectBranches, deps.brPath)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -5107,7 +5120,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// does not abort the merge sequence.
 				bgCtx := context.Background()
 				if curHeadSHA, headErr := resolveWorktreeHEAD(bgCtx, wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
-					mergeRes := lockedMergeRunBranchToMain(bgCtx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+					mergeRes := lockedMergeRunBranchToMain(bgCtx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, mergeTarget, effectiveMergeProtectBranches, deps.brPath)
 					if mergeRes.success || mergeRes.noChange {
 						drainTID, _ := deps.tidGen.Next()
 						if closeErr := deps.closeBeadWithHistoryTrim(bgCtx, runID, drainTID, beadID, false); closeErr != nil {

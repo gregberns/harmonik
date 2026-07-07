@@ -487,6 +487,13 @@ type WatcherConfig struct {
 	// ReadSessionIDFile is used. Set in tests. Refs: hk-75mr, hk-8prq.
 	ReadSidFn func(projectDir, agent string) (string, time.Time, error)
 
+	// ResolveTmuxTargetFn derives a canonical tmux target from projectDir+agentName
+	// when the configured TmuxTarget fails the IsPaneAliveFn probe — the stored
+	// target may be stale or mangled (the B3 watch-restall class, hk-9cqtm). When
+	// nil, ResolveTmuxTarget(projectDir, agentName, "", nil) is used. Set in tests
+	// to control re-resolution without real tmux. Refs: hk-9cqtm.
+	ResolveTmuxTargetFn func(projectDir, agentName string) string
+
 	// SleepingCheckFn reports whether the session identified by sessionID is
 	// currently parked by the QuiesceArbiter (.harmonik/.sleeping.<sessionID>
 	// marker, M1 / hk-jeby). When it returns true, the keeper suppresses BOTH
@@ -678,6 +685,11 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.ReadSidFn == nil {
 		c.ReadSidFn = ReadSessionIDFile
+	}
+	if c.ResolveTmuxTargetFn == nil {
+		c.ResolveTmuxTargetFn = func(projectDir, agentName string) string {
+			return ResolveTmuxTarget(projectDir, agentName, "", nil)
+		}
 	}
 	if c.SleepingCheckFn == nil {
 		c.SleepingCheckFn = IsSleeping
@@ -1629,11 +1641,21 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 		return
 	}
 	// Pane must be ALIVE (non-shell). An idle pane is the maybeRespawn path's job.
-	if !w.cfg.IsPaneAliveFn(ctx, w.cfg.TmuxTarget) {
-		return
+	// If the configured TmuxTarget is mangled (stale session name, wrong format —
+	// the B3 watch-restall class), re-resolve from projectDir+agentName before
+	// giving up. Refs: hk-9cqtm.
+	effectiveTarget := w.cfg.TmuxTarget
+	if !w.cfg.IsPaneAliveFn(ctx, effectiveTarget) {
+		resolved := w.cfg.ResolveTmuxTargetFn(w.cfg.ProjectDir, w.cfg.AgentName)
+		if resolved == "" || resolved == effectiveTarget || !w.cfg.IsPaneAliveFn(ctx, resolved) {
+			return
+		}
+		slog.InfoContext(ctx, "keeper: live-pane recovery: re-resolved mangled target",
+			"agent", w.cfg.AgentName, "old_target", w.cfg.TmuxTarget, "new_target", resolved)
+		effectiveTarget = resolved
 	}
 	// Never force-restart a pane a human operator is actively driving (hk-0t5s).
-	if w.cfg.OperatorAttachedFn(w.cfg.TmuxTarget) {
+	if w.cfg.OperatorAttachedFn(effectiveTarget) {
 		slog.InfoContext(ctx, "keeper: live-pane recovery suppressed — operator actively attached",
 			"agent", w.cfg.AgentName)
 		return

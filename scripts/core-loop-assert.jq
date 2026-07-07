@@ -1,0 +1,89 @@
+# core-loop-assert.jq — the core-loop-proof assertion library (T2, hk-1yxhh).
+#
+# THE LOAD-BEARING CONTRACT. Consumes a captured event stream + an expected-cell spec
+# and emits typed per-gap pass/fail records. This is the contract the Phase-2 scripted-
+# twin must satisfy, so it is kept clean and additive-only.
+#
+# INVOCATION (the matrix runner and the per-gap tasks T4-T8 both call it this way):
+#   jq -n \
+#     --slurpfile events <captured.ndjson> \
+#     --argjson  spec    "$(cat <cell-spec.json>)" \
+#     -f scripts/core-loop-assert.jq
+#
+#   $events  — the array of NDJSON event objects captured for this cell (subscribe --json);
+#              --slurpfile binds one array element per NDJSON line.
+#   $spec    — one expected-cell object (see scenarios/core-loop-proof/expected-cell.example.json).
+#
+# OUTPUT — a JSON array of result records, one per gap the spec lists:
+#   { "gap": "gap1", "verdict": "pass"|"fail"|"pending", "detail": "<human string>" }
+#
+#   pass    — the gap's contract held.
+#   fail    — the gap's contract was violated (a real red).
+#   pending — the gap's assertion is not implemented on THIS branch yet (T4-T8 land them).
+#             pending is NEVER a pass; the matrix runner counts it distinctly so a partial
+#             assertion set can never masquerade as full green (T9 gates on zero pending).
+#
+# SELECTION RULE: when multiple events of a type match (e.g. a review-loop retries and
+# re-emits harness_selected/model_selected), the LAST one wins (`[-1]`) — it reflects the
+# effective final launch. T4-T8 extending this contract should preserve last-wins.
+#
+# GAP MAP: gap1 model-reaches-harness (T2, DONE) · gap2 remote==local (T7) ·
+#          gap3 provider-through-sandbox (T6) · gap4 dispatch field fidelity (T5) ·
+#          gap5 claude worktree->agent_ready (T8).
+
+# --- helpers ---------------------------------------------------------------
+def events: $events;
+
+# all events of a given type
+def of_type($t): events | map(select(.type == $t));
+
+# the payload of an event object (payload wrapper is optional per emitter)
+def pl: (.payload // .);
+
+# result-record constructor
+def result($gap; $verdict; $detail): { gap: $gap, verdict: $verdict, detail: $detail };
+
+# --- gap1 — model reaches the harness per family (C4) -----------------------
+# Contract:
+#   (a) a harness_selected event for the seed bead exists, with agent_type == the
+#       expected harness family and tier == the expected precedence tier;
+#   (b) a model_selected event exists whose harness == expected, and whose model ==
+#       the expected model when the spec pins one (codex pins none → skip the model check).
+def assert_gap1:
+  ($spec.expect.harness_selected // {}) as $eh
+  | ($spec.expect.model_selected  // {}) as $em
+  | (of_type("harness_selected") | map(pl) | map(select(.bead_id == $spec.seed_bead))) as $hs
+  | (of_type("model_selected")   | map(pl) | map(select(.harness == ($em.harness // $eh.agent_type)))) as $ms
+  | if ($hs | length) == 0
+    then result("gap1"; "fail"; "no harness_selected event for seed bead \($spec.seed_bead)")
+    elif ($eh.agent_type != null and ($hs[-1].agent_type != $eh.agent_type))
+    then result("gap1"; "fail"; "harness_selected.agent_type=\($hs[-1].agent_type) != expected \($eh.agent_type)")
+    elif ($eh.tier != null and ($hs[-1].tier != $eh.tier))
+    then result("gap1"; "fail"; "harness_selected.tier=\($hs[-1].tier) != expected \($eh.tier) (harness pin leaked from wrong precedence tier)")
+    elif ($ms | length) == 0
+    then result("gap1"; "fail"; "no model_selected event for harness \($em.harness // $eh.agent_type)")
+    elif ($em.model != null and ($ms[-1].model != $em.model))
+    then result("gap1"; "fail"; "model_selected.model=\($ms[-1].model) != pinned \($em.model)")
+    else result("gap1"; "pass"; "harness=\($hs[-1].agent_type) tier=\($hs[-1].tier) model=\(if ($ms[-1].model // "") == "" then "<uncontrolled>" else $ms[-1].model end)")
+    end;
+
+# --- gap2..gap5 — declared here, implemented by T4-T8 -----------------------
+# Each returns pending (honest: not yet asserted on this branch), NOT pass. The
+# per-gap task replaces the pending body with its real assertion over the same stream.
+def assert_gap2: result("gap2"; "pending"; "remote(tcp://)==local parity assertion — implemented by T7 (hk-wf9lv)");
+def assert_gap3: result("gap3"; "pending"; "provider-comms-through-sandbox assertion — implemented by T6 (hk-i21pt)");
+def assert_gap4: result("gap4"; "pending"; "queue-submit->dispatch field-fidelity assertion — implemented by T5 (hk-bkn5a)");
+def assert_gap5: result("gap5"; "pending"; "claude worktree->agent_ready assertion — implemented by T8 (hk-4vwlx)");
+
+# --- dispatcher ------------------------------------------------------------
+# Run only the gaps the spec lists, in gap-number order, de-duplicated.
+def run_gap($g):
+  if   $g == "gap1" then assert_gap1
+  elif $g == "gap2" then assert_gap2
+  elif $g == "gap3" then assert_gap3
+  elif $g == "gap4" then assert_gap4
+  elif $g == "gap5" then assert_gap5
+  else result($g; "fail"; "unknown gap id in spec: \($g)")
+  end;
+
+[ ($spec.gaps // []) | unique[] | run_gap(.) ]

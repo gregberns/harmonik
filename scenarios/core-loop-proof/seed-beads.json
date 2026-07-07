@@ -1,0 +1,36 @@
+{
+  "//": "Seed-bead fixtures for the core-loop-proof matrix (T2, hk-1yxhh).",
+  "//usage": "scripts/core-loop-seed.sh reads this and creates one OPEN bead per entry in the",
+  "//usage2": "SCRATCH daemon's beads DB, then emits a cell->bead_id MATRIX_SEED_MAP the runner consumes.",
+  "//pin": "The harness:<family> label is the tier-1 per-bead harness pin (agentevents_hqwn59.go).",
+  "//pin2": "model_pin records the harmonik-controlled model the model_selected event must carry",
+  "//pin3": "(empty for codex — model is not harmonik-controlled; set by $CODEX_HOME/config.toml).",
+
+  "schema_version": 1,
+  "seeds": [
+    {
+      "key": "codex",
+      "title": "core-loop-proof seed: trivial one-line change (codex)",
+      "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. This is a fixture bead that exercises the real task-processing loop end to end.",
+      "labels": ["codename:quality-system", "core-loop-seed", "harness:codex"],
+      "harness": "codex",
+      "model_pin": null
+    },
+    {
+      "key": "pi",
+      "title": "core-loop-proof seed: trivial one-line change (pi)",
+      "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. Fixture bead for the pi harness family.",
+      "labels": ["codename:quality-system", "core-loop-seed", "harness:pi"],
+      "harness": "pi",
+      "model_pin": "deepseek-reasoner"
+    },
+    {
+      "key": "claude",
+      "title": "core-loop-proof seed: trivial one-line change (claude)",
+      "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. Fixture bead for the claude-code harness family (flag-gated cell).",
+      "labels": ["codename:quality-system", "core-loop-seed", "harness:claude-code"],
+      "harness": "claude-code",
+      "model_pin": "claude-opus-4-8"
+    }
+  ]
+}

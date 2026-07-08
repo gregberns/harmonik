@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-07-08T00:22:00Z",
+  "updated": "2026-07-08T11:46:00Z",
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
     {
@@ -154,7 +154,17 @@
       "queue": "gurney-q",
       "status": "active",
       "gate": null,
-      "note": "STAFFED 2026-07-07. Workstream A (P0 bleeding-stopper) of epic hk-clska: make gates fail-CLOSED. Live git hooks == lefthook.yml + CI assert; drop continue-on-error in ci.yml/scenario.yml; real diff-keyed agent-reviewer/run the commit hook cross-checks (stub fails CLOSED); branch-protect main (NOT unilateral — gurney designs required-checks set, hands gh-api apply to captain/admiral for coordination). Config/enforcement, no kerf."
+      "note": "STAFFED 2026-07-07. Workstream A (P0 bleeding-stopper) of epic hk-clska: make gates fail-CLOSED. Live git hooks == lefthook.yml + CI assert; drop continue-on-error in ci.yml/scenario.yml; real diff-keyed agent-reviewer/run the commit hook cross-checks (stub fails CLOSED); branch-protect main (NOT unilateral — gurney designs required-checks set, hands gh-api apply to captain/admiral for coordination). Config/enforcement, no kerf. GATE 2026-07-08: A5 (hk-q6axs.5 drop continue-on-error) + A6 (.6 branch-protect) PARKED behind 'make check-short green-on-main' — which is RED under -race saturation on TWO fronts: (1) srt sandbox-apply hk-tch4t (REOPENED — in-process gate can't serialize a system-wide 300s storm; hawat building fail-loud), (2) 5 non-srt tests hk-me8ru (stilgar). gurney2-q PAUSED. Fail-closed goes live only on BOTH-green + daemon REDEPLOY (redeploy hard-held; merge-to-main is cosmetic staging, live daemon runs old binary)."
+    },
+    {
+      "lane": "check-short-deflake",
+      "label": "codename:quality-enforcement",
+      "epic_id": null,
+      "crew": "stilgar",
+      "queue": "stilgar-q",
+      "status": "active",
+      "gate": null,
+      "note": "STAFFED 2026-07-08 11:46Z (captain). Bead hk-me8ru (P1). Srt-INDEPENDENT half of A5's green-on-main precondition: de-flake the 5 non-srt check-short tests that RED under full -race saturation (brcli TestStderrCapScenarioPartialStderrAtSIGKILL; daemon TestQuitOnReviewFile_HeartbeatCeiling + TestL2_SSHLocalhost_TmuxPaneID; keeper TestWatcher_OperatorWarnFn_ThrottledByWarnCooldown; specaudit AR052). hawat owns the srt piece (hk-tch4t) in parallel. Reproduce-first, classify race/timing vs environmental (disk 92% + GOCACHE purge landmine), de-flake (serialize/bound/deterministic-clock, hk-ri2in toolkit), accept only across MULTIPLE full runs. Out-of-daemon isolated-worktree -> 2 reviewers -> ff-land. stilgar's scripted-twin lane (hk-ynyd3, ST5 substrate-gated) stays parked meanwhile. epic_id:null — ready-count via label."
     },
     {
       "lane": "scripted-twin",

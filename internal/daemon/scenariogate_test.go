@@ -62,6 +62,16 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
+// skipScenarioGateSubprocessTests skips under -short: these tests spawn real
+// shell subprocesses to obtain *exec.ExitError values with genuine OS signal
+// shape. Excluded from check-short to de-saturate the -race ./... pass (hk-qpf2g).
+func skipScenarioGateSubprocessTests(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("scenario-gate subprocess test — excluded from -short pass (hk-qpf2g)")
+	}
+}
+
 func TestClassifyScenarioGateError_Pass(t *testing.T) {
 	// testErr == nil → tests passed → non-block.
 	res := classifyScenarioGateError(nil, nil, []byte("ok\tpkg\t0.5s\n"), []string{"./internal/daemon/..."})
@@ -70,6 +80,7 @@ func TestClassifyScenarioGateError_Pass(t *testing.T) {
 }
 
 func TestClassifyScenarioGateError_Killed(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	// SIGKILL (the OOM shape) → gate could not produce a verdict → non-block.
 	killErr := killedExitError(t)
 	res := classifyScenarioGateError(nil, killErr, []byte("signal: killed"), []string{"./internal/daemon/..."})
@@ -81,6 +92,7 @@ func TestClassifyScenarioGateError_Killed(t *testing.T) {
 }
 
 func TestClassifyScenarioGateError_Timeout(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	// Gate context deadline exceeded → non-block.
 	res := classifyScenarioGateError(context.DeadlineExceeded, exitErrorWithCode(t, 1), []byte("panic: test timed out"), []string{"./internal/daemon/..."})
 	require.False(t, res.blocked, "timeout must NOT block (fail-open)")
@@ -91,6 +103,7 @@ func TestClassifyScenarioGateError_Timeout(t *testing.T) {
 }
 
 func TestClassifyScenarioGateError_CompileFail(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	// Exit code 2 from `go test` = build failure → non-block.
 	res := classifyScenarioGateError(nil, exitErrorWithCode(t, 2), []byte("# pkg\n./x.go:1:1: undefined: Foo\nFAIL\tpkg [build failed]\n"), []string{"./internal/daemon/..."})
 	require.False(t, res.blocked, "compile/build failure must NOT block (fail-open)")
@@ -105,6 +118,7 @@ func TestClassifyScenarioGateError_CompileFail(t *testing.T) {
 }
 
 func TestClassifyScenarioGateError_GenuineTestFail(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	// Exit code 1 with a real --- FAIL marker = tests ran and failed → BLOCK.
 	out := []byte("--- FAIL: TestSomething (0.01s)\n    foo_test.go:10: boom\nFAIL\ngithub.com/x/y\t0.02s\nFAIL\n")
 	res := classifyScenarioGateError(nil, exitErrorWithCode(t, 1), out, []string{"./internal/daemon/..."})
@@ -120,6 +134,7 @@ func TestClassifyScenarioGateError_Unclassified(t *testing.T) {
 }
 
 func TestIsSignalKill(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	require.True(t, isSignalKill(killedExitError(t)))
 	require.False(t, isSignalKill(exitErrorWithCode(t, 1)))
 	require.False(t, isSignalKill(exitErrorWithCode(t, 2)))
@@ -128,6 +143,7 @@ func TestIsSignalKill(t *testing.T) {
 }
 
 func TestIsCompileFailure(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	require.True(t, isCompileFailure(exitErrorWithCode(t, 2), ""))
 	require.True(t, isCompileFailure(exitErrorWithCode(t, 1), "FAIL\tpkg [build failed]"))
 	require.True(t, isCompileFailure(nil, "FAIL\tpkg [setup failed]"))
@@ -135,6 +151,7 @@ func TestIsCompileFailure(t *testing.T) {
 }
 
 func TestIsGenuineTestFailure(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	require.True(t, isGenuineTestFailure(exitErrorWithCode(t, 1), "--- FAIL: TestX (0.0s)"))
 	require.True(t, isGenuineTestFailure(exitErrorWithCode(t, 1), "ok pkg\nFAIL\n"))
 	require.False(t, isGenuineTestFailure(exitErrorWithCode(t, 2), "--- FAIL: TestX"), "exit 2 is a build failure, not a test verdict")
@@ -165,6 +182,7 @@ func TestScenarioGateWithRetry_PassFirstRun(t *testing.T) {
 }
 
 func TestScenarioGateWithRetry_FlakyThenPass(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	// Genuine FAIL on run 1, pass on run 2 = load-induced flake → fail-open
 	// (hk-5em). This is the AllReachMerge / CaptainCrewE2E-under-load case the
 	// old gate false-blocked.
@@ -182,6 +200,7 @@ func TestScenarioGateWithRetry_FlakyThenPass(t *testing.T) {
 }
 
 func TestScenarioGateWithRetry_GenuineFailBothRuns(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	// Genuine FAIL on both runs = deterministic regression → BLOCK. A real
 	// code-break must still be caught; retry does not weaken coverage.
 	calls := 0
@@ -197,6 +216,7 @@ func TestScenarioGateWithRetry_GenuineFailBothRuns(t *testing.T) {
 }
 
 func TestScenarioGateWithRetry_FlakyThenNonBlockInfra(t *testing.T) {
+	skipScenarioGateSubprocessTests(t)
 	// Genuine FAIL on run 1, then a non-block infra outcome (e.g. timeout /
 	// SIGKILL) on retry → still fail-open. The retry being non-block for ANY
 	// reason means we did not confirm a deterministic regression.

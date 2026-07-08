@@ -76,10 +76,10 @@ func plFixtureTempProjectDir(t *testing.T) string {
 	// path fits within the 104-byte macOS sun_path limit.
 	candidate := t.TempDir()
 	sockCandidate := filepath.Join(candidate, ".harmonik", "daemon.sock")
-	const sunPathMax = 104 // sockaddr_un.sun_path limit on macOS
+	const sunPathMax = 104 // sockaddr_un.sun_path array size on macOS, incl. NUL terminator
 
 	var root string
-	if len(sockCandidate) <= sunPathMax {
+	if len(sockCandidate) < sunPathMax {
 		root = candidate
 	} else {
 		// Fall back to a short /tmp path so the socket path fits.

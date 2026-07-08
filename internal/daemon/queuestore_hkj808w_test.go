@@ -8,6 +8,7 @@ package daemon_test
 // Bead ref: hk-j808w.
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -28,9 +29,13 @@ func queueStoreFixtureQueue(t *testing.T) *queue.Queue {
 	}
 }
 
-// TestQueueStoreSingleInstance asserts that the same *queue.Queue pointer
-// is returned by the accessor after a single SetQueue call (QM-060: single
-// active queue instance per daemon).
+// TestQueueStoreSingleInstance asserts that the accessor returns the queue
+// set by SetQueue (QM-060: single active queue instance per daemon).
+//
+// Queue() returns a deep copy rather than the stored pointer (hk-ri2in.4:
+// handing out the live pointer let a reader's unguarded field access race
+// with the write path's in-place mutation under the write lock), so this
+// compares by value rather than by pointer identity.
 func TestQueueStoreSingleInstance(t *testing.T) {
 	t.Parallel()
 
@@ -46,8 +51,8 @@ func TestQueueStoreSingleInstance(t *testing.T) {
 	if got == nil {
 		t.Fatal("Queue: expected non-nil after SetQueue, got nil")
 	}
-	if got != q {
-		t.Fatalf("Queue: returned different pointer than set: want %p, got %p", q, got)
+	if !reflect.DeepEqual(got, q) {
+		t.Fatalf("Queue: returned value does not match set value: want %+v, got %+v", q, got)
 	}
 }
 
@@ -133,8 +138,9 @@ func TestQueueStoreLockForMutation(t *testing.T) {
 	lq.SetQueue(replacement)
 	lq.Done()
 
-	// After releasing, Queue must return the replacement.
-	if qs.Queue() != replacement {
-		t.Fatalf("after LockForMutation swap: want %p, got %p", replacement, qs.Queue())
+	// After releasing, Queue must return the replacement (by value — see
+	// TestQueueStoreSingleInstance for why Queue() copies rather than aliases).
+	if got := qs.Queue(); !reflect.DeepEqual(got, replacement) {
+		t.Fatalf("after LockForMutation swap: want %+v, got %+v", replacement, got)
 	}
 }

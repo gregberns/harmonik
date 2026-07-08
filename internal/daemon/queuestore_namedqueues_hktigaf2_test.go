@@ -13,6 +13,7 @@ package daemon_test
 // Bead ref: hk-tigaf.2.
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -35,7 +36,10 @@ func namedQueueFixture(t *testing.T, name string) *queue.Queue {
 }
 
 // TestQueueStoreByNameBasicRoundTrip asserts that SetQueueByName / QueueByName
-// round-trip the pointer correctly for a named slot.
+// round-trip the queue correctly for a named slot.
+//
+// QueueByName returns a deep copy rather than the stored pointer (hk-ri2in.4),
+// so this compares by value rather than by pointer identity.
 func TestQueueStoreByNameBasicRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -48,8 +52,8 @@ func TestQueueStoreByNameBasicRoundTrip(t *testing.T) {
 	if got == nil {
 		t.Fatal("QueueByName: expected non-nil after SetQueueByName, got nil")
 	}
-	if got != q {
-		t.Fatalf("QueueByName: returned different pointer: want %p, got %p", q, got)
+	if !reflect.DeepEqual(got, q) {
+		t.Fatalf("QueueByName: returned value does not match set value: want %+v, got %+v", q, got)
 	}
 }
 
@@ -95,8 +99,8 @@ func TestQueueStoreMultipleNamesIndependent(t *testing.T) {
 	if qs.QueueByName("alpha") != nil {
 		t.Fatal("alpha slot: expected nil after clear, got non-nil")
 	}
-	if got := qs.QueueByName("beta"); got != qb {
-		t.Fatalf("beta slot: want %p, got %p", qb, got)
+	if got := qs.QueueByName("beta"); !reflect.DeepEqual(got, qb) {
+		t.Fatalf("beta slot: want %+v, got %+v", qb, got)
 	}
 }
 
@@ -110,11 +114,11 @@ func TestQueueStoreSetQueueUsesNameField(t *testing.T) {
 	q := namedQueueFixture(t, queue.QueueNameMain)
 	qs.SetQueue(q)
 
-	if got := qs.Queue(); got != q {
-		t.Fatalf("Queue() after SetQueue(main): want %p, got %p", q, got)
+	if got := qs.Queue(); !reflect.DeepEqual(got, q) {
+		t.Fatalf("Queue() after SetQueue(main): want %+v, got %+v", q, got)
 	}
-	if got := qs.QueueByName(queue.QueueNameMain); got != q {
-		t.Fatalf("QueueByName(main) after SetQueue(main): want %p, got %p", q, got)
+	if got := qs.QueueByName(queue.QueueNameMain); !reflect.DeepEqual(got, q) {
+		t.Fatalf("QueueByName(main) after SetQueue(main): want %+v, got %+v", q, got)
 	}
 }
 
@@ -134,11 +138,11 @@ func TestQueueStoreSetQueueEmptyNameNormalisesToMain(t *testing.T) {
 	}
 	qs.SetQueue(q)
 
-	if got := qs.Queue(); got != q {
-		t.Fatalf("Queue() after SetQueue(empty Name): want %p, got %p", q, got)
+	if got := qs.Queue(); !reflect.DeepEqual(got, q) {
+		t.Fatalf("Queue() after SetQueue(empty Name): want %+v, got %+v", q, got)
 	}
-	if got := qs.QueueByName(queue.QueueNameMain); got != q {
-		t.Fatalf("QueueByName(main) after SetQueue(empty Name): want %p, got %p", q, got)
+	if got := qs.QueueByName(queue.QueueNameMain); !reflect.DeepEqual(got, q) {
+		t.Fatalf("QueueByName(main) after SetQueue(empty Name): want %+v, got %+v", q, got)
 	}
 }
 
@@ -158,11 +162,11 @@ func TestQueueStoreAllQueues(t *testing.T) {
 	if len(snap) != 2 {
 		t.Fatalf("AllQueues: want 2 entries, got %d", len(snap))
 	}
-	if snap["alpha"] != qa {
-		t.Fatalf("AllQueues[alpha]: want %p, got %p", qa, snap["alpha"])
+	if !reflect.DeepEqual(snap["alpha"], qa) {
+		t.Fatalf("AllQueues[alpha]: want %+v, got %+v", qa, snap["alpha"])
 	}
-	if snap["beta"] != qb {
-		t.Fatalf("AllQueues[beta]: want %p, got %p", qb, snap["beta"])
+	if !reflect.DeepEqual(snap["beta"], qb) {
+		t.Fatalf("AllQueues[beta]: want %+v, got %+v", qb, snap["beta"])
 	}
 }
 

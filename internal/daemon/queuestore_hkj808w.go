@@ -120,20 +120,24 @@ func (s *QueueStore) SetQueue(q *queue.Queue) {
 	}
 }
 
-// Queue returns the *queue.Queue for the QueueNameMain ("main") slot under the
-// read lock, or nil when no such queue is loaded. Backward-compatible accessor
-// for the workloop and all pre-NQ-A1 callers.
+// Queue returns a deep copy of the *queue.Queue for the QueueNameMain ("main")
+// slot, or nil when no such queue is loaded. Backward-compatible accessor for
+// the workloop and all pre-NQ-A1 callers.
 //
-// The returned pointer MUST NOT be mutated by the caller; use SetQueue for
-// mutations.
+// Returns a copy (not the live stored pointer) because the write path
+// (runWorkLoop, via LockForMutation/LockedQueueByName) mutates fields on the
+// stored *queue.Queue in place under the write lock rather than always
+// installing a fresh object; callers that read fields off a pointer obtained
+// here do so without holding any lock, so an aliased pointer would race with
+// that in-place mutation. This was a real, reproducible race (hk-ri2in.4)
+// caught by go test -race across TestWorkLoop_QueuePath_* and friends.
 //
 // Spec ref: specs/queue-model.md §9.1 QM-060, §9.6 QM-064.
 // Bead ref: hk-j808w.
 func (s *QueueStore) Queue() *queue.Queue {
 	s.queueMu.RLock()
-	q := s.queues[queue.QueueNameMain]
-	s.queueMu.RUnlock()
-	return q
+	defer s.queueMu.RUnlock()
+	return cloneQueue(s.queues[queue.QueueNameMain])
 }
 
 // ClearQueue removes the QueueNameMain ("main") slot under the write lock.
@@ -154,16 +158,18 @@ func (s *QueueStore) ClearQueue() {
 // Name-keyed API — per-name set/get/clear for multi-queue dispatch (NQ-A1).
 // ---------------------------------------------------------------------------
 
-// QueueByName returns the *queue.Queue for the given name under the read lock,
-// or nil when no queue with that name is loaded. name MUST be normalised
+// QueueByName returns a deep copy of the *queue.Queue for the given name, or
+// nil when no queue with that name is loaded. name MUST be normalised
 // (non-empty) before calling; use queue.NormaliseQueueName.
+//
+// Returns a copy rather than the live stored pointer — see [QueueStore.Queue]
+// for why (hk-ri2in.4).
 //
 // Bead ref: hk-tigaf.2.
 func (s *QueueStore) QueueByName(name string) *queue.Queue {
 	s.queueMu.RLock()
-	q := s.queues[name]
-	s.queueMu.RUnlock()
-	return q
+	defer s.queueMu.RUnlock()
+	return cloneQueue(s.queues[name])
 }
 
 // SetQueueByName installs q under the write lock at the given name slot,
@@ -192,15 +198,17 @@ func (s *QueueStore) ClearQueueByName(name string) {
 	s.queueMu.Unlock()
 }
 
-// AllQueues returns a snapshot of the full name→queue map under the read lock.
-// The returned map is a shallow copy; the *Queue pointers MUST NOT be mutated.
+// AllQueues returns a snapshot of the full name→queue map under the read
+// lock. Both the map and each *Queue value are deep copies — see
+// [QueueStore.Queue] for why the *Queue values cannot be the live stored
+// pointers (hk-ri2in.4).
 //
 // Bead ref: hk-tigaf.2.
 func (s *QueueStore) AllQueues() map[string]*queue.Queue {
 	s.queueMu.RLock()
 	out := make(map[string]*queue.Queue, len(s.queues))
 	for k, v := range s.queues {
-		out[k] = v
+		out[k] = cloneQueue(v)
 	}
 	s.queueMu.RUnlock()
 	return out
@@ -335,4 +343,56 @@ func (lq *LockedQueueStore) LockedAllQueueNames() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// ---------------------------------------------------------------------------
+// cloneQueue — deep copy for the plain (non-locked) read accessors.
+// ---------------------------------------------------------------------------
+
+// cloneQueue returns a deep copy of q, or nil if q is nil.
+//
+// The write path (runWorkLoop, via LockForMutation/LockedQueueByName) mutates
+// fields on the stored *queue.Queue in place under the write lock rather than
+// always installing a fresh object on every change. Plain read accessors
+// (Queue, QueueByName, AllQueues) return their result without holding the
+// lock for the caller's subsequent field reads, so handing out the live
+// pointer would let a reader observe a torn/mutating object concurrently with
+// the writer — a real, reproducible data race (hk-ri2in.4). Cloning here
+// gives every read-accessor caller an independent snapshot.
+func cloneQueue(q *queue.Queue) *queue.Queue {
+	if q == nil {
+		return nil
+	}
+	out := *q
+	if q.Groups != nil {
+		out.Groups = make([]queue.Group, len(q.Groups))
+		for i, g := range q.Groups {
+			out.Groups[i] = cloneGroup(g)
+		}
+	}
+	return &out
+}
+
+// cloneGroup returns a deep copy of g.
+func cloneGroup(g queue.Group) queue.Group {
+	out := g
+	if g.Items != nil {
+		out.Items = make([]queue.Item, len(g.Items))
+		for i, item := range g.Items {
+			out.Items[i] = cloneItem(item)
+		}
+	}
+	return out
+}
+
+// cloneItem returns a deep copy of item.
+func cloneItem(item queue.Item) queue.Item {
+	out := item
+	if item.TemplateParams != nil {
+		out.TemplateParams = make(map[string]string, len(item.TemplateParams))
+		for k, v := range item.TemplateParams {
+			out.TemplateParams[k] = v
+		}
+	}
+	return out
 }

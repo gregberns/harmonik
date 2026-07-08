@@ -66,11 +66,16 @@ exit 0
 // succeeds on the second attempt — rather than escalating immediately, which
 // was the pre-fix behaviour that left beads stuck IN_PROGRESS.
 func TestRunWithDBLockedRetryBrUnavailableRetriedHkyjsk8(t *testing.T) {
-	// First invocation: sleep 300ms (exceeds 100ms write timeout in tight cfg)
-	// to trigger a BrUnavailable-wrapped wall-clock-timeout error.
+	// First invocation: sleep 800ms (exceeds 200ms write timeout in tight
+	// cfg) to trigger a BrUnavailable-wrapped wall-clock-timeout error.
 	// Second invocation: exit 0 immediately.
+	//
+	// Margins are wide (200ms timeout vs 800ms sleep) because under -race
+	// with a saturated test machine, fork/exec of the fixture script can
+	// itself take well over 100ms before the script's own logic (the sentinel
+	// touch) even runs; a tight margin here flaked under load (hk-ri2in.4).
 	const failCount = 1
-	const sleepDuration = 300 * time.Millisecond
+	const sleepDuration = 800 * time.Millisecond
 
 	path := hkyjsk8FixtureSleepThenSucceedBinary(t, sleepDuration, failCount)
 	a, err := brcli.New(path)
@@ -78,10 +83,9 @@ func TestRunWithDBLockedRetryBrUnavailableRetriedHkyjsk8(t *testing.T) {
 		t.Fatalf("brcli.New: %v", err)
 	}
 
-	// Tight write timeout (100ms) so the first attempt times out quickly.
 	cfg := brcli.TimeoutConfig{
-		ReadTimeout:  50 * time.Millisecond,
-		WriteTimeout: 100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 200 * time.Millisecond,
 	}
 
 	result, retryErr := a.RunWithDBLockedRetry(
@@ -107,8 +111,10 @@ func TestRunWithDBLockedRetryBrUnavailableRetriedHkyjsk8(t *testing.T) {
 // rather than after a single attempt.
 func TestRunWithDBLockedRetryBrUnavailableExhaustedHkyjsk8(t *testing.T) {
 	// Every invocation sleeps past the write timeout: all retries exhaust.
+	// See TestRunWithDBLockedRetryBrUnavailableRetriedHkyjsk8 for why the
+	// margin is wide (hk-ri2in.4 de-flake).
 	const failCount = 999
-	const sleepDuration = 300 * time.Millisecond
+	const sleepDuration = 800 * time.Millisecond
 
 	path := hkyjsk8FixtureSleepThenSucceedBinary(t, sleepDuration, failCount)
 	a, err := brcli.New(path)
@@ -117,8 +123,8 @@ func TestRunWithDBLockedRetryBrUnavailableExhaustedHkyjsk8(t *testing.T) {
 	}
 
 	cfg := brcli.TimeoutConfig{
-		ReadTimeout:  50 * time.Millisecond,
-		WriteTimeout: 100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 200 * time.Millisecond,
 	}
 
 	_, retryErr := a.RunWithDBLockedRetry(

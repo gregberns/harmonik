@@ -104,8 +104,10 @@ func hkvjsvNewRunID(t *testing.T) core.RunID {
 // run non-stale by emitting run-scoped agent_heartbeat events throughout, not just
 // once at the start. Pre-fix the shell path emitted ZERO heartbeats.
 func TestDispatchDotToolNode_LongGate_EmitsPeriodicHeartbeats(t *testing.T) {
-	t.Parallel()
-
+	// Not t.Parallel(): this test and its two siblings in this file all
+	// reassign the package-level dotGateHeartbeatInterval var; running them
+	// concurrently raced under go test -race (hk-ri2in.4).
+	//
 	// Shrink the heartbeat cadence so the periodic tick is observable without a
 	// 5-minute wait. Restore on cleanup. Production never reassigns this var.
 	prev := dotGateHeartbeatInterval
@@ -139,8 +141,6 @@ func TestDispatchDotToolNode_LongGate_EmitsPeriodicHeartbeats(t *testing.T) {
 // unit-test path (bus == nil): no heartbeat is started and the call does not panic
 // — preserving the existing exit-state → Outcome behavior.
 func TestDispatchDotToolNode_NilBus_NoHeartbeatNoPanic(t *testing.T) {
-	t.Parallel()
-
 	prev := dotGateHeartbeatInterval
 	dotGateHeartbeatInterval = 10 * time.Millisecond
 	t.Cleanup(func() { dotGateHeartbeatInterval = prev })
@@ -159,8 +159,6 @@ func TestDispatchDotToolNode_NilBus_NoHeartbeatNoPanic(t *testing.T) {
 // heartbeat goroutine: once the gate command returns and dispatchDotToolNode
 // exits (closing hbDone), no further agent_heartbeat events appear for the run.
 func TestDispatchDotToolNode_HeartbeatStopsWhenGateReturns(t *testing.T) {
-	t.Parallel()
-
 	prev := dotGateHeartbeatInterval
 	dotGateHeartbeatInterval = 40 * time.Millisecond
 	t.Cleanup(func() { dotGateHeartbeatInterval = prev })

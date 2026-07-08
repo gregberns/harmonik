@@ -1990,6 +1990,28 @@ func ExportedResolveModelPreference(
 	return ResolveModelPreference(ctx, beadLabels, agentType, projectCfg, bus, beadID)
 }
 
+// ExportedResolvePiProfile exposes resolvePiProfile for tests in package
+// daemon_test (pi-provider-switch C5-design). Mirrors the claim-time call
+// shape at workloop.go:3099: the caller MUST pass the resolvedAgentType
+// produced by ExportedResolveHarnessAgentTypeQuiet (hk-pkugu discipline) so a
+// claude/codex-resolved bead never receives a pi tuple. Returns the zero
+// PiProfileConfig (all-empty) for a non-pi agentType, an absent/conflicting
+// profile: label, or a resolved profile; a *PiProfileUnknownError for an
+// unknown profile: reference (fail-loud — the caller must reopen the bead
+// rather than launch, matching workloop.go:3103-3109).
+//
+// Bead ref: hk-m6uu2.5.
+func ExportedResolvePiProfile(
+	ctx context.Context,
+	beadLabels []string,
+	agentType core.AgentType,
+	piCfg PiHarnessConfig,
+	bus handlercontract.EventEmitter,
+	beadID string,
+) (PiProfileConfig, error) {
+	return resolvePiProfile(ctx, beadLabels, agentType, piCfg, bus, beadID)
+}
+
 // WorkLoopDepsWithProjectCfg returns a copy of params with ProjectCfg set to cfg.
 // Used by integration tests to inject a non-zero ProjectConfig into the work loop.
 //

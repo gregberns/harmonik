@@ -1,0 +1,2 @@
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-pi","agent_type":"pi","tier":1}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"claude-sonnet-4-6","harness":"pi"}}

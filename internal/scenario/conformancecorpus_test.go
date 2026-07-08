@@ -408,6 +408,103 @@ func TestConformanceGate_BlocksOnMissingVerdictFile(t *testing.T) {
 	t.Logf("OK: gate blocked on missing file as expected\n%s", outStr)
 }
 
+// TestConformanceCorpus_PiTier3ModelLeakGate is the §10.1 conformance-corpus
+// enforcement gate for the pi tier-3 model-leak bug (hk-pkugu, hk-vovyi).
+//
+// The FIX (workloop resolving the harness agent-type up front via
+// resolveHarnessAgentTypeQuiet before calling ResolveModelPreference, instead of
+// hardcoding agentType=claude-code) is unit-tested in isolation by
+// internal/daemon/hk_pkugu_pi_model_leak_test.go and
+// internal/daemon/hk_pkugu_pi_launch_e2e_test.go. What was missing is a standing
+// entry in the §10.1 conformance corpus — the cells.json/ndjson matrix gated by
+// scripts/conformance-gate.sh — that drives the same class of leak assertion
+// through the production core-loop-assert.jq contract. This mirrors the
+// hk-d170r-over-hk-heh3t pattern: a routing/scenario gate registered ABOVE a
+// fix's unit tests, so a regression re-breaks the standing corpus GATE, not
+// production.
+//
+// Runs the real assertion library (scripts/core-loop-assert.jq) — the same
+// contract the live core-loop-proof matrix runner uses — against captured
+// event-stream fixtures for the pi:local cell, extended (hk-vovyi) to forbid
+// BOTH known pi model-leak values: the hk-lfrub node-model-pin leak
+// (claude-opus-4-8) and the hk-pkugu tier-3-default leak
+// (claude-sonnet-4-6 / sonnet). Zero Claude tokens: pure ndjson replay through
+// jq, no live daemon or provider.
+//
+// Spec ref: specs/scenario-harness.md §10.1 (conformance scenario set).
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+func TestConformanceCorpus_PiTier3ModelLeakGate(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not installed")
+	}
+
+	root := conformanceCorpusFixtureRepoRoot(t)
+	lib := filepath.Join(root, "scripts", "core-loop-assert.jq")
+	td := filepath.Join(root, "scenarios", "core-loop-proof", "testdata")
+
+	// pi:local cell spec (cells.json), no_leak_models extended per hk-vovyi to
+	// cover the hk-pkugu tier-3-default leak alongside the pre-existing
+	// hk-lfrub node-model-pin leak.
+	const spec = `{"schema_version":1,"cell":"pi:local","seed_bead":"hk-clp-pi","expect":{"harness_selected":{"agent_type":"pi","tier":1},"model_selected":{"harness":"pi","model":"deepseek-reasoner","no_leak_models":["claude-opus-4-8","claude-sonnet-4-6","sonnet"]}},"gaps":["gap1"]}`
+
+	cases := []struct {
+		name   string
+		stream string
+		want   string
+	}{
+		{"hk-lfrub node-pin leak still caught", "pi-local-modelleak.ndjson", "fail"},
+		{"hk-pkugu tier-3-default leak caught", "pi-local-tier3leak.ndjson", "fail"},
+		{"clean pi run passes (no false positive)", "pi-local-pass.ndjson", "pass"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := conformanceCorpusFixtureGap1Verdict(t, lib, filepath.Join(td, tc.stream), spec)
+			if got != tc.want {
+				t.Errorf("gap1 verdict for %s = %q; want %q", tc.stream, got, tc.want)
+			}
+		})
+	}
+}
+
+// conformanceCorpusFixtureGap1Verdict runs streamPath through the core-loop-assert.jq
+// library against spec and returns the gap1 verdict ("pass"|"fail"|"pending").
+func conformanceCorpusFixtureGap1Verdict(t *testing.T, lib, streamPath, spec string) string {
+	t.Helper()
+
+	cmd := exec.Command("jq", "-n",
+		"--slurpfile", "events", streamPath,
+		"--argjson", "spec", spec,
+		"--argjson", "ref_events", "null",
+		"-f", lib,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("jq assert-library run failed: %v\noutput: %s", err, out)
+	}
+
+	var results []struct {
+		Gap     string `json:"gap"`
+		Verdict string `json:"verdict"`
+		Detail  string `json:"detail"`
+	}
+	if err := json.Unmarshal(out, &results); err != nil {
+		t.Fatalf("unmarshal jq output: %v\noutput: %s", err, out)
+	}
+	for _, r := range results {
+		if r.Gap == "gap1" {
+			return r.Verdict
+		}
+	}
+	t.Fatalf("no gap1 result in jq output: %s", out)
+	return ""
+}
+
 // conformanceGateFixtureContainsLine returns true when s contains a line equal to want
 // (ignoring leading/trailing whitespace on each line).
 func containsLine(s, want string) bool {

@@ -87,7 +87,9 @@
           "harness": "pi",
           "model": "deepseek-reasoner",
           "no_leak_models": [
-            "claude-opus-4-8"
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "sonnet"
           ]
         },
         "terminal": "pass",
@@ -121,7 +123,9 @@
           "harness": "pi",
           "model": "deepseek-reasoner",
           "no_leak_models": [
-            "claude-opus-4-8"
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "sonnet"
           ]
         },
         "terminal": "pass",

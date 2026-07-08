@@ -26,6 +26,7 @@ import (
 	"flag"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -151,6 +152,21 @@ func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 		}
 	}()
 
+	// Safety net (hk-llizq): install the test's OWN SIGTERM handler for the whole
+	// life of the test.  The self-SIGTERM below is only meaningful while run()'s
+	// signal.NotifyContext handler is active; but on a runner where the tmux
+	// binary is ABSENT (e.g. GitHub Actions), run() fails in ProbeTmux and returns
+	// exit 1 EARLY — its `defer stop()` uninstalls the NotifyContext handler before
+	// our signal lands.  Without this net the SIGTERM would then hit Go's default
+	// disposition and terminate the whole test process ("signal: terminated"),
+	// cascade-failing the entire cmd/harmonik package.  With signal.Notify active
+	// here, a mistimed SIGTERM is always absorbed by the test (both handlers
+	// receive it when run()'s is active; only ours when it is not), never the
+	// default disposition.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM)
+	t.Cleanup(func() { signal.Stop(sigCh) })
+
 	// run() blocks in the daemon work loop until its SIGINT/SIGTERM signal
 	// context is cancelled, so call it in a goroutine and report the exit code
 	// back over a channel.
@@ -164,6 +180,21 @@ func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 	// the SIGTERM is delivered to that handler (cancelling the daemon context)
 	// rather than killing the test process via the default disposition.
 	time.Sleep(250 * time.Millisecond)
+
+	// If run() already returned (the tmux-absent fast path returns exit 1 well
+	// before 250ms), do NOT deliver a signal — there is no NotifyContext handler
+	// left to absorb it and nothing to shut down.  The bounded-return + no-panic
+	// contract is already satisfied; assert it and finish.
+	select {
+	case exitCode := <-exitCh:
+		t.Logf("run() returned exit code %d before signal delivery (tmux-absent fast path)", exitCode)
+		return
+	default:
+	}
+
+	// run() is still executing, so its NotifyContext handler is installed: deliver
+	// a single SIGTERM to drive the production shutdown path.  Our safety-net
+	// handler also receives it, harmlessly.
 	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatalf("failed to deliver SIGTERM to self: %v", err)
 	}

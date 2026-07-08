@@ -278,6 +278,16 @@ func TestSandbox_WriteToMainDenied_i0377(t *testing.T) {
 		return
 	}
 
+	// srt itself must report failure. Checking content-unchanged alone leaves a
+	// blind spot: a shell redirect that Seatbelt silently allowed but that
+	// happened to write byte-identical content would pass the check above.
+	// Requiring a non-zero exit closes that gap.
+	if srtErr == nil {
+		t.Errorf("isolation gate FAILED: srt exited 0 attempting to write %q; want non-zero (Seatbelt must deny)\n"+
+			"srt output:\n%s", targetFile, srtOut)
+		return
+	}
+
 	t.Logf("write-to-main denied OK: file unchanged, srt_exit_error=%v\nsrt output: %s",
 		srtErr, strings.TrimSpace(string(srtOut)))
 }

@@ -1433,7 +1433,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// does not see a dangling reviewer_launched/no-verdict state after every
 		// restart (hk-r73qr).
 		if cfg.JSONLLogPath != "" {
-			_ = reconcileOrphanedRunsOnResume(ctx, cfg.JSONLLogPath, bus)
+			// ctx here is the detached startup-sweep context (context.Background,
+			// see above): the orphan reconcile intentionally runs independent of
+			// the daemon lifecycle ctx so it completes even if shutdown races it.
+			_ = reconcileOrphanedRunsOnResume(ctx, cfg.JSONLLogPath, bus) //nolint:contextcheck // intentionally detached from daemon lifecycle ctx
 		}
 
 		// RC-020a dispatch point (a): emit reconciliation_started{trigger:"startup"}

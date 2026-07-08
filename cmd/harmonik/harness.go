@@ -309,8 +309,8 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	// see the "not yet implemented" message and can Ctrl-C to exit.
 	var completedResults []scenario.ScenarioResult // populated by G-02 loop
 
-	fmt.Fprintf(stderr, "harmonik harness: full scenario execution not yet implemented (G-02 pending)\n")
-	fmt.Fprintf(stderr, "harmonik harness: use --list or --dry-run; send SIGINT/SIGTERM to exit\n")
+	_, _ = fmt.Fprintf(stderr, "harmonik harness: full scenario execution not yet implemented (G-02 pending)\n") //nolint:errcheck // best-effort diagnostic
+	_, _ = fmt.Fprintf(stderr, "harmonik harness: use --list or --dry-run; send SIGINT/SIGTERM to exit\n")       //nolint:errcheck // best-effort diagnostic
 
 	// Block until a signal cancels ctx. When G-02 lands this becomes the
 	// scenario execution loop that selects on ctx.Done() to detect interrupts.
@@ -489,7 +489,7 @@ func harnessDiscoverScenarios(
 	// Duplicate detection spans all parsed files, before cadence filtering,
 	// so a name collision between scenarios of different cadences is caught.
 	nameToPath := make(map[string]string, len(paths))
-	var allLoaded []scenario.ScenarioFile
+	allLoaded := make([]scenario.ScenarioFile, 0, len(paths))
 
 	for _, path := range paths {
 		sf, err := scenario.ParseScenarioFile(path)
@@ -510,7 +510,7 @@ func harnessDiscoverScenarios(
 	}
 
 	// Apply cadence filter.
-	var scenarios []scenario.ScenarioFile
+	scenarios := make([]scenario.ScenarioFile, 0, len(allLoaded))
 	for _, sf := range allLoaded {
 		if !cadenceFilter.Includes(sf.CadenceTag) {
 			if verbose {

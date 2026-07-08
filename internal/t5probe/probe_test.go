@@ -440,32 +440,38 @@ func TestT5_DispatchOrder_SyncBlocksAsyncDoesNot(t *testing.T) {
 		},
 	})
 	asyncStarted := make(chan struct{}, 1)
+	asyncMayFinish := make(chan struct{})
+	asyncDone := make(chan struct{})
 	_, _ = bus.Subscribe(core.Subscription{
 		ConsumerID:    "async-1",
 		ConsumerClass: core.ConsumerClassAsynchronous,
 		EventPattern:  core.EventPattern{Wildcard: true},
 		Handler: func(_ context.Context, _ core.Event) error {
 			asyncStarted <- struct{}{}
-			time.Sleep(100 * time.Millisecond)
+			<-asyncMayFinish
 			mu.Lock()
 			dispatchLog = append(dispatchLog, "async")
 			mu.Unlock()
+			close(asyncDone)
 			return nil
 		},
 	})
 	_ = bus.Seal()
 
-	start := time.Now()
 	pb, _ := json.Marshal(map[string]any{"x": 1})
 	if emitErr := bus.Emit(context.Background(), core.EventType("run_started"), pb); emitErr != nil {
 		t.Fatalf("Emit: %v", emitErr)
 	}
-	emitDuration := time.Since(start)
 
-	// Emit must return BEFORE async consumer (100ms sleep) completes.
-	if emitDuration >= 90*time.Millisecond {
-		t.Errorf("Emit blocked for %v — async consumer appears to be on critical path (EV-014a violation)", emitDuration)
+	// Emit must return BEFORE the async consumer is allowed to complete —
+	// proven via happens-before signaling (asyncMayFinish/asyncDone) rather
+	// than a wall-clock budget, so this is immune to CPU-saturation flakes.
+	select {
+	case <-asyncDone:
+		t.Errorf("async consumer completed before Emit returned — async consumer appears to be on critical path (EV-014a violation)")
+	default:
 	}
+	close(asyncMayFinish)
 
 	// Drain and check that sync happened before async.
 	drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

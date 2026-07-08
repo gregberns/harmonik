@@ -46,7 +46,15 @@ func signalsEventsPath(projectDir string) string {
 // appendEvent writes one JSONL event to path, with an optional RunID on the envelope.
 func appendEvent(t *testing.T, path string, evType core.EventType, ts time.Time, runID *core.RunID, payload []byte) {
 	t.Helper()
-	id := core.EventID(uuid.New())
+	// Must be a UUIDv7 (not a random v4): ComputeSnapshot derives its ScanAfter
+	// cursor from scanStart via eventIDFloorForTime, a lexicographic UUIDv7
+	// floor. A random v4 ID sorts before that floor ~50% of the time regardless
+	// of ts, silently dropping the event and flaking window-based assertions.
+	v7, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid.NewV7: %v", err)
+	}
+	id := core.EventID(v7)
 	ev := core.Event{
 		EventID:         id,
 		SchemaVersion:   1,

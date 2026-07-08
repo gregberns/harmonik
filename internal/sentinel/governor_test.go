@@ -20,7 +20,16 @@ import (
 // writeEvent appends one JSONL event line to path.
 func writeEvent(t *testing.T, path string, evType core.EventType, ts time.Time, payload []byte) {
 	t.Helper()
-	id := core.EventID(uuid.New())
+	// Must be a UUIDv7 (not a random v4): computeWindowMovement derives its
+	// ScanAfter cursor from windowStart via eventIDFloorForTime, which is a
+	// lexicographic UUIDv7 floor. A random v4 ID sorts before that floor ~50%
+	// of the time regardless of ts, silently dropping the event and flaking
+	// this test's MovementScore assertion.
+	v7, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid.NewV7: %v", err)
+	}
+	id := core.EventID(v7)
 	ev := core.Event{
 		EventID:         id,
 		SchemaVersion:   1,

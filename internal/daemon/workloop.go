@@ -876,6 +876,14 @@ type workLoopDeps struct {
 	// Bead ref: hk-y3frr.
 	cacheReapMu *sync.RWMutex
 
+	// worktreeReclaimFunc, when non-nil, replaces the `git worktree remove`
+	// sequence in reclaimStaleWorktrees. Tests inject this to capture which
+	// stale paths would have been removed without touching the real filesystem.
+	// When nil, the production git-worktree-remove+prune sequence is used.
+	//
+	// Bead ref: hk-5uezz.
+	worktreeReclaimFunc func(ctx context.Context, projectDir string, stalePaths []string) error
+
 	// governorState is the mutable state persisted across sentinel governor
 	// evaluation cycles (flywheel-motion.md §§1, 6.1; FW2 wire-Evaluate).
 	// Nil when no sentinel config is loaded (governor evaluations are no-ops

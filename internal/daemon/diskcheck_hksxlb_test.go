@@ -18,6 +18,8 @@ package daemon_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -257,4 +259,183 @@ func TestDiskCheck_ProactiveReaper_TOCTOU(t *testing.T) {
 	}
 
 	<-reapDone
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — stale worktree reclaim path (hk-5uezz)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// diskCheckFixtureStaleWorktrees creates fake worktree directories under
+// projectDir's .harmonik/worktrees/ directory to simulate stale leftovers.
+// Returns the UUIDs of the created directories.
+func diskCheckFixtureStaleWorktrees(t *testing.T, projectDir string, count int) []string {
+	t.Helper()
+	worktreesDir := filepath.Join(projectDir, ".harmonik", "worktrees")
+	if err := os.MkdirAll(worktreesDir, 0o755); err != nil {
+		t.Fatalf("diskCheckFixtureStaleWorktrees: mkdir %s: %v", worktreesDir, err)
+	}
+	ids := make([]string, count)
+	for i := range count {
+		uid, err := uuid.NewV7()
+		if err != nil {
+			t.Fatalf("diskCheckFixtureStaleWorktrees: uuid: %v", err)
+		}
+		dir := filepath.Join(worktreesDir, uid.String())
+		if mkErr := os.Mkdir(dir, 0o755); mkErr != nil {
+			t.Fatalf("diskCheckFixtureStaleWorktrees: mkdir %s: %v", dir, mkErr)
+		}
+		ids[i] = uid.String()
+	}
+	return ids
+}
+
+// TestDiskCheck_ReactiveReaper_ReclaimsWorktreesBeforeClean verifies that when
+// stale worktrees are reclaimed and disk recovers above the watermark, the
+// reactive path returns without calling `go clean -cache` (hk-5uezz).
+func TestDiskCheck_ReactiveReaper_ReclaimsWorktreesBeforeClean(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	_ = diskCheckFixtureStaleWorktrees(t, projectDir, 2) // 2 stale worktrees
+
+	// Disk probe: low first call, high after reclaim.
+	probeCallCount := 0
+	freeBytesFunc := func(_ string) (uint64, error) {
+		probeCallCount++
+		if probeCallCount == 1 {
+			return 1, nil // below watermark
+		}
+		return 100 * 1024 * 1024 * 1024, nil // above watermark after reclaim
+	}
+
+	// Reclaim func: delete the dirs so the re-probe sees freed space.
+	reclaimedPaths := make([]string, 0)
+	reclaimFunc := func(_ context.Context, _ string, stalePaths []string) error {
+		reclaimedPaths = append(reclaimedPaths, stalePaths...)
+		for _, p := range stalePaths {
+			_ = os.RemoveAll(p)
+		}
+		return nil
+	}
+
+	cleanCount, cleanFn := diskCheckFixtureCounter()
+
+	params := diskCheckFixtureBuildDeps(t, 0, freeBytesFunc, cleanFn)
+	params.ProjectDir = projectDir
+	params.WorktreeReclaimFunc = reclaimFunc
+	deps := daemon.ExportedWorkLoopDeps(params)
+	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
+
+	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+
+	if got := atomic.LoadInt32(cleanCount); got != 0 {
+		t.Errorf("go clean -cache called %d time(s) after worktree reclaim recovered disk; want 0", got)
+	}
+	if len(reclaimedPaths) != 2 {
+		t.Errorf("reclaimFunc called with %d paths; want 2", len(reclaimedPaths))
+	}
+	if daemon.ExportedDiskCheckDiskLow(&deps) {
+		t.Error("diskLow should be false after disk recovered via worktree reclaim")
+	}
+}
+
+// TestDiskCheck_ReactiveReaper_FallsBackToCacheCleanWhenReclaimInsufficient
+// verifies that when stale worktree reclaim does not recover disk above the
+// watermark, the reactive path still falls through to `go clean -cache`
+// (hk-5uezz).
+func TestDiskCheck_ReactiveReaper_FallsBackToCacheCleanWhenReclaimInsufficient(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	_ = diskCheckFixtureStaleWorktrees(t, projectDir, 1) // 1 stale worktree
+
+	// Disk probe: always below watermark (reclaim didn't help enough).
+	freeBytesFunc := func(_ string) (uint64, error) {
+		return 1, nil // always below watermark
+	}
+
+	// Reclaim func: delete the dir but disk stays low.
+	reclaimFunc := func(_ context.Context, _ string, stalePaths []string) error {
+		for _, p := range stalePaths {
+			_ = os.RemoveAll(p)
+		}
+		return nil
+	}
+
+	cleanCount, cleanFn := diskCheckFixtureCounter()
+
+	params := diskCheckFixtureBuildDeps(t, 0, freeBytesFunc, cleanFn)
+	params.ProjectDir = projectDir
+	params.WorktreeReclaimFunc = reclaimFunc
+	deps := daemon.ExportedWorkLoopDeps(params)
+	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
+
+	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+
+	if got := atomic.LoadInt32(cleanCount); got != 1 {
+		t.Errorf("go clean -cache called %d time(s) after insufficient reclaim; want 1", got)
+	}
+	if !daemon.ExportedDiskCheckDiskLow(&deps) {
+		t.Error("diskLow should be true when disk remains below watermark after reclaim")
+	}
+}
+
+// TestDiskCheck_ReactiveReaper_SkipsRegisteredWorktrees verifies that worktrees
+// whose directory name matches a registered run ID are NOT removed by
+// reclaimStaleWorktrees (hk-5uezz).
+func TestDiskCheck_ReactiveReaper_SkipsRegisteredWorktrees(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+
+	// Create two worktrees: one "stale" (not registered), one "active" (registered).
+	worktreesDir := filepath.Join(projectDir, ".harmonik", "worktrees")
+	if err := os.MkdirAll(worktreesDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", worktreesDir, err)
+	}
+
+	staleUID, _ := uuid.NewV7()
+	staleDir := filepath.Join(worktreesDir, staleUID.String())
+	if err := os.Mkdir(staleDir, 0o755); err != nil {
+		t.Fatalf("mkdir stale worktree: %v", err)
+	}
+
+	activeUID, _ := uuid.NewV7()
+	activeDir := filepath.Join(worktreesDir, activeUID.String())
+	if err := os.Mkdir(activeDir, 0o755); err != nil {
+		t.Fatalf("mkdir active worktree: %v", err)
+	}
+
+	// Register the active worktree's run ID in the registry.
+	reg := daemon.ExportedNewRunRegistry()
+	daemon.ExportedRunRegistryRegister(reg, core.RunID(activeUID), &daemon.RunHandle{BeadID: "active-bead"})
+
+	var reclaimedPaths []string
+	reclaimFunc := func(_ context.Context, _ string, stalePaths []string) error {
+		reclaimedPaths = append(reclaimedPaths, stalePaths...)
+		return nil
+	}
+
+	params := daemon.WorkLoopDepsParams{
+		Bus:                 &stubEventCollector{},
+		BrAdapter:           &stubBeadLedger{},
+		ProjectDir:          projectDir,
+		IntentLogDir:        t.TempDir(),
+		RunRegistry:         reg,
+		WorktreeReclaimFunc: reclaimFunc,
+	}
+	deps := daemon.ExportedWorkLoopDeps(params)
+
+	daemon.ExportedReclaimStaleWorktrees(context.Background(), &deps)
+
+	if len(reclaimedPaths) != 1 {
+		t.Errorf("reclaimFunc called with %d paths; want 1 (only the stale one)", len(reclaimedPaths))
+	}
+	if len(reclaimedPaths) == 1 && filepath.Base(reclaimedPaths[0]) != staleUID.String() {
+		t.Errorf("reclaimFunc called with %q; want stale dir %q", reclaimedPaths[0], staleUID.String())
+	}
+	// Active worktree dir must still exist (was never passed to reclaimFunc).
+	if _, statErr := os.Stat(activeDir); os.IsNotExist(statErr) {
+		t.Error("active worktree was incorrectly removed")
+	}
 }

@@ -31,10 +31,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // diskFreeBytes returns the number of bytes available to unprivileged processes
@@ -67,6 +72,85 @@ func runGoCleanCache(ctx context.Context, deps *workLoopDeps) error {
 	cleanCtx, cleanCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cleanCancel()
 	return exec.CommandContext(cleanCtx, "go", "clean", "-cache").Run()
+}
+
+// reclaimStaleWorktrees enumerates .harmonik/worktrees/ and removes directories
+// whose basename is not a currently-registered run ID. These are stale worktrees
+// from crashed or otherwise-unclean runs whose deferred wtCleanup did not fire.
+//
+// Called in the reactive-reap path (disk below watermark, idle) BEFORE
+// go clean -cache: stale worktrees are cheaper to reclaim and do not leave
+// subsequent builds with a cold go-build cache (hk-5uezz).
+//
+// Only directories whose names are valid UUID strings are considered; other
+// entries (e.g. .gitkeep) are silently skipped.
+//
+// Returns the count of directories successfully removed.
+func reclaimStaleWorktrees(ctx context.Context, deps *workLoopDeps) int {
+	if deps.runRegistry == nil {
+		return 0
+	}
+	worktreesDir := filepath.Join(deps.projectDir, workspace.DefaultWorktreeRoot)
+	entries, err := os.ReadDir(worktreesDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "daemon: disk-check: reclaimStaleWorktrees: ReadDir %s: %v\n", worktreesDir, err)
+		}
+		return 0
+	}
+
+	var stalePaths []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		uid, parseErr := uuid.Parse(e.Name())
+		if parseErr != nil {
+			continue // not a UUID-named worktree; skip
+		}
+		if _, registered := deps.runRegistry.Get(core.RunID(uid)); registered {
+			continue // in-flight — never remove
+		}
+		stalePaths = append(stalePaths, filepath.Join(worktreesDir, e.Name()))
+	}
+	if len(stalePaths) == 0 {
+		return 0
+	}
+
+	if reclaimErr := runWorktreeReclaim(ctx, deps, stalePaths); reclaimErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: disk-check: reclaimStaleWorktrees: %v\n", reclaimErr)
+	}
+	// Count directories that no longer exist after the reclaim attempt.
+	removed := 0
+	for _, p := range stalePaths {
+		if _, statErr := os.Stat(p); os.IsNotExist(statErr) {
+			removed++
+		}
+	}
+	return removed
+}
+
+// runWorktreeReclaim removes stale worktree paths via git worktree remove and
+// prunes the git worktree list. Uses deps.worktreeReclaimFunc as a test seam
+// when non-nil; otherwise runs the production git subprocess sequence.
+func runWorktreeReclaim(ctx context.Context, deps *workLoopDeps, stalePaths []string) error {
+	if deps.worktreeReclaimFunc != nil {
+		return deps.worktreeReclaimFunc(ctx, deps.projectDir, stalePaths)
+	}
+	reclaimCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	for _, path := range stalePaths {
+		rmCmd := exec.CommandContext(reclaimCtx, "git", "-C", deps.projectDir, "worktree", "remove", "--force", "--force", path)
+		if out, rmErr := rmCmd.CombinedOutput(); rmErr != nil {
+			// Fallback: os.RemoveAll for "not a working tree" and similar git errors.
+			_ = os.RemoveAll(path)
+			fmt.Fprintf(os.Stderr,
+				"daemon: disk-check: git worktree remove %s: %v (%s); fell back to os.RemoveAll\n",
+				path, rmErr, strings.TrimSpace(string(out)))
+		}
+	}
+	pruneCmd := exec.CommandContext(reclaimCtx, "git", "-C", deps.projectDir, "worktree", "prune")
+	return pruneCmd.Run()
 }
 
 // runPeriodicDiskCheck is called once per work-loop poll tick to probe disk
@@ -128,6 +212,23 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 						"disk below watermark but merge-build in flight; reap deferred to next tick\n",
 					freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir)
 			} else {
+				// hk-5uezz: try stale-worktree reclaim FIRST — cheaper than
+				// wiping the shared go-build cache and avoids leaving the next
+				// build with a cold cache. Re-probe after reclaim; if disk is
+				// now above the watermark, skip go clean -cache entirely.
+				if reclaimedCount := reclaimStaleWorktrees(ctx, deps); reclaimedCount > 0 {
+					if newFree, probeErr := freeBytesFunc(deps.projectDir); probeErr == nil && newFree >= watermark {
+						fmt.Fprintf(os.Stderr,
+							"daemon: disk-check: reclaimed %d stale worktree(s) — "+
+								"disk recovered available=%dMiB watermark=%dMiB path=%s; skipping go clean -cache\n",
+							reclaimedCount, newFree/(1024*1024), watermark/(1024*1024), deps.projectDir)
+						deps.diskLow = false
+						return
+					}
+				}
+
+				// Stale-worktree reclaim was insufficient. Proceed with the
+				// shared go-build cache reap.
 				// hk-y3frr: hold the reap↔dispatch exclusive lock for the entire
 				// duration of `go clean -cache` so a run registered mid-clean
 				// cannot have its build cache deleted (Register holds the RLock;

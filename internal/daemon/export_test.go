@@ -360,6 +360,14 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-y3frr.
 	CacheReapMu *sync.RWMutex
 
+	// WorktreeReclaimFunc, when non-nil, overrides the git-worktree-remove
+	// sequence inside reclaimStaleWorktrees. Tests inject this to observe which
+	// stale paths would be removed and to control whether disk recovers after
+	// reclaim (by pairing with a stateful DiskFreeBytesFunc).
+	//
+	// Bead ref: hk-5uezz.
+	WorktreeReclaimFunc func(ctx context.Context, projectDir string, stalePaths []string) error
+
 	// Runner, when non-nil, is threaded into workLoopDeps.runner and used as the
 	// fallback dotRunner on the DOT run path when no remote worker is selected
 	// (hk-hd2w6). Inject a *tmuxPkg.RecordingRunner to capture Command calls in
@@ -532,9 +540,10 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 			}
 			return nil // no-op: tests must not wipe the shared go-build cache
 		},
-		cacheReapMu:    cacheReapMu,      // hk-y3frr: reap↔dispatch exclusion
-		runner:         p.Runner,         // hk-hd2w6: Config.Runner injection seam
-		defaultHarness: p.DefaultHarness, // hk-ytzj2: tier-4 global harness default
+		cacheReapMu:         cacheReapMu,             // hk-y3frr: reap↔dispatch exclusion
+		worktreeReclaimFunc: p.WorktreeReclaimFunc,   // hk-5uezz: stale-worktree reclaim seam
+		runner:              p.Runner,                // hk-hd2w6: Config.Runner injection seam
+		defaultHarness:      p.DefaultHarness,         // hk-ytzj2: tier-4 global harness default
 	}
 }
 
@@ -604,6 +613,13 @@ func ExportedDiskCheckSetGoCacheCleanInterval(deps *workLoopDeps, d time.Duratio
 // Bead ref: hk-guez.
 func ExportedDiskCheckSetCheckInterval(deps *workLoopDeps, d time.Duration) {
 	deps.diskCheckIntervalOverride = d
+}
+
+// ExportedReclaimStaleWorktrees calls reclaimStaleWorktrees with the given deps
+// and returns the count of stale worktrees removed. Used by
+// diskcheck_hksxlb_test.go to drive the reclaim step directly (hk-5uezz).
+func ExportedReclaimStaleWorktrees(ctx context.Context, deps *workLoopDeps) int {
+	return reclaimStaleWorktrees(ctx, deps)
 }
 
 // WorkflowModeDefaultOf returns the workflowModeDefault field from deps.

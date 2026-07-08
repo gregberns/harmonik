@@ -108,6 +108,7 @@ func (e *PiConfigError) Error() string {
 func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHarnessConfig, error) {
 	// ── Missing-value gate (checked first, aggregates ALL missing keys). ──
 	// Required: provider, model, api_key_env. No defaults — R1 mandate.
+	// Profiles' required keys are aggregated here too (same gate, one error).
 	var missing []string
 	if cfg.Provider == "" {
 		missing = append(missing, "harnesses.pi.provider")
@@ -130,6 +131,19 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 			missing = append(missing, "harnesses.pi.fallback.api_key_env")
 		}
 	}
+	// Each profile block's presence implies all three required fields must be set.
+	for name, prof := range cfg.Profiles {
+		pfx := "harnesses.pi.profiles." + name
+		if prof.Provider == "" {
+			missing = append(missing, pfx+".provider")
+		}
+		if prof.Model == "" {
+			missing = append(missing, pfx+".model")
+		}
+		if prof.APIKeyEnv == "" {
+			missing = append(missing, pfx+".api_key_env")
+		}
+	}
 	if len(missing) > 0 {
 		return daemon.PiHarnessConfig{}, &PiConfigMissingError{
 			ProjectDir: projectDir,
@@ -138,29 +152,12 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 	}
 
 	// ── api_key_file validation (PI-040/PI-050, hk-xmfoi). ──
-	// OPTIONAL: when set, expand ~ and validate the file is readable and non-empty
-	// at resolve time. Fail loud (PiConfigError) if set-but-unreadable/empty —
-	// R1 mandate: no silent default. Store the expanded path for use at launch time.
+	// OPTIONAL: when set, expand ~ and validate the file is readable and non-empty.
+	// Fail loud (PiConfigError) if set-but-unreadable/empty — R1 mandate.
 	if cfg.APIKeyFile != "" {
-		expanded, expErr := expandHomePath(cfg.APIKeyFile)
-		if expErr != nil {
-			return daemon.PiHarnessConfig{}, &PiConfigError{
-				Field:  "harnesses.pi.api_key_file",
-				Reason: fmt.Sprintf("path expansion failed: %v", expErr),
-			}
-		}
-		data, readErr := os.ReadFile(expanded)
-		if readErr != nil {
-			return daemon.PiHarnessConfig{}, &PiConfigError{
-				Field:  "harnesses.pi.api_key_file",
-				Reason: fmt.Sprintf("file is not readable: %v", readErr),
-			}
-		}
-		if strings.TrimSpace(string(data)) == "" {
-			return daemon.PiHarnessConfig{}, &PiConfigError{
-				Field:  "harnesses.pi.api_key_file",
-				Reason: "file is set but contains no key (file is empty or whitespace-only)",
-			}
+		expanded, err := resolvePiAPIKeyFile("harnesses.pi.api_key_file", cfg.APIKeyFile)
+		if err != nil {
+			return daemon.PiHarnessConfig{}, err
 		}
 		cfg.APIKeyFile = expanded
 	}
@@ -169,18 +166,8 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 	// OPTIONAL: when set, must look like scheme://host[:port][/path] and be ≤512
 	// chars. Absent is always valid. API needs no validation.
 	if cfg.BaseURL != "" {
-		if len(cfg.BaseURL) > 512 {
-			return daemon.PiHarnessConfig{}, &PiConfigError{
-				Field:  "harnesses.pi.base_url",
-				Reason: fmt.Sprintf("base_url is %d chars; must be ≤512 chars", len(cfg.BaseURL)),
-			}
-		}
-		parsed, parseErr := url.Parse(cfg.BaseURL)
-		if parseErr != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return daemon.PiHarnessConfig{}, &PiConfigError{
-				Field:  "harnesses.pi.base_url",
-				Reason: fmt.Sprintf("base_url %q is not a valid URL; must be scheme://host[:port][/path] (e.g. http://dgx.local:8551/v1)", cfg.BaseURL),
-			}
+		if err := validatePiBaseURL("harnesses.pi.base_url", cfg.BaseURL); err != nil {
+			return daemon.PiHarnessConfig{}, err
 		}
 	}
 
@@ -198,6 +185,32 @@ func ResolvePiConfig(cfg daemon.PiHarnessConfig, projectDir string) (daemon.PiHa
 		if err := validatePiModelShape(fbModelField, fbModelVal); err != nil {
 			return daemon.PiHarnessConfig{}, err
 		}
+	}
+
+	// ── Per-profile validation (pi-provider-switch C2). ──
+	// Shape + base_url + api_key_file for each named profile.
+	// Missing-required-key check already ran above (same gate). api: untouched.
+	for name, prof := range cfg.Profiles {
+		pfx := "harnesses.pi.profiles." + name
+		if err := validatePiModelShape(pfx+".provider", prof.Provider); err != nil {
+			return daemon.PiHarnessConfig{}, err
+		}
+		if err := validatePiModelShape(pfx+".model", prof.Model); err != nil {
+			return daemon.PiHarnessConfig{}, err
+		}
+		if prof.BaseURL != "" {
+			if err := validatePiBaseURL(pfx+".base_url", prof.BaseURL); err != nil {
+				return daemon.PiHarnessConfig{}, err
+			}
+		}
+		if prof.APIKeyFile != "" {
+			expanded, err := resolvePiAPIKeyFile(pfx+".api_key_file", prof.APIKeyFile)
+			if err != nil {
+				return daemon.PiHarnessConfig{}, err
+			}
+			prof.APIKeyFile = expanded
+		}
+		cfg.Profiles[name] = prof
 	}
 
 	return cfg, nil
@@ -221,6 +234,52 @@ func validatePiModelShape(field, model string) error {
 		}
 	}
 	return nil
+}
+
+// validatePiBaseURL validates that baseURL is ≤512 chars and parses as a valid
+// scheme://host URL. field is the dotted yaml path used in error messages.
+func validatePiBaseURL(field, baseURL string) error {
+	if len(baseURL) > 512 {
+		return &PiConfigError{
+			Field:  field,
+			Reason: fmt.Sprintf("base_url is %d chars; must be ≤512 chars", len(baseURL)),
+		}
+	}
+	parsed, parseErr := url.Parse(baseURL)
+	if parseErr != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return &PiConfigError{
+			Field:  field,
+			Reason: fmt.Sprintf("base_url %q is not a valid URL; must be scheme://host[:port][/path] (e.g. http://dgx.local:8551/v1)", baseURL),
+		}
+	}
+	return nil
+}
+
+// resolvePiAPIKeyFile expands ~ in apiKeyFile and validates the file is readable
+// and non-empty. Returns the expanded path on success. field is the dotted yaml
+// path used in error messages.
+func resolvePiAPIKeyFile(field, apiKeyFile string) (string, error) {
+	expanded, expErr := expandHomePath(apiKeyFile)
+	if expErr != nil {
+		return "", &PiConfigError{
+			Field:  field,
+			Reason: fmt.Sprintf("path expansion failed: %v", expErr),
+		}
+	}
+	data, readErr := os.ReadFile(expanded)
+	if readErr != nil {
+		return "", &PiConfigError{
+			Field:  field,
+			Reason: fmt.Sprintf("file is not readable: %v", readErr),
+		}
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return "", &PiConfigError{
+			Field:  field,
+			Reason: "file is set but contains no key (file is empty or whitespace-only)",
+		}
+	}
+	return expanded, nil
 }
 
 // expandHomePath expands a leading ~ to the user's home directory.

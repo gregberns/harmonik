@@ -782,18 +782,30 @@ type rawHarnessesPiFallbackConfig struct {
 	APIKeyEnv string `yaml:"api_key_env"`
 }
 
+// rawHarnessesPiProfileConfig is one named profile under harnesses.pi.profiles.
+// Full tuple; provider/model/api_key_env required (validated in resolve_pi_config.go).
+type rawHarnessesPiProfileConfig struct {
+	Provider   string `yaml:"provider"`
+	Model      string `yaml:"model"`
+	APIKeyEnv  string `yaml:"api_key_env"`
+	APIKeyFile string `yaml:"api_key_file"` // OPTIONAL
+	BaseURL    string `yaml:"base_url"`     // OPTIONAL
+	API        string `yaml:"api"`          // OPTIONAL; defaulted at launch, not here
+}
+
 // rawHarnessesPiConfig is the harnesses.pi block in config.yaml.
 // REQUIRED: provider, model, api_key_env. OPTIONAL: fallback, api_key_file, base_url, api.
 // No defaults — ResolvePiConfig (cmd/harmonik/resolve_pi_config.go) enforces
 // fail-loud on any missing required field (PI-050/PI-051).
 type rawHarnessesPiConfig struct {
-	Provider   string                       `yaml:"provider"`
-	Model      string                       `yaml:"model"`
-	APIKeyEnv  string                       `yaml:"api_key_env"`
-	APIKeyFile string                       `yaml:"api_key_file"` // OPTIONAL; PI-050/hk-xmfoi
-	BaseURL    string                       `yaml:"base_url"`     // OPTIONAL; locally-hosted OpenAI-compatible endpoints (hk-z13jz)
-	API        string                       `yaml:"api"`          // OPTIONAL; Pi wire format, defaults to "openai" at launch when empty (hk-z13jz)
-	Fallback   rawHarnessesPiFallbackConfig `yaml:"fallback"`
+	Provider   string                                  `yaml:"provider"`
+	Model      string                                  `yaml:"model"`
+	APIKeyEnv  string                                  `yaml:"api_key_env"`
+	APIKeyFile string                                  `yaml:"api_key_file"` // OPTIONAL; PI-050/hk-xmfoi
+	BaseURL    string                                  `yaml:"base_url"`     // OPTIONAL; locally-hosted OpenAI-compatible endpoints (hk-z13jz)
+	API        string                                  `yaml:"api"`          // OPTIONAL; Pi wire format, defaults to "openai" at launch when empty (hk-z13jz)
+	Fallback   rawHarnessesPiFallbackConfig            `yaml:"fallback"`
+	Profiles   map[string]rawHarnessesPiProfileConfig `yaml:"profiles"` // OPTIONAL; pi-provider-switch
 }
 
 // rawHarnessesConfig is the top-level harnesses: block in config.yaml.
@@ -811,6 +823,23 @@ type PiFallbackConfig struct {
 	Model string
 	// APIKeyEnv is the name of the env var carrying the fallback provider key.
 	APIKeyEnv string
+}
+
+// PiProfileConfig is one resolved named profile — a full switchable tuple.
+// Same shape+opacity discipline as the top-level PiHarnessConfig fields.
+type PiProfileConfig struct {
+	// Provider is the provider string for this profile. REQUIRED.
+	Provider string
+	// Model is the model string for this profile. REQUIRED.
+	Model string
+	// APIKeyEnv is the env var name carrying this profile's provider key. REQUIRED.
+	APIKeyEnv string
+	// APIKeyFile is the OPTIONAL path; expanded from ~ by ResolvePiConfig when set.
+	APIKeyFile string
+	// BaseURL is the OPTIONAL base URL for a locally-hosted endpoint.
+	BaseURL string
+	// API is the OPTIONAL wire-format string; defaulted at launch by buildPiModelsJSON.
+	API string
 }
 
 // PiHarnessConfig holds the harnesses.pi block read from .harmonik/config.yaml.
@@ -851,6 +880,10 @@ type PiHarnessConfig struct {
 	Fallback PiFallbackConfig
 	// HasFallback is true when the fallback: sub-block was present in config.
 	HasFallback bool
+	// Profiles are named switchable {provider,model,api_key_env,...} bundles,
+	// selected per-bead by a `profile:<name>` label (pi-provider-switch). Nil/empty
+	// map = no profiles defined (default path unaffected). Validated by ResolvePiConfig.
+	Profiles map[string]PiProfileConfig
 }
 
 // HarnessesConfig holds the harnesses: top-level block. Zero value when absent.
@@ -1859,6 +1892,21 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 	pi := raw.Pi
 	hasFallback := pi.Fallback.Provider != "" || pi.Fallback.Model != "" || pi.Fallback.APIKeyEnv != ""
 	apiKeyFile, _ := daemonExpandHomePath(pi.APIKeyFile)
+	// Copy profiles verbatim (APIKeyFile ~ expansion is done later in ResolvePiConfig).
+	var profiles map[string]PiProfileConfig
+	if len(pi.Profiles) > 0 {
+		profiles = make(map[string]PiProfileConfig, len(pi.Profiles))
+		for name, rp := range pi.Profiles {
+			profiles[name] = PiProfileConfig{
+				Provider:   rp.Provider,
+				Model:      rp.Model,
+				APIKeyEnv:  rp.APIKeyEnv,
+				APIKeyFile: rp.APIKeyFile,
+				BaseURL:    rp.BaseURL,
+				API:        rp.API,
+			}
+		}
+	}
 	return HarnessesConfig{
 		Pi: PiHarnessConfig{
 			Provider:    pi.Provider,
@@ -1873,6 +1921,7 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 				Model:     pi.Fallback.Model,
 				APIKeyEnv: pi.Fallback.APIKeyEnv,
 			},
+			Profiles: profiles,
 		},
 	}
 }

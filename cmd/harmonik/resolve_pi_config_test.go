@@ -488,3 +488,185 @@ func TestResolvePiConfig_API_PassesThrough(t *testing.T) {
 		t.Errorf("API = %q; want %q", got.API, "openai")
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Named-profile tests (pi-provider-switch C2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestResolvePiConfig_ProfileMap_Valid verifies a two-profile map (cloud openrouter
+// + ornith with base_url and api) resolves without error and both profiles are present.
+func TestResolvePiConfig_ProfileMap_Valid(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.Profiles = map[string]daemon.PiProfileConfig{
+		"cloud": {
+			Provider:  "openrouter",
+			Model:     "openrouter/qwen/qwen3-coder",
+			APIKeyEnv: "OPENROUTER_API_KEY",
+		},
+		"ornith": {
+			Provider:  "ornith",
+			Model:     "deepseek/deepseek-r1",
+			APIKeyEnv: "ORNITH_API_KEY",
+			BaseURL:   "http://dgx.local:8551/v1",
+			API:       "openai-completions",
+		},
+	}
+	got, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Fatalf("valid profile map: unexpected error: %v", err)
+	}
+	if len(got.Profiles) != 2 {
+		t.Fatalf("expected 2 profiles; got %d", len(got.Profiles))
+	}
+	cloud := got.Profiles["cloud"]
+	if cloud.Provider != "openrouter" || cloud.Model != "openrouter/qwen/qwen3-coder" {
+		t.Errorf("cloud profile: unexpected fields: %+v", cloud)
+	}
+	ornith := got.Profiles["ornith"]
+	if ornith.BaseURL != "http://dgx.local:8551/v1" || ornith.API != "openai-completions" {
+		t.Errorf("ornith profile: unexpected fields: %+v", ornith)
+	}
+}
+
+// TestResolvePiConfig_Profile_OrnithShape verifies an ornith-shaped profile with
+// base_url set and api unset validates correctly, and api stays "" in the result.
+func TestResolvePiConfig_Profile_OrnithShape(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.Profiles = map[string]daemon.PiProfileConfig{
+		"ornith": {
+			Provider:  "ornith",
+			Model:     "deepseek/deepseek-r1",
+			APIKeyEnv: "ORNITH_API_KEY",
+			BaseURL:   "http://dgx.local:8551/v1",
+			// API intentionally absent — must remain "" (defaulted at launch)
+		},
+	}
+	got, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Fatalf("ornith profile: unexpected error: %v", err)
+	}
+	ornith := got.Profiles["ornith"]
+	if ornith.API != "" {
+		t.Errorf("ornith profile: API = %q; want \"\" (defaulted at launch, not here)", ornith.API)
+	}
+}
+
+// TestResolvePiConfig_Profile_InvalidShape verifies a profile with an invalid
+// provider string (contains space) returns *PiConfigError naming the dotted path.
+func TestResolvePiConfig_Profile_InvalidShape(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	cfg.Profiles = map[string]daemon.PiProfileConfig{
+		"bad": {
+			Provider:  "bad provider",
+			Model:     "some/model",
+			APIKeyEnv: "SOME_KEY",
+		},
+	}
+	_, err := ResolvePiConfig(cfg, "/proj")
+	var pe *PiConfigError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *PiConfigError; got %T: %v", err, err)
+	}
+	if pe.Field != "harnesses.pi.profiles.bad.provider" {
+		t.Errorf("PiConfigError.Field = %q; want %q", pe.Field, "harnesses.pi.profiles.bad.provider")
+	}
+}
+
+// TestResolvePiConfig_Profile_MissingRequiredKey_Aggregates verifies that a profile
+// missing api_key_env produces a *PiConfigMissingError with the dotted path; and when
+// the top-level block also has a missing key, both appear in the same error.
+func TestResolvePiConfig_Profile_MissingRequiredKey_Aggregates(t *testing.T) {
+	t.Parallel()
+	// Top-level missing provider + profile missing api_key_env → both in one error.
+	cfg := daemon.PiHarnessConfig{
+		// Provider intentionally absent
+		Model:     "openrouter/qwen/qwen3-coder",
+		APIKeyEnv: "OPENROUTER_API_KEY",
+		Profiles: map[string]daemon.PiProfileConfig{
+			"myprofile": {
+				Provider: "openrouter",
+				Model:    "openrouter/qwen/qwen3-coder",
+				// APIKeyEnv intentionally absent
+			},
+		},
+	}
+	_, err := ResolvePiConfig(cfg, "/proj")
+	var me *PiConfigMissingError
+	if !errors.As(err, &me) {
+		t.Fatalf("expected *PiConfigMissingError; got %T: %v", err, err)
+	}
+	wantKeys := map[string]bool{
+		"harnesses.pi.provider":                       true,
+		"harnesses.pi.profiles.myprofile.api_key_env": true,
+	}
+	for _, got := range me.Missing {
+		delete(wantKeys, got)
+	}
+	for want := range wantKeys {
+		t.Errorf("expected missing key %q not in error.Missing: %v", want, me.Missing)
+	}
+}
+
+// TestResolvePiConfig_Profile_APIKeyFile_Expanded verifies that a profile with a
+// ~-prefixed api_key_file pointing at a temp file resolves to the expanded absolute
+// path; and that an unreadable/empty file fails loud.
+func TestResolvePiConfig_Profile_APIKeyFile_Expanded(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "profile.key")
+	if err := os.WriteFile(keyFile, []byte("sk-profile-test-key"), 0o600); err != nil {
+		t.Fatalf("setup: write key file: %v", err)
+	}
+	cfg := fullPiCfg()
+	cfg.Profiles = map[string]daemon.PiProfileConfig{
+		"withkey": {
+			Provider:   "openrouter",
+			Model:      "openrouter/qwen/qwen3-coder",
+			APIKeyEnv:  "OPENROUTER_API_KEY",
+			APIKeyFile: keyFile,
+		},
+	}
+	got, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Fatalf("profile api_key_file: unexpected error: %v", err)
+	}
+	if got.Profiles["withkey"].APIKeyFile != keyFile {
+		t.Errorf("APIKeyFile = %q; want %q", got.Profiles["withkey"].APIKeyFile, keyFile)
+	}
+
+	// Unreadable file → fail loud.
+	cfg2 := fullPiCfg()
+	cfg2.Profiles = map[string]daemon.PiProfileConfig{
+		"badkey": {
+			Provider:   "openrouter",
+			Model:      "openrouter/qwen/qwen3-coder",
+			APIKeyEnv:  "OPENROUTER_API_KEY",
+			APIKeyFile: "/nonexistent-harmonik-test-c2/profile.key",
+		},
+	}
+	_, err2 := ResolvePiConfig(cfg2, "/proj")
+	var pe *PiConfigError
+	if !errors.As(err2, &pe) {
+		t.Fatalf("unreadable profile api_key_file: expected *PiConfigError; got %T: %v", err2, err2)
+	}
+	if pe.Field != "harnesses.pi.profiles.badkey.api_key_file" {
+		t.Errorf("PiConfigError.Field = %q; want harnesses.pi.profiles.badkey.api_key_file", pe.Field)
+	}
+}
+
+// TestResolvePiConfig_AbsentProfiles_DefaultUnchanged verifies that a nil Profiles
+// map resolves identically to a config with no profiles (default path unaffected).
+func TestResolvePiConfig_AbsentProfiles_DefaultUnchanged(t *testing.T) {
+	t.Parallel()
+	cfg := fullPiCfg()
+	got, err := ResolvePiConfig(cfg, "/proj")
+	if err != nil {
+		t.Fatalf("no profiles: unexpected error: %v", err)
+	}
+	if got.Profiles != nil {
+		t.Errorf("expected nil Profiles map; got %v", got.Profiles)
+	}
+}

@@ -100,8 +100,6 @@ done
 
 [[ -n "$VERDICT_FILE" ]] || die "--verdict <path> is required"
 
-command -v jq >/dev/null 2>&1 || { block "jq is not installed — gate cannot parse the verdict file"; emit_and_exit; }
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 _VERDICT=""
 _REASON=""
@@ -122,6 +120,8 @@ emit_and_exit() {
     fi
     exit "$rc"
 }
+
+command -v jq >/dev/null 2>&1 || { block "jq is not installed — gate cannot parse the verdict file"; emit_and_exit; }
 
 # ── rule 1: verdict file must exist and be readable ──────────────────────────
 if [[ ! -f "$VERDICT_FILE" ]]; then

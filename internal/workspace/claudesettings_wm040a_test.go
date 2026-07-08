@@ -875,7 +875,7 @@ func TestDispatchConsentFix_NoPermissionsAllowInjected(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal user settings: %v", err)
 		}
-		if err := os.WriteFile(settingsPath, raw, 0o644); err != nil {
+		if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
 			t.Fatalf("WriteFile user settings: %v", err)
 		}
 

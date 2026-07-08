@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# .claude/skills/agent-reviewer/run — real Tier-1 agent-reviewer invocation.
+#
+# Computes the diff, hashes it, checks a local verdict cache, and invokes
+# `claude -p` to produce a JSON verdict per agent-reviewer schema v1.
+#
+# Verdict file (keyed by diff hash, read by commit hook hk-q6axs.4):
+#   <git-root>/.harmonik/verdicts/<diff-hash>.json
+#
+# Exit 0: APPROVE or REQUEST_CHANGES (commit may proceed)
+# Exit 1: BLOCK verdict or internal error
+#
+# Usage: run [--diff <REF>] [--bead <BEAD-ID>]
+#   --diff REF    Git ref to diff from (default: HEAD~1)
+#   --bead ID     Optional bead ID for review context (auto-detected from Refs: trailer)
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "agent-reviewer: not inside a git repository" >&2
+    exit 1
+}
+
+# ── Parse args ────────────────────────────────────────────────────────────────
+DIFF_REF="HEAD~1"
+BEAD_ID=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --diff) DIFF_REF="$2"; shift 2 ;;
+        --bead) BEAD_ID="$2"; shift 2 ;;
+        *) echo "agent-reviewer: unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+
+# ── Compute diff ──────────────────────────────────────────────────────────────
+# Working-tree diff first; fall back to committed diff (REF..HEAD) if clean.
+DIFF="$(git diff "${DIFF_REF}" 2>/dev/null)"
+if [[ -z "$DIFF" ]]; then
+    DIFF="$(git diff "${DIFF_REF}..HEAD" 2>/dev/null)"
+fi
+if [[ -z "$DIFF" ]]; then
+    echo "agent-reviewer: empty diff for ${DIFF_REF}; nothing to review" >&2
+    TRIVIAL='{"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Empty diff; nothing to review."}'
+    printf '%s\n' "$TRIVIAL"
+    exit 0
+fi
+
+# ── Diff hash (first 16 hex chars of sha256) ─────────────────────────────────
+if command -v sha256sum &>/dev/null; then
+    DIFF_HASH="$(printf '%s' "$DIFF" | sha256sum | cut -c1-16)"
+else
+    DIFF_HASH="$(printf '%s' "$DIFF" | shasum -a 256 | cut -c1-16)"
+fi
+
+# ── Verdict cache ─────────────────────────────────────────────────────────────
+VERDICTS_DIR="${GIT_ROOT}/.harmonik/verdicts"
+VERDICT_FILE="${VERDICTS_DIR}/${DIFF_HASH}.json"
+mkdir -p "$VERDICTS_DIR"
+
+if [[ -f "$VERDICT_FILE" ]]; then
+    echo "agent-reviewer: cache hit ${DIFF_HASH}" >&2
+    VERDICT_JSON="$(cat "$VERDICT_FILE")"
+else
+    # ── Auto-detect bead from Refs: git trailer ───────────────────────────────
+    if [[ -z "$BEAD_ID" ]]; then
+        BEAD_ID="$(git log -1 --format='%(trailers:key=Refs,valueonly)' 2>/dev/null \
+            | tr -d ' ' | head -1)"
+    fi
+
+    # ── Optional bead context ─────────────────────────────────────────────────
+    BEAD_SECTION=""
+    if [[ -n "$BEAD_ID" ]] && command -v br &>/dev/null; then
+        BEAD_RAW="$(br show "${BEAD_ID}" --format json 2>/dev/null)" || BEAD_RAW=""
+        if [[ -n "$BEAD_RAW" ]]; then
+            BEAD_TITLE="$(printf '%s' "$BEAD_RAW" \
+                | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[0].get('title',''))" \
+                2>/dev/null)" || BEAD_TITLE=""
+            BEAD_NOTES="$(printf '%s' "$BEAD_RAW" \
+                | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[0].get('notes',''))" \
+                2>/dev/null)" || BEAD_NOTES=""
+            BEAD_SECTION="## Work item: ${BEAD_ID}
+Title: ${BEAD_TITLE}
+${BEAD_NOTES:+Notes: ${BEAD_NOTES}}
+"
+        fi
+    fi
+
+    # ── Build review prompt ───────────────────────────────────────────────────
+    PROMPT="You are agent-reviewer for the harmonik project.
+Review the diff below and emit ONLY a single JSON verdict object — no prose, no markdown fences, no explanation.
+
+JSON-verdict schema v1 (emit exactly this shape):
+{\"schema_version\":1,\"verdict\":\"APPROVE|REQUEST_CHANGES|BLOCK\",\"flags\":[],\"notes\":\"...\"}
+
+Required fields: schema_version (integer 1), verdict (string), flags (array), notes (string, 1-3 sentences).
+
+Verdict meanings:
+- APPROVE: all checks pass.
+- REQUEST_CHANGES: issues found but commit may proceed if agent records rationale.
+- BLOCK: hard violation; do not commit.
+
+Flag vocabulary (use in flags[]):
+spec-divergence, idiom-violation, missing-tests, unwanted-abstraction, scope-creep,
+bead-mismatch, non-go-bead-idiom-na, missing-spec-ref, x-missing-wire-up,
+missing-scenario-test, spec-field-name
+
+Tier-1 checks:
+1. Spec alignment — does the diff match specs/*.md? Any silent divergence?
+2. Idiom compliance — idiomatic Go: camelCase, exec.CommandContext not exec.Command,
+   no panic outside testhelpers, //nolint:gosec on os.ReadFile/MkdirAll,
+   defer cleanup discards, errors.Is not ==, slog not fmt.Print.
+   For non-Go diffs flag non-go-bead-idiom-na.
+3. Test adequacy — does the diff add tests at the right tier?
+4. Unwanted abstraction — interfaces/wrappers the bead didn't request?
+5. Bead/codename match — does the diff match the bead title?
+6. Production wire-up — every new exported symbol wired into composition root
+   (daemon.go or equivalent)? Unwired symbol = BLOCK + x-missing-wire-up.
+
+${BEAD_SECTION}## Diff (git diff ${DIFF_REF})
+
+\`\`\`diff
+${DIFF}
+\`\`\`
+
+Emit the JSON verdict object now (no prose, no fences):"
+
+    # ── Invoke LLM ────────────────────────────────────────────────────────────
+    MODEL="${AGENT_REVIEW_MODEL:-claude-haiku-4-5-20251001}"
+    RAW_RESPONSE="$(printf '%s\n' "$PROMPT" \
+        | claude -p \
+            --dangerously-skip-permissions \
+            --output-format text \
+            --model "$MODEL" \
+            2>/dev/null)" || {
+        echo "agent-reviewer: claude invocation failed" >&2
+        exit 1
+    }
+
+    # ── Extract and validate JSON from LLM response ───────────────────────────
+    # python3 -c with single-quoted shell string; Python code uses double quotes only.
+    VERDICT_JSON="$(printf '%s\n' "$RAW_RESPONSE" | python3 -c "
+import sys, json, re
+
+text = sys.stdin.read()
+text = re.sub(r'\`\`\`[a-z]*\n?', '', text)
+
+m = re.search(r'\{.*\}', text, re.DOTALL)
+if not m:
+    sys.stderr.write('agent-reviewer: no JSON object in LLM response\n')
+    sys.stderr.write(text[:500] + '\n')
+    sys.exit(1)
+
+try:
+    d = json.loads(m.group(0))
+except ValueError as e:
+    sys.stderr.write('agent-reviewer: JSON parse error: ' + str(e) + '\n')
+    sys.exit(1)
+
+for k in ('schema_version', 'verdict', 'notes'):
+    if k not in d:
+        sys.stderr.write('agent-reviewer: missing field: ' + k + '\n')
+        sys.exit(1)
+
+if d['schema_version'] != 1:
+    sys.stderr.write('agent-reviewer: wrong schema_version\n')
+    sys.exit(1)
+
+if d['verdict'] not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK'):
+    sys.stderr.write('agent-reviewer: unknown verdict: ' + str(d['verdict']) + '\n')
+    sys.exit(1)
+
+if not isinstance(d.get('flags', []), list):
+    d['flags'] = []
+
+print(json.dumps(d, separators=(',', ':')))
+")" || {
+        echo "agent-reviewer: verdict extraction failed" >&2
+        echo "LLM response: ${RAW_RESPONSE:0:300}" >&2
+        exit 1
+    }
+
+    # ── Store verdict keyed by diff hash ──────────────────────────────────────
+    printf '%s\n' "$VERDICT_JSON" > "$VERDICT_FILE"
+fi
+
+# ── Emit verdict to stdout ────────────────────────────────────────────────────
+printf '%s\n' "$VERDICT_JSON"
+
+# ── Exit based on verdict ─────────────────────────────────────────────────────
+VERDICT_VALUE="$(printf '%s\n' "$VERDICT_JSON" \
+    | python3 -c "import json,sys; print(json.load(sys.stdin).get('verdict',''))" 2>/dev/null)"
+
+case "$VERDICT_VALUE" in
+    APPROVE|REQUEST_CHANGES)
+        exit 0 ;;
+    BLOCK)
+        echo "agent-reviewer: BLOCK — fix issues before committing" >&2
+        exit 1 ;;
+    *)
+        echo "agent-reviewer: unknown verdict '${VERDICT_VALUE}'" >&2
+        exit 1 ;;
+esac

@@ -18,6 +18,7 @@ package daemon_test
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -1316,6 +1317,98 @@ func TestPiHarness_LaunchSpec_CoupledTriple_TravelTogether(t *testing.T) {
 
 	// argv must use rc.Provider, not h.provider.
 	piLaunchSpecAssertFlagValue(t, spec.Args, "--provider", "ornith")
+}
+
+// TestPiHarness_DefaultPath_ByteIdentical is the C6 regression guard for the
+// pi-provider-switch initiative (hk-m6uu2): it proves that an UNLABELED bead
+// (rc.Provider/Model/APIKeyEnv/APIKeyFile/BaseURL/API all zero — the default,
+// pre-C1-C4 path every existing bead still takes) produces a SpawnSpec that is
+// byte-for-byte identical to what buildPiLaunchSpec would produce driven
+// exclusively by harness-level (h.*) config, with no rc-tuple coalescing in the
+// path at all. If C4's LaunchSpec override plumbing ever regresses the default
+// path (e.g. an accidental non-empty override, a field swap, a models.json
+// written when it should not be), this test fails on the Args/Env/WorkDir diff.
+func TestPiHarness_DefaultPath_ByteIdentical(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const apiKeyEnv = "TEST_PI_C6_GOLDEN_KEY"
+	t.Setenv(apiKeyEnv, "sk-golden-sentinel")
+
+	workDir := t.TempDir()
+
+	const (
+		piBinary = "pi"
+		provider = "openrouter"
+		model    = "openrouter/deepseek/deepseek-v4-flash"
+		beadID   = "hk-m6uu2-golden-default"
+	)
+	baseEnv := []string{"PATH=/usr/bin"}
+
+	harness := daemon.NewPiHarness(piBinary, provider, model, apiKeyEnv, "", "", "")
+
+	// Unlabeled bead: every rc-tuple field is zero.
+	rc := handlercontract.RunCtx{
+		WorkspacePath: workDir,
+		BeadID:        beadID,
+		BaseEnv:       baseEnv,
+	}
+
+	got, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	// Golden: the pre-C4 shape — buildPiLaunchSpec driven ONLY by h.* config,
+	// with no rc-tuple involved anywhere in its construction.
+	wantSpec, err := daemon.ExportedBuildPiLaunchSpec(daemon.ExportedPiRunCtx{
+		PiBinary:      piBinary,
+		WorkspacePath: workDir,
+		BeadID:        beadID,
+		Provider:      provider,
+		Model:         model,
+		APIKeyEnv:     apiKeyEnv,
+		BaseEnv:       baseEnv,
+	})
+	if err != nil {
+		t.Fatalf("golden ExportedBuildPiLaunchSpec: unexpected error: %v", err)
+	}
+	// Binary/Args/WorkDir are byte-identical (argv order is a hard contract —
+	// PI-020). Env is compared as a SET: buildPiEnv strips the credential
+	// allowlist by ranging a map (pilaunchspec.go strippedSet), so slice order
+	// is non-deterministic independent of C4 — a pre-existing property, not
+	// something this test should regress-guard against.
+	if got.Binary != wantSpec.Binary {
+		t.Errorf("Binary = %q; want %q", got.Binary, wantSpec.Binary)
+	}
+	if got.WorkDir != wantSpec.WorkDir {
+		t.Errorf("WorkDir = %q; want %q", got.WorkDir, wantSpec.WorkDir)
+	}
+	if !reflect.DeepEqual(got.Args, wantSpec.Args) {
+		t.Errorf("Args diverged from the pre-C4 golden shape:\ngot:  %#v\nwant: %#v", got.Args, wantSpec.Args)
+	}
+	if !sameEnvSet(got.Env, wantSpec.Env) {
+		t.Errorf("Env diverged from the pre-C4 golden shape (as a set):\ngot:  %#v\nwant: %#v", got.Env, wantSpec.Env)
+	}
+}
+
+// sameEnvSet reports whether a and b contain the same "KEY=VALUE" entries,
+// ignoring order (buildPiEnv's credential-strip pass ranges a map).
+func sameEnvSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, kv := range a {
+		counts[kv]++
+	}
+	for _, kv := range b {
+		counts[kv]--
+	}
+	for _, c := range counts {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

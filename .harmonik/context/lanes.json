@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-07-06T00:00:00Z",
+  "updated": "2026-07-08T00:22:00Z",
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
     {
@@ -135,6 +135,36 @@
       "status": "parked",
       "gate": null,
       "note": "PARKED (MVP done/live). Standing token-opt lane. Resume when ready file-disjoint work appears."
+    },
+    {
+      "lane": "pi-dual-provider",
+      "label": "codename:pi-provider-switch",
+      "epic_id": "hk-fdbhf",
+      "crew": "chani",
+      "queue": "chani-q",
+      "status": "active",
+      "gate": null,
+      "note": "STAFFED 2026-07-08 (operator re-scope via admiral, direction-log 00:20Z). Goal: pi works COMPLETELY through BOTH OpenRouter AND DGX/ornith, model/provider selectable PER-BEAD. Owns hk-4ir08 (DGX reasoning-model no-toolcalls) + hk-pkugu (daemon leaks claude tier-3 into pi runs). If per-bead switch unsupported, IMPLEMENT it. DoD = single-mode pi canary green with confirmed provider requests (run_started is NOT green; watch srt-sandbox landmine). This is the token-cheap-matrix taproot T9/hk-jjt6w waits on. PLUS the 4 bug classes become quality-harness corpus cases (joint chani+stilgar)."
+    },
+    {
+      "lane": "quality-enforcement-A",
+      "label": "codename:quality-enforcement",
+      "epic_id": "hk-q6axs",
+      "crew": "gurney",
+      "queue": "gurney-q",
+      "status": "active",
+      "gate": null,
+      "note": "STAFFED 2026-07-07. Workstream A (P0 bleeding-stopper) of epic hk-clska: make gates fail-CLOSED. Live git hooks == lefthook.yml + CI assert; drop continue-on-error in ci.yml/scenario.yml; real diff-keyed agent-reviewer/run the commit hook cross-checks (stub fails CLOSED); branch-protect main (NOT unilateral — gurney designs required-checks set, hands gh-api apply to captain/admiral for coordination). Config/enforcement, no kerf."
+    },
+    {
+      "lane": "scripted-twin",
+      "label": "codename:scripted-twin",
+      "epic_id": "hk-ynyd3",
+      "crew": "stilgar",
+      "queue": "stilgar-q",
+      "status": "active",
+      "gate": null,
+      "note": "STAFFED 2026-07-07. Phase-2 quality-system: Layer-1 deterministic twin + same-file merge-race scenario. G-02 scenario-engine (hk-ynyd3.1) LANDED green. ST5 (hk-psrnc real-daemon merge-race PROOF) re-submitting after daemon-restart orphan; now a scenario/acceptance bug not missing-engine. ST6 (hk-pnjgh assessor gate) next."
     }
   ]
 }

@@ -1,36 +1,68 @@
-// sonnet-triple-review.dot — keeper-redesign quality bar (v1)
+// standard-bead.dot — the standard harmonik bead workflow (v1)
 //
-// Operator-mandated bar for the keeper-redesign lane (epic hk-gffc):
-//   - IMPLEMENTER runs Sonnet + HIGH thinking (model/effort on the implement node).
-//   - >=3 DISTINCT reviewers, EACH on Sonnet: correctness, design, tests, then a
-//     consolidate node that severity-joins (BLOCK>REQUEST_CHANGES>APPROVE) into the
-//     ONE verdict the branch edges read. (The built-in review-loop is single-reviewer
-//     and cannot meet the >=3 bar — DOT mode is required.)
+// The canonical bead lifecycle: implement → commit-gate (build+vet+test+scenario)
+// → independent review → close, with review APPROVE as the SOLE inbound edge to
+// close. Unions implement-review-fix.dot and green-build-merge-gate.dot into one
+// complete workflow. No daemon code change required.
 //
-// Built from specs/examples/triple-review-consolidate.dot (THE MARQUEE) +
-// the commit_gate node from specs/examples/standard-bead.dot, so the keeper
-// unit tests must build+pass BEFORE any reviewer runs. Per-node model=/effort=
-// OVERRIDE the run-level pair (dot_cascade.go:781-787), so no daemon env change
-// and no global daemon restart are needed — Sonnet is scoped to THIS lane only.
+// Topology:
+//   start
+//   → implement (agent: implementer; commit required)
+//   → commit_gate (tool: go build + go vet + scripts/scenario-gate.sh —
+//                  affected-package-scoped unit + scenario tests, fail-open)
+//     SUCCESS                   → review
+//     FAIL + deterministic      → implement (fix-loop, capped at 3)
+//     FAIL + transient          → commit_gate (self-loop, capped at 2)
+//     fallback                  → close-needs-attention (canceled / structural)
+//   → review (agent: reviewer)
+//     APPROVE                   → close (SOLE inbound edge to close)
+//     REQUEST_CHANGES           → implement (fix-loop, capped at 3)
+//     BLOCK                     → close-needs-attention
+//     fallback                  → close-needs-attention
 //
-// Submit beads at this graph via a HAND-AUTHORED QueueSubmitRequest with per-item
-//   "workflow_mode":"dot","workflow_ref":".harmonik/workflows/sonnet-triple-review.dot"
-// (the `queue submit --beads` CLI cannot set workflow_ref).
+// Key design decisions:
+//   D1=A: single shell commit_gate node (NOT separate build/test/scenario nodes).
+//   D3=v1.1: the unit + scenario test steps are AFFECTED-PACKAGE-SCOPED and
+//     FAIL-OPEN via scripts/scenario-gate.sh (hk-u830m), superseding the v1
+//     whole-repo `go test ./... && go test -tags=scenario ./...`. The script
+//     mirrors the daemon's affectedScenarioPkgs / classifyScenarioGateError
+//     (internal/daemon/scenariogate.go) so script and daemon agree on which
+//     packages run and on failure-vs-infra-error classification. Required for
+//     the dispatch-default flip (hk-30vlb): a whole-repo gate would let a
+//     pre-existing RED test in an unrelated package block every bead.
+//   The SOLE-inbound-edge invariant: no path reaches close except review→close[APPROVE].
+//     This is a golden-test-asserted contract (see internal/workflow/scenario_standard_bead_hkp0kum_test.go).
 //
-// Marquee brief discipline (docs/sdlc-workflow-corpus.md §Marquee brief discipline):
-//   each per-axis reviewer writes+commits reviews/reviewer-<axis>.md FIRST, THEN
-//   writes .harmonik/review.json; consolidate reads all reviews/reviewer-*.md.
+// Spec refs:
+//   - docs/sdlc-workflow-corpus.md §1  (implement-review-fix reference topology)
+//   - docs/sdlc-workflow-corpus.md §15 (green-build-merge-gate topology)
+//   - specs/workflow-graph.md §4 WG-039 — tool_command / shell handler
+//   - specs/workflow-graph.md §5 WG-011 — unconditional-edge fallback invariant
+//   - specs/workflow-graph.md §6 WG-013 — v1 edge-condition dialect (== and && only)
+//   - specs/workflow-graph.md §6 WG-028 — traversal_cap
+//   - specs/workflow-graph.md §8 WG-021..WG-023 — terminal-node declaration
+//   - specs/workflow-graph.md §9 WG-027 — start_node attribute
+//   - specs/execution-model.md §II.7 EM-057 item 7 — exit-code → outcome
+//   - specs/execution-model.md §EM-015d (review-loop topology / verdict routing)
+//   - specs/execution-model.md §EM-015e (iteration cap + no-progress detector)
+//   - specs/handler-contract.md §III.1 HC-063 — in-process shell handler
+//   - specs/handler-contract.md §4.1 HC-001 — handler_ref required on every node
+//
+// Source: harmonik-productization-design workflow 2026-06-02.
+// Bead ref: hk-p0kum.
 
-digraph "sonnet-triple-review" {
+digraph "standard-bead" {
     // ─── Graph-level attributes ──────────────────────────────────────────────
     schema_version="1";
     version="1.0";
-    workflow_id="sonnet-triple-review";
+    workflow_id="standard-bead";
     start_node="start";
     terminal_node_ids="close,close-needs-attention";
     context_keys="bead_id";
 
     // ─── Nodes ───────────────────────────────────────────────────────────────
+
+    // start: workflow entry point.
     start [
         type="non-agentic",
         handler_ref="noop",
@@ -38,75 +70,63 @@ digraph "sonnet-triple-review" {
         role="entry"
     ];
 
-    // implement: Sonnet + HIGH. On re-entry, address the consolidated review feedback
-    // or fix the build/test failure. The keeper-redesign PRIME DIRECTIVE applies:
-    // identity-first, net LOC DOWN, RED-then-GREEN, ZERO band-threshold changes.
+    // implement: agentic implementer. On the first visit, produces the change.
+    // On re-entry (after REQUEST_CHANGES or a deterministic commit_gate failure),
+    // addresses the reviewer feedback or fixes the build/test failure.
     implement [
         type="agentic",
         agent_type="implementer",
         handler_ref="claude-implementer",
         idempotency_class="non-idempotent",
-        model="claude-sonnet-4-6",
-        effort="high",
-        role="implement the bead's change; commit required. On re-entry: address consolidated review feedback or fix the build/test failure. Keeper rules: identity-first, net LOC down, RED-then-GREEN first commit, ZERO warn/act/force threshold changes."
+        role="implement the bead's change; commit required. On re-entry: address reviewer feedback or fix the build/test failure."
     ];
 
-    // commit_gate: build + vet (whole-repo) + affected-package-scoped unit/scenario
-    // tests (fail-open on infra). Keeper redesign is unit-tier (internal/keeper +
-    // cmd/harmonik/keeper*.go) so this runs fast keeper tests; reviewers run only on SUCCESS.
+    // commit_gate: shell gate — build + vet (whole-repo) + affected-package-scoped
+    // tests. The unit and scenario test steps run only the Go packages this bead
+    // actually touched (vs. the merge base), via scripts/scenario-gate.sh, which
+    // is FAIL-OPEN on gate-infrastructure errors (timeout / OOM / compile) and
+    // BLOCKs only on a genuine `--- FAIL`. This is required for standard-bead.dot
+    // to be the dispatch default (hk-30vlb): a whole-repo `go test ./...` would
+    // let a pre-existing RED test in an UNRELATED package block every bead.
+    // build + vet stay whole-repo — a build break anywhere is legitimately fatal.
+    // `go test -run=^$ ./...` is a COMPILE-ONLY test build (no test runs): it
+    // compiles every _test.go file whole-repo and FAILS if any test references an
+    // undefined symbol. This closes the hk-cmry enabling hole — `go build` does
+    // NOT compile test files, and scenario-gate.sh is FAIL-OPEN on compile errors,
+    // so a RED-only commit (tests referencing undefined symbols) used to PASS the
+    // gate and reach the reviewers. A non-compiling test is a build break and is
+    // legitimately fatal, so this stays whole-repo (it runs no tests, so an
+    // unrelated pre-existing test FAILURE cannot block — only a compile break can).
+    // Exit 0 (SUCCESS) → all checks pass → advance to review.
+    // Non-zero deterministic → build / vet / test-compile / genuine test failure → loop back to implement (capped at 3).
+    // Non-zero transient → infra glitch → self-loop retry (capped at 2).
+    // Any other outcome → unconditional fallback → close-needs-attention.
     commit_gate [
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
         tool_command="go build ./... && go vet ./... && go test -run=^$ ./... && bash scripts/scenario-gate.sh",
         timeout="900",
-        role="commit gate: build + vet + affected-package-scoped unit + scenario tests (fail-open); exit 0 = ready for review"
+        role="commit gate: build + vet + test-compile + affected-package-scoped unit + scenario tests (fail-open); exit 0 = ready for review"
     ];
 
-    // review_correctness: Sonnet. Correctness/edge-cases/contracts lens.
-    review_correctness [
+    // review: agentic reviewer. Emits an Outcome whose preferred_label
+    // (APPROVE / REQUEST_CHANGES / BLOCK) drives the cascade below.
+    // harness="claude-code" pins review to Claude at tier 3 so the reviewer
+    // stays on Claude even when the global default (tier 4) is pi — avoids
+    // the Pi-reviewer pane seed-paste bug (hk-z4nif). hk-ytzj2.
+    review [
         type="agentic",
         agent_type="reviewer",
         handler_ref="claude-reviewer",
         idempotency_class="idempotent",
-        model="claude-sonnet-4-6",
-        effort="high",
-        role="correctness lens — logic, edge cases, contracts, the Phase-0 /clear-survives-session-id gate, fail-closed gating; write+commit reviews/reviewer-correctness.md FIRST, then write .harmonik/review.json"
+        model="claude-opus-4-8",
+        harness="claude-code",
+        role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on the change"
     ];
 
-    // review_design: Sonnet. Design/idioms + the anti-churn NET-DELETION thesis.
-    review_design [
-        type="agentic",
-        agent_type="reviewer",
-        handler_ref="claude-reviewer",
-        idempotency_class="idempotent",
-        model="claude-sonnet-4-6",
-        effort="high",
-        role="design & idiom + ANTI-CHURN lens — adopt the adversary thesis 'this is just another patch': CONFIRM net LOC went DOWN (the ~150-line watcher heuristic block deleted, not layered) and the single-writer/authoritative-identity invariant holds; write+commit reviews/reviewer-design.md FIRST, then write .harmonik/review.json"
-    ];
-
-    // review_tests: Sonnet. Test-adequacy + RED-then-GREEN + defaults-PIN lens.
-    review_tests [
-        type="agentic",
-        agent_type="reviewer",
-        handler_ref="claude-reviewer",
-        idempotency_class="idempotent",
-        model="claude-sonnet-4-6",
-        effort="high",
-        role="test-adequacy lens — RED-then-GREEN first commit present, the defaults-PIN test pins warn/act/force constants (no band retune), coverage of the stale/foreign/operator-attached cases; write+commit reviews/reviewer-tests.md FIRST, then write .harmonik/review.json"
-    ];
-
-    // consolidate: Sonnet. Severity-joins the three per-axis verdicts into one.
-    consolidate [
-        type="agentic",
-        agent_type="reviewer",
-        handler_ref="claude-reviewer",
-        idempotency_class="idempotent",
-        model="claude-sonnet-4-6",
-        effort="high",
-        role="read all reviews/reviewer-*.md; severity-join (BLOCK>REQUEST_CHANGES>APPROVE); write one verdict to .harmonik/review.json"
-    ];
-
+    // close: terminal node — APPROVE path only. The SOLE inbound edge is
+    // review→close[APPROVE]. No other path reaches this node.
     close [
         type="non-agentic",
         handler_ref="noop",
@@ -114,51 +134,64 @@ digraph "sonnet-triple-review" {
         role="APPROVE — change accepted and ready to merge"
     ];
 
+    // close-needs-attention: terminal node for BLOCK, cap-hit, gate fallback,
+    // and any unrecognized outcome.
     "close-needs-attention" [
         type="non-agentic",
         handler_ref="noop",
         idempotency_class="idempotent",
-        role="BLOCK / cap-hit / gate-fallback — operator attention required"
+        role="BLOCK / cap-hit / structural / unexpected — operator attention required"
     ];
 
     // ─── Edges ───────────────────────────────────────────────────────────────
-    // Spine: start → implement → commit_gate → (3 reviewers) → consolidate.
+
+    // (1) Entry edge — unconditional.
     start -> implement;
+
+    // (2) Implementer advances to commit_gate — unconditional.
     implement -> commit_gate;
 
-    // commit_gate SUCCESS → first reviewer.
-    commit_gate -> review_correctness [
+    // (3) Gate SUCCESS → review.
+    commit_gate -> review [
         condition="outcome.status == 'SUCCESS'"
     ];
-    // commit_gate deterministic failure → fix-loop (capped 3).
+
+    // (4) Gate deterministic failure (build error, test assertion) → fix-loop.
+    // Capped at 3: at most 3 fix attempts before escalating.
     commit_gate -> implement [
         condition="outcome.status == 'FAIL' && outcome.failure_class == 'deterministic'",
         traversal_cap="3"
     ];
-    // commit_gate transient failure → self-loop (capped 2).
+
+    // (5) Gate transient failure (infra glitch, timeout) → self-loop retry.
+    // Capped at 2: transient retries are limited to avoid masking real failures.
     commit_gate -> commit_gate [
         condition="outcome.status == 'FAIL' && outcome.failure_class == 'transient'",
         traversal_cap="2"
     ];
-    // commit_gate fallback (must appear last among its outgoing edges).
+
+    // (6) Gate fallback (canceled / structural / unknown) → triage.
+    // Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Must appear last among commit_gate outgoing edges.
     commit_gate -> "close-needs-attention";
 
-    // All three reviewers always run, in order, before branching on the consolidated verdict.
-    review_correctness -> review_design;
-    review_design -> review_tests;
-    review_tests -> consolidate;
-
-    // Branch on the CONSOLIDATED verdict.
-    consolidate -> close [
+    // (7) APPROVE → close. THIS IS THE SOLE INBOUND EDGE TO close.
+    review -> close [
         condition="outcome.preferred_label == 'APPROVE'"
     ];
-    consolidate -> implement [
+
+    // (8) REQUEST_CHANGES → loop back to implement (capped at 3 per EM-015e/WG-028).
+    review -> implement [
         condition="outcome.preferred_label == 'REQUEST_CHANGES'",
         traversal_cap="3"
     ];
-    consolidate -> "close-needs-attention" [
+
+    // (9) BLOCK → close-needs-attention.
+    review -> "close-needs-attention" [
         condition="outcome.preferred_label == 'BLOCK'"
     ];
-    // Unconditional fallback — REQUIRED by WG-011. Must appear last.
-    consolidate -> "close-needs-attention";
+
+    // (10) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Catches any unrecognized or absent preferred_label. Must appear last.
+    review -> "close-needs-attention";
 }

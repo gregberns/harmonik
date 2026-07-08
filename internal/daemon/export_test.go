@@ -1280,6 +1280,17 @@ type ExportedClaudeRunCtx struct {
 	// in the worker's settings.json for a REMOTE run (hk-z8ek). Empty → the
 	// box-A DaemonBinaryPath is used unchanged.
 	WorkerBinaryPath string
+
+	// Provider, APIKeyEnv, APIKeyFile, BaseURL, API are the per-bead Pi provider
+	// tuple resolved by resolvePiProfile from a `profile:<name>` label
+	// (pi-provider-switch, hk-m6uu2 C5). Empty ⇒ harness-global default
+	// (mirrors claudeRunCtx.provider/apiKeyEnv/apiKeyFile/baseURL/api, C4
+	// fallback in PiHarness.LaunchSpec).
+	Provider   string
+	APIKeyEnv  string
+	APIKeyFile string
+	BaseURL    string
+	API        string
 }
 
 // ExportedClaudeRunArtifacts is the exported shape of claudeRunArtifacts for tests.
@@ -2750,6 +2761,11 @@ func ExportedRoutedLaunchSpecBuilder(
 			baseEnv:           rc.BaseEnv,
 			model:             rc.Model,
 			effort:            rc.Effort,
+			provider:          rc.Provider,
+			apiKeyEnv:         rc.APIKeyEnv,
+			apiKeyFile:        rc.APIKeyFile,
+			baseURL:           rc.BaseURL,
+			api:               rc.API,
 			worktreeRootPath:  rc.WorktreeRootPath,
 			beadDescription:   rc.BeadDescription,
 			nodePrompt:        rc.NodePrompt,
@@ -2794,6 +2810,11 @@ func ExportedPinnedHarnessLaunchSpecBuilder(
 			baseEnv:           rc.BaseEnv,
 			model:             rc.Model,
 			effort:            rc.Effort,
+			provider:          rc.Provider,
+			apiKeyEnv:         rc.APIKeyEnv,
+			apiKeyFile:        rc.APIKeyFile,
+			baseURL:           rc.BaseURL,
+			api:               rc.API,
 			worktreeRootPath:  rc.WorktreeRootPath,
 			beadDescription:   rc.BeadDescription,
 			nodePrompt:        rc.NodePrompt,

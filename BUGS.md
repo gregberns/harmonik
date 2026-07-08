@@ -128,6 +128,14 @@
   `stalewatch_neverSpawnedTimeout_hk8gixi_test.go` cover label parse, fallback, and the integration
   path end-to-end.
 
+### B12 — no watcher detects a crew STRANDED on a dropped inter-agent handoff (idle-with-parked-work)
+- **Where:** ops-monitor (`.harmonik/ops-monitor/`) idle/stall detection + the `watch` crew. **Subsystem:** dispatch / monitoring.
+- **What:** a crew told "stand down, I'll ping you" (e.g. captain→yueh 22:14 "I will ping you the moment the box is quiet") sits idle indefinitely when the ping is never sent — the promising agent got pulled onto other work and the handoff was silently dropped. yueh waited ~3h on a redeploy-quiet-box ping that never came, with 2 OPEN parked beads (hk-1x8az, hk-tnyb7), while `ops-monitor` reported `idle_fleet: false`.
+- **Why nothing caught it:** (1) `idle_fleet` is FLEET-level — false whenever ANY queue is active (chani/gurney were), so a single stranded crew is invisible. (2) `crew-stale` is PRESENCE-based (comms who ~120s TTL) — a crew that exited/dormant doesn't distinguish "done" from "waiting on a dropped promise." (3) `watch` is EVENT-driven — a crew waiting quietly emits NO event, so there is nothing to trip on. The gap: a per-crew "has ready/parked work AND no dispatch AND no progress for N min AND was last told to wait" condition that nobody computes.
+- **Impact:** medium-high — directly defeats the "minimal supervision" goal; capacity strands silently and only a human eyeballing a pane notices. Recurs with every "I'll ping you later" handoff.
+- **Workaround:** the admiral hourly audit must cross-check `queue list` (paused-by-failure/idle queues with a live crew) against last-comms age; and any agent issuing an "I'll ping you" handoff owes a tracked follow-up. Neither is enforced.
+- **Candidate lane:** dispatch (belongs in the quality-enforcement fail-closed-gates thesis: a dropped handoff should trip a gate, not wait on a human). Related: B2 (presence TTL), B3 (watch self-heal).
+
 ---
 
 ## Triaged / folded into corpus

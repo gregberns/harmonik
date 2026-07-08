@@ -345,6 +345,13 @@ tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint,
 install-hooks:  ## Wire lefthook.yml hooks into .git/hooks/ (run after make tools)
 	$(TOOLS_DIR)/lefthook install
 
+# check-hooks: assert that the hooks installed in .git/hooks/ match lefthook.yml.
+# Fails if any hook declared in lefthook.yml is absent or does not invoke lefthook.
+# Run in CI after install-hooks to detect drift.
+.PHONY: check-hooks
+check-hooks:  ## Assert installed git hooks match lefthook.yml (CI drift check)
+	scripts/check-hooks.sh
+
 # bootstrap: one-stop fresh-clone setup — installs pinned tools then wires hooks.
 # Run this once after cloning; subsequent `make tools` re-pins tools without
 # re-running lefthook install (though re-running bootstrap is harmless).

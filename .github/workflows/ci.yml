@@ -42,3 +42,30 @@ jobs:
 
       - name: make check-short
         run: make check-short
+
+  hooks:
+    name: hooks (non-merge-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache dev tools
+        uses: actions/cache@v4
+        with:
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: Install dev tools
+        run: make tools
+
+      - name: Install git hooks
+        run: make install-hooks
+
+      - name: Assert installed hooks match lefthook.yml
+        run: make check-hooks

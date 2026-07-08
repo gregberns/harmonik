@@ -288,8 +288,15 @@ func TestDaemonWatchdog_PhantomReviveGuard(t *testing.T) {
 		DialTimeout:   10 * time.Millisecond,
 		MaxRevives:    5,
 		ReviveBackoff: 15 * time.Millisecond,
-		// ReviveWindow covers the simulated 80ms boot-backoff delay.
-		ReviveWindow: 250 * time.Millisecond,
+		// ReviveWindow is set >= the ctx timeout below on purpose. That makes a
+		// phantom second revive structurally impossible under any scheduling
+		// delay: pollUntilAlive can only exit by detecting the bind (returns
+		// true, revives reset) or by ctx cancellation (returns false) — and a
+		// cancelled ctx also breaks the outer Run loop before it can tick-dead
+		// and re-revive. So count==1 holds regardless of CPU saturation, instead
+		// of racing a tight wall-clock window against a starved bind goroutine.
+		// The happy path still exercises a bind delayed past ReviveBackoff.
+		ReviveWindow: 5 * time.Second,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

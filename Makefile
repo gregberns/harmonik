@@ -196,13 +196,23 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	go vet ./...
 	go build ./...
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=origin/main
-	TMPDIR=/tmp go test -short -race -count=1 -parallel=2 ./...
+	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
+	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
+	#   -p=1          serialize PACKAGES to kill cross-package -race saturation
+	#   -parallel=1   serialize intra-package t.Parallel to kill shared-state
+	#                 collisions (cmd/harmonik signature-less + brcli/lifecycle
+	#                 0.00s fails)
+	#   -timeout=20m  headroom for the daemon pkg running serially (~930s > the
+	#                 default 10m, else it panics "test timed out after 10m0s")
+	# Restore -parallel=2 only after the colliding pkgs are made hermetic
+	# (see follow-up hk-d515w).
+	TMPDIR=/tmp go test -short -race -count=1 -p=1 -parallel=1 -timeout=20m ./...
 
 # ---------------------------------------------------------------------------
 # Tier 2b — check-race-full (non-gating nightly)
 # Full-parallel -race run with no -short and no -parallel cap.  Used as the
 # nightly CI gate (.github/workflows/nightly-race.yml) to surface data races
-# suppressed by check-short's -parallel=2 saturation guard.  Never blocks
+# suppressed by check-short's -parallel=1 saturation guard.  Never blocks
 # merges; result surfaced via ops-monitor checks['nightly-race'] digest.
 # (hk-plw4z)
 # ---------------------------------------------------------------------------

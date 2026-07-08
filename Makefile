@@ -296,13 +296,14 @@ lint:  ## golangci-lint run (shorthand)
 
 # ---------------------------------------------------------------------------
 # Agent review — LOCAL ONLY
-# Invokes the agent-reviewer skill against the diff vs. the last commit.
-# The skill is filed under hk-jhob.1 and is not yet installed.
+# Invokes the agent-reviewer skill against the diff vs. the last commit,
+# then cross-checks the stored verdict via check-verdict.sh (hk-q6axs.4).
+# Only an APPROVE verdict allows the commit to proceed.
 # If the skill binary/wrapper is not present, exits 0 with an explanatory
 # message so that Makefile pipelines are not blocked during early bootstrap.
 # ---------------------------------------------------------------------------
 .PHONY: agent-review
-agent-review:  ## Run agent-reviewer skill against diff vs last commit (local only; stubs gracefully if skill absent)
+agent-review:  ## Run agent-reviewer + verdict cross-check; APPROVE required to commit (hk-q6axs.4)
 	@SKILL=".claude/skills/agent-reviewer/run"; \
 	if [ -x "$$SKILL" ]; then \
 		timeout $(AGENT_REVIEW_TIMEOUT) "$$SKILL" --diff HEAD~1; \
@@ -311,12 +312,17 @@ agent-review:  ## Run agent-reviewer skill against diff vs last commit (local on
 			echo "agent-review: timed out after $(AGENT_REVIEW_TIMEOUT)s; retry manually or add Trivial: true for trivial commits."; \
 			exit 1; \
 		fi; \
-		exit $$EXIT; \
+		if [ $$EXIT -ne 0 ]; then exit $$EXIT; fi; \
+		scripts/check-verdict.sh --diff HEAD~1; \
 	else \
 		echo "agent-reviewer skill not yet installed (filed under hk-jhob.1)."; \
 		echo "Install it to enable structured pre-commit review; skipping for now."; \
 		exit 0; \
 	fi
+
+.PHONY: check-verdict
+check-verdict:  ## Cross-check diff-keyed verdict: APPROVE → pass; absent/REQUEST_CHANGES/BLOCK → fail (hk-q6axs.4)
+	@scripts/check-verdict.sh --diff HEAD~1
 
 # ---------------------------------------------------------------------------
 # Tool installation + git-hooks setup

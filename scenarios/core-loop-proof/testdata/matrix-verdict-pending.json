@@ -1,0 +1,53 @@
+{
+  "//": "Pending-cell fixture for TestConformanceGate_* acceptance tests (WS-E/4 hk-g6plo.4).",
+  "//usage": "Used by conformance-gate.sh --verdict to prove BLOCK on residual PENDING (T9).",
+  "schema_version": 1,
+  "run_at": "2026-07-07T00:00:00Z",
+  "summary": {
+    "green": 1,
+    "red": 0,
+    "pending": 1,
+    "skip": 2,
+    "total": 4
+  },
+  "cells": [
+    {
+      "cell": "codex:local",
+      "harness": "codex",
+      "substrate": "local",
+      "verdict": "green",
+      "detail": "CELL_VERDICT green",
+      "gaps": [
+        {
+          "gap": "gap1",
+          "verdict": "pass",
+          "detail": "harness=codex tier=1"
+        }
+      ]
+    },
+    {
+      "cell": "pi:local",
+      "harness": "pi",
+      "substrate": "local",
+      "verdict": "pending",
+      "detail": "no fixture seed bead",
+      "gaps": []
+    },
+    {
+      "cell": "codex:remote",
+      "harness": "codex",
+      "substrate": "remote",
+      "verdict": "skip",
+      "detail": "no --remote-worker / MATRIX_REMOTE_WORKER set",
+      "gaps": []
+    },
+    {
+      "cell": "pi:remote",
+      "harness": "pi",
+      "substrate": "remote",
+      "verdict": "skip",
+      "detail": "no --remote-worker / MATRIX_REMOTE_WORKER set",
+      "gaps": []
+    }
+  ]
+}

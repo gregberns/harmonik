@@ -22,6 +22,7 @@ package scenario
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -280,4 +281,167 @@ func TestConformanceCorpus_MatrixVerdictSchema(t *testing.T) {
 	t.Logf("OK: schema_version=%d cells=%d summary=green:%d red:%d pending:%d skip:%d",
 		v.SchemaVersion, len(v.Cells),
 		v.Summary.Green, v.Summary.Red, v.Summary.Pending, v.Summary.Skip)
+}
+
+// TestConformanceGate_BlocksOnRedCell exercises the conformance-floor execution gate
+// (scripts/conformance-gate.sh, WS-E/4 hk-g6plo.4) against a verdict file that contains
+// a red cell.  The gate MUST exit non-zero (BLOCK). Acceptance criteria for hk-pnjgh.
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+func TestConformanceGate_BlocksOnRedCell(t *testing.T) {
+	t.Parallel()
+
+	root := conformanceCorpusFixtureRepoRoot(t)
+	gateScript := filepath.Join(root, "scripts", "conformance-gate.sh")
+	if _, err := os.Stat(gateScript); err != nil {
+		t.Fatalf("conformance-gate.sh not found: %v", err)
+	}
+
+	// The golden fixture has summary.red=1 (pi:local cell is red).
+	verdictFile := filepath.Join(root, "scenarios", "core-loop-proof", "testdata", "matrix-verdict-golden.json")
+	cmd := exec.Command("bash", gateScript,
+		"--verdict", verdictFile,
+		"--skip-block-query",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("conformance-gate.sh exited 0 (PASS) on a red-cell verdict; want non-zero (BLOCK)\noutput:\n%s", out)
+	}
+	// Verify the gate emitted a BLOCK verdict line.
+	outStr := string(out)
+	if !containsLine(outStr, "GATE_VERDICT=BLOCK") {
+		t.Errorf("expected GATE_VERDICT=BLOCK in output; got:\n%s", outStr)
+	}
+	t.Logf("OK: gate blocked as expected\n%s", outStr)
+}
+
+// TestConformanceGate_BlocksOnPendingCell exercises the gate against a verdict file that
+// contains a pending cell.  Per the T9 full-green requirement, residual PENDING must BLOCK.
+// Acceptance criteria for hk-pnjgh.
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+func TestConformanceGate_BlocksOnPendingCell(t *testing.T) {
+	t.Parallel()
+
+	root := conformanceCorpusFixtureRepoRoot(t)
+	gateScript := filepath.Join(root, "scripts", "conformance-gate.sh")
+	if _, err := os.Stat(gateScript); err != nil {
+		t.Fatalf("conformance-gate.sh not found: %v", err)
+	}
+
+	verdictFile := filepath.Join(root, "scenarios", "core-loop-proof", "testdata", "matrix-verdict-pending.json")
+	cmd := exec.Command("bash", gateScript,
+		"--verdict", verdictFile,
+		"--skip-block-query",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("conformance-gate.sh exited 0 (PASS) on a pending-cell verdict; want non-zero (BLOCK)\noutput:\n%s", out)
+	}
+	outStr := string(out)
+	if !containsLine(outStr, "GATE_VERDICT=BLOCK") {
+		t.Errorf("expected GATE_VERDICT=BLOCK in output; got:\n%s", outStr)
+	}
+	t.Logf("OK: gate blocked on pending cell as expected\n%s", outStr)
+}
+
+// TestConformanceGate_PassesOnFullGreen exercises the gate against a full-green verdict
+// file (all fixtured cells green; skip cells do not count against the gate).  With the
+// block query skipped the gate MUST exit zero (PASS). Acceptance criteria for hk-pnjgh.
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+func TestConformanceGate_PassesOnFullGreen(t *testing.T) {
+	t.Parallel()
+
+	root := conformanceCorpusFixtureRepoRoot(t)
+	gateScript := filepath.Join(root, "scripts", "conformance-gate.sh")
+	if _, err := os.Stat(gateScript); err != nil {
+		t.Fatalf("conformance-gate.sh not found: %v", err)
+	}
+
+	verdictFile := filepath.Join(root, "scenarios", "core-loop-proof", "testdata", "matrix-verdict-allgreen.json")
+	cmd := exec.Command("bash", gateScript,
+		"--verdict", verdictFile,
+		"--skip-block-query",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("conformance-gate.sh exited non-zero on a full-green verdict; want 0 (PASS)\noutput:\n%s", out)
+	}
+	outStr := string(out)
+	if !containsLine(outStr, "GATE_VERDICT=PASS") {
+		t.Errorf("expected GATE_VERDICT=PASS in output; got:\n%s", outStr)
+	}
+	t.Logf("OK: gate passed as expected\n%s", outStr)
+}
+
+// TestConformanceGate_BlocksOnMissingVerdictFile proves fail-closed behaviour: the gate
+// must exit non-zero when the verdict file is absent (never false-green).
+// Acceptance criteria for hk-pnjgh.
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+func TestConformanceGate_BlocksOnMissingVerdictFile(t *testing.T) {
+	t.Parallel()
+
+	root := conformanceCorpusFixtureRepoRoot(t)
+	gateScript := filepath.Join(root, "scripts", "conformance-gate.sh")
+	if _, err := os.Stat(gateScript); err != nil {
+		t.Fatalf("conformance-gate.sh not found: %v", err)
+	}
+
+	cmd := exec.Command("bash", gateScript,
+		"--verdict", filepath.Join(t.TempDir(), "nonexistent.json"),
+		"--skip-block-query",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("conformance-gate.sh exited 0 (PASS) on a missing verdict file; want non-zero (BLOCK)\noutput:\n%s", out)
+	}
+	outStr := string(out)
+	if !containsLine(outStr, "GATE_VERDICT=BLOCK") {
+		t.Errorf("expected GATE_VERDICT=BLOCK in output; got:\n%s", outStr)
+	}
+	t.Logf("OK: gate blocked on missing file as expected\n%s", outStr)
+}
+
+// conformanceGateFixtureContainsLine returns true when s contains a line equal to want
+// (ignoring leading/trailing whitespace on each line).
+func containsLine(s, want string) bool {
+	for _, line := range splitLines(s) {
+		if trimSpace(line) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			lines = append(lines, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		lines = append(lines, s[start:])
+	}
+	return lines
+}
+
+func trimSpace(s string) string {
+	start := 0
+	for start < len(s) && (s[start] == ' ' || s[start] == '\t' || s[start] == '\r') {
+		start++
+	}
+	end := len(s)
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
 }

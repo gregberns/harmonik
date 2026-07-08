@@ -197,9 +197,13 @@ func TestWorkLoop_ShowBeadErrorRetryBounded(t *testing.T) {
 
 	// Cancel the context to stop the loop.
 	cancel()
+	// Teardown of an in-flight dispatch (git worktree cleanup + handler kill) can
+	// take several seconds on a saturated CI runner. A 3s ceiling here false-fails
+	// under load even though the loop DOES exit; give it a generous 20s — this
+	// still catches a genuine no-exit hang while surviving CPU contention.
 	select {
 	case <-loopDone:
-	case <-time.After(3 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("work loop did not exit after context cancellation")
 	}
 

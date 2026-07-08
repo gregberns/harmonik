@@ -135,10 +135,28 @@ func TestSubscribeFollow_Reconnect(t *testing.T) {
 		t.Fatal("timed out waiting for reconnect; follow may not be retrying after EOF")
 	}
 
-	// Verify both events appeared in the output.
-	_ = outFile.Sync()
-	raw, _ := os.ReadFile(outFile.Name())
-	out := string(raw)
+	// Verify both events appeared in the output. The reconnectSince signal fires
+	// when the daemon RECEIVES the reconnect (case 2), but event 2 is encoded and
+	// written by the follow loop asynchronously AFTER that — so a single read here
+	// races the write and false-fails under load. Poll the output file until both
+	// events are present (or a generous deadline), then assert.
+	var out string
+	pollDeadline := time.After(15 * time.Second)
+	for {
+		_ = outFile.Sync()
+		raw, _ := os.ReadFile(outFile.Name())
+		out = string(raw)
+		if strings.Contains(out, ev1ID.String()) && strings.Contains(out, ev2ID.String()) {
+			break
+		}
+		select {
+		case <-pollDeadline:
+			// Fall through to the assertions below, which report which id is missing.
+		case <-time.After(25 * time.Millisecond):
+			continue
+		}
+		break
+	}
 	if !strings.Contains(out, ev1ID.String()) {
 		t.Errorf("event 1 (%s) not found in follow output:\n%s", ev1ID, out)
 	}

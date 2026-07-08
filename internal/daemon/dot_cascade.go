@@ -73,6 +73,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -2042,6 +2043,24 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 		// Inherit the daemon's process env (PATH, HOME, GOPATH, …) then layer the
 		// handler-supplied entries last so they override on duplicate keys.
 		cmd.Env = append(os.Environ(), env...)
+		// Run the gate shell in its own process group so a per-node timeout/cancel
+		// reaps the ENTIRE tree, not just the /bin/sh parent. On Linux, `sh -c "…"`
+		// may fork its command (dash running e.g. `sleep 60`); CommandContext's
+		// default kill SIGKILLs only the sh PID, leaving that child alive holding
+		// the stdout pipe open — so cmd.CombinedOutput() below blocks until the
+		// child exits on its own (observed on CI: a 1s-timeout gate returning after
+		// the full 60s sleep, not ~1s). Setpgid + a Cancel that signals the negative
+		// PGID kills the whole group; WaitDelay guarantees CombinedOutput unblocks
+		// even if a grandchild lingers on the pipe. (hk-me8ru)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			if cmd.Process != nil {
+				// Negative PID → deliver to the whole process group.
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+			return nil
+		}
+		cmd.WaitDelay = 5 * time.Second
 	} else {
 		// REMOTE run: route the gate through the worker's runner. cd into the
 		// worker's worktree and run under a login shell so the worker's PATH

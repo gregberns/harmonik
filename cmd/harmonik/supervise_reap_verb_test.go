@@ -87,6 +87,15 @@ func TestSuperviseReapVerb_KillsDeadFlywheel_LeavesDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Gate on the reaper's OWN pane_dead view (list-sessions), not just
+	// list-panes: under load the two lag out of sync and the reap would
+	// (correctly) skip a pane list-sessions still reports live, false-failing the
+	// assertion below. If list-sessions never surfaces the dead pane, this is a
+	// tmux env limitation — skip, consistent with the tmux-availability guards.
+	if !waitPaneDeadViaListSessions(t, flywheel) {
+		t.Skip("list-sessions never surfaced pane_dead for the flywheel (tmux version/env limitation)")
+	}
+
 	var out, errOut bytes.Buffer
 	code := supervisecmd.RunReap([]string{"--project", dir}, &out, &errOut)
 	if code != 0 {
@@ -133,6 +142,33 @@ func waitPaneDead(t *testing.T, session string) bool {
 		out, err := exec.Command("tmux", "list-panes", "-t", "="+session, "-F", "#{pane_dead}").CombinedOutput()
 		if err == nil && strings.TrimSpace(string(out)) == "1" {
 			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+// waitPaneDeadViaListSessions polls the SAME view the reaper uses — `tmux
+// list-sessions -F #{pane_dead}` — until the target session reports its pane
+// dead, up to ~10s. The reaper (reap_osadapter.go) reads pane_dead from
+// list-sessions, NOT list-panes; under a saturated runner the two views lag out
+// of sync (list-panes flips the pane dead before list-sessions surfaces it for
+// the session's active pane). Gating the reap assertion on this view removes
+// that false-fail. Returns false if list-sessions never reports the pane dead —
+// a tmux version/env that doesn't resolve pane_dead in session context, which
+// the caller treats as a skip, not a reap-logic failure.
+func waitPaneDeadViaListSessions(t *testing.T, session string) bool {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\x1f#{pane_dead}").CombinedOutput()
+		if err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				f := strings.Split(strings.TrimRight(line, "\r"), "\x1f")
+				if len(f) == 2 && strings.TrimSpace(f[0]) == session && strings.TrimSpace(f[1]) == "1" {
+					return true
+				}
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

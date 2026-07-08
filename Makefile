@@ -200,8 +200,10 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	# on the 2-vCPU CI runner. -parallel=2 still flaked stochastically (different
 	# tests each run: cmd/harmonik, TestIdempStep4/Step3, TestDaemonWatchdog_
 	# PhantomReviveGuard); stilgar proved 0 moles at -parallel=1. -p left at
-	# default. -race stays ON. (hk-plw4z)
-	TMPDIR=/tmp go test -short -race -count=1 -parallel=1 ./...
+	# default. -race stays ON. -timeout=20m added because -parallel=1 serial -race
+	# on the heaviest package exceeds Go's default 10m per-package timeout on the
+	# 2-vCPU CI (observed: both N=1 runs panicked 'test timed out after 10m0s'). (hk-plw4z)
+	TMPDIR=/tmp go test -short -race -count=1 -parallel=1 -timeout=20m ./...
 
 # ---------------------------------------------------------------------------
 # Tier 2b — check-race-full (non-gating nightly)

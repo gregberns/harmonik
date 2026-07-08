@@ -199,11 +199,18 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	# -parallel=1: fully serial intra-package to eliminate -race self-saturation
 	# on the 2-vCPU CI runner. -parallel=2 still flaked stochastically (different
 	# tests each run: cmd/harmonik, TestIdempStep4/Step3, TestDaemonWatchdog_
-	# PhantomReviveGuard); stilgar proved 0 moles at -parallel=1. -p left at
-	# default. -race stays ON. -timeout=20m added because -parallel=1 serial -race
-	# on the heaviest package exceeds Go's default 10m per-package timeout on the
-	# 2-vCPU CI (observed: both N=1 runs panicked 'test timed out after 10m0s'). (hk-plw4z)
-	TMPDIR=/tmp go test -short -race -count=1 -parallel=1 -timeout=20m ./...
+	# PhantomReviveGuard); stilgar proved 0 moles at -parallel=1.
+	# -p=1: serialize PACKAGES one at a time (each still uses full cores internally,
+	# so this is NOT GOMAXPROCS=1 — which would over-serialize within a package and
+	# worsen the daemon timeout). -parallel=1 alone left -p at default, so the heavy
+	# internal/daemon -race marathon (~930s) ran CONCURRENTLY with the timing-
+	# sensitive internal/supervise watchdog test (TestDaemonWatchdog_PhantomReviveGuard)
+	# and starved it under CPU saturation → 2.00s flake. -p=1 removes that cross-
+	# package contention: daemon runs alone, supervise runs uncontended.
+	# -race stays ON. -timeout=20m added because serial -race on the heaviest package
+	# exceeds Go's default 10m per-package timeout on the 2-vCPU CI (observed: both
+	# N=1 runs panicked 'test timed out after 10m0s'). (hk-plw4z)
+	TMPDIR=/tmp go test -short -race -count=1 -p=1 -parallel=1 -timeout=20m ./...
 
 # ---------------------------------------------------------------------------
 # Tier 2b — check-race-full (non-gating nightly)

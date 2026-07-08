@@ -21,6 +21,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -51,6 +52,29 @@ func dotExploreFixtureCaptureStderr(t *testing.T, fn func()) string {
 		t.Fatalf("dotExploreFixtureCaptureStderr: close read end: %v", closeErr)
 	}
 	return buf.String()
+}
+
+// dotExploreFixtureStubSelfWrap replaces the package-global runBeadSelfWrapExec
+// with a no-op stub for the duration of the test, restoring it via t.Cleanup.
+//
+// Without this, a test that supplies a VALID --workflow-mode dot + --workflow-ref
+// + --beads combination passes flag validation and reaches the $TMUX self-wrap
+// guard in runBeadSubcommand (run.go). On any host where $TMUX is unset AND tmux
+// is on PATH — which is exactly the GitHub Actions runner — that guard calls the
+// real runBeadSelfWrapExec (syscall.Exec), REPLACING the test-binary process image
+// with `tmux new-session …`. The whole `go test` process vanishes mid-run with no
+// panic, no --- FAIL, and no signal marker: a signature-less package FAIL that
+// orphans every remaining parallel test. Dev boxes never hit it because tests run
+// inside tmux ($TMUX set → guard skipped). Stubbing the exec makes the guard a
+// harmless error return so the test exercises only the flag-parse phase it intends.
+// (hk-to22v; mirrors main_test.go TestRunBeadSubcmd_TmuxUnset_SelfWraps.)
+func dotExploreFixtureStubSelfWrap(t *testing.T) {
+	t.Helper()
+	orig := runBeadSelfWrapExec
+	runBeadSelfWrapExec = func(_ string, _ []string, _ []string) error {
+		return errors.New("self-wrap stubbed in test")
+	}
+	t.Cleanup(func() { runBeadSelfWrapExec = orig })
 }
 
 // ─── Test: --workflow-mode=dot requires --workflow-ref ────────────────────────
@@ -165,6 +189,7 @@ func TestWorkflowRef_WithSingleModeRejected(t *testing.T) {
 // Acceptance: hk-4fvid — --workflow-ref + valid review-loop.dot dispatches
 // successfully through the parsing/loading phase.
 func TestWorkflowModeDot_ValidRefPassesFlagParse(t *testing.T) {
+	dotExploreFixtureStubSelfWrap(t)
 	var exitCode int
 	stderr := dotExploreFixtureCaptureStderr(t, func() {
 		exitCode = runBeadSubcommand([]string{
@@ -198,6 +223,7 @@ func TestWorkflowModeDot_ValidRefPassesFlagParse(t *testing.T) {
 // TestWorkflowModeDot_EqualsSyntax verifies that --workflow-mode=dot and
 // --workflow-ref=<path> (equals-separated form) also work.
 func TestWorkflowModeDot_EqualsSyntax(t *testing.T) {
+	dotExploreFixtureStubSelfWrap(t)
 	var exitCode int
 	stderr := dotExploreFixtureCaptureStderr(t, func() {
 		exitCode = runBeadSubcommand([]string{

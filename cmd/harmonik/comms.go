@@ -1476,14 +1476,14 @@ const commsFollowReconnectMaxBackoff = 10 * time.Second
 // SIGINT/SIGTERM. This eliminates the ~10-30 s comms dead-window that caused
 // false STALLED reads and stale concurrency-ceiling beliefs.
 func runCommsRecvFollow(sockPath, agent, fromFilter, topicFilter, sinceEventID string, jsonOut bool) int {
-	return runCommsRecvFollowIO(sockPath, agent, fromFilter, topicFilter, sinceEventID, jsonOut, os.Stdout)
+	return runCommsRecvFollowIO(context.Background(), sockPath, agent, fromFilter, topicFilter, sinceEventID, jsonOut, os.Stdout)
 }
 
 // runCommsRecvFollowIO is the testable core of runCommsRecvFollow; it writes
 // message output to w instead of the global os.Stdout.
-func runCommsRecvFollowIO(sockPath, agent, fromFilter, topicFilter, sinceEventID string, jsonOut bool, w io.Writer) int {
+func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topicFilter, sinceEventID string, jsonOut bool, w io.Writer) int {
 	// Register signal handler once for the lifetime of the --follow loop.
-	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// lastSeen tracks the highest event_id delivered so far; it advances as

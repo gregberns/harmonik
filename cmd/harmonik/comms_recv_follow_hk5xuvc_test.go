@@ -135,12 +135,7 @@ func TestCommsFollowReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create capture file: %v", err)
 	}
-	oldOut := os.Stdout
-	os.Stdout = outFile
-	t.Cleanup(func() {
-		os.Stdout = oldOut
-		_ = outFile.Close()
-	})
+	t.Cleanup(func() { _ = outFile.Close() })
 
 	// Create an anchor UUID before message A so ScanAfter(anchor) yields A.
 	// The subscribe hub only replays when since_event_id != ""; we pass the
@@ -156,10 +151,15 @@ func TestCommsFollowReconnect(t *testing.T) {
 	cancelHub1, hub1Done := followTestStartHub(t, sockPath, eventsPath)
 
 	// Start --follow anchored at anchorID (so message A is replayed from events.jsonl).
+	// Write to outFile (not the global os.Stdout) and use a cancellable ctx joined in
+	// cleanup so this reconnect goroutine cannot outlive the test and race a later
+	// captureStderr swap of os.Stderr (hk-me8ru).
+	followCtx, followCancel := context.WithCancel(context.Background())
 	followDone := make(chan int, 1)
 	go func() {
-		followDone <- runCommsRecvFollow(sockPath, "alice", "", "", anchorID.String(), true /*jsonOut*/)
+		followDone <- runCommsRecvFollowIO(followCtx, sockPath, "alice", "", "", anchorID.String(), true /*jsonOut*/, outFile)
 	}()
+	t.Cleanup(func() { followCancel(); <-followDone })
 
 	// Give the follow goroutine time to connect and receive message A.
 	time.Sleep(300 * time.Millisecond)
@@ -194,17 +194,8 @@ func TestCommsFollowReconnect(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Stop the follow goroutine by restoring os.Stdout (causes next fmt.Println
-	// to not write to the captured file, but the goroutine may also exit on the
-	// next pipe/write error or just keep running until the test exits).
-	os.Stdout = oldOut
-	_ = outFile.Close()
-	select {
-	case <-followDone:
-	case <-time.After(3 * time.Second):
-		// still running — acceptable, signal-stop requires SIGTERM
-	}
-
+	// The follow goroutine is cancelled + joined in t.Cleanup (followCancel/<-followDone),
+	// so it cannot outlive the test. Output was written directly to outFile above.
 	if !strings.Contains(combined, "reconnect-msg-B") {
 		t.Errorf("--follow did not deliver message B after reconnect\noutput=%q\nmsgAID=%s msgBID=%s",
 			combined, msgAID, msgBID)
@@ -307,9 +298,15 @@ func TestCommsFollowReconnect_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 	t.Cleanup(func() { _ = outFile.Close() })
 
 	// Run the follow loop; no initial since_event_id (cold start).
+	// Cancel + join the goroutine in cleanup so it cannot outlive this test and
+	// race a later captureStderr swap of os.Stderr (hk-me8ru).
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	go func() {
-		runCommsRecvFollowIO(sockPath, "alice", "", "", "" /* sinceEventID */, true /*jsonOut*/, outFile)
+		defer close(done)
+		runCommsRecvFollowIO(ctx, sockPath, "alice", "", "", "" /* sinceEventID */, true /*jsonOut*/, outFile)
 	}()
+	t.Cleanup(func() { cancel(); <-done })
 
 	// Wait for the second connection's captured since_event_id.
 	// Allow up to 15 s to cover the 1 s initial reconnect backoff.
@@ -395,7 +392,7 @@ func TestCommsRecvFollow_ParkMessageExitsWithoutReconnect(t *testing.T) {
 	t.Cleanup(func() { _ = outFile.Close() })
 
 	go func() {
-		exitCode <- runCommsRecvFollowIO(sockPath, "captain", "", "", "", true /*jsonOut*/, outFile)
+		exitCode <- runCommsRecvFollowIO(context.Background(), sockPath, "captain", "", "", "", true /*jsonOut*/, outFile)
 	}()
 
 	// Expect exit within 5 s; a reconnect path would loop indefinitely.

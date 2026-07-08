@@ -15,6 +15,7 @@ package main
 // stream-liveness signal, independent of whether the watch sent anything.
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"os"
@@ -70,9 +71,15 @@ func TestSubscribeFollow_HeartbeatFileTouchedOnHeartbeatLine_Q6YRW(t *testing.T)
 	outFile, _ := os.CreateTemp(t.TempDir(), "sub-hbfile-*.txt")
 	t.Cleanup(func() { _ = outFile.Close() })
 
+	// Cancel + join in cleanup so the reconnect goroutine cannot outlive the
+	// test and race a later os.Stderr swap (hk-me8ru).
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	go func() {
-		runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile, heartbeatFile)
+		defer close(done)
+		runSubscribeFollowIO(ctx, subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile, heartbeatFile)
 	}()
+	t.Cleanup(func() { cancel(); <-done })
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -95,7 +102,7 @@ func TestSubscribeFollow_HeartbeatFileTouchedOnHeartbeatLine_Q6YRW(t *testing.T)
 func TestSubscribeFollow_NoHeartbeatFileWhenPathEmpty_Q6YRW(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := dir + "/missing.sock"
-	code := runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "", os.Stdout, "")
+	code := runSubscribeFollowIO(context.Background(), subscribeFollowBaseReq, sockPath, "", os.Stdout, "")
 	if code != 17 {
 		t.Fatalf("runSubscribeFollowIO with missing socket: exit %d, want 17", code)
 	}

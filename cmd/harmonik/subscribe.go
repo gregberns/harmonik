@@ -188,7 +188,7 @@ func runSubscribeSubcommand(subArgs []string) int {
 	}
 
 	if followFlag {
-		return runSubscribeFollowIO(reqBodyBase, sockPath, sinceFlag, os.Stdout, heartbeatFileFlag)
+		return runSubscribeFollowIO(context.Background(), reqBodyBase, sockPath, sinceFlag, os.Stdout, heartbeatFileFlag)
 	}
 
 	// Non-follow: single connection, stream to stdout until EOF or signal.
@@ -266,8 +266,8 @@ func runSubscribeSubcommand(subArgs []string) int {
 // escalate" from "stream is dead" without relying on this process's own
 // output (hk-q6yrw: a healthy idle watch was mis-read as stalled because the
 // prior liveness proxy only tracked messages THIS process chose to send).
-func runSubscribeFollowIO(reqBodyBase map[string]any, sockPath, sinceEventID string, w io.Writer, heartbeatFilePath string) int {
-	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockPath, sinceEventID string, w io.Writer, heartbeatFilePath string) int {
+	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// lastSeen is the watermark: highest event_id delivered so far. It is

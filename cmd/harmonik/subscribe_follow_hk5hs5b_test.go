@@ -11,6 +11,7 @@ package main
 //      periods use max(prior, heartbeat.last_event_id) as since_event_id (EV-037a).
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"os"
@@ -34,7 +35,7 @@ var subscribeFollowBaseReq = map[string]any{
 func TestSubscribeFollow_Exit17WhenDaemonAbsentOnFirstDial(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := dir + "/missing.sock"
-	code := runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "", os.Stdout, "")
+	code := runSubscribeFollowIO(context.Background(), subscribeFollowBaseReq, sockPath, "", os.Stdout, "")
 	if code != 17 {
 		t.Fatalf("runSubscribeFollowIO with missing socket: exit %d, want 17", code)
 	}
@@ -121,9 +122,15 @@ func TestSubscribeFollow_Reconnect(t *testing.T) {
 	outFile, _ := os.CreateTemp(t.TempDir(), "sub-follow-*.txt")
 	t.Cleanup(func() { _ = outFile.Close() })
 
+	// Cancel + join in cleanup so the reconnect goroutine cannot outlive the
+	// test and race a later os.Stderr swap (hk-me8ru).
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	go func() {
-		runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile, "")
+		defer close(done)
+		runSubscribeFollowIO(ctx, subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile, "")
 	}()
+	t.Cleanup(func() { cancel(); <-done })
 
 	// Wait for the second connection and capture its since_event_id.
 	select {
@@ -232,9 +239,15 @@ func TestSubscribeFollow_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 	outFile, _ := os.CreateTemp(t.TempDir(), "sub-hb-*.txt")
 	t.Cleanup(func() { _ = outFile.Close() })
 
+	// Cancel + join in cleanup so the reconnect goroutine cannot outlive the
+	// test and race a later os.Stderr swap (hk-me8ru).
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	go func() {
-		runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile, "")
+		defer close(done)
+		runSubscribeFollowIO(ctx, subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile, "")
 	}()
+	t.Cleanup(func() { cancel(); <-done })
 
 	select {
 	case since := <-reconnectSince:

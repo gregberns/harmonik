@@ -12,7 +12,7 @@
       "key": "codex",
       "title": "core-loop-proof seed: trivial one-line change (codex)",
       "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. This is a fixture bead that exercises the real task-processing loop end to end.",
-      "labels": ["codename:quality-system", "core-loop-seed", "harness:codex"],
+      "labels": ["codename:quality-system", "core-loop-seed", "harness:codex", "model:o4-mini"],
       "harness": "codex",
       "model_pin": null
     },

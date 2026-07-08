@@ -403,8 +403,13 @@ func TestStaleWatch_LastEventTypeTracked(t *testing.T) {
 	// clock is advanced past staleAfter from the heartbeat time so the run is
 	// considered stale (the heartbeat resets the reference, and 10+ min later
 	// the run is stale again). Closed over by nowFn.
+	var clockMu sync.Mutex
 	clockNow := startedAt.Add(1 * time.Minute) // well before threshold
-	nowFn := func() time.Time { return clockNow }
+	nowFn := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return clockNow
+	}
 	w := daemon.NewStaleWatcher(daemon.StaleWatcherConfig{
 		SubscribeBus: unsealedForWatcher,
 		Emitter:      unsealedForWatcher,
@@ -432,7 +437,9 @@ func TestStaleWatch_LastEventTypeTracked(t *testing.T) {
 	// Advance clock: heartbeat was recorded at startedAt+1min (the clockNow
 	// when the observer ran). Now advance to 1min + staleAfter + 1s to make
 	// the age cross the threshold.
+	clockMu.Lock()
 	clockNow = startedAt.Add(1*time.Minute + staleAfter + time.Second)
+	clockMu.Unlock()
 
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
@@ -614,8 +621,13 @@ func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
 	reviewerLaunchStaleAfter := 30 * time.Minute
 
 	// Controllable clock: starts at startedAt.
+	var clockMu sync.Mutex
 	clockVal := startedAt
-	nowFn := func() time.Time { return clockVal }
+	nowFn := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return clockVal
+	}
 
 	sfb := staleFixtureNewBus(t)
 	// Build a second bus that the watcher subscribes to (and the reviewer_launched
@@ -649,7 +661,9 @@ func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
 
 	// Advance to just past the default threshold (10 min + 1 s).
 	// Without the gate this would fire run_stale; with the gate it must not.
+	clockMu.Lock()
 	clockVal = startedAt.Add(defaultStaleAfter + time.Second)
+	clockMu.Unlock()
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
 	if n := len(sfb.collected()); n != 0 {
@@ -658,7 +672,9 @@ func TestStaleWatch_ReviewerLaunchNodeGating(t *testing.T) {
 
 	// Advance to just past the reviewer-launch floor (30 min + 1 s) — run_stale
 	// must now fire because the reviewer has been silent for the full floor window.
+	clockMu.Lock()
 	clockVal = startedAt.Add(reviewerLaunchStaleAfter + time.Second)
+	clockMu.Unlock()
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
 	evts := sfb.collected()
@@ -689,8 +705,13 @@ func TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff(t *testing.T) {
 	defaultStaleAfter := 10 * time.Minute
 	reviewerLaunchStaleAfter := 30 * time.Minute
 
+	var clockMu sync.Mutex
 	clockVal := startedAt
-	nowFn := func() time.Time { return clockVal }
+	nowFn := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return clockVal
+	}
 
 	sfb := staleFixtureNewBus(t)
 	unsealedForWatcher := eventbus.NewBusImpl()
@@ -722,7 +743,9 @@ func TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// First emission at the reviewer-launch floor (30 min).
+	clockMu.Lock()
 	clockVal = startedAt.Add(reviewerLaunchStaleAfter)
+	clockMu.Unlock()
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
 	if n := len(sfb.collected()); n != 1 {
@@ -735,13 +758,17 @@ func TestStaleWatch_ReviewerLaunchGateDoesNotSuppressHighBackoff(t *testing.T) {
 	// (age is measured from lastEventAt = startedAt+0, so threshold is 60 min
 	//  but age is already 30 min; we need age to reach 60 min, i.e. clockVal = startedAt+60 min.)
 	// Actually: age = clockVal - startedAt; nextEmitAfter = 60 min; fires when age >= 60 min.
+	clockMu.Lock()
 	clockVal = startedAt.Add(59 * time.Minute)
+	clockMu.Unlock()
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
 	if n := len(sfb.collected()); n != 1 {
 		t.Fatalf("just under second emit (59min): expected 1, got %d", n)
 	}
+	clockMu.Lock()
 	clockVal = startedAt.Add(60*time.Minute + time.Second)
+	clockMu.Unlock()
 	daemon.ExportedStalewatchScan(w, ctx)
 	time.Sleep(50 * time.Millisecond)
 	if n := len(sfb.collected()); n != 2 {

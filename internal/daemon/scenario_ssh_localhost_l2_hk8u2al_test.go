@@ -63,7 +63,7 @@ import (
 // Returns (true, "") on success, (false, reason) on failure so the skip message
 // is actionable (no sshd, no key, host-key prompt, etc.).
 func hk8u2alSSHAvailable(ctx context.Context) (bool, string) {
-	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	//nolint:gosec // G204: args are test-controlled literals
 	cmd := exec.CommandContext(cctx, "ssh",
@@ -87,7 +87,7 @@ func hk8u2alSSHRunner() tmux.SSHRunner {
 		Opts: []string{
 			"-o", "BatchMode=yes",
 			"-o", "StrictHostKeyChecking=accept-new",
-			"-o", "ConnectTimeout=10",
+			"-o", "ConnectTimeout=30",
 		},
 	}
 }
@@ -207,7 +207,7 @@ func TestL2_SSHLocalhost_TmuxPaneID_hk8u2al(t *testing.T) {
 		sessName   = "hk8u2al-sess"
 	)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
 
 	// ── Start a detached session on the isolated socket with sandboxed HOME. ──

@@ -186,6 +186,11 @@ func TestWatcher_OperatorWarnFn_ThrottledByWarnCooldown(t *testing.T) {
 
 	spy := &operatorWarnSpy{}
 
+	// rearmed signals each below-threshold re-arm (the transient dip
+	// observation). Buffered + non-blocking send so the watcher never stalls;
+	// the test only needs to observe that at least one re-arm happened.
+	rearmed := make(chan struct{}, 1)
+
 	cfg := keeper.WatcherConfig{
 		AgentName:      agent,
 		ProjectDir:     projectDir,
@@ -198,6 +203,12 @@ func TestWatcher_OperatorWarnFn_ThrottledByWarnCooldown(t *testing.T) {
 		TmuxTarget:     "dummy-pane",
 		InjectFn:       func(_ context.Context, _ string) error { return nil },
 		OperatorWarnFn: spy.fn,
+		OnWarnRearmFn: func() {
+			select {
+			case rearmed <- struct{}{}:
+			default:
+			}
+		},
 		// WarnCooldown=1ms: matches TestWatcher_WarnResetOnDropBelow — allows
 		// the second crossing to register in the test window without a 30s sleep.
 		WarnCooldown: 1 * time.Millisecond,
@@ -229,17 +240,37 @@ func TestWatcher_OperatorWarnFn_ThrottledByWarnCooldown(t *testing.T) {
 		_ = w.Run(ctx) //nolint:errcheck // context.Canceled expected
 	}()
 
-	// First crossing: above threshold.
-	writeGaugeFile(85.0, 205_000)
-	time.Sleep(30 * time.Millisecond)
+	// waitFor polls cond up to 5s, failing the test if it never holds.
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if cond() {
+				return
+			}
+			time.Sleep(1 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for %s", what)
+	}
 
-	// Dip below threshold → cooldown elapses (1ms) → re-arm.
+	// First crossing: above threshold. Wait for the observable warn instead of
+	// sleeping a fixed window.
+	writeGaugeFile(85.0, 205_000)
+	waitFor("first crossing (count>=1)", func() bool { return spy.count() >= 1 })
+
+	// Dip below threshold → cooldown elapses (1ms) → re-arm. Keep the dip file
+	// on disk and wait for the re-arm callback so the transient dip cannot be
+	// missed by the poll goroutine under CPU starvation (the old flake).
 	writeGaugeFile(70.0, 140_000)
-	time.Sleep(30 * time.Millisecond)
+	select {
+	case <-rearmed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for warn re-arm after dip")
+	}
 
 	// Second crossing: rise above threshold again.
 	writeGaugeFile(90.0, 210_000)
-	time.Sleep(30 * time.Millisecond)
+	waitFor("second crossing (count>=2)", func() bool { return spy.count() >= 2 })
 
 	cancel()
 	<-done

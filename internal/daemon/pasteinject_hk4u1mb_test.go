@@ -141,13 +141,23 @@ func TestQuitOnReviewFile_HeartbeatCeiling_BoundsExtension_hk4u1mb(t *testing.T)
 		t.Errorf("Kill fired too early (%v): must wait at least budget (%v)", elapsed, budget)
 	}
 
-	// Must fire before the hard ceiling — the heartbeat extension ceiling
-	// (2×budget = 40ms) should be the limiting factor, not hardCeiling (200ms).
-	// Allow generous slack (hardCeiling/2 = 100ms) for slow CI, but the key
-	// property is that Kill does NOT wait until the flat hard ceiling.
-	if elapsed > hardCeiling/2 {
-		t.Errorf("Kill fired at %v which is past half the hard ceiling (%v): "+
-			"heartbeat extension ceiling (2×budget=%v) should have applied (hk-4u1mb regression)",
-			elapsed, hardCeiling, 2*budget)
+	// The heartbeat extension ceiling (2×budget), NOT the flat hard ceiling,
+	// must be what bounded the run. Assert this on the RECORDED KILL REASON
+	// rather than on wall-clock elapsed: under CPU starvation (~16 parallel
+	// -race binaries) an elapsed-vs-100ms bound balloons even though the logic
+	// is correct, so a wall-clock upper bound flakes. The production code writes
+	// a budget sentinel with the kill reason; read it and assert the reason is
+	// the heartbeat-ceiling path (hk-4u1mb), scheduler-independent.
+	sentinel, err := daemon.ReadReviewerBudgetSentinel(wtPath)
+	if err != nil {
+		t.Fatalf("ReadReviewerBudgetSentinel(%s): %v", wtPath, err)
+	}
+	if sentinel == nil {
+		t.Fatalf("budget sentinel absent: expected a recorded kill with reason %q (hk-4u1mb)", "heartbeat-ceiling")
+	}
+	if sentinel.Reason != "heartbeat-ceiling" {
+		t.Errorf("kill reason = %q, want %q: the heartbeat extension ceiling "+
+			"(2×budget), not the flat hard ceiling, must have bounded the run (hk-4u1mb regression)",
+			sentinel.Reason, "heartbeat-ceiling")
 	}
 }

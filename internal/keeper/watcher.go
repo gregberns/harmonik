@@ -600,6 +600,14 @@ type WatcherConfig struct {
 	// to keeperOperatorWarnFn(projectDir, agentName) in keeper_cmd.go. In
 	// tests, wire a recording spy. Refs: hk-ehm8s.
 	OperatorWarnFn func(ctx context.Context, sessionID string, tokens, warnTokens, actTokens int64)
+
+	// OnWarnRearmFn is a TEST-ONLY observability hook. When non-nil, it is
+	// invoked in the below-threshold re-arm branch immediately after the warn
+	// state machine re-arms (warnArmed=true). It is nil in production (zero
+	// behaviour change) and exists solely to let tests deterministically
+	// synchronize on the transient dip observation instead of racing a fixed
+	// sleep against the poll interval. Refs: hk-me8ru (de-flake).
+	OnWarnRearmFn func()
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -1291,6 +1299,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 					// Reset hint latch on genuine session reset (gauge dropped below
 					// warn and cooldown elapsed — new effective session start).
 					hintSentThisSession = false
+					// TEST-ONLY observability: signal the re-arm so tests can
+					// deterministically wait for the dip to be observed instead
+					// of racing a fixed sleep. Nil in production. Refs: hk-me8ru.
+					if w.cfg.OnWarnRearmFn != nil {
+						w.cfg.OnWarnRearmFn()
+					}
 				}
 				continue
 			}

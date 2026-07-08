@@ -299,11 +299,20 @@ func TestStderrCapScenarioPartialStderrAtSIGKILL(t *testing.T) {
 			}
 		}()
 
+		// Derive the readiness bound from the test's own deadline so it scales
+		// with -timeout and only fires on a true hang, not CPU starvation under
+		// heavy -race parallelism.
+		readyTimeout := 60 * time.Second
+		if dl, ok := t.Deadline(); ok {
+			if budget := time.Until(dl) - 2*time.Second; budget > 0 && budget < readyTimeout {
+				readyTimeout = budget
+			}
+		}
 		select {
 		case <-readyCh:
 			// Subprocess has flushed stderr; proceed to kill.
-		case <-time.After(5 * time.Second):
-			t.Fatalf("subprocess did not emit ready marker within 5s")
+		case <-time.After(readyTimeout):
+			t.Fatalf("subprocess did not emit ready marker within %s", readyTimeout)
 		}
 
 		// SIGKILL the entire process group — kills the shell AND its sleep child,

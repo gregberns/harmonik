@@ -43,6 +43,56 @@ jobs:
       - name: make check-short
         run: make check-short
 
+  # Tier 2 (macOS offload) — same `make check-short` -race gate, run on the
+  # gb-mbp self-hosted macOS runner (hk-l7i5a, codename:gbmbp-selfhosted-runner).
+  # WHY: the -race gate is proving un-green-able on the 2-vCPU ubuntu-latest
+  # GitHub-hosted runner (-parallel=2 flakes on saturation; -parallel=1 timed
+  # out at 10min). gb-mbp is a large macOS box with headroom to run it reliably.
+  #
+  # SAFETY — this job CANNOT wedge any PR while gb-mbp is unregistered:
+  # the `if:` guard evaluates the repo variable GBMBP_RUNNER_ENABLED, which
+  # DEFAULTS OFF (unset). A false/unset guard means the job is SKIPPED before
+  # scheduling — GitHub never tries to find a `[self-hosted, macos]` runner, so
+  # there is nothing to queue and nothing to hang. Only after an operator both
+  # (a) registers gb-mbp with labels [self-hosted, macos] AND (b) flips the flag
+  # (`gh variable set GBMBP_RUNNER_ENABLED --body true`) does this job dispatch.
+  # continue-on-error is belt-and-suspenders: even once live it is non-gating.
+  # See docs/gbmbp-selfhosted-runner-runbook.md for registration + rollback.
+  #
+  # COVERAGE NOTE: srt tests are macOS-only and are SKIPPED on the Linux leg —
+  # they will newly EXECUTE here once this runner is live.
+  check-macos:
+    name: check (Tier 2, macOS self-hosted)
+    if: vars.GBMBP_RUNNER_ENABLED == 'true'
+    runs-on: [self-hosted, macos]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Cache dev tools
+        uses: actions/cache@v4
+        with:
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: Install dev tools
+        run: make tools
+
+      - name: make check-short
+        run: make check-short
+
   hooks:
     name: hooks (non-merge-blocking)
     runs-on: ubuntu-latest

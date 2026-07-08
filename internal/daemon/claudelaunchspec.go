@@ -491,20 +491,41 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 // An empty worktreeRootPath always returns false (tests that do not populate
 // the field should not receive the flag).
 func isHarmonikManagedWorktree(workspacePath, worktreeRootPath string) bool {
-	if worktreeRootPath == "" || workspacePath == "" {
-		return false
-	}
-	canonRoot, err := filepath.EvalSymlinks(worktreeRootPath)
-	if err != nil {
+	if workspacePath == "" {
 		return false
 	}
 	canonWS, err := filepath.EvalSymlinks(workspacePath)
 	if err != nil {
-		return false
+		// Fall back to the unresolved path so the segment check below can still
+		// match (the worktree dir exists at launch, but be defensive).
+		canonWS = workspacePath
 	}
-	// Ensure the prefix includes a trailing separator so that a root path that
-	// is a prefix of another root path does not produce a false positive.
-	// E.g., /foo/bar must not match /foo/barbaz.
-	prefix := canonRoot + string(filepath.Separator)
-	return strings.HasPrefix(canonWS, prefix)
+	// Primary check: workspacePath canonicalizes under the configured worktree root.
+	if worktreeRootPath != "" {
+		if canonRoot, rerr := filepath.EvalSymlinks(worktreeRootPath); rerr == nil {
+			// Ensure the prefix includes a trailing separator so that a root path
+			// that is a prefix of another root path does not produce a false
+			// positive. E.g., /foo/bar must not match /foo/barbaz.
+			prefix := canonRoot + string(filepath.Separator)
+			if strings.HasPrefix(canonWS, prefix) {
+				return true
+			}
+		}
+	}
+	// Fallback (hk trust-modal fix): any path under a harmonik-managed worktrees
+	// directory IS operator-sanctioned, regardless of worktreeRootPath threading or
+	// a canonicalization mismatch between the root and the workspace. Without this,
+	// the mismatch drops --dangerously-skip-permissions and the bead agent wedges on
+	// Claude Code's interactive trust / pre-approved-permissions modal, so
+	// SessionStart never fires and the launch times out at agent_ready (HC-056).
+	sep := string(filepath.Separator)
+	for _, seg := range []string{
+		sep + ".harmonik" + sep + "worktrees" + sep,
+		sep + ".harmonik" + sep + "crew-worktrees" + sep,
+	} {
+		if strings.Contains(canonWS, seg) {
+			return true
+		}
+	}
+	return false
 }

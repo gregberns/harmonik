@@ -3090,6 +3090,31 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	)
 	sdModel = resolvedModel
 
+	// Resolve the per-bead Pi provider profile from a `profile:<name>` label
+	// (pi-provider-switch, hk-m6uu2 C3). Runs strictly AFTER resolvedAgentType
+	// (hk-pkugu discipline: a claude/codex-resolved bead yields the zero
+	// tuple). An unknown profile reference is fail-loud: reopen the bead
+	// through the same refuse-before-launch seam CrossRepoUnsafeError and
+	// StartFromRefError use below, and return before any launch-spec is built.
+	resolvedProfile, profErr := resolvePiProfile(
+		ctx, beadRecord.Labels, resolvedAgentType,
+		deps.projectCfg.Harnesses.Pi, deps.bus, string(beadID),
+	)
+	if profErr != nil {
+		reopenTID, _ := deps.tidGen.Next()
+		fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s refused: %v (reopening)\n", beadID, profErr)
+		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg,
+			runID, reopenTID, beadID, profErr.Error())
+		return
+	}
+	// Locked precedence (C3-spec.md §2): the wire-format triple + credentials
+	// arrive atomically from the profile and are never split; model: overrides
+	// ONLY the model field. When a profile is present and no exactly-one
+	// model: label resolved it, coalesce resolvedModel to profile.Model.
+	if resolvedProfile != (PiProfileConfig{}) && !hasSingleModelLabel(beadRecord.Labels) {
+		resolvedModel = resolvedProfile.Model
+	}
+
 	// Determine activeRepo: the repository where the per-bead worktree lives,
 	// commits happen, and merges are pushed (hk-xfuc cross-repo dispatch).
 	//
@@ -4051,6 +4076,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		beadDescription:   beadRecord.Description,
 		model:             resolvedModel,
 		effort:            resolvedEffort,
+		provider:          resolvedProfile.Provider,
+		apiKeyEnv:         resolvedProfile.APIKeyEnv,
+		apiKeyFile:        resolvedProfile.APIKeyFile,
+		baseURL:           resolvedProfile.BaseURL,
+		api:               resolvedProfile.API,
 		// worktreeRootPath is used by buildClaudeLaunchSpec to check whether the
 		// workspace is a harmonik-managed worktree for --dangerously-skip-permissions
 		// per HC-055b. Derived from activeRepo (= target repo for cross-repo runs).

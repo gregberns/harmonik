@@ -147,6 +147,18 @@ type claudeRunCtx struct {
 	// Violation returns *ModelPreferenceError before LaunchSpec is built.
 	effort string
 
+	// provider, apiKeyEnv, apiKeyFile, baseURL, api are the per-bead Pi provider
+	// tuple resolved by resolvePiProfile from a `profile:<name>` label
+	// (pi-provider-switch, hk-m6uu2). Empty ⇒ harness-global default (C4
+	// fallback in PiHarness.LaunchSpec). Zero-value for any non-pi-resolved bead
+	// (hk-pkugu harness gate). Only meaningful when the resolved agent type is
+	// core.AgentTypePi.
+	provider   string
+	apiKeyEnv  string
+	apiKeyFile string
+	baseURL    string
+	api        string
+
 	// worktreeRootPath is the absolute path to the harmonik worktrees root
 	// directory (e.g. <projectDir>/.harmonik/worktrees). When non-empty,
 	// buildClaudeLaunchSpec checks whether workspacePath canonicalizes to a

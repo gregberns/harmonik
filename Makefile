@@ -196,7 +196,19 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	go vet ./...
 	go build ./...
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=origin/main
-	TMPDIR=/tmp go test -short -race -count=1 ./...
+	TMPDIR=/tmp go test -short -race -count=1 -parallel=2 ./...
+
+# ---------------------------------------------------------------------------
+# Tier 2b — check-race-full (non-gating nightly)
+# Full-parallel -race run with no -short and no -parallel cap.  Used as the
+# nightly CI gate (.github/workflows/nightly-race.yml) to surface data races
+# suppressed by check-short's -parallel=2 saturation guard.  Never blocks
+# merges; result surfaced via ops-monitor checks['nightly-race'] digest.
+# (hk-plw4z)
+# ---------------------------------------------------------------------------
+.PHONY: check-race-full
+check-race-full:  ## Non-gating nightly: go test -race -count=1 ./... (full-parallel, no -short, no -parallel cap; hk-plw4z)
+	TMPDIR=/tmp go test -race -count=1 ./...
 
 # ---------------------------------------------------------------------------
 # Tier 2 — check (~3-5 min target)

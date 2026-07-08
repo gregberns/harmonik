@@ -604,6 +604,38 @@ except Exception:
   fi
 fi
 
+# ── Check nightly-race: last nightly full-parallel -race run on main ─────────
+# Non-gating digest signal: a failing nightly surfaces real data races that
+# check-short's -parallel=2 saturation guard suppresses. (hk-plw4z)
+NIGHTLY_RACE_STATUS=unknown
+if command -v gh >/dev/null 2>&1; then
+  _NR_OUT=""
+  _NR_OUT=$( (cd "$PROJ" && gh run list --workflow=nightly-race.yml --branch main --limit 1 --json conclusion,status 2>/dev/null) ) || true
+  _NR_STATUS=""
+  _NR_STATUS=$(printf '%s' "$_NR_OUT" | python3 -c "
+import json, sys
+try:
+    items = json.load(sys.stdin)
+    if items:
+        r = items[0]
+        status = r.get('status', '')
+        conclusion = r.get('conclusion', '')
+        if status in ('in_progress', 'queued', 'waiting'):
+            print('running')
+        elif conclusion == 'success':
+            print('green')
+        elif conclusion:
+            print('not-green')
+        else:
+            print('unknown')
+    else:
+        print('unknown')
+except Exception:
+    print('unknown')
+" 2>/dev/null) || true
+  NIGHTLY_RACE_STATUS="${_NR_STATUS:-unknown}"
+fi
+
 # ── Python analysis: produce JSON snapshot ────────────────────────────────────
 # Feed the program via a temp file (not py3 "..." double-quoted arg) to avoid
 # the dquote-truncation landmine (hk-2mw1x): any literal " in the Python source
@@ -652,6 +684,7 @@ prev_keeper_misses    = json.loads('$PREV_KEEPER_COVERAGE_MISSES')
 release_commit_count  = int('$RELEASE_COMMIT_COUNT')
 ci_status             = '$CI_STATUS'
 release_due_threshold = int('$RELEASE_DUE_COMMIT_THRESHOLD')
+nightly_race_status   = '$NIGHTLY_RACE_STATUS'
 ops_critical_cooldown = int('$OPS_CRITICAL_COOLDOWN')
 watch_absent_thresh   = int('$WATCH_ABSENT_THRESHOLD')
 watch_stall_ticks     = int('$WATCH_STALL_TICKS')
@@ -1282,6 +1315,12 @@ if watch_opsmonitor_target != 'captain' and watch_cursor:
 # critical-component signal — release-due is not an infra failure).
 release_due = release_commit_count >= release_due_threshold and ci_status == 'green'
 
+# ── Nightly-race check (hk-plw4z) ────────────────────────────────────────────
+# Non-gating digest signal: the nightly full-parallel -race run surfaces data
+# races that check-short's -parallel=2 saturation guard suppresses.
+# 'running' / 'unknown' = no signal; 'not-green' = digest flag.
+nightly_race_failed = nightly_race_status == 'not-green'
+
 # ── hk-unwzh F1/F2: zombie watch detection ────────────────────────────────────
 # A zombie watch sends presence beacons (comms join every ~270s refreshes last_seen)
 # but does not relay any escalation messages. Presence looks alive; cursor stays frozen.
@@ -1372,6 +1411,8 @@ if idle_fleet:
 backlog_ready = daemon_up and ready_count > 0 and total_workers < max(max_concurrent, 1)
 if backlog_ready:
     digest_signals.append('backlog-ready:count=' + str(ready_count))
+if nightly_race_failed:
+    digest_signals.append('nightly-race-fail')
 
 # ── SD-1: program-drained-stall (DETERMINISTIC, agent-external) ───────────────
 # PLAN-v2 Part 0 signal (a). Fires the lane-NAMED [IMMEDIATE] wake the captain
@@ -1453,6 +1494,8 @@ checks = {
                         'detail': ','.join(sorted(keeper_missing_crews)) if keeper_missing_crews else 'all online crews have keepers'},
     'release-due':     {'state': 'flag' if release_due else 'ok',
                         'detail': str(release_commit_count) + ' unreleased commits, CI=' + ci_status},
+    'nightly-race':    {'state': 'flag' if nightly_race_failed else 'ok',
+                        'detail': nightly_race_status},
     'program-stall':   {'state': 'flag' if program_drained_stall else 'ok',
                         'detail': ('drained; KNOWN lane ' + known_ready_lane + ' (epic ' +
                                    known_ready_lane_epic + ') has ' + str(known_ready_lane_count) +
@@ -1681,6 +1724,7 @@ snapshot = {
     'release_due': release_due,
     'release_commit_count': release_commit_count,
     'ci_status': ci_status,
+    'nightly_race_status': nightly_race_status,
     'checks': checks,
     'immediate_signals': immediate_signals,
     'send_immediate_signals': send_immediate_signals,

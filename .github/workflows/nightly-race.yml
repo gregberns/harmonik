@@ -1,0 +1,45 @@
+# Tier 2b — non-gating nightly full-parallel -race run (hk-plw4z).
+# Complements check-short's -parallel=2 saturation guard: runs the full test
+# suite with no -short flag and no -parallel cap so real data races surface
+# off the merge-blocking path.  Failure is surfaced in ops-monitor via the
+# checks['nightly-race'] digest signal; it does not block any branch or PR.
+name: Nightly Race
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC daily on main
+  workflow_dispatch:       # manual trigger for on-demand runs
+
+jobs:
+  race:
+    name: check-race-full (nightly)
+    runs-on: ubuntu-latest
+    # Non-gating: not listed as a required status check in branch protection.
+    # Do NOT add continue-on-error here — it silences the run conclusion and
+    # makes gh run list always report success, killing ops-monitor surfacing.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Cache dev tools
+        uses: actions/cache@v4
+        with:
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: Install dev tools
+        run: make tools
+
+      - name: make check-race-full
+        run: make check-race-full

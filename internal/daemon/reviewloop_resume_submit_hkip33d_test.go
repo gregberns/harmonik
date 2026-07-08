@@ -454,11 +454,11 @@ func TestScenario_ReviewLoop_ResumeSubmitReliable(t *testing.T) {
 	// Shrink the submit-retry delay so the retry fires quickly (the fix path).
 	// resumeSubmitRetries stays at its default (≥1) so the retry actually runs;
 	// this is what distinguishes the fix from the pre-fix single-Enter behaviour.
-	origDelay := *daemon.ExportedResumeSubmitRetryDelay
+	origDelay := daemon.ExportedResumeSubmitRetryDelay()
 	origRetries := *daemon.ExportedResumeSubmitRetries
-	*daemon.ExportedResumeSubmitRetryDelay = 50 * time.Millisecond
+	daemon.ExportedSetResumeSubmitRetryDelay(50 * time.Millisecond)
 	t.Cleanup(func() {
-		*daemon.ExportedResumeSubmitRetryDelay = origDelay
+		daemon.ExportedSetResumeSubmitRetryDelay(origDelay)
 		*daemon.ExportedResumeSubmitRetries = origRetries
 	})
 	if *daemon.ExportedResumeSubmitRetries < 1 {

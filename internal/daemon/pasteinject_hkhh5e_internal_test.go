@@ -118,9 +118,9 @@ func (*hkhh5eInternalSession) Stdout() io.Reader            { return nil }
 // returns success for stat, confirming stat was routed remotely.
 func TestPasteInjectOnLaunch_RemoteRunner_RoutesStatViaRunner(t *testing.T) {
 	// Shrink splash dismiss delay to keep the test fast.
-	old := splashDismissDelay
-	splashDismissDelay = 1
-	t.Cleanup(func() { splashDismissDelay = old })
+	old := splashDismissDelayNs.Load()
+	splashDismissDelayNs.Store(1)
+	t.Cleanup(func() { splashDismissDelayNs.Store(old) })
 
 	runner := &hkhh5eInternalRunner{} // exits 0 for any command
 	wtPath := t.TempDir()             // agent-task.md intentionally absent

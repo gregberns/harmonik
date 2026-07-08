@@ -454,23 +454,23 @@ func TestScenario_ReviewLoop_ResumeReseedSavesIdleImplementer(t *testing.T) {
 	// Short splash-dismiss delay suppresses real wall-time waits in paste helpers.
 	// Short poll interval speeds up HEAD detection after the commit lands.
 	origReseed := *daemon.ExportedImplementerReseedGrace
-	origRetryDelay := *daemon.ExportedResumeSubmitRetryDelay
+	origRetryDelay := daemon.ExportedResumeSubmitRetryDelay()
 	origRetries := *daemon.ExportedResumeSubmitRetries
-	origSplash := *daemon.ExportedSplashDismissDelay
+	origSplash := daemon.ExportedSplashDismissDelay()
 	origPoll := *daemon.ExportedCommitPollInterval
 	origPostQuit := *daemon.ExportedPostQuitKillGrace
 	*daemon.ExportedImplementerReseedGrace = 200 * time.Millisecond
-	*daemon.ExportedResumeSubmitRetryDelay = 1 * time.Millisecond
-	*daemon.ExportedSplashDismissDelay = 1 * time.Millisecond
+	daemon.ExportedSetResumeSubmitRetryDelay(1 * time.Millisecond)
+	daemon.ExportedSetSplashDismissDelay(1 * time.Millisecond)
 	*daemon.ExportedCommitPollInterval = 5 * time.Millisecond
 	// Prevent the post-commit /quit watchdog goroutine from interfering with
 	// the test by setting an extremely long grace (well beyond the test timeout).
 	*daemon.ExportedPostQuitKillGrace = 1 * time.Hour
 	t.Cleanup(func() {
 		*daemon.ExportedImplementerReseedGrace = origReseed
-		*daemon.ExportedResumeSubmitRetryDelay = origRetryDelay
+		daemon.ExportedSetResumeSubmitRetryDelay(origRetryDelay)
 		*daemon.ExportedResumeSubmitRetries = origRetries
-		*daemon.ExportedSplashDismissDelay = origSplash
+		daemon.ExportedSetSplashDismissDelay(origSplash)
 		*daemon.ExportedCommitPollInterval = origPoll
 		*daemon.ExportedPostQuitKillGrace = origPostQuit
 	})

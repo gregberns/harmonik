@@ -1494,12 +1494,18 @@ var ExportedReviewerReseedGrace = &reviewerReseedGrace
 // Bead: hk-76n5g.
 var ExportedImplementerReseedGrace = &implementerReseedGrace
 
-// ExportedSplashDismissDelay is a pointer to the package-level splashDismissDelay
-// var.  Tests set *ExportedSplashDismissDelay to a short duration so the
-// splash-dismiss wait inside the paste-inject helpers does not slow unit tests.
+// ExportedSplashDismissDelay / ExportedSetSplashDismissDelay read and write the
+// package-level splashDismissDelay (now an atomic.Int64 of nanoseconds).  Tests
+// set it to a short duration so the splash-dismiss wait inside the paste-inject
+// helpers does not slow unit tests; atomic access keeps a parallel test's write
+// from racing a production read.
 //
 // Bead: hk-7rgqs.
-var ExportedSplashDismissDelay = &splashDismissDelay
+func ExportedSplashDismissDelay() time.Duration { return splashDismissDelayDur() }
+
+func ExportedSetSplashDismissDelay(d time.Duration) {
+	splashDismissDelayNs.Store(int64(d))
+}
 
 // PaneCapturerExported is an exported alias for the unexported paneCapturer
 // interface so tests can supply a stub that drives the seed-paste
@@ -1512,9 +1518,17 @@ type PaneCapturerExported = paneCapturer
 // waiting real wall time (hk-zexsj).
 var (
 	ExportedPasteVerifyAttempts   = &pasteVerifyAttempts
-	ExportedPasteVerifyBackoff    = &pasteVerifyBackoff
 	ExportedPasteVerifyScrollback = &pasteVerifyScrollback
 )
+
+// ExportedPasteVerifyBackoff / ExportedSetPasteVerifyBackoff read and write the
+// package-level pasteVerifyBackoff (now an atomic.Int64 of nanoseconds) so a
+// parallel test's shrink does not race a production read (hk-zexsj).
+func ExportedPasteVerifyBackoff() time.Duration { return pasteVerifyBackoffDur() }
+
+func ExportedSetPasteVerifyBackoff(d time.Duration) {
+	pasteVerifyBackoffNs.Store(int64(d))
+}
 
 // ExportedPasteInjectReviewer exposes pasteInjectReviewer for unit tests that
 // assert the reviewer kick-off delivery (splash-dismiss → paste → bounded submit
@@ -2146,10 +2160,17 @@ var ExportedPostQuitKillGrace = &postQuitKillGrace
 // (the hk-ip33d fix) runs without burning real wall time.
 //
 // Bead: hk-ip33d.
-var (
-	ExportedResumeSubmitRetries    = &resumeSubmitRetries
-	ExportedResumeSubmitRetryDelay = &resumeSubmitRetryDelay
-)
+var ExportedResumeSubmitRetries = &resumeSubmitRetries
+
+// ExportedResumeSubmitRetryDelay / ExportedSetResumeSubmitRetryDelay read and
+// write the package-level resumeSubmitRetryDelay (now an atomic.Int64 of
+// nanoseconds) so a parallel test's shrink does not race a production read
+// (hk-ip33d).
+func ExportedResumeSubmitRetryDelay() time.Duration { return resumeSubmitRetryDelayDur() }
+
+func ExportedSetResumeSubmitRetryDelay(d time.Duration) {
+	resumeSubmitRetryDelayNs.Store(int64(d))
+}
 
 // ExportedCommitPollInterval is a pointer to the package-level commitPollInterval
 // var.  Tests set *ExportedCommitPollInterval to a short duration to keep

@@ -108,16 +108,16 @@ var (
 // unit tests run instantly.
 func hkzexsjFastTimings(t *testing.T) {
 	t.Helper()
-	origSplash := *daemon.ExportedSplashDismissDelay
-	origRetry := *daemon.ExportedResumeSubmitRetryDelay
-	origBackoff := *daemon.ExportedPasteVerifyBackoff
-	*daemon.ExportedSplashDismissDelay = 1 * time.Millisecond
-	*daemon.ExportedResumeSubmitRetryDelay = 1 * time.Millisecond
-	*daemon.ExportedPasteVerifyBackoff = 1 * time.Millisecond
+	origSplash := daemon.ExportedSplashDismissDelay()
+	origRetry := daemon.ExportedResumeSubmitRetryDelay()
+	origBackoff := daemon.ExportedPasteVerifyBackoff()
+	daemon.ExportedSetSplashDismissDelay(1 * time.Millisecond)
+	daemon.ExportedSetResumeSubmitRetryDelay(1 * time.Millisecond)
+	daemon.ExportedSetPasteVerifyBackoff(1 * time.Millisecond)
 	t.Cleanup(func() {
-		*daemon.ExportedSplashDismissDelay = origSplash
-		*daemon.ExportedResumeSubmitRetryDelay = origRetry
-		*daemon.ExportedPasteVerifyBackoff = origBackoff
+		daemon.ExportedSetSplashDismissDelay(origSplash)
+		daemon.ExportedSetResumeSubmitRetryDelay(origRetry)
+		daemon.ExportedSetPasteVerifyBackoff(origBackoff)
 	})
 }
 

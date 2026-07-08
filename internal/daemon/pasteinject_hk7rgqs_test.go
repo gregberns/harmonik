@@ -147,13 +147,13 @@ func hk7rgqsWriteVerdict(t *testing.T, wtPath string) {
 // paste-inject helpers run quickly, and returns a restore function.
 func hk7rgqsFastSplash(t *testing.T) {
 	t.Helper()
-	origSplash := *daemon.ExportedSplashDismissDelay
-	origRetryDelay := *daemon.ExportedResumeSubmitRetryDelay
-	*daemon.ExportedSplashDismissDelay = 1 * time.Millisecond
-	*daemon.ExportedResumeSubmitRetryDelay = 1 * time.Millisecond
+	origSplash := daemon.ExportedSplashDismissDelay()
+	origRetryDelay := daemon.ExportedResumeSubmitRetryDelay()
+	daemon.ExportedSetSplashDismissDelay(1 * time.Millisecond)
+	daemon.ExportedSetResumeSubmitRetryDelay(1 * time.Millisecond)
 	t.Cleanup(func() {
-		*daemon.ExportedSplashDismissDelay = origSplash
-		*daemon.ExportedResumeSubmitRetryDelay = origRetryDelay
+		daemon.ExportedSetSplashDismissDelay(origSplash)
+		daemon.ExportedSetResumeSubmitRetryDelay(origRetryDelay)
 	})
 }
 

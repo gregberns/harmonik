@@ -39,6 +39,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -63,7 +64,18 @@ import (
 // wall time, matching every other timing knob in this file.
 //
 // Bead: hk-rf4ux, hk-7rgqs.
-var splashDismissDelay = 750 * time.Millisecond
+// splashDismissDelayNs holds splashDismissDelay as nanoseconds behind an
+// atomic.Int64 so test helpers (running in parallel with production reads) can
+// shrink it without a data race.  Set once at init, only ever mutated by tests
+// via ExportedSplashDismissDelay; production code reads it through
+// splashDismissDelayDur().
+var splashDismissDelayNs atomic.Int64
+
+func init() { splashDismissDelayNs.Store(int64(750 * time.Millisecond)) }
+
+func splashDismissDelayDur() time.Duration {
+	return time.Duration(splashDismissDelayNs.Load())
+}
 
 // resumeSubmitRetries and resumeSubmitRetryDelay govern the bounded submit-retry
 // on EVERY post-paste submit Enter (implementer-initial, reviewer, and the
@@ -99,10 +111,17 @@ var splashDismissDelay = 750 * time.Millisecond
 // wall time.
 //
 // Bead: hk-ip33d.
-var (
-	resumeSubmitRetries    = 2
-	resumeSubmitRetryDelay = 400 * time.Millisecond
-)
+var resumeSubmitRetries = 2
+
+// resumeSubmitRetryDelayNs holds resumeSubmitRetryDelay as nanoseconds behind an
+// atomic.Int64 (see splashDismissDelayNs for the rationale).
+var resumeSubmitRetryDelayNs atomic.Int64
+
+func init() { resumeSubmitRetryDelayNs.Store(int64(400 * time.Millisecond)) }
+
+func resumeSubmitRetryDelayDur() time.Duration {
+	return time.Duration(resumeSubmitRetryDelayNs.Load())
+}
 
 // pasteVerifyAttempts, pasteVerifyBackoff and pasteVerifyScrollback govern the
 // seed-paste land-verification loop (hk-zexsj).
@@ -140,9 +159,18 @@ var (
 // Bead: hk-zexsj.
 var (
 	pasteVerifyAttempts   = 3
-	pasteVerifyBackoff    = 1500 * time.Millisecond
 	pasteVerifyScrollback = 200
 )
+
+// pasteVerifyBackoffNs holds pasteVerifyBackoff as nanoseconds behind an
+// atomic.Int64 (see splashDismissDelayNs for the rationale).
+var pasteVerifyBackoffNs atomic.Int64
+
+func init() { pasteVerifyBackoffNs.Store(int64(1500 * time.Millisecond)) }
+
+func pasteVerifyBackoffDur() time.Duration {
+	return time.Duration(pasteVerifyBackoffNs.Load())
+}
 
 // enterSender is an optional interface for tmux-backed Substrates that can
 // send a bare Enter keypress to the last spawned pane via
@@ -1500,7 +1528,7 @@ func emitImplementerBudgetExceeded(ctx context.Context, bus handlercontract.Even
 func splashDismissWait(ctx context.Context) {
 	select {
 	case <-ctx.Done():
-	case <-time.After(splashDismissDelay):
+	case <-time.After(splashDismissDelayDur()):
 	}
 }
 
@@ -1731,7 +1759,7 @@ func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string,
 			select {
 			case <-ctx.Done():
 				return fmt.Sprintf("%s: ctx cancelled during paste-verify: %v", phase, ctx.Err())
-			case <-time.After(pasteVerifyBackoff):
+			case <-time.After(pasteVerifyBackoffDur()):
 			}
 		}
 	}
@@ -1772,7 +1800,7 @@ func sendSubmitEnterWithRetry(ctx context.Context, es enterSender, phase string)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(resumeSubmitRetryDelay):
+		case <-time.After(resumeSubmitRetryDelayDur()):
 		}
 		if err := es.SendEnterToLastPane(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s submit-retry %d SendEnterToLastPane: %v\n", phase, i+1, err)

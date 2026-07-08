@@ -134,7 +134,7 @@ func hk76n5gShortTimeouts(reseedGrace, pollInterval, totalTimeout, hardCeiling, 
 	origHard := *daemon.ExportedCommitHardCeiling
 	origKill := *daemon.ExportedNoChangeKillDelay
 	origPostQuit := *daemon.ExportedPostQuitKillGrace
-	origSplash := *daemon.ExportedSplashDismissDelay
+	origSplash := daemon.ExportedSplashDismissDelay()
 	*daemon.ExportedImplementerReseedGrace = reseedGrace
 	*daemon.ExportedCommitPollInterval = pollInterval
 	*daemon.ExportedCommitPollTimeout = totalTimeout
@@ -144,7 +144,7 @@ func hk76n5gShortTimeouts(reseedGrace, pollInterval, totalTimeout, hardCeiling, 
 	*daemon.ExportedPostQuitKillGrace = 1 * time.Hour
 	// Suppress the splash-dismiss wait so paste-inject helpers in the review-
 	// loop scenario complete quickly when splashDismissWait is called.
-	*daemon.ExportedSplashDismissDelay = 1 * time.Millisecond
+	daemon.ExportedSetSplashDismissDelay(1 * time.Millisecond)
 	return func() {
 		*daemon.ExportedImplementerReseedGrace = origReseed
 		*daemon.ExportedCommitPollInterval = origPoll
@@ -152,7 +152,7 @@ func hk76n5gShortTimeouts(reseedGrace, pollInterval, totalTimeout, hardCeiling, 
 		*daemon.ExportedCommitHardCeiling = origHard
 		*daemon.ExportedNoChangeKillDelay = origKill
 		*daemon.ExportedPostQuitKillGrace = origPostQuit
-		*daemon.ExportedSplashDismissDelay = origSplash
+		daemon.ExportedSetSplashDismissDelay(origSplash)
 	}
 }
 

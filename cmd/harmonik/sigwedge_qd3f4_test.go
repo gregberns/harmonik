@@ -74,13 +74,20 @@ func TestSIGINTWedgedDaemonExit(t *testing.T) {
 		t.Fatalf("send SIGINT: %v", sigErr)
 	}
 
-	// Assert the process exits within 6 seconds.
+	// Assert the process exits within a bounded window after SIGINT.
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
 	}()
 
-	const deadline = 6 * time.Second
+	// The subprocess's watchdog fires os.Exit(1) at signalGracePeriod (5s); a
+	// flat 6s deadline left only ~1s for subprocess spawn + signal delivery +
+	// the post-timer scheduling of os.Exit. On a saturated 2-vCPU CI runner that
+	// margin evaporated and the parent killed a subprocess that WAS about to
+	// exit, false-failing. Derive the deadline from the real grace period plus a
+	// generous slack: still catches a watchdog that never fires (the subprocess
+	// would otherwise block forever) while surviving CPU contention. (hk-me8ru)
+	deadline := signalGracePeriod + 15*time.Second
 	select {
 	case waitErr := <-done:
 		// Any exit (including os.Exit(1) from the watchdog) satisfies the

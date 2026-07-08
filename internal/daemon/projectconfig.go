@@ -798,13 +798,13 @@ type rawHarnessesPiProfileConfig struct {
 // No defaults — ResolvePiConfig (cmd/harmonik/resolve_pi_config.go) enforces
 // fail-loud on any missing required field (PI-050/PI-051).
 type rawHarnessesPiConfig struct {
-	Provider   string                                  `yaml:"provider"`
-	Model      string                                  `yaml:"model"`
-	APIKeyEnv  string                                  `yaml:"api_key_env"`
-	APIKeyFile string                                  `yaml:"api_key_file"` // OPTIONAL; PI-050/hk-xmfoi
-	BaseURL    string                                  `yaml:"base_url"`     // OPTIONAL; locally-hosted OpenAI-compatible endpoints (hk-z13jz)
-	API        string                                  `yaml:"api"`          // OPTIONAL; Pi wire format, defaults to "openai" at launch when empty (hk-z13jz)
-	Fallback   rawHarnessesPiFallbackConfig            `yaml:"fallback"`
+	Provider   string                                 `yaml:"provider"`
+	Model      string                                 `yaml:"model"`
+	APIKeyEnv  string                                 `yaml:"api_key_env"`
+	APIKeyFile string                                 `yaml:"api_key_file"` // OPTIONAL; PI-050/hk-xmfoi
+	BaseURL    string                                 `yaml:"base_url"`     // OPTIONAL; locally-hosted OpenAI-compatible endpoints (hk-z13jz)
+	API        string                                 `yaml:"api"`          // OPTIONAL; Pi wire format, defaults to "openai" at launch when empty (hk-z13jz)
+	Fallback   rawHarnessesPiFallbackConfig           `yaml:"fallback"`
 	Profiles   map[string]rawHarnessesPiProfileConfig `yaml:"profiles"` // OPTIONAL; pi-provider-switch
 }
 

@@ -86,8 +86,8 @@ func TestHkd170rGated_CodexEmptyModelFailsLoud(t *testing.T) {
 	// Production claim-time seam: resolve harness (must be codex from bead label).
 	agentType := daemon.ExportedResolveHarnessAgentTypeQuiet(
 		bead,
-		core.AgentType(""), // queue default
-		core.AgentType(""), // node default
+		core.AgentType(""),       // queue default
+		core.AgentType(""),       // node default
 		core.AgentTypeClaudeCode, // global default
 	)
 	if agentType != core.AgentTypeCodex {
@@ -105,8 +105,8 @@ func TestHkd170rGated_CodexEmptyModelFailsLoud(t *testing.T) {
 	// Real routed launch path — this is what beadRunOne calls in production.
 	build := daemon.ExportedRoutedLaunchSpecBuilder(
 		reg, bead,
-		core.AgentType(""), // queue default
-		core.AgentType(""), // node default
+		core.AgentType(""),       // queue default
+		core.AgentType(""),       // node default
 		core.AgentTypeClaudeCode, // global default
 		bus,
 	)

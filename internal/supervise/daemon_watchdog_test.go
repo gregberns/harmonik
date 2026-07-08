@@ -51,14 +51,23 @@ func TestDaemonWatchdog_NoReviveWhenAlive(t *testing.T) {
 		SocketPath:    sockPath,
 		Command:       []string{"sh", "-c", "touch " + markerPath},
 		CheckInterval: 30 * time.Millisecond,
-		DialTimeout:   50 * time.Millisecond,
+		// A LIVE local unix socket dials in well under a millisecond, so a
+		// generous DialTimeout costs nothing on the happy path — but a tight one
+		// false-reads "dead" when a saturated CI runner starves the accept
+		// goroutine past the deadline, tripping a revival this test asserts must
+		// NOT happen (observed on ubuntu-latest at 50ms). 2s absorbs any realistic
+		// scheduler stall while a genuinely dead socket still fails instantly
+		// (ENOENT/refused, not a timeout). (hk-me8ru)
+		DialTimeout:   2 * time.Second,
 		MaxRevives:    1,
 		ReviveBackoff: 5 * time.Millisecond,
 		ReviveWindow:  50 * time.Millisecond,
 	}
 
 	dw := supervise.NewDaemonWatchdog(spec, silentLogger())
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	// Widened from 150ms to give several 30ms checks headroom even under load;
+	// the test can only fail on a spurious revive, never on running "too long".
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	_ = dw.Run(ctx) // exits on ctx timeout

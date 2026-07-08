@@ -120,6 +120,12 @@ func (h *PiHarness) AgentType() core.AgentType {
 // rc.Model, when non-empty, overrides the harness-level h.model so concurrent
 // Pi runs can target different models (mirrors ClaudeHarness.LaunchSpec). hk-oqlgw.
 //
+// rc.Provider/APIKeyEnv/APIKeyFile/BaseURL/API, when non-empty, override the
+// corresponding harness-level fields so per-bead profile selection (pi-provider-switch,
+// hk-m6uu2) can route concurrent runs to different providers. Empty ⇒ h.* fallback.
+// The wire-format triple {Provider, BaseURL, API} + credentials arrive coupled from C3
+// and are copied together; C4 introduces no per-field default that could split them.
+//
 // Returns a non-nil error on any buildPiLaunchSpec failure; the caller MUST NOT
 // call handler.Launch on error. PI-010/PI-020.
 func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.SpawnSpec, error) {
@@ -127,16 +133,36 @@ func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Spawn
 	if rc.Model != "" {
 		model = rc.Model
 	}
+	provider := h.provider
+	if rc.Provider != "" {
+		provider = rc.Provider
+	}
+	apiKeyEnv := h.apiKeyEnv
+	if rc.APIKeyEnv != "" {
+		apiKeyEnv = rc.APIKeyEnv
+	}
+	apiKeyFile := h.apiKeyFile
+	if rc.APIKeyFile != "" {
+		apiKeyFile = rc.APIKeyFile
+	}
+	baseURL := h.baseURL
+	if rc.BaseURL != "" {
+		baseURL = rc.BaseURL
+	}
+	api := h.api
+	if rc.API != "" {
+		api = rc.API
+	}
 	prc := piRunCtx{
 		piBinary:       h.piBinary,
 		workspacePath:  rc.WorkspacePath,
 		beadID:         rc.BeadID,
-		provider:       h.provider,
+		provider:       provider,
 		model:          model,
-		apiKeyEnv:      h.apiKeyEnv,
-		apiKeyFile:     h.apiKeyFile,
-		baseURL:        h.baseURL,
-		api:            h.api,
+		apiKeyEnv:      apiKeyEnv,
+		apiKeyFile:     apiKeyFile,
+		baseURL:        baseURL,
+		api:            api,
 		priorSessionID: rc.PriorSessionID,
 		baseEnv:        rc.BaseEnv,
 		runID:          rc.RunID,

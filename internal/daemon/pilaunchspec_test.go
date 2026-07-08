@@ -1023,6 +1023,302 @@ func TestPiHarness_LaunchSpec_EmptyRcModelFallsBackToHarnessModel(t *testing.T) 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// C4 rc.* tuple override tests (pi-provider-switch, hk-m6uu2.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestPiHarness_LaunchSpec_RCTupleOverridesGlobal verifies that non-empty
+// rc.Provider / rc.APIKeyEnv / rc.BaseURL / rc.API each override the
+// harness-level values (h.*) in the produced LaunchSpec argv and models.json.
+// Uses the full production call chain: NewPiHarness → LaunchSpec.
+func TestPiHarness_LaunchSpec_RCTupleOverridesGlobal(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+
+	// Harness-level (global) credentials — must NOT appear in the child env.
+	const harnessAPIKeyEnv = "OPENROUTER_API_KEY"
+	t.Setenv(harnessAPIKeyEnv, "harness-global-key-must-not-appear")
+
+	// rc-level (override) credentials — must appear.
+	const rcAPIKeyEnv = "PI_ORNITH_KEY"
+	const rcAPIKeyVal = "sk-ornith-rc-override-sentinel"
+	t.Setenv(rcAPIKeyEnv, rcAPIKeyVal)
+
+	workDir := t.TempDir()
+
+	// Harness carries the "old" global openrouter configuration.
+	harness := daemon.NewPiHarness(
+		"pi",
+		"openrouter",
+		"openrouter/deepseek/deepseek-v4-flash",
+		harnessAPIKeyEnv,
+		"",
+		"",
+		"",
+	)
+
+	// rc carries the per-bead ornith-dgx profile override.
+	rc := handlercontract.RunCtx{
+		WorkspacePath: workDir,
+		BeadID:        "hk-m6uu2-rc-override",
+		BaseEnv:       []string{"PATH=/usr/bin"},
+		Provider:      "ornith",
+		Model:         "ornith/deepseek-r1",
+		APIKeyEnv:     rcAPIKeyEnv,
+		BaseURL:       "http://127.0.0.1:8551/v1",
+		API:           "openai-completions",
+	}
+
+	spec, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	// rc.Provider must override h.provider in argv.
+	piLaunchSpecAssertFlagValue(t, spec.Args, "--provider", "ornith")
+
+	// rc.Model must override h.model in argv.
+	piLaunchSpecAssertFlagValue(t, spec.Args, "--model", "ornith/deepseek-r1")
+
+	// rc.BaseURL must produce a models.json with the override endpoint.
+	piAgentDir := findEnvValue(t, spec.Env, "PI_CODING_AGENT_DIR")
+	if piAgentDir == "" {
+		t.Fatal("PI_CODING_AGENT_DIR not injected; rc.BaseURL must trigger models.json generation")
+	}
+	modelsBytes, readErr := os.ReadFile(piAgentDir + "/models.json")
+	if readErr != nil {
+		t.Fatalf("models.json not found: %v", readErr)
+	}
+	var parsed struct {
+		Providers map[string]struct {
+			BaseURL string `json:"baseUrl"`
+			API     string `json:"api"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(modelsBytes, &parsed); err != nil {
+		t.Fatalf("models.json JSON parse failed: %v\ncontent: %s", err, modelsBytes)
+	}
+	prov, ok := parsed.Providers["ornith"]
+	if !ok {
+		t.Fatalf("models.json has no 'ornith' provider; got: %v", parsed.Providers)
+	}
+	if prov.BaseURL != "http://127.0.0.1:8551/v1" {
+		t.Errorf("baseUrl = %q; want %q", prov.BaseURL, "http://127.0.0.1:8551/v1")
+	}
+	if prov.API != "openai-completions" {
+		t.Errorf("api = %q; want %q", prov.API, "openai-completions")
+	}
+
+	// rc.APIKeyEnv key must be injected; harness key must be stripped.
+	injected := findEnvValue(t, spec.Env, rcAPIKeyEnv)
+	if injected != rcAPIKeyVal {
+		t.Errorf("rc.APIKeyEnv value = %q; want %q", injected, rcAPIKeyVal)
+	}
+	for _, kv := range spec.Env {
+		if kv == harnessAPIKeyEnv+"=harness-global-key-must-not-appear" {
+			t.Error("harness-level key value appeared in child env; rc.APIKeyEnv override must take precedence")
+		}
+	}
+}
+
+// TestPiHarness_LaunchSpec_EmptyRCFallsBackToGlobal verifies that when all five
+// rc tuple fields are empty, LaunchSpec falls back to h.* values. Shared with C6.
+func TestPiHarness_LaunchSpec_EmptyRCFallsBackToGlobal(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const apiKeyEnv = "TEST_PI_C4_FALLBACK_KEY"
+	t.Setenv(apiKeyEnv, "sk-fallback-sentinel")
+
+	workDir := t.TempDir()
+
+	harness := daemon.NewPiHarness(
+		"pi",
+		"openrouter",
+		"openrouter/deepseek/deepseek-v4-flash",
+		apiKeyEnv,
+		"",
+		"",
+		"",
+	)
+
+	// All five tuple fields empty — must use h.* entirely.
+	rc := handlercontract.RunCtx{
+		WorkspacePath: workDir,
+		BeadID:        "hk-m6uu2-empty-rc",
+		BaseEnv:       []string{"PATH=/usr/bin"},
+		// Provider, APIKeyEnv, APIKeyFile, BaseURL, API all zero
+	}
+
+	spec, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	// h.provider must appear in argv.
+	piLaunchSpecAssertFlagValue(t, spec.Args, "--provider", "openrouter")
+	// h.model must appear in argv.
+	piLaunchSpecAssertFlagValue(t, spec.Args, "--model", "openrouter/deepseek/deepseek-v4-flash")
+
+	// No models.json when h.baseURL is also empty.
+	piAgentDir := workDir + "/.harmonik/pi-agent"
+	if _, statErr := os.Stat(piAgentDir + "/models.json"); statErr == nil {
+		t.Error("models.json written when neither rc.BaseURL nor h.baseURL is set; must not exist")
+	}
+
+	// h.apiKeyEnv key must be injected in the child env.
+	injected := findEnvValue(t, spec.Env, apiKeyEnv)
+	if injected != "sk-fallback-sentinel" {
+		t.Errorf("h.apiKeyEnv value = %q; want %q", injected, "sk-fallback-sentinel")
+	}
+}
+
+// TestPiHarness_LaunchSpec_OverriddenAPIKeyEnv_StripsSiblings verifies that when
+// rc.APIKeyEnv overrides the harness-level key, buildPiEnv re-runs the fail-closed
+// strip keyed on the NEW env var: only the overridden key is injected; the harness-
+// level key (and other siblings) appear as KEY= empty-overrides.
+func TestPiHarness_LaunchSpec_OverriddenAPIKeyEnv_StripsSiblings(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+
+	// harness-level key — must appear STRIPPED (KEY=) in the child env.
+	const harnessKeyEnv = "OPENROUTER_API_KEY"
+	t.Setenv(harnessKeyEnv, "harness-key-must-be-stripped")
+
+	// rc-level override key — must be INJECTED with its live value.
+	const rcKeyEnv = "PI_ORNITH_KEY"
+	const rcKeyVal = "sk-rc-ornith-sibling-strip-test"
+	t.Setenv(rcKeyEnv, rcKeyVal)
+
+	// Another sibling that should also be stripped.
+	const siblingKey = "ANTHROPIC_API_KEY"
+	t.Setenv(siblingKey, "sibling-must-be-stripped")
+
+	workDir := t.TempDir()
+
+	harness := daemon.NewPiHarness(
+		"pi",
+		"openrouter",
+		"openrouter/deepseek/deepseek-v4-flash",
+		harnessKeyEnv,
+		"",
+		"",
+		"",
+	)
+
+	rc := handlercontract.RunCtx{
+		WorkspacePath: workDir,
+		BeadID:        "hk-m6uu2-sibling-strip",
+		BaseEnv: []string{
+			"PATH=/usr/bin",
+			harnessKeyEnv + "=harness-key-must-be-stripped",
+			rcKeyEnv + "=" + rcKeyVal,
+			siblingKey + "=sibling-must-be-stripped",
+		},
+		Provider:  "ornith",
+		APIKeyEnv: rcKeyEnv,
+	}
+
+	spec, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	// rc.APIKeyEnv key must be injected with its value.
+	injected := findEnvValue(t, spec.Env, rcKeyEnv)
+	if injected != rcKeyVal {
+		t.Errorf("rc.APIKeyEnv value = %q; want %q", injected, rcKeyVal)
+	}
+
+	// Harness key and sibling keys must be stripped (appear as KEY= with empty value).
+	for _, strippedKey := range []string{harnessKeyEnv, siblingKey} {
+		for _, kv := range spec.Env {
+			if strings.HasPrefix(kv, strippedKey+"=") {
+				val := kv[len(strippedKey)+1:]
+				if val != "" {
+					t.Errorf("PI-021: child env carries live value for %s=%q; must be empty-overridden", strippedKey, val)
+				}
+			}
+		}
+	}
+}
+
+// TestPiHarness_LaunchSpec_CoupledTriple_TravelTogether verifies the coupling
+// invariant: provider, baseURL, and api from the rc tuple are all applied together
+// (or all fall back to h.*), proving C4 introduces no per-field split.
+func TestPiHarness_LaunchSpec_CoupledTriple_TravelTogether(t *testing.T) {
+	// Not parallel: t.Setenv mutates process env.
+	const harnessKeyEnv = "OPENROUTER_API_KEY"
+	t.Setenv(harnessKeyEnv, "coupled-triple-harness-key")
+
+	const rcKeyEnv = "PI_ORNITH_COUPLED"
+	t.Setenv(rcKeyEnv, "coupled-triple-rc-key")
+
+	workDir := t.TempDir()
+
+	// Harness carries openrouter (cloud, no baseURL).
+	harness := daemon.NewPiHarness(
+		"pi",
+		"openrouter",
+		"openrouter/deepseek/deepseek-v4-flash",
+		harnessKeyEnv,
+		"",
+		"",
+		"",
+	)
+
+	// rc carries the full ornith triple {provider, baseURL, api}.
+	rc := handlercontract.RunCtx{
+		WorkspacePath: workDir,
+		BeadID:        "hk-m6uu2-coupled-triple",
+		BaseEnv:       []string{"PATH=/usr/bin"},
+		Provider:      "ornith",
+		Model:         "ornith/deepseek-r1",
+		APIKeyEnv:     rcKeyEnv,
+		BaseURL:       "http://127.0.0.1:8551/v1",
+		API:           "openai-completions",
+	}
+
+	spec, err := harness.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec: unexpected error: %v", err)
+	}
+
+	// The full triple must appear in models.json — not a mix of rc+h.
+	piAgentDir := findEnvValue(t, spec.Env, "PI_CODING_AGENT_DIR")
+	if piAgentDir == "" {
+		t.Fatal("PI_CODING_AGENT_DIR not injected; rc.BaseURL must produce models.json")
+	}
+	modelsBytes, readErr := os.ReadFile(piAgentDir + "/models.json")
+	if readErr != nil {
+		t.Fatalf("models.json not found: %v", readErr)
+	}
+	var parsed struct {
+		Providers map[string]struct {
+			BaseURL string `json:"baseUrl"`
+			API     string `json:"api"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(modelsBytes, &parsed); err != nil {
+		t.Fatalf("models.json JSON parse failed: %v\ncontent: %s", err, modelsBytes)
+	}
+	// "ornith" provider key — from rc.Provider, not from h.provider ("openrouter").
+	prov, ok := parsed.Providers["ornith"]
+	if !ok {
+		t.Fatalf("models.json has no 'ornith' provider (expected rc.Provider); got: %v", parsed.Providers)
+	}
+	if _, openrouterPresent := parsed.Providers["openrouter"]; openrouterPresent {
+		t.Error("h.provider 'openrouter' appeared in models.json; rc.Provider must override it")
+	}
+	// rc.BaseURL must appear, not h.baseURL (empty).
+	if prov.BaseURL != "http://127.0.0.1:8551/v1" {
+		t.Errorf("baseUrl = %q; want rc.BaseURL %q", prov.BaseURL, "http://127.0.0.1:8551/v1")
+	}
+	// rc.API must appear, not h.api (empty → would default to "openai").
+	if prov.API != "openai-completions" {
+		t.Errorf("api = %q; want rc.API %q", prov.API, "openai-completions")
+	}
+
+	// argv must use rc.Provider, not h.provider.
+	piLaunchSpecAssertFlagValue(t, spec.Args, "--provider", "ornith")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // helpers for base_url tests
 // ─────────────────────────────────────────────────────────────────────────────
 

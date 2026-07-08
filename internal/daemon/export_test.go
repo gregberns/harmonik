@@ -540,10 +540,10 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 			}
 			return nil // no-op: tests must not wipe the shared go-build cache
 		},
-		cacheReapMu:         cacheReapMu,             // hk-y3frr: reap↔dispatch exclusion
-		worktreeReclaimFunc: p.WorktreeReclaimFunc,   // hk-5uezz: stale-worktree reclaim seam
-		runner:              p.Runner,                // hk-hd2w6: Config.Runner injection seam
-		defaultHarness:      p.DefaultHarness,         // hk-ytzj2: tier-4 global harness default
+		cacheReapMu:         cacheReapMu,           // hk-y3frr: reap↔dispatch exclusion
+		worktreeReclaimFunc: p.WorktreeReclaimFunc, // hk-5uezz: stale-worktree reclaim seam
+		runner:              p.Runner,              // hk-hd2w6: Config.Runner injection seam
+		defaultHarness:      p.DefaultHarness,      // hk-ytzj2: tier-4 global harness default
 	}
 }
 

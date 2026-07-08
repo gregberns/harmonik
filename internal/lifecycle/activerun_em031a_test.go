@@ -503,7 +503,7 @@ func TestEM031a_GitBranchTipReader_EmptyRepo(t *testing.T) {
 	repoDir := t.TempDir()
 
 	//nolint:gosec // G204: arguments are hard-coded constants; repoDir is t.TempDir()
-	if out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir, "init").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", repoDir, "init", "-b", "main").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	//nolint:gosec // G204: arguments are hard-coded constants
@@ -550,7 +550,7 @@ func TestEM031a_GitBranchTipReader_BranchWithTrailers(t *testing.T) {
 		}
 	}
 
-	runGit("init")
+	runGit("init", "-b", "main")
 	runGit("config", "user.email", "test@test")
 	runGit("config", "user.name", "Test")
 

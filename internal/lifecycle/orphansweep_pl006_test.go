@@ -384,6 +384,13 @@ func TestPL006_EnumerateStaleIntents_NewFilesNotCounted(t *testing.T) {
 	if err := os.WriteFile(newPath, []byte(`{"id":"new"}`), 0o600); err != nil {
 		t.Fatalf("PL-006 intents new: WriteFile: %v", err)
 	}
+	// Force the file's mtime unambiguously AFTER daemonStart. On coarse-mtime
+	// filesystems the fresh write can be stamped at/just-below daemonStart,
+	// which would wrongly count it as stale; this guard removes that ambiguity.
+	newerThanStart := daemonStart.Add(time.Second)
+	if err := os.Chtimes(newPath, newerThanStart, newerThanStart); err != nil {
+		t.Fatalf("PL-006 intents new: Chtimes: %v", err)
+	}
 	// mtime is now (after daemonStart) — not stale.
 
 	count, err := EnumerateStaleIntents(projectDir, daemonStart)

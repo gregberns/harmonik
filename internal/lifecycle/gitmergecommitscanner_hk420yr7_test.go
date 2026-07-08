@@ -52,7 +52,7 @@ func gitMCSFixtureBeadID(n int) string {
 func gitMCSFixtureInitRepo(t *testing.T, repoDir string) {
 	t.Helper()
 
-	runGitRepo(t, repoDir, "init")
+	runGitRepo(t, repoDir, "init", "-b", "main")
 	runGitRepo(t, repoDir, "config", "user.email", "test@harmonik")
 	runGitRepo(t, repoDir, "config", "user.name", "Harmonik Test")
 

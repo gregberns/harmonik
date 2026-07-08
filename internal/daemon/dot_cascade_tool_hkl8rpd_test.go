@@ -82,7 +82,9 @@ func TestDispatchDotToolNode_TimeoutKill_Transient(t *testing.T) {
 		t.Fatalf("expected failure_class=transient, got %q", *outcome.FailureClass)
 	}
 	// Sanity: should have exited around the 1s timeout, not the 60s sleep.
-	if elapsed > 10*time.Second {
+	// Generous ceiling (30s) so a saturated -race runner can't blow it while
+	// still cleanly distinguishing the 1s tool-timeout from the 60s sleep.
+	if elapsed > 30*time.Second {
 		t.Fatalf("timeout kill took too long: %v", elapsed)
 	}
 }

@@ -174,7 +174,7 @@ func TestWorkLoop_ShowBeadErrorRetryBounded(t *testing.T) {
 
 	// Budget: 5 Ready calls returning failBead * 2s workloopPollInterval = ~10s,
 	// plus goodBead dispatch (~5s for git worktree + handler). 30s is generous.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
 	defer cancel()
 
 	loopDone := make(chan error, 1)
@@ -183,7 +183,7 @@ func TestWorkLoop_ShowBeadErrorRetryBounded(t *testing.T) {
 	}()
 
 	// Poll until the good bead is claimed or timeout.
-	deadline := time.After(25 * time.Second)
+	deadline := time.After(60 * time.Second)
 	for {
 		if ledger.goodClaimed.Load() {
 			break

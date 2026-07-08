@@ -45,16 +45,27 @@ func TestSuperviseReapVerb_KillsDeadFlywheel_LeavesDefault(t *testing.T) {
 		_ = exec.Command("tmux", "kill-session", "-t", "="+def).Run()
 	})
 
-	// Dead flywheel: launch a brief sleep so we can set remain-on-exit BEFORE the
-	// command exits, then the pane goes pane_dead=1 (mirrors a crashed shim under
-	// remain-on-exit). Setting remain-on-exit AFTER the command exits is too late
-	// (tmux would close the window instead of keeping a dead pane).
-	createOut, err := exec.Command("tmux", "new-session", "-d", "-s", flywheel, "sleep", "1").CombinedOutput()
+	// Dead flywheel: launch a LONG-lived command so the child cannot exit before
+	// we set remain-on-exit and force the kill — this removes the spawn race that
+	// a `sleep 1` fixture has on a saturated runner. Sequence: spawn `sleep 300`,
+	// turn on remain-on-exit while the child is still alive, THEN deterministically
+	// kill the pane's child PID so the pane transitions to pane_dead=1 (mirrors a
+	// crashed shim under remain-on-exit).
+	createOut, err := exec.Command("tmux", "new-session", "-d", "-s", flywheel, "sleep", "300").CombinedOutput()
 	if err != nil {
 		t.Skipf("tmux new-session (flywheel) failed (may lack a server): %v: %s", err, createOut)
 	}
 	_ = exec.Command("tmux", "set-option", "-t", flywheel, "remain-on-exit", "on").Run()
-	// Wait for the sleep to exit → pane_dead=1.
+	// Force the child dead deterministically: read the pane's child PID and SIGKILL
+	// it. With remain-on-exit on, the pane stays as pane_dead=1 rather than closing.
+	pidOut, err := exec.Command("tmux", "list-panes", "-t", "="+flywheel, "-F", "#{pane_pid}").CombinedOutput()
+	if err != nil {
+		t.Skipf("could not read flywheel pane_pid: %v: %s", err, pidOut)
+	}
+	if pid := strings.TrimSpace(string(pidOut)); pid != "" {
+		_ = exec.Command("kill", "-KILL", pid).Run()
+	}
+	// Wait for the child to die → pane_dead=1.
 	if !waitPaneDead(t, flywheel) {
 		t.Skip("could not get flywheel pane into pane_dead=1 (tmux remain-on-exit unsupported?)")
 	}
@@ -114,10 +125,10 @@ func TestSuperviseReapVerb_NoOrphans_CleanNoOp(t *testing.T) {
 }
 
 // waitPaneDead polls until the session's active pane reports pane_dead=1, up to
-// ~3s. Returns false if it never goes dead.
+// ~10s. Returns false if it never goes dead.
 func waitPaneDead(t *testing.T, session string) bool {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		out, err := exec.Command("tmux", "list-panes", "-t", "="+session, "-F", "#{pane_dead}").CombinedOutput()
 		if err == nil && strings.TrimSpace(string(out)) == "1" {

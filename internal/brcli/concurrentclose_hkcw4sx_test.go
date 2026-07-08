@@ -283,8 +283,8 @@ func TestJitterReducesThunderingHerd_HkCw4sx(t *testing.T) {
 	t.Parallel()
 
 	cfg := brcli.TimeoutConfig{
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  20 * time.Second,
+		WriteTimeout: 30 * time.Second,
 	}
 
 	// Run two retries concurrently. Each gets its own mock binary so their

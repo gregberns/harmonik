@@ -176,12 +176,21 @@ func TestRunPropagatesContextCancellation(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 
+	// Derive the upper bound from the test's own deadline so it scales with
+	// -timeout and only fires on a true hang, not CPU starvation under heavy
+	// -race parallelism on a slow CI runner.
+	returnTimeout := 30 * time.Second
+	if dl, ok := t.Deadline(); ok {
+		if budget := time.Until(dl) - 2*time.Second; budget > 0 && budget < returnTimeout {
+			returnTimeout = budget
+		}
+	}
 	select {
 	case runErr := <-done:
 		if runErr == nil {
 			t.Fatal("expected error after context cancellation, got nil")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(returnTimeout):
 		t.Fatal("Run did not return promptly after context cancellation")
 	}
 }

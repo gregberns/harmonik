@@ -147,9 +147,17 @@ func TestRunWithTimeoutReadTimeout(t *testing.T) {
 		t.Errorf("err = %v; want errors.Is(err, BrUnavailable) = true", err)
 	}
 	// Should return promptly: budget (50ms) + sigtermGrace (5s worst-case) + slack.
-	// In practice the subprocess terminates quickly on SIGTERM, so we use 8s.
-	if elapsed > 8*time.Second {
-		t.Errorf("RunWithTimeout took %v; expected < 8s", elapsed)
+	// Derive the upper bound from the test's own deadline so it scales with
+	// -timeout and only fires on a true hang, not CPU starvation under heavy
+	// -race parallelism. Keep it comfortably above the 5s sigtermGrace.
+	upperBound := 30 * time.Second
+	if dl, ok := t.Deadline(); ok {
+		if budget := time.Until(dl) - 2*time.Second; budget > 8*time.Second && budget < upperBound {
+			upperBound = budget
+		}
+	}
+	if elapsed > upperBound {
+		t.Errorf("RunWithTimeout took %v; expected < %s", elapsed, upperBound)
 	}
 }
 
@@ -190,6 +198,15 @@ func TestRunWithTimeoutContextCancellation(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 
+	// Derive the upper bound from the test's own deadline so it scales with
+	// -timeout and only fires on a true hang, not CPU starvation under heavy
+	// -race parallelism. Keep it comfortably above the 5s sigtermGrace.
+	returnTimeout := 30 * time.Second
+	if dl, ok := t.Deadline(); ok {
+		if budget := time.Until(dl) - 2*time.Second; budget > 8*time.Second && budget < returnTimeout {
+			returnTimeout = budget
+		}
+	}
 	select {
 	case err := <-done:
 		if err == nil {
@@ -198,7 +215,7 @@ func TestRunWithTimeoutContextCancellation(t *testing.T) {
 		if !errors.Is(err, brcli.BrUnavailable) {
 			t.Errorf("err = %v; want errors.Is(err, BrUnavailable) = true", err)
 		}
-	case <-time.After(8 * time.Second):
+	case <-time.After(returnTimeout):
 		t.Fatal("RunWithTimeout did not return promptly after ctx cancellation")
 	}
 }

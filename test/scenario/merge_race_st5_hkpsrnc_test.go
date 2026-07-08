@@ -13,7 +13,7 @@
 //   - The daemon is started via daemon.Start in-process (never the fleet daemon).
 //   - Uses real br binary (codex lifecycle pattern) for bead lifecycle coverage.
 //   - Assertions: run_completed, agent_ready present (twin was invoked),
-//     bead closed, ZERO Claude tokens (no claude binary on PATH needed).
+//     bead closed, zero budget_accrual events (structural: twin never calls Claude API).
 //
 // Spec ref: specs/scenario-harness.md §4 (fixture lifecycle, twin substitution).
 // Bead: hk-psrnc.
@@ -22,7 +22,6 @@ package scenario
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,35 +34,6 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures (mergeRaceST5 prefix — bead hk-psrnc)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// mergeRaceST5FixtureGitRepo initialises a git repo in dir with an initial
-// commit and a bare origin remote so the daemon's post-merge git push succeeds.
-func mergeRaceST5FixtureGitRepo(t *testing.T, dir string) {
-	t.Helper()
-	run := func(d string, args ...string) {
-		t.Helper()
-		//nolint:gosec // G204: git args are test-internal literals
-		cmd := exec.CommandContext(t.Context(), "git", args...)
-		cmd.Dir = d
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("mergeRaceST5FixtureGitRepo: git %v: %v\n%s", args, err, out)
-		}
-	}
-	run(dir, "init", "--initial-branch=main")
-	run(dir, "config", "user.email", "test@harmonik.local")
-	run(dir, "config", "user.name", "Harmonik Test")
-	readme := filepath.Join(dir, "README")
-	if err := os.WriteFile(readme, []byte("merge-race ST5 scenario repo\n"), 0o644); err != nil {
-		t.Fatalf("mergeRaceST5FixtureGitRepo: WriteFile README: %v", err)
-	}
-	run(dir, "add", "README")
-	run(dir, "commit", "-m", "Initial commit")
-
-	originDir := t.TempDir()
-	run(originDir, "init", "--bare", "--initial-branch=main")
-	run(dir, "remote", "add", "origin", originDir)
-	run(dir, "push", "origin", "main")
-}
 
 // mergeRaceST5FixtureWorkflowDot writes the two-node DOT workflow to
 // <projectDir>/workflow.dot. The daemon reads it from this location when
@@ -166,30 +136,6 @@ exec '%s' \
 	return scriptPath
 }
 
-// mergeRaceST5FixtureInitBr initialises a beads workspace in projectDir,
-// creates one open bead, and returns its ID.
-func mergeRaceST5FixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPath string) string {
-	t.Helper()
-	//nolint:gosec // G204: br args are test-internal literals
-	initCmd := exec.CommandContext(t.Context(), realBrPath, "init", "--prefix", "mr")
-	initCmd.Dir = projectDir
-	if out, err := initCmd.CombinedOutput(); err != nil {
-		t.Fatalf("mergeRaceST5FixtureInitBr: br init: %v\n%s", err, out)
-	}
-	//nolint:gosec // G204: br args are test-internal literals
-	createCmd := exec.CommandContext(t.Context(), brWrapperPath,
-		"create", "merge-race ST5 scenario test bead", "--status", "open", "--silent")
-	createOut, createErr := createCmd.CombinedOutput()
-	if createErr != nil {
-		t.Fatalf("mergeRaceST5FixtureInitBr: br create: %v\n%s", createErr, createOut)
-	}
-	id := strings.TrimSpace(string(createOut))
-	if id == "" {
-		t.Fatal("mergeRaceST5FixtureInitBr: br create returned empty ID")
-	}
-	return id
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // TestScenario_MergeRace_ST5
 // ─────────────────────────────────────────────────────────────────────────────
@@ -200,7 +146,8 @@ func mergeRaceST5FixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPa
 //  1. run_completed event emitted (not run_failed).
 //  2. agent_ready present in JSONL (proves harmonik-twin-claude was invoked).
 //  3. Bead closed after run_completed.
-//  4. ZERO Claude API tokens (no claude binary required).
+//  4. No budget_accrual events in JSONL (structural proof: twin never calls Claude API,
+//     so the daemon never accrues token spend — zero Claude API tokens consumed).
 func TestScenario_MergeRace_ST5(t *testing.T) {
 	if twinBinaryPath == "" {
 		t.Skip("harmonik-twin-claude binary not built; skipping merge-race ST5")
@@ -208,7 +155,7 @@ func TestScenario_MergeRace_ST5(t *testing.T) {
 
 	realBrPath := codexLifecycleFixtureBrPath(t)
 	projectDir, jsonlPath := codexLifecycleFixtureProjectDir(t)
-	mergeRaceST5FixtureGitRepo(t, projectDir)
+	codexLifecycleFixtureGitRepo(t, projectDir)
 	mergeRaceST5FixtureWorkflowDot(t, projectDir)
 
 	alphaScript := mergeRaceST5FixtureAlphaScript(t)
@@ -216,7 +163,7 @@ func TestScenario_MergeRace_ST5(t *testing.T) {
 
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := codexLifecycleFixtureBrWrapperScript(t, realBrPath, dbPath)
-	beadID := mergeRaceST5FixtureInitBr(t, realBrPath, projectDir, brWrapper)
+	beadID := codexLifecycleFixtureInitBr(t, realBrPath, projectDir, brWrapper)
 
 	cfg := daemon.Config{
 		ProjectDir:                 projectDir,
@@ -283,6 +230,16 @@ func TestScenario_MergeRace_ST5(t *testing.T) {
 	// 3. Bead must be closed.
 	if !codexLifecycleFixturePollBeadClosed(t, brWrapper, beadID, 2*time.Second) {
 		t.Errorf("bead %s not closed after run_completed", beadID)
+	}
+
+	// 4. Zero Claude API tokens: no budget_accrual events may appear. The twin
+	// binary has no Claude API call path, so the daemon never emits a
+	// budget_accrual event for this run.
+	for _, line := range lines {
+		if strings.Contains(line, "budget_accrual") {
+			t.Errorf("budget_accrual event found — Claude API was unexpectedly invoked; line: %s", line)
+			break
+		}
 	}
 
 	t.Logf("PASS beadID=%s foundCompleted=%v agentReadyFound=%v lines=%d",

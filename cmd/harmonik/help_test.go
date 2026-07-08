@@ -393,14 +393,13 @@ func TestReconcileHelpFlag(t *testing.T) {
 // TestConfirmVerdictHelpFlag verifies that `harmonik confirm-verdict --help`
 // exits 0 and the output contains the expected grammar, flags, and exit codes.
 //
-// Parallel: safe — runConfirmVerdictSubcommand does not touch flag.CommandLine.
+// Not parallel: helpFixtureCaptureStdout swaps the process-global os.Stdout,
+// which races with any other parallel test's os.Stdout reads/writes (hk-ri2in.2).
 //
 // Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
 //
 //	specs/operator-nfr.md §4.3 ON-014.
 func TestConfirmVerdictHelpFlag(t *testing.T) {
-	t.Parallel()
-
 	var exitCode int
 	output := helpFixtureCaptureStdout(t, func() {
 		exitCode = runConfirmVerdictSubcommand([]string{"--help"})
@@ -428,15 +427,14 @@ func TestConfirmVerdictHelpFlag(t *testing.T) {
 // and the output contains the expected grammar, flags (including --promote-to),
 // and exit codes.
 //
-// Parallel: safe — runVetoVerdictSubcommand does not touch flag.CommandLine.
+// Not parallel: helpFixtureCaptureStdout swaps the process-global os.Stdout,
+// which races with any other parallel test's os.Stdout reads/writes (hk-ri2in.2).
 //
 // Spec ref: specs/reconciliation/spec.md §4.5 RC-027;
 //
 //	specs/operator-nfr.md §4.3 ON-014 —
 //	"harmonik veto-verdict <run_id> [--promote-to escalate-to-human]".
 func TestVetoVerdictHelpFlag(t *testing.T) {
-	t.Parallel()
-
 	var exitCode int
 	output := helpFixtureCaptureStdout(t, func() {
 		exitCode = runVetoVerdictSubcommand([]string{"--help"})

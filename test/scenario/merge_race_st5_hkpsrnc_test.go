@@ -146,8 +146,8 @@ exec '%s' \
 //  1. run_completed event emitted (not run_failed).
 //  2. agent_ready present in JSONL (proves harmonik-twin-claude was invoked).
 //  3. Bead closed after run_completed.
-//  4. No budget_accrual events in JSONL (structural proof: twin never calls Claude API,
-//     so the daemon never accrues token spend — zero Claude API tokens consumed).
+//  4. No token-basis budget_accrual events (structural: twin never calls Claude API;
+//     output_bytes accruals from agent_output_chunk are expected and excluded).
 func TestScenario_MergeRace_ST5(t *testing.T) {
 	if twinBinaryPath == "" {
 		t.Skip("harmonik-twin-claude binary not built; skipping merge-race ST5")
@@ -232,12 +232,14 @@ func TestScenario_MergeRace_ST5(t *testing.T) {
 		t.Errorf("bead %s not closed after run_completed", beadID)
 	}
 
-	// 4. Zero Claude API tokens: no budget_accrual events may appear. The twin
-	// binary has no Claude API call path, so the daemon never emits a
-	// budget_accrual event for this run.
+	// 4. Zero Claude API tokens: the watcher always emits budget_accrual with
+	// cost_basis:"output_bytes" for agent_output_chunk events — that is expected
+	// and NOT an API-token charge. Token-basis accruals (any cost_basis other
+	// than "output_bytes") would indicate Claude API usage; none should appear
+	// when the twin is the sole handler.
 	for _, line := range lines {
-		if strings.Contains(line, "budget_accrual") {
-			t.Errorf("budget_accrual event found — Claude API was unexpectedly invoked; line: %s", line)
+		if strings.Contains(line, "budget_accrual") && !strings.Contains(line, `"output_bytes"`) {
+			t.Errorf("token-basis budget_accrual found — Claude API unexpectedly invoked; line: %s", line)
 			break
 		}
 	}

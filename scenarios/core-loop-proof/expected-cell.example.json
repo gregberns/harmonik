@@ -1,0 +1,25 @@
+{
+  "//": "Expected-cell spec — the load-bearing contract for the core-loop-proof matrix (T2, hk-1yxhh).",
+  "//schema": "One object per {harness}×{substrate} cell. The assertion library (scripts/core-loop-assert.jq)",
+  "//schema2": "folds a captured NDJSON event stream against this spec into typed per-gap pass/fail records.",
+  "//stability": "This shape is what the Phase-2 scripted-twin must satisfy — keep it additive-only.",
+
+  "schema_version": 1,
+  "cell": "codex:local",
+  "harness": "codex",
+  "substrate": "local",
+
+  "//seed_bead": "the fixture bead this cell submits; created by scripts/core-loop-seed.sh from seed-beads.json.",
+  "seed_bead": "hk-clp-codex",
+
+  "//expect": "per-signal expectations; a null/absent field means 'do not assert on it' (e.g. codex model is empty).",
+  "expect": {
+    "harness_selected": { "agent_type": "codex", "tier": 1 },
+    "model_selected":   { "harness": "codex", "model": null },
+    "terminal":         "pass"
+  },
+
+  "//gaps": "which coverage gaps this cell is expected to prove. gap1 lands in T2; gap2..gap5 in T4-T8.",
+  "//gap-legend": "gap1=model reaches harness (C4) · gap2=remote==local (C2) · gap3=provider through sandbox (C3/C6) · gap4=dispatch field fidelity (C7) · gap5=claude worktree->agent_ready (C8)",
+  "gaps": ["gap1", "gap4", "gap3"]
+}

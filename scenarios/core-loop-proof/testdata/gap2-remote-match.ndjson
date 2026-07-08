@@ -1,0 +1,4 @@
+{"type":"run_started","payload":{"bead_id":"hk-clp-codex","run_id":"r9"}}
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-codex","agent_type":"codex","tier":1}}
+{"type":"model_selected","payload":{"run_id":"r9","model":"","harness":"codex"}}
+{"type":"run_completed","payload":{"bead_id":"hk-clp-codex","run_id":"r9","success":true}}

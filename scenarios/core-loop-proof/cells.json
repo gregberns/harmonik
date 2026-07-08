@@ -1,0 +1,223 @@
+{
+  "//": "to the claude cells. gap1 is asserted everywhere (it is the T2-implemented gap).",
+  "schema_version": 1,
+  "cells": [
+    {
+      "cell": "codex:local",
+      "harness": "codex",
+      "substrate": "local",
+      "seed_bead": "codex",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "codex",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "codex",
+          "model": null,
+          "no_leak_models": [
+            "claude-opus-4-8",
+            "deepseek-reasoner"
+          ]
+        },
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
+        },
+        "lands_on": "main"
+      },
+      "gaps": [
+        "gap1",
+        "gap3",
+        "gap4",
+        "t10"
+      ]
+    },
+    {
+      "cell": "codex:remote",
+      "harness": "codex",
+      "substrate": "remote",
+      "seed_bead": "codex",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "codex",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "codex",
+          "model": null,
+          "no_leak_models": [
+            "claude-opus-4-8",
+            "deepseek-reasoner"
+          ]
+        },
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
+        },
+        "lands_on": "main"
+      },
+      "gaps": [
+        "gap1",
+        "gap2",
+        "gap3",
+        "gap4",
+        "t10"
+      ]
+    },
+    {
+      "cell": "pi:local",
+      "harness": "pi",
+      "substrate": "local",
+      "seed_bead": "pi",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "pi",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "pi",
+          "model": "deepseek-reasoner",
+          "no_leak_models": [
+            "claude-opus-4-8"
+          ]
+        },
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
+        },
+        "lands_on": "main"
+      },
+      "gaps": [
+        "gap1",
+        "gap3",
+        "gap4",
+        "t10"
+      ]
+    },
+    {
+      "cell": "pi:remote",
+      "harness": "pi",
+      "substrate": "remote",
+      "seed_bead": "pi",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "pi",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "pi",
+          "model": "deepseek-reasoner",
+          "no_leak_models": [
+            "claude-opus-4-8"
+          ]
+        },
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
+        },
+        "lands_on": "main"
+      },
+      "gaps": [
+        "gap1",
+        "gap2",
+        "gap3",
+        "gap4",
+        "t10"
+      ]
+    },
+    {
+      "cell": "claude:local",
+      "harness": "claude-code",
+      "substrate": "local",
+      "seed_bead": "claude",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "claude-code",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "claude-code",
+          "model": "claude-opus-4-8",
+          "no_leak_models": [
+            "deepseek-reasoner"
+          ]
+        },
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
+        },
+        "agent_ready": {
+          "required": true
+        },
+        "lands_on": "main"
+      },
+      "gaps": [
+        "gap1",
+        "gap3",
+        "gap4",
+        "gap5",
+        "t10"
+      ]
+    },
+    {
+      "cell": "claude:remote",
+      "harness": "claude-code",
+      "substrate": "remote",
+      "seed_bead": "claude",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "claude-code",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "claude-code",
+          "model": "claude-opus-4-8",
+          "no_leak_models": [
+            "deepseek-reasoner"
+          ]
+        },
+        "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": true
+        },
+        "provider": {
+          "enabled": true
+        },
+        "agent_ready": {
+          "required": true
+        },
+        "lands_on": "main"
+      },
+      "gaps": [
+        "gap1",
+        "gap2",
+        "gap3",
+        "gap4",
+        "gap5",
+        "t10"
+      ]
+    }
+  ]
+}

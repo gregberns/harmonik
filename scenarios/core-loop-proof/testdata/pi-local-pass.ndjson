@@ -1,0 +1,3 @@
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-pi","agent_type":"pi","tier":1}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"deepseek-reasoner","harness":"pi"}}
+{"type":"run_completed","payload":{"bead_id":"hk-clp-pi","run_id":"r1","success":true}}

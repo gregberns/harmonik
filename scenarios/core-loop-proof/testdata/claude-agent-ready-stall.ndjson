@@ -1,0 +1,2 @@
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-claude","agent_type":"claude-code","tier":1}}
+{"type":"agent_ready_stall_detected","payload":{"bead_id":"hk-clp-claude","run_id":"r1"}}

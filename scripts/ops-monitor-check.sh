@@ -636,6 +636,48 @@ except Exception:
   NIGHTLY_RACE_STATUS="${_NR_STATUS:-unknown}"
 fi
 
+# ── Check scenario-nightly: latest SCHEDULED scenario run's STEP conclusion ──
+# scenario.yml's job sets continue-on-error, so its run/workflow conclusion is
+# ALWAYS 'success' and masks a red suite. We therefore probe the STEP conclusion
+# of the 'make test-scenario' step on the latest SCHEDULED (cron) run — not the
+# run/workflow conclusion. A not-green step surfaces as a digest flag, same as
+# nightly-race. (hk-plw4z Part 4)
+# dquote-safe (hk-2mw1x): the embedded python below uses ONLY single-quoted
+# string literals; SCENARIO_NIGHTLY_STATUS carries only safe ASCII tokens.
+SCENARIO_NIGHTLY_STATUS=unknown
+if command -v gh >/dev/null 2>&1; then
+  _SC_ID=""
+  _SC_ID=$( (cd "$PROJ" && gh run list --workflow=scenario.yml --branch main --event schedule --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null) ) || true
+  _SC_RUNSTATUS=""
+  _SC_RUNSTATUS=$( (cd "$PROJ" && gh run list --workflow=scenario.yml --branch main --event schedule --limit 1 --json status --jq '.[0].status // empty' 2>/dev/null) ) || true
+  if [[ "$_SC_RUNSTATUS" == "in_progress" || "$_SC_RUNSTATUS" == "queued" || "$_SC_RUNSTATUS" == "waiting" ]]; then
+    SCENARIO_NIGHTLY_STATUS=running
+  elif [[ -n "$_SC_ID" ]]; then
+    _SC_JOBS=""
+    _SC_JOBS=$( (cd "$PROJ" && gh run view "$_SC_ID" --json jobs 2>/dev/null) ) || true
+    _SC_STEP=""
+    _SC_STEP=$(printf '%s' "$_SC_JOBS" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    concl = ''
+    for job in data.get('jobs', []):
+        for step in job.get('steps', []):
+            if step.get('name', '') == 'make test-scenario':
+                concl = step.get('conclusion', '') or ''
+    if concl == 'success':
+        print('green')
+    elif concl:
+        print('not-green')
+    else:
+        print('unknown')
+except Exception:
+    print('unknown')
+" 2>/dev/null) || true
+    SCENARIO_NIGHTLY_STATUS="${_SC_STEP:-unknown}"
+  fi
+fi
+
 # ── Python analysis: produce JSON snapshot ────────────────────────────────────
 # Feed the program via a temp file (not py3 "..." double-quoted arg) to avoid
 # the dquote-truncation landmine (hk-2mw1x): any literal " in the Python source
@@ -685,6 +727,7 @@ release_commit_count  = int('$RELEASE_COMMIT_COUNT')
 ci_status             = '$CI_STATUS'
 release_due_threshold = int('$RELEASE_DUE_COMMIT_THRESHOLD')
 nightly_race_status   = '$NIGHTLY_RACE_STATUS'
+scenario_nightly_status = '$SCENARIO_NIGHTLY_STATUS'
 ops_critical_cooldown = int('$OPS_CRITICAL_COOLDOWN')
 watch_absent_thresh   = int('$WATCH_ABSENT_THRESHOLD')
 watch_stall_ticks     = int('$WATCH_STALL_TICKS')
@@ -1320,6 +1363,10 @@ release_due = release_commit_count >= release_due_threshold and ci_status == 'gr
 # races that check-short's -parallel=2 saturation guard suppresses.
 # 'running' / 'unknown' = no signal; 'not-green' = digest flag.
 nightly_race_failed = nightly_race_status == 'not-green'
+# scenario-nightly (hk-plw4z Part 4): STEP conclusion of the latest scheduled
+# scenario run. continue-on-error masks the run conclusion, so a red suite only
+# surfaces here. 'running'/'unknown' = no signal; 'not-green' = digest flag.
+scenario_nightly_failed = scenario_nightly_status == 'not-green'
 
 # ── hk-unwzh F1/F2: zombie watch detection ────────────────────────────────────
 # A zombie watch sends presence beacons (comms join every ~270s refreshes last_seen)
@@ -1413,6 +1460,8 @@ if backlog_ready:
     digest_signals.append('backlog-ready:count=' + str(ready_count))
 if nightly_race_failed:
     digest_signals.append('nightly-race-fail')
+if scenario_nightly_failed:
+    digest_signals.append('scenario-nightly-fail')
 
 # ── SD-1: program-drained-stall (DETERMINISTIC, agent-external) ───────────────
 # PLAN-v2 Part 0 signal (a). Fires the lane-NAMED [IMMEDIATE] wake the captain
@@ -1496,6 +1545,8 @@ checks = {
                         'detail': str(release_commit_count) + ' unreleased commits, CI=' + ci_status},
     'nightly-race':    {'state': 'flag' if nightly_race_failed else 'ok',
                         'detail': nightly_race_status},
+    'scenario-nightly': {'state': 'flag' if scenario_nightly_failed else 'ok',
+                         'detail': scenario_nightly_status},
     'program-stall':   {'state': 'flag' if program_drained_stall else 'ok',
                         'detail': ('drained; KNOWN lane ' + known_ready_lane + ' (epic ' +
                                    known_ready_lane_epic + ') has ' + str(known_ready_lane_count) +
@@ -1725,6 +1776,7 @@ snapshot = {
     'release_commit_count': release_commit_count,
     'ci_status': ci_status,
     'nightly_race_status': nightly_race_status,
+    'scenario_nightly_status': scenario_nightly_status,
     'checks': checks,
     'immediate_signals': immediate_signals,
     'send_immediate_signals': send_immediate_signals,

@@ -144,6 +144,27 @@ type RunCtx struct {
 	// Empty means no effort flag is emitted.
 	Effort string
 
+	// Provider is the per-bead Pi provider override (pi-provider-switch).
+	// Empty ⇒ no override (harness-global default from PiHarness.provider).
+	Provider string
+
+	// APIKeyEnv is the per-bead Pi credential env-var-name override.
+	// Empty ⇒ no override (harness-global default). Travels coupled with Provider.
+	APIKeyEnv string
+
+	// APIKeyFile is the per-bead Pi credential file-path override.
+	// Empty ⇒ no override (harness-global default).
+	APIKeyFile string
+
+	// BaseURL is the per-bead Pi endpoint override for local OpenAI-compatible
+	// endpoints. Empty ⇒ no override. Part of the coupled wire-format triple
+	// {Provider, BaseURL, API}.
+	BaseURL string
+
+	// API is the per-bead Pi wire-format override (e.g. "openai-completions").
+	// Empty ⇒ no override. Part of the coupled wire-format triple.
+	API string
+
 	// WorktreeRootPath is the absolute path to the harmonik worktrees root directory.
 	// Used to decide whether to emit --dangerously-skip-permissions (HC-055b).
 	WorktreeRootPath string

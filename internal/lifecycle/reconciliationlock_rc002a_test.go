@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // rc73LockFixtureLockPath creates a reconciliation lock file at
@@ -167,8 +168,15 @@ func TestRC002a_LockReleasedOnFdClose(t *testing.T) {
 	// Release the lock (simulate daemon termination / fd close).
 	release()
 
-	// After release: lock must be acquirable again.
-	if rc73LockFixtureProbeWouldBlock(t, lockPath) {
+	// After release: lock must be acquirable again. Retry briefly: a
+	// concurrent exec.Command fork(2) elsewhere in this parallel test binary
+	// can transiently keep the just-released flock alive via an inherited fd
+	// copy until that child's exec(2) closes it — see
+	// plFixtureEventuallyTrue.
+	stillBlocked := !plFixtureEventuallyTrue(t, 2*time.Second, func() bool {
+		return !rc73LockFixtureProbeWouldBlock(t, lockPath)
+	})
+	if stillBlocked {
 		t.Error("RC-002a: lock still blocks after fd close; " +
 			"kernel should have released the flock on fd close")
 	}

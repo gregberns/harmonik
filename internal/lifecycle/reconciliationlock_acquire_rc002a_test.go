@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestAcquireReconciliationLock_SuccessAndRelease verifies that
@@ -41,8 +42,17 @@ func TestAcquireReconciliationLock_SuccessAndRelease(t *testing.T) {
 		t.Errorf("Release (second call): unexpected error: %v (want idempotent nil)", err)
 	}
 
-	// After release, a new acquire for the same run ID must succeed.
-	lock2, err := AcquireReconciliationLock(projectDir, targetRunID)
+	// After release, a new acquire for the same run ID must succeed. Retry
+	// briefly: a concurrent exec.Command fork(2) elsewhere in this parallel
+	// test binary can transiently keep the just-released flock alive via an
+	// inherited fd copy until that child's exec(2) closes it — see
+	// plFixtureEventuallyNoErr.
+	var lock2 *ReconciliationLock
+	err = plFixtureEventuallyNoErr(t, 2*time.Second, func() error {
+		var acquireErr error
+		lock2, acquireErr = AcquireReconciliationLock(projectDir, targetRunID)
+		return acquireErr
+	})
 	if err != nil {
 		t.Fatalf("AcquireReconciliationLock after Release: unexpected error: %v", err)
 	}

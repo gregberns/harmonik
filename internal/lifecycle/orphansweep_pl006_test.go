@@ -94,7 +94,7 @@ func TestPL006_SweepOrphanTmuxSessions_Empty(t *testing.T) {
 // Spec ref: process-lifecycle.md §4.2 PL-006 — "kill every matching session
 // via tmux kill-session."
 func TestPL006_SweepOrphanTmuxSessions_MatchingPrefix(t *testing.T) {
-	t.Parallel()
+	// NOT t.Parallel(): this test mutates the package-level var tmuxPollCeiling.
 
 	projectDir := plFixtureTempProjectDir(t)
 	hash := ComputeProjectHash(projectDir)
@@ -150,7 +150,7 @@ func TestPL006_SweepOrphanTmuxSessions_MatchingPrefix(t *testing.T) {
 // Spec ref: process-lifecycle.md §4.2 PL-006 — sessions can have already exited
 // by the time the sweep runs.
 func TestPL006_SweepOrphanTmuxSessions_KillErrorNonFatal(t *testing.T) {
-	t.Parallel()
+	// NOT t.Parallel(): this test mutates the package-level var tmuxPollCeiling.
 
 	projectDir := plFixtureTempProjectDir(t)
 	hash := ComputeProjectHash(projectDir)
@@ -205,7 +205,7 @@ func TestPL006_SweepOrphanTmuxSessions_ListError(t *testing.T) {
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006 — tmux bullet.
 func TestPL006_SweepOrphanTmuxSessions_NilListerAndKillerUsesOS(t *testing.T) {
-	t.Parallel()
+	// NOT t.Parallel(): this test mutates the package-level var tmuxPollCeiling.
 
 	projectDir := plFixtureTempProjectDir(t)
 	hash := ComputeProjectHash(projectDir)
@@ -251,7 +251,7 @@ func TestPL006_SweepOrphanHandlers_Empty(t *testing.T) {
 // Spec ref: process-lifecycle.md §4.2 PL-006 — "SIGTERM followed by SIGKILL
 // after a bounded 5-second interval."
 func TestPL006_SweepOrphanHandlers_DeadPIDs(t *testing.T) {
-	t.Parallel()
+	// NOT t.Parallel(): this test mutates the package-level var handlerSweepGracePeriod.
 
 	const deadPID = 99994
 	if plFixtureIsPidLive(deadPID) {

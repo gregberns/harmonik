@@ -5,6 +5,7 @@ import (
 	"os"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // TestPL_INV001_PidfileLockExclusivity exercises the PL-INV-001 sensor:
@@ -81,8 +82,17 @@ func TestPL_INV001_PidfileLockExclusivity(t *testing.T) {
 		}
 		release1()
 
-		// After release, a second acquire must succeed (invariant is re-satisfiable).
-		release2, err := plFixtureAcquirePidfile(t, projectDir, pid, pgid, instanceID2)
+		// After release, a second acquire must succeed (invariant is
+		// re-satisfiable). Retry briefly: a concurrent exec.Command fork(2)
+		// elsewhere in this parallel test binary can transiently keep the
+		// just-released flock alive via an inherited fd copy until that
+		// child's exec(2) closes it — see plFixtureEventuallyNoErr.
+		var release2 func()
+		err = plFixtureEventuallyNoErr(t, 2*time.Second, func() error {
+			r, acquireErr := plFixtureAcquirePidfile(t, projectDir, pid, pgid, instanceID2)
+			release2 = r
+			return acquireErr
+		})
 		if err != nil {
 			t.Fatalf("PL-INV-001 lock-released: second acquire after release: %v", err)
 		}

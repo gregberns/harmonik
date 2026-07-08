@@ -6,6 +6,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // startupSweepFixtureAcquireReconciliationLockEX opens a reconciliation lock
@@ -133,8 +134,13 @@ func TestPL007_ActiveFlockHeldLockNotRemoved(t *testing.T) {
 	}
 
 	// Post-release: the probe must now return not-held (lock is acquirable).
-	isHeldAfter := startupSweepFixtureProbeIsHeld(t, lockPath)
-	if isHeldAfter {
+	// Retry briefly: a concurrent exec.Command fork(2) elsewhere in this
+	// parallel test binary can transiently keep the just-released flock alive
+	// via an inherited fd copy until that child's exec(2) closes it.
+	becameFree := plFixtureEventuallyTrue(t, 2*time.Second, func() bool {
+		return !startupSweepFixtureProbeIsHeld(t, lockPath)
+	})
+	if !becameFree {
 		t.Error("PL-007 active flock: probe still returns held after goroutine released the lock")
 	}
 }

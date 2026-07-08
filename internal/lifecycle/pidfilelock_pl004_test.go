@@ -228,17 +228,18 @@ func TestProbePidfileLock_ReleaseThenProbeNotHeld(t *testing.T) {
 		t.Fatalf("TestProbePidfileLock_ReleaseThenProbeNotHeld: Release: %v", err)
 	}
 
-	// macOS fd recycling / goroutine fd-table sharing can cause the flock to
-	// appear still held immediately after Release() closes the fd. Force a GC
-	// cycle to flush any finalizer-held references, then yield to the scheduler
-	// so the kernel can propagate the flock release before the probe opens the
-	// file. Without this guard the test fails ~1/20 runs under -count=1 -p 1
-	// on macOS.
-	runtime.GC()
-	runtime.Gosched()
-	time.Sleep(time.Millisecond)
-
-	status, probedPID, probeErr := ProbePidfileLock(projectDir)
+	// A concurrent exec.Command fork(2) elsewhere in this parallel test binary
+	// can transiently keep the just-released flock alive via an inherited fd
+	// copy until that child's exec(2) closes it, making the probe briefly
+	// report Held right after Release() — see plFixtureEventuallyTrue. Retry
+	// until the probe settles rather than a single fixed sleep.
+	var status PidfileLockStatus
+	var probedPID int
+	var probeErr error
+	plFixtureEventuallyTrue(t, 2*time.Second, func() bool {
+		status, probedPID, probeErr = ProbePidfileLock(projectDir)
+		return status != PidfileLockStatusHeld && !errors.Is(probeErr, ErrPidfileLocked)
+	})
 
 	if errors.Is(probeErr, ErrPidfileLocked) {
 		t.Errorf("TestProbePidfileLock_ReleaseThenProbeNotHeld: got ErrPidfileLocked after release; flock must be free")

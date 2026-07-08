@@ -107,8 +107,17 @@ func TestPL002a_FdLifetimeAdvisoryLock(t *testing.T) {
 	// Release the first fd.
 	release1()
 
-	// Second acquire must now succeed (lock released on fd close).
-	release2, err := plFixtureAcquirePidfile(t, projectDir, pid, pgid, instanceID2)
+	// Second acquire must now succeed (lock released on fd close). Retry
+	// briefly: a concurrent exec.Command fork(2) elsewhere in this parallel
+	// test binary can transiently keep the just-released flock alive via an
+	// inherited fd copy until that child's exec(2) closes it — see
+	// plFixtureEventuallyNoErr.
+	var release2 func()
+	err = plFixtureEventuallyNoErr(t, 2*time.Second, func() error {
+		r, acquireErr := plFixtureAcquirePidfile(t, projectDir, pid, pgid, instanceID2)
+		release2 = r
+		return acquireErr
+	})
 	if err != nil {
 		t.Fatalf("PL-002a: second acquire after release: %v", err)
 	}

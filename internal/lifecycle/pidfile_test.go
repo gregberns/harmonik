@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // TestPidfileAcquire_Success verifies that AcquirePidfile returns a non-nil
@@ -140,8 +141,17 @@ func TestPidfileRelease_AllowsReacquire(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 
-	// After release, re-acquire must succeed.
-	pf2, err := AcquirePidfile(projectDir, pid, pgid, "01950000-0000-7001-8000-000000000021")
+	// After release, re-acquire must succeed. Retry briefly: a concurrent
+	// exec.Command fork(2) elsewhere in this parallel test binary can
+	// transiently keep the just-released flock alive via an inherited fd
+	// copy until that child's exec(2) closes it — see
+	// plFixtureEventuallyNoErr.
+	var pf2 *Pidfile
+	err = plFixtureEventuallyNoErr(t, 2*time.Second, func() error {
+		var acquireErr error
+		pf2, acquireErr = AcquirePidfile(projectDir, pid, pgid, "01950000-0000-7001-8000-000000000021")
+		return acquireErr
+	})
 	if err != nil {
 		t.Fatalf("AcquirePidfile after Release: %v", err)
 	}

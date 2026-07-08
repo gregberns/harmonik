@@ -11,7 +11,52 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
+
+// plFixtureEventuallyNoErr retries fn until it returns a nil error or timeout
+// elapses, returning the last error seen. This package runs dozens of
+// t.Parallel() tests that spawn real subprocesses (exec.Command) alongside
+// tests holding flock(LOCK_EX) advisory locks. fork(2) duplicates the whole fd
+// table into the child regardless of O_CLOEXEC — only exec(2) closes
+// close-on-exec fds — so a fork happening while a flock-holding fd is open can
+// transiently keep that flock live (via the child's inherited copy) for a
+// short window after the original fd's owner has already called Release(). The
+// kernel-level guarantee ("lock released when the fd is closed") still holds;
+// it is merely delayed, not violated. A short bounded retry absorbs that
+// window without masking a genuine stuck-lock regression.
+func plFixtureEventuallyNoErr(t *testing.T, timeout time.Duration, fn func() error) error {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// plFixtureEventuallyTrue retries fn until it returns true or timeout elapses.
+// See plFixtureEventuallyNoErr for why this retry exists.
+func plFixtureEventuallyTrue(t *testing.T, timeout time.Duration, fn func() bool) bool {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if fn() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 // plFixtureTempProjectDir creates a temporary directory tree that looks like
 // a harmonik project root: the returned path contains an initialised

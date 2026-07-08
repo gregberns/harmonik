@@ -319,9 +319,9 @@ agent-review:  ## Run agent-reviewer skill against diff vs last commit (local on
 	fi
 
 # ---------------------------------------------------------------------------
-# Tool installation
+# Tool installation + git-hooks setup
 # Pins dev tools into ./.tools/ to avoid polluting the global GOPATH.
-# Run once after a fresh clone: make tools
+# Fresh-clone setup: make bootstrap  (installs tools + wires git hooks)
 # ---------------------------------------------------------------------------
 .PHONY: tools
 tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck, lefthook)
@@ -331,6 +331,19 @@ tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint,
 	$(GOBIN_TOOLS) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.3.0
 	$(GOBIN_TOOLS) go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 	$(GOBIN_TOOLS) go install github.com/evilmartians/lefthook@v1.11.13
+
+# install-hooks: wire lefthook.yml hooks into .git/hooks/ so pre-commit,
+# pre-push, and commit-msg gates run automatically on every commit.
+# Prereq: lefthook binary must exist in .tools/ (run `make tools` first).
+.PHONY: install-hooks
+install-hooks:  ## Wire lefthook.yml hooks into .git/hooks/ (run after make tools)
+	$(TOOLS_DIR)/lefthook install
+
+# bootstrap: one-stop fresh-clone setup — installs pinned tools then wires hooks.
+# Run this once after cloning; subsequent `make tools` re-pins tools without
+# re-running lefthook install (though re-running bootstrap is harmless).
+.PHONY: bootstrap
+bootstrap: tools install-hooks  ## Fresh-clone setup: install tools + wire git hooks (lefthook install)
 
 # ---------------------------------------------------------------------------
 # Help

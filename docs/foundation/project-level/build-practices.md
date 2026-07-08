@@ -14,6 +14,27 @@
 6. **Semver `0.y.z`** pre-1.0; breaking changes bump `y`, everything else bumps `z`; 1.0 only after foundation complete + full bootstrap workflow runs end-to-end.
 7. **Tag-triggered releases** via `git tag v0.y.z` → GitHub release + `goreleaser` binary matrix.
 
+## Fresh-clone bootstrap
+
+After cloning, run one command to install pinned dev tools and wire the git hooks:
+
+```sh
+make bootstrap
+```
+
+This runs two steps in order:
+1. **`make tools`** — installs gofumpt, gci, golangci-lint, govulncheck, and lefthook into `.tools/` (no global GOPATH pollution).
+2. **`make install-hooks`** — runs `$(TOOLS_DIR)/lefthook install`, which reads `lefthook.yml` and registers the pre-commit, pre-push, and commit-msg hooks in `.git/hooks/`.
+
+Without `make install-hooks` (or `make bootstrap`), the hooks in `lefthook.yml` are never wired and commits bypass the Tier 1 gate entirely. **`--no-verify` is forbidden** per Git hygiene below; installing the hooks is the way to comply.
+
+To re-run steps independently after the initial setup:
+
+```sh
+make tools          # re-pin tools (idempotent; skips hook re-registration)
+make install-hooks  # re-wire hooks (requires .tools/lefthook to exist)
+```
+
 ## Commit conventions
 
 Format: `<type>(<scope>): <subject>` — body optional, trailers optional.

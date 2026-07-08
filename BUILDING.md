@@ -12,11 +12,20 @@ Dev tools (gofumpt, gci, golangci-lint, govulncheck, lefthook) are installed loc
 ```sh
 git clone https://github.com/gregberns/harmonik
 cd harmonik
-make tools          # installs pinned dev tools into ./.tools/
-.tools/lefthook install  # wires pre-commit and pre-push hooks
+make bootstrap      # installs pinned dev tools + wires git hooks
 ```
 
-`make tools` installs lefthook into `.tools/`; `lefthook install` registers the hooks in `.git/hooks/`.
+`make bootstrap` is the single command for a fresh clone: it runs `make tools`
+(pinned gofumpt, gci, golangci-lint, govulncheck, lefthook into `.tools/`) then
+`make install-hooks` (wires `lefthook.yml` pre-commit / pre-push / commit-msg
+hooks into `.git/hooks/`).
+
+To re-run either step independently:
+
+```sh
+make tools          # re-pin tools only (skips hook re-registration)
+make install-hooks  # re-wire hooks only (requires .tools/lefthook to exist)
+```
 
 ## The three-tier check gauntlet
 

@@ -34,7 +34,7 @@ var subscribeFollowBaseReq = map[string]any{
 func TestSubscribeFollow_Exit17WhenDaemonAbsentOnFirstDial(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := dir + "/missing.sock"
-	code := runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "", os.Stdout)
+	code := runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "", os.Stdout, "")
 	if code != 17 {
 		t.Fatalf("runSubscribeFollowIO with missing socket: exit %d, want 17", code)
 	}
@@ -122,7 +122,7 @@ func TestSubscribeFollow_Reconnect(t *testing.T) {
 	t.Cleanup(func() { _ = outFile.Close() })
 
 	go func() {
-		runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile)
+		runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile, "")
 	}()
 
 	// Wait for the second connection and capture its since_event_id.
@@ -215,7 +215,7 @@ func TestSubscribeFollow_WatermarkAdvancesOnHeartbeat(t *testing.T) {
 	t.Cleanup(func() { _ = outFile.Close() })
 
 	go func() {
-		runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile)
+		runSubscribeFollowIO(subscribeFollowBaseReq, sockPath, "" /*sinceEventID*/, outFile, "")
 	}()
 
 	select {

@@ -144,6 +144,17 @@ WATCH_RESTART_SUPPRESS_WINDOW=600  # 10 minutes
 #        session and restarts it via `harmonik start crew watch`.
 WATCH_ZOMBIE_THRESHOLD=7200   # 2h: no comms-send from watch = zombie-suspected
 WATCH_SELFHEAL_COOLDOWN=3600  # 1h: minimum between self-heal kill+restart attempts
+# hk-q6yrw: watch_stream_live (below) previously ONLY tracked whether the watch
+# had SENT a comms message recently (last_watch_msg_ts) — i.e. outbound activity,
+# not stream liveness. A correctly-idle, healthy, event-driven watch with nothing
+# to escalate goes quiet on outbound messages while its `subscribe --follow`
+# connection is still very much alive (the daemon keeps delivering idle heartbeat
+# lines over it on a ~60s cadence regardless). That gap read as false watch-stalled
+# and paged the captain repeatedly. `harmonik subscribe --follow --heartbeat-file`
+# touches a sentinel file's mtime on every decoded line, heartbeats included — this
+# threshold is how stale that mtime may be before the file itself no longer counts
+# as proof of a live stream. Deliberately generous vs. the ~60s heartbeat cadence.
+WATCH_STREAM_HEARTBEAT_STALE=300  # 5m: subscribe-stream heartbeat-file staleness ceiling
 # hk-ghcqn: idle-submit-wedge auto-nudge. When watch-stalled is confirmed (cursor
 # frozen + actionable events past it + stream dead) and the watch tmux session is
 # alive, inject Enter into the watch pane to unblock the /rc auto-submit-wedge.
@@ -382,6 +393,17 @@ fi
 WATCH_CURSOR=""
 if [[ -f "$PROJ/.harmonik/watch/cursor" ]]; then
   WATCH_CURSOR=$(tr -d '[:space:]' < "$PROJ/.harmonik/watch/cursor" 2>/dev/null || echo "")
+fi
+
+# ── hk-q6yrw: read subscribe-stream heartbeat-file mtime ─────────────────────
+# Written by `harmonik subscribe --follow --heartbeat-file` on every decoded
+# line (events AND idle heartbeats). Genuine stream-liveness proxy, independent
+# of whether the watch itself sent any comms message.
+STREAM_HEARTBEAT_MTIME=0
+if [[ -f "$PROJ/.harmonik/watch/stream.heartbeat" ]]; then
+  STREAM_HEARTBEAT_MTIME=$(stat -f %m "$PROJ/.harmonik/watch/stream.heartbeat" 2>/dev/null \
+    || stat -c %Y "$PROJ/.harmonik/watch/stream.heartbeat" 2>/dev/null \
+    || echo 0)
 fi
 
 # ── Collect data (skip if daemon is down) ─────────────────────────────────────
@@ -636,6 +658,9 @@ watch_stall_ticks     = int('$WATCH_STALL_TICKS')
 prev_watch_cursor     = '$PREV_WATCH_CURSOR'
 prev_watch_stall_misses = int('$PREV_WATCH_STALL_MISSES')
 watch_cursor          = '$WATCH_CURSOR'
+# hk-q6yrw: subscribe-stream heartbeat-file liveness inputs.
+stream_heartbeat_mtime   = int('$STREAM_HEARTBEAT_MTIME')
+watch_stream_heartbeat_stale = int('$WATCH_STREAM_HEARTBEAT_STALE')
 # hk-7o4i0: flap-retention grace + deploy/restart suppression inputs.
 watch_session_created = int('$WATCH_SESSION_CREATED')
 watch_restart_suppress_window = int('$WATCH_RESTART_SUPPRESS_WINDOW')
@@ -1203,16 +1228,25 @@ watch_down = (watch_opsmonitor_target != 'captain' and not watch_present
 # is sitting past the cursor unescalated. Benign churn no longer trips the counter.
 # ── hk-gioct: subscribe stream-liveness gate ────────────────────────────────
 # watch_stream_live: True when the watch subscription stream appears alive.
-# Proxy: the watch sent any agent_message (escalation, daemon-fired liveness ping,
-# etc.) within watch_zombie_threshold seconds. This is the same evidence used by
-# watch_zombie (hk-unwzh F2), making the two flags complementary:
-#   watch_stream_live = True  → stream alive → cursor frozen = long agent turn, not stall
+# Two independent proxies, either one sufficient:
+#   (a) message-based: the watch sent any agent_message (escalation, daemon-fired
+#       liveness ping, etc.) within watch_zombie_threshold seconds. Same evidence
+#       used by watch_zombie (hk-unwzh F2).
+#   (b) hk-q6yrw file-based: the subscribe-stream heartbeat file (written by
+#       `harmonik subscribe --follow --heartbeat-file` on EVERY decoded line,
+#       including idle heartbeats) was touched within watch_stream_heartbeat_stale
+#       seconds. This is the genuine liveness signal — it advances whether or not
+#       the watch ever sends anything, so a correctly-idle healthy watch (nothing
+#       actionable to escalate) does not read as stream-dead just because it has
+#       been quiet. (a) alone conflated "watch chose not to speak" with "stream
+#       died," producing false watch-stalled pages on a healthy idle watch.
+#   watch_stream_live = True  → stream alive → cursor frozen = long agent turn / idle, not stall
 #   watch_stream_live = False → stream dead  → cursor frozen = genuine stall candidate
-# When last_watch_msg_ts == 0 (new session, no messages yet), stream_live is False;
-# new sessions are already covered by watch_restart_suppressed during the boot window.
+# When last_watch_msg_ts == 0 AND no heartbeat file, stream_live is False; new
+# sessions are already covered by watch_restart_suppressed during the boot window.
 watch_stream_live = (
-    last_watch_msg_ts > 0
-    and (ts_epoch - last_watch_msg_ts) <= watch_zombie_threshold
+    (last_watch_msg_ts > 0 and (ts_epoch - last_watch_msg_ts) <= watch_zombie_threshold)
+    or (stream_heartbeat_mtime > 0 and (ts_epoch - stream_heartbeat_mtime) <= watch_stream_heartbeat_stale)
 )
 new_watch_stall_misses = 0
 watch_stalled = False
@@ -1640,6 +1674,8 @@ snapshot = {
     'do_selfheal': do_selfheal,
     # hk-gioct: stream-liveness gate result (True = stream alive, False = stream dead).
     'watch_stream_live': watch_stream_live,
+    # hk-q6yrw: subscribe-stream heartbeat-file mtime (epoch, 0 = file absent).
+    'stream_heartbeat_mtime': stream_heartbeat_mtime,
     # hk-ghcqn: idle-submit-wedge auto-nudge (True = Enter injected into watch pane this tick).
     'do_nudge': do_nudge,
     'release_due': release_due,

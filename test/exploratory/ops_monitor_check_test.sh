@@ -57,6 +57,8 @@
 #   [x] watch present+tmux-alive, cursor frozen N ticks with pending events → watch-stalled IMMEDIATE (Test 35a)
 #   [x] cursor advancing → no watch-stalled signal (Test 35b)
 #   [x] watch absent-from-comms but tmux-alive → NOT watch_down (dual-probe) (Test 35c)
+#   [x] idle-but-actively-streaming watch (heartbeat file fresh, no outbound msg)
+#       → HEALTHY, no watch-stalled (Test 45, hk-q6yrw)
 #   [x] SD-4 POSITIVE: program drained + KNOWN lane wake-economy ready + free slot →
 #                      IMMEDIATE 'program-drained-stall' NAMES wake-economy (Test 36)
 #   [x] SD-4 NEGATIVE: same lane ZERO ready beads → no program-drained-stall (Test 37)
@@ -194,6 +196,7 @@ setup_fixture() {
   local watch_absent_threshold=600 # WE9: absent_thresh_s written to config when watch is target
   local watch_stall_ticks=3        # WE9: stall_ticks written to config when watch is target
   local watch_cursor=''            # WE9: content of .harmonik/watch/cursor ('' = no cursor file)
+  local watch_stream_heartbeat_age='' # hk-q6yrw: seconds-ago mtime for .harmonik/watch/stream.heartbeat ('' = no file)
   local watch_session_created=''   # hk-7o4i0: epoch returned by `tmux display-message ... session_created`
                                    # ('' = probe returns nothing → script treats start time as unknown)
   local state_json=''
@@ -225,6 +228,7 @@ setup_fixture() {
       --watch-absent-threshold)    watch_absent_threshold="$2"; shift 2 ;;  # WE9
       --watch-stall-ticks)         watch_stall_ticks="$2"; shift 2 ;;        # WE9
       --watch-cursor)              watch_cursor="$2"; shift 2 ;;              # WE9
+      --watch-stream-heartbeat-age) watch_stream_heartbeat_age="$2"; shift 2 ;; # hk-q6yrw
       --watch-session-created)     watch_session_created="$2"; shift 2 ;;    # hk-7o4i0 Fix B
       --state-json)                state_json="$2";    shift 2 ;;
       --events-jsonl)              events_content="$2";shift 2 ;;
@@ -257,6 +261,16 @@ setup_fixture() {
   if [[ -n "$watch_cursor" ]]; then
     mkdir -p "$tmpdir/.harmonik/watch"
     printf '%s' "$watch_cursor" > "$tmpdir/.harmonik/watch/cursor"
+  fi
+  # hk-q6yrw: write subscribe-stream heartbeat file with a backdated mtime if
+  # specified — simulates `harmonik subscribe --follow --heartbeat-file` having
+  # touched it <age> seconds ago, independent of any comms message from watch.
+  if [[ -n "$watch_stream_heartbeat_age" ]]; then
+    mkdir -p "$tmpdir/.harmonik/watch"
+    local hb_file="$tmpdir/.harmonik/watch/stream.heartbeat"
+    : > "$hb_file"
+    local hb_mtime=$(( $(date +%s) - watch_stream_heartbeat_age ))
+    python3 -c "import os,sys; os.utime(sys.argv[1], (int(sys.argv[2]), int(sys.argv[2])))" "$hb_file" "$hb_mtime" 2>/dev/null || true
   fi
   # SD-1: write lanes.json if specified (empty => no file, defensive skip path).
   if [[ -n "$lanes_json" ]]; then
@@ -2253,6 +2267,57 @@ else
   WSM_35D=$(python3 -c "import json; d=json.load(open('$PROJ/.harmonik/ops-monitor/state.json')); print(d.get('watch_stall_misses', 'missing'))" 2>/dev/null || echo "missing")
   assert_eq "35d: watch_stall_misses reset to 0 on benign-only churn" "0" "$WSM_35D"
   assert_not_contains "35d: no watch-stalled in stdout" "watch-stalled" "$OUTPUT_35D"
+fi
+rm -rf "$PROJ"
+
+# Test 45 (hk-q6yrw): idle-but-actively-streaming watch → HEALTHY, no watch-stalled.
+# Same shape as Test 35a (frozen cursor + one genuinely actionable event past it,
+# stall counter one tick from firing) EXCEPT the watch has NOT sent any comms
+# message recently (last_watch_msg_ts stays 0 — no agent_message from watch in
+# events.jsonl) — under the OLD message-only liveness proxy this read as
+# stream-dead and fired watch-stalled, even though the watch is correctly idle
+# because it has nothing to escalate and its subscribe stream is genuinely alive
+# (daemon heartbeats still landing every ~60s). The subscribe-stream heartbeat
+# file, touched 30s ago, proves the stream is alive without any outbound message.
+echo ""
+echo "=== Test 45: hk-q6yrw — idle-but-streaming watch (heartbeat file fresh, no outbound msg) → HEALTHY ==="
+EID_CURSOR_45="eid-cursor-idle-001"
+EID_LATEST_45="eid-latest-idle-002"
+WATCH_TS_OLD_45=$(ts_ago 300)
+WATCH_TS_NEW_45=$(ts_ago 200)
+EVENTS_45='{"event_id":"'"$EID_CURSOR_45"'","type":"run_completed","timestamp_wall":"'"$WATCH_TS_OLD_45"'","run_id":"run-idle-a"}
+{"event_id":"'"$EID_LATEST_45"'","type":"run_failed","timestamp_wall":"'"$WATCH_TS_NEW_45"'","run_id":"run-idle-b"}'
+# prev state: cursor already frozen for (stall_ticks - 1) = 2 ticks; one more tick
+# would fire under Test 35a's conditions. Here the heartbeat file must hold it off.
+STATE_45='{"schema_version":1,"ts":"2026-06-24T00:00:00Z","stale_crew_misses":{},"keeper_coverage_misses":{},"last_digest_ts":0,"alerted_immediate":{},"watch_cursor":"'"$EID_CURSOR_45"'","watch_stall_misses":2}'
+CW_45='{"agent":"watch","status":"online","last_seen":"'"$(ts_ago 30)"'"}'
+PROJ=$(setup_fixture \
+  --hk-queue-status-json '{"status":"ok"}' \
+  --hk-queue-list-json '{"queues":[],"max_concurrent":4}' \
+  --hk-comms-who-json "$CW_45" \
+  --hk-supervise-status-json '{"schema_version":1,"running":true,"status":"running"}' \
+  --watch-opsmonitor-target watch \
+  --watch-stall-ticks 3 \
+  --watch-cursor "$EID_CURSOR_45" \
+  --watch-stream-heartbeat-age 30 \
+  --state-json "$STATE_45" \
+  --events-jsonl "$EVENTS_45" \
+  --tmux-watch-alive true \
+)
+OUTPUT_45=$(run_check "$PROJ" 2>&1)
+LATEST_45="$PROJ/.harmonik/ops-monitor/latest.json"
+if [[ ! -f "$LATEST_45" ]]; then
+  fail "45: latest.json missing"
+else
+  SIGS_45=$(python3 -c "import json; d=json.load(open('$LATEST_45')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
+  if echo "$SIGS_45" | grep -q "watch-stalled"; then
+    fail "45: watch-stalled FALSE-POSITIVE on idle-but-streaming watch (hk-q6yrw regression); got: $SIGS_45"
+  else
+    pass "45: no watch-stalled for idle-but-actively-streaming watch (hk-q6yrw)"
+  fi
+  STREAM_LIVE_45=$(python3 -c "import json; d=json.load(open('$LATEST_45')); print(d.get('watch_stream_live'))" 2>/dev/null || echo "missing")
+  assert_eq "45: watch_stream_live=True from heartbeat file alone (no outbound msg)" "True" "$STREAM_LIVE_45"
+  assert_not_contains "45: no watch-stalled in stdout" "watch-stalled" "$OUTPUT_45"
 fi
 rm -rf "$PROJ"
 

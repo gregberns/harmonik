@@ -36,7 +36,11 @@ The full architectural rationale and operator decisions live in
 1. `harmonik comms join --name watch` — join the bus with your stable name.
 2. `br update <watch-epic-id> --assignee watch` — mirror assignee (load-bearing for Gap-1).
 3. Post a boot status to captain: `harmonik comms send --from watch --to captain --topic status -- "watch online; cursor <cursor>"`.
-4. Arm your bus subscription: `harmonik subscribe --types <event-set> --since-event-id <cursor> --follow`.
+4. Arm your bus subscription: `harmonik subscribe --types <event-set> --since-event-id <cursor> --follow --heartbeat-file .harmonik/watch/stream.heartbeat`.
+   The `--heartbeat-file` flag is load-bearing (hk-q6yrw): ops-monitor reads that
+   file's mtime as proof the stream is alive, independent of whether you have
+   sent anything recently. Without it, a correctly-idle watch with nothing to
+   escalate can be misread as stalled and paged.
 5. Arm your directed inbox: `harmonik comms recv --agent watch --follow --json`.
 
 Your stable comms name is `watch`. All `--from` flags use `watch`.

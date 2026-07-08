@@ -18,6 +18,10 @@ package main
 //	--topic <topic>        Agent-message addressing filter: only deliver agent_message events with matching topic
 //	--socket <path>        Override socket path (default: <project>/.harmonik/daemon.sock)
 //	--project <dir>        Project directory (default: cwd)
+//	--heartbeat-file <path> With --follow: touch this file's mtime on every decoded
+//	                        line (events AND idle heartbeats), so an external health
+//	                        checker can tell the stream is alive without depending on
+//	                        whether THIS process ever emits output of its own (hk-q6yrw).
 //
 // Exit codes:
 //
@@ -60,6 +64,7 @@ func runSubscribeSubcommand(subArgs []string) int {
 	topicFlag := ""
 	socketFlag := ""
 	projectFlag := ""
+	heartbeatFileFlag := ""
 
 	for i := 0; i < len(subArgs); i++ {
 		arg := subArgs[i]
@@ -119,6 +124,11 @@ func runSubscribeSubcommand(subArgs []string) int {
 			projectFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--project="):
 			projectFlag = strings.TrimPrefix(arg, "--project=")
+		case arg == "--heartbeat-file" && i+1 < len(subArgs):
+			i++
+			heartbeatFileFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--heartbeat-file="):
+			heartbeatFileFlag = strings.TrimPrefix(arg, "--heartbeat-file=")
 		// Accept --json as a no-op alias (output is already NDJSON).
 		case arg == "--json":
 			// no-op
@@ -178,7 +188,7 @@ func runSubscribeSubcommand(subArgs []string) int {
 	}
 
 	if followFlag {
-		return runSubscribeFollowIO(reqBodyBase, sockPath, sinceFlag, os.Stdout)
+		return runSubscribeFollowIO(reqBodyBase, sockPath, sinceFlag, os.Stdout, heartbeatFileFlag)
 	}
 
 	// Non-follow: single connection, stream to stdout until EOF or signal.
@@ -250,7 +260,13 @@ func runSubscribeSubcommand(subArgs []string) int {
 // Watermark: lastSeen advances from event_id on each received event and from
 // heartbeat.last_event_id (EV-037a) so reconnects in quiet periods do not
 // replay events already delivered.
-func runSubscribeFollowIO(reqBodyBase map[string]any, sockPath, sinceEventID string, w io.Writer) int {
+// heartbeatFilePath, when non-empty, is touched (mtime updated) on every
+// decoded line — events AND idle heartbeats alike — so an external health
+// checker (ops-monitor) can distinguish "stream is alive but nothing to
+// escalate" from "stream is dead" without relying on this process's own
+// output (hk-q6yrw: a healthy idle watch was mis-read as stalled because the
+// prior liveness proxy only tracked messages THIS process chose to send).
+func runSubscribeFollowIO(reqBodyBase map[string]any, sockPath, sinceEventID string, w io.Writer, heartbeatFilePath string) int {
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -366,6 +382,11 @@ func runSubscribeFollowIO(reqBodyBase map[string]any, sockPath, sinceEventID str
 				return 1
 			}
 
+			// hk-q6yrw: touch the heartbeat file for every decoded line,
+			// including idle heartbeats — this is stream liveness, not
+			// activity, so it must not depend on the line's contents.
+			touchSubscribeHeartbeatFile(heartbeatFilePath)
+
 			// Extract watermark fields without re-marshaling the full event.
 			var env struct {
 				Type        string `json:"type"`
@@ -399,6 +420,28 @@ func runSubscribeFollowIO(reqBodyBase map[string]any, sockPath, sinceEventID str
 	}
 }
 
+// touchSubscribeHeartbeatFile best-effort-updates path's mtime (creating it
+// and any parent directory if needed). Errors are swallowed: the heartbeat
+// file is an observability aid, never allowed to interrupt the stream.
+func touchSubscribeHeartbeatFile(path string) {
+	if path == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	now := time.Now()
+	if err := os.Chtimes(path, now, now); err == nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // heartbeat sentinel path, not user input
+	if err != nil {
+		return
+	}
+	_ = f.Close()
+	_ = os.Chtimes(path, now, now)
+}
+
 func subscribeUsage() {
 	fmt.Print(`harmonik subscribe — stream daemon events on the Unix socket
 
@@ -415,6 +458,8 @@ FLAGS
   --topic TOPIC          Agent-message filter: only agent_message events with matching topic
   --socket PATH          Override socket path (default: <project>/.harmonik/daemon.sock)
   --project DIR          Project directory (default: cwd)
+  --heartbeat-file PATH  With --follow: touch PATH's mtime on every decoded line
+                         (events and idle heartbeats), for external liveness checks
   --json                 No-op alias; output is already NDJSON
 
 EXIT CODES

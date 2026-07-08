@@ -615,68 +615,40 @@ func TestWM040a_HookCommandIsAbsolutePath(t *testing.T) {
 	}
 }
 
-// TestWM040a_PermissionsAllowPresent verifies that MaterializeClaudeSettings
-// writes a "permissions.allow" array containing the standard harmonik tool set
-// per workspace-model.md §4.7a WM-040a (hk-53y35 amendment).
+// TestWM040a_PermissionsAllowAbsent verifies that a freshly-materialized
+// settings.json does NOT write a harmonik-default "permissions.allow" block
+// (hk trust-modal fix, 2026-07-06).
 //
-// Per-tool permission dialogs block unattended daemon operation; pre-authorizing
-// the standard Claude Code tool set via settings.json is the spec-compliant
-// alternative to the deny-listed --dangerously-skip-permissions flag.
+// Rationale: in a git-worktree context Claude Code >= 2.1.201 fires an interactive
+// "This folder pre-approves N tool permissions in .claude/settings.json" consent
+// modal whenever project-local settings declare permissions.allow. That modal is
+// NOT suppressed by the ~/.claude.json trust keys (hasTrustDialogAccepted /
+// hasCompletedProjectOnboarding) NOR by --dangerously-skip-permissions, so a
+// daemon-spawned pane wedges at it and times out at agent_ready (HC-056). Every
+// harmonik worktree launch already passes --dangerously-skip-permissions
+// (HC-055b), which makes the allow-list redundant; omitting it removes the modal.
+// This inverts the former TestWM040a_PermissionsAllowPresent (hk-53y35).
 //
-// Spec ref: workspace-model.md §4.7a WM-040a; claude-hook-bridge.md §4.2 CHB-007.
-// Bead: hk-53y35.
-func TestWM040a_PermissionsAllowPresent(t *testing.T) {
+// Spec ref: workspace-model.md §4.7a WM-040a (permissions-block removal note).
+func TestWM040a_PermissionsAllowAbsent(t *testing.T) {
 	t.Parallel()
 
 	workspacePath := t.TempDir()
 	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
-		t.Fatalf("TestWM040a_PermissionsAllowPresent: MaterializeClaudeSettings: %v", err)
+		t.Fatalf("TestWM040a_PermissionsAllowAbsent: MaterializeClaudeSettings: %v", err)
 	}
 
 	settingsPath := claudeSettingsFixturePath(workspacePath)
 	m := claudeSettingsFixtureReadJSON(t, settingsPath)
 
-	// Assert: top-level "permissions" key is present and is an object.
-	permRaw, ok := m["permissions"]
-	if !ok {
-		t.Fatalf("TestWM040a_PermissionsAllowPresent: no top-level 'permissions' key in settings.json")
-	}
-	permMap, ok := permRaw.(map[string]interface{})
-	if !ok {
-		t.Fatalf("TestWM040a_PermissionsAllowPresent: 'permissions' is not an object, got %T", permRaw)
-	}
-
-	// Assert: permissions.allow is present and is an array.
-	allowRaw, ok := permMap["allow"]
-	if !ok {
-		t.Fatalf("TestWM040a_PermissionsAllowPresent: 'permissions.allow' key absent")
-	}
-	allowArr, ok := allowRaw.([]interface{})
-	if !ok {
-		t.Fatalf("TestWM040a_PermissionsAllowPresent: 'permissions.allow' is not an array, got %T", allowRaw)
-	}
-
-	// Assert: each expected tool appears in the array.
-	wantTools := harmonikAllowedTools
-	allowSet := make(map[string]bool, len(allowArr))
-	for _, v := range allowArr {
-		if s, ok := v.(string); ok {
-			allowSet[s] = true
-		}
-	}
-	for _, want := range wantTools {
-		wantStr, ok2 := want.(string)
-		if !ok2 {
-			continue
-		}
-		if !allowSet[wantStr] {
-			t.Errorf("TestWM040a_PermissionsAllowPresent: tool %q absent from permissions.allow", wantStr)
-		}
+	// Assert: harmonik does NOT write a top-level "permissions" key on a fresh build.
+	if _, ok := m["permissions"]; ok {
+		t.Errorf("TestWM040a_PermissionsAllowAbsent: 'permissions' key present; harmonik must not write a permissions.allow block (trust-modal fix)")
 	}
 
 	// Assert: dangerouslySkipPermissions is NOT present (spec-forbidden, CHB-007).
 	if _, ok := m["dangerouslySkipPermissions"]; ok {
-		t.Errorf("TestWM040a_PermissionsAllowPresent: dangerouslySkipPermissions present; must not be set (CHB-007 deny-list)")
+		t.Errorf("TestWM040a_PermissionsAllowAbsent: dangerouslySkipPermissions present; must not be set (CHB-007 deny-list)")
 	}
 }
 
@@ -849,4 +821,82 @@ func assertAutoLoadedSkillsDisabled(t *testing.T, m map[string]interface{}, ctx 
 	if len(arr) != 0 {
 		t.Errorf("%s: 'autoLoadedSkillsDirectories' = %v; want empty []", ctx, arr)
 	}
+}
+
+// TestDispatchConsentFix_NoPermissionsAllowInjected is the deterministic E2E
+// canary for the dispatch-consent-fix (hk-5gmkd / HC-056). It materializes
+// worktree settings through the real MaterializeClaudeSettings path — exactly
+// as a bead run does — and asserts the on-disk settings.json contains NO
+// harmonik-injected top-level permissions.allow block. A pre-approved
+// permissions.allow in a git-worktree project settings is a consent gate that
+// Claude Code >= 2.1.204 fires an interactive modal for, which
+// --dangerously-skip-permissions does NOT bypass; SessionStart then never fires
+// and the launch times out at agent_ready. The two sub-cases together cover
+// both write sites: buildBridgeOnlySettings (fresh) and mergeSettingsWithBridge
+// (existing user settings).
+//
+// Refs: hk-5gmkd, HC-056, #25.
+func TestDispatchConsentFix_NoPermissionsAllowInjected(t *testing.T) {
+	t.Parallel()
+
+	t.Run("fresh_worktree_no_injected_allow", func(t *testing.T) {
+		t.Parallel()
+		workspacePath := t.TempDir()
+		if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+			t.Fatalf("MaterializeClaudeSettings: %v", err)
+		}
+		m := claudeSettingsFixtureReadJSON(t, claudeSettingsFixturePath(workspacePath))
+		// A bead worktree must NOT carry a harmonik-injected permissions block —
+		// otherwise it trips Claude Code's pre-approved-permissions consent modal.
+		if perm, ok := m["permissions"]; ok {
+			t.Errorf("consent-gate canary: fresh settings.json has top-level 'permissions' = %v; "+
+				"harmonik must not inject permissions.allow (would trip the consent modal, HC-056)", perm)
+		}
+	})
+
+	t.Run("user_allow_preserved_not_augmented", func(t *testing.T) {
+		t.Parallel()
+		workspacePath := t.TempDir()
+
+		// A user who deliberately commits their own permissions.allow keeps it —
+		// harmonik neither strips nor augments it. (If the user opts into the
+		// consent modal by declaring their own allow, that is their choice.)
+		userSettings := map[string]interface{}{
+			"permissions": map[string]interface{}{
+				"allow": []interface{}{"Read"},
+			},
+		}
+		settingsPath := claudeSettingsFixturePath(workspacePath)
+		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+		if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		raw, err := json.Marshal(userSettings)
+		if err != nil {
+			t.Fatalf("marshal user settings: %v", err)
+		}
+		if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
+			t.Fatalf("WriteFile user settings: %v", err)
+		}
+
+		if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+			t.Fatalf("MaterializeClaudeSettings (merge): %v", err)
+		}
+
+		m := claudeSettingsFixtureReadJSON(t, settingsPath)
+		permMap, ok := m["permissions"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("consent-gate canary: user 'permissions' object was dropped, got %T", m["permissions"])
+		}
+		allowArr, ok := permMap["allow"].([]interface{})
+		if !ok {
+			t.Fatalf("consent-gate canary: user 'permissions.allow' was dropped, got %T", permMap["allow"])
+		}
+		// The user's allow-list must be preserved verbatim — exactly ["Read"],
+		// NOT augmented with the retired harmonik default tool set.
+		if len(allowArr) != 1 || allowArr[0] != "Read" {
+			t.Errorf("consent-gate canary: user permissions.allow = %v; want [\"Read\"] preserved verbatim "+
+				"(harmonik must not augment it)", allowArr)
+		}
+	})
 }

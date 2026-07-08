@@ -250,6 +250,16 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 		return nil
 	}
 
+	// hasTrustDialogAccepted is the operative key for Claude Code's folder-trust
+	// gate — confirmed empirically on 2.1.201: seeding this key alone boots a
+	// daemon-spawned pane clean with no "Is this a project you trust?" modal
+	// (2026-07-06 trust-modal investigation). The separate "pre-approves N tool
+	// permissions" consent modal is NOT a trust-key concern — it is driven by the
+	// permissions.allow block in the worktree settings.json, which harmonik no
+	// longer writes (see claudesettings_wm040a.go). hasCompletedProjectOnboarding
+	// is NOT written here: it is not the operative key, and requiring it in the
+	// already-trusted probe would defeat the hk-bfvby lock-free fast path (every
+	// legacy single-key entry would take the LOCK_EX write path).
 	projectEntry["hasTrustDialogAccepted"] = true
 	projects[worktreePath] = projectEntry
 	cfg["projects"] = projects

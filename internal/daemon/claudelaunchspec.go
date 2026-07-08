@@ -480,31 +480,64 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	return spec, artifacts, nil
 }
 
-// isHarmonikManagedWorktree reports whether workspacePath canonicalizes to a
-// path under worktreeRootPath per specs/handler-contract.md §4.10 HC-055b.
+// isHarmonikManagedWorktree reports whether workspacePath is an operator-sanctioned
+// harmonik worktree, per specs/handler-contract.md §4.10 HC-055b — the positive
+// allowlist that gates emission of --dangerously-skip-permissions.
 //
-// The check is a positive-allowlist match: both paths are resolved via
-// os.EvalSymlinks before comparison. If either resolution fails (e.g. the
-// directory has not yet been created) the function returns false and the caller
-// omits --dangerously-skip-permissions without error.
+// A positive match is returned when EITHER:
+//   - (primary) workspacePath canonicalizes (via filepath.EvalSymlinks) to a path
+//     under the canonicalized worktreeRootPath, when worktreeRootPath is non-empty
+//     and resolvable; OR
+//   - (fallback) workspacePath contains a harmonik-managed worktrees path segment
+//     (.harmonik/worktrees/ or .harmonik/crew-worktrees/). This covers the case
+//     where worktreeRootPath is empty/unthreaded or its canonicalization mismatches
+//     the workspace (see the trust-modal fix, hk-5gmkd / HC-056).
 //
-// An empty worktreeRootPath always returns false (tests that do not populate
-// the field should not receive the flag).
+// If workspacePath's own EvalSymlinks fails (e.g. the dir is not yet created) the
+// unresolved path is used for the segment check rather than short-circuiting to
+// false. An empty workspacePath always returns false. Note: unlike an earlier
+// revision, an empty worktreeRootPath does NOT force false — the segment fallback
+// can still match.
 func isHarmonikManagedWorktree(workspacePath, worktreeRootPath string) bool {
-	if worktreeRootPath == "" || workspacePath == "" {
-		return false
-	}
-	canonRoot, err := filepath.EvalSymlinks(worktreeRootPath)
-	if err != nil {
+	if workspacePath == "" {
 		return false
 	}
 	canonWS, err := filepath.EvalSymlinks(workspacePath)
 	if err != nil {
-		return false
+		// Fall back to the unresolved path so the segment check below can still
+		// match (the worktree dir exists at launch, but be defensive).
+		canonWS = workspacePath
 	}
-	// Ensure the prefix includes a trailing separator so that a root path that
-	// is a prefix of another root path does not produce a false positive.
-	// E.g., /foo/bar must not match /foo/barbaz.
-	prefix := canonRoot + string(filepath.Separator)
-	return strings.HasPrefix(canonWS, prefix)
+	// Primary check: workspacePath canonicalizes under the configured worktree root.
+	if worktreeRootPath != "" {
+		if canonRoot, rerr := filepath.EvalSymlinks(worktreeRootPath); rerr == nil {
+			// Ensure the prefix includes a trailing separator so that a root path
+			// that is a prefix of another root path does not produce a false
+			// positive. E.g., /foo/bar must not match /foo/barbaz.
+			prefix := canonRoot + string(filepath.Separator)
+			if strings.HasPrefix(canonWS, prefix) {
+				return true
+			}
+		}
+	}
+	// Fallback (hk trust-modal fix): any path under a harmonik-managed worktrees
+	// directory IS operator-sanctioned, regardless of worktreeRootPath threading or
+	// a canonicalization mismatch between the root and the workspace. Without this,
+	// the mismatch drops --dangerously-skip-permissions and the bead agent wedges on
+	// Claude Code's interactive trust / pre-approved-permissions modal, so
+	// SessionStart never fires and the launch times out at agent_ready (HC-056).
+	sep := string(filepath.Separator)
+	for _, seg := range []string{
+		sep + ".harmonik" + sep + "worktrees" + sep, // implementer worktrees (DefaultWorktreeRoot)
+		// crew-launch worktree path — no Go code creates .harmonik/crew-worktrees/
+		// today (DefaultWorktreeRoot is .harmonik/worktrees), but the crew launch
+		// flow uses this dir; keep it as forward-compat/defensive coverage so a
+		// crew pane also gets --dangerously-skip-permissions.
+		sep + ".harmonik" + sep + "crew-worktrees" + sep,
+	} {
+		if strings.Contains(canonWS, seg) {
+			return true
+		}
+	}
+	return false
 }

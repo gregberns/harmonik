@@ -1,0 +1,70 @@
+{
+  "//": "Golden fixture for TestConformanceCorpus_MatrixVerdictSchema (WS-E/3 hk-g6plo.3).",
+  "//schema": "schema_version=1 output of scripts/core-loop-matrix.sh --verdict-out.",
+  "//usage": "WS-E/4 queries this file to read per-cell PASS/FAIL without parsing human text.",
+  "schema_version": 1,
+  "run_at": "2026-07-07T00:00:00Z",
+  "summary": {
+    "green": 1,
+    "red": 1,
+    "pending": 0,
+    "skip": 2,
+    "total": 4
+  },
+  "cells": [
+    {
+      "cell": "codex:local",
+      "harness": "codex",
+      "substrate": "local",
+      "verdict": "green",
+      "detail": "CELL_VERDICT green",
+      "gaps": [
+        {
+          "gap": "gap1",
+          "verdict": "pass",
+          "detail": "harness=codex tier=1 model=<uncontrolled>"
+        },
+        {
+          "gap": "gap3",
+          "verdict": "pass",
+          "detail": "provider produced a real HEAD change (commit_landed)"
+        },
+        {
+          "gap": "gap4",
+          "verdict": "pass",
+          "detail": "workflow_mode=single workflow_id=wf-0001"
+        }
+      ]
+    },
+    {
+      "cell": "pi:local",
+      "harness": "pi",
+      "substrate": "local",
+      "verdict": "red",
+      "detail": "CELL_VERDICT red",
+      "gaps": [
+        {
+          "gap": "gap1",
+          "verdict": "fail",
+          "detail": "node-model pin LEAKED into harness pi: forbidden model(s) claude-opus-4-8"
+        }
+      ]
+    },
+    {
+      "cell": "codex:remote",
+      "harness": "codex",
+      "substrate": "remote",
+      "verdict": "skip",
+      "detail": "no --remote-worker / MATRIX_REMOTE_WORKER set",
+      "gaps": []
+    },
+    {
+      "cell": "pi:remote",
+      "harness": "pi",
+      "substrate": "remote",
+      "verdict": "skip",
+      "detail": "no --remote-worker / MATRIX_REMOTE_WORKER set",
+      "gaps": []
+    }
+  ]
+}

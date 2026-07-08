@@ -20,6 +20,8 @@ package scenario
 // Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -38,6 +40,39 @@ func conformanceCorpusFixtureRepoRoot(t *testing.T) string {
 	// Walk: internal/scenario/conformancecorpus_test.go → internal/scenario → internal → <root>
 	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
 	return root
+}
+
+// matrixVerdictFile is the schema of the JSON verdict artifact written by
+// scripts/core-loop-matrix.sh (schema_version=1, WS-E/3 hk-g6plo.3).
+// WS-E/4 reads this to determine per-cell PASS/FAIL without parsing human text.
+type matrixVerdictFile struct {
+	SchemaVersion int                  `json:"schema_version"`
+	RunAt         string               `json:"run_at"`
+	Summary       matrixVerdictSummary `json:"summary"`
+	Cells         []matrixVerdictCell  `json:"cells"`
+}
+
+type matrixVerdictSummary struct {
+	Green   int `json:"green"`
+	Red     int `json:"red"`
+	Pending int `json:"pending"`
+	Skip    int `json:"skip"`
+	Total   int `json:"total"`
+}
+
+type matrixVerdictCell struct {
+	Cell      string             `json:"cell"`
+	Harness   string             `json:"harness"`
+	Substrate string             `json:"substrate"`
+	Verdict   string             `json:"verdict"`
+	Detail    string             `json:"detail"`
+	Gaps      []matrixVerdictGap `json:"gaps"`
+}
+
+type matrixVerdictGap struct {
+	Gap     string `json:"gap"`
+	Verdict string `json:"verdict"`
+	Detail  string `json:"detail"`
 }
 
 // TestConformanceCorpus_SH101ScenariosParse verifies that every §10.1 conformance
@@ -134,4 +169,115 @@ func TestConformanceCorpus_SH101ScenariosParse(t *testing.T) {
 				len(sf.ExpectedWorkspace), sf.ExpectedOutcome != nil)
 		})
 	}
+}
+
+// TestConformanceCorpus_MatrixVerdictSchema validates the JSON verdict file schema
+// written by scripts/core-loop-matrix.sh (schema_version=1, WS-E/3 hk-g6plo.3).
+// This is the §10.1 conformance-floor registry entry for the core-loop-proof matrix:
+// it anchors the per-cell PASS/FAIL schema contract so WS-E/4 and the assessor can
+// read it without parsing human text.
+//
+// Uses the golden fixture at scenarios/core-loop-proof/testdata/matrix-verdict-golden.json;
+// the real artifact is written by the matrix runner on every live run to
+// $SCRATCH/.harmonik/matrix-verdict.json.
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+func TestConformanceCorpus_MatrixVerdictSchema(t *testing.T) {
+	t.Parallel()
+
+	root := conformanceCorpusFixtureRepoRoot(t)
+	goldenPath := filepath.Join(root, "scenarios", "core-loop-proof", "testdata", "matrix-verdict-golden.json")
+
+	data, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q): %v", goldenPath, err)
+	}
+
+	var v matrixVerdictFile
+	if err := json.Unmarshal(data, &v); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	// schema_version must be 1.
+	if v.SchemaVersion != 1 {
+		t.Errorf("schema_version = %d, want 1", v.SchemaVersion)
+	}
+
+	// run_at must be non-empty.
+	if v.RunAt == "" {
+		t.Error("run_at is empty")
+	}
+
+	// summary totals must be self-consistent.
+	wantTotal := v.Summary.Green + v.Summary.Red + v.Summary.Pending + v.Summary.Skip
+	if v.Summary.Total != wantTotal {
+		t.Errorf("summary.total = %d, want %d (green=%d + red=%d + pending=%d + skip=%d)",
+			v.Summary.Total, wantTotal,
+			v.Summary.Green, v.Summary.Red, v.Summary.Pending, v.Summary.Skip)
+	}
+
+	// every cell must have valid enum values and a unique cell name.
+	validCellVerdicts := map[string]bool{"green": true, "red": true, "pending": true, "skip": true}
+	validGapVerdicts := map[string]bool{"pass": true, "fail": true, "pending": true}
+	seenCells := map[string]bool{}
+	for i, c := range v.Cells {
+		if c.Cell == "" {
+			t.Errorf("cells[%d].cell is empty", i)
+		}
+		if seenCells[c.Cell] {
+			t.Errorf("cells[%d].cell %q is a duplicate", i, c.Cell)
+		}
+		seenCells[c.Cell] = true
+		if !validCellVerdicts[c.Verdict] {
+			t.Errorf("cells[%d] (%s) verdict = %q, want one of green|red|pending|skip", i, c.Cell, c.Verdict)
+		}
+		if c.Harness == "" {
+			t.Errorf("cells[%d] (%s) harness is empty", i, c.Cell)
+		}
+		if c.Substrate == "" {
+			t.Errorf("cells[%d] (%s) substrate is empty", i, c.Cell)
+		}
+		for j, g := range c.Gaps {
+			if g.Gap == "" {
+				t.Errorf("cells[%d] (%s) gaps[%d].gap is empty", i, c.Cell, j)
+			}
+			if !validGapVerdicts[g.Verdict] {
+				t.Errorf("cells[%d] (%s) gaps[%d] (%s) verdict = %q, want one of pass|fail|pending",
+					i, c.Cell, j, g.Gap, g.Verdict)
+			}
+		}
+	}
+
+	// cell count must match summary total.
+	if len(v.Cells) != v.Summary.Total {
+		t.Errorf("len(cells) = %d, want summary.total = %d", len(v.Cells), v.Summary.Total)
+	}
+
+	// can query a cell by name (the Go equivalent of jq '.cells[] | select(.cell=="codex:local")')
+	cellByName := func(name string) *matrixVerdictCell {
+		for i := range v.Cells {
+			if v.Cells[i].Cell == name {
+				return &v.Cells[i]
+			}
+		}
+		return nil
+	}
+
+	// golden has codex:local=green with gap results; verify the jq-style lookup works.
+	c := cellByName("codex:local")
+	if c == nil {
+		t.Error("could not query cell codex:local by name")
+	} else {
+		if c.Verdict != "green" {
+			t.Errorf("codex:local verdict = %q, want green", c.Verdict)
+		}
+		if len(c.Gaps) == 0 {
+			t.Error("codex:local has no gap results in golden fixture")
+		}
+	}
+
+	t.Logf("OK: schema_version=%d cells=%d summary=green:%d red:%d pending:%d skip:%d",
+		v.SchemaVersion, len(v.Cells),
+		v.Summary.Green, v.Summary.Red, v.Summary.Pending, v.Summary.Skip)
 }

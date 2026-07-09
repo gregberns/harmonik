@@ -1,0 +1,68 @@
+# GoReleaser v2 configuration for harmonik.
+# Ships the user-facing `harmonik` binary only (the two cmd/harmonik-twin-*
+# packages are test-only twins and are deliberately NOT released).
+#
+# Validate locally with: goreleaser check
+# Dry-run cross-compile:  goreleaser release --snapshot --clean
+# Cut a real release:     see RELEASING.md
+
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: harmonik
+    main: ./cmd/harmonik
+    binary: harmonik
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commitHash={{.FullCommit}} -X main.buildDate={{.Date}}
+
+archives:
+  - id: harmonik
+    formats:
+      - tar.gz
+    name_template: harmonik_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^Merge "
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: gregberns
+    name: harmonik
+  draft: false
+  # prerelease: auto → a clean tag like v0.1.0 ships as a normal release, while
+  # a tag carrying -rc / -beta / -alpha is auto-marked as a GitHub prerelease.
+  prerelease: auto

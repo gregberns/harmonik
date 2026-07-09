@@ -1,0 +1,35 @@
+# CI workflow — build + test on every push to main and on PRs targeting main.
+#
+# Intentionally lightweight: a plain `go build ./...` and `go test ./...` so the
+# tree stays green. The heavier race / scenario gates run via the Makefile
+# locally and are not duplicated here.
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...

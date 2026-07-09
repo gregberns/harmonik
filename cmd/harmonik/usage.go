@@ -30,6 +30,7 @@ SUBCOMMANDS
   smoke            4-signal end-to-end verification of a live daemon (hk-4rkrg)
   tmux-start       Bootstrap a tmux session and start the daemon inside it
   hook-relay       Forward a Claude hook event to the daemon (internal use)
+  version          Print version, commit, build date, and platform (no daemon required)
 
 DAEMON FLAGS (used without a subcommand)
   --project DIR          Project directory (default: current working directory)

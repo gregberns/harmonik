@@ -18,6 +18,11 @@
 // Cite: specs/event-model.md §8.7.1 (daemon_started payload); bead hk-mz0x4.
 package main
 
+import (
+	"fmt"
+	"runtime"
+)
+
 // commitHash is stamped at build time via:
 //
 //	-ldflags "-X main.commitHash=$(git rev-parse HEAD)"
@@ -27,3 +32,39 @@ package main
 //
 // Cite: specs/event-model.md §8.7.1; bead hk-mz0x4.
 var commitHash = "unknown" //nolint:gochecknoglobals // build-time injection target
+
+// version is the human-facing release version, stamped at build time via:
+//
+//	-ldflags "-X main.version=$(git describe --tags --always --dirty)"
+//
+// It defaults to "dev" so that binaries built without the stamp (plain
+// `go build` / `go test`) report a recognisable sentinel rather than an empty
+// string. Consumed by the `harmonik version` subcommand (hk-release-prep).
+var version = "dev" //nolint:gochecknoglobals // build-time injection target
+
+// buildDate is the UTC build timestamp, stamped at build time via:
+//
+//	-ldflags "-X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+//
+// It defaults to "unknown" so that unstamped binaries report a recognisable
+// sentinel rather than an empty string. Consumed by the `harmonik version`
+// subcommand (hk-release-prep).
+var buildDate = "unknown" //nolint:gochecknoglobals // build-time injection target
+
+// versionLine renders the single-line version string printed by the `version`
+// subcommand:
+//
+//	harmonik {version} (commit {short-commit}, built {buildDate}) {GOOS}/{GOARCH}
+//
+// The commit is truncated to its first 12 characters when it is a full SHA;
+// the "unknown" sentinel (and any value shorter than 12 chars) is printed
+// verbatim. GOOS/GOARCH come from runtime so the line reflects the binary's
+// target platform.
+func versionLine() string {
+	shortCommit := commitHash
+	if len(shortCommit) > 12 {
+		shortCommit = shortCommit[:12]
+	}
+	return fmt.Sprintf("harmonik %s (commit %s, built %s) %s/%s",
+		version, shortCommit, buildDate, runtime.GOOS, runtime.GOARCH)
+}

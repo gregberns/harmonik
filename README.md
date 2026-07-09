@@ -41,7 +41,7 @@ you can reason about; the agents are the part that scales.
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| Go 1.22+ | Build harmonik | https://go.dev/dl/ |
+| Go 1.25+ | Build harmonik | https://go.dev/dl/ |
 | tmux | Session substrate | `brew install tmux` / `apt install tmux` |
 | Claude Code CLI (`claude`) | Agent runtime | https://claude.ai/code |
 | `br` (beads_rust) | Task ledger (required) | See below |
@@ -61,13 +61,46 @@ cargo install --git https://github.com/Dicklesworthstone/beads_rust
 
 ### Install harmonik
 
+harmonik is open source at [`github.com/gregberns/harmonik`](https://github.com/gregberns/harmonik).
+Pick the install path that fits you — easiest first.
+
+#### Option A — Download a prebuilt binary (no Go toolchain needed)
+
+Grab the latest release from the
+[GitHub Releases page](https://github.com/gregberns/harmonik/releases). Assets are published for
+`darwin`/`linux` × `amd64`/`arm64`, alongside a `checksums.txt` you can verify against.
+
 ```bash
-git clone https://github.com/your-org/harmonik   # or wherever you have it
-cd harmonik
-go install ./cmd/harmonik
+# macOS arm64 example — pick the asset matching your OS/arch
+gh release download --repo gregberns/harmonik --pattern 'harmonik_*_darwin_arm64.tar.gz'
+tar xzf harmonik_*_darwin_arm64.tar.gz
+sudo mv harmonik /usr/local/bin/
+harmonik version
 ```
 
-Verify:
+(No `gh`? Download the matching `.tar.gz` from the Releases page in a browser, then `tar xzf`
+and move the binary onto your `PATH`.)
+
+#### Option B — `go install` (Go 1.25+)
+
+```bash
+go install github.com/gregberns/harmonik/cmd/harmonik@latest
+```
+
+Requires the Go toolchain and builds from source at the latest tagged commit. Note: a plain
+`go install` does **not** stamp the version ldflags, so `harmonik version` will print `dev` —
+that's expected. Downloaded release binaries (Option A) print the real version.
+
+#### Option C — Build from source
+
+```bash
+git clone https://github.com/gregberns/harmonik
+cd harmonik
+make build          # stamps version/commit/date; outputs /tmp/harmonik
+# or: go install ./cmd/harmonik
+```
+
+Verify the install:
 
 ```bash
 harmonik version
@@ -215,6 +248,19 @@ Each completed bead prints a `run_completed` event. Failures print `run_failed` 
 - **[docs/components/internal/kerf.md](docs/components/internal/kerf.md)** — kerf planning tool
   reference (optional layer).
 - **[specs/](specs/)** — normative specs; the spec is always right, code matches it.
+
+---
+
+## Releases
+
+Releases are published on the
+[GitHub Releases page](https://github.com/gregberns/harmonik/releases) with prebuilt binaries
+(`darwin`/`linux` × `amd64`/`arm64`) and a `checksums.txt`. The release process itself is
+documented in [RELEASING.md](RELEASING.md).
+
+Versioning is [semver](https://semver.org/). harmonik is **pre-1.0 (v0.x)** while the
+daemon and queue APIs are still moving — expect breaking changes between minor versions until
+the surfaces stabilize.
 
 ---
 

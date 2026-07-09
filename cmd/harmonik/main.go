@@ -70,6 +70,15 @@ func run() int {
 		return 0
 	}
 
+	// version / --version / -v: print the build-stamped version line and exit 0
+	// before any flag.Parse, tmux, or project logic. This must work outside a
+	// tmux session and with no project on disk (hk-release-prep), so it runs at
+	// the very top of the dispatcher alongside --help.
+	if len(os.Args) >= 2 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println(versionLine())
+		return 0
+	}
+
 	// hk tmux-start — operator-facing tmux session bootstrap.
 	// Parses its own --session-name flag and must run before flag.Parse so
 	// that the global flag set does not reject the subcommand-specific flag.

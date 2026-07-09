@@ -26,17 +26,30 @@ AGENT_REVIEW_TIMEOUT ?= 60
 # incremental development.
 COMMIT_HASH := $(shell git rev-parse HEAD)
 
+# Release version + build date stamped into cmd/harmonik via -ldflags for the
+# `harmonik version` subcommand (hk-release-prep).
+# VERSION: prefer the nearest git tag (with -dirty when the tree has uncommitted
+# changes); fall back to the short SHA via --always; final "dev" fallback when
+# git is unavailable. BUILD_DATE: UTC timestamp at recipe execution time.
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Shared ldflags string for cmd/harmonik and the twin binaries — stamps commit,
+# version, and build date into the `main` package globals.
+HARMONIK_LDFLAGS := -X main.commitHash=$(COMMIT_HASH) -X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)
+
 # ---------------------------------------------------------------------------
 # Core build / test
 # ---------------------------------------------------------------------------
 
-# build-harmonik: compile cmd/harmonik with the commit-hash ldflags stamp.
-# The -X flag injects the current HEAD SHA into main.commitHash so that the
-# daemon_started event payload carries a real git hash (hk-mz0x4).
+# build-harmonik: compile cmd/harmonik with the commit/version/build-date stamp.
+# The -X flags inject the current HEAD SHA into main.commitHash (so the
+# daemon_started event payload carries a real git hash, hk-mz0x4) plus
+# main.version and main.buildDate for the `harmonik version` subcommand.
 # Output: /tmp/harmonik (matches the canonical smoke-test path).
 .PHONY: build-harmonik
-build-harmonik:  ## Build cmd/harmonik → /tmp/harmonik with commit-hash stamp (hk-mz0x4)
-	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o /tmp/harmonik ./cmd/harmonik
+build-harmonik:  ## Build cmd/harmonik → /tmp/harmonik with commit/version/build-date stamp (hk-mz0x4)
+	go build -ldflags "$(HARMONIK_LDFLAGS)" -o /tmp/harmonik ./cmd/harmonik
 
 .PHONY: build
 build: build-harmonik  ## go build ./... + cmd/harmonik stamped binary (hk-mz0x4)
@@ -76,7 +89,7 @@ test-e2e-real-claude-reviewloop:  ## Run real-Claude review-loop E2E smoke (requ
 .PHONY: build-twin-generic
 build-twin-generic:  ## Build cmd/harmonik-twin-generic → twins/generic-twin (SH-009 / HC-043)
 	@mkdir -p $(TWINS_DIR)
-	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o $(TWINS_DIR)/generic-twin ./cmd/harmonik-twin-generic
+	go build -ldflags "$(HARMONIK_LDFLAGS)" -o $(TWINS_DIR)/generic-twin ./cmd/harmonik-twin-generic
 
 # build-twin-claude: alias kept for compatibility during transition; delegates
 # to build-twin-generic until hk-w5vra.2 ships the real Claude twin.

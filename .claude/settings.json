@@ -571,20 +571,5 @@
         "matcher": ""
       }
     ]
-  },
-  "permissions": {
-    "allow": [
-      "Read",
-      "Write",
-      "Edit",
-      "Bash",
-      "Glob",
-      "Grep",
-      "WebFetch",
-      "WebSearch",
-      "NotebookEdit",
-      "TodoWrite",
-      "Task"
-    ]
   }
 }

@@ -3,7 +3,7 @@
 # -race. Skips real-daemon E2E tests (skipRealDaemonE2EInShort) that require
 # br, twin binaries, and a live daemon — none available on ubuntu-latest.
 # Those tests belong in the separate Tier 3 hk-6hzci lane.
-# Non-merge-blocking: no required status check configured in branch protection.
+# Merge-blocking (A5): continue-on-error dropped — check-short failures now block merges.
 name: CI
 
 on:
@@ -15,7 +15,6 @@ jobs:
   check:
     name: check (Tier 2)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:

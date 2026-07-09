@@ -188,12 +188,27 @@ func TestHandler_Launch_NilHandlerSpec_StdinNotClosed(t *testing.T) {
 	dl := handlercontract.NoopWatcherDeadLetter{}
 	h := handler.NewHandler(pub, dl, handlercontract.NewAdapterRegistry())
 
-	// Child: read one line from stdin, echo it to stdout as NDJSON, then exit.
+	// Child: read one line from stdin, write it to a temp file for the test to
+	// inspect, then emit a fixed agent_ready NDJSON so the watcher exits cleanly.
+	//
+	// The line is captured to a FILE rather than asserted by reading
+	// sess.Stdout() directly: Handler.Launch always wires sess.Stdout() to
+	// SpawnWatcher, and Session.Stdout() is a single-consumer stream ("Callers
+	// MUST NOT read from Stdout after passing it to SpawnWatcher"). A concurrent
+	// io.ReadAll(sess.Stdout()) in the test races the watcher's NDJSON read-loop
+	// for the same bytes; when the watcher wins, ReadAll returns empty and the
+	// assertion flakes (hk-88c29). Capturing stdin to a file is the same robust
+	// pattern used by TestHandler_Launch_HandlerSpecDeliveredViaLaunch above and
+	// is deterministic under -race.
+	tmpDir := t.TempDir()
+	lineCapture := tmpDir + "/line.txt"
+	childScript := `read line; printf '%s' "$line" > "` + lineCapture + `"; printf '{"type":"agent_ready"}\n'`
+
 	spec := handler.LaunchSpec{
 		Binary:      "sh",
-		Args:        []string{"-c", `read line; printf '{"type":"agent_ready","got":"%s"}\n' "$line"`},
+		Args:        []string{"-c", childScript},
 		Env:         []string{},
-		WorkDir:     t.TempDir(),
+		WorkDir:     tmpDir,
 		Role:        "test",
 		HandlerSpec: nil, // no delivery — legacy path
 	}
@@ -203,17 +218,13 @@ func TestHandler_Launch_NilHandlerSpec_StdinNotClosed(t *testing.T) {
 		t.Fatalf("Launch: %v", err)
 	}
 
-	// Send a line manually via SendInput; child should echo it.
+	// Send a line manually via SendInput; because HandlerSpec is nil, Launch did
+	// NOT close stdin, so the child's `read line` receives it.
 	if err := sess.SendInput(t.Context(), "manual-line"); err != nil {
 		t.Fatalf("SendInput: %v", err)
 	}
 	if err := sess.CloseStdin(); err != nil {
 		t.Fatalf("CloseStdin: %v", err)
-	}
-
-	stdoutBytes, readErr := io.ReadAll(sess.Stdout())
-	if readErr != nil {
-		t.Fatalf("ReadAll stdout: %v", readErr)
 	}
 
 	select {
@@ -223,7 +234,14 @@ func TestHandler_Launch_NilHandlerSpec_StdinNotClosed(t *testing.T) {
 	}
 	_ = sess.Wait(t.Context())
 
-	if !strings.Contains(string(stdoutBytes), "manual-line") {
-		t.Errorf("expected 'manual-line' in stdout when HandlerSpec=nil; got: %s", stdoutBytes)
+	// Read the captured line from the temp file.
+	//nolint:gosec // G304: path is test-generated; not user-controlled
+	captured, readErr := os.ReadFile(lineCapture)
+	if readErr != nil {
+		t.Fatalf("ReadFile(line capture): %v — SendInput may not have reached the child", readErr)
+	}
+
+	if !strings.Contains(string(captured), "manual-line") {
+		t.Errorf("expected 'manual-line' captured from stdin when HandlerSpec=nil; got: %q", captured)
 	}
 }

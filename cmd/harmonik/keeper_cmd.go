@@ -813,7 +813,7 @@ func runKeeperRestartNow(args []string) int {
 	}
 	// Print the nonce so an external watcher can match the injected
 	// '[KEEPER ACK <nonce>] received restart' line in the pane scrollback.
-	fmt.Printf("keeper restart-now: agent=%q nonce=%s restart driven (ack + /clear + /session-resume injected into %q)\n",
+	fmt.Printf("keeper restart-now: agent=%q nonce=%s restart driven (ack + /clear + agent brief --wake keeper-restart injected into %q)\n",
 		agent, nonce, tmuxTarget)
 	return 0
 }

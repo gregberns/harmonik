@@ -243,3 +243,122 @@ func TestKeeperCycle_NonceTimeoutAborts(t *testing.T) {
 		t.Errorf("gauge SID = %q after abort; want %q (S1 — never rotated)", rs.liveSID(), s1)
 	}
 }
+
+// TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers is the hk-fi78d regression:
+// the nonce echo is WITHHELD (writeNonce=false) so the poll times out, BUT the
+// agent still WROTE a fresh handoff (writeHandoffNoNonce=true). The brief
+// injection must SURVIVE the ack timeout: the cycle recovers and drives /clear +
+// briefRestartCmd rather than blindly aborting before /clear.
+//
+// Asserts:
+//   - /clear IS injected (a).
+//   - briefRestartCmd (`--wake keeper-restart`) IS injected (b).
+//   - the cycle is NOT a blind abort: NO cycle_aborted; cycle_complete emitted;
+//     a distinct cycle_recovered event is emitted; journal ends "complete" with
+//     reason "handoff_timeout_recovered" (c).
+//   - the SID still flips S1->S2, CAUSED by /clear (d).
+func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "reactive-recover-agent"
+		cycleID = "cyc-reactive-recover-001"
+	)
+	s1, s2 := reactiveSIDs()
+
+	em := &keeper.RecordingEmitter{}
+	jc := &journalCapture{}
+	var managedBinding string
+
+	// writeNonce=false → nonce poll times out; writeHandoffNoNonce=true → a fresh
+	// handoff body IS written (no nonce line); flipOnClear=true → /clear rotates SID.
+	rs := newReactiveSession(s1, s2, false /*writeNonce*/, true /*flipOnClear*/)
+	rs.writeHandoffNoNonce = true
+
+	cycler := newReactiveCycler(
+		agent, t.TempDir(), cycleID, rs, em, jc, &managedBinding,
+		40*time.Millisecond, // handoffTimeout — poll must time out
+		300*time.Millisecond, // clearSettle — reached on the recovery path
+	)
+
+	cf := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	inj := rs.snapshotInjected()
+
+	// (a) /clear IS injected.
+	if !rs.sawClear() {
+		t.Fatalf("/clear was NOT injected on the recovery path; injected=%v", inj)
+	}
+
+	// (b) briefRestartCmd (`--wake keeper-restart`) IS injected, after /clear.
+	clearIdx, briefIdx := -1, -1
+	for i, txt := range inj {
+		switch {
+		case clearIdx == -1 && txt == "/clear":
+			clearIdx = i
+		case briefIdx == -1 && containsSubstr(txt, "agent brief") && containsSubstr(txt, "keeper-restart"):
+			briefIdx = i
+		}
+	}
+	if briefIdx == -1 {
+		t.Fatalf("briefRestartCmd (--wake keeper-restart) was NOT injected; injected=%v", inj)
+	}
+	if !(clearIdx != -1 && clearIdx < briefIdx) {
+		t.Errorf("injection order wrong: clear=%d brief=%d; want clear<brief (%v)", clearIdx, briefIdx, inj)
+	}
+
+	// (c) NOT a blind abort.
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
+		t.Errorf("want 0 cycle_aborted on the recovery path; got %d", n)
+	}
+	completeEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
+	if len(completeEvts) != 1 {
+		t.Fatalf("want 1 cycle_complete on recovery; got %d", len(completeEvts))
+	}
+	var cp core.SessionKeeperCycleCompletePayload
+	if err := json.Unmarshal(completeEvts[0].Payload, &cp); err != nil {
+		t.Fatalf("unmarshal cycle_complete: %v", err)
+	}
+	if cp.PrevSessionID != s1 || cp.NewSessionID != s2 {
+		t.Errorf("cycle_complete prev=%q new=%q; want prev=%q new=%q", cp.PrevSessionID, cp.NewSessionID, s1, s2)
+	}
+	// A distinct cycle_recovered event marks this as a nonce-less recovery.
+	recEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleRecovered)
+	if len(recEvts) != 1 {
+		t.Fatalf("want 1 cycle_recovered on the recovery path; got %d", len(recEvts))
+	}
+	var rp core.SessionKeeperCycleRecoveredPayload
+	if err := json.Unmarshal(recEvts[0].Payload, &rp); err != nil {
+		t.Fatalf("unmarshal cycle_recovered: %v", err)
+	}
+	if rp.PhaseAtCrash != "handoff_timeout" {
+		t.Errorf("cycle_recovered.phase_at_crash = %q; want \"handoff_timeout\"", rp.PhaseAtCrash)
+	}
+	// Journal ends "complete" with the recovery reason (not "aborted").
+	phases := jc.snapshot()
+	if last := phases[len(phases)-1]; last != "complete" {
+		t.Errorf("last journal phase = %q; want \"complete\" (full=%v)", last, phases)
+	}
+	if lj := jc.lastJournal(); lj == nil {
+		t.Error("no last journal captured")
+	} else if lj.Reason != "handoff_timeout_recovered" {
+		t.Errorf("journal reason = %q; want \"handoff_timeout_recovered\"", lj.Reason)
+	}
+
+	// (d) SID flip to S2, caused by /clear; final .managed binding == S2.
+	if cause := rs.flipCause(); cause != "/clear" {
+		t.Errorf("SID flip caused by %q; want \"/clear\"", cause)
+	}
+	if rs.sidViolatedCausality() {
+		t.Error("a new SID appeared in the gauge BEFORE /clear on the recovery path")
+	}
+	if rs.liveSID() != s2 {
+		t.Errorf("live gauge SID = %q after recovery; want %q (S2)", rs.liveSID(), s2)
+	}
+	if managedBinding != s2 {
+		t.Errorf("SetManagedSessionFn binding = %q; want %q (S2)", managedBinding, s2)
+	}
+}

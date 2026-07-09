@@ -75,6 +75,12 @@ type CyclerConfig struct {
 	IsManagedFn              func(projectDir, agentName string) bool
 	HandoffFilePath          func(projectDir, agentName string) string
 	ReadHandoff              func(path string) (string, error)
+	// HandoffModTimeFn returns the handoff file's modification time and whether it
+	// exists. Nil → defaultHandoffModTime (os.Stat). Used by the ack-timeout
+	// recovery path (hk-fi78d) to decide whether the agent actually WROTE a fresh
+	// handoff despite the nonce echo never landing — in which case the brief
+	// injection must still survive rather than blindly aborting before /clear.
+	HandoffModTimeFn         func(path string) (time.Time, bool)
 	TruncateHandoffFn        func(path string) error
 	InjectFn                 func(ctx context.Context, target, text string) error
 	ReadGaugeFn              func(projectDir, agentName string) (*CtxFile, time.Time, error)
@@ -299,6 +305,9 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.ReadHandoff == nil {
 		c.ReadHandoff = defaultReadHandoff
 	}
+	if c.HandoffModTimeFn == nil {
+		c.HandoffModTimeFn = defaultHandoffModTime
+	}
 	if c.TruncateHandoffFn == nil {
 		c.TruncateHandoffFn = defaultTruncateHandoff
 	}
@@ -425,6 +434,16 @@ func defaultReadHandoff(path string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// defaultHandoffModTime reports the handoff file's mtime and existence via
+// os.Stat. A missing/unreadable file returns (zero, false). Refs: hk-fi78d.
+func defaultHandoffModTime(path string) (time.Time, bool) {
+	fi, err := os.Stat(path) //nolint:gosec // G304: path is operator-controlled projectDir + agentName
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
 }
 
 func defaultTruncateHandoff(path string) error {
@@ -859,8 +878,43 @@ func (c *Cycler) recentTurnFn() func(transcriptDir, sessionID, role string) (tim
 	return recentTranscriptTurn
 }
 
+// handoffWrittenAndFresh reports whether the agent actually WROTE a resumable
+// handoff IN RESPONSE to this cycle's /session-handoff injection: the file exists,
+// its body is non-empty, and its mtime is at/after handoffInjectedAt (the moment
+// we injected /session-handoff).
+//
+// The anchor is the injection time, NOT a generous look-BACK window. RestartNow
+// (restartnow.go) anchors on a 10-minute look-back because there the operator
+// writes /session-handoff and THEN calls restart-now — the handoff predates the
+// request. The auto-cycle is the reverse: we inject /session-handoff first and the
+// agent writes AFTER, so a resumable-for-THIS-cycle handoff must post-date the
+// injection. Requiring mtime >= handoffInjectedAt is what distinguishes a handoff
+// the agent just produced (recover: /clear + brief must land — hk-fi78d) from a
+// STALE pre-existing operator handoff sitting on disk that the agent never
+// refreshed (true abort: never /clear an unconfirmed handoff — hk-vpnp Bug 3).
+//
+// The non-empty-content check is load-bearing too: runCycle truncates a stale-nonce
+// handoff to EMPTY before injecting /session-handoff, which stamps a fresh mtime.
+// Without the content check that just-truncated empty file would falsely read as
+// "written". Requiring non-empty content means only a handoff with real content
+// counts. Refs: hk-fi78d, hk-vpnp.
+func (c *Cycler) handoffWrittenAndFresh(handoffPath string, handoffInjectedAt time.Time) bool {
+	content, err := c.cfg.ReadHandoff(handoffPath)
+	if err != nil || strings.TrimSpace(content) == "" {
+		return false
+	}
+	mt, ok := c.cfg.HandoffModTimeFn(handoffPath)
+	if !ok {
+		return false
+	}
+	return !mt.Before(handoffInjectedAt)
+}
+
 // runCycle executes the full 7-step reset cycle.
-// SAFETY: /clear is ONLY issued after the handoff nonce is positively confirmed.
+// SAFETY: /clear is ONLY issued after the handoff nonce is positively confirmed —
+// OR, when the nonce echo times out, after handoffWrittenAndFresh confirms the
+// agent nonetheless wrote a fresh, resumable handoff (hk-fi78d). Absent BOTH, the
+// cycle aborts before /clear (never /clear when there is nothing to resume from).
 func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	cycleID := c.cfg.CycleIDGen()
 	now := time.Now().UTC()
@@ -904,6 +958,13 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	// Step 2b: inject /session-handoff with nonce directive.
 	// Send Escape first to preempt any in-progress input on a busy pane so the
 	// injected command lands cleanly at the REPL prompt. (Refs: hk-qoz)
+	//
+	// Capture the injection instant BEFORE injecting: the ack-timeout recovery
+	// path (hk-fi78d) treats a handoff as resumable-for-this-cycle only when its
+	// mtime is at/after this moment — i.e. the agent wrote it in RESPONSE to this
+	// injection, not a stale pre-existing handoff (hk-vpnp). Captured before the
+	// inject call so any agent write is guaranteed to be >= this timestamp.
+	handoffInjectedAt := time.Now()
 	if c.cfg.TmuxTarget != "" {
 		if c.cfg.SendEscapeFn != nil {
 			_ = c.cfg.SendEscapeFn(ctx, c.cfg.TmuxTarget) //nolint:errcheck // non-fatal; clears partial input
@@ -923,6 +984,31 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 
 	// Step 3: confirm — poll until nonce appears or timeout elapses.
 	if !c.pollForNonce(ctx, handoffPath, nonceMarker(cycleID)) {
+		// hk-fi78d: the nonce echo never landed within HandoffTimeout — but the
+		// agent may still have WRITTEN a fresh, resumable handoff (e.g. it produced
+		// the handoff file but omitted or garbled the verbatim nonce line). In that
+		// case a handoff to resume from EXISTS, so the brief injection MUST still
+		// land: bailing before /clear + brief would strand the agent at a full
+		// context window even though its intent was captured on disk. The handoff
+		// counts as written-for-this-cycle only when its mtime is at/after
+		// handoffInjectedAt (the agent wrote it in RESPONSE to our injection), which
+		// distinguishes it from a STALE pre-existing operator handoff on disk that
+		// the agent never refreshed. Only when NO fresh handoff was written do we
+		// keep the true-abort behavior — preserving the safety invariant: never
+		// /clear when there is nothing fresh to resume from (hk-vpnp Bug 3).
+		if c.handoffWrittenAndFresh(handoffPath, handoffInjectedAt) {
+			slog.WarnContext(ctx, "keeper: nonce echo timed out but a fresh handoff was written — recovering (proceeding with /clear + brief)",
+				"agent", c.cfg.AgentName, "cycle_id", cycleID, "session_id", cf.SessionID)
+			j.Phase = "confirmed"
+			j.UpdatedAt = time.Now().UTC()
+			j.Reason = "handoff_timeout_recovered"
+			_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
+			// A fresh handoff means the pane was responsive enough to write it, so
+			// this is NOT a stuck-pane timeout that should march toward ForceRestartFn.
+			c.consecutiveHandoffTimeouts = 0
+			return c.completeCycleTail(ctx, cf, cycleID, journalPath, j, "handoff_timeout_recovered")
+		}
+
 		// ABORT — NEVER /clear an unconfirmed handoff.
 		j.Phase = "aborted"
 		j.UpdatedAt = time.Now().UTC()
@@ -979,6 +1065,23 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	j.UpdatedAt = time.Now().UTC()
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 
+	return c.completeCycleTail(ctx, cf, cycleID, journalPath, j, "")
+}
+
+// completeCycleTail runs the post-confirmation half of the cycle (steps 3b–7):
+// set HARMONIK_AGENT → /clear → wait for new session_id → rebind .managed →
+// inject briefRestartCmd → journal complete → emit cycle_complete + anti-loop
+// bookkeeping. It is reached from TWO callers:
+//   - the normal confirmed path (reason == ""), after the nonce poll succeeds;
+//   - the ack-timeout RECOVERY path (reason == "handoff_timeout_recovered"),
+//     where the nonce echo timed out but handoffWrittenAndFresh confirmed a
+//     resumable handoff exists (hk-fi78d).
+//
+// When reason != "" the final journal carries it and an additional
+// session_keeper_cycle_recovered event is emitted so the recovery is
+// distinguishable in the event stream from a clean confirm. Either way the cycle
+// records as a COMPLETE cycle (cycle_complete), never a blind abort.
+func (c *Cycler) completeCycleTail(ctx context.Context, cf *CtxFile, cycleID, journalPath string, j *CycleJournal, reason string) error {
 	// Step 3b: set HARMONIK_AGENT in the tmux session environment so the new
 	// Claude process started after /clear inherits the correct agent name.
 	// Non-fatal: the handoff identity block is the primary anchor.
@@ -1026,8 +1129,14 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	// Step 7: close journal; emit session_keeper_cycle_complete.
 	j.Phase = "complete"
 	j.UpdatedAt = time.Now().UTC()
+	j.Reason = reason // "" on the clean path; "handoff_timeout_recovered" on recovery.
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 	c.emitCycleComplete(ctx, cycleID, cf.SessionID, newSID)
+	// On the ack-timeout recovery path, ALSO emit cycle_recovered so the event
+	// stream distinguishes a nonce-less recovery from a clean confirm (hk-fi78d).
+	if reason != "" {
+		c.emitCycleRecovered(ctx, cycleID, "handoff_timeout")
+	}
 
 	// Anti-loop: record the session_id so we do not re-fire for it until both
 	// a new session_id is observed AND pct drops below WarnPct on it.

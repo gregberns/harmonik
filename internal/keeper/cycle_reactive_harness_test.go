@@ -62,6 +62,12 @@ type reactiveSession struct {
 	writeNonce  bool // /session-handoff writes the nonce into handoffBody when true
 	flipOnClear bool // /clear rotates SID S1->S2 + drops context when true
 
+	// writeHandoffNoNonce models the hk-fi78d bug shape: the agent writes a real,
+	// fresh handoff body in response to /session-handoff but OMITS the verbatim
+	// nonce line (echo garbled/forgotten). The nonce poll therefore times out, yet
+	// a resumable handoff exists on disk. Only consulted when writeNonce is false.
+	writeHandoffNoNonce bool
+
 	// Observability / causality tracking.
 	injected    []string // every injected command, in order
 	clearedSeen bool     // set true the moment "/clear" is injected
@@ -114,6 +120,9 @@ func (rs *reactiveSession) inject(_ context.Context, _ /*target*/, text string) 
 			if m := nonceLineRE.FindString(text); m != "" {
 				rs.handoffBody = "# Handoff (reactive fake)\n\n" + m + "\n\nrestored context.\n"
 			}
+		} else if rs.writeHandoffNoNonce {
+			// Fresh handoff written, but WITHOUT the nonce line (hk-fi78d).
+			rs.handoffBody = "# Handoff (reactive fake)\n\nrestored context — NO nonce line echoed.\n"
 		}
 	case text == "/clear":
 		rs.clearedSeen = true
@@ -157,6 +166,19 @@ func (rs *reactiveSession) readHandoff(_ /*path*/ string) (string, error) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	return rs.handoffBody, nil
+}
+
+// handoffModTime is the reactive HandoffModTimeFn: it reports a fresh mtime
+// (now) whenever a handoff body has been written, and "absent" while empty. This
+// mirrors os.Stat on a real handoff file and lets the ack-timeout recovery path
+// (hk-fi78d) distinguish "agent wrote a fresh handoff" from "nothing written".
+func (rs *reactiveSession) handoffModTime(_ /*path*/ string) (time.Time, bool) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.handoffBody == "" {
+		return time.Time{}, false
+	}
+	return time.Now(), true
 }
 
 // truncate is the reactive TruncateHandoffFn — clears the handoff body the way
@@ -238,6 +260,7 @@ func newReactiveCycler(
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
 		ReadHandoff:       rs.readHandoff,
+		HandoffModTimeFn:  rs.handoffModTime,
 		TruncateHandoffFn: rs.truncate,
 		InjectFn:          rs.inject,
 		ReadGaugeFn:       rs.readGauge,

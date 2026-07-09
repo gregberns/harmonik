@@ -9,6 +9,12 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
+## ⭐⭐ CURRENT TRUTH 2026-07-08 ~21:10Z — v0.5.0 gates on TWO lanes; everything below this block is HISTORY
+> Live crews: **gurney** (A5 lane), **chani** (dispatch-fix lane, pivoted off completed Pi lane), **hawat** off-path. stilgar NOT booted (boot for A5 co-verify only). Ignore the auto-monitor's stale pinned lanes (alia/hawat/T1/T2).
+> - **A5 / v0.5.0 gate — gurney:** drop `continue-on-error:true` on CI `check` after 2x check-short STEP-green. PR #24 (head ca4968bb) carries PhantomReviveGuard determinism fix + FULL proven-green recipe (-p=1 / -parallel=1 / -timeout=20m — all three load-bearing). CI in progress (~16-18min/run). Follow-up hk-d515w (P2) = make colliding pkgs hermetic to restore -parallel=2. NEXT: 2x STEP-green → boot stilgar co-verify → captain flips continue-on-error → fill A5-recipe-SHA in v0.5.0-release-notes → redeploy through E2E gate → cut v0.5.0.
+> - **Dispatch-fix — chani (epic hk-5gmkd, issue #25 / PR #19, found-by:admiral):** RELEASE-CRITICAL. daemon bead-dispatch DOWN on main — claudesettings_wm040a.go injects permissions.allow at L227+L295 → trips claude >=2.1.204 consent gate → agent_ready_timeout (HC-056). Crews immune (why fleet's on PR routes; explains paused-by-failure queues). Route: worktree-agent PR (NOT queue submit). Steps: repro on b67db8ee → fresh re-derive #19 (not blind merge) + CI + review → unit + isolated-E2E regression tests → land. MUST land alongside/before A5.
+> - **Pi lane — DONE:** operator core goal hk-fdbhf PROVEN in-daemon (canary green, commit e3c66024, hk-bl4ou closed). Epic-close awaiting operator. Residual hk-fdbhf.1 (P3) = agent_ready_stall threshold too aggressive for ornith ~20min path.
+
 ## ⭐⭐ FLEET TORN DOWN 2026-07-06 — CLEAN SLATE before the admiral's new initiative · expires: 2026-07-09T00:00:00Z
 > Captain's crew (jessica, duncan, stilgar, watch) STOPPED + registry-cleared + keepers killed.
 > No work orphaned (fleet was HELD, zero runs). All lane blocks BELOW are HISTORY — do NOT

@@ -160,3 +160,44 @@ independently reviewed → APPROVE (`.harmonik/agents/assessor/`); NOT yet wired
 - **hk-4u1mb** (reviewer diff-budget) — conflicts with shipped hk-sj6a heartbeat contract; captain recommends progress-aware discriminator. Operator leaning DEFER.
 - **Governor threshold** (`liveness_no_progress_n`) = 10 (observe/emit-only). Operator's policy call; 10 stands unless operator says 0.
 - **Close hk-0639 soak epic?** Functionally done; OPEN by charter. Operator's close-or-keep call.
+
+## Audit marker 2026-07-08 ~21:34Z (admiral)
+- **v0.5.0 now gates on THREE, all tracked+staffed:** (1) A5 flip, (2) dispatch-fix PR #26, (3) [done] Pi.
+- **Pi core-goal (hk-fdbhf): CLOSED in-daemon.** In-daemon canary GREEN (run 019f4365-e7cb, commit e3c66024) under the narrow no-$HOME warm_read. Operator core goal PROVEN in-daemon. hk-fdbhf.1 (startup-hang) re-scoped P3 follow-up. Captain reported milestone to operator.
+- **PR #19/#25 dispatch-down (my directive → captain → chani): EXECUTED FAST + CORRECT.** Captain git-verified ground-truth, filed epic hk-5gmkd, pivoted chani (Pi closed). chani: deterministic repro grounded on current main → fix landed → **PR #26 (OPEN/MERGEABLE, git-verified) supersedes #19, closes #25**, commit 60e2f1a9 removes permissions.allow at both write-sites + inverts the regression test. E2E-gate regression-test discipline honored. CI in flight.
+- **A5 (gurney, PR #24):** -timeout=20m cleared the daemon 10m panic; sole remaining red = cmd/harmonik (signature-less, both runs). Still converging.
+- **LOCKED-DECISION DEFENDED again:** captain refused read-all warm_read, held narrow no-$HOME set (secret-exfil safety). OPTION-A intact.
+
+## Audit marker 2026-07-08 ~22:33Z (admiral)
+- **ALIGNED + MOVING, no drift.** All three v0.5.0 gates progressing hard since 21:34.
+- **PR #26 (dispatch-down):** SUBSTANCE GREEN + independent adversarial review PASSED. Spec-drift caught + reconciled (WM-040a flipped MUST-inject → MUST-NOT, commit a7245148; hk-53y35 marked superseded). scenario Tier-3 x2 + hooks green. Sole red = cmd/harmonik check-short flake INHERITED from main (0 files under cmd/ touched) = the SAME bug #24 fixes. Correctly HELD ready to rebase onto post-#24 main. DONE pending human merge.
+- **PR #24 (A5): ROOT CAUSE FOUND + FIXED (git-verified head 477c7994).** Not a deadline, not OOM — TestWorkflowModeDot_ValidRefPassesFlagParse (+sibling) reached runBeadSubcommand's $TMUX self-wrap syscall.Exec, vanishing the go-test process on the tmux-less CI runner (signature-less FAIL, ~218 t.Parallel orphaned). Fix stubs runBeadSelfWrapExec; VALIDATED locally under exact CI env (env -u TMUX -race -p=1 -parallel=1). **1st Tier-2 STEP-green landed (pass 23m56s); 2nd run pending** for the 2× gate. Second recurrence of this class (b67db8ee was TestRunTmuxEnvSet) → captain to file P3 test-guard.
+- **Sequencing correct:** #24 lands (2× STEP-green) → boot stilgar co-verify → merge #24 → chani rebases #26 → merge #26 → captain flips continue-on-error (A5) → redeploy through PRE-DEPLOY E2E GATE → cut v0.5.0.
+- **E2E-gate honored:** #26 carries an isolated E2E dispatch-past-modal canary. Pre-deploy E2E gate on the redeploy still OWED (captain not yet at deploy).
+- **No new initiative, no locked-decision reversal.** watch-stalled ops alerts (#33/#34) continue — watch/operator lane, ops-monitor auto-nudges; not admiral drive.
+
+## Audit marker 2026-07-08 ~23:33Z (admiral)
+- **BOTH release-critical PRs LANDED. A5 LIVE.** Verified against ground truth (`git log origin/main`):
+  - **PR #24 (A5) MERGED** — 364f0400 on main. check-short flake root-caused ($TMUX self-wrap syscall.Exec) + fixed; 2× STEP-green co-verified real by captain.
+  - **PR #26 (dispatch-consent) MERGED** — 9120aa62 on main, hk-5gmkd CLOSED, closes #25 (auto), supersedes #19. Fully green post-rebase (SIGINT flake cleared once #24 in base = confirms diagnosis).
+  - **A5 FLIP CONFIRMED REAL** — ci.yml `check (Tier 2)` job has NO continue-on-error (line-48 continue-on-error is the non-blocking `hooks` job — verified, not a miss). check-short now merge-blocking.
+- **hk-to22v CLOSED** against 364f0400 (manual-PR route; captain closed after gurney's flag). Not admiral-driven — noted the gap.
+- **REMAINING TO CUT v0.5.0:** (1) redeploy live daemon through the PRE-DEPLOY E2E GATE (dispatch-past-modal canary — the #26 fix must be proven live before cut); (2) close superseded PR #19 (still OPEN, won't auto-close). Directed captain on both this audit.
+- **OPTION-A intact; E2E-gate enforced on the coming redeploy.** No drift, no locked-reversal.
+
+## Audit marker 2026-07-09 ~00:33Z (admiral)
+- **SELF-CORRECTION (load-bearing):** my 23:33 "A5 flip CONFIRMED REAL" was WRONG/incomplete. Dropping `continue-on-error` is necessary but NOT sufficient — captain found `check (Tier 2)` is not a REQUIRED status check in branch protection, so PR #27 is red-but-mergeable (UNSTABLE+MERGEABLE). True fail-closed A5 needs the check marked REQUIRED (repo-admin gh-api setting). A5 is NOT yet fail-closed. Lesson: verify the required-check, not just the yaml flag.
+- **PR #19 CLOSED** (superseded-by-#26) — my directive executed. Verified state=CLOSED.
+- **hk-88c29 flake fix LANDED** — PR #28 merged to main (1f985633, verified `git log`). The intermittent TestHandler_Launch_NilHandlerSpec_StdinNotClosed -race flake that #27 surfaced is fixed; no longer gates the cut.
+- **Captain's revised cut order (endorsed):** land hk-88c29 [DONE] → set `check (Tier 2)` REQUIRED in branch protection → merge A5-flip PR #27 → redeploy → PRE-DEPLOY E2E dispatch-past-modal canary → cut v0.5.0.
+- **AUTHORIZED captain** to set the required-check via gh api — it is correct EXECUTION of the locked A5 precondition (KNOWN lane, admiral's call), not a new decision or locked-reversal. Informed operator (branch-protection = repo governance).
+- OPTION-A intact; E2E gate still enforced. watch-stalled alerts (#37/#38) ongoing — watch/operator lane.
+
+## Audit marker 2026-07-09 ~01:33Z (admiral) — AT THE CUT GATE
+- **THE E2E GATE PAID OFF — caught a real ship-blocker.** Captain ran the PRE-DEPLOY dispatch-past-modal canary; GATE 0 FAILED: a *committed* `.claude/settings.json` permissions.allow block (11 tools, aab94ed2) still tripped the Claude 2.1.205 consent modal → agent_ready hang. #26 removed the daemon INJECTION but not the COMMITTED block → necessary-but-insufficient. Without the gate, v0.5.0 would have shipped with dispatch still dead. Vindicates the standing enforcement.
+- **Fixed + re-verified:** PR #29 (de-commit permissions.allow; daemon runs --dangerously-skip-permissions, devs keep pre-approval via gitignored settings.local.json) merged to main @ **e59beef8** (git-verified head). GATE 0 re-ran PASS: scratch daemon @ 651f00aa → agent_ready 2.3s + marker, live daemon untouched.
+- **A5 now GENUINELY fail-closed:** #27 dropped continue-on-error + branch protection CREATED with `check (Tier 2)` as REQUIRED status check (strict=false, enforce_admins=false — minimal-friction, preserves captain self-merge/emergency bypass). Not cosmetic.
+- **Redeploy DONE + verified:** live daemon on e59beef8, deploy tag **daemon-20260708-01** (git tag --points-at e59beef8 = confirmed), rollback binary intact, dispatch resumed live.
+- **Merge train complete:** #24 (A5 CI) + #26 (injection) + #28 (hk-88c29 flake) + #27 (continue-on-error) + #29 (committed-block) all on main; #19 closed; hk-88c29 + hk-5gmkd + hk-to22v closed.
+- **ESCALATED to operator: final GO to tag v0.5.0.** All gates green + verified. Cut = release/outward-facing/hard-to-reverse = operator's call, not admiral self-auth. Recommended GO. Captain holding for the word.
+- **Deferred (non-blocker):** supervisor asset-skew (10 files/6 conflicts) — captain correctly NOT blind-applying (AGENTS.md managed-region regression risk). gurney2-q paused-by-failure on a premature A5 bead dispatch — HARMLESS (nothing merged), leave paused.

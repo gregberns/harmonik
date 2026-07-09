@@ -106,6 +106,10 @@ docs/qa-scratch/
 .cass/
 .codex/
 
+# Ephemeral comms subscribe dumps written next to plan/work dirs
+.subscribe.jsonl
+**/.subscribe.jsonl
+
 # Python bytecode
 __pycache__/
 *.pyc

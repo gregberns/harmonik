@@ -55,3 +55,26 @@ pi-provider-switch — operator canary: real tool_calls per provider over DGX
 tunnel`. Recording an untested canary result here would be a fabrication;
 this section exists so that gap is explicit rather than silently assumed
 closed.
+
+## hk-4ir08 resolution note
+
+`hk-4ir08` originally read the ornith/DGX reasoning-model path as a stalled
+0-byte hang (content:null, no tool_calls) — a protocol/capability gap. A
+later in-daemon canary (run `019f4365-e7cb`, 2026-07-08) proved the opposite:
+Pi over DGX/ornith completes end-to-end through the daemon — real `write`
+tool_calls, a real commit — it is just slow. `agent_ready` legitimately takes
+~20 min on the reasoning path (reasoning latency ahead of the first
+tool_call), which is well inside the 30-min never-spawned reaper but past the
+3-min `agent_ready_stall_detected` default, so every healthy run on this
+profile tripped a spurious stall alarm that read as a hang.
+
+The residual fix (this bead) adds a per-bead
+`agent_ready_stall_threshold=<seconds>` label override (mirroring the
+existing `stale_after=` / `never_spawned_timeout=` overrides) in
+`internal/daemon/stalewatch.go` — beads dispatched against a reasoning-model
+pi profile (e.g. `profile:ornith-dgx-reasoning`) can widen the detection
+window to match the profile's real latency instead of alarming on every
+healthy run. No model swap or protocol adaptation is required; options
+(a)/(b)/(c) from the original bead description are moot. The live-DGX
+operator canary above remains the separate, not-yet-run DoD proof for the
+wider epic.

@@ -17,6 +17,14 @@ package daemon
 //     (default: 30 min). Per-bead override via "never_spawned_timeout=<seconds>"
 //     label (beadNeverSpawnedTimeout).  Use this label on long-running DOT-mode
 //     implement beads that legitimately exceed the 30-min ceiling (B9, hk-8gixi).
+//   - agentReadyStallThreshold: detection window for the launch_initiated →
+//     agent_ready blind spot (default: 3 min). Per-bead override via
+//     "agent_ready_stall_threshold=<seconds>" label
+//     (beadAgentReadyStallThreshold). Use this label on beads dispatched
+//     against a reasoning-model pi profile (e.g. ornith/DGX), whose legitimate
+//     agent_ready latency (~20 min) is far past the 3-min default and would
+//     otherwise trip a spurious agent_ready_stall_detected on every healthy
+//     run (hk-4ir08).
 //
 // The watcher must be constructed and Subscribed BEFORE bus.Seal (EV-009).
 // StartWatcher is called after Seal to launch the background goroutine.
@@ -189,6 +197,15 @@ type runStaleState struct {
 	// Long-running DOT-mode implement beads should carry this label to avoid
 	// false-positive context cancellations (B9, hk-8gixi).
 	neverSpawnedTimeout time.Duration
+
+	// agentReadyStallThreshold is the per-run detection window for
+	// agent_ready_stall_detected.  Initialised from the bead's
+	// "agent_ready_stall_threshold=<seconds>" label
+	// (beadAgentReadyStallThreshold); falls back to
+	// w.cfg.AgentReadyStallThreshold when no label is set.  Reasoning-model pi
+	// profiles (ornith/DGX) should carry this label so their legitimate
+	// ~20-min agent_ready latency does not trip the 3-min default (hk-4ir08).
+	agentReadyStallThreshold time.Duration
 
 	// launchInitiatedSeen is true once launch_initiated has been observed.
 	// When true, the launch-stall check is suppressed for this run.
@@ -442,6 +459,39 @@ func beadNeverSpawnedTimeout(labels []string, defaultTimeout time.Duration) time
 	return defaultTimeout
 }
 
+// beadAgentReadyStallThreshold parses an "agent_ready_stall_threshold=<seconds>"
+// or "agent_ready_stall_threshold:<seconds>" label from labels and returns the
+// corresponding duration.  Returns defaultThreshold when no such label is
+// present or the value is ≤0.
+//
+// The default 3-min AgentReadyStallThreshold assumes agent_ready follows
+// launch_initiated within seconds. Reasoning-model harness profiles (e.g. an
+// ornith/DGX pi profile) legitimately take ~20 min to reach agent_ready
+// (reasoning latency ahead of the first tool_call) — well within the 30-min
+// never-spawned reaper, but past the 3-min detector, so it fires a spurious
+// agent_ready_stall_detected on every run. Beads dispatched against such a
+// profile should carry this label so the detector's window matches the
+// profile's real latency instead of alarming on healthy runs (hk-4ir08).
+func beadAgentReadyStallThreshold(labels []string, defaultThreshold time.Duration) time.Duration {
+	for _, l := range labels {
+		var val string
+		switch {
+		case strings.HasPrefix(l, "agent_ready_stall_threshold="):
+			val = strings.TrimPrefix(l, "agent_ready_stall_threshold=")
+		case strings.HasPrefix(l, "agent_ready_stall_threshold:"):
+			val = strings.TrimPrefix(l, "agent_ready_stall_threshold:")
+		default:
+			continue
+		}
+		secs, err := strconv.ParseInt(val, 10, 64)
+		if err != nil || secs <= 0 {
+			return defaultThreshold
+		}
+		return time.Duration(secs) * time.Second
+	}
+	return defaultThreshold
+}
+
 // NewStaleWatcher creates a StaleWatcher from cfg. Call Subscribe before
 // bus.Seal; call StartWatcher after Seal to launch the background goroutine.
 func NewStaleWatcher(cfg StaleWatcherConfig) *StaleWatcher {
@@ -617,15 +667,21 @@ func (w *StaleWatcher) checkRun(
 		//
 		// Apply per-bead label overrides if present.
 		st = &runStaleState{
-			nextEmitAfter:       beadStaleAfter(handle.Labels, w.cfg.StaleAfter),
-			neverSpawnedTimeout: beadNeverSpawnedTimeout(handle.Labels, w.cfg.NeverSpawnedReaperTimeout),
+			nextEmitAfter:            beadStaleAfter(handle.Labels, w.cfg.StaleAfter),
+			neverSpawnedTimeout:      beadNeverSpawnedTimeout(handle.Labels, w.cfg.NeverSpawnedReaperTimeout),
+			agentReadyStallThreshold: beadAgentReadyStallThreshold(handle.Labels, w.cfg.AgentReadyStallThreshold),
 		}
 		w.states[runID] = st
-	} else if st.neverSpawnedTimeout == 0 {
+	} else {
 		// observe() may have initialised the state before checkRun had a chance
-		// to do so; it lacks access to handle.Labels and leaves neverSpawnedTimeout
-		// at its zero value.  Lazily apply the per-bead label override here.
-		st.neverSpawnedTimeout = beadNeverSpawnedTimeout(handle.Labels, w.cfg.NeverSpawnedReaperTimeout)
+		// to do so; it lacks access to handle.Labels and leaves these fields at
+		// their zero value.  Lazily apply the per-bead label overrides here.
+		if st.neverSpawnedTimeout == 0 {
+			st.neverSpawnedTimeout = beadNeverSpawnedTimeout(handle.Labels, w.cfg.NeverSpawnedReaperTimeout)
+		}
+		if st.agentReadyStallThreshold == 0 {
+			st.agentReadyStallThreshold = beadAgentReadyStallThreshold(handle.Labels, w.cfg.AgentReadyStallThreshold)
+		}
 	}
 	// Hydrate BeadID from the RunHandle (available even before first event).
 	if st.beadID == "" {
@@ -724,7 +780,7 @@ func (w *StaleWatcher) checkRun(
 	// that subsequent events (e.g. daemon heartbeats) do not delay the window.
 	if st.launchInitiatedSeen && !st.agentReadySeen && !st.agentReadyStallEmitted &&
 		!st.launchInitiatedAt.IsZero() &&
-		now.Sub(st.launchInitiatedAt) > w.cfg.AgentReadyStallThreshold {
+		now.Sub(st.launchInitiatedAt) > st.agentReadyStallThreshold {
 		st.agentReadyStallEmitted = true
 		beadIDForARS := st.beadID
 		arsStall := now.Sub(st.launchInitiatedAt)

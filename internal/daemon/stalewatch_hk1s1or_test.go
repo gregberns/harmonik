@@ -209,6 +209,53 @@ func TestAgentReadyStall_NotYetDue(t *testing.T) {
 	}
 }
 
+// TestAgentReadyStall_BeadLabelOverridesThreshold verifies a bead carrying
+// "agent_ready_stall_threshold=<seconds>" widens the detection window past
+// the daemon-global default, so a reasoning-model profile's legitimate
+// multi-minute agent_ready latency (hk-4ir08) does not trip a spurious
+// agent_ready_stall_detected within the default window.
+func TestAgentReadyStall_BeadLabelOverridesThreshold(t *testing.T) {
+	t.Parallel()
+	reg := daemon.NewRunRegistry()
+	runID := nsrNewRunID(t)
+	epoch := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clk := newMutableClock(epoch)
+
+	handle := &daemon.RunHandle{
+		BeadID:    "hk-4ir08-dgx-reasoning",
+		StartedAt: epoch,
+		Labels:    []string{"profile:ornith-dgx-reasoning", "agent_ready_stall_threshold=1200"},
+	}
+	reg.Register(runID, handle)
+
+	// Daemon-global default is 2 min — the bead's label widens it to 20 min.
+	const globalDefault = 2 * time.Minute
+	w, col := arsBuildWatcher(t, reg, globalDefault, clk)
+
+	nsrSimulateEvent(w, clk, runID, core.EventTypeLaunchInitiated, epoch)
+
+	// Past the global default but well within the label's 20-min window —
+	// must NOT fire.
+	clk.Set(epoch.Add(5 * time.Minute))
+	daemon.ExportedStalewatchScan(w, context.Background())
+	time.Sleep(50 * time.Millisecond)
+	if n := len(col.collected()); n != 0 {
+		t.Fatalf("expected 0 agent_ready_stall_detected events within the label override window, got %d", n)
+	}
+
+	// Past the label's own 20-min window — now it must fire.
+	clk.Set(epoch.Add(21 * time.Minute))
+	daemon.ExportedStalewatchScan(w, context.Background())
+	time.Sleep(50 * time.Millisecond)
+	got := col.collected()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 agent_ready_stall_detected event past the label override window, got %d", len(got))
+	}
+	if got[0].BeadID != "hk-4ir08-dgx-reasoning" {
+		t.Errorf("event bead_id = %q, want %q", got[0].BeadID, "hk-4ir08-dgx-reasoning")
+	}
+}
+
 // TestAgentReadyStall_SuppressedIfNoLaunchInitiated verifies the detector does
 // NOT fire when launch_initiated has not been observed (the launch-stall
 // detector owns the run_started → launch_initiated gap, not this one).

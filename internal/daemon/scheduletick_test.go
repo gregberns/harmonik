@@ -619,6 +619,36 @@ func TestScheduleTick_EnsureWatchLiveness(t *testing.T) {
 	}
 }
 
+// TestScheduleTick_EnsureWatchLivenessConfiguredBodies verifies that configured
+// LivenessPingBody / VerifyServicesBody override the Go-literal default bodies.
+func TestScheduleTick_EnsureWatchLivenessConfiguredBodies(t *testing.T) {
+	_, store, _ := newTickDeps(t)
+
+	cfg := WatchConfig{
+		LivenessInterval:   "1h",
+		DigestInterval:     "1h",
+		LivenessPingBody:   "custom-liveness-body",
+		VerifyServicesBody: "custom-verify-body",
+	}
+	ensureWatchLivenessSchedule(store, cfg, "")
+
+	j1, ok := store.Get(watchLivenessPingJobID)
+	if !ok {
+		t.Fatal("watch-liveness-ping job not registered")
+	}
+	if j1.Action.Body != "custom-liveness-body" {
+		t.Errorf("liveness-ping body = %q, want 'custom-liveness-body' (from config)", j1.Action.Body)
+	}
+
+	j2, ok := store.Get(watchVerifyServicesJobID)
+	if !ok {
+		t.Fatal("watch-verify-services job not registered")
+	}
+	if j2.Action.Body != "custom-verify-body" {
+		t.Errorf("verify-services body = %q, want 'custom-verify-body' (from config)", j2.Action.Body)
+	}
+}
+
 // TestScheduleTick_WatchLivenessSkippedWhenNotConfigured verifies that
 // ensureWatchLivenessSchedule is a no-op when interval fields are empty (WE6).
 // The fail-loud gate is checkMissingWatchValues (cmd/harmonik), not this function.

@@ -997,6 +997,8 @@ type rawWatchConfig struct {
 	LivenessInterval        string `yaml:"liveness_interval"`         // WE6: Go duration string for mutual-liveness ping (fail-loud)
 	DigestInterval          string `yaml:"digest_interval"`           // WE6: Go duration string for verify-services-up (fail-loud)
 	StaffingStarvationGrace int    `yaml:"staffing_starvation_grace"` // consecutive ops-monitor digests before staffing-starvation backstop escalates (fail-loud)
+	LivenessPingBody        string `yaml:"liveness_ping_body"`        // message body for the liveness-ping schedule job (defaults to "watch-liveness-ping", NOT fail-loud)
+	VerifyServicesBody      string `yaml:"verify_services_body"`      // message body for the verify-services-up schedule job (defaults to "watch-verify-services", NOT fail-loud)
 }
 
 // WatchConfig holds the watch-level routing configuration read from the
@@ -1029,6 +1031,12 @@ type WatchConfig struct {
 	// slot" condition may persist with NO captain staffing action before the watch escalates the
 	// staffing-starvation backstop. Zero = not configured; fail-loud when watch is deployed.
 	StaffingStarvationGrace int
+	// LivenessPingBody is the comms-send message body for the liveness-ping schedule job.
+	// Empty = not configured → callers resolve to "watch-liveness-ping" (NOT fail-loud).
+	LivenessPingBody string
+	// VerifyServicesBody is the comms-send message body for the verify-services-up schedule job.
+	// Empty = not configured → callers resolve to "watch-verify-services" (NOT fail-loud).
+	VerifyServicesBody string
 }
 
 // rawStallSentinelEscalation is the stall_sentinel.escalation: sub-block.
@@ -1819,6 +1827,8 @@ func parseWatchBlock(raw rawWatchConfig) WatchConfig {
 		LivenessInterval:        raw.LivenessInterval,
 		DigestInterval:          raw.DigestInterval,
 		StaffingStarvationGrace: raw.StaffingStarvationGrace,
+		LivenessPingBody:        raw.LivenessPingBody,
+		VerifyServicesBody:      raw.VerifyServicesBody,
 	}
 }
 

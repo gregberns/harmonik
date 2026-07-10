@@ -41,13 +41,25 @@ const watchVerifyServicesJobID = "watch-verify-services"
 // operator supplies both values.
 //
 // The liveness ping target defaults to "captain" when watchCfg.StatusTarget is
-// empty, matching the WE7 §7 exception for target keys.
+// empty, matching the WE7 §7 exception for target keys. The message bodies
+// default to "watch-liveness-ping" / "watch-verify-services" when
+// watchCfg.LivenessPingBody / watchCfg.VerifyServicesBody are empty, matching
+// the same §7 exception (not fail-loud).
 //
 // Errors are logged to stderr and do not abort daemon startup.
 func ensureWatchLivenessSchedule(store *schedule.Store, watchCfg WatchConfig, _ string) {
 	target := watchCfg.StatusTarget
 	if target == "" {
 		target = "captain"
+	}
+
+	livenessPingBody := watchCfg.LivenessPingBody
+	if livenessPingBody == "" {
+		livenessPingBody = watchLivenessPingJobID
+	}
+	verifyServicesBody := watchCfg.VerifyServicesBody
+	if verifyServicesBody == "" {
+		verifyServicesBody = watchVerifyServicesJobID
 	}
 
 	if watchCfg.LivenessInterval != "" {
@@ -61,7 +73,7 @@ func ensureWatchLivenessSchedule(store *schedule.Store, watchCfg WatchConfig, _ 
 				Action: schedule.Action{
 					Kind:  schedule.ActionKindCommsSend,
 					To:    target,
-					Body:  "watch-liveness-ping",
+					Body:  livenessPingBody,
 					Topic: "liveness",
 				},
 				Enabled:       true,
@@ -85,7 +97,7 @@ func ensureWatchLivenessSchedule(store *schedule.Store, watchCfg WatchConfig, _ 
 				Action: schedule.Action{
 					Kind:  schedule.ActionKindCommsSend,
 					To:    target,
-					Body:  "watch-verify-services",
+					Body:  verifyServicesBody,
 					Topic: "liveness",
 				},
 				Enabled:       true,

@@ -493,10 +493,16 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			return h.HandleQueueSetConcurrency(ctx, reEncoded)
 		})
 
+	// hk-0mmy4: cancels a queue by archiving its file and reaping the
+	// daemon's in-memory QueueStore slot (HandleQueueCancel). This targets a
+	// QUEUE, not an in-flight RUN: any run already dispatched from the
+	// cancelled queue keeps executing to completion untouched — only the
+	// queue's bookkeeping slot is removed so a later queue-submit for the
+	// same bead is no longer hard-blocked by the stale cross_queue_duplicate
+	// guard. Cannot abort an in-flight run; drain-safe per ON-008, mirroring
+	// the existing "queue" CLI verb's queue-model.md §8 authorization.
+	// ON-INV-006-AUTH: operator-nfr.md §4.3 ON-008; queue-only archive+reap, no in-flight run abort
 	case "queue-cancel":
-		// hk-0mmy4: routed through a live daemon (when reachable) so the
-		// in-memory QueueStore slot is reaped alongside the on-disk archive —
-		// see HandleQueueCancel for why the reap step is required.
 		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
 			return h.HandleQueueCancel(ctx, reEncoded)
 		})

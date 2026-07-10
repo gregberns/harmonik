@@ -25,23 +25,61 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/dashboard"
 )
 
-// runDashboardSubcommand implements `harmonik dashboard [--json]`.
+// defaultDashboardUnlockDuration is the default expiry for `harmonik
+// dashboard --unlock` when --until is not given (hk-xg6rw). A mandatory
+// expiry — never an indefinite override — mirrors the sentinel
+// PhaseFlag+Expiry convention (internal/digest/sentinelconfig.go).
+const defaultDashboardUnlockDuration = 1 * time.Hour
+
+// runDashboardSubcommand implements `harmonik dashboard [--json] [--unlock
+// [--until DURATION]] [--lock]`.
+//
+// --unlock / --lock are the DESIGN §4 operator override for the staleness
+// forcing gate (hk-xg6rw): they write/clear
+// .harmonik/context/dashboard-unlock.json directly (no daemon round-trip
+// needed — the gate evaluator reads the file straight off disk). --unlock
+// always carries a mandatory expiry (default 1h, or --until) so an override
+// can never be left on indefinitely by accident.
 //
 // Exit codes:
 //
-//	0 — snapshot emitted successfully
+//	0 — snapshot emitted / override applied successfully
 //	1 — fatal error (flag parse, marshal failure, daemon not running)
 func runDashboardSubcommand(args []string) int {
 	asJSON := false
-	for _, a := range args {
+	doUnlock := false
+	doLock := false
+	until := defaultDashboardUnlockDuration
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch a {
 		case "--json", "-json":
 			asJSON = true
+		case "--unlock":
+			doUnlock = true
+		case "--lock":
+			doLock = true
+		case "--until":
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "harmonik dashboard: --until requires a duration argument (e.g. --until 1h)\n")
+				return 1
+			}
+			i++
+			d, parseErr := time.ParseDuration(args[i])
+			if parseErr != nil {
+				fmt.Fprintf(os.Stderr, "harmonik dashboard: --until %q: %v\n", args[i], parseErr)
+				return 1
+			}
+			until = d
 		case "--help", "-h":
-			fmt.Fprintf(os.Stderr, "Usage: harmonik dashboard [--json]\n")
-			fmt.Fprintf(os.Stderr, "  --json   emit full DashboardSnapshot as JSON\n")
+			fmt.Fprintf(os.Stderr, "Usage: harmonik dashboard [--json] [--unlock [--until DURATION]] [--lock]\n")
+			fmt.Fprintf(os.Stderr, "  --json    emit full DashboardSnapshot as JSON\n")
+			fmt.Fprintf(os.Stderr, "  --unlock  bypass the staleness forcing gate for DURATION (default %s)\n", defaultDashboardUnlockDuration)
+			fmt.Fprintf(os.Stderr, "  --until   duration for --unlock (e.g. 1h, 30m)\n")
+			fmt.Fprintf(os.Stderr, "  --lock    clear an active --unlock override immediately\n")
 			return 0
 		}
 	}
@@ -50,6 +88,13 @@ func runDashboardSubcommand(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik dashboard: project dir: %v\n", err)
 		return 1
+	}
+
+	if doUnlock {
+		return runDashboardUnlock(projectDir, until)
+	}
+	if doLock {
+		return runDashboardLock(projectDir)
 	}
 
 	ctx := context.Background()
@@ -285,4 +330,29 @@ func nvl(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// runDashboardUnlock applies the operator override for the staleness forcing
+// gate (hk-xg6rw): writes dashboard-unlock.json with a mandatory expiry.
+// Disk-only — no daemon round-trip needed, since evaluateDashboardGate reads
+// the file directly every tick.
+func runDashboardUnlock(projectDir string, until time.Duration) int {
+	expiry := time.Now().Add(until)
+	if err := dashboard.WriteUnlock(projectDir, expiry, "operator"); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik dashboard: --unlock: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stdout, "dashboard gate unlocked until %s\n", expiry.Format(time.RFC3339))
+	return 0
+}
+
+// runDashboardLock clears an active --unlock override, re-arming the gate
+// immediately.
+func runDashboardLock(projectDir string) int {
+	if err := dashboard.ClearUnlock(projectDir); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik dashboard: --lock: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stdout, "dashboard gate re-armed (unlock override cleared)\n")
+	return 0
 }

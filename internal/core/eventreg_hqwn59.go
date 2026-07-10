@@ -361,6 +361,11 @@ func registerDaemonLifecycleEvents() {
 	// was killed by SIGKILL, OOM, or panic. Fills the logmine gap that previously
 	// required stderr correlation to detect unexplained daemon deaths. Durability: O.
 	mustRegister("supervisor_revival", func() EventPayload { return &SupervisorRevivalPayload{} })
+	// dashboard_stale / dashboard_refreshed (§8.7.21-22, hk-xg6rw): forcing gate
+	// — while dashboard.json is stale past dashboard.max_staleness, the daemon
+	// staffs no new work on captain-curated queues. Durability: O.
+	mustRegister("dashboard_stale", func() EventPayload { return &DashboardStalePayload{} })
+	mustRegister("dashboard_refreshed", func() EventPayload { return &DashboardRefreshedPayload{} })
 }
 
 // registerBusEvents registers all §8.8 observability and bus-internal event

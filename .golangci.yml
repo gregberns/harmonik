@@ -129,6 +129,8 @@ linters:
             - "github.com/gregberns/harmonik/internal/eventbus"
             - "github.com/gregberns/harmonik/internal/presence"
             - "github.com/gregberns/harmonik/internal/keeper"
+            - "github.com/gregberns/harmonik/internal/dashboard"
+            - "github.com/gregberns/harmonik/internal/digest"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "keeper MUST NOT import daemon (session-keeper spec hk-ekap1)" }
             - { pkg: "github.com/gregberns/harmonik/internal/workloop", desc: "keeper MUST NOT import workloop (session-keeper spec hk-ekap1)" }

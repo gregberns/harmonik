@@ -353,6 +353,17 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// per child bead whose parent:hk-* label has no parent-run merge commit on
 	// main (reconciliation/spec.md §8.BL1). Payload: bead_id, parent_id.
 	{TypeName: "orphaned_child_bead", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
+	// ── §8.7.21–22 Dashboard forcing gate (hk-xg6rw) ──────────────────────
+	// dashboard_stale: emitted when dashboard.json's updated timestamp exceeds
+	// dashboard.max_staleness; the daemon staffs no new work on captain-curated
+	// queues until refreshed or unlocked. Payload: max_staleness_secs,
+	// stale_secs, updated_at, blocked_queues, detected_at.
+	{TypeName: "dashboard_stale", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// dashboard_refreshed: emitted on the transition out of dashboard_stale
+	// (captain refreshed dashboard.json, or operator applied the unlock
+	// override). Payload: reason, updated_at, detected_at.
+	{TypeName: "dashboard_refreshed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 }
 
 // LookupPayloadCompatEntry returns the PayloadCompatEntry for the given

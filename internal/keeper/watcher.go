@@ -243,6 +243,12 @@ type WatcherConfig struct {
 	// observed without real tmux. Mirrors InjectFn for the warn injection.
 	SelfHintInjectFn func(ctx context.Context, target, text string) error
 
+	// DashboardNagInjectFn delivers the [KEEPER NAG] dashboard-staleness
+	// pre-nag text into the pane (hk-xg6rw, DESIGN §4 recommendation B). When
+	// nil, InjectText is used. Set to a spy in unit tests. Mirrors
+	// SelfHintInjectFn / InjectFn.
+	DashboardNagInjectFn func(ctx context.Context, target, text string) error
+
 	// Cycler, if non-nil, enables Phase-2 cycle dispatch. MaybeRun is called on
 	// each fresh-gauge tick; gating (act_pct, CrispIdle, HoldingDispatch,
 	// anti-loop) is handled internally by the Cycler.
@@ -904,6 +910,11 @@ type Watcher struct {
 	// for the current blind episode. Prevents re-emission on every tick. Cleared
 	// (along with blindSince) when the gauge becomes readable again.
 	blindAlarmFired bool
+
+	// lastDashboardNagAt is the wall-clock time of the most recent dashboard
+	// staleness pre-nag injection (hk-xg6rw). Zero means no nag has fired yet
+	// this session. Gates re-injection to dashboardNagCooldown.
+	lastDashboardNagAt time.Time
 }
 
 // NewWatcher constructs a Watcher with the given config and emitter.
@@ -1011,6 +1022,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// SPEC §5 / N9). The keeper tick is the SOLE emitter of
 			// decision_withdrawn(orphaned). Refs: hk-jrftk.
 			w.maybeReapOrphanedDecisions(ctx, &lastReapAt)
+
+			// ── dashboard staleness pre-nag (hk-xg6rw, DESIGN §4 rec. B) ─────
+			// Runs unconditionally each tick (like the reaper above), independent
+			// of gauge state — a wedged/foreign-session captain still needs the
+			// nudge before the daemon-side forcing gate trips.
+			w.maybeNagDashboardStale(ctx, time.Now())
 
 			// inNoGaugeBackoff is true during the 30s back-off window after a
 			// no_gauge emission. When true the re-emit calls below are suppressed

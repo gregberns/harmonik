@@ -146,6 +146,13 @@ var agentReadyKillReapTimeout = 10 * time.Second
 // Tests may inject a shorter value via workLoopDeps.coordinatorReapInterval.
 const periodicCoordinatorReapInterval = 5 * time.Minute
 
+// dashboardGateEvalInterval is the minimum interval between successive
+// dashboard forcing-gate evaluations (hk-xg6rw). The gate reads two small
+// JSON files (dashboard.json, lanes.json) plus config.yaml; rate-limiting
+// avoids doing that disk I/O on every 2s poll tick while still reacting
+// promptly to a captain's refresh.
+const dashboardGateEvalInterval = 30 * time.Second
+
 // diskLowWatermarkDefault is the default free-disk threshold below which the
 // daemon pauses new bead dispatch and attempts a go-cache reap (hk-sxlb).
 // 10 GiB chosen because --max-concurrent 4 with go build can consume ~3–5 GiB
@@ -1354,7 +1361,13 @@ func effectiveQueueWorkers(q *queue.Queue, globalCap int) int {
 // queue_running, global_cap - global_running) per QM-062.
 //
 // Bead ref: hk-tigaf.4 (NQ-B1).
-func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int) (queueSelection, bool) {
+//
+// blockedQueues is the hk-xg6rw dashboard forcing-gate set: queue names
+// present (with value true) are captain-curated queues currently gated by a
+// stale dashboard.json. A gated queue contributes nothing to dispatch this
+// tick but — like a paused-by-failure queue — MUST NOT block sibling queues.
+// nil disables the gate (pre-hk-xg6rw behaviour).
+func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) (queueSelection, bool) {
 	names := lq.LockedAllQueueNames()
 	if len(names) == 0 {
 		return queueSelection{}, false
@@ -1371,6 +1384,14 @@ func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor
 		if q.Status != queue.QueueStatusActive {
 			// Paused-by-failure / paused-by-drain / completed queues contribute
 			// nothing but MUST NOT block sibling queues.
+			sawNonContributing = true
+			continue
+		}
+		if blockedQueues[name] {
+			// hk-xg6rw: captain-curated queue gated by a stale dashboard.json.
+			// In-flight runs on this queue are untouched (they are already
+			// dispatched, tracked in runRegistry, never revisited here) — only
+			// NEW item dispatch is withheld. Sibling queues are unaffected.
 			sawNonContributing = true
 			continue
 		}
@@ -1498,6 +1519,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// dispatch fairly among active queues. Plain round-robin, NOT weighted
 	// fairness (QM-067; weighting deferred to v0.2).
 	rrCursor := 0
+
+	// Dashboard forcing-gate state (hk-xg6rw). dashboardGateWasBlocked persists
+	// across ticks so dashboard_stale/dashboard_refreshed emit only on the
+	// transition edge, not every tick. dashboardBlockedQueues is re-evaluated
+	// at most every dashboardGateEvalInterval and consulted by selectNextQueue.
+	var dashboardGateWasBlocked bool
+	var lastDashboardGateEval time.Time
+	var dashboardBlockedQueues map[string]bool
 
 	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
 	// in_progress with an active run. Entries suppress the item from the
@@ -1707,6 +1736,54 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					return exitClean()
 				}
 				continue
+			}
+		}
+
+		// Step 2b: dashboard staleness forcing gate (hk-xg6rw). Rate-limited to
+		// dashboardGateEvalInterval; dashboardBlockedQueues is consulted by
+		// selectNextQueue below (Step 3) to withhold NEW item dispatch on
+		// captain-curated queues only — in-flight runs, the mailbox, reconcile,
+		// and every daemon-core path are untouched.
+		//
+		// Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §4.
+		if time.Since(lastDashboardGateEval) >= dashboardGateEvalInterval {
+			lastDashboardGateEval = time.Now()
+			gateNow := time.Now()
+			gateResult, gateErr := evaluateDashboardGate(deps.projectDir, gateNow)
+			if gateErr != nil {
+				// Fail loud (no-hardcoded-threshold mandate) but not fatal: the
+				// result already degrades to Blocked=true (fail-safe direction).
+				fmt.Fprintf(os.Stderr, "daemon: workloop: dashboard gate: config error, failing closed: %v\n", gateErr)
+			}
+			dashboardBlockedQueues = gateResult.BlockedQueues
+
+			if gateResult.Blocked && !dashboardGateWasBlocked {
+				dashboardGateWasBlocked = true
+				blockedNames := make([]string, 0, len(gateResult.BlockedQueues))
+				for name := range gateResult.BlockedQueues {
+					blockedNames = append(blockedNames, name)
+				}
+				sort.Strings(blockedNames)
+				payload := core.DashboardStalePayload{
+					MaxStalenessSecs: int64(gateResult.MaxStaleness.Seconds()),
+					StaleSecs:        gateResult.StaleSecs,
+					UpdatedAt:        gateResult.UpdatedAt,
+					BlockedQueues:    blockedNames,
+					DetectedAt:       gateNow.UTC().Format(time.RFC3339),
+				}
+				if raw, mErr := json.Marshal(payload); mErr == nil {
+					_ = deps.bus.Emit(ctx, core.EventTypeDashboardStale, raw)
+				}
+			} else if !gateResult.Blocked && dashboardGateWasBlocked {
+				dashboardGateWasBlocked = false
+				payload := core.DashboardRefreshedPayload{
+					Reason:     "refreshed",
+					UpdatedAt:  gateResult.UpdatedAt,
+					DetectedAt: gateNow.UTC().Format(time.RFC3339),
+				}
+				if raw, mErr := json.Marshal(payload); mErr == nil {
+					_ = deps.bus.Emit(ctx, core.EventTypeDashboardRefreshed, raw)
+				}
 			}
 		}
 
@@ -2065,7 +2142,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// reflects the queue-owner's permanent concurrency intent, not the current tuner
 				// state; scaling it with the tuner would under-count eligible queues in the
 				// round-robin even when the global gate is the binding constraint.
-				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor)
+				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor, dashboardBlockedQueues)
 				// Capture queue count while the lock is still held so we can
 				// distinguish "zero queues loaded" from "queues exist but all
 				// paused/at-cap" after lq.Done() releases the lock (hk-mgoo7).

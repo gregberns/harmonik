@@ -155,7 +155,7 @@ func TestPerQueueRR_PerQueueCapBoundsDispatch(t *testing.T) {
 	reg.Register(perQueueRRRunID(t), perQueueRRHandle("hk-i-running", "investigate"))
 
 	lq := qs.LockForMutation()
-	sel, ok := selectNextQueue(lq, reg, 4 /*globalCap*/, 0 /*cursor*/)
+	sel, ok := selectNextQueue(lq, reg, 4 /*globalCap*/, 0 /*cursor*/, nil)
 	lq.Done()
 
 	if !ok {
@@ -181,7 +181,7 @@ func TestPerQueueRR_AllAtCapSelectsNothing(t *testing.T) {
 	reg.Register(perQueueRRRunID(t), perQueueRRHandle("hk-i-running", "investigate")) // investigate at cap
 
 	lq := qs.LockForMutation()
-	_, ok := selectNextQueue(lq, reg, 4, 0)
+	_, ok := selectNextQueue(lq, reg, 4, 0, nil)
 	lq.Done()
 
 	if ok {
@@ -218,7 +218,7 @@ func TestPerQueueRR_CursorAdvanceRotatesSelection(t *testing.T) {
 	const ticks = 10
 	for i := 0; i < ticks; i++ {
 		lq := qs.LockForMutation()
-		sel, ok := selectNextQueue(lq, reg, 10, cursor)
+		sel, ok := selectNextQueue(lq, reg, 10, cursor, nil)
 		lq.Done()
 		if !ok {
 			t.Fatalf("tick %d: selectNextQueue ok=false, want a selection", i)
@@ -259,7 +259,7 @@ func TestPerQueueRR_CursorResetWouldStarve(t *testing.T) {
 	const ticks = 6
 	for i := 0; i < ticks; i++ {
 		lq := qs.LockForMutation()
-		sel, ok := selectNextQueue(lq, reg, 10, 0 /*cursor pinned at 0 — the anti-pattern*/)
+		sel, ok := selectNextQueue(lq, reg, 10, 0 /*cursor pinned at 0 — the anti-pattern*/, nil)
 		lq.Done()
 		if !ok {
 			t.Fatalf("tick %d: ok=false", i)
@@ -337,7 +337,7 @@ func TestPerQueueRR_AllRemoteQueueAdmitsBeyondMaxConcurrent(t *testing.T) {
 	}
 
 	lq := qs.LockForMutation()
-	sel, ok := selectNextQueue(lq, reg, globalCap, 0)
+	sel, ok := selectNextQueue(lq, reg, globalCap, 0, nil)
 	lq.Done()
 
 	if !ok {

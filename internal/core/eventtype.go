@@ -657,6 +657,25 @@ const (
 	// emitted once per revival on startup, before orphan sweep).
 	// Bead ref: hk-rnkuy.
 	EventTypeSupervisorRevival EventType = "supervisor_revival"
+
+	// EventTypeDashboardStale is the dashboard_stale event type (§8.7.21).
+	// Emitted when .harmonik/context/dashboard.json's `updated` timestamp is
+	// older than the configured dashboard.max_staleness. While stale, the
+	// daemon staffs no new work on captain-curated queues (in-flight runs
+	// finish; mailbox/reconcile/daemon-core paths are never blocked) until the
+	// captain refreshes dashboard.json or the operator overrides the gate.
+	// Durability class: O (ordinary — observability; reconstructible; the
+	// daemon self-recovers once dashboard.json is refreshed or unlocked).
+	// Bead ref: hk-xg6rw.
+	EventTypeDashboardStale EventType = "dashboard_stale"
+
+	// EventTypeDashboardRefreshed is the dashboard_refreshed event type (§8.7.22).
+	// Emitted on the transition out of the dashboard_stale gate — either the
+	// captain refreshed dashboard.json's `updated` timestamp within the
+	// staleness window, or the operator applied the unlock override.
+	// Durability class: O.
+	// Bead ref: hk-xg6rw.
+	EventTypeDashboardRefreshed EventType = "dashboard_refreshed"
 )
 
 // ---------------------------------------------------------------------------

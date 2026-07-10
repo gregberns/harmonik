@@ -3349,3 +3349,10 @@ func ExportedPiAuthIndicatesPersistentCredential(piHome string) (bool, error) {
 func ExportedPiDefaultHome() string {
 	return piDefaultHome()
 }
+
+// ExportedStrandedBeadHasOnDiskRun exposes strandedBeadHasOnDiskRun for tests
+// in package daemon_test, so the race-conservative-on-List-error behavior
+// (hk-r9edj) can be exercised directly without driving the full workloop.
+func ExportedStrandedBeadHasOnDiskRun(projectDir string, beadID core.BeadID) bool {
+	return strandedBeadHasOnDiskRun(projectDir, beadID)
+}

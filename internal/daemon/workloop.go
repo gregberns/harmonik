@@ -7996,11 +7996,6 @@ func adoptLiveRunSession(ctx context.Context, deps workLoopDeps, rec runpkg.Reco
 	}
 }
 
-// strandedBeadHasOnDiskRun reports whether any record in .harmonik/runs/ is
-// associated with beadID. An on-disk record means an adoptLiveRunSession
-// goroutine is monitoring the independent tmux session; resetting the bead
-// in that case would race the live session, so the stranded-bead auto-reset
-// (hk-l2xd1) must skip.
 // sandboxOSTmpDirs returns the OS temp directories to include in the srt sandbox
 // allowWrite set (hk-6596l). On macOS /tmp is a symlink to /private/tmp; srt
 // requires the canonical path, so both are included when os.TempDir() returns "/tmp".
@@ -8013,13 +8008,23 @@ func sandboxOSTmpDirs() []string {
 	return dirs
 }
 
+// strandedBeadHasOnDiskRun reports whether any record in .harmonik/runs/ is
+// associated with beadID. An on-disk record means an adoptLiveRunSession
+// goroutine is monitoring the independent tmux session; resetting the bead
+// in that case would race the live session, so the stranded-bead auto-reset
+// (hk-l2xd1) must skip.
+//
+// On a runpkg.List error the on-disk state is unknown, not empty — treat
+// that as race-conservative (report true, i.e. "assume a run may exist")
+// so the caller skips the reset rather than risking a race with a live
+// adoptLiveRunSession goroutine it failed to see (hk-r9edj).
 func strandedBeadHasOnDiskRun(projectDir string, beadID core.BeadID) bool {
 	if projectDir == "" {
 		return false
 	}
 	recs, err := runpkg.List(projectDir)
-	if err != nil || len(recs) == 0 {
-		return false
+	if err != nil {
+		return true
 	}
 	for _, r := range recs {
 		if r.BeadID == string(beadID) {

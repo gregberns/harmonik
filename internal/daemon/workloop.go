@@ -6612,11 +6612,66 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip)
 		isAncCmd.Dir = projectDir
 		if err := isAncCmd.Run(); err != nil {
-			// Non-FF: target branch has diverged from the run-branch.
-			return mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("non_ff_merge: %s advanced concurrently", targetBranch),
+			// Non-FF: target branch has diverged from the run-branch. This
+			// happens when a concurrent merge (another run landing on the
+			// same targetBranch) advances the local ref between this run's
+			// step-2 rebase and this FF-check (hk-1u4wp). Mirror the
+			// push-rejection retry below: re-resolve the local target tip,
+			// rebase onto it, and retry the FF-check — up to maxPushAttempts
+			// total — before giving up terminally.
+			if pushAttempt >= maxPushAttempts {
+				return mergeOutcome{
+					success: false,
+					reason:  fmt.Sprintf("non_ff_merge: %s advanced concurrently", targetBranch),
+				}
 			}
+
+			currentMainTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+targetBranch)
+			currentMainTipCmd.Dir = projectDir
+			currentMainTipOut, currentMainTipErr := currentMainTipCmd.Output()
+			if currentMainTipErr != nil {
+				return mergeOutcome{
+					success: false,
+					reason:  fmt.Sprintf("non_ff_merge_retry_rev_parse (attempt %d): %v", pushAttempt, currentMainTipErr),
+				}
+			}
+			mainTip = strings.TrimRight(string(currentMainTipOut), "\n")
+
+			if _, statErr := os.Stat(wtPath); statErr == nil {
+				discardDirtyChurn(ctx, wtPath)
+				commitResidualDelta(ctx, wtPath, runID)
+				retryRebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
+				retryRebaseCmd.Dir = wtPath
+				if out, rebaseErr := retryRebaseCmd.CombinedOutput(); rebaseErr != nil {
+					abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
+					abortCmd.Dir = wtPath
+					_ = abortCmd.Run()
+					return mergeOutcome{
+						success: false,
+						reason:  fmt.Sprintf("rebase_conflict_on_non_ff_merge_retry (attempt %d): %v\n%s", pushAttempt, rebaseErr, strings.TrimRight(string(out), "\n")),
+					}
+				}
+			}
+
+			retryRunTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
+			retryRunTipCmd.Dir = projectDir
+			if retryRunTipOut, retryRunTipErr := retryRunTipCmd.Output(); retryRunTipErr == nil {
+				runTip = strings.TrimRight(string(retryRunTipOut), "\n")
+			}
+
+			// hk-zmpd: rebase-drop guard on the FF-check retry rebase (same
+			// invariant as the initial rebase and the push-retry rebase).
+			if runTip == mainTip {
+				return mergeOutcome{
+					success: false,
+					reason: fmt.Sprintf(
+						"rebase_dropped_commits_on_non_ff_merge_retry (attempt %d): rebase of %s"+
+							" onto %s produced no commits ahead of target",
+						pushAttempt, runBranch, targetBranch),
+				}
+			}
+
+			continue
 		}
 
 		// Step 3a: fast-forward target branch to runTip.

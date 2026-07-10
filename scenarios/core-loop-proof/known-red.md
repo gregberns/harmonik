@@ -21,6 +21,12 @@ There are currently no known-RED cells. The full-matrix green gate is therefore 
   branch) was fixed by wiring the resolved `baseBranch` as the merge target into all five
   merge call sites (`internal/daemon/workloop.go`, commit `ca23da59`). Proven live by the
   daemon E2E test `TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch` — a run lands on
-  its intended branch with `main` byte-pinned; RED before the fix, GREEN after. The
-  two-sided `assert_t10` golden coverage (wrong-branch → fail, intended-branch → pass)
-  stays in `scripts/core-loop-assert-test.sh` as permanent assertion-logic tests.
+  its intended branch with `main` byte-pinned; RED before the fix, GREEN after.
+
+  Re-specced 2026-07-10: `assert_t10` now proves the core-loop landing contract directly —
+  it reds unless a run reaches the APPROVE success terminal (`run_completed` with
+  `success==true`, summary not `needs-attention`) AND lands a commit
+  (`implementer_phase_complete.commit_landed==true`). Golden coverage is the three fixtures
+  `t10-success` (green), `t10-needs-attention` (red — wrong terminal), and
+  `t10-approve-nocommit` (red — no landed commit) in `scripts/core-loop-assert-test.sh`.
+  The older wrong-branch/intended-branch fixtures were superseded and removed.

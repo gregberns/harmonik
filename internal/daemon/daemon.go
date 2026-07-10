@@ -1726,6 +1726,13 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// both blocks share scope; nil in unit-test mode (no ProjectDir / socket).
 	var crewHandler CrewHandler
 
+	// crewIdleReaper (SD-3, hk-s2eac): tears down a crew whose bound queue has
+	// completed and stayed idle past a short grace window, reclaiming its
+	// slot. Constructed alongside crewHandler (needs it as the stop seam);
+	// started post-Seal beside quiesceArbiter.Start. Nil in unit-test mode
+	// (no ProjectDir / socket).
+	var crewIdleReaper *CrewIdleReaper
+
 	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
 	// subprocesses can deliver outcome_emitted envelopes to the daemon.
 	//
@@ -1858,6 +1865,15 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			cfg.HandlerBinary, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RemoteControlPrefix, cfg.Substrate, opPauseCtrl,
 			WithKeeperProbe(cfg.ProjectCfg.Keeper, bus, crewCommsEmitter),
 		)
+
+		// SD-3 (hk-s2eac): wire the idle-completed-crew reaper now that both
+		// the queue store and the crew stop seam exist. Started post-Seal,
+		// below, alongside quiesceArbiter.Start.
+		crewIdleReaper = NewCrewIdleReaper(CrewIdleReaperConfig{
+			ProjectDir: cfg.ProjectDir,
+			Queues:     qs,
+			Stopper:    crewHandler,
+		})
 
 		// Build the live state handler (hk-gv04 P2-a: `harmonik state`).
 		// drainDet may be nil if ProjectDir was empty above — LiveStateBuilder
@@ -2094,6 +2110,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		}
 
 		quiesceArbiter.Start(ctx)
+
+		// SD-3 (hk-s2eac): start the idle-completed-crew reaper. crewIdleReaper
+		// is non-nil here (constructed above, same cfg.ProjectDir != "" block).
+		crewIdleReaper.StartWatcher(ctx)
 
 		// Emit the composition-root wiring audit log when HARMONIK_DEBUG_WIRING=1
 		// is set in the operator environment.  All 31 wiring points have been

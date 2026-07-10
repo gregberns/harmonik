@@ -584,6 +584,31 @@ type QueueSetConcurrencyResponse struct {
 	SpawnCap int `json:"spawn_cap,omitempty"`
 }
 
+// QueueCancelRequest is the payload for the queue-cancel JSON-RPC method
+// (hk-0mmy4). It carries the target queue name and an optional force flag so
+// a live daemon can cancel/reap the same queue that `harmonik queue cancel`
+// archives on disk when invoked without a live daemon.
+//
+// Bead ref: hk-0mmy4.
+type QueueCancelRequest struct {
+	// Queue is the target queue name. Empty normalises to QueueNameMain.
+	Queue string `json:"queue"`
+	// Force allows cancelling an already-completed queue (mirrors the CLI's
+	// --force flag).
+	Force bool `json:"force,omitempty"`
+}
+
+// QueueCancelResponse is the response for queue-cancel.
+//
+// Bead ref: hk-0mmy4.
+type QueueCancelResponse struct {
+	// QueueID is the cancelled queue's ID. Empty when no queue file was found
+	// (still a success — nothing to cancel).
+	QueueID string `json:"queue_id,omitempty"`
+	// PriorStatus is the queue's Status value before cancellation.
+	PriorStatus string `json:"prior_status,omitempty"`
+}
+
 // WorkerSetEnabledRequest is the payload for the worker-set-enabled JSON-RPC
 // method — the live operator toggle behind `harmonik worker enable/disable`
 // (hk-xjbvi). It flips the named worker's Enabled flag in the daemon's LIVE

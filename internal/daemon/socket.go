@@ -174,6 +174,17 @@ type QueueHandler interface {
 	//
 	// Bead ref: hk-xjbvi.
 	HandleWorkerSetEnabled(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
+
+	// HandleQueueCancel dispatches a queue-cancel request. Archives the named
+	// queue's per-queue file on disk (same contract as the daemon-less CLI
+	// path) AND reaps the daemon's live in-memory QueueStore slot for that
+	// name — the reap is what the daemon-less CLI path cannot do, and its
+	// absence is what let a cancelled-but-still-in-memory queue's dispatched
+	// item hard-block re-dispatch of the same bead via cross_queue_duplicate
+	// (hk-0mmy4).
+	//
+	// Bead ref: hk-0mmy4.
+	HandleQueueCancel(ctx context.Context, params json.RawMessage) (json.RawMessage, *queue.RPCError)
 }
 
 // noopRequestHandler is a minimal RequestHandler that rejects every request
@@ -480,6 +491,14 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 	case "queue-set-concurrency":
 		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
 			return h.HandleQueueSetConcurrency(ctx, reEncoded)
+		})
+
+	case "queue-cancel":
+		// hk-0mmy4: routed through a live daemon (when reachable) so the
+		// in-memory QueueStore slot is reaped alongside the on-disk archive —
+		// see HandleQueueCancel for why the reap step is required.
+		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
+			return h.HandleQueueCancel(ctx, reEncoded)
 		})
 
 	case "worker-set-enabled":

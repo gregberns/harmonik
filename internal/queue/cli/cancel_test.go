@@ -11,6 +11,7 @@ package cli_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -357,4 +358,121 @@ func TestRunQueueCancel_QueueIDFlag_NotFound_ExitsZero(t *testing.T) {
 	if !strings.Contains(out.String(), "no active queue found") {
 		t.Errorf("RunQueueCancel --queue-id not-found: stdout %q does not mention 'no active queue found'", out.String())
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Daemon-routed cancel (hk-0mmy4)
+// ---------------------------------------------------------------------------
+//
+// These tests start an echo server on daemon.sock so RunQueueCancel routes
+// through tryDaemonQueueCancel's "queue-cancel" socket op instead of the
+// disk-only fallback used by the tests above (which run with no daemon.sock
+// present at all).
+
+// TestRunQueueCancel_LiveDaemon_RoutesThroughSocket verifies that when a
+// daemon is reachable, RunQueueCancel sends a "queue-cancel" op (not a
+// disk-only archive) and reports the daemon's response — this is the path
+// that lets a live daemon reap its in-memory QueueStore slot (hk-0mmy4).
+func TestRunQueueCancel_LiveDaemon_RoutesThroughSocket(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	// Deliberately do NOT write a queue file: RunQueueCancel's own pre-flight
+	// Load (used for the local "already completed" fast-path check) requires
+	// something loadable, so write a minimal active queue on disk too — the
+	// daemon-side archive is what actually matters for this assertion.
+	cancelFixtureWriteQueue(t, projectDir, "alpha")
+
+	var capturedOp string
+	var capturedQueue string
+	var capturedForce bool
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		var msg map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			if opBytes, ok := msg["op"]; ok {
+				_ = json.Unmarshal(opBytes, &capturedOp)
+			}
+			if qBytes, ok := msg["queue"]; ok {
+				_ = json.Unmarshal(qBytes, &capturedQueue)
+			}
+			if fBytes, ok := msg["force"]; ok {
+				_ = json.Unmarshal(fBytes, &capturedForce)
+			}
+		}
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"queue_id":     "qid-alpha-daemon-routed",
+			"prior_status": "active",
+		})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue", "alpha"}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueCancel live-daemon: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedOp != "queue-cancel" {
+		t.Errorf("RunQueueCancel live-daemon: op = %q, want %q", capturedOp, "queue-cancel")
+	}
+	if capturedQueue != "alpha" {
+		t.Errorf("RunQueueCancel live-daemon: queue = %q, want %q", capturedQueue, "alpha")
+	}
+	if capturedForce {
+		t.Errorf("RunQueueCancel live-daemon: force = true, want false (no --force passed)")
+	}
+	if !strings.Contains(out.String(), "qid-alpha-daemon-routed") {
+		t.Errorf("RunQueueCancel live-daemon: stdout %q does not echo the daemon-reported queue_id", out.String())
+	}
+	if !strings.Contains(out.String(), "daemon-reaped") {
+		t.Errorf("RunQueueCancel live-daemon: stdout %q does not indicate the daemon-routed path was used", out.String())
+	}
+}
+
+// TestRunQueueCancel_LiveDaemon_SurfacesDaemonError verifies that a daemon
+// rejection (e.g. queue_already_completed without --force) is surfaced to
+// the operator with a non-zero exit rather than silently falling back to the
+// disk-only archive (which would bypass the daemon's authoritative refusal).
+func TestRunQueueCancel_LiveDaemon_SurfacesDaemonError(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	cancelFixtureWriteQueue(t, projectDir, "main")
+
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		resp := map[string]json.RawMessage{
+			"ok":         json.RawMessage(`false`),
+			"error":      mustJSONMarshal(t, "queue qid-x is already completed; use --force to archive anyway"),
+			"error_code": json.RawMessage(`-32099`),
+		}
+		data, err := json.Marshal(resp)
+		if err != nil {
+			t.Fatalf("marshal error response: %v", err)
+		}
+		return data
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir}, &out, &errOut)
+
+	if got == 0 {
+		t.Fatalf("RunQueueCancel live-daemon error: exit = 0, want non-zero; stdout=%q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "already completed") {
+		t.Errorf("RunQueueCancel live-daemon error: stderr %q does not mention the daemon's rejection reason", errOut.String())
+	}
+}
+
+// mustJSONMarshal is a tiny helper for building literal JSON string fields in
+// hand-built response maps.
+func mustJSONMarshal(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("mustJSONMarshal: %v", err)
+	}
+	return data
 }

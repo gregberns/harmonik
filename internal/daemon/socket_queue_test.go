@@ -58,6 +58,10 @@ func (s *socketQueueFixtureStub) HandleWorkerSetEnabled(_ context.Context, _ jso
 	return json.RawMessage(`{"name":"gb-mbp","enabled":true}`), nil
 }
 
+func (s *socketQueueFixtureStub) HandleQueueCancel(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
+	return json.RawMessage(`{"queue_id":"stub-queue-id","prior_status":"active"}`), nil
+}
+
 // ---------------------------------------------------------------------------
 // Fixture helper: start listener with optional QueueHandler
 // ---------------------------------------------------------------------------

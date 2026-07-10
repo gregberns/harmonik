@@ -2,7 +2,7 @@ package cli
 
 // cancel.go — `harmonik queue cancel` subcommand implementation.
 //
-// Semantics (hk-i6hhn, extended hk-fkpb7):
+// Semantics (hk-i6hhn, extended hk-fkpb7, hk-0mmy4):
 //  1. Parse --project, --force, --queue, and --queue-id flags.
 //  2. Resolve the target queue:
 //     --queue-id <uuid> → enumerate per-queue files and find by UUID.
@@ -11,17 +11,24 @@ package cli
 //     (no arg)          → default to "main".
 //  3. Absent queue → exit 0 (nothing to cancel).
 //  4. Refuse if the queue status is already terminal (completed) unless --force.
-//  5. Archive .harmonik/queues/<name>.json to
-//     .harmonik/queues/<name>.json.failed-<timestamp> so the daemon and the
-//     next harmonik run invocation find no active queue for that name (freeing
-//     the slot for a fresh `queue submit`).
+//  5. Cancel the queue:
+//     - If a daemon is live (socket reachable), route the cancel through it
+//       via the "queue-cancel" op (HandlerAdapter.HandleQueueCancel). The
+//       daemon archives .harmonik/queues/<name>.json to
+//       <name>.json.failed-<timestamp> AND reaps its in-memory QueueStore
+//       slot for that name — the reap step is what a purely disk-based
+//       archive cannot do, and its absence is exactly what let a cancelled
+//       queue's still-in-memory Dispatched item hard-block re-dispatch of the
+//       same bead from another queue via cross_queue_duplicate (hk-0mmy4).
+//     - Otherwise (no live daemon), fall back to archiving the file directly
+//       — there is no in-memory registry to reap in that case.
 //  6. Emit a queue_cancel_operator event to events.jsonl (best-effort).
 //
-// This verb works entirely without a live daemon — it archives the per-queue
-// file directly. Because a paused-by-failure queue has no active in-flight
-// runs, the daemon will not re-persist the archived file; a subsequent
-// `queue submit --queue <name>` replaces the daemon's in-memory slot via
-// SetQueue (hk-fkpb7 problem (3)).
+// This verb works without a live daemon — it archives the per-queue file
+// directly when no daemon is reachable. Because a paused-by-failure queue has
+// no active in-flight runs, the daemon will not re-persist the archived file;
+// a subsequent `queue submit --queue <name>` replaces the daemon's in-memory
+// slot via SetQueue (hk-fkpb7 problem (3)).
 //
 // Exit-code contract:
 //
@@ -29,7 +36,7 @@ package cli
 //	1  — argument, I/O, or validation error
 //
 // Spec ref: specs/queue-model.md §2.2 (queue status lifecycle).
-// Bead ref: hk-i6hhn, hk-fkpb7.
+// Bead ref: hk-i6hhn, hk-fkpb7, hk-0mmy4.
 
 import (
 	"context"
@@ -140,6 +147,13 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 		return 1
 	}
 
+	// hk-0mmy4: prefer routing through a live daemon so it reaps its
+	// in-memory QueueStore slot alongside the on-disk archive. Falls back to
+	// the disk-only archive below when no daemon is reachable.
+	if handled, exitCode := tryDaemonQueueCancel(ctx, projectDir, queueName, forceFlag, out, errOut); handled {
+		return exitCode
+	}
+
 	archivePath, archiveErr := queue.ArchiveFailedQueue(ctx, projectDir, queueName, time.Now())
 	if archiveErr != nil {
 		fmt.Fprintf(errOut, "harmonik queue cancel: cannot archive queue.json: %v\n", archiveErr)
@@ -152,6 +166,68 @@ func RunQueueCancel(ctx context.Context, subArgs []string, out io.Writer, errOut
 	emitQueueCancelEvent(projectDir, existingQueue.QueueID, string(existingQueue.Status))
 
 	return 0
+}
+
+// tryDaemonQueueCancel attempts to route the cancel through a live daemon's
+// "queue-cancel" socket op (HandlerAdapter.HandleQueueCancel) so the daemon's
+// in-memory QueueStore slot for queueName is reaped alongside the on-disk
+// archive (hk-0mmy4). See the file-level doc comment for why the reap step
+// matters: without it, a live daemon's in-memory copy of a cancelled queue
+// keeps its dispatched item's Status at ItemStatusDispatched, hard-blocking
+// re-dispatch of the same bead from another queue with cross_queue_duplicate.
+//
+// Returns handled=false whenever the daemon could not be reached or the
+// exchange failed for any transport reason — the caller falls back to the
+// disk-only archive path in that case, unchanged from pre-hk-0mmy4 behaviour.
+// Returns handled=true once the daemon has authoritatively processed the
+// request (success or a typed rejection such as queue_already_completed);
+// exitCode is the process exit code the caller should return immediately.
+//
+// Bead ref: hk-0mmy4.
+func tryDaemonQueueCancel(ctx context.Context, projectDir, queueName string, force bool, out, errOut io.Writer) (handled bool, exitCode int) {
+	msg := struct {
+		Op    string `json:"op"`
+		Queue string `json:"queue"`
+		Force bool   `json:"force,omitempty"`
+	}{Op: "queue-cancel", Queue: queueName, Force: force}
+
+	payload, marshalErr := marshalJSON(msg)
+	if marshalErr != nil {
+		return false, 0
+	}
+
+	harmonikDir := harmonikDirFromProject(projectDir, io.Discard)
+	if harmonikDir == "" {
+		return false, 0
+	}
+
+	resp, earlyExit := sendRequest(ctx, harmonikDir, payload)
+	if earlyExit != -1 {
+		// exitDaemonDown (no live daemon) or any transport error: fall back
+		// to the disk-only archive rather than failing the command outright.
+		return false, 0
+	}
+
+	if !resp.Ok {
+		fmt.Fprintf(errOut, "harmonik queue cancel: %s\n", resp.Error) //nolint:errcheck
+		return true, 1
+	}
+
+	var result struct {
+		QueueID     string `json:"queue_id"`
+		PriorStatus string `json:"prior_status"`
+	}
+	if jsonErr := json.Unmarshal(resp.Result, &result); jsonErr != nil {
+		return false, 0
+	}
+	if result.QueueID == "" {
+		fmt.Fprintln(out, "harmonik queue cancel: no active queue found (queue file absent)") //nolint:errcheck
+		return true, 0
+	}
+
+	fmt.Fprintf(out, "queue %s (status=%s) archived (daemon-reaped)\n", result.QueueID, result.PriorStatus) //nolint:errcheck
+	emitQueueCancelEvent(projectDir, result.QueueID, result.PriorStatus)
+	return true, 0
 }
 
 // cancelFindByID enumerates all per-queue files under projectDir and returns

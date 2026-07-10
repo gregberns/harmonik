@@ -83,6 +83,12 @@ func (s *queueSetQueueWiringQueueSetter) SetQueue(q *queue.Queue) {
 	s.lastQueue = q
 }
 
+func (s *queueSetQueueWiringQueueSetter) ClearQueueByName(name string) {
+	if s.lastQueue != nil && queue.NormaliseQueueName(s.lastQueue.Name) == name {
+		s.lastQueue = nil
+	}
+}
+
 // queueSetQueueWiringEventCollector is a minimal EventEmitter stub that records
 // all emitted event types.
 type queueSetQueueWiringEventCollector struct {

@@ -24,6 +24,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -44,10 +45,17 @@ import (
 //
 // daemon.QueueStore satisfies this interface.
 //
+// ClearQueueByName removes the named slot from the in-memory store. It is
+// used by HandleQueueCancel to reap a cancelled queue from the live
+// QueueStore so the hk-a11re cross-queue dedup guard in the daemon's work
+// loop stops treating its (now-archived) Dispatched item as a live conflict
+// (hk-0mmy4).
+//
 // Spec ref: specs/queue-model.md §9.1 QM-060 (single-writer).
-// Bead ref: hk-4ukkq.
+// Bead ref: hk-4ukkq, hk-0mmy4.
 type QueueSetter interface {
 	SetQueue(q *Queue)
+	ClearQueueByName(name string)
 }
 
 // EventEmitter is the minimal bus interface required by HandlerAdapter to emit
@@ -1161,6 +1169,84 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 		return nil, &RPCError{
 			Code: -32099, Message: "internal_error",
 			Detail: map[string]any{"error": fmt.Sprintf("encode queue-set-concurrency response: %v", marshalErr)},
+		}
+	}
+	return data, nil
+}
+
+// HandleQueueCancel cancels the named queue on a live daemon: it archives the
+// per-queue file to <name>.json.failed-<timestamp> (the same disk contract as
+// the daemon-less `harmonik queue cancel` CLI path in
+// internal/queue/cli/cancel.go) and then reaps the daemon's in-memory
+// QueueStore slot via QueueSetter.ClearQueueByName.
+//
+// The reap step is the fix for hk-0mmy4: without it, a live daemon's
+// in-memory copy of the cancelled queue keeps Status=active with its
+// dispatched item's Status left at ItemStatusDispatched even after the file
+// is archived on disk, so the hk-a11re cross-queue dedup guard in the work
+// loop (workloop.go) keeps failing any fresh dispatch of the same bead from
+// another queue with LastFailureReason="cross_queue_duplicate" — the queue
+// looks cancelled on disk but the daemon never learns to let the bead go.
+//
+// Satisfies daemon.QueueHandler.
+//
+// Bead ref: hk-0mmy4.
+func (a *HandlerAdapter) HandleQueueCancel(ctx context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
+	var req QueueCancelRequest
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("decode queue-cancel request: %v", err)},
+		}
+	}
+	name := NormaliseQueueName(req.Queue)
+
+	q, loadErr := Load(ctx, a.projectDir, name)
+	if loadErr != nil && !errors.Is(loadErr, ErrCorrupt) {
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("cannot read queue file: %v", loadErr)},
+		}
+	}
+	if q == nil {
+		// Absent or an unparseable corrupt stub: nothing to archive, but still
+		// reap any stale in-memory slot under this name so it can't wedge the
+		// cross-queue dedup guard either (hk-0mmy4).
+		if a.qs != nil {
+			a.qs.ClearQueueByName(name)
+		}
+		data, marshalErr := json.Marshal(QueueCancelResponse{})
+		if marshalErr != nil {
+			return nil, &RPCError{
+				Code: -32099, Message: "internal_error",
+				Detail: map[string]any{"error": fmt.Sprintf("encode queue-cancel response: %v", marshalErr)},
+			}
+		}
+		return data, nil
+	}
+	if q.Status == QueueStatusCompleted && !req.Force {
+		return nil, &RPCError{
+			Code: -32099, Message: "queue_already_completed",
+			Detail: map[string]any{"error": fmt.Sprintf("queue %s is already completed; use --force to archive anyway", q.QueueID)},
+		}
+	}
+
+	priorStatus := string(q.Status)
+	if _, archErr := ArchiveFailedQueue(ctx, a.projectDir, name, time.Now()); archErr != nil {
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("cannot archive queue.json: %v", archErr)},
+		}
+	}
+	if a.qs != nil {
+		a.qs.ClearQueueByName(name)
+	}
+
+	data, marshalErr := json.Marshal(QueueCancelResponse{QueueID: q.QueueID, PriorStatus: priorStatus})
+	if marshalErr != nil {
+		return nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("encode queue-cancel response: %v", marshalErr)},
 		}
 	}
 	return data, nil

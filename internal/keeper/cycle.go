@@ -71,10 +71,10 @@ type CyclerConfig struct {
 	PollInterval   time.Duration // polling cadence for nonce + settle; default 200ms
 
 	// Injectable dependencies. Nil → production default.
-	CycleIDGen               func() string
-	IsManagedFn              func(projectDir, agentName string) bool
-	HandoffFilePath          func(projectDir, agentName string) string
-	ReadHandoff              func(path string) (string, error)
+	CycleIDGen      func() string
+	IsManagedFn     func(projectDir, agentName string) bool
+	HandoffFilePath func(projectDir, agentName string) string
+	ReadHandoff     func(path string) (string, error)
 	// HandoffModTimeFn returns the handoff file's modification time and whether it
 	// exists. Nil → defaultHandoffModTime (os.Stat). Used by the ack-timeout
 	// recovery path (hk-fi78d) to decide whether the agent actually WROTE a fresh
@@ -1129,7 +1129,7 @@ func (c *Cycler) completeCycleTail(ctx context.Context, cf *CtxFile, cycleID, jo
 	// Step 7: close journal; emit session_keeper_cycle_complete.
 	j.Phase = "complete"
 	j.UpdatedAt = time.Now().UTC()
-	j.Reason = reason // "" on the clean path; "handoff_timeout_recovered" on recovery.
+	j.Reason = reason                        // "" on the clean path; "handoff_timeout_recovered" on recovery.
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 	c.emitCycleComplete(ctx, cycleID, cf.SessionID, newSID)
 	// On the ack-timeout recovery path, ALSO emit cycle_recovered so the event

@@ -277,7 +277,7 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 
 	cycler := newReactiveCycler(
 		agent, t.TempDir(), cycleID, rs, em, jc, &managedBinding,
-		40*time.Millisecond, // handoffTimeout — poll must time out
+		40*time.Millisecond,  // handoffTimeout — poll must time out
 		300*time.Millisecond, // clearSettle — reached on the recovery path
 	)
 

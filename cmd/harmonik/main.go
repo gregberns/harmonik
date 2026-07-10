@@ -362,6 +362,13 @@ EXAMPLES
 	// instead of the reviewer hand-typing raw JSON text, which can mis-escape
 	// a backtick in a code-snippet-quoting Notes value (hk-9w79a).
 	//
+	// ON-INV-006-AUTH: operator-nfr.md §4.3 ON-008/ON-009; local filesystem
+	// write of the reviewer's own verdict file inside the reviewer's worktree
+	// — no daemon connection, no socket RPC, no queue or run-state mutation.
+	// It writes the same review.json the reviewer's Write tool would have
+	// hand-typed; it cannot abort an in-flight run, only produce the verdict
+	// the running review-loop node already waits on.
+	//
 	// Bead ref: hk-9w79a.
 	if len(os.Args) >= 2 && os.Args[1] == "write-review-verdict" {
 		return runWriteReviewVerdictSubcommand(os.Args[2:])

@@ -10,6 +10,10 @@ Sections: **Added** / **Changed** / **Fixed** / **Removed** / **Security** / **S
 
 > Tracks changes on `main` not yet tagged. Items marked _(pipeline)_ are part of the goreleaser+ledger+rollback release pipeline defined in `specs/release-pipeline.md`.
 
+### Added
+
+- core-loop-proof seed (hk-nyx): trivial one-line changelog entry verifying the dispatch → implement → merge daemon loop end-to-end.
+
 ---
 
 ## [0.4.0] — 2026-06-30

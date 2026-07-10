@@ -1914,6 +1914,19 @@ func runAutoStatusInspection(ctx context.Context, runner tmux.CommandRunner, wtP
 			// LOCAL run (NFR7: byte-identical to the pre-remote path).
 			cmd = exec.CommandContext(ctx, "go", buildArgs...)
 			cmd.Dir = wtPath
+			// Same process-group treatment as the sh -c gate (hk-me8ru): a ctx
+			// timeout/cancel must reap the whole tree, not just the `go` PID, so
+			// CombinedOutput below can't block on a lingering grandchild holding
+			// the stdout pipe open. Lower risk here (the go toolchain reaps its
+			// own children more reliably than sh -c fork) but same failure class.
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			cmd.Cancel = func() error {
+				if cmd.Process != nil {
+					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+				}
+				return nil
+			}
+			cmd.WaitDelay = 5 * time.Second
 		} else {
 			// REMOTE run: cd into the worker's worktree under a login shell so
 			// the worker's PATH resolves `go`; SSHRunner does not forward cmd.Env.

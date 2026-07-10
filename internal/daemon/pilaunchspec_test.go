@@ -1,11 +1,11 @@
 package daemon_test
 
-// pilaunchspec_test.go — unit tests for buildPiLaunchSpec (hk-1c16h PI-015/020/021).
+// pilaunchspec_test.go — unit tests for buildPiLaunchSpec (hk-1c16h PI-015/020/021/022).
 //
 // Key invariants tested:
 //
-//   - PI-020: initial turn argv = pi --mode json --provider <p> --model <m> <seed>
-//   - PI-020: resume turn argv = pi --mode json --session <id> <seed>
+//   - PI-020: initial turn argv = pi --mode json --no-extensions --provider <p> --model <m> <seed>
+//   - PI-020: resume turn argv = pi --mode json --no-extensions --session <id> <seed>
 //   - PI-015: no --sandbox flag in any argv
 //   - PI-015: seed prompt contains bead ID and "Refs" instruction
 //   - PI-020: WorkDir set to workspacePath; StdinDevNull = true
@@ -13,6 +13,7 @@ package daemon_test
 //   - PI-021: buildPiEnv injects ONLY the selected provider's key
 //   - PI-021: allowlist strip works with process env forwarded as baseEnv (T10 analog)
 //   - PI-021: resolvePiAPIKeyValue reads the correct operator env var
+//   - PI-022: --no-extensions always present (fork-bomb guard — hk-9s5fx)
 //   - Error cases: empty workspacePath, beadID, apiKeyEnv, emptySessionID
 
 import (
@@ -62,13 +63,16 @@ func TestBuildPiLaunchSpec_InitialTurn(t *testing.T) {
 		t.Error("StdinDevNull must be true (PI-020)")
 	}
 
-	// PI-020: argv shape — --mode json --provider <p> --model <m> <seed>
+	// PI-020: argv shape — --mode json --no-extensions --provider <p> --model <m> <seed>
 	piLaunchSpecAssertFlag(t, spec.Args, "--mode")
 	piLaunchSpecAssertFlagValue(t, spec.Args, "--mode", "json")
 	piLaunchSpecAssertFlag(t, spec.Args, "--provider")
 	piLaunchSpecAssertFlagValue(t, spec.Args, "--provider", rc.Provider)
 	piLaunchSpecAssertFlag(t, spec.Args, "--model")
 	piLaunchSpecAssertFlagValue(t, spec.Args, "--model", rc.Model)
+
+	// PI-022: --no-extensions must be present (fork-bomb guard, hk-9s5fx).
+	piLaunchSpecAssertFlag(t, spec.Args, "--no-extensions")
 
 	// PI-020: no --session on initial turn.
 	for _, arg := range spec.Args {
@@ -138,11 +142,14 @@ func TestBuildPiLaunchSpec_ResumeTurn(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// PI-020: argv shape — --mode json --session <id> <seed>
+	// PI-020: argv shape — --mode json --no-extensions --session <id> <seed>
 	piLaunchSpecAssertFlag(t, spec.Args, "--mode")
 	piLaunchSpecAssertFlagValue(t, spec.Args, "--mode", "json")
 	piLaunchSpecAssertFlag(t, spec.Args, "--session")
 	piLaunchSpecAssertFlagValue(t, spec.Args, "--session", sessionID)
+
+	// PI-022: --no-extensions must be present on resume turns too (fork-bomb guard, hk-9s5fx).
+	piLaunchSpecAssertFlag(t, spec.Args, "--no-extensions")
 
 	// Resume must not include --provider or --model (session carries state).
 	for _, arg := range spec.Args {
@@ -510,6 +517,59 @@ func TestBuildPiLaunchSpec_InitialTurn_EmptyModel(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for empty model on initial turn; got nil")
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestBuildPiLaunchSpec_NoExtensionsFlag (PI-022, hk-9s5fx)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestBuildPiLaunchSpec_NoExtensions_InitialTurn verifies PI-022: --no-extensions
+// is present on the initial turn so the flywheel extension cannot fork-bomb the
+// daemon by calling kerf-next on every Pi invocation (hk-9s5fx).
+func TestBuildPiLaunchSpec_NoExtensions_InitialTurn(t *testing.T) {
+	t.Parallel()
+
+	rc := daemon.ExportedPiRunCtx{
+		WorkspacePath:    "/tmp/wt-test-noext-initial",
+		BeadID:           "hk-9s5fx",
+		Provider:         "openrouter",
+		Model:            "openrouter/qwen/qwen3-coder",
+		APIKeyEnv:        "OPENROUTER_API_KEY",
+		BaseEnv:          []string{"PATH=/usr/bin"},
+		SkipBillingGuard: true,
+	}
+
+	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	piLaunchSpecAssertFlag(t, spec.Args, "--no-extensions")
+}
+
+// TestBuildPiLaunchSpec_NoExtensions_ResumeTurn verifies PI-022: --no-extensions
+// is present on resume turns as well (hk-9s5fx).
+func TestBuildPiLaunchSpec_NoExtensions_ResumeTurn(t *testing.T) {
+	t.Parallel()
+
+	sessionID := "pi-session-noext-resume"
+	rc := daemon.ExportedPiRunCtx{
+		WorkspacePath:    "/tmp/wt-test-noext-resume",
+		BeadID:           "hk-9s5fx",
+		Provider:         "openrouter",
+		Model:            "openrouter/qwen/qwen3-coder",
+		APIKeyEnv:        "OPENROUTER_API_KEY",
+		PriorSessionID:   &sessionID,
+		BaseEnv:          []string{"PATH=/usr/bin"},
+		SkipBillingGuard: true,
+	}
+
+	spec, err := daemon.ExportedBuildPiLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	piLaunchSpecAssertFlag(t, spec.Args, "--no-extensions")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

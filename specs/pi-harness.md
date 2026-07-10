@@ -77,6 +77,12 @@ depends-on:
   MUST inject **only** the selected provider's key. The key VALUE MUST come from the operator
   environment, never from config. A single shared key-resolution helper MUST feed both `buildPiEnv`
   and the guard (PI-040) so they cannot disagree.
+- **PI-022 (no-extensions — load-bearing)** Both initial and resume launch argv MUST include
+  `--no-extensions`. Reason: Pi auto-loads any tracked `.pi/extensions/*` extension from the
+  operator's home directory. The `flywheel` extension (a DEAD cognition-loop) calls `kerf next` on
+  every turn, which re-spawns Pi — a fork bomb under daemon dispatch. `--no-extensions` suppresses
+  extension auto-discovery for daemon-launched runs; explicit `-e` paths (none used by harmonik)
+  still work. Bead: hk-9s5fx.
 
 ## §3 Commit fallback
 

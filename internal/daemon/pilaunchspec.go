@@ -5,13 +5,16 @@ package daemon
 // Builds the argv/env spec for launching a Pi subprocess for any workflow phase:
 //
 //   - Initial turn (priorSessionID == nil):
-//       pi --mode json --provider <prov> --model <prov/id> "<seed-prompt>"
+//       pi --mode json --no-extensions --provider <prov> --model <prov/id> "<seed-prompt>"
 //   - Resume turn (priorSessionID != nil):
-//       pi --mode json --session <session-id> "<seed-prompt>"
+//       pi --mode json --no-extensions --session <session-id> "<seed-prompt>"
 //
 // No --sandbox flag (Pi is unsandboxed — PI-015). WorkDir is set via
 // LaunchSpec.WorkDir, NOT a -C flag. The API key MUST NOT be passed as
 // --api-key (ps/argv leak); env injection only (PI-020).
+// --no-extensions is always present (PI-022): Pi auto-loads .pi/extensions/*
+// from the operator home; the flywheel extension calls kerf-next on every turn
+// (fork bomb). Explicit -e paths still work.
 //
 // Env (buildPiEnv, PI-021 allowlist strip, review B1):
 //
@@ -245,23 +248,27 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 
 	// Build argv.
 	//
-	// Initial: pi --mode json --provider <prov> --model <prov/id> "<seed>"
-	// Resume:  pi --mode json --session <session-id> "<seed>"
+	// Initial: pi --mode json --no-extensions --provider <prov> --model <prov/id> "<seed>"
+	// Resume:  pi --mode json --no-extensions --session <session-id> "<seed>"
 	//
 	// No --sandbox flag: Pi is unsandboxed (PI-015). WorkDir in the returned
 	// LaunchSpec sets the subprocess CWD; no -C flag. The key is NEVER passed
 	// as --api-key (PI-020 — ps/argv leak).
+	// --no-extensions (PI-022): suppresses .pi/extensions/* auto-load so the
+	// flywheel extension cannot call kerf-next and fork-bomb the daemon.
 	seedPrompt := fmt.Sprintf(piSeedPromptTemplate, rc.beadID)
 	var args []string
 	if rc.priorSessionID != nil {
 		args = []string{
 			"--mode", "json",
+			"--no-extensions",
 			"--session", *rc.priorSessionID,
 			seedPrompt,
 		}
 	} else {
 		args = []string{
 			"--mode", "json",
+			"--no-extensions",
 			"--provider", rc.provider,
 			"--model", rc.model,
 			seedPrompt,

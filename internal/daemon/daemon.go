@@ -1806,10 +1806,16 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		concurrencyCtrl = NewConcurrencyController(cfg.MaxConcurrent)
 		if ha, ok := queueHandler.(*queue.HandlerAdapter); ok {
 			ha.SetConcurrencyFuncs(concurrencyCtrl.Get, concurrencyCtrl.Set)
-			// hk-vfeeo: wire spawn cap so set-concurrency can refuse requests
+			// hk-vfeeo: wire spawn cap so set-concurrency can detect requests
 			// that would oversubscribe the substrate's session ceiling.
 			if ss, ok := cfg.Substrate.(substrateWithSpawnCap); ok {
 				ha.SetSpawnCapFunc(ss.SpawnCapSize)
+			}
+			// hk-omvan: wire the live spawn-cap resize setter (when the
+			// substrate supports it) so set-concurrency RAISES the cap to
+			// satisfy an oversubscribing request instead of refusing it.
+			if ss, ok := cfg.Substrate.(substrateWithSpawnCapSetter); ok {
+				ha.SetSpawnCapSetFunc(ss.SetSpawnCap)
 			}
 		}
 

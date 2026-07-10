@@ -1074,6 +1074,25 @@ func ExportedSpawnSlotsInUse(sub handler.Substrate) int {
 	return 0
 }
 
+// ExportedSpawnCapSize exposes the non-terminal spawn-cap ceiling of a
+// substrate returned by NewTmuxSubstrate, for the hk-omvan live-resize tests.
+// Returns 0 when sub is not a *tmuxSubstrate or has no cap configured.
+func ExportedSpawnCapSize(sub handler.Substrate) int {
+	if ts, ok := sub.(*tmuxSubstrate); ok {
+		return ts.SpawnCapSize()
+	}
+	return 0
+}
+
+// ExportedSetSpawnCap exposes SetSpawnCap on a substrate returned by
+// NewTmuxSubstrate, for the hk-omvan live-resize tests. No-op when sub is not
+// a *tmuxSubstrate.
+func ExportedSetSpawnCap(sub handler.Substrate, n int) {
+	if ts, ok := sub.(*tmuxSubstrate); ok {
+		ts.SetSpawnCap(n)
+	}
+}
+
 // ExportedCrewSessionName exposes the crewSessionName method of a substrate
 // returned by NewTmuxSubstrate, for fleet-portability T2 naming tests (hk-ohd).
 // Returns ("", nil) when sub is not a *tmuxSubstrate; otherwise propagates the

@@ -23,6 +23,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -125,22 +126,28 @@ type tmuxSubstrate struct {
 	// is idempotent on a non-existent window so re-killing is harmless).
 	spawnedHandles []tmux.WindowHandle
 
-	// spawnSem, when non-nil, is a buffered-channel semaphore of size cap+1 that
-	// bounds the total number of concurrently active sessions. The +1 is the
-	// reserved slot for terminal/consolidate nodes (hk-x882o). Nil when no cap
-	// is configured (WithSpawnCap was not passed).
+	// spawnSem, when non-nil, is a resizable counting semaphore of capacity
+	// cap+1 that bounds the total number of concurrently active sessions. The
+	// +1 is the reserved slot for terminal/consolidate nodes (hk-x882o). Nil
+	// when no cap is configured (WithSpawnCap was not passed).
 	//
-	// Bead ref: hk-xb5yi (concurrent-spawn cap), hk-x882o (terminal reserve).
-	spawnSem chan struct{}
+	// hk-omvan: capacity is live-resizable via SetSpawnCap — unlike a fixed
+	// buffered channel, a *resizableSemaphore's capacity can grow (or shrink)
+	// without recreating it, so the operator can raise real throughput with
+	// `queue set-concurrency` and no daemon restart.
+	//
+	// Bead ref: hk-xb5yi (concurrent-spawn cap), hk-x882o (terminal reserve),
+	// hk-omvan (live resize).
+	spawnSem *resizableSemaphore
 
 	// nonTerminalSem, when non-nil, gates ordinary (non-terminal) spawns to the
-	// user-configured cap. It has size cap — one fewer slot than spawnSem — so
-	// that non-terminal sessions can never occupy the reserved +1 slot in
+	// user-configured cap. It has capacity cap — one fewer slot than spawnSem —
+	// so that non-terminal sessions can never occupy the reserved +1 slot in
 	// spawnSem. Terminal spawns bypass nonTerminalSem entirely and draw from
 	// the reserved slot. Nil when no cap is configured.
 	//
-	// Bead ref: hk-x882o.
-	nonTerminalSem chan struct{}
+	// Bead ref: hk-x882o, hk-omvan (live resize).
+	nonTerminalSem *resizableSemaphore
 
 	// spawnAcquireTimeout bounds how long SpawnWindow waits for a free spawn
 	// slot before treating the launch as failed (hk-4l7zs). A run sitting at
@@ -223,7 +230,8 @@ type TmuxSubstrateOption func(*tmuxSubstrate)
 // A value of 0 (or negative) disables the cap (no-op option).
 //
 // Typical production default: maxConcurrent*2 (one implementer + one reviewer
-// per in-flight bead). Override via HARMONIK_MAX_CONCURRENT_SESSIONS env var.
+// per in-flight bead). Override via HARMONIK_MAX_CONCURRENT_SESSIONS env var,
+// or raise it live post-startup via SetSpawnCap (hk-omvan).
 //
 // hk-x882o: internally the semaphore is sized at n+1 and a second semaphore of
 // size n gates non-terminal spawns. The +1 slot is reserved exclusively for
@@ -234,10 +242,169 @@ type TmuxSubstrateOption func(*tmuxSubstrate)
 func WithSpawnCap(n int) TmuxSubstrateOption {
 	return func(s *tmuxSubstrate) {
 		if n > 0 {
-			s.spawnSem = make(chan struct{}, n+1) // +1 reserved for terminal spawns (hk-x882o)
-			s.nonTerminalSem = make(chan struct{}, n)
+			s.spawnSem = newResizableSemaphore(n + 1) // +1 reserved for terminal spawns (hk-x882o)
+			s.nonTerminalSem = newResizableSemaphore(n)
 		}
 	}
+}
+
+// SetSpawnCap live-resizes the substrate's spawn cap to n non-terminal slots
+// (hk-omvan). It resizes nonTerminalSem's capacity to n and spawnSem's
+// capacity to n+1, preserving the hk-x882o invariant that a terminal spawn
+// always has a reserved slot even when all n non-terminal slots are occupied.
+//
+// A no-op when no cap was configured at construction (WithSpawnCap was not
+// passed — spawnSem is nil) or when n <= 0: SetSpawnCap can only resize an
+// existing cap, not install one where none exists. Growing the cap wakes any
+// SpawnWindow call currently blocked in acquireSpawnSlot so it can proceed
+// immediately against the new capacity, without waiting for an unrelated
+// slot to free up.
+//
+// The daemon wires this through daemon.Config so `queue set-concurrency` can
+// raise the cap to max(currentCap, N*2) instead of refusing an oversubscribing
+// request (see HandleQueueSetConcurrency in internal/queue/rpc.go).
+//
+// Bead ref: hk-omvan (follow-up to hk-vfeeo).
+func (s *tmuxSubstrate) SetSpawnCap(n int) {
+	if s.spawnSem == nil || n <= 0 {
+		return
+	}
+	s.nonTerminalSem.SetCapacity(n)
+	s.spawnSem.SetCapacity(n + 1)
+}
+
+// errSemaphoreAcquireTimeout is returned by resizableSemaphore.Acquire when the
+// caller-supplied timeout elapses before a slot frees up. It is unexported and
+// distinct from ErrSpawnCapTimeout: acquireSpawnSlot translates it into the
+// latter (with full spawn-cap diagnostics) at the call site.
+var errSemaphoreAcquireTimeout = errors.New("daemon: resizableSemaphore: acquire timed out")
+
+// resizableSemaphore is a counting semaphore whose capacity can change while
+// callers are blocked waiting on it (hk-omvan). A buffered Go channel cannot
+// do this — its capacity is fixed at creation — which is why the spawn cap was
+// restart-only before this bead: WithSpawnCap built a fixed-size chan once at
+// daemon startup and nothing could resize it short of recreating the
+// substrate. resizableSemaphore replaces that with a mutex + condition
+// variable: capacity is just a field SetCapacity can mutate at any time, and
+// Broadcast wakes every blocked Acquire so a raised cap takes effect
+// immediately rather than only for the next SpawnWindow call.
+//
+// All methods are safe for concurrent use.
+type resizableSemaphore struct {
+	mu       sync.Mutex
+	cond     *sync.Cond
+	capacity int
+	inUse    int
+}
+
+// newResizableSemaphore returns a resizableSemaphore with the given initial
+// capacity. Capacity may be zero or negative; TryAcquire/Acquire then always
+// block/fail until SetCapacity raises it above inUse.
+func newResizableSemaphore(capacity int) *resizableSemaphore {
+	sem := &resizableSemaphore{capacity: capacity}
+	sem.cond = sync.NewCond(&sem.mu)
+	return sem
+}
+
+// TryAcquire acquires a slot without blocking. Returns true and increments
+// inUse if a slot was free; returns false (no state change) otherwise.
+func (s *resizableSemaphore) TryAcquire() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.inUse < s.capacity {
+		s.inUse++
+		return true
+	}
+	return false
+}
+
+// Acquire blocks until a slot frees up, ctx is cancelled, or timeout elapses,
+// whichever comes first. timeout <= 0 disables the timeout bound (only ctx
+// cancellation can interrupt the wait — the pre-hk-4l7zs terminal-spawn
+// behaviour). Returns ctx.Err() on cancellation, errSemaphoreAcquireTimeout on
+// timeout, or nil once a slot has been acquired (inUse is incremented before
+// returning nil).
+func (s *resizableSemaphore) Acquire(ctx context.Context, timeout time.Duration) error {
+	if s.TryAcquire() {
+		return nil
+	}
+
+	// Bridge sync.Cond (which only wakes on Broadcast/Signal) with ctx
+	// cancellation and the optional timeout: both paths call Broadcast under
+	// mu so a blocked Wait() below reliably wakes and re-checks its exit
+	// conditions.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-ctx.Done():
+			s.mu.Lock()
+			s.cond.Broadcast()
+			s.mu.Unlock()
+		case <-stop:
+		}
+	}()
+
+	var timedOut atomic.Bool
+	if timeout > 0 {
+		timer := time.AfterFunc(timeout, func() {
+			timedOut.Store(true)
+			s.mu.Lock()
+			s.cond.Broadcast()
+			s.mu.Unlock()
+		})
+		defer timer.Stop()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for s.inUse >= s.capacity {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if timedOut.Load() {
+			return errSemaphoreAcquireTimeout
+		}
+		s.cond.Wait()
+	}
+	s.inUse++
+	return nil
+}
+
+// Release returns one slot to the semaphore and wakes any blocked Acquire /
+// waiter goroutine to re-check its exit condition. A no-op (no negative inUse)
+// if called with no slot currently held.
+func (s *resizableSemaphore) Release() {
+	s.mu.Lock()
+	if s.inUse > 0 {
+		s.inUse--
+	}
+	s.mu.Unlock()
+	s.cond.Broadcast()
+}
+
+// SetCapacity live-resizes the semaphore (hk-omvan) and wakes every blocked
+// Acquire so a raised capacity is picked up immediately rather than only once
+// an unrelated slot happens to free up.
+func (s *resizableSemaphore) SetCapacity(n int) {
+	s.mu.Lock()
+	s.capacity = n
+	s.mu.Unlock()
+	s.cond.Broadcast()
+}
+
+// Capacity reports the current configured capacity.
+func (s *resizableSemaphore) Capacity() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.capacity
+}
+
+// InUse reports the number of slots currently held.
+func (s *resizableSemaphore) InUse() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inUse
 }
 
 // ErrSpawnCapTimeout is the sentinel wrapped by SpawnWindow when a non-terminal
@@ -528,25 +695,26 @@ func NewTmuxSubstrate(adapter tmux.Adapter, sessionName string, opts ...TmuxSubs
 // Returns 0 when no cap is configured (spawnSem is nil). This is an
 // observability/diagnostic accessor (hk-4l7zs): the daemon and tests use it to
 // detect slot leaks — a slot acquired by SpawnWindow that is never returned by
-// Kill. len(chan) on a buffered channel is the count of buffered (held) slots
-// and is safe to read concurrently.
+// Kill.
 func (s *tmuxSubstrate) SpawnSlotsInUse() int {
 	if s.spawnSem == nil {
 		return 0
 	}
-	return len(s.spawnSem)
+	return s.spawnSem.InUse()
 }
 
 // SpawnCapSize reports the user-configured spawn-cap ceiling for non-terminal
-// sessions (cap(nonTerminalSem)). Returns 0 when no cap is configured.
+// sessions (nonTerminalSem.Capacity()). Returns 0 when no cap is configured.
 // Diagnostic accessor (hk-4l7zs). hk-x882o: returns the non-terminal cap (n),
 // not the total semaphore capacity (n+1), so diagnostics report the value the
-// operator configured rather than the internal oversized semaphore.
+// operator configured rather than the internal oversized semaphore. hk-omvan:
+// reflects live resizes made via SetSpawnCap, not just the construction-time
+// value.
 func (s *tmuxSubstrate) SpawnCapSize() int {
 	if s.nonTerminalSem == nil {
 		return 0
 	}
-	return cap(s.nonTerminalSem)
+	return s.nonTerminalSem.Capacity()
 }
 
 // substrateSpawnStats reports (slotsInUse, capSize) for a substrate that is, or
@@ -582,18 +750,9 @@ func (s *tmuxSubstrate) releaseSpawnSlotFor(terminal bool) {
 	if s.spawnSem == nil {
 		return
 	}
-	select {
-	case <-s.spawnSem:
-	default:
-		// Already released (should not happen since this is called inside
-		// killOnce.Do, but guard defensively).
-	}
+	s.spawnSem.Release()
 	if !terminal && s.nonTerminalSem != nil {
-		select {
-		case <-s.nonTerminalSem:
-		default:
-			// Guard defensively.
-		}
+		s.nonTerminalSem.Release()
 	}
 }
 
@@ -634,24 +793,10 @@ func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) err
 
 	if !terminal && s.nonTerminalSem != nil {
 		// Non-terminal path: acquire nonTerminalSem first to prevent occupying
-		// the reserved slot. Fast path first.
-		select {
-		case s.nonTerminalSem <- struct{}{}:
-		default:
-			// Slow path: wait, bounded by ctx and (when set) the acquire timeout.
-			var timeoutCh <-chan time.Time
-			if s.spawnAcquireTimeout > 0 {
-				t := time.NewTimer(s.spawnAcquireTimeout)
-				defer t.Stop()
-				timeoutCh = t.C
-			}
-			start := time.Now()
-			select {
-			case s.nonTerminalSem <- struct{}{}:
-			case <-ctx.Done():
-				return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
-					ctx.Err(), handler.ErrStructural)
-			case <-timeoutCh:
+		// the reserved slot, bounded by ctx and (when set) the acquire timeout.
+		start := time.Now()
+		if err := s.nonTerminalSem.Acquire(ctx, s.spawnAcquireTimeout); err != nil {
+			if errors.Is(err, errSemaphoreAcquireTimeout) {
 				waited := time.Since(start)
 				if s.spawnCapBlocked != nil {
 					s.spawnCapBlocked(waited, s.SpawnSlotsInUse(), s.SpawnCapSize())
@@ -659,38 +804,28 @@ func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) err
 				return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: no slot within %s (cap=%d in_use=%d): %w: %w",
 					s.spawnAcquireTimeout, s.SpawnCapSize(), s.SpawnSlotsInUse(), ErrSpawnCapTimeout, handler.ErrStructural)
 			}
+			return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
+				err, handler.ErrStructural)
 		}
 		// nonTerminalSem acquired. spawnSem must have room (non-terminal count ≤
 		// cap; spawnSem capacity = cap+1). Fast-path acquire only.
-		select {
-		case s.spawnSem <- struct{}{}:
+		if s.spawnSem.TryAcquire() {
 			return nil
-		default:
-			// Unexpected: nonTerminalSem was acquired but spawnSem is full. Release
-			// nonTerminalSem to avoid a permanent hold, then return a structural error.
-			select {
-			case <-s.nonTerminalSem:
-			default:
-			}
-			return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: unexpected spawnSem saturation after nonTerminalSem acquired: %w",
-				handler.ErrStructural)
 		}
+		// Unexpected: nonTerminalSem was acquired but spawnSem is full. Release
+		// nonTerminalSem to avoid a permanent hold, then return a structural error.
+		s.nonTerminalSem.Release()
+		return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: unexpected spawnSem saturation after nonTerminalSem acquired: %w",
+			handler.ErrStructural)
 	}
 
 	// Terminal path: acquire only spawnSem, bounded by ctx only (no timeout so
-	// reviewed work is never discarded due to spawn-slot starvation). Fast path first.
-	select {
-	case s.spawnSem <- struct{}{}:
-		return nil
-	default:
-	}
-	select {
-	case s.spawnSem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
+	// reviewed work is never discarded due to spawn-slot starvation).
+	if err := s.spawnSem.Acquire(ctx, 0); err != nil {
 		return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
-			ctx.Err(), handler.ErrStructural)
+			err, handler.ErrStructural)
 	}
+	return nil
 }
 
 // SpawnWindow creates a new tmux window in the configured session, runs
@@ -1282,6 +1417,24 @@ type substrateWithSpawnCap interface {
 // Compile-time assertion: *tmuxSubstrate satisfies substrateWithSpawnCap.
 // SpawnCapSize returns 0 when no cap is configured (nonTerminalSem is nil).
 var _ substrateWithSpawnCap = (*tmuxSubstrate)(nil)
+
+// substrateWithSpawnCapSetter is an optional interface a Substrate may
+// implement to expose a LIVE spawn-cap resize (hk-omvan, follow-up to
+// hk-vfeeo). daemon.Start probes cfg.Substrate for this interface when wiring
+// the HandlerAdapter so that HandleQueueSetConcurrency can RAISE the spawn cap
+// to satisfy an oversubscribing set-concurrency request instead of refusing
+// it outright.
+//
+// SetSpawnCap(n) resizes the non-terminal spawn ceiling to n; a no-op when no
+// cap was configured at construction or n <= 0.
+//
+// Bead ref: hk-omvan.
+type substrateWithSpawnCapSetter interface {
+	SetSpawnCap(n int)
+}
+
+// Compile-time assertion: *tmuxSubstrate satisfies substrateWithSpawnCapSetter.
+var _ substrateWithSpawnCapSetter = (*tmuxSubstrate)(nil)
 
 // substrateSpawnReadier is an optional interface a Substrate may implement to
 // expose a lightweight pre-dispatch spawn-readiness probe. daemon.Start probes

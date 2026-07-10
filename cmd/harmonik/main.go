@@ -657,6 +657,15 @@ EXAMPLES
 		return runDecisionsSubcommand(os.Args[2:])
 	}
 
+	// harmonik mailbox [--json] — thin alias of
+	// `decisions list --topic operator-mailbox` (bead hk-pltjs, pending
+	// operator sign-off per the hitl-decisions spec-change rule). Reuses the
+	// SAME hitl-decisions lifecycle scoped to the operator-mailbox topic
+	// convention — NOT a second bus.
+	if len(os.Args) >= 2 && os.Args[1] == "mailbox" {
+		return runMailboxSubcommand(os.Args[2:])
+	}
+
 	// harmonik captain — bare launcher for the Captain LLM session: mint/validate
 	// a stable UUIDv4 --session-id and bring up `claude --remote-control` in a
 	// tmux session. It is a launcher, not a daemon — it never touches the pidfile

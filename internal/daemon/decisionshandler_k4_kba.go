@@ -51,6 +51,11 @@ type DecisionsListRequest struct {
 	// DecisionID, when non-empty, narrows the result to a single decision
 	// (the `show <id>` path). Optional — the CLI also filters client-side.
 	DecisionID string `json:"decision_id,omitempty"`
+
+	// Topic, when non-empty, narrows the result to decisions raised with this
+	// exact topic (e.g. core.DecisionTopicOperatorMailbox for `harmonik
+	// mailbox`, bead hk-pltjs, pending operator sign-off). Optional.
+	Topic string `json:"topic,omitempty"`
 }
 
 // DecisionsListItem is one open decision in the decisions-list result. It mirrors
@@ -63,6 +68,8 @@ type DecisionsListItem struct {
 	BlockedAgent   string   `json:"blocked_agent,omitempty"`
 	ContextLink    string   `json:"context_link,omitempty"`
 	ValueRequested bool     `json:"value_requested,omitempty"`
+	Topic          string   `json:"topic,omitempty"`
+	Urgency        string   `json:"urgency,omitempty"`
 }
 
 // DecisionsListResult is the SocketResponse.Result payload for a successful
@@ -130,6 +137,9 @@ func (h *commsSendHandlerImpl) HandleDecisionsList(_ context.Context, payload js
 		if req.DecisionID != "" && d.DecisionID != req.DecisionID {
 			continue
 		}
+		if req.Topic != "" && d.Topic != req.Topic {
+			continue
+		}
 		items = append(items, DecisionsListItem{
 			DecisionID:     d.DecisionID,
 			Question:       d.Question,
@@ -137,6 +147,8 @@ func (h *commsSendHandlerImpl) HandleDecisionsList(_ context.Context, payload js
 			BlockedAgent:   d.BlockedAgent,
 			ContextLink:    d.ContextLink,
 			ValueRequested: d.ValueRequested,
+			Topic:          d.Topic,
+			Urgency:        string(d.Urgency),
 		})
 	}
 

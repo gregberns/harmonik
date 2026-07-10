@@ -91,6 +91,15 @@ type DecisionsRaiseRequest struct {
 
 	// ValueRequested is the optional v1.1 free-text-answer hook (v1 ignores it).
 	ValueRequested bool `json:"value_requested,omitempty"`
+
+	// Topic is the optional operator-mailbox routing tag (bead hk-pltjs,
+	// pending operator sign-off). core.DecisionTopicOperatorMailbox is the
+	// reserved convention value.
+	Topic string `json:"topic,omitempty"`
+
+	// Urgency is the optional operator-mailbox-flavor hint: blocker | question |
+	// fyi (bead hk-pltjs, pending operator sign-off).
+	Urgency string `json:"urgency,omitempty"`
 }
 
 // DecisionsRaiseResult is the SocketResponse.Result payload for a successful
@@ -150,9 +159,11 @@ func (h *commsSendHandlerImpl) HandleDecisionsRaise(ctx context.Context, payload
 		ContextLink:    req.ContextLink,
 		BlockedAgent:   req.BlockedAgent,
 		ValueRequested: req.ValueRequested,
+		Topic:          req.Topic,
+		Urgency:        core.DecisionUrgency(req.Urgency),
 	}
 	if !p.Valid() {
-		return nil, fmt.Errorf("decisions-raise: invalid decision_needed (question required and options must be ≥1)")
+		return nil, fmt.Errorf("decisions-raise: invalid decision_needed (question required, options must be ≥1, urgency must be blocker|question|fyi if set)")
 	}
 
 	payloadBytes, marshalErr := json.Marshal(p)

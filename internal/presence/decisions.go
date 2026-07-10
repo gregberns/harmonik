@@ -79,6 +79,16 @@ type Decision struct {
 	// v1 ignores it; carried for forward-compatibility so later readers need not
 	// re-scan.
 	ValueRequested bool
+
+	// Topic is the optional routing tag (decision_needed.topic). The reserved
+	// value core.DecisionTopicOperatorMailbox marks an operator-mailbox item
+	// (bead hk-pltjs, pending operator sign-off). Empty means untagged.
+	Topic string
+
+	// Urgency is the optional operator-mailbox-flavor hint
+	// (decision_needed.urgency): blocker | question | fyi (bead hk-pltjs,
+	// pending operator sign-off). Empty means unspecified.
+	Urgency core.DecisionUrgency
 }
 
 // OpenDecisions folds the events.jsonl log at eventsPath into the current
@@ -139,6 +149,8 @@ func OpenDecisions(eventsPath string) map[string]Decision {
 				BlockedAgent:   p.BlockedAgent,
 				ContextLink:    p.ContextLink,
 				ValueRequested: p.ValueRequested,
+				Topic:          p.Topic,
+				Urgency:        p.Urgency,
 			}
 
 		case string(core.EventTypeDecisionResolved):

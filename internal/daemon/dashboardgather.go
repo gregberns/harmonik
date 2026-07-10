@@ -138,6 +138,8 @@ func (b *DashboardBuilder) readOpenDecisions() []DashDecision {
 			BlockedAgent:   d.BlockedAgent,
 			ContextLink:    d.ContextLink,
 			ValueRequested: d.ValueRequested,
+			Topic:          d.Topic,
+			Urgency:        string(d.Urgency),
 		})
 	}
 	return out

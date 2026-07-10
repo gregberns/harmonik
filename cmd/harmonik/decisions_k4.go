@@ -46,6 +46,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // decisionListItem mirrors the daemon's DecisionsListItem (the package boundary
@@ -57,6 +59,8 @@ type decisionListItem struct {
 	BlockedAgent   string   `json:"blocked_agent,omitempty"`
 	ContextLink    string   `json:"context_link,omitempty"`
 	ValueRequested bool     `json:"value_requested,omitempty"`
+	Topic          string   `json:"topic,omitempty"`
+	Urgency        string   `json:"urgency,omitempty"`
 }
 
 // decisionListResult mirrors the daemon's DecisionsListResult.
@@ -85,6 +89,67 @@ type decisionListRow struct {
 // subArgs is os.Args[3:].
 func runDecisionsListSubcommand(subArgs []string) int {
 	return runDecisionsListOrShow(subArgs, "", "list")
+}
+
+// runMailboxSubcommand implements `harmonik mailbox [--json]` — a thin alias
+// of `decisions list --topic operator-mailbox` (bead hk-pltjs, pending
+// operator sign-off per the hitl-decisions spec-change rule). It does NOT
+// invent a second bus: it reuses the durable/ordered/fsync'd/ack'd/async-answer
+// hitl-decisions lifecycle, scoped to the operator-mailbox topic convention.
+// subArgs is os.Args[2:].
+func runMailboxSubcommand(subArgs []string) int {
+	jsonFlag := false
+	socketFlag := ""
+	projectFlag := ""
+
+	for i := 0; i < len(subArgs); i++ {
+		arg := subArgs[i]
+		switch {
+		case arg == "--help" || arg == "-h":
+			mailboxUsage()
+			return 0
+		case arg == "--json":
+			jsonFlag = true
+		case arg == "--socket" && i+1 < len(subArgs):
+			i++
+			socketFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--socket="):
+			socketFlag = strings.TrimPrefix(arg, "--socket=")
+		case arg == "--project" && i+1 < len(subArgs):
+			i++
+			projectFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--project="):
+			projectFlag = strings.TrimPrefix(arg, "--project=")
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(os.Stderr, "harmonik mailbox: unknown flag %q\n", arg)
+			return 1
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik mailbox: unexpected argument %q\n", arg)
+			return 1
+		}
+	}
+	return runDecisionsListOrShowParsed("", core.DecisionTopicOperatorMailbox, jsonFlag, socketFlag, projectFlag, "mailbox")
+}
+
+func mailboxUsage() {
+	fmt.Print(`harmonik mailbox — the operator mailbox (thin alias)
+
+USAGE
+  harmonik mailbox [--json] [--socket PATH] [--project DIR]
+
+Equivalent to:
+  harmonik decisions list --topic operator-mailbox
+
+Renders every OPEN decision raised on the "operator-mailbox" topic — the
+open-item set plus its count (the unread count). Reuses the SAME
+durable/ordered/fsync'd/ack'd/async-answer hitl-decisions lifecycle as
+"decisions list"; this is not a second bus.
+
+EXIT CODES
+  0   Success
+  1   Argument error or daemon rejected the op
+  17  Daemon not running (socket missing or ECONNREFUSED)
+`)
 }
 
 // runDecisionsShowSubcommand implements `harmonik decisions show <decision_id>`
@@ -125,7 +190,7 @@ func runDecisionsShowSubcommand(subArgs []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik decisions show: exactly one <decision_id> argument is required\n")
 		return 1
 	}
-	return runDecisionsListOrShowParsed(positional[0], jsonFlag, socketFlag, projectFlag, "show")
+	return runDecisionsListOrShowParsed(positional[0], "", jsonFlag, socketFlag, projectFlag, "show")
 }
 
 // runDecisionsListOrShow parses the list-verb flags then renders. filterID is the
@@ -134,6 +199,7 @@ func runDecisionsListOrShow(subArgs []string, filterID, verb string) int {
 	jsonFlag := false
 	socketFlag := ""
 	projectFlag := ""
+	topicFlag := ""
 
 	for i := 0; i < len(subArgs); i++ {
 		arg := subArgs[i]
@@ -143,6 +209,11 @@ func runDecisionsListOrShow(subArgs []string, filterID, verb string) int {
 			return 0
 		case arg == "--json":
 			jsonFlag = true
+		case arg == "--topic" && i+1 < len(subArgs):
+			i++
+			topicFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--topic="):
+			topicFlag = strings.TrimPrefix(arg, "--topic=")
 		case arg == "--socket" && i+1 < len(subArgs):
 			i++
 			socketFlag = subArgs[i]
@@ -161,12 +232,15 @@ func runDecisionsListOrShow(subArgs []string, filterID, verb string) int {
 			return 1
 		}
 	}
-	return runDecisionsListOrShowParsed(filterID, jsonFlag, socketFlag, projectFlag, verb)
+	return runDecisionsListOrShowParsed(filterID, topicFlag, jsonFlag, socketFlag, projectFlag, verb)
 }
 
 // runDecisionsListOrShowParsed dials decisions-list, computes the orphaned-pending
-// flag client-side from agent presence, and renders (text or JSON).
-func runDecisionsListOrShowParsed(filterID string, jsonFlag bool, socketFlag, projectFlag, verb string) int {
+// flag client-side from agent presence, and renders (text or JSON). topicFilter,
+// when non-empty, narrows to decisions raised with that exact topic (e.g.
+// core.DecisionTopicOperatorMailbox for `harmonik mailbox` — bead hk-pltjs,
+// pending operator sign-off).
+func runDecisionsListOrShowParsed(filterID, topicFilter string, jsonFlag bool, socketFlag, projectFlag, verb string) int {
 	absProject, sockPath, rc := decisionsResolvePaths(projectFlag, socketFlag, verb)
 	if rc != 0 {
 		return rc
@@ -177,6 +251,9 @@ func runDecisionsListOrShowParsed(filterID string, jsonFlag bool, socketFlag, pr
 	listPayload := map[string]any{}
 	if filterID != "" {
 		listPayload["decision_id"] = filterID
+	}
+	if topicFilter != "" {
+		listPayload["topic"] = topicFilter
 	}
 
 	resultBytes, rc := decisionsDialOp(sockPath, "decisions-list", listPayload, verb)
@@ -190,7 +267,7 @@ func runDecisionsListOrShowParsed(filterID string, jsonFlag bool, socketFlag, pr
 		return 1
 	}
 
-	// Client-side filter for `show` (belt-and-suspenders if the daemon returns all).
+	// Client-side filter (belt-and-suspenders if the daemon returns all).
 	items := result.Decisions
 	if filterID != "" {
 		filtered := items[:0:0]
@@ -204,6 +281,15 @@ func runDecisionsListOrShowParsed(filterID string, jsonFlag bool, socketFlag, pr
 			fmt.Fprintf(os.Stderr, "harmonik decisions %s: no open decision with id %q\n", verb, filterID)
 			return 1
 		}
+	}
+	if topicFilter != "" {
+		filtered := items[:0:0]
+		for _, it := range items {
+			if it.Topic == topicFilter {
+				filtered = append(filtered, it)
+			}
+		}
+		items = filtered
 	}
 
 	// Compute orphaned-pending (N9, read-pure): flag any open decision whose
@@ -268,12 +354,17 @@ func renderDecisionRows(rows []decisionListRow) {
 		if ctx == "" {
 			ctx = "-"
 		}
-		fmt.Printf("%s · %s · %s · %s · %s%s\n",
+		urgency := ""
+		if r.Urgency != "" {
+			urgency = fmt.Sprintf("  [%s]", r.Urgency)
+		}
+		fmt.Printf("%s · %s · %s · %s · %s%s%s\n",
 			r.Question,
 			strings.Join(r.Options, "|"),
 			blocked,
 			ctx,
 			r.DecisionID,
+			urgency,
 			flag,
 		)
 	}
@@ -384,10 +475,13 @@ func decisionsListUsage() {
 	fmt.Print(`harmonik decisions list — the cross-agent "what-needs-me" queue
 
 USAGE
-  harmonik decisions list [--json] [--socket PATH] [--project DIR]
+  harmonik decisions list [--json] [--topic TOPIC] [--socket PATH] [--project DIR]
 
 Renders every OPEN decision across all agents/works as
-  question · options · blocked_agent · context_link · decision_id
+  question · options · blocked_agent · context_link · decision_id [urgency]
+
+--topic TOPIC narrows the result to decisions raised with that exact topic
+(e.g. --topic operator-mailbox — equivalent to "harmonik mailbox").
 
 An open decision whose blocked_agent is Offline (past the ~10-min presence
 cutoff, not merely Stale) is flagged "orphaned-pending" (display only — no event

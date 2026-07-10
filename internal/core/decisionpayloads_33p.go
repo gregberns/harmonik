@@ -52,6 +52,47 @@ func (r DecisionWithdrawnReason) Valid() bool {
 	}
 }
 
+// DecisionTopicOperatorMailbox is the reserved topic value for the
+// operator-mailbox convention (bead hk-pltjs): a decision raised on this
+// topic is rendered by `harmonik mailbox` (a thin alias of
+// `decisions list --topic operator-mailbox`) and the dashboard mailbox
+// section. This EXTENDS the FINALIZED hitl-decisions SPEC (open decision D3)
+// rather than adding a second bus — decisions on this topic still ride the
+// same decision_needed/decision_resolved/decision_withdrawn lifecycle.
+//
+// NEEDS OPERATOR SIGN-OFF: this topic + urgency extension has not gone
+// through the spec-change gate the FINALIZED hitl-decisions SPEC requires
+// for new payload fields (SPEC.md §9). It is implemented additively (both
+// fields optional, zero-value = prior wire-compatible behavior) so existing
+// callers are unaffected pending sign-off.
+const DecisionTopicOperatorMailbox = "operator-mailbox"
+
+// DecisionUrgency is the typed discriminator for the optional urgency field
+// of a decision_needed event, added for the operator-mailbox topic
+// convention (bead hk-pltjs, pending operator sign-off — see
+// DecisionTopicOperatorMailbox).
+type DecisionUrgency string
+
+const (
+	// DecisionUrgencyBlocker marks a decision that is blocking forward progress.
+	DecisionUrgencyBlocker DecisionUrgency = "blocker"
+	// DecisionUrgencyQuestion marks a decision that is a non-blocking question.
+	DecisionUrgencyQuestion DecisionUrgency = "question"
+	// DecisionUrgencyFYI marks a decision that is informational only.
+	DecisionUrgencyFYI DecisionUrgency = "fyi"
+)
+
+// Valid reports whether u is one of the three declared DecisionUrgency
+// constants, or empty (urgency is optional).
+func (u DecisionUrgency) Valid() bool {
+	switch u {
+	case "", DecisionUrgencyBlocker, DecisionUrgencyQuestion, DecisionUrgencyFYI:
+		return true
+	default:
+		return false
+	}
+}
+
 // DecisionNeededPayload is the typed event payload for the decision_needed
 // event (hitl-decisions SPEC §1.1).
 //
@@ -91,6 +132,18 @@ type DecisionNeededPayload struct {
 	// ValueRequested is an optional v1.1 hook. When true, a future resolver MAY
 	// supply a free-text value in addition to a chosen option. v1 ignores it.
 	ValueRequested bool `json:"value_requested,omitempty"`
+
+	// Topic is an optional free-form routing tag. The reserved value
+	// DecisionTopicOperatorMailbox ("operator-mailbox") marks a decision as
+	// belonging to the operator-mailbox convention (bead hk-pltjs, pending
+	// operator sign-off — see DecisionTopicOperatorMailbox). Empty means the
+	// decision is untagged (prior wire-compatible behavior).
+	Topic string `json:"topic,omitempty"`
+
+	// Urgency is an optional operator-mailbox-flavor hint: blocker | question |
+	// fyi (bead hk-pltjs, pending operator sign-off). Empty is valid and means
+	// unspecified.
+	Urgency DecisionUrgency `json:"urgency,omitempty"`
 }
 
 // Valid reports whether p is a well-formed DecisionNeededPayload.
@@ -104,6 +157,9 @@ func (p DecisionNeededPayload) Valid() bool {
 		return false
 	}
 	if len(p.Options) < 1 {
+		return false
+	}
+	if !p.Urgency.Valid() {
 		return false
 	}
 	return true

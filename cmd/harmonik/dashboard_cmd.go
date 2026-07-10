@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
@@ -170,10 +172,13 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) {
 		}
 	}
 
-	// Open decisions (mailbox unread count).
-	if len(snap.OpenDecisions) > 0 {
-		fmt.Fprintf(w, "\nmailbox (%d open)\t\n", len(snap.OpenDecisions))
-		for _, d := range snap.OpenDecisions {
+	// Operator mailbox: decisions raised with topic=operator-mailbox (bead
+	// hk-pltjs, pending operator sign-off). The open-item set + its count (the
+	// unread count), sorted most-urgent first.
+	mailbox := filterDecisionsByTopic(snap.OpenDecisions, core.DecisionTopicOperatorMailbox)
+	if len(mailbox) > 0 {
+		fmt.Fprintf(w, "\nmailbox (%d unread)\t\n", len(mailbox))
+		for _, d := range mailbox {
 			from := d.BlockedAgent
 			if from == "" {
 				from = "unknown"
@@ -182,13 +187,52 @@ func printDashboardHuman(snap daemon.DashboardSnapshot) {
 			if len(q) > 60 {
 				q = q[:57] + "..."
 			}
-			fmt.Fprintf(w, "  %s\tfrom=%s  %s\n", d.DecisionID[:8], from, q)
+			urgency := d.Urgency
+			if urgency == "" {
+				urgency = "-"
+			}
+			fmt.Fprintf(w, "  %s\t[%s] from=%s  %s\n", d.DecisionID[:8], urgency, from, q)
 		}
 	}
 
 	// Notes from dashboard.json.
 	if snap.Config != nil && snap.Config.Notes != "" {
 		fmt.Fprintf(w, "\nnotes\t%s\n", strings.ReplaceAll(snap.Config.Notes, "\n", " "))
+	}
+}
+
+// filterDecisionsByTopic returns the decisions matching topic, sorted
+// most-urgent first (blocker, question, fyi, then unspecified), with
+// decision_id as the stable tiebreaker.
+func filterDecisionsByTopic(decisions []daemon.DashDecision, topic string) []daemon.DashDecision {
+	var out []daemon.DashDecision
+	for _, d := range decisions {
+		if d.Topic == topic {
+			out = append(out, d)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := mailboxUrgencyRank(out[i].Urgency), mailboxUrgencyRank(out[j].Urgency)
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i].DecisionID < out[j].DecisionID
+	})
+	return out
+}
+
+// mailboxUrgencyRank orders urgency values for display: blocker first, then
+// question, then fyi, then unspecified last.
+func mailboxUrgencyRank(u string) int {
+	switch core.DecisionUrgency(u) {
+	case core.DecisionUrgencyBlocker:
+		return 0
+	case core.DecisionUrgencyQuestion:
+		return 1
+	case core.DecisionUrgencyFYI:
+		return 2
+	default:
+		return 3
 	}
 }
 

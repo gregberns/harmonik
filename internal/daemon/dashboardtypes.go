@@ -79,6 +79,8 @@ type DashDecision struct {
 	BlockedAgent   string   `json:"blocked_agent,omitempty"`
 	ContextLink    string   `json:"context_link,omitempty"`
 	ValueRequested bool     `json:"value_requested,omitempty"`
+	Topic          string   `json:"topic,omitempty"`
+	Urgency        string   `json:"urgency,omitempty"`
 }
 
 // DashStall is one active stall_detected event for a currently-running run.

@@ -104,6 +104,8 @@ func runDecisionsRaiseSubcommand(subArgs []string) int {
 	waitFlag := false
 	socketFlag := ""
 	projectFlag := ""
+	topicFlag := ""
+	urgencyFlag := ""
 
 	for i := 0; i < len(subArgs); i++ {
 		arg := subArgs[i]
@@ -133,6 +135,16 @@ func runDecisionsRaiseSubcommand(subArgs []string) int {
 			fromFlag = strings.TrimPrefix(arg, "--from=")
 		case arg == "--wait":
 			waitFlag = true
+		case arg == "--topic" && i+1 < len(subArgs):
+			i++
+			topicFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--topic="):
+			topicFlag = strings.TrimPrefix(arg, "--topic=")
+		case arg == "--urgency" && i+1 < len(subArgs):
+			i++
+			urgencyFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--urgency="):
+			urgencyFlag = strings.TrimPrefix(arg, "--urgency=")
 		case arg == "--socket" && i+1 < len(subArgs):
 			i++
 			socketFlag = subArgs[i]
@@ -161,6 +173,10 @@ func runDecisionsRaiseSubcommand(subArgs []string) int {
 		fmt.Fprintf(os.Stderr, "harmonik decisions raise: at least one --option is required\n")
 		return 1
 	}
+	if !core.DecisionUrgency(urgencyFlag).Valid() {
+		fmt.Fprintf(os.Stderr, "harmonik decisions raise: --urgency %q is invalid (must be blocker, question, or fyi)\n", urgencyFlag)
+		return 1
+	}
 
 	// Resolve emitting agent: --from > $HARMONIK_AGENT (may be empty — blocked_agent
 	// is optional per SPEC §1.1, but a wait without a known agent still works).
@@ -184,6 +200,12 @@ func runDecisionsRaiseSubcommand(subArgs []string) int {
 	}
 	if from != "" {
 		raisePayload["blocked_agent"] = from
+	}
+	if topicFlag != "" {
+		raisePayload["topic"] = topicFlag
+	}
+	if urgencyFlag != "" {
+		raisePayload["urgency"] = urgencyFlag
 	}
 
 	resultBytes, rc := decisionsDialOp(sockPath, "decisions-raise", raisePayload, "raise")
@@ -763,7 +785,8 @@ func decisionsRaiseUsage() {
 
 USAGE
   harmonik decisions raise --question "..." --option A --option B [--option ...]
-                           [--context <link>] [--from <agent>] [--wait] [flags]
+                           [--context <link>] [--from <agent>] [--wait]
+                           [--topic <topic>] [--urgency blocker|question|fyi] [flags]
 
 FLAGS
   --question TEXT   The decision the human must make. Required.
@@ -772,6 +795,11 @@ FLAGS
   --from NAME       Emitting (blocked) agent name (default: $HARMONIK_AGENT).
   --wait            After raising, block until the decision is answered (§4 N8
                     arm-then-check) and print the chosen option (or withdrawal).
+  --topic TOPIC     Optional routing tag. Use "operator-mailbox" to route this
+                    decision into the operator mailbox (harmonik mailbox /
+                    decisions list --topic operator-mailbox).
+  --urgency LEVEL   Optional operator-mailbox-flavor hint: blocker, question,
+                    or fyi. Rejected if set to anything else.
   --socket PATH     Override socket path (default: <project>/.harmonik/daemon.sock).
   --project DIR     Project directory (default: cwd).
 

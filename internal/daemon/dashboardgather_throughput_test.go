@@ -185,4 +185,10 @@ func TestReadThroughput_GroupsByQueueHarnessModel(t *testing.T) {
 	if tp.ByLane[0].BeadsClosed != 2 {
 		t.Errorf("ByLane BeadsClosed: got %d, want 2", tp.ByLane[0].BeadsClosed)
 	}
+	// wall times 10+20+5=35 over all 3 runs (not just the 2 successes) -> mean=11.
+	// Regression check for the iter-1 review finding: dividing by the success-only
+	// count (2) would inflate this to 17.
+	if tp.ByLane[0].MeanWallSecs != 11 {
+		t.Errorf("ByLane MeanWallSecs: got %d, want 11 (35s / 3 runs, not / 2 successes)", tp.ByLane[0].MeanWallSecs)
+	}
 }

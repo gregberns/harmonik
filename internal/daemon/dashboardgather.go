@@ -232,8 +232,9 @@ func (b *DashboardBuilder) readThroughput(now time.Time) *DashThroughput {
 		byOutcome   map[string]*outcomeAgg
 	}
 	type laneAgg struct {
-		count    int
-		wallSecs float64
+		runCount    int
+		beadsClosed int
+		wallSecs    float64
 	}
 
 	groups := make(map[groupKey]*group)
@@ -276,8 +277,9 @@ func (b *DashboardBuilder) readThroughput(now time.Time) *DashThroughput {
 				la = &laneAgg{}
 				lanes[lane] = la
 			}
+			la.runCount++
 			if rec.Success {
-				la.count++
+				la.beadsClosed++
 			}
 			la.wallSecs += rec.WallTimeS
 		}
@@ -324,9 +326,9 @@ func (b *DashboardBuilder) readThroughput(now time.Time) *DashThroughput {
 
 	laneList := make([]DashLaneThroughput, 0, len(lanes))
 	for lane, agg := range lanes {
-		lt := DashLaneThroughput{Lane: lane, BeadsClosed: agg.count}
-		if agg.count > 0 {
-			lt.MeanWallSecs = int64(agg.wallSecs / float64(agg.count))
+		lt := DashLaneThroughput{Lane: lane, BeadsClosed: agg.beadsClosed}
+		if agg.runCount > 0 {
+			lt.MeanWallSecs = int64(agg.wallSecs / float64(agg.runCount))
 		}
 		laneList = append(laneList, lt)
 	}

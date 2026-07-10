@@ -14,6 +14,7 @@ Sections: **Added** / **Changed** / **Fixed** / **Removed** / **Security** / **S
 
 - core-loop-proof seed (hk-nyx): trivial one-line changelog entry verifying the dispatch → implement → merge daemon loop end-to-end.
 - core-loop-proof seed v2 (hk-vi3): trivial one-line changelog entry re-verifying the dispatch → implement → merge daemon loop end-to-end.
+- core-loop-proof seed v3 (hk-7x5): trivial one-line changelog entry re-verifying the dispatch → implement → merge daemon loop end-to-end.
 
 ---
 

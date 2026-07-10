@@ -223,6 +223,16 @@ func TestZJ1Y_ActionableWarn_LowConfigWarn_NamesVerbatimRestartNowCommand(t *tes
 		IdleQuiesce:   1 * time.Millisecond,
 		Staleness:     120 * time.Second,
 		WarnAbsTokens: zj1yLowWarnTokens, // ← the LOW configured threshold under test
+		// WarnPct is the pct<WarnPct NECESSARY-condition gate shared byte-for-byte
+		// with CyclerConfig.belowWarnThreshold (hk-lbo9w/F45): it exists to stop a
+		// default 200k abs threshold from firing prematurely on a huge (e.g. 1M)
+		// context window, and is NOT derived from WarnAbsTokens — config.yaml has no
+		// warn_pct knob (only warn_pct_ceil, a different field). A LOW abs config
+		// must be paired with a correspondingly LOW WarnPct for the abs threshold to
+		// actually govern, exactly as an operator configuring a low context budget
+		// would set both. 30 comfortably sits below the gauge's 35% (70000/200000)
+		// pct so the LOW abs value — not the 80-default pct gate — decides the fire.
+		WarnPct: 30,
 		// act/force stay high (defaults) so the warn fires WITHOUT a cycle.
 		TmuxTarget:         "", // warn emits; no keystroke injection into the throwaway pane
 		SelfServiceEnabled: true,

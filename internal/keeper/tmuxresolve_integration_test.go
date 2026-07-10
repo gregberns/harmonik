@@ -164,7 +164,11 @@ func TestIntegration_TmuxSessionLive_RealProbePath(t *testing.T) {
 // is still torn down by exact name in t.Cleanup.
 //
 // Assertions:
-//   - session live  → ResolveTmuxTarget returns the derived name.
+//   - session live  → ResolveTmuxTarget returns the derived name, targeting the
+//     AGENT window's active pane ("<derived>:agent" — see the windowAgent /
+//     "Priority 2: bare convention" doc on ResolveTmuxTarget; a keeper running
+//     in its own sibling "keeper" window must inject/measure the agent window,
+//     never itself).
 //   - session killed → ResolveTmuxTarget returns "" (resolution fails safe).
 func TestIntegration_ResolveTmuxTarget_RealLivePath(t *testing.T) {
 	tsiRequireTmux(t)
@@ -188,10 +192,13 @@ func TestIntegration_ResolveTmuxTarget_RealLivePath(t *testing.T) {
 		t.Fatalf("tsi: ResolveTmuxTarget returned %q before session creation; want \"\"", got)
 	}
 
-	// Create the throwaway session under the derived name, then resolve.
+	// Create the throwaway session under the derived name, then resolve. The
+	// live target carries the ":agent" window suffix — ResolveTmuxTarget always
+	// targets the AGENT window's pane, not the session's bare/focused pane.
 	tsiStartSession(t, derived)
-	if got := ResolveTmuxTarget(dir, agent, "", nil); got != derived {
-		t.Fatalf("tsi: ResolveTmuxTarget(real path) = %q; want %q (live session not detected)", got, derived)
+	wantLive := derived + ":" + windowAgent
+	if got := ResolveTmuxTarget(dir, agent, "", nil); got != wantLive {
+		t.Fatalf("tsi: ResolveTmuxTarget(real path) = %q; want %q (live session not detected)", got, wantLive)
 	}
 
 	// Kill it and confirm resolution fails safe back to "".

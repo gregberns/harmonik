@@ -212,6 +212,14 @@ type twTwinSpec struct {
 	// FRESH, rebound gauge after — the headline hk-nlio scenario. Single
 	// definition; downstream force-restart/live-recovery beads reuse it.
 	resumeStatuslineOnClear bool
+	// sessionName, when non-empty, is used as the tmux session name instead of
+	// a random twUniqueSessionName(). Needed by tests that exercise the REAL
+	// (unstubbed) keeper.ResolveTmuxTarget, which derives the canonical
+	// "harmonik-<hash12(project)>-<agent>" name from projectDir+agentName —
+	// a random name can never be found by that derivation (hk-9cqtm twin-loop
+	// proof). Pass keeper.HarmonikSessionName(project, agent) here to make the
+	// twin's real session discoverable by the real resolver.
+	sessionName string
 }
 
 // twStartTwin launches the twin binary as the foreground process of a new,
@@ -224,7 +232,10 @@ func twStartTwin(t *testing.T, spec twTwinSpec) string {
 	if spec.model == "" {
 		spec.model = "claude-opus-4-8 [1m]"
 	}
-	sess := twUniqueSessionName()
+	sess := spec.sessionName
+	if sess == "" {
+		sess = twUniqueSessionName()
+	}
 
 	// Build the twin command line. All paths are test-local temp/repo paths.
 	cmd := fmt.Sprintf(

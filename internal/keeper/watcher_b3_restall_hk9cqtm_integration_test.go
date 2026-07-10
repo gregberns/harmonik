@@ -59,6 +59,14 @@ func TestIntegration_B3_ReStall_AutoHealsNoLoop(t *testing.T) {
 	statusline, idleHook := twScripts(t)
 
 	const emitEvery = 150 * time.Millisecond
+	// The watcher below runs with ResolveTmuxTargetFn=nil, so the REAL
+	// keeper.ResolveTmuxTarget re-derives the canonical
+	// "harmonik-<hash12(project)>-<agent>:agent" target from projectDir+
+	// agentName — it can never find a randomly-named tmux session. Start the
+	// twin under that exact canonical session name so the real re-resolution
+	// path actually locates the live pane (hk-9cqtm twin-loop proof; mirrors
+	// what a real harmonik-launched agent session is named).
+	canonicalSession := keeper.HarmonikSessionName(project, agent)
 	_ = twStartTwin(t, twTwinSpec{
 		project:       project,
 		agent:         agent,
@@ -71,6 +79,7 @@ func TestIntegration_B3_ReStall_AutoHealsNoLoop(t *testing.T) {
 		startTokens:   50_000,
 		emitEvery:     emitEvery,
 		suppressAfter: 1 * time.Second, // gauge freezes while pane stays alive
+		sessionName:   canonicalSession,
 	})
 
 	// Wait for the gauge to appear before the suppression deadline.

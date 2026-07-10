@@ -125,11 +125,26 @@ func TestIntegration_TwinSidRebind_AntiLoopGateHolds(t *testing.T) {
 	}
 	cycler := keeper.NewCycler(cfg, em)
 
+	// Watch the gauge concurrently with the cycle so Phase 2 can observe the
+	// genuine post-/clear token RESET rather than racing the twin's aggressive
+	// regrowth (50k/200ms — a serial post-hoc poll can land on a reading that
+	// has already grown back past the act threshold by the time it captures
+	// the rotated session_id, which starves the gate-holds check of the
+	// near-baseline reading it needs; mirrors twWatchForReset's use in
+	// TestIntegration_TwinClearRestartCycle_E2E). Stops when stopWatch closes
+	// (after MaybeRun returns).
+	stopWatch := make(chan struct{})
+	resetCh := make(chan int64, 1)
+	go twWatchForReset(project, agent, seedSID, stopWatch, resetCh)
+
 	// Run the first cycle. MaybeRun drives: handoff → confirm nonce → /clear →
 	// wait for new session_id → agent brief.
 	if err := cycler.MaybeRun(context.Background(), seed); err != nil {
+		close(stopWatch)
 		t.Fatalf("tw-sid: first MaybeRun: %v", err)
 	}
+	close(stopWatch)
+	minPostClearTokens := <-resetCh
 
 	// Verify the first cycle completed cleanly.
 	completeEvents := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
@@ -167,20 +182,25 @@ func TestIntegration_TwinSidRebind_AntiLoopGateHolds(t *testing.T) {
 	// are exercised implicitly — the key assertion is that no second
 	// handoff_started event is emitted.
 	//
-	// Poll until the rotated newSID appears in the gauge (proves the real .ctx
-	// has been updated to the new session). Tokens will be low (~50k).
-	var postClearCtx *keeper.CtxFile
-	sidDeadline := time.Now().Add(6 * time.Second)
-	for time.Now().Before(sidDeadline) {
-		cf, _, err := keeper.ReadCtxFile(project, agent)
-		if err == nil && cf.SessionID == newSID {
-			postClearCtx = cf
-			break
-		}
-		time.Sleep(75 * time.Millisecond)
+	// Use the MINIMUM tokens the concurrent watcher observed on the rotated
+	// session — the genuine post-/clear reset value — rather than a fresh
+	// serial poll. A serial poll started only after MaybeRun(seed) already
+	// returned races the twin's aggressive regrowth (50k/200ms) against the
+	// real-time cost of the handoff→confirm→clear→settle dance inside
+	// MaybeRun itself, and can land on a reading that has already grown back
+	// past the act (215k) and even force (240k) thresholds by the time it
+	// first observes the new session_id — starving this check of the
+	// near-baseline reading its own gate-holds assertion documents relying on
+	// primarily (Gate 3), and forcing a >215k reading through purely on
+	// Gate 6 in a way real production traffic would not exercise on every run.
+	if minPostClearTokens < 0 {
+		t.Fatalf("tw-sid: watcher never observed a reading on the rotated session_id %q", newSID)
 	}
-	if postClearCtx == nil {
-		t.Fatalf("tw-sid: gauge never reflected the rotated session_id %q within timeout", newSID)
+	postClearCtx := &keeper.CtxFile{
+		Tokens:     minPostClearTokens,
+		WindowSize: seed.WindowSize,
+		Pct:        float64(minPostClearTokens) / float64(seed.WindowSize) * 100.0,
+		SessionID:  newSID,
 	}
 	if postClearCtx.Tokens >= 215_000 {
 		// This is theoretically possible (twin grew very fast) but would make

@@ -56,11 +56,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	yaml "gopkg.in/yaml.v3"
 )
+
+// walBackupKeepLast bounds how many $CODEX_HOME/.wal-backup-<unixnano>/
+// directories the guard leaves on disk. Each launch that cleans a stale WAL
+// creates one more backup dir, so on a host that repeatedly hits stale WALs
+// these accumulate forever without a reap step. This is a fixed retention
+// count, not a tunable business threshold (unlike stale_wal_max_bytes above),
+// so it is a compiled constant rather than a required config key.
+const walBackupKeepLast = 5
 
 // codexWALGuardConfig is a minimal local view of .harmonik/config.yaml's codex
 // block. It is deliberately NOT ProjectConfig: keeping a local struct here lets
@@ -194,6 +203,12 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 		}
 		if cpErr := copyFileForBackup(wal, filepath.Join(backupDir, filepath.Base(wal))); cpErr != nil {
 			slog.Warn("codex_wal_guard_backup_failed", "wal", wal, "error", cpErr.Error())
+			// backupDir was just created and holds nothing (the wal copy that
+			// would populate it failed) — drop the empty dir rather than
+			// leaving a useless stub behind on every failed backup attempt.
+			if rmErr := os.Remove(backupDir); rmErr != nil {
+				slog.Warn("codex_wal_guard_empty_backup_dir_cleanup_failed", "dir", backupDir, "error", rmErr.Error())
+			}
 			continue
 		}
 		// Best-effort -shm backup; absence is fine (not all WALs have a -shm).
@@ -259,7 +274,41 @@ func cleanCodexStaleWAL(projectRoot, codexHome string) error {
 		}
 	}
 
+	reapCodexWALBackupDirs(home)
+
 	return nil
+}
+
+// reapCodexWALBackupDirs keeps at most walBackupKeepLast of the
+// $CODEX_HOME/.wal-backup-<unixnano>/ directories the guard creates,
+// removing the oldest excess ones. It runs once per guard invocation (after
+// any cleanup above) so backup dirs from repeated stale-WAL launches don't
+// accumulate on disk forever. Best-effort: a glob/stat/remove failure is
+// logged and otherwise ignored — reaping stale backups never blocks a codex
+// launch.
+func reapCodexWALBackupDirs(codexHome string) {
+	pattern := filepath.Join(codexHome, ".wal-backup-*")
+	dirs, globErr := filepath.Glob(pattern)
+	if globErr != nil {
+		slog.Warn("codex_wal_guard_backup_reap_glob_error", "pattern", pattern, "error", globErr.Error())
+		return
+	}
+	if len(dirs) <= walBackupKeepLast {
+		return
+	}
+
+	// The unixnano suffix means lexical sort == chronological sort (fixed
+	// digit count for a given epoch), oldest first.
+	sort.Strings(dirs)
+
+	excess := len(dirs) - walBackupKeepLast
+	for _, dir := range dirs[:excess] {
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			slog.Warn("codex_wal_guard_backup_reap_failed", "dir", dir, "error", rmErr.Error())
+		} else {
+			slog.Info("codex_wal_guard_backup_reaped", "dir", dir)
+		}
+	}
 }
 
 // walUnchanged reports whether wal still exists and is byte-for-byte the same

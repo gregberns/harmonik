@@ -20,6 +20,7 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -245,5 +246,74 @@ func TestCleanCodexStaleWAL_ZeroThreshold_RemovesNonEmpty(t *testing.T) {
 func TestCleanCodexStaleWAL_EmptyProjectRoot_NoOp(t *testing.T) {
 	if err := cleanCodexStaleWAL("", t.TempDir()); err != nil {
 		t.Fatalf("expected nil for empty projectRoot, got: %v", err)
+	}
+}
+
+// TestReapCodexWALBackupDirs_KeepsLastN pins the reap behavior directly: given
+// more than walBackupKeepLast pre-existing .wal-backup-* dirs, only the newest
+// walBackupKeepLast survive and the rest are removed.
+func TestReapCodexWALBackupDirs_KeepsLastN(t *testing.T) {
+	codexHome := t.TempDir()
+	total := walBackupKeepLast + 3
+	var dirs []string
+	for i := 0; i < total; i++ {
+		dir := filepath.Join(codexHome, fmt.Sprintf(".wal-backup-%d", i))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		dirs = append(dirs, dir)
+	}
+
+	reapCodexWALBackupDirs(codexHome)
+
+	remaining, _ := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*"))
+	if len(remaining) != walBackupKeepLast {
+		t.Fatalf("expected %d backup dirs to remain, got %d: %v", walBackupKeepLast, len(remaining), remaining)
+	}
+	// The oldest (lowest-numbered) dirs must be the ones removed.
+	for i := 0; i < total-walBackupKeepLast; i++ {
+		if _, err := os.Stat(dirs[i]); !os.IsNotExist(err) {
+			t.Fatalf("expected oldest backup dir %s reaped, stat err = %v", dirs[i], err)
+		}
+	}
+	// The newest dirs must survive.
+	for i := total - walBackupKeepLast; i < total; i++ {
+		if _, err := os.Stat(dirs[i]); err != nil {
+			t.Fatalf("expected newest backup dir %s to survive, stat err = %v", dirs[i], err)
+		}
+	}
+}
+
+// TestCleanCodexStaleWAL_CopyFailure_DropsEmptyBackupDir pins the "drop empty
+// backup dir on copy-fail" behavior: if the wal copy into the freshly-created
+// backup dir fails, the guard removes the now-useless empty backup dir rather
+// than leaving a stub behind. Simulated by making the wal unreadable so
+// copyFileForBackup's os.ReadFile fails.
+func TestCleanCodexStaleWAL_CopyFailure_DropsEmptyBackupDir(t *testing.T) {
+	if !lsofAvailable() {
+		t.Skip("lsof not on PATH: guard conservatively skips removal")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file permissions do not block reads")
+	}
+	projectRoot := t.TempDir()
+	codexHome := t.TempDir()
+	writeConfigYAML(t, projectRoot, "codex:\n  stale_wal_max_bytes: 1024\n")
+	wal := writeWAL(t, codexHome, 4096)
+
+	if err := os.Chmod(wal, 0o000); err != nil {
+		t.Fatalf("chmod wal unreadable: %v", err)
+	}
+	defer os.Chmod(wal, 0o644)
+
+	if err := cleanCodexStaleWAL(projectRoot, codexHome); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The wal copy failed, so no backup dir should remain (empty ones are
+	// dropped rather than left as stubs).
+	entries, _ := filepath.Glob(filepath.Join(codexHome, ".wal-backup-*"))
+	if len(entries) != 0 {
+		t.Fatalf("expected no leftover backup dirs after copy failure, found: %v", entries)
 	}
 }

@@ -9,6 +9,12 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
+## ⛔⛔ HOLD 2026-07-10 ~11:5xZ — OPERATOR-DIRECTED (via admiral, directive 019f4cdc) · NO new dispatch until admiral lifts
+> STOP all submit/append/refill. Operator + admiral are auditing overnight alignment + quality-process compliance and building a plan; new work adds to the pile. Fleet is now IDLE: quality-depth + quality-fill + frontline5 all PAUSED, 0 worktrees in-flight. DO NOT re-staff or resume queues on boot until admiral explicitly lifts.
+> - Boot-time context (this session): lean daemon-queue posture, NO captain crews (crew list/comms who = admiral only, its own initiative). Local hard-cap 4. I deepened sustain at boot with quality-fill (16 file-disjoint daemon/keeper/de-hardcode beads) BEFORE this hold landed; it fully processed — ~11 completed / ~11 failed across the 3 queues. 8 quality-fill beads merged to origin/main (HEAD 250453f4: hk-ft1qt, EH4-report/346ta, SetSpawnCap/omvan, hk-klr5n, hk-r9edj, hk-os0hq, hk-1u4wp, hk-d9snr) — NOT reverted (landed clean via review gate). ~11 failures held un-redispatched for the audit.
+> - HELD for operator (separate, unchanged): gb-mbp live re-enable (test-on-scratch rule; scratch re-validate PASSED run 019f4ad2). Do NOT auto-flip.
+> - Direction conflict noted earlier: 07-09 direction-log 'quiesce' entry (unexpired) vs 07-10 'overnight volume' — now MOOT; this operator HOLD is the live direction.
+
 ## ⭐⭐ CURRENT TRUTH 2026-07-08 ~21:10Z — v0.5.0 gates on TWO lanes; everything below this block is HISTORY
 > Live crews: **gurney** (A5 lane), **chani** (dispatch-fix lane, pivoted off completed Pi lane), **hawat** off-path. stilgar NOT booted (boot for A5 co-verify only). Ignore the auto-monitor's stale pinned lanes (alia/hawat/T1/T2).
 > - **A5 / v0.5.0 gate — gurney:** drop `continue-on-error:true` on CI `check` after 2x check-short STEP-green. PR #24 (head ca4968bb) carries PhantomReviveGuard determinism fix + FULL proven-green recipe (-p=1 / -parallel=1 / -timeout=20m — all three load-bearing). CI in progress (~16-18min/run). Follow-up hk-d515w (P2) = make colliding pkgs hermetic to restore -parallel=2. NEXT: 2x STEP-green → boot stilgar co-verify → captain flips continue-on-error → fill A5-recipe-SHA in v0.5.0-release-notes → redeploy through E2E gate → cut v0.5.0.

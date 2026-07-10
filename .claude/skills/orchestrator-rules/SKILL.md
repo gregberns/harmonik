@@ -53,7 +53,7 @@ dispatch → **harmonik-dispatch**, comms → **agent-comms**, beads → **beads
 
 ## Priority rules
 
-**KERF IS THE PRIORITY SOURCE OF TRUTH (HARD RULE).** Use `kerf next` as the dispatch feed. `bv` is NOT used for prioritization — kerf owns that.
+**Named initiatives first, then kerf.** The operator's and admiral's named initiatives (`admiral-initiatives.md`, `captain-lanes.md`) sit at the top of the priority order; `kerf next` ranks the *unclaimed backlog* below them and is the dispatch feed for it. A flagship that ranks low in `kerf next` is a signal to re-float it — never a reason to work past it onto grab-bag churn.
 
 **FRICTION GETS PRIORITY (HARD RULE).** Any bead labeled `phase2-dogfood-friction` MUST be filed at P1 minimum; friction beads jump ahead of substantive feature work.
 

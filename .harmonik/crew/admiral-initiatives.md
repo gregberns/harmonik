@@ -25,6 +25,19 @@
 
 ## ★ SINGLE FOCUS — QUALITY-SYSTEM (operator 2026-07-06): build the whole test/validation system
 
+> **RECONCILE 2026-07-10 (admiral, operator-driven audit) — TRUE STATE + PLAN.** `core-loop-proof`
+> (hk-hcrvb) is **~95% done, not "build starting"**: 9 of 10 tranched tasks CLOSED, all code on
+> `integration/core-loop-proof` (179 commits ahead of main, **stalled since 07-07**). Remaining = **T9
+> live full-matrix green (hk-jjt6w) + rebase onto main + merge PR via the assessor gate.** pi row
+> unblocked 07-10 (hk-4ir08 closed); codex row still gated on hk-7l1w8 → near-term target is a Claude+pi
+> green with codex as a known SKIP. **ACTIVE = Track A (finish + merge core-loop-proof), single focus.**
+> DIAGNOSIS of the overnight drift: the captain followed `kerf next` onto grab-bag daemon-reliability
+> fixes because the instructions made kerf the priority authority and the flagship was mis-ranked/on a
+> branch — FIXED 07-10 (orchestrator-rules + AGENTS.md: "named initiatives first, then kerf"; admiral
+> audit now scores per-initiative). Cleanup beads filed: hk-x2spu (P1 reviewer-trailer hook gap),
+> hk-ih5k6 (missing tests for 3 overnight fixes), hk-rfhaw (schema-broken scenario YAMLs), hk-rg526
+> (scenario-gate fail-open). GATE: no daemon redeploy until hk-x2spu + hk-ih5k6 clear and GATE-0 E2E runs.
+
 > Vet the daemon after changes BEFORE it replaces the live binary. Full synthesis + 4 scoping passes:
 > `plans/2026-07-06-quality-system/` (00-SYNTHESIS is the map). Consolidate 4 overlapping efforts into
 > ONE kerf work `codename:quality-system` (tranched, NOT a mega-epic). Build spine = daemon-testbed-design

@@ -75,7 +75,7 @@ This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) 
 
 ### Prioritization: use kerf, not bv
 
-**`kerf next` is the single entry point for "what to work on."** It returns a ranked feed of beads with work-context (which kerf work owns each bead), cleanup tasks, and warnings. `kerf triage` handles drift detection (untriaged beads, external closes/reopens, multi-matched beads).
+**Work the operator's and admiral's named initiatives first; `kerf next` ranks everything below that line.** It returns a ranked feed of beads with work-context, cleanup tasks, and warnings — the priority source for the *unclaimed backlog*, never an override of a named initiative. `kerf triage` handles drift detection.
 
 ```bash
 kerf next                        # Ranked feed: top item is what to do next

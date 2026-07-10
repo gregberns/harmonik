@@ -15,6 +15,15 @@ package main
 // runPromoteSubcommand is the production entry point defined in promote_cmd.go.
 //
 // Bead: hk-420yr.6 (codename:subsystem-proofs, branch integration/subsystem-proofs).
+//
+// This suite, together with promote_cmd_hkpk3p1_test.go (sections a-f) and
+// gitmergecommitscanner_hk420yr7_test.go (reconcile-side HasMergeCommitForBead
+// acceptance), fully covers the scope of the parent umbrella bead hk-420yr.2
+// ("B2: promote/reconcile acceptance suite on temp git repo"): cherry-pick
+// onto origin/<target>, trailer stamping (explicit/auto-detect/none), the
+// go-build/vet gate, the non-ff rebase-retry race path, PR-mode arg
+// construction, and GitMergeCommitScanner.HasMergeCommitForBead. No further
+// implementation is needed for hk-420yr.2.
 
 import (
 	"fmt"

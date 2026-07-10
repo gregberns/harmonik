@@ -27,6 +27,12 @@ package lifecycle
 //
 // Helper prefix: gitMCSFixture (per implementer-protocol.md §Helper-prefix).
 // Bead ref: hk-420yr.7.
+//
+// Together with promote_cmd_b2a_subsystem_test.go and
+// promote_cmd_hkpk3p1_test.go (cmd/harmonik), this suite fully covers the
+// scope of the parent umbrella bead hk-420yr.2 ("B2: promote/reconcile
+// acceptance suite on temp git repo"). No further implementation is needed
+// for hk-420yr.2.
 
 import (
 	"context"

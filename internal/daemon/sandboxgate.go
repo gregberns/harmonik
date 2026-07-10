@@ -25,8 +25,10 @@ package daemon
 // Bead: hk-r4p0l. Precedes: hk-6596l (wiring), hk-rlxgx (argv-wrap).
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -142,4 +144,102 @@ func sandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []string) (s
 		return "", nil, err
 	}
 	return wrapped[0], wrapped[1:], nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Production sandbox-engagement verification (hk-5wdon, follow-up to hk-tch4t)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// srtEngagementMaxAttempts bounds the retry budget for verifySandboxEngaged.
+// hk-tch4t diagnosed a TRANSIENT srt sandbox_init apply-failure under heavy
+// concurrent-fork saturation (the sandbox silently fails to attach even though
+// srt itself exits 0). A single observed apply-failure must be retried — not
+// treated as fatal on the first sample — or the production gate would flake
+// red under the exact host conditions hk-tch4t already characterized. A
+// CONSISTENT apply-failure across the whole budget is never absorbed: it is
+// the "srt runs the child unsandboxed" hole this bead exists to close.
+const srtEngagementMaxAttempts = 5
+
+// srtEngagementCanaryMarker is written by the probe command and read back to
+// distinguish "the write reached disk" from "the write was denied and the
+// canary file was never touched."
+const srtEngagementCanaryMarker = "harmonik-srt-engagement-canary"
+
+// srtEngagementCanaryPath returns the path the engagement probe attempts to
+// write to. It is deliberately OUTSIDE the profile's allowWrite set: per
+// GenerateSandboxProfile (hk-p7smp), allowWrite contains the run's
+// WorktreePath and specific git-internal paths, never the project root
+// itself. A file directly under projectDir mirrors the "main-file.txt"
+// canary the hk-tch4t/hk-i0377 test suite already uses to prove denial, so
+// the production probe exercises the identical isolation invariant. The
+// RunID suffix keeps concurrent runs' canaries from colliding.
+func srtEngagementCanaryPath(projectDir, runID string) string {
+	return filepath.Join(projectDir, ".harmonik-srt-engagement-"+runID+".canary")
+}
+
+// verifySandboxEngaged proves the srt sandbox spawn actually engaged, rather
+// than trusting srt's own exit code (which hk-tch4t showed can be 0 even when
+// sandbox_init silently failed to apply). It runs a canary probe under the
+// SAME profile the real spawn will use: an attempted write to canaryPath, a
+// path guaranteed outside allowWrite. Engagement is proven only when BOTH:
+//   - the srt process itself reports a non-zero exit, AND
+//   - canaryPath was not written (the write never reached disk).
+//
+// Either condition failing alone is the production analogue of "srt exited 0
+// but sandbox_init never applied" — the caller MUST treat a non-nil return as
+// fatal and refuse to launch the real agent unsandboxed.
+//
+// spawn.SrtBinary is honored (not hardcoded to "srt"), so a test can point it
+// at a stub binary that fakes the apply-failure deterministically without any
+// dependency on macOS Seatbelt or fork-saturation timing.
+func verifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, canaryPath string, logf func(format string, args ...any)) error {
+	profileBytes, err := GenerateSandboxProfile(spawn.ProfileInput)
+	if err != nil {
+		return fmt.Errorf("verifySandboxEngaged: generate probe profile: %w", err)
+	}
+	profilePath := filepath.Join(os.TempDir(), "harmonik-srt-engagement-"+spawn.ProfileInput.RunID+".json")
+	//nolint:gosec // G306: 0600 is correct — profile contains literal filesystem paths, readable only by daemon uid.
+	if err := os.WriteFile(profilePath, profileBytes, 0o600); err != nil {
+		return fmt.Errorf("verifySandboxEngaged: write probe profile: %w", err)
+	}
+	defer func() { _ = os.Remove(profilePath) }()
+
+	srtBin := spawn.SrtBinary
+	if srtBin == "" {
+		srtBin = "srt"
+	}
+	script := fmt.Sprintf("echo %s > %s", srtEngagementCanaryMarker, shellQuoteSingle(canaryPath))
+
+	var lastDetail string
+	for attempt := 1; attempt <= srtEngagementMaxAttempts; attempt++ {
+		_ = os.Remove(canaryPath) // clean slate: a prior attempt's leaked write must not taint this one
+
+		//nolint:gosec // G204: srtBin/profilePath/script are daemon-controlled, not attacker input.
+		cmd := exec.CommandContext(ctx, srtBin, "--settings", profilePath, "-c", script)
+		out, runErr := cmd.CombinedOutput()
+
+		content, readErr := os.ReadFile(canaryPath)
+		wrote := readErr == nil && strings.Contains(string(content), srtEngagementCanaryMarker)
+		_ = os.Remove(canaryPath)
+
+		if runErr != nil && !wrote {
+			return nil // engaged: srt itself failed AND the denied write never landed
+		}
+
+		lastDetail = fmt.Sprintf("attempt %d/%d: srt_exit_err=%v canary_written=%v output=%q",
+			attempt, srtEngagementMaxAttempts, runErr, wrote, strings.TrimSpace(string(out)))
+		if logf != nil {
+			logf("srt sandbox engagement probe observed apply-failure (%s); retrying (hk-tch4t transient) canary=%s",
+				lastDetail, canaryPath)
+		}
+	}
+	return fmt.Errorf("srt sandbox engagement verification FAILED after %d attempts — sandbox_init did not engage "+
+		"(hk-tch4t/hk-5wdon apply-failure): %s", srtEngagementMaxAttempts, lastDetail)
+}
+
+// shellQuoteSingle wraps s in single quotes for use inside an `srt -c "..."`
+// shell script, escaping any embedded single quote. canaryPath values are
+// daemon-derived (projectDir + a UUID RunID), never attacker input.
+func shellQuoteSingle(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

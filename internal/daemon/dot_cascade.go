@@ -1428,6 +1428,21 @@ func dispatchDotAgenticNode(
 					SharedReadCacheDirs:    deps.sandboxCfg.Cache.WarmRead,
 					PrivateWriteCacheDirs:  deps.sandboxCfg.Cache.PrivateWrite,
 				})
+				// hk-5wdon: prove the srt sandbox actually engages under this
+				// profile before trusting it to isolate the run. Mirrors the
+				// single-mode exec-path check in workloop.go — srt's own exit
+				// code alone is not sufficient evidence (hk-tch4t).
+				if sandboxSpawn != nil {
+					canaryPath := srtEngagementCanaryPath(deps.projectDir, runID.String())
+					if engageErr := verifySandboxEngaged(ctx, sandboxSpawn, canaryPath, func(format string, args ...any) {
+						fmt.Fprintf(os.Stderr, "daemon: dot: bead %s run %s: "+format+"\n",
+							append([]any{beadID, runID.String()}, args...)...)
+					}); engageErr != nil {
+						fmt.Fprintf(os.Stderr, "daemon: dot: srt sandbox engagement verification bead %s run %s: %v\n",
+							beadID, runID.String(), engageErr)
+						return core.Outcome{}, fmt.Errorf("srt sandbox engagement verification failed: %w", engageErr)
+					}
+				}
 				wrapBin, wrapArgs, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
 				if wrapErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: dot: srt argv-wrap bead %s run %s: %v (reopening)\n",

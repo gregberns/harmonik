@@ -717,6 +717,19 @@ func ExportedSandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []st
 	return sandboxWrapExecArgv(spawn, binary, args)
 }
 
+// ExportedVerifySandboxEngaged exposes verifySandboxEngaged for tests in
+// package daemon_test — the production-path srt sandbox-engagement proof
+// (hk-5wdon, follow-up to hk-tch4t). See sandboxgate.go for semantics.
+func ExportedVerifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, canaryPath string, logf func(format string, args ...any)) error {
+	return verifySandboxEngaged(ctx, spawn, canaryPath, logf)
+}
+
+// ExportedSrtEngagementCanaryPath exposes srtEngagementCanaryPath for tests in
+// package daemon_test. See sandboxgate.go (hk-5wdon).
+func ExportedSrtEngagementCanaryPath(projectDir, runID string) string {
+	return srtEngagementCanaryPath(projectDir, runID)
+}
+
 // ExportedModelPreferenceError is a type alias for ModelPreferenceError so tests
 // in package daemon_test can use errors.As without importing internal types.
 //

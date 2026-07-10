@@ -4377,6 +4377,28 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if prs, ok := runSubstrate.(*perRunSubstrate); ok && sandboxSpawn != nil {
 		prs.sandboxSpawn = sandboxSpawn
 	}
+	// hk-5wdon: before trusting sandboxSpawn to isolate this run, PROVE the
+	// srt sandbox actually engages under the profile we are about to launch
+	// with. hk-tch4t showed srt's own exit code is NOT sufficient evidence —
+	// under fork saturation sandbox_init can silently fail to apply while srt
+	// still exits 0. A verification failure here means the sandbox is not
+	// trustworthy for this run; refuse to launch the agent unsandboxed and
+	// hard-fail the run loud rather than treating it as green.
+	if sandboxSpawn != nil {
+		canaryPath := srtEngagementCanaryPath(deps.projectDir, runID.String())
+		if engageErr := verifySandboxEngaged(ctx, sandboxSpawn, canaryPath, func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s: "+format+"\n",
+				append([]any{beadID, runID.String()}, args...)...)
+		}); engageErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: srt sandbox engagement verification bead %s run %s: %v (reopening)\n",
+				beadID, runID.String(), engageErr)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("srt sandbox engagement verification failed: %v", engageErr))
+			emitDone(false, fmt.Sprintf("srt sandbox engagement verification failed: %v", engageErr))
+			return
+		}
+	}
 
 	if implIsSessionIDCapturedWL {
 		spec.Substrate = nil

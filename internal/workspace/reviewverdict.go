@@ -285,6 +285,83 @@ func retryVerdictReadOnMalformed(ctx context.Context, read verdictRead) (*Review
 	return nil, lastErr
 }
 
+// WriteReviewVerdictAtomic writes verdict to the canonical review-verdict path
+// ${workspace_path}/.harmonik/review.json using encoding/json (not hand-rolled
+// string construction) and the same atomic-write discipline as
+// WriteLeaseLockAtomic:
+//
+//  1. json.Marshal verdict — this is the fix for hk-9w79a: a reviewer agent
+//     hand-typing raw JSON text into a Write-tool call can emit an invalid
+//     escape (e.g. a backtick-containing code snippet in Notes gets a stray
+//     "\`" backslash-escape, which is not a legal JSON escape) whenever the
+//     free-text Notes field contains a backtick. encoding/json.Marshal escapes
+//     only the characters JSON actually requires (", \, control chars) and
+//     leaves backtick unescaped, so a backtick in Notes can never produce
+//     invalid JSON.
+//  2. Write the marshaled bytes to a sibling temp file, fsync it.
+//  3. rename(2) the temp file over the target (POSIX-atomic within one fs).
+//  4. Best-effort fsync of the parent directory.
+//
+// Callers should prefer this over writing review.json by hand. The
+// write-review-verdict CLI subcommand is the reviewer-facing entry point.
+func WriteReviewVerdictAtomic(workspacePath string, verdict *ReviewVerdict) error {
+	if verdict.Flags == nil {
+		verdict.Flags = []string{}
+	}
+
+	target := ReviewVerdictPath(workspacePath)
+	content, err := json.Marshal(verdict)
+	if err != nil {
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: marshal: %w", err)
+	}
+
+	dir := filepath.Dir(target)
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: MkdirAll %q: %w", dir, err)
+	}
+
+	tmpPath := fmt.Sprintf("%s.tmp-%d", target, os.Getpid())
+	//nolint:gosec // G304: path is constructed from workspace_path + known relative segments, not user input
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: OpenFile %q: %w", tmpPath, err)
+	}
+
+	if _, err := f.Write(content); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Write: %w", err)
+	}
+
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Sync (pre-rename): %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Close (pre-rename): %w", err)
+	}
+
+	if err := os.Rename(tmpPath, target); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Rename %q → %q: %w", tmpPath, target, err)
+	}
+
+	//nolint:gosec // G304: path constructed from workspace_path + known relative segments; not user input
+	dirFD, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Open dir %q for fsync: %w", dir, err)
+	}
+	_ = dirFD.Sync() // best-effort on APFS per WM-013a precedent
+	if err := dirFD.Close(); err != nil {
+		return fmt.Errorf("workspace: WriteReviewVerdictAtomic: Close dir fd: %w", err)
+	}
+
+	return nil
+}
+
 // runnerIsLocalFS reports whether r operates on the daemon box's local filesystem
 // — i.e. the worktree paths it is given are directly readable with os.ReadFile.
 // A nil runner (defensive) and tmux.LocalRunner both qualify; an SSHRunner (or

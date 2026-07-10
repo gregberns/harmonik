@@ -1842,13 +1842,16 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 	bufName := bufferName(claudeSessID, "review")
 	msg := "Read .harmonik/review-target.md in this worktree." +
 		" It contains the bead context, the diff range to review, and any prior-iteration verdicts." +
-		" Produce your verdict by writing .harmonik/review.json conforming to the agent-reviewer schema v1." +
-		// hk-qts7r: atomic-write the verdict so a remote watchdog never observes a
-		// half-written file. Write to a temp file in .harmonik/ then rename it over
-		// review.json (e.g. write review.json.tmp then `mv review.json.tmp review.json`).
-		" IMPORTANT: write .harmonik/review.json ATOMICALLY — write the JSON to a temp file in" +
-		" .harmonik/ (e.g. review.json.tmp) and then rename it over review.json, so a partial file is" +
-		" never observed." +
+		" Produce your verdict by running:" +
+		" harmonik write-review-verdict --verdict=<APPROVE|REQUEST_CHANGES|BLOCK> --notes=\"<your rationale>\" --flags=<comma,separated,tags>" +
+		// hk-9w79a: hand-typing .harmonik/review.json via the Write tool lets the
+		// model mis-escape a backtick inside a code-snippet-quoting notes string
+		// (an illegal "\`" JSON escape), producing malformed JSON that fails the
+		// verdict read after a ~1hr hang. The CLI JSON-encodes notes/flags via
+		// encoding/json, so a backtick in notes can never break the JSON.
+		" DO NOT hand-write .harmonik/review.json directly with the Write tool — always use the" +
+		" harmonik write-review-verdict command above, even when notes quotes code containing backticks." +
+		" This command writes the file atomically (temp file + rename), so no separate atomic-write step is needed." +
 		" CRITICAL: when the bead body's '## Implementation Notes' section names exact field/struct names" +
 		" (e.g. 'MUST be SessionID string — NOT SessID'), grep the diff for every named identifier and" +
 		" verify the exact name appears. When a prior verdict has flag 'spec-field-name' or notes naming" +

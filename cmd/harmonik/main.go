@@ -357,6 +357,16 @@ EXAMPLES
 		return runVetoVerdictSubcommand(os.Args[2:])
 	}
 
+	// harmonik write-review-verdict --verdict=<V> --notes=<TEXT> [--flags=a,b,c] [--project DIR]
+	// Reviewer-facing surface: writes .harmonik/review.json via encoding/json
+	// instead of the reviewer hand-typing raw JSON text, which can mis-escape
+	// a backtick in a code-snippet-quoting Notes value (hk-9w79a).
+	//
+	// Bead ref: hk-9w79a.
+	if len(os.Args) >= 2 && os.Args[1] == "write-review-verdict" {
+		return runWriteReviewVerdictSubcommand(os.Args[2:])
+	}
+
 	// harmonik beads-merge %O %A %B %P — custom git merge-driver for .beads/issues.jsonl.
 	//
 	// Union-by-bead-ID merge with last-writer-wins collision resolution on updated_at.

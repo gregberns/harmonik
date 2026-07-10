@@ -1066,3 +1066,55 @@ func TestPreRunValidator_CorpusBadModeTag(t *testing.T) {
 	}
 	assertErrorCode(t, err, codeBadModeTag)
 }
+
+// TestPreRunValidator_CorpusBadIODeterminism tests the
+// malformedDotFixtureBadIODeterminism corpus constant. A node with an
+// unrecognised io-determinism value must be rejected per EM-038.
+func TestPreRunValidator_CorpusBadIODeterminism(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixtureBadIODeterminism)
+	if err == nil {
+		t.Fatal("Validate(malformedDotFixtureBadIODeterminism) = nil, want validation error (EM-038: bad io-determinism value)")
+	}
+	assertErrorCode(t, err, codeBadIODeterminism)
+}
+
+// TestPreRunValidator_CorpusBadReplaySafety tests the
+// malformedDotFixtureBadReplaySafety corpus constant. A node with an
+// unrecognised replay-safety value must be rejected per EM-038.
+func TestPreRunValidator_CorpusBadReplaySafety(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixtureBadReplaySafety)
+	if err == nil {
+		t.Fatal("Validate(malformedDotFixtureBadReplaySafety) = nil, want validation error (EM-038: bad replay-safety value)")
+	}
+	assertErrorCode(t, err, codeBadReplaySafety)
+}
+
+// TestPreRunValidator_CorpusBadAxisIdempotency tests the
+// malformedDotFixtureBadAxisIdempotency corpus constant. A node with an
+// unrecognised idempotency axis value must be rejected per EM-038.
+func TestPreRunValidator_CorpusBadAxisIdempotency(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixtureBadAxisIdempotency)
+	if err == nil {
+		t.Fatal("Validate(malformedDotFixtureBadAxisIdempotency) = nil, want validation error (EM-038: bad idempotency axis value)")
+	}
+	assertErrorCode(t, err, codeBadAxisIdempotency)
+}
+
+// TestPreRunValidator_CorpusForbiddenSubWorkflowRef tests the
+// malformedDotFixtureForbiddenSubWorkflowRef corpus constant. A non-sub-workflow
+// node declaring sub_workflow_ref must be rejected per EM-038.
+func TestPreRunValidator_CorpusForbiddenSubWorkflowRef(t *testing.T) {
+	t.Parallel()
+	v := preRunValidatorFixtureNew(t)
+	err := v.Validate(malformedDotFixtureForbiddenSubWorkflowRef)
+	if err == nil {
+		t.Fatal("Validate(malformedDotFixtureForbiddenSubWorkflowRef) = nil, want validation error (EM-038: forbidden sub_workflow_ref on non-sub-workflow node)")
+	}
+	assertErrorCode(t, err, codeForbiddenSubWorkflowRef)
+}

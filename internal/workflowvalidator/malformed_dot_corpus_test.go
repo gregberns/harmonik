@@ -24,6 +24,10 @@ package workflowvalidator
 //   malformedDotFixtureMissingSubWorkflowRef   — EM-038: sub-workflow node without sub_workflow_ref
 //   malformedDotFixtureBadLLMFreedom           — EM-038: node with unrecognised llm-freedom value
 //   malformedDotFixtureBadModeTag              — EM-038/AR-005: node with unrecognised mode tag
+//   malformedDotFixtureBadIODeterminism        — EM-038: node with unrecognised io-determinism value
+//   malformedDotFixtureBadReplaySafety         — EM-038: node with unrecognised replay-safety value
+//   malformedDotFixtureBadAxisIdempotency      — EM-038: node with unrecognised idempotency axis value
+//   malformedDotFixtureForbiddenSubWorkflowRef — EM-038: non-sub-workflow node declares sub_workflow_ref
 
 // malformedDotFixtureBadEnum is a workflow whose node declares an unknown
 // type value ("human"). The validator MUST reject this per EM-006: the only
@@ -448,6 +452,151 @@ const malformedDotFixtureBadLLMFreedom = `digraph workflow {
         type               = "non-agentic"
         idempotency_class  = "idempotent"
         "llm-freedom"      = "partial"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_b [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_a -> node_b
+}`
+
+// malformedDotFixtureBadIODeterminism is a workflow whose node declares an
+// unrecognised io-determinism value ("mostly-deterministic"). The validator
+// MUST reject this per EM-038: the only accepted io-determinism values are
+// deterministic, best-effort, nondeterministic.
+const malformedDotFixtureBadIODeterminism = `digraph workflow {
+    graph [
+        workflow_id       = "wf-bad-io-determinism-001"
+        name              = "bad-io-determinism-fixture"
+        version           = "0.1.0"
+        start_node_id     = "node_a"
+        terminal_node_ids = "node_b"
+    ]
+
+    node_a [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "mostly-deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_b [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_a -> node_b
+}`
+
+// malformedDotFixtureBadReplaySafety is a workflow whose node declares an
+// unrecognised replay-safety value ("mostly-safe"). The validator MUST reject
+// this per EM-038: the only accepted replay-safety values are safe, unsafe, n/a.
+const malformedDotFixtureBadReplaySafety = `digraph workflow {
+    graph [
+        workflow_id       = "wf-bad-replay-safety-001"
+        name              = "bad-replay-safety-fixture"
+        version           = "0.1.0"
+        start_node_id     = "node_a"
+        terminal_node_ids = "node_b"
+    ]
+
+    node_a [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "mostly-safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_b [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_a -> node_b
+}`
+
+// malformedDotFixtureBadAxisIdempotency is a workflow whose node declares an
+// unrecognised idempotency axis value ("mostly-idempotent") — distinct from
+// idempotency_class. The validator MUST reject this per EM-038: the only
+// accepted idempotency axis values are idempotent, non-idempotent,
+// recoverable-non-idempotent, n/a.
+const malformedDotFixtureBadAxisIdempotency = `digraph workflow {
+    graph [
+        workflow_id       = "wf-bad-axis-idempotency-001"
+        name              = "bad-axis-idempotency-fixture"
+        version           = "0.1.0"
+        start_node_id     = "node_a"
+        terminal_node_ids = "node_b"
+    ]
+
+    node_a [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "mostly-idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_b [
+        type               = "non-agentic"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
+        "io-determinism"   = "deterministic"
+        "replay-safety"    = "safe"
+        idempotency        = "idempotent"
+        mode               = "mechanism"
+    ]
+
+    node_a -> node_b
+}`
+
+// malformedDotFixtureForbiddenSubWorkflowRef is a workflow whose non-sub-workflow
+// node incorrectly declares sub_workflow_ref. The validator MUST reject this
+// per EM-038: sub_workflow_ref is only valid on sub-workflow nodes; declaring
+// it on any other node type is a structural violation.
+const malformedDotFixtureForbiddenSubWorkflowRef = `digraph workflow {
+    graph [
+        workflow_id       = "wf-forbidden-sub-workflow-ref-001"
+        name              = "forbidden-sub-workflow-ref-fixture"
+        version           = "0.1.0"
+        start_node_id     = "node_a"
+        terminal_node_ids = "node_b"
+    ]
+
+    node_a [
+        type               = "non-agentic"
+        sub_workflow_ref   = "wf-should-not-be-here"
+        idempotency_class  = "idempotent"
+        "llm-freedom"      = "none"
         "io-determinism"   = "deterministic"
         "replay-safety"    = "safe"
         idempotency        = "idempotent"

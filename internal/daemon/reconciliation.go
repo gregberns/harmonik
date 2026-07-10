@@ -15,8 +15,13 @@ package daemon
 // non-empty .beads/merge-conflicts.log, emits bead_ledger_conflict_audit, and
 // truncates the log file.
 //
+// Every Cat-6 operator_escalation_required emission below is paired with an
+// emitOperatorMailboxEscalation call (bead hk-u4dv4) so it also lands in the
+// single operator-mailbox projection (`harmonik mailbox`), not just the raw
+// event log.
+//
 // Spec ref: specs/reconciliation/spec.md §8.BL1, §8.BL2, §8.BL3.
-// Bead ref: hk-27ghc, hk-k7va9.
+// Bead ref: hk-27ghc, hk-k7va9, hk-u4dv4.
 
 import (
 	"bufio"
@@ -34,6 +39,40 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
+
+// emitOperatorMailboxEscalation raises a decision_needed event tagged with the
+// reserved operator-mailbox topic (core.DecisionTopicOperatorMailbox) so every
+// Cat-6 operator_escalation_required this package emits ALSO lands in the
+// single "harmonik mailbox" projection (`harmonik mailbox` / `decisions list
+// --topic operator-mailbox`) instead of only the raw operator_escalation_required
+// event, which no operator surface renders directly. Mirrors the CLI convention
+// `harmonik decisions raise --topic operator-mailbox --from <source>` that
+// stall-sentinel's Tier-3 (operator) escalation is designed to use once built
+// (plans/2026-07-02-stall-sentinel/DESIGN.md §3, §7 item 5; bead hk-u4dv4).
+//
+// Non-fatal: a marshal or emit failure is logged and swallowed — the caller's
+// operator_escalation_required emission (the durable audit record) has already
+// happened or is unaffected either way.
+func emitOperatorMailboxEscalation(ctx context.Context, emitter interface {
+	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
+}, logW io.Writer, source, question, contextLink string) {
+	p := core.DecisionNeededPayload{
+		Question:     question,
+		Options:      []string{"acknowledged"},
+		ContextLink:  contextLink,
+		BlockedAgent: source,
+		Topic:        core.DecisionTopicOperatorMailbox,
+		Urgency:      core.DecisionUrgencyBlocker,
+	}
+	b, marshalErr := json.Marshal(p)
+	if marshalErr != nil {
+		fmt.Fprintf(logW, "reconciliation: marshal decision_needed for operator-mailbox (%s): %v\n", source, marshalErr)
+		return
+	}
+	if emitErr := emitter.Emit(ctx, core.EventTypeDecisionNeeded, b); emitErr != nil {
+		fmt.Fprintf(logW, "reconciliation: emit decision_needed (operator-mailbox) for %s: %v\n", source, emitErr)
+	}
+}
 
 // parentLabelPrefix is the label prefix used by child beads to record their
 // parent bead lineage per specs/beads-integration.md §4.8b BI-010e (T0 rename:
@@ -156,6 +195,10 @@ func RunCatBL1StartupSweep(ctx context.Context, cfg CatBL1StartupSweepConfig) er
 						rec.BeadID, emitErr)
 				}
 			}
+			emitOperatorMailboxEscalation(scanCtx, cfg.Emitter, logW, "reconciliation-cat-bl1",
+				fmt.Sprintf("Bead %s is in_progress with orphaned parent %s (parent run never merged on %s) — verify and resolve manually.",
+					rec.BeadID, parentID, targetBranch),
+				string(rec.BeadID))
 			continue
 		}
 
@@ -337,6 +380,10 @@ func RunCatBL3StartupSweep(ctx context.Context, cfg CatBL3StartupSweepConfig) er
 			fmt.Fprintf(logW, "reconciliation Cat-BL3: emit operator_escalation_required: %v\n", emitErr)
 		}
 	}
+	emitOperatorMailboxEscalation(ctx, cfg.Emitter, logW, "reconciliation-cat-bl3",
+		fmt.Sprintf("Merge-conflict-log audit found %d conflict(s) across %d bead(s) — see bead_ledger_conflict_audit in events.jsonl.",
+			len(conflicts), len(beadIDs)),
+		strings.Join(beadIDs, ","))
 
 	// Truncate the log — conflicts are now durable in the event log.
 	if err := os.Truncate(logPath, 0); err != nil {
@@ -535,6 +582,9 @@ func (h *CatBL2Handler) handleBeadSyncFailed(ctx context.Context, evt core.Event
 			fmt.Fprintf(h.logWriter, "reconciliation Cat-BL2: emit operator_escalation_required: %v\n", emitErr)
 		}
 	}
+	emitOperatorMailboxEscalation(ctx, h.cfg.Emitter, h.logWriter, "reconciliation-cat-bl2",
+		fmt.Sprintf("Bead-ledger import failed after retry for run %s: %s", pl.RunID, errMsg),
+		pl.RunID)
 
 	fmt.Fprintf(h.logWriter,
 		"reconciliation Cat-BL2: ledger corrupt for run %s — escalated to operator (Cat 6b): %s\n",

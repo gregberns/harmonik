@@ -82,4 +82,9 @@ func TestRunCatBL3StartupSweep_EmitsBothEventsOnConflictLog(t *testing.T) {
 	if !emitter.has(core.EventTypeOperatorEscalationRequired) {
 		t.Errorf("expected %q event to be emitted, but it was not", core.EventTypeOperatorEscalationRequired)
 	}
+	// hk-u4dv4: the escalation must also land in the operator-mailbox
+	// projection via a decision_needed event on the reserved topic.
+	if !emitter.has(core.EventTypeDecisionNeeded) {
+		t.Errorf("expected %q event (operator-mailbox routing) to be emitted, but it was not", core.EventTypeDecisionNeeded)
+	}
 }

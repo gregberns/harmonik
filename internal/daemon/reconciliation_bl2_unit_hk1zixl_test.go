@@ -187,6 +187,9 @@ func TestCatBL2Handler_RetrySucceeds_EmitsLedgerRecovered(t *testing.T) {
 	if emitter.has(core.EventTypeOperatorEscalationRequired) {
 		t.Errorf("operator_escalation_required emitted on a successful retry; must not be")
 	}
+	if emitter.has(core.EventTypeDecisionNeeded) {
+		t.Errorf("decision_needed (operator-mailbox) emitted on a successful retry; must not be")
+	}
 }
 
 // TestCatBL2Handler_RetryFails_EmitsCorruptAndEscalation verifies that when the
@@ -212,6 +215,20 @@ func TestCatBL2Handler_RetryFails_EmitsCorruptAndEscalation(t *testing.T) {
 	if !emitter.has(core.EventTypeOperatorEscalationRequired) {
 		t.Fatalf("expected %q to be emitted on persistent retry failure, but it was not (events: %v)",
 			core.EventTypeOperatorEscalationRequired, emitter.types)
+	}
+
+	// hk-u4dv4: the escalation must also land in the operator-mailbox
+	// projection via a decision_needed event on the reserved topic.
+	if !emitter.has(core.EventTypeDecisionNeeded) {
+		t.Fatalf("expected %q (operator-mailbox routing) to be emitted alongside the escalation, but it was not (events: %v)",
+			core.EventTypeDecisionNeeded, emitter.types)
+	}
+	var decision core.DecisionNeededPayload
+	if err := json.Unmarshal(emitter.payload(core.EventTypeDecisionNeeded), &decision); err != nil {
+		t.Fatalf("unmarshal decision_needed payload: %v", err)
+	}
+	if decision.Topic != core.DecisionTopicOperatorMailbox {
+		t.Errorf("decision_needed topic = %q; want %q", decision.Topic, core.DecisionTopicOperatorMailbox)
 	}
 
 	// The corrupt payload must carry the originating run_id and a non-empty error.

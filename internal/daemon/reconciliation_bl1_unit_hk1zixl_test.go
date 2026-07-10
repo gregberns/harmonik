@@ -268,6 +268,12 @@ func TestRunCatBL1StartupSweep_OpenOrphanClosed_InProgressEscalated(t *testing.T
 	if !emitter.has(core.EventTypeOperatorEscalationRequired) {
 		t.Errorf("expected operator_escalation_required for the IN_PROGRESS orphan, but none was emitted (events: %v)", emitter.types)
 	}
+
+	// hk-u4dv4: the escalation must also land in the operator-mailbox
+	// projection via a decision_needed event on the reserved topic.
+	if !emitter.has(core.EventTypeDecisionNeeded) {
+		t.Errorf("expected decision_needed (operator-mailbox routing) for the IN_PROGRESS orphan, but none was emitted (events: %v)", emitter.types)
+	}
 	if bl1Contains(closed, bl1InProgressOrphanID) {
 		t.Errorf("IN_PROGRESS orphan %s was closed; it must be escalated, not auto-closed; close-marker: %v",
 			bl1InProgressOrphanID, closed)

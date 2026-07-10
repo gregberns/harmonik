@@ -40,7 +40,7 @@ tmux `capture-pane` is allowed ONLY as a **secondary confirm** on an already-sus
 On a confirmed stall, escalate by elapsed time, each tier a deterministic `harmonik comms send`:
 - **Tier 1 (X min) → the crew:** "run <id>/bead <id> shows <signature>; no progress since <ts> — check it." For a *wedged* (not merely idle) crew, a bare comms message won't wake it — the nudge must be a **pane keystroke** (reuse the keeper's `send-keys` mechanism).
 - **Tier 2 (Y min) → the captain:** same payload + "crew didn't clear it."
-- **Tier 3 (Z min) → the operator:** lands in the **operator-mailbox** (the separate discussion-item #2 surface), not a pane dump.
+- **Tier 3 (Z min) → the operator:** lands in the **operator-mailbox** (the separate discussion-item #2 surface), not a pane dump. Concretely, the Tier-3 firing is `harmonik decisions raise --topic operator-mailbox --from stall-sentinel --question "<signature> on run <id>/bead <id>; no progress since <ts>" --option acknowledged` — the SAME `decisions raise --topic operator-mailbox` convention reconciliation's Cat-6 `operator_escalation_required` was routed through in bead hk-u4dv4 (`internal/daemon/reconciliation.go` `emitOperatorMailboxEscalation`). One inbox for all operator escalations (`harmonik mailbox`), not a second ad-hoc surface.
 
 Thresholds `X/Y/Z` and every `*_stall` value are **config-driven, fail-loud if unset** (per the no-hardcoded-thresholds mandate — resolve like the keeper/watch config). Emit a typed `stall_detected` event for each firing (auditable; the watch/ops-monitor can consume it).
 

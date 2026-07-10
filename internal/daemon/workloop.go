@@ -1214,6 +1214,23 @@ func buildWorkerRegistryWithRunner(ctx context.Context, cfg workers.Config, bus 
 	if len(cfg.Workers) == 0 {
 		return nil
 	}
+
+	// hk-qmyis: make "workers.yaml has entries but none enabled" visible at
+	// startup — previously this looked identical to "no workers.yaml at all"
+	// because both paths were silent. The registry is rebuilt at process start
+	// only, so editing workers.yaml under a running daemon is a no-op until the
+	// next restart; the warning below says so explicitly.
+	enabledCount := 0
+	for _, w := range cfg.Workers {
+		if w.Enabled {
+			enabledCount++
+		}
+	}
+	slog.Info("worker_registry_init", "workers_loaded", len(cfg.Workers), "workers_enabled", enabledCount)
+	if enabledCount == 0 {
+		slog.Warn("remote routing DISABLED (0 enabled workers); restart the daemon after editing workers.yaml to pick up changes")
+	}
+
 	reg := workers.NewRegistry(cfg)
 
 	// B6 boot health check: probe each enabled worker over its transport runner.

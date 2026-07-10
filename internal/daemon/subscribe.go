@@ -120,6 +120,19 @@ const (
 	// subscribeChannelCapacity is the per-subscriber buffered-channel depth.
 	// On overflow the OLDEST event is dropped (see drop-oldest discipline).
 	subscribeChannelCapacity = 256
+
+	// subscribeWriteTimeout bounds how long a single write to a subscriber
+	// connection may take. Without this, a client that stops reading (dead or
+	// cleared session whose socket fd is still held open by a lingering
+	// descendant process, so no read-side EOF is ever observed) can leave
+	// conn.Write blocked forever once the kernel socket buffer fills, which
+	// permanently strands the connection's slot in connCount/subscribers and
+	// is the root cause of fleet-wide subscribe_capacity_exceeded (hk-qsz0p).
+	// A write that misses this deadline errors out, HandleSubscribe returns,
+	// and its deferred cleanup releases the slot without a daemon restart.
+	// Heartbeats guarantee a periodic write attempt even on an otherwise-idle
+	// connection, so a stuck subscriber is reaped within one heartbeat cycle.
+	subscribeWriteTimeout = 30 * time.Second
 )
 
 // commsCursorFlushInterval bounds how often a `comms recv --follow` subscribe
@@ -168,6 +181,13 @@ type SubscribeHubConfig struct {
 	// request that would exceed the cap is rejected immediately with a
 	// "subscribe_capacity_exceeded" error written to the connection.
 	MaxConnections int
+
+	// WriteTimeout bounds how long a single write to a subscriber connection
+	// may take before it is treated as a dead/stuck peer and the connection is
+	// torn down. When zero, subscribeWriteTimeout (30s) is used. Tests override
+	// this with a short duration to exercise the reap-on-stalled-write path
+	// without a real 30s wait.
+	WriteTimeout time.Duration
 
 	// EventsJSONLPath is the absolute path to the events.jsonl log file used
 	// for since_event_id replay (hk-a5sil). When empty, replay is skipped and
@@ -297,9 +317,14 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 	if maxConn <= 0 {
 		maxConn = subscribeMaxConnectionsDefault
 	}
+	writeTimeout := h.cfg.WriteTimeout
+	if writeTimeout <= 0 {
+		writeTimeout = subscribeWriteTimeout
+	}
 	for {
 		cur := h.connCount.Load()
 		if cur >= maxConn {
+			_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 			writeSubscribeError(conn, "subscribe_capacity_exceeded")
 			return
 		}
@@ -444,6 +469,9 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 						continue
 					}
 				}
+				if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+					return
+				}
 				if encErr := enc.Encode(evt); encErr != nil {
 					return
 				}
@@ -478,6 +506,10 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 				}
 			}
 
+			if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				return
+			}
+
 			// Drop-gap notice first if we accumulated drops.
 			if dropped := s.swapDropped(); dropped > 0 {
 				if err := enc.Encode(subscriptionGapLine{
@@ -510,6 +542,9 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 			cursorFlushReset(commsCursorFlushInterval)
 
 		case <-hbC:
+			if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				return
+			}
 			payload := h.makeHeartbeat()
 			if err := enc.Encode(payload); err != nil {
 				return

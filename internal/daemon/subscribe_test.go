@@ -997,3 +997,68 @@ func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
 	// (read-goroutine, heartbeat) must have exited.
 	goleak.VerifyNone(t)
 }
+
+// TestSubscribeHub_ReapsStalledWriteOnDeadPeer reproduces hk-qsz0p: a
+// subscriber whose peer stops reading (dead/cleared session whose socket is
+// still open — no read-side EOF ever arrives) must not permanently strand its
+// connCount/subscribers slot. A short WriteTimeout forces the stalled write to
+// error out, so HandleSubscribe returns and its deferred cleanup releases the
+// slot without requiring a daemon restart.
+func TestSubscribeHub_ReapsStalledWriteOnDeadPeer(t *testing.T) {
+	t.Parallel()
+
+	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil, WriteTimeout: 50 * time.Millisecond})
+
+	srv, cli := net.Pipe()
+	defer func() { _ = cli.Close() }()
+	defer func() { _ = srv.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		// Long heartbeat so the reap is driven by the dispatched event's
+		// stalled write, not an incidental heartbeat write.
+		hub.HandleSubscribe(ctx, srv, SubscribeRequest{HeartbeatSeconds: 600})
+		close(done)
+	}()
+
+	// Wait for registration.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		hub.mu.RLock()
+		n := len(hub.subscribers)
+		hub.mu.RUnlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := hub.connCount.Load(); got != 1 {
+		t.Fatalf("connCount before dispatch = %d, want 1", got)
+	}
+
+	// Deliver an event. The client (cli) never reads it, so the server-side
+	// write blocks on net.Pipe's synchronous rendezvous until WriteTimeout
+	// fires and errors the write out.
+	if err := hub.dispatch(ctx, subscribeTestMakeEvent(t, "run_completed")); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("HandleSubscribe did not return within 3s of stalled write timeout")
+	}
+
+	hub.mu.RLock()
+	n := len(hub.subscribers)
+	hub.mu.RUnlock()
+	if n != 0 {
+		t.Errorf("subscriber not deregistered after stalled-write reap; got %d", n)
+	}
+	if got := hub.connCount.Load(); got != 0 {
+		t.Errorf("connCount not released after stalled-write reap; got %d", got)
+	}
+}

@@ -9,7 +9,14 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
-## ⛔⛔ HOLD 2026-07-10 ~11:5xZ — OPERATOR-DIRECTED (via admiral, directive 019f4cdc) · NO new dispatch until admiral lifts
+## ⭐⭐ CURRENT TRUTH 2026-07-10 ~20:48Z — TRACK A: flagship core-loop-proof, kynes single lane; rebase ABANDONED (branch superseded)
+> HOLD below is LIFTED (operator directive 019f4dc3 / direction-log 07-10). Fleet posture: ONE lane (kynes), everything else PAUSED (paused-* queues = pre-audit/known cruft; do NOT resume).
+> - **kynes** (Opus, queue kynes-q, epic hk-hcrvb) live + verified (comms-online, keeper hk-keeper-kynes armed).
+> - **REBASE ABANDONED (captain-approved, this session):** `integration/core-loop-proof` is SUPERSEDED, not merely behind (179 behind/20 ahead). The hk-g6plo series already landed the ENTIRE core-loop-proof pipeline on main and evolved it further (per-cell verdict JSON, conformance-floor gate, pi tier-3 leak gate). Only unique file was scripts/core-loop-seed.sh — its logic is already inlined in main's MATRIX_SEED_MAP. T9 assert-test = pass=28/fail=0 ON MAIN. So: retire the branch, do NOT re-attempt the rebase on next boot.
+> - **NOW:** kynes driving T9 (hk-jjt6w) remaining piece = a LIVE full-matrix run on MAIN via scratch daemon (claude+pi REQUIRED green, codex KNOWN-SKIP).
+> - **HARD GATE (unchanged): NO fleet daemon redeploy until BOTH hk-x2spu AND hk-ih5k6 close (both OPEN).** Scratch daemon for the live matrix does NOT need a fleet redeploy; kynes surfaces if a fleet redeploy becomes needed.
+
+## ⛔⛔ (LIFTED 2026-07-10 20:48Z — see truth block above) HOLD 2026-07-10 ~11:5xZ — OPERATOR-DIRECTED (via admiral, directive 019f4cdc) · NO new dispatch until admiral lifts
 > STOP all submit/append/refill. Operator + admiral are auditing overnight alignment + quality-process compliance and building a plan; new work adds to the pile. Fleet is now IDLE: quality-depth + quality-fill + frontline5 all PAUSED, 0 worktrees in-flight. DO NOT re-staff or resume queues on boot until admiral explicitly lifts.
 > - Boot-time context (this session): lean daemon-queue posture, NO captain crews (crew list/comms who = admiral only, its own initiative). Local hard-cap 4. I deepened sustain at boot with quality-fill (16 file-disjoint daemon/keeper/de-hardcode beads) BEFORE this hold landed; it fully processed — ~11 completed / ~11 failed across the 3 queues. 8 quality-fill beads merged to origin/main (HEAD 250453f4: hk-ft1qt, EH4-report/346ta, SetSpawnCap/omvan, hk-klr5n, hk-r9edj, hk-os0hq, hk-1u4wp, hk-d9snr) — NOT reverted (landed clean via review gate). ~11 failures held un-redispatched for the audit.
 > - HELD for operator (separate, unchanged): gb-mbp live re-enable (test-on-scratch rule; scratch re-validate PASSED run 019f4ad2). Do NOT auto-flip.

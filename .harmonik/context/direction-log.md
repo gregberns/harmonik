@@ -47,3 +47,14 @@ ORDER: chani drives dual-provider + per-bead capability ‖ chani+stilgar add th
       per-bead-switch + 4-corpus-harness scope is the live remainder for the re-stand.
 RETURN-PATH: captain directive comms 019f3f26. Resume by checking which crew owns the
       dual-provider+per-bead capability + the harness-coverage plan for the 4 bug classes.
+
+## 2026-07-10 ~11:5xZ — operator (via captain, event 019f4dc3): HOLD LIFTED → TRACK A ONLY · expires: 2026-07-12T00:00:00Z
+WHAT: Overnight HOLD lifted into a single-lane directive. Staff ONE crew (kynes, Opus) on
+      flagship core-loop-proof epic hk-hcrvb: rebase integration/core-loop-proof onto main,
+      drive T9 (hk-jjt6w) to full-matrix green (Claude+pi REQUIRED, codex KNOWN-SKIP).
+WHY:  operator + admiral finished the overnight-alignment audit; focus is the flagship
+      core-loop proof, not broad volume. Grab-bag/kerf-next churn explicitly OFF.
+ORDER: kynes rebases → drives T9 green. Cleanup beads ONLY if slots remain after T9 moving.
+      HARD GATE: NO daemon redeploy until BOTH hk-x2spu AND hk-ih5k6 close.
+RETURN-PATH: resume by checking kynes owns hk-hcrvb + T9 leg status; the paused quality-*
+      queues stay PAUSED (do not resume — that was the pre-audit volume posture, now retired).

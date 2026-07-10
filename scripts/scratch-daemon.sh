@@ -236,7 +236,7 @@ cmd_up() {
     # `down`/pkill stays down for a clean rebuild. API keys are stripped so the
     # run bills the subscription pool (codename:credfence), matching smoke-scratch.
     # shellcheck disable=SC2016
-    tmux new-session -d -s "$sess" \
+    tmux new-session -d -s "$sess" -c "$scratch" \
         "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
           '$bin' --project '$scratch' \
           --max-concurrent $max_concurrent \

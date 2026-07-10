@@ -19,6 +19,13 @@ package main
 //   hidden_test.go → hidden_test_pass, hidden_test_pass_count
 //   deadcode      → unused_symbols (if tool installed)
 //
+// Guardrail feeders (specs/02-quality-assessment.md §Part 3; WS3e, see
+// eval_guardrails_lygpp.go):
+//   rubric_version  → G6 rubric weight-set stamp
+//   diff self-ID scan → self_id_matches (G2)
+//   diff test-file scan → test_file_touched (G5)
+//   bead-id sample hash → cross_check_sample (O-Q4)
+//
 // Bead: hk-eval-prog-quality-feeders-k5bxl (WS3b).
 
 import (
@@ -56,6 +63,7 @@ OUTPUT
 // evalMetricsRecord is the metrics.json schema (schema_version 1).
 type evalMetricsRecord struct {
 	SchemaVersion       int      `json:"schema_version"`
+	RubricVersion       int      `json:"rubric_version"`
 	GofmtClean          bool     `json:"gofmt_clean"`
 	GofmtUnformatted    []string `json:"gofmt_unformatted"`
 	VetClean            bool     `json:"vet_clean"`
@@ -71,6 +79,9 @@ type evalMetricsRecord struct {
 	HiddenTestPass      *bool    `json:"hidden_test_pass"`
 	HiddenTestPassCount *int     `json:"hidden_test_pass_count"`
 	UnusedSymbols       []string `json:"unused_symbols"`
+	SelfIDMatches       []string `json:"self_id_matches"`
+	TestFileTouched     bool     `json:"test_file_touched"`
+	CrossCheckSample    bool     `json:"cross_check_sample"`
 }
 
 // runEvalMetrics implements `harmonik eval metrics`.
@@ -128,9 +139,11 @@ func runEvalMetrics(args []string, stdout, stderr io.Writer, getwd func() (strin
 func evalComputeMetrics(workdir string) (evalMetricsRecord, error) {
 	rec := evalMetricsRecord{
 		SchemaVersion:    1,
+		RubricVersion:    evalRubricVersion,
 		GofmtUnformatted: []string{},
 		VetIssues:        []string{},
 		UnusedSymbols:    []string{},
+		SelfIDMatches:    []string{},
 	}
 
 	beadID, err := evalReadBeadIDFromTask(workdir)
@@ -140,6 +153,7 @@ func evalComputeMetrics(workdir string) (evalMetricsRecord, error) {
 
 	taskID := evalDeriveTaskID(beadID)
 	evaltaskDir := "evaltasks/" + taskID
+	rec.CrossCheckSample = evalShouldCrossCheckSample(beadID)
 
 	labels, _ := evalFetchBeadLabels(beadID, workdir)
 	if v := evalLabelValue(labels, "expected_big_o"); v != "" {
@@ -160,6 +174,8 @@ func evalComputeMetrics(workdir string) (evalMetricsRecord, error) {
 	diff, _ := evalGetHeadDiff(workdir)
 	rec.TodoCount, rec.FixmeCount, rec.StubCount = evalCountDiffMarkers(diff)
 	rec.DiffAddedLines = evalCountDiffAddedLines(diff)
+	rec.SelfIDMatches = evalScrubSelfID(diff)
+	rec.TestFileTouched = evalDiffTouchesTestFile(diff)
 
 	if rec.ReferenceLineBudget != nil {
 		within := rec.DiffAddedLines <= *rec.ReferenceLineBudget
@@ -328,9 +344,11 @@ func evalCountDiffAddedLines(diff string) int {
 	return count
 }
 
-// evalRunHiddenTest runs tests matching "^Hidden" and returns pass status and count.
+// evalRunHiddenTest runs tests whose name contains "Hidden" (e.g. TestHiddenFoo)
+// and returns pass status and count. -run matches the full "TestXxx" name, so
+// the pattern must not anchor past the mandatory "Test" prefix.
 func evalRunHiddenTest(workdir, evaltaskDir string) (pass *bool, count *int) {
-	cmd := exec.Command("go", "test", "./"+evaltaskDir+"/...", "-run", "^Hidden", "-timeout", "60s", "-v")
+	cmd := exec.Command("go", "test", "./"+evaltaskDir+"/...", "-run", "Hidden", "-timeout", "60s", "-v")
 	cmd.Dir = workdir
 	out, err := cmd.CombinedOutput()
 	p := err == nil

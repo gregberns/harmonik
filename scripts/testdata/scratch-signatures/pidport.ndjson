@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-pidport","payload":{"run_id":"run-pidport","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-pidport","payload":{"run_id":"run-pidport","bead_id":"hk-sig","success":false,"summary":"daemon still listening: pid 48213, port 9021"}}

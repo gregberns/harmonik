@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-uuid","payload":{"run_id":"run-uuid","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-uuid","payload":{"run_id":"run-uuid","bead_id":"hk-sig","success":false,"summary":"lock held by worker 123e4567-e89b-12d3-a456-426614174000"}}

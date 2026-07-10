@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-duration","payload":{"run_id":"run-duration","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-duration","payload":{"run_id":"run-duration","bead_id":"hk-sig","success":false,"summary":"test timed out after 1800s (build took 1.3s, retry after 30ms)"}}

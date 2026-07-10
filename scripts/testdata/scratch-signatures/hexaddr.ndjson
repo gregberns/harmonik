@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-hexaddr","payload":{"run_id":"run-hexaddr","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-hexaddr","payload":{"run_id":"run-hexaddr","bead_id":"hk-sig","success":false,"summary":"panic: invalid memory address 0x14000a2f00"}}

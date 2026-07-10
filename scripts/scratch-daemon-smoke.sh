@@ -30,6 +30,10 @@
 #   A  fail_signature STABILITY — fold TWO synthetic streams for the SAME logical
 #      failure but with DIFFERENT volatile tokens (run-id, timestamp, tmpdir path) and
 #      assert the derived fail_signature is byte-identical (the dedup precondition).
+#   A3 golden signature-corpus regression (hk-ft1qt) — fold the checked-in
+#      scripts/testdata/scratch-signatures/*.ndjson corpus (one per `oneline`
+#      redaction class, plus a false-merge guard pair) and byte-diff each derived
+#      fail_signature against its golden .sig.
 #   B  trivial 1-bead PASS batch — assert the JSON artifact + BATCH_SUMMARY line are
 #      produced with verdict=pass and the command exits 0.
 #   C  feedback CREATE — feed a real (offline-derived) FAIL artifact to `feedback`
@@ -198,6 +202,53 @@ na="$(sig_of na 'go vet failure: internal/daemon/foo.go missing return')"
 nb="$(sig_of nb 'go vet failure: internal/queue/bar.go missing return')"
 if [ -n "$na" ] && [ "$na" != "$nb" ]; then ok "distinct vet failures stay DISTINCT (no false-merge): '$na' vs '$nb'"
 else bad "distinct failures FALSE-MERGED into one signature — second bug would be lost (na='$na' nb='$nb')"; fi
+
+# ===========================================================================
+# Phase A3 — golden signature-corpus regression (hk-ft1qt, spec S-C4.1 / N1).
+# One .ndjson + expected .sig per `oneline` redaction class, plus a false-merge
+# guard pair (two DISTINCT failures whose signatures must NOT match each other).
+# Each entry is folded through the REAL `batch --from-events` path and the
+# derived fail_signature is byte-diffed against its golden .sig. A corrupted
+# golden (or a normalizer regression) fails this phase and the whole smoke.
+# ===========================================================================
+echo "[smoke] --- Phase A3: golden signature-corpus regression ---"
+CORPUS="$SELF_DIR/testdata/scratch-signatures"
+if [ -d "$CORPUS" ]; then
+    corpus_n=0
+    for ndjson in "$CORPUS"/*.ndjson; do
+        [ -f "$ndjson" ] || continue
+        corpus_n=$((corpus_n+1))
+        tag="$(basename "$ndjson" .ndjson)"
+        golden="$CORPUS/$tag.sig"
+        if [ ! -f "$golden" ]; then
+            bad "corpus[$tag]: golden .sig file missing"
+            continue
+        fi
+        $SD batch "$SCRATCH" "corpus-$tag" --from-events "$ndjson" >/dev/null 2>&1 || true
+        art="$SCRATCH/.harmonik/batch-corpus-$tag-events.json"
+        actual="$(jq -r '.[0].fail_signature' "$art" 2>/dev/null)"
+        expected="$(cat "$golden")"
+        if [ "$actual" = "$expected" ]; then
+            ok "corpus[$tag]: signature matches golden ('$actual')"
+        else
+            bad "corpus[$tag]: signature MISMATCH (expected '$expected', got '$actual')"
+        fi
+    done
+    if [ "$corpus_n" -eq 0 ]; then
+        bad "golden signature corpus is empty: $CORPUS"
+    fi
+    # False-merge guard: the two falsemerge-* entries are DIFFERENT logical
+    # failures — their golden signatures (and thus derived signatures) must differ.
+    fmA="$(jq -r '.[0].fail_signature' "$SCRATCH/.harmonik/batch-corpus-falsemerge-a-events.json" 2>/dev/null)"
+    fmB="$(jq -r '.[0].fail_signature' "$SCRATCH/.harmonik/batch-corpus-falsemerge-b-events.json" 2>/dev/null)"
+    if [ -n "$fmA" ] && [ "$fmA" != "$fmB" ]; then
+        ok "corpus false-merge guard: distinct failures stay distinct ('$fmA' vs '$fmB')"
+    else
+        bad "corpus false-merge guard FAILED: '$fmA' vs '$fmB'"
+    fi
+else
+    bad "golden signature corpus directory missing: $CORPUS"
+fi
 
 # ===========================================================================
 # Phase B — trivial 1-bead PASS batch produces the structured summary.

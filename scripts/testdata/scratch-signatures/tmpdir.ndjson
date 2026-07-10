@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-tmpdir","payload":{"run_id":"run-tmpdir","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-tmpdir","payload":{"run_id":"run-tmpdir","bead_id":"hk-sig","success":false,"summary":"build error in /var/folders/s9/kq5h9q_17t571w_xq_1q9f2r0000gp/T/scratch-x.AbC12Z/clone/internal/daemon/foo.go"}}

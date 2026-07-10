@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-goroutine","payload":{"run_id":"run-goroutine","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-goroutine","payload":{"run_id":"run-goroutine","bead_id":"hk-sig","success":false,"summary":"panic: runtime error goroutine 4823 [running]"}}

@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-gitsha","payload":{"run_id":"run-gitsha","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-gitsha","payload":{"run_id":"run-gitsha","bead_id":"hk-sig","success":false,"summary":"merge-failed (dot): cannot rebase abc1234 onto def5678901234567890123456789012345678"}}

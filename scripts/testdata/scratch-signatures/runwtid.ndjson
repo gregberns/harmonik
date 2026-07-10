@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-runwtid","payload":{"run_id":"run-runwtid","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-runwtid","payload":{"run_id":"run-runwtid","bead_id":"hk-sig","success":false,"summary":"run-a1b2c3d4e5 blocked on wt-f6a7b8c9d0"}}

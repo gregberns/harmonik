@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-timestamp","payload":{"run_id":"run-timestamp","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-timestamp","payload":{"run_id":"run-timestamp","bead_id":"hk-sig","success":false,"summary":"run failed at 2026-06-25T14:03:11Z during build"}}

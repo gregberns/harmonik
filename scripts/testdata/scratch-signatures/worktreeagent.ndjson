@@ -1,0 +1,2 @@
+{"type":"run_started","run_id":"run-worktreeagent","payload":{"run_id":"run-worktreeagent","bead_id":"hk-sig"}}
+{"type":"run_failed","run_id":"run-worktreeagent","payload":{"run_id":"run-worktreeagent","bead_id":"hk-sig","success":false,"summary":"worktree_create_failed: fatal: '/private/tmp/hk.AbC123/worktree-agent-run-aaa111aaa' already exists"}}

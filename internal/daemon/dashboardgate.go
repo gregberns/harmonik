@@ -24,8 +24,12 @@ type dashboardGateResult struct {
 	// Blocked reports whether the gate is currently tripped.
 	Blocked bool
 	// BlockedQueues is the set of captain-curated queue names (from
-	// lanes.json's `queue` field) gated by this trip. Nil/empty when Blocked
-	// is false.
+	// lanes.json's `queue` field) gated by this trip. Populated whenever
+	// Blocked is true — including the config/read error paths — because
+	// selectNextQueue (workloop.go) gates dispatch off THIS MAP alone, not
+	// off Blocked; a nil map here would silently defeat the fail-loud
+	// mandate. Nil/empty when Blocked is false, or when lanes.json itself is
+	// absent/malformed (captainCuratedQueues fails open on scoping only).
 	BlockedQueues map[string]bool
 	// StaleSecs / MaxStaleness / UpdatedAt feed the dashboard_stale payload.
 	StaleSecs    int64
@@ -50,7 +54,12 @@ func evaluateDashboardGate(projectDir string, now time.Time) (dashboardGateResul
 
 	cfg, cfgErr := digest.LoadDashboardGateConfig(projectDir)
 	if cfgErr != nil {
-		return dashboardGateResult{Blocked: true}, cfgErr
+		// BlockedQueues MUST be populated here, not left nil: selectNextQueue
+		// (workloop.go) gates dispatch off BlockedQueues alone, not off
+		// Blocked. A nil map on a config error would silently NOT force
+		// anything — exactly the fail-open gap the DESIGN §4 fail-loud
+		// mandate forbids.
+		return dashboardGateResult{Blocked: true, BlockedQueues: captainCuratedQueues(projectDir)}, cfgErr
 	}
 	if !cfg.Configured() {
 		// Operator has not opted into the dashboard: block at all — gate stays
@@ -73,7 +82,9 @@ func evaluateDashboardGate(projectDir string, now time.Time) (dashboardGateResul
 		// Never written: treat as maximally stale — the captain has not
 		// adopted the Tier-B mechanism at all yet (DESIGN §1).
 	case readErr != nil:
-		return dashboardGateResult{Blocked: true}, readErr
+		// Same fail-loud requirement as the cfgErr branch above: populate
+		// BlockedQueues so the dispatch gate actually engages.
+		return dashboardGateResult{Blocked: true, BlockedQueues: captainCuratedQueues(projectDir)}, readErr
 	default:
 		updatedAt = ds.Updated
 	}

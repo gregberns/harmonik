@@ -40,11 +40,20 @@ func TestEvaluateDashboardGate_NotConfigured(t *testing.T) {
 // TestEvaluateDashboardGate_MissingMaxStaleness verifies the fail-loud +
 // fail-blocking contract: a dashboard: block present without max_staleness
 // must trip the gate (Blocked true) AND return a non-nil error, never
-// silently disable.
+// silently disable. Critically, BlockedQueues must actually be populated —
+// selectNextQueue (workloop.go) gates dispatch off BlockedQueues alone, not
+// off Blocked, so a nil map here would silently defeat the forcing gate
+// despite Blocked reading true (the iter-1 review finding).
 func TestEvaluateDashboardGate_MissingMaxStaleness(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	writeGateFile(t, filepath.Join(dir, ".harmonik", "config.yaml"), "dashboard:\n  unlock: false\n")
+	writeGateFile(t, filepath.Join(dir, ".harmonik", "context", "lanes.json"), `{
+		"schema_version": 1,
+		"lanes": [
+			{"lane": "pi-sandbox", "queue": "main", "status": "active"}
+		]
+	}`)
 
 	result, err := evaluateDashboardGate(dir, time.Now())
 	if err == nil {
@@ -52,6 +61,9 @@ func TestEvaluateDashboardGate_MissingMaxStaleness(t *testing.T) {
 	}
 	if !result.Blocked {
 		t.Error("Blocked: got false, want true (fail-blocking on config error)")
+	}
+	if !result.BlockedQueues["main"] {
+		t.Errorf("BlockedQueues: got %v, want main gated (fail-loud must actually block dispatch, not just report Blocked=true)", result.BlockedQueues)
 	}
 }
 
@@ -187,5 +199,33 @@ func TestEvaluateDashboardGate_NeverWrittenIsMaximallyStale(t *testing.T) {
 	}
 	if !result.Blocked {
 		t.Error("Blocked: got false, want true (dashboard.json never written)")
+	}
+}
+
+// TestEvaluateDashboardGate_MalformedDashboardJSONBlocksAndScopes verifies
+// the dashboard.Read error path (as distinct from ErrNotFound) also fails
+// BLOCKING with BlockedQueues populated — the same fail-loud requirement as
+// the missing-max_staleness config-error path.
+func TestEvaluateDashboardGate_MalformedDashboardJSONBlocksAndScopes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeGateFile(t, filepath.Join(dir, ".harmonik", "config.yaml"), "dashboard:\n  max_staleness: 10m\n")
+	writeGateFile(t, filepath.Join(dir, ".harmonik", "context", "dashboard.json"), "{not valid json")
+	writeGateFile(t, filepath.Join(dir, ".harmonik", "context", "lanes.json"), `{
+		"schema_version": 1,
+		"lanes": [
+			{"lane": "pi-sandbox", "queue": "main", "status": "active"}
+		]
+	}`)
+
+	result, err := evaluateDashboardGate(dir, time.Now())
+	if err == nil {
+		t.Fatal("expected error for malformed dashboard.json, got nil")
+	}
+	if !result.Blocked {
+		t.Error("Blocked: got false, want true (fail-blocking on dashboard.json read error)")
+	}
+	if !result.BlockedQueues["main"] {
+		t.Errorf("BlockedQueues: got %v, want main gated", result.BlockedQueues)
 	}
 }

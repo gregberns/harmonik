@@ -662,6 +662,10 @@ EXAMPLES
 	// operator sign-off per the hitl-decisions spec-change rule). Reuses the
 	// SAME hitl-decisions lifecycle scoped to the operator-mailbox topic
 	// convention — NOT a second bus.
+	// ON-INV-006-AUTH: hitl-decisions SPEC §2/§3; delegates to the "decisions-list"
+	// socket RPC, a pure-read K3 projection over events.jsonl (no event emitted,
+	// no run state mutation, no in-flight run abort) — same invariant class as
+	// the "decisions list"/"show" verbs and the "dashboard" subcommand above.
 	if len(os.Args) >= 2 && os.Args[1] == "mailbox" {
 		return runMailboxSubcommand(os.Args[2:])
 	}

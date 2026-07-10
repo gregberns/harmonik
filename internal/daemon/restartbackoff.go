@@ -81,19 +81,25 @@ type restartRecord struct {
 }
 
 // applyBootBackoff records the current daemon boot in the persistent
-// boot-record file and sleeps for the computed exponential backoff delay before
-// returning. The delay is 0 on the first rapid boot within the window; it
-// grows as base × 2^(n−1), capped at the configured cap, where n is the number
-// of prior boots recorded within the configured window.
+// boot-record file and returns the computed exponential backoff delay. The
+// delay is 0 on the first rapid boot within the window; it grows as base ×
+// 2^(n−1), capped at the configured cap, where n is the number of prior boots
+// recorded within the configured window.
 //
-// The sleep is cancelled early if ctx expires.
+// This function does NOT sleep — it only records the boot and computes the
+// delay. Callers MUST sleep the returned delay themselves via
+// sleepBootBackoff, and MUST do so only after the daemon's liveness surface
+// (the socket bind) is already up, so the supervisor's health-window sees a
+// live daemon rather than declaring it unhealthy mid-sleep (hk-uzvt9: a
+// pre-bind sleep raced the 30s supervisor health-window and caused
+// false-revert-to-last-good under rapid restart).
 //
 // All read/write errors are non-fatal: the function prints a warning to stderr
-// and returns without sleeping so the daemon continues to start.
+// and returns 0 so the daemon continues to start without a delay.
 //
 // The cognition/ directory under projectDir is created on demand.
 //
-// Bead ref: hk-7t9g1.
+// Bead ref: hk-7t9g1, hk-uzvt9.
 func applyBootBackoff(ctx context.Context, projectDir string, rawCfg DaemonRestartBackoffConfig) time.Duration {
 	if projectDir == "" {
 		return 0
@@ -138,15 +144,26 @@ func applyBootBackoff(ctx context.Context, projectDir string, rawCfg DaemonResta
 
 	if delay > 0 {
 		fmt.Fprintf(os.Stderr,
-			"daemon: restart-backoff: %d rapid boot(s) in the last %s — delaying startup by %s\n",
+			"daemon: restart-backoff: %d rapid boot(s) in the last %s — delaying dispatch by %s (after socket bind)\n",
 			n, cfg.Window, delay)
-		select {
-		case <-time.After(delay):
-		case <-ctx.Done():
-		}
 	}
 
 	return delay
+}
+
+// sleepBootBackoff blocks for delay, cancellable early via ctx. It is a no-op
+// when delay is 0. Callers MUST invoke this only after the daemon's socket is
+// already bound (hk-uzvt9) — the backoff throttles dispatch, not liveness, so
+// it must never block the supervisor's health-window from observing a live
+// socket.
+func sleepBootBackoff(ctx context.Context, delay time.Duration) {
+	if delay <= 0 {
+		return
+	}
+	select {
+	case <-time.After(delay):
+	case <-ctx.Done():
+	}
 }
 
 // computeRestartBackoffDelay returns base × 2^(n−1), capped at cap.

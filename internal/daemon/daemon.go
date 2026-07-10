@@ -806,12 +806,16 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		_ = runBrHistoryRotationPreflight(ctx, cfg.ProjectDir, brHistoryRotationDefaultKeep)
 	}
 
-	// Restart-backoff pre-flight (hk-7t9g1): read the persistent boot record
-	// and sleep for an exponentially-increasing delay when the daemon has been
+	// Restart-backoff pre-flight (hk-7t9g1): read the persistent boot record and
+	// compute an exponentially-increasing delay when the daemon has been
 	// restarted rapidly within the last hour. This throttles the crash-and-re-pull
-	// loop (incident: 10 boots in a day, each auto-pulling br ready). The call is
-	// non-fatal and ctx-interruptible. Skipped when SkipRestartBackoff is true
-	// (test isolation) or when ProjectDir is empty (unit-test mode).
+	// loop (incident: 10 boots in a day, each auto-pulling br ready). The delay is
+	// NOT slept here — applyBootBackoff only records the boot and returns the
+	// duration; the actual sleep happens later, via sleepBootBackoff, AFTER the
+	// socket-bind block (hk-uzvt9: sleeping here blocked bind long enough for the
+	// supervisor's health-window to see no socket and false-revert under rapid
+	// restart). Skipped when SkipRestartBackoff is true (test isolation) or when
+	// ProjectDir is empty (unit-test mode).
 	var bootBackoffDelay time.Duration
 	if cfg.ProjectDir != "" && !cfg.SkipRestartBackoff {
 		bootBackoffDelay = applyBootBackoff(ctx, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RestartBackoff)
@@ -1899,6 +1903,15 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		}()
 		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 	}
+
+	// hk-uzvt9: apply the restart-backoff sleep computed above (bootBackoffDelay)
+	// only now, AFTER the socket has been bound (or its bind goroutine started).
+	// applyBootBackoff previously slept synchronously at ~L817, BEFORE the socket
+	// block — a 30s/60s backoff delay blocked bind long enough for the
+	// supervisor's 30s health-window to see no socket and revert to last-good
+	// under rapid restart. The backoff throttles dispatch, not liveness, so the
+	// sleep belongs after bind. sleepBootBackoff is a no-op when the delay is 0.
+	sleepBootBackoff(ctx, bootBackoffDelay)
 
 	// Skip the work loop when BrPath is not configured (unit-test mode).
 	if cfg.BrPath != "" {

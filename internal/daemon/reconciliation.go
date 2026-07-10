@@ -55,7 +55,8 @@ import (
 // happened or is unaffected either way.
 func emitOperatorMailboxEscalation(ctx context.Context, emitter interface {
 	Emit(ctx context.Context, eventType core.EventType, payload []byte) error
-}, logW io.Writer, source, question, contextLink string) {
+}, logW io.Writer, source, question, contextLink string,
+) {
 	p := core.DecisionNeededPayload{
 		Question:     question,
 		Options:      []string{"acknowledged"},

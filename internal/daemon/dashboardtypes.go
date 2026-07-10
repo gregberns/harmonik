@@ -91,19 +91,50 @@ type DashStall struct {
 	ElapsedMs int64  `json:"elapsed_ms"`
 }
 
-// DashThroughput is a windowed aggregate from session-data.jsonl.
-// Available=false when the file does not exist (WS1 task not yet landed).
+// DashThroughput is a windowed aggregate from session-data.jsonl (hk-r22bd).
+// Available=false when the file does not exist (WS1 not yet landed for this project).
 type DashThroughput struct {
-	Available bool                 `json:"available"`
-	WindowH   int                  `json:"window_h,omitempty"`
-	ByLane    []DashLaneThroughput `json:"by_lane,omitempty"`
+	Available bool                  `json:"available"`
+	WindowH   int                   `json:"window_h,omitempty"`
+	ByLane    []DashLaneThroughput  `json:"by_lane,omitempty"`
+	ByGroup   []DashGroupThroughput `json:"by_group,omitempty"`
 }
 
-// DashLaneThroughput is throughput stats for one lane over the window.
+// DashLaneThroughput is throughput stats for one lane over the window, keyed
+// by the lane's queue (session-data records carry queue_id, not lane — the
+// lane is recovered via the lanes.json queue→lane join). Kept as the stable
+// shape the expected-vs-actual render (dashboard_cmd.go) pairs against
+// Config.ThroughputExpected.
 type DashLaneThroughput struct {
 	Lane         string `json:"lane"`
 	BeadsClosed  int    `json:"beads_closed"`
 	MeanWallSecs int64  `json:"mean_wall_secs,omitempty"`
+}
+
+// DashGroupThroughput is the windowed roll-up for one crew/queue/harness/model
+// group: beads closed, mean/p50 wall-time, and per-outcome tokens+cost.
+type DashGroupThroughput struct {
+	Crew         string             `json:"crew,omitempty"`
+	Queue        string             `json:"queue,omitempty"`
+	Harness      string             `json:"harness,omitempty"`
+	Model        string             `json:"model,omitempty"`
+	RunCount     int                `json:"run_count"`
+	BeadsClosed  int                `json:"beads_closed"` // successful runs
+	MeanWallSecs float64            `json:"mean_wall_secs,omitempty"`
+	P50WallSecs  float64            `json:"p50_wall_secs,omitempty"`
+	ByOutcome    []DashOutcomeStats `json:"by_outcome,omitempty"`
+}
+
+// DashOutcomeStats is tokens+cost aggregated for one outcome ("success" or
+// "failure") within a DashGroupThroughput.
+type DashOutcomeStats struct {
+	Outcome             string   `json:"outcome"`
+	Count               int      `json:"count"`
+	TokensInput         int64    `json:"tokens_input"`
+	TokensOutput        int64    `json:"tokens_output"`
+	TokensCacheCreation int64    `json:"tokens_cache_creation"`
+	TokensCacheRead     int64    `json:"tokens_cache_read"`
+	CostUSD             *float64 `json:"cost_usd,omitempty"`
 }
 
 // lanesFile is the on-disk shape of .harmonik/context/lanes.json.

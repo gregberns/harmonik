@@ -11,16 +11,17 @@ package daemon
 // Bead ref: hk-2exz9.
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/presence"
+	"github.com/gregberns/harmonik/internal/sessiondata"
 )
 
 const (
@@ -185,81 +186,197 @@ func (b *DashboardBuilder) readActiveStalls(now time.Time, activeRunIDs map[stri
 	return out
 }
 
-// readThroughput reads a windowed aggregate from session-data.jsonl.
-// Returns {available: false} when the file does not exist.
+// readThroughput reads a windowed roll-up from session-data.jsonl (hk-r22bd):
+// beads closed, mean/p50 wall-time, and tokens+cost per outcome, grouped by
+// crew/queue/harness/model. session-data.jsonl is a SOFT dependency (WS1,
+// plans/2026-07-03-eval-program) — absent file degrades this axis to
+// {available: false} rather than blocking the dashboard.
 func (b *DashboardBuilder) readThroughput(now time.Time) *DashThroughput {
 	if b.projectDir == "" {
 		return &DashThroughput{Available: false}
 	}
 	path := filepath.Join(b.projectDir, sessionDataJSONL)
-	f, err := os.Open(path) //nolint:gosec // G304: operator-controlled projectDir
+	if _, err := os.Stat(path); err != nil {
+		return &DashThroughput{Available: false}
+	}
+
+	since := now.Add(-time.Duration(throughputWindowH) * time.Hour).UTC().Format(time.RFC3339)
+	records, err := sessiondata.ReadAll(b.projectDir, since, "")
 	if err != nil {
 		return &DashThroughput{Available: false}
 	}
-	defer f.Close() //nolint:errcheck
-
-	cutoff := now.Add(-time.Duration(throughputWindowH) * time.Hour)
-
-	// Session-data records: one JSON object per line. Schema is WS1-defined.
-	// Fields we need: lane (string), closed_at (RFC3339), wall_secs (int64).
-	type sessionRecord struct {
-		Lane     string `json:"lane"`
-		ClosedAt string `json:"closed_at"`
-		WallSecs int64  `json:"wall_secs"`
-	}
-
-	type laneAgg struct {
-		count    int
-		wallSecs int64
-	}
-	byLane := make(map[string]*laneAgg)
-	totalCount := 0
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var rec sessionRecord
-		if err := json.Unmarshal(line, &rec); err != nil {
-			continue
-		}
-		if rec.ClosedAt != "" {
-			ts, parseErr := time.Parse(time.RFC3339, rec.ClosedAt)
-			if parseErr != nil || ts.Before(cutoff) {
-				continue
-			}
-		}
-		agg := byLane[rec.Lane]
-		if agg == nil {
-			agg = &laneAgg{}
-			byLane[rec.Lane] = agg
-		}
-		agg.count++
-		agg.wallSecs += rec.WallSecs
-		totalCount++
-	}
-
-	if totalCount == 0 {
+	if len(records) == 0 {
 		return &DashThroughput{Available: true, WindowH: throughputWindowH}
 	}
 
-	laneList := make([]DashLaneThroughput, 0, len(byLane))
-	for lane, agg := range byLane {
-		lt := DashLaneThroughput{
-			Lane:        lane,
-			BeadsClosed: agg.count,
+	// queue → lane / crew, joined from lanes.json. Session-data records carry
+	// queue_id, not lane or crew directly.
+	queueToLane := make(map[string]string)
+	queueToCrew := make(map[string]string)
+	for _, l := range b.readLanes() {
+		if l.Queue == "" {
+			continue
 		}
+		if l.Lane != "" {
+			queueToLane[l.Queue] = l.Lane
+		}
+		if l.Crew != "" {
+			queueToCrew[l.Queue] = l.Crew
+		}
+	}
+
+	type group struct {
+		key         groupKey
+		wallSecs    []float64
+		beadsClosed int
+		byOutcome   map[string]*outcomeAgg
+	}
+	type laneAgg struct {
+		count    int
+		wallSecs float64
+	}
+
+	groups := make(map[groupKey]*group)
+	lanes := make(map[string]*laneAgg)
+
+	for _, rec := range records {
+		gk := groupKey{Crew: queueToCrew[rec.QueueID], Queue: rec.QueueID, Harness: rec.Harness, Model: rec.Model}
+		g := groups[gk]
+		if g == nil {
+			g = &group{key: gk, byOutcome: make(map[string]*outcomeAgg)}
+			groups[gk] = g
+		}
+		g.wallSecs = append(g.wallSecs, rec.WallTimeS)
+		if rec.Success {
+			g.beadsClosed++
+		}
+
+		outcome := "failure"
+		if rec.Success {
+			outcome = "success"
+		}
+		oa := g.byOutcome[outcome]
+		if oa == nil {
+			oa = &outcomeAgg{}
+			g.byOutcome[outcome] = oa
+		}
+		oa.count++
+		oa.tokens.Add(rec.TokensTotal)
+		if rec.CostUSD != nil {
+			if oa.costUSD == nil {
+				c := 0.0
+				oa.costUSD = &c
+			}
+			*oa.costUSD += *rec.CostUSD
+		}
+
+		if lane := queueToLane[rec.QueueID]; lane != "" {
+			la := lanes[lane]
+			if la == nil {
+				la = &laneAgg{}
+				lanes[lane] = la
+			}
+			if rec.Success {
+				la.count++
+			}
+			la.wallSecs += rec.WallTimeS
+		}
+	}
+
+	groupList := make([]DashGroupThroughput, 0, len(groups))
+	for _, g := range groups {
+		dg := DashGroupThroughput{
+			Crew:        g.key.Crew,
+			Queue:       g.key.Queue,
+			Harness:     g.key.Harness,
+			Model:       g.key.Model,
+			RunCount:    len(g.wallSecs),
+			BeadsClosed: g.beadsClosed,
+		}
+		dg.MeanWallSecs = meanF(g.wallSecs)
+		dg.P50WallSecs = medianF(g.wallSecs)
+		for _, outcome := range []string{"success", "failure"} {
+			oa := g.byOutcome[outcome]
+			if oa == nil {
+				continue
+			}
+			dg.ByOutcome = append(dg.ByOutcome, DashOutcomeStats{
+				Outcome:             outcome,
+				Count:               oa.count,
+				TokensInput:         oa.tokens.Input,
+				TokensOutput:        oa.tokens.Output,
+				TokensCacheCreation: oa.tokens.CacheCreation,
+				TokensCacheRead:     oa.tokens.CacheRead,
+				CostUSD:             oa.costUSD,
+			})
+		}
+		groupList = append(groupList, dg)
+	}
+	sort.Slice(groupList, func(i, j int) bool {
+		if groupList[i].Queue != groupList[j].Queue {
+			return groupList[i].Queue < groupList[j].Queue
+		}
+		if groupList[i].Harness != groupList[j].Harness {
+			return groupList[i].Harness < groupList[j].Harness
+		}
+		return groupList[i].Model < groupList[j].Model
+	})
+
+	laneList := make([]DashLaneThroughput, 0, len(lanes))
+	for lane, agg := range lanes {
+		lt := DashLaneThroughput{Lane: lane, BeadsClosed: agg.count}
 		if agg.count > 0 {
-			lt.MeanWallSecs = agg.wallSecs / int64(agg.count)
+			lt.MeanWallSecs = int64(agg.wallSecs / float64(agg.count))
 		}
 		laneList = append(laneList, lt)
 	}
+	sort.Slice(laneList, func(i, j int) bool { return laneList[i].Lane < laneList[j].Lane })
 
 	return &DashThroughput{
 		Available: true,
 		WindowH:   throughputWindowH,
 		ByLane:    laneList,
+		ByGroup:   groupList,
 	}
+}
+
+// groupKey identifies one crew/queue/harness/model roll-up bucket. Crew is
+// joined from lanes.json (queue→crew); empty when the queue has no lane entry.
+type groupKey struct {
+	Crew    string
+	Queue   string
+	Harness string
+	Model   string
+}
+
+// outcomeAgg accumulates tokens+cost for one outcome within a group.
+type outcomeAgg struct {
+	count   int
+	tokens  sessiondata.TokenUsage
+	costUSD *float64
+}
+
+func meanF(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, x := range xs {
+		sum += x
+	}
+	return sum / float64(len(xs))
+}
+
+// medianF returns the p50 of xs. Does not mutate xs.
+func medianF(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	sorted := append([]float64(nil), xs...)
+	sort.Float64s(sorted)
+	n := len(sorted)
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return (sorted[n/2-1] + sorted[n/2]) / 2
 }

@@ -26,6 +26,21 @@
   directly, cursor-independent) instead of `recv` when you just need to SEE traffic.
 - **Candidate lane:** comms.
 
+### B13 — `comms recv --follow` flapping-reconnect loop (client tail drops+reconnects ~1s) → `bead hk-62r8w`
+- **Where:** `harmonik comms recv --follow` live-tail transport. **Subsystem:** comms.
+- **What:** an armed `--follow` watcher spontaneously drops and reconnects (`connection dropped,
+  reconnecting in 1s...`) roughly once a second, continuously, with NO messages actually delivered —
+  a notification storm out of a healthy, idle stream. Distinct from B1 (cursor-drain) and from the
+  server-side daemon-restart reconnect (hk-fxpt9): this is a CLIENT-side tail connection-lifecycle
+  durability bug. SURVIVES hk-qw63o / hk-8xspi (not fixed by them). Intermittent, not constant —
+  captain's own `--follow` sampled 0 reconnects in 4s, so it needs a trigger-harness, not a can't-repro close.
+- **Impact:** high for long-lived idle-armed sessions — the storm floods the monitor and can auto-stop
+  it; masks real inbound messages in the noise. Hit live this session (commodore relaunch).
+- **Workaround:** filter the reconnect lines out of the watcher (`grep -vE 'connection dropped|reconnecting'`),
+  or use a `join` + `recv --wait` poll-loop instead of `--follow`; `comms log --json` reads the ledger cursor-independent.
+- **Candidate lane:** comms. → bead hk-62r8w (P1, assignee yueh, `codename:comms-test-harness`; fold in as a
+  T3-class trigger scenario asserting a stable steady-state tail).
+
 ### B2 — comms presence ages out at ~120s → live crews show `stale`/offline in `comms who`
 - **Where:** `harmonik comms who` presence TTL. **Subsystem:** comms.
 - **What:** an idle-but-alive crew (armed `--follow`, not sending) drops out of `comms who` after ~120s;

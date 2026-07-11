@@ -11,6 +11,23 @@
 
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 
+## 2026-07-11 ~01:25Z — operator (via admiral, event 019f4ec1): pi redeploy DECOUPLED from gate beads → GATE-0 e2e is the sole gate · expires: 2026-07-13T00:00:00Z
+WHAT: The pi/flagship redeploy is NO LONGER gated on hk-x2spu + hk-ih5k6. Those become a
+      PARALLEL quality track (stilgar). The SOLE operator-mandated redeploy gate is now a single
+      ISOLATED GATE-0 E2E TEST: repro the pi in-daemon hang on OLD binary d7abf34a, prove GREEN
+      with afa32372 — the test doubles as root-cause confirmation. Owner: kynes (re-tasked off
+      the "stand by for redeploy" idle-wait). On GATE-0 green, captain redeploys on own authority.
+WHY:  operator found the afa32372 fix is UNIT-tested only (argv-carries-flag) + a root-cause
+      coherence gap — the flag targets a flywheel-extension fork-bomb whose tree was ALREADY
+      deleted (353fc3c1). Captain CONFIRMED the gap: no .pi/extensions tracked on main, none in
+      home, none in a live worktree, and d7abf34a POSTDATES the deletion — so the old theory is
+      suspect. An empirical GATE-0 is required before trusting the redeploy.
+ORDER: kynes builds GATE-0 (flagship critical path) → green → captain redeploys → kynes re-runs
+      pi seed → hk-hcrvb complete. hk-x2spu/hk-ih5k6 run in parallel, no longer flagship blockers;
+      their LIVE fail-closed activation still needs main-lint-debt cleanup (new bead, stilgar lane).
+RETURN-PATH: check kynes owns GATE-0 + reports {e2e result, extensions-present y/n}; stilgar's
+      two beads move as an independent quality track. Redeploy gate = GATE-0 green ONLY.
+
 ## 2026-07-11 ~00:40Z — admiral (via captain, events 019f4e97/019f4e9d): WATCH RESTORED + hk-vdqe2 staffed · expires: 2026-07-13T00:00:00Z
 WHAT: (1) Restored the always-on watch triage session (crew watch, spawned 00:39Z) — KNOWN
       staffing gap, admiral's autonomous call: watch-down >43h dumped every stall/release/

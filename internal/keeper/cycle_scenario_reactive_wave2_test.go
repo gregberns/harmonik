@@ -36,6 +36,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -477,5 +478,156 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 	// (d) the .precompact marker was cleared afterward.
 	if !markerCleared {
 		t.Error("ClearPrecompactTriggerFn was never called; the .precompact marker must be cleared after the cycle")
+	}
+}
+
+// TestKeeperCycle_ClearBriefHardGate_SlowClear is the PERMANENT regression
+// scenario for hk-vdqe2: a keeper session handoff where /clear takes noticeably
+// longer to be consumed than a single ClearSettle poll window (operator observed
+// 1-2 minutes on a slow/busy pane). Before the hk-vdqe2 fix, Step 5's poll was
+// best-effort-only: it timed out after ONE ClearSettle window and Step 6 fired
+// the agent-brief injection regardless, keying the brief into the still-
+// uncleared context (the reported bug — the brief arrived concatenated to
+// /clear's own stdout).
+//
+// The reactive harness models the slow /clear via withClearDelay: /clear is
+// injected immediately (as always), but the gauge's session_id only rotates on
+// a background timer well AFTER a single ClearSettle window elapses (and well
+// BEFORE the ClearConfirmBackstop hard cap). This proves the fix end-to-end,
+// not just against a unit-level call-count fake:
+//
+//   - the brief is injected ONLY AFTER the new session_id (S2) is observed live
+//     in the gauge — never before (the hard gate).
+//   - /clear is re-injected at least once as part of the bounded retry (proving
+//     Step 5 actually retried rather than firing on the first miss).
+//   - the cycle still completes cleanly with prev=S1/new=S2 and NO
+//     clear_unconfirmed (the backstop was never exhausted — confirmation
+//     eventually landed).
+//
+// ACCEPTANCE: this test is RED against the pre-fix completeCycleTail (single
+// ClearSettle poll, no retry loop) because the brief fires before the delayed
+// SID flip; GREEN once the hk-vdqe2 hard-gate retry loop lands. It is a
+// standing part of the keeper reactive scenario suite (runs every time, no
+// build tag), not a one-off.
+func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
+	t.Parallel()
+
+	const (
+		agent   = "reactive-hardgate-agent"
+		cycleID = "cyc-reactive-hardgate-001"
+
+		clearSettle          = 20 * time.Millisecond  // deliberately SHORT single poll window
+		clearDelay           = 150 * time.Millisecond // /clear takes far longer than clearSettle to land
+		clearConfirmBackstop = 500 * time.Millisecond // generous vs. clearDelay — confirmation must land within it
+		clearConfirmRetries  = 40
+	)
+	s1, s2 := reactiveSIDs()
+
+	em := &keeper.RecordingEmitter{}
+	jc := &journalCapture{}
+	var managedBinding string
+
+	// writeNonce=true (handoff confirms promptly) + flipOnClear=true, but the
+	// flip is DELAYED past a single clearSettle window via withClearDelay.
+	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/).
+		withClearDelay(clearDelay)
+
+	// briefSawFlippedSID is set at the moment the brief command is injected,
+	// recording whether the gauge had ALREADY rotated to S2 by then. This is
+	// the load-bearing hard-gate witness: it must be true (never false, never
+	// "brief injected while still S1").
+	var briefInjected atomic.Bool
+	var briefSawFlippedSID atomic.Bool
+	witnessInject := func(ctx context.Context, target, text string) error {
+		if containsSubstr(text, "agent brief") {
+			briefInjected.Store(true)
+			briefSawFlippedSID.Store(rs.liveSID() == s2)
+		}
+		return rs.inject(ctx, target, text)
+	}
+
+	var mu sync.Mutex
+	cfg := keeper.CyclerConfig{
+		AgentName:            agent,
+		ProjectDir:           t.TempDir(),
+		TmuxTarget:           "fake-pane",
+		ActPct:               90.0,
+		WarnPct:              80.0,
+		HandoffTimeout:       500 * time.Millisecond,
+		ClearSettle:          clearSettle,
+		PollInterval:         5 * time.Millisecond,
+		ClearConfirmBackstop: clearConfirmBackstop,
+		ClearConfirmRetries:  clearConfirmRetries,
+		CycleIDGen:           func() string { return cycleID },
+		IsManagedFn:          func(_, _ string) bool { return true },
+		HandoffFilePath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		},
+		ReadHandoff:       rs.readHandoff,
+		HandoffModTimeFn:  rs.handoffModTime,
+		TruncateHandoffFn: rs.truncate,
+		InjectFn:          witnessInject,
+		ReadGaugeFn:       rs.readGauge,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
+		SetManagedSessionFn: func(_, _, sid string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			managedBinding = sid
+			return nil
+		},
+	}
+	cycler := keeper.NewCycler(cfg, em)
+
+	cf := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1}
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("MaybeRun: %v", err)
+	}
+
+	// (a) the brief WAS injected at all.
+	if !briefInjected.Load() {
+		t.Fatal("agent brief was never injected")
+	}
+
+	// (b) THE HARD GATE: the brief must have been injected only after the gauge
+	// had already rotated to S2. This is the exact race from the bug report —
+	// pre-fix, this is false (brief fires during the still-S1 window).
+	if !briefSawFlippedSID.Load() {
+		t.Fatal("agent brief was injected BEFORE the gauge session_id rotated to S2 — the clear->brief hand-off is not hard-gated (hk-vdqe2 regression)")
+	}
+
+	// (c) /clear was re-injected at least once (proving Step 5 actually retried
+	// past the first missed ClearSettle poll rather than firing immediately).
+	clearCount := 0
+	for _, cmd := range rs.snapshotInjected() {
+		if cmd == "/clear" {
+			clearCount++
+		}
+	}
+	if clearCount < 2 {
+		t.Errorf("/clear injected %d time(s); want >=2 (defensive retry within the backstop window)", clearCount)
+	}
+
+	// (d) confirmation landed within the backstop: NO clear_unconfirmed emitted.
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperClearUnconfirmed)); n != 0 {
+		t.Errorf("want 0 clear_unconfirmed (confirmation should land within the %s backstop); got %d", clearConfirmBackstop, n)
+	}
+
+	// (e) the cycle completed cleanly with prev=S1/new=S2.
+	completeEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
+	if len(completeEvts) != 1 {
+		t.Fatalf("want 1 cycle_complete; got %d", len(completeEvts))
+	}
+	var cp core.SessionKeeperCycleCompletePayload
+	if err := json.Unmarshal(completeEvts[0].Payload, &cp); err != nil {
+		t.Fatalf("unmarshal cycle_complete: %v", err)
+	}
+	if cp.PrevSessionID != s1 || cp.NewSessionID != s2 {
+		t.Errorf("cycle_complete = {prev:%q new:%q}; want {prev:%q new:%q}", cp.PrevSessionID, cp.NewSessionID, s1, s2)
+	}
+	if managedBinding != s2 {
+		t.Errorf("managed binding = %q; want %q (S2)", managedBinding, s2)
 	}
 }

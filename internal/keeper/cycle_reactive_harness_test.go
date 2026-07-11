@@ -62,6 +62,15 @@ type reactiveSession struct {
 	writeNonce  bool // /session-handoff writes the nonce into handoffBody when true
 	flipOnClear bool // /clear rotates SID S1->S2 + drops context when true
 
+	// clearDelay models a SLOW /clear: real /clear processing (a busy pane, a
+	// slow re-mint of the session_id) that takes noticeably longer than a single
+	// poll window. When > 0, the SID rotation triggered by "/clear" happens on a
+	// background timer clearDelay after the command is injected, instead of
+	// synchronously inside inject(). Zero (default) preserves the prior
+	// synchronous-flip behavior. Refs: hk-vdqe2.
+	clearDelay          time.Duration
+	clearDelayScheduled bool // guards against scheduling more than one flip timer
+
 	// writeHandoffNoNonce models the hk-fi78d bug shape: the agent writes a real,
 	// fresh handoff body in response to /session-handoff but OMITS the verbatim
 	// nonce line (echo garbled/forgotten). The nonce poll therefore times out, yet
@@ -126,12 +135,36 @@ func (rs *reactiveSession) inject(_ context.Context, _ /*target*/, text string) 
 		}
 	case text == "/clear":
 		rs.clearedSeen = true
-		if rs.flipOnClear {
-			// Rotate to the post-clear session and drop context below warn —
-			// this is the CAUSAL effect the real /clear has on the gauge.
-			rs.gauge.SessionID = rs.clearedSID
-			rs.gauge.Pct = 8.0
-			rs.gauge.Tokens = 12_000
+		if rs.flipOnClear && rs.gauge.SessionID != rs.clearedSID {
+			if rs.clearDelay > 0 {
+				// SLOW /clear: rotate the SID on a background timer instead of
+				// synchronously, modeling a busy pane / slow re-mint that outlasts a
+				// single poll window (hk-vdqe2). Idempotent against repeated
+				// defensive re-injects of /clear — only one timer is ever armed.
+				if !rs.clearDelayScheduled {
+					rs.clearDelayScheduled = true
+					delay := rs.clearDelay
+					go func() {
+						time.Sleep(delay)
+						rs.mu.Lock()
+						defer rs.mu.Unlock()
+						if rs.gauge.SessionID != rs.clearedSID {
+							rs.gauge.SessionID = rs.clearedSID
+							rs.gauge.Pct = 8.0
+							rs.gauge.Tokens = 12_000
+							if rs.sidFlipCause == "" {
+								rs.sidFlipCause = "/clear"
+							}
+						}
+					}()
+				}
+			} else {
+				// Rotate to the post-clear session and drop context below warn —
+				// this is the CAUSAL effect the real /clear has on the gauge.
+				rs.gauge.SessionID = rs.clearedSID
+				rs.gauge.Pct = 8.0
+				rs.gauge.Tokens = 12_000
+			}
 		}
 	case containsSubstr(text, "agent brief"):
 		// agent brief re-pins identity from soul.md (T8/I1). Keeps the
@@ -229,9 +262,24 @@ func (rs *reactiveSession) flipCause() string {
 	return rs.sidFlipCause
 }
 
+// withClearDelay arms a SLOW /clear reaction: the SID rotation happens on a
+// background timer d after "/clear" is injected instead of synchronously.
+// Must be called before the cycle runs (single-goroutine setup, no lock needed
+// beyond what inject()/readGauge() already take internally). Refs: hk-vdqe2.
+func (rs *reactiveSession) withClearDelay(d time.Duration) *reactiveSession {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.clearDelay = d
+	return rs
+}
+
 // newReactiveCycler builds a Cycler wired to drive rs. The seed CtxFile passed
 // to MaybeRun should be rs.gauge (over the act threshold on S1). ClearSettle /
 // HandoffTimeout / PollInterval are shrunk for fast deterministic unit runs.
+// ClearConfirmBackstop/Retries default to a small multiple of clearSettle (3x /
+// 5 attempts) so the hk-vdqe2 hard-gate retry loop stays fast in scenarios that
+// never confirm — see newReactiveCyclerWithBackstop for scenarios that need an
+// explicit, larger backstop (e.g. a delayed-flip race).
 //
 // managedSet is set to true by SetManagedSessionFn so the test can assert the
 // final binding == S2 without touching disk (mirrors the IdentityPinned test's
@@ -244,18 +292,39 @@ func newReactiveCycler(
 	managedSet *string,
 	handoffTimeout, clearSettle time.Duration,
 ) *keeper.Cycler {
+	return newReactiveCyclerWithBackstop(
+		agent, projectDir, cycleID, rs, em, jc, managedSet,
+		handoffTimeout, clearSettle, 3*clearSettle, 5,
+	)
+}
+
+// newReactiveCyclerWithBackstop is newReactiveCycler with explicit control over
+// the hk-vdqe2 hard-gate retry loop (ClearConfirmBackstop / ClearConfirmRetries),
+// for scenarios that need a backstop wider than the default 3x-clearSettle
+// (e.g. proving the gate survives a delayed SID flip via withClearDelay).
+func newReactiveCyclerWithBackstop(
+	agent, projectDir, cycleID string,
+	rs *reactiveSession,
+	em keeper.Emitter,
+	jc *journalCapture,
+	managedSet *string,
+	handoffTimeout, clearSettle, clearConfirmBackstop time.Duration,
+	clearConfirmRetries int,
+) *keeper.Cycler {
 	var mu sync.Mutex
 	cfg := keeper.CyclerConfig{
-		AgentName:      agent,
-		ProjectDir:     projectDir,
-		TmuxTarget:     "fake-pane", // non-empty so injection branches run
-		ActPct:         90.0,
-		WarnPct:        80.0,
-		HandoffTimeout: handoffTimeout,
-		ClearSettle:    clearSettle,
-		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return true },
+		AgentName:            agent,
+		ProjectDir:           projectDir,
+		TmuxTarget:           "fake-pane", // non-empty so injection branches run
+		ActPct:               90.0,
+		WarnPct:              80.0,
+		HandoffTimeout:       handoffTimeout,
+		ClearSettle:          clearSettle,
+		PollInterval:         5 * time.Millisecond,
+		ClearConfirmBackstop: clearConfirmBackstop,
+		ClearConfirmRetries:  clearConfirmRetries,
+		CycleIDGen:           func() string { return cycleID },
+		IsManagedFn:          func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},

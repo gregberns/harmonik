@@ -67,8 +67,19 @@ type CyclerConfig struct {
 	ForceActPct float64 // forced-clear fallback pct; default 95
 
 	HandoffTimeout time.Duration // wait for handoff nonce; default 300s (hk-4xni9 K2)
-	ClearSettle    time.Duration // best-effort wait for new session_id; default 10s (hk-4xni9 K3)
+	ClearSettle    time.Duration // per-attempt wait for new session_id; default 10s (hk-4xni9 K3)
 	PollInterval   time.Duration // polling cadence for nonce + settle; default 200ms
+
+	// ClearConfirmBackstop / ClearConfirmRetries turn the clear->brief hand-off
+	// into a HARD GATE (hk-vdqe2): completeCycleTail retries the ClearSettle poll
+	// (defensively re-injecting /clear each retry, in case a busy pane never
+	// consumed the first one) until a new session_id is confirmed OR this
+	// backstop is exhausted, instead of firing the brief on the very first
+	// missed poll. Only once the backstop is exhausted does the brief fire as a
+	// last resort (still logged via session_keeper_clear_unconfirmed). Zero →
+	// DefaultClearConfirmBackstop / DefaultClearConfirmRetries.
+	ClearConfirmBackstop time.Duration
+	ClearConfirmRetries  int
 
 	// Injectable dependencies. Nil → production default.
 	CycleIDGen      func() string
@@ -292,6 +303,12 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.PollInterval <= 0 {
 		c.PollInterval = DefaultCyclerPollInterval
+	}
+	if c.ClearConfirmBackstop <= 0 {
+		c.ClearConfirmBackstop = DefaultClearConfirmBackstop
+	}
+	if c.ClearConfirmRetries <= 0 {
+		c.ClearConfirmRetries = DefaultClearConfirmRetries
 	}
 	if c.CycleIDGen == nil {
 		c.CycleIDGen = newCycleIDGen()
@@ -1097,11 +1114,18 @@ func (c *Cycler) completeCycleTail(ctx context.Context, cf *CtxFile, cycleID, jo
 	j.UpdatedAt = time.Now().UTC()
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 
-	// Step 5: clear-readiness — wait for a new session_id (best-effort, NOT a hard gate).
-	// Spec note: the session_id is RE-MINTED at every /clear, so the keeper must
-	// re-resolve the new id post-clear — waitForNewSessionID polls the gauge until it
-	// differs from prevSID (cf.SessionID). Absent a new session_id is non-fatal.
-	newSID := c.waitForNewSessionID(ctx, cf.SessionID)
+	// Step 5: clear-readiness — HARD GATE (hk-vdqe2) on a new session_id before
+	// the brief may be injected. Spec note: the session_id is RE-MINTED at every
+	// /clear, so the keeper must re-resolve the new id post-clear —
+	// waitForNewSessionID polls the gauge until it differs from prevSID
+	// (cf.SessionID). A single ClearSettle window is only best-effort (a slow
+	// handoff write or busy pane can blow well past it, operator-observed at
+	// 1-2 minutes), so retry the poll — defensively re-injecting /clear each
+	// time in case the pane never consumed the first one — until either a new
+	// session_id is confirmed or ClearConfirmBackstop is exhausted. Only once
+	// the backstop is exhausted does Step 6 fire as a last resort (still
+	// surfaced via session_keeper_clear_unconfirmed for diagnosis).
+	newSID := c.waitForNewSessionIDWithBackstop(ctx, cf.SessionID)
 	if newSID == "" {
 		c.emitClearUnconfirmed(ctx, cycleID, cf.SessionID)
 	}
@@ -1500,6 +1524,31 @@ func (c *Cycler) pollForNonce(parentCtx context.Context, handoffPath, nonce stri
 			if err == nil && strings.Contains(content, nonce) {
 				return true
 			}
+		}
+	}
+}
+
+// waitForNewSessionIDWithBackstop is the HARD-GATE wrapper around
+// waitForNewSessionID (hk-vdqe2). It retries the ClearSettle poll — issuing a
+// defensive extra /clear before each retry, in case a busy pane never consumed
+// the first one — until a new session_id is confirmed, or either
+// ClearConfirmRetries attempts or the ClearConfirmBackstop wall-clock deadline
+// is exhausted, whichever comes first. Returns "" only once the backstop is
+// genuinely exhausted, at which point the caller falls back to firing the
+// brief unconfirmed (logged via session_keeper_clear_unconfirmed) rather than
+// hanging forever.
+func (c *Cycler) waitForNewSessionIDWithBackstop(ctx context.Context, prevSID string) string {
+	deadline := time.Now().Add(c.cfg.ClearConfirmBackstop)
+	for attempt := 1; ; attempt++ {
+		if sid := c.waitForNewSessionID(ctx, prevSID); sid != "" {
+			return sid
+		}
+		if ctx.Err() != nil || attempt >= c.cfg.ClearConfirmRetries || !time.Now().Before(deadline) {
+			return ""
+		}
+		// Defensive re-inject: the pane may not have consumed the prior /clear.
+		if c.cfg.TmuxTarget != "" {
+			_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, "/clear") //nolint:errcheck
 		}
 	}
 }

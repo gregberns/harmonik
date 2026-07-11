@@ -171,6 +171,7 @@ func TestPromotedDefaults_ByteIdentity(t *testing.T) {
 		{"DefaultCyclerPollInterval", DefaultCyclerPollInterval, 200 * time.Millisecond},
 		{"DefaultForceRetryInterval", DefaultForceRetryInterval, 120 * time.Second},
 		{"DefaultIdleRestartCooldown", DefaultIdleRestartCooldown, 30 * time.Minute},
+		{"DefaultClearConfirmBackstop", DefaultClearConfirmBackstop, 150 * time.Second},
 	}
 	for _, c := range durCases {
 		if c.got != c.want {
@@ -183,6 +184,9 @@ func TestPromotedDefaults_ByteIdentity(t *testing.T) {
 	}
 	if DefaultMaxHandoffTimeouts != 3 {
 		t.Errorf("DefaultMaxHandoffTimeouts = %d; want 3", DefaultMaxHandoffTimeouts)
+	}
+	if DefaultClearConfirmRetries != 20 {
+		t.Errorf("DefaultClearConfirmRetries = %d; want 20", DefaultClearConfirmRetries)
 	}
 	if DefaultMaxHeartbeatMisses != 12 {
 		t.Errorf("DefaultMaxHeartbeatMisses = %d; want 12", DefaultMaxHeartbeatMisses)

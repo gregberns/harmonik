@@ -74,8 +74,14 @@ func TestCycler_RestartNowDropsGauge_NoSecondCycle(t *testing.T) {
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    20 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return true },
+		// This test's gauge fake never rotates the session_id (it models a
+		// same-session restart-now, not a /clear-confirmation race), so the
+		// hk-vdqe2 hard-gate retry loop would otherwise keep re-injecting /clear
+		// for the full default backstop. Pin it to a single attempt — this test
+		// is about Gate-3 double-restart suppression, not clear confirmation.
+		ClearConfirmRetries: 1,
+		CycleIDGen:          func() string { return cycleID },
+		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},

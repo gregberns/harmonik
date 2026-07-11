@@ -162,6 +162,20 @@ const (
 	DefaultClearSettle = 10 * time.Second
 	// DefaultCyclerPollInterval is the CyclerConfig nonce/settle poll cadence.
 	DefaultCyclerPollInterval = 200 * time.Millisecond
+	// DefaultClearConfirmBackstop is the CyclerConfig total hard-gate backstop for
+	// confirming /clear (new session_id minted) before completeCycleTail gives up
+	// waiting and fires the brief injection as a last resort. A single
+	// ClearSettle window was not a hard gate: on a slow handoff write or busy
+	// pane (operator observed 1-2 minutes) the poll timed out before /clear
+	// re-minted the session_id, and the brief fired anyway into the still-
+	// uncleared context. This backstop bounds a retry loop that re-polls (and
+	// defensively re-injects /clear) well past a single ClearSettle window.
+	// Refs: hk-vdqe2.
+	DefaultClearConfirmBackstop = 150 * time.Second
+	// DefaultClearConfirmRetries caps the number of poll/re-inject attempts
+	// within DefaultClearConfirmBackstop, guarding against a pathologically
+	// large ClearSettle producing very few (or zero) retries. Refs: hk-vdqe2.
+	DefaultClearConfirmRetries = 20
 	// DefaultForceRetryInterval is the CyclerConfig forced-clear retry interval.
 	DefaultForceRetryInterval = 120 * time.Second
 	// DefaultIdleRestartAbsTokens is the CyclerConfig idle-crew restart token floor.

@@ -1477,6 +1477,67 @@ const commsFollowReconnectInitialBackoff = time.Second
 // of misreads (logmine finding F12, bead hk-5xuvc).
 const commsFollowReconnectMaxBackoff = 10 * time.Second
 
+// commsFollowPresenceBeatInterval is the cadence of the idle --follow
+// presence-beat (B2, hk-qw63o): a quiet subscriber's stream stays open but
+// presence.TTL (120s) only advances on an explicit comms-presence refresh or
+// comms-recv/send activity, so an idle --follow otherwise ages out of `comms
+// who` and false-flags as a zombie. 60s matches the canonical refresh cadence
+// (agent-comms spec §2.5, C=60s) and the heartbeat_seconds already requested
+// from subscribe.
+var commsFollowPresenceBeatInterval = 60 * time.Second
+
+// sendPresenceRefreshBeat sends a lightweight comms-presence refresh op to the
+// daemon for agent, keeping it Online in `comms who` without touching the
+// message read path. Shared by the idle --follow presence-beat below.
+func sendPresenceRefreshBeat(sockPath, agent, sessionID string) error {
+	payload := map[string]any{
+		"agent":  agent,
+		"status": "online",
+		"reason": "refresh",
+	}
+	if sessionID != "" {
+		payload["session_id"] = sessionID
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	reqBytes, err := json.Marshal(map[string]any{
+		"op":      "comms-presence",
+		"payload": json.RawMessage(payloadBytes),
+	})
+	if err != nil {
+		return err
+	}
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
+	cancel()
+	if dialErr != nil {
+		return dialErr
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
+		return writeErr
+	}
+	if uw, ok := conn.(*net.UnixConn); ok {
+		_ = uw.CloseWrite()
+	}
+
+	var resp struct {
+		Ok    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+	}
+	if decErr := json.NewDecoder(conn).Decode(&resp); decErr != nil {
+		return decErr
+	}
+	if !resp.Ok {
+		return fmt.Errorf("comms-presence refresh: %s", resp.Error)
+	}
+	return nil
+}
+
 // runCommsRecvFollow opens a subscribe connection for live agent_message events
 // anchored at sinceEventID (the cursor_after from the preceding comms-recv drain).
 // Streams until signal or connection close.
@@ -1497,6 +1558,24 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 	// Register signal handler once for the lifetime of the --follow loop.
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Idle presence-beat (B2, hk-qw63o): runs on its own timer and its own
+	// connection for the lifetime of this call, independent of the
+	// subscribe/reconnect loop below — a cheap periodic write that keeps a
+	// quiet subscriber Online in `comms who` without touching the read path.
+	beatSessionID := resolveSessionID()
+	beatTicker := time.NewTicker(commsFollowPresenceBeatInterval)
+	defer beatTicker.Stop()
+	go func() {
+		for {
+			select {
+			case <-sigCtx.Done():
+				return
+			case <-beatTicker.C:
+				_ = sendPresenceRefreshBeat(sockPath, agent, beatSessionID)
+			}
+		}
+	}()
 
 	// lastSeen tracks the highest event_id delivered so far; it advances as
 	// messages arrive and becomes the since_event_id anchor on reconnect.

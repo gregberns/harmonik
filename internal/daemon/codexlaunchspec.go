@@ -253,12 +253,31 @@ func buildCodexEnv(baseEnv []string, codexHome string) []string {
 	env := make([]string, 0, len(baseEnv)+len(codexCredentialDenyKeys)+1)
 
 	// Copy non-credential, non-CODEX_HOME entries from baseEnv.
+	hasPath := false
 	for _, kv := range baseEnv {
 		key := envKey(kv)
 		if denySet[key] || key == "CODEX_HOME" {
 			continue
 		}
+		if key == "PATH" {
+			hasPath = true
+		}
 		env = append(env, kv)
+	}
+
+	// Guarantee a working PATH (hk-07jrb, same hazard as buildPiEnv's
+	// hk-6atjk fix). SubstrateSpawn fully replaces the spawned pane's
+	// environment with this slice, and baseEnv can arrive with no PATH
+	// entry. Without one, the spawned codex binary resolves against the
+	// libc default PATH (/usr/bin:/bin), excluding wherever `go`/node/etc.
+	// actually live, and dies with exit 127 before the turn ever starts.
+	// Fall back to the daemon process's own PATH only when baseEnv did not
+	// already carry one (an existing PATH is preserved above). PATH is not
+	// a credential, so this does not weaken the C3 deny-list strip.
+	if !hasPath {
+		if procPath := os.Getenv("PATH"); procPath != "" {
+			env = append(env, "PATH="+procPath)
+		}
 	}
 
 	// Emit empty overrides for credential keys (C3 AC3.1 / CI-INV-002 pattern).

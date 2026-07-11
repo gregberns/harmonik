@@ -241,6 +241,7 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 	// CLAUDE_CODE_OAUTH* variants can be re-emitted as empty overrides below.
 	var base []string
 	var oauthKeysFromBase []string
+	hasPath := false
 	for _, kv := range cfg.BaseEnv {
 		key := kv
 		if idx := strings.IndexByte(kv, '='); idx >= 0 {
@@ -257,7 +258,28 @@ func ClaudeEnvVars(cfg ClaudeEnvConfig) []string {
 			}
 			continue
 		}
+		if key == "PATH" {
+			hasPath = true
+		}
 		base = append(base, kv)
+	}
+
+	// Guarantee a working PATH (hk-07jrb, same hazard as buildPiEnv's
+	// hk-6atjk fix). The tmux substrate's SubstrateSpawn fully replaces the
+	// spawned pane's environment with this slice, and cfg.BaseEnv can arrive
+	// with no PATH entry (e.g. a trimmed-down BaseEnv from a sandboxed
+	// caller). Without one, the spawned claude/codex binary resolves against
+	// the libc default PATH (/usr/bin:/bin), excluding /opt/homebrew/bin or
+	// other locations where `go`/node/etc. live, and dies with exit 127
+	// ("go: command not found" / "command not found") before the session
+	// ever starts. Fall back to the daemon process's own PATH only when
+	// BaseEnv did not already carry one (an existing PATH is preserved
+	// above via the base append loop). PATH is not a credential, so this
+	// does not weaken the CI-003 deny-list strip.
+	if !hasPath {
+		if procPath := os.Getenv("PATH"); procPath != "" {
+			base = append(base, "PATH="+procPath)
+		}
 	}
 
 	// Required vars (CHB-006).

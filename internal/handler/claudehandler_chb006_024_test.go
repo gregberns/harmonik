@@ -282,6 +282,61 @@ func TestClaudeEnvVars_RequiredVarsPresent(t *testing.T) {
 	}
 }
 
+// TestClaudeEnvVars_PATH_FallsBackToProcessPATH_WhenBaseEnvHasNone verifies
+// the hk-07jrb fix: when cfg.BaseEnv carries no PATH entry, ClaudeEnvVars
+// falls back to the daemon process's own PATH rather than emitting an env
+// slice with no PATH at all (which caused claude/codex spawns to 127 with
+// "go: command not found" once SubstrateSpawn fully replaces the pane env).
+func TestClaudeEnvVars_PATH_FallsBackToProcessPATH_WhenBaseEnvHasNone(t *testing.T) {
+	cfg := handler.ClaudeEnvConfig{
+		RunID:            "run-001",
+		DaemonSocket:     "/tmp/harmonik/daemon.sock",
+		WorkspacePath:    "/workspace/bead-001",
+		HandlerSessionID: "handler-sess-001",
+		ClaudeSessionID:  "claude-sess-001",
+		WorkflowID:       "wf-001",
+		NodeID:           "node-001",
+		BaseEnv:          []string{"HOME=/home/op"}, // no PATH
+	}
+	env := handler.ClaudeEnvVars(cfg)
+	envMap := claudeHandlerFixtureEnvMap(t, env)
+
+	procPath := os.Getenv("PATH")
+	if procPath == "" {
+		t.Skip("test process has no PATH set; cannot assert fallback value")
+	}
+	got, ok := envMap["PATH"]
+	if !ok {
+		t.Fatal("PATH missing from ClaudeEnvVars output; empty-PATH exit=127 hazard (hk-07jrb) reintroduced")
+	}
+	if got != procPath {
+		t.Errorf("PATH = %q; want daemon process PATH %q", got, procPath)
+	}
+}
+
+// TestClaudeEnvVars_PATH_PreservedWhenBaseEnvHasOne verifies that an
+// existing PATH in cfg.BaseEnv is passed through unchanged rather than being
+// overwritten by the process-PATH fallback.
+func TestClaudeEnvVars_PATH_PreservedWhenBaseEnvHasOne(t *testing.T) {
+	t.Parallel()
+	cfg := handler.ClaudeEnvConfig{
+		RunID:            "run-001",
+		DaemonSocket:     "/tmp/harmonik/daemon.sock",
+		WorkspacePath:    "/workspace/bead-001",
+		HandlerSessionID: "handler-sess-001",
+		ClaudeSessionID:  "claude-sess-001",
+		WorkflowID:       "wf-001",
+		NodeID:           "node-001",
+		BaseEnv:          []string{"PATH=/custom/bin:/usr/bin"},
+	}
+	env := handler.ClaudeEnvVars(cfg)
+	envMap := claudeHandlerFixtureEnvMap(t, env)
+
+	if got := envMap["PATH"]; got != "/custom/bin:/usr/bin" {
+		t.Errorf("PATH = %q; want BaseEnv's PATH preserved unchanged", got)
+	}
+}
+
 // TestClaudeEnvVars_ShellUpdatePromptDisabled verifies that the oh-my-zsh
 // auto-update disable vars are always injected (hk-5s6re). These neutralize the
 // interactive `[Y/n] Would you like to update?` prompt that otherwise wedges the

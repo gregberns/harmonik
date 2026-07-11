@@ -263,6 +263,83 @@ func TestBuildCodexLaunchSpec_CredentialKeysAbsentFromProcessEnv(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TestBuildCodexLaunchSpec_PATH (hk-07jrb)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestBuildCodexLaunchSpec_PATH_FallsBackToProcessPATH_WhenBaseEnvHasNone
+// verifies the hk-07jrb fix: when BaseEnv carries no PATH entry,
+// buildCodexEnv falls back to the daemon process's own PATH rather than
+// emitting an env slice with no PATH at all. SubstrateSpawn fully replaces
+// the spawned pane's environment, so a missing PATH previously resolved
+// against the libc default (/usr/bin:/bin) and died with exit 127 ("go:
+// command not found") before the codex turn ever started.
+func TestBuildCodexLaunchSpec_PATH_FallsBackToProcessPATH_WhenBaseEnvHasNone(t *testing.T) {
+	// No t.Parallel: asserts against the live process PATH.
+	procPath := os.Getenv("PATH")
+	if procPath == "" {
+		t.Skip("test process has no PATH set; cannot assert fallback value")
+	}
+
+	rc := daemon.ExportedCodexRunCtx{
+		WorkspacePath:    "/tmp/wt-test-codex-nopath",
+		BeadID:           "hk-test-07jrb",
+		Model:            "o4-mini",
+		BaseEnv:          []string{"HOME=/home/op"}, // no PATH
+		SkipBillingGuard: true,
+	}
+
+	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got string
+	found := false
+	for _, kv := range spec.Env {
+		if strings.HasPrefix(kv, "PATH=") {
+			got = strings.TrimPrefix(kv, "PATH=")
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("PATH missing from codex child env; empty-PATH exit=127 hazard (hk-07jrb) reintroduced")
+	}
+	if got != procPath {
+		t.Errorf("PATH = %q; want daemon process PATH %q", got, procPath)
+	}
+}
+
+// TestBuildCodexLaunchSpec_PATH_PreservedWhenBaseEnvHasOne verifies that an
+// existing PATH in BaseEnv is passed through unchanged rather than being
+// overwritten by the process-PATH fallback.
+func TestBuildCodexLaunchSpec_PATH_PreservedWhenBaseEnvHasOne(t *testing.T) {
+	t.Parallel()
+
+	rc := daemon.ExportedCodexRunCtx{
+		WorkspacePath:    "/tmp/wt-test-codex-haspath",
+		BeadID:           "hk-test-07jrb-2",
+		Model:            "o4-mini",
+		BaseEnv:          []string{"PATH=/custom/bin:/usr/bin"},
+		SkipBillingGuard: true,
+	}
+
+	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got string
+	for _, kv := range spec.Env {
+		if strings.HasPrefix(kv, "PATH=") {
+			got = strings.TrimPrefix(kv, "PATH=")
+		}
+	}
+	if got != "/custom/bin:/usr/bin" {
+		t.Errorf("PATH = %q; want BaseEnv's PATH preserved unchanged", got)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TestBuildCodexLaunchSpec_CodexHomeSet (AC3.4)
 // ─────────────────────────────────────────────────────────────────────────────
 

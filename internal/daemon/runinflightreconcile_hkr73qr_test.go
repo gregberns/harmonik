@@ -363,6 +363,40 @@ func TestReconcileOrphanedRunsOnResume_B3GuardSkipsClosedBead(t *testing.T) {
 	}
 }
 
+// TestReconcileOrphanedRunsOnResume_ResetsOpenBead verifies the hk-eaxc5 fix:
+// an event-log-only orphan (no .harmonik/runs/ record) whose bead already reads
+// open — not in_progress — must still have ResetBead issued, so the
+// status-independent -32015 (bead_already_dispatched) dispatch-lock clearing
+// path (QM-002a's subsequent revert) actually runs. Before the fix the reset was
+// gated to in_progress only, silently skipping open beads and leaving their
+// queue item wedged in 'dispatched' across every restart.
+func TestReconcileOrphanedRunsOnResume_ResetsOpenBead(t *testing.T) {
+	ctx := context.Background()
+
+	orphan := hkr73qrNewRunID(t)
+
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, orphan, "hk-eaxc5-open", "queue-open", 0)
+	})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	// The orphan bead already reads open (e.g. reopened by another path, or the
+	// crash landed before the claim write) — NOT in_progress.
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-eaxc5-open": core.CoarseStatusOpen,
+	}}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1)
+	if got != 1 {
+		t.Fatalf("reconcileOrphanedRunsOnResume returned %d, want 1", got)
+	}
+
+	if len(resetter.reset) != 1 || resetter.reset[0] != core.BeadID("hk-eaxc5-open") {
+		t.Fatalf("ResetBead calls = %v, want exactly [hk-eaxc5-open] — an open bead must still be reset so the dispatch-lock clears", resetter.reset)
+	}
+}
+
 // TestReconcileOrphanedRunsOnResume_NilLedgerSkipsReset verifies that when no
 // status ledger is supplied the reset is skipped entirely (conservative: never
 // risk reopening a landed bead without confirming its status).

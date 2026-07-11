@@ -40,6 +40,12 @@ type beadStatusReader interface {
 // the event log (no .harmonik/runs/ record for adoptDeadRunSessions to reset)
 // leaves its queue item wedged in 'dispatched' forever.
 //
+// hk-eaxc5 — the reset is issued for a bead currently open as well as one still
+// in_progress. An event-log-only orphan whose bead already reads open (reopened
+// by another path, or the crash landed before the claim write) must still have
+// the reset issued so the -32015 lock-clearing path runs; gating the reset to
+// in_progress only left such orphans stuck across every subsequent restart.
+//
 // Returns the count of run_failed events emitted. Non-fatal: callers MUST NOT
 // abort startup on a non-zero return — it is informational only.
 //
@@ -102,13 +108,26 @@ func reconcileOrphanedRunsOnResume(
 		// this pass, in LoadQueueAtStartup) reverts its dispatched queue item to
 		// pending. Best-effort — a failed reset is logged; the next boot retries.
 		//
-		// hk-mdus1 review B3 — in_progress guard. Reset ONLY when the bead is
-		// currently in_progress. In the narrow window where the daemon crashed
-		// AFTER closing a bead but BEFORE emitting run_completed, the run looks
-		// orphaned yet the bead already landed (closed); an unconditional reset
-		// would false-reopen completed work. When the status ledger is absent or
-		// ShowBead fails we SKIP the reset (conservative: never risk reopening a
-		// landed bead) — the run_failed above is still emitted for observers.
+		// hk-eaxc5 — status-independent dispatch-lock clear. The reset is not
+		// merely a bead-status transition: it is what lets QM-002a observe the
+		// bead as open and revert the queue item's dispatched → pending, which is
+		// what actually releases the -32015 (bead_already_dispatched) lock. An
+		// event-log-only orphan (no .harmonik/runs/ record for adoptDeadRunSessions
+		// to reset) whose bead is ALREADY open — e.g. reopened by some other path
+		// between restarts, or the daemon crashed before the claim write landed —
+		// must still have this reset issued so the lock-clearing path is exercised
+		// regardless of the bead's exact current status. Reset fires for both
+		// in_progress and open.
+		//
+		// hk-mdus1 review B3 — landed-bead guard retained. Reset is skipped ONLY
+		// when the bead has already landed (closed/tombstone) or is in a state
+		// where a reset write is not meaningful (blocked/deferred/draft/pinned).
+		// In the narrow window where the daemon crashed AFTER closing a bead but
+		// BEFORE emitting run_completed, the run looks orphaned yet the bead
+		// already landed; an unconditional reset would false-reopen completed
+		// work. When the status ledger is absent or ShowBead fails we SKIP the
+		// reset (conservative: never risk reopening a landed bead) — the
+		// run_failed above is still emitted for observers.
 		if resetter != nil && meta.beadID != "" && statusLedger != nil {
 			rec, showErr := statusLedger.ShowBead(ctx, core.BeadID(meta.beadID))
 			switch {
@@ -116,9 +135,9 @@ func reconcileOrphanedRunsOnResume(
 				fmt.Fprintf(os.Stderr,
 					"daemon: reconcileOrphanedRunsOnResume: ShowBead %s (run %s): %v — skipping reset (will not risk reopening a landed bead)\n",
 					meta.beadID, runID, showErr)
-			case rec.Status != core.CoarseStatusInProgress:
-				// Bead already terminal/open/blocked — not a stuck in-flight claim;
-				// nothing to reset (avoids false-reopening a closed bead, B3).
+			case rec.Status != core.CoarseStatusInProgress && rec.Status != core.CoarseStatusOpen:
+				// Bead already terminal/blocked/deferred — not a stuck in-flight
+				// claim; nothing to reset (avoids false-reopening a closed bead, B3).
 			default:
 				if resetErr := resetter.ResetBead(
 					ctx,

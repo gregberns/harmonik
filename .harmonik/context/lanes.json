@@ -1,180 +1,77 @@
 {
   "schema_version": 1,
-  "updated": "2026-07-08T11:46:00Z",
+  "updated": "2026-07-11T01:48:00Z",
   "_doc": "Machine-readable lane->epic index the ops-monitor (scripts/ops-monitor-check.sh) reads with jq. Join key = epic_id; ready-count per lane = `br ready --parent <epic_id> --limit 0 --json`. A lane is KNOWN/resumable when gate is null or expired; GATED only when a non-null unexpired gate object is present. epic_id:null REQUIRES a non-null gate (the lane has no ready-bead source, so it can never spuriously fire the stall wake). Admiral-owned; captain updates on staffing. Update in the SAME action as any lane add/retask/park. Seed = active + on-deck + parked lanes only (DONE lanes are not staffing candidates).",
   "lanes": [
     {
-      "lane": "quality-system-core-loop-proof",
-      "label": "codename:quality-system",
+      "lane": "pi-flagship-gate0",
+      "label": "codename:core-loop-proof",
       "epic_id": "hk-hcrvb",
-      "crew": "alia",
-      "queue": "alia-q",
+      "crew": "kynes",
+      "queue": "kynes-q",
       "status": "active",
       "gate": null,
-      "note": "STAFFED 2026-07-07 — alia ONLINE on the C-model (admiral+operator confirmed): builds harness on integration/core-loop-proof in its OWN worktree, daemon executes the matrix ONLY (never merges harness code), prefer codex/non-Claude (pi blocked hk-4ir08), assessor CR-gates integration->main. Phase-1 core-loop-proof: live-verify the real loop across {claude,codex,pi}x{local,remote}; acceptance = top-5 gaps + T10 hk-xke2i (branch-targeting assertion, known-RED, evidence for hk-lgykq). Epic hk-hcrvb; T1 hk-h6fej ready. HANDOFF TRIGGER: when T1 lands, staff crew HAWAT on hk-lgykq (P1 daemon-core fix — wire the dead LandsOn merge path; dogfoods against alia's harness; codex/claude not pi). When T2 lands green -> admiral's Phase-2 twin handoff. Bench .kerf/works/quality-system/; source plans/2026-07-06-quality-system/. Phases 2-3 admiral-owned."
+      "note": "PRIORITY #1 (operator 019f4ed0). kynes owns GATE-0: isolated scratch-daemon e2e that repros the pi in-daemon hang on OLD binary d7abf34a + proves green with afa32372 (doubles as root-cause confirmation of the SUSPECT extension-load theory — captain confirmed no .pi/extensions on main). On GATE-0 green: captain redeploys on own authority, kynes re-runs pi seed -> hk-hcrvb complete. Redeploy DECOUPLED from stilgar's gate beads (019f4ec1). kynes-q paused (scratch-daemon e2e, not fleet queue); kynes may age out of comms who while its bg e2e sub-agent runs — NOT a zombie. paused-queue:kynes-q flag is EXPECTED."
     },
     {
-      "lane": "quality-system-hk-lgykq-fix",
-      "label": "daemon-reliability",
-      "epic_id": "hk-lgykq",
+      "lane": "remote-substrate",
+      "label": "codename:remote-substrate",
+      "epic_id": "hk-rs-phase1-qfn1",
       "crew": "hawat",
       "queue": "hawat-q",
       "status": "active",
       "gate": null,
-      "note": "STAFFED 2026-07-06 overnight. hawat (sonnet/codex) fixes hk-lgykq (P1 daemon-core: wire dead per-bead LandsOn/landTaskBranch merge path into live workloop). Branch integration/lgykq-targeting. Dogfoods alia's T10 (hk-xke2i) branch-targeting assertion; GATE-0 isolated e2e mandatory. C-model, assessor-gated."
+      "note": "PRIORITY #2 (operator 019f4ed0). hawat (Opus) — remote is buggy, needs heavy TESTING. Test-first (L0-L5 / isolated test-daemon) on the reverse-tunnel + remote worktree-create reliability path. CONSTRAINT: gb-mbp live re-enable is OPERATOR-HELD — hawat does NOT flip gb-mbp; needs-live-remote beads escalate to captain. COLLISION GUARD: internal/daemon (workloop.go) overlaps stilgar's hk-ih5k6 daemon tests — coordinate before landing."
+    },
+    {
+      "lane": "codex-as-crew-mr1",
+      "label": "codename:crew-harness-select",
+      "epic_id": "hk-q3ovr",
+      "crew": "piter",
+      "queue": "piter-q",
+      "status": "active",
+      "gate": null,
+      "note": "PRIORITY #3 (operator 019f4ed0). Captain SCOPED hk-q3ovr into 6 child beads (spike hk-fijwi blocks hk-l63b9 -> hk-lrf30 -> hk-0ysh3/6z72r/8efdl). piter (Opus) runs the spike first — it CONCLUDES in a session-model design choice the OPERATOR must ratify; piter surfaces 2-3 options to captain, does NOT self-lock. Only hk-fijwi is ready now; the rest unblock after ratification. Pi-as-orchestrator shares the same gap; routing+non-TUI beads cover it."
+    },
+    {
+      "lane": "quality-enforcement",
+      "label": "codename:quality-enforcement",
+      "epic_id": "hk-x2spu",
+      "crew": "stilgar",
+      "queue": "stilgar-q",
+      "status": "active",
+      "gate": null,
+      "note": "PRIORITY #4 (operator 019f4ed0). stilgar owns the fail-closed gate track: hk-x2spu (reviewer-verdict trailer gate — re-scoped: land approved check-hooks.sh+Makefile, prove acceptance in ISOLATED worktree, NO primary-repo lefthook-install) + hk-ih5k6 (daemon regression tests, running) + hk-vdqe2 (P1 keeper clear->brief race, HARD e2e-repro merge gate) after. NEW bead directed onto this lane: containedctx/contextcheck main-lint-debt cleanup (gates LIVE fail-closed activation, NOT the redeploy). PARALLEL quality track — no longer the flagship/redeploy blocker (019f4ec1)."
     },
     {
       "lane": "comms-test-harness",
       "label": "codename:comms-test-harness",
       "epic_id": "hk-7m7o2",
       "crew": "yueh",
-      "queue": "yueh-q",
+      "queue": "yueh2-q",
       "status": "active",
       "gate": null,
-      "note": "STAFFED 2026-07-06 overnight (admiral lane #3). yueh (sonnet/codex) hardens L0/L1/L2 comms coverage; runs its own kerf from plans/2026-07-06-quality-system/12-comms-test-design.md. Branch integration/comms-test. T4 = 2 OPERATOR-IN-LOOP design questions (recv-drains-0, idle-follow presence) — surface, don't self-resolve. C-model, assessor-gated."
+      "note": "PRIORITY #5 (operator 019f4ed0). yueh (Sonnet) — systematic context-cancel implementation across the comms test-harness (~20/27), file-disjoint from daemon+hooks. Old yueh-q paused-by-failure -> using yueh2-q. Dispatched T2b hk-1x8az. Holding T4 hk-tnyb7 (operator design-questions bead) — surfaces to captain, does not self-resolve. Root-cause already fixed (harness:codex empty-model hang label removed -> routes claude/sonnet); surface if it reappears."
     },
     {
-      "lane": "keeper-test-harden",
-      "label": "codename:keeper-test-harden",
-      "epic_id": "hk-193bo",
-      "crew": "piter",
-      "queue": "piter-q",
-      "status": "active",
-      "gate": null,
-      "note": "STAFFED 2026-07-06 overnight (admiral lane #2). piter (sonnet/codex) hardens keeper pane/gauge/sid/restart coverage + fixes live keeper bugs; runs its own kerf from plans/2026-07-06-quality-system/11-keeper-test-design.md. Branch integration/keeper-test. T1 = hk-pp1in restart-now/no_tmux_target (stranded admiral). T4 gated on core-loop-proof scratch-daemon. C-model, assessor-gated."
-    },
-    {
-      "lane": "eval-metrics-ws1",
+      "lane": "eval-program",
       "label": "codename:eval-program",
       "epic_id": "hk-9jdid",
       "crew": null,
-      "queue": "duncan-q2",
+      "queue": null,
       "status": "parked",
       "gate": null,
-      "note": "PARKED 2026-07-06 — duncan torn down in the clean-slate before the admiral's new initiative (see plans/2026-07-06-crew-teardown/PARKED-INITIATIVES.md). WS1 token/attr children ALL LANDED+CLOSED (WS1a/b/c/d/e). Epic hk-9jdid still OPEN — confirm remaining scope (WS2/WS3) vs close on revive. Known/resumable; re-staff with a fresh mission when revived."
+      "note": "DEPRIORITIZED (operator 019f4ed0 — do NOT staff). Known/resumable record only."
     },
     {
-      "lane": "pi-sandbox",
-      "label": "codename:pi-sandbox",
-      "epic_id": null,
-      "crew": "leto",
-      "queue": "sandbox-q",
-      "status": "active",
-      "gate": null,
-      "note": "STAFFED 2026-07-02 (crew leto; operator made sandbox THE priority — unlock for Pi + DGX local models). Pi-in-a-sandbox via srt; both platforms mac-first; v1 network=OPEN. SPIKE hk-f39ny CLEARED 2026-07-03 (br/comms over unix socket + live model call proven; enableWeakerNetworkIsolation=FALSE secure; Go-CLI-TLS v1-irrelevant). Build chain underway: hk-p7smp profile-gen MERGED (0236ccb5) -> hk-rlxgx argv-wrap (in progress) -> hk-6596l config -> hk-i0377 acceptance; hk-ryi34 attach + hk-5zviv linux (P2). WATCH for the flagless-REQUEST_CHANGES review-wedge (hk-thbbv) on the remaining beads. Artifacts: .kerf/works/pi-sandbox/ + plans/2026-07-02-pi-sandbox/. epic_id:null (kerf work) — ready-count via label."
-    },
-    {
-      "lane": "stall-sentinel",
-      "label": "codename:stall-sentinel",
-      "epic_id": null,
+      "lane": "flywheel",
+      "label": "codename:flywheel",
+      "epic_id": "hk-0oca",
       "crew": null,
       "queue": null,
-      "status": "on-deck",
-      "gate": {
-        "reason": "PLANNED not staffed. Kerf work created 2026-07-02 (design+7 beads) for a deterministic stall/wedge detector + tiered escalation (the operator's 'fleet must not stall' fix; captain-relayed task). Un-gate + staff after the sandbox completes (admiral rec), OR sooner via gurney if operator wants stall-protection now. Signal library hk-mxxsl gates the detectors.",
-        "owner": "operator",
-        "expires": "2026-07-09T00:00:00Z"
-      },
-      "note": "Deterministic (no-LLM) sentinel: detect off events.jsonl (NOT tmux), two-layer algo (Layer A per-run stall: heartbeat-gap/review-stall/run-age; Layer B lane no-forward-progress+guard), tiered escalate crew->captain->operator, daemon-integrated Go, config thresholds fail-loud. Beads: hk-mxxsl signal-lib (P1 GATE), hk-l087e Layer-A, hk-r9n2s Layer-B, hk-hm09z config, hk-u9thq escalation, hk-vnsme acceptance, hk-sljlg watch-consume. Companion daemon FIX = hk-thbbv (flagless REQUEST_CHANGES=APPROVE). Brief: plans/2026-07-02-stall-sentinel/DESIGN.md; artifacts .kerf/works/stall-sentinel/."
-    },
-    {
-      "lane": "pilot",
-      "label": "codename:pilot",
-      "epic_id": "hk-94c3t",
-      "crew": null,
-      "queue": "pi-q",
-      "plan_path": "plans/2026-06-23-pi-openrouter-harness/",
       "status": "parked",
       "gate": null,
-      "note": "PROVEN + PARKED 2026-07-02. Pi runs live end-to-end (hk-d5q5l on agent_type=pi, gpt-5.4-mini via OpenRouter, merged 2min). CAPABILITY: gpt-5.4-mini does trivial doc beads but exits-without-committing on real Go. OPERATOR: HOLD Pi until the sandbox lands, then test DGX/local + a couple models via the sandbox. AUTH: Pi is on OpenRouter (sk-or- key); operator PREFERS Pi's own OpenAI SUBSCRIPTION (~/.pi/agent) — needs harness change hk-ecoh8 (native-auth, no injected key). Config reverted to open-weight minimax/minimax-m3 (correct OpenRouter pairing). Routing footgun: harness:pi LABEL required (hk-ytzj2)."
-    },
-    {
-      "lane": "remote-hardening",
-      "label": "codename:remote-hardening",
-      "epic_id": "hk-gx0dl",
-      "crew": null,
-      "queue": "gurney-q",
-      "status": "done",
-      "gate": null,
-      "note": "DONE/BANKED 2026-07-02. Epic hk-gx0dl CLOSED. 98 gb-mbp jobs; blockers fixed+validated live; proven conc-3. gurney STOOD DOWN + RESERVED for the operator's incoming REAL work -> gb-mbp (or staff onto stall-sentinel if operator wants it built now)."
-    },
-    {
-      "lane": "keeper-reliability",
-      "label": "codename:keeper-redesign",
-      "epic_id": "hk-tswe0",
-      "crew": null,
-      "queue": "paulk-q",
-      "status": "done",
-      "gate": null,
-      "note": "DRAINED 2026-07-02. All beads closed. Crew paul STOPPED. Durable keeper-launcher fix hk-5266t (P1) still OPEN + carried (recommend landing via CLAUDE — Go code past gpt-5.4-mini). P3 hk-os0hq unranked."
-    },
-    {
-      "lane": "scavenger",
-      "label": "codename:scavenger",
-      "epic_id": "hk-0kr4j",
-      "crew": null,
-      "queue": "thufir-q",
-      "status": "parked",
-      "gate": null,
-      "note": "PARKED 2026-07-02. Standing serial orphan-backlog drainer (~110 ready). Un-park per operator alignment."
-    },
-    {
-      "lane": "codex",
-      "label": "codename:codex",
-      "epic_id": "hk-8dtyk",
-      "crew": null,
-      "status": "parked",
-      "gate": null,
-      "note": "PARKED. Codex concurrency pilot; known/resumable. Restaff if operator wants codex offload back + slots free."
-    },
-    {
-      "lane": "wake-economy",
-      "label": "codename:wake-economy",
-      "epic_id": "hk-var9b",
-      "crew": null,
-      "status": "parked",
-      "gate": null,
-      "note": "PARKED (MVP done/live). Standing token-opt lane. Resume when ready file-disjoint work appears."
-    },
-    {
-      "lane": "pi-dual-provider",
-      "label": "codename:pi-provider-switch",
-      "epic_id": "hk-fdbhf",
-      "crew": "chani",
-      "queue": "chani-q",
-      "status": "active",
-      "gate": null,
-      "note": "STAFFED 2026-07-08 (operator re-scope via admiral, direction-log 00:20Z). Goal: pi works COMPLETELY through BOTH OpenRouter AND DGX/ornith, model/provider selectable PER-BEAD. Owns hk-4ir08 (DGX reasoning-model no-toolcalls) + hk-pkugu (daemon leaks claude tier-3 into pi runs). If per-bead switch unsupported, IMPLEMENT it. DoD = single-mode pi canary green with confirmed provider requests (run_started is NOT green; watch srt-sandbox landmine). This is the token-cheap-matrix taproot T9/hk-jjt6w waits on. PLUS the 4 bug classes become quality-harness corpus cases (joint chani+stilgar)."
-    },
-    {
-      "lane": "quality-enforcement-A",
-      "label": "codename:quality-enforcement",
-      "epic_id": "hk-q6axs",
-      "crew": "gurney",
-      "queue": "gurney-q",
-      "status": "active",
-      "gate": null,
-      "note": "STAFFED 2026-07-07. Workstream A (P0 bleeding-stopper) of epic hk-clska: make gates fail-CLOSED. Live git hooks == lefthook.yml + CI assert; drop continue-on-error in ci.yml/scenario.yml; real diff-keyed agent-reviewer/run the commit hook cross-checks (stub fails CLOSED); branch-protect main (NOT unilateral — gurney designs required-checks set, hands gh-api apply to captain/admiral for coordination). Config/enforcement, no kerf. GATE 2026-07-08: A5 (hk-q6axs.5 drop continue-on-error) + A6 (.6 branch-protect) PARKED behind 'make check-short green-on-main' — which is RED under -race saturation on TWO fronts: (1) srt sandbox-apply hk-tch4t (REOPENED — in-process gate can't serialize a system-wide 300s storm; hawat building fail-loud), (2) 5 non-srt tests hk-me8ru (stilgar). gurney2-q PAUSED. Fail-closed goes live only on BOTH-green + daemon REDEPLOY (redeploy hard-held; merge-to-main is cosmetic staging, live daemon runs old binary)."
-    },
-    {
-      "lane": "check-short-deflake",
-      "label": "codename:quality-enforcement",
-      "epic_id": null,
-      "crew": "stilgar",
-      "queue": "stilgar-q",
-      "status": "active",
-      "gate": null,
-      "note": "STAFFED 2026-07-08 11:46Z (captain). Bead hk-me8ru (P1). Srt-INDEPENDENT half of A5's green-on-main precondition: de-flake the 5 non-srt check-short tests that RED under full -race saturation (brcli TestStderrCapScenarioPartialStderrAtSIGKILL; daemon TestQuitOnReviewFile_HeartbeatCeiling + TestL2_SSHLocalhost_TmuxPaneID; keeper TestWatcher_OperatorWarnFn_ThrottledByWarnCooldown; specaudit AR052). hawat owns the srt piece (hk-tch4t) in parallel. Reproduce-first, classify race/timing vs environmental (disk 92% + GOCACHE purge landmine), de-flake (serialize/bound/deterministic-clock, hk-ri2in toolkit), accept only across MULTIPLE full runs. Out-of-daemon isolated-worktree -> 2 reviewers -> ff-land. stilgar's scripted-twin lane (hk-ynyd3, ST5 substrate-gated) stays parked meanwhile. epic_id:null — ready-count via label. RESHAPED 12:15Z: repro proved the SYSTEMIC root cause = UNBOUNDED test parallelism (~16 -race binaries pegging a 4-core box, 333s peg -> ~20-test cascade), NOT 5 per-test defects. THE green-maker = a check-short `go test -p N` cap (captain ruled IN SCOPE for stilgar; consistent w/ locked local-4 cap; -p doesn't cut race coverage). Same storm starves hawat's srt sandbox_init -> -p likely greens srt too. Genuine per-test fixes still land (HeartbeatCeiling 1/3, WarnCooldown 2/3 intermittent; brcli/L2 = cold-cache-only, land as latent hardening). SEQUENCING: -p must not remove hawat's srt repro before hawat validates fail-loud via injected apply-failure; hawat's fail-loud stays the real isolation property (both land)."
-    },
-    {
-      "lane": "scripted-twin",
-      "label": "codename:scripted-twin",
-      "epic_id": "hk-ynyd3",
-      "crew": "stilgar",
-      "queue": "stilgar-q",
-      "status": "active",
-      "gate": null,
-      "note": "STAFFED 2026-07-07. Phase-2 quality-system: Layer-1 deterministic twin + same-file merge-race scenario. G-02 scenario-engine (hk-ynyd3.1) LANDED green. ST5 (hk-psrnc real-daemon merge-race PROOF) re-submitting after daemon-restart orphan; now a scenario/acceptance bug not missing-engine. ST6 (hk-pnjgh assessor gate) next."
+      "note": "DEPRIORITIZED (operator 019f4ed0 — do NOT staff; needs full re-assessment, stale). Known/resumable record only."
     }
   ]
 }

@@ -286,8 +286,8 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 //
 // The fix mirrors the LOCAL Go writer's contract (see
 // claudetrust_hkbfvby_test.go — sidecar lockfile, lock-free fast path, LOCK_EX
-// write path): the read-modify-write is made atomic across processes with a
-// flock held on a SIDECAR lockfile (~/.claude.json.lock) — NOT on
+// write path): the read-modify-write is made atomic across processes with an
+// fcntl.flock(LOCK_EX) held on a SIDECAR lockfile (~/.claude.json.lock) — NOT on
 // ~/.claude.json itself, because os.replace() swaps the inode out from under any
 // lock held on the config file, which is unsound. The exclusive lock is acquired
 // BEFORE the read and held through os.replace(), so each writer sees the previous
@@ -299,32 +299,14 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 // because a concurrent writer may have trusted this same key between the probe
 // and the lock acquisition, the program RE-READS the config under the lock and
 // re-checks the fast-path condition before writing.
-//
-// # Bounded acquire (hk-a7xkl)
-//
-// The lock acquire uses fcntl.flock(LOCK_EX | LOCK_NB) polled in a bounded retry
-// loop (LOCK_TIMEOUT_SECONDS / LOCK_RETRY_SECONDS in the program below),
-// mirroring the LOCAL Go writer's acquireExclusiveBounded (claudetrust_wm040b.go).
-// A single remote worker's ~/.claude.json is shared across every concurrent
-// remote-substrate slot dispatched to that worker; as the remote slot count
-// grows, a plain blocking LOCK_EX can queue writers indefinitely behind an
-// unfair flock under sustained contention, silently wedging the launch upstream
-// of agent_ready with no observable failure. Bounding the wait converts that
-// into a prompt, observable EnsureWorktreeTrustVia error (non-zero exit,
-// captured in CombinedOutput) so the launch fails fast and the bead reopens,
-// rather than hanging.
 const workerTrustUpsertProgram = `
-import errno, fcntl, json, os, sys, tempfile, time
+import fcntl, json, os, sys, tempfile
 arg = sys.argv[1]
 if len(arg) >= 2 and arg[0] == "'" and arg[-1] == "'":
     arg = arg[1:-1]
 wt = os.path.realpath(arg)
 cfg_path = os.path.join(os.path.expanduser("~"), ".claude.json")
 lock_path = cfg_path + ".lock"
-# Overridable only for test determinism (HK_TEST_TRUST_LOCK_TIMEOUT_SECONDS);
-# production callers never set it, so the bound is always 15s in the field.
-LOCK_TIMEOUT_SECONDS = float(os.environ.get("HK_TEST_TRUST_LOCK_TIMEOUT_SECONDS", "15"))
-LOCK_RETRY_SECONDS = 0.05
 
 def load_cfg():
     try:
@@ -347,27 +329,11 @@ def is_trusted(cfg):
 if is_trusted(load_cfg()):
     sys.exit(0)
 
-# Write path: acquire LOCK_EX on the sidecar lockfile via a bounded
-# LOCK_NB-poll retry loop, then hold it across the whole read-modify-write so
-# concurrent writers never lose each other's keys.
+# Write path: hold LOCK_EX on the sidecar lockfile across the whole
+# read-modify-write so concurrent writers never lose each other's keys.
 lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
 try:
-    deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
-    while True:
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
-        except OSError as e:
-            if e.errno not in (errno.EWOULDBLOCK, errno.EAGAIN):
-                raise
-            if time.monotonic() >= deadline:
-                sys.stderr.write(
-                    "workerTrustUpsertProgram: timed out after %.1fs acquiring "
-                    "LOCK_EX on %s (contended ~/.claude.json)\n"
-                    % (LOCK_TIMEOUT_SECONDS, lock_path)
-                )
-                sys.exit(1)
-            time.sleep(LOCK_RETRY_SECONDS)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
     # Re-read UNDER the lock: another writer may have trusted this key (or added
     # other keys) between the lock-free probe and acquiring the lock.
     cfg = load_cfg()

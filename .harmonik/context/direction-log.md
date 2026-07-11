@@ -11,6 +11,24 @@
 
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 
+## 2026-07-11 ~01:35Z — operator (via admiral, events 019f4ed0/019f4ed3): PARALLEL 5-lane priority order, IRON RULE no-single-bead-freeze · expires: 2026-07-13T00:00:00Z
+WHAT: Single-focus flagship posture RETIRED → staff crews top-down IN PARALLEL, file-disjoint,
+      keep every slot full. IRON RULE (operator, emphatic): NEVER hold the whole pipeline for
+      one bead/initiative — a stuck leg reviews at its own pace, the assessor-gate is per-ITEM,
+      never a fleet freeze. ACTIVE order: (1) PI harness green + provider-switch (kynes/GATE-0);
+      (2) REMOTE substrate + hardening — buggy, heavy TESTING (hawat); (3) CODEX-AS-CREW MR1
+      hk-q3ovr — had NO children, captain scoped into 6 beads + staffed piter; (4) QUALITY-
+      ENFORCEMENT fail-closed gates (stilgar); (5) COMMS-TEST-HARNESS (yueh). DEPRIORITIZED,
+      do NOT staff: eval-program, flywheel (stale/needs re-assess), dehardcode.
+WHY:  operator wants max throughput across the real initiatives in parallel, not a narrow
+      flagship-only hold; capacity was idling under the single-lane posture.
+ORDER: all 5 lanes run concurrently, file-disjoint. gb-mbp live re-enable stays OPERATOR-HELD
+      (remote lane does local testing only). Collision rule on internal/daemon: stilgar hk-ih5k6
+      right-of-way; hawat holds workloop.go/reversetunnel.go beads until it lands.
+RETURN-PATH: 5 lanes staffed + verified; ONE pending operator decision — piter's codex
+      crew-orchestrator SESSION-MODEL choice (spike hk-fijwi output). Resume by checking all 5
+      crews online + that pending design ratification.
+
 ## 2026-07-11 ~01:25Z — operator (via admiral, event 019f4ec1): pi redeploy DECOUPLED from gate beads → GATE-0 e2e is the sole gate · expires: 2026-07-13T00:00:00Z
 WHAT: The pi/flagship redeploy is NO LONGER gated on hk-x2spu + hk-ih5k6. Those become a
       PARALLEL quality track (stilgar). The SOLE operator-mandated redeploy gate is now a single

@@ -18,10 +18,37 @@
 > OWNED, EXPIRING gate** — mirrors `lanes.json.gate`; absence of a live named gate means
 > KNOWN/resumable, see orchestrator-rules §Autonomy) · DONE (landed; kept briefly for context).
 >
-> Last reconciled: 2026-06-25 ~06:24Z (admiral). PARTIAL UPDATE 2026-07-05 ~15:2xZ: added the
-> MODEL-ROUTING / PROVIDER-SPREAD PROGRAM (operator, token-crunch). The 06-25 ACTIVE/ON-DECK rows
-> below are 10 days STALE — full reconcile owed on the next hourly audit; treat MR1–MR3 + the
-> quality-process kerf pilot as the current front line.
+> Last reconciled: 2026-07-11 ~01:2xZ (admiral, operator-set). The 06-25 ACTIVE/ON-DECK rows far
+> below are STALE historical context — the OPERATOR-SET PRIORITY ORDER immediately below is the
+> authoritative front line and OVERRIDES them.
+
+## ★★ OPERATOR-SET PRIORITY ORDER — authoritative (2026-07-11)
+
+> **This is THE priority. Documented so it stops being re-litigated (operator, 2026-07-11).**
+> Run these ACTIVE lanes IN PARALLEL — one crew each, file-disjoint, every non-conflicting slot full.
+>
+> **IRON RULE: NEVER hold up the whole work pipeline for one bead or one initiative.** A single
+> stuck leg (e.g. the pi redeploy pending its assessor/E2E) is ONE lane — it goes through the normal
+> review path at its own pace and does NOT freeze the fleet. Nothing deploys that hasn't passed the
+> assessor; that is a per-item gate, NEVER a fleet-wide freeze.
+
+**ACTIVE — in priority order (staff top-down, keep all slots full):**
+
+| # | Initiative | Plain description | Progress | Ready-to-staff? |
+|---|---|---|---|---|
+| 1 | **Pi** | Pi harness green in-daemon + model/provider switch (`pilot`, `pi-provider-switch`, pi:local finish). Goes through normal review; NOT a fleet-blocker. | pilot 21/27 · pi-switch 9/12 | ✅ ready beads |
+| 2 | **Remote** | Remote macOS SSH worker — **buggy, needs a LOT of testing** (`remote-substrate` + `remote-hardening`). | 41/47 + hardening | ✅ ready beads |
+| 3 | **Codex-as-crew** | Run a CREW orchestrator on Codex (not just Claude) so we can **offload when needed** (MR1, epic `hk-q3ovr`). | epic only | ⚠️ NEEDS SCOPING into beads first |
+| 4 | **Quality-enforcement** | Make every gate **fail-closed** so nothing merges/deploys unassessed (`quality-enforcement`). | 10/18 | ✅ ready beads |
+| 5 | **comms-test-harness** | Harden the inter-agent message bus with real L0/L1/L2 tests. | 20/27 | ✅ ready beads |
+
+**DEPRIORITIZED — do NOT staff now:**
+- **eval-program** (10/23) — parked.
+- **flywheel** (30/39) — **NEEDS A COMPLETE RE-ASSESSMENT before any more work** — untouched a long time; do not resume blind.
+- **dehardcode** (5/9) — parked.
+
+---
+
 
 ## ★ FLAGSHIP PROGRAM — QUALITY-SYSTEM (operator 2026-07-06): build the whole test/validation system
 

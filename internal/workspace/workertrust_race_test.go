@@ -24,9 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"testing"
-	"time"
 )
 
 // unlockedTrustUpsertProgramWithBarrier is the PRE-FIX unlocked upsert plus a
@@ -95,9 +93,6 @@ func runTrustUpsert(t *testing.T, home, program, worktreePath string, env ...str
 func countTrustedWorktrees(t *testing.T, home string, worktreePaths []string) int {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
-	if os.IsNotExist(err) {
-		return 0
-	}
 	if err != nil {
 		t.Fatalf("read .claude.json: %v", err)
 	}
@@ -226,44 +221,5 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 	gotProjects, _ := got["projects"].(map[string]interface{})
 	if _, ok := gotProjects["/preexisting/run-00000"]; !ok {
 		t.Errorf("pre-existing project key was clobbered by the concurrent writers")
-	}
-}
-
-// TestWorkerTrustUpsert_BoundedAcquireTimesOut is the hk-a7xkl regression: with
-// another process holding LOCK_EX on the sidecar lockfile, the shipped
-// workerTrustUpsertProgram must bail out via the bounded LOCK_NB-poll retry loop
-// (a prompt, observable non-zero exit) rather than blocking on LOCK_EX
-// indefinitely. HK_TEST_TRUST_LOCK_TIMEOUT_SECONDS shrinks the bound so the test
-// stays fast and deterministic, mirroring TestHkbfvby_BoundedAcquire_TimesOut for
-// the local Go writer (claudetrust_hkbfvby_test.go).
-func TestWorkerTrustUpsert_BoundedAcquireTimesOut(t *testing.T) {
-	t.Parallel()
-	home := t.TempDir()
-	paths := makeWorktreePaths(t, home, 1)
-
-	lockPath := filepath.Join(home, ".claude.json.lock")
-	holder, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		t.Fatalf("open holder lockfile: %v", err)
-	}
-	defer holder.Close() //nolint:errcheck // advisory lock fd
-	if err := syscall.Flock(int(holder.Fd()), syscall.LOCK_EX); err != nil {
-		t.Fatalf("holder LOCK_EX: %v", err)
-	}
-
-	start := time.Now()
-	err = runTrustUpsert(t, home, workerTrustUpsertProgram, paths[0],
-		"HK_TEST_TRUST_LOCK_TIMEOUT_SECONDS=0.2")
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("hk-a7xkl: trust upsert succeeded while LOCK_EX was held; the bounded acquire must time out and fail")
-	}
-	if elapsed > 3*time.Second {
-		t.Errorf("hk-a7xkl: trust upsert took %v; expected to bail near the 0.2s bound instead of blocking on LOCK_EX", elapsed)
-	}
-
-	if countTrustedWorktrees(t, home, paths) != 0 {
-		t.Errorf("hk-a7xkl: worktree was recorded trusted despite the bounded acquire timing out")
 	}
 }

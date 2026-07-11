@@ -10,6 +10,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
 // beadStatusReader is the minimal read-only ledger slice used by the orphan
@@ -46,8 +47,29 @@ type beadStatusReader interface {
 // the reset issued so the -32015 lock-clearing path runs; gating the reset to
 // in_progress only left such orphans stuck across every subsequent restart.
 //
+// hk-iwu8a — dispatch-tracker-sourced orphans (no run_started, no runs/ record).
+// The two loops above only ever visit runs the daemon actually knows about: one
+// with a run_started event in the durable log. There is a narrower crash window
+// where the durable QUEUE already recorded a bead as dispatched (queue.json
+// item status=dispatched) and the bead claim already landed (bead in_progress)
+// but the daemon was killed BEFORE run_started was emitted and before the
+// .harmonik/runs/ record was written — e.g. a SIGKILL between the queue-claim
+// write and the run-launch write. Such an orphan is invisible to both the
+// runs/-record sweep (adoptDeadRunSessions) and the event-log scan above, so its
+// -32015 dispatch-lock survives every restart. dispatchedBeads (the queue's live
+// dispatch-tracker, loaded from a raw pre-QM-002a queue.json read) is the only
+// remaining source that still has a record of it. For every bead in
+// dispatchedBeads that is NOT already accounted for by an observed run_started
+// (started map, regardless of terminal status — hk-mdus1's "do not reset
+// legitimately-live dispatched beads" guard) and is NOT still tracked by a live
+// runs/ record (liveRunBeadIDs — genuinely in-flight sessions surviving a clean
+// restart, handled by adoptLiveRunSession), the same status-independent guarded
+// reset is issued so QM-002a can revert the wedged queue item to pending.
+//
 // Returns the count of run_failed events emitted. Non-fatal: callers MUST NOT
-// abort startup on a non-zero return — it is informational only.
+// abort startup on a non-zero return — it is informational only. The
+// dispatch-tracker-sourced resets (hk-iwu8a) have no associated run_id to emit a
+// run_failed against, so they are not reflected in the returned count.
 //
 // Spec ref: process-lifecycle.md §4.5 PL-006 (hk-r73qr); queue-model.md §3.2a
 // QM-002a (hk-mdus1).
@@ -60,6 +82,8 @@ func reconcileOrphanedRunsOnResume(
 	intentLogDir string,
 	projectHash core.ProjectHash,
 	daemonStartNS int64,
+	dispatchedBeads lifecycle.QueueDispatchedSet,
+	liveRunBeadIDs map[core.BeadID]struct{},
 ) int {
 	if eventsPath == "" {
 		return 0
@@ -154,5 +178,63 @@ func reconcileOrphanedRunsOnResume(
 			}
 		}
 	}
+
+	// hk-iwu8a — dispatch-tracker-sourced orphans: beads the durable queue
+	// still records as dispatched but for which no CURRENTLY-ORPHANED
+	// run_started was observed above (started minus terminated) and no
+	// runs/ record is still live (liveRunBeadIDs). See the function doc
+	// comment for the crash window this covers. Guarded by the same
+	// statusLedger check as the primary loop so a landed
+	// (closed/blocked/deferred) bead is never false-reopened.
+	//
+	// startedBeadIDs is scoped to still-orphaned runs only (not every
+	// beadID that ever appears in `started`): a bead whose PRIOR run
+	// completed and was later redispatched must still be eligible for this
+	// pass, since a completed historical run says nothing about whether the
+	// current dispatch's run_started was ever emitted.
+	if len(dispatchedBeads) > 0 && resetter != nil && statusLedger != nil {
+		startedBeadIDs := make(map[core.BeadID]struct{}, len(started))
+		for runID, meta := range started {
+			if _, done := terminated[runID]; done {
+				continue
+			}
+			if meta.beadID != "" {
+				startedBeadIDs[core.BeadID(meta.beadID)] = struct{}{}
+			}
+		}
+
+		for beadID := range dispatchedBeads {
+			if _, seen := startedBeadIDs[beadID]; seen {
+				continue
+			}
+			if _, live := liveRunBeadIDs[beadID]; live {
+				continue
+			}
+
+			rec, showErr := statusLedger.ShowBead(ctx, beadID)
+			switch {
+			case showErr != nil:
+				fmt.Fprintf(os.Stderr,
+					"daemon: reconcileOrphanedRunsOnResume: ShowBead %s (dispatch-tracker orphan): %v — skipping reset (will not risk reopening a landed bead)\n",
+					beadID, showErr)
+			case rec.Status != core.CoarseStatusInProgress && rec.Status != core.CoarseStatusOpen:
+				// Bead already terminal/blocked/deferred — nothing to reset.
+			default:
+				if resetErr := resetter.ResetBead(
+					ctx,
+					intentLogDir,
+					brcli.TimeoutConfig{},
+					beadID,
+					projectHash,
+					daemonStartNS,
+				); resetErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: reconcileOrphanedRunsOnResume: ResetBead %s (dispatch-tracker orphan): %v — queue item may stay dispatched; will retry next boot\n",
+						beadID, resetErr)
+				}
+			}
+		}
+	}
+
 	return count
 }

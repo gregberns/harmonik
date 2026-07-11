@@ -11,6 +11,7 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ func TestReconcileOrphanedRunsOnResume_EmitsRunFailedForOrphanedRuns(t *testing.
 	})
 
 	capBus := &hkr73qrCapturingBus{}
-	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, capBus, nil, nil, "", core.ProjectHash(""), 0)
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, capBus, nil, nil, "", core.ProjectHash(""), 0, nil, nil)
 	if got != 2 {
 		t.Errorf("reconcileOrphanedRunsOnResume returned %d, want 2", got)
 	}
@@ -177,7 +178,7 @@ func TestReconcileOrphanedRunsOnResume_EmptyLog(t *testing.T) {
 	// File does not exist — ScanAfter treats a missing file as an empty log.
 	jsonlPath := filepath.Join(t.TempDir(), "events.jsonl")
 	capBus := &hkr73qrCapturingBus{}
-	got := reconcileOrphanedRunsOnResume(context.Background(), jsonlPath, capBus, nil, nil, "", core.ProjectHash(""), 0)
+	got := reconcileOrphanedRunsOnResume(context.Background(), jsonlPath, capBus, nil, nil, "", core.ProjectHash(""), 0, nil, nil)
 	if got != 0 {
 		t.Errorf("got %d, want 0 for absent log", got)
 	}
@@ -189,7 +190,7 @@ func TestReconcileOrphanedRunsOnResume_EmptyLog(t *testing.T) {
 // TestReconcileOrphanedRunsOnResume_EmptyEventsPath returns zero for empty path.
 func TestReconcileOrphanedRunsOnResume_EmptyEventsPath(t *testing.T) {
 	capBus := &hkr73qrCapturingBus{}
-	got := reconcileOrphanedRunsOnResume(context.Background(), "", capBus, nil, nil, "", core.ProjectHash(""), 0)
+	got := reconcileOrphanedRunsOnResume(context.Background(), "", capBus, nil, nil, "", core.ProjectHash(""), 0, nil, nil)
 	if got != 0 {
 		t.Errorf("got %d, want 0 for empty path", got)
 	}
@@ -211,7 +212,7 @@ func TestReconcileOrphanedRunsOnResume_AllTerminated(t *testing.T) {
 	})
 
 	capBus := &hkr73qrCapturingBus{}
-	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, capBus, nil, nil, "", core.ProjectHash(""), 0)
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, capBus, nil, nil, "", core.ProjectHash(""), 0, nil, nil)
 	if got != 0 {
 		t.Errorf("got %d, want 0 when all runs have terminal events", got)
 	}
@@ -305,7 +306,7 @@ func TestReconcileOrphanedRunsOnResume_ResetsBeadAndThreadsQueue(t *testing.T) {
 	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
 		"hk-mdus1-orphan": core.CoarseStatusInProgress,
 	}}
-	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 12345)
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 12345, nil, nil)
 	if got != 1 {
 		t.Fatalf("reconcileOrphanedRunsOnResume returned %d, want 1", got)
 	}
@@ -351,7 +352,7 @@ func TestReconcileOrphanedRunsOnResume_B3GuardSkipsClosedBead(t *testing.T) {
 		"hk-mdus1-live":   core.CoarseStatusInProgress,
 	}}
 
-	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1)
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, nil, nil)
 
 	// Both orphans get a terminal run_failed (observability unaffected).
 	if got != 2 {
@@ -387,7 +388,7 @@ func TestReconcileOrphanedRunsOnResume_ResetsOpenBead(t *testing.T) {
 		"hk-eaxc5-open": core.CoarseStatusOpen,
 	}}
 
-	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1)
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, nil, nil)
 	if got != 1 {
 		t.Fatalf("reconcileOrphanedRunsOnResume returned %d, want 1", got)
 	}
@@ -408,11 +409,180 @@ func TestReconcileOrphanedRunsOnResume_NilLedgerSkipsReset(t *testing.T) {
 	})
 	payBus := &hkr73qrPayloadBus{}
 	resetter := &hkr73qrFakeResetter{}
-	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, nil, "/tmp/intents", core.ProjectHash("ph"), 1)
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, nil, "/tmp/intents", core.ProjectHash("ph"), 1, nil, nil)
 	if got != 1 {
 		t.Fatalf("emitted %d run_failed, want 1", got)
 	}
 	if len(resetter.reset) != 0 {
 		t.Fatalf("ResetBead calls = %v, want none (nil ledger ⇒ skip reset)", resetter.reset)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-iwu8a — dispatch-tracker-sourced orphans (no run_started, no runs/ record)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_NoRunStarted
+// reproduces the hk-iwu8a gap: a bead the durable queue records as dispatched
+// (queueDispatched / the live dispatch-tracker) for which NO run_started event
+// was ever emitted (e.g. the daemon was SIGKILL'd between the queue-claim write
+// and the run-launch write) and no runs/ record exists either. Before the fix,
+// reconcileOrphanedRunsOnResume enumerated orphans exclusively from the event
+// log (the started/terminated maps), so this bead — invisible to that scan —
+// was never reset, leaving its -32015 (bead_already_dispatched) lock wedged
+// across every restart. The dispatch-tracker pass must still reset it.
+func TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_NoRunStarted(t *testing.T) {
+	ctx := context.Background()
+
+	// The event log is entirely empty for this bead — no run_started, no
+	// terminal — only the queue's live dispatch-tracker knows about it.
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-iwu8a-orphan": core.CoarseStatusInProgress,
+	}}
+	dispatched := lifecycle.QueueDispatchedSet{
+		core.BeadID("hk-iwu8a-orphan"): struct{}{},
+	}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, dispatched, nil)
+
+	// No run_failed is emitted — there is no run_id to attribute it to.
+	if got != 0 {
+		t.Fatalf("emitted %d run_failed, want 0 (no run_id known for a dispatch-tracker-only orphan)", got)
+	}
+	if len(resetter.reset) != 1 || resetter.reset[0] != core.BeadID("hk-iwu8a-orphan") {
+		t.Fatalf("ResetBead calls = %v, want exactly [hk-iwu8a-orphan] — dispatch-tracker orphan must still be reset", resetter.reset)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_SkipsLiveRun verifies
+// the hk-mdus1 non-regression guard: a bead present in the live dispatch-tracker
+// but also present in liveRunBeadIDs (a runs/ record whose tmux session is
+// still alive, handled separately by adoptLiveRunSession) must NOT be reset —
+// it is a legitimately-live dispatched bead, not an orphan.
+func TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_SkipsLiveRun(t *testing.T) {
+	ctx := context.Background()
+
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-iwu8a-live": core.CoarseStatusInProgress,
+	}}
+	dispatched := lifecycle.QueueDispatchedSet{
+		core.BeadID("hk-iwu8a-live"): struct{}{},
+	}
+	liveRunBeadIDs := map[core.BeadID]struct{}{
+		core.BeadID("hk-iwu8a-live"): {},
+	}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, dispatched, liveRunBeadIDs)
+	if got != 0 {
+		t.Fatalf("emitted %d run_failed, want 0", got)
+	}
+	if len(resetter.reset) != 0 {
+		t.Fatalf("ResetBead calls = %v, want none — a live run must never be reset", resetter.reset)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_SkipsAlreadyStarted
+// verifies that a bead already handled by the event-log scan — it has a
+// CURRENTLY-ORPHANED run_started (no terminal event) — is not double-processed
+// by the dispatch-tracker pass.
+func TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_SkipsAlreadyStarted(t *testing.T) {
+	ctx := context.Background()
+
+	run := hkr73qrNewRunID(t)
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, run, "hk-iwu8a-started", "q", 0)
+		// No terminal event: this run is itself an orphan, already handled
+		// by the primary (event-log) loop above.
+	})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-iwu8a-started": core.CoarseStatusInProgress,
+	}}
+	dispatched := lifecycle.QueueDispatchedSet{
+		core.BeadID("hk-iwu8a-started"): struct{}{},
+	}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, dispatched, nil)
+	if got != 1 {
+		t.Fatalf("emitted %d run_failed, want 1 (the primary loop's own orphan handling)", got)
+	}
+	if len(resetter.reset) != 1 || resetter.reset[0] != core.BeadID("hk-iwu8a-started") {
+		t.Fatalf("ResetBead calls = %v, want exactly [hk-iwu8a-started] once — the dispatch-tracker pass must not double-process a bead the primary loop already reset", resetter.reset)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_SkipsLandedBead
+// verifies the B3 guard is reused for the dispatch-tracker pass: a bead already
+// closed must never be reopened even if the queue still records it dispatched.
+func TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_SkipsLandedBead(t *testing.T) {
+	ctx := context.Background()
+
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-iwu8a-landed": core.CoarseStatusClosed,
+	}}
+	dispatched := lifecycle.QueueDispatchedSet{
+		core.BeadID("hk-iwu8a-landed"): struct{}{},
+	}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, dispatched, nil)
+	if got != 0 {
+		t.Fatalf("emitted %d run_failed, want 0", got)
+	}
+	if len(resetter.reset) != 0 {
+		t.Fatalf("ResetBead calls = %v, want none — a landed bead must never be reopened", resetter.reset)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_RedispatchAfterPriorCompletedRun
+// reproduces a gap the initial hk-iwu8a fix introduced: a bead whose PRIOR run
+// completed (run_started + run_completed both observed) and was later
+// redispatched — the queue records it dispatched again, but the daemon crashed
+// before emitting a run_started for this new dispatch — must still be reset.
+// A historical completed run says nothing about the current dispatch; scoping
+// the "already accounted for" exclusion to any beadID that ever appeared in
+// `started` (regardless of terminal status) wrongly treated the redispatch as
+// already-handled and left its -32015 lock wedged. FAILS before the fix
+// (scopes exclusion to ALL started entries), PASSES after (scopes exclusion to
+// only still-orphaned started entries).
+func TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_RedispatchAfterPriorCompletedRun(t *testing.T) {
+	ctx := context.Background()
+
+	priorRun := hkr73qrNewRunID(t)
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, priorRun, "hk-redispatch", "queue-a", 0)
+		hkr73qrWriteRunCompleted(t, bus, priorRun, "hk-redispatch")
+		// No new run_started for the redispatch — the daemon crashed before
+		// emitting it, which is exactly the hk-iwu8a crash window.
+	})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-redispatch": core.CoarseStatusInProgress,
+	}}
+	dispatched := lifecycle.QueueDispatchedSet{
+		core.BeadID("hk-redispatch"): struct{}{},
+	}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, dispatched, nil)
+	if got != 0 {
+		t.Fatalf("emitted %d run_failed, want 0 (no run_id known for the redispatch)", got)
+	}
+	if len(resetter.reset) != 1 || resetter.reset[0] != core.BeadID("hk-redispatch") {
+		t.Fatalf("ResetBead calls = %v, want exactly [hk-redispatch] — a redispatch after a completed prior run must still be reset", resetter.reset)
 	}
 }

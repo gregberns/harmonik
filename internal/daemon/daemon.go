@@ -1457,7 +1457,23 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// but no terminal event, emit run_failed so the ops-monitor review-gate
 		// does not see a dangling reviewer_launched/no-verdict state after every
 		// restart (hk-r73qr).
+		//
+		// hk-iwu8a: also source orphans from the live dispatch-tracker
+		// (queueDispatched, the same pre-QM-002a raw queue.json read used by the
+		// orphan sweep above) so a bead the daemon crashed on BEFORE writing a
+		// run_started event or a runs/ record still has its -32015 dispatch-lock
+		// cleared. liveRunBeadIDs — whatever adoptDeadRunSessions left behind in
+		// .harmonik/runs/ (i.e. sessions confirmed still alive) — is excluded so a
+		// genuinely in-flight run surviving a clean restart is never reset.
 		if cfg.JSONLLogPath != "" {
+			liveRunBeadIDs := make(map[core.BeadID]struct{})
+			if liveRecs, liveErr := runpkg.List(cfg.ProjectDir); liveErr == nil {
+				for _, rec := range liveRecs {
+					if rec.BeadID != "" {
+						liveRunBeadIDs[core.BeadID(rec.BeadID)] = struct{}{}
+					}
+				}
+			}
 			_ = reconcileOrphanedRunsOnResume(
 				ctx,
 				cfg.JSONLLogPath,
@@ -1467,6 +1483,8 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				intentLogDir,
 				projectHash,
 				daemonStartTime.UnixNano(),
+				queueDispatched,
+				liveRunBeadIDs,
 			)
 		}
 

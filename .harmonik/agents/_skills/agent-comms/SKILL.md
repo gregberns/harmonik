@@ -8,7 +8,7 @@ description: >
   participates in agent-to-agent coordination.
 
   Load-bearing: must not rot. Kept current with agent-comms spec
-  (FINALIZED 2026-06-01, peer sign-off).
+  (FINALIZED 2026-06-01, peer sign-off; AMENDMENT B1 2026-07-11, hk-8xspi).
 
 sources:
   - ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §N3 (FINALIZED)
@@ -135,10 +135,23 @@ Reads unread `agent_message` events from this agent's persisted cursor
 forward, advancing the cursor after delivery (at-least-once, N3). Delivers
 events where `to == me || to == "*"`.
 
+> **DECOUPLED CURSORS (B1, bead hk-8xspi)** — a plain one-shot `comms recv
+> --agent` and a `--follow`/`--wait` session each own an INDEPENDENT durable
+> cursor for the same agent. Draining one never advances the other, so a
+> polling `comms recv --agent X` and an armed `comms recv --agent X --follow`
+> can both run concurrently without either starving the other's view of the
+> backlog — at the cost of each seeing (and needing to dedupe) messages the
+> other already consumed. This is exactly what N3 dedupe-on-`event_id` already
+> requires of you, so no extra handling is needed beyond following N3.
+
 - `--agent NAME` — agent identity (default: `$HARMONIK_AGENT`).
 - `--from NAME` — filter: only messages from NAME.
 - `--topic T` — filter: only messages with topic T.
 - `--follow` — replay backlog, then tail live events until signal (no gap).
+  Uses the LIVE cursor (shared with `--wait` and `harmonik subscribe --to`),
+  not the plain-recv POLL cursor.
+- `--wait` — block until exactly one message arrives, then exit. Mutually
+  exclusive with `--follow`; also uses the LIVE cursor.
 - `--json` — emit one JSON object per message (NDJSON).
 - Exit 17 = daemon not running.
 
@@ -221,6 +234,14 @@ Call `join` at session start; call `leave` at clean shutdown. An agent that
 crashes without calling `leave` expires naturally when its last presence beat
 ages past the TTL (~120s).
 
+**Presence-refresh:** Presence expires ~120s. An armed `comms recv --follow`
+self-refreshes — it emits its own lightweight `agent_presence{reason:"refresh"}`
+beat every ~60s for as long as the stream is open, so a quiet subscriber stays
+Online in `comms who` even with no traffic (B2, bead hk-qw63o). This beat runs
+on its own timer, independent of message delivery — it does not require
+receiving or sending anything. If you are NOT keeping `--follow` armed, you
+still need to re-run `harmonik comms join` on a ≤90s timer yourself.
+
 ---
 
 ### `harmonik comms who` — presence registry (no daemon needed)
@@ -298,6 +319,7 @@ cross-reference.)
 - Use `$HARMONIK_AGENT` as identity (already set in the launch environment).
 - Use `--follow` for persistent message loops; without it `recv` is one-shot.
 - Call `comms join` at startup and `comms leave` at clean shutdown.
+- **Refresh presence** — an armed `comms recv --follow` self-refreshes every ~60s (hk-qw63o); without `--follow` armed, re-run `comms join` on a ≤90s timer instead. Presence expires ~120s.
 
 ## What agents MUST NOT do
 
@@ -314,4 +336,6 @@ cross-reference.)
 - **N3** (normative, FINALIZED 2026-06-01):
   `~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §FINALIZED`
 - **Q3** (acks, at-least-once): same file, §Q3 / §5 step 4.
+- **AMENDMENT B1** (decoupled poll/live cursors, operator-ratified 2026-07-11,
+  bead hk-8xspi, supersedes hk-d65rb): same file, §AMENDMENT B1.
 - `specs/handler-contract.md §4.11` — HC-046–HC-049 (skill provisioning).

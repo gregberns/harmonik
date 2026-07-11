@@ -44,6 +44,7 @@ type BootDoc struct {
 	WakeReason     string       `json:"wake_reason"     yaml:"wake_reason"`
 	Operating      string       `json:"operating"       yaml:"operating"`
 	Skills         []SkillEntry `json:"skills"          yaml:"skills"`
+	Docs           []SkillEntry `json:"docs"            yaml:"docs"`
 	ActiveTriggers []Trigger    `json:"active_triggers" yaml:"active_triggers"`
 	Handoff        string       `json:"handoff"         yaml:"handoff"`
 }
@@ -69,11 +70,14 @@ func BuildBootDoc(agentsDir, repoRoot, agentName, typeName, wake string) (*BootD
 	}
 
 	var skills []SkillEntry
+	var docs []SkillEntry
 	for _, c := range tf.Manifest.Context {
-		if c.As != "skill" {
-			continue
+		switch c.As {
+		case "skill":
+			skills = append(skills, buildSkillEntry(agentsDir, typeName, repoRoot, c))
+		case "doc":
+			docs = append(docs, buildDocEntry(agentsDir, typeName, repoRoot, c))
 		}
-		skills = append(skills, buildSkillEntry(agentsDir, typeName, repoRoot, c))
 	}
 
 	var activeTriggers []Trigger
@@ -95,6 +99,7 @@ func BuildBootDoc(agentsDir, repoRoot, agentName, typeName, wake string) (*BootD
 		WakeReason:     wake,
 		Operating:      tf.OperatingContent,
 		Skills:         skills,
+		Docs:           docs,
 		ActiveTriggers: activeTriggers,
 		Handoff:        readHandoff(repoRoot, agentName),
 	}, nil
@@ -168,6 +173,57 @@ func buildSkillEntry(agentsDir, typeName, repoRoot string, c ContextEntry) Skill
 	return entry
 }
 
+// buildDocEntry resolves a doc context entry (as: doc) to a SkillEntry carrying the
+// explicit resolved path and a description parsed from the ref's frontmatter, per
+// plans/2026-07-11-captain-startup-revamp/02-cutover-and-open-questions.md §2.4.
+func buildDocEntry(agentsDir, typeName, repoRoot string, c ContextEntry) SkillEntry {
+	entry := SkillEntry{
+		Name:     c.Ref,
+		Presence: c.Presence,
+	}
+
+	var resolved string
+	if strings.Contains(c.Ref, "/") {
+		resolved = filepath.Join(repoRoot, c.Ref)
+	} else if p, err := ResolveRef(agentsDir, typeName, c.Ref); err == nil {
+		resolved = p
+	}
+	if resolved == "" {
+		return entry
+	}
+
+	entry.Pointer = resolved
+	entry.ShortDesc = readFrontmatterDescription(resolved)
+	return entry
+}
+
+// readFrontmatterDescription returns the `description:` field of the YAML frontmatter
+// block (delimited by leading "---" lines) at the top of the file at path.
+// Returns "" when the file has no frontmatter or no description field.
+func readFrontmatterDescription(path string) string {
+	//nolint:gosec // G304: path is resolved by buildDocEntry against known roots
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	content := string(data)
+	if !strings.HasPrefix(content, "---\n") && !strings.HasPrefix(content, "---\r\n") {
+		return ""
+	}
+	rest := strings.SplitN(content, "\n", 2)[1]
+	end := strings.Index(rest, "\n---")
+	if end == -1 {
+		return ""
+	}
+	var meta struct {
+		Description string `yaml:"description"`
+	}
+	if err := yaml.Unmarshal([]byte(rest[:end]), &meta); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.Description)
+}
+
 // readSkillShortDesc returns the first non-blank, non-heading line from skillMDPath.
 func readSkillShortDesc(skillMDPath string) string {
 	//nolint:gosec // G304: path comes from ResolveRef which validates against known dirs
@@ -226,6 +282,15 @@ func RenderMarkdown(doc *BootDoc, w io.Writer) {
 		fmt.Fprintln(w)
 		for _, s := range doc.Skills {
 			renderSkillLine(w, s)
+		}
+	}
+
+	if len(doc.Docs) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "### Docs")
+		fmt.Fprintln(w)
+		for _, d := range doc.Docs {
+			renderDocLine(w, d)
 		}
 	}
 
@@ -304,6 +369,20 @@ func RenderToon(doc *BootDoc, w io.Writer) {
 			fmt.Fprintln(w)
 		}
 	}
+	if len(doc.Docs) > 0 {
+		fmt.Fprintln(w, "\nDocs:")
+		for _, d := range doc.Docs {
+			if d.ShortDesc != "" {
+				fmt.Fprintf(w, "  • %s: %s", d.Name, d.ShortDesc)
+			} else {
+				fmt.Fprintf(w, "  • %s", d.Name)
+			}
+			if d.Pointer != "" {
+				fmt.Fprintf(w, " — see %s", d.Pointer)
+			}
+			fmt.Fprintln(w)
+		}
+	}
 
 	// §4 Triggers.
 	boxHeader("ACTIVE TRIGGERS")
@@ -366,6 +445,20 @@ func renderSkillLine(w io.Writer, s SkillEntry) {
 		fmt.Fprintf(w, "- **%s:** %s — see `%s`\n", s.Name, s.ShortDesc, s.Pointer)
 	} else {
 		fmt.Fprintf(w, "- **%s:** %s\n", s.Name, s.ShortDesc)
+	}
+}
+
+// renderDocLine renders a single doc entry (as: doc) as a markdown list item, always
+// showing the explicit resolved path and, when present, the frontmatter description.
+func renderDocLine(w io.Writer, d SkillEntry) {
+	if d.Pointer == "" {
+		fmt.Fprintf(w, "- **%s**\n", d.Name)
+		return
+	}
+	if d.ShortDesc != "" {
+		fmt.Fprintf(w, "- **%s:** %s — see `%s`\n", d.Name, d.ShortDesc, d.Pointer)
+	} else {
+		fmt.Fprintf(w, "- **%s** — see `%s`\n", d.Name, d.Pointer)
 	}
 }
 

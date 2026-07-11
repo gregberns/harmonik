@@ -104,7 +104,6 @@ WHAT: Overnight HOLD lifted into a single-lane directive. Staff ONE crew (kynes,
 WHY:  operator + admiral finished the overnight-alignment audit; focus is the flagship
       core-loop proof, not broad volume. Grab-bag/kerf-next churn explicitly OFF.
 ORDER: kynes rebases → drives T9 green. Cleanup beads ONLY if slots remain after T9 moving.
-      HARD GATE: NO daemon redeploy until BOTH hk-x2spu AND hk-ih5k6 close.
 RETURN-PATH: resume by checking kynes owns hk-hcrvb + T9 leg status; the paused quality-*
       queues stay PAUSED (do not resume — that was the pre-audit volume posture, now retired).
 

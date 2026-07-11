@@ -174,10 +174,11 @@ func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Spawn
 	}
 
 	return handlercontract.SpawnSpec{
-		Binary:  spec.Binary,
-		Args:    spec.Args,
-		Env:     spec.Env,
-		WorkDir: spec.WorkDir,
+		Binary:       spec.Binary,
+		Args:         spec.Args,
+		Env:          spec.Env,
+		WorkDir:      spec.WorkDir,
+		StdinDevNull: spec.StdinDevNull, // PI-020 / hk-j0p1r: thread ProcessExit /dev/null stdin through the routed path
 	}, nil
 }
 

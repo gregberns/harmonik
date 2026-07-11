@@ -310,11 +310,12 @@ func buildCodexRoutedLaunchSpec(
 
 	// Step 5: assemble handler.LaunchSpec and claudeRunArtifacts.
 	spec := handler.LaunchSpec{
-		Binary:  spawnSpec.Binary,
-		Args:    spawnSpec.Args,
-		Env:     spawnSpec.Env,
-		WorkDir: spawnSpec.WorkDir,
-		Role:    string(rc.phase),
+		Binary:       spawnSpec.Binary,
+		Args:         spawnSpec.Args,
+		Env:          spawnSpec.Env,
+		WorkDir:      spawnSpec.WorkDir,
+		Role:         string(rc.phase),
+		StdinDevNull: spawnSpec.StdinDevNull, // hk-j0p1r: forward /dev/null stdin so ProcessExit harnesses (pi, codex) get startup EOF
 	}
 	artifacts := claudeRunArtifacts{
 		claudeSessionID:   trackingSessionID,

@@ -115,10 +115,11 @@ func (h *CodexHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Sp
 	}
 
 	return handlercontract.SpawnSpec{
-		Binary:  spec.Binary,
-		Args:    spec.Args,
-		Env:     spec.Env,
-		WorkDir: spec.WorkDir,
+		Binary:       spec.Binary,
+		Args:         spec.Args,
+		Env:          spec.Env,
+		WorkDir:      spec.WorkDir,
+		StdinDevNull: spec.StdinDevNull, // hk-rpr6 / hk-j0p1r: thread ProcessExit /dev/null stdin through the routed path
 	}, nil
 }
 

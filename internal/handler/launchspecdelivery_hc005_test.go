@@ -245,3 +245,45 @@ func TestHandler_Launch_NilHandlerSpec_StdinNotClosed(t *testing.T) {
 		t.Errorf("expected 'manual-line' captured from stdin when HandlerSpec=nil; got: %q", captured)
 	}
 }
+
+// TestHandler_Launch_NilHandlerSpec_StdinDevNull_ClosesStdinImmediately
+// verifies the hk-y20d2 fix: on the direct exec.CommandContext path, when
+// HandlerSpec is nil and StdinDevNull is true, Launch closes stdin right
+// away so an argv-driven ProcessExit harness (pi, codex) sees startup EOF on
+// fd0 instead of blocking forever on an unfed pipe.
+func TestHandler_Launch_NilHandlerSpec_StdinDevNull_ClosesStdinImmediately(t *testing.T) {
+	t.Parallel()
+
+	pub := &handlercontract.CollectingEmitter{}
+	dl := handlercontract.NoopWatcherDeadLetter{}
+	h := handler.NewHandler(pub, dl, handlercontract.NewAdapterRegistry())
+
+	// Child: `cat` on stdin blocks forever unless it observes EOF. If Launch
+	// failed to close stdin, this test would hang until t.Context() deadline;
+	// with the fix, cat sees EOF immediately and exits, then the child emits
+	// agent_ready.
+	tmpDir := t.TempDir()
+	childScript := `cat > /dev/null; printf '{"type":"agent_ready"}\n'`
+
+	spec := handler.LaunchSpec{
+		Binary:       "sh",
+		Args:         []string{"-c", childScript},
+		Env:          []string{},
+		WorkDir:      tmpDir,
+		Role:         "test",
+		HandlerSpec:  nil,
+		StdinDevNull: true,
+	}
+
+	sess, watcher, err := h.Launch(t.Context(), spec)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	select {
+	case <-watcher.Done():
+	case <-t.Context().Done():
+		t.Fatal("watcher.Done() did not close before test context cancelled — stdin was not closed (hk-y20d2 regression)")
+	}
+	_ = sess.Wait(t.Context())
+}

@@ -239,6 +239,19 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		return nil, nil, fmt.Errorf("handler: Launch: NewSession: %w", err)
 	}
 
+	// hk-y20d2: newSessionWithIDs always opens stdin as a pipe (needed for HC-005
+	// HandlerSpec delivery below). When there is no HandlerSpec to deliver, that
+	// pipe is never fed or closed on this path, so argv-driven ProcessExit
+	// harnesses (pi, codex — see StdinDevNull in pilaunchspec.go / codexlaunchspec.go)
+	// block forever reading fd0 and never reach the model. StdinDevNull was only
+	// honored on the tmux/substrate path (launchViaSubstrate below); honor it here
+	// too by closing the write end immediately so the subprocess sees startup EOF.
+	if spec.HandlerSpec == nil && spec.StdinDevNull {
+		if closeErr := sess.CloseStdin(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "handler: Launch: CloseStdin (StdinDevNull): %v\n", closeErr)
+		}
+	}
+
 	// HC-005: if a HandlerSpec is provided, encode it as compact JSON and write
 	// it to subprocess stdin followed by a newline, then close the write end so
 	// the subprocess sees EOF after reading exactly one JSON object. The delivery

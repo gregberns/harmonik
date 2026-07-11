@@ -107,3 +107,20 @@ ORDER: kynes rebases → drives T9 green. Cleanup beads ONLY if slots remain aft
       HARD GATE: NO daemon redeploy until BOTH hk-x2spu AND hk-ih5k6 close.
 RETURN-PATH: resume by checking kynes owns hk-hcrvb + T9 leg status; the paused quality-*
       queues stay PAUSED (do not resume — that was the pre-audit volume posture, now retired).
+
+## 2026-07-11 ~01:54Z — captain (GATE-0 verdict: --no-extensions REFUTED; redeploy is NOT the pi fix) · expires: 2026-07-13T00:00:00Z
+WHAT: GATE-0 came back a STOP. kynes's faithful in-daemon A/B showed OLD (d7abf34a, no flag)
+      and NEW (133319f5, +afa32372 flag) HANG IDENTICALLY — pi never POSTs to ornith, extensions
+      absent in both. --no-extensions root cause EMPIRICALLY REFUTED. Real mechanism: pi child
+      parked in node event loop with fd0(stdin)=UNFED PIPE, before any model POST. Prior "green"
+      was OUT-OF-daemon. Sharpened hypothesis: daemon sets StdinDevNull on the OUTER srt proc, but
+      srt-wrapping pi hands the pi CHILD a fresh unfed pipe → epoll hang; predict srt-OFF greens.
+WHY:  the redeploy-onto-afa32372 plan would NOT have fixed pi:local — it hangs identically WITH the
+      flag. The defect is in-daemon launch plumbing (stdin feed under srt-wrap), not the flag.
+ORDER: NO redeploy as a pi fix (it's dead). kynes runs the decisive arm now (NEW in-daemon, srt OFF,
+      instrument pi stdin) — captain-authorized. On result: if srt-OFF greens, fix = drop pi from
+      sandbox.harnesses (matches known memory pi_noop_is_harness_not_model) → then prove pi:local
+      green → hk-hcrvb flagship complete. Other 4 lanes run in parallel, unaffected.
+RETURN-PATH: check kynes's {stdin-fed, srt-off result, mechanism} report; the "on GATE-0 green →
+      redeploy" path in prior lane docs is SUPERSEDED (no redeploy fix pending). Decision #2 (Codex
+      session-model Option B) awaits operator ratification — piter's l63b9→trio BLOCKED until relayed.

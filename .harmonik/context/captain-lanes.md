@@ -9,7 +9,16 @@
 # Captain reads on every boot (STARTUP.md Step 0b) BEFORE re-deriving lanes.
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 
-## ⭐⭐ CURRENT TRUTH 2026-07-11 ~01:48Z — PARALLEL 5-LANE posture (operator 019f4ed0); pi redeploy DECOUPLED → GATE-0 sole gate (019f4ec1)
+## ⭐⭐ CURRENT TRUTH 2026-07-11 ~01:54Z — GATE-0 VERDICT: --no-extensions root cause REFUTED; redeploy STILL HELD; pi hang re-diagnosed to in-daemon stdin-feed
+> **GATE-0 came back a STOP, not a green (kynes, comms 019f4ede).** The `--no-extensions` theory is EMPIRICALLY REFUTED: a faithful in-daemon A/B (scratch /tmp/hkg0, exact fleet config, ornith :8551 up, srt ON) showed OLD binary d7abf34a (no flag) and NEW binary 133319f5 (flag PRESENT, afa32372) **HANG IDENTICALLY** — 0-byte pi stdout, pi never POSTs to ornith. Extensions absent in both worktree AND ~/.pi for both runs → refutes extension-load entirely.
+> - **Real mechanism (stack sample):** pi child parked in node event loop (uv__io_poll→kevent), NO socket to :8551, **fd0(stdin)=UNFED PIPE**. pi hangs BEFORE any model POST — upstream of everything the flag touches. Prior "green" (1.38s NDJSON) was **OUT-OF-daemon**. Undischarged variable = the **in-daemon launch plumbing (does the daemon feed pi's stdin?)**, NOT flag/srt/extensions.
+> - **REDEPLOY IS DEAD as a fix** — do NOT redeploy onto afa32372 expecting pi:local to green; it will NOT. The old "on GATE-0 green → redeploy" path below is SUPERSEDED — there is no redeploy fix pending; the pi hang is an unsolved in-daemon defect being root-caused live.
+> - **NEXT ARM (captain-authorized, kynes running now, comms 019f4ee0):** NEW binary in-daemon + srt OFF + instrument pi stdin. Reports {stdin-fed y/n, srt-off result, mechanism}. Flagship critical path.
+> - **Surfaced to operator** (comms 019f4ee0) — verdict ping the operator asked for. No operator gate; captain owns the continued diagnosis.
+> - **DECISION #2 also routed (piter spike hk-fijwi done, comms 019f4ee1):** Codex crew-orchestrator session-model — captain concurs Option B (bounded `codex exec resume` loop). AWAITING operator ratification; hk-l63b9→lrf30→trio BLOCKED until then.
+> - **keeper-missing:hawat,piter,stilgar** (ops-monitor flag) — these 3 crews spawned via `crew start` (no auto-keeper); durability gap, not urgent (freshly spawned). Flagged; arm via `harmonik start crew` path or a manual keeper watcher next lull.
+
+## ⭐⭐ (SUPERSEDED 01:54Z by GATE-0 refutation above — redeploy is NOT the fix) CURRENT TRUTH 2026-07-11 ~01:48Z — PARALLEL 5-LANE posture (operator 019f4ed0); pi redeploy DECOUPLED → GATE-0 sole gate (019f4ec1)
 > **OPERATOR PRIORITY ORDER (019f4ed0), IRON RULE = keep every slot full, never freeze the fleet for one bead.** 5 lanes STAFFED + VERIFIED online this session:
 > - **#1 PI — kynes** (kynes-q, hk-hcrvb): GATE-0 e2e (bg sub-agent live). See decouple detail below.
 > - **#2 REMOTE — hawat** (hawat-q, hk-rs-phase1-qfn1, Opus): remote-substrate, buggy+heavy-testing, test-first LOCAL only. gb-mbp live re-enable OPERATOR-HELD (hawat does NOT flip). Collision: internal/daemon overlaps stilgar hk-ih5k6 → stilgar right-of-way, hawat holds workloop.go/reversetunnel.go beads until it lands.

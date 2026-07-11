@@ -190,3 +190,34 @@ func TestExecPath_Pi_WasNotWrapped_BeforeFix(t *testing.T) {
 		t.Errorf("nil spawn changed argv (binary=%q args=%v); want unchanged pi argv — the RED state is 'no srt prefix'", gotBinary, gotArgs)
 	}
 }
+
+// TestExecPath_Pi_SrtWrapCreatesClaudeTmpDir is the hk-cdpxu regression: srt
+// 1.0.0 hardcodes TMPDIR=/tmp/claude for the sandboxed child regardless of the
+// profile (verified empirically), and srt itself stats that directory on
+// startup before the sandboxed process runs — a missing directory fails the
+// spawn immediately ("stat /tmp/claude: no such file or directory"), which in
+// turn breaks any tool the agent invokes that honors TMPDIR for scratch/work-dir
+// creation (e.g. `go build`). sandboxWrapExecArgv (via srtWrapArgv) must create
+// the directory as a side effect of wrapping a sandboxed run, not merely
+// allowlist it in the profile JSON.
+func TestExecPath_Pi_SrtWrapCreatesClaudeTmpDir(t *testing.T) {
+	// Not t.Parallel: asserts on a fixed, shared filesystem path (/tmp/claude).
+	cfg := daemon.SandboxConfig{Backend: "srt", Harnesses: []string{"pi"}}
+	in := hkr4p0lexecProfileInput(t, "hkcdpxu-claude-tmpdir-run")
+	spawn := daemon.ExportedSandboxSpawnForRun(cfg, core.AgentTypePi, in)
+	if spawn == nil {
+		t.Fatal("precondition: gate must return non-nil spawn for pi + srt + harnesses:[pi]")
+	}
+
+	if _, _, err := daemon.ExportedSandboxWrapExecArgv(spawn, "/opt/pi/bin/pi", []string{"--mode=json"}); err != nil {
+		t.Fatalf("sandboxWrapExecArgv: %v", err)
+	}
+
+	fi, statErr := os.Stat("/tmp/claude")
+	if statErr != nil {
+		t.Fatalf("hk-cdpxu: sandboxWrapExecArgv did not create /tmp/claude: %v", statErr)
+	}
+	if !fi.IsDir() {
+		t.Fatalf("hk-cdpxu: /tmp/claude exists but is not a directory")
+	}
+}

@@ -136,6 +136,8 @@ func TestSandboxProfile_AllowWriteExactSet(t *testing.T) {
 		{"reflog dir (tight scope)", "/repo/.git/logs/refs/heads/run"},
 		{"tmpdir /tmp", "/tmp"},
 		{"tmpdir /private/tmp", "/private/tmp"},
+		{"srt scratch TMPDIR /tmp/claude (hk-cdpxu)", "/tmp/claude"},
+		{"srt scratch TMPDIR /private/tmp/claude (hk-cdpxu)", "/private/tmp/claude"},
 		{"private cache", "/repo/.harmonik/worktrees/0196f000-0000-7000-8000-000000000001/.cache"},
 	}
 	for _, m := range mandated {

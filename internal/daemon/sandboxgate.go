@@ -82,6 +82,10 @@ func sandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxP
 	return &SrtSpawnConfig{ProfileInput: in}
 }
 
+// srtClaudeTmpDir is srt 1.0.0's hardcoded sandboxed-child TMPDIR (hk-cdpxu).
+// See srtWrapArgv and sandboxprofile.go allowWrite step 6a.
+const srtClaudeTmpDir = "/tmp/claude"
+
 // srtWrapArgv generates a per-run srt settings profile, writes it to a temp file,
 // and returns the srt-prefixed argv:
 //
@@ -104,6 +108,21 @@ func sandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in SandboxP
 //
 // Bead: hk-rlxgx (original substrate wrap), hk-r4p0l (extraction + exec-path reuse).
 func srtWrapArgv(spawn *SrtSpawnConfig, agentArgv []string) ([]string, error) {
+	// hk-cdpxu: srt 1.0.0 hardcodes TMPDIR=/tmp/claude for the sandboxed child
+	// (verified empirically — independent of the parent's own TMPDIR and of
+	// anything else in the profile). GenerateSandboxProfile allowlists that path
+	// (see sandboxprofile.go allowWrite step 6a), but allowlisting alone is not
+	// enough: srt's own filesystem check on child startup stats the directory
+	// ("stat /tmp/claude: no such file or directory") before any sandboxed
+	// process runs, so it must actually exist on disk first. Any tool the
+	// sandboxed agent invokes that honors TMPDIR for scratch/work-dir creation
+	// (e.g. `go build`'s "creating work dir" step) fails immediately without
+	// this. Best-effort MkdirAll: a pre-existing directory (created by a prior
+	// run, any permissions) is not an error here — os.MkdirAll is idempotent.
+	if err := os.MkdirAll(srtClaudeTmpDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create srt scratch TMPDIR %s: %w", srtClaudeTmpDir, err)
+	}
+
 	profileBytes, err := GenerateSandboxProfile(spawn.ProfileInput)
 	if err != nil {
 		return nil, fmt.Errorf("generate srt profile: %w", err)

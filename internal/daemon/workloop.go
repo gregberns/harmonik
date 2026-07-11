@@ -4458,6 +4458,23 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 		spec.Binary = wrapBin
 		spec.Args = wrapArgs
+		// hk-cdpxu: when the run is actually srt-sandboxed, point Go's toolchain
+		// caches at the run worktree (already in the profile's allowWrite set,
+		// see GenerateSandboxProfile step 1) instead of their default location
+		// under $HOME (e.g. ~/Library/Caches/go-build, ~/go) — a path the sandbox
+		// denies. Without this, any `go build`/`go vet`/`go test` the agent runs
+		// inside the sandbox fails with "operation not permitted" on the cache
+		// write, even though `go` itself resolves fine. Reproduced empirically
+		// via a direct srt invocation against the production warm_read set.
+		// Additive only (spec.Env wins on duplicate GOCACHE/GOPATH keys per Go's
+		// env semantics — last entry wins); harmless when the agent's task has no
+		// go.mod. No-op when this run is not srt-sandboxed (sandboxSpawn == nil).
+		if sandboxSpawn != nil {
+			spec.Env = append(spec.Env,
+				"GOCACHE="+filepath.Join(wtPath, ".harmonik", "go-cache"),
+				"GOPATH="+filepath.Join(wtPath, ".harmonik", "go-path"),
+			)
+		}
 	} else {
 		spec.Substrate = runSubstrate
 	}

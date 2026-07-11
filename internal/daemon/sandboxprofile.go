@@ -17,6 +17,8 @@ package daemon
 //     required because git creates <ref>.lock as a sibling during commit.
 //   - <gitDir>/packed-refs and <gitDir>/packed-refs.lock (git pack-refs atomic pair).
 //   - OS temp directories (TmpDirs).
+//   - srt's own hardcoded scratch TMPDIR, /tmp/claude (and /private/tmp/claude);
+//     see hk-cdpxu below.
 //   - Per-run private cache areas (PrivateWriteCacheDirs — never shared).
 //
 // Warm shared toolchain caches go in allowRead (read-only) to avoid the
@@ -230,6 +232,20 @@ func GenerateSandboxProfile(in SandboxProfileInput) ([]byte, error) {
 
 	// 6. OS temp directories.
 	allowWrite = append(allowWrite, in.TmpDirs...)
+
+	// 6a. srt's own scratch TMPDIR (hk-cdpxu). Empirically (srt 1.0.0), the
+	// sandboxed child ALWAYS gets TMPDIR=/tmp/claude injected by srt itself,
+	// regardless of the parent process's TMPDIR and regardless of what this
+	// profile's allowWrite otherwise contains — it is not one of in.TmpDirs.
+	// Any tool that honors TMPDIR for scratch/work-dir creation (e.g. `go
+	// build`'s "creating work dir" step) fails with ENOENT inside the sandbox
+	// unless /tmp/claude is both present on disk AND in allowWrite. Both the
+	// /tmp and /private/tmp forms are listed (macOS symlinks /tmp ->
+	// /private/tmp; bwrap/Seatbelt need the literal path used at open time),
+	// mirroring the existing TmpDirs /private/tmp fallback above. Directory
+	// creation is the caller's responsibility (sandboxWrapExecArgv), since this
+	// function is a pure profile generator.
+	allowWrite = append(allowWrite, "/tmp/claude", "/private/tmp/claude")
 
 	// 7. Per-run private cache areas (never shared with concurrent runs).
 	allowWrite = append(allowWrite, in.PrivateWriteCacheDirs...)

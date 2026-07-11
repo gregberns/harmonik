@@ -1751,6 +1751,19 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 3a; §4.1 PL-003.
 	if cfg.ProjectDir != "" {
 		sockPath := filepath.Join(cfg.ProjectDir, ".harmonik", "daemon.sock")
+		// hk-ta6dg: a too-long sockPath is a PERMANENT bind failure (unlike the
+		// transient stale-socket race removeStaleSocket already handles), and it
+		// silently defeats the reverse-tunnel readiness gate for remote runs (the
+		// gate only probes the worker-side TCP listener, never this local path —
+		// see internal/lifecycle/socketpathlimit.go). PL-003 deliberately keeps
+		// socket-bind errors non-fatal to daemon.Start (many callers/tests rely on
+		// that, including short-lived test harnesses whose t.TempDir() path is
+		// itself long enough to trip this on macOS), so this is a loud diagnostic,
+		// not an abort — the reverse-tunnel call site is where a too-long path
+		// actually blocks a run, and that path fails loud per-run.
+		if lenErr := lifecycle.ValidateSocketPathLength(sockPath); lenErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon.Start: %v\n", lenErr)
+		}
 		// .harmonik/ was already created above (pidfile block), but when
 		// ProjectDir is set with BrPath="" (test mode skipping pidfile) we still
 		// need the dir. MkdirAll is idempotent.

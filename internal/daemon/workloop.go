@@ -3446,6 +3446,25 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 
 		daemonHookSock := filepath.Join(deps.projectDir, ".harmonik", "daemon.sock")
+		// hk-ta6dg: `ssh -N -R <port>:<daemonHookSock>` never validates this local
+		// forward destination at tunnel start — only when a connection actually
+		// needs forwarding — so a too-long daemonHookSock would let the tunnel
+		// come up and the readiness gate below (a TCP probe against the WORKER's
+		// listener only) pass, then silently swallow every hook-relay connection
+		// once traffic actually tries to flow. Fail loud here, before spawning the
+		// doomed tunnel, exactly like a readiness-gate failure: no Launch, reopen
+		// the bead.
+		if lenErr := lifecycle.ValidateSocketPathLength(daemonHookSock); lenErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"daemon: workloop: reverse-tunnel socket-path bead %s run %s: %v (reopening, not launching)\n",
+				beadID, runID.String(), lenErr)
+			workers.EmitWorkerTunnelFailedEvent(ctx, runID.String(), string(beadID),
+				rbc.worker.Name, rbc.worker.Host, daemonHookSock, lenErr.Error(), deps.bus.Emit)
+			reopenTID, _ := deps.tidGen.Next()
+			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+				fmt.Sprintf("reverse-tunnel not ready: %v", lenErr))
+			return
+		}
 		// Mirror the SSHRunner host/opts argv pattern (runner.go SSHRunner.Command):
 		// extra opts BEFORE the host. Fall back to the worker record's Host when
 		// the runner is not an SSHRunner (e.g. a test double).

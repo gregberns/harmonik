@@ -11,6 +11,19 @@
 
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 
+## 2026-07-11 ~06:2xZ — operator (direct to captain): CODEX OPTION B KILLED (hard no, never revisit) → piter pivots to app-server deep-research kerf · expires: 2026-07-13T00:00:00Z
+WHAT: Codex crew-orchestrator Option B (daemon re-invokes `codex exec resume` per wake) is
+      PERMANENTLY DEAD — operator hard-no, do NOT discuss/re-propose again. piter's Codex-as-crew
+      lane (epic hk-q3ovr) now enters a RESEARCH phase: run a FULL kerf work item to deeply
+      understand the resident `codex app-server` path — how it works, what integrating it involves,
+      viability of retiring the keeper/compaction machinery via long-context resident orchestration.
+WHY:  ZFC grounds (B puts cognition in the framework); the real prize is a resident long-context
+      orchestrator. Decide-by-research before any implementation.
+ORDER: piter opens a kerf work (problem-space → research → design) on codex app-server; hk-l63b9
+      (route crew-start through harness selection) stays OPEN-PARKED until the research names the path.
+      Option-B artifacts are dead context — do not resurface.
+RETURN-PATH: check piter owns a live kerf work on the app-server research; no B ratification anywhere.
+
 ## 2026-07-11 ~01:35Z — operator (via admiral, events 019f4ed0/019f4ed3): PARALLEL 5-lane priority order, IRON RULE no-single-bead-freeze · expires: 2026-07-13T00:00:00Z
 WHAT: Single-focus flagship posture RETIRED → staff crews top-down IN PARALLEL, file-disjoint,
       keep every slot full. IRON RULE (operator, emphatic): NEVER hold the whole pipeline for

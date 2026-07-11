@@ -586,3 +586,140 @@ func TestReconcileOrphanedRunsOnResume_DispatchTrackerOrphan_RedispatchAfterPrio
 		t.Fatalf("ResetBead calls = %v, want exactly [hk-redispatch] — a redispatch after a completed prior run must still be reset", resetter.reset)
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hk-hjvl4 — terminated-but-locked beads (distinct from hk-iwu8a orphan-only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestReconcileOrphanedRunsOnResume_TerminatedButLocked_NotInDispatchedBeads
+// reproduces the hk-hjvl4 gap: a run that DID emit a terminal event
+// (run_started + run_failed both observed) whose bead reads OPEN yet is NOT a
+// member of dispatchedBeads (e.g. a historical multi-bead queue-run whose
+// durable queue-item status update never landed for this bead, or the queue
+// scan that produced dispatchedBeads never covered it). Before the fix,
+// neither the primary loop (which explicitly skips terminated runs) nor the
+// hk-iwu8a dispatch-tracker pass (which only ever visits dispatchedBeads
+// members) ever calls ResetBead for such a bead, leaving its -32015
+// (bead_already_dispatched) dispatch-lock wedged across every restart. FAILS
+// before the fix (no reset issued), PASSES after (the new terminated-but-
+// locked pass resets it).
+func TestReconcileOrphanedRunsOnResume_TerminatedButLocked_NotInDispatchedBeads(t *testing.T) {
+	ctx := context.Background()
+
+	run := hkr73qrNewRunID(t)
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, run, "hk-thbbv", "queue-main", 0)
+		hkr73qrWriteRunFailed(t, bus, run, "hk-thbbv")
+	})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	// The bead already reads open — QM-022 would not reject it, but the
+	// concrete repro shows queue submit/dry-run still rejecting -32015 via
+	// the queue-item-level (EM-065) lock, which only clears once the bead is
+	// (re-)reset and the queue-side reconcile observes it.
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-thbbv": core.CoarseStatusOpen,
+	}}
+	// dispatchedBeads deliberately does NOT contain hk-thbbv — this is the
+	// crux of the gap: the bead is invisible to the hk-iwu8a pass entirely.
+	var dispatched lifecycle.QueueDispatchedSet
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, dispatched, nil)
+	if got != 0 {
+		t.Fatalf("emitted %d run_failed, want 0 (run already terminated; must not re-emit)", got)
+	}
+	if len(resetter.reset) != 1 || resetter.reset[0] != core.BeadID("hk-thbbv") {
+		t.Fatalf("ResetBead calls = %v, want exactly [hk-thbbv] — a terminated-but-locked bead not in dispatchedBeads must still be reset", resetter.reset)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_TerminatedButLocked_SkipsLiveRun verifies
+// the hk-mdus1 non-regression guard extends to the new pass: a bead with a
+// terminated historical run but also currently tracked by a live runs/
+// record (liveRunBeadIDs) — i.e. legitimately redispatched and still running
+// — must NOT be reset.
+func TestReconcileOrphanedRunsOnResume_TerminatedButLocked_SkipsLiveRun(t *testing.T) {
+	ctx := context.Background()
+
+	run := hkr73qrNewRunID(t)
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, run, "hk-live-redispatch", "queue-main", 0)
+		hkr73qrWriteRunFailed(t, bus, run, "hk-live-redispatch")
+	})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-live-redispatch": core.CoarseStatusInProgress,
+	}}
+	liveRunBeadIDs := map[core.BeadID]struct{}{
+		core.BeadID("hk-live-redispatch"): {},
+	}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, nil, liveRunBeadIDs)
+	if got != 0 {
+		t.Fatalf("emitted %d run_failed, want 0", got)
+	}
+	if len(resetter.reset) != 0 {
+		t.Fatalf("ResetBead calls = %v, want none — a bead with a currently-live redispatch must never be reset", resetter.reset)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_TerminatedButLocked_SkipsLandedBead
+// verifies the B3 guard applies to the new pass: a bead already closed must
+// never be reopened even though its historical run terminated.
+func TestReconcileOrphanedRunsOnResume_TerminatedButLocked_SkipsLandedBead(t *testing.T) {
+	ctx := context.Background()
+
+	run := hkr73qrNewRunID(t)
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, run, "hk-landed-terminated", "queue-main", 0)
+		hkr73qrWriteRunCompleted(t, bus, run, "hk-landed-terminated")
+	})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-landed-terminated": core.CoarseStatusClosed,
+	}}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, nil, nil)
+	if got != 0 {
+		t.Fatalf("emitted %d run_failed, want 0", got)
+	}
+	if len(resetter.reset) != 0 {
+		t.Fatalf("ResetBead calls = %v, want none — a landed bead must never be reopened", resetter.reset)
+	}
+}
+
+// TestReconcileOrphanedRunsOnResume_TerminatedButLocked_NoDoubleResetWhenInDispatchedBeads
+// verifies the new pass does not duplicate a reset already issued by the
+// hk-iwu8a dispatch-tracker pass when the terminated bead IS also a
+// dispatchedBeads member.
+func TestReconcileOrphanedRunsOnResume_TerminatedButLocked_NoDoubleResetWhenInDispatchedBeads(t *testing.T) {
+	ctx := context.Background()
+
+	run := hkr73qrNewRunID(t)
+	jsonlPath := hkr73qrSetupJSONL(t, func(bus eventbus.EventBus) {
+		hkr73qrWriteRunStartedQ(t, bus, run, "hk-both-sources", "queue-main", 0)
+		hkr73qrWriteRunFailed(t, bus, run, "hk-both-sources")
+	})
+
+	payBus := &hkr73qrPayloadBus{}
+	resetter := &hkr73qrFakeResetter{}
+	ledger := &hkr73qrFakeStatusLedger{status: map[string]core.CoarseStatus{
+		"hk-both-sources": core.CoarseStatusOpen,
+	}}
+	dispatched := lifecycle.QueueDispatchedSet{
+		core.BeadID("hk-both-sources"): struct{}{},
+	}
+
+	got := reconcileOrphanedRunsOnResume(ctx, jsonlPath, payBus, resetter, ledger, "/tmp/intents", core.ProjectHash("ph"), 1, dispatched, nil)
+	if got != 0 {
+		t.Fatalf("emitted %d run_failed, want 0", got)
+	}
+	if len(resetter.reset) != 1 || resetter.reset[0] != core.BeadID("hk-both-sources") {
+		t.Fatalf("ResetBead calls = %v, want exactly one call for [hk-both-sources] (no double-reset across passes)", resetter.reset)
+	}
+}

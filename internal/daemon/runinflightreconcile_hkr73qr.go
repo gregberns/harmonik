@@ -153,29 +153,9 @@ func reconcileOrphanedRunsOnResume(
 		// reset (conservative: never risk reopening a landed bead) — the
 		// run_failed above is still emitted for observers.
 		if resetter != nil && meta.beadID != "" && statusLedger != nil {
-			rec, showErr := statusLedger.ShowBead(ctx, core.BeadID(meta.beadID))
-			switch {
-			case showErr != nil:
-				fmt.Fprintf(os.Stderr,
-					"daemon: reconcileOrphanedRunsOnResume: ShowBead %s (run %s): %v — skipping reset (will not risk reopening a landed bead)\n",
-					meta.beadID, runID, showErr)
-			case rec.Status != core.CoarseStatusInProgress && rec.Status != core.CoarseStatusOpen:
-				// Bead already terminal/blocked/deferred — not a stuck in-flight
-				// claim; nothing to reset (avoids false-reopening a closed bead, B3).
-			default:
-				if resetErr := resetter.ResetBead(
-					ctx,
-					intentLogDir,
-					brcli.TimeoutConfig{},
-					core.BeadID(meta.beadID),
-					projectHash,
-					daemonStartNS,
-				); resetErr != nil {
-					fmt.Fprintf(os.Stderr,
-						"daemon: reconcileOrphanedRunsOnResume: ResetBead %s (run %s): %v — queue item may stay dispatched; will retry next boot\n",
-						meta.beadID, runID, resetErr)
-				}
-			}
+			resetGuardedBead(ctx, resetter, statusLedger, core.BeadID(meta.beadID),
+				intentLogDir, projectHash, daemonStartNS,
+				fmt.Sprintf("run %s", runID))
 		}
 	}
 
@@ -192,17 +172,24 @@ func reconcileOrphanedRunsOnResume(
 	// completed and was later redispatched must still be eligible for this
 	// pass, since a completed historical run says nothing about whether the
 	// current dispatch's run_started was ever emitted.
-	if len(dispatchedBeads) > 0 && resetter != nil && statusLedger != nil {
-		startedBeadIDs := make(map[core.BeadID]struct{}, len(started))
-		for runID, meta := range started {
-			if _, done := terminated[runID]; done {
-				continue
-			}
-			if meta.beadID != "" {
-				startedBeadIDs[core.BeadID(meta.beadID)] = struct{}{}
-			}
+	//
+	// startedBeadIDs (still-orphaned only) and terminatedBeadIDs (deduped
+	// beads with at least one terminated run) are both derived from a single
+	// pass over `started`, reused by the two passes below.
+	startedBeadIDs := make(map[core.BeadID]struct{}, len(started))
+	terminatedBeadIDs := make(map[core.BeadID]struct{})
+	for runID, meta := range started {
+		if meta.beadID == "" {
+			continue
 		}
+		if _, done := terminated[runID]; done {
+			terminatedBeadIDs[core.BeadID(meta.beadID)] = struct{}{}
+			continue
+		}
+		startedBeadIDs[core.BeadID(meta.beadID)] = struct{}{}
+	}
 
+	if len(dispatchedBeads) > 0 && resetter != nil && statusLedger != nil {
 		for beadID := range dispatchedBeads {
 			if _, seen := startedBeadIDs[beadID]; seen {
 				continue
@@ -210,31 +197,84 @@ func reconcileOrphanedRunsOnResume(
 			if _, live := liveRunBeadIDs[beadID]; live {
 				continue
 			}
+			resetGuardedBead(ctx, resetter, statusLedger, beadID,
+				intentLogDir, projectHash, daemonStartNS,
+				"dispatch-tracker orphan")
+		}
+	}
 
-			rec, showErr := statusLedger.ShowBead(ctx, beadID)
-			switch {
-			case showErr != nil:
-				fmt.Fprintf(os.Stderr,
-					"daemon: reconcileOrphanedRunsOnResume: ShowBead %s (dispatch-tracker orphan): %v — skipping reset (will not risk reopening a landed bead)\n",
-					beadID, showErr)
-			case rec.Status != core.CoarseStatusInProgress && rec.Status != core.CoarseStatusOpen:
-				// Bead already terminal/blocked/deferred — nothing to reset.
-			default:
-				if resetErr := resetter.ResetBead(
-					ctx,
-					intentLogDir,
-					brcli.TimeoutConfig{},
-					beadID,
-					projectHash,
-					daemonStartNS,
-				); resetErr != nil {
-					fmt.Fprintf(os.Stderr,
-						"daemon: reconcileOrphanedRunsOnResume: ResetBead %s (dispatch-tracker orphan): %v — queue item may stay dispatched; will retry next boot\n",
-						beadID, resetErr)
-				}
+	// hk-hjvl4 — terminated-but-locked beads. Distinct from the hk-iwu8a pass
+	// above: that pass only ever visits beads dispatchedBeads (a raw pre-
+	// QM-002a read of queue.json's status=dispatched items, scoped to the
+	// main queue) still records as dispatched. A run that DID emit a terminal
+	// event (run_completed/run_failed) can still leave its bead's -32015
+	// dispatch-lock un-released — e.g. a historical multi-bead queue-run whose
+	// durable queue-item status update never landed for this bead — yet such
+	// a bead is invisible to the dispatchedBeads scan (it was never a member
+	// of that set, or is no longer one), so it was never reset by either pass
+	// above. For every beadID with at least one terminated run in the durable
+	// log (terminatedBeadIDs) that is NOT already handled by the
+	// dispatchedBeads pass (beadID present there) and is NOT live, apply the
+	// same guarded reset. Skipping dispatchedBeads members avoids a duplicate
+	// ResetBead call for a bead the pass above already reset.
+	//
+	// Bead ref: hk-hjvl4.
+	if resetter != nil && statusLedger != nil {
+		for beadID := range terminatedBeadIDs {
+			if _, seen := dispatchedBeads[beadID]; seen {
+				continue
 			}
+			if _, live := liveRunBeadIDs[beadID]; live {
+				continue
+			}
+			resetGuardedBead(ctx, resetter, statusLedger, beadID,
+				intentLogDir, projectHash, daemonStartNS,
+				"terminated-but-locked")
 		}
 	}
 
 	return count
+}
+
+// resetGuardedBead issues the shared B3-guarded ResetBead call: it queries
+// statusLedger and resets beadID only when the bead currently reads open or
+// in_progress, skipping any bead that has already landed (closed/tombstone)
+// or sits in a state where a reset write is not meaningful
+// (blocked/deferred/draft/pinned) — never risking a false-reopen. logCtx is a
+// short human-readable label (e.g. "run <id>", "dispatch-tracker orphan",
+// "terminated-but-locked") identifying which reconcile pass is calling, for
+// the stderr diagnostics on failure.
+func resetGuardedBead(
+	ctx context.Context,
+	resetter runBeadResetter,
+	statusLedger beadStatusReader,
+	beadID core.BeadID,
+	intentLogDir string,
+	projectHash core.ProjectHash,
+	daemonStartNS int64,
+	logCtx string,
+) {
+	rec, showErr := statusLedger.ShowBead(ctx, beadID)
+	switch {
+	case showErr != nil:
+		fmt.Fprintf(os.Stderr,
+			"daemon: reconcileOrphanedRunsOnResume: ShowBead %s (%s): %v — skipping reset (will not risk reopening a landed bead)\n",
+			beadID, logCtx, showErr)
+	case rec.Status != core.CoarseStatusInProgress && rec.Status != core.CoarseStatusOpen:
+		// Bead already terminal/blocked/deferred — not a stuck in-flight
+		// claim; nothing to reset (avoids false-reopening a closed bead, B3).
+	default:
+		if resetErr := resetter.ResetBead(
+			ctx,
+			intentLogDir,
+			brcli.TimeoutConfig{},
+			beadID,
+			projectHash,
+			daemonStartNS,
+		); resetErr != nil {
+			fmt.Fprintf(os.Stderr,
+				"daemon: reconcileOrphanedRunsOnResume: ResetBead %s (%s): %v — queue item may stay dispatched; will retry next boot\n",
+				beadID, logCtx, resetErr)
+		}
+	}
 }

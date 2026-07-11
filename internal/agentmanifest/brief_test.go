@@ -379,6 +379,50 @@ func TestRenderMarkdown_SoulBeforeHandoff(t *testing.T) {
 	}
 }
 
+// TestRenderMarkdown_HandoffClaimHeader verifies the Handoff section is stamped as a CLAIM
+// that `harmonik digest` overrides, both when a handoff is present and when it is absent.
+func TestRenderMarkdown_HandoffClaimHeader(t *testing.T) {
+	t.Parallel()
+	tmpDir := t.TempDir()
+	agentsDir := filepath.Join(tmpDir, ".harmonik", "agents")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeTypeFolder(t, agentsDir, "crew", "operator", "", "")
+
+	handoffContent := "# HANDOFF-crew\nsome prior-session claim\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "HANDOFF-crew.md"), []byte(handoffContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := BuildBootDoc(agentsDir, tmpDir, "crew", "crew", "fresh")
+	if err != nil {
+		t.Fatalf("BuildBootDoc: %v", err)
+	}
+
+	const wantClaim = "CLAIM, not ground truth"
+	const wantOverride = "harmonik digest"
+
+	var mdBuf strings.Builder
+	RenderMarkdown(doc, &mdBuf)
+	md := mdBuf.String()
+	handoffSection := md[strings.Index(md, "## Handoff"):]
+	if !strings.Contains(handoffSection, wantClaim) || !strings.Contains(handoffSection, wantOverride) {
+		t.Errorf("RenderMarkdown Handoff section missing CLAIM header, got:\n%s", handoffSection)
+	}
+	if idx := strings.Index(handoffSection, wantClaim); idx > strings.Index(handoffSection, "some prior-session claim") {
+		t.Errorf("CLAIM header must precede handoff content")
+	}
+
+	var toonBuf strings.Builder
+	RenderToon(doc, &toonBuf)
+	toon := toonBuf.String()
+	toonHandoffSection := toon[strings.Index(toon, "HANDOFF"):]
+	if !strings.Contains(toonHandoffSection, wantClaim) || !strings.Contains(toonHandoffSection, wantOverride) {
+		t.Errorf("RenderToon Handoff section missing CLAIM header, got:\n%s", toonHandoffSection)
+	}
+}
+
 // TestBuildBootDoc_CronTriggerActivityGuard verifies that a cron trigger with activity_guard
 // is included in ActiveTriggers and that RenderMarkdown includes the activity_guard value.
 func TestBuildBootDoc_CronTriggerActivityGuard(t *testing.T) {

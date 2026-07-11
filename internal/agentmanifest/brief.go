@@ -19,6 +19,11 @@ import (
 // operatorIntentLine is the fixed grafted line when parent_intent is the terminal "operator".
 const operatorIntentLine = "I am the operator — the human who created and directs this fleet."
 
+// handoffClaimHeader stamps the embedded handoff as a CLAIM from the prior session, not
+// ground truth: `harmonik digest` is the live-state source that overrides it. See
+// plans/2026-07-11-captain-startup-revamp/01-revamp-process.md Step 0.4(b).
+const handoffClaimHeader = "**CLAIM, not ground truth — `harmonik digest` overrides.**"
+
 // SkillEntry is a single skill reference in the boot document.
 type SkillEntry struct {
 	Name      string `json:"name"       yaml:"name"`
@@ -242,6 +247,8 @@ func RenderMarkdown(doc *BootDoc, w io.Writer) {
 	// §5 Handoff — LAST (episodic state only; no identity re-statement).
 	fmt.Fprintln(w, "## Handoff")
 	fmt.Fprintln(w)
+	fmt.Fprintln(w, handoffClaimHeader)
+	fmt.Fprintln(w)
 	if doc.Handoff == "" {
 		fmt.Fprintln(w, "_(no handoff on record)_")
 	} else {
@@ -321,6 +328,8 @@ func RenderToon(doc *BootDoc, w io.Writer) {
 
 	// §5 Handoff — LAST.
 	boxHeader("HANDOFF")
+	fmt.Fprintln(w, handoffClaimHeader)
+	fmt.Fprintln(w)
 	if doc.Handoff == "" {
 		fmt.Fprintln(w, "(no handoff on record)")
 	} else {

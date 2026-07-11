@@ -78,3 +78,26 @@ healthy run. No model swap or protocol adaptation is required; options
 (a)/(b)/(c) from the original bead description are moot. The live-DGX
 operator canary above remains the separate, not-yet-run DoD proof for the
 wider epic.
+
+## T-EXPLORE re-check (2026-07-11, worktree session for hk-m6uu2.9)
+
+Re-verified the gap above still holds; still not fabricating a result here.
+
+- The DGX loopback tunnel itself is reachable from this machine right now
+  (`curl http://127.0.0.1:8551/v1/models` returns the `ornith` model), so the
+  tunnel is not the blocker.
+- This worktree has no `.harmonik/config.yaml` (it is operator/local-only and
+  never git-tracked — confirmed via `git log --all -- '**/config.yaml'`), so
+  no `openrouter-cloud` / `ornith-dgx` profile definitions exist to resolve
+  against, and the shell has no real `OPENROUTER_API_KEY` (only a dummy
+  `ORNITH_API_KEY`).
+- Per this session's worktree-discipline contract, a worktree agent must not
+  read or write the main repo's `.harmonik/` (queue.json, daemon.sock) — so
+  `harmonik queue submit` cannot be dispatched against the live daemon from
+  here even if credentials were present.
+
+Net: the operator canary is still un-run and still requires an operator
+running `harmonik queue submit` from the main repo root, with real
+`config.yaml` profiles and real `OPENROUTER_API_KEY`, against the live
+daemon. `T-EXPLORE` (`hk-m6uu2.9`) is not code-shaped and has no implementer
+deliverable beyond this record.

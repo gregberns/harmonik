@@ -114,6 +114,18 @@ type RunHandle struct {
 	//
 	// Bead ref: hk-4tjt6.
 	Remote atomic.Bool
+
+	// resolvedProvider is the resolved Pi provider identity for this run
+	// (per-provider slot-accounting design, docs/design/pi-multi-provider-slot-accounting.md).
+	// Nil until SetResolvedProvider is called. Empty string is a valid resolved
+	// value (Pi run with no profile override — the harness-global default
+	// provider); nil/unset means "not yet resolved" or "not a Pi run" and is
+	// excluded from LenForProvider tallies. Set by the claim-time profile
+	// resolver (hk-8ziid.2, C2) alongside the provider_selected event; read by
+	// LenForProvider to keep every configured provider substrate at its own
+	// concurrency ceiling regardless of queue (hk-8ziid.3, C3). Mirrors the
+	// SetAgentType/GetAgentType atomic-pointer pattern above.
+	resolvedProvider atomic.Pointer[string]
 }
 
 // SetMachine stores m as the lifecycle Machine for this run. Thread-safe.
@@ -141,6 +153,26 @@ func (h *RunHandle) GetAgentType() core.AgentType {
 		return *p
 	}
 	return core.AgentType("")
+}
+
+// SetResolvedProvider stores the resolved Pi provider identity for this run.
+// Called by the claim-time profile resolver (C2) once the provider tuple is
+// known, before or alongside Register. Thread-safe.
+func (h *RunHandle) SetResolvedProvider(provider string) {
+	h.resolvedProvider.Store(&provider)
+}
+
+// GetResolvedProvider returns the resolved Pi provider identity for this run
+// and whether it has been set. Returns ("", false) before SetResolvedProvider
+// is called (not-yet-resolved or non-Pi run) — callers MUST check the second
+// return value rather than treating "" as "resolved to the empty string",
+// since an empty resolved provider (harness-global default, no profile
+// override) is a distinct, legitimate value. Thread-safe.
+func (h *RunHandle) GetResolvedProvider() (string, bool) {
+	if p := h.resolvedProvider.Load(); p != nil {
+		return *p, true
+	}
+	return "", false
 }
 
 // RunRegistry is a concurrency-safe map of run_id → *RunHandle.
@@ -228,6 +260,29 @@ func (r *RunRegistry) LenForQueueLocal(name string) int {
 	n := 0
 	for _, h := range r.handles {
 		if h.QueueName == name && !h.Remote.Load() {
+			n++
+		}
+	}
+	r.mu.RUnlock()
+	return n
+}
+
+// LenForProvider returns the number of currently registered in-flight runs
+// whose resolved provider equals name. This is the per-provider tally consumed
+// by the provider-aware capacity gate (docs/design/pi-multi-provider-slot-accounting.md):
+// a provider may admit a new dispatch only while LenForProvider(name) is below
+// its configured slot ceiling, independent of the global MaxConcurrent ceiling
+// enforced by Len() and the per-queue ceiling enforced by LenForQueue. Runs
+// with no resolved provider (SetResolvedProvider never called — non-Pi runs,
+// or a Pi run not yet past claim-time resolution) are excluded from every
+// per-provider tally.
+//
+// Bead ref: hk-8ziid.1 (design), hk-8ziid.3 (wiring).
+func (r *RunRegistry) LenForProvider(name string) int {
+	r.mu.RLock()
+	n := 0
+	for _, h := range r.handles {
+		if p, ok := h.GetResolvedProvider(); ok && p == name {
 			n++
 		}
 	}

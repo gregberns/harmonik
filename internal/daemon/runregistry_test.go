@@ -236,3 +236,67 @@ func TestRunRegistry_SnapshotStableDuringMutation(t *testing.T) {
 		t.Fatalf("Snapshot len = %d, want 0..%d", snapshotLen, preload+mutators)
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resolved-provider seam (hk-8ziid.1, per-provider slot-accounting design).
+// docs/design/pi-multi-provider-slot-accounting.md
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestRunHandle_ResolvedProvider_UnsetByDefault asserts GetResolvedProvider
+// returns ("", false) before SetResolvedProvider is ever called — the
+// "not yet resolved" state distinct from "resolved to the empty string".
+func TestRunHandle_ResolvedProvider_UnsetByDefault(t *testing.T) {
+	h := runregistryFixtureHandle("bead-unresolved", "/wt/unresolved")
+	if got, ok := h.GetResolvedProvider(); ok || got != "" {
+		t.Fatalf("GetResolvedProvider() = (%q, %v), want (\"\", false)", got, ok)
+	}
+}
+
+// TestRunHandle_ResolvedProvider_SetGet asserts a value set via
+// SetResolvedProvider round-trips through GetResolvedProvider, including the
+// harness-global-default case (empty string, but resolved: ok == true).
+func TestRunHandle_ResolvedProvider_SetGet(t *testing.T) {
+	h := runregistryFixtureHandle("bead-resolved", "/wt/resolved")
+
+	h.SetResolvedProvider("openrouter")
+	if got, ok := h.GetResolvedProvider(); !ok || got != "openrouter" {
+		t.Fatalf("GetResolvedProvider() = (%q, %v), want (\"openrouter\", true)", got, ok)
+	}
+
+	// Resolved-to-empty (harness-global default, no profile override) is a
+	// distinct legitimate state from "unset" — ok must be true.
+	h.SetResolvedProvider("")
+	if got, ok := h.GetResolvedProvider(); !ok || got != "" {
+		t.Fatalf("GetResolvedProvider() after resolving to empty = (%q, %v), want (\"\", true)", got, ok)
+	}
+}
+
+// TestRunRegistry_LenForProvider asserts the per-provider tally counts only
+// runs resolved to the named provider and excludes unresolved runs, mirroring
+// LenForQueue's per-queue tally semantics.
+func TestRunRegistry_LenForProvider(t *testing.T) {
+	reg := daemon.NewRunRegistry()
+
+	openrouterA := runregistryFixtureHandle("bead-or-a", "/wt/or-a")
+	openrouterA.SetResolvedProvider("openrouter")
+	openrouterB := runregistryFixtureHandle("bead-or-b", "/wt/or-b")
+	openrouterB.SetResolvedProvider("openrouter")
+	ornith := runregistryFixtureHandle("bead-ornith", "/wt/ornith")
+	ornith.SetResolvedProvider("ornith")
+	unresolved := runregistryFixtureHandle("bead-unresolved", "/wt/unresolved")
+
+	reg.Register(runregistryFixtureRunID(t), openrouterA)
+	reg.Register(runregistryFixtureRunID(t), openrouterB)
+	reg.Register(runregistryFixtureRunID(t), ornith)
+	reg.Register(runregistryFixtureRunID(t), unresolved)
+
+	if n := reg.LenForProvider("openrouter"); n != 2 {
+		t.Fatalf("LenForProvider(openrouter) = %d, want 2", n)
+	}
+	if n := reg.LenForProvider("ornith"); n != 1 {
+		t.Fatalf("LenForProvider(ornith) = %d, want 1", n)
+	}
+	if n := reg.LenForProvider("nonexistent"); n != 0 {
+		t.Fatalf("LenForProvider(nonexistent) = %d, want 0", n)
+	}
+}

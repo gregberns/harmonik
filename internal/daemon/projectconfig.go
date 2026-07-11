@@ -806,6 +806,17 @@ type rawHarnessesPiConfig struct {
 	API        string                                 `yaml:"api"`          // OPTIONAL; Pi wire format, defaults to "openai" at launch when empty (hk-z13jz)
 	Fallback   rawHarnessesPiFallbackConfig           `yaml:"fallback"`
 	Profiles   map[string]rawHarnessesPiProfileConfig `yaml:"profiles"` // OPTIONAL; pi-provider-switch
+
+	// ProviderSlots is the OPTIONAL per-provider concurrency ceiling
+	// (docs/design/pi-multi-provider-slot-accounting.md, hk-8ziid). Keyed by
+	// the resolved `provider` string (the same value a profile's `provider`
+	// field or the top-level `provider` field carries — e.g. "openrouter",
+	// "ornith" — NOT the profile name), value is the max number of
+	// simultaneously in-flight runs the daemon will dispatch to that provider.
+	// A provider with no entry (or entry <= 0) is unbounded — gated only by
+	// the existing global max_concurrent and per-queue Workers ceilings,
+	// preserving today's behavior byte-for-byte when this block is absent.
+	ProviderSlots map[string]int `yaml:"provider_slots"`
 }
 
 // rawHarnessesConfig is the top-level harnesses: block in config.yaml.
@@ -884,6 +895,14 @@ type PiHarnessConfig struct {
 	// selected per-bead by a `profile:<name>` label (pi-provider-switch). Nil/empty
 	// map = no profiles defined (default path unaffected). Validated by ResolvePiConfig.
 	Profiles map[string]PiProfileConfig
+
+	// ProviderSlots is the OPTIONAL per-provider concurrency ceiling, keyed by
+	// resolved provider string (not profile name). See
+	// docs/design/pi-multi-provider-slot-accounting.md. Nil/empty map = every
+	// provider unbounded (today's behavior; the global/per-queue ceilings still
+	// apply). Consumed by RunRegistry.LenForProvider at the dispatch gate
+	// (hk-8ziid.3, C3 — not yet wired as of this design bead).
+	ProviderSlots map[string]int
 }
 
 // HarnessesConfig holds the harnesses: top-level block. Zero value when absent.
@@ -1917,6 +1936,14 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 			}
 		}
 	}
+	// Copy provider slot ceilings verbatim; nil/empty stays nil (unbounded).
+	var providerSlots map[string]int
+	if len(pi.ProviderSlots) > 0 {
+		providerSlots = make(map[string]int, len(pi.ProviderSlots))
+		for name, n := range pi.ProviderSlots {
+			providerSlots[name] = n
+		}
+	}
 	return HarnessesConfig{
 		Pi: PiHarnessConfig{
 			Provider:    pi.Provider,
@@ -1931,7 +1958,8 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 				Model:     pi.Fallback.Model,
 				APIKeyEnv: pi.Fallback.APIKeyEnv,
 			},
-			Profiles: profiles,
+			Profiles:      profiles,
+			ProviderSlots: providerSlots,
 		},
 	}
 }

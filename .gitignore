@@ -118,3 +118,8 @@ HANDOFF.md
 
 # Daemon-materialized per-worktree; must NOT be tracked (CHB-005/hk-jvzc2, hk-5isix fleet-wide rebase-abort)
 .claude/settings.json
+
+# Crew registry JSON is daemon-managed runtime state — must NOT be tracked
+# (fleet-wide rebase-abort: tracked admiral.json deletion dirtied the merge index).
+# Missions (*.md) stay tracked for reviewability (hk-ev9e).
+/.harmonik/crew/*.json

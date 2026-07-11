@@ -386,18 +386,21 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 
 // renderReviewerConstraint writes the reviewer read-only constraint block
 // shared by buildAgentTaskContent's "reviewer" phase and
-// buildReviewTargetContent (hk-805f7, hk-qts7r). Both call sites mandate
-// atomic-write of `.harmonik/review.json` via the daemon-owned
-// write-review-verdict path — this block exists to keep reviewers from
-// hand-writing review.json instead, per B3c (Step 0.4(c)).
+// buildReviewTargetContent (hk-805f7, hk-qts7r, hk-9w79a). Both call sites
+// mandate `harmonik write-review-verdict` as the sole path to
+// `.harmonik/review.json` — per pasteinject.go's reviewer kick-off seed
+// (hk-9w79a) and B3c (Step 0.4(c)), hand-writing the file via the Write tool
+// is banned because a mis-escaped backtick in a code-quoting notes string can
+// produce malformed JSON that hangs the verdict read for ~1hr. The CLI
+// JSON-encodes notes/flags and writes atomically (temp file + rename), so no
+// separate atomic-write instruction is needed here.
 func renderReviewerConstraint(sb *strings.Builder) {
 	sb.WriteString("## Reviewer Constraint (CRITICAL — read before acting)\n\n")
 	sb.WriteString("You are a READ-ONLY reviewer. You MUST NOT run any git command that changes repository state.\n")
 	sb.WriteString("Forbidden commands: `git reset`, `git checkout`, `git cherry-pick`, `git merge`, `git branch -d`, `git push`, `git rebase`, or any other state-mutating git operation.\n")
-	sb.WriteString("You operate on a detached-HEAD reviewer worktree. The only files you may write are `.harmonik/review.json` (your verdict) and any analysis scratch files under `.harmonik/`.\n")
+	sb.WriteString("You operate on a detached-HEAD reviewer worktree. Produce your verdict by running `harmonik write-review-verdict --verdict=<APPROVE|REQUEST_CHANGES|BLOCK> --notes=\"<your rationale>\" --flags=<comma,separated,tags>`.\n")
+	sb.WriteString("DO NOT hand-write `.harmonik/review.json` directly with the Write tool — always use the `harmonik write-review-verdict` command above, even when notes quotes code containing backticks. This command writes the file atomically (temp file + rename), so no separate atomic-write step is needed.\n")
 	sb.WriteString("Violating this constraint can corrupt the implementer's task branch and break the merge pipeline.\n")
-	// hk-qts7r: atomic-write the verdict so a remote watchdog never reads a half-written file.
-	sb.WriteString("ATOMIC WRITE: write `.harmonik/review.json` atomically — write the JSON to a temp file in `.harmonik/` (e.g. `review.json.tmp`) and then rename it over `review.json` (`mv review.json.tmp review.json`), so a partial file is never observed.\n")
 }
 
 // ReviewerFeedbackPayload carries the inputs for WriteReviewerFeedback.

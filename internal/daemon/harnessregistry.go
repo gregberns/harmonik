@@ -198,7 +198,7 @@ func pinnedHarnessLaunchSpecBuilder(
 //  4. Render pre-exec bus messages (CHB-018 subset).
 //  5. Return LaunchSpec + claudeRunArtifacts{resolvedAgentType: agentType}.
 func buildCodexRoutedLaunchSpec(
-	_ context.Context,
+	ctx context.Context,
 	rc claudeRunCtx,
 	h handlercontract.Harness,
 	agentType core.AgentType,
@@ -231,9 +231,9 @@ func buildCodexRoutedLaunchSpec(
 		ExtraContext:        rc.extraContext,
 		BaseBranch:          rc.baseBranch,
 	}
-	if err := workspace.WriteAgentTask(rc.workspacePath, agentTaskPayload); err != nil {
+	if err := workspace.WriteAgentTaskVia(ctx, rc.runner, rc.workspacePath, agentTaskPayload); err != nil {
 		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
-			"daemon: buildCodexRoutedLaunchSpec: WriteAgentTask: %w", err)
+			"daemon: buildCodexRoutedLaunchSpec: WriteAgentTaskVia: %w", err)
 	}
 
 	// Step 2: convert to RunCtx and call harness.LaunchSpec.

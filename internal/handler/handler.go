@@ -92,11 +92,16 @@ type LaunchSpec struct {
 	// Spec: specs/claude-hook-bridge.md §4.6.CHB-023.
 	StdoutWrapper func(io.Reader) io.Reader
 
-	// StdinDevNull, when true, is forwarded to SubstrateSpawn.StdinDevNull so
-	// the substrate can redirect stdin from /dev/null. Only meaningful when
-	// Substrate is non-nil. See SubstrateSpawn.StdinDevNull for semantics.
+	// StdinDevNull, when true, signals that the subprocess needs stdin closed
+	// at startup rather than left open and unfed. On the substrate path it is
+	// forwarded to SubstrateSpawn.StdinDevNull so the substrate can redirect
+	// stdin from /dev/null (see SubstrateSpawn.StdinDevNull for semantics). On
+	// the direct exec.CommandContext path (Substrate nil), when HandlerSpec is
+	// also nil, Launch honors it by closing the stdin pipe immediately so
+	// argv-driven ProcessExit harnesses (pi, codex) see startup EOF instead of
+	// blocking on an unfed pipe.
 	//
-	// Bead: hk-rpr6.
+	// Bead: hk-rpr6, hk-y20d2.
 	StdinDevNull bool
 
 	// Terminal, when true, is forwarded to SubstrateSpawn.Terminal to mark this

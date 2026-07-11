@@ -432,7 +432,9 @@ func executeCognitionGate(
 			}()
 		}
 		eventSrc := newChanAgentEventSource(tapCh)
-		readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, deps.agentReadyTimeout)
+		// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
+		readyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil)
+		readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, readyTimeout)
 		readyCancel()
 
 		if readyErr == ErrAgentReadyTimeout {

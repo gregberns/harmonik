@@ -176,6 +176,20 @@ type Config struct {
 	// Bead ref: hk-gql20.18.
 	AgentReadyTimeout time.Duration
 
+	// RemoteAgentReadyTimeout is the agent_ready wait window applied to a
+	// dispatch routed to a REMOTE (SSH worker) node instead of AgentReadyTimeout.
+	//
+	// A zero value falls back to defaultRemoteAgentReadyTimeout (210s as of
+	// hk-96d7w) declared in agentready.go. Remote spawns clear reverse-SSH-tunnel
+	// readiness on top of the claude cold-start itself and, for the reviewer
+	// node, may compete with a resident implementer agent for CPU/disk on the
+	// same worker — the separate, longer default covers that extra latency
+	// without loosening the local timeout.
+	//
+	// Spec ref: specs/handler-contract.md §4.9 HC-056.
+	// Bead ref: hk-96d7w (LOCAL slice of hk-5z1f0).
+	RemoteAgentReadyTimeout time.Duration
+
 	// Substrate is the optional tmux substrate for handler.Launch.
 	//
 	// When non-nil it is injected into workLoopDeps.substrate so that each bead

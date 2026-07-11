@@ -1039,7 +1039,19 @@ EXAMPLES
 	// Bead ref: hk-hzj.
 	var agentReadyTimeoutFlag time.Duration
 	flag.DurationVar(&agentReadyTimeoutFlag, "agent-ready-timeout", 0,
-		"per-dispatch timeout for agent_ready event; 0 uses the built-in default (90s) (hk-hzj)")
+		"per-dispatch timeout for agent_ready event; 0 uses the built-in default (150s) (hk-hzj)")
+
+	// --remote-agent-ready-timeout: HC-056 agent_ready timeout applied to a
+	// dispatch routed to a REMOTE (SSH worker) node instead of
+	// --agent-ready-timeout. A remote spawn additionally clears reverse-SSH-
+	// tunnel readiness and, for the reviewer node, may compete with a resident
+	// implementer agent for CPU/disk on the same worker — the separate, longer
+	// default covers that extra latency without loosening the local timeout.
+	//
+	// Bead ref: hk-96d7w (LOCAL slice of hk-5z1f0).
+	var remoteAgentReadyTimeoutFlag time.Duration
+	flag.DurationVar(&remoteAgentReadyTimeoutFlag, "remote-agent-ready-timeout", 0,
+		"per-dispatch timeout for agent_ready event on a REMOTE worker; 0 uses the built-in default (210s) (hk-96d7w)")
 
 	// --spawn-stagger: minimum interval between consecutive tmux window creations.
 	// Under a concurrent dispatch burst all claude agents cold-start simultaneously,
@@ -1314,7 +1326,8 @@ EXAMPLES
 		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...),
 		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash:         resolvedHash,                        // ldflags stamp or runtime/debug fallback (hk-mz0x4, hk-v3nv)
-		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (90s)
+		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (150s)
+		RemoteAgentReadyTimeout:  remoteAgentReadyTimeoutFlag,         // hk-96d7w: remote-worker ready timeout; 0 = built-in default (210s)
 		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag,        // hk-ymav1: bandwidth auto-tuner
 		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-30vlb: default to dot (embedded standard-bead.dot)
 		TargetBranch:             targetBranchFlag,                    // hk-mkxw1: merge target branch

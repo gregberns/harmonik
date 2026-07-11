@@ -718,7 +718,9 @@ func runReviewLoop(
 				}
 
 				implEventSrc := newChanAgentEventSource(implTapCh)
-				implReadyErr := waitAgentReady(implReadyCtx, runID, implEventSrc, implAdapter, deps.agentReadyTimeout)
+				// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
+				implReadyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil)
+				implReadyErr := waitAgentReady(implReadyCtx, runID, implEventSrc, implAdapter, implReadyTimeout)
 				implReadyCancel() // always release the watcher-done goroutine above
 				// hk-isq02: the ready-wait has returned — stop the resume-phase fallback
 				// goroutine promptly so it does not emit a stale agent_ready after we have
@@ -1453,7 +1455,10 @@ func runReviewLoop(
 			}
 
 			revEventSrc := newChanAgentEventSource(revTapCh)
-			revReadyErr := waitAgentReady(revReadyCtx, runID, revEventSrc, revAdapter, deps.agentReadyTimeout)
+			// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
+			// This is the remote reviewer-node agent_ready wait that hk-5z1f0 diagnosed.
+			revReadyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil)
+			revReadyErr := waitAgentReady(revReadyCtx, runID, revEventSrc, revAdapter, revReadyTimeout)
 			revReadyCancel() // always release the watcher-done goroutine above
 
 			if revReadyErr == ErrAgentReadyTimeout {

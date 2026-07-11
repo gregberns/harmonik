@@ -504,6 +504,16 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.14.
 	agentReadyTimeout time.Duration
 
+	// remoteAgentReadyTimeout is agentReadyTimeout's counterpart for a dispatch
+	// routed to a REMOTE (SSH worker) node. Zero → defaultRemoteAgentReadyTimeout
+	// (210s). Sourced from Config.RemoteAgentReadyTimeout (zero-value safe).
+	// Resolved via effectiveAgentReadyTimeout at each waitAgentReady call site
+	// that has a remote/local signal in scope.
+	//
+	// Spec ref: specs/handler-contract.md §4.9 HC-056.
+	// Bead ref: hk-96d7w (LOCAL slice of hk-5z1f0).
+	remoteAgentReadyTimeout time.Duration
+
 	// postAgentReadyHangTimeout is the duration the review-loop's post-agent_ready
 	// hang detector waits for any activity after agent_ready before declaring the
 	// implementer hung and failing fast (hk-a2okh). Zero → defaultPostAgentReadyHangTimeout
@@ -1131,6 +1141,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		harnessRegistry:            harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
 		substrate:                  cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
 		agentReadyTimeout:          cfg.AgentReadyTimeout,
+		remoteAgentReadyTimeout:    cfg.RemoteAgentReadyTimeout, // hk-96d7w: remote-worker agent_ready wait window
 		cancelOnQueueDrain:         cfg.CancelOnQueueDrain,
 		projectCfg:                 cfg.ProjectCfg,
 		defaultHarness:             cfg.DefaultHarness,        // hk-ytzj2: tier-4 global harness default wired from Config
@@ -4789,7 +4800,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			}
 
 			eventSrc := newChanAgentEventSource(tapCh)
-			readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, deps.agentReadyTimeout)
+			// hk-96d7w: remote dispatch (rbc != nil) gets the longer remote window.
+			readyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, rbc != nil)
+			readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, readyTimeout)
 			readyCancel() // always release the watcher-done goroutine above
 
 			if readyErr == ErrAgentReadyTimeout {

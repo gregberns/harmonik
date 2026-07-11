@@ -10,6 +10,20 @@
 # Direction log — temporal sequencing intent across direction changes
 
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
+
+## 2026-07-11 ~00:40Z — admiral (via captain, events 019f4e97/019f4e9d): WATCH RESTORED + hk-vdqe2 staffed · expires: 2026-07-13T00:00:00Z
+WHAT: (1) Restored the always-on watch triage session (crew watch, spawned 00:39Z) — KNOWN
+      staffing gap, admiral's autonomous call: watch-down >43h dumped every stall/release/
+      paused-queue escalation straight on the captain. (2) Staffed NEW P1 hk-vdqe2 (keeper
+      clear->brief race, cycle.go completeCycleTail) onto stilgar's lane.
+WHY:  restore escalation-filtering so the captain isn't triaging ops noise inline while
+      driving the flagship; hk-vdqe2 is operator-reported, seen repeatedly.
+ORDER: hk-vdqe2 sequences AFTER the two redeploy-gate beads (hk-x2spu + hk-ih5k6 = critical
+      path) and AHEAD of rfhaw/rg526. HARD MERGE GATE (operator, non-negotiable): rigorous
+      ACTUAL e2e twin/scenario-harness repro of the slow-handoff/busy-pane race + a PERMANENT
+      regression test that fails on current code / passes after fix — NOT unit tests alone.
+RETURN-PATH: confirm watch online in `comms who`; check stilgar picks up hk-vdqe2 after the
+      gate beads. 2-lane split unchanged (kynes paused/preserved + stilgar gate-clear+vdqe2).
 > This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
 
 ## 2026-07-09 ~02:33Z — admiral (relaying operator: v0.5.0 SHIPPED → fleet QUIESCED) · expires: 2026-07-11T00:00:00Z

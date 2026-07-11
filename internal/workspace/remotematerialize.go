@@ -99,6 +99,32 @@ func removeRemoteFile(ctx context.Context, runner tmux.CommandRunner, absPath st
 	return nil
 }
 
+// WriteFileVia writes content to absPath either onto the worker (runner != nil)
+// or onto box A's local filesystem (runner == nil, byte-identical to a plain
+// os.MkdirAll+os.WriteFile — NFR7). Generic content-agnostic sibling of
+// WriteReviewTargetVia/WriteAgentTaskVia for callers with no dedicated payload
+// type (e.g. the DOT cognition-gate task brief, hk-9fe2).
+func WriteFileVia(ctx context.Context, runner tmux.CommandRunner, absPath string, content []byte, perm os.FileMode) error {
+	if runner == nil {
+		if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+			return fmt.Errorf("workspace: WriteFileVia mkdir: %w", err)
+		}
+		return os.WriteFile(absPath, content, perm)
+	}
+	return writeRemoteFile(ctx, runner, absPath, content)
+}
+
+// RemoveFileVia removes absPath either on the worker (runner != nil) or on box
+// A's local filesystem (runner == nil, byte-identical to os.Remove — NFR7).
+// Generic content-agnostic sibling of RemoveReviewVerdictVia for callers with
+// no dedicated path helper (e.g. the DOT cognition-gate verdict, hk-9fe2).
+func RemoveFileVia(ctx context.Context, runner tmux.CommandRunner, absPath string) error {
+	if runner == nil {
+		return os.Remove(absPath)
+	}
+	return removeRemoteFile(ctx, runner, absPath)
+}
+
 // WriteReviewTargetVia writes the per-launch review-target.md either onto the
 // worker (runner != nil) or onto box A's local filesystem (runner == nil,
 // byte-identical to WriteReviewTarget — NFR7).

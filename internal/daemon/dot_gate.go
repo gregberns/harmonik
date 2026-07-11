@@ -105,6 +105,12 @@ func dispatchDotGateNode(
 	extraContext string,
 	baseBranch string,
 	runner ltmux.CommandRunner,
+	// remote-substrate: worker-launch params threaded the same way as
+	// dispatchDotAgenticNode (dot_cascade.go) — all empty for a LOCAL run,
+	// byte-identical to the pre-hk-9fe2 box-A-only path (NFR7).
+	workerBinaryPath string,
+	workerSessionName string,
+	workerSessionCwd string,
 ) (core.Outcome, error) {
 	gateRef := core.GateRef(node.GateRef)
 
@@ -129,7 +135,7 @@ func dispatchDotGateNode(
 		evalFn = buildMechanismGateEval(cp)
 	case core.ModeTagCognition:
 		var cogErr error
-		evalFn, cogErr = buildCognitionGateEval(deps, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, runner)
+		evalFn, cogErr = buildCognitionGateEval(deps, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
 		if cogErr != nil {
 			return core.Outcome{}, fmt.Errorf("dot: gate node %q: build cognition eval: %w", node.ID, cogErr)
 		}
@@ -239,6 +245,9 @@ func buildCognitionGateEval(
 	extraContext string,
 	baseBranch string,
 	runner ltmux.CommandRunner,
+	workerBinaryPath string,
+	workerSessionName string,
+	workerSessionCwd string,
 ) (handler.GateEvalFunc, error) {
 	dp := cp.Evaluator.DelegationPath
 	if dp == nil {
@@ -246,7 +255,7 @@ func buildCognitionGateEval(
 	}
 
 	return func(ctx context.Context, run *core.Run, nodeID core.NodeID, gateRef core.GateRef) (*core.GateDecisionPayload, error) {
-		return executeCognitionGate(ctx, deps, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, gateRef, runner)
+		return executeCognitionGate(ctx, deps, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, gateRef, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
 	}, nil
 }
 
@@ -272,22 +281,37 @@ func executeCognitionGate(
 	baseBranch string,
 	gateRef core.GateRef,
 	runner ltmux.CommandRunner,
+	workerBinaryPath string,
+	workerSessionName string,
+	workerSessionCwd string,
 ) (*core.GateDecisionPayload, error) {
-	// Remove any stale verdict from a prior attempt.
+	// Remove any stale verdict from a prior attempt. Routed through runner so a
+	// REMOTE run (runner != nil) clears the verdict on the WORKER's filesystem,
+	// not box A's (hk-9fe2).
 	verdictPath := filepath.Join(wtPath, gateVerdictRelPath)
-	_ = os.Remove(verdictPath)
+	_ = workspace.RemoveFileVia(ctx, runner, verdictPath)
 
-	// Write the gate-task.md brief.
-	if err := writeCognitionGateTask(wtPath, cp, dp, run, string(beadID), beadTitle, beadDescription, node.ID); err != nil {
+	// Write the gate-task.md brief. Routed through runner so a REMOTE run
+	// (runner != nil) writes the brief onto the WORKER's filesystem — a
+	// box-A-local write would leave the worker's gate evaluator with no brief
+	// to read (hk-9fe2).
+	if err := writeCognitionGateTask(ctx, runner, wtPath, cp, dp, run, string(beadID), beadTitle, beadDescription, node.ID); err != nil {
 		return nil, fmt.Errorf("cognition gate %q: write gate-task.md: %w", gateRef, err)
 	}
 
 	// Build launch spec. Use ReviewLoopPhaseReviewer for a fresh session with
 	// no resume, mirroring how the reviewer is launched.
 	rc := claudeRunCtx{
-		runID:             runID,
-		beadID:            string(beadID),
-		workspacePath:     wtPath,
+		runID:         runID,
+		beadID:        string(beadID),
+		workspacePath: wtPath,
+		// remote-substrate (hk-9fe2): thread the run's CommandRunner + worker
+		// harmonik path into the cognition-gate's claudeRunCtx the same way
+		// dispatchDotAgenticNode does (dot_cascade.go), so the trust/settings/
+		// agent-task materialization writes land on the WORKER for a REMOTE
+		// DOT run and stay box-A-local for a LOCAL run (runner == nil, NFR7).
+		runner:            runner,
+		workerBinaryPath:  workerBinaryPath,
 		daemonSocket:      daemonSocket,
 		workflowMode:      core.WorkflowModeDot,
 		phase:             handlercontract.ReviewLoopPhaseReviewer,
@@ -318,20 +342,21 @@ func executeCognitionGate(
 		spec.Args = append(deps.handlerArgs, spec.Args...)
 	}
 
-	// TODO(hk-538l): the cognition-gate launch path is NOT remote-substrate-aware —
-	// rc.runner / rc.workerBinaryPath are unset (box-A), the daemonSocket is the box-A
-	// unix path (not the worker reverse-tunnel TCP), newPerRunSubstrate is passed nil,
-	// and os.Remove/writeCognitionGateTask operate on the box-A wtPath. LATENT: the
-	// default workflow.dot uses a tool-command commit_gate, not a cognition gate, so
-	// no live remote run exercises this path today. To make it remote-correct, thread
-	// the run's CommandRunner + worker binary/session/cwd through dispatchDotGateNode
-	// → executeCognitionGate the same way reviewloop.go / dot_cascade.go now do.
-	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, nil)
+	// remote-substrate (hk-9fe2): thread the run's runner (SSHRunner for remote,
+	// nil for local) into the per-run substrate so a REMOTE cognition-gate node
+	// spawns on the WORKER, mirroring dispatchDotAgenticNode (dot_cascade.go).
+	// LATENT: the default workflow.dot uses a tool-command commit_gate, not a
+	// cognition gate, so no live remote run exercises this path today.
+	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runner)
 	var substrate handler.Substrate = deps.substrate
 	var pasteTarget handler.Substrate = deps.substrate
 	if prs != nil {
 		substrate = prs
 		pasteTarget = prs
+		if runner != nil && workerSessionName != "" {
+			prs.workerSessionName = workerSessionName
+			prs.workerSessionCwd = workerSessionCwd
+		}
 	}
 	spec.Substrate = substrate
 
@@ -468,6 +493,8 @@ func executeCognitionGate(
 // evaluator subprocess. The brief includes the gate's identity, the delegation
 // path role, the run context, and clear instructions for writing gate-verdict.json.
 func writeCognitionGateTask(
+	ctx context.Context,
+	runner ltmux.CommandRunner,
 	wtPath string,
 	cp core.ControlPoint,
 	dp core.DelegationPath,
@@ -478,9 +505,6 @@ func writeCognitionGateTask(
 	nodeID string,
 ) error {
 	taskPath := filepath.Join(wtPath, gateTaskRelPath)
-	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
-		return fmt.Errorf("mkdir: %w", err)
-	}
 
 	ctxJSON, _ := json.MarshalIndent(run.Context, "", "  ")
 
@@ -547,7 +571,7 @@ Write the JSON file now, then exit with /quit.
 		gateVerdictRelPath,
 	)
 
-	return os.WriteFile(taskPath, []byte(content), 0o644)
+	return workspace.WriteFileVia(ctx, runner, taskPath, []byte(content), 0o644)
 }
 
 // parseGateVerdict parses raw gate-verdict.json bytes into a GateAction.

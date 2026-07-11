@@ -978,6 +978,7 @@ func driveDotWorkflow(
 				ctx, deps, runID, run, wtPath, daemonSocket, node,
 				iterationCount, resolvedModel, resolvedEffort,
 				beadID, beadTitle, beadDescription, extraContext, baseBranch, runner,
+				workerBinaryPath, workerSessionName, workerSessionCwd,
 			)
 			if gateErr != nil {
 				return dotWorkflowResult{

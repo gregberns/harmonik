@@ -21,33 +21,64 @@ package daemon_test
 //   reviewloop.go:349               review-loop implementer     runner    SAFE (LIVE FIX, covered)
 //   reviewloop.go:1267              review-loop REVIEWER        nil       SAFE (intentional, box A)
 //   dot_cascade.go:1078             DOT agentic node            runner    SAFE (LIVE FIX, covered)
-//   dot_gate.go:325                 DOT cognition-gate          nil       LEAK   (hk-9fe2, latent)
+//   dot_gate.go:329                 DOT cognition-gate          runner    SAFE (LIVE FIX, covered; hk-9fe2)
 //   crewstart.go:247                crew test-double fallback   nil       N/A    (not an agent run)
 //
-// The two LIVE-fixed paths already have non-nil sentinel assertions in
-// launch_substrate_runner_threading_hkfxy9_test.go. This file documents the
-// remaining four. Each is a t.Skip with the precise reason it is NOT a passing
-// non-nil assertion here — either it is correctly nil by design, it is a confirmed
-// latent leak not yet fixed (so a non-nil assert would be wrong), or it is only
-// reachable through real-SSH / heavy-fixture machinery that has no pure-local seam.
+// The three LIVE-fixed paths (review-loop implementer, DOT agentic node, DOT
+// cognition-gate) have non-nil sentinel assertions — the first two in
+// launch_substrate_runner_threading_hkfxy9_test.go, the third
+// (TestDotCognitionGateSubstrateRunnerLeak_hk9fe2) below. This file documents
+// the remaining three. Each is a t.Skip with the precise reason it is NOT a
+// passing non-nil assertion here — either it is correctly nil by design, or it
+// is only reachable through real-SSH / heavy-fixture machinery that has no
+// pure-local seam.
 //
 // The skips are intentional regression DOCUMENTATION, not stubs: when a leak is
 // closed (hk-9fe2) or a local seam is added for the single-mode/reviewer paths,
 // the matching Skip should be replaced with the live assertion described in its body.
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
+
+// hk9fe2FakeGateRegistry is a minimal core.Registry stub that resolves exactly
+// one Cognition-tagged Gate ControlPoint by name. Only LookupByName is exercised
+// by dispatchDotGateNode; the other Registry methods are unused no-ops.
+type hk9fe2FakeGateRegistry struct {
+	cp core.ControlPoint
+}
+
+func (r hk9fe2FakeGateRegistry) Register(core.ControlPoint) error { return nil }
+
+func (r hk9fe2FakeGateRegistry) LookupByName(name string) (core.ControlPoint, bool) {
+	if name == r.cp.Name {
+		return r.cp, true
+	}
+	return core.ControlPoint{}, false
+}
+
+func (r hk9fe2FakeGateRegistry) LookupByTrigger(string) []core.ControlPoint {
+	return []core.ControlPoint{}
+}
+
+func (r hk9fe2FakeGateRegistry) LookupByAttachPoint(core.AttachPoint) []core.ControlPoint {
+	return []core.ControlPoint{}
+}
+
+func (r hk9fe2FakeGateRegistry) All() []core.ControlPoint { return []core.ControlPoint{r.cp} }
 
 // hkfxy9ParityObserver installs the shared substrate-runner observer and returns
 // the capture channel + a cleanup-registering helper, mirroring the setup used by
-// TestReviewLoopThreadsRunnerIntoSubstrate_hkfxy9. Kept here so a future un-skip
-// can drop straight into the existing idiom without re-deriving the seam.
-//
-//nolint:unused // retained for the un-skip path; see per-test bodies below.
+// TestReviewLoopThreadsRunnerIntoSubstrate_hkfxy9. Used directly by
+// TestDotCognitionGateSubstrateRunnerLeak_hk9fe2 below.
 func hkfxy9ParityObserver(t *testing.T) chan tmux.CommandRunner {
 	t.Helper()
 	captured := make(chan tmux.CommandRunner, 4)
@@ -116,38 +147,94 @@ func TestReviewLoopReviewerSubstrateRunnerIsNil_hkfxy9(t *testing.T) {
 		"load-bearing comment at reviewloop.go:1197-1204 are the guarantee.")
 }
 
-// TestDotCognitionGateSubstrateRunnerLeak_hk9fe2 documents the CONFIRMED latent
-// leak at dot_gate.go:325: executeCognitionGate calls
-// newPerRunSubstrate(deps.substrate, deps.handlerBinary, nil) with a HARDCODED nil
-// runner. For a REMOTE DOT run whose default graph used a cognition gate, the gate
-// agent's claude PROCESS would spawn against box A's tmux/-default session, not the
-// worker — the same wedge class as hk-fxy9 / hk-538l, but for the gate node.
+// TestDotCognitionGateSubstrateRunnerLeak_hk9fe2 is the hk-9fe2 regression: it
+// proves the DOT cognition-gate launch path (dispatchDotGateNode →
+// buildCognitionGateEval → executeCognitionGate, dot_gate.go) now passes the
+// non-nil CommandRunner it receives into newPerRunSubstrate, mirroring
+// TestDotThreadsRunnerIntoSubstrate_hkfxy9 for the agentic-node path. Before the
+// fix this call site hardcoded nil, so a REMOTE DOT run whose graph used a
+// cognition gate would spawn the gate-evaluator's claude PROCESS against box A's
+// tmux/-default session (absent on the worker) instead of the worker.
 //
-// Per the chani-rs-integ task guidance, a CONFIRMED leak gets a documented skip,
-// NOT a passing non-nil assertion (which would fail today). The leak is NOT fixed
-// in this test family because it is NOT a one-line runner pass-through: the
-// in-code TODO(hk-538l) at dot_gate.go:317-324 spells out that the runner is not
-// even in scope — neither dispatchDotGateNode (dot_gate.go:90) nor
-// executeCognitionGate (dot_gate.go:252) takes a `runner` parameter, and making
-// the path remote-correct also requires threading the worker binary path,
-// worker session name/cwd, and making os.Remove + writeCognitionGateTask
-// runner-aware. That is multi-function plumbing = scope-creep; it belongs to
-// hk-9fe2, not here.
-//
-// LATENCY NOTE (why no live run hits it today): the default workflow.dot uses a
-// tool-command commit_gate, not a cognition gate, so no production remote run
-// exercises dot_gate.go:325 — hence "latent". When hk-9fe2 threads the runner,
-// replace this Skip with: drive ExportedDriveDotWorkflowWithRunner over a graph
-// whose start node is a cognition-gate node (with a cpRegistry holding a
-// Cognition-mode Gate ControlPoint) and assert the captured runner is the
-// hk3susFakeRunner sentinel, mirroring TestDotThreadsRunnerIntoSubstrate_hkfxy9.
+// The graph's start node is a Gate node whose gate_ref resolves (via
+// hk9fe2FakeGateRegistry) to a Cognition-tagged ControlPoint, so
+// dispatchDotGateNode routes into buildCognitionGateEval/executeCognitionGate —
+// the exact call chain that previously hardcoded nil at dot_gate.go:329.
 func TestDotCognitionGateSubstrateRunnerLeak_hk9fe2(t *testing.T) {
-	t.Skip("hk-9fe2: dot_gate.go:325 cognition-gate newPerRunSubstrate is passed a " +
-		"HARDCODED nil — confirmed latent box-A leak (no `runner` in scope; the " +
-		"TODO(hk-538l) at dot_gate.go:317-324 documents the multi-function fix). " +
-		"Latent: the default workflow.dot uses a mechanism commit_gate, so no live " +
-		"remote run hits it. Flip to a non-nil sentinel assert once hk-9fe2 threads " +
-		"the runner through dispatchDotGateNode → executeCognitionGate.")
+	skipRealDaemonE2EInShort(t) // spawns real tmux pane (sleep 3600 hang-handler) — reap can time out, leaving zombie pane that wedges sibling tests
+	// NOT parallel: installs a process-global test seam + isolates ~/.claude.json.
+	rlIsolateClaudeConfig(t)
+
+	projectDir := implReadyFixtureProjectDir(t)
+	wtPath, parentSHA := implReadyFixtureWorktree(t, projectDir)
+	scriptPath := hkfxy9HangHandlerScript(t)
+	adapterReg := implReadyFixtureAdapterRegistry(t)
+
+	captured := hkfxy9ParityObserver(t)
+
+	gateCP := core.ControlPoint{
+		Name: "hk9fe2_cognition_gate",
+		Kind: core.KindGate,
+		Evaluator: core.Evaluator{
+			Mode: core.ModeTagCognition,
+			DelegationPath: &core.DelegationPath{
+				Role:              "gate-evaluator",
+				ModelClass:        "reviewer-tier-1",
+				InputSchemaRef:    "hk9fe2-input",
+				ResponseSchemaRef: "hk9fe2-response",
+				PromptTemplateRef: "hk9fe2-prompt",
+			},
+		},
+	}
+
+	graph := &dot.Graph{
+		StartNodeID:     "gate1",
+		TerminalNodeIDs: []string{"close"},
+		Nodes: []*dot.Node{
+			{
+				ID:      "gate1",
+				Type:    core.NodeTypeGate,
+				GateRef: gateCP.Name,
+			},
+		},
+		UnknownAttrs: map[string]string{},
+	}
+
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:           &stubBeadLedger{},
+		Bus:                 &stubEventCollector{},
+		ProjectDir:          projectDir,
+		HandlerBinary:       "/bin/sh",
+		HandlerArgs:         []string{scriptPath},
+		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		WorkflowModeDefault: core.WorkflowModeDot,
+		AdapterRegistry2:    adapterReg,
+		AgentReadyTimeout:   100 * time.Millisecond,
+		HookStore:           daemon.ExportedNewHookSessionStore(),
+		CPRegistry:          hk9fe2FakeGateRegistry{cp: gateCP},
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	want := hk3susFakeRunner{}
+	_ = daemon.ExportedDriveDotWorkflowWithRunner(
+		ctx, deps, implReadyFixtureRunID(t), core.BeadID("hk-9fe2-dot-gate-substrate-001"),
+		"gate task", "bead body",
+		wtPath, parentSHA, graph, want,
+	)
+
+	select {
+	case got := <-captured:
+		if got == nil {
+			t.Fatal("DOT cognition-gate newPerRunSubstrate runner is nil; the gate-evaluator claude PROCESS would spawn against box A's tmux/-default session, not the worker (hk-9fe2 regression)")
+		}
+		if _, ok := got.(hk3susFakeRunner); !ok {
+			t.Fatalf("DOT cognition-gate substrate runner = %T; want the sentinel hk3susFakeRunner passed into driveDotWorkflow", got)
+		}
+	default:
+		t.Fatal("substrate-runner seam was never invoked — DOT cognition-gate launch path did not reach newPerRunSubstrate")
+	}
 }
 
 // TestCodexRoutedSpecWriteAgentTaskBoxALeak_hkr36v documents a SIBLING leak found

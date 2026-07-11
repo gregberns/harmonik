@@ -1,0 +1,72 @@
+<!-- DRAFT — proposed replacement for .harmonik/context/project.yaml (2026-07-11
+     captain-startup revamp, cutover Step 1.1 / 02-cutover-and-open-questions.md §2.7
+     [B] "friction-P1 rule" + [B, dangling] "Step 0a" header fix + 00-SYNTHESIS.md §6
+     "State tier" table row "project.yaml (28 lines) | KEEP; fix 'STARTUP Step 0a'
+     refs → manifest"). Do NOT deploy as live.
+     Landing notes:
+       1. Strip this HTML comment at landing so the in-file header comment (below) is
+          the first bytes again, same "strip the DRAFT banner" cutover step as the
+          other drafts (02-cutover §3 (iv)).
+       2. This is an ADDITIVE landing (cutover Step 1.1) — nothing reads the two new
+          blocks at boot yet; landing this file is safe any time. It only becomes the
+          canonical MOVE destination once orchestrator-rules/SKILL.md's own
+          "MOVE-when-home-exists" lines (draft L68–72) are deleted in the SAME change
+          that flips this draft live — a rule leaves its old home only in the commit
+          where its new home lands (02-cutover ground rule (ii)).
+       3. The header comment's "STARTUP Step 0a" pointer is fixed to "Step 0a/0b" to
+          match the live `.claude/skills/captain/STARTUP.md` section, which already
+          combines tier-3 and tier-2 reads under one "Step 0a/0b" heading.
+-->
+<!-- TIER: 3 (operational state, weeks cadence)
+     LOADED BY: captain @ STARTUP Step 0a/0b; NOT loaded by crews or implementers
+     OWNER: captain, updated when phase changes / decisions are locked / guardrails shift
+     DO NOT PUT HERE: time-boxed operator directives + lane priorities (→ captain-lanes.md tier-2);
+                      standing behavioral rules (→ orchestrator-rules skill); this-session state (→ HANDOFF.md tier-1) -->
+
+# Durable project-level state only. Captain reads on every boot (STARTUP.md Step 0a/0b)
+# BEFORE re-deriving state. Five blocks: phase, forbidden_actions, locked_decisions,
+# friction_guardrail, endgame_and_beta_status.
+
+phase: operational  # operational | bootstrap | maintenance | winding-down
+
+# Actions the captain must NEVER take without explicit operator confirmation.
+forbidden_actions:
+  - force-push to main
+  - delete a named queue that has pending or active items
+  - rm any worktree without confirming it is orphaned (no live run, no pending commit)
+  - submit beads to the main queue from a crew (crews use their own named queue)
+  - widen keeper warn/act band (operator HARD-NO; see feedback_keeper_band_no_retune.md)
+
+# Architectural decisions locked as of 2026-04-19 (see STATUS.md §Decisions).
+# Reopening requires strong new evidence + explicit operator request.
+locked_decisions:
+  - single-daemon-per-project via pidfile lock (hk-li14r)
+  - worktrees+merges over agent-mail reservation (Gas Town)
+  - twin-binaries, not in-process mocks
+  - tmux inspectability required
+  - no verifier subsystem
+  - beads owns terminal bead transitions; harmonik daemon does NOT call br close directly
+
+# Friction gets priority — because we are dogfooding (03-operator-decisions.md Q10:
+# "keep the behavior; tag strength is negotiable" — operator leans keep: "if agents
+# don't fix their own painpoints who will?"). Guardrail, not a suggestion:
+friction_guardrail:
+  rule: >
+    Any bead labeled `phase2-dogfood-friction` is filed at P1 minimum and jumps ahead
+    of substantive feature work.
+  why: >
+    The tool only gets good through its own users filing and fixing what hurts —
+    this is the dogfooding engine; keep it working.
+
+# Near-term endgame + current tooling-maturity caveats. Relocated here from
+# orchestrator-rules/SKILL.md per 02-cutover §2.7 [B] (that skill is a behavioral
+# contract, not project state — these two facts are project state, not rules).
+endgame_and_beta_status:
+  phase3_dot: >
+    PHASE-3 DOT is the near-term endgame. DOT-defined bead-process workflow is the
+    planned replacement for `--review-loop`.
+  kerf_beta: >
+    Kerf is in beta. Use `kerf next` as the primary dispatch surface but expect
+    friction (`kerf next` may report empty for works lacking `bead_filter` clauses;
+    `kerf triage` mixes good and phantom suggestions). Log issues to
+    docs/kerf-beta-feedback.md.

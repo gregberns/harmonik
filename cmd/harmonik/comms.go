@@ -1198,17 +1198,21 @@ EXAMPLES
 }
 
 // runCommsRecvSubcommand implements `harmonik comms recv [--follow]` (agent-comms
-// spec §2.2 C2/C5/C3, beads hk-nnwaa T8 and hk-oqmrs T9).
+// spec §2.2 C2/C5/C3, beads hk-nnwaa T8, hk-oqmrs T9, and hk-8xspi B1).
 //
-// Without --follow: sends one comms-recv op to the daemon, drains the backlog
-// for the agent's durable cursor, prints matched messages, and exits.
+// Without --follow/--wait: sends one comms-recv op to the daemon, drains the
+// backlog for the agent's durable POLL cursor, prints matched messages, and
+// exits.
 //
-// With --follow: drains the backlog via comms-recv (same as above), then
-// opens a subscribe connection anchored at cursor_after (the position returned
-// by the comms-recv op) and streams live agent_message events until a signal.
-// The subscribe server registers for live events BEFORE replaying the gap
-// (subscribe.go:304), so no messages are dropped between the drain and the
-// live tail.
+// With --follow (or --wait): drains the backlog via comms-recv against the
+// agent's durable LIVE cursor instead (payload "live":true — hk-8xspi, B1),
+// then opens a subscribe connection anchored at cursor_after (the position
+// returned by the comms-recv op) and streams live agent_message events until a
+// signal. The subscribe server registers for live events BEFORE replaying the
+// gap (subscribe.go:304), so no messages are dropped between the drain and the
+// live tail. The POLL cursor a plain `comms recv --agent` uses is untouched by
+// this whole flow — the two are independent, so a poller is never starved by a
+// follow/wait watcher's consumption (or vice versa).
 //
 // subArgs is os.Args[3:].
 func runCommsRecvSubcommand(subArgs []string) int {
@@ -1325,6 +1329,11 @@ func runCommsRecvSubcommand(subArgs []string) int {
 	}
 
 	// Build the CommsRecvRequest payload.
+	//
+	// hk-8xspi (B1): --follow/--wait mark this drain "live" so it reads/advances
+	// the LIVE cursor (shared with the subsequent subscribe session) instead of
+	// the POLL cursor a plain `comms recv --agent` uses. This keeps a follow/wait
+	// session's catch-up drain from stealing position from an independent poller.
 	recvPayload := map[string]any{
 		"agent": agent,
 	}
@@ -1333,6 +1342,9 @@ func runCommsRecvSubcommand(subArgs []string) int {
 	}
 	if topicFlag != "" {
 		recvPayload["topic"] = topicFlag
+	}
+	if followFlag || waitFlag {
+		recvPayload["live"] = true
 	}
 
 	payloadBytes, err := json.Marshal(recvPayload)

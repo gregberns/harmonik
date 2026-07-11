@@ -84,7 +84,7 @@ import (
 // the concrete type satisfies these local interfaces, so we can wire the
 // events-JSONL path and drive the real raise handler directly.
 type v1lRecvDepsSetter interface {
-	SetRecvDeps(store *daemon.CursorStore, eventsJSONLPath string)
+	SetRecvDeps(pollStore, liveStore *daemon.CursorStore, eventsJSONLPath string)
 }
 type v1lDecisionsRaiser interface {
 	HandleDecisionsRaise(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
@@ -157,7 +157,8 @@ func v1lStartRig(t *testing.T) *v1lRig {
 	if !ok {
 		t.Fatalf("v1lStartRig: handler does not expose SetRecvDeps")
 	}
-	depSetter.SetRecvDeps(daemon.NewCursorStore(filepath.Join(dir, "cursors")), eventsPath)
+	v1lCursorStore := daemon.NewCursorStore(filepath.Join(dir, "cursors"))
+	depSetter.SetRecvDeps(v1lCursorStore, v1lCursorStore, eventsPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

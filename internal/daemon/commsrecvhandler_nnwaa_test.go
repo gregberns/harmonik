@@ -62,10 +62,13 @@ func writeTestEvent(t *testing.T, path string, evType string, payload any) strin
 }
 
 // newTestCommsHandler builds a *commsSendHandlerImpl with a nil emitter (send/presence
-// not needed) but with recv deps wired so comms-recv works.
+// not needed) but with recv deps wired so comms-recv works. The same cursorStore is
+// wired as both the poll and live store — sufficient for tests that don't exercise the
+// hk-8xspi (B1) poll/live decoupling. Tests that need distinct stores should call
+// h.SetRecvDeps directly with two separate *CursorStore values.
 func newTestCommsHandler(cursorStore *CursorStore, eventsPath string) *commsSendHandlerImpl {
 	h := &commsSendHandlerImpl{}
-	h.SetRecvDeps(cursorStore, eventsPath)
+	h.SetRecvDeps(cursorStore, cursorStore, eventsPath)
 	return h
 }
 

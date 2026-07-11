@@ -228,23 +228,33 @@ type SubscribeHub struct {
 	// goroutine returns. Used to enforce cfg.MaxConnections.
 	connCount atomic.Int64
 
-	// cursorStore, when non-nil, lets a `comms recv --follow` subscribe session
-	// advance the calling agent's durable comms cursor as agent_message events
-	// are delivered (hk-tafd4). Without this, a --follow watcher that restarts
-	// replays everything since its initial drain because the cursor only moves on
-	// a one-shot `comms recv`. Set post-construction via SetCommsCursorStore so
-	// the hub and the comms-recv handler share ONE cursor store (no parallel
-	// cursor). nil = cursor advancement disabled (subscribe behaves as before).
+	// cursorStore, when non-nil, lets a `comms recv --follow`/`--wait` (or a
+	// bare `harmonik subscribe --to`) session advance the calling agent's
+	// durable LIVE comms cursor as agent_message events are delivered
+	// (hk-tafd4). Without this, a watcher that restarts replays everything
+	// since its initial drain because the cursor only moves on a one-shot
+	// `comms recv`. Set post-construction via SetCommsCursorStore.
+	//
+	// This is the LIVE cursor, independent of the POLL cursor a plain one-shot
+	// `comms recv --agent` (without --follow/--wait) advances (hk-8xspi, B1).
+	// The two are deliberately decoupled: a poller and a follow/wait watcher no
+	// longer race over one shared position — draining one never advances the
+	// other. See commsSendHandlerImpl.SetRecvDeps (commsrecvhandler_nnwaa.go)
+	// for the poll-store side and daemon.go for the wiring. nil = cursor
+	// advancement disabled (subscribe behaves as before).
 	cursorStore *CursorStore
 
 	closed atomic.Bool
 }
 
-// SetCommsCursorStore wires the per-agent comms cursor store into the hub so a
-// `comms recv --follow` subscribe session advances the agent's durable cursor as
-// agent_message events are delivered (hk-tafd4). Pass the SAME *CursorStore the
-// comms-recv handler uses (see daemon wiring) so both paths share one cursor.
-// A nil store leaves cursor advancement disabled.
+// SetCommsCursorStore wires the per-agent LIVE comms cursor store into the hub
+// so a `comms recv --follow`/`--wait` (or bare `harmonik subscribe --to`)
+// session advances the agent's durable cursor as agent_message events are
+// delivered (hk-tafd4). Pass the SAME *CursorStore used as the liveStore
+// argument to commsSendHandlerImpl.SetRecvDeps (see daemon wiring) so a
+// follow/wait session's catch-up drain and its live tail share one continuous
+// cursor — decoupled from the poll cursor a plain `comms recv --agent` uses
+// (hk-8xspi, B1). A nil store leaves cursor advancement disabled.
 func (h *SubscribeHub) SetCommsCursorStore(store *CursorStore) {
 	h.cursorStore = store
 }
@@ -404,20 +414,25 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 
 	enc := json.NewEncoder(conn)
 
-	// Comms-cursor advancement for `comms recv --follow` (hk-tafd4). When the hub
-	// has a cursor store and the request carries an agent name (req.To), we
-	// advance that agent's durable cursor as agent_message events directed to it
-	// are delivered, so a watcher restart does NOT replay already-delivered
-	// messages. To bound fsync churn we track the last-delivered event_id and
-	// flush it to the cursor at most every cursorFlushInterval (and once more on
-	// return). Advancing AFTER delivery preserves at-least-once (N3): a crash
-	// between deliver and flush re-delivers; clients dedup on event_id.
+	// Comms-cursor advancement for `comms recv --follow`/`--wait` (hk-tafd4).
+	// When the hub has a cursor store and the request carries an agent name
+	// (req.To), we advance that agent's durable LIVE cursor as agent_message
+	// events directed to it are delivered, so a watcher restart does NOT replay
+	// already-delivered messages. To bound fsync churn we track the
+	// last-delivered event_id and flush it to the cursor at most every
+	// cursorFlushInterval (and once more on return). Advancing AFTER delivery
+	// preserves at-least-once (N3): a crash between deliver and flush
+	// re-delivers; clients dedup on event_id.
 	//
-	// B1 pin (hk-d65rb): a one-shot comms recv called AFTER a --follow session
-	// has advanced the cursor correctly drains 0 messages — not a bug. The shared
-	// cursor is the single source of truth for "what this agent has seen."
-	// Operators can audit the full message history cursor-independently via
-	// `comms log --since`, which scans events.jsonl without consulting the cursor.
+	// B1 (hk-8xspi, superseding the hk-d65rb pin): this LIVE cursor is
+	// INDEPENDENT of the POLL cursor a plain one-shot `comms recv --agent`
+	// advances. A one-shot recv called after a --follow/--wait session has
+	// advanced the live cursor still drains its own backlog from the poll
+	// cursor's position — it is no longer starved by follow/wait consumption.
+	// N3 at-least-once + mandatory dedupe-on-event_id makes the resulting
+	// duplicate delivery across the two cursors harmless. Operators can also
+	// audit the full message history cursor-independently via `comms log
+	// --since`, which scans events.jsonl without consulting either cursor.
 	cursorAdvanceEnabled := h.cursorStore != nil && req.To != ""
 	var pendingCursorID string // last agent_message event_id delivered but not yet flushed
 	flushCursor := func() {

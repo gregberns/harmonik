@@ -1857,16 +1857,25 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// (e.g. test stubs), in which case comms-send ops return an error response.
 		// Bead ref: hk-nbrmf (comms-send T4).
 		commsSendHandler := NewCommsSendHandler(bus)
-		// Wire comms-recv deps (T8, hk-nnwaa): cursor store + events JSONL path.
-		// SetRecvDeps is a no-op when commsSendHandler is nil (bus stub case).
-		// The SAME cursor store is shared with the SubscribeHub (hk-tafd4) so that
-		// a `comms recv --follow` session advances the same durable cursor a
-		// one-shot `comms recv` would — no parallel cursor, no replay on restart.
+		// Wire comms-recv deps (T8, hk-nnwaa): two INDEPENDENT cursor stores +
+		// events JSONL path. SetRecvDeps is a no-op when commsSendHandler is nil
+		// (bus stub case).
+		//
+		// hk-8xspi (B1): a plain one-shot `comms recv --agent` poll and a
+		// `--follow`/`--wait` live session no longer share a cursor — draining
+		// one never advances the other, so a poller can no longer be starved by
+		// a follow/wait watcher's consumption (or vice versa). The live store is
+		// shared between the handler's catch-up drain (CommsRecvRequest.Live)
+		// and the SubscribeHub (hk-tafd4) so a follow/wait session's drain and
+		// its live tail stay on one continuous cursor. Separate on-disk
+		// directories keep the two cursor namespaces from ever colliding.
 		if impl, ok := commsSendHandler.(*commsSendHandlerImpl); ok && cfg.ProjectDir != "" {
-			cursorDir := filepath.Join(cfg.ProjectDir, ".harmonik", "comms", "cursors")
-			commsCursorStore := NewCursorStore(cursorDir)
-			impl.SetRecvDeps(commsCursorStore, cfg.JSONLLogPath)
-			subscribeHub.SetCommsCursorStore(commsCursorStore)
+			pollCursorDir := filepath.Join(cfg.ProjectDir, ".harmonik", "comms", "cursors")
+			liveCursorDir := filepath.Join(cfg.ProjectDir, ".harmonik", "comms", "cursors-live")
+			pollCursorStore := NewCursorStore(pollCursorDir)
+			liveCursorStore := NewCursorStore(liveCursorDir)
+			impl.SetRecvDeps(pollCursorStore, liveCursorStore, cfg.JSONLLogPath)
+			subscribeHub.SetCommsCursorStore(liveCursorStore)
 		}
 
 		// Construct the C2 crew-start/stop handler (c2-spec.md §3.1).

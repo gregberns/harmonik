@@ -62,7 +62,8 @@ func dk4NewHandler(t *testing.T) *dk4Setup {
 		t.Fatal("dk4NewHandler: handler is not *commsSendHandlerImpl")
 	}
 	// Wire the events path so decisions-list / decisions-answer can re-project.
-	impl.SetRecvDeps(NewCursorStore(filepath.Join(dir, "cursors")), eventsPath)
+	cursorStore := NewCursorStore(filepath.Join(dir, "cursors"))
+	impl.SetRecvDeps(cursorStore, cursorStore, eventsPath)
 
 	return &dk4Setup{h: impl, eventsPath: eventsPath, bus: bus}
 }

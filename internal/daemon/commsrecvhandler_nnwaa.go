@@ -20,6 +20,16 @@ package daemon
 // (T7 contract). A daemon restart reads the cursor from disk and resumes from
 // the stored position — no messages are lost.
 //
+// # Decoupled poll/live cursors (hk-8xspi, B1)
+//
+// A plain one-shot `comms recv --agent` poll and a `--follow`/`--wait` live
+// session each own an INDEPENDENT durable cursor (CommsRecvRequest.Live selects
+// which one this call reads/advances). Before this change both paths shared one
+// cursor, so a poller and a follow/wait watcher raced over the same position and
+// one would starve the other (recv-drains-0-under-follow). N3 at-least-once +
+// mandatory dedupe-on-event_id makes the resulting duplicate delivery across the
+// two cursors harmless — see agent-comms spec §5 Q1/Q3.
+//
 // # Shared predicate (R1 / N1)
 //
 // comms-recv uses the same MatchAgentMessage predicate as the live subscribe
@@ -28,7 +38,7 @@ package daemon
 // the addressing logic: agent_message.go:MatchAgentMessage.
 //
 // Spec ref: ~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §2.2 C2/C5.
-// Bead ref: hk-nnwaa (T8).
+// Bead ref: hk-nnwaa (T8), hk-8xspi (B1 decoupled cursor).
 
 import (
 	"context"
@@ -65,6 +75,14 @@ type CommsRecvRequest struct {
 
 	// Topic is an optional topic filter. Empty = match any topic.
 	Topic string `json:"topic,omitempty"`
+
+	// Live selects which of the agent's two independent durable cursors this
+	// call reads/advances (hk-8xspi, B1). false (default) = the plain poll
+	// cursor used by a bare `comms recv --agent`. true = the live cursor shared
+	// with SubscribeHub, used for the catch-up drain that precedes a
+	// `--follow`/`--wait` subscribe session. The two cursors never interact:
+	// draining one never advances the other.
+	Live bool `json:"live,omitempty"`
 }
 
 // CommsRecvMessage is one agent_message event returned by comms-recv.
@@ -118,13 +136,19 @@ type CommsRecvResult struct {
 	ScanAnchor string `json:"scan_anchor,omitempty"`
 }
 
-// SetRecvDeps wires the cursor store and events JSONL path into the handler so
-// comms-recv ops can scan durable history and advance the agent cursor.
+// SetRecvDeps wires the two independent cursor stores and the events JSONL
+// path into the handler so comms-recv ops can scan durable history and advance
+// the agent cursor (hk-8xspi, B1: poll and live are separate stores — see
+// commsSendHandlerImpl doc). liveStore is also the store passed to
+// SubscribeHub.SetCommsCursorStore so a --follow/--wait session's catch-up
+// drain and its live tail share one continuous cursor.
 //
 // Called by the daemon after NewCommsSendHandler when ProjectDir is known.
-// A nil store or empty eventsPath causes comms-recv to return an error response.
-func (h *commsSendHandlerImpl) SetRecvDeps(store *CursorStore, eventsJSONLPath string) {
-	h.cursorStore = store
+// A nil pollStore/liveStore or empty eventsPath causes comms-recv to return an
+// error response.
+func (h *commsSendHandlerImpl) SetRecvDeps(pollStore, liveStore *CursorStore, eventsJSONLPath string) {
+	h.pollCursorStore = pollStore
+	h.liveCursorStore = liveStore
 	h.eventsJSONLPath = eventsJSONLPath
 }
 
@@ -141,7 +165,7 @@ func (h *commsSendHandlerImpl) SetRecvDeps(store *CursorStore, eventsJSONLPath s
 //  5. If any messages found, Advance cursor to last event_id (N3: after read).
 //  6. Return CommsRecvResult.
 func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
-	if h.cursorStore == nil {
+	if h.pollCursorStore == nil || h.liveCursorStore == nil {
 		return nil, fmt.Errorf("comms-recv: CursorStore not configured")
 	}
 	if h.eventsJSONLPath == "" {
@@ -156,17 +180,24 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 		return nil, fmt.Errorf("comms-recv: agent is required")
 	}
 
+	// hk-8xspi (B1): route to the poll or live cursor store per req.Live. The two
+	// stores are independent — draining one never advances the other.
+	cursorStore := h.pollCursorStore
+	if req.Live {
+		cursorStore = h.liveCursorStore
+	}
+
 	// Serialize the Get→scan→Advance critical section per agent (hk-fww4e).
 	// Two concurrent "comms recv --agent X" calls on separate connections would
 	// otherwise both Get the same cursor, scan the same backlog, and both Advance —
 	// causing bounded duplicate delivery. The per-agent mutex in CursorStore
 	// prevents this without blocking concurrent ops for different agents.
-	agentMu := h.cursorStore.AgentMu(req.Agent)
+	agentMu := cursorStore.AgentMu(req.Agent)
 	agentMu.Lock()
 	defer agentMu.Unlock()
 
 	// Read the durable cursor; "" means start of log (deliver all matching events).
-	cursorStr, err := h.cursorStore.Get(req.Agent)
+	cursorStr, err := cursorStore.Get(req.Agent)
 	if err != nil {
 		return nil, fmt.Errorf("comms-recv: read cursor for %q: %w", req.Agent, err)
 	}
@@ -215,7 +246,7 @@ func (h *commsSendHandlerImpl) HandleCommsRecv(ctx context.Context, payload json
 	// N3: advance cursor AFTER read so a crash between scan and advance
 	// causes re-delivery rather than loss.
 	if lastEventID != "" {
-		if advErr := h.cursorStore.Advance(req.Agent, lastEventID); advErr != nil {
+		if advErr := cursorStore.Advance(req.Agent, lastEventID); advErr != nil {
 			return nil, fmt.Errorf("comms-recv: advance cursor for %q: %w", req.Agent, advErr)
 		}
 	}

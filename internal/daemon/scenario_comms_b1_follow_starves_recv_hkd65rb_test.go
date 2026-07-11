@@ -1,46 +1,54 @@
 package daemon
 
 // scenario_comms_b1_follow_starves_recv_hkd65rb_test.go — T2c L1:
-// B1 follow-starves-recv pin + inline doc (bead hk-d65rb, codename:comms-test-harness).
+// B1 decoupled poll/live cursor pin + inline doc.
 //
-// # Scenario 1: follow-starves-recv is CORRECT, not a bug
+// Originally pinned hk-d65rb's "follow-starves-recv is correct" behavior (a
+// shared cursor between `recv --follow` and one-shot `comms recv`). That
+// behavior was operator-RATIFIED as a BUG via T4 (hk-tnyb7) and fixed by
+// hk-8xspi: `comms recv --agent` now owns an independent POLL cursor, fully
+// decoupled from the LIVE cursor `--follow`/`--wait` share with SubscribeHub.
+// This file now pins the DECOUPLED behavior instead.
 //
-// When `recv --follow` is armed for agent A (SubscribeHub with shared CursorStore),
-// messages directed to A are delivered to the follower's stream AND the shared
-// durable cursor advances past each delivered event (hk-tafd4). A subsequent
-// one-shot `comms recv --agent A` then drains 0 messages — the follower already
-// consumed them and the cursor reflects that.
+// # Scenario 1: follow no longer starves recv
 //
-// # Why 0-drain is intentional (B1 pin)
+// When `recv --follow` is armed for agent A (SubscribeHub with a LIVE
+// CursorStore), messages directed to A are delivered to the follower's stream
+// AND the LIVE cursor advances past each delivered event (hk-tafd4). A
+// subsequent one-shot `comms recv --agent A` reads its own, separate POLL
+// cursor — untouched by the follower — and drains the SAME 3 messages again.
 //
-// The shared cursor is the single source of truth for "what agent A has seen."
-// The --follow subscriber and the one-shot recv share the SAME CursorStore:
-// SetCommsCursorStore wires both to a single *CursorStore instance. When --follow
-// advances the cursor past msg 3, recv starts scanning from after msg 3 and finds
-// nothing new. This is at-least-once N3 semantics, not a missing-message gap:
+// # Why duplicate delivery across the two cursors is safe
 //
-//   - Exactly-once delivery is NOT guaranteed (N3). The follow path delivers, the
-//     cursor advances, recv correctly skips already-delivered events.
-//   - If --follow crashes between delivery and cursor-flush, recv will re-deliver
-//     the same events. Recipients MUST deduplicate on event_id (N3 contract).
-//   - The events are permanently stored in events.jsonl. `comms log --since <id>`
-//     (cursor-independent scan of events.jsonl) always shows the full history.
+// N3 at-least-once + mandatory dedupe-on-event_id (agent-comms spec §5 Q1/Q3)
+// makes this safe: recipients already tolerate redelivery, so two independent
+// cursors each seeing the same backlog once is not a correctness problem — it
+// removes the far worse failure mode where a --follow watcher silently drained
+// messages a plain poller was still waiting to see (the original recv-drains-0
+// -under-follow bug, B1).
+//
+//   - The events are permanently stored in events.jsonl regardless of either
+//     cursor's position. `comms log --since <id>` (cursor-independent scan of
+//     events.jsonl) always shows the full history.
 //
 // # Assertions (two)
 //
-//   1. 0-DRAIN: after the follower session delivers 3 messages and flushes the
-//      shared cursor, HandleCommsRecv for the same agent returns 0 messages.
+//   1. FULL-DRAIN: after the follower session delivers 3 messages and flushes
+//      the LIVE cursor, HandleCommsRecv against the agent's POLL cursor (a
+//      request with Live=false) still returns all 3 messages — the poll cursor
+//      was never touched by the follower.
 //   2. LOG-INTACT: eventbus.ScanAfter(eventsPath, anchorID) — the functional
 //      equivalent of `comms log --since <anchorID>` — returns all 3 messages;
 //      cursor advance does NOT delete events from events.jsonl (log is append-only).
 //
 // # Harness (L1 in-process)
 //
-// Shared CursorStore + SubscribeHub (SetCommsCursorStore) + net.Pipe fake client
-// (hk7n6o7Never timer — suppresses heartbeats and cursor-flush ticks) +
-// commsSendHandlerImpl. No socket, no real time, no daemon process.
+// Two independent CursorStore instances (poll, live) + SubscribeHub wired to
+// the live store (SetCommsCursorStore) + net.Pipe fake client (hk7n6o7Never
+// timer — suppresses heartbeats and cursor-flush ticks) + commsSendHandlerImpl
+// wired to both stores. No socket, no real time, no daemon process.
 //
-// Bead: hk-d65rb. Design: comms-test-harness §3 scenario 1.
+// Bead: hk-d65rb (original pin), hk-8xspi (B1 decoupling, supersedes the pin).
 // Spec ref: agent-comms spec §N3.
 
 import (
@@ -87,13 +95,14 @@ func hkd65rbReadAgentMessage(t *testing.T, conn net.Conn, rdr *bufio.Reader, lab
 	}
 }
 
-// TestScenario_HkD65rb_B1_FollowStarvesRecv asserts the two halves of scenario 1:
+// TestScenario_HkD65rb_B1_DecoupledCursors asserts the two halves of scenario 1:
 //
-//  1. 0-drain: after --follow delivers 3 messages and advances the shared cursor,
-//     HandleCommsRecv for the same agent returns 0 messages.
+//  1. full-drain: after --follow delivers 3 messages and advances the LIVE cursor,
+//     HandleCommsRecv against the agent's independent POLL cursor still returns
+//     all 3 messages.
 //  2. log-intact: eventbus.ScanAfter (comms-log-equivalent) still returns all 3
-//     messages from events.jsonl regardless of the cursor position.
-func TestScenario_HkD65rb_B1_FollowStarvesRecv(t *testing.T) {
+//     messages from events.jsonl regardless of either cursor's position.
+func TestScenario_HkD65rb_B1_DecoupledCursors(t *testing.T) {
 	t.Parallel()
 
 	dir, err := os.MkdirTemp("/tmp", "hkd65rb-")
@@ -103,7 +112,8 @@ func TestScenario_HkD65rb_B1_FollowStarvesRecv(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
 	eventsPath := filepath.Join(dir, "events.jsonl")
-	cursorDir := filepath.Join(dir, "cursors")
+	liveCursorDir := filepath.Join(dir, "cursors-live")
+	pollCursorDir := filepath.Join(dir, "cursors-poll")
 
 	// ── Fixture: anchor (noise) + 3 agent_message events directed to alice ───
 	//
@@ -118,17 +128,18 @@ func TestScenario_HkD65rb_B1_FollowStarvesRecv(t *testing.T) {
 	time.Sleep(2 * time.Millisecond)
 	id3 := writeTestEvent(t, eventsPath, "agent_message", AgentMessagePayload{From: "captain", To: "alice", Body: "msg-3"})
 
-	// ── Wire shared CursorStore; arm SubscribeHub with it ───────────────────
+	// ── Wire two independent CursorStores: live (follower) and poll (recv) ──
 	//
-	// SetCommsCursorStore binds the hub to the same *CursorStore used by the
-	// one-shot recv handler. Both paths share one durable cursor per agent.
-	cs := NewCursorStore(cursorDir)
+	// SetCommsCursorStore binds the hub to the LIVE store only. The POLL store
+	// is separate and is never touched by the follower (hk-8xspi, B1).
+	liveCS := NewCursorStore(liveCursorDir)
+	pollCS := NewCursorStore(pollCursorDir)
 	hub := NewSubscribeHub(SubscribeHubConfig{
 		Bus:             nil,
 		EventsJSONLPath: eventsPath,
 		NewTimer:        hk7n6o7Never, // suppress heartbeats + cursor-flush ticks
 	})
-	hub.SetCommsCursorStore(cs)
+	hub.SetCommsCursorStore(liveCS)
 
 	// ── Arm follower — HandleSubscribe via net.Pipe ──────────────────────────
 	//
@@ -178,18 +189,20 @@ func TestScenario_HkD65rb_B1_FollowStarvesRecv(t *testing.T) {
 		t.Fatal("HandleSubscribe did not return within 3s of connection close")
 	}
 
-	// Confirm cursor advanced to id3 (post-replay flush or defer flush).
-	got := waitForCursor(t, cs, "alice", id3, 3*time.Second)
+	// Confirm the LIVE cursor advanced to id3 (post-replay flush or defer flush).
+	got := waitForCursor(t, liveCS, "alice", id3, 3*time.Second)
 	if got != id3 {
-		t.Fatalf("cursor not at id3 after follow session: got %q, want %q", got, id3)
+		t.Fatalf("live cursor not at id3 after follow session: got %q, want %q", got, id3)
 	}
 
-	// ── Assertion 1: 0-drain ─────────────────────────────────────────────────
+	// ── Assertion 1: full-drain via the independent POLL cursor ─────────────
 	//
-	// HandleCommsRecv reads alice's cursor (now = id3) and scans events.jsonl
-	// from id3 forward — finding no new events. This is the B1 semantics:
-	// 0-drain is CORRECT because the follower already delivered id1..id3.
-	impl := newTestCommsHandler(cs, eventsPath)
+	// HandleCommsRecv with Live=false (the default) reads alice's POLL cursor,
+	// which the follower never touched (still ""), and scans events.jsonl from
+	// the beginning — finding all 3 messages. This is the hk-8xspi B1 fix: the
+	// poll cursor is no longer starved by a --follow session's consumption.
+	impl := &commsSendHandlerImpl{}
+	impl.SetRecvDeps(pollCS, liveCS, eventsPath)
 	recvPayload, _ := json.Marshal(CommsRecvRequest{Agent: "alice"})
 	resBytes, recvErr := impl.HandleCommsRecv(context.Background(), recvPayload)
 	if recvErr != nil {
@@ -199,12 +212,12 @@ func TestScenario_HkD65rb_B1_FollowStarvesRecv(t *testing.T) {
 	if uErr := json.Unmarshal(resBytes, &res); uErr != nil {
 		t.Fatalf("decode CommsRecvResult: %v", uErr)
 	}
-	if len(res.Messages) != 0 {
+	if len(res.Messages) != 3 {
 		bodies := make([]string, len(res.Messages))
 		for i, m := range res.Messages {
 			bodies[i] = m.Body
 		}
-		t.Errorf("B1 violation: HandleCommsRecv returned %d message(s) after follower consumed shared cursor; want 0 (follow-starves-recv is intentional at-least-once semantics). messages: %v",
+		t.Errorf("B1 violation: HandleCommsRecv (poll cursor) returned %d message(s) after follower consumed the live cursor; want 3 (poll and live cursors must be independent). messages: %v",
 			len(res.Messages), bodies)
 	}
 
@@ -235,5 +248,5 @@ func TestScenario_HkD65rb_B1_FollowStarvesRecv(t *testing.T) {
 			logCount)
 	}
 
-	t.Logf("B1 PASS: follow delivered 3 + cursor=id3 → recv drained 0 (intentional); comms log still shows 3 (cursor-independent)")
+	t.Logf("B1 PASS: follow delivered 3 + live cursor=id3 → poll recv independently drained 3; comms log still shows 3 (cursor-independent)")
 }

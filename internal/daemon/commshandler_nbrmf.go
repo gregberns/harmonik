@@ -72,8 +72,11 @@ type CommsSendResult struct {
 // so the daemon can pass one handler value to RunSocketListenerFull and the socket
 // op switch can type-assert to the appropriate sub-interface per op.
 //
-// cursorStore and eventsJSONLPath are set post-construction via SetRecvDeps
-// (commsrecvhandler_nnwaa.go) and enable the comms-recv op (hk-nnwaa T8).
+// pollCursorStore/liveCursorStore and eventsJSONLPath are set post-construction
+// via SetRecvDeps (commsrecvhandler_nnwaa.go) and enable the comms-recv op
+// (hk-nnwaa T8). The two stores are deliberately DISTINCT (hk-8xspi, B1): a
+// plain `comms recv --agent` poll and a `--follow`/`--wait` live session each
+// own an independent durable cursor so one never starves the other.
 type commsSendHandlerImpl struct {
 	emitter     eventbus.CommsMessageEmitter
 	presEmitter eventbus.CommsPresenceEmitter // nil when bus does not support presence
@@ -85,7 +88,13 @@ type commsSendHandlerImpl struct {
 	decisionEmitter eventbus.TypedEmitter
 
 	// recv deps — set by SetRecvDeps; nil/empty disables comms-recv.
-	cursorStore     *CursorStore
+	// pollCursorStore backs plain one-shot `comms recv --agent` calls.
+	// liveCursorStore backs the initial drain of `--follow`/`--wait` calls and is
+	// the SAME store SubscribeHub uses to advance the cursor as it streams live
+	// agent_message events — so a follow/wait session's catch-up-drain and its
+	// live tail share one continuous cursor, decoupled from the poll cursor.
+	pollCursorStore *CursorStore
+	liveCursorStore *CursorStore
 	eventsJSONLPath string
 }
 

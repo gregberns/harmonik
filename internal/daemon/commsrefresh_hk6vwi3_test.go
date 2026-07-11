@@ -72,11 +72,11 @@ func refreshFixtureStartListener(t *testing.T, bus eventbus.EventBus) (sockPath,
 
 	// Wire recv deps so comms-recv works.
 	type recvDepsSetter interface {
-		SetRecvDeps(store *daemon.CursorStore, eventsJSONLPath string)
+		SetRecvDeps(pollStore, liveStore *daemon.CursorStore, eventsJSONLPath string)
 	}
 	if rds, ok := ch.(recvDepsSetter); ok {
 		cs := daemon.NewCursorStore(cursorsDir)
-		rds.SetRecvDeps(cs, eventsPath)
+		rds.SetRecvDeps(cs, cs, eventsPath)
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())

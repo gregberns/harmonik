@@ -86,7 +86,7 @@ import (
 // interface (the concrete type satisfies it) to wire the events-JSONL path the
 // list/answer handlers read (the same SetRecvDeps the daemon wiring calls).
 type rz4RecvDepsSetter interface {
-	SetRecvDeps(store *daemon.CursorStore, eventsJSONLPath string)
+	SetRecvDeps(pollStore, liveStore *daemon.CursorStore, eventsJSONLPath string)
 }
 
 // rz4DecisionsRaiser/Answerer are the subsets of the daemon's DecisionsHandler
@@ -168,7 +168,8 @@ func rz4StartRig(t *testing.T) *rz4Rig {
 	if !ok {
 		t.Fatalf("rz4StartRig: handler does not expose SetRecvDeps")
 	}
-	depSetter.SetRecvDeps(daemon.NewCursorStore(filepath.Join(dir, "cursors")), eventsPath)
+	rz4CursorStore := daemon.NewCursorStore(filepath.Join(dir, "cursors"))
+	depSetter.SetRecvDeps(rz4CursorStore, rz4CursorStore, eventsPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

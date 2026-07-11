@@ -67,6 +67,14 @@ type SpawnSpec struct {
 
 	// WorkDir is the working-directory for the subprocess (typically the worktree path).
 	WorkDir string
+
+	// StdinDevNull mirrors handler.LaunchSpec.StdinDevNull: when true, the
+	// subprocess needs stdin closed at startup (a /dev/null-equivalent EOF)
+	// rather than left open on an unfed pipe. Argv-driven ProcessExit harnesses
+	// (pi, codex) block forever reading fd0 without it. The routed launch-spec
+	// builder forwards this onto the assembled handler.LaunchSpec so Launch
+	// honors it. Bead: hk-rpr6, hk-j0p1r.
+	StdinDevNull bool
 }
 
 // RunCtx carries the per-launch inputs passed to Harness methods.

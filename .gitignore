@@ -115,3 +115,6 @@ __pycache__/
 *.pyc
 
 HANDOFF.md
+
+# Daemon-materialized per-worktree; must NOT be tracked (CHB-005/hk-jvzc2, hk-5isix fleet-wide rebase-abort)
+.claude/settings.json

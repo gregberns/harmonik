@@ -1,9 +1,9 @@
 package daemon_test
 
 // dot_gategreen_no_verdict_salvage_hkdu455_test.go — regression test for
-// FIX3 (hk-du455, defense-in-depth for hk-7xgu4).
+// FIX3 (hk-du455, defense-in-depth for hk-7xgu4), corrected by hk-nwgj7.
 //
-// # The bug
+// # The original bug (hk-du455)
 //
 // When a transient gate failure bounced the bead back to the implementer
 // (iter-2), the implementer correctly made no new commit (the committed tree
@@ -17,13 +17,25 @@ package daemon_test
 // Live incident: run 019eedd9-1de4-75b4-8be7-f47942252e3d, bead hk-y3o51.
 // 14 prior occurrences on the same commit_gate→implement back-edge.
 //
-// # The fix (hk-du455 / FIX3)
+// # The hk-du455 fix, and the regression it introduced (hk-nwgj7)
 //
-// A new completion exemption in the no-progress block: when there IS a
-// committed result (HEAD past parentSHA) AND no reviewer has run yet
-// (priorVerdict == "") AND the most-recent gate passed (lastGatePassed),
-// the run COMPLETES (success=true) instead of failing. The committed work is
-// preserved even though the reviewer did not run (defense-in-depth).
+// The original hk-du455 fix added a completion exemption in the no-progress
+// block that fired at the REVIEWER's first entry: committedResult=true AND
+// priorVerdict=="" AND lastGatePassed=true → return success=true WITHOUT ever
+// dispatching the reviewer. That preserved the committed work, but it also
+// SKIPPED REVIEW ENTIRELY — the run closed with committed code and no
+// reviewer verdict at all (an unreviewed merge; the review gate was silently
+// bypassed).
+//
+// hk-nwgj7 corrects this: when the upcoming node IS a reviewer that has never
+// produced a verdict on this run, the no-progress guard is suppressed
+// entirely (not resolved to completion) so the walk falls through to the
+// normal dispatch path and the reviewer actually runs. Reviewers never
+// advance HEAD by design, so HEAD being unchanged on a reviewer's first entry
+// is not evidence of being stuck — it just means review hasn't happened yet.
+// The hk-du455 completion exemption itself is now scoped to `!isReviewer`: it
+// only fires for a non-reviewer re-entry (e.g. a graph with no reviewer node
+// downstream of the gate), where there is genuinely nothing left to run.
 //
 // # Scenario (positive test)
 //
@@ -33,7 +45,8 @@ package daemon_test
 // Handler script:
 //   - CNT=1 (implement iter-1): commits real work → HEAD advances past parentSHA.
 //   - CNT=2 (implement iter-2): NO commit (nothing to fix; gate was transient).
-//   - CNT=3 (reviewer): MUST NOT be reached — exemption fires first.
+//   - CNT=3 (reviewer): MUST be reached and MUST write an APPROVE verdict —
+//     the reviewer is no longer skipped.
 //
 // Gate command:
 //   - call 1 → exit 1 (deterministic failure, bounces to implement).
@@ -45,8 +58,8 @@ package daemon_test
 //   - implement(2): no commit → iterationCount→2, priorIterHeadSHA=commit_A.
 //   - commit_gate(2): PASSES (lastGatePassed=true) → reviewer entry.
 //   - reviewer entry: iterationCount=2, headAdvanced=false, priorVerdict="",
-//     committedResult=true, lastGatePassed=true → hk-du455 exemption fires →
-//     success=true.
+//     committedResult=true, lastGatePassed=true → hk-nwgj7 suppression skips
+//     the no-progress guard → reviewer actually dispatches → APPROVE → close.
 //
 // # Negative test
 //
@@ -54,7 +67,7 @@ package daemon_test
 // committedResult=false → exemption does NOT fire → no_progress_detected fires →
 // success=false.
 //
-// Bead: hk-du455.
+// Bead: hk-du455 (original fix), hk-nwgj7 (unreviewed-merge correction).
 
 import (
 	"context"
@@ -128,10 +141,11 @@ func du455WriteScript(t *testing.T, name, body string) string {
 //
 //	CNT=1 (implement iter-1): commits real work → HEAD advances past parentSHA.
 //	CNT=2 (implement iter-2): NO commit (gate was transient; nothing to fix).
-//	CNT=3 (reviewer): MUST NOT be reached if the hk-du455 exemption fires first.
+//	CNT=3 (reviewer): MUST be reached (hk-nwgj7) — writes an APPROVE verdict.
 func du455CommittingScript(t *testing.T, wtPath string) string {
 	t.Helper()
 	wtpEsc := strings.ReplaceAll(wtPath, "'", "'\\''")
+	approve := strings.ReplaceAll(rlFixtureVerdictJSON("APPROVE"), "'", "'\\''")
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
 WTP='%s'
@@ -151,13 +165,16 @@ case "$CNT" in
     # Implement iter-2: transient gate failed; committed tree is already correct.
     # Make NO new commit — HEAD stays put.
     ;;
+  3)
+    # Reviewer (hk-nwgj7): must actually run now — write an APPROVE verdict.
+    printf '%%s' '%s' > "$WS/.harmonik/review.json"
+    ;;
   *)
-    # CNT=3 would be the reviewer — must never be reached.
     printf 'UNEXPECTED_INVOCATION_%%d\n' "$CNT" >&2
     exit 1 ;;
 esac
 exit 0
-`, wtpEsc)
+`, wtpEsc, approve)
 	return du455WriteScript(t, "du455_commit.sh", script)
 }
 
@@ -200,13 +217,18 @@ exit 0
 	return du455WriteScript(t, "du455_redgate.sh", script)
 }
 
-// TestGateGreenNoVerdict_CommittedWork_Completes_hkdu455 is the positive
-// regression: a committed + gate-green tree with no prior reviewer verdict must
-// COMPLETE (success=true) instead of firing no_progress_detected.
+// TestGateGreenNoVerdict_CommittedWork_Completes_hkdu455 is the hk-nwgj7
+// regression: a committed + gate-green tree with no prior reviewer verdict
+// must let the reviewer actually run (and COMPLETE via its verdict) instead
+// of either firing no_progress_detected OR fake-completing without review.
 //
 // This is the exact failure shape from hk-7xgu4 / run 019eedd9: transient
-// Gate-1 failure → iter-2 no-op → Gate-2 passes → reviewer entry →
-// no_progress fires (before fix), discarding the valid committed tree.
+// Gate-1 failure → iter-2 no-op → Gate-2 passes → reviewer entry. Before
+// hk-du455 this hard-failed with no_progress, discarding the valid committed
+// tree. The original hk-du455 fix over-corrected: it fake-completed the run
+// WITHOUT dispatching the reviewer at all (an unreviewed merge — hk-nwgj7).
+// This test now asserts the reviewer is actually invoked and its verdict
+// drives completion.
 func TestGateGreenNoVerdict_CommittedWork_Completes_hkdu455(t *testing.T) {
 	t.Parallel()
 
@@ -236,27 +258,34 @@ func TestGateGreenNoVerdict_CommittedWork_Completes_hkdu455(t *testing.T) {
 		core.BeadID("du455-committed-completes"), wtPath, parentSHA, graph)
 
 	events := collector.eventTypes()
-	t.Logf("hk-du455 positive: result=%+v events=%v", result, events)
+	t.Logf("hk-du455/hk-nwgj7 positive: result=%+v events=%v", result, events)
 
-	// hk-du455 fix: committed + gate-green + no prior verdict → complete, not fail.
+	// hk-nwgj7: the run must complete, but ONLY via an actual reviewer verdict.
 	if !result.Success {
-		t.Errorf("hk-du455: expected success=true (committed work + green gate + no prior verdict must complete); summary=%q", result.Summary)
+		t.Errorf("hk-nwgj7: expected success=true (reviewer must run and APPROVE); summary=%q", result.Summary)
 	}
 	if result.NeedsAttention {
-		t.Errorf("hk-du455: expected needs_attention=false; summary=%q", result.Summary)
+		t.Errorf("hk-nwgj7: expected needs_attention=false; summary=%q", result.Summary)
 	}
-	// The no-progress and stall signals must NOT have fired.
+	if result.TerminalNodeID != "close" {
+		t.Errorf("hk-nwgj7: expected terminal_node_id=close (reached via the reviewer's APPROVE edge); got %q, summary=%q", result.TerminalNodeID, result.Summary)
+	}
+	// The reviewer must have actually been dispatched and returned a verdict —
+	// this is the crux of the hk-nwgj7 fix: no unreviewed merge.
+	sawReviewerVerdict := false
 	for _, et := range events {
+		if et == string(core.EventTypeReviewerVerdict) {
+			sawReviewerVerdict = true
+		}
 		if et == string(core.EventTypeNoProgressDetected) {
-			t.Errorf("hk-du455: no_progress_detected false-fired on committed+gate-green tree with no prior verdict; events=%v summary=%q", events, result.Summary)
+			t.Errorf("hk-nwgj7: no_progress_detected false-fired on committed+gate-green tree with no prior verdict; events=%v summary=%q", events, result.Summary)
 		}
 		if et == string(core.EventTypeReviewFixupStalled) {
-			t.Errorf("hk-du455: review_fixup_stalled false-fired on committed+gate-green tree with no prior verdict; events=%v summary=%q", events, result.Summary)
+			t.Errorf("hk-nwgj7: review_fixup_stalled false-fired on committed+gate-green tree with no prior verdict; events=%v summary=%q", events, result.Summary)
 		}
 	}
-	// Summary should mention the hk-du455 exemption path.
-	if !strings.Contains(result.Summary, "hk-du455") && !strings.Contains(result.Summary, "gate-green") {
-		t.Errorf("hk-du455: expected summary to reference hk-du455 or gate-green; got %q", result.Summary)
+	if !sawReviewerVerdict {
+		t.Errorf("hk-nwgj7: expected a reviewer_verdict event — the run must not close without an actual reviewer verdict; events=%v", events)
 	}
 }
 

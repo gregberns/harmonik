@@ -546,6 +546,23 @@ func driveDotWorkflow(
 				}
 			}
 			headAdvanced := priorIterHeadSHA == "" || currentHead != priorIterHeadSHA
+			// committedResult: is there a committed result on this run at all (HEAD
+			// past the run baseline parentSHA)? Computed here (rather than only
+			// inside the no-progress block) because hk-nwgj7 needs it to gate the
+			// FIRST-reviewer-entry suppression below.
+			committedResult := parentSHA == "" || currentHead != parentSHA
+			// hk-nwgj7: suppress the no-progress check entirely when the upcoming
+			// node is a reviewer that has NEVER produced a verdict on this run
+			// (priorVerdict == "") and there is gate-green committed work to
+			// review. Before this fix, the hk-du455 case-4 exemption (below) fired
+			// HERE and returned success WITHOUT ever dispatching the reviewer —
+			// merging committed code with no reviewer verdict at all (the review
+			// gate was silently bypassed). Reviewers never advance HEAD by design,
+			// so a HEAD-unchanged first entry into the reviewer is not evidence of
+			// being "stuck" — it just means the reviewer has not run yet. Skipping
+			// the whole guard here lets the walk fall through to the normal
+			// dispatch path so the reviewer actually reviews the committed work.
+			firstReviewerEntryWithGreenGate := isReviewer && priorVerdict == "" && committedResult && lastGatePassed
 			// hk-ycxfa: suppress the no-progress check when retrying a stalled reviewer
 			// (hk-bqf1q follow-up). A reviewer retry does not advance HEAD (reviewers
 			// never commit), so the check would fire prematurely when iterationCount >= 2
@@ -553,7 +570,7 @@ func driveDotWorkflow(
 			// meant to rescue. The retry is already gated by reviewerNoVerdictRetries <
 			// dotMaxReviewerNoVerdictRetries; if the retry also stalls, hard-fail fires
 			// below via the exhausted-budget branch.
-			if iterationCount >= 2 && !headAdvanced && !(isReviewer && reviewerNoVerdictRetries > 0) {
+			if iterationCount >= 2 && !headAdvanced && !(isReviewer && reviewerNoVerdictRetries > 0) && !firstReviewerEntryWithGreenGate {
 				// hk-8ps7q — approved-and-done is COMPLETION, not no-progress.
 				//
 				// The no-progress condition (iter ≥ 2 + HEAD unchanged) is met by
@@ -580,7 +597,9 @@ func driveDotWorkflow(
 				// path loops back through an agentic node (e.g. a commit_gate
 				// fix-loop re-entry on an already-approved, already-committed bead —
 				// the production T12/hk-xhawy shape).
-				committedResult := parentSHA == "" || currentHead != parentSHA
+				//
+				// committedResult was computed above (before this block) so the
+				// hk-nwgj7 first-reviewer-entry suppression could consult it too.
 				// hk-2vpj / hk-8ps7q: gate the APPROVE-completion exemption on
 				// !prevAgenticNodeWasReviewer (rather than !isReviewer).
 				//
@@ -640,21 +659,28 @@ func driveDotWorkflow(
 						summary:    fmt.Sprintf("dot: completed at iteration %d — REQUEST_CHANGES was advisory-only (commit gate green; HEAD final, nothing committable remained) (hk-w2ow)", iterationCount),
 					}
 				}
-				// hk-du455 — committed + gate-green, no reviewer verdict yet: COMPLETION.
+				// hk-du455 — committed + gate-green, no reviewer verdict yet, and the
+				// upcoming node is NOT a reviewer: COMPLETION.
 				//
-				//   (4) COMMITTED + GATE-GREEN + NO VERDICT YET: there IS a committed
-				//       result (HEAD is past parentSHA) AND no reviewer has produced a
-				//       verdict yet (priorVerdict == "") AND the most-recent build/test
-				//       gate passed (lastGatePassed). The no-progress guard fires here
-				//       because the implementer re-entered without a new commit — e.g. a
-				//       transient gate failure bounced the bead back to the implementer,
-				//       which made no new commit since the committed tree was already
-				//       correct, and Gate-2 then passed on the same tree.
-				//       Firing no_progress here discards valid, gate-green committed work
-				//       before the reviewer can even run. The run instead COMPLETES so
-				//       the caller preserves the committed work.
+				//   (4) COMMITTED + GATE-GREEN + NO VERDICT YET + NO REVIEWER TO RUN:
+				//       there IS a committed result (HEAD is past parentSHA) AND no
+				//       reviewer has produced a verdict yet (priorVerdict == "") AND
+				//       the most-recent build/test gate passed (lastGatePassed) AND the
+				//       node about to be (re-)dispatched is NOT a reviewer. This covers
+				//       graphs with no reviewer node downstream of the gate (or any
+				//       other non-reviewer agentic re-entry with nothing left to do):
+				//       firing no_progress here would discard valid, gate-green
+				//       committed work that will never reach a review step anyway.
+				//       The run instead COMPLETES so the caller preserves the work.
+				//
+				//       hk-nwgj7: when the upcoming node IS a reviewer that has not run
+				//       yet, this case must NOT fire — completing here would merge
+				//       committed code with no reviewer verdict at all (an unreviewed
+				//       merge). That shape is instead handled by the
+				//       firstReviewerEntryWithGreenGate suppression above, which skips
+				//       this whole guard block so the reviewer actually dispatches.
 				//       Defense-in-depth for hk-7xgu4; precedent: cap-hit salvage above.
-				if committedResult && priorVerdict == "" && lastGatePassed {
+				if committedResult && priorVerdict == "" && lastGatePassed && !isReviewer {
 					return dotWorkflowResult{
 						success: true,
 						summary: fmt.Sprintf("dot: completed at iteration %d — committed work is gate-green with no prior reviewer verdict; preserving committed tree (hk-du455)", iterationCount),

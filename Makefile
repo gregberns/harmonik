@@ -20,6 +20,14 @@ TWINS_DIR := $(PWD)/twins
 # gets its own hard cap. Override via: make agent-review AGENT_REVIEW_TIMEOUT=120
 AGENT_REVIEW_TIMEOUT ?= 60
 
+# `timeout` is GNU coreutils and absent from stock macOS; `gtimeout` is what
+# `brew install coreutils` provides instead. Resolve whichever exists so
+# agent-review doesn't hard-fail with "command not found" on a bare Mac
+# (hk-x2spu: exposed once lefthook itself was made resolvable and pre-commit
+# stopped silently no-op'ing). Empty means neither is installed — run
+# unwrapped rather than block every commit on a missing dev dependency.
+TIMEOUT_BIN := $(shell command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null)
+
 # Commit hash stamped into twin binaries at build time (HC-043).
 # Uses the shell form so the value is resolved at recipe execution time, not
 # at Makefile parse time, which correctly reflects uncommitted state during
@@ -328,7 +336,12 @@ lint:  ## golangci-lint run (shorthand)
 agent-review:  ## Run agent-reviewer + verdict cross-check; APPROVE required to commit (hk-q6axs.4)
 	@SKILL=".claude/skills/agent-reviewer/run"; \
 	if [ -x "$$SKILL" ]; then \
-		timeout $(AGENT_REVIEW_TIMEOUT) "$$SKILL" --diff HEAD~1; \
+		if [ -n "$(TIMEOUT_BIN)" ]; then \
+			$(TIMEOUT_BIN) $(AGENT_REVIEW_TIMEOUT) "$$SKILL" --diff HEAD~1; \
+		else \
+			echo "agent-review: no timeout/gtimeout binary found; running unwrapped (no hard cap)."; \
+			"$$SKILL" --diff HEAD~1; \
+		fi; \
 		EXIT=$$?; \
 		if [ $$EXIT -eq 124 ]; then \
 			echo "agent-review: timed out after $(AGENT_REVIEW_TIMEOUT)s; retry manually or add Trivial: true for trivial commits."; \

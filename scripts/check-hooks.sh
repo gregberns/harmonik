@@ -48,6 +48,25 @@ for hook in "${EXPECTED[@]}"; do
   fi
 done
 
+# A hook file existing and invoking lefthook is not enough: if the lefthook
+# binary itself can't be resolved at commit time, the auto-generated shim
+# just echoes "Can't find lefthook in PATH" and exits 0 — a silent fail-open
+# that lets every gate (trailer validation included) pass unchecked.
+# (hk-x2spu: 0 reviewer-verdict trailers across 35 overnight commits despite
+# hooks being installed, because lefthook wasn't on PATH.)
+if command -v lefthook >/dev/null 2>&1; then
+  echo "OK       lefthook resolvable via PATH ($(command -v lefthook))"
+else
+  fallback="$(grep -oE '(^|[[:space:]])"?/[^[:space:]"]*/lefthook"?([[:space:]]|$)' "$HOOKS_DIR/pre-commit" 2>/dev/null | tr -d '" ' | head -1 || true)"
+  if [[ -n "$fallback" && -x "$fallback" ]]; then
+    echo "OK       lefthook resolvable via baked-in fallback ($fallback)"
+  else
+    echo "MISSING  lefthook binary not resolvable via PATH or hook fallback — hooks fail open (echo + exit 0)" >&2
+    echo "Fix: brew install lefthook  (or: make tools && make install-hooks; then: lefthook install --force)" >&2
+    exit_code=1
+  fi
+fi
+
 if [[ $exit_code -ne 0 ]]; then
   echo ""
   echo "Git hooks are not in sync with $LEFTHOOK_YML." >&2

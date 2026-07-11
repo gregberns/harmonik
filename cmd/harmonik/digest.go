@@ -246,6 +246,50 @@ func printHumanDigest(d *digest.DigestJSON) {
 		}
 	}
 
+	// Agents online (comms who)
+	fmt.Printf("\n=== Agents online (%d) ===\n", len(d.CommsWho))
+	if len(d.CommsWho) == 0 {
+		fmt.Println("  (none)")
+	}
+	for _, w := range d.CommsWho {
+		fmt.Printf("  %s  status=%s\n", w.Agent, w.Status)
+	}
+
+	// Registered crews
+	fmt.Printf("\n=== Registered crews (%d) ===\n", len(d.Crews))
+	if len(d.Crews) == 0 {
+		fmt.Println("  (none)")
+	}
+	for _, c := range d.Crews {
+		fmt.Printf("  %s  queue=%s  epic=%s\n", c.Name, c.Queue, c.Epic)
+	}
+
+	// tmux fleet
+	fmt.Printf("\n=== tmux fleet (%d sessions) ===\n", len(d.TmuxFleet))
+	if len(d.TmuxFleet) == 0 {
+		fmt.Println("  (no tmux sessions)")
+	}
+	for _, s := range d.TmuxFleet {
+		fmt.Printf("  %s  windows=%s\n", s.Session, strings.Join(s.Windows, ","))
+	}
+
+	// Paused / failed queues
+	if len(d.PausedQueues) > 0 {
+		fmt.Printf("\n=== PAUSED/FAILED QUEUES (%d) ===\n", len(d.PausedQueues))
+		for _, q := range d.PausedQueues {
+			fmt.Printf("  %s  status=%s\n", q.Name, q.Status)
+		}
+	} else {
+		fmt.Println("\n=== Paused/failed queues ===")
+		fmt.Println("  (none — all queues active or idle-healthy)")
+	}
+
+	// kerf map
+	if d.KerfMap != "" {
+		fmt.Println("\n=== Kerf map ===")
+		fmt.Println(d.KerfMap)
+	}
+
 	// Non-fatal errors
 	if len(d.Errors) > 0 {
 		fmt.Println("\n=== Collection errors ===")

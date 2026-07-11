@@ -4,17 +4,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/presence"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -155,7 +161,179 @@ func Build(ctx context.Context, in BuildInput) (*DigestJSON, error) {
 		addErr("undeployed_tail", undeployedErr)
 	}
 
+	// --- comms who (agent presence, in-process — no daemon socket) ---
+	out.CommsWho = buildCommsWho(eventsPath, now)
+
+	// --- crew list (in-process durable registry read) ---
+	var crewErr error
+	out.Crews, crewErr = buildCrewList(in.ProjectDir)
+	addErr("crew_list", crewErr)
+
+	// --- tmux fleet ---
+	var tmuxErr error
+	out.TmuxFleet, tmuxErr = buildTmuxFleet(ctx)
+	addErr("tmux_fleet", tmuxErr)
+
+	// --- paused/failed queue sweep (file-based — no daemon socket) ---
+	var pausedErr error
+	out.PausedQueues, pausedErr = buildPausedQueues(ctx, in.ProjectDir)
+	addErr("paused_queues", pausedErr)
+
+	// --- kerf map ---
+	if in.KerfPath != "" {
+		var kerfMapErr error
+		out.KerfMap, kerfMapErr = kerfMapText(ctx, in.KerfPath)
+		addErr("kerf_map", kerfMapErr)
+	}
+
 	return out, nil
+}
+
+// buildCommsWho computes the agent-presence projection via internal/presence
+// (the same projection `harmonik comms who` reads), matching NDJSON row shape
+// but computed in-process from events.jsonl — no daemon socket, no LLM
+// (DC-INV-001).
+//
+// Offline agents (an explicit leave beat, or effective_last_seen past the
+// stale cutoff) are omitted, matching `harmonik comms who`'s own filter
+// (runCommsWhoSubcommand only emits online/stale) — otherwise every agent
+// that ever sent a presence beat, however long ago, would remain in the list
+// forever.
+func buildCommsWho(eventsPath string, now time.Time) []CommsWhoEntry {
+	registry := presence.ComputeRegistry(eventsPath)
+	names := make([]string, 0, len(registry))
+	for name := range registry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]CommsWhoEntry, 0, len(names))
+	for _, name := range names {
+		rec := registry[name]
+		var status string
+		switch presence.GetStateAt(rec, now) {
+		case presence.StateOnline:
+			status = "online"
+		case presence.StateStale:
+			status = "stale"
+		default:
+			continue // offline: omitted, matching `harmonik comms who`
+		}
+		out = append(out, CommsWhoEntry{
+			Agent:    name,
+			Status:   status,
+			LastSeen: rec.EffectiveLastSeen,
+		})
+	}
+	return out
+}
+
+// buildCrewList reads the durable crew registry (.harmonik/crew/*.json) via
+// internal/crew — the same file-based source `harmonik crew list` reads; no
+// daemon socket required.
+func buildCrewList(projectDir string) ([]CrewSummary, error) {
+	records, err := crew.List(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CrewSummary, 0, len(records))
+	for _, r := range records {
+		out = append(out, CrewSummary{
+			Name:      r.Name,
+			Type:      r.EffectiveType(),
+			Queue:     r.Queue,
+			Epic:      r.Epic,
+			SessionID: r.SessionID,
+			StartedAt: r.StartedAt,
+		})
+	}
+	return out, nil
+}
+
+// buildTmuxFleet lists every live tmux session and its windows via
+// internal/lifecycle/tmux.OSAdapter. Absence of tmux or an idle server both
+// degrade to an empty fleet (OSAdapter.ListSessions' own no-tmux semantics),
+// not an error.
+//
+// A per-session tmux.ErrNoSession (the session vanished between
+// ListSessions and ListWindows — a TOCTOU race) is expected and silently
+// degrades that session to no windows, matching
+// internal/lifecycle/tmux/orphanwindow.go's own convention. Any other
+// ListWindows error is a genuine tmux failure and is joined into the
+// returned error so it reaches out.Errors (DC-007) instead of being
+// silently swallowed; the session still appears in the fleet with no
+// windows.
+func buildTmuxFleet(ctx context.Context) ([]TmuxSessionSummary, error) {
+	adapter := tmux.OSAdapter{}
+	sessions, err := adapter.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TmuxSessionSummary, 0, len(sessions))
+	var errs []error
+	for _, s := range sessions {
+		windows, wErr := adapter.ListWindows(ctx, s)
+		if wErr != nil {
+			if !errors.Is(wErr, tmux.ErrNoSession) {
+				errs = append(errs, fmt.Errorf("list-windows %s: %w", s, wErr))
+			}
+			out = append(out, TmuxSessionSummary{Session: s})
+			continue
+		}
+		out = append(out, TmuxSessionSummary{Session: s, Windows: windows})
+	}
+	return out, errors.Join(errs...)
+}
+
+// pausedQueueStatusRe matches queue-level statuses the paused-queue sweep
+// surfaces. Kept identical to scripts/captain-boot-digest.sh's own sweep
+// regex for parity: "complete-with-failures" is (today) a Group-level status
+// rather than a queue-level one, but the sweep checks the same pattern
+// against queue status text so a future queue-level status of that name is
+// caught without a code change.
+var pausedQueueStatusRe = regexp.MustCompile(`paused|complete-with-failures`)
+
+// buildPausedQueues enumerates every named queue via queue.EnumerateQueueNames
+// (file-based — no daemon socket, per DC-001/DC-INV-001; also skips
+// .tmp-/.failed-/.cancelled- archive files) and returns every queue whose
+// status matches pausedQueueStatusRe. A queue file that fails to load (e.g.
+// queue.ErrCorrupt) is joined into the returned error so it reaches
+// out.Errors (DC-007) rather than silently vanishing from the sweep.
+func buildPausedQueues(ctx context.Context, projectDir string) ([]PausedQueueSummary, error) {
+	names, err := queue.EnumerateQueueNames(projectDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []PausedQueueSummary
+	var errs []error
+	for _, name := range names {
+		q, loadErr := queue.Load(ctx, projectDir, name)
+		if loadErr != nil {
+			errs = append(errs, fmt.Errorf("load queue %s: %w", name, loadErr))
+			continue
+		}
+		if q == nil {
+			continue
+		}
+		status := string(q.Status)
+		if pausedQueueStatusRe.MatchString(status) {
+			out = append(out, PausedQueueSummary{Name: name, Status: status})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, errors.Join(errs...)
+}
+
+// kerfMapText runs `kerf map` and returns its raw text output. kerf has no
+// --format=json for this subcommand, so the output is captured verbatim
+// rather than parsed.
+func kerfMapText(ctx context.Context, kerfPath string) (string, error) {
+	out, err := runCmd(ctx, kerfPath, "map")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // buildPendingDecisions returns every unacknowledged decision_required entry.
@@ -407,12 +585,17 @@ func recentCommits(ctx context.Context, projectDir, gitPath string, n int) ([]Co
 	return commits, nil
 }
 
-// brReady runs `br ready --format json --limit 0` and returns BeadSummary slice.
+// brReady runs `br ready --limit 0 --json` and returns BeadSummary slice.
 // --limit 0 (unlimited) is REQUIRED: bare `br ready` silently caps at 20, which
 // would truncate the boot digest's ready list and mislead agents into thinking
 // the ready queue is shorter than it is.
+//
+// The flag MUST follow the subcommand (`br ready --json`, not `br --format
+// json ready`): br's CLI parser rejects `--format` as a global (pre-subcommand)
+// flag with exit 2 ("unexpected argument '--format' found") — this was the
+// digest-parity bug (br_ready collector always failed).
 func brReady(ctx context.Context, brPath, projectDir string) ([]BeadSummary, error) {
-	out, err := runCmd(ctx, brPath, "--format", "json", "ready", "--limit", "0")
+	out, err := runCmd(ctx, brPath, "ready", "--limit", "0", "--json")
 	if err != nil {
 		return nil, err
 	}

@@ -114,8 +114,65 @@ type DigestJSON struct {
 	// Present in every digest so the cognition loop can always read the current state.
 	SuppressionState SuppressionState `json:"suppression_state"`
 
+	// CommsWho is the agent-presence projection (equivalent to `harmonik comms
+	// who --json`), computed in-process from events.jsonl via internal/presence
+	// — no daemon socket required (DC-INV-001).
+	CommsWho []CommsWhoEntry `json:"comms_who,omitempty"`
+
+	// Crews is the registered-crew list (equivalent to `harmonik crew list
+	// --json`), read in-process from the durable .harmonik/crew/*.json registry.
+	Crews []CrewSummary `json:"crews,omitempty"`
+
+	// TmuxFleet is every live tmux session and its windows (equivalent to
+	// `tmux list-sessions` / `tmux list-windows -a`). Empty when tmux is not
+	// installed or the server is not running — not an error.
+	TmuxFleet []TmuxSessionSummary `json:"tmux_fleet,omitempty"`
+
+	// PausedQueues lists every named queue (read from .harmonik/queues/*.json,
+	// file-based — no daemon socket) whose status matches the paused/failed
+	// sweep per captain-boot-digest.sh parity (paused-by-* AND
+	// complete-with-failures).
+	PausedQueues []PausedQueueSummary `json:"paused_queues,omitempty"`
+
+	// KerfMap holds the raw text of `kerf map` (works grouped by area). kerf
+	// has no --format=json for this subcommand, so the output is captured
+	// verbatim rather than parsed.
+	KerfMap string `json:"kerf_map,omitempty"`
+
 	// Errors lists non-fatal collection errors so the loop can surface them.
 	Errors []string `json:"errors,omitempty"`
+}
+
+// CommsWhoEntry is a single agent-presence entry, matching one row of
+// `harmonik comms who --json`.
+type CommsWhoEntry struct {
+	Agent    string    `json:"agent"`
+	Status   string    `json:"status"` // "online", "stale", or "offline"
+	LastSeen time.Time `json:"last_seen,omitempty"`
+}
+
+// CrewSummary is a single registered-crew entry, matching one row of
+// `harmonik crew list --json`.
+type CrewSummary struct {
+	Name      string    `json:"name"`
+	Type      string    `json:"type,omitempty"`
+	Queue     string    `json:"queue,omitempty"`
+	Epic      string    `json:"epic,omitempty"`
+	SessionID string    `json:"session_id,omitempty"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+}
+
+// TmuxSessionSummary is one live tmux session and its window names.
+type TmuxSessionSummary struct {
+	Session string   `json:"session"`
+	Windows []string `json:"windows,omitempty"`
+}
+
+// PausedQueueSummary is a named queue whose status matched the paused/failed
+// sweep regex.
+type PausedQueueSummary struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 // QueueSummary holds queue.json–derived fields.

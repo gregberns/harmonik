@@ -8,10 +8,10 @@ requirement-prefix: DC
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.1.0
+version: 0.2.0
 spec-template-version: 1.1
 owner: flywheel-author
-last-updated: 2026-05-30
+last-updated: 2026-07-11
 depends-on:
   - cognition-loop
   - process-lifecycle
@@ -33,7 +33,9 @@ operators monitoring the system state.
 ### 2.1 In scope
 
 - `harmonik digest` snapshot mode: reads queue.json, events.jsonl, notes.jsonl,
-  br ready/list, and kerf next; emits JSON or human-readable text.
+  br ready/list, kerf next/map, agent presence, the crew registry, tmux
+  sessions/windows, and every named queue's paused/failed status; emits JSON
+  or human-readable text.
 - `--json` flag: NDJSON output carrying `schema_version` per CL-033.
 - `--since <event_id>`: ScanAfter watermark filter per CL-031.
 - `--full` flag: disable CL-032 size caps.
@@ -74,11 +76,14 @@ Envelope for the digest-command subsystem per [architecture.md §4.0 AR-053]. `h
   | Type | `Tags:` | `Axes:` (if non-baseline) |
   |---|---|---|
   | `CL-DIGEST` status-sheet record (JSON/text, carries `schema_version` per DC-003 / CL-033) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe` |
-  | `.harmonik/queue.json` queue envelope (consumed; owned by [queue-model.md]) | mechanism | baseline |
+  | `.harmonik/queues/main.json` queue envelope (consumed; owned by [queue-model.md]) | mechanism | baseline |
   | `.harmonik/events/events.jsonl` typed-event log (consumed; owned by [event-model.md]) | mechanism | baseline |
   | `.harmonik/cognition/notes.jsonl` open-note entries (consumed; owned by [cognition-loop.md]) | mechanism | baseline |
   | `.harmonik/cognition/state.json` `last_processed_event_id` watermark (consumed via `--since`; owned by [cognition-loop.md]) | mechanism | baseline |
-  | `br ready` / `br list` JSON and `kerf next --format=json` feed (consumed, advisory; external tool surfaces) | mechanism | `io-determinism=best-effort; replay-safety=safe` |
+  | `br ready` / `br list` JSON and `kerf next --format=json` / `kerf map` feed (consumed, advisory; external tool surfaces) | mechanism | `io-determinism=best-effort; replay-safety=safe` |
+  | `.harmonik/crew/*.json` crew registry (consumed; owned by [c2-spec.md §3.3]) | mechanism | baseline |
+  | `.harmonik/queues/*.json` per-queue envelopes (consumed; owned by [queue-model.md]) | mechanism | baseline |
+  | tmux sessions/windows (consumed, advisory; external process-table surface) | mechanism | `io-determinism=best-effort; replay-safety=safe` |
 
 (d) Handlers implemented: none. `harmonik digest` is a CLI subcommand, not a handler-contract handler ([handler-contract.md]).
 
@@ -100,6 +105,11 @@ Envelope for the digest-command subsystem per [architecture.md §4.0 AR-053]. `h
   | `read_git_log` (DC-004) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `invoke_br_ready_and_list` (DC-004, DC-007) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent` |
   | `invoke_kerf_next` (DC-004, DC-007) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent` |
+  | `invoke_kerf_map` (DC-011, DC-007) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent` |
+  | `compute_presence_registry` (DC-009) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `read_crew_registry` (DC-009) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `list_tmux_sessions_and_windows` (DC-009, DC-007) | mechanism | `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=idempotent` |
+  | `sweep_paused_queues` (DC-010) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `apply_size_caps` (DC-005) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `emit_status_sheet` (DC-003, §6) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
 
@@ -132,13 +142,23 @@ Tags: mechanism
 ### DC-004 — Digest inputs are deterministic only (CL-031)
 
 The builder MUST NOT consult any LLM. Inputs are:
-- `queue.json` — queue envelope from `.harmonik/queue.json`
+- `queue.json` — queue envelope from `.harmonik/queues/main.json`
 - `origin/main` git log — recent commits
 - `events.jsonl` via `ScanAfter(watermark)` — recent typed events
-- `br ready --format json` — unblocked open beads
+- `br ready --limit 0 --json` — unblocked open beads
 - `br list --status in_progress --json` — in-progress beads
 - `.harmonik/cognition/notes.jsonl` — open (unresolved) note entries
 - `kerf next --format=json` — ranked bead feed (advisory)
+- agent-presence projection over `events.jsonl` (in-process, via
+  `internal/presence.ComputeRegistry`) — equivalent to `harmonik comms who
+  --json` (DC-009)
+- `.harmonik/crew/*.json` — the durable crew registry, read in-process via
+  `internal/crew.List` — equivalent to `harmonik crew list --json` (DC-009)
+- tmux sessions/windows via `internal/lifecycle/tmux.OSAdapter` — equivalent
+  to `tmux list-sessions` / `tmux list-windows -a` (DC-009)
+- `.harmonik/queues/*.json` — every named queue (file-based, not the daemon
+  RPC `harmonik queue list`), filtered for paused/failed status (DC-010)
+- `kerf map` — works grouped by area, captured as raw text (DC-011)
 
 Tags: mechanism
 
@@ -197,6 +217,48 @@ work (OQ-DC-001 resolved below).
 
 Tags: mechanism
 
+### DC-009 — Fleet-state parity with `scripts/captain-boot-digest.sh`
+
+`harmonik digest` MUST additionally surface, computed in-process (no daemon
+socket, no subprocess where an in-process durable-state read is available):
+
+1. **Agent presence** (`comms_who`) — the same projection `harmonik comms who
+   --json` reads (`internal/presence.ComputeRegistry` over `events.jsonl`),
+   with each entry's resolved status (`online`/`stale`/`offline`).
+2. **Registered crews** (`crews`) — the durable crew registry
+   (`.harmonik/crew/*.json`, via `internal/crew.List`), equivalent to
+   `harmonik crew list --json`.
+3. **tmux fleet** (`tmux_fleet`) — every live tmux session and its windows,
+   equivalent to `tmux list-sessions` / `tmux list-windows -a`. Absence of
+   tmux or an idle server degrades to an empty fleet, not an error.
+
+This closes the parity gap that blocked retiring
+`scripts/captain-boot-digest.sh` (STARTUP.md §2b–§2d discovery).
+
+Tags: mechanism
+
+### DC-010 — Paused/failed queue sweep
+
+`harmonik digest` MUST scan every named queue under `.harmonik/queues/*.json`
+(file-based — the daemon-RPC `harmonik queue list` MUST NOT be used, per
+DC-INV-001) and report every queue whose `status` matches the regex
+`paused|complete-with-failures` in `paused_queues`. This regex is intentionally
+broader than `paused-by-failure` alone — it also matches `paused-by-drain`,
+`paused-by-budget`, and any future `complete-with-failures` queue-level
+status — matching `scripts/captain-boot-digest.sh`'s own sweep pattern.
+
+Tags: mechanism
+
+### DC-011 — `kerf map` raw text
+
+`harmonik digest` MUST run `kerf map` and surface its raw text output in
+`kerf_map`. Unlike `kerf next`, `kerf map` has no `--format=json` mode as of
+this writing; the output is captured verbatim rather than parsed. A future
+kerf release adding structured output for `map` may upgrade this field
+without a schema-version bump (it remains a free-text field either way).
+
+Tags: mechanism
+
 ## 5. Invariants
 
 ### DC-INV-001 — No LLM in the digest path
@@ -240,3 +302,4 @@ EXIT CODES
 | Date       | Version | Author | Changes |
 |------------|---------|--------|---------|
 | 2026-05-30 | 0.1.0   | agent  | Initial draft (hk-1qrty). CL-030..033 + OQ-CL-002 resolved as subcommand. |
+| 2026-07-11 | 0.2.0   | agent  | hk-j5yer.13: fixed the `br_ready` collector's exit-2 bug (`--json` must follow the `ready` subcommand, not precede it as `--format json`); added DC-009 (comms-who, crew list, tmux fleet), DC-010 (paused/failed queue sweep — `.harmonik/queues/*.json`, regex `paused\|complete-with-failures`), DC-011 (`kerf map` raw text) for parity with `scripts/captain-boot-digest.sh`. |

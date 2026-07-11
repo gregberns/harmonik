@@ -999,3 +999,233 @@ func TestBuildPendingDecisions_AcksDirAcknowledgedSkipped(t *testing.T) {
 		t.Errorf("expected 0 pending decisions (acknowledged file should be skipped); got %d", len(d.PendingDecisions))
 	}
 }
+
+// TestBrReady_InvokesCorrectFlagOrder verifies the digest-parity fix: the
+// --json flag MUST follow the "ready" subcommand (`br ready --limit 0
+// --json`). The pre-fix invocation (`br --format json ready --limit 0`) put a
+// bogus global flag ahead of the subcommand and always failed with exit 2.
+func TestBrReady_InvokesCorrectFlagOrder(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// A fake br that only succeeds when invoked as "ready --limit 0 --json"
+	// (in that exact order), and fails loudly (exit 2, mirroring real br's
+	// behaviour) for any other argument shape — reproducing the historical bug.
+	script := `#!/bin/sh
+if [ "$1" = "ready" ] && [ "$2" = "--limit" ] && [ "$3" = "0" ] && [ "$4" = "--json" ]; then
+  echo '[{"id":"hk-x","title":"t","priority":1,"status":"open"}]'
+  exit 0
+fi
+echo "error: unexpected argument" >&2
+exit 2
+`
+	path := filepath.Join(dir, "fake-br-order")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	beads, err := brReady(context.Background(), path, dir)
+	if err != nil {
+		t.Fatalf("brReady failed (flag-order regression): %v", err)
+	}
+	if len(beads) != 1 || beads[0].BeadID != "hk-x" {
+		t.Errorf("unexpected beads: %+v", beads)
+	}
+}
+
+// TestBuildPausedQueues verifies the paused-queue sweep matches the same
+// regex as scripts/captain-boot-digest.sh (paused|complete-with-failures),
+// covering both paused-by-* queue statuses AND a hypothetical
+// "complete-with-failures" queue status, while leaving healthy queues out.
+func TestBuildPausedQueues(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+	queuesDir := filepath.Join(dir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	writeQ := func(name, status string) {
+		q := map[string]interface{}{
+			"schema_version": 1,
+			"queue_id":       "00000000-0000-0000-0000-000000000001",
+			"submitted_at":   "2026-01-01T00:00:00Z",
+			"groups":         []interface{}{},
+			"status":         status,
+		}
+		data, _ := json.Marshal(q)
+		if err := os.WriteFile(filepath.Join(queuesDir, name+".json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeQ("healthy-q", "active")
+	writeQ("failed-q", "paused-by-failure")
+	writeQ("drained-q", "paused-by-drain")
+	writeQ("cwf-q", "complete-with-failures")
+
+	got, err := buildPausedQueues(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("buildPausedQueues failed: %v", err)
+	}
+
+	names := make(map[string]string)
+	for _, pq := range got {
+		names[pq.Name] = pq.Status
+	}
+	if len(names) != 3 {
+		t.Fatalf("expected 3 paused/failed queues; got %d: %+v", len(names), got)
+	}
+	if names["failed-q"] != "paused-by-failure" {
+		t.Errorf("expected failed-q to be flagged; got %+v", names)
+	}
+	if names["drained-q"] != "paused-by-drain" {
+		t.Errorf("expected drained-q to be flagged; got %+v", names)
+	}
+	if names["cwf-q"] != "complete-with-failures" {
+		t.Errorf("expected cwf-q to be flagged; got %+v", names)
+	}
+	if _, ok := names["healthy-q"]; ok {
+		t.Errorf("healthy-q should not be flagged; got %+v", names)
+	}
+}
+
+// TestBuildCrewList verifies buildCrewList reads the durable crew registry
+// (.harmonik/crew/*.json) and maps every field onto CrewSummary.
+func TestBuildCrewList(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+	crewDir := filepath.Join(dir, ".harmonik", "crew")
+	if err := os.MkdirAll(crewDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := map[string]interface{}{
+		"schema_version": 1,
+		"name":           "hawat",
+		"session_id":     "sess-1",
+		"queue":          "hawat-q",
+		"epic":           "hk-epic1",
+		"handle":         "harmonik-abc-crew-hawat:agent",
+		"started_at":     "2026-01-01T00:00:00Z",
+	}
+	data, _ := json.Marshal(rec)
+	if err := os.WriteFile(filepath.Join(crewDir, "hawat.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Unix(1700000000, 0),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	if len(d.Crews) != 1 {
+		t.Fatalf("expected 1 crew; got %d: %+v", len(d.Crews), d.Crews)
+	}
+	c := d.Crews[0]
+	if c.Name != "hawat" || c.Queue != "hawat-q" || c.Epic != "hk-epic1" {
+		t.Errorf("unexpected crew summary: %+v", c)
+	}
+}
+
+// TestBuildCommsWho verifies the in-process presence projection (matching
+// `harmonik comms who --json`) surfaces an online agent from an
+// agent_presence event.
+func TestBuildCommsWho(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+	eventsDir := filepath.Join(dir, ".harmonik", "events")
+	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	eventID := uuid.Must(uuid.NewV7()).String()
+	line := `{"event_id":"` + eventID + `","type":"agent_presence","payload":{"agent":"hawat","status":"online","last_seen":"2026-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(filepath.Join(eventsDir, "events.jsonl"), []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	if len(d.CommsWho) != 1 || d.CommsWho[0].Agent != "hawat" || d.CommsWho[0].Status != "online" {
+		t.Errorf("unexpected comms_who: %+v", d.CommsWho)
+	}
+}
+
+// TestBuildCommsWho_OfflineOmitted verifies an agent past the stale cutoff
+// (fully offline) is omitted from comms_who, matching `harmonik comms who`'s
+// own filter (runCommsWhoSubcommand only emits online/stale agents).
+func TestBuildCommsWho_OfflineOmitted(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+	eventsDir := filepath.Join(dir, ".harmonik", "events")
+	if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	eventID := uuid.Must(uuid.NewV7()).String()
+	// last_seen far in the past — well past the 10-minute stale cutoff.
+	line := `{"event_id":"` + eventID + `","type":"agent_presence","payload":{"agent":"ghost","status":"online","last_seen":"2020-01-01T00:00:00Z"}}`
+	if err := os.WriteFile(filepath.Join(eventsDir, "events.jsonl"), []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err := Build(context.Background(), BuildInput{
+		ProjectDir: dir,
+		Limits:     DefaultLimits(),
+		Now:        time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	if len(d.CommsWho) != 0 {
+		t.Errorf("expected offline agent to be omitted; got %+v", d.CommsWho)
+	}
+}
+
+// TestBuildPausedQueues_CorruptFileSurfacesError verifies an unparseable
+// queue file is joined into the returned error (DC-007) rather than silently
+// vanishing from the sweep.
+func TestBuildPausedQueues_CorruptFileSurfacesError(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+	queuesDir := filepath.Join(dir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(queuesDir, "broken-q.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := buildPausedQueues(context.Background(), dir)
+	if err == nil {
+		t.Fatal("expected an error for the unparseable queue file; got nil")
+	}
+}
+
+// TestBuildPausedQueues_SkipsArchiveFiles verifies the sweep reuses
+// queue.EnumerateQueueNames and so skips .tmp-/.failed-/.cancelled- archive
+// files rather than treating them as live queues.
+func TestBuildPausedQueues_SkipsArchiveFiles(t *testing.T) {
+	t.Parallel()
+	dir := makeMinimalProject(t)
+	queuesDir := filepath.Join(dir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(queuesDir, "old-q.json.failed-20260101000000"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := buildPausedQueues(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("buildPausedQueues failed: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected archive file to be skipped; got %+v", got)
+	}
+}

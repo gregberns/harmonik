@@ -625,8 +625,10 @@ func driveDotWorkflow(
 					// hk-f3u6o: route through runner so a REMOTE run reads the
 					// worker-side review.json (a box-A os.ReadFile would miss it and
 					// silently drop the merge trailers); nil/local → bare-local (NFR7).
+					// hk-vv10r: use the retrying reader (both local and remote) so a
+					// verdict observed mid-flush doesn't silently drop the trailers.
 					//nolint:errcheck // non-fatal: a missing/unreadable file yields nil, which the trailer-stamp guard skips
-					dotApproveVerdict, _ := workspace.ReadReviewVerdictVia(ctx, runner, wtPath)
+					dotApproveVerdict, _ := readDotReviewVerdictRetry(ctx, runner, wtPath)
 					return dotWorkflowResult{
 						success:        true,
 						approveVerdict: dotApproveVerdict,
@@ -1174,6 +1176,26 @@ func nodeModelForHarness(resolvedModel, nodeModelAttr string, effHarness core.Ag
 		return nodeModelAttr
 	}
 	return resolvedModel
+}
+
+// readDotReviewVerdictRetry reads a reviewer's .harmonik/review.json with
+// retry-until-valid-on-ErrMalformed semantics regardless of whether runner is
+// local or remote (hk-vv10r).
+//
+// ReadReviewVerdictVia only retries on its REMOTE (SSH cat) branch; its
+// local/nil-runner branch intentionally falls through to the bare, no-retry
+// ReadReviewVerdict (NFR7 — pollers like the quit-watchdog gate need a fast
+// absent/malformed return). The DOT cascade's finalize verdict reads are NOT
+// pollers: they run once, after the reviewer node has already exited, exactly
+// like reviewloop.go's finalize read (which uses ReadReviewVerdictLocalRetry).
+// Without this, a local DOT run that observes review.json mid-flush gets a
+// single no-retry read and false-fails the whole run on a transient
+// ErrMalformed — the review-loop fix (hk-1hgjr) never applied to the DOT path.
+func readDotReviewVerdictRetry(ctx context.Context, runner tmux.CommandRunner, wtPath string) (*workspace.ReviewVerdict, error) {
+	if runnerIsLocalFS(runner) {
+		return workspace.ReadReviewVerdictLocalRetry(ctx, wtPath)
+	}
+	return workspace.ReadReviewVerdictVia(ctx, runner, wtPath)
 }
 
 // dispatchDotAgenticNode dispatches a single agentic node into the substrate,
@@ -1805,7 +1827,15 @@ func dispatchDotAgenticNode(
 		// variants cat the file over the transport; nil/local runner → byte-identical
 		// bare-local read (NFR7). runner is the same value already threaded to the
 		// node launch (e.g. resolveDotWorktreeHEAD above).
-		verdict, verdictErr := workspace.ReadReviewVerdictVia(ctx, runner, wtPath)
+		//
+		// hk-vv10r: this is a finalize read (runs once, after the reviewer node has
+		// already exited) — not a poller — so it should retry-until-valid on a
+		// transient ErrMalformed the same way reviewloop.go's finalize read does via
+		// ReadReviewVerdictLocalRetry, on BOTH the local and remote branch.
+		// ReadReviewVerdictVia alone only retries its remote branch; the local
+		// branch falls through to the bare no-retry ReadReviewVerdict, so a local
+		// DOT run false-failed on a review.json observed mid-flush.
+		verdict, verdictErr := readDotReviewVerdictRetry(ctx, runner, wtPath)
 		if verdictErr != nil {
 			return core.Outcome{}, fmt.Errorf("read reviewer verdict for node %q: %w", node.ID, verdictErr)
 		}

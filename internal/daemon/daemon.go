@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/gregberns/harmonik/internal/agentmanifest"
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
@@ -1879,10 +1880,22 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// SD-3 (hk-s2eac): wire the idle-completed-crew reaper now that both
 		// the queue store and the crew stop seam exist. Started post-Seal,
 		// below, alongside quiesceArbiter.Start.
+		crewIdleReaperAgentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "agents")
 		crewIdleReaper = NewCrewIdleReaper(CrewIdleReaperConfig{
 			ProjectDir: cfg.ProjectDir,
 			Queues:     qs,
 			Stopper:    crewHandler,
+			// GATE-0 (hk-dy5gw): a persistent oversight role (admiral, watch —
+			// manifest lifecycle.persistent: true) is never reclaimed. The manifest
+			// property is the durable source of truth; a load error reads as
+			// non-persistent so an ordinary bead-crew is unaffected.
+			PersistentType: func(typeName string) bool {
+				tf, err := agentmanifest.Load(crewIdleReaperAgentsDir, typeName)
+				if err != nil {
+					return false
+				}
+				return tf.Manifest.Lifecycle.Persistent
+			},
 		})
 
 		// Build the live state handler (hk-gv04 P2-a: `harmonik state`).

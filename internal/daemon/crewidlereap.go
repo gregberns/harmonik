@@ -101,6 +101,12 @@ type CrewIdleReaperConfig struct {
 
 	// ListCrews enumerates the crew registry. Nil → crew.List.
 	ListCrews crewListFunc
+
+	// PersistentType reports whether the given agent type is a persistent
+	// oversight role (manifest lifecycle.persistent: true) that must never be
+	// reaped. Nil → no crew is ever treated as persistent (unit-test mode); the
+	// daemon wires this to an agentmanifest lookup.
+	PersistentType func(typeName string) bool
 }
 
 // CrewIdleReaper periodically scans the crew registry and tears down any crew
@@ -195,6 +201,17 @@ func (r *CrewIdleReaper) checkCrew(ctx context.Context, rec crew.Record, now tim
 		r.clearCandidate(rec.Name)
 		return
 	}
+	if r.crewIsPersistent(rec) {
+		// GATE-0: a persistent OVERSIGHT role (admiral, watch — manifest
+		// lifecycle.persistent: true) is NEVER reclaimed. Such roles never submit
+		// work, so their crew-start formality queue reads QueueStatusCompleted
+		// forever (ensureQueue, hk-vrnh3); without this gate the reaper culls them
+		// at exactly GraceAfter (hk-dy5gw, same root cause as the watch
+		// self-terminate hk-kojyr). The manifest property is the durable source of
+		// truth — not a queue-shape heuristic.
+		r.clearCandidate(rec.Name)
+		return
+	}
 	q := r.cfg.Queues.QueueByName(rec.Queue)
 	if q == nil || q.Status != queue.QueueStatusCompleted {
 		// Either no completion signal yet, or the queue was re-armed with new
@@ -220,6 +237,16 @@ func (r *CrewIdleReaper) checkCrew(ctx context.Context, rec crew.Record, now tim
 	r.mu.Unlock()
 
 	r.reap(ctx, rec, idleFor)
+}
+
+// crewIsPersistent reports whether rec's agent type is a persistent oversight
+// role (manifest lifecycle.persistent: true) that must never be reaped. When no
+// PersistentType seam is wired (unit-test mode), no crew is persistent.
+func (r *CrewIdleReaper) crewIsPersistent(rec crew.Record) bool {
+	if r.cfg.PersistentType == nil {
+		return false
+	}
+	return r.cfg.PersistentType(rec.EffectiveType())
 }
 
 // clearCandidate removes any pending-teardown tracking for the named crew.

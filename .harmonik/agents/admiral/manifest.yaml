@@ -30,6 +30,7 @@ keeper:
 
 lifecycle:
   self_restart: true
+  persistent: true
 
 tools_dir: null
 

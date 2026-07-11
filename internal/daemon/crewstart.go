@@ -77,6 +77,12 @@ type CrewStartRequest struct {
 	Queue string `json:"queue"`
 	// MissionPath is the path to the handoff file the crew seeds its boot loop from.
 	MissionPath string `json:"mission_path"`
+	// Type is the agent type folder name (e.g. "admiral", "watch", "crew"). When
+	// empty the daemon derives it from a same-named type folder (oversight
+	// singletons launch with name == type); an unresolved type reads as the
+	// default "crew" via Record.EffectiveType(). Stamping it durably lets the
+	// SD-3 reaper honour the manifest lifecycle.persistent flag (hk-dy5gw).
+	Type string `json:"type,omitempty"`
 }
 
 // CrewStopRequest is the wire payload for a "crew-stop" socket op.
@@ -223,6 +229,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	// ── Step 2: write registry record before launch ──
 	rec := crew.Record{
 		Name:      req.Name,
+		Type:      h.resolveCrewType(req),
 		SessionID: sessionID,
 		Queue:     req.Queue,
 		StartedAt: time.Now().UTC(),
@@ -399,6 +406,24 @@ func (h *crewHandlerImpl) checkQueueConflict(name, wantQueue string) error {
 		}
 	}
 	return nil
+}
+
+// resolveCrewType determines the crew's agent type for the durable registry
+// record. An explicit req.Type wins; otherwise the type is derived from a
+// same-named type folder under .harmonik/agents/ (oversight singletons —
+// admiral, watch — launch with instance name == type name). When neither
+// resolves, "" is returned and Record.EffectiveType() reads it as the default
+// "crew". The stamped type lets the SD-3 reaper honour lifecycle.persistent
+// (hk-dy5gw).
+func (h *crewHandlerImpl) resolveCrewType(req CrewStartRequest) string {
+	if req.Type != "" {
+		return req.Type
+	}
+	agentsDir := filepath.Join(h.projectDir, ".harmonik", "agents")
+	if st, err := os.Stat(filepath.Join(agentsDir, req.Name)); err == nil && st.IsDir() {
+		return req.Name
+	}
+	return ""
 }
 
 // ensureQueue ensures the named queue exists in .harmonik/queues/<name>.json.

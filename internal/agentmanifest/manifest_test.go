@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/agentmanifest"
@@ -141,6 +142,38 @@ func TestLoad_ValidType(t *testing.T) {
 	}
 	if tf.OperatingContent != validOperating {
 		t.Errorf("OperatingContent mismatch: got %q, want %q", tf.OperatingContent, validOperating)
+	}
+}
+
+// TestLoad_LifecyclePersistent (hk-dy5gw): the lifecycle.persistent property
+// parses and defaults to false when absent. Oversight roles (admiral, watch)
+// set it true so the SD-3 crew-idle-reaper never reclaims them.
+func TestLoad_LifecyclePersistent(t *testing.T) {
+	t.Parallel()
+
+	// Absent → defaults to false (validManifest declares only self_restart).
+	agentsDir := t.TempDir()
+	makeTypeFolder(t, agentsDir, "mytype", validManifest, validSoul, validOperating)
+	tf, err := agentmanifest.Load(agentsDir, "mytype")
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if tf.Manifest.Lifecycle.Persistent {
+		t.Errorf("Lifecycle.Persistent = true, want false (property absent)")
+	}
+
+	// Present and true → parses true.
+	persistentManifest := strings.Replace(validManifest,
+		"lifecycle:\n  self_restart: true",
+		"lifecycle:\n  self_restart: true\n  persistent: true", 1)
+	agentsDir2 := t.TempDir()
+	makeTypeFolder(t, agentsDir2, "mytype", persistentManifest, validSoul, validOperating)
+	tf2, err := agentmanifest.Load(agentsDir2, "mytype")
+	if err != nil {
+		t.Fatalf("Load (persistent): unexpected error: %v", err)
+	}
+	if !tf2.Manifest.Lifecycle.Persistent {
+		t.Errorf("Lifecycle.Persistent = false, want true (property set)")
 	}
 }
 

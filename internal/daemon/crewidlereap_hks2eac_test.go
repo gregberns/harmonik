@@ -237,6 +237,60 @@ func TestCrewIdleReaper_ActiveQueueNeverReaped(t *testing.T) {
 	}
 }
 
+// TestCrewIdleReaper_PersistentOversightNeverReaped (GATE-0, hk-dy5gw): a
+// persistent oversight role (admiral, watch — manifest lifecycle.persistent:
+// true) never submits work, so its crew-start formality queue reads
+// QueueStatusCompleted forever (ensureQueue, hk-vrnh3). Because PersistentType
+// flags its type, the reaper must skip it across every grace window — otherwise
+// admiral and watch are culled at exactly GraceAfter (5m0s), the same root
+// cause as the watch self-terminate hk-kojyr. An ordinary bead-crew whose type
+// is NOT persistent is still reaped.
+func TestCrewIdleReaper_PersistentOversightNeverReaped(t *testing.T) {
+	queues := newFakeCrewQueues()
+	// All three queues read Completed (formality queue for oversight, drained
+	// queue for the worker) — the persistent flag, not queue shape, decides.
+	queues.set("admiral-q", queue.QueueStatusCompleted)
+	queues.set("watch-q", queue.QueueStatusCompleted)
+	queues.set("paul-q", queue.QueueStatusCompleted)
+	stopper := &fakeCrewStopper{}
+	clock := newFakeClock(time.Now())
+
+	persistent := map[string]bool{"admiral": true, "watch": true}
+
+	r := NewCrewIdleReaper(CrewIdleReaperConfig{
+		ProjectDir:     "/fake/project",
+		Queues:         queues,
+		Stopper:        stopper,
+		GraceAfter:     5 * time.Minute,
+		Now:            clock.Now,
+		PersistentType: func(typeName string) bool { return persistent[typeName] },
+		ListCrews: listCrewsFrom([]crew.Record{
+			{Name: "admiral", Type: "admiral", Queue: "admiral-q"},
+			{Name: "watch", Type: "watch", Queue: "watch-q"},
+			{Name: "paul", Type: "crew", Queue: "paul-q"},
+		}),
+	})
+
+	ctx := context.Background()
+	for i := 0; i < 6; i++ {
+		clock.Advance(5 * time.Minute)
+		r.scan(ctx)
+	}
+
+	// The persistent oversight roles are NEVER reaped; the ordinary bead-crew IS.
+	// (The fake stopper does not remove the reaped record — production does — so
+	// paul may appear more than once; assert membership, not an exact count.)
+	got := stopper.names()
+	for _, name := range got {
+		if name == "admiral" || name == "watch" {
+			t.Fatalf("persistent oversight crew %q was reaped; got %v", name, got)
+		}
+	}
+	if len(got) == 0 {
+		t.Fatalf("expected the non-persistent bead-crew %q to be reaped, got none", "paul")
+	}
+}
+
 // TestCrewIdleReaper_NoOpWithoutProjectDir: scan is a no-op in unit-test mode
 // (no ProjectDir), matching StaleWatcher/QuiesceArbiter's guarded-construction
 // convention.

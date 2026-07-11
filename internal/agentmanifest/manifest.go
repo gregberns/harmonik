@@ -117,6 +117,13 @@ type Keeper struct {
 type Lifecycle struct {
 	// SelfRestart true means the agent is restarted (not duplicated) after exit.
 	SelfRestart bool `yaml:"self_restart"`
+	// Persistent true marks a long-lived OVERSIGHT role (admiral, watch) that
+	// must never be reclaimed by the SD-3 crew-idle-reaper. Such roles never
+	// submit work, so their crew-start formality queue reads
+	// QueueStatusCompleted forever (ensureQueue, hk-vrnh3); without this flag the
+	// reaper culls them at GraceAfter (hk-dy5gw, hk-kojyr). Absent → false: an
+	// ordinary bead-crew whose drained queue completes is still reclaimed.
+	Persistent bool `yaml:"persistent"`
 }
 
 // Markers holds declarative event constraints for watch to validate against the event stream.

@@ -222,6 +222,12 @@ type GovernorInput struct {
 
 	// GitPath is the path to the git binary; defaults to "git" on PATH.
 	GitPath string
+
+	// OperatorPaused is true when the daemon is in a global operator-pause state.
+	// Zero movement during an operator-pause is expected (the system is intentionally
+	// idle) and must not be counted as a G-liveness fault. When true, ConsecutiveZeroCycles
+	// is reset to 0 rather than incremented so the liveness halt gate cannot fire.
+	OperatorPaused bool
 }
 
 // WindowSample records the movement observed in one evaluation window.
@@ -469,7 +475,12 @@ func Evaluate(
 	// of the inverse-staircase gate. Any terminal-progress event (score > 0)
 	// resets the counter; score == 0 increments it.
 	// This tracking runs before the staircase so the counter is always current.
-	if sample.MovementScore == 0 {
+	//
+	// Operator-pause exemption (bead hk-uxyf1): when the daemon is in a global
+	// operator-pause, zero movement is expected — the system is intentionally idle.
+	// Counting those cycles toward the liveness fault counter conflates legitimate
+	// quiet with a doom-loop; reset instead.
+	if sample.MovementScore == 0 && !input.OperatorPaused {
 		state.ConsecutiveZeroCycles++
 	} else {
 		state.ConsecutiveZeroCycles = 0

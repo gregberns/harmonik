@@ -669,6 +669,65 @@ func TestGLiveness_WarmupSuppressesHalt(t *testing.T) {
 	}
 }
 
+func TestGLiveness_OperatorPause_DoesNotAccumulate(t *testing.T) {
+	// While the daemon is in operator-pause, zero-movement cycles must NOT
+	// accumulate ConsecutiveZeroCycles. Operator-pause quiet is expected
+	// idle — not a liveness fault (bead hk-uxyf1).
+	projectDir := makeEventsFile(t)
+	now := time.Now()
+
+	state := &sentinel.GovernorState{}
+	cfg := sentinel.Config{
+		Window:              30 * time.Minute,
+		WarmupWindow:        0,
+		LivenessNoProgressN: 3,
+	}
+	// Paused input — zero movement, operator has globally paused the daemon.
+	pausedInput := sentinel.GovernorInput{
+		ProjectDir:     projectDir,
+		Now:            now,
+		HasReadyBeads:  true,
+		OperatorPaused: true,
+	}
+
+	// Run well past N cycles; G-liveness must never fire while paused.
+	for i := 0; i < 10; i++ {
+		sig := sentinel.Evaluate(context.Background(), state, pausedInput, cfg)
+		if sig.Level == sentinel.ActivationHalt {
+			t.Fatalf("cycle %d: G-liveness fired during operator-pause (must not)", i)
+		}
+		if sig.LivenessViolated {
+			t.Fatalf("cycle %d: LivenessViolated=true during operator-pause", i)
+		}
+		if state.ConsecutiveZeroCycles != 0 {
+			t.Fatalf("cycle %d: ConsecutiveZeroCycles=%d during operator-pause (must stay 0)",
+				i, state.ConsecutiveZeroCycles)
+		}
+	}
+
+	// After resume (OperatorPaused=false), zero cycles should now accumulate normally.
+	resumedInput := sentinel.GovernorInput{
+		ProjectDir:     projectDir,
+		Now:            now,
+		HasReadyBeads:  true,
+		OperatorPaused: false,
+	}
+	for i := 1; i <= 3; i++ {
+		sig := sentinel.Evaluate(context.Background(), state, resumedInput, cfg)
+		if i < 3 && sig.LivenessViolated {
+			t.Errorf("post-resume cycle %d: premature LivenessViolated=true", i)
+		}
+		if i == 3 {
+			if !sig.LivenessViolated {
+				t.Error("post-resume cycle 3: expected LivenessViolated=true after N zero cycles")
+			}
+			if sig.Level != sentinel.ActivationHalt {
+				t.Errorf("post-resume cycle 3: expected ActivationHalt, got %s", sig.Level)
+			}
+		}
+	}
+}
+
 func TestGLiveness_WarmupElapsed_Halts(t *testing.T) {
 	// Once the warmup window elapses, G-liveness fires after N zero-progress cycles.
 	projectDir := makeEventsFile(t)

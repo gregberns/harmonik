@@ -1856,11 +1856,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
 				}
 
+				operatorPaused := deps.operatorPauseCtrl != nil && deps.operatorPauseCtrl.IsPaused()
 				sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
 					ProjectDir:        deps.projectDir,
 					Now:               now,
 					HasReadyBeads:     hasReadyBeads,
 					HasUndeployedTail: hasUndeployedTail,
+					OperatorPaused:    operatorPaused,
 				}, deps.governorCfg)
 
 				if raw, mErr := json.Marshal(sig); mErr == nil {
@@ -1906,11 +1908,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes)
 				}
 
+				operatorPausedAct := deps.operatorPauseCtrl != nil && deps.operatorPauseCtrl.IsPaused()
 				sig := sentinel.Evaluate(ctx, deps.governorState, sentinel.GovernorInput{
 					ProjectDir:        deps.projectDir,
 					Now:               now,
 					HasReadyBeads:     hasReadyBeads,
 					HasUndeployedTail: hasUndeployedTail,
+					OperatorPaused:    operatorPausedAct,
 				}, deps.governorCfg)
 
 				if raw, mErr := json.Marshal(sig); mErr == nil {

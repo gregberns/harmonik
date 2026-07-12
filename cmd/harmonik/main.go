@@ -794,6 +794,9 @@ EXAMPLES
 	// harmonik gc <verb> — garbage-collect stale harmonik artifacts (hk-fpjxi).
 	// Verbs: branches (reap merged/orphaned run/* + worktree-agent-* refs).
 	// No daemon required; operates directly on git.
+	// ON-INV-006-AUTH: operator-nfr.md §4.3 ON-008/ON-009; no daemon connection,
+	// no socket RPC, no queue or run-state mutation — deletes fully-merged or
+	// orphaned git branches directly via git plumbing, cannot abort an in-flight run.
 	if len(os.Args) >= 2 && os.Args[1] == "gc" {
 		subArgs := []string{}
 		if len(os.Args) >= 3 {

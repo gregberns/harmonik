@@ -19,6 +19,7 @@ type fakeBulkLister struct {
 func (f *fakeBulkLister) ListInFlightBeads(context.Context) ([]core.BeadRecord, error) {
 	return f.inflight, f.inflightErr
 }
+
 func (f *fakeBulkLister) ListBeadsByStatus(_ context.Context, _ string) ([]core.BeadRecord, error) {
 	return f.open, f.openErr
 }

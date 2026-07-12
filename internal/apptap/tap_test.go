@@ -1,9 +1,10 @@
 // Tests for apptap.Tap (codex-app-server T1, hk-893ct).
 //
 // Gate (T1 acceptance criteria):
-//   "real client through tap for one happy turn → child works E2E AND
-//    concatenated captured raw bytes diff-match an untapped control run
-//    (transparent + lossless)"
+//
+//	"real client through tap for one happy turn → child works E2E AND
+//	 concatenated captured raw bytes diff-match an untapped control run
+//	 (transparent + lossless)"
 //
 // The test child is `cat` (reads stdin, echoes verbatim to stdout, exits on
 // EOF).  cat is the minimal bidirectional stdio process: any JSONL payload sent

@@ -118,7 +118,7 @@ func (t *Twin) replay(ctx context.Context, ch chan<- codexreactor.Event) {
 	// Default 64 KB buffer is sufficient for the corpus (max line ~1 KB).
 
 	var seq uint64 // monotonically assigned to emitted events
-	evIdx := 0    // count of reactor events emitted so far
+	evIdx := 0     // count of reactor events emitted so far
 
 	for scanner.Scan() {
 		if ctx.Err() != nil {

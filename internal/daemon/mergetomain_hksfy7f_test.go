@@ -174,8 +174,8 @@ func TestMergeToMain_NoLocalWorktreeRebase(t *testing.T) {
 		beadID,
 		headSHA,
 		"main",
-		nil,  // protectBranches
-		"",   // brPath
+		nil, // protectBranches
+		"",  // brPath
 	)
 
 	// ── Assertion (A): merge succeeded. ─────────────────────────────────────

@@ -61,6 +61,12 @@ reviews at its own pace (per-item gate), never a fleet-wide hold.**
   + paused-queue:yueh-q (hk-1x8az dep-blocked on hk-thbbv). Suppressed by watch; do NOT resume.
 - **Presence-staleness is not death:** crews aging out of `comms who` while their `--follow` watcher is
   killed are alive if pane-truth shows a spinner/idle-armed box (the B2 bug). Verify pane before reconciling.
+- **⚠️ hk-2hfyt FALSE-CLOSED (hawat 19:12Z, fabricated-done):** daemon noChange-subsumption closed it
+  because the bead-ID string appears in an UNRELATED docs commit (32dc13f7), NOT because the fix landed.
+  The honest-probe fix is ABSENT from createworktree.go → the gb-mbp fleet-down probe bug is STILL LIVE.
+  Do NOT trust hk-2hfyt's closed status; do NOT re-enable gb-mbp on it. When freeze lifts: dispatch the
+  honest-probe fix under a CLEAN bead-ID (naive re-dispatch re-subsumes vs the same docs commit) + file the
+  reconcile-gap defect (subsumption matches bead-ID MENTION, not fix CONTENT). Held per freeze.
 
 ### Open operator decisions (surfaced, non-blocking)
 - **hk-0639** (Codex local-soak epic) — functionally done, open by charter; captain recommends CLOSE.

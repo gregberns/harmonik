@@ -300,7 +300,7 @@ This check MUST run before the daemon reaches `ready` state and before any dispa
 
 ### 3.2b QM-002b — Three-way reconciliation on startup
 
-After QM-002a completes, the daemon MUST run a full three-way reconciliation pass that covers mismatch classes not reachable by the `dispatched`-items-only scan. Three mismatch classes are defined:
+After QM-002a completes, the daemon MUST run a full three-way reconciliation pass that covers mismatch classes not reachable by the `dispatched`-items-only scan. Four mismatch classes are defined:
 
 **Class A — `bead_closed_queue_pending`:** A queue item has `status=pending` (or `status=deferred-for-ledger-dep`) but the Beads ledger shows the bead as `closed` or `tombstone`. The item is waiting for a bead that has already finished. The daemon MUST:
 
@@ -312,14 +312,20 @@ After QM-002a completes, the daemon MUST run a full three-way reconciliation pas
 
 **Class C — `bead_closed_queue_inprogress`:** A queue item has `status=completed` or `status=failed` but the Beads ledger still shows the bead as `in_progress`. The queue-side terminal is already set; no queue mutation is applied. The daemon MUST emit `reconciliation_mismatch_observed` with `mismatch_class: "bead_closed_queue_inprogress"` and log a structured warning for operator visibility.
 
+**Class D — `queue_paused_by_drain_item_stranded`:** The queue's own `status` is `paused-by-drain` (abandoned — a `paused-by-drain` queue does not auto-resume across a daemon restart in v0.1, per §3.2 QM-002) and it still carries an item with `status=pending` or `status=deferred-for-ledger-dep`. That item will never be dispatched from this queue again, but the EM-065 cross-queue occupancy guard [/Users/gb/github/harmonik/specs/execution-model.md §4.14] still counts any non-terminal item as "claimed" for its bead — permanently blocking that bead from being queued anywhere else even while the bead itself remains open. Unlike Class A, this correction does NOT depend on the Beads ledger status: the queue's own abandonment is sufficient grounds to release the item. The daemon MUST:
+
+1. Advance the item's status to `failed` in the in-memory queue envelope (the queue-level `status` is left untouched — it remains `paused-by-drain`).
+2. Persist the corrected queue envelope via QM-001 atomic write (per QM-063 — persist BEFORE emit).
+3. Emit `reconciliation_mismatch_observed` per [/Users/gb/github/harmonik/specs/event-model.md §8.6.15] with `mismatch_class: "queue_paused_by_drain_item_stranded"`.
+
 **Execution ordering (per QM-063):**
 
-1. Scan all queue items; collect Class A mutations and all pending event payloads for Classes A and C.
-2. If any Class A mutations were collected: persist the corrected queue envelope via QM-001 before proceeding.
+1. Scan all queue items; collect Class A/D mutations and all pending event payloads for Classes A, C, and D. Class D takes priority over Class A for the same item (a paused-by-drain queue is abandoned regardless of ledger status).
+2. If any Class A/D mutations were collected: persist the corrected queue envelope via QM-001 before proceeding.
 3. Enumerate in-progress Beads ledger entries (via `br list --status in_progress`); collect Class B payloads for any bead not referenced by a queue item.
-4. Emit all collected events in the order: Class A, then Class C, then Class B.
+4. Emit all collected events in the order: Class A/D, then Class C, then Class B.
 
-This pass MUST complete before the daemon reaches `ready` state and before any dispatch-loop tick. In v0.1 corrections are applied directly (no reconciliation-investigator routing) because all three classes are fully deterministic given the observed store state.
+This pass MUST complete before the daemon reaches `ready` state and before any dispatch-loop tick. In v0.1 corrections are applied directly (no reconciliation-investigator routing) because all four classes are fully deterministic given the observed store state.
 
 ### 3.3 QM-003 — Removal on completion
 
@@ -859,6 +865,10 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 - Write coalescing across QM-001 mutations.
 
 ### A.4 Changelog
+
+v0.1.5 — 2026-07-12 — QM-002b Class D: paused-by-drain strand reconciliation (hk-bl4d6). One additive amendment:
+
+1. **§3.2b (amended) — QM-002b Class D (new).** Added a fourth mismatch class, `queue_paused_by_drain_item_stranded`: a queue whose own `status` is `paused-by-drain` (abandoned; no auto-resume in v0.1) that still carries a pending/deferred-for-ledger-dep item. Unlike Class A, this correction is keyed on the queue's own status, not the Beads ledger status — the item is advanced to `failed` regardless of whether its bead is open or closed. This releases the EM-065 cross-queue occupancy guard, which otherwise counts the stranded item as live forever, permanently blocking its bead from being queued elsewhere (`bead_already_dispatched`, -32015). Ordering: Class D mutations are collected and persisted alongside Class A (before any event emission, per QM-063); events emitted in A/D → C → B order.
 
 v0.1.4 — 2026-05-31 — Pi-driven dispatch & control-plane confirmations (kerf `pilot` work, A4). Three annotation-only amendments; no new requirement IDs, no new methods, no consumer-semantics change:
 

@@ -1455,3 +1455,275 @@ func TestLoadQueueAtStartup_F5_PendingItemsNotAffected(t *testing.T) {
 			gotQueue.Groups[0].Status, queue.GroupStatusActive)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// QM-002b Class D — GATE-0 (hk-bl4d6)
+// ---------------------------------------------------------------------------
+
+// startupQueueFixturePausedByDrainPendingQueue builds a Queue whose overall
+// Status is paused-by-drain and whose sole group/item is still pending. This
+// is the stranded shape from the EM-065 permanent -32015 strand: the queue
+// itself is abandoned (a paused-by-drain queue never auto-resumes across
+// daemon restart per QM-054), but the bare pending item still counts as
+// live cross-queue occupancy for EM-065 (validation.go) even though the
+// bead it references is open.
+func startupQueueFixturePausedByDrainPendingQueue(beadID core.BeadID) queue.Queue {
+	now := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
+	return queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "019605a0-5555-7000-8000-000000000005",
+		SubmittedAt:   now,
+		Status:        queue.QueueStatusPausedByDrain,
+		Groups: []queue.Group{
+			{
+				GroupIndex: 0,
+				Kind:       queue.GroupKindWave,
+				Status:     queue.GroupStatusActive,
+				Items: []queue.Item{
+					{
+						BeadID: beadID,
+						Status: queue.ItemStatusPending,
+					},
+				},
+				CreatedAt: now,
+			},
+		},
+	}
+}
+
+// TestLoadQueueAtStartup_QM002b_ClassD_QueuePausedByDrainItemStranded covers
+// the Class D mismatch (hk-bl4d6): a bare pending item for an OPEN bead,
+// stranded in a queue whose overall Status is paused-by-drain (abandoned —
+// it never resumes). Boot-reconcile must advance the item to failed so it no
+// longer counts as EM-065 cross-queue occupancy for its bead.
+//
+// GATE-0: this is the exact repro from the bead's root-cause comment — the
+// bead is OPEN in the ledger (not closed/tombstone), so Class A would never
+// fire for it; only Class D (keyed on queue.Status, not ledger status) can
+// release the strand.
+//
+// Assertions:
+//  1. Item status is advanced to failed in the returned Queue.
+//  2. Queue.json on disk reflects the failed status (persist happened).
+//  3. Queue.Status remains paused-by-drain (Class D does not touch queue
+//     status; reconcileQueueTerminalState only acts on active queues).
+//  4. A reconciliation_mismatch_observed event is emitted with
+//     mismatch_class=queue_paused_by_drain_item_stranded.
+//
+// Spec ref: specs/queue-model.md §3.2b QM-002b — Class D.
+// Bead: hk-bl4d6.
+func TestLoadQueueAtStartup_QM002b_ClassD_QueuePausedByDrainItemStranded(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	const testBeadID = core.BeadID("hk-bl4d6-classD-01")
+
+	q := startupQueueFixturePausedByDrainPendingQueue(testBeadID)
+	if err := queue.Persist(ctx, projectDir, &q); err != nil {
+		t.Fatalf("setup: Persist: %v", err)
+	}
+
+	// Ledger: bead is OPEN — Class A's ledger-closed condition does NOT hold.
+	// Only Class D (keyed on the queue's own paused-by-drain status) can fire.
+	ledger := newStartupQueueFixtureLedger(
+		map[core.BeadID]core.CoarseStatus{
+			testBeadID: core.CoarseStatusOpen,
+		},
+		nil,
+	)
+
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+
+	gotQueues, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger)
+	gotQueue := firstOrNil(gotQueues)
+	if err != nil {
+		t.Fatalf("Class D: unexpected error: %v", err)
+	}
+	if gotQueue == nil {
+		t.Fatal("Class D: expected non-nil queue (paused-by-drain queues are not auto-cleaned-up by F5)")
+	}
+
+	// Assertion 1: item advanced to failed.
+	if got := gotQueue.Groups[0].Items[0].Status; got != queue.ItemStatusFailed {
+		t.Errorf("Class D: item status: got %q, want %q", got, queue.ItemStatusFailed)
+	}
+
+	// Assertion 3: queue status unchanged.
+	if gotQueue.Status != queue.QueueStatusPausedByDrain {
+		t.Errorf("Class D: queue status: got %q, want %q", gotQueue.Status, queue.QueueStatusPausedByDrain)
+	}
+
+	// Assertion 2: on-disk file reflects the failed status (persist happened).
+	onDisk, loadErr := queue.Load(ctx, projectDir, queue.QueueNameMain)
+	if loadErr != nil {
+		t.Fatalf("Class D: reload persisted queue: %v", loadErr)
+	}
+	if onDisk == nil {
+		t.Fatal("Class D: expected persisted queue file to still exist")
+	}
+	if got := onDisk.Groups[0].Items[0].Status; got != queue.ItemStatusFailed {
+		t.Errorf("Class D: on-disk item status: got %q, want %q", got, queue.ItemStatusFailed)
+	}
+
+	// Assertion 4: reconciliation_mismatch_observed event emitted.
+	evs := emitter.Events()
+	found := false
+	for _, ev := range evs {
+		if ev.EventType != core.EventTypeReconciliationMismatchObserved {
+			continue
+		}
+		var p core.ReconciliationMismatchObservedPayload
+		if unmarshalErr := json.Unmarshal(ev.Payload, &p); unmarshalErr != nil {
+			t.Fatalf("Class D: unmarshal payload: %v", unmarshalErr)
+		}
+		if p.BeadID != string(testBeadID) {
+			continue
+		}
+		if p.MismatchClass != "queue_paused_by_drain_item_stranded" {
+			t.Errorf("Class D: mismatch_class: got %q, want queue_paused_by_drain_item_stranded", p.MismatchClass)
+		}
+		if p.LedgerStatus != string(core.CoarseStatusOpen) {
+			t.Errorf("Class D: ledger_status: got %q, want %q", p.LedgerStatus, core.CoarseStatusOpen)
+		}
+		if !p.Valid() {
+			t.Errorf("Class D: ReconciliationMismatchObservedPayload.Valid() false: %+v", p)
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Error("Class D: reconciliation_mismatch_observed event not found in emitted events")
+	}
+}
+
+// classDGate0FakeValidateLedger is a minimal queue.BeadLedger fake for driving
+// queue.Validate directly (the real EM-065 cross-queue occupancy guard), as
+// opposed to the lifecycle.BeadLedger fake used elsewhere in this file for
+// LoadQueueAtStartup's own ShowBead/ListInFlightBeads calls.
+type classDGate0FakeValidateLedger struct {
+	statuses map[core.BeadID]queue.BeadStatus
+}
+
+func (f *classDGate0FakeValidateLedger) LookupStatus(_ context.Context, id core.BeadID) (queue.BeadStatus, error) {
+	if s, ok := f.statuses[id]; ok {
+		return s, nil
+	}
+	return queue.BeadStatusNotFound, nil
+}
+
+func (f *classDGate0FakeValidateLedger) BlocksEdge(_ context.Context, _, _ core.BeadID) (bool, error) {
+	return false, nil
+}
+
+// TestLoadQueueAtStartup_QM002b_ClassD_GATE0_EM065StrandClears is the GATE-0
+// repro mandated by hk-bl4d6's root-cause comment: two on-disk queue.jsons
+// pre-boot — qA paused-by-drain with a bare pending item for an OPEN bead —
+// asserting that a dry-run submit for that bead into a sibling queue qB
+// returns bead_already_dispatched (EM-065, validation.go) BEFORE
+// boot-reconcile runs, and PASSES (no EM-065 rejection) after.
+//
+// This drives queue.Validate directly (the real EM-065 cross-queue occupancy
+// guard) rather than just asserting on the reconciled item's in-memory
+// status, closing the gap between "Class D advances the item to failed" and
+// "the -32015 strand is actually released end-to-end".
+//
+// Spec ref: specs/queue-model.md §3.2b QM-002b — Class D.
+// Spec ref: specs/execution-model.md §4.14 EM-065.
+// Bead: hk-bl4d6.
+func TestLoadQueueAtStartup_QM002b_ClassD_GATE0_EM065StrandClears(t *testing.T) {
+	t.Parallel()
+
+	projectDir := startupQueueFixtureProjectDir(t)
+	ctx := context.Background()
+
+	const strandedBeadID = core.BeadID("hk-bl4d6-gate0-repro")
+
+	// qA: paused-by-drain, one bare pending item for strandedBeadID (the OPEN
+	// bead). Persisted under a NON-main name so it survives as an "other
+	// queue" once qB is the submit target.
+	qA := startupQueueFixturePausedByDrainPendingQueue(strandedBeadID)
+	qA.Name = "queue-a"
+	qA.QueueID = "019605a0-6666-7000-8000-000000000006"
+	if err := queue.Persist(ctx, projectDir, &qA); err != nil {
+		t.Fatalf("setup: Persist qA: %v", err)
+	}
+
+	// The dry-run submit request: one group carrying strandedBeadID, targeting
+	// a different queue name ("queue-b"), with qA supplied as an OtherQueues
+	// entry — exactly how the daemon's submit RPC assembles EM-065's
+	// cross-queue scan (rpc.go loadOtherQueues).
+	submitReq := func(otherQueues []*queue.Queue) queue.ValidationRequest {
+		return queue.ValidationRequest{
+			Groups: []queue.Group{
+				{
+					GroupIndex: 0,
+					Kind:       queue.GroupKindWave,
+					Status:     queue.GroupStatusPending,
+					Items: []queue.Item{
+						{BeadID: strandedBeadID, Status: queue.ItemStatusPending},
+					},
+				},
+			},
+			OtherQueues: otherQueues,
+			QueueName:   "queue-b",
+		}
+	}
+	validateLedger := &classDGate0FakeValidateLedger{
+		statuses: map[core.BeadID]queue.BeadStatus{
+			strandedBeadID: queue.BeadStatusOpen,
+		},
+	}
+
+	// Pre-fix assertion: dry-run submit to queue-b is rejected with
+	// bead_already_dispatched because qA's bare pending item still counts as
+	// live cross-queue occupancy for strandedBeadID.
+	preErrs, _, preErr := queue.Validate(ctx, submitReq([]*queue.Queue{&qA}), validateLedger)
+	if preErr != nil {
+		t.Fatalf("GATE-0 pre-reconcile: unexpected Validate error: %v", preErr)
+	}
+	if len(preErrs) != 1 || preErrs[0].Reason != queue.ReasonBeadAlreadyDispatched {
+		t.Fatalf("GATE-0 pre-reconcile: expected exactly one bead_already_dispatched ValidationError, got %+v", preErrs)
+	}
+
+	// Run boot-reconcile: LoadQueueAtStartup loads and reconciles every queue
+	// under .harmonik/queues/, including qA. strandedBeadID is OPEN in the
+	// ledger, so only Class D (keyed on qA's own paused-by-drain status) can
+	// release the strand.
+	ledger := newStartupQueueFixtureLedger(
+		map[core.BeadID]core.CoarseStatus{
+			strandedBeadID: core.CoarseStatusOpen,
+		},
+		nil,
+	)
+	emitter := &startupQueueFixtureEmitter{}
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	if _, err := LoadQueueAtStartup(ctx, projectDir, ledger, emitter, logger); err != nil {
+		t.Fatalf("GATE-0: LoadQueueAtStartup: %v", err)
+	}
+
+	// Reload qA from disk post-reconcile — this is what a fresh
+	// loadOtherQueues call would hand to Validate on the next submit attempt.
+	reconciledQA, loadErr := queue.Load(ctx, projectDir, "queue-a")
+	if loadErr != nil {
+		t.Fatalf("GATE-0: reload qA post-reconcile: %v", loadErr)
+	}
+	if reconciledQA == nil {
+		t.Fatal("GATE-0: expected qA to still exist post-reconcile (paused-by-drain queues are not unlinked)")
+	}
+	if got := reconciledQA.Groups[0].Items[0].Status; got != queue.ItemStatusFailed {
+		t.Fatalf("GATE-0: qA item status post-reconcile: got %q, want %q", got, queue.ItemStatusFailed)
+	}
+
+	// Post-fix assertion: the same dry-run submit now passes — no EM-065
+	// rejection, because the stranded item is failed (terminal), not pending.
+	postErrs, _, postErr := queue.Validate(ctx, submitReq([]*queue.Queue{reconciledQA}), validateLedger)
+	if postErr != nil {
+		t.Fatalf("GATE-0 post-reconcile: unexpected Validate error: %v", postErr)
+	}
+	if len(postErrs) != 0 {
+		t.Fatalf("GATE-0 post-reconcile: expected no ValidationErrors (EM-065 strand cleared), got %+v", postErrs)
+	}
+}

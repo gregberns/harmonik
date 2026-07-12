@@ -541,8 +541,9 @@ type ReconciliationMismatchObservedPayload struct {
 	BeadID string `json:"bead_id"`
 
 	// MismatchClass identifies the mismatch type. Required; one of:
-	// "bead_closed_queue_pending", "bead_inprogress_queue_absent",
-	// "bead_closed_queue_inprogress".
+	// "bead_closed_queue_pending", "bead_closed_queue_dispatched",
+	// "bead_inprogress_queue_absent", "bead_closed_queue_inprogress",
+	// "queue_paused_by_drain_item_stranded".
 	MismatchClass string `json:"mismatch_class"`
 
 	// LedgerStatus is the CoarseStatus string from the Beads ledger. Required.
@@ -559,10 +560,11 @@ type ReconciliationMismatchObservedPayload struct {
 // validMismatchClasses is the exhaustive set of mismatch_class values per
 // queue-model.md §3.2b QM-002b.
 var validMismatchClasses = map[string]struct{}{
-	"bead_closed_queue_pending":    {},
-	"bead_closed_queue_dispatched": {},
-	"bead_inprogress_queue_absent": {},
-	"bead_closed_queue_inprogress": {},
+	"bead_closed_queue_pending":           {},
+	"bead_closed_queue_dispatched":        {},
+	"bead_inprogress_queue_absent":        {},
+	"bead_closed_queue_inprogress":        {},
+	"queue_paused_by_drain_item_stranded": {},
 }
 
 // Valid reports whether p is a well-formed ReconciliationMismatchObservedPayload.

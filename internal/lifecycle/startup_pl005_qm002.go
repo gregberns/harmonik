@@ -392,9 +392,23 @@ func reconcileDispatchedItems(
 //     shows in_progress. No queue mutation (the queue-side terminal is already
 //     set); emit reconciliation_mismatch_observed + log for operator visibility.
 //
+//  4. Class D — "queue_paused_by_drain_item_stranded" (EM-065 permanent
+//     -32015 strand, hk-bl4d6): the queue's own Status is paused-by-drain
+//     (abandoned; a paused-by-drain queue never resumes in v0.1 — see
+//     specs/queue-model.md §8.5 QM-054) and it still carries a pending or
+//     deferred-for-ledger-dep item. That item is never going to be dispatched
+//     from this queue, but EM-065's cross-queue occupancy check
+//     (validation.go) still counts it as "claimed" for its bead, permanently
+//     blocking that bead from being queued anywhere else even though the bead
+//     itself is still open. The item is advanced to failed so the cross-queue
+//     occupancy is released without touching the bead's ledger status.
+//     Correction: mutate item status in memory, persist via QM-001, emit
+//     reconciliation_mismatch_observed. Takes priority over Class A for the
+//     same item (the queue is abandoned regardless of ledger status).
+//
 // Ordering per QM-063 (persist BEFORE emit):
-//  1. Scan all queue items; collect Class A mutations + pending event payloads.
-//  2. If any Class A mutations: persist via QM-001.
+//  1. Scan all queue items; collect Class A/D mutations + pending event payloads.
+//  2. If any Class A/D mutations: persist via QM-001.
 //  3. Enumerate in-progress ledger beads; collect Class B payloads.
 //  4. Emit all collected events.
 //
@@ -422,6 +436,10 @@ func reconcileThreeWay(
 	}
 	var pendingEvents []pendingEvent
 	var classACount int
+
+	// Class D applies only when the whole queue is paused-by-drain (abandoned;
+	// no auto-resume across daemon restart per QM-054/QM-002). hk-bl4d6.
+	queuePausedByDrain := q.Status == queue.QueueStatusPausedByDrain
 
 	// --- Class A and Class C scan: iterate queue items ---
 	for gi := range q.Groups {
@@ -523,6 +541,52 @@ func reconcileThreeWay(
 					payloadBytes, marshalErr := json.Marshal(p)
 					if marshalErr != nil {
 						logger.WarnContext(ctx, "QM-002b: failed to marshal mismatch payload",
+							"bead_id", string(item.BeadID),
+							"error", marshalErr,
+						)
+					} else {
+						pendingEvents = append(pendingEvents, pendingEvent{
+							eventType: core.EventTypeReconciliationMismatchObserved,
+							payload:   payloadBytes,
+						})
+					}
+				}
+				continue
+			}
+
+			// isPendingLike — Class D takes priority: the queue itself is
+			// abandoned (paused-by-drain), so this item will never be
+			// dispatched from here regardless of ledger status. Advance it to
+			// failed to release the EM-065 cross-queue occupancy hold.
+			if queuePausedByDrain {
+				preStatus := string(item.Status)
+				logger.InfoContext(ctx, "QM-002b Class D: advancing stranded pending item to failed (queue_paused_by_drain_item_stranded)",
+					"bead_id", string(item.BeadID),
+					"group_index", gi,
+					"queue_status", string(q.Status),
+					"item_status", preStatus,
+				)
+
+				item.Status = queue.ItemStatusFailed
+				classACount++
+
+				if emitter != nil {
+					ledgerStatus := ""
+					if rec, showErr := ledger.ShowBead(ctx, item.BeadID); showErr == nil {
+						ledgerStatus = string(rec.Status)
+					}
+					p := core.ReconciliationMismatchObservedPayload{
+						QueueID:       q.QueueID,
+						GroupIndex:    gi,
+						BeadID:        string(item.BeadID),
+						MismatchClass: "queue_paused_by_drain_item_stranded",
+						LedgerStatus:  ledgerStatus,
+						QueueStatus:   preStatus,
+						ObservedAt:    observedAt,
+					}
+					payloadBytes, marshalErr := json.Marshal(p)
+					if marshalErr != nil {
+						logger.WarnContext(ctx, "QM-002b: failed to marshal Class D mismatch payload",
 							"bead_id", string(item.BeadID),
 							"error", marshalErr,
 						)

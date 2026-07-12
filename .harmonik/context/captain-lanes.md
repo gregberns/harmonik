@@ -67,6 +67,14 @@ reviews at its own pace (per-item gate), never a fleet-wide hold.**
   Do NOT trust hk-2hfyt's closed status; do NOT re-enable gb-mbp on it. When freeze lifts: dispatch the
   honest-probe fix under a CLEAN bead-ID (naive re-dispatch re-subsumes vs the same docs commit) + file the
   reconcile-gap defect (subsumption matches bead-ID MENTION, not fix CONTENT). Held per freeze.
+- **⚠️ RESUME-HANG meta-blocker (stilgar 19:23Z):** ~5/5 recent local runs wedge identically — each lands
+  its FIRST implement commit in-worktree, then goes DEAD SILENT at `implementer_resumed` (no output, no
+  heartbeat, no run_stale). Victims: hk-2i36s(74m), hk-nxcvi, hk-bl4d6(26m), hk-zeo5y(45m), hk-6629b.
+  Correlates with the QA-execution-gate workflow (~0adb6551). Pairs with hk-2hfyt as census root-problem-#3:
+  neither done-status NOR in-progress-status from the run pipeline is trustworthy. Post-freeze: stilgar's
+  lane owns the diagnosis (internal/daemon, no hawat collision) as top-of-lane; file the P1 then. Held per
+  freeze — crews stopped feeding the wedging pipeline. hk-zeo5y Option-A landed (cc236e05); option-C
+  orphan-sweep backstop still open (also post-freeze).
 
 ### Open operator decisions (surfaced, non-blocking)
 - **hk-0639** (Codex local-soak epic) — functionally done, open by charter; captain recommends CLOSE.

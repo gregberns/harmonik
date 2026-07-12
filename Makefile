@@ -100,6 +100,39 @@ test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budge
 	go test -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/...
 
 # ---------------------------------------------------------------------------
+# codex-app-server test taxonomy (T5, hk-oe86p)
+# Four tiers: L0 unit / L1 contract / L2 integration / L3 live.
+# ---------------------------------------------------------------------------
+
+# test-codex-l012: run L0+L1+L2 codex-app-server taxonomy tests.
+# CODEX_LIVE=0 (default) — runs against captured corpus; no live process.
+# GATE: must be green before any codex-app-server deploy or protocol change.
+# Includes the pre-deploy drift canary (TestCodexDriftCanary).
+.PHONY: test-codex-l012
+test-codex-l012:  ## Codex-app-server L0/L1/L2 taxonomy gate (CODEX_LIVE=0; hk-oe86p)
+	go test -count=1 ./internal/codextest/... ./internal/codexwire/... ./internal/codexdigitaltwin/... ./internal/codexreactor/...
+
+# test-codex-live: run L3 live tests against a real codex app-server process.
+# Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
+# valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
+# L3 happy-path = PRE-DEPLOY E2E GATE for the codex-app-server integration.
+.PHONY: test-codex-live
+test-codex-live:  ## Codex-app-server L3 live gate (CODEX_LIVE=1 required; token-capped; hk-oe86p)
+	CODEX_LIVE=1 go test -timeout 180s -count=1 -run TestL3_ ./internal/codextest/...
+
+# capture-fixtures: deliberate, budget-capped corpus capture.
+# Requires: CODEX_LIVE=1, codex binary on PATH, valid codex auth.
+# Output: testdata/codex-app-server/corpus/<session>.jsonl
+# Ledger: testdata/codex-app-server/corpus/CAPTURE-LOG.md (manual update required).
+# Run deliberately — NOT part of make test or CI. Token budget: one minimal turn.
+.PHONY: capture-fixtures
+capture-fixtures:  ## Capture new codex corpus (CODEX_LIVE=1 required; deliberate+token-capped; hk-oe86p)
+	@echo "capture-fixtures: launching budget-capped codex session via L3 live harness"
+	@echo "  Corpus output: testdata/codex-app-server/corpus/"
+	@echo "  Update testdata/codex-app-server/corpus/CAPTURE-LOG.md after capture."
+	CODEX_LIVE=1 go test -timeout 120s -count=1 -v -run TestL3_ ./internal/codextest/...
+
+# ---------------------------------------------------------------------------
 # Twin-binary targets
 # ---------------------------------------------------------------------------
 

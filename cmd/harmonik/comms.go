@@ -1678,6 +1678,11 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 				LastEventID   string          `json:"last_event_id"` // heartbeat payload field; EV-037a
 				TimestampWall string          `json:"timestamp_wall"`
 				Payload       json.RawMessage `json:"payload"`
+				// hk-62r8w: SocketResponse fields — present when the server rejects the
+				// subscribe request before streaming begins (e.g. subscribe_capacity_exceeded,
+				// malformed request). Type is absent in SocketResponse so env.Type == "".
+				Ok    *bool  `json:"ok"`
+				Error string `json:"error"`
 			}
 			if decErr := dec.Decode(&env); decErr != nil {
 				close(connCloseOnce) // stop the signal-closer goroutine
@@ -1703,6 +1708,18 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 					break
 				}
 				fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: decode event: %v\n", decErr)
+				return 1
+			}
+
+			// hk-62r8w: SocketResponse error — server rejected the subscribe request
+			// permanently (capacity exceeded, malformed request, unregistered handler).
+			// These are not transient drops: the daemon is up but refused this session.
+			// Exit with error instead of reconnecting; reconnecting would loop at ~1s
+			// because backoff resets on every successful TCP dial.
+			if env.Ok != nil && !*env.Ok {
+				close(connCloseOnce)
+				_ = conn.Close()
+				fmt.Fprintf(os.Stderr, "harmonik comms recv --follow: server error: %s\n", env.Error)
 				return 1
 			}
 
@@ -1901,6 +1918,9 @@ func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID str
 			EventID       string          `json:"event_id"`
 			TimestampWall string          `json:"timestamp_wall"`
 			Payload       json.RawMessage `json:"payload"`
+			// hk-62r8w: SocketResponse fields for server error detection.
+			Ok    *bool  `json:"ok"`
+			Error string `json:"error"`
 		}
 		if decErr := dec.Decode(&env); decErr != nil {
 			// Timeout / signal close manifests as an EOF or "use of closed".
@@ -1912,6 +1932,12 @@ func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID str
 				return 0
 			}
 			fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: decode event: %v\n", decErr)
+			return 1
+		}
+
+		// hk-62r8w: SocketResponse error — server rejected the subscribe request.
+		if env.Ok != nil && !*env.Ok {
+			fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: server error: %s\n", env.Error)
 			return 1
 		}
 

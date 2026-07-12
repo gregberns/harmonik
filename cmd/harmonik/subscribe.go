@@ -392,8 +392,21 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 				Type        string `json:"type"`
 				EventID     string `json:"event_id"`
 				LastEventID string `json:"last_event_id"` // heartbeat payload; EV-037a
+				// hk-62r8w: SocketResponse fields for server error detection.
+				Ok    *bool  `json:"ok"`
+				Error string `json:"error"`
 			}
 			_ = json.Unmarshal(rawMsg, &env)
+
+			// hk-62r8w: SocketResponse error — server rejected the subscribe request
+			// permanently. Exit with error instead of forwarding the rejection to the
+			// writer and reconnecting in an ~1s loop.
+			if env.Ok != nil && !*env.Ok {
+				close(connCloseOnce)
+				_ = conn.Close()
+				fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: server error: %s\n", env.Error)
+				return 1
+			}
 
 			// EV-037a: advance watermark from heartbeat.last_event_id so reconnects
 			// in quiet periods do not re-replay already-delivered events.

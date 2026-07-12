@@ -14,7 +14,12 @@
 //     FAIL + deterministic      → implement (fix-loop, capped at 3)
 //     FAIL + transient          → commit_gate (self-loop, capped at 2)
 //     fallback                  → close-needs-attention (canceled / structural)
-//   → review (agent: reviewer)
+//   → review (agent: reviewer — reads the diff)
+//     APPROVE                   → qa
+//     REQUEST_CHANGES           → implement (fix-loop, capped at 3)
+//     BLOCK                     → close-needs-attention
+//     fallback                  → close-needs-attention
+//   → qa (agent: reviewer-class QA — EXECUTES the code + edge-case testing)
 //     APPROVE                   → close (SOLE inbound edge to close)
 //     REQUEST_CHANGES           → implement (fix-loop, capped at 3)
 //     BLOCK                     → close-needs-attention
@@ -125,8 +130,26 @@ digraph "standard-bead" {
         role="render APPROVE / REQUEST_CHANGES / BLOCK verdict on the change"
     ];
 
+    // qa: agentic QA gate — runs AFTER review APPROVE. Reviewer-class node
+    // (agent_type="reviewer" + handler_ref="claude-reviewer") so it reuses the
+    // verdict machinery: writes .harmonik/review.json with APPROVE / REQUEST_CHANGES
+    // / BLOCK, and that preferred_label drives the cascade. Unlike `review` (which
+    // reads the diff), QA MUST actually EXECUTE the changed code, run it, and
+    // exercise edge cases before it can APPROVE. harness="claude-code" gives it a
+    // real execution environment in the worktree; model pinned to opus like review.
+    qa [
+        type="agentic",
+        agent_type="reviewer",
+        handler_ref="claude-reviewer",
+        idempotency_class="idempotent",
+        model="claude-opus-4-8",
+        harness="claude-code",
+        role="QA gate — you are the last line of defense before merge. Do NOT merely read the diff. ACTUALLY EXECUTE the changed code: build it (go build ./... and any affected binaries), run the specific commands/flows the bead changed, and exercise EDGE CASES (empty input, boundary values, error paths, concurrent/repeat invocation, malformed input). Reproduce the bead's stated goal end-to-end and confirm the observed behavior matches what was asked — not just that tests pass. Write your verdict to .harmonik/review.json: APPROVE only if you ran the code and it demonstrably works including edge cases; REQUEST_CHANGES (with concrete repro steps + the failing case in notes) if execution reveals ANY defect or the change does not actually do what the bead required; BLOCK only if the change cannot be validated at all. When in doubt, REQUEST_CHANGES — never APPROVE code you did not execute."
+    ];
+
     // close: terminal node — APPROVE path only. The SOLE inbound edge is
-    // review→close[APPROVE]. No other path reaches this node.
+    // qa->close[APPROVE] (QA runs after review; review->qa->close). No other path
+    // reaches this node.
     close [
         type="non-agentic",
         handler_ref="noop",
@@ -175,8 +198,8 @@ digraph "standard-bead" {
     // Must appear last among commit_gate outgoing edges.
     commit_gate -> "close-needs-attention";
 
-    // (7) APPROVE → close. THIS IS THE SOLE INBOUND EDGE TO close.
-    review -> close [
+    // (7) Review APPROVE → QA gate (NOT close). QA must execute the code before merge.
+    review -> qa [
         condition="outcome.preferred_label == 'APPROVE'"
     ];
 
@@ -194,4 +217,25 @@ digraph "standard-bead" {
     // (10) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
     // Catches any unrecognized or absent preferred_label. Must appear last.
     review -> "close-needs-attention";
+
+    // (11) QA APPROVE → close. THIS IS THE SOLE INBOUND EDGE TO close.
+    // QA executed the changed code and confirmed it works incl. edge cases.
+    qa -> close [
+        condition="outcome.preferred_label == 'APPROVE'"
+    ];
+
+    // (12) QA REQUEST_CHANGES → back to implement (fix-loop, capped at 3).
+    qa -> implement [
+        condition="outcome.preferred_label == 'REQUEST_CHANGES'",
+        traversal_cap="3"
+    ];
+
+    // (13) QA BLOCK → close-needs-attention (cannot validate / structural).
+    qa -> "close-needs-attention" [
+        condition="outcome.preferred_label == 'BLOCK'"
+    ];
+
+    // (14) Unconditional fallback — REQUIRED by D-edge-cascade-invariant (WG-011).
+    // Must appear last among qa outgoing edges.
+    qa -> "close-needs-attention";
 }

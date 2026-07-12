@@ -10,18 +10,22 @@
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 # Keep this SHORT — one current-truth block. Superseded history is DELETED, not archived.
 
-## ⭐⭐ CURRENT TRUTH 2026-07-12 ~08:15Z — PARALLEL 5-LANE; fmt-gate CLASS closed + daemon REDEPLOYED b25e9919; post-outage fleet-hardening in flight
+## ⭐⭐ CURRENT TRUTH 2026-07-12 ~11:30Z — PARALLEL 5-LANE; daemon REDEPLOYED 6442aaa0, hk-f9xzs commit_gate fix LIVE, GREEN broadcast
 
-> **fmt-gate outage + sibling CLASS fully RESOLVED; daemon REDEPLOYED to b25e9919 (2026-07-12 08:04Z):**
-> tag daemon-20260712-05, pid 19214, health-window PINNED as last-good. NOW LIVE: hk-2jeel (fmt sibling
-> `commitResidualDelta`/`stripRunContextFromMerge` — subjects proven vs validate-commit-msg.sh; GATE-0
-> satisfied by direct hook verification since the committed Go test hk-r1v2n lagged), hk-1q7bt (no_gauge
-> flood fix, kills 683/window), hk-p006e (crew-start `.managed` keeper-arm marker), hk-fpjxi (reaper),
-> hk-hjvl4/1b348917 (dispatch-lock release), + the QA-EXECUTION-GATE workflow (implement→commit_gate→
-> review→qa→close; admiral 019f551f). EMPIRICAL: 1b348917 did NOT release hk-thbbv's -32015 lock
-> (stilgar verified post-deploy) → hk-eaxc5 status-gated skip still blocks hk-thbbv→yueh T2b.
-> **Next systemic fix in flight: hk-f9xzs (merge stage discards passed APPROVE on retry → 31 full
-> re-runs; = the commit_gate traversal-cap loop wedging hk-nxcvi) → stilgar.**
+> **daemon REDEPLOYED to 6442aaa0 (2026-07-12 ~11:28Z):** tag daemon-20260712-06, pid 60409,
+> crashed_in_health_window=false, serving 46 queues. NOW LIVE (the delta over b25e9919): **hk-f9xzs
+> 2476922e** (merge-step retry loop + preserve-APPROVE — the commit_gate traversal-cap fix that wedged
+> hk-nxcvi/hk-thbbv; GATE-0 satisfied by its own 347-line integration test, run green in isolation),
+> hk-ru45u (presence reason:refresh — killed 53% of log volume), + evalvol test beads.
+> **GREEN broadcast → stilgar hold LIFTED (proving f9xzs via hk-nxcvi), yueh T2b/T3 unblocks on hk-thbbv land.**
+> **hk-5z1f0 CLOSED-OUT as already-built:** its mechanism (150s remote agent_ready timeout + spawn
+> semaphore) was ALREADY in b25e9919 (implementer kept no-committing — no code gap). Residual 2/10
+> reviewer cold-start timeout at sustained-6 is empirical TUNING, DEFERRED to the operator-gated 6→10
+> ramp (bead down-ranked P1→P3, deferral noted). gb-mbp RE-ENABLED (was briefly disabled to route the
+> now-void local attempt).
+> **RECURRING DRAG — hk-iaj1w:** concurrent remote worktree-create empty-HEAD race under multi-crew load
+> (85 worktrees) hit hk-5z1f0 3/3 AND hk-nxcvi run-1 (transient, re-runnable). Likely tied to worktree
+> bloat / inert reaper (hk-fpjxi/hk-2i36s). NEXT to drive if it recurs — route to stilgar's daemon lane.
 > NOTE: daemon working-tree resets wipe UNCOMMITTED .harmonik/context edits — commit tier-2 updates.
 > `harmonik crew start` sets the keeper `.managed` marker but does NOT spawn the watcher — use
 > `harmonik start crew` for a fully keeper-armed relaunch (stilgar/hawat currently watcher-less).

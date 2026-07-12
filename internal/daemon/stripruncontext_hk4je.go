@@ -87,10 +87,14 @@ func stripRunContextFromMerge(ctx context.Context, wtPath string) (stripped bool
 
 	// Commit the removal onto the run-branch so the fast-forward update-ref
 	// carries a clean tree to main.
-	commitMsg := "harmonik: strip run-context from merge (hk-4je)\n\n" +
+	// "chore:" is required: "harmonik:" is not in the CC closed type set and
+	// fails the commit-msg gate. Trivial: true bypasses Reviewed-By/Review-Verdict
+	// trailer requirement for this machine-generated commit (build-practices.md).
+	commitMsg := "chore: strip run-context from merge (hk-4je)\n\n" +
 		"Remove .harmonik/run-context/** that was force-committed by CHB-023 for\n" +
 		"crash-recovery (EM-031). The files remain valid on the run-branch reflog;\n" +
-		"they must not land on the merge target."
+		"they must not land on the merge target.\n" +
+		"Trivial: true"
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = wtPath
 	if out, commitErr := commitCmd.CombinedOutput(); commitErr != nil {

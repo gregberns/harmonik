@@ -7203,8 +7203,11 @@ func commitResidualDelta(ctx context.Context, wtPath string, runID core.RunID) {
 		return
 	}
 
+	// Subject ≤72 chars with CC type + runID for traceability.
+	// Trivial: true bypasses the Reviewed-By/Review-Verdict trailer requirement
+	// for this machine-generated commit (commit-msg gate; build-practices.md).
 	commitMsg := fmt.Sprintf(
-		"chore(reviewloop): commit residual iteration delta before rebase [%s]",
+		"chore: residual iteration delta [%s]\n\nTrivial: true",
 		runID.String(),
 	)
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)

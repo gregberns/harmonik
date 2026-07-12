@@ -529,11 +529,13 @@ type WatcherConfig struct {
 	// Refs: hk-sol6.
 	WarnCooldown time.Duration
 
-	// NoGaugeBackoff is the duration the watcher backs off (suppressing no_gauge
-	// re-emission and gauge re-reads) after emitting a session_keeper_no_gauge
-	// event. Zero (default) uses DefaultNoGaugeBackoff (30s). Threaded from
-	// .harmonik/config.yaml keeper.cadence.no_gauge_backoff via ResolveKeeperConfig
-	// so an adopter's config reaches the live backoff. Refs: hk-4gtu, hk-sol6.
+	// NoGaugeBackoff is retained for config backward compatibility
+	// (.harmonik/config.yaml keeper.cadence.no_gauge_backoff) but is no longer
+	// consumed by the watcher loop. hk-1q7bt replaced the per-tick backoff+re-emit
+	// interval with transition-only suppression (maybeEmitNoGauge): session_keeper_no_gauge
+	// now fires exactly once per reason-transition, making the backoff window moot.
+	// applyDefaults still fills this from DefaultNoGaugeBackoff so config entries
+	// do not hard-error; the resolved value is a no-op. Refs: hk-4gtu, hk-sol6, hk-1q7bt.
 	NoGaugeBackoff time.Duration
 
 	// ── Backstop 2: SID-independent hard-ceiling failsafe (hk-34ac) ──────────
@@ -727,9 +729,8 @@ func (c *WatcherConfig) applyDefaults() {
 	} else if c.WarnCooldown == 0 {
 		c.WarnCooldown = DefaultWarnCooldown // zero sentinel → use production default
 	}
-	// NoGaugeBackoff (hk-4gtu): fill from DefaultNoGaugeBackoff (30s) when zero so
-	// the runtime backoff window reads w.cfg.NoGaugeBackoff (configurable) rather
-	// than the bare package const.
+	// NoGaugeBackoff: filled for backward config compat; no longer consumed by the
+	// watcher loop (hk-1q7bt replaced the backoff+re-emit with transition-only).
 	if c.NoGaugeBackoff <= 0 {
 		c.NoGaugeBackoff = DefaultNoGaugeBackoff
 	}
@@ -915,6 +916,14 @@ type Watcher struct {
 	// staleness pre-nag injection (hk-xg6rw). Zero means no nag has fired yet
 	// this session. Gates re-injection to dashboardNagCooldown.
 	lastDashboardNagAt time.Time
+
+	// lastNoGaugeReason is the reason string of the most recent
+	// session_keeper_no_gauge emission. Empty when the gauge is fresh (initial
+	// state, or after a fresh-gauge recovery resets it). Used by
+	// maybeEmitNoGauge to implement log-once-per-(agent,reason)-transition:
+	// the event fires only when the reason changes, not on every poll tick.
+	// Refs: hk-1q7bt.
+	lastNoGaugeReason string
 }
 
 // NewWatcher constructs a Watcher with the given config and emitter.
@@ -948,13 +957,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// Used for idle-gate (quiescence detection).
 		lastModTime time.Time
 
-		// lastNoGaugeEmit is when we last emitted session_keeper_no_gauge.
-		// Tracks staleness re-emit interval.
-		lastNoGaugeEmit time.Time
-
-		// noGaugeEmittedAtBoot tracks the boot-time no_gauge emission.
-		noGaugeEmittedAtBoot = false
-
 		// gaugeStaleSince is the time when the gauge first became stale/absent
 		// in the current stale streak. Zero when the gauge is fresh. Used by the
 		// respawn path to enforce RespawnGrace. (Refs: hk-3w2)
@@ -968,11 +970,6 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// attempt. Used to enforce LiveRecoverCooldown. Zero when no recovery has
 		// occurred this session. (Refs: hk-75mr)
 		lastLiveRecoverAt time.Time
-
-		// backoffUntil is set to now+noGaugeBackoff after a no_gauge event is
-		// emitted. While time.Now() is before backoffUntil the gauge read is
-		// skipped entirely to avoid re-emitting on every tick. Refs: hk-sol6.
-		backoffUntil time.Time
 
 		// lastWarnFiredAt is the wall time of the most recent warn-threshold
 		// firing. Used by the dip-rise cooldown to suppress a re-fire within
@@ -997,12 +994,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 	)
 
 	// Boot-time check: emit no_gauge immediately if gauge is absent or stale.
+	// Uses the transition gate so a subsequent ticker tick with the same reason
+	// is a no-op. Refs: hk-1q7bt.
 	if absent, reason := w.gaugeUnavailable(ctx); absent {
-		if !noGaugeEmittedAtBoot {
-			w.emitNoGauge(ctx, reason)
-			lastNoGaugeEmit = time.Now()
-			noGaugeEmittedAtBoot = true
-		}
+		w.maybeEmitNoGauge(ctx, reason)
 	}
 
 	ticker := time.NewTicker(w.cfg.PollInterval)
@@ -1029,22 +1024,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// nudge before the daemon-side forcing gate trips.
 			w.maybeNagDashboardStale(ctx, time.Now())
 
-			// inNoGaugeBackoff is true during the 30s back-off window after a
-			// no_gauge emission. When true the re-emit calls below are suppressed
-			// (we don't re-read the gauge or try to emit), but respawn/live-recover
-			// still run against the last-known staleness state. Refs: hk-sol6.
-			inNoGaugeBackoff := !backoffUntil.IsZero() && time.Now().Before(backoffUntil)
-
 			ctxFile, modTime, err := ReadCtxFile(w.cfg.ProjectDir, w.cfg.AgentName)
 
 			// ── gauge absent ────────────────────────────────────────────────
 			if errors.Is(err, os.ErrNotExist) {
-				if !inNoGaugeBackoff {
-					if w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit) {
-						backoffUntil = time.Now().Add(w.cfg.NoGaugeBackoff)
-					}
-				}
-				noGaugeEmittedAtBoot = true
+				w.maybeEmitNoGauge(ctx, "absent")
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
@@ -1058,12 +1042,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if err != nil {
 				// parse / stat error: treat as absent, log and continue
 				slog.WarnContext(ctx, "keeper: read ctx file", "err", err)
-				if !inNoGaugeBackoff {
-					if w.maybeReemitNoGauge(ctx, "absent", lastNoGaugeEmit, &lastNoGaugeEmit) {
-						backoffUntil = time.Now().Add(w.cfg.NoGaugeBackoff)
-					}
-				}
-				noGaugeEmittedAtBoot = true
+				w.maybeEmitNoGauge(ctx, "absent")
 				pendingInject = false
 				if gaugeStaleSince.IsZero() {
 					gaugeStaleSince = time.Now()
@@ -1086,12 +1065,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 
 			// ── gauge stale ──────────────────────────────────────────────────
 			if time.Since(modTime) >= w.cfg.Staleness {
-				if !inNoGaugeBackoff {
-					if w.maybeReemitNoGauge(ctx, "stale", lastNoGaugeEmit, &lastNoGaugeEmit) {
-						backoffUntil = time.Now().Add(w.cfg.NoGaugeBackoff)
-					}
-				}
-				noGaugeEmittedAtBoot = true
+				w.maybeEmitNoGauge(ctx, "stale")
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
@@ -1139,14 +1113,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 					// Fall through to fresh-gauge handling below.
 				} else {
 					// True foreign session — treat as absent.
-					slog.WarnContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",
-						"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID)
-					if !inNoGaugeBackoff {
-						if w.maybeReemitNoGauge(ctx, "foreign_session", lastNoGaugeEmit, &lastNoGaugeEmit) {
-							backoffUntil = time.Now().Add(w.cfg.NoGaugeBackoff)
-						}
+					// Log and emit only on transition to foreign_session; suppress
+					// the per-tick slog.Warn flood for continuously-foreign gauges.
+					// Refs: hk-1q7bt.
+					if w.maybeEmitNoGauge(ctx, "foreign_session") {
+						slog.WarnContext(ctx, "keeper: gauge session_id mismatch; ignoring foreign session",
+							"agent", w.cfg.AgentName, "expected_sid", managedSID, "got_sid", ctxFile.SessionID)
 					}
-					noGaugeEmittedAtBoot = true
 					warnArmed = true
 					warnFired = false
 					pendingInject = false
@@ -1229,13 +1202,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 
 			// Gauge is fresh (and belongs to the managed session): reset no_gauge
-			// and respawn tracking so they re-arm if the gauge goes stale or foreign
-			// again. Also clear the no_gauge back-off so the watcher monitors
-			// normally once the gauge recovers. Refs: hk-sol6.
-			noGaugeEmittedAtBoot = false
-			lastNoGaugeEmit = time.Time{}
+			// tracking so the next absence/stale/foreign fires a fresh transition
+			// event. Also clear respawn staleness tracking. Refs: hk-1q7bt.
+			w.lastNoGaugeReason = ""
 			gaugeStaleSince = time.Time{}
-			backoffUntil = time.Time{}
 
 			// ── Backstop 1 reset (hk-34ac) ───────────────────────────────────────
 			// Gauge is readable and SID-matched: clear the blind episode so the
@@ -1466,17 +1436,6 @@ func (w *Watcher) gaugeUnavailable(ctx context.Context) (bool, string) {
 	return false, ""
 }
 
-// noGaugeReemitInterval is the minimum time between repeated session_keeper_no_gauge
-// events for the same stale/absent episode. Bumped from 120s to 300s (5 min) to
-// reduce noise from sustained no_gauge episodes. Refs: hk-sol6.
-const noGaugeReemitInterval = 300 * time.Second
-
-// noGaugeBackoff is the duration the watcher backs off after emitting a
-// no_gauge event before re-polling the gauge. Prevents a flurry of no_gauge
-// events on consecutive ticks during a stale episode. Refs: hk-sol6.
-// Alias of the exported DefaultNoGaugeBackoff (thresholds.go single source). hk-gwz6.
-const noGaugeBackoff = DefaultNoGaugeBackoff
-
 // warnCooldown is the minimum duration between warn-threshold firings in the
 // same direction (dip-rise cooldown). Prevents a transient dip below the
 // threshold immediately followed by a rise from counting as a second event.
@@ -1497,16 +1456,26 @@ func keeperHintText(tokens int64) string {
 	return fmt.Sprintf("[KEEPER HINT] Context is at ~%dK tokens. Consider wrapping up the current task and preparing a handoff soon.", approxK)
 }
 
-// maybeReemitNoGauge emits session_keeper_no_gauge if the re-emit interval
-// (noGaugeReemitInterval = 300s) has elapsed since the last emission. Updates
-// *lastEmit on emission and returns true when an event was emitted. Refs: hk-sol6.
-func (w *Watcher) maybeReemitNoGauge(ctx context.Context, reason string, lastEmit time.Time, lastEmitOut *time.Time) bool {
-	if lastEmit.IsZero() || time.Since(lastEmit) >= noGaugeReemitInterval {
-		w.emitNoGauge(ctx, reason)
-		*lastEmitOut = time.Now()
-		return true
+// maybeEmitNoGauge emits session_keeper_no_gauge and logs only when the
+// no-gauge reason transitions from the last emitted reason
+// (log-once-per-(agent,reason)-transition). The event fires on:
+//   - first call from the initial "" state to any non-empty reason (gauge went absent);
+//   - any subsequent call where reason differs from w.lastNoGaugeReason (e.g.
+//     "absent" → "stale", or any reason → "foreign_session").
+//
+// No event fires when reason equals w.lastNoGaugeReason: continuous absence does
+// not re-emit on every poll tick — the event is a TRANSITION signal, not a
+// persistent-state alarm. The caller resets w.lastNoGaugeReason to "" on
+// fresh-gauge recovery so the next absence starts a fresh transition.
+//
+// Returns true when an event was emitted. Refs: hk-1q7bt.
+func (w *Watcher) maybeEmitNoGauge(ctx context.Context, reason string) bool {
+	if w.lastNoGaugeReason == reason {
+		return false
 	}
-	return false
+	w.emitNoGauge(ctx, reason)
+	w.lastNoGaugeReason = reason
+	return true
 }
 
 // emitNoGauge emits the session_keeper_no_gauge event.

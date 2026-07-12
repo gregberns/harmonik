@@ -1,9 +1,9 @@
 package keeper_test
 
 // watcher_noise_reduction_test.go — unit tests for hk-sol6 (keeper noise
-// reduction) and hk-lsk5 (190K self-hint). Covers:
-//   - 30s back-off after no_gauge: no re-emit within the back-off window
-//   - 300s re-emit cadence: re-emit fires only after noGaugeReemitInterval
+// reduction), hk-1q7bt (transition-only no_gauge suppression), and hk-lsk5
+// (190K self-hint). Covers:
+//   - transition-only no_gauge: emit exactly once per reason per state entry
 //   - dip-rise cooldown: second warn crossing suppressed within WarnCooldown
 //   - one-time self-hint: injected exactly once per session on first crossing
 
@@ -20,21 +20,18 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// TestWatcher_NoGaugeBackoff_NoReemitWithinBackoffWindow asserts that after a
-// no_gauge event is emitted (absent gauge), no second no_gauge is emitted during
-// the back-off window even across many poll ticks. The back-off suppresses the
-// re-emit path; after the window expires a second no_gauge is allowed.
+// TestWatcher_NoGauge_TransitionOnly asserts that a permanently absent gauge
+// emits exactly one session_keeper_no_gauge event across many poll ticks.
 //
-// Test strategy: set WarnCooldown to something tiny so we control timing, but
-// the key is the no_gauge back-off. We use a gauge that is permanently absent
-// so every tick hits the absent branch. The back-off suppresses re-emits for
-// noGaugeBackoff (30s in production). We verify that within a 200ms run the
-// watcher emits exactly one no_gauge despite many poll ticks.
-func TestWatcher_NoGaugeBackoff_NoReemitWithinBackoffWindow(t *testing.T) {
+// This is the hk-1q7bt transition-only suppression: the event fires on the
+// absent→"absent" state transition (reason "" → "absent"), then is suppressed
+// for every subsequent tick in the same state. A never-armed crew keeper
+// therefore produces exactly 1 event total, not 1 event per 300s.
+func TestWatcher_NoGauge_TransitionOnly(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	agent := "backoff-test-agent"
+	agent := "transition-only-test-agent"
 
 	// Ensure the keeper dir exists so ReadCtxFile returns ErrNotExist rather
 	// than an error reading the directory, triggering the absent branch cleanly.
@@ -42,34 +39,28 @@ func TestWatcher_NoGaugeBackoff_NoReemitWithinBackoffWindow(t *testing.T) {
 	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	// Do NOT write any .ctx file — gauge is absent.
+	// Do NOT write any .ctx file — gauge is permanently absent.
 
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{
 		AgentName:       agent,
 		ProjectDir:      projectDir,
-		PollInterval:    5 * time.Millisecond, // fast ticks
+		PollInterval:    5 * time.Millisecond, // fast ticks → ~40 ticks in 200ms
 		Staleness:       120 * time.Second,    // won't reach stale (absent path)
 		SuppressNoGauge: false,                // want events
-		// ReadManagedSessionFn: nil → default (no managed binding, no session_id)
-		// The back-off is 30s in production; we test that within 200ms only one
-		// no_gauge is emitted despite ~40 poll ticks.
 	}
 
 	runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
 
 	noGaugeEvents := em.EventsOfType(core.EventTypeSessionKeeperNoGauge)
-	// Within 200ms with 30s back-off: exactly one emission allowed (the first).
-	// The boot-time check emits one; the ticker ticks do NOT re-emit while in
-	// back-off. We allow for the boot check + at most one ticker fire (in case
-	// the first tick lands before the boot check sets backoffUntil), but no more.
+	// Transition-only: exactly ONE event across ~40 ticks (first absent transition;
+	// all subsequent ticks are same-reason suppressed). Pre-hk-1q7bt this path
+	// emitted 1 event per 300s; with many never-armed crews this was 22% of log vol.
 	if len(noGaugeEvents) == 0 {
-		t.Error("want ≥1 no_gauge event (initial emission); got 0")
+		t.Error("want exactly 1 no_gauge event on first absent transition; got 0")
 	}
-	// The key assertion: no more than 2 events (boot + at most one tick race)
-	// — NOT the ~40 events that would appear without back-off.
-	if len(noGaugeEvents) > 2 {
-		t.Errorf("back-off violated: want ≤2 no_gauge events within 200ms; got %d (expected ~40 without back-off)",
+	if len(noGaugeEvents) > 1 {
+		t.Errorf("transition-only violated: want exactly 1 no_gauge event for permanently absent gauge; got %d",
 			len(noGaugeEvents))
 	}
 }

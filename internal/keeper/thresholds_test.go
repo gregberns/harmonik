@@ -147,8 +147,10 @@ func TestMinAbsOrPctCeil(t *testing.T) {
 // is a value-freeze: the promotion is a naming change only, so these values must
 // stay byte-identical to the pre-promotion literals. A diff here means a default
 // number changed — which is an operator decision, never a refactor side effect.
-// The package-const aliases (warnCooldown, noGaugeBackoff, MaxHeartbeatMisses)
-// are asserted to equal their Default* source so call sites stay correct.
+// The package-const aliases (warnCooldown, MaxHeartbeatMisses) are asserted to
+// equal their Default* source so call sites stay correct.
+// Note: noGaugeBackoff alias removed in hk-1q7bt (transition-only suppression
+// replaced the per-tick backoff; DefaultNoGaugeBackoff is still pinned above).
 func TestPromotedDefaults_ByteIdentity(t *testing.T) {
 	durCases := []struct {
 		name string
@@ -196,9 +198,6 @@ func TestPromotedDefaults_ByteIdentity(t *testing.T) {
 	// existing call site keeps resolving the same value.
 	if warnCooldown != DefaultWarnCooldown {
 		t.Errorf("warnCooldown alias = %v; want DefaultWarnCooldown %v", warnCooldown, DefaultWarnCooldown)
-	}
-	if noGaugeBackoff != DefaultNoGaugeBackoff {
-		t.Errorf("noGaugeBackoff alias = %v; want DefaultNoGaugeBackoff %v", noGaugeBackoff, DefaultNoGaugeBackoff)
 	}
 	if MaxHeartbeatMisses != DefaultMaxHeartbeatMisses {
 		t.Errorf("MaxHeartbeatMisses alias = %d; want DefaultMaxHeartbeatMisses %d", MaxHeartbeatMisses, DefaultMaxHeartbeatMisses)

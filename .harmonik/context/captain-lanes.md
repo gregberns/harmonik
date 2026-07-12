@@ -10,7 +10,7 @@
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 # Keep this SHORT — one current-truth block. Superseded history is DELETED, not archived.
 
-## ⭐⭐ CURRENT TRUTH 2026-07-12 ~11:30Z — PARALLEL 5-LANE; daemon REDEPLOYED 6442aaa0, hk-f9xzs commit_gate fix LIVE, GREEN broadcast
+## ⭐⭐ CURRENT TRUTH 2026-07-12 ~11:48Z — PARALLEL 5-LANE; hk-thbbv UNBLOCKED (admiral-volume cancelled); iaj1w race = STALE WORKER (hk-zno2t)
 
 > **daemon REDEPLOYED to 6442aaa0 (2026-07-12 ~11:28Z):** tag daemon-20260712-06, pid 60409,
 > crashed_in_health_window=false, serving 46 queues. NOW LIVE (the delta over b25e9919): **hk-f9xzs
@@ -23,9 +23,16 @@
 > reviewer cold-start timeout at sustained-6 is empirical TUNING, DEFERRED to the operator-gated 6→10
 > ramp (bead down-ranked P1→P3, deferral noted). gb-mbp RE-ENABLED (was briefly disabled to route the
 > now-void local attempt).
-> **RECURRING DRAG — hk-iaj1w:** concurrent remote worktree-create empty-HEAD race under multi-crew load
-> (85 worktrees) hit hk-5z1f0 3/3 AND hk-nxcvi run-1 (transient, re-runnable). Likely tied to worktree
-> bloat / inert reaper (hk-fpjxi/hk-2i36s). NEXT to drive if it recurs — route to stilgar's daemon lane.
+> **hk-thbbv UNBLOCKED (11:44Z):** stilgar root-caused the -32015 to a STALE 'pending' item (run_id null)
+> in the drained admiral-volume queue — EM-065 cross-queue scan counted it as live occupancy = permanent
+> lock. admiral OK'd; captain ran `harmonik queue cancel admiral-volume` (REVERSIBLE, archived to .failed).
+> Freed 3 P1s (hk-thbbv/hk-r9n2s/hk-rs1eh). Durable Class-D boot-reconcile fix = hk-bl4d6 (stilgar, queue-lane).
+> **hk-iaj1w empty-HEAD race ROOT CAUSE (empirical, stilgar) = STALE WORKER, not bloat/gc/mutex:** run base
+> commits didn't exist on /Users/gb/harmonik-worker/repo → `worktree add -b run/x <base-sha>` can't resolve
+> HEAD. Remediated non-destructively (`git -C .../harmonik-worker/repo fetch origin`). DURABLE fix = **hk-zno2t**
+> (fetch/push base before worktree-add; investigate why codesync fetchBaseOnWorker missed the base). Captain's
+> code-reasoned hk-rpp5a CLOSED as superseded (secondary refs folded into hk-zno2t). Reaper hygiene = hk-2i36s
+> (stilgar re-dispatching, separately valid).
 > NOTE: daemon working-tree resets wipe UNCOMMITTED .harmonik/context edits — commit tier-2 updates.
 > `harmonik crew start` sets the keeper `.managed` marker but does NOT spawn the watcher — use
 > `harmonik start crew` for a fully keeper-armed relaunch (stilgar/hawat currently watcher-less).
@@ -37,9 +44,9 @@ reviews at its own pace (per-item gate), never a fleet-wide hold.**
 | # | Lane | crew | queue | model | epic / state |
 |---|---|---|---|---|---|
 | 1 | **FLEET-HARDENING / logmine** | kynes | kynes2-q | Opus | PI flagship DONE + fleet-hardening (hk-p006e keeper-arm + hk-fpjxi reaper) LANDED. Now owns **logmine epic hk-mhmaw** (recurring mine→document→file). iter-22 delivered (findings-iter22.md, 5 beads filed). Currently on **hk-q6nve** (agent-reviewer unregistered in worktree = root of 44% missing-trailer). ✅ |
-| 2 | **REMOTE** | hawat | hawat-q | Opus | remote-substrate PROVEN e2e 3/3 (7d0a4afa/0708c377/1a2bceb9) **+ SUSTAINED-6 BANKED 10/10 clean on b25e9919** (2/10 first-pass reviewer cold-start timeouts both landed on retry = transient drag, not block). **6→10 workers.yaml ramp HELD** pending a reviewer cold-start notch. Now re-tasked → **hk-5z1f0** (P1: remote reviewer agent_ready_timeout under 6 concurrent slots over the tunnel = the residual ceiling). CAVEAT sent: hold reversetunnel.go + coordinate w/ stilgar before any internal/daemon file. gb-mbp live re-enable OPERATOR-HELD. watcher-less. ✅ |
+| 2 | **REMOTE** | hawat | hawat-q | Opus | remote-substrate PROVEN e2e 3/3 + SUSTAINED-6 BANKED 10/10 on b25e9919. **6→10 ramp HELD**, gb-mbp live re-enable OPERATOR-HELD, and the worktree-race work is stilgar's internal/daemon zone (collision rule) → remote lane has NO dispatchable file-disjoint work right now. **IDLE-ARMED on remote lane (11:49Z)** — a correctly-BLOCKED lane, not a staffing miss: no dispatchable file-disjoint work exists for it now. (Temp-fill hk-420yr.3 was VOID — already covered by hk-420yr.8/.9 on main; hawat pre-screened + captain closed it.) ROUTE BACK the instant hk-zno2t/hk-2i36s land + free hawat's workloop.go beads. watcher-less. ✅ |
 | 3 | **CODEX-AS-CREW** | piter | piter-q | Opus | epic hk-q3ovr. Option B PERMANENTLY KILLED. **codex-app-server PHASE-1 COMPLETE + proven** (tap/serializer/reactor/twin + L0/L1/L2 green vs real corpus; T0-T5 closed). Verdict: layering cheap+sound, cost was ~all daemon/merge infra. **IDLE-ARMED on Decision #2 (Phase-2 go/no-go: hk-nzzos resident client+sidecar + Spike B) — SURFACED to operator, awaiting ruling.** |
-| 4 | **REVIEW-LOOP + DISPATCH-LOCK** | stilgar | stilgar-q | Opus | RESTARTED 08:12Z (fresh ctx, keeper-marker set, watcher-less). Re-laned from stale gate-clear mission onto the systemic **hk-f9xzs** (merge discards APPROVE on retry = commit_gate traversal-cap loop) → **hk-thbbv** (flagless REQUEST_CHANGES wedge, still -32015 blocked via hk-eaxc5) → hk-nxcvi. Unblocks yueh T2b. internal/daemon right-of-way. ✅ |
+| 4 | **REVIEW-LOOP + DISPATCH-LOCK + DAEMON-HYGIENE** | stilgar | stilgar-q | Opus | internal/daemon right-of-way. **hk-thbbv now UNBLOCKED** (admiral-volume cancel cleared the EM-065 phantom lock) → driving hk-thbbv (flagless REQUEST_CHANGES wedge fix) → hk-nxcvi; unblocks yueh T2b. Also owns: **hk-zno2t** (remote stale-worker fetch-before-add durable fix), **hk-2i36s** (wire ReapBranches periodic, re-dispatching), **hk-bl4d6** (Class-D boot-reconcile for drained-queue stale-pending). ✅ |
 | 5 | **COMMS-TEST + presence** | yueh | yueh2-q | Sonnet | comms bus tests. Main T2b/T3 chain still GATED on hk-thbbv (stilgar). **hk-r1v2n MERGED** (GATE-0 durability test — fmt-gate class now has permanent regression coverage). Now on **hk-ru45u** (presence join-only flood = 53% of ALL log; reason:refresh + single-emit/tick + leave-on-teardown). ✅ |
 
 **Oversight (not counted as lanes):** watch (triage, watch-q) + admiral (strategy). Both up.

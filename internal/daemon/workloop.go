@@ -7467,7 +7467,10 @@ func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, m
 			return &mergeOutcome{success: false, reason: "merge_fmt_failed (git add): " + addErr.Error()}
 		}
 
-		commitMsg := fmt.Sprintf("fmt: auto-format via gofumpt+gci\n\nRefs: %s", beadID)
+		// Conventional Commits subject ("chore:") + Trivial: true trailer so
+		// this machine commit passes the commit-msg gate without --no-verify,
+		// which is forbidden repo-wide (build-practices.md §Git hygiene).
+		commitMsg := fmt.Sprintf("chore: auto-format via gofumpt+gci\n\nRefs: %s\nTrivial: true", beadID)
 		commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
 		commitCmd.Dir = buildDir
 		if commitOut, commitErr := commitCmd.CombinedOutput(); commitErr != nil {

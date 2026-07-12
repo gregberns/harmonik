@@ -207,3 +207,28 @@ ORDER: stilgar HOLDS hk-nxcvi/hk-thbbv until post-redeploy GREEN (told 09:00Z, r
       hk-nxcvi/hk-thbbv, hawat ramp decision reopens.
 RETURN-PATH: check whether hk-5z1f0 has merged; if yes and daemon still on b25e9919, DO the batched
       redeploy now, then GREEN. If hk-5z1f0 still in-flight, keep holding.
+
+## 2026-07-12 ~18:00Z — operator (via admiral): STRATEGIC PIVOT → FREEZE-AND-CARVE; fleet QUIESCED · expires: 2026-07-14T00:00:00Z
+WHAT: Two events retire the whole 5-lane volume posture above. (1) commodore-stays-up HARD STOP
+      (17:21Z) is DONE+PROVEN: root cause = SD-3 CrewIdleReaper reaped the idle planner (no
+      persistent-exemption); config-only fix (persistent agent-type manifest), committed 3f5e60fd;
+      survival proven 17m+ past the 5m36s window + across a supervisor-revive. (2) Operator voiced a
+      deep architectural concern ("everything keeps breaking, remote poorly architected, don't know
+      what's real, can't build the system with itself, so much slop, mutexes=bugs") → authorized a
+      codebase CENSUS. Census DONE (10 Fable assessors + 10 adversarial challengers + synthesis;
+      every verdict UPHELD). Report: plans/2026-07-12-codebase-census/REPORT.md.
+WHY:  the treadmill (43% of 20-day commits are hardening; 80% land in the 55k-LOC daemon god-package)
+      is architectural, not review-debt. Adding QA nodes cannot fix it. Domain logic is SOUND; the
+      two ack-free IO boundaries (tmux paste-inject + remote SSH) + the god-package + no-single-writer
+      are the root. Verdict: KEEP the proven core (queue model, lifecycle sweeps, harness axes, ~466
+      regression tests), REBUILD daemon-workloop core + remote + tmux-input, SIMPLIFY the rest,
+      DELETE ~50k LOC of test-theater (operatornfr/specaudit).
+ORDER: FLEET STAYS QUIESCED — 5 lanes NOT resumed (no bug-fix treadmill). Commodore is UP idle-armed
+      (persistent, sid 5b89172f) as the census's planning owner. Sequenced moves: M1 delete test-theater
+      + dead event-registry (safe, days) → M2 rebuild agent input channel behind handler.Substrate →
+      M3 extract run state-machine from beadRunOne → M4 remote rebuild. Admiral recommends AUTHORIZE M1
+      NOW, HOLD M2-M4 for operator ratification (weeks-scale, freeze-and-carve).
+RETURN-PATH: AWAITING operator ruling on admiral's a/b/c offer — (a) hand M1 to a crew now, (b) point
+      commodore at REPORT.md to produce the full kerf-planned sequence, (c) both. Do NOT resume the 5
+      lanes or dispatch structural work until the operator greenlights. Prior lane docs above
+      (T9/redeploy-batch/pi-srt) are SUPERSEDED by this pivot.

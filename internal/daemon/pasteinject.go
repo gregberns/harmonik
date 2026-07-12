@@ -1815,6 +1815,20 @@ func sendResumeSubmitEnter(ctx context.Context, es enterSender) {
 	sendSubmitEnterWithRetry(ctx, es, "implementer-resume")
 }
 
+// reviewerSeedMaxLen bounds the reviewer kick-off seed so it can never grow back
+// into a long single-line paste that the Claude Code TUI collapses into a
+// placeholder chip (hk-zn3vs).  Enforced by TestReviewerKickoffSeedStaysShort.
+const reviewerSeedMaxLen = 300
+
+// reviewerKickoffSeed is the SHORT reviewer kick-off message pasted into the
+// reviewer pane.  It intentionally carries no constraints beyond "read
+// review-target.md and produce your verdict there" — every reviewer constraint
+// lives in review-target.md (buildReviewTargetContent).  The "review-target.md"
+// marker sits near the start so injectAndVerifySeed can verify the paste
+// rendered literally.  MUST stay under reviewerSeedMaxLen (hk-zn3vs).
+const reviewerKickoffSeed = "Read .harmonik/review-target.md in this worktree" +
+	" and produce your verdict exactly as instructed there.\n"
+
 // pasteInjectReviewer delivers the reviewer kick-off message.
 //
 // Buffer purpose slug: "review" → buffer name "harmonik-<session-id>-review".
@@ -1840,32 +1854,19 @@ func pasteInjectReviewer(ctx context.Context, inj pasteInjecter, claudeSessID, w
 	}
 
 	bufName := bufferName(claudeSessID, "review")
-	msg := "Read .harmonik/review-target.md in this worktree." +
-		" It contains the bead context, the diff range to review, and any prior-iteration verdicts." +
-		" Produce your verdict by running:" +
-		" harmonik write-review-verdict --verdict=<APPROVE|REQUEST_CHANGES|BLOCK> --notes=\"<your rationale>\" --flags=<comma,separated,tags>" +
-		// hk-9w79a: hand-typing .harmonik/review.json via the Write tool lets the
-		// model mis-escape a backtick inside a code-snippet-quoting notes string
-		// (an illegal "\`" JSON escape), producing malformed JSON that fails the
-		// verdict read after a ~1hr hang. The CLI JSON-encodes notes/flags via
-		// encoding/json, so a backtick in notes can never break the JSON.
-		" DO NOT hand-write .harmonik/review.json directly with the Write tool — always use the" +
-		" harmonik write-review-verdict command above, even when notes quotes code containing backticks." +
-		" This command writes the file atomically (temp file + rename), so no separate atomic-write step is needed." +
-		" CRITICAL: when the bead body's '## Implementation Notes' section names exact field/struct names" +
-		" (e.g. 'MUST be SessionID string — NOT SessID'), grep the diff for every named identifier and" +
-		" verify the exact name appears. When a prior verdict has flag 'spec-field-name' or notes naming" +
-		" a field-name violation, re-check that EXACT field name in the new diff before approving." +
-		// hk-hay: all-X coverage check — reviewer must not approve a partial 'all-sites'/'all-X' change.
-		" COVERAGE CHECK: if the bead title or body uses all-inclusive language ('all X', 'all sites'," +
-		" 'every X', 'all callers', 'all handlers', 'all usages', etc.), grep the worktree for every" +
-		" occurrence of the targeted pattern and verify each one appears in the diff. If any occurrence" +
-		" is absent from the diff, emit flags: [\"incomplete-coverage\"] and REQUEST_CHANGES naming the" +
-		" missed file paths and line numbers in notes — do NOT approve a partial 'all-X' change." +
-		// hk-805f7: explicit read-only constraint — reviewer MUST NOT run git state-changing commands.
-		" READ-ONLY CONSTRAINT: you MUST NOT run git reset, git checkout, git cherry-pick, git merge," +
-		" git push, git rebase, or any other state-mutating git command. You are on a detached-HEAD" +
-		" reviewer worktree; mutating git state can corrupt the implementer's task branch.\n"
+	// hk-zn3vs: this seed MUST stay short. A long single-line paste is collapsed
+	// by the Claude Code TUI into a "[Pasted text #N +L lines]" placeholder chip,
+	// so the literal text (including the "review-target.md" marker) never renders
+	// into the pane and injectAndVerifySeed fails deterministically ("seed marker
+	// absent from pane" x3 -> the reviewer idles taskless, holding a slot + a
+	// -32015 lock for hours). The 46-char implementer seed renders fine, which is
+	// why implement completes but review wedged on every run once a Claude Code
+	// update lowered the paste-collapse threshold (2026-07-11). ALL reviewer
+	// constraints (read-only, write-review-verdict usage, no-hand-write review.json,
+	// coverage check, spec-field-name check) live in review-target.md
+	// (buildReviewTargetContent), which the reviewer reads FIRST. Do NOT re-inline
+	// them here — keep the seed under reviewerSeedMaxLen (enforced by a test).
+	msg := reviewerKickoffSeed
 	// Verify the reviewer seed rendered into the input box before submitting,
 	// re-pasting on a silently-dropped paste (hk-zexsj).  Marker "review-target.md"
 	// is on the first line of the seed and guaranteed present on a successful

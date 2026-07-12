@@ -599,6 +599,14 @@ func buildReviewTargetContent(p ReviewTargetPayload) string {
 	sb.WriteString("   - Name every missed file path and line number in your `notes`.\n\n")
 	sb.WriteString("Approving a partial 'all-X' change without running this grep check is a reviewer failure.\n\n")
 
+	// hk-zn3vs: spec-field-name check — previously carried in the reviewer kick-off
+	// seed; moved here so the seed can stay short (see pasteinject.go reviewerKickoffSeed).
+	sb.WriteString("## Spec Field-Name Check (CRITICAL)\n\n")
+	sb.WriteString("When the bead body's '## Implementation Notes' section names exact field/struct names\n")
+	sb.WriteString("(e.g. 'MUST be SessionID string — NOT SessID'), grep the diff for every named identifier\n")
+	sb.WriteString("and verify the exact name appears. When a prior verdict has flag 'spec-field-name' or notes\n")
+	sb.WriteString("naming a field-name violation, re-check that EXACT field name in the new diff before approving.\n\n")
+
 	sb.WriteString("## Bead\n\n")
 	sb.WriteString(fmt.Sprintf("id: %s\n", p.BeadID))
 	sb.WriteString(fmt.Sprintf("title: %s\n\n", p.BeadTitle))

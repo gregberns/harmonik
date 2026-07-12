@@ -293,7 +293,7 @@ case "$CNT" in
   2)
     # iter1 reviewer: REQUEST_CHANGES (forces iter2 implementer-resume).
     mkdir -p "$WS/.harmonik"
-    printf '{"schema_version":1,"verdict":"REQUEST_CHANGES","flags":[],"notes":"please address X"}' > "$WS/.harmonik/review.json"
+    printf '{"schema_version":1,"verdict":"REQUEST_CHANGES","flags":["rlrr-flag"],"notes":"please address X"}' > "$WS/.harmonik/review.json"
     ;;
   3)
     # iter2 implementer-resume: commit again (diff hash advances).

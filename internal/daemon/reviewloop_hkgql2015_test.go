@@ -135,6 +135,9 @@ func rlBridgeFixtureRunID(t *testing.T) core.RunID {
 
 // rlBridgeFixtureVerdictJSON returns a minimal valid agent-reviewer JSON schema
 // v1 verdict payload for the given verdict string.
+//
+// A REQUEST_CHANGES verdict gets a non-empty flags list — a flagless
+// REQUEST_CHANGES is treated by the daemon as an implicit APPROVE (hk-thbbv).
 func rlBridgeFixtureVerdictJSON(verdict string) string {
 	type vFile struct {
 		SchemaVersion int      `json:"schema_version"`
@@ -142,10 +145,14 @@ func rlBridgeFixtureVerdictJSON(verdict string) string {
 		Flags         []string `json:"flags"`
 		Notes         string   `json:"notes"`
 	}
+	flags := []string{}
+	if verdict == "REQUEST_CHANGES" {
+		flags = []string{"test-flag"}
+	}
 	b, _ := json.Marshal(vFile{
 		SchemaVersion: 1,
 		Verdict:       verdict,
-		Flags:         []string{},
+		Flags:         flags,
 		Notes:         fmt.Sprintf("Bridge test verdict: %s", verdict),
 	})
 	return string(b)

@@ -133,6 +133,11 @@ func rlFixtureRunID(t *testing.T) core.RunID {
 
 // rlFixtureVerdictJSON returns a minimal valid agent-reviewer JSON schema v1
 // verdict payload for the given verdict string.
+//
+// A REQUEST_CHANGES verdict is given a non-empty flags list: a flagless
+// REQUEST_CHANGES is treated by the daemon as an implicit APPROVE (hk-thbbv),
+// so fixtures modelling a genuine "reviewer found something to fix" loop
+// need at least one flag or the loop short-circuits after iteration 1.
 func rlFixtureVerdictJSON(verdict string) string {
 	type vFile struct {
 		SchemaVersion int      `json:"schema_version"`
@@ -140,10 +145,14 @@ func rlFixtureVerdictJSON(verdict string) string {
 		Flags         []string `json:"flags"`
 		Notes         string   `json:"notes"`
 	}
+	flags := []string{}
+	if verdict == "REQUEST_CHANGES" {
+		flags = []string{"test-flag"}
+	}
 	b, _ := json.Marshal(vFile{
 		SchemaVersion: 1,
 		Verdict:       verdict,
-		Flags:         []string{},
+		Flags:         flags,
 		Notes:         fmt.Sprintf("Test verdict: %s", verdict),
 	})
 	return string(b)
@@ -349,6 +358,108 @@ func TestReviewLoop_RequestChangesThenAPPROVE(t *testing.T) {
 	if _, err := os.Stat(archivePath); err != nil {
 		t.Errorf("T-WM-027: verdict archive file missing after RC→APPROVE cycle: %s: %v", archivePath, err)
 	}
+}
+
+// TestReviewLoop_FlaglessRequestChangesTreatedAsApprove verifies hk-thbbv: a
+// REQUEST_CHANGES verdict whose flags list is empty is routed as an implicit
+// APPROVE rather than spending another iteration on it — the implementer has
+// nothing actionable to address, so looping again would wedge the run once
+// the implementer finds nothing to change and quits.
+//   - result.Success = true
+//   - result.CompletionReason = "approved"
+//   - result.NeedsAttention = false
+//   - No implementer_resumed / second reviewer_launched is emitted — the
+//     cycle terminates at iteration 1, it never loops.
+func TestReviewLoop_FlaglessRequestChangesTreatedAsApprove(t *testing.T) {
+	t.Parallel()
+
+	projectDir := rlFixtureProjectDir(t)
+	rlFixtureGitRepo(t, projectDir)
+	wtPath, parentSHA := rlFixtureWorktree(t, projectDir)
+
+	// A REQUEST_CHANGES verdict with an explicit empty flags list — the exact
+	// hk-thbbv shape (reviewer notes affirm correctness but the verdict field
+	// still says REQUEST_CHANGES).
+	wtpEsc := strings.ReplaceAll(wtPath, "'", "'\\''")
+	script := fmt.Sprintf(`#!/bin/sh
+set -e
+WTP='%s'
+WS="${HARMONIK_WORKSPACE_PATH:-$WTP}"
+CNT_FILE="$WTP/.harmonik/rl_count"
+if [ ! -f "$CNT_FILE" ]; then
+  printf '0' > "$CNT_FILE"
+fi
+CNT=$(cat "$CNT_FILE")
+CNT=$((CNT + 1))
+printf '%%d' "$CNT" > "$CNT_FILE"
+if [ $((CNT %% 2)) -eq 0 ]; then
+  mkdir -p "$WS/.harmonik"
+  printf '{"schema_version":1,"verdict":"REQUEST_CHANGES","flags":[],"notes":"looks correct as-is"}' > "$WS/.harmonik/review.json"
+else
+  printf '%%d' "$CNT" > "$WS/impl_iter_$CNT.txt"
+  git -C "$WS" add "impl_iter_$CNT.txt" >/dev/null 2>&1
+  git -C "$WS" -c user.email=test@harmonik.local -c user.name="Test" commit -m "impl iter $CNT" --no-gpg-sign >/dev/null 2>&1
+fi
+exit 0
+`, wtpEsc)
+	scriptPath := filepath.Join(t.TempDir(), "rl_thbbv_handler.sh")
+	//nolint:gosec // G306: test-only fixture script; not production
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("TestReviewLoop_FlaglessRequestChangesTreatedAsApprove: WriteFile: %v", err)
+	}
+
+	collector := &stubEventCollector{}
+	ledger := &stubBeadLedger{}
+
+	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+		BrAdapter:           ledger,
+		Bus:                 collector,
+		ProjectDir:          projectDir,
+		HandlerBinary:       "/bin/sh",
+		HandlerArgs:         []string{scriptPath},
+		IntentLogDir:        filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2:    NewSealedAdapterRegistryForTest(t),
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	result := daemon.ExportedRunReviewLoop(
+		ctx, deps,
+		rlFixtureRunID(t),
+		core.BeadID("rl-thbbv-flagless-001"),
+		wtPath, parentSHA,
+	)
+
+	if !result.Success {
+		t.Errorf("expected success=true on flagless REQUEST_CHANGES; summary=%q", result.Summary)
+	}
+	if result.CompletionReason != string(core.ReviewLoopCompletionReasonApproved) {
+		t.Errorf("completion_reason = %q; want %q", result.CompletionReason, core.ReviewLoopCompletionReasonApproved)
+	}
+	if result.NeedsAttention {
+		t.Errorf("expected needs_attention=false on flagless REQUEST_CHANGES; got true (summary=%q)", result.Summary)
+	}
+
+	eventTypes := collector.eventTypes()
+	if rlCountEventType(eventTypes, string(core.EventTypeImplementerResumed)) != 0 {
+		t.Errorf("expected no implementer_resumed (flagless REQUEST_CHANGES must not loop); events=%v", eventTypes)
+	}
+	if got := rlCountEventType(eventTypes, string(core.EventTypeReviewerLaunched)); got != 1 {
+		t.Errorf("expected exactly 1 reviewer_launched (no second iteration); got %d events=%v", got, eventTypes)
+	}
+}
+
+// rlCountEventType returns how many times eventType appears in eventTypes.
+func rlCountEventType(eventTypes []string, eventType string) int {
+	n := 0
+	for _, e := range eventTypes {
+		if e == eventType {
+			n++
+		}
+	}
+	return n
 }
 
 // TestReviewLoop_CapHit verifies that three REQUEST_CHANGES verdicts trigger

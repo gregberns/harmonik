@@ -1691,6 +1691,26 @@ func runReviewLoop(
 			return result
 
 		case workspace.ReviewVerdictRequestChanges:
+			// hk-thbbv: a REQUEST_CHANGES verdict with an empty flags list carries no
+			// actionable item for the implementer to address — the reviewer's notes
+			// affirm correctness (or are otherwise non-actionable) while the verdict
+			// field alone routes to another fix-up iteration. The implementer then
+			// finds nothing to change, /quits without a new commit, and the next
+			// iteration's no-progress guard (or, if it's the last resume, plain
+			// operator confusion) wedges the run even though nothing is actually
+			// wrong. Treat a flagless REQUEST_CHANGES as an implicit APPROVE rather
+			// than spending (and likely exhausting) another iteration on it.
+			if len(verdict.Flags) == 0 {
+				result := reviewLoopResult{
+					success:          true,
+					completionReason: core.ReviewLoopCompletionReasonApproved,
+					summary:          fmt.Sprintf("REQUEST_CHANGES with no flags at iteration %d treated as APPROVE", state.iterationCount),
+					needsAttention:   false,
+					approveVerdict:   verdict,
+				}
+				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+				return result
+			}
 			if state.iterationCount >= reviewLoopIterationCap {
 				// Cap hit: emit iteration_cap_hit BEFORE cycle_complete per §8.1a ordering.
 				emitIterationCapHit(ctx, deps.bus, runID, state.iterationCount, reviewLoopIterationCap,

@@ -148,3 +148,18 @@ ORDER: NO redeploy as a pi fix (it's dead). kynes runs the decisive arm now (NEW
 RETURN-PATH: check kynes's {stdin-fed, srt-off result, mechanism} report; the "on GATE-0 green →
       redeploy" path in prior lane docs is SUPERSEDED (no redeploy fix pending). Decision #2 (Codex
       session-model Option B) awaits operator ratification — piter's l63b9→trio BLOCKED until relayed.
+
+## 2026-07-12 ~09:00Z — captain (PENDING REDEPLOY batched behind hk-5z1f0) · expires: 2026-07-13T00:00:00Z
+WHAT: hk-f9xzs (systemic merge-retry/preserve-APPROVE fix) MERGED to main as 2476922e but is
+      NOT LIVE — daemon runs b25e9919 (redeployed 08:04Z), 2476922e is newer. A redeploy is
+      PENDING, deliberately BATCHED behind hawat's in-flight hk-5z1f0 (also internal/daemon:
+      agentready.go reviewer cold-start notch) so both land in ONE socket blip instead of two.
+WHY:  hk-f9xzs unblocks stilgar's hk-nxcvi + hk-thbbv (commit_gate traversal-cap loop) but only
+      once LIVE; hk-5z1f0 unblocks the 6→10 worker ramp. Both are daemon-surface → batch, don't
+      double-cycle the socket ~1h after the last redeploy.
+ORDER: stilgar HOLDS hk-nxcvi/hk-thbbv until post-redeploy GREEN (told 09:00Z, re-arming --follow).
+      hawat 6→10 ramp HELD until hk-5z1f0 lands. On hk-5z1f0 merge → captain redeploys
+      (docs/daemon-redeploy.md) picking up BOTH commits → broadcast GREEN → stilgar re-dispatches
+      hk-nxcvi/hk-thbbv, hawat ramp decision reopens.
+RETURN-PATH: check whether hk-5z1f0 has merged; if yes and daemon still on b25e9919, DO the batched
+      redeploy now, then GREEN. If hk-5z1f0 still in-flight, keep holding.

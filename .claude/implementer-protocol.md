@@ -64,6 +64,32 @@ The directives in `HANDOFF.md` describe a "merge dance" run from the main repo d
 
 When a Go file contains aligned Unicode box-drawing characters (e.g. `│`, `─`, `┌`, `└`) in comment tables, the Edit tool's `old_string` matching fails on the multi-byte sequences. Remedy: Read the exact bytes around your target anchor first, then use the shortest purely-ASCII substring in that row as the `old_string` anchor (e.g. the label text or an adjacent Go keyword) rather than the full aligned row.
 
+## Agent review (REQUIRED before non-trivial commits)
+
+Before committing, run the `agent-reviewer` subagent to produce the verdict the
+commit-msg hook requires. Use the `Agent` tool with `subagent_type: "agent-reviewer"`:
+
+```
+Agent(subagent_type="agent-reviewer", prompt="""
+You are agent-reviewer. Review the following diff as a Tier-1 reviewer per the
+agent-reviewer skill. Emit a single JSON verdict object — no prose before or after it.
+
+## Diff (git diff main...HEAD)
+<paste: git diff main...HEAD>
+
+## Bead body
+<paste: br show <bead-id> --format json | jq .description>
+
+## Relevant spec section(s)
+<paste normative spec content cited by the bead>
+
+Perform all Tier-1 checks and emit the JSON verdict.
+""")
+```
+
+The agent returns a JSON verdict. Add it to the commit as trailers (see commit format below).
+Trivial commits (typo, whitespace, one-line obvious fix) may use `Trivial: true` instead.
+
 ## Commit format (REQUIRED — verbatim HEREDOC pattern with quoted EOF)
 
 ```
@@ -74,13 +100,19 @@ git commit -m "$(cat <<'EOF'
 - <file>: <one-line bullet>
 
 Refs: <bead-id>
+Reviewed-By: agent-reviewer
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"..."}
 EOF
 )"
 ```
 
 The quoted `'EOF'` prevents shell expansion. After committing, verify with `git show HEAD --format='%s'` — output MUST be ONLY the subject line, NOT bullets collapsed in.
 
-Do NOT add `## Why / ## What / ## Spec alignment / ## Test plan / ## Risk` sections. Do NOT add `Reviewed-By:` or `Review-Verdict:` trailers. The orchestrator-directive commit format overrides any `build-practices.md` template.
+Do NOT add `## Why / ## What / ## Spec alignment / ## Test plan / ## Risk` sections.
+The `Reviewed-By:` and `Review-Verdict:` trailers are required by the commit-msg hook
+for non-trivial commits. Replace the `Review-Verdict:` value with the JSON the
+`agent-reviewer` subagent returned. Use `Trivial: true` trailer only for typos and
+whitespace fixes.
 
 ## Typed-alias-deferral pattern
 

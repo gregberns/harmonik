@@ -1040,6 +1040,11 @@ func ExportedNewHookSessionStore() *hookSessionStore {
 // Bead ref: hk-kqdpf.1.
 var ExportedProductionWorktreeFactory = productionWorktreeFactory
 
+// ExportedIsRetryableMergeReason exposes isRetryableMergeReason for unit tests.
+//
+// Bead ref: hk-f9xzs.
+var ExportedIsRetryableMergeReason = isRetryableMergeReason
+
 // ExportedMergeOutcome wraps the internal mergeOutcome so tests in the
 // daemon_test package can inspect the result of ExportedMergeRunBranchToMain.
 //

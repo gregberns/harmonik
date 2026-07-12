@@ -3865,7 +3865,34 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
 				}
 			}
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+			// §4.12: outer merge-step retry loop (hk-f9xzs).
+			// On retryable failures (rebase_conflict / non_ff_merge / merge_fmt_failed),
+			// retry lockedMergeRunBranchToMain up to maxMergeStepRetries additional
+			// times, preserving the APPROVE verdict. EM-053 reopen fires only after
+			// all retries are exhausted or on a non-retryable failure.
+			const maxMergeStepRetries = 2
+			var mergeRes mergeOutcome
+			for mergeAttempt := 0; mergeAttempt <= maxMergeStepRetries; mergeAttempt++ {
+				if mergeAttempt > 0 && rlResult.approveVerdict != nil && rbc == nil {
+					// Re-amend trailers before each retry: the prior inner rebase may
+					// have rewritten HEAD (commitResidualDelta adds commits; the amend
+					// must target the current HEAD). appendReviewTrailersToHEAD is
+					// idempotent, so repeated calls are safe.
+					if amendErr := appendReviewTrailersToHEAD(ctx, wtPath, rlResult.approveVerdict); amendErr != nil {
+						fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD (merge retry %d) bead %s: %v (non-fatal)\n",
+							mergeAttempt, beadID, amendErr)
+					}
+				}
+				mergeRes = lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+				if mergeRes.noChange || mergeRes.success {
+					break
+				}
+				if !isRetryableMergeReason(mergeRes.reason) || mergeAttempt >= maxMergeStepRetries {
+					break
+				}
+				fmt.Fprintf(os.Stderr, "daemon: workloop: merge-step retry %d/%d (bead %s): %s\n",
+					mergeAttempt+1, maxMergeStepRetries, beadID, mergeRes.reason)
+			}
 			if !mergeRes.noChange && !mergeRes.success {
 				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
 				reopenTID, _ := deps.tidGen.Next()
@@ -6387,6 +6414,24 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 // ─────────────────────────────────────────────────────────────────────────────
 // mergeRunBranchToMain — Step 9 merge-to-main helper (§4.12.EM-052/EM-053)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// isRetryableMergeReason returns true when a mergeRunBranchToMain failure is a
+// race-condition artifact worth retrying at the workloop level WITHOUT
+// re-running the full implementer+reviewer cycle. The APPROVE verdict is
+// preserved across retries.
+//
+// Retryable (transient race): rebase_conflict, non_ff_merge, merge_fmt_failed.
+// Non-retryable (structural): merge_build_failed, push_failed, strip_run_context_failed, etc.
+//
+// Bead: hk-f9xzs.
+func isRetryableMergeReason(reason string) bool {
+	for _, prefix := range []string{"rebase_conflict", "non_ff_merge", "merge_fmt_failed"} {
+		if strings.HasPrefix(reason, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // mergeOutcome carries the result of mergeRunBranchToMain so the caller can
 // decide which terminal event sequence to emit.

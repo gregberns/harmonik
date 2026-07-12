@@ -55,12 +55,15 @@ func (hk8ziid2Ledger) Ready(context.Context) ([]core.BeadRecord, error) { return
 func (hk8ziid2Ledger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	return core.BeadRecord{BeadID: id}, nil
 }
+
 func (hk8ziid2Ledger) ClaimBead(context.Context, string, brcli.TimeoutConfig, core.RunID, core.TransitionID, core.BeadID) error {
 	return nil
 }
+
 func (hk8ziid2Ledger) CloseBead(context.Context, string, brcli.TimeoutConfig, core.RunID, core.TransitionID, core.BeadID, bool) error {
 	return nil
 }
+
 func (hk8ziid2Ledger) ReopenBead(context.Context, string, brcli.TimeoutConfig, core.RunID, core.TransitionID, core.BeadID, string) error {
 	return nil
 }

@@ -165,6 +165,7 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 
 	// hk-eval-prog-model-on-log-bh2o7: model_selected dispatch observability
 	{EventTypeModelSelected, func() EventPayload { return &ModelSelectedPayload{} }},
+	{EventTypeProviderSelected, func() EventPayload { return &ProviderSelectedPayload{} }},
 
 	// §8.12 Staleness-detection
 	{EventTypeRunStale, func() EventPayload { return &RunStalePayload{} }},

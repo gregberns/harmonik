@@ -176,6 +176,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "harness_selected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-eval-prog-model-on-log-bh2o7: model-selected observability event (effective model keyed on run_id).
 	{TypeName: "model_selected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// hk-8ziid.2: provider-selected observability event (resolved Pi provider keyed on run_id).
+	{TypeName: "provider_selected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-33p: hitl-decisions typed events (hitl-decisions SPEC §1, component K1).
 	{TypeName: "decision_needed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "decision_resolved", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

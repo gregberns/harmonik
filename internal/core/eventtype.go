@@ -795,6 +795,19 @@ const (
 	// harnesses.pi.model config value; Codex → empty (model is not
 	// harmonik-controlled). Carries run_id, model, and harness (agent_type).
 	EventTypeModelSelected EventType = "model_selected"
+
+	// EventTypeProviderSelected is the provider_selected event type
+	// (hk-8ziid.2, docs/design/pi-multi-provider-slot-accounting.md).
+	// Durability class: O (ordinary — dispatch-time observability; records the
+	// resolved Pi provider identity for each run so operators can see the
+	// per-run routing decision without reading the run handle directly).
+	//
+	// Emitted at claim time by the daemon's claim-time Pi profile resolver
+	// (workloop.go, immediately after resolvePiProfile) for Pi runs only.
+	// Carries run_id and the resolved provider string: the matched profile's
+	// provider when a profile: label resolved, else the harness-global
+	// harnesses.pi.provider default.
+	EventTypeProviderSelected EventType = "provider_selected"
 )
 
 // ---------------------------------------------------------------------------

@@ -3232,6 +3232,24 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		resolvedModel = resolvedProfile.Model
 	}
 
+	// Carry the resolved Pi provider identity onto the run handle and emit
+	// provider_selected (hk-8ziid.2, docs/design/pi-multi-provider-slot-accounting.md).
+	// Pi runs only: a matched profile's provider wins, else the harness-global
+	// harnesses.pi.provider default. Non-Pi runs leave resolvedProvider unset
+	// (RunHandle.GetResolvedProvider stays ("", false) — see the atomic-pointer
+	// contract in runregistry.go distinguishing "not yet resolved" from
+	// "resolved to the empty-string default").
+	if resolvedAgentType == core.AgentTypePi {
+		resolvedProvider := resolvedProfile.Provider
+		if resolvedProfile == (PiProfileConfig{}) {
+			resolvedProvider = deps.projectCfg.Harnesses.Pi.Provider
+		}
+		if rh, ok := deps.runRegistry.Get(runID); ok && rh != nil {
+			rh.SetResolvedProvider(resolvedProvider)
+		}
+		emitProviderSelected(ctx, deps.bus, runID, resolvedProvider)
+	}
+
 	// Determine activeRepo: the repository where the per-bead worktree lives,
 	// commits happen, and merges are pushed (hk-xfuc cross-repo dispatch).
 	//

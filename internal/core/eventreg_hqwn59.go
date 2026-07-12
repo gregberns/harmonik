@@ -242,6 +242,11 @@ func registerAgentEvents() {
 	// model string keyed on run_id. Enables trustworthy cross-model run records without
 	// config snapshots. Durability class: O.
 	mustRegister("model_selected", func() EventPayload { return &ModelSelectedPayload{} })
+	// provider_selected (hk-8ziid.2): emitted by the claim-time Pi profile
+	// resolver alongside RunHandle.SetResolvedProvider, recording the resolved
+	// Pi provider string keyed on run_id. Enables per-provider slot-accounting
+	// audit without reading the run handle directly. Durability class: O.
+	mustRegister("provider_selected", func() EventPayload { return &ProviderSelectedPayload{} })
 }
 
 // registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.

@@ -44,7 +44,7 @@ import "testing"
 //	      bead_ledger_recovered, bead_ledger_corrupt [hk-k7va9],
 //	      bead_ledger_conflict_audit [hk-u3q6o], orphaned_child_bead [hk-27ghc])
 //
-// Total: 125 EventType constants registered in allEventTypeCohort.
+// Total: 126 EventType constants registered in allEventTypeCohort.
 // Amendment: stall_detected added for stall-sentinel Layer A detection (hk-l087e;
 // EV-027 foundation amendment — new O-class event emitted when heartbeat_gap,
 // review_stall, or run_age fires for an active run; feeds watch tier + ops-monitor).
@@ -68,6 +68,10 @@ import "testing"
 // Amendment: model_selected added (hk-eval-prog-model-on-log-bh2o7; O-class
 // dispatch-time event recording the effective model keyed on run_id — enables
 // trustworthy cross-model run records without config snapshots).
+// Amendment: provider_selected added (hk-8ziid.2; O-class claim-time event
+// recording the resolved Pi provider identity keyed on run_id, emitted
+// alongside RunHandle.SetResolvedProvider — enables per-provider slot
+// accounting audit without reading the run handle directly).
 //
 // To add an EventType: update allEventTypeCohort in eventtype_coverage_gjyks_test.go,
 // add the constant to eventtype.go, register the constructor in eventreg_hqwn59.go
@@ -84,7 +88,7 @@ func TestEV027_CrossBusEventTypeTaxonomyCount(t *testing.T) {
 	// wantCount is the number of entries in allEventTypeCohort (event-model.md §8
 	// cross-bus taxonomy). Changing this value requires a foundation amendment per
 	// EV-027 and architecture.md §4.6.
-	const wantCount = 125 // +1 stall_detected (hk-l087e EV-027 amendment; O-class Layer A stall-sentinel event emitted when heartbeat_gap/review_stall/run_age fires for an active run)
+	const wantCount = 126 // +1 provider_selected (hk-8ziid.2 EV-027 amendment; O-class claim-time event recording the resolved Pi provider identity keyed on run_id)
 
 	got := len(allEventTypeCohort)
 	if got != wantCount {

@@ -872,3 +872,41 @@ type ModelSelectedPayload struct {
 func (p ModelSelectedPayload) Valid() bool {
 	return p.RunID != "" && p.Harness != ""
 }
+
+// ProviderSelectedPayload is the typed event payload for the provider_selected
+// event (hk-8ziid.2, docs/design/pi-multi-provider-slot-accounting.md).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+// Durability class: O (ordinary — dispatch-time observability; records the
+// resolved Pi provider identity keyed on run_id so per-provider slot
+// accounting decisions are auditable without reading the run handle directly).
+//
+// Emitted by the daemon's claim-time Pi profile resolver (workloop.go,
+// immediately after resolvePiProfile) for Pi runs only, alongside the
+// RunHandle.SetResolvedProvider call the same value is stored under.
+//
+// # Payload fields
+//
+//   - run_id   — UUID of the run this resolution belongs to (RunID.String())
+//   - provider — the resolved Pi provider string; empty is a valid, distinct
+//     value meaning "harness-global default, no profile: override" (NOT
+//     "unresolved" — see RunHandle.GetResolvedProvider's ok-bool contract)
+type ProviderSelectedPayload struct {
+	// RunID is the run identifier this resolution belongs to (UUID string).
+	// Required (non-empty).
+	RunID string `json:"run_id"`
+
+	// Provider is the resolved Pi provider string. May be empty (harness-global
+	// default, no profile: label matched).
+	Provider string `json:"provider"`
+}
+
+// Valid reports whether p is a well-formed ProviderSelectedPayload.
+//
+// Rules:
+//   - RunID must be non-empty.
+//   - Provider may be empty (harness-global default case).
+func (p ProviderSelectedPayload) Valid() bool {
+	return p.RunID != ""
+}

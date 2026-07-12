@@ -21,6 +21,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -99,6 +100,30 @@ func resolvePiProfile(
 			"tier-1 profile absent: multiple profile:<name> labels; zero tuple (C4 h.* fallback)")
 		return PiProfileConfig{}, nil
 	}
+}
+
+// emitProviderSelected emits a provider_selected event (hk-8ziid.2,
+// docs/design/pi-multi-provider-slot-accounting.md) recording the resolved Pi
+// provider identity keyed on run_id. Called by beadRunOne (workloop.go)
+// immediately after resolvePiProfile returns, for Pi runs only, alongside the
+// RunHandle.SetResolvedProvider call the same value is stored under.
+// Best-effort: emit errors are silently discarded (the resolution result is
+// already determined before this call).
+func emitProviderSelected(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
+	provider string,
+) {
+	pl := core.ProviderSelectedPayload{
+		RunID:    runID.String(),
+		Provider: provider,
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = bus.Emit(ctx, core.EventTypeProviderSelected, b)
 }
 
 // hasSingleModelLabel reports whether beadLabels carries EXACTLY ONE

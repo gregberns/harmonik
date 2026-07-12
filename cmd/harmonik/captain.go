@@ -90,6 +90,12 @@ type captainLaunchRunFn func(cmd *exec.Cmd) error
 // runKeeperEnable (the testable core of `harmonik keeper enable`).
 type keeperEnableFn func(cfg enableConfig, stdout, stderr io.Writer) int
 
+// captainReapPriorWatchers is the hk-6629b launch-path reap hook (see
+// watcherreap.go). A package var, not a runCaptainLaunchWithOps parameter, so
+// the many existing call sites/tests of that function are unaffected; tests
+// that care override this var directly and restore it via t.Cleanup.
+var captainReapPriorWatchers reapPriorAgentWatchersFn = reapPriorAgentWatchers
+
 // runCaptainTmux is the production run func for the agent-window launch: it
 // actually runs the assembled `tmux new-session` command.
 func runCaptainTmux(cmd *exec.Cmd) error { return cmd.Run() }
@@ -469,6 +475,15 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 			return 1
 		}
 	}
+
+	// hk-6629b: reap any prior `comms recv --agent <name> --follow` /
+	// `subscribe --to <name> --follow` watcher process for this agent name,
+	// REGARDLESS of liveness — a captain relaunched after /clear must never
+	// leave its predecessor's watcher holding a daemon subscribe slot. This is
+	// orthogonal to the D7 tmux-session pre-flight above (D7 gates on the
+	// AGENT PANE's liveness; this reaps watcher PROCESSES by argv+identity,
+	// live or dead, independent of any tmux session).
+	captainReapPriorWatchers(name)
 
 	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
 	// before launching so a foreign project (never run harmonik init) has the

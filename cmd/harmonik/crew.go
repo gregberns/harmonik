@@ -101,6 +101,12 @@ type crewStartArgs struct {
 	ProjectFlag string
 }
 
+// crewReapPriorWatchers is the hk-6629b launch-path reap hook (see
+// watcherreap.go). A package var, not a runCrewStartCoreWith parameter, so
+// the many existing call sites/tests of that function are unaffected; tests
+// that care override this var directly and restore it via t.Cleanup.
+var crewReapPriorWatchers reapPriorAgentWatchersFn = reapPriorAgentWatchers
+
 // resolveCrewStartArgs parses `crew start` / `start crew` argv, applies the ES4
 // defaults, and enforces the mission-split rule. It returns the resolved args,
 // a help-requested flag, and a usage-error message ("" on success).
@@ -288,6 +294,14 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 	if ap, apErr := filepath.Abs(absProject); apErr == nil {
 		absProject = ap
 	}
+
+	// hk-6629b: reap any prior `comms recv --agent <name> --follow` /
+	// `subscribe --to <name> --follow` watcher process for this crew name,
+	// REGARDLESS of liveness — a crew relaunched (e.g. after a keeper restart
+	// or a re-`crew start` for the same name) must never leave its
+	// predecessor's watcher holding a daemon subscribe slot. See
+	// captainReapPriorWatchers in captain.go for the mirrored captain-side call.
+	crewReapPriorWatchers(name)
 
 	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
 	// before the daemon spawns the crew so a foreign project (never run harmonik

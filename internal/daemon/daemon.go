@@ -1784,6 +1784,13 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// (no ProjectDir / socket).
 	var crewIdleReaper *CrewIdleReaper
 
+	// branchReapWatcher (hk-2i36s, follow-up to hk-fpjxi): periodically reaps
+	// merged/orphaned run/* and worktree-agent-* branches so the on-demand
+	// `harmonik gc branches` tool isn't the only caller. Constructed alongside
+	// crewIdleReaper; started post-Seal beside quiesceArbiter.Start. Nil in
+	// unit-test mode (no ProjectDir).
+	var branchReapWatcher *BranchReapWatcher
+
 	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
 	// subprocesses can deliver outcome_emitted envelopes to the daemon.
 	//
@@ -1964,6 +1971,13 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 				}
 				return tf.Manifest.Lifecycle.Persistent
 			},
+		})
+
+		// hk-2i36s: wire the periodic branch reaper now that cfg.ProjectDir is
+		// known to be a git repository root. Started post-Seal, below, alongside
+		// crewIdleReaper.StartWatcher.
+		branchReapWatcher = NewBranchReapWatcher(BranchReapWatcherConfig{
+			RepoDir: cfg.ProjectDir,
 		})
 
 		// Build the live state handler (hk-gv04 P2-a: `harmonik state`).
@@ -2214,6 +2228,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		// SD-3 (hk-s2eac): start the idle-completed-crew reaper. crewIdleReaper
 		// is non-nil here (constructed above, same cfg.ProjectDir != "" block).
 		crewIdleReaper.StartWatcher(ctx)
+
+		// hk-2i36s: start the periodic branch reaper. branchReapWatcher is
+		// non-nil here (constructed above, same cfg.ProjectDir != "" block).
+		branchReapWatcher.StartWatcher(ctx)
 
 		// Emit the composition-root wiring audit log when HARMONIK_DEBUG_WIRING=1
 		// is set in the operator environment.  All 31 wiring points have been

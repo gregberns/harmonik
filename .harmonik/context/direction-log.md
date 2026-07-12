@@ -11,6 +11,19 @@
 
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 
+## 2026-07-12 ~14:05Z — captain: daemon REDEPLOYED 6442aaa0→77ea4295 NOW (un-batched from hk-2hfyt) to make hk-thbbv live · expires: 2026-07-13T00:00:00Z
+WHAT: Redeployed the live daemon to 77ea4295 (tag daemon-20260712-07) picking up hk-thbbv (980649d5,
+      flagless-REQUEST_CHANGES→APPROVE) + pi-provider MR2 wire. Supersedes the 09:00Z "batch redeploy
+      behind hk-5z1f0" plan (hk-5z1f0 already closed-out; 6442aaa0 shipped at 11:28Z without thbbv).
+WHY:  yueh + stilgar independently VERIFIED hk-thbbv was merged-but-not-live (landed 4 commits after the
+      deployed 6442aaa0), so T2b (hk-1x8az) + hk-nxcvi re-wedged on the exact commit_gate traversal-cap
+      the fix addresses. Two lanes actively stalled > the batch-with-hk-2hfyt economy. GATE-0 met.
+ORDER: did NOT wait for hk-2hfyt (nowhere near landing). hk-2hfyt gets its OWN cycle when it lands, paired
+      with the gb-mbp serialized re-validate (natural cycle point). Cleared a stale yueh2-q phantom-lock
+      (queue cancel, EM-065 class) — yueh's T2b run survived the race. sync-assets deferred to next lull.
+RETURN-PATH: confirm daemon_started SHA == 77ea4295 + hk-thbbv live; yueh T2b + stilgar hk-nxcvi clear the
+      commit_gate wedge. gb-mbp still DISABLED pending hk-2hfyt land + serialized re-validate (unchanged).
+
 ## 2026-07-12 ~06:59Z — admiral (event 019f551f, operator-directed): NEW STANDARD WORKFLOW = QA execution gate after review · expires: 2026-07-14T00:00:00Z
 WHAT: Project workflow.dot topology is now implement→commit_gate→review→qa→close. The `qa` node is
       reviewer-class but its role FORCES it to actually EXECUTE the changed code + edge-case test before

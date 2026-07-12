@@ -10,10 +10,21 @@
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 # Keep this SHORT — one current-truth block. Superseded history is DELETED, not archived.
 
-## ⭐⭐ CURRENT TRUTH 2026-07-12 ~11:48Z — PARALLEL 5-LANE; hk-thbbv UNBLOCKED (admiral-volume cancelled); iaj1w race = STALE WORKER (hk-zno2t)
+## ⭐⭐ CURRENT TRUTH 2026-07-12 ~14:05Z — PARALLEL 5-LANE; daemon REDEPLOYED to 77ea4295 → hk-thbbv NOW LIVE (commit_gate wedge cleared)
 
-> **daemon REDEPLOYED to 6442aaa0 (2026-07-12 ~11:28Z):** tag daemon-20260712-06, pid 60409,
-> crashed_in_health_window=false, serving 46 queues. NOW LIVE (the delta over b25e9919): **hk-f9xzs
+> **daemon REDEPLOYED to 77ea4295 (2026-07-12 ~14:01Z):** tag daemon-20260712-07, pid 47756,
+> crashed_in_health_window=false, serving 46 queues. Delta over 6442aaa0 = **hk-thbbv (980649d5,
+> flagless-REQUEST_CHANGES→APPROVE — GATE-0 met by TestReviewLoop_FlaglessRequestChangesTreatedAsApprove)**
+> + pi-provider MR2 C2 wire (5466e91a). Redeploy triggered by yueh+stilgar VERIFYING hk-thbbv was merged
+> but NOT live (980649d5 landed 4 commits after deployed 6442aaa0) → T2b/hk-nxcvi re-wedged on the exact
+> commit_gate traversal-cap. Done NOW (not batched behind hk-2hfyt) because 2 lanes were actively wedged +
+> it had been ~2h20m since last cycle. GREEN broadcast. yueh T2b (hk-1x8az) re-dispatched + LIVE (run
+> 019f56a4-cd7a). stilgar hk-nxcvi unblocked. **NOTE: cleared a stale yueh2-q phantom-lock via `queue cancel`
+> (EM-065 class, durable fix hk-bl4d6) — briefly raced yueh's T2b submit but the run SURVIVED (queue-record
+> archive only). sync-assets DEFERRED: 4 keeper-hook scripts to create + content-owned conflicts (our live
+> files, left alone) — apply next clean lull.**
+>
+> **[PRIOR — 6442aaa0 11:28Z, now superseded]** NOW LIVE (the delta over b25e9919): **hk-f9xzs
 > 2476922e** (merge-step retry loop + preserve-APPROVE — the commit_gate traversal-cap fix that wedged
 > hk-nxcvi/hk-thbbv; GATE-0 satisfied by its own 347-line integration test, run green in isolation),
 > hk-ru45u (presence reason:refresh — killed 53% of log volume), + evalvol test beads.

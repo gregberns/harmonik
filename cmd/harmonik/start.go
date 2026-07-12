@@ -68,7 +68,7 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 		startUsage(stdout)
 		// A bare `start` with no role is a usage error; an explicit --help is not.
 		if len(args) == 0 {
-			fmt.Fprintln(stderr, "harmonik start: a role is required — `start captain` or `start crew <name>`")
+			fmt.Fprintln(stderr, "harmonik start: a role is required — `start captain`, `start crew <name>`, `start commodore`, or `start admiral`")
 			return 2
 		}
 		return 0
@@ -115,8 +115,34 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 				return dispatch.crew(argv)
 			},
 		}, stderr)
+	case "commodore", "admiral":
+		// First-class oversight-role launchers (hk-zeo5y). Oversight sessions
+		// (commodore, admiral) are ONLY orphan-sweep-protected when launched
+		// through the crew-registry RPC path (daemon HandleCrewStart), which
+		// writes both the crew.Record and the crew-<name>-prefixed tmux
+		// session that RunOrphanSweep's exemptions look for. Prior to this,
+		// the only documented way to get that protection was the exact
+		// invocation `harmonik crew start commodore` / `… admiral` — any
+		// other launch (bare `claude --remote-control`, `harmonik agent
+		// brief`) left the session unregistered and it was reaped at the next
+		// daemon boot. These roles remove that footgun: they always route
+		// through the same protected path, with the name pinned to the role
+		// (no positional — the identity is not a free choice), so protection
+		// is the only option, not something to remember.
+		if dispatch.skewHint != nil {
+			dispatch.skewHint(startResolveProjectDir(args), stderr)
+		}
+		return runStartRole(roleArgs, startRoleSpec{
+			role:           role,
+			takesName:      false,
+			downstreamName: "--name",
+			dispatch: func(name string, flags []string) int {
+				argv := append([]string{"start", role}, flags...)
+				return dispatch.crew(argv)
+			},
+		}, stderr)
 	default:
-		fmt.Fprintf(stderr, "harmonik start: unknown role %q — roles are: captain, crew\n", role)
+		fmt.Fprintf(stderr, "harmonik start: unknown role %q — roles are: captain, crew, commodore, admiral\n", role)
 		return 2
 	}
 }
@@ -205,11 +231,13 @@ func runStartRole(args []string, spec startRoleSpec, stderr io.Writer) int {
 // startUsage prints the `harmonik start` umbrella help. The per-role flag detail
 // lives on the downstream launchers (captain.go / crew.go).
 func startUsage(w io.Writer) {
-	fmt.Fprint(w, `harmonik start — launch a captain or crew (keeper auto-armed)
+	fmt.Fprint(w, `harmonik start — launch a captain, crew, commodore, or admiral (keeper auto-armed)
 
 USAGE
   harmonik start captain                       # all defaults
   harmonik start crew <name>                   # one bare positional = the crew name
+  harmonik start commodore                     # oversight planner, protected launch
+  harmonik start admiral                       # oversight planner, protected launch
   harmonik start captain --name NAME …         # advanced: all named, NO positional
   harmonik start crew --name NAME --queue Q …  # advanced: name via --name, NO positional
 
@@ -217,6 +245,12 @@ RULE (positional XOR flags)
   Simple form  = role + at-most-one bare positional name + NO flags.
   Advanced form = any --flag present => ZERO bare positionals; the name must be --name.
   Mixing a bare name with flags is a hard error.
+
+NOTE
+  commodore and admiral are oversight singletons: the identity is the role
+  name, not a free choice, so — like captain — they take no positional name.
+  Both always route through the crew-registry RPC path (crew start), so
+  daemon-boot orphan-sweep protection is automatic, not something to remember.
 
 SEE ALSO
   harmonik captain --help        full captain flags

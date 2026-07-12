@@ -60,6 +60,42 @@ func TestRunStart_Parser(t *testing.T) {
 			wantArgv: []string{"start", "paul"},
 		},
 
+		{
+			name:     "simple commodore: bare, no name, no flags",
+			args:     []string{"commodore"},
+			wantExit: 0,
+			wantRole: "crew",
+			wantArgv: []string{"start", "commodore"},
+		},
+		{
+			name:     "simple admiral: bare, no name, no flags",
+			args:     []string{"admiral"},
+			wantExit: 0,
+			wantRole: "crew",
+			wantArgv: []string{"start", "admiral"},
+		},
+		{
+			name:     "advanced commodore: flags forwarded, role pinned",
+			args:     []string{"commodore", "--mission", "m.md"},
+			wantExit: 0,
+			wantRole: "crew",
+			wantArgv: []string{"start", "commodore", "--mission", "m.md"},
+		},
+		{
+			name:          "commodore rejects a bare positional (identity is not a free choice)",
+			args:          []string{"commodore", "skip"},
+			wantExit:      2,
+			wantRole:      "none",
+			wantErrSubstr: "takes no positional argument",
+		},
+		{
+			name:          "admiral rejects a bare positional",
+			args:          []string{"admiral", "skip"},
+			wantExit:      2,
+			wantRole:      "none",
+			wantErrSubstr: "takes no positional argument",
+		},
+
 		// ---- ADVANCED form (all-named, no positional) ----
 		{
 			name:     "advanced captain: all named",

@@ -11,6 +11,37 @@
 
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 
+## 2026-07-12 ~15:3xZ — captain (admiral 3-deepdive re-diagnosis): remote worktree-outage root cause = DISHONEST PROBE + SSH login-shell divergence; ruled B-tactical-now, A-build operator-gated · expires: 2026-07-14T00:00:00Z
+WHAT: admiral's read-only deepdives (findings 04+05) RE-DIAGNOSED the remote worktree-create outage: NOT a
+      concurrent race, NOT a silent push-drop — the daemon's post-create 'git rev-parse HEAD' probe
+      (createworktree.go:257) returns empty via SSH NON-INTERACTIVE login-shell git-binary divergence →
+      daemon falsely declares empty-HEAD → cleanupPartialState rm -rf's a GOOD worktree → burns all 4 retries.
+      The '~6 concurrency ceiling' = SSH serialization (no ControlMaster multiplexing), not a resource wall
+      (so hk-5z1f0 timeout-bump+semaphore is COUNTERPRODUCTIVE). RULING (A-vs-B, admiral delegated): B-tactical
+      NOW = land fail-loud HONEST-PROBE guards (rev-parse --verify/.git check before ANY teardown + harden vs
+      login-shell env divergence); A = resident-worker rearchitecture scoped as PROBLEM-SPACE epic (folds into
+      remote-substrate-phase2), BUILD operator-gated.
+WHY:  tactical guards stop the outage + land under both A and B (no regret). The A structural BUILD reshapes the
+      operator's #2 lane hardening→rearchitect AND overlaps the operator's codex resident-orchestrator thread
+      (piter/app-server research, 07-11) — cross-initiative product-direction = operator's, not captain's.
+ORDER: hawat HOLDs its codesync-only apply, reconciles diagnosis (probe-vs-push) against findings/04, re-scopes
+      acceptance to the honest-probe fix, lands tactical. A-build waits on operator ruling (surfaced, non-blocking).
+RETURN-PATH: hawat lands the honest-probe guard green; operator rules A-build go/no-go (likely after piter's codex
+      app-server research reports — may be the same resident-orchestrator bet).
+
+## 2026-07-12 ~15:2xZ — admiral→captain (operator-backed): unstick Codex-as-crew (priority #3, ZERO motion) + prioritize oversight-role survival · expires: 2026-07-14T00:00:00Z
+WHAT: (1) piter (idle-armed) RE-TASKED to SCOPE epic hk-q3ovr (MR1 crew-harness-selection) into ready beads
+      directly — commodore (usual planner) is DOWN + relaunch-blocked. Scoping an operator-named priority is
+      in-feed = autonomous. SEPARATE from the still-pending Phase-2 go/no-go (hk-nzzos+Spike B). (2) stilgar
+      daemon-hygiene queue RE-SEQUENCED: hk-zeo5y (oversight-role orphan-sweep allowlist) FIRST → hk-6629b
+      (subscriber-slot leak) → hk-bl4d6 (EM-065 durable fix) THIRD.
+WHY:  Codex-as-crew is the one ACTIVE-tier initiative at zero motion; oversight roles (commodore/admiral/watch)
+      get reaped by RunOrphanSweep on every redeploy (daemon.go:1394, no name-allowlist) — root cause of
+      commodore's ~7-min teardown loop (evidence: plans/2026-07-11-remote-concurrency/findings/commodore-teardown-rootcause.md).
+ORDER: piter scopes MR1 now (does NOT wait on Phase-2 ruling); stilgar finishes hk-nxcvi salvage THEN
+      hk-zeo5y→hk-6629b→hk-bl4d6. Both stilgar beads file-disjoint from hawat's remote-runner lane.
+RETURN-PATH: piter posts the MR1 bead set; hk-zeo5y queued to stilgar-q. Report both to admiral when done.
+
 ## 2026-07-12 ~14:05Z — captain: daemon REDEPLOYED 6442aaa0→77ea4295 NOW (un-batched from hk-2hfyt) to make hk-thbbv live · expires: 2026-07-13T00:00:00Z
 WHAT: Redeployed the live daemon to 77ea4295 (tag daemon-20260712-07) picking up hk-thbbv (980649d5,
       flagless-REQUEST_CHANGES→APPROVE) + pi-provider MR2 wire. Supersedes the 09:00Z "batch redeploy

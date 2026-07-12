@@ -6,10 +6,10 @@
 //  1. Trusted envelope: strict JSON-RPC 2.0 outer frame. Four discriminated
 //     frame kinds are inferred from the combination of id/method/result/error
 //     fields present on each line:
-//       - ClientRequest      (jsonrpc + id + method + params)
-//       - ClientNotification (jsonrpc + method; no id)
-//       - ServerResponse     (id + result/error; no jsonrpc/method on wire)
-//       - ServerNotification (method + params; no id/jsonrpc on wire)
+//     - ClientRequest      (jsonrpc + id + method + params)
+//     - ClientNotification (jsonrpc + method; no id)
+//     - ServerResponse     (id + result/error; no jsonrpc/method on wire)
+//     - ServerNotification (method + params; no id/jsonrpc on wire)
 //
 //  2. Untrusted payload: per-method params/result structs. Every struct
 //     carries an Extra field (map[string]json.RawMessage) that captures and
@@ -466,10 +466,11 @@ func ExtraCount(extra map[string]json.RawMessage) int {
 // InitializeParams: client→server "initialize" request params.
 //
 // Corpus evidence:
-//   {"clientInfo": {"name": ..., "title": ..., "version": ...}, "capabilities": null}
+//
+//	{"clientInfo": {"name": ..., "title": ..., "version": ...}, "capabilities": null}
 type InitializeParams struct {
-	ClientInfo   ClientInfo      `json:"clientInfo"`
-	Capabilities json.RawMessage `json:"capabilities"` // null in corpus; preserved verbatim
+	ClientInfo   ClientInfo                 `json:"clientInfo"`
+	Capabilities json.RawMessage            `json:"capabilities"` // null in corpus; preserved verbatim
 	Extra        map[string]json.RawMessage `json:"-"`
 }
 
@@ -494,9 +495,9 @@ func (p InitializeParams) MarshalJSON() ([]byte, error) {
 
 // ClientInfo is the client identity block sent in "initialize".
 type ClientInfo struct {
-	Name    string `json:"name"`
-	Title   string `json:"title"`
-	Version string `json:"version"`
+	Name    string                     `json:"name"`
+	Title   string                     `json:"title"`
+	Version string                     `json:"version"`
 	Extra   map[string]json.RawMessage `json:"-"`
 }
 
@@ -524,7 +525,7 @@ func (c ClientInfo) MarshalJSON() ([]byte, error) {
 // Corpus evidence: {"cwd": "/Users/gb/github/harmonik"}
 // All fields optional per T0 findings ("all fields optional").
 type ThreadStartParams struct {
-	CWD   string `json:"cwd,omitempty"`
+	CWD   string                     `json:"cwd,omitempty"`
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
@@ -552,8 +553,8 @@ func (p ThreadStartParams) MarshalJSON() ([]byte, error) {
 // Corpus evidence: {"threadId": "...", "input": [{"type":"text","text":"...","text_elements":[]}]}
 // NOTE: text_elements:[] is REQUIRED in the text UserInput variant (T0 finding).
 type TurnStartParams struct {
-	ThreadID string      `json:"threadId"`
-	Input    []InputItem `json:"input"`
+	ThreadID string                     `json:"threadId"`
+	Input    []InputItem                `json:"input"`
 	Extra    map[string]json.RawMessage `json:"-"`
 }
 
@@ -579,9 +580,9 @@ func (p TurnStartParams) MarshalJSON() ([]byte, error) {
 // InputItem is one element of the turn/start input array.
 // Corpus shows only the "text" variant; other variants preserved via Extra.
 type InputItem struct {
-	Type         string          `json:"type"`
-	Text         string          `json:"text,omitempty"`
-	TextElements json.RawMessage `json:"text_elements,omitempty"` // [] in corpus; raw to preserve
+	Type         string                     `json:"type"`
+	Text         string                     `json:"text,omitempty"`
+	TextElements json.RawMessage            `json:"text_elements,omitempty"` // [] in corpus; raw to preserve
 	Extra        map[string]json.RawMessage `json:"-"`
 }
 
@@ -610,10 +611,10 @@ func (i InputItem) MarshalJSON() ([]byte, error) {
 //
 // Corpus evidence: {"userAgent":"...","codexHome":"...","platformFamily":"...","platformOs":"..."}
 type InitializeResult struct {
-	UserAgent      string `json:"userAgent"`
-	CodexHome      string `json:"codexHome"`
-	PlatformFamily string `json:"platformFamily"`
-	PlatformOs     string `json:"platformOs"`
+	UserAgent      string                     `json:"userAgent"`
+	CodexHome      string                     `json:"codexHome"`
+	PlatformFamily string                     `json:"platformFamily"`
+	PlatformOs     string                     `json:"platformOs"`
 	Extra          map[string]json.RawMessage `json:"-"`
 }
 
@@ -644,19 +645,19 @@ func (r InitializeResult) MarshalJSON() ([]byte, error) {
 // thread and most nested fields are stored as RawMessage to preserve all
 // fields verbatim (they are not used programmatically by this package).
 type ThreadStartResult struct {
-	Thread                  json.RawMessage `json:"thread"`
-	Model                   string          `json:"model,omitempty"`
-	ModelProvider           string          `json:"modelProvider,omitempty"`
-	ServiceTier             json.RawMessage `json:"serviceTier"`      // null in corpus
-	CWD                     string          `json:"cwd,omitempty"`
-	RuntimeWorkspaceRoots   []string        `json:"runtimeWorkspaceRoots,omitempty"`
-	InstructionSources      []string        `json:"instructionSources,omitempty"`
-	ApprovalPolicy          string          `json:"approvalPolicy,omitempty"`
-	ApprovalsReviewer       string          `json:"approvalsReviewer,omitempty"`
-	Sandbox                 json.RawMessage `json:"sandbox"`                 // {type,networkAccess}
-	ActivePermissionProfile json.RawMessage `json:"activePermissionProfile"` // {id,extends}
-	ReasoningEffort         json.RawMessage `json:"reasoningEffort"`         // null in corpus
-	MultiAgentMode          string          `json:"multiAgentMode,omitempty"`
+	Thread                  json.RawMessage            `json:"thread"`
+	Model                   string                     `json:"model,omitempty"`
+	ModelProvider           string                     `json:"modelProvider,omitempty"`
+	ServiceTier             json.RawMessage            `json:"serviceTier"` // null in corpus
+	CWD                     string                     `json:"cwd,omitempty"`
+	RuntimeWorkspaceRoots   []string                   `json:"runtimeWorkspaceRoots,omitempty"`
+	InstructionSources      []string                   `json:"instructionSources,omitempty"`
+	ApprovalPolicy          string                     `json:"approvalPolicy,omitempty"`
+	ApprovalsReviewer       string                     `json:"approvalsReviewer,omitempty"`
+	Sandbox                 json.RawMessage            `json:"sandbox"`                 // {type,networkAccess}
+	ActivePermissionProfile json.RawMessage            `json:"activePermissionProfile"` // {id,extends}
+	ReasoningEffort         json.RawMessage            `json:"reasoningEffort"`         // null in corpus
+	MultiAgentMode          string                     `json:"multiAgentMode,omitempty"`
 	Extra                   map[string]json.RawMessage `json:"-"`
 }
 
@@ -688,7 +689,7 @@ func (r ThreadStartResult) MarshalJSON() ([]byte, error) {
 //
 // Corpus evidence: {"turn":{"id":"...","items":[],"itemsView":"notLoaded","status":"inProgress",...}}
 type TurnStartResult struct {
-	Turn  Turn `json:"turn"`
+	Turn  Turn                       `json:"turn"`
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
@@ -718,14 +719,14 @@ func (r TurnStartResult) MarshalJSON() ([]byte, error) {
 // Corpus evidence: id, items (empty array), itemsView, status, error (null),
 // startedAt (null or int), completedAt (null or int), durationMs (null or int).
 type Turn struct {
-	ID          string          `json:"id"`
-	Items       json.RawMessage `json:"items"`       // [] in corpus; array of item objects
-	ItemsView   string          `json:"itemsView,omitempty"`
-	Status      string          `json:"status,omitempty"`
-	Error       json.RawMessage `json:"error"`       // null in corpus
-	StartedAt   json.RawMessage `json:"startedAt"`   // null or int
-	CompletedAt json.RawMessage `json:"completedAt"` // null or int
-	DurationMs  json.RawMessage `json:"durationMs"`  // null or int
+	ID          string                     `json:"id"`
+	Items       json.RawMessage            `json:"items"` // [] in corpus; array of item objects
+	ItemsView   string                     `json:"itemsView,omitempty"`
+	Status      string                     `json:"status,omitempty"`
+	Error       json.RawMessage            `json:"error"`       // null in corpus
+	StartedAt   json.RawMessage            `json:"startedAt"`   // null or int
+	CompletedAt json.RawMessage            `json:"completedAt"` // null or int
+	DurationMs  json.RawMessage            `json:"durationMs"`  // null or int
 	Extra       map[string]json.RawMessage `json:"-"`
 }
 
@@ -754,11 +755,12 @@ func (t Turn) MarshalJSON() ([]byte, error) {
 // ThreadStatus represents the status discriminated union on a thread.
 //
 // Corpus evidence:
-//   {"type":"idle"}
-//   {"type":"active","activeFlags":[]}
+//
+//	{"type":"idle"}
+//	{"type":"active","activeFlags":[]}
 type ThreadStatus struct {
-	Type        string          `json:"type"`
-	ActiveFlags json.RawMessage `json:"activeFlags,omitempty"` // [] when active; absent when idle
+	Type        string                     `json:"type"`
+	ActiveFlags json.RawMessage            `json:"activeFlags,omitempty"` // [] when active; absent when idle
 	Extra       map[string]json.RawMessage `json:"-"`
 }
 
@@ -787,8 +789,8 @@ func (s ThreadStatus) MarshalJSON() ([]byte, error) {
 //
 // Corpus evidence: {"summary":"Project-local config...","details":null}
 type ConfigWarningParams struct {
-	Summary string          `json:"summary"`
-	Details json.RawMessage `json:"details"` // null in corpus; may be object
+	Summary string                     `json:"summary"`
+	Details json.RawMessage            `json:"details"` // null in corpus; may be object
 	Extra   map[string]json.RawMessage `json:"-"`
 }
 
@@ -815,10 +817,10 @@ func (p ConfigWarningParams) MarshalJSON() ([]byte, error) {
 //
 // Corpus evidence: {"status":"disabled","serverName":"...","installationId":"...","environmentId":null}
 type RemoteControlStatusChangedParams struct {
-	Status         string          `json:"status"`
-	ServerName     string          `json:"serverName"`
-	InstallationID string          `json:"installationId"`
-	EnvironmentID  json.RawMessage `json:"environmentId"` // null in corpus
+	Status         string                     `json:"status"`
+	ServerName     string                     `json:"serverName"`
+	InstallationID string                     `json:"installationId"`
+	EnvironmentID  json.RawMessage            `json:"environmentId"` // null in corpus
 	Extra          map[string]json.RawMessage `json:"-"`
 }
 
@@ -847,7 +849,7 @@ func (p RemoteControlStatusChangedParams) MarshalJSON() ([]byte, error) {
 //
 // Corpus evidence: {"thread":{...}}
 type ThreadStartedParams struct {
-	Thread json.RawMessage `json:"thread"` // full Thread object; raw for round-trip
+	Thread json.RawMessage            `json:"thread"` // full Thread object; raw for round-trip
 	Extra  map[string]json.RawMessage `json:"-"`
 }
 
@@ -873,13 +875,14 @@ func (p ThreadStartedParams) MarshalJSON() ([]byte, error) {
 // MCPServerStartupStatusUpdatedParams: server→client "mcpServer/startupStatus/updated".
 //
 // Corpus evidence (2 frames):
-//   {"threadId":"...","name":"codex_apps","status":"starting","error":null}
-//   {"threadId":"...","name":"codex_apps","status":"ready","error":null}
+//
+//	{"threadId":"...","name":"codex_apps","status":"starting","error":null}
+//	{"threadId":"...","name":"codex_apps","status":"ready","error":null}
 type MCPServerStartupStatusUpdatedParams struct {
-	ThreadID string          `json:"threadId"`
-	Name     string          `json:"name"`
-	Status   string          `json:"status"`
-	Error    json.RawMessage `json:"error"` // null in corpus
+	ThreadID string                     `json:"threadId"`
+	Name     string                     `json:"name"`
+	Status   string                     `json:"status"`
+	Error    json.RawMessage            `json:"error"` // null in corpus
 	Extra    map[string]json.RawMessage `json:"-"`
 }
 
@@ -907,11 +910,12 @@ func (p MCPServerStartupStatusUpdatedParams) MarshalJSON() ([]byte, error) {
 // ThreadStatusChangedParams: server→client "thread/status/changed".
 //
 // Corpus evidence:
-//   {"threadId":"...","status":{"type":"active","activeFlags":[]}}
-//   {"threadId":"...","status":{"type":"idle"}}
+//
+//	{"threadId":"...","status":{"type":"active","activeFlags":[]}}
+//	{"threadId":"...","status":{"type":"idle"}}
 type ThreadStatusChangedParams struct {
-	ThreadID string       `json:"threadId"`
-	Status   ThreadStatus `json:"status"`
+	ThreadID string                     `json:"threadId"`
+	Status   ThreadStatus               `json:"status"`
 	Extra    map[string]json.RawMessage `json:"-"`
 }
 
@@ -938,8 +942,8 @@ func (p ThreadStatusChangedParams) MarshalJSON() ([]byte, error) {
 //
 // Corpus evidence: {"threadId":"...","turn":{...}}
 type TurnStartedParams struct {
-	ThreadID string `json:"threadId"`
-	Turn     Turn   `json:"turn"`
+	ThreadID string                     `json:"threadId"`
+	Turn     Turn                       `json:"turn"`
 	Extra    map[string]json.RawMessage `json:"-"`
 }
 
@@ -965,15 +969,16 @@ func (p TurnStartedParams) MarshalJSON() ([]byte, error) {
 // ItemStartedParams: server→client "item/started".
 //
 // Corpus evidence (2 variants — userMessage and agentMessage items):
-//   {"item":{"type":"userMessage",...},"threadId":"...","turnId":"...","startedAtMs":...}
-//   {"item":{"type":"agentMessage",...},"threadId":"...","turnId":"...","startedAtMs":...}
+//
+//	{"item":{"type":"userMessage",...},"threadId":"...","turnId":"...","startedAtMs":...}
+//	{"item":{"type":"agentMessage",...},"threadId":"...","turnId":"...","startedAtMs":...}
 //
 // item is stored as RawItem (discriminated by Type, raw content preserved).
 type ItemStartedParams struct {
-	Item      RawItem `json:"item"`
-	ThreadID  string  `json:"threadId"`
-	TurnID    string  `json:"turnId"`
-	StartedAt int64   `json:"startedAtMs"`
+	Item      RawItem                    `json:"item"`
+	ThreadID  string                     `json:"threadId"`
+	TurnID    string                     `json:"turnId"`
+	StartedAt int64                      `json:"startedAtMs"`
 	Extra     map[string]json.RawMessage `json:"-"`
 }
 
@@ -1002,10 +1007,10 @@ func (p ItemStartedParams) MarshalJSON() ([]byte, error) {
 //
 // Same structure as ItemStartedParams but with completedAtMs instead of startedAtMs.
 type ItemCompletedParams struct {
-	Item        RawItem `json:"item"`
-	ThreadID    string  `json:"threadId"`
-	TurnID      string  `json:"turnId"`
-	CompletedAt int64   `json:"completedAtMs"`
+	Item        RawItem                    `json:"item"`
+	ThreadID    string                     `json:"threadId"`
+	TurnID      string                     `json:"turnId"`
+	CompletedAt int64                      `json:"completedAtMs"`
 	Extra       map[string]json.RawMessage `json:"-"`
 }
 
@@ -1066,10 +1071,10 @@ func (r RawItem) MarshalJSON() ([]byte, error) {
 //
 // Corpus evidence: {"threadId":"...","turnId":"...","itemId":"msg_...","delta":"ok"}
 type ItemAgentMessageDeltaParams struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId"`
-	ItemID   string `json:"itemId"`
-	Delta    string `json:"delta"`
+	ThreadID string                     `json:"threadId"`
+	TurnID   string                     `json:"turnId"`
+	ItemID   string                     `json:"itemId"`
+	Delta    string                     `json:"delta"`
 	Extra    map[string]json.RawMessage `json:"-"`
 }
 
@@ -1097,11 +1102,12 @@ func (p ItemAgentMessageDeltaParams) MarshalJSON() ([]byte, error) {
 // ThreadTokenUsageUpdatedParams: server→client "thread/tokenUsage/updated".
 //
 // Corpus evidence:
-//   {"threadId":"...","turnId":"...","tokenUsage":{"total":{...},"last":{...},"modelContextWindow":258400}}
+//
+//	{"threadId":"...","turnId":"...","tokenUsage":{"total":{...},"last":{...},"modelContextWindow":258400}}
 type ThreadTokenUsageUpdatedParams struct {
-	ThreadID   string     `json:"threadId"`
-	TurnID     string     `json:"turnId"`
-	TokenUsage TokenUsage `json:"tokenUsage"`
+	ThreadID   string                     `json:"threadId"`
+	TurnID     string                     `json:"turnId"`
+	TokenUsage TokenUsage                 `json:"tokenUsage"`
 	Extra      map[string]json.RawMessage `json:"-"`
 }
 
@@ -1128,9 +1134,9 @@ func (p ThreadTokenUsageUpdatedParams) MarshalJSON() ([]byte, error) {
 
 // TokenUsage holds cumulative and per-turn token counts.
 type TokenUsage struct {
-	Total              TokenCounts `json:"total"`
-	Last               TokenCounts `json:"last"`
-	ModelContextWindow int64       `json:"modelContextWindow"`
+	Total              TokenCounts                `json:"total"`
+	Last               TokenCounts                `json:"last"`
+	ModelContextWindow int64                      `json:"modelContextWindow"`
 	Extra              map[string]json.RawMessage `json:"-"`
 }
 
@@ -1157,11 +1163,11 @@ func (u TokenUsage) MarshalJSON() ([]byte, error) {
 //
 // Corpus: {totalTokens, inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens}
 type TokenCounts struct {
-	TotalTokens           int64 `json:"totalTokens"`
-	InputTokens           int64 `json:"inputTokens"`
-	CachedInputTokens     int64 `json:"cachedInputTokens"`
-	OutputTokens          int64 `json:"outputTokens"`
-	ReasoningOutputTokens int64 `json:"reasoningOutputTokens"`
+	TotalTokens           int64                      `json:"totalTokens"`
+	InputTokens           int64                      `json:"inputTokens"`
+	CachedInputTokens     int64                      `json:"cachedInputTokens"`
+	OutputTokens          int64                      `json:"outputTokens"`
+	ReasoningOutputTokens int64                      `json:"reasoningOutputTokens"`
 	Extra                 map[string]json.RawMessage `json:"-"`
 }
 
@@ -1189,7 +1195,7 @@ func (c TokenCounts) MarshalJSON() ([]byte, error) {
 
 // AccountRateLimitsUpdatedParams: server→client "account/rateLimits/updated".
 type AccountRateLimitsUpdatedParams struct {
-	RateLimits RateLimits `json:"rateLimits"`
+	RateLimits RateLimits                 `json:"rateLimits"`
 	Extra      map[string]json.RawMessage `json:"-"`
 }
 
@@ -1215,18 +1221,19 @@ func (p AccountRateLimitsUpdatedParams) MarshalJSON() ([]byte, error) {
 // RateLimits holds the rate-limit block from "account/rateLimits/updated".
 //
 // Corpus:
-//   {"limitId":"codex","limitName":null,"primary":{...},"secondary":{...},
-//    "credits":null,"individualLimit":null,"planType":"prolite","rateLimitReachedType":null}
+//
+//	{"limitId":"codex","limitName":null,"primary":{...},"secondary":{...},
+//	 "credits":null,"individualLimit":null,"planType":"prolite","rateLimitReachedType":null}
 type RateLimits struct {
-	LimitID             string           `json:"limitId"`
-	LimitName           json.RawMessage  `json:"limitName"`           // null in corpus
-	Primary             RateLimitWindow  `json:"primary"`
-	Secondary           RateLimitWindow  `json:"secondary"`
-	Credits             json.RawMessage  `json:"credits"`             // null in corpus
-	IndividualLimit     json.RawMessage  `json:"individualLimit"`     // null in corpus
-	PlanType            string           `json:"planType"`
-	RateLimitReachedType json.RawMessage `json:"rateLimitReachedType"` // null in corpus
-	Extra               map[string]json.RawMessage `json:"-"`
+	LimitID              string                     `json:"limitId"`
+	LimitName            json.RawMessage            `json:"limitName"` // null in corpus
+	Primary              RateLimitWindow            `json:"primary"`
+	Secondary            RateLimitWindow            `json:"secondary"`
+	Credits              json.RawMessage            `json:"credits"`         // null in corpus
+	IndividualLimit      json.RawMessage            `json:"individualLimit"` // null in corpus
+	PlanType             string                     `json:"planType"`
+	RateLimitReachedType json.RawMessage            `json:"rateLimitReachedType"` // null in corpus
+	Extra                map[string]json.RawMessage `json:"-"`
 }
 
 var rateLimitsKnown = map[string]bool{
@@ -1255,10 +1262,10 @@ func (r RateLimits) MarshalJSON() ([]byte, error) {
 //
 // Corpus: {"usedPercent":0,"windowDurationMins":300,"resetsAt":1783847730}
 type RateLimitWindow struct {
-	UsedPercent       float64 `json:"usedPercent"`
-	WindowDurationMins int64  `json:"windowDurationMins"`
-	ResetsAt          int64   `json:"resetsAt"`
-	Extra             map[string]json.RawMessage `json:"-"`
+	UsedPercent        float64                    `json:"usedPercent"`
+	WindowDurationMins int64                      `json:"windowDurationMins"`
+	ResetsAt           int64                      `json:"resetsAt"`
+	Extra              map[string]json.RawMessage `json:"-"`
 }
 
 var rateLimitWindowKnown = map[string]bool{
@@ -1307,8 +1314,8 @@ func sortStrings(ss []string) {
 //
 // Corpus evidence: {"threadId":"...","turn":{...}}
 type TurnCompletedParams struct {
-	ThreadID string `json:"threadId"`
-	Turn     Turn   `json:"turn"`
+	ThreadID string                     `json:"threadId"`
+	Turn     Turn                       `json:"turn"`
 	Extra    map[string]json.RawMessage `json:"-"`
 }
 

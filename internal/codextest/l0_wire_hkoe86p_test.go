@@ -3,10 +3,10 @@
 //
 // Four tiers wire all previous phase tests under a single taxonomy:
 //
-//   L0 — unit:        codexwire serializer (round-trip, golden, malformed)
-//   L1 — contract:    corpus replay via twin → zero unknown frames, all frames round-trip
-//   L2 — integration: twin → reactor → HarmonikBridgeSink (faked comms/queue/beads)
-//   L3 — live:        real codex app-server (CODEX_LIVE=1 required, token-capped)
+//	L0 — unit:        codexwire serializer (round-trip, golden, malformed)
+//	L1 — contract:    corpus replay via twin → zero unknown frames, all frames round-trip
+//	L2 — integration: twin → reactor → HarmonikBridgeSink (faked comms/queue/beads)
+//	L3 — live:        real codex app-server (CODEX_LIVE=1 required, token-capped)
 //
 // make test runs L0/L1/L2 only (CODEX_LIVE=0 default).
 // make test-codex-live runs L3 (CODEX_LIVE=1 required).
@@ -202,4 +202,3 @@ func TestL0_Wire_UnknownMethodYieldsRaw(t *testing.T) {
 		t.Errorf("Raw bytes not preserved: got %q, want %q", frame.Raw, raw)
 	}
 }
-

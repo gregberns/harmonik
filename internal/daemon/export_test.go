@@ -1040,6 +1040,41 @@ func ExportedNewHookSessionStore() *hookSessionStore {
 // Bead ref: hk-kqdpf.1.
 var ExportedProductionWorktreeFactory = productionWorktreeFactory
 
+// ExportedMergeOutcome wraps the internal mergeOutcome so tests in the
+// daemon_test package can inspect the result of ExportedMergeRunBranchToMain.
+//
+// Bead ref: hk-sfy7f.
+type ExportedMergeOutcome struct {
+	success  bool
+	reason   string
+	noChange bool
+}
+
+func (o ExportedMergeOutcome) Success() bool  { return o.success }
+func (o ExportedMergeOutcome) Reason() string { return o.reason }
+func (o ExportedMergeOutcome) NoChange() bool { return o.noChange }
+
+// ExportedMergeRunBranchToMain exposes mergeRunBranchToMain for direct unit
+// tests that set up the git state manually and call the merge helper without
+// going through the full work loop (e.g. the hk-sfy7f no-local-worktree
+// regression test).
+//
+// Bead ref: hk-sfy7f.
+func ExportedMergeRunBranchToMain(
+	ctx context.Context,
+	projectDir string,
+	runID core.RunID,
+	bus handlercontract.EventEmitter,
+	beadID core.BeadID,
+	headSHA string,
+	targetBranch string,
+	protectBranches []string,
+	brPath string,
+) ExportedMergeOutcome {
+	o := mergeRunBranchToMain(ctx, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches, brPath)
+	return ExportedMergeOutcome{success: o.success, reason: o.reason, noChange: o.noChange}
+}
+
 // ExportedDiscardDirtyChurn exposes discardDirtyChurn for the pre-rebase
 // churn-cleanup regression test (hk-3yz2d ledger, hk-aiw63 generalized).
 func ExportedDiscardDirtyChurn(ctx context.Context, wtPath string) {

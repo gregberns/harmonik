@@ -6542,6 +6542,33 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 	//
 	// Spec ref: specs/execution-model.md §4.12.EM-052 step 2.
 	wtPath := workspace.WorktreePath(projectDir, runID.String(), workspace.NoWorktreeRootOverride())
+
+	// hk-sfy7f: no-worktree fallback for remote runs.
+	//
+	// For remote bead runs the implementer worktree lives on the worker machine.
+	// preMergeSync fetches refs/heads/run/<id> to box-A but does NOT create a
+	// local checkout at wtPath.  Without a local worktree the entire step-2
+	// rebase is skipped, so runTip stays based on the old headSHA.  When any
+	// competing merge lands during the multi-minute run window, mainTip advances
+	// past the run-branch fork point and the FF-check fails terminally (all
+	// maxPushAttempts exhausted) because the retry loop also cannot rebase
+	// without a local worktree.
+	//
+	// Fix: when wtPath does not exist, attempt to create a temporary local
+	// worktree linked to the same refs/heads/run/<id>.  The deferred cleanup
+	// removes it after the merge (success or failure) so no orphaned worktrees
+	// are left behind.  Failure to add is best-effort — we fall through to the
+	// existing "skip step 2" path rather than aborting prematurely.
+	if _, statErr := os.Stat(wtPath); statErr != nil {
+		addWtCmd := exec.CommandContext(ctx, "git", "worktree", "add", wtPath, runBranch)
+		addWtCmd.Dir = projectDir
+		if _, addErr := addWtCmd.CombinedOutput(); addErr == nil {
+			defer func() {
+				removeWorktree(context.Background(), projectDir, wtPath)
+			}()
+		}
+	}
+
 	if _, statErr := os.Stat(wtPath); statErr == nil {
 		// Pre-rebase cleanup (hk-3yz2d, hk-aiw63): discard any UNCOMMITTED
 		// daemon/agent-owned churn in the worktree before the rebase. `git`

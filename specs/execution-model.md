@@ -883,8 +883,14 @@ steps BEFORE calling `CloseBead`:
    `git rebase --abort` in the worktree directory, then proceed to the
    `rebase_conflict` reopen path (EM-053). After a successful rebase, the
    daemon MUST re-resolve the run-branch tip and the `main` tip before
-   continuing (both may have changed). If the worktree directory does not exist,
-   this step is skipped.
+   continuing (both may have changed). If the worktree directory does not exist
+   locally — the typical case for remote bead runs where the worktree lives on
+   the worker and `preMergeSync` has fetched `refs/heads/run/<id>` to box-A —
+   the daemon MUST attempt to create a temporary local worktree at the standard
+   worktree path via `git worktree add` so the rebase can proceed (hk-sfy7f).
+   The temporary worktree is removed after the merge completes (success or
+   failure). If worktree creation fails, the step is skipped (best-effort
+   fallback).
 
 3. **Fast-forward check.** Resolve the current tip SHA of `main` via
    `git rev-parse refs/heads/main`. If `main` is an ancestor of the run-branch
@@ -933,7 +939,7 @@ steps BEFORE calling `CloseBead`:
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
-Refs: hk-ftyvo, hk-j1aq5, hk-o68j3, hk-ycp62
+Refs: hk-ftyvo, hk-j1aq5, hk-o68j3, hk-ycp62, hk-sfy7f
 
 #### EM-053 — Non-FF, rebase-conflict, push-failure, and build-gate reopen path
 

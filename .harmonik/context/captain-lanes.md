@@ -70,11 +70,16 @@ reviews at its own pace (per-item gate), never a fleet-wide hold.**
 - **⚠️ RESUME-HANG meta-blocker (stilgar 19:23Z):** ~5/5 recent local runs wedge identically — each lands
   its FIRST implement commit in-worktree, then goes DEAD SILENT at `implementer_resumed` (no output, no
   heartbeat, no run_stale). Victims: hk-2i36s(74m), hk-nxcvi, hk-bl4d6(26m), hk-zeo5y(45m), hk-6629b.
-  Correlates with the QA-execution-gate workflow (~0adb6551). Pairs with hk-2hfyt as census root-problem-#3:
-  neither done-status NOR in-progress-status from the run pipeline is trustworthy. Post-freeze: stilgar's
-  lane owns the diagnosis (internal/daemon, no hawat collision) as top-of-lane; file the P1 then. Held per
-  freeze — crews stopped feeding the wedging pipeline. hk-zeo5y Option-A landed (cc236e05); option-C
-  orphan-sweep backstop still open (also post-freeze).
+  SHARPENED (19:24Z): the hang is on the implementer RELAUNCH path, INDEPENDENT of the gate reason — a
+  commit-gate failure (iteration 3) re-launches the implementer, which emits model_selected /
+  session_log_location / skills_provisioned then DIES (never output/commit). internal/daemon
+  dot_cascade/agent-relaunch → LIKELY overlaps hawat's workloop.go right-of-way, so diagnosis needs
+  stilgar+hawat coordination on the relaunch path. Correlates with the QA-execution-gate workflow
+  (~0adb6551). Pairs with hk-2hfyt as census root-problem-#3: neither done-status NOR in-progress-status
+  from the run pipeline is trustworthy. Post-freeze: stilgar's lane owns it as top-of-lane; file the P1 then.
+  stilgar QUIESCED — left 2 in-flight stilgar-q runs (hk-zeo5y resumed-hung, hk-6629b) UNTOUCHED for the
+  census (not cancelled; hk-bl4d6 Class-D cleans them next boot). hk-zeo5y Option-A landed (cc236e05);
+  option-C orphan-sweep backstop still open (also post-freeze).
 
 ### Open operator decisions (surfaced, non-blocking)
 - **hk-0639** (Codex local-soak epic) — functionally done, open by charter; captain recommends CLOSE.

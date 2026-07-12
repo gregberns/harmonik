@@ -1474,12 +1474,26 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 					}
 				}
 			}
+			// hk-hju8n: snapshot the resettable-bead set (open + in_progress) in
+			// two bulk `br list` calls so the reconcile's terminated-but-locked
+			// pass does an O(1) map lookup per bead instead of a `br show`
+			// subprocess. Without this, a long event-log history of terminated
+			// (mostly-deleted) beads makes the synchronous reconcile take minutes
+			// and the daemon is killed before it binds its socket. On any bulk-list
+			// error the cache is nil and we fall back to the per-bead reader
+			// (behaviour identical to pre-hk-hju8n).
+			reconcileStatusReader := orphanStatusReader
+			if lister, ok := orphanStatusReader.(bulkBeadLister); ok && lister != nil {
+				if cached := newCachedOrphanStatusReader(ctx, lister); cached != nil {
+					reconcileStatusReader = cached
+				}
+			}
 			_ = reconcileOrphanedRunsOnResume(
 				ctx,
 				cfg.JSONLLogPath,
 				bus,
 				beadResetter,
-				orphanStatusReader,
+				reconcileStatusReader,
 				intentLogDir,
 				projectHash,
 				daemonStartTime.UnixNano(),

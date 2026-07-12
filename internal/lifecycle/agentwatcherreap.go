@@ -126,8 +126,10 @@ func splitFlagToken(tok string) (flag, val string, ok bool) {
 
 // agentWatcherReapGracePeriod / PollInterval mirror SweepOrphanBr's SIGTERM→
 // SIGKILL escalation timing (vars so tests can shorten them).
-var agentWatcherReapGracePeriod = 5 * time.Second
-var agentWatcherReapPollInterval = 100 * time.Millisecond
+var (
+	agentWatcherReapGracePeriod  = 5 * time.Second
+	agentWatcherReapPollInterval = 100 * time.Millisecond
+)
 
 // ReapPriorAgentFollowWatchers enumerates and terminates every prior
 // `comms recv --follow` / `subscribe --follow` watcher process addressed to
@@ -227,4 +229,3 @@ func ReapPriorAgentFollowWatchers(ctx context.Context, lister AgentWatcherLister
 
 	return survived, nil
 }
-

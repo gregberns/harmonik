@@ -10,225 +10,35 @@
 # Direction log — temporal sequencing intent across direction changes
 
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
+> Pre-freeze sequencing history (14 superseded entries: 5-lane priority, remote worktree,
+> pi redeploy, codex option-B, QA-gate, v0.5.0 cut) is preserved in git history + the
+> snapshot at .harmonik/archive/2026-07-12-freeze-and-carve/. Struck 2026-07-12 by the
+> admiral audit under the retention/anti-rot rule — all superseded by the pivot below.
 
-## 2026-07-12 ~15:3xZ — captain (admiral 3-deepdive re-diagnosis): remote worktree-outage root cause = DISHONEST PROBE + SSH login-shell divergence; ruled B-tactical-now, A-build operator-gated · expires: 2026-07-14T00:00:00Z
-WHAT: admiral's read-only deepdives (findings 04+05) RE-DIAGNOSED the remote worktree-create outage: NOT a
-      concurrent race, NOT a silent push-drop — the daemon's post-create 'git rev-parse HEAD' probe
-      (createworktree.go:257) returns empty via SSH NON-INTERACTIVE login-shell git-binary divergence →
-      daemon falsely declares empty-HEAD → cleanupPartialState rm -rf's a GOOD worktree → burns all 4 retries.
-      The '~6 concurrency ceiling' = SSH serialization (no ControlMaster multiplexing), not a resource wall
-      (so hk-5z1f0 timeout-bump+semaphore is COUNTERPRODUCTIVE). RULING (A-vs-B, admiral delegated): B-tactical
-      NOW = land fail-loud HONEST-PROBE guards (rev-parse --verify/.git check before ANY teardown + harden vs
-      login-shell env divergence); A = resident-worker rearchitecture scoped as PROBLEM-SPACE epic (folds into
-      remote-substrate-phase2), BUILD operator-gated.
-WHY:  tactical guards stop the outage + land under both A and B (no regret). The A structural BUILD reshapes the
-      operator's #2 lane hardening→rearchitect AND overlaps the operator's codex resident-orchestrator thread
-      (piter/app-server research, 07-11) — cross-initiative product-direction = operator's, not captain's.
-ORDER: hawat HOLDs its codesync-only apply, reconciles diagnosis (probe-vs-push) against findings/04, re-scopes
-      acceptance to the honest-probe fix, lands tactical. A-build waits on operator ruling (surfaced, non-blocking).
-RETURN-PATH: hawat lands the honest-probe guard green; operator rules A-build go/no-go (likely after piter's codex
-      app-server research reports — may be the same resident-orchestrator bet).
-
-## 2026-07-12 ~15:2xZ — admiral→captain (operator-backed): unstick Codex-as-crew (priority #3, ZERO motion) + prioritize oversight-role survival · expires: 2026-07-14T00:00:00Z
-WHAT: (1) piter (idle-armed) RE-TASKED to SCOPE epic hk-q3ovr (MR1 crew-harness-selection) into ready beads
-      directly — commodore (usual planner) is DOWN + relaunch-blocked. Scoping an operator-named priority is
-      in-feed = autonomous. SEPARATE from the still-pending Phase-2 go/no-go (hk-nzzos+Spike B). (2) stilgar
-      daemon-hygiene queue RE-SEQUENCED: hk-zeo5y (oversight-role orphan-sweep allowlist) FIRST → hk-6629b
-      (subscriber-slot leak) → hk-bl4d6 (EM-065 durable fix) THIRD.
-WHY:  Codex-as-crew is the one ACTIVE-tier initiative at zero motion; oversight roles (commodore/admiral/watch)
-      get reaped by RunOrphanSweep on every redeploy (daemon.go:1394, no name-allowlist) — root cause of
-      commodore's ~7-min teardown loop (evidence: plans/2026-07-11-remote-concurrency/findings/commodore-teardown-rootcause.md).
-ORDER: piter scopes MR1 now (does NOT wait on Phase-2 ruling); stilgar finishes hk-nxcvi salvage THEN
-      hk-zeo5y→hk-6629b→hk-bl4d6. Both stilgar beads file-disjoint from hawat's remote-runner lane.
-RETURN-PATH: piter posts the MR1 bead set; hk-zeo5y queued to stilgar-q. Report both to admiral when done.
-
-## 2026-07-12 ~14:05Z — captain: daemon REDEPLOYED 6442aaa0→77ea4295 NOW (un-batched from hk-2hfyt) to make hk-thbbv live · expires: 2026-07-13T00:00:00Z
-WHAT: Redeployed the live daemon to 77ea4295 (tag daemon-20260712-07) picking up hk-thbbv (980649d5,
-      flagless-REQUEST_CHANGES→APPROVE) + pi-provider MR2 wire. Supersedes the 09:00Z "batch redeploy
-      behind hk-5z1f0" plan (hk-5z1f0 already closed-out; 6442aaa0 shipped at 11:28Z without thbbv).
-WHY:  yueh + stilgar independently VERIFIED hk-thbbv was merged-but-not-live (landed 4 commits after the
-      deployed 6442aaa0), so T2b (hk-1x8az) + hk-nxcvi re-wedged on the exact commit_gate traversal-cap
-      the fix addresses. Two lanes actively stalled > the batch-with-hk-2hfyt economy. GATE-0 met.
-ORDER: did NOT wait for hk-2hfyt (nowhere near landing). hk-2hfyt gets its OWN cycle when it lands, paired
-      with the gb-mbp serialized re-validate (natural cycle point). Cleared a stale yueh2-q phantom-lock
-      (queue cancel, EM-065 class) — yueh's T2b run survived the race. sync-assets deferred to next lull.
-RETURN-PATH: confirm daemon_started SHA == 77ea4295 + hk-thbbv live; yueh T2b + stilgar hk-nxcvi clear the
-      commit_gate wedge. gb-mbp still DISABLED pending hk-2hfyt land + serialized re-validate (unchanged).
-
-## 2026-07-12 ~06:59Z — admiral (event 019f551f, operator-directed): NEW STANDARD WORKFLOW = QA execution gate after review · expires: 2026-07-14T00:00:00Z
-WHAT: Project workflow.dot topology is now implement→commit_gate→review→qa→close. The `qa` node is
-      reviewer-class but its role FORCES it to actually EXECUTE the changed code + edge-case test before
-      it can APPROVE; qa REQUEST_CHANGES routes back to implement (fix-loop cap 3); qa APPROVE is the SOLE
-      inbound edge to close/merge. Committed 0adb6551; zero daemon code change (reuses verdict machinery,
-      read from disk per-run); already the project-root default the daemon reads.
-WHY:  operator wants every bead to get a real QA-executes-the-code step before merge (stop shipping
-      repeat bug classes). PROVEN e2e live: hk-1qmg7 traversed review→qa(~4min)→APPROVE→close→merged.
-ORDER: no dispatch change required — workflow.dot is the default; ensure the periodic worktree `git reset`
-      does not clobber it (committed to HEAD, survives). All crews' dispatches pick it up automatically.
-RETURN-PATH: confirm workflow.dot at HEAD carries the qa node; new run_completeds carry a qa verdict.
-
-## 2026-07-11 ~06:2xZ — operator (direct to captain): CODEX OPTION B KILLED (hard no, never revisit) → piter pivots to app-server deep-research kerf · expires: 2026-07-13T00:00:00Z
-WHAT: Codex crew-orchestrator Option B (daemon re-invokes `codex exec resume` per wake) is
-      PERMANENTLY DEAD — operator hard-no, do NOT discuss/re-propose again. piter's Codex-as-crew
-      lane (epic hk-q3ovr) now enters a RESEARCH phase: run a FULL kerf work item to deeply
-      understand the resident `codex app-server` path — how it works, what integrating it involves,
-      viability of retiring the keeper/compaction machinery via long-context resident orchestration.
-WHY:  ZFC grounds (B puts cognition in the framework); the real prize is a resident long-context
-      orchestrator. Decide-by-research before any implementation.
-ORDER: piter opens a kerf work (problem-space → research → design) on codex app-server; hk-l63b9
-      (route crew-start through harness selection) stays OPEN-PARKED until the research names the path.
-      Option-B artifacts are dead context — do not resurface.
-RETURN-PATH: check piter owns a live kerf work on the app-server research; no B ratification anywhere.
-
-## 2026-07-11 ~01:35Z — operator (via admiral, events 019f4ed0/019f4ed3): PARALLEL 5-lane priority order, IRON RULE no-single-bead-freeze · expires: 2026-07-13T00:00:00Z
-WHAT: Single-focus flagship posture RETIRED → staff crews top-down IN PARALLEL, file-disjoint,
-      keep every slot full. IRON RULE (operator, emphatic): NEVER hold the whole pipeline for
-      one bead/initiative — a stuck leg reviews at its own pace, the assessor-gate is per-ITEM,
-      never a fleet freeze. ACTIVE order: (1) PI harness green + provider-switch (kynes/GATE-0);
-      (2) REMOTE substrate + hardening — buggy, heavy TESTING (hawat); (3) CODEX-AS-CREW MR1
-      hk-q3ovr — had NO children, captain scoped into 6 beads + staffed piter; (4) QUALITY-
-      ENFORCEMENT fail-closed gates (stilgar); (5) COMMS-TEST-HARNESS (yueh). DEPRIORITIZED,
-      do NOT staff: eval-program, flywheel (stale/needs re-assess), dehardcode.
-WHY:  operator wants max throughput across the real initiatives in parallel, not a narrow
-      flagship-only hold; capacity was idling under the single-lane posture.
-ORDER: all 5 lanes run concurrently, file-disjoint. gb-mbp live re-enable stays OPERATOR-HELD
-      (remote lane does local testing only). Collision rule on internal/daemon: stilgar hk-ih5k6
-      right-of-way; hawat holds workloop.go/reversetunnel.go beads until it lands.
-RETURN-PATH: 5 lanes staffed + verified; ONE pending operator decision — piter's codex
-      crew-orchestrator SESSION-MODEL choice (spike hk-fijwi output). Resume by checking all 5
-      crews online + that pending design ratification.
-
-## 2026-07-11 ~01:25Z — operator (via admiral, event 019f4ec1): pi redeploy DECOUPLED from gate beads → GATE-0 e2e is the sole gate · expires: 2026-07-13T00:00:00Z
-WHAT: The pi/flagship redeploy is NO LONGER gated on hk-x2spu + hk-ih5k6. Those become a
-      PARALLEL quality track (stilgar). The SOLE operator-mandated redeploy gate is now a single
-      ISOLATED GATE-0 E2E TEST: repro the pi in-daemon hang on OLD binary d7abf34a, prove GREEN
-      with afa32372 — the test doubles as root-cause confirmation. Owner: kynes (re-tasked off
-      the "stand by for redeploy" idle-wait). On GATE-0 green, captain redeploys on own authority.
-WHY:  operator found the afa32372 fix is UNIT-tested only (argv-carries-flag) + a root-cause
-      coherence gap — the flag targets a flywheel-extension fork-bomb whose tree was ALREADY
-      deleted (353fc3c1). Captain CONFIRMED the gap: no .pi/extensions tracked on main, none in
-      home, none in a live worktree, and d7abf34a POSTDATES the deletion — so the old theory is
-      suspect. An empirical GATE-0 is required before trusting the redeploy.
-ORDER: kynes builds GATE-0 (flagship critical path) → green → captain redeploys → kynes re-runs
-      pi seed → hk-hcrvb complete. hk-x2spu/hk-ih5k6 run in parallel, no longer flagship blockers;
-      their LIVE fail-closed activation still needs main-lint-debt cleanup (new bead, stilgar lane).
-RETURN-PATH: check kynes owns GATE-0 + reports {e2e result, extensions-present y/n}; stilgar's
-      two beads move as an independent quality track. Redeploy gate = GATE-0 green ONLY.
-
-## 2026-07-11 ~00:40Z — admiral (via captain, events 019f4e97/019f4e9d): WATCH RESTORED + hk-vdqe2 staffed · expires: 2026-07-13T00:00:00Z
-WHAT: (1) Restored the always-on watch triage session (crew watch, spawned 00:39Z) — KNOWN
-      staffing gap, admiral's autonomous call: watch-down >43h dumped every stall/release/
-      paused-queue escalation straight on the captain. (2) Staffed NEW P1 hk-vdqe2 (keeper
-      clear->brief race, cycle.go completeCycleTail) onto stilgar's lane.
-WHY:  restore escalation-filtering so the captain isn't triaging ops noise inline while
-      driving the flagship; hk-vdqe2 is operator-reported, seen repeatedly.
-ORDER: hk-vdqe2 sequences AFTER the two redeploy-gate beads (hk-x2spu + hk-ih5k6 = critical
-      path) and AHEAD of rfhaw/rg526. HARD MERGE GATE (operator, non-negotiable): rigorous
-      ACTUAL e2e twin/scenario-harness repro of the slow-handoff/busy-pane race + a PERMANENT
-      regression test that fails on current code / passes after fix — NOT unit tests alone.
-RETURN-PATH: confirm watch online in `comms who`; check stilgar picks up hk-vdqe2 after the
-      gate beads. 2-lane split unchanged (kynes paused/preserved + stilgar gate-clear+vdqe2).
-> This is what a fresh /clear destroys. Read the newest RETURN-PATH as ground truth for sequencing.
-
-## 2026-07-09 ~02:33Z — admiral (relaying operator: v0.5.0 SHIPPED → fleet QUIESCED) · expires: 2026-07-11T00:00:00Z
-WHAT: v0.5.0 CUT + PUBLISHED (annotated tag v0.5.0 → e59beef8, GitHub release live; dispatch
-      consent-modal hang fixed via #26+#29, live daemon redeployed to e59beef8 / tag
-      daemon-20260708-01). Operator then AUTHORIZED a wide post-release teardown → fleet
-      DELIBERATELY QUIESCED: dispatch PAUSED, 11 crew/watch sessions stood down (captain +
-      admiral + ops-monitor kept), main cleaned (worktrees 14→2, branches 1882→547 with WIP
-      preserved), and the release-infra WIP preserved on origin/release-infra (cb332c06).
-WHY:  clean pause point after the release; operator wanted the deck cleared before the next initiative.
-ORDER: fleet STAYS quiesced until the operator gives next-initiative direction. Re-stand with
-      `harmonik supervise resume` + re-staff crews per Step 5. NO lanes should be running now —
-      idle is the INTENDED end-state, NOT a stall (do not self-staff off a stale lane doc).
-      NOTE: ops-monitor watch-down / paused-queue alerts are EXPECTED teardown artifacts, not incidents.
-RETURN-PATH: resume by asking the operator "what's next after v0.5.0?" — the next initiative is
-      theirs to rank (nothing ranked is being worked). The 07-08 Pi re-scope entry below stays
-      live (expires 07-11) as the leading KNOWN candidate for the re-stand.
-
-## 2026-07-08 ~00:20Z — operator (via admiral) · expires: 2026-07-11T00:00:00Z
-WHAT: Pi provider RE-SCOPED — not "flip to MiniMax to unblock." Goal = pi works COMPLETELY
-      through BOTH OpenRouter AND the DGX/ornith provider, with model/provider selectable
-      PER-BEAD (switch between the two on a per-bead basis). If per-bead switching isn't
-      supported today, IMPLEMENT it (kerf only if it grows a real contract). Extends chani
-      epic hk-fdbhf + the operator pi-provider-switch kerf (2026-07-05). PLUS: the four
-      known bug classes become PROVABLE quality-harness coverage (enforcement-first, not
-      one-off patches): (a) pi model reaches harness with working tool_calls per provider,
-      (b) no Claude-tier-3 leak into pi runs (hk-pkugu), (c) codex empty-model no-hang,
-      (d) ST5 merge-race greens (hk-psrnc). Owned jointly chani (pi) + stilgar (harness).
-WHY:  operator wants pi validated on BOTH substrates + switchable, not a single-provider
-      shortcut; and wants the recurring bug classes gated by the harness so a regression
-      re-breaks the gate, not production. This is the enforcement-first thesis applied to pi.
-ORDER: chani drives dual-provider + per-bead capability ‖ chani+stilgar add the 4 corpus
-      cases; gurney (Workstream A fail-closed gates) continues in parallel; PR #20 → green.
-      STATUS NOTE (admiral 07-09): hk-fdbhf core-goal PROVEN in-daemon + CLOSED; the
-      per-bead-switch + 4-corpus-harness scope is the live remainder for the re-stand.
-RETURN-PATH: captain directive comms 019f3f26. Resume by checking which crew owns the
-      dual-provider+per-bead capability + the harness-coverage plan for the 4 bug classes.
-
-## 2026-07-10 ~11:5xZ — operator (via captain, event 019f4dc3): HOLD LIFTED → TRACK A ONLY · expires: 2026-07-12T00:00:00Z
-WHAT: Overnight HOLD lifted into a single-lane directive. Staff ONE crew (kynes, Opus) on
-      flagship core-loop-proof epic hk-hcrvb: rebase integration/core-loop-proof onto main,
-      drive T9 (hk-jjt6w) to full-matrix green (Claude+pi REQUIRED, codex KNOWN-SKIP).
-WHY:  operator + admiral finished the overnight-alignment audit; focus is the flagship
-      core-loop proof, not broad volume. Grab-bag/kerf-next churn explicitly OFF.
-ORDER: kynes rebases → drives T9 green. Cleanup beads ONLY if slots remain after T9 moving.
-RETURN-PATH: resume by checking kynes owns hk-hcrvb + T9 leg status; the paused quality-*
-      queues stay PAUSED (do not resume — that was the pre-audit volume posture, now retired).
-
-## 2026-07-11 ~01:54Z — captain (GATE-0 verdict: --no-extensions REFUTED; redeploy is NOT the pi fix) · expires: 2026-07-13T00:00:00Z
-WHAT: GATE-0 came back a STOP. kynes's faithful in-daemon A/B showed OLD (d7abf34a, no flag)
-      and NEW (133319f5, +afa32372 flag) HANG IDENTICALLY — pi never POSTs to ornith, extensions
-      absent in both. --no-extensions root cause EMPIRICALLY REFUTED. Real mechanism: pi child
-      parked in node event loop with fd0(stdin)=UNFED PIPE, before any model POST. Prior "green"
-      was OUT-OF-daemon. Sharpened hypothesis: daemon sets StdinDevNull on the OUTER srt proc, but
-      srt-wrapping pi hands the pi CHILD a fresh unfed pipe → epoll hang; predict srt-OFF greens.
-WHY:  the redeploy-onto-afa32372 plan would NOT have fixed pi:local — it hangs identically WITH the
-      flag. The defect is in-daemon launch plumbing (stdin feed under srt-wrap), not the flag.
-ORDER: NO redeploy as a pi fix (it's dead). kynes runs the decisive arm now (NEW in-daemon, srt OFF,
-      instrument pi stdin) — captain-authorized. On result: if srt-OFF greens, fix = drop pi from
-      sandbox.harnesses (matches known memory pi_noop_is_harness_not_model) → then prove pi:local
-      green → hk-hcrvb flagship complete. Other 4 lanes run in parallel, unaffected.
-RETURN-PATH: check kynes's {stdin-fed, srt-off result, mechanism} report; the "on GATE-0 green →
-      redeploy" path in prior lane docs is SUPERSEDED (no redeploy fix pending). Decision #2 (Codex
-      session-model Option B) awaits operator ratification — piter's l63b9→trio BLOCKED until relayed.
-
-## 2026-07-12 ~09:00Z — captain (PENDING REDEPLOY batched behind hk-5z1f0) · expires: 2026-07-13T00:00:00Z
-WHAT: hk-f9xzs (systemic merge-retry/preserve-APPROVE fix) MERGED to main as 2476922e but is
-      NOT LIVE — daemon runs b25e9919 (redeployed 08:04Z), 2476922e is newer. A redeploy is
-      PENDING, deliberately BATCHED behind hawat's in-flight hk-5z1f0 (also internal/daemon:
-      agentready.go reviewer cold-start notch) so both land in ONE socket blip instead of two.
-WHY:  hk-f9xzs unblocks stilgar's hk-nxcvi + hk-thbbv (commit_gate traversal-cap loop) but only
-      once LIVE; hk-5z1f0 unblocks the 6→10 worker ramp. Both are daemon-surface → batch, don't
-      double-cycle the socket ~1h after the last redeploy.
-ORDER: stilgar HOLDS hk-nxcvi/hk-thbbv until post-redeploy GREEN (told 09:00Z, re-arming --follow).
-      hawat 6→10 ramp HELD until hk-5z1f0 lands. On hk-5z1f0 merge → captain redeploys
-      (docs/daemon-redeploy.md) picking up BOTH commits → broadcast GREEN → stilgar re-dispatches
-      hk-nxcvi/hk-thbbv, hawat ramp decision reopens.
-RETURN-PATH: check whether hk-5z1f0 has merged; if yes and daemon still on b25e9919, DO the batched
-      redeploy now, then GREEN. If hk-5z1f0 still in-flight, keep holding.
+## 2026-07-12 ~20:5xZ — operator+admiral: PLAN-FIRST resolved → clean slate executed; PLAN.md v2 awaiting ratification · expires: 2026-07-14T00:00:00Z
+WHAT: the 18:00Z pivot's a/b/c offer is RESOLVED — operator chose PLAN-FIRST + a clean slate.
+      Executed: fleet torn down (all crews down, run worktrees reaped, 267 beads closed, ~2GB history
+      cleared; captain+admiral up). Admiral authored + independently review-hardened the full carve
+      program: plans/2026-07-12-codebase-census/PLAN.md v2 (STEP-0 → M1 → M2 → M3 → M4, with the
+      Acceptance Oracle standard-of-proof). Initiative/lane trackers archived + cleared to the
+      frozen state.
+WHY:  no dispatch until the plan is ratified — the daemon run pipeline itself is untrustworthy
+      (resume-hang + false-close), so STEP-0 must repair it OUT-OF-PIPELINE before any carve work flows.
+ORDER: everything stays FROZEN. On operator ratification: settle PLAN Q1 (the Acceptance Oracle) →
+      captain re-stands FRESH agents, STEP-0 first (resume-hang + noChange false-close + honest-probe
+      re-land, all out-of-pipeline) → M1 (delete test-theater) concurrent → M2/M3/M4 kerf-first.
+RETURN-PATH: AWAITING operator ratification of PLAN.md v2 (7 open questions; Q1 = standard of proof is
+      the crux). Do NOT re-stand any pre-freeze lane; the carve program is the single front line.
 
 ## 2026-07-12 ~18:00Z — operator (via admiral): STRATEGIC PIVOT → FREEZE-AND-CARVE; fleet QUIESCED · expires: 2026-07-14T00:00:00Z
-WHAT: Two events retire the whole 5-lane volume posture above. (1) commodore-stays-up HARD STOP
-      (17:21Z) is DONE+PROVEN: root cause = SD-3 CrewIdleReaper reaped the idle planner (no
-      persistent-exemption); config-only fix (persistent agent-type manifest), committed 3f5e60fd;
-      survival proven 17m+ past the 5m36s window + across a supervisor-revive. (2) Operator voiced a
-      deep architectural concern ("everything keeps breaking, remote poorly architected, don't know
-      what's real, can't build the system with itself, so much slop, mutexes=bugs") → authorized a
-      codebase CENSUS. Census DONE (10 Fable assessors + 10 adversarial challengers + synthesis;
-      every verdict UPHELD). Report: plans/2026-07-12-codebase-census/REPORT.md.
+WHAT: Operator voiced a deep architectural concern ("everything keeps breaking, remote poorly
+      architected, don't know what's real, can't build the system with itself, so much slop,
+      mutexes=bugs") → authorized a codebase CENSUS (10 Fable assessors + 10 adversarial challengers
+      + synthesis; every verdict UPHELD). Report: plans/2026-07-12-codebase-census/REPORT.md.
 WHY:  the treadmill (43% of 20-day commits are hardening; 80% land in the 55k-LOC daemon god-package)
-      is architectural, not review-debt. Adding QA nodes cannot fix it. Domain logic is SOUND; the
-      two ack-free IO boundaries (tmux paste-inject + remote SSH) + the god-package + no-single-writer
-      are the root. Verdict: KEEP the proven core (queue model, lifecycle sweeps, harness axes, ~466
-      regression tests), REBUILD daemon-workloop core + remote + tmux-input, SIMPLIFY the rest,
-      DELETE ~50k LOC of test-theater (operatornfr/specaudit).
-ORDER: FLEET STAYS QUIESCED — 5 lanes NOT resumed (no bug-fix treadmill). Commodore is UP idle-armed
-      (persistent, sid 5b89172f) as the census's planning owner. Sequenced moves: M1 delete test-theater
-      + dead event-registry (safe, days) → M2 rebuild agent input channel behind handler.Substrate →
-      M3 extract run state-machine from beadRunOne → M4 remote rebuild. Admiral recommends AUTHORIZE M1
-      NOW, HOLD M2-M4 for operator ratification (weeks-scale, freeze-and-carve).
-RETURN-PATH: AWAITING operator ruling on admiral's a/b/c offer — (a) hand M1 to a crew now, (b) point
-      commodore at REPORT.md to produce the full kerf-planned sequence, (c) both. Do NOT resume the 5
-      lanes or dispatch structural work until the operator greenlights. Prior lane docs above
-      (T9/redeploy-batch/pi-srt) are SUPERSEDED by this pivot.
+      is architectural, not review-debt. Domain logic is SOUND; the two ack-free IO boundaries (tmux
+      paste-inject + remote SSH) + the god-package + no-single-writer are the root. Verdict: KEEP the
+      proven core (queue model, lifecycle sweeps, harness axes, ~466 regression tests), REBUILD
+      daemon-workloop core + remote + tmux-input, SIMPLIFY the rest, DELETE ~50k LOC of test-theater.
+RETURN-PATH: superseded by the ~20:5xZ entry above (plan-first + clean slate executed). Retained here
+      as the root direction change of record.

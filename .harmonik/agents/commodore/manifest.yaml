@@ -1,0 +1,39 @@
+type: commodore
+# Singleton long-term planner (like admiral/watch): at most one instance.
+cardinality: { min: 0, max: 1 }
+harness: claude
+
+identity:
+  soul: soul.md
+  parent_intent: captain
+
+context:
+  - { ref: boot,                       as: skill,       presence: injected }
+  - { ref: operating.md,              as: instruction, presence: injected }
+  - { ref: crew-launch,               as: skill,       presence: injected }
+  - { ref: beads-cli,                 as: skill,       presence: retrieved }
+  - { ref: agent-comms,               as: skill,       presence: retrieved }
+  - { ref: harmonik-dispatch,         as: skill,       presence: retrieved }
+  - { ref: docs/orchestration-protocol-v2.md, as: doc, presence: retrieved }
+
+triggers:
+  - { id: queue, source: queue, enabled: true }
+
+handoff:
+  channel: private
+
+keeper:
+  thresholds: default
+
+# commodore is a resident long-term PLANNER. Like admiral and watch it legitimately
+# sits idle with a completed formality queue for long stretches, so it MUST be
+# exempt from the SD-3 CrewIdleReaper (hk-dy5gw / hk-kojyr class). persistent: true
+# is the durable source of truth GATE-0 checks — NOT a queue-shape heuristic.
+lifecycle:
+  self_restart: true
+  persistent: true
+
+tools_dir: null
+
+markers:
+  never_emits: [queue_submit:main, crew_start]

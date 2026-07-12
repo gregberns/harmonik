@@ -10,49 +10,28 @@
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 # Keep this SHORT — one current-truth block. Superseded history is DELETED, not archived.
 
-## ⭐⭐ CURRENT TRUTH 2026-07-12 ~14:05Z — PARALLEL 5-LANE; daemon REDEPLOYED to 77ea4295 → hk-thbbv NOW LIVE (commit_gate wedge cleared)
+## ⭐⭐ CURRENT TRUTH 2026-07-12 ~16:15Z — PARALLEL 5-LANE, ALL MOVING. daemon 77ea4295 (daemon-20260712-07) live.
 
-> **daemon REDEPLOYED to 77ea4295 (2026-07-12 ~14:01Z):** tag daemon-20260712-07, pid 47756,
-> crashed_in_health_window=false, serving 46 queues. Delta over 6442aaa0 = **hk-thbbv (980649d5,
-> flagless-REQUEST_CHANGES→APPROVE — GATE-0 met by TestReviewLoop_FlaglessRequestChangesTreatedAsApprove)**
-> + pi-provider MR2 C2 wire (5466e91a). Redeploy triggered by yueh+stilgar VERIFYING hk-thbbv was merged
-> but NOT live (980649d5 landed 4 commits after deployed 6442aaa0) → T2b/hk-nxcvi re-wedged on the exact
-> commit_gate traversal-cap. Done NOW (not batched behind hk-2hfyt) because 2 lanes were actively wedged +
-> it had been ~2h20m since last cycle. GREEN broadcast. yueh T2b (hk-1x8az) re-dispatched + LIVE (run
-> 019f56a4-cd7a). stilgar hk-nxcvi unblocked. **NOTE: cleared a stale yueh2-q phantom-lock via `queue cancel`
-> (EM-065 class, durable fix hk-bl4d6) — briefly raced yueh's T2b submit but the run SURVIVED (queue-record
-> archive only). sync-assets DEFERRED: 4 keeper-hook scripts to create + content-owned conflicts (our live
-> files, left alone) — apply next clean lull.**
+> **Fleet CLEAN.** All 5 lanes verified pane-truth this boot (advancing spinners + idle-armed boxes).
+> `comms who` staleness on watcher-less crews (stilgar/yueh/piter) is the B2 aging bug, NOT death.
 >
-> **[PRIOR — 6442aaa0 11:28Z, now superseded]** NOW LIVE (the delta over b25e9919): **hk-f9xzs
-> 2476922e** (merge-step retry loop + preserve-APPROVE — the commit_gate traversal-cap fix that wedged
-> hk-nxcvi/hk-thbbv; GATE-0 satisfied by its own 347-line integration test, run green in isolation),
-> hk-ru45u (presence reason:refresh — killed 53% of log volume), + evalvol test beads.
-> **GREEN broadcast → stilgar hold LIFTED (proving f9xzs via hk-nxcvi), yueh T2b/T3 unblocks on hk-thbbv land.**
-> **hk-5z1f0 CLOSED-OUT as already-built:** its mechanism (150s remote agent_ready timeout + spawn
-> semaphore) was ALREADY in b25e9919 (implementer kept no-committing — no code gap). Residual 2/10
-> reviewer cold-start timeout at sustained-6 is empirical TUNING, DEFERRED to the operator-gated 6→10
-> ramp (bead down-ranked P1→P3, deferral noted). gb-mbp RE-ENABLED (was briefly disabled to route the
-> now-void local attempt).
-> **hk-thbbv UNBLOCKED (11:44Z):** stilgar root-caused the -32015 to a STALE 'pending' item (run_id null)
-> in the drained admiral-volume queue — EM-065 cross-queue scan counted it as live occupancy = permanent
-> lock. admiral OK'd; captain ran `harmonik queue cancel admiral-volume` (REVERSIBLE, archived to .failed).
-> Freed 3 P1s (hk-thbbv/hk-r9n2s/hk-rs1eh). Durable Class-D boot-reconcile fix = hk-bl4d6 (stilgar, queue-lane).
-> **⚠️ FLEET-DISPATCH OUTAGE 11:52Z — gb-mbp DISABLED (durable+live), fleet routes LOCAL.** stilgar's 6 runs
-> (hk-thbbv, hk-2i36s x2, hk-nxcvi x3) ALL died worker_name=gb-mbp at worktree-create empty-HEAD = **hk-2hfyt
-> RECURRENCE**. ROOT CAUSE (stilgar decisive repro, SUPERSEDES both the earlier stale-worker read AND the
-> gc/mutex hypotheses): base commit IS present on worker (fetched+cat-file), MANUAL `git worktree add` SUCCEEDS,
-> only the daemon's **ssh-runner-WRAPPED checkout no-ops** (createworktree.go:257 resolveWorktreeHEADViaRunner
-> returns empty). Not git/fs/base/concurrency. Disable is OPERATOR-PRE-AUTHORIZED (07-11 re-enable's own
-> "re-disable if it recurs" condition fired). **hk-2hfyt REOPENED P1 → hawat** (remote-runner-wrapper fix, its
-> real remote lane — UN-IDLES hawat). hawat's hk-rs-validate-remote-898a close (claimed remote validated) was
-> INSUFFICIENT — didn't exercise wrapped-dispatch; fold a real assertion into hk-2hfyt acceptance. stilgar
-> re-submitted hk-thbbv+hk-2i36s to a fresh LOCAL stilgar-q run (landing now). hk-zno2t (fetch-before-add) +
-> hk-rpp5a stale-worker framing RETRACTED (kept as hygiene refs only). RE-ENABLE gb-mbp only after hk-2hfyt
-> lands + quiet-window serialized (max_slots:1) re-validate. If hawat's first fix attempt fails → major-issue-fanout.
+> **Remote worktree-outage ROOT CAUSE SETTLED (admiral 3-deepdive, findings 04+05):** NOT a concurrent
+> race, NOT a silent push-drop, NOT a stale-worker (all prior framings RETRACTED). The daemon's post-create
+> `git rev-parse HEAD` probe (createworktree.go:257 `resolveWorktreeHEADViaRunner`) returns EXIT-0 + EMPTY
+> stdout over the SSHRunner (non-interactive login-shell git-binary divergence) → daemon falsely declares
+> empty-HEAD → `cleanupPartialState` rm -rf's a GOOD worktree → burns all 4 retries. The '~6 concurrency
+> ceiling' = SSH serialization (no ControlMaster), not a resource wall — so hk-5z1f0 timeout-bump+semaphore
+> is COUNTERPRODUCTIVE. **hawat DISPATCHED hk-2hfyt** = the fail-loud HONEST-PROBE fix (rev-parse --verify /
+> test -e <wt>/.git before ANY teardown + harden remote git-invocation vs ~/.zshenv env divergence + fix the
+> false 'concurrent race' error string). **WATCH: hk-2hfyt land.** hk-zno2t HELD as secondary base-hardening.
+> **A-vs-B ruled B-tactical-NOW** (honest-probe lands under both); A = resident-worker REARCHITECTURE scoped
+> as problem-space (folds into remote-substrate-phase2), **BUILD go/no-go is the OPERATOR's** (overlaps piter's
+> codex resident-orchestrator thread). gb-mbp stays DISABLED until hk-2hfyt lands + serialized re-validate.
+>
 > NOTE: daemon working-tree resets wipe UNCOMMITTED .harmonik/context edits — commit tier-2 updates.
-> `harmonik crew start` sets the keeper `.managed` marker but does NOT spawn the watcher — use
-> `harmonik start crew` for a fully keeper-armed relaunch (stilgar/hawat currently watcher-less).
+> stilgar/hawat/piter/yueh are watcher-less (`crew start` sets `.managed` but no watcher — use
+> `harmonik start crew` for a fully keeper-armed relaunch). **piter nearing auto-compact (~4%)** — its beads
+> are dispatched+durable, so a lossy compact costs only its "report beads" reminder; not urgent.
 
 **Operator priority order (2026-07-11, direction-log): run all 5 lanes IN PARALLEL, file-disjoint,
 every non-conflicting slot full. IRON RULE — NEVER freeze the whole fleet for one bead; a stuck leg

@@ -10,7 +10,17 @@
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 # Keep this SHORT — one current-truth block. Superseded history is DELETED, not archived.
 
-## ⭐⭐ CURRENT TRUTH 2026-07-11 ~06:20Z — PARALLEL 5-LANE posture; pi flagship DONE; Codex Option B KILLED
+## ⭐⭐ CURRENT TRUTH 2026-07-11 ~06:35Z — PARALLEL 5-LANE posture; pi flagship DONE; Codex Option B KILLED
+
+> **fmt-gate outage RESOLVED + PROVEN (2026-07-12 06:26–06:35Z):** daemon's merge-step auto-format
+> commit used a `fmt:` subject the lefthook commit-msg gate rejected → drift-bearing merges failed
+> fleet-wide. Fix hk-9k24q (`chore:` + `Trivial: true`, 1b97559a) on main; **daemon REDEPLOYED to
+> d1fbf715** (live 06:25:54Z, pid 35591, last-good pinned 06:27, tag daemon-20260711-04). PROOF:
+> hawat's remote wave landed 3/3 clean past the gate at 6-slot concurrency (7d0a4afa/0708c377/1a2bceb9)
+> — remote-substrate now proven e2e. **Residual (hk-2jeel, P1, → yueh):** two CONDITIONAL sibling
+> merge-path commits still fail the same gate — `commitResidualDelta` (soft-fail/work-loss) +
+> `stripRunContextFromMerge` (hard-fail/merge-abort); fix inbound, needs a follow-up redeploy to go live.
+> NOTE: daemon working-tree resets wipe UNCOMMITTED .harmonik/context edits — commit tier-2 updates.
 
 **Operator priority order (2026-07-11, direction-log): run all 5 lanes IN PARALLEL, file-disjoint,
 every non-conflicting slot full. IRON RULE — NEVER freeze the whole fleet for one bead; a stuck leg

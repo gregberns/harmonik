@@ -1,0 +1,6 @@
+{"in":{"seq":1,"type":"turn_started","thread_id":"t1","turn_id":"u1"},"out":[]}
+{"in":{"seq":2,"type":"message_delta","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"I will run a command."},"out":[{"type":"emit_output","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"I will run a command."}]}
+{"in":{"seq":3,"type":"thread_status","thread_id":"t1","status":"active"},"out":[{"type":"notify_status","thread_id":"t1","status":"active"}]}
+{"in":{"seq":4,"type":"message_delta","thread_id":"t1","turn_id":"u1","item_id":"i2","delta":"Command output received."},"out":[{"type":"emit_output","thread_id":"t1","turn_id":"u1","item_id":"i2","delta":"Command output received."}]}
+{"in":{"seq":5,"type":"token_usage","thread_id":"t1","turn_id":"u1","total_tokens":500,"context_window":256000},"out":[{"type":"notify_token_usage","thread_id":"t1","turn_id":"u1","total_tokens":500,"context_window":256000}]}
+{"in":{"seq":6,"type":"turn_completed","thread_id":"t1","turn_id":"u1","status":"completed"},"out":[{"type":"complete_turn","thread_id":"t1","turn_id":"u1","status":"completed"}]}

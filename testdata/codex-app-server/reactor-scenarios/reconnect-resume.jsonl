@@ -1,0 +1,7 @@
+{"in":{"seq":1,"type":"turn_started","thread_id":"t1","turn_id":"u1"},"out":[]}
+{"in":{"seq":2,"type":"message_delta","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"mid-flight"},"out":[{"type":"emit_output","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"mid-flight"}]}
+{"in":{"seq":3,"type":"disconnected"},"out":[{"type":"emit_error","message":"disconnected during turn"}]}
+{"in":{"seq":0,"type":"connected"},"out":[]}
+{"in":{"seq":1,"type":"turn_started","thread_id":"t1","turn_id":"u2"},"out":[]}
+{"in":{"seq":2,"type":"message_delta","thread_id":"t1","turn_id":"u2","item_id":"i1","delta":"resumed"},"out":[{"type":"emit_output","thread_id":"t1","turn_id":"u2","item_id":"i1","delta":"resumed"}]}
+{"in":{"seq":3,"type":"turn_completed","thread_id":"t1","turn_id":"u2","status":"completed"},"out":[{"type":"complete_turn","thread_id":"t1","turn_id":"u2","status":"completed"}]}

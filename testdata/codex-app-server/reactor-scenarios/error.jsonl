@@ -1,0 +1,3 @@
+{"in":{"seq":1,"type":"turn_started","thread_id":"t1","turn_id":"u1"},"out":[]}
+{"in":{"seq":2,"type":"message_delta","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"partial output"},"out":[{"type":"emit_output","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"partial output"}]}
+{"in":{"seq":3,"type":"error","message":"model_error: context_length_exceeded"},"out":[{"type":"emit_error","message":"model_error: context_length_exceeded"}]}

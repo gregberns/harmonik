@@ -1,0 +1,5 @@
+{"in":{"seq":1,"type":"turn_started","thread_id":"t1","turn_id":"u1"},"out":[]}
+{"in":{"seq":2,"type":"message_delta","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"first"},"out":[{"type":"emit_output","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"first"}]}
+{"in":{"seq":2,"type":"message_delta","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"first"},"out":[]}
+{"in":{"seq":1,"type":"message_delta","thread_id":"t1","turn_id":"u1","item_id":"i1","delta":"stale"},"out":[]}
+{"in":{"seq":3,"type":"turn_completed","thread_id":"t1","turn_id":"u1","status":"completed"},"out":[{"type":"complete_turn","thread_id":"t1","turn_id":"u1","status":"completed"}]}

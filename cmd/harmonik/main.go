@@ -791,6 +791,17 @@ EXAMPLES
 		return runPromoteSubcommand(subArgs)
 	}
 
+	// harmonik gc <verb> — garbage-collect stale harmonik artifacts (hk-fpjxi).
+	// Verbs: branches (reap merged/orphaned run/* + worktree-agent-* refs).
+	// No daemon required; operates directly on git.
+	if len(os.Args) >= 2 && os.Args[1] == "gc" {
+		subArgs := []string{}
+		if len(os.Args) >= 3 {
+			subArgs = os.Args[2:]
+		}
+		return runGCSubcommand(subArgs)
+	}
+
 	// harmonik release <verb> — release ledger management (hk-n7ofb).
 	// ledger: list entries; certify: flip prerelease:false + stamp certified_at;
 	// yank: mark yanked. No daemon required; operates on the ledger JSON file.

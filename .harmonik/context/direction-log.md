@@ -11,6 +11,18 @@
 
 > The one thing no other doc holds: WHY we paused X for Y and IN WHAT ORDER we resume.
 
+## 2026-07-12 ~06:59Z — admiral (event 019f551f, operator-directed): NEW STANDARD WORKFLOW = QA execution gate after review · expires: 2026-07-14T00:00:00Z
+WHAT: Project workflow.dot topology is now implement→commit_gate→review→qa→close. The `qa` node is
+      reviewer-class but its role FORCES it to actually EXECUTE the changed code + edge-case test before
+      it can APPROVE; qa REQUEST_CHANGES routes back to implement (fix-loop cap 3); qa APPROVE is the SOLE
+      inbound edge to close/merge. Committed 0adb6551; zero daemon code change (reuses verdict machinery,
+      read from disk per-run); already the project-root default the daemon reads.
+WHY:  operator wants every bead to get a real QA-executes-the-code step before merge (stop shipping
+      repeat bug classes). PROVEN e2e live: hk-1qmg7 traversed review→qa(~4min)→APPROVE→close→merged.
+ORDER: no dispatch change required — workflow.dot is the default; ensure the periodic worktree `git reset`
+      does not clobber it (committed to HEAD, survives). All crews' dispatches pick it up automatically.
+RETURN-PATH: confirm workflow.dot at HEAD carries the qa node; new run_completeds carry a qa verdict.
+
 ## 2026-07-11 ~06:2xZ — operator (direct to captain): CODEX OPTION B KILLED (hard no, never revisit) → piter pivots to app-server deep-research kerf · expires: 2026-07-13T00:00:00Z
 WHAT: Codex crew-orchestrator Option B (daemon re-invokes `codex exec resume` per wake) is
       PERMANENTLY DEAD — operator hard-no, do NOT discuss/re-propose again. piter's Codex-as-crew

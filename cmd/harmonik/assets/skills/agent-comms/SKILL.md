@@ -215,17 +215,18 @@ harmonik comms log --since 1h --to myagent
 ### `harmonik comms join` / `leave` — presence beats (requires daemon)
 
 ```
-harmonik comms join [--name NAME] [--project DIR]
+harmonik comms join [--name NAME] [--reason join|refresh] [--project DIR]
 harmonik comms leave [--name NAME] [--project DIR]
 ```
 
-- `join` → emits `agent_presence{status:"online", reason:"join"}`.
+- `join` → emits `agent_presence{status:"online", reason:"join"|"refresh"}`.
 - `leave` → emits `agent_presence{status:"offline", reason:"leave"}`.
 - Prints the minted `event_id` on success.
 - Exit 17 = daemon not running.
 
 ```bash
-harmonik comms join --name myagent
+harmonik comms join --name myagent               # first join at boot
+harmonik comms join --name myagent --reason=refresh  # heartbeat tick (not persisted)
 harmonik comms leave --name myagent
 harmonik comms join    # uses $HARMONIK_AGENT
 ```
@@ -239,8 +240,16 @@ self-refreshes — it emits its own lightweight `agent_presence{reason:"refresh"
 beat every ~60s for as long as the stream is open, so a quiet subscriber stays
 Online in `comms who` even with no traffic (B2, bead hk-qw63o). This beat runs
 on its own timer, independent of message delivery — it does not require
-receiving or sending anything. If you are NOT keeping `--follow` armed, you
-still need to re-run `harmonik comms join` on a ≤90s timer yourself.
+receiving or sending anything. When `--follow` exits on a signal, it emits a
+`leave` beat immediately so the registry reflects the departure without waiting
+for the TTL (hk-ru45u).
+
+**Single-emit discipline (hk-ru45u):** Do NOT also run a manual `comms join`
+timer when `--follow` is armed — `--follow` already handles periodic refresh
+via its own beat ticker. Running both causes double-emits that pollute
+events.jsonl with redundant `reason:join` entries. If you are NOT keeping
+`--follow` armed, re-run `harmonik comms join --reason=refresh` on a ≤90s
+timer yourself (use `--reason=refresh` so the heartbeat is not persisted).
 
 ---
 

@@ -709,7 +709,7 @@ harmonik decisions answer 0192f5a1-... ship --resolver alice
 | `send` | Send an `agent_message` to a named agent or broadcast | yes |
 | `recv` | Receive unread `agent_message`s from the durable cursor | yes |
 | `log` | Read-only operator view of recent `agent_message` events | **no** |
-| `join` | Emit `agent_presence{online, reason:"join"}` | yes |
+| `join` | Emit `agent_presence{online, reason:"join"\|"refresh"}` (`--reason=refresh` for heartbeats) | yes |
 | `leave` | Emit `agent_presence{offline, reason:"leave"}` | yes |
 | `who` | List currently-online agents (presence registry) | **no** |
 
@@ -731,7 +731,9 @@ harmonik decisions answer 0192f5a1-... ship --resolver alice
 **Usage:** `harmonik comms who [--json] [--project DIR]` — online = latest presence beat `online` within ~120s. No daemon. Exit 0/1 only.
 
 ### `comms join` / `comms leave`
-**Usage:** `harmonik comms join [--name NAME] [--socket PATH] [--project DIR]` (and `leave`). `--name` default `$HARMONIK_AGENT`, required. Exit 0/1/17.
+**Usage:** `harmonik comms join [--name NAME] [--reason join|refresh] [--socket PATH] [--project DIR]` (and `leave`). `--name` default `$HARMONIK_AGENT`, required. Exit 0/1/17.
+
+`--reason` (join only): `join` (default, persisted) or `refresh` (not persisted — use for periodic heartbeat calls to keep events.jsonl clean, hk-ru45u). `comms recv --follow` self-refreshes and emits leave on teardown; no separate join timer needed when `--follow` is armed.
 
 **Example**
 ```bash

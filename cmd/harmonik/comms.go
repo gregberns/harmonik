@@ -34,6 +34,9 @@ package main
 // Flag reference for `harmonik comms join` and `harmonik comms leave`:
 //
 //	--name NAME                Agent identity (default: $HARMONIK_AGENT env var).
+//	--reason join|refresh      Presence reason override for `join` only (default: join). Use
+//	                           "refresh" for periodic heartbeat calls so the beat is not
+//	                           persisted to events.jsonl (hk-ru45u).
 //	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).
 //	--project DIR              Project directory (default: cwd).
 //
@@ -500,7 +503,7 @@ VERBS
   send    Send an agent_message to a named agent or broadcast to all
   recv    Receive unread agent_messages from the durable cursor (daemon required)
   log     Read-only operator view of recent agent_message events (no daemon needed)
-  join    Emit an agent_presence{online, reason:"join"} beat (presence registry)
+  join    Emit an agent_presence{online, reason:"join"|"refresh"} beat (presence registry)
   leave   Emit an agent_presence{offline, reason:"leave"} beat (presence registry)
   who     List currently-online agents from the presence registry (no daemon needed)
 
@@ -520,6 +523,7 @@ EXAMPLES
   harmonik comms log --since 30m
   harmonik comms log --since 30m --to myagent --json
   harmonik comms join --name myagent
+  harmonik comms join --name myagent --reason=refresh  # heartbeat: not persisted
   harmonik comms leave --name myagent
   harmonik comms who
   harmonik comms who --json
@@ -875,6 +879,7 @@ func checkCommsNameConflict(eventsPath, name, sessionID string) string {
 // verb is "join" or "leave". subArgs is os.Args[3:].
 func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 	nameFlag := ""
+	reasonFlag := ""
 	socketFlag := ""
 	projectFlag := ""
 
@@ -889,6 +894,11 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 			nameFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--name="):
 			nameFlag = strings.TrimPrefix(arg, "--name=")
+		case arg == "--reason" && i+1 < len(subArgs):
+			i++
+			reasonFlag = subArgs[i]
+		case strings.HasPrefix(arg, "--reason="):
+			reasonFlag = strings.TrimPrefix(arg, "--reason=")
 		case arg == "--socket" && i+1 < len(subArgs):
 			i++
 			socketFlag = subArgs[i]
@@ -919,11 +929,24 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 	}
 
 	// Map verb → (status, reason).
+	// For "join", --reason may override to "refresh" so periodic heartbeat calls are not
+	// persisted to events.jsonl (hk-ru45u). Only "join" and "refresh" are valid overrides;
+	// "leave" is rejected (use `harmonik comms leave` instead).
+	// For "leave", the reason is always "leave" regardless of --reason.
 	status := "online"
 	reason := "join"
 	if verb == "leave" {
 		status = "offline"
 		reason = "leave"
+	}
+	if reasonFlag != "" && verb == "join" {
+		switch reasonFlag {
+		case "join", "refresh":
+			reason = reasonFlag
+		default:
+			fmt.Fprintf(os.Stderr, "harmonik comms join: --reason %q is invalid; must be \"join\" or \"refresh\"\n", reasonFlag)
+			return 1
+		}
 	}
 
 	// Resolve socket path and project directory.
@@ -1168,6 +1191,13 @@ EXAMPLES
 }
 
 func commsPresenceUsage(verb string) {
+	joinReasonNote := ""
+	if verb == "join" {
+		joinReasonNote = `  --reason join|refresh  Presence reason (default: join). Use "refresh" for
+                        periodic heartbeat calls — refresh beats are not persisted
+                        to events.jsonl, keeping the log clean (hk-ru45u).
+`
+	}
 	fmt.Printf(`harmonik comms %s — emit an agent_presence beat (presence registry)
 
 USAGE
@@ -1178,7 +1208,7 @@ with status="%s" and reason="%s". The minted event_id is printed to stdout.
 
 FLAGS
   --name NAME     Agent identity (default: $HARMONIK_AGENT env var). Required.
-  --socket PATH   Override socket path (default: <project>/.harmonik/daemon.sock).
+%s  --socket PATH   Override socket path (default: <project>/.harmonik/daemon.sock).
   --project DIR   Project directory (default: cwd).
 
 EXIT CODES
@@ -1194,7 +1224,7 @@ EXAMPLES
 			return "online"
 		}
 		return "offline"
-	}(), verb, verb, verb)
+	}(), verb, joinReasonNote, verb, verb)
 }
 
 // runCommsRecvSubcommand implements `harmonik comms recv [--follow]` (agent-comms
@@ -1538,6 +1568,59 @@ func sendPresenceRefreshBeat(sockPath, agent, sessionID string) error {
 	return nil
 }
 
+// sendPresenceLeaveBeat sends a comms-presence leave op to the daemon for agent,
+// marking it offline in `comms who`. Used by the --follow teardown path (hk-ru45u)
+// so a clean exit is immediately reflected in the registry rather than waiting for
+// the 120s TTL to expire. Best-effort: the caller should ignore the error.
+func sendPresenceLeaveBeat(sockPath, agent, sessionID string) error {
+	payload := map[string]any{
+		"agent":  agent,
+		"status": "offline",
+		"reason": "leave",
+	}
+	if sessionID != "" {
+		payload["session_id"] = sessionID
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	reqBytes, err := json.Marshal(map[string]any{
+		"op":      "comms-presence",
+		"payload": json.RawMessage(payloadBytes),
+	})
+	if err != nil {
+		return err
+	}
+
+	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "unix", sockPath)
+	cancel()
+	if dialErr != nil {
+		return dialErr
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
+		return writeErr
+	}
+	if uw, ok := conn.(*net.UnixConn); ok {
+		_ = uw.CloseWrite()
+	}
+
+	var resp struct {
+		Ok    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+	}
+	if decErr := json.NewDecoder(conn).Decode(&resp); decErr != nil {
+		return decErr
+	}
+	if !resp.Ok {
+		return fmt.Errorf("comms-presence leave: %s", resp.Error)
+	}
+	return nil
+}
+
 // runCommsRecvFollow opens a subscribe connection for live agent_message events
 // anchored at sinceEventID (the cursor_after from the preceding comms-recv drain).
 // Streams until signal or connection close.
@@ -1559,11 +1642,23 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Leave-on-teardown (hk-ru45u): emit an offline leave beat when --follow exits
+	// on a signal or context cancel so the presence registry reflects the departure
+	// immediately rather than waiting for the 120s TTL to expire.
+	// Guard on sigCtx.Err(): a park-message exit returns 0 WITHOUT cancelling sigCtx
+	// (the agent is quiesced, not offline — it will resume on pane wake); we must
+	// not emit leave for that path or the agent incorrectly appears offline.
+	beatSessionID := resolveSessionID()
+	defer func() {
+		if agent != "" && sigCtx.Err() != nil {
+			_ = sendPresenceLeaveBeat(sockPath, agent, beatSessionID)
+		}
+	}()
+
 	// Idle presence-beat (B2, hk-qw63o): runs on its own timer and its own
 	// connection for the lifetime of this call, independent of the
 	// subscribe/reconnect loop below — a cheap periodic write that keeps a
 	// quiet subscriber Online in `comms who` without touching the read path.
-	beatSessionID := resolveSessionID()
 	beatTicker := time.NewTicker(commsFollowPresenceBeatInterval)
 	defer beatTicker.Stop()
 	go func() {

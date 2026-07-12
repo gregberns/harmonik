@@ -104,7 +104,7 @@ Write the summary in the **captain's own terms** — what happened, which lane/s
 The captain **pulls** the digest by reading `.harmonik/watch/latest.json` on its own idle. You **never** send a timed comms message to the captain with the digest — a timed send is a poll loop by another name. If you want to append a digest note to a genuine IMMEDIATE escalation, you may fold it in; do not send it standalone.
 
 ### Liveness beats
-`harmonik comms join` presence keeps your `last_seen` fresh so ops-monitor's component-liveness probe can detect watch-down.
+Your `comms recv --follow --agent watch` (step 5 above) already self-refreshes presence every ~60s and emits a `leave` beat on clean exit — no separate `comms join` timer is needed (hk-ru45u). The ops-monitor component-liveness probe reads `last_seen` from this stream. If you ever need an explicit manual heartbeat without `--follow` armed, use `harmonik comms join --reason=refresh` (not bare `comms join`) so the beat is not persisted to events.jsonl.
 
 ---
 

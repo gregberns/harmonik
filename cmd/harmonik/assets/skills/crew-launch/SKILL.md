@@ -128,8 +128,14 @@ op for this session. Never operate without a confirmed crew identity.
 harmonik comms join
 ```
 
-This emits `agent_presence online` so `harmonik comms who` shows you online
-(success-criterion #1). Do this BEFORE dispatching any beads.
+This emits `agent_presence{online, reason:"join"}` so `harmonik comms who` shows you
+online (success-criterion #1). Do this BEFORE dispatching any beads.
+
+**Heartbeat discipline (hk-ru45u):** once `comms recv --follow` is armed (Step 5 or
+wherever you open it), it auto-refreshes presence every ~60s and emits a `leave` beat
+on clean exit — no separate `comms join` timer is needed. If you need a manual
+heartbeat when `--follow` is NOT armed, use `harmonik comms join --reason=refresh`
+(not bare `comms join`) so the beat is not persisted to events.jsonl.
 
 ### Step 4 — Mirror the assignment to beads (LOAD-BEARING — Gap 1)
 

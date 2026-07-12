@@ -244,6 +244,22 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		return nil, fmt.Errorf("ensure queue: %w", qErr)
 	}
 
+	// ── Step 3.5: .managed marker — created BEFORE session spawn (hk-p006e) ──
+	//
+	// MUST precede SpawnCrewSession so the in-session keeper (a sibling tmux
+	// window launched inside SpawnCrewSession as "keeper") finds the marker at
+	// startup. harmonik keeper Step 2 calls keeper.IsManaged immediately on boot:
+	// if the marker is absent, the keeper exits as a no-op and never arms.
+	// The old position (step 6a, after the spawn) caused a race: the keeper
+	// started and checked IsManaged before the daemon reached step 6a.
+	//
+	// Non-fatal: a failure logs to stderr and the crew start continues. The
+	// keeper will fail to arm (no-op exit) if the marker could not be written;
+	// ops-monitor will surface keeper-missing and the watch skill will re-arm.
+	if markerErr := createCrewManagedMarker(h.projectDir, req.Name); markerErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: crew-start: create .managed marker for %q: %v\n", req.Name, markerErr)
+	}
+
 	// ── Step 4: build launch spec + spawn ──
 	// Read the optional model: front-matter field from the mission handoff
 	// (specs/crew-handoff-schema.md §3). Best-effort: a missing/unreadable mission
@@ -334,20 +350,12 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		}
 	}
 
-	// ── Step 6a: .managed marker (keeper-attach input) ──
+	// ── Step 6a: .managed marker already created in step 3.5 (hk-p006e) ──
 	//
-	// Slice-C note (hk-rmy1): on the independent-session path the daemon now
-	// launches the keeper IN-SESSION (the "keeper" window), so the .managed marker
-	// is largely REDUNDANT for the in-session keeper — it no longer gates whether a
-	// keeper attaches. It is RETAINED because external readers still depend on it:
-	// keeper.IsManaged consults it (and the CLI crew keeper / crew-stop marker
-	// cleanup, plus `keeper doctor`, key off it). Removing it is a separate cleanup,
-	// not in scope for this topology change.
-	if markerErr := createCrewManagedMarker(h.projectDir, req.Name); markerErr != nil {
-		// Non-fatal: session is live; the in-session keeper window is already
-		// launched independently of this marker.
-		fmt.Fprintf(os.Stderr, "daemon: crew-start: create .managed marker for %q: %v\n", req.Name, markerErr)
-	}
+	// Retained note (hk-rmy1): the marker gates keeper.IsManaged on boot — it is
+	// NOT redundant. External readers (keeper doctor, crew-stop cleanup) also key
+	// off it. It was moved to step 3.5 (before the spawn) to close the race where
+	// the keeper process started before the marker existed and exited as a no-op.
 
 	// ── Step 7: update registry with handle ──
 	if windowHandle != "" {

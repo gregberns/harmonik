@@ -100,3 +100,8 @@ until this is answered.
 49 git stashes exist (mostly abandoned `leak`/`v36-leak`/worktree-agent WIP). Operator: delegate
 a triage — keep anything genuinely useful, delete the rest; a full cleanup PROCESS is wanted
 eventually but NOT being pursued now. (Delegated to a sub-agent this session.)
+
+**Triage outcome (2026-07-11, hk-j5yer.15):** `git stash list` returned zero stashes; `refs/stash`
+does not exist and the stash reflog is empty. All abandoned leak/v36-leak/worktree-agent WIP stashes
+were cleared by the 2026-07-03 recover/plan-folders merge commits. The orphaned settings.json stash
+(stilgar-delegated) is also absent. Q6 is fully resolved — no stashes to keep or delete.

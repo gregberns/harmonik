@@ -383,8 +383,8 @@ list is self-checking — walk it.
       captain-lanes — if it fires, that's the Q5 residue); renderer beads (0.4a/b) landing
       lets operating.md's explicit-path workaround be removed later (file a follow-up bead,
       don't block cutover on it).
-- [ ] 5.3 Reconcile the orphaned `git stash` (Q6) during a daemon-quiet window — NOT during
-      normal fleet operation (stash-stack shift hazard).
+- [x] 5.3 Reconcile the orphaned `git stash` (Q6) — triage completed 2026-07-11 (hk-j5yer.15):
+      zero stashes found; all were cleared by 2026-07-03 recover/plan-folders commits. Q6 resolved.
 
 Rollback at any step: every landing is a small commit set on specific paths; `git revert` the
 landing commit(s) and re-run the sync script. Old docs remain in git history (the archive) —

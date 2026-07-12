@@ -27,12 +27,18 @@
 > in the drained admiral-volume queue — EM-065 cross-queue scan counted it as live occupancy = permanent
 > lock. admiral OK'd; captain ran `harmonik queue cancel admiral-volume` (REVERSIBLE, archived to .failed).
 > Freed 3 P1s (hk-thbbv/hk-r9n2s/hk-rs1eh). Durable Class-D boot-reconcile fix = hk-bl4d6 (stilgar, queue-lane).
-> **hk-iaj1w empty-HEAD race ROOT CAUSE (empirical, stilgar) = STALE WORKER, not bloat/gc/mutex:** run base
-> commits didn't exist on /Users/gb/harmonik-worker/repo → `worktree add -b run/x <base-sha>` can't resolve
-> HEAD. Remediated non-destructively (`git -C .../harmonik-worker/repo fetch origin`). DURABLE fix = **hk-zno2t**
-> (fetch/push base before worktree-add; investigate why codesync fetchBaseOnWorker missed the base). Captain's
-> code-reasoned hk-rpp5a CLOSED as superseded (secondary refs folded into hk-zno2t). Reaper hygiene = hk-2i36s
-> (stilgar re-dispatching, separately valid).
+> **⚠️ FLEET-DISPATCH OUTAGE 11:52Z — gb-mbp DISABLED (durable+live), fleet routes LOCAL.** stilgar's 6 runs
+> (hk-thbbv, hk-2i36s x2, hk-nxcvi x3) ALL died worker_name=gb-mbp at worktree-create empty-HEAD = **hk-2hfyt
+> RECURRENCE**. ROOT CAUSE (stilgar decisive repro, SUPERSEDES both the earlier stale-worker read AND the
+> gc/mutex hypotheses): base commit IS present on worker (fetched+cat-file), MANUAL `git worktree add` SUCCEEDS,
+> only the daemon's **ssh-runner-WRAPPED checkout no-ops** (createworktree.go:257 resolveWorktreeHEADViaRunner
+> returns empty). Not git/fs/base/concurrency. Disable is OPERATOR-PRE-AUTHORIZED (07-11 re-enable's own
+> "re-disable if it recurs" condition fired). **hk-2hfyt REOPENED P1 → hawat** (remote-runner-wrapper fix, its
+> real remote lane — UN-IDLES hawat). hawat's hk-rs-validate-remote-898a close (claimed remote validated) was
+> INSUFFICIENT — didn't exercise wrapped-dispatch; fold a real assertion into hk-2hfyt acceptance. stilgar
+> re-submitted hk-thbbv+hk-2i36s to a fresh LOCAL stilgar-q run (landing now). hk-zno2t (fetch-before-add) +
+> hk-rpp5a stale-worker framing RETRACTED (kept as hygiene refs only). RE-ENABLE gb-mbp only after hk-2hfyt
+> lands + quiet-window serialized (max_slots:1) re-validate. If hawat's first fix attempt fails → major-issue-fanout.
 > NOTE: daemon working-tree resets wipe UNCOMMITTED .harmonik/context edits — commit tier-2 updates.
 > `harmonik crew start` sets the keeper `.managed` marker but does NOT spawn the watcher — use
 > `harmonik start crew` for a fully keeper-armed relaunch (stilgar/hawat currently watcher-less).
@@ -44,7 +50,7 @@ reviews at its own pace (per-item gate), never a fleet-wide hold.**
 | # | Lane | crew | queue | model | epic / state |
 |---|---|---|---|---|---|
 | 1 | **FLEET-HARDENING / logmine** | kynes | kynes2-q | Opus | PI flagship DONE + fleet-hardening (hk-p006e keeper-arm + hk-fpjxi reaper) LANDED. Now owns **logmine epic hk-mhmaw** (recurring mine→document→file). iter-22 delivered (findings-iter22.md, 5 beads filed). Currently on **hk-q6nve** (agent-reviewer unregistered in worktree = root of 44% missing-trailer). ✅ |
-| 2 | **REMOTE** | hawat | hawat-q | Opus | remote-substrate PROVEN e2e 3/3 + SUSTAINED-6 BANKED 10/10 on b25e9919. **6→10 ramp HELD**, gb-mbp live re-enable OPERATOR-HELD, and the worktree-race work is stilgar's internal/daemon zone (collision rule) → remote lane has NO dispatchable file-disjoint work right now. **IDLE-ARMED on remote lane (11:49Z)** — a correctly-BLOCKED lane, not a staffing miss: no dispatchable file-disjoint work exists for it now. (Temp-fill hk-420yr.3 was VOID — already covered by hk-420yr.8/.9 on main; hawat pre-screened + captain closed it.) ROUTE BACK the instant hk-zno2t/hk-2i36s land + free hawat's workloop.go beads. watcher-less. ✅ |
+| 2 | **REMOTE** | hawat | hawat-q | Opus | remote-substrate PROVEN e2e 3/3 + SUSTAINED-6 BANKED 10/10 on b25e9919. **6→10 ramp HELD**, gb-mbp live re-enable OPERATOR-HELD, and the worktree-race work is stilgar's internal/daemon zone (collision rule) → remote lane has NO dispatchable file-disjoint work right now. **UN-IDLED (11:55Z) → hk-2hfyt** (P1 REOPENED: remote-runner-wrapper checkout no-op — the gb-mbp fleet-outage bug; its REAL remote-lane work). Spinner advancing. Acceptance MUST include a real wrapped-dispatch worktree-create assertion (its prior hk-rs-validate-remote-898a close missed that path). gb-mbp stays DISABLED until this lands + serialized re-validate. watcher-less. ✅ |
 | 3 | **CODEX-AS-CREW** | piter | piter-q | Opus | epic hk-q3ovr. Option B PERMANENTLY KILLED. **codex-app-server PHASE-1 COMPLETE + proven** (tap/serializer/reactor/twin + L0/L1/L2 green vs real corpus; T0-T5 closed). Verdict: layering cheap+sound, cost was ~all daemon/merge infra. **IDLE-ARMED on Decision #2 (Phase-2 go/no-go: hk-nzzos resident client+sidecar + Spike B) — SURFACED to operator, awaiting ruling.** |
 | 4 | **REVIEW-LOOP + DISPATCH-LOCK + DAEMON-HYGIENE** | stilgar | stilgar-q | Opus | internal/daemon right-of-way. **hk-thbbv now UNBLOCKED** (admiral-volume cancel cleared the EM-065 phantom lock) → driving hk-thbbv (flagless REQUEST_CHANGES wedge fix) → hk-nxcvi; unblocks yueh T2b. Also owns: **hk-zno2t** (remote stale-worker fetch-before-add durable fix), **hk-2i36s** (wire ReapBranches periodic, re-dispatching), **hk-bl4d6** (Class-D boot-reconcile for drained-queue stale-pending). ✅ |
 | 5 | **COMMS-TEST + presence** | yueh | yueh2-q | Sonnet | comms bus tests. Main T2b/T3 chain still GATED on hk-thbbv (stilgar). **hk-r1v2n MERGED** (GATE-0 durability test — fmt-gate class now has permanent regression coverage). Now on **hk-ru45u** (presence join-only flood = 53% of ALL log; reason:refresh + single-emit/tick + leave-on-teardown). ✅ |

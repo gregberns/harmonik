@@ -10,17 +10,21 @@
 # Stable across /clear cycles; verify every claim against live ground-truth at Step 2.
 # Keep this SHORT — one current-truth block. Superseded history is DELETED, not archived.
 
-## ⭐⭐ CURRENT TRUTH 2026-07-11 ~06:35Z — PARALLEL 5-LANE posture; pi flagship DONE; Codex Option B KILLED
+## ⭐⭐ CURRENT TRUTH 2026-07-12 ~08:15Z — PARALLEL 5-LANE; fmt-gate CLASS closed + daemon REDEPLOYED b25e9919; post-outage fleet-hardening in flight
 
-> **fmt-gate outage RESOLVED + PROVEN (2026-07-12 06:26–06:35Z):** daemon's merge-step auto-format
-> commit used a `fmt:` subject the lefthook commit-msg gate rejected → drift-bearing merges failed
-> fleet-wide. Fix hk-9k24q (`chore:` + `Trivial: true`, 1b97559a) on main; **daemon REDEPLOYED to
-> d1fbf715** (live 06:25:54Z, pid 35591, last-good pinned 06:27, tag daemon-20260711-04). PROOF:
-> hawat's remote wave landed 3/3 clean past the gate at 6-slot concurrency (7d0a4afa/0708c377/1a2bceb9)
-> — remote-substrate now proven e2e. **Residual (hk-2jeel, P1, → yueh):** two CONDITIONAL sibling
-> merge-path commits still fail the same gate — `commitResidualDelta` (soft-fail/work-loss) +
-> `stripRunContextFromMerge` (hard-fail/merge-abort); fix inbound, needs a follow-up redeploy to go live.
+> **fmt-gate outage + sibling CLASS fully RESOLVED; daemon REDEPLOYED to b25e9919 (2026-07-12 08:04Z):**
+> tag daemon-20260712-05, pid 19214, health-window PINNED as last-good. NOW LIVE: hk-2jeel (fmt sibling
+> `commitResidualDelta`/`stripRunContextFromMerge` — subjects proven vs validate-commit-msg.sh; GATE-0
+> satisfied by direct hook verification since the committed Go test hk-r1v2n lagged), hk-1q7bt (no_gauge
+> flood fix, kills 683/window), hk-p006e (crew-start `.managed` keeper-arm marker), hk-fpjxi (reaper),
+> hk-hjvl4/1b348917 (dispatch-lock release), + the QA-EXECUTION-GATE workflow (implement→commit_gate→
+> review→qa→close; admiral 019f551f). EMPIRICAL: 1b348917 did NOT release hk-thbbv's -32015 lock
+> (stilgar verified post-deploy) → hk-eaxc5 status-gated skip still blocks hk-thbbv→yueh T2b.
+> **Next systemic fix in flight: hk-f9xzs (merge stage discards passed APPROVE on retry → 31 full
+> re-runs; = the commit_gate traversal-cap loop wedging hk-nxcvi) → stilgar.**
 > NOTE: daemon working-tree resets wipe UNCOMMITTED .harmonik/context edits — commit tier-2 updates.
+> `harmonik crew start` sets the keeper `.managed` marker but does NOT spawn the watcher — use
+> `harmonik start crew` for a fully keeper-armed relaunch (stilgar/hawat currently watcher-less).
 
 **Operator priority order (2026-07-11, direction-log): run all 5 lanes IN PARALLEL, file-disjoint,
 every non-conflicting slot full. IRON RULE — NEVER freeze the whole fleet for one bead; a stuck leg
@@ -28,11 +32,11 @@ reviews at its own pace (per-item gate), never a fleet-wide hold.**
 
 | # | Lane | crew | queue | model | epic / state |
 |---|---|---|---|---|---|
-| 1 | **PI** | kynes | kynes-q | Opus | Flagship pi-hang **DONE** (hk-hcrvb CLOSED, deployed 59089968, prod-canary green) · pi-provider-switch **LANDED** (hk-m6uu2.*). Now on follow-up harness beads (hk-cdpxu empty-PATH). ✅ ready |
-| 2 | **REMOTE** | hawat | hawat-q | Opus | remote-substrate + hardening (hk-rs-phase1-qfn1), 41/47 — buggy, heavy LOCAL testing. gb-mbp live re-enable OPERATOR-HELD (hawat does NOT flip). ✅ ready |
-| 3 | **CODEX-AS-CREW** | piter | piter-q | Opus | epic hk-q3ovr. **Option B PERMANENTLY KILLED** (operator 07-11 hard-no — never revisit). Now: full kerf work `codex-app-server` — deep research on resident app-server orchestrator + can-it-retire-the-keeper. hk-l63b9 OPEN-PARKED until design names the path. |
-| 4 | **QUALITY-ENFORCEMENT** | stilgar | stilgar-q | Opus | fail-closed gates (hk-clska line), 10/18. Currently hk-nwgj7 in-flight. ✅ ready |
-| 5 | **COMMS-TEST-HARNESS** | yueh | yueh2-q | Sonnet | comms bus L0/L1/L2 tests. **B1+B2 operator-RATIFIED + dispatched**: B1=hk-8xspi (recv --agent own cursor), B2=hk-qw63o (idle --follow presence-beat) — removes a class of crew comms-wedges. ✅ ready |
+| 1 | **FLEET-HARDENING / logmine** | kynes | kynes2-q | Opus | PI flagship DONE + fleet-hardening (hk-p006e keeper-arm + hk-fpjxi reaper) LANDED. Now owns **logmine epic hk-mhmaw** (recurring mine→document→file). iter-22 delivered (findings-iter22.md, 5 beads filed). Currently on **hk-q6nve** (agent-reviewer unregistered in worktree = root of 44% missing-trailer). ✅ |
+| 2 | **REMOTE** | hawat | hawat-q | Opus | remote-substrate PROVEN e2e 3/3 this session (7d0a4afa/0708c377/1a2bceb9). Now running **sustained-clean concurrent wave** to bank sustained-6 proof on b25e9919 (re-driven from a submit-wedge 08:14Z). gb-mbp live re-enable OPERATOR-HELD. ~247k tokens, watcher-less. ✅ |
+| 3 | **CODEX-AS-CREW** | piter | piter-q | Opus | epic hk-q3ovr. Option B PERMANENTLY KILLED. **codex-app-server PHASE-1 COMPLETE + proven** (tap/serializer/reactor/twin + L0/L1/L2 green vs real corpus; T0-T5 closed). Verdict: layering cheap+sound, cost was ~all daemon/merge infra. **IDLE-ARMED on Decision #2 (Phase-2 go/no-go: hk-nzzos resident client+sidecar + Spike B) — SURFACED to operator, awaiting ruling.** |
+| 4 | **REVIEW-LOOP + DISPATCH-LOCK** | stilgar | stilgar-q | Opus | RESTARTED 08:12Z (fresh ctx, keeper-marker set, watcher-less). Re-laned from stale gate-clear mission onto the systemic **hk-f9xzs** (merge discards APPROVE on retry = commit_gate traversal-cap loop) → **hk-thbbv** (flagless REQUEST_CHANGES wedge, still -32015 blocked via hk-eaxc5) → hk-nxcvi. Unblocks yueh T2b. internal/daemon right-of-way. ✅ |
+| 5 | **COMMS-TEST + presence** | yueh | yueh2-q | Sonnet | comms bus tests. Main T2b/T3 chain still GATED on hk-thbbv (stilgar). Now on **hk-r1v2n** (GATE-0 durability test, decoupled from redeploy — re-landing past the empty-HEAD worktree race) + **hk-ru45u** (presence join-only flood = 53% of ALL log; reason:refresh + single-emit/tick + leave-on-teardown). ✅ |
 
 **Oversight (not counted as lanes):** watch (triage, watch-q) + admiral (strategy). Both up.
 **admiral tmux pane = LIVE OPERATOR session** — do NOT send keystrokes or relaunch while operator is in it.

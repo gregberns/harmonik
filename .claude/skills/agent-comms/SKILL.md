@@ -328,7 +328,7 @@ cross-reference.)
 - Use `$HARMONIK_AGENT` as identity (already set in the launch environment).
 - Use `--follow` for persistent message loops; without it `recv` is one-shot.
 - Call `comms join` at startup and `comms leave` at clean shutdown.
-- **Refresh presence** — an armed `comms recv --follow` self-refreshes every ~60s (hk-qw63o); without `--follow` armed, re-run `comms join` on a ≤90s timer instead. Presence expires ~120s.
+- **Refresh presence** — an armed `comms recv --follow` self-refreshes every ~60s (hk-qw63o); without `--follow` armed, re-run `comms join --reason=refresh` on a ≤90s timer instead (hk-ru45u: use `--reason=refresh` so the heartbeat is not persisted to events.jsonl). Presence expires ~120s.
 
 ## What agents MUST NOT do
 

@@ -43,9 +43,14 @@ ratifies PLAN.md and lifts the freeze.
 honest-probe re-land, OUT-OF-PIPELINE) → M1 delete test-theater (concurrent) → M2 agent-input
 substrate → M3 run-state-machine extraction → M4 remote rebuild. M2/M3/M4 are kerf-first.
 
-**Crux open decision (PLAN Q1):** the **Acceptance Oracle** — the standard of proof that a fix
-is real (proposed: N-consecutive runs + fault-injection + out-of-band verification). Every DoD
-depends on the operator's answer.
+**REFRAMED 2026-07-12 ~23:35Z (operator "Yes"):** the north star is no longer "carve the
+codebase, gated by an Acceptance Oracle." It is **build a generative SYSTEM** — a small set
+of load-bearing principles + a self-pruning metabolism + agents that reason from them — that
+**builds the tool as the encoding of the system's own attributes**. Alignment across ~1000
+varied sessions is emergent (ants/flocks: shared principles + signals, a gradient not a rail).
+The carve (STEP-0/M1–M4) is **downstream** — the proving ground, not the goal. PLAN Q1's
+"Acceptance Oracle" is **superseded**. Full capture: `plans/2026-07-12-generative-system/CAPTURE.md`.
+The real STEP-0 is now the **charter** (principles + metabolism); next-steps discussion pending.
 
 **PARKED / superseded:** the entire pre-freeze lane set (Pi, Remote, Codex-as-crew,
 Quality-enforcement, comms-test-harness, captain-startup-revamp, eval-program, flywheel,

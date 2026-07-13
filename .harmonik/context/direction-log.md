@@ -15,6 +15,27 @@
 > snapshot at .harmonik/archive/2026-07-12-freeze-and-carve/. Struck 2026-07-12 by the
 > admiral audit under the retention/anti-rot rule — all superseded by the pivot below.
 
+## 2026-07-12 ~23:35Z — operator+admiral: REFRAME — the goal is a generative SYSTEM, not the tool; carve is downstream · expires: 2026-07-14T00:00:00Z
+WHAT: Operator confirmed ("Yes") a reframe of the whole project. We are not building a tool; we are
+      building a complex ADAPTIVE SYSTEM (principles + a self-pruning metabolism + agents that reason
+      from principles) that BUILDS the tool as the encoding of the system's own attributes. Three hard
+      problems named: (1) principles not structure — kerf gives a track, no compass (a 2300-line fn
+      lived the whole life, no agent ever flagged it); (2) alignment across ~1000 varied sessions is
+      EMERGENT like ants/flocks — shared principles + signals, a gradient not a rail; (3) stay stable
+      AND improve WITHOUT accreting — promote only what generalizes, prune/fold by default, cap the
+      count, selection not authorship. Recursion: the builder must run on the same principles it encodes.
+WHY:  the treadmill is not a code problem, it's a BUILDER problem — the process that built harmonik
+      carries no principles, so it produced (and could not reject) an unmaintainable system. Fixing the
+      artifact without fixing the generative system just regenerates slop.
+ORDER: freeze still HOLDS; nothing dispatches. The real STEP-0 is now the CHARTER (the few load-bearing
+      principles + the metabolism that keeps them few/live/self-pruning). The freeze-and-carve carve
+      (STEP-0/M1–M4, plans/2026-07-12-codebase-census/) is DOWNSTREAM — the first thing the system
+      produces and proves itself on, not the north star. PLAN.md v2's "Acceptance Oracle" (Q1) is
+      SUPERSEDED (wrong question: "is a fix real"); its residue folds into principle-space.
+RETURN-PATH: capture DONE (plans/2026-07-12-generative-system/CAPTURE.md). NEXT: operator+admiral talk
+      next steps, then draft the charter. Do NOT re-stand any lane; do NOT dispatch the carve until the
+      charter exists and the operator lifts the freeze.
+
 ## 2026-07-12 ~20:5xZ — operator+admiral: PLAN-FIRST resolved → clean slate executed; PLAN.md v2 awaiting ratification · expires: 2026-07-14T00:00:00Z
 WHAT: the 18:00Z pivot's a/b/c offer is RESOLVED — operator chose PLAN-FIRST + a clean slate.
       Executed: fleet torn down (all crews down, run worktrees reaped, 267 beads closed, ~2GB history

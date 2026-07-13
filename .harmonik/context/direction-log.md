@@ -15,6 +15,24 @@
 > snapshot at .harmonik/archive/2026-07-12-freeze-and-carve/. Struck 2026-07-12 by the
 > admiral audit under the retention/anti-rot rule — all superseded by the pivot below.
 
+## 2026-07-13 ~ (post-panel) — operator: PARK the generative-system framing; codebase-overhaul is the line · expires: 2026-07-15T00:00:00Z
+WHAT: Operator decided the "generative-system" meta-approach (principles/metabolism/emergence) needs to
+      be approached DIFFERENTLY and is NOT moving forward now. Its concrete engineering FINDINGS are kept
+      as inputs to the codebase overhaul. All exploration docs relocated under the census they came from:
+      plans/2026-07-12-codebase-census/generative-system-exploration/ (docs 1–4 + CAPTURE + CHARTER-draft).
+WHY:  the emergent-systems/simulation framing was adversarially found to be mostly yak-shaving (doc 2);
+      the VALUABLE residue is ordinary strong engineering — a stable event/port substrate, record→replay,
+      property-tested invariants, and replay-vs-frozen-baseline measurement (doc 4). That belongs to the
+      codebase overhaul, not a separate "system" project.
+ORDER: next is a LARGER codebase-overhaul PLAN that decides REWRITE-vs-REFACTOR per section (STEP-0
+      pipeline fixes, M1 test-theater, M2 agent-input, M3 run-lifecycle god-fn, M4 remote), tuned in
+      before dispatch. Start small (panel pick: session-restart vertical, resume-hang = its first property
+      test) but the per-section rewrite/refactor call is the open work. Measurement standard: replay +
+      fault-injection vs baseline (.harmonik/events/baseline-2026-07-13/; 54% run-completion, 84% restart,
+      347 clear-unconfirmed). Codex substrate template already built (internal/apptap|codexwire|codexreactor).
+RETURN-PATH: supersedes the ~23:35Z generative-system reframe below (that entry retained as record).
+      Freeze still HOLDS; keeper HELD. Next session: draft the overhaul plan; await operator ratification.
+
 ## 2026-07-12 ~23:35Z — operator+admiral: REFRAME — the goal is a generative SYSTEM, not the tool; carve is downstream · expires: 2026-07-14T00:00:00Z
 WHAT: Operator confirmed ("Yes") a reframe of the whole project. We are not building a tool; we are
       building a complex ADAPTIVE SYSTEM (principles + a self-pruning metabolism + agents that reason

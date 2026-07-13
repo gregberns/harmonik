@@ -43,14 +43,16 @@ ratifies PLAN.md and lifts the freeze.
 honest-probe re-land, OUT-OF-PIPELINE) → M1 delete test-theater (concurrent) → M2 agent-input
 substrate → M3 run-state-machine extraction → M4 remote rebuild. M2/M3/M4 are kerf-first.
 
-**REFRAMED 2026-07-12 ~23:35Z (operator "Yes"):** the north star is no longer "carve the
-codebase, gated by an Acceptance Oracle." It is **build a generative SYSTEM** — a small set
-of load-bearing principles + a self-pruning metabolism + agents that reason from them — that
-**builds the tool as the encoding of the system's own attributes**. Alignment across ~1000
-varied sessions is emergent (ants/flocks: shared principles + signals, a gradient not a rail).
-The carve (STEP-0/M1–M4) is **downstream** — the proving ground, not the goal. PLAN Q1's
-"Acceptance Oracle" is **superseded**. Full capture: `plans/2026-07-12-generative-system/CAPTURE.md`.
-The real STEP-0 is now the **charter** (principles + metabolism); next-steps discussion pending.
+**UPDATED 2026-07-13 (operator):** the "generative-system" meta-framing is **PARKED** (to be
+approached differently later; not moving forward now). The line is the **codebase overhaul**.
+Its concrete findings are kept as inputs: a stable **event/port substrate + record→replay +
+property-tested invariants**, and **replay-vs-frozen-baseline measurement** (not live A/B). The
+Codex substrate template is already built (`internal/apptap|codexwire|codexreactor|codexdigitaltwin`).
+**Next: a larger overhaul plan deciding REWRITE-vs-REFACTOR per section** (STEP-0 pipeline / M1
+test-theater / M2 agent-input / M3 run-lifecycle god-fn / M4 remote), tuned before dispatch;
+start small (session-restart vertical, resume-hang = its first property test). Exploration
+docs: `plans/2026-07-12-codebase-census/generative-system-exploration/` (docs 1–4). Baseline:
+`.harmonik/events/baseline-2026-07-13/`.
 
 **PARKED / superseded:** the entire pre-freeze lane set (Pi, Remote, Codex-as-crew,
 Quality-enforcement, comms-test-harness, captain-startup-revamp, eval-program, flywheel,

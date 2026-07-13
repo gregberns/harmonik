@@ -17,7 +17,7 @@ triggers:
   - id: alignment-audit
     source: cron
     every: 1h
-    enabled: true
+    enabled: false  # OFF 2026-07-13 — fleet frozen (freeze-and-carve); nothing runs, nothing to audit. Re-enable when execution resumes.
     deliver: comms
     message: "Run the hourly alignment audit."
     activity_guard: 24h

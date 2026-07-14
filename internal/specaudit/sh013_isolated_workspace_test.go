@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // sh013_isolated_workspace_test.go — spec-corpus sensor for SH-013.

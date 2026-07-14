@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.40 binding test — ON-027 step 7: orchestrator exits (or enters paused).

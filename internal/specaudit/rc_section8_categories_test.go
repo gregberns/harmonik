@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // Reconciliation §8 category binding tests — spec-corpus sensors.

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.72 binding test — ON-INV-006 sensor: no subsystem introduces a

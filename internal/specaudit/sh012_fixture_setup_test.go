@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.12 binding test — SH-012: fixture setup precedes orchestration.

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.58 binding test — ON-042 multi-tenancy is explicitly deferred post-MVH.

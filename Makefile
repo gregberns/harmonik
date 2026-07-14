@@ -380,6 +380,16 @@ lint:  ## golangci-lint run (shorthand)
 	$(TOOLS_DIR)/golangci-lint run
 
 # ---------------------------------------------------------------------------
+# specaudit-lint — spec-drift lint (M1-1)
+# Runs the 129 relocated spec-prose sensor tests behind the `specaudit` build
+# tag (skipped by the default `go test ./...`). See
+# internal/specaudit/RELOCATED-ALLOWLIST.md.
+# ---------------------------------------------------------------------------
+.PHONY: specaudit-lint
+specaudit-lint:  ## Run the tagged spec-drift sensor suite (-tags specaudit; M1-1)
+	scripts/specaudit-lint.sh
+
+# ---------------------------------------------------------------------------
 # Agent review — LOCAL ONLY
 # Invokes the agent-reviewer skill against the diff vs. the last commit,
 # then cross-checks the stored verdict via check-verdict.sh (hk-q6axs.4).

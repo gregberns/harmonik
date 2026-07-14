@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.38 binding test — SH-INV-002: workspace state fully reset on teardown.

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-iljnj binding test — HC-045b: hook-bridge connection regime for short-lived

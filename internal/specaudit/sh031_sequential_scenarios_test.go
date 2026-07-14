@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.33 binding test — SH-031: scenarios run sequentially at MVH.

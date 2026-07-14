@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-iuaed.6 — Sensor 1: BI-010d reset-op-routes-through-adapter corpus scan.

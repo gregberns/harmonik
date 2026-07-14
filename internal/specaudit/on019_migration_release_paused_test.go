@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.23 binding test — ON-019 migration releases are operator-paused boundaries.

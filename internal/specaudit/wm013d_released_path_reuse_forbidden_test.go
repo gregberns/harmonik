@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.22 binding test — WM-013d released-workspace path re-use is forbidden.

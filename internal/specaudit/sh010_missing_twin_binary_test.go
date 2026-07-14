@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.10 binding test — SH-010: missing twin binary fails with `twin-binary-not-found`.

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.47 binding test — EV-INV-001 events are observational, not authoritative.

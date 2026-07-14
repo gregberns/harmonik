@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.36 binding test — HC-029 agent_started event MUST NOT include

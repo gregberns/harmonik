@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.17 binding test — ON-013c operator-command idempotency on no-op transitions.

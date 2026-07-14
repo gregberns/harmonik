@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // AR-027 binding test — four-surface byte-identity of the `agent_type` field name.

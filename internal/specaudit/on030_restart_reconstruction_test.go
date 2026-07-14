@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.44 + hk-sx9r.45 binding test — ON-030 restart reconstruction path (git + Beads,

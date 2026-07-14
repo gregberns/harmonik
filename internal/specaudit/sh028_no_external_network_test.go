@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.30 binding test — SH-028: harness MUST NOT depend on external network access.

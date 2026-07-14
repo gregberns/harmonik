@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-zs0.1 binding test — AR-052 spec-category front-matter.

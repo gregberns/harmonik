@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.3 binding test — SH-003: scenario file is declarative-loadable.

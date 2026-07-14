@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-872.35 binding test — Beads-CLI skill present in every agent's launch context.

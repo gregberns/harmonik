@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.36 binding test — SH-034: ScenarioResult durability and emission.

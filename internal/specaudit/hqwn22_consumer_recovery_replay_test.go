@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.22 binding test — EV-014d consumer-recovery replay contract (closes EV-INV-002 consumer side).

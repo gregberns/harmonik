@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.42 binding test — HC-035 twins (as real-handler substitutes) implement the

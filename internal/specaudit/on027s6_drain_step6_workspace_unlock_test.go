@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.39 binding test — ON-027 step 6: workspace manager unlocks leased workspaces.

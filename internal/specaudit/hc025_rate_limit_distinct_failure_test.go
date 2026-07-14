@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.30 binding test — HC-025 rate-limit events are distinct from failure events.

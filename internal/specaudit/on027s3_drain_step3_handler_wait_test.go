@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.35 binding test — ON-027 step 3: agent runners wait for handler subprocesses.

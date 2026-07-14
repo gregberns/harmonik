@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.35 binding test — SH-033: signal handling and graceful shutdown.

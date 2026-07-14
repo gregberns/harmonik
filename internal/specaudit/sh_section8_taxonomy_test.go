@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.53 binding test — SH §8 failure-class taxonomy + §8.0 precedence table.

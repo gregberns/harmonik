@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.39 binding test — SH-INV-003 twin-only invariant.

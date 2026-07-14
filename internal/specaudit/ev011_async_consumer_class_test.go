@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.14 binding test — EV-011 asynchronous consumer class.

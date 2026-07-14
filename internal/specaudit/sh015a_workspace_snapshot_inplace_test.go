@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.16 binding test — SH-015a: workspace snapshot mechanism (in-place worktree).

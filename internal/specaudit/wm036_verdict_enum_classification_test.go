@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.48 binding test — WM-036 re-run vs intra-run classification is deterministic

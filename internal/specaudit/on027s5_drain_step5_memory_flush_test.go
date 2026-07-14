@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.38 binding test — ON-027 step 5: memory layer flushes indexing.

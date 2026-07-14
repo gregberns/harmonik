@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.54 binding test — WM-040 interrupt_state reset to none requires reconciliation

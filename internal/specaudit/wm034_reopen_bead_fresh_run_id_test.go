@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.46 binding test — WM-034 reopen-bead verdict triggers fresh worktree and

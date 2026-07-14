@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mup.25 binding test — PL-014a per-daemon concurrency ceiling (rlimit-derived default).

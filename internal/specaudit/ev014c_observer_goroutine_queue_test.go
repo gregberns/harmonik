@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.21 binding test — EV-014c observer dispatch uses per-observer goroutine + bounded queue.

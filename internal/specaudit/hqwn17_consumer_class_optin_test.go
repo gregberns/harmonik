@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.17 binding test — EV-013 consumer class is opt-in at subscription.

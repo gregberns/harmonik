@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.57 binding test — WM-INV-003 sensor: checkpoint commits obey git

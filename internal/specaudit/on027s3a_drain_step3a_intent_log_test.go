@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.36 binding test — ON-027 step 3a: br-CLI adapter intent-log drain.

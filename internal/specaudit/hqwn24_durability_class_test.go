@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.24 binding test — EV-016 + EV-016a durability class and fsync semantics.

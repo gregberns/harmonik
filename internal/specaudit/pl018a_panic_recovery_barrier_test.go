@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mup.30 binding test — PL-018a panic recovery barrier in the daemon main goroutine.

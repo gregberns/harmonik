@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.55 binding test — HC-046 + HC-047 skill provisioning + resolution surface

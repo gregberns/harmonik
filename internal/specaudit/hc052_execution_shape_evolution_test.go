@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.62 binding test — HC-052 execution-shape evolution re-implements the

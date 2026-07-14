@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mup.19 binding test — PL-010 degraded state on Cat 0 infrastructure failure

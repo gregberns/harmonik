@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.33 binding test — HC-026b drain-forced silent-hang synthesis is ON-classified,

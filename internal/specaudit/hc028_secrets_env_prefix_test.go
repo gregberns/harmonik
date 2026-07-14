@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.35 binding test — HC-028 secrets injected via environment variable

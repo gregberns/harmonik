@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.14 binding test — ON-012 improvement-pause is a subtype of pause.

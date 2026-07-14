@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.12 binding test — EV-009 subscription is declared at registration, not inferred.

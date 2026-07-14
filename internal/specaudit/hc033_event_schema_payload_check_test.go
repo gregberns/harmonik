@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.40 binding test — HC-033 compile-time event-schema payload check.

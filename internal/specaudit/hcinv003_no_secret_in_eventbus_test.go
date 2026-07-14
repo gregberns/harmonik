@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.66 binding test — HC-INV-003 sensor: no secret value crosses the

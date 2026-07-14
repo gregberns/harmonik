@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.24 binding test — SH-022 workspace-state predicates inspect the captured

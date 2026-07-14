@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.4 binding test — HC-004 Launch is idempotent on (run_id, node_id).

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.6 binding test — SH-006: suite-load is a discrete discovery + parse + validate phase.

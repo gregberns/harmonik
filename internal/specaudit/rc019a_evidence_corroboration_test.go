@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-63oh.20 binding test — RC-019a: every store_divergence_detected emission

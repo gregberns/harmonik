@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.51 binding test — WM-038 interrupt_state is set by operator and

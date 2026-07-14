@@ -190,6 +190,54 @@ func countType(types []core.EventType, want core.EventType) int {
 	return n
 }
 
+// writeReplayedStream replays ALL corpus cycles through the flat pipe and
+// re-envelopes every emitted event into an events.jsonl at path (the T10
+// envelope-writer, shared by TestL1_ReplayedStreamInvariants and the T13
+// out-of-band metrics export). Envelopes carry deterministic, ordering-
+// controlled EventIDs and virtual timestamps so the file is byte-stable
+// across runs. Returns the number of envelopes written.
+func writeReplayedStream(t *testing.T, path string) int {
+	t.Helper()
+	sums := allSummaries(t)
+	versions := core.AllPayloadSchemaVersions()
+
+	f, err := os.Create(path) //nolint:gosec // G304: test-owned output path
+	if err != nil {
+		t.Fatalf("create replayed log: %v", err)
+	}
+	enc := json.NewEncoder(f)
+
+	base := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	var seq uint32
+	for _, sum := range sums {
+		for _, a := range flatReplayCycle(t, sum) {
+			if a.Kind != keeper.ActEmit {
+				continue
+			}
+			ver, ok := versions[string(a.Type)]
+			if !ok {
+				t.Fatalf("%s: reactor emitted unregistered event type %q", sum.CKey, a.Type)
+			}
+			seq++
+			ev := core.Event{
+				EventID:         mkEventID(seq),
+				SchemaVersion:   ver,
+				Type:            string(a.Type),
+				TimestampWall:   base.Add(time.Duration(seq) * time.Millisecond),
+				SourceSubsystem: "internal/keeper",
+				Payload:         json.RawMessage(a.Payload),
+			}
+			if err := enc.Encode(&ev); err != nil {
+				t.Fatalf("encode envelope: %v", err)
+			}
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close replayed log: %v", err)
+	}
+	return int(seq)
+}
+
 // mkEventID builds a deterministic, ordering-controlled UUIDv7-shaped EventID
 // whose big-endian counter in the leading bytes drives the internal/replay
 // EventID sort (the replay_test fixture idiom, widened to a uint32 counter).

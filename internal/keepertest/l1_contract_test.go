@@ -34,15 +34,11 @@ package keepertest_test
 // schedule cannot reproduce — those live in the L2 discrete-event tier.
 
 import (
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/keepertwin"
 	"github.com/gregberns/harmonik/internal/replay"
 )
@@ -183,44 +179,8 @@ func TestL1_GoldenOutcomes(t *testing.T) {
 // violations — in particular zero SR9 unterminated (§7 metric 3: 1 → 0).
 func TestL1_ReplayedStreamInvariants(t *testing.T) {
 	t.Parallel()
-	sums := allSummaries(t)
-	versions := core.AllPayloadSchemaVersions()
-
 	path := filepath.Join(t.TempDir(), "events.jsonl")
-	f, err := os.Create(path) //nolint:gosec // G304: t.TempDir-scoped
-	if err != nil {
-		t.Fatalf("create replayed log: %v", err)
-	}
-	enc := json.NewEncoder(f)
-
-	base := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
-	var seq uint32
-	for _, sum := range sums {
-		for _, a := range flatReplayCycle(t, sum) {
-			if a.Kind != keeper.ActEmit {
-				continue
-			}
-			ver, ok := versions[string(a.Type)]
-			if !ok {
-				t.Fatalf("%s: reactor emitted unregistered event type %q", sum.CKey, a.Type)
-			}
-			seq++
-			ev := core.Event{
-				EventID:         mkEventID(seq),
-				SchemaVersion:   ver,
-				Type:            string(a.Type),
-				TimestampWall:   base.Add(time.Duration(seq) * time.Millisecond),
-				SourceSubsystem: "internal/keeper",
-				Payload:         json.RawMessage(a.Payload),
-			}
-			if err := enc.Encode(&ev); err != nil {
-				t.Fatalf("encode envelope: %v", err)
-			}
-		}
-	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("close replayed log: %v", err)
-	}
+	written := writeReplayedStream(t, path)
 
 	rep, err := replay.Replay(path, core.EventID{}, true, replay.DefaultCheckers())
 	if err != nil {
@@ -238,7 +198,7 @@ func TestL1_ReplayedStreamInvariants(t *testing.T) {
 		t.Fatalf("replayed stream: skipped=%d malformed=%d mismatches=%d, want all 0",
 			rep.Skipped, rep.Malformed, len(rep.SchemaMismatches))
 	}
-	if rep.Events != int(seq) {
-		t.Fatalf("replay saw %d events, wrote %d", rep.Events, seq)
+	if rep.Events != written {
+		t.Fatalf("replay saw %d events, wrote %d", rep.Events, written)
 	}
 }

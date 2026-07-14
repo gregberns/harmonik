@@ -7,191 +7,144 @@
 // between raw captured bytes and the reactor's typed event abstractions.
 //
 // Fault injection is supported for testing the reactor under adverse transport
-// conditions. Four modes are available:
+// conditions. The four fault modes are the vertical-neutral modes defined by
+// the generic substrate replay engine; for the codex instantiation they mean:
 //
-//   - FaultDropAfter N: emit the first N events, inject Disconnected, close.
+//   - FaultDropAfter N: emit the first N events, then the connection-lost event
+//     (Disconnected), and close.
 //   - FaultStall N: block before emitting the Nth event until ctx is cancelled.
-//   - FaultTruncate N: replace the Nth event with an Error event (simulates a
-//     malformed/truncated JSONL line), then close.
+//   - FaultTruncate N: replace the Nth event with the transport-error event
+//     (Error, simulating a malformed/truncated JSONL line), then close.
 //   - FaultDup N: emit the Nth event twice with the same Seq (reactor I2 dedup
 //     must drop the second copy).
 //
 // # Architecture
 //
 //	corpus JSONL
-//	     ↓  codexwire.Parse (T2)
-//	  Frame
-//	     ↓  frameToEvent
+//	     ↓  codexCodec.DecodeLine (codexwire.Parse + frameToEvent)
 //	  Event
-//	     ↓  fault injection
+//	     ↓  substrate.Twin[Event] (fault injection, generic seam)
 //	  EventSource channel
 //	     ↓  Reactor.Run (T3)
 //	  Actions → FakeEffector
+//
+// FaultMode/FaultConfig and the replay engine now live in internal/substrate;
+// this package re-exports the fault names, supplies a codexCodec that fuses the
+// former replay-loop leak points (decode, filter, map, and the two synthetic
+// terminal events), and keeps a thin wrapper Twin so every call site — and thus
+// codextest — compiles unchanged (RS-021; substrate-design §2.3).
 //
 // Bead: hk-swc8p [codex-app-server T4]
 package codexdigitaltwin
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"io"
 
 	"github.com/gregberns/harmonik/internal/codexreactor"
 	"github.com/gregberns/harmonik/internal/codexwire"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ─── Fault injection ─────────────────────────────────────────────────────────
+// ─── Fault injection (re-exported from substrate) ─────────────────────────────
 
-// FaultMode selects the fault injection behaviour of the Twin.
-type FaultMode int
+// FaultMode is re-exported (a type alias) from the generic substrate replay
+// engine so existing call sites keep compiling unchanged.
+type FaultMode = substrate.FaultMode
 
+// FaultConfig is re-exported (a type alias) from the generic substrate replay
+// engine so existing call sites keep compiling unchanged.
+type FaultConfig = substrate.FaultConfig
+
+// Fault-mode constants re-exported from substrate. Go has no enum re-export
+// sugar, so these are restated verbatim; this is what lets composite literals
+// such as FaultConfig{Mode: FaultDropAfter, EventN: 2} keep compiling.
 const (
-	// FaultNone disables fault injection; the corpus is replayed unmodified.
-	FaultNone FaultMode = iota
-
-	// FaultDropAfter emits the first EventN reactor events, then injects a
-	// Disconnected event and closes the source.
-	FaultDropAfter
-
-	// FaultStall blocks before emitting the EventN-th reactor event until ctx
-	// is cancelled, then closes the source.
-	FaultStall
-
-	// FaultTruncate replaces the EventN-th reactor event with an Error event
-	// (simulating a malformed / truncated wire line), then closes the source.
-	FaultTruncate
-
-	// FaultDup emits the EventN-th reactor event twice with the same Seq field.
-	// The reactor's I2 dedup invariant must drop the second copy.
-	FaultDup
+	FaultNone      = substrate.FaultNone
+	FaultDropAfter = substrate.FaultDropAfter
+	FaultStall     = substrate.FaultStall
+	FaultTruncate  = substrate.FaultTruncate
+	FaultDup       = substrate.FaultDup
 )
 
-// FaultConfig parameterises fault injection. EventN is 1-based (the first
-// emitted reactor event is event 1). EventN is ignored when Mode == FaultNone.
-type FaultConfig struct {
-	Mode   FaultMode
-	EventN int
+// ─── codexCodec ────────────────────────────────────────────────────────────────
+
+// substrateTruncateSentinel is the message substrate.Twin passes to ErrorEvent
+// on the FaultTruncate path (internal/substrate/replay.go). The codex twin
+// historically reported truncation as "twin: truncated frame"; the codec
+// translates the neutral substrate sentinel back to the codex phrasing so the
+// existing fault tests stay green without edits. A genuine fatal decode error
+// carries the real parser message and is passed through unchanged.
+const substrateTruncateSentinel = "substrate: truncated frame"
+
+// codexCodec implements substrate.ReplayCodec[codexreactor.Event]. It fuses the
+// codex replay leak points — wire decode, server-notification filter, and the
+// Frame→Event map — into DecodeLine, and supplies the two codex-typed synthetic
+// terminal events. The seq counter is codec-internal state (it no longer
+// threads through the substrate surface; RS-008, substrate-design §2.3).
+type codexCodec struct {
+	seq uint64
+}
+
+// DecodeLine fuses decode + server-notification filter + Frame→Event map.
+//
+//	err  != nil  → fatal transport failure (twin emits ErrorEvent, closes)
+//	emit == false → skip (client frame, server response, or non-mapped notif)
+//	emit == true  → deliver ev
+func (c *codexCodec) DecodeLine(line []byte) (codexreactor.Event, bool, error) {
+	frame, err := codexwire.Parse(line)
+	if err != nil {
+		// Fatal transport failure: substrate emits ErrorEvent(err) and closes.
+		return codexreactor.Event{}, false, err
+	}
+	// Only server notifications translate to reactor events; client frames and
+	// server responses are skipped (not fatal).
+	if frame.Kind != codexwire.FrameKindServerNotification {
+		return codexreactor.Event{}, false, nil
+	}
+	ev, mapped := frameToEvent(frame, &c.seq)
+	// mapped==false → not a reactor-relevant notification (configWarning, …) → skip.
+	return ev, mapped, nil
+}
+
+// ErrorEvent is the codex transport-error terminal event. Its Seq is the codec's
+// current seq (advanced by the most recent frameToEvent), satisfying the
+// FaultTruncate "current seq" requirement for free.
+func (c *codexCodec) ErrorEvent(msg string) codexreactor.Event {
+	if msg == substrateTruncateSentinel {
+		msg = "twin: truncated frame"
+	}
+	return codexreactor.Event{Seq: c.seq, Type: codexreactor.EventTypeError, Message: msg}
+}
+
+// DisconnectEvent is the codex connection-lost event. Seq=0 bypasses reactor I2
+// dedup (connection-lifecycle events always process).
+func (c *codexCodec) DisconnectEvent() codexreactor.Event {
+	return codexreactor.Event{Seq: 0, Type: codexreactor.EventTypeDisconnected}
 }
 
 // ─── Twin ────────────────────────────────────────────────────────────────────
 
 // Twin replays a captured codex app-server JSONL corpus as a
-// codexreactor.EventSource, optionally injecting transport faults.
+// codexreactor.EventSource, optionally injecting transport faults. It is a thin
+// wrapper over substrate.Twin[codexreactor.Event] parameterised with codexCodec.
 type Twin struct {
-	corpus io.Reader
-	fault  FaultConfig
+	inner *substrate.Twin[codexreactor.Event]
 }
 
 // New creates a Twin that reads corpus and applies the given fault injection.
-// Pass FaultConfig{} (or FaultConfig{Mode: FaultNone}) for a clean replay.
+// Pass FaultConfig{} (or FaultConfig{Mode: FaultNone}) for a clean replay. The
+// signature is unchanged from the pre-extraction Twin, so every call site
+// compiles untouched.
 func New(corpus io.Reader, fault FaultConfig) *Twin {
-	return &Twin{corpus: corpus, fault: fault}
+	return &Twin{inner: substrate.NewTwin(corpus, fault, &codexCodec{})}
 }
 
-// Events implements codexreactor.EventSource.
-//
-// The goroutine started here terminates when:
-//   - the corpus is exhausted,
-//   - ctx is cancelled,
-//   - the fault causes an early stop.
+// Events implements codexreactor.EventSource. It delegates to the generic Twin,
+// whose goroutine terminates when the corpus is exhausted, ctx is cancelled, or
+// the fault causes an early stop.
 func (t *Twin) Events(ctx context.Context) <-chan codexreactor.Event {
-	ch := make(chan codexreactor.Event, 16)
-	go func() {
-		defer close(ch)
-		t.replay(ctx, ch)
-	}()
-	return ch
-}
-
-func (t *Twin) replay(ctx context.Context, ch chan<- codexreactor.Event) {
-	send := func(ev codexreactor.Event) bool {
-		select {
-		case ch <- ev:
-			return true
-		case <-ctx.Done():
-			return false
-		}
-	}
-
-	scanner := bufio.NewScanner(t.corpus)
-	// Default 64 KB buffer is sufficient for the corpus (max line ~1 KB).
-
-	var seq uint64 // monotonically assigned to emitted events
-	evIdx := 0     // count of reactor events emitted so far
-
-	for scanner.Scan() {
-		if ctx.Err() != nil {
-			return
-		}
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
-
-		frame, err := codexwire.Parse(line)
-		if err != nil {
-			// Parse error: emit an Error event so the reactor can handle it.
-			seq++
-			evIdx++
-			ev := codexreactor.Event{Seq: seq, Type: codexreactor.EventTypeError, Message: err.Error()}
-			send(ev)
-			return // treat parse error as a fatal transport failure
-		}
-
-		// Only server notifications are translated to reactor events.
-		// Client frames and server responses are not emitted.
-		if frame.Kind != codexwire.FrameKindServerNotification {
-			continue
-		}
-
-		ev, mapped := frameToEvent(frame, &seq)
-		if !mapped {
-			// Not a reactor-relevant notification (configWarning, etc.) — skip.
-			continue
-		}
-
-		evIdx++
-
-		// Apply fault when we've reached the configured event index.
-		if t.fault.Mode != FaultNone && evIdx == t.fault.EventN {
-			switch t.fault.Mode {
-			case FaultDropAfter:
-				// Emit this event, inject Disconnected, then stop.
-				if !send(ev) {
-					return
-				}
-				disc := codexreactor.Event{Seq: 0, Type: codexreactor.EventTypeDisconnected}
-				send(disc)
-				return
-
-			case FaultStall:
-				// Block until ctx cancellation.
-				<-ctx.Done()
-				return
-
-			case FaultTruncate:
-				// Replace event with an error (simulates a truncated wire line).
-				errEv := codexreactor.Event{Seq: seq, Type: codexreactor.EventTypeError, Message: "twin: truncated frame"}
-				send(errEv)
-				return
-
-			case FaultDup:
-				// Send the same event twice (same Seq); reactor I2 dedup drops copy.
-				if !send(ev) {
-					return
-				}
-				if !send(ev) {
-					return
-				}
-				continue
-			}
-		}
-
-		if !send(ev) {
-			return
-		}
-	}
+	return t.inner.Events(ctx)
 }
 
 // ─── Frame → Event translation ───────────────────────────────────────────────

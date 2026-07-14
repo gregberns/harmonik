@@ -183,6 +183,24 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "substrate MUST NOT import a vertical (keeper)" }
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "substrate MUST NOT import daemon" }
 
+        # codex vertical: reactor + digital twin instantiate the substrate seam.
+        # Companion rule pinning the "verticals depend on substrate, never
+        # sideways or on the daemon" invariant (codename:session-restart-substrate).
+        # Allow: stdlib + substrate + the codex sibling packages (codexwire/
+        # codexreactor). Deny: daemon and the keeper vertical.
+        # Rationale: specs/replay-substrate.md §RS-005; substrate-design.md §1.3.
+        codex-vertical:
+          files: ["**/internal/codexreactor/**", "**/internal/codexdigitaltwin/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/codexwire"
+            - "github.com/gregberns/harmonik/internal/codexreactor"
+            - "github.com/gregberns/harmonik/internal/codexdigitaltwin"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codex vertical MUST NOT import daemon" }
+            - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "codex vertical MUST NOT import a sibling vertical (keeper)" }
+
         # agentmanifest: leaf package loading .harmonik/agents/<type>/manifest.yaml.
         # Depends only on stdlib + yaml.v3. Self-import for external test pattern.
         agentmanifest:

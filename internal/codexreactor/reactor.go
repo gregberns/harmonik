@@ -24,7 +24,11 @@
 // Bead: hk-5co9a [codex-app-server T3]
 package codexreactor
 
-import "context"
+import (
+	"context"
+
+	"github.com/gregberns/harmonik/internal/substrate"
+)
 
 // ─── Event types ─────────────────────────────────────────────────────────────
 
@@ -113,28 +117,32 @@ type Action struct {
 
 // ─── Effector ────────────────────────────────────────────────────────────────
 
-// Effector executes Actions produced by the reactor.
+// Effector executes Actions produced by the reactor. It is the codex
+// instantiation of the generic substrate seam (substrate.Effector[Action]).
+//
+// This is a type ALIAS (=), not a defined type: the alias preserves structural
+// identity so existing implementors (e.g. the L2 HarmonikBridgeSink) satisfy it
+// without change, which is what keeps codextest green (RS-021; substrate-design
+// §2.1).
 //
 // The real effector wires into the harmonik event bus and the codex stdio
 // channel. FakeEffector (in fake.go) records actions for scenario assertions.
-type Effector interface {
-	Execute(ctx context.Context, a Action) error
-}
+type Effector = substrate.Effector[Action]
 
 // ─── EventSource ─────────────────────────────────────────────────────────────
 
-// EventSource is the provider of typed Events.
+// EventSource is the provider of typed Events. It is the codex instantiation of
+// the generic substrate seam (substrate.EventSource[Event]).
+//
+// This is a type ALIAS (=), not a defined type, so any existing source
+// satisfies it unchanged (RS-021; substrate-design §2.1).
 //
 // Implementations:
 //   - Live source: wraps a codexwire stream from a running codex app-server.
 //   - Replay source: reads from a saved JSONL file (e.g. the corpus).
 //   - SyntheticSource (fake.go): delivers a pre-defined []Event slice; used in
 //     unit and scenario tests.
-type EventSource interface {
-	// Events returns a channel delivering events until ctx is cancelled or the
-	// source is exhausted. The channel is closed when delivery is complete.
-	Events(ctx context.Context) <-chan Event
-}
+type EventSource = substrate.EventSource[Event]
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -279,14 +287,13 @@ func (r *Reactor) Step(ev Event) []Action {
 // Run drives the reactor loop: reads Events from src, calls Step, and executes
 // the resulting Actions via eff. Returns when ctx is cancelled, src is
 // exhausted (channel closed), or Execute returns an error.
+//
+// It is a one-line wrapper over the generic substrate.Run driver. Go forbids
+// generic methods, so the canonical loop is the free function substrate.Run;
+// this method preserves the codex call sites (RS-002/RS-021; substrate-design
+// §2.1). r.Step is a bound method value of type func(Event) []Action — exactly
+// substrate.Run's step parameter after the E=Event, A=Action instantiation, so
+// no adapter or boxing is needed.
 func (r *Reactor) Run(ctx context.Context, src EventSource, eff Effector) error {
-	for ev := range src.Events(ctx) {
-		actions := r.Step(ev)
-		for _, a := range actions {
-			if err := eff.Execute(ctx, a); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return substrate.Run(ctx, src, r.Step, eff)
 }

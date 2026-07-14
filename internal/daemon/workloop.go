@@ -3677,6 +3677,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			wtFactory = productionWorktreeFactory
 		}
 	}
+	// RSM-010 (RT7): thread the assembled factory onto RunPorts as WorktreePort.
+	// The create call site below reaches it via rp.Worktree — byte-identical to
+	// calling wtFactory directly (ports-design §6).
+	rp.Worktree = worktreePort(wtFactory)
 	// Serialize fetchBaseOnWorker (step a, DD1 code-sync) + 'git worktree add'
 	// inside the merge exclusion domain (mergeq, RSM-018) so concurrent
 	// beadRunOne goroutines do not run concurrent git operations on the same
@@ -3709,7 +3713,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// baseSyncErr (a business outcome, handled after the critical section) does
 		// not fail the critical section itself; only skip the worktree-add on it.
 		if baseSyncErr == nil {
-			wtPath, wtCleanup, wtErr = wtFactory(qctx, activeRepo, runID.String(), headSHA)
+			wtPath, wtCleanup, wtErr = rp.Worktree.Create(qctx, activeRepo, runID.String(), headSHA)
 		}
 		return nil
 	}); subErr != nil {
@@ -3879,6 +3883,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			deps.launchSpecBuilder = buildClaudeLaunchSpec
 		}
 	}
+	// RSM-010 (RT7): thread the resolved builder onto RunPorts as LaunchPort. The
+	// single-mode build call site reaches it via rp.Launch — byte-identical to
+	// calling deps.launchSpecBuilder directly (ports-design §6). The review-loop /
+	// DOT sub-drivers still read deps.launchSpecBuilder (RT8 migrates them).
+	rp.Launch = launchPort(deps.launchSpecBuilder)
 
 	// Mode-dispatch: route to the mode-specific driver.
 	//
@@ -4012,39 +4021,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// the bead permanently with needsAttention=true so that it does NOT
 			// re-enter the ready queue. Without this cap, a structurally-stuck bead
 			// burns a full Claude session on every re-dispatch indefinitely.
+			// RSM-011: charge the review-loop-failure budget through BudgetPort
+			// (the sole run-path queueStore use). The port handles the
+			// nil-queue / nil-queueID guards and returns whether the retry-spend
+			// budget is now exhausted — byte-identical to the pre-port inline block.
 			budgetExhausted := false
-			if rlResult.needsAttention && queueID != nil && queueGroupIndex != nil &&
-				queueItemIndex >= 0 && deps.queueStore != nil {
-				lq := deps.queueStore.LockForMutation()
-				// NQ-B1: resolve the queue BY NAME (capturedQueueName), not the
-				// main-only lq.Queue() shim — otherwise the review-loop-failure
-				// budget for a non-"main" queue is read/written against the wrong
-				// queue (or nil) and the cap never trips (hk-tigaf.4).
-				normName := queue.NormaliseQueueName(queueName)
-				liveQ := lq.LockedQueueByName(normName)
-				if liveQ != nil {
-				outerBudgetLoop:
-					for gi := range liveQ.Groups {
-						if liveQ.Groups[gi].GroupIndex != *queueGroupIndex {
-							continue
-						}
-						if queueItemIndex < len(liveQ.Groups[gi].Items) &&
-							liveQ.Groups[gi].Items[queueItemIndex].BeadID == beadID {
-							liveQ.Groups[gi].Items[queueItemIndex].ReviewLoopFailures++
-							if liveQ.Groups[gi].Items[queueItemIndex].ReviewLoopFailures >= queue.MaxReviewLoopFailures {
-								budgetExhausted = true
-								liveQ.Groups[gi].Items[queueItemIndex].LastFailureReason = "review_loop_budget_exhausted"
-							}
-							break outerBudgetLoop
-						}
-					}
-					lq.LockedSetQueueByName(normName, liveQ)
-					if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
-						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist rl-failures queueID=%s: %v\n",
-							liveQ.QueueID, persistErr)
-					}
-				}
-				lq.Done()
+			if rlResult.needsAttention {
+				budgetExhausted = deps.budgetPort().ChargeReviewLoopFailure(
+					ctx, queueName, queueID, queueGroupIndex, queueItemIndex, beadID)
 			}
 
 			if budgetExhausted {
@@ -4350,11 +4334,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		rc.runner = rbc.sshRunner
 		rc.workerBinaryPath = workerHarmonikPath(rbc.worker)
 	}
-	// Use the pre-built routed specBuilder (set above, before the mode switch).
-	// deps.launchSpecBuilder is always non-nil here: the pre-build block ensures it
-	// (T12, hk-xhawy). specBuilder is a local alias for clarity.
-	specBuilder := deps.launchSpecBuilder
-	spec, artifacts, specErr := specBuilder(ctx, rc)
+	// RSM-010 (RT7): build the launch spec through LaunchPort (assembled above,
+	// before the mode switch, over the pre-built routed builder). Byte-identical to
+	// the pre-port `deps.launchSpecBuilder(ctx, rc)` (T12, hk-xhawy).
+	spec, artifacts, specErr := rp.Launch.BuildSpec(ctx, rc)
 	if specErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: buildClaudeLaunchSpec bead %s run %s: %v (reopening)\n",
 			beadID, runID.String(), specErr)

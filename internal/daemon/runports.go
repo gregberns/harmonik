@@ -19,12 +19,15 @@ package daemon
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"sync/atomic"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 )
@@ -172,6 +175,99 @@ type BudgetPort interface {
 	// is now exhausted (>= queue.MaxReviewLoopFailures). Returns false when no
 	// queue surface is wired.
 	ChargeReviewLoopFailure(ctx context.Context, queueName string, queueID *string, groupIndex *int, itemIndex int, beadID core.BeadID) bool
+}
+
+// daemonWorktree is the production WorktreePort adapter (RSM-010, RT7): it wraps
+// the per-run worktree factory closure assembled in beadRunOne (the remote
+// SSHRunner factory when a worker is selected, else productionWorktreeFactory).
+// Create is a pass-through onto that closure — byte-identical to the pre-port
+// `wtFactory(qctx, activeRepo, runID.String(), headSHA)` call site.
+type daemonWorktree struct {
+	factory func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error)
+}
+
+func (w daemonWorktree) Create(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error) {
+	return w.factory(ctx, projectDir, runID, headSHA)
+}
+
+// worktreePort wraps a per-run worktree factory closure as a WorktreePort. The
+// factory (local or remote) is assembled per-run in beadRunOne where the
+// remote-branch context is in scope (RSM-010 / ports-design §6).
+func worktreePort(factory func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error)) WorktreePort {
+	return daemonWorktree{factory: factory}
+}
+
+// daemonLaunch is the production LaunchPort adapter (RSM-010, RT7): it wraps the
+// resolved launch-spec builder (the routed builder or a test-injected one).
+// BuildSpec is a pass-through onto that builder — byte-identical to the pre-port
+// `specBuilder(ctx, rc)` call site.
+type daemonLaunch struct {
+	builder func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)
+}
+
+func (l daemonLaunch) BuildSpec(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	return l.builder(ctx, rc)
+}
+
+// launchPort wraps a resolved launch-spec builder as a LaunchPort. The builder
+// is assembled per-run in beadRunOne (it needs the routed harness registry and
+// the pre-built spec builder), so this is threaded there (RSM-010).
+func launchPort(builder func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)) LaunchPort {
+	return daemonLaunch{builder: builder}
+}
+
+// daemonBudget is the production BudgetPort adapter (RSM-011): the sole run-path
+// use of the queueStore. It folds the review-loop-failure charge (LockForMutation
+// → increment ReviewLoopFailures → compare MaxReviewLoopFailures → Persist) that
+// previously sat inline in beadRunOne, so the store never becomes a run port.
+type daemonBudget struct {
+	deps *workLoopDeps
+}
+
+// ChargeReviewLoopFailure increments the dispatched item's ReviewLoopFailures
+// counter under LockForMutation and reports whether the retry-spend budget is now
+// exhausted (>= MaxReviewLoopFailures). Returns false when no queue surface is
+// wired (nil queueStore / queueID / groupIndex). Byte-identical to the pre-port
+// inline block (hk-c1ah6 / hk-tigaf.4): resolve the queue BY NAME, mutate the
+// matching item, persist, and report exhaustion.
+func (b daemonBudget) ChargeReviewLoopFailure(ctx context.Context, queueName string, queueID *string, groupIndex *int, itemIndex int, beadID core.BeadID) bool {
+	if queueID == nil || groupIndex == nil || itemIndex < 0 || b.deps.queueStore == nil {
+		return false
+	}
+	budgetExhausted := false
+	lq := b.deps.queueStore.LockForMutation()
+	// NQ-B1: resolve the queue BY NAME (not the main-only shim) so a non-"main"
+	// queue's budget is read/written against the right queue (hk-tigaf.4).
+	normName := queue.NormaliseQueueName(queueName)
+	liveQ := lq.LockedQueueByName(normName)
+	if liveQ != nil {
+		for gi := range liveQ.Groups {
+			if liveQ.Groups[gi].GroupIndex != *groupIndex {
+				continue
+			}
+			if itemIndex < len(liveQ.Groups[gi].Items) &&
+				liveQ.Groups[gi].Items[itemIndex].BeadID == beadID {
+				liveQ.Groups[gi].Items[itemIndex].ReviewLoopFailures++
+				if liveQ.Groups[gi].Items[itemIndex].ReviewLoopFailures >= queue.MaxReviewLoopFailures {
+					budgetExhausted = true
+					liveQ.Groups[gi].Items[itemIndex].LastFailureReason = "review_loop_budget_exhausted"
+				}
+				break
+			}
+		}
+		lq.LockedSetQueueByName(normName, liveQ)
+		if persistErr := queue.Persist(ctx, b.deps.projectDir, liveQ); persistErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: Persist rl-failures queueID=%s: %v\n",
+				liveQ.QueueID, persistErr)
+		}
+	}
+	lq.Done()
+	return budgetExhausted
+}
+
+// budgetPort returns the production BudgetPort bound to these deps (RSM-011).
+func (deps *workLoopDeps) budgetPort() BudgetPort {
+	return daemonBudget{deps: deps}
 }
 
 // RunPorts is the behavioral-dependency bundle of the run shell (ports-design

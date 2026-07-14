@@ -102,8 +102,19 @@ const (
 )
 
 // synthesisTable is THE single reviewed decision table (measurement-design
-// §2.4; frozen against the T11 GREEN differential per 00b R6). It is the one
-// choke point where "recorded output → plausible input" lives. Each stratum
+// §2.4). FROZEN per 00b R6 (T11 decision, 2026-07-14): R6 requires this table
+// be frozen against a GREEN differential before the transition scaffold is
+// deleted. D13's live old-vs-new scaffold is OBSOLETE — T7 already deleted the
+// old blocking Cycler (runCycle), which is entangled with pre-T7 code and not
+// cleanly resurrectable; T7 landed with the full ~55-file keeper suite green
+// (the regression catch the scaffold existed to provide). The "green
+// differential" of record is therefore the L1 golden-vs-baseline corpus test
+// (measurement-design §3's named PERMANENT net: internal/keepertest
+// TestL1_* — new reactor reproduces all 507 recorded baseline outcomes) plus
+// the T13 no-regress metrics (scripts/keeper-metrics.sh, all 9 anchors held).
+// Both are green as of T13, so this table is frozen: do not edit the schedules
+// without re-greening L1 + the metrics. It is the one choke point where
+// "recorded output → plausible input" lives. Each stratum
 // maps to the full, flat input-event schedule delivered through the Twin;
 // timer firings that the recorded outcome requires are pre-scheduled at the
 // exact virtual instant the shell's fake clock would have fired them

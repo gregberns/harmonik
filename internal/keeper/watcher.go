@@ -1032,6 +1032,22 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C():
+			// ── InCycle suppression (SK-017 / D11) ───────────────────────────
+			// While the restart cycle is in flight (the reactor is off-Idle),
+			// ALL non-cycle tick processing is parked: no warn state machine,
+			// no precompact detection, no heartbeat, reaper, or hard-ceiling —
+			// only the cycle-detection poll + timer-fire drive the reactor
+			// forward. Today the cycle shell drives that loop SYNCHRONOUSLY
+			// inside MaybeRun/RunForPrecompact/RunForIdle below (this goroutine
+			// blocks there, reproducing the pre-rebuild freeze exactly), so
+			// this guard cannot observe an off-Idle reactor; it makes the
+			// parked-processing contract explicit and keeps it holding if the
+			// reactor is ever driven asynchronously. Relaxing InCycle is a
+			// later, separately-measured change (deferred; SK §11).
+			if w.cfg.Cycler != nil && w.cfg.Cycler.InCycle() {
+				continue
+			}
+
 			// ── hitl-decisions orphan reaper (K5, hk-061) ────────────────────
 			// Runs BEFORE the gauge-read branches below (which may `continue` past
 			// the rest of the loop body when the gauge is absent/stale/foreign),

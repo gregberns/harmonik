@@ -54,7 +54,7 @@ func ReadCtxFile(projectDir, agent string) (*CtxFile, time.Time, error) {
 	// latch/UUIDv7/uppercase heuristics work around. When .sid is absent or
 	// malformed, cf.SessionID keeps the gauge value (the FALLBACK path; the
 	// heuristics still apply). Centralising the override here means BOTH the
-	// watcher loop AND the cycler's waitForNewSessionID (which read through this
+	// watcher loop AND the cycler's clear-settle detection poll (which read through this
 	// function / the default ReadGaugeFn) pick up the authoritative id.
 	if sid, _, sidErr := ReadSessionIDFile(projectDir, agent); sidErr == nil && isPrimarySID(sid) {
 		cf.SessionID = sid

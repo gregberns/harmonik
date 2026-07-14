@@ -163,7 +163,7 @@ const (
 	// DefaultCyclerPollInterval is the CyclerConfig nonce/settle poll cadence.
 	DefaultCyclerPollInterval = 200 * time.Millisecond
 	// DefaultClearConfirmBackstop is the CyclerConfig total hard-gate backstop for
-	// confirming /clear (new session_id minted) before completeCycleTail gives up
+	// confirming /clear (new session_id minted) before the Clearing phase gives up
 	// waiting and fires the brief injection as a last resort. A single
 	// ClearSettle window was not a hard gate: on a slow handoff write or busy
 	// pane (operator observed 1-2 minutes) the poll timed out before /clear

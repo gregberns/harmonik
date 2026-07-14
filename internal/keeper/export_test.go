@@ -28,11 +28,12 @@ func OperatorActiveSinceForTest(listClientsOutput string, now time.Time, window 
 // suite feeds the real window to OperatorActiveSinceForTest. Refs: hk-nlio.
 const OperatorActiveWindowForTest = operatorActiveWindow
 
-// SetCyclerLastFiredSID sets the Cycler's lastFiredSID field, allowing test
-// code to pre-arm the anti-loop gate without running a real cycle.
+// SetCyclerLastFiredSID sets the reactor's LastFiredSID state, allowing test
+// code to pre-arm the anti-loop gate without running a real cycle. (T7: the
+// anti-loop fields moved from the Cycler onto the pure reactor's CycleState.)
 func SetCyclerLastFiredSID(c *Cycler, sid string) {
-	c.lastFiredSID = sid
-	c.seenLowPctAfterLastFire = false
+	c.machine.state.LastFiredSID = sid
+	c.machine.state.SeenLowPctAfterLastFire = false
 }
 
 // DeriveContextTokensForTest exposes deriveContextTokens to the keeper_test

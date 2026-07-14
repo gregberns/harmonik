@@ -5,14 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -72,7 +70,7 @@ type CyclerConfig struct {
 	PollInterval   time.Duration // polling cadence for nonce + settle; default 200ms
 
 	// ClearConfirmBackstop / ClearConfirmRetries turn the clear->brief hand-off
-	// into a HARD GATE (hk-vdqe2): completeCycleTail retries the ClearSettle poll
+	// into a HARD GATE (hk-vdqe2): the Clearing phase retries the ClearSettle poll
 	// (defensively re-injecting /clear each retry, in case a busy pane never
 	// consumed the first one) until a new session_id is confirmed OR this
 	// backstop is exhausted, instead of firing the brief on the very first
@@ -262,6 +260,12 @@ type CyclerConfig struct {
 	// transcriptDir/sessionID.jsonl. Nil → recentTranscriptTurn (production).
 	// Injectable for tests that write controlled transcript files. Refs: hk-74iyd.
 	RecentTranscriptTurnFn func(transcriptDir, sessionID, role string) (time.Time, bool)
+
+	// hasRespawn is set by NewCycler once the RespawnPort is bound; the pure
+	// reactor reads it (a policy scalar, not IO) to reproduce the pre-rebuild
+	// "count marches but never fires when no respawn is wired" escalation
+	// semantics exactly (cycle.go history, hk-qoz).
+	hasRespawn bool
 }
 
 // defaultOperatorAttachedSampleInterval is the default Gate-7 emission sample
@@ -539,25 +543,11 @@ func nonceMarker(cycleID string) string {
 // nonce from a prior cycle that must be cleared before polling. Refs: hk-vpnp.
 const nonceMarkerPrefix = "<!-- KEEPER:"
 
-// handoffHasStaleNonce reports whether the handoff file already contains a keeper
-// nonce marker from some OTHER (prior) cycle. The current cycle's nonce is unique
-// and cannot already be present, so a marker that is not currentNonce is stale and
-// would falsely pre-satisfy the poll (DEFECT-2). When this returns false the file
-// is either absent, empty, or a genuine operator handoff with no keeper nonce —
-// in which case it MUST be preserved rather than truncated (hk-vpnp / Bug 3b).
-func (c *Cycler) handoffHasStaleNonce(currentNonce string) bool {
-	content, err := c.handoff.ReadHandoff()
-	if err != nil {
-		return false // absent/unreadable → nothing stale to clear
-	}
-	if !strings.Contains(content, nonceMarkerPrefix) {
-		return false // no keeper nonce at all → genuine handoff; preserve it
-	}
-	// A keeper nonce is present. If it is ONLY the current cycle's nonce (cannot
-	// happen for a fresh unique id, but be defensive), it is not stale.
-	return strings.Contains(content, nonceMarkerPrefix) &&
-		!isOnlyNonce(content, currentNonce)
-}
+// NOTE (T7): the stale-nonce PREDICATE is now the pure
+// handoffContentHasStaleNonce (step.go), evaluated by the reactor over the
+// handoff content the shell samples onto the firing entry event. The reading
+// stayed shell-side and fire-aligned so ReadHandoff call counts match the
+// pre-rebuild code exactly (hk-vpnp / Bug 3b semantics unchanged).
 
 // isOnlyNonce reports whether every keeper nonce marker in content equals
 // currentNonce (i.e. there is no foreign/stale nonce present).
@@ -583,17 +573,25 @@ func isOnlyNonce(content, currentNonce string) bool {
 	}
 }
 
-// Cycler runs the Phase-2 intent-preserving reset cycle when gate conditions
-// are met. It is safe to call MaybeRun on every watcher tick.
+// Cycler is the IMPERATIVE SHELL around the pure Cycle reactor (T7). It owns
+// the ports, the ClockPort timer deadlines, and the detection poll; ALL cycle
+// decisions — the 11-gate ladder, the phase machine, and every
+// anti-loop/hysteresis rule (hk-vpnp / hk-qoz / hk-4f8 / hk-ibb / hk-hz9 /
+// hk-4i0s scars included) — live in the pure Step reactor (step.go), whose
+// CycleState carries what used to be this struct's mutable fields.
 //
-// Spec ref: codename:session-keeper §4.3 Phase-2 cycle core (hk-22i70, hk-kct9t).
+// It is safe to call MaybeRun on every watcher tick; while a cycle is in
+// flight the call blocks until the terminal — reproducing the pre-rebuild
+// synchronous freeze (SK-017 / D11) — so the Cycler stays single-goroutine.
+//
+// Spec ref: specs/session-keeper.md SK-009..011, SK-016/017.
 type Cycler struct {
 	cfg     CyclerConfig
 	emitter Emitter
 
-	// The named ports (T6). The cycle core routes EVERY side effect through
-	// these; they are filled by NewCycler from cfg.Pane/Gauge/Handoff/Respawn
-	// or, when nil, from the fn* adapters over the defaulted function fields.
+	// The named ports (T6). The shell routes EVERY side effect through these;
+	// they are filled by NewCycler from cfg.Pane/Gauge/Handoff/Respawn or,
+	// when nil, from the fn* adapters over the defaulted function fields.
 	// respawn stays nil when neither cfg.Respawn nor cfg.ForceRestartFn is set
 	// (escalation dormant).
 	pane    PanePort
@@ -601,69 +599,20 @@ type Cycler struct {
 	handoff HandoffPort
 	respawn RespawnPort
 
-	// Anti-loop state. The cycle is suppressed on a session_id after firing
-	// until BOTH (1) a new session_id is observed AND (2) pct has been seen
-	// below WarnPct on that new session_id.
-	lastFiredSID            string // session_id of the last completed or aborted cycle
-	seenLowPctAfterLastFire bool   // true once pct < WarnPct is observed on the new session
+	// machine is the pure Step reactor holding ALL cycle state (design §3c).
+	machine *Cycle
 
-	// lastFireWasAbort records whether the most recent fire ABORTED (handoff
-	// never confirmed → /clear was NEVER issued) rather than completing. It gates
-	// the same-SID anti-loop escape hatch: after an ABORT, a below-WarnPct reading
-	// on the SAME (un-cleared) session_id is NOT evidence that a real /clear
-	// happened — it is gauge noise (truncated handoff, transient repaint). Re-arming
-	// on it caused hk-vpnp / Bug 3a: the cycle re-fired a fresh nonce every time
-	// the gauge dipped, looping against a session that was never cleared. The
-	// escape hatch is therefore taken only after a COMPLETED cycle, where /clear
-	// genuinely ran and a real context drop is expected. Refs: hk-vpnp.
-	lastFireWasAbort bool
+	// Shell-owned timer deadlines for the reactor's ArmTimer/CancelTimer
+	// actions (SK-010); timersArmed marks that the last action batch re-armed
+	// a timer, telling the drive loop to start a fresh detection ticker
+	// (first-tick-after-interval per wait segment — parity risk #4).
+	timers      map[TimerKind]time.Time
+	timersArmed bool
 
-	// Forced-clear retry state (Refs: hk-qoz).
-	// lastForcedAttemptAt is set at the start of any runCycle call when
-	// aboveForceThreshold. Gate 6 uses it to rate-limit same-session forced
-	// retries after an abort without permanently blocking them.
-	lastForcedAttemptAt time.Time
-
-	// lastOperatorAttachedEmit is the wall-clock time of the most recent
-	// Gate-7 operator_attached emission. Used to throttle the poll-tick event to
-	// one per OperatorAttachedSampleInterval (logmine F55 spam fix). Refs: hk-2yvx.
-	lastOperatorAttachedEmit time.Time
-
-	// lastIdleRestartAt is when the most recent idle-restart was triggered.
-	// Used to enforce IdleRestartCooldown. Zero = no restart this session.
-	// Refs: hk-ee81.
-	lastIdleRestartAt time.Time
-
-	// lastIdleCrewNotifiedSID is the session_id for which the most recent
-	// session_keeper_idle_crew (below_idle_threshold) event was emitted.
-	// Suppresses per-poll log spam: the event fires only on the first poll
-	// per session_id that is below the idle-restart floor, not on every tick.
-	// A new session_id resets eligibility automatically. Refs: hk-qshh8.
-	lastIdleCrewNotifiedSID string
-
-	// consecutiveHandoffTimeouts counts consecutive handoff timeouts while
-	// above the force threshold. Reset to 0 on a successful cycle or on a
-	// below-force-threshold abort. When it reaches MaxHandoffTimeouts,
-	// ForceRestartFn is called to hard-restart the agent.
-	consecutiveHandoffTimeouts int
-
-	// Boot-grace tracking (Refs: hk-4f8, hk-ibb).
-	// currentSessionID is the session_id most recently seen in MaybeRun.
-	// currentSessionIDSince is the time the session_id last CHANGED to a
-	// never-before-seen SID (set only when a non-empty previous session_id was
-	// evicted AND the new SID is novel). Zero on first boot, meaning the grace
-	// does not apply when the Cycler has never seen a prior session.
-	// seenSessionIDs tracks all session_ids ever observed — a SID already in this
-	// set does NOT re-arm the grace timer (prevents flapping SIDs from perpetually
-	// extending the grace window). bootGraceFirstArmAt is the timestamp of the
-	// most recent burst's first grace arm; used to enforce MaxBootGraceTotal ceiling.
-	//
-	// TODO(hk-hz9 fix 5): seenSessionIDs grows unbounded. If keeper becomes
-	// permanently resident, cap it with an LRU (e.g. 128 entries).
-	currentSessionID      string
-	currentSessionIDSince time.Time
-	seenSessionIDs        map[string]struct{}
-	bootGraceFirstArmAt   time.Time
+	// handoffInjectedAt is the freshness anchor captured immediately before
+	// the /session-handoff injection (hk-fi78d); consumed by the shell's
+	// handoff-timeout freshness sample.
+	handoffInjectedAt time.Time
 }
 
 // NewCycler constructs a Cycler. Defaults are applied to zero-valued config
@@ -692,8 +641,17 @@ func NewCycler(cfg CyclerConfig, emitter Emitter) *Cycler {
 	if c.respawn == nil && c.cfg.ForceRestartFn != nil {
 		c.respawn = fnRespawn{fn: c.cfg.ForceRestartFn}
 	}
+	// The pure reactor reads policy scalars (and whether escalation is wired)
+	// from the defaulted config; it never calls a fn-field or port.
+	c.cfg.hasRespawn = c.respawn != nil
+	c.machine = NewCycle(&c.cfg)
 	return c
 }
+
+// InCycle reports whether a restart cycle is currently in flight (the reactor
+// is off-Idle). The watcher's tick loop consults this to park all non-cycle
+// processing while a cycle runs (the InCycle suppression, SK-017 / D11).
+func (c *Cycler) InCycle() bool { return c.machine.InCycle() }
 
 // journalFilePath returns the path to the cycle journal file for the agent:
 // <projectDir>/.harmonik/keeper/<agent>.cycle.
@@ -714,220 +672,20 @@ func journalFilePath(projectDir, agent string) string {
 //     aborted) until BOTH (a) new session_id AND (b) pct<WarnPct observed on
 //     that new session_id.
 //
-// It is safe to call on every watcher tick; gating is done internally.
+// It is safe to call on every watcher tick; gating is done internally by the
+// pure reactor (stepIdleGaugeTick, step.go — the ladder above, verbatim, as a
+// pure function of the event-carried GateSnapshot per SK-011). This method is
+// the shell entry: it samples the per-tick GateSnapshot read-burst, stamps
+// the event with the Clock, and — when the ladder passes — drives the cycle
+// SYNCHRONOUSLY to its terminal (the InCycle freeze, SK-017).
 func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
-	// Per-tick gate-input read-burst (T6): sample the seven gate predicates
-	// ONCE, up front, instead of seven scattered live reads mid-ladder. The
-	// ladder below reads only this snapshot (plus pure cf/threshold math), which
-	// is what lets T7 evaluate it as a pure function of an event-carried
-	// GateSnapshot.
 	snap := c.gauge.Snapshot(cf.SessionID)
-
-	// Gate 1: .managed opt-in — co-located with the destructive action (DEFECT-3).
-	if !snap.Managed {
-		return nil
-	}
-	// Gate 2: empty session_id → cannot establish anti-loop identity (DEFECT-1).
-	if cf.SessionID == "" {
-		return nil
-	}
-
-	// Observe context level for re-arm: track the first below-warn reading on a
-	// new session_id after a cycle has fired. This happens regardless of other
-	// gates so a brief low-context window is never missed.
-	if c.lastFiredSID != "" && cf.SessionID != c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
-		c.seenLowPctAfterLastFire = true
-	}
-
-	// Anti-loop escape hatch: if the session_id hasn't changed since the last
-	// cycle (ClearSettle timeout — no new SID observed) but the context has
-	// genuinely dropped below WarnPct, a real /clear happened and the keeper
-	// must be allowed to re-arm. Reset lastFiredSID so subsequent ticks on the
-	// same session_id can pass Gate 6 once the context climbs again.
-	// (Refs: hk-uxu)
-	//
-	// hk-vpnp / Bug 3a: take this escape hatch ONLY when the last fire COMPLETED
-	// (i.e. /clear actually ran). After an ABORT, /clear was never issued, so a
-	// same-SID below-WarnPct reading is gauge noise (truncated handoff, transient
-	// repaint), NOT proof of a real clear. Re-arming on it re-fired a fresh nonce
-	// on a never-cleared session, looping. After an abort, re-fire is governed
-	// solely by the Gate-6 force-retry path (rate-limited), not by this hatch.
-	if c.lastFiredSID != "" && cf.SessionID == c.lastFiredSID &&
-		!c.lastFireWasAbort && c.cfg.belowWarnThreshold(cf) {
-		c.lastFiredSID = ""
-		c.seenLowPctAfterLastFire = false
-		c.lastFireWasAbort = false
-	}
-
-	// Boot-grace gate (Refs: hk-4f8 — bad-trigger-timing fix, hk-ibb — follow-up).
-	// Track when the session_id last changed to a NEVER-SEEN SID. Apply a grace
-	// window after each novel session_id transition so cycles cannot fire while
-	// an agent is still booting after an agent-brief restart. The grace applies ONLY
-	// when a previous session_id was evicted AND the new SID is novel (never
-	// observed before), preventing flapping SIDs from perpetually re-arming the
-	// timer. On initial Cycler startup (currentSessionID == "") no grace is armed
-	// so an already-running agent is monitored without delay on keeper boot.
-	if cf.SessionID != c.currentSessionID {
-		if c.currentSessionID != "" {
-			// Session changed: arm grace only for a never-seen SID.
-			// Already-seen SIDs (e.g. a flapping session_id) do not re-arm the
-			// timer — the prior grace period was sufficient. (Refs: hk-ibb fix 2)
-			if _, alreadySeen := c.seenSessionIDs[cf.SessionID]; !alreadySeen {
-				now := c.cfg.Clock.Now()
-				c.currentSessionIDSince = now
-				// Burst-relative cap (Refs: hk-hz9 fix 1): reset the grace burst
-				// window on first arm OR when the prior burst's MaxBootGraceTotal has
-				// already elapsed. This ensures a new boot burst gets a fresh total
-				// window rather than inheriting accumulated time from a prior burst.
-				if c.bootGraceFirstArmAt.IsZero() ||
-					(c.cfg.MaxBootGraceTotal > 0 && c.cfg.Clock.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal) {
-					c.bootGraceFirstArmAt = now
-				}
-			}
-		}
-		if c.seenSessionIDs == nil {
-			c.seenSessionIDs = make(map[string]struct{})
-		}
-		c.seenSessionIDs[cf.SessionID] = struct{}{}
-		c.currentSessionID = cf.SessionID
-	}
-	// Force-path exemption (Refs: hk-ibb fix 1): an agent above ForceActPct
-	// bypasses the boot grace entirely — pane-overflow risk outweighs the
-	// boot-timing false-positive risk.
-	if c.cfg.BootGracePeriod > 0 && !c.currentSessionIDSince.IsZero() &&
-		!c.cfg.aboveForceThreshold(cf) &&
-		c.cfg.Clock.Since(c.currentSessionIDSince) < c.cfg.BootGracePeriod {
-		// MaxBootGraceTotal ceiling: if total time since first grace-arm exceeds
-		// the cap, skip the grace gate regardless of per-SID timer. (hk-ibb fix 2)
-		totalExceeded := c.cfg.MaxBootGraceTotal > 0 &&
-			!c.bootGraceFirstArmAt.IsZero() &&
-			c.cfg.Clock.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal
-		if !totalExceeded {
-			slog.DebugContext(ctx, "keeper: boot grace active — deferring cycle for new session",
-				"agent", c.cfg.AgentName, "session_id", cf.SessionID,
-				"grace_remaining", c.cfg.BootGracePeriod-c.cfg.Clock.Since(c.currentSessionIDSince))
-			return nil
-		}
-	}
-
-	// Gate 3: context must reach the act threshold.
-	// Uses absolute tokens when available (min(ActAbsTokens, ActPctCeil*window));
-	// falls back to percentage when Tokens/WindowSize are absent (old .ctx files).
-	if c.cfg.belowActThreshold(cf) {
-		return nil
-	}
-	// Gate 4: agent must be at a crisp await-input boundary — UNLESS context
-	// has breached the hard force-act threshold. Above that threshold the cycle
-	// fires unconditionally so a perpetually-busy crew (one that never satisfies
-	// CrispIdle) is still cleared before context exhaustion. (Refs: hk-0uu)
-	if !snap.CrispIdle {
-		if !c.cfg.aboveForceThreshold(cf) {
-			return nil
-		}
-		slog.WarnContext(ctx, "keeper: forced-clear: bypassing CrispIdle above hard threshold",
-			"agent", c.cfg.AgentName, "pct", cf.Pct, "tokens", cf.Tokens)
-	}
-	// Gate 5: no in-flight queue work (fail-closed via the HoldingDispatch read).
-	if snap.HoldingDispatch {
-		return nil
-	}
-	// Gate 5b: session sleeping — defer cycle (M3 / hk-l3gs). The keeper must
-	// not inject /session-handoff into a parked session. M1's max-sleep failsafe
-	// wakes a genuinely-overflowing session first; the keeper acts on the next
-	// tick after .sleeping.<sessionID> is cleared.
-	if cf.SessionID != "" && snap.Sleeping {
-		return nil
-	}
-	// Gate 5c: operator HOLD (D5/hk-9waz) — defer the destructive cycle while a
-	// fresh, session-scoped hold is active. The hold is keyed by the live session-id
-	// (re-minted on /clear) so it can never survive a restart, plus a timer backstop
-	// covers walk-away/crash. WARN still fires (watcher path); only the act/restart
-	// is suspended. The hard-ceiling restart deliberately OVERRIDES this (watcher).
-	if snap.Held {
-		return nil
-	}
-	// Gate 5d: auto-hold on a recent inbound operator user turn (hk-74iyd).
-	// When the transcript shows a real user turn (not exclusively tool_result
-	// content) within OperatorTurnLookback, auto-engage a co-working hold via the
-	// existing SetHold machinery so ACT never fires mid-conversation. The hold
-	// auto-reverts via session-id keying (/clear re-mints .sid) plus the TTL
-	// backstop — identical to the manual hold (Gate 5c). WARN still fires
-	// (watcher path). The hard-ceiling watcher path calls HardCeilingRestartFn
-	// directly, bypassing MaybeRun, so this gate never defeats it.
-	// NOTE: this gate is placed AFTER the Gate 4 CrispIdle/force-act bypass
-	// (line above), so it ALSO suppresses the unconditional forced-clear that
-	// fires when aboveForceThreshold. That is intentional: an operator who just
-	// sent a message should not be force-cleared even if context is critical.
-	if c.cfg.OperatorTurnLookback > 0 && cf.SessionID != "" && !snap.LastUserTurnAt.IsZero() {
-		if c.cfg.Clock.Since(snap.LastUserTurnAt) <= c.cfg.OperatorTurnLookback {
-			// Best-effort: arm the hold so Gate 5c fires on the next tick too.
-			// Ignore errors (SetHold fails silently when .sid is absent).
-			_, _ = c.gauge.SetHold()
-			slog.DebugContext(ctx, "keeper: auto-hold: recent operator turn suppresses ACT",
-				"agent", c.cfg.AgentName, "turn_age", c.cfg.Clock.Since(snap.LastUserTurnAt).Round(time.Second))
-			return nil
-		}
-	}
-	// Gate 5e: post-answer grace delay (hk-74iyd). Do NOT fire ACT within
-	// PostAnswerGrace of the agent's most recent real assistant text turn — the
-	// operator may still be reading the response. Unlike Gate 5d this does NOT
-	// write a hold marker; it is a transient tick-level deferral that lifts
-	// automatically when the grace window expires. WARN still fires (watcher path).
-	if c.cfg.PostAnswerGrace > 0 && cf.SessionID != "" && !snap.LastAssistantTurnAt.IsZero() {
-		if c.cfg.Clock.Since(snap.LastAssistantTurnAt) <= c.cfg.PostAnswerGrace {
-			slog.DebugContext(ctx, "keeper: post-answer grace: recent assistant turn suppresses ACT",
-				"agent", c.cfg.AgentName, "turn_age", c.cfg.Clock.Since(snap.LastAssistantTurnAt).Round(time.Second))
-			return nil
-		}
-	}
-	// Gate 6: full anti-loop suppression (only applies after the first fire).
-	//
-	// Forced-clear exception (Refs: hk-qoz): when above the hard force threshold
-	// and the same session_id is still present (DEFECT-4 abort set lastFiredSID),
-	// allow a retry once ForceRetryInterval has elapsed from the last forced
-	// attempt. This breaks the catch-22 where an aborted forced-clear permanently
-	// blocks further attempts on a session whose context never drops below WarnPct.
-	if c.lastFiredSID != "" {
-		if cf.SessionID == c.lastFiredSID {
-			if !c.cfg.aboveForceThreshold(cf) {
-				// Normal path: same session always suppressed until context drops.
-				return nil
-			}
-			// Above force threshold: allow retry after ForceRetryInterval.
-			if !c.lastForcedAttemptAt.IsZero() && c.cfg.Clock.Since(c.lastForcedAttemptAt) < c.cfg.ForceRetryInterval {
-				return nil
-			}
-			// Fall through: retry the forced-clear.
-		} else if !c.seenLowPctAfterLastFire {
-			// Different session: suppress until pct has been seen below WarnPct.
-			// Force-retry exception (Refs: hk-hz9 fix 2): mirrors the same-SID path
-			// above. A novel session staying above WarnPct would otherwise wedge
-			// indefinitely — it can never arm seenLowPctAfterLastFire and the normal
-			// suppression never lifts. When above the hard force threshold and
-			// ForceRetryInterval has elapsed, allow a retry to break the stall.
-			if c.cfg.aboveForceThreshold(cf) {
-				if !c.lastForcedAttemptAt.IsZero() && c.cfg.Clock.Since(c.lastForcedAttemptAt) < c.cfg.ForceRetryInterval {
-					return nil
-				}
-				// Fall through: retry the forced-clear.
-			} else {
-				return nil
-			}
-		}
-	}
-
-	// Gate 7: operator-attached guard (warn-only). If a human operator is
-	// attached to the target tmux session, suppress the destructive injection so
-	// the keeper never races the operator's keystrokes and clobbers an in-flight
-	// turn. The watcher keeps emitting warn/gauge; the cycle resumes on a later
-	// tick once the operator detaches. Skipped when TmuxTarget is empty (nothing
-	// to inject into). Refs: hk-6qf.
-	if snap.OperatorAttached {
-		c.maybeEmitOperatorAttached(ctx, cf.SessionID, "cycle")
-		return nil
-	}
-
-	return c.runCycle(ctx, cf)
+	return c.runEntry(ctx, Event{
+		Kind:  EvGaugeTick,
+		At:    c.cfg.Clock.Now(),
+		CF:    cf,
+		Gates: snap,
+	})
 }
 
 // resolvedTranscriptDir returns the effective transcript directory: the
@@ -949,286 +707,18 @@ func (c *CyclerConfig) recentTurnFn() func(transcriptDir, sessionID, role string
 	return recentTranscriptTurn
 }
 
-// handoffWrittenAndFresh reports whether the agent actually WROTE a resumable
-// handoff IN RESPONSE to this cycle's /session-handoff injection: the file exists,
-// its body is non-empty, and its mtime is at/after handoffInjectedAt (the moment
-// we injected /session-handoff).
-//
-// The anchor is the injection time, NOT a generous look-BACK window. RestartNow
-// (restartnow.go) anchors on a 10-minute look-back because there the operator
-// writes /session-handoff and THEN calls restart-now — the handoff predates the
-// request. The auto-cycle is the reverse: we inject /session-handoff first and the
-// agent writes AFTER, so a resumable-for-THIS-cycle handoff must post-date the
-// injection. Requiring mtime >= handoffInjectedAt is what distinguishes a handoff
-// the agent just produced (recover: /clear + brief must land — hk-fi78d) from a
-// STALE pre-existing operator handoff sitting on disk that the agent never
-// refreshed (true abort: never /clear an unconfirmed handoff — hk-vpnp Bug 3).
-//
-// The non-empty-content check is load-bearing too: runCycle truncates a stale-nonce
-// handoff to EMPTY before injecting /session-handoff, which stamps a fresh mtime.
-// Without the content check that just-truncated empty file would falsely read as
-// "written". Requiring non-empty content means only a handoff with real content
-// counts. Refs: hk-fi78d, hk-vpnp.
-func (c *Cycler) handoffWrittenAndFresh(handoffInjectedAt time.Time) bool {
-	content, err := c.handoff.ReadHandoff()
-	if err != nil || strings.TrimSpace(content) == "" {
-		return false
-	}
-	mt, ok := c.handoff.HandoffModTime()
-	if !ok {
-		return false
-	}
-	return !mt.Before(handoffInjectedAt)
-}
+// NOTE (T7): the hk-fi78d freshness recovery is now split between the
+// shell's handoff-timeout sample (Cycler.sampleHandoffFreshness, shell.go —
+// the reads, verbatim semantics incl. the injection-time anchor and the
+// load-bearing non-empty-content check) and the pure TimerFired(handoff_
+// timeout) recovered edge (step.go).
 
-// runCycle executes the full 7-step reset cycle.
-// SAFETY: /clear is ONLY issued after the handoff nonce is positively confirmed —
-// OR, when the nonce echo times out, after handoffWrittenAndFresh confirms the
-// agent nonetheless wrote a fresh, resumable handoff (hk-fi78d). Absent BOTH, the
-// cycle aborts before /clear (never /clear when there is nothing to resume from).
-func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
-	cycleID := c.cfg.CycleIDGen()
-	now := c.cfg.Clock.Now().UTC()
-	handoffPath := c.handoff.HandoffPath()
-
-	// Record forced-attempt timestamp BEFORE injecting so Gate 6 can rate-limit
-	// same-session retries after this cycle completes or aborts. Set regardless
-	// of CrispIdle path so any forced-threshold cycle is rate-limited. (hk-qoz)
-	if c.cfg.aboveForceThreshold(cf) {
-		c.lastForcedAttemptAt = c.cfg.Clock.Now().UTC()
-	}
-
-	// Step 1: open journal BEFORE any injection.
-	j := &CycleJournal{
-		CycleID:   cycleID,
-		Phase:     "opened",
-		OpenedAt:  now,
-		UpdatedAt: now,
-	}
-	if err := c.handoff.WriteJournal(j); err != nil {
-		return err
-	}
-
-	// Emit session_keeper_handoff_started so the cycle is auditable.
-	c.emitHandoffStarted(ctx, cycleID, cf.SessionID)
-
-	// Step 2: clear any STALE keeper nonce from a prior cycle BEFORE injecting
-	// /session-handoff, so a leftover nonce cannot pre-satisfy the poll in step 3
-	// (DEFECT-2). The current cycle's nonce is unique (timestamp-prefixed,
-	// per-process sequence), so it can never already be present — only a PRIOR
-	// cycle's nonce can. We therefore truncate ONLY when the existing file carries
-	// a keeper nonce; a genuine, non-empty handoff that carries no keeper nonce is
-	// PRESERVED. Truncating it unconditionally was hk-vpnp / Bug 3b: an aborted
-	// cycle (handoff never confirmed) wiped the prior handoff to 0 lines, and the
-	// next cycle wiped it again, so the loop destroyed the operator's fleet intent.
-	if c.handoffHasStaleNonce(nonceMarker(cycleID)) {
-		_ = c.handoff.TruncateHandoff() //nolint:errcheck // non-fatal; poll will fail gracefully
-	}
-
-	// Step 2b: inject /session-handoff with nonce directive.
-	// Send Escape first to preempt any in-progress input on a busy pane so the
-	// injected command lands cleanly at the REPL prompt. (Refs: hk-qoz)
-	//
-	// Capture the injection instant BEFORE injecting: the ack-timeout recovery
-	// path (hk-fi78d) treats a handoff as resumable-for-this-cycle only when its
-	// mtime is at/after this moment — i.e. the agent wrote it in RESPONSE to this
-	// injection, not a stale pre-existing handoff (hk-vpnp). Captured before the
-	// inject call so any agent write is guaranteed to be >= this timestamp.
-	handoffInjectedAt := c.cfg.Clock.Now()
-	if c.cfg.TmuxTarget != "" {
-		_ = c.pane.SendEscape(ctx, c.cfg.TmuxTarget) //nolint:errcheck // non-fatal; clears partial input
-		handoffCmd := fmt.Sprintf(
-			"/session-handoff %s\n\nIMPORTANT: include exactly this line verbatim in the handoff file: %s",
-			handoffPath, nonceMarker(cycleID),
-		)
-		if err := c.pane.Inject(ctx, c.cfg.TmuxTarget, handoffCmd); err != nil {
-			// Non-fatal: the confirm step will catch any delivery failure.
-			_ = err //nolint:errcheck
-		}
-	}
-	j.Phase = "handoff_injected"
-	j.UpdatedAt = c.cfg.Clock.Now().UTC()
-	_ = c.handoff.WriteJournal(j) //nolint:errcheck
-
-	// Step 3: confirm — poll until nonce appears or timeout elapses.
-	if !c.pollForNonce(ctx, nonceMarker(cycleID)) {
-		// hk-fi78d: the nonce echo never landed within HandoffTimeout — but the
-		// agent may still have WRITTEN a fresh, resumable handoff (e.g. it produced
-		// the handoff file but omitted or garbled the verbatim nonce line). In that
-		// case a handoff to resume from EXISTS, so the brief injection MUST still
-		// land: bailing before /clear + brief would strand the agent at a full
-		// context window even though its intent was captured on disk. The handoff
-		// counts as written-for-this-cycle only when its mtime is at/after
-		// handoffInjectedAt (the agent wrote it in RESPONSE to our injection), which
-		// distinguishes it from a STALE pre-existing operator handoff on disk that
-		// the agent never refreshed. Only when NO fresh handoff was written do we
-		// keep the true-abort behavior — preserving the safety invariant: never
-		// /clear when there is nothing fresh to resume from (hk-vpnp Bug 3).
-		if c.handoffWrittenAndFresh(handoffInjectedAt) {
-			slog.WarnContext(ctx, "keeper: nonce echo timed out but a fresh handoff was written — recovering (proceeding with /clear + brief)",
-				"agent", c.cfg.AgentName, "cycle_id", cycleID, "session_id", cf.SessionID)
-			j.Phase = "confirmed"
-			j.UpdatedAt = c.cfg.Clock.Now().UTC()
-			j.Reason = "handoff_timeout_recovered"
-			_ = c.handoff.WriteJournal(j) //nolint:errcheck
-			// A fresh handoff means the pane was responsive enough to write it, so
-			// this is NOT a stuck-pane timeout that should march toward ForceRestart.
-			c.consecutiveHandoffTimeouts = 0
-			return c.completeCycleTail(ctx, cf, cycleID, j, "handoff_timeout_recovered")
-		}
-
-		// ABORT — NEVER /clear an unconfirmed handoff.
-		j.Phase = "aborted"
-		j.UpdatedAt = c.cfg.Clock.Now().UTC()
-		j.Reason = "handoff_timeout"
-		_ = c.handoff.WriteJournal(j) //nolint:errcheck
-		c.emitCycleAborted(ctx, cycleID, cf.SessionID, "handoff_timeout")
-		// DEFECT-4: record suppression on abort to prevent re-fire on next tick.
-		c.lastFiredSID = cf.SessionID
-		c.seenLowPctAfterLastFire = false
-		// hk-vpnp / Bug 3a: mark this fire as an ABORT so the same-SID escape hatch
-		// does NOT re-arm on a post-abort gauge dip (no /clear was issued).
-		c.lastFireWasAbort = true
-
-		// Re-arm: clear .managed so the .sid channel can rebind after this abort
-		// — but ONLY when a real session-id change was
-		// previously observed (currentSessionIDSince non-zero). When the keeper
-		// has never seen a session change (first monitored session), clearing
-		// .managed prematurely allows a new SID to rebind and trigger boot-grace,
-		// creating a Gate-6 suppression stall where the force-retry exception
-		// never fires (different SID, no low-pct observation). Gating this on
-		// !currentSessionIDSince.IsZero() ensures the watcher stays bound to the
-		// original session and Gate-6 same-SID force-retry handles the retry loop.
-		// Refs: hk-4f8 (no-re-arm fix), hk-ibb (fix 3 — gate abort-clear).
-		if !c.currentSessionIDSince.IsZero() {
-			if setErr := c.gauge.SetManagedSession(""); setErr != nil {
-				slog.WarnContext(ctx, "keeper: clear managed session_id after handoff_timeout abort",
-					"agent", c.cfg.AgentName, "err", setErr)
-			}
-		}
-
-		// Escalation path: track consecutive timeouts above the force threshold
-		// and call ForceRestartFn after MaxHandoffTimeouts. This handles the case
-		// where the pane is permanently unresponsive (process loop, frozen REPL).
-		// Refs: hk-qoz.
-		if c.cfg.aboveForceThreshold(cf) {
-			c.consecutiveHandoffTimeouts++
-			if c.respawn != nil && c.cfg.MaxHandoffTimeouts > 0 &&
-				c.consecutiveHandoffTimeouts >= c.cfg.MaxHandoffTimeouts {
-				slog.WarnContext(ctx, "keeper: escalating to hard restart after repeated handoff timeouts",
-					"agent", c.cfg.AgentName, "timeouts", c.consecutiveHandoffTimeouts)
-				if restartErr := c.respawn.ForceRestart(ctx, c.cfg.AgentName); restartErr != nil {
-					slog.WarnContext(ctx, "keeper: hard restart failed",
-						"agent", c.cfg.AgentName, "err", restartErr)
-				}
-				c.consecutiveHandoffTimeouts = 0
-			}
-		} else {
-			c.consecutiveHandoffTimeouts = 0
-		}
-		return nil
-	}
-
-	j.Phase = "confirmed"
-	j.UpdatedAt = c.cfg.Clock.Now().UTC()
-	_ = c.handoff.WriteJournal(j) //nolint:errcheck
-
-	return c.completeCycleTail(ctx, cf, cycleID, j, "")
-}
-
-// completeCycleTail runs the post-confirmation half of the cycle (steps 3b–7):
-// set HARMONIK_AGENT → /clear → wait for new session_id → rebind .managed →
-// inject briefRestartCmd → journal complete → emit cycle_complete + anti-loop
-// bookkeeping. It is reached from TWO callers:
-//   - the normal confirmed path (reason == ""), after the nonce poll succeeds;
-//   - the ack-timeout RECOVERY path (reason == "handoff_timeout_recovered"),
-//     where the nonce echo timed out but handoffWrittenAndFresh confirmed a
-//     resumable handoff exists (hk-fi78d).
-//
-// When reason != "" the final journal carries it and an additional
-// session_keeper_cycle_recovered event is emitted so the recovery is
-// distinguishable in the event stream from a clean confirm. Either way the cycle
-// records as a COMPLETE cycle (cycle_complete), never a blind abort.
-func (c *Cycler) completeCycleTail(ctx context.Context, cf *CtxFile, cycleID string, j *CycleJournal, reason string) error {
-	// Step 3b: set HARMONIK_AGENT in the tmux session environment so the new
-	// Claude process started after /clear inherits the correct agent name.
-	// Non-fatal: the handoff identity block is the primary anchor.
-	if c.cfg.TmuxTarget != "" {
-		_ = c.pane.SetEnv(ctx, c.cfg.TmuxTarget, "HARMONIK_AGENT", c.cfg.AgentName) //nolint:errcheck
-	}
-
-	// Step 4: inject /clear.
-	if c.cfg.TmuxTarget != "" {
-		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, "/clear") //nolint:errcheck
-	}
-	j.Phase = "cleared"
-	j.UpdatedAt = c.cfg.Clock.Now().UTC()
-	_ = c.handoff.WriteJournal(j) //nolint:errcheck
-
-	// Step 5: clear-readiness — HARD GATE (hk-vdqe2) on a new session_id before
-	// the brief may be injected. Spec note: the session_id is RE-MINTED at every
-	// /clear, so the keeper must re-resolve the new id post-clear —
-	// waitForNewSessionID polls the gauge until it differs from prevSID
-	// (cf.SessionID). A single ClearSettle window is only best-effort (a slow
-	// handoff write or busy pane can blow well past it, operator-observed at
-	// 1-2 minutes), so retry the poll — defensively re-injecting /clear each
-	// time in case the pane never consumed the first one — until either a new
-	// session_id is confirmed or ClearConfirmBackstop is exhausted. Only once
-	// the backstop is exhausted does Step 6 fire as a last resort (still
-	// surfaced via session_keeper_clear_unconfirmed for diagnosis).
-	newSID := c.waitForNewSessionIDWithBackstop(ctx, cf.SessionID)
-	if newSID == "" {
-		c.emitClearUnconfirmed(ctx, cycleID, cf.SessionID)
-	}
-
-	// Step 5b: update the .managed session binding so the watcher accepts the
-	// new session's gauge data after /clear. Without this update the watcher would
-	// continue filtering the new session as "foreign". Called unconditionally:
-	// when newSID=="" (ClearSettle timeout), writing "" clears the stale binding
-	// so the .sid channel can rebind the next session. (Refs: hk-igt, hk-uxu)
-	if err := c.gauge.SetManagedSession(newSID); err != nil {
-		slog.WarnContext(ctx, "keeper: update managed session_id after cycle",
-			"agent", c.cfg.AgentName, "new_sid", newSID, "err", err)
-		// Non-fatal: watcher falls back to accepting the session_id via
-		// the latch path on the next tick.
-	}
-
-	// Step 6: inject agent brief — re-pins identity from soul.md (I1, SPEC §4).
-	if c.cfg.TmuxTarget != "" {
-		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, briefRestartCmd) //nolint:errcheck
-	}
-	j.Phase = "resumed"
-	j.UpdatedAt = c.cfg.Clock.Now().UTC()
-	_ = c.handoff.WriteJournal(j) //nolint:errcheck
-
-	// Step 7: close journal; emit session_keeper_cycle_complete.
-	j.Phase = "complete"
-	j.UpdatedAt = c.cfg.Clock.Now().UTC()
-	j.Reason = reason             // "" on the clean path; "handoff_timeout_recovered" on recovery.
-	_ = c.handoff.WriteJournal(j) //nolint:errcheck
-	c.emitCycleComplete(ctx, cycleID, cf.SessionID, newSID)
-	// On the ack-timeout recovery path, ALSO emit cycle_recovered so the event
-	// stream distinguishes a nonce-less recovery from a clean confirm (hk-fi78d).
-	if reason != "" {
-		c.emitCycleRecovered(ctx, cycleID, "handoff_timeout")
-	}
-
-	// Anti-loop: record the session_id so we do not re-fire for it until both
-	// a new session_id is observed AND pct drops below WarnPct on it.
-	c.lastFiredSID = cf.SessionID
-	c.seenLowPctAfterLastFire = false
-	// hk-vpnp / Bug 3a: this fire COMPLETED (/clear ran), so the same-SID escape
-	// hatch may legitimately re-arm on a real context drop.
-	c.lastFireWasAbort = false
-
-	// Successful cycle: reset the consecutive-timeout counter and the grace
-	// burst window so the next novel SID after this /clear gets a fresh total
-	// window, not residual time from the current burst. (Refs: hk-hz9 fix 1)
-	c.consecutiveHandoffTimeouts = 0
-	c.bootGraceFirstArmAt = time.Time{}
-
-	return nil
-}
+// NOTE (T7): runCycle and completeCycleTail are DISSOLVED into the pure Step
+// reactor (step.go: stepStartCycle → stepAbort / stepEnterClearing /
+// stepClearUnconfirmed / stepBriefing) plus the shell drive loop (shell.go).
+// The SAFETY invariant is structural now: /clear is reachable ONLY through
+// AwaitModelDone, which is reachable only via the nonce-confirmed or the
+// freshness-recovered edge — the abort path never clears (SK-INV-001).
 
 // RecoverFromCrash checks for an in-progress cycle journal on boot and takes
 // corrective action based on the last recorded phase.
@@ -1246,9 +736,9 @@ func (c *Cycler) completeCycleTail(ctx context.Context, cf *CtxFile, cycleID str
 // recovery path injects briefRestartCmd directly without a nonce poll, so a
 // stale nonce cannot trigger unintended behaviour.
 func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
-	// Fail-closed: only act on a managed agent. Boot-time entry point (T7's
-	// CrashJournal event): the gate input comes from the same per-entry
-	// GateSnapshot burst as the tick entry points.
+	// Fail-closed: only act on a managed agent. Boot-time entry point (the
+	// reactor's CrashJournal event): the gate input comes from the same
+	// per-entry GateSnapshot burst as the tick entry points.
 	if !c.gauge.Snapshot("").Managed {
 		return nil
 	}
@@ -1261,38 +751,10 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 		return fmt.Errorf("keeper: read recovery journal: %w", err)
 	}
 
-	switch j.Phase {
-	case "cleared":
-		// /clear was issued; inject agent brief to re-pin identity (I1).
-		if c.cfg.TmuxTarget != "" {
-			_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, briefRestartCmd) //nolint:errcheck
-		}
-		j.Phase = "complete"
-		j.UpdatedAt = c.cfg.Clock.Now().UTC()
-		j.Reason = "recovered_from_crash"
-		_ = c.handoff.WriteJournal(j) //nolint:errcheck
-		c.emitCycleRecovered(ctx, j.CycleID, "cleared")
-
-	case "resumed":
-		// brief was already injected; just close the journal.
-		j.Phase = "complete"
-		j.UpdatedAt = c.cfg.Clock.Now().UTC()
-		j.Reason = "recovered_from_crash"
-		_ = c.handoff.WriteJournal(j) //nolint:errcheck
-		c.emitCycleRecovered(ctx, j.CycleID, "resumed")
-
-	case "opened", "handoff_injected", "confirmed":
-		// /clear was NOT issued; discard (abort) the journal safely.
-		j.Phase = "aborted"
-		j.UpdatedAt = c.cfg.Clock.Now().UTC()
-		j.Reason = "crash_before_clear"
-		_ = c.handoff.WriteJournal(j) //nolint:errcheck
-
-	case "complete", "aborted":
-		// Terminal state — nothing to recover.
-	}
-
-	return nil
+	// One-shot fast-forward/close-out per the crash-recovery matrix
+	// (stepIdleCrashJournal, step.go): no drive loop — the machine never
+	// leaves Idle on this event.
+	return c.feed(ctx, Event{Kind: EvCrashJournal, At: c.cfg.Clock.Now(), Journal: j})
 }
 
 // RunForPrecompact is the PreCompact-backstop entry point. It is called by the
@@ -1333,112 +795,17 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 
 	// Per-entry gate-input read-burst (T6): sampled fresh at THIS entry point —
 	// not shared with a MaybeRun that may have run a full blocking cycle on the
-	// same tick — so gate values match the old live reads.
+	// same tick — so gate values match the old live reads. The gate subset,
+	// the per-gate precompact_blocked emissions, and the always-clear-marker
+	// contract live in the pure reactor (stepIdlePrecompact, step.go).
 	snap := c.gauge.Snapshot(sessionID)
 
-	// Gate 1: .managed opt-in (defensive; the shell script checks this too).
-	if !snap.Managed {
-		c.emitPrecompactBlocked(ctx, sessionID, "not_managed")
-		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
-		return nil
-	}
-
-	// Gate 2: empty session_id → cannot establish anti-loop identity.
-	if sessionID == "" {
-		// Don't cycle but clear marker — let native compaction proceed next time.
-		c.emitPrecompactBlocked(ctx, sessionID, "hold_dispatch_skip")
-		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
-		return nil
-	}
-
-	// Gate 2b: boot-grace (Refs: hk-hz9 fix 3). The grace state is kept current
-	// by MaybeRun, which the watcher calls immediately before RunForPrecompact
-	// (watcher.go:568 before :580) — that ordering is the load-bearing invariant.
-	// Force-path exception: cf above ForceActPct bypasses grace (pane-overflow
-	// risk outweighs boot-timing false-positive risk).
-	if c.cfg.BootGracePeriod > 0 && !c.currentSessionIDSince.IsZero() &&
-		(cf == nil || !c.cfg.aboveForceThreshold(cf)) &&
-		c.cfg.Clock.Since(c.currentSessionIDSince) < c.cfg.BootGracePeriod {
-		totalExceeded := c.cfg.MaxBootGraceTotal > 0 &&
-			!c.bootGraceFirstArmAt.IsZero() &&
-			c.cfg.Clock.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal
-		if !totalExceeded {
-			c.emitPrecompactBlocked(ctx, sessionID, "boot_grace")
-			_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
-			return nil
-		}
-	}
-
-	// Observe context level for re-arm tracking (mirrors MaybeRun side-effect).
-	if cf != nil && c.lastFiredSID != "" && cf.SessionID != c.lastFiredSID && c.cfg.belowWarnThreshold(cf) {
-		c.seenLowPctAfterLastFire = true
-	}
-
-	// Anti-loop escape hatch (mirrors MaybeRun): same-session + below WarnPct
-	// means a real /clear happened with ClearSettle timeout; reset so re-arm
-	// is possible. (Refs: hk-uxu) — gated on !lastFireWasAbort to avoid the
-	// hk-vpnp / Bug 3a re-fire loop (an aborted cycle never issued /clear).
-	if cf != nil && c.lastFiredSID != "" && cf.SessionID == c.lastFiredSID &&
-		!c.lastFireWasAbort && c.cfg.belowWarnThreshold(cf) {
-		c.lastFiredSID = ""
-		c.seenLowPctAfterLastFire = false
-		c.lastFireWasAbort = false
-	}
-
-	// Gate 3: HoldingDispatch — fail-closed; skip cycle.
-	if snap.HoldingDispatch {
-		c.emitPrecompactBlocked(ctx, sessionID, "hold_dispatch_skip")
-		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
-		return nil
-	}
-
-	// Gate 3b: operator HOLD (D5/hk-9waz, Refs: hk-4rago) — skip the PreCompact
-	// cycle while a fresh, session-scoped hold is active. A precompact trigger
-	// does not override co-working intent: the hold signals the operator is
-	// actively using this session. Clear the marker so native compaction can
-	// proceed and the next PreCompact fire gets a clean slate.
-	if snap.Held {
-		c.emitPrecompactBlocked(ctx, sessionID, "hold_skip")
-		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
-		return nil
-	}
-
-	// Gate 4: anti-loop suppression.
-	if c.lastFiredSID != "" {
-		if sessionID == c.lastFiredSID {
-			c.emitPrecompactBlocked(ctx, sessionID, "anti_loop_suppressed")
-			_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
-			return nil
-		}
-		if !c.seenLowPctAfterLastFire {
-			c.emitPrecompactBlocked(ctx, sessionID, "anti_loop_suppressed")
-			_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
-			return nil
-		}
-	}
-
-	// Gate 5: operator-attached guard (warn-only). Even under PreCompact, if a
-	// human operator is attached we must not race their keystrokes with a /clear.
-	// Emit the precompact decision (operator_attached) AND the operator_attached
-	// event, clear the marker (bounded-fallback: native compaction proceeds next
-	// time), and suppress the cycle. The keeper retries on a later PreCompact fire
-	// once the operator detaches. Refs: hk-6qf.
-	if snap.OperatorAttached {
-		c.emitPrecompactBlocked(ctx, sessionID, "operator_attached")
-		c.emitOperatorAttached(ctx, sessionID, "precompact")
-		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
-		return nil
-	}
-
-	// All gates passed: emit the precompact event, clear the marker, run cycle.
-	c.emitPrecompactBlocked(ctx, sessionID, "cycle_triggered")
-	_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
-
-	if cf == nil {
-		// Construct a minimal CtxFile so runCycle has a session_id.
-		cf = &CtxFile{SessionID: sessionID}
-	}
-	return c.runCycle(ctx, cf)
+	return c.runEntry(ctx, Event{
+		Kind:  EvPrecompactTrigger,
+		At:    c.cfg.Clock.Now(),
+		CF:    cf,
+		Gates: snap,
+	})
 }
 
 // RunForIdle is the idle-large-context entry point. Called by the watcher
@@ -1463,232 +830,27 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 	if cf == nil {
 		return nil
 	}
-	sessionID := cf.SessionID
 
 	// Per-entry gate-input read-burst (T6) — see RunForPrecompact for why each
-	// entry point samples its own snapshot.
-	snap := c.gauge.Snapshot(sessionID)
+	// entry point samples its own snapshot. The idle gate ladder (incl. the
+	// hk-4i0s stamp-then-unwind cooldown discipline and the hk-qshh8
+	// once-per-SID idle_crew notification) lives in the pure reactor
+	// (stepIdleRestartTick, step.go).
+	snap := c.gauge.Snapshot(cf.SessionID)
 
-	// Gate 2: below idle-restart floor → emit notification (transition only), no restart.
-	// Emit once per session_id entering the below-threshold state; suppress
-	// repeated polls on the same session to avoid events.jsonl spam. Refs: hk-qshh8.
-	if cf.Tokens < c.cfg.IdleRestartAbsTokens {
-		if cf.Tokens > 0 && sessionID != c.lastIdleCrewNotifiedSID {
-			payload, _ := json.Marshal(map[string]any{
-				"agent":  c.cfg.AgentName,
-				"tokens": cf.Tokens,
-				"reason": "below_idle_threshold",
-			})
-			_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperIdleCrew, payload)
-			c.lastIdleCrewNotifiedSID = sessionID
-		}
-		return nil
-	}
-
-	// Gate 3: above or at act threshold → let MaybeRun handle it.
-	if !c.cfg.belowActThreshold(cf) {
-		return nil
-	}
-
-	// Gate 4: pane must be quiescent.
-	if !snap.CrispIdle {
-		return nil
-	}
-
-	// Gate 5: no in-flight dispatch (fail-closed).
-	if snap.HoldingDispatch {
-		return nil
-	}
-
-	// Gate 5b: operator HOLD (D5/hk-9waz, Refs: hk-4rago) — skip the idle
-	// restart while a fresh, session-scoped hold is active. WARN still fires
-	// (watcher path); only the idle-restart action is suspended.
-	if snap.Held {
-		return nil
-	}
-
-	// Gate 6: cooldown.
-	if !c.lastIdleRestartAt.IsZero() && c.cfg.Clock.Since(c.lastIdleRestartAt) < c.cfg.IdleRestartCooldown {
-		return nil
-	}
-
-	// Gate 7: anti-loop.
-	if c.lastFiredSID != "" && sessionID == c.lastFiredSID {
-		return nil
-	}
-
-	// Arm the cooldown only when the cycle COMPLETES. The idle path wants
-	// completion-stamping (unlike the forced path's start-stamping anti-thrash at
-	// lastForcedAttemptAt): an idle restart that ABORTS (handoff-nonce timeout,
-	// context cancel — runCycle sets lastFireWasAbort and returns) issued no
-	// /clear, so the crew is still wedged at large context. Start-stamping there
-	// let Gate 6 suppress every retry for the full IdleRestartCooldown (30 min
-	// default), stranding the idle crew on a single failed attempt. Stamp before
-	// the call so the in-flight cycle is rate-limited, then unwind the stamp if it
-	// aborted so the next tick can retry. Refs: hk-4i0s.
-	c.lastIdleRestartAt = c.cfg.Clock.Now()
-	err := c.runCycle(ctx, cf)
-	if c.lastFireWasAbort {
-		c.lastIdleRestartAt = time.Time{}
-	}
-	return err
+	return c.runEntry(ctx, Event{
+		Kind:  EvIdleRestartTick,
+		At:    c.cfg.Clock.Now(),
+		CF:    cf,
+		Gates: snap,
+	})
 }
 
-// emitPrecompactBlocked emits session_keeper_precompact_blocked.
-func (c *Cycler) emitPrecompactBlocked(ctx context.Context, sessionID, action string) {
-	payload := core.SessionKeeperPrecompactBlockedPayload{
-		AgentName: c.cfg.AgentName,
-		SessionID: sessionID,
-		Action:    action,
-	}
-	raw, _ := json.Marshal(payload)                                                                   //nolint:errcheck
-	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperPrecompactBlocked, raw) //nolint:errcheck
-}
-
-// maybeEmitOperatorAttached emits a Gate-7 operator_attached event at most once
-// per OperatorAttachedSampleInterval, collapsing the ~5s poll-tick spam (logmine
-// F55) into a sample. The first observation after an interval gap always emits,
-// so a fresh attach edge is recorded promptly; subsequent same-window ticks are
-// dropped. The discrete precompact/restart_now paths emit unconditionally — they
-// are marker-driven, not poll-driven. Refs: hk-2yvx.
-func (c *Cycler) maybeEmitOperatorAttached(ctx context.Context, sessionID, phase string) {
-	now := c.cfg.Clock.Now()
-	if !c.lastOperatorAttachedEmit.IsZero() &&
-		now.Sub(c.lastOperatorAttachedEmit) < c.cfg.OperatorAttachedSampleInterval {
-		return
-	}
-	c.lastOperatorAttachedEmit = now
-	c.emitOperatorAttached(ctx, sessionID, phase)
-}
-
-// emitOperatorAttached is a no-op: session_keeper_operator_attached is no longer
-// persisted to events.jsonl (logmine TA3 / finish F55). The suppression resolver's
-// AttachedInactiveTimeout (default 5 min) handles expiry; the live OperatorAttachedFn
-// remains the authoritative source. Refs: hk-6qf, hk-ubp1.
-func (c *Cycler) emitOperatorAttached(_ context.Context, _, _ string) {}
-
-// pollForNonce polls the handoff file until the nonce appears or the handoff
-// timeout (or ctx) elapses.
-func (c *Cycler) pollForNonce(parentCtx context.Context, nonce string) bool {
-	ctx, cancel := context.WithTimeout(parentCtx, c.cfg.HandoffTimeout)
-	defer cancel()
-
-	ticker := c.cfg.Clock.NewTicker(c.cfg.PollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-ticker.C():
-			content, err := c.handoff.ReadHandoff()
-			if err == nil && strings.Contains(content, nonce) {
-				return true
-			}
-		}
-	}
-}
-
-// waitForNewSessionIDWithBackstop is the HARD-GATE wrapper around
-// waitForNewSessionID (hk-vdqe2). It retries the ClearSettle poll — issuing a
-// defensive extra /clear before each retry, in case a busy pane never consumed
-// the first one — until a new session_id is confirmed, or either
-// ClearConfirmRetries attempts or the ClearConfirmBackstop wall-clock deadline
-// is exhausted, whichever comes first. Returns "" only once the backstop is
-// genuinely exhausted, at which point the caller falls back to firing the
-// brief unconfirmed (logged via session_keeper_clear_unconfirmed) rather than
-// hanging forever.
-func (c *Cycler) waitForNewSessionIDWithBackstop(ctx context.Context, prevSID string) string {
-	deadline := c.cfg.Clock.Now().Add(c.cfg.ClearConfirmBackstop)
-	for attempt := 1; ; attempt++ {
-		if sid := c.waitForNewSessionID(ctx, prevSID); sid != "" {
-			return sid
-		}
-		if ctx.Err() != nil || attempt >= c.cfg.ClearConfirmRetries || !c.cfg.Clock.Now().Before(deadline) {
-			return ""
-		}
-		// Defensive re-inject: the pane may not have consumed the prior /clear.
-		if c.cfg.TmuxTarget != "" {
-			_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, "/clear") //nolint:errcheck
-		}
-	}
-}
-
-// waitForNewSessionID polls the gauge until its session_id differs from
-// prevSID or the clear-settle timeout (or ctx) elapses.
-func (c *Cycler) waitForNewSessionID(parentCtx context.Context, prevSID string) string {
-	ctx, cancel := context.WithTimeout(parentCtx, c.cfg.ClearSettle)
-	defer cancel()
-
-	ticker := c.cfg.Clock.NewTicker(c.cfg.PollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ""
-		case <-ticker.C():
-			cf, _, err := c.gauge.ReadGauge()
-			if err == nil && cf.SessionID != "" && cf.SessionID != prevSID {
-				return cf.SessionID
-			}
-		}
-	}
-}
-
-// emitHandoffStarted emits session_keeper_handoff_started.
-func (c *Cycler) emitHandoffStarted(ctx context.Context, cycleID, sessionID string) {
-	payload := core.SessionKeeperHandoffStartedPayload{
-		AgentName: c.cfg.AgentName,
-		CycleID:   cycleID,
-		SessionID: sessionID,
-	}
-	raw, _ := json.Marshal(payload)                                                                //nolint:errcheck
-	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperHandoffStarted, raw) //nolint:errcheck
-}
-
-// emitCycleComplete emits session_keeper_cycle_complete.
-func (c *Cycler) emitCycleComplete(ctx context.Context, cycleID, prevSID, newSID string) {
-	payload := core.SessionKeeperCycleCompletePayload{
-		AgentName:     c.cfg.AgentName,
-		CycleID:       cycleID,
-		PrevSessionID: prevSID,
-		NewSessionID:  newSID,
-	}
-	raw, _ := json.Marshal(payload)                                                               //nolint:errcheck
-	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperCycleComplete, raw) //nolint:errcheck
-}
-
-// emitCycleAborted emits session_keeper_cycle_aborted.
-func (c *Cycler) emitCycleAborted(ctx context.Context, cycleID, sessionID, reason string) {
-	payload := core.SessionKeeperCycleAbortedPayload{
-		AgentName: c.cfg.AgentName,
-		CycleID:   cycleID,
-		SessionID: sessionID,
-		Reason:    reason,
-	}
-	raw, _ := json.Marshal(payload)                                                              //nolint:errcheck
-	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperCycleAborted, raw) //nolint:errcheck
-}
-
-// emitClearUnconfirmed emits session_keeper_clear_unconfirmed.
-func (c *Cycler) emitClearUnconfirmed(ctx context.Context, cycleID, sessionID string) {
-	payload := core.SessionKeeperClearUnconfirmedPayload{
-		AgentName: c.cfg.AgentName,
-		CycleID:   cycleID,
-		SessionID: sessionID,
-	}
-	raw, _ := json.Marshal(payload)                                                                  //nolint:errcheck
-	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperClearUnconfirmed, raw) //nolint:errcheck
-}
-
-// emitCycleRecovered emits session_keeper_cycle_recovered.
-func (c *Cycler) emitCycleRecovered(ctx context.Context, cycleID, phaseAtCrash string) {
-	payload := core.SessionKeeperCycleRecoveredPayload{
-		AgentName:    c.cfg.AgentName,
-		CycleID:      cycleID,
-		PhaseAtCrash: phaseAtCrash,
-	}
-	raw, _ := json.Marshal(payload)                                                                //nolint:errcheck
-	_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperCycleRecovered, raw) //nolint:errcheck
-}
+// NOTE (T7): the emit* helpers, the Gate-7 operator-attached throttle, and
+// the two blocking poll loops (pollForNonce, waitForNewSessionID /
+// waitForNewSessionIDWithBackstop) are DISSOLVED: emissions are pure Emit
+// actions built in step.go (emitOperatorAttached stays a deliberate NO-OP —
+// logmine TA3/F55 — represented by Gate 7 emitting NOTHING while still
+// advancing the hk-2yvx sample throttle in CycleState); the poll loops are
+// the shell drive loop's detection ticks + armed-timer deadlines (shell.go,
+// SK-010).

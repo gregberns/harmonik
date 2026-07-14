@@ -22,7 +22,7 @@ package keepertest_test
 //
 // L2 also hosts the per-mode fault smoke (RS-017: "at least one fault case
 // per mode asserting a terminal signal"); the exhaustive 4-fault × 4-strata ×
-// EventN matrix is T12.
+// EventN matrix lives in l2_fault_matrix_test.go (T12).
 
 import (
 	"bytes"
@@ -179,10 +179,12 @@ func drainTwin(t *testing.T, twin *keepertwin.Twin, stallExpected bool) []keeper
 }
 
 // runDiscrete replays one cycle through the discrete-event harness and
-// returns the sink. It FAILS the test if the reactor is still in-cycle when
-// both the stimulus and every armed timer are exhausted — that is the silence
-// bug (SR9), converted into an explicit failure, never a hang.
-func runDiscrete(t *testing.T, sum keepertwin.CycleSummary, fault keepertwin.FaultConfig, stallExpected bool) *KeeperBridgeSink {
+// returns the sink plus the total VIRTUAL time elapsed (first stimulus → last
+// step; the T12 matrix asserts it against the SK-015 bounded window). It
+// FAILS the test if the reactor is still in-cycle when both the stimulus and
+// every armed timer are exhausted — that is the silence bug (SR9), converted
+// into an explicit failure, never a hang.
+func runDiscrete(t *testing.T, sum keepertwin.CycleSummary, fault keepertwin.FaultConfig, stallExpected bool) (*KeeperBridgeSink, time.Duration) {
 	t.Helper()
 
 	events, err := keepertwin.SynthesizeStimulus(sum)
@@ -208,6 +210,7 @@ func runDiscrete(t *testing.T, sum keepertwin.CycleSummary, fault keepertwin.Fau
 	if len(stimuli) > 0 {
 		now = stimuli[0].At
 	}
+	start := now
 	timers := map[keeper.TimerKind]time.Time{}
 
 	feed := func(ev keeper.Event) {
@@ -283,7 +286,7 @@ func runDiscrete(t *testing.T, sum keepertwin.CycleSummary, fault keepertwin.Fau
 				t.Fatalf("%s: SILENCE — reactor still in-cycle (phase %s) with no stimulus and no armed timer",
 					sum.CKey, cyc.State().Phase)
 			}
-			return sink
+			return sink, now.Sub(start)
 		}
 	}
 }
@@ -348,7 +351,7 @@ func eqStrings(a, b []string) bool {
 func TestL2_CleanCompleteEffects(t *testing.T) {
 	t.Parallel()
 	sum := pickPerStratum(t)[keepertwin.StratumCleanComplete]
-	sink := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
+	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
 	assertOneTerminal(t, sink, sum.CKey, true, false)
 	if sink.Escapes != 1 {
@@ -385,7 +388,7 @@ func TestL2_CleanCompleteEffects(t *testing.T) {
 func TestL2_DegradedCompleteEffects(t *testing.T) {
 	t.Parallel()
 	sum := pickPerStratum(t)[keepertwin.StratumDegradedComplete]
-	sink := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
+	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
 	assertOneTerminal(t, sink, sum.CKey, true, true)
 
@@ -415,7 +418,7 @@ func TestL2_DegradedCompleteEffects(t *testing.T) {
 func TestL2_AbortEffects(t *testing.T) {
 	t.Parallel()
 	sum := pickPerStratum(t)[keepertwin.StratumAbortHandoffTimeout]
-	sink := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
+	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
 	assertOneTerminal(t, sink, sum.CKey, false, false)
 	if sink.Clears != 0 {
@@ -455,7 +458,7 @@ func TestL2_UnterminatedCycleFixedEffects(t *testing.T) {
 	if sum.CKey != knownUnterminatedCKey {
 		t.Fatalf("unterminated pick = %s, want %s", sum.CKey, knownUnterminatedCKey)
 	}
-	sink := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
+	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
 	// FIXED behavior: complete + clear_unconfirmed within the virtual bound.
 	assertOneTerminal(t, sink, sum.CKey, true, true)
@@ -524,7 +527,7 @@ func TestL2_FaultSmoke(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			sink := runDiscrete(t, clean, tc.fault, tc.stallExpected)
+			sink, _ := runDiscrete(t, clean, tc.fault, tc.stallExpected)
 			assertOneTerminal(t, sink, clean.CKey, tc.wantComplete, tc.wantUnconfirmed)
 			if sink.Clears != tc.wantClears {
 				t.Errorf("clears = %d, want %d", sink.Clears, tc.wantClears)

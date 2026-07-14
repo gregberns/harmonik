@@ -30,8 +30,10 @@
 //     ends). Effects land in a KeeperBridgeSink (a test-local recording fake of
 //     the five ports). L2 asserts interior counts a live shell would produce
 //     (e.g. the degraded path's defensive /clear re-injects), plus one fault
-//     case per substrate fault mode asserting terminal-never-silence (RS-017;
-//     the exhaustive matrix is T12).
+//     case per substrate fault mode asserting terminal-never-silence (RS-017).
+//     The exhaustive 4-fault × 4-strata × EventN matrix (T12; SR9/SK-INV-005;
+//     measurement-design §5) lives in l2_fault_matrix_test.go on the same
+//     discrete-event harness.
 //
 //   - L3 live (l3_live_test.go): gated on KEEPER_LIVE=1 (RS-019). One real
 //     tmux pane, one scripted handoff→clear→resume cycle, wire-canary

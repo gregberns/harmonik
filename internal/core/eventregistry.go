@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -225,6 +226,38 @@ func (e Event) DecodePayload() (EventPayload, error) {
 	}
 	payload := entry.constructor()
 	if err := json.Unmarshal(e.Payload, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+// DecodePayloadStrict decodes e.Payload exactly like DecodePayload but rejects
+// unknown payload fields (json.Decoder.DisallowUnknownFields), so an additive
+// field a NEWER writer introduced surfaces as a decode error instead of being
+// silently ignored. DecodePayload uses json.Unmarshal with no
+// DisallowUnknownFields and therefore cannot see additive writer drift.
+//
+// Returns:
+//   - (payload, nil) on success.
+//   - (nil, ErrUnknownEventType) when e.Type has no registered constructor.
+//   - (nil, <decode error>) when JSON decoding fails, INCLUDING an unknown field.
+//
+// The addition is purely additive: DecodePayload's tolerant semantics are
+// unchanged and remain the default for historical replay. Strict mode is for
+// replaying the harness's OWN freshly-recorded corpus, where an unknown field
+// means a writer drifted (EV-049, event-model.md §4.7).
+func (e Event) DecodePayloadStrict() (EventPayload, error) {
+	r := globalEventRegistry
+	r.mu.Lock()
+	entry, ok := r.entries[e.Type]
+	r.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownEventType, e.Type)
+	}
+	payload := entry.constructor()
+	dec := json.NewDecoder(bytes.NewReader(e.Payload))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(payload); err != nil {
 		return nil, err
 	}
 	return payload, nil

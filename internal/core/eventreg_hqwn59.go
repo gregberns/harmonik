@@ -40,6 +40,7 @@ func init() {
 	registerGateDispatchEvents()
 	registerWorkflowLoaderEvents()
 	registerKeeperEvents()
+	registerKeeperInteriorEvents()
 	registerAlarmEvents()
 	registerHITLDecisionEvents()
 	registerDecisionRequiredEvents()
@@ -475,18 +476,18 @@ func registerWorkflowLoaderEvents() {
 	mustRegister("skills_resolved", func() EventPayload { return &SkillsResolvedPayload{} })
 }
 
-// registerKeeperEvents registers §8.13 session-keeper event payload constructors
+// registerKeeperEvents registers §8.16 session-keeper event payload constructors
 // (codename:session-keeper, hk-ekap1; beads hk-8vzek, hk-22i70, hk-kct9t, hk-aalsm).
 //
-// Durability classes per §8.13:
-//   - session_keeper_warn                (§8.13.1): O (ordinary — observability)
-//   - session_keeper_no_gauge            (§8.13.2): O (ordinary — configuration-gap signal)
-//   - session_keeper_handoff_started     (§8.13.3): O (ordinary — observability)
-//   - session_keeper_cycle_complete      (§8.13.4): O (ordinary — observability)
-//   - session_keeper_cycle_aborted       (§8.13.5): O (ordinary — operator attention)
-//   - session_keeper_clear_unconfirmed   (§8.13.6): O (ordinary — observability)
-//   - session_keeper_cycle_recovered     (§8.13.7): O (ordinary — observability)
-//   - session_keeper_precompact_blocked  (§8.13.8): O (ordinary — observability)
+// Durability classes per §8.16:
+//   - session_keeper_warn                (§8.16.1): O (ordinary — observability)
+//   - session_keeper_no_gauge            (§8.16.2): O (ordinary — configuration-gap signal)
+//   - session_keeper_handoff_started     (§8.16.3): O (ordinary — observability)
+//   - session_keeper_cycle_complete      (§8.16.4): O (ordinary — observability)
+//   - session_keeper_cycle_aborted       (§8.16.5): O (ordinary — operator attention)
+//   - session_keeper_clear_unconfirmed   (§8.16.6): O (ordinary — observability)
+//   - session_keeper_cycle_recovered     (§8.16.7): O (ordinary — observability)
+//   - session_keeper_precompact_blocked  (§8.16.8): O (ordinary — observability)
 func registerKeeperEvents() {
 	mustRegister("session_keeper_warn", func() EventPayload { return &SessionKeeperWarnPayload{} })
 	mustRegister("session_keeper_no_gauge", func() EventPayload { return &SessionKeeperNoGaugePayload{} })
@@ -520,11 +521,29 @@ func registerKeeperEvents() {
 	mustRegister("session_keeper_ack_timeout", func() EventPayload { return &SessionKeeperAckTimeoutPayload{} })
 }
 
-// registerAlarmEvents registers §8.14 alarm / self-check event payload
+// registerKeeperInteriorEvents registers §8.20 session-keeper interior cycle
+// event constructors (codename:session-restart-substrate). All schema v1, class O.
+//
+// Kept SEPARATE from registerKeeperEvents (the §8.16 watcher/lifecycle family)
+// to keep the §8.16 vs §8.20 split legible.
+//
+// Durability classes per §8.20:
+//   - session_keeper_handoff_written (§8.20.1): O (ordinary — observability)
+//   - session_keeper_model_done      (§8.20.2): O (ordinary — observability)
+//   - session_keeper_clear_sent      (§8.20.3): O (ordinary — observability)
+//   - session_keeper_new_session_up  (§8.20.4): O (ordinary — observability)
+func registerKeeperInteriorEvents() {
+	mustRegister("session_keeper_handoff_written", func() EventPayload { return &SessionKeeperHandoffWrittenPayload{} })
+	mustRegister("session_keeper_model_done", func() EventPayload { return &SessionKeeperModelDonePayload{} })
+	mustRegister("session_keeper_clear_sent", func() EventPayload { return &SessionKeeperClearSentPayload{} })
+	mustRegister("session_keeper_new_session_up", func() EventPayload { return &SessionKeeperNewSessionUpPayload{} })
+}
+
+// registerAlarmEvents registers §8.17 alarm / self-check event payload
 // constructors (hk-tnmjy).
 //
-// Durability classes per §8.14:
-//   - review_gate_anomaly (§8.14.1): O (ordinary — observability alarm; reconstructible
+// Durability classes per §8.17:
+//   - review_gate_anomaly (§8.17.1): O (ordinary — observability alarm; reconstructible
 //     from bead_closed + reviewer_verdict sequence in the JSONL log)
 func registerAlarmEvents() {
 	mustRegister("review_gate_anomaly", func() EventPayload { return &ReviewGateAnomalyPayload{} })
@@ -534,7 +553,7 @@ func registerAlarmEvents() {
 	mustRegister("stall_detected", func() EventPayload { return &StallDetectedPayload{} })
 }
 
-// registerHITLDecisionEvents registers the §8.15 hitl-decisions event payload
+// registerHITLDecisionEvents registers the §8.14 hitl-decisions event payload
 // constructors (codename:hitl-decisions, hk-33p, component K1).
 //
 // These are the agent→human decision dual of agent-comms. All three are F-class

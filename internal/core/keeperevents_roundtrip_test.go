@@ -63,3 +63,104 @@ func TestKeeperEvents_AckTimeout_RoundTrip(t *testing.T) {
 		t.Errorf("DecodePayload value mismatch: got %+v, want %+v", got, want)
 	}
 }
+
+// ── §8.20 Session-keeper interior cycle events (codename:session-restart-substrate) ──
+
+func TestKeeperEvents_HandoffWritten_RoundTrip(t *testing.T) {
+	want := &SessionKeeperHandoffWrittenPayload{
+		AgentName:    "test-agent",
+		CycleID:      "cyc-20260713T000000Z-1",
+		SessionID:    "550e8400-e29b-41d4-a716-446655440000",
+		Nonce:        "nonce-abc",
+		Recovered:    true,
+		HandoffMtime: "2026-07-13T00:00:00Z",
+	}
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	ev := minimalEvent(t, "session_keeper_handoff_written", raw)
+	got, err := ev.DecodePayload()
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	if reflect.TypeOf(got) != reflect.TypeOf(want) {
+		t.Errorf("DecodePayload type mismatch: got %T, want %T", got, want)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("DecodePayload value mismatch: got %+v, want %+v", got, want)
+	}
+}
+
+func TestKeeperEvents_ModelDone_RoundTrip(t *testing.T) {
+	want := &SessionKeeperModelDonePayload{
+		AgentName: "test-agent",
+		CycleID:   "cyc-20260713T000000Z-1",
+		SessionID: "550e8400-e29b-41d4-a716-446655440000",
+		Source:    "idle_marker",
+		Degraded:  true,
+	}
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	ev := minimalEvent(t, "session_keeper_model_done", raw)
+	got, err := ev.DecodePayload()
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	if reflect.TypeOf(got) != reflect.TypeOf(want) {
+		t.Errorf("DecodePayload type mismatch: got %T, want %T", got, want)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("DecodePayload value mismatch: got %+v, want %+v", got, want)
+	}
+}
+
+func TestKeeperEvents_ClearSent_RoundTrip(t *testing.T) {
+	want := &SessionKeeperClearSentPayload{
+		AgentName: "test-agent",
+		CycleID:   "cyc-20260713T000000Z-1",
+		SessionID: "550e8400-e29b-41d4-a716-446655440000",
+		Attempt:   2,
+	}
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	ev := minimalEvent(t, "session_keeper_clear_sent", raw)
+	got, err := ev.DecodePayload()
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	if reflect.TypeOf(got) != reflect.TypeOf(want) {
+		t.Errorf("DecodePayload type mismatch: got %T, want %T", got, want)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("DecodePayload value mismatch: got %+v, want %+v", got, want)
+	}
+}
+
+func TestKeeperEvents_NewSessionUp_RoundTrip(t *testing.T) {
+	want := &SessionKeeperNewSessionUpPayload{
+		AgentName:     "test-agent",
+		CycleID:       "cyc-20260713T000000Z-1",
+		PrevSessionID: "550e8400-e29b-41d4-a716-446655440000",
+		NewSessionID:  "660e8400-e29b-41d4-a716-446655440001",
+	}
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	ev := minimalEvent(t, "session_keeper_new_session_up", raw)
+	got, err := ev.DecodePayload()
+	if err != nil {
+		t.Fatalf("DecodePayload: %v", err)
+	}
+	if reflect.TypeOf(got) != reflect.TypeOf(want) {
+		t.Errorf("DecodePayload type mismatch: got %T, want %T", got, want)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("DecodePayload value mismatch: got %+v, want %+v", got, want)
+	}
+}

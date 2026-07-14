@@ -15,7 +15,12 @@ import (
 // The test is table-driven: allEventTypeCohort enumerates every constant with
 // its constructor. This is the single source of truth for "what must be
 // registered". When a new EventType constant is added to eventtype.go, it MUST
-// also be appended to allEventTypeCohort in this file.
+// also be appended to allEventTypeCohort in this file — EXCEPT the
+// session_keeper_* families (§8.16 watcher/lifecycle AND §8.20 interior), which
+// are registered + compat-tabled but deliberately CARVED OUT of this cross-bus
+// taxonomy cohort per EV-050 (D8). A new session_keeper_* type gets a
+// mustRegister constructor and a mandatory pertypecompat row, but MUST NOT be
+// added here.
 //
 // The test uses a LOCAL registry snapshot (not the global registry) to be
 // immune to eventRegistryReset() calls in TestRegistry subtests — same isolation

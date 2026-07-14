@@ -105,3 +105,33 @@ func (m daemonMerge) Submit() mergeSubmit {
 func (deps *workLoopDeps) mergePort() MergePort {
 	return daemonMerge{q: deps.mergeQ}
 }
+
+// GatePort is the DOT gate-node evaluation surface: it resolves a gate_ref to a
+// Gate ControlPoint via the daemon's ControlPoint registry.
+type GatePort interface {
+	// LookupGate resolves gateRef. registryLoaded is false when no registry is
+	// wired (nil cpRegistry); ok is false when gateRef is absent from a loaded
+	// registry. The Kind check stays at the call site so the eval-failure reason
+	// strings remain byte-identical to the pre-port path (ports-design §3).
+	LookupGate(gateRef core.GateRef) (cp core.ControlPoint, ok bool, registryLoaded bool)
+}
+
+// daemonGate is the production GatePort adapter over deps.cpRegistry. A nil
+// registry yields registryLoaded=false so the caller emits the exact
+// "no ControlPoint registry loaded in daemon" eval-failure Outcome.
+type daemonGate struct {
+	reg core.Registry
+}
+
+func (g daemonGate) LookupGate(gateRef core.GateRef) (core.ControlPoint, bool, bool) {
+	if g.reg == nil {
+		return core.ControlPoint{}, false, false
+	}
+	cp, ok := g.reg.LookupByName(string(gateRef))
+	return cp, ok, true
+}
+
+// gatePort returns the production GatePort bound to deps.cpRegistry.
+func (deps *workLoopDeps) gatePort() GatePort {
+	return daemonGate{reg: deps.cpRegistry}
+}

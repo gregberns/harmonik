@@ -131,6 +131,12 @@ linters:
             - "github.com/gregberns/harmonik/internal/keeper"
             - "github.com/gregberns/harmonik/internal/dashboard"
             - "github.com/gregberns/harmonik/internal/digest"
+            # substrate: the ClockPort determinism seam (D4/SK-008/SK-R3). The
+            # cycle core reads time exclusively through substrate.ClockPort so a
+            # FakeClock can replay timeouts. substrate is a stdlib-only leaf; this
+            # edge is the intended keeper→substrate consumer direction (the
+            # reverse is denied by the substrate leaf rule). Rationale: T5.
+            - "github.com/gregberns/harmonik/internal/substrate"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "keeper MUST NOT import daemon (session-keeper spec hk-ekap1)" }
             - { pkg: "github.com/gregberns/harmonik/internal/workloop", desc: "keeper MUST NOT import workloop (session-keeper spec hk-ekap1)" }

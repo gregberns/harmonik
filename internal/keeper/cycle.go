@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // briefRestartCmd is injected after /clear to re-orient the agent via the
@@ -80,6 +81,13 @@ type CyclerConfig struct {
 	// DefaultClearConfirmBackstop / DefaultClearConfirmRetries.
 	ClearConfirmBackstop time.Duration
 	ClearConfirmRetries  int
+
+	// Clock is the determinism port for all cycle-timing reads (SK-008/SK-R3,
+	// substrate D4). Nil → substrate.SystemClock{} (production wall clock). The
+	// cycle core reads time exclusively through this port so a substrate.FakeClock
+	// can drive timeouts and poll cadences in virtual time. T6 promotes this to a
+	// named ClockPort alongside the other extracted ports.
+	Clock substrate.ClockPort
 
 	// Injectable dependencies. Nil → production default.
 	CycleIDGen      func() string
@@ -310,8 +318,11 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.ClearConfirmRetries <= 0 {
 		c.ClearConfirmRetries = DefaultClearConfirmRetries
 	}
+	if c.Clock == nil {
+		c.Clock = substrate.SystemClock{}
+	}
 	if c.CycleIDGen == nil {
-		c.CycleIDGen = newCycleIDGen()
+		c.CycleIDGen = newCycleIDGen(c.Clock)
 	}
 	if c.IsManagedFn == nil {
 		c.IsManagedFn = IsManaged
@@ -431,8 +442,8 @@ func (c *CyclerConfig) aboveForceThreshold(cf *CtxFile) bool {
 // newCycleIDGen returns a closure that generates collision-resistant cycle IDs.
 // The ID includes a startup-time timestamp prefix so IDs issued by different
 // process instances never collide, addressing DEFECT-2 (stale on-disk nonce).
-func newCycleIDGen() func() string {
-	prefix := time.Now().UTC().Format("20060102T150405")
+func newCycleIDGen(clock substrate.ClockPort) func() string {
+	prefix := clock.Now().UTC().Format("20060102T150405")
 	var seq uint64
 	return func() string {
 		n := atomic.AddUint64(&seq, 1)
@@ -704,14 +715,14 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 			// Already-seen SIDs (e.g. a flapping session_id) do not re-arm the
 			// timer — the prior grace period was sufficient. (Refs: hk-ibb fix 2)
 			if _, alreadySeen := c.seenSessionIDs[cf.SessionID]; !alreadySeen {
-				now := time.Now()
+				now := c.cfg.Clock.Now()
 				c.currentSessionIDSince = now
 				// Burst-relative cap (Refs: hk-hz9 fix 1): reset the grace burst
 				// window on first arm OR when the prior burst's MaxBootGraceTotal has
 				// already elapsed. This ensures a new boot burst gets a fresh total
 				// window rather than inheriting accumulated time from a prior burst.
 				if c.bootGraceFirstArmAt.IsZero() ||
-					(c.cfg.MaxBootGraceTotal > 0 && time.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal) {
+					(c.cfg.MaxBootGraceTotal > 0 && c.cfg.Clock.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal) {
 					c.bootGraceFirstArmAt = now
 				}
 			}
@@ -727,16 +738,16 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	// boot-timing false-positive risk.
 	if c.cfg.BootGracePeriod > 0 && !c.currentSessionIDSince.IsZero() &&
 		!c.cfg.aboveForceThreshold(cf) &&
-		time.Since(c.currentSessionIDSince) < c.cfg.BootGracePeriod {
+		c.cfg.Clock.Since(c.currentSessionIDSince) < c.cfg.BootGracePeriod {
 		// MaxBootGraceTotal ceiling: if total time since first grace-arm exceeds
 		// the cap, skip the grace gate regardless of per-SID timer. (hk-ibb fix 2)
 		totalExceeded := c.cfg.MaxBootGraceTotal > 0 &&
 			!c.bootGraceFirstArmAt.IsZero() &&
-			time.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal
+			c.cfg.Clock.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal
 		if !totalExceeded {
 			slog.DebugContext(ctx, "keeper: boot grace active — deferring cycle for new session",
 				"agent", c.cfg.AgentName, "session_id", cf.SessionID,
-				"grace_remaining", c.cfg.BootGracePeriod-time.Since(c.currentSessionIDSince))
+				"grace_remaining", c.cfg.BootGracePeriod-c.cfg.Clock.Since(c.currentSessionIDSince))
 			return nil
 		}
 	}
@@ -791,12 +802,12 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	// sent a message should not be force-cleared even if context is critical.
 	if c.cfg.OperatorTurnLookback > 0 && cf.SessionID != "" {
 		if t, ok := c.recentTurnFn()(c.resolvedTranscriptDir(), cf.SessionID, "user"); ok {
-			if time.Since(t) <= c.cfg.OperatorTurnLookback {
+			if c.cfg.Clock.Since(t) <= c.cfg.OperatorTurnLookback {
 				// Best-effort: arm the hold so Gate 5c fires on the next tick too.
 				// Ignore errors (SetHold fails silently when .sid is absent).
 				_, _ = SetHold(c.cfg.ProjectDir, c.cfg.AgentName)
 				slog.DebugContext(ctx, "keeper: auto-hold: recent operator turn suppresses ACT",
-					"agent", c.cfg.AgentName, "turn_age", time.Since(t).Round(time.Second))
+					"agent", c.cfg.AgentName, "turn_age", c.cfg.Clock.Since(t).Round(time.Second))
 				return nil
 			}
 		}
@@ -808,9 +819,9 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	// automatically when the grace window expires. WARN still fires (watcher path).
 	if c.cfg.PostAnswerGrace > 0 && cf.SessionID != "" {
 		if t, ok := c.recentTurnFn()(c.resolvedTranscriptDir(), cf.SessionID, "assistant"); ok {
-			if time.Since(t) <= c.cfg.PostAnswerGrace {
+			if c.cfg.Clock.Since(t) <= c.cfg.PostAnswerGrace {
 				slog.DebugContext(ctx, "keeper: post-answer grace: recent assistant turn suppresses ACT",
-					"agent", c.cfg.AgentName, "turn_age", time.Since(t).Round(time.Second))
+					"agent", c.cfg.AgentName, "turn_age", c.cfg.Clock.Since(t).Round(time.Second))
 				return nil
 			}
 		}
@@ -829,7 +840,7 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 				return nil
 			}
 			// Above force threshold: allow retry after ForceRetryInterval.
-			if !c.lastForcedAttemptAt.IsZero() && time.Since(c.lastForcedAttemptAt) < c.cfg.ForceRetryInterval {
+			if !c.lastForcedAttemptAt.IsZero() && c.cfg.Clock.Since(c.lastForcedAttemptAt) < c.cfg.ForceRetryInterval {
 				return nil
 			}
 			// Fall through: retry the forced-clear.
@@ -841,7 +852,7 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 			// suppression never lifts. When above the hard force threshold and
 			// ForceRetryInterval has elapsed, allow a retry to break the stall.
 			if c.cfg.aboveForceThreshold(cf) {
-				if !c.lastForcedAttemptAt.IsZero() && time.Since(c.lastForcedAttemptAt) < c.cfg.ForceRetryInterval {
+				if !c.lastForcedAttemptAt.IsZero() && c.cfg.Clock.Since(c.lastForcedAttemptAt) < c.cfg.ForceRetryInterval {
 					return nil
 				}
 				// Fall through: retry the forced-clear.
@@ -934,7 +945,7 @@ func (c *Cycler) handoffWrittenAndFresh(handoffPath string, handoffInjectedAt ti
 // cycle aborts before /clear (never /clear when there is nothing to resume from).
 func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	cycleID := c.cfg.CycleIDGen()
-	now := time.Now().UTC()
+	now := c.cfg.Clock.Now().UTC()
 	journalPath := c.journalPath()
 	handoffPath := c.cfg.HandoffFilePath(c.cfg.ProjectDir, c.cfg.AgentName)
 
@@ -942,7 +953,7 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	// same-session retries after this cycle completes or aborts. Set regardless
 	// of CrispIdle path so any forced-threshold cycle is rate-limited. (hk-qoz)
 	if c.cfg.aboveForceThreshold(cf) {
-		c.lastForcedAttemptAt = time.Now().UTC()
+		c.lastForcedAttemptAt = c.cfg.Clock.Now().UTC()
 	}
 
 	// Step 1: open journal BEFORE any injection.
@@ -981,7 +992,7 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	// mtime is at/after this moment — i.e. the agent wrote it in RESPONSE to this
 	// injection, not a stale pre-existing handoff (hk-vpnp). Captured before the
 	// inject call so any agent write is guaranteed to be >= this timestamp.
-	handoffInjectedAt := time.Now()
+	handoffInjectedAt := c.cfg.Clock.Now()
 	if c.cfg.TmuxTarget != "" {
 		if c.cfg.SendEscapeFn != nil {
 			_ = c.cfg.SendEscapeFn(ctx, c.cfg.TmuxTarget) //nolint:errcheck // non-fatal; clears partial input
@@ -996,7 +1007,7 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 		}
 	}
 	j.Phase = "handoff_injected"
-	j.UpdatedAt = time.Now().UTC()
+	j.UpdatedAt = c.cfg.Clock.Now().UTC()
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 
 	// Step 3: confirm — poll until nonce appears or timeout elapses.
@@ -1017,7 +1028,7 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 			slog.WarnContext(ctx, "keeper: nonce echo timed out but a fresh handoff was written — recovering (proceeding with /clear + brief)",
 				"agent", c.cfg.AgentName, "cycle_id", cycleID, "session_id", cf.SessionID)
 			j.Phase = "confirmed"
-			j.UpdatedAt = time.Now().UTC()
+			j.UpdatedAt = c.cfg.Clock.Now().UTC()
 			j.Reason = "handoff_timeout_recovered"
 			_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 			// A fresh handoff means the pane was responsive enough to write it, so
@@ -1028,7 +1039,7 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 
 		// ABORT — NEVER /clear an unconfirmed handoff.
 		j.Phase = "aborted"
-		j.UpdatedAt = time.Now().UTC()
+		j.UpdatedAt = c.cfg.Clock.Now().UTC()
 		j.Reason = "handoff_timeout"
 		_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 		c.emitCycleAborted(ctx, cycleID, cf.SessionID, "handoff_timeout")
@@ -1079,7 +1090,7 @@ func (c *Cycler) runCycle(ctx context.Context, cf *CtxFile) error {
 	}
 
 	j.Phase = "confirmed"
-	j.UpdatedAt = time.Now().UTC()
+	j.UpdatedAt = c.cfg.Clock.Now().UTC()
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 
 	return c.completeCycleTail(ctx, cf, cycleID, journalPath, j, "")
@@ -1111,7 +1122,7 @@ func (c *Cycler) completeCycleTail(ctx context.Context, cf *CtxFile, cycleID, jo
 		_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, "/clear") //nolint:errcheck
 	}
 	j.Phase = "cleared"
-	j.UpdatedAt = time.Now().UTC()
+	j.UpdatedAt = c.cfg.Clock.Now().UTC()
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 
 	// Step 5: clear-readiness — HARD GATE (hk-vdqe2) on a new session_id before
@@ -1147,12 +1158,12 @@ func (c *Cycler) completeCycleTail(ctx context.Context, cf *CtxFile, cycleID, jo
 		_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, briefRestartCmd) //nolint:errcheck
 	}
 	j.Phase = "resumed"
-	j.UpdatedAt = time.Now().UTC()
+	j.UpdatedAt = c.cfg.Clock.Now().UTC()
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 
 	// Step 7: close journal; emit session_keeper_cycle_complete.
 	j.Phase = "complete"
-	j.UpdatedAt = time.Now().UTC()
+	j.UpdatedAt = c.cfg.Clock.Now().UTC()
 	j.Reason = reason                        // "" on the clean path; "handoff_timeout_recovered" on recovery.
 	_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 	c.emitCycleComplete(ctx, cycleID, cf.SessionID, newSID)
@@ -1216,7 +1227,7 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 			_ = c.cfg.InjectFn(ctx, c.cfg.TmuxTarget, briefRestartCmd) //nolint:errcheck
 		}
 		j.Phase = "complete"
-		j.UpdatedAt = time.Now().UTC()
+		j.UpdatedAt = c.cfg.Clock.Now().UTC()
 		j.Reason = "recovered_from_crash"
 		_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 		c.emitCycleRecovered(ctx, j.CycleID, "cleared")
@@ -1224,7 +1235,7 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 	case "resumed":
 		// brief was already injected; just close the journal.
 		j.Phase = "complete"
-		j.UpdatedAt = time.Now().UTC()
+		j.UpdatedAt = c.cfg.Clock.Now().UTC()
 		j.Reason = "recovered_from_crash"
 		_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 		c.emitCycleRecovered(ctx, j.CycleID, "resumed")
@@ -1232,7 +1243,7 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 	case "opened", "handoff_injected", "confirmed":
 		// /clear was NOT issued; discard (abort) the journal safely.
 		j.Phase = "aborted"
-		j.UpdatedAt = time.Now().UTC()
+		j.UpdatedAt = c.cfg.Clock.Now().UTC()
 		j.Reason = "crash_before_clear"
 		_ = c.cfg.WriteJournalFn(journalPath, j) //nolint:errcheck
 
@@ -1301,10 +1312,10 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 	// risk outweighs boot-timing false-positive risk).
 	if c.cfg.BootGracePeriod > 0 && !c.currentSessionIDSince.IsZero() &&
 		(cf == nil || !c.cfg.aboveForceThreshold(cf)) &&
-		time.Since(c.currentSessionIDSince) < c.cfg.BootGracePeriod {
+		c.cfg.Clock.Since(c.currentSessionIDSince) < c.cfg.BootGracePeriod {
 		totalExceeded := c.cfg.MaxBootGraceTotal > 0 &&
 			!c.bootGraceFirstArmAt.IsZero() &&
-			time.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal
+			c.cfg.Clock.Since(c.bootGraceFirstArmAt) >= c.cfg.MaxBootGraceTotal
 		if !totalExceeded {
 			c.emitPrecompactBlocked(ctx, sessionID, "boot_grace")
 			_ = c.cfg.ClearPrecompactTriggerFn(c.cfg.ProjectDir, c.cfg.AgentName) //nolint:errcheck
@@ -1447,7 +1458,7 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 	}
 
 	// Gate 6: cooldown.
-	if !c.lastIdleRestartAt.IsZero() && time.Since(c.lastIdleRestartAt) < c.cfg.IdleRestartCooldown {
+	if !c.lastIdleRestartAt.IsZero() && c.cfg.Clock.Since(c.lastIdleRestartAt) < c.cfg.IdleRestartCooldown {
 		return nil
 	}
 
@@ -1465,7 +1476,7 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 	// default), stranding the idle crew on a single failed attempt. Stamp before
 	// the call so the in-flight cycle is rate-limited, then unwind the stamp if it
 	// aborted so the next tick can retry. Refs: hk-4i0s.
-	c.lastIdleRestartAt = time.Now()
+	c.lastIdleRestartAt = c.cfg.Clock.Now()
 	err := c.runCycle(ctx, cf)
 	if c.lastFireWasAbort {
 		c.lastIdleRestartAt = time.Time{}
@@ -1491,7 +1502,7 @@ func (c *Cycler) emitPrecompactBlocked(ctx context.Context, sessionID, action st
 // dropped. The discrete precompact/restart_now paths emit unconditionally — they
 // are marker-driven, not poll-driven. Refs: hk-2yvx.
 func (c *Cycler) maybeEmitOperatorAttached(ctx context.Context, sessionID, phase string) {
-	now := time.Now()
+	now := c.cfg.Clock.Now()
 	if !c.lastOperatorAttachedEmit.IsZero() &&
 		now.Sub(c.lastOperatorAttachedEmit) < c.cfg.OperatorAttachedSampleInterval {
 		return
@@ -1512,14 +1523,14 @@ func (c *Cycler) pollForNonce(parentCtx context.Context, handoffPath, nonce stri
 	ctx, cancel := context.WithTimeout(parentCtx, c.cfg.HandoffTimeout)
 	defer cancel()
 
-	ticker := time.NewTicker(c.cfg.PollInterval)
+	ticker := c.cfg.Clock.NewTicker(c.cfg.PollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return false
-		case <-ticker.C:
+		case <-ticker.C():
 			content, err := c.cfg.ReadHandoff(handoffPath)
 			if err == nil && strings.Contains(content, nonce) {
 				return true
@@ -1538,12 +1549,12 @@ func (c *Cycler) pollForNonce(parentCtx context.Context, handoffPath, nonce stri
 // brief unconfirmed (logged via session_keeper_clear_unconfirmed) rather than
 // hanging forever.
 func (c *Cycler) waitForNewSessionIDWithBackstop(ctx context.Context, prevSID string) string {
-	deadline := time.Now().Add(c.cfg.ClearConfirmBackstop)
+	deadline := c.cfg.Clock.Now().Add(c.cfg.ClearConfirmBackstop)
 	for attempt := 1; ; attempt++ {
 		if sid := c.waitForNewSessionID(ctx, prevSID); sid != "" {
 			return sid
 		}
-		if ctx.Err() != nil || attempt >= c.cfg.ClearConfirmRetries || !time.Now().Before(deadline) {
+		if ctx.Err() != nil || attempt >= c.cfg.ClearConfirmRetries || !c.cfg.Clock.Now().Before(deadline) {
 			return ""
 		}
 		// Defensive re-inject: the pane may not have consumed the prior /clear.
@@ -1559,14 +1570,14 @@ func (c *Cycler) waitForNewSessionID(parentCtx context.Context, prevSID string) 
 	ctx, cancel := context.WithTimeout(parentCtx, c.cfg.ClearSettle)
 	defer cancel()
 
-	ticker := time.NewTicker(c.cfg.PollInterval)
+	ticker := c.cfg.Clock.NewTicker(c.cfg.PollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ""
-		case <-ticker.C:
+		case <-ticker.C():
 			cf, _, err := c.cfg.ReadGaugeFn(c.cfg.ProjectDir, c.cfg.AgentName)
 			if err == nil && cf.SessionID != "" && cf.SessionID != prevSID {
 				return cf.SessionID

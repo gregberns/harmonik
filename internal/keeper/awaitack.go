@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // awaitack.go — the AGENT-SIDE half of the restart-now/ping ACK handshake
@@ -64,9 +65,9 @@ type PaneCapturer func(ctx context.Context, tmuxTarget string) (string, error)
 
 // AwaitAckConfig carries everything AwaitAck needs. TmuxTarget is the
 // already-resolved pane (the CLI resolves it via ResolveTmuxTarget). Capture
-// defaults to CaptureTmuxPane when nil; Now defaults to time.Now (overridable
-// in tests for a deterministic clock); Timeout/Poll default to the package
-// constants when zero.
+// defaults to CaptureTmuxPane when nil; Clock defaults to substrate.SystemClock
+// (overridable in tests via a substrate.FakeClock for a deterministic clock);
+// Timeout/Poll default to the package constants when zero.
 type AwaitAckConfig struct {
 	AgentName  string
 	TmuxTarget string
@@ -75,7 +76,7 @@ type AwaitAckConfig struct {
 	Timeout    time.Duration
 	Poll       time.Duration
 	Capture    PaneCapturer
-	Now        func() time.Time
+	Clock      substrate.ClockPort
 }
 
 // ErrAckTimeout is returned by AwaitAck when the timeout elapses without
@@ -92,9 +93,9 @@ var ErrAckTimeout = errors.New("keeper: await-ack: timeout")
 // nonce), so scrollback from older cycles with a different nonce is inert: there
 // is no "first ACK wins" ambiguity (design §2).
 func AwaitAck(ctx context.Context, cfg AwaitAckConfig, emitter Emitter) error {
-	now := cfg.Now
-	if now == nil {
-		now = time.Now
+	clock := cfg.Clock
+	if clock == nil {
+		clock = substrate.SystemClock{}
 	}
 	capture := cfg.Capture
 	if capture == nil {
@@ -125,7 +126,7 @@ func AwaitAck(ctx context.Context, cfg AwaitAckConfig, emitter Emitter) error {
 	}
 
 	token := AckMatchToken(cfg.Nonce)
-	deadline := now().Add(timeout)
+	deadline := clock.Now().Add(timeout)
 	log.InfoContext(ctx, "keeper: await-ack: watching pane for ack", "tmux_target", cfg.TmuxTarget, "token", token, "timeout", timeout, "poll", poll)
 
 	var captureErrs int
@@ -149,7 +150,7 @@ func AwaitAck(ctx context.Context, cfg AwaitAckConfig, emitter Emitter) error {
 		}
 
 		// Timed out? Emit the durable escalation event and return.
-		if !now().Before(deadline) {
+		if !clock.Now().Before(deadline) {
 			log.WarnContext(ctx, "keeper: await-ack: timeout; ack not observed", "timeout", timeout)
 			emitAckTimeout(ctx, emitter, cfg, kind, timeout, "ack_not_observed")
 			return fmt.Errorf("%w: no %q within %s for agent %q — keeper may be dead, wrong pane, or unverifiable sid; investigate",
@@ -159,10 +160,10 @@ func AwaitAck(ctx context.Context, cfg AwaitAckConfig, emitter Emitter) error {
 		// Wait one poll interval (or until the deadline / ctx cancel, whichever
 		// is first) before the next capture.
 		wait := poll
-		if rem := time.Until(deadline); rem > 0 && rem < wait {
+		if rem := deadline.Sub(clock.Now()); rem > 0 && rem < wait {
 			wait = rem
 		}
-		if !sleepCtx(ctx, wait) {
+		if !clock.Sleep(ctx, wait) {
 			// Context cancelled (e.g. SIGINT). Surface the cancellation; do NOT
 			// emit a timeout event — the operator interrupted, the keeper is not
 			// implicated.

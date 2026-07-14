@@ -15,6 +15,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/presence"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // Emitter is a minimal event-emission interface used by the keeper watcher.
@@ -39,15 +40,19 @@ func (NoopEmitter) EmitWithRunID(_ context.Context, _ core.RunID, _ core.EventTy
 type FileEmitter struct {
 	path  string
 	idGen *core.EventIDGenerator
+	clock substrate.ClockPort
 	mu    sync.Mutex
 }
 
 // NewFileEmitter constructs a FileEmitter that appends to the harmonik events
-// log at projectDir/.harmonik/events/events.jsonl.
+// log at projectDir/.harmonik/events/events.jsonl. Event TimestampWall stamps
+// are read through substrate.SystemClock (the determinism port, SK-008/D9) so
+// replay envelopes are reproducible under a substrate.FakeClock.
 func NewFileEmitter(projectDir string) *FileEmitter {
 	return &FileEmitter{
 		path:  filepath.Join(projectDir, ".harmonik", core.EventsJSONLPath),
 		idGen: core.NewEventIDGenerator(),
+		clock: substrate.SystemClock{},
 	}
 }
 
@@ -65,7 +70,7 @@ func (f *FileEmitter) EmitWithRunID(ctx context.Context, runID core.RunID, event
 		EventID:         eventID,
 		SchemaVersion:   1,
 		Type:            string(eventType),
-		TimestampWall:   time.Now().UTC(),
+		TimestampWall:   f.clock.Now().UTC(),
 		SourceSubsystem: "internal/keeper",
 		Payload:         json.RawMessage(payload),
 	}
@@ -184,6 +189,12 @@ func ParseHardCeilingMode(s string) HardCeilingMode {
 
 // WatcherConfig is the configuration for a Watcher instance.
 type WatcherConfig struct {
+	// Clock is the determinism port for all watcher-loop timing reads: the poll
+	// ticker, staleness/cooldown math, and per-tick timestamps (SK-008/SK-R3,
+	// substrate D4). Nil → substrate.SystemClock{} (production wall clock). T6
+	// promotes this to a named ClockPort alongside the extracted ports.
+	Clock substrate.ClockPort
+
 	// AgentName is the keeper agent identifier (matches the --agent flag).
 	AgentName string
 
@@ -620,6 +631,9 @@ type WatcherConfig struct {
 
 // applyDefaults fills in zero-valued duration / pct fields.
 func (c *WatcherConfig) applyDefaults() {
+	if c.Clock == nil {
+		c.Clock = substrate.SystemClock{}
+	}
 	if c.PollInterval <= 0 {
 		c.PollInterval = DefaultPollInterval
 	}
@@ -1000,14 +1014,14 @@ func (w *Watcher) Run(ctx context.Context) error {
 		w.maybeEmitNoGauge(ctx, reason)
 	}
 
-	ticker := time.NewTicker(w.cfg.PollInterval)
+	ticker := w.cfg.Clock.NewTicker(w.cfg.PollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-ticker.C():
 			// ── hitl-decisions orphan reaper (K5, hk-061) ────────────────────
 			// Runs BEFORE the gauge-read branches below (which may `continue` past
 			// the rest of the loop body when the gauge is absent/stale/foreign),
@@ -1022,7 +1036,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// Runs unconditionally each tick (like the reaper above), independent
 			// of gauge state — a wedged/foreign-session captain still needs the
 			// nudge before the daemon-side forcing gate trips.
-			w.maybeNagDashboardStale(ctx, time.Now())
+			w.maybeNagDashboardStale(ctx, w.cfg.Clock.Now())
 
 			ctxFile, modTime, err := ReadCtxFile(w.cfg.ProjectDir, w.cfg.AgentName)
 
@@ -1033,7 +1047,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				warnFired = false
 				pendingInject = false
 				if gaugeStaleSince.IsZero() {
-					gaugeStaleSince = time.Now()
+					gaugeStaleSince = w.cfg.Clock.Now()
 				}
 				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
 				w.maybeLivePaneRecover(ctx, gaugeStaleSince, &lastLiveRecoverAt)
@@ -1045,7 +1059,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				w.maybeEmitNoGauge(ctx, "absent")
 				pendingInject = false
 				if gaugeStaleSince.IsZero() {
-					gaugeStaleSince = time.Now()
+					gaugeStaleSince = w.cfg.Clock.Now()
 				}
 				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
 				w.maybeLivePaneRecover(ctx, gaugeStaleSince, &lastLiveRecoverAt)
@@ -1061,16 +1075,16 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// with a fresh ts (transcript-derived tokens when available) so a live
 			// agent's gauge NEVER goes stale. No-op when the pane is idle so the
 			// respawn path stays intact.
-			w.maybeHeartbeat(ctx, ctxFile, time.Since(modTime))
+			w.maybeHeartbeat(ctx, ctxFile, w.cfg.Clock.Since(modTime))
 
 			// ── gauge stale ──────────────────────────────────────────────────
-			if time.Since(modTime) >= w.cfg.Staleness {
+			if w.cfg.Clock.Since(modTime) >= w.cfg.Staleness {
 				w.maybeEmitNoGauge(ctx, "stale")
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
 				if gaugeStaleSince.IsZero() {
-					gaugeStaleSince = time.Now()
+					gaugeStaleSince = w.cfg.Clock.Now()
 				}
 				w.maybeRespawn(ctx, gaugeStaleSince, &lastRespawnAt)
 				w.maybeLivePaneRecover(ctx, gaugeStaleSince, &lastLiveRecoverAt)
@@ -1131,10 +1145,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 					// only once per episode (blindAlarmFired). The latch and timer are
 					// reset on the next successful (non-foreign) tick (below).
 					if w.blindSince.IsZero() {
-						w.blindSince = time.Now()
+						w.blindSince = w.cfg.Clock.Now()
 					}
-					if !w.blindAlarmFired && time.Since(w.blindSince) > w.cfg.BlindKeeperThreshold {
-						blindSeconds := int64(time.Since(w.blindSince).Seconds())
+					if !w.blindAlarmFired && w.cfg.Clock.Since(w.blindSince) > w.cfg.BlindKeeperThreshold {
+						blindSeconds := int64(w.cfg.Clock.Since(w.blindSince).Seconds())
 						slog.WarnContext(ctx, "keeper: blind-keeper alarm: continuous foreign_session for >5 min; keeper cannot monitor this pane",
 							"agent", w.cfg.AgentName, "managed_sid", managedSID, "live_sid", ctxFile.SessionID,
 							"blind_seconds", blindSeconds)
@@ -1173,12 +1187,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 							// Restart mode with a wired fn: cooldown-gate the whole
 							// emit+restart so we do not thrash. Outside the cooldown the
 							// emit is suppressed too (the prior tick already alarmed).
-							if hardCeilingLastAt.IsZero() || time.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
+							if hardCeilingLastAt.IsZero() || w.cfg.Clock.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
 								slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): forcing restart",
 									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens)
 								w.emitHardCeiling(ctx, ctxFile.Tokens)
 								_ = w.cfg.HardCeilingRestartFn(ctx, w.cfg.AgentName) //nolint:errcheck // best-effort restart
-								hardCeilingLastAt = time.Now()
+								hardCeilingLastAt = w.cfg.Clock.Now()
 							} else {
 								slog.DebugContext(ctx, "keeper: hard ceiling hit but cooldown active; skipping restart",
 									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens)
@@ -1187,12 +1201,12 @@ func (w *Watcher) Run(ctx context.Context) error {
 							// Alarm mode, OR restart mode degraded to alarm (fn nil): emit
 							// only, cooldown-gated so we alarm at most once per cooldown
 							// window rather than every tick the pane sits above ceiling.
-							if hardCeilingLastAt.IsZero() || time.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
+							if hardCeilingLastAt.IsZero() || w.cfg.Clock.Since(hardCeilingLastAt) >= w.cfg.HardCeilingCooldown {
 								slog.WarnContext(ctx, "keeper: hard ceiling hit (SID-independent): alarm only",
 									"agent", w.cfg.AgentName, "tokens", ctxFile.Tokens, "hard_ceiling", w.cfg.HardCeilingTokens,
 									"mode", w.cfg.HardCeilingMode.String())
 								w.emitHardCeiling(ctx, ctxFile.Tokens)
-								hardCeilingLastAt = time.Now()
+								hardCeilingLastAt = w.cfg.Clock.Now()
 							}
 						}
 					}
@@ -1218,7 +1232,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// changed since the previous tick for at least IdleQuiesce.
 			gaugeQuiesced := !modTime.IsZero() && !lastModTime.IsZero() &&
 				modTime.Equal(lastModTime) &&
-				time.Since(modTime) >= w.cfg.IdleQuiesce
+				w.cfg.Clock.Since(modTime) >= w.cfg.IdleQuiesce
 			lastModTime = modTime
 
 			// ── Phase-2 gate predicates ──────────────────────────────────────
@@ -1279,7 +1293,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				// since the last warn fire, preventing a transient dip-then-rise
 				// from counting as a second event. A zero WarnCooldown disables
 				// the gate entirely (used by tests that exercise multi-crossing).
-				if lastWarnFiredAt.IsZero() || w.cfg.WarnCooldown == 0 || time.Since(lastWarnFiredAt) >= w.cfg.WarnCooldown {
+				if lastWarnFiredAt.IsZero() || w.cfg.WarnCooldown == 0 || w.cfg.Clock.Since(lastWarnFiredAt) >= w.cfg.WarnCooldown {
 					warnArmed = true
 					warnFired = false
 					pendingInject = false
@@ -1312,7 +1326,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 				warnFired = true
 				warnArmed = false
-				lastWarnFiredAt = time.Now()
+				lastWarnFiredAt = w.cfg.Clock.Now()
 				if w.cfg.TmuxTarget != "" {
 					pendingInject = true
 				}
@@ -1396,10 +1410,10 @@ func (w *Watcher) maybeReapOrphanedDecisions(ctx context.Context, lastReapAt *ti
 	if !w.cfg.ReapDecisions {
 		return
 	}
-	if !lastReapAt.IsZero() && time.Since(*lastReapAt) < w.cfg.ReapDecisionsCadence {
+	if !lastReapAt.IsZero() && w.cfg.Clock.Since(*lastReapAt) < w.cfg.ReapDecisionsCadence {
 		return
 	}
-	*lastReapAt = time.Now()
+	*lastReapAt = w.cfg.Clock.Now()
 	emitter := w.cfg.DecisionEmitter
 	if emitter == nil {
 		emitter = w.emitter
@@ -1430,7 +1444,7 @@ func (w *Watcher) gaugeUnavailable(ctx context.Context) (bool, string) {
 		slog.WarnContext(ctx, "keeper: read ctx file at boot", "err", err)
 		return true, "absent"
 	}
-	if time.Since(modTime) >= w.cfg.Staleness {
+	if w.cfg.Clock.Since(modTime) >= w.cfg.Staleness {
 		return true, "stale"
 	}
 	return false, ""
@@ -1544,10 +1558,10 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 	if w.cfg.HeldCheckFn(w.cfg.ProjectDir, w.cfg.AgentName) {
 		return
 	}
-	if staleSince.IsZero() || time.Since(staleSince) < w.cfg.RespawnGrace {
+	if staleSince.IsZero() || w.cfg.Clock.Since(staleSince) < w.cfg.RespawnGrace {
 		return
 	}
-	if !lastRespawnAt.IsZero() && time.Since(*lastRespawnAt) < w.cfg.RespawnCooldown {
+	if !lastRespawnAt.IsZero() && w.cfg.Clock.Since(*lastRespawnAt) < w.cfg.RespawnCooldown {
 		return
 	}
 	if !w.cfg.IsPaneIdleFn(ctx, w.cfg.TmuxTarget) {
@@ -1578,7 +1592,7 @@ func (w *Watcher) maybeRespawn(ctx context.Context, staleSince time.Time, lastRe
 	cmd := exec.CommandContext(ctx, "sh", "-c", w.cfg.RespawnCmd)
 	runErr := cmd.Run()
 
-	*lastRespawnAt = time.Now()
+	*lastRespawnAt = w.cfg.Clock.Now()
 	outcome := "ok"
 	errMsg := ""
 	if runErr != nil {
@@ -1634,10 +1648,10 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 	if w.cfg.HeldCheckFn(w.cfg.ProjectDir, w.cfg.AgentName) {
 		return
 	}
-	if staleSince.IsZero() || time.Since(staleSince) < w.cfg.LiveRecoverGrace {
+	if staleSince.IsZero() || w.cfg.Clock.Since(staleSince) < w.cfg.LiveRecoverGrace {
 		return
 	}
-	if !lastRecoverAt.IsZero() && time.Since(*lastRecoverAt) < w.cfg.LiveRecoverCooldown {
+	if !lastRecoverAt.IsZero() && w.cfg.Clock.Since(*lastRecoverAt) < w.cfg.LiveRecoverCooldown {
 		return
 	}
 	// Pane must be ALIVE (non-shell). An idle pane is the maybeRespawn path's job.
@@ -1676,7 +1690,7 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 		return
 	}
 
-	staleSeconds := int64(time.Since(staleSince).Seconds())
+	staleSeconds := int64(w.cfg.Clock.Since(staleSince).Seconds())
 	slog.WarnContext(ctx, "keeper: live-pane recovery — gauge stale over a live pane; firing gated ForceRestart last-resort",
 		"agent", w.cfg.AgentName, "stale_seconds", staleSeconds, "bound_sid", boundSID)
 	fmt.Printf("keeper: live-pane recovery — agent %q hung mid-turn (gauge stale %ds, pane alive); force-restarting\n",
@@ -1684,7 +1698,7 @@ func (w *Watcher) maybeLivePaneRecover(ctx context.Context, staleSince time.Time
 
 	runErr := w.cfg.LiveRecoverFn(ctx, w.cfg.AgentName)
 
-	*lastRecoverAt = time.Now()
+	*lastRecoverAt = w.cfg.Clock.Now()
 	outcome := "ok"
 	errMsg := ""
 	if runErr != nil {

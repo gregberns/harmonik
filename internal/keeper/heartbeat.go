@@ -284,7 +284,7 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 		transcriptDir = transcriptDirFor(w.cfg.ProjectDir)
 	}
 
-	now := time.Now()
+	now := w.cfg.Clock.Now()
 	fresh := CtxFile{
 		Pct:        last.Pct,
 		Tokens:     last.Tokens,

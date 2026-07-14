@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // restartnow.go — the DEAD-SIMPLE restart-now / ping path (hk-5da7).
@@ -42,16 +44,16 @@ const HandoffFreshnessWindow = 10 * time.Minute
 
 // RestartNowConfig carries everything RestartNow needs. ProjectDir + AgentName
 // identify the session; TmuxTarget is the already-resolved pane; Inject is the
-// injection surface (defaults to InjectText when nil); Now defaults to
-// time.Now (overridable in tests); RequestedAt anchors the freshness check — the
-// handoff must be newer than RequestedAt - HandoffFreshnessWindow (defaults to
-// Now() when zero).
+// injection surface (defaults to InjectText when nil); Clock defaults to
+// substrate.SystemClock (overridable in tests via a substrate.FakeClock);
+// RequestedAt anchors the freshness check — the handoff must be newer than
+// RequestedAt - HandoffFreshnessWindow (defaults to Clock.Now() when zero).
 type RestartNowConfig struct {
 	ProjectDir  string
 	AgentName   string
 	TmuxTarget  string
 	Inject      RestartNowInjector
-	Now         func() time.Time
+	Clock       substrate.ClockPort
 	RequestedAt time.Time
 }
 
@@ -65,9 +67,9 @@ type RestartNowConfig struct {
 // non-zero exit). It does NOT consult or write any marker file — there is no
 // marker in this path.
 func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
-	now := cfg.Now
-	if now == nil {
-		now = time.Now
+	clock := cfg.Clock
+	if clock == nil {
+		clock = substrate.SystemClock{}
 	}
 	inject := cfg.Inject
 	if inject == nil {
@@ -75,7 +77,7 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	}
 	requestedAt := cfg.RequestedAt
 	if requestedAt.IsZero() {
-		requestedAt = now()
+		requestedAt = clock.Now()
 	}
 	log := slog.With("agent", cfg.AgentName, "op", "restart-now", "nonce", nonce)
 	log.InfoContext(ctx, "keeper: restart-now: request received")

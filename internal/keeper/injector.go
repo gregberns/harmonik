@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // wrapUpWarningText is the prompt injected into the managed pane when the
@@ -192,17 +194,20 @@ func SendEscapeKey(ctx context.Context, tmuxTarget string) error {
 	return nil
 }
 
+// injectorClock is the ClockPort backing the injector's cancellable settle
+// sleeps (submitSettle / submitRetryDelay). It is a package var — mirroring the
+// existing tmuxRunFn / submitSettle injectable-seam pattern — so the injector's
+// timing routes through the determinism port (SK-008/SK-R3) while InjectText
+// keeps its free-function signature (the CyclerConfig.InjectFn / PanePort seam).
+// Defaults to the real wall clock; T6/T7 fold it into the injected port.
+var injectorClock substrate.ClockPort = substrate.SystemClock{}
+
 // sleepCtx waits for d or until ctx is cancelled. Returns true if the full
-// duration elapsed, false if ctx was cancelled first.
+// duration elapsed, false if ctx was cancelled first. Routed through
+// injectorClock so the settle sequence honors the determinism port; the
+// substrate SystemClock.Sleep preserves the exact select-ctx-vs-timer shape.
 func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
+	return injectorClock.Sleep(ctx, d)
 }
 
 // InjectWrapUpWarning delivers the wrap-up-warning prompt into the tmux pane

@@ -26,6 +26,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
@@ -1943,14 +1944,14 @@ func ExportedBufferName(sessionID, purpose string) string {
 // tests in package daemon_test.  Tests use this to verify the produced ID
 // satisfies the tmux buffer-name regex (hk-lckbv).
 func ExportedSynthesiseClaudeSessionID() string {
-	return rlSynthesiseClaudeSessionID()
+	return rlSynthesiseClaudeSessionID(substrate.SystemClock{})
 }
 
 // ExportedResolveIter1ClaudeSessionID exposes rlResolveIter1ClaudeSessionID for
 // tests in package daemon_test (hk-za5mz). Verifies the iteration-1 session-id
 // resolution order: interceptor id → real minted id → synthesis.
 func ExportedResolveIter1ClaudeSessionID(interceptorID, realMintedID string) string {
-	return rlResolveIter1ClaudeSessionID(interceptorID, realMintedID)
+	return rlResolveIter1ClaudeSessionID(substrate.SystemClock{}, interceptorID, realMintedID)
 }
 
 // ExportedNewPerRunSubstrate wraps newPerRunSubstrate for tests in package

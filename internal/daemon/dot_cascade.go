@@ -83,6 +83,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
@@ -205,6 +206,12 @@ func driveDotWorkflow(
 	workerSessionName string,
 	workerSessionCwd string,
 ) dotWorkflowResult {
+	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
+	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
+	// deps is by-value, so this default propagates to every downstream site.
+	if deps.clock == nil {
+		deps.clock = substrate.SystemClock{}
+	}
 	// hk-538l: for a REMOTE run rewrite the hook socket to the worker-side reverse-
 	// tunnel TCP endpoint so the worker's claude can reach the relay; box A's local
 	// unix daemon.sock is unreachable from the worker. Empty workerHookSock (LOCAL
@@ -232,7 +239,7 @@ func driveDotWorkflow(
 		WorkflowMode:    core.WorkflowModeDot,
 		State:           core.StateID(uuid.New()),
 		Context:         map[string]any{},
-		StartTime:       time.Now(),
+		StartTime:       deps.clock.Now(),
 	}
 	if beadID != "" {
 		b := beadID
@@ -415,7 +422,7 @@ func driveDotWorkflow(
 
 		// Emit node_dispatch_requested (O-class observability) before handling the
 		// node, per event-model.md §8.1.11.
-		emitNodeDispatchRequested(ctx, deps.bus, runID, core.NodeID(currentNodeID))
+		emitNodeDispatchRequested(ctx, deps.bus, deps.clock, runID, core.NodeID(currentNodeID))
 
 		var outcome core.Outcome
 
@@ -1239,6 +1246,11 @@ func dispatchDotAgenticNode(
 	// non-terminal slots are occupied.
 	isTerminalSpawn bool,
 ) (core.Outcome, error) {
+	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
+	// deps (also reachable via sub_workflow_runner.go); prod wires SystemClock.
+	if deps.clock == nil {
+		deps.clock = substrate.SystemClock{}
+	}
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
 	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
 	if isReviewer {
@@ -1568,7 +1580,7 @@ func dispatchDotAgenticNode(
 		emitDotReviewerLaunched(ctx, deps.bus, runID, reviewerSessionID, *claudeSessionID, iterationCount)
 	}
 
-	nodeLaunchedAt := time.Now()
+	nodeLaunchedAt := deps.clock.Now()
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
 		if deps.hookStore != nil {
@@ -1585,10 +1597,10 @@ func dispatchDotAgenticNode(
 		// single-mode path already has.
 		if errors.Is(launchErr, ErrSpawnCapTimeout) {
 			inUse, capSize := substrateSpawnStats(deps.substrate)
-			emitSpawnCapBlocked(ctx, deps.bus, runID, time.Since(nodeLaunchedAt), inUse, capSize)
+			emitSpawnCapBlocked(ctx, deps.bus, runID, deps.clock.Since(nodeLaunchedAt), inUse, capSize)
 		}
 		if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
-			emitTmuxNewWindowTimeout(ctx, deps.bus, runID, time.Since(nodeLaunchedAt))
+			emitTmuxNewWindowTimeout(ctx, deps.bus, runID, deps.clock.Since(nodeLaunchedAt))
 		}
 		return core.Outcome{}, fmt.Errorf("launch node %q: %w", node.ID, launchErr)
 	}
@@ -1713,7 +1725,7 @@ func dispatchDotAgenticNode(
 				if watcher != nil {
 					select {
 					case <-watcher.Done():
-					case <-time.After(agentReadyKillReapTimeout):
+					case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
 					}
 				}
 				_ = sess.Wait(ctx)
@@ -1801,7 +1813,7 @@ func dispatchDotAgenticNode(
 		curHead, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		commitLanded := curHead != "" && curHead != preHeadSHA
 		emitImplementerPhaseComplete(ctx, deps.bus, runID, nodeEI.exitCode,
-			nodeEI.stderrTail, commitLanded, time.Since(nodeLaunchedAt))
+			nodeEI.stderrTail, commitLanded, deps.clock.Since(nodeLaunchedAt))
 	}
 
 	if deps.hookStore != nil {
@@ -2507,11 +2519,11 @@ func graphVersionOr(graph *dot.Graph) string {
 
 // emitNodeDispatchRequested emits node_dispatch_requested (event-model.md §8.1.11,
 // O-class observability) immediately before a node is handled.
-func emitNodeDispatchRequested(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, nodeID core.NodeID) {
+func emitNodeDispatchRequested(ctx context.Context, bus handlercontract.EventEmitter, clk substrate.ClockPort, runID core.RunID, nodeID core.NodeID) {
 	pl := core.NodeDispatchRequestedPayload{
 		RunID:       runID,
 		NodeID:      nodeID,
-		RequestedAt: time.Now().UTC().Format(time.RFC3339),
+		RequestedAt: clk.Now().UTC().Format(time.RFC3339),
 		Origin:      core.NodeDispatchOriginWorkflow,
 	}
 	b, err := json.Marshal(pl)

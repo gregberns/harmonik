@@ -65,6 +65,7 @@ import (
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/sessiondata"
+	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -487,6 +488,12 @@ type workLoopDeps struct {
 	// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
 	// Bead ref: hk-gql20.14.
 	substrate handler.Substrate
+
+	// clock is the determinism port through which the RUN path reads time
+	// (RSM-013 / M3-D4). Production wires substrate.SystemClock{}; tests inject
+	// substrate.FakeClock so agent-ready / reap timeouts replay in virtual time
+	// without wall-clock sleeps. Mirrors the P1 T5 keeper ClockPort migration.
+	clock substrate.ClockPort
 
 	// spawnSubstrateReadyCh, when non-nil, is awaited at the START of runWorkLoop
 	// before the first dispatch tick. daemon.Start closes this channel once the
@@ -1138,8 +1145,9 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		hookStore:                  store,
 		cpRegistry:                 cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
 		adapterRegistry:            registry,
-		harnessRegistry:            harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
-		substrate:                  cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		harnessRegistry:            harnessReg,              // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
+		substrate:                  cfg.Substrate,           // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		clock:                      substrate.SystemClock{}, // RSM-013 / M3-D4: run-path determinism port (SystemClock in prod, FakeClock in tests)
 		agentReadyTimeout:          cfg.AgentReadyTimeout,
 		remoteAgentReadyTimeout:    cfg.RemoteAgentReadyTimeout, // hk-96d7w: remote-worker agent_ready wait window
 		cancelOnQueueDrain:         cfg.CancelOnQueueDrain,
@@ -1174,6 +1182,26 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		runner:                     cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
 		sandboxCfg:                 cfg.ProjectCfg.Sandbox,             // hk-6596l: srt sandbox config block
 	}, nil
+}
+
+// clockAfter is the ClockPort-backed analogue of time.After for use in a select:
+// it returns a channel that receives once, after d has elapsed on clk. Like
+// time.After (and UNLIKE a ctx-bound sleep) the deadline fires UNCONDITIONALLY —
+// the reap/fallback guards that use it must bound the wait even after the run
+// ctx is cancelled, so the internal Sleep is anchored to context.Background().
+// Under substrate.FakeClock the wake is driven by Advance, making run-path
+// timeouts (agent-ready reap, resume-ready fallback) deterministic in tests
+// (RSM-013 / M3-D4). The goroutine outlives the caller by at most d, matching
+// time.After's un-cancellable timer. Buffered cap 1 so the send never blocks
+// when the select picked another case first.
+func clockAfter(clk substrate.ClockPort, d time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	go func() {
+		if clk.Sleep(context.Background(), d) {
+			ch <- clk.Now()
+		}
+	}()
+	return ch
 }
 
 // buildWorkerRegistry turns the loaded workers.Config into a live *workers.Registry
@@ -3070,6 +3098,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
 func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string, itemLocalOnly bool, itemWorkerTarget string, preSelectedWorker *workers.Worker, localSlotHeld bool) {
+	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
+	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
+	// deps is by-value, so this default propagates to every downstream site.
+	if deps.clock == nil {
+		deps.clock = substrate.SystemClock{}
+	}
 	beadID := beadRecord.BeadID
 
 	// hk-hs7ex: release the local slot on exit when the outer loop incremented
@@ -3106,7 +3140,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// sdStartedAt, sdModel, sdHarness are captured by emitDone for the
 	// sessiondata.Collect goroutine. They are assigned after their respective
 	// resolutions below (ResolveModelPreference, implHarnessWL).
-	sdStartedAt := time.Now()
+	sdStartedAt := deps.clock.Now()
 	var sdModel, sdHarness string
 
 	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
@@ -3131,7 +3165,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// Fire sessiondata.Collect off the hot path (hk-eval-prog-sessiondata-hook-vmxrk).
 		// Best-effort: errors are silently discarded — a missed record is preferable
 		// to a panicking goroutine that could affect the daemon.
-		sdEndedAt := time.Now()
+		sdEndedAt := deps.clock.Now()
 		sdQID := ""
 		if queueID != nil {
 			sdQID = *queueID
@@ -4405,7 +4439,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					GroupIndex:    queueGroupIdx,
 					ItemIndex:     queueItemIndex,
 					SessionName:   sessName,
-					StartedAt:     time.Now(),
+					StartedAt:     deps.clock.Now(),
 				}); writeErr != nil {
 					// Registry write failed: fall back to shared-session path (no survive-restart).
 					fmt.Fprintf(os.Stderr, "daemon: workloop: run registry write failed for %s: %v (using shared session)\n", runID.String(), writeErr)
@@ -4634,7 +4668,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		defer releaseSpawnSlot() // leak backstop; explicit release after agent_ready below
 	}
 
-	implementerLaunchedAt := time.Now()
+	implementerLaunchedAt := deps.clock.Now()
 	sess, watcher, launchErr := runH.Launch(ctx, spec)
 	if launchErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: Launch bead %s run %s: %v (reopening)\n",
@@ -4644,14 +4678,14 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		// saturated) instead of an opaque launch-error reopen.
 		if errors.Is(launchErr, ErrSpawnCapTimeout) {
 			inUse, capSize := substrateSpawnStats(deps.substrate)
-			emitSpawnCapBlocked(ctx, deps.bus, runID, time.Since(implementerLaunchedAt), inUse, capSize)
+			emitSpawnCapBlocked(ctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt), inUse, capSize)
 		}
 		// hk-r1rup: a tmux-new-window-timeout launch failure is the hung-tmux
 		// signature (the no-spawn wedge). Emit tmux_new_window_timeout so operators
 		// see WHY the launch failed (tmux new-window did not return) instead of an
 		// opaque launch-error reopen.
 		if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
-			emitTmuxNewWindowTimeout(ctx, deps.bus, runID, time.Since(implementerLaunchedAt))
+			emitTmuxNewWindowTimeout(ctx, deps.bus, runID, deps.clock.Since(implementerLaunchedAt))
 		}
 		reopenTID, _ := deps.tidGen.Next()
 		_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
@@ -4868,7 +4902,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					// Bead ref: hk-do7te.
 					select {
 					case <-watcher.Done():
-					case <-time.After(agentReadyKillReapTimeout):
+					case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
 						fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
 							beadID, runID.String())
 					}
@@ -5060,7 +5094,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		curHead, _ := resolveWorktreeHEADVia(ctx, runRunner, wtPath)
 		commitLanded := curHead != "" && curHead != headSHA
 		emitImplementerPhaseComplete(ctx, deps.bus, runID, ei.exitCode, ei.stderrTail,
-			commitLanded, time.Since(implementerLaunchedAt))
+			commitLanded, deps.clock.Since(implementerLaunchedAt))
 	}
 
 	// ── ProcessExit daemon-side commit fallback (hk-gd9r / hk-mazln) ─────────

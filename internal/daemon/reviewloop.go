@@ -56,6 +56,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -236,6 +237,12 @@ func runReviewLoop(
 	workerSessionName string,
 	workerSessionCwd string,
 ) reviewLoopResult {
+	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
+	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
+	// deps is by-value, so this default propagates to every downstream site.
+	if deps.clock == nil {
+		deps.clock = substrate.SystemClock{}
+	}
 	// daemonSocket is the UNIX-domain socket path for the hook-relay per design §7.
 	// Derived from projectDir so reviewloop.go does not need a separate field on deps.
 	// For a REMOTE run (workerHookSock != ""), rewrite to the worker-side
@@ -548,7 +555,7 @@ func runReviewLoop(
 
 		var implWatcher *handlercontract.Watcher
 		var implLaunchErr error
-		implLaunchedAt := time.Now()
+		implLaunchedAt := deps.clock.Now()
 		implSess, implWatcher, implLaunchErr = implRunH.Launch(ctx, implSpec)
 		if implLaunchErr != nil {
 			if deps.hookStore != nil {
@@ -559,13 +566,13 @@ func runReviewLoop(
 			// wedged on the spawn semaphore.
 			if errors.Is(implLaunchErr, ErrSpawnCapTimeout) {
 				inUse, capSize := substrateSpawnStats(implSubstrate)
-				emitSpawnCapBlocked(ctx, deps.bus, runID, time.Since(implLaunchedAt), inUse, capSize)
+				emitSpawnCapBlocked(ctx, deps.bus, runID, deps.clock.Since(implLaunchedAt), inUse, capSize)
 			}
 			// hk-r1rup: surface a hung `tmux new-window` (the no-spawn wedge) as a
 			// dedicated tmux_new_window_timeout event when the implementer launch is
 			// wedged on the new-window call.
 			if errors.Is(implLaunchErr, ErrTmuxNewWindowTimeout) {
-				emitTmuxNewWindowTimeout(ctx, deps.bus, runID, time.Since(implLaunchedAt))
+				emitTmuxNewWindowTimeout(ctx, deps.bus, runID, deps.clock.Since(implLaunchedAt))
 			}
 			result := rlErrorResult(fmt.Sprintf("implementer launch error at iteration %d: %v", state.iterationCount, implLaunchErr))
 			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
@@ -656,7 +663,7 @@ func runReviewLoop(
 			capturedImplTap := implTap
 			go func() {
 				select {
-				case <-time.After(resumeReadyFallbackGrace):
+				case <-clockAfter(deps.clock, resumeReadyFallbackGrace):
 					_ = capturedImplTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
 				case <-resumeReadyFallbackCtx.Done():
 				}
@@ -735,7 +742,7 @@ func runReviewLoop(
 					if implWatcher != nil {
 						select {
 						case <-implWatcher.Done():
-						case <-time.After(agentReadyKillReapTimeout):
+						case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
 							fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 								beadID, state.iterationCount, runID.String())
 						}
@@ -859,7 +866,7 @@ func runReviewLoop(
 			curHead, _ := resolveWorktreeHEADVia(ctx, runner, wtPath)
 			commitLanded := curHead != "" && curHead != parentSHA
 			emitImplementerPhaseComplete(ctx, deps.bus, runID, implEI.exitCode,
-				implEI.stderrTail, commitLanded, time.Since(implLaunchedAt))
+				implEI.stderrTail, commitLanded, deps.clock.Since(implLaunchedAt))
 		}
 
 		// Close this phase's hook session — late hooks from a completed implementer
@@ -1031,7 +1038,7 @@ func runReviewLoop(
 				// Interceptor never fired (tmux substrate, or handler exited
 				// without emitting handler_capabilities with claude_session_id).
 			}
-			state.claudeSessionID = rlResolveIter1ClaudeSessionID(interceptorID, implArtifacts.claudeSessionID)
+			state.claudeSessionID = rlResolveIter1ClaudeSessionID(deps.clock, interceptorID, implArtifacts.claudeSessionID)
 
 			// hk-za5mz: when the interceptor never persisted the id (interceptorID
 			// empty) but we fell back to the real minted id, the CHB-023 git
@@ -1475,7 +1482,7 @@ func runReviewLoop(
 				if revWatcher != nil {
 					select {
 					case <-revWatcher.Done():
-					case <-time.After(agentReadyKillReapTimeout):
+					case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
 						fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 							beadID, state.iterationCount, runID.String())
 					}
@@ -1903,8 +1910,8 @@ func resolveBranchSHA(ctx context.Context, projectDir, branch string) (string, e
 //
 // Post-MVH: replace with handlercontract.ParseClaudeSessionID on the session's
 // captured stdout buffer once the handler exposes it.
-func rlSynthesiseClaudeSessionID() string {
-	return "syntheticclaudesession" + time.Now().UTC().Format("20060102150405")
+func rlSynthesiseClaudeSessionID(clk substrate.ClockPort) string {
+	return "syntheticclaudesession" + clk.Now().UTC().Format("20060102150405")
 }
 
 // rlResolveIter1ClaudeSessionID picks the claude_session_id to carry forward from
@@ -1933,14 +1940,14 @@ func rlSynthesiseClaudeSessionID() string {
 // `claude --resume <synthetic>` against a session that never existed → no commit
 // → diff unchanged → no_progress_detected. Falling back to realMintedID (the live
 // `--session-id` value) makes iteration-2's --resume target the real session.
-func rlResolveIter1ClaudeSessionID(interceptorID, realMintedID string) string {
+func rlResolveIter1ClaudeSessionID(clk substrate.ClockPort, interceptorID, realMintedID string) string {
 	if interceptorID != "" {
 		return interceptorID
 	}
 	if realMintedID != "" {
 		return realMintedID
 	}
-	return rlSynthesiseClaudeSessionID()
+	return rlSynthesiseClaudeSessionID(clk)
 }
 
 // rlCopyReviewVerdict copies ${srcWtPath}/.harmonik/review.json to

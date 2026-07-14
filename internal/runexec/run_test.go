@@ -7,7 +7,7 @@ import (
 )
 
 // run_test.go — L0 per-transition + terminal-spine tests for the Run machine
-// (RSM-007/008/009, RSM-020..022, RSM-INV-004). Pure and zero-token: the reactor
+// (RSM-007/008/009, RSM-020..022, RSM-003 terminal exclusivity). Pure and zero-token: the reactor
 // reads no clock and mints no ids. The headline test proves the 6 pre-change
 // close-ladder variants collapse onto ONE tail with byte-identical strings.
 
@@ -329,9 +329,9 @@ func TestRun_DoneTerminalNoOutgoing(t *testing.T) {
 }
 
 // TestRun_AllTerminalEntriesReachOneDone: the four terminal-entry events
-// (RSM-INV-004 spine unification) each land the machine in exactly one Done
-// state, and every reopen path lands Done{reopened}, every close path
-// Done{closed}.
+// (RSM-020/022 spine unification; RSM-003 exactly-one-terminal) each land the
+// machine in exactly one Done state, and every reopen path lands Done{reopened},
+// every close path Done{closed}.
 func TestRun_AllTerminalEntriesReachOneDone(t *testing.T) {
 	cfg := stdRunCfg()
 	// close entries.

@@ -150,6 +150,29 @@ func TestDispatch_ReadyTimeoutSR9Edge(t *testing.T) {
 	}
 }
 
+func TestDispatch_LaunchTimeoutNotSilent(t *testing.T) {
+	// RSM-INV-002: a hung launch (no EvLaunched/EvLaunchFailed) whose agent_ready
+	// deadline expires in Launching must ride the SR9 edge, not wait silently.
+	m := NewDispatch(stdDispatchCfg())
+	m.Step(Event{Kind: EvStartDispatch, Session: "s1", At: at(1)})
+	got := m.Step(Event{Kind: EvTimerFired, Timer: TimerAgentReady, At: at(40)})
+	if !eqKinds(kinds(got), []ActionKind{ActKillAgent, ActArmTimer, ActEmit}) {
+		t.Fatalf("launch timeout edge: %v", kinds(got))
+	}
+	if m.State().Phase != DispatchReadyTimeout {
+		t.Fatalf("phase %s", m.State().Phase)
+	}
+	var sawTimeout bool
+	for _, a := range got {
+		if a.Kind == ActEmit && a.Type == core.EventTypeAgentReadyTimeout {
+			sawTimeout = true
+		}
+	}
+	if !sawTimeout {
+		t.Fatal("launch timeout must emit agent_ready_timeout")
+	}
+}
+
 func TestDispatch_HeartbeatNotProgress(t *testing.T) {
 	// RSM-006: a bare daemon heartbeat MUST NOT advance progress; a commit does.
 	m := toWorking(t, stdDispatchCfg())
@@ -305,6 +328,7 @@ func TestDispatch_TerminalExclusivity(t *testing.T) {
 func TestDispatch_TimerFiredNeverSilent(t *testing.T) {
 	// The armed-timer map: which timer is live in which non-terminal phase.
 	armed := map[DispatchPhase]TimerKind{
+		DispatchLaunching:     TimerAgentReady, // armed at Idle→Launching, live through Launching
 		DispatchAwaitingReady: TimerAgentReady,
 		DispatchBriefing:      TimerInputAck,
 		DispatchReadyTimeout:  TimerReadyKillReap,

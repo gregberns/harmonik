@@ -157,18 +157,7 @@ func hasInteriorEvents(s *CycleState) bool {
 func Replay(path string, since core.EventID, strict bool, checkers []Checker) (Report, error) {
 	var rep Report
 
-	// 1. Collect + EventID-sort (D9). ScanAfter yields file order; a single
-	//    log is written by multiple processes with independent EventID
-	//    generators, so we re-sort by the 16-byte UUIDv7 before checking.
-	var evs []core.Event
-	for ev := range eventbus.ScanAfter(path, since) {
-		evs = append(evs, ev)
-	}
-	sort.SliceStable(evs, func(i, j int) bool {
-		a := [16]byte(evs[i].EventID)
-		b := [16]byte(evs[j].EventID)
-		return bytes.Compare(a[:], b[:]) < 0
-	})
+	evs := collectSorted(path, since)
 
 	states := map[string]*CycleState{}
 	observed := map[string]struct{}{}
@@ -181,37 +170,17 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 		//     drift), not fatal — record it and, if the type's N-1 compat window
 		//     is NOT declared safe, skip the checks for this event. An unknown
 		//     type here is left to the decode step's skip-vs-fail policy.
-		if err := core.ValidateEnvelopeSchemaVersion(ev); err != nil {
-			if errors.Is(err, core.ErrSchemaVersionMismatch) {
-				rep.SchemaMismatches = append(rep.SchemaMismatches, ev.EventID)
-				if entry, ok := core.LookupPayloadCompatEntry(ev.Type); ok && !entry.CompatWindowHolds {
-					continue
-				}
-			}
+		if schemaMismatchSkips(&rep, ev) {
+			continue
 		}
 
 		// 2b. Decode.
-		var p core.EventPayload
-		if strict {
-			pp, err := ev.DecodePayloadStrict()
-			if err != nil {
-				if errors.Is(err, core.ErrUnknownEventType) {
-					return rep, &core.DispatchUnknownEventError{EventType: ev.Type, EventID: ev.EventID}
-				}
-				return rep, fmt.Errorf("replay: strict decode %q (event_id=%s): %w", ev.Type, ev.EventID, err)
-			}
-			p = pp
-		} else {
-			pp, err := core.DispatchObservational(ev)
-			if err != nil {
-				if errors.Is(err, core.ErrSkipUnknown) {
-					rep.Skipped++
-					continue
-				}
-				rep.Malformed++
-				continue
-			}
-			p = pp
+		p, skip, err := decodeEvent(&rep, ev, strict)
+		if err != nil {
+			return rep, err
+		}
+		if skip {
+			continue
 		}
 		observed[ev.Type] = struct{}{}
 
@@ -223,14 +192,7 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 			continue
 		}
 		st := stateFor(states, agent, cid)
-		et := core.EventType(ev.Type)
-		if _, dup := st.Seen[et]; !dup {
-			st.Seen[et] = ev
-		}
-		st.LastEventID = ev.EventID
-		if isTerminal(et) && st.Terminal == "" {
-			st.Terminal = et
-		}
+		recordEvent(st, ev)
 
 		// 2d. Run the matching checkers over the (already-updated) state.
 		for _, c := range checkers {
@@ -249,22 +211,99 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 		}
 	}
 
-	// 4. Registered-but-never-observed (events-design §4.6). Scoped to the
-	//    session_keeper_* family — the taxonomy this harness is responsible for;
-	//    reporting the entire 169-type registry would bury the signal. Reported,
-	//    never a violation.
+	rep.RegisteredNeverObserved = neverObservedKeeperTypes(observed)
+
+	return rep, nil
+}
+
+// collectSorted scans the log and EventID-sorts the events (D9). ScanAfter
+// yields file order; a single log is written by multiple processes with
+// independent EventID generators, so we re-sort by the 16-byte UUIDv7 before
+// checking.
+func collectSorted(path string, since core.EventID) []core.Event {
+	var evs []core.Event
+	for ev := range eventbus.ScanAfter(path, since) {
+		evs = append(evs, ev)
+	}
+	sort.SliceStable(evs, func(i, j int) bool {
+		a := [16]byte(evs[i].EventID)
+		b := [16]byte(evs[j].EventID)
+		return bytes.Compare(a[:], b[:]) < 0
+	})
+	return evs
+}
+
+// schemaMismatchSkips records a schema_version mismatch on the report and
+// reports whether the event's checks must be skipped (compat window not
+// declared safe). A non-mismatch error (e.g. unknown type) is left to the
+// decode step's skip-vs-fail policy.
+func schemaMismatchSkips(rep *Report, ev core.Event) bool {
+	err := core.ValidateEnvelopeSchemaVersion(ev)
+	if err == nil || !errors.Is(err, core.ErrSchemaVersionMismatch) {
+		return false
+	}
+	rep.SchemaMismatches = append(rep.SchemaMismatches, ev.EventID)
+	if entry, ok := core.LookupPayloadCompatEntry(ev.Type); ok && !entry.CompatWindowHolds {
+		return true
+	}
+	return false
+}
+
+// decodeEvent decodes one event under the selected policy. In strict mode a
+// decode failure is a hard error; in observational mode an unknown type or a
+// malformed payload is counted on the report and skipped (EV-033).
+func decodeEvent(rep *Report, ev core.Event, strict bool) (p core.EventPayload, skip bool, err error) {
+	if strict {
+		pp, derr := ev.DecodePayloadStrict()
+		if derr != nil {
+			if errors.Is(derr, core.ErrUnknownEventType) {
+				return nil, false, &core.DispatchUnknownEventError{EventType: ev.Type, EventID: ev.EventID}
+			}
+			return nil, false, fmt.Errorf("replay: strict decode %q (event_id=%s): %w", ev.Type, ev.EventID, derr)
+		}
+		return pp, false, nil
+	}
+	pp, derr := core.DispatchObservational(ev)
+	if derr != nil {
+		if errors.Is(derr, core.ErrSkipUnknown) {
+			rep.Skipped++
+			return nil, true, nil
+		}
+		rep.Malformed++
+		return nil, true, nil
+	}
+	return pp, false, nil
+}
+
+// recordEvent runs Replay's central per-cycle bookkeeping for one routed
+// event: first-occurrence Seen tracking, the LastEventID watermark, and the
+// first-terminal latch.
+func recordEvent(st *CycleState, ev core.Event) {
+	et := core.EventType(ev.Type)
+	if _, dup := st.Seen[et]; !dup {
+		st.Seen[et] = ev
+	}
+	st.LastEventID = ev.EventID
+	if isTerminal(et) && st.Terminal == "" {
+		st.Terminal = et
+	}
+}
+
+// neverObservedKeeperTypes is the registered-but-never-observed sweep
+// (events-design §4.6). Scoped to the session_keeper_* family — the taxonomy
+// this harness is responsible for; reporting the entire 169-type registry
+// would bury the signal. Reported, never a violation.
+func neverObservedKeeperTypes(observed map[string]struct{}) []core.EventType {
+	var out []core.EventType
 	for t := range core.AllPayloadSchemaVersions() {
 		if strings.HasPrefix(t, "session_keeper_") {
 			if _, seen := observed[t]; !seen {
-				rep.RegisteredNeverObserved = append(rep.RegisteredNeverObserved, core.EventType(t))
+				out = append(out, core.EventType(t))
 			}
 		}
 	}
-	sort.Slice(rep.RegisteredNeverObserved, func(i, j int) bool {
-		return rep.RegisteredNeverObserved[i] < rep.RegisteredNeverObserved[j]
-	})
-
-	return rep, nil
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 // compositeKey builds the map key for a (agent_name, cycle_id) pair. The NUL

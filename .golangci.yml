@@ -38,6 +38,10 @@ linters:
     - gosec           # security smells (advisory; see below)
     - forbidigo       # ban specific calls (see config)
     - depguard        # import-graph + component-layer rules (subsystem-organization.md)
+    # ── Track C: complexity ceiling (ratchet via --new-from-rev; grandfathers existing) ──
+    - funlen          # function length ceiling — new/changed code only
+    - cyclop          # per-function cyclomatic complexity ceiling
+    - gocognit        # cognitive complexity (better "hard to follow" signal than raw cyclo)
   exclusions:
     rules:
       # tools/ holds one-shot CLI utilities that print to stdout and run synchronously
@@ -47,6 +51,13 @@ linters:
         linters:
           - forbidigo
           - noctx
+      # Complexity ceilings target production logic, not table-driven tests or the
+      # full-stack scenario harness / self-assert audit packages.
+      - path: (_test\.go$|^internal/scenario/|^internal/specaudit/)
+        linters:
+          - funlen
+          - cyclop
+          - gocognit
       # internal/testhelpers is test infrastructure invoked from *_test.go files;
       # forbidigo bans (panic) target production code paths, not assertion helpers.
       - path: ^internal/testhelpers/
@@ -57,6 +68,15 @@ linters:
     revive:   { rules: [{name: exported}, {name: package-comments}, {name: var-naming}, {name: error-return}, {name: error-naming}, {name: if-return}] }
     gocritic: { enabled-tags: [diagnostic, performance, style], disabled-checks: [hugeParam, rangeValCopy] }
     nolintlint: { require-explanation: true, require-specific: true, allow-unused: false }
+    funlen:
+      lines: 100          # 104 existing funcs exceed this — all grandfathered by --new-from-rev
+      statements: 60
+      ignore-comments: true
+    cyclop:
+      max-complexity: 15  # per-function ceiling (linter default 10; 15 = headroom for real branching)
+      package-average: 0  # disabled — rely on the per-function ceiling only
+    gocognit:
+      min-complexity: 20  # report cognitive complexity above 20 (golangci default 30; 20 is stricter)
     forbidigo:
       forbid:
         - { pattern: '^fmt\.Print.*$', msg: "use the structured logger" }

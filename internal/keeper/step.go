@@ -294,118 +294,137 @@ func stepCycle(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 			return s, nil
 		}
 	case PhaseAwaitingHandoff:
-		switch ev.Kind {
-		case EvNonceObserved:
-			// Nonce confirmed → journal "confirmed", emit handoff_written
-			// (SK-012, §4: the AwaitingHandoff → AwaitModelDone transition),
-			// and await the model-done signal (SR4) under the fail-open
-			// model_done_timeout bound (SK-014).
+		return stepAwaitingHandoff(cfg, s, ev)
+	case PhaseAwaitModelDone:
+		return stepAwaitModelDone(cfg, s, ev)
+	case PhaseClearing:
+		return stepClearing(cfg, s, ev)
+	default:
+		return s, nil
+	}
+}
+
+// stepAwaitingHandoff handles the AwaitingHandoff phase (design §3c rows).
+func stepAwaitingHandoff(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+	switch ev.Kind {
+	case EvNonceObserved:
+		// Nonce confirmed → journal "confirmed", emit handoff_written
+		// (SK-012, §4: the AwaitingHandoff → AwaitModelDone transition),
+		// and await the model-done signal (SR4) under the fail-open
+		// model_done_timeout bound (SK-014).
+		s.Phase = PhaseAwaitModelDone
+		s.NonceConfirmedAt = ev.At
+		return s, []Action{
+			journalAction(&s, "confirmed", ev.At),
+			emitHandoffWrittenAction(cfg, s.CycleID, s.PrevSID, false, time.Time{}),
+			{Kind: ActCancelTimer, Timer: TimerHandoffTimeout},
+			{Kind: ActArmTimer, Timer: TimerModelDone, D: cfg.ModelDoneTimeout},
+		}
+	case EvHandoffFreshSeen:
+		// The shell observed a fresh handoff (mtime ≥ injectedAt) at
+		// handoff-timeout expiry; record it for the TimerFired edge.
+		s.HandoffFresh = true
+		s.HandoffFreshMtime = ev.Mtime
+		return s, nil
+	case EvTimerFired:
+		if ev.Timer != TimerHandoffTimeout {
+			return s, nil
+		}
+		if s.HandoffFresh {
+			// hk-fi78d recovery: the nonce echo never landed but the agent
+			// wrote a fresh, resumable handoff — proceed with /clear + brief.
+			// A responsive-enough pane is NOT a stuck-pane timeout: reset the
+			// escalation counter. handoff_written carries recovered:true +
+			// the sampled handoff mtime (SK-012 / 00b R1).
+			s.Reason = "handoff_timeout_recovered"
+			s.ConsecutiveHandoffTimeouts = 0
 			s.Phase = PhaseAwaitModelDone
 			s.NonceConfirmedAt = ev.At
 			return s, []Action{
 				journalAction(&s, "confirmed", ev.At),
-				emitHandoffWrittenAction(cfg, s.CycleID, s.PrevSID, false, time.Time{}),
-				{Kind: ActCancelTimer, Timer: TimerHandoffTimeout},
+				emitHandoffWrittenAction(cfg, s.CycleID, s.PrevSID, true, s.HandoffFreshMtime),
 				{Kind: ActArmTimer, Timer: TimerModelDone, D: cfg.ModelDoneTimeout},
 			}
-		case EvHandoffFreshSeen:
-			// The shell observed a fresh handoff (mtime ≥ injectedAt) at
-			// handoff-timeout expiry; record it for the TimerFired edge.
-			s.HandoffFresh = true
-			s.HandoffFreshMtime = ev.Mtime
-			return s, nil
-		case EvTimerFired:
-			if ev.Timer != TimerHandoffTimeout {
-				return s, nil
-			}
-			if s.HandoffFresh {
-				// hk-fi78d recovery: the nonce echo never landed but the agent
-				// wrote a fresh, resumable handoff — proceed with /clear + brief.
-				// A responsive-enough pane is NOT a stuck-pane timeout: reset the
-				// escalation counter. handoff_written carries recovered:true +
-				// the sampled handoff mtime (SK-012 / 00b R1).
-				s.Reason = "handoff_timeout_recovered"
-				s.ConsecutiveHandoffTimeouts = 0
-				s.Phase = PhaseAwaitModelDone
-				s.NonceConfirmedAt = ev.At
-				return s, []Action{
-					journalAction(&s, "confirmed", ev.At),
-					emitHandoffWrittenAction(cfg, s.CycleID, s.PrevSID, true, s.HandoffFreshMtime),
-					{Kind: ActArmTimer, Timer: TimerModelDone, D: cfg.ModelDoneTimeout},
-				}
-			}
-			return stepAbort(cfg, s, ev)
-		default:
+		}
+		return stepAbort(cfg, s, ev)
+	default:
+		return s, nil
+	}
+}
+
+// stepAwaitModelDone handles the AwaitModelDone phase (T8, SK-014).
+func stepAwaitModelDone(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+	switch ev.Kind {
+	case EvModelDone:
+		// The real model-done signal ("idle_marker" primary,
+		// "transcript_turn" backstop — detected shell-side, §5).
+		return stepEnterClearing(cfg, s, ev, ev.Source, false)
+	case EvTimerFired:
+		if ev.Timer != TimerModelDone {
 			return s, nil
 		}
-	case PhaseAwaitModelDone:
-		switch ev.Kind {
-		case EvModelDone:
-			// The real model-done signal ("idle_marker" primary,
-			// "transcript_turn" backstop — detected shell-side, §5).
-			return stepEnterClearing(cfg, s, ev, ev.Source, false)
-		case EvTimerFired:
-			if ev.Timer != TimerModelDone {
-				return s, nil
-			}
-			// Fail-open liveness bound (SK-014 / SR9): proceed to Clearing
-			// anyway with model_done{source:"timeout", degraded:true} — the
-			// degraded mode IS the pre-rebuild clear-immediately behavior, so
-			// a lost .idle write can never wedge the cycle.
-			return stepEnterClearing(cfg, s, ev, "timeout", true)
-		default:
+		// Fail-open liveness bound (SK-014 / SR9): proceed to Clearing
+		// anyway with model_done{source:"timeout", degraded:true} — the
+		// degraded mode IS the pre-rebuild clear-immediately behavior, so
+		// a lost .idle write can never wedge the cycle.
+		return stepEnterClearing(cfg, s, ev, "timeout", true)
+	default:
+		return s, nil
+	}
+}
+
+// stepClearing handles the Clearing phase (hk-vdqe2 hard gate).
+func stepClearing(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+	switch ev.Kind {
+	case EvSessionChanged:
+		if ev.NewSID == "" || ev.NewSID == s.PrevSID {
 			return s, nil
 		}
-	case PhaseClearing:
-		switch ev.Kind {
-		case EvSessionChanged:
-			if ev.NewSID == "" || ev.NewSID == s.PrevSID {
-				return s, nil
-			}
-			// new_session_up (SK-012, §4: the Clearing → Briefing transition)
-			// is emitted immediately BEFORE the managed-session rebind.
-			actions := []Action{
-				emitNewSessionUpAction(cfg, s.CycleID, s.PrevSID, ev.NewSID),
-				{Kind: ActSetManagedSession, SID: ev.NewSID},
-				{Kind: ActCancelTimer, Timer: TimerClearSettle},
-				{Kind: ActCancelTimer, Timer: TimerClearBackstop},
-			}
-			return stepBriefing(cfg, s, ev, ev.NewSID, actions)
-		case EvTimerFired:
-			switch ev.Timer {
-			case TimerClearSettle:
-				// hk-vdqe2 hard gate: retry the settle window (defensively
-				// re-injecting /clear) until retries are exhausted; the shell
-				// fires TimerClearBackstop instead when the wall-clock backstop
-				// has also elapsed (matching the pre-rebuild deadline check at
-				// each settle-window end).
-				if s.ClearAttempt >= cfg.ClearConfirmRetries {
-					return stepClearUnconfirmed(cfg, s, ev)
-				}
-				s.ClearAttempt++
-				var actions []Action
-				if cfg.TmuxTarget != "" {
-					// Each defensive re-inject re-emits clear_sent with the
-					// incremented attempt (SK-012 — makes the unconfirmed
-					// forensics replayable).
-					if clear, ok := injectClearAction(&s); ok {
-						actions = append(actions, clear,
-							emitClearSentAction(cfg, s.CycleID, s.PrevSID, s.ClearAttempt))
-					}
-				}
-				actions = append(actions, Action{Kind: ActArmTimer, Timer: TimerClearSettle, D: cfg.ClearSettle})
-				return s, actions
-			case TimerClearBackstop:
-				return stepClearUnconfirmed(cfg, s, ev)
-			default:
-				return s, nil
-			}
+		// new_session_up (SK-012, §4: the Clearing → Briefing transition)
+		// is emitted immediately BEFORE the managed-session rebind.
+		actions := []Action{
+			emitNewSessionUpAction(cfg, s.CycleID, s.PrevSID, ev.NewSID),
+			{Kind: ActSetManagedSession, SID: ev.NewSID},
+			{Kind: ActCancelTimer, Timer: TimerClearSettle},
+			{Kind: ActCancelTimer, Timer: TimerClearBackstop},
+		}
+		return stepBriefing(cfg, s, ev, ev.NewSID, actions)
+	case EvTimerFired:
+		switch ev.Timer {
+		case TimerClearSettle:
+			return stepClearSettleExpired(cfg, s, ev)
+		case TimerClearBackstop:
+			return stepClearUnconfirmed(cfg, s, ev)
 		default:
 			return s, nil
 		}
 	default:
 		return s, nil
 	}
+}
+
+// stepClearSettleExpired is the Clearing settle-window expiry (hk-vdqe2 hard
+// gate): retry the settle window (defensively re-injecting /clear) until
+// retries are exhausted; the shell fires TimerClearBackstop instead when the
+// wall-clock backstop has also elapsed (matching the pre-rebuild deadline
+// check at each settle-window end).
+func stepClearSettleExpired(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+	if s.ClearAttempt >= cfg.ClearConfirmRetries {
+		return stepClearUnconfirmed(cfg, s, ev)
+	}
+	s.ClearAttempt++
+	var actions []Action
+	if cfg.TmuxTarget != "" {
+		// Each defensive re-inject re-emits clear_sent with the
+		// incremented attempt (SK-012 — makes the unconfirmed
+		// forensics replayable).
+		if clear, ok := injectClearAction(&s); ok {
+			actions = append(actions, clear,
+				emitClearSentAction(cfg, s.CycleID, s.PrevSID, s.ClearAttempt))
+		}
+	}
+	actions = append(actions, Action{Kind: ActArmTimer, Timer: TimerClearSettle, D: cfg.ClearSettle})
+	return s, actions
 }
 
 // ─── Idle entries ────────────────────────────────────────────────────────────
@@ -428,51 +447,14 @@ func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, [
 		return s, nil
 	}
 
-	// Prelude (unconditional): re-arm observation.
-	if s.LastFiredSID != "" && cf.SessionID != s.LastFiredSID && cfg.belowWarnThreshold(cf) {
-		s.SeenLowPctAfterLastFire = true
-	}
-
-	// Prelude: same-SID anti-loop escape hatch (hk-uxu), gated on the last
-	// fire having COMPLETED (hk-vpnp / Bug 3a).
-	if s.LastFiredSID != "" && cf.SessionID == s.LastFiredSID &&
-		!s.LastFireWasAbort && cfg.belowWarnThreshold(cf) {
-		s.LastFiredSID = ""
-		s.SeenLowPctAfterLastFire = false
-		s.LastFireWasAbort = false
-	}
-
-	// Prelude: boot-grace SID tracking (hk-4f8, hk-ibb, hk-hz9).
-	if cf.SessionID != s.CurrentSessionID {
-		if s.CurrentSessionID != "" {
-			if _, alreadySeen := s.SeenSessionIDs[cf.SessionID]; !alreadySeen {
-				s.CurrentSessionIDSince = ev.At
-				if s.BootGraceFirstArmAt.IsZero() ||
-					(cfg.MaxBootGraceTotal > 0 && ev.At.Sub(s.BootGraceFirstArmAt) >= cfg.MaxBootGraceTotal) {
-					s.BootGraceFirstArmAt = ev.At
-				}
-			}
-		}
-		// Copy-on-write so state copies (the shell peek) never alias.
-		next := make(map[string]struct{}, len(s.SeenSessionIDs)+1)
-		for k := range s.SeenSessionIDs {
-			next[k] = struct{}{}
-		}
-		next[cf.SessionID] = struct{}{}
-		s.SeenSessionIDs = next
-		s.CurrentSessionID = cf.SessionID
-	}
+	// Preludes (unconditional): re-arm observation + same-SID escape hatch,
+	// then boot-grace SID tracking (hk-4f8, hk-ibb, hk-hz9).
+	s = applyAntiLoopPrelude(cfg, s, cf)
+	s = trackBootGraceSID(cfg, s, ev.At, cf.SessionID)
 
 	// Boot-grace gate (force-path exempt — hk-ibb fix 1; total ceiling — fix 2).
-	if cfg.BootGracePeriod > 0 && !s.CurrentSessionIDSince.IsZero() &&
-		!cfg.aboveForceThreshold(cf) &&
-		ev.At.Sub(s.CurrentSessionIDSince) < cfg.BootGracePeriod {
-		totalExceeded := cfg.MaxBootGraceTotal > 0 &&
-			!s.BootGraceFirstArmAt.IsZero() &&
-			ev.At.Sub(s.BootGraceFirstArmAt) >= cfg.MaxBootGraceTotal
-		if !totalExceeded {
-			return s, nil
-		}
+	if bootGraceHolds(cfg, s, ev.At, cf) {
+		return s, nil
 	}
 
 	// Gate 3: act threshold.
@@ -497,48 +479,142 @@ func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, [
 	}
 	// Gate 5d: auto-hold on a recent inbound operator user turn (hk-74iyd).
 	// Prelude-class side effect on the FAIL path: the SetHold marker write.
-	if cfg.OperatorTurnLookback > 0 && cf.SessionID != "" && !snap.LastUserTurnAt.IsZero() &&
-		ev.At.Sub(snap.LastUserTurnAt) <= cfg.OperatorTurnLookback {
+	if gateOperatorTurnHolds(cfg, snap, ev.At, cf.SessionID) {
 		return s, []Action{{Kind: ActSetHold}}
 	}
 	// Gate 5e: post-answer grace (hk-74iyd) — transient tick-level deferral.
-	if cfg.PostAnswerGrace > 0 && cf.SessionID != "" && !snap.LastAssistantTurnAt.IsZero() &&
-		ev.At.Sub(snap.LastAssistantTurnAt) <= cfg.PostAnswerGrace {
+	if gatePostAnswerGraceHolds(cfg, snap, ev.At, cf.SessionID) {
 		return s, nil
 	}
 	// Gate 6: full anti-loop suppression + force-retry exceptions (hk-qoz, hk-hz9 fix 2).
-	if s.LastFiredSID != "" {
-		if cf.SessionID == s.LastFiredSID {
-			if !cfg.aboveForceThreshold(cf) {
-				return s, nil
-			}
-			if !s.LastForcedAttemptAt.IsZero() && ev.At.Sub(s.LastForcedAttemptAt) < cfg.ForceRetryInterval {
-				return s, nil
-			}
-			// Fall through: retry the forced-clear.
-		} else if !s.SeenLowPctAfterLastFire {
-			if cfg.aboveForceThreshold(cf) {
-				if !s.LastForcedAttemptAt.IsZero() && ev.At.Sub(s.LastForcedAttemptAt) < cfg.ForceRetryInterval {
-					return s, nil
-				}
-				// Fall through: retry the forced-clear.
-			} else {
-				return s, nil
-			}
-		}
+	if gateAntiLoopSuppresses(cfg, s, ev.At, cf) {
+		return s, nil
 	}
 	// Gate 7: operator-attached guard (warn-only, hk-6qf). The emission is a
 	// deliberate NO-OP (logmine TA3/F55 — do NOT resurrect); only the
 	// once-per-interval sampling state advances (hk-2yvx).
 	if snap.OperatorAttached {
-		if s.LastOperatorAttachedEmit.IsZero() ||
-			ev.At.Sub(s.LastOperatorAttachedEmit) >= cfg.OperatorAttachedSampleInterval {
-			s.LastOperatorAttachedEmit = ev.At
-		}
-		return s, nil
+		return gateOperatorAttachedSample(cfg, s, ev.At), nil
 	}
 
 	return stepStartCycle(cfg, s, ev, cf)
+}
+
+// gateOperatorTurnHolds is the Gate 5d predicate: a recent inbound operator
+// user turn within the lookback window (hk-74iyd).
+func gateOperatorTurnHolds(cfg *CyclerConfig, snap GateSnapshot, at time.Time, sid string) bool {
+	return cfg.OperatorTurnLookback > 0 && sid != "" && !snap.LastUserTurnAt.IsZero() &&
+		at.Sub(snap.LastUserTurnAt) <= cfg.OperatorTurnLookback
+}
+
+// gatePostAnswerGraceHolds is the Gate 5e predicate: within the post-answer
+// grace window after the last assistant turn (hk-74iyd).
+func gatePostAnswerGraceHolds(cfg *CyclerConfig, snap GateSnapshot, at time.Time, sid string) bool {
+	return cfg.PostAnswerGrace > 0 && sid != "" && !snap.LastAssistantTurnAt.IsZero() &&
+		at.Sub(snap.LastAssistantTurnAt) <= cfg.PostAnswerGrace
+}
+
+// gateOperatorAttachedSample advances Gate 7's once-per-interval sampling
+// state (hk-2yvx). The emission itself is a deliberate NO-OP (logmine
+// TA3/F55 — do NOT resurrect).
+func gateOperatorAttachedSample(cfg *CyclerConfig, s CycleState, at time.Time) CycleState {
+	if s.LastOperatorAttachedEmit.IsZero() ||
+		at.Sub(s.LastOperatorAttachedEmit) >= cfg.OperatorAttachedSampleInterval {
+		s.LastOperatorAttachedEmit = at
+	}
+	return s
+}
+
+// applyAntiLoopPrelude is the UNCONDITIONAL anti-loop prelude shared by the
+// GaugeTick and Precompact entries (§3f: a "clean" short-circuit would change
+// observable state): the re-arm observation, then the same-SID escape hatch
+// (hk-uxu) gated on the last fire having COMPLETED (hk-vpnp / Bug 3a).
+func applyAntiLoopPrelude(cfg *CyclerConfig, s CycleState, cf *CtxFile) CycleState {
+	// Prelude: re-arm observation.
+	if s.LastFiredSID != "" && cf.SessionID != s.LastFiredSID && cfg.belowWarnThreshold(cf) {
+		s.SeenLowPctAfterLastFire = true
+	}
+	// Prelude: same-SID anti-loop escape hatch.
+	if s.LastFiredSID != "" && cf.SessionID == s.LastFiredSID &&
+		!s.LastFireWasAbort && cfg.belowWarnThreshold(cf) {
+		s.LastFiredSID = ""
+		s.SeenLowPctAfterLastFire = false
+		s.LastFireWasAbort = false
+	}
+	return s
+}
+
+// trackBootGraceSID is the boot-grace SID-tracking prelude (hk-4f8, hk-ibb,
+// hk-hz9): stamp CurrentSessionIDSince on a genuinely-new session id and
+// maintain the grace-burst window anchor.
+func trackBootGraceSID(cfg *CyclerConfig, s CycleState, at time.Time, sid string) CycleState {
+	if sid == s.CurrentSessionID {
+		return s
+	}
+	if s.CurrentSessionID != "" {
+		if _, alreadySeen := s.SeenSessionIDs[sid]; !alreadySeen {
+			s.CurrentSessionIDSince = at
+			if s.BootGraceFirstArmAt.IsZero() ||
+				(cfg.MaxBootGraceTotal > 0 && at.Sub(s.BootGraceFirstArmAt) >= cfg.MaxBootGraceTotal) {
+				s.BootGraceFirstArmAt = at
+			}
+		}
+	}
+	// Copy-on-write so state copies (the shell peek) never alias.
+	next := make(map[string]struct{}, len(s.SeenSessionIDs)+1)
+	for k := range s.SeenSessionIDs {
+		next[k] = struct{}{}
+	}
+	next[sid] = struct{}{}
+	s.SeenSessionIDs = next
+	s.CurrentSessionID = sid
+	return s
+}
+
+// bootGraceHolds is the boot-grace gate predicate shared by the GaugeTick and
+// Precompact entries: true when the grace window is still holding the entry
+// back. Force-path exempt (hk-ibb fix 1; a nil cf is NOT exempt — the
+// precompact entry's pre-rebuild check); the total ceiling (fix 2) overrides
+// the hold.
+func bootGraceHolds(cfg *CyclerConfig, s CycleState, at time.Time, cf *CtxFile) bool {
+	if cfg.BootGracePeriod <= 0 || s.CurrentSessionIDSince.IsZero() {
+		return false
+	}
+	if cf != nil && cfg.aboveForceThreshold(cf) {
+		return false
+	}
+	if at.Sub(s.CurrentSessionIDSince) >= cfg.BootGracePeriod {
+		return false
+	}
+	totalExceeded := cfg.MaxBootGraceTotal > 0 &&
+		!s.BootGraceFirstArmAt.IsZero() &&
+		at.Sub(s.BootGraceFirstArmAt) >= cfg.MaxBootGraceTotal
+	return !totalExceeded
+}
+
+// gateAntiLoopSuppresses is Gate 6 of the MaybeRun ladder: full anti-loop
+// suppression + the force-retry exceptions (hk-qoz, hk-hz9 fix 2). true means
+// the entry is suppressed; false falls through (including the forced-clear
+// retry paths).
+func gateAntiLoopSuppresses(cfg *CyclerConfig, s CycleState, at time.Time, cf *CtxFile) bool {
+	if s.LastFiredSID == "" {
+		return false
+	}
+	if cf.SessionID == s.LastFiredSID {
+		if !cfg.aboveForceThreshold(cf) {
+			return true
+		}
+		// Retry the forced-clear once the retry interval has elapsed.
+		return !s.LastForcedAttemptAt.IsZero() && at.Sub(s.LastForcedAttemptAt) < cfg.ForceRetryInterval
+	}
+	if !s.SeenLowPctAfterLastFire {
+		if !cfg.aboveForceThreshold(cf) {
+			return true
+		}
+		// Retry the forced-clear once the retry interval has elapsed.
+		return !s.LastForcedAttemptAt.IsZero() && at.Sub(s.LastForcedAttemptAt) < cfg.ForceRetryInterval
+	}
+	return false
 }
 
 // stepIdlePrecompact is the RunForPrecompact entry ladder (gate subset; skips
@@ -572,27 +648,14 @@ func stepIdlePrecompact(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, 
 	}
 	// Gate 2b: boot-grace (hk-hz9 fix 3) — state kept current by the GaugeTick
 	// prelude, which the watcher always delivers first. Force-path exempt.
-	if cfg.BootGracePeriod > 0 && !s.CurrentSessionIDSince.IsZero() &&
-		(cf == nil || !cfg.aboveForceThreshold(cf)) &&
-		ev.At.Sub(s.CurrentSessionIDSince) < cfg.BootGracePeriod {
-		totalExceeded := cfg.MaxBootGraceTotal > 0 &&
-			!s.BootGraceFirstArmAt.IsZero() &&
-			ev.At.Sub(s.BootGraceFirstArmAt) >= cfg.MaxBootGraceTotal
-		if !totalExceeded {
-			return s, blocked("boot_grace")
-		}
+	if bootGraceHolds(cfg, s, ev.At, cf) {
+		return s, blocked("boot_grace")
 	}
 
-	// Prelude: re-arm observation (mirrors the GaugeTick prelude).
-	if cf != nil && s.LastFiredSID != "" && cf.SessionID != s.LastFiredSID && cfg.belowWarnThreshold(cf) {
-		s.SeenLowPctAfterLastFire = true
-	}
-	// Prelude: same-SID escape hatch, gated on !LastFireWasAbort (hk-vpnp).
-	if cf != nil && s.LastFiredSID != "" && cf.SessionID == s.LastFiredSID &&
-		!s.LastFireWasAbort && cfg.belowWarnThreshold(cf) {
-		s.LastFiredSID = ""
-		s.SeenLowPctAfterLastFire = false
-		s.LastFireWasAbort = false
+	// Preludes: re-arm observation + same-SID escape hatch (mirrors the
+	// GaugeTick prelude; gated on !LastFireWasAbort — hk-vpnp).
+	if cf != nil {
+		s = applyAntiLoopPrelude(cfg, s, cf)
 	}
 
 	// Gate 3: HoldingDispatch (fail-closed).

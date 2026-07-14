@@ -35,45 +35,15 @@ import (
 func (c *Cycler) execute(ctx context.Context, a Action) error {
 	switch a.Kind {
 	case ActWriteJournal:
-		j := a.Journal
-		if err := c.handoff.WriteJournal(&j); err != nil {
-			if j.Phase == "opened" {
-				return err // fatal: the cycle must not start unjournaled
-			}
-			// all other journal writes were `_ =` best-effort
-		}
+		return c.executeWriteJournal(a)
 	case ActEmit:
-		if err := c.emitter.EmitWithRunID(ctx, core.RunID{}, a.Type, a.Payload); err != nil {
-			// D9 / SK-013: emit failures for the four §8.20 interior events
-			// MUST NOT be silently swallowed — log, non-fatal (O-class: no
-			// retry, no block; the failure just becomes observable). Every
-			// other keeper emit keeps the pre-rebuild best-effort discard.
-			switch a.Type {
-			case core.EventTypeSessionKeeperHandoffWritten,
-				core.EventTypeSessionKeeperModelDone,
-				core.EventTypeSessionKeeperClearSent,
-				core.EventTypeSessionKeeperNewSessionUp:
-				slog.WarnContext(ctx, "keeper: interior event emit failed",
-					"agent", c.cfg.AgentName, "type", string(a.Type), "err", err)
-			}
-		}
+		c.executeEmit(ctx, a)
 	case ActTruncateHandoff:
 		_ = c.handoff.TruncateHandoff() //nolint:errcheck // non-fatal; poll fails gracefully
 	case ActSendEscape:
 		_ = c.pane.SendEscape(ctx, c.cfg.TmuxTarget) //nolint:errcheck // non-fatal; clears partial input
 	case ActInjectHandoffCmd:
-		// Capture the injection instant BEFORE injecting (hk-fi78d): the
-		// freshness-recovery sampler treats a handoff as written-for-this-cycle
-		// only when its mtime is at/after this moment.
-		c.handoffInjectedAt = c.cfg.Clock.Now()
-		handoffCmd := fmt.Sprintf(
-			"/session-handoff %s\n\nIMPORTANT: include exactly this line verbatim in the handoff file: %s",
-			c.handoff.HandoffPath(), nonceMarker(a.CycleID),
-		)
-		if err := c.pane.Inject(ctx, c.cfg.TmuxTarget, handoffCmd); err != nil {
-			// Non-fatal: the confirm step catches any delivery failure.
-			_ = err //nolint:errcheck
-		}
+		c.executeInjectHandoffCmd(ctx, a)
 	case ActInjectClear:
 		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, "/clear") //nolint:errcheck
 	case ActInjectBrief:
@@ -81,50 +51,115 @@ func (c *Cycler) execute(ctx context.Context, a Action) error {
 	case ActSetTmuxEnv:
 		_ = c.pane.SetEnv(ctx, c.cfg.TmuxTarget, a.Key, a.Value) //nolint:errcheck
 	case ActSetManagedSession:
-		if err := c.gauge.SetManagedSession(a.SID); err != nil {
-			slog.WarnContext(ctx, "keeper: update managed session_id",
-				"agent", c.cfg.AgentName, "sid", a.SID, "err", err)
-			// Non-fatal: the watcher latch path rebinds on the next tick.
-		}
+		c.executeSetManagedSession(ctx, a)
 	case ActClearPrecompact:
 		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
 	case ActSetHold:
 		// Best-effort (SetHold fails silently when .sid is absent) — Gate 5d.
 		_, _ = c.gauge.SetHold() //nolint:errcheck
 	case ActForceRestart:
-		if c.respawn != nil {
-			slog.WarnContext(ctx, "keeper: escalating to hard restart after repeated handoff timeouts",
-				"agent", c.cfg.AgentName)
-			if restartErr := c.respawn.ForceRestart(ctx, c.cfg.AgentName); restartErr != nil {
-				slog.WarnContext(ctx, "keeper: hard restart failed",
-					"agent", c.cfg.AgentName, "err", restartErr)
-			}
-		}
+		c.executeForceRestart(ctx)
 	case ActArmTimer:
-		// Deadline anchored at EXECUTION time (after the preceding actions in
-		// the batch, e.g. the inject) — matching where the pre-rebuild code
-		// created its context.WithTimeout / backstop deadline.
-		if a.Timer == TimerHandoffTimeout && c.cfg.TmuxTarget == "" {
-			// hk-fi78d parity: with an empty tmux target no ActInjectHandoffCmd
-			// is emitted, so the freshness anchor is never stamped there. The
-			// pre-rebuild runCycle stamped handoffInjectedAt = Clock.Now()
-			// UNCONDITIONALLY before the `if TmuxTarget != ""` injection branch,
-			// so an empty-target handoff-timeout compares the handoff mtime
-			// against a per-cycle anchor (stale handoff → ABORT), not a zero/
-			// prior-cycle anchor (which would wrongly take the recovery path and
-			// flip LastFireWasAbort). Re-stamp per firing cycle here; the
-			// non-empty-target path keeps its exact before-inject stamp.
-			c.handoffInjectedAt = c.cfg.Clock.Now()
-		}
-		if c.timers == nil {
-			c.timers = make(map[TimerKind]time.Time)
-		}
-		c.timers[a.Timer] = c.cfg.Clock.Now().Add(a.D)
-		c.timersArmed = true
+		c.executeArmTimer(a)
 	case ActCancelTimer:
 		delete(c.timers, a.Timer)
 	}
 	return nil
+}
+
+// executeWriteJournal is the ActWriteJournal arm. Only the "opened" journal
+// write is fatal (the cycle must not start unjournaled — pre-rebuild runCycle
+// returned its error); all other journal writes were `_ =` best-effort.
+func (c *Cycler) executeWriteJournal(a Action) error {
+	j := a.Journal
+	if err := c.handoff.WriteJournal(&j); err != nil {
+		if j.Phase == "opened" {
+			return err // fatal: the cycle must not start unjournaled
+		}
+		// all other journal writes were `_ =` best-effort
+	}
+	return nil
+}
+
+// executeInjectHandoffCmd is the ActInjectHandoffCmd arm. The injection
+// instant is captured BEFORE injecting (hk-fi78d): the freshness-recovery
+// sampler treats a handoff as written-for-this-cycle only when its mtime is
+// at/after this moment.
+func (c *Cycler) executeInjectHandoffCmd(ctx context.Context, a Action) {
+	c.handoffInjectedAt = c.cfg.Clock.Now()
+	handoffCmd := fmt.Sprintf(
+		"/session-handoff %s\n\nIMPORTANT: include exactly this line verbatim in the handoff file: %s",
+		c.handoff.HandoffPath(), nonceMarker(a.CycleID),
+	)
+	if err := c.pane.Inject(ctx, c.cfg.TmuxTarget, handoffCmd); err != nil {
+		// Non-fatal: the confirm step catches any delivery failure.
+		_ = err //nolint:errcheck
+	}
+}
+
+// executeSetManagedSession is the ActSetManagedSession arm. Non-fatal: the
+// watcher latch path rebinds on the next tick.
+func (c *Cycler) executeSetManagedSession(ctx context.Context, a Action) {
+	if err := c.gauge.SetManagedSession(a.SID); err != nil {
+		slog.WarnContext(ctx, "keeper: update managed session_id",
+			"agent", c.cfg.AgentName, "sid", a.SID, "err", err)
+	}
+}
+
+// executeForceRestart is the ActForceRestart arm (hk-qoz escalation).
+func (c *Cycler) executeForceRestart(ctx context.Context) {
+	if c.respawn == nil {
+		return
+	}
+	slog.WarnContext(ctx, "keeper: escalating to hard restart after repeated handoff timeouts",
+		"agent", c.cfg.AgentName)
+	if restartErr := c.respawn.ForceRestart(ctx, c.cfg.AgentName); restartErr != nil {
+		slog.WarnContext(ctx, "keeper: hard restart failed",
+			"agent", c.cfg.AgentName, "err", restartErr)
+	}
+}
+
+// executeEmit is the ActEmit arm. D9 / SK-013: emit failures for the four
+// §8.20 interior events MUST NOT be silently swallowed — log, non-fatal
+// (O-class: no retry, no block; the failure just becomes observable). Every
+// other keeper emit keeps the pre-rebuild best-effort discard.
+func (c *Cycler) executeEmit(ctx context.Context, a Action) {
+	err := c.emitter.EmitWithRunID(ctx, core.RunID{}, a.Type, a.Payload)
+	if err == nil {
+		return
+	}
+	switch a.Type {
+	case core.EventTypeSessionKeeperHandoffWritten,
+		core.EventTypeSessionKeeperModelDone,
+		core.EventTypeSessionKeeperClearSent,
+		core.EventTypeSessionKeeperNewSessionUp:
+		slog.WarnContext(ctx, "keeper: interior event emit failed",
+			"agent", c.cfg.AgentName, "type", string(a.Type), "err", err)
+	}
+}
+
+// executeArmTimer is the ActArmTimer arm. The deadline is anchored at
+// EXECUTION time (after the preceding actions in the batch, e.g. the inject)
+// — matching where the pre-rebuild code created its context.WithTimeout /
+// backstop deadline.
+func (c *Cycler) executeArmTimer(a Action) {
+	if a.Timer == TimerHandoffTimeout && c.cfg.TmuxTarget == "" {
+		// hk-fi78d parity: with an empty tmux target no ActInjectHandoffCmd
+		// is emitted, so the freshness anchor is never stamped there. The
+		// pre-rebuild runCycle stamped handoffInjectedAt = Clock.Now()
+		// UNCONDITIONALLY before the `if TmuxTarget != ""` injection branch,
+		// so an empty-target handoff-timeout compares the handoff mtime
+		// against a per-cycle anchor (stale handoff → ABORT), not a zero/
+		// prior-cycle anchor (which would wrongly take the recovery path and
+		// flip LastFireWasAbort). Re-stamp per firing cycle here; the
+		// non-empty-target path keeps its exact before-inject stamp.
+		c.handoffInjectedAt = c.cfg.Clock.Now()
+	}
+	if c.timers == nil {
+		c.timers = make(map[TimerKind]time.Time)
+	}
+	c.timers[a.Timer] = c.cfg.Clock.Now().Add(a.D)
+	c.timersArmed = true
 }
 
 // feed runs one event through the pure reactor and executes the resulting
@@ -248,66 +283,83 @@ func (c *Cycler) pollOnce(ctx context.Context) {
 	st := c.machine.State()
 	switch st.Phase {
 	case PhaseAwaitingHandoff:
-		if dl, ok := c.timers[TimerHandoffTimeout]; ok && !at.Before(dl) {
-			delete(c.timers, TimerHandoffTimeout)
-			c.sampleHandoffFreshness(ctx, st, at)
-			_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: st.CycleID, At: at}) //nolint:errcheck
-			return
-		}
-		content, err := c.handoff.ReadHandoff()
-		if err == nil && strings.Contains(content, nonceMarker(st.CycleID)) {
-			_ = c.feed(ctx, Event{Kind: EvNonceObserved, CycleID: st.CycleID, At: at}) //nolint:errcheck
-		}
+		c.pollAwaitingHandoff(ctx, st, at)
 	case PhaseAwaitModelDone:
-		if dl, ok := c.timers[TimerModelDone]; ok && !at.Before(dl) {
-			// Fail-open bound (SK-014/SR9): the reactor proceeds to Clearing
-			// degraded; never silence.
-			delete(c.timers, TimerModelDone)
-			_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerModelDone, CycleID: st.CycleID, At: at}) //nolint:errcheck
-			return
-		}
-		// Primary source: the Stop-hook .idle marker. The first
-		// mtime(.idle) ≥ t_nonce after handoff confirmation means the model
-		// reached an await-input boundary AFTER the turn that wrote the
-		// handoff. STRICT compare against the nonce instant — no
-		// crispIdleTolerance fudge (that tolerance discounts passive .ctx
-		// repaints, irrelevant against t_nonce). SK-014 / design §5.
-		if mt, ok := c.gauge.IdleMarkerModTime(); ok && !mt.Before(st.NonceConfirmedAt) {
-			_ = c.feed(ctx, Event{ //nolint:errcheck
-				Kind: EvModelDone, CycleID: st.CycleID,
-				SessionID: st.PrevSID, Source: "idle_marker", At: at,
-			})
-			return
-		}
-		// Backstop source: a real assistant transcript turn at/after t_nonce
-		// (agents whose Stop hook isn't wired). Heavier (JSONL tail scan);
-		// consulted only when the .idle read yields nothing.
-		if tt, ok := c.gauge.LastAssistantTurn(st.PrevSID); ok && !tt.Before(st.NonceConfirmedAt) {
-			_ = c.feed(ctx, Event{ //nolint:errcheck
-				Kind: EvModelDone, CycleID: st.CycleID,
-				SessionID: st.PrevSID, Source: "transcript_turn", At: at,
-			})
-		}
+		c.pollAwaitModelDone(ctx, st, at)
 	case PhaseClearing:
-		if dl, ok := c.timers[TimerClearSettle]; ok && !at.Before(dl) {
-			// The wall-clock backstop is consulted at settle-window ends,
-			// exactly like waitForNewSessionIDWithBackstop's post-attempt
-			// deadline check — it never cuts a settle window short.
-			if bdl, bok := c.timers[TimerClearBackstop]; bok && !at.Before(bdl) {
-				_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: st.CycleID, At: at}) //nolint:errcheck
-				return
-			}
-			_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		c.pollClearing(ctx, st, at)
+	default:
+	}
+}
+
+// pollAwaitingHandoff is the AwaitingHandoff detection tick: handoff-timeout
+// expiry (with the freshness sample) first, else the nonce-echo read.
+func (c *Cycler) pollAwaitingHandoff(ctx context.Context, st CycleState, at time.Time) {
+	if dl, ok := c.timers[TimerHandoffTimeout]; ok && !at.Before(dl) {
+		delete(c.timers, TimerHandoffTimeout)
+		c.sampleHandoffFreshness(ctx, st, at)
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		return
+	}
+	content, err := c.handoff.ReadHandoff()
+	if err == nil && strings.Contains(content, nonceMarker(st.CycleID)) {
+		_ = c.feed(ctx, Event{Kind: EvNonceObserved, CycleID: st.CycleID, At: at}) //nolint:errcheck
+	}
+}
+
+// pollAwaitModelDone is the AwaitModelDone detection tick (T8, SK-014).
+func (c *Cycler) pollAwaitModelDone(ctx context.Context, st CycleState, at time.Time) {
+	if dl, ok := c.timers[TimerModelDone]; ok && !at.Before(dl) {
+		// Fail-open bound (SK-014/SR9): the reactor proceeds to Clearing
+		// degraded; never silence.
+		delete(c.timers, TimerModelDone)
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerModelDone, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		return
+	}
+	// Primary source: the Stop-hook .idle marker. The first
+	// mtime(.idle) ≥ t_nonce after handoff confirmation means the model
+	// reached an await-input boundary AFTER the turn that wrote the
+	// handoff. STRICT compare against the nonce instant — no
+	// crispIdleTolerance fudge (that tolerance discounts passive .ctx
+	// repaints, irrelevant against t_nonce). SK-014 / design §5.
+	if mt, ok := c.gauge.IdleMarkerModTime(); ok && !mt.Before(st.NonceConfirmedAt) {
+		_ = c.feed(ctx, Event{ //nolint:errcheck
+			Kind: EvModelDone, CycleID: st.CycleID,
+			SessionID: st.PrevSID, Source: "idle_marker", At: at,
+		})
+		return
+	}
+	// Backstop source: a real assistant transcript turn at/after t_nonce
+	// (agents whose Stop hook isn't wired). Heavier (JSONL tail scan);
+	// consulted only when the .idle read yields nothing.
+	if tt, ok := c.gauge.LastAssistantTurn(st.PrevSID); ok && !tt.Before(st.NonceConfirmedAt) {
+		_ = c.feed(ctx, Event{ //nolint:errcheck
+			Kind: EvModelDone, CycleID: st.CycleID,
+			SessionID: st.PrevSID, Source: "transcript_turn", At: at,
+		})
+	}
+}
+
+// pollClearing is the Clearing detection tick: settle-window / backstop
+// expiry first, else the session-id rebind read.
+func (c *Cycler) pollClearing(ctx context.Context, st CycleState, at time.Time) {
+	if dl, ok := c.timers[TimerClearSettle]; ok && !at.Before(dl) {
+		// The wall-clock backstop is consulted at settle-window ends,
+		// exactly like waitForNewSessionIDWithBackstop's post-attempt
+		// deadline check — it never cuts a settle window short.
+		if bdl, bok := c.timers[TimerClearBackstop]; bok && !at.Before(bdl) {
+			_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: st.CycleID, At: at}) //nolint:errcheck
 			return
 		}
-		cf, _, err := c.gauge.ReadGauge()
-		if err == nil && cf.SessionID != "" && cf.SessionID != st.PrevSID {
-			_ = c.feed(ctx, Event{ //nolint:errcheck
-				Kind: EvSessionChanged, CycleID: st.CycleID,
-				PrevSID: st.PrevSID, NewSID: cf.SessionID, At: at,
-			})
-		}
-	default:
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		return
+	}
+	cf, _, err := c.gauge.ReadGauge()
+	if err == nil && cf.SessionID != "" && cf.SessionID != st.PrevSID {
+		_ = c.feed(ctx, Event{ //nolint:errcheck
+			Kind: EvSessionChanged, CycleID: st.CycleID,
+			PrevSID: st.PrevSID, NewSID: cf.SessionID, At: at,
+		})
 	}
 }
 

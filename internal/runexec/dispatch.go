@@ -275,12 +275,12 @@ func stepDispatchBriefing(cfg DispatchConfig, s DispatchState, ev Event) (Dispat
 		s.LastProgressAt = ev.At
 		return s, []Action{{Kind: ActCancelTimer, Timer: TimerInputAck}}
 	case EvInputRejected:
-		return dispatchBriefRetry(cfg, s, ev)
+		return dispatchBriefRetry(cfg, s)
 	case EvTimerFired:
 		if ev.Timer != TimerInputAck {
 			return s, nil
 		}
-		return dispatchBriefRetry(cfg, s, ev)
+		return dispatchBriefRetry(cfg, s)
 	case EvAgentExited:
 		s.Phase = DispatchExited
 		s.ExitCode = ev.ExitCode
@@ -293,7 +293,7 @@ func stepDispatchBriefing(cfg DispatchConfig, s DispatchState, ev Event) (Dispat
 // dispatchBriefRetry is the RSM-INV-001 edge: retry the brief while attempts
 // remain, else fail closed (input_undeliverable). Either branch is an outgoing
 // action, never a silent no-op (RSM-INV-002).
-func dispatchBriefRetry(cfg DispatchConfig, s DispatchState, ev Event) (DispatchState, []Action) {
+func dispatchBriefRetry(cfg DispatchConfig, s DispatchState) (DispatchState, []Action) {
 	if s.Attempt < cfg.MaxInputAttempts {
 		s.Attempt++
 		return s, []Action{

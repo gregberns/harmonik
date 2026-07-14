@@ -169,7 +169,7 @@ func TestDispatch_HeartbeatNotProgress(t *testing.T) {
 
 func TestDispatch_BriefRetryThenFailClosed(t *testing.T) {
 	// RSM-INV-001: input rejection retries within budget then fails closed.
-	cfg := stdDispatchCfg() // MaxInputAttempts=2
+	cfg := stdDispatchCfg() // caps brief attempts at two
 	m := NewDispatch(cfg)
 	m.Step(Event{Kind: EvStartDispatch, Session: "s1", At: at(1)})
 	m.Step(Event{Kind: EvLaunched, Session: "s1", At: at(2)})

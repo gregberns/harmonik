@@ -189,9 +189,6 @@ type workLoopDeps struct {
 	// bus is the in-process event bus.  The work loop uses only Emit.
 	bus handlercontract.EventEmitter
 
-	// h is the handler factory.
-	h handler.Handler
-
 	// intentLogDir is the absolute path to the beads-intents/ directory for
 	// the BI-030 intent-log protocol.
 	intentLogDir string
@@ -755,14 +752,6 @@ type workLoopDeps struct {
 	// Bead ref: hk-hd2w6.
 	runner tmuxpkg.CommandRunner
 
-	// beadAuditLogger is retained for the beadExplicitlyReopened predicate and
-	// its associated tests (hk-wcv).  The pre-dispatch subsume block that called
-	// it was removed by hk-f38n (bare Refs-grep false-positives on partial
-	// commits); the function is no longer called in production dispatch paths.
-	//
-	// Production: wired to (*brcli.Adapter).AuditLog in newWorkLoopDeps.
-	beadAuditLogger func(ctx context.Context, id core.BeadID) ([]brcli.AuditEvent, error)
-
 	// scheduleStore, when non-nil, is the daemon-owned recurring-job registry
 	// (codename:schedule, hk-0es). The work loop runs runScheduleTick once per
 	// poll iteration (after the dispatch-context check, before the capacity gate)
@@ -829,35 +818,12 @@ type workLoopDeps struct {
 	// Bead ref: hk-t08m.
 	coordinatorReapInterval time.Duration
 
-	// lastCoordinatorReap records when the periodic coordinator reaper last ran.
-	// Guarded entirely by the work-loop goroutine — no locking needed. Initialised
-	// to zero so the first tick always fires.
-	//
-	// Bead ref: hk-t08m.
-	lastCoordinatorReap time.Time
-
-	// lastDiskCheck records when the periodic disk free-space probe last ran.
-	// Guarded entirely by the work-loop goroutine — no locking needed. Initialised
-	// to zero so the first tick fires after diskCheckInterval elapses; the guard
-	// below uses time.Since which returns a large value for a zero time.
-	//
-	// Bead ref: hk-sxlb.
-	lastDiskCheck time.Time
-
-	// lastGoCacheClean records when `go clean -cache` was last run proactively
-	// (independently of a disk-low crossing). Guarded by the work-loop goroutine.
-	// Zero → first proactive clean fires after goCacheCleanInterval.
-	//
-	// Bead ref: hk-sxlb.
-	lastGoCacheClean time.Time
-
-	// diskLow is true when the most recent disk probe found available space below
-	// diskLowWatermarkDefault (or deps.diskLowWatermark). The dispatch loop skips
-	// bead claiming while this flag is set, sleeping and retrying each poll tick
-	// until disk recovers above the watermark.
-	//
-	// Bead ref: hk-sxlb.
-	diskLow bool
+	// NOTE (RSM-011): the periodic-maintenance VALUE fields formerly here —
+	// lastCoordinatorReap, lastDiskCheck, lastGoCacheClean, diskLow — were lifted
+	// out onto runWorkLoop-local loopMaintenanceState. workLoopDeps is passed BY
+	// VALUE into every run goroutine, so a mutation of these fields from a run
+	// goroutine would be a silent no-op (PF §3 hazard). Keeping them off the
+	// bundle makes the ownership (the single work-loop goroutine) structural.
 
 	// diskLowWatermark is the injectable free-space floor for tests. Zero →
 	// diskLowWatermarkDefault (10 GiB). Production leaves this zero.
@@ -950,6 +916,31 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-6596l.
 	sandboxCfg SandboxConfig
+}
+
+// loopMaintenanceState holds the periodic-maintenance value fields owned solely
+// by the runWorkLoop goroutine (RSM-011). They were lifted off workLoopDeps
+// because that bundle is copied by value into every run goroutine, where a
+// mutation of a value field is a silent no-op (PF §3 hazard). Declared local to
+// runWorkLoop and threaded by pointer into the periodic maintenance passes.
+type loopMaintenanceState struct {
+	// lastCoordinatorReap records when the periodic coordinator reaper last ran.
+	// Zero → the first tick always fires (hk-t08m).
+	lastCoordinatorReap time.Time
+
+	// lastDiskCheck records when the periodic disk free-space probe last ran.
+	// Zero → the first tick fires after diskCheckInterval elapses (hk-sxlb).
+	lastDiskCheck time.Time
+
+	// lastGoCacheClean records when `go clean -cache` was last run proactively
+	// (independently of a disk-low crossing). Zero → first proactive clean fires
+	// after goCacheCleanInterval (hk-sxlb).
+	lastGoCacheClean time.Time
+
+	// diskLow is true when the most recent disk probe found available space below
+	// diskLowWatermarkDefault (or deps.diskLowWatermark). The dispatch loop skips
+	// bead claiming while this flag is set (hk-sxlb).
+	diskLow bool
 }
 
 // closeBeadWithHistoryTrim trims .beads/.br_history to brHistoryCloseTrimKeep
@@ -1072,8 +1063,6 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 
 	intentLogDir := lifecycle.BeadsIntentsDir(cfg.ProjectDir)
 
-	h := handler.NewHandler(bus, handlercontract.NoopWatcherDeadLetter{}, registry)
-
 	binary := cfg.HandlerBinary
 	if binary == "" {
 		binary = "claude"
@@ -1133,7 +1122,6 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 	return workLoopDeps{
 		brAdapter:                  adapter,
 		bus:                        bus,
-		h:                          h,
 		intentLogDir:               intentLogDir,
 		projectDir:                 cfg.ProjectDir,
 		handlerBinary:              binary,
@@ -1182,7 +1170,6 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		targetBranch:               resolveTargetBranch(cfg.TargetBranch),
 		protectBranches:            cfg.ProtectBranches,
 		allowedRepos:               cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
-		beadAuditLogger:            adapter.AuditLog,                   // hk-wcv / hk-f38n: retained for tests; pre-dispatch block removed
 		workerRegistry:             workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
 		coordinatorReapAdapter:     coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
 		coordinatorReapProjectHash: projectHash,                        // hk-t08m: pre-computed for session name derivation
@@ -1545,6 +1532,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
 
+	// maint holds the periodic-maintenance value fields (RSM-011). Owned solely
+	// by this goroutine; threaded by pointer into the maintenance passes below.
+	var maint loopMaintenanceState
+
 	// RSM-015: own the merge exclusion-domain queue. runWorkLoop CREATES and
 	// starts the queue when deps carries none (production, and every StartForTesting
 	// / ExportedRunWorkLoop test that does not inject one) — and it alone cancels
@@ -1769,9 +1760,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			if interval <= 0 {
 				interval = periodicCoordinatorReapInterval
 			}
-			if deps.coordinatorReapAdapter != nil && time.Since(deps.lastCoordinatorReap) >= interval {
+			if deps.coordinatorReapAdapter != nil && time.Since(maint.lastCoordinatorReap) >= interval {
 				runPeriodicCoordinatorReap(ctx, deps.projectDir, deps.coordinatorReapProjectHash, deps.coordinatorReapAdapter, nil)
-				deps.lastCoordinatorReap = time.Now()
+				maint.lastCoordinatorReap = time.Now()
 			}
 		}
 
@@ -1790,8 +1781,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		//     60 min) even when disk is healthy, preventing the cache from
 		//     growing to 20 GiB between low-disk crossings. Also gated on idle
 		//     (runRegistry.Len()==0) to avoid racing merge-builds (hk-guez).
-		runPeriodicDiskCheck(ctx, &deps)
-		if deps.diskLow {
+		runPeriodicDiskCheck(ctx, &deps, &maint)
+		if maint.diskLow {
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
 				return exitClean()
 			}

@@ -310,14 +310,6 @@ type WorkLoopDepsParams struct {
 	// nil, ExportedWorkLoopDeps installs a fresh cap-3 channel (production default).
 	AgentSpawnSem chan struct{}
 
-	// BeadAuditLogger, when non-nil, overrides the beadAuditLogger function
-	// used by the pre-dispatch subsume check to detect reopen-for-fix beads
-	// (hk-wcv). When nil (the test default), the check is skipped and the
-	// conservative crash-restart assumption applies (pre-dispatch close fires).
-	// Supply a non-nil value to exercise the bypass path in unit tests.
-	//
-	// Bead ref: hk-wcv.
-	BeadAuditLogger func(ctx context.Context, id core.BeadID) ([]brcli.AuditEvent, error)
 
 	// WorkerRegistry, when non-nil, enables the DD1 remote code-sync path in
 	// beadRunOne (remote-substrate B8). When nil (the test default), all runs
@@ -468,8 +460,6 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		cacheReapMu = &sync.RWMutex{}
 	}
 
-	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{}, adapterReg)
-
 	// Derive the submit-wake channel from the QueueStore when one is provided
 	// (hk-24xn1). Mirrors the daemon.Start wiring so queue-aware tests observe
 	// the same wake-on-submit behaviour as production.
@@ -481,7 +471,6 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	return workLoopDeps{
 		brAdapter:                  p.BrAdapter,
 		bus:                        p.Bus,
-		h:                          h,
 		intentLogDir:               p.IntentLogDir,
 		projectDir:                 p.ProjectDir,
 		handlerBinary:              binary,
@@ -525,8 +514,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		agentSpawnSem:              agentSpawnSem,                  // hk-5z1f0: per-worker cold-start spawn semaphore
 		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
 		emittedEpicsMu:             &sync.Mutex{},
-		beadAuditLogger:            p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption
-		workerRegistry:             p.WorkerRegistry,  // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
+		workerRegistry:             p.WorkerRegistry, // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
 		brPath:                     p.BrPath,          // hk-f722: staged-bead generator; empty → disabled
 		followUpLedger:             make(map[string]struct{}),
 		followUpLedgerMu:           &sync.Mutex{},
@@ -572,11 +560,21 @@ func ExportedLoadStandardGraph(params map[string]string) (*dot.Graph, error) {
 	return loadStandardGraph(params)
 }
 
-// ExportedRunPeriodicDiskCheck calls runPeriodicDiskCheck with the given deps.
-// Used by diskcheck_hksxlb_test.go to drive the reaper directly without
-// running the full work loop (hk-guez).
-func ExportedRunPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
-	runPeriodicDiskCheck(ctx, deps)
+// ExportedMaintState is an opaque test handle over the runWorkLoop-local
+// loopMaintenanceState (RSM-011: the periodic-maintenance value fields were
+// lifted off workLoopDeps). Tests create one via ExportedNewMaintState and
+// thread it through ExportedRunPeriodicDiskCheck so per-run state (diskLow,
+// last-probe timestamps) persists across calls, as it did on deps before.
+type ExportedMaintState struct{ m loopMaintenanceState }
+
+// ExportedNewMaintState returns a fresh maintenance-state handle.
+func ExportedNewMaintState() *ExportedMaintState { return &ExportedMaintState{} }
+
+// ExportedRunPeriodicDiskCheck calls runPeriodicDiskCheck with the given deps
+// and maintenance-state handle. Used by diskcheck_hksxlb_test.go to drive the
+// reaper directly without running the full work loop (hk-guez).
+func ExportedRunPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, ms *ExportedMaintState) {
+	runPeriodicDiskCheck(ctx, deps, &ms.m)
 }
 
 // ExportedWorkLoopDepsPtr returns a pointer to a workLoopDeps so tests can
@@ -596,10 +594,10 @@ func ExportedNewRunRegistry() *RunRegistry {
 	return NewRunRegistry()
 }
 
-// ExportedDiskCheckDiskLow reads the diskLow field from deps.
-// Used by diskcheck_hksxlb_test.go to assert post-call state (hk-guez).
-func ExportedDiskCheckDiskLow(deps *workLoopDeps) bool {
-	return deps.diskLow
+// ExportedDiskCheckDiskLow reads the diskLow field from the maintenance-state
+// handle. Used by diskcheck_hksxlb_test.go to assert post-call state (hk-guez).
+func ExportedDiskCheckDiskLow(ms *ExportedMaintState) bool {
+	return ms.m.diskLow
 }
 
 // ExportedDiskCheckSetGoCacheCleanInterval overrides the proactive-reap

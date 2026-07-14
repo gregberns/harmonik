@@ -115,12 +115,13 @@ func TestDiskCheck_ReactiveReaper_SkipsWhenRunsInFlight(t *testing.T) {
 	)
 	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
 
-	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+	ms := daemon.ExportedNewMaintState()
+	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
 
 	if got := atomic.LoadInt32(cleanCount); got != 0 {
 		t.Errorf("go clean -cache called %d time(s) with a run in flight; want 0", got)
 	}
-	if !daemon.ExportedDiskCheckDiskLow(&deps) {
+	if !daemon.ExportedDiskCheckDiskLow(ms) {
 		t.Error("diskLow should be true after a below-watermark probe")
 	}
 }
@@ -136,12 +137,13 @@ func TestDiskCheck_ReactiveReaper_RunsWhenIdle(t *testing.T) {
 	)
 	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
 
-	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+	ms := daemon.ExportedNewMaintState()
+	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
 
 	if got := atomic.LoadInt32(cleanCount); got != 1 {
 		t.Errorf("go clean -cache called %d time(s) when idle; want 1", got)
 	}
-	if !daemon.ExportedDiskCheckDiskLow(&deps) {
+	if !daemon.ExportedDiskCheckDiskLow(ms) {
 		t.Error("diskLow should be true after a below-watermark probe")
 	}
 }
@@ -163,7 +165,8 @@ func TestDiskCheck_ProactiveReaper_SkipsWhenRunsInFlight(t *testing.T) {
 	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
 	daemon.ExportedDiskCheckSetGoCacheCleanInterval(&deps, time.Nanosecond)
 
-	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+	ms := daemon.ExportedNewMaintState()
+	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
 
 	if got := atomic.LoadInt32(cleanCount); got != 0 {
 		t.Errorf("proactive go clean -cache called %d time(s) with a run in flight; want 0", got)
@@ -182,7 +185,8 @@ func TestDiskCheck_ProactiveReaper_RunsWhenIdle(t *testing.T) {
 	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
 	daemon.ExportedDiskCheckSetGoCacheCleanInterval(&deps, time.Nanosecond)
 
-	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+	ms := daemon.ExportedNewMaintState()
+	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
 
 	if got := atomic.LoadInt32(cleanCount); got != 1 {
 		t.Errorf("proactive go clean -cache called %d time(s) when idle; want 1", got)
@@ -222,7 +226,8 @@ func TestDiskCheck_ProactiveReaper_TOCTOU(t *testing.T) {
 	reapDone := make(chan struct{})
 	go func() {
 		defer close(reapDone)
-		daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+		ms := daemon.ExportedNewMaintState()
+		daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
 	}()
 
 	// Wait until the reap has acquired the WLock (stub signals cleanStarted).
@@ -326,7 +331,8 @@ func TestDiskCheck_ReactiveReaper_ReclaimsWorktreesBeforeClean(t *testing.T) {
 	deps := daemon.ExportedWorkLoopDeps(params)
 	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
 
-	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+	ms := daemon.ExportedNewMaintState()
+	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
 
 	if got := atomic.LoadInt32(cleanCount); got != 0 {
 		t.Errorf("go clean -cache called %d time(s) after worktree reclaim recovered disk; want 0", got)
@@ -334,7 +340,7 @@ func TestDiskCheck_ReactiveReaper_ReclaimsWorktreesBeforeClean(t *testing.T) {
 	if len(reclaimedPaths) != 2 {
 		t.Errorf("reclaimFunc called with %d paths; want 2", len(reclaimedPaths))
 	}
-	if daemon.ExportedDiskCheckDiskLow(&deps) {
+	if daemon.ExportedDiskCheckDiskLow(ms) {
 		t.Error("diskLow should be false after disk recovered via worktree reclaim")
 	}
 }
@@ -370,12 +376,13 @@ func TestDiskCheck_ReactiveReaper_FallsBackToCacheCleanWhenReclaimInsufficient(t
 	deps := daemon.ExportedWorkLoopDeps(params)
 	daemon.ExportedDiskCheckSetCheckInterval(&deps, time.Nanosecond)
 
-	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps)
+	ms := daemon.ExportedNewMaintState()
+	daemon.ExportedRunPeriodicDiskCheck(context.Background(), &deps, ms)
 
 	if got := atomic.LoadInt32(cleanCount); got != 1 {
 		t.Errorf("go clean -cache called %d time(s) after insufficient reclaim; want 1", got)
 	}
-	if !daemon.ExportedDiskCheckDiskLow(&deps) {
+	if !daemon.ExportedDiskCheckDiskLow(ms) {
 		t.Error("diskLow should be true when disk remains below watermark after reclaim")
 	}
 }

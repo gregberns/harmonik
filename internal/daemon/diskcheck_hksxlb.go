@@ -11,7 +11,7 @@ package daemon
 //     Rate-limited to diskCheckInterval (default 10 min) for the probe.
 //
 //     Sub-step A — reactive reap: when disk is below the watermark, sets
-//     deps.diskLow = true, emits a disk_low event, and runs `go clean -cache`
+//     maint.diskLow = true, emits a disk_low event, and runs `go clean -cache`
 //     only when no merge-build is in flight (runRegistry.Len()==0). If a
 //     merge-build IS in flight, the reap is deferred to the next tick and a
 //     warning is logged instead of corrupting the build (hk-guez fix for the
@@ -159,19 +159,19 @@ func runWorktreeReclaim(ctx context.Context, deps *workLoopDeps, stalePaths []st
 // Sub-step A — disk probe (rate-limited to deps.diskCheckIntervalOverride or
 // diskCheckInterval): reads available bytes on the project filesystem.
 //
-//   - Below watermark: sets deps.diskLow = true.
+//   - Below watermark: sets maint.diskLow = true.
 //     If no merge-build is in flight (runRegistry.Len()==0), immediately runs
 //     `go clean -cache` (reactive reap). If a merge-build IS in flight, skips
 //     the reap and logs a loud warning — this prevents a spurious
 //     merge_build_failed at the cost of one deferred clean (hk-guez).
 //     A disk_low event is emitted when deps.bus is non-nil regardless.
 //
-//   - Above watermark: clears deps.diskLow.
+//   - Above watermark: clears maint.diskLow.
 //
 // Sub-step B — proactive reap (hk-guez, restored from stopgap 5c2276ca):
 // runs `go clean -cache` every goCacheCleanInterval (default 60 min) even
 // when disk is healthy, gated on idle (runRegistry.Len()==0).
-func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
+func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState) {
 	now := time.Now()
 
 	checkInterval := deps.diskCheckIntervalOverride
@@ -184,8 +184,8 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 	}
 
 	// Sub-step A: disk probe.
-	if time.Since(deps.lastDiskCheck) >= checkInterval {
-		deps.lastDiskCheck = now
+	if time.Since(maint.lastDiskCheck) >= checkInterval {
+		maint.lastDiskCheck = now
 
 		freeBytesFunc := deps.diskFreeBytesFunc
 		if freeBytesFunc == nil {
@@ -222,7 +222,7 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 							"daemon: disk-check: reclaimed %d stale worktree(s) — "+
 								"disk recovered available=%dMiB watermark=%dMiB path=%s; skipping go clean -cache\n",
 							reclaimedCount, newFree/(1024*1024), watermark/(1024*1024), deps.projectDir)
-						deps.diskLow = false
+						maint.diskLow = false
 						return
 					}
 				}
@@ -243,7 +243,7 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 					if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
 						cleanErrStr = cleanErr.Error()
 					}
-					deps.lastGoCacheClean = now // reset proactive timer on reactive clean
+					maint.lastGoCacheClean = now // reset proactive timer on reactive clean
 				}
 				if deps.cacheReapMu != nil {
 					deps.cacheReapMu.Unlock()
@@ -267,14 +267,14 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 				"daemon: disk-check: available=%dMiB watermark=%dMiB path=%s — dispatch paused; go_clean_attempted=%v err=%q\n",
 				freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir,
 				cleanAttempted, cleanErrStr)
-			deps.diskLow = true
+			maint.diskLow = true
 		} else {
-			if deps.diskLow {
+			if maint.diskLow {
 				fmt.Fprintf(os.Stderr,
 					"daemon: disk-check: recovered — available=%dMiB watermark=%dMiB path=%s — dispatch resumed\n",
 					freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir)
 			}
-			deps.diskLow = false
+			maint.diskLow = false
 		}
 	}
 
@@ -286,7 +286,7 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 	if cleanInterval <= 0 {
 		cleanInterval = goCacheCleanInterval
 	}
-	if !deps.diskLow && time.Since(deps.lastGoCacheClean) >= cleanInterval {
+	if !maint.diskLow && time.Since(maint.lastGoCacheClean) >= cleanInterval {
 		if mergeOrRunInFlight(deps) {
 			// Merge-build in flight: defer proactive reap to avoid racing the
 			// build cache. The timer is NOT reset so the next idle tick will
@@ -307,7 +307,7 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
 					fmt.Fprintf(os.Stderr,
 						"daemon: disk-check: proactive go clean -cache failed: %v\n", cleanErr)
 				}
-				deps.lastGoCacheClean = now
+				maint.lastGoCacheClean = now
 			}
 			if deps.cacheReapMu != nil {
 				deps.cacheReapMu.Unlock()

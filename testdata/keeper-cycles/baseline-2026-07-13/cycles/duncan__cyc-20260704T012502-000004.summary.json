@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "duncan",
+  "ckey": "duncan|cyc-20260704T012502-000004",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260704T012502-000004",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "2b9c60fa-a592-4e36-be33-89dc6153d2ec",
+  "started_at": "2026-07-04T19:44:27.427218Z",
+  "terminal_at": "2026-07-04T19:45:42.053941Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

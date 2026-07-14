@@ -207,6 +207,25 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codex vertical MUST NOT import daemon" }
             - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "codex vertical MUST NOT import a sibling vertical (keeper)" }
 
+        # keepertwin: the keeper vertical's trace-driven digital twin (T9,
+        # codename:session-restart-substrate; measurement-design §2). Synthesizes
+        # input-event schedules from the recorded corpus goldens and replays them
+        # through the generic substrate Twin into the pure keeper reactor.
+        # Allow: stdlib + substrate + keeper + core + self (external test pattern).
+        # Deny: daemon and the codex vertical.
+        keepertwin:
+          files: ["**/internal/keepertwin/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/keeper"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/keepertwin"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "keepertwin MUST NOT import daemon (offline twin)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "keepertwin MUST NOT import a sibling vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexdigitaltwin", desc: "keepertwin MUST NOT import a sibling vertical (codex)" }
+
         # replay: the session-restart invariant-checking harness (codename:session-restart-substrate).
         # Reads a recorded events.jsonl via eventbus.ScanAfter and decodes through the typed
         # core registry (DispatchObservational / DecodePayloadStrict). Allowed edges: stdlib +

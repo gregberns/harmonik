@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "kynes",
+  "ckey": "kynes|cyc-20260710T204347-000013",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260710T204347-000013",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "e34827ab-c90b-4b7c-a3db-864ab8655ca9",
+  "started_at": "2026-07-12T03:29:07.426771Z",
+  "terminal_at": "2026-07-12T03:30:06.034844Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

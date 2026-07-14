@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "chani",
+  "ckey": "chani|cyc-20260708T021600-000004",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260708T021600-000004",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "8f5fb545-97bd-483b-86e8-42a9e0e7bfa8",
+  "started_at": "2026-07-08T20:11:42.429318Z",
+  "terminal_at": "2026-07-08T20:14:44.093716Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

@@ -1,0 +1,1 @@
+{"event_id":"019eb396-049b-7294-9828-e841df9272b1","payload":{"agent_name":"kk-test","cycle_id":"cyc-20260610T215853-000004","session_id":"idlegate-sid-0001"},"schema_version":1,"source_subsystem":"internal/keeper","timestamp_wall":"2026-06-10T22:10:13.787169Z","type":"session_keeper_handoff_started"}

@@ -1,0 +1,16 @@
+{
+  "abort_reason": null,
+  "agent_name": "leto",
+  "ckey": "leto|cyc-20260625T203628-000001",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260625T203628-000001",
+  "event_count": 2,
+  "outcome": "complete",
+  "session_id_start": "ace7f48a-e199-4787-ae66-da308676e94e",
+  "started_at": "2026-06-25T20:36:38.261655Z",
+  "terminal_at": "2026-06-25T20:37:14.472802Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_complete"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "shannon",
+  "ckey": "shannon|cyc-20260705T143641-000001",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260705T143641-000001",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "5a40df83-88f9-4df5-bb89-6cb3618e8a2f",
+  "started_at": "2026-07-07T06:21:31.3934Z",
+  "terminal_at": "2026-07-07T06:24:31.398613Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

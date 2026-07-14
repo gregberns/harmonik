@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "admiral",
+  "ckey": "admiral|cyc-20260624T204821-000007",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260624T204821-000007",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "0606ad8a-67d7-4108-a4f4-3cb23bab96af",
+  "started_at": "2026-06-25T09:25:27.055522Z",
+  "terminal_at": "2026-06-25T09:26:46.869348Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

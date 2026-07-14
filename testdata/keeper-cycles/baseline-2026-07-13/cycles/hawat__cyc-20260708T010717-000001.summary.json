@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "hawat",
+  "ckey": "hawat|cyc-20260708T010717-000001",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260708T010717-000001",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "295fc19e-0522-4816-b07c-8fd367df6634",
+  "started_at": "2026-07-08T01:07:22.882662Z",
+  "terminal_at": "2026-07-08T01:08:22.008152Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

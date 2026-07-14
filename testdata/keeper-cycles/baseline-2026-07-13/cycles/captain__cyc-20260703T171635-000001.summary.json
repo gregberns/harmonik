@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "captain",
+  "ckey": "captain|cyc-20260703T171635-000001",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260703T171635-000001",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "880f6fe5-8a17-4443-8e59-78988d9b7e87",
+  "started_at": "2026-07-03T17:16:40.868498Z",
+  "terminal_at": "2026-07-03T17:17:48.058846Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

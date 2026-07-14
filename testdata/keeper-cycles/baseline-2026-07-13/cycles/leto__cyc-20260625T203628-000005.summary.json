@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "leto",
+  "ckey": "leto|cyc-20260625T203628-000005",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260625T203628-000005",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "1c071acb-8ed9-4522-a9f6-a44e23961e4c",
+  "started_at": "2026-06-26T05:19:24.075144Z",
+  "terminal_at": "2026-06-26T05:22:25.687067Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

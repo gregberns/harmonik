@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "paul",
+  "ckey": "paul|cyc-20260622T042506-000004",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260622T042506-000004",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "74ab0ffb-eb61-46fc-91df-383c7ebf169a",
+  "started_at": "2026-06-22T18:50:02.240182Z",
+  "terminal_at": "2026-06-22T18:51:43.393958Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

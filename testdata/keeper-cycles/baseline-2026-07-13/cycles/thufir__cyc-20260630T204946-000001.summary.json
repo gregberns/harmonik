@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "thufir",
+  "ckey": "thufir|cyc-20260630T204946-000001",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260630T204946-000001",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "d850a577-598c-43ea-8ae0-237a0cc04cd9",
+  "started_at": "2026-06-30T20:56:01.897359Z",
+  "terminal_at": "2026-06-30T20:57:03.897595Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "paul",
+  "ckey": "paul|cyc-20260623T174847-000002",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260623T174847-000002",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "78b261f4-28da-46d6-99b2-0ae51942a17e",
+  "started_at": "2026-06-24T00:47:57.108492Z",
+  "terminal_at": "2026-06-24T00:50:58.707342Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "yueh",
+  "ckey": "yueh|cyc-20260707T072415-000003",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260707T072415-000003",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "a5844cfe-40e3-4f3a-886c-f28dd82b4205",
+  "started_at": "2026-07-09T01:27:05.235748Z",
+  "terminal_at": "2026-07-09T01:30:05.239656Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

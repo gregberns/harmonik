@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "skdog1",
+  "ckey": "skdog1|cyc-20260608T101057-000002",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260608T101057-000002",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "dogfood-happy-1",
+  "started_at": "2026-06-08T10:15:22.268267Z",
+  "terminal_at": "2026-06-08T10:15:25.747784Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

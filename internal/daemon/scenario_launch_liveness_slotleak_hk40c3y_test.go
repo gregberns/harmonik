@@ -294,7 +294,7 @@ func TestScenario_LaunchLiveness_SlotNoLeak_HK40C3Y(t *testing.T) {
 	res := scenariotest.RunConcurrentMerge(t, scenariotest.ConcurrentMergeConfig{
 		N:            n,
 		TwinScenario: "single-happy-path",
-		Boot:         vn4BootForTesting(), // binds StartForTesting + determinism options
+		Boot:         vn4BootForTesting(t), // binds StartForTesting + determinism options
 		Substrate:    substrate,
 		// ExpectAllComplete=false: the fake-substrate path cannot reach
 		// run_completed (no hook-bridge socket relay → agent_ready_timeout). The

@@ -25,6 +25,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/release"
 	runpkg "github.com/gregberns/harmonik/internal/run"
@@ -610,13 +611,12 @@ type daemonTestHooks struct {
 	// The zero value (nil) falls back to productionWorktreeFactory.
 	worktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
 
-	// mergeMu, when set via WithMergeMutex, OVERRIDES the production merge mutex
-	// so a test can share/inspect the lock held across the full
-	// rebase → update-ref → push sequence of every mergeRunBranchToMain call.
-	// The zero value (nil) is this hook's default and leaves production's own
-	// non-nil mutex (set unconditionally in newWorkLoopDeps, hk-yyso7) in place —
-	// merges are serialised across all queues in production regardless.
-	mergeMu *sync.Mutex
+	// mergeQ, when set via WithMergeQueue, OVERRIDES the production merge queue
+	// (RSM-015) so a test can share/inspect the exclusion domain across concurrent
+	// beadRunOne goroutines. The injected queue MUST already be Start()ed by the
+	// test. The zero value (nil) leaves production's own queue (created in
+	// newWorkLoopDeps, started in runWorkLoop) in place.
+	mergeQ *mergeq.Queue
 }
 
 // newBrAdapter constructs a *brcli.Adapter using hooks.brAdapterFactory when set
@@ -2199,11 +2199,11 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			deps.worktreeFactory = hooks.worktreeFactory
 		}
 
-		// Inject the test-only merge-mutex override when set via WithMergeMutex.
-		// Nil (the default) keeps production's own mutex from newWorkLoopDeps
-		// (hk-yyso7), so production merges stay serialised.
-		if hooks.mergeMu != nil {
-			deps.mergeMu = hooks.mergeMu
+		// Inject the test-only merge-queue override when set via WithMergeQueue.
+		// Nil (the default) keeps production's own queue from newWorkLoopDeps
+		// (RSM-015), so production merges stay serialised through the domain.
+		if hooks.mergeQ != nil {
+			deps.mergeQ = hooks.mergeQ
 		}
 
 		// hk-bk33: spawn-substrate readiness gate for post-boot re-dispatch.

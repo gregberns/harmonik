@@ -60,6 +60,7 @@ import (
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/schedule"
@@ -366,23 +367,26 @@ type workLoopDeps struct {
 	// Bead ref: hk-kqdpf.1.
 	worktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
 
-	// mergeMu, when non-nil, is acquired before every mergeRunBranchToMain call
-	// and released after it returns. This serialises the rebase → update-ref →
-	// push sequence so that concurrent bead goroutines do not race on
-	// refs/heads/main: without serialisation, two goroutines can both
-	// successfully rebase onto the same mainTip and then one's push arrives
-	// on the remote AFTER the other has already advanced it, producing a
-	// "non-fast-forward" rejection.
+	// mergeQ is the merge exclusion domain (RSM-015): an explicit, strictly-FIFO
+	// single-owner queue that replaces the historical mergeMu mutex. Every member
+	// of the domain — the commit-phase merge (update-ref → push → working-tree
+	// reset), the post-merge escaped-worktree check, and the remote base-sync +
+	// worktree-add — runs its critical section via mergeQ.Submit, so no two
+	// overlap on refs/heads/<target> or the main checkout (hk-yyso7). Build-class
+	// work (rebase, go build/vet, gofumpt/gci) runs OUTSIDE the domain in the
+	// prepare phase (RSM-017 / RSM-INV-005).
 	//
-	// Production: newWorkLoopDeps always sets this to a non-nil &sync.Mutex{} so
-	// that merges are serialised globally across ALL queues. With named queues,
-	// two beads from different queues can complete simultaneously and both enter
-	// mergeRunBranchToMain concurrently — the rebase step narrows the window but
-	// does not eliminate the non-FF race (hk-yyso7). Tests that need to inject
-	// their own mutex may override via WithMergeMutex / daemonTestHooks.mergeMu.
+	// Production: newWorkLoopDeps sets this to a non-nil mergeq.New(...) queue;
+	// runWorkLoop Start()s its owner goroutine on a background-derived context so
+	// the shutdown-drain submission (bgCtx) still executes, and cancels it only
+	// after all in-flight bead goroutines have drained. When nil (unit tests that
+	// drive a single beadRunOne directly), mergeSubmitFunc runs the critical
+	// section inline. Concurrent tests inject a shared, pre-started queue via
+	// WithMergeQueue / daemonTestHooks.mergeQ.
 	//
-	// Bead ref: hk-bnm89 (scenario-test harness hardening), hk-yyso7 (race fix).
-	mergeMu *sync.Mutex
+	// Bead ref: hk-bnm89 (scenario-test harness hardening), hk-yyso7 (race fix),
+	// RSM-012..016 (mergeMu → mergeq split).
+	mergeQ *mergeq.Queue
 
 	// worktreeCreateMu, when non-nil, is threaded into workspace.WorktreeRootConfig
 	// for remote bead runs via WithCreateMutex so that the git-worktree-add +
@@ -1166,11 +1170,14 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		followUpLedgerPath:         filepath.Join(cfg.ProjectDir, ".harmonik", followUpLedgerFileName), // hk-3ndb: durable ledger path
 		noAutoPull:                 cfg.NoAutoPull,                                                     // hk-exd7m: queue-only mode for flywheel topology
 		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,                                          // hk-hypbi: per-close .br_history trim
-		mergeMu:                    &sync.Mutex{},                                                      // hk-yyso7: global merge-serialisation across all queues
-		worktreeCreateMu:           &sync.Mutex{},                                                      // hk-5qp7z: global worktree-create serialisation for remote runs
-		agentSpawnSem:              make(chan struct{}, 3),                                             // hk-5z1f0: per-worker cold-start spawn semaphore (cap 3, remote-only)
-		cacheReapMu:                &sync.RWMutex{},                                                    // hk-y3frr: reap↔dispatch exclusion
-		emittedEpics:               make(map[core.BeadID]struct{}),                                     // hk-w6y70: at-most-once guard per daemon session
+		// mergeQ (RSM-015 merge exclusion domain) is left nil here: runWorkLoop
+		// creates AND owns the production queue (starts its owner, cancels on
+		// return after the drain). A test may inject a pre-started queue via
+		// WithMergeQueue, which runWorkLoop then leaves untouched (hk-yyso7).
+		worktreeCreateMu:           &sync.Mutex{},                  // hk-5qp7z: global worktree-create serialisation for remote runs
+		agentSpawnSem:              make(chan struct{}, 3),         // hk-5z1f0: per-worker cold-start spawn semaphore (cap 3, remote-only)
+		cacheReapMu:                &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
+		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:             &sync.Mutex{},
 		targetBranch:               resolveTargetBranch(cfg.TargetBranch),
 		protectBranches:            cfg.ProtectBranches,
@@ -1537,6 +1544,26 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
+
+	// RSM-015: own the merge exclusion-domain queue. runWorkLoop CREATES and
+	// starts the queue when deps carries none (production, and every StartForTesting
+	// / ExportedRunWorkLoop test that does not inject one) — and it alone cancels
+	// the owner, on return, which is AFTER every wg.Wait() below, so all in-flight
+	// drains complete first (no leak, no lost drain). The owner runs on a
+	// background-derived context (NOT the shutdown ctx) so a shutdown-drain merge —
+	// submitted on a bgCtx after ctx is cancelled — still executes.
+	//
+	// A queue supplied by the caller (WithMergeQueue) is left UNTOUCHED: it is
+	// already Started and the injector owns its lifecycle. Starting it again would
+	// spawn a second owner goroutine draining the same intake channel (concurrent
+	// critical sections + a double close(done) panic on shutdown) — the double-Start
+	// bug this ownership split exists to prevent.
+	if deps.mergeQ == nil {
+		deps.mergeQ = mergeq.New(nil)
+		mergeQCtx, mergeQCancel := context.WithCancel(context.Background())
+		deps.mergeQ.Start(mergeQCtx)
+		defer mergeQCancel()
+	}
 
 	// effectiveMax: 0-value → 1 to preserve MVH single-threaded default.
 	effectiveMax := deps.maxConcurrent
@@ -3655,9 +3682,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 	}
 	// Serialize fetchBaseOnWorker (step a, DD1 code-sync) + 'git worktree add'
-	// under mergeMu so concurrent beadRunOne goroutines do not run concurrent
-	// git operations on the same remote worker (hk-lt091) or race on
-	// projectDir/.git/index.lock (hk-h8u7p).
+	// inside the merge exclusion domain (mergeq, RSM-018) so concurrent
+	// beadRunOne goroutines do not run concurrent git operations on the same
+	// remote worker (hk-lt091) or race on projectDir/.git/index.lock (hk-h8u7p),
+	// and so this box-A .git + worker git work excludes concurrent merge commits.
 	//
 	// hk-lt091: before hk-zexsj added -o ControlMaster=no, all SSH commands to a
 	// worker shared one TCP connection, so the remote OS serialised them naturally.
@@ -3665,40 +3693,52 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// sibling bead's fetchBaseOnWorker (git-fetch) can therefore race git-worktree-add
 	// at the remote-OS level, leaving the worktree dir created but HEAD uninitialised
 	// — the empty-HEAD race that hk-iaj1w retries cannot fix because the race persists
-	// across all retry attempts. Placing fetchBaseOnWorker inside mergeMu eliminates
-	// the race at its source.
-	if deps.mergeMu != nil {
-		deps.mergeMu.Lock()
-	}
-	// Step (a): for remote runs, ensure baseSHA is on the worker before the
-	// worktree is created there (DD1 code-sync, remote-substrate B8).
-	// Runs inside mergeMu so it does not overlap with a sibling bead's
-	// git-worktree-add (hk-lt091).
-	if rbc != nil {
-		// hk-2hfyt: use ensureBaseOnWorker (not fetchBaseOnWorker directly) so
-		// an unpushed base commit triggers a direct push from box A to the worker
-		// rather than leaving an empty-HEAD worktree.
-		workerHostEBOW, sshOptsEBOW, _ := sshHostOpts(rbc.sshRunner)
-		if fetchErr := ensureBaseOnWorker(ctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA,
-			nil, deps.projectDir, workerHostEBOW, sshOptsEBOW); fetchErr != nil {
-			if deps.mergeMu != nil {
-				deps.mergeMu.Unlock()
-			}
-			fmt.Fprintf(os.Stderr, "daemon: workloop: ensureBaseOnWorker bead %s run %s: %v (reopening)\n",
-				beadID, runID.String(), fetchErr)
-			// B11: SSH connection failure → emit worker_offline + disable worker.
-			if tmuxpkg.IsSSHConnectionFailure(fetchErr) {
-				notifyWorkerOffline("spawn", fmt.Sprintf("ensureBaseOnWorker: %v", fetchErr))
-			}
-			reopenTID, _ := deps.tidGen.Next()
-			_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-				fmt.Sprintf("ensure base on worker failed: %v", fetchErr))
-			return
+	// across all retry attempts. Running fetchBaseOnWorker + worktree-add as ONE
+	// critical section in the domain eliminates the race at its source.
+	var baseSyncErr error
+	var wtPath string
+	var wtCleanup func()
+	var wtErr error
+	if subErr := deps.mergeSubmitFunc()(ctx, "base-sync-create", func(qctx context.Context) error {
+		// Step (a): for remote runs, ensure baseSHA is on the worker before the
+		// worktree is created there (DD1 code-sync, remote-substrate B8).
+		if rbc != nil {
+			// hk-2hfyt: use ensureBaseOnWorker (not fetchBaseOnWorker directly) so
+			// an unpushed base commit triggers a direct push from box A to the worker
+			// rather than leaving an empty-HEAD worktree.
+			workerHostEBOW, sshOptsEBOW, _ := sshHostOpts(rbc.sshRunner)
+			baseSyncErr = ensureBaseOnWorker(qctx, rbc.sshRunner, rbc.worker.RepoPath, headSHA,
+				nil, deps.projectDir, workerHostEBOW, sshOptsEBOW)
 		}
+		// baseSyncErr (a business outcome, handled after the critical section) does
+		// not fail the critical section itself; only skip the worktree-add on it.
+		if baseSyncErr == nil {
+			wtPath, wtCleanup, wtErr = wtFactory(qctx, activeRepo, runID.String(), headSHA)
+		}
+		return nil
+	}); subErr != nil {
+		// The critical section never entered the domain (ctx cancelled before
+		// execution, or the queue owner stopped) — surface as a worktree-create
+		// failure so the run reopens rather than proceeding with an empty wtPath.
+		wtErr = subErr
 	}
-	wtPath, wtCleanup, wtErr := wtFactory(ctx, activeRepo, runID.String(), headSHA)
-	if deps.mergeMu != nil {
-		deps.mergeMu.Unlock()
+	if baseSyncErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: ensureBaseOnWorker bead %s run %s: %v (reopening)\n",
+			beadID, runID.String(), baseSyncErr)
+		// B11: SSH connection failure → emit worker_offline + disable worker.
+		if tmuxpkg.IsSSHConnectionFailure(baseSyncErr) {
+			notifyWorkerOffline("spawn", fmt.Sprintf("ensureBaseOnWorker: %v", baseSyncErr))
+		}
+		reopenTID, tidErr := deps.tidGen.Next()
+		if tidErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: tidGen.Next (ensureBaseOnWorker reopen) bead %s: %v\n", beadID, tidErr)
+		}
+		if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
+			fmt.Sprintf("ensure base on worker failed: %v", baseSyncErr)); reopenErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (ensureBaseOnWorker) bead %s run %s: %v\n",
+				beadID, runID.String(), reopenErr)
+		}
+		return
 	}
 	if wtErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: CreateWorktree for bead %s run %s: %v (reopening)\n", beadID, runID.String(), wtErr)
@@ -3935,7 +3975,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 							mergeAttempt, beadID, amendErr)
 					}
 				}
-				mergeRes = lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+				mergeRes = mergeRunBranchToMain(ctx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 				if mergeRes.noChange || mergeRes.success {
 					break
 				}
@@ -4154,7 +4194,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
 				}
 			}
-			mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+			mergeRes := mergeRunBranchToMain(ctx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 			if !mergeRes.noChange && !mergeRes.success {
 				// hk-whru3: advisory-RC + rebase_dropped_commits → work already on main.
 				// A prior run merged the same patch; git rebase identifies it as "already
@@ -5193,19 +5233,22 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	//
 	// Bead: hk-6zylj, hk-zguy6.
 	//
-	// hk-zguy6: hold mergeMu during the escape check so that a sibling's
-	// update-ref → reset-hard sequence cannot race with this check. The merge
-	// sequence (rebase → update-ref → push → reset-hard) is entirely under
-	// mergeMu, so when we hold the lock no sibling can be in a transient dirty
-	// state. This makes the check race-free without any path-exclusion heuristic.
+	// hk-zguy6 / RSM-018: run the escape check inside the merge exclusion domain
+	// (mergeq) so that a sibling's commit-phase update-ref → reset-hard sequence
+	// cannot race with this read. The commit phase runs via the same queue, so
+	// while this read-only slot holds the domain no sibling can be in a transient
+	// dirty state — race-free without any path-exclusion heuristic.
 	//
 	// Bead: hk-6zylj, hk-zguy6, hk-xux36.
-	if deps.mergeMu != nil {
-		deps.mergeMu.Lock()
-	}
-	mainDirty, dirtyFiles, escapeErr := checkMainWorkingTreeDirty(ctx, activeRepo, preRunUntracked)
-	if deps.mergeMu != nil {
-		deps.mergeMu.Unlock()
+	var mainDirty bool
+	var dirtyFiles []string
+	var escapeErr error
+	if subErr := deps.mergeSubmitFunc()(ctx, "escape-check", func(qctx context.Context) error {
+		mainDirty, dirtyFiles, escapeErr = checkMainWorkingTreeDirty(qctx, activeRepo, preRunUntracked)
+		return nil
+	}); subErr != nil {
+		// Domain unavailable (shutdown) — treat as an errored check (no escape flag).
+		escapeErr = subErr
 	}
 	if escapeErr == nil && mainDirty {
 		emitImplementerEscapedWorktree(ctx, deps.bus, runID, beadID, activeRepo, dirtyFiles)
@@ -5283,7 +5326,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (agent_completed): %s", syncReason))
 			return
 		}
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+		mergeRes := mergeRunBranchToMain(ctx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -5333,7 +5376,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (auto-close): %s", syncReason))
 			return
 		}
-		mergeRes := lockedMergeRunBranchToMain(ctx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+		mergeRes := mergeRunBranchToMain(ctx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -5405,7 +5448,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// does not abort the merge sequence.
 				bgCtx := context.Background()
 				if curHeadSHA, headErr := resolveWorktreeHEAD(bgCtx, wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
-					mergeRes := lockedMergeRunBranchToMain(bgCtx, deps.mergeMu, activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+					mergeRes := mergeRunBranchToMain(bgCtx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 					if mergeRes.success || mergeRes.noChange {
 						drainTID, _ := deps.tidGen.Next()
 						if closeErr := deps.closeBeadWithHistoryTrim(bgCtx, runID, drainTID, beadID, false); closeErr != nil {
@@ -6536,130 +6579,97 @@ type mergeBuildFailedPayload struct {
 	Error  string `json:"error"`
 }
 
-// lockedMergeRunBranchToMain wraps mergeRunBranchToMain with an optional mutex
-// held across the entire rebase → update-ref → push sequence. Production always
-// passes a non-nil mu (set in newWorkLoopDeps per hk-yyso7) so that merges are
-// serialised globally across all queues. When mu is nil (unit tests that do not
-// need real merge serialisation), the call runs unguarded.
-//
-// Bead ref: hk-bnm89, hk-yyso7.
-func lockedMergeRunBranchToMain(ctx context.Context, mu *sync.Mutex, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string, targetBranch string, protectBranches []string, brPath string) mergeOutcome {
-	if mu != nil {
-		mu.Lock()
-		defer mu.Unlock()
-	}
-	return mergeRunBranchToMain(ctx, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches, brPath)
+// mergeSubmit runs a critical section inside the merge exclusion domain
+// (mergeq.Queue.Submit) or, when no queue is wired (unit tests that drive a
+// single beadRunOne directly), inline under the caller's context. It mirrors
+// mergeq.Queue.Submit's signature so the two are interchangeable.
+type mergeSubmit func(ctx context.Context, label string, critical func(context.Context) error) error
+
+// inlineMergeSubmit runs critical directly under ctx — the nil-queue fallback.
+func inlineMergeSubmit(ctx context.Context, _ string, critical func(context.Context) error) error {
+	return critical(ctx)
 }
 
-// mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence:
-//
-//  1. Resolve run-branch tip.
-//  2. Rebase run-branch onto main (hk-j1aq5; rebase_conflict → EM-053 reopen path).
-//  3. Fast-forward check (non-FF → EM-053 reopen path).
-//  4. git update-ref refs/heads/main <tip>.
-//     4a. Post-merge build gate: go build+vet in wtPath (hk-o68j3/hk-ycp62;
-//     merge_build_failed → EM-053 reopen path).
-//  5. git push origin main.
-//  6. git reset --hard HEAD (working-tree refresh, EM-054).
-//  7. br sync --import-only when .beads/issues.jsonl is in the diff (BL-MRG-004/005).
-//
-// Returns a mergeOutcome. The caller is responsible for all event emission
-// and the CloseBead call; this function is a pure git-operation helper.
-//
-// The bus and beadID parameters are used for the EM-054 refresh path:
-// if git reset --hard HEAD fails, a working_tree_refresh_failed event is
-// emitted and the function still returns success=true (the merge succeeded).
-// They are also used for the BL-MRG-004 path: if br sync --import-only fails
-// after a merge touching .beads/issues.jsonl, a bead_sync_failed event is
-// emitted and the function still returns success=true.
-//
-// Spec ref: specs/execution-model.md §4.12 EM-052, EM-053, EM-054.
-// Bead: hk-ftyvo, hk-4goy3, hk-6r6xv, hk-zgt4u.
-func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA string, targetBranch string, protectBranches []string, brPath string) mergeOutcome {
-	// Fail-closed guard (hk-6r6xv): refuse before any update-ref/push when
-	// targetBranch is empty or appears in the protect-set.
-	if targetBranch == "" {
-		return mergeOutcome{
-			success: false,
-			reason:  "merge_target_empty: targetBranch must not be empty",
-		}
+// mergeSubmitFunc returns the exclusion-domain entry point: the merge queue's
+// Submit when one is wired (production and concurrent tests), else an inline
+// runner. RSM-015: the global merge mutex is replaced by this explicit,
+// strictly-FIFO single-owner queue.
+func (d workLoopDeps) mergeSubmitFunc() mergeSubmit {
+	if d.mergeQ != nil {
+		return d.mergeQ.Submit
 	}
-	for _, protected := range protectBranches {
-		if targetBranch == protected {
-			return mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("merge_target_protected: %q is in ProtectBranches", targetBranch),
-			}
-		}
+	return inlineMergeSubmit
+}
+
+// mergePrepareKind selects which reason-string vocabulary a re-prepare rebase
+// emits, matching the pre-split call site: the first prepare, a re-prepare after
+// a lost FF-check (non_ff_merge retry), or a re-prepare after a non-fast-forward
+// push rejection (push retry).
+type mergePrepareKind int
+
+const (
+	mergePrepareFirst mergePrepareKind = iota
+	mergePrepareNonFFRetry
+	mergePreparePushRetry
+)
+
+// commitOutcome is commitMerge's classified result.
+//
+//   - done != nil  → a terminal merge outcome (success or a fatal failure); the
+//     driver returns it directly.
+//   - otherwise    → the driver re-prepares (rebase) and re-attempts. retryKind
+//     picks the reason-string variant; newMainTip is the fresh target tip to
+//     rebase onto.
+type commitOutcome struct {
+	done       *mergeOutcome
+	retryKind  mergePrepareKind
+	newMainTip string
+}
+
+// mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence,
+// split (RSM-012..016, merge-queue-design §2) into a speculative prepare phase
+// that runs OUTSIDE the merge exclusion domain (rebase, strip, go build/vet, the
+// gofumpt/gci auto-fix) and a commit phase that runs INSIDE the domain via
+// `submit` (the fresh FF re-validation, git update-ref, git push with its
+// rollback, the working-tree reset, and the conditional br sync). No build-class
+// command (go build/vet, gofumpt, gci, git rebase) runs inside the domain
+// (RSM-017 / RSM-INV-005); the retry loop's re-rebase re-prepares OUTSIDE it.
+//
+// The retry budget (maxPushAttempts = 3) and every mergeOutcome.reason string
+// are preserved from the pre-split single-function form.
+//
+// Steps:
+//  1. Resolve run-branch tip; no-change short-circuits.
+//  2. Rebase run-branch onto the target (prepare; rebase_conflict → EM-053).
+//  3. Fast-forward re-validation against a freshly read target tip (commit).
+//  4. git update-ref refs/heads/<target> <tip> (commit).
+//  5. git push origin <target>, with non-FF rollback + re-prepare (commit→retry).
+//  6. git restore --staged . + git reset --hard HEAD (commit; EM-054).
+//  7. br sync --import-only when .beads/issues.jsonl is in the diff (commit).
+//
+// Spec ref: specs/run-state-machine.md RSM-012..019; specs/execution-model.md
+// §4.12 EM-052/EM-053/EM-054. Bead: hk-ftyvo, hk-4goy3, hk-6r6xv, hk-zgt4u,
+// hk-yyso7 (mergeMu → mergeq).
+func mergeRunBranchToMain(ctx context.Context, submit mergeSubmit, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA, targetBranch string, protectBranches []string, brPath string) mergeOutcome {
+	if submit == nil {
+		submit = inlineMergeSubmit
 	}
 
 	runBranch := workspace.TaskBranchName(runID.String())
 
-	// Step 1: resolve run-branch tip.
-	runTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
-	runTipCmd.Dir = projectDir
-	runTipOut, err := runTipCmd.Output()
-	if err != nil {
-		// Branch does not exist — no commits were made; treat as no-change.
-		return mergeOutcome{noChange: true}
-	}
-	runTip := strings.TrimRight(string(runTipOut), "\n")
-
-	// Step 1b: check whether the run-branch has commits beyond its fork point
-	// from the target branch.  If targetTip == runTip the agent made no commits;
-	// treat as no-change.
-	mainTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+targetBranch)
-	mainTipCmd.Dir = projectDir
-	mainTipOut, err := mainTipCmd.Output()
-	if err != nil {
-		return mergeOutcome{
-			success: false,
-			reason:  fmt.Sprintf("git rev-parse %s: %v", targetBranch, err),
-		}
-	}
-	mainTip := strings.TrimRight(string(mainTipOut), "\n")
-
-	if mainTip == runTip {
-		// Run-branch tip == target tip: no commits were made by the agent.
-		return mergeOutcome{noChange: true}
+	// Guards + tip resolution + no-change short-circuits (all cheap rev-parse
+	// reads, OUTSIDE the exclusion domain).
+	runTip, mainTip, done := resolveMergeTips(ctx, projectDir, runBranch, targetBranch, headSHA, protectBranches)
+	if done != nil {
+		return *done
 	}
 
-	// hk-cwxow: false-positive guard. If runTip equals the fork-point SHA
-	// (headSHA), the agent made no commits regardless of where the target branch
-	// now points.  Without this check, when the target has advanced past headSHA
-	// the is-ancestor test correctly fails and the daemon misreports
-	// "non_ff_merge" even though the agent did nothing.
-	if headSHA != "" && runTip == headSHA {
-		return mergeOutcome{noChange: true}
-	}
-
-	// Step 2: rebase run-branch onto current target branch (hk-j1aq5).
-	//
-	// If the target has advanced since the worktree was cut (parallel agents
-	// landing concurrently), rebase the run-branch onto it before the FF check.
-	// This turns what would be a non_ff_merge failure into a successful merge as
-	// long as there are no conflicts.  On conflict: abort and return
-	// rebase_conflict so the bead is reopened (EM-053).
-	//
-	// Spec ref: specs/execution-model.md §4.12.EM-052 step 2.
 	wtPath := workspace.WorktreePath(projectDir, runID.String(), workspace.NoWorktreeRootOverride())
 
-	// hk-sfy7f: no-worktree fallback for remote runs.
-	//
-	// For remote bead runs the implementer worktree lives on the worker machine.
-	// preMergeSync fetches refs/heads/run/<id> to box-A but does NOT create a
-	// local checkout at wtPath.  Without a local worktree the entire step-2
-	// rebase is skipped, so runTip stays based on the old headSHA.  When any
-	// competing merge lands during the multi-minute run window, mainTip advances
-	// past the run-branch fork point and the FF-check fails terminally (all
-	// maxPushAttempts exhausted) because the retry loop also cannot rebase
-	// without a local worktree.
-	//
-	// Fix: when wtPath does not exist, attempt to create a temporary local
-	// worktree linked to the same refs/heads/run/<id>.  The deferred cleanup
-	// removes it after the merge (success or failure) so no orphaned worktrees
-	// are left behind.  Failure to add is best-effort — we fall through to the
-	// existing "skip step 2" path rather than aborting prematurely.
+	// hk-sfy7f: no-worktree fallback for remote runs. When wtPath does not exist,
+	// attempt to create a temporary local worktree linked to refs/heads/run/<id>
+	// so the prepare-phase rebase/build/fmt have a tree to operate on; the
+	// deferred cleanup removes it after the merge (success or failure).
 	if _, statErr := os.Stat(wtPath); statErr != nil {
 		addWtCmd := exec.CommandContext(ctx, "git", "worktree", "add", wtPath, runBranch)
 		addWtCmd.Dir = projectDir
@@ -6670,82 +6680,139 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 		}
 	}
 
+	// Initial prepare (OUTSIDE the exclusion domain): churn discard, rebase onto
+	// the target, rebase-drop guard, and run-context strip.
+	if prepOut := prepareInitialMerge(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, &mainTip); prepOut != nil {
+		return *prepOut
+	}
+
+	// ── prepare→commit attempt loop ──────────────────────────────────────────
+	// Each attempt: the build + fmt gates run OUTSIDE the domain (prepare); the
+	// FF re-validation + update-ref + push + working-tree reset run INSIDE it
+	// (commit, via submit). A lost FF race or a non-FF push rejection re-prepares
+	// (rebase OUTSIDE the domain) and re-attempts, up to maxPushAttempts.
+	//
+	// Bead ref: hk-svieq.
+	const maxPushAttempts = 3
+	for pushAttempt := 1; pushAttempt <= maxPushAttempts; pushAttempt++ {
+		// Post-merge build gate (hk-o68j3 / hk-ycp62) — prepare phase.
+		if buildOut := runMergeBuildGate(ctx, wtPath, projectDir, runID, beadID, bus); buildOut != nil {
+			return *buildOut
+		}
+		// Post-merge fmt gate (hk-k1hn) — prepare phase; may advance runTip via
+		// the gofumpt/gci auto-fix commit landed in the worktree.
+		if fmtOut, fmtRunTip := runMergeFmtGate(ctx, wtPath, projectDir, runID, beadID, bus); fmtOut != nil {
+			return *fmtOut
+		} else if fmtRunTip != "" {
+			runTip = fmtRunTip
+		}
+
+		var co commitOutcome
+		submitErr := submit(ctx, "commit-merge", func(qctx context.Context) error {
+			co = commitMerge(qctx, projectDir, runID, bus, beadID, runTip, targetBranch, brPath, pushAttempt, maxPushAttempts)
+			return nil
+		})
+		if submitErr != nil {
+			// The submission never entered the domain (ctx cancelled before
+			// execution, or the queue owner stopped) — nothing ran.
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("merge_queue_submit_failed: %v", submitErr),
+			}
+		}
+		if co.done != nil {
+			return *co.done
+		}
+
+		// Retry: re-prepare (rebase onto the fresh target) OUTSIDE the domain.
+		mainTip = co.newMainTip
+		if prepOut := prepareRebase(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, mainTip, co.retryKind, pushAttempt); prepOut != nil {
+			return *prepOut
+		}
+	}
+
+	// Defensive: commitMerge returns a terminal outcome once attempts are
+	// exhausted, so the loop always returns above. Fail closed if it does not.
+	return mergeOutcome{success: false, reason: "non_ff_merge: retry budget exhausted"}
+}
+
+// resolveMergeTips runs the merge preflight: the fail-closed target guards
+// (hk-6r6xv), run-branch/target tip resolution, and the no-change short-circuits
+// (hk-cwxow). It returns (runTip, mainTip, nil) to proceed, or (_, _, outcome)
+// when the merge is already resolved (no-change or a guard failure). All reads
+// are cheap rev-parse, OUTSIDE the exclusion domain.
+func resolveMergeTips(ctx context.Context, projectDir, runBranch, targetBranch, headSHA string, protectBranches []string) (runTip, mainTip string, done *mergeOutcome) {
+	if targetBranch == "" {
+		return "", "", &mergeOutcome{success: false, reason: "merge_target_empty: targetBranch must not be empty"}
+	}
+	for _, protected := range protectBranches {
+		if targetBranch == protected {
+			return "", "", &mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("merge_target_protected: %q is in ProtectBranches", targetBranch),
+			}
+		}
+	}
+
+	// Step 1: resolve run-branch tip. A missing branch means no commits → no-change.
+	rt, rtErr := gitRevParse(ctx, projectDir, "refs/heads/"+runBranch)
+	if rtErr != nil {
+		return "", "", &mergeOutcome{noChange: true}
+	}
+
+	// Step 1b: resolve the target tip; equal tips → the agent made no commits.
+	mt, mtErr := gitRevParse(ctx, projectDir, "refs/heads/"+targetBranch)
+	if mtErr != nil {
+		return "", "", &mergeOutcome{success: false, reason: fmt.Sprintf("git rev-parse %s: %v", targetBranch, mtErr)}
+	}
+	if mt == rt {
+		return "", "", &mergeOutcome{noChange: true}
+	}
+
+	// hk-cwxow: false-positive guard — runTip == fork-point SHA ⇒ no commits,
+	// regardless of where the target now points.
+	if headSHA != "" && rt == headSHA {
+		return "", "", &mergeOutcome{noChange: true}
+	}
+	return rt, mt, nil
+}
+
+// prepareInitialMerge runs the first prepare pass OUTSIDE the exclusion domain:
+// discard churn, rebase the run-branch onto the target, guard against a
+// silently-dropped rebase, and strip run-context. It updates *runTip / *mainTip
+// in place and returns nil on success, a terminal outcome on failure. All
+// commands run in the per-run worktree (build-class → OUTSIDE the domain,
+// RSM-017).
+func prepareInitialMerge(ctx context.Context, wtPath, projectDir string, runID core.RunID, runBranch, targetBranch string, runTip, mainTip *string) *mergeOutcome {
 	if _, statErr := os.Stat(wtPath); statErr == nil {
-		// Pre-rebase cleanup (hk-3yz2d, hk-aiw63): discard any UNCOMMITTED
-		// daemon/agent-owned churn in the worktree before the rebase. `git`
-		// refuses to rebase a worktree with unstaged changes ("error: cannot
-		// rebase: You have unstaged changes"). Two tracked files get dirtied
-		// during every run without the implementer touching them as task work:
-		// .beads/issues.jsonl (a `br` SQLite→JSONL flush; canonical source is
-		// main) and .claude/settings.json (per-launch MaterializeClaudeSettings
-		// hook-bridge merge + claude's own mutations; this repo tracks the file
-		// and the root .gitignore does not cover it). discardDirtyChurn restores
-		// exactly the isHarmonikChurn allowlist — the same set the post-merge
-		// escape check uses — so an implementer that left GENUINE uncommitted
-		// work (a non-churn path) still surfaces as a rebase failure rather than
-		// being silently reset (hk-i1n7j safety property preserved).
+		// Pre-rebase cleanup (hk-3yz2d, hk-aiw63): discard UNCOMMITTED churn.
 		discardDirtyChurn(ctx, wtPath)
-
-		// hk-rljho class: a review-loop iteration can leave a TRACKED but
-		// UNCOMMITTED change in the worktree (e.g. a staged deletion of a test
-		// file). discardDirtyChurn deliberately preserves it (hk-i1n7j: don't
-		// silently reset real work), so it would survive to `git rebase <target>`
-		// and abort with "cannot rebase: You have unstaged changes". Commit the
-		// residual tracked delta onto the run-branch — it IS the bead's own work
-		// — so the rebase proceeds with the work intact instead of failing.
+		// hk-rljho class: commit any residual TRACKED-but-uncommitted delta.
 		commitResidualDelta(ctx, wtPath, runID)
-
-		// hk-g9zz: remove untracked non-gitignored files left by //go:build
-		// integration tests. A bead whose agent ran an integration test (e.g.
-		// TestIntegration_TwinE2E_OperatorRealEnv) may leave build artifacts —
-		// binaries built without an explicit output path, temp objects, etc. —
-		// in the run worktree. `git rebase` aborts when an untracked file would
-		// be overwritten by a commit being replayed, producing:
-		//   "error: The following untracked working tree files would be
-		//    overwritten by checkout"
-		// At this point commitResidualDelta has already committed any genuine
-		// authored untracked files (new source files, etc.), so the files
-		// `git clean -fd` touches are only integration test artifacts.
-		// Non-fatal: errors are logged; the subsequent rebase surfaces the
-		// real dirty-state failure if any genuine artifacts remain.
+		// hk-g9zz: remove untracked //go:build integration-test artifacts.
 		cleanUntrackedFiles(ctx, wtPath)
 
 		rebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
 		rebaseCmd.Dir = wtPath
 		if out, rebaseErr := rebaseCmd.CombinedOutput(); rebaseErr != nil {
-			// Let git invoke the registered beads-union driver (configured via
-			// .gitattributes + ensureBeadsMergeDriver) for .beads/issues.jsonl
-			// conflicts. If the driver resolves them, the rebase succeeds and we
-			// never reach this branch. If it fails or leaves conflicts unresolved,
-			// surface the error rather than silently dropping a side.
-			abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
-			abortCmd.Dir = wtPath
-			_ = abortCmd.Run()
-			return mergeOutcome{
+			gitRebaseAbort(ctx, wtPath)
+			return &mergeOutcome{
 				success: false,
 				reason:  fmt.Sprintf("rebase_conflict: %v\n%s", rebaseErr, strings.TrimRight(string(out), "\n")),
 			}
 		}
 		// Rebase succeeded — re-resolve runTip and targetTip (both may have changed).
-		rebasedTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
-		rebasedTipCmd.Dir = projectDir
-		if rebasedOut, rebasedErr := rebasedTipCmd.Output(); rebasedErr == nil {
-			runTip = strings.TrimRight(string(rebasedOut), "\n")
+		if t, rerr := gitRevParse(ctx, projectDir, "refs/heads/"+runBranch); rerr == nil {
+			*runTip = t
 		}
-		rebasedMainCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+targetBranch)
-		rebasedMainCmd.Dir = projectDir
-		if rebasedMainOut, rebasedMainErr := rebasedMainCmd.Output(); rebasedMainErr == nil {
-			mainTip = strings.TrimRight(string(rebasedMainOut), "\n")
+		if t, rerr := gitRevParse(ctx, projectDir, "refs/heads/"+targetBranch); rerr == nil {
+			*mainTip = t
 		}
 
-		// hk-zmpd: rebase-drop guard. Before this block we established that
-		// runTip ≠ mainTip (the run-branch had reviewed commits). If the rebase
-		// exits 0 but the new runTip equals mainTip, git silently dropped every
-		// commit as "already applied" (patch-id match). Pushing a main that lost
-		// reviewed work is worse than a visible reopen; fail-closed so the work
-		// is salvageable on the run-branch.
-		if runTip == mainTip {
-			return mergeOutcome{
+		// hk-zmpd: rebase-drop guard — a rebase that silently drops every commit
+		// as "already applied" must fail-closed so reviewed work is salvageable.
+		if *runTip == *mainTip {
+			return &mergeOutcome{
 				success: false,
 				reason: fmt.Sprintf(
 					"rebase_dropped_commits: rebase of %s onto %s produced no commits"+
@@ -6756,296 +6823,208 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 	}
 
 	// hk-4je: strip .harmonik/run-context/** from the run-branch before the
-	// fast-forward update-ref.  CHB-023 force-commits context.json to the task
-	// branch for crash-recovery (EM-031); those paths must not land on the
-	// merge target.  The strip commit is created in the run-branch worktree so
-	// the subsequent update-ref picks up a clean tree.
-	if stripped, stripErr := stripRunContextFromMerge(ctx, wtPath); stripErr != nil {
-		return mergeOutcome{
+	// fast-forward update-ref.
+	stripped, stripErr := stripRunContextFromMerge(ctx, wtPath)
+	if stripErr != nil {
+		return &mergeOutcome{
 			success: false,
 			reason:  fmt.Sprintf("strip_run_context_failed: %v", stripErr),
 		}
-	} else if stripped {
-		// Strip commit advanced run-branch HEAD — re-resolve runTip.
+	}
+	if stripped {
 		if newTip, resolveErr := resolveWorktreeHEAD(ctx, wtPath); resolveErr == nil {
-			runTip = newTip
+			*runTip = newTip
 		}
 	}
+	return nil
+}
 
-	// Steps 3–4: FF-check → update-ref → build gate → push, with non-FF retry.
-	//
-	// On a non-fast-forward push rejection (origin/<targetBranch> advanced
-	// out-of-band, e.g. a captain cherry-pick deploy), roll back the local
-	// update-ref, fetch the new remote tip, rebase the run-branch onto it,
-	// and retry — up to maxPushAttempts times total.  Any other push failure,
-	// a rebase conflict on retry, or exhausted retries is terminal.
-	//
-	// Bead ref: hk-svieq.
-	const maxPushAttempts = 3
-	for pushAttempt := 1; pushAttempt <= maxPushAttempts; pushAttempt++ {
-		// Step 3: fast-forward check.  The target branch MUST be an ancestor of
-		// runTip.  git merge-base --is-ancestor <target> <runTip> exits 0 iff
-		// target ⊆ runTip.
-		isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip)
-		isAncCmd.Dir = projectDir
-		if err := isAncCmd.Run(); err != nil {
-			// Non-FF: target branch has diverged from the run-branch. This
-			// happens when a concurrent merge (another run landing on the
-			// same targetBranch) advances the local ref between this run's
-			// step-2 rebase and this FF-check (hk-1u4wp). Mirror the
-			// push-rejection retry below: re-resolve the local target tip,
-			// rebase onto it, and retry the FF-check — up to maxPushAttempts
-			// total — before giving up terminally.
-			if pushAttempt >= maxPushAttempts {
-				return mergeOutcome{
-					success: false,
-					reason:  fmt.Sprintf("non_ff_merge: %s advanced concurrently", targetBranch),
-				}
-			}
+// gitRebaseAbort runs `git rebase --abort` best-effort in wtPath, logging on
+// failure (the caller has already captured the originating rebase error).
+func gitRebaseAbort(ctx context.Context, wtPath string) {
+	abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
+	abortCmd.Dir = wtPath
+	if out, err := abortCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: git rebase --abort failed in %s: %v\n%s", wtPath, err, out)
+	}
+}
 
-			currentMainTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+targetBranch)
-			currentMainTipCmd.Dir = projectDir
-			currentMainTipOut, currentMainTipErr := currentMainTipCmd.Output()
-			if currentMainTipErr != nil {
-				return mergeOutcome{
-					success: false,
-					reason:  fmt.Sprintf("non_ff_merge_retry_rev_parse (attempt %d): %v", pushAttempt, currentMainTipErr),
-				}
-			}
-			mainTip = strings.TrimRight(string(currentMainTipOut), "\n")
-
-			if _, statErr := os.Stat(wtPath); statErr == nil {
-				discardDirtyChurn(ctx, wtPath)
-				commitResidualDelta(ctx, wtPath, runID)
-				retryRebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
-				retryRebaseCmd.Dir = wtPath
-				if out, rebaseErr := retryRebaseCmd.CombinedOutput(); rebaseErr != nil {
-					abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
-					abortCmd.Dir = wtPath
-					_ = abortCmd.Run()
-					return mergeOutcome{
-						success: false,
-						reason:  fmt.Sprintf("rebase_conflict_on_non_ff_merge_retry (attempt %d): %v\n%s", pushAttempt, rebaseErr, strings.TrimRight(string(out), "\n")),
-					}
-				}
-			}
-
-			retryRunTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
-			retryRunTipCmd.Dir = projectDir
-			if retryRunTipOut, retryRunTipErr := retryRunTipCmd.Output(); retryRunTipErr == nil {
-				runTip = strings.TrimRight(string(retryRunTipOut), "\n")
-			}
-
-			// hk-zmpd: rebase-drop guard on the FF-check retry rebase (same
-			// invariant as the initial rebase and the push-retry rebase).
-			if runTip == mainTip {
-				return mergeOutcome{
-					success: false,
-					reason: fmt.Sprintf(
-						"rebase_dropped_commits_on_non_ff_merge_retry (attempt %d): rebase of %s"+
-							" onto %s produced no commits ahead of target",
-						pushAttempt, runBranch, targetBranch),
-				}
-			}
-
+// runMergeBuildGate runs go build+vet on the merged tree in the run-branch
+// worktree (or projectDir when the worktree is gone) — the prepare-phase build
+// gate. It runs OUTSIDE the merge exclusion domain (RSM-017): no update-ref has
+// advanced the target, so a failure needs no rollback (a deliberate delta from
+// the pre-split form, allowlisted M3-D12: build failures no longer transiently
+// advance the target ref). Returns nil on pass, a terminal outcome on failure.
+func runMergeBuildGate(ctx context.Context, wtPath, projectDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) *mergeOutcome {
+	buildDir := projectDir
+	if _, statErr := os.Stat(wtPath); statErr == nil {
+		buildDir = wtPath
+	}
+	if _, goModErr := os.Stat(filepath.Join(buildDir, "go.mod")); goModErr != nil {
+		return nil
+	}
+	for _, buildArgs := range [][]string{
+		{"build", "./..."},
+		{"vet", "./..."},
+	} {
+		buildCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+		buildCmd.Dir = buildDir
+		out, buildErr := buildCmd.CombinedOutput()
+		if buildErr == nil {
 			continue
 		}
+		// Cold-cache retry (hk-44ab2): the go-cache reaper can wipe the cache in
+		// the TOCTOU window; retry once when the output matches the signature.
+		if isMergeBuildColdCacheError(out) {
+			retryCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+			retryCmd.Dir = buildDir
+			if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
+				continue
+			} else {
+				out = retryOut
+				buildErr = retryErr
+			}
+		}
+		emitMergeBuildFailed(ctx, bus, runID, beadID, buildErr, out)
+		return &mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("merge_build_failed (go %s): %v\n%s", buildArgs[0], buildErr, strings.TrimRight(string(out), "\n")),
+		}
+	}
+	return nil
+}
 
-		// Step 3a: fast-forward target branch to runTip.
-		updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, runTip)
-		updateRefCmd.Dir = projectDir
-		if out, err := updateRefCmd.CombinedOutput(); err != nil {
-			return mergeOutcome{
+// runMergeFmtGate runs the gofumpt/gci fmt gate on the merged tree — the
+// prepare-phase fmt gate (RSM-017: OUTSIDE the exclusion domain). It wraps
+// runMergeFmtCheck, which auto-fixes and commits format drift into the worktree.
+// Returns (nil, newRunTip) where newRunTip is non-empty when the auto-fix
+// advanced the worktree HEAD; (outcome, "") on a terminal fmt failure.
+func runMergeFmtGate(ctx context.Context, wtPath, projectDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (outcome *mergeOutcome, newRunTip string) {
+	buildDir := projectDir
+	if _, statErr := os.Stat(wtPath); statErr == nil {
+		buildDir = wtPath
+	}
+	if _, goModErr := os.Stat(filepath.Join(buildDir, "go.mod")); goModErr != nil {
+		return nil, ""
+	}
+	return runMergeFmtCheck(ctx, buildDir, projectDir, runID, beadID, bus)
+}
+
+// commitMerge is the merge exclusion-domain critical section (RSM-016): it runs
+// entirely INSIDE mergeq.Queue.Submit and performs no build-class command
+// (RSM-017 / RSM-INV-005). It re-reads the target tip freshly (re-validate under
+// lock), re-runs the FF-check, advances the target ref, pushes, and — on success
+// — refreshes the project working tree and reconciles the bead ledger.
+//
+// A lost FF race or a non-fast-forward push rejection is classified as a retry
+// (commitOutcome.retryKind + newMainTip) rather than a terminal outcome, so the
+// driver re-prepares (rebase) OUTSIDE the domain. All other failures are terminal.
+func commitMerge(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, runTip, targetBranch, brPath string, pushAttempt, maxPushAttempts int) commitOutcome {
+	// Re-validate under lock (RSM-016): re-read the target tip freshly. Between
+	// the prepare-phase rebase (OUTSIDE the domain) and this critical section, a
+	// sibling merge may have advanced the target; the fresh read + FF-check below
+	// is the re-validation the pre-split form got implicitly from holding mergeMu
+	// across the whole sequence.
+	freshMainCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+targetBranch) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+	freshMainCmd.Dir = projectDir
+	freshMainOut, freshMainErr := freshMainCmd.Output()
+	if freshMainErr != nil {
+		return commitOutcome{done: &mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("non_ff_merge_retry_rev_parse (attempt %d): %v", pushAttempt, freshMainErr),
+		}}
+	}
+	mainTip := strings.TrimRight(string(freshMainOut), "\n")
+
+	// Step 3: fast-forward check. target MUST be an ancestor of runTip.
+	isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip) //nolint:gosec // G204: fixed git binary; args are git SHAs, not user input
+	isAncCmd.Dir = projectDir
+	if err := isAncCmd.Run(); err != nil {
+		// Non-FF: the target advanced concurrently (hk-1u4wp). Re-prepare (rebase
+		// onto the fresh target) and retry — up to maxPushAttempts total.
+		if pushAttempt >= maxPushAttempts {
+			return commitOutcome{done: &mergeOutcome{
 				success: false,
-				reason:  fmt.Sprintf("git update-ref %s: %v\n%s", targetBranch, err, out),
-			}
+				reason:  fmt.Sprintf("non_ff_merge: %s advanced concurrently", targetBranch),
+			}}
 		}
-
-		// Step 3b: post-merge build gate (hk-o68j3 / hk-ycp62).
-		//
-		// Run go build+vet on the MERGED tree to catch compile errors introduced
-		// by the merged commit before the push makes them visible to other agents.
-		// Build runs in the run-branch worktree (wtPath) when it is still on disk
-		// — after the rebase (step 2) the worktree reflects the combined
-		// main+agent content, so cross-bead conflicts such as redeclared
-		// package-level helpers are caught here.  Falls back to projectDir for
-		// runs where the worktree was already removed.
-		// Only active when a go.mod is present in the build directory so non-Go
-		// projects and bare-repo test fixtures are unaffected.
-		// On failure: roll back the update-ref, emit merge_build_failed, and
-		// return failure so the caller reopens the bead.
-		buildDir := projectDir
-		if _, statErr := os.Stat(wtPath); statErr == nil {
-			buildDir = wtPath
-		}
-		if _, goModErr := os.Stat(filepath.Join(buildDir, "go.mod")); goModErr == nil {
-			for _, buildArgs := range [][]string{
-				{"build", "./..."},
-				{"vet", "./..."},
-			} {
-				buildCmd := exec.CommandContext(ctx, "go", buildArgs...)
-				buildCmd.Dir = buildDir
-				if out, buildErr := buildCmd.CombinedOutput(); buildErr != nil {
-					// Cold-cache retry (hk-44ab2): the proactive go-cache reaper
-					// can wipe the build cache between the idle check and the
-					// merge-build start (TOCTOU window). When the output matches
-					// the cold-cache signature, retry once — the first attempt
-					// repopulates enough cache for the second to succeed.
-					if isMergeBuildColdCacheError(out) {
-						retryCmd := exec.CommandContext(ctx, "go", buildArgs...)
-						retryCmd.Dir = buildDir
-						if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
-							continue
-						} else {
-							out = retryOut
-							buildErr = retryErr
-						}
-					}
-					rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
-					rollbackCmd.Dir = projectDir
-					_ = rollbackCmd.Run()
-					emitMergeBuildFailed(ctx, bus, runID, beadID, buildErr, out)
-					return mergeOutcome{
-						success: false,
-						reason:  fmt.Sprintf("merge_build_failed (go %s): %v\n%s", buildArgs[0], buildErr, strings.TrimRight(string(out), "\n")),
-					}
-				}
-			}
-
-			// Step 3c: post-merge fmt-check gate (hk-k1hn).
-			//
-			// Run gofumpt -l and gci diff on the merged tree to catch formatting
-			// drift before the push. Both tools exit 0 and emit output when files
-			// are dirty; non-empty output blocks the merge.
-			// Fail-open: if the .tools/ binaries are absent (non-Go repos, bare
-			// test fixtures, CI machines without tools installed) the check is
-			// skipped entirely. Same rollback+emit pattern as the build gate above.
-			if fmtOutcome := runMergeFmtCheck(ctx, buildDir, projectDir, targetBranch, mainTip, runID, beadID, bus); fmtOutcome != nil {
-				return *fmtOutcome
-			}
-		}
-
-		// Step 4: push origin <targetBranch>.
-		pushCmd := exec.CommandContext(ctx, "git", "push", "origin", targetBranch)
-		pushCmd.Dir = projectDir
-		pushOut, pushErr := pushCmd.CombinedOutput()
-		if pushErr == nil {
-			break // push succeeded; fall through to working-tree refresh
-		}
-
-		// Push failed — roll back the local update-ref so the repo is consistent.
-		// Best-effort rollback: if it fails the operator will see the target branch
-		// pointing to runTip without a matching remote; reconciliation (Cat 3 /
-		// EM-INV-005) will catch this on the next startup.
-		rollbackCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
-		rollbackCmd.Dir = projectDir
-		_ = rollbackCmd.Run()
-
-		// Non-FF? If so, fetch the new remote tip, rebase the run-branch, and
-		// retry the whole sequence.  All other push errors are terminal.
-		pushOutStr := string(pushOut)
-		isNonFF := strings.Contains(pushOutStr, "non-fast-forward") ||
-			strings.Contains(pushOutStr, "[rejected]")
-		if !isNonFF || pushAttempt >= maxPushAttempts {
-			return mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("push_failed: %v\n%s", pushErr, pushOut),
-			}
-		}
-
-		// Fetch to update refs/remotes/origin/<targetBranch>.
-		fetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", targetBranch)
-		fetchCmd.Dir = projectDir
-		if fetchOut, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
-			return mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("push_failed_fetch (attempt %d): %v\n%s", pushAttempt, fetchErr, fetchOut),
-			}
-		}
-
-		// Read the new remote tip.
-		remoteRef := "refs/remotes/origin/" + targetBranch
-		remoteRevCmd := exec.CommandContext(ctx, "git", "rev-parse", remoteRef)
-		remoteRevCmd.Dir = projectDir
-		remoteRevOut, remoteRevErr := remoteRevCmd.Output()
-		if remoteRevErr != nil {
-			return mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("push_failed_rev_parse_remote (attempt %d): %v", pushAttempt, remoteRevErr),
-			}
-		}
-		newMainTip := strings.TrimRight(string(remoteRevOut), "\n")
-
-		// Advance local targetBranch to the fetched remote tip so the rebase
-		// and next iteration's FF check have a correct base.
-		updateToRemoteCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, newMainTip)
-		updateToRemoteCmd.Dir = projectDir
-		if updateOut, updateErr := updateToRemoteCmd.CombinedOutput(); updateErr != nil {
-			return mergeOutcome{
-				success: false,
-				reason:  fmt.Sprintf("push_failed_update_to_remote (attempt %d): %v\n%s", pushAttempt, updateErr, updateOut),
-			}
-		}
-		mainTip = newMainTip
-
-		// Rebase the run-branch onto the updated local target (in the worktree).
-		if _, statErr := os.Stat(wtPath); statErr == nil {
-			discardDirtyChurn(ctx, wtPath)
-			commitResidualDelta(ctx, wtPath, runID)
-			retryRebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
-			retryRebaseCmd.Dir = wtPath
-			if out, rebaseErr := retryRebaseCmd.CombinedOutput(); rebaseErr != nil {
-				abortCmd := exec.CommandContext(ctx, "git", "rebase", "--abort")
-				abortCmd.Dir = wtPath
-				_ = abortCmd.Run()
-				return mergeOutcome{
-					success: false,
-					reason:  fmt.Sprintf("rebase_conflict_on_push_retry (attempt %d): %v\n%s", pushAttempt, rebaseErr, strings.TrimRight(string(out), "\n")),
-				}
-			}
-		}
-
-		// Re-resolve runTip after the retry rebase.
-		retryRunTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "refs/heads/"+runBranch)
-		retryRunTipCmd.Dir = projectDir
-		if retryRunTipOut, retryRunTipErr := retryRunTipCmd.Output(); retryRunTipErr == nil {
-			runTip = strings.TrimRight(string(retryRunTipOut), "\n")
-		}
-
-		// hk-zmpd: rebase-drop guard on push-retry rebase (same invariant as the
-		// initial rebase above — reviewed commits must survive onto the new base).
-		if runTip == mainTip {
-			return mergeOutcome{
-				success: false,
-				reason: fmt.Sprintf(
-					"rebase_dropped_commits_on_push_retry (attempt %d): rebase of %s"+
-						" onto %s produced no commits ahead of target",
-					pushAttempt, runBranch, targetBranch),
-			}
-		}
-
-		// Loop back: FF-check → update-ref → build gate → push with updated mainTip/runTip.
+		return commitOutcome{retryKind: mergePrepareNonFFRetry, newMainTip: mainTip}
 	}
 
-	// Step 5: refresh project working tree to match HEAD (EM-054).
-	//
-	// Step 5a: restore the staged index before the working-tree reset.
-	//
-	// git update-ref (step 4) advances HEAD but leaves the index at the
-	// pre-merge state.  Any files that were added/modified by the merged commit
-	// now appear as "staged deletions" (index behind HEAD) in git status
-	// --porcelain.  If git reset --hard HEAD (step 5b) subsequently fails
-	// (non-fatal per EM-054), those staged phantom-deletions persist into the
-	// next bead's run and trigger false implementer_escaped_worktree positives.
-	//
-	// git restore --staged . clears the index to match HEAD without touching
-	// the working tree.  It is lighter than reset --hard and less likely to
-	// fail (no working-tree I/O, no file-lock contention).  Running it first
-	// means that even on a reset --hard failure the staged index is already
-	// clean for the subsequent escape check.
-	//
-	// Best-effort / non-fatal: a failure here is harmless because step 5b will
-	// attempt the same cleanup (and more) via reset --hard.
+	// Step 3a: fast-forward the target branch to runTip.
+	updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, runTip) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+	updateRefCmd.Dir = projectDir
+	if out, err := updateRefCmd.CombinedOutput(); err != nil {
+		return commitOutcome{done: &mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("git update-ref %s: %v\n%s", targetBranch, err, out),
+		}}
+	}
+
+	// Step 4: push origin <targetBranch>.
+	pushCmd := exec.CommandContext(ctx, "git", "push", "origin", targetBranch)
+	pushCmd.Dir = projectDir
+	pushOut, pushErr := pushCmd.CombinedOutput()
+	if pushErr != nil {
+		return commitHandlePushFailure(ctx, projectDir, targetBranch, mainTip, pushOut, pushErr, pushAttempt, maxPushAttempts)
+	}
+
+	// Push succeeded — refresh the project working tree + reconcile the ledger.
+	commitFinalizeWorkingTree(ctx, projectDir, runID, bus, beadID, mainTip, runTip, brPath)
+	return commitOutcome{done: &mergeOutcome{success: true}}
+}
+
+// commitHandlePushFailure rolls back the local ref-advance and classifies a push
+// failure: a non-fast-forward rejection below the retry cap fetches the new
+// remote tip, advances the local target to it, and signals a push-retry
+// re-prepare; any other failure (or an exhausted budget) is terminal. All
+// commands (update-ref, fetch, rev-parse) are commit-allowlisted (RSM-017).
+func commitHandlePushFailure(ctx context.Context, projectDir, targetBranch, mainTip string, pushOut []byte, pushErr error, pushAttempt, maxPushAttempts int) commitOutcome {
+	// Roll back the local update-ref so the repo is consistent (best-effort).
+	gitUpdateRefBestEffort(ctx, projectDir, targetBranch, mainTip)
+
+	pushOutStr := string(pushOut)
+	isNonFF := strings.Contains(pushOutStr, "non-fast-forward") || strings.Contains(pushOutStr, "[rejected]")
+	if !isNonFF || pushAttempt >= maxPushAttempts {
+		return commitOutcome{done: &mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("push_failed: %v\n%s", pushErr, pushOut),
+		}}
+	}
+
+	// Non-FF push rejection: fetch the new remote tip, advance the local target to
+	// it, and re-prepare (rebase) OUTSIDE the domain on retry.
+	fetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", targetBranch)
+	fetchCmd.Dir = projectDir
+	if fetchOut, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {
+		return commitOutcome{done: &mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("push_failed_fetch (attempt %d): %v\n%s", pushAttempt, fetchErr, fetchOut),
+		}}
+	}
+	newMainTip, rerr := gitRevParse(ctx, projectDir, "refs/remotes/origin/"+targetBranch)
+	if rerr != nil {
+		return commitOutcome{done: &mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("push_failed_rev_parse_remote (attempt %d): rev-parse refs/remotes/origin/%s", pushAttempt, targetBranch),
+		}}
+	}
+	updateToRemoteCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, newMainTip) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+	updateToRemoteCmd.Dir = projectDir
+	if updateOut, updateErr := updateToRemoteCmd.CombinedOutput(); updateErr != nil {
+		return commitOutcome{done: &mergeOutcome{
+			success: false,
+			reason:  fmt.Sprintf("push_failed_update_to_remote (attempt %d): %v\n%s", pushAttempt, updateErr, updateOut),
+		}}
+	}
+	return commitOutcome{retryKind: mergePreparePushRetry, newMainTip: newMainTip}
+}
+
+// commitFinalizeWorkingTree refreshes the project working tree after a successful
+// push (EM-054) and reconciles the bead ledger (BL-MRG-004/005). All steps are
+// best-effort / non-fatal — the merge is already durable.
+func commitFinalizeWorkingTree(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, mainTip, runTip, brPath string) {
+	// Step 5a: restore the staged index (best-effort / non-fatal).
 	restoreCmd := exec.CommandContext(ctx, "git", "restore", "--staged", ".")
 	restoreCmd.Dir = projectDir
 	if out, restoreErr := restoreCmd.CombinedOutput(); restoreErr != nil {
@@ -7053,52 +7032,93 @@ func mergeRunBranchToMain(ctx context.Context, projectDir string, runID core.Run
 			beadID, runID.String(), restoreErr, out)
 	}
 
-	// Step 5b: git reset --hard HEAD re-syncs both the index and the working
-	// tree to the new HEAD (which is now the run-branch tip). This eliminates
-	// the "modified" state that appears in git status when update-ref advances
-	// HEAD without touching the working tree files.
-	//
-	// Uncommitted-changes policy (EM-054): if the working tree has uncommitted
-	// changes, log a warning and still reset. The daemon owns the project working
-	// tree during operation; the operator is expected to keep it clean.
-	//
-	// Refresh-failure policy (EM-054): if git reset --hard HEAD fails, the merge
-	// is already durable. Log a warning, emit working_tree_refresh_failed, and
-	// return success=true so the caller proceeds to CloseBead normally.
-	// F21: "uncommitted changes before refresh" WARN removed — fires x142/session
-	// during normal operation; the reset below always cleans it up unconditionally.
+	// Step 5b: git reset --hard HEAD re-syncs the index + working tree. On failure
+	// the merge is already durable: warn, emit working_tree_refresh_failed, and
+	// still report success.
 	resetCmd := exec.CommandContext(ctx, "git", "reset", "--hard", "HEAD")
 	resetCmd.Dir = projectDir
 	if out, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
-		// Refresh failed — merge succeeded; emit event and continue.
 		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: git reset --hard HEAD failed (bead %s run %s): %v\n%s",
 			beadID, runID.String(), resetErr, out)
 		emitWorkingTreeRefreshFailed(ctx, bus, runID, beadID, resetErr)
 	}
 
-	// BL-MRG-004/005: when the merge touched .beads/issues.jsonl, reconcile the
-	// SQLite DB by running `br sync --import-only` in the project directory.
-	// This is non-fatal: a failure emits bead_sync_failed but does not revert the
-	// merge or change the returned outcome. brPath == "" disables the step (tests
-	// that do not have a real `br` binary).
-	if brPath != "" {
-		diffCmd := exec.CommandContext(ctx, "git", "diff", "--name-only", mainTip, runTip)
-		diffCmd.Dir = projectDir
-		if diffOut, diffErr := diffCmd.Output(); diffErr == nil {
-			for _, p := range strings.Split(strings.TrimRight(string(diffOut), "\n"), "\n") {
-				if p == ".beads/issues.jsonl" {
-					syncCmd := exec.CommandContext(ctx, brPath, "sync", "--import-only")
-					syncCmd.Dir = projectDir
-					if syncOut, syncErr := syncCmd.CombinedOutput(); syncErr != nil {
-						emitBeadSyncFailed(ctx, bus, runID, syncErr, syncOut)
-					}
-					break
-				}
+	// BL-MRG-004/005: reconcile the bead ledger when the merge touched
+	// .beads/issues.jsonl (non-fatal). brPath == "" disables the step.
+	if brPath == "" {
+		return
+	}
+	diffCmd := exec.CommandContext(ctx, "git", "diff", "--name-only", mainTip, runTip)
+	diffCmd.Dir = projectDir
+	diffOut, diffErr := diffCmd.Output()
+	if diffErr != nil {
+		return
+	}
+	for _, p := range strings.Split(strings.TrimRight(string(diffOut), "\n"), "\n") {
+		if p == ".beads/issues.jsonl" {
+			syncCmd := exec.CommandContext(ctx, brPath, "sync", "--import-only")
+			syncCmd.Dir = projectDir
+			if syncOut, syncErr := syncCmd.CombinedOutput(); syncErr != nil {
+				emitBeadSyncFailed(ctx, bus, runID, syncErr, syncOut)
+			}
+			return
+		}
+	}
+}
+
+// gitUpdateRefBestEffort advances refs/heads/<branch> to sha in dir, logging on
+// failure (used for the push-failure rollback, where a failed rollback is
+// surfaced to reconciliation, EM-INV-005, rather than aborting).
+func gitUpdateRefBestEffort(ctx context.Context, dir, branch, sha string) {
+	cmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+branch, sha) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: rollback update-ref %s failed: %v\n%s", branch, err, out)
+	}
+}
+
+// prepareRebase re-prepares the run-branch for a re-attempt after a lost FF race
+// or a non-FF push rejection: it rebases the run-branch onto the (already
+// updated) target OUTSIDE the exclusion domain (RSM-017). It updates *runTip in
+// place and returns nil on success, a terminal outcome on a rebase conflict or a
+// silently-dropped rebase. The kind selects the reason-string variant so the
+// pre-split "(attempt N)" strings are preserved.
+func prepareRebase(ctx context.Context, wtPath, projectDir string, runID core.RunID, runBranch, targetBranch string, runTip *string, mainTip string, kind mergePrepareKind, pushAttempt int) *mergeOutcome {
+	conflictReason := "rebase_conflict_on_non_ff_merge_retry"
+	droppedReason := "rebase_dropped_commits_on_non_ff_merge_retry"
+	if kind == mergePreparePushRetry {
+		conflictReason = "rebase_conflict_on_push_retry"
+		droppedReason = "rebase_dropped_commits_on_push_retry"
+	}
+
+	if _, statErr := os.Stat(wtPath); statErr == nil {
+		discardDirtyChurn(ctx, wtPath)
+		commitResidualDelta(ctx, wtPath, runID)
+		retryRebaseCmd := exec.CommandContext(ctx, "git", "rebase", targetBranch)
+		retryRebaseCmd.Dir = wtPath
+		if out, rebaseErr := retryRebaseCmd.CombinedOutput(); rebaseErr != nil {
+			gitRebaseAbort(ctx, wtPath)
+			return &mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("%s (attempt %d): %v\n%s", conflictReason, pushAttempt, rebaseErr, strings.TrimRight(string(out), "\n")),
 			}
 		}
 	}
 
-	return mergeOutcome{success: true}
+	if t, rerr := gitRevParse(ctx, projectDir, "refs/heads/"+runBranch); rerr == nil {
+		*runTip = t
+	}
+
+	// hk-zmpd: rebase-drop guard — reviewed commits must survive onto the new base.
+	if *runTip == mainTip {
+		return &mergeOutcome{
+			success: false,
+			reason: fmt.Sprintf(
+				"%s (attempt %d): rebase of %s onto %s produced no commits ahead of target",
+				droppedReason, pushAttempt, runBranch, targetBranch),
+		}
+	}
+	return nil
 }
 
 // discardDirtyChurn discards UNCOMMITTED changes to daemon/agent-owned churn
@@ -7460,18 +7480,18 @@ func emitBeadSyncFailed(ctx context.Context, bus handlercontract.EventEmitter, r
 // is silently skipped (non-Go repos, bare test fixtures, CI without tools).
 //
 // Beads: hk-k1hn (original gate), hk-0lrt (auto-heal).
-func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, mainTip string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) *mergeOutcome {
-	rollback := func() {
-		rb := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, mainTip)
-		rb.Dir = projectDir
-		_ = rb.Run()
-	}
-
+// runMergeFmtCheck runs gofumpt+gci on the merged tree in buildDir and, when the
+// worktree is isolated (buildDir != projectDir), auto-fixes drift and commits it
+// onto the run-branch. It is the prepare-phase fmt gate (RSM-017): it runs
+// OUTSIDE the merge exclusion domain and never advances the target ref — the
+// post-fmt worktree HEAD is returned as the new run-branch tip, and the commit
+// phase's update-ref advances the target to it.
+//
+// Returns (nil, newRunTip) on success — newRunTip is the post-fmt worktree HEAD
+// when the auto-fix committed, else ""; (outcome, "") on a terminal fmt failure.
+func runMergeFmtCheck(ctx context.Context, buildDir, projectDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (outcome *mergeOutcome, newRunTip string) {
 	// Auto-format is only safe when an isolated worktree is available.
-	// When buildDir == projectDir the worktree has already been removed and
-	// we cannot commit a format change without racing the project's own index.
 	canAutoFmt := buildDir != projectDir
-
 	needsCommit := false
 
 	gofumptBin := filepath.Join(projectDir, ".tools", "gofumpt")
@@ -7480,126 +7500,126 @@ func runMergeFmtCheck(ctx context.Context, buildDir, projectDir, targetBranch, m
 	_, gciAvail := os.Stat(gciBin)
 	mod := readGoModule(buildDir)
 
-	// Run gofumpt+gci to a fixpoint: each tool can disturb the other's
-	// invariant (gci re-groups imports → gofumpt sees drift; gofumpt adjusts
-	// spacing → gci sees drift), so we loop until both are clean or we exhaust
-	// the iteration cap.
 	const maxFmtIter = 5
 	for i := range maxFmtIter {
-		iterDirty := false
-
-		if gofumptAvail == nil {
-			listCmd := exec.CommandContext(ctx, gofumptBin, "-l", ".")
-			listCmd.Dir = buildDir
-			// gofumpt -l exits 0; non-empty stdout = unformatted files.
-			if out, err := listCmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
-				if canAutoFmt {
-					fmtCmd := exec.CommandContext(ctx, gofumptBin, "-w", ".")
-					fmtCmd.Dir = buildDir
-					if fmtErr := fmtCmd.Run(); fmtErr != nil {
-						rollback()
-						msg := "gofumpt -w: " + fmtErr.Error()
-						emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-						return &mergeOutcome{success: false, reason: "merge_fmt_failed (gofumpt -w): " + fmtErr.Error()}
-					}
-					needsCommit = true
-					iterDirty = true
-				} else {
-					rollback()
-					msg := "gofumpt: unformatted files (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
-					emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-					return &mergeOutcome{
-						success: false,
-						reason:  "merge_fmt_failed (gofumpt): " + strings.TrimRight(string(out), "\n"),
-					}
-				}
-			}
+		iterDirty, out := runFmtPassesOnce(ctx, buildDir, gofumptBin, gciBin, mod,
+			gofumptAvail == nil, gciAvail == nil, canAutoFmt, runID, beadID, bus)
+		if out != nil {
+			return out, ""
 		}
-
-		if gciAvail == nil && mod != "" {
-			diffCmd := exec.CommandContext(ctx, gciBin, "diff", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".")
-			diffCmd.Dir = buildDir
-			// gci diff exits 0; non-empty stdout = import order drift.
-			if out, err := diffCmd.Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
-				if canAutoFmt {
-					writeCmd := exec.CommandContext(ctx, gciBin, "write", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".")
-					writeCmd.Dir = buildDir
-					if writeErr := writeCmd.Run(); writeErr != nil {
-						rollback()
-						msg := "gci write: " + writeErr.Error()
-						emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-						return &mergeOutcome{success: false, reason: "merge_fmt_failed (gci write): " + writeErr.Error()}
-					}
-					needsCommit = true
-					iterDirty = true
-				} else {
-					rollback()
-					msg := "gci: import order drift (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
-					emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
-					return &mergeOutcome{
-						success: false,
-						reason:  "merge_fmt_failed (gci): import order drift detected",
-					}
-				}
-			}
-		}
+		needsCommit = needsCommit || iterDirty
 
 		if !iterDirty {
 			break
 		}
 		if i == maxFmtIter-1 {
-			// Both tools are still disagreeing after maxFmtIter passes — a
-			// genuine divergence in tool config; fail rather than loop forever.
-			rollback()
 			emitMergeBuildFailed(ctx, bus, runID, beadID,
-				errors.New("gofumpt+gci did not converge after "+fmt.Sprint(maxFmtIter)+" passes"),
-				nil)
+				errors.New("gofumpt+gci did not converge after "+fmt.Sprint(maxFmtIter)+" passes"), nil)
 			return &mergeOutcome{
 				success: false,
 				reason:  "merge_fmt_failed: gofumpt+gci did not converge after " + fmt.Sprint(maxFmtIter) + " passes (check gci local-prefix config vs module path)",
-			}
+			}, ""
 		}
 	}
 
-	if needsCommit {
-		// Stage all formatting changes in the worktree.
-		addCmd := exec.CommandContext(ctx, "git", "add", "-A")
-		addCmd.Dir = buildDir
-		if addOut, addErr := addCmd.CombinedOutput(); addErr != nil {
-			rollback()
-			emitMergeBuildFailed(ctx, bus, runID, beadID, addErr, addOut)
-			return &mergeOutcome{success: false, reason: "merge_fmt_failed (git add): " + addErr.Error()}
-		}
+	if !needsCommit {
+		return nil, ""
+	}
+	return commitFmtChanges(ctx, buildDir, runID, beadID, bus)
+}
 
-		// Conventional Commits subject ("chore:") + Trivial: true trailer so
-		// this machine commit passes the commit-msg gate without --no-verify,
-		// which is forbidden repo-wide (build-practices.md §Git hygiene).
-		commitMsg := fmt.Sprintf("chore: auto-format via gofumpt+gci\n\nRefs: %s\nTrivial: true", beadID)
-		commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
-		commitCmd.Dir = buildDir
-		if commitOut, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
-			rollback()
-			emitMergeBuildFailed(ctx, bus, runID, beadID, commitErr, commitOut)
-			return &mergeOutcome{success: false, reason: "merge_fmt_failed (fmt commit): " + commitErr.Error()}
+// runFmtPassesOnce runs one gofumpt then one gci pass over buildDir (each gated
+// on tool availability), returning (dirty, nil) when either reformatted the tree
+// and (false, outcome) on the first terminal failure.
+func runFmtPassesOnce(ctx context.Context, buildDir, gofumptBin, gciBin, mod string, gofumptAvail, gciAvail, canAutoFmt bool, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (dirty bool, out *mergeOutcome) {
+	if gofumptAvail {
+		d, o := fmtGofumptPass(ctx, buildDir, gofumptBin, canAutoFmt, runID, beadID, bus)
+		if o != nil {
+			return false, o
 		}
+		dirty = dirty || d
+	}
+	if gciAvail && mod != "" {
+		d, o := fmtGciPass(ctx, buildDir, gciBin, mod, canAutoFmt, runID, beadID, bus)
+		if o != nil {
+			return false, o
+		}
+		dirty = dirty || d
+	}
+	return dirty, nil
+}
 
-		// Advance targetBranch to the new formatted tip so step 4 (push)
-		// picks up the format commit.
-		newTipCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
-		newTipCmd.Dir = buildDir
-		if newTipOut, newTipErr := newTipCmd.Output(); newTipErr == nil {
-			newTip := strings.TrimRight(string(newTipOut), "\n")
-			updateCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, newTip)
-			updateCmd.Dir = projectDir
-			if updateErr := updateCmd.Run(); updateErr != nil {
-				rollback()
-				emitMergeBuildFailed(ctx, bus, runID, beadID, updateErr, nil)
-				return &mergeOutcome{success: false, reason: "merge_fmt_failed (update-ref after fmt): " + updateErr.Error()}
-			}
-		}
+// fmtGofumptPass runs one gofumpt pass over buildDir. It returns (dirty, nil)
+// when files were reformatted (auto-fix) and (false, outcome) on a terminal
+// failure. When canAutoFmt is false, unformatted files are a terminal failure.
+func fmtGofumptPass(ctx context.Context, buildDir, gofumptBin string, canAutoFmt bool, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (bool, *mergeOutcome) {
+	listCmd := exec.CommandContext(ctx, gofumptBin, "-l", ".")
+	listCmd.Dir = buildDir
+	out, err := listCmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return false, nil
+	}
+	if !canAutoFmt {
+		msg := "gofumpt: unformatted files (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
+		emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
+		return false, &mergeOutcome{success: false, reason: "merge_fmt_failed (gofumpt): " + strings.TrimRight(string(out), "\n")}
+	}
+	fmtCmd := exec.CommandContext(ctx, gofumptBin, "-w", ".")
+	fmtCmd.Dir = buildDir
+	if fmtErr := fmtCmd.Run(); fmtErr != nil {
+		emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New("gofumpt -w: "+fmtErr.Error()), nil)
+		return false, &mergeOutcome{success: false, reason: "merge_fmt_failed (gofumpt -w): " + fmtErr.Error()}
+	}
+	return true, nil
+}
+
+// fmtGciPass runs one gci import-order pass over buildDir, with the same
+// (dirty, outcome) contract as fmtGofumptPass.
+func fmtGciPass(ctx context.Context, buildDir, gciBin, mod string, canAutoFmt bool, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (bool, *mergeOutcome) {
+	diffCmd := exec.CommandContext(ctx, gciBin, "diff", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".") //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+	diffCmd.Dir = buildDir
+	out, err := diffCmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return false, nil
+	}
+	if !canAutoFmt {
+		msg := "gci: import order drift (run 'make fmt' to fix):\n" + strings.TrimRight(string(out), "\n")
+		emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New(msg), nil)
+		return false, &mergeOutcome{success: false, reason: "merge_fmt_failed (gci): import order drift detected"}
+	}
+	writeCmd := exec.CommandContext(ctx, gciBin, "write", "-s", "standard", "-s", "default", "-s", "prefix("+mod+")", ".") //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+	writeCmd.Dir = buildDir
+	if writeErr := writeCmd.Run(); writeErr != nil {
+		emitMergeBuildFailed(ctx, bus, runID, beadID, errors.New("gci write: "+writeErr.Error()), nil)
+		return false, &mergeOutcome{success: false, reason: "merge_fmt_failed (gci write): " + writeErr.Error()}
+	}
+	return true, nil
+}
+
+// commitFmtChanges stages and commits the gofumpt/gci auto-fix onto the
+// run-branch in buildDir and returns (nil, newRunTip) — the post-fmt worktree
+// HEAD the commit phase advances the target to — or (outcome, "") on failure.
+func commitFmtChanges(ctx context.Context, buildDir string, runID core.RunID, beadID core.BeadID, bus handlercontract.EventEmitter) (outcome *mergeOutcome, newRunTip string) {
+	addCmd := exec.CommandContext(ctx, "git", "add", "-A")
+	addCmd.Dir = buildDir
+	if addOut, addErr := addCmd.CombinedOutput(); addErr != nil {
+		emitMergeBuildFailed(ctx, bus, runID, beadID, addErr, addOut)
+		return &mergeOutcome{success: false, reason: "merge_fmt_failed (git add): " + addErr.Error()}, ""
 	}
 
-	return nil
+	commitMsg := fmt.Sprintf("chore: auto-format via gofumpt+gci\n\nRefs: %s\nTrivial: true", beadID)
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
+	commitCmd.Dir = buildDir
+	if commitOut, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
+		emitMergeBuildFailed(ctx, bus, runID, beadID, commitErr, commitOut)
+		return &mergeOutcome{success: false, reason: "merge_fmt_failed (fmt commit): " + commitErr.Error()}, ""
+	}
+
+	// Return the post-fmt worktree HEAD; the commit phase advances the target to it.
+	if newTip, rerr := gitRevParse(ctx, buildDir, "HEAD"); rerr == nil {
+		return nil, newTip
+	}
+	return nil, ""
 }
 
 // readGoModule parses the first "module <path>" directive from dir/go.mod.

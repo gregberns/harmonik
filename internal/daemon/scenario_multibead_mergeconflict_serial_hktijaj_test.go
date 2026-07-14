@@ -54,6 +54,7 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/mergeq"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -357,20 +358,21 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 	//       this is the DOMINANT concurrent projectDir/.git writer — it fires
 	//       N times near-simultaneously at factory time, before any merge.
 	//
-	// (c) is NOT gated by mergeMu in production's factory, so without explicit
-	// serialisation here the four factory `git worktree add` calls (plus the
-	// merge step and the advance) race on index.lock; the loser dies with
-	// "Unable to create '.../.git/index.lock': File exists" (git exit 128), the
-	// bead never reaches a terminal state, doneCh never closes — a hard hang,
-	// not a slow path, that no timeout budget can rescue.
-	//
-	// Fix: hold mergeMu around EVERY projectDir/.git mutation the test drives —
-	// the factory worktree-add (c), the out-of-band advance (b) — so all three
-	// callers (a)(b)(c) serialise on the one mutex. This is exactly git's own
-	// requirement (only one process may hold .git/index.lock), and it does NOT
-	// defeat the test's concurrency intent: beads still PROCESS concurrently
-	// (MaxConcurrent=4); only the brief projectDir/.git index writes serialise.
-	mergeMu := &sync.Mutex{}
+	// (c) is serialised for free now: RSM-018 runs the base-sync + worktree-add as
+	// ONE critical section INSIDE the merge exclusion domain (mergeq), and the
+	// daemon calls this test's WorktreeFactory from within that Submit closure. So
+	// the factory `git worktree add` (c) and the out-of-band advance (b) it drives
+	// already run in the SAME domain as the commit-phase merge (a) — all three
+	// serialise on the one queue owner. The test therefore injects a shared,
+	// pre-started queue via MergeQueue and does NOT lock separately (a re-entrant
+	// Submit from inside the factory would deadlock the single owner goroutine).
+	// This preserves the test's concurrency intent: beads still PROCESS
+	// concurrently (MaxConcurrent=4); only the brief projectDir/.git writes
+	// serialise.
+	mergeQ := mergeq.New(nil)
+	mergeQCtx, mergeQCancel := context.WithCancel(context.Background())
+	mergeQ.Start(mergeQCtx)
+	t.Cleanup(mergeQCancel)
 
 	// fileForBead gives each bead a unique, collision-free filename so clean
 	// beads never conflict with each other.
@@ -380,16 +382,12 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 	const conflictFile = "conflict.txt"
 
 	worktreeFactory := func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
-		// Gate the `git worktree add` (inside ExportedProductionWorktreeFactory,
-		// cmd.Dir = projectDir) under mergeMu: it takes projectDir/.git/index.lock
-		// and is the dominant concurrent projectDir/.git writer at factory time
-		// (N near-simultaneous adds under MaxConcurrent=4). Serialising it on the
-		// same mutex the merge step uses removes the index.lock race. Hold the
-		// lock ONLY across the projectDir/.git mutation; commits land in the
-		// worktree's own index (no projectDir contention) and stay outside it.
-		mergeMu.Lock()
+		// The daemon calls this factory from INSIDE the base-sync+worktree-add
+		// Submit critical section (RSM-018), so the `git worktree add`
+		// (cmd.Dir = projectDir, takes projectDir/.git/index.lock) is already
+		// serialised against every sibling factory call and the commit-phase merge.
+		// No separate lock — a re-entrant Submit here would deadlock the owner.
 		wtPath, cleanup, err := daemon.ExportedProductionWorktreeFactory(ctx, projectDir, runID, headSHA)
-		mergeMu.Unlock()
 		if err != nil {
 			return "", nil, err
 		}
@@ -401,13 +399,11 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 		if beadID == beadConflict {
 			// Commit the conflict file in the worktree (own worktree index — no
 			// projectDir contention), then advance main on the SAME path with
-			// different content → rebase conflict at merge time. The advance
-			// mutates projectDir directly, so it must hold mergeMu to avoid the
-			// .git/index.lock race against a concurrent sibling merge.
+			// different content → rebase conflict at merge time. The advance mutates
+			// projectDir directly, but this factory already runs inside the merge
+			// exclusion domain (RSM-018), so it is serialised against sibling merges.
 			hktijajCommitInWorktree(t, ctx, wtPath, runID, conflictFile, "agent version of conflict file\n")
-			mergeMu.Lock()
 			hktijajAdvanceMainOn(t, ctx, projectDir, conflictFile, "main's out-of-band conflicting content\n")
-			mergeMu.Unlock()
 			return wtPath, cleanup, nil
 		}
 		// Clean bead: commit a unique file that never collides.
@@ -425,7 +421,7 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 		MaxConcurrent:    len(allBeads),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorktreeFactory:  worktreeFactory,
-		MergeMu:          mergeMu,
+		MergeQueue:       mergeQ,
 	})
 
 	// 240s ceiling (was 90s): this is an infinite-loop safety net, not a

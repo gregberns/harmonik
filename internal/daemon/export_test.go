@@ -25,6 +25,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
@@ -284,12 +285,19 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-6r6xv.
 	ProtectBranches []string
 
-	// MergeMu, when non-nil, serialises every lockedMergeRunBranchToMain call
-	// across concurrent beadRunOne goroutines (mirrors WithMergeMutex on the
-	// daemon.Start path and the production newWorkLoopDeps default). When nil,
-	// ExportedWorkLoopDeps installs a fresh mutex so concurrent merges to the
-	// shared origin never race on refs/heads/main (hk-4f5ua / hk-bnm89).
-	MergeMu *sync.Mutex
+	// MergeQueue, when non-nil, is the merge exclusion domain (RSM-015) that
+	// concurrent beadRunOne goroutines serialise their commit-phase merge, escape
+	// check, and base-sync+worktree-add through. It MUST already be Start()ed by
+	// the test, which owns its lifecycle (runWorkLoop leaves an injected queue
+	// untouched).
+	//
+	// When nil: a test that calls beadRunOne DIRECTLY runs the merge critical
+	// section inline (correct for a single beadRunOne). A test that drives
+	// ExportedRunWorkLoop instead gets a queue runWorkLoop creates, starts, and
+	// owns — so a concurrent ExportedRunWorkLoop test needs neither this field nor
+	// an inline-race workaround. Inject a started queue here only when driving
+	// concurrent beadRunOne WITHOUT runWorkLoop (hk-4f5ua / hk-bnm89).
+	MergeQueue *mergeq.Queue
 
 	// WorktreeCreateMu, when non-nil, is threaded into WorktreeRootConfig for
 	// remote bead runs so that workspace.CreateWorktree serialises the
@@ -437,14 +445,10 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	lsb := p.LaunchSpecBuilder
 	wtf := p.WorktreeFactory
 
-	// MergeMu: default to a fresh mutex (mirrors newWorkLoopDeps line ~575) so
-	// concurrent beadRunOne goroutines serialise their merge-to-origin and never
-	// race on refs/heads/main. Without this, an N>1 test (e.g. SC-2) sees one
-	// bead's `git reset --hard` killed mid-merge by a sibling (hk-4f5ua).
-	mergeMu := p.MergeMu
-	if mergeMu == nil {
-		mergeMu = &sync.Mutex{}
-	}
+	// MergeQueue: pass the caller-supplied domain (nil ⇒ inline merge). Concurrent
+	// beadRunOne tests inject a started queue so their commit-phase merges never
+	// race on refs/heads/main (hk-4f5ua); single-bead tests leave it nil.
+	mergeQ := p.MergeQueue
 
 	// WorktreeCreateMu: default to a fresh mutex (mirrors newWorkLoopDeps, hk-5qp7z).
 	worktreeCreateMu := p.WorktreeCreateMu
@@ -516,7 +520,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		skipBrHistoryRotation:      true,                         // hk-hypbi: tests use temp dirs without real .br_history
 		targetBranch:               resolveTargetBranch(p.TargetBranch),
 		protectBranches:            p.ProtectBranches,
-		mergeMu:                    mergeMu,
+		mergeQ:                     mergeQ,
 		worktreeCreateMu:           worktreeCreateMu,
 		agentSpawnSem:              agentSpawnSem,                  // hk-5z1f0: per-worker cold-start spawn semaphore
 		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
@@ -1077,7 +1081,7 @@ func ExportedMergeRunBranchToMain(
 	protectBranches []string,
 	brPath string,
 ) ExportedMergeOutcome {
-	o := mergeRunBranchToMain(ctx, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches, brPath)
+	o := mergeRunBranchToMain(ctx, inlineMergeSubmit, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches, brPath)
 	return ExportedMergeOutcome{success: o.success, reason: o.reason, noChange: o.noChange}
 }
 

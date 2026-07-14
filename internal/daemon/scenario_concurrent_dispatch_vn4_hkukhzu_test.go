@@ -67,21 +67,30 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/mergeq"
 )
 
 // vn4BootForTesting binds daemon.StartForTesting with the determinism options
 // the RunConcurrentMerge fixture requires but cannot reference itself (the
 // options live in package daemon's *_test.go files — see the fixture's
-// import-boundary note). Each bead goroutine shares the one merge mutex so
-// concurrent merges to the shared bare-repo origin serialise.
-func vn4BootForTesting() func(ctx context.Context, cfg daemon.Config) <-chan error {
-	var mergeMu sync.Mutex
+// import-boundary note). Each bead goroutine shares the one merge exclusion
+// domain (mergeq) so concurrent merges to the shared bare-repo origin serialise.
+//
+// The injected queue is Started here (with a t.Cleanup cancel) because
+// runWorkLoop only starts a queue it created itself — an injected queue keeps
+// the injector's lifecycle (RSM-015).
+func vn4BootForTesting(t *testing.T) func(ctx context.Context, cfg daemon.Config) <-chan error {
+	t.Helper()
+	mergeQ := mergeq.New(nil)
+	mergeQCtx, mergeQCancel := context.WithCancel(context.Background())
+	mergeQ.Start(mergeQCtx)
+	t.Cleanup(mergeQCancel)
 	return func(ctx context.Context, cfg daemon.Config) <-chan error {
 		done := make(chan error, 1)
 		go func() {
 			done <- daemon.StartForTesting(ctx, cfg,
 				daemon.WithWorktreeFactory(emptyCommitWorktreeFactory),
-				daemon.WithMergeMutex(&mergeMu),
+				daemon.WithMergeQueue(mergeQ),
 			)
 		}()
 		return done
@@ -105,7 +114,7 @@ func TestScenario_ConcurrentDispatch_VN4_AllReachMerge(t *testing.T) {
 	res := scenariotest.RunConcurrentMerge(t, scenariotest.ConcurrentMergeConfig{
 		N:                 3,
 		TwinScenario:      "single-happy-path",
-		Boot:              vn4BootForTesting(),
+		Boot:              vn4BootForTesting(t),
 		ExpectAllComplete: true,
 		AgentReadyTimeout: 5 * time.Second,
 		BeadPrefix:        "vn4",
@@ -319,7 +328,7 @@ func TestScenario_ConcurrentDispatch_VN4_WatchdogContention(t *testing.T) {
 	res := scenariotest.RunConcurrentMerge(t, scenariotest.ConcurrentMergeConfig{
 		N:                 3,
 		TwinScenario:      "heartbeat-then-hold",
-		Boot:              vn4BootForTesting(),
+		Boot:              vn4BootForTesting(t),
 		Substrate:         substrate,
 		ExpectAllComplete: true,
 		AgentReadyTimeout: 3 * time.Second,

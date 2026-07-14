@@ -165,9 +165,12 @@ tip → advance the target ref (`git update-ref`) → the format-gate ref advanc
 MUST be re-validated inside it. A re-validation that loses the race MUST re-rebase and re-run the
 build/format gate before re-attempting the ref advance.
 
-**RSM-017.** No `go build`, `go vet`, `git push`, or `br sync` invocation MUST run while the
-merge queue's exclusive section is held. Conformance MUST be checkable by a test asserting the
-critical-section executor performs no build or network I/O.
+**RSM-017.** No build-class command — `go build`, `go vet`, `gofumpt`/`gci`, or `git rebase` —
+MUST run while the merge queue's exclusive section is held. Conformance MUST be checkable by a
+test asserting the critical-section executor performs no build-class command. `git push` and
+`br sync` DO run inside the exclusive section (the push stays inside per RSM-019, and the
+post-merge `br sync` reconciliation follows it); relocating the push — and thus the network I/O —
+outside the section is deferred to the remote-execution work.
 
 **RSM-018 (preserved exclusions).** The escaped-worktree check MUST remain mutually exclusive
 with the ref-advance→working-tree-reset window (via the same queue, as a read-only

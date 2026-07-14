@@ -398,6 +398,7 @@ Every row terminates (RS-INV-003): no fault mode may produce indefinite silence.
 - **[scenario-harness.md] SH-018 / SH-INV-001** — this spec's zero-token L0–L2 tiers (RS-017) are consistent with, and do not contradict, the scenario-harness no-test-branch discipline and its cadence taxonomy; substitution is by wired value, not runtime branch. A mutual pointer is added at integration. No reverse dependency.
 - **[handler-contract.md] HC-035** — HC-035 disclaims governing the in-process-fake surface; this spec now governs that surface (the seam + the two test doubles, RS-001/RS-006/RS-007). The two become mutually discoverable at integration. No reverse dependency.
 - **session-keeper (prefix SK, not yet landed)** — the second instantiation (RS-022). The pointer becomes a concrete cross-reference once the SK spec lands.
+- **[run-state-machine.md] (RSM)** — the daemon run vertical, third instantiation of the replay-substrate seam.
 
 ## 10. Conformance
 

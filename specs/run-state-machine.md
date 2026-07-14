@@ -1,0 +1,306 @@
+# Run State Machine
+
+```yaml
+---
+title: Run State Machine
+spec-id: run-state-machine
+requirement-prefix: RSM
+status: draft
+spec-shape: requirements-first
+spec-category: runtime-subsystem
+version: 0.1.0
+spec-template-version: 1.1
+owner: foundation-author
+last-updated: 2026-07-14
+depends-on:
+  - replay-substrate
+  - event-model
+  - process-lifecycle
+  - handler-contract
+  - queue-model
+  - agent-input
+---
+```
+
+## 1. Purpose
+
+This spec defines the normative contract for the harmonik daemon's **per-bead run lifecycle**
+— the logic historically carried by the `beadRunOne` god-function. It is normative for: the
+consumer-owned ports the run lifecycle runs over; the two pure `Step(state, event) → (state,
+[]action)` reactors (a per-session **Dispatch** machine and a per-run **Run** machine) that
+express the lifecycle; the explicit **merge queue** that serialises only the merge critical
+section; the single factored **terminal spine**; and the **bounded-liveness** invariants that
+forbid a resumed run from hanging silently. It is the second production instantiation of the
+replay-substrate seam ([replay-substrate.md §1]) and the daemon peer of the session-keeper
+reactor ([session-keeper.md §1]); it consumes — and does not redefine — the agent-input
+`InputPort`/`Ack` seam ([agent-input.md] AIS-001/AIS-003/AIS-004).
+
+## 2. Scope
+
+### 2.1 In scope
+- The run-lifecycle **ports** (LedgerPort, EmitterPort, WorktreePort, MergePort, LaunchPort,
+  ClockPort, WorkerPort, GatePort) as consumer-owned narrow interfaces.
+- The pure **Dispatch** and **Run** reactors: their named states, event vocabulary, action
+  vocabulary, and total transition tables.
+- The **ClockPort** determinism seam across the run path.
+- The **merge queue** and the merge critical section it serialises.
+- The **terminal spine** (the factored launch→gate→merge→close tail) and elimination of the
+  `runSucceeded` out-parameter.
+- The **bounded-liveness** invariants (the resume-hang fix), including the normative home of
+  the `run_stale` event.
+- Depguard enforcement of the `runexec` / `mergequeue` package boundaries.
+
+### 2.2 Out of scope
+- The full daemon package decomposition (the ≥8-subsystem breakup) — that is a later work;
+  this spec carves the run-lifecycle + merge boundary only.
+- The agent-input channel itself — owned by [agent-input.md]; this spec CONSUMES its
+  `InputPort.SubmitInput` / `Ack` contract (§9).
+- The remote worker-resident execution interface — a later work depends on this spec's merge
+  queue but owns its own execution seam.
+- Interactive-operator-session input and the keeper/CLI paste carve-out ([agent-input.md]
+  AIS-012).
+- Terminal bead-transition ownership — the daemon (not this machine) owns close/reopen ledger
+  writes; this spec factors their invocation, it does not move ownership
+  ([beads-integration.md §4.4]).
+
+## 3. The run-lifecycle reactors
+
+### 3.1 Structure
+**RSM-001.** The run lifecycle MUST be expressed as two pure reactors in a package that MUST
+NOT import the flat `internal/daemon` package: a **Dispatch** machine (one instance per agent
+session) and a **Run** machine (one instance per bead run). Each reactor's `Step` MUST be a
+total function of `(state, event)` returning `(state, []action)` with no I/O, no clock reads,
+and no identifier minting; every timestamp in state MUST derive from an event's stamped `At`.
+
+**RSM-002.** A daemon **shell** (in `internal/daemon`) MUST own all effects: it samples I/O
+into events, executes actions via an effector, owns the ClockPort and the timer deadlines, and
+drives each reactor to a terminal. The former `beadRunOne` MUST become a thin driver that
+constructs the reactors and runs the shell loop.
+
+**RSM-003.** Every `(state, event)` pair MUST have a defined transition; pairs with no
+semantic effect MUST be explicit no-ops. Each reactor MUST reach exactly one terminal state per
+instance, and terminal states MUST have no outgoing transitions.
+
+### 3.2 The Dispatch machine
+**RSM-004.** The Dispatch machine MUST express one agent session as the states
+`Idle → Launching → AwaitingReady → Briefing → Working → {Completed | Exited | Stalled |
+ReadyTimeout→Failed | Failed | Aborted}`. A session launched under a completion-by-process-exit
+harness (no readiness handshake) MUST transition `Launching → Working` directly, skipping
+`AwaitingReady` and `Briefing`.
+
+**RSM-005.** In `AwaitingReady`, expiry of the `agent_ready` timer MUST transition to
+`ReadyTimeout` with an outgoing action set (kill + reap-timer + `agent_ready_timeout` emission)
+— it MUST NOT be a silent wait. Readiness MUST be signalled by an `agent_ready` event carrying
+the run identifier, on both first launch and resume.
+
+**RSM-006.** In `Working`, an `agent_heartbeat` event (daemon-goroutine liveness) MUST NOT be
+treated as agent progress. Only agent-derived signals — a run-attributed `agent_ready`, an
+observed worktree-HEAD advance, an agent-input ack (§9), or a tool/outcome event — MUST advance
+or sustain the working state.
+
+### 3.3 The Run machine
+**RSM-007.** The Run machine MUST express one bead run as the states
+`Resolving → Provisioning → Dispatching → [Guarding] → Gating → Merging → Finalizing →
+Done{closed | reopened}`, with the workflow-mode fork (review-loop, DOT cascade, single-shot)
+driving one or more Dispatch instances from the `Dispatching` state.
+
+**RSM-008.** The single-shot path's post-exit guards — the escaped-worktree check and the
+no-commit-guard — MUST run in a `Guarding` state between `Dispatching` and `Gating`, and MUST
+execute mutually exclusively with the merge critical section (§6). The review-loop and DOT
+paths MUST NOT enter `Guarding` (they do not run those guards).
+
+**RSM-009.** Every pre-launch failure (configuration, branching, remote setup, worktree
+creation) MUST route to `Finalizing(reopen)`; the terminal spine (§7), not scattered returns,
+MUST own every reopen/emit pairing.
+
+## 4. Run-lifecycle ports
+
+**RSM-010.** The run lifecycle MUST consume its daemon dependencies through consumer-owned
+narrow interfaces, declared beside their consumers and satisfied structurally by the daemon
+shell: **LedgerPort** (bead close/reopen/history-trim + intent log), **EmitterPort** (the event
+bus), **WorktreePort** (local and remote worktree create + base-sync), **MergePort** (the merge
+queue submit surface, §6), **LaunchPort** (launch-spec build, agent spawn, harness/adapter
+registries, hook store, agent-ready timeouts, sandbox), **ClockPort** (§5), **WorkerPort**
+(worker registry + remote code-sync), and **GatePort** (DOT gate-node evaluation).
+
+**RSM-011.** Only run-lifecycle fields MUST be promoted to ports. Cross-goroutine shared state
+(the run registry, the local-in-flight counter, the TID generator, the spawn semaphore) MUST
+remain shared by reference. Periodic-maintenance value fields MUST NOT be carried on the run
+dependency bundle. The bead-queue store MUST NOT become a run port; its single run-path use
+(the review-loop-failure budget) MUST be exposed as a one-method budget port, and the run
+outcome MUST be surfaced to the dispatch side as a terminal event rather than by direct store
+access.
+
+**RSM-012.** Port constructors MUST preserve the current nil-means-default behavior: a nil
+launch-spec builder, worktree factory, worker registry, hook store, harness registry, or gate
+registry MUST resolve to today's production default or documented no-op, with no behavior
+change.
+
+## 5. ClockPort and determinism
+
+**RSM-013.** The run lifecycle MUST read time only through `substrate.ClockPort`
+([replay-substrate.md]). A `ClockPort` dependency MUST be threaded through the run ports and the
+reactor shell, defaulting to the system clock when unset; tests MUST inject a fake clock. This
+seam MUST be the single time source for the run path: the existing mutable timeout variables,
+the per-subsystem `Now` function fields on the run path, and the wall-clock `context.WithTimeout`
+run-path deadlines MUST reconcile onto it.
+
+**RSM-014.** Every run-path wall-clock select-deadline (`agent_ready`, kill-reap, post-agent-ready
+hang, resume-ready, and the commit watchdog budgets) MUST be expressed as a reactor timer event
+(§3, §8), not a direct `time.After`. Interval reads (`Now`/`Since`) MUST use the ClockPort. No
+run-path blocking wait MUST read the wall clock directly.
+
+## 6. The merge queue
+
+**RSM-015.** The global merge mutex MUST be replaced by an explicit merge queue that serialises
+merges to a given target branch through a single owner. Submission MUST be serialised per target
+branch, MUST accept a submission whose context outlives the per-run context (shutdown-drain), and
+MUST impose a FIFO ordering among concurrent submissions.
+
+**RSM-016 (the critical section).** The merge queue MUST hold its exclusive section over only
+this window, per target branch: re-validate the fast-forward check against a freshly read target
+tip → advance the target ref (`git update-ref`) → the format-gate ref advance → push to origin
+(with its rollback) → restore the index → reset the working tree. The rebase, the `go build` /
+`go vet` gate, and the format run MUST execute OUTSIDE the exclusive section, speculatively, and
+MUST be re-validated inside it. A re-validation that loses the race MUST re-rebase and re-run the
+build/format gate before re-attempting the ref advance.
+
+**RSM-017.** No `go build`, `go vet`, `git push`, or `br sync` invocation MUST run while the
+merge queue's exclusive section is held. Conformance MUST be checkable by a test asserting the
+critical-section executor performs no build or network I/O.
+
+**RSM-018 (preserved exclusions).** The escaped-worktree check MUST remain mutually exclusive
+with the ref-advance→working-tree-reset window (via the same queue, as a read-only
+tree-quiescent slot). The remote base-sync + worktree-add MUST retain an equivalent exclusion
+against concurrent creators and against the main-checkout working-tree reset.
+
+**RSM-019.** Merge outcomes MUST preserve the current taxonomy and retry semantics: a retryable
+failure (rebase conflict, non-fast-forward, format failure) below its per-mode retry cap MUST
+re-prepare and re-attempt; an exhausted or fatal failure MUST emit a rejected outcome, reopen the
+bead, and emit a failed run terminal. Pushing to origin remains inside the exclusive section in
+this spec; relocating the push outside it is deferred to the remote-execution work.
+
+## 7. The terminal spine
+
+**RSM-020.** The launch→gate→merge→close logic MUST exist once, as the Run machine's
+`Gating → Merging → Finalizing` tail plus a single close-ladder effector — not as the four
+open-coded blocks and the duplicated close ladder it replaces. Every behavioral divergence among
+the former blocks MUST survive as an explicit parameter (summary label, gate-runner presence,
+pre-merge-sync flag, trailer-verdict and per-retry re-amend, merge-retry count, rebase-dropped
+fall-through, context selection, outcome-emission flag, needs-attention flag, and close/reopen
+reason templates). All observable summary and reason strings MUST be preserved.
+
+**RSM-021.** The exit-0 auto-close path MUST remain a distinct terminal entry (it is the
+terminal path for completion-by-process-exit harnesses that emit no stop-hook outcome), sharing
+the spine tail. The shutdown-drain path MUST remain a distinct terminal edge (background context,
+no gate, no pre-merge-sync, no outcome emission, direct run-completed emission, and its
+requeue-recovery reopen reason).
+
+**RSM-022.** The `runSucceeded` out-parameter MUST be eliminated: run success MUST be a terminal
+state of the Run machine, read by the shell after the reactor returns (for group advancement,
+staged-generator evaluation, and worktree-retention decisions). Terminal reopens MUST use a
+background context so a mid-merge-cancelled run's reopen does not silently no-op.
+
+**RSM-023.** The formal session-lifecycle machine ([handler-contract.md] HC-065) MUST be driven
+as a downstream projection via a lifecycle-transition action, preserving its transition emissions
+and its external readers; the Run machine MUST NOT require it.
+
+## 8. Bounded liveness (the resume-hang invariant)
+
+**RSM-INV-001 (resume liveness).** For every run `r` that emits `implementer_resumed(r, i)`,
+exactly one run-correlated terminal event (`review_loop_cycle_complete(r)` with outcome,
+`run_completed(r)`, or `run_failed(r)`) or failure-class event (`agent_ready_timeout(r)`,
+`agent_input_stale(r)`, or `run_stale(r)`) MUST follow within the bounded window (RSM-024). A run
+that produces neither is a conformance failure. **Silence is forbidden.**
+
+**RSM-INV-002 (structural non-wedge).** Every timer-fired transition in the Dispatch machine MUST
+land in a state with an outgoing action. No reachable `(state, timer-fired)` pair MUST be a
+silent no-op.
+
+**RSM-024 (the bound).** The resume window MUST be bounded by the composed timer stack, all
+ClockPort-timed:
+- the agent-input output-or-stale bound on the resume seed (§9), which resolves the seed
+  submission to an `Ack` or an `agent_input_stale` terminal within the agent-input bounded
+  window ([agent-input.md] AIS-INV-001; the window value is owned by the agent-input seam);
+- the ready sub-bound: resume to ready-or-fail MUST NOT exceed the effective agent-ready timeout
+  (the tight headline guarantee that replaces the former fixed 2-second resume grace);
+- the post-agent-ready progress bound (`post_ready_hang`); and
+- the absolute commit-watchdog ceiling.
+The former fixed resume grace MUST be removed; the resume-ready decision MUST dissolve into the
+ready-timer edge.
+
+**RSM-025 (fail-closed).** On a liveness-timeout edge the run MUST kill the agent and reopen the
+bead, riding the existing review-loop-failure budget for anti-thrash. The run MUST NOT silently
+proceed past an unconfirmed resume.
+
+**RSM-026 (`run_stale`).** The `run_stale` event is a run-lifecycle failure-class event owned by
+this spec. It MUST be emitted, run-attributed, when a run's liveness bound (RSM-024) elapses with
+no terminal or other failure-class event. (This spec is its normative home; prior citations to a
+non-existent event-model section are superseded.)
+
+## 9. Consuming the agent-input seam
+
+**RSM-027.** The run lifecycle MUST consume the agent-input contract ([agent-input.md]
+AIS-001, AIS-003, AIS-004, AIS-INV-001); it MUST NOT define its own input port, acceptance
+type, stale terminal, or input-ack timer. Specifically:
+- The reactor MUST request input via submit actions (a resume-seed submit and a brief submit),
+  each carrying an `InputRequest`; the shell effector MUST call the agent-input port
+  `InputPort.SubmitInput(ctx, InputRequest) (Ack, error)` ([agent-input.md] AIS-001).
+- The reactor MUST honour the three-valued acceptance class of `Ack` ([agent-input.md]
+  AIS-003): `Accepted` (positively confirmed) MUST advance the dispatch; `Rejected`
+  (protocol refusal) MUST route to the fail-closed liveness edge (RSM-025); `Degraded`
+  (written but not positively confirmed — the interim tmux/paste case) MUST NOT be treated as
+  confirmation — the reactor MUST continue to require an agent-derived readiness or progress
+  signal and MUST rely on the liveness bound (RSM-024) to terminate a Degraded submission that
+  never confirms.
+- The shell MUST convert `SubmitInput`'s synchronous `Ack` and the dual-delivered durable
+  `agent_input_acked` / `agent_input_stale` events ([agent-input.md] AIS-004) into reactor
+  events; correlation MUST use the `Ack`'s driver-internal monotonic input-sequence id, and a
+  duplicate for an already-correlated submission MUST be dropped by `Step`.
+- The bounded output-or-stale window and the acceptance definition belong to the agent-input
+  seam ([agent-input.md] AIS-INV-001); the reactor MUST NOT re-implement them.
+- The per-submission output-or-stale guarantee ([agent-input.md] AIS-INV-001) composes into
+  RSM-INV-001: a stale (or `Rejected`, or never-confirmed `Degraded`) resume seed MUST feed the
+  run's fail-closed liveness edge (RSM-025), never silence.
+
+## 10. Enforcement
+
+**RSM-028.** The reactor package and the merge-queue package MUST have depguard entries
+forbidding imports from the flat `internal/daemon` package, so run-lifecycle and merge logic
+cannot leak back into it.
+
+## 11. Conformance
+
+**RSM-029 (parity).** The extraction MUST preserve observable dispatch behavior — same events,
+same order, same bead transitions, same terminal outcomes — except the sanctioned divergences:
+the resume-hang liveness fix (the resume bound replaces the fixed grace; DOT back-edge resumes
+gain the bound; a formerly-hung run now terminates or emits a failure-class event), the
+run-identifier attribution on the synthetic ready, the shrunk escape-check window, and the
+absence of a transient ref advance during a build failure.
+
+**RSM-030 (tests).** Conformance MUST be demonstrated by: pure per-transition tests of both
+reactors (every row, including no-ops) and the structural properties (terminal exclusivity;
+RSM-INV-002); a finalizing replay checker, keyed per run, that flags any `implementer_resumed`
+with no terminal or failure-class event (RSM-INV-001) and any terminal-exclusivity breach; a
+fake-clock fault-injection test that stalls the agent on relaunch and asserts a terminal or
+failure-class signal within the virtual-time bound, never silence; the existing incident-pinned
+regression suite green per commit; and an out-of-band oracle (N=10 clean relaunch cycles plus a
+replay-log check that the seeded hung-run gap is flagged and absent post-fix). The state-machine
+path MUST meet the measured coverage floor from the coverage audit.
+
+## 12. Cross-references
+
+- [replay-substrate.md] — the generic reactor seam (`EventSource`/`Effector`/`Run`), `ClockPort`,
+  the fault-injection Twin, and the replay-checker harness this spec instantiates.
+- [session-keeper.md] — the first reactor instantiation and the template for RSM-INV-001 (its
+  SK-INV-005 / SK-015 bounded-liveness invariant).
+- [agent-input.md] — the `InputPort`/`Ack` seam this spec consumes (§9); AIS-001, AIS-003,
+  AIS-004, AIS-INV-001. This spec's run-lifecycle changes co-land with agent-input (a hard
+  dependency: agent-input introduces the `InputPort` that RSM-027 consumes).
+- [event-model.md] — the durable event registry; the run-lifecycle events named here
+  (`run_started`, `run_completed`, `run_failed`, `run_stale`, `implementer_resumed`,
+  `agent_ready`, `agent_ready_timeout`, `lifecycle_transition`) are consumed and, for `run_stale`,
+  normatively homed here (RSM-026).
+- [handler-contract.md] — the session-lifecycle machine (HC-065) driven as a projection (RSM-023).
+- [queue-model.md] — the bead-queue store, kept out of the run ports (RSM-011).
+- [beads-integration.md] — the daemon owns terminal bead transitions (§2.2).

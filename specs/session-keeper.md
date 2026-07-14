@@ -487,6 +487,7 @@ The only path that never sends `/clear` — the `AwaitingHandoff` `handoff_timeo
 ### 9.3 Co-references (read-only consumption)
 
 - **[operator-nfr.md §4.5]** — the N-1 readable schema-compatibility window applied to the four payloads (§6.6); no reverse dependency.
+- **[run-state-machine.md]** — RSM-INV-001 is the daemon peer of SK-INV-005.
 
 ## 10. Conformance
 

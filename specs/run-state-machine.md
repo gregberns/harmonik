@@ -91,7 +91,12 @@ harness (no readiness handshake) MUST transition `Launching → Working` directl
 **RSM-005.** In `AwaitingReady`, expiry of the `agent_ready` timer MUST transition to
 `ReadyTimeout` with an outgoing action set (kill + reap-timer + `agent_ready_timeout` emission)
 — it MUST NOT be a silent wait. Readiness MUST be signalled by an `agent_ready` event carrying
-the run identifier, on both first launch and resume.
+the run identifier, on both first launch and resume. The `agent_ready` timer is armed at the
+`Idle → Launching` entry and stays live across `Launching`; a hung launch that never yields a
+`launched` or `launch_failed` event (e.g. `tmux_new_window_timeout`) and lets that deadline
+expire in `Launching` MUST ride the SAME `ReadyTimeout` edge (kill + reap-timer +
+`agent_ready_timeout` emission), never a silent wait (RSM-INV-002). This closes the SR9
+silent-wedge on the launch phase as well as `AwaitingReady`.
 
 **RSM-006.** In `Working`, an `agent_heartbeat` event (daemon-goroutine liveness) MUST NOT be
 treated as agent progress. Only agent-derived signals — a run-attributed `agent_ready`, an

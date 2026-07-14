@@ -206,12 +206,12 @@ func stepDispatchLaunching(cfg DispatchConfig, s DispatchState, ev Event) (Dispa
 		if ev.Timer != TimerAgentReady {
 			return s, nil
 		}
-		// RSM-INV-002: the agent_ready deadline is armed at Idle→Launching entry
-		// and stays live through Launching. A hung launch (no EvLaunched/
-		// EvLaunchFailed — e.g. tmux_new_window_timeout) that lets the deadline
-		// expire here MUST NOT be a silent wait; it rides the SAME SR9 edge as
-		// AwaitingReady (kill + reap + agent_ready_timeout). Design §3 is silent
-		// on this Launching edge (thin-spot — flagged in the RT5/6 report).
+		// RSM-005 / RSM-INV-002: the agent_ready deadline is armed at
+		// Idle→Launching entry and stays live through Launching. A hung launch (no
+		// EvLaunched/EvLaunchFailed — e.g. tmux_new_window_timeout) that lets the
+		// deadline expire here MUST NOT be a silent wait; it rides the SAME SR9 edge
+		// as AwaitingReady (kill + reap + agent_ready_timeout). RSM-005 now names
+		// this Launching edge explicitly (carry-in (a), RT7 spec row).
 		return dispatchReadyTimeoutEdge(cfg, s)
 	default:
 		return s, nil

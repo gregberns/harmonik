@@ -19,10 +19,14 @@ package daemon
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/substrate"
+	"github.com/gregberns/harmonik/internal/workers"
 )
 
 // EmitterPort is the event-emission surface of the run shell. It is a type
@@ -134,4 +138,109 @@ func (g daemonGate) LookupGate(gateRef core.GateRef) (core.ControlPoint, bool, b
 // gatePort returns the production GatePort bound to deps.cpRegistry.
 func (deps *workLoopDeps) gatePort() GatePort {
 	return daemonGate{reg: deps.cpRegistry}
+}
+
+// WorktreePort creates the per-run worktree (local or on a remote worker) and
+// returns its absolute path plus a cleanup func. Its production nil-default
+// (deps.worktreeFactory == nil ⇒ productionWorktreeFactory for a local run, or
+// the remote SSHRunner factory when a worker is selected) is assembled per-run
+// inside beadRunOne where the remote-branch context is in scope; RT7 lifts that
+// assembly onto this port. Declared here as part of the RSM-010 boundary.
+type WorktreePort interface {
+	Create(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
+}
+
+// LaunchPort is the (wide) agent-launch surface: launch-spec build, agent spawn
+// (substrate), harness/adapter registries, hook-store outcome wait, brief
+// delivery, agent-ready timeouts, and sandbox. Every run mode uses the cluster
+// together (ports-design §6), so it is one port. Its production nil-defaulting
+// (nil launchSpecBuilder ⇒ routedLaunchSpecBuilder/buildClaudeLaunchSpec; nil
+// hookStore ⇒ skip WaitForOutcome; nil harnessRegistry ⇒ builder fallthrough)
+// is assembled per-run in beadRunOne today; RT7 lifts it onto this port.
+type LaunchPort interface {
+	// BuildSpec builds the handler LaunchSpec + artifacts for a run (the
+	// launchSpecBuilder surface).
+	BuildSpec(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error)
+}
+
+// BudgetPort is the one-method wrap of the queueStore review-loop-failure budget
+// mutation (RSM-011): the ONLY run-path queueStore use. It hides QueueStore from
+// the run path so the store does not become a run port.
+type BudgetPort interface {
+	// ChargeReviewLoopFailure increments the dispatched item's ReviewLoopFailures
+	// counter under LockForMutation and returns true when the retry-spend budget
+	// is now exhausted (>= queue.MaxReviewLoopFailures). Returns false when no
+	// queue surface is wired.
+	ChargeReviewLoopFailure(ctx context.Context, queueName string, queueID *string, groupIndex *int, itemIndex int, beadID core.BeadID) bool
+}
+
+// RunPorts is the behavioral-dependency bundle of the run shell (ports-design
+// §1). Narrow, structural. beadRunOne and the reviewloop/dot helpers reach their
+// daemon dependencies through this bundle rather than the raw workLoopDeps.
+//
+// Worktree and Launch are assembled per-run inside beadRunOne (they need the
+// resolved remote-branch context and the pre-built routed spec builder); the
+// deps-level runPorts constructor leaves them nil, and RT7 threads them.
+type RunPorts struct {
+	Ledger   LedgerPort
+	Emitter  EmitterPort
+	Worktree WorktreePort
+	Merge    MergePort
+	Launch   LaunchPort
+	Gate     GatePort
+	Clock    substrate.ClockPort
+}
+
+// RunEnv carries the immutable per-run values (no behavior) — the daemon-level
+// configuration plus the dispatched item's identity and overrides.
+type RunEnv struct {
+	ProjectDir   string
+	TargetBranch string
+	BrPath       string
+
+	ProtectBranches []string
+	AllowedRepos    []string
+
+	WorkflowModeDefault core.WorkflowMode
+	DefaultHarness      core.AgentType
+	ProjectCfg          ProjectConfig
+
+	RunID      core.RunID
+	BeadRecord core.BeadRecord
+
+	QueueName       string
+	QueueID         *string
+	QueueGroupIndex *int
+	QueueItemIndex  int
+
+	ItemWorkflowMode   string
+	ItemWorkflowRef    string
+	ItemTemplateParams map[string]string
+	ItemLocalOnly      bool
+	ItemWorkerTarget   string
+}
+
+// SharedHandles is the cross-goroutine state shared by reference (ports-design
+// §3): the run registry, the local-in-flight counter, the agent-spawn semaphore,
+// the worker registry, and the review-loop-failure budget port.
+type SharedHandles struct {
+	RunRegistry   *RunRegistry
+	LocalInFlight *atomic.Int32
+	AgentSpawnSem chan struct{}
+	Workers       *workers.Registry
+	Budget        BudgetPort
+}
+
+// runPorts assembles the deps-level RunPorts bundle. Ledger/Emitter/Merge/Gate
+// and the Clock are wired here; Worktree and Launch are left nil for per-run
+// assembly in beadRunOne (RT7). Byte-identical to reaching the same deps fields
+// directly.
+func (deps *workLoopDeps) runPorts() RunPorts {
+	return RunPorts{
+		Ledger:  deps.ledgerPort(),
+		Emitter: deps.emitterPort(),
+		Merge:   deps.mergePort(),
+		Gate:    deps.gatePort(),
+		Clock:   deps.clock,
+	}
 }

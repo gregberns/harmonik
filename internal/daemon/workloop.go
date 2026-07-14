@@ -3122,9 +3122,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if deps.clock == nil {
 		deps.clock = substrate.SystemClock{}
 	}
-	// RSM-010 MergePort: the merge exclusion-domain submit surface for this run.
-	// mport.Submit() is byte-identical to mport.Submit() (RSM-015).
-	mport := deps.mergePort()
+	// RSM-010: the run-lifecycle port bundle for this run. Reaching a dependency
+	// through rp.<Port> is byte-identical to the pre-port deps field access.
+	rp := deps.runPorts()
+	// mport.Submit() is the merge exclusion-domain submit surface (RSM-015).
+	mport := rp.Merge
 	beadID := beadRecord.BeadID
 
 	// hk-hs7ex: release the local slot on exit when the outer loop incremented
@@ -7641,7 +7643,7 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 // bead's parent epic just completed (hk-w6y70 C1). It is the single insertion
 // point replacing the seven raw emitBeadClosed call sites.
 func emitBeadClosedAndMaybeEpic(ctx context.Context, deps workLoopDeps, runID core.RunID, beadID core.BeadID) {
-	emitBeadClosed(ctx, deps.emitterPort(), runID, beadID)
+	emitBeadClosed(ctx, deps.runPorts().Emitter, runID, beadID)
 	maybeEmitEpicCompleted(ctx, deps, runID, beadID)
 }
 
@@ -7652,7 +7654,7 @@ func emitBeadClosedAndMaybeEpic(ctx context.Context, deps workLoopDeps, runID co
 //
 // Bead: hk-w6y70.
 func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.RunID, closedBeadID core.BeadID) {
-	ledger := deps.ledgerPort()
+	ledger := deps.runPorts().Ledger
 	// Step 1: ShowBead(closedBead) to find the parent via a parent-child edge.
 	// The closed bead's outgoing parent-child edge has FromBeadID == closedBead,
 	// ToBeadID == parent (per brcli/show.go: dependencies[] → outgoing edges).

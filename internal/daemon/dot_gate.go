@@ -115,7 +115,7 @@ func dispatchDotGateNode(
 	gateRef := core.GateRef(node.GateRef)
 
 	// Step 1: resolve gate_ref → ControlPoint via the GatePort (RSM-010).
-	cp, ok, registryLoaded := deps.gatePort().LookupGate(gateRef)
+	cp, ok, registryLoaded := deps.runPorts().Gate.LookupGate(gateRef)
 	// No registry → structural failure; no ControlPoint can be resolved.
 	if !registryLoaded {
 		return gateEvalFailureOutcome("no ControlPoint registry loaded in daemon"), nil

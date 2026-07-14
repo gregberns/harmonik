@@ -201,6 +201,24 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codex vertical MUST NOT import daemon" }
             - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "codex vertical MUST NOT import a sibling vertical (keeper)" }
 
+        # replay: the session-restart invariant-checking harness (codename:session-restart-substrate).
+        # Reads a recorded events.jsonl via eventbus.ScanAfter and decodes through the typed
+        # core registry (DispatchObservational / DecodePayloadStrict). Allowed edges: stdlib +
+        # core + eventbus + uuid + self-import (external test pattern). MUST NOT import a vertical
+        # (keeper) or the daemon — it is an offline consumer, not part of the live pipeline.
+        # Rationale: events-design.md §4 (EV-U3/EV-048); decisions D6.
+        replay:
+          files: ["**/internal/replay/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/replay"
+            - "github.com/google/uuid"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "replay MUST NOT import a vertical (keeper); it reads the recorded log offline" }
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "replay MUST NOT import daemon (offline consumer)" }
+
         # agentmanifest: leaf package loading .harmonik/agents/<type>/manifest.yaml.
         # Depends only on stdlib + yaml.v3. Self-import for external test pattern.
         agentmanifest:

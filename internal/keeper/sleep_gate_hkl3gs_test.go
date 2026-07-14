@@ -250,11 +250,12 @@ func TestCyclerMaybeRun_DeferredWhenSleeping(t *testing.T) {
 
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.CyclerConfig{
-		AgentName:  agent,
-		ProjectDir: projectDir,
-		TmuxTarget: "", // no real injection
-		ActPct:     80.0,
-		WarnPct:    70.0,
+		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
+		AgentName:           agent,
+		ProjectDir:          projectDir,
+		TmuxTarget:          "", // no real injection
+		ActPct:              80.0,
+		WarnPct:             70.0,
 		// Gate overrides to ensure all gates except sleeping pass.
 		IsManagedFn:       func(_, _ string) bool { return true },
 		CrispIdleFn:       func(_, _ string) bool { return true },
@@ -308,11 +309,12 @@ func TestCyclerMaybeRun_SleepingGateReachedWhenAwake(t *testing.T) {
 
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.CyclerConfig{
-		AgentName:  agent,
-		ProjectDir: projectDir,
-		TmuxTarget: "", // no real tmux; runCycle skips handoff injection
-		ActPct:     80.0,
-		WarnPct:    70.0,
+		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
+		AgentName:           agent,
+		ProjectDir:          projectDir,
+		TmuxTarget:          "", // no real tmux; runCycle skips handoff injection
+		ActPct:              80.0,
+		WarnPct:             70.0,
 		// All gates pass; session is NOT sleeping.
 		IsManagedFn:       func(_, _ string) bool { return true },
 		CrispIdleFn:       func(_, _ string) bool { return true },

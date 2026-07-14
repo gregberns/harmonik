@@ -7,6 +7,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -191,9 +192,22 @@ func TestStep_HandoffTimeout_FreshRecovers(t *testing.T) {
 	m.Step(Event{Kind: EvHandoffFreshSeen, CycleID: "cyc-step-005", Mtime: at.Add(time.Second), At: at.Add(cfg.HandoffTimeout)})
 	actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: "cyc-step-005", At: at.Add(cfg.HandoffTimeout)})
 
-	assertKinds(t, actions, []ActionKind{ActWriteJournal})
+	assertKinds(t, actions, []ActionKind{ActWriteJournal, ActEmit, ActArmTimer})
 	if actions[0].Journal.Phase != "confirmed" || actions[0].Journal.Reason != "handoff_timeout_recovered" {
 		t.Fatalf("journal = %+v; want confirmed/handoff_timeout_recovered", actions[0].Journal)
+	}
+	if actions[1].Type != core.EventTypeSessionKeeperHandoffWritten {
+		t.Fatalf("emit = %v; want handoff_written", actions[1].Type)
+	}
+	var hw core.SessionKeeperHandoffWrittenPayload
+	if err := json.Unmarshal(actions[1].Payload, &hw); err != nil {
+		t.Fatalf("unmarshal handoff_written: %v", err)
+	}
+	if !hw.Recovered || hw.HandoffMtime == "" || hw.Nonce != "" {
+		t.Fatalf("recovery payload = %+v; want recovered:true + handoff_mtime, no nonce", hw)
+	}
+	if actions[2].Timer != TimerModelDone || actions[2].D != cfg.ModelDoneTimeout {
+		t.Fatalf("armed timer = %v/%v; want model_done_timeout/%v", actions[2].Timer, actions[2].D, cfg.ModelDoneTimeout)
 	}
 	if st := m.State(); st.Phase != PhaseAwaitModelDone {
 		t.Fatalf("phase = %v; want AwaitModelDone", st.Phase)
@@ -213,38 +227,85 @@ func TestStep_FullHappyPath_ThroughAwaitModelDone(t *testing.T) {
 
 	m.Step(gaugeTickAt(at, "sess-1", "cyc-step-006"))
 	confirm := m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-step-006", At: at.Add(time.Second)})
-	assertKinds(t, confirm, []ActionKind{ActWriteJournal, ActCancelTimer})
+	assertKinds(t, confirm, []ActionKind{ActWriteJournal, ActEmit, ActCancelTimer, ActArmTimer})
 	if confirm[0].Journal.Phase != "confirmed" || confirm[0].Journal.Reason != "" {
 		t.Fatalf("confirm journal = %+v; want confirmed/\"\"", confirm[0].Journal)
+	}
+	if confirm[1].Type != core.EventTypeSessionKeeperHandoffWritten {
+		t.Fatalf("emit = %v; want handoff_written", confirm[1].Type)
+	}
+	var hw core.SessionKeeperHandoffWrittenPayload
+	if err := json.Unmarshal(confirm[1].Payload, &hw); err != nil {
+		t.Fatalf("unmarshal handoff_written: %v", err)
+	}
+	if hw.CycleID != "cyc-step-006" || hw.Nonce == "" || hw.Recovered {
+		t.Fatalf("handoff_written payload = %+v; want cycle_id + nonce, not recovered", hw)
+	}
+	if confirm[3].Timer != TimerModelDone {
+		t.Fatalf("armed timer = %v; want model_done_timeout", confirm[3].Timer)
 	}
 	if st := m.State(); st.Phase != PhaseAwaitModelDone {
 		t.Fatalf("phase after nonce = %v; want AwaitModelDone", st.Phase)
 	}
 
-	clearing := m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-006", SessionID: "sess-1", Source: "immediate", At: at.Add(2 * time.Second)})
+	clearing := m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-006", SessionID: "sess-1", Source: "idle_marker", At: at.Add(2 * time.Second)})
 	assertKinds(t, clearing, []ActionKind{
-		ActSetTmuxEnv, ActInjectClear, ActWriteJournal, ActArmTimer, ActArmTimer,
+		ActEmit, ActSetTmuxEnv, ActInjectClear, ActEmit, ActWriteJournal,
+		ActCancelTimer, ActArmTimer, ActArmTimer,
 	})
-	if clearing[2].Journal.Phase != "cleared" {
-		t.Fatalf("journal = %q; want cleared", clearing[2].Journal.Phase)
+	if clearing[0].Type != core.EventTypeSessionKeeperModelDone {
+		t.Fatalf("emit[0] = %v; want model_done", clearing[0].Type)
 	}
-	if clearing[3].Timer != TimerClearBackstop || clearing[4].Timer != TimerClearSettle {
-		t.Fatalf("armed timers = %v,%v; want clear_backstop,clear_settle", clearing[3].Timer, clearing[4].Timer)
+	var md core.SessionKeeperModelDonePayload
+	if err := json.Unmarshal(clearing[0].Payload, &md); err != nil {
+		t.Fatalf("unmarshal model_done: %v", err)
+	}
+	if md.Source != "idle_marker" || md.Degraded || md.CycleID != "cyc-step-006" {
+		t.Fatalf("model_done payload = %+v; want source=idle_marker, not degraded", md)
+	}
+	if clearing[3].Type != core.EventTypeSessionKeeperClearSent {
+		t.Fatalf("emit[3] = %v; want clear_sent", clearing[3].Type)
+	}
+	var cs core.SessionKeeperClearSentPayload
+	if err := json.Unmarshal(clearing[3].Payload, &cs); err != nil {
+		t.Fatalf("unmarshal clear_sent: %v", err)
+	}
+	if cs.Attempt != 1 || cs.CycleID != "cyc-step-006" {
+		t.Fatalf("clear_sent payload = %+v; want attempt:1", cs)
+	}
+	if clearing[4].Journal.Phase != "cleared" {
+		t.Fatalf("journal = %q; want cleared", clearing[4].Journal.Phase)
+	}
+	if clearing[5].Timer != TimerModelDone {
+		t.Fatalf("cancel timer = %v; want model_done_timeout", clearing[5].Timer)
+	}
+	if clearing[6].Timer != TimerClearBackstop || clearing[7].Timer != TimerClearSettle {
+		t.Fatalf("armed timers = %v,%v; want clear_backstop,clear_settle", clearing[6].Timer, clearing[7].Timer)
 	}
 
 	brief := m.Step(Event{Kind: EvSessionChanged, CycleID: "cyc-step-006", PrevSID: "sess-1", NewSID: "sess-2", At: at.Add(3 * time.Second)})
 	assertKinds(t, brief, []ActionKind{
-		ActSetManagedSession, ActCancelTimer, ActCancelTimer,
+		ActEmit, ActSetManagedSession, ActCancelTimer, ActCancelTimer,
 		ActInjectBrief, ActWriteJournal, ActWriteJournal, ActEmit,
 	})
-	if brief[0].SID != "sess-2" {
-		t.Fatalf("managed rebind SID = %q; want sess-2", brief[0].SID)
+	if brief[0].Type != core.EventTypeSessionKeeperNewSessionUp {
+		t.Fatalf("emit[0] = %v; want new_session_up", brief[0].Type)
 	}
-	if brief[4].Journal.Phase != "resumed" || brief[5].Journal.Phase != "complete" {
-		t.Fatalf("journal tail = %q,%q; want resumed,complete", brief[4].Journal.Phase, brief[5].Journal.Phase)
+	var nsu core.SessionKeeperNewSessionUpPayload
+	if err := json.Unmarshal(brief[0].Payload, &nsu); err != nil {
+		t.Fatalf("unmarshal new_session_up: %v", err)
 	}
-	if brief[6].Type != core.EventTypeSessionKeeperCycleComplete {
-		t.Fatalf("emit = %v; want cycle_complete", brief[6].Type)
+	if nsu.PrevSessionID != "sess-1" || nsu.NewSessionID != "sess-2" || !nsu.Valid() {
+		t.Fatalf("new_session_up payload = %+v; want prev=sess-1 new=sess-2 Valid", nsu)
+	}
+	if brief[1].SID != "sess-2" {
+		t.Fatalf("managed rebind SID = %q; want sess-2", brief[1].SID)
+	}
+	if brief[5].Journal.Phase != "resumed" || brief[6].Journal.Phase != "complete" {
+		t.Fatalf("journal tail = %q,%q; want resumed,complete", brief[5].Journal.Phase, brief[6].Journal.Phase)
+	}
+	if brief[7].Type != core.EventTypeSessionKeeperCycleComplete {
+		t.Fatalf("emit = %v; want cycle_complete", brief[7].Type)
 	}
 	st := m.State()
 	if st.Phase != PhaseIdle || st.LastTerminal != "complete" || st.LastFireWasAbort {
@@ -264,7 +325,7 @@ func TestStep_ClearBackstop_Unconfirmed(t *testing.T) {
 
 	m.Step(gaugeTickAt(at, "sess-1", "cyc-step-007"))
 	m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-step-007", At: at})
-	m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-007", SessionID: "sess-1", Source: "immediate", At: at})
+	m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-007", SessionID: "sess-1", Source: "idle_marker", At: at})
 
 	actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: "cyc-step-007", At: at.Add(cfg.ClearConfirmBackstop)})
 	assertKinds(t, actions, []ActionKind{
@@ -295,12 +356,23 @@ func TestStep_ClearSettle_RetriesThenExhausts(t *testing.T) {
 
 	m.Step(gaugeTickAt(at, "sess-1", "cyc-step-008"))
 	m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-step-008", At: at})
-	m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-008", SessionID: "sess-1", Source: "immediate", At: at})
+	m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-008", SessionID: "sess-1", Source: "idle_marker", At: at})
 
-	// Windows 1 and 2: retries left → defensive re-inject + re-arm.
+	// Windows 1 and 2: retries left → defensive re-inject (with the attempt-
+	// incremented clear_sent re-emit, SK-012) + re-arm.
 	for i := 0; i < 2; i++ {
 		actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: "cyc-step-008", At: at})
-		assertKinds(t, actions, []ActionKind{ActInjectClear, ActArmTimer})
+		assertKinds(t, actions, []ActionKind{ActInjectClear, ActEmit, ActArmTimer})
+		if actions[1].Type != core.EventTypeSessionKeeperClearSent {
+			t.Fatalf("re-inject emit = %v; want clear_sent", actions[1].Type)
+		}
+		var cs core.SessionKeeperClearSentPayload
+		if err := json.Unmarshal(actions[1].Payload, &cs); err != nil {
+			t.Fatalf("unmarshal clear_sent: %v", err)
+		}
+		if cs.Attempt != i+2 {
+			t.Fatalf("clear_sent attempt = %d; want %d", cs.Attempt, i+2)
+		}
 	}
 	// Window 3: attempt == retries → unconfirmed + brief.
 	actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: "cyc-step-008", At: at})
@@ -324,7 +396,7 @@ func TestStep_SubstrateRunRoundTrip(t *testing.T) {
 	src := substrate.NewSyntheticSource([]Event{
 		gaugeTickAt(at, "sess-1", "cyc-step-009"),
 		{Kind: EvNonceObserved, CycleID: "cyc-step-009", At: at.Add(time.Second)},
-		{Kind: EvModelDone, CycleID: "cyc-step-009", SessionID: "sess-1", Source: "immediate", At: at.Add(2 * time.Second)},
+		{Kind: EvModelDone, CycleID: "cyc-step-009", SessionID: "sess-1", Source: "idle_marker", At: at.Add(2 * time.Second)},
 		{Kind: EvSessionChanged, CycleID: "cyc-step-009", PrevSID: "sess-1", NewSID: "sess-2", At: at.Add(3 * time.Second)},
 	})
 	eff := &substrate.FakeEffector[Action]{}
@@ -336,12 +408,13 @@ func TestStep_SubstrateRunRoundTrip(t *testing.T) {
 	want := []ActionKind{
 		// cycle open
 		ActWriteJournal, ActEmit, ActSendEscape, ActInjectHandoffCmd, ActWriteJournal, ActArmTimer,
-		// confirm
-		ActWriteJournal, ActCancelTimer,
-		// clearing
-		ActSetTmuxEnv, ActInjectClear, ActWriteJournal, ActArmTimer, ActArmTimer,
-		// briefing terminal
-		ActSetManagedSession, ActCancelTimer, ActCancelTimer,
+		// confirm (journal + handoff_written + cancel + model-done arm, T8)
+		ActWriteJournal, ActEmit, ActCancelTimer, ActArmTimer,
+		// clearing (model_done + env + /clear + clear_sent + journal + cancel + arms)
+		ActEmit, ActSetTmuxEnv, ActInjectClear, ActEmit, ActWriteJournal,
+		ActCancelTimer, ActArmTimer, ActArmTimer,
+		// briefing terminal (new_session_up first, T8)
+		ActEmit, ActSetManagedSession, ActCancelTimer, ActCancelTimer,
 		ActInjectBrief, ActWriteJournal, ActWriteJournal, ActEmit,
 	}
 	if len(got) != len(want) {

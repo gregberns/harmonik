@@ -33,12 +33,15 @@ import (
 // loops (pollForNonce, waitForNewSessionIDWithBackstop — deleted) and the
 // backstop deadline are dissolved into exactly these event interleavings.
 //
-// T8 seams (do NOT implement here): the four §8.20 interior-event emissions
+// T8 (SK-012/013/014, SK-INV-002): the four §8.20 interior-event emissions
 // (session_keeper_handoff_written / model_done / clear_sent / new_session_up)
-// land at the transitions marked "T8:" below; the model-done signal detection
-// and the model_done_timeout arm land in the shell + the NonceObserved edge.
-// The AwaitModelDone state and TimerKindModelDone are structurally present so
-// T8 slots in without reshaping the machine.
+// are emitted at their named transitions (design §4), and SR4 — /clear MUST
+// NOT be injected before the cycle's model-done signal — is STRUCTURAL:
+// injectClearAction is the only ActInjectClear constructor and refuses until
+// CycleState.ModelDoneSource is recorded by the single AwaitModelDone →
+// Clearing edge. Model-done DETECTION (the .idle-mtime read, the transcript
+// backstop) is shell-side (shell.go pollOnce); the reactor only consumes the
+// resulting ModelDone / TimerFired(model_done_timeout) events.
 
 // Phase is the reactor's state-machine phase.
 type Phase string
@@ -75,10 +78,10 @@ const (
 // TimerKind names the four reactor timers (design §2c / SK-010).
 type TimerKind string
 
-// The four timer kinds. TimerModelDone is a T8 seam: the constant and its
-// fired-transition exist, but T7 never arms it (the shell synthesizes an
-// immediate ModelDone to preserve today's clear-right-after-confirm behavior;
-// SK-018's old-corpus synthesis rule is the same shape).
+// The four timer kinds. TimerModelDone is the SR4 fail-open liveness bound
+// (SK-014/SR9): armed on entry to AwaitModelDone; its firing proceeds to
+// Clearing anyway with model_done{source:"timeout", degraded:true}, so a lost
+// .idle write can never wedge the cycle.
 const (
 	TimerHandoffTimeout TimerKind = "handoff_timeout"
 	TimerModelDone      TimerKind = "model_done_timeout"
@@ -190,6 +193,21 @@ type CycleState struct {
 	ClearAttempt      int    // 1-based settle-window counter (hk-vdqe2)
 	PrevSID           string // session id being cleared
 
+	// NonceConfirmedAt is t_nonce (SK-014 / design §5): the instant the handoff
+	// was confirmed (NonceObserved, or the freshness-recovery TimerFired edge).
+	// The shell's AwaitModelDone detection compares the .idle marker mtime /
+	// assistant-transcript-turn timestamp against it — strict ≥, no CrispIdle
+	// tolerance. Event-`At`-sourced, so it stays pure and replay-deterministic.
+	NonceConfirmedAt time.Time
+
+	// ModelDoneSource records which model-done signal was processed for the
+	// in-flight cycle ("idle_marker" | "transcript_turn" | "timeout"); "" until
+	// then. SR4's structural anchor (SK-INV-002): injectClearAction — the ONLY
+	// ActInjectClear constructor — returns no action while this is empty, and
+	// it is set exclusively by stepEnterClearing, the single AwaitModelDone →
+	// Clearing edge.
+	ModelDoneSource string
+
 	// LastTerminal records the most recent terminal outcome ("complete" |
 	// "aborted"); informational (the phase returns to Idle).
 	LastTerminal string
@@ -278,12 +296,17 @@ func stepCycle(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 	case PhaseAwaitingHandoff:
 		switch ev.Kind {
 		case EvNonceObserved:
-			// Nonce confirmed → journal "confirmed" and await model-done.
-			// T8: Emit(session_keeper_handoff_written) + ArmTimer(model_done_timeout) land here.
+			// Nonce confirmed → journal "confirmed", emit handoff_written
+			// (SK-012, §4: the AwaitingHandoff → AwaitModelDone transition),
+			// and await the model-done signal (SR4) under the fail-open
+			// model_done_timeout bound (SK-014).
 			s.Phase = PhaseAwaitModelDone
+			s.NonceConfirmedAt = ev.At
 			return s, []Action{
 				journalAction(&s, "confirmed", ev.At),
+				emitHandoffWrittenAction(cfg, s.CycleID, s.PrevSID, false, time.Time{}),
 				{Kind: ActCancelTimer, Timer: TimerHandoffTimeout},
+				{Kind: ActArmTimer, Timer: TimerModelDone, D: cfg.ModelDoneTimeout},
 			}
 		case EvHandoffFreshSeen:
 			// The shell observed a fresh handoff (mtime ≥ injectedAt) at
@@ -299,12 +322,17 @@ func stepCycle(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 				// hk-fi78d recovery: the nonce echo never landed but the agent
 				// wrote a fresh, resumable handoff — proceed with /clear + brief.
 				// A responsive-enough pane is NOT a stuck-pane timeout: reset the
-				// escalation counter.
-				// T8: Emit(handoff_written{recovered:true, handoff_mtime}) lands here.
+				// escalation counter. handoff_written carries recovered:true +
+				// the sampled handoff mtime (SK-012 / 00b R1).
 				s.Reason = "handoff_timeout_recovered"
 				s.ConsecutiveHandoffTimeouts = 0
 				s.Phase = PhaseAwaitModelDone
-				return s, []Action{journalAction(&s, "confirmed", ev.At)}
+				s.NonceConfirmedAt = ev.At
+				return s, []Action{
+					journalAction(&s, "confirmed", ev.At),
+					emitHandoffWrittenAction(cfg, s.CycleID, s.PrevSID, true, s.HandoffFreshMtime),
+					{Kind: ActArmTimer, Timer: TimerModelDone, D: cfg.ModelDoneTimeout},
+				}
 			}
 			return stepAbort(cfg, s, ev)
 		default:
@@ -313,14 +341,18 @@ func stepCycle(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 	case PhaseAwaitModelDone:
 		switch ev.Kind {
 		case EvModelDone:
-			return stepEnterClearing(cfg, s, ev)
+			// The real model-done signal ("idle_marker" primary,
+			// "transcript_turn" backstop — detected shell-side, §5).
+			return stepEnterClearing(cfg, s, ev, ev.Source, false)
 		case EvTimerFired:
 			if ev.Timer != TimerModelDone {
 				return s, nil
 			}
-			// T8 seam: fail-open bound (SK-014) — proceed to Clearing anyway.
-			// T8 adds Emit(model_done{source:"timeout", degraded:true}).
-			return stepEnterClearing(cfg, s, ev)
+			// Fail-open liveness bound (SK-014 / SR9): proceed to Clearing
+			// anyway with model_done{source:"timeout", degraded:true} — the
+			// degraded mode IS the pre-rebuild clear-immediately behavior, so
+			// a lost .idle write can never wedge the cycle.
+			return stepEnterClearing(cfg, s, ev, "timeout", true)
 		default:
 			return s, nil
 		}
@@ -330,9 +362,10 @@ func stepCycle(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 			if ev.NewSID == "" || ev.NewSID == s.PrevSID {
 				return s, nil
 			}
-			// T8: Emit(session_keeper_new_session_up{prev,new}) lands here,
-			// immediately before the managed-session rebind.
+			// new_session_up (SK-012, §4: the Clearing → Briefing transition)
+			// is emitted immediately BEFORE the managed-session rebind.
 			actions := []Action{
+				emitNewSessionUpAction(cfg, s.CycleID, s.PrevSID, ev.NewSID),
 				{Kind: ActSetManagedSession, SID: ev.NewSID},
 				{Kind: ActCancelTimer, Timer: TimerClearSettle},
 				{Kind: ActCancelTimer, Timer: TimerClearBackstop},
@@ -352,8 +385,13 @@ func stepCycle(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 				s.ClearAttempt++
 				var actions []Action
 				if cfg.TmuxTarget != "" {
-					actions = append(actions, Action{Kind: ActInjectClear})
-					// T8: Emit(clear_sent{attempt:n}) lands here.
+					// Each defensive re-inject re-emits clear_sent with the
+					// incremented attempt (SK-012 — makes the unconfirmed
+					// forensics replayable).
+					if clear, ok := injectClearAction(&s); ok {
+						actions = append(actions, clear,
+							emitClearSentAction(cfg, s.CycleID, s.PrevSID, s.ClearAttempt))
+					}
 				}
 				actions = append(actions, Action{Kind: ActArmTimer, Timer: TimerClearSettle, D: cfg.ClearSettle})
 				return s, actions
@@ -713,6 +751,8 @@ func stepStartCycle(cfg *CyclerConfig, s CycleState, ev Event, cf *CtxFile) (Cyc
 	s.HandoffFreshMtime = time.Time{}
 	s.ClearAttempt = 0
 	s.PrevSID = cf.SessionID
+	s.NonceConfirmedAt = time.Time{}
+	s.ModelDoneSource = "" // SR4: /clear is unconstructible until model-done
 
 	actions := []Action{
 		// Journal "opened" BEFORE any injection. This is the ONE fatal journal
@@ -784,28 +824,54 @@ func stepAbort(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 	return s, actions
 }
 
-// stepEnterClearing is the AwaitModelDone → Clearing transition: set
-// HARMONIK_AGENT, inject /clear, journal "cleared", arm the settle + backstop
-// timers (hk-vdqe2 hard gate). T8: Emit(model_done{source}) and
-// Emit(clear_sent{attempt:1}) land here.
-func stepEnterClearing(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+// stepEnterClearing is the SINGLE AwaitModelDone → Clearing transition (the
+// only entry into Clearing): record the processed model-done signal, emit
+// model_done{source[, degraded]} (SK-012), set HARMONIK_AGENT, inject /clear
+// + emit clear_sent{attempt:1}, journal "cleared", cancel the model-done
+// bound, and arm the settle + backstop timers (hk-vdqe2 hard gate).
+func stepEnterClearing(cfg *CyclerConfig, s CycleState, ev Event, source string, degraded bool) (CycleState, []Action) {
 	s.Phase = PhaseClearing
 	s.ClearAttempt = 1
-	var actions []Action
+	// SR4 (SK-014 / SK-INV-002): record the model-done signal BEFORE any
+	// injectClearAction call — until this field is set, the /clear action
+	// cannot be constructed anywhere in the reactor.
+	s.ModelDoneSource = source
+	actions := []Action{emitModelDoneAction(cfg, s.CycleID, s.PrevSID, source, degraded)}
 	if cfg.TmuxTarget != "" {
 		actions = append(actions,
 			Action{Kind: ActSetTmuxEnv, Key: "HARMONIK_AGENT", Value: cfg.AgentName},
-			Action{Kind: ActInjectClear},
 		)
+		if clear, ok := injectClearAction(&s); ok {
+			actions = append(actions, clear,
+				emitClearSentAction(cfg, s.CycleID, s.PrevSID, s.ClearAttempt))
+		}
 	}
 	actions = append(actions,
 		journalAction(&s, "cleared", ev.At),
+		Action{Kind: ActCancelTimer, Timer: TimerModelDone},
 		// Backstop deadline first (pre-rebuild: computed at the wrapper entry,
 		// before the first settle window), then the per-attempt settle window.
 		Action{Kind: ActArmTimer, Timer: TimerClearBackstop, D: cfg.ClearConfirmBackstop},
 		Action{Kind: ActArmTimer, Timer: TimerClearSettle, D: cfg.ClearSettle},
 	)
 	return s, actions
+}
+
+// injectClearAction is the ONLY constructor of an ActInjectClear action in
+// the pure reactor. SR4 (SK-014, "/clear MUST NOT be injected before
+// model-done") is enforced STRUCTURALLY here, not by call-site discipline:
+// the action cannot be built while the in-flight cycle's ModelDoneSource is
+// unset, and ModelDoneSource is set exclusively by stepEnterClearing — the
+// single AwaitModelDone → Clearing edge, reached only by consuming EvModelDone
+// or the model_done_timeout fail-open TimerFired. A Step ordering that emits
+// InjectClear before processing a model-done event for the cycle is therefore
+// unrepresentable. (SR3 rides along: AwaitModelDone is reachable only via the
+// two handoff_written edges, and the abort path never clears — SK-INV-001.)
+func injectClearAction(s *CycleState) (Action, bool) {
+	if s.ModelDoneSource == "" {
+		return Action{}, false
+	}
+	return Action{Kind: ActInjectClear}, true
 }
 
 // stepClearUnconfirmed is the Clearing backstop-exhaustion outcome: emit
@@ -953,6 +1019,69 @@ func emitCycleRecoveredAction(cfg *CyclerConfig, cycleID, phaseAtCrash string) A
 		PhaseAtCrash: phaseAtCrash,
 	})
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleRecovered, Payload: raw}
+}
+
+// ─── The four §8.20 interior-event builders (T8, SK-012; payloads pinned by
+// 00b R1/R2). All carry agent_name + the REQUIRED cycle_id; the envelope
+// run_id stays absent (D7 — the shell's effector passes core.RunID{}).
+
+// emitHandoffWrittenAction builds session_keeper_handoff_written. On the
+// nonce path the confirmed nonce marker is carried for audit; on the
+// hk-fi78d freshness-recovery edge recovered:true + the sampled handoff
+// mtime (RFC3339) are carried instead (00b R1 union shape).
+func emitHandoffWrittenAction(cfg *CyclerConfig, cycleID, sessionID string, recovered bool, handoffMtime time.Time) Action {
+	p := core.SessionKeeperHandoffWrittenPayload{
+		AgentName: cfg.AgentName,
+		CycleID:   cycleID,
+		SessionID: sessionID,
+	}
+	if recovered {
+		p.Recovered = true
+		p.HandoffMtime = handoffMtime.UTC().Format(time.RFC3339)
+	} else {
+		p.Nonce = nonceMarker(cycleID)
+	}
+	raw, _ := json.Marshal(p)
+	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperHandoffWritten, Payload: raw}
+}
+
+// emitModelDoneAction builds session_keeper_model_done. Source is REQUIRED
+// ("idle_marker" | "transcript_turn" | "timeout"); degraded is true only on
+// the model_done_timeout fail-open path (omitempty per 00b R2).
+func emitModelDoneAction(cfg *CyclerConfig, cycleID, sessionID, source string, degraded bool) Action {
+	raw, _ := json.Marshal(core.SessionKeeperModelDonePayload{
+		AgentName: cfg.AgentName,
+		CycleID:   cycleID,
+		SessionID: sessionID,
+		Source:    source,
+		Degraded:  degraded,
+	})
+	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperModelDone, Payload: raw}
+}
+
+// emitClearSentAction builds session_keeper_clear_sent (attempt is 1-based;
+// defensive re-injects increment it).
+func emitClearSentAction(cfg *CyclerConfig, cycleID, sessionID string, attempt int) Action {
+	raw, _ := json.Marshal(core.SessionKeeperClearSentPayload{
+		AgentName: cfg.AgentName,
+		CycleID:   cycleID,
+		SessionID: sessionID,
+		Attempt:   attempt,
+	})
+	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperClearSent, Payload: raw}
+}
+
+// emitNewSessionUpAction builds session_keeper_new_session_up (prev/new both
+// REQUIRED and distinct — the pure SessionChanged guard already enforces the
+// != check, matching the payload's Valid()).
+func emitNewSessionUpAction(cfg *CyclerConfig, cycleID, prevSID, newSID string) Action {
+	raw, _ := json.Marshal(core.SessionKeeperNewSessionUpPayload{
+		AgentName:     cfg.AgentName,
+		CycleID:       cycleID,
+		PrevSessionID: prevSID,
+		NewSessionID:  newSID,
+	})
+	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperNewSessionUp, Payload: raw}
 }
 
 func emitPrecompactBlockedAction(cfg *CyclerConfig, sessionID, action string) Action {

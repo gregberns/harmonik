@@ -66,14 +66,15 @@ func TestCycler_RestartNowDropsGauge_NoSecondCycle(t *testing.T) {
 	alwaysNonce := func(_ string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil }
 
 	cfg := keeper.CyclerConfig{
-		AgentName:      agent,
-		ProjectDir:     t.TempDir(),
-		TmuxTarget:     "fake-pane",
-		ActAbsTokens:   200_000, // act threshold (abs-token path active: cf has Tokens+WindowSize)
-		WarnAbsTokens:  170_000,
-		HandoffTimeout: 200 * time.Millisecond,
-		ClearSettle:    20 * time.Millisecond,
-		PollInterval:   5 * time.Millisecond,
+		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
+		AgentName:           agent,
+		ProjectDir:          t.TempDir(),
+		TmuxTarget:          "fake-pane",
+		ActAbsTokens:        200_000, // act threshold (abs-token path active: cf has Tokens+WindowSize)
+		WarnAbsTokens:       170_000,
+		HandoffTimeout:      200 * time.Millisecond,
+		ClearSettle:         20 * time.Millisecond,
+		PollInterval:        5 * time.Millisecond,
 		// This test's gauge fake never rotates the session_id (it models a
 		// same-session restart-now, not a /clear-confirmation race), so the
 		// hk-vdqe2 hard-gate retry loop would otherwise keep re-injecting /clear

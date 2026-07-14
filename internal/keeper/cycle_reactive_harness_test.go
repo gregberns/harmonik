@@ -343,6 +343,10 @@ func newReactiveCyclerWithBackstop(
 			*managedSet = sid
 			return nil
 		},
+		// Stop hook wired and freshly fired (T8, SK-014): ModelDone{idle_marker}
+		// lands on the first AwaitModelDone detection tick, preserving the
+		// pre-T8 clear-right-after-confirm scenario cadence.
+		IdleMarkerModTimeFn: idleMarkerFreshNow,
 	}
 	return keeper.NewCycler(cfg, em)
 }

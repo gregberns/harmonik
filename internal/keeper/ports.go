@@ -75,6 +75,17 @@ type GaugePort interface {
 	// Snapshot performs the one gate-input read-burst per tick; the gate ladder
 	// reads ONLY the returned value, never a port.
 	Snapshot(sessionID string) GateSnapshot
+	// IdleMarkerModTime reports the Stop-hook .idle marker's mtime and whether
+	// it exists — the PRIMARY model-done source (T8, SK-014 / design §5). The
+	// shell reads it on AwaitModelDone detection ticks; the first mtime ≥
+	// t_nonce (strict, no crispIdleTolerance) is ModelDone{source:"idle_marker"}.
+	IdleMarkerModTime() (time.Time, bool)
+	// LastAssistantTurn reports the most recent real assistant transcript turn
+	// for the session — the model-done BACKSTOP source (SK-014) for agents
+	// whose Stop hook is not wired: a turn timestamp ≥ t_nonce is
+	// ModelDone{source:"transcript_turn"}. Unlike Snapshot's Gate-5e read this
+	// is NOT gated on PostAnswerGrace — model-done detection needs it always.
+	LastAssistantTurn(sessionID string) (time.Time, bool)
 }
 
 // HandoffPort is the handoff-file + cycle-journal filesystem surface. The
@@ -193,6 +204,22 @@ func (g fnGauge) Snapshot(sessionID string) GateSnapshot {
 		}
 	}
 	return s
+}
+
+// IdleMarkerModTime delegates to the (defaulted) IdleMarkerModTimeFn — the
+// os.Stat of .harmonik/keeper/<agent>.idle in production.
+func (g fnGauge) IdleMarkerModTime() (time.Time, bool) {
+	return g.cfg.IdleMarkerModTimeFn(g.cfg.ProjectDir, g.cfg.AgentName)
+}
+
+// LastAssistantTurn tail-scans the session transcript for the most recent
+// real assistant turn (the SK-014 backstop). Empty sessionID → no transcript
+// to scan (zero, false).
+func (g fnGauge) LastAssistantTurn(sessionID string) (time.Time, bool) {
+	if sessionID == "" {
+		return time.Time{}, false
+	}
+	return g.cfg.recentTurnFn()(g.cfg.resolvedTranscriptDir(), sessionID, "assistant")
 }
 
 // fnHandoff adapts the handoff-file + journal fn-fields to HandoffPort. Paths

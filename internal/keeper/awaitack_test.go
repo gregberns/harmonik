@@ -67,8 +67,8 @@ func fakeClock(t0 time.Time, step time.Duration) substrate.ClockPort {
 // and NewTicker is unused by AwaitAck.
 type steppingClock struct{ now func() time.Time }
 
-func (s steppingClock) Now() time.Time                    { return s.now() }
-func (s steppingClock) Since(t time.Time) time.Duration   { return s.now().Sub(t) }
+func (s steppingClock) Now() time.Time                  { return s.now() }
+func (s steppingClock) Since(t time.Time) time.Duration { return s.now().Sub(t) }
 func (s steppingClock) NewTicker(d time.Duration) substrate.Ticker {
 	return substrate.SystemClock{}.NewTicker(d)
 }

@@ -43,7 +43,20 @@ func (c *Cycler) execute(ctx context.Context, a Action) error {
 			// all other journal writes were `_ =` best-effort
 		}
 	case ActEmit:
-		_ = c.emitter.EmitWithRunID(ctx, core.RunID{}, a.Type, a.Payload) //nolint:errcheck
+		if err := c.emitter.EmitWithRunID(ctx, core.RunID{}, a.Type, a.Payload); err != nil {
+			// D9 / SK-013: emit failures for the four §8.20 interior events
+			// MUST NOT be silently swallowed — log, non-fatal (O-class: no
+			// retry, no block; the failure just becomes observable). Every
+			// other keeper emit keeps the pre-rebuild best-effort discard.
+			switch a.Type {
+			case core.EventTypeSessionKeeperHandoffWritten,
+				core.EventTypeSessionKeeperModelDone,
+				core.EventTypeSessionKeeperClearSent,
+				core.EventTypeSessionKeeperNewSessionUp:
+				slog.WarnContext(ctx, "keeper: interior event emit failed",
+					"agent", c.cfg.AgentName, "type", string(a.Type), "err", err)
+			}
+		}
 	case ActTruncateHandoff:
 		_ = c.handoff.TruncateHandoff() //nolint:errcheck // non-fatal; poll fails gracefully
 	case ActSendEscape:
@@ -168,25 +181,14 @@ func (c *Cycler) runEntry(ctx context.Context, ev Event) error {
 //     ctx.Done() selects hit (handoff wait → handoff_timeout with the
 //     freshness sample; clear wait → the backstop's unconfirmed path).
 //
-// AwaitModelDone is a T7 pass-through: the shell synthesizes an immediate
-// ModelDone so /clear fires right after confirmation, byte-identical to
-// today. T8 replaces this synthesis with the real .idle/transcript detection
-// and the model_done_timeout arm (SK-014); SK-018's old-corpus synthesis
-// keeps replay goldens identical to this exact behavior.
+// AwaitModelDone (T8, SK-014) is a real detection phase like the other two:
+// pollOnce reads the .idle marker (primary) and the assistant transcript turn
+// (backstop) against t_nonce, and the armed model_done_timeout fails open to
+// Clearing degraded. SK-018's old-corpus ModelDone synthesis (measurement
+// wave) keeps pre-rebuild replay goldens on the clear-right-after-confirm
+// shape this phase used to pass through.
 func (c *Cycler) drive(ctx context.Context) error {
 	for c.machine.InCycle() {
-		if c.machine.State().Phase == PhaseAwaitModelDone {
-			st := c.machine.State()
-			_ = c.feed(ctx, Event{ //nolint:errcheck // no fatal actions on this edge
-				Kind:      EvModelDone,
-				At:        c.cfg.Clock.Now(),
-				CycleID:   st.CycleID,
-				SessionID: st.PrevSID,
-				Source:    "immediate", // T7 synthetic; T8 wires idle_marker/transcript_turn/timeout
-			})
-			continue
-		}
-
 		ticker := c.cfg.Clock.NewTicker(c.cfg.PollInterval)
 		// Punctual deadline wake: arm a dedicated ticker at the nearest armed
 		// deadline so its expiry is observed on time even when the detection
@@ -200,8 +202,7 @@ func (c *Cycler) drive(ctx context.Context) error {
 			deadlineC = deadlineTicker.C()
 		}
 		c.timersArmed = false
-		for c.machine.InCycle() && !c.timersArmed &&
-			c.machine.State().Phase != PhaseAwaitModelDone {
+		for c.machine.InCycle() && !c.timersArmed {
 			select {
 			case <-ctx.Done():
 				c.fireOnCancel(ctx)
@@ -257,6 +258,36 @@ func (c *Cycler) pollOnce(ctx context.Context) {
 		if err == nil && strings.Contains(content, nonceMarker(st.CycleID)) {
 			_ = c.feed(ctx, Event{Kind: EvNonceObserved, CycleID: st.CycleID, At: at}) //nolint:errcheck
 		}
+	case PhaseAwaitModelDone:
+		if dl, ok := c.timers[TimerModelDone]; ok && !at.Before(dl) {
+			// Fail-open bound (SK-014/SR9): the reactor proceeds to Clearing
+			// degraded; never silence.
+			delete(c.timers, TimerModelDone)
+			_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerModelDone, CycleID: st.CycleID, At: at}) //nolint:errcheck
+			return
+		}
+		// Primary source: the Stop-hook .idle marker. The first
+		// mtime(.idle) ≥ t_nonce after handoff confirmation means the model
+		// reached an await-input boundary AFTER the turn that wrote the
+		// handoff. STRICT compare against the nonce instant — no
+		// crispIdleTolerance fudge (that tolerance discounts passive .ctx
+		// repaints, irrelevant against t_nonce). SK-014 / design §5.
+		if mt, ok := c.gauge.IdleMarkerModTime(); ok && !mt.Before(st.NonceConfirmedAt) {
+			_ = c.feed(ctx, Event{ //nolint:errcheck
+				Kind: EvModelDone, CycleID: st.CycleID,
+				SessionID: st.PrevSID, Source: "idle_marker", At: at,
+			})
+			return
+		}
+		// Backstop source: a real assistant transcript turn at/after t_nonce
+		// (agents whose Stop hook isn't wired). Heavier (JSONL tail scan);
+		// consulted only when the .idle read yields nothing.
+		if tt, ok := c.gauge.LastAssistantTurn(st.PrevSID); ok && !tt.Before(st.NonceConfirmedAt) {
+			_ = c.feed(ctx, Event{ //nolint:errcheck
+				Kind: EvModelDone, CycleID: st.CycleID,
+				SessionID: st.PrevSID, Source: "transcript_turn", At: at,
+			})
+		}
 	case PhaseClearing:
 		if dl, ok := c.timers[TimerClearSettle]; ok && !at.Before(dl) {
 			// The wall-clock backstop is consulted at settle-window ends,
@@ -292,6 +323,12 @@ func (c *Cycler) fireOnCancel(ctx context.Context) {
 		delete(c.timers, TimerHandoffTimeout)
 		c.sampleHandoffFreshness(ctx, st, at)
 		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: st.CycleID, At: at}) //nolint:errcheck
+	case PhaseAwaitModelDone:
+		// Cancellation maps onto the fail-open timeout edge (SK-014/SR9): the
+		// handoff is confirmed, so the cycle proceeds to Clearing degraded
+		// rather than stranding a written handoff (never silence).
+		delete(c.timers, TimerModelDone)
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerModelDone, CycleID: st.CycleID, At: at}) //nolint:errcheck
 	case PhaseClearing:
 		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: st.CycleID, At: at}) //nolint:errcheck
 	default:

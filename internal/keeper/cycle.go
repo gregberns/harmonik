@@ -80,6 +80,15 @@ type CyclerConfig struct {
 	ClearConfirmBackstop time.Duration
 	ClearConfirmRetries  int
 
+	// ModelDoneTimeout is the SR4 fail-open liveness bound (SK-014 / D12): the
+	// maximum wait in AwaitModelDone for the model-done signal (.idle-marker
+	// mtime ≥ t_nonce primary; assistant-transcript-turn backstop) after the
+	// handoff is confirmed, before the reactor proceeds to Clearing anyway with
+	// model_done{source:"timeout", degraded:true}. Must stay strictly less than
+	// ClearConfirmBackstop (150s) so the SR4 wait cannot dominate the SR9
+	// liveness budget. Zero → DefaultModelDoneTimeout (60s).
+	ModelDoneTimeout time.Duration
+
 	// Clock is the ClockPort — the determinism port for all cycle-timing reads
 	// (SK-008/SK-R3, substrate D4; keeper requires the type by reference from
 	// internal/substrate). Nil → substrate.SystemClock{} (production wall
@@ -111,8 +120,15 @@ type CyclerConfig struct {
 	// recovery path (hk-fi78d) to decide whether the agent actually WROTE a fresh
 	// handoff despite the nonce echo never landing — in which case the brief
 	// injection must still survive rather than blindly aborting before /clear.
-	HandoffModTimeFn         func(path string) (time.Time, bool)
-	TruncateHandoffFn        func(path string) error
+	HandoffModTimeFn  func(path string) (time.Time, bool)
+	TruncateHandoffFn func(path string) error
+	// IdleMarkerModTimeFn reports the Stop-hook .idle marker's mtime and whether
+	// it exists — the PRIMARY model-done source (SK-014): in AwaitModelDone the
+	// shell reads it each detection tick and the first mtime ≥ t_nonce (the
+	// nonce-confirmation instant, strict compare, NO crispIdleTolerance) yields
+	// ModelDone{source:"idle_marker"}. Nil → defaultIdleMarkerModTime (os.Stat
+	// on .harmonik/keeper/<agent>.idle).
+	IdleMarkerModTimeFn      func(projectDir, agentName string) (time.Time, bool)
 	InjectFn                 func(ctx context.Context, target, text string) error
 	ReadGaugeFn              func(projectDir, agentName string) (*CtxFile, time.Time, error)
 	CrispIdleFn              func(projectDir, agentName string) bool
@@ -336,6 +352,9 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.ClearConfirmRetries <= 0 {
 		c.ClearConfirmRetries = DefaultClearConfirmRetries
 	}
+	if c.ModelDoneTimeout <= 0 {
+		c.ModelDoneTimeout = DefaultModelDoneTimeout
+	}
 	if c.Clock == nil {
 		c.Clock = substrate.SystemClock{}
 	}
@@ -356,6 +375,9 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.TruncateHandoffFn == nil {
 		c.TruncateHandoffFn = defaultTruncateHandoff
+	}
+	if c.IdleMarkerModTimeFn == nil {
+		c.IdleMarkerModTimeFn = defaultIdleMarkerModTime
 	}
 	if c.InjectFn == nil {
 		// Bind the production injector to the cycle Clock so the settle/retry
@@ -492,6 +514,18 @@ func defaultReadHandoff(path string) (string, error) {
 // os.Stat. A missing/unreadable file returns (zero, false). Refs: hk-fi78d.
 func defaultHandoffModTime(path string) (time.Time, bool) {
 	fi, err := os.Stat(path) //nolint:gosec // G304: path is operator-controlled projectDir + agentName
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
+}
+
+// defaultIdleMarkerModTime reports the Stop-hook .idle marker's mtime and
+// existence via os.Stat — the production primary model-done source (SK-014).
+// A missing/unreadable marker returns (zero, false): the shell then falls to
+// the transcript backstop and, ultimately, the model_done_timeout fail-open.
+func defaultIdleMarkerModTime(projectDir, agent string) (time.Time, bool) {
+	fi, err := os.Stat(idleMarkerPath(projectDir, agent))
 	if err != nil {
 		return time.Time{}, false
 	}

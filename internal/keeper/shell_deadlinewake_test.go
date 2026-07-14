@@ -100,16 +100,17 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 	)
 
 	cfg := keeper.CyclerConfig{
-		AgentName:          agent,
-		ProjectDir:         t.TempDir(),
-		TmuxTarget:         "fake-pane",
-		ActPct:             90.0,
-		WarnPct:            80.0,
-		ForceActPct:        95.0,
-		ForceRetryInterval: forceRetryInterval,
-		HandoffTimeout:     30 * time.Millisecond,
-		ClearSettle:        10 * time.Millisecond,
-		PollInterval:       pollInterval,
+		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
+		AgentName:           agent,
+		ProjectDir:          t.TempDir(),
+		TmuxTarget:          "fake-pane",
+		ActPct:              90.0,
+		WarnPct:             80.0,
+		ForceActPct:         95.0,
+		ForceRetryInterval:  forceRetryInterval,
+		HandoffTimeout:      30 * time.Millisecond,
+		ClearSettle:         10 * time.Millisecond,
+		PollInterval:        pollInterval,
 		// First detection tick withheld until AFTER ForceRetryInterval: on the
 		// pre-fix drive loop the handoff timeout is then detected only at
 		// ~200ms, call-1's wall time crosses 150ms, and call-2 wrongly fires.

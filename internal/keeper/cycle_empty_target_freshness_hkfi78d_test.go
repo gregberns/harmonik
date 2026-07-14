@@ -44,16 +44,17 @@ func TestCycler_EmptyTarget_StaleHandoff_Aborts(t *testing.T) {
 	}
 
 	cfg := keeper.CyclerConfig{
-		AgentName:      agent,
-		ProjectDir:     t.TempDir(),
-		TmuxTarget:     "", // the crux: no live tmux session → no injection
-		ActPct:         90.0,
-		WarnPct:        80.0,
-		HandoffTimeout: 60 * time.Millisecond,
-		ClearSettle:    30 * time.Millisecond,
-		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return true },
+		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
+		AgentName:           agent,
+		ProjectDir:          t.TempDir(),
+		TmuxTarget:          "", // the crux: no live tmux session → no injection
+		ActPct:              90.0,
+		WarnPct:             80.0,
+		HandoffTimeout:      60 * time.Millisecond,
+		ClearSettle:         30 * time.Millisecond,
+		PollInterval:        10 * time.Millisecond,
+		CycleIDGen:          func() string { return cycleID },
+		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},

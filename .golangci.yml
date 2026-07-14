@@ -226,6 +226,27 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "keepertwin MUST NOT import a sibling vertical (codex)" }
             - { pkg: "github.com/gregberns/harmonik/internal/codexdigitaltwin", desc: "keepertwin MUST NOT import a sibling vertical (codex)" }
 
+        # keepertest: the keeper vertical's L0–L3 replay test tiers (T10,
+        # codename:session-restart-substrate; measurement-design §3; RS-017/018).
+        # Test-only package (external keepertest_test): corpus goldens → keepertwin
+        # Twin → pure keeper reactor → substrate doubles / bridge sink, with the
+        # recorded stream decoded via internal/replay. Zero-token, offline.
+        # Deny: daemon and the codex vertical.
+        keepertest:
+          files: ["**/internal/keepertest/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/keeper"
+            - "github.com/gregberns/harmonik/internal/keepertwin"
+            - "github.com/gregberns/harmonik/internal/replay"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/google/uuid"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "keepertest MUST NOT import daemon (zero-token offline tiers)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "keepertest MUST NOT import a sibling vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexdigitaltwin", desc: "keepertest MUST NOT import a sibling vertical (codex)" }
+
         # replay: the session-restart invariant-checking harness (codename:session-restart-substrate).
         # Reads a recorded events.jsonl via eventbus.ScanAfter and decodes through the typed
         # core registry (DispatchObservational / DecodePayloadStrict). Allowed edges: stdlib +

@@ -133,6 +133,28 @@ capture-fixtures:  ## Capture new codex corpus (CODEX_LIVE=1 required; deliberat
 	CODEX_LIVE=1 go test -timeout 120s -count=1 -v -run TestL3_ ./internal/codextest/...
 
 # ---------------------------------------------------------------------------
+# Keeper replay test taxonomy (T10; session-restart-substrate)
+# Four tiers: L0 unit / L1 contract / L2 integration / L3 live, mirroring the
+# codex pair (measurement-design §3; RS-017/018/019).
+# ---------------------------------------------------------------------------
+
+# test-keeper-l012: run L0+L1+L2 keeper taxonomy tests + the corpus drift
+# canary. KEEPER_LIVE=0 (default) — corpus-driven, zero-token, no live pane.
+# GATE: must be green before any keeper cycle change deploys.
+.PHONY: test-keeper-l012
+test-keeper-l012:  ## Keeper replay L0/L1/L2 gate (KEEPER_LIVE=0; corpus-driven)
+	go test -count=1 ./internal/keepertest/... ./internal/keepertwin/... ./internal/keeper/...
+
+# test-keeper-live: run the L3 one-cycle tmux smoke against a REAL tmux pane.
+# Requires: KEEPER_LIVE=1, tmux on PATH. The pane runs a bare shell (no model,
+# no daemon). No re-capture target exists (unlike codex capture-fixtures): the
+# corpus source is the frozen baseline log — scripts/extract-keeper-corpus.py
+# is a deterministic rebuild, not a token-capped capture.
+.PHONY: test-keeper-live
+test-keeper-live:  ## Keeper L3 live gate (KEEPER_LIVE=1 required; one-cycle tmux smoke)
+	KEEPER_LIVE=1 go test -timeout 180s -count=1 -run TestL3_ ./internal/keepertest/...
+
+# ---------------------------------------------------------------------------
 # Twin-binary targets
 # ---------------------------------------------------------------------------
 

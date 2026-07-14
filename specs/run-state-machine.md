@@ -121,7 +121,9 @@ shell: **LedgerPort** (bead close/reopen/history-trim + intent log), **EmitterPo
 bus), **WorktreePort** (local and remote worktree create + base-sync), **MergePort** (the merge
 queue submit surface, §6), **LaunchPort** (launch-spec build, agent spawn, harness/adapter
 registries, hook store, agent-ready timeouts, sandbox), **ClockPort** (§5), **WorkerPort**
-(worker registry + remote code-sync), and **GatePort** (DOT gate-node evaluation).
+(worker registry + remote code-sync — **M4-deferred**: the `runner != nil` execution seam it
+collapses is an M4/C1 concern, so M3 implements the other seven ports and leaves WorkerPort's
+extraction to the M4 execution-seam collapse), and **GatePort** (DOT gate-node evaluation).
 
 **RSM-011.** Only run-lifecycle fields MUST be promoted to ports. Cross-goroutine shared state
 (the run registry, the local-in-flight counter, the TID generator, the spawn semaphore) MUST

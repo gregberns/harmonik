@@ -7649,7 +7649,7 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 // bead's parent epic just completed (hk-w6y70 C1). It is the single insertion
 // point replacing the seven raw emitBeadClosed call sites.
 func emitBeadClosedAndMaybeEpic(ctx context.Context, deps workLoopDeps, runID core.RunID, beadID core.BeadID) {
-	emitBeadClosed(ctx, deps.bus, runID, beadID)
+	emitBeadClosed(ctx, deps.emitterPort(), runID, beadID)
 	maybeEmitEpicCompleted(ctx, deps, runID, beadID)
 }
 
@@ -7660,10 +7660,11 @@ func emitBeadClosedAndMaybeEpic(ctx context.Context, deps workLoopDeps, runID co
 //
 // Bead: hk-w6y70.
 func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.RunID, closedBeadID core.BeadID) {
+	ledger := deps.ledgerPort()
 	// Step 1: ShowBead(closedBead) to find the parent via a parent-child edge.
 	// The closed bead's outgoing parent-child edge has FromBeadID == closedBead,
 	// ToBeadID == parent (per brcli/show.go: dependencies[] → outgoing edges).
-	closedRecord, err := deps.brAdapter.ShowBead(ctx, closedBeadID)
+	closedRecord, err := ledger.ShowBead(ctx, closedBeadID)
 	if err != nil {
 		return
 	}
@@ -7683,7 +7684,7 @@ func maybeEmitEpicCompleted(ctx context.Context, deps workLoopDeps, runID core.R
 	// Step 2: ShowBead(parent) to enumerate all children and check their statuses.
 	// Incoming parent-child edges on the parent have ToBeadID == parent,
 	// FromBeadID == child (per brcli/show.go: dependents[] → incoming edges).
-	parentRecord, err := deps.brAdapter.ShowBead(ctx, parentID)
+	parentRecord, err := ledger.ShowBead(ctx, parentID)
 	if err != nil {
 		return
 	}

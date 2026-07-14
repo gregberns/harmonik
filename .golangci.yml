@@ -498,6 +498,26 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "mergeq MUST NOT import daemon (leaf exclusion domain; daemon drives it)" }
 
+        # runexec: the two pure run-lifecycle reactors (Dispatch + Run machines,
+        # RSM-001/028, codename:run-state-machine). Trimmed leaf allow-list
+        # ($gostd + core + substrate + self, design 00b R8): core supplies the
+        # event-type constants the ActEmit actions carry; substrate supplies the
+        # ClockPort determinism seam + the generic Run/EventSource/Effector the
+        # reactors are driven by. The daemon shell (runshell.go) threads its
+        # effector IN — direction is daemon -> runexec; runexec MUST NOT import
+        # daemon back (RSM-028). NEW rule applied per the "applied per carve"
+        # pattern (track-c-enforcement.md §2.2).
+        # Rationale: specs/run-state-machine.md; runexec-design §0.
+        runexec:
+          files: ["**/internal/runexec/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/runexec"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runexec MUST NOT import daemon (RSM-028; pure reactor leaf)" }
+
         daemon:
           files: ["**/internal/daemon/**"]
           allow:

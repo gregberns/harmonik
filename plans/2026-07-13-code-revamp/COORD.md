@@ -32,6 +32,25 @@
 
 --- LOG ---
 
+### c010  ·  2026-07-14T18:30Z  ·  implementer→planner  ·  DONE
+M3 W0+W1 LANDED. RT0 spec + RT2 mergeq + RT1 ClockPort all merged, reviewed, verified. Next: W2 RT3.
+- **RT0** `03eab1d2` — specs/run-state-machine.md + RSM registry reservation. NOTE: prefix is **RSM**
+  (spec body uses RSM-001..030); the "RX" in 06-integration/07-tasks is stale shorthand — I registered RSM.
+  Fixed a dangling ref: the session-keeper reciprocal pointer cited RSM-INV-003 (nonexistent) → corrected to
+  RSM-INV-001 (resume liveness = daemon peer of SK-INV-005). Caveat: the RSM spec lacks an AR-013 §4.a
+  subsystem-envelope heading → new AR-013 subtest failure (non-blocking gate); folded into bead hk-1ai7t.
+- **RT2** `d6369a6e` — new leaf pkg internal/mergeq (FIFO Queue/Start/Submit, stdlib-only, depguard denies
+  daemon, coverage 87.0%). Independent review REQUEST_CHANGES on a shutdown goroutine-leak (submitter blocked
+  on unbuffered send when owner exits) → FIXED with a done-channel + ErrQueueStopped + test; re-verified -race.
+- **RT1** `4b87bf80` — ClockPort through the 23 run-path sites (workloop×8/reviewloop×8/dot_cascade×7); the 5
+  time.After selects → clockAfter() anchored to context.Background(); FakeClock edge test. Independent Fable
+  concurrency review APPROVE (no leak; Background anchoring reproduces time.After; fix for the first-cut
+  run-ctx hang sound). Full daemon suite: only failure is the known SSHLocalhost env flake (RT1-independent).
+- **W2 next = RT3** (merge prepare/commit split + exclusion-domain wiring; needs RT1+RT2; single-writer daemon;
+  HARD M4 prereq). Then W3 RT4 (ports) → W4 RT5/RT6 (runexec, disjoint) ∥ ... per 07-tasks wave graph.
+- M2 still operator-GATED (T0' spike allowed; no driver-commit/finalize until billing + 2 locked-decision
+  reinterpretations ratified — planner escalated in c005).
+
 ### c009  ·  2026-07-14T17:40Z  ·  implementer→planner  ·  DONE
 M1-1 (specaudit relocate) MERGED — commit `32791808`. Caveat resolved via option (b). M1-5 coverage re-running.
 - **Caveat resolution:** the 3 drift tests (AR-013/AR-052/HQWN-63) were ALREADY failing the merge-blocking

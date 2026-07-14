@@ -8,7 +8,7 @@ requirement-prefix: EV
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: taxonomy-first
-version: 0.6.4
+version: 0.7.0
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-06-21
@@ -408,6 +408,102 @@ Two event types emitted during the bead-ledger union-merge path (normative spec:
 
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
+### 8.16 Session-keeper watcher & cycle lifecycle
+
+The session-keeper watcher/lifecycle cohort (codename:session-keeper, hk-ekap1). These 18 types are the coarse-grained watcher and cycle-boundary signals the keeper has shipped since v0.6.x; they are documented here to close the code↔spec §-numbering drift — the code doc-comments cited them as "§8.13", colliding with the spec's §8.13 Epic-completion family (§8.13/§8.14/§8.15 are unmoved; only the code-comment citations are corrected to §8.16 in the same change). This cohort is registered by `registerKeeperEvents()` and is the coarse counterpart to the fine-grained interior milestones in §8.20. Emitter is the standalone `internal/keeper` process (the `session_keeper_watcher_dead` liveness probe is daemon-emitted). All 18 are durability class O.
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.16.1 | `session_keeper_warn` | O | internal/keeper | operator-observability, audit | `agent_name`, `pct`, `warn_pct`, `session_id?` |
+| 8.16.2 | `session_keeper_no_gauge` | O | internal/keeper | operator-observability, audit | `agent_name`, `reason` |
+| 8.16.3 | `session_keeper_handoff_started` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `session_id?` |
+| 8.16.4 | `session_keeper_cycle_complete` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `prev_session_id?`, `new_session_id?` |
+| 8.16.5 | `session_keeper_cycle_aborted` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `session_id?`, `reason` |
+| 8.16.6 | `session_keeper_clear_unconfirmed` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `session_id?` |
+| 8.16.7 | `session_keeper_cycle_recovered` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `phase_at_crash` |
+| 8.16.8 | `session_keeper_precompact_blocked` | O | internal/keeper | operator-observability, audit | `agent_name`, `session_id?`, `action` |
+| 8.16.9 | `session_keeper_respawn_attempted` | O | internal/keeper | operator-observability, audit | `agent_name`, `outcome`, `error?` |
+| 8.16.10 | `session_keeper_operator_attached` | O | internal/keeper | operator-observability, audit | `agent_name`, `session_id?`, `phase` |
+| 8.16.11 | `session_keeper_restart_now_blocked` | O | internal/keeper (RunOnDemand) | operator-observability, audit | `agent_name`, `session_id?`, `reason` |
+| 8.16.12 | `session_keeper_blind` | O | internal/keeper | operator-observability, audit | `agent_name`, `managed_sid?`, `live_sid?`, `blind_seconds` |
+| 8.16.13 | `session_keeper_hard_ceiling` | O | internal/keeper | operator-observability, audit | `agent_name`, `tokens`, `hard_ceiling` |
+| 8.16.14 | `session_keeper_idle_crew` | O | internal/keeper | captain, operator-observability, audit | `agent`, `tokens`, `reason` |
+| 8.16.15 | `session_keeper_config_rejected` | O | internal/keeper | operator-observability, audit | `agent_name`, `field`, `reason` |
+| 8.16.16 | `session_keeper_watcher_dead` | O | daemon-core | captain, operator-observability, audit | `agent_name`, `grace_period_seconds`, `reason` |
+| 8.16.17 | `session_keeper_live_pane_recover` | O | internal/keeper | operator-observability, audit | `agent_name`, `session_id?`, `stale_seconds`, `outcome`, `error?` |
+| 8.16.18 | `session_keeper_ack_timeout` | O | internal/keeper (await-ack) | operator-observability, audit | `agent_name`, `nonce`, `kind`, `timeout_seconds`, `tmux_target?`, `reason` |
+
+> **Cohort-guard carve-out (§8.16).** Per EV-050, the `session_keeper_*` family is registered (each has a `mustRegister` constructor and a mandatory `pertypecompat` row) but is EXCLUDED from the cross-bus taxonomy cohort guard (`allEventTypeCohort`) and from the EV-027 amendment count guard. This documents the existing 18-type precedent (they were already absent from the cohort) and applies equally to the §8.20 interior cohort.
+
+> Section Axes (§8.16 Session-keeper watcher & cycle lifecycle): all 18 entries are mechanism-tagged, class O (ordinary — observability; a lost signal is recoverable from the keeper journal / gauge / a fresh probe). Default per-entry Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
+### 8.17 Alarm / self-check
+
+The alarm / self-check cohort (hk-tnmjy). Documented here to close the code↔spec drift (the code doc-comment cited "§8.14", colliding with the spec's §8.14 HITL-decisions family). One type today.
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.17.1 | `review_gate_anomaly` | O | daemon-core (ReviewGateAnomalyWatcher) | operator-observability, audit | `consecutive_count`, `threshold`, `bead_ids`, `detected_at` |
+
+> Section Axes (§8.17 Alarm / self-check): mechanism-tagged, class O (ordinary — observability alarm; the causal `bead_closed` + `reviewer_verdict` sequence is reconstructible from the JSONL log). Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
+### 8.18 Remote-substrate workers
+
+The remote-substrate worker cohort (remote-substrate B6/B11, worker-report WR1/PB1). Documented here to close the code↔spec drift (the code doc-comments cited "§8.16", now corrected to §8.18). Emitter is the daemon-side `workers` package. All class O.
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.18.1 | `worker_unhealthy` | O | daemon-core (workers) | operator-observability, audit | `worker_name`, `failing_probe`, `detail`, `detected_at` |
+| 8.18.2 | `worker_offline` | O | daemon-core (workers) | operator-observability, audit | `worker_name`, `worker_host`, `phase`, `detail`, `detected_at` |
+| 8.18.3 | `worker_tunnel_failed` | O | daemon-core (workers) | operator-observability, audit | `run_id`, `bead_id`, `worker_name`, `worker_host`, `socket_path`, `detail`, `detected_at` |
+| 8.18.4 | `worker_report` | O | daemon-core (workers) | operator-observability, audit, autoscale | `worker_name`, `sampled_at`, `load1`, `load5`, `ncpu`, `mem_total_mb`, `mem_free_mb`, `swap_used_mb`, `disk_free_mb`, `claude_procs`, `problems` |
+| 8.18.5 | `resource_breach` | O | daemon-core (workers) | operator-observability, audit, autoscale | `worker_name`, `kind`, `signal`, `value`, `threshold`, `breached_for_seconds`, `in_flight`, `started_at`, `fired_at` |
+
+> Section Axes (§8.18 Remote-substrate workers): all five entries are mechanism-tagged, class O (ordinary — operator observability; breach/health state is reconstructible from the `worker_report` stream). Default per-entry Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
+### 8.19 Flywheel governor / liveness-halt / stall-sentinel
+
+The flywheel-governor and stall-sentinel cohort (flywheel FW2/FW3 hk-z1lr/hk-4toh; stall-sentinel Layer A hk-l087e). Documented here to close the code↔spec drift (the code doc-comments cited "§8.17/§8.18/§8.19"; the spec homes all three under §8.19). Mixed durability — the ACT-mode halt page is class F.
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.19.1 | `governor_signal` | O | daemon-core (sentinel) | operator-observability, audit | JSON-serialised `sentinel.GovernorSignal` (observe-mode audit record for one `Evaluate` cycle) |
+| 8.19.2 | `liveness_halt` | F | daemon-core | operator-observability, audit | `consecutive_zero_cycles`, `liveness_no_progress_n` |
+| 8.19.3 | `stall_detected` | O | daemon-core (Layer A stall detector) | watch-tier, ops-monitor, operator-observability, audit | `run_id`, `bead_id`, `signature`, `elapsed_ms` |
+
+> Section Axes (§8.19 Flywheel governor / liveness-halt / stall-sentinel): all mechanism-tagged. §8.19.1 (`governor_signal`) class O — reconstructible by re-running `Evaluate` over the events window. §8.19.2 (`liveness_halt`) class F — flight-critical: the daemon halts on emission and MUST NOT lose the page. §8.19.3 (`stall_detected`) class O — reconstructible from a fresh Snapshot. Default per-entry Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
+### 8.20 Session-keeper interior cycle events
+
+The four fine-grained interior milestones of the keeper restart state machine (codename:session-restart-substrate). Where §8.16 carries the coarse watcher/lifecycle signals, §8.20 carries the per-cycle transition points a machine-checkable replay-invariant harness needs. All four are durability class O (observational), emitter `internal/keeper` (the existing `Emitter`/`FileEmitter` path), consumed by the `internal/replay` invariant harness (EV-048). Names follow the `session_keeper_*` catalog convention shared with §8.16 — not the `keeper_*` prose shorthand. The payload structs are in §6.3; the emission timing and ordering are owned by [session-keeper.md §4.4] (SK-R4).
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.20.1 | `session_keeper_handoff_written` | O | internal/keeper | replay-invariant-harness, audit, observability | `agent_name`, `cycle_id` (REQUIRED), `session_id?`, `nonce?`, `recovered?`, `handoff_mtime?` |
+| 8.20.2 | `session_keeper_model_done` | O | internal/keeper | replay-invariant-harness, audit, observability | `agent_name`, `cycle_id` (REQUIRED), `session_id?`, `source` (REQUIRED: `idle_marker`\|`transcript_turn`\|`timeout`), `degraded?` |
+| 8.20.3 | `session_keeper_clear_sent` | O | internal/keeper | replay-invariant-harness, audit, observability | `agent_name`, `cycle_id` (REQUIRED), `session_id?`, `attempt` (1-based) |
+| 8.20.4 | `session_keeper_new_session_up` | O | internal/keeper | replay-invariant-harness, audit, observability | `agent_name`, `cycle_id` (REQUIRED), `prev_session_id` (REQUIRED), `new_session_id` (REQUIRED, ≠ `prev_session_id`) |
+
+> **Emission ordering (§8.20).** Within one restart cycle (keyed by the composite `(agent_name, cycle_id)` — see EV-046) the emission order MUST be: `session_keeper_handoff_written` → `session_keeper_model_done` → `session_keeper_clear_sent` → `session_keeper_new_session_up`. `session_keeper_clear_sent` MUST NOT be emitted before both `session_keeper_handoff_written` (SR3) and `session_keeper_model_done` (SR4) for the same cycle. The full ordering/liveness semantics (SR3/SR4/SR6/SR7/SR9) are owned by [session-keeper.md §5]; this spec owns the type registration, payload shape, and durability class.
+
+> **Durability (§8.20 — D9, O-class explicit not implicit).** These four are class O for this phase, NOT class F. F-class would require routing keeper emits through the daemon or adding `Sync()` to `FileEmitter` (which opens/appends/closes with no fsync) — larger blast radius, out of scope (no daemon in execution). F-class is deferred; revisit if a later phase routes keeper through the daemon. **Required hardening:** unlike the existing keeper `_ = emit(...)` sites, the four §8.20 emit helpers MUST NOT silently swallow a marshal or emit error — they MUST log on failure, because "a durable event that silently fails to write" is a spec lie. This hardening is scoped to the four new helpers only; the existing `_ =` keeper emits are out of scope.
+
+> **§8.9(b) cycle-interior exception (§8.20, RECORDED compliance evidence).** §8.9 admits a candidate type iff all of (a)–(h). These four are cycle-interior, which reads against §8.9(b) ("a lifecycle-boundary signal rather than an intra-lifecycle detail"). The exception is argued and recorded inline (as §8.12/§8.14 do): **(a) SATISFIED** — a real cross-subsystem consumer exists, the `internal/replay` invariant harness (EV-048), and the events cross a genuine process boundary (keeper process → `events.jsonl` → the replay package), which is also why they are NOT EV-026-internal. **(c) SATISFIED (granularity)** — the harness requires per-boundary access: SR3/SR4/SR6 are orderings *between* these interior milestones; a single summary event cannot express "`clear_sent` after `model_done`." **(b) REFRAMED and satisfied** — these four ARE the lifecycle boundaries of the restart state machine's sub-lifecycle (handoff-write / model-done / clear / new-session are its transition points), not incidental chatter; unlike the deferred `tool_command_completed` candidate, the consumer is named and SR3/SR4/SR6/SR7/SR9 are load-bearing. **(d)–(f) SATISFIED** — typed Go payloads in §6.3; four-axis + mechanism tags and durability class O per the Section Axes note; replay side-effect classification `safe`. **(g) SATISFIED** — [session-keeper.md] SK-R4 cites all four by their registered names as its ordering-invariant subjects. **(h) DOES NOT force a merge** — the four are distinct single-emission milestones, not a paired pending/resolved lifecycle. **EV-026 is not the escape hatch:** EV-026-internal events "MUST NOT be passed to `RegisterEventType`," which would kill the EV-048 typed-decode adoption; because the four cross the process boundary they are cross-bus and MUST be registered per EV-027.
+
+> **Cohort-guard carve-out (§8.20).** Per EV-050, these four are registered + compat-tabled but excluded from `allEventTypeCohort` and the EV-027 count guard, following the §8.16 keeper precedent.
+
+> Section Axes (§8.20 Session-keeper interior cycle events): all four entries are mechanism-tagged, class O (observational; loss does not gate the restart cycle, whose crash-recovery need is met by the retained keeper journal `RecoverFromCrash`). Default per-entry Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
 ## 4. Normative requirements
 
 ### 4.1 Envelope
@@ -614,6 +710,19 @@ Any tool that walks JSONL for debugging, pattern analysis, or dashboard purposes
 
 Tags: mechanism
 
+#### EV-047 — `ScanAfter` is the declared normative offline-replay read surface
+
+`eventbus.ScanAfter(path string, sinceID core.EventID) iter.Seq[core.Event]` is the **declared read surface** for offline observational replay over `events.jsonl`. It is promoted from its incidental EV-038 mention to a first-class primitive: it is exported, already has production callers, and yields every envelope whose `event_id` is strictly greater than `sinceID` in **file order**. An offline replay / invariant-checking consumer (EV-048) MUST read the log through `ScanAfter` — passing `core.EventID{}` (zero) to scan from the beginning, or a persisted watermark `EventID` for incremental re-runs — and MUST NOT reconstruct authoritative state from the result (subject to EV-021). Because the keeper `FileEmitter`s and the daemon `JSONLWriter` append to the **same** `events.jsonl` with **per-process** `EventIDGenerator`s, `ScanAfter`'s file order is only an approximation of global `EventID` order across writers; a consumer whose invariants depend on inter-event ordering MUST re-sort the collected events by `EventID` after the scan drains before evaluating ordering invariants. `eventbus.Filter(path, runID)` selects by envelope `run_id` and remains undeclared/unused (its deadness corroborates EV-046: cycle events carry no envelope `run_id`).
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### EV-048 — The typed-decode registry is the sanctioned decode/assert layer for an observational replay-invariant consumer
+
+The typed-decode registry path — `Event.DecodePayload`, `core.ValidateEnvelopeSchemaVersion`, the `DispatchObservational` / `DispatchSynchronous` dispatchers, and the `pertypecompat` N-1 compat table (`LookupPayloadCompatEntry`) — is declared ADOPTED (not dead, not deleted) as the decode-and-assert layer of a sanctioned **observational replay-invariant-checking consumer** (the `internal/replay` harness). This consumer is the EV-033 "observational consumer" the API was specced for and becomes the registry's first production reader. It MUST decode each scanned envelope through the registry, and MUST treat a schema-version mismatch as a recorded **finding** (writer/reader drift), consulting `LookupPayloadCompatEntry(ev.Type).CompatWindowHolds` to decide whether N-1 replay is declared safe — never as a fatal error. In its default (tolerant) mode it MUST apply the EV-033 unknown-type policy: an unknown `type` is **counted and skipped**, never fatal. A type registered but never observed in the corpus MUST be reported informationally, never as a violation. This consumer is observational per EV-021: its output is advisory and MUST NOT reconstruct authoritative state.
+
+Tags: mechanism
+
 #### EV-022 — State reconstruction MUST NOT walk JSONL
 
 The daemon's startup state-reconstruction path MUST walk git plus query Beads; it MUST NOT read JSONL to reconstruct state.
@@ -653,6 +762,14 @@ Each event type in §8 MUST have its payload schema declared in §6.3 of this sp
 
 Tags: mechanism
 
+#### EV-046 — Cycle-scoped keeper events MUST join on a required payload `cycle_id`, never a zero envelope `run_id`
+
+The four §8.20 session-keeper interior event types MUST carry their cycle correlation identity in a **REQUIRED payload field `cycle_id`** (JSON `cycle_id`, no `omitempty`), NOT in the envelope `run_id`. A §8.20 event MUST NOT be emitted with an empty `cycle_id`; the payload `Valid()` method MUST reject an empty `cycle_id`. The envelope `run_id` for these events MUST be absent (`core.RunID{}` / `None`); a zero-valued (Nil-UUID) envelope `run_id` MUST NOT be written for a cycle-scoped keeper event — this reuses the §6.1 "`run_id` present when scoped to a run" rule (these events are cycle-scoped, not workflow-run-scoped) and keeps them out of the EM-013 workflow-run keyspace that live daemon folds (`eventbus.Filter`) walk. Because `cycle_id` alone is not globally unique (`newCycleIDGen` resets its sequence per process), the normative join key is the **composite `(agent_name, cycle_id)`**; every §8.20 payload MUST carry both `agent_name` and `cycle_id` so the composite is always available. Precedent: the §8.6 `reconciliation_run_id` payload-level run identity (`ReconciliationStartedPayload`, `Valid()`-checked). Consumers MUST group cycle-scoped keeper events by the composite, and MUST NOT attempt to correlate them via envelope `run_id`.
+
+Tags: mechanism
+
+> **Optional additive backfill (non-blocking).** `SessionKeeperAckTimeoutPayload` MAY additively gain `CycleID string` (json `cycle_id,omitempty` — a backfill onto an existing type; old records legitimately lack it). No schema-version bump (additive; covered by its `AdditiveOnly:true` compat row). Deferrable as a follow-up.
+
 #### EV-026 — Subsystems MAY emit internal events not on this list
 
 Internal events (within a subsystem's own Go package, never dispatched to the bus) MUST NOT cross the bus and do not require §8 registration.
@@ -667,11 +784,23 @@ Symmetrically, a sibling spec that removes an emission requirement MUST also ame
 
 Tags: mechanism
 
+#### EV-050 — The `session_keeper_*` cohorts are carved out of the cross-bus cohort/count guards
+
+The `session_keeper_*` event families (the §8.16 watcher/lifecycle cohort AND the §8.20 interior cohort) are **registered and compat-tabled** (each has a `mustRegister` constructor and a `PayloadCompatEntry` row) but are **excluded from the cross-bus taxonomy cohort guard** (`allEventTypeCohort` in `eventtype_coverage_gjyks_test.go`) and from the EV-027 amendment count guard (`wantCount`). This carve-out follows the existing 18-type keeper precedent (today those 18 are already absent from the cohort, silently) and is now stated normatively so future keeper additions know the rule: a new `session_keeper_*` type MUST get a `mustRegister` constructor and a mandatory `pertypecompat` row, but MUST NOT be added to `allEventTypeCohort` or to the EV-027 `wantCount`. The `eventtype_coverage_gjyks_test.go` doc-comment — which currently states "every `EventType` constant MUST also be appended to `allEventTypeCohort`", a contract 18 keeper types already violate — MUST be amended to name this carve-out explicitly (a doc-comment edit, not a test-logic change), so the stated contract stops being false.
+
+Tags: mechanism
+
 ### 4.7 Schema versioning
 
 #### EV-028 — Each event type and the envelope carry `schema_version`
 
 `schema_version` is an integer on the envelope and MUST match the schema version of the payload for that `type`. The envelope-level `schema_version` field is normative for the envelope shape; per-type schema versions MAY increment independently as declared in the amendment protocol.
+
+Tags: mechanism
+
+#### EV-049 — Additive `DecodePayloadStrict` variant surfaces additive writer drift
+
+The registry MUST provide an additive `DecodePayloadStrict` variant that decodes a payload exactly as `DecodePayload` does but with `DisallowUnknownFields` set, so that an **additive field a newer writer introduced** surfaces as a decode error instead of being silently ignored (`DecodePayload` uses `json.Unmarshal` with no `DisallowUnknownFields` and therefore cannot see additive drift). The replay-invariant consumer's **strict mode** MUST route through `DecodePayloadStrict` and treat an unknown payload field, or an unknown event `type`, as a hard finding — strict mode is for replaying the harness's OWN freshly-recorded corpus, where such a surprise means a `mustRegister` was forgotten or a writer drifted. The addition is purely additive: it introduces no new obligation on existing writers and does not change `DecodePayload`'s tolerant semantics, which remain the default for historical replay.
 
 Tags: mechanism
 
@@ -1345,6 +1474,53 @@ cat_6_verdict_id: <String>                 # identifier of the Cat 6 reconciliat
 
 Emitted when a Cat 6 reconciliation verdict authorizes mechanism-tagged Gate re-evaluation under a drifted definition per [control-points.md §4.7 CP-038a]. The `prior_decision` is read from the JSONL `gate_allowed` / `gate_denied` event for the original transition. Durability class is `F` (the re-evaluation outcome is a lifecycle boundary).
 
+#### `session_keeper_handoff_written` (§8.20.1)
+
+```yaml
+agent_name: <String>
+cycle_id: <String>                 # REQUIRED (no omitempty); Valid() rejects empty
+session_id: <String>               # optional
+nonce: <String>                    # optional — confirmed nonce marker (audit)
+recovered: <Bool>                  # optional — true iff accepted via freshness recovery (not nonce)
+handoff_mtime: <String>            # optional — RFC3339; carried on the recovery edge
+```
+
+Go struct `core.SessionKeeperHandoffWrittenPayload` (`internal/core/keeperevents.go`). `Valid()` requires non-empty `agent_name` and `cycle_id`. Emitted per [session-keeper.md §4.4 SK-012]; schema v1, `PayloadCompatEntry{CurrentVersion:1, PreviousVersion:0, CompatWindowHolds:true, AdditiveOnly:true}`.
+
+#### `session_keeper_model_done` (§8.20.2)
+
+```yaml
+agent_name: <String>
+cycle_id: <String>                 # REQUIRED (no omitempty); Valid() rejects empty
+session_id: <String>               # optional
+source: <enum: idle_marker | transcript_turn | timeout>   # REQUIRED — which signal fired
+degraded: <Bool>                   # optional — true iff reached via model_done_timeout
+```
+
+Go struct `core.SessionKeeperModelDonePayload`. `Valid()` requires non-empty `agent_name` and `cycle_id`. Emitted per [session-keeper.md §4.5 SK-014]; schema v1, compat as above.
+
+#### `session_keeper_clear_sent` (§8.20.3)
+
+```yaml
+agent_name: <String>
+cycle_id: <String>                 # REQUIRED (no omitempty); Valid() rejects empty
+session_id: <String>               # optional
+attempt: <Integer>                 # 1-based; increments on defensive re-injects
+```
+
+Go struct `core.SessionKeeperClearSentPayload`. `Valid()` requires non-empty `agent_name`/`cycle_id` and `attempt >= 1`. Emitted per [session-keeper.md §4.4 SK-012]; schema v1, compat as above.
+
+#### `session_keeper_new_session_up` (§8.20.4)
+
+```yaml
+agent_name: <String>
+cycle_id: <String>                 # REQUIRED (no omitempty); Valid() rejects empty
+prev_session_id: <String>          # REQUIRED — needed for the != check
+new_session_id: <String>           # REQUIRED — Valid(): non-empty AND != prev_session_id
+```
+
+Go struct `core.SessionKeeperNewSessionUpPayload`. `Valid()` requires non-empty `agent_name`/`cycle_id`/`new_session_id` and `new_session_id != prev_session_id`. Emitted per [session-keeper.md §4.4 SK-012]; schema v1, compat as above. The `^cyc-` prefix on `cycle_id` is a soft check kept OUT of `Valid()` (a future `CycleIDGen` change MUST NOT retro-invalidate historical corpora); a non-conforming id is a low-severity harness finding, not a dropped event.
+
 Remaining per-type payloads follow the same pattern: field names listed in §8 columns, Go types resolved against the registry per EV-032. Outstanding: full YAML for the remaining ~41 types lands within one revision cycle per OQ-EV-005.
 
 ### 6.4 Schema evolution — breaking-change table
@@ -1570,6 +1746,7 @@ Default-if-unresolved: Implement `recover_and_log` for MVH; `quarantine_consumer
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-13 | 0.7.0 | agent (codename:session-restart-substrate) | **Session-keeper interior events + §8 drift reconciliation.** §8-numbering reconciliation (EV-U5): added real spec sections **§8.16** (the 18 existing `session_keeper_*` watcher/lifecycle types, renumbered out of the §8.13 code-comment collision), **§8.17** (alarm / self-check — `review_gate_anomaly`), **§8.18** (remote-substrate workers — `worker_unhealthy`/`worker_offline`/`worker_tunnel_failed`/`worker_report`/`resource_breach`), **§8.19** (flywheel governor / liveness-halt / stall-sentinel — `governor_signal`/`liveness_halt`/`stall_detected`); §8.13/§8.14/§8.15 unmoved (only the code-comment citations are corrected). New cohort **§8.20 Session-keeper interior cycle events** — four O-class types (`session_keeper_handoff_written`, `session_keeper_model_done`, `session_keeper_clear_sent`, `session_keeper_new_session_up`), each joinable by a REQUIRED payload `cycle_id`, with the recorded §8.9(b) cycle-interior exception and the D9 O-class + emit-failure-logging durability note; **§6.3** gains the four payload schemas. Five new requirements **EV-046** (cycle-scoped keeper events join on required payload `cycle_id`, composite `(agent_name, cycle_id)`, never a zero envelope `run_id`), **EV-047** (`ScanAfter` declared the normative offline-replay read surface + cross-writer EventID-sort caveat), **EV-048** (typed-decode registry adopted as the decode/assert layer for the `internal/replay` observational consumer), **EV-049** (additive `DecodePayloadStrict` variant surfacing additive writer drift), **EV-050** (the `session_keeper_*` §8.16+§8.20 cohorts carved out of `allEventTypeCohort` / the EV-027 count guard; gjyks doc-comment contract amended). Highest prior ID EV-045; next-free EV-046. No prior IDs renumbered or retired; no prior §8 row renumbered. Source: kerf session-restart-substrate change design (D6/D7/D8/D9; 00b R1+R2). |
 | 2026-06-01 | 0.5.5 | agent (hk-sx9r.68) | **ON-049 coordination: attribution 5-tuple fields added to §8.4 budget events.** Added the ON-049 attribution fields to §8.4 budget lifecycle events as additive optional fields per §6.4: (1) `budget_accrual` (§8.4.2) gains `role`, `node_id`, `category`, `amount`, and `delegation_path?` — these are the on-wire realization of the ON-049 5-tuple `(run_id, role, node_id, category, amount)` and the cognition-tagged `delegation_path` supplement per [operator-nfr.md §4.11 ON-049]; (2) `budget_warning` (§8.4.1) gains `role`, `node_id`, `category` to support per-role and per-node threshold observability; (3) `budget_exhausted` (§8.4.3) gains `role?`, `node_id?`, `category?` as optional — absent for the account-scoped (run-agnostic) variant per the existing INFORMATIVE note. Added NORMATIVE note to §8.4 section header explaining the attribution-field semantics and the additive-field rationale. `delegation_path?` is REQUIRED on `budget_accrual` events for cognition-tagged evaluator steps (ControlPoint with cognition tag per [control-points.md §4.8 CP-039]) and absent otherwise. No EV requirement IDs added or renumbered; all additions are governed by the §6.4 additive-field rule and the §4.6 amendment protocol. Source: [operator-nfr.md §4.11 ON-049] (hk-sx9r.68). |
 | 2026-05-31 | 0.5.4 | agent (hk-sx9r.30) | **ON-025 egress/workspace-escape audit: `rejected_skills[]?` added to §8.3.8 `skills_provisioned`.** Updated §8.3.8 payload to add optional `rejected_skills[]` (each: `name`, `reject_reason`). Added INFORMATIVE note: `skills[]` lists only successfully installed skills; `rejected_skills[]` lists skills rejected by pre-provisioning policy checks (egress-policy or workspace-escape per [handler-contract.md §4.11.HC-048b]); absent when no rejections occurred; `reject_reason` strings are `"egress_domain_not_whitelisted"` and `"path_escapes_workspace"`. Additive optional-field extension; N-1 readers tolerate unknown fields per §6.4. No EV requirement IDs added or renumbered. |
 | 2026-05-31 | 0.x | agent (kerf `credfence` work) | Additive producer-set amendment for `budget_exhausted` (§8.4.3). Added `cognition-loop (flywheel)` to the producer set so the unified per-day spend meter ([cognition-loop.md CL-090]) emits the account-scoped `budget_exhausted{budget_scope=handler_account}` that the budget-exhaustion handler-pause policy ([handler-pause.md HP-012]) consumes; added the optional `budget_scope`, `spent_usd`, `cap_usd` payload fields and made `run_id`/`session_id`/`attempted_dispatch_cost` optional for the account-scoped (run-agnostic) variant; added an INFORMATIVE producer-set note distinguishing the per-run (S04) variant from the account-scoped (cognition-loop) variant. Event class O and mechanism tag unchanged. Governed by the §6.4 additive-field rule and the §4.6 amendment protocol. Source: kerf `credfence` change design. |

@@ -1331,6 +1331,7 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 - **[operator-nfr.md §4.9 Observability protocol]** — the redaction registry (§4.7) is one of the enforcement points for operator-nfr's "no secrets in event log / audit record" invariant.
 - **[operator-nfr.md §4.7 Security posture]** — skill-injection policy enforcement (network egress, sandbox) consumes this spec's provisioning hook.
 - **[execution-model.md §4.1 EM-005b (gate-decision Outcome variant)]** — co-owned with EM; HC-060 is the handler-side emission rule for gate-decision Outcomes; EM-005b is the spec-side schema requirement.
+- **[replay-substrate.md §4 RS-001/RS-006/RS-007]** — the in-process `EventSource`/`Effector` seam and its two test doubles now govern the in-process-fake surface HC-035 carves out of the twin-parity rule. HC-035 disclaims it; RS owns it. Read-only co-reference; no reverse dependency.
 
 ## 10. Conformance
 

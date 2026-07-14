@@ -1389,6 +1389,7 @@ Additional codes may be added within the N-1 window as long as existing code-to-
 - **[docs/foundation/project-level/build-practices.md §Branch model]** — direct-to-main MVH development; §2.1a consumes this operational posture (formerly ON-INV-002, retired v0.3 — content preserved as a scope assumption).
 - **[docs/foundation/problem-space.md §Locked decisions]** — locked decision #10 (operator controls between tasks) and locked decision #12 (no DTW); §4.3 and §4.8 derive from these positions.
 - **[STATUS.md §Decisions Locked In]** — the ten locked decisions; amendment protocol per [architecture.md §4.6] applies to relaxing any requirement here that rests on a locked decision.
+- **[session-keeper.md §4.7 SK-016]** — SK-016 re-expresses the keeper decision logic these bands drive behind ports + a `Step` reactor and preserves the §4.13 ON-059 warn/act/force-act bands (200k/215k/240k) and the ceiling function unchanged; band changes remain HARD-NO without operator direction (ON-059). Read-only co-reference; no reverse dependency.
 
 ## 10. Conformance
 

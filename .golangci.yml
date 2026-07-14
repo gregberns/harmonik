@@ -167,6 +167,22 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "schedule MUST NOT import daemon (hk-0es: leaf primitive)" }
 
+        # substrate: generic record→replay seam (codename:session-restart-substrate).
+        # Leaf: stdlib + self-import only. Verticals instantiate substrate, never the
+        # reverse. MUST NOT import a vertical (codex, keeper) or the daemon.
+        # Rationale: specs/replay-substrate.md §RS-005; substrate-design.md §1.3.
+        substrate:
+          files: ["**/internal/substrate/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "substrate MUST NOT import a vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexwire", desc: "substrate MUST NOT import a vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexdigitaltwin", desc: "substrate MUST NOT import a vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "substrate MUST NOT import a vertical (keeper)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "substrate MUST NOT import daemon" }
+
         # agentmanifest: leaf package loading .harmonik/agents/<type>/manifest.yaml.
         # Depends only on stdlib + yaml.v3. Self-import for external test pattern.
         agentmanifest:

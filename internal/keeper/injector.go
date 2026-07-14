@@ -131,6 +131,20 @@ func runTmuxCombined(ctx context.Context, stdin string, args ...string) ([]byte,
 // The cycle core uses this as its InjectFn default, so /session-handoff,
 // /clear, and /session-resume all inherit the fix.
 func InjectText(ctx context.Context, tmuxTarget, text string) error {
+	return injectTextClocked(ctx, substrate.SystemClock{}, tmuxTarget, text)
+}
+
+// injectTextClocked is InjectText with the settle/retry sleeps read through the
+// given ClockPort (SK-008/SK-R3). The cycle core's default InjectFn binds this
+// to CyclerConfig.Clock (the T5 injectorClock package var, folded into the port
+// wiring at T6), so a substrate.FakeClock drives the 750ms/400ms×2 sequence in
+// virtual time; the free InjectText keeps the wall clock for watcher-side warn
+// injection. The sequence ORDER and durations are unchanged
+// (TestInjectText_SettleConstants guards them — parity risk #8).
+func injectTextClocked(ctx context.Context, clock substrate.ClockPort, tmuxTarget, text string) error {
+	if clock == nil {
+		clock = substrate.SystemClock{}
+	}
 	if tmuxTarget == "" {
 		return fmt.Errorf("keeper: inject: tmuxTarget is empty")
 	}
@@ -147,7 +161,7 @@ func InjectText(ctx context.Context, tmuxTarget, text string) error {
 
 	// Settle so the REPL finishes ingesting the pasted text before the submit
 	// Enter; otherwise the first Enter races ahead and is dropped (hk-89g).
-	if !sleepCtx(ctx, submitSettle) {
+	if !clock.Sleep(ctx, submitSettle) {
 		return ctx.Err()
 	}
 
@@ -160,7 +174,7 @@ func InjectText(ctx context.Context, tmuxTarget, text string) error {
 	// non-fatal — the line is already submitted by the first Enter on the happy
 	// path, and a redundant Enter is a harmless empty line.
 	for i := 0; i < submitRetries; i++ {
-		if !sleepCtx(ctx, submitRetryDelay) {
+		if !clock.Sleep(ctx, submitRetryDelay) {
 			break
 		}
 		_ = sendEnter(ctx, tmuxTarget) //nolint:errcheck // retry; best-effort
@@ -192,22 +206,6 @@ func SendEscapeKey(ctx context.Context, tmuxTarget string) error {
 		return fmt.Errorf("keeper: tmux send-keys Escape: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// injectorClock is the ClockPort backing the injector's cancellable settle
-// sleeps (submitSettle / submitRetryDelay). It is a package var — mirroring the
-// existing tmuxRunFn / submitSettle injectable-seam pattern — so the injector's
-// timing routes through the determinism port (SK-008/SK-R3) while InjectText
-// keeps its free-function signature (the CyclerConfig.InjectFn / PanePort seam).
-// Defaults to the real wall clock; T6/T7 fold it into the injected port.
-var injectorClock substrate.ClockPort = substrate.SystemClock{}
-
-// sleepCtx waits for d or until ctx is cancelled. Returns true if the full
-// duration elapsed, false if ctx was cancelled first. Routed through
-// injectorClock so the settle sequence honors the determinism port; the
-// substrate SystemClock.Sleep preserves the exact select-ctx-vs-timer shape.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	return injectorClock.Sleep(ctx, d)
 }
 
 // InjectWrapUpWarning delivers the wrap-up-warning prompt into the tmux pane

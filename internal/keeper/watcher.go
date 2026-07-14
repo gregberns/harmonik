@@ -46,13 +46,23 @@ type FileEmitter struct {
 
 // NewFileEmitter constructs a FileEmitter that appends to the harmonik events
 // log at projectDir/.harmonik/events/events.jsonl. Event TimestampWall stamps
-// are read through substrate.SystemClock (the determinism port, SK-008/D9) so
-// replay envelopes are reproducible under a substrate.FakeClock.
+// are read through substrate.SystemClock (the determinism port, SK-008/D9).
 func NewFileEmitter(projectDir string) *FileEmitter {
+	return NewFileEmitterWithClock(projectDir, substrate.SystemClock{})
+}
+
+// NewFileEmitterWithClock is NewFileEmitter with an injectable ClockPort for
+// the TimestampWall stamp (D9): the T7 shell wires the SAME clock that drives
+// the cycle so replay envelopes are reproducible under a substrate.FakeClock.
+// Nil clock falls back to the system clock.
+func NewFileEmitterWithClock(projectDir string, clock substrate.ClockPort) *FileEmitter {
+	if clock == nil {
+		clock = substrate.SystemClock{}
+	}
 	return &FileEmitter{
 		path:  filepath.Join(projectDir, ".harmonik", core.EventsJSONLPath),
 		idGen: core.NewEventIDGenerator(),
-		clock: substrate.SystemClock{},
+		clock: clock,
 	}
 }
 

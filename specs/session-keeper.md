@@ -85,7 +85,7 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 #### SK-003 — GaugePort reads are sampled into a per-tick GateSnapshot
 
-`GaugePort` owns the keeper's file-state read surface and the single managed-session write-back. The seven gate-predicate reads (CrispIdle, HoldingDispatch, Sleeping, Held, Managed, operator-attached, recent-turn) MUST be sampled by the shell into a per-tick `GateSnapshot` (§6) that rides on the `GaugeTick` event, so the pure `Step` never calls a port. `GaugePort` MUST expose `ReadGauge`, `SetManagedSession`, `ClearPrecompactTrigger`, and `Snapshot(sessionID) → GateSnapshot`.
+`GaugePort` owns the keeper's file-state read surface and the single managed-session write-back. The seven gate-predicate reads (CrispIdle, HoldingDispatch, Sleeping, Held, Managed, operator-attached, recent-turn) MUST be sampled by the shell into a per-tick `GateSnapshot` (§6) that rides on the `GaugeTick` event, so the pure `Step` never calls a port. `GaugePort` MUST expose `ReadGauge`, `SetManagedSession`, `ClearPrecompactTrigger`, `SetHold(sessionID) → (sessionID, error)` (the Clock-stamped Gate-5d auto-hold action, per §6.3 and SK-011), and `Snapshot(sessionID) → GateSnapshot`.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
@@ -279,6 +279,7 @@ INTERFACE GaugePort:
     ReadGauge() -> (CtxFile, Timestamp, error)   -- .ctx (+ .sid overlay when primary UUIDv4)
     SetManagedSession(sessionID) -> error        -- "" clears; rebind after cycle
     ClearPrecompactTrigger() -> error            -- remove .precompact marker
+    SetHold(sessionID) -> (String, error)        -- Gate-5d auto-hold; Clock-stamped hold marker (see §6.3, SK-011)
     Snapshot(sessionID) -> GateSnapshot          -- one read-burst per tick (Step never calls this)
 
 INTERFACE HandoffPort:

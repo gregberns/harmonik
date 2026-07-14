@@ -3,66 +3,72 @@ package keeper
 // injector_test.go — unit tests for InjectText settle/retry sequencing (hk-89g).
 //
 // Tests in package keeper (not package keeper_test) so they can reach the
-// unexported sleepCtx function and the package-level submitSettle var /
-// submitRetries + submitRetryDelay constants that implement the sequencing.
+// package-level submitSettle var / submitRetries + submitRetryDelay constants
+// that implement the sequencing.
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// ── sleepCtx ──────────────────────────────────────────────────────────────────
+// ── the injector's cancellable settle sleep ───────────────────────────────────
+// The old sleepCtx helper folded into ClockPort.Sleep at T6: injectTextClocked
+// sleeps through the injected clock. These tests pin the cancellation contract
+// of the production clock the injector defaults to (substrate.SystemClock),
+// which preserves the exact select-ctx-vs-timer shape sleepCtx had.
 
-// TestSleepCtx_FullDurationElapsed verifies that sleepCtx returns true when the
-// full duration elapses without context cancellation.
-func TestSleepCtx_FullDurationElapsed(t *testing.T) {
+// TestInjectorSleep_FullDurationElapsed verifies that the injector's settle
+// sleep returns true when the full duration elapses without cancellation.
+func TestInjectorSleep_FullDurationElapsed(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	got := sleepCtx(ctx, 5*time.Millisecond)
+	got := substrate.SystemClock{}.Sleep(ctx, 5*time.Millisecond)
 	if !got {
-		t.Error("sleepCtx: want true (full duration elapsed), got false")
+		t.Error("Sleep: want true (full duration elapsed), got false")
 	}
 }
 
-// TestSleepCtx_CancelledBefore verifies that sleepCtx returns false when the
-// context is already cancelled before the call.
-func TestSleepCtx_CancelledBefore(t *testing.T) {
+// TestInjectorSleep_CancelledBefore verifies that the settle sleep returns
+// false when the context is already cancelled before the call.
+func TestInjectorSleep_CancelledBefore(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before calling
 
-	got := sleepCtx(ctx, 10*time.Second) // would block for 10s if not properly handled
+	got := substrate.SystemClock{}.Sleep(ctx, 10*time.Second) // would block for 10s if not properly handled
 	if got {
-		t.Error("sleepCtx: want false (context already cancelled), got true")
+		t.Error("Sleep: want false (context already cancelled), got true")
 	}
 }
 
-// TestSleepCtx_CancelledDuring verifies that sleepCtx returns false when the
-// context is cancelled while the sleep is in progress.
-func TestSleepCtx_CancelledDuring(t *testing.T) {
+// TestInjectorSleep_CancelledDuring verifies that the settle sleep returns
+// false when the context is cancelled while the sleep is in progress.
+func TestInjectorSleep_CancelledDuring(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Cancel the context after a brief delay, while sleepCtx is blocking on a
-	// longer duration. sleepCtx must return false (not block for the full duration).
+	// Cancel the context after a brief delay, while the sleep is blocking on a
+	// longer duration. It must return false (not block for the full duration).
 	go func() {
 		time.Sleep(5 * time.Millisecond)
 		cancel()
 	}()
 
 	start := time.Now()
-	got := sleepCtx(ctx, 10*time.Second) // would block for 10s without cancel
+	got := substrate.SystemClock{}.Sleep(ctx, 10*time.Second) // would block for 10s without cancel
 	elapsed := time.Since(start)
 
 	if got {
-		t.Error("sleepCtx: want false (context cancelled during wait), got true")
+		t.Error("Sleep: want false (context cancelled during wait), got true")
 	}
 	if elapsed >= 2*time.Second {
-		t.Errorf("sleepCtx: did not respect context cancellation (elapsed %v; want <2s)", elapsed)
+		t.Errorf("Sleep: did not respect context cancellation (elapsed %v; want <2s)", elapsed)
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // idleMarkerPath returns the path to <projectDir>/.harmonik/keeper/<agent>.idle.
@@ -169,6 +171,17 @@ func holdMarkerPath(projectDir, agent, sessionID string) string {
 // UUIDv4 this errors: we will not form a hold on an untrustworthy live session.
 // Returns the keying session-id on success. Refs: hk-9waz, hk-8prq.
 func SetHold(projectDir, agent string) (sessionID string, err error) {
+	return setHoldAt(projectDir, agent, substrate.SystemClock{})
+}
+
+// setHoldAt is SetHold with the marker timestamp read through the given
+// ClockPort (SK-008/SK-R3): the cycle path stamps holds via the injected
+// Clock (GaugePort.SetHold), while the public SetHold keeps the wall clock
+// for CLI callers. Nil clock falls back to the system clock.
+func setHoldAt(projectDir, agent string, clock substrate.ClockPort) (sessionID string, err error) {
+	if clock == nil {
+		clock = substrate.SystemClock{}
+	}
 	if vErr := validateAgent(agent); vErr != nil {
 		return "", vErr
 	}
@@ -182,7 +195,7 @@ func SetHold(projectDir, agent string) (sessionID string, err error) {
 		return "", fmt.Errorf("keeper: create keeper dir: %w", mkErr)
 	}
 	path := holdMarkerPath(projectDir, agent, sid)
-	content := time.Now().UTC().Format(time.RFC3339) + "\n"
+	content := clock.Now().UTC().Format(time.RFC3339) + "\n"
 	//nolint:gosec // G306: 0600 — keeper-owned file, no world-read needed
 	if wErr := os.WriteFile(path, []byte(content), 0o600); wErr != nil {
 		return "", fmt.Errorf("keeper: write hold marker %q: %w", path, wErr)
@@ -230,6 +243,17 @@ func ReleaseHold(projectDir, agent string) error {
 //
 // ttl <= 0 falls back to DefaultHoldTTL. Refs: hk-9waz, hk-8prq.
 func IsHeld(projectDir, agent string, ttl time.Duration) bool {
+	return isHeldAt(projectDir, agent, ttl, substrate.SystemClock{})
+}
+
+// isHeldAt is IsHeld with the TTL-expiry math read through the given ClockPort
+// (SK-008/SK-R3): the cycle path's HeldCheckFn default routes through the
+// injected Clock so a FakeClock can drive hold expiry deterministically. Nil
+// clock falls back to the system clock.
+func isHeldAt(projectDir, agent string, ttl time.Duration, clock substrate.ClockPort) bool {
+	if clock == nil {
+		clock = substrate.SystemClock{}
+	}
 	if validateAgent(agent) != nil {
 		return false // fail-open: a traversal name cannot have a valid hold
 	}
@@ -253,7 +277,7 @@ func IsHeld(projectDir, agent string, ttl time.Duration) bool {
 	if parseErr != nil {
 		return false // corrupt marker → fail toward NOT-held
 	}
-	if time.Since(parsed) > ttl {
+	if clock.Since(parsed) > ttl {
 		return false // EXPIRED — timer backstop
 	}
 	return true

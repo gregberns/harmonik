@@ -39,6 +39,7 @@ github.com/gregberns/harmonik/internal/hooksystem 82.4
 github.com/gregberns/harmonik/internal/keeper 72.6
 github.com/gregberns/harmonik/internal/lifecycle 76.5
 github.com/gregberns/harmonik/internal/lifecycle/tmux 77.4
+github.com/gregberns/harmonik/internal/mergeq 87.0
 github.com/gregberns/harmonik/internal/operatornfr 67.0
 github.com/gregberns/harmonik/internal/queue 66.6
 github.com/gregberns/harmonik/internal/queue/cli 65.3

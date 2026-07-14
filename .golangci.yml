@@ -483,6 +483,21 @@ linters:
         # Also subject to llm-sdk-ban (see above).
         # uuid and yaml.v3 are direct deps of daemon production code.
         # depguard allow-list uses trailing-slash prefix matching (not Go-module "...").
+        # mergeq: the merge-queue exclusion domain (RSM-002/RSM-012,
+        # codename:run-state-machine). Leaf: stdlib + self-import only. The
+        # daemon threads its prepare/commit closures IN as `critical` funcs, so
+        # the direction is daemon -> mergeq; mergeq MUST NOT import daemon back.
+        # NEW rule (not in TC-6's pre-authorization) applied per the same
+        # "applied per carve" pattern (track-c-enforcement.md §2.2).
+        # Rationale: specs/run-state-machine.md; merge-queue-design.md §1.
+        mergeq:
+          files: ["**/internal/mergeq/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/mergeq"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "mergeq MUST NOT import daemon (leaf exclusion domain; daemon drives it)" }
+
         daemon:
           files: ["**/internal/daemon/**"]
           allow:

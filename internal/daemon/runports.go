@@ -22,6 +22,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/mergeq"
 )
 
 // EmitterPort is the event-emission surface of the run shell. It is a type
@@ -73,4 +74,34 @@ func (deps *workLoopDeps) ledgerPort() LedgerPort {
 // emitterPort returns the run shell's EmitterPort (identity over deps.bus).
 func (deps *workLoopDeps) emitterPort() EmitterPort {
 	return deps.bus
+}
+
+// MergePort is the merge exclusion-domain surface of the run path (RSM-015). It
+// exposes the strictly-FIFO single-owner submit entry point that serialises the
+// commit-phase merge, the post-merge escaped-worktree check, and the remote
+// base-sync + worktree-add.
+type MergePort interface {
+	// Submit returns the exclusion-domain entry point (mergeq.Queue.Submit when a
+	// queue is wired, else the inline nil-queue fallback).
+	Submit() mergeSubmit
+}
+
+// daemonMerge is the production MergePort adapter over the RT3 mergeq handle: the
+// queue's Submit when non-nil, else inlineMergeSubmit (the nil-queue
+// single-beadRunOne fallback). This is the sole owner of that selection, which
+// previously lived on the (now-removed) workLoopDeps.mergeSubmitFunc method.
+type daemonMerge struct {
+	q *mergeq.Queue
+}
+
+func (m daemonMerge) Submit() mergeSubmit {
+	if m.q != nil {
+		return m.q.Submit
+	}
+	return inlineMergeSubmit
+}
+
+// mergePort returns the production MergePort bound to deps.mergeQ.
+func (deps *workLoopDeps) mergePort() MergePort {
+	return daemonMerge{q: deps.mergeQ}
 }

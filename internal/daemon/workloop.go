@@ -3122,6 +3122,9 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	if deps.clock == nil {
 		deps.clock = substrate.SystemClock{}
 	}
+	// RSM-010 MergePort: the merge exclusion-domain submit surface for this run.
+	// mport.Submit() is byte-identical to mport.Submit() (RSM-015).
+	mport := deps.mergePort()
 	beadID := beadRecord.BeadID
 
 	// hk-hs7ex: release the local slot on exit when the outer loop incremented
@@ -3690,7 +3693,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	var wtPath string
 	var wtCleanup func()
 	var wtErr error
-	if subErr := deps.mergeSubmitFunc()(ctx, "base-sync-create", func(qctx context.Context) error {
+	if subErr := mport.Submit()(ctx, "base-sync-create", func(qctx context.Context) error {
 		// Step (a): for remote runs, ensure baseSHA is on the worker before the
 		// worktree is created there (DD1 code-sync, remote-substrate B8).
 		if rbc != nil {
@@ -3966,7 +3969,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 							mergeAttempt, beadID, amendErr)
 					}
 				}
-				mergeRes = mergeRunBranchToMain(ctx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+				mergeRes = mergeRunBranchToMain(ctx, mport.Submit(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 				if mergeRes.noChange || mergeRes.success {
 					break
 				}
@@ -4185,7 +4188,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
 				}
 			}
-			mergeRes := mergeRunBranchToMain(ctx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+			mergeRes := mergeRunBranchToMain(ctx, mport.Submit(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 			if !mergeRes.noChange && !mergeRes.success {
 				// hk-whru3: advisory-RC + rebase_dropped_commits → work already on main.
 				// A prior run merged the same patch; git rebase identifies it as "already
@@ -5234,7 +5237,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	var mainDirty bool
 	var dirtyFiles []string
 	var escapeErr error
-	if subErr := deps.mergeSubmitFunc()(ctx, "escape-check", func(qctx context.Context) error {
+	if subErr := mport.Submit()(ctx, "escape-check", func(qctx context.Context) error {
 		mainDirty, dirtyFiles, escapeErr = checkMainWorkingTreeDirty(qctx, activeRepo, preRunUntracked)
 		return nil
 	}); subErr != nil {
@@ -5317,7 +5320,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (agent_completed): %s", syncReason))
 			return
 		}
-		mergeRes := mergeRunBranchToMain(ctx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+		mergeRes := mergeRunBranchToMain(ctx, mport.Submit(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -5367,7 +5370,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			emitDone(false, fmt.Sprintf("code-sync-failed (auto-close): %s", syncReason))
 			return
 		}
-		mergeRes := mergeRunBranchToMain(ctx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+		mergeRes := mergeRunBranchToMain(ctx, mport.Submit(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 		if !mergeRes.noChange && !mergeRes.success {
 			// EM-053: non-FF or push failure → reopen.
 			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
@@ -5439,7 +5442,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// does not abort the merge sequence.
 				bgCtx := context.Background()
 				if curHeadSHA, headErr := resolveWorktreeHEAD(bgCtx, wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
-					mergeRes := mergeRunBranchToMain(bgCtx, deps.mergeSubmitFunc(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
+					mergeRes := mergeRunBranchToMain(bgCtx, mport.Submit(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
 					if mergeRes.success || mergeRes.noChange {
 						drainTID, _ := deps.tidGen.Next()
 						if closeErr := deps.closeBeadWithHistoryTrim(bgCtx, runID, drainTID, beadID, false); closeErr != nil {
@@ -6579,17 +6582,6 @@ type mergeSubmit func(ctx context.Context, label string, critical func(context.C
 // inlineMergeSubmit runs critical directly under ctx — the nil-queue fallback.
 func inlineMergeSubmit(ctx context.Context, _ string, critical func(context.Context) error) error {
 	return critical(ctx)
-}
-
-// mergeSubmitFunc returns the exclusion-domain entry point: the merge queue's
-// Submit when one is wired (production and concurrent tests), else an inline
-// runner. RSM-015: the global merge mutex is replaced by this explicit,
-// strictly-FIFO single-owner queue.
-func (d workLoopDeps) mergeSubmitFunc() mergeSubmit {
-	if d.mergeQ != nil {
-		return d.mergeQ.Submit
-	}
-	return inlineMergeSubmit
 }
 
 // mergePrepareKind selects which reason-string vocabulary a re-prepare rebase

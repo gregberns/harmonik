@@ -648,10 +648,10 @@ func runReviewLoop(
 				if deps.hookStore != nil {
 					capturedImplTap := implTap
 					capturedImplRunID := runID // hk-wths: copy for EmitWithRunID closure
-					deps.hookStore.SetAgentReadyCallback(runID.String(), implArtifacts.claudeSessionID, func() {
+					deps.hookStore.SetAgentReadyCallback(runID.String(), implArtifacts.claudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 						// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
 						// the stale watcher's never-spawned reaper sees agentReadySeen = true.
-						_ = capturedImplTap.EmitWithRunID(context.Background(), capturedImplRunID, core.EventTypeAgentReady, nil)
+						_ = capturedImplTap.EmitWithRunID(context.Background(), capturedImplRunID, core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
 					})
 				}
 			},
@@ -722,18 +722,18 @@ func runReviewLoop(
 				// result + cycle-complete emission follow at the segment return below.
 				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady implementer bead %s iter %d run %s: %v (error)\n",
 					beadID, state.iterationCount, runID.String(), ErrAgentReadyTimeout)
-				_ = implSess.Kill(kctx)
+				_ = implSess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
 				if implWatcher != nil {
 					select {
 					case <-implWatcher.Done():
-					case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
+					case <-clockAfter(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 						fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 							beadID, state.iterationCount, runID.String())
 					}
 				}
 				{
 					implWaitCtx, implWaitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
-					_ = implSess.Wait(implWaitCtx)
+					_ = implSess.Wait(implWaitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
 					implWaitCancel()
 				}
 				if deps.hookStore != nil {
@@ -747,7 +747,7 @@ func runReviewLoop(
 				// Ctx-cancel abort edge: Kill is idempotent (the per-iteration
 				// forceTeardownSession backstop rides behind it either way).
 				if implSess != nil {
-					_ = implSess.Kill(context.Background())
+					_ = implSess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
 				}
 			},
 		}
@@ -765,10 +765,10 @@ func runReviewLoop(
 		// reacquire for the next iteration's implementer) holds at most ONE spawn
 		// slot per phase.
 		implSessForTeardown := implSess
-		defer forceTeardownSession(implSessForTeardown)
+		defer forceTeardownSession(implSessForTeardown) //nolint:contextcheck,gocritic // per-iteration LIFO defer, bounded by reviewLoopIterationCap (pre-RT8 idiom)
 		if implHBDone != nil {
 			implHBDoneToClose := implHBDone
-			defer close(implHBDoneToClose)
+			defer close(implHBDoneToClose) //nolint:gocritic // deferInLoop: per-iteration accumulation bounded by reviewLoopIterationCap (pre-RT8 idiom)
 		}
 
 		if implDispatch.Phase == runexec.DispatchFailed && implDispatch.Reason == "agent_ready_timeout" {
@@ -1384,10 +1384,10 @@ func runReviewLoop(
 				if deps.hookStore != nil {
 					capturedRevTap := revTap
 					capturedRevRunID := runID // hk-wths: copy for EmitWithRunID closure
-					deps.hookStore.SetAgentReadyCallback(runID.String(), revArtifacts.claudeSessionID, func() {
+					deps.hookStore.SetAgentReadyCallback(runID.String(), revArtifacts.claudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 						// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
 						// the stale watcher's never-spawned reaper sees agentReadySeen = true.
-						_ = capturedRevTap.EmitWithRunID(context.Background(), capturedRevRunID, core.EventTypeAgentReady, nil)
+						_ = capturedRevTap.EmitWithRunID(context.Background(), capturedRevRunID, core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
 					})
 				}
 			},
@@ -1412,7 +1412,7 @@ func runReviewLoop(
 					// swallowed by a slow splash (revPasteTarget implements pasteInjecter
 					// when it is a perRunSubstrate; a non-pasteInjecter target yields a nil
 					// inj inside the watchdog → re-seed disabled).
-					revInj, _ := revPasteTarget.(pasteInjecter)
+					revInj, _ := revPasteTarget.(pasteInjecter) //nolint:errcheck // nil revInj disables re-seed by design (pre-RT8 idiom)
 					// hk-60t8: give the reviewer watchdog an independent heartbeat
 					// subscription so it can extend the deadline when the reviewer is
 					// actively reasoning (recent agent_heartbeat), not only when the OS
@@ -1426,7 +1426,7 @@ func runReviewLoop(
 				// + cycle-complete emission follow at the segment return below.
 				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady reviewer bead %s iter %d run %s: %v (error)\n",
 					beadID, state.iterationCount, runID.String(), ErrAgentReadyTimeout)
-				_ = revSess.Kill(kctx)
+				_ = revSess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
 				// Wait for the reviewer watcher goroutine to exit with a
 				// deadline — agentReadyKillReapTimeout prevents indefinite
 				// blocking if the killed subprocess does not cooperate.
@@ -1436,14 +1436,14 @@ func runReviewLoop(
 				if revWatcher != nil {
 					select {
 					case <-revWatcher.Done():
-					case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
+					case <-clockAfter(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 						fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 							beadID, state.iterationCount, runID.String())
 					}
 				}
 				{
 					revWaitCtx, revWaitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
-					_ = revSess.Wait(revWaitCtx)
+					_ = revSess.Wait(revWaitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
 					revWaitCancel()
 				}
 				if deps.hookStore != nil {
@@ -1452,7 +1452,7 @@ func runReviewLoop(
 			},
 			killAbort: func(context.Context) {
 				if revSess != nil {
-					_ = revSess.Kill(context.Background())
+					_ = revSess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
 				}
 			},
 		}
@@ -1468,7 +1468,7 @@ func runReviewLoop(
 		// above so the deferred wtCleanup never removes the worktree while a
 		// substrate-hosted reviewer claude is still live in it. Idempotent.
 		revSessForTeardown := revSess
-		defer forceTeardownSession(revSessForTeardown)
+		defer forceTeardownSession(revSessForTeardown) //nolint:contextcheck,gocritic // per-iteration LIFO defer, bounded by reviewLoopIterationCap (pre-RT8 idiom)
 
 		if revDispatch.Phase == runexec.DispatchFailed && revDispatch.Reason == "agent_ready_timeout" {
 			result := rlErrorResult(fmt.Sprintf("reviewer agent_ready_timeout at iteration %d", state.iterationCount))

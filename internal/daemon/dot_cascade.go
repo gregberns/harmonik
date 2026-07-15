@@ -1637,7 +1637,7 @@ func dispatchDotAgenticNode(
 				// swallowed by a slow splash (pasteTarget implements pasteInjecter when
 				// it is a perRunSubstrate; a non-pasteInjecter target yields a nil inj
 				// inside the watchdog → re-seed disabled).
-				revInj, _ := pasteTarget.(pasteInjecter)
+				revInj, _ := pasteTarget.(pasteInjecter) //nolint:errcheck // nil revInj disables re-seed by design (pre-RT8 idiom)
 				// hk-60t8: parse per-node reviewer hard-ceiling override from the DOT
 				// timeout= attribute (integer seconds).  A non-zero value overrides
 				// reviewFileHardCeiling for this node only, allowing opus/high reviewer
@@ -1653,22 +1653,21 @@ func dispatchDotAgenticNode(
 				// extension — independent of the tapCh used by the segment's ready pump.
 				reviewerHBCh := tap.Subscribe()
 				go pasteInjectQuitOnReviewFile(ctx, qs, sess, revInj, artifacts.claudeSessionID, wtPath, briefDelivered, reviewerHBCh, reviewerCeiling)
-			} else {
+			} else if dotCompletionMode != handlercontract.CompletionProcessExit {
 				// hk-o90sl (T13/C5): gate on Completion() policy (specs/harness-contract.md §2 N5).
 				// ProcessExit harnesses (codex) self-terminate when the turn completes; sess.Wait +
 				// commitHardCeiling detect completion without a /quit injection. Only launch the
 				// watchdog for PasteInjectQuit harnesses (claude — the default when the registry is
 				// absent or the agent type is unregistered).
-				if dotCompletionMode != handlercontract.CompletionProcessExit {
-					// hk-37giq: give the watchdog its OWN independent subscription
-					// (tap.Subscribe()) rather than sharing tapCh with the ready pump.
-					// Sharing one channel let the ready-side drain goroutine steal every
-					// heartbeat under concurrent dispatch, wedging this watchdog in the
-					// launch-suppression branch forever. The fan-out tap delivers each
-					// consumer its own copy of every event.
-					watchdogCh := tap.Subscribe()
-					go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, deps.bus, runID)
-				}
+				//
+				// hk-37giq: give the watchdog its OWN independent subscription
+				// (tap.Subscribe()) rather than sharing tapCh with the ready pump.
+				// Sharing one channel let the ready-side drain goroutine steal every
+				// heartbeat under concurrent dispatch, wedging this watchdog in the
+				// launch-suppression branch forever. The fan-out tap delivers each
+				// consumer its own copy of every event.
+				watchdogCh := tap.Subscribe()
+				go pasteInjectQuitOnCommit(ctx, qs, sess, wtPath, preHeadSHA, nil, briefDelivered, watchdogCh, deps.bus, runID)
 			}
 		}
 	}
@@ -1749,7 +1748,7 @@ func dispatchDotAgenticNode(
 			// and can extend totalDeadline. Emitting to deps.bus only bypasses tap entirely,
 			// starving the implementer budget watchdog of progress signals. Tap is
 			// per-node (reviewer XOR implementer) so this scoping is safe.
-			hbTarget := handlercontract.EventEmitter(deps.bus)
+			hbTarget := deps.bus
 			if !isReviewer {
 				hbTarget = tap
 			}
@@ -1761,14 +1760,14 @@ func dispatchDotAgenticNode(
 			if deps.hookStore != nil {
 				capturedTap := tap
 				capturedRunID := runID // hk-wths: copy runID so EmitWithRunID stamps the bus envelope
-				deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() {
+				deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 					// hk-wths: use EmitWithRunID so the bus envelope carries run_id. Without
 					// this, the stale watcher's observe() skips the event (evt.RunID == nil),
 					// agentReadySeen stays false, and the never-spawned reaper fires after
 					// neverSpawnedReaperDefaultTimeout (30 min) — cancelling the per-run
 					// context mid-session on any DOT-mode run whose implement node takes longer
 					// than 30 min (e.g. opus+max on complex beads).
-					_ = capturedTap.EmitWithRunID(context.Background(), capturedRunID, core.EventTypeAgentReady, nil)
+					_ = capturedTap.EmitWithRunID(context.Background(), capturedRunID, core.EventTypeAgentReady, nil) //nolint:errcheck // best-effort emit (pre-RT8 idiom)
 				})
 			}
 		},
@@ -1776,14 +1775,14 @@ func dispatchDotAgenticNode(
 		killReady: func(kctx context.Context) {
 			fmt.Fprintf(os.Stderr, "daemon: dot: waitAgentReady node %q run %s: %v (failing node)\n",
 				node.ID, runID.String(), ErrAgentReadyTimeout)
-			_ = sess.Kill(kctx)
+			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; reap below bounds it (pre-RT8 idiom)
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
-				case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
+				case <-clockAfter(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 				}
 			}
-			_ = sess.Wait(kctx)
+			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)
 			if deps.hookStore != nil {
 				deps.hookStore.CloseHookSession(runID.String(), artifacts.claudeSessionID)
 			}
@@ -1793,7 +1792,7 @@ func dispatchDotAgenticNode(
 		},
 		killAbort: func(context.Context) {
 			if sess != nil {
-				_ = sess.Kill(context.Background())
+				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown backstop follows
 			}
 		},
 	}
@@ -1810,7 +1809,7 @@ func dispatchDotAgenticNode(
 	// hk-4l7zs) is returned even on the exec path or any early return between
 	// here and that conditional kill. Kill is idempotent (killOnce), so this is
 	// a no-op when the session was already torn down.
-	defer forceTeardownSession(sess)
+	defer forceTeardownSession(sess) //nolint:contextcheck // teardown backstop takes no ctx (pre-RT8 idiom)
 	if nodeHBDone != nil {
 		nodeHBDoneToClose := nodeHBDone
 		defer close(nodeHBDoneToClose)

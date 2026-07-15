@@ -34,10 +34,9 @@ type segRecordingEmitter struct {
 }
 
 type segEmitCall struct {
-	typ      core.EventType
-	runID    *core.RunID
-	withRun  bool
-	occurred time.Time
+	typ     core.EventType
+	runID   *core.RunID
+	withRun bool
 }
 
 func (e *segRecordingEmitter) Emit(_ context.Context, typ core.EventType, _ []byte) error {
@@ -55,7 +54,7 @@ func (e *segRecordingEmitter) EmitWithRunID(_ context.Context, runID core.RunID,
 	return nil
 }
 
-func (e *segRecordingEmitter) readyEmit() (found bool, withRun bool, runID *core.RunID) {
+func (e *segRecordingEmitter) readyEmit() (found, withRun bool, runID *core.RunID) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, c := range e.calls {
@@ -90,16 +89,16 @@ func segTestRunID(t *testing.T) core.RunID {
 // watcher; transitional probe armed) whose agent never yields a recognized
 // readiness signal, in pure virtual time, and returns the terminal state, the
 // virtual elapsed duration, and the recorded side effects.
-func runStalledResumeSegment(t *testing.T, cfg runexec.DispatchConfig, emitReadyTimeout bool) (runexec.DispatchState, time.Duration, *segRecordingEmitter, *bool, *bool) {
+func runStalledResumeSegment(t *testing.T, cfg runexec.DispatchConfig, emitReadyTimeout bool) (final runexec.DispatchState, elapsed time.Duration, rec *segRecordingEmitter, killed, timeoutEmitted *bool) {
 	t.Helper()
 	start := time.Unix(0, 0)
 	clock := substrate.NewFakeClock(start)
 	runID := segTestRunID(t)
-	rec := &segRecordingEmitter{}
+	rec = &segRecordingEmitter{}
 	tap, tapCh := newPerRunEventTap(rec, runID)
 
-	killed := false
-	timeoutEmitted := false
+	var killedVal, timeoutEmittedVal bool
+	killed, timeoutEmitted = &killedVal, &timeoutEmittedVal
 	seg := &dispatchSegment{
 		clock: clock,
 		runID: runID,
@@ -112,16 +111,16 @@ func runStalledResumeSegment(t *testing.T, cfg runexec.DispatchConfig, emitReady
 		tap:         tap,
 		tapCh:       tapCh,
 		launch:      func(context.Context) (<-chan struct{}, error) { return nil, nil },
-		killReady:   func(context.Context) { killed = true },
+		killReady:   func(context.Context) { killedVal = true },
 	}
 	if emitReadyTimeout {
-		seg.emitReadyTimeout = func(context.Context) { timeoutEmitted = true }
+		seg.emitReadyTimeout = func(context.Context) { timeoutEmittedVal = true }
 	}
 
 	result := make(chan runexec.DispatchState, 1)
 	go func() { result <- seg.run(context.Background()) }()
-	final := pumpUntilDone(t, clock, result)
-	return final, clock.Now().Sub(start), rec, &killed, &timeoutEmitted
+	final = pumpUntilDone(t, clock, result)
+	return final, clock.Now().Sub(start), rec, killed, timeoutEmitted
 }
 
 // TestDispatchSegment_ResumeStalled_TimeoutThenReopenWithinBound is the census

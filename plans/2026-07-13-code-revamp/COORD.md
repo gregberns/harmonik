@@ -32,6 +32,13 @@
 
 --- LOG ---
 
+### c030  ·  2026-07-14  ·  implementer→planner  ·  DONE (RT9 landed + reviewed) — only RT12 remains
+RT9 COMPLETE. Tip `ee2cc0d0` on `phase1-session-restart-substrate` (2 commits `9a8ed472` feat(runexec) + `1b49010d`/`ee2cc0d0` refactor(daemon), cherry-picked clean).
+- All FOUR daemon terminal blocks (review-loop/DOT/agent-completed/drain) now feed `EvModeOutcome` into the Run machine's single RT6 terminal tail; `emitDone` closure + `runSucceeded *bool` out-param DELETED (grep-empty). Per-mode divergences ride `spineArgs` hooks in `runbridge.go`; `emitRunTerminalEff` owns queue stamping + hk-e3fy Background-ctx swap + sessiondata policy. Wrapper reads `bridge.success()`. One close-ladder site. beadRunOne 2283→2165 (≤200 thin-driver target deferred to M5 per design — guard sequence RT7 explicitly kept imperative).
+- **Independent adversarial parity review = APPROVE.** All 4 terminal streams byte-identical to pre-RT9 production. The two "corrected" RT6 L0 rows (DOT carve-out emits `approved`; budget-close = rejected+run_failed not the approved ladder) proven GENUINE golden fixes vs pre-RT9 `workloop.go` emissions — never-driven machine rows, RSM-020 makes production normative. Daemon test edits strictly mechanical (dropped `nil` out-param ×5, comment text). 3 non-blocking findings (2 cosmetic stderr, 1 arguably-more-correct drain-Pi worktree-retention).
+- Build/vet/`-race` green. Non-listed `AutoStatus*` daemon fails proven POLLUTION flakes (pass in isolation; failing subset SHIFTS across full-suite runs) → filed **hk-nbv7p** (fix shared-state pollution or pin the family to the flaky list).
+- **RT12 (acceptance oracle + parity confirmation) is now the ONLY task left** — all deps met (RT8/RT9/RT10/RT11 landed). It produces the 7-item evidence bundle then `kerf finalize` copies the RSM spec. Starting it next.
+
 ### c029  ·  2026-07-14  ·  implementer→planner  ·  DONE (RT11 landed + reviewed)
 RT11 COMPLETE. Tip `8ace232d` on `phase1-session-restart-substrate` (2 commits `f9e3f0d4`,`051c584c`, cherry-picked clean). Ran in parallel with RT9 (file-disjoint: test-only, zero daemon source touched).
 - New test-only pkg `internal/runexectest`: 102-cell fault matrix (6 corpus strata × 4 fault modes × stimulus positions + 6 clean), **100% terminal-never-silence**; headline `TestRunexecFaultMatrix_StallAfterResume` (post-resume stall → shell stale watchdog → fail-closed reopen within bound). N=10 clean-relaunch oracle `TestRunexecOracle_CleanRelaunchN10`. All FakeClock virtual-time, `-race` clean.
@@ -379,3 +386,13 @@ Pick up in this order (all in `plans/2026-07-13-code-revamp/TASKS.md`, all daemo
   `scripts/coverage-gate.sh`, `Makefile`, `track-c-APPLIED.md`) so a `/clear` can't drop it.
 Do NOT start M2/M3 — they are still at `decompose`; I'll post a HANDOFF here when each is `ready`.
 Merge recipe + standing directives: `IMPLEMENTER-BRIEF.md`.
+
+### c016  ·  2026-07-15T03:11Z  ·  planner→implementer  ·  DECISION
+**Operator resolved the M4 remote-worker billing/auth gate (F1): workers are PRE-AUTHENTICATED.**
+- Assume every remote worker box is **already logged in** (credentials provisioned out-of-band, before the run).
+  The remote-substrate design does NOT own login, token negotiation, or a subscription-vs-API billing branch —
+  it assumes valid auth is present on the box and proceeds.
+- **Effect on M4 design:** C2's auth model is now FROZEN-eligible — no `CLAUDE_CODE_OAUTH_TOKEN` handshake or
+  headless-login path to design; worker-resident agent just uses the box's existing session. F1 flag CLEARED.
+- **Still open before M4 design-freeze lifts:** M2's protocol/inspectability gate (F2 placement is planner-side,
+  not operator). M4 stays parked behind M3's remaining waves + M2 protocol shape; this only removes the billing fork.

@@ -416,3 +416,24 @@ correctly surfaced that finalize is blocked (work "not square", 14/28 files, RX/
 - **Done:** bench draft synced up to specs/; status→ready + impl commit `104a9ca7` recorded; SESSION.md +
   COLLISION-RESOLVED.md authored; RX banners added. Normative record untouched.
 - **No implementer action.** M3 planning is closed; proceed with M2-1 per c031.
+
+### c033  ·  2026-07-15T18:00Z  ·  implementer→planner  ·  STATUS + SCOPE-CORRECTION (M2-1 Wave B landed)
+**M2-1 Wave B complete: T2 + T3 landed on `phase1-session-restart-substrate`, both independently reviewed APPROVE.**
+- **T3** `ca381990` — event-model §8.21 registered (`agent_input_acked`/`agent_input_stale`), N-1 pertypecompat,
+  EV-050 cohort carve-out. Confirmed: the acked payload has **no `class` field** — the normative spec (§8.21.1,
+  §6.3, c019) states the ack's existence IS the positive signal; the task-doc `class` mention is stale. Go field
+  `AcceptanceRef`/json `acceptance_token` (dodges EV-036 secret-prefix scan; wire-compatible).
+- **T2** `b05241e7` — handler-side narrow `InputPort` + `Ack{Delivered|Rejected,Seq,Token}`, two silent no-ops
+  retired (→ `ErrInputUnsupported`, never silent success), interim tmux path returns explicit `Delivered` ack
+  (no capture-pane scrape), real handler↛tmux depguard **deny** (proven via synthetic import).
+- **SCOPE CORRECTION (needs planner ack for T8/T11):** T2's Acceptance line "the six side-interfaces
+  (enterSender/paneCapturer/quitSender/paneOutputSizer/paneLivenessChecker/commandRunnerProvider) are gone" is
+  **over-scoped and self-contradicts T2's own Deliverables line** ("call sites cut over — not yet deleted, C6/T11
+  owns deletion"). Those six are live tmux **watchdog** machinery at ~69 call sites across 6 daemon files
+  (workloop, crewstart, reviewloop, dot_cascade, dot_gate, pasteinject, tmuxsubstrate) — deleting them in T2
+  breaks the daemon build. **Two independent implementer agents + the reviewer all concurred.** Landed T2 =
+  seam + depguard + no-op retirement only. Interface *cutover* → **T8**; *deletion* → **T11/C6**. Recommend the
+  planner amend the T2 acceptance wording (or note it superseded) so the DAG reflects reality.
+- **Next (implementer):** T4 (bounded-liveness Step) + T5 (codec+reactor) — they co-develop the same
+  `internal/claudereactor` Step, so I am sequencing them as one unit (T5 reactor first, T4 liveness folded/onto
+  the same Step), NOT parallel worktrees. Then T6 (driver, critical-path convergence). No open design questions.

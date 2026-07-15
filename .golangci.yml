@@ -267,6 +267,26 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "keepertest MUST NOT import a sibling vertical (codex)" }
             - { pkg: "github.com/gregberns/harmonik/internal/codexdigitaltwin", desc: "keepertest MUST NOT import a sibling vertical (codex)" }
 
+        # runexectest: the run-state-machine L2 fault-matrix + relaunch-oracle
+        # tiers (RT11, codename:run-state-machine; RSM-030). Test-only package
+        # (external runexectest_test), mirroring keepertest: corpus summaries →
+        # replay.StimulusSynthesizer schedules → substrate.Twin → the pure
+        # runexec reactors under FakeClock virtual time. Zero-token, offline.
+        # Deny: daemon (RSM-028 stays intact — the tiers exercise the reactors,
+        # never the shell) and the verticals.
+        runexectest:
+          files: ["**/internal/runexectest/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/runexec"
+            - "github.com/gregberns/harmonik/internal/replay"
+            - "github.com/gregberns/harmonik/internal/core"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runexectest MUST NOT import daemon (zero-token offline tiers; RSM-028)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "runexectest MUST NOT import a sibling vertical (keeper)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "runexectest MUST NOT import a sibling vertical (codex)" }
+
         # replay: the session-restart invariant-checking harness (codename:session-restart-substrate).
         # Reads a recorded events.jsonl via eventbus.ScanAfter and decodes through the typed
         # core registry (DispatchObservational / DecodePayloadStrict). Allowed edges: stdlib +

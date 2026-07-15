@@ -355,15 +355,76 @@ func (sh *runShell) fireOnCancel(ctx context.Context, m runReactor) {
 	sh.feed(ctx, m, runexec.Event{Kind: runexec.EvTimerFired, Timer: bestKind, At: sh.clock.Now()})
 }
 
-// RunDispatch drives one Dispatch instance to its terminal and returns the
-// terminal state (runexec-design §5: the sub-drivers call this instead of
-// open-coded Launch+waitAgentReady+caulk). The shell feeds EvStartDispatch to
-// launch, then pumps the tap/timer/cancel loop.
-func (sh *runShell) RunDispatch(ctx context.Context, cfg runexec.DispatchConfig, sess runexec.SessionRef, specRef string) runexec.DispatchState {
-	m := runexec.NewDispatch(cfg)
+// RunDispatch drives one Dispatch instance through its launch/ready/brief
+// segment and returns the resulting state (runexec-design §5: the sub-drivers
+// call this instead of open-coded Launch+waitAgentReady+caulk). The shell
+// feeds EvStartDispatch to launch, then pumps the tap/timer/cancel loop until
+// the machine is terminal OR has settled into Working — the RT8 segment
+// boundary: the Working-phase completion wait (waitWithSocketGrace + the
+// frozen commit watchdog) stays with the sub-driver until the M5-adjacent
+// full-reactorization (00-decisions "Open items"). Every failure class
+// (launch failure, the RSM-005 ready-timeout edge, input undeliverable,
+// abort) reaches its terminal INSIDE this loop, so the SR9 bound is owned by
+// the machine's TimerAgentReady on the ClockPort, never a wall-clock wait.
+//
+// Cancellation maps onto the Dispatch machine's uniform EvAborted edge
+// (runexec-design §3 "any non-terminal") rather than fireOnCancel's
+// fire-nearest-timer mapping: pre-RT8 a ctx cancel during the ready wait fell
+// through WITHOUT emitting agent_ready_timeout, and firing the ready timer
+// here would fabricate that emission on every shutdown (an unsanctioned
+// stream divergence, RSM-029).
+func (sh *runShell) RunDispatch(ctx context.Context, m *runexec.Dispatch, sess runexec.SessionRef, specRef string) runexec.DispatchState {
 	sh.feed(ctx, m, runexec.Event{Kind: runexec.EvStartDispatch, Session: sess, Detail: specRef, At: sh.clock.Now()})
-	sh.drive(ctx, m)
+	for dispatchSegmentActive(m) {
+		if sh.drainPending(ctx, m) {
+			continue
+		}
+		if !dispatchSegmentActive(m) {
+			break
+		}
+		sh.driveDispatchOnce(ctx, m)
+	}
 	return m.State()
+}
+
+// dispatchSegmentActive reports whether the RunDispatch segment loop must keep
+// pumping: the machine is in flight and has not yet reached Working (the RT8
+// segment boundary).
+func dispatchSegmentActive(m *runexec.Dispatch) bool {
+	return m.InFlight() && m.State().Phase != runexec.DispatchWorking
+}
+
+// driveDispatchOnce blocks for one external signal and feeds it — driveOnce's
+// dispatch-segment variant: ctx cancellation (and a closed tap) map onto the
+// machine's EvAborted edge instead of fireOnCancel (see RunDispatch).
+func (sh *runShell) driveDispatchOnce(ctx context.Context, m *runexec.Dispatch) {
+	var deadlineC <-chan time.Time
+	var deadlineTicker substrate.Ticker
+	if remaining, ok := sh.nearestDeadline(); ok {
+		deadlineTicker = sh.clock.NewTicker(remaining)
+		deadlineC = deadlineTicker.C()
+	}
+	defer func() {
+		if deadlineTicker != nil {
+			deadlineTicker.Stop()
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		sh.feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "context cancelled", At: sh.clock.Now()})
+	case ev, ok := <-sh.events:
+		if !ok {
+			sh.feed(ctx, m, runexec.Event{Kind: runexec.EvAborted, Reason: "event tap closed", At: sh.clock.Now()})
+			return
+		}
+		if ev.At.IsZero() {
+			ev.At = sh.clock.Now()
+		}
+		sh.feed(ctx, m, ev)
+	case <-deadlineC:
+		sh.fireElapsedTimers(ctx, m)
+	}
 }
 
 // driveRun feeds EvStartRun (guards already passed shell-side) and pumps the Run

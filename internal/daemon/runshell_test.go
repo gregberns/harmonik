@@ -94,7 +94,7 @@ func TestRunShell_ReadyTimeout_KillsAndFails(t *testing.T) {
 
 	result := make(chan runexec.DispatchState, 1)
 	go func() {
-		result <- sh.RunDispatch(context.Background(), cfg, "sess-1", "spec-ref")
+		result <- sh.RunDispatch(context.Background(), runexec.NewDispatch(cfg), "sess-1", "spec-ref")
 	}()
 
 	// Pump virtual time until the dispatch reaches its terminal. Each drive

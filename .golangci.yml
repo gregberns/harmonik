@@ -228,6 +228,29 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codex vertical MUST NOT import daemon" }
             - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "codex vertical MUST NOT import a sibling vertical (keeper)" }
 
+        # codexdriver: the structured Codex app-server driver — the second
+        # handler.Substrate implementation (agent-input-substrate T6,
+        # codename:agent-input-substrate). The driver shell may import handler
+        # (the Substrate/InputPort seam it implements), apptap (the capture
+        # tee), substrate (ClockPort + Run), and the codex vertical siblings
+        # (codexwire codec + codexinput reactor). It MUST NEVER import
+        # internal/lifecycle/tmux (AIS-009/AIS-010: tmux is not on the
+        # structured input path — the AIS-016 CommandRunner seam is declared
+        # locally) or daemon.
+        codexdriver:
+          files: ["**/internal/codexdriver/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/codexwire"
+            - "github.com/gregberns/harmonik/internal/codexinput"
+            - "github.com/gregberns/harmonik/internal/codexdriver"
+            - "github.com/gregberns/harmonik/internal/apptap"
+            - "github.com/gregberns/harmonik/internal/handler"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/lifecycle/tmux", desc: "codexdriver MUST NOT import tmux (AIS-009: the driver owns the child stdio; tmux is not on the structured input path)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codexdriver MUST NOT import daemon (composition root injects, never the reverse)" }
+
         # keepertwin: the keeper vertical's trace-driven digital twin (T9,
         # codename:session-restart-substrate; measurement-design §2). Synthesizes
         # input-event schedules from the recorded corpus goldens and replays them

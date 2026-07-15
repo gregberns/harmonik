@@ -705,7 +705,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		BrPath:                   brPath,
 		JSONLLogPath:             jsonlLogPath,
 		MaxConcurrent:            maxConcurrent,                                                                                                                                             // hk-w3cp1: user-controlled concurrency
-		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions), daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir))), // fleet-portability T2
+		Substrate:                selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions), daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir))), ""), // fleet-portability T2; AIS-015 selection axis
 		DaemonBinaryPath:         daemonBinaryPath,
 		BinaryCommitHash:         commitHash,
 		CancelOnQueueDrain:       cancelStopDispatch,           // stop dispatch on success (hk-icecw, hk-2o2i9)

@@ -1337,7 +1337,7 @@ EXAMPLES
 		JSONLLogPath:             jsonlLogPath,
 		MaxConcurrent:            maxConcurrentFlag,
 		NoAutoPull:               !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
-		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...),
+		Substrate:                selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag), // AIS-015 selection axis; default tmux
 		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash:         resolvedHash,                        // ldflags stamp or runtime/debug fallback (hk-mz0x4, hk-v3nv)
 		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (150s)

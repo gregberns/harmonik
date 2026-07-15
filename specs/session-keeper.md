@@ -7,10 +7,10 @@ spec-id: session-keeper
 requirement-prefix: SK   # reserve in specs/_registry.yaml at landing (same commit as this spec)
 status: draft
 spec-shape: requirements-first
-version: 0.1.0
+version: 0.2.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-13
+last-updated: 2026-07-14
 depends-on:
   - replay-substrate
   - event-model
@@ -70,6 +70,8 @@ Tags: mechanism
 #### SK-002 — PanePort follows PL-021d; Capture is keeper-only
 
 `PanePort` is the tmux write/read boundary. Its `Inject` method MUST follow the `tmux load-buffer` + `paste-buffer` write discipline of [process-lifecycle.md §4.7 PL-021d]; the bare `send-keys` form is FORBIDDEN for injected payloads. `PanePort.Capture` (pane read via `capture-pane`) is keeper-scoped: it MUST NOT be extended into the daemon's process-spawn path. [process-lifecycle.md §4.7 PL-021b] §5 forbids the daemon the `pipe-pane` bridge side-channel specifically (the daemon's own `logs` uses `capture-pane`, `process-lifecycle.md:958`); `PanePort` MUST remain consistent with the PL-021b process-spawn seam without rebuilding the daemon side.
+
+NOTE (M2 agent-input-substrate carve-out): [process-lifecycle.md §4.7 PL-021d] is DEMOTED for the daemon RUN input path (superseded by [agent-input.md] AIS for daemon-spawned agent runs), but is PRESERVED for the keeper. `PanePort.Inject`'s conformance to the load-buffer + paste-buffer discipline is UNCHANGED by that demotion: the keeper is off-daemon, holds no `SubstrateSession` handle, and drives interactive panes it did not spawn, so it is explicitly EXCLUDED from the C6 deletion boundary that retires the daemon run input stack. The `load-buffer`/`paste-buffer`/`send-keys` tmux verbs keeper depends on MUST survive that deletion.
 
 ```
 INTERFACE PanePort:
@@ -183,6 +185,8 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 - **Backstop source** — a recent assistant transcript turn with turn-timestamp `≥ t_nonce` yields `ModelDone{source:"transcript_turn"}`, for agents whose Stop hook is not wired.
 - **Liveness bound** — a `model_done_timeout` (default ~60s, strictly less than `ClearConfirmBackstop` = 150s) after which the reactor MUST proceed to `Clearing` anyway, emitting `model_done{source:"timeout", degraded:true}`. The timeout path preserves the pre-rebuild clear-immediately behavior as the degraded mode, so the SR4 tightening is fail-open: a lost `.idle` write can never wedge the cycle.
 
+> NOTE (hook-sourced done-gate cross-ref, COORD c021 / [agent-input.md AIS-018]). The `model_done` signal is the keeper's realization of the handoff done-gate whose normative home is [agent-input.md §4.9 AIS-018] (`handoff-done = outcome_emitted` (`Stop`) AND expected artifact present). The **primary source** above (the Stop-hook `.idle` marker) is a filesystem realization of the `Stop`-hook `outcome_emitted` signal AIS-018 names; the **backstop** (transcript turn) is SECONDARY corroboration only, never the primary ack (consistent with [agent-input.md AIS-003]). AIS-018's completed-vs-pending-question discrimination (telling a `Stop`-that-completed apart from a `Stop`-that-paused-to-ask) is the OPEN problem (OQ-AIS-006) — SK-014 does NOT solve it and MUST NOT claim to. Migrating the keeper's model-done gate to consume the bus `outcome_emitted` event + an artifact-presence check directly (rather than the `.idle` marker + transcript parse) is the keeper-side reconciliation owned by the sibling session-keeper change per [agent-input.md AIS-012], not rebuilt here.
+
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
@@ -232,6 +236,14 @@ The §5 invariants MUST be verified by property tests over the recorded corpus a
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+### 4.10 Deferred: keeper input migration (SK-R12)
+
+#### SK-021 — Deferred: keeper input MAY migrate to a session-id-keyed input port
+
+The keeper's paste path (SK-002) is a deliberate carve-out during M2. A future phase MAY migrate it OFF direct tmux paste onto the agent-input substrate — but ONLY via a **session-id-keyed input port in a leaf package keeper is permitted to import** (keeper has no `SubstrateSession` handle and is depguard-barred from the daemon), OR via a daemon RPC. Until such a port exists, SK-002's PL-021d carve-out is normative and keeper stays OUT of the C6 deletion boundary. This is a deferred item, NOT an open decision.
+
+Tags: mechanism
 
 ## 5. Invariants
 
@@ -476,7 +488,7 @@ The only path that never sends `/clear` — the `AwaitingHandoff` `handoff_timeo
 - **[replay-substrate.md §4]** — the `EventSource` / `Effector` / `Run` seam (second instantiation), the replay `Twin`, the four fault modes, and the L0–L2 test tiers this spec's reactor and property tests instantiate.
 - **[replay-substrate.md §6]** — the `ClockPort` / `Ticker` type, required by reference in SK-006.
 - **[event-model.md §8.20]** — the registration, payload struct catalog, `PayloadCompatEntry`, and cohort-guard carve-out for the four interior events; the payload `cycle_id` joinability contract (D7) this spec's ordering invariants join on.
-- **[process-lifecycle.md §4.7 PL-021d]** — the `tmux load-buffer` + `paste-buffer` write discipline that `PanePort.Inject` follows per SK-002.
+- **[process-lifecycle.md §4.7 PL-021d]** — the `tmux load-buffer` + `paste-buffer` write discipline that `PanePort.Inject` follows per SK-002. Under the M2 agent-input-substrate work this requirement survives ONLY as the keeper-preserved discipline: it is DEMOTED (not deleted) on the daemon RUN input path (superseded by [agent-input.md] AIS), so a future PL reader MUST NOT treat that demotion as removing keeper's basis (SK-002 carve-out, SK-021).
 - **[process-lifecycle.md §4.7 PL-021b]** — the process-spawn seam and its §5 `pipe-pane` bridge prohibition; `PanePort.Capture` stays keeper-scoped and is not extended into the daemon path (SK-002).
 - **[operator-nfr.md §4.13 ON-059]** — the restart-now gate ladder and the operator-pinned warn/act bands and thresholds preserved by SK-016.
 
@@ -514,11 +526,12 @@ The only path that never sends `/clear` — the `AwaitingHandoff` `handoff_timeo
 
 None blocking.
 
-> INFORMATIVE: Two items are deferred by design, not open decisions. (1) F-class durability for the four interior events — revisited only if a later phase routes keeper emits through the daemon; O-class is correct for this phase (D9). (2) Relaxing the `InCycle` suppression to let warns/precompact/heartbeat fire during a cycle — a separately-measured change, out of scope for the parity proof (D11). Neither blocks finalizing this spec.
+> INFORMATIVE: Three items are deferred by design, not open decisions. (1) F-class durability for the four interior events — revisited only if a later phase routes keeper emits through the daemon; O-class is correct for this phase (D9). (2) Relaxing the `InCycle` suppression to let warns/precompact/heartbeat fire during a cycle — a separately-measured change, out of scope for the parity proof (D11). (3) Migrating keeper input off direct tmux paste onto the agent-input substrate — deferred per SK-021, which carries the normative MUST-precondition (only via a session-id-keyed leaf-package port or a daemon RPC) that gates any future teardown of keeper's PL-021d verbs. None blocks finalizing this spec.
 
 ## 12. Revision history
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
 | 2026-07-13 | 0.1.0 | foundation-author | Initial draft — session-restart vertical: five ports (SK-001…SK-007), ClockPort migration (SK-008), pure Step reactor + timers-as-events + gate ladder (SK-009…SK-011), four durable interior events (SK-012…SK-013), model-done signal (SK-014), bounded liveness (SK-015), behavior parity (SK-016…SK-018), baseline anchor (SK-019), verification obligation (SK-020); SR3/SR4/SR6/SR7/SR9 as SK-INV-001…SK-INV-005; Step transition table and model-done detection protocol; terminal/abort taxonomy. |
+| 2026-07-14 | 0.2.0 | foundation-author | M2 agent-input-substrate carve-out (D6/C6/A11): appended the PL-021d keeper carve-out NOTE to SK-002 prose (PL-021d demoted-for-daemon-run-but-preserved-for-keeper; `PanePort.Inject` unchanged; keeper EXCLUDED from the C6 deletion boundary; keeper's load-buffer/paste-buffer/send-keys verbs MUST survive); §9.1 PL-021d "Depends on" clause noting the demoted-not-deleted survival; new deferred requirement SK-021 (§4.10) — keeper input MAY migrate to a session-id-keyed leaf-package port / daemon RPC, with the normative MUST-precondition gating any C6 teardown — plus its §11 deferred-register pointer. No SK renumbering; SK-002 interface block untouched. |
 ```

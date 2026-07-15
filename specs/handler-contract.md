@@ -8,10 +8,10 @@ requirement-prefix: HC
 status: reviewed
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.5.4
+version: 0.7.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-06-01
+last-updated: 2026-07-14
 depends-on:
   - architecture
   - execution-model
@@ -135,6 +135,58 @@ A non-zero exit is a `FAIL` `Outcome` the cascade routes on per [execution-model
 **Observability.** A tool node reuses the existing node-lifecycle observability surface: `node_dispatch_requested` ([event-model.md §8.1.11]) fires before dispatch, and the command's result flows through the standard `Outcome` surface and run-terminal events. No `tool_command_completed` event is introduced at v1 (per the integration-pass observability decision; per-command lifecycle events are deliberately excluded by [event-model.md §8]'s lifecycle-boundary discipline).
 
 Tags: mechanism
+
+### 4.1a Session input port
+
+> These three requirements make the seam carry a first-class typed input verb + ack. They are additive amendments in the manner of the HC-054 bridge family (see §10.1); the detailed wire framing, codec, `InputRequest` field schema, capture, and driver Step live in the companion [agent-input.md] (AIS) spec — this section stays at seam-contract altitude. IDs continue additively from the highest live requirement ID (HC-068); HC-058/059/060 are already taken by §4.2a and MUST NOT be reused.
+
+#### HC-069 — Session input port (`InputPort`)
+
+The seam MUST expose a narrow, consumer-declared `InputPort` interface (defined in §6.1) that a `Session` MAY satisfy structurally. `InputPort` carries exactly two methods:
+
+- `SubmitInput(ctx, InputRequest) -> (Ack, error)` — delivers ONE input to the running agent and **blocks until the input is acked-or-stale** within the bounded window of §5 HC-INV-008. It MUST NOT return before the input reaches exactly one terminal (a returned `Ack` per HC-070, or an emitted `agent_input_stale`-class event).
+- `CloseInput(ctx) -> error` — signals that no further input will be submitted for this session and closes the driver's input channel.
+
+`InputPort` is a **separately asserted narrow port, NOT a method on the `Session` interface**. The consumer (the daemon composition root / structured input driver) declares it; a session satisfies it structurally. This mirrors the port + function-adapter idiom used elsewhere in the composition layer.
+
+**Retirement (SC2).** This requirement RETIRES, as the input mechanism: (a) the six type-asserted side-interfaces previously used to smuggle input out-of-band (the enter-sender / pane-capturer / quit-sender / pane-output-sizer / pane-liveness-checker / command-runner-provider assertions) and (b) the no-op `SendInput` / `CloseStdin` on the substrate session adapter. A session that does NOT satisfy `InputPort` MUST cause `SubmitInput` / `CloseInput` at the seam to return a typed `ErrDeterministic` ("input unsupported") — it MUST NOT silently succeed as the retired no-op did.
+
+**Interim tmux/paste impl.** The interim tmux/paste implementation MUST satisfy `InputPort` during the bake window by returning a `Delivered` ack for a successful write (per HC-070) — its positive acceptance is confirmed ASYNCHRONOUSLY by the Claude-hook-bridge signal (`outcome_emitted` on `Stop`, `agent_ready` on `SessionStart` start/resume per [claude-hook-bridge.md §4.5 CHB-013, §4.7 CHB-018]), NOT by a `capture-pane` scrape — so that the structured-driver implementation and the interim implementation remain swappable at ONE seam. It MUST NOT synthesize a positive acceptance it did not observe.
+
+**Stdin disposition — structured driver vs. interim/codex.** Under the structured input driver the driver OWNS the child's stdin directly and delivers input as NDJSON per [agent-input.md]; therefore the prior `/dev/null` stdin redirect and the "stdin MUST NOT be driver-owned for `claude` (pane-paste harness)" guidance are **superseded for the structured-driver harness** — `claude` now reads structured input on stdin. The `/dev/null` stdin redirect remains in force ONLY for the codex / `ProcessExit` harness and the interim tmux implementation. This requirement RECORDS the split; it does not remove the redirect for the implementations that still rely on it.
+
+Cross-refs: HC-054 (observation peer of this input port), HC-070 (ack contents + emitted event), HC-071 (machine-enforced seam inversion), §6.1 (`InputPort` / `InputRequest` / `Ack` schemas), §5 HC-INV-008 (bounded input liveness), [agent-input.md] (AIS — wire framing, codec, `InputRequest` schema, capture, driver Step).
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### HC-070 — Input ack: contents + synchronous return AND emitted event
+
+The `Ack` returned by `SubmitInput` (schema in §6.1) MUST carry:
+
+1. a **delivery outcome** ∈ `{Delivered, Rejected}` — `Delivered` = the input was handed to the driver (the acceptance verdict arrives ASYNCHRONOUSLY, see below); `Rejected` = a protocol-level refusal (structured drivers only; the tmux/paste path cannot produce one). There is NO acceptance "class" and no capability hierarchy; the two input methods (tmux paste for Claude; the structured Codex app-server driver) are PEERS, not tiers;
+2. a **monotonic input sequence id** — driver-internal, strictly increasing per session;
+3. a **protocol-level acceptance token** when the wire protocol supplies one (e.g., the turn id the input opened); absent (`None`) otherwise.
+
+`SubmitInput`'s return value is the **synchronous** delivery-handoff ack for the calling goroutine. Positive acceptance is NOT an `Ack` outcome value — it is the ASYNC **`agent_input_acked`** bus event, which the driver MUST emit so async observers see the acceptance on the event stream; on the stale terminal (no positive signal within the HC-INV-008 window) the driver MUST emit **`agent_input_stale`**. These events' payload schemas live in [event-model.md §6.3] and are indexed in §6.4.
+
+**Ack signal source (per driver).** On the **tmux/Claude path** the positive-acceptance signal that triggers `agent_input_acked` is the Claude-hook-bridge event — `outcome_emitted` (the `Stop` hook) or `agent_ready` (the `SessionStart` hook, fresh start AND post-`/clear` resume) per [claude-hook-bridge.md §4.5 CHB-013, §4.7 CHB-018] — NOT a `capture-pane` scrape and NOT a Claude wire protocol. On the **structured (Codex) driver** it is the wire protocol's observed input-ack. The interim tmux/paste implementation MUST return `Delivered` for a successful write — an honest interim state that replaces today's silent no-op; its acceptance is confirmed async by the hook signal, or reaches `agent_input_stale` on the HC-INV-008 timeout. `exit-0-of-tmux` ceases to be an acceptance signal; the interim impl MUST NOT synthesize a positive acceptance it did not observe.
+
+**Front-stop composition, NOT replacement (HC-056 / HC-057 relationship).** The synchronous input ack is an earlier, positive, per-input acceptance signal that **composes in front of** the existing process-liveness signals. It does NOT gate first-work dispatch (`agent_ready` per §4.9 HC-056 / §5 HC-INV-004 still does) and does NOT replace the heartbeat / commit watchdogs (§4.9 HC-057, §7.1).
+
+Cross-refs: HC-069, §5 HC-INV-008, §4.9 HC-056, §4.9 HC-057, §6.4 (co-owned events), [event-model.md §6.3], [agent-input.md] (AIS-003 ack-signal source, AIS-018 handoff done-gate), [claude-hook-bridge.md §4.5 CHB-013 / §4.7 CHB-018] (the tmux/Claude-path ack-signal source: `outcome_emitted` / `agent_ready`).
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
+#### HC-071 — Machine-enforced seam inversion
+
+The handler declares `InputPort`; the daemon composition root supplies the concrete driver. This dependency inversion MUST be enforced by a REAL `depguard` deny rule (leaf-package style per the RS-005 precedent), not a doc comment: `internal/handler` MUST NOT import `internal/lifecycle/tmux`. The rule MUST land in `.golangci.yml` in the SAME change that introduces the port (the boundary is comment-only today). The doc-only "handler ↔ lifecycle/tmux forbidden" claim thereby becomes machine-checked.
+
+Cross-refs: HC-069 (the port the inversion protects), [agent-input.md] (AIS).
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 4.2 Wire protocol
 
@@ -704,7 +756,9 @@ The 30 s default is informed by claude's observed cold-start latency (≤ 5 s ty
 
 The timeout MUST fire from the same goroutine that owns the session's lifecycle to ensure ordered Kill/Wait. Concurrent `agent_ready` arrival and timeout-expiry race is resolved in favour of `agent_ready` (last-second arrival wins).
 
-Cross-refs: HC-039 (emitter identity), HC-041 (DetectReady), [claude-hook-bridge.md §4.5 CHB-013] (SessionStart → agent_ready mapping), [claude-hook-bridge.md §4.7 CHB-018] (launch_initiated precursor, agent_ready gating), [claude-hook-bridge.md §4.7 CHB-020] (terminal-event mapping). Closes follow-up bead `hk-do7te`.
+**Front-stop composition (HC-070).** The per-input synchronous input ack of §4.1a HC-070 composes in front of this timeout as an earlier, positive, per-input acceptance signal; it does NOT replace or satisfy the `agent_ready` gate — first-work dispatch still requires `agent_ready` per HC-INV-004, and this `agent_ready` timeout remains the process-liveness guard for ready-state.
+
+Cross-refs: HC-039 (emitter identity), HC-041 (DetectReady), HC-070 (per-input ack, front-stop composition), [claude-hook-bridge.md §4.5 CHB-013] (SessionStart → agent_ready mapping), [claude-hook-bridge.md §4.7 CHB-018] (launch_initiated precursor, agent_ready gating), [claude-hook-bridge.md §4.7 CHB-020] (terminal-event mapping). Closes follow-up bead `hk-do7te`.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -725,7 +779,9 @@ For `agent_type == "claude-code"`, the daemon MAY emit `agent_heartbeat{phase:"r
 
 Post-MVH, when a `harmonik claude-handler` shim binary lands, heartbeat emission MUST migrate to the shim and this clause is retired.
 
-Cross-ref: [claude-hook-bridge.md §4.7 CHB-019].
+**Front-stop composition (HC-070).** The per-input synchronous input ack of §4.1a HC-070 is an earlier, per-input acceptance signal that composes in front of this heartbeat watchdog; it does NOT replace the heartbeat / silent-hang liveness guard (§7.1), which remains the authoritative process-liveness guard for extended reasoning.
+
+Cross-ref: [claude-hook-bridge.md §4.7 CHB-019]; §4.1a HC-070 (per-input ack, front-stop composition).
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -1035,6 +1091,14 @@ Tags: mechanism
 
 For every handler-lifecycle event type enumerated in §6.4 and §4.2.HC-007, the session watcher (§4.3.HC-011) MUST be the SOLE publisher to the in-process event bus. No other component — including in-process `Handler` fakes per the §4.8.HC-035 carve-out — MAY publish a handler-lifecycle event directly. In-process fakes per HC-035 MUST route their emissions through the same watcher and redaction middleware (§4.7) that a real-subprocess-backed session uses; a fake that bypasses the watcher bypasses HC-INV-003 (redaction) and HC-INV-004 (ordering) by construction. This invariant makes the watcher's position as the redaction and ordering enforcement point normative rather than descriptive.
 
+**Input-ack events carve-out (HC-070).** The `agent_input_acked` / `agent_input_stale` events indexed under §6.4 "Input-ack events" are **driver-emitted** (per HC-070): the structured input driver publishes them at the moment it observes protocol-level acceptance or the bounded-liveness timeout (AIS-INV-001), which is a distinct emission point from the session watcher's lifecycle-event stream. These two event types are therefore **EXCLUDED** from this invariant's "sole publisher" scope — the watcher is NOT their publisher. They remain subject to the redaction middleware (§4.7) and to event-model registration ([event-model.md §8], EV-027); their ordering guarantee is the per-submission bounded-liveness terminal of HC-INV-008 / AIS-INV-001, not the watcher's lifecycle ordering (HC-INV-004). This carve-out is scoped to exactly these two driver-emitted input-ack types; every other §6.4 handler-lifecycle event remains watcher-published.
+
+Tags: mechanism
+
+#### HC-INV-008 — Bounded input liveness
+
+For every `SubmitInput` (§4.1a HC-069), the call MUST reach exactly ONE terminal — an `Ack{Delivered | Rejected}` OR an emitted `agent_input_stale`-class event — within a bounded window (`InputAckTimeout` + injection overhead) measured via the `ClockPort` (never wall-clock). On the tmux/Claude path the awaited positive signal is the Claude-hook-bridge event (`outcome_emitted` / `agent_ready` per [claude-hook-bridge.md §4.5 CHB-013, §4.7 CHB-018]); when it does not arrive in-bound the driver emits `agent_input_stale` and the daemon recovers rather than hanging — the resume-hang fix. SILENCE IS FORBIDDEN: every timer edge in the driver's input Step MUST land in a state that carries an outgoing action (an ack, a stale event, or a retry that itself carries a bounded deadline); no timer edge may leave the input in flight with no pending action. This is the seam-level statement of bounded input liveness; the machine-checked, per-cell home is **AIS-INV-001** in [agent-input.md] (the AIS fault matrix). A `SubmitInput` that returns neither an `Ack` nor an emitted stale event within the window is a driver defect.
+
 Tags: mechanism
 
 ### 5.6 Context update discipline (per-workflow registered keys)
@@ -1070,11 +1134,29 @@ INTERFACE Handler:
 ```
 INTERFACE Session:
     ID() -> SessionID                              -- stable identifier for this session; assigned at Launch return
-    SendInput(ctx, input) -> error                 -- delivers input to the running agent; typed sentinel on failure
+    -- input is NOT a Session method: it is the separately asserted narrow InputPort below, which a Session MAY satisfy structurally per §4.1a HC-069 (the prior no-op SendInput/CloseStdin are retired)
     Attach(ctx) -> (io.Reader, error)              -- returns a reader over the session's tmux or log tail for operator-facing observability
     Kill(ctx) -> error                             -- signals the subprocess to exit; safe to call multiple times
     Wait(ctx) -> (Outcome, error)                  -- blocks until the subprocess terminates; safe to call multiple times; returns the Outcome from the final outcome_emitted event, or a typed sentinel on crash
     LogLocation() -> String                        -- returns the absolute session-log path emitted in session_log_location
+```
+
+```
+INTERFACE InputPort:                                   -- separately asserted narrow port per §4.1a HC-069; a Session MAY satisfy it structurally. Full InputRequest field schema in [agent-input.md] (AIS)
+    SubmitInput(ctx, InputRequest) -> (Ack, error)     -- delivers ONE input; blocks until acked-or-stale within §5 HC-INV-008; ErrDeterministic("input unsupported") at the seam when the session does not satisfy InputPort
+    CloseInput(ctx) -> error                           -- signals no further input; closes the driver's input channel
+```
+
+```
+RECORD InputRequest:
+    payload           : opaque                     -- the input to deliver to the running agent; full field schema in [agent-input.md] (AIS). Carries NO secret value — secrets travel only via HARMONIK_SECRET_* env per §4.7.HC-028 / §5 HC-INV-003
+```
+
+```
+RECORD Ack:
+    outcome           : Enum                        -- {Delivered, Rejected}; Delivered = input handed to the driver (acceptance verdict arrives async as agent_input_acked); Rejected = protocol-level refusal (structured drivers only; tmux cannot produce one). No acceptance "class"/tier. Interim tmux/paste impl returns Delivered per §4.1a HC-070; its positive acceptance is the async Claude-hook-bridge signal (outcome_emitted / agent_ready)
+    input_seq         : Integer                     -- monotonic, driver-internal, strictly increasing per session
+    acceptance_token  : String | None               -- protocol-level token when the wire protocol supplies one (e.g., the turn id the input opened); None otherwise
 ```
 
 ```
@@ -1148,7 +1230,9 @@ Closing the reader MUST NOT terminate the session; the session terminates only v
 
 Multiple concurrent `Attach()` calls are permitted; each call returns an independent reader fed from the same underlying pty. Implementations MAY coalesce readers into a single tee.
 
-Cross-refs: [process-lifecycle.md §4.7 PL-021b] (pane substrate), [claude-hook-bridge.md §4.7 CHB-018] (pre-exec emission ordering — unaffected).
+`Session.Attach()` is the OBSERVATION half of the seam; its input peer is the `InputPort` of §4.1a HC-069 (`Attach()` observes the agent's output; `SubmitInput` delivers input to it). The two are peers and are not renumbered by this amendment.
+
+Cross-refs: [process-lifecycle.md §4.7 PL-021b] (pane substrate), [claude-hook-bridge.md §4.7 CHB-018] (pre-exec emission ordering — unaffected), §4.1a HC-069 (input peer port).
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -1179,6 +1263,11 @@ Each item below is a progress-stream message emitted by the handler subprocess; 
 - `session_log_location` — emitted early in the session per §4.2.HC-010 and [workspace-model.md §4.7].
 - `skills_provisioned` — emitted after skill provisioning and before `agent_ready` per §4.11.HC-049.
 - `outcome_emitted` — emitted as the final message carrying the session's `Outcome` per §4.2.HC-008.
+
+**Input-ack events (driver-emitted per §4.1a HC-070).** The structured input driver emits these on the same bus so async observers see per-input acceptance; their payload schemas live in [event-model.md §6.3]:
+
+- `agent_input_acked` — emitted when a submitted input is POSITIVELY accepted (its existence IS the ack; it carries no class). On the tmux/Claude path this is when the Claude-hook-bridge signal (`outcome_emitted` / `agent_ready`) is observed; on the structured driver, on the wire input-ack. A synchronous `Ack{Rejected}` (protocol refusal, structured driver only) does NOT produce this event. Per §4.1a HC-070.
+- `agent_input_stale` — emitted when a `SubmitInput` reaches the §5 HC-INV-008 stale terminal (no positive ack within the bounded, `ClockPort`-measured window).
 
 **Watcher-synthesized events (not handler-emitted).** The following are emitted by the watcher in response to state-machine transitions rather than handler messages; their payload schemas also live in [event-model.md §6.3]:
 
@@ -1332,20 +1421,22 @@ Classification is mechanism-tagged per §4.5.HC-023. Every error returned across
 - **[operator-nfr.md §4.7 Security posture]** — skill-injection policy enforcement (network egress, sandbox) consumes this spec's provisioning hook.
 - **[execution-model.md §4.1 EM-005b (gate-decision Outcome variant)]** — co-owned with EM; HC-060 is the handler-side emission rule for gate-decision Outcomes; EM-005b is the spec-side schema requirement.
 - **[replay-substrate.md §4 RS-001/RS-006/RS-007]** — the in-process `EventSource`/`Effector` seam and its two test doubles now govern the in-process-fake surface HC-035 carves out of the twin-parity rule. HC-035 disclaims it; RS owns it. Read-only co-reference; no reverse dependency.
+- **[agent-input.md (AIS)]** — the home of the input wire framing, codec, full `InputRequest` field schema, output capture, and the driver Step / fault matrix. §4.1a HC-069/HC-070/HC-071 and §5 HC-INV-008 stay at seam-contract altitude and cross-ref AIS for the mechanism; AIS-INV-001 is the machine-checked, per-cell home of the bounded-input-liveness invariant HC-INV-008 states at seam level. Read-only co-reference.
 
 ## 10. Conformance
 
 ### 10.1 Conformance profiles
 
-**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement `HC-001` through `HC-053` (including `HC-007a`, `HC-007b`, `HC-008a`, `HC-011a`, `HC-013a`, `HC-024a`, `HC-026a`, `HC-036a`, `HC-044a`, `HC-048a`, `HC-049a`) and every invariant `HC-INV-001` through `HC-INV-007`. No requirement is deferred at MVH.
+**Core MVH.** An implementation conforming to Core MVH MUST pass every requirement `HC-001` through `HC-053` (including `HC-007a`, `HC-007b`, `HC-008a`, `HC-011a`, `HC-013a`, `HC-024a`, `HC-026a`, `HC-036a`, `HC-044a`, `HC-048a`, `HC-049a`) and every invariant `HC-INV-001` through `HC-INV-008`. No requirement is deferred at MVH.
 
-**Post-MVH extensions.** The following are additive extensions to Core MVH; neither is required to claim Core MVH conformance:
+**Post-MVH extensions.** The following are additive extensions to Core MVH; none is required to claim Core MVH conformance:
 
 - Binary signing / cosign verification (per §4.10.HC-043 — commit-hash check is MVH, signing is post-MVH).
 - Per-connection socket authentication (per §4.10.HC-044 — filesystem-permission authenticity is MVH).
 - Twin-conformance drift detection (per §4.8.HC-038 — scoped to S07 scenario-harness post-MVH).
 - Account rotation support for a given handler type (per §4.3.HC-013 `RotateAccount` — returning `ErrDeterministic` is conformant for agent types without rotation).
 - Secret rotation mid-session (explicitly out of scope; a new launch is required for MVH).
+- Structured agent-input substrate (§4.1a HC-069 / HC-070 / HC-071 + §5 HC-INV-008): the first-class `InputPort`, its `Ack` contents + emitted `agent_input_acked` / `agent_input_stale` events, the machine-enforced seam inversion, and bounded input liveness. These are additive amendments layered on Core MVH in the manner of the HC-054 bridge family (NOT folded into the HC-001..HC-053 requirement range); the machine-checked, per-cell liveness home is AIS-INV-001 in [agent-input.md]. The interim tmux/paste implementation satisfies HC-069 by returning `Delivered` during the bake window (its positive acceptance is the async Claude-hook-bridge signal per HC-070).
 
 ### 10.2 Test-surface obligations
 
@@ -1364,6 +1455,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **HC-042 — HC-045 (trust).** Launch-path negative test: missing binary, mismatched commit hash. System-handler path (via `system_handler=true` declaration) exercised via Claude Code fixture.
 - **HC-046 — HC-050 (skill injection).** Skill-injection scenario tests: (a) `required_skills` not resolvable triggers `ErrSkillProvisioningFailed` at launch per `HC-048`; (b) resolved-but-provisioning-fails-transiently path retries per `HC-048a` and eventually succeeds within `provisioning_timeout`; (c) resolved-but-provisioning-fails-after-backoff path reclassifies to `ErrStructural` on attempt-cap exhaustion; `skills_provisioned` event carries the installed set; end-to-end Beads-CLI skill provisioning test. **HC-048b egress and workspace-escape tests:** (d) skill manifest declaring an egress domain present in `LaunchSpec.egress_whitelist[]` provisions successfully; (e) skill manifest declaring an egress domain NOT in `egress_whitelist[]` fails with `ErrSkillProvisioningFailed` and `skills_provisioned` lists only prior successfully-installed skills; (f) skill manifest declaring no `egress_domains[]` is unaffected by a non-`None` `egress_whitelist`; (g) `egress_whitelist = None` is a no-op for all skills; (h) skill whose provisioning file path escapes `workspace_path` (via `../` traversal) fails with `ErrSkillProvisioningFailed`; (i) `rejected_skills[]` in `skills_provisioned` event names the failing skill and `reject_reason`. **Agent-comms skill (N3 — at-least-once / dedupe-by-`event_id`):** end-to-end agent-comms skill provisioning test; the agent-comms skill carries the normative N3 requirement (at-least-once delivery, recipient MUST dedupe by `event_id`, re-delivered `event_id` MUST be a no-op) per the FINALIZED agent-comms spec (peer sign-off 2026-06-01); skill content verified against `~/.kerf/projects/gregberns-harmonik/agent-comms/05-spec-draft.md §FINALIZED §N3`; skill file at `.claude/skills/agent-comms/SKILL.md`.
 - **HC-051 — HC-053 (modularity).** Boundary-enforcement static-analysis rule: daemon packages MUST NOT import ntm-specific types. Changeable-adapter test: swapping the claude-code adapter for a mock adapter does not alter daemon behavior.
+- **HC-069 — HC-071 + HC-INV-008 (agent-input substrate).** Delivery-outcome matrix test: `SubmitInput` returns each of `{Delivered, Rejected}` under the corresponding driver condition (`Rejected` structured-driver only), and the interim tmux/paste implementation returns `Delivered` on a successful write with its positive acceptance arriving async as `agent_input_acked` on the observed Claude-hook-bridge signal (`outcome_emitted` / `agent_ready`), never synthesized from a `capture-pane` scrape; each returned `Ack` carries a strictly-increasing `input_seq` and the `acceptance_token` is present exactly when the wire protocol supplies one. Bounded-liveness fault test: every timer edge in the driver's input Step reaches a terminal (an `Ack` or an emitted `agent_input_stale`) within the `ClockPort`-measured window with NO silent path — driven from the AIS-INV-001 fault matrix in [agent-input.md]. Depguard-deny lint: a `.golangci.yml` rule fails the build when `internal/handler` imports `internal/lifecycle/tmux` (HC-071), landed in the same change as the port. Retirement test: a session that does not satisfy `InputPort` yields `ErrDeterministic("input unsupported")` at the seam, and no input flows through the six retired type-asserted side-interfaces or the retired no-op `SendInput` / `CloseStdin`. Event-emission test: `agent_input_acked` fires on positive acceptance (the observed Claude-hook-bridge signal on the tmux/Claude path; the wire input-ack on the structured driver) and NOT on a synchronous `Ack{Rejected}`, `agent_input_stale` fires on the stale terminal (§6.4).
 
 Migration to `[testing.md §<layer>]` cross-references occurs within one revision cycle once `testing.md` lands; tracked in `OQ-HC-003`.
 
@@ -1462,6 +1554,7 @@ Default-if-unresolved: Log-only. Promote to Cat 6 escalation if observed disagre
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-07-14 | 0.7.0 | agent (M2 agent-input-substrate) | **Seam gains a first-class typed input verb + ack (new §4.1a; HC-069/070/071 + HC-INV-008).** New **§4.1a Session input port**: **HC-069** — narrow consumer-declared `InputPort` (`SubmitInput(ctx, InputRequest) -> (Ack, error)` blocking until acked-or-stale + `CloseInput`), separately asserted (NOT a `Session` method); retires the six type-asserted input side-interfaces and the no-op `SendInput`/`CloseStdin` (a non-satisfying session returns `ErrDeterministic("input unsupported")`); interim tmux/paste impl satisfies it by returning `Delivered`; `StdinDevNull` disposition split — the structured driver owns stdin, `/dev/null` stays codex / interim-tmux only. **HC-070** — `Ack` carries delivery outcome `{Delivered, Rejected}` (binary; NO acceptance class/tier — the two input methods are peers) + monotonic `input_seq` + protocol acceptance token; positive acceptance is the async `agent_input_acked` event (its existence IS the ack), sourced on the tmux/Claude path from the Claude-hook-bridge (`outcome_emitted` / `agent_ready` per CHB-013/CHB-018), on the structured driver from the wire input-ack — never a `capture-pane` scrape; `agent_input_stale` on the bounded-liveness timeout; front-stop composition (NOT replacement) of HC-056/HC-057. **HC-071** — machine-enforced seam inversion: a REAL `depguard` deny (`internal/handler` MUST NOT import `internal/lifecycle/tmux`) landed with the port. New invariant **HC-INV-008** — bounded input liveness (output-or-stale within a `ClockPort`-measured window; silence forbidden; every timer edge emits); machine-checked home is AIS-INV-001 in [agent-input.md]. Amended: HC-054 (observation peer of the input port, one line), HC-056 + HC-057 (one front-stop cross-ref clause each), §6.1 (removed no-op `SendInput` from `Session`; added `InputPort` interface + `InputRequest` / `Ack` records), §6.4 (registered `agent_input_acked` / `agent_input_stale`), §10.1 (invariant range → HC-INV-008; bridge-amendment note), §10.2 (ack-class matrix + bounded-liveness fault + depguard-deny test bullet), §9.3 (AIS co-reference). Cross-ref [agent-input.md] (AIS) as the home of wire/driver/capture detail. **ID note:** the design brief named these HC-058/059/060, but those IDs are already live in §4.2a (Outcome surface) through HC-068 — per the HC ID FREEZE / additive-gap-filler rule they land as HC-069/070/071. NO existing HC IDs renumbered. Status remains `reviewed`. |
 | 2026-06-13 | 0.5.5 | agent (hk-2j90) | **New HC-068 (§4.2a) — `.harmonik/auto_status.json` daemon-validated deny-side INPUT mirroring review.json/ReadReviewVerdict; status must be FAIL, failure_class ∈ the six, compilation_loop→structural per HC-059; daemon retains authority; gitignored; no mid-loop archival; C3 deferred. Refs: hk-2j90.** |
 | 2026-06-01 | 0.5.4 | agent (hk-7k48y T12) | **Agent-comms skill (N3) added to §10.2 test scenarios.** Added agent-comms skill reference to the HC-046–HC-050 test-scenario list: end-to-end agent-comms skill provisioning test; normative N3 requirement (at-least-once delivery, dedupe-by-`event_id`); skill file at `.claude/skills/agent-comms/SKILL.md`. Version bump 0.5.3 → 0.5.4. No HC IDs added or renumbered. |
 | 2026-05-31 | 0.5.3 | agent (hk-sx9r.30) | **ON-025 egress and workspace-escape enforcement at provisioning (HC-048b); `egress_whitelist` in LaunchSpec.** Added `egress_whitelist : List<String> | None` to `LaunchSpec` RECORD (§6.1): propagated from role's `permission_schema.egress_whitelist` at claim time per [control-points.md §4.11.CP-059]; `None` = unrestricted. Updated HC-006 optional-fields list to include `egress_whitelist`. Added **HC-048b** — Fail provisioning on egress-policy or workspace-escape violation: (1) egress-policy check compares skill manifest's `egress_domains[]` against `egress_whitelist[]` patterns (no-op when whitelist is `None` or skill declares no domains); (2) workspace-escape check rejects any provisioning path resolving outside `workspace_path` per [operator-nfr.md §4.7.ON-024]. On check failure: emit `skills_provisioned` with only successfully-installed skills plus `rejected_skills[]?`, then fail-launch with `ErrSkillProvisioningFailed`. Updated §9 test scenarios for HC-046–HC-050 with 6 new egress/workspace-escape cases (d–i). Front matter corrected: `version: 0.4.0 → 0.5.3` (front matter had drifted from changelog; this commit reconciles). New IDs: HC-048b. No existing IDs renumbered. Cross-spec: control-points.md v0.4.2 adds CP-059; event-model.md adds `rejected_skills[]?` to §8.3.8. |

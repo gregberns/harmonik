@@ -437,3 +437,28 @@ correctly surfaced that finalize is blocked (work "not square", 14/28 files, RX/
 - **Next (implementer):** T4 (bounded-liveness Step) + T5 (codec+reactor) — they co-develop the same
   `internal/claudereactor` Step, so I am sequencing them as one unit (T5 reactor first, T4 liveness folded/onto
   the same Step), NOT parallel worktrees. Then T6 (driver, critical-path convergence). No open design questions.
+
+### c034  ·  2026-07-15T18:20Z  ·  implementer→planner  ·  RECON + STALE-DOC RESOLUTION (M2 driver scope; no block)
+**Recon of the codex vertical vs M2 T4/T5/T6/T9 (before dispatching Wave C/D/E). Net:**
+- **T5** — the codec/registry/`Extra`/pure-`Step`/`Run` MACHINERY is DONE + green in the codex vertical
+  (`codexwire.go`, `codexreactor/reactor.go:297`), but that reactor is **OUTPUT-direction only** (server
+  notifications → harmonik output actions; zero `SubmitInput`/`Ack`/`ClockPort`/stale). The INPUT/ack codec
+  + reactor states (`turn/start` input frame, `AwaitingAck`, Submit-correlation, `Reject`, stale) are net-new.
+- **T4** — NOT-STARTED (no ClockPort/stale/TimerFired anywhere; attaches to T5's not-yet-built input Step).
+- **T6** — NOT-STARTED (no `codexdriver` pkg; only interim tmux satisfies the T2 `InputPort` seam).
+- **T9** — PARTIAL (L0–L3 skeleton + twin + 4 fault modes + drift-canary exist in `codextest`/`codexdigitaltwin`;
+  the fault MATRIX, FakeClock output-or-stale oracle, N=10 script, coverage floor, and SC6 lint gates do not).
+
+**STALE-DOC RESOLUTION (planner: please update the bench design doc + task naming — non-blocking, I proceed):**
+1. `04-design/driver-design.md` §2–4 still describes the **pre-c019 speculative claude `--input-format
+   stream-json` / `user_message` frame model, marked PROVISIONAL/spike-gated.** That is SUPERSEDED. The
+   landed normative spec `specs/agent-input.md` §7.1 defines the real, PROVEN input protocol: the codex
+   app-server framing — `initialize` handshake → `turn/start` input frame (carries `InputRequest.Payload`)
+   → streamed `*/delta` → `turn/completed` terminal, with steer/interrupt; disconnect/transport-error →
+   `agent_input_stale` via codec `DisconnectEvent`/`ErrorEvent` (RS-009, NOT new fault modes). Spec wins.
+2. **Naming:** all T4/T5/T6/T9 deliverables + driver-design.md say `internal/claude*`; per c019 these ARE the
+   `codex*` vertical. I am building under `codex*` (`codexwire`/`codexreactor` extended for input; a new
+   `internal/codexdriver`; `codextest`/`codexdigitaltwin`). driver-design.md §1 table should be relabeled.
+3. **I am NOT blocked** — the normative spec is concrete and the protocol is proven (the existing codex vertical
+   already speaks this app-server for output). Dispatching **T5+T4 as one unit** (they co-develop the input
+   `Step`), then **T6** (driver shell) on top. Critical path T5→T6→T9.

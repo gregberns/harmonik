@@ -41,6 +41,7 @@ func init() {
 	registerWorkflowLoaderEvents()
 	registerKeeperEvents()
 	registerKeeperInteriorEvents()
+	registerAgentInputEvents()
 	registerAlarmEvents()
 	registerHITLDecisionEvents()
 	registerDecisionRequiredEvents()
@@ -537,6 +538,23 @@ func registerKeeperInteriorEvents() {
 	mustRegister("session_keeper_model_done", func() EventPayload { return &SessionKeeperModelDonePayload{} })
 	mustRegister("session_keeper_clear_sent", func() EventPayload { return &SessionKeeperClearSentPayload{} })
 	mustRegister("session_keeper_new_session_up", func() EventPayload { return &SessionKeeperNewSessionUpPayload{} })
+}
+
+// registerAgentInputEvents registers §8.21 agent-input acceptance event
+// constructors (codename:agent-input-substrate, M2-1 T3). Both schema v1, class O.
+//
+// Kept SEPARATE from the §8.16/§8.20 keeper families: these are the M2 structured
+// input driver's submission-sub-lifecycle signals, emitted by daemon-core, not by
+// the keeper. Per EV-050 the two are registered + compat-tabled but CARVED OUT of
+// allEventTypeCohort and the EV-027 count guard (see eventtype_coverage_gjyks_test.go),
+// following the §8.16/§8.20 precedent.
+//
+// Durability classes per §8.21:
+//   - agent_input_acked (§8.21.1): O (ordinary — observational; the ack IS the boundary)
+//   - agent_input_stale (§8.21.2): O (ordinary — observational; the timeout terminal)
+func registerAgentInputEvents() {
+	mustRegister("agent_input_acked", func() EventPayload { return &AgentInputAckedPayload{} })
+	mustRegister("agent_input_stale", func() EventPayload { return &AgentInputStalePayload{} })
 }
 
 // registerAlarmEvents registers §8.17 alarm / self-check event payload

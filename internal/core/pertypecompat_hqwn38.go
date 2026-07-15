@@ -304,6 +304,12 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "session_keeper_clear_sent", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "session_keeper_new_session_up", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
+	// ── §8.21 Agent-input acceptance events (codename:agent-input-substrate) ──
+	// Registered + compat-tabled but carved out of allEventTypeCohort / the EV-027
+	// count guard per EV-050 (async-observer cohort; §8.16/§8.20 precedent).
+	{TypeName: "agent_input_acked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "agent_input_stale", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
 	// ── §8.17 Alarm / self-check ───────────────────────────────────────────
 	// hk-tnmjy: review-gate anomaly alarm — N consecutive bead_closed with no reviewer_verdict.
 	{TypeName: "review_gate_anomaly", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

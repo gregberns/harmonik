@@ -216,13 +216,14 @@ linters:
         # codexreactor). Deny: daemon and the keeper vertical.
         # Rationale: specs/replay-substrate.md §RS-005; substrate-design.md §1.3.
         codex-vertical:
-          files: ["**/internal/codexreactor/**", "**/internal/codexdigitaltwin/**"]
+          files: ["**/internal/codexreactor/**", "**/internal/codexdigitaltwin/**", "**/internal/codexinput/**"]
           allow:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/substrate"
             - "github.com/gregberns/harmonik/internal/codexwire"
             - "github.com/gregberns/harmonik/internal/codexreactor"
             - "github.com/gregberns/harmonik/internal/codexdigitaltwin"
+            - "github.com/gregberns/harmonik/internal/codexinput"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codex vertical MUST NOT import daemon" }
             - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "codex vertical MUST NOT import a sibling vertical (keeper)" }

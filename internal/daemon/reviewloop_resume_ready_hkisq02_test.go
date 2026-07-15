@@ -32,7 +32,8 @@ package daemon_test
 //
 // Pre-fix: iteration 2 hangs until ErrAgentReadyTimeout → result.Success=false,
 // completion_reason=error, summary contains "agent_ready_timeout at iteration 2".
-// Post-fix: the resume-phase fallback (resumeReadyFallbackGrace) synthesizes
+// Post-fix: the resume-phase transitional probe (resumeReadyProbeDelay,
+// RT8: driven under the Dispatch machine's ready bound) synthesizes
 // agent_ready so iteration 2 readies, the cycle proceeds to the iter-2 reviewer,
 // and the APPROVE verdict completes the run successfully.
 //

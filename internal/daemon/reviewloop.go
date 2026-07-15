@@ -49,13 +49,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
@@ -83,32 +83,12 @@ const reviewLoopIterationCap = 3
 // event-model.md §8.1a.1 (front-truncation to 256 UTF-8 bytes).
 const priorVerdictSummaryMaxBytes = 256
 
-// resumeReadyFallbackGrace is the fixed grace period after which the
-// implementer-resume phase (iteration ≥ 2) under the tmux substrate synthesizes
-// its own agent_ready when no relay-driven agent_ready has arrived.
-//
-// Root cause (hk-isq02): iteration 1 launches `claude --session-id <uuid>`, a
-// FRESH session that fires a SessionStart hook; the hook-relay synthesizes
-// agent_ready on first SessionStart receipt (hookrelay.go buildSessionStartMessage),
-// which is the daemon's sole ready signal under the tmux substrate (implWatcher
-// is nil there, so there is no progress-stream watcher to cancel the wait).
-// Iteration ≥ 2 launches `claude --resume <uuid>`, which REATTACHES to an
-// already-persisted session and does NOT re-fire a SessionStart hook the way a
-// fresh `--session-id` launch does. The relay therefore never sends agent_ready,
-// waitAgentReady never observes it, and the configured timeout fires →
-// `implementer agent_ready_timeout at iteration 2`. The twin-claude handler
-// masks this because it self-emits agent_ready directly on every phase.
-//
-// A `--resume` reattach still renders the welcome splash before the REPL is
-// input-ready, so the fallback retains a splash-dismiss-class grace rather than
-// synthesizing ready immediately; this preserves the hk-kunm4 "do not paste
-// before the REPL accepts input" invariant. If a real relay agent_ready DOES
-// arrive first (a newer claude that fires SessionStart on resume), waitAgentReady
-// completes on that signal and the fallback emit is a harmless no-op (the tap
-// channel is buffered and the wait has already returned).
-//
-// Bead: hk-isq02.
-const resumeReadyFallbackGrace = 2 * time.Second
+// The former resume ready-fallback grace caulk (hk-isq02: a fixed 2s grace after
+// which the iteration ≥ 2 tmux resume synthesized its own agent_ready) is
+// DELETED per RSM-024/M3-D7: the resume-ready decision dissolved into the
+// Dispatch machine's TimerAgentReady edge, and the splash-dismiss-class resume
+// synthesis lives on as the run_id-stamped transitional readiness probe
+// (dispatchsegment.go resumeReadyProbeDelay) UNDER that bound.
 
 // reviewLoopResult is the terminal outcome produced by runReviewLoop.
 // The caller (workloop.go) uses this to drive the bead close call and
@@ -553,139 +533,27 @@ func runReviewLoop(
 		implTap, implTapCh := newPerRunEventTap(deps.bus, runID)
 		implRunH := handler.NewHandler(implTap, handlercontract.NoopWatcherDeadLetter{}, deps.adapterRegistry)
 
+		// RT8 (RSM-005/RSM-024): the implementer launch/ready/brief segment is
+		// driven by the runexec Dispatch machine via shell.RunDispatch
+		// (dispatchsegment.go) instead of the open-coded Launch + waitAgentReady
+		// + fixed-resume-grace caulk. The per-site emissions, kill/reap
+		// sequences, and failure strings below are the pre-RT8 code verbatim,
+		// bound as effector hooks (RSM-029 parity).
 		var implWatcher *handlercontract.Watcher
 		var implLaunchErr error
+		var implHBDone chan struct{}
 		implLaunchedAt := deps.clock.Now()
-		implSess, implWatcher, implLaunchErr = implRunH.Launch(ctx, implSpec)
-		if implLaunchErr != nil {
-			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
-			}
-			// hk-4l7zs: surface spawn-cap saturation (slot-leak signature) as a
-			// dedicated spawn_cap_blocked event when the implementer launch is
-			// wedged on the spawn semaphore.
-			if errors.Is(implLaunchErr, ErrSpawnCapTimeout) {
-				inUse, capSize := substrateSpawnStats(implSubstrate)
-				emitSpawnCapBlocked(ctx, deps.bus, runID, deps.clock.Since(implLaunchedAt), inUse, capSize)
-			}
-			// hk-r1rup: surface a hung `tmux new-window` (the no-spawn wedge) as a
-			// dedicated tmux_new_window_timeout event when the implementer launch is
-			// wedged on the new-window call.
-			if errors.Is(implLaunchErr, ErrTmuxNewWindowTimeout) {
-				emitTmuxNewWindowTimeout(ctx, deps.bus, runID, deps.clock.Since(implLaunchedAt))
-			}
-			result := rlErrorResult(fmt.Sprintf("implementer launch error at iteration %d: %v", state.iterationCount, implLaunchErr))
-			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
-			return result
-		}
-		// hk-4l7zs: emit the held-back launch_initiated now that the implementer
-		// window has actually spawned (Launch returned a live session). On the
-		// wedged-spawn path Launch returns an error above and launch_initiated is
-		// never emitted, so the event stays truthful.
-		if implLaunchInitiatedMsg != nil {
-			emitPreExecMessage(ctx, deps.bus, runID, implLaunchInitiatedMsg)
-		}
-		// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
-		// receives agent_heartbeat events (with run_id) after launch_initiated.
-		// Without this, lastEventType stays frozen at "launch_initiated" for the
-		// full run duration, causing false-positive run_stale on every review-loop
-		// dispatch. Mirrors the single-mode path (workloop.go Step 5). The defer
-		// accumulates per iteration (same pattern as implSessForTeardown below);
-		// the goroutine also exits on ctx cancellation.
-		implHBDone := make(chan struct{})
-		go handler.RunHeartbeatLoop(ctx, implArtifacts.handlerSessionID,
-			handler.HeartbeatInterval, implHBDone,
-			newDaemonHeartbeatEmitter(implTap, runID))
-		defer close(implHBDone)
 
-		// hk-68pvl / hk-4l7zs: release this iteration's implementer session
-		// PROMPTLY at the end of the iteration rather than only at runReviewLoop
-		// return. The per-phase Kill (waitWithSocketGrace branch, ~line 533) is the
-		// normal release point; this is a backstop for early-return paths. Kill is
-		// idempotent, so registering it via a per-iteration LIFO defer (below) and
-		// also calling it eagerly at iteration end (release-before-reacquire for the
-		// next iteration's implementer) holds at most ONE spawn slot per phase.
-		//
-		// Why the defer alone over-holds (the original hk-4l7zs leak path): each
-		// iteration's `defer forceTeardownSession` fires only when runReviewLoop
-		// RETURNS, so a 3-iteration review loop accumulates up to 3 implementer +
-		// 3 reviewer deferred teardowns. While the per-phase Kills already release
-		// the slots on the tmux happy path, any error/early-return branch BETWEEN
-		// the impl Kill (line ~533) and the reviewer Kill (line ~970) would hold
-		// both this iteration's slots until function return. The explicit
-		// per-iteration release below bounds the worst case to one live session.
-		implSessForTeardown := implSess
-		defer forceTeardownSession(implSessForTeardown)
-
-		// Wire the implementer's agent-ready callback into implTap so that
-		// relay-synthesized agent_ready envelopes from the hook-relay subprocess
-		// reach implTapCh, which waitAgentReady (below) blocks on. Without this
-		// call notifyAgentReady finds a nil callback and implTapCh stays empty,
-		// causing HC-056 to fire every 30s.
-		//
-		// Same wiring as reviewer phase and single-mode beadRunOne
-		// (workloop.go lines 1222-1242). Bead ref: hk-lj1p9.4, hk-kunm4.
-		//
-		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
-		if deps.hookStore != nil {
-			capturedImplTap := implTap
-			capturedImplRunID := runID // hk-wths: copy for EmitWithRunID closure
-			deps.hookStore.SetAgentReadyCallback(runID.String(), implArtifacts.claudeSessionID, func() {
-				// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
-				// the stale watcher's never-spawned reaper sees agentReadySeen = true.
-				_ = capturedImplTap.EmitWithRunID(context.Background(), capturedImplRunID, core.EventTypeAgentReady, nil)
-			})
-		}
-
-		// hk-isq02: resume-phase agent_ready fallback.
-		//
-		// On iteration ≥ 2 the implementer is launched with `claude --resume <uuid>`
-		// (see buildClaudeLaunchSpec / MintClaudeSessionID ResumeMode). Under the
-		// tmux substrate (implWatcher == nil) the daemon's ONLY ready signal is the
-		// relay-synthesized agent_ready, which the relay produces solely on a
-		// SessionStart hook receipt. A `--resume` reattach does not reliably re-fire
-		// SessionStart, so the relay never sends agent_ready and waitAgentReady below
-		// would block until ErrAgentReadyTimeout — the hk-isq02 fix-up-cycle failure.
-		//
-		// Arm a fallback: after resumeReadyFallbackGrace (splash-dismiss-class), emit
-		// agent_ready into implTap ourselves so waitAgentReady completes. The grace
-		// preserves the hk-kunm4 invariant (do not paste before the REPL is input-
-		// ready). The goroutine is bounded by resumeReadyFallbackCtx, cancelled right
-		// after waitAgentReady returns, so a genuine relay agent_ready (newer claude)
-		// still wins and the fallback emit never fires. Gating on implWatcher == nil
-		// keeps the exec.CommandContext / single-mode path (watcher non-nil) untouched.
-		resumeReadyFallbackCtx, resumeReadyFallbackCancel := context.WithCancel(ctx)
-		// Defer guarantees the cancel runs on every return path (go vet lostcancel);
-		// the eager cancel after waitAgentReady (below) stops the goroutine promptly.
-		// The defer accumulates per iteration, bounded by reviewLoopIterationCap.
-		defer resumeReadyFallbackCancel()
-		if state.iterationCount >= 2 && implWatcher == nil {
-			capturedImplTap := implTap
-			go func() {
-				select {
-				case <-clockAfter(deps.clock, resumeReadyFallbackGrace):
-					_ = capturedImplTap.Emit(context.Background(), core.EventTypeAgentReady, nil)
-				case <-resumeReadyFallbackCtx.Done():
-				}
-			}()
-		}
-
-		// HC-056: waitAgentReady — implementer phase must observe agent_ready
-		// within the configured timeout before paste-injecting the task.
-		// Without this gate, ~60% of concurrent dispatches land the paste before
-		// Claude's REPL is input-ready, resulting in empty panes (hk-kunm4).
-		//
-		// Pattern mirrors reviewer phase and single-mode beadRunOne
-		// (workloop.go lines 1265-1337).
-		// hk-a2okh: hang-detector state, set inside the else branch when
+		// hk-a2okh: hang-detector state, armed by the deliver hook when
 		// agent_ready is observed on the exec path.
 		var implHangDetectedCh <-chan struct{}
 		var implHangCancel context.CancelFunc = func() {}
 
-		// hk-zlo8: resolve implCompletionMode before the adapter check so it is
-		// accessible at the paste-inject gate below (pasteInjectOnLaunch +
-		// pasteInjectQuitOnCommit must be skipped for ProcessExit harnesses —
-		// same class as hk-f6g7).
+		// hk-zlo8: resolve implCompletionMode before the dispatch so the machine
+		// skips the readiness handshake for ProcessExit harnesses (hk-f6g7: these
+		// self-terminate on turn completion and never emit agent_ready) and the
+		// deliver hook can gate paste-inject on it (same class as hk-f6g7).
+		// Spec: specs/harness-contract.md §2 N5.
 		implCompletionMode := handlercontract.CompletionEventStreamThenQuit
 		if deps.harnessRegistry != nil {
 			if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(implArtifacts)); hErr == nil {
@@ -695,84 +563,109 @@ func runReviewLoop(
 
 		implAdapter, implAdapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(implArtifacts))
 		if implAdapterErr != nil {
-			// No adapter for the resolved agent type — non-fatal; skip ready-wait.
+			// No adapter for the resolved agent type — non-fatal; skip ready-wait
+			// (the segment feeds a synthetic ready so the brief is still delivered).
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(%s) implementer bead %s iter %d: %v (skipping ready-wait)\n",
 				artifactAgentType(implArtifacts), beadID, state.iterationCount, implAdapterErr)
-		} else {
-			// hk-f6g7: skip waitAgentReady for ProcessExit harnesses (codex). These
-			// self-terminate on turn completion and never emit agent_ready; calling
-			// waitAgentReady unconditionally caused HC-056 timeout in all workflow modes.
-			// Spec: specs/harness-contract.md §2 N5.
-			// implCompletionMode was resolved above (hk-zlo8) and is used here directly.
-			if implCompletionMode != handlercontract.CompletionProcessExit {
-				// Derive a child context that cancels when the implementer watcher
-				// finishes (handler exit), preventing a full-timeout block on crash.
-				//
-				// Substrate path: implWatcher is nil when deps.substrate != nil
-				// (tmux-hosted sessions return nil from handler.launchViaSubstrate).
-				// Skip the watcher-done goroutine in that case — readyCtx is still
-				// valid and will be cancelled by the outer ctx or readyCancel below.
-				// Bead ref: hk-yjduq.
-				implReadyCtx, implReadyCancel := context.WithCancel(ctx)
-				if implWatcher != nil {
-					go func() {
-						select {
-						case <-implWatcher.Done():
-							implReadyCancel()
-						case <-implReadyCtx.Done():
-						}
-					}()
-				}
+			implAdapter = nil
+		}
 
-				implEventSrc := newChanAgentEventSource(implTapCh)
+		implSeg := &dispatchSegment{
+			clock: deps.clock,
+			runID: runID,
+			cfg: runexec.DispatchConfig{
+				SkipReadyHandshake: implCompletionMode == handlercontract.CompletionProcessExit,
+				IsResume:           state.iterationCount >= 2,
+				MaxInputAttempts:   1,
 				// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
-				implReadyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil)
-				implReadyErr := waitAgentReady(implReadyCtx, runID, implEventSrc, implAdapter, implReadyTimeout)
-				implReadyCancel() // always release the watcher-done goroutine above
-				// hk-isq02: the ready-wait has returned — stop the resume-phase fallback
-				// goroutine promptly so it does not emit a stale agent_ready after we have
-				// moved on to paste-inject.
-				resumeReadyFallbackCancel()
-
-				if implReadyErr == ErrAgentReadyTimeout {
-					// HC-056: implementer agent_ready_timeout — kill, reap, error result.
-					fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady implementer bead %s iter %d run %s: %v (error)\n",
-						beadID, state.iterationCount, runID.String(), implReadyErr)
-					_ = implSess.Kill(ctx)
-					if implWatcher != nil {
-						select {
-						case <-implWatcher.Done():
-						case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
-							fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
-								beadID, state.iterationCount, runID.String())
-						}
-					}
-					{
-						implWaitCtx, implWaitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
-						_ = implSess.Wait(implWaitCtx)
-						implWaitCancel()
-					}
-					if deps.hookStore != nil {
-						deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
-					}
-					emitAgentReadyTimeout(ctx, deps.bus, runID, implArtifacts.claudeSessionID, deps.agentReadyTimeout)
-					result := rlErrorResult(fmt.Sprintf("implementer agent_ready_timeout at iteration %d", state.iterationCount))
-					emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
-					return result
+				ReadyTimeout:  effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
+				InputAck:      dispatchSegmentInputAckWindow,
+				ReadyKillReap: agentReadyKillReapTimeout,
+			},
+			adapter: implAdapter,
+			// hk-isq02 → M3-D7: iteration ≥ 2 launches `claude --resume <uuid>`,
+			// which does not reliably re-fire a SessionStart hook, so under the
+			// tmux substrate (implWatcher == nil) the relay never synthesizes
+			// agent_ready for the resume; the transitional probe supplies the
+			// run_id-stamped ready under the machine's TimerAgentReady bound.
+			probeResume: state.iterationCount >= 2,
+			tap:         implTap,
+			tapCh:       implTapCh,
+			launch: func(lctx context.Context) (<-chan struct{}, error) {
+				implSess, implWatcher, implLaunchErr = implRunH.Launch(lctx, implSpec)
+				if implLaunchErr != nil {
+					return nil, implLaunchErr
 				}
-				// implReadyErr == nil (agent_ready observed) OR context.Canceled
-				// (watcher exited first or ctx cancelled). Fall through to paste-inject.
-
-				// hk-a2okh: post-agent_ready hang detector — exec path only.
-				// If agent_ready was observed (not just a context cancel) and we have a
-				// watcher (exec path), subscribe to implTap AFTER agent_ready to watch
-				// for the next event.  If none arrives within postAgentReadyHangTimeout
-				// the session is declared hung and we fail fast.
+				if implWatcher != nil {
+					return implWatcher.Done(), nil
+				}
+				return nil, nil
+			},
+			onLaunchFailed: func(lctx context.Context, launchErr error) {
+				if deps.hookStore != nil {
+					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+				}
+				// hk-4l7zs: surface spawn-cap saturation (slot-leak signature) as a
+				// dedicated spawn_cap_blocked event when the implementer launch is
+				// wedged on the spawn semaphore.
+				if errors.Is(launchErr, ErrSpawnCapTimeout) {
+					inUse, capSize := substrateSpawnStats(implSubstrate)
+					emitSpawnCapBlocked(lctx, deps.bus, runID, deps.clock.Since(implLaunchedAt), inUse, capSize)
+				}
+				// hk-r1rup: surface a hung `tmux new-window` (the no-spawn wedge) as a
+				// dedicated tmux_new_window_timeout event when the implementer launch is
+				// wedged on the new-window call.
+				if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
+					emitTmuxNewWindowTimeout(lctx, deps.bus, runID, deps.clock.Since(implLaunchedAt))
+				}
+			},
+			onLaunched: func(lctx context.Context) {
+				// hk-4l7zs: emit the held-back launch_initiated now that the implementer
+				// window has actually spawned (Launch returned a live session). On the
+				// wedged-spawn path Launch returns an error and launch_initiated is
+				// never emitted, so the event stays truthful.
+				if implLaunchInitiatedMsg != nil {
+					emitPreExecMessage(lctx, deps.bus, runID, implLaunchInitiatedMsg)
+				}
+				// hk-nvjk: start the CHB-019 heartbeat goroutine so the stale watcher
+				// receives agent_heartbeat events (with run_id) after launch_initiated.
+				// Without this, lastEventType stays frozen at "launch_initiated" for the
+				// full run duration, causing false-positive run_stale on every review-loop
+				// dispatch. Mirrors the single-mode path (workloop.go Step 5); closed via
+				// the per-iteration defer registered after the segment returns.
+				implHBDone = make(chan struct{})
+				go handler.RunHeartbeatLoop(ctx, implArtifacts.handlerSessionID,
+					handler.HeartbeatInterval, implHBDone,
+					newDaemonHeartbeatEmitter(implTap, runID))
+				// Wire the implementer's agent-ready callback into implTap so that
+				// relay-synthesized agent_ready envelopes from the hook-relay subprocess
+				// reach implTapCh, which the segment's ready pump consumes. Without this
+				// notifyAgentReady finds a nil callback and implTapCh stays empty,
+				// causing HC-056 to fire every 30s.
+				//
+				// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013;
+				// specs/handler-contract.md §4.9 HC-056. Bead ref: hk-lj1p9.4, hk-kunm4.
+				if deps.hookStore != nil {
+					capturedImplTap := implTap
+					capturedImplRunID := runID // hk-wths: copy for EmitWithRunID closure
+					deps.hookStore.SetAgentReadyCallback(runID.String(), implArtifacts.claudeSessionID, func() {
+						// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
+						// the stale watcher's never-spawned reaper sees agentReadySeen = true.
+						_ = capturedImplTap.EmitWithRunID(context.Background(), capturedImplRunID, core.EventTypeAgentReady, nil)
+					})
+				}
+			},
+			deliver: func(dctx context.Context) {
+				// hk-a2okh: post-agent_ready hang detector — exec path only. If
+				// agent_ready was observed and we have a watcher (exec path),
+				// subscribe to implTap AFTER agent_ready to watch for the next event.
+				// If none arrives within postAgentReadyHangTimeout the session is
+				// declared hung and we fail fast.
 				//
 				// tmux path (implWatcher == nil) is intentionally excluded: the only
 				// post-ready signal there would be unconditional daemon heartbeats which
 				// cannot distinguish a hung agent from a working one.
-				if implWatcher != nil && implReadyErr == nil {
+				if implAdapterErr == nil && implWatcher != nil {
 					implHangCh := make(chan struct{})
 					implHangDetectedCh = implHangCh
 					hangCtx, cancelFn := context.WithCancel(ctx)
@@ -786,64 +679,105 @@ func runReviewLoop(
 						}
 					}()
 				}
-			} else {
-				// CompletionProcessExit: task delivered via argv; no agent_ready handshake.
-				// Cancel the resume-phase fallback goroutine — it is not needed here.
-				resumeReadyFallbackCancel()
-			}
+
+				// Paste-inject: only for interactive TUI harnesses (not ProcessExit).
+				// hk-zlo8: CodexHarness (CompletionProcessExit) has no tmux pane; calling
+				// pasteInjectOnLaunch causes "WriteLastPane: cant find pane" → no_commit in ~4s.
+				// ProcessExit harnesses receive their task via argv (launch spec), not pane paste.
+				//
+				// MUST run on the machine's post-ready deliver edge (hk-kunm4): when
+				// paste-inject fires before agent_ready, the trailing \n is consumed by
+				// Claude Code's welcome-splash render before the REPL input state is
+				// active; the buffered text sits in the input bar unsubmitted, claude
+				// never reads agent-task.md, and the run hangs.
+				//
+				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
+				// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3, hk-kunm4.
+				if implCompletionMode != handlercontract.CompletionProcessExit {
+					implBriefDelivered := pasteInjectOnLaunch(dctx, implPasteTarget, implArtifacts.claudeSessionID,
+						implPhase, state.iterationCount, wtPath, deps.bus, runID)
+
+					// Quit-on-commit: after the implementer's task commit lands in the worktree,
+					// send `/quit Enter` to trigger Stop hook → outcome_emitted → workloop unblocked.
+					// hk-012af: use implPasteTarget (per-run wrapper) so /quit targets this
+					// iteration's pane, not the shared "last pane".
+					// hk-930o3: implBriefDelivered gates commit-polling until the brief paste lands.
+					// hk-x78n: subscribe to implTap BEFORE launching the goroutine so no
+					// heartbeats are missed (heartbeat-extended implementer-wait budget).
+					// Beads: hk-cmybm, hk-930o3.
+					if qs, ok := implPasteTarget.(quitSender); ok {
+						// REMOTE: wtPath is on the worker; resolve its HEAD via the worker runner
+						// (resolveWorktreeHEADVia delegates to the local probe when runner is nil).
+						implInitialSHA, resolveErr := resolveWorktreeHEADVia(dctx, runner, wtPath)
+						if resolveErr != nil {
+							implInitialSHA = parentSHA // fallback to known-good parent SHA
+						}
+						implHBCh := implTap.Subscribe()
+						go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, deps.bus, runID)
+					}
+				}
+			},
+			killReady: func(kctx context.Context) {
+				// HC-056: implementer agent_ready_timeout — kill, reap. The error
+				// result + cycle-complete emission follow at the segment return below.
+				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady implementer bead %s iter %d run %s: %v (error)\n",
+					beadID, state.iterationCount, runID.String(), ErrAgentReadyTimeout)
+				_ = implSess.Kill(kctx)
+				if implWatcher != nil {
+					select {
+					case <-implWatcher.Done():
+					case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
+						fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
+							beadID, state.iterationCount, runID.String())
+					}
+				}
+				{
+					implWaitCtx, implWaitCancel := context.WithTimeout(context.Background(), agentReadyKillReapTimeout)
+					_ = implSess.Wait(implWaitCtx)
+					implWaitCancel()
+				}
+				if deps.hookStore != nil {
+					deps.hookStore.CloseHookSession(runID.String(), implArtifacts.claudeSessionID)
+				}
+			},
+			emitReadyTimeout: func(ectx context.Context) {
+				emitAgentReadyTimeout(ectx, deps.bus, runID, implArtifacts.claudeSessionID, deps.agentReadyTimeout)
+			},
+			killAbort: func(context.Context) {
+				// Ctx-cancel abort edge: Kill is idempotent (the per-iteration
+				// forceTeardownSession backstop rides behind it either way).
+				if implSess != nil {
+					_ = implSess.Kill(context.Background())
+				}
+			},
+		}
+		implDispatch := implSeg.run(ctx)
+
+		if implLaunchErr != nil {
+			result := rlErrorResult(fmt.Sprintf("implementer launch error at iteration %d: %v", state.iterationCount, implLaunchErr))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
+		}
+		// hk-68pvl / hk-4l7zs: release this iteration's implementer session
+		// PROMPTLY at the end of the iteration rather than only at runReviewLoop
+		// return. Kill is idempotent, so registering it via a per-iteration LIFO
+		// defer and also calling it eagerly at iteration end (release-before-
+		// reacquire for the next iteration's implementer) holds at most ONE spawn
+		// slot per phase.
+		implSessForTeardown := implSess
+		defer forceTeardownSession(implSessForTeardown)
+		if implHBDone != nil {
+			implHBDoneToClose := implHBDone
+			defer close(implHBDoneToClose)
 		}
 
-		// Paste-inject: only for interactive TUI harnesses (not ProcessExit).
-		// hk-zlo8: CodexHarness (CompletionProcessExit) has no tmux pane; calling
-		// pasteInjectOnLaunch causes "WriteLastPane: cant find pane" → no_commit in ~4s.
-		// ProcessExit harnesses receive their task via argv (launch spec), not pane paste.
-		// Mirrors the existing hk-f6g7 gate above for waitAgentReady.
-		if implCompletionMode != handlercontract.CompletionProcessExit {
-			// pasteInjectOnLaunch is a no-op when deps.substrate does not implement
-			// pasteInjecter (exec.CommandContext path, test fixtures). Non-fatal.
-			// Returns briefDelivered, passed to pasteInjectQuitOnCommit (hk-930o3).
-			//
-			// MUST run AFTER waitAgentReady returns (hk-kunm4): when paste-inject fires
-			// before agent_ready, the trailing \n is consumed by Claude Code's welcome-splash
-			// render before the REPL input state is active; the buffered text sits in the
-			// input bar unsubmitted, claude never reads agent-task.md, and the run hangs.
-			//
-			// Spec ref: specs/process-lifecycle.md §4.7 PL-021d; specs/claude-hook-bridge.md §4.11 CHB-028.
-			// Bead ref: hk-lj1p9.4, hk-zrj83, hk-930o3, hk-kunm4.
-			implBriefDelivered := pasteInjectOnLaunch(ctx, implPasteTarget, implArtifacts.claudeSessionID,
-				implPhase, state.iterationCount, wtPath, deps.bus, runID)
-
-			// Quit-on-commit: after the implementer's task commit lands in the worktree,
-			// send `/quit Enter` to trigger Stop hook → outcome_emitted → workloop unblocked.
-			// The initial HEAD for this iteration is the current worktree HEAD at launch time.
-			// Non-fatal: only fires when substrate implements quitSender (tmux path).
-			//
-			// hk-012af: use implPasteTarget (per-run wrapper) so /quit targets this
-			// iteration's pane, not the shared "last pane".
-			// hk-930o3: implBriefDelivered gates commit-polling until the brief paste lands.
-			//
-			// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-			// Beads: hk-cmybm, hk-930o3.
-			if qs, ok := implPasteTarget.(quitSender); ok {
-				// REMOTE: wtPath is on the worker; resolve its HEAD via the worker runner
-				// (resolveWorktreeHEADVia delegates to the local probe when runner is nil).
-				implInitialSHA, resolveErr := resolveWorktreeHEADVia(ctx, runner, wtPath)
-				if resolveErr != nil {
-					implInitialSHA = parentSHA // fallback to known-good parent SHA
-				}
-				// Pass implSess as the killer so commitPollTimeout forces an exit;
-				// nil noChangeTimeoutCh — the reviewloop handles outcomes differently.
-				// hk-x78n: subscribe to implTap BEFORE launching the goroutine so no
-				// heartbeats are missed. Each tap.Subscribe() returns an independent
-				// fan-out channel (no competing-consumer race with implTapCh or the
-				// post-ready hang-detector). This makes the implementer-wait budget
-				// heartbeat-extended (matching the reviewer-side hk-60t8 pattern):
-				// each agent_heartbeat extends totalDeadline by commitPollTimeout;
-				// only a genuine heartbeat-stall or commitHardCeiling kills.
-				implHBCh := implTap.Subscribe()
-				go pasteInjectQuitOnCommit(ctx, qs, implSess, wtPath, implInitialSHA, nil, implBriefDelivered, implHBCh, deps.bus, runID)
-			}
-		} // end hk-zlo8 ProcessExit gate
+		if implDispatch.Phase == runexec.DispatchFailed && implDispatch.Reason == "agent_ready_timeout" {
+			result := rlErrorResult(fmt.Sprintf("implementer agent_ready_timeout at iteration %d", state.iterationCount))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
+		}
+		// Working / Exited / Aborted: fall through to waitWithSocketGrace — the
+		// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
 		// Wait for implementer using waitWithSocketGrace (OQ2 resolution: stop hook wins).
 		// This replaces the bare <-watcher.Done() + sess.Wait() pattern.
@@ -1376,103 +1310,123 @@ func runReviewLoop(
 		revSessionID := handlercontract.NewSessionID()
 		emitReviewerLaunched(ctx, deps.bus, runID, revSessionID, state.claudeSessionID, state.iterationCount)
 
-		revSess, revWatcher, revLaunchErr := revH.Launch(ctx, revSpec)
-		if revLaunchErr != nil {
-			if deps.hookStore != nil {
-				deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
-			}
-			// hk-4l7zs: spawn-cap saturation on the reviewer launch.
-			if errors.Is(revLaunchErr, ErrSpawnCapTimeout) {
-				inUse, capSize := substrateSpawnStats(revSubstrate)
-				emitSpawnCapBlocked(ctx, deps.bus, runID, defaultSpawnAcquireTimeout, inUse, capSize)
-			}
-			// hk-r1rup: hung `tmux new-window` (no-spawn wedge) on the reviewer
-			// launch. No launch-time var here (mirrors the spawn-cap branch), so
-			// use defaultNewWindowTimeout as the proxy waited value.
-			if errors.Is(revLaunchErr, ErrTmuxNewWindowTimeout) {
-				emitTmuxNewWindowTimeout(ctx, deps.bus, runID, defaultNewWindowTimeout)
-			}
-			result := rlErrorResult(fmt.Sprintf("reviewer launch error at iteration %d: %v", state.iterationCount, revLaunchErr))
-			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
-			return result
-		}
-		// hk-4l7zs: emit the held-back reviewer launch_initiated now the window
-		// is live.
-		if revLaunchInitiatedMsg != nil {
-			emitPreExecMessage(ctx, deps.bus, runID, revLaunchInitiatedMsg)
-		}
-		// hk-68pvl: backstop — force-tear-down this reviewer session before
-		// runReviewLoop returns on ANY path, mirroring the implementer guard
-		// above so the deferred wtCleanup never removes the worktree while a
-		// substrate-hosted reviewer claude is still live in it. Idempotent.
-		revSessForTeardown := revSess
-		defer forceTeardownSession(revSessForTeardown)
+		// RT8 (RSM-005): the reviewer launch/ready/brief segment rides the same
+		// runexec Dispatch machine as the implementer (dispatchsegment.go); the
+		// per-site emissions and kill/reap sequence below are the pre-RT8 code
+		// verbatim, bound as effector hooks (RSM-029 parity). The reviewer always
+		// mints a fresh session (CHB-009), so no resume probe is armed, and —
+		// preserving the pre-RT8 reviewer branch — no agent_ready_timeout event
+		// is emitted on its ready-timeout edge (emitReadyTimeout nil).
+		var revSess handler.Session
+		var revWatcher *handlercontract.Watcher
+		var revLaunchErr error
 
-		// Wire the reviewer's agent-ready callback into revTap so that relay-synthesized
-		// agent_ready envelopes from the hook-relay subprocess reach revTapCh, which
-		// waitAgentReady (below) blocks on. Without this call notifyAgentReady finds a
-		// nil callback and revTapCh stays empty, causing HC-056 to fire every 30s.
-		//
-		// Same wiring gap as single-mode beadRunOne (bead hk-lj1p9.4); fixed in both paths.
-		//
-		// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013; specs/handler-contract.md §4.9 HC-056.
-		// Bead ref: hk-lj1p9.4.
-		if deps.hookStore != nil {
-			capturedRevTap := revTap
-			capturedRevRunID := runID // hk-wths: copy for EmitWithRunID closure
-			deps.hookStore.SetAgentReadyCallback(runID.String(), revArtifacts.claudeSessionID, func() {
-				// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
-				// the stale watcher's never-spawned reaper sees agentReadySeen = true.
-				_ = capturedRevTap.EmitWithRunID(context.Background(), capturedRevRunID, core.EventTypeAgentReady, nil)
-			})
-		}
-
-		// HC-056: waitAgentReady — reviewer phase must observe agent_ready within
-		// the configured timeout, same as the implementer phase.
-		//
-		// Precondition: deps.adapterRegistry is non-nil (enforced by newWorkLoopDeps;
-		// hk-d8u1y deleted the nil-guard). When ErrAgentReadyTimeout fires: kill,
-		// reap, emit rlErrorResult so the caller (workloop) can reopen the bead via
-		// the same error envelope shape as the implementer phase.
 		revAdapter, revAdapterErr := deps.adapterRegistry.ForAgent(artifactAgentType(revArtifacts))
 		if revAdapterErr != nil {
 			// No adapter for the resolved agent type — non-fatal; skip ready-wait.
 			fmt.Fprintf(os.Stderr, "daemon: reviewloop: ForAgent(%s) bead %s iter %d: %v (skipping ready-wait)\n",
 				artifactAgentType(revArtifacts), beadID, state.iterationCount, revAdapterErr)
-		} else {
-			// Derive a child context that cancels when the reviewer watcher finishes
-			// (handler exit), preventing a full-timeout block on reviewer crash.
-			//
-			// Substrate path: revWatcher is nil when deps.substrate != nil
-			// (tmux-hosted sessions return nil from handler.launchViaSubstrate
-			// when subSess.Stdout() is nil — see internal/handler/handler.go:291).
-			// In that case there is no progress-stream goroutine to await; the
-			// watcher-done coordination goroutine is simply skipped and the
-			// ready-wait below relies on context cancellation alone.
-			// Bead ref: hk-yjduq (DOGFOOD-BLOCKER #2 — nil watcher in tmux path).
-			revReadyCtx, revReadyCancel := context.WithCancel(ctx)
-			if revWatcher != nil {
-				go func() {
-					select {
-					case <-revWatcher.Done():
-						revReadyCancel()
-					case <-revReadyCtx.Done():
-					}
-				}()
-			}
+			revAdapter = nil
+		}
 
-			revEventSrc := newChanAgentEventSource(revTapCh)
-			// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
-			// This is the remote reviewer-node agent_ready wait that hk-5z1f0 diagnosed.
-			revReadyTimeout := effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil)
-			revReadyErr := waitAgentReady(revReadyCtx, runID, revEventSrc, revAdapter, revReadyTimeout)
-			revReadyCancel() // always release the watcher-done goroutine above
-
-			if revReadyErr == ErrAgentReadyTimeout {
-				// HC-056: reviewer agent_ready_timeout — kill, reap, error result.
+		revSeg := &dispatchSegment{
+			clock: deps.clock,
+			runID: runID,
+			cfg: runexec.DispatchConfig{
+				MaxInputAttempts: 1,
+				// hk-96d7w: runner != nil marks a REMOTE (SSH worker) run — longer window.
+				// This is the remote reviewer-node agent_ready wait that hk-5z1f0 diagnosed.
+				ReadyTimeout:  effectiveAgentReadyTimeout(deps.agentReadyTimeout, deps.remoteAgentReadyTimeout, runner != nil),
+				InputAck:      dispatchSegmentInputAckWindow,
+				ReadyKillReap: agentReadyKillReapTimeout,
+			},
+			adapter: revAdapter,
+			tap:     revTap,
+			tapCh:   revTapCh,
+			launch: func(lctx context.Context) (<-chan struct{}, error) {
+				revSess, revWatcher, revLaunchErr = revH.Launch(lctx, revSpec)
+				if revLaunchErr != nil {
+					return nil, revLaunchErr
+				}
+				if revWatcher != nil {
+					return revWatcher.Done(), nil
+				}
+				return nil, nil
+			},
+			onLaunchFailed: func(lctx context.Context, launchErr error) {
+				if deps.hookStore != nil {
+					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
+				}
+				// hk-4l7zs: spawn-cap saturation on the reviewer launch.
+				if errors.Is(launchErr, ErrSpawnCapTimeout) {
+					inUse, capSize := substrateSpawnStats(revSubstrate)
+					emitSpawnCapBlocked(lctx, deps.bus, runID, defaultSpawnAcquireTimeout, inUse, capSize)
+				}
+				// hk-r1rup: hung `tmux new-window` (no-spawn wedge) on the reviewer
+				// launch. No launch-time var here (mirrors the spawn-cap branch), so
+				// use defaultNewWindowTimeout as the proxy waited value.
+				if errors.Is(launchErr, ErrTmuxNewWindowTimeout) {
+					emitTmuxNewWindowTimeout(lctx, deps.bus, runID, defaultNewWindowTimeout)
+				}
+			},
+			onLaunched: func(lctx context.Context) {
+				// hk-4l7zs: emit the held-back reviewer launch_initiated now the window
+				// is live.
+				if revLaunchInitiatedMsg != nil {
+					emitPreExecMessage(lctx, deps.bus, runID, revLaunchInitiatedMsg)
+				}
+				// Wire the reviewer's agent-ready callback into revTap so that
+				// relay-synthesized agent_ready envelopes from the hook-relay subprocess
+				// reach revTapCh, which the segment's ready pump consumes.
+				//
+				// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-013;
+				// specs/handler-contract.md §4.9 HC-056. Bead ref: hk-lj1p9.4.
+				if deps.hookStore != nil {
+					capturedRevTap := revTap
+					capturedRevRunID := runID // hk-wths: copy for EmitWithRunID closure
+					deps.hookStore.SetAgentReadyCallback(runID.String(), revArtifacts.claudeSessionID, func() {
+						// hk-wths: use EmitWithRunID so the bus envelope carries run_id and
+						// the stale watcher's never-spawned reaper sees agentReadySeen = true.
+						_ = capturedRevTap.EmitWithRunID(context.Background(), capturedRevRunID, core.EventTypeAgentReady, nil)
+					})
+				}
+			},
+			deliver: func(dctx context.Context) {
+				// Paste-inject the reviewer kick-off message AFTER agent_ready (hk-zchbu).
+				// Running before agent_ready races Claude's welcome splash, which
+				// consumes the trailing \n and leaves the buffered text unsubmitted.
+				// hk-012af: use revPasteTarget (per-run wrapper) so inject targets this
+				// reviewer's pane rather than the shared "last pane".
+				// pasteInjectOnLaunch is non-blocking (spawns an internal goroutine).
+				// hk-zimkh: the returned briefDelivered channel gates
+				// pasteInjectQuitOnReviewFile, which watches for .harmonik/review.json
+				// and sends /quit once the verdict is written — without this the
+				// reviewer claude hangs indefinitely at a prompt.
+				// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
+				revBriefDelivered := pasteInjectOnLaunch(dctx, revPasteTarget, revArtifacts.claudeSessionID,
+					handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, revWtPath,
+					deps.bus, runID)
+				if qs, ok := revPasteTarget.(quitSender); ok {
+					// hk-7rgqs: pass the pasteInjecter + claude session id so the watchdog
+					// can re-seed the reviewer brief once if the original submit Enter was
+					// swallowed by a slow splash (revPasteTarget implements pasteInjecter
+					// when it is a perRunSubstrate; a non-pasteInjecter target yields a nil
+					// inj inside the watchdog → re-seed disabled).
+					revInj, _ := revPasteTarget.(pasteInjecter)
+					// hk-60t8: give the reviewer watchdog an independent heartbeat
+					// subscription so it can extend the deadline when the reviewer is
+					// actively reasoning (recent agent_heartbeat), not only when the OS
+					// pane-liveness probe finds an active process.
+					revHBCh := revTap.Subscribe()
+					go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revInj, revArtifacts.claudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
+				}
+			},
+			killReady: func(kctx context.Context) {
+				// HC-056: reviewer agent_ready_timeout — kill, reap; the error result
+				// + cycle-complete emission follow at the segment return below.
 				fmt.Fprintf(os.Stderr, "daemon: reviewloop: waitAgentReady reviewer bead %s iter %d run %s: %v (error)\n",
-					beadID, state.iterationCount, runID.String(), revReadyErr)
-				_ = revSess.Kill(ctx)
+					beadID, state.iterationCount, runID.String(), ErrAgentReadyTimeout)
+				_ = revSess.Kill(kctx)
 				// Wait for the reviewer watcher goroutine to exit with a
 				// deadline — agentReadyKillReapTimeout prevents indefinite
 				// blocking if the killed subprocess does not cooperate.
@@ -1495,42 +1449,34 @@ func runReviewLoop(
 				if deps.hookStore != nil {
 					deps.hookStore.CloseHookSession(runID.String(), revArtifacts.claudeSessionID)
 				}
-				result := rlErrorResult(fmt.Sprintf("reviewer agent_ready_timeout at iteration %d", state.iterationCount))
-				emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
-				return result
-			}
-			// revReadyErr == nil (agent_ready observed) OR context.Canceled (watcher
-			// exited first or ctx cancelled). Fall through to waitWithSocketGrace.
+			},
+			killAbort: func(context.Context) {
+				if revSess != nil {
+					_ = revSess.Kill(context.Background())
+				}
+			},
 		}
+		revDispatch := revSeg.run(ctx)
 
-		// Paste-inject the reviewer kick-off message AFTER agent_ready (hk-zchbu).
-		// Running before agent_ready races Claude's welcome splash, which
-		// consumes the trailing \n and leaves the buffered text unsubmitted.
-		// hk-012af: use revPasteTarget (per-run wrapper) so inject targets this
-		// reviewer's pane rather than the shared "last pane".
-		// pasteInjectOnLaunch is non-blocking (spawns an internal goroutine).
-		// hk-zimkh: the returned briefDelivered channel gates
-		// pasteInjectQuitOnReviewFile, which watches for .harmonik/review.json
-		// and sends /quit once the verdict is written — without this the
-		// reviewer claude hangs indefinitely at a prompt.
-		// Spec ref: specs/process-lifecycle.md §4.7 PL-021d.
-		revBriefDelivered := pasteInjectOnLaunch(ctx, revPasteTarget, revArtifacts.claudeSessionID,
-			handlercontract.ReviewLoopPhaseReviewer, state.iterationCount, revWtPath,
-			deps.bus, runID)
-		if qs, ok := revPasteTarget.(quitSender); ok {
-			// hk-7rgqs: pass the pasteInjecter + claude session id so the watchdog
-			// can re-seed the reviewer brief once if the original submit Enter was
-			// swallowed by a slow splash (revPasteTarget implements pasteInjecter
-			// when it is a perRunSubstrate; a non-pasteInjecter target yields a nil
-			// inj inside the watchdog → re-seed disabled).
-			revInj, _ := revPasteTarget.(pasteInjecter)
-			// hk-60t8: give the reviewer watchdog an independent heartbeat
-			// subscription so it can extend the deadline when the reviewer is
-			// actively reasoning (recent agent_heartbeat), not only when the OS
-			// pane-liveness probe finds an active process.
-			revHBCh := revTap.Subscribe()
-			go pasteInjectQuitOnReviewFile(ctx, qs, revSess, revInj, revArtifacts.claudeSessionID, revWtPath, revBriefDelivered, revHBCh, 0)
+		if revLaunchErr != nil {
+			result := rlErrorResult(fmt.Sprintf("reviewer launch error at iteration %d: %v", state.iterationCount, revLaunchErr))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
 		}
+		// hk-68pvl: backstop — force-tear-down this reviewer session before
+		// runReviewLoop returns on ANY path, mirroring the implementer guard
+		// above so the deferred wtCleanup never removes the worktree while a
+		// substrate-hosted reviewer claude is still live in it. Idempotent.
+		revSessForTeardown := revSess
+		defer forceTeardownSession(revSessForTeardown)
+
+		if revDispatch.Phase == runexec.DispatchFailed && revDispatch.Reason == "agent_ready_timeout" {
+			result := rlErrorResult(fmt.Sprintf("reviewer agent_ready_timeout at iteration %d", state.iterationCount))
+			emitReviewLoopCycleComplete(ctx, deps.bus, runID, state.iterationCount, result.completionReason)
+			return result
+		}
+		// Working / Exited / Aborted: fall through to waitWithSocketGrace — the
+		// pre-RT8 posture for agent_ready-observed, watcher-exit, and ctx-cancel.
 
 		// Wait for reviewer using waitWithSocketGrace (OQ2 resolution).
 		_, revEI := waitWithSocketGrace(ctx, deps.hookStore, revWatcher, revSess,

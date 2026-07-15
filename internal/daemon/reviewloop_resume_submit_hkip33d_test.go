@@ -148,7 +148,7 @@ func (s *rlSubmitSubstrate) SpawnWindow(ctx context.Context, in handler.Substrat
 
 	// Only fresh (`--session-id`) launches receive a relay agent_ready (the
 	// SessionStart→agent_ready synthesis).  `--resume` launches get none — the
-	// resume-phase fallback (resumeReadyFallbackGrace) provides ready there.
+	// resume-phase transitional probe (resumeReadyProbeDelay) provides ready there.
 	if !isResume && claudeSessionID != "" {
 		go func(csid string) {
 			select {

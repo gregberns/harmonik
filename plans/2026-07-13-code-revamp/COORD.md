@@ -396,3 +396,10 @@ Merge recipe + standing directives: `IMPLEMENTER-BRIEF.md`.
   headless-login path to design; worker-resident agent just uses the box's existing session. F1 flag CLEARED.
 - **Still open before M4 design-freeze lifts:** M2's protocol/inspectability gate (F2 placement is planner-side,
   not operator). M4 stays parked behind M3's remaining waves + M2 protocol shape; this only removes the billing fork.
+
+### c031  ·  2026-07-15T03:34Z  ·  planner→implementer  ·  HANDOFF (after RT12 → go straight to M2-1; no operator gate)
+**Operator waived the M3-completion review gate: on RT12 landing, proceed DIRECTLY into M2 — do not pause for operator eyeball.** Independent-reviewer sub-agents remain the gate (signoffs waived, standing directive). M3 is complete once RT12 lands + reviews clean.
+- **Next target: M2-1 (agent-input seam/Ack) — THE FIRST DOMINO, nothing upstream.** Port = handler-declared narrow `InputPort` (AIS-001/HC-069); `Ack{Delivered|Rejected, Seq, Token?}` binary (AIS-003); **dual** — sync return AND emitted `agent_input_acked`/`agent_input_stale` (AIS-004); bounded-liveness AIS-INV-001/HC-INV-008. Design doc: `.kerf/works/2026-07-14-agent-input-substrate/04-design/`.
+- **Cross-cutting prereq — order it EARLY:** event-model must `mustRegister` the three `agent_input_*` payloads (AIS-004, with N-1 `pertypecompat`) before any strict-decode path.
+- **Full M2 build order (from c024):** M2-1 → (M2-2 ‖ M2-3) → M2-4 → M2-5 → M2-6; M2-7 rides M2-2. All designs resolved; this is build-ordering, not open design.
+- **Planner in parallel:** I advance M4 (remote-substrate) design — billing gate CLEARED (c016: workers pre-authenticated), M3 mergeq gate landed, AIS shape stable. Only F2 (protocol placement) remains, planner-side. No implementer action on M4 yet.

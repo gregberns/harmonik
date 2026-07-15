@@ -104,13 +104,29 @@ test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budge
 # Four tiers: L0 unit / L1 contract / L2 integration / L3 live.
 # ---------------------------------------------------------------------------
 
-# test-codex-l012: run L0+L1+L2 codex-app-server taxonomy tests.
-# CODEX_LIVE=0 (default) — runs against captured corpus; no live process.
-# GATE: must be green before any codex-app-server deploy or protocol change.
-# Includes the pre-deploy drift canary (TestCodexDriftCanary).
+# test-codex-l012: run L0+L1+L2 codex-app-server taxonomy tests + the structured
+# INPUT-driver harness (agent-input-substrate M2, T9): codexinput reactor,
+# codexdriver, and the L0–L3 input harness + 4×strata×EventN fault matrix +
+# bounded-liveness oracle. CODEX_LIVE=0 (default) — captured corpus, no live
+# process. GATE: must be green before any codex-app-server deploy or protocol
+# change. Includes the pre-deploy drift canaries + the SC6 gate trio (forbidigo /
+# depguard / capture-pane) via `make codex-sc6-gates`, the N=10 determinism
+# oracle, and the per-file coverage floor — this is the C6-deletion gate, so it
+# blocks a deploy, not merely a CI branch check.
 .PHONY: test-codex-l012
-test-codex-l012:  ## Codex-app-server L0/L1/L2 taxonomy gate (CODEX_LIVE=0; hk-oe86p)
-	go test -count=1 ./internal/codextest/... ./internal/codexwire/... ./internal/codexdigitaltwin/... ./internal/codexreactor/...
+test-codex-l012:  ## Codex L0/L1/L2 + input-driver harness + fault matrix + N=10 + coverage + SC6 gates (CODEX_LIVE=0; hk-oe86p, T9)
+	go test -count=1 ./internal/codextest/... ./internal/codexwire/... ./internal/codexdigitaltwin/... ./internal/codexreactor/... ./internal/codexinput/... ./internal/codexdriver/...
+	scripts/codex-oracle-n10.sh 10
+	scripts/codex-coverage-gate.sh
+	$(MAKE) codex-capture-pane-gate
+
+# codex-capture-pane-gate: the SC6 capture-pane grep ratchet — the structured
+# input driver must never scrape a tmux pane (capture-pane is an exec-arg string,
+# not an import, so a grep gate is the cheapest enforcement; the forbidigo +
+# depguard halves of the SC6 trio live in .golangci.yml).
+.PHONY: codex-capture-pane-gate
+codex-capture-pane-gate:  ## SC6: forbid `capture-pane` in the structured input-driver packages (T9)
+	scripts/codex-capture-pane-gate.sh
 
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),

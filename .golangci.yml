@@ -63,6 +63,23 @@ linters:
       - path: ^internal/testhelpers/
         linters:
           - forbidigo
+      # SC6 (agent-input-substrate T9): the time.Sleep/After/NewTimer ban is
+      # PATH-SCOPED to the structured input-driver packages. This rule EXCLUDES
+      # the SC6-DRIVER-CLOCKPORT finding for every file EXCEPT those packages
+      # (path-except), so the ban bites ONLY there — FakeClock's own spin
+      # (internal/substrate) and all other code stay unaffected. Matching on the
+      # SC6-DRIVER-CLOCKPORT marker leaves the fmt.Print / panic bans intact.
+      - linters:
+          - forbidigo
+        text: 'SC6-DRIVER-CLOCKPORT'
+        path-except: internal/(codexinput|codexdriver)/
+      # SC6 carve-out: the ban targets the PRODUCTION driver path. Driver test
+      # files legitimately poll with time.Sleep (arm-before-advance spins) and
+      # backstop with time.After — those are harness plumbing, not driver timing.
+      - linters:
+          - forbidigo
+        text: 'SC6-DRIVER-CLOCKPORT'
+        path: _test\.go$
   settings:
     errcheck: { check-type-assertions: true, check-blank: true, exclude-functions: ["(io.Closer).Close"] }
     revive:   { rules: [{name: exported}, {name: package-comments}, {name: var-naming}, {name: error-return}, {name: error-naming}, {name: if-return}] }
@@ -81,6 +98,17 @@ linters:
       forbid:
         - { pattern: '^fmt\.Print.*$', msg: "use the structured logger" }
         - { pattern: '^panic$',         msg: "return an error; panics only in main/init" }
+        # SC6 (agent-input-substrate T9): the structured Codex input-driver
+        # packages must take EVERY wait through the substrate ClockPort so the
+        # bounded-liveness windows replay in virtual time. A literal-Sleep ban
+        # alone is insufficient — the live path's blind waits are time.After in a
+        # select — so time.After / time.NewTimer are banned too. These bans are
+        # SCOPED to the driver packages by the SC6-DRIVER-CLOCKPORT exclusion rule
+        # below (path-except), so FakeClock's own spin (internal/substrate) and
+        # every other package stay unaffected.
+        - { pattern: '^time\.Sleep$',    msg: "SC6-DRIVER-CLOCKPORT: driver waits go through substrate.ClockPort.Sleep, never time.Sleep" }
+        - { pattern: '^time\.After$',    msg: "SC6-DRIVER-CLOCKPORT: driver waits go through substrate.ClockPort, never time.After" }
+        - { pattern: '^time\.NewTimer$', msg: "SC6-DRIVER-CLOCKPORT: driver waits go through substrate.ClockPort, never time.NewTimer" }
     depguard:
       # Component-graph rules (subsystem layering) live here per subsystem-organization.md §Dependency layering enforcement.
       # One `rules.<name>` entry per component; `files:` scopes the rule, `allow:`/`deny:` set the allowed edges.
@@ -227,6 +255,10 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codex vertical MUST NOT import daemon" }
             - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "codex vertical MUST NOT import a sibling vertical (keeper)" }
+            # SC6 (agent-input-substrate T9): the structured input reactor is on
+            # the direct-stdio input path (AIS-009); it MUST NEVER re-import the
+            # tmux write verbs. This mirrors the codexdriver→tmux deny below.
+            - { pkg: "github.com/gregberns/harmonik/internal/lifecycle/tmux", desc: "codex input path MUST NOT import tmux (AIS-009: the driver owns child stdio; tmux is not on the structured input path)" }
 
         # codexdriver: the structured Codex app-server driver — the second
         # handler.Substrate implementation (agent-input-substrate T6,

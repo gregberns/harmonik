@@ -1705,6 +1705,35 @@ func pasteInjectImplementerResume(ctx context.Context, inj pasteInjecter, claude
 // against the seed sitting unsubmitted in the input box.
 //
 // Bead: hk-zexsj.
+// submitSeedInput delivers one seed payload to this run's pane through the
+// agent-input structured input port (handler.InputPort.SubmitInput) when the
+// substrate exposes it — the daemon-run INPUT path per [agent-input.md AIS-011 /
+// AIS-012] and [execution-model.md EM-015d-RFD step 2 / EM-015d-RIA step 3]:
+// daemon-run input is delivered via SubmitInput→Ack, NOT by a direct tmux
+// load-buffer / paste-buffer call on this code path. The interim tmux/paste
+// driver's SubmitInput (perRunSubstrate.SubmitInput) encapsulates the bracketed
+// paste BEHIND the port (PL-021d demoted-not-deleted), so the daemon-run
+// delivery code here depends on the port, not on the tmux write verb — that is
+// the observation-only-tmux demotion. Positive acceptance is the async
+// agent_input_acked (sourced from the Claude-hook-bridge outcome_emitted /
+// agent_ready signal), never this synchronous Ack and never a capture-pane
+// scrape.
+//
+// A minimal test double that satisfies only pasteInjecter (no InputPort) falls
+// back to WriteLastPane so the pre-AIS test-double contract is preserved through
+// the bake window (pre-C6 deletion).
+//
+// Returns the delivery Ack (zero-value on the WriteLastPane fallback path) and a
+// write error, if any.
+//
+// Bead: T8 (codename:agent-input-substrate) — AIS-011/AIS-012 wiring.
+func submitSeedInput(ctx context.Context, inj pasteInjecter, bufName string, payload []byte) (handler.Ack, error) {
+	if ip, ok := inj.(handler.InputPort); ok {
+		return ip.SubmitInput(ctx, handler.InputRequest{Payload: payload})
+	}
+	return handler.Ack{}, inj.WriteLastPane(ctx, bufName, payload)
+}
+
 func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string, payload []byte, marker, phase string) string {
 	pc, canCapture := inj.(paneCapturer)
 	var lastErr error
@@ -1717,14 +1746,23 @@ func injectAndVerifySeed(ctx context.Context, inj pasteInjecter, bufName string,
 	// actually landed; the latter is a real discard and must.
 	captureEverSucceeded := false
 	for attempt := 1; attempt <= pasteVerifyAttempts; attempt++ {
-		if err := inj.WriteLastPane(ctx, bufName, payload); err != nil {
+		// Deliver via the AIS structured input port (SubmitInput→Ack) on the
+		// daemon-run input path per AIS-011/AIS-012 + EM-015d-RFD/RIA; the interim
+		// tmux driver's SubmitInput encapsulates the bracketed paste behind the
+		// port (PL-021d demoted-not-deleted).  See submitSeedInput.
+		if ack, err := submitSeedInput(ctx, inj, bufName, payload); err != nil {
 			// A hard paste error is already loud (non-zero tmux/ssh exit) and is
 			// surfaced immediately, matching the pre-hk-zexsj contract.  The
 			// silent-discard case the verify loop targets is the OPPOSITE: tmux
-			// returns exit 0 (WriteLastPane == nil) yet nothing rendered.
-			reason := fmt.Sprintf("%s WriteLastPane: %v", phase, err)
+			// returns exit 0 (SubmitInput == nil) yet nothing rendered.
+			reason := fmt.Sprintf("%s SubmitInput: %v", phase, err)
 			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s\n", reason)
 			return reason
+		} else if attempt == 1 {
+			// Observability: the delivery went through the AIS port and returned a
+			// synchronous delivery Ack (positive acceptance still arrives async as
+			// agent_input_acked, AIS-004).  Logged once per seed.
+			fmt.Fprintf(os.Stderr, "daemon: pasteinject: %s delivered via SubmitInput (ack=%s)\n", phase, ack.Outcome)
 		}
 		if !canCapture {
 			// No capture capability (e.g. a minimal test double): trust the paste

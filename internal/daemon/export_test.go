@@ -1942,6 +1942,18 @@ func ExportedBufferName(sessionID, purpose string) string {
 	return bufferName(sessionID, purpose)
 }
 
+// ExportedInputBufferName exposes the interim tmux/paste InputPort buffer name
+// (inputBufferName) for tests in package daemon_test. Since T8
+// (codename:agent-input-substrate) the daemon-run review-loop delivery routes
+// through handler.InputPort.SubmitInput, whose interim tmux driver uses this
+// single AIS input buffer rather than the former per-phase
+// "harmonik-<session-id>-<purpose>" buffer names. The per-purpose bufferName
+// discipline remains normative only for the keeper + interactive-CLI paste paths
+// (PL-021d carve-out).
+func ExportedInputBufferName() string {
+	return inputBufferName
+}
+
 // ExportedSynthesiseClaudeSessionID exposes rlSynthesiseClaudeSessionID for
 // tests in package daemon_test.  Tests use this to verify the produced ID
 // satisfies the tmux buffer-name regex (hk-lckbv).

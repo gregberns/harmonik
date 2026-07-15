@@ -196,7 +196,11 @@ func TestPasteInjectOnLaunch_ImplementerInitial(t *testing.T) {
 	}
 	c := calls[0]
 
-	wantBuf := fmt.Sprintf("harmonik-%s-task", sessionID)
+	// T8: the daemon-run delivery routes through the AIS InputPort.SubmitInput,
+	// whose interim tmux driver uses the single AIS input buffer (not the former
+	// per-phase "harmonik-<sessionID>-task" name — that discipline now applies
+	// only to the keeper/CLI paste paths per the PL-021d carve-out).
+	wantBuf := daemon.ExportedInputBufferName()
 	if c.bufferName != wantBuf {
 		t.Errorf("implementer-initial: bufferName = %q, want %q", c.bufferName, wantBuf)
 	}
@@ -233,7 +237,9 @@ func TestPasteInjectOnLaunch_Reviewer(t *testing.T) {
 	}
 	c := calls[0]
 
-	wantBuf := fmt.Sprintf("harmonik-%s-review", sessionID)
+	// T8: daemon-run delivery via AIS InputPort.SubmitInput → single AIS input
+	// buffer (see implementer-initial note above).
+	wantBuf := daemon.ExportedInputBufferName()
 	if c.bufferName != wantBuf {
 		t.Errorf("reviewer: bufferName = %q, want %q", c.bufferName, wantBuf)
 	}
@@ -272,7 +278,9 @@ func TestPasteInjectOnLaunch_ImplementerResume(t *testing.T) {
 		t.Fatalf("implementer-resume: expected 1 WriteToPane call (combined task+feedback), got %d", len(calls))
 	}
 
-	wantBuf := fmt.Sprintf("harmonik-%s-task", sessionID)
+	// T8: daemon-run delivery via AIS InputPort.SubmitInput → single AIS input
+	// buffer (see implementer-initial note above).
+	wantBuf := daemon.ExportedInputBufferName()
 	if calls[0].bufferName != wantBuf {
 		t.Errorf("implementer-resume: bufferName = %q, want %q", calls[0].bufferName, wantBuf)
 	}

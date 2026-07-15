@@ -32,7 +32,6 @@ package daemon_test
 // Bead: hk-poy7k.
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -117,7 +116,9 @@ func TestPasteInjectImplementerResume_BothMessagesReadable(t *testing.T) {
 
 	// Buffer name must use "task" purpose (not "feedback" — that was the old
 	// second buffer; combined paste uses the task buffer, hk-poy7k).
-	wantBuf := fmt.Sprintf("harmonik-%s-task", sessionID)
+	// T8: daemon-run delivery routes through the AIS InputPort.SubmitInput → the
+	// single AIS input buffer (per-phase name is now keeper/CLI-only per PL-021d).
+	wantBuf := daemon.ExportedInputBufferName()
 	if calls[0].bufferName != wantBuf {
 		t.Errorf("bufferName = %q, want %q", calls[0].bufferName, wantBuf)
 	}

@@ -146,6 +146,11 @@ func TestRun_MergeRetryThenExhaustedReopen(t *testing.T) {
 
 func TestRun_DOTAlreadyApprovedCarveOut(t *testing.T) {
 	// RF :4138 — a fatal merge with already-approved-on-main closes, not reopens.
+	// RT9 parity fix: the pre-RT9 DOT carve-out falls through to the SAME
+	// approved close ladder as a merge success (pre-RT9 workloop.go :4206–:4217
+	// skips only the reopen; outcome_emitted=approved is still emitted), so the
+	// carve-out row emits the approved outcome per cfg.EmitOutcome. The original
+	// RT6 expectation ([close_bead] only) contradicted the production stream.
 	cfg := stdRunCfg()
 	m := NewRun(cfg)
 	m.Step(Event{Kind: EvStartRun, Mode: "dot", At: at(1)})
@@ -153,8 +158,11 @@ func TestRun_DOTAlreadyApprovedCarveOut(t *testing.T) {
 	m.Step(Event{Kind: EvModeOutcome, ModeOutcome: ModeSuccess, At: at(3)})
 	m.Step(Event{Kind: EvGatePassed, At: at(4)})
 	got := m.Step(Event{Kind: EvMergeResult, Merge: MergeFatal, AlreadyApprovedOnMain: true, At: at(5)})
-	if !eqKinds(kinds(got), []ActionKind{ActCloseBead}) {
+	if !eqKinds(kinds(got), []ActionKind{ActEmit, ActCloseBead}) {
 		t.Fatalf("carveout: %v", kinds(got))
+	}
+	if got[0].Type != core.EventTypeOutcomeEmitted || got[0].Detail != "approved" {
+		t.Fatalf("carveout outcome: %+v", got[0])
 	}
 	if m.State().Phase != RunFinalizing || m.State().FinalizeMode != FinalizeClose {
 		t.Fatalf("carveout state: %+v", m.State())
@@ -230,10 +238,13 @@ func driveToClose(t *testing.T, cfg RunConfig, mode string, dispatchTerminal Eve
 	return tail
 }
 
-// TestRun_CloseLadderByteIdentical is the RT6 acceptance headline: the six
+// TestRun_CloseLadderByteIdentical is the RT6 acceptance headline: the
 // pre-change close-ladder variants (review-loop, DOT, single-shot agent-
-// completed, exit-0 clean-exit, budget-needs-attention close, and a second
-// single-shot entry) all map onto ONE tail with BYTE-IDENTICAL strings.
+// completed, exit-0 clean-exit, and the noChange merge) all map onto ONE tail
+// with BYTE-IDENTICAL strings. The budget-needs-attention close is a DISTINCT
+// ladder (rejected outcome + needs-attention close + run_failed; see
+// TestRun_BudgetNeedsAttentionLadder) — the pre-RT9 production stream, not the
+// approved ladder the original RT6 variant assumed.
 func TestRun_CloseLadderByteIdentical(t *testing.T) {
 	cfg := stdRunCfg() // identical summary/reason data across all variants
 
@@ -243,19 +254,7 @@ func TestRun_CloseLadderByteIdentical(t *testing.T) {
 		"single_completed": driveToClose(t, cfg, "single", Event{Kind: EvAgentCompleted, At: at(3)}),
 		"single_exit0":     driveToClose(t, cfg, "single", Event{Kind: EvCleanExit, ExitCode: 0, At: at(3)}),
 	}
-	// The budget-needs-attention close reaches the SAME tail without a merge.
-	budget := func() []Action {
-		m := NewRun(cfg)
-		m.Step(Event{Kind: EvStartRun, Mode: "review_loop", At: at(1)})
-		m.Step(Event{Kind: EvProvisioned, At: at(2)})
-		var tail []Action
-		tail = append(tail, m.Step(Event{Kind: EvModeOutcome, ModeOutcome: ModeBudget, NeedsAttention: true, At: at(3)})...)
-		tail = append(tail, m.Step(Event{Kind: EvCloseResult, Close: CloseClosed, At: at(4)})...)
-		return tail
-	}()
-	variants["budget_needs_attention"] = budget
-
-	// noChange merge is the sixth variant (shares the merge close tail).
+	// noChange merge shares the merge close tail.
 	noChange := func() []Action {
 		m := NewRun(cfg)
 		m.Step(Event{Kind: EvStartRun, Mode: "single", At: at(1)})
@@ -353,5 +352,173 @@ func TestRun_AllTerminalEntriesReachOneDone(t *testing.T) {
 	m.Step(Event{Kind: EvGateFailed, At: at(4)})
 	if m.State().Phase != RunDone || m.State().DoneOutcome != "reopened" {
 		t.Fatalf("gate-fail reopen: %+v", m.State())
+	}
+}
+
+// ─── RT9 additions: the mode-outcome latches, the attention ladder, drain ────
+
+// TestRun_BudgetNeedsAttentionLadder: the review-loop budget-exhausted close is
+// its own ladder (pre-RT9 workloop.go hk-c1ah6 block): outcome_emitted=rejected
+// → close_bead{needs_attention} → run_failed with the exhausted summary on
+// EVERY close result; a hard close error reopens first (hk-hypbi: transient
+// BrUnavailable does NOT reopen — the bead stays in_progress for BI-031).
+func TestRun_BudgetNeedsAttentionLadder(t *testing.T) {
+	const exhausted = "review_loop_budget_exhausted (max=3 failures): summary"
+	drive := func() *Run {
+		m := NewRun(stdRunCfg())
+		m.Step(Event{Kind: EvStartRun, Mode: "review_loop", At: at(1)})
+		m.Step(Event{Kind: EvProvisioned, At: at(2)})
+		got := m.Step(Event{Kind: EvModeOutcome, ModeOutcome: ModeBudget, NeedsAttention: true, Detail: exhausted, At: at(3)})
+		if !eqKinds(kinds(got), []ActionKind{ActEmit, ActCloseBead}) {
+			t.Fatalf("attention entry: %v", kinds(got))
+		}
+		if got[0].Detail != "rejected" {
+			t.Fatalf("attention outcome: %+v", got[0])
+		}
+		if !got[1].NeedsAttention || got[1].Summary != exhausted {
+			t.Fatalf("attention close: %+v", got[1])
+		}
+		return m
+	}
+
+	// Close success → bead closed, but the run terminal is still run_failed.
+	m := drive()
+	got := m.Step(Event{Kind: EvCloseResult, Close: CloseClosed, At: at(4)})
+	if !eqKinds(kinds(got), []ActionKind{ActEmitRunTerminal}) || got[0].Success || got[0].Summary != exhausted {
+		t.Fatalf("attention closed: %v %+v", kinds(got), got)
+	}
+	// Transient BrUnavailable → NO reopen (BI-031 recovery), run_failed.
+	m = drive()
+	got = m.Step(Event{Kind: EvCloseResult, Close: CloseBrUnavailable, At: at(4)})
+	if !eqKinds(kinds(got), []ActionKind{ActEmitRunTerminal}) || got[0].Success || got[0].Summary != exhausted {
+		t.Fatalf("attention transient: %v %+v", kinds(got), got)
+	}
+	// Hard close error → reopen with the exhausted summary, then run_failed.
+	m = drive()
+	got = m.Step(Event{Kind: EvCloseResult, Close: CloseError, Detail: "close-error: boom", At: at(4)})
+	if !eqKinds(kinds(got), []ActionKind{ActReopenBead, ActEmitRunTerminal}) {
+		t.Fatalf("attention close-error: %v", kinds(got))
+	}
+	if got[0].Reason != exhausted || got[1].Success || got[1].Summary != exhausted {
+		t.Fatalf("attention close-error strings: %+v", got)
+	}
+}
+
+// TestRun_ModeOutcomeLatchesLabelAndSummary: a review-loop/DOT success latches
+// the path label (merge-failure string composition) + the dynamic close summary
+// (RT9); the BrUnavailable transient comes from the config override, NOT the
+// label composition ("close-transient-merged (review-loop APPROVE)" vs
+// "(review-loop)").
+func TestRun_ModeOutcomeLatchesLabelAndSummary(t *testing.T) {
+	cfg := stdRunCfg()
+	cfg.BrUnavailableSummary = "close-transient-merged (review-loop APPROVE)"
+	drive := func() *Run {
+		m := NewRun(cfg)
+		m.Step(Event{Kind: EvStartRun, Mode: "review_loop", At: at(1)})
+		m.Step(Event{Kind: EvProvisioned, At: at(2)})
+		m.Step(Event{Kind: EvModeOutcome, ModeOutcome: ModeSuccess, PathLabel: "review-loop", Detail: "APPROVE at iteration 2", At: at(3)})
+		m.Step(Event{Kind: EvGatePassed, At: at(4)})
+		return m
+	}
+	// Merge success → close → terminal carries the latched dynamic summary.
+	m := drive()
+	m.Step(Event{Kind: EvMergeResult, Merge: MergeSuccess, At: at(5)})
+	got := m.Step(Event{Kind: EvCloseResult, Close: CloseClosed, At: at(6)})
+	if got[0].Summary != "APPROVE at iteration 2" || !got[0].Success {
+		t.Fatalf("latched close summary: %+v", got[0])
+	}
+	// BrUnavailable → the config transient wins over label composition.
+	m = drive()
+	m.Step(Event{Kind: EvMergeResult, Merge: MergeSuccess, At: at(5)})
+	got = m.Step(Event{Kind: EvCloseResult, Close: CloseBrUnavailable, At: at(6)})
+	if got[0].Summary != "close-transient-merged (review-loop APPROVE)" {
+		t.Fatalf("mode transient: %+v", got[0])
+	}
+	// Merge fatal → the label-parameterized failure strings.
+	m = drive()
+	got = m.Step(Event{Kind: EvMergeResult, Merge: MergeFatal, MergeStage: MergeStageMerge, MergeReason: "non_ff", At: at(5)})
+	if !eqKinds(kinds(got), []ActionKind{ActEmit, ActReopenBead, ActEmitRunTerminal}) {
+		t.Fatalf("mode merge fatal: %v", kinds(got))
+	}
+	if got[1].Reason != "merge-to-main failed: non_ff" || got[2].Summary != "merge-failed (review-loop): non_ff" {
+		t.Fatalf("mode merge fatal strings: %+v", got)
+	}
+	// Code-sync fatal → the code-sync label strings.
+	m = drive()
+	got = m.Step(Event{Kind: EvMergeResult, Merge: MergeFatal, MergeStage: MergeStageCodeSync, MergeReason: "fetch failed", At: at(5)})
+	if got[1].Reason != "code-sync failed (review-loop): fetch failed" ||
+		got[2].Summary != "code-sync-failed (review-loop): fetch failed" {
+		t.Fatalf("mode code-sync strings: %+v", got)
+	}
+}
+
+// TestRun_DOTSubsumedEventLabelTransient: the DOT noChange-subsumed close
+// carries its own label on the event so the transient composes to
+// "close-transient-merged (dot noChange-subsumed)" even when the mode-level
+// config transient ("…(dot success)") is set (RT9).
+func TestRun_DOTSubsumedEventLabelTransient(t *testing.T) {
+	cfg := stdRunCfg()
+	cfg.BrUnavailableSummary = "close-transient-merged (dot success)"
+	m := NewRun(cfg)
+	m.Step(Event{Kind: EvStartRun, Mode: "dot", At: at(1)})
+	m.Step(Event{Kind: EvProvisioned, At: at(2)})
+	got := m.Step(Event{
+		Kind: EvModeOutcome, ModeOutcome: ModeSubsumed, EmitOutcome: true,
+		PathLabel: "dot noChange-subsumed", Detail: "noChange-subsumed: bead found in main", At: at(3),
+	})
+	if !eqKinds(kinds(got), []ActionKind{ActEmit, ActCloseBead}) || got[0].Detail != "approved" {
+		t.Fatalf("dot subsumed entry: %v %+v", kinds(got), got)
+	}
+	term := m.Step(Event{Kind: EvCloseResult, Close: CloseBrUnavailable, At: at(4)})
+	if term[0].Summary != "close-transient-merged (dot noChange-subsumed)" || !term[0].Success {
+		t.Fatalf("dot subsumed transient: %+v", term[0])
+	}
+}
+
+// TestRun_ShutdownDrainLadders: the drain edge's three outcomes (RSM-021,
+// pre-RT9 hk-dnrg block): no commit → reopen with the requeue reason and NO
+// run terminal; merged → the drain close ladder (no outcome emission, the
+// drain summaries); merge failure → the same requeue reopen, no terminal.
+func TestRun_ShutdownDrainLadders(t *testing.T) {
+	drive := func() *Run {
+		m := NewRun(stdRunCfg())
+		m.Step(Event{Kind: EvStartRun, Mode: "single", At: at(1)})
+		m.Step(Event{Kind: EvProvisioned, At: at(2)})
+		return m
+	}
+	// No commit: straight requeue reopen, no terminal.
+	m := drive()
+	got := m.Step(Event{Kind: EvShutdownDrain, At: at(3)})
+	if !eqKinds(kinds(got), []ActionKind{ActReopenBead}) || got[0].Reason != "context_cancelled: daemon shutdown, requeue pending" {
+		t.Fatalf("drain no-commit: %v %+v", kinds(got), got)
+	}
+	if m.State().Phase != RunDone || m.State().DoneOutcome != "reopened" {
+		t.Fatalf("drain no-commit state: %+v", m.State())
+	}
+	// Committed + merge success → drain close (no outcome emission).
+	m = drive()
+	m.Step(Event{Kind: EvShutdownDrain, WorktreeAheadSHA: "deadbeef", At: at(3)})
+	got = m.Step(Event{Kind: EvMergeResult, Merge: MergeSuccess, At: at(4)})
+	if !eqKinds(kinds(got), []ActionKind{ActCloseBead}) || got[0].Summary != "shutdown-drain: committed work merged" {
+		t.Fatalf("drain close entry: %v %+v", kinds(got), got)
+	}
+	term := m.Step(Event{Kind: EvCloseResult, Close: CloseClosed, At: at(5)})
+	if term[0].Summary != "shutdown-drain: committed work merged" || !term[0].Success {
+		t.Fatalf("drain closed terminal: %+v", term[0])
+	}
+	// Committed + merge success + transient close → the drain transient string.
+	m = drive()
+	m.Step(Event{Kind: EvShutdownDrain, WorktreeAheadSHA: "deadbeef", At: at(3)})
+	m.Step(Event{Kind: EvMergeResult, Merge: MergeSuccess, At: at(4)})
+	term = m.Step(Event{Kind: EvCloseResult, Close: CloseBrUnavailable, At: at(5)})
+	if term[0].Summary != "close-transient-merged (shutdown-drain)" || !term[0].Success {
+		t.Fatalf("drain transient terminal: %+v", term[0])
+	}
+	// Committed + merge failure → requeue reopen, no terminal.
+	m = drive()
+	m.Step(Event{Kind: EvShutdownDrain, WorktreeAheadSHA: "deadbeef", At: at(3)})
+	got = m.Step(Event{Kind: EvMergeResult, Merge: MergeFatal, MergeReason: "non_ff", At: at(4)})
+	if !eqKinds(kinds(got), []ActionKind{ActReopenBead}) || got[0].Reason != "context_cancelled: daemon shutdown, requeue pending" {
+		t.Fatalf("drain merge-fail: %v %+v", kinds(got), got)
 	}
 }

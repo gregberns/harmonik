@@ -164,6 +164,7 @@ type Event struct {
 	MergeReason           string            `json:"merge_reason,omitempty"`             // retryable/fatal reason
 	MergeStage            MergeStage        `json:"merge_stage,omitempty"`              // code_sync | merge (RSM-033)
 	EmitOutcome           bool              `json:"emit_outcome,omitempty"`             // subsumed approved-close flag (RSM-035)
+	PathLabel             string            `json:"path_label,omitempty"`               // mode path label for merge/close string composition (RSM-020/033)
 	AlreadyApprovedOnMain bool              `json:"already_approved_on_main,omitempty"` // DOT carve-out (RF :4138)
 	Close                 CloseOutcomeClass `json:"close,omitempty"`                    // EvCloseResult
 	WorktreeAheadSHA      string            `json:"worktree_ahead_sha,omitempty"`       // EvShutdownDrain
@@ -220,10 +221,11 @@ type Action struct {
 	Detail string         `json:"detail,omitempty"`
 
 	// Run / close-ladder (RSM-020: every divergence survives as a parameter).
-	Summary string `json:"summary,omitempty"` // ActCloseBead / ActEmitRunTerminal SummaryRef
-	Reason  string `json:"reason,omitempty"`  // ActReopenBead reason template
-	Success bool   `json:"success,omitempty"` // ActEmitRunTerminal
-	Label   string `json:"label,omitempty"`   // ActSubmitMerge target label
+	Summary        string `json:"summary,omitempty"`         // ActCloseBead / ActEmitRunTerminal SummaryRef
+	Reason         string `json:"reason,omitempty"`          // ActReopenBead reason template
+	NeedsAttention bool   `json:"needs_attention,omitempty"` // ActCloseBead needs-attention close (RSM-020)
+	Success        bool   `json:"success,omitempty"`         // ActEmitRunTerminal
+	Label          string `json:"label,omitempty"`           // ActSubmitMerge target label
 
 	// Timers (shared).
 	Timer TimerKind     `json:"timer,omitempty"` // ArmTimer / CancelTimer

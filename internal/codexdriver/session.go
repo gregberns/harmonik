@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -117,12 +118,15 @@ var (
 
 func newCodexSession(opts Options, cmd *exec.Cmd, procCancel context.CancelFunc, stdin io.WriteCloser, stdout io.Reader, stderr *ringWriter) *codexSession {
 	return &codexSession{
-		opts:         opts,
-		cmd:          cmd,
-		procCancel:   procCancel,
-		stdinPipe:    stdin,
-		stdinW:       apptap.CaptureWriter(stdin, opts.InCapture),
-		stdout:       apptap.CaptureReader(stdout, opts.OutCapture),
+		opts:       opts,
+		cmd:        cmd,
+		procCancel: procCancel,
+		stdinPipe:  stdin,
+		// Best-effort capture tee (AIS-013 / AIS-INV-002): a capture-disk fault
+		// degrades to uncaptured and MUST NOT abort or back-pressure the live
+		// agent wire. onErr logs once and drops capture for the rest of the run.
+		stdinW:       apptap.BestEffortCaptureWriter(stdin, opts.InCapture, captureDegradeLogger("input")),
+		stdout:       apptap.BestEffortCaptureReader(stdout, opts.OutCapture, captureDegradeLogger("output")),
 		stderr:       stderr,
 		evCh:         make(chan codexinput.Event, evChanCap),
 		wireDone:     make(chan struct{}),
@@ -135,6 +139,20 @@ func newCodexSession(opts Options, cmd *exec.Cmd, procCancel context.CancelFunc,
 		waiters:      make(map[uint64]chan submitResult),
 		timers:       make(map[codexinput.TimerKind]context.CancelFunc),
 		started:      opts.Clock.Now(),
+	}
+}
+
+// captureDegradeLogger returns the apptap best-effort onErr hook for one
+// capture direction: it logs the degrade-to-uncaptured event exactly once (the
+// tee fires it once per stream) so an operator can see capture was lost without
+// the live run ever noticing (AIS-INV-002).
+func captureDegradeLogger(dir string) func(error) {
+	return func(err error) {
+		slog.WarnContext(context.Background(), "codexdriver_capture_degraded",
+			"direction", dir,
+			"error", err.Error(),
+			"note", "capture dropped; live agent stream unaffected (AIS-INV-002)",
+		)
 	}
 }
 

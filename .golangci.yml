@@ -251,6 +251,25 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/lifecycle/tmux", desc: "codexdriver MUST NOT import tmux (AIS-009: the driver owns the child stdio; tmux is not on the structured input path)" }
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codexdriver MUST NOT import daemon (composition root injects, never the reverse)" }
 
+        # sessioncapture: the CONSUMER side of the capture tee (agent-input-
+        # substrate T7, codename:agent-input-substrate; AIS-014). The apptap tee
+        # owns no file format (RS-016); this package is the caller-supplied
+        # writer that does persistence + HC-032 OUTPUT scrub + keep-N/age-prune
+        # retention + the mechanical CAPTURE-LOG ledger. It may import substrate
+        # (ClockPort for the age-prune cutoff, RS-015) and self only. It MUST
+        # NEVER import daemon (composition root injects, never the reverse), the
+        # codex vertical, or tmux.
+        sessioncapture:
+          files: ["**/internal/sessioncapture/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/sessioncapture"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "sessioncapture MUST NOT import daemon (composition root injects the capture sink, never the reverse)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexdriver", desc: "sessioncapture is the driver's consumer, not its dependency (no import cycle)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/lifecycle/tmux", desc: "sessioncapture MUST NOT import tmux" }
+
         # keepertwin: the keeper vertical's trace-driven digital twin (T9,
         # codename:session-restart-substrate; measurement-design §2). Synthesizes
         # input-event schedules from the recorded corpus goldens and replays them

@@ -170,6 +170,7 @@ func (c *codexSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSp
 		return nil, fmt.Errorf("codexdriver: start %q: %w", argv[0], err)
 	}
 
+	//nolint:contextcheck // captureDegradeLogger logs from the session-lifetime-owned tee; no request ctx to inherit (same rationale as runLoop).
 	s := newCodexSession(c.opts, cmd, procCancel, stdin, stdout, stderrRing)
 	s.start(ctx)
 	return s, nil

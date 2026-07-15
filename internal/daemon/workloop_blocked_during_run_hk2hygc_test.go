@@ -8,7 +8,7 @@ package daemon_test
 // bead was made blocked mid-run (someone added a dependency while the handler
 // was working).
 //
-// The workloop handles this by emitting a failed run (emitDone(false, ...)) and
+// The workloop handles this by emitting a failed run (run_failed terminal) and
 // logging the close error. The bead remains in_progress — it is NOT reopened
 // automatically in this path.
 //

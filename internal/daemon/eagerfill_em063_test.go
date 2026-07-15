@@ -614,7 +614,7 @@ func stagedBeadGitFixture(t *testing.T, dir, refBeadID string) {
 
 // TestStagedBeadGenerator_NoopWhenProvenanceAbsent verifies the §6.2 provenance
 // guard: when targetBranch is set but origin/<targetBranch> has no "Refs: <beadID>"
-// commit, the generator is a no-op even if runSucceeded was true.
+// commit, the generator is a no-op even if the run terminal was a success.
 func TestStagedBeadGenerator_NoopWhenProvenanceAbsent(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()

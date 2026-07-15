@@ -219,7 +219,7 @@ func TestRunFailed_BeadResetToOpen_s20z(t *testing.T) {
 	//
 	// The no_commit_during_implementer path calls ReopenBead THEN emits
 	// run_failed. We accept run_failed appearing anywhere in the collected
-	// events (emitDone fires after ReopenBead returns).
+	// events (the run terminal is emitted after ReopenBead returns).
 
 	runFailedFound := false
 	for _, et := range collector.eventTypes() {

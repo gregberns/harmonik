@@ -66,7 +66,7 @@ type runEffectors struct {
 	prepareMerge   func(ctx context.Context)
 	submitMerge    func(ctx context.Context, label string) []runexec.Event
 	reAmendTrailer func(ctx context.Context)
-	closeBead      func(ctx context.Context, summary string) []runexec.Event
+	closeBead      func(ctx context.Context, summary string, needsAttention bool) []runexec.Event
 	reopenBead     func(ctx context.Context, reason string)
 
 	// Emission ops.
@@ -138,7 +138,7 @@ func (e *runEffectors) normalize() {
 		e.reAmendTrailer = func(context.Context) {}
 	}
 	if e.closeBead == nil {
-		e.closeBead = func(context.Context, string) []runexec.Event { return nil }
+		e.closeBead = func(context.Context, string, bool) []runexec.Event { return nil }
 	}
 	if e.reopenBead == nil {
 		e.reopenBead = func(context.Context, string) {}
@@ -202,7 +202,7 @@ func (sh *runShell) executeRunAction(ctx context.Context, a runexec.Action) {
 	case runexec.ActReAmendTrailer:
 		sh.eff.reAmendTrailer(ctx)
 	case runexec.ActCloseBead:
-		sh.pending = append(sh.pending, sh.eff.closeBead(ctx, a.Summary)...)
+		sh.pending = append(sh.pending, sh.eff.closeBead(ctx, a.Summary, a.NeedsAttention)...)
 	case runexec.ActReopenBead:
 		sh.eff.reopenBead(ctx, a.Reason)
 	default: // routed elsewhere by execute

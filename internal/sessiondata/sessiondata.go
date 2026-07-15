@@ -1,5 +1,5 @@
 // Package sessiondata implements the always-on session-data collector fired from
-// emitDone at the end of every daemon run. It reads session logs (Claude
+// the run-terminal effector at the end of every daemon run. It reads session logs (Claude
 // transcripts via session_log_location events) and appends one normalized record
 // per run to <project>/.harmonik/session-data.jsonl.
 //
@@ -152,7 +152,7 @@ type CollectParams struct {
 
 // Collect reads session logs for the given run, builds a Record, and appends it
 // to <projectDir>/.harmonik/session-data.jsonl. It is designed to be called in
-// a goroutine from emitDone — best-effort, off the hot path.
+// a goroutine from the run-terminal effector — best-effort, off the hot path.
 func Collect(p CollectParams) error {
 	eventsFile := filepath.Join(p.ProjectDir, ".harmonik", "events", "events.jsonl")
 	runData, err := buildRunEventData(eventsFile, p.RunID)
@@ -170,7 +170,7 @@ func Collect(p CollectParams) error {
 	endedAt := p.EndedAt
 	wallTimeS := math.Round(endedAt.Sub(startedAt).Seconds()*10) / 10
 
-	// Prefer values passed from emitDone over those derived from events.
+	// Prefer values passed from the run-terminal effector over those derived from events.
 	beadID := p.BeadID
 	if beadID == "" {
 		beadID = runData.BeadID

@@ -3071,10 +3071,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			defer wg.Done()
 			defer runCancel() // always release the per-run context, even on panic
 			defer deps.runRegistry.Unregister(runID)
-			// runSucceeded is set by the emitDone closure inside beadRunOne
-			// and read here after beadRunOne returns for EM-015f group-advance.
-			var runSucceeded bool
-			beadRunOne(runCtx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, &runSucceeded, extraCtx, itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget, preSelected, localSlotHeld)
+			// The run outcome is the Run machine's terminal state, returned by
+			// beadRunOne (RSM-022) and read here for EM-015f group-advance.
+			runOK := beadRunOne(runCtx, deps, runID, beadRecord, qname, qid, qgidx, itemIdx, extraCtx, itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget, preSelected, localSlotHeld)
 			// EM-015f: after run terminal, evaluate queue group advance.
 			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
 				// hk-ly0hg Fix-1: if the daemon context was cancelled (shutdown),
@@ -3085,12 +3084,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				if ctx.Err() != nil {
 					// Item stays 'dispatched'; QM-002a handles recovery on restart.
 				} else {
-					evaluateGroupAdvanceWithOutcome(ctx, deps, qname, *qid, *qgidx, itemIdx, runSucceeded)
+					evaluateGroupAdvanceWithOutcome(ctx, deps, qname, *qid, *qgidx, itemIdx, runOK)
 				}
 			}
 			// hk-f722 flywheel V9 §5.4 B: on Phase-1 success, emit a staged
 			// deploy+verify bead for any Phase-2 class the completed bead belongs to.
-			if runSucceeded && ctx.Err() == nil {
+			if runOK && ctx.Err() == nil {
 				stagedBeadGeneratorEval(ctx, deps, beadRecord.BeadID, beadRecord.Labels)
 			}
 		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, preSelectedWorker, isLocalDispatch)
@@ -3110,13 +3109,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 // run_started / run_completed / run_failed payloads per EM-015a/EM-015b and
 // QM-011/QM-012. They are nil for non-queue-dispatched runs.
 //
-// runSucceeded is a non-nil output pointer (provided by the goroutine wrapper in
-// runWorkLoop) that is set by emitDone when the run emits its terminal event.
-// The caller reads it after beadRunOne returns to drive the EM-015f group-advance
-// evaluation. When nil (legacy callers), success is not tracked.
+// The returned success flag is the Run machine's terminal state (RSM-022): true
+// only when the run reached Done{closed, success}. The goroutine wrapper in
+// runWorkLoop reads it to drive the EM-015f group-advance evaluation and the
+// hk-f722 staged-generator eval. Early guard returns (before the Run bridge
+// exists) report false.
 //
 // Bead ref: hk-e61c3.2, hk-45ude.
-func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, runSucceeded *bool, extraContext string, itemWorkflowMode string, itemWorkflowRef string, itemTemplateParams map[string]string, itemLocalOnly bool, itemWorkerTarget string, preSelectedWorker *workers.Worker, localSlotHeld bool) {
+//
+//nolint:gocognit,cyclop,funlen // grandfathered pre-reactor guard sequence (M3-D2); the M5 full reactorization decomposes it
+func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRecord core.BeadRecord, queueName string, queueID *string, queueGroupIndex *int, queueItemIndex int, extraContext, itemWorkflowMode, itemWorkflowRef string, itemTemplateParams map[string]string, itemLocalOnly bool, itemWorkerTarget string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
 	// RSM-013 / M3-D4: default the run-path clock port for struct-literal test
 	// deps that predate the field; newWorkLoopDeps wires SystemClock in prod.
 	// deps is by-value, so this default propagates to every downstream site.
@@ -3161,31 +3163,31 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		handle.OwningEpicAssignee = owningEpicAssignee
 	}
 
-	// sdStartedAt, sdModel, sdHarness are captured by emitDone for the
-	// sessiondata.Collect goroutine. They are assigned after their respective
-	// resolutions below (ResolveModelPreference, implHarnessWL).
+	// sdStartedAt, sdModel, sdHarness are captured by the run-terminal effector
+	// for the sessiondata.Collect goroutine. They are assigned after their
+	// respective resolutions below (ResolveModelPreference, implHarnessWL).
 	sdStartedAt := deps.clock.Now()
 	var sdModel, sdHarness string
 
-	// emitDone is a local wrapper that stamps queue_id + queue_group_index onto
-	// every run_completed / run_failed event emitted from this function. Using a
-	// closure avoids threading the optional queue fields through every call site.
-	// It also records the success outcome via runSucceeded for EM-015f tracking.
+	// emitRunTerminalEff is the ActEmitRunTerminal effector binding (RT9,
+	// RSM-020/022): it stamps queue_id + queue_group_index onto every
+	// run_completed / run_failed event emitted from this run and fires the
+	// sessiondata collection. The hk-e3fy background-context swap (a cancelled
+	// per-run ctx must not drop the terminal — the daemon is still running) and
+	// the RSM-021 drain policy (background batch, NO sessiondata — the pre-RT9
+	// drain block never collected) live HERE, as effector policy, instead of
+	// being open-coded at each terminal block.
 	//
-	// Spec ref: specs/execution-model.md §4.3.EM-015b; QM-011/QM-012.
+	// Spec ref: specs/execution-model.md §4.3.EM-015b; QM-011/QM-012; RSM-021.
 	// Bead ref: hk-45ude.
-	emitDone := func(success bool, summary string) {
-		if runSucceeded != nil {
-			*runSucceeded = success
-		}
-		// hk-e3fy: use background ctx if the per-run ctx is already cancelled
-		// (e.g. stale watcher fired) so run_failed is always emitted. The
-		// daemon is still running; only this run's context is done.
-		emitCtx := ctx
+	emitRunTerminalEff := func(emitCtx context.Context, success bool, summary string, draining bool) { //nolint:contextcheck // hk-e3fy: a cancelled per-run ctx must not drop the terminal; Background swap by design
 		if emitCtx.Err() != nil {
 			emitCtx = context.Background()
 		}
 		emitRunCompleted(emitCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, success, summary, queueID, queueGroupIndex, runTipSHA)
+		if draining {
+			return // RSM-021: the drain batch collects no sessiondata.
+		}
 		// Fire sessiondata.Collect off the hot path (hk-eval-prog-sessiondata-hook-vmxrk).
 		// Best-effort: errors are silently discarded — a missed record is preferable
 		// to a panicking goroutine that could affect the daemon.
@@ -3235,17 +3237,18 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// through to the project-level workflow.dot or embedded standard-bead.dot.
 	itemWorkflowRef = resolveWorkflowRef(beadRecord, itemWorkflowRef)
 
-	// ── RT7: the per-run Run reactor bridge (RSM-007, RSM-031..035) ──────────
+	// ── RT7/RT9: the per-run Run reactor bridge (RSM-007, RSM-020..022) ──────
 	//
 	// The pure Run machine (internal/runexec, composed in runbridge.go) owns the
-	// single-mode terminal spine — every reopen + run-terminal / close-ladder
-	// pairing below rides its actions instead of open-coded ReopenBead+emitDone
-	// blocks. Constructed here, before the worktree critical section, so
-	// provisioning-phase failures ride the reopen spine via EvProvisionFailed
-	// (RSM-032). The review-loop / DOT sub-drivers keep their imperative
-	// terminals (their re-drives are post-RT7); for those modes the machine sees
-	// at most a provisioning failure.
-	bridge := newRunBridge(deps, rp, runID, beadID, workflowMode, emitDone)
+	// terminal spine for ALL FOUR terminal paths (review-loop, DOT,
+	// agent-completed, exit-0): every reopen + run-terminal / close-ladder
+	// pairing below rides its actions instead of open-coded blocks. Constructed
+	// here, before the worktree critical section, so provisioning-phase failures
+	// ride the reopen spine via EvProvisionFailed (RSM-032). The run's success
+	// is the machine's terminal state (bridge.success(), RSM-022).
+	// Guard paths that return before (or without) feeding the machine yield the
+	// zero value (false); every terminal-spine path returns bridge.success().
+	bridge := newRunBridge(deps, rp, runID, beadID, workflowMode, emitRunTerminalEff)
 	failRun := func(reason, summary string) { bridge.fail(ctx, reason, summary) }
 
 	// Resolve (model, effort) per EM-012b four-tier precedence walk.
@@ -3773,8 +3776,8 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	// captured stdout/stderr, see below) on FAILURE for Pi runs so the fast-fail
 	// error — e.g. the ~4.5s exit0-no-commit against a locally-hosted
 	// OpenAI-compatible endpoint (ornith) — is observable post-mortem. runIsPi is
-	// set true once the harness resolves to Pi (below); runSucceeded is set by
-	// emitDone on the terminal path. This mirrors the hk-o85ye survive-cleanup
+	// set true once the harness resolves to Pi (below); the run outcome is the
+	// Run machine's terminal state (bridge.success(), RSM-022). This mirrors the hk-o85ye survive-cleanup
 	// gate: skip the deferred wtCleanup on an abnormal outcome so the artifacts
 	// survive, instead of deleting the only evidence of why the run failed.
 	// Successful Pi runs and ALL non-Pi runs clean up exactly as before, so there
@@ -3794,7 +3797,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// hk-j6wm7: on a Pi FAILURE, retain the worktree (skip cleanup) and log
 			// where the retained artifacts live so an operator/captain can inspect
 			// the pi-agent dir + captured pi-stdout.log / pi-stderr.log.
-			if runIsPi && (runSucceeded == nil || !*runSucceeded) {
+			if runIsPi && !bridge.success() {
 				fmt.Fprintf(os.Stderr,
 					"daemon: workloop: hk-j6wm7: Pi run %s (bead %s) FAILED — retaining worktree for post-mortem inspection at %s (pi output under %s/.harmonik/pi-agent/)\n",
 					runID.String(), beadID, wtPath, wtPath)
@@ -3935,146 +3938,81 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		}
 		rlResult := runReviewLoop(ctx, deps, runID, beadID, beadRecord.Title, beadRecord.Description, wtPath, headSHA, resolvedModel, resolvedEffort, extraContext, baseBranch, rlRunner, rlWorkerBinary, rlWorkerHookSock, rlWorkerSession, rlWorkerCwd)
 
+		// ── RT9: the review-loop terminal rides the Run tail (RSM-020) ────────
+		//
+		// The gate → code-sync → merge-retry → close/reopen sequence below is the
+		// machine's Gating→Merging→Finalizing spine; the pre-RT9 open-coded block
+		// survives as spineArgs policy (trailer amend + per-retry re-amend
+		// hk-dyim/RF :3899, isRetryableMergeReason classification hk-f9xzs) and
+		// event data (the label-parameterized reason/summary strings, RSM-033).
 		transitionTID, _ := deps.tidGen.Next()
-		if rlResult.success {
-			// Scenario gate (hk-i2ie5): block merge when scenario tests go RED.
-			// REMOTE: route via rlRunner so the gate's git-diff, file sniff, and
-			// `go test` run on the worker where the worktree lives (nil ⇒ box-A-local).
-			if sgr := runScenarioGateIfNeededVia(ctx, rlRunner, wtPath, headSHA); sgr.blocked {
-				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", sgr.reason)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, sgr.reason)
-				emitDone(false, sgr.reason)
-				return
-			}
-			// §4.12.EM-052: merge run-branch to main before CloseBead.
-			// Mirrors the single-mode merge path (hk-ftyvo).
-			// DD1 code-sync (remote-substrate B8): push-branch + box-A-fetch
-			// BEFORE merge when a remote worker was used.
-			if syncReason := preMergeSync(); syncReason != "" {
-				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", syncReason)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					fmt.Sprintf("code-sync failed (review-loop): %s", syncReason))
-				emitDone(false, fmt.Sprintf("code-sync-failed (review-loop): %s", syncReason))
-				return
-			}
-			// hk-dyim: amend the HEAD commit in the implementer worktree to embed
-			// Reviewed-By: and Review-Verdict: trailers before the FF merge, so the
-			// review audit trail is visible in git history. Non-fatal: the merge
-			// proceeds without trailers if the amend fails (e.g. empty worktree).
-			// LOCAL runs only (rbc == nil): for REMOTE runs the implementer worktree
-			// lives on the worker and the amend would require SSH routing; the
-			// rebase inside mergeRunBranchToMain runs on box-A and sees the
-			// worker-side commits, so the trailers land post-rebase on box-A in a
-			// follow-up (FLAGGED).
-			if rlResult.approveVerdict != nil && rbc == nil {
-				if amendErr := appendReviewTrailersToHEAD(ctx, wtPath, rlResult.approveVerdict); amendErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
+		bridge.start(ctx, workflowMode)
+		bridge.wireSpine(spineArgs{
+			runRunner:       rlRunner,
+			wtPath:          wtPath,
+			headSHA:         headSHA,
+			preMergeSync:    preMergeSync,
+			mport:           mport,
+			activeRepo:      activeRepo,
+			protectBranches: effectiveMergeProtectBranches,
+			transitionTID:   transitionTID,
+			retryable:       isRetryableMergeReason,
+			// hk-dyim: amend the HEAD commit to embed Reviewed-By/Review-Verdict
+			// trailers before each FF-merge attempt. Non-fatal. LOCAL runs only
+			// (rbc == nil): for REMOTE runs the trailers land post-rebase on box-A
+			// in a follow-up (FLAGGED). Re-amends before each retry: the prior
+			// inner rebase may have rewritten HEAD (idempotent, RF :3899).
+			amendTrailers: func(c context.Context, retry int) {
+				if rlResult.approveVerdict == nil || rbc != nil {
+					return
 				}
-			}
-			// §4.12: outer merge-step retry loop (hk-f9xzs).
-			// On retryable failures (rebase_conflict / non_ff_merge / merge_fmt_failed),
-			// retry lockedMergeRunBranchToMain up to maxMergeStepRetries additional
-			// times, preserving the APPROVE verdict. EM-053 reopen fires only after
-			// all retries are exhausted or on a non-retryable failure.
-			const maxMergeStepRetries = 2
-			var mergeRes mergeOutcome
-			for mergeAttempt := 0; mergeAttempt <= maxMergeStepRetries; mergeAttempt++ {
-				if mergeAttempt > 0 && rlResult.approveVerdict != nil && rbc == nil {
-					// Re-amend trailers before each retry: the prior inner rebase may
-					// have rewritten HEAD (commitResidualDelta adds commits; the amend
-					// must target the current HEAD). appendReviewTrailersToHEAD is
-					// idempotent, so repeated calls are safe.
-					if amendErr := appendReviewTrailersToHEAD(ctx, wtPath, rlResult.approveVerdict); amendErr != nil {
+				if amendErr := appendReviewTrailersToHEAD(c, wtPath, rlResult.approveVerdict); amendErr != nil {
+					if retry == 0 {
+						fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s: %v (non-fatal)\n", beadID, amendErr)
+					} else {
 						fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD (merge retry %d) bead %s: %v (non-fatal)\n",
-							mergeAttempt, beadID, amendErr)
+							retry, beadID, amendErr)
 					}
 				}
-				mergeRes = mergeRunBranchToMain(ctx, mport.Submit(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
-				if mergeRes.noChange || mergeRes.success {
-					break
-				}
-				if !isRetryableMergeReason(mergeRes.reason) || mergeAttempt >= maxMergeStepRetries {
-					break
-				}
-				fmt.Fprintf(os.Stderr, "daemon: workloop: merge-step retry %d/%d (bead %s): %s\n",
-					mergeAttempt+1, maxMergeStepRetries, beadID, mergeRes.reason)
-			}
-			if !mergeRes.noChange && !mergeRes.success {
-				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
-				emitDone(false, fmt.Sprintf("merge-failed (review-loop): %s", mergeRes.reason))
-				return
-			}
-			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop APPROVE) %s: %v\n", beadID, closeErr)
-				// hk-hypbi: transient BrUnavailable after successful merge → emit
-				// success; intent file retained for BI-031 recovery on next startup.
-				if errors.Is(closeErr, brcli.BrUnavailable) {
-					emitDone(true, "close-transient-merged (review-loop APPROVE)")
-				} else {
-					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
-				}
-			} else {
-				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
-				emitDone(true, rlResult.summary)
-			}
-		} else {
-			// Review-loop failed. For queue-dispatched runs with needsAttention=true,
-			// increment the per-item ReviewLoopFailures counter and check whether the
-			// global retry-spend budget is exhausted (hk-c1ah6).
-			//
-			// Budget exhaustion (ReviewLoopFailures >= MaxReviewLoopFailures) closes
-			// the bead permanently with needsAttention=true so that it does NOT
-			// re-enter the ready queue. Without this cap, a structurally-stuck bead
-			// burns a full Claude session on every re-dispatch indefinitely.
-			// RSM-011: charge the review-loop-failure budget through BudgetPort
-			// (the sole run-path queueStore use). The port handles the
-			// nil-queue / nil-queueID guards and returns whether the retry-spend
-			// budget is now exhausted — byte-identical to the pre-port inline block.
-			budgetExhausted := false
-			if rlResult.needsAttention {
-				budgetExhausted = deps.budgetPort().ChargeReviewLoopFailure(
-					ctx, queueName, queueID, queueGroupIndex, queueItemIndex, beadID)
-			}
-
-			if budgetExhausted {
-				// Budget exhausted: permanently close the bead with needs-attention
-				// rather than reopening it (hk-c1ah6).
-				exhaustedSummary := fmt.Sprintf("review_loop_budget_exhausted (max=%d failures): %s",
-					queue.MaxReviewLoopFailures, rlResult.summary)
-				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s review-loop budget exhausted — closing with needs-attention (hk-c1ah6)\n",
-					beadID, runID.String())
-				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", exhaustedSummary)
-				budgetTID, _ := deps.tidGen.Next()
-				if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, budgetTID, beadID, true); closeErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (review-loop budget-exhausted) %s: %v\n",
-						beadID, closeErr)
-					// hk-hypbi: on transient BrUnavailable, leave bead in_progress for
-					// BI-031 recovery — do NOT reopen, which would re-dispatch the bead
-					// and bypass the operator-triage needs-attention requirement.
-					if !errors.Is(closeErr, brcli.BrUnavailable) {
-						reopenTID, _ := deps.tidGen.Next()
-						_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, exhaustedSummary)
-					}
-				} else {
-					emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
-				}
-				emitDone(false, exhaustedSummary)
-			} else {
-				// Budget not exhausted (or no queue): reopen the bead for retry.
-				reopenTID, _ := deps.tidGen.Next()
-				if reopenErr := deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, rlResult.summary); reopenErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (review-loop %s) %s: %v\n", rlResult.completionReason, beadID, reopenErr)
-				}
-				emitDone(false, rlResult.summary)
-			}
+			},
+		})
+		if rlResult.success {
+			bridge.feed(ctx, runexec.Event{
+				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSuccess,
+				PathLabel: "review-loop", Detail: rlResult.summary,
+			})
+			return bridge.success()
 		}
-		return
+		// Review-loop failed. For queue-dispatched runs with needsAttention=true,
+		// increment the per-item ReviewLoopFailures counter and check whether the
+		// global retry-spend budget is exhausted (hk-c1ah6). RSM-011: charged
+		// through BudgetPort (the sole run-path queueStore use); the machine owns
+		// only the close-vs-reopen CHOICE the event carries.
+		budgetExhausted := false
+		if rlResult.needsAttention {
+			budgetExhausted = deps.budgetPort().ChargeReviewLoopFailure(
+				ctx, queueName, queueID, queueGroupIndex, queueItemIndex, beadID)
+		}
+		if budgetExhausted {
+			// Budget exhausted: permanently close the bead with needs-attention
+			// rather than reopening it (hk-c1ah6) — the machine's attention ladder.
+			exhaustedSummary := fmt.Sprintf("review_loop_budget_exhausted (max=%d failures): %s",
+				queue.MaxReviewLoopFailures, rlResult.summary)
+			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s review-loop budget exhausted — closing with needs-attention (hk-c1ah6)\n",
+				beadID, runID.String())
+			bridge.rejectReason = exhaustedSummary
+			bridge.feed(ctx, runexec.Event{
+				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeBudget,
+				NeedsAttention: true, Detail: exhaustedSummary,
+			})
+			return bridge.success()
+		}
+		// Budget not exhausted (or no queue): reopen the bead for retry.
+		bridge.feed(ctx, runexec.Event{
+			Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure,
+			Reason: rlResult.summary, Detail: rlResult.summary,
+		})
+		return bridge.success()
 
 	case core.WorkflowModeDot:
 		// DOT workflow mode: load + validate the .dot artifact, then hand the
@@ -4107,11 +4045,11 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			if loadErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow load failed for bead %s run %s: %v (reopening)\n",
 					beadID, runID.String(), loadErr)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					fmt.Sprintf("workflow_load: %v", loadErr))
-				emitDone(false, fmt.Sprintf("workflow_load: %v", loadErr))
-				return
+				// RT9: the load failure rides the machine's reopen spine (reopen +
+				// run_failed with the same workflow_load reason, RSM-009/032).
+				reason := fmt.Sprintf("workflow_load: %v", loadErr)
+				failRun(reason, reason)
+				return bridge.success()
 			}
 		}
 
@@ -4158,111 +4096,82 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch, dotRunner,
 			dotWorkerBinary, dotWorkerHookSock, dotWorkerSession, dotWorkerCwd)
 
+		// ── RT9: the DOT terminal rides the Run tail (RSM-020) ────────────────
+		//
+		// No post-mode scenario gate on this path: the DOT cascade engine
+		// (dispatchDotToolNode) runs its gate inside the graph (standard-bead.dot
+		// commit_gate tool node) — skipGate records the pass. The hk-whru3 /
+		// hk-vbv3b already-approved-on-main carve-out rides as the carveOut
+		// classifier onto the machine's AlreadyApprovedOnMain row; the hk-tnui
+		// trailer stamp is the amendTrailers policy (single attempt — DOT has no
+		// merge-retry loop).
 		transitionTID, _ := deps.tidGen.Next()
-		if dotResult.success {
-			// Scenario gate: the DOT cascade engine (dispatchDotToolNode) already
-			// maps exit codes to outcomes correctly — timeout→transient (commit_gate
-			// self-loop retry), non-zero→deterministic (fix-loop back to implement).
-			// No separate runScenarioGateIfNeeded call is needed on the DOT path;
-			// the gate lives inside standard-bead.dot's commit_gate tool_command.
-			// §4.12.EM-052: merge run-branch to main before CloseBead (mirrors the
-			// single-mode and review-loop merge path).
-			// DD1 code-sync (remote-substrate B8): push-branch + box-A-fetch BEFORE merge.
-			if syncReason := preMergeSync(); syncReason != "" {
-				emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", syncReason)
-				reopenTID, _ := deps.tidGen.Next()
-				_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					fmt.Sprintf("code-sync failed (dot): %s", syncReason))
-				emitDone(false, fmt.Sprintf("code-sync-failed (dot): %s", syncReason))
-				return
-			}
+		bridge.start(ctx, workflowMode)
+		bridge.wireSpine(spineArgs{
+			runRunner:       dotRunner,
+			wtPath:          wtPath,
+			headSHA:         headSHA,
+			preMergeSync:    preMergeSync,
+			mport:           mport,
+			activeRepo:      activeRepo,
+			protectBranches: effectiveMergeProtectBranches,
+			transitionTID:   transitionTID,
+			skipGate:        true,
 			// hk-tnui: stamp Reviewed-By / Review-Verdict trailers on the HEAD
-			// commit before the FF merge, mirroring the review-loop path (line
-			// 3095). LOCAL runs only (rbc == nil): remote runs keep the trailer
-			// injection deferred (same FLAGGED note as the review-loop path).
-			if dotResult.approveVerdict != nil && rbc == nil {
-				if amendErr := appendReviewTrailersToHEAD(ctx, wtPath, dotResult.approveVerdict); amendErr != nil {
+			// commit before the FF merge, mirroring the review-loop path. LOCAL
+			// runs only (rbc == nil): remote runs keep the trailer injection
+			// deferred (same FLAGGED note as the review-loop path).
+			amendTrailers: func(c context.Context, retry int) {
+				if retry > 0 || dotResult.approveVerdict == nil || rbc != nil {
+					return
+				}
+				if amendErr := appendReviewTrailersToHEAD(c, wtPath, dotResult.approveVerdict); amendErr != nil {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: appendReviewTrailersToHEAD bead %s (dot): %v (non-fatal)\n", beadID, amendErr)
 				}
-			}
-			mergeRes := mergeRunBranchToMain(ctx, mport.Submit(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
-			if !mergeRes.noChange && !mergeRes.success {
-				// hk-whru3: advisory-RC + rebase_dropped_commits → work already on main.
-				// A prior run merged the same patch; git rebase identifies it as "already
-				// applied" and drops the commit (hk-zmpd guard fires: runTip == mainTip).
-				// hk-zmpd fails-closed for the general case (salvage the run-branch), but
-				// when the cascade completed with an APPROVE result the work IS already on
-				// main. Fall through to CloseBead so the infinite re-dispatch loop
-				// terminates instead of re-queuing.
-				//
-				// hk-vbv3b: extend to the genuine APPROVE terminal path
-				// (dotResult.terminalNodeID == "close") and the hk-8ps7q approved-and-done
-				// path (dotResult.approveVerdict != nil). Both indicate the reviewer
-				// APPROVEd and the cascade completed successfully; the only reason the
-				// merge failed is that the work is already on main from a prior run.
+			},
+			// hk-whru3: advisory-RC + rebase_dropped_commits → work already on
+			// main; a prior run merged the same patch and the rebase dropped the
+			// commit. hk-vbv3b: extended to the genuine APPROVE terminal path
+			// (terminalNodeID == "close") and the hk-8ps7q approved-and-done path
+			// (approveVerdict != nil). Falls through to CloseBead so the infinite
+			// re-dispatch loop terminates instead of re-queuing.
+			carveOut: func(reason string) bool {
 				alreadyApprovedOnMain := dotResult.advisoryRC ||
 					dotResult.terminalNodeID == "close" ||
 					dotResult.approveVerdict != nil
-				if alreadyApprovedOnMain && strings.Contains(mergeRes.reason, "rebase_dropped_commits") {
-					// noChange-equivalent: run-branch commits already applied. Skip reopen.
-				} else {
-					emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "rejected", mergeRes.reason)
-					reopenTID, _ := deps.tidGen.Next()
-					_ = deps.brAdapter.ReopenBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-						fmt.Sprintf("merge-to-main failed: %s", mergeRes.reason))
-					emitDone(false, fmt.Sprintf("merge-failed (dot): %s", mergeRes.reason))
-					return
-				}
-			}
-			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (dot success) %s: %v\n", beadID, closeErr)
-				// hk-hypbi: transient BrUnavailable after successful merge → emit success.
-				if errors.Is(closeErr, brcli.BrUnavailable) {
-					emitDone(true, "close-transient-merged (dot success)")
-				} else {
-					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
-				}
-			} else {
-				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
-				emitDone(true, dotResult.summary)
-			}
-		} else if dotResult.subsumed {
+				return alreadyApprovedOnMain && strings.Contains(reason, "rebase_dropped_commits")
+			},
+		})
+		switch {
+		case dotResult.success:
+			bridge.feed(ctx, runexec.Event{
+				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSuccess,
+				PathLabel: "dot", Detail: dotResult.summary,
+			})
+		case dotResult.subsumed:
 			// noChange-subsumed: implementer exited without advancing HEAD because
-			// the work already landed in main via a prior run. Close the bead
-			// (mirrors the builtin noChange-subsumed path in the default switch,
-			// workloop.go:1831-1843). No merge needed — no new commits. Bead: hk-9v5yo.
-			emitOutcomeEmitted(ctx, deps.bus, runID, beadID, "approved", "")
-			if closeErr := deps.closeBeadWithHistoryTrim(ctx, runID, transitionTID, beadID, false); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (dot noChange-subsumed) %s: %v\n", beadID, closeErr)
-				// hk-hypbi: transient BrUnavailable after merge-already-on-main → emit success.
-				if errors.Is(closeErr, brcli.BrUnavailable) {
-					emitDone(true, "close-transient-merged (dot noChange-subsumed)")
-				} else {
-					emitDone(false, fmt.Sprintf("close-error: %v", closeErr))
-				}
-			} else {
-				emitBeadClosedAndMaybeEpic(ctx, deps, runID, beadID)
-				emitDone(true, "noChange-subsumed: bead found in main")
-			}
-		} else {
+			// the work already landed in main via a prior run. Approved close, no
+			// merge — no new commits (hk-9v5yo); RSM-035 event-carried strings.
+			bridge.feed(ctx, runexec.Event{
+				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSubsumed,
+				EmitOutcome: true, PathLabel: "dot noChange-subsumed",
+				Detail: "noChange-subsumed: bead found in main",
+			})
+		default:
 			// Non-success terminal (BLOCK / cap-hit / no-progress / structural
-			// failure / gate-out-of-scope / context_cancelled) → reopen the bead
-			// so it can be retried or escalated. The needsAttention flag is
-			// carried in the summary.
+			// failure / gate-out-of-scope / context_cancelled) → the reopen spine.
 			//
 			// Orphan-salvage (hk-8b35c): if the implementer advanced HEAD past the
-			// parent (a commit landed on the run branch before the gate bounced it),
-			// record the tip SHA in the run_failed payload so the operator can find
-			// and manually cherry-pick / merge the stranded work.
-			//
-			// REMOTE: wtPath is on the worker; resolve via dotRunner so the tip SHA
-			// reflects the worker's run branch (nil dotRunner ⇒ box-A-local, NFR7).
+			// parent (a commit landed on the run branch before the gate bounced
+			// it), record the tip SHA in the run_failed payload so the operator
+			// can find and manually cherry-pick / merge the stranded work.
+			// REMOTE: resolve via dotRunner (nil ⇒ box-A-local, NFR7).
 			//
 			// hk-e3fy: use context.Background() for the HEAD resolve so a
-			// context_cancelled DOT failure (daemon shutdown or per-run abort)
-			// can still capture the tip SHA for orphan-salvage — ctx is already
-			// cancelled when this path fires for that failure class.
+			// context_cancelled DOT failure (daemon shutdown or per-run abort) can
+			// still capture the tip SHA — ctx is already cancelled on that class.
+			// The reopen itself rides the machine's spine; the reopen hook applies
+			// the same cancellation-free fallback (RSM-022).
 			tipResolveCtx := ctx
 			if ctx.Err() != nil {
 				tipResolveCtx = context.Background()
@@ -4270,18 +4179,12 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			if tipSHA, tipErr := resolveWorktreeHEADVia(tipResolveCtx, dotRunner, wtPath); tipErr == nil && tipSHA != "" && tipSHA != headSHA {
 				runTipSHA = &tipSHA
 			}
-			reopenTID, _ := deps.tidGen.Next()
-			// hk-e3fy: ReopenBead uses context.Background() so a context_cancelled
-			// DOT run (daemon shutdown, per-run abort, or agentic-node budget-cancel)
-			// still resets the bead to open. Using ctx here silently discards the
-			// call when ctx is already cancelled — exactly the strand class this
-			// bead fixes.
-			if reopenErr := deps.brAdapter.ReopenBead(context.Background(), deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID, dotResult.summary); reopenErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (dot) %s: %v\n", beadID, reopenErr)
-			}
-			emitDone(false, dotResult.summary)
+			bridge.feed(ctx, runexec.Event{
+				Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeFailure,
+				Reason: dotResult.summary, Detail: dotResult.summary,
+			})
 		}
-		return
+		return bridge.success()
 
 	default:
 		// WorkflowModeSingle or any normalised-to-single value: fall through
@@ -4743,7 +4646,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 		capturedSess := sess
 		capturedCaptureDir := piCaptureDir
 		defer func() {
-			if runSucceeded != nil && *runSucceeded {
+			if bridge.success() {
 				return
 			}
 			if capturedSess == nil {
@@ -5334,39 +5237,19 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 				// hk-dnrg: drain committed-but-unmerged runs on shutdown instead of
 				// abandoning. A run that already committed in its worktree must be
 				// merged before exit — abandoning it causes re-dispatch (wasted or
-				// duplicated work) on next boot. Use background context so shutdown
-				// does not abort the merge sequence.
-				bgCtx := context.Background()
-				if curHeadSHA, headErr := resolveWorktreeHEAD(bgCtx, wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
-					mergeRes := mergeRunBranchToMain(bgCtx, mport.Submit(), activeRepo, runID, deps.bus, beadID, headSHA, deps.targetBranch, effectiveMergeProtectBranches, deps.brPath)
-					if mergeRes.success || mergeRes.noChange {
-						drainTID, _ := deps.tidGen.Next()
-						if closeErr := deps.closeBeadWithHistoryTrim(bgCtx, runID, drainTID, beadID, false); closeErr != nil {
-							fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead (shutdown-drain) %s: %v\n", beadID, closeErr)
-							if errors.Is(closeErr, brcli.BrUnavailable) {
-								emitRunCompleted(bgCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, true, "close-transient-merged (shutdown-drain)", queueID, queueGroupIndex, runTipSHA)
-							} else {
-								emitRunCompleted(bgCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, false, fmt.Sprintf("close-error (shutdown-drain): %v", closeErr), queueID, queueGroupIndex, runTipSHA)
-							}
-						} else {
-							emitBeadClosedAndMaybeEpic(bgCtx, deps, runID, beadID)
-							emitRunCompleted(bgCtx, deps.bus, runID, string(beadID), owningEpicID, owningEpicAssignee, true, "shutdown-drain: committed work merged", queueID, queueGroupIndex, runTipSHA)
-						}
-						return
-					}
-					// Merge failed: log and fall through to reopen.
-					fmt.Fprintf(os.Stderr, "daemon: workloop: shutdown-drain: merge failed for bead %s: %s; reopening for re-dispatch\n", beadID, mergeRes.reason)
+				// duplicated work) on next boot. RT9 / RSM-021: the drain rides the
+				// machine's EvShutdownDrain edge; the background-context and
+				// no-sessiondata policies live in the effector (runbridge), the
+				// drain summaries + requeue-recovery reopen reason in the machine.
+				// No commit (or HEAD probe failure) feeds an empty SHA → the
+				// requeue reopen with no run terminal (QM-002a reverts the queue
+				// item to pending at next startup, hk-ly0hg Fix-1 / hk-1h5q).
+				drainSHA := ""
+				if curHeadSHA, headErr := resolveWorktreeHEAD(context.Background(), wtPath); headErr == nil && curHeadSHA != "" && curHeadSHA != headSHA {
+					drainSHA = curHeadSHA
 				}
-				// No commit in worktree (or HEAD check failed): reopen for re-dispatch.
-				// QM-002a at next startup reverts the queue item to pending once it
-				// sees the bead is open again.
-				reopenTID, _ := deps.tidGen.Next()
-				if reopenErr := deps.brAdapter.ReopenBead(bgCtx, deps.intentLogDir, deps.brTimeoutCfg, runID, reopenTID, beadID,
-					"context_cancelled: daemon shutdown, requeue pending"); reopenErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead FAILED (context_cancelled) bead %s run %s: %v — bead is stuck in_progress; operator must reopen manually (hk-1h5q)\n",
-						beadID, runID.String(), reopenErr)
-				}
-				return
+				bridge.drain(ctx, drainSHA)
+				return bridge.success()
 			}
 
 			// CHB-020 branch 2 (FAILURE_SIGNAL), branch 3 with non-zero exit, or
@@ -5398,6 +5281,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			failRun(failReason, "auto-reopen: "+failReason)
 		}
 	}
+	return bridge.success()
 }
 
 // isWatcherErrCanceled reports whether err is the ErrCanceled sentinel that

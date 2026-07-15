@@ -15,8 +15,8 @@ package daemon
 // ref (pi_unknown_profile_refuse_test.go's refuse-before-launch shape) rather
 // than an erroring WorktreeFactory: resolveParentCommit's StartFromRefError
 // path (workloop.go, immediately after the profile-resolution block under
-// test) reopens the bead and returns WITHOUT calling emitDone — unlike a
-// WorktreeFactory error, which calls emitDone and spawns emitDone's
+// test) reopens the bead and returns WITHOUT emitting a run terminal — unlike a
+// WorktreeFactory error, which rides the reopen spine and spawns the terminal effector's
 // sessiondata.Collect goroutine (workloop.go ~3143) reading deps.projectDir
 // asynchronously, racing this test's t.TempDir() cleanup of that same
 // directory (observed as an intermittent "TempDir RemoveAll cleanup:
@@ -43,7 +43,7 @@ import (
 // (n5md3RepoWithCommit only ever creates "main"), so resolveParentCommit
 // fails fast with a *StartFromRefError immediately after the
 // profile-resolution block under test — before any worktree/launch-spec work,
-// and without the emitDone/sessiondata.Collect goroutine a WorktreeFactory
+// and without the run-terminal/sessiondata.Collect goroutine a WorktreeFactory
 // error would trigger (see file-level comment above).
 const hk8ziid2BranchingBody = "## Summary\n\nprobe.\n\n## Branching\n\n```yaml\nstart_from: hk8ziid2-no-such-ref\n```\n"
 
@@ -171,7 +171,7 @@ func TestBeadRunOne_ProviderSelected_ProfileMatch(t *testing.T) {
 	}
 
 	beadRunOne(ctx, deps, runID, beadRecord,
-		"", nil, nil, 0, nil, "", "", "", nil,
+		"", nil, nil, 0, "", "", "", nil,
 		false, "", nil, false)
 
 	rh, ok := runRegistry.Get(runID)
@@ -243,7 +243,7 @@ func TestBeadRunOne_ProviderSelected_NoProfile_UsesGlobalDefault(t *testing.T) {
 	}
 
 	beadRunOne(ctx, deps, runID, beadRecord,
-		"", nil, nil, 0, nil, "", "", "", nil,
+		"", nil, nil, 0, "", "", "", nil,
 		false, "", nil, false)
 
 	rh, ok := runRegistry.Get(runID)
@@ -304,7 +304,7 @@ func TestBeadRunOne_ProviderSelected_NonPiRun_LeavesUnresolved(t *testing.T) {
 	}
 
 	beadRunOne(ctx, deps, runID, beadRecord,
-		"", nil, nil, 0, nil, "", "", "", nil,
+		"", nil, nil, 0, "", "", "", nil,
 		false, "", nil, false)
 
 	rh, ok := runRegistry.Get(runID)

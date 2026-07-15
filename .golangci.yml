@@ -337,6 +337,21 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/brcli", desc: "BI-004: handler MUST NOT import brcli; agents access br only via the Beads-CLI skill per handler-contract.md §4.11 (specs/beads-integration.md §4.2)" }
 
+        # handler↛tmux: the machine-enforced seam inversion (HC-071 / AIS-002).
+        # internal/handler DECLARES the InputPort seam (SubmitInput / CloseInput);
+        # the concrete input driver — the interim tmux/paste implementation and the
+        # future structured Codex driver — is SUPPLIED daemon-side. internal/handler
+        # therefore MUST NOT import internal/lifecycle/tmux; this replaces the former
+        # doc-comment-only "boundary" (internal/handler/substrate.go) with a real,
+        # machine-checkable deny, landed with the port.
+        #
+        # Rationale: specs/handler-contract.md §4.1a HC-071; specs/agent-input.md §4.1 AIS-002.
+        handler-tmux-ban:
+          files:
+            - "**/internal/handler/**"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/lifecycle/tmux", desc: "HC-071/AIS-002: internal/handler declares the InputPort seam; the tmux driver is supplied daemon-side — handler MUST NOT import internal/lifecycle/tmux (specs/handler-contract.md §4.1a, specs/agent-input.md §4.1)" }
+
         # lifecycle/tmux: may import internal/core, internal/lifecycle (provenance),
         # and stdlib only. No other harmonik subsystem imports are permitted.
         # Rationale: process-lifecycle.md §4.5 PL-021b, PL-021c; workspace-model.md §4.1 WM-002a.

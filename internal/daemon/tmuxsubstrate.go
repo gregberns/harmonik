@@ -1328,6 +1328,7 @@ func (p *perRunSubstrate) commandRunner() tmux.CommandRunner {
 // Compile-time assertions for perRunSubstrate.
 var (
 	_ handler.Substrate     = (*perRunSubstrate)(nil)
+	_ handler.InputPort     = (*perRunSubstrate)(nil) // interim tmux/paste input port (AIS-001)
 	_ pasteInjecter         = (*perRunSubstrate)(nil)
 	_ enterSender           = (*perRunSubstrate)(nil)
 	_ quitSender            = (*perRunSubstrate)(nil)
@@ -2221,6 +2222,39 @@ func (p *perRunSubstrate) WriteLastPane(ctx context.Context, bufferName string, 
 		return fmt.Errorf("daemon: perRunSubstrate.WriteLastPane: no window spawned yet: %w", tmux.ErrStructural)
 	}
 	return p.pasteAdapter().WriteToPane(ctx, bufferName, target, payload)
+}
+
+// inputBufferName is the tmux buffer name the interim InputPort.SubmitInput uses
+// for its bracketed paste (perRunSubstrate is the input-bearing handle at the
+// process-spawn seam in the tmux/paste path).
+const inputBufferName = "harmonik-input"
+
+// SubmitInput is the interim tmux/paste implementation of handler.InputPort
+// (AIS-001 / AIS-003 / HC-069 / HC-070). It delivers the payload to this run's
+// pane via the existing bracketed-paste path and returns an EXPLICIT
+// Ack{Delivered} on a successful write — replacing the retired silent no-op.
+//
+// Its positive acceptance is confirmed ASYNCHRONOUSLY by the Claude-hook-bridge
+// signal (outcome_emitted on Stop / agent_ready on SessionStart), or reaches the
+// agent_input_stale terminal on the bounded-liveness timeout (HC-INV-008 /
+// AIS-INV-001) — it MUST NOT synthesize a positive acceptance it did not observe,
+// and MUST NOT scrape capture-pane for one. The tmux/paste path cannot produce a
+// protocol-level Rejected, so this interim impl returns only Delivered or a write
+// error. Seq/Token are codec-owned and remain zero for the interim paste path
+// (no wire protocol supplies them).
+func (p *perRunSubstrate) SubmitInput(ctx context.Context, req handler.InputRequest) (handler.Ack, error) {
+	if err := p.WriteLastPane(ctx, inputBufferName, req.Payload); err != nil {
+		return handler.Ack{}, err
+	}
+	return handler.Ack{Outcome: handler.Delivered}, nil
+}
+
+// CloseInput signals end-of-input for the interim tmux/paste path (replaces the
+// retired substrateSessionAdapter.CloseStdin no-op, AIS-001 / HC-069). The tmux
+// pane owns the child's pty; there is no daemon-held write-end pipe to close, so
+// this is a legitimate nil — distinct from the retired input-acceptance no-op.
+func (p *perRunSubstrate) CloseInput(_ context.Context) error {
+	return nil
 }
 
 // SendEnterToLastPane sends a bare Enter key to this run's pane.

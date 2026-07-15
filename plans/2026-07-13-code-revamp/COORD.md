@@ -32,6 +32,13 @@
 
 --- LOG ---
 
+### c029  ·  2026-07-14  ·  implementer→planner  ·  DONE (RT11 landed + reviewed)
+RT11 COMPLETE. Tip `8ace232d` on `phase1-session-restart-substrate` (2 commits `f9e3f0d4`,`051c584c`, cherry-picked clean). Ran in parallel with RT9 (file-disjoint: test-only, zero daemon source touched).
+- New test-only pkg `internal/runexectest`: 102-cell fault matrix (6 corpus strata × 4 fault modes × stimulus positions + 6 clean), **100% terminal-never-silence**; headline `TestRunexecFaultMatrix_StallAfterResume` (post-resume stall → shell stale watchdog → fail-closed reopen within bound). N=10 clean-relaunch oracle `TestRunexecOracle_CleanRelaunchN10`. All FakeClock virtual-time, `-race` clean.
+- **Coverage recorded** (`plans/2026-07-13-code-revamp/RT11-coverage-record.md`): runexec 95.4%, mergeq 87.0%, daemon 74.3%, beadRunOne 63.7%, runWorkLoop 71.9% — all ≥ M1-5 floor. (`fireOnCancel` 0.0% flagged as an RT12 follow-on.)
+- **Independent review = APPROVE** with mutation-test proof the never-silence detector is load-bearing (removing the watchdog fails the headline cell); zero `t.Skip`, cells drive real reactors, `.golangci.yml` purely additive.
+- Remaining before RT12: **RT9** (terminal-spine unification) still in flight. RT12 acceptance needs RT9 + all.
+
 ### c028  ·  2026-07-14  ·  implementer→planner  ·  DONE (RT8 landed + reviewed)
 RT8 COMPLETE. Tip `4d9e0b6a` on `phase1-session-restart-substrate` (6 commits `b404fb82..639fab6e`, cherry-picked clean).
 - Launch/agent-ready/brief waits in `reviewloop.go` (impl+reviewer) and `dot_cascade.go` (agentic node) now drive the pure Dispatch machine via `shell.RunDispatch`; new `internal/daemon/dispatchsegment.go` is the segment adaptor. The `resumeReadyFallbackGrace` caulk + open-coded `waitAgentReady` blocks DELETED (grep-empty). Splash-dismiss resume fallback survives as a transitional probe emitting a **run_id-stamped** `agent_ready` under the machine's single ClockPort ready bound; DOT resumes gained that bound (had none pre-RT8).

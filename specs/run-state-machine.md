@@ -8,7 +8,7 @@ requirement-prefix: RSM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.0
+version: 0.2.0
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-07-14
@@ -298,7 +298,74 @@ regression suite green per commit; and an out-of-band oracle (N=10 clean relaunc
 replay-log check that the seeded hung-run gap is flagged and absent post-fix). The state-machine
 path MUST meet the measured coverage floor from the coverage audit.
 
-## 12. Cross-references
+## 12. Amendment A1 — single-mode failure mapping (2026-07-14)
+
+> **Amendment.** Added after the RT5/RT6 machines landed, to close the RT7 spec gap: the Run
+> machine had no edge for a failed single-mode Dispatch, and its reopen/outcome strings were
+> static `RunConfig` templates that cannot reproduce single-mode's per-sub-branch reason strings
+> byte-equal against the event-stream goldens. RSM-031..035 are normative for the RT7 re-drive.
+
+**RSM-031 (the failed-Dispatch → reopen edge).** A single-mode Dispatch instance that reaches a
+failure-class terminal (`Failed`, `Stalled`, `Exited`-with-abort, or `Aborted`) MUST be mapped
+onto the Run machine's reopen spine by the shell synthesizing a mode-outcome event —
+`EvModeOutcome{ModeOutcome: failure}` — exactly as the review-loop and DOT sub-drivers surface
+their returns (RSM-011: "the run outcome MUST be surfaced … as a terminal event"). Single-shot
+is a workflow mode; its sub-driver is one Dispatch instance, and its failure is a mode failure.
+The Run machine MUST NOT gain a separate dispatch-failure event kind, and the Dispatch machine
+MUST NOT gain knowledge of the Run machine. In `Dispatching`, `EvModeOutcome{failure}` is
+therefore a defined edge for ALL modes, and RSM-025's "reopen the bead" is reachable for
+single-mode through this edge.
+
+**RSM-032 (event-sourced terminal strings).** The reopen reason and the failed-terminal summary
+for an event-classified failure MUST be carried on the triggering event's payload (`Reason` =
+the `ReopenBead` reason string; `Detail` = the run-terminal summary string), NOT derived from
+static `RunConfig`. The `RunConfig` templates (`ReopenReason`, `CloseSummary`,
+`BrUnavailableSummary`, `NoMergeCloseSummary`) remain the fallback when the event carries no
+string, preserving RT6 behavior for the review-loop/DOT paths until their own re-drives. This
+applies to: `EvModeOutcome{failure}`, `EvGateFailed`, `EvEscapeDetected`,
+`EvNoCommitGuardReopen`, `EvMergeResult{fatal|exhausted}`, `EvCloseResult{error}`, and
+`EvProvisionFailed`. The last covers every pre-launch/provisioning failure that
+`stepRunResolving`/`stepRunProvisioning` route to the reopen spine — the launch-spec build error
+(`build launch spec error: %v`, workloop.go ~:4346), the D2 API-key refusal (`remote run:
+ANTHROPIC_API_KEY in spawn env (D2 fail-closed)`, ~:4376), worktree-create failures, and the
+prepareRun guard failures — all of which interpolate runtime strings that today's
+`finalizeReopen(cfg, s, nil)` → static `cfg.ReopenReason` cannot reproduce; `EvProvisionFailed`
+MUST therefore carry its `Reason`/`Detail` payload like the other failure events. The machine
+remains pure: the strings are event data, composed shell-side or latched from prior events
+(RSM-033); the machine mints none of them.
+
+**RSM-033 (the single-mode path label).** The single-mode dispatch-terminal events
+`EvAgentCompleted` and `EvCleanExit` MUST latch a path label into Run state
+(`agent_completed` and `auto-close` respectively; the shell-synthesized noChange-subsumed close
+carries `noChange-subsumed`), because the downstream close/merge/sync strings are
+label-parameterized (`merge-failed (agent_completed): …` vs `merge-failed (auto-close): …`;
+`close-transient-merged (<label>)`) and the branch is only known at event time, never at
+config-construction time. Merge-window failures MUST additionally be staged: an `EvMergeResult`
+failure carries a stage discriminator (`code_sync` vs `merge`) so the pre-merge code-sync
+failure reproduces its distinct `code-sync failed (<label>): …` reopen reason and
+`code-sync-failed (<label>): …` terminal summary, byte-equal. Event-classified failure reasons
+on the P13/P18 spine are exactly: `agent_ready_timeout`, the code-sync failure, the merge
+failure, the gate failure, the escaped-worktree guard, the no-commit guard, `noChange-timeout`,
+and the never-spawned-reaper abort (`never_spawned_reaper: launch_initiated but agent_ready not
+received within deadline`, workloop.go ~:5071) — the last surfaced mechanically via RSM-031's
+`Aborted` dispatch-terminal class carrying its reason on payload, no distinct edge required.
+
+**RSM-034 (rejected-outcome pairing).** The gate-failure, code-sync-failure, and merge-failure
+reopens MUST be preceded by an `outcome_emitted=rejected` emission carrying the classified
+reason (the P18 golden pairing); the `agent_ready_timeout`, escaped-worktree, no-commit, and
+`noChange-timeout` reopens MUST NOT emit an outcome. The machine expresses this as the reopen
+prefix (the same mechanism as the existing escaped-worktree and merge-rejected prefixes).
+
+**RSM-035 (noChange-subsumed → approved close).** A single-mode run whose Dispatch stalls on
+the no-change timeout but whose bead is found already subsumed in the target branch MUST close
+— not reopen — with an `outcome_emitted=approved` emission and the subsumed close summary,
+sharing the RSM-020 close ladder. The shell performs the subsumption check (it is I/O) and
+synthesizes the subsumed mode-outcome event carrying the close summary and the emit-approved
+flag; the not-subsumed case rides RSM-031 with reason `noChange-timeout`. This supersedes the
+RT6 assumption that a subsumed close never emits an outcome (that remains true for the DOT
+subsumed path, which passes no flag).
+
+## 13. Cross-references
 
 - [replay-substrate.md] — the generic reactor seam (`EventSource`/`Effector`/`Run`), `ClockPort`,
   the fault-injection Twin, and the replay-checker harness this spec instantiates.

@@ -106,6 +106,38 @@ func TestStep_TimerFiredAlwaysActs(t *testing.T) {
 	}
 }
 
+// TestStep_CloseWhileInTurnGracefulInterrupt: a CloseInput while a turn is open
+// (InTurn) MUST take the graceful path — emit turn/interrupt for the open turn,
+// then close stdin and enter Draining — never a SIGKILL wind-down (AIS-017
+// "reduce the need via graceful turn-termination instead of SIGKILL"). This is
+// the reactor-side of the WAL-guard reduce-the-need: an ungraceful kill is what
+// leaves a stale state_*.sqlite-wal behind; the interrupt path avoids it.
+func TestStep_CloseWhileInTurnGracefulInterrupt(t *testing.T) {
+	r := ready(t)
+	r.Step(codexinput.Event{Type: codexinput.EventTypeInputSubmitted, InputSeq: 4})
+	r.Step(codexinput.Event{Type: codexinput.EventTypeInputAcked, InputSeq: 4, TurnID: "turn-9"})
+	if r.State().Phase != codexinput.InTurn {
+		t.Fatalf("after ack: want InTurn, got %s", r.State().Phase)
+	}
+
+	got := r.Step(codexinput.Event{Type: codexinput.EventTypeCloseRequested})
+	want := []codexinput.Action{
+		{Type: codexinput.ActionTypeInterrupt, TurnID: "turn-9"},
+		{Type: codexinput.ActionTypeCloseInput},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("close-mid-turn actions:\n got %+v\nwant %+v", got, want)
+	}
+	if r.State().Phase != codexinput.Draining {
+		t.Fatalf("close-mid-turn must enter Draining (graceful), got %s", r.State().Phase)
+	}
+	// The graceful path never fabricates a kill/exit: the open turn drains via
+	// the twin's turn/completed, and only stdin-close ends the session.
+	if late := r.Step(codexinput.Event{Type: codexinput.EventTypeTurnCompleted}); late != nil {
+		t.Fatalf("turn/completed after close should be a no-op action, got %+v", late)
+	}
+}
+
 // TestStep_TransportTerminalWhilePending: a disconnect while AwaitingAck resolves
 // the pending submission to agent_input_stale (never silence).
 func TestStep_TransportTerminalWhilePending(t *testing.T) {

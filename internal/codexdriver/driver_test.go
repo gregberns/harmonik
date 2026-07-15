@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -43,6 +44,10 @@ func TestMain(m *testing.M) {
 //   - "reject":      full handshake; turn/start → JSON-RPC error response
 //   - "silent":      full handshake; turn/start → nothing (stale probe)
 //   - "nohandshake": never answers initialize (handshake-timeout probe)
+//   - "openturn":    full handshake; turn/start → turn/started + delta but NO
+//     turn/completed (turn stays OPEN so a mid-turn CloseInput exercises the
+//     graceful turn/interrupt path, AIS-017). On turn/interrupt the twin marks
+//     stderr TWIN_INTERRUPT_RECEIVED, replies, then completes the turn.
 //   - "silentthenhappy": first turn/start → silent (caller A parks in
 //     AwaitingAck); second turn/start → full happy turn (caller B). Drives the
 //     ctx-cancel-then-resubmit regression (A resolves via its stale timeout).
@@ -91,6 +96,13 @@ func runTwin(mode string) {
 			tid := fmt.Sprintf("turn_%d", turnStarts)
 			effMode := mode
 			switch mode {
+			case "openturn":
+				// Open the turn (started + delta) but DO NOT complete it: the
+				// driver stays InTurn so a subsequent CloseInput exercises the
+				// graceful turn/interrupt path (AIS-017), not a SIGKILL.
+				emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, tid)
+				emit(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","turnId":%q,"itemId":"msg_1","delta":"working"}}`, tid)
+				continue
 			case "silentthenhappy":
 				if turnStarts == 1 {
 					effMode = "silent" // caller A: never acked → resolves via stale
@@ -113,7 +125,14 @@ func runTwin(mode string) {
 				emitTurn(tid)
 			}
 		case "turn/interrupt":
+			// Positive marker on stderr (captured into Outcome.StderrTail) so a
+			// test can PROVE the graceful turn/interrupt frame arrived — i.e. the
+			// driver wound the turn down via interrupt, not a SIGKILL.
+			fmt.Fprintln(os.Stderr, "TWIN_INTERRUPT_RECEIVED")
 			emit(`{"id":%d,"result":{}}`, *env.ID)
+			// Graceful drain: complete the interrupted turn so the reactor leaves
+			// InTurn, then the stdin EOF (from CloseInput) ends the run at exit 0.
+			emit(`{"method":"turn/completed","params":{"threadId":"th_1","turn":{"id":"turn_%d","items":[],"itemsView":"notLoaded","status":"completed","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, turnStarts)
 		}
 	}
 	// stdin EOF: exit 0 (graceful end-of-input).
@@ -328,6 +347,52 @@ func TestHandshakeTimeoutLaunchFailure(t *testing.T) {
 			t.Fatalf("no agent_launch_failure emission; got %v", rec.types())
 		}
 		time.Sleep(10 * time.Millisecond) // test scaffolding poll, not driver timing
+	}
+}
+
+// TestCloseMidTurnGracefulInterrupt is the driver-level AIS-017 reduce-the-need
+// acceptance: a CloseInput issued while a turn is still OPEN winds the session
+// down via the graceful turn/interrupt frame and a stdin-close drain — NOT a
+// SIGKILL. An ungraceful kill is exactly what leaves a stale codex
+// state_*.sqlite-wal behind (the WAL-guard's whole reason to exist); the
+// graceful path avoids it. Proven two ways: the twin records a positive
+// TWIN_INTERRUPT_RECEIVED marker (the interrupt frame arrived), and the child
+// exits 0 UNSIGNALED (no kill signal).
+func TestCloseMidTurnGracefulInterrupt(t *testing.T) {
+	rec := &emitRecorder{}
+	sess := spawnTwin(t, "openturn", codexinput.Config{}, rec)
+	port := asPort(t, sess)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Submit: the turn opens (turn/started) and stays open — the driver is InTurn.
+	ack, err := port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("start work")})
+	if err != nil {
+		t.Fatalf("SubmitInput: %v", err)
+	}
+	if ack.Outcome != handler.Delivered || ack.Token != "turn_1" {
+		t.Fatalf("ack = %+v, want Delivered/turn_1", ack)
+	}
+
+	// Close mid-turn: reactor emits turn/interrupt (graceful) + stdin close.
+	if err := port.CloseInput(ctx); err != nil {
+		t.Fatalf("CloseInput: %v", err)
+	}
+	if err := sess.Wait(ctx); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	out := sess.Outcome()
+	if out.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0 (graceful turn/interrupt + stdin-close drain, not SIGKILL)", out.ExitCode)
+	}
+	if out.Signal != syscall.Signal(-1) {
+		t.Fatalf("child was signaled (%v); graceful close must NOT SIGKILL (AIS-017)", out.Signal)
+	}
+	if !strings.Contains(string(out.StderrTail), "TWIN_INTERRUPT_RECEIVED") {
+		t.Fatalf("turn/interrupt frame never reached the child (stderr tail: %q); "+
+			"graceful interrupt path not exercised", string(out.StderrTail))
 	}
 }
 

@@ -1,0 +1,19 @@
+{
+  "event_count": 4,
+  "iterations": 0,
+  "merge_outcome": null,
+  "mode": "review-loop",
+  "outcome": "run_failed",
+  "resumed": false,
+  "run_id": "00000000-0000-7000-8000-000000000004",
+  "started_at": "2026-07-14T12:00:00Z",
+  "stratum": "merge-failure",
+  "terminal_at": "2026-07-14T12:00:00Z",
+  "terminal_type": "run_failed",
+  "types": [
+    "run_started",
+    "launch_initiated",
+    "agent_ready",
+    "run_failed"
+  ]
+}

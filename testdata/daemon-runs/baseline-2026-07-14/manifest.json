@@ -1,0 +1,22 @@
+{
+  "count": 6,
+  "failure_class": 2,
+  "resumed": 2,
+  "strata": {
+    "dot": 1,
+    "hung-relaunch": 1,
+    "merge-failure": 1,
+    "review-loop-resume": 1,
+    "run-stale": 1,
+    "single": 1
+  },
+  "terminals": {
+    "agent_ready_timeout": 1,
+    "review_loop_cycle_complete": 1,
+    "run_completed": 2,
+    "run_failed": 1,
+    "run_stale": 1
+  },
+  "terminated": 4,
+  "unterminated": 0
+}

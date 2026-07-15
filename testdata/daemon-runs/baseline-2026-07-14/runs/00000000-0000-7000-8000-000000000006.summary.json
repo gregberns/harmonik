@@ -1,0 +1,19 @@
+{
+  "event_count": 4,
+  "iterations": 2,
+  "merge_outcome": null,
+  "mode": "review-loop",
+  "outcome": "agent_ready_timeout",
+  "resumed": true,
+  "run_id": "00000000-0000-7000-8000-000000000006",
+  "started_at": "2026-07-14T12:00:00Z",
+  "stratum": "hung-relaunch",
+  "terminal_at": "2026-07-14T12:00:00Z",
+  "terminal_type": "agent_ready_timeout",
+  "types": [
+    "run_started",
+    "launch_initiated",
+    "implementer_resumed",
+    "agent_ready_timeout"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "event_count": 5,
+  "iterations": 2,
+  "merge_outcome": null,
+  "mode": "review-loop",
+  "outcome": "review_loop_cycle_complete",
+  "resumed": true,
+  "run_id": "00000000-0000-7000-8000-000000000002",
+  "started_at": "2026-07-14T12:00:00Z",
+  "stratum": "review-loop-resume",
+  "terminal_at": "2026-07-14T12:00:00Z",
+  "terminal_type": "review_loop_cycle_complete",
+  "types": [
+    "run_started",
+    "launch_initiated",
+    "agent_ready",
+    "implementer_resumed",
+    "review_loop_cycle_complete"
+  ]
+}

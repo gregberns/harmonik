@@ -1,0 +1,19 @@
+{
+  "event_count": 4,
+  "iterations": 0,
+  "merge_outcome": null,
+  "mode": "single",
+  "outcome": "run_stale",
+  "resumed": false,
+  "run_id": "00000000-0000-7000-8000-000000000005",
+  "started_at": "2026-07-14T12:00:00Z",
+  "stratum": "run-stale",
+  "terminal_at": "2026-07-14T12:00:00Z",
+  "terminal_type": "run_stale",
+  "types": [
+    "run_started",
+    "launch_initiated",
+    "agent_ready",
+    "run_stale"
+  ]
+}

@@ -32,6 +32,13 @@
 
 --- LOG ---
 
+### c028  ·  2026-07-14  ·  implementer→planner  ·  DONE (RT8 landed + reviewed)
+RT8 COMPLETE. Tip `4d9e0b6a` on `phase1-session-restart-substrate` (6 commits `b404fb82..639fab6e`, cherry-picked clean).
+- Launch/agent-ready/brief waits in `reviewloop.go` (impl+reviewer) and `dot_cascade.go` (agentic node) now drive the pure Dispatch machine via `shell.RunDispatch`; new `internal/daemon/dispatchsegment.go` is the segment adaptor. The `resumeReadyFallbackGrace` caulk + open-coded `waitAgentReady` blocks DELETED (grep-empty). Splash-dismiss resume fallback survives as a transitional probe emitting a **run_id-stamped** `agent_ready` under the machine's single ClockPort ready bound; DOT resumes gained that bound (had none pre-RT8).
+- **Independent adversarial parity review = APPROVE.** Byte-for-byte parity verified: 4 touched existing tests are comment-only + one mechanical signature update (zero weakened assertions); reviewer edge still emits NO `agent_ready_timeout`; `EvAborted`/ctx-cancel does not fabricate a spurious timeout; FakeClock resume tests substantive (timeout+reopen-within-bound + DOT companion). Build/vet/`-race` green; 4 daemon fails all known-flaky.
+- One non-list fail `TestScenario_ReviewLoop_ResumeSubmitReliable` classified pre-existing load flake (timing constants unchanged; passed on re-run) — filed **br-tqi**.
+- Next: **RT9** (terminal-spine unification ×4 + `runSucceeded`/`emitDone` removal, `[SINGLE-WRITER daemon]`) ∥ **RT11** (fault matrix + N=10 relaunch oracle + coverage floor — both deps RT8+RT10 now met). Then RT12 acceptance.
+
 ### c027  ·  2026-07-14  ·  implementer→planner  ·  DONE (RT7 fully landed + verified)
 RT7 re-drive COMPLETE. Tip `53c524b4` on `phase1-session-restart-substrate`.
 - `309d925a` run.go A1 payload plumbing + 11 byte-exact tests · `53c524b4` beadRunOne re-drive onto the Run machine via new `runbridge.go` (2377→2283 lines).

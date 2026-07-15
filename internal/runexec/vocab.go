@@ -105,6 +105,17 @@ const (
 	MergeFatal     MergeOutcomeClass = "fatal"
 )
 
+// MergeStage discriminates WHERE in the merge window an EvMergeResult failure
+// occurred (RSM-033): the pre-merge code-sync vs the merge itself. Empty means
+// merge (back-compat with the RT6 review-loop/DOT feeds).
+type MergeStage string
+
+// The merge stages.
+const (
+	MergeStageCodeSync MergeStage = "code_sync"
+	MergeStageMerge    MergeStage = "merge"
+)
+
 // CloseOutcomeClass is the LedgerPort close-return taxonomy (RSM-020 close
 // ladder; RF §6). The success-transient string is preserved on br_unavailable.
 type CloseOutcomeClass string
@@ -151,6 +162,8 @@ type Event struct {
 	Detail                string            `json:"detail,omitempty"`                   // verdict/salvage SHA
 	Merge                 MergeOutcomeClass `json:"merge,omitempty"`                    // EvMergeResult
 	MergeReason           string            `json:"merge_reason,omitempty"`             // retryable/fatal reason
+	MergeStage            MergeStage        `json:"merge_stage,omitempty"`              // code_sync | merge (RSM-033)
+	EmitOutcome           bool              `json:"emit_outcome,omitempty"`             // subsumed approved-close flag (RSM-035)
 	AlreadyApprovedOnMain bool              `json:"already_approved_on_main,omitempty"` // DOT carve-out (RF :4138)
 	Close                 CloseOutcomeClass `json:"close,omitempty"`                    // EvCloseResult
 	WorktreeAheadSHA      string            `json:"worktree_ahead_sha,omitempty"`       // EvShutdownDrain

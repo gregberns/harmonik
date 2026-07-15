@@ -69,6 +69,13 @@ type RunState struct {
 	Mode         string
 	MergeAttempt int // 0-based count of merge attempts already made
 
+	// Single-mode path label + close summary, latched from the dispatch-terminal
+	// event (RSM-033): the downstream merge/close strings are label-parameterized
+	// and the branch is only known at event time. Empty for review-loop/DOT
+	// (config-fallback behavior unchanged).
+	PathLabel        string // "agent_completed" | "auto-close" | "noChange-subsumed"
+	PathCloseSummary string // event-carried close-success terminal summary
+
 	// Finalizing / Done detail.
 	FinalizeMode FinalizeMode
 	DoneOutcome  string // "closed" | "reopened" (set at Done)
@@ -141,7 +148,8 @@ func stepRunResolving(cfg RunConfig, s RunState, ev Event) (RunState, []Action) 
 		s.Mode = ev.Mode
 		return s, []Action{{Kind: ActCreateWorktree}}
 	case EvProvisionFailed:
-		return finalizeReopen(cfg, s, nil)
+		// RSM-032: the interpolated guard/provisioning strings ride the event.
+		return finalizeReopen(cfg, s, nil, ev.Reason, ev.Detail)
 	default:
 		return s, nil
 	}
@@ -155,7 +163,7 @@ func stepRunProvisioning(cfg RunConfig, s RunState, ev Event) (RunState, []Actio
 		s.Phase = RunDispatching
 		return s, []Action{{Kind: ActEmit, Type: core.EventTypeRunStarted}}
 	case EvProvisionFailed:
-		return finalizeReopen(cfg, s, nil)
+		return finalizeReopen(cfg, s, nil, ev.Reason, ev.Detail)
 	default:
 		return s, nil
 	}
@@ -170,7 +178,19 @@ func stepRunDispatching(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 		return stepRunModeOutcome(cfg, s, ev)
 	case EvAgentCompleted, EvCleanExit:
 		// Single-mode dispatch terminals → the escape + no-commit guards run in
-		// Guarding, mutually exclusive with the merge section (RSM-008).
+		// Guarding, mutually exclusive with the merge section (RSM-008). The path
+		// label + event-carried close summary are latched here (RSM-033): the
+		// downstream merge/close strings are parameterized by which terminal fired.
+		// A payload-less event (legacy/RT6 feed) latches nothing, keeping the
+		// config-fallback strings — the single-mode shell always sends the payload.
+		if ev.Detail != "" {
+			if ev.Kind == EvAgentCompleted {
+				s.PathLabel = "agent_completed"
+			} else {
+				s.PathLabel = "auto-close"
+			}
+			s.PathCloseSummary = ev.Detail
+		}
 		s.Phase = RunGuarding
 		return s, []Action{{Kind: ActCheckEscape}}
 	case EvShutdownDrain:
@@ -191,7 +211,15 @@ func stepRunModeOutcome(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 		s.Phase = RunGating
 		return s, []Action{{Kind: ActRunGate}}
 	case ModeSubsumed, ModeNoChange:
-		// The 2 no-merge close-ladder entries (RF §6): close without a merge.
+		// RSM-035: the single-mode noChange-subsumed close carries the
+		// emit-approved flag + close summary on the event; it latches its path
+		// label so a BrUnavailable close reproduces the transient string. Without
+		// the flag (DOT subsumed / no-change) the RT6 no-outcome close is unchanged.
+		if ev.ModeOutcome == ModeSubsumed && ev.EmitOutcome {
+			s.PathLabel = "noChange-subsumed"
+			s.PathCloseSummary = ev.Detail
+			return finalizeClose(cfg, s, ev.Detail, true)
+		}
 		return finalizeClose(cfg, s, cfg.NoMergeCloseSummary, false)
 	case ModeBudget:
 		// Budget policy (shell-computed): close-needs-attention vs reopen — the
@@ -199,9 +227,10 @@ func stepRunModeOutcome(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 		if ev.NeedsAttention {
 			return finalizeClose(cfg, s, cfg.CloseSummary, cfg.EmitOutcome)
 		}
-		return finalizeReopen(cfg, s, nil)
+		return finalizeReopen(cfg, s, nil, "", "")
 	default: // ModeFailure
-		return finalizeReopen(cfg, s, nil)
+		// RSM-031/032: the shell-classified failure strings ride the event.
+		return finalizeReopen(cfg, s, nil, ev.Reason, ev.Detail)
 	}
 }
 
@@ -212,9 +241,9 @@ func stepRunGuarding(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	case EvEscapeDetected:
 		return finalizeReopen(cfg, s, []Action{
 			{Kind: ActEmit, Type: core.EventTypeImplementerEscapedWorktree, Detail: ev.Reason},
-		})
+		}, ev.Reason, ev.Reason)
 	case EvNoCommitGuardReopen:
-		return finalizeReopen(cfg, s, nil)
+		return finalizeReopen(cfg, s, nil, ev.Reason, ev.Reason)
 	case EvGuardsPassed:
 		s.Phase = RunGating
 		return s, []Action{{Kind: ActRunGate}}
@@ -230,7 +259,15 @@ func stepRunGating(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 		s.Phase = RunMerging
 		return s, []Action{{Kind: ActPrepareMerge}}
 	case EvGateFailed:
-		return finalizeReopen(cfg, s, nil)
+		// RSM-034: an event-classified gate failure pairs an
+		// outcome_emitted=rejected prefix with the reopen (the shell resolves the
+		// classified reason into the emission payload). Empty-reason behavior is
+		// the RT6 config fallback, unchanged.
+		if ev.Reason != "" {
+			prefix := []Action{{Kind: ActEmit, Type: core.EventTypeOutcomeEmitted, Detail: "rejected"}}
+			return finalizeReopen(cfg, s, prefix, ev.Reason, ev.Reason)
+		}
+		return finalizeReopen(cfg, s, nil, "", "")
 	default:
 		return s, nil
 	}
@@ -268,7 +305,25 @@ func mergeExhaustedOrFatal(cfg RunConfig, s RunState, ev Event) (RunState, []Act
 		return finalizeClose(cfg, s, cfg.CloseSummary, false)
 	}
 	prefix := []Action{{Kind: ActEmit, Type: core.EventTypeOutcomeEmitted, Detail: "rejected"}}
-	return finalizeReopen(cfg, s, prefix)
+	reason, summary := mergeFailureStrings(s, ev)
+	return finalizeReopen(cfg, s, prefix, reason, summary)
+}
+
+// mergeFailureStrings composes the label-parameterized single-mode merge-window
+// failure strings (RSM-033; design-note rows 5–8) — pure string composition of
+// preserved templates (RSM-020). Without a latched path label (review-loop/DOT,
+// not yet re-driven) it returns empty strings so finalizeReopen keeps the RT6
+// config fallback.
+func mergeFailureStrings(s RunState, ev Event) (reason, summary string) {
+	if s.PathLabel == "" {
+		return "", ""
+	}
+	if ev.MergeStage == MergeStageCodeSync {
+		return "code-sync failed (" + s.PathLabel + "): " + ev.MergeReason,
+			"code-sync-failed (" + s.PathLabel + "): " + ev.MergeReason
+	}
+	return "merge-to-main failed: " + ev.MergeReason,
+		"merge-failed (" + s.PathLabel + "): " + ev.MergeReason
 }
 
 // stepRunFinalizing: the close ladder's second half — the LedgerPort close
@@ -278,12 +333,23 @@ func stepRunFinalizing(cfg RunConfig, s RunState, ev Event) (RunState, []Action)
 	if ev.Kind != EvCloseResult {
 		return s, nil
 	}
+	// Event/latch-first summaries (RSM-032/033); empty falls back to the RT6
+	// config strings so the review-loop/DOT ladders are byte-unchanged.
 	switch ev.Close {
 	case CloseClosed:
+		if s.PathCloseSummary != "" {
+			return doneClosed(s, s.PathCloseSummary, true)
+		}
 		return doneClosed(s, cfg.CloseSummary, true)
 	case CloseBrUnavailable:
+		if s.PathLabel != "" {
+			return doneClosed(s, "close-transient-merged ("+s.PathLabel+")", true)
+		}
 		return doneClosed(s, cfg.BrUnavailableSummary, true)
 	default: // CloseError — the bead close itself failed; still emit the terminal
+		if ev.Detail != "" {
+			return doneClosed(s, ev.Detail, false)
+		}
 		return doneClosed(s, cfg.CloseSummary, false)
 	}
 }
@@ -317,16 +383,24 @@ func doneClosed(s RunState, summary string, success bool) (RunState, []Action) {
 // in the same Step. Terminal reopens use a background context shell-side so a
 // mid-merge-cancelled reopen does not silently no-op (RSM-022). `prefix` carries
 // any path-specific emission (escaped-worktree, rejected outcome) that precedes
-// the reopen.
-func finalizeReopen(cfg RunConfig, s RunState, prefix []Action) (RunState, []Action) {
+// the reopen. `reason`/`summary` are the per-call event-sourced strings
+// (RSM-032); empty falls back to cfg.ReopenReason for BOTH, preserving the RT6
+// review-loop/DOT behavior.
+func finalizeReopen(cfg RunConfig, s RunState, prefix []Action, reason, summary string) (RunState, []Action) {
+	if reason == "" {
+		reason = cfg.ReopenReason
+	}
+	if summary == "" {
+		summary = cfg.ReopenReason
+	}
 	s.Phase = RunDone
 	s.FinalizeMode = FinalizeReopen
 	s.DoneOutcome = "reopened"
 	s.Success = false
 	actions := append([]Action{}, prefix...)
 	actions = append(actions,
-		Action{Kind: ActReopenBead, Reason: cfg.ReopenReason},
-		Action{Kind: ActEmitRunTerminal, Success: false, Summary: cfg.ReopenReason},
+		Action{Kind: ActReopenBead, Reason: reason},
+		Action{Kind: ActEmitRunTerminal, Success: false, Summary: summary},
 	)
 	return s, actions
 }

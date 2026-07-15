@@ -1,0 +1,31 @@
+codename: 2026-07-14-run-state-machine
+title: Extract beadRunOne into a runexec state machine + explicit merge queue (absorbs resume-hang SR9)
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-07-14T02:48:22Z
+updated: 2026-07-14T15:53:41Z
+sessions:
+    - id: null
+      started: 2026-07-14T02:48:22Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+    label: codename:2026-07-14-run-state-machine
+pinned_beads: []
+implementation:
+    branch: phase1-session-restart-substrate
+    pr: null
+    commits: [104a9ca7]

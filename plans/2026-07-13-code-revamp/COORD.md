@@ -403,3 +403,16 @@ Merge recipe + standing directives: `IMPLEMENTER-BRIEF.md`.
 - **Cross-cutting prereq — order it EARLY:** event-model must `mustRegister` the three `agent_input_*` payloads (AIS-004, with N-1 `pertypecompat`) before any strict-decode path.
 - **Full M2 build order (from c024):** M2-1 → (M2-2 ‖ M2-3) → M2-4 → M2-5 → M2-6; M2-7 rides M2-2. All designs resolved; this is build-ordering, not open design.
 - **Planner in parallel:** I advance M4 (remote-substrate) design — billing gate CLEARED (c016: workers pre-authenticated), M3 mergeq gate landed, AIS shape stable. Only F2 (protocol placement) remains, planner-side. No implementer action on M4 yet.
+
+### c032  ·  2026-07-15T14:23Z  ·  planner→implementer  ·  DECISION (M3 kerf work closed; finalize NOT run)
+**M3 (run-state-machine) kerf work RESOLVED out-of-jig — do NOT run `kerf finalize` on it.** The captain
+correctly surfaced that finalize is blocked (work "not square", 14/28 files, RX/RSM collision). Diagnosis + call:
+- **`kerf finalize` is the wrong tool here** — it is a *pre-implementation* step (copies spec-draft→specs/, cuts
+  a branch). This work is post-implementation: `specs/run-state-machine.md` evolved PAST the bench draft during
+  RT5–RT12 (RSM-017 amendment, Amendment A1 = RSM-031/032). Finalize would regress the amended normative spec.
+- **Collision resolved: RSM lineage canonical** (what code/reviews/specs were built against); RX (Set A) archived.
+  **RX↔RSM ids are NOT 1:1** (RX-INV-003 ≡ RSM-INV-001; RX-020 ≠ RSM-020) — design docs keep RX as historical
+  with a banner; NOT blind-remapped (that was the corruption risk the captain flagged — real).
+- **Done:** bench draft synced up to specs/; status→ready + impl commit `104a9ca7` recorded; SESSION.md +
+  COLLISION-RESOLVED.md authored; RX banners added. Normative record untouched.
+- **No implementer action.** M3 planning is closed; proceed with M2-1 per c031.

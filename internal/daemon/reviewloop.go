@@ -521,9 +521,9 @@ func runReviewLoop(
 		// leaked spawn slot).
 		implLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, implArtifacts.preExecMsgs)
 
-		// Create a per-run tapping emitter so waitAgentReady can observe
-		// watcher events from the implementer launch without a post-seal bus
-		// subscription (EV-009). A new handler is constructed using the tap so
+		// Create a per-run tapping emitter so the dispatch segment's ready pump
+		// can observe watcher events from the implementer launch without a
+		// post-seal bus subscription (EV-009). A new handler is constructed using the tap so
 		// events flow through the channel — same pattern as the reviewer phase
 		// (lines ~592-598) and single-mode beadRunOne (workloop.go lines 1173-1176).
 		// Precondition: deps.adapterRegistry must be non-nil (enforced by
@@ -1299,8 +1299,9 @@ func runReviewLoop(
 		// (see implementer phase) so it signals a live reviewer window.
 		revLaunchInitiatedMsg := emitPreExecBeforeLaunch(ctx, deps.bus, runID, revArtifacts.preExecMsgs)
 
-		// Create a per-phase tapping emitter so waitAgentReady can observe watcher
-		// events from the reviewer launch without a post-seal bus subscription (EV-009).
+		// Create a per-phase tapping emitter so the dispatch segment's ready pump
+		// can observe watcher events from the reviewer launch without a post-seal
+		// bus subscription (EV-009).
 		// A new handler is constructed using the tap so events flow through the channel.
 		// Precondition: deps.adapterRegistry must be non-nil (enforced by
 		// newWorkLoopDeps). NewHandler panics on a nil registry (hk-d8u1y).

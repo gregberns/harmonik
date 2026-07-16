@@ -132,6 +132,38 @@ type LaunchSpec struct {
 	// Spec ref: specs/process-lifecycle.md §4.7 PL-021b; handler-contract.md HC-054.
 	// Bead: hk-gql20.11.
 	Substrate Substrate
+
+	// Runner, when non-nil, is the CommandRunner used to build the subprocess
+	// *exec.Cmd on the DIRECT exec path (Substrate == nil). It exists so a
+	// worker-selected run of an argv-driven, forced-exec harness (pi, codex —
+	// both SessionIDCaptured, so the caller forces Substrate=nil to expose a
+	// stdout pipe for session-id capture) spawns the agent process ON THE WORKER
+	// via the same SSHRunner the tmux/Claude path uses (remote-substrate M4-C4).
+	//
+	// When nil, Launch falls back to exec.CommandContext — byte-identical to the
+	// pre-existing local path (NFR7: zero/disabled workers => byte-identical LOCAL
+	// spawn). When non-nil, Launch builds the *exec.Cmd via Runner.Command; an
+	// SSHRunner tunnels it to the worker host. cmd.Dir/cmd.Env are applied to the
+	// returned *exec.Cmd unchanged (mirroring the codexdriver spawn path), so the
+	// runner is the ONLY selection axis — the launch spec (binary/args/env/wire
+	// config) is identical regardless of host.
+	//
+	// Ignored on the Substrate path (Substrate != nil), where the substrate owns
+	// process hosting and its own runner.
+	//
+	// Bead: remote-substrate M4-C4 (T6).
+	Runner CommandRunner
+}
+
+// CommandRunner is the seam for building the subprocess *exec.Cmd on the direct
+// exec path. It mirrors internal/lifecycle/tmux.CommandRunner structurally so the
+// daemon's LocalRunner / SSHRunner satisfy it, WITHOUT internal/handler importing
+// internal/lifecycle/tmux (depguard forbids that edge — same rule as Substrate).
+//
+// The nil CommandRunner is meaningful: LaunchSpec.Runner == nil selects
+// exec.CommandContext (the byte-identical local path).
+type CommandRunner interface {
+	Command(ctx context.Context, name string, args ...string) *exec.Cmd
 }
 
 // Handler is the daemon-side factory for handler sessions.
@@ -226,8 +258,18 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		return h.launchViaSubstrate(ctx, sessionID, spec)
 	}
 
-	//nolint:gosec // G204: Binary is daemon-config-resolved; not user-controlled
-	cmd := exec.CommandContext(ctx, spec.Binary, spec.Args...)
+	// M4-C4 (T6): build the *exec.Cmd through spec.Runner when a worker was
+	// selected so the argv-driven agent process (pi/codex) spawns ON THE WORKER
+	// via the SSHRunner. spec.Runner == nil ⇒ exec.CommandContext, byte-identical
+	// to the pre-existing LOCAL path (NFR7). cmd.Dir/cmd.Env are applied below
+	// unchanged either way (the runner is the only host-selection axis).
+	var cmd *exec.Cmd
+	if spec.Runner != nil {
+		cmd = spec.Runner.Command(ctx, spec.Binary, spec.Args...)
+	} else {
+		//nolint:gosec // G204: Binary is daemon-config-resolved; not user-controlled
+		cmd = exec.CommandContext(ctx, spec.Binary, spec.Args...)
+	}
 	cmd.Dir = spec.WorkDir
 	cmd.Env = spec.Env
 	cmd.SysProcAttr = lifecycle.SpawnChildSysProcAttr(lifecycle.RecordedPGID())

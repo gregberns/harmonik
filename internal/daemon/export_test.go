@@ -310,7 +310,6 @@ type WorkLoopDepsParams struct {
 	// nil, ExportedWorkLoopDeps installs a fresh cap-3 channel (production default).
 	AgentSpawnSem chan struct{}
 
-
 	// WorkerRegistry, when non-nil, enables the DD1 remote code-sync path in
 	// beadRunOne (remote-substrate B8). When nil (the test default), all runs
 	// take the local path: no SSH fetch/push steps are inserted.
@@ -515,7 +514,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
 		emittedEpicsMu:             &sync.Mutex{},
 		workerRegistry:             p.WorkerRegistry, // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
-		brPath:                     p.BrPath,          // hk-f722: staged-bead generator; empty → disabled
+		brPath:                     p.BrPath,         // hk-f722: staged-bead generator; empty → disabled
 		followUpLedger:             make(map[string]struct{}),
 		followUpLedgerMu:           &sync.Mutex{},
 		spawnSubstrateReadyCh:      p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
@@ -2877,6 +2876,11 @@ func ExportedRoutedLaunchSpecBuilder(
 			worktreeRootPath:  rc.WorktreeRootPath,
 			beadDescription:   rc.BeadDescription,
 			nodePrompt:        rc.NodePrompt,
+			// remote-substrate M4-C4 (T6): thread the per-run runner so tests can
+			// assert the routed pi/codex exec-path launch spec carries the worker's
+			// SSHRunner (remote) or nil (local, NFR7).
+			runner:           rc.Runner,
+			workerBinaryPath: rc.WorkerBinaryPath,
 		}
 		spec, arts, err := builder(ctx, internal)
 		if err != nil {
@@ -2926,6 +2930,11 @@ func ExportedPinnedHarnessLaunchSpecBuilder(
 			worktreeRootPath:  rc.WorktreeRootPath,
 			beadDescription:   rc.BeadDescription,
 			nodePrompt:        rc.NodePrompt,
+			// remote-substrate M4-C4 (T6): thread the per-run runner so tests can
+			// assert the routed pi/codex exec-path launch spec carries the worker's
+			// SSHRunner (remote) or nil (local, NFR7).
+			runner:           rc.Runner,
+			workerBinaryPath: rc.WorkerBinaryPath,
 		}
 		spec, arts, err := builder(ctx, internal)
 		if err != nil {

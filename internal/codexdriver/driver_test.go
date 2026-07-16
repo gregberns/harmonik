@@ -55,6 +55,10 @@ func TestMain(m *testing.M) {
 //     id is turn_<N> (distinct per turn). The delay lets caller A be cancelled
 //     while AwaitingAck, then turn_1's turn/started arrives LATE (after abandon).
 //     Drives the mis-attribution regression: B must ack with turn_2, never turn_1.
+//   - "stalethenlate": the stale-then-revive mis-attribution race. Caller A's
+//     turn/start gets a RESPONSE (turn_1) but NO turn/started, so A stales and
+//     frees the reactor; caller B's turn/start then emits turn_1's genuinely-late
+//     turn/started BEFORE B's own turn_2. B must ack with turn_2, never turn_1.
 func runTwin(mode string) {
 	turnStarts := 0
 	in := bufio.NewScanner(os.Stdin)
@@ -94,12 +98,22 @@ func runTwin(mode string) {
 		case "turn/start":
 			turnStarts++
 			tid := fmt.Sprintf("turn_%d", turnStarts)
+			reqID := *env.ID
+			// respondTurnStart replays the real server's turn/start RESPONSE,
+			// which carries the created turn's id and arrives BEFORE the
+			// turn/started notification (corpus raw-session-01 lines 11→13). The
+			// driver binds this turn id → the submission seq for correlation.
+			respondTurnStart := func(id string) {
+				emit(`{"id":%d,"result":{"turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, reqID, id)
+			}
 			effMode := mode
 			switch mode {
 			case "openturn":
-				// Open the turn (started + delta) but DO NOT complete it: the
-				// driver stays InTurn so a subsequent CloseInput exercises the
-				// graceful turn/interrupt path (AIS-017), not a SIGKILL.
+				// Open the turn (response + started + delta) but DO NOT complete
+				// it: the driver stays InTurn so a subsequent CloseInput
+				// exercises the graceful turn/interrupt path (AIS-017), not a
+				// SIGKILL.
+				respondTurnStart(tid)
 				emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, tid)
 				emit(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","turnId":%q,"itemId":"msg_1","delta":"working"}}`, tid)
 				continue
@@ -111,9 +125,31 @@ func runTwin(mode string) {
 				}
 			case "latedistinctturn":
 				// Delay so caller A is cancelled while AwaitingAck; turn_1's
-				// turn/started then arrives late (after abandon). turn_2 for B.
+				// response+turn/started then arrive late (after abandon). turn_2
+				// for B.
 				time.Sleep(400 * time.Millisecond)
+				respondTurnStart(tid)
 				emitTurn(tid)
+				continue
+			case "stalethenlate":
+				// The stale-then-revive mis-attribution race (AIS-INV-001).
+				//   turn/start #1 (caller A): send the turn/start RESPONSE (so the
+				//     turn_1 binding exists) but NEVER the turn/started anchor —
+				//     A stales via a short InputAckTimeout, freeing the reactor.
+				//   turn/start #2 (caller B): send B's response (turn_2), THEN
+				//     turn_1's genuinely-LATE turn/started (the abandoned turn's
+				//     anchor), THEN B's own full turn_2. A mutable-inFlightSeq
+				//     driver mis-acks B with turn_1; the turn-id-correlated driver
+				//     FENCES the late turn_1 anchor and acks B with turn_2.
+				if turnStarts == 1 {
+					respondTurnStart(tid) // turn_1 bound to A; no anchor → A stales
+					continue
+				}
+				respondTurnStart(tid) // turn_2 bound to B
+				// The late anchor for the abandoned turn_1, injected AFTER B is
+				// AwaitingAck and BEFORE B's own anchor.
+				emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":"turn_1","items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`)
+				emitTurn(tid) // B's own turn_2
 				continue
 			}
 			switch effMode {
@@ -122,6 +158,7 @@ func runTwin(mode string) {
 			case "silent":
 				// stale probe: no ack anchor ever arrives.
 			default: // happy
+				respondTurnStart(tid)
 				emitTurn(tid)
 			}
 		case "turn/interrupt":
@@ -591,6 +628,54 @@ func TestCancelThenLateTurnStartedNoMisAck(t *testing.T) {
 	}
 	if ack.Token == "turn_1" {
 		t.Fatalf("caller B MIS-ACKED with A's turn id turn_1 (AIS-INV-001 wrong-ack)")
+	}
+	if ack.Token != "turn_2" {
+		t.Fatalf("caller B token = %q, want turn_2 (its own turn)", ack.Token)
+	}
+	if ack.Seq != 2 {
+		t.Fatalf("caller B seq = %d, want 2", ack.Seq)
+	}
+}
+
+// TestStaleThenLateTurnStartedNoMisAck is the design-inherent AIS-INV-001
+// no-mis-ack regression the response-id correlation fixes (bead hk-9rrzi). It is
+// the STALE-then-revive variant the front-stop alone cannot cover: caller A's
+// submission is slower than InputAckTimeout, so A reaches its REAL stale terminal
+// and the reactor legitimately returns to Ready (front-stop satisfied). Caller B
+// then submits — and A's genuinely-late turn/started (for the now-abandoned
+// turn_1) arrives while B is AwaitingAck. A driver that correlated turn/started
+// by a mutable in-flight seq would stamp turn_1 onto B (mis-ack). With turn-id
+// correlation (turn/started bound to the turn/start response's turn id), the late
+// turn_1 anchor matches no live binding and is FENCED; B acks with its own turn_2.
+func TestStaleThenLateTurnStartedNoMisAck(t *testing.T) {
+	rec := &emitRecorder{}
+	// Short ack timeout so caller A genuinely stales (its turn_1 anchor never
+	// arrives) and the reactor returns to Ready before caller B submits.
+	sess := spawnTwin(t, "stalethenlate", codexinput.Config{InputAckTimeout: 300 * time.Millisecond}, rec)
+	port := asPort(t, sess)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	// Caller A: MUST reach the stale terminal (never an ack) — turn_1 has no
+	// anchor within the bound.
+	_, errA := port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("caller A")})
+	if !errors.Is(errA, codexdriver.ErrInputStale) {
+		t.Fatalf("caller A err = %v, want ErrInputStale (no anchor within bound)", errA)
+	}
+
+	// Caller B: the twin now injects turn_1's LATE turn/started (abandoned-turn
+	// anchor) before B's own turn_2. B MUST ack with turn_2, never turn_1.
+	ack, errB := port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("caller B")})
+	if errB != nil {
+		t.Fatalf("caller B err = %v, want Delivered", errB)
+	}
+	if ack.Outcome != handler.Delivered {
+		t.Fatalf("caller B outcome = %v, want Delivered", ack.Outcome)
+	}
+	if ack.Token == "turn_1" {
+		t.Fatalf("caller B MIS-ACKED with abandoned turn_1 (AIS-INV-001 wrong-ack); "+
+			"late turn/started was stamped onto a fresh submission")
 	}
 	if ack.Token != "turn_2" {
 		t.Fatalf("caller B token = %q, want turn_2 (its own turn)", ack.Token)

@@ -91,14 +91,23 @@ type codexSession struct {
 	// in flight per session (the reactor's AwaitingAck invariant).
 	submitMu sync.Mutex
 
-	mu          sync.Mutex
-	seq         uint64
-	reqID       int64
-	pending     map[int64]pendingReq
-	payloads    map[uint64][]byte
-	waiters     map[uint64]chan submitResult
-	timers      map[codexinput.TimerKind]context.CancelFunc
-	inFlightSeq uint64
+	mu       sync.Mutex
+	seq      uint64
+	reqID    int64
+	pending  map[int64]pendingReq
+	payloads map[uint64][]byte
+	waiters  map[uint64]chan submitResult
+	timers   map[codexinput.TimerKind]context.CancelFunc
+	// turnSeqByID binds a codex turn id → the input seq that opened it. The
+	// binding is created from the turn/start RESPONSE (correlated to its seq by
+	// the JSON-RPC request id, s.pending), which the server sends carrying the
+	// created turn's id BEFORE the turn/started notification (corpus
+	// raw-session-01 lines 11→13). The turn/started notification then correlates
+	// to a seq by its OWN turn id — never by a mutable in-flight pointer — so a
+	// genuinely-late turn/started for an abandoned turn cannot bind to a fresh
+	// submission (AIS-INV-001 no-mis-ack). Entries are pruned when the seq
+	// resolves or the turn completes.
+	turnSeqByID map[string]uint64
 	threadID    string
 	failure     error
 	stdinClosed bool
@@ -138,6 +147,7 @@ func newCodexSession(opts Options, cmd *exec.Cmd, procCancel context.CancelFunc,
 		payloads:     make(map[uint64][]byte),
 		waiters:      make(map[uint64]chan submitResult),
 		timers:       make(map[codexinput.TimerKind]context.CancelFunc),
+		turnSeqByID:  make(map[string]uint64),
 		started:      opts.Clock.Now(),
 	}
 }
@@ -221,9 +231,10 @@ func (s *codexSession) SubmitInput(ctx context.Context, req handler.InputRequest
 	// is load-bearing (AIS-INV-001): if a PRIOR caller cancelled mid-flight, its
 	// turn is still live on the child and the reactor is still AwaitingAck/InTurn;
 	// a fresh submit into that state would be SILENTLY DROPPED by the reactor
-	// (stepInputSubmitted accepts only from Ready/InTurn) OR mis-attributed to
-	// the abandoned turn's late turn/started (correlation is by mutable
-	// inFlightSeq). Waiting for the abandoned turn's REAL terminal (its
+	// (stepInputSubmitted accepts only from Ready/InTurn). Correlation-wise a
+	// late turn/started for the abandoned turn is separately fenced by turn-id
+	// binding (handleNotification), but waiting for the abandoned turn's REAL
+	// terminal (its
 	// turn/completed, or the InputAck timer → stale) before proceeding closes
 	// both holes. The wait is bounded by that terminal, never a hang.
 	if err := s.awaitReady(ctx); err != nil {
@@ -268,12 +279,13 @@ func (s *codexSession) SubmitInput(ctx context.Context, req handler.InputRequest
 		}
 	case <-ctx.Done():
 		// Abandon the park: drop THIS caller's waiter ONLY. We deliberately do
-		// NOT touch the reactor or inFlightSeq — the abandoned turn is still live
-		// on the child, so it MUST resolve through its own REAL terminal
-		// (turn/started → InTurn → turn/completed → Ready, or the InputAck timer
-		// → stale → Ready). inFlightSeq stays this seq so the child's (possibly
-		// late) turn/started still correlates to the abandoned submission, never
-		// to a subsequent caller's turn. The reactor's later agent_input_acked /
+		// NOT touch the reactor — the abandoned turn is still live on the child,
+		// so it MUST resolve through its own REAL terminal (turn/started → InTurn
+		// → turn/completed → Ready, or the InputAck timer → stale → Ready). The
+		// abandoned turn's turn-id binding still correlates its (possibly late)
+		// turn/started to THIS seq, never to a subsequent caller's turn; the
+		// reactor's PendingSeq guard drops that ack since this seq is no longer
+		// pending. The reactor's later agent_input_acked /
 		// agent_input_stale emit for this seq becomes a no-op resolve (the waiter
 		// is gone) — verified non-panicking in resolveWaiter. The next caller
 		// blocks in awaitReady until that real terminal returns the reactor to
@@ -643,9 +655,11 @@ func (s *codexSession) writeTurnStart(seq uint64) {
 	payload := s.payloads[seq]
 	delete(s.payloads, seq)
 	threadID := s.threadID
-	s.inFlightSeq = seq
 	s.mu.Unlock()
 
+	// The turn id this submission opens is not known until the turn/start
+	// RESPONSE arrives (handleResponse → pendingTurnStart), which binds it to
+	// this seq via s.pending[id]. No mutable in-flight pointer is set here.
 	id := s.nextReqID(pendingTurnStart, seq)
 	s.writeFrame(codexwire.Frame{
 		Kind:    codexwire.FrameKindClientRequest,
@@ -753,8 +767,20 @@ func (s *codexSession) handleResponse(f codexwire.Frame) {
 			// (no emit), so the waiter resolves here at the wire.
 			s.resolveWaiter(req.seq, submitResult{ack: handler.Ack{Outcome: handler.Rejected, Seq: req.seq}})
 			s.sendEvent(codexinput.Event{Type: codexinput.EventTypeInputRejected, InputSeq: req.seq, Reason: string(f.Error)})
+			return
 		}
-		// Success response: the ack anchor is the turn/started notification.
+		// Success response: it carries the created turn's id (corpus
+		// raw-session-01 line 11). Bind that turn id → this seq so the
+		// subsequent turn/started notification (the ack anchor) correlates by
+		// its OWN turn id, not a mutable in-flight pointer — the fence against
+		// a late turn/started for an abandoned turn mis-acking a fresh
+		// submission (AIS-INV-001). The ack itself is still the turn/started.
+		var res codexwire.TurnStartResult
+		if err := json.Unmarshal(f.RawResult, &res); err == nil && res.Turn.ID != "" {
+			s.mu.Lock()
+			s.turnSeqByID[res.Turn.ID] = req.seq
+			s.mu.Unlock()
+		}
 
 	case pendingInterrupt:
 		// Best-effort graceful interrupt; nothing to resolve.
@@ -765,15 +791,34 @@ func (s *codexSession) handleNotification(f codexwire.Frame) {
 	switch f.Method {
 	case "turn/started":
 		// The ack anchor: the turn id is the acceptance token the input opened.
+		// Correlate to the originating seq by THIS turn's id (bound from the
+		// turn/start response), never by a mutable in-flight pointer. A
+		// turn/started whose turn id we never opened — a genuinely-late anchor
+		// for an abandoned/stale turn — matches no binding and is FENCED
+		// (dropped), so it can never be stamped onto a fresh submission
+		// (AIS-INV-001 no-mis-ack). The binding is one-shot: consumed here.
 		turnID := ""
 		if p, ok := f.Params.(*codexwire.TurnStartedParams); ok {
 			turnID = p.Turn.ID
 		}
 		s.mu.Lock()
-		seq := s.inFlightSeq
+		seq, ok := s.turnSeqByID[turnID]
+		if ok {
+			delete(s.turnSeqByID, turnID)
+		}
 		s.mu.Unlock()
+		if !ok || turnID == "" {
+			return // fenced: unknown/late turn/started, no submission owns it.
+		}
 		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeInputAcked, InputSeq: seq, TurnID: turnID})
 	case "turn/completed":
+		// Prune any lingering binding for the completed turn (e.g. an abandoned
+		// turn whose late started was fenced without consuming its binding).
+		if p, ok := f.Params.(*codexwire.TurnCompletedParams); ok && p.Turn.ID != "" {
+			s.mu.Lock()
+			delete(s.turnSeqByID, p.Turn.ID)
+			s.mu.Unlock()
+		}
 		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeTurnCompleted})
 	case "item/agentMessage/delta":
 		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeDelta})
@@ -790,8 +835,13 @@ func (s *codexSession) resolveWaiter(seq uint64, res submitResult) {
 	if ok {
 		delete(s.waiters, seq)
 	}
-	if s.inFlightSeq == seq {
-		s.inFlightSeq = 0
+	// Prune any turn-id binding this seq still owns (e.g. resolved via stale
+	// before its turn/started arrived) so a genuinely-late turn/started for the
+	// abandoned turn finds no binding and is fenced (AIS-INV-001 no-mis-ack).
+	for tid, s2 := range s.turnSeqByID {
+		if s2 == seq {
+			delete(s.turnSeqByID, tid)
+		}
 	}
 	s.mu.Unlock()
 	if ok {

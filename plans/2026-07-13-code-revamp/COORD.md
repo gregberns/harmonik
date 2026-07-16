@@ -462,3 +462,24 @@ correctly surfaced that finalize is blocked (work "not square", 14/28 files, RX/
 3. **I am NOT blocked** — the normative spec is concrete and the protocol is proven (the existing codex vertical
    already speaks this app-server for output). Dispatching **T5+T4 as one unit** (they co-develop the input
    `Step`), then **T6** (driver shell) on top. Critical path T5→T6→T9.
+
+### c035  ·  2026-07-16T04:57Z  ·  planner→implementer  ·  DECISION + EXECUTION ORDER (M2 done; T11 parked; forward plan)
+**Operator agreed 2026-07-15: PARK T11 — delete the tmux hatch once there are NO callers (not now).**
+- **T11 gate (revised, operator-blessed):** delete `internal/daemon/pasteinject.go` + input parts of `tmuxsubstrate.go`
+  ONLY when (a) no live callers remain — crew-seeding (`crewPasteInjector`) + reviewer-kickoff paste must be cut over
+  first (T8 cut over ONLY the run-input path) — AND (b) the daemon has returned and SubmitInput soaked with the ack
+  contract holding. Neither holds in a no-daemon session. **Do NOT start T11 autonomously.** It stays a parked bead.
+- **M2 is CODE-COMPLETE** (T5–T10 landed, tip `30ed25a4`), minus the parked T11 cleanup. **M3 done** (closed out-of-jig, c032).
+
+**EXECUTION ORDER — captain (implementer executor):**
+1. **NOW:** finish **M1-5** (daemon coverage baseline; doc `plans/2026-07-13-code-revamp/M1-5-coverage-baseline.md`).
+   Confirm its state first — it may already be complete; if so, skip. This is the ONLY seam-independent build-ready piece.
+2. **THEN AWAIT M4.** M4 (remote-substrate) is the next major build lane but is **NOT build-ready** — it's at `analyze`
+   and needs the planner's **AR-2 alignment pass** (re-fit design to the AS-BUILT M2 input/ack contract) + design→`ready`.
+   Planner is doing that now and will post an **M4 build HANDOFF to this COORD**. Do NOT start M4 before that handoff.
+   If M1-5 is done and M4 isn't handed off yet, HOLD (don't invent work) — ping planner via COORD.
+3. **Parked / operator-gated (do NOT start):** **T11** (above); **M1-2 / M1-3** (test-theater deletions, operator-gated).
+4. **Later (planner-sequenced):** **M5** (daemon-decompose) — held; un-hold trigger (M3 merge-queue merged) now MET;
+   planner opens M5 problem-space; captain builds after M4.
+
+**Planner (admiral) owns in parallel:** AR-2 alignment → M4 design→ready → M4 build handoff; open M5 problem-space.

@@ -554,6 +554,16 @@ type Config struct {
 	// Bead ref: hk-rs-b4-bootwire-b44z.
 	Workers workers.Config
 
+	// WorkerRegistryObserver, when non-nil, is invoked ONCE at work-loop startup
+	// with the live *workers.Registry the tmux dispatch path reads (or nil when
+	// no worker is configured — NFR7). The composition root uses it to late-bind
+	// that SAME registry into the Codex driver's runner-selection seam (M4-C3),
+	// so a worker-selected HARMONIK_SUBSTRATE=codexdriver run routes its codex
+	// process over SSHRunner — WITHOUT the driver ever learning about workers
+	// (RS-017 twin-blindness: selection stays at the wire/root, driver stays
+	// blind). No-op for the tmux substrate (observer is nil there).
+	WorkerRegistryObserver func(*workers.Registry)
+
 	// Runner is the CommandRunner used for remote-aware marker-file reads on the
 	// DOT run path (hk-hd2w6). At runtime, local runs set it to nil (NFR7:
 	// byte-identical local path) and remote runs override it with rbc.sshRunner

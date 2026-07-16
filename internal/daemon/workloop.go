@@ -1111,6 +1111,14 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 	// enabled so the dispatch path takes the existing local-only branch (NFR7).
 	workerReg := buildWorkerRegistry(context.Background(), cfg.Workers, bus)
 
+	// M4-C3: hand the SAME live registry to the composition root's Codex
+	// runner-selection seam so a worker-selected codexdriver run routes over
+	// SSHRunner. No-op for the tmux path (observer nil). The driver never sees
+	// this — selection stays at the wire/root (RS-017 twin-blindness).
+	if cfg.WorkerRegistryObserver != nil {
+		cfg.WorkerRegistryObserver(workerReg)
+	}
+
 	// Extract the tmux adapter from cfg.Substrate for the periodic coordinator
 	// reaper (hk-t08m). Same extraction pattern as the boot-time sweep above.
 	// When no tmux substrate is configured, coordinatorReapAdapter stays nil and

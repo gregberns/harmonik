@@ -1330,14 +1330,19 @@ EXAMPLES
 	// Cite: bead hk-v3nv (TA4 tokenaudit — unblocks version<->cost correlation).
 	resolvedHash := resolvedCommitHash()
 
+	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
+	// the live worker registry into the Codex driver's runner (nil for tmux).
+	codexSubstrate, codexRegObserver := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag)
+
 	cfg := daemon.Config{
 		ProjectDir:               projectDir,
 		BrPath:                   brPath,
 		KerfPath:                 kerfPath, // hk-9321v: kerf next for EM-062/EM-063 eager-refill
 		JSONLLogPath:             jsonlLogPath,
 		MaxConcurrent:            maxConcurrentFlag,
-		NoAutoPull:               !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
-		Substrate:                selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag), // AIS-015 selection axis; default tmux
+		NoAutoPull:               !autoPullFlag,                       // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
+		Substrate:                codexSubstrate,                      // AIS-015 selection axis; default tmux
+		WorkerRegistryObserver:   codexRegObserver,                    // M4-C3: late-bind live registry into Codex runner
 		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
 		BinaryCommitHash:         resolvedHash,                        // ldflags stamp or runtime/debug fallback (hk-mz0x4, hk-v3nv)
 		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (150s)

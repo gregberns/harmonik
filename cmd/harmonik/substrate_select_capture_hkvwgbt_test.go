@@ -18,7 +18,7 @@ func TestCodexSubstrateOptions_CaptureNonInert(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(captureDirEnv, dir)
 
-	opts, sess := codexSubstrateOptions("codex")
+	opts, sess := codexSubstrateOptions("codex", &codexWorkerRoutingRunner{})
 	if sess == nil {
 		t.Fatal("capture session not opened despite HARMONIK_CAPTURE_DIR set")
 	}
@@ -60,7 +60,7 @@ func TestCodexSubstrateOptions_CaptureNonInert(t *testing.T) {
 func TestCodexSubstrateOptions_CaptureOptInOffByDefault(t *testing.T) {
 	t.Setenv(captureDirEnv, "") // force-unset even if the ambient env had it
 
-	opts, sess := codexSubstrateOptions("codex")
+	opts, sess := codexSubstrateOptions("codex", &codexWorkerRoutingRunner{})
 	if sess != nil {
 		t.Fatal("capture session opened with no HARMONIK_CAPTURE_DIR (must be opt-in)")
 	}

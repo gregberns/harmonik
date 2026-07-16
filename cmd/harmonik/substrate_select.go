@@ -4,7 +4,9 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/exec"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/codexdriver"
@@ -12,6 +14,7 @@ import (
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/sessioncapture"
 	"github.com/gregberns/harmonik/internal/substrate"
+	"github.com/gregberns/harmonik/internal/workers"
 )
 
 // substrateSelectEnv is the composition-root substrate-selection axis
@@ -44,14 +47,84 @@ const (
 // default) used when a LaunchSpec supplies no argv.
 //
 // The spawn seam stays remote-capable (AIS-016): the driver takes the same
-// CommandRunner shape as the tmux path — tmux.LocalRunner here; an SSH runner
-// substitutes when M4 rebuilds the remote transport.
-func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) handler.Substrate {
+// CommandRunner shape as the tmux path. For the Codex path the injected runner
+// is a per-run worker-routing runner (M4-C3): a healthy selected worker routes
+// the codex process to that worker over SSHRunner; zero/disabled workers stay
+// byte-identical LOCAL (NFR7). See codexWorkerRoutingRunner.
+//
+// The second return value is a worker-registry observer the daemon MUST invoke
+// once at work-loop startup with the SAME live registry the tmux dispatch path
+// reads (daemon.Config.WorkerRegistryObserver). It late-binds that registry
+// into the Codex runner so selection is per-run and shares the tmux path's
+// health/live-disable state — WITHOUT the driver ever learning about workers
+// (RS-017 twin-blindness: selection lives at the composition root, not the
+// driver). It is nil for the tmux path (nothing to bind).
+func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (handler.Substrate, func(*workers.Registry)) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
-		return tmuxSub
+		return tmuxSub, nil
 	}
-	opts, _ := codexSubstrateOptions(codexBinary)
-	return codexdriver.NewCodexSubstrate(opts)
+	router := &codexWorkerRoutingRunner{}
+	opts, _ := codexSubstrateOptions(codexBinary, router)
+	return codexdriver.NewCodexSubstrate(opts), router.setRegistry
+}
+
+// codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that
+// makes the Codex driver's spawn seam worker-selectable PER-RUN. It satisfies
+// codexdriver.CommandRunner structurally and is injected as Options.Runner.
+//
+// Mechanism — late-binding hook (NOT boot-time construction): the Codex
+// substrate is built ONCE at daemon boot (selectSubstrate), whereas the tmux
+// path picks SSHRunner{Host} PER-RUN from the live worker registry
+// (workloop.go SelectWorker + SSHRunner{Host}). A construction-time runner pick
+// would freeze the Codex substrate to a single host for the daemon's whole
+// lifetime and could never react to live worker enable/disable (FR12) or the
+// boot health probe. So the routing decision is deferred to Command() time,
+// exactly like the tmux path re-selects every run. The registry pointer is
+// late-bound (setRegistry) by the daemon AFTER it builds the live registry, so
+// Codex reads the SAME registry the tmux path reads — no second registry, no
+// duplicated health check.
+//
+// RS-017: the driver stays BLIND — it only ever calls Runner.Command(); all
+// worker logic lives here at the wire/root, never inside internal/codexdriver.
+type codexWorkerRoutingRunner struct {
+	// reg is the live worker registry, late-bound by the daemon. nil until
+	// bound (and stays nil when no worker is configured) ⇒ LOCAL codex,
+	// byte-identical to the pre-M4 hardcoded LocalRunner path (NFR7).
+	reg atomic.Pointer[workers.Registry]
+}
+
+// setRegistry late-binds the live worker registry. Wired to
+// daemon.Config.WorkerRegistryObserver so the daemon hands over the SAME
+// *workers.Registry its tmux dispatch path uses. A nil registry (no worker
+// configured, NFR7) leaves the router on the LOCAL path.
+func (r *codexWorkerRoutingRunner) setRegistry(reg *workers.Registry) {
+	r.reg.Store(reg)
+}
+
+// Command selects the per-run spawn transport. When a worker is bound, enabled
+// (health-gated + live-disable via the shared registry), and reachable over
+// ssh, the codex process is spawned on that worker via SSHRunner{Host}. Any
+// other state (no registry bound, no worker, disabled/unhealthy worker,
+// non-ssh transport) falls through to LocalRunner — byte-identical local codex
+// (NFR7).
+//
+// Slot capacity accounting stays owned by the daemon's dispatch gate
+// (workloop SelectWorker/ReleaseSlot, which runs for every dispatched run);
+// this runner mirrors only the host decision via the non-reserving
+// WorkerSnapshot peek.
+func (r *codexWorkerRoutingRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	if reg := r.reg.Load(); reg != nil {
+		if w := reg.WorkerSnapshot(); w != nil && w.Enabled && w.Transport == "ssh" {
+			// Mirror the tmux path's per-run SSHRunner opts (workloop.go
+			// hk-zexsj): a dedicated, non-multiplexed connection per command
+			// avoids the ControlMaster truncation family.
+			return ltmux.SSHRunner{
+				Host: w.Host,
+				Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"},
+			}.Command(ctx, name, args...)
+		}
+	}
+	return ltmux.LocalRunner{}.Command(ctx, name, args...)
 }
 
 // codexSubstrateOptions builds the structured-driver Options and, when live
@@ -63,13 +136,13 @@ func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) handler.Subs
 //
 // AIS-INV-002 (capture never aborts the run): a capture-open failure is logged
 // once and swallowed — the driver is returned uncaptured, never an error.
-func codexSubstrateOptions(codexBinary string) (codexdriver.Options, *sessioncapture.Session) {
+func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner) (codexdriver.Options, *sessioncapture.Session) {
 	if codexBinary == "" {
 		codexBinary = "codex"
 	}
 	opts := codexdriver.Options{
 		Binary: codexBinary,
-		Runner: ltmux.LocalRunner{}, // AIS-016: same runner seam as the tmux/remote path
+		Runner: runner, // M4-C3: per-run worker-routing runner (SSHRunner remote / LocalRunner local)
 		Clock:  substrate.SystemClock{},
 	}
 	sess := openCaptureSession()

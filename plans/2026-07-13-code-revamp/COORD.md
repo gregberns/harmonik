@@ -605,3 +605,21 @@ Ran the c038 M4 build order. **Claude-first slice T1–T4 all landed on `phase1-
 **Verification (out-of-band, no daemon):** `go build ./...` green · `go vet ./internal/hook/... ./internal/daemon/...` green · `go test ./internal/hook/...` ok standalone · hook-affected daemon suite ok 201s · frozen contracts (socket wire, handler ifaces, bus shapes) unchanged. Note: `golangci-lint` not installed in this env — the depguard rule pre-exists and imports are stdlib-only, so the edge holds; run the lint on final merge to confirm.
 
 **⇒ GO on slice 2 (`policy`).** I'll scope it from M5-PROBLEM-SPACE §2/§6 (QuiesceArbiter/gate/pause decision predicates) unless you post a tighter change-spec. Slice 3 (`orchestrator`) remains last.
+
+### c044  ·  2026-07-16T18:12Z  ·  implementer→planner  ·  STATUS — M5 slice 2 scoped as A→B→C; sub-slice A (`internal/policy` pause predicates) DONE + landed
+**I scoped slice 2 from M5-PROBLEM-SPACE §2/§6 (per your c042 grant). Full design in `plans/2026-07-13-code-revamp/M5-SLICE2-POLICY-DESIGN.md`. The `policy` cut is NOT one move — it's fragmented across 5 files / 3 owners. Split into A→B→C. Sub-slice A landed on `phase1-session-restart-substrate` (tip `396c3d8e`), two independent agent-reviewer APPROVEs, trailer-stamped.**
+
+**Sub-slice A — landed:** new pure package `internal/policy` (`doc.go` purity contract + `ratelimit.go` + `autoresume.go`). Moved the two handler-pause pure predicates:
+- `policy.StepRateLimit(state, event, threshold) → PauseVerdict{Trip, NewState}` — the rate-limit hysteresis reducer (exact parity: `>=` trip, increment-before-compare, cleared-first reset; verified by reviewer against original `handleRateLimitStatus`).
+- `policy.BackoffDuration(AutoResumeParams) → time.Duration` — byte-for-byte `backoffDurationLocked`.
+- `policy.BudgetExhaustedTrips()` — unchanged always-trip.
+The two `handlerpause_*` daemon files are now thin shells: they hold the map+mutex+bus+clock-stamp+`Controller.Pause` and call the pure funcs. **Pure edge PROVEN even tighter than the rule:** `go list -deps ./internal/policy` = stdlib `time` only (rule allows $gostd+core). impl 169 / test 197 LOC. Pure truth-table + backoff-math tests migrated to `package policy_test`; all daemon effect tests (freeze-list, Schedule/flap/epoch/persist) retained. build/vet green · `go test ./internal/policy/...` ok standalone · pause-family daemon suite ok.
+
+**Honest debt-shave note:** A shaves cognit on the two `handlerpause_*` files (`handleRateLimitStatus` 12→8; `backoffDurationLocked` retired), **NOT** a grandfather giant. `startWithHooks` / `handleSocketConn` are UNCHANGED by A. A's value = it stands up the `policy` package + hard edge at near-zero blast radius. The giant-shaving comes from sub-slice B.
+
+**⇒ OPERATOR/PLANNER DECISION needed before sub-slice B (quiesce/drain classification):** B moves `ClassifyDrain`/`SleepVeto` into `policy` and is the cut that collapses drain classification toward a grandfather-giant shave — BUT the predicates need `FleetFacts`, which lives in `internal/daemon`, not `core`. Two options:
+  - **B2 (I recommend):** narrow `policy.DrainSnapshot` (~8 scalar counts); daemon projects `FleetFacts → DrainSnapshot` at the call site. Zero ripple, keeps blast radius tiny.
+  - **B1:** relocate `FleetFacts`+axis types into `internal/core`. Architecturally cleaner, larger ripple (`stategather.go`/`socket.go`).
+I'll proceed with **B2** unless you say otherwise. **STRUCK from slice 2:** `verdictexecutor_rc025a.go` (its pure logic already lives in `internal/core` — nothing left to extract). Sub-slice C (gate predicates: `ParseGateVerdict`/`MechanismDecision`) is thin and last.
+
+Verdict on next action: I'll start **B2** now unless you flag the FleetFacts call differently. Then C, then slice 3 (`orchestrator`).

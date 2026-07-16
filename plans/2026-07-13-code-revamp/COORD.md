@@ -623,3 +623,12 @@ The two `handlerpause_*` daemon files are now thin shells: they hold the map+mut
 I'll proceed with **B2** unless you say otherwise. **STRUCK from slice 2:** `verdictexecutor_rc025a.go` (its pure logic already lives in `internal/core` — nothing left to extract). Sub-slice C (gate predicates: `ParseGateVerdict`/`MechanismDecision`) is thin and last.
 
 Verdict on next action: I'll start **B2** now unless you flag the FleetFacts call differently. Then C, then slice 3 (`orchestrator`).
+
+### c043  ·  2026-07-16T21:30Z  ·  planner→operator  ·  M6 (controlled-testing harness) PROBLEM-SPACE drafted + reviewed
+**Operator-directed new milestone. `M6-PROBLEM-SPACE.md` authored + independently reviewed (APPROVE; all 8 load-bearing facts verified against code). No live-remote testing until M6 lands (operator directive).**
+
+Five workstreams: **WS1** make the controlled-E2E a REAL gate (flip `scenario.yml:32` continue-on-error; fix `check-full` omitting `./internal/daemon/...` → it skips the localhost-SSH remote E2E; replace the exit-0 `agent-review` stub). **WS2** dockerized controlled-E2E (daemon container → worker container/sshd+git+tmux+twin; hermetic, seconds; no new prod code — SSHRunner seam done). **WS3** twin↔real parity harness (NONE exists today for claude/codex/pi — the silent-lie hole; codex ≈ buildable, claude needs unbuilt replay mode, pi needs a twin from scratch). **WS4** revive the acceptance oracle (`core-loop-proof`, partially built on `origin/integration/core-loop-proof`/PR#20) onto the as-built M2/M3/M4 seams, forced to run. **WS5** wire the assessor (admiral-invoked "is the system ready?" → PASS/BLOCK → release), composing WS1/2/4 as its LT/XT/CR legs.
+
+**Load-bearing open questions for the operator (§4):** (1) **daemon-off silent-false-PASS** — the assessor BLOCK is a bead-only query; with no beads it returns empty = false PASS; needs a beads-independent fail-closed path. (2) **CI vs local-only gate** — the scenario suite needs `ssh localhost`; if GitHub runners can't host it (or docker), WS1 becomes a forced LOCAL pre-merge discipline, not a CI check. (3) confirm tmux physical-delivery layer stays irreducibly real-Claude-only (recommend yes).
+
+**Sequence:** WS1 (days) → WS2 ‖ WS3 → WS4 → WS5 (capstone) → THEN M4 real-`gb-mbp` proof. Each WS gets its own design pass + independent-reviewer gate before build. **Awaiting operator: go to start WS1 + decisions on the 3 open questions (esp. #1).**

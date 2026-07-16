@@ -13,8 +13,10 @@ import (
 
 // intEvent / intAction are throwaway instantiations so the generics themselves
 // are covered independent of any vertical (the substrate's own L0).
-type intEvent int
-type intAction int
+type (
+	intEvent  int
+	intAction int
+)
 
 // ─── Run + SyntheticSource + FakeEffector ────────────────────────────────────
 

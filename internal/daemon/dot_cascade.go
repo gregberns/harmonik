@@ -1759,7 +1759,7 @@ func dispatchDotAgenticNode(
 
 			if deps.hookStore != nil {
 				capturedTap := tap
-				capturedRunID := runID // hk-wths: copy runID so EmitWithRunID stamps the bus envelope
+				capturedRunID := runID                                                                   // hk-wths: copy runID so EmitWithRunID stamps the bus envelope
 				deps.hookStore.SetAgentReadyCallback(runID.String(), artifacts.claudeSessionID, func() { //nolint:contextcheck // relay callback runs off any request ctx (pre-RT8 idiom)
 					// hk-wths: use EmitWithRunID so the bus envelope carries run_id. Without
 					// this, the stale watcher's observe() skips the event (evt.RunID == nil),

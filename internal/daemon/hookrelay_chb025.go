@@ -37,8 +37,10 @@ import (
 // hookRelayEnvelope / hookRelayAckMsg are the daemon-local names for the pure
 // wire types. Kept as aliases so socket.go, the HookRelayHandler contract, and
 // the existing daemon test suite continue to compile unchanged.
-type hookRelayEnvelope = hook.RelayEnvelope
-type hookRelayAckMsg = hook.RelayAck
+type (
+	hookRelayEnvelope = hook.RelayEnvelope
+	hookRelayAckMsg   = hook.RelayAck
+)
 
 // hookStoreIface is the interface over hook-session state used by the work loop
 // and waitWithSocketGrace. The concrete *hookSessionStore implements it (its

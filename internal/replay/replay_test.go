@@ -83,7 +83,6 @@ func appendRaw(t *testing.T, path string, obj map[string]any) {
 	}
 }
 
-
 // violationRules returns the (Rule, CycleID) pairs of a report's violations,
 // sorted, for order-independent comparison.
 func violationKeys(vs []replay.Violation) []string {
@@ -99,21 +98,27 @@ func violationKeys(vs []replay.Violation) []string {
 func hs(agent, cid string) core.EventPayload {
 	return core.SessionKeeperHandoffStartedPayload{AgentName: agent, CycleID: cid}
 }
+
 func hw(agent, cid string) core.EventPayload {
 	return core.SessionKeeperHandoffWrittenPayload{AgentName: agent, CycleID: cid, Nonce: "n"}
 }
+
 func md(agent, cid string) core.EventPayload {
 	return core.SessionKeeperModelDonePayload{AgentName: agent, CycleID: cid, Source: "idle_marker"}
 }
+
 func cs(agent, cid string, attempt int) core.EventPayload {
 	return core.SessionKeeperClearSentPayload{AgentName: agent, CycleID: cid, Attempt: attempt}
 }
+
 func nsu(agent, cid string) core.EventPayload {
 	return core.SessionKeeperNewSessionUpPayload{AgentName: agent, CycleID: cid, PrevSessionID: "old", NewSessionID: "new"}
 }
+
 func cc(agent, cid string) core.EventPayload {
 	return core.SessionKeeperCycleCompletePayload{AgentName: agent, CycleID: cid, NewSessionID: "new"}
 }
+
 func cu(agent, cid string) core.EventPayload {
 	return core.SessionKeeperClearUnconfirmedPayload{AgentName: agent, CycleID: cid}
 }

@@ -441,7 +441,7 @@ type SessionKeeperConfigRejectedPayload struct {
 // Refs: codename:session-restart-substrate.
 type SessionKeeperHandoffWrittenPayload struct {
 	AgentName    string `json:"agent_name"`
-	CycleID      string `json:"cycle_id"`               // REQUIRED
+	CycleID      string `json:"cycle_id"` // REQUIRED
 	SessionID    string `json:"session_id,omitempty"`
 	Nonce        string `json:"nonce,omitempty"`         // confirmed nonce marker (audit)
 	Recovered    bool   `json:"recovered,omitempty"`     // true iff accepted via freshness recovery (not nonce)
@@ -459,10 +459,10 @@ type SessionKeeperHandoffWrittenPayload struct {
 // Refs: codename:session-restart-substrate.
 type SessionKeeperModelDonePayload struct {
 	AgentName string `json:"agent_name"`
-	CycleID   string `json:"cycle_id"`             // REQUIRED
+	CycleID   string `json:"cycle_id"` // REQUIRED
 	SessionID string `json:"session_id,omitempty"`
-	Source    string `json:"source"`               // REQUIRED: "idle_marker" | "transcript_turn" | "timeout"
-	Degraded  bool   `json:"degraded,omitempty"`   // true iff reached via model_done_timeout
+	Source    string `json:"source"`             // REQUIRED: "idle_marker" | "transcript_turn" | "timeout"
+	Degraded  bool   `json:"degraded,omitempty"` // true iff reached via model_done_timeout
 }
 
 // SessionKeeperClearSentPayload is the payload for session_keeper_clear_sent

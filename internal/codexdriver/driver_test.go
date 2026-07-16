@@ -674,7 +674,7 @@ func TestStaleThenLateTurnStartedNoMisAck(t *testing.T) {
 		t.Fatalf("caller B outcome = %v, want Delivered", ack.Outcome)
 	}
 	if ack.Token == "turn_1" {
-		t.Fatalf("caller B MIS-ACKED with abandoned turn_1 (AIS-INV-001 wrong-ack); "+
+		t.Fatalf("caller B MIS-ACKED with abandoned turn_1 (AIS-INV-001 wrong-ack); " +
 			"late turn/started was stamped onto a fresh submission")
 	}
 	if ack.Token != "turn_2" {

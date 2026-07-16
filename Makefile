@@ -99,6 +99,17 @@ test-e2e-real-claude-reviewloop:  ## Run real-Claude review-loop E2E smoke (requ
 test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budget; prereq: build-all)
 	go test -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/...
 
+# test-subprocess: WS2.4 non-docker subprocess daemon-boot smoke. Execs the real
+# built harmonik binary as a separate process, waits for the daemon unix socket,
+# submits one bead via the CLI, and asserts a terminal run outcome. Billing-free
+# (dispatch routed to the generic twin via the codexdriver substrate; no real
+# agent, no tmux, no network). Dedicated `subprocess` build tag isolates it from
+# the default build/test (it is NOT part of -tags=scenario). Budget: 5 minutes.
+# Cite: plans/2026-07-13-code-revamp/M6-PLAN.md §WS2.4.
+.PHONY: test-subprocess
+test-subprocess:  ## Run WS2.4 non-docker subprocess boot smoke (-tags=subprocess; needs go+br+git on PATH)
+	go test -tags=subprocess -timeout 5m -count=1 ./cmd/harmonik -run TestSubprocessDaemonBootSmoke
+
 # ---------------------------------------------------------------------------
 # codex-app-server test taxonomy (T5, hk-oe86p)
 # Four tiers: L0 unit / L1 contract / L2 integration / L3 live.

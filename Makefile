@@ -177,6 +177,27 @@ capture-claude-fixtures:  ## Capture real-Claude twin-parity fixtures (e2e_real_
 test-twin-parity-claude:  ## Routine Claude twin-parity gate (twin-vs-reference-capture; zero-token, deterministic)
 	go test -count=1 -run 'ClaudeParity' ./internal/twinparity/...
 
+# test-pi-live: the REAL-BOX-GATED pi oracle (WS3-pi / pi-A). Drives a real
+# `pi --mode json` single-turn, asserts the terminal NDJSON sequence
+# (session → agent_end), and writes testdata/twin-parity/pi/<scn>/{ndjson,
+# events.jsonl}. DEFAULT-SKIPPED without PI_LIVE=1; needs pi on PATH (or PI_BIN),
+# PI_PROVIDER + PI_MODEL, and valid pi provider auth. Anti-false-green:
+# HARMONIK_REQUIRE_PI_LIVE=1 turns a can't-run skip into a Fatalf.
+.PHONY: test-pi-live
+test-pi-live:  ## Real-pi oracle gate (PI_LIVE=1 required; pi provider auth; writes pi twin-parity fixtures)
+	PI_LIVE=1 go test -timeout 180s -count=1 -run TestPiA_ ./internal/daemon/...
+
+# test-twin-parity-pi: the ROUTINE pi twin-parity gate (WS3-pi / pi-C). Compares
+# the pi twin's NDJSON (committed testdata/twin-parity/pi/happy-path-sample/ndjson
+# — deterministic `harmonik-twin-pi --scenario happy-path` output) against the
+# reference capture on the pi-native wire spine (session → agent_end) + the
+# daemon-projected durable terminal triad, and proves a drifted twin is caught
+# with a first-divergence diff. Cheap, deterministic, zero-token — NO auth or live
+# pi needed (distinct from test-pi-live, the separate REAL-BOX re-capture).
+.PHONY: test-twin-parity-pi
+test-twin-parity-pi:  ## Routine pi twin-parity gate (twin-vs-reference-capture; zero-token, deterministic)
+	go test -count=1 -run 'PiParity' ./internal/twinparity/...
+
 # ---------------------------------------------------------------------------
 # Keeper replay test taxonomy (T10; session-restart-substrate)
 # Four tiers: L0 unit / L1 contract / L2 integration / L3 live, mirroring the
@@ -221,10 +242,19 @@ build-twin-generic:  ## Build cmd/harmonik-twin-generic → twins/generic-twin (
 .PHONY: build-twin-claude
 build-twin-claude: build-twin-generic  ## Alias → build-twin-generic (hk-w5vra.2 will replace with real Claude twin)
 
+# build-twin-pi: compile cmd/harmonik-twin-pi/ into twins/pi-twin. The pi test
+# twin emits pi's `--mode json` NDJSON lifecycle (session → message_start/end →
+# agent_end) deterministically so it can stand in for a real pi session in
+# scenario tests and the twin-parity gate (WS3-pi). HC-043 commit stamp injected.
+.PHONY: build-twin-pi
+build-twin-pi:  ## Build cmd/harmonik-twin-pi → twins/pi-twin (SH-009 / HC-043)
+	@mkdir -p $(TWINS_DIR)
+	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o $(TWINS_DIR)/pi-twin ./cmd/harmonik-twin-pi
+
 # twins: build all twin binaries into twins/.
 # Add further per-twin prerequisites here as new twin packages land.
 .PHONY: twins
-twins: build-twin-generic  ## Build all twin binaries into twins/ (SH-009 search-path default)
+twins: build-twin-generic build-twin-pi  ## Build all twin binaries into twins/ (SH-009 search-path default)
 
 # build-all: build the module + all twin binaries.
 # Suitable as a pre-scenario-test warmup target.

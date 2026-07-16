@@ -1,0 +1,36 @@
+# ⚠️ HAND-AUTHORED / TWIN-DERIVED SAMPLE — NOT a real pi capture.
+#
+# This directory pins the WS3-pi capture FORMAT so the pi twin-parity gate
+# (test-twin-parity-pi) has a valid, spine-complete corpus BEFORE the first real
+# PI_LIVE=1 capture lands. The `ndjson` file below is the DETERMINISTIC output of
+# `harmonik-twin-pi --scenario happy-path` (regenerate with:
+#   go run ./cmd/harmonik-twin-pi --scenario happy-path > ndjson
+# ); `events.jsonl` is hand-authored to mirror the daemon-projected durable
+# terminal triad the pi path emits (identical in shape to the Claude sample —
+# the durable log is daemon-projected, not harness-specific).
+#
+# Real reference captures are produced on an auth'd, pi-provider box by
+# `make test-pi-live` (PI_LIVE=1), which OVERWRITES ndjson + events.jsonl with a
+# live pi run and stamps this file. Until then the gate runs twin-vs-this-sample:
+# it validates format/spine/wiring and bites on drift; its strength grows when a
+# real capture replaces this one.
+#
+# Format of a capture dir (testdata/twin-parity/pi/<scn>/):
+#   ndjson       — the raw pi `--mode json` NDJSON stream, one event per line:
+#                  session → message_start → message_end → agent_end. This is the
+#                  exact dialect internal/daemon/pijsonlparser.go consumes.
+#   events.jsonl — the DURABLE event log (.harmonik/events/events.jsonl) copied
+#                  on success. Terminal triad in emit order:
+#                  outcome_emitted → bead_closed → run_completed
+#                  (internal/twinparity.TerminalKinds). NOTE: pi's NDJSON kinds
+#                  (session/message_start/agent_end) are pi-native and do NOT
+#                  appear here — the daemon projects the durable kinds from the
+#                  run lifecycle, not from pi's wire vocabulary.
+#   meta.yaml    — this file.
+
+scn: happy-path-sample
+agent: pi
+hand_authored: true                  # true → sample; a real PI_LIVE capture sets this false
+twin_derived: true                   # ndjson is harmonik-twin-pi --scenario happy-path output
+capture_date: "PLACEHOLDER-REAL-BOX" # real capture stamps the UTC capture date
+commit_sha: "PLACEHOLDER-REAL-BOX"   # real capture stamps the harmonik commit sha

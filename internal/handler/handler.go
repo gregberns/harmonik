@@ -336,13 +336,30 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		progressStream = spec.StdoutWrapper(progressStream)
 	}
 
+	// WS3-Claude-A daemon opt-in: when HARMONIK_WIRE_CAPTURE_DIR is set (capture
+	// harness only), tee the raw NDJSON wire to <dir>/<scn>/wire.ndjson. Unset →
+	// nil → byte-identical no-op.
+	wireTap, wtErr := openWireTap()
+	if wtErr != nil {
+		return nil, nil, wtErr
+	}
+	var wireWriter io.Writer // nil interface when wireTap is nil (must NOT wrap a nil *os.File)
+	if wireTap != nil {
+		wireWriter = wireTap
+	}
+
 	watcher := handlercontract.SpawnWatcher(ctx, handlercontract.SpawnWatcherConfig{
 		SessionID:      sessionID,
 		ProgressStream: progressStream,
 		Publisher:      h.publisher,
 		DeadLetter:     h.deadLetter,
 		Machine:        sess.Machine(),
+		WireTap:        wireWriter,
 	})
+
+	if wireTap != nil {
+		go func() { <-watcher.Done(); _ = wireTap.Close() }()
+	}
 
 	return sess, watcher, nil
 }
@@ -398,13 +415,29 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 		progressStream = spec.StdoutWrapper(progressStream)
 	}
 
+	// WS3-Claude-A daemon opt-in (substrate path): same wire-capture wiring as
+	// the exec path — only active when HARMONIK_WIRE_CAPTURE_DIR is set.
+	wireTap, wtErr := openWireTap()
+	if wtErr != nil {
+		return nil, nil, wtErr
+	}
+	var wireWriter io.Writer // nil interface when wireTap is nil
+	if wireTap != nil {
+		wireWriter = wireTap
+	}
+
 	watcher := handlercontract.SpawnWatcher(ctx, handlercontract.SpawnWatcherConfig{
 		SessionID:      sessionID,
 		ProgressStream: progressStream,
 		Publisher:      h.publisher,
 		DeadLetter:     h.deadLetter,
 		Machine:        adapted.Machine(),
+		WireTap:        wireWriter,
 	})
+
+	if wireTap != nil {
+		go func() { <-watcher.Done(); _ = wireTap.Close() }()
+	}
 
 	return adapted, watcher, nil
 }

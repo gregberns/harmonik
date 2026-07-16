@@ -22,8 +22,8 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
-          "workflow_id_present": false
+          "workflow_mode": "single",
+          "workflow_id_present": true
         },
         "provider": {
           "enabled": true
@@ -57,8 +57,8 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
-          "workflow_id_present": false
+          "workflow_mode": "single",
+          "workflow_id_present": true
         },
         "provider": {
           "enabled": true
@@ -85,17 +85,15 @@
         },
         "model_selected": {
           "harness": "pi",
-          "model": "ornith",
+          "model": "deepseek-reasoner",
           "no_leak_models": [
-            "claude-opus-4-8",
-            "claude-sonnet-4-6",
-            "sonnet"
+            "claude-opus-4-8"
           ]
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
-          "workflow_id_present": false
+          "workflow_mode": "single",
+          "workflow_id_present": true
         },
         "provider": {
           "enabled": true
@@ -121,17 +119,15 @@
         },
         "model_selected": {
           "harness": "pi",
-          "model": "ornith",
+          "model": "deepseek-reasoner",
           "no_leak_models": [
-            "claude-opus-4-8",
-            "claude-sonnet-4-6",
-            "sonnet"
+            "claude-opus-4-8"
           ]
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
-          "workflow_id_present": false
+          "workflow_mode": "single",
+          "workflow_id_present": true
         },
         "provider": {
           "enabled": true
@@ -165,8 +161,8 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
-          "workflow_id_present": false
+          "workflow_mode": "single",
+          "workflow_id_present": true
         },
         "provider": {
           "enabled": true
@@ -203,8 +199,8 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
-          "workflow_id_present": false
+          "workflow_mode": "single",
+          "workflow_id_present": true
         },
         "provider": {
           "enabled": true

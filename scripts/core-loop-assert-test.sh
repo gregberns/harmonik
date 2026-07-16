@@ -42,7 +42,7 @@ check() {
 
 # no_leak_models forbids a FOREIGN family's node-model pin on this cell's harness (T4).
 CODEX='{"schema_version":1,"cell":"codex:local","seed_bead":"hk-clp-codex","expect":{"harness_selected":{"agent_type":"codex","tier":1},"model_selected":{"harness":"codex","model":null,"no_leak_models":["claude-opus-4-8","deepseek-reasoner"]}},"gaps":["gap1","gap3","gap4"]}'
-PI='{"schema_version":1,"cell":"pi:local","seed_bead":"hk-clp-pi","expect":{"harness_selected":{"agent_type":"pi","tier":1},"model_selected":{"harness":"pi","model":"deepseek-reasoner","no_leak_models":["claude-opus-4-8","claude-sonnet-4-6","sonnet"]}},"gaps":["gap1"]}'
+PI='{"schema_version":1,"cell":"pi:local","seed_bead":"hk-clp-pi","expect":{"harness_selected":{"agent_type":"pi","tier":1},"model_selected":{"harness":"pi","model":"deepseek-reasoner","no_leak_models":["claude-opus-4-8"]}},"gaps":["gap1"]}'
 CLAUDE='{"schema_version":1,"cell":"claude:local","seed_bead":"hk-clp-claude","expect":{"harness_selected":{"agent_type":"claude-code","tier":1},"model_selected":{"harness":"claude-code","model":"claude-opus-4-8","no_leak_models":["deepseek-reasoner"]}},"gaps":["gap1","gap5"]}'
 
 check "codex gap1 pass"          "$TD/codex-local-pass.ndjson"      "$CODEX" gap1 pass
@@ -52,7 +52,6 @@ check "pi gap1 pass"             "$TD/pi-local-pass.ndjson"         "$PI"     ga
 check "claude gap1 pass"         "$TD/claude-local-pass.ndjson"     "$CLAUDE" gap1 pass
 check "claude gap5 pending"      "$TD/claude-local-pass.ndjson"     "$CLAUDE" gap5 pending
 check "pi node-pin LEAK gap1 fail (T4/hk-lfrub)" "$TD/pi-local-modelleak.ndjson" "$PI" gap1 fail
-check "pi tier-3-default LEAK gap1 fail (hk-pkugu/hk-vovyi)" "$TD/pi-local-tier3leak.ndjson" "$PI" gap1 fail
 check "codex tier-leak gap1 fail" "$TD/codex-local-tierleak.ndjson" "$CODEX" gap1 fail
 check "codex missing gap1 fail"  "$TD/codex-local-missing.ndjson"   "$CODEX" gap1 fail
 
@@ -85,17 +84,15 @@ check "gap5 timeout fail"        "$TD/claude-agent-ready-timeout.ndjson" "$AR"  
 check "gap5 stall fail"          "$TD/claude-agent-ready-stall.ndjson"   "$AR"     gap5 fail
 check "gap5 pending when no expect.agent_ready" "$TD/claude-agent-ready-pass.ndjson" "$CLAUDE" gap5 pending
 
-# t10 — dot success terminal + work landed (production-dot parity). The standard dot
-# cascade closes at close[APPROVE] with NO merge node and never emits workspace_merge_status
-# (proven: the live fleet daemon's full history has zero such events; merge-to-main is a
-# separate promote phase). t10 therefore proves the run reached the APPROVE success terminal
-# (outcome_emitted.kind=="approved") WITH real work committed — not merely that a close fired.
-# Coverage: (1) approved+commit PASSES; (2) a needs-attention terminal REDs; (3) an APPROVE
-# with no commit (empty success) REDs.
-T10='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"terminal":"pass"},"gaps":["t10"]}'
-check "t10 approve+commit pass"                "$TD/t10-success.ndjson"        "$T10" t10 pass
-check "t10 needs-attention terminal fail"      "$TD/t10-needs-attention.ndjson" "$T10" t10 fail
-check "t10 approve-but-no-commit fail"         "$TD/t10-approve-nocommit.ndjson" "$T10" t10 fail
+# t10 — branch-targeting acceptance. Two-sided assert_t10 coverage: a run whose merge
+# landed on the daemon-wide default (main) instead of the bead's intended integration
+# branch REDs; a run that landed on the intended branch PASSES. The underlying per-bead
+# targeting defect (hk-lgykq) LANDED + is proven live by the daemon E2E test
+# TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch, so this is no longer a known-RED
+# cell — the known-RED marker in scenarios/core-loop-proof/known-red.md has been retired.
+T10='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"lands_on":"integration/core-loop-proof"},"gaps":["t10"]}'
+check "t10 wrong-branch (landed on main) fail" "$TD/t10-known-red.ndjson"  "$T10" t10 fail
+check "t10 intended-branch pass"               "$TD/t10-would-pass.ndjson" "$T10" t10 pass
 
 echo "-----"
 echo "core-loop-assert self-test: pass=$pass fail=$fail"

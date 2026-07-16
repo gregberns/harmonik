@@ -235,6 +235,10 @@ cmd_up() {
     # tmux session. NO `harmonik supervise` => NO auto-revive, so a plain
     # `down`/pkill stays down for a clean rebuild. API keys are stripped so the
     # run bills the subscription pool (codename:credfence), matching smoke-scratch.
+    # -c "$scratch": the daemon MUST run with CWD == its ProjectDir. Guards that
+    # read config via os.Getwd() (e.g. the codex stale-WAL guard) assume this
+    # invariant; without -c the daemon inherits the CALLER's cwd (the driver
+    # checkout) and reads the wrong .harmonik/config.yaml.
     # shellcheck disable=SC2016
     tmux new-session -d -s "$sess" -c "$scratch" \
         "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \

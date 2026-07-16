@@ -666,3 +666,29 @@ Landed commits (interleaved with the concurrent planner M6 COORD commits on this
 - **Gate scales with change risk:** trivial/low-risk (docs-only→main) skip the heavy tier; large/critical-path changes MUST run the rigorous assessor gate. Risk-tiering rule defined in WS1.
 
 **Operator meta-note (acted on):** don't fire session-handoffs mid-flow — reach a clean breakpoint first (saved as a standing preference; likely wants a keeper-behavior change too). **Awaiting operator: explicit go.**
+
+### c049  ·  2026-07-16  ·  planner→operator  ·  M6 DETAILED PLAN authored + independently reviewed (STILL HOLDING for go)
+**Operator flagged that M6 had only a problem-space — no outcome-tasks, no plan-level review. Closed that gap. `plans/2026-07-13-code-revamp/M6-PLAN.md` authored (build-ready outcome tasks per WS, acceptance criteria, dependency graph, CI-vs-local map, risk-tiering rule, all open design decisions surfaced) and INDEPENDENTLY REVIEWED — verdict APPROVE-WITH-CHANGES; 2 must-fix + 6 should-fix applied. Still NOT starting — holding for explicit go.**
+
+Method: 3 grounded planning sub-agents (WS1+WS2 / WS3 / WS4+WS5), each verifying the problem-space's file:line claims against the live repo, then synthesis + an adversarial independent reviewer.
+
+**Corrections to the problem-space (verified):** (1) `make agent-review` is NO LONGER an exit-0 stub — the reviewer skill is installed + works; the real gap is nothing *forces* it (WS1 reframes to "wire the working gate"). (2) `continue-on-error` is at `scenario.yml:31` not `:32`. (3) The credential problem is HALF-solved — credfence (`scratch-daemon.sh:237-240`) resolves the no-API-key/subscription half (D2); mounting `~/.claude` auth into an isolated env is still WS4-0/WS2 work.
+
+**New structural finding:** WS3 needs a shared foundation task **WS3-F1** (normalized-event canonicalizer + stream-equivalence library) that gates all three parity slices — not in the problem-space.
+
+**Load-bearing caveat surfaced:** the localhost-SSH remote E2E `t.Skipf`s to GREEN when `ssh localhost` is unavailable — a false gate. WS1.1 (CI required check) is scoped to `go test -tags=scenario ./test/scenario/...` ONLY (excludes the ssh-dependent `./internal/daemon/...` tests) so the gate can't pass by skipping; WS1.3 adds a require-flag for the forced-local tier.
+
+**Open for the operator (M6-PLAN §4):** (1) explicit go on the first wave (WS1.2/1.3 ‖ WS3-F1→Claude-A/B ‖ WS4-1 ‖ WS5-1); (2) WS1.1 branch-protection = repo-admin/operator-only; (3) WS1.4 enforce-vs-descope call; (4) WS4-0 run-env (docker default recommended, now decidable since credfence resolves the credential half).
+
+**COORD numbering:** planner now consumed through **c049**; captain continues from **c050** (HANDOFF-captain updated).
+
+### c050  ·  2026-07-16  ·  captain→operator  ·  M5 slice 3A (orchestrator queue-selection) LANDED + APPROVED
+**M5 slice 3 STARTED. Sub-slice 3A COMPLETE: extracted pure queue-selection into new `internal/orchestrator` package (`$gostd + internal/core` only). Commit `9b3eb87f`, independent APPROVE trailer-stamped.**
+
+- **What moved:** `orchestrator.SelectNextQueue(FleetSnapshot) → (Selection, bool)` — pure candidate-filter + lexicographic sort + round-robin cursor + first-eligible pick. Daemon `snapshotFleet` projects under the existing `LockForMutation` (mirrors slice-2 `drainSnapshot`); `selectNextQueue` is now a 26-line shell (was 109). Enum queue fields projected as string/bool so orchestrator never imports `internal/queue`.
+- **Depguard:** `.golangci.yml` orchestrator rule un-commented + trimmed to exactly `$gostd + internal/core` (NOT the broader commented allow-list; NOT the `core/eventbus/memory` the handoff brief stated — no `internal/memory` pkg exists). Boundary verified by `go list`.
+- **Method:** design pass (Plan) → adversarial seam review (5 mandated fixes) → worktree implementer → cherry-pick `-x` → re-verify green → independent agent-reviewer APPROVE → trailer amend. Design+addendum: `M5-SLICE3-ORCHESTRATOR-DESIGN.md`.
+- **Green:** `go build ./...`, `go test ./internal/orchestrator/` (7 cases), selector regression set in `./internal/daemon/` (incl. all-remote local-cap-asymmetry integration guard), `go vet` — all pass. Pre-existing SSH/tmux/sandbox E2E failures unrelated (fail identically on pristine tree).
+- **NEXT:** 3B (eager-fill + pre-screen decisions), then 3C (group-advance micro-predicates — downgraded from a monolithic planner per seam review; the classification interleaves with `queue.AdvanceGroup` mutation, so only micro-predicates extract cleanly).
+
+**⚑ SURFACED TO OPERATOR — M5-closure scope (locked-scope reality check, NOT a unilateral reversal):** both the design pass AND the independent seam review verified against source that the two "giant retirements" in the locked M5 scope (c042) — `startWithHooks` (daemon.go, boot/pidfile/config wiring) and `handleSocketConn` (socket.go, protocol dispatch table) — contain NO work-loop/queue-selection brain. An orchestrator extraction structurally CANNOT shrink them; their shave needs separate boot-config / socket-router subsystems (future slices). **Recommendation: redefine M5 = the 3 orchestrator extractions only (hook✓/policy✓/orchestrator in-progress); track the two giant retirements as a named follow-up.** Awaiting operator adjudication on the M5-closure bar. Does NOT block 3B/3C — extraction proceeds regardless.

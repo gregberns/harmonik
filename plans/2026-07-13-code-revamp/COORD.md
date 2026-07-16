@@ -550,3 +550,22 @@ Ran the c038 M4 build order. **Claude-first slice T1–T4 all landed on `phase1-
   `HARMONIK_T4_WORKER=gb-mbp HARMONIK_T4_WORKER_REPO=~/harmonik-worker/repo TMPDIR=/tmp/h go test -tags scenario -run TestScenario_RemoteSubstrate_ClaudeSlice_RemoteWorker_E2E ./internal/daemon/ -v`
 
 **NOW: proceeding to Slice 2 (T5 Codex runner-selection + T6 Pi harness, parallel) + Slice 3 (T7 F4 push relocation), then T8 conformance gate.** T5's mechanism choice (per-run substrate vs runner-late-binding) is the c038-delegated implementer design call; not re-surfacing.
+
+### c041  ·  2026-07-16T18:40Z  ·  implementer→planner  ·  M4 (remote-substrate) CODE-COMPLETE — T1–T8 landed, all reviewed
+**All eight M4 tasks landed on `phase1-session-restart-substrate`, each independently agent-reviewer APPROVE + trailer-stamped. Full `go build ./...` + `go vet ./...` green.** Commit range: `d3ae0d21`(pre-M4 tip) → `079b355b`.
+- **T1 (M4-C1)** PROVEN, no code change — M2/M3 rebuild broke nothing on the remote Claude path; `TestScenario_RemoteSubstrate_Localhost_E2E` green.
+- **T2 (M4-C2)** `2cd2f3c0` — ack-on-remote conformance tests.
+- **T3 (M4-C6)** `2baf21e8` — STEP-0c honest-probe pinned under both runners.
+- **T4 (M4-C8)** `4b893761` — real-Claude-spawn remote e2e scenario, ARMED-ONLY (skips unless `HARMONIK_T4_WORKER` set); reviewer-confirmed faithful. Runbook `docs/remote-substrate/WORKER-SETUP-macos.md` Part 4b.
+- **T5 (M4-C3)** `b5bdc176` — Codex worker-selectable runner via late-binding hook + `WorkerRegistryObserver`; RS-017 driver-blindness structurally guarded; no data-race (atomic.Pointer, Store-before-dispatch).
+- **T6 (M4-C4)** `82593881` — Pi process routed onto the SSHRunner (handler-local `CommandRunner`); provider config untouched. **Follow-up `hk-u6qu6` (P1):** remote-Pi needs `models.json`/`.harmonik/pi-agent` materialized ON the worker before live remote Pi works (T6 routes the process; staging is a separate axis).
+- **T7 (M4-C5)** `be00d40f` — F4: `git push` relocated OUTSIDE the `mergeq` exclusive section (A/B/C/D phase split, CAS-rollback re-enter-on-conflict). Reviewer independently verified NO data-loss path; RSM-019 taxonomy byte-identical; `-race` clean. Spec `run-state-machine.md` RSM-016/017/019 updated.
+- **T8 (M4-C7)** `079b355b` — NFR7 + guardrail conformance gate (byte-identical-local ×3 harnesses, seam-survival floors, billing fail-closed ×3). Reviewer-confirmed non-vacuous, no Codex uncaught-leak.
+
+**⚠ OPERATOR — two things need you:**
+1. **Real-box v1 proof (SLICE 1 DONE gate):** run T4 against `gb-mbp` per WORKER-SETUP-macos.md Part 4b. Not runnable from the build box (host unresolvable here). This is the final step to declare the operator's Claude-v1 goal DONE.
+2. **integration→main** is a human PR step (per lifecycle rules) when you want this phase branch promoted.
+
+**Also closed this session:** `hk-vwgbt` (capture wired), `hk-9rrzi` (turn/started mis-ack fenced) from c037. Filed: `hk-qvnz0` (P3 capture Close/per-session corpus), `hk-u6qu6` (P1 remote-Pi models.json).
+
+**Next (planner-sequenced):** M5 (daemon-decompose) — problem-space drafted; hook/policy can start now, `agentrunner` cut waits since M4 touched those files. Awaiting planner go / operator direction.

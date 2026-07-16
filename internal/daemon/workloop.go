@@ -61,6 +61,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
+	"github.com/gregberns/harmonik/internal/orchestrator"
 	"github.com/gregberns/harmonik/internal/queue"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/runexec"
@@ -1427,113 +1428,98 @@ func effectiveQueueWorkers(q *queue.Queue, globalCap int) int {
 // tick but — like a paused-by-failure queue — MUST NOT block sibling queues.
 // nil disables the gate (pre-hk-xg6rw behaviour).
 func selectNextQueue(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) (queueSelection, bool) {
-	names := lq.LockedAllQueueNames()
-	if len(names) == 0 {
-		return queueSelection{}, false
+	// M5 slice 3A: the pure NQ-B1 decision moved to internal/orchestrator. This
+	// shell projects the live QueueStore/RunRegistry into a narrow FleetSnapshot
+	// under the (already-held) write lock, calls the pure selector, and maps the
+	// Selection back onto queueSelection so callers are unchanged. The Phase-3
+	// claim-time re-validation downstream (see the dispatch stamp block) remains
+	// the load-bearing race guardrail.
+	sel, ok := orchestrator.SelectNextQueue(snapshotFleet(lq, reg, globalCap, rrCursor, blockedQueues))
+	if !ok {
+		return queueSelection{anyPausedOrEmpty: sel.SawNonContributing}, false
 	}
+	return queueSelection{
+		queueName:         sel.QueueName,
+		queueID:           sel.QueueID,
+		groupIndex:        sel.GroupIndex,
+		itemIdx:           sel.Item.ItemIdx,
+		itemBeadID:        sel.Item.BeadID,
+		itemContext:       sel.Item.Context,
+		itemWFMode:        sel.Item.WorkflowMode,
+		itemWFRef:         sel.Item.WorkflowRef,
+		itemTemplateMap:   sel.Item.TemplateParams,
+		anyEligible:       true,
+		queueLocalOnly:    sel.LocalOnly,
+		queueWorkerTarget: sel.WorkerTarget,
+	}, true
+}
 
-	// Build the candidate set: queues with eligible work under their own cap.
-	candidates := make([]string, 0, len(names))
-	sawNonContributing := false
+// snapshotFleet projects the live QueueStore/RunRegistry into the narrow
+// orchestrator.FleetSnapshot the pure selector reads (M5 slice 3A). It is the
+// single queue.* → snapshot mapping point, built while the caller holds the
+// QueueStore write lock (mirrors drainSnapshot in draindetect.go). WorkerCap is
+// precomputed here via effectiveQueueWorkers so orchestrator never imports
+// internal/queue; enum-typed status/kind fields are projected as booleans.
+func snapshotFleet(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) orchestrator.FleetSnapshot {
+	names := lq.LockedAllQueueNames()
+	queues := make([]orchestrator.QueueSnapshot, 0, len(names))
 	for _, name := range names {
 		q := lq.LockedQueueByName(name)
 		if q == nil {
 			continue
 		}
-		if q.Status != queue.QueueStatusActive {
-			// Paused-by-failure / paused-by-drain / completed queues contribute
-			// nothing but MUST NOT block sibling queues.
-			sawNonContributing = true
-			continue
-		}
-		if blockedQueues[name] {
-			// hk-xg6rw: captain-curated queue gated by a stale dashboard.json.
-			// In-flight runs on this queue are untouched (they are already
-			// dispatched, tracked in runRegistry, never revisited here) — only
-			// NEW item dispatch is withheld. Sibling queues are unaffected.
-			sawNonContributing = true
-			continue
-		}
-		// Per-queue cap: skip when this queue is already at its LOCAL Workers
-		// ceiling. Only local (non-remote) runs count here, mirroring the
-		// level-1 localInFlight asymmetry (hk-4tjt6): an all-remote queue
-		// admits up to its worker slot capacity rather than being capped at
-		// max_concurrent. Remote runs are bounded by the worker registry's
-		// slot accounting, not by this gate.
-		if reg.LenForQueueLocal(name) >= effectiveQueueWorkers(q, globalCap) {
-			sawNonContributing = true
-			continue
-		}
-		// Must have an active group with at least one eligible item.
-		hasEligible := false
-		for gi := range q.Groups {
-			if q.Groups[gi].Status != queue.GroupStatusActive {
-				continue
-			}
-			if len(queue.EligibleItems(&q.Groups[gi])) > 0 {
-				hasEligible = true
-			}
-			break
-		}
-		if !hasEligible {
-			sawNonContributing = true
-			continue
-		}
-		candidates = append(candidates, name)
+		queues = append(queues, orchestrator.QueueSnapshot{
+			Name:          name,
+			QueueID:       q.QueueID,
+			Active:        q.Status == queue.QueueStatusActive,
+			Blocked:       blockedQueues[name],
+			LocalInFlight: reg.LenForQueueLocal(name),
+			WorkerCap:     effectiveQueueWorkers(q, globalCap),
+			LocalOnly:     q.LocalOnly,
+			WorkerTarget:  q.WorkerTarget,
+			ActiveGroup:   projectActiveGroup(q),
+		})
 	}
+	return orchestrator.FleetSnapshot{Queues: queues, RRCursor: rrCursor}
+}
 
-	if len(candidates) == 0 {
-		return queueSelection{}, false
-	}
-	sort.Strings(candidates)
-
-	// Round-robin: start at the daemon-state cursor offset (mod candidate count)
-	// and pick the first candidate. The caller advances rrCursor every tick so
-	// the start offset rotates, guaranteeing no queue starves.
-	start := 0
-	if n := len(candidates); n > 0 {
-		start = ((rrCursor % n) + n) % n // guard against negative cursor
-	}
-	chosen := candidates[start]
-
-	q := lq.LockedQueueByName(chosen)
-	if q == nil { // racing clear — caller retries next tick
-		_ = sawNonContributing
-		return queueSelection{}, false
-	}
-
-	// Locate the chosen queue's active group and its first eligible item.
+// projectActiveGroup projects q's FIRST active group into a GroupSnapshot (nil
+// when none), stamping each eligible item's ABSOLUTE index into Group.Items so
+// the dispatch stamp lands on the right item (addendum fix #1). The absolute
+// index is resolved exactly as the legacy selectNextQueue did: the first
+// Items entry matching the eligible item's BeadID with ItemStatusPending.
+func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 	for gi := range q.Groups {
 		if q.Groups[gi].Status != queue.GroupStatusActive {
 			continue
 		}
-		eligible := queue.EligibleItems(&q.Groups[gi])
-		if len(eligible) == 0 {
-			break
-		}
-		head := eligible[0]
-		for j := range q.Groups[gi].Items {
-			it := &q.Groups[gi].Items[j]
-			if it.BeadID == head.BeadID && it.Status == queue.ItemStatusPending {
-				return queueSelection{
-					queueName:         chosen,
-					queueID:           q.QueueID,
-					groupIndex:        q.Groups[gi].GroupIndex,
-					itemIdx:           j,
-					itemBeadID:        it.BeadID,
-					itemContext:       it.Context,
-					itemWFMode:        it.WorkflowMode,
-					itemWFRef:         it.WorkflowRef,
-					itemTemplateMap:   it.TemplateParams,
-					anyEligible:       true,
-					queueLocalOnly:    q.LocalOnly,
-					queueWorkerTarget: q.WorkerTarget,
-				}, true
+		g := &q.Groups[gi]
+		eligible := queue.EligibleItems(g)
+		items := make([]orchestrator.ItemSnapshot, 0, len(eligible))
+		for _, ep := range eligible {
+			idx := -1
+			for j := range g.Items {
+				if g.Items[j].BeadID == ep.BeadID && g.Items[j].Status == queue.ItemStatusPending {
+					idx = j
+					break
+				}
 			}
+			if idx < 0 {
+				continue
+			}
+			it := &g.Items[idx]
+			items = append(items, orchestrator.ItemSnapshot{
+				ItemIdx:        idx,
+				BeadID:         it.BeadID,
+				Context:        it.Context,
+				WorkflowMode:   it.WorkflowMode,
+				WorkflowRef:    it.WorkflowRef,
+				TemplateParams: it.TemplateParams,
+			})
 		}
-		break
+		return &orchestrator.GroupSnapshot{GroupIndex: g.GroupIndex, Eligible: items}
 	}
-	return queueSelection{anyPausedOrEmpty: sawNonContributing}, false
+	return nil
 }
 
 func runWorkLoop(ctx context.Context, deps workLoopDeps) error {

@@ -576,18 +576,17 @@ linters:
         #     - "github.com/gregberns/harmonik/internal/eventbus"
         #     - "github.com/gregberns/harmonik/internal/memory"
   
-        # Orchestrator: everything listed above except daemon/cmd.
-        # orchestrator:
-        #   files: ["**/internal/orchestrator/**"]
-        #   allow:
-        #     - "$gostd"
-        #     - "github.com/gregberns/harmonik/internal/core"
-        #     - "github.com/gregberns/harmonik/internal/eventbus"
-        #     - "github.com/gregberns/harmonik/internal/policy"
-        #     - "github.com/gregberns/harmonik/internal/handler/contract"
-        #     - "github.com/gregberns/harmonik/internal/workspace"
-        #     - "github.com/gregberns/harmonik/internal/hook"
-        #     - "github.com/gregberns/harmonik/internal/adapter/br"
+        # Orchestrator: the pure work-loop-brain leaf (M5 slice 3, codename
+        # orchestrator). Value-in/value-out decision predicates over narrow
+        # snapshot structs projected by the daemon under the QueueStore lock;
+        # trimmed to $gostd + core exactly like internal/policy. internal/queue
+        # is deliberately NOT allowed — enum fields are projected as
+        # booleans/strings at the daemon boundary.
+        orchestrator:
+          files: ["**/internal/orchestrator/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
   
         # Composition root: may import every harmonik subsystem.
         # Also subject to llm-sdk-ban (see above).

@@ -166,6 +166,17 @@ capture-claude-fixtures:  ## Capture real-Claude twin-parity fixtures (e2e_real_
 	  go test -tags e2e_real_claude -timeout 300s -count=1 -v \
 	    -run TestCaptureClaudeFixtures ./internal/daemon/...
 
+# test-twin-parity-claude: the ROUTINE Claude twin-parity gate (WS3-Claude-D).
+# Compares the canonical twin's --replay-path output (committed wire.ndjson)
+# against the committed Claude reference capture using only F1's equivalence
+# library: ordered kind-sequence + terminal outcome equivalent, hook/causal
+# timing within tolerance, and a drifted twin caught with a first-divergence
+# diff. Cheap, deterministic, zero-token — NO auth, tmux, or live model needed
+# (distinct from capture-claude-fixtures, the separate PERIODIC live re-capture).
+.PHONY: test-twin-parity-claude
+test-twin-parity-claude:  ## Routine Claude twin-parity gate (twin-vs-reference-capture; zero-token, deterministic)
+	go test -count=1 -run 'ClaudeParity' ./internal/twinparity/...
+
 # ---------------------------------------------------------------------------
 # Keeper replay test taxonomy (T10; session-restart-substrate)
 # Four tiers: L0 unit / L1 contract / L2 integration / L3 live, mirroring the

@@ -757,3 +757,20 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 - **WS3 Claude-A/B** — F1 (their dependency) is now landed. Claude-A's real-Claude fixture CAPTURE needs auth/tmux not runnable from this box (like the M4 real-`gb-mbp` proof) — real-box-gated. The Claude-A harness/wire-tap-seam/Makefile + Claude-B replay driver are buildable now; will dispatch the buildable parts next.
 
 **⚑ OPERATOR ITEM (pending WS4-1 result):** whether to push the reconciled `integration/core-loop-proof` to origin + advance PR #20 (currently DRAFT, zero recorded approvals) — surfaced once the local reconcile verifies green. Not taken autonomously (outward-facing / shared-branch).
+
+### c055  ·  2026-07-16  ·  captain→operator  ·  M6 first wave: WS3-Claude-A/B LANDED; WS4-1 reconcile DONE-in-worktree (3 decisions pending); pre-existing fmt/lint drift surfaced
+**Supersedes c054's "Claude-A/B pending" status. First-wave build progress:**
+
+**LANDED + independently APPROVED + trailer-stamped (phase tip `4cf8ffe2`):**
+- WS1.2/1.3 `4caa9822`, WS5-1 `331d92b7`, WS3-F1 `d01e27f8` (per c054).
+- **WS3-Claude-A** `44ef9d67` — wire-tap `WireTap io.Writer` seam (nil-path byte-identical, production untouched) + `capture-claude-fixtures` harness (credfenced, D2) + hand-authored sample capture. Real-Claude reference captures are real-box-gated (auth/tmux — like the M4 proof). Known follow-up (loudly documented, not silent): daemon doesn't yet set `WireTap` from `HARMONIK_WIRE_CAPTURE_DIR`, so real raw `wire.ndjson` needs a small daemon opt-in wiring.
+- **WS3-Claude-B** `4cf8ffe2` — twin `--replay-path` replays a captured `wire.ndjson` VERBATIM (no restamp → round-trip identity) + `--preserve-timing` + parity test; malformed/non-handshake → exit 1; existing twin modes unchanged. Independent review verified the "light proof" is the CORRECT scope (not under-testing): `run_completed`/`bead_closed` are daemon-synthesized (daemon.go/runbridge.go), never carried on the twin wire, so a wire replay provably cannot drive the full durable triad — a full-daemon round-trip is architecturally impossible here.
+
+**WS4-1 — reconcile COMPLETE in worktree, NOT landed on phase branch:**
+- Merge commit `629d427b` (two parents: P tip `331d92b7` + `origin/integration/core-loop-proof` tip `e03ea9e4`; T1–T10 lineage preserved, merge not rebase). 9 conflicts resolved (workloop.go/daemon.go/harness.go/ci.yml → take P as-built; scenarios/scripts → take B add/add; oracle test clean add). Audited B's quality-system commits 809d3b71/4bc47189 — scenario/scripts/testdata only, no daemon Go source to graft.
+- **Load-bearing `ca23da59` (per-bead integration-target) RE-PORTED into `runbridge.go`:** both `mergeRunBranchToMain` sites (`mergeHook` :278, `drainMergeHook` :321) now pass a resolved `mergeInto` (baseBranch with `deps.targetBranch` fallback), never bare `deps.targetBranch`. **Oracle `TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch` GREEN** (verified twice) — proves the re-port. `go build`/`go vet` clean; ScenarioGate + merge/branching suites green. The 5 `-race` daemon failures reproduce identically on pristine P (pre-existing sandbox/tmux/concurrency flakes, NOT merge-introduced).
+- **3 DECISIONS PENDING (none auto-run):** (1) land the two-parent merge onto phase (cherry-pick -x won't work — decide merge-in vs replay; independent-review first); (2) **⚑ OPERATOR** — push to origin + advance PR #20 (DRAFT, 0 approvals), NOT taken autonomously; (3) the fmt/lint drift below.
+
+**⚑ SURFACED — pre-existing M5/M6 fmt/lint drift (INDEPENDENT of WS4-1; blocks `make check-short` green):** 7 gofumpt-dirty files (dot_cascade.go, hookrelay_chb025.go, reviewloop.go, substrate_test.go, …) + 18 `--new-from-rev=origin/main` lint findings — byte-identical on the pristine phase tip, so this predates and is independent of every first-wave commit. Needs a dedicated cleanup pass (a gofumpt/lint sweep of the phase branch). Recommend slotting it before the WS1.1 CI-required flip, since that flip presumes a green tree.
+
+**Next COORD entry = c056 (verify max-in-file first).**

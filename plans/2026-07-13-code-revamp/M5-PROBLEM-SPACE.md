@@ -1,4 +1,9 @@
-# M5 — daemon god-package decompose — PROBLEM-SPACE (DRAFT)
+# M5 — daemon god-package decompose — PROBLEM-SPACE
+
+> **§5 OPEN QUESTIONS ARE RESOLVED (planner, 2026-07-16 — COORD c042).** Scope locked to the
+> honest target: 3 real cuts (`hook`→`policy`→`orchestrator`) + 2 debt retirements, NOT "≥8 packages."
+> Slice 1 = `internal/hook`, GO. See COORD c042 for the locked decisions + slice-1 change-spec.
+> Read §5 below as history, not as pending.
 
 > **STATUS: DRAFT problem-space (first kerf "problem-space" pass output).** Written
 > alongside the other code-revamp phase docs; a formal kerf bench for M5 can be created
@@ -99,9 +104,11 @@ import edge — not a folder you move whole files into.**
 
 **Implications for M5's ambition (the honest answer: the "≥8 subsystems" count is soft):**
 
-1. **`adapters` is already done.** `adapter/br` and `adapter/ntm` exist with *live* depguard
-   rules (`.golangci.yml:489/:492`), described as "core only," not "reserved for M5." Strike
-   adapters from the M5 target list — it is not decompose work.
+1. **`adapters` is not a decompose target.** _(Correction, 2026-07-16 review: the earlier "adapter/br
+   and adapter/ntm exist as extracted packages" claim was wrong on LOCATION — there is no `internal/adapter`;
+   the adapter code lives in `internal/handler/adapter_*.go` + `internal/brcli`, already OUTSIDE `internal/daemon`,
+   and the `.golangci.yml:489/:492` rules are forward-reservations, same status as `memory`.)_ Either way there
+   is no `internal/daemon` adapter code for M5 to extract — **strike adapters from the M5 target list.**
 2. **`memory` and `improvement` are greenfield, not decompose.** There is no meaningful daemon
    code implementing a memory store or an improvement loop today (the `go-subsystem-add` skill
    frames both as "Phase-2-and-beyond subsystems" *to be added*). A god-package *decompose*

@@ -75,7 +75,7 @@ channels behind the proven seam → dogfood.** Seam-independent hygiene runs in 
 | **M1 — test-theater** | delete `operatornfr`/`specaudit` self-assert mass, prune `scenario`, delete dead event-registry surface | no | reconcile into `testing-strategy-uplift` (integration) | — (seam-independent) | ready to scope |
 | **M3 — run-state-machine** | extract `beadRunOne` → `runexec` state machine; `mergeMu` → explicit merge queue; **absorbs STEP-0a resume-hang** | **yes** `codename:2026-07-14-run-state-machine` | **NEW kerf** | P1 method proven; C ratchet live; M1→M3 coverage audit | prepare problem-space now |
 | **M2 — agent-input-substrate** | structured-protocol driver behind `handler.Substrate`; tmux → observation-only; delete `pasteinject`/`tmuxsubstrate` | **yes** `codename:2026-07-14-agent-input-substrate` | **NEW kerf** | P1 method proven | prepare problem-space now |
-| **M4 — remote-substrate** | daemon (mac-mini) drives agent PROCESS on remote box (gb-mbp) via SSH `CommandRunner` behind `handler.Substrate`; **all 3 harnesses remote** (Claude/Codex/Pi), **Claude-first v1 slice**; F4 merge-`push` relocation; **carry STEP-0c guard**. Runner-threaded (Option A); worker-resident network agent = Phase-3. DEC-A dual-path cleanup **DEFERRED** (not v1). _(Decisions operator-locked 2026-07-16 — see `.kerf/works/remote-substrate/01-problem-space.md`.)_ | **yes** `codename:remote-substrate` | rewritten onto as-built M2/M3 seams | M2 (InputPort/Ack) + M3 (mergeq) — both DONE | **BUILD-READY** (status=ready 2026-07-16) |
+| **M4 — remote-substrate** | daemon (mac-mini) drives agent PROCESS on remote box (gb-mbp) via SSH `CommandRunner` behind `handler.Substrate`; **all 3 harnesses remote** (Claude/Codex/Pi), **Claude-first v1 slice**; F4 merge-`push` relocation; **carry STEP-0c guard**. Runner-threaded (Option A); worker-resident network agent = Phase-3. DEC-A dual-path cleanup **DEFERRED** (not v1). _(Decisions operator-locked 2026-07-16 — see `.kerf/works/remote-substrate/01-problem-space.md`.)_ | **yes** `codename:remote-substrate` | rewritten onto as-built M2/M3 seams | M2 (InputPort/Ack) + M3 (mergeq) — both DONE | **✅ CODE-COMPLETE** (T1–T8 landed+reviewed, tip `ac6091ca`, 2026-07-16; COORD c041). Operator gates remain: real-box T4 proof + integration→main PR. |
 | **DOGFOOD** | rebuilt core passes acceptance oracle offline → daemon back on | — | — | M2 + M3 (+ M4 for remote) | gate |
 
 **M2 ‖ M3 are near-fully parallel — one real edge.** M3-phase-1 (C1 ClockPort, C2 `mergeMu` →
@@ -116,9 +116,14 @@ Assign each to a host so nothing falls through:
    this framing (do not create a duplicate); they predate the revamp and need rebasing onto M3's
    merge-queue + the proven seam.
 
-**Hold (don't spec yet):**
-6. **M5 daemon-decompose** — the full god-package breakup. Depends on M3 landing the first slice;
-   speccing it now designs against a moving target.
+**Un-held — BUILD-READY (2026-07-16, COORD c042):**
+6. **M5 daemon-decompose** — god-package breakup. Un-hold trigger MET (M3 mergeq slice landed → as-built
+   extraction template exists; M4 landed → agentrunner files settled). **Scope locked to the HONEST target,
+   NOT "≥8 packages":** 3 real cuts (`hook`→`policy`→`orchestrator`) + 2 debt retirements (socket op-dispatch,
+   boot wiring). `adapters` struck (done); `memory`/`improvement` struck (greenfield, future feature phase);
+   `agentrunner` folds into `orchestrator` (M2+M4 own its files). Success = daemon shell shrinks + the two
+   grandfather giants (`startWithHooks`, `handleSocketConn`) retire under ceilings. **Slice 1 = `internal/hook`,
+   GO now.** Full handoff: COORD c042. Problem-space: `M5-PROBLEM-SPACE.md`.
 
 ## Kerf reconciliation checklist (before creating anything new)
 
@@ -130,4 +135,4 @@ Several existing works overlap the future phases — **reconcile, don't duplicat
   defined in P1's substrate spec.
 
 **M3 (`2026-07-14-run-state-machine`)**, **M2 (`2026-07-14-agent-input-substrate`)**, and **M5 (`daemon-decompose`)**
-are the genuinely net-new codenames (M5 held; see below).
+are the genuinely net-new codenames (M5 un-held + BUILD-READY as of 2026-07-16 — see item 6 above).

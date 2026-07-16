@@ -37,7 +37,7 @@ ratifies PLAN.md and lifts the freeze.
 
 | # | Initiative | State |
 |---|---|---|
-| 1 | **freeze-and-carve** — the carve/rebuild program (STEP-0 → M1 → M2 → M3 → M4) | **ACTIVE (planning).** Census + plan-v2 committed; independent 3-lens review folded in. Awaiting operator ratification. |
+| 1 | **freeze-and-carve** — the carve/rebuild program (P1 → Track B/C → M1 → {M2, M3} → M4 → M5) | **ACTIVE (executing).** Ratified 2026-07-13. As of 2026-07-15: P1 + Track B/C ✅, **M3 done** (closed out-of-jig), **M2 code-complete** (T5–T10; T11 parked by operator — delete once no callers), M1 mostly done (M1-5 finishing; M1-2/M1-3 operator-gated), **M4 next** (at `analyze`; planner running AR-2 + design→ready), M5 held (un-hold trigger now met). Order + T11 rationale: COORD c035. |
 
 **On ratification** the ordered work is: STEP-0 (resume-hang + noChange false-close +
 honest-probe re-land, OUT-OF-PIPELINE) → M1 delete test-theater (concurrent) → M2 agent-input

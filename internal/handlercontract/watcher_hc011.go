@@ -183,6 +183,19 @@ type SpawnWatcherConfig struct {
 	// Optional: the zero value (empty string) disables the HC-061 guard and
 	// is the default for sessions whose node type is not a sub-workflow.
 	NodeType core.NodeType
+
+	// WireTap is an optional lossless raw sink for the NDJSON progress stream.
+	// When non-nil, the read-loop reads through io.TeeReader(cfg.ProgressStream,
+	// cfg.WireTap), so every byte the watcher consumes is copied verbatim to the
+	// tap BEFORE decode — a byte-exact capture of the wire. The twin-parity
+	// WS3-Claude-A reference-capture harness feeds this tap's output to
+	// internal/twinparity.AssertStreamEquivalent.
+	//
+	// Optional: when nil the read-loop consumes cfg.ProgressStream directly and
+	// behavior is byte-identical to the pre-WireTap watcher (production untouched).
+	// This is an explicit config seam — NOT an env var — so it is testable with
+	// no global state, and it never alters read-loop timing when unset.
+	WireTap io.Writer
 }
 
 // Watcher is the daemon-side goroutine that owns (a) the NDJSON read-loop on
@@ -363,7 +376,15 @@ func (w *Watcher) runLoop(ctx context.Context, cfg SpawnWatcherConfig, bufSize i
 // Framing violations (line-too-long, partial-message, malformed JSON) are
 // classified per HC-007a/HC-007b and result in agent_failed publication.
 func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
-	scanner := bufio.NewScanner(cfg.ProgressStream)
+	// WS3-Claude-A wire-tap seam: when cfg.WireTap is set, read through a
+	// TeeReader so every consumed byte is copied verbatim to the tap BEFORE
+	// decode (lossless raw capture). When nil, read cfg.ProgressStream directly
+	// — byte-identical to the pre-tap watcher, no timing change.
+	src := cfg.ProgressStream
+	if cfg.WireTap != nil {
+		src = io.TeeReader(cfg.ProgressStream, cfg.WireTap)
+	}
+	scanner := bufio.NewScanner(src)
 	// HC-007a: enforce the 1 MiB max line-length cap at the scanner layer.
 	scanner.Buffer(make([]byte, NDJSONMaxLineLenBytes+1), NDJSONMaxLineLenBytes+1)
 

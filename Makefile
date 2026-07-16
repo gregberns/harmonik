@@ -148,6 +148,24 @@ capture-fixtures:  ## Capture new codex corpus (CODEX_LIVE=1 required; deliberat
 	@echo "  Update testdata/codex-app-server/corpus/CAPTURE-LOG.md after capture."
 	CODEX_LIVE=1 go test -timeout 120s -count=1 -v -run TestL3_ ./internal/codextest/...
 
+# capture-claude-fixtures: real-Claude twin-parity capture (WS3-Claude-A).
+# Requires an AUTH'D, tmux-capable box: claude/tmux/git/br/ntm on PATH + a
+# subscription OAuth session. On a box without those the test SKIPS cleanly.
+# Output: testdata/twin-parity/claude/<scn>/{wire.ndjson,events.jsonl,meta.yaml}
+# Credfence (codename:credfence, D2): run under `env -u ANTHROPIC_API_KEY
+# -u ANTHROPIC_AUTH_TOKEN` so the run bills the subscription pool — NEVER an API
+# key (mirrors scripts/scratch-daemon.sh:237-240). Distinct from capture-fixtures
+# (codex corpus) — do not conflate.
+.PHONY: capture-claude-fixtures
+capture-claude-fixtures:  ## Capture real-Claude twin-parity fixtures (e2e_real_claude; auth+tmux required; credfenced)
+	@echo "capture-claude-fixtures: real-Claude capture into testdata/twin-parity/claude/$${HARMONIK_CAPTURE_SCN:-happy-path}/"
+	@echo "  SKIPS cleanly without claude/tmux/br/ntm binaries + auth."
+	env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+	  HARMONIK_WIRE_CAPTURE_DIR=$(CURDIR)/testdata/twin-parity/claude \
+	  HARMONIK_CAPTURE_COMMIT_SHA=$$(git rev-parse --short HEAD) \
+	  go test -tags e2e_real_claude -timeout 300s -count=1 -v \
+	    -run TestCaptureClaudeFixtures ./internal/daemon/...
+
 # ---------------------------------------------------------------------------
 # Keeper replay test taxonomy (T10; session-restart-substrate)
 # Four tiers: L0 unit / L1 contract / L2 integration / L3 live, mirroring the

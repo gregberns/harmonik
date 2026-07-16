@@ -1,0 +1,44 @@
+# ⚠️ HAND-AUTHORED SAMPLE — NOT a real Claude capture.
+#
+# This directory pins the WS3-Claude-A capture FORMAT so that Claude-B has a
+# valid corpus to replay and the layout is fixed before the first real capture.
+# The wire.ndjson / events.jsonl below were authored by hand, not produced by a
+# live Claude session. Real reference captures (happy-path, review-loop) are
+# DEFERRED to a real-box run — they must be produced by `make
+# capture-claude-fixtures` on an auth'd, tmux-capable machine (see that target).
+#
+# Format of a capture dir (testdata/twin-parity/claude/<scn>/):
+#   wire.ndjson   — the raw tee'd NDJSON progress stream, one message per line,
+#                   handler_capabilities … agent_completed (via the watcher's
+#                   optional WireTap seam, internal/handlercontract/watcher_hc011.go).
+#   events.jsonl  — the DURABLE event log (.harmonik/events/events.jsonl) copied
+#                   on success. Contains the terminal triad in emit order:
+#                   outcome_emitted → bead_closed → run_completed
+#                   (internal/twinparity.TerminalKinds). Observability-class
+#                   events (agent_completed, hook_fired) are NOT journaled here.
+#   meta.yaml     — this file.
+
+scn: happy-path-sample
+agent: claude
+hand_authored: true                 # true → sample; real captures set this false
+capture_date: "PLACEHOLDER-REAL-BOX" # real capture stamps the UTC capture date
+commit_sha: "PLACEHOLDER-REAL-BOX"   # real capture stamps the harmonik commit sha
+
+# excludes: wire-layer equivalence carve-outs. Per
+# docs/twin-parity-audit-2026-05-14.md §5 (Real-Claude Conformance Carve-Outs),
+# two fixes CANNOT be observed by any wire-protocol capture and are therefore
+# OUT of scope for AssertStreamEquivalent over this corpus:
+excludes:
+  - fix: Fix5
+    bead: hk-yngq2
+    name: pane %NNNN stable send-keys target
+    reason: >
+      A tmux topology question (does `tmux send-keys -t %NNNN` land in the right
+      pane vs window-name targeting). No NDJSON message can observe it; needs a
+      real-tmux conformance test, not wire equivalence.
+  - fix: Fix8
+    bead: hk-rf4ux
+    name: splash dismiss (SendEnterToLastPane + 750ms splashDismissDelay)
+    reason: >
+      Requires a real tmux pane + physical Enter-key delivery to dismiss the
+      Claude splash. The wire twin has no terminal, so no wire line proves it.

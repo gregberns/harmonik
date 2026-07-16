@@ -1,0 +1,10 @@
+{"type":"handler_capabilities","protocol_version":"1","handler":"claude"}
+{"type":"launch_initiated","session_id":"33333333-3333-3333-3333-333333333333"}
+{"type":"session_log_location","session_log_path":"/tmp/sample/session.log"}
+{"type":"skills_provisioned","skills":["agent-comms","beads-cli"]}
+{"type":"agent_started","session_id":"33333333-3333-3333-3333-333333333333"}
+{"type":"agent_ready","session_id":"33333333-3333-3333-3333-333333333333","claude_session_id":"44444444-4444-4444-4444-444444444444"}
+{"type":"agent_heartbeat","session_id":"33333333-3333-3333-3333-333333333333"}
+{"type":"agent_output_chunk","session_id":"33333333-3333-3333-3333-333333333333","chunk_index":0,"bytes_emitted":128}
+{"type":"outcome_emitted","session_id":"33333333-3333-3333-3333-333333333333","outcome_status":"success","node_id":"implement"}
+{"type":"agent_completed","session_id":"33333333-3333-3333-3333-333333333333","exit_code":0}

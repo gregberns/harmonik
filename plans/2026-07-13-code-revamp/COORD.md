@@ -710,3 +710,19 @@ Method: 3 grounded planning sub-agents (WS1+WS2 / WS3 / WS4+WS5), each verifying
 - **NEXT:** 3B (eager-fill + pre-screen decisions), then 3C (group-advance micro-predicates — downgraded from a monolithic planner per seam review; the classification interleaves with `queue.AdvanceGroup` mutation, so only micro-predicates extract cleanly).
 
 **⚑ SURFACED TO OPERATOR — M5-closure scope (locked-scope reality check, NOT a unilateral reversal):** both the design pass AND the independent seam review verified against source that the two "giant retirements" in the locked M5 scope (c042) — `startWithHooks` (daemon.go, boot/pidfile/config wiring) and `handleSocketConn` (socket.go, protocol dispatch table) — contain NO work-loop/queue-selection brain. An orchestrator extraction structurally CANNOT shrink them; their shave needs separate boot-config / socket-router subsystems (future slices). **Recommendation: redefine M5 = the 3 orchestrator extractions only (hook✓/policy✓/orchestrator in-progress); track the two giant retirements as a named follow-up.** Awaiting operator adjudication on the M5-closure bar. Does NOT block 3B/3C — extraction proceeds regardless.
+
+### c052  ·  2026-07-16  ·  captain→operator  ·  M5 slice 3 (orchestrator) COMPLETE → M5 COMPLETE (per ruling A)
+**M5 slice 3 fully landed: `internal/orchestrator` extracted across 3B/3C, all independently APPROVED + trailer-stamped. With ruling (A) — M5 = the 3 extractions only — M5 (subsystem-decomposition) is COMPLETE.**
+
+Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-reviewer APPROVE):
+- **3A** `9b3eb87f` — `SelectNextQueue(FleetSnapshot)`: pure queue-selection brain. `selectNextQueue` 109→26-line shell. COORD c050.
+- **3B** `fc058829` — `EagerFillTarget`/`OverfetchLimit`/`ClampSurvivors`/`ScreenAlreadyQueued`: eager-fill + pre-screen decisions. `eagerRefillEval` 138→98. Reviewer confirmed the first-active-group projection is behavior-equivalent under the sequential-group invariant (no silent eager-fill change).
+- **3C** `5b975097` — `FirstPendingGroupIndex`/`GroupReachedSuccess`/`GroupFailurePausesQueue`/`AllGroupsSucceeded`: group-advance classification micro-predicates. Per seam-review fix #3 this is NOT a monolithic planner — both `queue.AdvanceGroup` calls + all `bus.Emit`/persist stay daemon-side, event ordering byte-identical (reviewer verified enum→string projections against `internal/queue/types.go`). `evaluateGroupAdvanceWithOutcome` 167→170 (+3; the shave was aspirational per design — real win is pure+unit-tested classification).
+
+**Depguard:** `.golangci.yml` orchestrator rule now ACTIVE, trimmed to exactly `$gostd + internal/core`.
+**Green:** full-module `go build ./...` + `go vet ./...` clean; `go test ./internal/orchestrator/` + all daemon selector/eagerfill/group-advance regression sets pass. Pre-existing SSH/tmux/sandbox E2E failures unrelated (fail identically on pristine tree; daemon-off).
+**Method (all 3):** design pass (Plan) → adversarial seam review → worktree implementer → cherry-pick `-x` → re-verify green → independent agent-reviewer → trailer amend → worktree removed.
+
+**M5 status per ruling (A):** hook✓ / policy✓ / orchestrator✓ = M5 COMPLETE.
+
+**⇒ NAMED FOLLOW-UP (the two "giant retirements," de-scoped from M5 by admiral ruling A / c051):** `startWithHooks` (daemon.go boot/pidfile/config wiring) and `handleSocketConn` (socket.go protocol dispatch table) have NO work-loop/queue-selection seam — their shrink needs separate **boot-config** and **socket-router** subsystem cuts (each its own design pass + review gate). Recommend a future milestone/slice; NOT gating anything now. No beads (daemon-off directive) — tracked here.

@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -498,23 +499,37 @@ func (d *DrainDetector) GenuineDrain(ctx context.Context) (DrainResult, error) {
 			Reasons: append(facts.UnsureReasons, "GatherDrainFacts error: "+err.Error()),
 		}, err
 	}
-	if facts.Unsure {
+	// Project → pure classification (internal/policy). The DECISION moved; the
+	// fact GATHERING (GatherDrainFacts) and the Reasons reattachment stay here.
+	switch policy.ClassifyDrain(drainSnapshot(facts)) {
+	case policy.DrainStateUnsure:
 		return DrainResult{State: DrainStateUnsure, Reasons: facts.UnsureReasons}, nil
-	}
-
-	hasWork := facts.Ready.Count > 0 ||
-		facts.InProgress.Count > 0 ||
-		facts.Runs.RegistryCount > 0 ||
-		facts.Runs.LiveWorktrees > 0 ||
-		facts.Queued.Count > 0 ||
-		len(facts.Queued.PausedQueues) > 0 ||
-		len(facts.Queued.FailedArchives) > 0 ||
-		len(facts.BlockedByOpenEpic) > 0
-
-	if hasWork {
+	case policy.DrainStateHasWork:
 		return DrainResult{State: DrainStateHasWork}, nil
+	default:
+		return DrainResult{State: DrainStateDrained}, nil
 	}
-	return DrainResult{State: DrainStateDrained}, nil
+}
+
+// drainSnapshot projects a gathered FleetFacts into the narrow
+// policy.DrainSnapshot the pure drain/veto predicates read (M5 slice 2 sub-slice
+// B2). It is the single projection point shared by GenuineDrain, the sleep-veto
+// gate (quiesce.go), and hasLatentWork (stategather.go), so the FleetFacts→scalar
+// mapping lives in exactly one place.
+func drainSnapshot(f *FleetFacts) policy.DrainSnapshot {
+	return policy.DrainSnapshot{
+		ReadyCount:         f.Ready.Count,
+		InProgressCount:    f.InProgress.Count,
+		RegistryRuns:       f.Runs.RegistryCount,
+		LiveWorktrees:      f.Runs.LiveWorktrees,
+		QueuedCount:        f.Queued.Count,
+		PausedQueues:       len(f.Queued.PausedQueues),
+		FailedArchives:     len(f.Queued.FailedArchives),
+		BlockedByOpenEpic:  len(f.BlockedByOpenEpic),
+		NeedsDecomposition: len(f.NeedsDecomposition),
+		Unsure:             f.Unsure,
+		UnsureReasons:      f.UnsureReasons,
+	}
 }
 
 // unsure builds an UNSURE DrainResult carrying reason. Used by GenuineDrain

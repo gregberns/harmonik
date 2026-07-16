@@ -25,6 +25,7 @@ import (
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -502,23 +503,14 @@ func sessionsAlive(sessions []StateSession) bool {
 	return false
 }
 
-// hasLatentWork is HAS_LATENT_WORK per §4.2.
+// hasLatentWork is HAS_LATENT_WORK per §4.2. Thin shell: the nil guard stays
+// here (a nil FleetFacts is not latent work); the DECISION is the pure
+// policy.HasLatentWork over the projected snapshot (M5 slice 2 sub-slice B2).
 func hasLatentWork(facts *FleetFacts) bool {
 	if facts == nil {
 		return false
 	}
-	if facts.Unsure {
-		return true
-	}
-	return facts.Ready.Count > 0 ||
-		facts.InProgress.Count > 0 ||
-		facts.Runs.RegistryCount > 0 ||
-		facts.Runs.LiveWorktrees > 0 ||
-		facts.Queued.Count > 0 ||
-		len(facts.Queued.PausedQueues) > 0 ||
-		len(facts.Queued.FailedArchives) > 0 ||
-		len(facts.BlockedByOpenEpic) > 0 ||
-		len(facts.NeedsDecomposition) > 0
+	return policy.HasLatentWork(drainSnapshot(facts))
 }
 
 // readPidFromFile reads the supervisor pidfile.

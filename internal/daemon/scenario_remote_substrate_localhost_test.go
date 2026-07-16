@@ -242,6 +242,24 @@ func rsb12SSHAvailable(ctx context.Context) (bool, string) {
 	return true, ""
 }
 
+// rsb12RequireSSHOrSkip gates the remote-substrate e2e on a working
+// `ssh localhost true`. By default (flag unset) it SKIPs green so the suite is
+// clean on boxes without a passwordless sshd. With HARMONIK_REQUIRE_REMOTE_E2E=1
+// it FATALs instead — so CI that intends to exercise the remote path fails loudly
+// rather than silently skipping.
+func rsb12RequireSSHOrSkip(t *testing.T) {
+	t.Helper()
+	ok, detail := rsb12SSHAvailable(t.Context())
+	if ok {
+		return
+	}
+	msg := "remote-substrate e2e requires a working `ssh localhost true`; probe: " + detail
+	if os.Getenv("HARMONIK_REQUIRE_REMOTE_E2E") == "1" {
+		t.Fatalf("%s (HARMONIK_REQUIRE_REMOTE_E2E=1)", msg)
+	}
+	t.Skipf("%s", msg)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Test — full remote lifecycle over ssh localhost
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,10 +289,7 @@ func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
 	t.Parallel()
 
 	// ── Pre-flight guard: ssh localhost must work (no sshd / no key → skip). ──
-	if ok, detail := rsb12SSHAvailable(t.Context()); !ok {
-		t.Skipf("remote-substrate e2e requires a working `ssh localhost true` "+
-			"(passwordless sshd on this box); skipping. probe output: %s", detail)
-	}
+	rsb12RequireSSHOrSkip(t)
 
 	const bead = core.BeadID("hk-rs-b12-e2e-localhost")
 	sshRunner := tmux.SSHRunner{Host: "localhost"}

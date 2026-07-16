@@ -136,10 +136,7 @@ func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 	t.Parallel()
 
 	// ── Pre-flight guard: ssh localhost must work (no sshd / no key → skip). ──
-	if ok, detail := rsb12SSHAvailable(t.Context()); !ok {
-		t.Skipf("remote-substrate DOT e2e requires a working `ssh localhost true` "+
-			"(passwordless sshd on this box); skipping. probe output: %s", detail)
-	}
+	rsb12RequireSSHOrSkip(t)
 
 	const bead = core.BeadID("hk-rs-b12-e2e-localhost-dot")
 	sshRunner := tmux.SSHRunner{Host: "localhost"}

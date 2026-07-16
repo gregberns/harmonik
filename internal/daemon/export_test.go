@@ -1453,6 +1453,21 @@ var ExportedDefaultPostAgentReadyHangTimeout = &defaultPostAgentReadyHangTimeout
 // unit tests (hk-a2okh).
 var ExportedWaitPostAgentReadyProgress = waitPostAgentReadyProgress
 
+// ExportedDefaultAgentReadyTimeout exposes defaultAgentReadyTimeout (HC-056,
+// agentready.go) so the WS3-Claude-C timing property/fuzz harness can PIN the
+// real threshold constant — if the production default drifts, the pin assertion
+// fails, surfacing that the harness's scaled band no longer models the real one.
+var ExportedDefaultAgentReadyTimeout = defaultAgentReadyTimeout
+
+// ExportedEmitAgentReadyTimeout exposes emitAgentReadyTimeout (hk-5cox8) so the
+// WS3-Claude-C harness drives the REAL anomaly emitter (inv-3) rather than a
+// fabricated stand-in.
+var ExportedEmitAgentReadyTimeout = emitAgentReadyTimeout
+
+// ExportedEmitPostAgentReadyHang exposes emitPostAgentReadyHang (hk-a2okh) so the
+// WS3-Claude-C harness drives the REAL post-agent_ready-hang anomaly emitter.
+var ExportedEmitPostAgentReadyHang = emitPostAgentReadyHang
+
 // AgentEventSourceExported is the exported alias for agentEventSource so that
 // test stubs in package daemon_test can satisfy the interface.
 //

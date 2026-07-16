@@ -158,6 +158,21 @@ type ScriptMessage struct {
 	// first message).  Only honoured when heartbeat_mode is "scripted".
 	// MUST be >= 0; negative values are treated as 0 (immediate).
 	RelativeTimestampMs int `yaml:"relative_timestamp_ms,omitempty"`
+
+	// DelayMs is a per-step pre-emit delay honoured in BOTH heartbeat modes
+	// (unlike RelativeTimestampMs, which is scripted-mode only). The driver
+	// sleeps this many milliseconds — context-aware, so a cancelled ctx exits
+	// the sleep cleanly — before processing the step. Absent or zero means no
+	// delay (current behaviour; no production drift). Negative values are
+	// treated as zero.
+	//
+	// This is the timing knob the twin-parity property/fuzz harness
+	// (WS3-Claude-C) uses to drive controlled per-edge latencies through the
+	// same idiom as startup_delay_ms. It composes with RelativeTimestampMs:
+	// in scripted mode both delays apply (relative first, then DelayMs).
+	//
+	// Cite: plans/2026-07-13-code-revamp/M6-PLAN.md §WS3-Claude-C.
+	DelayMs int `yaml:"delay_ms,omitempty"`
 }
 
 // ScriptFile is the top-level type parsed from a twin script YAML file.
@@ -342,6 +357,19 @@ func runScript(ctx context.Context, e *wireEmitter, sf *ScriptFile, cfg scriptRu
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
+			}
+		}
+
+		// Per-step delay knob (honoured in BOTH modes; absent/zero = immediate).
+		// Applied AFTER the scripted relative delay so the two compose. This is
+		// the twin's per-edge latency control for the WS3-Claude-C timing
+		// property/fuzz harness; it follows the startup_delay_ms idiom (a
+		// context-aware sleep whose zero value preserves current behaviour).
+		if msg.DelayMs > 0 {
+			select {
+			case <-time.After(time.Duration(msg.DelayMs) * time.Millisecond):
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
 

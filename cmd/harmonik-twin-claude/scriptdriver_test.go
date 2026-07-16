@@ -459,6 +459,82 @@ func TestRunScriptScriptedModeDelay(t *testing.T) {
 	}
 }
 
+// TestRunScriptDelayMsWallClock verifies the per-step delay_ms knob (WS3-Claude-C)
+// is honoured even in wall_clock mode, where RelativeTimestampMs is ignored. This
+// is the timing knob the twin-parity property/fuzz harness relies on.
+func TestRunScriptDelayMsWallClock(t *testing.T) {
+	e, _ := twinScriptFixtureEmitter(t)
+
+	const delayMs = 50
+	sf := &ScriptFile{
+		HeartbeatMode: heartbeatModeWallClock,
+		Messages: []ScriptMessage{
+			{Type: "agent_heartbeat", Payload: map[string]any{"session_id": "s1", "phase": "starting"}, DelayMs: delayMs},
+		},
+	}
+
+	start := time.Now()
+	if err := runScript(context.Background(), e, sf, scriptRunConfig{}); err != nil {
+		t.Fatalf("runScript: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if elapsed < time.Duration(delayMs)*time.Millisecond {
+		t.Errorf("delay_ms not honoured in wall_clock mode: took %v, expected >= %dms", elapsed, delayMs)
+	}
+	if elapsed > time.Duration(delayMs)*time.Millisecond+200*time.Millisecond {
+		t.Errorf("delay_ms overshot: took %v", elapsed)
+	}
+}
+
+// TestRunScriptDelayMsAbsentImmediate verifies that an absent/zero delay_ms
+// preserves the current no-delay behaviour (no production drift).
+func TestRunScriptDelayMsAbsentImmediate(t *testing.T) {
+	e, _ := twinScriptFixtureEmitter(t)
+
+	sf := &ScriptFile{
+		HeartbeatMode: heartbeatModeWallClock,
+		Messages: []ScriptMessage{
+			{Type: "agent_heartbeat", Payload: map[string]any{"session_id": "s1", "phase": "starting"}},
+		},
+	}
+
+	start := time.Now()
+	if err := runScript(context.Background(), e, sf, scriptRunConfig{}); err != nil {
+		t.Fatalf("runScript: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Errorf("absent delay_ms introduced a delay: took %v, expected ~immediate", elapsed)
+	}
+}
+
+// TestRunScriptDelayMsContextCancellation verifies the per-step delay_ms sleep
+// is context-aware: a cancelled ctx exits the sleep promptly.
+func TestRunScriptDelayMsContextCancellation(t *testing.T) {
+	e, _ := twinScriptFixtureEmitter(t)
+
+	sf := &ScriptFile{
+		HeartbeatMode: heartbeatModeWallClock,
+		Messages: []ScriptMessage{
+			{Type: "agent_heartbeat", Payload: map[string]any{"session_id": "s1", "phase": "starting"}, DelayMs: 10000},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := runScript(ctx, e, sf, scriptRunConfig{})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("runScript: expected ctx error during delay_ms sleep, got nil")
+	}
+	if elapsed > time.Second {
+		t.Errorf("delay_ms sleep not cancelled promptly: took %v", elapsed)
+	}
+}
+
 // TestRunScriptContextCancellation verifies that runScript returns ctx.Err()
 // promptly when the context is cancelled during a scripted delay.
 func TestRunScriptContextCancellation(t *testing.T) {

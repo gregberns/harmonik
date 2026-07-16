@@ -180,6 +180,17 @@ type spineArgs struct {
 	protectBranches []string
 	transitionTID   core.TransitionID
 
+	// mergeTarget is the per-bead integration branch the run-branch must LAND
+	// on (hk-lgykq): the resolved baseBranch (lands_on) carrying the three-tier
+	// precedence (bead ## Branching > branching.yaml > default), equal to
+	// deps.targetBranch when no per-bead override is present. Empty only when
+	// resolveBranching errored; the merge call sites fall back to
+	// deps.targetBranch in that case so the merge is never directed at an empty
+	// ref (mergeRunBranchToMain fail-closes on empty target). Threaded into the
+	// mergeRunBranchToMain calls in mergeHook / drainMergeHook, superseding the
+	// daemon-wide deps.targetBranch the run was formerly merged into.
+	mergeTarget string
+
 	// skipGate short-circuits the gate to a pass: the DOT cascade runs its gate
 	// inside the graph (commit_gate tool node), not as a post-mode gate.
 	skipGate bool
@@ -257,7 +268,14 @@ func (b *runBridge) mergeHook(a spineArgs) func(context.Context) {
 		if a.amendTrailers != nil {
 			a.amendTrailers(c, attempt-1)
 		}
-		mergeRes := mergeRunBranchToMain(c, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, b.deps.targetBranch, a.protectBranches, b.deps.brPath)
+		// hk-lgykq: land on the per-bead integration branch (mergeTarget =
+		// resolved baseBranch), not the daemon-wide default; fall back to
+		// deps.targetBranch when resolveBranching left mergeTarget empty.
+		mergeInto := a.mergeTarget
+		if mergeInto == "" {
+			mergeInto = b.deps.targetBranch
+		}
+		mergeRes := mergeRunBranchToMain(c, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
 		switch {
 		case mergeRes.noChange:
 			b.sh.pending = append(b.sh.pending, runexec.Event{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange})
@@ -293,7 +311,14 @@ func (b *runBridge) drainMergeHook(a spineArgs) func(context.Context, string) []
 		if mctx.Err() != nil {
 			mctx = context.WithoutCancel(c)
 		}
-		mergeRes := mergeRunBranchToMain(mctx, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, b.deps.targetBranch, a.protectBranches, b.deps.brPath)
+		// hk-lgykq: shutdown-drain merge also lands on the per-bead integration
+		// branch (mergeTarget = resolved baseBranch); fall back to the
+		// daemon-wide target when mergeTarget is empty.
+		mergeInto := a.mergeTarget
+		if mergeInto == "" {
+			mergeInto = b.deps.targetBranch
+		}
+		mergeRes := mergeRunBranchToMain(mctx, a.mport.Submit(), a.activeRepo, b.runID, b.deps.bus, b.beadID, a.headSHA, mergeInto, a.protectBranches, b.deps.brPath)
 		switch {
 		case mergeRes.noChange:
 			return []runexec.Event{{Kind: runexec.EvMergeResult, Merge: runexec.MergeNoChange}}

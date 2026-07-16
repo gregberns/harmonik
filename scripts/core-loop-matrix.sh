@@ -42,11 +42,6 @@
 #                                (green=all pass, red=any fail incl known-RED, pending=SKIP-LOUD)
 #     --specs <cells.json>       expected-cell specs for --assert (default:
 #                                scenarios/core-loop-proof/cells.json)
-#     --verdict-out <path>       write a structured JSON verdict file (schema_version=1) to
-#                                this path (default: $SCRATCH/.harmonik/matrix-verdict.json).
-#                                Emits MATRIX_VERDICT_FILE=<path> on stdout. WS-E/4 + the
-#                                assessor read this to determine per-cell PASS/FAIL without
-#                                parsing human text. Best-effort: write failure ≠ exit non-zero.
 #
 # ENV:
 #   MATRIX_REMOTE_WORKER   same as --remote-worker
@@ -82,7 +77,6 @@ NO_CYCLE=0
 FEEDBACK=0
 ASSERT=0
 SPECS=""
-VERDICT_OUT=""
 
 [ $# -ge 1 ] || die "usage: $SELF <scratch-path> [flags] (see header)"
 SCRATCH="$1"; shift
@@ -105,14 +99,9 @@ while [ $# -gt 0 ]; do
         --assert)         ASSERT=1; shift;;
         --specs)          [ $# -ge 2 ] || die "--specs needs a value"; SPECS="$2"; shift 2;;
         --specs=*)        SPECS="${1#--specs=}"; shift;;
-        --verdict-out)    [ $# -ge 2 ] || die "--verdict-out needs a value"; VERDICT_OUT="$2"; shift 2;;
-        --verdict-out=*)  VERDICT_OUT="${1#--verdict-out=}"; shift;;
         *) die "unknown flag '$1' (see header for usage)";;
     esac
 done
-
-# Default verdict-out path: $SCRATCH/.harmonik/matrix-verdict.json
-[ -n "$VERDICT_OUT" ] || VERDICT_OUT="$SCRATCH/.harmonik/matrix-verdict.json"
 
 # ---- resolve the cell axes ------------------------------------------------
 # Harnesses: default pi,codex (cap-thrift); claude only behind --enable-claude.
@@ -186,10 +175,7 @@ fi
 
 # ---- iterate the matrix ---------------------------------------------------
 # Grid rows accumulate as: cell<TAB>verdict<TAB>detail  (verdict ∈ green|red|pending|skip)
-# CELL_GAPS is a parallel array of JSON arrays (one per GRID row) carrying per-gap fold
-# results; [] for non-assert cells or cells that were skipped/pending without a batch run.
 GRID=()
-CELL_GAPS=()
 RED_ARTIFACTS=()
 had_red=0; n_green=0; n_red=0; n_pending=0; n_skip=0
 
@@ -218,7 +204,6 @@ for h in "${HARNESSES[@]}"; do
         if [ "$s" = "remote" ] && [ "$REMOTE_OK" -eq 0 ]; then
             log "SKIP  $cell — $REMOTE_REASON"
             GRID+=("$cell	skip	$REMOTE_REASON")
-            CELL_GAPS+=("[]")
             n_skip=$((n_skip+1))
             continue
         fi
@@ -228,7 +213,6 @@ for h in "${HARNESSES[@]}"; do
         if ! local_seed="$(seed_for_cell "$cell")" || [ -z "$local_seed" ]; then
             log "PENDING $cell — no fixture seed bead (T2 wires per-cell fixtures)"
             GRID+=("$cell	pending	no fixture seed bead")
-            CELL_GAPS+=("[]")
             n_pending=$((n_pending+1))
             continue
         fi
@@ -238,7 +222,6 @@ for h in "${HARNESSES[@]}"; do
         # writes a results artifact whose path we echo for T2/T3 to consume.
         batch_name="matrix-${h}-${s}"
         log "RUN   $cell — batch '$batch_name' seed=$local_seed"
-        gaps_json="[]"  # per-gap fold results; populated in --assert mode below
 
         # --assert: arm a FULL-type capture BEFORE submitting (no missed-event race).
         cap_pid=""; cap_file="$CAP_DIR/${h}-${s}.ndjson"
@@ -281,10 +264,6 @@ for h in "${HARNESSES[@]}"; do
                     *) cell_verdict="red" ;;
                 esac
                 detail="$(printf '%s\n' "$fold_out" | grep '^CELL_VERDICT' | tail -1 || true)"
-                # extract per-gap fold results for the JSON verdict artifact (WS-E/3).
-                # GAP lines are tab-separated: GAP<TAB>gap-id<TAB>verdict<TAB>detail
-                gaps_json="$(printf '%s\n' "$fold_out" | grep '^GAP' | \
-                    jq -Rn '[inputs | split("\t") | {gap:.[1], verdict:.[2], detail:(.[3:]|join("\t"))}]' 2>/dev/null || echo '[]')"
             fi
         fi
 
@@ -294,7 +273,6 @@ for h in "${HARNESSES[@]}"; do
             pending) n_pending=$((n_pending+1)) ;;
         esac
         GRID+=("$cell	$cell_verdict	$detail")
-        CELL_GAPS+=("$gaps_json")
 
         # T3 (hk-9cw6q): red cells → deduped fleet bead. Stash the (batch,artifact) pair;
         # green cells file nothing. Feedback runs AFTER the grid (it reads the persisted
@@ -345,46 +323,6 @@ if [ "$FEEDBACK" -eq 1 ] && [ "${#RED_ARTIFACTS[@]}" -gt 0 ]; then
     done
 elif [ "$FEEDBACK" -eq 1 ]; then
     log "feedback: no red cells — nothing to file"
-fi
-
-# ---- write structured JSON verdict file (WS-E/3, hk-g6plo.3) ------------------
-# Schema (schema_version=1): { run_at, summary:{green,red,pending,skip,total},
-#   cells:[{cell,harness,substrate,verdict,detail,gaps:[{gap,verdict,detail}]}] }
-# Emits MATRIX_VERDICT_FILE=<path> so consumers (WS-E/4, assessor) can locate it.
-# Best-effort: a write failure must not flip the matrix exit code.
-if [ -n "$VERDICT_OUT" ]; then
-    mkdir -p "$(dirname "$VERDICT_OUT")" 2>/dev/null || true
-    cells_json="[]"
-    _idx=0
-    for _row in "${GRID[@]:-}"; do
-        [ -n "$_row" ] || continue
-        IFS=$'\t' read -r _cell _verd _det <<< "$_row"
-        _h="${_cell%%:*}"
-        _s="${_cell##*:}"
-        _gaps="${CELL_GAPS[$_idx]:-[]}"
-        cells_json="$(jq -n \
-            --argjson arr "$cells_json" \
-            --arg cell "$_cell" --arg harness "$_h" --arg substrate "$_s" \
-            --arg verdict "$_verd" --arg detail "$_det" --argjson gaps "$_gaps" \
-            '$arr + [{cell:$cell,harness:$harness,substrate:$substrate,verdict:$verdict,detail:$detail,gaps:$gaps}]' 2>/dev/null)" \
-            || { log "verdict: jq failed on cell $_cell — skipping verdict file"; cells_json="[]"; break; }
-        _idx=$((_idx+1))
-    done
-    _total=$((n_green+n_red+n_pending+n_skip))
-    _run_at="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")"
-    if jq -n \
-        --arg run_at "$_run_at" \
-        --argjson n_green  "$n_green"   --argjson n_red     "$n_red" \
-        --argjson n_pending "$n_pending" --argjson n_skip    "$n_skip" \
-        --argjson total    "$_total"    --argjson cells      "$cells_json" \
-        '{schema_version:1, run_at:$run_at,
-          summary:{green:$n_green,red:$n_red,pending:$n_pending,skip:$n_skip,total:$total},
-          cells:$cells}' > "$VERDICT_OUT" 2>/dev/null; then
-        log "verdict file: $VERDICT_OUT"
-        echo "MATRIX_VERDICT_FILE=$VERDICT_OUT"
-    else
-        log "verdict: failed to write $VERDICT_OUT (continuing)"
-    fi
 fi
 
 # Exit non-zero on any red. PENDING/SKIP are surfaced but do not by themselves fail the

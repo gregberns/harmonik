@@ -29,13 +29,6 @@
 # SELECTION RULE: when multiple events of a type match (e.g. a review-loop retries and
 # re-emits harness_selected/model_selected), the LAST one wins (`[-1]`) — it reflects the
 # effective final launch. T4-T8 extending this contract should preserve last-wins.
-# EXCEPTION (gap1, dot parity): production runs the DOT cascade, which appends a REVIEW
-# node whose own harness_selected/model_selected (claude-reviewer, tier 3) is NOT the
-# implementer's selection. gap1 therefore takes the FIRST (`[0]`) harness_selected/
-# model_selected for the seed bead — the implement node is the cascade entry and always
-# fires before the reviewer, so first-wins isolates the implementer and excludes the
-# reviewer's tier-3 event. (Retries re-emit the implement selection at the same tier, so
-# first-wins stays correct under review-loop retries too.)
 #
 # GAP MAP: gap1 model-reaches-harness (T2, DONE) · gap2 remote==local (T7) ·
 #          gap3 provider-through-sandbox (T6) · gap4 dispatch field fidelity (T5) ·
@@ -73,17 +66,17 @@ def assert_gap1:
   | ($ms | map(.model) | map(select(. as $m | $forbidden | index($m))) | unique) as $leaks
   | if ($hs | length) == 0
     then result("gap1"; "fail"; "no harness_selected event for seed bead \($spec.seed_bead)")
-    elif ($eh.agent_type != null and ($hs[0].agent_type != $eh.agent_type))
-    then result("gap1"; "fail"; "harness_selected.agent_type=\($hs[0].agent_type) != expected \($eh.agent_type)")
-    elif ($eh.tier != null and ($hs[0].tier != $eh.tier))
-    then result("gap1"; "fail"; "harness_selected.tier=\($hs[0].tier) != expected \($eh.tier) (harness pin leaked from wrong precedence tier)")
+    elif ($eh.agent_type != null and ($hs[-1].agent_type != $eh.agent_type))
+    then result("gap1"; "fail"; "harness_selected.agent_type=\($hs[-1].agent_type) != expected \($eh.agent_type)")
+    elif ($eh.tier != null and ($hs[-1].tier != $eh.tier))
+    then result("gap1"; "fail"; "harness_selected.tier=\($hs[-1].tier) != expected \($eh.tier) (harness pin leaked from wrong precedence tier)")
     elif ($ms | length) == 0
     then result("gap1"; "fail"; "no model_selected event for harness \($em.harness // $eh.agent_type)")
     elif ($leaks | length) > 0
     then result("gap1"; "fail"; "node-model pin LEAKED into harness \($em.harness // $eh.agent_type): forbidden model(s) \($leaks | join(",")) (cf pi-model-leak hk-lfrub/hk-pkugu)")
-    elif ($em.model != null and ($ms[0].model != $em.model))
-    then result("gap1"; "fail"; "model_selected.model=\($ms[0].model) != pinned \($em.model)")
-    else result("gap1"; "pass"; "harness=\($hs[0].agent_type) tier=\($hs[0].tier) model=\(if ($ms[0].model // "") == "" then "<uncontrolled>" else $ms[0].model end)")
+    elif ($em.model != null and ($ms[-1].model != $em.model))
+    then result("gap1"; "fail"; "model_selected.model=\($ms[-1].model) != pinned \($em.model)")
+    else result("gap1"; "pass"; "harness=\($hs[-1].agent_type) tier=\($hs[-1].tier) model=\(if ($ms[-1].model // "") == "" then "<uncontrolled>" else $ms[-1].model end)")
     end;
 
 # --- gap2..gap5 — declared here, implemented by T4-T8 -----------------------
@@ -182,36 +175,25 @@ def assert_gap5:
     else result("gap5"; "pass"; "agent_ready reached; no timeout/stall/hang")
     end;
 
-# --- t10 — dot success terminal + work landed (production-dot parity) ---------
-# Aligns to the TRUE production dispatch path. The standard workflow.dot cascade
-# (implement -> commit_gate -> review -> close[APPROVE]) has NO merge node and NEVER emits
-# workspace_merge_status: merge-to-main is a SEPARATE promote/PR phase. This is proven, not
-# assumed — the live fleet daemon's full event history carries ZERO workspace_merge_status
-# events and its dispatch terminals are close/consolidate/finalize, never `merge`. So the
-# landing proof available at dispatch time is: the run reached a SUCCESSFUL terminal
-# (review APPROVE -> close, i.e. outcome_emitted.kind=="approved") AND real work was
-# committed (implementer_phase_complete.commit_landed==true). A needs-attention / BLOCK
-# terminal, or an APPROVE with no commit (empty success), REDs — this is NOT "any close
-# event fired regardless of outcome". gap3 independently proves the commit; t10 proves the
-# run reached the success terminal WITH that commit. Enabled by spec.expect.terminal.
+# --- t10 — branch-targeting acceptance (KNOWN-RED today, hk-lgykq) -----------
+# A bead directed at integration branch X must LAND on X, not main. Asserts the merged
+# workspace_merge_status.target_branch == spec.expect.lands_on. This REDs today because
+# per-bead/DOT integration-branch targeting is DEAD CODE (LandsOn/landTaskBranch not wired
+# into the live workloop merge — internal/daemon/workloop.go:3153). The RED is the
+# recorded evidence for hk-lgykq; when that lands, this flips to pass and the self-test's
+# expected-fail row breaks loudly (prompting removal of the known-RED marker). t10 is
+# deliberately NOT in the default cells' `gaps` — T9's green gate excludes it (mission:
+# "known-RED cell, recorded, not a false-green pass").
 def assert_t10:
-  ($spec.expect.terminal // null) as $want
-  | (of_type("run_completed") | map(pl) | map(select((.bead_id // null) == $spec.seed_bead))) as $rc
-  # A success terminal = a run_completed with success==true whose summary is NOT the
-  # needs-attention terminal (dot reports "reached terminal node \"close\"" for the APPROVE
-  # path vs "...close-needs-attention" for BLOCK/gate-fallback; success alone does not
-  # distinguish them, so exclude needs-attention explicitly).
-  | ($rc | map(select(.success == true and ((.summary // "") | test("needs-attention") | not)))) as $succ
-  | (of_type("implementer_phase_complete") | map(pl) | map(.commit_landed == true) | any) as $committed
+  ($spec.expect.lands_on // null) as $want
+  | (of_type("workspace_merge_status") | map(pl) | map(select(.status == "merged"))) as $m
   | if $want == null
-    then result("t10"; "pending"; "no expect.terminal in spec — set it to require the dot success terminal")
-    elif ($rc | length) == 0
-    then result("t10"; "fail"; "no run_completed for seed bead \($spec.seed_bead) — run never reached a terminal")
-    elif ($succ | length) == 0
-    then result("t10"; "fail"; "run reached a NON-success terminal (needs-attention / failed): \($rc | last | .summary // "?") — not an APPROVE close")
-    elif ($committed | not)
-    then result("t10"; "fail"; "success terminal but NO commit landed — empty success, nothing was committed to land")
-    else result("t10"; "pass"; "reached success terminal (\($succ | last | .summary // "close")) with real work committed")
+    then result("t10"; "pending"; "no expect.lands_on in spec — set it to the intended integration branch")
+    elif ($m | length) == 0
+    then result("t10"; "fail"; "no merged workspace_merge_status event — nothing landed")
+    elif ($m[-1].target_branch != $want)
+    then result("t10"; "fail"; "KNOWN-RED (hk-lgykq): landed on '\($m[-1].target_branch)' != intended '\($want)' — per-bead integration targeting is dead code")
+    else result("t10"; "pass"; "landed on intended branch '\($want)'")
     end;
 
 # --- dispatcher ------------------------------------------------------------

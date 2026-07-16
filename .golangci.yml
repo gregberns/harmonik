@@ -477,6 +477,22 @@ linters:
             - "github.com/gregberns/harmonik/internal/handlercontract"
             - "github.com/google/uuid"
 
+        # twinparity: leaf test-support package — normalized-event equivalence +
+        # timing assertion library (M6 WS3-F1). Depends only on core (event-type
+        # vocabulary), handlercontract (progress-msg vocabulary via
+        # KnownProgressMsgTypes), stdlib, and self-import (external test pattern).
+        # MUST NOT import daemon or any heavier subsystem — it is consumed by
+        # scenario/parity tests, not by production paths.
+        twinparity:
+          files: ["**/internal/twinparity/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/twinparity"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "twinparity is a leaf test-support package; MUST NOT import daemon (M6 WS3-F1)" }
+
         # handler-contract/lifecycle: leaf package — stdlib only (HC-064..HC-067).
         # No internal/ deps. Event emission wired in B4 (hk-q0uba follow-up).
         handler-contract-lifecycle:

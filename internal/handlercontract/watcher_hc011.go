@@ -683,6 +683,19 @@ var knownProgressMsgTypes = map[ProgressMsgType]struct{}{
 	ProgressMsgTypeLaunchInitiated:       {},
 }
 
+// KnownProgressMsgTypes returns a copy of the complete set of required
+// progress-stream message type strings per HC-007. Exposed for consumers that
+// need to assemble a legal-kind vocabulary from the progress-stream layer
+// (e.g. internal/twinparity) without re-listing the types by hand. Additive
+// accessor only — it does not participate in the watcher publish path.
+func KnownProgressMsgTypes() []string {
+	out := make([]string, 0, len(knownProgressMsgTypes))
+	for t := range knownProgressMsgTypes {
+		out = append(out, t)
+	}
+	return out
+}
+
 // isKnownProgressMsgType reports whether msgType is one of the 12 required
 // progress-stream message types declared in HC-007.
 func isKnownProgressMsgType(msgType ProgressMsgType) bool {

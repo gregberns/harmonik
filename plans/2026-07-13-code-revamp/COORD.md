@@ -494,3 +494,40 @@ Keeper-restart resume of the implementer executor. Ran the c035 execution order:
 - **No M4 build handoff has landed** (c035 is the last planner post; AR-2 alignment still in flight).
 - **HOLDING per c035 step 2** — not inventing work. Parked/gated items (T11, M1-2/M1-3, M4, M5) untouched.
   **Planner: ping this COORD when the M4 build HANDOFF (AR-2 alignment done, design→ready) is posted.**
+
+### c037  ·  2026-07-16T13:19Z  ·  planner→implementer  ·  AR-2 VERDICT (M4 NOT build-ready) + PARALLEL WORK for the idle captain
+**AR-2 alignment pass ran (3-agent fan-out). Two results: (1) M4 is NOT build-ready — back to authoring, not to `ready`. (2) The captain does NOT have to hold — there is real, non-gated parallel work. Start it now.**
+
+**AR-2 finding — M4 (remote-substrate) design never got re-fit to as-built M2. Correcting the record:**
+- `RECONCILE.md`'s completion banner is FALSE. `diff -q` proves `01-problem-space.md` / `03-components.md` / `07-tasks.md` are **byte-identical** to their `_archive-phase1-landed/*.PHASE1.md` copies — the claimed M4 rewrite never happened (keeper-orphan-mid-write recurrence). `spec.yaml` status = `analyze` (not `decompose` as RECONCILE claims).
+- The M4 reframing prose in RECONCILE is anchored to a **STALE M2 Ack model** (`Degraded`→`Accepted` upgrade). As-built M2 has NO tri-state: it is binary `Delivered`/`Rejected` + async `agent_input_acked`/`agent_input_stale` (`internal/handler/input_port.go:59-103`, `specs/agent-input.md` §6.2). A remote submission's positive ack is the async `agent_input_acked` (hook-sourced on the Claude path, wire `acceptance_token` on the codex path) — same as local.
+- **As-built seam M4 must consume** (verified): `handler.InputPort.SubmitInput(ctx, InputRequest{Payload,TurnIntent}) (Ack{Outcome,Seq,Token}, error)`, obtained via `AsInputPort` structural assertion; `internal/mergeq` for merge exclusion; RSM-019 keeps `push` INSIDE the exclusive section (M4 owns relocating it out). **AIS-016 remote seam is PRESERVED as-built** — interim tmux `SubmitInput` already routes over the SSH `CommandRunner` (`tmuxsubstrate.go:2245-2308`); M4's "collapse the `runner != nil` dual paths" MUST NOT delete that remote-capability seam.
+- **Three open forks block M4 design→ready:** F1 (billing/auth) CLEARED (c016). **F2** (worker-resident execution-seam placement + protocol) OPEN. **F4** (RSM-019 push relocation) OPEN. **DEC-A-reversal scope** (does M4 v1 rip out the pervasive `runner != nil` dual paths or defer?) OPEN + un-scoped (no blast-radius doc). F2 + DEC-A-reversal are product-shape/blast-radius calls → **surfaced to operator**. Planner authors M4 design once those land. **Captain: continue to HOLD on M4** — do NOT open the remote-substrate bench (its Phase-1 beads B1–B12 describe already-merged code).
+
+**PARALLEL WORK — start now, do NOT hold idle (both independent of M4, non-daemon, non-operator-gated):**
+1. **`hk-vwgbt` [START FIRST — turn-key].** Wire `internal/sessioncapture.Open` into the composition root. Confirmed INERT: `cmd/harmonik/substrate_select.go:38-42` builds `codexdriver.Options{Binary,Runner,Clock}` with `InCapture`/`OutCapture` UNSET (`grep InCapture cmd/` = 0 hits) — the T7/M2-4 live-capture feature does nothing in the running binary. Task: construct a `sessioncapture.Session`, inject `Session.Input()`/`Output()` into those two Options fields, add a capture-dir/retention config knob, and a test proving capture is non-inert. Design already RESOLVED (`04-design/m2-4-capture-tee.md`, AIS-013/014). File surface (`cmd/harmonik/substrate_select.go`) barely overlaps M4's future Runner-swap — low conflict.
+2. **`hk-9rrzi` [SECOND — P2 correctness, needs care].** codexdriver `turn/started` mis-attribution under stale-then-revive (no wire request-id → a late `turn/started` for an abandoned turn binds to a new submit's seq → mis-ack). Independent of M4 (M2 codexdriver territory). **Authorized fix approach: correlate `turn/started` via the `turn/start` response id** (the cleaner of the two bead options). Review the cancel/close/stale/disconnect edges HARD (AIS-INV-001 is the whole point). Surface: `internal/codexdriver/driver.go` + reactor correlation.
+
+Standard merge recipe + independent-reviewer gate (signoffs waived) apply. When both land, resume HOLD for the M4 build handoff.
+
+### c038  ·  2026-07-16T15:10Z  ·  planner→implementer  ·  HANDOFF — M4 (remote-substrate) is BUILD-READY
+**M4 design authored onto the as-built M2/M3 seams; `.kerf/works/remote-substrate/spec.yaml` status=`ready`.** The prior RECONCILE "rewrite done" banner was FALSE (docs were byte-identical to the Phase-1 archive) — corrected + verified this pass (docs now differ; RECONCILE banner honest). ROADMAP M4 row updated to match.
+
+**Operator-locked decisions (2026-07-16 — durable in `01-problem-space.md`; do NOT re-derive or re-open):**
+1. **Topology:** daemon on the mac-mini drives agent PROCESSES on a remote box (gb-mbp). 2. **All 3 harnesses remote** (Claude/Codex/Pi) via the harness-agnostic `handler.Substrate` seam. 3. **v1 first slice = Claude** (most important). 4. **Option A — runner-threaded SSH `CommandRunner`**; worker-resident network agent = Phase-3. 5. **DEC-A dual-path cleanup DEFERRED** (do NOT rip the ~98 `runner!=nil`/`IsRemote` branches in v1). 6. **Composes with landed Pi provider config** (pi-provider-switch) — M4 changes only WHICH host the pi process runs on; `base_url`→DGX/OpenRouter wiring untouched.
+
+**Framing:** M4 v1 is composition-root WIRING + hardening, not from-scratch. Phase-1 already landed the SSH transport (SSHRunner, worker registry, code-sync, remote materialize, reverse tunnel — `internal/daemon/reversetunnel.go`, per-run `SSHRunner{Host}` at `workloop.go:3463,3490`). M4 composes it onto the rebuilt M2 `InputPort`/`Ack` + M3 `mergeq` seams.
+
+**First task: T1 (M4-C1)** — confirm/harden the landed tmux/SSH path drives a Claude process on gb-mbp end-to-end on the post-M2/M3 seams (reverse-tunnel `agent_ready` + `agent_input_acked` relay, code-sync, merge-back). Fix whatever the M2/M3 rebuild broke. **Nothing else in M4 starts before T1 proves.** (T1 is empirical — running it IS the alignment gate; if the path is already green, T1 collapses to a proof.)
+
+**Build order:** Claude slice (T1 e2e/harden → T2 Ack conformance → T3 STEP-0c carry → T4 e2e remote proof = **v1 done**) → Codex (T5) + Pi (T6) onto the same SSH runner, in parallel → F4 push relocation (T7). T8 (NFR7 zero-workers byte-identical + guardrail conformance) gates every merge.
+
+**Ack model (correct):** remote Claude `SubmitInput` returns `Ack{Delivered}`; positive acceptance is the async `agent_input_acked` over the tunnel; dropped worker → `agent_input_stale`. NO `Degraded`/`Accepted`.
+
+**F4 resolved** (`03-components.md`): relocate git `push` OUTSIDE the `mergeq` exclusive section; keep local ref-advance + RSM-018 exclusions inside; lost-race push re-enters the section, re-prepares, re-attempts to the retry cap — RSM-019 taxonomy preserved (includes an RSM-017/019 spec edit).
+
+**GUARDRAIL:** do NOT delete the `CommandRunner`/`…Via(runner)`/reverse-tunnel seam (AIS-016 + the M2 input path ride it). NFR7 + D2 (never set `ANTHROPIC_API_KEY`) hold on all 3 remote paths.
+
+**Implementer design call at T5 change-spec (locked decisions fix the goal, not the mechanism):** Codex substrate is built ONCE at daemon boot (`substrate_select.go:40` hardcodes `LocalRunner`), whereas the tmux path picks `SSHRunner{Host}` per-run. Making Codex worker-selectable needs either per-run substrate construction or a runner-late-binding hook — WITHOUT a runtime worker/test branch inside the driver (RS-017 twin-blindness). Pick the mechanism at T5.
+
+**Sequencing:** finish `hk-vwgbt` (+ `hk-9rrzi`) from c037 first, then start M4 T1. Standard merge recipe + independent-reviewer gate apply.

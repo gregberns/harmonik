@@ -1,126 +1,146 @@
-# remote-substrate — Problem Space (DRAFT v0)
+# remote-substrate — M4 Problem Space (code-revamp)
 
-> Status: DRAFT pending operator iteration. This is paul's say-back of the brainstorm
-> kickoff (2026-06-14), to be confirmed/edited before we advance to `analyze`.
-> Companion docs: `REQUIREMENTS.md`, `BRAINSTORM.md`.
+> **AUTHORED 2026-07-16** onto the code-revamp M4 framing, replacing the Phase-1 copy (archived at
+> `_archive-phase1-landed/01-problem-space.PHASE1.md`). The six operator decisions below were
+> confirmed 2026-07-16 and are DURABLE CONSTRAINTS — not to be re-opened or re-derived.
+>
+> **What changed vs the archived Phase-1 doc.** Phase-1 asked "how do we add remote SSH
+> execution?" and answered it — that code is MERGED and validated on a real remote Mac. M4 asks a
+> narrower, downstream question: **now that the code-revamp rebuilt the input seam (M2) and the
+> merge queue (M3), wire the already-landed SSH-runner substrate at the composition root so the
+> harmonik daemon on the mac-mini drives the three agent harnesses' processes on a remote box —
+> proven end-to-end, Claude first.** This is composition-root wiring + hardening, NOT a
+> from-scratch build (§"Why this is mostly wiring").
 
 ## One-paragraph summary
 
-Today every part of harmonik — the captain session, all crew sessions, and every
-bead's implementer Claude Code session + git worktree — runs on a single macOS box
-with 16 GB RAM. We are hitting hard RAM and disk ceilings: concurrency is capped not
-by useful parallelism but by the one machine's resources (the `--max-concurrent 4`
-knee, repeated "no space left" cache blowouts). We want to let harmonik **place
-execution on other machines** — starting with two spare Apple-Silicon MacBook Pros
-(lots of RAM/disk), and eventually arbitrary remote targets (a dual-boot Linux box, a
-VPS, or a cloud sandbox spun up at work). The end state is that harmonik treats
-"where a session runs" as a pluggable **execution substrate** rather than always
-"local tmux on this host."
+The harmonik daemon runs on the **mac-mini**; the agent PROCESSES (the implementer Claude Code
+sessions, and next the Codex and Pi harnesses) run on a **remote box (`gb-mbp`)**, driven remotely
+by the daemon over SSH. "Where a session's process runs" is behind the harness-agnostic
+`handler.Substrate` seam, with an SSH `CommandRunner` threaded through the dispatch path as the
+remote transport. The remote transport LARGELY EXISTS already (Phase-1 landed `SSHRunner`, the
+worker registry, code-sync, remote workspace materialization, and the per-run reverse tunnel). M4
+v1's job is to (a) confirm/harden that path on the AS-BUILT M2 `InputPort`/`Ack` and M3 `mergeq`
+seams, (b) close the composition-root gaps so all three harnesses — not just Claude/tmux — can be
+selected onto the SSH runner, (c) prove the mac-mini→`gb-mbp` topology end-to-end for the Claude
+slice, and (d) relocate the merge `push` out of the exclusive section (fork F4).
 
-## The problem, concretely
+## Locked decisions (operator, 2026-07-16 — DURABLE, do not re-open)
 
-- **Resource ceiling.** 16 GB RAM + finite disk on one box caps concurrent beads far
-  below what the work queue could absorb. Disk-full has repeatedly masqueraded as
-  daemon flakiness; CPU saturation has too.
-- **Single point of contention.** Captain, crews, and bead-work compete for the same
-  cores, RAM, disk, and build cache on one machine.
-- **No isolation.** Every bead's implementer Claude runs against the same host
-  filesystem (mitigated by git worktrees, not by true sandboxing). A per-bead or
-  per-crew sandbox would give real blast-radius containment.
-- **Idle hardware.** Two capable Macs sit unused while box A thrashes.
+1. **Topology.** The harmonik daemon runs on the **mac-mini**. The agent processes run on a
+   **remote box (`gb-mbp`)**. The daemon drives them remotely. This is M4's whole point. (This is
+   the same dispatching-host / remote-agent-host split Phase-1 built, with the concrete hosts
+   named; it is NOT "move the daemon or crews off-box.")
+2. **All THREE harnesses must be remote-supported** in the end-state — Claude (tmux substrate),
+   Codex (`internal/codexdriver`), Pi (`daemon/piharness.go`) — via the harness-agnostic
+   `handler.Substrate` seam. M4 wires an SSH runner behind that seam; "run on `gb-mbp`" is the same
+   wiring for all three.
+3. **v1 first remote slice = Claude** (most important to the operator). Prove the remote seam on
+   the Claude/tmux harness first; Codex + Pi ride the same seam next.
+4. **Architecture = Option A, runner-threaded (SSH `CommandRunner`).** NOT a worker-resident
+   network agent. The gRPC/tailnet worker agent is a **Phase-3 cloud concern**, kept behind the
+   same seam for later. Matches locked D1/D5 (v1 = single remote Mac over SSH, ship it working
+   before any Phase-2).
+5. **Defer the DEC-A dual-path cleanup.** Do NOT rip out the ~98 `runner!=nil`/`IsRemote`
+   conditional branches across 17 files in M4 v1 — pure refactor risk, zero capability gain. Fold
+   into a later evidence-backed cleanup once remote proves out.
+6. **Pi remote composes with existing Pi provider config.** The Pi process running on `gb-mbp`
+   (M4 = where the process runs) is independent of Pi pointing `base_url` at the DGX/OpenRouter LLM
+   endpoint (already landed via `pi-provider-switch`). Don't redesign Pi provider config; just note
+   the composition: Pi's harness carries `{Provider, BaseURL, API}` (see `piharness.go:71,149`),
+   and M4 only changes WHICH host the Pi process runs on.
 
-## Goals (what this work achieves)
+## The AS-BUILT seams M4 consumes (build onto these, not the Phase-1 speculative model)
 
-1. harmonik can run agent work (at minimum: per-bead implementer sessions) on a
-   machine **other than** the one the daemon/captain runs on.
-2. The "where it runs" decision is behind a **pluggable substrate interface** — the
-   local-tmux path becomes one implementation among several (remote-Mac-over-SSH,
-   container, cloud sandbox), not a hardcoded assumption.
-3. A spare Mac can be brought online as a worker with a documented, repeatable setup.
-4. Preserve harmonik's existing operating model where it still makes sense:
-   tmux-inspectability, the comms bus, the worktree→merge→review flow, subscription
-   billing (see the auth constraint below).
+These are verified against the merged tree. M4 designs onto them; it does not re-invent them.
 
-## The two framing questions to settle FIRST (operator flagged these)
+- **Input seam (M2).** `handler.InputPort.SubmitInput(ctx, InputRequest{Payload,TurnIntent})
+  (Ack, error)`, obtained via the `handler.AsInputPort` structural assertion
+  (`internal/handler/input_port.go:29-47,111-119`). The `Ack` is **BINARY** —
+  `Outcome ∈ {Delivered, Rejected}`, plus codec-owned `Seq`/`Token`
+  (`input_port.go:59-103`). There is **NO** `Degraded`/`Accepted` tri-state. Positive acceptance is
+  the asynchronous `agent_input_acked` event; a never-confirmed submission reaches
+  `agent_input_stale` (bounded-liveness AIS-INV-001). **Remote Claude stays `Delivered`** —
+  tmux/paste has no structured protocol, which is expected and fine for v1
+  (`internal/daemon/tmuxsubstrate.go:2245-2250`).
+- **Runner seam (AIS-016), already remote.** The interim tmux `SubmitInput` ALREADY routes over the
+  SSH `CommandRunner` (the per-run substrate holds the runner; `tmuxsubstrate.go:2245-2308` and the
+  `WriteLastPane`/paste path run on the worker's tmux server over that runner). The runner type is
+  `internal/lifecycle/tmux.CommandRunner` with `LocalRunner` / `SSHRunner` implementations
+  (`internal/lifecycle/tmux/runner.go:16-121`). `codexdriver.Options.Runner` is the declared
+  AIS-016 remote seam for the structured driver (`internal/codexdriver/driver.go:52-89`). So the
+  remote seam largely EXISTS.
+- **Merge exclusion (M3).** `internal/mergeq` is landed (`mergeq.Queue.Submit(ctx, label,
+  critical)` — `internal/mergeq/mergeq.go:121`). Per RSM-019 (`specs/run-state-machine.md:187-191`)
+  the `git push` currently stays INSIDE the exclusive section; **M4 owns relocating `push` out**
+  (fork F4).
+- **Already-landed remote plumbing** (Phase-1, verified in tree): the worker registry +
+  `SelectWorker` + `workers.yaml` (`internal/workers`, `daemon.go:548-555`), per-run
+  `SSHRunner{Host}` selection in the workloop (`internal/daemon/workloop.go:3463,3490`), code-sync
+  (`internal/daemon/codesync_rs_b8.go`), remote workspace materialization (`*Via(runner)` helpers,
+  `internal/workspace/remotematerialize.go`), the STEP-0c honest-probe worktree guard
+  (`internal/workspace/createworktree.go`), and the per-run SSH **reverse tunnel** that relays the
+  worker-side agent's hooks (agent_ready / agent_input_acked) back to the daemon's hook socket
+  (`internal/daemon/reversetunnel.go`).
 
-**Q1 — Connect-in vs. spin-up.** Does harmonik *connect into an already-provisioned*
-remote environment (someone/something else stands up the box/VM/container; harmonik
-just gets a handle and runs work), or does harmonik *itself provision* the
-environment (calls Docker/k8s/a cloud API to create a sandbox per bead/crew, runs,
-tears down)? Likely answer: a thin provider interface where "connect-only" ships
-first and "managed/provisioned" is a later provider — but this must be confirmed.
+## Why this is mostly wiring, not a build
 
-**Q2 — What is the unit of remote placement?** Options, possibly layered:
-  - the **bead-work** (implementer Claude + worktree) — biggest resource win, the
-    daemon spawns/monitors a session on a remote host;
-  - the **crew** (a long-lived orchestrator Claude) — runs on box B, still talks to
-    box A's comms bus over the network;
-  - the **whole daemon** and/or the **captain** — heavier, probably out of scope v1.
+The Phase-1 remote-substrate work merged substantially MORE than its own B1–B12 task list
+describes: the worker registry, dispatch-time worker selection, code-sync, remote materialization,
+and the reverse tunnel are all in the tree. Independently, the code-revamp's M2 rebuilt the input
+path (`InputPort`/`Ack`) and M3 introduced `internal/mergeq`. M4 sits at the intersection: the
+landed remote path must be confirmed to still work on the rebuilt M2/M3 seams, the composition root
+must select the SSH runner for **all three** harnesses (today `substrate_select.go:40` hardcodes
+`LocalRunner` for the Codex driver — a real gap), and the mac-mini→`gb-mbp` topology must be proven
+end-to-end for Claude. The guardrail (below) exists precisely because "mostly wiring" invites the
+temptation to also do the DEC-A cleanup — which is explicitly deferred.
 
-## Non-goals (explicitly out of scope, at least for v1)
+## Hard constraints (carried from Phase-1, still binding)
 
-- Building a general-purpose cluster scheduler. (Lean on existing tools.)
-- Auto-scaling / elastic cloud fleets. (Manual/declarative worker registration first.)
-- Multi-tenant / multi-user isolation hardening beyond single-operator needs.
-- Moving **crews, the captain, or the daemon** off box A — DECIDED (D3): all stay on
-  box A; only per-bead task work goes remote. (Crews-local is simpler AND preferred.)
-- Replacing tmux as the *inspectable* session layer where a worker is a real shell.
+- **Interactive auth, never `claude -p`; subscription billing is a MUST (D2).** Never set
+  `ANTHROPIC_API_KEY`; the boot health-check fails closed if it is present on the worker. A
+  persistent remote Mac with a one-time interactive login preserves subscription billing.
+- **The dispatching host keeps merge authority (DEC-B).** Base-SHA resolution and the final
+  merge-to-main run on the mac-mini; the worker fetches the base, the implementer commits, and the
+  worker pushes a `run/<id>` branch that the mac-mini fetches and merges. (F4 relocates only the
+  *timing* of the merge push relative to the exclusive section.)
+- **NFR7 — zero-workers is byte-identical.** With no `workers.yaml` (or all workers disabled),
+  every path is byte-identical to local-only operation. This is the regression floor for all M4
+  wiring.
+- **Do NOT delete the remote seam (M4 guardrail).** AIS-016 requires the `CommandRunner` /
+  `…Via(runner)` seam and the M2 input path rides it. "Collapse dual paths" (deferred anyway) is
+  NOT "remove remote capability." Deleting `SSHRunner`, the `*Via(runner)` helpers, or the
+  reverse tunnel is out of bounds.
+- **Carry the STEP-0c honest-probe worktree guard** forward as an M4 acceptance item
+  (ROADMAP §STEP-0; `createworktree.go`).
 
-## Constraints
+## Success criteria (verifiable)
 
-- **Auth/billing (suspected make-or-break).** Claude Code subscription auth is
-  interactive-login-bound; headless/ephemeral environments may force API-credit
-  billing (cf. the credit-burn incident). A persistent remote Mac with a one-time
-  interactive login likely preserves subscription billing; ephemeral containers may
-  not. *(Research agent R5 is confirming this — it may rule out whole branches.)*
-- **Tmux coupling.** The current spawn/keeper path assumes local tmux (`send-keys`,
-  `capture-pane`, local PIDs). Remote execution needs an abstraction here.
-- **Comms bus reach.** The bus is a local unix socket today — crews on another host
-  need network reach (or a relay). *(R6 confirming.)*
-- **Code sync.** Repo + worktree state must get to the worker and results (commits)
-  must come back race-safely into the one-at-a-time merge flow.
-- **Don't regress single-box operation.** Local-tmux must remain a first-class
-  substrate; remote is additive.
-- **Disk/CPU on box A** is the pain we're solving — the solution must not just move
-  the bottleneck or add heavy local overhead.
+- **S1 — Claude remote, end-to-end.** A bead dispatched by the daemon on the mac-mini executes its
+  implementer Claude session's process on `gb-mbp`, the agent's hooks (agent_ready /
+  agent_input_acked) relay back over the reverse tunnel, the run commits on `gb-mbp`, and the
+  `run/<id>` branch merges into main on the mac-mini — no manual per-bead step. (First slice.)
+- **S2 — Codex + Pi ride the same seam.** After the Claude slice, selecting the Codex driver or the
+  Pi harness onto a worker routes its process to `gb-mbp` through the same `CommandRunner` seam,
+  with no per-harness special-casing of the transport. Pi composes with its landed `base_url`
+  provider config (decision 6).
+- **S3 — Ack semantics correct on remote.** Remote Claude `SubmitInput` returns `Ack{Delivered}`;
+  positive acceptance arrives as the async `agent_input_acked` over the tunnel; a dropped worker
+  reaches `agent_input_stale` (never a silent wedge).
+- **S4 — F4 landed.** The merge `push` executes OUTSIDE the `mergeq` exclusive section, with the
+  RSM-019 retry/taxonomy semantics preserved and the exclusion invariants (RSM-018) intact.
+- **S5 — NFR7 preserved.** Zero/disabled workers ⇒ byte-identical local operation; the DEC-A dual
+  paths remain (cleanup deferred), so no `runner!=nil` branch is removed in M4 v1.
+- **S6 — Billing safety.** No remote run ever sets `ANTHROPIC_API_KEY`; the health-check fail-closed
+  and the spawn-env strip both hold on the remote path.
 
-## Success criteria (concrete, verifiable — DRAFT, sharpen after requirements)
+## Non-goals (out of scope for M4 v1)
 
-- S1: A bead dispatched by the daemon on box A executes its implementer Claude
-  session on box B, commits, and the result merges into main on box A — with no
-  manual per-bead intervention.
-- S2: With one worker box added, sustained concurrent-bead throughput exceeds the
-  single-box `--max-concurrent` knee without box A hitting disk/RAM limits.
-- S3: Bringing a fresh spare Mac online as a worker is a documented procedure that
-  completes in under [TARGET] minutes.
-- S4: Billing for remote sessions lands on the subscription (or the chosen branch's
-  billing is an explicit, accepted decision — not an accident).
-- S5: A remote worker dying mid-bead is detected and the bead is recovered (re-queued
-  or cleanly failed), not silently wedged.
-
-## Decisions locked (operator, 2026-06-14)
-
-- **D-Q1 (connect-in vs spin-up):** ONE provider interface; **connect-in first** (infra is
-  already up, harmonik connects). Spin-up is a later provider, not a fork.
-- **D-Q2 (unit of placement):** Only **per-bead task work** relocates. Crews + captain +
-  daemon + comms bus all stay on box A. (D3 — the big simplifier.)
-- **D1 (v1 target):** Anchor v1 on **Phase 1 = remote Mac over SSH, bead-work only**
-  (renamed from "Phase 0"). See `PHASE-1-DESIGN.md`.
-- **D2 (billing):** Subscription billing is a **hard MUST** — API-credit billing is too
-  expensive. Phase 1 → one-time interactive login on the worker. Never set `ANTHROPIC_API_KEY`.
-- **D3 (crews):** Crews do **NOT** run remotely. They run on box A and push task work to
-  remote workers. Removes the need for network bus transport and remote `--remote-control`
-  in v1.
-- **Egress:** two-phase / locked-down egress is desirable but is a **Phase 2 (container)**
-  capability; some beads need network for tests → egress must be per-bead-configurable.
-  Phase 1 (bare remote Mac) has open egress like today.
-- **D4 (worker OS):** V1 remote = **macOS** (near-zero setup, identical to box A's model,
-  preserves interactive-login subscription, no new env for agents). Linux/containers are a
-  deliberate Phase 2 (where the `CLAUDE_CODE_OAUTH_TOKEN` headless-subscription path applies).
-- **D5 (scope discipline):** Ship V1 **working → tested → deployed → running** BEFORE any
-  Phase-2 work. Governing constraint. V1 = single configured macOS worker over SSH.
-
-### Still-open (downstream, not blocking)
-- Setup-burden target per worker (S3 time target).
-- NFR latency/throughput numeric targets (S2/S3).
-- The Phase-1 design decisions DD1–DD5 (see `PHASE-1-DESIGN.md`) — resolved in analyze/spec.
+- The **worker-resident network agent** (gRPC/tailnet), containers, cloud-provisioned sandboxes —
+  all Phase-2/Phase-3, kept behind the same seam (decision 4).
+- The **DEC-A dual-path cleanup** — the ~98 `runner!=nil`/`IsRemote` branches stay; deferred to a
+  later evidence-backed pass (decision 5).
+- **Redesigning Pi provider config** — it already landed (`pi-provider-switch`); M4 only changes
+  where the Pi process runs (decision 6).
+- Moving the **daemon, captain, or crews** off the mac-mini — only per-bead agent processes go
+  remote (Phase-1 D3, unchanged).

@@ -804,3 +804,21 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **⚑ OPERATOR — still pending (NOT taken autonomously):** push the reconciled lineage to origin + advance PR #20 (DRAFT, 0 approvals). Outward-facing / shared-branch — your call.
 
 **Next COORD entry = c058 (verify max-in-file first).**
+
+### c058  ·  2026-07-16  ·  captain→operator  ·  M6 second wave: WireTap opt-in + 4 parity/schema slices LANDED (all reviewed)
+**Phase tip `0f8d88ae`. Six commits since c057, each independently or self-reviewed + trailer-stamped.**
+
+**LANDED:**
+- **WireTap opt-in** `c3ea97c2` — daemon populates `SpawnWatcherConfig.WireTap` from `HARMONIK_WIRE_CAPTURE_DIR` → `<dir>/<scn>/wire.ndjson` (path matches the read-back harness exactly); unset → true nil io.Writer → byte-identical no-op. Satisfies the WS3-Claude-A loud placeholder; real-box capture now produces raw wire.ndjson. Independent review APPROVE (typed-nil trap + fd-teardown + path-match verified).
+- **WS3-Claude-D** `327114da` — routine parity gate `make test-twin-parity-claude` (twin replay vs Claude-A reference capture, F1 equivalence + timing tolerance). 2 negative sub-tests prove it bites. Gate strength bounded by the hand-authored corpus until a real capture lands (documented).
+- **WS3-codex-B** `a2f9f849` — fresh-vs-frozen drift-diff gate (`internal/codextest/`): method-not-in-registry + reactor-kind-set checks; negative tests print the offending method + fix pointer; live leg gated, REQUIRE-mode Fatalfs loudly (verified — no false-green); human-gate promotion preserved.
+- **WS5-2** `7c98b890` — assessor mission/handoff schema v2 (`specs/assessor-handoff-schema.md`): schema_version→2, `found_by_sources` reframed to evidence enumeration, aligned to WS5-1 reasoned judgment. NOTE: imported schema-ONLY — the implementer's re-derived operating.md/soul.md edits were byte-identical to on-branch HEAD (WS5-1 already present here), so dropped to avoid redundant churn.
+- **WS3-Claude-C** `0f8d88ae` — timing property/fuzz harness driving the REAL agent-ready/post-ready detectors+emitters over N≥50 draws; inv-1/2/3 + shrinking + keeper co-observation; new twin per-step `delay_ms` knob (absent=no-op). Independent review caught a **-race flakiness** (15ms in-band margin let jitter cross the band ~1/4 runs); FIXED with a 120ms dead-zone guard (wider bands), re-verified 5/5 under -race.
+
+**WS3 verticals now: Claude A/B/C/D COMPLETE (routine gates green; real-Claude captures still real-box-gated). codex-B complete (codex-A live capture real-box-gated). pi untouched.**
+
+**Next wave (candidates): WS2 docker foundation (2.1/2.2/2.4-smoke), codex-A (real-box), WS4-2 (reseat matrix on WS2 env — needs WS2), WS5-3 (assessor launcher), WS3-pi.**
+
+**⚑ OPERATOR — still pending (unchanged from c057):** (1) push reconciled lineage to origin + advance PR #20 (DRAFT, 0 approvals); (2) route the 107 feature-owned lint findings to owning crews before the WS1.1 CI-required flip.
+
+**Next COORD entry = c059 (verify max-in-file first).**

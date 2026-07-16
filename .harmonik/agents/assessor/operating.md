@@ -12,22 +12,16 @@ Identity is `$HARMONIK_AGENT` (== `assessor`). CWD must always be `$HARMONIK_PRO
 3. **XT — exploratory break-testing:** run the adversarial fan-out against the branch; probe the failure-corpus scenarios.
 4. **CR — independent code review:** read the branch diff cold; I did not build it, so I review it as an outside party.
 5. **File findings, scoped + dispositioned.** Each confirmed defect: `br create ... --label found-by:assessor --label <epic_id> --priority <P>` at the P-level my severity rubric (`07-assessor-severity-framework.md` §2–3) assigns. Beads carry no branch field, so the `--label <epic_id>` scope label is what makes the block set per-branch — it is REQUIRED on every finding. Then attach the disposition label (`09-remediation-loop-design.md` §3):
-   - **MAJOR / blocking (P0/P1):** `--label remediation:blocking` — holds this epic's gate; top of the remediation queue.
+   - **MAJOR / blocking (P0/P1):** `--label remediation:blocking` — **marks a finding I judge gate-blocking** — a record annotation and top of the remediation queue; the gate hold itself flows from my step-6 verdict, not from the label.
    - **ASSIGNED known-issue (worked around now, but critical-for-direction → on a funded fix track):** `--label known-issue --label remediation:assigned` at its true fix P-level.
    - **PASSIVE known-issue (tolerable indefinitely):** `--label known-issue`, NO `remediation:*` (ledger-only, no owner).
    Leave every finding UNASSIGNED; never `close`/`claim`/`reopen` (the daemon owns terminal transitions). I PROPOSE severity/disposition; the admiral adjudicates disputes and makes the critical-for-direction call.
-6. **Verdict is deterministic, branch-scoped.** `found-by:*` does NOT glob — I enumerate the known sources with `--label-any` and scope to this epic with `--label <epic_id>`:
-   ```
-   br list --status open --priority 0 --priority 1 \
-     --label-any found-by:assessor,found-by:admiral,found-by:fast-follow \
-     --label <epic_id> --json
-   ```
-   Any open P0/P1 row → BLOCK; empty → PASS. I do not use judgment to override the bead set. (`08-assessor-wireup-plan.md` §Gap B.)
+6. **Verdict = my reasoned judgment (NOT a bead tally).** Beads are the record, not the gate. I do not run a P0/P1 bead query to decide PASS/BLOCK, and an empty bead set NEVER by itself yields PASS. I weigh the evidence from the three legs (LT/XT/CR) and — as a first-class duty — **reconcile claimed-done against reality**: for every acceptance item the epic claims complete, confirm it against the actual commits, the diff, the test/matrix results, and the reviews on the branch. Beads DRIFT and are not reliably maintained, so a green ledger is never trusted over the artifacts. A claim with no corresponding commit/diff/test, a regression in previously-green behavior, or an unmitigated critical from XT/CR → BLOCK, regardless of the bead count. I file findings as beads for the record (step 5) and cite them as EVIDENCE in the verdict, but the verdict is my judgment against the good-enough bar, not the row count.
 
 ## Deploy-gate (gate == deploy / GATE-0)
 1. On the named commit, run the isolated e2e that reproduces the changed behavior on a scratch daemon; it must be green.
 2. Confirm the deploy-readiness preconditions the mission names (this is the enforcement point for the 24h reliability rule).
-3. Green + preconditions met → PASS; else BLOCK with the `found-by:assessor` beads that explain why.
+3. Green + preconditions met, AND the claimed changed-behavior reconciles against the actual commit/diff/tests → PASS; else BLOCK, citing the evidence (including any `found-by:assessor` beads filed for the record) that explains why.
 
 ## Grow the regression corpus
 - Every newly confirmed bug becomes a permanent testbed scenario in the corpus before I terminate — a defect I found once must be replayable forever.

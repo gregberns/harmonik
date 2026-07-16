@@ -591,3 +591,17 @@ Ran the c038 M4 build order. **Claude-first slice T1–T4 all landed on `phase1-
 **Build order:** `hook` (slice 1, start now) → status post to COORD → `policy` (slice 2, I'll confirm its change-spec at your slice-1-done post or you may scope it from §2/§6) → `orchestrator` (slice 3, last; its design pass happens after policy lands). Standard merge recipe + independent-reviewer gate (signoffs waived) apply per slice.
 
 **Two M4 items remain the OPERATOR's, NOT build-gated (do not conflate with M5):** (1) real-box T4 proof against `gb-mbp` per WORKER-SETUP-macos.md Part 4b — the Claude-v1 SLICE-1-DONE gate; (2) integration→main promotion (human PR step). M5 build proceeds in parallel with both.
+
+### c043  ·  2026-07-16T17:57Z  ·  implementer→planner  ·  STATUS — M5 slice 1 (`internal/hook`) DONE + landed on phase
+**M5 slice 1 CODE-COMPLETE and merged to `phase1-session-restart-substrate` (tip `3db50f1d`). Cut option (a). Two independent agent-reviewer APPROVEs (builder + independent merge-gate reviewer), trailer-stamped.**
+
+**What landed:**
+- New pure package `internal/hook` — the CHB-025 last-received-wins outcome-dedup + hook-session state machine (`SessionStore`: Register/Close/SetAgentReadyCallback/LatestOutcome/WaitForOutcome/updateOutcome/notifyAgentReady + `Dispatch` for the pure `outcome_emitted`/`agent_ready` routing). **stdlib-only imports** (context/encoding/json/sync) — satisfies the staged `.golangci.yml:530` depguard `hook` edge ($gostd+core+eventbus) by construction; `daemon → hook` only, no reverse import.
+- `internal/daemon/hookrelay_chb025.go` reduced to a thin shell: embeds `*hook.SessionStore`, keeps ONLY the impure rate-limit path (`agent_rate_limited`/`agent_rate_limit_cleared` → `emitRateLimitStatus`, which needs handlercontract.EventEmitter + uuid.Parse + time.Now). Top-level envelope validation replicated in the shell so wire acks (ok/bad_envelope/unknown_session) are byte-identical. `hookRelayEnvelope`/`hookRelayAckMsg` are now aliases to `hook.RelayEnvelope`/`RelayAck`.
+- Tests migrated: pure dedup / stale-post-close / bad-envelope / agent_ready-callback / WaitForOutcome (present, blocks-then-unblocks, ctx-cancel, multi-waiter) now run as `package hook_test` WITHOUT the daemon. Socket round-trip + rate-limit coverage retained in `package daemon`. impl 365 / test 438 LOC.
+
+**Debt shave:** `startWithHooks` gocognit **319 → 304** (hook-store construction folded into `newDaemonHookStore(bus)`; PL-005 queue-load block extracted to `loadStartupQueues`, behaviour-preserving). Won't hit the ceiling from one cut — cumulative across slices, as expected.
+
+**Verification (out-of-band, no daemon):** `go build ./...` green · `go vet ./internal/hook/... ./internal/daemon/...` green · `go test ./internal/hook/...` ok standalone · hook-affected daemon suite ok 201s · frozen contracts (socket wire, handler ifaces, bus shapes) unchanged. Note: `golangci-lint` not installed in this env — the depguard rule pre-exists and imports are stdlib-only, so the edge holds; run the lint on final merge to confirm.
+
+**⇒ GO on slice 2 (`policy`).** I'll scope it from M5-PROBLEM-SPACE §2/§6 (QuiesceArbiter/gate/pause decision predicates) unless you post a tighter change-spec. Slice 3 (`orchestrator`) remains last.

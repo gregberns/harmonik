@@ -624,7 +624,8 @@ I'll proceed with **B2** unless you say otherwise. **STRUCK from slice 2:** `ver
 
 Verdict on next action: I'll start **B2** now unless you flag the FleetFacts call differently. Then C, then slice 3 (`orchestrator`).
 
-### c043  ·  2026-07-16T21:30Z  ·  planner→operator  ·  M6 (controlled-testing harness) PROBLEM-SPACE drafted + reviewed
+### c046  ·  2026-07-16T21:30Z  ·  planner→operator  ·  M6 (controlled-testing harness) PROBLEM-SPACE drafted + reviewed
+<!-- renumbered from c043 (planner) 2026-07-16 to resolve a collision with the captain's M5 c043; content unchanged. -->>
 **Operator-directed new milestone. `M6-PROBLEM-SPACE.md` authored + independently reviewed (APPROVE; all 8 load-bearing facts verified against code). No live-remote testing until M6 lands (operator directive).**
 
 Five workstreams: **WS1** make the controlled-E2E a REAL gate (flip `scenario.yml:32` continue-on-error; fix `check-full` omitting `./internal/daemon/...` → it skips the localhost-SSH remote E2E; replace the exit-0 `agent-review` stub). **WS2** dockerized controlled-E2E (daemon container → worker container/sshd+git+tmux+twin; hermetic, seconds; no new prod code — SSHRunner seam done). **WS3** twin↔real parity harness (NONE exists today for claude/codex/pi — the silent-lie hole; codex ≈ buildable, claude needs unbuilt replay mode, pi needs a twin from scratch). **WS4** revive the acceptance oracle (`core-loop-proof`, partially built on `origin/integration/core-loop-proof`/PR#20) onto the as-built M2/M3/M4 seams, forced to run. **WS5** wire the assessor (admiral-invoked "is the system ready?" → PASS/BLOCK → release), composing WS1/2/4 as its LT/XT/CR legs.
@@ -633,7 +634,8 @@ Five workstreams: **WS1** make the controlled-E2E a REAL gate (flip `scenario.ym
 
 **Sequence:** WS1 (days) → WS2 ‖ WS3 → WS4 → WS5 (capstone) → THEN M4 real-`gb-mbp` proof. Each WS gets its own design pass + independent-reviewer gate before build. **Awaiting operator: go to start WS1 + decisions on the 3 open questions (esp. #1).**
 
-### c044  ·  2026-07-16T22:15Z  ·  planner→operator  ·  M6 revised per operator alignment (HOLDING for go)
+### c047  ·  2026-07-16T22:15Z  ·  planner→operator  ·  M6 revised per operator alignment (HOLDING for go)
+<!-- renumbered from c044 (planner) 2026-07-16 to resolve a collision with the captain's M5 c044; content unchanged. -->>
 **Operator feedback folded into `M6-PROBLEM-SPACE.md` + ROADMAP (M5+M6 rows added; pi-handler placeholder added). NOT starting — holding for explicit go.**
 
 Changes: (1) **Assessor rewritten** — it is an LLM AGENT that returns a REASONED judgment and actively reconciles beads↔commits↔reviews; the deterministic `br list` P0/P1 bead-count verdict is REPLACED (beads drift; daemon-off = no beads = false PASS). (2) **WS2** now covers BOTH in-process (exists) AND subprocess daemon boot. (3) **WS3 elevated to highest-value** — Claude twin is the priority: build real-session replay + make it property/fuzz-testable (vary timings, assert daemon+keeper behave); codex = keep corpus fresh over time (live re-capture + diff, not frozen); pi = twin-from-scratch + real-agent test. Real-Claude invocation during parity is acceptable; runs at docker cadence. (4) **WS4** embed core-loop-proof, keep it moving. (5) **CI/local split made explicit** — assume only part runs in GitHub CI; heavy tier is forced-local; docs-only→main skips the heavy gate. (6) **pi codex-style handler** (fork/plugin vs tmux) = future investigation placeholder on ROADMAP, separate from M6.
@@ -653,3 +655,14 @@ Landed commits (interleaved with the concurrent planner M6 COORD commits on this
 **Pre-existing failure (NOT a regression):** `TestScenario_SSHLocalhost_ReviewVerdict_SSHRunner_hk8u2al` fails identically on the pre-slice-2C base commit (needs a live SSH worker — environmental). Verified by stash-and-rerun on `74dfe7db`.
 
 **⇒ NEXT: slice 3 (`orchestrator`) — the large residual work-loop/queue-selection brain + the two grandfather-giant retirements.** This is the biggest, most-coupled cut and warrants its own read-only design pass before implementation (like slice 2 got). Recommend a fresh session/context for it. M5 is 2-of-3 real cuts done; the daemon now has two hard pure edges (`hook`, `policy`) it didn't have at M5 start.
+
+### c048  ·  2026-07-16T23:05Z  ·  planner→operator  ·  M6 round-2 operator alignment + COORD renumber (STILL HOLDING for go)
+**⚠ COORD RENUMBER:** the planner's two M6 entries collided with the captain's concurrent M5 entries (both took c043/c044). Planner entries renumbered **c043→c046, c044→c047**; this is c048. **Planner has consumed COORD through c048 — captain, continue from c049.** (Two writers on one log with comms off; take max-in-file + 1.)
+
+**Second operator alignment round folded into `M6-PROBLEM-SPACE.md` + ROADMAP (still NOT starting):**
+- **"acceptance oracle" RENAMED → "live core-loop check"** (operator: name was confusing; it's an end-to-end check of the real bead→…→terminal loop). WS4.
+- **Live core-loop check environment (new open design Q):** run it in an ISOLATED/REPRODUCIBLE env — a real **subprocess** daemon on WS2's **docker** harness (leaning) or a scratch worktree, NOT in-process/on-the-box; real-agent cells mount subscription creds (never `ANTHROPIC_API_KEY`, D2). Resolve at WS2/WS4 design.
+- **Assessor sharpened:** it's an **adversarial mesh (critic+QA+architect)** that **DELEGATES verification to subagents**, forms a **reasoned judgment** (bead-count verdict DELETED — beads aren't maintained), then **DISCUSSES signoff with the admiral against explicit "good-enough" principles — the ADMIRAL makes the FINAL call** (to be made explicit in the admiral's own instructions). Deliverable includes a **refinable 30–50-line assessor personality** (seed from the installed **oh-my-claude** plugin agent types).
+- **Gate scales with change risk:** trivial/low-risk (docs-only→main) skip the heavy tier; large/critical-path changes MUST run the rigorous assessor gate. Risk-tiering rule defined in WS1.
+
+**Operator meta-note (acted on):** don't fire session-handoffs mid-flow — reach a clean breakpoint first (saved as a standing preference; likely wants a keeper-behavior change too). **Awaiting operator: explicit go.**

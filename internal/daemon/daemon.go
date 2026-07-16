@@ -641,6 +641,98 @@ func newBrAdapter(hooks daemonTestHooks, brPath, projectDir string) (*brcli.Adap
 	return brcli.NewForProject(brPath, projectDir)
 }
 
+// newDaemonHookStore constructs the daemon hook-session store (a composition of
+// the pure internal/hook state machine) and wires the bus emitter used by the
+// rate-limit routing path (hk-lqtzq). Factored out of startWithHooks so the
+// composition root stays a single call (M5 slice 1, internal/hook extraction).
+func newDaemonHookStore(bus eventbus.EventBus) *hookSessionStore {
+	store := newHookSessionStore()
+	store.SetEmitter(bus)
+	return store
+}
+
+// loadStartupQueues runs the PL-005 step 8a per-queue load: it constructs the
+// br adapter, settles the SQLite ledger (F40), enumerates .harmonik/queues/ via
+// LoadQueueAtStartup with QM-002a/QM-002b reconciliation, installs each queue,
+// and issues a defensive Wake so the work loop unblocks promptly.
+//
+// Only runs when both ProjectDir and BrPath are set (production mode); unit-test
+// callers that omit either skip cleanly (returns nil). A forward-incompatible
+// schema_version returns a fatal error (exit code 2 per QM-002); a br-adapter
+// construction failure is non-fatal (classified + emitted per BI-031b) and the
+// daemon proceeds without a queue.
+//
+// Extracted from startWithHooks (M5 slice 1) to shave the composition-root
+// cognit; behaviour is byte-identical to the pre-extraction inline block.
+//
+// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
+// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
+// Bead ref: hk-tigaf.3.
+func loadStartupQueues(cfg Config, hooks daemonTestHooks, bus eventbus.EventBus, qs *QueueStore, daemonStartTime time.Time) error {
+	if cfg.ProjectDir == "" || cfg.BrPath == "" {
+		return nil
+	}
+
+	brAdapterForQueue, brAdapterErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
+	if brAdapterErr != nil {
+		// Classify + emit divergence_inconclusive for BrSchemaMismatch per
+		// BI-031b.  Non-fatal: daemon proceeds without a queue; queue-* ops
+		// return errors until a queue is submitted.
+		//
+		// Spec ref: specs/beads-integration.md §4.10 BI-031b.
+		// Bead ref: hk-th378.
+		_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brAdapterErr, "br-new-for-project-queue", bus)
+		return nil
+	}
+
+	// F40 (hk-n2y): run `br sync --flush-only` before QM-002a/QM-002b
+	// reconciliation to ensure the SQLite ledger is settled. After a daemon
+	// restart the database may be transiently locked by the previous process,
+	// causing every `br show` call to return exit 3 with empty stdout for the
+	// first ~31 items. A flush-only sync forces a full database round-trip,
+	// clearing the lock so the subsequent ShowBead queries succeed without
+	// spurious warnings. Non-fatal: on sync failure the reconciliation continues
+	// with the pre-F40 degraded behaviour (ShowBead failures are warned and skipped).
+	if syncErr := brAdapterForQueue.SyncFlushOnly(context.Background()); syncErr != nil {
+		logW := cfg.LogWriter
+		if logW == nil {
+			logW = os.Stderr
+		}
+		fmt.Fprintf(logW, "warn: daemon startup: br sync --flush-only failed; QM-002b ShowBead queries may emit transient exit-3 warnings: %v\n", syncErr)
+	}
+
+	loadedQueues, loadErr := lifecycle.LoadQueueAtStartup(
+		context.Background(),
+		cfg.ProjectDir,
+		brAdapterForQueue,
+		bus,
+		nil, // slog.Default() is used when nil
+		&lifecycle.QM002bReapConfig{
+			Resetter:      brAdapterForQueue,
+			IntentLogDir:  lifecycle.BeadsIntentsDir(cfg.ProjectDir),
+			ProjectHash:   lifecycle.ComputeProjectHash(cfg.ProjectDir),
+			DaemonStartNS: daemonStartTime.UnixNano(),
+		},
+	)
+	if loadErr != nil {
+		// ErrQueueSchemaUnsupported → fatal (exit code 2 per QM-002).
+		return fmt.Errorf("daemon.Start: queue load: %w", loadErr)
+	}
+	for _, lq := range loadedQueues {
+		qs.SetQueue(lq)
+	}
+	// Explicit wake after all startup queues are installed so the workloop
+	// unblocks immediately if it reaches workloopIdleWait before any
+	// submit/append signal arrives (hk-ekj wake-gap fix). SetQueue above already
+	// fires the channel for each loaded queue, but a coalesced signal may have
+	// been consumed between iterations; a defensive Wake() here ensures at least
+	// one signal is present when the workloop first runs.
+	if len(loadedQueues) > 0 {
+		qs.Wake()
+	}
+	return nil
+}
+
 // Start is the composition-root entry point for the harmonik daemon.
 //
 // ctx controls the lifetime of the work loop. The caller is responsible for
@@ -1624,12 +1716,12 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// completion path (hk-gql20.22).
 	//
 	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
-	hookStore := newHookSessionStore()
-	// Wire the bus emitter so dispatchHookRelayEnvelope can forward
-	// agent_rate_limited → agent_rate_limit_status events (hk-lqtzq).
-	// bus.Seal has already been called at this point; the emitter is used
-	// for Emit calls (delivery, not subscription), which are valid post-Seal.
-	hookStore.SetEmitter(bus)
+	//
+	// The pure session-store state machine lives in internal/hook; newDaemonHookStore
+	// composes it with the bus emitter used by the rate-limit routing path
+	// (hk-lqtzq). bus.Seal has already been called at this point; the emitter is
+	// used for Emit calls (delivery, not subscription), which are valid post-Seal.
+	hookStore := newDaemonHookStore(bus)
 
 	// PL-005 step 8a (QM-002 / QM-002a): load per-queue files at startup BEFORE
 	// the socket listener or work loop start.  LoadQueueAtStartup first runs the
@@ -1645,66 +1737,8 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
 	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
 	// Bead ref: hk-tigaf.3.
-	if cfg.ProjectDir != "" && cfg.BrPath != "" {
-		brAdapterForQueue, brAdapterErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
-		if brAdapterErr != nil {
-			// Classify + emit divergence_inconclusive for BrSchemaMismatch per
-			// BI-031b.  Non-fatal: daemon proceeds without a queue; queue-* ops
-			// return errors until a queue is submitted.
-			//
-			// Spec ref: specs/beads-integration.md §4.10 BI-031b.
-			// Bead ref: hk-th378.
-			_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brAdapterErr, "br-new-for-project-queue", bus)
-		} else {
-			// F40 (hk-n2y): run `br sync --flush-only` before QM-002a/QM-002b
-			// reconciliation to ensure the SQLite ledger is settled. After a
-			// daemon restart the database may be transiently locked by the
-			// previous process, causing every `br show` call to return exit 3
-			// with empty stdout for the first ~31 items. A flush-only sync
-			// forces a full database round-trip, clearing the lock so the
-			// subsequent ShowBead queries succeed without spurious warnings.
-			// Non-fatal: on sync failure the reconciliation continues with
-			// the pre-F40 degraded behaviour (ShowBead failures are warned
-			// and skipped).
-			if syncErr := brAdapterForQueue.SyncFlushOnly(context.Background()); syncErr != nil {
-				logW := cfg.LogWriter
-				if logW == nil {
-					logW = os.Stderr
-				}
-				fmt.Fprintf(logW, "warn: daemon startup: br sync --flush-only failed; QM-002b ShowBead queries may emit transient exit-3 warnings: %v\n", syncErr)
-			}
-
-			loadedQueues, loadErr := lifecycle.LoadQueueAtStartup(
-				context.Background(),
-				cfg.ProjectDir,
-				brAdapterForQueue,
-				bus,
-				nil, // slog.Default() is used when nil
-				&lifecycle.QM002bReapConfig{
-					Resetter:      brAdapterForQueue,
-					IntentLogDir:  lifecycle.BeadsIntentsDir(cfg.ProjectDir),
-					ProjectHash:   lifecycle.ComputeProjectHash(cfg.ProjectDir),
-					DaemonStartNS: daemonStartTime.UnixNano(),
-				},
-			)
-			if loadErr != nil {
-				// ErrQueueSchemaUnsupported → fatal (exit code 2 per QM-002).
-				return fmt.Errorf("daemon.Start: queue load: %w", loadErr)
-			}
-			for _, lq := range loadedQueues {
-				qs.SetQueue(lq)
-			}
-			// Explicit wake after all startup queues are installed so the
-			// workloop unblocks immediately if it reaches workloopIdleWait
-			// before any submit/append signal arrives (hk-ekj wake-gap fix).
-			// SetQueue above already fires the channel for each loaded queue,
-			// but a coalesced signal may have been consumed between iterations;
-			// a defensive Wake() here ensures at least one signal is present
-			// when the workloop first runs.
-			if len(loadedQueues) > 0 {
-				qs.Wake()
-			}
-		}
+	if loadErr := loadStartupQueues(cfg, hooks, bus, qs, daemonStartTime); loadErr != nil {
+		return loadErr
 	}
 
 	// PL-005 step 8a (hk-m0k0a): wire the persistence function into the

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/policy"
 )
 
 // autoResumeFlapWindow is the duration after an auto-resume during which a
@@ -33,29 +34,23 @@ import (
 // 5 minutes of an auto-resume has not recovered.
 const autoResumeFlapWindow = 5 * time.Minute
 
-// autoResumeDefaultMaxBackoff is the maximum per-attempt backoff duration when
-// AutoResumeConfig.MaxBackoff is zero.
-const autoResumeDefaultMaxBackoff = 30 * time.Minute
-
 // AutoResumeConfig configures auto-resume behaviour for a single handler type.
 // Set via HandlerPauseController.SetAutoResumeConfig.
+//
+// This type stays in the daemon because it is entangled with the controller: it
+// is stored per handler type (autoResumeCfgs map) and carries the operator's
+// Disabled opt-out.  Only the pure backoff arithmetic it feeds lives in
+// internal/policy (policy.BackoffDuration); the zero-MaxBackoff default is
+// policy.DefaultAutoResumeMaxBackoff (30m).
 type AutoResumeConfig struct {
 	// Disabled, when true, makes Schedule a no-op for this handler type.
 	// Allows operators to opt out of automatic resumption per handler.
 	Disabled bool
 
 	// MaxBackoff is the maximum duration between auto-resume attempts when
-	// flapping is detected.  When zero, autoResumeDefaultMaxBackoff (30m) applies.
+	// flapping is detected.  When zero, policy.DefaultAutoResumeMaxBackoff (30m)
+	// applies.
 	MaxBackoff time.Duration
-}
-
-// effectiveMaxBackoff returns the effective max-backoff duration, applying the
-// default when cfg.MaxBackoff is zero.
-func (cfg AutoResumeConfig) effectiveMaxBackoff() time.Duration {
-	if cfg.MaxBackoff <= 0 {
-		return autoResumeDefaultMaxBackoff
-	}
-	return cfg.MaxBackoff
 }
 
 // ---------------------------------------------------------------------------
@@ -137,29 +132,17 @@ func (c *HandlerPauseController) Schedule(ctx context.Context, agentType core.Ag
 }
 
 // backoffDurationLocked computes the effective backoff duration given the base
-// `after`, the number of consecutive flap attempts, and the config.
+// `after`, the number of consecutive flap attempts, and the config.  It is a
+// thin adapter over the pure policy.BackoffDuration reducer (effective =
+// after * 2^attempts, capped at the effective MaxBackoff).
 //
-// Formula: effective = after * 2^attempts, capped at cfg.MaxBackoff.
 // MUST be called while mu is held (reads attempts from entry, which is mutable).
 func (c *HandlerPauseController) backoffDurationLocked(after time.Duration, attempts int, cfg AutoResumeConfig) time.Duration {
-	if attempts <= 0 {
-		return after
-	}
-	maxBackoff := cfg.effectiveMaxBackoff()
-	// Shift left by attempts, but cap to avoid overflow.
-	shifted := after
-	for i := 0; i < attempts && shifted < maxBackoff; i++ {
-		next := shifted * 2
-		if next <= 0 || next > maxBackoff { // overflow guard
-			shifted = maxBackoff
-			break
-		}
-		shifted = next
-	}
-	if shifted > maxBackoff {
-		shifted = maxBackoff
-	}
-	return shifted
+	return policy.BackoffDuration(policy.AutoResumeParams{
+		Base:       after,
+		Attempts:   attempts,
+		MaxBackoff: cfg.MaxBackoff,
+	})
 }
 
 // ---------------------------------------------------------------------------

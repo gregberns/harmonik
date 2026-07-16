@@ -38,12 +38,17 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/policy"
 )
 
 // rateLimitHysteresisCount is the number of consecutive rate-limit active
 // events required to trip a pause.  Two consecutive hits (without clearance)
 // trigger a pause.  This is the minimum hysteresis per hk-37zy8.
-const rateLimitHysteresisCount = 2
+//
+// The trip decision itself is the pure policy.StepRateLimit reducer; this const
+// mirrors policy.DefaultRateLimitThreshold as the threshold this goroutine feeds
+// in.
+const rateLimitHysteresisCount = policy.DefaultRateLimitThreshold
 
 // HandlerPausePolicyConfig carries the configuration parameters for
 // NewHandlerPausePolicyGoroutine.
@@ -161,37 +166,41 @@ func (p *HandlerPausePolicyGoroutine) handleRateLimitStatus(ctx context.Context,
 	// is not on the payload.
 	agentType := p.cfg.AgentType
 
-	switch payload.Status {
-	case core.AgentRateLimitStatusCleared:
-		p.mu.Lock()
-		p.rateLimitConsecutive[agentType] = 0
-		p.mu.Unlock()
+	// Project the payload into the pure reducer's event shape (keeps uuid/payload
+	// out of internal/policy), step the hysteresis reducer under the lock, and
+	// write the new counter back.  The reducer owns the decision; this shell owns
+	// the state map + the effects.
+	ev := policy.RateLimitEvent{
+		Cleared: payload.Status == core.AgentRateLimitStatusCleared,
+		Active:  payload.Status == core.AgentRateLimitStatusActive,
+	}
+	p.mu.Lock()
+	verdict := policy.StepRateLimit(
+		policy.RateLimitState{Consecutive: p.rateLimitConsecutive[agentType]},
+		ev,
+		rateLimitHysteresisCount,
+	)
+	p.rateLimitConsecutive[agentType] = verdict.NewState.Consecutive
+	p.mu.Unlock()
 
-	case core.AgentRateLimitStatusActive:
-		p.mu.Lock()
-		p.rateLimitConsecutive[agentType]++
-		count := p.rateLimitConsecutive[agentType]
-		p.mu.Unlock()
-
-		if count >= rateLimitHysteresisCount {
-			// Trip condition met: pause the handler.
-			cause := core.HandlerPauseCause{
-				FailureClass: core.FailureClassTransient,
-				SubReason:    "rate_limit",
-				SourceRunID:  payload.RunID.String(),
-				SourceBeadID: string(p.cfg.AgentType), // best-effort at MVH; no bead on payload
-				TrippedAt:    time.Now().UTC().Format(time.RFC3339Nano),
-			}
-			inFlight := p.buildInFlightList()
-			if err := p.cfg.Controller.Pause(ctx, agentType, cause, inFlight); err != nil {
-				return fmt.Errorf("handler-pause-policy: rate-limit: Pause: %w", err)
-			}
-			// Schedule auto-resume if the provider reported a retry_after window
-			// (hk-0otqs).  The controller applies flap-backoff internally.
-			if payload.RetryAfterSeconds != nil && *payload.RetryAfterSeconds > 0 {
-				after := time.Duration(*payload.RetryAfterSeconds) * time.Second
-				p.cfg.Controller.Schedule(ctx, agentType, after)
-			}
+	if verdict.Trip {
+		// Trip condition met: pause the handler.
+		cause := core.HandlerPauseCause{
+			FailureClass: core.FailureClassTransient,
+			SubReason:    "rate_limit",
+			SourceRunID:  payload.RunID.String(),
+			SourceBeadID: string(p.cfg.AgentType), // best-effort at MVH; no bead on payload
+			TrippedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		inFlight := p.buildInFlightList()
+		if err := p.cfg.Controller.Pause(ctx, agentType, cause, inFlight); err != nil {
+			return fmt.Errorf("handler-pause-policy: rate-limit: Pause: %w", err)
+		}
+		// Schedule auto-resume if the provider reported a retry_after window
+		// (hk-0otqs).  The controller applies flap-backoff internally.
+		if payload.RetryAfterSeconds != nil && *payload.RetryAfterSeconds > 0 {
+			after := time.Duration(*payload.RetryAfterSeconds) * time.Second
+			p.cfg.Controller.Schedule(ctx, agentType, after)
 		}
 	}
 	return nil
@@ -215,6 +224,10 @@ func (p *HandlerPausePolicyGoroutine) handleBudgetExhausted(ctx context.Context,
 	}
 	if !payload.Valid() {
 		return nil // silently skip invalid payloads
+	}
+
+	if !policy.BudgetExhaustedTrips() {
+		return nil
 	}
 
 	agentType := p.cfg.AgentType

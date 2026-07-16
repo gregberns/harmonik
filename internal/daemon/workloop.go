@@ -6170,23 +6170,28 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 	q.Groups[groupPos].Status = newStatus
 
 	// If group reached complete-with-failures → queue transitions to paused-by-failure.
-	if newStatus == queue.GroupStatusCompleteWithFailures {
+	// (M5 slice 3C: pure classification via orchestrator; the mutation stays here.)
+	if orchestrator.GroupFailurePausesQueue(string(newStatus)) {
 		q.Status = queue.QueueStatusPausedByFailure
 	}
 
-	// If group reached complete-success → activate the next group.
-	if newStatus == queue.GroupStatusCompleteSuccess {
+	// If group reached complete-success → activate the next group. The pure
+	// predicate decides WHICH group to activate (first still-pending); the
+	// effectful queue.AdvanceGroup call — which mutates the group AND produces
+	// order-appended events — stays daemon-side (M5 slice 3C).
+	if orchestrator.GroupReachedSuccess(string(newStatus)) {
+		groupStatuses := make([]string, len(q.Groups))
 		for i := range q.Groups {
-			if q.Groups[i].Status == queue.GroupStatusPending {
-				nextStatus, nextEvents, nextErr := queue.AdvanceGroup(ctx, &q.Groups[i], q.Status, queueID, time.Now())
-				if nextErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup next group queueID=%s groupIndex=%d: %v\n",
-						queueID, q.Groups[i].GroupIndex, nextErr)
-				} else {
-					q.Groups[i].Status = nextStatus
-					events = append(events, nextEvents...)
-				}
-				break
+			groupStatuses[i] = string(q.Groups[i].Status)
+		}
+		if i := orchestrator.FirstPendingGroupIndex(groupStatuses); i >= 0 {
+			nextStatus, nextEvents, nextErr := queue.AdvanceGroup(ctx, &q.Groups[i], q.Status, queueID, time.Now())
+			if nextErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup next group queueID=%s groupIndex=%d: %v\n",
+					queueID, q.Groups[i].GroupIndex, nextErr)
+			} else {
+				q.Groups[i].Status = nextStatus
+				events = append(events, nextEvents...)
 			}
 		}
 	}
@@ -6195,14 +6200,12 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 	// complete-success (hk-xsutm). This is the sole condition that triggers
 	// CompleteAndUnlink (QM-003). A paused-by-failure queue retains queue.json
 	// for operator-driven resume or reset; only the happy-path full-success case
-	// removes it.
-	allSucceeded := len(q.Groups) > 0
+	// removes it. (M5 slice 3C: pure scan via orchestrator.AllGroupsSucceeded.)
+	postStatuses := make([]string, len(q.Groups))
 	for i := range q.Groups {
-		if q.Groups[i].Status != queue.GroupStatusCompleteSuccess {
-			allSucceeded = false
-			break
-		}
+		postStatuses[i] = string(q.Groups[i].Status)
 	}
+	allSucceeded := orchestrator.AllGroupsSucceeded(postStatuses)
 
 	if allSucceeded {
 		// All groups complete-success → CompleteAndUnlink (QM-003 / QM-053).

@@ -165,19 +165,24 @@ branch, MUST accept a submission whose context outlives the per-run context (shu
 MUST impose a FIFO ordering among concurrent submissions.
 
 **RSM-016 (the critical section).** The merge queue MUST hold its exclusive section over only
-this window, per target branch: re-validate the fast-forward check against a freshly read target
-tip → advance the target ref (`git update-ref`) → the format-gate ref advance → push to origin
-(with its rollback) → restore the index → reset the working tree. The rebase, the `go build` /
-`go vet` gate, and the format run MUST execute OUTSIDE the exclusive section, speculatively, and
-MUST be re-validated inside it. A re-validation that loses the race MUST re-rebase and re-run the
-build/format gate before re-attempting the ref advance.
+the local ref + working-tree mutations, per target branch, split across the phases the push
+relocation (RSM-019, M4-C5) opens: **Phase A** — re-validate the fast-forward check against a
+freshly read target tip → advance the target ref (`git update-ref`); **Phase C** (on push
+success) — restore the index → reset the working tree → the conditional `br sync` reconciliation;
+**Phase D** (on push failure) — the compare-and-swap rollback of the local ref → `git fetch` →
+re-advance the local target to the fresh origin tip. The network `git push origin <target>`
+(**Phase B**) MUST run OUTSIDE the exclusive section (see RSM-019). The rebase, the `go build` /
+`go vet` gate, and the format run MUST likewise execute OUTSIDE the exclusive section,
+speculatively, and MUST be re-validated inside it. A re-validation that loses the race MUST
+re-rebase and re-run the build/format gate before re-attempting the ref advance.
 
 **RSM-017.** No build-class command — `go build`, `go vet`, `gofumpt`/`gci`, or `git rebase` —
-MUST run while the merge queue's exclusive section is held. Conformance MUST be checkable by a
-test asserting the critical-section executor performs no build-class command. `git push` and
-`br sync` DO run inside the exclusive section (the push stays inside per RSM-019, and the
-post-merge `br sync` reconciliation follows it); relocating the push — and thus the network I/O —
-outside the section is deferred to the remote-execution work.
+MUST run while the merge queue's exclusive section is held, and the network `git push` MUST NOT
+run inside it (it is relocated OUTSIDE per RSM-019, M4-C5). Conformance MUST be checkable by a
+test asserting the critical-section executor performs no build-class command and no `git push`.
+The local ref-advance (`git update-ref`), the working-tree reset, the push-failure `git fetch` +
+CAS-rollback, and the post-merge `br sync` reconciliation DO run inside the exclusive section
+(Phases A/C/D); the push (Phase B) does not.
 
 **RSM-018 (preserved exclusions).** The escaped-worktree check MUST remain mutually exclusive
 with the ref-advance→working-tree-reset window (via the same queue, as a read-only
@@ -187,8 +192,20 @@ against concurrent creators and against the main-checkout working-tree reset.
 **RSM-019.** Merge outcomes MUST preserve the current taxonomy and retry semantics: a retryable
 failure (rebase conflict, non-fast-forward, format failure) below its per-mode retry cap MUST
 re-prepare and re-attempt; an exhausted or fatal failure MUST emit a rejected outcome, reopen the
-bead, and emit a failed run terminal. Pushing to origin remains inside the exclusive section in
-this spec; relocating the push outside it is deferred to the remote-execution work.
+bead, and emit a failed run terminal.
+
+The network `git push origin <target>` MUST run OUTSIDE the exclusive section (Phase B). M4 (M4-C5)
+performed this relocation: the invariant the exclusion domain protects is serial mutation of the
+local target ref and working tree, not serial publication to origin, so holding the section across
+the network push needlessly serializes unrelated merges behind network I/O. Correctness on a lost
+race comes from RE-VALIDATING inside the section on conflict, not from holding the lock across the
+push: a non-fast-forward push rejection (origin advanced under the relocated push) MUST
+**re-enter the exclusive section**, compare-and-swap-roll-back the local ref advance (regressing it
+only when it still points at the tip this run set — a sibling merge may have advanced and published
+it in the Phase-B window), `git fetch` the fresh origin tip, re-advance the local target to it, and
+then re-prepare (rebase OUTSIDE the section) and re-attempt, up to the same per-mode retry cap.
+Exhaustion → the same rejected outcome + reopen + failed run terminal, with byte-identical reason
+strings to the pre-relocation form.
 
 ## 7. The terminal spine
 

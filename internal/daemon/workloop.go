@@ -6380,12 +6380,12 @@ const (
 	mergePreparePushRetry
 )
 
-// commitOutcome is commitMerge's classified result.
+// commitOutcome is commitHandlePushFailure's classified result.
 //
-//   - done != nil  → a terminal merge outcome (success or a fatal failure); the
-//     driver returns it directly.
+//   - done != nil  → a terminal merge outcome (a fatal push failure or an
+//     exhausted budget); the driver returns it directly.
 //   - otherwise    → the driver re-prepares (rebase) and re-attempts. retryKind
-//     picks the reason-string variant; newMainTip is the fresh target tip to
+//     picks the reason-string variant; newMainTip is the fresh origin tip to
 //     rebase onto.
 type commitOutcome struct {
 	done       *mergeOutcome
@@ -6393,14 +6393,36 @@ type commitOutcome struct {
 	newMainTip string
 }
 
+// commitAdvanceResult is commitAdvanceRef's classified result (Phase A, inside
+// the exclusion domain).
+//
+//   - done != nil     → a terminal outcome (a fresh rev-parse failure, an
+//     exhausted non-FF budget, or an update-ref failure); returned directly.
+//   - retry == true   → a lost FF race: the target advanced concurrently below
+//     the cap. The driver re-prepares (rebase onto newMainTip) and re-attempts.
+//   - advanced == true → the local target ref now points at runTip. priorMainTip
+//     is the target tip BEFORE the advance, carried out for the Phase-D
+//     CAS-rollback and the Phase-C ledger diff base.
+type commitAdvanceResult struct {
+	done         *mergeOutcome
+	retry        bool
+	newMainTip   string
+	advanced     bool
+	priorMainTip string
+}
+
 // mergeRunBranchToMain implements the §4.12.EM-052 ordered merge sequence,
 // split (RSM-012..016, merge-queue-design §2) into a speculative prepare phase
 // that runs OUTSIDE the merge exclusion domain (rebase, strip, go build/vet, the
-// gofumpt/gci auto-fix) and a commit phase that runs INSIDE the domain via
-// `submit` (the fresh FF re-validation, git update-ref, git push with its
-// rollback, the working-tree reset, and the conditional br sync). No build-class
-// command (go build/vet, gofumpt, gci, git rebase) runs inside the domain
-// (RSM-017 / RSM-INV-005); the retry loop's re-rebase re-prepares OUTSIDE it.
+// gofumpt/gci auto-fix) and a commit phase whose ref-mutations run INSIDE the
+// domain via `submit` (the fresh FF re-validation + git update-ref in Phase A;
+// the working-tree reset + conditional br sync in Phase C; the CAS-rollback +
+// fetch + re-base-to-origin in Phase D). The network `git push origin <target>`
+// runs OUTSIDE the domain (Phase B) per the F4 relocation (RSM-019 / M4-C5): the
+// exclusive section serializes local ref + working-tree mutation, not the
+// publication to origin. No build-class command (go build/vet, gofumpt, gci, git
+// rebase) runs inside the domain (RSM-017 / RSM-INV-005); the retry loop's
+// re-rebase re-prepares OUTSIDE it.
 //
 // The retry budget (maxPushAttempts = 3) and every mergeOutcome.reason string
 // are preserved from the pre-split single-function form.
@@ -6409,10 +6431,11 @@ type commitOutcome struct {
 //  1. Resolve run-branch tip; no-change short-circuits.
 //  2. Rebase run-branch onto the target (prepare; rebase_conflict → EM-053).
 //  3. Fast-forward re-validation against a freshly read target tip (commit).
-//  4. git update-ref refs/heads/<target> <tip> (commit).
-//  5. git push origin <target>, with non-FF rollback + re-prepare (commit→retry).
-//  6. git restore --staged . + git reset --hard HEAD (commit; EM-054).
-//  7. br sync --import-only when .beads/issues.jsonl is in the diff (commit).
+//  4. git update-ref refs/heads/<target> <tip> (Phase A, inside the domain).
+//  5. git push origin <target>, OUTSIDE the domain (Phase B), with a CAS-rollback
+//     + re-prepare on a non-FF rejection (Phase D, inside the domain).
+//  6. git restore --staged . + git reset --hard HEAD (Phase C, inside; EM-054).
+//  7. br sync --import-only when .beads/issues.jsonl is in the diff (Phase C).
 //
 // Spec ref: specs/run-state-machine.md RSM-012..019; specs/execution-model.md
 // §4.12 EM-052/EM-053/EM-054. Bead: hk-ftyvo, hk-4goy3, hk-6r6xv, hk-zgt4u,
@@ -6454,12 +6477,23 @@ func mergeRunBranchToMain(ctx context.Context, submit mergeSubmit, projectDir st
 	}
 
 	// ── prepare→commit attempt loop ──────────────────────────────────────────
-	// Each attempt: the build + fmt gates run OUTSIDE the domain (prepare); the
-	// FF re-validation + update-ref + push + working-tree reset run INSIDE it
-	// (commit, via submit). A lost FF race or a non-FF push rejection re-prepares
-	// (rebase OUTSIDE the domain) and re-attempts, up to maxPushAttempts.
+	// Each attempt has three phases, per RSM-016/019 (F4 push relocation, M4-C5):
 	//
-	// Bead ref: hk-svieq.
+	//   Prepare (OUTSIDE the domain): the build + fmt gates and the rebase.
+	//   Phase A (INSIDE the domain):  fresh FF re-validation + local update-ref.
+	//   Phase B (OUTSIDE the domain): git push origin <target> — the network I/O
+	//                                 is NO LONGER held under the exclusive section.
+	//   Phase C (INSIDE the domain):  on push success, the working-tree reset +
+	//                                 br sync reconciliation.
+	//   Phase D (INSIDE the domain):  on push failure, CAS-rollback + fetch +
+	//                                 re-base to origin (classify retry/terminal).
+	//
+	// A lost FF race (Phase A) or a non-FF push rejection (Phase D) re-prepares
+	// (rebase OUTSIDE the domain) and re-attempts, up to maxPushAttempts. The
+	// RSM-019 taxonomy (reason strings, retry cap, terminals) is byte-identical to
+	// the pre-relocation form.
+	//
+	// Bead ref: hk-svieq (retry taxonomy); M4-C5 / T7 (push relocation).
 	const maxPushAttempts = 3
 	for pushAttempt := 1; pushAttempt <= maxPushAttempts; pushAttempt++ {
 		// Post-merge build gate (hk-o68j3 / hk-ycp62) — prepare phase.
@@ -6474,14 +6508,62 @@ func mergeRunBranchToMain(ctx context.Context, submit mergeSubmit, projectDir st
 			runTip = fmtRunTip
 		}
 
-		var co commitOutcome
-		submitErr := submit(ctx, "commit-merge", func(qctx context.Context) error {
-			co = commitMerge(qctx, projectDir, runID, bus, beadID, runTip, targetBranch, brPath, pushAttempt, maxPushAttempts)
+		// Phase A (INSIDE the domain): re-validate the fast-forward against a
+		// freshly read target tip and advance the LOCAL target ref. No network
+		// push runs here (RSM-019 relocation) — only the cheap ref-mutation the
+		// exclusion domain must serialize.
+		var adv commitAdvanceResult
+		if submitErr := submit(ctx, "commit-merge", func(qctx context.Context) error {
+			adv = commitAdvanceRef(qctx, projectDir, runTip, targetBranch, pushAttempt, maxPushAttempts)
 			return nil
-		})
-		if submitErr != nil {
-			// The submission never entered the domain (ctx cancelled before
-			// execution, or the queue owner stopped) — nothing ran.
+		}); submitErr != nil {
+			return mergeOutcome{
+				success: false,
+				reason:  fmt.Sprintf("merge_queue_submit_failed: %v", submitErr),
+			}
+		}
+		if adv.done != nil {
+			return *adv.done
+		}
+		if adv.retry {
+			// Lost FF race: re-prepare (rebase onto the fresh target) OUTSIDE the
+			// domain and re-attempt (non_ff_merge retry vocabulary, RSM-019).
+			mainTip = adv.newMainTip
+			if prepOut := prepareRebase(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, mainTip, mergePrepareNonFFRetry, pushAttempt); prepOut != nil {
+				return *prepOut
+			}
+			continue
+		}
+
+		// Phase B (OUTSIDE the domain, RSM-019): publish the already-committed
+		// local target ref to origin. The exclusive section is NOT held across
+		// this network I/O — correctness comes from Phase D re-validating inside
+		// the domain on conflict, not from holding the lock across the push.
+		pushOut, pushErr := gitPushOrigin(ctx, projectDir, targetBranch)
+		if pushErr == nil {
+			// Phase C (INSIDE the domain): refresh the project working tree
+			// (index restore + reset --hard, RSM-016/¶1) and reconcile the ledger.
+			if submitErr := submit(ctx, "commit-merge", func(qctx context.Context) error {
+				commitFinalizeWorkingTree(qctx, projectDir, runID, bus, beadID, adv.priorMainTip, runTip, brPath)
+				return nil
+			}); submitErr != nil {
+				// The push already published durably; the working-tree refresh is
+				// best-effort (EM-054 is non-fatal), so still report success.
+				fmt.Fprintf(os.Stderr, "daemon: mergeRunBranchToMain: WARNING: post-push finalize submit failed (bead %s run %s): %v\n",
+					beadID, runID.String(), submitErr)
+			}
+			return mergeOutcome{success: true}
+		}
+
+		// Phase D (INSIDE the domain): classify the push failure. A non-FF
+		// rejection below the cap CAS-rolls-back the local ref, fetches, advances
+		// to the fresh origin tip, and signals a push-retry re-prepare; any other
+		// failure (or an exhausted budget) is terminal.
+		var co commitOutcome
+		if submitErr := submit(ctx, "commit-merge", func(qctx context.Context) error {
+			co = commitHandlePushFailure(qctx, projectDir, targetBranch, adv.priorMainTip, runTip, pushOut, pushErr, pushAttempt, maxPushAttempts)
+			return nil
+		}); submitErr != nil {
 			return mergeOutcome{
 				success: false,
 				reason:  fmt.Sprintf("merge_queue_submit_failed: %v", submitErr),
@@ -6491,14 +6573,14 @@ func mergeRunBranchToMain(ctx context.Context, submit mergeSubmit, projectDir st
 			return *co.done
 		}
 
-		// Retry: re-prepare (rebase onto the fresh target) OUTSIDE the domain.
+		// Retry: re-prepare (rebase onto the fresh origin tip) OUTSIDE the domain.
 		mainTip = co.newMainTip
 		if prepOut := prepareRebase(ctx, wtPath, projectDir, runID, runBranch, targetBranch, &runTip, mainTip, co.retryKind, pushAttempt); prepOut != nil {
 			return *prepOut
 		}
 	}
 
-	// Defensive: commitMerge returns a terminal outcome once attempts are
+	// Defensive: Phase A / Phase D return a terminal outcome once attempts are
 	// exhausted, so the loop always returns above. Fail closed if it does not.
 	return mergeOutcome{success: false, reason: "non_ff_merge: retry budget exhausted"}
 }
@@ -6677,16 +6759,14 @@ func runMergeFmtGate(ctx context.Context, wtPath, projectDir string, runID core.
 	return runMergeFmtCheck(ctx, buildDir, projectDir, runID, beadID, bus)
 }
 
-// commitMerge is the merge exclusion-domain critical section (RSM-016): it runs
-// entirely INSIDE mergeq.Queue.Submit and performs no build-class command
-// (RSM-017 / RSM-INV-005). It re-reads the target tip freshly (re-validate under
-// lock), re-runs the FF-check, advances the target ref, pushes, and — on success
-// — refreshes the project working tree and reconciles the bead ledger.
-//
-// A lost FF race or a non-fast-forward push rejection is classified as a retry
-// (commitOutcome.retryKind + newMainTip) rather than a terminal outcome, so the
-// driver re-prepares (rebase) OUTSIDE the domain. All other failures are terminal.
-func commitMerge(ctx context.Context, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, runTip, targetBranch, brPath string, pushAttempt, maxPushAttempts int) commitOutcome {
+// commitAdvanceRef is the Phase-A merge exclusion-domain critical section
+// (RSM-016): it runs entirely INSIDE mergeq.Queue.Submit and performs no
+// build-class command and NO network push (RSM-017 / RSM-019 relocation). It
+// re-reads the target tip freshly (re-validate under lock), re-runs the FF-check,
+// and advances the LOCAL target ref to runTip. The network `git push` runs
+// OUTSIDE this section (Phase B); a lost FF race is classified as a retry so the
+// driver re-prepares (rebase) OUTSIDE the domain.
+func commitAdvanceRef(ctx context.Context, projectDir, runTip, targetBranch string, pushAttempt, maxPushAttempts int) commitAdvanceResult {
 	// Re-validate under lock (RSM-016): re-read the target tip freshly. Between
 	// the prepare-phase rebase (OUTSIDE the domain) and this critical section, a
 	// sibling merge may have advanced the target; the fresh read + FF-check below
@@ -6696,7 +6776,7 @@ func commitMerge(ctx context.Context, projectDir string, runID core.RunID, bus h
 	freshMainCmd.Dir = projectDir
 	freshMainOut, freshMainErr := freshMainCmd.Output()
 	if freshMainErr != nil {
-		return commitOutcome{done: &mergeOutcome{
+		return commitAdvanceResult{done: &mergeOutcome{
 			success: false,
 			reason:  fmt.Sprintf("non_ff_merge_retry_rev_parse (attempt %d): %v", pushAttempt, freshMainErr),
 		}}
@@ -6710,45 +6790,54 @@ func commitMerge(ctx context.Context, projectDir string, runID core.RunID, bus h
 		// Non-FF: the target advanced concurrently (hk-1u4wp). Re-prepare (rebase
 		// onto the fresh target) and retry — up to maxPushAttempts total.
 		if pushAttempt >= maxPushAttempts {
-			return commitOutcome{done: &mergeOutcome{
+			return commitAdvanceResult{done: &mergeOutcome{
 				success: false,
 				reason:  fmt.Sprintf("non_ff_merge: %s advanced concurrently", targetBranch),
 			}}
 		}
-		return commitOutcome{retryKind: mergePrepareNonFFRetry, newMainTip: mainTip}
+		return commitAdvanceResult{retry: true, newMainTip: mainTip}
 	}
 
 	// Step 3a: fast-forward the target branch to runTip.
 	updateRefCmd := exec.CommandContext(ctx, "git", "update-ref", "refs/heads/"+targetBranch, runTip) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
 	updateRefCmd.Dir = projectDir
 	if out, err := updateRefCmd.CombinedOutput(); err != nil {
-		return commitOutcome{done: &mergeOutcome{
+		return commitAdvanceResult{done: &mergeOutcome{
 			success: false,
 			reason:  fmt.Sprintf("git update-ref %s: %v\n%s", targetBranch, err, out),
 		}}
 	}
 
-	// Step 4: push origin <targetBranch>.
+	return commitAdvanceResult{advanced: true, priorMainTip: mainTip}
+}
+
+// gitPushOrigin publishes refs/heads/<targetBranch> to origin. It runs OUTSIDE
+// the merge exclusion domain (RSM-019 / M4-C5 F4 relocation): the exclusive
+// section serializes local ref + working-tree mutation, not network publication.
+func gitPushOrigin(ctx context.Context, projectDir, targetBranch string) ([]byte, error) {
 	pushCmd := exec.CommandContext(ctx, "git", "push", "origin", targetBranch)
 	pushCmd.Dir = projectDir
-	pushOut, pushErr := pushCmd.CombinedOutput()
-	if pushErr != nil {
-		return commitHandlePushFailure(ctx, projectDir, targetBranch, mainTip, pushOut, pushErr, pushAttempt, maxPushAttempts)
-	}
-
-	// Push succeeded — refresh the project working tree + reconcile the ledger.
-	commitFinalizeWorkingTree(ctx, projectDir, runID, bus, beadID, mainTip, runTip, brPath)
-	return commitOutcome{done: &mergeOutcome{success: true}}
+	return pushCmd.CombinedOutput()
 }
 
 // commitHandlePushFailure rolls back the local ref-advance and classifies a push
-// failure: a non-fast-forward rejection below the retry cap fetches the new
-// remote tip, advances the local target to it, and signals a push-retry
-// re-prepare; any other failure (or an exhausted budget) is terminal. All
-// commands (update-ref, fetch, rev-parse) are commit-allowlisted (RSM-017).
-func commitHandlePushFailure(ctx context.Context, projectDir, targetBranch, mainTip string, pushOut []byte, pushErr error, pushAttempt, maxPushAttempts int) commitOutcome {
-	// Roll back the local update-ref so the repo is consistent (best-effort).
-	gitUpdateRefBestEffort(ctx, projectDir, targetBranch, mainTip)
+// failure (Phase D, inside the exclusion domain): a non-fast-forward rejection
+// below the retry cap fetches the new remote tip, advances the local target to
+// it, and signals a push-retry re-prepare; any other failure (or an exhausted
+// budget) is terminal. All commands (update-ref, fetch, rev-parse) are
+// commit-allowlisted (RSM-017).
+//
+// The rollback is COMPARE-AND-SWAP on advancedTip: because the push now runs
+// OUTSIDE the domain (Phase B), a sibling merge may have advanced+published the
+// local target in the window between our Phase-A update-ref and this handler.
+// Rolling the ref back unconditionally would clobber the sibling's advance, so we
+// only regress to priorMainTip when the target still points at the tip WE set.
+func commitHandlePushFailure(ctx context.Context, projectDir, targetBranch, priorMainTip, advancedTip string, pushOut []byte, pushErr error, pushAttempt, maxPushAttempts int) commitOutcome {
+	// CAS rollback: only regress the local target if it is STILL the tip we
+	// advanced it to (a sibling may have moved it under the relocated push).
+	if cur, rerr := gitRevParse(ctx, projectDir, "refs/heads/"+targetBranch); rerr == nil && cur == advancedTip {
+		gitUpdateRefBestEffort(ctx, projectDir, targetBranch, priorMainTip)
+	}
 
 	pushOutStr := string(pushOut)
 	isNonFF := strings.Contains(pushOutStr, "non-fast-forward") || strings.Contains(pushOutStr, "[rejected]")

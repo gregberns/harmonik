@@ -5,13 +5,15 @@ package daemon
 //
 // The merge split (RSM-012..016) runs the rebase, the go build/vet gate, and the
 // gofumpt/gci auto-fix in a speculative prepare phase OUTSIDE the exclusion
-// domain, and only the FF re-validation → update-ref → push → working-tree reset
-// INSIDE it (via mergeq.Queue.Submit). RSM-017 / RSM-INV-005 require that no
-// build-class command (go build/vet, gofumpt, gci, git rebase) runs inside the
-// domain, and that the commit phase's command inventory is the enumerated
-// allowlist. These tests prove both against the real daemon-side prepare/commit
-// closures — the daemon layer of the harness scaffolding RT2 stood up in
-// internal/mergeq (mergeq_test.go §RSM-INV-005).
+// domain, and only the FF re-validation → update-ref (Phase A) and the
+// working-tree reset (Phase C) INSIDE it (via mergeq.Queue.Submit). Per the F4
+// relocation (RSM-019 / M4-C5), the network `git push origin <target>` runs
+// OUTSIDE the domain (Phase B). RSM-017 / RSM-INV-005 require that no build-class
+// command (go build/vet, gofumpt, gci, git rebase) runs inside the domain, that
+// no `git push` runs inside it, and that the inside-domain command inventory is
+// the enumerated allowlist. These tests prove all three against the real
+// daemon-side prepare/commit closures — the daemon layer of the harness
+// scaffolding RT2 stood up in internal/mergeq (mergeq_test.go §RSM-INV-005).
 //
 // Mechanism: a PATH shim for `git` and `go` logs every invocation's subcommand
 // to a file; the injected mergeSubmit brackets the critical section with
@@ -46,12 +48,13 @@ var rsmInvBuildClass = map[string]bool{
 }
 
 // rsmInvCommitAllowlist is the exact command inventory the commit phase may run
-// (merge-queue-design §5).
+// INSIDE the exclusion domain (merge-queue-design §5). Note: `git push` is NOT in
+// this set — the F4 relocation (RSM-019 / M4-C5) moved the push OUTSIDE the
+// domain (Phase B), so a `git push` recorded inside the markers is a regression.
 var rsmInvCommitAllowlist = map[string]bool{
 	"git rev-parse":  true,
 	"git merge-base": true,
 	"git update-ref": true,
-	"git push":       true,
 	"git fetch":      true,
 	"git restore":    true,
 	"git reset":      true,
@@ -227,10 +230,14 @@ func TestMergeQDomain_RSMInv005_NoBuildClassInsideDomain(t *testing.T) {
 		t.Fatal("no commands recorded inside the exclusion domain — harness did not observe the commit phase")
 	}
 
-	// (1) No build-class command inside the domain; inside ⊆ commit allowlist.
+	// (1) No build-class command AND no `git push` inside the domain; inside ⊆
+	// commit allowlist (which no longer contains `git push` — F4 relocation).
 	for _, cmd := range inside {
 		if rsmInvBuildClass[cmd] {
 			t.Errorf("RSM-017 violation: build-class command %q ran INSIDE the exclusion domain", cmd)
+		}
+		if cmd == "git push" {
+			t.Errorf("RSM-019 (F4) violation: `git push` ran INSIDE the exclusion domain; the push must be relocated OUTSIDE (Phase B)")
 		}
 		if !rsmInvCommitAllowlist[cmd] {
 			t.Errorf("RSM-INV-005 violation: command %q inside the domain is not in the commit allowlist", cmd)
@@ -249,16 +256,20 @@ func TestMergeQDomain_RSMInv005_NoBuildClassInsideDomain(t *testing.T) {
 		t.Errorf("expected the prepare build gate to run `go build`/`go vet` OUTSIDE the domain; outside=%v", outside)
 	}
 
-	// (3) The commit phase actually pushed (the ref advanced) — inside the domain.
-	pushedInside := false
+	// (3) The push actually happened — OUTSIDE the domain (Phase B, F4 relocation).
+	if !outsideSet["git push"] {
+		t.Errorf("expected `git push` OUTSIDE the domain (Phase B); outside=%v", outside)
+	}
+	// The ref-advance (update-ref) stays INSIDE the domain (Phase A).
+	updateRefInside := false
 	for _, c := range inside {
-		if c == "git push" {
-			pushedInside = true
+		if c == "git update-ref" {
+			updateRefInside = true
 			break
 		}
 	}
-	if !pushedInside {
-		t.Errorf("expected `git push` INSIDE the domain (commit phase); inside=%v", inside)
+	if !updateRefInside {
+		t.Errorf("expected `git update-ref` INSIDE the domain (Phase A ref-advance); inside=%v", inside)
 	}
 }
 

@@ -70,10 +70,10 @@ remote box.
 | WS | What | Why it's needed | Rough size |
 |---|---|---|---|
 | **WS1 — Make the controlled-E2E a REAL gate** | Flip `scenario.yml:32` `continue-on-error`; add the suite as a required branch-protection check (or a forced local pre-push tier if CI can't host it); replace the `make agent-review` stub; **fix the `check-full` coverage gap** (`Makefile:335` omits `./internal/daemon/...`, so `check-full` does NOT run the localhost-SSH remote E2E that `test-scenario`/CI do). | The tests exist and pass; they just don't block. Highest value, lowest effort. | **small** (config + one Makefile fix) — **but its "forced" property depends on `ssh localhost` being reachable on whatever host runs the gate; see open-Q2. WS2 (docker) is what makes the gate host-independent.** |
-| **WS2 — Dockerized controlled-E2E** | Two images (daemon; worker = sshd+git+tmux+twin) + compose wiring `SSHRunner{Host:"worker"}` across the container network + a test entrypoint. Hermetic, reproducible, seconds, no dev-box ssh setup, no Claude billing. | Operator floor: *no real-remote testing without a docker harness that already runs.* No new production code — the SSHRunner seam is done. | **small–medium** (~2 Dockerfiles + compose + entrypoint) |
-| **WS3 — Twin↔real parity harness** | Agent-runnable, before-release / after-twin-change cadence. Run one scenario through BOTH twin and live agent; assert equivalence on the daemon-observed normalized event stream (ordered event types, ack/hook timing within tolerance, terminal outcome). | Closes the silent-lie hole. Codex nearly buildable (diff a fresh live capture's reactor-action sequence vs the corpus the twin replays). Claude needs the unbuilt replay mode + accept tmux-physical layer stays real-only. pi needs a twin first. | **medium–large** (codex ≈ medium; **claude needs the unbuilt replay mode; pi needs a twin built from scratch** — each is its own slice) |
-| **WS4 — Acceptance oracle (core-loop-proof), forced** | Revive the `origin/integration/core-loop-proof` harness onto the rebuilt M2/M3/M4 seams; the {claude,codex,pi}×{local,remote} matrix proving bead→queue→correct-model→real-change→verdict→terminal. Make it the assessor's LT leg. | Operator: MUST HAVE, comprehensive, **the system must force it to run** — not a green check that does nothing. | **medium** (revive + reseat) |
-| **WS5 — Wire the assessor** | A launcher + admiral-invoked flow (*"Assessor, is the system ready?"* → PASS/BLOCK → cut release). Compose WS1/WS2/WS4 as its LT/XT/CR legs. **Design a beads-independent, fail-closed BLOCK path for daemon-off mode** (see §4.1). NOT code in `internal/` — it's an agent + a gate mechanism. | Turns everything above into a forced release gate under the admiral's control. | **medium** (wiring + the daemon-off BLOCK design) |
+| **WS2 — Dockerized + subprocess controlled-E2E** | Two images (daemon; worker = sshd+git+tmux+twin) + compose wiring `SSHRunner{Host:"worker"}` across the container network + a test entrypoint. Hermetic, reproducible, seconds, no dev-box ssh setup, no Claude billing. **Also add a subprocess daemon-boot test** — the operator wants BOTH in-process (exists) AND subprocess (real `harmonik` daemon started as a separate process) coverage; the containerized run IS the subprocess variant, plus a non-docker subprocess smoke. | Operator floor: *no real-remote testing without a docker harness that already runs.* No new production code — the SSHRunner seam is done. | **small–medium** (~2 Dockerfiles + compose + entrypoint + subprocess boot test) |
+| **WS3 — Twin↔real parity harness ⭐ HIGHEST-VALUE CORRECTNESS WORK** | Agent-runnable, run at the same (heavier, real-Claude-invoking, token-spending — **operator: acceptable**) cadence as docker testing. Run one scenario through BOTH twin and live agent; assert equivalence on the daemon-observed normalized event stream (ordered event types, ack/hook timing within tolerance, terminal outcome). **Per-agent:** **(a) Claude — the priority.** The Claude twin is scripted-only today = the biggest blind spot; the operator flags this as *possibly the most important thing we do* (an unrealistic twin masks prod issues). Build the real-session replay mode AND make the twin **property/fuzz-testable**: inject varied timings and assert the daemon+keeper behave correctly across them. **(b) Codex — keep the corpus fresh over time:** periodic live re-capture + diff, not a one-time frozen snapshot (today's canary only checks a frozen corpus). **(c) pi — needs a twin built from scratch AND a real-agent test** (has neither today). | Closes the silent-lie hole — the structural gap that lets real-vs-twin divergence reach prod. | **large** (Claude replay+fuzz ‖ codex fresh-capture-diff ‖ pi twin-from-scratch — three independent slices) |
+| **WS4 — Acceptance oracle (core-loop-proof), forced** | Revive the `origin/integration/core-loop-proof` harness (partially built, PR #20) onto the rebuilt M2/M3/M4 seams — **embed it in the plan and keep it moving, don't let it re-stall**; the {claude,codex,pi}×{local,remote} matrix proving bead→queue→correct-model→real-change→verdict→terminal. Becomes the assessor's LT leg. | Operator: MUST HAVE, comprehensive, **the system must force it to run** — not a green check that does nothing. | **medium** (revive + reseat) |
+| **WS5 — Wire the assessor (release-readiness AGENT)** | Stand up the assessor as a launchable **LLM agent** the admiral spawns on demand (*"is the system ready?"* → PASS/BLOCK → cut release). It runs the three legs (LT live-verify / XT exploratory-break / CR cold code-review) AND **actively reconciles what was claimed done against actual commits, diffs, test results, and reviews — explicitly checking beads-vs-reality alignment** — then returns a **reasoned judgment**. The verdict is the agent's judgment, **NOT a mechanical bead-count** (the authored design's `br list` P0/P1 tally is REPLACED — beads drift, and in daemon-off mode there are none → false PASS). Beads, when present, are one input + the durable defect record, never the arbiter. It is an agent + a launcher, NOT code in `internal/`. | Operator: readiness must be an agent digging through everything, because beads/commits drift constantly. Turns WS1/2/4 into a forced release gate under the admiral. | **medium** (launcher + mission schema + the judgment/reconciliation contract) |
 
 **Explicitly out of scope:** any real-`gb-mbp` run (that's the M4 gate, gated behind this whole
 milestone); new production code in the remote path (the seam is complete); rebuilding the
@@ -81,37 +81,47 @@ in-process harness or the core-loop-proof matrix from scratch.
 
 ---
 
-## 4. Load-bearing open questions (need the operator / resolved at design)
+## 4. Decisions (operator-locked 2026-07-16 — do NOT re-open)
 
-1. **Daemon-off BLOCK signal — the silent-false-PASS.** The assessor's PASS/BLOCK is entirely a
-   beads query (open P0/P1 `found-by:*` = BLOCK). With the daemon off and no beads created, that
-   query is empty → the gate falsely says PASS. The gate needs a **beads-independent, fail-closed**
-   verdict path (e.g. verdict written to a file/COORD the gate reads, + a daemon-liveness
-   precondition that BLOCKs if it can't trust the bead ledger). **Resolve at WS5 design; flag now
-   because it's load-bearing for how we run today.**
-2. **Can the controlled-E2E gate live in CI, or is it local-only?** The scenario suite includes
-   the localhost-SSH remote E2E, which needs `ssh localhost` reachable on the runner. If GitHub's
-   runner can't host that (or the docker harness), WS1's "forced" gate becomes a **local pre-push /
-   pre-merge discipline**, not a CI check. That changes the "how do we force it" answer — decide
-   which at WS1/WS2 design. **(Operator explicitly raised this — "may need to run those locally".)**
-3. **Twin-parity scope.** Accept that the tmux physical-delivery layer (splash-dismiss, physical
-   Enter, pane-ID targeting) is **irreducibly real-Claude-only** and cannot be twinned (per the
-   2026-05-14 audit)? If yes, parity asserts equivalence on the *wire/event* layer only, and those
-   two stages stay covered by the `e2e_real_claude` path. **Recommend yes.**
+1. **The assessor JUDGES; it does not count beads.** The authored design computed PASS/BLOCK as a
+   deterministic bead query (open P0/P1 `found-by:*` → BLOCK). **REPLACED.** Beads drift out of sync
+   constantly, and in daemon-off mode there are none → an empty query = a false PASS. Instead the
+   assessor is an **LLM agent whose verdict is its own reasoned judgment** over commits, diffs, test
+   results, and reviews; **reconciling beads-vs-reality (do the beads/commits/claims actually agree?)
+   is an explicit DUTY of the agent**, not something it trusts. Beads are an input + durable record,
+   never the arbiter.
+2. **The gate is split CI / local, and that split is made explicit.** Assume GitHub CI can host only
+   PART of the suite (the pure-Go units + anything not needing `ssh localhost` / docker). The
+   heavier tier (localhost-SSH remote E2E, docker controlled-E2E, twin↔real parity) is a **forced
+   LOCAL pre-merge discipline**. WS1/WS2 must produce a clear, documented map of *what runs in CI vs
+   what must run locally.* **Docs-only changes to `main` don't need the heavy gate** (skip it).
+3. **Twin parity invokes real Claude Code — acceptable.** Building/running parity spins up a real
+   Claude (and real codex/pi) — the tmux physical-delivery layer (splash-dismiss, physical Enter,
+   pane targeting) can't be twinned, so parity covers the wire/event layer and the real agents cover
+   the rest. Parity runs at the **same heavier cadence as docker testing** (slower, some token spend
+   — operator: acceptable), not on every commit.
 4. **Milestone bureaucracy.** Under no-beads this rides the plan docs (like M5). A formal
    `codename:controlled-testing` kerf bench + beads gets created when the daemon/beads come back on.
+
+**Tracked separately (NOT part of M6 — a future investigation, placeholder on the ROADMAP):**
+a better pi interaction seam. Pi is open and modifiable; instead of driving it through tmux
+keystrokes we could **fork pi or write a plugin for a codex-style structured handler** — more
+scalable and more testable. Placeholder only; scope later.
 
 ---
 
 ## 5. Recommended sequence
 
-1. **WS1 first** (days) — flip the gate + fix the `check-full` coverage gap. Immediate value: the
-   controlled-E2E we already own starts actually blocking merges.
-2. **WS2 ‖ WS3** (parallel) — docker harness and the parity harness are independent; run concurrently.
-3. **WS4** — revive the acceptance oracle onto the as-built seams (depends on nothing above, but
-   naturally feeds WS5).
-4. **WS5 last** — wire the assessor, composing WS1/WS2/WS4 as its legs and resolving the daemon-off
-   BLOCK path. This is the capstone that makes the whole thing a forced release gate.
+1. **WS1 + WS3-Claude start together.** WS1 (days) — flip the gate + fix the `check-full` coverage
+   gap — is the fast structural win. **WS3-Claude** (real-session replay + property/fuzz the twin) is
+   the highest-value *correctness* work (operator: possibly the most important thing we do) and is
+   independent of WS1 — run them in parallel from the start.
+2. **WS2 ‖ WS3-codex ‖ WS3-pi.** Docker/subprocess harness, codex fresh-capture-diff, and the pi
+   twin-from-scratch are mutually independent — run concurrently.
+3. **WS4** — revive the acceptance oracle onto the as-built seams; keep it moving so it doesn't
+   re-stall. Feeds WS5.
+4. **WS5 last** — wire the assessor as the release-readiness agent, composing WS1/WS2/WS4 as its
+   legs. The capstone that makes the whole thing a forced release gate.
 5. **THEN** — and only then — the M4 real-`gb-mbp` proof.
 
 Each workstream carries its own design pass + independent-reviewer gate (signoffs waived) before

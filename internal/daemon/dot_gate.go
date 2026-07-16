@@ -137,7 +137,7 @@ func dispatchDotGateNode(
 //   - true  → GateActionAllow
 //   - false → GateActionDeny
 //
-// The expression is compiled and evaluated against gateExprEnv with a
+// The expression is compiled and evaluated against policy.GateExprEnv with a
 // harmonik-level cost ceiling (PolicyExprEvaluator, CP-034b).
 // DecisionActor is "mechanism" per GateDecisionPayload §3.
 func buildMechanismGateEval(cp core.ControlPoint) handler.GateEvalFunc {

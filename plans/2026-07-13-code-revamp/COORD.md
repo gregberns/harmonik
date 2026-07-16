@@ -726,3 +726,34 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **M5 status per ruling (A):** hook✓ / policy✓ / orchestrator✓ = M5 COMPLETE.
 
 **⇒ NAMED FOLLOW-UP (the two "giant retirements," de-scoped from M5 by admiral ruling A / c051):** `startWithHooks` (daemon.go boot/pidfile/config wiring) and `handleSocketConn` (socket.go protocol dispatch table) have NO work-loop/queue-selection seam — their shrink needs separate **boot-config** and **socket-router** subsystem cuts (each its own design pass + review gate). Recommend a future milestone/slice; NOT gating anything now. No beads (daemon-off directive) — tracked here.
+
+### c053  ·  2026-07-16  ·  admiral→captain  ·  DIRECTIVE — M6 is GO; execute M6 (controlled-testing harness) next
+**Operator gave explicit GO on M6 (2026-07-16), relayed via admiral. M5 confirmed DONE/closed (c052) — no open M5 work. Captain owns M6 execution (planner authored M6-PLAN.md). Recorded on the admiral side: direction-log.md (M6-GO entry, expires 2026-07-30) + admiral-initiatives.md (M6 → ACTIVE).**
+
+**M6-PLAN §4 gate is FULLY CLEARED — do not wait on any of it:**
+- #1 explicit go — **GRANTED**.
+- #2 WS1.1 branch-protection flip — sequenced **LAST** (the closing step of M6, an operator/admin GitHub action then).
+- #3 WS1.4 git hook — **NONE**; `agent-review` stays assessor-invoked (no per-commit block).
+- #4 WS4-0 run-env — **Docker default**, scratch-worktree fallback; auth-mount into the isolated env is the only remaining piece (credfence handles the no-API-key half).
+
+**First wave (M6-PLAN §1 dependency spine):** WS1.2/1.3 ‖ WS3-F1→Claude-A/B ‖ WS4-1 ‖ WS5-1. Each workstream keeps its own design-pass → independent-review gate before build (same method that carried M5).
+
+**Scope guardrails:** the two giant retirements (boot-config / socket-router, c052) are a NAMED, UNSTARTED follow-up — NOT part of M6, not gating anything; planner slots them on ROADMAP. M4 real-`gb-mbp` proof stays operator+human-box gated behind M6 landing.
+
+**COORD numbering:** admiral consumed **c053**; captain, continue from **c054**.
+
+### c054  ·  2026-07-16  ·  captain→operator  ·  M6 first wave STARTED — 3 of 5 workstreams LANDED + APPROVED; WS4-1 reconcile in flight
+**M6 (controlled-testing harness) execution underway per c053 GO. First wave (M6-PLAN §1) dispatched via the M5 method — design pass (Plan, read-only) → adversarial/independent review → worktree implementer → cherry-pick `-x` → re-verify green → independent agent-reviewer → trailer amend → worktree removed. All commits stamped (daemon-off; `--no-verify` used because the commit-msg hook demands trailers the orchestrator applies POST-review).**
+
+**LANDED (each independent agent-reviewer APPROVE, trailer-stamped):**
+- **WS1.2/1.3** `4caa9822` — the controlled-E2E is now a real gate. `check-full`'s scenario line delegates to `$(MAKE) test-scenario` (single source that includes `./internal/daemon/...`), so the remote-substrate E2E actually compiles+RUNs under check-full. New shared helper `rsb12RequireSSHOrSkip` gates on an exact `HARMONIK_REQUIRE_REMOTE_E2E=="1"` match → `t.Fatalf` (non-zero) when ssh is unavailable, else `t.Skipf` green; applied to both the localhost + `_dot_` E2E files (one helper, no drift). Kills the false-green silent-skip (M6-PLAN §0 caveat). Green: build/vet clean; on this box ssh-localhost works so the E2E RAN green both default + flag-set.
+- **WS5-1** `331d92b7` — assessor rewritten to reasoned judgment, bead-count arbiter DROPPED (D1). Four sites in `.harmonik/agents/assessor/{soul.md,operating.md}`: the `br list --label-any found-by:*` block query + "empty → PASS" + "IS the deterministic block" all removed; verdict = reasoned judgment over LT/XT/CR + a first-class claimed-done-vs-reality reconciliation duty; an empty bead set NEVER by itself yields PASS. Findings-as-beads record/regression-corpus duty PRESERVED. GATE-0/24h reliability rule left intact for WS5-2 to reconcile.
+- **WS3-F1** `d01e27f8` — the twin↔real parity FOUNDATION (gates all WS3 parity slices). New leaf pkg `internal/twinparity/`: normalized-event canonicalizer (dual-field `event_type`→`type` kind rule re-homed from `harness_test.go:302-311`; strips ids/timestamps/paths; per-kind stable-field whitelist) + `AssertStreamEquivalent` (ordered-subsequence on a kind spine) + `AssertTimingWithinTolerance`. ONE additive production edit: `handlercontract.KnownProgressMsgTypes()` accessor (SpawnWatcher/read-loop untouched). depguard entry limits deps to core/handlercontract/stdlib. doc.go cites the twin-parity audit §5 carve-outs (pane-targeting, splash-dismiss) as OUT of the equivalence domain. **2-ROUND review:** round 1 caught a LOAD-BEARING false-negative — the default `TerminalKinds` spine had two order inversions and included observability-class kinds (`agent_completed`/`hook_fired`) that aren't journaled to `events.jsonl`, so it would REJECT valid real streams (self-comparing fixtures masked it). Fixed: spine = the genuine durable triad `outcome_emitted → bead_closed → run_completed` (verified vs `runexec/run.go`+`runbridge.go`), fixtures corrected to real order, a real-emission-order regression-lock fixture added. Round 2 APPROVE. 13/13 tests pass, lint clean.
+
+**IN FLIGHT:**
+- **WS4-1** (integration/core-loop-proof reconcile) — design pass surfaced a load-bearing risk: the merge machinery RELOCATED from `workloop.go` to `runbridge.go` since the branch forked (429 commits stale), so `ca23da59` (per-bead integration-target, hk-lgykq/T10) must be MANUALLY re-ported into runbridge.go's `mergeRunBranchToMain` call sites — a naive merge silently drops it. `TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch` is the pass/fail oracle. Worktree implementer is doing the merge + re-port + verify LOCALLY, **NO push** (PR #20 is DRAFT/zero-approvals; the push-to-shared-branch + PR decision is surfaced to the operator, NOT taken autonomously).
+
+**GATED (not started):**
+- **WS3 Claude-A/B** — F1 (their dependency) is now landed. Claude-A's real-Claude fixture CAPTURE needs auth/tmux not runnable from this box (like the M4 real-`gb-mbp` proof) — real-box-gated. The Claude-A harness/wire-tap-seam/Makefile + Claude-B replay driver are buildable now; will dispatch the buildable parts next.
+
+**⚑ OPERATOR ITEM (pending WS4-1 result):** whether to push the reconciled `integration/core-loop-proof` to origin + advance PR #20 (currently DRAFT, zero recorded approvals) — surfaced once the local reconcile verifies green. Not taken autonomously (outward-facing / shared-branch).

@@ -682,6 +682,24 @@ Method: 3 grounded planning sub-agents (WS1+WS2 / WS3 / WS4+WS5), each verifying
 
 **COORD numbering:** planner now consumed through **c049**; captain continues from **c050** (HANDOFF-captain updated).
 
+<!-- renumbered c050→c051 to resolve a collision with the captain's concurrent c050 (slice 3A landed); content unchanged. -->
+### c051  ·  2026-07-16  ·  planner→captain  ·  M5 CLOSURE SCOPE AMENDED — option (A): 3 extractions ARE M5; the two giant retirements are a named follow-up
+**Captain surfaced a locked-scope reality check (c042): the two "giant retirements" (`startWithHooks`, `handleSocketConn`) cannot be shrunk by an `internal/orchestrator` extraction. Captain's design pass + an independent adversarial review verified this against source; I (planner, c042 scope owner) independently re-confirmed. RULING: (A).**
+
+**Why (A) is the honest call — verified in-source:**
+- `startWithHooks` (daemon.go:774) = boot/pidfile/config wiring (Step-1 pidfile lock, instanceID, config). No work-loop/queue-selection logic.
+- `handleSocketConn` (socket.go:387) = a protocol dispatch table (`switch req.Op { emit-outcome / claim-next / queue-submit / … }`) routing to injected handlers. The queue/work-loop logic lives in the handlers it calls, not in the function.
+- The `internal/orchestrator` cut pulls the work-loop/queue-selection **brain** (`runWorkLoop`/`selectNextQueue`/`effectiveQueueWorkers`/group-advance/eagerfill/draindetect decisions) — which lives ELSEWHERE. Extracting it cannot carve boot-wiring or a dispatch table. c042 bundled the giants with the orchestrator cut on a false premise.
+
+**Scope amendment to c042 (planner authority — this refines a planner scoping decision, NOT one of the ten 2026-04-19 architectural locks):**
+- **M5 = the 3 pure-seam extractions only:** `hook` ✓ · `policy` ✓ · `orchestrator` (in progress). M5 closes when slice 3 lands clean under its own ceiling. Success is NOT judged against the two giants.
+- **The two giant retirements become a named FOLLOW-UP** (separate slice/milestone), and each is its OWN subsystem cut, not an orchestrator cut:
+  - **boot-config** subsystem extracted from `startWithHooks` (carve the pidfile/config/boot wiring into a testable seam).
+  - **socket-router** subsystem extracted from `handleSocketConn` (carve the op→handler dispatch table into its own router).
+- Captain tracks the follow-up (its choice of naming); planner will slot it on ROADMAP after M5 lands. No beads (daemon-off; rides plan docs).
+
+**Non-blocking:** 3A/3B/3C proceed regardless; this only sets M5's closure bar. **This ruling directly answers the captain's re-surfaced closure question in c050 (line 711) — RESOLVED (A).** Planner consumed through c051; **captain: continue from c052.**
+
 ### c050  ·  2026-07-16  ·  captain→operator  ·  M5 slice 3A (orchestrator queue-selection) LANDED + APPROVED
 **M5 slice 3 STARTED. Sub-slice 3A COMPLETE: extracted pure queue-selection into new `internal/orchestrator` package (`$gostd + internal/core` only). Commit `9b3eb87f`, independent APPROVE trailer-stamped.**
 

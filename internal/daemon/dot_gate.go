@@ -33,29 +33,16 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
-// gateExprEnv is the typed evaluation environment for mechanism-tagged Gate
-// policy expressions, per specs/control-points.md §6.4.
-//
-// The spec declares: run, outcome, event, context, policy_meta.
-// For gate pre-entry dispatch, outcome and event are nil (no outcome has been
-// produced yet; gate nodes are not event-triggered). policy_meta is nil at MVH
-// (no policy-document metadata is threaded to the daemon in the current
-// implementation).
-type gateExprEnv struct {
-	Run        *core.Run      `expr:"run"`
-	Outcome    *core.Outcome  `expr:"outcome"`
-	Event      interface{}    `expr:"event"`
-	Context    map[string]any `expr:"context"`
-	PolicyMeta map[string]any `expr:"policy_meta"`
-}
-
-// gateVerdictSchemaVersion is the schema version expected in gate-verdict.json
-// files written by cognition gate evaluators.
-const gateVerdictSchemaVersion = 1
+// The mechanism gate evaluation environment (GateExprEnv), the bool→GateAction
+// mapping (MechanismDecision), the gate-verdict.json parse (ParseGateVerdict),
+// and the pre-eval structural-failure Outcome (GateEvalFailureOutcome) are the
+// pure DECISION predicates — they live in internal/policy (M5 slice 2 sub-slice
+// C). This file is the daemon shell that threads every effect in.
 
 // gateVerdictRelPath is the worktree-relative path where a cognition gate
 // evaluator writes its verdict. Analogous to .harmonik/review.json for reviewers.
@@ -64,14 +51,6 @@ const gateVerdictRelPath = ".harmonik/gate-verdict.json"
 // gateTaskRelPath is the worktree-relative path of the brief file written for
 // cognition gate evaluators. Analogous to .harmonik/review-target.md for reviewers.
 const gateTaskRelPath = ".harmonik/gate-task.md"
-
-// gateVerdictJSON is the on-disk format for gate-verdict.json written by
-// cognition gate evaluator subprocesses.
-type gateVerdictJSON struct {
-	SchemaVersion int    `json:"schema_version"`
-	Decision      string `json:"decision"`
-	Reason        string `json:"reason,omitempty"`
-}
 
 // gateFileTimeout is the maximum time to wait for gate-verdict.json to appear.
 // Override in tests via the var below.
@@ -118,13 +97,13 @@ func dispatchDotGateNode(
 	cp, ok, registryLoaded := deps.runPorts().Gate.LookupGate(gateRef)
 	// No registry → structural failure; no ControlPoint can be resolved.
 	if !registryLoaded {
-		return gateEvalFailureOutcome("no ControlPoint registry loaded in daemon"), nil
+		return policy.GateEvalFailureOutcome("no ControlPoint registry loaded in daemon"), nil
 	}
 	if !ok {
-		return gateEvalFailureOutcome(fmt.Sprintf("gate_ref %q not found in ControlPoint registry", gateRef)), nil
+		return policy.GateEvalFailureOutcome(fmt.Sprintf("gate_ref %q not found in ControlPoint registry", gateRef)), nil
 	}
 	if cp.Kind != core.KindGate {
-		return gateEvalFailureOutcome(fmt.Sprintf("gate_ref %q resolves to kind=%s, expected Gate", gateRef, cp.Kind)), nil
+		return policy.GateEvalFailureOutcome(fmt.Sprintf("gate_ref %q resolves to kind=%s, expected Gate", gateRef, cp.Kind)), nil
 	}
 
 	// Step 2: construct GateEvalFunc based on evaluator ModeTag.
@@ -139,7 +118,7 @@ func dispatchDotGateNode(
 			return core.Outcome{}, fmt.Errorf("dot: gate node %q: build cognition eval: %w", node.ID, cogErr)
 		}
 	default:
-		return gateEvalFailureOutcome(fmt.Sprintf("gate_ref %q has unknown evaluator mode %q", gateRef, cp.Evaluator.Mode)), nil
+		return policy.GateEvalFailureOutcome(fmt.Sprintf("gate_ref %q has unknown evaluator mode %q", gateRef, cp.Evaluator.Mode)), nil
 	}
 
 	// Step 3: call handler.DispatchGateNode. It invokes evalFn, maps the result
@@ -149,19 +128,6 @@ func dispatchDotGateNode(
 		return core.Outcome{}, fmt.Errorf("dot: gate node %q: DispatchGateNode: %w", node.ID, err)
 	}
 	return result.Outcome, nil
-}
-
-// gateEvalFailureOutcome returns a FAIL Outcome with failure_class=structural
-// and the given reason in Notes. Used for pre-eval failures (no registry, ref
-// not found, etc.) that are not the result of the evaluator itself.
-func gateEvalFailureOutcome(reason string) core.Outcome {
-	fc := core.FailureClassStructural
-	return core.Outcome{
-		Status:       core.OutcomeStatusFail,
-		Kind:         core.OutcomeKindDefault,
-		FailureClass: &fc,
-		Notes:        "gate dispatch: " + reason,
-	}
 }
 
 // buildMechanismGateEval builds a GateEvalFunc for a mechanism-tagged Gate.
@@ -180,7 +146,7 @@ func buildMechanismGateEval(cp core.ControlPoint) handler.GateEvalFunc {
 	policyID := cp.Name
 
 	return func(ctx context.Context, run *core.Run, _ core.NodeID, gateRef core.GateRef) (*core.GateDecisionPayload, error) {
-		env := gateExprEnv{
+		env := policy.GateExprEnv{
 			Run:        run,
 			Outcome:    nil,
 			Event:      nil,
@@ -203,10 +169,7 @@ func buildMechanismGateEval(cp core.ControlPoint) handler.GateEvalFunc {
 			return nil, fmt.Errorf("mechanism gate %q: expression returned non-bool %T (want bool per §6.4)", gateRef, result.Value)
 		}
 
-		decision := core.GateActionAllow
-		if !boolVal {
-			decision = core.GateActionDeny
-		}
+		decision := policy.MechanismDecision(boolVal)
 
 		return &core.GateDecisionPayload{
 			PolicyID:      policyID,
@@ -575,38 +538,23 @@ Write the JSON file now, then exit with /quit.
 	return workspace.WriteFileVia(ctx, runner, taskPath, []byte(content), 0o644)
 }
 
-// parseGateVerdict parses raw gate-verdict.json bytes into a GateAction.
-// Factored out of readGateVerdict so both local and remote (Via) paths share
-// byte-identical validation (NFR7).
-func parseGateVerdict(data []byte) (core.GateAction, error) {
-	var v gateVerdictJSON
-	if err := json.Unmarshal(data, &v); err != nil {
-		return "", fmt.Errorf("unmarshal gate-verdict.json: %w", err)
-	}
-	if v.SchemaVersion != gateVerdictSchemaVersion {
-		return "", fmt.Errorf("gate-verdict.json: schema_version=%d, want %d", v.SchemaVersion, gateVerdictSchemaVersion)
-	}
-	action := core.GateAction(v.Decision)
-	if !action.Valid() {
-		return "", fmt.Errorf("gate-verdict.json: decision=%q is not a valid GateAction (must be allow, deny, or escalate-to-human)", v.Decision)
-	}
-	return action, nil
-}
-
-// readGateVerdict reads and parses gate-verdict.json, returning the GateAction.
+// readGateVerdict reads gate-verdict.json off the local filesystem and parses it
+// via policy.ParseGateVerdict (the pure validation predicate — M5 slice 2
+// sub-slice C). Factored so both this local path and readGateVerdictVia (remote)
+// share byte-identical validation (NFR7).
 func readGateVerdict(verdictPath string) (core.GateAction, error) {
 	data, err := os.ReadFile(verdictPath)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", verdictPath, err)
 	}
-	return parseGateVerdict(data)
+	return policy.ParseGateVerdict(data)
 }
 
 // readGateVerdictVia is like readGateVerdict but routes the file read through
 // runner for remote runs (hk-hd2w6). When runner is nil or local-FS, delegates
 // to readGateVerdict (NFR7: byte-identical local path). When runner is non-local
 // (e.g. SSHRunner), reads the worker-side gate-verdict.json via cat and applies
-// identical parsing via parseGateVerdict.
+// identical parsing via policy.ParseGateVerdict.
 //
 // Bead: hk-hd2w6.
 func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdictPath string) (core.GateAction, error) {
@@ -617,7 +565,7 @@ func readGateVerdictVia(ctx context.Context, runner ltmux.CommandRunner, verdict
 	if err != nil {
 		return "", fmt.Errorf("read %s via runner: %w", verdictPath, err)
 	}
-	return parseGateVerdict(out)
+	return policy.ParseGateVerdict(out)
 }
 
 // gateVerdictExistsVia reports whether the gate-verdict.json file exists and is

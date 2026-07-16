@@ -35,6 +35,14 @@ type ItemSnapshot struct {
 type GroupSnapshot struct {
 	GroupIndex int
 	Eligible   []ItemSnapshot
+	// Kind is the group's dispatch kind projected as a string ("wave" | "stream"),
+	// never queue.GroupKind (keeps orchestrator off internal/queue). Read only by
+	// the eager-fill decision (EagerFillTarget, M5 slice 3B); the selector ignores it.
+	Kind string
+	// PendingCount is the number of ItemStatusPending items in the group — the
+	// eager-fill deficit input (M5 slice 3B). Counted independently of Eligible so
+	// it faithfully mirrors the daemon's original pending scan.
+	PendingCount int
 }
 
 // QueueSnapshot is one queue's point-in-time dispatch-relevant state, projected

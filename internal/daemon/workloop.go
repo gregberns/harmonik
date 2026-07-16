@@ -1494,6 +1494,15 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 			continue
 		}
 		g := &q.Groups[gi]
+		// PendingCount is counted over ALL group items (not just the eligible
+		// head) so it faithfully mirrors the daemon's original eager-fill pending
+		// scan (eagerfill_em063.go). It feeds orchestrator.EagerFillTarget.
+		pendingCount := 0
+		for ii := range g.Items {
+			if g.Items[ii].Status == queue.ItemStatusPending {
+				pendingCount++
+			}
+		}
 		eligible := queue.EligibleItems(g)
 		items := make([]orchestrator.ItemSnapshot, 0, len(eligible))
 		for _, ep := range eligible {
@@ -1517,7 +1526,12 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 				TemplateParams: it.TemplateParams,
 			})
 		}
-		return &orchestrator.GroupSnapshot{GroupIndex: g.GroupIndex, Eligible: items}
+		return &orchestrator.GroupSnapshot{
+			GroupIndex:   g.GroupIndex,
+			Eligible:     items,
+			Kind:         string(g.Kind),
+			PendingCount: pendingCount,
+		}
 	}
 	return nil
 }

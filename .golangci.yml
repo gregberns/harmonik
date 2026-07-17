@@ -654,6 +654,23 @@ linters:
             - "github.com/stretchr/testify/"
             - "go.uber.org/goleak"
 
+        # bootconfig: pure daemon sub-package (giant-retirement boot-config).
+        # Config-resolution stays isolated to $gostd + core; it must never pull in
+        # queue/branching/workspace or the daemon package itself — daemon depends
+        # on bootconfig, never the reverse (import-cycle caveat). The allow-list
+        # IS the isolation gate: it whitelists ONLY $gostd, internal/core, and the
+        # package's own external test package, so importing internal/daemon (or any
+        # other subsystem) is rejected as "not allowed from list". A separate deny
+        # row for internal/daemon is intentionally omitted: depguard prefix-matches,
+        # so a deny on ".../internal/daemon" also matches ".../internal/daemon/
+        # bootconfig" and would flag the package's own _test self-import.
+        bootconfig:
+          files: ["**/internal/daemon/bootconfig/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/daemon/bootconfig"
+
         # CLI entry-point: composition root — may import every harmonik subsystem
         # plus cmd subpackages and external utility deps.
         # Also subject to llm-sdk-ban (see above).

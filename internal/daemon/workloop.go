@@ -54,6 +54,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
 	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -1177,7 +1178,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 		cacheReapMu:                &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
 		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:             &sync.Mutex{},
-		targetBranch:               resolveTargetBranch(cfg.TargetBranch),
+		targetBranch:               bootconfig.ResolveTargetBranch(cfg.TargetBranch),
 		protectBranches:            cfg.ProtectBranches,
 		allowedRepos:               cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
 		workerRegistry:             workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
@@ -1304,16 +1305,6 @@ func bootHealthRunner(cfg workers.Config) tmuxpkg.CommandRunner {
 		return nil
 	}
 	return nil
-}
-
-// resolveTargetBranch returns branch when non-empty, otherwise the production
-// default "main". This mirrors the convention used by the reconciliation
-// scanner (daemon.go comment: "defaults to 'main' inside the scanner").
-func resolveTargetBranch(branch string) string {
-	if branch == "" {
-		return "main"
-	}
-	return branch
 }
 
 // runWorkLoop is the main dispatch goroutine. It blocks until ctx is cancelled

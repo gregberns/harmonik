@@ -19,6 +19,7 @@ import (
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
 	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
@@ -817,59 +818,44 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// rejected so the daemon fails fast rather than silently using a wrong mode.
 	//
 	// Bead ref: hk-7om2q.8, hk-81n9r.
+	//
+	// Ordering (seam-2, load-bearing): ValidateWorkflowMode runs BEFORE
+	// branching.Load below, so the empty-mode misconfig (hk-81n9r)
+	// short-circuits before any I/O, byte-identical to the pre-seam block.
 	workflowModeDefault := cfg.WorkflowModeDefault
-	if workflowModeDefault == "" {
-		return fmt.Errorf("daemon.Start: WorkflowModeDefault must be set (PL-004a); set cfg.WorkflowModeDefault = core.WorkflowModeDot for the standard dot default")
-	} else if !workflowModeDefault.Valid() {
-		return fmt.Errorf("daemon.Start: invalid workflow_mode_default %q: must be one of single, review-loop, dot (PL-004a)", workflowModeDefault)
+	if err := bootconfig.ValidateWorkflowMode(workflowModeDefault); err != nil {
+		return fmt.Errorf("daemon.Start: %w", err)
 	}
 
-	// WM-005b: apply project-level branching defaults from .harmonik/branching.yaml.
+	// WM-005b / hk-sul12: resolve project-level branching defaults from
+	// .harmonik/branching.yaml (precedence CLI flag > branching.yaml > built-in),
+	// resolve the target branch ("" → "main"), and run the fail-closed
+	// branch-protection checks (two hard-error cases before any socket bind). The
+	// pure resolution lives in the bootconfig sub-package; the daemon performs
+	// only the branching.Load I/O here and threads the loaded values in.
 	//
-	// Precedence: CLI flag > branching.yaml > built-in daemon default.
-	// Only fields left at their zero value (empty string / nil slice) are filled
-	// from the file; a flag-supplied value is never overwritten.
-	//
-	// This block MUST run before resolveTargetBranch and the hk-sul12 guard so
-	// that both operate on the fully-resolved cfg (flag or YAML, not zero value).
-	//
-	// Bead ref: hk-zl4sl.
+	// Bead ref: hk-zl4sl, hk-sul12.
+	bootIn := bootconfig.Input{
+		WorkflowMode:             workflowModeDefault,
+		FlagTargetBranch:         cfg.TargetBranch,
+		FlagProtectBranches:      cfg.ProtectBranches,
+		ForbidUnprotectedDefault: cfg.ForbidUnprotectedDefault,
+	}
 	if cfg.ProjectDir != "" {
 		branchingDefaults, branchingErr := branching.Load(cfg.ProjectDir)
 		if branchingErr != nil {
 			return fmt.Errorf("daemon.Start: load .harmonik/branching.yaml: %w", branchingErr)
 		}
-		if cfg.TargetBranch == "" && branchingDefaults.LandsOn != "" {
-			cfg.TargetBranch = branchingDefaults.LandsOn
-		}
-		if len(cfg.ProtectBranches) == 0 && len(branchingDefaults.ProtectBranches) > 0 {
-			cfg.ProtectBranches = branchingDefaults.ProtectBranches
-		}
+		bootIn.YAMLLandsOn = branchingDefaults.LandsOn
+		bootIn.YAMLProtectBranches = branchingDefaults.ProtectBranches
 	}
-
-	// hk-sul12: fail-closed branch-protection validation.
-	//
-	// Two hard-error cases, checked before any socket bind:
-	//
-	//   (1) ForbidUnprotectedDefault && TargetBranch == "": the operator set
-	//       --forbid-default-main but did not provide --target-branch. The daemon
-	//       would silently merge into the default branch ("main"), which the flag
-	//       was explicitly designed to prevent.
-	//
-	//   (2) resolved TargetBranch is in ProtectBranches: the daemon would merge
-	//       completed bead branches into a protected branch, violating the
-	//       operator's explicit protection policy.
-	//
-	// resolveTargetBranch("") returns "main"; use that resolved value for (2).
-	resolvedTargetBranch := resolveTargetBranch(cfg.TargetBranch)
-	if cfg.ForbidUnprotectedDefault && cfg.TargetBranch == "" {
-		return fmt.Errorf("daemon.Start: --forbid-default-main is set but --target-branch is empty; provide an explicit --target-branch to proceed (hk-sul12)")
+	resolvedBoot, resolveErr := bootconfig.Resolve(bootIn)
+	if resolveErr != nil {
+		return fmt.Errorf("daemon.Start: %w", resolveErr)
 	}
-	for _, protected := range cfg.ProtectBranches {
-		if resolvedTargetBranch == protected {
-			return fmt.Errorf("daemon.Start: target branch %q is in ProtectBranches; choose a different --target-branch (hk-sul12)", resolvedTargetBranch)
-		}
-	}
+	cfg.TargetBranch = resolvedBoot.TargetBranch
+	cfg.ProtectBranches = resolvedBoot.ProtectBranches
+	resolvedTargetBranch := resolvedBoot.TargetBranch
 
 	// WM-024: validate ConflictResolutionAttemptCap at startup.
 	//

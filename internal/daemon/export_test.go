@@ -20,6 +20,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -506,7 +507,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		concurrencyCtrl:            p.ConcurrencyCtrl,            // hk-ohiaf
 		localInFlight:              new(atomic.Int32),            // hk-hs7ex: split gate — fresh counter for each test
 		skipBrHistoryRotation:      true,                         // hk-hypbi: tests use temp dirs without real .br_history
-		targetBranch:               resolveTargetBranch(p.TargetBranch),
+		targetBranch:               bootconfig.ResolveTargetBranch(p.TargetBranch),
 		protectBranches:            p.ProtectBranches,
 		mergeQ:                     mergeQ,
 		worktreeCreateMu:           worktreeCreateMu,

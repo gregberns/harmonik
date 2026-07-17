@@ -20,7 +20,7 @@ This methodology defines the test **types** harmonik uses, what each proves, and
 
 ## Testing layers
 
-Harmonik tests at five layers, each answering a different question.
+Harmonik tests at six layers, each answering a different question.
 
 ### 1. Unit tests
 
@@ -77,6 +77,14 @@ Harmonik tests at five layers, each answering a different question.
 - **Run:** on every push, with a seeded generator for determinism; nightly with random seeds.
 - **Examples:** "edge-selection cascade is deterministic for identical state + candidate set"; "cycle-detection never false-positives on a DAG"; "checkpoint-commit-message round-trips through parse/emit."
 - **Coverage target:** every mechanism-tagged algorithm has at least one property test.
+
+### 6. Docker cross-container E2E (remote-substrate) — REQUIRED, localhost-SSH-independent
+
+- **What it proves:** the remote-substrate lifecycle — `git worktree add` on a remote worker plus `git fetch ssh://worker…` back to box A — works over a **real SSH transport across two separate containers**, not just a localhost loopback.
+- **Why it's its own tier:** the §3 scenario twin of this test (`internal/daemon/scenario_remote_substrate_localhost_test.go`) drives the same path over localhost SSH, which silently passes or skips when the host's SSH loopback is misconfigured. The Docker tier is **localhost-SSH-independent**: it stands up a daemon container ("box A") and an sshd worker container on compose's bridge network, so a broken host loopback cannot mask a real regression. It runs with `HARMONIK_REQUIRE_REMOTE_E2E=1` — a broken SSH path fails **loud**, never skips green.
+- **Scope + technique:** two containers, real sshd, keypair handed off at compose-up through a shared `keys` volume, `origin.git` + worker clone on a shared volume at the identical `/shared` path in both. The daemon execs a compiled scenario test binary against the worker.
+- **Run:** `make test-docker-e2e` (repo root). REQUIRED tier — a green run is the single signal that the two-container remote-substrate path passed. Needs a working Docker; needs no host `~/.ssh` setup.
+- **Docs:** [`test/docker/README.md`](../../test/docker/README.md) — full topology, key-handoff, the `HARMONIK_E2E_SHARED_ROOT=/shared` identical-path requirement, and the WS4 credential mount point (mounted `~/.claude`, **never** `ANTHROPIC_API_KEY`).
 
 ## What we deliberately do NOT test this way
 

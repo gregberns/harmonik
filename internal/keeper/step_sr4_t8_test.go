@@ -41,9 +41,9 @@ func TestStep_SR4_NoInjectClearBeforeModelDone(t *testing.T) {
 	at := time.Unix(1_700_000_000, 0)
 
 	var preModelDone [][]Action
-	preModelDone = append(preModelDone, m.Step(gaugeTickAt(at, "sess-1", "cyc-sr4-001")))
-	// Detection noise while awaiting the handoff.
 	preModelDone = append(preModelDone,
+		m.Step(gaugeTickAt(at, "cyc-sr4-001")),
+		// Detection noise while awaiting the handoff.
 		m.Step(Event{Kind: EvHandoffFreshSeen, CycleID: "cyc-sr4-001", Mtime: at, At: at}),
 		m.Step(Event{Kind: EvSessionChanged, CycleID: "cyc-sr4-001", PrevSID: "sess-1", NewSID: "sess-2", At: at}),
 		m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-sr4-001", At: at.Add(time.Second)}),
@@ -53,7 +53,7 @@ func TestStep_SR4_NoInjectClearBeforeModelDone(t *testing.T) {
 	}
 	// Every non-model-done event in AwaitModelDone: none may yield /clear.
 	preModelDone = append(preModelDone,
-		m.Step(gaugeTickAt(at.Add(2*time.Second), "sess-1", "")),
+		m.Step(gaugeTickAt(at.Add(2*time.Second), "")),
 		m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-sr4-001", At: at.Add(2 * time.Second)}),
 		m.Step(Event{Kind: EvSessionChanged, CycleID: "cyc-sr4-001", PrevSID: "sess-1", NewSID: "sess-2", At: at.Add(2 * time.Second)}),
 		m.Step(Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: "cyc-sr4-001", At: at.Add(2 * time.Second)}),
@@ -114,7 +114,7 @@ func TestStep_ModelDoneTimeout_FailOpenDegraded(t *testing.T) {
 	m := NewCycle(cfg)
 	at := time.Unix(1_700_000_000, 0)
 
-	m.Step(gaugeTickAt(at, "sess-1", "cyc-sr4-003"))
+	m.Step(gaugeTickAt(at, "cyc-sr4-003"))
 	confirm := m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-sr4-003", At: at.Add(time.Second)})
 	// The model-done bound is armed on entry to AwaitModelDone.
 	armed := false

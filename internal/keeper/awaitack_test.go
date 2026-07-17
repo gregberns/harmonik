@@ -86,7 +86,7 @@ func (s steppingClock) Sleep(ctx context.Context, _ time.Duration) bool {
 // first poll → AwaitAck returns nil and emits no timeout event (case a).
 func TestAwaitAck_AckPresentImmediately(t *testing.T) {
 	nonce := "rn-123"
-	cap := &fakeCapturer{fn: func(int) (string, error) {
+	capturer := &fakeCapturer{fn: func(int) (string, error) {
 		return "some pane noise\n" + AckLine(nonce, "restart") + "\nmore", nil
 	}}
 	em := &RecordingEmitter{}
@@ -97,7 +97,7 @@ func TestAwaitAck_AckPresentImmediately(t *testing.T) {
 		Kind:       "restart",
 		Timeout:    5 * time.Second,
 		Poll:       time.Millisecond,
-		Capture:    cap.capture,
+		Capture:    capturer.capture,
 	}, em)
 	if err != nil {
 		t.Fatalf("want nil (ack present), got %v", err)
@@ -105,8 +105,8 @@ func TestAwaitAck_AckPresentImmediately(t *testing.T) {
 	if got := len(em.EventsOfType(core.EventTypeSessionKeeperAckTimeout)); got != 0 {
 		t.Fatalf("want 0 ack_timeout events, got %d", got)
 	}
-	if cap.count() != 1 {
-		t.Fatalf("want exactly 1 capture call, got %d", cap.count())
+	if capturer.count() != 1 {
+		t.Fatalf("want exactly 1 capture call, got %d", capturer.count())
 	}
 }
 
@@ -114,7 +114,7 @@ func TestAwaitAck_AckPresentImmediately(t *testing.T) {
 // nil and polled >= 3 times (case b-ish from §5).
 func TestAwaitAck_AckOnThirdPoll(t *testing.T) {
 	nonce := "ping-77"
-	cap := &fakeCapturer{fn: func(call int) (string, error) {
+	capturer := &fakeCapturer{fn: func(call int) (string, error) {
 		if call >= 3 {
 			return AckLine(nonce, "ping"), nil
 		}
@@ -128,13 +128,13 @@ func TestAwaitAck_AckOnThirdPoll(t *testing.T) {
 		Kind:       "ping",
 		Timeout:    5 * time.Second,
 		Poll:       time.Millisecond,
-		Capture:    cap.capture,
+		Capture:    capturer.capture,
 	}, em)
 	if err != nil {
 		t.Fatalf("want nil (ack on 3rd poll), got %v", err)
 	}
-	if cap.count() < 3 {
-		t.Fatalf("want >= 3 capture calls, got %d", cap.count())
+	if capturer.count() < 3 {
+		t.Fatalf("want >= 3 capture calls, got %d", capturer.count())
 	}
 	if got := len(em.EventsOfType(core.EventTypeSessionKeeperAckTimeout)); got != 0 {
 		t.Fatalf("want 0 ack_timeout events, got %d", got)
@@ -146,7 +146,7 @@ func TestAwaitAck_AckOnThirdPoll(t *testing.T) {
 // session_keeper_ack_timeout event with reason ack_not_observed (case b/§5.3).
 func TestAwaitAck_NeverAppears(t *testing.T) {
 	nonce := "rn-999"
-	cap := &fakeCapturer{fn: func(int) (string, error) {
+	capturer := &fakeCapturer{fn: func(int) (string, error) {
 		return "unrelated pane text without the token", nil
 	}}
 	em := &RecordingEmitter{}
@@ -158,7 +158,7 @@ func TestAwaitAck_NeverAppears(t *testing.T) {
 		Kind:       "restart",
 		Timeout:    500 * time.Millisecond,
 		Poll:       time.Millisecond,
-		Capture:    cap.capture,
+		Capture:    capturer.capture,
 		Clock:      fakeClock(time.Unix(0, 0), 200*time.Millisecond),
 	}, em)
 	if !errors.Is(err, ErrAckTimeout) {
@@ -188,7 +188,7 @@ func TestAwaitAck_NeverAppears(t *testing.T) {
 // (case c, §5.4).
 func TestAwaitAck_WrongNonce(t *testing.T) {
 	wantNonce := "rn-555"
-	cap := &fakeCapturer{fn: func(int) (string, error) {
+	capturer := &fakeCapturer{fn: func(int) (string, error) {
 		// A stale ACK from a previous cycle with a different nonce.
 		return AckLine("rn-OTHER", "restart"), nil
 	}}
@@ -200,7 +200,7 @@ func TestAwaitAck_WrongNonce(t *testing.T) {
 		Kind:       "restart",
 		Timeout:    500 * time.Millisecond,
 		Poll:       time.Millisecond,
-		Capture:    cap.capture,
+		Capture:    capturer.capture,
 		Clock:      fakeClock(time.Unix(0, 0), 200*time.Millisecond),
 	}, em)
 	if !errors.Is(err, ErrAckTimeout) {
@@ -214,7 +214,7 @@ func TestAwaitAck_WrongNonce(t *testing.T) {
 // TestAwaitAck_CapturerError: the capturer errors every poll → bounded retries
 // then a timeout-with-reason naming the capture failure; no panic (§5.5).
 func TestAwaitAck_CapturerError(t *testing.T) {
-	cap := &fakeCapturer{fn: func(int) (string, error) {
+	capturer := &fakeCapturer{fn: func(int) (string, error) {
 		return "", fmt.Errorf("tmux: no such pane")
 	}}
 	em := &RecordingEmitter{}
@@ -225,13 +225,13 @@ func TestAwaitAck_CapturerError(t *testing.T) {
 		Kind:       "ping",
 		Timeout:    10 * time.Second, // long timeout: the error budget must trip first
 		Poll:       time.Millisecond,
-		Capture:    cap.capture,
+		Capture:    capturer.capture,
 	}, em)
 	if !errors.Is(err, ErrAckTimeout) {
 		t.Fatalf("want ErrAckTimeout, got %v", err)
 	}
-	if cap.count() != captureErrorBudget {
-		t.Fatalf("want exactly %d capture attempts (error budget), got %d", captureErrorBudget, cap.count())
+	if capturer.count() != captureErrorBudget {
+		t.Fatalf("want exactly %d capture attempts (error budget), got %d", captureErrorBudget, capturer.count())
 	}
 	if got := len(em.EventsOfType(core.EventTypeSessionKeeperAckTimeout)); got != 1 {
 		t.Fatalf("want 1 ack_timeout event, got %d", got)
@@ -269,7 +269,7 @@ func TestAwaitAck_NoTmuxTarget(t *testing.T) {
 // implicated).
 func TestAwaitAck_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cap := &fakeCapturer{fn: func(call int) (string, error) {
+	capturer := &fakeCapturer{fn: func(call int) (string, error) {
 		if call == 1 {
 			cancel() // cancel after the first (non-matching) capture
 		}
@@ -283,7 +283,7 @@ func TestAwaitAck_ContextCancel(t *testing.T) {
 		Kind:       "ping",
 		Timeout:    10 * time.Second,
 		Poll:       50 * time.Millisecond,
-		Capture:    cap.capture,
+		Capture:    capturer.capture,
 	}, em)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context.Canceled, got %v", err)
@@ -328,7 +328,7 @@ func contains(s, sub string) bool {
 // the test would hang.
 func TestAwaitAck_FakeClockTimeout(t *testing.T) {
 	nonce := "rn-fake"
-	cap := &fakeCapturer{fn: func(int) (string, error) {
+	capturer := &fakeCapturer{fn: func(int) (string, error) {
 		return "no ack in this pane", nil // ACK never appears
 	}}
 	em := &RecordingEmitter{}
@@ -343,7 +343,7 @@ func TestAwaitAck_FakeClockTimeout(t *testing.T) {
 			Kind:       "restart",
 			Timeout:    30 * time.Second,
 			Poll:       5 * time.Second,
-			Capture:    cap.capture,
+			Capture:    capturer.capture,
 			Clock:      clock,
 		}, em)
 	}()

@@ -45,18 +45,18 @@ func (c *Cycler) execute(ctx context.Context, a Action) error {
 	case ActInjectHandoffCmd:
 		c.executeInjectHandoffCmd(ctx, a)
 	case ActInjectClear:
-		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, "/clear") //nolint:errcheck
+		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, "/clear") //nolint:errcheck // non-fatal; a dropped /clear is caught by the Clearing poll
 	case ActInjectBrief:
-		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, briefRestartCmd) //nolint:errcheck
+		_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, briefRestartCmd) //nolint:errcheck // non-fatal; brief re-injection is retried by the reactor
 	case ActSetTmuxEnv:
-		_ = c.pane.SetEnv(ctx, c.cfg.TmuxTarget, a.Key, a.Value) //nolint:errcheck
+		_ = c.pane.SetEnv(ctx, c.cfg.TmuxTarget, a.Key, a.Value) //nolint:errcheck // non-fatal; env is advisory, watcher rebinds on next tick
 	case ActSetManagedSession:
 		c.executeSetManagedSession(ctx, a)
 	case ActClearPrecompact:
-		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck
+		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck // non-fatal; a stale precompact trigger is re-cleared next cycle
 	case ActSetHold:
 		// Best-effort (SetHold fails silently when .sid is absent) — Gate 5d.
-		_, _ = c.gauge.SetHold() //nolint:errcheck
+		_, _ = c.gauge.SetHold() //nolint:errcheck // best-effort; SetHold no-ops without a .sid (Gate 5d)
 	case ActForceRestart:
 		c.executeForceRestart(ctx)
 	case ActArmTimer:
@@ -91,10 +91,8 @@ func (c *Cycler) executeInjectHandoffCmd(ctx context.Context, a Action) {
 		"/session-handoff %s\n\nIMPORTANT: include exactly this line verbatim in the handoff file: %s",
 		c.handoff.HandoffPath(), nonceMarker(a.CycleID),
 	)
-	if err := c.pane.Inject(ctx, c.cfg.TmuxTarget, handoffCmd); err != nil {
-		// Non-fatal: the confirm step catches any delivery failure.
-		_ = err //nolint:errcheck
-	}
+	// Non-fatal: the confirm step catches any delivery failure.
+	_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, handoffCmd) //nolint:errcheck // non-fatal; the nonce-confirm step catches a dropped injection
 }
 
 // executeSetManagedSession is the ActSetManagedSession arm. Non-fatal: the
@@ -135,6 +133,8 @@ func (c *Cycler) executeEmit(ctx context.Context, a Action) {
 		core.EventTypeSessionKeeperNewSessionUp:
 		slog.WarnContext(ctx, "keeper: interior event emit failed",
 			"agent", c.cfg.AgentName, "type", string(a.Type), "err", err)
+	default:
+		// Every other keeper emit keeps the pre-rebuild best-effort discard.
 	}
 }
 
@@ -298,12 +298,12 @@ func (c *Cycler) pollAwaitingHandoff(ctx context.Context, st CycleState, at time
 	if dl, ok := c.timers[TimerHandoffTimeout]; ok && !at.Before(dl) {
 		delete(c.timers, TimerHandoffTimeout)
 		c.sampleHandoffFreshness(ctx, st, at)
-		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 		return
 	}
 	content, err := c.handoff.ReadHandoff()
 	if err == nil && strings.Contains(content, nonceMarker(st.CycleID)) {
-		_ = c.feed(ctx, Event{Kind: EvNonceObserved, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		_ = c.feed(ctx, Event{Kind: EvNonceObserved, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 	}
 }
 
@@ -313,7 +313,7 @@ func (c *Cycler) pollAwaitModelDone(ctx context.Context, st CycleState, at time.
 		// Fail-open bound (SK-014/SR9): the reactor proceeds to Clearing
 		// degraded; never silence.
 		delete(c.timers, TimerModelDone)
-		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerModelDone, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerModelDone, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 		return
 	}
 	// Primary source: the Stop-hook .idle marker. The first
@@ -323,7 +323,7 @@ func (c *Cycler) pollAwaitModelDone(ctx context.Context, st CycleState, at time.
 	// crispIdleTolerance fudge (that tolerance discounts passive .ctx
 	// repaints, irrelevant against t_nonce). SK-014 / design §5.
 	if mt, ok := c.gauge.IdleMarkerModTime(); ok && !mt.Before(st.NonceConfirmedAt) {
-		_ = c.feed(ctx, Event{ //nolint:errcheck
+		_ = c.feed(ctx, Event{ //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 			Kind: EvModelDone, CycleID: st.CycleID,
 			SessionID: st.PrevSID, Source: "idle_marker", At: at,
 		})
@@ -333,7 +333,7 @@ func (c *Cycler) pollAwaitModelDone(ctx context.Context, st CycleState, at time.
 	// (agents whose Stop hook isn't wired). Heavier (JSONL tail scan);
 	// consulted only when the .idle read yields nothing.
 	if tt, ok := c.gauge.LastAssistantTurn(st.PrevSID); ok && !tt.Before(st.NonceConfirmedAt) {
-		_ = c.feed(ctx, Event{ //nolint:errcheck
+		_ = c.feed(ctx, Event{ //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 			Kind: EvModelDone, CycleID: st.CycleID,
 			SessionID: st.PrevSID, Source: "transcript_turn", At: at,
 		})
@@ -348,15 +348,15 @@ func (c *Cycler) pollClearing(ctx context.Context, st CycleState, at time.Time) 
 		// exactly like waitForNewSessionIDWithBackstop's post-attempt
 		// deadline check — it never cuts a settle window short.
 		if bdl, bok := c.timers[TimerClearBackstop]; bok && !at.Before(bdl) {
-			_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: st.CycleID, At: at}) //nolint:errcheck
+			_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 			return
 		}
-		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 		return
 	}
 	cf, _, err := c.gauge.ReadGauge()
 	if err == nil && cf.SessionID != "" && cf.SessionID != st.PrevSID {
-		_ = c.feed(ctx, Event{ //nolint:errcheck
+		_ = c.feed(ctx, Event{ //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 			Kind: EvSessionChanged, CycleID: st.CycleID,
 			PrevSID: st.PrevSID, NewSID: cf.SessionID, At: at,
 		})
@@ -374,15 +374,15 @@ func (c *Cycler) fireOnCancel(ctx context.Context) {
 	case PhaseAwaitingHandoff:
 		delete(c.timers, TimerHandoffTimeout)
 		c.sampleHandoffFreshness(ctx, st, at)
-		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 	case PhaseAwaitModelDone:
 		// Cancellation maps onto the fail-open timeout edge (SK-014/SR9): the
 		// handoff is confirmed, so the cycle proceeds to Clearing degraded
 		// rather than stranding a written handoff (never silence).
 		delete(c.timers, TimerModelDone)
-		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerModelDone, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerModelDone, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 	case PhaseClearing:
-		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: st.CycleID, At: at}) //nolint:errcheck
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 	default:
 	}
 }
@@ -405,5 +405,5 @@ func (c *Cycler) sampleHandoffFreshness(ctx context.Context, st CycleState, at t
 	}
 	slog.WarnContext(ctx, "keeper: nonce echo timed out but a fresh handoff was written — recovering (proceeding with /clear + brief)",
 		"agent", c.cfg.AgentName, "cycle_id", st.CycleID, "session_id", st.PrevSID)
-	_ = c.feed(ctx, Event{Kind: EvHandoffFreshSeen, CycleID: st.CycleID, Mtime: mt, At: at}) //nolint:errcheck
+	_ = c.feed(ctx, Event{Kind: EvHandoffFreshSeen, CycleID: st.CycleID, Mtime: mt, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 }

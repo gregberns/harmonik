@@ -418,8 +418,8 @@ func stepClearSettleExpired(cfg *CyclerConfig, s CycleState, ev Event) (CycleSta
 		// Each defensive re-inject re-emits clear_sent with the
 		// incremented attempt (SK-012 — makes the unconfirmed
 		// forensics replayable).
-		if clear, ok := injectClearAction(&s); ok {
-			actions = append(actions, clear,
+		if clearAct, ok := injectClearAction(&s); ok {
+			actions = append(actions, clearAct,
 				emitClearSentAction(cfg, s.CycleID, s.PrevSID, s.ClearAttempt))
 		}
 	}
@@ -700,7 +700,7 @@ func stepIdleRestartTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState,
 	// Gate 2: below idle-restart floor → notify once per session_id (hk-qshh8).
 	if cf.Tokens < cfg.IdleRestartAbsTokens {
 		if cf.Tokens > 0 && sessionID != s.LastIdleCrewNotifiedSID {
-			payload, _ := json.Marshal(map[string]any{
+			payload := mustMarshalPayload(map[string]any{
 				"agent":  cfg.AgentName,
 				"tokens": cf.Tokens,
 				"reason": "below_idle_threshold",
@@ -904,8 +904,8 @@ func stepEnterClearing(cfg *CyclerConfig, s CycleState, ev Event, source string,
 		actions = append(actions,
 			Action{Kind: ActSetTmuxEnv, Key: "HARMONIK_AGENT", Value: cfg.AgentName},
 		)
-		if clear, ok := injectClearAction(&s); ok {
-			actions = append(actions, clear,
+		if clearAct, ok := injectClearAction(&s); ok {
+			actions = append(actions, clearAct,
 				emitClearSentAction(cfg, s.CycleID, s.PrevSID, s.ClearAttempt))
 		}
 	}
@@ -1037,8 +1037,17 @@ func handoffContentHasStaleNonce(content, currentNonce string) bool {
 
 // ─── Pure emit-payload builders (design §3d: payload construction is pure) ──
 
+// mustMarshalPayload marshals a keeper event payload. Every caller passes a
+// fixed struct (or map) of scalar fields, so json.Marshal cannot fail; the sole
+// justified errcheck suppression in the payload-builder path lives here rather
+// than scattered across each builder.
+func mustMarshalPayload(v any) []byte {
+	raw, _ := json.Marshal(v) //nolint:errcheck,errchkjson // callers pass only fixed scalar-field payload structs/maps, which never fail to marshal; empty bytes on the impossible error
+	return raw
+}
+
 func emitHandoffStartedAction(cfg *CyclerConfig, cycleID, sessionID string) Action {
-	raw, _ := json.Marshal(core.SessionKeeperHandoffStartedPayload{
+	raw := mustMarshalPayload(core.SessionKeeperHandoffStartedPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
 		SessionID: sessionID,
@@ -1047,7 +1056,7 @@ func emitHandoffStartedAction(cfg *CyclerConfig, cycleID, sessionID string) Acti
 }
 
 func emitCycleCompleteAction(cfg *CyclerConfig, cycleID, prevSID, newSID string) Action {
-	raw, _ := json.Marshal(core.SessionKeeperCycleCompletePayload{
+	raw := mustMarshalPayload(core.SessionKeeperCycleCompletePayload{
 		AgentName:     cfg.AgentName,
 		CycleID:       cycleID,
 		PrevSessionID: prevSID,
@@ -1057,7 +1066,7 @@ func emitCycleCompleteAction(cfg *CyclerConfig, cycleID, prevSID, newSID string)
 }
 
 func emitCycleAbortedAction(cfg *CyclerConfig, cycleID, sessionID, reason string) Action {
-	raw, _ := json.Marshal(core.SessionKeeperCycleAbortedPayload{
+	raw := mustMarshalPayload(core.SessionKeeperCycleAbortedPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
 		SessionID: sessionID,
@@ -1067,7 +1076,7 @@ func emitCycleAbortedAction(cfg *CyclerConfig, cycleID, sessionID, reason string
 }
 
 func emitClearUnconfirmedAction(cfg *CyclerConfig, cycleID, sessionID string) Action {
-	raw, _ := json.Marshal(core.SessionKeeperClearUnconfirmedPayload{
+	raw := mustMarshalPayload(core.SessionKeeperClearUnconfirmedPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
 		SessionID: sessionID,
@@ -1076,7 +1085,7 @@ func emitClearUnconfirmedAction(cfg *CyclerConfig, cycleID, sessionID string) Ac
 }
 
 func emitCycleRecoveredAction(cfg *CyclerConfig, cycleID, phaseAtCrash string) Action {
-	raw, _ := json.Marshal(core.SessionKeeperCycleRecoveredPayload{
+	raw := mustMarshalPayload(core.SessionKeeperCycleRecoveredPayload{
 		AgentName:    cfg.AgentName,
 		CycleID:      cycleID,
 		PhaseAtCrash: phaseAtCrash,
@@ -1104,7 +1113,7 @@ func emitHandoffWrittenAction(cfg *CyclerConfig, cycleID, sessionID string, reco
 	} else {
 		p.Nonce = nonceMarker(cycleID)
 	}
-	raw, _ := json.Marshal(p)
+	raw := mustMarshalPayload(p)
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperHandoffWritten, Payload: raw}
 }
 
@@ -1112,7 +1121,7 @@ func emitHandoffWrittenAction(cfg *CyclerConfig, cycleID, sessionID string, reco
 // ("idle_marker" | "transcript_turn" | "timeout"); degraded is true only on
 // the model_done_timeout fail-open path (omitempty per 00b R2).
 func emitModelDoneAction(cfg *CyclerConfig, cycleID, sessionID, source string, degraded bool) Action {
-	raw, _ := json.Marshal(core.SessionKeeperModelDonePayload{
+	raw := mustMarshalPayload(core.SessionKeeperModelDonePayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
 		SessionID: sessionID,
@@ -1125,7 +1134,7 @@ func emitModelDoneAction(cfg *CyclerConfig, cycleID, sessionID, source string, d
 // emitClearSentAction builds session_keeper_clear_sent (attempt is 1-based;
 // defensive re-injects increment it).
 func emitClearSentAction(cfg *CyclerConfig, cycleID, sessionID string, attempt int) Action {
-	raw, _ := json.Marshal(core.SessionKeeperClearSentPayload{
+	raw := mustMarshalPayload(core.SessionKeeperClearSentPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
 		SessionID: sessionID,
@@ -1138,7 +1147,7 @@ func emitClearSentAction(cfg *CyclerConfig, cycleID, sessionID string, attempt i
 // REQUIRED and distinct — the pure SessionChanged guard already enforces the
 // != check, matching the payload's Valid()).
 func emitNewSessionUpAction(cfg *CyclerConfig, cycleID, prevSID, newSID string) Action {
-	raw, _ := json.Marshal(core.SessionKeeperNewSessionUpPayload{
+	raw := mustMarshalPayload(core.SessionKeeperNewSessionUpPayload{
 		AgentName:     cfg.AgentName,
 		CycleID:       cycleID,
 		PrevSessionID: prevSID,
@@ -1148,7 +1157,7 @@ func emitNewSessionUpAction(cfg *CyclerConfig, cycleID, prevSID, newSID string) 
 }
 
 func emitPrecompactBlockedAction(cfg *CyclerConfig, sessionID, action string) Action {
-	raw, _ := json.Marshal(core.SessionKeeperPrecompactBlockedPayload{
+	raw := mustMarshalPayload(core.SessionKeeperPrecompactBlockedPayload{
 		AgentName: cfg.AgentName,
 		SessionID: sessionID,
 		Action:    action,

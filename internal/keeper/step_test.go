@@ -51,11 +51,11 @@ func assertKinds(t *testing.T, got []Action, want []ActionKind) {
 }
 
 // gaugeTickAt builds a passing-ladder GaugeTick entry event.
-func gaugeTickAt(at time.Time, sid, cycleID string) Event {
+func gaugeTickAt(at time.Time, cycleID string) Event {
 	return Event{
 		Kind:    EvGaugeTick,
 		At:      at,
-		CF:      &CtxFile{Pct: 95.0, SessionID: sid},
+		CF:      &CtxFile{Pct: 95.0, SessionID: "sess-1"},
 		Gates:   GateSnapshot{Managed: true, CrispIdle: true},
 		CycleID: cycleID,
 	}
@@ -71,7 +71,7 @@ func TestStep_IdleToAwaitingHandoff_LadderPass(t *testing.T) {
 	m := NewCycle(cfg)
 	at := time.Unix(1_700_000_000, 0)
 
-	actions := m.Step(gaugeTickAt(at, "sess-1", "cyc-step-001"))
+	actions := m.Step(gaugeTickAt(at, "cyc-step-001"))
 
 	assertKinds(t, actions, []ActionKind{
 		ActWriteJournal, ActEmit, ActSendEscape, ActInjectHandoffCmd,
@@ -101,7 +101,7 @@ func TestStep_LadderPass_StaleNonceTruncates(t *testing.T) {
 	cfg := stepTestConfig()
 	at := time.Unix(1_700_000_000, 0)
 
-	stale := gaugeTickAt(at, "sess-1", "cyc-step-002")
+	stale := gaugeTickAt(at, "cyc-step-002")
 	stale.HandoffReadOK = true
 	stale.HandoffContent = "# old\n<!-- KEEPER:cyc-prior-999 -->\n"
 	actions := NewCycle(cfg).Step(stale)
@@ -110,7 +110,7 @@ func TestStep_LadderPass_StaleNonceTruncates(t *testing.T) {
 		ActInjectHandoffCmd, ActWriteJournal, ActArmTimer,
 	})
 
-	genuine := gaugeTickAt(at, "sess-1", "cyc-step-003")
+	genuine := gaugeTickAt(at, "cyc-step-003")
 	genuine.HandoffReadOK = true
 	genuine.HandoffContent = "# real operator handoff, no keeper nonce\n"
 	actions = NewCycle(cfg).Step(genuine)
@@ -131,7 +131,7 @@ func TestStep_LadderFail_Gate5d_SetHoldPrelude(t *testing.T) {
 	m := NewCycle(cfg)
 	at := time.Unix(1_700_000_000, 0)
 
-	ev := gaugeTickAt(at, "sess-1", "")
+	ev := gaugeTickAt(at, "")
 	ev.Gates.LastUserTurnAt = at.Add(-30 * time.Second) // within lookback
 
 	actions := m.Step(ev)
@@ -151,7 +151,7 @@ func TestStep_HandoffTimeout_NoFresh_Aborts(t *testing.T) {
 	m := NewCycle(cfg)
 	at := time.Unix(1_700_000_000, 0)
 
-	m.Step(gaugeTickAt(at, "sess-1", "cyc-step-004"))
+	m.Step(gaugeTickAt(at, "cyc-step-004"))
 	actions := m.Step(Event{
 		Kind: EvTimerFired, Timer: TimerHandoffTimeout,
 		CycleID: "cyc-step-004", At: at.Add(cfg.HandoffTimeout),
@@ -188,7 +188,7 @@ func TestStep_HandoffTimeout_FreshRecovers(t *testing.T) {
 	m := NewCycle(cfg)
 	at := time.Unix(1_700_000_000, 0)
 
-	m.Step(gaugeTickAt(at, "sess-1", "cyc-step-005"))
+	m.Step(gaugeTickAt(at, "cyc-step-005"))
 	m.Step(Event{Kind: EvHandoffFreshSeen, CycleID: "cyc-step-005", Mtime: at.Add(time.Second), At: at.Add(cfg.HandoffTimeout)})
 	actions := m.Step(Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: "cyc-step-005", At: at.Add(cfg.HandoffTimeout)})
 
@@ -225,7 +225,7 @@ func TestStep_FullHappyPath_ThroughAwaitModelDone(t *testing.T) {
 	m := NewCycle(cfg)
 	at := time.Unix(1_700_000_000, 0)
 
-	m.Step(gaugeTickAt(at, "sess-1", "cyc-step-006"))
+	m.Step(gaugeTickAt(at, "cyc-step-006"))
 	confirm := m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-step-006", At: at.Add(time.Second)})
 	assertKinds(t, confirm, []ActionKind{ActWriteJournal, ActEmit, ActCancelTimer, ActArmTimer})
 	if confirm[0].Journal.Phase != "confirmed" || confirm[0].Journal.Reason != "" {
@@ -323,7 +323,7 @@ func TestStep_ClearBackstop_Unconfirmed(t *testing.T) {
 	m := NewCycle(cfg)
 	at := time.Unix(1_700_000_000, 0)
 
-	m.Step(gaugeTickAt(at, "sess-1", "cyc-step-007"))
+	m.Step(gaugeTickAt(at, "cyc-step-007"))
 	m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-step-007", At: at})
 	m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-007", SessionID: "sess-1", Source: "idle_marker", At: at})
 
@@ -354,7 +354,7 @@ func TestStep_ClearSettle_RetriesThenExhausts(t *testing.T) {
 	m := NewCycle(cfg)
 	at := time.Unix(1_700_000_000, 0)
 
-	m.Step(gaugeTickAt(at, "sess-1", "cyc-step-008"))
+	m.Step(gaugeTickAt(at, "cyc-step-008"))
 	m.Step(Event{Kind: EvNonceObserved, CycleID: "cyc-step-008", At: at})
 	m.Step(Event{Kind: EvModelDone, CycleID: "cyc-step-008", SessionID: "sess-1", Source: "idle_marker", At: at})
 
@@ -394,7 +394,7 @@ func TestStep_SubstrateRunRoundTrip(t *testing.T) {
 	at := time.Unix(1_700_000_000, 0)
 
 	src := substrate.NewSyntheticSource([]Event{
-		gaugeTickAt(at, "sess-1", "cyc-step-009"),
+		gaugeTickAt(at, "cyc-step-009"),
 		{Kind: EvNonceObserved, CycleID: "cyc-step-009", At: at.Add(time.Second)},
 		{Kind: EvModelDone, CycleID: "cyc-step-009", SessionID: "sess-1", Source: "idle_marker", At: at.Add(2 * time.Second)},
 		{Kind: EvSessionChanged, CycleID: "cyc-step-009", PrevSID: "sess-1", NewSID: "sess-2", At: at.Add(3 * time.Second)},

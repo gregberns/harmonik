@@ -151,6 +151,6 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 	abortedAfter2 := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted))
 	if abortedAfter2 != abortedAfter1 {
 		t.Errorf("Gate 6 defeated: call-2 fired after call-1 wall=%s (poll tick withheld %s); want suppression within ForceRetryInterval=%s",
-			wall, time.Duration(tickWithheldFor), forceRetryInterval)
+			wall, tickWithheldFor, forceRetryInterval)
 	}
 }

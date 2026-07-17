@@ -1397,16 +1397,18 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 			} else {
 				// BI-024a: explicit br --version handshake before any bead
 				// operations (PL-005 step 4 Cat 0 pre-check). Policy amended by
-				// hk-m6243: a version delta is a loud WARNING (log + continue);
+				// hk-m6243: a version delta is a NOTICE (log + continue);
 				// only exec-failure or unparseable output is fatal (exit code 8).
+				// Notice (not warning) per operator direction 2026-07-16: a
+				// delta is an expected, benign condition, not something wrong.
 				//
 				// Spec ref: specs/beads-integration.md §4.8a BI-024a.
 				// Bead ref: hk-3pbox, hk-m6243.
 				if versionErr := brAdapter.CheckBrVersion(ctx, release.BeadsVersion); versionErr != nil {
 					if errors.Is(versionErr, brcli.ErrBrVersionMismatch) {
-						// Non-fatal: br version differs from pin but br is usable.
-						// Log loudly so operators know to bump the pin; do NOT exit.
-						log.Printf("WARNING: daemon.Start: br version mismatch (BI-024a): %v — daemon continues; update release.BeadsVersion to silence", versionErr)
+						// Non-fatal, expected: br version differs from pin but br
+						// is usable. A notice, not a warning — daemon continues.
+						log.Printf("NOTICE: daemon.Start: br version differs from pin (BI-024a): %v — daemon continues normally; bump release.BeadsVersion when the fleet adopts a new br", versionErr)
 					} else {
 						// Fatal: br binary is unavailable or version output is unparseable.
 						failedPayload := core.DaemonStartupFailedPayload{

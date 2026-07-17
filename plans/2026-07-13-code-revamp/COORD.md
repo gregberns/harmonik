@@ -953,3 +953,16 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **WS4-2 latent traps to fold into a bead/follow-up (from lane report):** (1) scratch `harmonik init` config missing `sentinel.liveness_no_progress_n` + no `harnesses.pi/codex` blocks (init-template drift — daemon refuses boot); (2) docker cred bind `create_host_path:true` → absent `~/.claude` yields empty mount not a hard error (invariant still holds via loud-PENDING; note for WS4-4 real-claude); (3) daemon restart-backoff (≤1m) after ≥2 rapid boots looks like a hang during iterative testing.
 
 **Next COORD entry = c067.**
+
+### c067  ·  2026-07-16  ·  captain  ·  WS2.4-form + WS1.5 land; WS5 already done; WS4-3 dispatched
+**Two doc legs landed on tip (branch `phase1-session-restart-substrate`), both self-reviewed APPROVE:**
+- **WS2.4-docker form** (`f84ae433`) — TESTING.md gains §7 "Subprocess daemon-boot" tier documenting both accept legs: (1) the non-docker smoke (`cmd/harmonik/subprocess_boot_smoke_test.go`, `subprocess` tag, `make test-subprocess`) and (2) the §6 Docker cross-container E2E as the containerized subprocess variant. §6↔§7 cross-linked. Non-docker smoke re-run green (exit 0). Also corrected a drift: §7's smoke is assessor-forced/local, NOT yet CI-wired (plan said "on every push"; no workflow runs it — CI-wiring logged as a follow-up).
+- **WS1.5 gate map** (`a9006fb4`) — TESTING.md gains "Gate tiers & risk-tiering": the CI-vs-local table (every layer → Makefile target → workflow → merge-blocking status, verified against `.github/workflows/`) + the risk-tiering rule (path-glob FLOOR: `internal/daemon/**`|`internal/lifecycle/**` diff = auto-R1 requiring check-short + full scenario + Docker E2E; assessor can only RAISE, never lower; R2=other product, R3=docs/test/tooling). Two "tier" numberings (test-layers §1-§7 vs risk-tiers R1-R3) explicitly disambiguated. All Makefile targets + paths verified to exist.
+
+**⚠️ HANDOFF roadmap was stale — WS5 foundation is DONE.** The handoff's "next = WS2.4→WS1.5→WS5-7→WS5-8" glossed the DAG. Git ledger (main..HEAD) shows **WS5-1/5-2/5-3/5-4/5-5/5-6 all already landed** (`331d92b7` reasoned-judgment, `WS5-2 schema v2` c058, `WS5-3` launcher, `511d2d92` personality, `69f3f1cd` good-enough, `2fd53b62` admiral authority). So WS5-7/5-8 are NOT the immediate next step — they gate on WS4-5 (`WS4-5 + WS5-1 → WS5-7`), which gates on WS4-3.
+
+**Corrected remaining critical path to the capstone:** **WS4-3** (regreen pi+codex cells; dep WS4-2 ✓) **→ WS4-5** (forced single-entry LT command) **→ WS5-7** (wire 3 legs) **→ WS5-8** (capstone dry-run). Side: **WS4-4** (real-claude cells; dep WS4-3), **WS4-6** (WS4 design/review + PR#20/kerf reconcile; dep WS4-5). **WS1.1 CI-flip still LAST**, operator/admiral-sequenced.
+
+**WS4-3 DISPATCHED** to a worktree-isolated background sub-agent (out-of-band, self-verify). Brief includes the WS4-2 provisioning traps as the leading hypothesis (scratch init missing `sentinel.liveness_no_progress_n` + no `harnesses.pi/codex` blocks → daemon won't boot the harnesses → cells PENDING). Guarded against false-green (no SKIP/assertion-weakening; real green or self-tested known-RED only).
+
+**Next COORD entry = c068.**

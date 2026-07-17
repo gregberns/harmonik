@@ -13,6 +13,24 @@ self-test row breaks loudly, and that break is the signal to retire the entry he
 There are currently no known-RED cells. The full-matrix green gate is therefore the plain
 "full-matrix green" with no exclusions.
 
+### Operator caveat — live codex empty-model runs depend on the account default (not a known-RED cell)
+
+This is an **operator caveat**, NOT a known-RED cell: it does not flip a matrix
+assertion, and the codex cells stay GREEN because determinism in the matrix comes from
+`harmonik-twin-codex`, not from live codex.
+
+A live codex empty-model run (`codex exec` with no `--model`) resolves the model from the
+ChatGPT **account default** in `$CODEX_HOME/config.toml`. That default only works if the
+installed `codex-cli` can actually serve it. As of **2026-07-16** the ChatGPT account
+default is rotating to **gpt-5.6-sol**, which **codex-cli 0.142.5 cannot serve** — it
+returns HTTP 400 `"requires a newer version of Codex"`. So a live empty-model codex run can
+fail even though the harness argv (no `--model`) is correct.
+
+Mitigation for operators: either **pin a supported model** in `$CODEX_HOME/config.toml`, or
+**upgrade `codex-cli`** to a version that serves the current default. The matrix itself is
+unaffected — the codex cells run against `harmonik-twin-codex` (model-blind), so they stay
+deterministic regardless of the live rotation. Ref: COORD c072.
+
 ### Retired
 
 - **t10 — per-bead integration-branch targeting (hk-lgykq).** RETIRED 2026-07-07. The

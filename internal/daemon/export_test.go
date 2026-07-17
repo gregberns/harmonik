@@ -2528,8 +2528,11 @@ type ExportedCodexRunCtx struct {
 	CodexBinary   string
 	WorkspacePath string
 	BeadID        string
-	// Model is the codex model name (e.g. "o4-mini"). Required for initial turns;
-	// empty model on an initial turn is a fail-loud error (hk-heh3t).
+	// Model is the codex model name (e.g. "o4-mini"). OPTIONAL: an empty model on
+	// an initial turn omits the --model flag so codex resolves the account default
+	// from $CODEX_HOME/config.toml — the only working config on the HN-022
+	// ChatGPT-subscription path, where a named model 400s. The old fail-loud guard
+	// (empty → error) was retired with hk-heh3t; matches codexRunCtx.model.
 	Model         string
 	PriorThreadID *string
 	BaseEnv       []string

@@ -96,6 +96,11 @@ type codexRunCtx struct {
 	// model directly contradicts the HN-022 ChatGPT path — so the guard is
 	// retired. The never-spawned reaper (stalewatch neverSpawnedTimeout) remains
 	// the backstop if a future codex version ever re-hangs on an omitted --model.
+	//
+	// Operator caveat: a live empty-model run still depends on the ChatGPT account
+	// default being a model the installed codex-cli can serve — a rotating default
+	// (e.g. gpt-5.6-sol vs codex-cli 0.142.5) can 400. See
+	// scenarios/core-loop-proof/known-red.md §"Operator caveat" (COORD c072).
 	model string
 
 	// priorThreadID is non-nil for resume turns (iteration >= 2). It holds the

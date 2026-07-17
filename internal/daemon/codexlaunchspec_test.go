@@ -474,6 +474,101 @@ func TestBuildCodexLaunchSpec_EmptyModelInitialTurn(t *testing.T) {
 			return
 		}
 	}
+
+	// GAP-7: StdinDevNull must be true on the empty-model initial turn. This is
+	// the backstop against the old omitted-model stdin hang (hk-rpr6): even when
+	// codex resolves the account-default model with no --model flag, stdin is
+	// redirected to /dev/null so codex (ProcessExit) can never block on the pane
+	// PTY waiting for EOF.
+	if !spec.StdinDevNull {
+		t.Error("empty-model initial spec.StdinDevNull = false; want true (omitted-model stdin-hang backstop, hk-rpr6)")
+	}
+}
+
+// TestBuildCodexLaunchSpec_InitialArgv_Order verifies the exact ordering of the
+// initial-turn argv (GAP-2): --sandbox precedes --model precedes -C, each flag's
+// value immediately follows it, and the seed prompt is the final arg. An empty-model
+// counterpart asserts the same shape with --model absent. Ordering is load-bearing:
+// codex parses `--model <m>` and `-C <wt>` positionally-adjacent, and the seed prompt
+// must be the trailing positional.
+func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
+	t.Parallel()
+
+	indexOf := func(args []string, tok string) int {
+		for i, a := range args {
+			if a == tok {
+				return i
+			}
+		}
+		return -1
+	}
+
+	// Non-empty model path.
+	t.Run("with model", func(t *testing.T) {
+		t.Parallel()
+		rc := daemon.ExportedCodexRunCtx{
+			WorkspacePath:    "/tmp/wt-test-codex-order",
+			BeadID:           "hk-test-order",
+			Model:            "o4-mini",
+			SkipBillingGuard: true,
+		}
+		spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		idxSandbox := indexOf(spec.Args, "--sandbox")
+		idxModel := indexOf(spec.Args, "--model")
+		idxC := indexOf(spec.Args, "-C")
+		if idxSandbox < 0 || idxModel < 0 || idxC < 0 {
+			t.Fatalf("missing expected flag(s): --sandbox=%d --model=%d -C=%d; args=%v",
+				idxSandbox, idxModel, idxC, spec.Args)
+		}
+		if !(idxSandbox < idxModel && idxModel < idxC) {
+			t.Errorf("argv ordering wrong: want --sandbox(%d) < --model(%d) < -C(%d); args=%v",
+				idxSandbox, idxModel, idxC, spec.Args)
+		}
+		// --model value immediately follows --model.
+		if idxModel+1 >= len(spec.Args) || spec.Args[idxModel+1] != "o4-mini" {
+			t.Errorf("--model value must immediately follow --model; args=%v", spec.Args)
+		}
+		// -C value immediately follows -C.
+		if idxC+1 >= len(spec.Args) || spec.Args[idxC+1] != rc.WorkspacePath {
+			t.Errorf("-C value must immediately follow -C; args=%v", spec.Args)
+		}
+		// Seed prompt is the final arg.
+		codexLaunchSpecAssertSeedPrompt(t, spec.Args, rc.BeadID)
+		if idxC+2 != len(spec.Args)-1 {
+			t.Errorf("seed prompt must be the final arg (immediately after the -C value); args=%v", spec.Args)
+		}
+	})
+
+	// Empty-model counterpart: seed last, no --model anywhere.
+	t.Run("empty model", func(t *testing.T) {
+		t.Parallel()
+		rc := daemon.ExportedCodexRunCtx{
+			WorkspacePath:    "/tmp/wt-test-codex-order-nomodel",
+			BeadID:           "hk-test-order-nomodel",
+			SkipBillingGuard: true,
+		}
+		spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if indexOf(spec.Args, "--model") != -1 {
+			t.Errorf("empty-model argv must not contain --model anywhere; args=%v", spec.Args)
+		}
+		idxSandbox := indexOf(spec.Args, "--sandbox")
+		idxC := indexOf(spec.Args, "-C")
+		if !(idxSandbox >= 0 && idxC >= 0 && idxSandbox < idxC) {
+			t.Errorf("argv ordering wrong: want --sandbox(%d) < -C(%d); args=%v", idxSandbox, idxC, spec.Args)
+		}
+		// Seed prompt is the final arg, immediately after the -C value.
+		codexLaunchSpecAssertSeedPrompt(t, spec.Args, rc.BeadID)
+		if idxC+2 != len(spec.Args)-1 {
+			t.Errorf("seed prompt must be the final arg (immediately after the -C value); args=%v", spec.Args)
+		}
+	})
 }
 
 // TestBuildCodexLaunchSpec_EmptyModelResumeTurnOK verifies that an empty model is
@@ -621,7 +716,12 @@ func codexLaunchSpecAssertSeedPrompt(t *testing.T, args []string, beadID string)
 	if !strings.Contains(last, beadID) {
 		t.Errorf("seed prompt (last arg) does not reference beadID %q; got %q", beadID, last)
 	}
-	if !strings.Contains(strings.ToLower(last), "refs") {
-		t.Errorf("seed prompt does not contain 'Refs' instruction; got %q", last)
+	// GAP-8: require the EXACT "Refs: <beadID>" substring, byte-matching what the
+	// detector (workloop.go beadAlreadySubsumedInMain) greps for. A looser
+	// lowercased "refs" check would pass even if the prompt instructed a
+	// trailer format the detector cannot recognise.
+	wantRefs := "Refs: " + beadID
+	if !strings.Contains(last, wantRefs) {
+		t.Errorf("seed prompt does not contain exact %q trailer instruction; got %q", wantRefs, last)
 	}
 }

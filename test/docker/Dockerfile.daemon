@@ -1,0 +1,87 @@
+# test/docker/Dockerfile.daemon — M6 WS2.1 daemon foundation image.
+#
+# LOCKED decision (M6-PLAN §WS2.1): MULTI-STAGE, in-image build. The build stage
+# compiles `harmonik` + the twins FROM SOURCE via the repo's own Makefile targets
+# (`build-all` = `build` + `twins`); the runtime stage is a minimal Debian slim
+# with only the daemon's real runtime deps (git, tmux, openssh-client, br). No
+# host artifacts are mounted — the image is hermetic and CI-portable.
+#
+# Build context is the repo ROOT:  docker build -f test/docker/Dockerfile.daemon .
+#
+# Makefile targets reused (do NOT reinvent the build):
+#   build-all → build (build-harmonik → /tmp/harmonik) + twins (build-twin-generic
+#               → <repo>/twins/generic-twin). See Makefile lines 46/214/227/232.
+# COMMIT_HASH is normally `git rev-parse HEAD`; we pass it as a build-arg so the
+# build needs no .git in the context (see .dockerignore).
+
+# ── Stage 1: compile the Go binaries from source via the Makefile ────────────
+FROM golang:1.25-bookworm AS go-build
+ARG COMMIT_HASH=docker
+WORKDIR /src
+
+# Warm the module cache first (better layer caching on source-only edits).
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Bring in the full source tree (pruned by .dockerignore) + the Makefile.
+COPY . .
+
+# Reuse the repo's own build-all target: builds cmd/harmonik → /tmp/harmonik and
+# every twin → /src/twins/generic-twin. `make` is preinstalled in golang:bookworm.
+RUN make build-all COMMIT_HASH="${COMMIT_HASH}"
+
+# ── Stage 2: fetch the beads CLI (`br`) the daemon shells out to at runtime ───
+# beads_rust is a genuine runtime dependency (harmonik init/reconcile shell out
+# to `br`). We pull a PINNED, checksum-verified upstream release binary rather
+# than building from source: the from-source cargo build is heavy (OOMs on
+# constrained hosts) and currently upstream-broken (fsqlite-core fails to compile
+# on install-from-HEAD). The version is pinned via ARG and the download is
+# sha256-verified, so the image stays reproducible. No host artifact is mounted —
+# the LOCKED "hermetic" decision is about the harmonik/twin build in stage 1,
+# which is fully from-source.
+FROM debian:bookworm-slim AS br-fetch
+ARG BR_VERSION=0.2.16
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    base="https://github.com/Dicklesworthstone/beads_rust/releases/download/v${BR_VERSION}"; \
+    file="br-${BR_VERSION}-linux_musl_${TARGETARCH}.tar.gz"; \
+    curl -fsSL "${base}/${file}"        -o /tmp/br.tgz; \
+    curl -fsSL "${base}/${file}.sha256" -o /tmp/br.sha256; \
+    want="$(awk '{print $1}' /tmp/br.sha256)"; \
+    got="$(sha256sum /tmp/br.tgz | awk '{print $1}')"; \
+    [ "${want}" = "${got}" ] || { echo "br checksum mismatch want=${want} got=${got}" >&2; exit 1; }; \
+    tar -xzf /tmp/br.tgz -C /usr/local/bin br; \
+    chmod +x /usr/local/bin/br; \
+    /usr/local/bin/br --version
+
+# ── Stage 3: minimal runtime ─────────────────────────────────────────────────
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        tmux \
+        openssh-client \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Binaries on PATH (WS2.1 accept: "twins present on PATH").
+COPY --from=go-build /tmp/harmonik            /usr/local/bin/harmonik
+COPY --from=go-build /src/twins/generic-twin  /usr/local/bin/generic-twin
+COPY --from=br-fetch /usr/local/bin/br        /usr/local/bin/br
+
+# SH-009 in-tree twin search-path default is <repo-root>/twins/; mirror it so the
+# daemon finds the twin whether it looks on PATH or in the conventional dir.
+RUN mkdir -p /work/twins \
+    && ln -sf /usr/local/bin/generic-twin /work/twins/generic-twin
+
+# WS4 credential mount point (STUB — implemented in WS2.5, not here): a real
+# ANTHROPIC_API_KEY / ~/.claude credential set is mounted at /root/.claude by
+# compose. Left as a documented convention only.
+ENV HARMONIK_PROJECT=/work/project
+
+WORKDIR /work
+COPY test/docker/entrypoint-daemon.sh /usr/local/bin/entrypoint-daemon.sh
+RUN chmod +x /usr/local/bin/entrypoint-daemon.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-daemon.sh"]

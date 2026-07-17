@@ -93,7 +93,7 @@ Harmonik tests at six layers, each answering a different question.
 - **Two legs (M6 WS2.4):**
   - **Non-docker smoke** — `cmd/harmonik/subprocess_boot_smoke_test.go`, behind a dedicated `subprocess` build tag (never compiled by default `go build`/`go test ./...`). Billing-free: it points `--codex-binary` at the compiled `generic-twin`, whose handshake fails fast so the run reaches a terminal `run_failed` without tmux, a real agent, or the network. Run: `make test-subprocess` (or `go test -tags subprocess -run TestSubprocessDaemonBootSmoke ./cmd/harmonik/`).
   - **Docker/containerized variant** — the §6 Docker cross-container E2E (`make test-docker-e2e`) **is** the subprocess form of this tier: the daemon container runs the real `harmonik` binary and execs a compiled scenario binary against the worker over real SSH. It additionally asserts a clean bead-*close* through the real binary, which the non-docker smoke deliberately leaves out of scope.
-- **Run:** the non-docker smoke is fast, deterministic, and zero-token, but is **not yet wired into a CI workflow** — it runs locally / as an assessor-forced gate (`make test-subprocess`). Wiring it into CI is a follow-up. The Docker variant runs per §6 (also assessor-forced, not CI). See the gate map below for exactly where each tier is required.
+- **Run:** the non-docker smoke is fast, deterministic, and zero-token, but is **deliberately not wired into a CI workflow** — it runs locally / as an assessor-forced gate (`make test-subprocess`). This is settled, not a pending follow-up: the smoke `t.Skip`s when `br` is not on `PATH`, and no CI runner provisions `br`, so wiring it into CI would either skip straight to green (the exact "green CI skip masks a regression" failure mode the forced-local split exists to prevent — see the note under the gate map) or force a `br`-version pin into CI (the project does not bind to external tool versions). It stays forced-local alongside the other real-daemon tiers. The Docker variant runs per §6 (also assessor-forced, not CI). See the gate map below for exactly where each tier is required.
 
 ## Gate tiers & risk-tiering
 
@@ -112,7 +112,7 @@ The single authoritative map of **which test tier runs where** and **which tier 
 | §3 scenario suite (full, `-tags=scenario`, incl. `internal/daemon` scenario files) | `make test-scenario` | `scenario.yml` → *scenario (Tier 3)* | **No today** (`continue-on-error`); WS1.1 flips the **`./test/scenario/...`-only** invocation to a required check — never the daemon bundle, which `t.Skipf`s green on sshd-less runners |
 | full `-race`, no `-short`, uncapped parallel | `make check-race-full` | `nightly-race.yml` | No (nightly shake-out) |
 | §6 Docker cross-container remote-substrate E2E | `make test-docker-e2e` | *(none — local / assessor-forced)* | Assessor gate, not CI |
-| §7 subprocess daemon-boot (non-docker) | `make test-subprocess` | *(none — local / assessor-forced; CI wiring is a follow-up)* | Assessor gate, not CI |
+| §7 subprocess daemon-boot (non-docker) | `make test-subprocess` | *(none — local / assessor-forced; deliberately off CI — `br`-on-PATH dep would skip-to-green)* | Assessor gate, not CI |
 | Core-loop LT gate (real pi/codex/claude cells, forced) | `make core-loop-lt` | *(none — forced-local, WS4-5)* | Assessor LT-leg gate, never CI (non-zero on any non-green cell; emits `MATRIX_JSON` grid) |
 | Real-agent conformance (twin↔real) | *(rare, expensive)* | *(none — on-demand)* | Assessor gate, not CI |
 

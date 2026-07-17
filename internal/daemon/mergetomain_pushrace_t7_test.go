@@ -120,7 +120,7 @@ func TestMergeToMain_ForcedLostPushRace_ReEntersAndRetries(t *testing.T) {
 
 	// (B) origin main contains BOTH the race commit and the run work.
 	for _, want := range []string{"race.txt", "work.txt"} {
-		lsCmd := exec.CommandContext(t.Context(), "git", "cat-file", "-e", "main:"+want)
+		lsCmd := exec.CommandContext(t.Context(), "git", "cat-file", "-e", "main:"+want) //nolint:gosec // G204: fixed git subcommand + test-controlled loop constants
 		lsCmd.Dir = originDir
 		if err := lsCmd.Run(); err != nil {
 			t.Errorf("origin main missing %q after retry (work or race commit lost): %v", want, err)

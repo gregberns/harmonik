@@ -1488,6 +1488,7 @@ func snapshotFleet(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor i
 // the dispatch stamp lands on the right item (addendum fix #1). The absolute
 // index is resolved exactly as the legacy selectNextQueue did: the first
 // Items entry matching the eligible item's BeadID with ItemStatusPending.
+//nolint:gocognit // slated for giant-retirement refactor (TRACK 3); do not split here
 func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 	for gi := range q.Groups {
 		if q.Groups[gi].Status != queue.GroupStatusActive {
@@ -3776,7 +3777,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			fmt.Fprintf(os.Stderr, "daemon: workloop: ReopenBead (ensureBaseOnWorker) bead %s run %s: %v\n",
 				beadID, runID.String(), reopenErr)
 		}
-		return
+		return succeeded
 	}
 	if wtErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: CreateWorktree for bead %s run %s: %v (reopening)\n", beadID, runID.String(), wtErr)
@@ -6459,6 +6460,7 @@ type commitAdvanceResult struct {
 // Spec ref: specs/run-state-machine.md RSM-012..019; specs/execution-model.md
 // §4.12 EM-052/EM-053/EM-054. Bead: hk-ftyvo, hk-4goy3, hk-6r6xv, hk-zgt4u,
 // hk-yyso7 (mergeMu → mergeq).
+//nolint:gocognit,cyclop // slated for giant-retirement refactor (TRACK 3); do not split here
 func mergeRunBranchToMain(ctx context.Context, submit mergeSubmit, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA, targetBranch string, protectBranches []string, brPath string) mergeOutcome {
 	if submit == nil {
 		submit = inlineMergeSubmit

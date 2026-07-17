@@ -668,7 +668,7 @@ func newDaemonHookStore(bus eventbus.EventBus) *hookSessionStore {
 // Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
 // Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
 // Bead ref: hk-tigaf.3.
-func loadStartupQueues(cfg Config, hooks daemonTestHooks, bus eventbus.EventBus, qs *QueueStore, daemonStartTime time.Time) error {
+func loadStartupQueues(ctx context.Context, cfg Config, hooks daemonTestHooks, bus eventbus.EventBus, qs *QueueStore, daemonStartTime time.Time) error {
 	if cfg.ProjectDir == "" || cfg.BrPath == "" {
 		return nil
 	}
@@ -681,7 +681,7 @@ func loadStartupQueues(cfg Config, hooks daemonTestHooks, bus eventbus.EventBus,
 		//
 		// Spec ref: specs/beads-integration.md §4.10 BI-031b.
 		// Bead ref: hk-th378.
-		_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brAdapterErr, "br-new-for-project-queue", bus)
+		_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brAdapterErr, "br-new-for-project-queue", bus)
 		return nil
 	}
 
@@ -693,16 +693,16 @@ func loadStartupQueues(cfg Config, hooks daemonTestHooks, bus eventbus.EventBus,
 	// clearing the lock so the subsequent ShowBead queries succeed without
 	// spurious warnings. Non-fatal: on sync failure the reconciliation continues
 	// with the pre-F40 degraded behaviour (ShowBead failures are warned and skipped).
-	if syncErr := brAdapterForQueue.SyncFlushOnly(context.Background()); syncErr != nil {
+	if syncErr := brAdapterForQueue.SyncFlushOnly(ctx); syncErr != nil {
 		logW := cfg.LogWriter
 		if logW == nil {
 			logW = os.Stderr
 		}
-		fmt.Fprintf(logW, "warn: daemon startup: br sync --flush-only failed; QM-002b ShowBead queries may emit transient exit-3 warnings: %v\n", syncErr)
+		fmt.Fprintf(logW, "warn: daemon startup: br sync --flush-only failed; QM-002b ShowBead queries may emit transient exit-3 warnings: %v\n", syncErr) //nolint:errcheck // best-effort stderr warning
 	}
 
 	loadedQueues, loadErr := lifecycle.LoadQueueAtStartup(
-		context.Background(),
+		ctx,
 		cfg.ProjectDir,
 		brAdapterForQueue,
 		bus,
@@ -1739,7 +1739,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
 	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
 	// Bead ref: hk-tigaf.3.
-	if loadErr := loadStartupQueues(cfg, hooks, bus, qs, daemonStartTime); loadErr != nil {
+	if loadErr := loadStartupQueues(ctx, cfg, hooks, bus, qs, daemonStartTime); loadErr != nil {
 		return loadErr
 	}
 

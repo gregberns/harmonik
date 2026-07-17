@@ -81,7 +81,7 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 			ctxTimeout = d
 		}
 	}
-	cmd := exec.Command(piBin, //nolint:gosec // G204: piBin is operator-provided on a live-gated box.
+	cmd := exec.CommandContext(t.Context(), piBin, //nolint:gosec // G204: piBin is operator-provided on a live-gated box.
 		"--mode", "json", "--no-extensions",
 		"--provider", provider, "--model", model,
 		"Reply with the single word: ok.")
@@ -101,7 +101,7 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 			t.Fatalf("pi exited non-zero: %v\nstderr: %s", err, stderr.String())
 		}
 	case <-time.After(ctxTimeout):
-		_ = cmd.Process.Kill()
+		_ = cmd.Process.Kill() //nolint:errcheck // best-effort kill on timeout
 		t.Fatalf("pi did not complete within %s (pi process-exit is unreliable; agent_end is the real terminal)", ctxTimeout)
 	}
 
@@ -119,7 +119,7 @@ func TestPiA_LiveSingleTurn(t *testing.T) {
 		func(id string) { gotSessionID = id },
 		func() { agentEndFired = true },
 	)
-	_, _ = interceptor.Read(make([]byte, len(out)+1)) // drive the interceptor over the buffered stream
+	_, _ = interceptor.Read(make([]byte, len(out)+1)) //nolint:errcheck // drive the interceptor over the buffered stream; EOF expected
 	if gotSessionID == "" {
 		t.Error("live pi: no session id captured (PI-012)")
 	}

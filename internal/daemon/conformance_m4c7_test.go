@@ -85,7 +85,7 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 	// handler.Launch's exec path uses exec.CommandContext locally (NFR7).
 	t.Run("codex_nil_runner_localspawn", func(t *testing.T) {
 		wt := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
 			t.Fatalf("mkdir .harmonik: %v", err)
 		}
 		rc := claudeRunCtx{
@@ -113,7 +113,7 @@ func TestM4C7_NFR7_LocalByteIdentical_AllHarnesses(t *testing.T) {
 	t.Run("pi_nil_runner_localspawn", func(t *testing.T) {
 		t.Setenv("OPENROUTER_API_KEY", "sk-test-m4c7")
 		wt := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
 			t.Fatalf("mkdir .harmonik: %v", err)
 		}
 		rc := claudeRunCtx{
@@ -171,7 +171,7 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 	codexRemoteSpecEnv := func(t *testing.T) []string {
 		t.Helper()
 		wt := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
 			t.Fatalf("mkdir .harmonik: %v", err)
 		}
 		rc := claudeRunCtx{
@@ -200,7 +200,7 @@ func TestM4C7_BillingFailClosed_AllRemoteHarnesses(t *testing.T) {
 		t.Helper()
 		t.Setenv("OPENROUTER_API_KEY", "sk-test-m4c7")
 		wt := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(wt, ".harmonik"), 0o750); err != nil {
 			t.Fatalf("mkdir .harmonik: %v", err)
 		}
 		rc := claudeRunCtx{
@@ -402,7 +402,7 @@ func countViaHelpers(t *testing.T) int {
 					seen[fn] = true
 				}
 			}
-			_ = f.Close()
+			_ = f.Close() //nolint:errcheck // scan-only read; close error unactionable
 		}
 	}
 	return len(seen)

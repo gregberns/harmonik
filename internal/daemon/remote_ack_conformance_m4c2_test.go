@@ -144,7 +144,7 @@ func newRemoteRunSubstrate(t *testing.T, adapter *remoteAckFixtureAdapter) *perR
 // classifies as a connection failure. Real subprocess, deterministic, no sleep.
 func sshDisconnectErr(t *testing.T) error {
 	t.Helper()
-	err := exec.Command("sh", "-c", "exit 255").Run()
+	err := exec.CommandContext(t.Context(), "sh", "-c", "exit 255").Run()
 	var ee *exec.ExitError
 	if !errors.As(err, &ee) || ee.ExitCode() != 255 {
 		t.Fatalf("T2: could not synthesize exit-255 ExitError: %v", err)
@@ -248,7 +248,7 @@ func TestT2_PositiveAcceptance_OnlyAsyncAcked(t *testing.T) {
 	// the synchronous Ack never supplies.
 	acked := core.AgentInputAckedPayload{
 		RunID:         "019ec897-0000-7000-8000-000000000042",
-		InputSeq:      int64(ack.Seq),
+		InputSeq:      int64(ack.Seq), //nolint:gosec // G115: test ack.Seq is a small controlled value, no uint64→int64 overflow
 		AcceptanceRef: ack.Token, // empty here — the paste path supplies no turn id.
 		AckedAt:       "2026-07-16T00:00:00Z",
 	}

@@ -33,7 +33,7 @@ import (
 // base_url) so buildPiLaunchSpec succeeds and emits the base_url wiring.
 func piRemoteRunCtx(t *testing.T, ws string, runner tmux.CommandRunner) claudeRunCtx {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(ws, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(ws, ".harmonik"), 0o750); err != nil {
 		t.Fatalf("mkdir .harmonik: %v", err)
 	}
 	return claudeRunCtx{
@@ -154,7 +154,7 @@ func TestBuildPiRoutedLaunchSpec_ProviderConfigIntactAcrossHosts(t *testing.T) {
 		if agentDir == "" {
 			t.Fatal("PI_CODING_AGENT_DIR not injected; base_url provider wiring missing")
 		}
-		raw, readErr := os.ReadFile(filepath.Join(agentDir, "models.json"))
+		raw, readErr := os.ReadFile(filepath.Join(agentDir, "models.json")) //nolint:gosec // G304: agentDir is test-injected via PI_CODING_AGENT_DIR, not user input
 		if readErr != nil {
 			t.Fatalf("read models.json: %v", readErr)
 		}

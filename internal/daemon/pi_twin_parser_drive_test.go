@@ -34,7 +34,7 @@ import (
 func runPiTwin(t *testing.T, args ...string) []byte {
 	t.Helper()
 	full := append([]string{"run", "github.com/gregberns/harmonik/cmd/harmonik-twin-pi"}, args...)
-	cmd := exec.Command("go", full...) //nolint:gosec // G204: fixed module-internal package path + test-controlled args.
+	cmd := exec.CommandContext(t.Context(), "go", full...) //nolint:gosec // G204: fixed module-internal package path + test-controlled args.
 	cmd.Env = os.Environ()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -105,7 +105,7 @@ func TestPiTwinDrivesRealParser(t *testing.T) {
 	// (3) The committed reference fixture must be byte-identical to the twin's
 	// live output — the parity gate's corpus is the twin, verbatim.
 	fixture := filepath.Join("..", "..", "testdata", "twin-parity", "pi", "happy-path-sample", "ndjson")
-	refBytes, err := os.ReadFile(fixture)
+	refBytes, err := os.ReadFile(fixture) //nolint:gosec // G304: fixture is a fixed in-repo testdata path, not user input
 	if err != nil {
 		t.Fatalf("read committed reference ndjson: %v", err)
 	}

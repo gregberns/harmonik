@@ -128,7 +128,7 @@ func (s *hookSessionStore) dispatchHookRelayEnvelope(env hookRelayEnvelope) hook
 	default:
 		// outcome_emitted, agent_ready, and every other type are pure — the hook
 		// state machine owns them.
-		return s.SessionStore.Dispatch(env)
+		return s.Dispatch(env)
 	}
 }
 

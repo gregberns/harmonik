@@ -336,10 +336,10 @@ func TestTimingProperty_InBandInvariants(t *testing.T) {
 
 		// inv-2: no anomaly events inside the bands.
 		if len(anoms) != 0 {
-			min := shrinkTimingVector(draw.asVector(), func(v []time.Duration) bool {
+			minVec := shrinkTimingVector(draw.asVector(), func(v []time.Duration) bool {
 				return len(observeAnomalies(t, drawFromVector(v))) != 0
 			})
-			t.Errorf("inv-2 VIOLATED: in-band draw produced anomalies %v; minimal failing vector = %v", anoms, min)
+			t.Errorf("inv-2 VIOLATED: in-band draw produced anomalies %v; minimal failing vector = %v", anoms, minVec)
 		}
 
 		// keeper co-observation: an in-band draw must read as a clean completion.
@@ -413,12 +413,12 @@ func TestTimingProperty_OutOfBandMatchingAnomaly(t *testing.T) {
 
 			want := []string{tc.wantOne}
 			if !reflect.DeepEqual(anoms, want) {
-				min := shrinkTimingVector(draw.asVector(), func(v []time.Duration) bool {
+				minVec := shrinkTimingVector(draw.asVector(), func(v []time.Duration) bool {
 					got := observeAnomalies(t, drawFromVector(v))
 					return !reflect.DeepEqual(got, want)
 				})
 				t.Errorf("inv-3 VIOLATED [%s]: got anomalies %v, want exactly %v; minimal failing vector = %v",
-					tc.name, anoms, want, min)
+					tc.name, anoms, want, minVec)
 			}
 
 			// keeper co-observation must agree on the partition for the
@@ -460,17 +460,17 @@ func TestTimingProperty_ShrinkerMinimizes(t *testing.T) {
 	fails := func(v []time.Duration) bool { return v[0] > boundary }
 
 	start := []time.Duration{500 * time.Millisecond, 700 * time.Millisecond}
-	min := shrinkTimingVector(start, fails)
+	minVec := shrinkTimingVector(start, fails)
 
-	if !fails(min) {
-		t.Fatalf("shrinker returned a non-failing vector: %v", min)
+	if !fails(minVec) {
+		t.Fatalf("shrinker returned a non-failing vector: %v", minVec)
 	}
-	if min[1] != 0 {
-		t.Errorf("shrinker did not zero the irrelevant component: got min[1]=%v, want 0", min[1])
+	if minVec[1] != 0 {
+		t.Errorf("shrinker did not zero the irrelevant component: got minVec[1]=%v, want 0", minVec[1])
 	}
-	// min[0] must still fail but be no larger than the original; halving from
+	// minVec[0] must still fail but be no larger than the original; halving from
 	// 500ms toward the 40ms boundary lands within (boundary, 2*boundary].
-	if min[0] <= boundary || min[0] > 2*boundary {
-		t.Errorf("shrinker did not minimize component 0: got %v, want in (%v, %v]", min[0], boundary, 2*boundary)
+	if minVec[0] <= boundary || minVec[0] > 2*boundary {
+		t.Errorf("shrinker did not minimize component 0: got %v, want in (%v, %v]", minVec[0], boundary, 2*boundary)
 	}
 }

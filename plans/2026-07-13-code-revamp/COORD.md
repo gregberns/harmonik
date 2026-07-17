@@ -981,3 +981,18 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **Follow-ups for WS4-4/4-5:** WS4-4 (claude cells) will hit the SAME capture/dispatch race — the Wall-1 env toggle now covers it. Document `codex.stale_wal_max_bytes` + local-`main` requirements in WS4-2's scratch-setup runbook.
 
 **Next COORD entry = c069.**
+
+### c069  ·  2026-07-16  ·  captain  ·  WS4-5 + WS5-7 land; critical path now converges on Wall-2
+**Two more M6 nodes landed (tip `1b0bf440`), both self-reviewed APPROVE:**
+- **WS4-5 forced LT gate** (`94e72916`) — `make core-loop-lt`: ONE entrypoint that runs the core-loop matrix on a scratch daemon and exits non-zero unless EVERY cell is green (new `--gate` flag = red|pending|skip all fail, the T9 zero-PENDING gate; the default lenient red-only exit preserved for other callers). New `--json` flag emits a machine-readable per-cell grid (`MATRIX_JSON …` last stdout line: {summary,gate,all_green,cells[]}). Named in the assessor's LT step (operating.md) + listed forced-LOCAL in TESTING.md's gate map. jq grid + gate exit validated on a synthetic grid; bash -n + make -n clean. The command CONTRACT stands independent of today's cell colors (real green = WS4-4/Wall-2).
+- **WS5-7 wire three legs** (`1b0bf440`) — assessor operating.md: LT = the WS4-5 forced cmd, XT = adversarial break-fan-out on WS2's env, CR = independent cold full-diff review; new subagent-delegation model (spawn a subagent per leg for coverage/independence, then FOLD evidence into one reasoned verdict — judgment stays the assessor's); pre-existing independence bound reaffirmed as binding every leg.
+
+**⇒ M6 critical path is now complete UP TO the real-agent-execution wall.** Ledger of what's left, all converging on ONE blocker:
+- **WS5-8 (capstone)** — a LIVE admiral↔assessor dry-run gating the M6 branch. Its LT leg is `make core-loop-lt`, which cannot go green until real pi/codex cells complete → **blocked on Wall-2 / WS4-4**.
+- **WS4-4 (real-agent cells)** — where Wall-2 (real pi/codex not reaching terminal `pass` in scratch: pi ornith-latency stall, codex no-commit) was rescoped by the operator. This is the real remaining engineering blocker; needs reseat/env debug of real-agent completion in the scratch subprocess env.
+- **WS4-6 (WS4 design review + kerf reconcile)** — design-review needs the WS4 design complete (incl. WS4-4); PR#20 land is operator-gated.
+- **WS1.1 (CI flip)** — LAST, operator/admiral-sequenced.
+
+**Net:** every open M6 node now depends on resolving Wall-2 (real-agent completion in the scratch env, folded into WS4-4) or on an operator action (PR#20, WS1.1 flip). No further non-blocked critical-path work remains this session. Recommend WS4-4/Wall-2 (real-agent-completion debug) as the next lane — it's the single unlock for the M6 tail.
+
+**Next COORD entry = c070.**

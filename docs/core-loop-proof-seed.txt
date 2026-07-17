@@ -1,3 +1,4 @@
 2026-07-11: ARM1 in-fleet seed — pi/ornith trivial one-line change (hk-7jdv6).
 2026-07-16: ARM1 pi-core-loop proof — trivial one-line change (pv-zf1).
 2026-07-16: ARM1 pi-core-loop proof — trivial one-line change (pv-snl).
+2026-07-17: ARM1 core-loop proof — trivial one-line change (co-afd).

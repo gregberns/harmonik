@@ -966,3 +966,18 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **WS4-3 DISPATCHED** to a worktree-isolated background sub-agent (out-of-band, self-verify). Brief includes the WS4-2 provisioning traps as the leading hypothesis (scratch init missing `sentinel.liveness_no_progress_n` + no `harnesses.pi/codex` blocks → daemon won't boot the harnesses → cells PENDING). Guarded against false-green (no SKIP/assertion-weakening; real green or self-tested known-RED only).
 
 **Next COORD entry = c068.**
+
+### c068  ·  2026-07-16  ·  captain  ·  WS4-3 partial: provisioning + Wall-1 land; Wall-2 (real-agent completion) surfaced
+**WS4-3 (regreen pi+codex cells) is NOT green yet — but two real blockers cleared, honestly, no faked green.**
+
+**LANDED (tip `4ae8a549`):**
+- **WS4-3 provisioning** (`134a9781`, from a worktree sub-agent, self-review APPROVE, FF-merged) — the config crux. Scratch `harmonik init` was missing FOUR fail-loud daemon requirements (not two): `sentinel.liveness_no_progress_n` (commented → daemon won't boot), `harnesses.pi` block, `codex.stale_wal_max_bytes` (codex implement node fail-louds without it), AND no local `main` branch (scratch clones the phase1 feature checkout → only `origin/main`; `resolveParentCommit` `git rev-parse main` exits 128 → every bead reopens without dispatching). Plus a real `set -u` unbound-var bug in scratch-daemon.sh's EXIT trap, and a workflow-mode mismatch (booted review-loop; cells pin dot). New checked-in `scenarios/core-loop-proof/scratch-config-overlay.yaml` + `provision_matrix_config` in scratch-daemon.sh. VERIFIED from the daemon's own events.jsonl: harness_selected + model_selected now fire (codex→o4-mini, pi→ornith) and the real agents launch — none of which happened before.
+- **WS4-3 Wall-1 deterministic dispatch** (`4ae8a549`, self-review APPROVE) — the matrix capture/dispatch race: the scratch daemon eager-refills (EM-062/063 `kerf next`) ready seed beads at boot, before a cell's subscribe arms, so the cell's `queue submit` hits bead_already_dispatched and its capture folds empty. Fix = new `HARMONIK_DISABLE_EAGER_REFILL` env override at main.go composition root (forces the existing kerfPath="" disabled path WITHOUT dropping kerf from PATH — kerf shares a bin dir with pi/codex). scratch-daemon.sh defaults it ON. build/vet/new-from-main-lint/bash-n all green.
+
+**⚑ Wall-2 — the genuine blocker to WS4-3 green (OPERATOR JUDGMENT):** with provisioning + dispatch fixed, the REAL pi/codex agents still don't drive the trivial seed task to terminal `pass` in the scratch env: **pi** emits `agent_ready_stall_detected` (~205s stall — ornith reasoning-model latency); **codex** `run_failed` "implementer exited without advancing HEAD" (ran, didn't commit). The seed loop worked in-fleet historically, so this is environmental (sandbox/credfence/workflow-reseat on the subprocess env — WS4-2's "reseat" concern), NOT a fixture/config defect fixable inside WS4-3 without faking events. Reaching green needs real-agent-completion debugging in the scratch env — expensive, flaky, and overlapping WS4-4 (real-agent cells). **Decision needed:** how far to push real pi/codex completion in scratch (invest in the reseat/env debug) vs. rescope WS4-3's "green" bar. Held pending operator.
+
+**Infra (live on this box, not blockers):** DGX/ornith tunnel `127.0.0.1:8551`, `~/.config/harmonik/ornith.key`, `~/.codex` auth all present; provider reachability is fine.
+
+**Follow-ups for WS4-4/4-5:** WS4-4 (claude cells) will hit the SAME capture/dispatch race — the Wall-1 env toggle now covers it. Document `codex.stale_wal_max_bytes` + local-`main` requirements in WS4-2's scratch-setup runbook.
+
+**Next COORD entry = c069.**

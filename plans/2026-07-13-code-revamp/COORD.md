@@ -916,4 +916,29 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 
 **REMAINING lint (53, TRACK 2, still gating the HELD WS1.1 flip):** daemon L2 (~25 — now dispatchable, no live daemon lane; TRACK-3 giant-retirement is HELD post-M6) · L5 handler+hook · L6 orchestrator+policy+core (non-depguard) · L7 cmd+codextest. **9 depguard findings remain OPERATOR-gated** (config allow-list, subsystem-org contract).
 
-**Next COORD entry = c064 (verify max-in-file first).**
+### c064  ·  2026-07-16  ·  admiral→captain  ·  DIRECTIVE — the "9 depguard findings" are NOT operator-gated; fold them into a code lane
+**Operator asked the admiral to resolve the "9 depguard, operator sign-off" item rather than sit on it. Resolved: it is not an operator decision. Drop the operator gate; fold into a normal code lane. No config change, no subsystem-org contract touch.**
+
+**What they actually are:** all 9 are the SAME thing, all in `internal/core` — test files declared `package core_test` that import their own package (`github.com/gregberns/harmonik/internal/core`), tripping the "core is a leaf; no subsystem imports" rule. Files: `daemonevents_coverage_hkj3hrn_test.go`, `epiccompleted_test.go`, `pertypecompat_hqwn38_test.go`, `schemachangekind_hqwn39_test.go`, `skillname_test.go`, `skillunion_cp050_test.go`, `skillversion_test.go`, `templateparams_test.go`, `verdictoverride_rc027_test.go`.
+
+**The fix is already precedented in this same package — use it, do NOT widen the allow-list.** Sibling tests `runid_test.go` / `stateid_test.go` / `transitionid_test.go` are declared `package core` (internal test package) and never trip the rule; `hk-b3f.66` converted `runid_test.go` from `core_test`→`core` for exactly this reason. Convert these 9 to `package core` (drop the now-redundant self-import), matching the siblings. That is why it's not operator-gated: the allow-list widening (which WOULD edit the subsystem-org contract → operator's call) is the wrong fix; the package-declaration convention is the established one and touches only these 9 test files.
+
+**Not gating WS1.1 anyway:** these surface only in the full `golangci-lint run ./...`; CI's actual gate is `--new-from-rev=origin/main`, already clean. So this is cleanup, not a flip blocker — do it in a normal L6-adjacent code lane (or fold into L6-core), APPROVE, done. **Remove "9 depguard findings OPERATOR-gated" from the remaining-lint tally.**
+
+**Next COORD entry = c065 (verify max-in-file first).**
+
+### c065  ·  2026-07-16  ·  captain  ·  M6 lands (L2 + depguard-core + WS4-2) + c064 reconciliation
+**Three lanes landed on tip `164ccf71` this session, all reviewed:**
+- **L2 daemon lint** (`4177c8d6`, agent-reviewer APPROVE) — internal/daemon golangci cleared (contextcheck/errcheck/staticcheck/nakedret/gosec), diskcheck extract-method verified De Morgan-equivalent, 2 god-functions deferred to giant-retirement via justified nolint. New-from-main lint 0. (Suite's only red = pre-existing seatbelt flake hk-tch4t, reproduces on clean tip.)
+- **depguard-core** (`6b06a70d`, self-review APPROVE) — the 9 `internal/core` self-import test files c064 named, converted `package core_test`→`package core` per the runid_test.go precedent.
+- **WS4-2 credfence** (`164ccf71`, self-review APPROVE) — WS4-0 §5 plumbing: daemon container mounts `~/.claude:ro`, entrypoint unsets ANTHROPIC keys before daemon launch. Runner already booted via scratch-daemon's WS2 subprocess path (no reseat code needed). Accept #2/#3 MET; #1 (green pi/codex) deferred to WS4-3 (needs harness-config provisioning). Container-boot verified by `compose config` only, not live `compose up`.
+
+**⚠️ c064 RECONCILIATION — the directive misidentified the files.** c064 said the 9 depguard findings are all `internal/core` self-imports and that CI `--new-from-rev=origin/main` is "already clean." Empirically FALSE:
+- The 9 core files c064 named surface ONLY in the full `golangci-lint run ./...`, NOT in the new-from-origin/main gate (they pre-exist origin/main). depguard-core cleared them anyway (valid full-run cleanup).
+- The ACTUAL 9 findings gating `--new-from-rev=origin/main` (the real CI gate, still RED) are a DIFFERENT set: **8 self-imports** in `internal/hook` (1: sessionstore_test), `internal/orchestrator` (3: eagerfill/groupadvance/select), `internal/policy` (4: autoresume/drain/gate/ratelimit) **+ 1 core third-party** `pgregory.net/rapid` import in `keeperinteriorevents_prop_test.go:17`.
+- The 8 self-imports take the SAME admiral-endorsed conversion pattern — BUT `.golangci.yml` INTENTIONALLY allows self-import for crew/keeper as "external test pattern," so hook/orch/policy could alternatively be added to that allow-list; and converting external→internal tests risks import cycles / changes public-API test intent. Not purely mechanical.
+- The `rapid` import is a DISTINCT class: 26 sibling `package core` prop-tests import rapid bare (tolerated baseline debt); this new file trips the gate only because it's new. Fix = explained `//nolint:depguard` (local, no shared-config-contract change) OR a narrow test-scoped allow-list entry (config call).
+
+**Net:** WS1.1's CI-flip prerequisite (green new-from-origin/main) is NOT yet met — depguard gate still RED with 9 real findings. Follow-on lane needed. WS1.1 stays LAST regardless.
+
+**Next COORD entry = c066.**

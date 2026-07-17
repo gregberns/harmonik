@@ -995,4 +995,20 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 
 **Net:** every open M6 node now depends on resolving Wall-2 (real-agent completion in the scratch env, folded into WS4-4) or on an operator action (PR#20, WS1.1 flip). No further non-blocked critical-path work remains this session. Recommend WS4-4/Wall-2 (real-agent-completion debug) as the next lane — it's the single unlock for the M6 tail.
 
-**Next COORD entry = c070.**
+### c070  ·  2026-07-16  ·  captain  ·  Wall-2 ROOT-CAUSED both halves — NOT reseat/sandbox; both are provisioning/infra at the operator boundary
+**Reproduced Wall-2 with fresh evidence (prior ws43-scratch capture + direct provider probes). The "environmental/reseat" hypothesis was WRONG on both cells — each is a concrete provisioning mismatch, not a subprocess-env defect fixable by sandbox/credfence debug.**
+
+**CODEX half — HTTP 400 model/auth mismatch (confirmed, reproduced standalone):**
+- Evidence: `implementer_phase_complete` exit_code=1, duration=8.1s, commit_landed=false, stderr="Reading additional input from stdin…". WAL guard worked fine (cleaned a 2.4MB stale WAL). NOT the stale-WAL silent exit-0.
+- Direct repro: `codex exec -m o4-mini` → `HTTP 400 invalid_request_error: "The 'o4-mini' model is not supported when using Codex with a ChatGPT account."` The box's `~/.codex/config.toml` has `forced_login_method = "chatgpt"` (ChatGPT-subscription auth, NOT an OpenAI API key). Under ChatGPT auth, EVERY explicitly-named model rejects with 400: o4-mini, gpt-5, gpt-5-codex, codex-mini-latest all fail. ONLY the account default `gpt-5.5` works (`codex exec` no-`-m`, or explicit `-m gpt-5.5`, both return cleanly).
+- **The bind:** codex harness REQUIRES a `model:<name>` bead label (buildCodexLaunchSpec fail-loud, hk-heh3t: empty model → 30-min stdin hang). The only working model is `gpt-5.5`, whose `.` is REJECTED by br label validation ("only alphanumeric, hyphen, underscore, colon"). So there is no valid bead label that makes codex green on this box. (Tried `model:gpt-5.5` in the fixture → seeding fails VALIDATION_FAILED → reverted; it's strictly worse than `model:o4-mini`, which at least seeds.)
+- Resolution requires ONE of (operator/code decision, NOT a fixture tweak): (a) switch codex to an OpenAI **API-key** auth on this box → o4-mini works, current fixture fine; (b) code change: let the codex harness launch with codex's **config-default** model when no `model:` label is present (no `--model` arg — verified standalone this does NOT hang, contra the hk-heh3t rationale), which reworks a load-bearing guard; (c) relax br label charset to allow `.` (beads-level).
+
+**PI half — DGX/ornith vLLM inference engine WEDGED (confirmed):**
+- `/v1/models` responds instantly (liveness LIES), but `/v1/completions` for a trivial prompt returns **0 bytes after a 240s timeout**. That is the ~205s `agent_ready_stall` — the model never answers. Exactly the "0-byte inference = wedged vLLM engine" mode the fleet config documents (`.harmonik/config.yaml` harnesses.pi comment: prior fix was `docker compose restart` on the dgx box).
+- Also latent: cells.json pi:local pins `model_selected.model = "deepseek-reasoner"` but the scratch overlay provisions `ornith` → the pi gap1 model-equality assert would fail even if DGX were healthy. cells.json ↔ overlay disagree on the pi model (deepseek/OpenRouter vs ornith/DGX).
+- Resolution: operator restarts the DGX vLLM engine, OR swap harnesses.pi to the parked OpenRouter block (`provider: openrouter, model: deepseek…`, needs OPENROUTER_API_KEY) AND reconcile cells.json's pinned model. Infra/operator call.
+
+**NET — Wall-2 is NOT an engineering bug in the loop; both real-agent providers are mis-provisioned for the matrix on this box.** No code/fixture change lands it without an operator decision on auth (codex) + infra (pi DGX). SURFACED to operator. No files changed this entry (fixture edit made + reverted). Scratch daemon at /tmp/h/wall2-codex torn down.
+
+**Next COORD entry = c071.**

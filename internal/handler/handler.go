@@ -358,7 +358,13 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	})
 
 	if wireTap != nil {
-		go func() { <-watcher.Done(); _ = wireTap.Close() }()
+		go func() {
+			<-watcher.Done()
+			// Wire capture is best-effort; a close error here is non-fatal.
+			if cerr := wireTap.Close(); cerr != nil {
+				return
+			}
+		}()
 	}
 
 	return sess, watcher, nil
@@ -436,7 +442,13 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 	})
 
 	if wireTap != nil {
-		go func() { <-watcher.Done(); _ = wireTap.Close() }()
+		go func() {
+			<-watcher.Done()
+			// Wire capture is best-effort; a close error here is non-fatal.
+			if cerr := wireTap.Close(); cerr != nil {
+				return
+			}
+		}()
 	}
 
 	return adapted, watcher, nil

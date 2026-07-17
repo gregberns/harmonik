@@ -17,6 +17,7 @@ package hook_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -28,11 +29,11 @@ import (
 // Fixtures
 // ─────────────────────────────────────────────────────────────────────────────
 
-// hookFixtureMakePayload returns a JSON payload for an outcome_emitted message
-// with the given kind and summary.
-func hookFixtureMakePayload(t *testing.T, kind, summary string) json.RawMessage {
+// hookFixtureMakePayload returns a JSON payload for a WORK_COMPLETE
+// outcome_emitted message with the given summary.
+func hookFixtureMakePayload(t *testing.T, summary string) json.RawMessage {
 	t.Helper()
-	pl, err := json.Marshal(map[string]string{"kind": kind, "summary": summary})
+	pl, err := json.Marshal(map[string]string{"kind": "WORK_COMPLETE", "summary": summary})
 	if err != nil {
 		t.Fatalf("hookFixtureMakePayload: marshal: %v", err)
 	}
@@ -76,9 +77,9 @@ func TestSessionStore_MultiStopDedup(t *testing.T) {
 	store.RegisterHookSession(runID, sessionID)
 
 	payloads := []json.RawMessage{
-		hookFixtureMakePayload(t, "WORK_COMPLETE", "first stop"),
-		hookFixtureMakePayload(t, "WORK_COMPLETE", "second stop"),
-		hookFixtureMakePayload(t, "WORK_COMPLETE", "third stop — authoritative"),
+		hookFixtureMakePayload(t, "first stop"),
+		hookFixtureMakePayload(t, "second stop"),
+		hookFixtureMakePayload(t, "third stop — authoritative"),
 	}
 
 	for i, pl := range payloads {
@@ -113,7 +114,7 @@ func TestSessionStore_StalePostCloseArrival(t *testing.T) {
 	store := hook.NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
-	live := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "WORK_COMPLETE", "live outcome"))
+	live := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "live outcome"))
 	if ack := store.Dispatch(live); ack.Status != "ok" {
 		t.Fatalf("live dispatch: status=%q reason=%q, want ok", ack.Status, ack.Reason)
 	}
@@ -124,7 +125,7 @@ func TestSessionStore_StalePostCloseArrival(t *testing.T) {
 		t.Errorf("LatestOutcome after close: got non-nil, want nil (session deleted)")
 	}
 
-	stale := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "WORK_COMPLETE", "stale late outcome"))
+	stale := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "stale late outcome"))
 	if ack := store.Dispatch(stale); ack.Status != "unknown_session" {
 		t.Errorf("stale dispatch: status=%q reason=%q, want unknown_session", ack.Status, ack.Reason)
 	}
@@ -262,7 +263,7 @@ func TestWaitForOutcome_AlreadyPresent(t *testing.T) {
 	store := hook.NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
-	env := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "WORK_COMPLETE", "pre-existing outcome"))
+	env := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "pre-existing outcome"))
 	if ack := store.Dispatch(env); ack.Status != "ok" {
 		t.Fatalf("dispatch: status=%q reason=%q, want ok", ack.Status, ack.Reason)
 	}
@@ -314,7 +315,7 @@ func TestWaitForOutcome_BlocksThenUnblocks(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond)
 
-	env := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "WORK_COMPLETE", "delayed outcome"))
+	env := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "delayed outcome"))
 	if ack := store.Dispatch(env); ack.Status != "ok" {
 		t.Fatalf("dispatch: status=%q reason=%q, want ok", ack.Status, ack.Reason)
 	}
@@ -368,7 +369,7 @@ func TestWaitForOutcome_CtxCancel(t *testing.T) {
 		if res.err == nil {
 			t.Fatal("WaitForOutcome: expected ctx.Err(), got nil")
 		}
-		if res.err != context.Canceled {
+		if !errors.Is(res.err, context.Canceled) {
 			t.Errorf("WaitForOutcome: err=%v, want context.Canceled", res.err)
 		}
 	case <-time.After(2 * time.Second):
@@ -410,7 +411,7 @@ func TestWaitForOutcome_MultipleWaiters(t *testing.T) {
 
 	time.Sleep(30 * time.Millisecond)
 
-	env := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "WORK_COMPLETE", "broadcast outcome"))
+	env := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "broadcast outcome"))
 	if ack := store.Dispatch(env); ack.Status != "ok" {
 		t.Fatalf("dispatch: status=%q reason=%q, want ok", ack.Status, ack.Reason)
 	}

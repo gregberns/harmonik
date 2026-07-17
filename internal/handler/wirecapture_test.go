@@ -15,7 +15,9 @@ func TestOpenWireTap_EnvUnset(t *testing.T) {
 		t.Fatalf("openWireTap: unexpected error: %v", err)
 	}
 	if f != nil {
-		_ = f.Close()
+		if cerr := f.Close(); cerr != nil {
+			t.Logf("close unexpected file: %v", cerr)
+		}
 		t.Fatalf("openWireTap: expected nil file when %s unset, got %v", EnvWireCaptureDir, f.Name())
 	}
 }
@@ -35,7 +37,11 @@ func TestOpenWireTap_EnvSet(t *testing.T) {
 	if f == nil {
 		t.Fatalf("openWireTap: expected non-nil file when %s set", EnvWireCaptureDir)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Logf("close wire file: %v", cerr)
+		}
+	}()
 
 	want := filepath.Join(dir, DefaultWireCaptureScn, "wire.ndjson")
 	if f.Name() != want {
@@ -60,7 +66,11 @@ func TestOpenWireTap_ScnOverride(t *testing.T) {
 	if f == nil {
 		t.Fatalf("openWireTap: expected non-nil file")
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Logf("close wire file: %v", cerr)
+		}
+	}()
 
 	want := filepath.Join(dir, "review-loop", "wire.ndjson")
 	if f.Name() != want {

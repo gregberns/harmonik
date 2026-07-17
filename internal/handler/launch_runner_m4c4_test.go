@@ -66,7 +66,9 @@ func TestHandler_Launch_ExecPath_RoutesThroughRunner(t *testing.T) {
 	case <-t.Context().Done():
 		t.Fatal("watcher.Done() did not close before test context cancelled")
 	}
-	_ = sess.Wait(t.Context())
+	if err := sess.Wait(t.Context()); err != nil {
+		t.Logf("sess.Wait returned (non-fatal for this test): %v", err)
+	}
 
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
@@ -111,5 +113,7 @@ func TestHandler_Launch_ExecPath_NilRunnerSpawnsLocally(t *testing.T) {
 	case <-t.Context().Done():
 		t.Fatal("watcher.Done() did not close (nil-runner local path broken)")
 	}
-	_ = sess.Wait(t.Context())
+	if err := sess.Wait(t.Context()); err != nil {
+		t.Logf("sess.Wait returned (non-fatal for this test): %v", err)
+	}
 }

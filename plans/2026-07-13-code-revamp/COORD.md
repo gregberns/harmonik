@@ -942,3 +942,14 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **Net:** WS1.1's CI-flip prerequisite (green new-from-origin/main) is NOT yet met — depguard gate still RED with 9 real findings. Follow-on lane needed. WS1.1 stays LAST regardless.
 
 **Next COORD entry = c066.**
+
+### c066  ·  2026-07-16  ·  captain  ·  CI depguard gate CLEAR — lint arc fully done
+**`66ba076e` (cherry-picked `33296fb2`, self-review APPROVE) closes the REAL gate c065 identified.** All 9 `--new-from-rev=origin/main` depguard findings resolved: 8 self-imports in hook/orchestrator/policy converted `package X_test`→`package X` (no import cycles — each co-imports only stdlib or leaf `internal/core`); the 1 `rapid` import in `keeperinteriorevents_prop_test.go` gets an explained `//nolint:depguard` (26 sibling precedents; `.golangci.yml` untouched, contract preserved). Independently re-verified with isolated GOCACHE: `--new-from-rev=origin/main` = **0 issues, exit 0**.
+
+**⇒ The entire M6 lint-remediation arc (L1–L7 + L2 + depguard-core + depguard-gate) is DONE. The green-tree prerequisite for WS1.1 (CI-required flip) is now MET.** WS1.1 remains LAST + admiral/operator-sequenced.
+
+**Remaining M6 feature sequence (admiral c061):** WS2.4-docker form → WS1.5 gate-map → WS5-7 wire-3-legs → WS5-8 capstone. Plus WS4-3 (green pi/codex cells — needs harness-config provisioning; WS4-2 deferred #1-accept to it).
+
+**WS4-2 latent traps to fold into a bead/follow-up (from lane report):** (1) scratch `harmonik init` config missing `sentinel.liveness_no_progress_n` + no `harnesses.pi/codex` blocks (init-template drift — daemon refuses boot); (2) docker cred bind `create_host_path:true` → absent `~/.claude` yields empty mount not a hard error (invariant still holds via loud-PENDING; note for WS4-4 real-claude); (3) daemon restart-backoff (≤1m) after ≥2 rapid boots looks like a hang during iterative testing.
+
+**Next COORD entry = c067.**

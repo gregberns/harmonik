@@ -2,8 +2,10 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -296,4 +298,87 @@ func (bs *bootState) wireWatchersAndObservers(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// emitStartupEvents runs the P6 post-Seal startup events: the clock-regression
+// daemon_degraded signal (EV-002c), the stale-watch goroutine start (EV-009), the
+// F-class daemon_started landmark (hk-iarcy), the supervisor-revival scan
+// (hk-rnkuy), and the daemon_config emit (hk-sul12/hk-mptxw). It returns the
+// daemon start time threaded into the later phases. Only the daemon_started
+// marshal/emit is fatal; the rest are best-effort. Extracted for giant-retirement
+// boot-config (B6 complexity reduction).
+func (bs *bootState) emitStartupEvents(ctx context.Context, clockRegressionDetected bool, resolvedTargetBranch string) (time.Time, error) {
+	cfg := bs.cfg
+	bus := bs.bus
+
+	// EV-002c: daemon_degraded{reason=clock_regression}. Non-fatal.
+	if clockRegressionDetected {
+		degradedPayload := core.DaemonDegradedPayload{
+			DetectedAt: time.Now().UTC().Format(time.RFC3339),
+			Reason:     core.DaemonDegradedReasonClockRegression,
+		}
+		if degradedBytes, marshalErr := json.Marshal(degradedPayload); marshalErr == nil {
+			if emitErr := bus.Emit(ctx, core.EventTypeDaemonDegraded, degradedBytes); emitErr != nil {
+				log.Printf("warn: daemon.Start: emit daemon_degraded: %v", emitErr)
+			}
+		}
+	}
+
+	// Start the stale-watch goroutine after Seal (EV-009 sealed-bus semantics);
+	// runs until ctx is cancelled (hk-wkzlc).
+	bs.staleWatcher.StartWatcher(ctx)
+
+	// daemon_started (§8.7.1, hk-iarcy): F-class startup landmark. binary_commit_hash
+	// falls back to "unknown" for unstamped builds to keep the envelope well-formed.
+	binaryCommitHash := cfg.BinaryCommitHash
+	if binaryCommitHash == "" {
+		binaryCommitHash = "unknown"
+	}
+	daemonStartTime := time.Now().UTC()
+	startedPayload := core.DaemonStartedPayload{
+		StartedAt:        daemonStartTime.Format(time.RFC3339),
+		PID:              os.Getpid(),
+		BinaryCommitHash: binaryCommitHash,
+	}
+	payloadBytes, marshalErr := json.Marshal(startedPayload)
+	if marshalErr != nil {
+		return time.Time{}, fmt.Errorf("daemon.Start: marshal daemon_started payload: %w", marshalErr)
+	}
+	if emitErr := bus.Emit(ctx, core.EventTypeDaemonStarted, payloadBytes); emitErr != nil {
+		return time.Time{}, fmt.Errorf("daemon.Start: emit daemon_started: %w", emitErr)
+	}
+
+	// supervisor_revival scan (hk-rnkuy): the current session is already logged
+	// (daemon_started is F-class/fsynced). Non-fatal.
+	if cfg.JSONLLogPath != "" {
+		detectAndEmitSupervisorRevival(ctx, cfg.JSONLLogPath, bus)
+	}
+
+	// daemon_config (hk-sul12, hk-mptxw F8): resolved merge-target + policy. Non-fatal.
+	bs.emitDaemonConfig(ctx, resolvedTargetBranch)
+
+	return daemonStartTime, nil
+}
+
+// emitDaemonConfig emits daemon_config with the resolved merge-target and active
+// branch-protection / workflow-mode policy so config drift across restarts is
+// visible in the event log (hk-sul12, hk-mptxw F8). Non-fatal.
+func (bs *bootState) emitDaemonConfig(ctx context.Context, resolvedTargetBranch string) {
+	cfg := bs.cfg
+	cfgPayload := core.DaemonConfigPayload{
+		TargetBranch:             resolvedTargetBranch,
+		ProtectBranches:          cfg.ProtectBranches,
+		ForbidUnprotectedDefault: cfg.ForbidUnprotectedDefault,
+		WorkflowMode:             string(cfg.WorkflowModeDefault),
+		MaxConcurrent:            cfg.MaxConcurrent,
+		NoAutoPull:               cfg.NoAutoPull,
+	}
+	if !cfgPayload.Valid() {
+		return
+	}
+	if cfgBytes, cfgMarshalErr := json.Marshal(cfgPayload); cfgMarshalErr == nil {
+		if emitErr := bs.bus.Emit(ctx, core.EventTypeDaemonConfig, cfgBytes); emitErr != nil {
+			log.Printf("warn: daemon.Start: emit daemon_config: %v", emitErr)
+		}
+	}
 }

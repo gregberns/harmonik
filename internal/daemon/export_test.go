@@ -2194,7 +2194,7 @@ func ExportedNewQueueStore() *QueueStore {
 //
 // Bead ref: hk-nvrvp.
 func ExportedNewWorkLoopDepsWithStore(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store *hookSessionStore) (workLoopDeps, error) {
-	return newWorkLoopDeps(cfg, bus, workflowModeDefault, registry, store)
+	return newWorkLoopDeps(context.Background(), cfg, bus, workflowModeDefault, registry, store)
 }
 
 // ExportedEvaluateGroupAdvanceWithOutcome exposes evaluateGroupAdvanceWithOutcome

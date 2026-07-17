@@ -1045,7 +1045,7 @@ func newLocalRunRegistry() *RunRegistry {
 // store MUST be non-nil; it is the daemon-wide hook-session registry shared
 // between RunSocketListener (as HookRelayHandler) and the work loop completion
 // path (WaitForOutcome).
-func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store hookStoreIface) (workLoopDeps, error) {
+func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store hookStoreIface) (workLoopDeps, error) {
 	if cfg.BrPath == "" {
 		return workLoopDeps{}, fmt.Errorf("daemon: newWorkLoopDeps: Config.BrPath is empty; production callers must resolve br from PATH at startup")
 	}
@@ -1111,7 +1111,7 @@ func newWorkLoopDeps(cfg Config, bus handlercontract.EventEmitter, workflowModeD
 	// Build the remote-worker registry from cfg.Workers and run the boot-time
 	// health check (remote-substrate B4/B6). Returns nil when no worker is
 	// enabled so the dispatch path takes the existing local-only branch (NFR7).
-	workerReg := buildWorkerRegistry(context.Background(), cfg.Workers, bus)
+	workerReg := buildWorkerRegistry(ctx, cfg.Workers, bus)
 
 	// M4-C3: hand the SAME live registry to the composition root's Codex
 	// runner-selection seam so a worker-selected codexdriver run routes over

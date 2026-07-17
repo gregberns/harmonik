@@ -93,7 +93,39 @@ Harmonik tests at six layers, each answering a different question.
 - **Two legs (M6 WS2.4):**
   - **Non-docker smoke** — `cmd/harmonik/subprocess_boot_smoke_test.go`, behind a dedicated `subprocess` build tag (never compiled by default `go build`/`go test ./...`). Billing-free: it points `--codex-binary` at the compiled `generic-twin`, whose handshake fails fast so the run reaches a terminal `run_failed` without tmux, a real agent, or the network. Run: `make test-subprocess` (or `go test -tags subprocess -run TestSubprocessDaemonBootSmoke ./cmd/harmonik/`).
   - **Docker/containerized variant** — the §6 Docker cross-container E2E (`make test-docker-e2e`) **is** the subprocess form of this tier: the daemon container runs the real `harmonik` binary and execs a compiled scenario binary against the worker over real SSH. It additionally asserts a clean bead-*close* through the real binary, which the non-docker smoke deliberately leaves out of scope.
-- **Run:** non-docker smoke on every push (fast, deterministic, zero-token); the Docker variant per §6.
+- **Run:** the non-docker smoke is fast, deterministic, and zero-token, but is **not yet wired into a CI workflow** — it runs locally / as an assessor-forced gate (`make test-subprocess`). Wiring it into CI is a follow-up. The Docker variant runs per §6 (also assessor-forced, not CI). See the gate map below for exactly where each tier is required.
+
+## Gate tiers & risk-tiering
+
+The single authoritative map of **which test tier runs where** and **which tier a given change is required to pass**. When the two sources below disagree, the *workflow files are ground truth* and this table is stale — fix the table.
+
+> **Two independent "tier" numberings — do not conflate.** The **layer** numbers above (§1 unit … §7 subprocess) name *kinds* of test. The **risk tiers** (R1/R2/R3) below name *how much gate a change must clear*. A high-risk change (R1) is required to pass more layers than a low-risk one (R3).
+
+### Where each layer runs (CI vs local)
+
+| Test layer | Invocation | CI workflow | Merge-blocking? |
+| --- | --- | --- | --- |
+| §1–§5 unit / integration / scenario(in-proc) / crash-recovery(fast) / property — via `-short` | `make check-short` | `ci.yml` → *check (Tier 2)* | **Yes** — blocks merge |
+| gofumpt+gci / vet / build / golangci-lint | `make check-short` | `ci.yml` → *check (Tier 2)* | **Yes** |
+| spec-drift lint | `make specaudit-lint` | `ci.yml` step | No (pre-existing drift; flip on when clean) |
+| installed-hooks match | `make check-hooks` | `ci.yml` → *hooks* | No |
+| §3 scenario suite (full, `-tags=scenario`, incl. `internal/daemon` scenario files) | `make test-scenario` | `scenario.yml` → *scenario (Tier 3)* | **No today** (`continue-on-error`); WS1.1 flips the **`./test/scenario/...`-only** invocation to a required check — never the daemon bundle, which `t.Skipf`s green on sshd-less runners |
+| full `-race`, no `-short`, uncapped parallel | `make check-race-full` | `nightly-race.yml` | No (nightly shake-out) |
+| §6 Docker cross-container remote-substrate E2E | `make test-docker-e2e` | *(none — local / assessor-forced)* | Assessor gate, not CI |
+| §7 subprocess daemon-boot (non-docker) | `make test-subprocess` | *(none — local / assessor-forced; CI wiring is a follow-up)* | Assessor gate, not CI |
+| Real-agent conformance (twin↔real) | *(rare, expensive)* | *(none — on-demand)* | Assessor gate, not CI |
+
+The localhost-SSH + Docker + subprocess tiers are **the assessor's forced-local gate**, deliberately kept off the CI required-check path (a broken host loopback must fail loud locally, never mask a regression as a green CI skip — see §6).
+
+### Risk-tiering rule — which tier a change must clear
+
+Every change gets a **risk tier**; the risk tier sets the *minimum* set of layers that must pass before it lands.
+
+- **R1 (highest) — daemon / lifecycle core.** A diff touching `internal/daemon/**` or `internal/lifecycle/**` is **auto-R1** by path-glob **floor**. R1 requires: CI Tier 2 (`check-short`) green **and** the full scenario suite (§3) green **and** the assessor-forced Docker remote-substrate E2E (§6) green. These paths carry the highest blast radius (dispatch, crash-recovery, promote/reconcile), so the false-green-proof tiers are mandatory.
+- **R2 — other product code** (`internal/**` outside the R1 globs, `cmd/**`): CI Tier 2 green **and** any §3 scenario that exercises the touched path green. The assessor raises to R1 when a change reaches into a daemon/lifecycle seam indirectly (e.g. a shared type a daemon path depends on).
+- **R3 — docs / test-only / tooling** (`docs/**`, `*_test.go` with no product-source change, `Makefile`/CI-config where the change is self-evidently inert): CI Tier 2 green. No scenario/Docker requirement.
+
+**The path-glob is a floor, not a ceiling.** The assessor can only **raise** a change's tier above its glob floor, never lower it. An R1 path is R1 even if "it's just a one-liner." Conversely a nominally-R3 doc change that alters a *gate definition* (this file, a workflow, `lefthook.yml`) is raised by the assessor because it changes what "green" means.
 
 ## What we deliberately do NOT test this way
 

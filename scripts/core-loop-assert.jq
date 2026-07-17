@@ -175,25 +175,69 @@ def assert_gap5:
     else result("gap5"; "pass"; "agent_ready reached; no timeout/stall/hang")
     end;
 
-# --- t10 — branch-targeting acceptance (KNOWN-RED today, hk-lgykq) -----------
-# A bead directed at integration branch X must LAND on X, not main. Asserts the merged
-# workspace_merge_status.target_branch == spec.expect.lands_on. This REDs today because
-# per-bead/DOT integration-branch targeting is DEAD CODE (LandsOn/landTaskBranch not wired
-# into the live workloop merge — internal/daemon/workloop.go:3153). The RED is the
-# recorded evidence for hk-lgykq; when that lands, this flips to pass and the self-test's
-# expected-fail row breaks loudly (prompting removal of the known-RED marker). t10 is
-# deliberately NOT in the default cells' `gaps` — T9's green gate excludes it (mission:
-# "known-RED cell, recorded, not a false-green pass").
+# --- t10 — branch-targeting acceptance (GIT-VERIFIED, D2) --------------------
+# A bead directed at integration branch X must LAND on X, and main must NOT advance.
+# This assertion is NOT event-driven: the workspace_merge_status event the daemon once
+# aspired to emit is NEVER emitted (dead/aspirational — the merge writes git but no event),
+# so an event-based check is structurally always RED. Instead the matrix runner verifies
+# the landing directly from GIT (baseline vs. post-run tips of main + the target branch)
+# and injects the branch that actually advanced as $spec._observed_lands_on. t10 simply
+# compares intent (expect.lands_on) against that git-observed reality. Per-bead integration
+# targeting is LIVE (hk-lgykq landed; proven by daemon E2E
+# TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch), so this is no longer known-RED.
 def assert_t10:
   ($spec.expect.lands_on // null) as $want
-  | (of_type("workspace_merge_status") | map(pl) | map(select(.status == "merged"))) as $m
+  | ($spec._observed_lands_on // null) as $obs
   | if $want == null
     then result("t10"; "pending"; "no expect.lands_on in spec — set it to the intended integration branch")
-    elif ($m | length) == 0
-    then result("t10"; "fail"; "no merged workspace_merge_status event — nothing landed")
-    elif ($m[-1].target_branch != $want)
-    then result("t10"; "fail"; "KNOWN-RED (hk-lgykq): landed on '\($m[-1].target_branch)' != intended '\($want)' — per-bead integration targeting is dead code")
-    else result("t10"; "pass"; "landed on intended branch '\($want)'")
+    elif ($obs == null or $obs == "")
+    then result("t10"; "pending"; "no ._observed_lands_on injected — runner did not git-verify the landing (need --assert + a git scratch)")
+    elif ($obs == "main" and $want != "main")
+    then result("t10"; "fail"; "main advanced — the change landed on 'main', not the intended '\($want)' (main must not move)")
+    elif ($obs == "none")
+    then result("t10"; "fail"; "nothing landed — neither 'main' nor '\($want)' advanced (merge did not run / bead did not close)")
+    elif ($obs != $want)
+    then result("t10"; "fail"; "landed on '\($obs)' != intended '\($want)' (git-verified)")
+    else result("t10"; "pass"; "landed on '\($want)' (git-verified; main unchanged)")
+    end;
+
+# --- gap6 — dot review->implement round-trip, same model (D4) ----------------
+# The dot cell must show a REAL model round-trip driven by the seed rubric, with BOTH the
+# implementer and reviewer nodes on the same model (no claude leak into a pi dot run).
+# PASS iff the captured stream shows, IN ORDER:
+#   (a) a reviewer_verdict with verdict == REQUEST_CHANGES,
+#   (b) an implementer RE-DISPATCH after that verdict — a node_dispatch_requested for the
+#       implementer node (node_id matches /implement/) OR a second implementer_phase_complete,
+#   (c) a reviewer_verdict APPROVE after the re-dispatch, then a terminal pass/close, AND
+#   (d) SAME-MODEL: every model_selected.model in the run == the pinned model (spec
+#       expect.model_selected.model, default ornith) — any other model is a leak → fail.
+# Positional ordering is taken from the append-ordered capture stream (event index).
+def assert_gap6:
+  ($spec.expect.model_selected.model // "ornith") as $wantModel
+  | ([ events[] | {type: .type, p: pl} ] | to_entries
+       | map({i: .key, type: .value.type, p: .value.p})) as $seq
+  | ([ $seq[] | select(.type == "reviewer_verdict" and (.p.verdict == "REQUEST_CHANGES")) ]
+       | (.[0].i // -1)) as $reqIdx
+  | ([ $seq[] | select(.type == "implementer_phase_complete"
+        or (.type == "node_dispatch_requested" and ((.p.node_id // "") | tostring | test("implement"; "i")))) ]) as $impl
+  | ([ $seq[] | select(.type == "reviewer_verdict" and (.p.verdict == "APPROVE")) ]) as $appr
+  | (of_type("model_selected") | map(pl.model) | map(select(. != null))) as $models
+  | ($models | map(select(. != $wantModel)) | unique) as $badModels
+  | (of_type("run_completed") | map(pl)
+       | map(select((.bead_id // null) == $spec.seed_bead and .success == true)) | length > 0) as $closed
+  | ([ $impl[] | select(.i > $reqIdx) ] | (.[0].i // -1)) as $reImplIdx
+  | ([ $appr[] | select(.i > $reImplIdx) ] | (.[0].i // -1)) as $apprIdx
+  | if $reqIdx < 0
+    then result("gap6"; "fail"; "no REQUEST_CHANGES reviewer_verdict — the seed rubric did not force a round-trip (reviewer approved on the first pass?)")
+    elif $reImplIdx < 0
+    then result("gap6"; "fail"; "REQUEST_CHANGES@\($reqIdx) but no implementer re-dispatch after it — back-edge did not fire")
+    elif $apprIdx < 0
+    then result("gap6"; "fail"; "re-dispatch@\($reImplIdx) but no APPROVE reviewer_verdict after it — round-trip did not converge")
+    elif ($badModels | length) > 0
+    then result("gap6"; "fail"; "same-model VIOLATED: model_selected carried \($badModels | join(",")) != pinned \($wantModel) (claude leaked into the dot run?)")
+    elif ($closed | not)
+    then result("gap6"; "fail"; "round-trip verdicts present but no terminal run_completed(success) for \($spec.seed_bead) — run did not close green")
+    else result("gap6"; "pass"; "REQUEST_CHANGES@\($reqIdx) -> impl re-dispatch@\($reImplIdx) -> APPROVE@\($apprIdx) -> close; all \($models | length) model_selected == \($wantModel)")
     end;
 
 # --- dispatcher ------------------------------------------------------------
@@ -204,6 +248,7 @@ def run_gap($g):
   elif $g == "gap3" then assert_gap3
   elif $g == "gap4" then assert_gap4
   elif $g == "gap5" then assert_gap5
+  elif $g == "gap6" then assert_gap6
   elif $g == "t10"  then assert_t10
   else result($g; "fail"; "unknown gap id in spec: \($g)")
   end;

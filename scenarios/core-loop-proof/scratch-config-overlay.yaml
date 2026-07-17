@@ -30,6 +30,9 @@ codex:
   stale_wal_max_bytes: 1048576   # required by the codex harness (no compiled default; log-classification only)
 
 harnesses:
+  # D1: the matrix runs a /v1/completions readiness probe (POST model=ornith, tiny prompt)
+  # before every pi cell; a 0-byte / timeout / non-200 reply = a wedged vLLM behind the DGX
+  # tunnel, so the cell is SKIP-loud (never green) and you should restart vLLM on the dgx box.
   pi:
     provider: ornith
     model: ornith

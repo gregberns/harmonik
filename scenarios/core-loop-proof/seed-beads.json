@@ -5,6 +5,11 @@
   "//pin": "The harness:<family> label is the tier-1 per-bead harness pin (agentevents_hqwn59.go).",
   "//pin2": "model_pin records the harmonik-controlled model the model_selected event must carry",
   "//pin3": "(empty for codex — model is not harmonik-controlled; set by $CODEX_HOME/config.toml).",
+  "//branch": "target_branch (optional, D2): when set, core-loop-seed.sh creates/resets that",
+  "//branch2": "branch off main in the SCRATCH clone BEFORE creating the bead, and appends a",
+  "//branch3": "## Branching fenced-yaml block (target_branch: <b>) to the bead description so",
+  "//branch4": "the daemon lands the task there instead of main (BI-009b). The runner git-",
+  "//branch5": "verifies the landing (the workspace_merge_status event is never emitted).",
 
   "schema_version": 1,
   "seeds": [
@@ -18,11 +23,26 @@
     },
     {
       "key": "pi",
-      "title": "core-loop-proof seed: trivial one-line change (pi)",
-      "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. Fixture bead for the pi harness family.",
-      "labels": ["codename:quality-system", "core-loop-seed", "harness:pi"],
+      "title": "core-loop-proof seed: trivial one-line change (pi, single)",
+      "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. Fixture bead for the pi harness family (single workflow mode).",
+      "labels": ["codename:quality-system", "core-loop-seed", "harness:pi", "workflow:single"],
       "harness": "pi",
-      "model_pin": "ornith"
+      "model_pin": "ornith",
+      "target_branch": "core-loop-proof-integ"
+    },
+    {
+      "key": "pi-dot",
+      "title": "core-loop-proof seed: two-step review round-trip (pi, dot)",
+      "body": "Goal: the file docs/core-loop-proof-seed.txt must end up with TWO new appended lines — one containing the token LINE-A and one containing the token LINE-B — added in TWO SEPARATE commits, one per implementation pass. Do not modify any other file.\n\nDECIDE WHICH PASS YOU ARE ON by reading docs/core-loop-proof-seed.txt right now:\n- If the file does NOT yet contain a line with the token LINE-A: this is the FIRST pass. Append exactly ONE new line whose content is the token LINE-A, then commit. Add ONLY LINE-A on this pass; do NOT add LINE-B yet.\n- If the file ALREADY contains a line with the token LINE-A but does NOT contain a line with the token LINE-B: this is the SECOND pass (the reviewer asked for changes). Append exactly ONE new line whose content is the token LINE-B, then commit. Adding this LINE-B line and committing it is REQUIRED — the run FAILS if this pass makes no commit, so you MUST append LINE-B and commit; do not report the task complete without it.\n\n(The reviewer feedback delivered to you between passes will also ask for LINE-B.)\n\n## Review\n\nApply this acceptance rubric to docs/core-loop-proof-seed.txt as it stands after the implementer's latest commit:\n\n- If the file does NOT contain a line with the token LINE-B, the change is INCOMPLETE. Return verdict REQUEST_CHANGES and say in your notes that a line containing the token LINE-B must be added on the next pass.\n- Only when the file contains BOTH a line with the token LINE-A AND a line with the token LINE-B, return verdict APPROVE.",
+      "//dot": "dot:review-loop pins this bead's workflow FILE to the scratch-root review-loop.dot",
+      "//dot2": "(resolveWorkflowRef tier-1). Required for same-model: the project-default",
+      "//dot3": "workflow.dot is committed as standard-bead.dot, whose review node pins",
+      "//dot4": "harness=claude-code + model=claude-opus-4-8 (a claude leak), and every landing's",
+      "//dot5": "`git reset --hard HEAD` restores it, so overriding that tracked file cannot hold.",
+      "labels": ["codename:quality-system", "core-loop-seed", "harness:pi", "workflow:dot", "dot:review-loop"],
+      "harness": "pi",
+      "model_pin": "ornith",
+      "target_branch": "core-loop-proof-dot-integ"
     },
     {
       "key": "claude",

@@ -84,15 +84,27 @@ check "gap5 timeout fail"        "$TD/claude-agent-ready-timeout.ndjson" "$AR"  
 check "gap5 stall fail"          "$TD/claude-agent-ready-stall.ndjson"   "$AR"     gap5 fail
 check "gap5 pending when no expect.agent_ready" "$TD/claude-agent-ready-pass.ndjson" "$CLAUDE" gap5 pending
 
-# t10 — branch-targeting acceptance. Two-sided assert_t10 coverage: a run whose merge
-# landed on the daemon-wide default (main) instead of the bead's intended integration
-# branch REDs; a run that landed on the intended branch PASSES. The underlying per-bead
-# targeting defect (hk-lgykq) LANDED + is proven live by the daemon E2E test
-# TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch, so this is no longer a known-RED
-# cell — the known-RED marker in scenarios/core-loop-proof/known-red.md has been retired.
+# t10 — branch-targeting acceptance (GIT-VERIFIED, D2). t10 no longer reads the (never-
+# emitted) workspace_merge_status event; the matrix runner injects the git-observed landing
+# branch as ._observed_lands_on and assert_t10 compares it against expect.lands_on. The
+# event stream is unused, so these rows carry ._observed_lands_on directly. Two-sided:
+# landed-on-intended-branch PASSES; main-advanced FAILS. Per-bead targeting is LIVE (hk-lgykq;
+# proven by daemon E2E TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch).
 T10='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"lands_on":"integration/core-loop-proof"},"gaps":["t10"]}'
-check "t10 wrong-branch (landed on main) fail" "$TD/t10-known-red.ndjson"  "$T10" t10 fail
-check "t10 intended-branch pass"               "$TD/t10-would-pass.ndjson" "$T10" t10 pass
+T10_PASS="$(printf '%s' "$T10" | jq -c '._observed_lands_on="integration/core-loop-proof"')"
+T10_MAIN="$(printf '%s' "$T10" | jq -c '._observed_lands_on="main"')"
+T10_NONE="$(printf '%s' "$T10" | jq -c '._observed_lands_on="none"')"
+check "t10 landed-on-intended-branch pass" "$TD/t10-would-pass.ndjson" "$T10_PASS" t10 pass
+check "t10 landed-on-main fail"            "$TD/t10-known-red.ndjson"  "$T10_MAIN" t10 fail
+check "t10 nothing-landed fail"            "$TD/t10-would-pass.ndjson" "$T10_NONE" t10 fail
+
+# gap6 — dot review->implement round-trip, same model (D4). PASS iff REQUEST_CHANGES ->
+# implementer re-dispatch -> APPROVE -> close AND every model_selected == the pinned model.
+# FAIL if the reviewer approved on the first pass (no round-trip) or a foreign model leaked.
+GAP6='{"schema_version":1,"seed_bead":"hk-clp-pidot","substrate":"local","expect":{"model_selected":{"harness":"pi","model":"ornith"}},"gaps":["gap6"]}'
+check "gap6 real round-trip pass"      "$TD/pi-dot-roundtrip-pass.ndjson"  "$GAP6" gap6 pass
+check "gap6 no round-trip (first-pass APPROVE) fail" "$TD/pi-dot-noroundtrip-fail.ndjson" "$GAP6" gap6 fail
+check "gap6 same-model leak (claude) fail" "$TD/pi-dot-modelleak-fail.ndjson"  "$GAP6" gap6 fail
 
 echo "-----"
 echo "core-loop-assert self-test: pass=$pass fail=$fail"

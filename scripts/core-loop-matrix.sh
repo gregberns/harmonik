@@ -161,6 +161,37 @@ if [ -n "$REMOTE_WORKER" ]; then
     fi
 fi
 
+# ---- D1: local-model (pi) readiness preflight -----------------------------
+# Before running any pi cell we POST a tiny completion to the ornith /v1/completions
+# endpoint (the same loopback tunnel -> DGX vLLM the pi harness uses). A real non-empty
+# completion => the model is live, proceed. A 0-byte reply / timeout / non-200 => the vLLM
+# behind the tunnel is wedged, so the cell is marked SKIP-loud (never green; fails --gate)
+# with detail "pi endpoint wedged/no response" rather than letting the daemon spend minutes
+# discovering the wedge as a run_failed. Always-on for pi (no --no-preflight escape hatch):
+# a green pi cell MUST be backed by a live model, and catching the wedge here is the point.
+# Endpoint + key default to the overlay's harnesses.pi values; override via PI_BASE_URL /
+# PI_KEY_FILE. If the vLLM is wedged: restart it on the dgx box.
+PI_BASE_URL="${PI_BASE_URL:-http://127.0.0.1:8551/v1}"
+PI_KEY_FILE="${PI_KEY_FILE:-$HOME/.config/harmonik/ornith.key}"
+pi_preflight() {
+    command -v curl >/dev/null 2>&1 || { log "preflight: curl missing — cannot probe pi endpoint"; return 1; }
+    local key="" body
+    [ -f "$PI_KEY_FILE" ] && key="$(tr -d '[:space:]' < "$PI_KEY_FILE" 2>/dev/null)"
+    body="$(curl -sS -m 12 -X POST "$PI_BASE_URL/completions" \
+        -H "Authorization: Bearer $key" -H "Content-Type: application/json" \
+        -d '{"model":"ornith","prompt":"ping","max_tokens":16}' 2>/dev/null)" || return 1
+    [ -n "$body" ] || return 1
+    printf '%s' "$body" \
+        | jq -e '((.choices[0].text // .choices[0].message.content // "") | tostring | length) > 0' \
+          >/dev/null 2>&1
+}
+
+# cell_slug: a queue-name-safe + filesystem-safe token for a cell name (':' and '/' -> '-'),
+# so a cell whose name is NOT harness:substrate (e.g. the D4 extra cell pi-dot:local) gets
+# its own capture file and batch/queue name, and never collides with pi:local's. Hyphen
+# (not underscore) because the daemon's queue-name validator rejects '_' (queue_name_invalid).
+cell_slug() { printf '%s' "$1" | tr ':/' '--'; }
+
 # ---- per-cell seed-bead resolver ------------------------------------------
 # Precedence: --seed-bead (one bead, every cell) > MATRIX_SEED_MAP row for the cell >
 # unset → PENDING. Real per-cell, harness-labelled fixtures are authored in T2; the
@@ -201,7 +232,10 @@ had_red=0; n_green=0; n_red=0; n_pending=0; n_skip=0
 ASSERT_CELL="$REPO_ROOT/scripts/core-loop-assert-cell.sh"
 SCRATCH_BIN="$SCRATCH/.harmonik/bin/harmonik"
 SCRATCH_SOCK="$SCRATCH/.harmonik/daemon.sock"
-CAP_TYPES="harness_selected,model_selected,run_started,run_completed,run_failed,workspace_merge_status,implementer_phase_complete,agent_ready,agent_ready_timeout,agent_ready_stall_detected,post_agent_ready_hang,launch_stall_detected"
+# gap6 (D4) needs the dot round-trip events too: reviewer_verdict (verdict), and the
+# node_dispatch_requested/decided that mark the implementer re-dispatch after a
+# REQUEST_CHANGES. Harmless extras for the single/codex/claude cells (which never emit them).
+CAP_TYPES="harness_selected,model_selected,run_started,run_completed,run_failed,workspace_merge_status,implementer_phase_complete,reviewer_verdict,node_dispatch_requested,node_dispatch_decided,agent_ready,agent_ready_timeout,agent_ready_stall_detected,post_agent_ready_hang,launch_stall_detected"
 CAP_DIR="$SCRATCH/.harmonik/matrix-captures"
 if [ "$ASSERT" -eq 1 ]; then
     [ -x "$ASSERT_CELL" ] || die "--assert needs $ASSERT_CELL"
@@ -212,9 +246,34 @@ fi
 
 [ "${#HARNESSES[@]}" -gt 0 ] || die "no harnesses to run (empty --harnesses?)"
 [ "${#SUBSTRATES[@]}" -gt 0 ] || die "no substrates to run (empty --substrates?)"
+
+# ---- build the ordered run list (HARNESSES×SUBSTRATES + EXTRA_CELLS) -------
+# Each entry is "cell<TAB>harness<TAB>substrate". EXTRA_CELLS (D4) lets a cell whose name
+# is NOT harness:substrate — e.g. the dot-mode pi-dot:local cell — join the run WITHOUT
+# forcing the whole matrix off its {harness}×{substrate} shape (codex/claude cells stay
+# intact). Format: comma-separated "cell|harness|substrate" tuples in env EXTRA_CELLS,
+# e.g. EXTRA_CELLS='pi-dot:local|pi|local'. Its seed resolves through MATRIX_SEED_MAP /
+# cells.json exactly like every other cell (the cell must have a row + a spec).
+RUN_CELLS=()
 for h in "${HARNESSES[@]}"; do
     for s in "${SUBSTRATES[@]}"; do
-        cell="${h}:${s}"
+        RUN_CELLS+=("${h}:${s}	${h}	${s}")
+    done
+done
+if [ -n "${EXTRA_CELLS:-}" ]; then
+    IFS=',' read -r -a _extra_cells <<< "$EXTRA_CELLS"
+    for _ec in "${_extra_cells[@]}"; do
+        [ -n "$_ec" ] || continue
+        IFS='|' read -r _ec_cell _ec_h _ec_s <<< "$_ec"
+        [ -n "$_ec_cell" ] && [ -n "$_ec_h" ] && [ -n "$_ec_s" ] \
+            || die "EXTRA_CELLS entry '$_ec' malformed — want cell|harness|substrate"
+        RUN_CELLS+=("${_ec_cell}	${_ec_h}	${_ec_s}")
+        log "extra cell queued: $_ec_cell (harness=$_ec_h substrate=$_ec_s)"
+    done
+fi
+
+for _run_cell in "${RUN_CELLS[@]}"; do
+        IFS=$'\t' read -r cell h s <<< "$_run_cell"
 
         # substrate gating — remote needs a reachable tcp:// worker
         if [ "$s" = "remote" ] && [ "$REMOTE_OK" -eq 0 ]; then
@@ -233,19 +292,44 @@ for h in "${HARNESSES[@]}"; do
             continue
         fi
 
+        # D1: local-model preflight — pi cells only. A wedged vLLM (0-byte/timeout/non-200)
+        # is SKIP-loud (never green; fails --gate), not a slow run_failed discovered minutes
+        # later. Always-on; the readiness of the model IS the precondition for a pi green.
+        if [ "$h" = "pi" ]; then
+            if pi_preflight; then
+                log "preflight OK — pi endpoint answered ($PI_BASE_URL)"
+            else
+                log "SKIP  $cell — pi endpoint wedged/no response ($PI_BASE_URL) — restart vLLM on dgx"
+                GRID+=("$cell	skip	pi endpoint wedged/no response")
+                n_skip=$((n_skip+1))
+                continue
+            fi
+        fi
+
         # run the cell: submit the seed bead through the scratch daemon's batch fold.
         # batch exits 0 iff every submitted bead reached a terminal pass; it always
         # writes a results artifact whose path we echo for T2/T3 to consume.
-        batch_name="matrix-${h}-${s}"
+        batch_name="matrix-$(cell_slug "$cell")"
         log "RUN   $cell — batch '$batch_name' seed=$local_seed"
 
         # --assert: arm a FULL-type capture BEFORE submitting (no missed-event race).
-        cap_pid=""; cap_file="$CAP_DIR/${h}-${s}.ndjson"
+        cap_pid=""; cap_file="$CAP_DIR/$(cell_slug "$cell").ndjson"
         if [ "$ASSERT" -eq 1 ]; then
             [ -x "$SCRATCH_BIN" ] || die "--assert: scratch binary not built ($SCRATCH_BIN)"
             "$SCRATCH_BIN" subscribe --socket "$SCRATCH_SOCK" --types "$CAP_TYPES" --heartbeat 30s \
                 > "$cap_file" 2>/dev/null &
             cap_pid=$!
+        fi
+
+        # D2: git landing baseline (record BEFORE submit). The intended branch is the cell
+        # spec's expect.lands_on; we snapshot main + that branch tip so that AFTER the run we
+        # can prove from GIT which branch actually advanced — the workspace_merge_status event
+        # is never emitted (dead/aspirational), so the merge must be verified from the repo.
+        land_want=""; base_main=""; base_target=""
+        if [ "$ASSERT" -eq 1 ] && command -v git >/dev/null 2>&1; then
+            land_want="$(jq -r --arg c "$cell" '.cells[]|select(.cell==$c)|.expect.lands_on // empty' "$SPECS" 2>/dev/null || true)"
+            base_main="$(git -C "$SCRATCH" rev-parse --verify -q main 2>/dev/null || echo -)"
+            [ -n "$land_want" ] && base_target="$(git -C "$SCRATCH" rev-parse --verify -q "$land_want" 2>/dev/null || echo -)"
         fi
 
         batch_out=""
@@ -257,19 +341,34 @@ for h in "${HARNESSES[@]}"; do
         results_path="$(printf '%s\n' "$batch_out" | sed -n 's/.*results=\([^ ]*\).*/\1/p' | tail -1)"
         printf '%s\n' "$batch_out" | grep -E '^BATCH_(ITEM|SUMMARY)' || true
 
+        # D2: recompute tips + derive the OBSERVED landing branch from git truth. Landed-on =
+        # the branch whose tip advanced; if main advanced at all that is always a fail (main
+        # must NOT move). This observed value is fed to the t10 assertion below.
+        observed_lands_on=""
+        if [ "$ASSERT" -eq 1 ] && [ -n "$land_want" ] && command -v git >/dev/null 2>&1; then
+            new_main="$(git -C "$SCRATCH" rev-parse --verify -q main 2>/dev/null || echo -)"
+            new_target="$(git -C "$SCRATCH" rev-parse --verify -q "$land_want" 2>/dev/null || echo -)"
+            observed_lands_on="none"
+            [ "$new_target" != "$base_target" ] && observed_lands_on="$land_want"
+            [ "$new_main" != "$base_main" ] && observed_lands_on="main"
+            log "landing: want='$land_want' observed='$observed_lands_on' (main ${base_main:0:8}->${new_main:0:8}, target ${base_target:0:8}->${new_target:0:8})"
+        fi
+
         # Determine the cell verdict. Without --assert it is the batch terminal outcome.
         # With --assert it is the assertion fold over the full captured stream.
         cell_verdict="$batch_verdict"; detail="${results_path:-no-artifact}"
         if [ "$ASSERT" -eq 1 ]; then
             [ -n "$cap_pid" ] && kill "$cap_pid" 2>/dev/null || true
-            # resolve the cell spec, overriding seed_bead with the real dispatched id.
-            spec="$(jq -c --arg c "$cell" --arg sb "$local_seed" \
-                      '.cells[] | select(.cell==$c) | .seed_bead=$sb' "$SPECS" 2>/dev/null || true)"
+            # resolve the cell spec, overriding seed_bead with the real dispatched id and
+            # injecting the git-observed landing branch (D2) so assert_t10 compares intent
+            # (expect.lands_on) against reality (._observed_lands_on).
+            spec="$(jq -c --arg c "$cell" --arg sb "$local_seed" --arg obs "$observed_lands_on" \
+                      '.cells[] | select(.cell==$c) | .seed_bead=$sb | ._observed_lands_on=$obs' "$SPECS" 2>/dev/null || true)"
             if [ -z "$spec" ]; then
                 cell_verdict="pending"; detail="no spec for cell in $SPECS"
             else
                 # gap2 remote cells fold against the local cell's captured stream.
-                ref="-"; [ "$s" = "remote" ] && [ -f "$CAP_DIR/${h}-local.ndjson" ] && ref="$CAP_DIR/${h}-local.ndjson"
+                ref="-"; [ "$s" = "remote" ] && [ -f "$CAP_DIR/$(cell_slug "${h}:local").ndjson" ] && ref="$CAP_DIR/$(cell_slug "${h}:local").ndjson"
                 # A red cell's fold exits non-zero; capture rc WITHOUT tripping `set -e`
                 # (a bare `x="$(cmd)"; rc=$?` aborts under errexit before rc is read).
                 if fold_out="$(bash "$ASSERT_CELL" "$cap_file" "$spec" "$ref" 2>&1)"; then fold_rc=0; else fold_rc=$?; fi
@@ -296,7 +395,6 @@ for h in "${HARNESSES[@]}"; do
         if [ "$cell_verdict" = "red" ] && [ -n "$results_path" ]; then
             RED_ARTIFACTS+=("$batch_name	$results_path")
         fi
-    done
 done
 
 if [ "$KEEP" -eq 0 ] && [ "$NO_CYCLE" -eq 0 ]; then

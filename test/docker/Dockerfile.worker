@@ -30,6 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         tmux \
         ca-certificates \
+        netcat-openbsd \
+        python3 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /run/sshd
 

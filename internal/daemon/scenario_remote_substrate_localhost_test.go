@@ -223,10 +223,55 @@ func rsb12GitConfig(t *testing.T, dir string) {
 	rsb12Git(t, dir, "config", "user.name", "Harmonik Test")
 }
 
-// rsb12SSHAvailable reports whether `ssh localhost true` succeeds within a short
+// rsb12SSHHost returns the ssh host the remote-substrate e2e drives against.
+// Default "localhost" preserves the original single-box behaviour; the docker
+// compose drive (WS2.3) sets HARMONIK_E2E_SSH_HOST=worker so the SAME test runs
+// across two containers with the worker reachable by its compose service name.
+func rsb12SSHHost() string {
+	if h := os.Getenv("HARMONIK_E2E_SSH_HOST"); h != "" {
+		return h
+	}
+	return "localhost"
+}
+
+// rsb12SharedRoot returns HARMONIK_E2E_SHARED_ROOT, the directory (mounted at an
+// IDENTICAL absolute path in both the daemon and worker containers) under which
+// origin.git + the worker clone are rooted so box A and the worker share those
+// two repos across the network. Empty (the default) keeps the original
+// single-box t.TempDir() behaviour where every path is box-A-local.
+func rsb12SharedRoot() string {
+	return os.Getenv("HARMONIK_E2E_SHARED_ROOT")
+}
+
+// rsb12OriginWorkerDirs returns the origin.git (bare) + worker-clone paths. When
+// HARMONIK_E2E_SHARED_ROOT is set they are rooted under it at the shared,
+// identical-in-both-containers absolute path (and any stale copy from a prior run
+// on a persistent volume is removed first); otherwise origin uses t.TempDir() and
+// the caller lets `git clone` create the worker dir under t.TempDir().
+func rsb12OriginWorkerDirs(t *testing.T) (originDir, workerDir string) {
+	t.Helper()
+	if root := rsb12SharedRoot(); root != "" {
+		originDir = filepath.Join(root, "origin.git")
+		workerDir = filepath.Join(root, "worker")
+		// Clean any stale repos left by a prior run (down -v normally wipes the
+		// volume, but be defensive so a reused volume can't poison the fixture).
+		_ = os.RemoveAll(originDir)
+		_ = os.RemoveAll(workerDir)
+		//nolint:gosec // G301: 0755 fixture dir on the shared volume
+		if err := os.MkdirAll(originDir, 0o755); err != nil {
+			t.Fatalf("mkdir shared originDir %s: %v", originDir, err)
+		}
+		return originDir, workerDir
+	}
+	originDir = t.TempDir()
+	workerDir = t.TempDir()
+	return originDir, workerDir
+}
+
+// rsb12SSHAvailable reports whether `ssh <host> true` succeeds within a short
 // bound. Returns the combined output on failure so the skip message is actionable
 // (no sshd, no key, host-key prompt, etc.).
-func rsb12SSHAvailable(ctx context.Context) (bool, string) {
+func rsb12SSHAvailable(ctx context.Context, host string) (bool, string) {
 	cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	// BatchMode=yes: never prompt for a passphrase/password — fail fast instead.
@@ -234,7 +279,7 @@ func rsb12SSHAvailable(ctx context.Context) (bool, string) {
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ConnectTimeout=10",
-		"localhost", "true")
+		host, "true")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return false, strings.TrimSpace(string(out)) + " (" + err.Error() + ")"
@@ -243,17 +288,19 @@ func rsb12SSHAvailable(ctx context.Context) (bool, string) {
 }
 
 // rsb12RequireSSHOrSkip gates the remote-substrate e2e on a working
-// `ssh localhost true`. By default (flag unset) it SKIPs green so the suite is
-// clean on boxes without a passwordless sshd. With HARMONIK_REQUIRE_REMOTE_E2E=1
-// it FATALs instead — so CI that intends to exercise the remote path fails loudly
-// rather than silently skipping.
+// `ssh <host> true` (host = rsb12SSHHost()). By default (flag unset) it SKIPs
+// green so the suite is clean on boxes without a passwordless sshd. With
+// HARMONIK_REQUIRE_REMOTE_E2E=1 it FATALs instead — so CI (and the docker drive)
+// that intends to exercise the remote path fails loudly rather than silently
+// skipping.
 func rsb12RequireSSHOrSkip(t *testing.T) {
 	t.Helper()
-	ok, detail := rsb12SSHAvailable(t.Context())
+	host := rsb12SSHHost()
+	ok, detail := rsb12SSHAvailable(t.Context(), host)
 	if ok {
 		return
 	}
-	msg := "remote-substrate e2e requires a working `ssh localhost true`; probe: " + detail
+	msg := "remote-substrate e2e requires a working `ssh " + host + " true`; probe: " + detail
 	if os.Getenv("HARMONIK_REQUIRE_REMOTE_E2E") == "1" {
 		t.Fatalf("%s (HARMONIK_REQUIRE_REMOTE_E2E=1)", msg)
 	}
@@ -292,10 +339,15 @@ func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
 	rsb12RequireSSHOrSkip(t)
 
 	const bead = core.BeadID("hk-rs-b12-e2e-localhost")
-	sshRunner := tmux.SSHRunner{Host: "localhost"}
+	sshHost := rsb12SSHHost()
+	sshRunner := tmux.SSHRunner{Host: sshHost}
 
-	// ── origin (bare) ────────────────────────────────────────────────────────
-	originDir := t.TempDir()
+	// ── origin (bare) + worker-clone paths ───────────────────────────────────
+	// When HARMONIK_E2E_SHARED_ROOT is set (docker drive) these live on a volume
+	// mounted at the SAME absolute path in both containers, so the worker's
+	// `git fetch origin <baseSHA>` and box A's `git fetch ssh://worker<workerDir>`
+	// resolve the identical repos across the network (CRUX 2).
+	originDir, workerDir := rsb12OriginWorkerDirs(t)
 	rsb12Git(t, originDir, "init", "--bare", "--initial-branch=main")
 
 	// ── box A (projectDir): the daemon's repo. ───────────────────────────────
@@ -337,20 +389,20 @@ func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
 
 	// ── worker clone: the SSH worker's repo (registry RepoPath). ─────────────
 	// A real clone of origin so its default fetch refspec + `git push origin`
-	// behave exactly as a production worker's clone does.
-	workerDir := t.TempDir()
-	// `git clone <origin> <workerDir>` — clone into the pre-created temp dir.
+	// behave exactly as a production worker's clone does. `git clone` creates
+	// workerDir (t.TempDir yields an empty existing dir clone accepts; the shared
+	// path was RemoveAll'd in rsb12OriginWorkerDirs so it's fresh here too).
 	rsb12Git(t, ".", "clone", originDir, workerDir)
 	rsb12GitConfig(t, workerDir)
 
-	// ── worker registry: one ssh/localhost worker. ───────────────────────────
+	// ── worker registry: one ssh worker (host from HARMONIK_E2E_SSH_HOST). ────
 	cfg := workers.Config{
 		Version: 1,
 		Workers: []workers.Worker{{
-			Name:      "localhost",
+			Name:      sshHost,
 			Transport: "ssh",
-			Host:      "localhost",
-			OS:        "darwin",
+			Host:      sshHost,
+			OS:        "linux",
 			RepoPath:  workerDir,
 			MaxSlots:  1,
 			Enabled:   true,
@@ -489,8 +541,8 @@ func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
 	if !ok {
 		t.Fatalf("no run_started event captured; events=%v", collector.eventTypes())
 	}
-	if gotWorker != "localhost" {
-		t.Errorf("run_started.worker_name = %q, want %q — the run was NOT routed to the ssh worker (silent route-to-LOCAL regression)", gotWorker, "localhost")
+	if gotWorker != sshHost {
+		t.Errorf("run_started.worker_name = %q, want %q — the run was NOT routed to the ssh worker (silent route-to-LOCAL regression)", gotWorker, sshHost)
 	}
 
 	t.Logf("remote-substrate e2e OK: worker commit synced over ssh localhost and landed on box A main (%s); run_started.worker_name=%q", boxAMainSHA, gotWorker)

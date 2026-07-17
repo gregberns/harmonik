@@ -110,6 +110,42 @@ test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budge
 test-subprocess:  ## Run WS2.4 non-docker subprocess boot smoke (-tags=subprocess; needs go+br+git on PATH)
 	go test -tags=subprocess -timeout 5m -count=1 ./cmd/harmonik -run TestSubprocessDaemonBootSmoke
 
+# test-docker-e2e: WS2.3 remote-substrate E2E across two containers. Builds the
+# daemon (box A) + worker images, brings them up on a compose bridge network (the
+# worker reachable as `worker`), waits until `ssh worker true` from the daemon
+# succeeds (the worker installs the daemon's client key from the shared `keys`
+# volume once both are up), then execs the compiled scenario test binary baked
+# into the daemon image against HARMONIK_E2E_SSH_HOST=worker. origin.git + the
+# worker clone live on the shared volume at the identical /shared path in both
+# containers (CRUX 2). ALWAYS tears the stack down with `down -v` (fresh keys +
+# repos each run), preserving the drive's exit code. Needs NO host ~/.ssh setup —
+# keys are generated inside the containers at boot. Cite: M6-PLAN §WS2.3.
+COMPOSE_E2E := test/docker/compose.yml
+.PHONY: test-docker-e2e
+test-docker-e2e:  ## WS2.3 remote-substrate E2E over ssh across daemon+worker containers (needs docker)
+	docker compose -f $(COMPOSE_E2E) up -d --build
+	@echo "test-docker-e2e: waiting for passwordless ssh daemon->worker …"
+	@ok=0; \
+	for i in $$(seq 1 30); do \
+	  if docker compose -f $(COMPOSE_E2E) exec -T daemon \
+	       ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 worker true >/dev/null 2>&1; then \
+	    ok=1; echo "test-docker-e2e: ssh worker reachable (attempt $$i)"; break; \
+	  fi; \
+	  sleep 0.5; \
+	done; \
+	if [ "$$ok" != "1" ]; then \
+	  echo "test-docker-e2e: FATAL ssh daemon->worker never came up" >&2; \
+	  docker compose -f $(COMPOSE_E2E) logs --no-color >&2 || true; \
+	  docker compose -f $(COMPOSE_E2E) down -v || true; \
+	  exit 1; \
+	fi; \
+	docker compose -f $(COMPOSE_E2E) exec -T daemon \
+	  /usr/local/bin/remote-substrate.test \
+	  -test.run '^TestScenario_RemoteSubstrate_Localhost_E2E$$' -test.v; \
+	rc=$$?; \
+	docker compose -f $(COMPOSE_E2E) down -v; \
+	exit $$rc
+
 # ---------------------------------------------------------------------------
 # codex-app-server test taxonomy (T5, hk-oe86p)
 # Four tiers: L0 unit / L1 contract / L2 integration / L3 live.

@@ -30,6 +30,12 @@ COPY . .
 # every twin → /src/twins/generic-twin. `make` is preinstalled in golang:bookworm.
 RUN make build-all COMMIT_HASH="${COMMIT_HASH}"
 
+# WS2.3: compile the remote-substrate scenario E2E into a standalone test binary
+# so the compose drive can exec it inside the daemon container against the worker
+# service. Building it here (with the full Go toolchain + module cache) keeps the
+# runtime image toolchain-free — the binary needs only git + ssh at run time.
+RUN go test -c -tags scenario -o /tmp/remote-substrate.test ./internal/daemon/
+
 # ── Stage 2: fetch the beads CLI (`br`) the daemon shells out to at runtime ───
 # beads_rust is a genuine runtime dependency (harmonik init/reconcile shell out
 # to `br`). We pull a PINNED, checksum-verified upstream release binary rather
@@ -69,6 +75,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=go-build /tmp/harmonik            /usr/local/bin/harmonik
 COPY --from=go-build /src/twins/generic-twin  /usr/local/bin/generic-twin
 COPY --from=br-fetch /usr/local/bin/br        /usr/local/bin/br
+
+# WS2.3 remote-substrate E2E drive binary (compiled scenario suite). The compose
+# drive execs this against HARMONIK_E2E_SSH_HOST=worker.
+COPY --from=go-build /tmp/remote-substrate.test /usr/local/bin/remote-substrate.test
 
 # SH-009 in-tree twin search-path default is <repo-root>/twins/; mirror it so the
 # daemon finds the twin whether it looks on PATH or in the conventional dir.

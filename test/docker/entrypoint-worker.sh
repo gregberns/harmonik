@@ -12,24 +12,31 @@ KEYS_DIR="${KEYS_DIR:-/keys}"
 # Host keys — generated per-boot (not committed).
 ssh-keygen -A
 
-# Install the daemon's client public key from the shared volume. Wait briefly for
-# the daemon side to publish it (both containers come up concurrently).
+# Install the daemon's client public key from the shared volume. The daemon only
+# GENERATES its key AFTER it boots, and under WS2.3 compose the daemon boots only
+# once this worker is healthy (sshd listening) — so the key is NOT guaranteed to
+# be present at worker-boot time. A one-shot poll here would race and lose. Run an
+# idempotent background installer that watches the shared volume and appends the
+# key to authorized_keys as soon as it appears (and stays a no-op once installed),
+# so `ssh worker true` starts succeeding the moment the daemon has published.
 mkdir -p /root/.ssh
 chmod 700 /root/.ssh
+touch /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
 PUB="${KEYS_DIR}/id_ed25519.pub"
-for _ in $(seq 1 50); do
-    [ -f "${PUB}" ] && break
-    sleep 0.2
-done
-if [ -f "${PUB}" ]; then
-    # Idempotent: don't accumulate dup lines across restarts on a persistent volume.
-    touch /root/.ssh/authorized_keys
-    grep -qxF "$(cat "${PUB}")" /root/.ssh/authorized_keys || cat "${PUB}" >> /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-    echo "entrypoint-worker: installed client key from ${PUB}"
-else
-    echo "entrypoint-worker: WARNING no client key at ${PUB} — passwordless ssh will fail" >&2
-fi
+install_key_watcher() {
+    while true; do
+        if [ -f "${PUB}" ]; then
+            # Idempotent: don't accumulate dup lines across restarts / re-checks.
+            if ! grep -qxF "$(cat "${PUB}")" /root/.ssh/authorized_keys 2>/dev/null; then
+                cat "${PUB}" >> /root/.ssh/authorized_keys
+                echo "entrypoint-worker: installed client key from ${PUB}"
+            fi
+        fi
+        sleep 1
+    done
+}
+install_key_watcher &
 
 # Ensure the writable clone path exists (bind-mount or fresh).
 mkdir -p /work/worker

@@ -301,9 +301,15 @@ cmd_up() {
     # read config via os.Getwd() (e.g. the codex stale-WAL guard) assume this
     # invariant; without -c the daemon inherits the CALLER's cwd (the driver
     # checkout) and reads the wrong .harmonik/config.yaml.
+    # M6 WS4-3: default eager-refill OFF for scratch daemons so `queue submit` is
+    # the sole deterministic dispatcher (the daemon must not auto-dispatch ready
+    # seed beads at boot before a cell's subscribe arms). Override with
+    # SCRATCH_DISABLE_EAGER_REFILL=0 for scratch runs that want the flywheel.
+    local disable_eager="${SCRATCH_DISABLE_EAGER_REFILL:-1}"
     # shellcheck disable=SC2016
     tmux new-session -d -s "$sess" -c "$scratch" \
         "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+          HARMONIK_DISABLE_EAGER_REFILL='$disable_eager' \
           '$bin' --project '$scratch' \
           --max-concurrent $max_concurrent \
           --workflow-mode $workflow_mode \

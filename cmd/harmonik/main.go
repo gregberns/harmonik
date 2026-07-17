@@ -1183,6 +1183,16 @@ EXAMPLES
 	// hk-9321v: resolve kerf binary via PATH for EM-062/EM-063 eager-refill.
 	// If kerf is not on PATH, KerfPath remains empty and eager-refill is disabled.
 	kerfPath, _ := exec.LookPath("kerf")
+	// M6 WS4-3: HARMONIK_DISABLE_EAGER_REFILL forces eager-refill off without
+	// removing kerf from PATH. The core-loop-proof matrix needs queue-submit to
+	// be the SOLE deterministic dispatcher: otherwise the daemon auto-dispatches
+	// the ready seed beads at boot (via `kerf next`) before a cell's subscribe
+	// arms, so the cell's `queue submit` hits bead_already_dispatched and its
+	// capture folds empty. kerf shares a bin dir with pi/codex, so a PATH shim
+	// can't drop kerf alone; this explicit toggle is the clean lever.
+	if v := os.Getenv("HARMONIK_DISABLE_EAGER_REFILL"); v == "1" || v == "true" {
+		kerfPath = ""
+	}
 
 	// hk-keul6: default JSONL log path to <ProjectDir>/.harmonik/events/events.jsonl
 	// per event-model.md §6.2 EV-020.

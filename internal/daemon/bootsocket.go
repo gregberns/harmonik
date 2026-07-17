@@ -292,7 +292,18 @@ func (bs *bootState) startSocketListener(ctx context.Context, sockPath string, q
 	// defer ln.Close() discards errors in RunSocketListener).
 	socketDone := make(chan error, 1)
 	go func() {
-		socketDone <- RunSocketListenerWithDashboard(ctx, sockPath, &noopRequestHandler{}, bs.hookStore, bs.subscribeHub, bs.opPauseCtrl, commsSendHandler, bs.crewHandler, bs.quiesceArbiter, stateHandler, dashHandler, queueHandler)
+		socketDone <- Serve(ctx, sockPath, SocketHandlers{
+			Request:   &noopRequestHandler{},
+			HookRelay: bs.hookStore,
+			Queue:     queueHandler,
+			Subscribe: bs.subscribeHub,
+			Operator:  bs.opPauseCtrl,
+			Comms:     commsSendHandler,
+			Crew:      bs.crewHandler,
+			SleepWake: bs.quiesceArbiter,
+			State:     stateHandler,
+			Dashboard: dashHandler,
+		})
 	}()
 	go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 }

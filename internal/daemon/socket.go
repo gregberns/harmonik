@@ -331,19 +331,67 @@ func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHa
 //
 // Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
 func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, qh ...QueueHandler) error {
+	return Serve(ctx, sockPath, SocketHandlers{
+		Request: h, HookRelay: hr, Queue: firstQueueHandler(qh), Subscribe: sub,
+		Operator: oh, Comms: ch, Crew: crewh, SleepWake: sleepWakeh,
+	})
+}
+
+// SocketHandlers bundles the handler interfaces the daemon injects into the
+// socket listener. It replaces the telescoping-constructor chain of positional
+// RunSocketListener* wrappers (giant-retirement SR-3). Any field may be nil; the
+// corresponding ops return their "… not registered" envelope.
+type SocketHandlers struct {
+	Request   RequestHandler
+	HookRelay HookRelayHandler
+	Queue     QueueHandler
+	Subscribe SubscribeHandler
+	Operator  OperatorControlHandler
+	Comms     CommsSendHandler
+	Crew      CrewHandler
+	SleepWake QuiesceOverrideHandler
+	State     StateHandler
+	Dashboard DashboardHandler
+}
+
+// firstQueueHandler returns the first variadic QueueHandler, or nil. Bridges the
+// back-compat variadic wrappers onto SocketHandlers.Queue.
+func firstQueueHandler(qh []QueueHandler) QueueHandler {
+	if len(qh) > 0 {
+		return qh[0]
+	}
+	return nil
+}
+
+// Serve binds a Unix-domain socket at sockPath, sets its permissions to 0600,
+// and accepts connections until ctx is cancelled. It is the single shared
+// Accept-loop body — the three formerly-duplicated RunSocketListener* bodies
+// (WithSleepWake/WithState/WithDashboard) now delegate here (SR-3).
+//
+// The router is built ONCE (buildSocketRouter), before the Accept loop, from the
+// injected handlers — never per-connection (design risk #7). Each connection is
+// handled in its own goroutine.
+//
+// Serve returns nil when ctx is cancelled and the listener closes cleanly. It
+// returns a non-nil error only on bind failure or when a live daemon is detected
+// at sockPath (errLiveDaemon, wrapped).
+//
+// Spec ref: specs/process-lifecycle.md §4.1 PL-003 (socket exclusivity), §4.4
+// PL-003a (queue method set); specs/claude-hook-bridge.md §4.6 CHB-015.
+func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	if err := removeStaleSocket(sockPath); err != nil {
-		return fmt.Errorf("daemon: RunSocketListener: stale-socket check: %w", err)
+		return fmt.Errorf("daemon: Serve: stale-socket check: %w", err)
 	}
 
 	ln, err := (&net.ListenConfig{}).Listen(ctx, "unix", sockPath)
 	if err != nil {
-		return fmt.Errorf("daemon: RunSocketListener: listen unix %q: %w", sockPath, err)
+		return fmt.Errorf("daemon: Serve: listen unix %q: %w", sockPath, err)
 	}
 	defer func() { _ = ln.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	// Restrict access to the daemon's own uid per specs/process-lifecycle.md PL-003.
 	if err := os.Chmod(sockPath, 0o600); err != nil {
-		return fmt.Errorf("daemon: RunSocketListener: chmod 0600 %q: %w", sockPath, err)
+		return fmt.Errorf("daemon: Serve: chmod 0600 %q: %w", sockPath, err)
 	}
 
 	// Close the listener when ctx is cancelled so Accept unblocks.
@@ -352,15 +400,10 @@ func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h Requ
 		_ = ln.Close() //nolint:errcheck // cleanup error unactionable
 	}()
 
-	var queueHandler QueueHandler
-	if len(qh) > 0 {
-		queueHandler = qh[0]
-	}
-
-	// Build the router ONCE per listener body, before the Accept loop (never
-	// per-connection). Handlers are fixed for the listener's lifetime.
+	// Build the router ONCE, before the Accept loop (never per-connection).
 	router := buildSocketRouter(&socketDispatch{
-		h: h, qh: queueHandler, oh: oh, ch: ch, crewh: crewh, sleepWakeh: sleepWakeh,
+		h: hs.Request, qh: hs.Queue, oh: hs.Operator, ch: hs.Comms,
+		crewh: hs.Crew, sleepWakeh: hs.SleepWake, stateh: hs.State, dashh: hs.Dashboard,
 	})
 
 	for {
@@ -371,9 +414,9 @@ func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h Requ
 			if ctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
+			return fmt.Errorf("daemon: Serve: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, hr, sub, router)
+		go handleSocketConn(ctx, conn, hs.HookRelay, hs.Subscribe, router)
 	}
 }
 

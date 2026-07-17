@@ -12,8 +12,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"os"
 )
 
 // StateHandler is the interface the daemon registers to handle "state" socket
@@ -49,43 +47,8 @@ func (h *liveStateHandlerImpl) HandleState(ctx context.Context) (json.RawMessage
 // Spec ref: specs/system-state.md SS-001 / SS-INV-007 (read-only observation).
 // Bead ref: hk-gv04 (P2-a).
 func RunSocketListenerWithState(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, stateh StateHandler, qh ...QueueHandler) error {
-	if err := removeStaleSocket(sockPath); err != nil {
-		return fmt.Errorf("daemon: RunSocketListenerWithState: stale-socket check: %w", err)
-	}
-
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "unix", sockPath)
-	if err != nil {
-		return fmt.Errorf("daemon: RunSocketListenerWithState: listen unix %q: %w", sockPath, err)
-	}
-	defer func() { _ = ln.Close() }() //nolint:errcheck
-
-	if err := os.Chmod(sockPath, 0o600); err != nil {
-		return fmt.Errorf("daemon: RunSocketListenerWithState: chmod 0600 %q: %w", sockPath, err)
-	}
-
-	go func() {
-		<-ctx.Done()
-		_ = ln.Close() //nolint:errcheck
-	}()
-
-	var queueHandler QueueHandler
-	if len(qh) > 0 {
-		queueHandler = qh[0]
-	}
-
-	// Build the router ONCE per listener body, before the Accept loop.
-	router := buildSocketRouter(&socketDispatch{
-		h: h, qh: queueHandler, oh: oh, ch: ch, crewh: crewh, sleepWakeh: sleepWakeh, stateh: stateh,
+	return Serve(ctx, sockPath, SocketHandlers{
+		Request: h, HookRelay: hr, Queue: firstQueueHandler(qh), Subscribe: sub,
+		Operator: oh, Comms: ch, Crew: crewh, SleepWake: sleepWakeh, State: stateh,
 	})
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return fmt.Errorf("daemon: RunSocketListenerWithState: accept: %w", err)
-		}
-		go handleSocketConn(ctx, conn, hr, sub, router)
-	}
 }

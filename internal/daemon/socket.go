@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	socketrouter "github.com/gregberns/harmonik/internal/daemon/router"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -356,6 +357,12 @@ func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h Requ
 		queueHandler = qh[0]
 	}
 
+	// Build the router ONCE per listener body, before the Accept loop (never
+	// per-connection). Handlers are fixed for the listener's lifetime.
+	router := buildSocketRouter(&socketDispatch{
+		h: h, qh: queueHandler, oh: oh, ch: ch, crewh: crewh, sleepWakeh: sleepWakeh,
+	})
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -366,67 +373,98 @@ func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h Requ
 			}
 			return fmt.Errorf("daemon: RunSocketListener: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh, sleepWakeh, nil, nil)
+		go handleSocketConn(ctx, conn, hr, sub, router)
 	}
 }
 
-// handleSocketConn reads one JSON message from conn and dispatches it to the
-// appropriate handler:
-//   - If the decoded JSON has a non-empty "type" field → hook-relay envelope,
-//     dispatched to hr (HookRelayHandler); response is a hookRelayAckMsg.
-//   - If op ∈ {"queue-submit","queue-append","queue-status","queue-dry-run"}
-//     → queue request, dispatched to qh (QueueHandler); response is a
-//     SocketResponse with optional ErrorCode per QM-029b.
-//   - Otherwise → SocketRequest, dispatched to h (RequestHandler); response is
-//     a SocketResponse.
+// handleSocketConn reads one JSON message from conn and dispatches it. The
+// giant switch was carved into the pure socketrouter.Router (op→Result lookup)
+// plus the daemon-side socketDispatch adapter methods; two response-shape-
+// breaking ops stay as daemon pre-branches:
+//   - a non-empty "type" field → hook-relay envelope (handleHookRelayEnvelope);
+//     response is a hookRelayAckMsg written as NDJSON (+ '\n').
+//   - op == "subscribe" → a long-running NDJSON stream (handleSubscribe) that
+//     writes no SocketResponse on success.
+//
+// Every other op routes through router.Dispatch → resultToResponse →
+// writeSocketResponse (no trailing newline). router is built once per listener
+// body (buildSocketRouter), never per-connection.
 //
 // CHB-027: if the relay sent zero complete lines (abrupt EOF before the '\n'
-// terminator), json.Decoder.Decode returns an error and the connection is dropped
-// with no response after writing a bad_envelope ack — the relay will have exited
-// already in this case, so the write is best-effort.
-func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr HookRelayHandler, qh QueueHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, stateh StateHandler, dashh DashboardHandler) {
+// terminator), the raw decode fails and the connection is dropped after a
+// best-effort bad_envelope ack — the relay will have exited already, so the
+// write is best-effort.
+func handleSocketConn(ctx context.Context, conn net.Conn, hr HookRelayHandler, sub SubscribeHandler, router *socketrouter.Router) {
 	defer func() { _ = conn.Close() }() //nolint:errcheck // cleanup error unactionable
 
-	// Decode into a raw map first to detect the message format (type vs op).
+	raw, err := decodeRawMap(conn)
+	if err != nil {
+		return
+	}
+	if socketrouter.Classify(raw) == socketrouter.KindHookRelay {
+		handleHookRelayEnvelope(conn, hr, raw) // daemon pre-branch #1
+		return
+	}
+	req, reEncoded, ok := decodeSocketRequest(conn, raw)
+	if !ok {
+		return
+	}
+	if req.Op == "subscribe" {
+		handleSubscribe(ctx, conn, sub, reEncoded) // daemon pre-branch #2
+		return
+	}
+	res := router.Dispatch(ctx, req.Op, reEncoded)
+	writeSocketResponse(conn, resultToResponse(res, req.Op))
+}
+
+// decodeRawMap reads one JSON message from conn into a raw map to detect the
+// message format (type vs op). On decode failure it writes a bad_envelope ack
+// via the hook-relay writer (NDJSON + '\n', preserving the pre-carve behavior;
+// the initial raw-decode failure uses the hook-relay writer even for what would
+// have been an op request — wire-F3) and returns the error.
+func decodeRawMap(conn net.Conn) (map[string]json.RawMessage, error) {
 	var raw map[string]json.RawMessage
 	if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&raw); err != nil {
-		// CHB-027: orphan connection / partial write. Drop silently; best-effort
-		// ack so relay can observe the error if it is still alive.
 		writeHookRelayAck(conn, hookRelayAckMsg{
 			Status: "bad_envelope",
 			Reason: fmt.Sprintf("decode: %v", err),
 		})
+		return nil, err
+	}
+	return raw, nil
+}
+
+// handleHookRelayEnvelope is daemon pre-branch #1: re-marshal the raw map,
+// unmarshal into hookRelayEnvelope, nil-guard hr, and dispatch. Every ack is
+// written as NDJSON (+ '\n') via writeHookRelayAck.
+func handleHookRelayEnvelope(conn net.Conn, hr HookRelayHandler, raw map[string]json.RawMessage) {
+	reEncoded, encErr := json.Marshal(raw)
+	if encErr != nil {
+		writeHookRelayAck(conn, hookRelayAckMsg{Status: "bad_envelope", Reason: "re-encode failed"})
 		return
 	}
-
-	// Distinguish hook-relay envelope from SocketRequest by the "type" field.
-	if typeRaw, hasType := raw["type"]; hasType && len(typeRaw) > 2 {
-		// Looks like a hookRelayEnvelope (has non-empty "type").
-		// Re-marshal the raw map back to JSON so we can Unmarshal into the typed struct.
-		reEncoded, encErr := json.Marshal(raw)
-		if encErr != nil {
-			writeHookRelayAck(conn, hookRelayAckMsg{Status: "bad_envelope", Reason: "re-encode failed"})
-			return
-		}
-		var env hookRelayEnvelope
-		if err := json.Unmarshal(reEncoded, &env); err != nil {
-			writeHookRelayAck(conn, hookRelayAckMsg{Status: "bad_envelope", Reason: fmt.Sprintf("envelope decode: %v", err)})
-			return
-		}
-		if hr == nil {
-			writeHookRelayAck(conn, hookRelayAckMsg{Status: "bad_envelope", Reason: "no hook-relay handler registered"})
-			return
-		}
-		ack := hr.HandleHookRelay(env)
-		writeHookRelayAck(conn, ack)
+	var env hookRelayEnvelope
+	if err := json.Unmarshal(reEncoded, &env); err != nil {
+		writeHookRelayAck(conn, hookRelayAckMsg{Status: "bad_envelope", Reason: fmt.Sprintf("envelope decode: %v", err)})
 		return
 	}
+	if hr == nil {
+		writeHookRelayAck(conn, hookRelayAckMsg{Status: "bad_envelope", Reason: "no hook-relay handler registered"})
+		return
+	}
+	ack := hr.HandleHookRelay(env)
+	writeHookRelayAck(conn, ack)
+}
 
-	// SocketRequest path (op-based protocol).
+// decodeSocketRequest re-encodes the raw map (byte-identical reEncoded bytes)
+// and unmarshals it into a SocketRequest. On failure it writes a SocketResponse
+// error envelope (no trailing newline) and returns ok=false. On success it
+// returns the parsed request plus the reEncoded bytes for downstream Dispatch.
+func decodeSocketRequest(conn net.Conn, raw map[string]json.RawMessage) (SocketRequest, json.RawMessage, bool) {
 	reEncoded, encErr := json.Marshal(raw)
 	if encErr != nil {
 		writeSocketResponse(conn, SocketResponse{Ok: false, Error: "re-encode failed"})
-		return
+		return SocketRequest{}, nil, false
 	}
 	var req SocketRequest
 	if err := json.Unmarshal(reEncoded, &req); err != nil {
@@ -434,376 +472,41 @@ func handleSocketConn(ctx context.Context, conn net.Conn, h RequestHandler, hr H
 			Ok:    false,
 			Error: fmt.Sprintf("daemon: decode request: %v", err),
 		})
+		return SocketRequest{}, nil, false
+	}
+	return req, reEncoded, true
+}
+
+// handleSubscribe is daemon pre-branch #2: the long-running subscribe op. It
+// streams NDJSON events on conn until the client disconnects or ctx is
+// cancelled; on success no SocketResponse is written (the connection IS the
+// stream, and conn is closed by handleSocketConn's defer). The three error
+// sub-paths (nil handler, bad decode, invalid uuid) fall through to
+// writeSocketResponse. uuid.Parse validation stays daemon-side (off the router's
+// $gostd-only edge).
+//
+// Spec ref: operator-nfr.md §4.9 ON-055 (subscribe is read-only observation).
+// Bead ref: hk-6ynv4, hk-a5sil.
+func handleSubscribe(ctx context.Context, conn net.Conn, sub SubscribeHandler, reEncoded json.RawMessage) {
+	if sub == nil {
+		writeSocketResponse(conn, SocketResponse{Ok: false, Error: "daemon: SubscribeHandler not registered"})
 		return
 	}
-
-	var resp SocketResponse
-	switch req.Op {
-	case "emit-outcome":
-		result, err := h.EmitOutcome(ctx, OutcomeRequest{
-			RunID:   req.RunID,
-			BeadID:  req.BeadID,
-			Outcome: req.Outcome,
-		})
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	case "claim-next":
-		result, err := h.ClaimNext(ctx, req.Role)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	// -----------------------------------------------------------------------
-	// Queue control-surface methods (specs/process-lifecycle.md §4.4 PL-003a)
-	// -----------------------------------------------------------------------
-
-	case "queue-submit":
-		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
-			return h.HandleQueueSubmit(ctx, reEncoded)
-		})
-
-	case "queue-append":
-		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
-			return h.HandleQueueAppend(ctx, reEncoded)
-		})
-
-	case "queue-status":
-		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
-			return h.HandleQueueStatus(ctx, reEncoded)
-		})
-
-	case "queue-dry-run":
-		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
-			return h.HandleQueueDryRun(ctx, reEncoded)
-		})
-
-	case "queue-list":
-		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
-			return h.HandleQueueList(ctx)
-		})
-
-	case "queue-set-concurrency":
-		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
-			return h.HandleQueueSetConcurrency(ctx, reEncoded)
-		})
-
-	// hk-0mmy4: cancels a queue by archiving its file and reaping the
-	// daemon's in-memory QueueStore slot (HandleQueueCancel). This targets a
-	// QUEUE, not an in-flight RUN: any run already dispatched from the
-	// cancelled queue keeps executing to completion untouched — only the
-	// queue's bookkeeping slot is removed so a later queue-submit for the
-	// same bead is no longer hard-blocked by the stale cross_queue_duplicate
-	// guard. Cannot abort an in-flight run; drain-safe per ON-008, mirroring
-	// the existing "queue" CLI verb's queue-model.md §8 authorization.
-	// ON-INV-006-AUTH: operator-nfr.md §4.3 ON-008; queue-only archive+reap, no in-flight run abort
-	case "queue-cancel":
-		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
-			return h.HandleQueueCancel(ctx, reEncoded)
-		})
-
-	case "worker-set-enabled":
-		// hk-xjbvi: live `harmonik worker enable/disable`. Routed through the
-		// QueueHandler (HandlerAdapter) like queue-set-concurrency; flips the
-		// worker's enabled flag in the live registry — gates future dispatch only,
-		// never aborts an in-flight run (drain-safe per ON-008).
-		resp = handleQueueOp(ctx, qh, func(h QueueHandler) (json.RawMessage, *queue.RPCError) {
-			return h.HandleWorkerSetEnabled(ctx, reEncoded)
-		})
-
-	case "subscribe":
-		// Long-running op: streams NDJSON events on conn until the client
-		// disconnects or ctx is cancelled. No SocketResponse is written —
-		// the caller's connection IS the stream.
-		//
-		// Spec ref: operator-nfr.md §4.9 ON-055 (subscribe is read-only observation).
-		// Bead ref: hk-6ynv4.
-		if sub == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: SubscribeHandler not registered"}
-			break
-		}
-		var subReq SubscribeRequest
-		if err := json.Unmarshal(reEncoded, &subReq); err != nil {
-			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: decode subscribe request: %v", err)}
-			break
-		}
-		// Validate since_event_id format when provided. Must be a parseable
-		// UUID (expected UUIDv7). Replay is implemented in HandleSubscribe
-		// per hk-a5sil; only format validation lives here.
-		if subReq.SinceEventID != "" {
-			if _, parseErr := uuid.Parse(subReq.SinceEventID); parseErr != nil {
-				resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: since_event_id %q is not a valid UUID: %v", subReq.SinceEventID, parseErr)}
-				break
-			}
-		}
-		sub.HandleSubscribe(ctx, conn, subReq)
-		return // suppress SocketResponse write; conn is closed by defer
-
-	// -----------------------------------------------------------------------
-	// Agent-comms ops (agent-comms spec §2.1 C2, bead hk-nbrmf)
-	// -----------------------------------------------------------------------
-
-	case "comms-send":
-		if ch == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: CommsSendHandler not registered"}
-			break
-		}
-		result, err := ch.HandleCommsSend(ctx, req.Payload)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	case "comms-presence":
-		// Type-assert ch to CommsPresenceHandler. In production, *commsSendHandlerImpl
-		// implements both CommsSendHandler and CommsPresenceHandler (hk-7t27s T10).
-		cp, ok := ch.(CommsPresenceHandler)
-		if !ok || cp == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: CommsPresenceHandler not registered"}
-			break
-		}
-		result, err := cp.HandleCommsPresence(ctx, req.Payload)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	case "comms-recv":
-		// Type-assert ch to CommsRecvHandler. In production, *commsSendHandlerImpl
-		// implements CommsSendHandler, CommsPresenceHandler, and CommsRecvHandler
-		// (hk-nnwaa T8). The recv deps are set via SetRecvDeps after handler creation.
-		cr, ok := ch.(CommsRecvHandler)
-		if !ok || cr == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: CommsRecvHandler not registered"}
-			break
-		}
-		result, err := cr.HandleCommsRecv(ctx, req.Payload)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	// -----------------------------------------------------------------------
-	// hitl-decisions agent-side emit ops (hitl-decisions SPEC §2, bead hk-xz9 K2)
-	// -----------------------------------------------------------------------
-
-	case "decisions-raise":
-		// Type-assert ch to DecisionsHandler. In production, *commsSendHandlerImpl
-		// implements DecisionsHandler (decisionshandler_xz9.go) alongside the
-		// comms handlers, so it rides the same ch value — no new socket-listener
-		// parameter. K4 (list/answer) and K5 (reaper) are separate later beads.
-		dh, ok := ch.(DecisionsHandler)
-		if !ok || dh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: DecisionsHandler not registered"}
-			break
-		}
-		result, err := dh.HandleDecisionsRaise(ctx, req.Payload)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	case "decisions-withdraw":
-		dh, ok := ch.(DecisionsHandler)
-		if !ok || dh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: DecisionsHandler not registered"}
-			break
-		}
-		result, err := dh.HandleDecisionsWithdraw(ctx, req.Payload)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	// -----------------------------------------------------------------------
-	// hitl-decisions operator-side ops (hitl-decisions SPEC §2, bead hk-kba K4)
-	//   decisions-list   → pure read of the K3 open-decision projection (S6).
-	//   decisions-answer → emit decision_resolved (N7 option check, N3 no-op).
-	// Both ride the same DecisionsHandler value as the K2 emit ops.
-	// -----------------------------------------------------------------------
-
-	case "decisions-list":
-		dh, ok := ch.(DecisionsHandler)
-		if !ok || dh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: DecisionsHandler not registered"}
-			break
-		}
-		result, err := dh.HandleDecisionsList(ctx, req.Payload)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	case "decisions-answer":
-		dh, ok := ch.(DecisionsHandler)
-		if !ok || dh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: DecisionsHandler not registered"}
-			break
-		}
-		result, err := dh.HandleDecisionsAnswer(ctx, req.Payload)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	// -----------------------------------------------------------------------
-	// Operator control ops (specs/operator-nfr.md §4.3 ON-007–ON-010)
-	// -----------------------------------------------------------------------
-
-	case "operator-pause":
-		if oh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: OperatorControlHandler not registered"}
-			break
-		}
-		if err := oh.HandleOperatorPause(ctx, req.Queue); err != nil {
-			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: operator-pause: %v", err)}
-		} else {
-			resp = SocketResponse{Ok: true}
-		}
-
-	case "operator-resume":
-		if oh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: OperatorControlHandler not registered"}
-			break
-		}
-		if err := oh.HandleOperatorResume(ctx, req.Queue); err != nil {
-			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: operator-resume: %v", err)}
-		} else {
-			resp = SocketResponse{Ok: true}
-		}
-
-	case "crew-start":
-		// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1–§3.4.
-		// Bead ref: hk-5tg5o.
-		if crewh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: CrewHandler not registered"}
-			break
-		}
-		result, err := crewh.HandleCrewStart(ctx, req.Payload)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: crew-start: %v", err)}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	case "crew-stop":
-		// Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.5.
-		// Bead ref: hk-5tg5o.
-		if crewh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: CrewHandler not registered"}
-			break
-		}
-		result, err := crewh.HandleCrewStop(ctx, req.Payload)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: crew-stop: %v", err)}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	// -----------------------------------------------------------------------
-	// Quiesce override ops (manual operator sleep/wake; codename:sleep-wake)
-	// daemon-sleep: park all LLM sessions now (gated on GenuineDrain unless --force).
-	// daemon-wake:  wake sleeping sessions (--agent <name> or --all).
-	// Bead ref: hk-s5v3 (M4 of hk-rl4b).
-	// -----------------------------------------------------------------------
-
-	case "daemon-sleep":
-		if sleepWakeh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: QuiesceOverrideHandler not registered"}
-			break
-		}
-		var sleepReq struct {
-			Force bool `json:"force"`
-		}
-		if len(req.Payload) > 0 {
-			if err := json.Unmarshal(req.Payload, &sleepReq); err != nil {
-				resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: daemon-sleep: decode payload: %v", err)}
-				break
-			}
-		}
-		if err := sleepWakeh.HandleDaemonSleep(ctx, sleepReq.Force); err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true}
-		}
-
-	case "daemon-wake":
-		if sleepWakeh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: QuiesceOverrideHandler not registered"}
-			break
-		}
-		var wakeReq struct {
-			Agent string `json:"agent"`
-			All   bool   `json:"all"`
-		}
-		if len(req.Payload) > 0 {
-			if err := json.Unmarshal(req.Payload, &wakeReq); err != nil {
-				resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: daemon-wake: decode payload: %v", err)}
-				break
-			}
-		}
-		if err := sleepWakeh.HandleDaemonWake(ctx, wakeReq.Agent, wakeReq.All); err != nil {
-			resp = SocketResponse{Ok: false, Error: err.Error()}
-		} else {
-			resp = SocketResponse{Ok: true}
-		}
-
-	// -----------------------------------------------------------------------
-	// State snapshot op (specs/system-state.md SS-001; hk-gv04 P2-a).
-	// -----------------------------------------------------------------------
-
-	case "state":
-		if stateh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: StateHandler not registered"}
-			break
-		}
-		result, err := stateh.HandleState(ctx)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: state: %v", err)}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	// -----------------------------------------------------------------------
-	// Dashboard snapshot op (plans/2026-07-03-operator-dashboard/DESIGN.md §2).
-	// ON-INV-006-AUTH: read-only DashboardSnapshot RPC; joins LiveStateBuilder.Build()
-	// with dashboard.json, lanes.json, open decisions, and stall events — pure reads,
-	// no state mutation, no in-flight run abort. Same read-only invariant as "state"
-	// (specs/system-state.md §4 SS-001 / SS-INV-007). Bead: hk-2exz9.
-	// -----------------------------------------------------------------------
-
-	case "dashboard":
-		if dashh == nil {
-			resp = SocketResponse{Ok: false, Error: "daemon: DashboardHandler not registered"}
-			break
-		}
-		result, err := dashh.HandleDashboard(ctx)
-		if err != nil {
-			resp = SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: dashboard: %v", err)}
-		} else {
-			resp = SocketResponse{Ok: true, Result: result}
-		}
-
-	default:
-		resp = SocketResponse{
-			Ok:    false,
-			Error: fmt.Sprintf("daemon: unknown op %q", req.Op),
+	var subReq SubscribeRequest
+	if err := json.Unmarshal(reEncoded, &subReq); err != nil {
+		writeSocketResponse(conn, SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: decode subscribe request: %v", err)})
+		return
+	}
+	// Validate since_event_id format when provided. Must be a parseable UUID
+	// (expected UUIDv7). Replay is implemented in HandleSubscribe per hk-a5sil;
+	// only format validation lives here.
+	if subReq.SinceEventID != "" {
+		if _, parseErr := uuid.Parse(subReq.SinceEventID); parseErr != nil {
+			writeSocketResponse(conn, SocketResponse{Ok: false, Error: fmt.Sprintf("daemon: since_event_id %q is not a valid UUID: %v", subReq.SinceEventID, parseErr)})
+			return
 		}
 	}
-
-	writeSocketResponse(conn, resp)
+	sub.HandleSubscribe(ctx, conn, subReq) // suppress SocketResponse write; conn is closed by defer
 }
 
 // handleQueueOp dispatches a single queue operation to qh and converts the

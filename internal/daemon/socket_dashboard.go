@@ -77,6 +77,11 @@ func RunSocketListenerWithDashboard(ctx context.Context, sockPath string, h Requ
 		queueHandler = qh[0]
 	}
 
+	// Build the router ONCE per listener body, before the Accept loop.
+	router := buildSocketRouter(&socketDispatch{
+		h: h, qh: queueHandler, oh: oh, ch: ch, crewh: crewh, sleepWakeh: sleepWakeh, stateh: stateh, dashh: dashh,
+	})
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -85,6 +90,6 @@ func RunSocketListenerWithDashboard(ctx context.Context, sockPath string, h Requ
 			}
 			return fmt.Errorf("daemon: RunSocketListenerWithDashboard: accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh, sleepWakeh, stateh, dashh)
+		go handleSocketConn(ctx, conn, hr, sub, router)
 	}
 }

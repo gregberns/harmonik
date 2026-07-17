@@ -154,6 +154,67 @@ prov_hash() {
 }
 
 # ---------------------------------------------------------------------------
+# provision_matrix_config: patch a freshly-init'd scratch config so the
+# core-loop-proof matrix can boot + run the pi/codex cells (M6 WS4-3).
+#
+# Two gaps in the `harmonik init` config (both fail-loud, no compiled default):
+#   1. sentinel.liveness_no_progress_n — shipped commented; daemon.Start refuses to
+#      boot without it. Insert `0` (G-liveness off) under the existing sentinel: block
+#      so a throwaway matrix daemon never self-kills mid-run.
+#   2. harnesses.pi — absent; a pi bead can't resolve provider/model. Append the block
+#      from scenarios/core-loop-proof/scratch-config-overlay.yaml.
+# Both edits are idempotent (skipped when the target key is already ACTIVE), so re-init
+# on an existing scratch is a no-op. codex needs no block (model comes from $CODEX_HOME).
+# ---------------------------------------------------------------------------
+provision_matrix_config() {
+    local scratch cfg overlay repo_root
+    scratch="$1"
+    cfg="$scratch/.harmonik/config.yaml"
+    [ -f "$cfg" ] || { echo "[scratch-daemon] provision: no config.yaml at $cfg — skipping" >&2; return 0; }
+    repo_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+    overlay="$repo_root/scenarios/core-loop-proof/scratch-config-overlay.yaml"
+
+    # (0) target_branch ref must exist LOCALLY. daemon.target_branch defaults to `main`
+    # (workloop resolveParentCommit does `git rev-parse main` to branch from / merge into).
+    # A clone made from a source checkout that is NOT on `main` (e.g. a feature branch, as
+    # the matrix does to run the as-built binary) has only `origin/main`, so `git rev-parse
+    # main` fails exit-128 and EVERY bead reopens without dispatching. Create the local
+    # branch (idempotent) from origin/main when available, else from the current HEAD.
+    if ! git -C "$scratch" rev-parse --verify --quiet main >/dev/null 2>&1; then
+        if git -C "$scratch" rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+            git -C "$scratch" branch main origin/main >/dev/null 2>&1 || true
+            echo "[scratch-daemon] provision: created local 'main' branch from origin/main"
+        else
+            git -C "$scratch" branch main HEAD >/dev/null 2>&1 || true
+            echo "[scratch-daemon] provision: created local 'main' branch from HEAD (no origin/main)"
+        fi
+    fi
+
+    # (1) liveness_no_progress_n under the existing sentinel: block.
+    if grep -qE '^[[:space:]]+liveness_no_progress_n:[[:space:]]*[0-9]' "$cfg"; then
+        echo "[scratch-daemon] provision: liveness_no_progress_n already set — skipping"
+    else
+        awk '{print} /^sentinel:/{print "  liveness_no_progress_n: 0  # WS4-3 matrix provisioning (G-liveness off; scratch-daemon.sh)"}' \
+            "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+        echo "[scratch-daemon] provision: set sentinel.liveness_no_progress_n: 0"
+    fi
+
+    # (2) harnesses.pi block from the checked-in overlay.
+    if grep -qE '^harnesses:' "$cfg"; then
+        echo "[scratch-daemon] provision: harnesses: block already present — skipping"
+    elif [ -f "$overlay" ]; then
+        {
+            echo ""
+            echo "# --- appended by scratch-daemon.sh provision (M6 WS4-3) from scratch-config-overlay.yaml ---"
+            sed -n '/^# ---8<--- everything below this marker/,$p' "$overlay" | sed '1d'
+        } >> "$cfg"
+        echo "[scratch-daemon] provision: appended harnesses.pi block from $overlay"
+    else
+        echo "[scratch-daemon] provision: WARNING overlay not found ($overlay) — pi cells will not run" >&2
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Subcommand: init
 # ---------------------------------------------------------------------------
 cmd_init() {
@@ -188,6 +249,7 @@ cmd_init() {
     else
         echo "[scratch-daemon] .harmonik/config.yaml present — no init needed"
     fi
+    provision_matrix_config "$scratch"
     echo "[scratch-daemon] init complete. Next: $0 build $scratch && $0 up $scratch"
 }
 
@@ -504,7 +566,11 @@ cmd_batch() {
             >"$raw" 2>>"$(scratch_log "$scratch")" &
         sub_pid=$!
         # Tear down the background reader + temp stream on any exit; keep the results file.
-        trap 'kill "$sub_pid" 2>/dev/null || true; rm -f "$raw" 2>/dev/null || true' EXIT
+        # sub_pid/raw are function-locals but the EXIT trap fires at SCRIPT exit, by which
+        # point they are out of scope — under `set -u` a bare "$sub_pid" then aborts the
+        # trap with "unbound variable" (leaking the subscribe child + temp file). Guard
+        # both with :- so the cleanup always runs.
+        trap 'kill "${sub_pid:-}" 2>/dev/null || true; rm -f "${raw:-}" 2>/dev/null || true' EXIT
 
         echo "[scratch-daemon] batch: submitting $item_count item(s) to queue '$name' (project=$scratch)"
         local submit_out

@@ -1,0 +1,39 @@
+# core-loop-proof matrix — scratch-daemon config overlay (M6 WS4-3).
+#
+# `harmonik init` writes a scratch .harmonik/config.yaml that boots a bare daemon but
+# CANNOT run the pi/codex matrix cells: it has no `harnesses.pi` block, so a pi-labelled
+# bead can never resolve its provider/model and the pi cells never reach terminal `pass`.
+# scratch-daemon.sh `init` appends the ACTIVE YAML below (everything past the marker) onto
+# the generated config, idempotently (skipped when a `harnesses:` key is already present).
+#
+# The SECOND provisioning gap — `sentinel.liveness_no_progress_n` — is NOT in this file:
+# init ships a `sentinel:` block already, and a second top-level `sentinel:` key would be a
+# duplicate-key YAML error. scratch-daemon.sh `init` instead awk-inserts
+# `liveness_no_progress_n: 0` UNDER the existing sentinel block (daemon.Start fail-louds
+# without it — no compiled default, flywheel-motion.md §7; 0 = G-liveness off so a
+# throwaway matrix daemon never self-kills mid-run).
+#
+# The codex harness resolves its MODEL from the operator's $CODEX_HOME/config.toml
+# (~/.codex by default) — harmonik does not control it (cells.json pins codex
+# model_selected.model = null). But the codex harness DOES require ONE harmonik config
+# key: `codex.stale_wal_max_bytes` (a stale-WAL log-classification threshold, no compiled
+# default — buildCodexRoutedLaunchSpec fail-louds without it). It is appended below.
+#
+# The harnesses.pi block MIRRORS the fleet's live ornith/DGX pass (the operator's
+# forced-local matrix environment: DGX reachable via the `ssh -f -N -L 8551:localhost:8551
+# dgx` loopback tunnel, key at ~/.config/harmonik/ornith.key). cells.json pins
+# pi model_selected.model = "ornith" to match. If DGX is wedged, swap in the parked
+# OpenRouter block from the fleet config and repoint cells.json accordingly.
+#
+# ---8<--- everything below this marker is appended verbatim ---8<---
+codex:
+  stale_wal_max_bytes: 1048576   # required by the codex harness (no compiled default; log-classification only)
+
+harnesses:
+  pi:
+    provider: ornith
+    model: ornith
+    base_url: http://127.0.0.1:8551/v1   # loopback tunnel -> DGX vLLM (srt permits loopback; LAN IP blocked)
+    api: openai-completions              # ornith needs "openai-completions", NOT bare "openai"
+    api_key_env: ORNITH_API_KEY
+    api_key_file: ~/.config/harmonik/ornith.key

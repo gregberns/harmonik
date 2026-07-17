@@ -208,6 +208,19 @@ linters:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/core"
 
+        # socketrouter: the pure protocol dispatch table (giant-retirement follow-up), a daemon
+        # sub-package. Value-in/value-out routing: Classify + Router.Dispatch + neutral Result over
+        # json.RawMessage. The daemon threads effectful handler closures IN (mergeq/runexec pattern);
+        # the router MUST NOT import daemon back. Tighter than orchestrator/policy — no core, no net
+        # (ops are strings, payloads are json.RawMessage, no conn on the edge).
+        socketrouter:
+          files: ["**/internal/daemon/router/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/daemon/router"   # self-import (external test pattern)
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "router is a pure daemon sub-package; daemon threads handler closures in, never the reverse (import-cycle caveat)" }
+
         # schedule: generic recurring-job primitive (codename:schedule, hk-0es).
         # Pure types + next-fire clock + durable single-writer store. Leaf:
         # stdlib + self-import only (no core dep today; action execution + the

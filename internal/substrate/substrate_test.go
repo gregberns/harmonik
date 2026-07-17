@@ -46,8 +46,12 @@ func TestRun_RecordsActionsInOrder(t *testing.T) {
 func TestFakeEffector_ResetAndActionsCopy(t *testing.T) {
 	t.Parallel()
 	eff := &substrate.FakeEffector[intAction]{}
-	_ = eff.Execute(context.Background(), 1)
-	_ = eff.Execute(context.Background(), 2)
+	if err := eff.Execute(context.Background(), 1); err != nil {
+		t.Fatalf("Execute(1): %v", err)
+	}
+	if err := eff.Execute(context.Background(), 2); err != nil {
+		t.Fatalf("Execute(2): %v", err)
+	}
 
 	snap := eff.Actions()
 	if len(snap) != 2 {
@@ -119,7 +123,7 @@ func drainTwin(t *testing.T, tw *substrate.Twin[intEvent]) []intEvent {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	var got []intEvent
+	got := make([]intEvent, 0)
 	for ev := range tw.Events(ctx) {
 		got = append(got, ev)
 	}

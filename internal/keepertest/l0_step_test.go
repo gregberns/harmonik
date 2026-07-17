@@ -177,6 +177,8 @@ func TestL0_CleanCycleTable(t *testing.T) {
 		switch a.Kind {
 		case keeper.ActSendEscape, keeper.ActInjectHandoffCmd, keeper.ActInjectClear, keeper.ActInjectBrief:
 			injects = append(injects, a.Kind)
+		default:
+			// other action kinds are not part of the injection sequence
 		}
 	}
 	wantInjects := []keeper.ActionKind{
@@ -262,22 +264,23 @@ func TestL0_FreshnessRecoveryTable(t *testing.T) {
 	}
 	found := false
 	for _, a := range actions {
-		if a.Kind == keeper.ActEmit && a.Type == core.EventTypeSessionKeeperHandoffWritten {
-			var p core.SessionKeeperHandoffWrittenPayload
-			if err := json.Unmarshal(a.Payload, &p); err != nil {
-				t.Fatalf("decode handoff_written payload: %v", err)
-			}
-			if !p.Recovered {
-				t.Fatal("handoff_written.recovered = false, want true on the recovery edge (00b R1)")
-			}
-			if p.HandoffMtime == "" {
-				t.Fatal("handoff_written.handoff_mtime empty on the recovery edge")
-			}
-			if p.Nonce != "" {
-				t.Fatalf("handoff_written.nonce = %q, want empty on the recovery edge", p.Nonce)
-			}
-			found = true
+		if a.Kind != keeper.ActEmit || a.Type != core.EventTypeSessionKeeperHandoffWritten {
+			continue
 		}
+		var p core.SessionKeeperHandoffWrittenPayload
+		if err := json.Unmarshal(a.Payload, &p); err != nil {
+			t.Fatalf("decode handoff_written payload: %v", err)
+		}
+		if !p.Recovered {
+			t.Fatal("handoff_written.recovered = false, want true on the recovery edge (00b R1)")
+		}
+		if p.HandoffMtime == "" {
+			t.Fatal("handoff_written.handoff_mtime empty on the recovery edge")
+		}
+		if p.Nonce != "" {
+			t.Fatalf("handoff_written.nonce = %q, want empty on the recovery edge", p.Nonce)
+		}
+		found = true
 	}
 	if !found {
 		t.Fatal("no handoff_written emit found")
@@ -430,7 +433,7 @@ func TestL0_StimulusCodecRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	twin := keepertwin.New(bytes.NewReader(raw), keepertwin.FaultConfig{})
-	var decoded []keeper.Event
+	decoded := make([]keeper.Event, 0, len(events))
 	for ev := range twin.Events(ctx) {
 		decoded = append(decoded, ev)
 	}
@@ -439,9 +442,15 @@ func TestL0_StimulusCodecRoundTrip(t *testing.T) {
 		t.Fatalf("decoded %d events, want %d", len(decoded), len(events))
 	}
 	for i := range events {
-		wantJSON, _ := json.Marshal(events[i])
-		gotJSON, _ := json.Marshal(decoded[i])
-		if string(wantJSON) != string(gotJSON) {
+		wantJSON, err := json.Marshal(events[i])
+		if err != nil {
+			t.Fatalf("marshal want event %d: %v", i, err)
+		}
+		gotJSON, err := json.Marshal(decoded[i])
+		if err != nil {
+			t.Fatalf("marshal got event %d: %v", i, err)
+		}
+		if !bytes.Equal(wantJSON, gotJSON) {
 			t.Fatalf("event %d round-trip mismatch:\n want %s\n got  %s", i, wantJSON, gotJSON)
 		}
 	}
@@ -563,6 +572,8 @@ func assertSRPostconditions(t *testing.T, seq int, actions []keeper.Action) {
 				t.Fatalf("seq %d action %d: terminal exclusivity violated — cycle_aborted with no open cycle", seq, i)
 			}
 			open = false
+		default:
+			// other event types carry no SR invariant checked here
 		}
 	}
 }

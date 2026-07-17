@@ -101,7 +101,7 @@ func strippedStimulusLen(t *testing.T, sum keepertwin.CycleSummary) int {
 // abortReasons decodes every cycle_aborted payload reason in emit order.
 func abortReasons(t *testing.T, sink *KeeperBridgeSink) []string {
 	t.Helper()
-	var out []string
+	out := make([]string, 0, len(sink.Emits))
 	for _, a := range sink.Emits {
 		if a.Type != core.EventTypeSessionKeeperCycleAborted {
 			continue

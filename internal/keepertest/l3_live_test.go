@@ -44,7 +44,7 @@ func l3SessionName() string {
 
 // l3KillSession kills the named tmux session (exact-match anchor; idempotent).
 func l3KillSession(name string) {
-	_ = exec.Command("tmux", "kill-session", "-t", "="+name).Run() //nolint:errcheck,gosec // G204: test-local name; best-effort teardown
+	_ = exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", "="+name).Run() //nolint:errcheck,gosec // G204: test-local name; best-effort teardown
 }
 
 // TestL3_OneCycleTmuxSmoke is the keeper pre-deploy live smoke: a real tmux
@@ -57,7 +57,7 @@ func TestL3_OneCycleTmuxSmoke(t *testing.T) {
 
 	sessName := l3SessionName()
 	t.Cleanup(func() { l3KillSession(sessName) })
-	out, err := exec.Command("tmux", "new-session", "-d", "-s", sessName, "bash", "--norc").CombinedOutput() //nolint:gosec // G204: test-local session name
+	out, err := exec.CommandContext(context.Background(), "tmux", "new-session", "-d", "-s", sessName, "bash", "--norc").CombinedOutput() //nolint:gosec // G204: test-local session name
 	if err != nil {
 		t.Fatalf("L3: tmux new-session -s %q: %v (%s)", sessName, err, out)
 	}
@@ -68,7 +68,7 @@ func TestL3_OneCycleTmuxSmoke(t *testing.T) {
 
 	// Gauge (.ctx) + .sid channel so the pre-flight checks find a primary SID.
 	keeperDir := filepath.Join(project, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o750); err != nil {
 		t.Fatalf("L3: mkdir keeper dir: %v", err)
 	}
 	ctxLine := fmt.Sprintf(`{"pct":50,"session_id":%q,"ts":%q}`, primarySID, time.Now().UTC().Format(time.RFC3339))
@@ -100,7 +100,7 @@ func TestL3_OneCycleTmuxSmoke(t *testing.T) {
 
 	// Wire canary: the injected text physically landed in the pane. The pane
 	// is a bare shell, so the injected lines appear verbatim at the prompt.
-	pane, err := exec.Command("tmux", "capture-pane", "-p", "-t", sessName).CombinedOutput() //nolint:gosec // G204: test-local session name
+	pane, err := exec.CommandContext(context.Background(), "tmux", "capture-pane", "-p", "-t", sessName).CombinedOutput() //nolint:gosec // G204: test-local session name
 	if err != nil {
 		t.Fatalf("L3: capture-pane: %v (%s)", err, pane)
 	}

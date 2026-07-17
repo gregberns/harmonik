@@ -99,6 +99,8 @@ func (s *KeeperBridgeSink) Execute(_ context.Context, a keeper.Action) error {
 		s.Emits = append(s.Emits, a)
 	case keeper.ActForceRestart:
 		s.ForceRestarts++
+	case keeper.ActArmTimer, keeper.ActCancelTimer:
+		// intercepted by the harness before reaching the sink; no-op here
 	}
 	return nil
 }
@@ -113,7 +115,7 @@ func (s *KeeperBridgeSink) emitTypes() []core.EventType {
 // clearAttempts decodes the clear_sent attempt counters, in order.
 func (s *KeeperBridgeSink) clearAttempts(t *testing.T) []int {
 	t.Helper()
-	var out []int
+	out := make([]int, 0, len(s.Emits))
 	for _, a := range s.Emits {
 		if a.Type != core.EventTypeSessionKeeperClearSent {
 			continue
@@ -171,7 +173,7 @@ func drainTwin(t *testing.T, twin *keepertwin.Twin, stallExpected bool) []keeper
 				t.Fatalf("twin produced no event within the idle budget (silence bug?); got %d events", len(out))
 			}
 			cancel()
-			for range ch { //nolint:revive // drain to let the twin goroutine exit
+			for range ch { // drain to let the twin goroutine exit
 			}
 			return out
 		}

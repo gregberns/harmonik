@@ -32,7 +32,7 @@ var frozenAnchors = struct {
 // anchors.
 func TestKeeperDriftCanary_ManifestAnchors(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join(corpusRoot(t), "manifest.json")) //nolint:gosec // G304: test-owned corpus testdata
+	raw, err := os.ReadFile(filepath.Join(corpusRoot(t), "manifest.json"))
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestKeeperDriftCanary_CorpusIntegrity(t *testing.T) {
 // corpus source is the frozen log, so the ledger records the extraction).
 func TestKeeperDriftCanary_ExtractLedger(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join(corpusRoot(t), "EXTRACT-LOG.md")) //nolint:gosec // G304: test-owned corpus testdata
+	raw, err := os.ReadFile(filepath.Join(corpusRoot(t), "EXTRACT-LOG.md"))
 	if err != nil {
 		t.Fatalf("EXTRACT-LOG.md missing (RS-018 ledger): %v", err)
 	}

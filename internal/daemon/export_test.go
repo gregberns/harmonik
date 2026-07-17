@@ -2534,10 +2534,11 @@ type ExportedCodexRunCtx struct {
 	// from $CODEX_HOME/config.toml — the only working config on the HN-022
 	// ChatGPT-subscription path, where a named model 400s. The old fail-loud guard
 	// (empty → error) was retired with hk-heh3t; matches codexRunCtx.model.
-	Model         string
-	PriorThreadID *string
-	BaseEnv       []string
-	CodexHome     string
+	Model          string
+	PriorThreadID  *string
+	IterationCount int
+	BaseEnv        []string
+	CodexHome      string
 	// BillingEmitter / RunID / SkipBillingGuard expose the C3/T11 positive
 	// billing-guard seams (hk-tu48u).
 	BillingEmitter   handlercontract.EventEmitter
@@ -2557,6 +2558,7 @@ func ExportedBuildCodexLaunchSpec(rc ExportedCodexRunCtx) (handler.LaunchSpec, e
 		beadID:           rc.BeadID,
 		model:            rc.Model,
 		priorThreadID:    rc.PriorThreadID,
+		iterationCount:   rc.IterationCount,
 		baseEnv:          rc.BaseEnv,
 		codexHome:        rc.CodexHome,
 		billingEmitter:   rc.BillingEmitter,
@@ -3333,6 +3335,7 @@ type ExportedPiRunCtx struct {
 	// Spec: PI-050 (api_key_file). Bead: hk-xmfoi.
 	APIKeyFile     string
 	PriorSessionID *string
+	IterationCount int
 	BaseEnv        []string
 	// BillingEmitter receives pi_billing_guard events from the guard (PI-040/042/043).
 	// Nil disables event emission; enforcement still runs unless SkipBillingGuard.
@@ -3374,6 +3377,7 @@ func ExportedBuildPiLaunchSpec(rc ExportedPiRunCtx) (handler.LaunchSpec, error) 
 		baseURL:          rc.BaseURL,
 		api:              rc.API,
 		priorSessionID:   rc.PriorSessionID,
+		iterationCount:   rc.IterationCount,
 		baseEnv:          rc.BaseEnv,
 		billingEmitter:   rc.BillingEmitter,
 		runID:            rc.RunID,

@@ -100,13 +100,14 @@ func (h *CodexHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Sp
 	}
 
 	internal := codexRunCtx{
-		codexBinary:   h.codexBinary,
-		workspacePath: rc.WorkspacePath,
-		beadID:        rc.BeadID,
-		model:         rc.Model,
-		priorThreadID: rc.PriorSessionID,
-		baseEnv:       rc.BaseEnv,
-		codexHome:     h.codexHome,
+		codexBinary:    h.codexBinary,
+		workspacePath:  rc.WorkspacePath,
+		beadID:         rc.BeadID,
+		model:          rc.Model,
+		priorThreadID:  rc.PriorSessionID,
+		iterationCount: rc.IterationCount,
+		baseEnv:        rc.BaseEnv,
+		codexHome:      h.codexHome,
 	}
 
 	spec, err := buildCodexLaunchSpec(internal)

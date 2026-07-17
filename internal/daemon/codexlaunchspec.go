@@ -108,6 +108,12 @@ type codexRunCtx struct {
 	// Nil means this is the initial turn.
 	priorThreadID *string
 
+	// iterationCount is the 1-based DOT iteration index. On a resume turn
+	// (priorThreadID != nil) it selects the reviewer-feedback.iter-<N-1>.md the
+	// resume seed prompt points at. Zero on the initial turn. See
+	// implementerResumeSeedPrompt (agentseedprompt.go).
+	iterationCount int
+
 	// baseEnv is the base environment inherited from daemon Config.HandlerEnv.
 	// codexCredentialDenyKeys are stripped and re-emitted as empty overrides.
 	// CODEX_HOME is set to codexHome (overwriting any prior value).
@@ -178,6 +184,11 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 	seedPrompt := fmt.Sprintf(codexSeedPromptTemplate, rc.beadID)
 	var args []string
 	if rc.priorThreadID != nil {
+		// Resume turns deliver the reviewer-feedback pointer via the shared resume
+		// prompt so a DOT back-edge re-entry gets an actionable instruction instead
+		// of the identical initial prompt it already satisfied (c073 defect; peer of
+		// pasteInjectImplementerResume for claude).
+		seedPrompt = implementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
 		// codex exec resume does NOT accept -C (exit 2: "unexpected argument -C found").
 		// WorkDir in the returned LaunchSpec sets the subprocess working directory.
 		args = []string{

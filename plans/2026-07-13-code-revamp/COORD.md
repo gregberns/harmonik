@@ -792,22 +792,6 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 
 **Next COORD entry = c057 (verify max-in-file first).**
 
-### c059  ·  2026-07-16  ·  admiral→operator  ·  Both delegated planning efforts EXECUTION-READY — operator rulings folded; open gates RESOLVED
-**Operator ruled on all pending items (2026-07-16); folded into the v2 finals. Both efforts are now execution-ready with NO open operator gates. Mega-review execution stays sequenced AFTER giant-retirement lands (operator ordering). No code touched — plan artifacts only.**
-
-**Giant-retirement — scope RESOLVED: daemon-internal SUB-PACKAGES (not top-level `internal/` siblings).**
-- `boot-config-DESIGN-v2.md` §0.3 gate RESOLVED → package `internal/daemon/bootconfig`; depguard = scoped sub-package row with a `deny` on `internal/daemon` (one-way edge); top-level-subsystem variant dropped.
-- `socket-router-DESIGN-v2.md` OG-1 RESOLVED → package `internal/daemon/router` (§4 Variant B); the "do not implement SR-1 until OG-1 answered" blocker is now UNBLOCKED; top-level variant dropped.
-- Both carry an implementer caveat: watch for an import cycle back into `daemon` — thread a shared primitive type rather than promoting to top-level if `bootconfig`/`router` ↔ `daemon` types collide.
-
-**Mega-review — two rulings folded into `MEGA-REVIEW-PLAN-v2.md`:**
-- **O1 RESOLVED = DEFER** the markdown agent-skill drift pass (that's the agent-config-reviewer's job on config drift, not this code/coverage sweep). RU-24 executable assets + RU-25 spec-drift stay IN.
-- **Codex plan type: operator confirms Codex is on a ChatGPT subscription locally.** The token's `plan_type:"free"` was a stale/other-account read; relaxed the "assume free tier" framing to "subscription; headroom pilot-verified empirically." The pilot stays a hard go/no-go gate (operator-approved) with the checkpoint/abort/resume protocol; auth guardrail intact (chatgpt auth, no OPENAI_API_KEY, mandatory `forced_login_method="chatgpt"`).
-
-**Deliverables (all through design→adversarial-review→v2, no BLOCKs, no open gates):** `plans/2026-07-16-giant-retirement/{boot-config,socket-router}-DESIGN-v2.md`; `plans/2026-07-16-mega-codex-review/MEGA-REVIEW-PLAN-v2.md` (+ its 3 source drafts + 2 review docs). Ready to implement on operator's go; giant-retirement first.
-
-**Next COORD entry = c060 (verify max-in-file first).**
-
 ### c057  ·  2026-07-16  ·  captain→operator  ·  WS4-1 reconcile LANDED (merge-in); gofumpt sweep landed; lint drift RE-SCOPED (107 feature-owned, not 18 pre-existing)
 **Phase tip now `3e4bb3cb`. Two clean landings + one corrected picture.**
 
@@ -855,3 +839,81 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **⚑ OPERATOR — still pending (unchanged from c058):** (1) push reconciled lineage to origin + advance PR #20 (DRAFT, 0 approvals); (2) route the 107 feature-owned lint findings to owning crews before the WS1.1 CI-required flip.
 
 **Next COORD entry = c060 (verify max-in-file first).**
+
+### c060  ·  2026-07-16  ·  admiral→operator  ·  Both delegated planning efforts EXECUTION-READY — operator rulings folded; open gates RESOLVED  *(relocated/renumbered from a c059 collision + misplacement)*
+**Operator ruled on all pending items (2026-07-16); folded into the v2 finals. Both efforts are now execution-ready with NO open operator gates. Mega-review execution stays sequenced AFTER giant-retirement lands (operator ordering). No code touched — plan artifacts only. NOTE: this entry was originally mis-written as a second `c059` inserted mid-file (append-only race with the captain + a stale `Next=c057` pointer); reconciled to c060 at the true tail.**
+
+**Giant-retirement — scope RESOLVED: daemon-internal SUB-PACKAGES (not top-level `internal/` siblings).**
+- `boot-config-DESIGN-v2.md` §0.3 gate RESOLVED → package `internal/daemon/bootconfig`; depguard = scoped sub-package row with a `deny` on `internal/daemon` (one-way edge); top-level-subsystem variant dropped.
+- `socket-router-DESIGN-v2.md` OG-1 RESOLVED → package `internal/daemon/router` (§4 Variant B); the "do not implement SR-1 until OG-1 answered" blocker is now UNBLOCKED; top-level variant dropped.
+- Both carry an implementer caveat: watch for an import cycle back into `daemon` — thread a shared primitive type rather than promoting to top-level if `bootconfig`/`router` ↔ `daemon` types collide.
+
+**Mega-review — two rulings folded into `MEGA-REVIEW-PLAN-v2.md`:**
+- **O1 RESOLVED = DEFER** the markdown agent-skill drift pass (that's the agent-config-reviewer's job on config drift, not this code/coverage sweep). RU-24 executable assets + RU-25 spec-drift stay IN.
+- **Codex plan type: operator confirms Codex is on a ChatGPT subscription locally.** The token's `plan_type:"free"` was a stale/other-account read; relaxed the "assume free tier" framing to "subscription; headroom pilot-verified empirically." The pilot stays a hard go/no-go gate (operator-approved) with the checkpoint/abort/resume protocol; auth guardrail intact (chatgpt auth, no OPENAI_API_KEY, mandatory `forced_login_method="chatgpt"`).
+
+**Deliverables (all through design→adversarial-review→v2, no BLOCKs, no open gates):** `plans/2026-07-16-giant-retirement/{boot-config,socket-router}-DESIGN-v2.md`; `plans/2026-07-16-mega-codex-review/MEGA-REVIEW-PLAN-v2.md` (+ its 3 source drafts + 2 review docs).
+
+**Next COORD entry = c061 (verify max-in-file first).**
+
+### c061  ·  2026-07-16  ·  admiral→captain  ·  DIRECTIVE — program end-game sequenced: 4 tracks to the finish
+**Operator asked (2026-07-16) for the full remaining program laid out so the captain knows where it's going. Admiral-owned sequencing below. Captain owns per-workstream design+build (this directive does NOT design your workstreams — it orders them). Two items marked ⚑ carry an admiral recommendation the operator may override; treat them as the current plan of record unless the operator redirects.**
+
+**TRACK 1 — Finish M6 (captain, ACTIVE).** Remaining workstreams per M6-PLAN.md:
+- **WS2 docker E2E:** WS2.3 compose E2E *(implementing now)* → WS2.5 doc → WS2.4-docker.
+- **WS4 core-loop:** WS4-0 env+cred design gate → WS4-2 reseat matrix on the WS2 subprocess env. (WS4-1 reconciled ✓.)
+- **WS5 assessor:** WS5-4 personality → WS5-5 good-enough bar → WS5-6 admiral-authority → WS5-7 wire-3-legs → WS5-8 capstone dry-run. (Own parallel lane; WS5-1/2/3 ✓.)
+- **WS1 gate:** WS1.5 gate-map + risk tiers; **WS1.1 CI-required flip = LAST** (needs a green tree → gated on TRACK 2).
+- **codex-A** live re-capture — real-box-gated (auth/tmux); parked for a real-box window, does not block the flip.
+
+**TRACK 2 — Lint remediation (107 feature-owned findings).** `make check-short` is red until these are worked down; it is the gate on WS1.1. **⚑ ADMIRAL CALL: start now, as its own parallel fan-out lane** (owning-area sub-agents — keeper/replay/substrate/daemon — file-disjoint from WS2/4/5), so it finishes BEFORE the flip rather than stalling it at the end. This is the one open item with a hard downstream dependency. NOT a mechanical pass (errcheck/gocritic/gosec/depguard/exhaustive need owner judgment per c057).
+
+**TRACK 3 — Giant-retirement (execution-ready, post-M6-daemon-waves).** boot-config (`internal/daemon/bootconfig`, B1-B6) + socket-router (`internal/daemon/router`, SR-1…) per the c060 v2 designs. Touches `internal/daemon/{daemon.go,socket.go}` — SAME surface as M6's daemon work → **sequence AFTER M6's daemon waves settle (post-WS4-2)** to avoid file collisions.
+
+**TRACK 4 — Mega code-review (last).** MEGA-REVIEW-PLAN-v2: pilot (hard go/no-go on codex headroom) → full sweep. **Hard-sequenced AFTER giant-retirement lands** — it restructures the god-functions the review chunks on (RU-01/RU-06).
+
+**Operator-async tracks (off the critical path, operator's calls):** PR #20 push + integration lineage → origin (ready now); M4 real-`gb-mbp` proof (post-M6, needs the human box).
+
+**RECOMMENDED LINE:** `M6 waves (WS2→WS4→WS5) ‖ lint remediation → tree green → WS1.1 flip (M6 DONE) → giant-retirement → mega-review`.
+**⚑ ADMIRAL CALL (operator may override):** run giant-retirement AFTER the WS1.1 flip (big refactors land under the new CI-required gate = cleaner discipline).
+
+**Next COORD entry = c062 (verify max-in-file first).**
+
+### c062  ·  2026-07-16  ·  captain  ·  M6 5-lane wave integrated + next wave dispatched
+**Session picked up the 5-lane parallel fan-out from HANDOFF-captain and integrated every returning lane onto tip. Branch tip `c993b606`, tree clean, `go build ./...` green.**
+
+**LANDED this session (each: review → `cherry-pick -x` → JSON Review-Verdict trailer → worktree retired):**
+- **WS2.3 compose E2E** ✓ — `c993b606`. HARD GATE GREEN on-box: `make test-docker-e2e` EXIT=0, `--- PASS: TestScenario_RemoteSubstrate_Localhost_E2E`, worker's commit synced over real ssh onto box A, bead closed. Deviations (all needed for green): worker entrypoint installs the daemon client pubkey via a background watcher (the one-shot poll raced under `depends_on: service_healthy`); Dockerfile.worker added netcat-openbsd (reverse-tunnel readiness) + python3 (EnsureWorktreeTrust). **M6's hardest gate is done.**
+- **WS5-4 personality** ✓ / **WS5-5 good-enough principles** ✓ / **WS4-0 run-env+cred note** ✓ — all landed (assessor agent-config + WS4 design note).
+- **Lint triage** ✓ — clean inventory: **125** findings (not ~107), 11 packages, 7-lane partition. KEY: **no `.golangci.yml` change is needed** — the real gate (`golangci-lint run --new-from-rev=origin/main`) is already clean; only a stale-worktree-file invocation chokes (Go pkg expansion skips dot-dirs). WS2.3 files carry ZERO findings → daemon-lint and WS2.3 don't collide. The **9 depguard "test self-import" findings** are an allow-list config change (subsystem-org contract) → **operator sign-off, NOT folded into a code lane**.
+
+**DISPATCHED (5 parallel worktree-isolated lanes, running):** WS2.5 (docker README + TESTING gate-map link) · WS5-6 (admiral final-signoff authority) · lint L1 keeper (36) · lint L3 keepertest+substrate (20) · lint L4 replay (16).
+
+**NEXT WAVE (deps now satisfied, queued):** WS4-2 reseat matrix (WS4-1 already ✓ per c061; needs WS2✓+WS4-0✓) · WS2.4-docker form · WS1.5 gate-map · remaining lint lanes L5 (handler+hook) / L6 (orchestrator+policy+core, non-depguard only) / L7 (cmd+codextest) / **L2 daemon lint** (hold if a daemon-touching lane is live) · WS5-7 then WS5-8 capstone. **WS1.1 CI-flip stays LAST** (needs green tree ← lint remediation).
+
+**OPERATOR-ONLY, parked:** PR #20 push + lineage → origin; the 9 depguard config-allowlist decision.
+
+**Next COORD entry = c063 (verify max-in-file first).**
+
+### c063  ·  2026-07-16  ·  captain  ·  Next M6 wave landed + independent code review of all substantive code
+**Branch tip `7844cb6a`, tree clean, `go build ./...` green. Lint: 125 → 53 findings (72 cleared).**
+
+**LANDED (on top of c062):**
+- **WS2.5** docker harness doc ✓ (`42fe8c7e`) — `test/docker/README.md` + `docs/methodology/TESTING.md` gains a REQUIRED "Docker cross-container E2E" tier.
+- **WS5-6** admiral final-signoff authority ✓ (`2fd53b62`) — admiral owns the release gate as a comms/authority act; the "I direct, I do not edit repo files" bound preserved explicitly.
+- **Dockerfile stub comment fix** ✓ (`98dd1ec0`) — corrected the stale `ANTHROPIC_API_KEY` credential-stub comment to WS4-0 D2 (mounted `~/.claude` ro, never the key).
+- **Lint L1 keeper (36)** ✓ (`7844cb6a`) · **L3 keepertest+substrate (20)** ✓ (`9bfcc783`) · **L4 replay (16)** ✓ (`4a9aa2b6`) — each package golangci gate = 0, build/vet/tests green.
+
+**INDEPENDENT CODE REVIEW (operator-requested — the earlier trailers were self-review stamps; these are independent agent-reviewer passes on the substantive CODE):**
+- **WS2.3 E2E → APPROVE.** Loud-fail double-gated (no false-green); shared-volume identical-path CRUX correct; key-watcher resolves the daemon-publishes-after-healthy race; asserts real terminal outcome (closed==1/reopened==0 + commit on box-A & origin main).
+- **Lint L1 keeper → APPROVE.** `mustMarshalPayload` verified byte-identical to the 10 inline marshals; the errchkjson suppression is valid — every routed payload type in `core/keeperevents.go` is a pure scalar struct (marshal cannot fail); `gaugeTickAt` sid-drop verified across all 13 callers.
+- **Lint L3 → APPROVE / Lint L4 → APPROVE.** All edits behavior-preserving (exhaustive defaults are explicit no-ops matching prior fall-through; prealloc caps correct; unparam call-site drops safe).
+- Doc/agent-config lanes (WS2.5, WS5-4/5/6, WS4-0) treated as prose — no code review.
+
+**FOLLOW-UPS (non-blocking; no beads this phase — tracked here):**
+1. **WS2.3 latent trap:** worker-registry `OS` hardcoded `"linux"` on the localhost path (`scenario_remote_substrate_localhost_test.go:405`, `_dot_test.go:191`). Harmless today (this scenario never runs the telemetry probe) but would misparse memory if telemetry is ever added here. Fix = `runtime.GOOS` for localhost, `"linux"` only for the container worker.
+2. **Keeper timing flake:** one non-reproducing FAIL in the keeper suite (0/4 reruns), pre-existing, unrelated to the lint diff (identifier/comment-only). Worth a flake investigation.
+
+**REMAINING lint (53, TRACK 2, still gating the HELD WS1.1 flip):** daemon L2 (~25 — now dispatchable, no live daemon lane; TRACK-3 giant-retirement is HELD post-M6) · L5 handler+hook · L6 orchestrator+policy+core (non-depguard) · L7 cmd+codextest. **9 depguard findings remain OPERATOR-gated** (config allow-list, subsystem-org contract).
+
+**Next COORD entry = c064 (verify max-in-file first).**

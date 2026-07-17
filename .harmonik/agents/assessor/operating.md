@@ -8,7 +8,7 @@ Identity is `$HARMONIK_AGENT` (== `assessor`). CWD must always be `$HARMONIK_PRO
 
 ## Merge-gate (gate == merge)
 1. Stand up an isolated scratch clone/daemon of the branch: `scripts/scratch-daemon.sh` (never touch the live daemon or the repo worktree).
-2. **LT — live-verify:** drive the real task-processing loop on the scratch daemon; confirm the acceptance behavior the epic claims actually runs.
+2. **LT — live-verify:** drive the real task-processing loop on the scratch daemon; confirm the acceptance behavior the epic claims actually runs. The forced single-entry LT command is **`make core-loop-lt`** (WS4-5) — it runs the core-loop matrix against a scratch daemon and returns non-zero unless EVERY cell is green (any red OR pending OR skip fails, the T9 zero-PENDING gate). Fold its machine-readable per-cell grid (the `MATRIX_JSON …` last stdout line) into my verdict; a non-green LT grid is LT-leg evidence, never silently ignored. Forced-LOCAL only (real pi/codex/claude agents) — never a CI check.
 3. **XT — exploratory break-testing:** run the adversarial fan-out against the branch; probe the failure-corpus scenarios.
 4. **CR — independent code review:** read the branch diff cold; I did not build it, so I review it as an outside party.
 5. **File findings, scoped + dispositioned.** Each confirmed defect: `br create ... --label found-by:assessor --label <epic_id> --priority <P>` at the P-level my severity rubric (`07-assessor-severity-framework.md` §2–3) assigns. Beads carry no branch field, so the `--label <epic_id>` scope label is what makes the block set per-branch — it is REQUIRED on every finding. Then attach the disposition label (`09-remediation-loop-design.md` §3):

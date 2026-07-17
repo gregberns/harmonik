@@ -113,6 +113,7 @@ The single authoritative map of **which test tier runs where** and **which tier 
 | full `-race`, no `-short`, uncapped parallel | `make check-race-full` | `nightly-race.yml` | No (nightly shake-out) |
 | §6 Docker cross-container remote-substrate E2E | `make test-docker-e2e` | *(none — local / assessor-forced)* | Assessor gate, not CI |
 | §7 subprocess daemon-boot (non-docker) | `make test-subprocess` | *(none — local / assessor-forced; CI wiring is a follow-up)* | Assessor gate, not CI |
+| Core-loop LT gate (real pi/codex/claude cells, forced) | `make core-loop-lt` | *(none — forced-local, WS4-5)* | Assessor LT-leg gate, never CI (non-zero on any non-green cell; emits `MATRIX_JSON` grid) |
 | Real-agent conformance (twin↔real) | *(rare, expensive)* | *(none — on-demand)* | Assessor gate, not CI |
 
 The localhost-SSH + Docker + subprocess tiers are **the assessor's forced-local gate**, deliberately kept off the CI required-check path (a broken host loopback must fail loud locally, never mask a regression as a green CI skip — see §6).

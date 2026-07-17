@@ -42,6 +42,11 @@
 #                                (green=all pass, red=any fail incl known-RED, pending=SKIP-LOUD)
 #     --specs <cells.json>       expected-cell specs for --assert (default:
 #                                scenarios/core-loop-proof/cells.json)
+#     --gate                     (WS4-5) FORCED LT-gate exit: non-zero unless EVERY cell is
+#                                green — any red OR pending OR skip fails (the T9 zero-PENDING
+#                                gate). Without it the default lenient exit (red-only) applies.
+#     --json                     emit the per-cell grid as a machine-readable JSON object on the
+#                                LAST stdout line (marker `MATRIX_JSON `) for the assessor to fold.
 #
 # ENV:
 #   MATRIX_REMOTE_WORKER   same as --remote-worker
@@ -49,9 +54,9 @@
 #                          a cell absent from the map (and without --seed-bead) → PENDING
 #   SCRATCH_BATCH_TIMEOUT  forwarded to scratch-daemon.sh batch (per-cell terminal wait)
 #
-# EXIT: 0 iff every ENABLED, FIXTURED cell is green. Any red → 1. PENDING/SKIP cells do
-#   not flip the exit on their own, but are printed loud and counted in the summary so a
-#   partial matrix is never mistaken for a full green (T9 gates on zero PENDING).
+# EXIT (default, lenient): 0 iff no red cell. PENDING/SKIP are printed loud and counted but do
+#   not flip the exit on their own. EXIT (--gate, forced LT): 0 iff EVERY cell is green — any
+#   red OR pending OR skip → non-zero (the T9 zero-PENDING gate; a partial matrix never passes).
 
 set -euo pipefail
 
@@ -77,6 +82,8 @@ NO_CYCLE=0
 FEEDBACK=0
 ASSERT=0
 SPECS=""
+GATE=0
+JSON=0
 
 [ $# -ge 1 ] || die "usage: $SELF <scratch-path> [flags] (see header)"
 SCRATCH="$1"; shift
@@ -99,6 +106,8 @@ while [ $# -gt 0 ]; do
         --assert)         ASSERT=1; shift;;
         --specs)          [ $# -ge 2 ] || die "--specs needs a value"; SPECS="$2"; shift 2;;
         --specs=*)        SPECS="${1#--specs=}"; shift;;
+        --gate)           GATE=1; shift;;
+        --json)           JSON=1; shift;;
         *) die "unknown flag '$1' (see header for usage)";;
     esac
 done
@@ -332,6 +341,37 @@ elif [ "$FEEDBACK" -eq 1 ]; then
     log "feedback: no red cells — nothing to file"
 fi
 
-# Exit non-zero on any red. PENDING/SKIP are surfaced but do not by themselves fail the
-# skeleton — the full-green gate (T9) is what forbids residual PENDING.
-[ "$had_red" -eq 0 ]
+# ---- WS4-5: machine-readable per-cell grid (JSON) -------------------------
+# Emitted LAST on stdout (marker `MATRIX_JSON `) so the assessor can fold the grid into
+# its LT-leg verdict without scraping the human table. `all_green` is the forced-gate
+# result; `gate` echoes whether --gate was in effect for this run.
+if [ "$JSON" -eq 1 ]; then
+    cells_json="$(
+        for row in "${GRID[@]:-}"; do
+            [ -n "$row" ] || continue
+            IFS=$'\t' read -r cell verdict detail <<< "$row"
+            jq -cn --arg c "$cell" --arg v "$verdict" --arg d "$detail" \
+                '{cell:$c, verdict:$v, detail:$d}'
+        done | jq -cs '.'
+    )"
+    all_green="false"
+    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ] && all_green="true"
+    jq -cn \
+        --argjson cells "${cells_json:-[]}" \
+        --argjson green "$n_green" --argjson red "$n_red" \
+        --argjson pending "$n_pending" --argjson skip "$n_skip" \
+        --argjson gate "$GATE" --argjson all_green "$all_green" \
+        '{summary:{green:$green, red:$red, pending:$pending, skip:$skip},
+          gate:($gate==1), all_green:$all_green, cells:$cells}' \
+        | sed 's/^/MATRIX_JSON /'
+fi
+
+# ---- exit -----------------------------------------------------------------
+# Default (lenient): non-zero on any red only. --gate (forced LT, WS4-5): non-zero unless
+# EVERY cell is green — any red OR pending OR skip fails (the T9 zero-PENDING gate), so the
+# assessor's forced-local LT leg never mistakes a partial matrix for a pass.
+if [ "$GATE" -eq 1 ]; then
+    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ]
+else
+    [ "$had_red" -eq 0 ]
+fi

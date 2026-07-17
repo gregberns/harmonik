@@ -110,6 +110,20 @@ test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budge
 test-subprocess:  ## Run WS2.4 non-docker subprocess boot smoke (-tags=subprocess; needs go+br+git on PATH)
 	go test -tags=subprocess -timeout 5m -count=1 ./cmd/harmonik -run TestSubprocessDaemonBootSmoke
 
+# core-loop-lt: WS4-5 FORCED, single-entry LT-leg command. THE assessor's live-verify
+# gate — drives the real task-processing loop on a scratch daemon across the core-loop
+# matrix and returns non-zero unless EVERY cell is green (any red OR pending OR skip fails,
+# the T9 zero-PENDING gate), so a partial matrix can never be mistaken for a pass. Emits a
+# machine-readable per-cell grid (marker `MATRIX_JSON …` on the last stdout line) that the
+# assessor folds into its LT verdict. Forced-LOCAL: real pi/codex (+claude, WS4-4) agents,
+# never a CI required check (see docs/methodology/TESTING.md "Gate tiers & risk-tiering").
+# Override the scratch dir with LT_SCRATCH=… . Cite: M6-PLAN §WS4-5.
+LT_SCRATCH ?= /tmp/h/core-loop-lt
+LT_SPECS   ?= scenarios/core-loop-proof/cells.json
+.PHONY: core-loop-lt
+core-loop-lt: build-all  ## WS4-5 forced LT gate: core-loop matrix, non-zero on any non-green cell + JSON grid
+	bash scripts/core-loop-matrix.sh "$(LT_SCRATCH)" --assert --gate --json --specs "$(LT_SPECS)"
+
 # test-docker-e2e: WS2.3 remote-substrate E2E across two containers. Builds the
 # daemon (box A) + worker images, brings them up on a compose bridge network (the
 # worker reachable as `worker`), waits until `ssh worker true` from the daemon

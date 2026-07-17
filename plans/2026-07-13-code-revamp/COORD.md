@@ -792,6 +792,22 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 
 **Next COORD entry = c057 (verify max-in-file first).**
 
+### c059  ·  2026-07-16  ·  admiral→operator  ·  Both delegated planning efforts EXECUTION-READY — operator rulings folded; open gates RESOLVED
+**Operator ruled on all pending items (2026-07-16); folded into the v2 finals. Both efforts are now execution-ready with NO open operator gates. Mega-review execution stays sequenced AFTER giant-retirement lands (operator ordering). No code touched — plan artifacts only.**
+
+**Giant-retirement — scope RESOLVED: daemon-internal SUB-PACKAGES (not top-level `internal/` siblings).**
+- `boot-config-DESIGN-v2.md` §0.3 gate RESOLVED → package `internal/daemon/bootconfig`; depguard = scoped sub-package row with a `deny` on `internal/daemon` (one-way edge); top-level-subsystem variant dropped.
+- `socket-router-DESIGN-v2.md` OG-1 RESOLVED → package `internal/daemon/router` (§4 Variant B); the "do not implement SR-1 until OG-1 answered" blocker is now UNBLOCKED; top-level variant dropped.
+- Both carry an implementer caveat: watch for an import cycle back into `daemon` — thread a shared primitive type rather than promoting to top-level if `bootconfig`/`router` ↔ `daemon` types collide.
+
+**Mega-review — two rulings folded into `MEGA-REVIEW-PLAN-v2.md`:**
+- **O1 RESOLVED = DEFER** the markdown agent-skill drift pass (that's the agent-config-reviewer's job on config drift, not this code/coverage sweep). RU-24 executable assets + RU-25 spec-drift stay IN.
+- **Codex plan type: operator confirms Codex is on a ChatGPT subscription locally.** The token's `plan_type:"free"` was a stale/other-account read; relaxed the "assume free tier" framing to "subscription; headroom pilot-verified empirically." The pilot stays a hard go/no-go gate (operator-approved) with the checkpoint/abort/resume protocol; auth guardrail intact (chatgpt auth, no OPENAI_API_KEY, mandatory `forced_login_method="chatgpt"`).
+
+**Deliverables (all through design→adversarial-review→v2, no BLOCKs, no open gates):** `plans/2026-07-16-giant-retirement/{boot-config,socket-router}-DESIGN-v2.md`; `plans/2026-07-16-mega-codex-review/MEGA-REVIEW-PLAN-v2.md` (+ its 3 source drafts + 2 review docs). Ready to implement on operator's go; giant-retirement first.
+
+**Next COORD entry = c060 (verify max-in-file first).**
+
 ### c057  ·  2026-07-16  ·  captain→operator  ·  WS4-1 reconcile LANDED (merge-in); gofumpt sweep landed; lint drift RE-SCOPED (107 feature-owned, not 18 pre-existing)
 **Phase tip now `3e4bb3cb`. Two clean landings + one corrected picture.**
 
@@ -822,3 +838,20 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **⚑ OPERATOR — still pending (unchanged from c057):** (1) push reconciled lineage to origin + advance PR #20 (DRAFT, 0 approvals); (2) route the 107 feature-owned lint findings to owning crews before the WS1.1 CI-required flip.
 
 **Next COORD entry = c059 (verify max-in-file first).**
+
+### c059  ·  2026-07-16  ·  captain→operator  ·  M6 WS2 Docker foundation LANDED (2.1+2.2 images) + third-wave recap (WS5-3, WS3-pi, WS2.4)
+**Phase tip `5853f458`. Docker foundation images build green + verified on-box.**
+
+**LANDED THIS SESSION:**
+- **WS2.1+WS2.2 docker foundation** `5853f458` — multi-stage hermetic `test/docker/Dockerfile.daemon` + `Dockerfile.worker` + entrypoints + `.dockerignore`. Daemon: stage-1 builds harmonik + twins from source via the repo Makefile (`build-all`); `br` pulled as a **PINNED sha256-verified release binary (v0.2.16)** — from-source cargo is NOT viable (upstream beads_rust HEAD fails to compile: `fsqlite-core`/`asupersync` `try_acquire` arity skew, E0061). Worker: stage-1 twin build; runtime sshd+git+tmux, compose-generated ssh keys over a shared volume (no secret baked in), idempotent authorized_keys install. **Verified on-box: both images `docker build` GREEN and reproducible** (daemon image bit-identical across two independent builds); daemon carries harmonik + br 0.2.16 + generic-twin + git/tmux/ssh/ssh-keygen; worker carries git + sshd + generic-twin + writable `/work/worker`. Independent agent-reviewer **APPROVE** (hermetic-decision reconciled — LOCKED "hermetic" is the harmonik/twin stage-1 build, not `br`; caught + I fixed a dup-authorized_keys nit). Worktree `agent-a2501715deb1cb71c` removed; a prior-session builder had wedged on a malformed `docker run` smoke-test (ENTRYPOINT swallowed the `sh -c` args → foreground sshd) — cleaned up.
+
+**Recorded for completeness (landed after c058's doc commit, not yet in a c-entry):**
+- **WS5-3** `36b159d5` — first-class `start assessor` role launcher.
+- **WS3-pi** `13c780bb` — pi twin from scratch + parser-drive proof + gated live + parity gate (A/B/C).
+- **WS2.4** `1dbfddf` — non-docker subprocess boot smoke (runs on-box, ~25–60s).
+
+**WS2 status: 2.1 + 2.2 + 2.4 DONE.** Next: **WS2.3** compose E2E (two-container SSH handshake — needs 2.1+2.2, now unblocked) → **WS2.5** doc → **WS4-2** reseat matrix on the WS2 subprocess env (needs WS2 + WS4-0).
+
+**⚑ OPERATOR — still pending (unchanged from c058):** (1) push reconciled lineage to origin + advance PR #20 (DRAFT, 0 approvals); (2) route the 107 feature-owned lint findings to owning crews before the WS1.1 CI-required flip.
+
+**Next COORD entry = c060 (verify max-in-file first).**

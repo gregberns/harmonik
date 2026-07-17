@@ -221,6 +221,7 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 // independent EventID generators, so we re-sort by the 16-byte UUIDv7 before
 // checking.
 func collectSorted(path string, since core.EventID) []core.Event {
+	//nolint:prealloc // ScanAfter streams an unbounded event count; no length is known up front.
 	var evs []core.Event
 	for ev := range eventbus.ScanAfter(path, since) {
 		evs = append(evs, ev)

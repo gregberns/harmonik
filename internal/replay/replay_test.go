@@ -41,11 +41,15 @@ func writeLog(t *testing.T, lines []line) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
-	f, err := os.Create(path)
+	f, err := os.Create(path) //nolint:gosec // G304: path is t.TempDir()-based; not user input.
 	if err != nil {
 		t.Fatalf("create log: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Errorf("close log: %v", cerr)
+		}
+	}()
 
 	enc := json.NewEncoder(f)
 	base := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
@@ -73,11 +77,16 @@ func writeLog(t *testing.T, lines []line) string {
 // unknown-type case, whose type has no registered constructor).
 func appendRaw(t *testing.T, path string, obj map[string]any) {
 	t.Helper()
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	//nolint:gosec // G304: path is t.TempDir()-based; not user input.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open log for append: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			t.Errorf("close log: %v", cerr)
+		}
+	}()
 	if err := json.NewEncoder(f).Encode(obj); err != nil {
 		t.Fatalf("append raw line: %v", err)
 	}
@@ -107,8 +116,8 @@ func md(agent, cid string) core.EventPayload {
 	return core.SessionKeeperModelDonePayload{AgentName: agent, CycleID: cid, Source: "idle_marker"}
 }
 
-func cs(agent, cid string, attempt int) core.EventPayload {
-	return core.SessionKeeperClearSentPayload{AgentName: agent, CycleID: cid, Attempt: attempt}
+func cs(agent, cid string) core.EventPayload {
+	return core.SessionKeeperClearSentPayload{AgentName: agent, CycleID: cid, Attempt: 1}
 }
 
 func nsu(agent, cid string) core.EventPayload {
@@ -141,14 +150,14 @@ func TestReplay_AcceptanceFixture(t *testing.T) {
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("paul", "cyc-1")},
 		{2, core.EventTypeSessionKeeperHandoffWritten, hw("paul", "cyc-1")},
 		{3, core.EventTypeSessionKeeperModelDone, md("paul", "cyc-1")},
-		{4, core.EventTypeSessionKeeperClearSent, cs("paul", "cyc-1", 1)},
+		{4, core.EventTypeSessionKeeperClearSent, cs("paul", "cyc-1")},
 		{5, core.EventTypeSessionKeeperNewSessionUp, nsu("paul", "cyc-1")},
 		{6, core.EventTypeSessionKeeperCycleComplete, cc("paul", "cyc-1")},
 
 		// (b) SR4-violating cycle: paul / cyc-2 — clear_sent with NO model_done.
 		{11, core.EventTypeSessionKeeperHandoffStarted, hs("paul", "cyc-2")},
 		{12, core.EventTypeSessionKeeperHandoffWritten, hw("paul", "cyc-2")},
-		{13, core.EventTypeSessionKeeperClearSent, cs("paul", "cyc-2", 1)},
+		{13, core.EventTypeSessionKeeperClearSent, cs("paul", "cyc-2")},
 		{14, core.EventTypeSessionKeeperNewSessionUp, nsu("paul", "cyc-2")},
 		{15, core.EventTypeSessionKeeperCycleComplete, cc("paul", "cyc-2")},
 
@@ -210,7 +219,7 @@ func TestReplay_SR3_ClearBeforeHandoffWritten(t *testing.T) {
 	lines := []line{
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("x", "c")},
 		{2, core.EventTypeSessionKeeperModelDone, md("x", "c")},
-		{3, core.EventTypeSessionKeeperClearSent, cs("x", "c", 1)},
+		{3, core.EventTypeSessionKeeperClearSent, cs("x", "c")},
 		{4, core.EventTypeSessionKeeperNewSessionUp, nsu("x", "c")},
 		{5, core.EventTypeSessionKeeperCycleComplete, cc("x", "c")},
 	}
@@ -227,7 +236,7 @@ func TestReplay_SR6_CompleteWithoutNewSession(t *testing.T) {
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("z", "c")},
 		{2, core.EventTypeSessionKeeperHandoffWritten, hw("z", "c")},
 		{3, core.EventTypeSessionKeeperModelDone, md("z", "c")},
-		{4, core.EventTypeSessionKeeperClearSent, cs("z", "c", 1)},
+		{4, core.EventTypeSessionKeeperClearSent, cs("z", "c")},
 		{5, core.EventTypeSessionKeeperCycleComplete, cc("z", "c")},
 	}
 	rep, err := replay.Replay(writeLog(t, lines), core.EventID{}, false, replay.DefaultCheckers())
@@ -243,7 +252,7 @@ func TestReplay_SR6_DegradedPathClean(t *testing.T) {
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("z", "c")},
 		{2, core.EventTypeSessionKeeperHandoffWritten, hw("z", "c")},
 		{3, core.EventTypeSessionKeeperModelDone, md("z", "c")},
-		{4, core.EventTypeSessionKeeperClearSent, cs("z", "c", 1)},
+		{4, core.EventTypeSessionKeeperClearSent, cs("z", "c")},
 		{5, core.EventTypeSessionKeeperClearUnconfirmed, cu("z", "c")},
 		{6, core.EventTypeSessionKeeperCycleComplete, cc("z", "c")},
 	}
@@ -291,7 +300,7 @@ func TestReplay_UnknownType_ObservationalSkips_StrictErrors(t *testing.T) {
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("p", "c")},
 		{2, core.EventTypeSessionKeeperHandoffWritten, hw("p", "c")},
 		{3, core.EventTypeSessionKeeperModelDone, md("p", "c")},
-		{4, core.EventTypeSessionKeeperClearSent, cs("p", "c", 1)},
+		{4, core.EventTypeSessionKeeperClearSent, cs("p", "c")},
 		{5, core.EventTypeSessionKeeperNewSessionUp, nsu("p", "c")},
 		{6, core.EventTypeSessionKeeperCycleComplete, cc("p", "c")},
 	}
@@ -334,7 +343,7 @@ func TestReplay_Since_Watermark(t *testing.T) {
 		{1, core.EventTypeSessionKeeperHandoffStarted, hs("p", "c")},
 		{2, core.EventTypeSessionKeeperHandoffWritten, hw("p", "c")},
 		{3, core.EventTypeSessionKeeperModelDone, md("p", "c")},
-		{4, core.EventTypeSessionKeeperClearSent, cs("p", "c", 1)},
+		{4, core.EventTypeSessionKeeperClearSent, cs("p", "c")},
 	}
 	path := writeLog(t, lines)
 	// Replay only events after seq 2: leaves model_done + clear_sent. On

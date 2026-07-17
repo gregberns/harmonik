@@ -35,10 +35,12 @@ func DefaultCheckers() []Checker {
 // (machine-checks the runCycle SAFETY invariant, cycle.go confirmed-phase).
 type SR3Checker struct{}
 
+// Types reports the event types SR3 subscribes to: clear_sent.
 func (SR3Checker) Types() []core.EventType {
 	return []core.EventType{core.EventTypeSessionKeeperClearSent}
 }
 
+// Check flags a clear_sent that arrives before handoff_written in the cycle.
 func (SR3Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []Violation {
 	if _, ok := s.Seen[core.EventTypeSessionKeeperHandoffWritten]; !ok {
 		return []Violation{{
@@ -56,10 +58,12 @@ func (SR3Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []Vio
 // On clear_sent, model_done MUST already have been seen in the cycle.
 type SR4Checker struct{}
 
+// Types reports the event types SR4 subscribes to: clear_sent.
 func (SR4Checker) Types() []core.EventType {
 	return []core.EventType{core.EventTypeSessionKeeperClearSent}
 }
 
+// Check flags a clear_sent that arrives before model_done in the cycle.
 func (SR4Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []Violation {
 	if _, ok := s.Seen[core.EventTypeSessionKeeperModelDone]; !ok {
 		return []Violation{{
@@ -80,10 +84,13 @@ func (SR4Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []Vio
 // evaluated, so a historical cycle_complete is not falsely flagged.
 type SR6Checker struct{}
 
+// Types reports the event types SR6 subscribes to: cycle_complete.
 func (SR6Checker) Types() []core.EventType {
 	return []core.EventType{core.EventTypeSessionKeeperCycleComplete}
 }
 
+// Check flags a cycle_complete that reaches terminal without either
+// new_session_up or the degraded clear_unconfirmed (post-change cycles only).
 func (SR6Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []Violation {
 	if !hasInteriorEvents(s) {
 		return nil // pre-change corpus: reduced invariant set
@@ -116,6 +123,8 @@ type SR7Checker struct {
 // required per Replay run because it carries per-agent open-cycle state.
 func NewSR7Checker() *SR7Checker { return &SR7Checker{open: map[string]string{}} }
 
+// Types reports the event types SR7 subscribes to: handoff_started and the two
+// terminals (cycle_complete, cycle_aborted) that close an open cycle.
 func (*SR7Checker) Types() []core.EventType {
 	return []core.EventType{
 		core.EventTypeSessionKeeperHandoffStarted,
@@ -124,6 +133,8 @@ func (*SR7Checker) Types() []core.EventType {
 	}
 }
 
+// Check flags a handoff_started for an agent whose prior cycle is still open,
+// adopting the newer cycle, and clears the open cycle on its terminal.
 func (c *SR7Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []Violation {
 	switch core.EventType(ev.Type) {
 	case core.EventTypeSessionKeeperHandoffStarted:
@@ -142,6 +153,9 @@ func (c *SR7Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []
 		if c.open[s.AgentName] == s.CycleID {
 			delete(c.open, s.AgentName)
 		}
+	default:
+		// SR7 subscribes only to the three types above; any other event
+		// reaching here is irrelevant to overlap tracking.
 	}
 	return nil
 }
@@ -153,6 +167,8 @@ func (c *SR7Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []
 // (cycle_complete XOR cycle_aborted) is the companion check in the same checker.
 type SR9Checker struct{}
 
+// Types reports the event types SR9 subscribes to: handoff_started and the two
+// terminals it correlates against in Finalize.
 func (SR9Checker) Types() []core.EventType {
 	return []core.EventType{
 		core.EventTypeSessionKeeperHandoffStarted,

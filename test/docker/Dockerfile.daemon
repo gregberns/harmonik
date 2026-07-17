@@ -85,9 +85,9 @@ COPY --from=go-build /tmp/remote-substrate.test /usr/local/bin/remote-substrate.
 RUN mkdir -p /work/twins \
     && ln -sf /usr/local/bin/generic-twin /work/twins/generic-twin
 
-# WS4 credential mount point (STUB — implemented in WS2.5, not here): a real
-# ANTHROPIC_API_KEY / ~/.claude credential set is mounted at /root/.claude by
-# compose. Left as a documented convention only.
+# WS4 credential mount point (STUB — documented convention only, wired in WS4):
+# the host `~/.claude` auth dir is mounted read-only at /root/.claude by compose.
+# NEVER ANTHROPIC_API_KEY — subscription auth only (WS4-0 D2 / credfence).
 ENV HARMONIK_PROJECT=/work/project
 
 WORKDIR /work

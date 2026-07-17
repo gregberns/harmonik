@@ -86,6 +86,15 @@ Harmonik tests at six layers, each answering a different question.
 - **Run:** `make test-docker-e2e` (repo root). REQUIRED tier — a green run is the single signal that the two-container remote-substrate path passed. Needs a working Docker; needs no host `~/.ssh` setup.
 - **Docs:** [`test/docker/README.md`](../../test/docker/README.md) — full topology, key-handoff, the `HARMONIK_E2E_SHARED_ROOT=/shared` identical-path requirement, and the WS4 credential mount point (mounted `~/.claude`, **never** `ANTHROPIC_API_KEY`).
 
+### 7. Subprocess daemon-boot (real binary as a separate OS process)
+
+- **What it proves:** the *compiled* `harmonik` binary boots as its own OS process — not an in-process `daemon.Start` — surfaces its unix socket, accepts a bead over the real CLI (`harmonik queue submit`), and drives that bead to a **terminal** run outcome. This is the full subprocess pipeline: process boot → socket → CLI-submit → dispatch → terminal signal, with nothing stubbed at the process boundary.
+- **Why it's its own tier:** every §3 scenario test drives the daemon *in-process*, so it can't catch a regression that only manifests when `harmonik` runs as a real subprocess (composition-root wiring, flag parsing, socket handoff across a process boundary). This tier closes that gap.
+- **Two legs (M6 WS2.4):**
+  - **Non-docker smoke** — `cmd/harmonik/subprocess_boot_smoke_test.go`, behind a dedicated `subprocess` build tag (never compiled by default `go build`/`go test ./...`). Billing-free: it points `--codex-binary` at the compiled `generic-twin`, whose handshake fails fast so the run reaches a terminal `run_failed` without tmux, a real agent, or the network. Run: `make test-subprocess` (or `go test -tags subprocess -run TestSubprocessDaemonBootSmoke ./cmd/harmonik/`).
+  - **Docker/containerized variant** — the §6 Docker cross-container E2E (`make test-docker-e2e`) **is** the subprocess form of this tier: the daemon container runs the real `harmonik` binary and execs a compiled scenario binary against the worker over real SSH. It additionally asserts a clean bead-*close* through the real binary, which the non-docker smoke deliberately leaves out of scope.
+- **Run:** non-docker smoke on every push (fast, deterministic, zero-token); the Docker variant per §6.
+
 ## What we deliberately do NOT test this way
 
 - **LLM output quality.** Harmonik can't unit-test the quality of a model's output. That lives in the real-agent conformance suite (see §Twin conformance below), which is rare and expensive.

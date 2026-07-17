@@ -1,9 +1,7 @@
-package core_test
+package core
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 // TestSkillVersion_IsZero_ZeroValue verifies that the zero-value SkillVersion
@@ -13,7 +11,7 @@ import (
 func TestSkillVersion_IsZero_ZeroValue(t *testing.T) {
 	t.Parallel()
 
-	var v core.SkillVersion
+	var v SkillVersion
 	if !v.IsZero() {
 		t.Error("SkillVersion zero value: IsZero() = false, want true")
 	}
@@ -26,7 +24,7 @@ func TestSkillVersion_IsZero_ZeroValue(t *testing.T) {
 func TestSkillVersion_IsZero_NonEmpty(t *testing.T) {
 	t.Parallel()
 
-	v := core.SkillVersion("1.2.3")
+	v := SkillVersion("1.2.3")
 	if v.IsZero() {
 		t.Errorf("SkillVersion(%q): IsZero() = true, want false", v)
 	}
@@ -40,7 +38,7 @@ func TestSkillVersion_String_ReturnsRawString(t *testing.T) {
 	t.Parallel()
 
 	const raw = "2.0.1-rc.3"
-	v := core.SkillVersion(raw)
+	v := SkillVersion(raw)
 	if v.String() != raw {
 		t.Errorf("SkillVersion.String() = %q, want %q", v.String(), raw)
 	}
@@ -53,7 +51,7 @@ func TestSkillVersion_String_ReturnsRawString(t *testing.T) {
 func TestSkillVersion_String_ZeroValueReturnsEmpty(t *testing.T) {
 	t.Parallel()
 
-	var v core.SkillVersion
+	var v SkillVersion
 	if v.String() != "" {
 		t.Errorf("SkillVersion zero value: String() = %q, want empty", v.String())
 	}
@@ -70,12 +68,12 @@ func TestSkillVersion_TypedAlias_DistinctFromString(t *testing.T) {
 	// This is a compile-time check via type assertion; the test passes if it
 	// compiles. A plain string is NOT assignable to SkillVersion without
 	// explicit conversion — that is the type-safety guarantee.
-	var v core.SkillVersion = core.SkillVersion("1.0.0")
+	v := SkillVersion("1.0.0")
 	_ = v // used
 
 	// Verify that SkillVersion("") == zero value (same as var declaration).
-	var zero core.SkillVersion
-	if core.SkillVersion("") != zero {
+	var zero SkillVersion
+	if SkillVersion("") != zero {
 		t.Error("SkillVersion empty literal must equal zero value")
 	}
 }

@@ -1,9 +1,7 @@
-package core_test
+package core
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 // TestSkillName_Valid_NonEmpty verifies that a non-empty SkillName reports
@@ -13,7 +11,7 @@ import (
 func TestSkillName_Valid_NonEmpty(t *testing.T) {
 	t.Parallel()
 
-	s := core.SkillName("beads-cli")
+	s := SkillName("beads-cli")
 	if !s.Valid() {
 		t.Errorf("SkillName(%q).Valid() = false, want true", s)
 	}
@@ -25,7 +23,7 @@ func TestSkillName_Valid_NonEmpty(t *testing.T) {
 func TestSkillName_Valid_Zero(t *testing.T) {
 	t.Parallel()
 
-	var s core.SkillName
+	var s SkillName
 	if s.Valid() {
 		t.Error("SkillName zero value: Valid() = true, want false")
 	}
@@ -47,7 +45,7 @@ func TestSkillName_ValidShape_LowercaseHyphenated(t *testing.T) {
 		"skill-v2",
 	}
 	for _, name := range valid {
-		s := core.SkillName(name)
+		s := SkillName(name)
 		if !s.ValidShape() {
 			t.Errorf("CP-049: SkillName(%q).ValidShape() = false, want true", name)
 		}
@@ -68,7 +66,7 @@ func TestSkillName_ValidShape_WithVersionSuffix(t *testing.T) {
 		"skill@latest",
 	}
 	for _, name := range valid {
-		s := core.SkillName(name)
+		s := SkillName(name)
 		if !s.ValidShape() {
 			t.Errorf("CP-049: SkillName(%q).ValidShape() = false, want true (with @version)", name)
 		}
@@ -94,7 +92,7 @@ func TestSkillName_ValidShape_Invalid(t *testing.T) {
 		"-starts-with-hyphen", // starts with hyphen
 	}
 	for _, name := range invalid {
-		s := core.SkillName(name)
+		s := SkillName(name)
 		if s.ValidShape() {
 			t.Errorf("CP-049: SkillName(%q).ValidShape() = true, want false (invalid shape)", name)
 		}
@@ -107,7 +105,7 @@ func TestSkillName_ValidShape_Invalid(t *testing.T) {
 func TestSkillName_ValidShape_Zero(t *testing.T) {
 	t.Parallel()
 
-	var s core.SkillName
+	var s SkillName
 	if s.ValidShape() {
 		t.Error("CP-049: SkillName zero value: ValidShape() = true, want false")
 	}

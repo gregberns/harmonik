@@ -1,41 +1,39 @@
-package core_test
+package core
 
 import (
 	"encoding/json"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 func TestEpicCompletedPayloadValid(t *testing.T) {
 	tests := []struct {
 		name  string
-		p     core.EpicCompletedPayload
+		p     EpicCompletedPayload
 		valid bool
 	}{
 		{
 			name:  "all fields set",
-			p:     core.EpicCompletedPayload{EpicID: "hk-aaa", LastChildBeadID: "hk-bbb", ClosedAt: "2026-06-01T00:00:00Z"},
+			p:     EpicCompletedPayload{EpicID: "hk-aaa", LastChildBeadID: "hk-bbb", ClosedAt: "2026-06-01T00:00:00Z"},
 			valid: true,
 		},
 		{
 			name:  "missing EpicID",
-			p:     core.EpicCompletedPayload{EpicID: "", LastChildBeadID: "hk-bbb", ClosedAt: "2026-06-01T00:00:00Z"},
+			p:     EpicCompletedPayload{EpicID: "", LastChildBeadID: "hk-bbb", ClosedAt: "2026-06-01T00:00:00Z"},
 			valid: false,
 		},
 		{
 			name:  "missing LastChildBeadID",
-			p:     core.EpicCompletedPayload{EpicID: "hk-aaa", LastChildBeadID: "", ClosedAt: "2026-06-01T00:00:00Z"},
+			p:     EpicCompletedPayload{EpicID: "hk-aaa", LastChildBeadID: "", ClosedAt: "2026-06-01T00:00:00Z"},
 			valid: false,
 		},
 		{
 			name:  "missing ClosedAt",
-			p:     core.EpicCompletedPayload{EpicID: "hk-aaa", LastChildBeadID: "hk-bbb", ClosedAt: ""},
+			p:     EpicCompletedPayload{EpicID: "hk-aaa", LastChildBeadID: "hk-bbb", ClosedAt: ""},
 			valid: false,
 		},
 		{
 			name:  "zero value",
-			p:     core.EpicCompletedPayload{},
+			p:     EpicCompletedPayload{},
 			valid: false,
 		},
 	}
@@ -53,7 +51,7 @@ func TestEpicCompletedPayloadValid(t *testing.T) {
 // in the global event registry and that its payload survives a marshal/unmarshal
 // round-trip via Event.DecodePayload.
 func TestEpicCompletedRegistryRoundTrip(t *testing.T) {
-	original := core.EpicCompletedPayload{
+	original := EpicCompletedPayload{
 		EpicID:          "hk-epic",
 		LastChildBeadID: "hk-child",
 		ClosedAt:        "2026-06-01T12:00:00Z",
@@ -63,8 +61,8 @@ func TestEpicCompletedRegistryRoundTrip(t *testing.T) {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 
-	evt := core.Event{
-		Type:    string(core.EventTypeEpicCompleted),
+	evt := Event{
+		Type:    string(EventTypeEpicCompleted),
 		Payload: b,
 	}
 
@@ -73,7 +71,7 @@ func TestEpicCompletedRegistryRoundTrip(t *testing.T) {
 		t.Fatalf("DecodePayload: %v", err)
 	}
 
-	got, ok := decoded.(*core.EpicCompletedPayload)
+	got, ok := decoded.(*EpicCompletedPayload)
 	if !ok {
 		t.Fatalf("expected *EpicCompletedPayload, got %T", decoded)
 	}

@@ -1,9 +1,7 @@
-package core_test
+package core
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 // TestEffectiveSkillSet verifies the CP-050 set-union semantics:
@@ -17,7 +15,7 @@ func TestEffectiveSkillSet(t *testing.T) {
 	tests := []struct {
 		name         string
 		nodeSkills   []string
-		roleDefaults []core.SkillName
+		roleDefaults []SkillName
 		wantSkills   []string
 	}{
 		{
@@ -35,37 +33,37 @@ func TestEffectiveSkillSet(t *testing.T) {
 		{
 			name:         "role only",
 			nodeSkills:   nil,
-			roleDefaults: []core.SkillName{"beads-cli", "session-resume"},
+			roleDefaults: []SkillName{"beads-cli", "session-resume"},
 			wantSkills:   []string{"beads-cli", "session-resume"},
 		},
 		{
 			name:         "disjoint — node skills first",
 			nodeSkills:   []string{"agent-reviewer"},
-			roleDefaults: []core.SkillName{"beads-cli"},
+			roleDefaults: []SkillName{"beads-cli"},
 			wantSkills:   []string{"agent-reviewer", "beads-cli"},
 		},
 		{
 			name:         "overlap — no duplicate",
 			nodeSkills:   []string{"beads-cli", "agent-reviewer"},
-			roleDefaults: []core.SkillName{"beads-cli", "session-resume"},
+			roleDefaults: []SkillName{"beads-cli", "session-resume"},
 			wantSkills:   []string{"beads-cli", "agent-reviewer", "session-resume"},
 		},
 		{
 			name:         "node duplicates collapsed",
 			nodeSkills:   []string{"beads-cli", "beads-cli"},
-			roleDefaults: []core.SkillName{"beads-cli"},
+			roleDefaults: []SkillName{"beads-cli"},
 			wantSkills:   []string{"beads-cli"},
 		},
 		{
 			name:         "role only — preserves role order",
 			nodeSkills:   []string{},
-			roleDefaults: []core.SkillName{"session-resume", "beads-cli"},
+			roleDefaults: []SkillName{"session-resume", "beads-cli"},
 			wantSkills:   []string{"session-resume", "beads-cli"},
 		},
 		{
 			name:         "complete overlap — role adds nothing",
 			nodeSkills:   []string{"beads-cli", "session-resume"},
-			roleDefaults: []core.SkillName{"beads-cli", "session-resume"},
+			roleDefaults: []SkillName{"beads-cli", "session-resume"},
 			wantSkills:   []string{"beads-cli", "session-resume"},
 		},
 	}
@@ -74,7 +72,7 @@ func TestEffectiveSkillSet(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := core.EffectiveSkillSet(tc.nodeSkills, tc.roleDefaults)
+			got := EffectiveSkillSet(tc.nodeSkills, tc.roleDefaults)
 			if len(got) != len(tc.wantSkills) {
 				t.Fatalf("EffectiveSkillSet(%v, %v): got %v (len %d), want %v (len %d)",
 					tc.nodeSkills, tc.roleDefaults, got, len(got), tc.wantSkills, len(tc.wantSkills))

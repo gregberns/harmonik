@@ -1,10 +1,8 @@
-package core_test
+package core
 
 import (
 	"errors"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 // schemachangekind_hqwn39_test.go — tests for the §6.4 breaking-change
@@ -16,28 +14,28 @@ import (
 // wantBreaking is the expected IsBreaking() result for each of the nine §6.4
 // change-kind rows.
 var ev030ChangeKindFixtures = []struct {
-	kind       core.SchemaChangeKind
+	kind       SchemaChangeKind
 	breaking   bool
 	obligation string
 }{
 	// Row 1: Add optional field → non-breaking.
-	{core.SchemaChangeAddOptionalField, false, "Accept; ignore unknown fields on older readers."},
+	{SchemaChangeAddOptionalField, false, "Accept; ignore unknown fields on older readers."},
 	// Row 2: Add required field → breaking.
-	{core.SchemaChangeAddRequiredField, true, "Older readers fail closed with typed error on missing field."},
+	{SchemaChangeAddRequiredField, true, "Older readers fail closed with typed error on missing field."},
 	// Row 3: Rename field → breaking.
-	{core.SchemaChangeRenameField, true, "Migration release; no on-the-fly rewrite."},
+	{SchemaChangeRenameField, true, "Migration release; no on-the-fly rewrite."},
 	// Row 4: Remove field → breaking.
-	{core.SchemaChangeRemoveField, true, "Migration release."},
+	{SchemaChangeRemoveField, true, "Migration release."},
 	// Row 5: Widen type → non-breaking.
-	{core.SchemaChangeWidenType, false, "Accept widened values."},
+	{SchemaChangeWidenType, false, "Accept widened values."},
 	// Row 6: Narrow type → breaking.
-	{core.SchemaChangeNarrowType, true, "Migration release."},
+	{SchemaChangeNarrowType, true, "Migration release."},
 	// Row 7: Add enum variant (non-required semantics) → non-breaking.
-	{core.SchemaChangeAddEnumVariant, false, "Older readers see the new variant as unknown; handlers MUST treat unknown variants as non-fatal."},
+	{SchemaChangeAddEnumVariant, false, "Older readers see the new variant as unknown; handlers MUST treat unknown variants as non-fatal."},
 	// Row 8: Remove enum variant → breaking.
-	{core.SchemaChangeRemoveEnumVariant, true, "Migration release."},
+	{SchemaChangeRemoveEnumVariant, true, "Migration release."},
 	// Row 9: Tighten validation → breaking.
-	{core.SchemaChangeTightenValidation, true, "Migration release."},
+	{SchemaChangeTightenValidation, true, "Migration release."},
 }
 
 // TestEV030_NineRowsExist verifies that exactly nine SchemaChangeKind constants
@@ -118,7 +116,7 @@ func TestEV030_Valid(t *testing.T) {
 	t.Run("unknown_value", func(t *testing.T) {
 		t.Parallel()
 
-		k := core.SchemaChangeKind("not_a_real_kind")
+		k := SchemaChangeKind("not_a_real_kind")
 		if k.Valid() {
 			t.Error("EV-030: unknown SchemaChangeKind should not be Valid()")
 		}
@@ -135,7 +133,7 @@ func TestEV030_ParseSchemaChangeKind(t *testing.T) {
 		t.Run(fx.kind.String(), func(t *testing.T) {
 			t.Parallel()
 
-			got, err := core.ParseSchemaChangeKind(fx.kind.String())
+			got, err := ParseSchemaChangeKind(fx.kind.String())
 			if err != nil {
 				t.Fatalf("EV-030: ParseSchemaChangeKind(%q) error = %v, want nil", fx.kind, err)
 			}
@@ -148,11 +146,11 @@ func TestEV030_ParseSchemaChangeKind(t *testing.T) {
 	t.Run("unknown_returns_error", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := core.ParseSchemaChangeKind("not_real")
+		_, err := ParseSchemaChangeKind("not_real")
 		if err == nil {
 			t.Error("EV-030: ParseSchemaChangeKind with unknown value should return error")
 		}
-		if !errors.Is(err, core.ErrUnknownSchemaChangeKind) {
+		if !errors.Is(err, ErrUnknownSchemaChangeKind) {
 			t.Errorf("EV-030: ParseSchemaChangeKind error = %v, want wrapping ErrUnknownSchemaChangeKind", err)
 		}
 	})
@@ -164,10 +162,10 @@ func TestEV030_ParseSchemaChangeKind(t *testing.T) {
 func TestEV030_AdditiveChangesAreNonBreaking(t *testing.T) {
 	t.Parallel()
 
-	additiveKinds := []core.SchemaChangeKind{
-		core.SchemaChangeAddOptionalField,
-		core.SchemaChangeWidenType,
-		core.SchemaChangeAddEnumVariant,
+	additiveKinds := []SchemaChangeKind{
+		SchemaChangeAddOptionalField,
+		SchemaChangeWidenType,
+		SchemaChangeAddEnumVariant,
 	}
 
 	for _, k := range additiveKinds {
@@ -187,13 +185,13 @@ func TestEV030_AdditiveChangesAreNonBreaking(t *testing.T) {
 func TestEV030_BreakingChangesRequireMigrationRelease(t *testing.T) {
 	t.Parallel()
 
-	breakingKinds := []core.SchemaChangeKind{
-		core.SchemaChangeAddRequiredField,
-		core.SchemaChangeRenameField,
-		core.SchemaChangeRemoveField,
-		core.SchemaChangeNarrowType,
-		core.SchemaChangeRemoveEnumVariant,
-		core.SchemaChangeTightenValidation,
+	breakingKinds := []SchemaChangeKind{
+		SchemaChangeAddRequiredField,
+		SchemaChangeRenameField,
+		SchemaChangeRemoveField,
+		SchemaChangeNarrowType,
+		SchemaChangeRemoveEnumVariant,
+		SchemaChangeTightenValidation,
 	}
 
 	for _, k := range breakingKinds {

@@ -1,4 +1,4 @@
-package core_test
+package core
 
 // verdictoverride_rc027_test.go — Tests for the operator verdict-override
 // surface (RC-027).
@@ -18,8 +18,6 @@ package core_test
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ---------------------------------------------------------------------------
@@ -35,8 +33,8 @@ import (
 func TestRC027_PolicyDefaultIsFalse(t *testing.T) {
 	t.Parallel()
 
-	var policy core.OperatorVerdictOverridePolicy
-	if core.PolicyRequiresConfirmation(policy) {
+	var policy OperatorVerdictOverridePolicy
+	if PolicyRequiresConfirmation(policy) {
 		t.Error("RC-027: zero-value OperatorVerdictOverridePolicy should not require confirmation (default is false)")
 	}
 }
@@ -48,8 +46,8 @@ func TestRC027_PolicyDefaultIsFalse(t *testing.T) {
 func TestRC027_PolicyConfirmRequiredTrue(t *testing.T) {
 	t.Parallel()
 
-	policy := core.OperatorVerdictOverridePolicy{ConfirmRequired: true}
-	if !core.PolicyRequiresConfirmation(policy) {
+	policy := OperatorVerdictOverridePolicy{ConfirmRequired: true}
+	if !PolicyRequiresConfirmation(policy) {
 		t.Error("RC-027: OperatorVerdictOverridePolicy{ConfirmRequired: true} should require confirmation")
 	}
 }
@@ -59,8 +57,8 @@ func TestRC027_PolicyConfirmRequiredTrue(t *testing.T) {
 func TestRC027_PolicyConfirmRequiredFalse(t *testing.T) {
 	t.Parallel()
 
-	policy := core.OperatorVerdictOverridePolicy{ConfirmRequired: false}
-	if core.PolicyRequiresConfirmation(policy) {
+	policy := OperatorVerdictOverridePolicy{ConfirmRequired: false}
+	if PolicyRequiresConfirmation(policy) {
 		t.Error("RC-027: OperatorVerdictOverridePolicy{ConfirmRequired: false} must not require confirmation")
 	}
 }
@@ -72,8 +70,8 @@ func TestRC027_PolicyConfirmRequiredFalse(t *testing.T) {
 func TestRC027_S01Cat2PolicyDefault(t *testing.T) {
 	t.Parallel()
 
-	cat2Policy := core.OperatorVerdictOverridePolicy{ConfirmRequired: false}
-	if core.PolicyRequiresConfirmation(cat2Policy) {
+	cat2Policy := OperatorVerdictOverridePolicy{ConfirmRequired: false}
+	if PolicyRequiresConfirmation(cat2Policy) {
 		t.Error("RC-027/Cat2: S01 Cat 2 default policy must not require confirmation (confirm_required: false)")
 	}
 }
@@ -85,8 +83,8 @@ func TestRC027_S01Cat2PolicyDefault(t *testing.T) {
 func TestRC027_S01Cat3PolicyDefault(t *testing.T) {
 	t.Parallel()
 
-	cat3Policy := core.OperatorVerdictOverridePolicy{ConfirmRequired: false}
-	if core.PolicyRequiresConfirmation(cat3Policy) {
+	cat3Policy := OperatorVerdictOverridePolicy{ConfirmRequired: false}
+	if PolicyRequiresConfirmation(cat3Policy) {
 		t.Error("RC-027/Cat3: S01 Cat 3 default policy must not require confirmation (confirm_required: false)")
 	}
 }
@@ -100,8 +98,8 @@ func TestRC027_S01Cat3PolicyDefault(t *testing.T) {
 func TestRC027_S01Cat6aPolicyDefault(t *testing.T) {
 	t.Parallel()
 
-	cat6aPolicy := core.OperatorVerdictOverridePolicy{ConfirmRequired: true}
-	if !core.PolicyRequiresConfirmation(cat6aPolicy) {
+	cat6aPolicy := OperatorVerdictOverridePolicy{ConfirmRequired: true}
+	if !PolicyRequiresConfirmation(cat6aPolicy) {
 		t.Error("RC-027/Cat6a: S01 Cat 6a default policy must require confirmation (confirm_required: true)")
 	}
 }
@@ -118,9 +116,9 @@ func TestRC027_S01Cat6aPolicyDefault(t *testing.T) {
 func TestRC027_DecisionEnumCardinality(t *testing.T) {
 	t.Parallel()
 
-	decisions := []core.VerdictOverrideDecision{
-		core.VerdictOverrideDecisionConfirm,
-		core.VerdictOverrideDecisionVeto,
+	decisions := []VerdictOverrideDecision{
+		VerdictOverrideDecisionConfirm,
+		VerdictOverrideDecisionVeto,
 	}
 	const wantCount = 2
 	if len(decisions) != wantCount {
@@ -137,7 +135,7 @@ func TestRC027_DecisionEnumCardinality(t *testing.T) {
 func TestRC027_DecisionConfirmIsValid(t *testing.T) {
 	t.Parallel()
 
-	if !core.VerdictOverrideDecisionConfirm.Valid() {
+	if !VerdictOverrideDecisionConfirm.Valid() {
 		t.Error("RC-027: VerdictOverrideDecisionConfirm.Valid() = false")
 	}
 }
@@ -146,7 +144,7 @@ func TestRC027_DecisionConfirmIsValid(t *testing.T) {
 func TestRC027_DecisionVetoIsValid(t *testing.T) {
 	t.Parallel()
 
-	if !core.VerdictOverrideDecisionVeto.Valid() {
+	if !VerdictOverrideDecisionVeto.Valid() {
 		t.Error("RC-027: VerdictOverrideDecisionVeto.Valid() = false")
 	}
 }
@@ -156,7 +154,7 @@ func TestRC027_DecisionVetoIsValid(t *testing.T) {
 func TestRC027_UnknownDecisionIsInvalid(t *testing.T) {
 	t.Parallel()
 
-	unknown := core.VerdictOverrideDecision("unknown-decision")
+	unknown := VerdictOverrideDecision("unknown-decision")
 	if unknown.Valid() {
 		t.Error("RC-027: unknown VerdictOverrideDecision should not be valid")
 	}
@@ -175,9 +173,9 @@ func TestRC027_UnknownDecisionIsInvalid(t *testing.T) {
 func TestRC027_VetoPromotionEnumCardinality(t *testing.T) {
 	t.Parallel()
 
-	promotions := []core.VetoPromotion{
-		core.VetoPromotionNone,
-		core.VetoPromotionEscalateToHuman,
+	promotions := []VetoPromotion{
+		VetoPromotionNone,
+		VetoPromotionEscalateToHuman,
 	}
 	const wantCount = 2
 	if len(promotions) != wantCount {
@@ -199,9 +197,9 @@ func TestRC027_VetoPromotionEnumCardinality(t *testing.T) {
 func TestRC027_VetoPromotionEscalateToHumanMatchesVerdictEnum(t *testing.T) {
 	t.Parallel()
 
-	if string(core.VetoPromotionEscalateToHuman) != string(core.VerdictEscalateToHuman) {
+	if string(VetoPromotionEscalateToHuman) != string(VerdictEscalateToHuman) {
 		t.Errorf("RC-027: VetoPromotionEscalateToHuman wire value %q != VerdictEscalateToHuman %q; must be identical for daemon pass-through",
-			core.VetoPromotionEscalateToHuman, core.VerdictEscalateToHuman)
+			VetoPromotionEscalateToHuman, VerdictEscalateToHuman)
 	}
 }
 
@@ -210,7 +208,7 @@ func TestRC027_VetoPromotionEscalateToHumanMatchesVerdictEnum(t *testing.T) {
 func TestRC027_UnknownVetoPromotionIsInvalid(t *testing.T) {
 	t.Parallel()
 
-	unknown := core.VetoPromotion("unknown-promotion")
+	unknown := VetoPromotion("unknown-promotion")
 	if unknown.Valid() {
 		t.Error("RC-027: unknown VetoPromotion should not be valid")
 	}
@@ -224,10 +222,10 @@ func TestRC027_UnknownVetoPromotionIsInvalid(t *testing.T) {
 func TestRC027_RequestValidConfirm(t *testing.T) {
 	t.Parallel()
 
-	req := core.OperatorVerdictOverrideRequest{
+	req := OperatorVerdictOverrideRequest{
 		TargetRunID:   "run-abc",
-		Decision:      core.VerdictOverrideDecisionConfirm,
-		VetoPromotion: core.VetoPromotionNone,
+		Decision:      VerdictOverrideDecisionConfirm,
+		VetoPromotion: VetoPromotionNone,
 	}
 	if !req.Valid() {
 		t.Error("RC-027: confirm request with valid fields should be Valid()")
@@ -239,10 +237,10 @@ func TestRC027_RequestValidConfirm(t *testing.T) {
 func TestRC027_RequestValidVetoNoPromotion(t *testing.T) {
 	t.Parallel()
 
-	req := core.OperatorVerdictOverrideRequest{
+	req := OperatorVerdictOverrideRequest{
 		TargetRunID:   "run-abc",
-		Decision:      core.VerdictOverrideDecisionVeto,
-		VetoPromotion: core.VetoPromotionNone,
+		Decision:      VerdictOverrideDecisionVeto,
+		VetoPromotion: VetoPromotionNone,
 	}
 	if !req.Valid() {
 		t.Error("RC-027: veto request with no promotion should be Valid()")
@@ -254,10 +252,10 @@ func TestRC027_RequestValidVetoNoPromotion(t *testing.T) {
 func TestRC027_RequestValidVetoWithPromotion(t *testing.T) {
 	t.Parallel()
 
-	req := core.OperatorVerdictOverrideRequest{
+	req := OperatorVerdictOverrideRequest{
 		TargetRunID:   "run-abc",
-		Decision:      core.VerdictOverrideDecisionVeto,
-		VetoPromotion: core.VetoPromotionEscalateToHuman,
+		Decision:      VerdictOverrideDecisionVeto,
+		VetoPromotion: VetoPromotionEscalateToHuman,
 	}
 	if !req.Valid() {
 		t.Error("RC-027: veto request with escalate-to-human promotion should be Valid()")
@@ -269,10 +267,10 @@ func TestRC027_RequestValidVetoWithPromotion(t *testing.T) {
 func TestRC027_RequestInvalidEmptyRunID(t *testing.T) {
 	t.Parallel()
 
-	req := core.OperatorVerdictOverrideRequest{
+	req := OperatorVerdictOverrideRequest{
 		TargetRunID:   "",
-		Decision:      core.VerdictOverrideDecisionConfirm,
-		VetoPromotion: core.VetoPromotionNone,
+		Decision:      VerdictOverrideDecisionConfirm,
+		VetoPromotion: VetoPromotionNone,
 	}
 	if req.Valid() {
 		t.Error("RC-027: request with empty TargetRunID must not be Valid()")
@@ -284,10 +282,10 @@ func TestRC027_RequestInvalidEmptyRunID(t *testing.T) {
 func TestRC027_RequestInvalidUnknownDecision(t *testing.T) {
 	t.Parallel()
 
-	req := core.OperatorVerdictOverrideRequest{
+	req := OperatorVerdictOverrideRequest{
 		TargetRunID:   "run-abc",
-		Decision:      core.VerdictOverrideDecision("bogus"),
-		VetoPromotion: core.VetoPromotionNone,
+		Decision:      VerdictOverrideDecision("bogus"),
+		VetoPromotion: VetoPromotionNone,
 	}
 	if req.Valid() {
 		t.Error("RC-027: request with unknown Decision must not be Valid()")
@@ -302,10 +300,10 @@ func TestRC027_RequestInvalidUnknownDecision(t *testing.T) {
 func TestRC027_RequestInvalidConfirmWithPromotion(t *testing.T) {
 	t.Parallel()
 
-	req := core.OperatorVerdictOverrideRequest{
+	req := OperatorVerdictOverrideRequest{
 		TargetRunID:   "run-abc",
-		Decision:      core.VerdictOverrideDecisionConfirm,
-		VetoPromotion: core.VetoPromotionEscalateToHuman,
+		Decision:      VerdictOverrideDecisionConfirm,
+		VetoPromotion: VetoPromotionEscalateToHuman,
 	}
 	if req.Valid() {
 		t.Error("RC-027: confirm request carrying VetoPromotionEscalateToHuman must not be Valid()")
@@ -317,10 +315,10 @@ func TestRC027_RequestInvalidConfirmWithPromotion(t *testing.T) {
 func TestRC027_RequestInvalidUnknownPromotion(t *testing.T) {
 	t.Parallel()
 
-	req := core.OperatorVerdictOverrideRequest{
+	req := OperatorVerdictOverrideRequest{
 		TargetRunID:   "run-abc",
-		Decision:      core.VerdictOverrideDecisionVeto,
-		VetoPromotion: core.VetoPromotion("unknown"),
+		Decision:      VerdictOverrideDecisionVeto,
+		VetoPromotion: VetoPromotion("unknown"),
 	}
 	if req.Valid() {
 		t.Error("RC-027: request with unknown VetoPromotion must not be Valid()")
@@ -339,10 +337,10 @@ func TestRC027_RequestInvalidUnknownPromotion(t *testing.T) {
 func TestRC027_ApplyVetoPromotionNoneYieldsNoOpAccept(t *testing.T) {
 	t.Parallel()
 
-	result := core.ApplyVetoPromotion(core.VetoPromotionNone)
-	if result != core.VerdictNoOpAccept {
+	result := ApplyVetoPromotion(VetoPromotionNone)
+	if result != VerdictNoOpAccept {
 		t.Errorf("RC-027: ApplyVetoPromotion(None) = %q, want %q",
-			result, core.VerdictNoOpAccept)
+			result, VerdictNoOpAccept)
 	}
 }
 
@@ -354,10 +352,10 @@ func TestRC027_ApplyVetoPromotionNoneYieldsNoOpAccept(t *testing.T) {
 func TestRC027_ApplyVetoPromotionEscalateToHumanYieldsEscalateToHuman(t *testing.T) {
 	t.Parallel()
 
-	result := core.ApplyVetoPromotion(core.VetoPromotionEscalateToHuman)
-	if result != core.VerdictEscalateToHuman {
+	result := ApplyVetoPromotion(VetoPromotionEscalateToHuman)
+	if result != VerdictEscalateToHuman {
 		t.Errorf("RC-027: ApplyVetoPromotion(EscalateToHuman) = %q, want %q",
-			result, core.VerdictEscalateToHuman)
+			result, VerdictEscalateToHuman)
 	}
 }
 
@@ -369,12 +367,12 @@ func TestRC027_ApplyVetoPromotionEscalateToHumanYieldsEscalateToHuman(t *testing
 func TestRC027_ApplyVetoPromotionResultsAreValidVerdicts(t *testing.T) {
 	t.Parallel()
 
-	for _, p := range []core.VetoPromotion{core.VetoPromotionNone, core.VetoPromotionEscalateToHuman} {
+	for _, p := range []VetoPromotion{VetoPromotionNone, VetoPromotionEscalateToHuman} {
 		p := p
 		t.Run(string(p), func(t *testing.T) {
 			t.Parallel()
 
-			v := core.ApplyVetoPromotion(p)
+			v := ApplyVetoPromotion(p)
 			if !v.Valid() {
 				t.Errorf("RC-027: ApplyVetoPromotion(%q) = %q which is not a valid Verdict", p, v)
 			}
@@ -420,8 +418,8 @@ func TestRC027_AppliesOnlyToInvestigatorDispatchedCategories(t *testing.T) {
 
 	// Verify auto-resolver categories do not require confirmation (policy default).
 	for _, name := range autoResolver {
-		policy := core.OperatorVerdictOverridePolicy{ConfirmRequired: false}
-		if core.PolicyRequiresConfirmation(policy) {
+		policy := OperatorVerdictOverridePolicy{ConfirmRequired: false}
+		if PolicyRequiresConfirmation(policy) {
 			t.Errorf("RC-027: auto-resolver category %q should not require confirmation by default", name)
 		}
 	}

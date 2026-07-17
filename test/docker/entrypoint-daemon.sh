@@ -48,6 +48,14 @@ if [ ! -d "${PROJECT}/.harmonik" ]; then
     harmonik init --project "${PROJECT}" --no-supervise
 fi
 
+# WS4-2 credfence (WS4-0 §5.2): strip any inherited API keys so the ONLY usable
+# credential is the read-only-mounted /root/.claude subscription set. Belt-and-
+# suspenders with compose omitting them from `environment:` — mirrors
+# scripts/scratch-daemon.sh:244's `env -u`. The daemon (and every agent subprocess
+# it forks) inherits this stripped environment via the tmux session below. NEVER
+# ANTHROPIC_API_KEY (D2); missing /root/.claude ⇒ loud-PENDING, never key auth.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+
 # Start the daemon inside a DETACHED tmux session. `harmonik daemon` requires
 # $TMUX to be set; launching it as the session's command satisfies that without
 # needing a TTY to attach to (`harmonik tmux-start` would try to attach, which

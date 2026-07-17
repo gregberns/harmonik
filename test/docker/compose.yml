@@ -56,7 +56,16 @@ services:
     volumes:
       - keys:/keys
       - shared:/shared
+      # WS4-2 (WS4-0 §5.1): mount the host subscription-credential dir READ-ONLY at the
+      # container path Dockerfile.daemon:88-91 fixes (daemon runs as root ⇒ ~ = /root).
+      # This is the ONLY credential the daemon/agents may use — NEVER ANTHROPIC_API_KEY
+      # (D2 / credfence). :ro so the proof run cannot mutate host creds. If ${HOME}/.claude
+      # is absent, a cell needing auth is loud-PENDING, never a key-auth fallback.
+      - ${HOME}/.claude:/root/.claude:ro   # subscription credentials (credfence)
     environment:
+      # NOTE (WS4-0 §5.2/§5.3): deliberately NO ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
+      # here — the credfence forbids key auth in every run environment. entrypoint-daemon.sh
+      # additionally unsets them defensively before launching the daemon.
       # Drive the SAME scenario test against the worker container over ssh.
       HARMONIK_E2E_SSH_HOST: worker
       # origin.git + the worker clone live here, visible at the identical path on

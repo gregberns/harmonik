@@ -1043,3 +1043,60 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **Net:** codex half of Wall-2 is unblocked. Combined with c071 (pi half resolved), both real-agent halves of Wall-2 now have a green path. WS4-4 codex-cell acceptance is met.
 
 **Next COORD entry = c073.**
+
+### c073  ·  2026-07-16  ·  hk-alpha  ·  WS4-4: preflight + branch-landing + single cell GREEN; DOT round-trip RED on a REAL product defect (pi never receives reviewer feedback)
+**Operator's 4 asks built + independently verified against real ornith runs. 3 done. The 4th (dot round-trip) is an honest RED that surfaced a genuine daemon defect on a critical workflow — the matrix did its job.**
+
+**GREEN (verified from the real capture + git, not relayed):**
+- **pi:local single cell** — `run_started workflow_mode=single`, `harness_selected=pi`, `model_selected=ornith`, `implementer_phase_complete commit_landed=true`, `run_completed`. gap1/gap3/gap4/t10 all pass.
+- **Per-bead branch targeting WORKS (ask #2)** — the change landed on `core-loop-proof-integ` (`7d0606ce`), and `main` did NOT move (`5160326b`). Seed bead carries a `## Branching` → ```yaml target_branch:``` block; core-loop-seed.sh pre-creates the branch (daemon won't).
+- **t10's real root cause fixed** — `workspace_merge_status` is REGISTERED BUT NEVER EMITTED (dead code; fires in NO mode). The old assertion inferred "nothing landed" from that absent event = structural false-negative. Runner now GIT-verifies landing (target advanced, main unchanged) and feeds the observed branch to the assertion.
+- **Local-model preflight (ask #1)** — `/v1/completions` readiness probe before the pi cell; 0-byte/timeout/wedged → SKIP-loud (fails `--gate`). A wedged vLLM can no longer masquerade as anything but loud.
+- **Model pin (ask #3)** — deepseek-reasoner→ornith across cells.json + seed-beads.json + the codex/claude leak-guards.
+
+**Two FALSE GREENS caught and killed (worth recording):**
+1. Scratch `origin` = the FLEET repo, which carried a stale `core-loop-proof-integ` (348b91b2). The daemon's `git push origin <target>` non-FF-rejected → rebased onto the stale tip → DROPPED the run's commit, leaving a branch that LOOKED advanced. The runner scored a landing that wasn't this run's change. Fix: isolated throwaway bare origin; fleet refs never touched.
+2. Repo TRACKS `workflow.dot` as standard-bead.dot, whose review node pins `harness=claude-code`/`model=claude-opus-4-8`. Overriding the tracked file cannot hold — every landing's `git reset --hard HEAD` (workloop.go:6912) restores it mid-run; a run silently leaked `model_selected=claude-opus-4-8`. Fix: `dot:review-loop` tier-1 label + an UNTRACKED scratch-root review-loop.dot.
+
+**DOT cell (ask #4): same-model PROVEN, round-trip mechanics PROVEN, last mile RED.**
+- **Same model holds:** every `model_selected` in the dot run == `ornith` (3×), zero claude leak. The reviewer inherits the implementer's harness by default (dot_cascade.go ~1401) — no .dot edit needed for same-model.
+- **Graph works:** implementer(ornith) → commit LINE-A → reviewer(ornith) → **real** `reviewer_verdict REQUEST_CHANGES` ("contains LINE-A but is missing LINE-B… must be added on the next pass") → back-edge → implementer re-dispatched. Real model judgment, no rig.
+- **Fails at delivery:** implementer pass 2 makes NO commit (7s vs 36s for pass 1) → `run_failed: dot: review fix-up stalled at iteration 2: HEAD did not advance after REQUEST_CHANGES`.
+
+**⚑ PRODUCT DEFECT (independently confirmed, needs a Go change) — the pi implementer NEVER receives reviewer feedback on a dot back-edge re-entry:**
+- `piSeedPromptTemplate` (pilaunchspec.go:91) is ONE constant used for BOTH the initial and the resume turn ("Read .harmonik/agent-task.md… Implement the changes described…"). It never references `.harmonik/reviewer-feedback.iter-<N>.md`. `grep -n 'reviewer-feedback' internal/daemon/pilaunchspec.go` → **zero hits**, despite the file explicitly modelling `priorSessionID == nil` (initial) vs `!= nil` (resume).
+- The daemon DOES write the feedback file (`WriteReviewerFeedback`, dot_cascade.go ~820) — the data exists, undelivered.
+- The ONLY code that tells an implementer to read it is `pasteInjectImplementerResume` (pasteinject.go), the **claude/tmux paste-inject** path. hk-wixms (`dot_resume_feedback_hkwixms_test.go`) fixed this **for claude ONLY**.
+- ⇒ Resumed pi gets the identical prompt it already satisfied → nothing to do → no commit → no-progress fail. **This is NOT model unreliability — ornith is never asked to do anything on pass 2.**
+- **Scope alarm:** this plausibly breaks the DOT review-loop for EVERY non-claude harness (pi AND codex) in the LIVE FLEET, not just the matrix. Worth confirming for codex (bravo owns that half, c072).
+- Fix = resume-specific implementer prompt referencing the feedback file when `priorSessionID != nil`; better done GENERICALLY for all harnesses than pi-only. Working the bead body around it would green only beads carrying the workaround — a real bead still fails. Not hacked around; left as a known-RED repro (the checked-in `pi-dot` seed + `pi-dot:local` cell).
+
+**Deviation to note:** dot cell `workflow_id_present=false` — a project-default dot run's `run_started.workflow_id` is provably null and no event carries it. gap4 still proves mode fidelity (dot stays dot). Candidate separate daemon follow-up.
+
+**State:** nothing committed; edits in the working tree (cells.json, seed-beads.json, overlay, core-loop-{matrix,seed,assert-test}.sh, core-loop-assert.jq + 3 golden fixtures). assert-test 31/31 pass; bash -n + `make -n core-loop-lt` clean. Scratch kept at `/tmp/h/ws44-build` (captures under `.harmonik/matrix-captures/`).
+
+**Next COORD entry = c074.**
+
+### c074  ·  2026-07-16  ·  bravo  ·  Codex empty-model contract LOCKED through the stack (adversarial plan → impl → mutation-proved)
+**`4acb6bef` — test-only hardening of c072's fix (`5e8e6c50`). The sole production change is a comment cross-ref; everything else is tests.** Flow: an adversarial test-architect mapped the surface and ranked the gaps, an implementer closed them, an independent reviewer returned REQUEST_CHANGES with 5 items — all 5 fixed before commit.
+
+**What is now locked (gap → silent regression caught):**
+- **model_selected↔argv tie-through** — a recording emitter proves the event and the argv from the SAME routed build agree the codex model is empty (they could previously drift apart, each single-layer test still passing). Feeds the RESOLVED model through rc so the resolution→argv seam is real, not assumed.
+- **initial-argv ordering** — pins `--sandbox < --model < -C`, values adjacent, seed prompt last. Existing asserts found tokens ANYWHERE, so a flag emitted after the positional seed would have passed while breaking real codex.
+- **routing carries the model VALUE** — the with-model routing test asserted only `Binary != claude`; a routed path DROPPING an operator-pinned model passed.
+- **cross-harness asymmetry lock** (new `crossharness_empty_model_test.go`) — codex empty→omit vs pi empty→fail-loud (`harnesses.pi.model`). pi has NO account-default fallback, so the split is deliberate; this stops a "make them consistent" refactor from breaking either.
+- **fixture-drift guard** (new `internal/scenario/coreloopproof_fixture_drift_test.go`, plain go test — no scenario tag) — fails if the codex seed regains a `model:` label or cells.json drifts off `model:null`. **The pi leak expectation is DERIVED from the pi cell in the same file, never hard-coded**, so a pi provider swap (deepseek-reasoner↔ornith, live in hk-alpha's lane) can never fail the codex contract.
+- **twin-driven full-stack** — `TestScenario_Codex_EmptyModel_FullLifecycle`: a `harness:codex` bead + a `codex` shim on PATH that receives the REAL daemon-built argv and exits 3 on any leaked `--model`, then hands to the model-blind twin. This is the DETERMINISTIC replacement for c072's live-codex proof (the ChatGPT account default rotates). Hermetic HOME so the in-daemon billing guard never mutates the operator's real `~/.codex`.
+- Plus StdinDevNull + byte-exact `"Refs: <bead>"` locks (matching workloop's detector needle).
+
+**⚑ Finding for the record — the pre-existing "codex adapter" lifecycle scenario NEVER tested codex.** `TestScenario_CodexAdapter_FullLifecycle`'s bead carries no harness label and the cfg sets no default, so it routes through the **claude** harness: its wrapper receives the claude argv and its model_selected reports `claude-code`. It never touched `buildCodexLaunchSpec`. Hence the genuinely codex-routing sibling above.
+
+**MUTATION-PROVED, not assumed:** making `--model` emit unconditionally turns ALL layers RED — unit, adapter, routing, tie-through, ordering, asymmetry, and the twin scenario (shim fires `argv leaked --model` → exit 3 → run_failed). Reverted → green. Re-run after the reviewer fixes: still all-RED then green.
+
+**Rotation caveat = DOCS ONLY (argued, not skipped).** `known-red.md` gains an Operator-caveat (NOT a known-RED cell): a live empty-model run depends on the ChatGPT account default being a model the installed codex-cli can serve (gpt-5.6-sol vs codex-cli 0.142.5 → 400). No code guard: the daemon cannot know a server-side, ROTATING model-compat matrix; the existing `run_failed` path + never-spawned reaper already cover it. Matrix determinism comes from the twin, not live codex.
+
+**Honest test status:** targeted suites green (daemon codex/cross-harness, scenario drift, `-tags=scenario TestScenario_Codex` both lifecycle tests); vet clean. The FULL `./internal/daemon` package has **5 PRE-EXISTING failures** (tmux/SSH/throughput/nested-go-test) — verified by stashing the diff and re-running on a pristine tree: identical failures. My own full-package re-run timed out under contention with the concurrent lane, so that A/B (not a green I observed) is the basis; the production change being comment-only makes those failures structurally impossible to attribute here.
+
+**⚠ Shared-worktree hazard (for whoever reads this next):** two lanes are editing this working tree concurrently (codex tests here; pi fixtures in hk-alpha's c073). Two consequences bit us: (1) a broad `pkill -f "go test ./internal/daemon"` kills the OTHER lane's suite — don't; use an isolated GOCACHE and never pkill by that pattern. (2) The implementer initially hard-coded `"ornith"` (only present via hk-alpha's UNCOMMITTED cells.json edit) into the codex drift guard — it would have failed on checkout against HEAD's `deepseek-reasoner`. Caught in review; the assertion is now derived, not borrowed across lanes. Also noted: HEAD's pi seed `model_pin: "ornith"` disagrees with HEAD's pi cell `model_selected: "deepseek-reasoner"` — a real pre-existing fixture inconsistency, surfaced to hk-alpha's lane, deliberately NOT fixed here.
+
+**Next COORD entry = c075.**

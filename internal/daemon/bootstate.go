@@ -12,6 +12,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // bootState threads the shared singletons constructed across the daemon
@@ -41,6 +42,18 @@ type bootState struct {
 	tunerBackstop  *bandwidthTunerBackstop
 	quiesceArbiter *QuiesceArbiter
 	subscribeHub   *SubscribeHub
+
+	// P9-P11 (wireSocketListener) outputs consumed by P13 (work loop).
+	adapterReg          *handlercontract.AdapterRegistry
+	hookStore           *hookSessionStore
+	decisionBlocker     *DecisionBlocker
+	opPauseCtrl         *OperatorPauseController
+	concurrencyCtrl     *ConcurrencyController
+	queueHandlerAdapter *queue.HandlerAdapter
+	drainDet            *DrainDetector
+	crewHandler         CrewHandler
+	crewIdleReaper      *CrewIdleReaper
+	branchReapWatcher   *BranchReapWatcher
 }
 
 // constructBusAndRegistries performs PL-005 step 0 P4: it opens the JSONL event

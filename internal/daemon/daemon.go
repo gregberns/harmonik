@@ -14,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/gregberns/harmonik/internal/agentmanifest"
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
@@ -22,11 +21,9 @@ import (
 	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
-	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
-	"github.com/gregberns/harmonik/internal/queue"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
@@ -991,9 +988,6 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	sharedRunRegistry := bs.sharedRunRegistry
 	staleWatcher := bs.staleWatcher
 	quiesceArbiter := bs.quiesceArbiter
-	subscribeHub := bs.subscribeHub
-	pollGate := bs.pollGate
-	tunerBackstop := bs.tunerBackstop
 	clockRegressionDetected := bs.clockRegressionDetected
 
 	if sealErr := bus.Seal(); sealErr != nil {
@@ -1099,379 +1093,26 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		go sk.RunSessionKeepalive(ctx)
 	}
 
-	// Step 4 (hk-ecrxy): register adapters and launch the work loop.
-	//
-	// AdapterRegistry: construct, register ClaudeCodeAdapter for core.AgentTypeClaudeCode,
-	// seal.  The sealed registry is forwarded into handler.NewHandler as a latent
-	// seam for post-MVH adapter-selection (hk-gql20.16).  Construct and seal here
-	// to satisfy PL-020a composition-root ordering.
-	adapterReg := handlercontract.NewAdapterRegistry()
-	if regErr := handler.Register(adapterReg); regErr != nil {
-		return fmt.Errorf("daemon.Start: register ClaudeCodeAdapter: %w", regErr)
-	}
-	if regErr := handler.RegisterCodex(adapterReg); regErr != nil {
-		return fmt.Errorf("daemon.Start: register CodexAdapter: %w", regErr)
-	}
-	if regErr := handler.RegisterPi(adapterReg); regErr != nil {
-		return fmt.Errorf("daemon.Start: register PiAdapter: %w", regErr)
-	}
-	// Seal the registry: no further adapters.
-	// The first ForAgent call would seal it anyway; explicit seal here makes the
-	// ordering contract observable.
-	claudeCodeAdapter, forAgentErr := adapterReg.ForAgent(core.AgentTypeClaudeCode)
-	if forAgentErr != nil {
-		// ForAgent only fails if no adapter is registered — that would be a bug
-		// in the Register call above; treat as fatal.
-		return fmt.Errorf("daemon.Start: seal adapter registry: %w", forAgentErr)
+	// PL-005 step 4 / step 8a + PL-003 (P9-P11): register adapters + hook store,
+	// load persisted startup state (queues, handler-pause, decision-acks), and
+	// bind the socket listener. Extracted into wireSocketListener + sub-helpers
+	// for giant-retirement boot-config B5; the persistent singletons thread
+	// through bootState for the work loop (P13).
+	if socketErr := bs.wireSocketListener(ctx, daemonStartTime); socketErr != nil {
+		return socketErr
 	}
 
-	// HC-014a: inject the ClaudeCode adapter into the handler-pause controller
-	// so it can call Diagnose on pause-trip and Resume.
-	//
-	// SetAdapter is called after the registry is sealed and before any event
-	// consumers fire (bus is not yet sealed at this point).
-	//
-	// Spec: specs/handler-contract.md §4.3a HC-014a.  Bead: hk-tvsl7.
-	handlerPauseCtrl.SetAdapter(claudeCodeAdapter)
-
-	// Construct the hook-session store once at the composition root (hk-gql20.21).
-	// The same instance is forwarded to RunSocketListener (as HookRelayHandler)
-	// and into workLoopDeps so the work loop can call WaitForOutcome in the
-	// completion path (hk-gql20.22).
-	//
-	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
-	//
-	// The pure session-store state machine lives in internal/hook; newDaemonHookStore
-	// composes it with the bus emitter used by the rate-limit routing path
-	// (hk-lqtzq). bus.Seal has already been called at this point; the emitter is
-	// used for Emit calls (delivery, not subscription), which are valid post-Seal.
-	hookStore := newDaemonHookStore(bus)
-
-	// PL-005 step 8a (QM-002 / QM-002a): load per-queue files at startup BEFORE
-	// the socket listener or work loop start.  LoadQueueAtStartup first runs the
-	// NQ-A2 legacy migration (.harmonik/queue.json → .harmonik/queues/main.json),
-	// then enumerates .harmonik/queues/ and loads each queue with QM-002a + QM-002b
-	// reconciliation.  Only runs when both ProjectDir and BrPath are set
-	// (production mode); unit-test callers that omit one or both skip cleanly.
-	//
-	// A forward-incompatible schema_version causes a fatal return with exit-code-2
-	// semantics per QM-002.  Corrupt but parseable files produce a warning and are
-	// skipped (daemon proceeds without that queue).
-	//
-	// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
-	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
-	// Bead ref: hk-tigaf.3.
-	if loadErr := loadStartupQueues(ctx, cfg, hooks, bus, qs, daemonStartTime); loadErr != nil {
-		return loadErr
-	}
-
-	// PL-005 step 8a (hk-m0k0a): wire the persistence function into the
-	// HandlerPauseController (constructed pre-Seal above) and load any persisted
-	// handler state from .harmonik/handler-state.json.
-	//
-	// The controller was constructed above (pre-Seal) with a nil persistFn so
-	// that HandlerPausePolicyGoroutine.Subscribe could reference it before Seal.
-	// Here we patch in the real persistFn (when ProjectDir is set) and then seed
-	// the controller from disk.
-	//
-	// LoadHandlerPauseState seeds the controller with any paused handlers that
-	// survived the last daemon run, ensuring "paused status MUST persist across
-	// restarts" per specs/handler-pause.md §8.3 HP-008 (QM-055 analog).
-	//
-	// A forward-incompatible schema_version causes a fatal return (exit code 2).
-	// File absent → all handlers default live (no-op).
-	//
-	// Spec ref: specs/handler-pause.md §3.5.
-	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
-	// Bead ref: hk-m0k0a, hk-37zy8.
-	if cfg.ProjectDir != "" {
-		harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
-		handlerPauseCtrl.SetPersistFn(MakeHandlerPausePersistFn(harmonikDir))
-		if loadErr := LoadHandlerPauseState(context.Background(), harmonikDir, handlerPauseCtrl); loadErr != nil {
-			return fmt.Errorf("daemon.Start: handler-state.json load: %w", loadErr)
-		}
-	}
-
-	// decisionBlocker is the daemon-singleton DecisionBlocker populated by
-	// LoadDecisionAckState (EV-043a).  Declared here so the socket listener
-	// (future: decision-ack handler) and the workloop share the same instance.
-	//
-	// Spec ref: specs/event-model.md §4.12 EV-043a.
-	// Bead ref: hk-pbmsq.
-	decisionBlocker := NewDecisionBlocker()
-	if cfg.ProjectDir != "" {
-		if loadErr := LoadDecisionAckState(context.Background(), cfg.ProjectDir, decisionBlocker); loadErr != nil {
-			return fmt.Errorf("daemon.Start: decision_acks load: %w", loadErr)
-		}
-	}
-
-	// opPauseCtrl is the daemon-singleton OperatorPauseController. Constructed
-	// inside the ProjectDir block (where the bus is available and Sealed) and
-	// consumed by both the socket listener (handles operator-pause/resume ops)
-	// and the workloop (br-ready dispatch gate). Declared here so both blocks
-	// share the same variable scope.
-	//
-	// Bead ref: hk-ry8q1.
-	var opPauseCtrl *OperatorPauseController
-
-	// concurrencyCtrl is the daemon-singleton ConcurrencyController. Initialised
-	// inside the ProjectDir block and injected into both the HandlerAdapter (so
-	// queue-set-concurrency RPCs can update the ceiling) and the workloop deps (so
-	// the dispatch gate reads the live value on every tick). Declared here so
-	// both blocks share the same variable scope.
-	//
-	// Bead ref: hk-ohiaf.
-	var concurrencyCtrl *ConcurrencyController
-
-	// queueHandlerAdapter holds the concrete *queue.HandlerAdapter (when one was
-	// constructed in the socket block) so the work-loop block can wire the live
-	// worker-toggle func into it once deps.workerRegistry exists (hk-xjbvi). The
-	// registry is built inside newWorkLoopDeps (after the socket block), so unlike
-	// the concurrency setter — which is wired pre-listener — the worker toggle is
-	// wired just after deps is built; a worker-set-enabled RPC that races the few
-	// microseconds before that gets a clean "no worker registry wired" error and
-	// is retried, never a panic. Nil in unit-test mode (no socket / no adapter).
-	var queueHandlerAdapter *queue.HandlerAdapter
-
-	// drainDet is the daemon-singleton DrainDetector. Constructed inside the
-	// ProjectDir/BrPath block and reused by both the quiesce arbiter (P1-c)
-	// and the state handler (hk-gv04 P2-a). Nil in unit-test mode.
-	var drainDet *DrainDetector
-
-	// crewHandler is the daemon-singleton crew-start/stop handler. Constructed
-	// inside the ProjectDir block (for the socket listener) and also injected into
-	// the workloop deps so the schedule tick can fire spawn-crew actions through
-	// the same HandleCrewStart path (codename:schedule, hk-0es). Declared here so
-	// both blocks share scope; nil in unit-test mode (no ProjectDir / socket).
-	var crewHandler CrewHandler
-
-	// crewIdleReaper (SD-3, hk-s2eac): tears down a crew whose bound queue has
-	// completed and stayed idle past a short grace window, reclaiming its
-	// slot. Constructed alongside crewHandler (needs it as the stop seam);
-	// started post-Seal beside quiesceArbiter.Start. Nil in unit-test mode
-	// (no ProjectDir / socket).
-	var crewIdleReaper *CrewIdleReaper
-
-	// branchReapWatcher (hk-2i36s, follow-up to hk-fpjxi): periodically reaps
-	// merged/orphaned run/* and worktree-agent-* branches so the on-demand
-	// `harmonik gc branches` tool isn't the only caller. Constructed alongside
-	// crewIdleReaper; started post-Seal beside quiesceArbiter.Start. Nil in
-	// unit-test mode (no ProjectDir).
-	var branchReapWatcher *BranchReapWatcher
-
-	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
-	// subprocesses can deliver outcome_emitted envelopes to the daemon.
-	//
-	// Only bind when ProjectDir is set; unit-test callers that omit ProjectDir
-	// skip the socket (no path to bind). The socket listener runs concurrently
-	// with the work loop and shuts down on the same ctx.
-	//
-	// QueueHandler: queue.NewHandlerAdapter wired when BrPath is set. A nil
-	// QueueHandler causes all queue-* ops to return -32099 (no queue loaded).
-	//
-	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 3a; §4.1 PL-003.
-	if cfg.ProjectDir != "" {
-		sockPath := filepath.Join(cfg.ProjectDir, ".harmonik", "daemon.sock")
-		// hk-ta6dg: a too-long sockPath is a PERMANENT bind failure (unlike the
-		// transient stale-socket race removeStaleSocket already handles), and it
-		// silently defeats the reverse-tunnel readiness gate for remote runs (the
-		// gate only probes the worker-side TCP listener, never this local path —
-		// see internal/lifecycle/socketpathlimit.go). PL-003 deliberately keeps
-		// socket-bind errors non-fatal to daemon.Start (many callers/tests rely on
-		// that, including short-lived test harnesses whose t.TempDir() path is
-		// itself long enough to trip this on macOS), so this is a loud diagnostic,
-		// not an abort — the reverse-tunnel call site is where a too-long path
-		// actually blocks a run, and that path fails loud per-run.
-		if lenErr := lifecycle.ValidateSocketPathLength(sockPath); lenErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon.Start: %v\n", lenErr)
-		}
-		// .harmonik/ was already created above (pidfile block), but when
-		// ProjectDir is set with BrPath="" (test mode skipping pidfile) we still
-		// need the dir. MkdirAll is idempotent.
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if mkErr := os.MkdirAll(filepath.Dir(sockPath), 0o755); mkErr != nil {
-			return fmt.Errorf("daemon.Start: mkdir-p .harmonik (socket): %w", mkErr)
-		}
-
-		// Construct the QueueHandler adapter. Nil when BrPath is unset (unit-test
-		// mode); RunSocketListener accepts nil and returns -32099 for queue-* ops.
-		// qs and bus are threaded in so the adapter can update the in-memory
-		// QueueStore and emit events after each persist (hk-4ukkq, hk-lzs8r,
-		// hk-peucr).
-		var queueHandler QueueHandler
-		if cfg.BrPath != "" {
-			brAdapterForHandler, brHandlerErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
-			if brHandlerErr != nil {
-				// Classify + emit divergence_inconclusive for BrSchemaMismatch per
-				// BI-031b.  Non-fatal: socket handler proceeds without queue support;
-				// queue-* ops return errors until a queue is submitted.
-				//
-				// Spec ref: specs/beads-integration.md §4.10 BI-031b.
-				// Bead ref: hk-th378.
-				_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brHandlerErr, "br-new-for-project-handler", bus)
-			} else {
-				adapter := queue.NewHandlerAdapter(newBRQueueLedger(brAdapterForHandler), cfg.ProjectDir, qs, bus)
-				// Wire the global --max-concurrent so submit can default a queue's
-				// per-queue Workers count (QM-066) and warn on oversubscription
-				// (hk-tigaf.4 NQ-B1). cfg.MaxConcurrent zero → 1 inside the adapter.
-				adapter.SetGlobalMaxConcurrent(cfg.MaxConcurrent)
-				queueHandler = adapter
-				// Retain the concrete adapter so the work-loop block can wire the
-				// live worker-toggle func once deps.workerRegistry exists (hk-xjbvi).
-				queueHandlerAdapter = adapter
-
-				// Wire the SS-INV-005 veto gate into the quiesce arbiter (P1-c,
-				// hk-zqb3): non-force `harmonik sleep` is refused when GatherDrainFacts
-				// reports dispatchable or in-flight work that would be stranded.
-				drainDet = NewDrainDetector(brAdapterForHandler, brAdapterForHandler, newBRQueueLedger(brAdapterForHandler), sharedRunRegistry, qs, cfg.ProjectDir)
-				quiesceArbiter.SetDrain(drainDet)
-			}
-		}
-
-		// Construct the OperatorPauseController so the socket listener can handle
-		// operator-pause / operator-resume ops (hk-ry8q1). The controller emits
-		// lifecycle events on the bus; must be constructed after Seal so the bus
-		// is ready to deliver events.
-		//
-		// Bead ref: hk-ry8q1.
-		opPauseCtrl = NewOperatorPauseController(bus)
-
-		// Create the ConcurrencyController and wire it into the HandlerAdapter so
-		// queue-set-concurrency RPCs can update the ceiling at runtime (hk-ohiaf).
-		concurrencyCtrl = NewConcurrencyController(cfg.MaxConcurrent)
-		if ha, ok := queueHandler.(*queue.HandlerAdapter); ok {
-			ha.SetConcurrencyFuncs(concurrencyCtrl.Get, concurrencyCtrl.Set)
-			// hk-vfeeo: wire spawn cap so set-concurrency can detect requests
-			// that would oversubscribe the substrate's session ceiling.
-			if ss, ok := cfg.Substrate.(substrateWithSpawnCap); ok {
-				ha.SetSpawnCapFunc(ss.SpawnCapSize)
-			}
-			// hk-omvan: wire the live spawn-cap resize setter (when the
-			// substrate supports it) so set-concurrency RAISES the cap to
-			// satisfy an oversubscribing request instead of refusing it.
-			if ss, ok := cfg.Substrate.(substrateWithSpawnCapSetter); ok {
-				ha.SetSpawnCapSetFunc(ss.SetSpawnCap)
-			}
-		}
-
-		// Start the bandwidth tuner when --subscription-token-ceiling is set
-		// (hk-ymav1).  The tuner reads rolling 5h token usage from Claude Code
-		// transcripts and adjusts concurrencyCtrl on every 60s tick.
-		// normalised MaxConcurrent (zero → 1) is used as the N_max ceiling so the
-		// tuner and the static gate share the same scale.
-		if cfg.SubscriptionTokenCeiling > 0 {
-			maxN := cfg.MaxConcurrent
-			if maxN <= 0 {
-				maxN = 1
-			}
-			homeDir, homeDirErr := os.UserHomeDir()
-			if homeDirErr == nil {
-				tuner := NewBandwidthTuner(concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
-				tuner.SetGate(pollGate)       // SS-007: OFF at INACTIVE (hk-w6q7)
-				tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
-				go tuner.Run(ctx)
-			}
-		}
-
-		// commsSendHandler emits agent_message events on behalf of CLI callers.
-		// NewCommsSendHandler returns nil if bus does not implement CommsMessageEmitter
-		// (e.g. test stubs), in which case comms-send ops return an error response.
-		// Bead ref: hk-nbrmf (comms-send T4).
-		commsSendHandler := NewCommsSendHandler(bus)
-		// Wire comms-recv deps (T8, hk-nnwaa): two INDEPENDENT cursor stores +
-		// events JSONL path. SetRecvDeps is a no-op when commsSendHandler is nil
-		// (bus stub case).
-		//
-		// hk-8xspi (B1): a plain one-shot `comms recv --agent` poll and a
-		// `--follow`/`--wait` live session no longer share a cursor — draining
-		// one never advances the other, so a poller can no longer be starved by
-		// a follow/wait watcher's consumption (or vice versa). The live store is
-		// shared between the handler's catch-up drain (CommsRecvRequest.Live)
-		// and the SubscribeHub (hk-tafd4) so a follow/wait session's drain and
-		// its live tail stay on one continuous cursor. Separate on-disk
-		// directories keep the two cursor namespaces from ever colliding.
-		if impl, ok := commsSendHandler.(*commsSendHandlerImpl); ok && cfg.ProjectDir != "" {
-			pollCursorDir := filepath.Join(cfg.ProjectDir, ".harmonik", "comms", "cursors")
-			liveCursorDir := filepath.Join(cfg.ProjectDir, ".harmonik", "comms", "cursors-live")
-			pollCursorStore := NewCursorStore(pollCursorDir)
-			liveCursorStore := NewCursorStore(liveCursorDir)
-			impl.SetRecvDeps(pollCursorStore, liveCursorStore, cfg.JSONLLogPath)
-			subscribeHub.SetCommsCursorStore(liveCursorStore)
-		}
-
-		// Construct the C2 crew-start/stop handler (c2-spec.md §3.1).
-		// Spec ref: docs/plans/captain/05-specs/c2-spec.md.
-		// Bead ref: hk-5tg5o.
-		// Assigned to the function-scope var (declared above) so the workloop deps
-		// block can reuse it for spawn-crew scheduled actions (hk-0es).
-		// rcPrefix (hk-igpg): the per-project Claude RC label prefix, read from the
-		// cached .harmonik/config.yaml daemon block (loaded at Start, ~L745). Empty =
-		// bare label. Cosmetic only — crew identity keys stay bare.
-		// Wire the keeper probe (hk-qgfme). The event bus satisfies crewKeeperEventBus
-		// directly (eventbus.EventBus.Emit). For comms we need EmitAgentMessage, which
-		// lives on the optional CommsMessageEmitter capability — type-assert the bus,
-		// mirroring the quiesceCommsBus pattern above.
-		var crewCommsEmitter crewKeeperCommsBus
-		if ce, ok := bus.(crewKeeperCommsBus); ok {
-			crewCommsEmitter = ce
-		}
-		crewHandler = NewCrewHandler(
-			cfg.HandlerBinary, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RemoteControlPrefix, cfg.Substrate, opPauseCtrl,
-			WithKeeperProbe(cfg.ProjectCfg.Keeper, bus, crewCommsEmitter),
-		)
-
-		// SD-3 (hk-s2eac): wire the idle-completed-crew reaper now that both
-		// the queue store and the crew stop seam exist. Started post-Seal,
-		// below, alongside quiesceArbiter.Start.
-		crewIdleReaperAgentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "agents")
-		crewIdleReaper = NewCrewIdleReaper(CrewIdleReaperConfig{
-			ProjectDir: cfg.ProjectDir,
-			Queues:     qs,
-			Stopper:    crewHandler,
-			// GATE-0 (hk-dy5gw): a persistent oversight role (admiral, watch —
-			// manifest lifecycle.persistent: true) is never reclaimed. The manifest
-			// property is the durable source of truth; a load error reads as
-			// non-persistent so an ordinary bead-crew is unaffected.
-			PersistentType: func(typeName string) bool {
-				tf, err := agentmanifest.Load(crewIdleReaperAgentsDir, typeName)
-				if err != nil {
-					return false
-				}
-				return tf.Manifest.Lifecycle.Persistent
-			},
-		})
-
-		// hk-2i36s: wire the periodic branch reaper now that cfg.ProjectDir is
-		// known to be a git repository root. Started post-Seal, below, alongside
-		// crewIdleReaper.StartWatcher.
-		branchReapWatcher = NewBranchReapWatcher(BranchReapWatcherConfig{
-			RepoDir: cfg.ProjectDir,
-		})
-
-		// Build the live state handler (hk-gv04 P2-a: `harmonik state`).
-		// drainDet may be nil if ProjectDir was empty above — LiveStateBuilder
-		// tolerates that and sets read_quality.unsure=true in the response.
-		stateBuilder := NewLiveStateBuilder(sharedRunRegistry, qs, drainDet, concurrencyCtrl, cfg.MaxConcurrent, cfg.ProjectDir, cfg.ProjectCfg.Keeper)
-		stateHandler := NewLiveStateSocketHandler(stateBuilder)
-
-		dashBuilder := NewDashboardBuilder(stateBuilder, cfg.ProjectDir, cfg.JSONLLogPath)
-		dashHandler := NewLiveDashboardSocketHandler(dashBuilder)
-
-		// Start the poll-gate goroutine (SS-007, hk-w6q7 P2-b): evaluates the
-		// fleet ActivityLabel every pollGateInterval and gates StaleWatcher and
-		// BandwidthTuner when INACTIVE.  Must start after stateBuilder is ready.
-		startPollGate(ctx, pollGate, stateBuilder)
-
-		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
-		// the absence of the socket is observable externally). Drain the done
-		// channel to avoid goroutine leaks; error is discarded per the same
-		// reasoning as defer ln.Close() discards errors in RunSocketListener.
-		socketDone := make(chan error, 1)
-		go func() {
-			socketDone <- RunSocketListenerWithDashboard(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, crewHandler, quiesceArbiter, stateHandler, dashHandler, queueHandler)
-		}()
-		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
-	}
+	// Local aliases so the still-inline work-loop phase (P13) reads the shared
+	// singletons under their historical names.
+	adapterReg := bs.adapterReg
+	hookStore := bs.hookStore
+	decisionBlocker := bs.decisionBlocker
+	opPauseCtrl := bs.opPauseCtrl
+	concurrencyCtrl := bs.concurrencyCtrl
+	queueHandlerAdapter := bs.queueHandlerAdapter
+	crewHandler := bs.crewHandler
+	crewIdleReaper := bs.crewIdleReaper
+	branchReapWatcher := bs.branchReapWatcher
 
 	// hk-uzvt9: apply the restart-backoff sleep computed above (bootBackoffDelay)
 	// only now, AFTER the socket has been bound (or its bind goroutine started).

@@ -280,21 +280,34 @@ func TestCodexHarness_LaunchSpec_EmptyWorkspaceErrors(t *testing.T) {
 	}
 }
 
-// TestCodexHarness_LaunchSpec_EmptyModelErrors verifies that an empty Model on an
-// initial turn returns a descriptive error (hk-heh3t: fail loud, not 30-min hang).
-func TestCodexHarness_LaunchSpec_EmptyModelErrors(t *testing.T) {
+// TestCodexHarness_LaunchSpec_EmptyModelAccountDefault verifies that an empty Model
+// on an initial turn launches WITHOUT --model through the harness adapter, so codex
+// uses its config-default (account) model. Inverts the retired hk-heh3t fail-loud
+// guard (the ~30-min omitted-model hang no longer reproduces, and a named model 400s
+// on the HN-022 ChatGPT path). Uses SkipBillingGuard so the shape check needs no
+// materialized config.toml.
+func TestCodexHarness_LaunchSpec_EmptyModelAccountDefault(t *testing.T) {
 	t.Parallel()
 
 	rc := handlercontract.RunCtx{
 		WorkspacePath: "/tmp/wt-codex-harness-nomodel",
 		BeadID:        "hk-m57va-test-nomodel",
-		// Model deliberately empty.
+		// Model deliberately empty → account-default (no --model flag).
 	}
 
-	h := daemon.ExportedNewCodexHarness("", "")
-	_, err := h.LaunchSpec(rc)
-	if err == nil {
-		t.Error("LaunchSpec with empty Model on initial turn: want error, got nil")
+	// t.TempDir() CODEX_HOME mirrors the positive sibling test: the billing guard
+	// materializes forced_login_method=chatgpt into a fresh home and asserts, so the
+	// launch shape is exercised without touching the operator's ~/.codex.
+	h := daemon.ExportedNewCodexHarness("", t.TempDir())
+	spec, err := h.LaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("LaunchSpec with empty Model on initial turn: want account-default launch, got error: %v", err)
+	}
+	for _, arg := range spec.Args {
+		if arg == "--model" {
+			t.Errorf("empty-model harness argv must omit --model; got %v", spec.Args)
+			return
+		}
 	}
 }
 

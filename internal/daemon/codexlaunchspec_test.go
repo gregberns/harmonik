@@ -450,19 +450,29 @@ func TestBuildCodexLaunchSpec_EmptyPriorThreadID(t *testing.T) {
 }
 
 // TestBuildCodexLaunchSpec_EmptyModelInitialTurn verifies that an empty model on an
-// initial (non-resume) turn returns an error instead of hanging for ~30 min (hk-heh3t).
+// initial (non-resume) turn launches WITHOUT a --model flag, so codex uses its
+// $CODEX_HOME/config.toml (account) default — the only working config on the
+// HN-022 ChatGPT-subscription path, where a named model 400s. This inverts the old
+// hk-heh3t fail-loud guard, retired because the ~30-min omitted-model hang no longer
+// reproduces on the pinned codex and requiring a model contradicts HN-022.
 func TestBuildCodexLaunchSpec_EmptyModelInitialTurn(t *testing.T) {
 	t.Parallel()
 
 	rc := daemon.ExportedCodexRunCtx{
 		WorkspacePath: "/tmp/wt-test-codex-nomodel",
 		BeadID:        "hk-test-empty-model",
-		// Model deliberately omitted: empty model on initial turn must fail loud.
+		// Model deliberately omitted: empty model → account-default (no --model flag).
 		SkipBillingGuard: true,
 	}
-	_, err := daemon.ExportedBuildCodexLaunchSpec(rc)
-	if err == nil {
-		t.Error("expected error for empty model on initial turn; got nil")
+	spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+	if err != nil {
+		t.Fatalf("empty model on initial turn must not error (account-default path); got: %v", err)
+	}
+	for _, arg := range spec.Args {
+		if arg == "--model" {
+			t.Errorf("empty-model initial argv must omit --model; got %v", spec.Args)
+			return
+		}
 	}
 }
 

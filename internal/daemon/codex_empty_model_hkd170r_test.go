@@ -1,38 +1,48 @@
 package daemon_test
 
-// codex_empty_model_hkd170r_test.go — gated harness regression for the codex
-// empty-model hang (hk-d170r, hk-heh3t).
+// codex_empty_model_hkd170r_test.go — gated routing regression for codex
+// empty-model resolution (hk-d170r; hk-heh3t retired).
 //
 // # What this proves
 //
 // A bead labelled harness:codex with no model: label resolves to an empty model
 // string (codex has no tier-3 default in defaultModelEntries). The real routed
 // launch path through routedLaunchSpecBuilder → buildCodexRoutedLaunchSpec →
-// CodexHarness.LaunchSpec → buildCodexLaunchSpec MUST return a descriptive error
-// immediately, not block on stdin for ~30 minutes.
+// CodexHarness.LaunchSpec → buildCodexLaunchSpec MUST launch codex WITHOUT a
+// --model flag, so codex resolves its model from $CODEX_HOME/config.toml — the
+// account default.
 //
-// Without the hk-heh3t fix, buildCodexLaunchSpec launched `codex exec` without
-// --model, which caused codex 0.139.0 to print "Reading additional input from
-// stdin..." and block forever. The daemon's never-spawned reaper cancelled the
-// run after 30 minutes with "context cancelled during node implement".
+// # Why the old fail-loud assertion was inverted (hk-heh3t retired)
+//
+// hk-heh3t once made this path fail loud: on codex 0.139.0 an omitted --model hung
+// on stdin for ~30 min ("Reading additional input from stdin..."), reaped only by
+// the never-spawned timeout. Two facts retired that guard:
+//   1. specs/harness-contract.md HN-022 mandates codex run the ChatGPT-subscription
+//      path by default. On that path EVERY explicitly-named model is rejected with
+//      HTTP 400 ("not supported when using Codex with a ChatGPT account", verified
+//      2026-07-16) — so a required --model makes codex structurally un-runnable.
+//   2. The omitted---model hang no longer reproduces on the pinned codex (0.142.5
+//      verified: a --model-less `codex exec` completes in seconds and edits the
+//      tree). The never-spawned reaper remains the backstop for any future regress.
+// So the correct routed behavior for an unpinned codex bead is: launch with no
+// --model (account default), not fail loud.
 //
 // # Why this level matters
 //
 // - codexlaunchspec_test.go (TestBuildCodexLaunchSpec_EmptyModelInitialTurn) tests
 //   the lowest-level function in isolation.
-// - codexharness_test.go (TestCodexHarness_LaunchSpec_EmptyModelErrors) tests the
-//   harness adapter layer.
+// - codexharness_test.go (TestCodexHarness_LaunchSpec_EmptyModelAccountDefault) tests
+//   the harness adapter layer.
 // - THIS FILE tests the ROUTING layer: the full production path from a bead label
 //   through resolveHarness + HarnessRegistry + buildCodexRoutedLaunchSpec. If any
-//   intermediate layer strips or ignores the model before the check, these lower
-//   tests pass but the routing path silently regresses.
+//   intermediate layer injects or drops the model, these lower tests pass but the
+//   routing path silently regresses.
 //
-// Bead refs: hk-d170r (gated regression), hk-heh3t (original fix).
+// Bead refs: hk-d170r (gated regression), hk-heh3t (retired guard).
 // Helper prefix: hkd170rGated.
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -62,16 +72,23 @@ func hkd170rGatedRunCtx(t *testing.T, ws string) daemon.ExportedClaudeRunCtx {
 	}
 }
 
-// TestHkd170rGated_CodexEmptyModelFailsLoud is the gated routing-layer regression:
-// a bead with harness:codex but no model: label resolves to an empty model, and the
-// full routed launch path MUST return a descriptive error immediately (not hang).
-func TestHkd170rGated_CodexEmptyModelFailsLoud(t *testing.T) {
-	t.Parallel()
+// TestHkd170rGated_CodexEmptyModelAccountDefault is the gated routing-layer
+// regression: a bead with harness:codex but no model: label resolves to an empty
+// model, and the full routed launch path MUST build a spec that launches codex
+// WITHOUT a --model flag (account default), not fail loud (hk-heh3t retired).
+func TestHkd170rGated_CodexEmptyModelAccountDefault(t *testing.T) {
+	// NOT parallel: the routed path now proceeds into the codex billing guard
+	// (the old empty-model guard used to return first), which materializes+reads
+	// $CODEX_HOME/config.toml. Point HOME at a throwaway dir so resolveCodexHome
+	// ("") lands in <tmp>/.codex — hermetic, and no write/read race against the
+	// operator's real ~/.codex shared with other codex tests. t.Setenv forbids
+	// t.Parallel().
+	t.Setenv("HOME", t.TempDir())
 
 	ctx := context.Background()
 	bus := eventbus.NewBusImpl()
 
-	// Bead carries harness:codex but NO model: label — the exact incident config.
+	// Bead carries harness:codex but NO model: label — the unpinned-codex config.
 	bead := core.BeadRecord{
 		BeadID: "hk-d170r-regression-bead",
 		Title:  "codex empty-model regression bead",
@@ -99,7 +116,7 @@ func TestHkd170rGated_CodexEmptyModelFailsLoud(t *testing.T) {
 		ctx, bead.Labels, agentType, daemon.ProjectConfig{}, bus, string(bead.BeadID),
 	)
 	if sealedModel != "" {
-		t.Fatalf("codex model resolution = %q; want empty (no tier-3 default → should require explicit model: label)", sealedModel)
+		t.Fatalf("codex model resolution = %q; want empty (no tier-3 default → unpinned → account default)", sealedModel)
 	}
 
 	// Real routed launch path — this is what beadRunOne calls in production.
@@ -112,15 +129,17 @@ func TestHkd170rGated_CodexEmptyModelFailsLoud(t *testing.T) {
 	)
 
 	ws := t.TempDir()
-	_, _, err = build(ctx, hkd170rGatedRunCtx(t, ws))
-	if err == nil {
-		t.Fatal("routed launch with harness:codex + empty model: want immediate error, got nil — " +
-			"codex will block on stdin for ~30 minutes (hk-heh3t regression)")
+	spec, _, err := build(ctx, hkd170rGatedRunCtx(t, ws))
+	if err != nil {
+		t.Fatalf("routed launch with harness:codex + empty model: want account-default launch, got error: %v", err)
 	}
 
-	// Error must mention model so operators know how to fix it.
-	if !strings.Contains(err.Error(), "model") {
-		t.Errorf("error does not mention 'model'; operators need a fix hint: %v", err)
+	// The initial-turn argv MUST omit --model so codex uses its config-default.
+	for _, arg := range spec.Args {
+		if arg == "--model" {
+			t.Errorf("routed empty-model argv must omit --model (account default); got %v", spec.Args)
+			return
+		}
 	}
 }
 

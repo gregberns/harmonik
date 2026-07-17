@@ -1,4 +1,4 @@
-package orchestrator_test
+package orchestrator
 
 // groupadvance_hk45ude_test.go — pure truth-table coverage for the EM-015f
 // group-advance CLASSIFICATION micro-predicates (M5 slice 3C). These migrate the
@@ -11,8 +11,6 @@ package orchestrator_test
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/orchestrator"
 )
 
 // Group-status string values mirror internal/queue/types.go (the daemon projects
@@ -44,7 +42,7 @@ func TestFirstPendingGroupIndex(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := orchestrator.FirstPendingGroupIndex(tc.statuses); got != tc.want {
+			if got := FirstPendingGroupIndex(tc.statuses); got != tc.want {
 				t.Errorf("FirstPendingGroupIndex(%v) = %d; want %d", tc.statuses, got, tc.want)
 			}
 		})
@@ -64,7 +62,7 @@ func TestGroupReachedSuccess(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range cases {
-		if got := orchestrator.GroupReachedSuccess(tc.status); got != tc.want {
+		if got := GroupReachedSuccess(tc.status); got != tc.want {
 			t.Errorf("GroupReachedSuccess(%q) = %v; want %v", tc.status, got, tc.want)
 		}
 	}
@@ -83,7 +81,7 @@ func TestGroupFailurePausesQueue(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range cases {
-		if got := orchestrator.GroupFailurePausesQueue(tc.status); got != tc.want {
+		if got := GroupFailurePausesQueue(tc.status); got != tc.want {
 			t.Errorf("GroupFailurePausesQueue(%q) = %v; want %v", tc.status, got, tc.want)
 		}
 	}
@@ -106,7 +104,7 @@ func TestAllGroupsSucceeded(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := orchestrator.AllGroupsSucceeded(tc.statuses); got != tc.want {
+			if got := AllGroupsSucceeded(tc.statuses); got != tc.want {
 				t.Errorf("AllGroupsSucceeded(%v) = %v; want %v", tc.statuses, got, tc.want)
 			}
 		})

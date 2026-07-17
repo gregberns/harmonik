@@ -1,4 +1,4 @@
-package orchestrator_test
+package orchestrator
 
 // eagerfill_hk9321v_test.go — EM-062/EM-063 pure-decision truth-tables for the
 // eager-refill deficit computation, overfetch limit, survivor clamp, and Phase-1
@@ -13,17 +13,16 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/orchestrator"
 )
 
 // streamQueue builds an active QueueSnapshot whose active group is a stream with
 // the given pending count. A wave group is produced when kind != "stream".
-func streamQueue(name, queueID string, groupPos, pending int, kind string) orchestrator.QueueSnapshot {
-	return orchestrator.QueueSnapshot{
+func streamQueue(name, queueID string, groupPos, pending int, kind string) QueueSnapshot {
+	return QueueSnapshot{
 		Name:    name,
 		QueueID: queueID,
 		Active:  true,
-		ActiveGroup: &orchestrator.GroupSnapshot{
+		ActiveGroup: &GroupSnapshot{
 			GroupIndex:   groupPos,
 			Kind:         kind,
 			PendingCount: pending,
@@ -40,13 +39,13 @@ func streamQueue(name, queueID string, groupPos, pending int, kind string) orche
 func TestEagerFillTarget_DeficitFromAvailableMinusPending(t *testing.T) {
 	t.Parallel()
 
-	f := orchestrator.FleetSnapshot{
-		Queues: []orchestrator.QueueSnapshot{
+	f := FleetSnapshot{
+		Queues: []QueueSnapshot{
 			streamQueue("main", "qid-main", 0, 1, "stream"),
 		},
 	}
 	// available = 4 - 1 = 3; deficit = 3 - 1(pending) = 2.
-	target, ok := orchestrator.EagerFillTarget(f, 4, 1)
+	target, ok := EagerFillTarget(f, 4, 1)
 	if !ok {
 		t.Fatal("EagerFillTarget ok=false, want a target (deficit 2)")
 	}
@@ -63,10 +62,10 @@ func TestEagerFillTarget_DeficitFromAvailableMinusPending(t *testing.T) {
 func TestEagerFillTarget_NoAvailableSlots(t *testing.T) {
 	t.Parallel()
 
-	f := orchestrator.FleetSnapshot{
-		Queues: []orchestrator.QueueSnapshot{streamQueue("main", "qid-main", 0, 0, "stream")},
+	f := FleetSnapshot{
+		Queues: []QueueSnapshot{streamQueue("main", "qid-main", 0, 0, "stream")},
 	}
-	if _, ok := orchestrator.EagerFillTarget(f, 4, 4); ok {
+	if _, ok := EagerFillTarget(f, 4, 4); ok {
 		t.Error("EagerFillTarget ok=true at available=0, want false")
 	}
 }
@@ -76,11 +75,11 @@ func TestEagerFillTarget_NoAvailableSlots(t *testing.T) {
 func TestEagerFillTarget_PendingCoversDeficit(t *testing.T) {
 	t.Parallel()
 
-	f := orchestrator.FleetSnapshot{
+	f := FleetSnapshot{
 		// available = 3; pending = 3 → deficit 0, skip.
-		Queues: []orchestrator.QueueSnapshot{streamQueue("main", "qid-main", 0, 3, "stream")},
+		Queues: []QueueSnapshot{streamQueue("main", "qid-main", 0, 3, "stream")},
 	}
-	if _, ok := orchestrator.EagerFillTarget(f, 3, 0); ok {
+	if _, ok := EagerFillTarget(f, 3, 0); ok {
 		t.Error("EagerFillTarget ok=true when pending covers deficit, want false")
 	}
 }
@@ -94,14 +93,14 @@ func TestEagerFillTarget_SkipsWaveAndInactive(t *testing.T) {
 	inactive := streamQueue("paused", "qid-paused", 0, 0, "stream")
 	inactive.Active = false
 
-	f := orchestrator.FleetSnapshot{
-		Queues: []orchestrator.QueueSnapshot{
+	f := FleetSnapshot{
+		Queues: []QueueSnapshot{
 			inactive, // inactive → skip
 			streamQueue("wavy", "qid-wavy", 0, 0, "wave"),   // wave → skip
 			streamQueue("strm", "qid-strm", 2, 0, "stream"), // first qualifying stream
 		},
 	}
-	target, ok := orchestrator.EagerFillTarget(f, 4, 0)
+	target, ok := EagerFillTarget(f, 4, 0)
 	if !ok {
 		t.Fatal("EagerFillTarget ok=false, want the stream queue")
 	}
@@ -115,10 +114,10 @@ func TestEagerFillTarget_SkipsWaveAndInactive(t *testing.T) {
 func TestEagerFillTarget_NilActiveGroup(t *testing.T) {
 	t.Parallel()
 
-	f := orchestrator.FleetSnapshot{
-		Queues: []orchestrator.QueueSnapshot{{Name: "empty", Active: true, ActiveGroup: nil}},
+	f := FleetSnapshot{
+		Queues: []QueueSnapshot{{Name: "empty", Active: true, ActiveGroup: nil}},
 	}
-	if _, ok := orchestrator.EagerFillTarget(f, 4, 0); ok {
+	if _, ok := EagerFillTarget(f, 4, 0); ok {
 		t.Error("EagerFillTarget ok=true for nil active group, want false")
 	}
 }
@@ -133,7 +132,7 @@ func TestOverfetchLimit(t *testing.T) {
 		{0, 0}, {1, 2}, {3, 6}, {5, 10},
 	}
 	for _, c := range cases {
-		if got := orchestrator.OverfetchLimit(c.deficit); got != c.want {
+		if got := OverfetchLimit(c.deficit); got != c.want {
 			t.Errorf("OverfetchLimit(%d) = %d, want %d", c.deficit, got, c.want)
 		}
 	}
@@ -148,26 +147,26 @@ func TestClampSurvivors(t *testing.T) {
 	all := []core.BeadID{"hk-a", "hk-b", "hk-c", "hk-d"}
 
 	// deficit < len → clamp, order preserved.
-	got := orchestrator.ClampSurvivors(all, 2)
+	got := ClampSurvivors(all, 2)
 	if len(got) != 2 || got[0] != "hk-a" || got[1] != "hk-b" {
 		t.Errorf("ClampSurvivors(len4, 2) = %v, want [hk-a hk-b]", got)
 	}
 
 	// deficit >= len → unchanged.
-	if got := orchestrator.ClampSurvivors(all, 10); len(got) != 4 {
+	if got := ClampSurvivors(all, 10); len(got) != 4 {
 		t.Errorf("ClampSurvivors(len4, 10) = %v, want all 4", got)
 	}
 
 	// deficit == len → unchanged (boundary).
-	if got := orchestrator.ClampSurvivors(all, 4); len(got) != 4 {
+	if got := ClampSurvivors(all, 4); len(got) != 4 {
 		t.Errorf("ClampSurvivors(len4, 4) = %v, want all 4", got)
 	}
 
 	// non-positive deficit → empty.
-	if got := orchestrator.ClampSurvivors(all, 0); len(got) != 0 {
+	if got := ClampSurvivors(all, 0); len(got) != 0 {
 		t.Errorf("ClampSurvivors(len4, 0) = %v, want empty", got)
 	}
-	if got := orchestrator.ClampSurvivors(all, -1); len(got) != 0 {
+	if got := ClampSurvivors(all, -1); len(got) != 0 {
 		t.Errorf("ClampSurvivors(len4, -1) = %v, want empty", got)
 	}
 }
@@ -184,7 +183,7 @@ func TestScreenAlreadyQueued_DropsInSetPreservesOrder(t *testing.T) {
 	inQueue := map[core.BeadID]struct{}{"hk-in-1": {}, "hk-in-2": {}}
 	candidates := []core.BeadID{"hk-in-1", "hk-new-a", "hk-in-2", "hk-new-b"}
 
-	got := orchestrator.ScreenAlreadyQueued(candidates, inQueue)
+	got := ScreenAlreadyQueued(candidates, inQueue)
 	if len(got) != 2 || got[0] != "hk-new-a" || got[1] != "hk-new-b" {
 		t.Errorf("ScreenAlreadyQueued = %v, want [hk-new-a hk-new-b]", got)
 	}
@@ -196,7 +195,7 @@ func TestScreenAlreadyQueued_NilSetDropsNothing(t *testing.T) {
 	t.Parallel()
 
 	candidates := []core.BeadID{"hk-a", "hk-b", "hk-c"}
-	got := orchestrator.ScreenAlreadyQueued(candidates, nil)
+	got := ScreenAlreadyQueued(candidates, nil)
 	if len(got) != 3 {
 		t.Errorf("ScreenAlreadyQueued(nil set) = %v, want all 3", got)
 	}
@@ -208,7 +207,7 @@ func TestScreenAlreadyQueued_AllQueuedYieldsEmpty(t *testing.T) {
 	t.Parallel()
 
 	inQueue := map[core.BeadID]struct{}{"hk-a": {}, "hk-b": {}}
-	got := orchestrator.ScreenAlreadyQueued([]core.BeadID{"hk-a", "hk-b"}, inQueue)
+	got := ScreenAlreadyQueued([]core.BeadID{"hk-a", "hk-b"}, inQueue)
 	if len(got) != 0 {
 		t.Errorf("ScreenAlreadyQueued(all queued) = %v, want empty", got)
 	}

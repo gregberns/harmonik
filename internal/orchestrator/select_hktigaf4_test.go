@@ -1,9 +1,9 @@
-package orchestrator_test
+package orchestrator
 
 // select_hktigaf4_test.go — NQ-B1 pure-decision truth-table for the cross-queue
 // round-robin selector, migrated from internal/daemon
 // workloop_perqueue_roundrobin_hktigaf4_test.go (M5 slice 3A). These cases drive
-// orchestrator.SelectNextQueue over a FleetSnapshot directly — the daemon's
+// SelectNextQueue over a FleetSnapshot directly — the daemon's
 // lock/registry projection is exercised by the sibling tests that remain in
 // package daemon.
 //
@@ -16,25 +16,24 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/orchestrator"
 )
 
 // orchTestQueue builds an active QueueSnapshot with `pending` eligible items and
 // the given LOCAL in-flight count and worker ceiling. A zero-pending queue has
 // no active group (non-candidate).
-func orchTestQueue(name, queueID string, pending, localInFlight, workerCap int) orchestrator.QueueSnapshot {
-	var g *orchestrator.GroupSnapshot
+func orchTestQueue(name, queueID string, pending, localInFlight, workerCap int) QueueSnapshot {
+	var g *GroupSnapshot
 	if pending > 0 {
-		items := make([]orchestrator.ItemSnapshot, pending)
+		items := make([]ItemSnapshot, pending)
 		for i := range items {
-			items[i] = orchestrator.ItemSnapshot{
+			items[i] = ItemSnapshot{
 				ItemIdx: i,
 				BeadID:  core.BeadID(name + "-" + string(rune('a'+i))),
 			}
 		}
-		g = &orchestrator.GroupSnapshot{GroupIndex: 0, Eligible: items}
+		g = &GroupSnapshot{GroupIndex: 0, Eligible: items}
 	}
-	return orchestrator.QueueSnapshot{
+	return QueueSnapshot{
 		Name:          name,
 		QueueID:       queueID,
 		Active:        true,
@@ -54,14 +53,14 @@ func orchTestQueue(name, queueID string, pending, localInFlight, workerCap int) 
 func TestSelectNextQueue_PerQueueCapBoundsDispatch(t *testing.T) {
 	t.Parallel()
 
-	f := orchestrator.FleetSnapshot{
-		Queues: []orchestrator.QueueSnapshot{
+	f := FleetSnapshot{
+		Queues: []QueueSnapshot{
 			orchTestQueue("main", "qid-main", 3, 0, 3),       // room
 			orchTestQueue("investigate", "qid-inv", 1, 1, 1), // at cap
 		},
 		RRCursor: 0,
 	}
-	sel, ok := orchestrator.SelectNextQueue(f)
+	sel, ok := SelectNextQueue(f)
 	if !ok {
 		t.Fatal("SelectNextQueue returned ok=false, want a selection from main")
 	}
@@ -75,13 +74,13 @@ func TestSelectNextQueue_PerQueueCapBoundsDispatch(t *testing.T) {
 func TestSelectNextQueue_AllAtCapSelectsNothing(t *testing.T) {
 	t.Parallel()
 
-	f := orchestrator.FleetSnapshot{
-		Queues: []orchestrator.QueueSnapshot{
+	f := FleetSnapshot{
+		Queues: []QueueSnapshot{
 			orchTestQueue("main", "qid-main", 3, 1, 1),
 			orchTestQueue("investigate", "qid-inv", 1, 1, 1),
 		},
 	}
-	if _, ok := orchestrator.SelectNextQueue(f); ok {
+	if _, ok := SelectNextQueue(f); ok {
 		t.Error("SelectNextQueue returned ok=true, want false (both queues at per-queue cap)")
 	}
 }
@@ -95,14 +94,14 @@ func TestSelectNextQueue_AllAtCapSelectsNothing(t *testing.T) {
 func TestSelectNextQueue_LocalCapVsGlobalAsymmetry(t *testing.T) {
 	t.Parallel()
 
-	f := orchestrator.FleetSnapshot{
-		Queues: []orchestrator.QueueSnapshot{
+	f := FleetSnapshot{
+		Queues: []QueueSnapshot{
 			// jessica-sat: 3 pending, LocalInFlight=0 (all in-flight runs are
 			// remote), WorkerCap=4. Must be selectable — no local runs to gate on.
 			orchTestQueue("jessica-sat", "qid-jsat", 3, 0, 4),
 		},
 	}
-	sel, ok := orchestrator.SelectNextQueue(f)
+	sel, ok := SelectNextQueue(f)
 	if !ok {
 		t.Fatal("SelectNextQueue returned ok=false for local=0/cap=4 queue — local cap must NOT block on remote runs (hk-4tjt6)")
 	}
@@ -126,14 +125,14 @@ func TestSelectNextQueue_CursorAdvanceRotatesSelection(t *testing.T) {
 	cursor := 0
 	const ticks = 10
 	for i := 0; i < ticks; i++ {
-		f := orchestrator.FleetSnapshot{
-			Queues: []orchestrator.QueueSnapshot{
+		f := FleetSnapshot{
+			Queues: []QueueSnapshot{
 				orchTestQueue("main", "qid-main", 10, 0, 10),
 				orchTestQueue("investigate", "qid-inv", 10, 0, 10),
 			},
 			RRCursor: cursor,
 		}
-		sel, ok := orchestrator.SelectNextQueue(f)
+		sel, ok := SelectNextQueue(f)
 		if !ok {
 			t.Fatalf("tick %d: SelectNextQueue ok=false, want a selection", i)
 		}
@@ -162,14 +161,14 @@ func TestSelectNextQueue_CursorResetWouldStarve(t *testing.T) {
 	picks := map[string]int{}
 	const ticks = 6
 	for i := 0; i < ticks; i++ {
-		f := orchestrator.FleetSnapshot{
-			Queues: []orchestrator.QueueSnapshot{
+		f := FleetSnapshot{
+			Queues: []QueueSnapshot{
 				orchTestQueue("main", "qid-main", 10, 0, 10),
 				orchTestQueue("investigate", "qid-inv", 10, 0, 10),
 			},
 			RRCursor: 0, // pinned — the anti-pattern
 		}
-		sel, ok := orchestrator.SelectNextQueue(f)
+		sel, ok := SelectNextQueue(f)
 		if !ok {
 			t.Fatalf("tick %d: ok=false", i)
 		}
@@ -189,7 +188,7 @@ func TestSelectNextQueue_CursorResetWouldStarve(t *testing.T) {
 // TestSelectNextQueue_EmptyFleet verifies the zero-queue guard.
 func TestSelectNextQueue_EmptyFleet(t *testing.T) {
 	t.Parallel()
-	if _, ok := orchestrator.SelectNextQueue(orchestrator.FleetSnapshot{}); ok {
+	if _, ok := SelectNextQueue(FleetSnapshot{}); ok {
 		t.Error("SelectNextQueue(empty) returned ok=true, want false")
 	}
 }
@@ -200,21 +199,21 @@ func TestSelectNextQueue_EmptyFleet(t *testing.T) {
 func TestSelectNextQueue_ReturnsAbsoluteItemIdx(t *testing.T) {
 	t.Parallel()
 
-	f := orchestrator.FleetSnapshot{
-		Queues: []orchestrator.QueueSnapshot{{
+	f := FleetSnapshot{
+		Queues: []QueueSnapshot{{
 			Name:      "main",
 			QueueID:   "qid-main",
 			Active:    true,
 			WorkerCap: 4,
-			ActiveGroup: &orchestrator.GroupSnapshot{
+			ActiveGroup: &GroupSnapshot{
 				GroupIndex: 0,
-				Eligible: []orchestrator.ItemSnapshot{
+				Eligible: []ItemSnapshot{
 					{ItemIdx: 2, BeadID: "hk-head"}, // absolute index 2 (items 0,1 terminal)
 				},
 			},
 		}},
 	}
-	sel, ok := orchestrator.SelectNextQueue(f)
+	sel, ok := SelectNextQueue(f)
 	if !ok {
 		t.Fatal("SelectNextQueue ok=false, want a selection")
 	}

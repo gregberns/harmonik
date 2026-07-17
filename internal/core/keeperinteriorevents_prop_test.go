@@ -14,7 +14,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"pgregory.net/rapid"
+	"pgregory.net/rapid" //nolint:depguard // pgregory.net/rapid is the established property-test lib for in-package core tests (26 precedents); see COORD c065
 )
 
 var keeperModelDoneSources = []string{"idle_marker", "transcript_turn", "timeout"}

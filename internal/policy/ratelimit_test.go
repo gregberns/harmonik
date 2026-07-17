@@ -1,7 +1,7 @@
-package policy_test
+package policy
 
 // ratelimit_test.go — pure truth-table tests for the rate-limit hysteresis
-// reducer (policy.StepRateLimit) and the budget-exhausted predicate. These
+// reducer (StepRateLimit) and the budget-exhausted predicate. These
 // migrate the pure decision logic out of the daemon's handlerpause_policy_37zy8
 // tests: no controller, no bus, no RunRegistry — value-in / value-out.
 //
@@ -12,8 +12,6 @@ package policy_test
 
 import (
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/policy"
 )
 
 // TestStepRateLimit_NoTripOnSingleRateLimit: one active event does not trip
@@ -21,10 +19,10 @@ import (
 func TestStepRateLimit_NoTripOnSingleRateLimit(t *testing.T) {
 	t.Parallel()
 
-	v := policy.StepRateLimit(
-		policy.RateLimitState{Consecutive: 0},
-		policy.RateLimitEvent{Active: true},
-		policy.DefaultRateLimitThreshold,
+	v := StepRateLimit(
+		RateLimitState{Consecutive: 0},
+		RateLimitEvent{Active: true},
+		DefaultRateLimitThreshold,
 	)
 	if v.Trip {
 		t.Error("single active event tripped; want no-trip (threshold=2)")
@@ -39,19 +37,19 @@ func TestStepRateLimit_NoTripOnSingleRateLimit(t *testing.T) {
 func TestStepRateLimit_TripOnTwoConsecutiveRateLimits(t *testing.T) {
 	t.Parallel()
 
-	first := policy.StepRateLimit(
-		policy.RateLimitState{Consecutive: 0},
-		policy.RateLimitEvent{Active: true},
-		policy.DefaultRateLimitThreshold,
+	first := StepRateLimit(
+		RateLimitState{Consecutive: 0},
+		RateLimitEvent{Active: true},
+		DefaultRateLimitThreshold,
 	)
 	if first.Trip {
 		t.Fatal("tripped on first active; want no-trip yet")
 	}
 
-	second := policy.StepRateLimit(
+	second := StepRateLimit(
 		first.NewState,
-		policy.RateLimitEvent{Active: true},
-		policy.DefaultRateLimitThreshold,
+		RateLimitEvent{Active: true},
+		DefaultRateLimitThreshold,
 	)
 	if !second.Trip {
 		t.Error("did not trip on second consecutive active; want trip")
@@ -66,12 +64,12 @@ func TestStepRateLimit_TripOnTwoConsecutiveRateLimits(t *testing.T) {
 func TestStepRateLimit_NoTripAfterClearance(t *testing.T) {
 	t.Parallel()
 
-	s := policy.StepRateLimit(policy.RateLimitState{}, policy.RateLimitEvent{Active: true}, policy.DefaultRateLimitThreshold).NewState
+	s := StepRateLimit(RateLimitState{}, RateLimitEvent{Active: true}, DefaultRateLimitThreshold).NewState
 	if s.Consecutive != 1 {
 		t.Fatalf("after first active Consecutive=%d, want 1", s.Consecutive)
 	}
 
-	cleared := policy.StepRateLimit(s, policy.RateLimitEvent{Cleared: true}, policy.DefaultRateLimitThreshold)
+	cleared := StepRateLimit(s, RateLimitEvent{Cleared: true}, DefaultRateLimitThreshold)
 	if cleared.Trip {
 		t.Error("cleared event tripped; want no-trip")
 	}
@@ -79,7 +77,7 @@ func TestStepRateLimit_NoTripAfterClearance(t *testing.T) {
 		t.Errorf("after cleared Consecutive=%d, want 0 (reset)", cleared.NewState.Consecutive)
 	}
 
-	again := policy.StepRateLimit(cleared.NewState, policy.RateLimitEvent{Active: true}, policy.DefaultRateLimitThreshold)
+	again := StepRateLimit(cleared.NewState, RateLimitEvent{Active: true}, DefaultRateLimitThreshold)
 	if again.Trip {
 		t.Error("active after clearance tripped; want no-trip (counter was reset)")
 	}
@@ -94,8 +92,8 @@ func TestStepRateLimit_NoTripAfterClearance(t *testing.T) {
 func TestStepRateLimit_NeitherIsNoOp(t *testing.T) {
 	t.Parallel()
 
-	in := policy.RateLimitState{Consecutive: 1}
-	v := policy.StepRateLimit(in, policy.RateLimitEvent{}, policy.DefaultRateLimitThreshold)
+	in := RateLimitState{Consecutive: 1}
+	v := StepRateLimit(in, RateLimitEvent{}, DefaultRateLimitThreshold)
 	if v.Trip {
 		t.Error("unknown-status event tripped; want no-trip")
 	}
@@ -109,7 +107,7 @@ func TestStepRateLimit_NeitherIsNoOp(t *testing.T) {
 func TestBudgetExhaustedTrips(t *testing.T) {
 	t.Parallel()
 
-	if !policy.BudgetExhaustedTrips() {
+	if !BudgetExhaustedTrips() {
 		t.Error("BudgetExhaustedTrips()=false, want true (single-hit trip)")
 	}
 }

@@ -1,8 +1,8 @@
-package policy_test
+package policy
 
 // drain_test.go — pure truth-table tests for the quiesce/drain DECISION
-// predicates: policy.ClassifyDrain (GenuineDrain semantics), policy.SleepVeto
-// (the SS-INV-005 veto strands), and policy.HasLatentWork (§4.2 latent-work).
+// predicates: ClassifyDrain (GenuineDrain semantics), SleepVeto
+// (the SS-INV-005 veto strands), and HasLatentWork (§4.2 latent-work).
 //
 // These assert the DECISION over projected scalar inputs — no DrainDetector, no
 // br-ready reads, no worktree readdir, no bus. The daemon-side fact-gathering,
@@ -14,15 +14,13 @@ package policy_test
 import (
 	"strings"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/policy"
 )
 
 // --- ClassifyDrain -----------------------------------------------------------
 
 func TestClassifyDrain_EmptyIsDrained(t *testing.T) {
 	t.Parallel()
-	if got := policy.ClassifyDrain(policy.DrainSnapshot{}); got != policy.DrainStateDrained {
+	if got := ClassifyDrain(DrainSnapshot{}); got != DrainStateDrained {
 		t.Fatalf("empty snapshot: got %q, want DRAINED", got)
 	}
 }
@@ -30,8 +28,8 @@ func TestClassifyDrain_EmptyIsDrained(t *testing.T) {
 func TestClassifyDrain_UnsureShortCircuits(t *testing.T) {
 	t.Parallel()
 	// Unsure wins even when a work axis is non-empty (fail-closed).
-	s := policy.DrainSnapshot{Unsure: true, ReadyCount: 5}
-	if got := policy.ClassifyDrain(s); got != policy.DrainStateUnsure {
+	s := DrainSnapshot{Unsure: true, ReadyCount: 5}
+	if got := ClassifyDrain(s); got != DrainStateUnsure {
 		t.Fatalf("unsure snapshot: got %q, want UNSURE", got)
 	}
 }
@@ -40,7 +38,7 @@ func TestClassifyDrain_UnsureShortCircuits(t *testing.T) {
 // work axes independently classifies as HAS_WORK.
 func TestClassifyDrain_EachAxisIsWork(t *testing.T) {
 	t.Parallel()
-	cases := map[string]policy.DrainSnapshot{
+	cases := map[string]DrainSnapshot{
 		"ready":             {ReadyCount: 1},
 		"in_progress":       {InProgressCount: 1},
 		"registry_runs":     {RegistryRuns: 1},
@@ -51,7 +49,7 @@ func TestClassifyDrain_EachAxisIsWork(t *testing.T) {
 		"blocked_open_epic": {BlockedByOpenEpic: 1},
 	}
 	for name, s := range cases {
-		if got := policy.ClassifyDrain(s); got != policy.DrainStateHasWork {
+		if got := ClassifyDrain(s); got != DrainStateHasWork {
 			t.Errorf("%s: got %q, want HAS_WORK", name, got)
 		}
 	}
@@ -62,8 +60,8 @@ func TestClassifyDrain_EachAxisIsWork(t *testing.T) {
 // snapshot with only NeedsDecomposition is DRAINED.
 func TestClassifyDrain_NeedsDecompositionNotWork(t *testing.T) {
 	t.Parallel()
-	s := policy.DrainSnapshot{NeedsDecomposition: 3}
-	if got := policy.ClassifyDrain(s); got != policy.DrainStateDrained {
+	s := DrainSnapshot{NeedsDecomposition: 3}
+	if got := ClassifyDrain(s); got != DrainStateDrained {
 		t.Fatalf("needs-decomposition only: got %q, want DRAINED (GenuineDrain drops it)", got)
 	}
 }
@@ -72,14 +70,14 @@ func TestClassifyDrain_NeedsDecompositionNotWork(t *testing.T) {
 
 func TestHasLatentWork_EmptyIsFalse(t *testing.T) {
 	t.Parallel()
-	if policy.HasLatentWork(policy.DrainSnapshot{}) {
+	if HasLatentWork(DrainSnapshot{}) {
 		t.Fatal("empty snapshot: got true, want false")
 	}
 }
 
 func TestHasLatentWork_UnsureIsLatent(t *testing.T) {
 	t.Parallel()
-	if !policy.HasLatentWork(policy.DrainSnapshot{Unsure: true}) {
+	if !HasLatentWork(DrainSnapshot{Unsure: true}) {
 		t.Fatal("unsure snapshot: got false, want true")
 	}
 }
@@ -88,14 +86,14 @@ func TestHasLatentWork_UnsureIsLatent(t *testing.T) {
 // ClassifyDrain, HasLatentWork counts NeedsDecomposition as latent work.
 func TestHasLatentWork_NeedsDecompositionIsLatent(t *testing.T) {
 	t.Parallel()
-	if !policy.HasLatentWork(policy.DrainSnapshot{NeedsDecomposition: 1}) {
+	if !HasLatentWork(DrainSnapshot{NeedsDecomposition: 1}) {
 		t.Fatal("needs-decomposition: got false, want true")
 	}
 }
 
 func TestHasLatentWork_EachDispatchAxis(t *testing.T) {
 	t.Parallel()
-	cases := map[string]policy.DrainSnapshot{
+	cases := map[string]DrainSnapshot{
 		"ready":             {ReadyCount: 1},
 		"in_progress":       {InProgressCount: 1},
 		"registry_runs":     {RegistryRuns: 1},
@@ -106,7 +104,7 @@ func TestHasLatentWork_EachDispatchAxis(t *testing.T) {
 		"blocked_open_epic": {BlockedByOpenEpic: 1},
 	}
 	for name, s := range cases {
-		if !policy.HasLatentWork(s) {
+		if !HasLatentWork(s) {
 			t.Errorf("%s: got false, want true", name)
 		}
 	}
@@ -116,7 +114,7 @@ func TestHasLatentWork_EachDispatchAxis(t *testing.T) {
 
 func TestSleepVeto_EmptyNotVetoed(t *testing.T) {
 	t.Parallel()
-	res := policy.SleepVeto(policy.DrainSnapshot{})
+	res := SleepVeto(DrainSnapshot{})
 	if res.Vetoed() {
 		t.Fatalf("empty snapshot: got vetoed (%+v), want not vetoed", res)
 	}
@@ -126,12 +124,12 @@ func TestSleepVeto_EmptyNotVetoed(t *testing.T) {
 // with reasons and no strands, even when work axes are non-empty.
 func TestSleepVeto_UnsureShortCircuits(t *testing.T) {
 	t.Parallel()
-	s := policy.DrainSnapshot{
+	s := DrainSnapshot{
 		Unsure:        true,
 		UnsureReasons: []string{"nil epic seam"},
 		ReadyCount:    9, // would strand, but Unsure wins
 	}
-	res := policy.SleepVeto(s)
+	res := SleepVeto(s)
 	if !res.Unsure {
 		t.Fatal("want Unsure=true")
 	}
@@ -150,7 +148,7 @@ func TestSleepVeto_UnsureShortCircuits(t *testing.T) {
 // fixed axis ORDER preserved from quiesce.go vetoCheck.
 func TestSleepVeto_StrandOrderingAndText(t *testing.T) {
 	t.Parallel()
-	s := policy.DrainSnapshot{
+	s := DrainSnapshot{
 		ReadyCount:        1,
 		InProgressCount:   2,
 		RegistryRuns:      3,
@@ -170,7 +168,7 @@ func TestSleepVeto_StrandOrderingAndText(t *testing.T) {
 		"7 failed archive(s)",
 		"8 bead(s) blocked by open epic(s)",
 	}
-	res := policy.SleepVeto(s)
+	res := SleepVeto(s)
 	if strings.Join(res.Strands, ", ") != strings.Join(want, ", ") {
 		t.Fatalf("strands mismatch:\n got %q\nwant %q", res.Strands, want)
 	}
@@ -181,20 +179,20 @@ func TestSleepVeto_SingleAxis(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
-		snap policy.DrainSnapshot
+		snap DrainSnapshot
 		want string
 	}{
-		{"ready", policy.DrainSnapshot{ReadyCount: 1}, "ready bead"},
-		{"in_progress", policy.DrainSnapshot{InProgressCount: 1}, "in-progress bead"},
-		{"registry_runs", policy.DrainSnapshot{RegistryRuns: 1}, "in-flight run"},
-		{"live_worktrees", policy.DrainSnapshot{LiveWorktrees: 1}, "live worktree"},
-		{"queued", policy.DrainSnapshot{QueuedCount: 1}, "queued item"},
-		{"paused_queues", policy.DrainSnapshot{PausedQueues: 1}, "paused queue"},
-		{"failed_archives", policy.DrainSnapshot{FailedArchives: 1}, "failed archive"},
-		{"blocked_open_epic", policy.DrainSnapshot{BlockedByOpenEpic: 1}, "blocked by open epic"},
+		{"ready", DrainSnapshot{ReadyCount: 1}, "ready bead"},
+		{"in_progress", DrainSnapshot{InProgressCount: 1}, "in-progress bead"},
+		{"registry_runs", DrainSnapshot{RegistryRuns: 1}, "in-flight run"},
+		{"live_worktrees", DrainSnapshot{LiveWorktrees: 1}, "live worktree"},
+		{"queued", DrainSnapshot{QueuedCount: 1}, "queued item"},
+		{"paused_queues", DrainSnapshot{PausedQueues: 1}, "paused queue"},
+		{"failed_archives", DrainSnapshot{FailedArchives: 1}, "failed archive"},
+		{"blocked_open_epic", DrainSnapshot{BlockedByOpenEpic: 1}, "blocked by open epic"},
 	}
 	for _, c := range cases {
-		res := policy.SleepVeto(c.snap)
+		res := SleepVeto(c.snap)
 		if !res.Vetoed() {
 			t.Errorf("%s: want vetoed", c.name)
 			continue
@@ -209,7 +207,7 @@ func TestSleepVeto_SingleAxis(t *testing.T) {
 // veto strand (vetoCheck never tested it).
 func TestSleepVeto_NeedsDecompositionNotStrand(t *testing.T) {
 	t.Parallel()
-	res := policy.SleepVeto(policy.DrainSnapshot{NeedsDecomposition: 5})
+	res := SleepVeto(DrainSnapshot{NeedsDecomposition: 5})
 	if res.Vetoed() {
 		t.Fatalf("needs-decomposition only: got vetoed (%v), want not vetoed", res.Strands)
 	}

@@ -1,10 +1,10 @@
-package hook_test
+package hook
 
 // sessionstore_test.go — standalone unit tests for the pure CHB-025 hook-relay
 // state machine (internal/hook). These prove the dedup / registry / agent_ready
 // / WaitForOutcome domain is fully testable WITHOUT standing up the daemon: no
 // socket, no bus, no clock, no UUID. They exercise only the exported surface of
-// hook.SessionStore.
+// SessionStore.
 //
 // Migrated from internal/daemon/hookrelay_chb025_test.go and
 // internal/daemon/hookrelay_waitforoutcome_hkgql2020_test.go (M5 slice 1).
@@ -21,8 +21,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/gregberns/harmonik/internal/hook"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,9 +38,9 @@ func hookFixtureMakePayload(t *testing.T, summary string) json.RawMessage {
 	return pl
 }
 
-// hookFixtureMakeEnvelope builds a hook.RelayEnvelope for Dispatch calls.
-func hookFixtureMakeEnvelope(runID, claudeSessionID, msgType string, payload json.RawMessage) hook.RelayEnvelope {
-	return hook.RelayEnvelope{
+// hookFixtureMakeEnvelope builds a RelayEnvelope for Dispatch calls.
+func hookFixtureMakeEnvelope(runID, claudeSessionID, msgType string, payload json.RawMessage) RelayEnvelope {
+	return RelayEnvelope{
 		Type:             msgType,
 		RunID:            runID,
 		ClaudeSessionID:  claudeSessionID,
@@ -73,7 +71,7 @@ func TestSessionStore_MultiStopDedup(t *testing.T) {
 	const runID = "run-multi-stop-01"
 	const sessionID = "claude-sess-multi-stop-01"
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	payloads := []json.RawMessage{
@@ -111,7 +109,7 @@ func TestSessionStore_StalePostCloseArrival(t *testing.T) {
 	const runID = "run-stale-01"
 	const sessionID = "claude-sess-stale-01"
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	live := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "live outcome"))
@@ -139,15 +137,15 @@ func TestSessionStore_StalePostCloseArrival(t *testing.T) {
 // type or missing run_id/claude_session_id → bad_envelope.
 func TestSessionStore_BadEnvelope(t *testing.T) {
 	t.Parallel()
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 
-	if ack := store.Dispatch(hook.RelayEnvelope{Type: "", RunID: "r", ClaudeSessionID: "s"}); ack.Status != "bad_envelope" {
+	if ack := store.Dispatch(RelayEnvelope{Type: "", RunID: "r", ClaudeSessionID: "s"}); ack.Status != "bad_envelope" {
 		t.Errorf("empty type: status=%q, want bad_envelope", ack.Status)
 	}
-	if ack := store.Dispatch(hook.RelayEnvelope{Type: "outcome_emitted", RunID: "", ClaudeSessionID: "s"}); ack.Status != "bad_envelope" {
+	if ack := store.Dispatch(RelayEnvelope{Type: "outcome_emitted", RunID: "", ClaudeSessionID: "s"}); ack.Status != "bad_envelope" {
 		t.Errorf("empty run_id: status=%q, want bad_envelope", ack.Status)
 	}
-	if ack := store.Dispatch(hook.RelayEnvelope{Type: "outcome_emitted", RunID: "r", ClaudeSessionID: ""}); ack.Status != "bad_envelope" {
+	if ack := store.Dispatch(RelayEnvelope{Type: "outcome_emitted", RunID: "r", ClaudeSessionID: ""}); ack.Status != "bad_envelope" {
 		t.Errorf("empty claude_session_id: status=%q, want bad_envelope", ack.Status)
 	}
 }
@@ -161,7 +159,7 @@ func TestSessionStore_UnknownType(t *testing.T) {
 	const runID = "run-unknown-01"
 	const sessionID = "claude-sess-unknown-01"
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	for _, typ := range []string{"agent_heartbeat", "agent_rate_limited", "launch_initiated"} {
@@ -186,7 +184,7 @@ func TestSessionStore_AgentReadyDispatch_TriggersCallback(t *testing.T) {
 	const runID = "run-agent-ready-01"
 	const sessionID = "claude-sess-agent-ready-01"
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	called := make(chan struct{}, 1)
@@ -217,7 +215,7 @@ func TestSessionStore_AgentReadyDispatch_NoCallbackIsNoOp(t *testing.T) {
 	const runID = "run-agent-ready-noop-01"
 	const sessionID = "claude-sess-agent-ready-noop-01"
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	env := hookFixtureMakeEnvelope(runID, sessionID, "agent_ready", nil)
@@ -234,7 +232,7 @@ func TestSessionStore_LaunchInitiated_DoesNotFireCallback(t *testing.T) {
 	const runID = "run-launch-initiated-01"
 	const sessionID = "claude-sess-launch-initiated-01"
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	fired := false
@@ -260,7 +258,7 @@ func TestWaitForOutcome_AlreadyPresent(t *testing.T) {
 	const runID = "run-wait-present-01"
 	const sessionID = "claude-sess-wait-present-01"
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	env := hookFixtureMakeEnvelope(runID, sessionID, "outcome_emitted", hookFixtureMakePayload(t, "pre-existing outcome"))
@@ -300,7 +298,7 @@ func TestWaitForOutcome_BlocksThenUnblocks(t *testing.T) {
 	const runID = "run-wait-block-01"
 	const sessionID = "claude-sess-wait-block-01"
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	type result struct {
@@ -343,7 +341,7 @@ func TestWaitForOutcome_CtxCancel(t *testing.T) {
 	const runID = "run-wait-cancel-01"
 	const sessionID = "claude-sess-wait-cancel-01"
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -386,7 +384,7 @@ func TestWaitForOutcome_MultipleWaiters(t *testing.T) {
 	const sessionID = "claude-sess-wait-multi-01"
 	const numWaiters = 5
 
-	store := hook.NewSessionStore()
+	store := NewSessionStore()
 	store.RegisterHookSession(runID, sessionID)
 
 	type result struct {

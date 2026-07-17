@@ -1,9 +1,9 @@
-package policy_test
+package policy
 
 // gate_test.go — pure truth-table tests for the DOT-gate DECISION predicates:
-// policy.ParseGateVerdict (gate-verdict.json schema+enum validation),
-// policy.MechanismDecision (bool→GateAction per §6.4), and
-// policy.GateEvalFailureOutcome (the structural pre-eval FAIL Outcome).
+// ParseGateVerdict (gate-verdict.json schema+enum validation),
+// MechanismDecision (bool→GateAction per §6.4), and
+// GateEvalFailureOutcome (the structural pre-eval FAIL Outcome).
 //
 // These assert the DECISION over raw bytes / scalars — no subprocess, no
 // verdict-file I/O, no paste-inject, no runner. The daemon-side effect coverage
@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/policy"
 )
 
 func TestParseGateVerdict(t *testing.T) {
@@ -81,7 +80,7 @@ func TestParseGateVerdict(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := policy.ParseGateVerdict([]byte(tc.data))
+			got, err := ParseGateVerdict([]byte(tc.data))
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("ParseGateVerdict(%q) = %q, want error", tc.data, got)
@@ -99,17 +98,17 @@ func TestParseGateVerdict(t *testing.T) {
 }
 
 func TestMechanismDecision(t *testing.T) {
-	if got := policy.MechanismDecision(true); got != core.GateActionAllow {
+	if got := MechanismDecision(true); got != core.GateActionAllow {
 		t.Fatalf("MechanismDecision(true) = %q, want %q", got, core.GateActionAllow)
 	}
-	if got := policy.MechanismDecision(false); got != core.GateActionDeny {
+	if got := MechanismDecision(false); got != core.GateActionDeny {
 		t.Fatalf("MechanismDecision(false) = %q, want %q", got, core.GateActionDeny)
 	}
 }
 
 func TestGateEvalFailureOutcome(t *testing.T) {
 	const reason = "gate_ref \"x\" not found in ControlPoint registry"
-	got := policy.GateEvalFailureOutcome(reason)
+	got := GateEvalFailureOutcome(reason)
 
 	if got.Status != core.OutcomeStatusFail {
 		t.Errorf("Status = %q, want %q", got.Status, core.OutcomeStatusFail)

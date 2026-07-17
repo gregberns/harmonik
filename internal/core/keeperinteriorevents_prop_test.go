@@ -10,6 +10,7 @@ package core
 // all-valid -> true.
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -261,5 +262,5 @@ func jsonEqual(t *testing.T, a, b any) bool {
 	if err != nil {
 		t.Fatalf("json.Marshal(b): %v", err)
 	}
-	return string(ab) == string(bb)
+	return bytes.Equal(ab, bb)
 }

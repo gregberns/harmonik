@@ -42,7 +42,6 @@ func TestFirstPendingGroupIndex(t *testing.T) {
 		{"pending after a failure group", []string{completeWithFailure, pending}, 1},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := orchestrator.FirstPendingGroupIndex(tc.statuses); got != tc.want {
@@ -105,7 +104,6 @@ func TestAllGroupsSucceeded(t *testing.T) {
 		{"one failed → not all succeeded", []string{completeSuccess, completeWithFailure}, false},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			if got := orchestrator.AllGroupsSucceeded(tc.statuses); got != tc.want {

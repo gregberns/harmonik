@@ -59,7 +59,7 @@ const (
 // health/live-disable state — WITHOUT the driver ever learning about workers
 // (RS-017 twin-blindness: selection lives at the composition root, not the
 // driver). It is nil for the tmux path (nothing to bind).
-func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (handler.Substrate, func(*workers.Registry)) {
+func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry)) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
 		return tmuxSub, nil
 	}

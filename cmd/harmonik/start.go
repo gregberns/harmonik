@@ -68,7 +68,7 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 		startUsage(stdout)
 		// A bare `start` with no role is a usage error; an explicit --help is not.
 		if len(args) == 0 {
-			fmt.Fprintln(stderr, "harmonik start: a role is required — `start captain`, `start crew <name>`, `start commodore`, `start admiral`, or `start assessor`")
+			_, _ = fmt.Fprintln(stderr, "harmonik start: a role is required — `start captain`, `start crew <name>`, `start commodore`, `start admiral`, or `start assessor`") //nolint:errcheck // best-effort
 			return 2
 		}
 		return 0
@@ -146,7 +146,7 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 			},
 		}, stderr)
 	default:
-		fmt.Fprintf(stderr, "harmonik start: unknown role %q — roles are: captain, crew, commodore, admiral, assessor\n", role)
+		_, _ = fmt.Fprintf(stderr, "harmonik start: unknown role %q — roles are: captain, crew, commodore, admiral, assessor\n", role) //nolint:errcheck // best-effort
 		return 2
 	}
 }
@@ -235,7 +235,8 @@ func runStartRole(args []string, spec startRoleSpec, stderr io.Writer) int {
 // startUsage prints the `harmonik start` umbrella help. The per-role flag detail
 // lives on the downstream launchers (captain.go / crew.go).
 func startUsage(w io.Writer) {
-	fmt.Fprint(w, `harmonik start — launch a captain, crew, commodore, admiral, or assessor (keeper auto-armed)
+	_, _ = fmt.Fprint(w, //nolint:errcheck // best-effort
+		`harmonik start — launch a captain, crew, commodore, admiral, or assessor (keeper auto-armed)
 
 USAGE
   harmonik start captain                       # all defaults

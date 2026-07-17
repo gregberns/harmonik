@@ -346,7 +346,7 @@ func TestCodexB_FreshVsFrozenLive(t *testing.T) {
 				"wire.ndjson produced by codex-A (`make recapture-codex-corpus`)")
 		return
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: CODEX_FRESH_CAPTURE is an operator-set test env var, not user input
 	if err != nil {
 		codexDriftRequireOrSkip(t, fmt.Sprintf("read fresh capture %s: %v", path, err))
 		return

@@ -44,5 +44,5 @@ func versionLine() string {
 
 // writeVersion writes the version line followed by a newline to w.
 func writeVersion(w io.Writer) {
-	fmt.Fprintln(w, versionLine())
+	_, _ = fmt.Fprintln(w, versionLine()) //nolint:errcheck // best-effort
 }

@@ -73,6 +73,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -402,7 +403,7 @@ func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
 			Name:      sshHost,
 			Transport: "ssh",
 			Host:      sshHost,
-			OS:        "linux",
+			OS:        runtime.GOOS, // localhost worker == this host; hardcoded "linux" was wrong on darwin (latent trap, c063/c066/c068)
 			RepoPath:  workerDir,
 			MaxSlots:  1,
 			Enabled:   true,

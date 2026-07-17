@@ -771,6 +771,90 @@ func Start(ctx context.Context, cfg Config) error {
 // which passes a zero-value daemonTestHooks.  Test callers use StartForTesting
 // (internal/daemon/testopts_test.go) which supplies non-nil hook fields.
 //
+// acquirePidfile performs PL-002 step 1: acquire the advisory pidfile lock at
+// <ProjectDir>/.harmonik/daemon.pid (hk-iarcy). It returns the acquired
+// *lifecycle.Pidfile so the CALLER owns the defer Release() — the lock must be
+// held for the whole daemon lifetime, so a helper-scope defer would release it
+// immediately (the same lifetime trap as jsonlWriter). Returns (nil, nil) when
+// ProjectDir is empty (unit-test mode); pidfile acquisition is skipped.
+//
+// AcquirePidfile constructs the path internally as <ProjectDir>/.harmonik/daemon.pid
+// (PL-002b). Extracted from startWithHooks (giant-retirement boot-config B2).
+func acquirePidfile(cfg Config) (*lifecycle.Pidfile, error) {
+	if cfg.ProjectDir == "" {
+		return nil, nil
+	}
+	// mkdir-p <ProjectDir>/.harmonik/ so AcquirePidfile can open the file.
+	harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if mkErr := os.MkdirAll(harmonikDir, 0o755); mkErr != nil {
+		return nil, fmt.Errorf("daemon.Start: mkdir-p .harmonik: %w", mkErr)
+	}
+
+	pid := os.Getpid()
+	pgid := syscall.Getpgrp()
+	// Generate a UUIDv7 as the daemon instance ID (PL-005 step 0).
+	instanceUID, uidErr := uuid.NewV7()
+	if uidErr != nil {
+		return nil, fmt.Errorf("daemon.Start: generate instance ID: %w", uidErr)
+	}
+
+	pidfile, acquireErr := lifecycle.AcquirePidfile(cfg.ProjectDir, pid, pgid, instanceUID.String())
+	if acquireErr != nil {
+		return nil, fmt.Errorf("daemon.Start: pidfile: %w", acquireErr)
+	}
+	return pidfile, nil
+}
+
+// runBootPreflights runs the boot-time pre-flight maintenance steps (PL-005
+// step 0 supporting work) and returns the restart-backoff delay. Each step
+// self-guards on ProjectDir + its skip flag so unit-test mode short-circuits
+// cleanly. The delay is NOT slept here (hk-uzvt9: the sleep belongs after the
+// socket bind). Extracted from startWithHooks (giant-retirement boot-config B2).
+func runBootPreflights(ctx context.Context, cfg Config) time.Duration {
+	// WAL-checkpoint pre-flight (hk-5dewt): if .beads/beads.db-wal exists and
+	// exceeds 1 MB, run PRAGMA wal_checkpoint(TRUNCATE) via sqlite3 before the
+	// first br write. Non-fatal; no-op when sqlite3 is not on PATH. A failure is
+	// logged and swallowed — it never blocks startup.
+	if cfg.ProjectDir != "" && !cfg.SkipWALCheckpoint {
+		if err := runWALCheckpointPreflight(ctx, cfg.ProjectDir); err != nil {
+			logBootPreflightWarn("WAL checkpoint", err)
+		}
+	}
+
+	// .br_history/ rotation pre-flight (hk-5dewt): archive all but the 20
+	// most-recent snapshots so per-write scan cost stays sub-second. Non-fatal.
+	if cfg.ProjectDir != "" && !cfg.SkipBrHistoryRotation {
+		if err := runBrHistoryRotationPreflight(ctx, cfg.ProjectDir, brHistoryRotationDefaultKeep); err != nil {
+			logBootPreflightWarn(".br_history rotation", err)
+		}
+	}
+
+	// Restart-backoff pre-flight (hk-7t9g1): record the boot and compute an
+	// exponentially-increasing delay when the daemon has been restarted rapidly.
+	// applyBootBackoff only records + returns the duration; the sleep is deferred.
+	var bootBackoffDelay time.Duration
+	if cfg.ProjectDir != "" && !cfg.SkipRestartBackoff {
+		bootBackoffDelay = applyBootBackoff(ctx, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RestartBackoff)
+	}
+
+	// Beads-union driver auto-config pre-flight (hk-r0y1o): register
+	// merge.beads-union.{name,driver} in .git/config once per clone. Non-fatal.
+	if cfg.ProjectDir != "" && !cfg.SkipBeadsMergeDriverConfig {
+		ensureBeadsMergeDriver(ctx, cfg.ProjectDir)
+	}
+
+	return bootBackoffDelay
+}
+
+// logBootPreflightWarn writes a best-effort warning for a non-fatal boot
+// pre-flight failure via the default logger, matching the structured-warning
+// idiom used elsewhere in startup (e.g. the event-ID HWM warnings). Pre-flight
+// errors never block boot.
+func logBootPreflightWarn(step string, err error) {
+	log.Printf("warn: daemon startup: %s pre-flight failed (non-fatal): %v", step, err)
+}
+
 // Bead ref: hk-j192n.
 func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) error {
 	// Step 1 (PL-002, hk-iarcy): acquire the advisory pidfile lock.
@@ -782,29 +866,13 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Follow-up: patch bead body / spec cross-ref for the .harmonik/run/ path form.
 	//
 	// Skip pidfile acquisition when ProjectDir is empty (unit-test mode).
-	var pidfile *lifecycle.Pidfile
-	if cfg.ProjectDir != "" {
-		// mkdir-p <ProjectDir>/.harmonik/ so AcquirePidfile can open the file.
-		harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if mkErr := os.MkdirAll(harmonikDir, 0o755); mkErr != nil {
-			return fmt.Errorf("daemon.Start: mkdir-p .harmonik: %w", mkErr)
-		}
-
-		pid := os.Getpid()
-		pgid := syscall.Getpgrp()
-		// Generate a UUIDv7 as the daemon instance ID (PL-005 step 0).
-		instanceUID, uidErr := uuid.NewV7()
-		if uidErr != nil {
-			return fmt.Errorf("daemon.Start: generate instance ID: %w", uidErr)
-		}
-		instanceID := instanceUID.String()
-
-		var acquireErr error
-		pidfile, acquireErr = lifecycle.AcquirePidfile(cfg.ProjectDir, pid, pgid, instanceID)
-		if acquireErr != nil {
-			return fmt.Errorf("daemon.Start: pidfile: %w", acquireErr)
-		}
+	// The outer shell owns the defer so the lock is held for the whole daemon
+	// lifetime (a defer inside acquirePidfile would release it immediately).
+	pidfile, pidErr := acquirePidfile(cfg)
+	if pidErr != nil {
+		return pidErr
+	}
+	if pidfile != nil {
 		defer func() { _ = pidfile.Release() }()
 	}
 
@@ -886,52 +954,12 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		cfg.ProjectCfg = projectCfg
 	}
 
-	// WAL-checkpoint pre-flight (hk-5dewt): if .beads/beads.db-wal exists and
-	// exceeds 1 MB, run PRAGMA wal_checkpoint(TRUNCATE) via sqlite3 before the
-	// first br write.  This prevents the 10s wall-clock timeout in
-	// brcli/timeout.go from firing when WAL bloat causes `br close` to take
-	// >10s (dogfood-2/3/4 diagnosis: 0.35s on clean DB vs 19.4s with 12MB WAL).
-	// The call is non-fatal and is a no-op when sqlite3 is not on PATH.
-	// Skipped when SkipWALCheckpoint is true (test isolation) or when ProjectDir
-	// is empty (unit-test mode).
-	if cfg.ProjectDir != "" && !cfg.SkipWALCheckpoint {
-		_ = runWALCheckpointPreflight(ctx, cfg.ProjectDir)
-	}
-
-	// .br_history/ rotation pre-flight (hk-5dewt): each `br` write appends a
-	// ~1.2 MB snapshot to .beads/.br_history/. With 200+ entries (226 MB) the
-	// per-write scan cost reaches ~19.5 s, exceeding the 10 s brcli timeout
-	// regardless of WAL state. Archiving all but the 20 most-recent snapshots
-	// restores sub-second write latency (validated: 19.5 s → 0.15 s).
-	// The call is non-fatal. Skipped when SkipBrHistoryRotation is true (test
-	// isolation) or when ProjectDir is empty (unit-test mode).
-	if cfg.ProjectDir != "" && !cfg.SkipBrHistoryRotation {
-		_ = runBrHistoryRotationPreflight(ctx, cfg.ProjectDir, brHistoryRotationDefaultKeep)
-	}
-
-	// Restart-backoff pre-flight (hk-7t9g1): read the persistent boot record and
-	// compute an exponentially-increasing delay when the daemon has been
-	// restarted rapidly within the last hour. This throttles the crash-and-re-pull
-	// loop (incident: 10 boots in a day, each auto-pulling br ready). The delay is
-	// NOT slept here — applyBootBackoff only records the boot and returns the
-	// duration; the actual sleep happens later, via sleepBootBackoff, AFTER the
-	// socket-bind block (hk-uzvt9: sleeping here blocked bind long enough for the
-	// supervisor's health-window to see no socket and false-revert under rapid
-	// restart). Skipped when SkipRestartBackoff is true (test isolation) or when
-	// ProjectDir is empty (unit-test mode).
-	var bootBackoffDelay time.Duration
-	if cfg.ProjectDir != "" && !cfg.SkipRestartBackoff {
-		bootBackoffDelay = applyBootBackoff(ctx, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RestartBackoff)
-	}
-
-	// Beads-union driver auto-config pre-flight (hk-r0y1o): register
-	// merge.beads-union.{name,driver} in .git/config once per clone so git
-	// invokes the union merge driver instead of the default text merge when
-	// merging .beads/issues.jsonl. The call is non-fatal. Skipped when
-	// SkipBeadsMergeDriverConfig is true (test isolation) or ProjectDir is empty.
-	if cfg.ProjectDir != "" && !cfg.SkipBeadsMergeDriverConfig {
-		ensureBeadsMergeDriver(ctx, cfg.ProjectDir)
-	}
+	// Boot pre-flight maintenance (WAL checkpoint, .br_history rotation,
+	// restart-backoff record, beads-union merge-driver config). Each step
+	// self-guards on ProjectDir + its skip flag. Returns the restart-backoff
+	// delay, which is NOT slept here — the actual sleep happens later, via
+	// sleepBootBackoff, AFTER the socket-bind block (hk-uzvt9).
+	bootBackoffDelay := runBootPreflights(ctx, cfg)
 
 	// Instantiate the RedactionRegistry (HC-032; hk-8i31.83).
 	// No seed patterns here — handlers call registry.RegisterPattern when they

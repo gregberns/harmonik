@@ -341,6 +341,10 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	// nil → byte-identical no-op.
 	wireTap, wtErr := openWireTap()
 	if wtErr != nil {
+		// The subprocess is already spawned; reap it (and its runWait /
+		// drainStderr goroutines) before returning, or it leaks with no
+		// handle until the daemon orphan sweep. Kill is best-effort here.
+		_ = sess.Kill(ctx)
 		return nil, nil, wtErr
 	}
 	var wireWriter io.Writer // nil interface when wireTap is nil (must NOT wrap a nil *os.File)
@@ -425,6 +429,9 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 	// the exec path — only active when HARMONIK_WIRE_CAPTURE_DIR is set.
 	wireTap, wtErr := openWireTap()
 	if wtErr != nil {
+		// The substrate window is already spawned; reap it before returning so
+		// the hosted subprocess does not leak until the daemon orphan sweep.
+		_ = adapted.Kill(ctx)
 		return nil, nil, wtErr
 	}
 	var wireWriter io.Writer // nil interface when wireTap is nil

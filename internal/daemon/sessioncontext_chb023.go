@@ -271,6 +271,28 @@ type SessionIDInterceptor struct {
 	buf       bytes.Buffer // line accumulator
 	firedOnce bool
 	cb        func(string) // called with claude_session_id on first match
+
+	// capsSeen is true once the first handler_capabilities line has been
+	// decoded (HC-009 negotiation runs exactly once, on that line).
+	capsSeen bool
+
+	// selectedVersion is the wire-protocol version selected by HC-009
+	// negotiation (max of the daemon/handler intersection). Zero until
+	// negotiation succeeds.
+	selectedVersion int
+
+	// negoErr is the sticky HC-009 failure: either an empty version
+	// intersection or handler_capabilities absent within
+	// HandlerCapabilitiesTimeout. Once set, every subsequent Read returns it,
+	// which terminates the Watcher's read-loop and surfaces agent_failed with
+	// an ErrProtocolMismatch-classed error (§8.7).
+	negoErr error
+
+	// capsTimer enforces the HandlerCapabilitiesTimeout (5s) abort of §7.2:
+	// if no handler_capabilities line is observed within the window, negoErr
+	// is set and inner is closed (when it is an io.Closer) so a blocked Read
+	// unwedges and observes the mismatch.
+	capsTimer *time.Timer
 }
 
 // newSessionIDInterceptor wraps inner with a SessionIDInterceptor that fires cb
@@ -287,7 +309,79 @@ type SessionIDInterceptor struct {
 // that channel before spawning the Watcher, achieving the ordering contract without
 // blocking the Watcher goroutine.
 func newSessionIDInterceptor(inner io.Reader, cb func(string)) *SessionIDInterceptor {
-	return &SessionIDInterceptor{inner: inner, cb: cb}
+	s := &SessionIDInterceptor{inner: inner, cb: cb}
+	// HC-009 / §7.2: abort if handler_capabilities is absent within
+	// HandlerCapabilitiesTimeout of subprocess spawn (the interceptor is
+	// constructed inside Handler.Launch, immediately around cmd.Start).
+	// Closing inner (the session stdout io.Pipe reader) unwedges a Read that
+	// is blocked waiting on a silent handler so the mismatch is observed
+	// promptly rather than at the session ceiling.
+	s.capsTimer = time.AfterFunc(capsAbsentTimeout, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.capsSeen || s.negoErr != nil {
+			return
+		}
+		s.negoErr = fmt.Errorf(
+			"daemon: version negotiation: handler_capabilities absent within %s: %w",
+			capsAbsentTimeout, handlercontract.ErrProtocolMismatch)
+		if c, ok := s.inner.(io.Closer); ok {
+			_ = c.Close()
+		}
+	})
+	return s
+}
+
+// SelectedVersion returns the wire-protocol version selected by HC-009
+// negotiation, or 0 if negotiation has not (yet) succeeded.
+func (s *SessionIDInterceptor) SelectedVersion() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.selectedVersion
+}
+
+// NegotiationErr returns the sticky HC-009 failure (empty version
+// intersection, or capabilities-absent timeout), or nil.
+func (s *SessionIDInterceptor) NegotiationErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.negoErr
+}
+
+// daemonSupportedWireVersions is the ordered list of wire-protocol versions
+// this daemon supports (specs/handler-contract.md §4.2.HC-009). The ACK sender
+// (sendVersionSelectedACK) derives its default selected_version from this
+// list; when a second version is added the negotiated value MUST be plumbed
+// from the interceptor to the ACK call sites.
+var daemonSupportedWireVersions = []int{1}
+
+// capsAbsentTimeout is the handler_capabilities-absent abort window (§7.2).
+// A var (not const) only so tests can shrink the window; production value is
+// the normative handlercontract.HandlerCapabilitiesTimeout (5s).
+var capsAbsentTimeout = handlercontract.HandlerCapabilitiesTimeout
+
+// negotiateWireVersion implements HC-009: select the highest wire-protocol
+// version present in both the daemon's and the handler's supported lists.
+// An empty intersection (including a nil/empty handler list) is a
+// version-negotiation failure and returns an ErrProtocolMismatch-wrapping
+// error per specs/handler-contract.md §4.2.HC-009, §8.7.
+func negotiateWireVersion(handlerVersions []int) (int, error) {
+	best := 0
+	found := false
+	for _, dv := range daemonSupportedWireVersions {
+		for _, hv := range handlerVersions {
+			if dv == hv && (!found || dv > best) {
+				best = dv
+				found = true
+			}
+		}
+	}
+	if !found {
+		return 0, fmt.Errorf(
+			"daemon: version negotiation: no mutually supported wire-protocol version (daemon %v, handler %v): %w",
+			daemonSupportedWireVersions, handlerVersions, handlercontract.ErrProtocolMismatch)
+	}
+	return best, nil
 }
 
 // Read implements io.Reader.  It passes all bytes from the underlying reader
@@ -295,13 +389,28 @@ func newSessionIDInterceptor(inner io.Reader, cb func(string)) *SessionIDInterce
 // handler_capabilities message with a non-empty claude_session_id, it fires cb
 // exactly once before returning the bytes to the caller.
 func (s *SessionIDInterceptor) Read(p []byte) (int, error) {
+	s.mu.Lock()
+	if s.negoErr != nil {
+		err := s.negoErr
+		s.mu.Unlock()
+		return 0, err
+	}
+	s.mu.Unlock()
+
 	n, err := s.inner.Read(p)
+	s.mu.Lock()
 	if n > 0 {
-		s.mu.Lock()
 		s.buf.Write(p[:n])
 		s.checkBuffer()
-		s.mu.Unlock()
 	}
+	// HC-009: a negotiation failure (empty intersection, or the
+	// capabilities-absent timer closing inner mid-Read) overrides the inner
+	// error so the Watcher terminates with an ErrProtocolMismatch-classed
+	// read error.
+	if s.negoErr != nil {
+		err = s.negoErr
+	}
+	s.mu.Unlock()
 	return n, err
 }
 
@@ -309,7 +418,7 @@ func (s *SessionIDInterceptor) Read(p []byte) (int, error) {
 // the first handler_capabilities line with a non-empty claude_session_id.
 // Called with s.mu held.
 func (s *SessionIDInterceptor) checkBuffer() {
-	if s.firedOnce {
+	if s.firedOnce && s.capsSeen {
 		return
 	}
 	for {
@@ -339,7 +448,27 @@ func (s *SessionIDInterceptor) checkBuffer() {
 		if msg.Type != handlercontract.ProgressMsgTypeHandlerCapabilities {
 			continue
 		}
-		if msg.ClaudeSessionID == "" {
+
+		// HC-009: version negotiation runs exactly once, on the FIRST
+		// handler_capabilities line. Disarm the capabilities-absent timer,
+		// then select max(intersection(daemon, handler)); an empty
+		// intersection (including a nil/empty supported_versions list) is a
+		// negotiation failure surfaced as a sticky ErrProtocolMismatch read
+		// error — the cb (persist + version_selected ACK) is NOT fired.
+		if !s.capsSeen {
+			s.capsSeen = true
+			if s.capsTimer != nil {
+				s.capsTimer.Stop()
+			}
+			sel, negoErr := negotiateWireVersion(msg.SupportedVersions)
+			if negoErr != nil {
+				s.negoErr = negoErr
+				return
+			}
+			s.selectedVersion = sel
+		}
+
+		if s.firedOnce || msg.ClaudeSessionID == "" {
 			continue
 		}
 
@@ -363,14 +492,28 @@ func (s *SessionIDInterceptor) checkBuffer() {
 // the function returns nil immediately (no-op).
 //
 // Spec: specs/handler-contract.md §4.11 (control message catalog), §7.2.
+// selected, when provided, is the wire-protocol version chosen by HC-009
+// negotiation (SessionIDInterceptor.SelectedVersion). When omitted the ACK
+// carries max(daemonSupportedWireVersions) — correct while the daemon supports
+// a single version, because the interceptor only releases the ACK path after
+// a successful negotiation, whose result is necessarily that version.
 func sendVersionSelectedACK(ctx context.Context, sess interface {
 	SendInput(ctx context.Context, line string) error
-},
+}, selected ...int,
 ) error {
 	if sess == nil {
 		return nil
 	}
-	msg := fmt.Sprintf(`{"type":%q,"selected_version":1}`, handlercontract.VersionSelectedControlMsgType)
+	version := 0
+	for _, v := range daemonSupportedWireVersions {
+		if v > version {
+			version = v
+		}
+	}
+	if len(selected) > 0 && selected[0] > 0 {
+		version = selected[0]
+	}
+	msg := fmt.Sprintf(`{"type":%q,"selected_version":%d}`, handlercontract.VersionSelectedControlMsgType, version)
 	if err := sess.SendInput(ctx, msg); err != nil {
 		return fmt.Errorf("daemon: sendVersionSelectedACK: SendInput: %w", err)
 	}

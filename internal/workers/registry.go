@@ -14,12 +14,24 @@ type Registry struct {
 	inFlight  int
 }
 
+// PrimaryWorkerIndex returns the index of the worker the Registry consumes as
+// THE active remote worker, or -1 when cfg configures no workers. It is the
+// single source of truth for "which worker is live" so that callers applying
+// CLI overrides (applyWorkerOverrides) target the same entry NewRegistry selects
+// and cannot drift to a different index than the one dispatch actually uses.
+func PrimaryWorkerIndex(cfg Config) int {
+	if len(cfg.Workers) == 0 {
+		return -1
+	}
+	return 0
+}
+
 // NewRegistry constructs a Registry from a loaded Config.
 // If cfg has no workers, SelectWorker always returns nil (local fallback).
 func NewRegistry(cfg Config) *Registry {
 	r := &Registry{}
-	if len(cfg.Workers) > 0 {
-		r.worker = cfg.Workers[0]
+	if i := PrimaryWorkerIndex(cfg); i >= 0 {
+		r.worker = cfg.Workers[i]
 		r.hasWorker = true
 	}
 	return r

@@ -3,8 +3,8 @@ package workers
 // health.go — boot-time worker health check (remote-substrate B6).
 //
 // RunHealthCheck runs four probes against each enabled worker. Any failure marks
-// the worker unhealthy in the Registry (SetEnabled(false)) and emits a typed
-// worker_unhealthy event. Config entries are never deleted (FR11).
+// that worker unhealthy in the Registry (SetEnabledByName(name, false)) and emits
+// a typed worker_unhealthy event. Config entries are never deleted (FR11).
 //
 // Bead ref: hk-rs-b6-healthcheck-isda.
 
@@ -50,10 +50,10 @@ func init() {
 // RunHealthCheck runs four health probes against each enabled worker in cfg
 // via runner. Results:
 //
-//   - Failing worker: disabled in reg (SetEnabled(false)); worker_unhealthy event
-//     emitted via emit naming the first failing probe.
-//   - Passing worker: re-enabled in reg (SetEnabled(true)) so the call is safe
-//     to repeat after a transient outage (re-runnable, FR11).
+//   - Failing worker: disabled in reg by name (SetEnabledByName(name, false));
+//     worker_unhealthy event emitted via emit naming the first failing probe.
+//   - Passing worker: re-enabled in reg by name (SetEnabledByName(name, true)) so
+//     the call is safe to repeat after a transient outage (re-runnable, FR11).
 //
 // Config entries are never removed.
 //
@@ -79,11 +79,16 @@ func RunHealthCheck(ctx context.Context, runner tmux.CommandRunner, cfg Config, 
 		}
 		probeName, detail, err := runProbes(ctx, runner, w)
 		if err != nil {
-			reg.SetEnabled(false)
+			// Target this specific worker by name. SetEnabledByName is a no-op
+			// (returns an error we intentionally ignore) when w is not the
+			// worker held by reg, so a failing worker never flips a different
+			// worker's Enabled state. This matters once more than one worker is
+			// configured; with the v1 single-worker cap it matches SetEnabled.
+			_, _ = reg.SetEnabledByName(w.Name, false)
 			emitUnhealthyEvent(ctx, w.Name, probeName, detail, emit)
 			continue
 		}
-		reg.SetEnabled(true)
+		_, _ = reg.SetEnabledByName(w.Name, true)
 	}
 	return nil
 }

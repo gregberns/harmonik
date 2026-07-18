@@ -3,7 +3,9 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // MergeNodeKind is the typed discriminator for the two merge-node shapes
@@ -132,10 +134,27 @@ type ConflictDetectionResult struct {
 // mechanical: a non-zero exit from `git merge --squash` OR the presence of
 // conflict markers in `git status --porcelain` output MUST be treated as
 // conflict entry per WM-020."
-func DetectSquashMergeConflict(workDir, taskBranch string) (ConflictDetectionResult, error) {
+// DetectSquashMergeConflict is a detection PROBE only: whatever the outcome
+// (conflict, clean, or error), it resets the worktree and index back to HEAD
+// before returning, so it has no side effects. Without the reset, a conflicting
+// `--squash` merge (which sets no MERGE_HEAD) would leave conflict markers and
+// a half-staged index behind, and a clean trial merge would leave a staged
+// squash that a later real merge double-applies.
+func DetectSquashMergeConflict(workDir, taskBranch string) (result ConflictDetectionResult, retErr error) {
 	mergeCmd := exec.Command("git", "merge", "--squash", "--strategy=ort", taskBranch) //nolint:noctx // called from non-context path; caller responsible for lifecycle
 	mergeCmd.Dir = workDir
-	if err := mergeCmd.Run(); err != nil {
+	mergeErr := mergeCmd.Run()
+
+	// Always undo the trial merge's mutations (staged squash on success,
+	// conflict markers + half-staged index on conflict) before returning.
+	defer func() {
+		if err := resetSquashProbe(workDir); err != nil && retErr == nil {
+			retErr = err
+			result = ConflictDetectionResult{}
+		}
+	}()
+
+	if mergeErr != nil {
 		// Non-zero exit from git merge --squash → conflict per WM-018a.
 		return ConflictDetectionResult{
 			HasConflict: true,
@@ -161,6 +180,34 @@ func DetectSquashMergeConflict(workDir, taskBranch string) (ConflictDetectionRes
 	}
 
 	return ConflictDetectionResult{HasConflict: false}, nil
+}
+
+// resetSquashProbe restores the worktree at workDir to a clean state after a
+// trial `git merge --squash`. `git reset --hard HEAD` discards the staged
+// squash / conflicted index and working-tree changes (files the trial merge
+// added to the index are removed from the working tree too, since they are
+// tracked in the index but absent from HEAD). A squash merge sets no
+// MERGE_HEAD, so `git merge --abort` is not applicable; the leftover
+// SQUASH_MSG/MERGE_MSG scratch files are removed best-effort.
+func resetSquashProbe(workDir string) error {
+	resetCmd := exec.Command("git", "reset", "--hard", "HEAD") //nolint:noctx // called from non-context path
+	resetCmd.Dir = workDir
+	if out, err := resetCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("workspace: DetectSquashMergeConflict: git reset --hard after squash probe: %w (output: %s)", err, out)
+	}
+	// Best-effort: clear the squash scratch files so a later unrelated commit
+	// does not inherit the trial merge's prepared message.
+	gitDirCmd := exec.Command("git", "rev-parse", "--absolute-git-dir") //nolint:noctx // called from non-context path
+	gitDirCmd.Dir = workDir
+	if out, err := gitDirCmd.Output(); err == nil {
+		gitDir := string(out)
+		for len(gitDir) > 0 && (gitDir[len(gitDir)-1] == '\n' || gitDir[len(gitDir)-1] == '\r') {
+			gitDir = gitDir[:len(gitDir)-1]
+		}
+		_ = os.Remove(filepath.Join(gitDir, "SQUASH_MSG"))
+		_ = os.Remove(filepath.Join(gitDir, "MERGE_MSG"))
+	}
+	return nil
 }
 
 // porcelainLines splits git status --porcelain output into individual lines.

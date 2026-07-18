@@ -68,6 +68,12 @@ var ErrWorktreeCreationFailed = errors.New("workspace: WorktreeCreationFailed")
 // lease.
 var ErrLeaseLockHeldByOrphan = errors.New("workspace: LeaseLockHeldByOrphan")
 
+// ErrLeaseAlreadyHeld is returned when WriteLeaseLockAtomic finds an existing
+// lease-lock file at the target path — a second claimant on the same workspace
+// path must fail rather than silently overwrite the holder's lease (test-and-set
+// acquisition per WM-013a; single-holder invariant).
+var ErrLeaseAlreadyHeld = errors.New("workspace: LeaseAlreadyHeld")
+
 // ErrSidecarWriteFailed is returned when the metadata sidecar write fails on
 // I/O (disk full, permissions, concurrent file conflict).
 //

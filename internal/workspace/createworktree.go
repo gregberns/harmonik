@@ -211,18 +211,21 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 	// path the failing add exits before creating a branch, so this order is a
 	// harmless no-op there.)
 	cleanupPartialState := func() {
+		// Cleanup must run to completion even when ctx has just been cancelled —
+		// otherwise the partial dir/branch survive and poison the next dispatch.
+		cleanupCtx := context.WithoutCancel(ctx)
 		if cfg.runner != nil {
-			rmCmd := runner.Command(ctx, "rm", "-rf", worktreePath)
+			rmCmd := runner.Command(cleanupCtx, "rm", "-rf", worktreePath)
 			_ = rmCmd.Run()
 		} else {
 			_ = os.RemoveAll(worktreePath)
 		}
 		// Deregister the now-removed worktree FIRST so the branch is no longer
 		// "used by worktree" and branch -D can succeed.
-		pruneCmd := runner.Command(ctx, "git", "-C", repoRoot, "worktree", "prune")
+		pruneCmd := runner.Command(cleanupCtx, "git", "-C", repoRoot, "worktree", "prune")
 		_ = pruneCmd.Run()
 		// Remove the branch git created for the failed / empty-HEAD attempt.
-		delBranch := runner.Command(ctx, "git", "-C", repoRoot, "branch", "-D", branch)
+		delBranch := runner.Command(cleanupCtx, "git", "-C", repoRoot, "branch", "-D", branch)
 		_ = delBranch.Run()
 	}
 
@@ -275,8 +278,12 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 			delay := time.Duration(50*(1<<attempt)) * time.Millisecond // 50ms, 100ms, 200ms
 			select {
 			case <-ctx.Done():
-				break
+				// A bare `break` here would only exit the select, not the retry
+				// loop; check ctx.Err below to actually stop retrying.
 			case <-time.After(delay):
+			}
+			if ctx.Err() != nil {
+				break
 			}
 			continue
 		}

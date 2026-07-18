@@ -1095,6 +1095,25 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 	return data, nil
 }
 
+// cloneQueue returns a deep, independent copy of q by round-tripping through
+// the same JSON representation Persist writes. Used by appendUnderLock to take
+// a snapshot before the in-place AppendItems mutation so a failed Persist never
+// leaves the in-memory store ahead of disk (hk-3hh9w). Round-tripping (rather
+// than a hand-written field copy) matches the legacy append path exactly, which
+// operates on a fresh disk-loaded copy (Load == UnmarshalQueue), and stays
+// correct as Queue/Group/Item fields evolve.
+func cloneQueue(q *Queue) (*Queue, error) {
+	data, err := json.Marshal(q)
+	if err != nil {
+		return nil, fmt.Errorf("clone queue: marshal: %w", err)
+	}
+	cloned, err := UnmarshalQueue(data)
+	if err != nil {
+		return nil, fmt.Errorf("clone queue: unmarshal: %w", err)
+	}
+	return &cloned, nil
+}
+
 // appendUnderLock performs the whole queue-append read-modify-write under the
 // queue mutation lock (B1: two-writer lost-update fix):
 //
@@ -1104,10 +1123,13 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 //     back to disk only when the queue is not in memory (e.g. adapter wired
 //     to a fresh store) — still safe because every writer persists under
 //     this same lock.
-//  3. AppendItems mutates the locked queue in place (only after validation
-//     passes — a rejected append leaves the store untouched).
-//  4. Persist WHILE holding the lock (QM-063 persist-before-emit), write back
-//     via the locked view, release, then Wake the workloop.
+//  3. Clone the resolved queue and run AppendItems on the CLONE (only after
+//     validation passes — a rejected append leaves the store untouched). The
+//     live store entry is not mutated until the persist below succeeds
+//     (hk-3hh9w: no memory-ahead-of-disk on a failed persist).
+//  4. Persist the clone WHILE holding the lock (QM-063 persist-before-emit),
+//     install it via the locked view only on success, release, then Wake the
+//     workloop.
 //
 // Events are returned for the caller to emit AFTER the lock is released.
 func (a *HandlerAdapter) appendUnderLock(
@@ -1143,7 +1165,23 @@ func (a *HandlerAdapter) appendUnderLock(
 		q = diskQ
 	}
 
-	resp, mutated, events, rpcErr := HandleQueueAppendOnQueue(ctx, req, a.ledger, a.projectDir, q)
+	// Snapshot-and-swap (hk-3hh9w): AppendItems mutates the queue in place, and
+	// for the in-memory-resolved case q IS the live locked store entry. Mutating
+	// it directly and then Persisting would leave the in-memory store ahead of
+	// disk if Persist fails (memory has the appended items, disk does not, no
+	// rollback). Mutate a clone instead and install it into the store only after
+	// Persist succeeds — mirroring the legacy path, which operates on a fresh
+	// disk-loaded copy and SetQueues only on a successful persist. On Persist
+	// failure the live store is left untouched.
+	snapshot, cloneErr := cloneQueue(q)
+	if cloneErr != nil {
+		return QueueAppendResponse{}, nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("snapshot queue before append: %v", cloneErr)},
+		}
+	}
+
+	resp, mutated, events, rpcErr := HandleQueueAppendOnQueue(ctx, req, a.ledger, a.projectDir, snapshot)
 	if rpcErr != nil {
 		return QueueAppendResponse{}, nil, rpcErr
 	}
@@ -1151,12 +1189,16 @@ func (a *HandlerAdapter) appendUnderLock(
 	if mutated != nil {
 		// QM-063: persist BEFORE emitting; still under the mutation lock so a
 		// concurrent status-mutation cannot interleave and clobber this write.
+		// mutated is the clone, so a Persist failure here has NOT touched the
+		// live store — nothing to roll back.
 		if persistErr := Persist(ctx, a.projectDir, mutated); persistErr != nil {
 			return QueueAppendResponse{}, nil, &RPCError{
 				Code: -32099, Message: "internal_error",
 				Detail: map[string]any{"error": fmt.Sprintf("persist queue after append: %v", persistErr)},
 			}
 		}
+		// Install the persisted clone into the live store only now that disk and
+		// memory agree.
 		lv.LockedSetQueueByName(NormaliseQueueName(mutated.Name), mutated)
 	}
 

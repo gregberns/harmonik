@@ -999,6 +999,10 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	if sealErr := bus.Seal(); sealErr != nil {
 		return fmt.Errorf("daemon.Start: seal bus: %w", sealErr)
 	}
+	// EV-034: seal the event-type registry at the same lifecycle point as the
+	// bus. After this, any late RegisterEventType call fails rather than
+	// silently mutating the dispatch table after dispatch has begun.
+	core.SealEventRegistry()
 
 	// P6: post-Seal startup events (clock-regression degraded, stale-watch start,
 	// daemon_started F-class landmark, supervisor-revival scan, daemon_config).

@@ -177,7 +177,13 @@ func ExecuteVerdict(
 	}
 
 	// ── Step 4: Apply mechanical action per schemas.md §6.2 ─────────────────
-	plan := core.PlanForVerdict(ve.Verdict)
+	plan, planErr := core.PlanForVerdict(ve.Verdict)
+	if planErr != nil {
+		// An unknown/forward-compat verdict is a malformed VerdictEvent per
+		// RC-023, not a daemon crash. Surface it as an error so ExecuteVerdict's
+		// caller can route through the RC-023 malformation fallback.
+		return result, fmt.Errorf("daemon: ExecuteVerdict: plan for verdict: %w", planErr)
+	}
 	if actionErr := applyVerdictAction(ctx, ve, plan, cfg); actionErr != nil {
 		return result, fmt.Errorf("daemon: ExecuteVerdict: apply action %q: %w", plan.ActionKind, actionErr)
 	}

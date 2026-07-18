@@ -39,6 +39,58 @@ func eventRegistryReset() {
 	for k, v := range initialRegistrySnapshot {
 		globalEventRegistry.entries[k] = v
 	}
+	globalEventRegistry.sealed = false
+}
+
+// TestSealEventRegistry_RejectsPostSealRegistration verifies EV-034: after the
+// registry is sealed, registration returns ErrRegistrySealed instead of silently
+// mutating the dispatch table mid-dispatch. Read paths remain functional.
+func TestSealEventRegistry_RejectsPostSealRegistration(t *testing.T) {
+	t.Cleanup(eventRegistryReset)
+
+	if EventRegistrySealed() {
+		t.Fatal("registry unexpectedly sealed at test start")
+	}
+
+	// Registration before seal succeeds.
+	if err := RegisterEventType("test.ev034.presail", func() EventPayload { return &struct{}{} }); err != nil {
+		t.Fatalf("pre-seal RegisterEventType err = %v; want nil", err)
+	}
+
+	SealEventRegistry()
+	if !EventRegistrySealed() {
+		t.Fatal("EventRegistrySealed() = false after SealEventRegistry()")
+	}
+
+	// Registration after seal is rejected with the typed error — no panic, no
+	// silent success.
+	err := RegisterEventType("test.ev034.postseal", func() EventPayload { return &struct{}{} })
+	if !errors.Is(err, ErrRegistrySealed) {
+		t.Errorf("post-seal RegisterEventType err = %v; want wrapping ErrRegistrySealed", err)
+	}
+	if _, ok := LookupTypeSchemaVersion("test.ev034.postseal"); ok {
+		t.Error("post-seal type leaked into the registry despite the rejected registration")
+	}
+
+	// RegisterEventTypeAtVersion is rejected too.
+	if err := RegisterEventTypeAtVersion("test.ev034.postseal2", func() EventPayload { return &struct{}{} }, 2); !errors.Is(err, ErrRegistrySealed) {
+		t.Errorf("post-seal RegisterEventTypeAtVersion err = %v; want wrapping ErrRegistrySealed", err)
+	}
+
+	// Read path still works for a type registered before the seal.
+	if _, ok := LookupTypeSchemaVersion("test.ev034.presail"); !ok {
+		t.Error("pre-seal type missing from registry after seal; read path must remain functional")
+	}
+}
+
+// TestSealEventRegistry_Idempotent verifies sealing twice is a harmless no-op.
+func TestSealEventRegistry_Idempotent(t *testing.T) {
+	t.Cleanup(eventRegistryReset)
+	SealEventRegistry()
+	SealEventRegistry()
+	if !EventRegistrySealed() {
+		t.Fatal("registry not sealed after double SealEventRegistry()")
+	}
 }
 
 // Test-only payload types — defined here so they never leak to production code.

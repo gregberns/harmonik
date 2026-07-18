@@ -92,9 +92,9 @@ type codexSession struct {
 	// in flight per session (the reactor's AwaitingAck invariant).
 	submitMu sync.Mutex
 
-	mu       sync.Mutex
-	seq      uint64
-	reqID    int64
+	mu    sync.Mutex
+	seq   uint64
+	reqID int64
 	// pending is keyed by the JSON-RPC request id's verbatim string form (the id
 	// is a json.RawMessage on the wire per H11 — a number here, but a string or
 	// other shape round-trips too). We mint integer ids but correlate responses

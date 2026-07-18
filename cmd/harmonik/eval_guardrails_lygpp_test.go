@@ -77,6 +77,44 @@ func TestEvalDiffTouchesTestFile_False(t *testing.T) {
 	}
 }
 
+func TestEvalDiffTouchesTestFile_AddedFileFalse(t *testing.T) {
+	// A net-new test file (new file mode) is a legitimate addition, not the
+	// disallowed edit/delete of a shipped test, so G5 must not flag it.
+	diff := `diff --git a/lru.go b/lru.go
++++ b/lru.go
++func Foo() {}
+diff --git a/lru_test.go b/lru_test.go
+new file mode 100644
+index 0000000..abc1234
+--- /dev/null
++++ b/lru_test.go
++package foo
++func TestFoo(t *testing.T) {}
+`
+	if evalDiffTouchesTestFile(diff) {
+		t.Error("want false when the only _test.go section is a net-new file")
+	}
+}
+
+func TestEvalDiffTouchesTestFile_AddedPlusModified(t *testing.T) {
+	// A net-new test file alongside an edit to a shipped test still flags:
+	// the shipped-test edit is the disallowed touch.
+	diff := `diff --git a/new_test.go b/new_test.go
+new file mode 100644
+--- /dev/null
++++ b/new_test.go
++package foo
+diff --git a/shipped_test.go b/shipped_test.go
+index abc..def 100644
+--- a/shipped_test.go
++++ b/shipped_test.go
++// tampered
+`
+	if !evalDiffTouchesTestFile(diff) {
+		t.Error("want true when a shipped _test.go is edited even if a new test is added")
+	}
+}
+
 func TestEvalShouldCrossCheckSample_Deterministic(t *testing.T) {
 	beadID := "hk-eval-fizzbuzz-avjjr"
 	first := evalShouldCrossCheckSample(beadID)

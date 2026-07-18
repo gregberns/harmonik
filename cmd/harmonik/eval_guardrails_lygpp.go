@@ -69,17 +69,30 @@ func evalScrubSelfID(diff string) []string {
 	return matches
 }
 
-// evalDiffTouchesTestFile reports whether the diff contains any hunk against
-// a _test.go file (G5) — the implementer edited/deleted the shipped test
-// rather than the solution, which would otherwise let a broken solution
-// fool the deterministic grade or the Q2 feeder.
+// evalDiffTouchesTestFile reports whether the diff edits or deletes a shipped
+// _test.go file (G5) — the disallowed touch, which would otherwise let a broken
+// solution fool the deterministic grade or the Q2 feeder. A net-new test file
+// (a "new file mode" section) is a legitimate addition and is NOT flagged.
 func evalDiffTouchesTestFile(diff string) bool {
+	inTestFile := false
+	addedFile := false
+	flagged := func() bool { return inTestFile && !addedFile }
 	for _, line := range strings.Split(diff, "\n") {
-		if strings.HasPrefix(line, "diff --git") && strings.Contains(line, "_test.go") {
-			return true
+		if strings.HasPrefix(line, "diff --git") {
+			// Section boundary: judge the section we just finished, then
+			// start tracking the new one.
+			if flagged() {
+				return true
+			}
+			inTestFile = strings.Contains(line, "_test.go")
+			addedFile = false
+			continue
+		}
+		if inTestFile && strings.HasPrefix(line, "new file mode") {
+			addedFile = true
 		}
 	}
-	return false
+	return flagged()
 }
 
 // evalShouldCrossCheckSample deterministically decides whether a run is

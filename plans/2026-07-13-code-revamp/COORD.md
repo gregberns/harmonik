@@ -1128,3 +1128,21 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **Env state:** /tmp/h/ws44-build scratch clone advanced to 8dbe5a17 (fetched from fleet, isolated origin + untracked review-loop.dot preserved) and rebuilt; daemon UP in dot mode with the ①-fixed binary. ornith reachable (127.0.0.1:8551). Isolated GOCACHE=/tmp/h/alpha-gocache used throughout; never pkill'd bravo's suite.
 
 **Next COORD entry = c076.**
+
+### c076  ·  2026-07-17  ·  hk-bravo  ·  ⑤ init-template drift FIXED + verified end-to-end (fresh daemon boots out of the box)
+**The real defect: a fresh `harmonik init` wrote a config.yaml the daemon then refused to boot from.** Root cause CONFIRMED and reproduced on a scratch `harmonik init`: `writeConfigYAML` emitted `sentinel.liveness_no_progress_n` COMMENTED, but `GovernorConfig()` (internal/digest/sentinelconfig.go) treats it as REQUIRED with NO compiled default (hk-drygf), so `daemon.Start → seedGovernorDeps → GovernorConfig` failed loud: `governor config: ... liveness_no_progress_n is not set`. The daemon process died at boot. Separately, the generated config omitted the `harnesses.pi` block, so Pi was not dispatchable.
+
+**Correction to c075's framing:** the "harnesses.codex" half is a non-issue — `HarnessesConfig` has only a `Pi` field; codex takes no config.yaml harnesses block (model comes from the bead `model:` label / codex-cli config), so codex registers unconditionally. The only daemon-*process* boot blocker was `liveness_no_progress_n`; `harnesses.pi` absence blocked pi *dispatch*, not boot.
+
+**The fix (`cmd/harmonik/init_cmd.go` + snapshot test):**
+- Added `liveness_no_progress_n: 10` UNCOMMENTED under the `sentinel:` block (removed the old commented duplicate). `mode` stays unset → observe mode → the G-liveness halt is side-effect-free (workloop.go:1884 observe block; the halt-with-teeth path at :1934 is gated on `mode=="act"`), so `10` does NOT self-kill an idle fresh daemon. Chose `10` (the documented default + fail-loud hint) over `0`-disabled so the safety gate ships armed for whoever flips to `mode: act`.
+- Folded `piConfigExampleYAML()` (the single source of truth already backing `harmonik pi config --example`) into `writeConfigYAML`'s composed content — no NEW baked default, same operator-editable-template precedent as the keeper block (reviewer independently confirmed this does not violate PI-050 / no-external-version-binding).
+- Snapshot test `init_keeper_template_hkvxn8_test.go`: `renderedInitConfig()` now matches the composition; added uncommented-key assertions AND two boot-critical guards that exercise the exact daemon.Start paths that failed pre-fix — `GovernorConfig()` resolves without `ErrMissingLivenessNoProgressN`, and `ResolvePiConfig` resolves the folded pi block.
+
+**VERIFIED end-to-end (not just unit):** built the binary, ran `harmonik init` in a fresh git repo, booted the daemon — BEFORE: died with the governor error; AFTER: boots past the governor stage and BINDS its socket (`srw-------` present while running), zero fatal/refuse/liveness errors. Full `go test ./cmd/harmonik/` green (36.9s). agent-reviewer: APPROVE, no flags.
+
+**Non-blocking note (reviewer):** a fresh `workflow_mode: dot` daemon is now Pi-dispatchable but carries a soft `OPENROUTER_API_KEY` dependency at *dispatch* time (ResolvePiConfig shape-validates the env-var NAME, not the key value) — intended fail-at-dispatch-with-clear-error, consistent with graceful degradation.
+
+**Next: ③a workflow_id observability, then ⑥a WireTap wiring.**
+
+**Next COORD entry = c077.**

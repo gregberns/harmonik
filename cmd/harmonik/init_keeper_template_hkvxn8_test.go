@@ -14,7 +14,12 @@ package main
 //     starts cleanly.
 //
 // The artifact under test is exactly what writeConfigYAML emits:
-// fmt.Sprintf(configYAMLContent, ...) + keeperConfigExampleYAML().
+// fmt.Sprintf(configYAMLContent, ...) + keeperConfigExampleYAML() + piConfigExampleYAML().
+//
+// It also guards the init-template-drift fix (⑤): the generated config must set
+// sentinel.liveness_no_progress_n uncommented (else the daemon refuses to boot —
+// GovernorConfig fails loud, hk-drygf) and must fold in the harnesses.pi block so
+// the Pi harness is dispatchable out of the box.
 
 import (
 	"errors"
@@ -25,12 +30,15 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/digest"
 )
 
 // renderedInitConfig returns the exact config.yaml body `harmonik init` writes
-// (daemon/sentinel template + the shared complete keeper block).
+// (daemon/sentinel template + the shared complete keeper block + harnesses.pi block).
 func renderedInitConfig() string {
-	return fmt.Sprintf(configYAMLContent, "main", "hk") + keeperConfigExampleYAML()
+	return fmt.Sprintf(configYAMLContent, "main", "hk") +
+		keeperConfigExampleYAML() +
+		piConfigExampleYAML()
 }
 
 // writeRenderedInitConfig writes the rendered body into <tmp>/.harmonik/config.yaml
@@ -58,6 +66,8 @@ func TestInitKeeperTemplate_SchemaAndKeeperBlockUncommented(t *testing.T) {
 	}
 
 	// The required keeper tunables are now UNCOMMENTED (real config, not a template).
+	// sentinel.liveness_no_progress_n and the harnesses.pi block join them: the
+	// former is boot-required (⑤); the latter makes Pi dispatchable out of the box.
 	mustBeUncommented := []string{
 		"keeper:",
 		"warn_abs_tokens: 200000",
@@ -68,6 +78,11 @@ func TestInitKeeperTemplate_SchemaAndKeeperBlockUncommented(t *testing.T) {
 		"poll_interval: 5s",
 		"hold_ttl: 45m",
 		"max_handoff_timeouts: 3",
+		"liveness_no_progress_n: 10",
+		"harnesses:",
+		"provider: openrouter",
+		"model: openrouter/qwen/qwen3-coder",
+		"api_key_env: OPENROUTER_API_KEY",
 	}
 	for _, key := range mustBeUncommented {
 		if !lineUncommented(body, key) {
@@ -105,6 +120,25 @@ func TestInitKeeperTemplate_ResolvesCleanly(t *testing.T) {
 	// Sanity: the suggested band reached the parsed config.
 	if cfg.Keeper.WarnAbsTokens != 200000 {
 		t.Errorf("expected warn_abs_tokens=200000 from the generated config, got %d", cfg.Keeper.WarnAbsTokens)
+	}
+
+	// ⑤ boot-critical guarantee 1: the sentinel governor config resolves without
+	// the fail-loud ErrMissingLivenessNoProgressN. This is the exact check
+	// daemon.Start runs at boot (seedGovernorDeps → GovernorConfig); before the
+	// init-template fix it returned that error and the daemon refused to start.
+	sentinelCfg, serr := digest.LoadSentinelConfig(repoRoot)
+	if serr != nil {
+		t.Fatalf("LoadSentinelConfig on the generated config must succeed, got: %v", serr)
+	}
+	if _, gerr := sentinelCfg.GovernorConfig(); gerr != nil {
+		t.Fatalf("the generated sentinel block must yield a bootable governor config, got: %v", gerr)
+	}
+
+	// ⑤ boot-critical guarantee 2: the harnesses.pi block resolves — provider,
+	// model, and api_key_env are all present, so the Pi harness is dispatchable
+	// out of the box (the operator tunes the suggested values).
+	if _, perr := ResolvePiConfig(cfg.Harnesses.Pi, repoRoot); perr != nil {
+		t.Fatalf("the generated harnesses.pi block must resolve, got: %v", perr)
 	}
 }
 

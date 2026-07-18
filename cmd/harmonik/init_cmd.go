@@ -412,9 +412,18 @@ daemon:
   remote_control_prefix: %[2]s
 
 # sentinel: configures the flywheel movement governor (flywheel-motion.md §7).
-# All fields are optional; compiled defaults shown below as comments.
+# Every field EXCEPT liveness_no_progress_n is optional (compiled defaults shown
+# below as comments). liveness_no_progress_n is REQUIRED with no compiled default
+# (hk-drygf): the daemon refuses to boot without it, so init emits it uncommented.
 # Spec ref: flywheel-motion.md §7; bead hk-w0rm.
 sentinel:
+  # G-liveness self-kill: consecutive evaluation cycles with zero terminal progress
+  # before the governor halts dispatch and pages (§6.1). REQUIRED — no compiled
+  # default (hk-drygf); set 0 to explicitly disable the gate. Observe mode (the
+  # default when 'mode' is unset below) makes this observe-only — the halt gains
+  # teeth only under 'mode: act'.
+  liveness_no_progress_n: 10
+
   # Sliding-window duration for terminal-progress movement scoring (§1.2).
   # window: 30m
 
@@ -445,9 +454,8 @@ sentinel:
   # phase_flag: ""
   # phase_flag_expiry: ""
 
-  # G-liveness: consecutive cycles with no terminal progress before self-kill
-  # (§6.1). Prevents a stuck loop from spinning indefinitely.
-  # liveness_no_progress_n: 10
+  # (liveness_no_progress_n is set uncommented at the top of this block — it is
+  # REQUIRED with no compiled default, so it cannot live here as a comment.)
 
   # Per-class completion definition (§5.2). Default "merged" means done when
   # the Refs: trailer lands on origin/main. Phase-2 classes may supply a
@@ -474,10 +482,16 @@ func writeConfigYAML(projectDir, targetBranch, rcPrefix string, force bool, stdo
 		fmt.Fprintln(stdout, "harmonik init: .harmonik/config.yaml already exists — skipping (use --force to overwrite)")
 		return 0
 	}
-	// Append the COMPLETE keeper: block from the single source of truth shared with
-	// `harmonik keeper config --example` so a generated project starts with a valid,
-	// operator-editable keeper config (harmonik imposes no runtime keeper defaults).
-	content := fmt.Sprintf(configYAMLContent, targetBranch, rcPrefix) + keeperConfigExampleYAML()
+	// Append the COMPLETE keeper: and harnesses.pi: blocks from their single
+	// sources of truth (shared with `harmonik keeper config --example` and
+	// `harmonik pi config --example`) so a generated project starts with a valid,
+	// operator-editable config: keeper has no runtime defaults, and folding in the
+	// harnesses.pi block lets the daemon dispatch the Pi harness out of the box
+	// (the operator tunes the suggested provider/model/api_key_env). YAML key order
+	// is not semantic, so appending harnesses.pi after keeper is fine.
+	content := fmt.Sprintf(configYAMLContent, targetBranch, rcPrefix) +
+		keeperConfigExampleYAML() +
+		piConfigExampleYAML()
 	//nolint:gosec // G306: config file readable by owner only; 0644 matches conventions
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		fmt.Fprintf(stderr, "harmonik init: write .harmonik/config.yaml: %v\n", err)

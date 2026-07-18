@@ -67,6 +67,12 @@ type SocketRequest struct {
 	// The shape of Payload depends on the op; for comms-send it is a CommsSendRequest.
 	// Bead ref: hk-nbrmf (comms-send T4).
 	Payload json.RawMessage `json:"payload,omitempty"`
+
+	// PromoteTo carries the optional --promote-to target for the veto_verdict op
+	// (RC-027 operator verdict-override; CLI surface: harmonik veto-verdict
+	// --promote-to escalate-to-human). Empty for confirm_verdict and for a plain
+	// veto. See specs/reconciliation/spec.md §4.5 RC-027.
+	PromoteTo string `json:"promote_to,omitempty"`
 }
 
 // SocketResponse is the daemon's reply to a SocketRequest.

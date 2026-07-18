@@ -66,13 +66,19 @@ type OperatorPauseController struct {
 	mu     sync.Mutex
 	paused bool
 	bus    handlercontract.EventEmitter
+
+	// verdicts is the RC-027 operator verdict-override rendezvous. It parks
+	// reconciliation runs whose policy sets confirm_required: true and delivers
+	// the operator's confirm/veto decision (routed via HandleVerdictOverride).
+	// See verdictoverride.go.
+	verdicts *VerdictConfirmationRegistry
 }
 
 // NewOperatorPauseController constructs an OperatorPauseController wired to bus.
 // bus must be non-nil and Sealed before HandleOperatorPause/HandleOperatorResume
 // are called (EV-009).
 func NewOperatorPauseController(bus handlercontract.EventEmitter) *OperatorPauseController {
-	return &OperatorPauseController{bus: bus}
+	return &OperatorPauseController{bus: bus, verdicts: NewVerdictConfirmationRegistry()}
 }
 
 // IsPaused reports whether the daemon is currently in an operator-pause state.

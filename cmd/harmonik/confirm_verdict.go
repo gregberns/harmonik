@@ -128,7 +128,7 @@ func runConfirmVerdictSubcommand(subArgs []string) int {
 		return 1
 	}
 
-	return sendVerdictOverrideRequest(projectDirFlag, runID, "confirm", "")
+	return sendVerdictOverrideRequest(projectDirFlag, runID, "confirm_verdict", "")
 }
 
 // sendVerdictOverrideRequest sends a verdict-override socket request to the

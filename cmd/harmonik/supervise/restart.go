@@ -53,9 +53,21 @@ func RunRestart(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Re-read config.json to validate it's parseable before re-launch.
-	if _, err := ReadConfig(projectDir); err != nil {
-		fmt.Fprintf(stderr, "harmonik supervise restart: read config: %v\n", err)
+	// Re-read config.json to validate it's parseable before re-launch — but ONLY
+	// when it exists. A MISSING config.json is NOT fatal: when reviving a
+	// supervisor that never ran in this project (the standalone-daemon
+	// supervisor-watchdog revive path — hk-ky7ye), there is no prior config to
+	// carry forward, so restart must cold-start. start (RunStart) writes a fresh
+	// config.json from project config + flags, exactly as a first-ever
+	// `supervise start` does. Only a config that EXISTS but fails to parse is a
+	// genuine corruption we refuse to relaunch over.
+	if _, statErr := os.Stat(ConfigPath(projectDir)); statErr == nil {
+		if _, err := ReadConfig(projectDir); err != nil {
+			fmt.Fprintf(stderr, "harmonik supervise restart: read config: %v\n", err)
+			return 1
+		}
+	} else if !os.IsNotExist(statErr) {
+		fmt.Fprintf(stderr, "harmonik supervise restart: stat config: %v\n", statErr)
 		return 1
 	}
 

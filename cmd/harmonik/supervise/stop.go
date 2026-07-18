@@ -1,6 +1,7 @@
 package supervisecmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,7 +51,13 @@ func RunStop(args []string, stdout, stderr io.Writer) int {
 
 	pid, err := ReadPidfile(projectDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		// ReadPidfile wraps its os.Open ENOENT with %w, so the legacy
+		// non-unwrapping os.IsNotExist would return false here and stop would
+		// wrongly report exit 1 for an already-stopped supervisor — breaking
+		// stop's documented idempotency and, in turn, the watchdog's
+		// `restart --watch-restart` revive of a standalone daemon (hk-ky7ye).
+		// errors.Is unwraps to fs.ErrNotExist correctly.
+		if errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintln(stdout, "harmonik supervise stop: supervisor not running (no pidfile)")
 			return 0
 		}

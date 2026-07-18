@@ -419,6 +419,13 @@ func (s *SessionIDInterceptor) Read(p []byte) (int, error) {
 // Called with s.mu held.
 func (s *SessionIDInterceptor) checkBuffer() {
 	if s.firedOnce && s.capsSeen {
+		// Terminal state: the session id is captured and negotiation is done,
+		// so nothing further will ever be scanned. Read() has already passed
+		// these bytes through to the caller; retaining a copy here only grows
+		// the buffer without bound for the rest of the session (hk-hi53s:
+		// every agent_output_chunk byte of a long run accumulated until
+		// session end). Drop the accumulator so it stays at ~one read's worth.
+		s.buf.Reset()
 		return
 	}
 	for {

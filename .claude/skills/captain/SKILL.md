@@ -308,6 +308,13 @@ covering the priority work without fragmenting into single-bead crews.
 
 ## 2. Spawn a crew member  (mechanism #1 — success-criteria #1, #6)
 
+**Crew naming — CANONICAL (operator, 2026-07-18):** worker crews use the **NATO phonetic
+alphabet in sequence** — `alpha`, `bravo`, `charlie`, `delta`, `echo`, … — assigned in spawn
+order and never reused while live. This REPLACES the older Dune codenames (paul, stilgar, leto,
+hawat, …), which are retired for new crews. **Role / oversight sessions keep their role names**
+(`captain`, `admiral`, `assessor`, `commodore`, `watch`) — NATO is for *worker* crews only.
+The queue is `<name>-q` (so `alpha` → `alpha-q`). Pick the next unused NATO name for each new crew.
+
 For each crew assignment the **operator** has handed you:
 
 1. **Write the mission handoff FIRST** (§3). C2's `crew start` only delivers the

@@ -180,7 +180,31 @@ func buildGitignoreBlock(existing string, missing []string) string {
 
 // gitignoreCommit stages the .gitignore and commits it on the
 // [GitignoreBranchName] branch per WM-013e.
+//
+// WM-013e mandates that the daemon-state .gitignore commit land on the dedicated
+// `harmonik/gitignore-init` branch, NEVER on the operator's working branch
+// (main / whatever HEAD happens to be) — committing daemon state onto the user's
+// branch pollutes their history. gitignoreCommit therefore checks out (creating
+// if absent) the dedicated branch BEFORE staging, and hard-refuses to commit if
+// HEAD is still on any non-harmonik branch after the checkout.
 func gitignoreCommit(ctx context.Context, repoRoot, gitignorePath string) error {
+	// Move HEAD onto the dedicated init branch so the commit cannot land on the
+	// operator's branch.
+	if err := checkoutGitignoreBranch(ctx, repoRoot); err != nil {
+		return err
+	}
+
+	// Safety net: after the checkout, HEAD MUST be the dedicated branch. If it is
+	// not (checkout silently no-oped, detached HEAD, etc.), REFUSE rather than
+	// inject a daemon-state commit onto whatever branch is checked out.
+	current, err := currentGitBranch(ctx, repoRoot)
+	if err != nil {
+		return err
+	}
+	if current != GitignoreBranchName {
+		return fmt.Errorf("refusing to commit .gitignore onto branch %q: WM-013e requires the dedicated %q branch", current, GitignoreBranchName)
+	}
+
 	// git add .gitignore
 	addCmd := exec.CommandContext(ctx, "git", "add", gitignorePath)
 	addCmd.Dir = repoRoot
@@ -188,23 +212,57 @@ func gitignoreCommit(ctx context.Context, repoRoot, gitignorePath string) error 
 		return fmt.Errorf("git add .gitignore: %w\noutput: %s", err, out)
 	}
 
-	// git commit -m "..." on the current branch (workspace manager calls this
-	// before any worktree is created; the branch is main / the operator's branch).
-	// WM-013e specifies the dedicated branch name for the commit; creating and
-	// checking out that branch is the caller's (workspace manager's) responsibility
-	// at the daemon-startup level. Here we commit to whatever the current HEAD
-	// branch is, which MUST be GitignoreBranchName (harmonik/gitignore-init) when
-	// called from the workspace manager startup path per WM-013e.
+	// git commit — NO --allow-empty: an empty daemon-state commit is never
+	// desirable (it would create noise commits carrying no .gitignore change).
+	// If the tree is clean after add (nothing changed — already committed on this
+	// branch), git commit exits non-zero with "nothing to commit"; treat that as
+	// an idempotent no-op.
 	commitMsg := "harmonik: ensure .gitignore covers control-plane paths (WM-013e)"
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg, "--allow-empty")
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = repoRoot
 	if out, err := commitCmd.CombinedOutput(); err != nil {
-		// If the tree is clean after add (nothing changed — already committed),
-		// git commit exits non-zero with "nothing to commit". Treat as idempotent.
 		if strings.Contains(string(out), "nothing to commit") {
 			return nil
 		}
 		return fmt.Errorf("git commit .gitignore: %w\noutput: %s", err, out)
+	}
+	return nil
+}
+
+// currentGitBranch returns the abbreviated symbolic name of HEAD in repoRoot.
+// A detached HEAD yields "HEAD" (which is not GitignoreBranchName, so callers
+// treat it as a non-harmonik branch and refuse).
+func currentGitBranch(ctx context.Context, repoRoot string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --abbrev-ref HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// checkoutGitignoreBranch checks out [GitignoreBranchName], creating it from the
+// current HEAD when it does not yet exist, so the subsequent .gitignore commit
+// lands on the dedicated branch rather than the operator's working branch
+// (WM-013e). If HEAD is already on the dedicated branch this is a no-op.
+func checkoutGitignoreBranch(ctx context.Context, repoRoot string) error {
+	if current, err := currentGitBranch(ctx, repoRoot); err == nil && current == GitignoreBranchName {
+		return nil
+	}
+
+	// Does the dedicated branch already exist? --verify --quiet exits non-zero
+	// (no output) when the ref is absent.
+	exists := exec.CommandContext(ctx, "git", "-C", repoRoot,
+		"rev-parse", "--verify", "--quiet", "refs/heads/"+GitignoreBranchName).Run() == nil
+
+	args := []string{"-C", repoRoot, "checkout"}
+	if exists {
+		args = append(args, GitignoreBranchName)
+	} else {
+		args = append(args, "-b", GitignoreBranchName)
+	}
+	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("git checkout %s: %w\noutput: %s", GitignoreBranchName, err, out)
 	}
 	return nil
 }

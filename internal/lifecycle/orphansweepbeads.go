@@ -235,6 +235,17 @@ type MergeCommitScanner interface {
 // This is the conservative behavior given that a missed Cat 3c condition will
 // be re-detected on the next daemon restart, but a false-positive
 // merge-commit detection would skip a needed reset.
+//
+// # Change-still-present verification (H3)
+//
+// A bare `git log --grep` match on the trailer is NOT sufficient to auto-close a
+// bead as subsumed: a commit bearing the trailer can have been REVERTED or
+// otherwise superseded, leaving the bead's work absent from the current tree.
+// Auto-closing on the mere historical presence of the trailer would mark such a
+// bead DONE even though its change is gone. HasMergeCommitForBead therefore, after
+// finding the trailer-bearing commit, (1) confirms it is still an ancestor of the
+// target-branch tip and (2) confirms no later commit on the branch REVERTS it —
+// only then does it report the change present.
 type GitMergeCommitScanner struct {
 	ProjectDir   string
 	TargetBranch string // empty defaults to "main"
@@ -243,8 +254,10 @@ type GitMergeCommitScanner struct {
 // HasMergeCommitForBead implements MergeCommitScanner.
 //
 // It requires BOTH a genuine `Harmonik-Bead-ID` trailer whose value equals
-// beadID exactly AND a non-docs diff on the matched commit. On any scan error
-// it returns (false, nil) — conservative, as documented on the type.
+// beadID exactly AND a non-docs diff on the matched commit, AND confirms the
+// matched commit's change is still present on the branch (ancestor of the tip
+// and not reverted by a later commit). On any scan error it returns (false, nil)
+// — conservative, as documented on the type.
 func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID core.BeadID) (bool, error) {
 	branch := s.TargetBranch
 	if branch == "" {
@@ -286,6 +299,14 @@ func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID
 			return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
 		}
 		if touchesNonDocs {
+			// Trailer + real diff matched. Before reporting the change present,
+			// confirm it has not been reverted/superseded — a bare historical
+			// trailer match is NOT sufficient to auto-close (H3).
+			if !s.changeStillPresent(ctx, hash, branch) {
+				// This trailer-bearing commit was reverted; keep scanning in case
+				// another commit re-landed the same bead's work.
+				continue
+			}
 			return true, nil
 		}
 		// Trailer matched but diff is docs-only — keep scanning; another commit
@@ -354,6 +375,36 @@ func isDocsPath(path string) bool {
 		return true
 	}
 	return false
+}
+
+// changeStillPresent reports whether the trailer-bearing commit hash is still
+// present on branch — an ancestor of the branch tip and not reverted by a later
+// commit. A bare historical trailer match is NOT sufficient to auto-close a bead
+// (H3): the commit may have been reverted/superseded, leaving the work absent
+// from the current tree.
+func (s GitMergeCommitScanner) changeStillPresent(ctx context.Context, hash, branch string) bool {
+	// (1) Confirm the commit is still an ancestor of the branch tip. An amended/
+	// rebased/force-pushed branch could have dropped it; --is-ancestor exits 0
+	// iff hash is reachable from the tip.
+	//nolint:gosec // G204: hash is a %H value from git output; branch is validated (defaulted).
+	if err := exec.CommandContext(ctx, "git", "-C", s.ProjectDir,
+		"merge-base", "--is-ancestor", hash, branch).Run(); err != nil {
+		// Non-zero exit → not an ancestor (or git error) → change not present.
+		return false
+	}
+
+	// (2) Confirm the change has not been reverted by a LATER commit on the
+	// branch. `git revert` records "This reverts commit <full-sha>." in the revert
+	// commit message; a match in the hash..branch range means the work was undone.
+	//nolint:gosec // G204: hash is a %H value from git output; branch is validated.
+	revOut, revErr := exec.CommandContext(ctx, "git", "-C", s.ProjectDir, "log",
+		"--grep", "This reverts commit "+hash, "--format=%H", hash+".."+branch).Output()
+	if revErr == nil && strings.TrimSpace(string(revOut)) != "" {
+		// A later revert of the trailer-bearing commit exists → change superseded.
+		return false
+	}
+
+	return true
 }
 
 // QueueDispatchedSet is the set of bead IDs that appear in queue.json with

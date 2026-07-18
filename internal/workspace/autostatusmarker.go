@@ -88,19 +88,31 @@ func ReadAutoStatusMarker(workspacePath string) (*AutoStatusMarker, error) {
 // reads the worker-side auto_status.json via cat and applies identical
 // validation via ParseAutoStatusMarker.
 //
-// Returns (nil, nil) when the marker file is absent on the worker (cat exits
-// non-zero), matching ReadAutoStatusMarker's os.IsNotExist behavior.
+// Returns (nil, nil) when the marker file is confirmed absent on the worker (cat
+// exits non-zero for a non-transport reason: no such file), matching
+// ReadAutoStatusMarker's os.IsNotExist behavior.
+//
+// Returns (nil, ErrRemoteTransport-wrapped) when the read fails at the TRANSPORT
+// layer (ssh exit 255: connection refused/timeout/host-key). A transport failure
+// is INCONCLUSIVE — a FAIL marker may exist on the worker but was unreachable — so
+// it is NOT collapsed into confirmed-absent; masking it as absent would silently
+// drop a deny-side FAIL hint and mis-derive the C2 outcome. H5.
 //
 // Bead: hk-hd2w6.
 func ReadAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, workspacePath string) (*AutoStatusMarker, error) {
 	if runner == nil || runnerIsLocalFS(runner) {
 		return ReadAutoStatusMarker(workspacePath)
 	}
-	out, err := runner.Command(ctx, "cat", AutoStatusMarkerPath(workspacePath)).Output()
+	target := AutoStatusMarkerPath(workspacePath)
+	out, err := runner.Command(ctx, "cat", target).Output()
 	if err != nil {
-		// Absent marker (cat: no such file) or transport hiccup → treat as absent,
-		// preserving C1-only pass-through (the local not-exist path returns nil,nil).
-		return nil, nil //nolint:nilnil // absent/unreadable marker = C1-only gate per HC-068
+		if tmux.IsSSHConnectionFailure(err) {
+			// SSH transport failure — inconclusive, distinct from confirmed-absent.
+			return nil, fmt.Errorf("%w: cat %s: %v", ErrRemoteTransport, target, err)
+		}
+		// Non-transport cat failure (no such file) → genuinely absent, preserving
+		// C1-only pass-through (the local not-exist path returns nil,nil).
+		return nil, nil //nolint:nilnil // confirmed-absent marker = C1-only gate per HC-068
 	}
 	return ParseAutoStatusMarker(out), nil
 }

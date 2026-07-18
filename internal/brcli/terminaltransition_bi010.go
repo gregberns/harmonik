@@ -515,6 +515,14 @@ func (a *Adapter) ResetBead(
 // query, so a crash after `br close` succeeds but before the sweep completes
 // simply means the bead is already closed on the next startup.
 //
+// After a successful close SweepCloseBead applies the "needs-attention" label
+// (H3): a Cat 3c auto-close is a DAEMON inference — "a trailer-bearing commit is
+// present and unreverted" — not an explicit operator/reviewer sign-off, so the
+// closed bead is flagged for operator triage rather than treated as a clean DONE.
+// The label write mirrors CloseBead's needs-attention path and routes through the
+// same DB-locked retry; if it fails the bead is already closed but unflagged, so
+// the caller MUST treat that as an error.
+//
 // Implements lifecycle.BeadCat3cCloser.
 //
 // Spec ref: hk-lgtq2 (Cat 3c auto-reconciler).
@@ -524,7 +532,8 @@ func (a *Adapter) SweepCloseBead(
 	beadID core.BeadID,
 ) error {
 	// Serialize terminal-transition writes to prevent concurrent `br` invocations
-	// from racing on the SQLite .write.lock (hk-hdbls).
+	// from racing on the SQLite .write.lock (hk-hdbls). The lock covers both the
+	// close write and the needs-attention label write.
 	a.terminalMu.Lock()
 	defer a.terminalMu.Unlock()
 
@@ -539,6 +548,21 @@ func (a *Adapter) SweepCloseBead(
 	if result.BrErr != BrOK {
 		return fmt.Errorf("brcli.SweepCloseBead: br close %s failed: %s (exit %d): stderr=%q",
 			beadID, result.BrErr, result.ExitCode, string(result.Stderr))
+	}
+
+	// Flag the auto-closed bead for operator review (H3). A Cat 3c close is a
+	// daemon inference, not an explicit sign-off, so mark it needs-attention.
+	labelResult, labelErr := a.RunWithDBLockedRetry(
+		ctx, cfg, CommandKindWrite,
+		UnavailableRetryMax, UnavailableRetryBase, UnavailableRetryCap,
+		"label", "add", string(beadID), "-l", "needs-attention",
+	)
+	if labelErr != nil {
+		return fmt.Errorf("brcli.SweepCloseBead: br label add needs-attention: %w", labelErr)
+	}
+	if labelResult.BrErr != BrOK {
+		return fmt.Errorf("brcli.SweepCloseBead: br label add needs-attention failed: %s (exit %d): stderr=%q",
+			labelResult.BrErr, labelResult.ExitCode, string(labelResult.Stderr))
 	}
 	return nil
 }

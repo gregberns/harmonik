@@ -173,3 +173,39 @@ func TestBrErrorFromExitCode_noUnavailableFromCode(t *testing.T) {
 		}
 	}
 }
+
+// TestBrErrorFromExit_stderrRefinement verifies the stderr-aware refinement of
+// the exit-code table: a generic br exit-1 failure whose stderr does NOT signal
+// a missing bead-id classifies as BrOther (not a spurious BrNotFound divergence
+// signal), while a genuine not-found or empty-stderr exit-1 stays BrNotFound.
+// Codes other than 1 defer to the pure table regardless of stderr.
+func TestBrErrorFromExit_stderrRefinement(t *testing.T) {
+	cases := []struct {
+		name   string
+		code   int
+		stderr string
+		want   BrError
+	}{
+		// Exit 1: the refined code.
+		{"exit1-empty-stderr", 1, "", BrNotFound},                                    // BI-025d empty-stderr rule → table
+		{"exit1-whitespace-only", 1, "   \n\t ", BrNotFound},                         // effectively empty → table
+		{"exit1-genuine-not-found", 1, "Error: Issue not found: hk-abc", BrNotFound}, // real missing bead-id
+		{"exit1-not-found-mixed-case", 1, "ERROR: Bead NOT FOUND", BrNotFound},       // case-insensitive match
+		{"exit1-generic-error", 1, "Error: invalid argument to --status", BrOther},   // NOT a divergence
+		{"exit1-db-error", 1, "Error: database connection refused", BrOther},         // generic failure
+		// Other codes ignore stderr and defer to the pure table.
+		{"exit0-ok", 0, "some warning", BrOK},
+		{"exit2-conflict", 2, "whatever", BrConflict},
+		{"exit3-dblocked-notfoundtext", 3, "not found", BrDbLocked},
+		{"exit4-schema", 4, "", BrSchemaMismatch},
+		{"exit127-other", 127, "not found", BrOther},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BrErrorFromExit(tc.code, []byte(tc.stderr))
+			if got != tc.want {
+				t.Errorf("BrErrorFromExit(%d, %q) = %q; want %q", tc.code, tc.stderr, string(got), string(tc.want))
+			}
+		})
+	}
+}

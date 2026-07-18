@@ -765,7 +765,7 @@ func harnessDiscoverScenarios(
 			}
 			// SH-002: .yml and uppercase variants look like YAML but use the
 			// wrong extension; reject without opening.
-			if ext == ".yml" || strings.ToLower(ext) == ".yaml" {
+			if lower := strings.ToLower(ext); lower == ".yml" || lower == ".yaml" {
 				wrongExt = append(wrongExt, fmt.Errorf(
 					"scenario-load-failure: %q has extension %q; scenario files MUST use .yaml (SH-002)",
 					path, ext,

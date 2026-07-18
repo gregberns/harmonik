@@ -118,6 +118,11 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 			smoke = true
 		case args[i] == "--no-supervise":
 			noSupervise = true
+		default:
+			// Fail closed: a mistyped flag (e.g. --target-branc) must not
+			// silently bootstrap against defaults.
+			fmt.Fprintf(stderr, "harmonik init: unknown argument %q\n\n%s", args[i], initUsage)
+			return 1
 		}
 	}
 

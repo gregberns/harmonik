@@ -57,6 +57,11 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 			maxAgeStr = args[i]
 		case strings.HasPrefix(args[i], "--max-age="):
 			maxAgeStr = strings.TrimPrefix(args[i], "--max-age=")
+		default:
+			// Fail closed: a mistyped flag (e.g. --dryrun) must not turn a
+			// dry run into a live `git branch -D` pass.
+			fmt.Fprintf(stderr, "harmonik gc branches: unknown argument %q\n\n%s", args[i], branchReapUsage)
+			return 1
 		}
 	}
 

@@ -64,7 +64,9 @@ FLAGS
 DESCRIPTION
   Reads events.jsonl, groups events by run_id, and for each eval run
   (a run that passed through a "grade" node) emits one flat JSON record to
-  the output file. Appends to the output file (existing records are preserved).
+  the output file. Appends to the output file (existing records are preserved);
+  run_ids already present in the output file are skipped, so re-running collect
+  does not double-count.
 
   Eval runs are identified by the presence of a node_dispatch_requested event
   for the "grade" node. Grade pass/fail is inferred from whether an
@@ -170,6 +172,14 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 
 	piModel := evalReadPiModel(absProject)
 
+	// Dedup on re-run: records for run_ids already present in the output file
+	// are skipped so re-collecting does not double-count the training set.
+	existing, err := evalReadExistingRunIDs(*outputFile)
+	if err != nil {
+		fmt.Fprintf(stderr, "harmonik eval collect: reading existing output: %v\n", err)
+		return 1
+	}
+
 	f, err := os.OpenFile(*outputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		fmt.Fprintf(stderr, "harmonik eval collect: opening output: %v\n", err)
@@ -178,9 +188,14 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 	defer f.Close()
 
 	written := 0
+	skipped := 0
 	for runID, st := range states {
 		if !st.gradeDispatched {
 			continue // not an eval run
+		}
+		if _, dup := existing[runID]; dup {
+			skipped++
+			continue // already collected on a prior run
 		}
 		rec, err := evalBuildRecord(runID, st, absProject, piModel)
 		if err != nil {
@@ -199,8 +214,43 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 		written++
 	}
 
-	fmt.Fprintf(stdout, "harmonik eval collect: wrote %d record(s) to %s\n", written, *outputFile)
+	fmt.Fprintf(stdout, "harmonik eval collect: wrote %d record(s) to %s (%d already present, skipped)\n",
+		written, *outputFile, skipped)
 	return 0
+}
+
+// evalReadExistingRunIDs returns the set of run_ids already present in the
+// output file. A missing file yields an empty set. Malformed lines are skipped.
+func evalReadExistingRunIDs(path string) (map[string]struct{}, error) {
+	ids := map[string]struct{}{}
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ids, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	setLargeScanBuffer(scanner)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var rec struct {
+			RunID string `json:"run_id"`
+		}
+		if err := json.Unmarshal(line, &rec); err != nil || rec.RunID == "" {
+			continue
+		}
+		ids[rec.RunID] = struct{}{}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // evalReadEvents scans events.jsonl and returns per-run accumulated state.

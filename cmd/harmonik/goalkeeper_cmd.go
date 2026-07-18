@@ -154,6 +154,9 @@ func readOperatorComms(projectDir, sinceID string) (bodies []string, lastEventID
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	// A long operator directive can exceed the default 64KB token limit;
+	// without a larger buffer the whole goal-keeper run hard-fails.
+	setLargeScanBuffer(scanner)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {

@@ -100,9 +100,15 @@ func runBeadSubcommandViaDaemon(
 	defer func() { _ = subConn.Close() }()
 
 	// Subscribe to the minimal set of events needed to detect group completion.
+	// run_started / run_completed / run_failed are needed for the append-fallback
+	// path, which attributes the exit code to the caller's OWN beads rather than
+	// the whole of group 0; they are ignored on the fresh-submit path.
 	subReqBytes, _ := json.Marshal(map[string]any{ //nolint:errcheck // constant map; cannot fail
-		"op":                "subscribe",
-		"types":             []string{"queue_group_completed", "queue_paused", "heartbeat"},
+		"op": "subscribe",
+		"types": []string{
+			"queue_group_completed", "queue_paused", "heartbeat",
+			"run_started", "run_completed", "run_failed",
+		},
 		"heartbeat_seconds": 60,
 	})
 	if _, writeErr := subConn.Write(subReqBytes); writeErr != nil {
@@ -111,9 +117,16 @@ func runBeadSubcommandViaDaemon(
 	}
 
 	// Submit the beads to the daemon as a stream group.
-	watchQueueID, watchGroupIndex, submitCode := viaSubmitOrAppend(signalCtx, harmonikDir, items, groupKind)
+	watchQueueID, watchGroupIndex, appended, submitCode := viaSubmitOrAppend(signalCtx, harmonikDir, items, groupKind)
 	if submitCode != 0 {
 		return submitCode
+	}
+
+	// On the append-fallback path the group also contains OTHER callers' beads,
+	// so completion must be attributed to our own beads, not the whole group.
+	var watchBeads []core.BeadID
+	if appended {
+		watchBeads = beadIDs
 	}
 
 	beadIDStrs := make([]string, len(beadIDs))
@@ -130,20 +143,22 @@ func runBeadSubcommandViaDaemon(
 		_ = subConn.Close()
 	}()
 
-	return viaWatchGroupCompletion(subConn, watchQueueID, watchGroupIndex, notifyWriter)
+	return viaWatchGroupCompletion(subConn, watchQueueID, watchGroupIndex, watchBeads, notifyWriter)
 }
 
 // viaSubmitOrAppend tries to submit the items as a new stream group. If the
 // daemon already has an active queue (queue_already_active), it falls back to
 // appending the items to group 0 of the active queue.
 //
-// Returns (queueID, groupIndex, exitCode). exitCode 0 = accepted; non-zero = error.
+// Returns (queueID, groupIndex, appended, exitCode). appended is true when the
+// items were appended to an already-active queue's group 0 (shared with other
+// callers' beads). exitCode 0 = accepted; non-zero = error.
 func viaSubmitOrAppend(
 	ctx context.Context,
 	harmonikDir string,
 	items []queue.Item,
 	groupKind queue.GroupKind,
-) (queueID string, groupIndex int, exitCode int) {
+) (queueID string, groupIndex int, appended bool, exitCode int) {
 	now := time.Now().UTC()
 
 	// Build the queue-submit envelope. The daemon's HandlerAdapter unmarshals
@@ -178,17 +193,17 @@ func viaSubmitOrAppend(
 	submitPayload, marshalErr := json.Marshal(submitBody)
 	if marshalErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot marshal submit request: %v\n", marshalErr)
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 
 	submitResp, earlyExit := viaSendRequest(ctx, harmonikDir, submitPayload)
 	if earlyExit == exitViaDaemonDown {
 		fmt.Fprintf(os.Stderr, "harmonik run: daemon went down between probe and submit\n")
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 	if earlyExit != 0 {
 		fmt.Fprintf(os.Stderr, "harmonik run: transport error sending submit request\n")
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 
 	if submitResp.Ok {
@@ -198,9 +213,9 @@ func viaSubmitOrAppend(
 		}
 		if unmarshalErr := json.Unmarshal(submitResp.Result, &sr); unmarshalErr != nil {
 			fmt.Fprintf(os.Stderr, "harmonik run: cannot parse submit response: %v\n", unmarshalErr)
-			return "", 0, 1
+			return "", 0, false, 1
 		}
-		return sr.QueueID, 0, 0
+		return sr.QueueID, 0, false, 0
 	}
 
 	// Submit failed. If it's queue_already_active (QM-027 / ErrorCodeQueueAlreadyActive),
@@ -208,29 +223,30 @@ func viaSubmitOrAppend(
 	if submitResp.ErrorCode != queue.ErrorCodeQueueAlreadyActive {
 		fmt.Fprintf(os.Stderr, "harmonik run: queue-submit rejected: %s (code %d)\n",
 			submitResp.Error, submitResp.ErrorCode)
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 
 	return viaAppendToActiveQueue(ctx, harmonikDir, items)
 }
 
 // viaAppendToActiveQueue queries the active queue_id via queue-status and
-// appends items to group 0. Returns (queueID, groupIndex, exitCode).
+// appends items to group 0. Returns (queueID, groupIndex, appended, exitCode);
+// appended is true on success (the items now share group 0 with other callers).
 func viaAppendToActiveQueue(
 	ctx context.Context,
 	harmonikDir string,
 	items []queue.Item,
-) (queueID string, groupIndex int, exitCode int) {
+) (queueID string, groupIndex int, appended bool, exitCode int) {
 	// Query the active queue to get its queue_id.
 	statusPayload, _ := json.Marshal(map[string]string{"op": "queue-status"}) //nolint:errcheck
 	statusResp, earlyExit := viaSendRequest(ctx, harmonikDir, statusPayload)
 	if earlyExit != 0 {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot query daemon queue status for append fallback\n")
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 	if !statusResp.Ok {
 		fmt.Fprintf(os.Stderr, "harmonik run: queue-status error: %s\n", statusResp.Error)
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 
 	// Parse queue_id from status response.
@@ -241,13 +257,13 @@ func viaAppendToActiveQueue(
 	}
 	if unmarshalErr := json.Unmarshal(statusResp.Result, &statusBody); unmarshalErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot parse queue-status response: %v\n", unmarshalErr)
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 	if statusBody.Queue == nil {
 		// Queue disappeared between submit rejection and status query; safe to
 		// retry submit, but for simplicity just surface an error.
 		fmt.Fprintf(os.Stderr, "harmonik run: active queue disappeared; retry harmonik run\n")
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 	activeQueueID := statusBody.Queue.QueueID
 
@@ -270,37 +286,52 @@ func viaAppendToActiveQueue(
 	})
 	if marshalErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot marshal append request: %v\n", marshalErr)
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 
 	appendResp, earlyExitA := viaSendRequest(ctx, harmonikDir, appendPayload)
 	if earlyExitA != 0 {
 		fmt.Fprintf(os.Stderr, "harmonik run: transport error sending append request\n")
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 	if !appendResp.Ok {
 		fmt.Fprintf(os.Stderr, "harmonik run: queue-append rejected: %s (code %d)\n",
 			appendResp.Error, appendResp.ErrorCode)
 		fmt.Fprintf(os.Stderr, "  (the active queue may not accept appends; check 'harmonik queue status')\n")
-		return "", 0, 1
+		return "", 0, false, 1
 	}
 
 	fmt.Fprintf(os.Stderr, "harmonik run: appended to existing queue (queue_id=%s, group=0)\n", activeQueueID)
-	return activeQueueID, 0, 0
+	return activeQueueID, 0, true, 0
 }
 
 // viaWatchGroupCompletion reads NDJSON events from the subscribe connection
 // until it receives a queue_group_completed or queue_paused event for
 // queueID/groupIndex. Returns 0 on complete-success, 1 otherwise.
+//
+// When watchBeads is non-empty (append-fallback path: our items share group 0
+// with other callers' beads), the exit code is attributed to OUR beads only:
+// each bead's run is tracked via run_started → run_completed / run_failed, and
+// the group's overall outcome is used only as a last-resort fallback for beads
+// whose run events were not observed by the time the group completed.
 func viaWatchGroupCompletion(
 	subConn net.Conn,
 	queueID string,
 	groupIndex int,
+	watchBeads []core.BeadID,
 	notifyWriter io.Writer,
 ) int {
 	scanner := bufio.NewScanner(subConn)
 	// Increase scanner buffer for large event payloads.
-	scanner.Buffer(make([]byte, 64*1024), 512*1024)
+	setLargeScanBuffer(scanner)
+
+	// Per-bead attribution state (append-fallback path only).
+	pendingBeads := make(map[string]struct{}, len(watchBeads))
+	for _, id := range watchBeads {
+		pendingBeads[string(id)] = struct{}{}
+	}
+	runToBead := make(map[string]string) // run_id → bead_id (our beads only)
+	anyBeadFailed := false
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -340,10 +371,71 @@ func viaWatchGroupCompletion(
 				_, _ = fmt.Fprintf(notifyWriter, "group_completed queue_id=%s group=%d status=%s\n",
 					payload.QueueID, payload.GroupIndex, payload.FinalStatus)
 			}
+			if len(watchBeads) > 0 {
+				// Append-fallback path: exit reflects OUR beads, not the group.
+				if anyBeadFailed {
+					return 1
+				}
+				if len(pendingBeads) == 0 {
+					return 0
+				}
+				// Some of our beads never surfaced run events (e.g. reconciled
+				// or subsumed without a run). Fall back to the group outcome
+				// for those.
+				fmt.Fprintf(os.Stderr, "harmonik run: %d of our bead(s) had no observed run outcome; falling back to group status %s\n",
+					len(pendingBeads), payload.FinalStatus)
+				if payload.FinalStatus == "complete-success" {
+					return 0
+				}
+				return 1
+			}
 			if payload.FinalStatus == "complete-success" {
 				return 0
 			}
 			return 1
+
+		case "run_started":
+			if len(watchBeads) == 0 {
+				continue
+			}
+			var payload struct {
+				RunID  string  `json:"run_id"`
+				BeadID *string `json:"bead_id"`
+			}
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil || payload.BeadID == nil {
+				continue
+			}
+			if _, ours := pendingBeads[*payload.BeadID]; ours {
+				runToBead[payload.RunID] = *payload.BeadID
+			}
+
+		case "run_completed", "run_failed":
+			if len(watchBeads) == 0 {
+				continue
+			}
+			var payload struct {
+				RunID string `json:"run_id"`
+			}
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+				continue
+			}
+			beadID, ours := runToBead[payload.RunID]
+			if !ours {
+				continue
+			}
+			delete(runToBead, payload.RunID)
+			delete(pendingBeads, beadID)
+			if envelope.Type == "run_failed" {
+				anyBeadFailed = true
+				fmt.Fprintf(os.Stderr, "harmonik run: bead %s failed (run_id=%s)\n", beadID, payload.RunID)
+			}
+			if len(pendingBeads) == 0 {
+				fmt.Fprintf(os.Stderr, "harmonik run: all submitted bead(s) reached a terminal run state (failed=%v)\n", anyBeadFailed)
+				if anyBeadFailed {
+					return 1
+				}
+				return 0
+			}
 
 		case "queue_paused":
 			var payload struct {

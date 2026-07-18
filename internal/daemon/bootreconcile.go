@@ -149,26 +149,47 @@ func (bs *bootState) brVersionHandshake(ctx context.Context, brAdapter *brcli.Ad
 	return fmt.Errorf("daemon.Start: br --version handshake failed (BI-024a, exit code 8): %w", versionErr)
 }
 
-// loadQueueProvenance reads the raw queue.json (hk-2ty0g) into the QueueOwned /
-// QueueDispatched provenance sets for the orphan-sweep bead-reset. Non-fatal: a
-// missing/corrupt queue.json yields empty sets and the sweep falls back to
-// intent-log provenance only (PL-006 sixth bullet).
+// loadQueueProvenance reads every named queue's queue.json (hk-2ty0g, widened to
+// all queues by hk-nddg1) into the QueueOwned / QueueDispatched provenance sets for
+// the orphan-sweep bead-reset. Non-fatal: enumerate/load errors yield partial (or
+// empty) sets and the sweep falls back to intent-log provenance only (PL-006 sixth
+// bullet).
 func (bs *bootState) loadQueueProvenance(ctx context.Context, st *reconcileState) {
-	rawQ, rawQErr := queue.Load(ctx, bs.cfg.ProjectDir, queue.QueueNameMain)
-	if rawQErr != nil {
-		log.Printf("warn: pre-sweep queue.Load failed: %v — falling back to intent-log-only provenance", rawQErr)
+	// hk-nddg1: aggregate provenance across ALL named queues, not just main.
+	// Dispatch happens from every named queue (queue.EnumerateQueueNames — see
+	// LoadStartupQueues and the Class-B reconcile pass in reconciliationcadence),
+	// so a bead dispatched via a crew queue (e.g. queues/paul.json) must contribute
+	// to QueueOwned / QueueDispatched. Reading main.json alone let the orphan sweep
+	// miss a crew-queue bead's dispatched-sentinel: SweepStaleInProgressBeads reset
+	// it in_progress->open (the a-queue exclusion at orphansweepbeads.go did not
+	// fire because the bead was absent from the main-only QueueDispatched set), and
+	// LoadStartupQueues then re-dispatched it from its still-"dispatched" crew queue
+	// = double-dispatch (the hk-2ty0g regression reintroduced for every non-main
+	// queue). Non-fatal: enumerate/load errors fall back to whatever provenance was
+	// gathered (or intent-log-only if none). EnumerateQueueNames includes main
+	// (main.json lives in .harmonik/queues/), so this strictly widens coverage.
+	names, enumErr := queue.EnumerateQueueNames(bs.cfg.ProjectDir)
+	if enumErr != nil {
+		log.Printf("warn: pre-sweep EnumerateQueueNames failed: %v — falling back to intent-log-only provenance", enumErr)
 		return
 	}
-	if rawQ == nil {
+	if len(names) == 0 {
 		return
 	}
 	st.queueDispatched = make(lifecycle.QueueDispatchedSet)
 	st.queueOwned = make(lifecycle.QueueOwnedSet)
-	for gi := range rawQ.Groups {
-		for _, item := range rawQ.Groups[gi].Items {
-			st.queueOwned[item.BeadID] = struct{}{}
-			if item.Status == queue.ItemStatusDispatched {
-				st.queueDispatched[item.BeadID] = struct{}{}
+	for _, name := range names {
+		rawQ, rawQErr := queue.Load(ctx, bs.cfg.ProjectDir, name)
+		if rawQErr != nil || rawQ == nil {
+			log.Printf("warn: pre-sweep queue.Load(%q) failed: %v — skipping this queue's provenance", name, rawQErr)
+			continue
+		}
+		for gi := range rawQ.Groups {
+			for _, item := range rawQ.Groups[gi].Items {
+				st.queueOwned[item.BeadID] = struct{}{}
+				if item.Status == queue.ItemStatusDispatched {
+					st.queueDispatched[item.BeadID] = struct{}{}
+				}
 			}
 		}
 	}

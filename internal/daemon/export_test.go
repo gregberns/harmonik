@@ -641,6 +641,17 @@ func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	return runWorkLoop(ctx, deps)
 }
 
+// ExportedStoreLocalInFlight preloads the split-gate local-in-flight counter on
+// deps so a test can simulate local saturation (localInFlight >= gateMax) before
+// running the work loop. localInFlight is a *atomic.Int32 shared through the
+// by-value deps copy, so a store here is visible to the loop started via
+// ExportedRunWorkLoop(deps).
+//
+// Bead ref: hk-l5saf.
+func ExportedStoreLocalInFlight(deps workLoopDeps, n int32) {
+	deps.localInFlight.Store(n)
+}
+
 // ExportedSetAgentReadyKillReapTimeout overrides the package-level
 // agentReadyKillReapTimeout for tests. Returns a restore function; pass it to
 // t.Cleanup. NOT safe for use with t.Parallel() — modifies a package global.
@@ -3461,4 +3472,17 @@ func ExportedPiDefaultHome() string {
 // (hk-r9edj) can be exercised directly without driving the full workloop.
 func ExportedStrandedBeadHasOnDiskRun(projectDir string, beadID core.BeadID) bool {
 	return strandedBeadHasOnDiskRun(projectDir, beadID)
+}
+
+// ExportedLoadQueueProvenance runs bootState.loadQueueProvenance for projectDir
+// and returns the aggregated QueueDispatched / QueueOwned provenance sets. It is
+// the test seam for hk-nddg1: loadQueueProvenance must enumerate ALL named
+// queues (queue.EnumerateQueueNames), not just main, so a bead dispatched via a
+// crew queue (e.g. queues/paul.json) lands in QueueDispatched and the orphan
+// sweep's (a-queue) exclusion protects it from a double-dispatch reset.
+func ExportedLoadQueueProvenance(ctx context.Context, projectDir string) (lifecycle.QueueDispatchedSet, lifecycle.QueueOwnedSet) {
+	bs := &bootState{cfg: Config{ProjectDir: projectDir}}
+	st := &reconcileState{}
+	bs.loadQueueProvenance(ctx, st)
+	return st.queueDispatched, st.queueOwned
 }

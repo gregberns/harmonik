@@ -2518,6 +2518,29 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 					}
 				}
 
+				// hk-l5saf: secondary local-cap guard, HOISTED to before the Phase-3
+				// dispatch stamp (was previously post-stamp, at the loop-body level).
+				// The Step-2 split gate (~line 1818) may have admitted in "remote bypass"
+				// mode (localInFlight >= gateMax, HasFreeSlot=true), expecting this bead to
+				// route remotely. If the selected item turned out local-only
+				// (capturedQueueLocalOnly=true), dispatching it locally would overrun the
+				// HARD session cap — so defer WITHOUT stamping, exactly like the sibling
+				// hold gates above (handler-pause, decision-required, sentinel, greenlight).
+				// The old post-stamp position stranded the item forever: Phase 3 had already
+				// stamped ItemStatusDispatched + a placeholder RunID and PERSISTED queue.json,
+				// then the guard's sleep+continue left it un-reverted; a Dispatched item with
+				// no run/goroutine is never re-selected (only Pending is projected) and no
+				// reverter reclaims it, wedging the group until daemon restart. Hoisting is
+				// safe because localInFlight is incremented only by this single dispatch
+				// goroutine and not until ~line 3072 (post-claim), so a pre-stamp read that
+				// is < gateMax stays < gateMax through dispatch.
+				if capturedQueueLocalOnly && int(deps.localInFlight.Load()) >= gateMax {
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						return exitClean()
+					}
+					continue
+				}
+
 				// Phase 3 — stamp item as dispatched under the write lock (TOCTOU).
 				// NQ-B1: operate on the SELECTED queue (snapQueueName), not the "main"
 				// slot, so the dispatch stamp lands on the queue the round-robin chose.
@@ -2889,19 +2912,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			beadRecord.Description = showRecord.Description
 		}
 
-		// hk-hs7ex: secondary local-cap guard. The split gate at Step 2 may have
-		// passed in "remote bypass" mode (localInFlight >= gateMax, HasFreeSlot=true),
-		// expecting this bead to route remotely. If the item turned out to be
-		// local-only (capturedQueueLocalOnly=true), SelectWorker will be skipped
-		// and localInFlight will be incremented — overrunning the HARD 4-session
-		// cap. Defer this item: sleep and re-evaluate. No state to undo at this
-		// point (ClaimBead not yet called, runRegistry not yet updated).
-		if capturedQueueLocalOnly && int(deps.localInFlight.Load()) >= gateMax {
-			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
-				return exitClean()
-			}
-			continue
-		}
+		// hk-l5saf: the secondary local-cap guard that previously sat here (post-stamp)
+		// was hoisted to before the Phase-3 dispatch stamp (see the guard tagged
+		// hk-l5saf above). At this point the item has already been stamped Dispatched
+		// and persisted, so deferring here would strand it; the hoisted guard defers
+		// pre-stamp instead, and localInFlight cannot have risen since (single dispatch
+		// goroutine, increment at ~line 3072), so no cap re-check is needed here.
 
 		// Acquire the claim semaphore before the SQLite write (hk-e61c3.3).
 		// The select allows dispatch-halt to abort the acquire so the loop
@@ -3157,6 +3173,26 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 	defer func() {
 		if relLocalSlot && deps.localInFlight != nil {
 			deps.localInFlight.Add(-1)
+		}
+	}()
+
+	// hk-3hozm: release the pre-reserved REMOTE worker slot on ANY exit path,
+	// including the four refuse-before-launch early returns below (bad pi profile,
+	// CrossRepoUnsafeError, unresolvable start_from/parent commit, LandsOnProtected).
+	// The outer dispatch loop pre-reserved this slot via SelectWorker (~line 3078)
+	// and the caller MUST balance it with ReleaseSlot. That release was previously
+	// registered only at the remote-runner setup (the `preSelectedWorker != nil`
+	// block far below), AFTER those early returns — so a refused remote bead
+	// ReopenBeads'd and returned without releasing, permanently over-counting the
+	// registry until HasFreeSlot()==false forever wedged the remote path. Hoisting
+	// the release to a top-level defer fires it exactly once on every return path.
+	// Keyed on preSelectedWorker so it is inert for the fallback path (which is
+	// mutually exclusive — it runs only when rbc==nil, i.e. preSelectedWorker==nil —
+	// and acquires+releases its own slot after these early returns).
+	relWorkerSlot := preSelectedWorker != nil && deps.workerRegistry != nil
+	defer func() {
+		if relWorkerSlot {
+			deps.workerRegistry.ReleaseSlot()
 		}
 	}()
 
@@ -3490,7 +3526,10 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			// hk-zexsj: pin the tmux SSHRunner off the shared SSH ControlMaster.
 			sshRunner: tmuxpkg.SSHRunner{Host: preSelectedWorker.Host, Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"}},
 		}
-		defer deps.workerRegistry.ReleaseSlot()
+		// hk-3hozm: the balancing ReleaseSlot for this pre-reserved slot is now
+		// registered at the top of beadRunOne (relWorkerSlot defer) so it also
+		// covers the refuse-before-launch early returns above. No release here —
+		// registering one would double-free the slot.
 	}
 	// hk-f10xl [L5 Move 2]: per-queue routing gate fallback. Applies when
 	// preSelectedWorker is nil (e.g. br-ready path with no available worker at

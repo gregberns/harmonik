@@ -479,30 +479,31 @@ func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecte
 	bufName := bufferName(sessionID, "crew-init")
 	msg := fmt.Sprintf("Please read %s and run /session-resume on it, then begin your operating loop.\n", handoffPath)
 
-	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: crew-start: paste mission WriteLastPane: %v\n", err)
+	// Verify the seed actually rendered into the input box BEFORE submitting,
+	// re-pasting on a silently-dropped paste (hk-dvcc7). This mirrors the working
+	// implementer/reviewer paths (injectAndVerifySeed, hk-zexsj); the crew path
+	// alone still used a blind WriteLastPane + fixed-delay submit Enter, which on
+	// a slow or concurrent cold-start fired the Enter while the bracketed paste
+	// was still being absorbed — the keypress raced the paste and was swallowed,
+	// leaving the seed typed-but-unsubmitted so the crew idled silently until
+	// someone manually pressed Enter. injectAndVerifySeed captures the pane and
+	// confirms the marker rendered (re-pasting up to pasteVerifyAttempts) so the
+	// submit only fires once the seed is demonstrably in the input bar. Marker
+	// "/session-resume" is a stable literal in the seed, guaranteed present on a
+	// successful render (the handoff path is variable, so it is not the marker).
+	if reason := injectAndVerifySeed(ctx, inj, bufName, []byte(msg), "/session-resume", "crew-init"); reason != "" {
+		fmt.Fprintf(os.Stderr, "daemon: crew-start: paste mission unverified: %s\n", reason)
 		return
 	}
-	// Settle after the paste before submitting (hk-jzpqo).
-	//
-	// Root cause of the not-submitted seed: the post-paste submit Enter was sent
-	// IMMEDIATELY after WriteLastPane (the bracketed paste), with no settle in
-	// between.  A freshly-spawned crew pane — like a freshly-`--resume`'d
-	// implementer (hk-ip33d) — has a REPL input handler that is intermittently
-	// not yet ready to accept the keypress at that instant: the paste content is
-	// still being absorbed by the TUI, so the single Enter races it and is
-	// swallowed.  The seed then sits in the input bar unsubmitted and the crew
-	// never begins its loop until someone manually presses Enter.
-	//
-	// Fix: mirror the working implementer paths — wait splashDismissWait after the
-	// paste so the bracketed-paste content lands and the REPL returns to an
-	// input-ready prompt, THEN submit via sendResumeSubmitEnter, the same bounded
-	// submit-Enter retry the implementer-resume path uses (hk-ip33d).  A redundant
-	// Enter at an already-submitted REPL is a harmless empty line, so the retry
-	// only ever helps: at least one keypress lands after the input handler is ready.
+	// Settle after the paste before submitting (hk-jzpqo/hk-76n5g): the bracketed
+	// paste is still being absorbed by the TUI when the first submit Enter fires;
+	// waiting splashDismissWait gives the REPL time to return to an input-ready
+	// state before the bounded submit-Enter retry. A redundant Enter at an
+	// already-submitted REPL is a harmless empty line, so the retry only ever
+	// helps: at least one keypress lands after the input handler is ready.
 	splashDismissWait(ctx)
 	if es, ok := inj.(enterSender); ok {
-		sendResumeSubmitEnter(ctx, es)
+		sendSubmitEnterWithRetry(ctx, es, "crew-init")
 	}
 }
 
@@ -524,6 +525,20 @@ func (c *crewPasteInjector) WriteLastPane(ctx context.Context, bufferName string
 
 func (c *crewPasteInjector) SendEnterToLastPane(ctx context.Context) error {
 	return c.adapter.SendKeysEnter(ctx, c.paneTarget)
+}
+
+// CaptureLastPane implements paneCapturer so injectAndVerifySeed can confirm the
+// crew seed rendered before submitting (hk-dvcc7). It type-asserts the adapter
+// to the pane-capture capability (tmux.OSAdapter satisfies it) and reads the
+// crew pane's rendered text. Returns errPaneCaptureUnsupported (wrapped) when
+// the adapter cannot capture — e.g. a minimal test double — so the verify loop
+// falls back to trusting the write, unchanged from the prior blind behaviour.
+func (c *crewPasteInjector) CaptureLastPane(ctx context.Context, scrollback int) (string, error) {
+	pc, ok := c.adapter.(paneCaptureAdapter)
+	if !ok {
+		return "", fmt.Errorf("daemon: crewPasteInjector.CaptureLastPane: adapter %T lacks CapturePane: %w", c.adapter, errPaneCaptureUnsupported)
+	}
+	return pc.CapturePane(ctx, c.paneTarget, scrollback)
 }
 
 // pasteCrewMissionToSession delivers the mission kick-off line to the crew pane

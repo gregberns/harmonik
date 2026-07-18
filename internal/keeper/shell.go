@@ -244,6 +244,21 @@ func (c *Cycler) drive(ctx context.Context) error {
 			case <-ticker.C():
 				c.pollOnce(ctx)
 			case <-deadlineC:
+				// One-shot semantics (hk-n8yha): the deadline wake is a
+				// repeating substrate.Ticker used only to punctually observe
+				// the nearest armed deadline ONCE per generation. Disable it
+				// after the first fire (a nil channel blocks in select) so an
+				// already-elapsed deadline — nearestDeadline clamps a non-
+				// positive remaining to 1ns, e.g. a ClearConfirmBackstop that
+				// fell due between pollClearing's boundary sample and this
+				// generation's nearestDeadline sample under a non-aligned
+				// config — cannot re-fire every 1ns and spin the loop (tight
+				// CPU + a ReadGauge disk-read storm). After the one wake,
+				// detection stays on the PollInterval ticker until a timer
+				// re-arms, which starts a fresh generation with a fresh
+				// deadline wake; the backstop is still consulted at the settle-
+				// window end exactly as before.
+				deadlineC = nil
 				c.pollOnce(ctx)
 			}
 		}

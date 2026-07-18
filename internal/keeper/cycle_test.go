@@ -538,6 +538,39 @@ func TestCycler_EmptySessionIDNeverFires(t *testing.T) {
 	}
 }
 
+// TestCycler_NilCtxFileNoPanic verifies the MaybeRun nil-guard: a CF-less tick
+// (cf == nil) must be skipped gracefully rather than crashing the keeper when
+// the reactor's gate ladder dereferences ev.CF.
+func TestCycler_NilCtxFileNoPanic(t *testing.T) {
+	t.Parallel()
+
+	em := &keeper.RecordingEmitter{}
+	spy := &cycleSpyInjector{}
+	jc := &journalCapture{}
+
+	alwaysNonce := func(_ string) (string, error) {
+		return "<!-- KEEPER:any -->", nil
+	}
+	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0}, time.Now(), nil
+	}
+
+	cycler := newTestCycler(
+		"nil-cf-agent", t.TempDir(), em, spy, jc, "cyc-nilcf-001",
+		alwaysNonce, noopGauge,
+		true, false,
+		100*time.Millisecond, 30*time.Millisecond,
+	)
+
+	// nil cf must not panic and must not fire.
+	if err := cycler.MaybeRun(context.Background(), nil); err != nil {
+		t.Fatalf("MaybeRun(nil): %v", err)
+	}
+	if n := len(spy.texts()); n != 0 {
+		t.Errorf("want 0 inject calls with nil cf; got %d", n)
+	}
+}
+
 // TestCycler_AbortDoesNotRefire verifies DEFECT-4: after an abort the cycle
 // must not re-fire on the same session_id on the very next tick.
 func TestCycler_AbortDoesNotRefire(t *testing.T) {

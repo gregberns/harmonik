@@ -713,6 +713,12 @@ func journalFilePath(projectDir, agent string) string {
 // the event with the Clock, and — when the ladder passes — drives the cycle
 // SYNCHRONOUSLY to its terminal (the InCycle freeze, SK-017).
 func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
+	// A CF-less tick carries no gauge/session identity: the reactor's gate ladder
+	// (stepIdleGaugeTick) dereferences ev.CF unconditionally, so a nil cf would
+	// crash the keeper. Skip gracefully — mirrors RunForIdle's nil guard.
+	if cf == nil {
+		return nil
+	}
 	snap := c.gauge.Snapshot(cf.SessionID)
 	return c.runEntry(ctx, Event{
 		Kind:  EvGaugeTick,

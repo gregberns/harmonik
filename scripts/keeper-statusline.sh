@@ -57,6 +57,12 @@ elif [ -n "${TMUX:-}" ]; then
 else
     AGENT="default"
 fi
+# Reject path-traversal / absolute-escape in the agent name: it is interpolated
+# into a filesystem path, so a value containing a path separator or ".." could
+# steer writes outside .harmonik/keeper. Fail closed on any such value.
+case "${AGENT}" in
+    */*|*..*) echo "keeper-statusline: refusing unsafe agent name: ${AGENT}" >&2; exit 1 ;;
+esac
 PROJECT="${HARMONIK_PROJECT:-${PWD}}"
 # HARMONIK_KEEPER_WINDOW_SIZE: optional explicit override for window_size when
 # Claude Code omits context_window_size (e.g. [1m] models). Must be a positive integer.

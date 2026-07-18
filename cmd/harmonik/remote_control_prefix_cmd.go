@@ -23,6 +23,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/gregberns/harmonik/internal/daemon"
 )
@@ -37,8 +38,12 @@ func runRemoteControlPrefixSubcommand(args []string) int {
 		case args[i] == "--project" && i+1 < len(args):
 			i++
 			projectDir = args[i]
-		case len(args[i]) > 10 && args[i][:10] == "--project=":
-			projectDir = args[i][10:]
+		case strings.HasPrefix(args[i], "--project="):
+			projectDir = strings.TrimPrefix(args[i], "--project=")
+			if projectDir == "" {
+				fmt.Fprintln(os.Stderr, "harmonik remote-control-prefix: --project= requires a directory")
+				return 1
+			}
 		case args[i] == "--help" || args[i] == "-h":
 			fmt.Print(`harmonik remote-control-prefix — print the per-project Claude RC label prefix
 

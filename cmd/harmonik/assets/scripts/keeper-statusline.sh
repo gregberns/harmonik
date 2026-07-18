@@ -28,6 +28,8 @@
 # Environment
 #   HARMONIK_PROJECT   Absolute path to the project root (fallback: $PWD).
 #   HARMONIK_AGENT     Agent name to namespace the .ctx file (fallback: "default").
+#   HARMONIK_KEEPER_AGENT  Backward-compat alias for HARMONIK_AGENT (checked second),
+#                      matching the stop/precompact/sessionstart hooks.
 #   HARMONIK_KEEPER_1M_EFFECTIVE_FRACTION
 #                      Effective fraction of the nominal 1M context window for [1m]
 #                      models (default: 0.5, i.e. ~500k tokens). window_size is set to
@@ -46,12 +48,15 @@
 #       hk-whd (robust .model extraction — handles nested {id,display_name} object form).
 set -euo pipefail
 
-# Derive agent name: explicit HARMONIK_AGENT env var → tmux session name → "default".
-# The tmux fallback means a single global statusLine entry in ~/.claude/settings.json
-# works correctly for all concurrent agent sessions; each session writes to its own
-# .ctx file keyed by the tmux session name (hk-nm32w).
+# Derive agent name: HARMONIK_AGENT → HARMONIK_KEEPER_AGENT (backward compat) →
+# tmux session name → "default". The tmux fallback means a single global
+# statusLine entry in ~/.claude/settings.json works correctly for all concurrent
+# agent sessions; each session writes to its own .ctx file keyed by the tmux
+# session name (hk-nm32w).
 if [ -n "${HARMONIK_AGENT:-}" ]; then
     AGENT="${HARMONIK_AGENT}"
+elif [ -n "${HARMONIK_KEEPER_AGENT:-}" ]; then
+    AGENT="${HARMONIK_KEEPER_AGENT}"
 elif [ -n "${TMUX:-}" ]; then
     AGENT="$(tmux display-message -p '#S' 2>/dev/null || echo default)"
 else

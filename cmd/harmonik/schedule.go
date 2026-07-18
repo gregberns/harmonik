@@ -248,6 +248,16 @@ func runScheduleAdd(args []string) int {
 			schedule.CatchupCoalesceWithinWindow, schedule.CatchupOff)
 		return 1
 	}
+	// Validate --catchup-window at add-time: the clock parses it with
+	// time.ParseDuration when firing, so reject a malformed value here rather
+	// than silently persisting a job that never catches up.
+	if catchupWin != "" {
+		if _, err := time.ParseDuration(catchupWin); err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik schedule add: --catchup-window %q is not a valid duration (e.g. 24h): %v\n",
+				catchupWin, err)
+			return 1
+		}
+	}
 
 	store, code := resolveScheduleStore(projectFlag)
 	if code != 0 {

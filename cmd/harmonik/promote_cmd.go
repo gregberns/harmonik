@@ -302,12 +302,19 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 		fmt.Fprintf(os.Stderr, "harmonik promote: MkdirTemp: %v\n", tmpErr)
 		return 1
 	}
-	// Always clean up the temp worktree on exit.
+	// Always clean up the temp worktree on exit. If `git worktree remove`
+	// fails (e.g. a dirty tree from an aborted cherry-pick), removing the
+	// directory alone leaves a stale registration behind, so follow up with
+	// `git worktree prune` to drop it.
 	defer func() {
 		rmCmd := exec.Command("git", "worktree", "remove", "--force", tmpDir) //nolint:gosec
 		rmCmd.Dir = projectDir
-		_ = rmCmd.Run()
-		_ = os.RemoveAll(tmpDir)
+		if rmErr := rmCmd.Run(); rmErr != nil {
+			_ = os.RemoveAll(tmpDir)
+			pruneCmd := exec.Command("git", "worktree", "prune")
+			pruneCmd.Dir = projectDir
+			_ = pruneCmd.Run()
+		}
 	}()
 
 	addCmd := exec.CommandContext(ctx, "git", "worktree", "add", "--detach", tmpDir, remoteTip)

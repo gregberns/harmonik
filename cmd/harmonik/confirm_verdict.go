@@ -145,6 +145,10 @@ func runConfirmVerdictSubcommand(subArgs []string) int {
 //	16 — operator-control-invalid-state (no pending verdict for run_id)
 //	17 — daemon not running
 func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
+	// This path is shared by `confirm-verdict` and `veto-verdict`; derive the
+	// diagnostic prefix from the op ("confirm_verdict" → "confirm-verdict",
+	// "veto_verdict" → "veto-verdict") so messages name the actual command.
+	cmdName := strings.ReplaceAll(op, "_", "-")
 	harmonikDir := projectDir + "/.harmonik"
 	sockPath := harmonikDir + "/daemon.sock"
 
@@ -165,7 +169,7 @@ func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
 		PromoteTo: promoteTo,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "harmonik confirm-verdict: internal error marshalling request: %v\n", err)
+		fmt.Fprintf(os.Stderr, "harmonik %s: internal error marshalling request: %v\n", cmdName, err)
 		return 1
 	}
 
@@ -173,17 +177,17 @@ func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
 	conn, dialErr := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 	if dialErr != nil {
 		if isVerdictSocketAbsent(dialErr) || isVerdictConnectionRefused(dialErr) {
-			fmt.Fprintln(os.Stderr, "harmonik confirm-verdict: daemon is not running (socket absent or connection refused)")
-			fmt.Fprintf(os.Stderr, "harmonik confirm-verdict: start the daemon with 'harmonik --project %s' and retry\n", projectDir)
+			fmt.Fprintf(os.Stderr, "harmonik %s: daemon is not running (socket absent or connection refused)\n", cmdName)
+			fmt.Fprintf(os.Stderr, "harmonik %s: start the daemon with 'harmonik --project %s' and retry\n", cmdName, projectDir)
 			return 17
 		}
-		fmt.Fprintf(os.Stderr, "harmonik confirm-verdict: socket dial error: %v\n", dialErr)
+		fmt.Fprintf(os.Stderr, "harmonik %s: socket dial error: %v\n", cmdName, dialErr)
 		return 17
 	}
 	defer func() { _ = conn.Close() }() //nolint:errcheck
 
 	if _, writeErr := conn.Write(payload); writeErr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik confirm-verdict: socket write error: %v\n", writeErr)
+		fmt.Fprintf(os.Stderr, "harmonik %s: socket write error: %v\n", cmdName, writeErr)
 		return 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
@@ -192,22 +196,26 @@ func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
 
 	var resp verdictOverrideResp
 	if decErr := json.NewDecoder(conn).Decode(&resp); decErr != nil {
-		fmt.Fprintf(os.Stderr, "harmonik confirm-verdict: socket read error: %v\n", decErr)
+		fmt.Fprintf(os.Stderr, "harmonik %s: socket read error: %v\n", cmdName, decErr)
 		return 1
 	}
 
 	if !resp.Ok {
 		// exit code 16 = operator-control-invalid-state (no pending verdict)
 		if resp.ErrorCode == 16 {
-			fmt.Fprintf(os.Stderr, "harmonik confirm-verdict: no pending verdict for run %q (operator-control-invalid-state)\n", runID)
-			fmt.Fprintln(os.Stderr, "harmonik confirm-verdict: use 'harmonik status' to list reconciliation runs with pending verdicts")
+			fmt.Fprintf(os.Stderr, "harmonik %s: no pending verdict for run %q (operator-control-invalid-state)\n", cmdName, runID)
+			fmt.Fprintf(os.Stderr, "harmonik %s: use 'harmonik status' to list reconciliation runs with pending verdicts\n", cmdName)
 			return 16
 		}
-		fmt.Fprintf(os.Stderr, "harmonik confirm-verdict: daemon rejected request (code %d): %s\n", resp.ErrorCode, resp.Error)
+		fmt.Fprintf(os.Stderr, "harmonik %s: daemon rejected request (code %d): %s\n", cmdName, resp.ErrorCode, resp.Error)
 		return 1
 	}
 
-	fmt.Fprintf(os.Stderr, "harmonik confirm-verdict: verdict confirmed for run %q — daemon will proceed with execution\n", runID)
+	// The veto path prints its own success message; only the confirm path needs
+	// the generic "verdict confirmed" line here.
+	if op == "confirm_verdict" {
+		fmt.Fprintf(os.Stderr, "harmonik %s: verdict confirmed for run %q — daemon will proceed with execution\n", cmdName, runID)
+	}
 	return 0
 }
 

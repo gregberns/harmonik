@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -187,9 +188,18 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 	}
 	defer f.Close()
 
+	// Emit in a deterministic run_id order so re-collecting the same events
+	// produces byte-identical output (map iteration order is randomised).
+	runIDs := make([]string, 0, len(states))
+	for runID := range states {
+		runIDs = append(runIDs, runID)
+	}
+	sort.Strings(runIDs)
+
 	written := 0
 	skipped := 0
-	for runID, st := range states {
+	for _, runID := range runIDs {
+		st := states[runID]
 		if !st.gradeDispatched {
 			continue // not an eval run
 		}

@@ -285,15 +285,20 @@ func evalGocycloMax(workdir string, files []string) *int {
 		return nil
 	}
 	max := 0
+	found := false
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.Fields(line)
 		if len(parts) >= 1 {
-			if n, err := strconv.Atoi(parts[0]); err == nil && n > max {
-				max = n
+			if n, err := strconv.Atoi(parts[0]); err == nil {
+				found = true
+				if n > max {
+					max = n
+				}
 			}
 		}
 	}
-	if max == 0 {
+	if !found {
+		// No parseable gocyclo output — distinct from a real max of 0.
 		return nil
 	}
 	return &max

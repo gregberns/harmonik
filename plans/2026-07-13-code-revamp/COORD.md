@@ -1246,4 +1246,23 @@ Shipping `handler.Launch` (`internal/handler/handler.go:236`) mints a fresh `New
 
 **Still open (Wave 4 batch-2, next):** remaining §c file-disjoint medium groups — config/socket/router; core (verdictexecution `PlanForVerdict` unknown-verdict panic, EV-034 registry sealing); eventbus; brcli; mergeq/runexec; workflow (params/loader); supervise/workers; scenario (`asserteval` symlink escape); usage/structuredlog; specs/_registry. Then the ~50 NITS. ALPHA-LANE items still logged-not-fixed.
 
-**Next COORD entry = c085.**
+### c085  ·  2026-07-18  ·  captain  ·  mega-review Wave 4 batch-2 §c mediums — 9 groups LANDED
+**Nine file-disjoint §c medium groups fixed via parallel non-isolated sub-agents (each build/vet/gofmt/targeted-test green, self-reviewed under waived signoffs, committed).**
+- **core — ef43d264** — `PlanForVerdict` panic→typed error (unknown payload-derived verdict no longer crashes the daemon goroutine; caller routes to RC-023 fallback). EV-034: `SealEventRegistry()` wired after `bus.Seal()`; late `RegisterEventType` now rejected. Alpha-lane `verdictexecutor_rc025a.go` touched ONLY for the mechanical caller-signature update — no alpha logic changed.
+- **workers — 90b8da31** — `RunHealthCheck` uses `SetEnabledByName` (was flipping the one registry worker for every probe); `PrimaryWorkerIndex` unifies `NewRegistry` + `applyWorkerOverrides` so CLI overrides can't drift off the live worker. No-op under v1 single-worker cap.
+- **config — 2303ad14** — empty-file sentinel replaced with structural `reflect.DeepEqual` vs zero `rawProjectConfig` (kills the per-block drift class; a partial `watch` block is no longer silently dropped). Unknown-keeper-key detection walks the `yaml.Node` vs struct tags instead of regex-matching yaml.v3 error text. `keeper.hard_ceiling.cooldown` consumption DEFERRED (spans `resolve_keeper_config.go`).
+- **brcli — 8effa3fa** — `BrErrorFromExit(code,stderr)`: exit-1 with non-empty non-"not found" stderr → `BrOther` (no spurious divergence dispatch); empty/"not found" still `BrNotFound` per BI-025d.
+- **mergeq — 8f5e64bc** — deterministic FIFO via explicit intake seq under mu (was relying on unspecified Go channel-sendq release order); cap-1 wake, `stop()` drains pending. `-race -count=3` green; new test races 200 concurrent submits. (Fable-authored.)
+- **scenario — 7cb693d2** — `checkSymlinkSafety` now resolves the full path (deepest existing ancestor via `EvalSymlinks`) so a symlinked INTERMEDIATE dir can't escape the SH-022 guard; `jsonValuesEqual` equates YAML int with JSON float64.
+- **structuredlog — d4c8f480** — `Handle` after `Close` returns `os.ErrClosed` (was nil-deref/panic); `-race`-tested.
+- **workflow — 682cbe9b** — deleted dead `SubstituteTemplateParams` + its theater tests (live path is `substituteGraphParams`). CP-057 (`LoadDotWorkflowWithPolicy` unwired) DEFERRED — the whole policy subsystem is unwired upstream (`ParsePolicyDocument`/`Config.CPRegistry` have zero prod callers); wiring spans daemon-startup/config/eventbus. **FOLLOW-UP below.**
+- **specs/_registry — 295f5a23** — added the nine declared-but-missing prefixes (CI DC FW HD PR RP SW SS WG).
+
+**⚠ Pre-existing failure logged (NOT ours, confirmed on clean HEAD):** `TestSHINV005CorpusLint` fails on tracked `scenarios/core-loop-proof/scratch-config-overlay.yaml` — it carries `codex:`/`harnesses:` fields absent from `scenario.ScenarioFile`, so strict `KnownFields(true)` load rejects it (SH-INV-005). Either fix the scenario file or extend the schema. Worth a bead.
+
+### FOLLOW-UP — wire runtime policy loading (CP-055/056/057 ref-resolution, deferred by workflow batch-2)
+The daemon never loads a `*core.PolicyDocument` at runtime, so `LoadDotWorkflowWithPolicy` (skills_ref / *_ref resolution per WG-467) never runs. Correct fix: discover + `ParsePolicyDocument`, populate `Config.CPRegistry`/thread a policy into `workLoopDeps`, resolve refs at the DOT case + emit `skills_resolved`. Multi-subsystem (daemon-startup/config/eventbus) — own bead when beads return.
+
+**Not yet done in Wave 4 §c (remaining backlog, mostly LOW nits + a few deferred M refactors):** god-function refactors (workloop `run()`, keeper `Watcher.Run`, codex `codexSession`, eventbus 5-emit-pipelines, main.go `run()`), the handler openWireTap-orphan / ScheduleRotateAccount-TOCTOU / PID-recycling mediums (RU-08 deep), tmux argv shell-quoting (M, hk-rpr6), hookrelay socket-absent retry (M, CHB-016), the ~50 NITS. ALPHA-LANE items still logged-not-fixed.
+
+**Next COORD entry = c086.**

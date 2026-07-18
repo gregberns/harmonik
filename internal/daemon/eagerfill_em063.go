@@ -184,7 +184,7 @@ func preScreenCandidates(ctx context.Context, deps workLoopDeps, candidates []co
 	survivors := make([]core.BeadID, 0, len(phase1Survivors))
 	for _, id := range phase1Survivors {
 		// Phase 2 — already landed on origin/main.
-		landed, commitSHA, gitErr := beadLandedOnOriginMain(ctx, deps.projectDir, string(id))
+		landed, commitSHA, gitErr := beadLandedOnOriginMain(ctx, deps.projectDir, deps.targetBranch, string(id))
 		if gitErr != nil {
 			// Non-fatal: log and treat as not-landed so we don't spuriously skip.
 			fmt.Fprintf(os.Stderr, "daemon: preScreenCandidates: git check bead=%s: %v\n", id, gitErr)
@@ -237,33 +237,58 @@ func buildInQueueSet(deps workLoopDeps, targetQueueID string) map[core.BeadID]st
 	return result
 }
 
-// beadLandedOnOriginMain executes `git log origin/main --grep "Refs: <id>"
-// --max-count=1 --format=%H` in deps.projectDir and reports whether at least
-// one commit carrying the Refs: trailer was found.
+// beadLandedOnOriginMain reports whether a commit carrying an exact
+// "Refs: <beadID>" trailer line is reachable from origin/<targetBranch>, and
+// returns that commit's SHA.
 //
-// Returns (false, "", nil) when origin/main does not exist (git exits 128).
-// Returns (false, "", err) on other git errors.
+// It mirrors the sibling provenance guard beadOnOriginMain: the check targets
+// the configured merge branch (NOT a hardcoded origin/main) and uses
+// --fixed-strings plus an exact-line verification so a shorter bead id is not a
+// false-positive substring of a longer one (e.g. "Refs: hk-12" must NOT match a
+// commit trailing "Refs: hk-123"). Because a substring --grep can surface a
+// superstring commit, --max-count is omitted so every candidate is inspected.
+//
+// Returns (false, "", nil) when targetBranch is empty or origin/<targetBranch>
+// does not exist (git exits 128). Returns (false, "", err) on other git errors.
 //
 // Spec ref: specs/execution-model.md §4.13 EM-063 Phase 2.
-func beadLandedOnOriginMain(ctx context.Context, projectDir, beadID string) (found bool, sha string, err error) {
-	grep := "Refs: " + beadID
-	//nolint:gosec // G204: beadID is an internal identifier; projectDir is a controlled path.
-	cmd := exec.CommandContext(ctx, "git", "-C", projectDir, "log", "origin/main",
-		"--grep", grep, "--max-count=1", "--format=%H")
+func beadLandedOnOriginMain(ctx context.Context, projectDir, targetBranch, beadID string) (found bool, sha string, err error) {
+	if targetBranch == "" {
+		return false, "", nil
+	}
+	needle := "Refs: " + beadID
+	ref := "origin/" + targetBranch
+	// %x1f (unit sep) splits the SHA from the body; %x1e (record sep) splits
+	// commits so each commit's body can be line-verified against needle.
+	//nolint:gosec // G204: beadID/targetBranch are internal identifiers; projectDir is a controlled path.
+	cmd := exec.CommandContext(ctx, "git", "-C", projectDir, "log", ref,
+		"--fixed-strings", "--grep", needle, "--format=%H%x1f%B%x1e")
 	out, runErr := cmd.Output()
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 128 {
-			// origin/main does not exist — treat as not landed.
+			// origin/<targetBranch> does not exist — treat as not landed.
 			return false, "", nil
 		}
-		return false, "", fmt.Errorf("git log origin/main --grep %q: %w", grep, runErr)
+		return false, "", fmt.Errorf("git log %s --grep %q: %w", ref, needle, runErr)
 	}
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" {
-		return false, "", nil
+	for _, rec := range strings.Split(string(out), "\x1e") {
+		rec = strings.TrimLeft(rec, "\n")
+		if rec == "" {
+			continue
+		}
+		hashAndBody := strings.SplitN(rec, "\x1f", 2)
+		if len(hashAndBody) != 2 {
+			continue
+		}
+		hash := strings.TrimSpace(hashAndBody[0])
+		for _, line := range strings.Split(hashAndBody[1], "\n") {
+			if strings.TrimRight(line, "\r") == needle {
+				return true, hash, nil
+			}
+		}
 	}
-	return true, trimmed, nil
+	return false, "", nil
 }
 
 // emitStaleOpenBeadDetected emits the stale_open_bead_detected informative

@@ -195,7 +195,7 @@ func TestEM063_Phase2_BeadLandedOnOriginMain_MissingRemote(t *testing.T) {
 		t.Skipf("git init failed: %v (%s)", err, out)
 	}
 
-	found, sha, err := beadLandedOnOriginMain(context.Background(), dir, "hk-test-bead")
+	found, sha, err := beadLandedOnOriginMain(context.Background(), dir, "main", "hk-test-bead")
 	if err != nil {
 		t.Fatalf("beadLandedOnOriginMain: unexpected error: %v", err)
 	}

@@ -1901,7 +1901,12 @@ func parseStallSentinelBlock(path string, raw rawStallSentinelConfig) (StallSent
 func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 	pi := raw.Pi
 	hasFallback := pi.Fallback.Provider != "" || pi.Fallback.Model != "" || pi.Fallback.APIKeyEnv != ""
-	apiKeyFile, _ := daemonExpandHomePath(pi.APIKeyFile)
+	apiKeyFile, expandErr := daemonExpandHomePath(pi.APIKeyFile)
+	if expandErr != nil {
+		// Non-fatal: leave the ~-prefixed path unexpanded and let ResolvePiConfig
+		// surface it. Log so a home-dir resolution failure is not swallowed.
+		fmt.Fprintf(os.Stderr, "daemon: parseHarnessesBlock: expand harnesses.pi.api_key_file %q: %v\n", pi.APIKeyFile, expandErr)
+	}
 	// Copy profiles verbatim (APIKeyFile ~ expansion is done later in ResolvePiConfig).
 	var profiles map[string]PiProfileConfig
 	if len(pi.Profiles) > 0 {

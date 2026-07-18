@@ -24,6 +24,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -399,7 +400,7 @@ func executeCognitionGate(
 		readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, readyTimeout)
 		readyCancel()
 
-		if readyErr == ErrAgentReadyTimeout {
+		if errors.Is(readyErr, ErrAgentReadyTimeout) {
 			fmt.Fprintf(os.Stderr, "daemon: dot: gate: waitAgentReady node %q run %s: %v\n",
 				node.ID, runID.String(), readyErr)
 			_ = sess.Kill(ctx)
@@ -470,7 +471,12 @@ func writeCognitionGateTask(
 ) error {
 	taskPath := filepath.Join(wtPath, gateTaskRelPath)
 
-	ctxJSON, _ := json.MarshalIndent(run.Context, "", "  ")
+	ctxJSON, ctxErr := json.MarshalIndent(run.Context, "", "  ")
+	if ctxErr != nil {
+		// Non-fatal: the brief renders an empty Run Context block. Log so the
+		// silent omission is diagnosable rather than swallowed.
+		fmt.Fprintf(os.Stderr, "daemon: dot: gate: marshal run context for node %q: %v\n", nodeID, ctxErr)
+	}
 
 	content := fmt.Sprintf(`# Gate Evaluation Task
 

@@ -1479,6 +1479,7 @@ func snapshotFleet(lq *LockedQueueStore, reg *RunRegistry, globalCap, rrCursor i
 // the dispatch stamp lands on the right item (addendum fix #1). The absolute
 // index is resolved exactly as the legacy selectNextQueue did: the first
 // Items entry matching the eligible item's BeadID with ItemStatusPending.
+//
 //nolint:gocognit // slated for giant-retirement refactor (TRACK 3); do not split here
 func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 	for gi := range q.Groups {
@@ -1713,7 +1714,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			if liveRecs, listErr := runpkg.List(deps.projectDir); listErr == nil {
 				for _, rec := range liveRecs {
 					rec := rec // capture loop variable
-					go adoptLiveRunSession(ctx, deps, rec, tmuxAdp)
+					// Track in wg so exitClean's bounded drain awaits an
+					// in-progress bead/queue reset (hk-o85ye): without this a
+					// SIGTERM could exit mid-write, leaving the bead half-reset.
+					// The monitor returns promptly on ctx.Done, so a clean
+					// shutdown is not delayed beyond shutdownDrainTimeout.
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						adoptLiveRunSession(ctx, deps, rec, tmuxAdp)
+					}()
 				}
 			}
 		}
@@ -2599,6 +2609,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 							// hk-6pspu: increment Attempts and enforce maxItemAttempts.
 							liveQ.Groups[gi].Items[snapItemIdx].Attempts++
 							if liveQ.Groups[gi].Items[snapItemIdx].Attempts >= maxItemAttempts {
+								// Set the terminal status so the item leaves Pending —
+								// otherwise the next select re-picks it, re-increments
+								// Attempts, and live-locks dispatch (mirrors the
+								// cross-queue-duplicate sibling above). hk-6pspu.
+								liveQ.Groups[gi].Items[snapItemIdx].Status = queue.ItemStatusFailed
 								liveQ.Groups[gi].Items[snapItemIdx].LastFailureReason = "max_attempts_exceeded"
 								fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d — failing queue item (hk-6pspu)\n",
 									snapItemBeadID, maxItemAttempts)
@@ -4829,7 +4844,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			readyErr := waitAgentReady(readyCtx, runID, eventSrc, adapter, readyTimeout)
 			readyCancel() // always release the watcher-done goroutine above
 
-			if readyErr == ErrAgentReadyTimeout {
+			if errors.Is(readyErr, ErrAgentReadyTimeout) {
 				// HC-056: agent_ready_timeout — kill, reap, reopen.
 				fmt.Fprintf(os.Stderr, "daemon: workloop: waitAgentReady bead %s run %s: %v (reopening)\n",
 					beadID, runID.String(), readyErr)
@@ -6451,6 +6466,7 @@ type commitAdvanceResult struct {
 // Spec ref: specs/run-state-machine.md RSM-012..019; specs/execution-model.md
 // §4.12 EM-052/EM-053/EM-054. Bead: hk-ftyvo, hk-4goy3, hk-6r6xv, hk-zgt4u,
 // hk-yyso7 (mergeMu → mergeq).
+//
 //nolint:gocognit,cyclop // slated for giant-retirement refactor (TRACK 3); do not split here
 func mergeRunBranchToMain(ctx context.Context, submit mergeSubmit, projectDir string, runID core.RunID, bus handlercontract.EventEmitter, beadID core.BeadID, headSHA, targetBranch string, protectBranches []string, brPath string) mergeOutcome {
 	if submit == nil {

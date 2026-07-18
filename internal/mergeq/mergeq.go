@@ -4,9 +4,15 @@
 // FIFO single-executor queue (RSM-002 / RSM-012). All members of the merge
 // exclusion domain (commit-phase merge, escape check, remote base-sync +
 // worktree-add) run their critical section via Queue.Submit; the queue's one
-// owner goroutine drains submissions in arrival order, preserving the global
-// single-writer invariant (hk-yyso7) while keeping build-class work OUTSIDE the
-// domain.
+// owner goroutine drains submissions in intake-sequence order, preserving the
+// global single-writer invariant (hk-yyso7) while keeping build-class work
+// OUTSIDE the domain.
+//
+// FIFO mechanism: each submission is stamped with a monotonically increasing
+// intake sequence number under the queue mutex, and the owner goroutine serves
+// pending submissions in seq order. Ordering is therefore deterministic and
+// spec-guaranteed — it does NOT rely on the release order of blocked channel
+// senders, which the Go spec leaves unspecified (RU-03).
 //
 // The package is a leaf: it imports the Go standard library only. It never
 // imports internal/daemon (depguard-enforced) — the daemon threads its
@@ -21,6 +27,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -29,7 +36,8 @@ import (
 // exclusion domain. The critical section did not run.
 var ErrQueueStopped = errors.New("mergeq: queue stopped")
 
-// job is a single submission carried over the owner goroutine's intake channel.
+// job is a single submission held on the pending list until the owner
+// goroutine serves it.
 type job struct {
 	// ctx is the submitter's context. Carrying it on the job is deliberate: the
 	// owner goroutine must run the critical section under the SUBMITTER's ctx
@@ -37,6 +45,7 @@ type job struct {
 	// cancel-before-execution. This is the queue's message payload, not a stored
 	// request-scoped ctx of the queue itself.
 	ctx      context.Context //nolint:containedctx // ctx is the submission payload; see field doc.
+	seq      uint64
 	label    string
 	critical func(context.Context) error
 	result   chan error
@@ -44,15 +53,28 @@ type job struct {
 }
 
 // Queue serializes the merge critical section. Submissions execute strictly
-// FIFO on a single owner goroutine; a critical section never overlaps another.
+// FIFO — in intake-sequence order — on a single owner goroutine; a critical
+// section never overlaps another.
 //
 // The zero value is not usable; construct with New and drive with Start.
 type Queue struct {
-	submit chan job
-	// done is closed by the owner goroutine when it exits (Start ctx cancelled),
-	// so a submitter blocked on the unbuffered send is released instead of
-	// leaking. Post-enqueue there is no leak: the owner always executes a job it
-	// has received, so the buffered result channel is always written.
+	// mu guards nextSeq, pending, and stopped. Seq assignment and the append to
+	// pending happen atomically under mu, so pending is always sorted by seq and
+	// serving pending head-first IS serving in intake order.
+	mu      sync.Mutex
+	nextSeq uint64
+	pending []job
+	stopped bool
+
+	// wake (capacity 1) nudges the owner goroutine after an enqueue. A full
+	// buffer means a wake is already pending, so the non-blocking send in Submit
+	// can never lose a wakeup: the owner re-checks pending under mu after every
+	// receive.
+	wake chan struct{}
+
+	// done is closed by the owner goroutine when it exits (Start ctx cancelled).
+	// At that point stopped is already set and every still-pending submission has
+	// been released with ErrQueueStopped, so no submitter leaks.
 	done   chan struct{}
 	logger *slog.Logger
 }
@@ -63,10 +85,7 @@ func New(logger *slog.Logger) *Queue {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	// Unbuffered intake: senders block until the owner is ready to receive,
-	// which gives natural backpressure and a Go-runtime FIFO send queue so
-	// arrival order is the execution order.
-	return &Queue{submit: make(chan job), done: make(chan struct{}), logger: logger}
+	return &Queue{wake: make(chan struct{}, 1), done: make(chan struct{}), logger: logger}
 }
 
 // Start launches the owner goroutine that drains the queue. It returns
@@ -79,12 +98,54 @@ func (q *Queue) Start(ctx context.Context) {
 func (q *Queue) run(ctx context.Context) {
 	defer close(q.done)
 	for {
+		// Stop promptly on cancellation, even with work still pending — pending
+		// submissions never entered the domain and are released with
+		// ErrQueueStopped below.
+		if ctx.Err() != nil {
+			q.stop()
+			return
+		}
+
+		if j, ok := q.pop(); ok {
+			q.execute(j)
+			continue
+		}
+
 		select {
 		case <-ctx.Done():
+			q.stop()
 			return
-		case j := <-q.submit:
-			q.execute(j)
+		case <-q.wake:
 		}
+	}
+}
+
+// pop removes and returns the lowest-seq pending job, if any. pending is
+// seq-sorted by construction (seq assigned and appended under one mu hold), so
+// the head is always the next intake-sequence job.
+func (q *Queue) pop() (job, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.pending) == 0 {
+		return job{}, false
+	}
+	j := q.pending[0]
+	q.pending[0] = job{} // release references held by the popped slot
+	q.pending = q.pending[1:]
+	return j, true
+}
+
+// stop marks the queue stopped and releases every still-pending submission
+// with ErrQueueStopped. After stopped is set (under mu), Submit rejects new
+// intake, so no submission can be appended and then stranded.
+func (q *Queue) stop() {
+	q.mu.Lock()
+	q.stopped = true
+	pending := q.pending
+	q.pending = nil
+	q.mu.Unlock()
+	for _, j := range pending {
+		j.result <- ErrQueueStopped
 	}
 }
 
@@ -99,26 +160,36 @@ func (q *Queue) execute(j job) {
 	// its own ctx (a Background-derived ctx for the shutdown-drain submission).
 	if err := j.ctx.Err(); err != nil {
 		q.logger.InfoContext(j.ctx, "mergeq: skipped cancelled submission",
-			"label", j.label, "wait_ms", waitMS, "err", err)
+			"label", j.label, "seq", j.seq, "wait_ms", waitMS, "err", err)
 		j.result <- err
 		return
 	}
 
-	q.logger.InfoContext(j.ctx, "mergeq: executing", "label", j.label, "wait_ms", waitMS)
+	q.logger.InfoContext(j.ctx, "mergeq: executing", "label", j.label, "seq", j.seq, "wait_ms", waitMS)
 	err := j.critical(j.ctx)
-	q.logger.InfoContext(j.ctx, "mergeq: executed", "label", j.label, "wait_ms", waitMS, "err", err)
+	q.logger.InfoContext(j.ctx, "mergeq: executed", "label", j.label, "seq", j.seq, "wait_ms", waitMS, "err", err)
 	j.result <- err
 }
 
 // Submit runs critical inside the exclusion domain, strictly FIFO across all
-// submitters. It blocks until the critical section has executed (returning its
-// error) or until ctx is cancelled BEFORE execution starts (returning
-// ctx.Err()). Once a critical section has begun, it runs to completion under
-// its own ctx and its result is returned regardless of later cancellation.
-// If the queue's owner goroutine has already stopped (its Start ctx was
-// cancelled) when Submit is called or while it blocks on enqueue, Submit
-// returns ErrQueueStopped and the critical section does not run.
+// submitters: every submission is assigned a monotonically increasing intake
+// sequence number under the queue mutex, and the owner goroutine executes in
+// seq order. Submit blocks until the critical section has executed (returning
+// its error). A ctx already cancelled at intake returns ctx.Err() without
+// enqueueing; a ctx cancelled while queued is caught by the pre-execution gate
+// and returns ctx.Err() without the critical running. Once a critical section
+// has begun, it runs to completion under its own ctx and its result is
+// returned regardless of later cancellation. If the queue's owner goroutine
+// has already stopped (its Start ctx was cancelled) at intake, or stops before
+// this submission is served, Submit returns ErrQueueStopped and the critical
+// section does not run.
 func (q *Queue) Submit(ctx context.Context, label string, critical func(context.Context) error) error {
+	// Intake gate: a ctx cancellation here means the submission never entered
+	// the domain, so nothing ran.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	j := job{
 		ctx:      ctx,
 		label:    label,
@@ -127,20 +198,29 @@ func (q *Queue) Submit(ctx context.Context, label string, critical func(context.
 		enqueued: time.Now(),
 	}
 
-	// Enqueue phase: a ctx cancellation here means the submission never entered
-	// the domain, so nothing ran. A closed q.done means the owner goroutine has
-	// stopped, so the send would otherwise block forever — release with
-	// ErrQueueStopped instead of leaking.
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-q.done:
+	// Intake: seq assignment and the append happen under one mu hold, so the
+	// seq order IS the pending order — the FIFO position is fixed here,
+	// deterministically, independent of goroutine scheduling.
+	q.mu.Lock()
+	if q.stopped {
+		q.mu.Unlock()
 		return ErrQueueStopped
-	case q.submit <- j:
+	}
+	j.seq = q.nextSeq
+	q.nextSeq++
+	q.pending = append(q.pending, j)
+	q.mu.Unlock()
+
+	// Nudge the owner. Non-blocking: a full buffer means a wake is already
+	// pending and the owner will observe this job on its next pending re-check.
+	select {
+	case q.wake <- struct{}{}:
+	default:
 	}
 
 	// Enqueued: our FIFO position is fixed. Wait for the owner goroutine to
-	// report the outcome (which may itself be ctx.Err() if we were cancelled
-	// while queued — handled by execute's pre-execution gate).
+	// report the outcome — the critical's error, ctx.Err() if we were cancelled
+	// while queued (execute's pre-execution gate), or ErrQueueStopped if the
+	// owner stopped before serving us.
 	return <-j.result
 }

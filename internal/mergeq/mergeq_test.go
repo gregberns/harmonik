@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,8 +23,9 @@ func startQueue(t *testing.T) *Queue {
 }
 
 // TestSubmitAfterQueueStopped confirms a submission does not leak once the
-// owner goroutine has stopped: Submit returns ErrQueueStopped instead of
-// blocking forever on the unbuffered send, and the critical never runs.
+// owner goroutine has stopped: Submit returns ErrQueueStopped at intake
+// instead of enqueueing onto a queue nothing will ever drain, and the critical
+// never runs.
 func TestSubmitAfterQueueStopped(t *testing.T) {
 	q := New(nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -64,20 +66,24 @@ func TestSubmitRunsCriticalAndReturnsError(t *testing.T) {
 	}
 }
 
-// TestFIFOOrderUnderConcurrentSubmits asserts that N submissions execute in
-// strict arrival order and never overlap. Run with -race to also catch data
-// races on the shared recorder.
+// TestFIFOOrderUnderConcurrentSubmits launches many GENUINELY concurrent
+// submitters (a start gate, no sleep-tuned choreography, no reliance on
+// channel-sendq release order) and asserts that execution order exactly
+// matches intake-sequence order, and that critical sections never overlap.
 //
-// Determinism: the owner goroutine is first parked on a gate job so the intake
-// channel has no receiver. Each subsequent submitter is launched and allowed to
-// block on the (unbuffered) send before the next is launched; Go's channel send
-// queue is FIFO, so release order == launch order == submission order.
+// Shape: the executor is parked on a gate job while all n submitters race
+// through intake. Whatever interleaving the scheduler picks, each submission's
+// FIFO position is fixed by the seq number assigned under the queue mutex at
+// intake. Once every submission is enqueued, the test snapshots the pending
+// list (in-package access) — verifying seqs are dense, ascending 0-based
+// intake order — then releases the gate and asserts the execution order equals
+// that snapshot. Run with -race to also catch data races on the recorder.
 func TestFIFOOrderUnderConcurrentSubmits(t *testing.T) {
 	q := startQueue(t)
 
-	const n = 25
+	const n = 200
 
-	// Gate: occupy the executor so all real submissions queue behind it.
+	// Gate: occupy the executor so all real submissions accumulate as pending.
 	gateReleased := make(chan struct{})
 	gateBusy := make(chan struct{})
 	go func() {
@@ -89,45 +95,71 @@ func TestFIFOOrderUnderConcurrentSubmits(t *testing.T) {
 			t.Errorf("gate submit failed: %v", err)
 		}
 	}()
-	<-gateBusy // executor is now busy; intake channel has no receiver.
+	<-gateBusy // executor is now busy; nothing pending will be served yet.
 
 	var mu sync.Mutex
-	var order []int
+	var executed []string
 	var concurrent int32
 	var wg sync.WaitGroup
 
+	start := make(chan struct{}) // starting gate: maximize genuine intake contention
 	for i := 0; i < n; i++ {
 		wg.Add(1)
-		idx := i
+		label := fmt.Sprintf("job-%d", i)
 		go func() {
 			defer wg.Done()
-			if err := q.Submit(context.Background(), fmt.Sprintf("job-%d", idx), func(context.Context) error {
+			<-start
+			if err := q.Submit(context.Background(), label, func(context.Context) error {
 				if atomic.AddInt32(&concurrent, 1) != 1 {
 					t.Errorf("critical sections overlapped")
 				}
 				mu.Lock()
-				order = append(order, idx)
+				executed = append(executed, label)
 				mu.Unlock()
 				atomic.AddInt32(&concurrent, -1)
 				return nil
 			}); err != nil {
-				t.Errorf("job-%d submit failed: %v", idx, err)
+				t.Errorf("%s submit failed: %v", label, err)
 			}
 		}()
-		// Let goroutine idx reach and block on the send before launching idx+1,
-		// so entries queue on the channel's FIFO sendq in launch order.
-		time.Sleep(2 * time.Millisecond)
+	}
+	close(start)
+
+	// Wait (condition-driven, not tuned) until every racing submission has
+	// completed intake, then snapshot the intake order the seq numbers fixed.
+	var intakeOrder []string
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		q.mu.Lock()
+		if len(q.pending) == n {
+			base := q.pending[0].seq
+			for i, j := range q.pending {
+				if j.seq != base+uint64(i) {
+					q.mu.Unlock()
+					t.Fatalf("pending not in dense seq order at %d: seq %d (base %d)", i, j.seq, base)
+				}
+				intakeOrder = append(intakeOrder, j.label)
+			}
+			q.mu.Unlock()
+			break
+		}
+		q.mu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for all submissions to complete intake")
+		}
+		runtime.Gosched()
 	}
 
 	close(gateReleased) // drain
 	wg.Wait()
 
-	if len(order) != n {
-		t.Fatalf("want %d executions, got %d", n, len(order))
+	if len(executed) != n {
+		t.Fatalf("want %d executions, got %d", n, len(executed))
 	}
-	for i, got := range order {
-		if got != i {
-			t.Fatalf("FIFO violated at position %d: got job-%d\nfull order: %v", i, got, order)
+	for i, got := range executed {
+		if got != intakeOrder[i] {
+			t.Fatalf("intake-sequence order violated at execution slot %d: got %s, want %s\nfull order: %v",
+				i, got, intakeOrder[i], executed)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package hookrelay_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/hookrelay"
 )
@@ -124,6 +126,42 @@ func hookRelayFixtureListenSequence(t *testing.T, ackSequence []string) (socketP
 			_, _ = fmt.Fprintln(conn, ack)
 			_ = conn.Close()
 		}
+	}()
+
+	return sockPath, ch
+}
+
+// hookRelayFixtureListenDelayed returns a socket path that has NO listener yet;
+// after delay, a listener binds and responds once with ackJSON. It models the
+// cold-boot / in-place-swap startup race (CHB-016): the first dial gets ENOENT,
+// and later dials succeed once the daemon starts listening.
+func hookRelayFixtureListenDelayed(t *testing.T, delay time.Duration, ackJSON string) (socketPath string, received <-chan []byte) {
+	t.Helper()
+
+	dir := hookRelayFixtureShortSockDir(t)
+	sockPath := filepath.Join(dir, "d.sock")
+
+	ch := make(chan []byte, 1)
+	go func() {
+		time.Sleep(delay)
+		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", sockPath)
+		if err != nil {
+			return
+		}
+		defer func() { _ = ln.Close() }()
+		conn, acceptErr := ln.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		scanner := bufio.NewScanner(conn)
+		if scanner.Scan() {
+			select {
+			case ch <- scanner.Bytes():
+			default:
+			}
+		}
+		_, _ = fmt.Fprintln(conn, ackJSON)
 	}()
 
 	return sockPath, ch
@@ -579,21 +617,52 @@ func TestHookRelay_Notification_Reasoning(t *testing.T) {
 	}
 }
 
-func TestHookRelay_DialFailed_SocketAbsent(t *testing.T) {
+func TestHookRelay_DialFailed_NonSocketFatal(t *testing.T) {
 	t.Parallel()
 
-	// CHB-017: socket file absent → exit 1 with bridge_dial_failed on stderr.
+	// CHB-017: a genuinely-fatal dial error — the target path exists but is not a
+	// socket (ENOTSOCK) — is NOT the startup race. It must fail fast with
+	// bridge_dial_failed and must NOT enter the CHB-016 retry loop.
 	e := hookRelayFixtureEnv(t.TempDir())
-	e.DaemonSocket = filepath.Join(t.TempDir(), "nonexistent.sock")
+	notASocket := filepath.Join(t.TempDir(), "regular-file")
+	if err := os.WriteFile(notASocket, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write fixture file: %v", err)
+	}
+	e.DaemonSocket = notASocket
 
 	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
 	var stderr bytes.Buffer
 	code := hookrelay.Run("Stop", stdin, &stderr, &e)
 	if code != 1 {
-		t.Errorf("dial failed: exit %d, want 1", code)
+		t.Errorf("non-socket dial: exit %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "bridge_dial_failed") {
-		t.Errorf("dial failed: stderr missing bridge_dial_failed, got %q", stderr.String())
+		t.Errorf("non-socket dial: stderr missing bridge_dial_failed, got %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "retrying") {
+		t.Errorf("non-socket dial: must not retry a fatal error, got %q", stderr.String())
+	}
+}
+
+func TestHookRelay_DialRetry_SocketAppearsLate(t *testing.T) {
+	t.Parallel()
+
+	// CHB-016 / RU-14: the daemon socket is absent at first dial (ENOENT — the
+	// cold-boot / in-place-swap race) and only appears after a short delay. The
+	// relay must retry the dial within the startup window and then succeed —
+	// NOT return bridge_dial_failed on the first miss.
+	e := hookRelayFixtureEnv(t.TempDir())
+	sockPath, _ := hookRelayFixtureListenDelayed(t, 250*time.Millisecond, `{"status":"ok"}`)
+	e.DaemonSocket = sockPath
+
+	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "Stop", nil)
+	var stderr bytes.Buffer
+	code := hookrelay.Run("Stop", stdin, &stderr, &e)
+	if code != 0 {
+		t.Fatalf("late socket retry: exit %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "retrying") {
+		t.Errorf("late socket retry: expected a dial-retry log, got %q", stderr.String())
 	}
 }
 

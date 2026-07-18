@@ -144,9 +144,11 @@ func TestHookRelay_TCPEndpoint_DoesNotDialUnix(t *testing.T) {
 	}()
 
 	e := hookRelayFixtureEnv(t.TempDir())
-	// A tcp:// endpoint pointing at a port where nothing listens. The relay must
-	// dial tcp (fail), and must NOT fall back to the unix path above.
-	e.DaemonSocket = "tcp://127.0.0.1:1" // port 1: not connectable
+	// A tcp:// endpoint the relay cannot dial. Use an out-of-range port so the
+	// dial fails FAST and FATALLY (an "invalid port" error, not the retryable
+	// connection-refused startup-race case per CHB-016) — the relay must dial tcp
+	// (fail), and must NOT fall back to the unix path above.
+	e.DaemonSocket = "tcp://127.0.0.1:99999"
 
 	stdin := hookRelayFixtureStdin(e.ClaudeSessionID, "SessionStart", nil)
 	var stderr bytes.Buffer

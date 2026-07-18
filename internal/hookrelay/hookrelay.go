@@ -25,7 +25,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // knownEventKinds is the set of event kinds the relay handles.
@@ -416,15 +418,14 @@ func truncate4KiB(s string) string {
 	if len(s) <= max {
 		return s
 	}
-	// Truncate at a valid UTF-8 boundary.
-	b := []byte(s[:max])
-	// Walk back to a valid rune boundary.
-	for i := len(b); i > 0; i-- {
-		if b[i-1]&0x80 == 0 || b[i-1]&0xC0 == 0xC0 {
-			return string(b[:i])
-		}
+	// A byte-boundary cut can split the final multibyte rune. Trim up to
+	// utf8.UTFMax-1 trailing bytes until the result ends on a valid rune
+	// boundary, so we never emit an invalid trailing rune (CHB-013 / RU-14).
+	b := s[:max]
+	for i := 0; i < utf8.UTFMax-1 && !utf8.ValidString(b); i++ {
+		b = b[:len(b)-1]
 	}
-	return string(b)
+	return b
 }
 
 // buildStopFailureMessage maps StopFailure error_type to progress-stream messages per CHB-013.
@@ -512,6 +513,16 @@ func resolveDialTarget(endpoint string) (network, address string) {
 	return "unix", endpoint
 }
 
+// isRetryableDialErr reports whether a DialContext failure reflects a daemon
+// that has not yet begun listening — the cold-boot / in-place-swap startup race
+// (CHB-016) — rather than a fatal misconfiguration. Connection-refused (the
+// listener endpoint is present but nothing is accepting yet) and ENOENT / "no
+// such file" (the unix socket has not been created yet) are both transient and
+// worth retrying within the startup window; anything else is fatal.
+func isRetryableDialErr(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT)
+}
+
 // sendToSocket implements the one-shot write with daemon-not-ready retry per
 // CHB-015 and CHB-016. socketPath is the HARMONIK_DAEMON_SOCKET value: a unix
 // path for local runs, or a "tcp://127.0.0.1:<port>" reverse-tunnel endpoint for
@@ -542,6 +553,23 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 		cancelDial()
 
 		if dialErr != nil {
+			// CHB-016: a socket that is not yet listening (cold boot / in-place
+			// binary swap per docs/daemon-redeploy.md) surfaces as a dial error,
+			// not a daemon_not_ready ACK. Retry those within the startup window
+			// on the same backoff schedule; anything else is fatal.
+			if isRetryableDialErr(dialErr) {
+				elapsed := time.Since(wallStart)
+				if elapsed+retryDelay > wallMax {
+					return fmt.Errorf("bridge_daemon_startup_window_exceeded: dial failed after %v: %w", elapsed, dialErr)
+				}
+				fmt.Fprintf(stderr, "hook-relay: dial failed (%v), retrying in %v\n", dialErr, retryDelay)
+				time.Sleep(retryDelay)
+				retryDelay *= 2
+				if retryDelay > retryMax {
+					retryDelay = retryMax
+				}
+				continue
+			}
 			return fmt.Errorf("bridge_dial_failed: %w", dialErr)
 		}
 

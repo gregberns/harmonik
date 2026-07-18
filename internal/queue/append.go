@@ -181,7 +181,6 @@ func AppendItems(
 
 	// Mutate in place: append to the target group's Items slice.
 	g := &q.Groups[groupIndex]
-	tailStart := len(g.Items)
 	g.Items = append(g.Items, newItems...)
 
 	// QM-042 — emit queue_appended.
@@ -202,13 +201,12 @@ func AppendItems(
 
 	// QM-042 — emit queue_item_deferred_for_ledger_dep per deferred item, in
 	// append order, after queue_appended.
-	for i, id := range beadIDs {
+	for _, id := range beadIDs {
 		beadID := core.BeadID(id)
 		blockerID, deferred := deferredSet[beadID]
 		if !deferred {
 			continue
 		}
-		_ = tailStart + i // index of the newly appended item; informational
 		evtDeferred, evtErr := newEvent("queue_item_deferred_for_ledger_dep", &core.QueueItemDeferredForLedgerDepPayload{
 			QueueID:       q.QueueID,
 			GroupIndex:    groupIndex,

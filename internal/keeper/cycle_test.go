@@ -10,7 +10,59 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
+
+// steppingAdvanceClock is a test ClockPort for deflaking the Cycler
+// interval/timeout tests (hk-h0twl, follow-up to hk-3dn16). Now() auto-steps
+// virtual time by `step` on each call, so a drive-loop timeout trips after a
+// DETERMINISTIC number of polls (independent of real -race scheduling), exactly
+// like the awaitack fakeClock. NewTicker returns a REAL ticker so the drive loop
+// still iterates (the real ticker only paces WHEN polls happen; the virtual
+// stepping governs HOW MANY polls reach a timeout). Advance jumps virtual time
+// explicitly, replacing a real time.Sleep for "interval elapsed" transitions —
+// so an interval window can be made arbitrarily large in VIRTUAL time (huge
+// deterministic margin) without slowing the test. Sleep is a no-op that respects
+// ctx.
+type steppingAdvanceClock struct {
+	mu   sync.Mutex
+	now  time.Time
+	step time.Duration
+}
+
+func newSteppingAdvanceClock(t0 time.Time, step time.Duration) *steppingAdvanceClock {
+	return &steppingAdvanceClock{now: t0, step: step}
+}
+
+func (c *steppingAdvanceClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(c.step)
+	return c.now
+}
+
+func (c *steppingAdvanceClock) Since(t time.Time) time.Duration { return c.Now().Sub(t) }
+
+func (c *steppingAdvanceClock) NewTicker(d time.Duration) substrate.Ticker {
+	return substrate.SystemClock{}.NewTicker(d)
+}
+
+func (c *steppingAdvanceClock) Sleep(ctx context.Context, _ time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+		return true
+	}
+}
+
+// Advance jumps virtual time forward by d without a real sleep — used to cross an
+// interval/cooldown boundary deterministically.
+func (c *steppingAdvanceClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(d)
+	c.mu.Unlock()
+}
 
 // cycleSpyInjector records inject calls (target + text) without spawning tmux.
 type cycleSpyInjector struct {
@@ -1798,10 +1850,18 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
 	}
 
-	// Short ForceRetryInterval for test speed.
-	const forceRetryInterval = 60 * time.Millisecond
+	// hk-h0twl deflake: virtual-time clock. ForceRetryInterval is large in
+	// VIRTUAL time so it dwarfs the deterministic virtual time consumed by call
+	// 1's abort drive loop (a few polls of Now()-stepping) — call 2's "interval
+	// not elapsed" then holds with an enormous margin, and the previously-flaky
+	// dependence on real wall-clock between MaybeRun calls is gone. Call 3 crosses
+	// the interval via clock.Advance (no real sleep). The auto-stepping Now() also
+	// makes the HandoffTimeout abort trip after a deterministic number of polls.
+	const forceRetryInterval = 5 * time.Second
+	clock := newSteppingAdvanceClock(time.Unix(1_700_000_000, 0), 5*time.Millisecond)
 
 	cfg := keeper.CyclerConfig{
+		Clock:               clock,
 		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
 		AgentName:           agent,
 		ProjectDir:          t.TempDir(),
@@ -1810,7 +1870,7 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		WarnPct:             80.0,
 		ForceActPct:         95.0,
 		ForceRetryInterval:  forceRetryInterval,
-		HandoffTimeout:      30 * time.Millisecond, // short → quick abort
+		HandoffTimeout:      30 * time.Millisecond, // short → quick abort (deterministic poll count)
 		ClearSettle:         10 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
@@ -1849,8 +1909,8 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		t.Errorf("want no new cycle_aborted immediately after abort; got %d total", abortedAfter2)
 	}
 
-	// Wait for ForceRetryInterval to elapse.
-	time.Sleep(forceRetryInterval + 10*time.Millisecond)
+	// Cross ForceRetryInterval deterministically in virtual time (no real sleep).
+	clock.Advance(forceRetryInterval + 10*time.Millisecond)
 
 	// Call 3 (after interval): must retry the forced-clear, abort again.
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -3031,9 +3091,13 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 	t.Parallel()
 
-	// forceRetryInterval is kept short so the test runs fast. abortHandoffTimeout
-	// is also short so the abort completes quickly.
-	const forceRetryInterval = 80 * time.Millisecond
+	// hk-h0twl deflake: forceRetryInterval is large in VIRTUAL time (see the
+	// per-subtest steppingAdvanceClock) so it dwarfs the deterministic virtual
+	// time consumed by the abort drive loop — the "interval not elapsed" checks
+	// hold with a huge margin instead of racing real wall-clock between MaybeRun
+	// calls. abortHandoffTimeout stays short so the abort trips after a
+	// deterministic handful of virtual-stepped polls.
+	const forceRetryInterval = 5 * time.Second
 	const abortHandoffTimeout = 25 * time.Millisecond
 
 	for _, tc := range []struct {
@@ -3079,7 +3143,10 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 			}
 			readGaugeFn := gaugeReturnsNewSIDAfter(1, "", "agent-cross", tc.novelSID, tc.novelSID+"_post")
 
+			clock := newSteppingAdvanceClock(time.Unix(1_700_000_000, 0), 5*time.Millisecond)
+
 			cfg := keeper.CyclerConfig{
+				Clock:               clock,
 				IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
 				AgentName:           "agent-cross",
 				ProjectDir:          t.TempDir(),
@@ -3153,8 +3220,8 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				t.Errorf("novelSID force, interval not elapsed: want still-1 handoff_started; got %d (force-retry fired too early)", n)
 			}
 
-			// Wait for ForceRetryInterval to elapse.
-			time.Sleep(forceRetryInterval + 15*time.Millisecond)
+			// Cross ForceRetryInterval deterministically in virtual time (no sleep).
+			clock.Advance(forceRetryInterval + 15*time.Millisecond)
 
 			// novelSID at 97% after interval: Gate-6 cross-SID force-retry escape fires.
 			if err := cycler.MaybeRun(ctx, cfNovelForce); err != nil {

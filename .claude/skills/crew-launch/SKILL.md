@@ -188,6 +188,18 @@ Run, and keep running for the life of the session:
 harmonik comms recv --follow --json
 ```
 
+> **ARM IT VIA THE MONITOR TOOL — NOT A BACKGROUND BASH (load-bearing, hk-b51bg).**
+> An inbound `comms send --to <you>` only becomes a crew **ACTION** if this stream
+> is armed via the **Monitor tool**. Only a Monitor re-invocation turns a delivered
+> line into a REPL turn you actually read and act on. A plain `run_in_background`
+> bash streaming `--follow` to a file just writes bytes an idle session never reads —
+> the directive is *delivered but never acted on* (this was the root cause of the
+> fleet "7 unread directives" under-drain symptom). So: arm `comms recv --follow
+> --json` **through Monitor** (the same tool you use for `harmonik subscribe`; see
+> the harmonik-dispatch skill for the canonical Monitor pattern), and treat each
+> delivered line as a turn. Backstop for a silently-dead stream: see the idle-branch
+> one-shot sweep in § Operating loop step 6/7.
+
 - Your identity resolves from `$HARMONIK_AGENT`; you receive messages where
   `to == you` or `to == "*"` (broadcast).
 - **NORMATIVE (agent-comms N3): dedupe on `event_id`.** Delivery is
@@ -382,10 +394,27 @@ close`** — doing so breaks the C1 event chain and the captain's attribution.
 
 When no ready beads remain under the epic, post a drain status (§ Progress feed,
 drain trigger) and idle on the comms inbox waiting for the next assignment. **Keep
-`comms recv --follow --json` armed while idle** — this is the case the captain
-re-tasks you, so a dropped `--follow` here strands the re-task (§ Idle-crew-wake
-protocol, Rule 1). You do NOT need to detect epic completion yourself — C1 does that
-structurally when the epic's last child closes, and notifies the captain.
+`comms recv --follow --json` armed (via the Monitor tool) while idle** — this is the
+case the captain re-tasks you, so a dropped `--follow` here strands the re-task
+(§ Idle-crew-wake protocol, Rule 1). You do NOT need to detect epic completion
+yourself — C1 does that structurally when the epic's last child closes, and notifies
+the captain.
+
+> **Idle-branch backstop sweep (hk-b51bg).** On each idle progress-feed tick
+> (≤15 min), ALSO run a one-shot inbox sweep as a backstop in case the `--follow`
+> Monitor died silently (§ Idle-crew-wake protocol, Rule 3):
+>
+> ```bash
+> harmonik comms recv --agent "$HARMONIK_AGENT" --json   # one-shot; own POLL cursor (B1)
+> ```
+>
+> This uses the decoupled POLL cursor (agent-comms B1), independent of the
+> `--follow` LIVE cursor, so it never starves the armed stream — dedupe both on
+> `event_id` (N3). Because the POLL and LIVE cursors are decoupled, a *healthy*
+> `--follow` still lets the sweep re-surface already-seen messages — so the signal
+> that your live stream is dead is a directive **absent from your `seen` set** (a
+> new `event_id`), not merely any sweep hit. On that signal, **re-arm the Monitor
+> immediately** (Rule 3); don't rely on the sweep as the primary path.
 
 ### 7. When no ready beads are available (all blocked / draft)
 
@@ -480,12 +509,17 @@ you, it writes a handoff, clears context, and resumes your **same** `session_id`
 > see the **`keeper` skill** (`.claude/skills/keeper/SKILL.md`). This section
 > only covers what a crew does on restart; the keeper skill owns the mechanism.
 
-On restart, re-run the full boot sequence from Step 1:
-1. Re-read your handoff / re-derive `{queue, epic_id}` from beads (`assignee ==
+On restart, the `/clear` has torn down your `--follow` Monitor stream, so:
+
+1. **FIRST, re-arm `comms recv --follow --json` via the Monitor tool** (hk-b51bg).
+   Do this *before* the slower re-hydration below — a resumed crew that spends
+   minutes re-reading its handoff before re-arming is deaf to the captain for that
+   whole window, and a captain `assign` landing then is stranded. Your `seen` set
+   is fresh; re-process the replayed backlog idempotently (duplicate actions are
+   no-ops). It MUST be the Monitor tool, not a background bash (§ Subscribe).
+2. Re-read your handoff / re-derive `{queue, epic_id}` from beads (`assignee ==
    crew_name`).
-2. Re-`join` (re-announce presence).
-3. Re-`recv --follow --json` (your `seen` set is fresh; re-process the backlog
-   idempotently — duplicate actions are no-ops).
+3. Re-`join` (re-announce presence).
 
 **No in-flight work is lost:** your named queue keeps draining on the daemon
 independent of your session. The captain's coordination is unaffected because

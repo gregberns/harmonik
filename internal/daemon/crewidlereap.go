@@ -155,6 +155,14 @@ func NewCrewIdleReaper(cfg CrewIdleReaperConfig) *CrewIdleReaper {
 // BranchReapWatcher, and the boot-time orphan sweep (RunOrphanSweep, which reaps
 // sessions MISSING from the registry) are all unaffected. loop/scan/checkCrew/reap
 // are retained (unreferenced) so re-enabling is a one-line revert if ever wanted.
+//
+// Traceability (hk-do173): hk-s2eac is the FEATURE bead that introduced SD-3; the
+// DISABLE and its guards are tracked under hk-98at0 (the teardown-level guard) and
+// hk-do173 (the tighter no-scan guard). Two regression tests in
+// crewidlereap_hks2eac_test.go pin this no-op —
+// TestCrewIdleReaper_StartWatcher_Disabled_NeverReaps and
+// TestCrewIdleReaper_StartWatcher_Disabled_NeverScans — both FAIL if this body is
+// reverted to launch loop(), so a re-enable cannot land silently.
 func (r *CrewIdleReaper) StartWatcher(ctx context.Context) {
 	// Idle-crew reaping is disabled; the sweep goroutine is never launched.
 }

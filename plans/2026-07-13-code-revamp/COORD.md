@@ -1161,3 +1161,12 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **Next: ⑥a WireTap wiring.**
 
 **Next COORD entry = c078.**
+
+### c078  ·  2026-07-17  ·  hk-bravo  ·  ⑥a WireTap wiring — VERIFIED already landed; NO work needed (stale handoff claim)
+**⑥a is DONE — no code required.** The handoff (echoing c075 "⑥a WireTap — not done") said the daemon doesn't set `WireTap` from `HARMONIK_WIRE_CAPTURE_DIR`. That is STALE: commit `c3ea97c23` ("feat(wirecapture): daemon WireTap opt-in from HARMONIK_WIRE_CAPTURE_DIR (M6 §1)", 2026-07-16, the day BEFORE this handoff) already landed the exact opt-in, and it is on the current branch (`git merge-base --is-ancestor c3ea97c23 HEAD` → yes).
+
+**What's wired (`internal/handler/`):** `openWireTap()` (wirecapture.go) reads `HARMONIK_WIRE_CAPTURE_DIR` (unset → nil → byte-identical no-op) and opens `<dir>/<scn>/wire.ndjson` (scn from `HARMONIK_CAPTURE_SCN`, default happy-path). Handler.Launch wires it into `SpawnWatcherConfig.WireTap` on BOTH launch paths — the exec path (handler.go:342) and the substrate path (handler.go:426) — and closes it best-effort on watcher Done. The watcher tees every consumed byte to the tap via `io.TeeReader` (watcher_hc011.go:384). Tested: `TestOpenWireTap_EnvUnset` (no-op), `TestOpenWireTap_EnvSet` (lands at `<dir>/<scn>/wire.ndjson`), `TestOpenWireTap_ScnOverride` — `go test ./internal/handler/` green.
+
+**So:** an operator gets a real raw wire capture by setting `HARMONIK_WIRE_CAPTURE_DIR` on the daemon process; no daemon change is outstanding. Marking ⑥a complete.
+
+**Next COORD entry = c079.**

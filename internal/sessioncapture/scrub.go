@@ -3,7 +3,6 @@ package sessioncapture
 import (
 	"regexp"
 	"strings"
-	"unicode"
 )
 
 // redactedSentinel is the replacement for any scrubbed value. Matches
@@ -58,12 +57,6 @@ var nonLetter = regexp.MustCompile(`[^A-Za-z]+`)
 // that segment-splitting would miss, e.g. "passWord" or "clientSecret".
 var unambiguousSecretWords = []string{"password", "secret", "authorization", "apikey"}
 
-// segmentSecretWords are secret indicators that share a PREFIX with common
-// non-secret keys ("auth" ⊂ author/authority/authored), so they are matched only
-// as a WHOLE key segment (snake_case or camelCase), never as a bare substring
-// (hk-nqkoz).
-var segmentSecretWords = map[string]bool{"auth": true}
-
 // denyKeys are compact key forms that share a segment with a sensitive word but
 // are known NON-secret token metadata (LLM sampling / usage counters). They are
 // allowed through un-redacted to keep the replay corpus faithful (hk-nqkoz).
@@ -90,9 +83,14 @@ var denyKeys = map[string]bool{
 //     forms with no separator (authtoken, accesstoken, ACCESSTOKEN — which
 //     WHOLE-segment matching would miss and leak) and stays false on non-secrets;
 //     OR
-//   - a WHOLE segment (split on non-letters AND lower→upper camelCase) is a
-//     segmentSecretWords indicator ("auth"), distinguishing auth_token/authHeader
-//     (secret) from author/authority (not).
+//   - its compact form contains "auth" but not "author" — "auth" as a compact
+//     substring catches separator-less concatenations (authcode, authkey,
+//     authheader, authtoken) that WHOLE-segment matching misses and LEAKS
+//     (hk-a5f1k). The only benign "auth"-family keys are the author/authority
+//     family (author, authored, authoring, authorship, authority, authorities),
+//     which ALL contain "author"; excluding "author" therefore preserves them
+//     (hk-nqkoz over-redaction guard). "authorization" is already caught above by
+//     unambiguousSecretWords, so excluding "author" here can never leak it.
 func keyIsSensitive(key string) bool {
 	compact := strings.ToLower(nonLetter.ReplaceAllString(key, ""))
 	if denyKeys[compact] {
@@ -106,41 +104,10 @@ func keyIsSensitive(key string) bool {
 	if strings.Contains(compact, "token") && !strings.Contains(compact, "tokeniz") {
 		return true
 	}
-	for _, seg := range splitKeySegments(key) {
-		if segmentSecretWords[seg] {
-			return true
-		}
+	if strings.Contains(compact, "auth") && !strings.Contains(compact, "author") {
+		return true
 	}
 	return false
-}
-
-// splitKeySegments lowercases and splits a key into word segments on any
-// non-letter rune and on each lower→upper camelCase boundary. "accessToken" ->
-// [access token]; "auth_token" -> [auth token]; "authority" -> [authority].
-func splitKeySegments(key string) []string {
-	var segs []string
-	var cur []rune
-	flush := func() {
-		if len(cur) > 0 {
-			segs = append(segs, strings.ToLower(string(cur)))
-			cur = cur[:0]
-		}
-	}
-	var prev rune
-	for _, r := range key {
-		if !unicode.IsLetter(r) {
-			flush()
-			prev = r
-			continue
-		}
-		if unicode.IsLower(prev) && unicode.IsUpper(r) {
-			flush()
-		}
-		cur = append(cur, r)
-		prev = r
-	}
-	flush()
-	return segs
 }
 
 // scrubLine applies the HC-032 value-pattern scrub to one line of captured

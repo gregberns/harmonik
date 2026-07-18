@@ -3,7 +3,7 @@ package core
 // EventType is the typed string identifier for an event type in the §8 taxonomy
 // (event-model.md §8).
 //
-// The ~79 constants below cover all active rows across §8.1–§8.8. The
+// The constants below cover all active rows of the §8 taxonomy. The
 // Event.Type field uses this type per EV-001; the registry (eventregistry.go)
 // enforces that only registered types are dispatched.
 //

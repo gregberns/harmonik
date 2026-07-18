@@ -221,8 +221,8 @@ func ValidateEnvelopeSchemaVersion(e Event) error {
 // table. Each key is a registered event type name; each value is its current
 // declared schema version (≥ 1).
 //
-// Spec ref: event-model.md §4.8 EV-029 — "N (currently 71) independent
-// compatibility contracts."
+// Spec ref: event-model.md §4.8 EV-029 — one independent compatibility
+// contract per registered type (the per-type "N-1 readable" window).
 // Bead ref: hk-hqwn.38.
 func AllPayloadSchemaVersions() map[string]int {
 	r := globalEventRegistry
@@ -233,16 +233,6 @@ func AllPayloadSchemaVersions() map[string]int {
 	}
 	r.mu.Unlock()
 	return snapshot
-}
-
-// CurrentPayloadSchemaVersion returns the declared schema version for the given
-// event type. Returns (version, true) when the type is registered, (0, false)
-// when it is not. Alias for LookupTypeSchemaVersion.
-//
-// Spec ref: event-model.md §4.8 EV-028; §4.8 EV-029.
-// Bead ref: hk-hqwn.38.
-func CurrentPayloadSchemaVersion(typeName string) (int, bool) {
-	return LookupTypeSchemaVersion(typeName)
 }
 
 // DecodePayload looks up the constructor for e.Type, instantiates a fresh

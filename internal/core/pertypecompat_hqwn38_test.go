@@ -181,7 +181,7 @@ func TestEV029_CompatEntryVersionsMatchRegistry(t *testing.T) {
 		e := e
 		t.Run(e.TypeName, func(t *testing.T) {
 			t.Parallel()
-			registryVersion, ok := CurrentPayloadSchemaVersion(e.TypeName)
+			registryVersion, ok := LookupTypeSchemaVersion(e.TypeName)
 			if !ok {
 				// Type in compat table but not registered — caught by
 				// TestEV029_CompatTableCoversAllRegisteredTypes; skip here.

@@ -280,6 +280,11 @@ func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	// RU-12x: a commit line is "<hash>\x00<NUL-joined trailer values>"; many/large
+	// Harmonik-Bead-ID trailers can exceed bufio's default 64KB token limit, which
+	// would abort the scan mid-history and silently drop later commits. Raise the
+	// buffer to match the git-output scanning cap used elsewhere (daemon/reconciliation.go).
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {

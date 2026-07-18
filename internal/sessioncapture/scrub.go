@@ -32,7 +32,13 @@ var valuePatterns = []*regexp.Regexp{
 // matches the HC-031 common-prefix shape (secret|token|password|api_key|auth),
 // regardless of the value's shape — the belt to valuePatterns' braces. The
 // value's quotes are preserved; only the inner text is replaced.
-var keyValuePattern = regexp.MustCompile(`(?i)("(?:[^"]*(?:secret|token|password|api[_-]?key|auth)[^"]*)"\s*:\s*")([^"]*)(")`)
+//
+// The value group `(?:[^"\\]|\\.)*` matches a JSON string body: it consumes
+// any escape sequence (`\.`) — including an escaped quote `\"` — so the value
+// terminates only at the first UNescaped closing quote. A plain `[^"]*` would
+// stop at the escaped quote inside {"token":"abc\"def"}, leaking the real
+// secret tail (`def`) into the persisted corpus.
+var keyValuePattern = regexp.MustCompile(`(?i)("(?:[^"]*(?:secret|token|password|api[_-]?key|auth)[^"]*)"\s*:\s*")((?:[^"\\]|\\.)*)(")`)
 
 // scrubLine applies the HC-032 value-pattern scrub to one line of captured
 // OUTPUT bytes, returning a redacted copy. The line's newline (if any) is

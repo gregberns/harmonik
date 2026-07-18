@@ -78,6 +78,36 @@ func TestOutputScrub(t *testing.T) {
 	}
 }
 
+// TestOutputScrubEscapedQuoteInValue asserts a secret whose value contains a
+// JSON-escaped quote (\") is scrubbed in full — the value terminates at the
+// first UNescaped quote, so the real tail after the escape must not survive.
+// Regression for hk-13ff4 (keyValuePattern value group stopped at the escaped
+// quote, leaking the suffix verbatim).
+func TestOutputScrubEscapedQuoteInValue(t *testing.T) {
+	ws := t.TempDir()
+	s := mustOpen(t, Config{WorkspacePath: ws, SessionID: "sess-esc"})
+
+	// The secret value is `abc"def` JSON-encoded as `abc\"def`.
+	line := `{"event":"log","token":"abc\"def"}` + "\n"
+	if _, err := s.Output().Write([]byte(line)); err != nil {
+		t.Fatalf("output write: %v", err)
+	}
+	mustClose(t, s)
+
+	got := readFile(t, filepath.Join(s.Dir(), wireOutFile))
+	// The tail after the escaped quote must NOT leak.
+	if strings.Contains(got, "def") {
+		t.Fatalf("OUTPUT leaked the secret tail past the escaped quote: %q", got)
+	}
+	if !strings.Contains(got, redactedSentinel) {
+		t.Fatalf("OUTPUT missing the redaction sentinel: %q", got)
+	}
+	// Non-secret surrounding structure survives.
+	if !strings.Contains(got, `"event":"log"`) {
+		t.Fatalf("OUTPUT over-scrubbed non-secret content: %q", got)
+	}
+}
+
 // TestOutputScrubSpanningWrites asserts the line-boundary buffer scrubs a
 // secret even when the value is split across two Write calls.
 func TestOutputScrubSpanningWrites(t *testing.T) {

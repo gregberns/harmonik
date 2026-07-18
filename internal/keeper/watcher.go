@@ -637,6 +637,15 @@ type WatcherConfig struct {
 	// synchronize on the transient dip observation instead of racing a fixed
 	// sleep against the poll interval. Refs: hk-me8ru (de-flake).
 	OnWarnRearmFn func()
+
+	// OnPollTickFn is a TEST-ONLY observability hook. When non-nil, it is
+	// invoked at the top of every poll-tick iteration — immediately after a tick
+	// is received and BEFORE any processing — so a test driving the loop with a
+	// substrate.FakeClock can advance virtual time one poll interval at a time in
+	// deterministic lockstep with the loop, instead of racing a fixed real-time
+	// window whose iteration count is nondeterministic under -race starvation. It
+	// is nil in production (zero behaviour change). Refs: hk-3dn16 (de-flake).
+	OnPollTickFn func()
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -1041,6 +1050,13 @@ func (w *Watcher) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C():
+			// TEST-ONLY lockstep hook (hk-3dn16): signal that a poll tick was
+			// received, BEFORE any processing, so a FakeClock-driving test can
+			// advance virtual time deterministically. Nil in production.
+			if w.cfg.OnPollTickFn != nil {
+				w.cfg.OnPollTickFn()
+			}
+
 			// ── InCycle suppression (SK-017 / D11) ───────────────────────────
 			// While the restart cycle is in flight (the reactor is off-Idle),
 			// ALL non-cycle tick processing is parked: no warn state machine,

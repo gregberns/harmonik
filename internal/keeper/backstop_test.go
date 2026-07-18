@@ -422,8 +422,11 @@ func TestHardCeiling_CooldownPreventsMultipleRestarts(t *testing.T) {
 	cfg.HardCeilingRestartFn = spy.restart
 	cfg.HardCeilingCooldown = 10 * time.Second // long cooldown → only one attempt
 
-	// Run for 300ms — many ticks, all above 280K, but cooldown holds to 1 restart.
-	runWatcherFor(context.Background(), cfg, em, 300*time.Millisecond)
+	// Drive 40 deterministic ticks, all above 280K. The first fires the restart;
+	// the rest fall within the 10s cooldown (40 × 5ms = 200ms virtual ≪ 10s), so
+	// exactly one restart fires. FakeClock removes the -race tick-starvation flake
+	// where a fixed 300ms real window could yield zero effective ticks (hk-3dn16).
+	driveWatcherFakeClock(t, cfg, em, 40)
 
 	if n := spy.count(); n != 1 {
 		t.Errorf("want exactly 1 hard-ceiling restart (cooldown holds); got %d", n)

@@ -118,11 +118,56 @@ test-subprocess:  ## Run WS2.4 non-docker subprocess boot smoke (-tags=subproces
 # assessor folds into its LT verdict. Forced-LOCAL: real pi/codex (+claude, WS4-4) agents,
 # never a CI required check (see docs/methodology/TESTING.md "Gate tiers & risk-tiering").
 # Override the scratch dir with LT_SCRATCH=… . Cite: M6-PLAN §WS4-5.
+#
+# hk-xy9ym: this target must be SELF-SERVING for the CHECKED-OUT (pinned) code. It:
+#   1. wipes + inits LT_SCRATCH by cloning the LOCAL checkout ($(CURDIR)) — NOT origin/main
+#      (scratch-daemon.sh init defaults to the origin URL and SKIPS a re-clone when .git
+#      exists, so a stale origin/main clone would otherwise persist and be the daemon-under-
+#      test). Cloning the local repo checks out this branch's HEAD = the pinned code.
+#   2. seeds the fixture beads into the fresh scratch DB + writes the cell->bead_id map, so
+#      the scoped cell actually LAUNCHES (bare/un-seeded => every cell PENDING, no agent).
+#   3. scopes to pi:local — the one leg that proves the full core-loop contract e2e with a
+#      real agent (single-mode dispatch -> real pi/ornith change -> per-bead-branch landing).
+#      codex (operator runs codex-minimal), claude (WS4-4, --enable-claude), remote (needs a
+#      reachable tcp:// worker) and the pi-dot round-trip (stronger convergence model,
+#      EXTRA_CELLS) stay behind their existing opt-in knobs, so a bare run never red/skip/
+#      pends on an intentionally-absent leg. Widen with LT_HARNESSES/LT_SUBSTRATES.
 LT_SCRATCH ?= /tmp/h/core-loop-lt
 LT_SPECS   ?= scenarios/core-loop-proof/cells.json
+# Per-cell seed map (cell<TAB>bead_id) that core-loop-seed.sh writes and core-loop-matrix.sh
+# consumes via MATRIX_SEED_MAP. Lives under the (wiped-each-run) scratch so it is always
+# regenerated against THIS run's freshly-created seed beads.
+LT_SEED_MAP   ?= $(LT_SCRATCH)/.harmonik/matrix-seed-map.tsv
+LT_HARNESSES  ?= pi
+LT_SUBSTRATES ?= local
 .PHONY: core-loop-lt
-core-loop-lt: build-all  ## WS4-5 forced LT gate: core-loop matrix, non-zero on any non-green cell + JSON grid
-	bash scripts/core-loop-matrix.sh "$(LT_SCRATCH)" --assert --gate --json --specs "$(LT_SPECS)"
+core-loop-lt: build-all  ## WS4-5 forced LT gate: inits scratch from LOCAL checkout + seeds pi:local, non-zero on any non-green cell + JSON grid (hk-xy9ym)
+	@# hk-xy9ym: guard the `rm -rf` below — never wipe an empty/root/repo-root path.
+	@test -n "$(LT_SCRATCH)" || { echo "core-loop-lt: LT_SCRATCH is empty — refusing"; exit 1; }
+	@case "$(LT_SCRATCH)" in /|.|..) echo "core-loop-lt: unsafe LT_SCRATCH='$(LT_SCRATCH)' — refusing"; exit 1;; esac
+	@# Resolve symlinks on BOTH sides and refuse if LT_SCRATCH is the repo root, $$HOME,
+	@# /, or an ANCESTOR of the repo (wiping it would destroy the fleet checkout). Only
+	@# checked when the dir already exists — a not-yet-created scratch is a safe no-op wipe.
+	@if [ -d "$(LT_SCRATCH)" ]; then \
+		lt="$$(cd "$(LT_SCRATCH)" && pwd -P)"; \
+		repo="$$(cd "$(CURDIR)" && pwd -P)"; \
+		home="$$(cd "$$HOME" 2>/dev/null && pwd -P || echo /nonexistent-home)"; \
+		if [ "$$lt" = "$$repo" ] || [ "$$lt" = "$$home" ] || [ "$$lt" = "/" ]; then \
+			echo "core-loop-lt: LT_SCRATCH resolves to '$$lt' (repo root, \$$HOME, or /) — refusing to wipe"; exit 1; fi; \
+		case "$$repo/" in "$$lt"/*) echo "core-loop-lt: LT_SCRATCH '$$lt' is an ancestor of the repo — refusing to wipe"; exit 1;; esac; \
+	fi
+	@# Stop any stale scratch daemon (pidfile-scoped; fleet-safe) BEFORE wiping the dir so a
+	@# leftover run from a prior invocation is never orphaned. Tolerate a not-yet-created scratch.
+	bash scripts/scratch-daemon.sh down "$(LT_SCRATCH)" 2>/dev/null || true
+	@# Guarantee a FRESH clone of the PINNED code: wipe, then init from the LOCAL checkout.
+	rm -rf "$(LT_SCRATCH)"
+	bash scripts/scratch-daemon.sh init "$(LT_SCRATCH)" "$(CURDIR)"
+	@# Seed the fixture beads into the fresh scratch DB + emit the cell->bead_id map so the
+	@# scoped cell launches (isolates origin + pre-creates the pi landing branch).
+	bash scripts/core-loop-seed.sh "$(LT_SCRATCH)" "$(LT_SEED_MAP)"
+	@# Run the scoped matrix: MATRIX_SEED_MAP wires per-cell seeds; --harnesses/--substrates
+	@# scope to pi:local; --assert --gate --json keep the forced zero-PENDING gate + JSON grid.
+	MATRIX_SEED_MAP="$(LT_SEED_MAP)" bash scripts/core-loop-matrix.sh "$(LT_SCRATCH)" --harnesses "$(LT_HARNESSES)" --substrates "$(LT_SUBSTRATES)" --assert --gate --json --specs "$(LT_SPECS)"
 
 # test-docker-e2e: WS2.3 remote-substrate E2E across two containers. Builds the
 # daemon (box A) + worker images, brings them up on a compose bridge network (the

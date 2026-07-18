@@ -38,7 +38,7 @@ var RequiredGitignoreEntries = []string{
 // commits missing .gitignore entries per WM-013e.
 const GitignoreBranchName = "harmonik/gitignore-init"
 
-// EnsureGitignoreHygiene checks the repository's root .gitignore for the four
+// EnsureGitignoreHygiene checks the repository's root .gitignore for the six
 // required harmonik control-plane patterns (WM-013e) and adds any missing
 // entries.
 //
@@ -59,7 +59,7 @@ const GitignoreBranchName = "harmonik/gitignore-init"
 //
 // # Idempotency
 //
-// EnsureGitignoreHygiene is idempotent: if all four entries are already present,
+// EnsureGitignoreHygiene is idempotent: if all six entries are already present,
 // the function returns nil without modifying the file or making a commit.
 //
 // # Pattern matching

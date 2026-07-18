@@ -281,8 +281,20 @@ current architecture.
    difference is the keeper's settle + 2 retry Enters vs comms' single immediate
    Enter — and that retry loop is a load-bearing reliability fix (hk-89g). The
    "comms feels better" effect is not in the tmux layer.
-4. ⬜ **STILL OPEN (C6):** sample N crew transcripts and answer "how bad is it for
-   crews" with data. Not yet done — needs transcript access; next groundwork step.
+4. ✅ **C6 ANSWERED (2026-07-18, data + transcript sampling — see `C6-findings.md`).**
+   12 crews / 138 restarts in the event log + 4 sampled crews (kynes, leto, yueh,
+   chani). **Crews do NOT suffer the C1/C4 pain** that motivates this plan — no
+   operator conversation, warn/restart≈0.28 (vs captain 1.67), restarts already land
+   at natural idle pauses. Healthy restarts (kynes, leto) are near-zero disruption:
+   state survives via **durable substrate** (`HARMONIK_AGENT` env + on-disk mission
+   file + config.yaml + beads), NOT the handoff — crews often don't even read their
+   own handoff on reboot. The crew-relevant failure is **keeper RELIABILITY, not
+   timing**: a 20% abort rate that decomposes into (a) handoff-never-delivered (dead
+   keeper watcher / parked-crew unreachable — yueh) and (b) handoff-written-but-
+   discarded (recovery boot doesn't read the custom-path handoff; in-flight run
+   SIGKILLed → orphan-process contamination — chani). **Implication: crews need a
+   lighter, reliability-focused treatment kept separate from the captain/admiral
+   timing+delivery redesign.**
 5. ⬜ A short direction memo picks 1–2 threads to pursue and hands off to a
    solution/kerf-work plan. NOT built here. (The Q1/Q2 findings above reshape the
    candidate threads — see note below.)

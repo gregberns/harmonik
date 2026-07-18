@@ -425,6 +425,24 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 					w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 					return
 				}
+				// hk-9ngiv: version-negotiation failure surfaces through the
+				// scanner as an error wrapping ErrProtocolMismatch (the
+				// SessionIDInterceptor's sticky negoErr — handler advertised no
+				// mutually supported version, or never emitted handler_capabilities
+				// within the caps timeout). Preserve the sentinel (%w for scanErr,
+				// NOT %v) so the orchestrator's retry policy can distinguish a
+				// protocol mismatch — which MUST NOT retry-spin the same pinned
+				// binary — from a transient framing error (§8.7, HC-021). Mirrors
+				// the isLineTooLong branch above; both wrap ErrProtocolMismatch, but
+				// this is the general case (sub_reason protocol_mismatch) vs the
+				// line-cap subcase (sub_reason ndjson_line_too_long).
+				if errors.Is(scanErr, ErrProtocolMismatch) {
+					termErr := fmt.Errorf("handlercontract: progress stream protocol mismatch: %w", scanErr)
+					w.setTermErr(termErr)
+					et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, ProtocolMismatchSubReason, termErr)
+					w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
+					return
+				}
 				// Other I/O errors: structural framing failure.
 				termErr := fmt.Errorf("handlercontract: progress stream read error: %v: %w", scanErr, ErrStructural)
 				w.setTermErr(termErr)

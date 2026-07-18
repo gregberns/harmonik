@@ -124,6 +124,19 @@ const NDJSONMaxLineLenBytes = 1 << 20 // 1 MiB
 // Spec: specs/handler-contract.md §4.2.HC-007a, §8.7.
 const NDJSONLineTooLongSubReason = "ndjson_line_too_long"
 
+// ProtocolMismatchSubReason is the sub_reason value the watcher MUST use when
+// version negotiation fails — the handler advertises no mutually supported wire
+// version, or never emits handler_capabilities within the caps timeout — and the
+// failure surfaces through the progress-stream scanner as an error wrapping
+// ErrProtocolMismatch.
+//
+// The corresponding error class is ErrProtocolMismatch (which wraps ErrStructural)
+// per §8.7. This is the general protocol-mismatch case; the line-cap subcase uses
+// NDJSONLineTooLongSubReason instead.
+//
+// Spec: specs/handler-contract.md §8.7.
+const ProtocolMismatchSubReason = "protocol_mismatch"
+
 // PartialMessageSubReason is the sub_reason value the watcher MUST use when
 // the progress stream closes (EOF) with bytes buffered before the terminating
 // \n — i.e., a message that was started but never terminated.

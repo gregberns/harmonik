@@ -199,18 +199,40 @@ provision_matrix_config() {
         echo "[scratch-daemon] provision: set sentinel.liveness_no_progress_n: 0"
     fi
 
-    # (2) harnesses.pi block from the checked-in overlay.
-    if grep -qE '^harnesses:' "$cfg"; then
-        echo "[scratch-daemon] provision: harnesses: block already present — skipping"
-    elif [ -f "$overlay" ]; then
+    # (2) harnesses.pi (+ codex.stale_wal_max_bytes) from the checked-in overlay.
+    #
+    # hk-es4f7: `harmonik init` now ships a DEFAULT harnesses.pi block (provider
+    # openrouter, model openrouter/qwen3-coder) via piConfigExampleYAML(). The old
+    # guard "skip if any 'harnesses:' present" therefore SHADOWED the matrix overlay:
+    # the ornith/DGX pi config never landed, so every pi cell red-failed the forced
+    # core-loop-lt gate (PI-040 OPENROUTER_API_KEY absent + model_selected=openrouter
+    # != pinned ornith). The overlay is the authoritative matrix config, so instead of
+    # skipping we STRIP init's default top-level harnesses:/codex: blocks and append
+    # the overlay's ornith block. Stripping is required because a second top-level
+    # 'harnesses:' key would be a duplicate-key YAML error. Idempotent: re-detect the
+    # already-applied ornith overlay (provider: ornith) and skip.
+    if [ ! -f "$overlay" ]; then
+        echo "[scratch-daemon] provision: WARNING overlay not found ($overlay) — pi cells will not run" >&2
+    elif grep -qE '^[[:space:]]+provider:[[:space:]]*ornith([[:space:]]|$)' "$cfg"; then
+        echo "[scratch-daemon] provision: ornith harnesses.pi overlay already applied — skipping"
+    else
+        # Strip any existing top-level harnesses:/codex: block (init's default) so the
+        # overlay's version is authoritative and no duplicate top-level key results.
+        # A block runs from its 'harnesses:'/'codex:' key line through all following
+        # indented or blank lines, up to the next top-level key or EOF.
+        awk '
+            /^(harnesses|codex):[[:space:]]*$/ { skip=1; next }
+            skip==1 && /^[[:space:]]/         { next }
+            skip==1 && /^[[:space:]]*$/       { next }
+            { skip=0 }
+            { print }
+        ' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
         {
             echo ""
-            echo "# --- appended by scratch-daemon.sh provision (M6 WS4-3) from scratch-config-overlay.yaml ---"
+            echo "# --- appended by scratch-daemon.sh provision (M6 WS4-3 / hk-es4f7) from scratch-config-overlay.yaml ---"
             sed -n '/^# ---8<--- everything below this marker/,$p' "$overlay" | sed '1d'
         } >> "$cfg"
-        echo "[scratch-daemon] provision: appended harnesses.pi block from $overlay"
-    else
-        echo "[scratch-daemon] provision: WARNING overlay not found ($overlay) — pi cells will not run" >&2
+        echo "[scratch-daemon] provision: stripped default harnesses/codex + appended ornith overlay from $overlay"
     fi
 }
 

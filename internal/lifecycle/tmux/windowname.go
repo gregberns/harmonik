@@ -114,9 +114,11 @@ func windowNameBeadPart(beadID core.BeadID, sentinelPrefix, suffix string) strin
 		return raw
 	}
 
-	// Compute the 8-char SHA-256 hash of the original bead_id.
+	// Compute the SHA-256 hash suffix of the original bead_id. The number of
+	// hex chars is hashSuffixLen, so the width used here and the width reserved
+	// in the budget below cannot drift apart (hashSuffixLen must stay even).
 	sum := sha256.Sum256([]byte(raw))
-	hashHex := fmt.Sprintf("%x", sum[:4]) // 4 bytes → 8 lowercase hex chars
+	hashHex := fmt.Sprintf("%x", sum[:hashSuffixLen/2]) // N bytes → hashSuffixLen lowercase hex chars
 
 	// Budget for the truncated bead_id: total max minus the fixed parts
 	// (sentinel prefix, suffix, "~" separator, 8-char hash).

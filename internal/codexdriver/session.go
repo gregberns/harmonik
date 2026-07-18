@@ -87,6 +87,12 @@ type codexSession struct {
 	phaseMu      sync.Mutex
 	phase        codexinput.DriverState // reactor phase mirror (Spawning at rest)
 	phaseChanged chan struct{}          // closed+replaced on each phase publish
+	// handshakeDone latches true the first time the reactor reaches Ready, i.e.
+	// the launch handshake completed. finalize reads it to tell a clean
+	// wind-down (ran, then the wire closed) from a genuine launch failure
+	// (never reached Ready). Written only from runLoop (publishPhase); guarded
+	// by phaseMu because awaitReady's goroutine may also observe the phase.
+	handshakeDone bool
 
 	// submitMu serializes SubmitInput callers: exactly one uncorrelated input
 	// in flight per session (the reactor's AwaitingAck invariant).
@@ -341,6 +347,9 @@ func (s *codexSession) awaitReady(ctx context.Context) error {
 func (s *codexSession) publishPhase(p codexinput.DriverState) {
 	s.phaseMu.Lock()
 	s.phase = p
+	if p == codexinput.Ready {
+		s.handshakeDone = true
+	}
 	close(s.phaseChanged)
 	s.phaseChanged = make(chan struct{})
 	s.phaseMu.Unlock()
@@ -448,8 +457,11 @@ func (s *codexSession) runLoop() {
 	close(s.loopDone)
 }
 
-// finalize resolves every remaining waiter to the stale terminal, fails the
-// readiness gate if the handshake never completed, and cancels timers.
+// finalize resolves every remaining waiter to the stale terminal, cancels
+// timers, and — only when the handshake never completed — fails the readiness
+// gate. A wind-down AFTER the reactor reached Ready is a clean end (the wire
+// closed on a session that launched fine), not a launch failure; flagging it as
+// one would poison failureErr for any late SubmitInput/awaitReady caller.
 func (s *codexSession) finalize() {
 	s.mu.Lock()
 	waiters := s.waiters
@@ -463,7 +475,12 @@ func (s *codexSession) finalize() {
 	for _, cancel := range timers {
 		cancel()
 	}
-	s.setFailure("session wind-down before handshake")
+	s.phaseMu.Lock()
+	handshakeDone := s.handshakeDone
+	s.phaseMu.Unlock()
+	if !handshakeDone {
+		s.setFailure("session wind-down before handshake")
+	}
 }
 
 // ─── EventSource ─────────────────────────────────────────────────────────────

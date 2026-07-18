@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -669,9 +670,17 @@ func parseLines(out []byte) []string {
 
 // isNotFoundErr reports whether err from exec.Command indicates the binary was
 // not found on PATH (exec.ErrNotFound or ENOENT).
+//
+// Prefer typed matching: a local exec of a missing binary wraps exec.ErrNotFound
+// (via *exec.Error), which errors.Is unwraps reliably. The substring fallback
+// covers transports (e.g. SSHRunner) that surface the failure as remote-shell
+// TEXT rather than a typed Go error.
 func isNotFoundErr(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		return true
 	}
 	return strings.Contains(err.Error(), exec.ErrNotFound.Error()) ||
 		strings.Contains(err.Error(), "executable file not found")

@@ -108,7 +108,7 @@ func SweepOrphanTmuxWindows(
 		case <-time.After(windowSweepPollInterval):
 		}
 
-		anyRemain := windowSweepAnyRemain(ctx, adapter, targets, prefix, logger)
+		anyRemain := windowSweepAnyRemain(ctx, adapter, targets, logger)
 		if !anyRemain {
 			windowSweepLog(logger, "SweepOrphanTmuxWindows: all matching windows exited after kill")
 			break
@@ -147,7 +147,6 @@ func windowSweepAnyRemain(
 	ctx context.Context,
 	adapter Adapter,
 	targets []windowTarget,
-	prefix string,
 	logger *log.Logger,
 ) bool {
 	// Build a set of sessions we need to check.
@@ -156,14 +155,14 @@ func windowSweepAnyRemain(
 		sessionSet[tgt.session] = struct{}{}
 	}
 
-	// Build a lookup of (session, window) pairs that we killed.
+	// Build a lookup of (session, window) pairs that we killed. The prefix that
+	// selected these windows at kill time is not needed here — we re-check only
+	// the exact (session, window) targets we recorded.
 	type windowKey struct{ session, window string }
 	killedSet := make(map[windowKey]struct{}, len(targets))
 	for _, tgt := range targets {
 		killedSet[windowKey{tgt.session, tgt.window}] = struct{}{}
 	}
-
-	_ = prefix // prefix was applied at kill time; here we check only known targets
 
 	for session := range sessionSet {
 		windows, err := adapter.ListWindows(ctx, session)

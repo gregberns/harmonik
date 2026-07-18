@@ -231,6 +231,43 @@ func TestReactor_Invariant_DedupBySeq(t *testing.T) {
 	}
 }
 
+// TestReactor_MidTurnSupersede verifies that a TurnStarted arriving while a
+// turn is already in-flight emits a terminal for the orphaned turn (a
+// superseded turn must not vanish without a terminal) and adopts the new turn.
+func TestReactor_MidTurnSupersede(t *testing.T) {
+	r := codexreactor.New()
+
+	r.Step(codexreactor.Event{Seq: 1, Type: codexreactor.EventTypeTurnStarted, ThreadID: "t1", TurnID: "u1"})
+
+	got := r.Step(codexreactor.Event{Seq: 2, Type: codexreactor.EventTypeTurnStarted, ThreadID: "t1", TurnID: "u2"})
+	want := []codexreactor.Action{
+		{Type: codexreactor.ActionTypeCompleteTurn, ThreadID: "t1", TurnID: "u1", Status: "superseded"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("supersede should emit a terminal for u1\n  want: %s\n  got:  %s", formatActions(want), formatActions(got))
+	}
+	if s := r.State(); s.TurnID != "u2" || !s.InFlight {
+		t.Errorf("after supersede want TurnID=u2 InFlight=true; got TurnID=%q InFlight=%v", s.TurnID, s.InFlight)
+	}
+
+	// A TurnStarted repeating the SAME in-flight turn id is not a supersede.
+	got = r.Step(codexreactor.Event{Seq: 3, Type: codexreactor.EventTypeTurnStarted, ThreadID: "t1", TurnID: "u2"})
+	if len(got) != 0 {
+		t.Errorf("re-announcing the in-flight turn should emit no terminal; got %s", formatActions(got))
+	}
+}
+
+// TestReactor_ConnectedResetsThreadID verifies that a reconnect clears the
+// stale ThreadID so the first post-reconnect telemetry is not misattributed.
+func TestReactor_ConnectedResetsThreadID(t *testing.T) {
+	r := codexreactor.New()
+	r.Step(codexreactor.Event{Seq: 1, Type: codexreactor.EventTypeTurnStarted, ThreadID: "t1", TurnID: "u1"})
+	r.Step(codexreactor.Event{Seq: 0, Type: codexreactor.EventTypeConnected})
+	if s := r.State(); s.ThreadID != "" {
+		t.Errorf("Connected should clear ThreadID; got %q", s.ThreadID)
+	}
+}
+
 // TestReactor_Run_SyntheticSource verifies that Run drives the reactor loop via
 // SyntheticSource and FakeEffector, collecting actions correctly.
 func TestReactor_Run_SyntheticSource(t *testing.T) {

@@ -204,9 +204,12 @@ func (r *Reactor) Step(ev Event) []Action {
 	case EventTypeConnected:
 		// Reconnect: reset dedup seq and clear in-flight state. Any turn that
 		// was in-flight before disconnect was already terminated by the
-		// Disconnected event.
+		// Disconnected event. Clear ThreadID too — the prior thread does not
+		// survive a reconnect; leaving it stale would misattribute the first
+		// post-reconnect delta/status until the next TurnStarted overwrites it.
 		r.state.InFlight = false
 		r.state.TurnID = ""
+		r.state.ThreadID = ""
 		r.state.LastSeq = 0
 		return nil
 
@@ -223,13 +226,24 @@ func (r *Reactor) Step(ev Event) []Action {
 		return nil
 
 	case EventTypeTurnStarted:
-		// I1: record the new turn in-flight.
-		// (If another turn was already in-flight this supersedes it; the server
-		// guarantees ordering in normal operation.)
+		// I1: record the new turn in-flight. If another turn was already
+		// in-flight (mid-turn steer, or rare server reordering), it is
+		// superseded — emit a terminal for the orphaned turn so the effector
+		// closes it out. A superseded turn must not vanish without a terminal
+		// (wind-down is a terminal, not silence).
+		var actions []Action
+		if r.state.InFlight && r.state.TurnID != "" && r.state.TurnID != ev.TurnID {
+			actions = []Action{{
+				Type:     ActionTypeCompleteTurn,
+				ThreadID: r.state.ThreadID,
+				TurnID:   r.state.TurnID,
+				Status:   "superseded",
+			}}
+		}
 		r.state.ThreadID = ev.ThreadID
 		r.state.TurnID = ev.TurnID
 		r.state.InFlight = true
-		return nil
+		return actions
 
 	case EventTypeTurnCompleted:
 		if !r.state.InFlight {

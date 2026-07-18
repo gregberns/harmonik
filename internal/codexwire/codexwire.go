@@ -251,11 +251,12 @@ func Parse(line []byte) (Frame, error) {
 		}
 
 	case hasID && !hasMethod:
-		// Server response.
+		// Server response. The result stays in f.RawResult (an explicit
+		// "result": null round-trips as the "null" bytes; an absent result as
+		// empty). Typed parsing is deferred to ResolveResponseResult, which the
+		// caller invokes once it correlates the response id to the originating
+		// request method.
 		f.Kind = FrameKindServerResponse
-		if err := parseResult(&f); err != nil {
-			return Frame{}, err
-		}
 
 	default:
 		f.Kind = FrameKindRaw
@@ -278,21 +279,6 @@ func parseParams(f *Frame, hasParams bool) error {
 		return fmt.Errorf("codexwire: parse params for %q: %w", f.Method, err)
 	}
 	f.Params = p
-	return nil
-}
-
-// parseResult populates f.Result from f.RawResult for a server response.
-// The method is looked up via a reverse lookup from the request registry;
-// since we parse both directions, we find the entry by matching requests.
-// For corpus correctness the result is stored in f.Params (see Marshal).
-//
-// We can't resolve method→result without knowing the request id correlation.
-// Instead we store the raw result and resolve via ResponseResult if needed.
-func parseResult(f *Frame) error {
-	// Result parsing is done lazily via ResolveResponseResult when the caller
-	// correlates the response id to the originating request method. For the
-	// round-trip gate, we only need to preserve and re-emit RawResult, which
-	// is already stored in f.RawResult.
 	return nil
 }
 

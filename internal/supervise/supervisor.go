@@ -23,8 +23,8 @@ const (
 	PolicyOnFailure RestartPolicy = "on-failure"
 )
 
-// BackoffConfig mirrors handlercontract.ProvisioningBackoffConfig for the
-// supervisor's restart-delay envelope.
+// BackoffConfig is the supervisor's exponential restart-delay envelope
+// (base / cap / attempt ceiling).
 type BackoffConfig struct {
 	// Base is the initial restart delay. Default: 1s.
 	Base time.Duration

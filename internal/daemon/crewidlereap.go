@@ -144,11 +144,24 @@ func NewCrewIdleReaper(cfg CrewIdleReaperConfig) *CrewIdleReaper {
 
 // StartWatcher launches the background scan goroutine. Returns immediately;
 // the goroutine runs until ctx is cancelled.
+//
+// DISABLED (operator directive 2026-07-18): the SD-3 idle-completed-crew sweep
+// was tearing down worker/gate crews (alpha, bravo, assessor) ~5 min after they
+// drained their queue and went to QueueStatusCompleted, mid-standby. The operator
+// wants idle crews with an empty/completed queue to STAY ALIVE. The sweep is
+// turned fully off here: the scan goroutine is never started, so no crew is ever
+// reclaimed for being idle. This does NOT touch legitimate cleanup — the operator
+// crew-stop path (HandleCrewStop), the StaleWatcher wedged-run force-reap, the
+// BranchReapWatcher, and the boot-time orphan sweep (RunOrphanSweep, which reaps
+// sessions MISSING from the registry) are all unaffected. loop/scan/checkCrew/reap
+// are retained (unreferenced) so re-enabling is a one-line revert if ever wanted.
 func (r *CrewIdleReaper) StartWatcher(ctx context.Context) {
-	go r.loop(ctx)
+	// Idle-crew reaping is disabled; the sweep goroutine is never launched.
 }
 
 // loop is the background goroutine body.
+//
+//nolint:unused // retained for a one-line revert of the operator-disabled sweep (hk-s2eac)
 func (r *CrewIdleReaper) loop(ctx context.Context) {
 	ticker := time.NewTicker(r.cfg.ScanInterval)
 	defer ticker.Stop()

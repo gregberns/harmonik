@@ -300,9 +300,14 @@ func TestSessionIDInterceptor_FiresOnHandlerCapabilities(t *testing.T) {
 	}
 }
 
-// TestSessionIDInterceptor_SkipsEmptySessionID verifies that the interceptor does
-// not call the callback when handler_capabilities has an empty claude_session_id.
-func TestSessionIDInterceptor_SkipsEmptySessionID(t *testing.T) {
+// TestSessionIDInterceptor_FiresOnEmptySessionID verifies that a
+// handler_capabilities line whose negotiation succeeds (valid supported_versions)
+// but carries an EMPTY claude_session_id STILL fires the callback exactly once,
+// with the empty string. The version_selected ACK is sent only from that
+// callback, and downstream synthesises a session id from the empty signal;
+// withholding the fire on empty left a handler blocked on the ACK until the
+// 150s agent_ready_timeout (hk-o66xy regression).
+func TestSessionIDInterceptor_FiresOnEmptySessionID(t *testing.T) {
 	t.Parallel()
 
 	msg := handlercontract.HandlerCapabilitiesMsg{
@@ -314,15 +319,22 @@ func TestSessionIDInterceptor_SkipsEmptySessionID(t *testing.T) {
 	line := append(data, '\n')
 
 	fired := 0
-	intercepted := daemon.ExportedNewSessionIDInterceptor(bytes.NewReader(line), func(_ string) {
+	var gotID string
+	sawID := false
+	intercepted := daemon.ExportedNewSessionIDInterceptor(bytes.NewReader(line), func(id string) {
 		fired++
+		gotID = id
+		sawID = true
 	})
 
 	buf := make([]byte, 1024)
 	_, _ = intercepted.Read(buf)
 
-	if fired != 0 {
-		t.Errorf("SessionIDInterceptor empty: callback fired %d times, want 0", fired)
+	if fired != 1 {
+		t.Errorf("SessionIDInterceptor empty: callback fired %d times, want 1 (ACK must be released)", fired)
+	}
+	if sawID && gotID != "" {
+		t.Errorf("SessionIDInterceptor empty: callback got id %q, want empty string", gotID)
 	}
 }
 

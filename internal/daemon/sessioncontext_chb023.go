@@ -475,11 +475,20 @@ func (s *SessionIDInterceptor) checkBuffer() {
 			s.selectedVersion = sel
 		}
 
-		if s.firedOnce || msg.ClaudeSessionID == "" {
+		if s.firedOnce {
 			continue
 		}
 
-		// Fire callback exactly once.
+		// Fire callback exactly once, on the first handler_capabilities line
+		// whose negotiation succeeded (reaching here means the capsSeen block
+		// above did NOT set negoErr). An EMPTY claude_session_id still fires,
+		// with the empty string: the version_selected ACK is sent only from
+		// this callback, and the downstream callback synthesises a session id
+		// from the empty signal. Withholding the fire on empty (the old
+		// behaviour) left a handler that negotiated a valid version but sent no
+		// session id blocked on the ACK until the 150s agent_ready_timeout
+		// (hk-o66xy). Synthesis stays downstream (it owns the run context);
+		// the interceptor's job is only to fire so the ACK is not withheld.
 		s.firedOnce = true
 		s.cb(msg.ClaudeSessionID)
 		return

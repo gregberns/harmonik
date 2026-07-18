@@ -413,7 +413,6 @@ func TestPL023_HandlerContractIsNtmBoundary(t *testing.T) {
 	// interact with ntm only through the handler contract abstraction).
 	peerPackages := []string{
 		"github.com/gregberns/harmonik/internal/workspace",
-		"github.com/gregberns/harmonik/internal/operatornfr",
 		"github.com/gregberns/harmonik/internal/core",
 	}
 

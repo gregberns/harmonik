@@ -46,7 +46,7 @@ package core
 
 // PayloadCompatEntry declares the N-1 compatibility window for one registered
 // event type. It is the per-type analogue of the cross-artifact compatibility
-// matrix in internal/operatornfr/schemacompatwindow_test.go.
+// matrix described in specs/control-points.md §6.3.
 //
 // Spec ref: event-model.md §4.8 EV-029.
 type PayloadCompatEntry struct {

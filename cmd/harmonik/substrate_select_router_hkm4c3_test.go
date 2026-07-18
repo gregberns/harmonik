@@ -71,6 +71,60 @@ func TestCodexRouter_NFR7_ZeroWorkersLocal(t *testing.T) {
 	}
 }
 
+// nonSSHWorkerRegistry builds a live registry with a single ENABLED but non-ssh
+// worker. SelectWorker would bind such a worker, but the router only sandboxes
+// over ssh — so with requireBoundary set, Command must REFUSE rather than fall
+// through to LocalRunner.
+func nonSSHWorkerRegistry() *workers.Registry {
+	return workers.NewRegistry(workers.Config{
+		Version: 1,
+		Workers: []workers.Worker{{
+			Name:      "gb-mbp-local",
+			Transport: "local",
+			Host:      "",
+			MaxSlots:  1,
+			Enabled:   true,
+		}},
+	})
+}
+
+// TestCodexRouter_RequireBoundary_RefusesUnsandboxed_HK5H759 pins the fail-closed
+// runner: when requireBoundary is set (the codexdriver crew path), Command must
+// return the deliberately-nonexistent refusal argv0 for EVERY non-(enabled+ssh)
+// state — no registry, nil registry, a disabled ssh worker, or an enabled non-ssh
+// worker — so exec.Start fails instead of running codex danger-full-access
+// UNSANDBOXED on the daemon host. Only an enabled ssh worker routes remotely.
+func TestCodexRouter_RequireBoundary_RefusesUnsandboxed_HK5H759(t *testing.T) {
+	refuseCases := []struct {
+		name string
+		bind func(*codexWorkerRoutingRunner)
+	}{
+		{"no registry bound", func(r *codexWorkerRoutingRunner) {}},
+		{"nil registry", func(r *codexWorkerRoutingRunner) { r.setRegistry(nil) }},
+		{"disabled ssh worker", func(r *codexWorkerRoutingRunner) { r.setRegistry(oneWorkerRegistry("gb-mbp", false)) }},
+		{"enabled non-ssh worker", func(r *codexWorkerRoutingRunner) { r.setRegistry(nonSSHWorkerRegistry()) }},
+	}
+	for _, tc := range refuseCases {
+		t.Run("refuse/"+tc.name, func(t *testing.T) {
+			r := &codexWorkerRoutingRunner{requireBoundary: true}
+			tc.bind(r)
+			cmd := r.Command(context.Background(), "codex", "app-server")
+			if cmd.Args[0] != refusedIsolationBoundaryArgv0 {
+				t.Fatalf("expected fail-closed refusal argv0 %q, got %v", refusedIsolationBoundaryArgv0, cmd.Args)
+			}
+		})
+	}
+
+	t.Run("allow/enabled ssh worker routes remotely", func(t *testing.T) {
+		r := &codexWorkerRoutingRunner{requireBoundary: true}
+		r.setRegistry(oneWorkerRegistry("gb-mbp", true))
+		cmd := r.Command(context.Background(), "codex", "app-server")
+		if cmd.Args[0] != "ssh" {
+			t.Fatalf("enabled ssh worker IS the boundary; expected ssh routing, got %v", cmd.Args)
+		}
+	})
+}
+
 // TestCodexRouter_HealthyWorkerRoutesSSH proves a worker-selected run routes the
 // codex process to the worker over SSHRunner{Host}: once the live registry with
 // one healthy ssh worker is late-bound (as the daemon does via
@@ -115,6 +169,28 @@ func TestCodexRouter_SelectSubstrateWiresObserver(t *testing.T) {
 	if got := rr.Command(context.Background(), "codex").Args[0]; got != "ssh" {
 		t.Fatalf("post-bind expected ssh routing, got %v", got)
 	}
+}
+
+// TestSelectSubstrate_RequireIsolationBoundary_HK5H759 is the composition-root
+// contract for the fail-closed guard signal: selectSubstrate returns
+// requireIsolationBoundary=true ONLY on the codexdriver path (permissive sandbox
+// posture) and false for the tmux default (nothing to guard). The daemon keys
+// its fail-closed refusal off this bool, so it must track the substrate choice.
+func TestSelectSubstrate_RequireIsolationBoundary_HK5H759(t *testing.T) {
+	t.Run("codexdriver_requires_boundary", func(t *testing.T) {
+		t.Setenv(substrateSelectEnv, "codexdriver")
+		_, _, requireBoundary := selectSubstrate(nil, "codex")
+		if !requireBoundary {
+			t.Fatal("codexdriver path must require an isolation boundary (fail-closed signal)")
+		}
+	})
+	t.Run("tmux_default_no_boundary", func(t *testing.T) {
+		t.Setenv(substrateSelectEnv, "")
+		_, _, requireBoundary := selectSubstrate(nil, "codex")
+		if requireBoundary {
+			t.Fatal("tmux default has no permissive posture; must NOT require a boundary")
+		}
+	})
 }
 
 // TestCodexDriverBlindToWorkers is the RS-017 structural guard: the Codex driver

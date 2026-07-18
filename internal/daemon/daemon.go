@@ -564,6 +564,20 @@ type Config struct {
 	// blind). No-op for the tmux substrate (observer is nil there).
 	WorkerRegistryObserver func(*workers.Registry)
 
+	// CodexRequireIsolationBoundary makes the work loop FAIL CLOSED for codex
+	// app-server crews (hk-5h759). The composition root sets it true iff
+	// HARMONIK_SUBSTRATE=codexdriver — a codex crew runs with a permissive sandbox
+	// posture (danger-full-access) that is safe ONLY inside a real isolation
+	// boundary (an enabled remote ssh worker / container IS the sandbox). With it
+	// set, beadRunOne refuses to launch any codex run unless the worker registry's
+	// WorkerSnapshot() yields an enabled ssh worker — mirroring the runner's own
+	// routing predicate. Any other state (no registry, no worker, disabled, or a
+	// non-ssh transport) would otherwise fall through codexWorkerRoutingRunner.Command
+	// to LocalRunner and run codex UNSANDBOXED on the daemon host. Operator mandate:
+	// never a silent local fallback; commits must land inside the boundary. False
+	// (default) for the tmux path — no permissive posture, nothing to guard.
+	CodexRequireIsolationBoundary bool
+
 	// Runner is the CommandRunner used for remote-aware marker-file reads on the
 	// DOT run path (hk-hd2w6). At runtime, local runs set it to nil (NFR7:
 	// byte-identical local path) and remote runs override it with rbc.sshRunner

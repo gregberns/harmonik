@@ -59,13 +59,21 @@ const (
 // health/live-disable state — WITHOUT the driver ever learning about workers
 // (RS-017 twin-blindness: selection lives at the composition root, not the
 // driver). It is nil for the tmux path (nothing to bind).
-func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry)) {
+// The third return value, requireIsolationBoundary, is true ONLY on the
+// codexdriver path: a codex app-server crew runs with a permissive sandbox
+// posture (danger-full-access) that is safe solely inside a real isolation
+// boundary — an enabled remote ssh worker IS that boundary. It is the signal the
+// daemon's fail-closed guard keys off (hk-5h759): with it set, the work loop
+// REFUSES to launch a codex run that has no worker bound (which would otherwise
+// fall through codexWorkerRoutingRunner.Command to LocalRunner and run codex
+// UNSANDBOXED on the daemon host). False for the tmux path (no such posture).
+func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), requireIsolationBoundary bool) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
-		return tmuxSub, nil
+		return tmuxSub, nil, false
 	}
-	router := &codexWorkerRoutingRunner{}
+	router := &codexWorkerRoutingRunner{requireBoundary: true}
 	opts, _ := codexSubstrateOptions(codexBinary, router)
-	return codexdriver.NewCodexSubstrate(opts), router.setRegistry
+	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, true
 }
 
 // codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that
@@ -91,7 +99,24 @@ type codexWorkerRoutingRunner struct {
 	// bound (and stays nil when no worker is configured) ⇒ LOCAL codex,
 	// byte-identical to the pre-M4 hardcoded LocalRunner path (NFR7).
 	reg atomic.Pointer[workers.Registry]
+
+	// requireBoundary makes this runner FAIL CLOSED (hk-5h759). Set true on the
+	// codexdriver path (a codex crew runs danger-full-access, safe ONLY inside an
+	// enabled ssh worker/container). When set and no enabled ssh worker is bound,
+	// Command REFUSES rather than falling through to LocalRunner — which would run
+	// codex UNSANDBOXED on the daemon host. This is the authoritative, race-free
+	// enforcement point: it evaluates the SAME predicate that decides ssh-vs-local
+	// AT spawn time, so it closes the TOCTOU window a caller-side admission check
+	// alone cannot (a worker disabled between admission and spawn is caught here).
+	requireBoundary bool
 }
+
+// refusedIsolationBoundaryArgv0 is a deliberately non-existent binary whose PATH
+// NAME is the diagnostic. When a codex crew requires an isolation boundary but
+// none is bound, codexWorkerRoutingRunner.Command returns a Command pointing at
+// it: exec.Start fails fast and codexdriver.SpawnWindow surfaces the refusal
+// (with this path in the error) instead of running codex unsandboxed locally.
+const refusedIsolationBoundaryArgv0 = "/nonexistent/harmonik-REFUSED-codex-danger-full-access-requires-enabled-ssh-isolation-boundary-hk5h759"
 
 // setRegistry late-binds the live worker registry. Wired to
 // daemon.Config.WorkerRegistryObserver so the daemon hands over the SAME
@@ -123,6 +148,15 @@ func (r *codexWorkerRoutingRunner) Command(ctx context.Context, name string, arg
 				Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"},
 			}.Command(ctx, name, args...)
 		}
+	}
+	if r.requireBoundary {
+		// FAIL CLOSED (hk-5h759): a codex crew requires an isolation boundary but
+		// none is ssh-routable here (no registry / no worker / disabled / non-ssh
+		// transport). Refuse rather than fall through to LocalRunner, which would
+		// run codex danger-full-access UNSANDBOXED on the daemon host. Return a
+		// Command whose argv0 does not exist: exec.Start fails immediately and the
+		// refusal (with the diagnostic path) propagates up through SpawnWindow.
+		return exec.CommandContext(ctx, refusedIsolationBoundaryArgv0)
 	}
 	return ltmux.LocalRunner{}.Command(ctx, name, args...)
 }

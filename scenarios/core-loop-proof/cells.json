@@ -1,5 +1,14 @@
 {
   "//": "to the claude cells. gap1 is asserted everywhere (it is the T2-implemented gap).",
+  "//workflow_id": "EVERY cell asserts dispatch.workflow_id_present=false: this daemon does",
+  "//workflow_id2": "NOT emit workflow_id on run_started for ANY mode (workloopRunStartedPayload",
+  "//workflow_id3": "has no workflow_id field; the struct comment flags it post-MVH). The spec",
+  "//workflow_id4": "(execution-model.md EM-015a §331, event-model.md §8.1.1) DOES require it —",
+  "//workflow_id5": "emitting it (incl. synthesizing stable ids for built-in single/review-loop",
+  "//workflow_id6": "and resolving the .dot graph id before run_started) is a tracked follow-up,",
+  "//workflow_id7": "not a core-loop gap. Cells claiming true here were a latent gap4 failure",
+  "//workflow_id8": "masked by golden run_started streams that carried a fabricated workflow_id;",
+  "//workflow_id9": "those goldens have been stripped so they mirror the daemon's real output.",
   "schema_version": 1,
   "cells": [
     {
@@ -23,7 +32,7 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "single",
-          "workflow_id_present": true
+          "workflow_id_present": false
         },
         "provider": {
           "enabled": true
@@ -58,7 +67,7 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "single",
-          "workflow_id_present": true
+          "workflow_id_present": false
         },
         "provider": {
           "enabled": true
@@ -181,7 +190,7 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "single",
-          "workflow_id_present": true
+          "workflow_id_present": false
         },
         "provider": {
           "enabled": true
@@ -216,7 +225,7 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "single",
-          "workflow_id_present": true
+          "workflow_id_present": false
         },
         "provider": {
           "enabled": true
@@ -254,7 +263,7 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "single",
-          "workflow_id_present": true
+          "workflow_id_present": false
         },
         "provider": {
           "enabled": true

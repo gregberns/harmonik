@@ -65,8 +65,12 @@ type writeRequest struct {
 //
 // Correctness: batching does not violate EV-020 (no reordering, no truncation)
 // because all writes in a batch are written to the file before the single fsync
-// that covers them all. All line buffers are concatenated into one Write call
-// to preserve POSIX O_APPEND atomicity within PIPE_BUF.
+// that covers them all. The drainer is the sole writer of the fd, so a batch's
+// lines are never interleaved with another writer's data regardless of size;
+// concatenating them into one Write call keeps them contiguous and in append
+// order. This is NOT a crash-atomicity guarantee: a buffer larger than PIPE_BUF
+// may be split into multiple physical writes, and a crash mid-write leaves a
+// torn final line that readers discard per the §6.2 torn-tail rule.
 //
 // The drainer is started by OpenJSONLWriter and stopped by Close. Append after
 // Close returns [ErrWriterClosed].
@@ -189,8 +193,11 @@ func (w *JSONLWriter) drain(f *os.File) {
 // the result to all callers in the batch.
 func (w *JSONLWriter) processBatch(f *os.File, batch []writeRequest) {
 	// Concatenate all payloads into a single buffer for one Write call.
-	// This preserves O_APPEND atomicity: the combined buffer is submitted
-	// as a single kernel write, keeping all lines for this batch contiguous.
+	// The drainer is the sole writer of f, so a single Write keeps this batch's
+	// lines contiguous and in append order. This is NOT a crash-atomicity
+	// guarantee: a buffer larger than PIPE_BUF may be split into multiple
+	// physical writes, and a crash mid-write leaves a torn final line that
+	// readers discard per the §6.2 torn-tail rule.
 	totalLen := 0
 	needsSync := false
 	for i := range batch {
@@ -299,9 +306,12 @@ func (w *JSONLWriter) Close() error {
 // lexicographically greater than sinceID's byte string). Because EventID is a
 // UUIDv7, lexicographic byte order is chronological order (EV-002).
 //
-// Events are yielded in file order. Malformed lines are skipped with a
-// log.Printf warning. A missing file is treated as an empty log (no events
-// yielded, no error) so callers do not need to special-case a fresh daemon.
+// Events are yielded in file order. A newline-terminated line that fails to
+// decode is genuine corruption and is skipped with a log.Printf warning; a
+// torn tail (a final line lacking a terminating newline, the signature of a
+// partial write on crash) is discarded silently per the §6.2 torn-tail rule.
+// A missing file is treated as an empty log (no events yielded, no error) so
+// callers do not need to special-case a fresh daemon.
 //
 // ScanAfter is a pure read-side function; it does NOT modify the file (EV-020).
 //
@@ -325,11 +335,19 @@ func ScanAfter(path string, sinceID core.EventID) iter.Seq[core.Event] {
 		for {
 			lineBytes, err := reader.ReadBytes('\n')
 			if len(lineBytes) > 0 {
+				// A line returned together with io.EOF has no terminating
+				// newline: it is the torn tail of a crashed write. Per the §6.2
+				// torn-tail rule a partial final line is expected and discarded
+				// silently; only a newline-terminated line that fails to decode
+				// is genuine corruption worth logging.
+				tornTail := err == io.EOF
 				// Trim the trailing newline before unmarshalling.
 				lineBytes = bytes.TrimRight(lineBytes, "\n")
 				var ev core.Event
 				if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
-					log.Printf("eventbus.ScanAfter: malformed line in %s (skipping): %v", path, decodeErr)
+					if !tornTail {
+						log.Printf("eventbus.ScanAfter: malformed line in %s (skipping): %v", path, decodeErr)
+					}
 				} else {
 					// bytes.Compare on raw UUID bytes: lexicographic order matches
 					// chronological order for UUIDv7 (EV-002). Skip events ≤ sinceID.
@@ -360,13 +378,14 @@ func ScanAfter(path string, sinceID core.EventID) iter.Seq[core.Event] {
 //
 // Each line is decoded as a [core.Event] envelope. Lines whose run_id field
 // matches runID are yielded to the caller. Lines that do not match are
-// skipped silently. Lines that are malformed JSON (cannot be decoded as a
-// core.Event envelope) are also skipped, with a log.Printf warning — the
-// caller is not interrupted.
+// skipped silently. A newline-terminated line that is malformed JSON (cannot
+// be decoded as a core.Event envelope) is skipped with a log.Printf warning —
+// the caller is not interrupted. A missing file is treated as an empty log
+// (no events yielded, no error).
 //
 // The torn-tail rule (event-model.md §6.2): a final line that lacks a
-// terminating newline is treated as malformed by the JSON decoder and is
-// therefore skipped per the above malformed-line policy.
+// terminating newline is the signature of a partial write on crash; it is
+// discarded silently rather than logged as corruption.
 //
 // Filter is a free function bound to a path rather than a method on
 // JSONLWriter so that callers can read any JSONL file (including files written
@@ -381,7 +400,10 @@ func Filter(path string, runID core.RunID) iter.Seq[core.Event] {
 	return func(yield func(core.Event) bool) {
 		f, err := os.Open(path)
 		if err != nil {
-			log.Printf("eventbus.Filter: open %s: %v", path, err)
+			// A missing file is a fresh/empty log, not an error (mirrors ScanAfter).
+			if !os.IsNotExist(err) {
+				log.Printf("eventbus.Filter: open %s: %v", path, err)
+			}
 			return
 		}
 		defer func() { _ = f.Close() }()
@@ -390,11 +412,18 @@ func Filter(path string, runID core.RunID) iter.Seq[core.Event] {
 		for {
 			lineBytes, err := reader.ReadBytes('\n')
 			if len(lineBytes) > 0 {
+				// A line returned together with io.EOF has no terminating
+				// newline: it is the torn tail of a crashed write, expected per
+				// the §6.2 torn-tail rule and discarded silently. Only a
+				// newline-terminated line that fails to decode is corruption.
+				tornTail := err == io.EOF
 				lineBytes = bytes.TrimRight(lineBytes, "\n")
 				// Decode just the envelope fields needed for matching.
 				var ev core.Event
 				if decodeErr := json.Unmarshal(lineBytes, &ev); decodeErr != nil {
-					log.Printf("eventbus.Filter: malformed line in %s (skipping): %v", path, decodeErr)
+					if !tornTail {
+						log.Printf("eventbus.Filter: malformed line in %s (skipping): %v", path, decodeErr)
+					}
 				} else if ev.RunID != nil && *ev.RunID == runID {
 					if !yield(ev) {
 						return

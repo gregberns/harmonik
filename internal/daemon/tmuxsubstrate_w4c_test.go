@@ -233,7 +233,7 @@ func TestKillAllWindows_RemoteWindowKilledViaRemoteAdapter(t *testing.T) {
 	if _, err := sub.spawnWindowVia(ctx, handler.SubstrateSpawn{
 		WindowName: "remote-win",
 		Argv:       []string{"/bin/sh", "-c", "exit 0"},
-	}, remoteAdapter, "worker-session", true); err != nil {
+	}, remoteAdapter, "worker-session", true, nil); err != nil {
 		t.Fatalf("spawnWindowVia(remote): %v", err)
 	}
 

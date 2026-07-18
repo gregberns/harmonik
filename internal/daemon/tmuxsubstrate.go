@@ -853,7 +853,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 	// session, unchanged. Remote runs route through spawnWindowVia with an
 	// SSH-backed adapter + a worker-scoped session (see perRunSubstrate.SpawnWindow).
 	// NFR7: the local path is byte-identical to the pre-remote behaviour.
-	return s.spawnWindowVia(ctx, in, s.adapter, s.sessionName, false /* local */)
+	return s.spawnWindowVia(ctx, in, s.adapter, s.sessionName, false /* local */, nil /* no SSH runner: local Kill uses syscall.Kill */)
 }
 
 // spawnWindowVia is the adapter/session-parameterised core of SpawnWindow. The
@@ -868,7 +868,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 // The remote flag marks the spawned session as worker-hosted so runWait polls
 // worker-side liveness instead of a local kill(s.pid,0) (hk-r1zq). Local callers
 // pass false ⇒ unchanged behaviour (NFR7).
-func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.SubstrateSpawn, adapter tmux.Adapter, sessionName string, remote bool) (handler.SubstrateSession, error) {
+func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.SubstrateSpawn, adapter tmux.Adapter, sessionName string, remote bool, runner tmux.CommandRunner) (handler.SubstrateSession, error) {
 	// Acquire spawn semaphore slot(s) before creating the window. This enforces
 	// the concurrent-session ceiling (hk-xb5yi). When the cap is not configured
 	// (spawnSem is nil) this block is a no-op.
@@ -1056,6 +1056,7 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 		pidTarget:   pidTarget,
 		pid:         pid,
 		remote:      remote,
+		runner:      runner,
 		waitDone:    make(chan struct{}),
 		releaseSlot: releaseSlotFn,
 	}
@@ -2199,7 +2200,7 @@ func (p *perRunSubstrate) spawnWindowRemote(ctx context.Context, in handler.Subs
 	p.remoteAdapter = remoteAdapter
 	p.paneTargetMu.Unlock()
 
-	return p.inner.spawnWindowVia(ctx, in, remoteAdapter, sessName, true /* remote: worker-hosted, runWait must poll worker liveness not local kill (hk-r1zq) */)
+	return p.inner.spawnWindowVia(ctx, in, remoteAdapter, sessName, true /* remote: worker-hosted, runWait must poll worker liveness not local kill (hk-r1zq) */, p.runner /* SSH runner: Kill forcefully terminates the worker pane PID over SSH (hk-btl1n) */)
 }
 
 // pasteAdapter returns the adapter that paste-inject and liveness PID-resolution
@@ -2458,6 +2459,16 @@ type tmuxSubstrateSession struct {
 	// sessions leave this false ⇒ the fast path is byte-identical (NFR7).
 	remote bool
 
+	// runner is the run's SSH-backed CommandRunner for a REMOTE session, nil for
+	// a local one. Kill uses it to forcefully terminate the WORKER pane PID over
+	// SSH (kill -TERM → grace → kill -KILL), the remote analog of the local
+	// killProcessWithGrace(s.pid) syscall path — a worker agent that survives the
+	// pane SIGHUP from KillWindow would otherwise leak on the worker (hk-btl1n).
+	// s.pid MUST NOT be local-signalled for a remote run (it names the worker's
+	// process table, not the daemon host's — hk-r1zq/H8), so the kill is routed
+	// through this runner instead.
+	runner tmux.CommandRunner
+
 	// killOnce ensures Kill is idempotent.
 	killOnce sync.Once
 
@@ -2517,6 +2528,16 @@ func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 			if pt := s.PaneTarget(); pt != "" {
 				_ = s.adapter.SendKeysQuit(ctx, pt) //nolint:errcheck // best-effort; KillWindow is authoritative
 			}
+			// hk-btl1n: forcefully terminate the WORKER pane PID over SSH, the
+			// remote analog of the local killProcessWithGrace path. KillWindow
+			// below only sends the pane SIGHUP; an agent that survives it would
+			// leak on the worker. s.pid is the worker's pane PID (NOT a daemon-host
+			// PID — never syscall.Kill it, hk-r1zq/H8), so the kill routes through
+			// the run's SSH runner. Best-effort: KillWindow remains authoritative
+			// for window cleanup. No-op when the runner or PID is unavailable.
+			if s.runner != nil && s.pid > 0 {
+				killRemoteProcessWithGrace(ctx, s.runner, s.pid, killGracePeriod)
+			}
 		} else if s.pid > 0 {
 			killProcessWithGrace(s.pid, killGracePeriod)
 		}
@@ -2551,6 +2572,37 @@ func killProcessWithGrace(pid int, grace time.Duration) {
 
 	// Grace period elapsed; escalate to SIGKILL.
 	_ = syscall.Kill(pid, syscall.SIGKILL)
+}
+
+// killRemoteProcessWithGrace forcefully terminates a WORKER pane PID over the
+// run's SSH runner: it sends SIGTERM, polls kill(pid,0) for up to grace, then
+// escalates to SIGKILL if the process is still alive. This is the remote analog
+// of killProcessWithGrace — the daemon host CANNOT syscall.Kill a worker PID
+// (it names the worker's process table, not the host's), so the whole
+// TERM→grace→KILL sequence runs as a single POSIX-sh script on the worker,
+// bounding SSH round-trips to one invocation. It is best-effort: all errors are
+// swallowed because KillWindow is the authoritative window-cleanup step
+// (hk-btl1n).
+func killRemoteProcessWithGrace(ctx context.Context, runner tmux.CommandRunner, pid int, grace time.Duration) {
+	// Poll count: match the local 100ms cadence over the grace window. The script
+	// exits early (exit 0) the instant the process is gone, so the common case —
+	// the agent already terminated by SendKeysQuit/KillWindow — returns fast; the
+	// SIGKILL escalation only runs for a process that outlives the grace window.
+	steps := int(grace / (100 * time.Millisecond))
+	if steps < 1 {
+		steps = 1
+	}
+	// Single-quote-free POSIX sh so SSHRunner's per-token single-quoting delivers
+	// it intact to the worker's login shell (see SSHRunner.Command). If the
+	// worker's sh lacks sub-second sleep, `sleep 0.1` errors (swallowed) and the
+	// loop escalates to SIGKILL near-immediately — acceptable for this best-effort
+	// path (KillWindow is the authoritative cleanup).
+	script := fmt.Sprintf(
+		"kill -TERM %d 2>/dev/null; n=0; while [ $n -lt %d ]; do kill -0 %d 2>/dev/null || exit 0; sleep 0.1; n=$((n+1)); done; kill -KILL %d 2>/dev/null",
+		pid, steps, pid, pid,
+	)
+	cmd := runner.Command(ctx, "sh", "-c", script)
+	_ = cmd.Run() //nolint:errcheck // best-effort; KillWindow is authoritative
 }
 
 // Wait blocks until the hosted process exits. It polls liveness at 500ms

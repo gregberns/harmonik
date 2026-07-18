@@ -209,6 +209,23 @@ func ReapPriorAgentFollowWatchers(ctx context.Context, lister AgentWatcherLister
 		}
 	}
 
+	// Before SIGKILL, re-verify identity via a fresh command-line enumeration
+	// so a recycled PID (unrelated process that inherited the number after the
+	// watcher exited) is never SIGKILLed. This does NOT reintroduce a liveness
+	// gate on the initial candidate set (the hk-6629b ruling): identification
+	// stays command-line + agent-identity only; the recheck only confirms the
+	// PID still belongs to a matching watcher before escalation.
+	if len(alive) > 0 {
+		fresh, freshErr := lister.ListAgentFollowWatcherPIDs(ctx, agent)
+		if freshErr != nil {
+			orphanLog(logger, "ReapPriorAgentFollowWatchers: re-enumerate before SIGKILL failed: %v; skipping SIGKILL (PID-reuse guard)", freshErr)
+			for pid := range alive {
+				survived = append(survived, pid)
+			}
+			return survived, nil
+		}
+		alive = reverifyCandidatePIDs(alive, fresh)
+	}
 	if len(alive) > 0 {
 		orphanLog(logger, "ReapPriorAgentFollowWatchers: %d process(es) survived SIGTERM grace period; sending SIGKILL", len(alive))
 	}

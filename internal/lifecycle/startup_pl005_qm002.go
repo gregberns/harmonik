@@ -367,6 +367,38 @@ func reconcileDispatchedItems(
 	return nil
 }
 
+// qm002bPendingEvent is a reconciliation event collected during the QM-002b
+// scan and emitted only after any persist step (QM-063: persist BEFORE emit).
+type qm002bPendingEvent struct {
+	eventType core.EventType
+	payload   []byte
+}
+
+// appendMismatchObserved marshals a reconciliation_mismatch_observed payload
+// and appends it to events. On marshal failure it logs a warning (carrying the
+// mismatch class for site attribution) and returns events unchanged — the
+// mismatch handling itself (any queue mutation) is unaffected.
+func appendMismatchObserved(
+	ctx context.Context,
+	logger *slog.Logger,
+	events []qm002bPendingEvent,
+	p core.ReconciliationMismatchObservedPayload,
+) []qm002bPendingEvent {
+	payloadBytes, marshalErr := json.Marshal(p)
+	if marshalErr != nil {
+		logger.WarnContext(ctx, "QM-002b: failed to marshal mismatch payload",
+			"bead_id", p.BeadID,
+			"mismatch_class", p.MismatchClass,
+			"error", marshalErr,
+		)
+		return events
+	}
+	return append(events, qm002bPendingEvent{
+		eventType: core.EventTypeReconciliationMismatchObserved,
+		payload:   payloadBytes,
+	})
+}
+
 // reconcileThreeWay implements QM-002b: the full three-way reconciliation pass
 // that runs after QM-002a to catch mismatch classes not covered by the
 // dispatched-items-only scan.
@@ -430,11 +462,7 @@ func reconcileThreeWay(
 	beadsInQueue := make(map[core.BeadID]queue.ItemStatus)
 
 	// pendingEvents collects all events to emit after any persist step.
-	type pendingEvent struct {
-		eventType core.EventType
-		payload   []byte
-	}
-	var pendingEvents []pendingEvent
+	var pendingEvents []qm002bPendingEvent
 	var classACount int
 
 	// Class D applies only when the whole queue is paused-by-drain (abandoned;
@@ -486,7 +514,7 @@ func reconcileThreeWay(
 					item.Status = queue.ItemStatusCompleted
 					classACount++
 					if emitter != nil {
-						p := core.ReconciliationMismatchObservedPayload{
+						pendingEvents = appendMismatchObserved(ctx, logger, pendingEvents, core.ReconciliationMismatchObservedPayload{
 							QueueID:       q.QueueID,
 							GroupIndex:    gi,
 							BeadID:        string(item.BeadID),
@@ -494,19 +522,7 @@ func reconcileThreeWay(
 							LedgerStatus:  string(dispRecord.Status),
 							QueueStatus:   "dispatched",
 							ObservedAt:    observedAt,
-						}
-						payloadBytes, marshalErr := json.Marshal(p)
-						if marshalErr != nil {
-							logger.WarnContext(ctx, "QM-002b: failed to marshal mismatch payload",
-								"bead_id", string(item.BeadID),
-								"error", marshalErr,
-							)
-						} else {
-							pendingEvents = append(pendingEvents, pendingEvent{
-								eventType: core.EventTypeReconciliationMismatchObserved,
-								payload:   payloadBytes,
-							})
-						}
+						})
 					}
 					continue
 				}
@@ -529,7 +545,7 @@ func reconcileThreeWay(
 					"group_index", gi,
 				)
 				if emitter != nil {
-					p := core.ReconciliationMismatchObservedPayload{
+					pendingEvents = appendMismatchObserved(ctx, logger, pendingEvents, core.ReconciliationMismatchObservedPayload{
 						QueueID:       q.QueueID,
 						GroupIndex:    gi,
 						BeadID:        string(item.BeadID),
@@ -537,19 +553,7 @@ func reconcileThreeWay(
 						LedgerStatus:  string(record.Status),
 						QueueStatus:   string(item.Status),
 						ObservedAt:    observedAt,
-					}
-					payloadBytes, marshalErr := json.Marshal(p)
-					if marshalErr != nil {
-						logger.WarnContext(ctx, "QM-002b: failed to marshal mismatch payload",
-							"bead_id", string(item.BeadID),
-							"error", marshalErr,
-						)
-					} else {
-						pendingEvents = append(pendingEvents, pendingEvent{
-							eventType: core.EventTypeReconciliationMismatchObserved,
-							payload:   payloadBytes,
-						})
-					}
+					})
 				}
 				continue
 			}
@@ -575,7 +579,7 @@ func reconcileThreeWay(
 					if rec, showErr := ledger.ShowBead(ctx, item.BeadID); showErr == nil {
 						ledgerStatus = string(rec.Status)
 					}
-					p := core.ReconciliationMismatchObservedPayload{
+					pendingEvents = appendMismatchObserved(ctx, logger, pendingEvents, core.ReconciliationMismatchObservedPayload{
 						QueueID:       q.QueueID,
 						GroupIndex:    gi,
 						BeadID:        string(item.BeadID),
@@ -583,19 +587,7 @@ func reconcileThreeWay(
 						LedgerStatus:  ledgerStatus,
 						QueueStatus:   preStatus,
 						ObservedAt:    observedAt,
-					}
-					payloadBytes, marshalErr := json.Marshal(p)
-					if marshalErr != nil {
-						logger.WarnContext(ctx, "QM-002b: failed to marshal Class D mismatch payload",
-							"bead_id", string(item.BeadID),
-							"error", marshalErr,
-						)
-					} else {
-						pendingEvents = append(pendingEvents, pendingEvent{
-							eventType: core.EventTypeReconciliationMismatchObserved,
-							payload:   payloadBytes,
-						})
-					}
+					})
 				}
 				continue
 			}
@@ -626,7 +618,7 @@ func reconcileThreeWay(
 			classACount++
 
 			if emitter != nil {
-				p := core.ReconciliationMismatchObservedPayload{
+				pendingEvents = appendMismatchObserved(ctx, logger, pendingEvents, core.ReconciliationMismatchObservedPayload{
 					QueueID:       q.QueueID,
 					GroupIndex:    gi,
 					BeadID:        string(item.BeadID),
@@ -634,19 +626,7 @@ func reconcileThreeWay(
 					LedgerStatus:  string(record.Status),
 					QueueStatus:   "pending",
 					ObservedAt:    observedAt,
-				}
-				payloadBytes, marshalErr := json.Marshal(p)
-				if marshalErr != nil {
-					logger.WarnContext(ctx, "QM-002b: failed to marshal mismatch payload",
-						"bead_id", string(item.BeadID),
-						"error", marshalErr,
-					)
-				} else {
-					pendingEvents = append(pendingEvents, pendingEvent{
-						eventType: core.EventTypeReconciliationMismatchObserved,
-						payload:   payloadBytes,
-					})
-				}
+				})
 			}
 		}
 	}
@@ -682,7 +662,7 @@ func reconcileThreeWay(
 					"bead_id", string(rec.BeadID),
 				)
 				if emitter != nil {
-					p := core.ReconciliationMismatchObservedPayload{
+					pendingEvents = appendMismatchObserved(ctx, logger, pendingEvents, core.ReconciliationMismatchObservedPayload{
 						QueueID:       "",
 						GroupIndex:    -1,
 						BeadID:        string(rec.BeadID),
@@ -690,19 +670,7 @@ func reconcileThreeWay(
 						LedgerStatus:  string(rec.Status),
 						QueueStatus:   "",
 						ObservedAt:    observedAt,
-					}
-					payloadBytes, marshalErr := json.Marshal(p)
-					if marshalErr != nil {
-						logger.WarnContext(ctx, "QM-002b: failed to marshal Class B mismatch payload",
-							"bead_id", string(rec.BeadID),
-							"error", marshalErr,
-						)
-					} else {
-						pendingEvents = append(pendingEvents, pendingEvent{
-							eventType: core.EventTypeReconciliationMismatchObserved,
-							payload:   payloadBytes,
-						})
-					}
+					})
 				}
 				if reapEnabled {
 					classBOrphans = append(classBOrphans, rec.BeadID)

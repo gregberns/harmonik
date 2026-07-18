@@ -203,21 +203,18 @@ func TestReconLockReadCreatorPID_FirstLineIsPID(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// reconLockIsStale direct unit tests
+// reconLockProbeStale direct unit tests
 // ──────────────────────────────────────────────────────────────────────────────
 
-// TestReconLockIsStale_LivePIDNotStale verifies that reconLockIsStale returns
-// (false, nil) when the recorded creator_pid is live (our own PID) and the
-// flock is acquirable. A live PID means the lock is NOT stale — the creator
-// might still be cleaning up.
-//
-// This exercises the "flock succeeds but kill(pid, 0) returns nil" path, where
-// the recorded PID is alive and the lock is not held.
+// TestReconLockProbeStale_LivePIDNotStale verifies that reconLockProbeStale
+// returns (nil, false, nil) when the recorded creator_pid is live (our own PID)
+// and the flock is acquirable. A live PID means the lock is NOT stale — the
+// creator might still be cleaning up.
 //
 // Spec ref: process-lifecycle.md §4.2 PL-006 — "Stale lock files (acquirable +
 // the recorded creator-PID does NOT respond to kill(pid, 0)) MUST be removed."
 // A live PID means the second condition is false → not stale.
-func TestReconLockIsStale_LivePIDNotStale(t *testing.T) {
+func TestReconLockProbeStale_LivePIDNotStale(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -226,22 +223,27 @@ func TestReconLockIsStale_LivePIDNotStale(t *testing.T) {
 	ownPID := os.Getpid()
 	reconLockUpliftWriteFile(t, lockPath, fmt.Sprintf("creator_pid=%d\n", ownPID))
 
-	stale, err := reconLockIsStale(lockPath)
+	held, stale, err := reconLockProbeStale(lockPath)
 	if err != nil {
-		t.Fatalf("reconLockIsStale live-PID: unexpected error: %v", err)
+		t.Fatalf("reconLockProbeStale live-PID: unexpected error: %v", err)
 	}
 	if stale {
-		t.Errorf("reconLockIsStale live-PID: got stale=true for live creator PID %d; want false", ownPID)
+		t.Errorf("reconLockProbeStale live-PID: got stale=true for live creator PID %d; want false", ownPID)
+	}
+	if held != nil {
+		t.Error("reconLockProbeStale live-PID: got non-nil held file for non-stale lock")
 	}
 }
 
-// TestReconLockIsStale_DeadPIDIsStale verifies that reconLockIsStale returns
-// (true, nil) when the recorded creator_pid does not respond to kill(pid, 0)
-// and the flock is acquirable.
+// TestReconLockProbeStale_DeadPIDIsStaleAndHoldsFlock verifies that
+// reconLockProbeStale returns stale=true for a dead creator PID AND keeps the
+// flock held on the returned file (RC-002a regression: the sweep must hold the
+// lock across the unlink so another daemon cannot acquire the lock — and start
+// a live reconciliation — between the staleness verdict and the unlink).
 //
-// Spec ref: process-lifecycle.md §4.2 PL-006 — "acquirable + dead creator-PID
-// → stale → unlink."
-func TestReconLockIsStale_DeadPIDIsStale(t *testing.T) {
+// Spec ref: process-lifecycle.md §4.2 PL-006; specs/reconciliation/spec.md
+// §4.1 RC-002a — the flock probe is the serialization point.
+func TestReconLockProbeStale_DeadPIDIsStaleAndHoldsFlock(t *testing.T) {
 	t.Parallel()
 
 	deadPID := reconLockUpliftFindDeadPID(t)
@@ -250,20 +252,38 @@ func TestReconLockIsStale_DeadPIDIsStale(t *testing.T) {
 	lockPath := filepath.Join(dir, "run-dead.lock")
 	reconLockUpliftWriteFile(t, lockPath, fmt.Sprintf("creator_pid=%d\n", deadPID))
 
-	stale, err := reconLockIsStale(lockPath)
+	held, stale, err := reconLockProbeStale(lockPath)
 	if err != nil {
-		t.Fatalf("reconLockIsStale dead-PID: unexpected error: %v", err)
+		t.Fatalf("reconLockProbeStale dead-PID: unexpected error: %v", err)
 	}
 	if !stale {
-		t.Errorf("reconLockIsStale dead-PID: got stale=false for dead PID %d; want true", deadPID)
+		t.Fatalf("reconLockProbeStale dead-PID: got stale=false for dead PID %d; want true", deadPID)
+	}
+	if held == nil {
+		t.Fatal("reconLockProbeStale dead-PID: stale=true but held file is nil")
+	}
+	defer func() { _ = held.Close() }()
+
+	// The flock must STILL be held: a competing acquirer (fresh fd on the same
+	// path, LOCK_EX|LOCK_NB) must observe EWOULDBLOCK. flock locks are held per
+	// open file description, so a second open in this process conflicts exactly
+	// like a second daemon would.
+	competitor, openErr := os.OpenFile(lockPath, os.O_RDWR, 0o600)
+	if openErr != nil {
+		t.Fatalf("open competitor fd: %v", openErr)
+	}
+	defer func() { _ = competitor.Close() }()
+	flockErr := syscall.Flock(int(competitor.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if flockErr == nil {
+		t.Error("RC-002a regression: competing flock succeeded while probe result outstanding — flock was released before unlink")
 	}
 }
 
-// TestReconLockIsStale_ZombiePIDNotStale verifies the current PL-024 liveness
-// contract for defunct children: a zombie remains visible to kill(pid, 0), so
-// reconLockIsStale must not classify the lock as stale until the child is
-// reaped and disappears from the process table.
-func TestReconLockIsStale_ZombiePIDNotStale(t *testing.T) {
+// TestReconLockProbeStale_ZombiePIDNotStale verifies the current PL-024
+// liveness contract for defunct children: a zombie remains visible to
+// kill(pid, 0), so reconLockProbeStale must not classify the lock as stale
+// until the child is reaped and disappears from the process table.
+func TestReconLockProbeStale_ZombiePIDNotStale(t *testing.T) {
 	t.Parallel()
 
 	_, zombiePID := reconLockUpliftStartExitedChild(t)
@@ -272,53 +292,53 @@ func TestReconLockIsStale_ZombiePIDNotStale(t *testing.T) {
 	lockPath := filepath.Join(dir, "run-zombie.lock")
 	reconLockUpliftWriteFile(t, lockPath, fmt.Sprintf("creator_pid=%d\n", zombiePID))
 
-	stale, err := reconLockIsStale(lockPath)
+	held, stale, err := reconLockProbeStale(lockPath)
 	if err != nil {
-		t.Fatalf("reconLockIsStale zombie-PID: unexpected error: %v", err)
+		t.Fatalf("reconLockProbeStale zombie-PID: unexpected error: %v", err)
 	}
-	if stale {
-		t.Errorf("reconLockIsStale zombie-PID: got stale=true for defunct but in-table PID %d; want false", zombiePID)
+	if stale || held != nil {
+		t.Errorf("reconLockProbeStale zombie-PID: got stale=%v held=%v for defunct but in-table PID %d; want false/nil", stale, held != nil, zombiePID)
 	}
 }
 
-// TestReconLockIsStale_MalformedPIDIsTreatedAsStale verifies that when the
-// lock file's creator_pid line cannot be parsed, reconLockIsStale treats the
-// file as stale (returns true, nil) so the sweep removes it.
-//
-// Spec ref: process-lifecycle.md §4.2 PL-006 — "Cannot parse: treat as stale."
-func TestReconLockIsStale_MalformedPIDIsTreatedAsStale(t *testing.T) {
+// TestReconLockProbeStale_MalformedPIDIsSkipped verifies that when the lock
+// file's creator_pid line cannot be parsed, reconLockProbeStale returns an
+// error (skip) rather than declaring the file stale: an unparseable creator
+// PID cannot be confirmed dead, and PL-006's staleness definition requires
+// "the recorded creator-PID does NOT respond to kill(pid, 0)" — which cannot
+// be established without a PID.
+func TestReconLockProbeStale_MalformedPIDIsSkipped(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "run-malformed-pid.lock")
 	reconLockUpliftWriteFile(t, lockPath, "creator_pid=not-a-number\n")
 
-	stale, err := reconLockIsStale(lockPath)
-	if err != nil {
-		t.Fatalf("reconLockIsStale malformed-pid: unexpected error: %v", err)
+	held, stale, err := reconLockProbeStale(lockPath)
+	if err == nil {
+		t.Error("reconLockProbeStale malformed-pid: got nil error; unparseable PID must error (skip, not remove)")
 	}
-	if !stale {
-		t.Error("reconLockIsStale malformed-pid: got stale=false; unparseable PID must be treated as stale")
+	if stale || held != nil {
+		t.Errorf("reconLockProbeStale malformed-pid: got stale=%v held=%v; want false/nil", stale, held != nil)
 	}
 }
 
-// TestReconLockIsStale_MissingCreatorPIDLineIsTreatedAsStale verifies that a
-// lock file with no creator_pid line at all is treated as stale.
-//
-// Spec ref: process-lifecycle.md §4.2 PL-006 — "Cannot parse: treat as stale."
-func TestReconLockIsStale_MissingCreatorPIDLineIsTreatedAsStale(t *testing.T) {
+// TestReconLockProbeStale_MissingCreatorPIDLineIsSkipped verifies that a lock
+// file with no creator_pid line at all errors (skip) rather than being
+// declared stale and removed.
+func TestReconLockProbeStale_MissingCreatorPIDLineIsSkipped(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "run-no-pid-line.lock")
 	reconLockUpliftWriteFile(t, lockPath, "run_id=run-no-pid\nstarted_at=2026-05-20T00:00:00Z\n")
 
-	stale, err := reconLockIsStale(lockPath)
-	if err != nil {
-		t.Fatalf("reconLockIsStale missing-creator-pid: unexpected error: %v", err)
+	held, stale, err := reconLockProbeStale(lockPath)
+	if err == nil {
+		t.Error("reconLockProbeStale missing-creator-pid: got nil error; missing creator_pid must error (skip, not remove)")
 	}
-	if !stale {
-		t.Error("reconLockIsStale missing-creator-pid: got stale=false; missing creator_pid must be treated as stale")
+	if stale || held != nil {
+		t.Errorf("reconLockProbeStale missing-creator-pid: got stale=%v held=%v; want false/nil", stale, held != nil)
 	}
 }
 

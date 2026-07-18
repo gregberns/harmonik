@@ -48,7 +48,7 @@
       "key": "claude",
       "title": "core-loop-proof seed: trivial one-line change (claude)",
       "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. Fixture bead for the claude-code harness family (flag-gated cell).",
-      "labels": ["codename:quality-system", "core-loop-seed", "harness:claude-code"],
+      "labels": ["codename:quality-system", "core-loop-seed", "harness:claude-code", "workflow:single", "model:claude-opus-4-8"],
       "harness": "claude-code",
       "model_pin": "claude-opus-4-8"
     }

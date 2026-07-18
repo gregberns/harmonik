@@ -96,7 +96,7 @@ type pasteInjecter interface {
 // it spawned and routes paste-inject I/O there, ensuring per-goroutine
 // isolation under MaxConcurrent>1.
 //
-// tmuxSubstrate also tracks every window it spawns in spawnedHandles so that
+// tmuxSubstrate also tracks every window it spawns in spawnedWindows so that
 // KillAllWindows can clean them up on daemon exit or wave completion (hk-j6npz).
 //
 // All methods are safe for concurrent use.
@@ -117,14 +117,17 @@ type tmuxSubstrate struct {
 	// mutex is released, so a single wedge cannot block all other launches forever.
 	newWindowMu sync.Mutex
 
-	// spawnedMu guards spawnedHandles.
+	// spawnedMu guards spawnedWindows.
 	spawnedMu sync.Mutex
-	// spawnedHandles accumulates the WindowHandle of every window created by
-	// SpawnWindow during this daemon instance's lifetime. KillAllWindows iterates
-	// this slice to clean up orphan windows on wave completion or daemon exit.
-	// Handles are appended-only; no removal on individual Kill calls (KillWindow
+	// spawnedWindows accumulates the WindowHandle (and the adapter it was
+	// created through — the local adapter for local runs, the SSH-backed remote
+	// adapter for worker-hosted runs) of every window created by SpawnWindow
+	// during this daemon instance's lifetime. KillAllWindows iterates this slice
+	// to clean up orphan windows on wave completion or daemon exit, killing each
+	// window via the adapter that spawned it so remote windows are not leaked.
+	// Entries are appended-only; no removal on individual Kill calls (KillWindow
 	// is idempotent on a non-existent window so re-killing is harmless).
-	spawnedHandles []tmux.WindowHandle
+	spawnedWindows []spawnedWindow
 
 	// spawnSem, when non-nil, is a resizable counting semaphore of capacity
 	// cap+1 that bounds the total number of concurrently active sessions. The
@@ -861,7 +864,7 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 // all execute on the WORKER's tmux server rather than box A's.
 //
 // All shared machinery — spawn semaphore, new-window mutex, stagger, the
-// new-window timeout, and spawnedHandles tracking — is preserved for both paths.
+// new-window timeout, and spawnedWindows tracking — is preserved for both paths.
 // The remote flag marks the spawned session as worker-hosted so runWait polls
 // worker-side liveness instead of a local kill(s.pid,0) (hk-r1zq). Local callers
 // pass false ⇒ unchanged behaviour (NFR7).
@@ -907,14 +910,7 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 	// quote each element with single-quotes so argv values containing spaces
 	// (e.g. the codex multi-word seed prompt) survive as a single sh token.
 	// hk-rpr6: fixes codex ARGC=15 shattering that caused immediate exit-2.
-	command := ""
-	if len(in.Argv) > 0 {
-		quoted := make([]string, len(in.Argv))
-		for i, arg := range in.Argv {
-			quoted[i] = shellQuoteArg(arg)
-		}
-		command = strings.Join(quoted, " ")
-	}
+	command := shellJoinArgv(in.Argv)
 	// hk-rpr6: ProcessExit harnesses (codex) run in a tmux pane whose PTY never
 	// sends EOF, causing codex 0.139.0 to block on stdin indefinitely. Redirect
 	// stdin from /dev/null so codex does not stall after completing its work.
@@ -988,7 +984,7 @@ func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.Substrate
 	// exit (hk-j6npz). Appended under lock; reads happen only in KillAllWindows
 	// (called after wg.Wait(), so no concurrent SpawnWindow calls are live).
 	s.spawnedMu.Lock()
-	s.spawnedHandles = append(s.spawnedHandles, outcome.Handle)
+	s.spawnedWindows = append(s.spawnedWindows, spawnedWindow{handle: outcome.Handle, adapter: adapter})
 	s.spawnedMu.Unlock()
 
 	// Resolve the slash-free pane ID BEFORE capturing the pane PID (hk-kuxxl).
@@ -1285,6 +1281,8 @@ type perRunSubstrate struct {
 	// (WriteLastPane / SendEnter / SendQuit) and PaneHasActiveProcess's PID
 	// resolution use it so all tmux I/O for a remote run reaches the worker's
 	// tmux server. Nil for local runs (paste-inject uses inner.adapter, unchanged).
+	// Guarded by paneTargetMu: written by spawnWindowRemote, read by
+	// pasteAdapter which may run on a different goroutine.
 	//
 	// Bead ref: remote-substrate worker-spawn gap.
 	remoteAdapter tmux.Adapter
@@ -1476,16 +1474,27 @@ var _ substrateSpawnReadier = (*tmuxSubstrate)(nil)
 // Implements windowCleaner. Bead: hk-j6npz.
 func (s *tmuxSubstrate) KillAllWindows(ctx context.Context) error {
 	s.spawnedMu.Lock()
-	handles := make([]tmux.WindowHandle, len(s.spawnedHandles))
-	copy(handles, s.spawnedHandles)
+	windows := make([]spawnedWindow, len(s.spawnedWindows))
+	copy(windows, s.spawnedWindows)
 	s.spawnedMu.Unlock()
 
-	for _, h := range handles {
-		// Ignore errors: the window may have already been killed by
-		// tmuxSubstrateSession.Kill or by an external tmux kill-window command.
-		_ = s.adapter.KillWindow(ctx, h)
+	for _, w := range windows {
+		// Kill via the adapter the window was spawned through: remote
+		// (worker-hosted) windows must be killed over the SSH-backed adapter or
+		// they leak on the worker's tmux server. Ignore errors: the window may
+		// have already been killed by tmuxSubstrateSession.Kill or by an
+		// external tmux kill-window command.
+		_ = w.adapter.KillWindow(ctx, w.handle)
 	}
 	return nil
+}
+
+// spawnedWindow pairs a spawned window's handle with the adapter it was
+// created through, so KillAllWindows can target the right tmux server
+// (local vs SSH-backed remote worker).
+type spawnedWindow struct {
+	handle  tmux.WindowHandle
+	adapter tmux.Adapter
 }
 
 // StopWindowByHandle sends /quit to the pane (best-effort), waits a grace
@@ -1675,10 +1684,9 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 	// The crew's claude --remote-control always runs in the "agent" window
 	// (tmux.WindowAgent), per the tmux-session-organization CONTRACT. The keeper
 	// targets this window's active pane via "--tmux <session>:agent".
-	command := ""
-	if len(spawn.Argv) > 0 {
-		command = strings.Join(spawn.Argv, " ")
-	}
+	// Shell-quote each argv element (hk-rpr6): tmux passes the joined string to
+	// `sh -c`, which re-word-splits on whitespace.
+	command := shellJoinArgv(spawn.Argv)
 
 	params := tmux.NewWindowIn{
 		Session:    sessName,
@@ -1767,10 +1775,9 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 		return nil, fmt.Errorf("daemon: SpawnRunSession: %w", nameErr)
 	}
 
-	command := ""
-	if len(spawn.Argv) > 0 {
-		command = strings.Join(spawn.Argv, " ")
-	}
+	// Shell-quote each argv element (hk-rpr6): tmux passes the joined string to
+	// `sh -c`, which re-word-splits on whitespace.
+	command := shellJoinArgv(spawn.Argv)
 
 	params := tmux.NewWindowIn{
 		Session:    sessName,
@@ -2187,7 +2194,10 @@ func (p *perRunSubstrate) spawnWindowRemote(ctx context.Context, in handler.Subs
 	}
 
 	// Cache the remote adapter for paste-inject + liveness PID resolution.
+	// Under paneTargetMu: pasteAdapter may read from another goroutine.
+	p.paneTargetMu.Lock()
 	p.remoteAdapter = remoteAdapter
+	p.paneTargetMu.Unlock()
 
 	return p.inner.spawnWindowVia(ctx, in, remoteAdapter, sessName, true /* remote: worker-hosted, runWait must poll worker liveness not local kill (hk-r1zq) */)
 }
@@ -2196,8 +2206,11 @@ func (p *perRunSubstrate) spawnWindowRemote(ctx context.Context, in handler.Subs
 // calls should target: the cached remote (SSH-backed) adapter for a remote run,
 // otherwise the shared inner adapter (unchanged local behaviour, NFR7).
 func (p *perRunSubstrate) pasteAdapter() tmux.Adapter {
-	if p.remoteAdapter != nil {
-		return p.remoteAdapter
+	p.paneTargetMu.Lock()
+	ra := p.remoteAdapter
+	p.paneTargetMu.Unlock()
+	if ra != nil {
+		return ra
 	}
 	return p.inner.adapter
 }

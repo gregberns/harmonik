@@ -28,7 +28,8 @@ func sessionOrphanPrefix(projectHash core.ProjectHash) string {
 // projectHash, and kills any session that is orphaned. A session is considered
 // orphaned if either:
 //
-//   - All of its windows are zsh shells (zero non-zsh windows), meaning the
+//   - All of its windows are idle shells (zero non-idle-shell windows — see
+//     idleShellNames), meaning the
 //     workload that owned the session has already exited, OR
 //   - The first pane of its first window reports a PID that is no longer alive
 //     (kill(pid, 0) returns ESRCH).
@@ -86,9 +87,10 @@ func SweepOrphanTmuxSessions(
 		sessionSweepLog(logger, "SweepOrphanTmuxSessions: killing orphan session %q", session)
 		if killErr := adapter.KillSession(ctx, session); killErr != nil {
 			// ErrNoSession means the session vanished between our check and the kill —
-			// treat as already-gone (non-fatal TOCTOU).
+			// treat as already-gone (non-fatal TOCTOU). Either way the kill did not
+			// happen here, so it is NOT counted in killed.
 			sessionSweepLog(logger, "SweepOrphanTmuxSessions: kill-session %q error (proceeding): %v", session, killErr)
-			// Still count it: we identified it as orphaned; the error is diagnostic.
+			continue
 		}
 		killed++
 	}
@@ -98,7 +100,7 @@ func SweepOrphanTmuxSessions(
 
 // sessionIsOrphaned reports whether a harmonik session is safe to kill.
 // A session is orphaned when either:
-//  1. It has zero non-zsh windows (the workload process has exited, leaving
+//  1. It has zero non-idle-shell windows (the workload process has exited, leaving
 //     only an idle shell pane), OR
 //  2. The first pane of the first window reports a PID that is dead
 //     (kill(pid, 0) returns ESRCH — no such process).
@@ -118,10 +120,10 @@ func sessionIsOrphaned(
 		return false
 	}
 
-	// Condition 1: zero non-zsh windows.
-	nonZsh := countNonZshWindows(windows)
-	if nonZsh == 0 {
-		sessionSweepLog(logger, "SweepOrphanTmuxSessions: session %q has %d window(s), all zsh — orphaned", session, len(windows))
+	// Condition 1: zero non-idle-shell windows.
+	nonShell := countNonShellWindows(windows)
+	if nonShell == 0 {
+		sessionSweepLog(logger, "SweepOrphanTmuxSessions: session %q has %d window(s), all idle shells — orphaned", session, len(windows))
 		return true
 	}
 
@@ -154,14 +156,30 @@ func sessionIsOrphaned(
 	return false
 }
 
-// countNonZshWindows returns the number of window names in the slice that do
-// not equal "zsh" (case-sensitive). A window named exactly "zsh" is treated as
-// an idle shell pane that can be abandoned; any other name indicates an active
-// workload window.
-func countNonZshWindows(windows []string) int {
+// idleShellNames is the set of window names that tmux assigns when the pane is
+// running a bare interactive shell (tmux defaults the window name to the
+// running command's basename). A window whose name is exactly one of these is
+// treated as an idle shell pane that can be abandoned; any other name
+// indicates an active workload window. Hardcoding only "zsh" defeated PL-006
+// on bash/fish/sh hosts — an idle bash shell counted as active and the
+// orphaned session was never reclaimed.
+var idleShellNames = map[string]struct{}{
+	"zsh":  {},
+	"bash": {},
+	"fish": {},
+	"sh":   {},
+	"dash": {},
+	"ksh":  {},
+	"tcsh": {},
+	"csh":  {},
+}
+
+// countNonShellWindows returns the number of window names in the slice that
+// are not idle-shell names (case-sensitive match against idleShellNames).
+func countNonShellWindows(windows []string) int {
 	count := 0
 	for _, w := range windows {
-		if w != "zsh" {
+		if _, isShell := idleShellNames[w]; !isShell {
 			count++
 		}
 	}

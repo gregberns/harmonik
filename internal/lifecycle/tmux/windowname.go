@@ -10,7 +10,6 @@ import (
 
 const (
 	windowNameMaxBytes   = 64
-	beadIDMaxBytes       = 56
 	hashSuffixLen        = 8
 	projectHashPrefixLen = 6
 )
@@ -48,8 +47,9 @@ const (
 // "hk-<hash6>-" where hash6 is the first 6 hex chars of projectHash.
 //
 // Truncation: if len(name) > 64 bytes after construction, bead_id is
-// truncated to its leading 56 bytes and an 8-byte lowercase-hex prefix of
-// SHA-256(bead_id) is appended as "~<hash[:8]>" before any suffix.
+// truncated so that the composed name (sentinel prefix + truncated bead_id +
+// "~<hash[:8]>" + suffix) fits within 64 bytes, where the hash is an 8-byte
+// lowercase-hex prefix of SHA-256(bead_id).
 // The suffix ("/i<n>", "/r<n>") and the sentinel prefix are not truncated.
 //
 // Spec ref: workspace-model.md §4.1 WM-002a.
@@ -100,8 +100,11 @@ func windowNameSentinelPrefix(projectHash core.ProjectHash, ownsSession bool) st
 //
 // Truncation rule (WM-002a): replace bead_id with
 //
-//	<bead_id[:56]> + "~" + lowercase-hex(SHA-256(bead_id))[:8]
+//	<bead_id[:budget]> + "~" + lowercase-hex(SHA-256(bead_id))[:8]
 //
+// where budget = 64 - len(sentinelPrefix) - len(suffix) - len("~") - 8, so the
+// composed name never exceeds windowNameMaxBytes. (A fixed 56-byte bead budget
+// previously yielded 56+1+8 = 65 bytes even before any prefix/suffix.)
 // The sentinel prefix and suffix are excluded from truncation.
 func windowNameBeadPart(beadID core.BeadID, sentinelPrefix, suffix string) string {
 	raw := string(beadID)
@@ -115,11 +118,18 @@ func windowNameBeadPart(beadID core.BeadID, sentinelPrefix, suffix string) strin
 	sum := sha256.Sum256([]byte(raw))
 	hashHex := fmt.Sprintf("%x", sum[:4]) // 4 bytes → 8 lowercase hex chars
 
-	// Truncate bead_id to 56 bytes (byte-level truncation, not rune-level;
+	// Budget for the truncated bead_id: total max minus the fixed parts
+	// (sentinel prefix, suffix, "~" separator, 8-char hash).
+	budget := windowNameMaxBytes - len(sentinelPrefix) - len(suffix) - 1 - hashSuffixLen
+	if budget < 0 {
+		budget = 0
+	}
+
+	// Truncate bead_id to the budget (byte-level truncation, not rune-level;
 	// bead IDs are ASCII per Beads convention).
 	truncated := raw
-	if len(truncated) > beadIDMaxBytes {
-		truncated = raw[:beadIDMaxBytes]
+	if len(truncated) > budget {
+		truncated = raw[:budget]
 	}
 	return truncated + "~" + hashHex
 }

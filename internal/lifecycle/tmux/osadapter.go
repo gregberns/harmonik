@@ -543,6 +543,12 @@ func (o OSAdapter) WriteToPane(ctx context.Context, bufferName, paneTarget strin
 		return err
 	}
 	if err := o.PasteBuffer(ctx, bufferName, paneTarget); err != nil {
+		// PasteBuffer's -d flag only deletes the buffer on success; on failure
+		// the loaded buffer would otherwise accumulate on the tmux server.
+		// Best-effort cleanup: the paste error remains the returned error.
+		//nolint:gosec // G204: bufferName was validated by LoadBuffer above
+		delCmd := o.effectiveRunner().Command(ctx, "tmux", "delete-buffer", "-b", bufferName)
+		_, _ = delCmd.CombinedOutput() //nolint:errcheck // best-effort cleanup
 		return err
 	}
 	// Parse session-id and purpose from "harmonik-<session-id>-<purpose>".
@@ -614,13 +620,17 @@ func buildNewWindowArgs(p NewWindowIn) []string {
 
 // parseTmuxMajorVersion extracts the major version integer from a tmux -V
 // output string of the form "tmux <major>.<minor>[suffix]".
+//
+// Development builds print "tmux next-3.6" (the "next-" prefix is stripped)
+// or "tmux master" / "tmux openbsd-N.N" (treated as a modern build — major
+// devBuildMajor — rather than rejected).
 func parseTmuxMajorVersion(versionStr string) (int, error) {
-	// Expected format: "tmux 3.4" or "tmux 3.4a".
 	parts := strings.Fields(versionStr)
 	if len(parts) < 2 {
 		return 0, fmt.Errorf("parseTmuxMajorVersion: unexpected output %q", versionStr)
 	}
-	verPart := parts[1] // e.g. "3.4" or "3.4a"
+	verPart := parts[1] // e.g. "3.4", "3.4a", "next-3.6", "master"
+	verPart = strings.TrimPrefix(verPart, "next-")
 	dotIdx := strings.IndexByte(verPart, '.')
 	majorStr := verPart
 	if dotIdx >= 0 {
@@ -628,10 +638,21 @@ func parseTmuxMajorVersion(versionStr string) (int, error) {
 	}
 	major, err := strconv.Atoi(majorStr)
 	if err != nil {
+		// Non-numeric version: a dev build compiled from git ("master",
+		// "openbsd-7.4", …). These track post-3.x tmux; treat as modern
+		// instead of failing the ≥3.0 probe.
+		if verPart == "master" || strings.HasPrefix(verPart, "openbsd") {
+			return devBuildMajor, nil
+		}
 		return 0, fmt.Errorf("parseTmuxMajorVersion: cannot parse major from %q: %w", versionStr, err)
 	}
 	return major, nil
 }
+
+// devBuildMajor is the assumed major version for tmux builds whose -V output
+// carries no numeric version (e.g. "tmux master"). Such builds track the
+// development head, which is well past the required 3.0.
+const devBuildMajor = 999
 
 // parseLines splits output on newlines and returns non-empty, trimmed lines.
 func parseLines(out []byte) []string {

@@ -1072,6 +1072,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
+				// An absent gauge is a no_gauge condition, not a foreign one:
+				// break any continuous foreign_session blind episode so the
+				// 5-min blind clock restarts on the next foreign streak (hk-34ac).
+				w.blindSince = time.Time{}
+				w.blindAlarmFired = false
 				if gaugeStaleSince.IsZero() {
 					gaugeStaleSince = w.cfg.Clock.Now()
 				}
@@ -1083,7 +1088,14 @@ func (w *Watcher) Run(ctx context.Context) error {
 				// parse / stat error: treat as absent, log and continue
 				slog.WarnContext(ctx, "keeper: read ctx file", "err", err)
 				w.maybeEmitNoGauge(ctx, "absent")
+				// Mirror the absent branch: re-arm the warn state machine so the
+				// next upward crossing fires a fresh warn (was omitted here).
+				warnArmed = true
+				warnFired = false
 				pendingInject = false
+				// Break any continuous foreign_session blind episode (see above).
+				w.blindSince = time.Time{}
+				w.blindAlarmFired = false
 				if gaugeStaleSince.IsZero() {
 					gaugeStaleSince = w.cfg.Clock.Now()
 				}
@@ -1109,6 +1121,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 				warnArmed = true
 				warnFired = false
 				pendingInject = false
+				// A stale gauge is a no_gauge condition, not a foreign one:
+				// break any continuous foreign_session blind episode (hk-34ac).
+				w.blindSince = time.Time{}
+				w.blindAlarmFired = false
 				if gaugeStaleSince.IsZero() {
 					gaugeStaleSince = w.cfg.Clock.Now()
 				}
@@ -1276,7 +1292,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// Cycler.MaybeRun handles all internal gating (act_pct, CrispIdle,
 			// HoldingDispatch, anti-loop). We pass the full ctxFile so the cycler
 			// can read pct and session_id directly.
-			if w.cfg.Cycler != nil {
+			if w.cfg.Cycler != nil && !w.cfg.WarnOnly {
 				if cycleErr := w.cfg.Cycler.MaybeRun(ctx, ctxFile); cycleErr != nil {
 					slog.WarnContext(ctx, "keeper: cycle error", "agent", w.cfg.AgentName, "err", cycleErr)
 				}
@@ -1288,7 +1304,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// the CrispIdle and act_pct gates (the agent is mid-turn when PreCompact
 			// fires). RunForPrecompact always clears the marker so the next PreCompact
 			// fire gets a clean slate (bounded-fallback contract).
-			if w.cfg.Cycler != nil && HasPrecompactTrigger(w.cfg.ProjectDir, w.cfg.AgentName) {
+			if w.cfg.Cycler != nil && !w.cfg.WarnOnly && HasPrecompactTrigger(w.cfg.ProjectDir, w.cfg.AgentName) {
 				if pcErr := w.cfg.Cycler.RunForPrecompact(ctx, ctxFile); pcErr != nil {
 					slog.WarnContext(ctx, "keeper: precompact cycle error", "agent", w.cfg.AgentName, "err", pcErr)
 				}

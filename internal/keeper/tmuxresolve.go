@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -337,6 +338,15 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 		}
 		lastTs = ts
 		found = true
+	}
+	if scanErr := sc.Err(); scanErr != nil {
+		// A transcript line exceeding the 16 MB scan buffer (e.g. a huge inline
+		// tool result) halts the scan early — since the tail is walked
+		// oldest→newest, the truncation drops the NEWEST entries and returns a
+		// stale/absent turn timestamp. Surface it rather than swallowing it
+		// silently so a mis-gated cycle has a breadcrumb. Refs: hk-74iyd.
+		slog.Warn("keeper: recentTranscriptTurn: transcript scan truncated (over-long line)",
+			"path", path, "role", role, "err", scanErr)
 	}
 	return lastTs, found
 }

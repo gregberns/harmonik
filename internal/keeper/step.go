@@ -442,8 +442,11 @@ func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, [
 	if !snap.Managed {
 		return s, nil
 	}
-	// Gate 2: empty session_id → cannot establish anti-loop identity (DEFECT-1).
-	if cf.SessionID == "" {
+	// Gate 2: nil/empty session_id → cannot establish anti-loop identity
+	// (DEFECT-1). A CF-less gauge tick likewise cannot establish identity;
+	// nil-guard cf exactly as the precompact entry (stepIdlePrecompact) does so
+	// a CF-less event can never deref-panic the keeper here.
+	if cf == nil || cf.SessionID == "" {
 		return s, nil
 	}
 

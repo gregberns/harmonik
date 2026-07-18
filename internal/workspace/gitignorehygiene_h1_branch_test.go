@@ -25,7 +25,9 @@ func h1GitOut(t *testing.T, repo string, args ...string) string {
 
 // TestH1_GitignoreCommit_LandsOnDedicatedBranch verifies that after
 // EnsureGitignoreHygiene adds missing entries, (1) the commit lands on
-// harmonik/gitignore-init, and (2) the operator's main branch tip is unchanged.
+// harmonik/gitignore-init, (2) the operator's main branch tip is unchanged, and
+// (3) HEAD is RESTORED to the operator's branch — never left parked on the
+// dedicated branch (hk-3edb1).
 func TestH1_GitignoreCommit_LandsOnDedicatedBranch(t *testing.T) {
 	repo, _ := tempRepo(t)
 
@@ -39,12 +41,16 @@ func TestH1_GitignoreCommit_LandsOnDedicatedBranch(t *testing.T) {
 		t.Fatalf("EnsureGitignoreHygiene: %v", err)
 	}
 
-	// HEAD must now be the dedicated branch.
-	if branch := h1GitOut(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); branch != GitignoreBranchName {
-		t.Errorf("HEAD branch = %q; want %q", branch, GitignoreBranchName)
+	// HEAD must be RESTORED to the operator's branch (hk-3edb1), NOT left on the
+	// dedicated branch. Before the fix, gitignoreCommit checked out
+	// harmonik/gitignore-init and never switched back, parking the operator
+	// checkout on the daemon-state branch.
+	if branch := h1GitOut(t, repo, "rev-parse", "--abbrev-ref", "HEAD"); branch != "main" {
+		t.Errorf("HEAD branch = %q; want %q (operator HEAD must be restored after the hygiene commit)", branch, "main")
 	}
 
-	// The dedicated branch tip must carry the hygiene commit.
+	// The dedicated branch tip must carry the hygiene commit (looked up by branch
+	// name, since HEAD is no longer on it).
 	subject := h1GitOut(t, repo, "log", "-1", "--format=%s", GitignoreBranchName)
 	if !strings.Contains(subject, "WM-013e") {
 		t.Errorf("dedicated-branch tip subject = %q; want the WM-013e hygiene commit", subject)
@@ -53,6 +59,19 @@ func TestH1_GitignoreCommit_LandsOnDedicatedBranch(t *testing.T) {
 	// The operator's main tip MUST be unchanged — no daemon-state commit injected.
 	if mainTipAfter := h1GitOut(t, repo, "rev-parse", "main"); mainTipAfter != mainTipBefore {
 		t.Errorf("main tip changed: before=%s after=%s; hygiene commit leaked onto operator branch", mainTipBefore, mainTipAfter)
+	}
+
+	// The required entries MUST still be present in the operator's working tree
+	// (an uncommitted change) so daemon control-plane state stays ignored even
+	// though the commit lives only on the dedicated branch (hk-3edb1).
+	data, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore after hygiene: %v", err)
+	}
+	for _, entry := range RequiredGitignoreEntries {
+		if !gitignoreEntryPresent(string(data), entry) {
+			t.Errorf("working-tree .gitignore missing %q after HEAD restore; entries must be re-materialized", entry)
+		}
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -507,6 +508,20 @@ func HandleQueueAppendOnQueue(
 	}
 
 	// Compute newTailIndices: indices of appended items within the target group.
+	// AppendItems only returns success with an in-range GroupIndex, but guard
+	// the direct index defensively so a decode-time mismatch can never panic the
+	// socket handler. Bead ref: W4 mega-review §c.
+	if req.GroupIndex < 0 || req.GroupIndex >= len(mutated.Groups) {
+		return QueueAppendResponse{}, nil, nil, &RPCError{
+			Code:    ErrorCodeAppendTargetInvalid,
+			Message: "append_target_invalid",
+			Detail: map[string]any{
+				"group_index":   req.GroupIndex,
+				"actual_kind":   nil,
+				"actual_status": nil,
+			},
+		}
+	}
 	targetGroup := mutated.Groups[req.GroupIndex]
 	appendedCount := len(req.BeadIDs)
 	tailStart := len(targetGroup.Items) - appendedCount
@@ -1213,6 +1228,10 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 		for _, evt := range events {
 			raw, err := json.Marshal(evt.Payload)
 			if err != nil {
+				// Fall back to the raw payload, but surface the marshal failure
+				// rather than dropping it silently — a persistently unmarshalable
+				// payload would otherwise emit malformed events unnoticed.
+				log.Printf("queue: HandleQueueAppend: marshal %s payload: %v (emitting raw payload)", evt.Type, err)
 				raw = evt.Payload
 			}
 			_ = a.bus.Emit(ctx, core.EventType(evt.Type), raw)
@@ -1339,6 +1358,14 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 		return nil, &RPCError{
 			Code: -32099, Message: "internal_error",
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-set-concurrency request: %v", err)},
+		}
+	}
+	// Validate N >= 1 (as documented) before touching the controller: a zero or
+	// negative ceiling would stall or corrupt dispatch accounting.
+	if req.N < 1 {
+		return nil, &RPCError{
+			Code: -32099, Message: "invalid_concurrency",
+			Detail: map[string]any{"error": fmt.Sprintf("concurrency N must be >= 1, got %d", req.N)},
 		}
 	}
 	if a.concurrencySet == nil {

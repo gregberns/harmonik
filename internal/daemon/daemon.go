@@ -25,6 +25,16 @@ import (
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
+// scanRegisteredPayloadsForSecretFields is the EV-036 startup secret-field
+// gate invoked by Start after all event-payload types are registered and before
+// bus.Seal(). It is a package var (not a direct call) solely so tests can
+// substitute a synthetic-violation stub to assert Start aborts boot, without
+// polluting the global event registry that other parallel daemon tests share.
+// Production always uses core.ScanRegisteredPayloadsForSecretFields.
+//
+// Spec ref: event-model.md §4.10 EV-036.
+var scanRegisteredPayloadsForSecretFields = core.ScanRegisteredPayloadsForSecretFields
+
 // Config holds the startup configuration for the harmonik daemon.
 //
 // At MVH the struct is intentionally minimal: subsystem-specific fields are
@@ -973,6 +983,18 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// startup events) still reads directly under their historical names.
 	bus := bs.bus
 	clockRegressionDetected := bs.clockRegressionDetected
+
+	// EV-036 (event-model.md §4.10 / HC-033): before sealing the bus, verify no
+	// registered event-payload type declares an exported field whose name matches
+	// the secret-prefix rule. Payload types register via init() (mustRegister), so
+	// the registry is fully populated by now; this scan runs AFTER all
+	// RegisterEventType calls and BEFORE Seal. A positive result is FATAL — the
+	// daemon refuses to boot rather than risk emitting a secret-named field to the
+	// durable JSONL log with no startup failure. Fail-closed, matching the
+	// governor-config fail-loud discipline in seedGovernorDeps.
+	if scanErr := scanRegisteredPayloadsForSecretFields(); scanErr != nil {
+		return fmt.Errorf("daemon.Start: EV-036 secret-field scan: %w", scanErr)
+	}
 
 	if sealErr := bus.Seal(); sealErr != nil {
 		return fmt.Errorf("daemon.Start: seal bus: %w", sealErr)

@@ -72,6 +72,14 @@ type codexSession struct {
 	stdout    io.Reader      // tee'd read path
 	stderr    *ringWriter
 
+	// wmu serializes every write to the child's stdin AND the pipe close, so a
+	// server-request reply written on readLoop (handleServerRequest) can never
+	// tear against, or write after, a close driven on runLoop. stdinWClosed
+	// latches once the pipe is closed; a write after it is dropped silently
+	// (the child is gone) rather than surfacing a spurious transport error.
+	wmu          sync.Mutex
+	stdinWClosed bool
+
 	evCh     chan codexinput.Event
 	wireDone chan struct{} // closed by the scanner after EOF/read error
 	loopDone chan struct{} // closed when the reactor loop has exited
@@ -123,6 +131,15 @@ type codexSession struct {
 	threadID    string
 	failure     error
 	stdinClosed bool
+	// drainClose latches when a mid-turn CloseInput deferred the stdin close so
+	// the interrupted turn can wind down first (RU-07: a server-originated
+	// approval request the child sends AFTER we started closing still needs its
+	// reply written, which requires stdin to stay open). The pipe is then closed
+	// on the turn's terminal (turn/completed) or by the drain backstop timer,
+	// whichever comes first. drainCancel stops that backstop when the terminal
+	// wins the race.
+	drainClose  bool
+	drainCancel context.CancelFunc
 
 	killOnce sync.Once
 
@@ -463,6 +480,11 @@ func (s *codexSession) runLoop() {
 // closed on a session that launched fine), not a launch failure; flagging it as
 // one would poison failureErr for any late SubmitInput/awaitReady caller.
 func (s *codexSession) finalize() {
+	// The wire has closed; cancel any in-flight drain backstop and ensure stdin
+	// is closed (a deferred mid-turn close whose turn never reached a terminal
+	// would otherwise leak the pipe open).
+	s.finishDeferredClose()
+	s.closeStdin()
 	s.mu.Lock()
 	waiters := s.waiters
 	s.waiters = make(map[uint64]chan submitResult)
@@ -560,8 +582,15 @@ func (se *sessionEffector) Execute(_ context.Context, a codexinput.Action) error
 	case codexinput.ActionTypeWriteInput:
 		s.writeTurnStart(a.InputSeq)
 	case codexinput.ActionTypeCloseInput:
-		_ = s.stdinPipe.Close()
+		s.closeInputAction()
 	case codexinput.ActionTypeInterrupt:
+		// A graceful mid-turn interrupt: the reactor pairs this with the
+		// CloseInput that follows in the same Step batch. Mark the close to be
+		// deferred so the interrupted turn can wind down (and any late
+		// server-request reply still land) before stdin is closed (RU-07).
+		s.mu.Lock()
+		s.drainClose = true
+		s.mu.Unlock()
 		s.writeInterrupt(a.TurnID)
 	case codexinput.ActionTypeArmTimer:
 		s.armTimer(a.Kind, a.Duration) //nolint:contextcheck // timer lifetime is reactor-owned (cancel_timer), deliberately not caller-ctx-scoped
@@ -648,9 +677,80 @@ func (s *codexSession) writeFrame(f codexwire.Frame) {
 		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: "marshal: " + err.Error()})
 		return
 	}
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if s.stdinWClosed {
+		return // child stdin already closed; the child is gone. Drop, don't fault.
+	}
 	if _, err := s.stdinW.Write(append(b, '\n')); err != nil {
 		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: "stdin write: " + err.Error()})
 	}
+}
+
+// closeStdin closes the child's stdin exactly once, serialized against writeFrame
+// so a concurrent server-request reply (readLoop) can never write into a
+// half-closed pipe. Idempotent: repeated terminal edges (turn/completed after a
+// deferred close, the drain backstop, finalize) all funnel here safely.
+func (s *codexSession) closeStdin() {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if s.stdinWClosed {
+		return
+	}
+	s.stdinWClosed = true
+	_ = s.stdinPipe.Close()
+}
+
+// drainTimeout bounds how long a mid-turn CloseInput waits for the interrupted
+// turn to reach its terminal before the backstop force-closes stdin. Keeps the
+// graceful drain from wedging if the child never acknowledges the interrupt.
+const drainTimeout = 30 * time.Second
+
+// closeInputAction executes the reactor's CloseInput. On the graceful mid-turn
+// path (drainClose set by the paired Interrupt) it defers the actual pipe close
+// so a server-originated request the child sends AFTER we began closing still
+// gets its reply written (RU-07 — the reply needs stdin open). The pipe is then
+// closed by finishDeferredClose on the turn's terminal, or by this backstop if
+// the turn never winds down. On every other path it closes stdin immediately.
+func (s *codexSession) closeInputAction() {
+	tctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	// Re-check drainClose under the lock: if this is not a graceful mid-turn
+	// close — or the interrupted turn already reached its terminal and
+	// finishDeferredClose ran first — close stdin now instead of arming a
+	// backstop that would leak. closeStdin is idempotent.
+	if !s.drainClose {
+		s.mu.Unlock()
+		cancel()
+		s.closeStdin()
+		return
+	}
+	s.drainCancel = cancel
+	s.mu.Unlock()
+	go func() {
+		if s.opts.Clock.Sleep(tctx, drainTimeout) {
+			s.finishDeferredClose()
+		}
+	}()
+}
+
+// finishDeferredClose closes a deferred (mid-turn) stdin exactly once, cancelling
+// the drain backstop. Called from the turn/completed terminal and the backstop
+// itself; the second caller is a no-op.
+func (s *codexSession) finishDeferredClose() {
+	s.mu.Lock()
+	if !s.drainClose {
+		s.mu.Unlock()
+		return
+	}
+	s.drainClose = false
+	cancel := s.drainCancel
+	s.drainCancel = nil
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	s.closeStdin()
 }
 
 func (s *codexSession) writeInitialize() {
@@ -890,6 +990,10 @@ func (s *codexSession) handleNotification(f codexwire.Frame) {
 			s.mu.Unlock()
 		}
 		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeTurnCompleted})
+		// A mid-turn CloseInput deferred the stdin close so this interrupted turn
+		// could wind down first (RU-07). The turn has now reached its terminal —
+		// close stdin. A no-op unless a deferral is pending.
+		s.finishDeferredClose()
 	case "item/agentMessage/delta":
 		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeDelta})
 	default:

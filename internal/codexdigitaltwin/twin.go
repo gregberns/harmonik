@@ -97,8 +97,12 @@ func (c *codexCodec) DecodeLine(line []byte) (codexreactor.Event, bool, error) {
 		// Fatal transport failure: substrate emits ErrorEvent(err) and closes.
 		return codexreactor.Event{}, false, err
 	}
-	// Only server notifications translate to reactor events; client frames and
-	// server responses are skipped (not fatal).
+	// Only server notifications translate to reactor events; client frames,
+	// server responses, and server-originated requests (approval prompts —
+	// FrameKindServerRequest) are skipped (not fatal). The twin replays a
+	// captured corpus and never answers requests, so a server request is a
+	// no-op here — but it is now classified distinctly rather than misfiled as a
+	// client request, keeping the twin in parity with the live session (RU-07).
 	if frame.Kind != codexwire.FrameKindServerNotification {
 		return codexreactor.Event{}, false, nil
 	}

@@ -723,9 +723,51 @@ func (s *codexSession) handleFrame(f codexwire.Frame) {
 		s.handleResponse(f)
 	case codexwire.FrameKindServerNotification:
 		s.handleNotification(f)
+	case codexwire.FrameKindServerRequest:
+		s.handleServerRequest(f)
 	default:
 		// Client echoes / raw unknowns: preserved by the tee, ignored here.
 	}
+}
+
+// handleServerRequest handles a JSON-RPC request the app-server sends TO us —
+// an exec / apply-patch approval prompt carrying its own id + method (RU-07).
+// These MUST NOT be dropped: the server blocks the turn until it receives a
+// response for that id, so a silently-discarded request hangs the turn forever.
+//
+// This driver does not yet negotiate approval capabilities, so no interactive
+// approval flow exists. The correct JSON-RPC-conformant answer is therefore to
+// reply immediately with a "method not found" error (JSON-RPC -32601) for the
+// request id, which unblocks the server's wait deterministically instead of
+// leaving it parked. The event is also surfaced so an operator can see an
+// approval was requested and auto-declined.
+func (s *codexSession) handleServerRequest(f codexwire.Frame) {
+	slog.WarnContext(context.Background(), "codexdriver_server_request_declined",
+		"method", f.Method,
+		"id", string(f.ID),
+		"note", "app-server request auto-declined (no approval negotiation); replying method-not-found to unblock the turn (RU-07)",
+	)
+	// Reply with a JSON-RPC error for this id so the server's wait resolves.
+	s.writeFrame(codexwire.Frame{
+		Kind:    codexwire.FrameKindServerResponse,
+		JSONRPC: "2.0",
+		ID:      f.ID,
+		Error:   json.RawMessage(`{"code":-32601,"message":"method not supported by client: ` + jsonEscape(f.Method) + `"}`),
+	})
+	// Deliberately no fatal Event: the wire reply unblocks the server, which then
+	// drives the turn to its own terminal (turn/completed) normally. Injecting an
+	// EventTypeError here would wind the whole session down for a single declined
+	// approval, which is the opposite of the desired non-hang behaviour.
+}
+
+// jsonEscape returns s escaped for embedding inside a JSON string literal.
+func jsonEscape(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return ""
+	}
+	// Strip the surrounding quotes json.Marshal adds.
+	return string(b[1 : len(b)-1])
 }
 
 func (s *codexSession) handleResponse(f codexwire.Frame) {

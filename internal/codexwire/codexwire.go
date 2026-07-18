@@ -41,6 +41,7 @@ const (
 	FrameKindClientNotification                  // client→server: jsonrpc + method, no id
 	FrameKindServerResponse                      // server→client: id + result/error, no method
 	FrameKindServerNotification                  // server→client: method + params, no id/jsonrpc
+	FrameKindServerRequest                       // server→client: id + method (approval prompt); MUST be answered
 	FrameKindRaw                                 // unknown method; raw bytes preserved
 )
 
@@ -214,8 +215,18 @@ func Parse(line []byte) (Frame, error) {
 
 	switch {
 	case hasID && hasMethod:
-		// Client request.
-		f.Kind = FrameKindClientRequest
+		// id + method is a JSON-RPC request. Direction disambiguates: a method the
+		// client originates (registry Dir == DirClient — initialize / thread/start /
+		// turn/start) is our own outbound request; anything else — a server-only
+		// method or a method not yet modeled (e.g. an exec / apply-patch approval
+		// prompt) — is a request the app-server sends TO us and MUST be answered,
+		// never dropped (RU-07). Classify the latter as FrameKindServerRequest so
+		// the driver routes it instead of letting it fall through as a client echo.
+		if entry, ok := methodRegistry[env.Method]; ok && entry.Dir == DirClient {
+			f.Kind = FrameKindClientRequest
+		} else {
+			f.Kind = FrameKindServerRequest
+		}
 		if err := parseParams(&f, hasParams); err != nil {
 			return Frame{}, err
 		}
@@ -313,7 +324,9 @@ func ResolveResponseResult(f *Frame, requestMethod string) error {
 // the round-trip guarantee.
 func Marshal(f Frame) ([]byte, error) {
 	switch f.Kind {
-	case FrameKindClientRequest:
+	case FrameKindClientRequest, FrameKindServerRequest:
+		// Both are JSON-RPC requests (jsonrpc? + id + method + params); the same
+		// envelope serializer round-trips either direction.
 		return marshalClientRequest(f)
 	case FrameKindClientNotification:
 		return marshalClientNotification(f)

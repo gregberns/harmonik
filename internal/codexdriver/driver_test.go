@@ -85,6 +85,16 @@ func runTwin(mode string) {
 		if json.Unmarshal(line, &env) != nil {
 			continue
 		}
+		// Approval-reply detection: in "approval" mode the twin sends the driver a
+		// server-originated JSON-RPC request (id 999). The driver MUST answer it —
+		// a dropped request would hang the turn. When the driver's response for id
+		// 999 arrives (empty method), record a positive stderr marker and complete
+		// the outstanding turn so the session drains cleanly (RU-07).
+		if mode == "approval" && env.Method == "" && env.ID != nil && *env.ID == 999 {
+			fmt.Fprintln(os.Stderr, "TWIN_APPROVAL_REPLY_RECEIVED")
+			emit(`{"method":"turn/completed","params":{"threadId":"th_1","turn":{"id":"turn_%d","items":[],"itemsView":"notLoaded","status":"completed","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, turnStarts)
+			continue
+		}
 		switch env.Method {
 		case "initialize":
 			if mode == "nohandshake" {
@@ -116,6 +126,16 @@ func runTwin(mode string) {
 				respondTurnStart(tid)
 				emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, tid)
 				emit(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","turnId":%q,"itemId":"msg_1","delta":"working"}}`, tid)
+				continue
+			case "approval":
+				// Ack the submission (turn/started), then send a server-originated
+				// approval request (id+method) that the driver must answer. The turn
+				// is completed only once the driver's reply for id 999 arrives (see
+				// the approval-reply detection above) — proving the request was NOT
+				// silently dropped (RU-07).
+				respondTurnStart(tid)
+				emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, tid)
+				emit(`{"jsonrpc":"2.0","id":999,"method":"execCommandApproval","params":{"command":"ls"}}`)
 				continue
 			case "silentthenhappy":
 				if turnStarts == 1 {
@@ -303,6 +323,40 @@ func TestSubmitAckedDelivered(t *testing.T) {
 		if types[i] != w {
 			t.Fatalf("emissions = %v, want prefix %v", types, wantPrefix)
 		}
+	}
+}
+
+// TestServerRequestAnswered proves that a JSON-RPC request the app-server sends
+// TO the driver mid-turn (an exec/apply-patch approval prompt, id+method) is
+// answered rather than silently dropped. The twin withholds turn/completed until
+// it receives the driver's reply for the approval id; if the driver dropped the
+// request (the pre-fix behaviour), the turn would never complete and the session
+// would not drain to exit 0 with the positive stderr marker (RU-07).
+func TestServerRequestAnswered(t *testing.T) {
+	sess := spawnTwin(t, "approval", codexinput.Config{}, nil)
+	port := asPort(t, sess)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ack, err := port.SubmitInput(ctx, handler.InputRequest{Payload: []byte("do the thing")})
+	if err != nil {
+		t.Fatalf("SubmitInput: %v", err)
+	}
+	if ack.Outcome != handler.Delivered {
+		t.Fatalf("outcome = %v, want Delivered", ack.Outcome)
+	}
+
+	if err := port.CloseInput(ctx); err != nil {
+		t.Fatalf("CloseInput: %v", err)
+	}
+	if err := sess.Wait(ctx); err != nil {
+		t.Fatalf("Wait: %v (driver likely dropped the server request → turn never completed)", err)
+	}
+	if got := sess.Outcome().ExitCode; got != 0 {
+		t.Fatalf("exit code = %d, want 0", got)
+	}
+	if tail := string(sess.Outcome().StderrTail); !strings.Contains(tail, "TWIN_APPROVAL_REPLY_RECEIVED") {
+		t.Fatalf("twin never received the driver's approval reply — server request was dropped (RU-07). stderr: %q", tail)
 	}
 }
 

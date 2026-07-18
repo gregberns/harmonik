@@ -165,6 +165,54 @@ func TestStringAndVariantIDRoundTrip(t *testing.T) {
 	}
 }
 
+// TestServerRequestClassification proves a JSON-RPC request the app-server
+// sends TO the client (id + method, e.g. an exec / apply-patch approval prompt
+// whose method is not a client-originated method) is classified as
+// FrameKindServerRequest — NOT FrameKindClientRequest and NOT dropped to
+// FrameKindRaw — so the driver can answer it instead of hanging the turn (RU-07).
+func TestServerRequestClassification(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want codexwire.FrameKind
+	}{
+		{
+			name: "approval prompt (unknown method, id+method) → ServerRequest",
+			line: `{"jsonrpc":"2.0","id":42,"method":"execCommandApproval","params":{"command":"rm -rf /tmp/x"}}`,
+			want: codexwire.FrameKindServerRequest,
+		},
+		{
+			name: "apply-patch approval (unknown method, string id) → ServerRequest",
+			line: `{"jsonrpc":"2.0","id":"appr-1","method":"applyPatchApproval","params":{"patch":"..."}}`,
+			want: codexwire.FrameKindServerRequest,
+		},
+		{
+			name: "client-originated request (registry DirClient) → ClientRequest",
+			line: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"x","title":"y","version":"1"},"capabilities":null}}`,
+			want: codexwire.FrameKindClientRequest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frame, err := codexwire.Parse([]byte(tc.line))
+			if err != nil {
+				t.Fatalf("Parse returned error: %v", err)
+			}
+			if frame.Kind != tc.want {
+				t.Fatalf("classification = %d, want %d (line dropped or misfiled)", frame.Kind, tc.want)
+			}
+			// A server request must round-trip verbatim (it is answered by id).
+			out, err := codexwire.Marshal(frame)
+			if err != nil {
+				t.Fatalf("Marshal returned error: %v", err)
+			}
+			if err := assertSemanticEqual(t, 0, []byte(tc.line), out); err != nil {
+				t.Fatalf("did not round-trip: %v\n  in:  %s\n  out: %s", err, tc.line, out)
+			}
+		})
+	}
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 // assertSemanticEqual compares original and remarshal as parsed JSON maps.

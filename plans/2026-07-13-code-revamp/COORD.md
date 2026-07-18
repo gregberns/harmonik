@@ -1170,3 +1170,52 @@ Slice-3 sub-slices (all `$gostd + internal/core` only; each independent agent-re
 **So:** an operator gets a real raw wire capture by setting `HARMONIK_WIRE_CAPTURE_DIR` on the daemon process; no daemon change is outstanding. Marking ⑥a complete.
 
 **Next COORD entry = c079.**
+
+### c079  ·  2026-07-17  ·  hk-bravo  ·  mega-review Wave 2c (H11, H12) — LANDED c3aa880c
+**Two HIGH wire/CLI fixes, independently reviewed (agent-reviewer APPROVE).**
+- **H11 codexwire string JSON-RPC ids:** `codexwire.Frame.ID` / `rawLine.ID` were `*int64`, so any JSON-RPC 2.0 line with a string (or non-integer) id failed envelope Unmarshal → Parse error → `readLoop` tore the session down to Exited. Retyped the id as `json.RawMessage`, preserved verbatim through parse+marshal so string/number/null ids round-trip byte-for-byte (`idRawOrNull` emits raw id or `null`). Map consumers rekeyed on `string(frame.ID)`; second consumer `internal/codexdriver/session.go` rekeyed on `string(id)` (build-fixed in Wave 2b).
+- **H12 brcli joined-flag guard:** `CheckWorkflowLabelWrite` matched `HasPrefix(arg,"workflow:")` on the raw argv token only, so the joined form `--label=workflow:dot` slipped past the BI-INV-001 guard. Now normalizes each token via `labelValue` (splits `--flag=value` to its value) then matches the label VALUE — both split and joined forms caught.
+- Tests: string/large-int id round-trip (codexwire); joined-flag rejection + joined non-label permit (brcli). Build/vet/-race pass.
+
+### c080  ·  2026-07-17  ·  hk-bravo  ·  mega-review Wave 2a (H1–H5, H2b) — LANDED 3027c82b
+**Six HIGH workspace/lifecycle data-integrity fixes, agent-reviewer APPROVE.** H3 was hand-merged into HEAD's B2 scanner.
+- **H1 gitignorehygiene:** commit `.gitignore` on the dedicated `harmonik/gitignore-init` branch (check out/create first), refuse to commit onto a non-harmonik branch, drop the forced `--allow-empty` — daemon-state never lands on the operator's branch.
+- **H2 discoverworktrees:** a corrupt/truncated `lease.lock` surfaces as `LeaseLockUnreadable` (lock present, state unknown) instead of being discarded as absent → sweep quarantines instead of force-removing.
+- **H2b orphansweep:** `RemoveAgedNoLockWorktrees` derives activity from the newest file mtime within the tree (walk), not the top-dir mtime, so in-place edits protect a worktree from age-based removal.
+- **H3 orphansweepbeads:** `HasMergeCommitForBead` verifies the trailer-bearing commit is still present (ancestor of tip, not reverted) before reporting subsumed; `SweepCloseBead` flags auto-closed beads needs-attention for operator triage.
+- **H4/H5 reviewverdict + autostatusmarker:** distinguish an SSH transport failure (ssh exit 255 → `ErrRemoteTransport`, inconclusive/retried) from a confirmed-absent file (cat exit 1 → nil,nil) on the remote read paths. (Note: H5's new transport-inconclusive signal is currently discarded at `dot_cascade.go:2010` — logged to the alpha lane below.)
+- Tests added for every fix.
+
+### c081  ·  2026-07-17  ·  hk-bravo  ·  mega-review Wave 2b (H6, H7, H8, H13) — LANDED 18a2d221
+**Four HIGH daemon-concurrency fixes, re-applied against current HEAD (worktree was 210 commits stale), agent-reviewer APPROVE.** Adversarial review caught a **self-deadlock** in the H6 rework (held queueMu then SetQueue re-locked) — fixed to write back via `lv.LockedSetQueueByName` + re-approved.
+- **H6 queue-submit lost-update:** `HandleQueueSubmit` now serialises its whole read-modify-write under the SAME `LockForMutationView` B1 uses for append, writes back via `lv.LockedSetQueueByName` + `Wake` (NOT `a.qs.SetQueue`, which re-acquires the non-reentrant `queueMu` and self-deadlocks), releases before the non-mutating emits.
+- **H7 eventbus global-WaitGroup misuse:** gate `Add` behind a drain seal under `drainMu` so `Emit`'s Add cannot race `Drain`'s Wait.
+- **H8 remote Kill:** branch on `s.remote`, route through the SSH adapter instead of `syscall.Kill` on a local PID.
+- **H13 agent_ready lost-wakeup:** edge-latch `readyFired`; notify latches, `SetAgentReadyCallback` replays on late install. Applied at the M5-extracted location `internal/hook/sessionstore.go`. (+200-iter concurrent fire/install race test.)
+- H10 (runShell busy-spin): N/A — `runshell.go` no longer exists on HEAD.
+- Build clean; vet clean; `-race` on queue/eventbus/hook/codexwire/codexdriver/codextest all ok.
+
+### c082  ·  2026-07-17  ·  hk-bravo  ·  C1 — wire confirm_verdict/veto_verdict socket routes (RC-027 operator override) — LANDED 1d659a39
+**Root cause:** `harmonik confirm-verdict` / `veto-verdict` sent socket ops (`confirm_verdict` / `veto_verdict`) that no daemon dispatch path registered. On HEAD, ops are registered as `socketDispatch` methods in `buildSocketRouter`; unregistered ops return `Result{Unknown:true}` → `daemon: unknown op %q` → CLI exit 1. The entire RC-027 operator control path was dead. A prior fix existed on a 210-commit-stale worktree that wired a `switch` HEAD has since refactored away — its design ported, wiring re-targeted.
+
+**The fix:**
+- `internal/daemon/verdictoverride.go` (new): `VerdictOverrideHandler` interface, `VerdictConfirmationRegistry` (Await/Resolve rendezvous, buffered cap-1), `*OperatorPauseController.HandleVerdictOverride` (returns code 16 when no run parked) + `Verdicts()` accessor.
+- `internal/daemon/operatorpause.go`: `verdicts` registry field, constructed in `NewOperatorPauseController`.
+- `internal/daemon/socketdispatch.go`: `confirmVerdict`/`vetoVerdict` methods (type-assert `d.oh` to `VerdictOverrideHandler`, mirroring the `decisions-*` idiom on `d.ch`) + registered `confirm_verdict`/`veto_verdict` in `buildSocketRouter`.
+- `internal/daemon/socket.go`: `SocketRequest.PromoteTo` wire field.
+- `cmd/harmonik/confirm_verdict.go`: CLI now sends `confirm_verdict` (was `confirm`).
+- Tests: frozen op-set guard 25→27; `verdictoverride_c079_test.go` — root-cause guard (every CLI-reachable verdict op resolves to a registered non-Unknown handler + bogus-op negative control) and e2e (confirm releases parked run; veto `--promote-to escalate-to-human` delivers Veto+escalate; unparked run returns code 16) via the real router+registry.
+- VERIFIED: `go build ./...` clean, `go vet` clean, C079/VerdictOverride tests pass `-race`. agent-reviewer: APPROVE.
+
+**⟶ ALPHA-LANE FOLLOW-UP (this commit exposes the seam but does NOT wire the executor):** `internal/daemon/verdictexecutor_rc025a.go` must call `OperatorPauseController.Verdicts().Await(runID)` so a `confirm_required` run actually PARKS. Until wired, a live confirm/veto for an unparked run returns code 16 (correct behavior when nothing is parked). That file is alpha/DOT-owned — logged below.
+
+### ALPHA-LANE — handed off, NOT fixed by hk-bravo (alpha owns DOT/verdict machinery)
+Logged for the alpha lane per handoff; hk-bravo did not touch these files:
+- **C1 executor Await wiring** — `verdictexecutor_rc025a.go` must call `Verdicts().Await(runID)` so `confirm_required` runs park (see c082 above).
+- **H5** — the new transport-inconclusive signal (Wave 2a) is discarded at `dot_cascade.go:2010`.
+- **H9** — `verdictexecutor_rc025a.go`.
+- **A7** — `dot_cascade.go`.
+- **A8** — `reviewloop.go` vs `dot_cascade.go` dedup.
+- **New nit** — `emit-outcome`/`claim-next` nil-deref on a nil `RequestHandler`.
+
+**Next COORD entry = c083.**

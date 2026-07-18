@@ -1021,6 +1021,16 @@ const (
 	// Refs: hk-wjzf, hk-xjlq, ON-059.
 	EventTypeSessionKeeperRestartNowBlocked EventType = "session_keeper_restart_now_blocked"
 
+	// EventTypeSessionKeeperRestartNow is the session_keeper_restart_now event
+	// type. Emitted by RestartNow on a SUCCESSFUL agent-run restart (after the
+	// ack + /clear + brief are all injected). Its `nonce` carries the value
+	// supplied to `restart-now --nonce` (carry-for-audit, SK-030): a query of
+	// events.jsonl by that nonce joins the self-restart to its originating keeper
+	// cycle. Additive — it does not change the verify/ACK/clear ordering.
+	// Durability class: O (ordinary — observability; non-destructive).
+	// Refs: SK-029, SK-030, hk-keeper-delivery-restartnow-nonce-kz4w6.
+	EventTypeSessionKeeperRestartNow EventType = "session_keeper_restart_now"
+
 	// EventTypeSessionKeeperLivePaneRecover is the session_keeper_live_pane_recover
 	// event type. Emitted by the keeper watcher's gauge-INDEPENDENT last-resort
 	// recovery: when the gauge has been stale beyond LiveRecoverGrace but the tmux

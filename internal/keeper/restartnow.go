@@ -2,11 +2,13 @@ package keeper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -55,6 +57,12 @@ type RestartNowConfig struct {
 	Inject      RestartNowInjector
 	Clock       substrate.ClockPort
 	RequestedAt time.Time
+
+	// Emitter, when non-nil, receives a durable session_keeper_restart_now event
+	// carrying the nonce on a SUCCESSFUL restart (SK-030, carry-for-audit) so the
+	// self-restart is joinable to its originating cycle in events.jsonl. Nil → no
+	// event is emitted (Ping never emits). The CLI wires a keeper.FileEmitter.
+	Emitter Emitter
 }
 
 // Nonce is a short verifiability token echoed back to the agent in the ACK line.
@@ -147,6 +155,25 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 		return fmt.Errorf("keeper: restart-now: inject agent brief: %w", err)
 	}
 	log.InfoContext(ctx, "keeper: restart-now: agent brief injected; done")
+
+	// Step 7 (additive audit, SK-030): record a durable session_keeper_restart_now
+	// event carrying the nonce so the self-restart joins to its originating cycle
+	// in events.jsonl by nonce. Emitted AFTER the injected sequence, so it does not
+	// change the verify/ACK/clear ordering. Carry-for-audit: the nonce is never
+	// validated. Best-effort — a failed audit write must not fail a restart that
+	// already drove /clear+brief. Ping does not emit (nil Emitter).
+	if cfg.Emitter != nil {
+		payload, marshalErr := json.Marshal(core.SessionKeeperRestartNowPayload{
+			AgentName: cfg.AgentName,
+			SessionID: sid,
+			Nonce:     nonce,
+		})
+		if marshalErr != nil {
+			log.WarnContext(ctx, "keeper: restart-now: marshal audit payload", "err", marshalErr)
+		} else if emitErr := cfg.Emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperRestartNow, payload); emitErr != nil {
+			log.WarnContext(ctx, "keeper: restart-now: emit audit event", "err", emitErr)
+		}
+	}
 	return nil
 }
 

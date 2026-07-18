@@ -211,6 +211,28 @@ type SessionKeeperRestartNowBlockedPayload struct {
 	Reason string `json:"reason"`
 }
 
+// SessionKeeperRestartNowPayload is the payload for session_keeper_restart_now
+// (SK-030, hk-keeper-delivery-restartnow-nonce-kz4w6).
+//
+// Emitted by RestartNow on a SUCCESSFUL agent-run restart (ack + /clear + brief
+// all injected). The Nonce carries the value supplied to `restart-now --nonce`
+// (carry-for-audit — NEVER validated), so a query of events.jsonl by that nonce
+// joins the self-restart to its originating keeper cycle.
+//
+// Durability class: O (ordinary — observability; non-destructive).
+type SessionKeeperRestartNowPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// SessionID is the verified gauge session_id the restart was driven against.
+	SessionID string `json:"session_id,omitempty"`
+
+	// Nonce is the verifiability/provenance token supplied to restart-now
+	// (--nonce, or the derived rn-<ms> default when the flag is omitted). Carried
+	// for audit; never validated.
+	Nonce string `json:"nonce"`
+}
+
 // SessionKeeperLivePaneRecoverPayload is the payload for
 // session_keeper_live_pane_recover (hk-75mr).
 //

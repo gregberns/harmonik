@@ -771,7 +771,8 @@ func runKeeperRelease(args []string) int {
 	return 0
 }
 
-// runKeeperRestartNow implements `harmonik keeper restart-now --agent <name>`.
+// runKeeperRestartNow implements
+// `harmonik keeper restart-now --agent <name> [--nonce N] [--project DIR]`.
 //
 // SIMPLIFIED (hk-5da7): this runs the restart SYNCHRONOUSLY in-process — verify
 // the session id, ONE handoff-freshness check, inject an ACK line (so the agent
@@ -789,23 +790,58 @@ func runKeeperRelease(args []string) int {
 //
 // Refs: hk-5da7, hk-wjzf, hk-xjlq, ON-059.
 func runKeeperRestartNow(args []string) int {
-	agent, projectFlag, code := parseKeeperMarkerArgs("keeper restart-now", args)
+	// Flag-set (not parseKeeperMarkerArgs) so a net-new --nonce can be parsed
+	// alongside --agent/--project, mirroring `keeper ping` (SK-030). Omitting
+	// --nonce preserves today's behavior (a derived rn-<ms> token).
+	fs, projectFlag, agentFlag := newKeeperMarkerFlags("keeper restart-now")
+	nonceFlag := fs.String("nonce", "",
+		"provenance nonce carried on the [KEEPER ACK <nonce>] line and the emitted "+
+			"session_keeper_restart_now event; carry-for-audit, never validated (default: rn-<ms> timestamp)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 1
+		}
+		return 2
+	}
+	agent, code := resolveKeeperAgent(fs, "harmonik keeper restart-now", *agentFlag)
 	if agent == "" {
 		return code
 	}
+	projectDir := *projectFlag
+	if projectDir == "" {
+		wd, wdErr := os.Getwd()
+		if wdErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: cannot determine working directory: %v\n", wdErr)
+			return 1
+		}
+		projectDir = wd
+	}
+	// W5 (hk-x7s): Abs-normalize for parity with the watcher / enable / doctor /
+	// ping — the emitted event and the pane must resolve to the same .harmonik dir.
+	absRN, absRNErr := normalizeProjectDir("keeper restart-now", projectDir)
+	if absRNErr != nil {
+		return 1
+	}
+	projectDir = absRN
 
 	// Resolve the tmux pane the same way the watcher does (convention-derived
 	// when not explicit). restart-now has no --tmux flag — it is always the
 	// agent's own pane.
-	tmuxTarget := keeper.ResolveTmuxTarget(projectFlag, agent, "", nil)
+	tmuxTarget := keeper.ResolveTmuxTarget(projectDir, agent, "", nil)
 
 	requestedAt := time.Now().UTC()
-	nonce := restartNowNonce(requestedAt)
+	nonce := *nonceFlag
+	if nonce == "" {
+		nonce = restartNowNonce(requestedAt)
+	}
 	err := keeper.RestartNow(context.Background(), keeper.RestartNowConfig{
-		ProjectDir:  projectFlag,
+		ProjectDir:  projectDir,
 		AgentName:   agent,
 		TmuxTarget:  tmuxTarget,
 		RequestedAt: requestedAt,
+		// Durable audit record carrying the nonce (SK-030). FileEmitter appends to
+		// <projectDir>/.harmonik/events/events.jsonl.
+		Emitter: keeper.NewFileEmitter(projectDir),
 	}, nonce)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: %v\n", err)

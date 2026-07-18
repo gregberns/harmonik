@@ -119,9 +119,9 @@ func LoadDotWorkflow(dotPath string) (*dot.Graph, error) {
 	return graph, nil
 }
 
-// LoadDotWorkflowWithParams reads a .dot file at dotPath, applies template-param
-// substitution via SubstituteTemplateParams (WG-045/WG-046) before parsing, then
-// parses and validates the graph.
+// LoadDotWorkflowWithParams reads a .dot file at dotPath, parses the template,
+// then applies per-attribute template-param substitution via substituteGraphParams
+// (WG-045/WG-046) and validates the graph.
 //
 // Ordering invariant (WG-046): read → substitute → parse → validate → dispatch.
 //

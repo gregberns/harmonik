@@ -116,6 +116,17 @@ type busImpl struct {
 	// lazily initialised so the five constructors need no change.
 	runSealed map[string]bool
 
+	// drainMu guards drainSealed. It serialises the global b.wg.Add performed by
+	// every Emit* dispatch against Drain's b.wg.Wait: without it, a Drain that
+	// observes the counter momentarily at 0 and returns from Wait can race an
+	// Emit doing wg.Add(1), which Go treats as "Add called concurrently with
+	// Wait" and aborts the whole process (fatal error: sync: WaitGroup misuse).
+	// This mirrors the per-run runSealed seal (addRunDrainer/DrainRun) for the
+	// global WaitGroup. Once drainSealed is set, dispatches run untracked (Drain
+	// is a shutdown-time operation), exactly as a sealed run does (H7).
+	drainMu     sync.Mutex
+	drainSealed bool
+
 	// HWM persistence fields (EV-002c). hwmPath is the absolute path of the
 	// event_id_hwm file; empty string disables HWM writes (test mode / no
 	// project dir). hwmMu serialises concurrent writes; hwmLast tracks the
@@ -502,9 +513,11 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 			// launched per dispatch; post-MVH: replace with bounded worker pool
 			// (default 4 workers, operator-configurable per EV-014a).
 			sub := sub // capture loop variable
-			b.wg.Add(1)
+			tracked := b.addGlobalDrainer()
 			go func() {
-				defer b.wg.Done()
+				if tracked {
+					defer b.wg.Done()
+				}
 				// Panic recovery (hk-xvpwb): recover observer panics and record
 				// them to the dead-letter sink with reason "observer_panic". If
 				// the sink is nil, the panic is absorbed and logged nowhere
@@ -623,9 +636,11 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 			// skip per-run tracking (the global b.wg still accounts for the
 			// goroutine).
 			runWG := b.addRunDrainer(evt.RunID.String())
-			b.wg.Add(1)
+			tracked := b.addGlobalDrainer()
 			go func() {
-				defer b.wg.Done()
+				if tracked {
+					defer b.wg.Done()
+				}
 				if runWG != nil {
 					defer runWG.Done()
 				}
@@ -724,9 +739,11 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 			}
 		default:
 			sub := sub // capture loop variable
-			b.wg.Add(1)
+			tracked := b.addGlobalDrainer()
 			go func() {
-				defer b.wg.Done()
+				if tracked {
+					defer b.wg.Done()
+				}
 				defer func() {
 					if r := recover(); r != nil {
 						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
@@ -818,9 +835,11 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 			}
 		default:
 			sub := sub
-			b.wg.Add(1)
+			tracked := b.addGlobalDrainer()
 			go func() {
-				defer b.wg.Done()
+				if tracked {
+					defer b.wg.Done()
+				}
 				defer func() {
 					if r := recover(); r != nil {
 						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
@@ -920,9 +939,11 @@ func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, paylo
 			}
 		default:
 			sub := sub // capture loop variable
-			b.wg.Add(1)
+			tracked := b.addGlobalDrainer()
 			go func() {
-				defer b.wg.Done()
+				if tracked {
+					defer b.wg.Done()
+				}
 				defer func() {
 					if r := recover(); r != nil {
 						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
@@ -1430,6 +1451,24 @@ func replayAndDetectTrunc(ctx context.Context, path string, sinceID core.EventID
 	}
 }
 
+// addGlobalDrainer performs b.wg.Add(1) WHILE HOLDING drainMu, so the Add is
+// serialised against Drain's seal-then-Wait. It returns true when the Add was
+// performed (the caller must arrange a matching b.wg.Done). It returns false
+// when Drain has already sealed the global WaitGroup — the caller then still
+// dispatches the consumer goroutine but leaves it untracked (Drain is a
+// shutdown-time operation; a late dispatch is best-effort). Doing Add under the
+// lock is what prevents "Add called concurrently with Wait" (H7). Mirrors
+// addRunDrainer for the global WaitGroup.
+func (b *busImpl) addGlobalDrainer() bool {
+	b.drainMu.Lock()
+	defer b.drainMu.Unlock()
+	if b.drainSealed {
+		return false
+	}
+	b.wg.Add(1)
+	return true
+}
+
 // addRunDrainer registers one in-flight per-run goroutine: it returns the
 // run's WaitGroup after calling Add(1) on it WHILE HOLDING runDrainersMu, so
 // the Add is serialised against DrainRun's seal-then-Wait. It returns nil when
@@ -1502,6 +1541,14 @@ func (b *busImpl) DrainRun(ctx context.Context, runID core.RunID) error {
 //
 // Spec ref: specs/event-model.md §6.1.
 func (b *busImpl) Drain(ctx context.Context) error {
+	// Seal the global WaitGroup under drainMu, then start Wait. After the seal is
+	// set, addGlobalDrainer performs no further Add; any Add already performed
+	// happened under the same lock before this point, so it happens-before the
+	// Wait below. This closes the Add-concurrent-with-Wait race that otherwise
+	// aborts the process under concurrent Emit (H7), mirroring DrainRun's seal.
+	b.drainMu.Lock()
+	b.drainSealed = true
+	b.drainMu.Unlock()
 	done := make(chan struct{})
 	go func() {
 		b.wg.Wait()

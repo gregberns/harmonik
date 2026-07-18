@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -94,7 +95,12 @@ type codexSession struct {
 	mu       sync.Mutex
 	seq      uint64
 	reqID    int64
-	pending  map[int64]pendingReq
+	// pending is keyed by the JSON-RPC request id's verbatim string form (the id
+	// is a json.RawMessage on the wire per H11 — a number here, but a string or
+	// other shape round-trips too). We mint integer ids but correlate responses
+	// by string(f.ID) so a server that echoes the id in any valid JSON form still
+	// matches.
+	pending  map[string]pendingReq
 	payloads map[uint64][]byte
 	waiters  map[uint64]chan submitResult
 	timers   map[codexinput.TimerKind]context.CancelFunc
@@ -143,7 +149,7 @@ func newCodexSession(opts Options, cmd *exec.Cmd, procCancel context.CancelFunc,
 		failCh:       make(chan struct{}),
 		waitDone:     make(chan struct{}),
 		phaseChanged: make(chan struct{}),
-		pending:      make(map[int64]pendingReq),
+		pending:      make(map[string]pendingReq),
 		payloads:     make(map[uint64][]byte),
 		waiters:      make(map[uint64]chan submitResult),
 		timers:       make(map[codexinput.TimerKind]context.CancelFunc),
@@ -603,12 +609,17 @@ func (s *codexSession) cancelTimer(kind codexinput.TimerKind) {
 
 // ─── Outbound frames (codexwire.Marshal + stdin write) ──────────────────────
 
-func (s *codexSession) nextReqID(kind pendingKind, seq uint64) int64 {
+// nextReqID mints the next integer request id, records its pending correlation
+// keyed by the id's verbatim JSON string form, and returns the id as the
+// json.RawMessage the wire frame carries (H11: Frame.ID is raw so string/number
+// ids round-trip verbatim).
+func (s *codexSession) nextReqID(kind pendingKind, seq uint64) json.RawMessage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reqID++
-	s.pending[s.reqID] = pendingReq{kind: kind, seq: seq}
-	return s.reqID
+	raw := json.RawMessage(strconv.FormatInt(s.reqID, 10))
+	s.pending[string(raw)] = pendingReq{kind: kind, seq: seq}
+	return raw
 }
 
 // writeFrame marshals and writes one NDJSON line. Write failures are funneled
@@ -719,9 +730,9 @@ func (s *codexSession) handleFrame(f codexwire.Frame) {
 
 func (s *codexSession) handleResponse(f codexwire.Frame) {
 	s.mu.Lock()
-	req, ok := s.pending[f.ID]
+	req, ok := s.pending[string(f.ID)]
 	if ok {
-		delete(s.pending, f.ID)
+		delete(s.pending, string(f.ID))
 	}
 	s.mu.Unlock()
 	if !ok {

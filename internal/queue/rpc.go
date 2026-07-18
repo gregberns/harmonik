@@ -984,9 +984,44 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-submit request: %v", err)},
 		}
 	}
+
+	// H6 (two-writer lost-update / single-active TOCTOU fix): serialise the whole
+	// submit read-modify-write — the disk Load, the QM-027 single-active check,
+	// and the Persist all happen inside the pure HandleQueueSubmit, plus the
+	// in-memory write-back below — under the SAME queue mutation lock B1 uses for
+	// append and the workloop uses for status mutations. Without it two concurrent
+	// submits for the same new queue name can both pass the single-active check
+	// and both Persist to <name>.json (last-writer-wins drops one). Only test
+	// harnesses wiring a nil/plain QueueSetter fall through unlocked.
+	locker, hasLock := a.qs.(MutationLocker)
+	var lv LockedQueueView
+	if hasLock {
+		lv = locker.LockForMutationView()
+	}
+
 	resp, q, ledgerDepPairs, rpcErr := HandleQueueSubmit(ctx, req, a.ledger, a.projectDir, a.globalMaxConcurrent)
 	if rpcErr != nil {
+		if hasLock {
+			lv.Done()
+		}
 		return nil, rpcErr
+	}
+
+	// Thread the persisted queue into the running workloop (hk-4ukkq). Under the
+	// mutation lock we MUST write back through the LOCKED view — NOT a.qs.SetQueue,
+	// which re-acquires the non-reentrant queueMu and would self-deadlock (the same
+	// trap B1's appendUnderLock avoids via lv.LockedSetQueueByName). Wake the
+	// workloop, then release the lock before the (non-mutating) emits below.
+	if q != nil {
+		if hasLock {
+			lv.LockedSetQueueByName(NormaliseQueueName(q.Name), q)
+			locker.Wake()
+		} else if a.qs != nil {
+			a.qs.SetQueue(q)
+		}
+	}
+	if hasLock {
+		lv.Done()
 	}
 
 	// QM-066 oversubscription warning: a per-queue Workers count above the global
@@ -998,11 +1033,6 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 		fmt.Fprintf(os.Stderr,
 			"daemon: queue-submit: queue %q workers=%d oversubscribes global --max-concurrent=%d; global ceiling still applies (QM-062/QM-066)\n",
 			q.Name, q.Workers, a.globalMaxConcurrent)
-	}
-
-	// Thread the persisted queue into the running workloop (hk-4ukkq).
-	if a.qs != nil && q != nil {
-		a.qs.SetQueue(q)
 	}
 
 	// Emit queue_submitted event (hk-peucr). The queue has already been

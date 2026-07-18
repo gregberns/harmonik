@@ -224,6 +224,75 @@ func TestSessionStore_AgentReadyDispatch_NoCallbackIsNoOp(t *testing.T) {
 	}
 }
 
+// TestSessionStore_AgentReadyLatch_ReplaysOnLateCallback verifies the H13
+// edge-latch: when agent_ready fires BEFORE SetAgentReadyCallback is installed
+// (the lost-wakeup window — daemon registers + launches the subprocess before
+// installing the callback), the signal is latched and replayed when the callback
+// is finally installed, rather than being silently dropped.
+func TestSessionStore_AgentReadyLatch_ReplaysOnLateCallback(t *testing.T) {
+	t.Parallel()
+	const runID = "run-agent-ready-latch-01"
+	const sessionID = "claude-sess-agent-ready-latch-01"
+
+	store := NewSessionStore()
+	store.RegisterHookSession(runID, sessionID)
+
+	// agent_ready arrives in the window BEFORE any callback is installed.
+	env := hookFixtureMakeEnvelope(runID, sessionID, "agent_ready", nil)
+	if ack := store.Dispatch(env); ack.Status != "ok" {
+		t.Fatalf("pre-callback agent_ready dispatch: status=%q, want ok", ack.Status)
+	}
+
+	// Installing the callback now must replay the latched signal immediately.
+	called := make(chan struct{}, 1)
+	store.SetAgentReadyCallback(runID, sessionID, func() {
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+	})
+
+	select {
+	case <-called:
+		// expected — the latch replayed the missed agent_ready.
+	default:
+		t.Error("agent_ready latch: callback was NOT replayed on late install (lost-wakeup)")
+	}
+}
+
+// TestSessionStore_AgentReadyLatch_ConcurrentFireAndInstall stresses the latch
+// under a race between notifyAgentReady (via Dispatch) and SetAgentReadyCallback:
+// exactly one delivery must occur regardless of ordering, never zero.
+func TestSessionStore_AgentReadyLatch_ConcurrentFireAndInstall(t *testing.T) {
+	t.Parallel()
+	for i := 0; i < 200; i++ {
+		store := NewSessionStore()
+		const runID = "run-latch-race"
+		const sessionID = "claude-sess-latch-race"
+		store.RegisterHookSession(runID, sessionID)
+
+		got := make(chan struct{}, 4)
+		cb := func() { got <- struct{}{} }
+
+		done := make(chan struct{}, 2)
+		go func() {
+			env := hookFixtureMakeEnvelope(runID, sessionID, "agent_ready", nil)
+			store.Dispatch(env)
+			done <- struct{}{}
+		}()
+		go func() {
+			store.SetAgentReadyCallback(runID, sessionID, cb)
+			done <- struct{}{}
+		}()
+		<-done
+		<-done
+
+		if len(got) == 0 {
+			t.Fatalf("iter %d: agent_ready lost (no delivery under concurrent fire/install)", i)
+		}
+	}
+}
+
 // TestSessionStore_LaunchInitiated_DoesNotFireCallback verifies that
 // launch_initiated (CHB-018 pre-exec precursor) does NOT fire the agent_ready
 // callback (HC-041).

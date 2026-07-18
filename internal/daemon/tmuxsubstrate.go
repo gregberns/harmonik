@@ -2488,8 +2488,23 @@ const killGracePeriod = 3 * time.Second
 func (s *tmuxSubstrateSession) Kill(ctx context.Context) error {
 	var killErr error
 	s.killOnce.Do(func() {
-		// Step 1: terminate the hosted process if we have a PID.
-		if s.pid > 0 {
+		// Step 1: terminate the hosted process.
+		//
+		// hk-r1zq / H8: s.pid is the tmux pane PID as observed on the process
+		// HOST. For a LOCAL session that is a daemon-host PID, so a direct
+		// syscall.Kill is correct. For a REMOTE session s.pid is the WORKER's
+		// pane PID — meaningless in the daemon host's process table, where it
+		// could name an unrelated LOCAL process. NEVER local-signal a remote
+		// session's PID (killProcessWithGrace uses syscall.Kill). Route
+		// termination through the SSH-backed adapter instead: a best-effort
+		// SendKeysQuit for a graceful stop, then the authoritative KillWindow
+		// below (both run over s.adapter, which is the run's SSH-backed worker
+		// adapter for a remote session — see runWait).
+		if s.remote {
+			if pt := s.PaneTarget(); pt != "" {
+				_ = s.adapter.SendKeysQuit(ctx, pt) //nolint:errcheck // best-effort; KillWindow is authoritative
+			}
+		} else if s.pid > 0 {
 			killProcessWithGrace(s.pid, killGracePeriod)
 		}
 		// Step 2: destroy the tmux window (cleans up pane/window state).

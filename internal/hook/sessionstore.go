@@ -90,6 +90,18 @@ type session struct {
 	// RegisterHookSession; used by the work loop to forward relay-synthesized
 	// agent_ready into the per-run event tap so waitAgentReady can observe it.
 	agentReadyCallback func()
+
+	// readyFired latches that an agent_ready relay message arrived for this
+	// session, regardless of whether a callback was installed yet. The daemon
+	// registers the session + launches the handler subprocess BEFORE installing
+	// the callback (workloop: RegisterHookSession + Launch, then
+	// SetAgentReadyCallback). If the subprocess's SessionStart hook fires
+	// agent_ready in that window, notifyAgentReady would find agentReadyCallback
+	// nil and silently drop the signal — waitAgentReady then blocks until timeout
+	// (lost-wakeup, dispatch stall). This edge-latch closes the window:
+	// notifyAgentReady always sets readyFired, and SetAgentReadyCallback replays
+	// the callback immediately when readyFired was already set (H13).
+	readyFired bool
 }
 
 // SessionStore is the registry of active hook-relay sessions.
@@ -144,9 +156,17 @@ func (s *SessionStore) RegisterHookSession(runID, claudeSessionID string) {
 func (s *SessionStore) SetAgentReadyCallback(runID, claudeSessionID string, cb func()) {
 	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var replay bool
 	if sess, ok := s.sessions[key]; ok && sess != nil {
 		sess.agentReadyCallback = cb
+		// H13: if agent_ready already fired before the callback was installed,
+		// replay it now so the latched signal is not lost. Invoke outside the
+		// mutex (below) to match notifyAgentReady's lock discipline.
+		replay = sess.readyFired && cb != nil
+	}
+	s.mu.Unlock()
+	if replay {
+		cb()
 	}
 }
 
@@ -287,6 +307,9 @@ func (s *SessionStore) notifyAgentReady(runID, claudeSessionID string) {
 	s.mu.Lock()
 	var cb func()
 	if sess, ok := s.sessions[key]; ok && sess != nil {
+		// H13: always latch that ready fired, so a callback installed LATER
+		// (SetAgentReadyCallback) can replay the signal instead of losing it.
+		sess.readyFired = true
 		cb = sess.agentReadyCallback
 	}
 	s.mu.Unlock()

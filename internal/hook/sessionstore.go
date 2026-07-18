@@ -81,10 +81,6 @@ type session struct {
 	// per CHB-025). nil until the first outcome_emitted is received.
 	latestOutcome *json.RawMessage
 
-	// closed is set to true by CloseHookSession when cmd.Wait() returns. Any
-	// incoming relay message targeting a closed session returns unknown_session.
-	closed bool
-
 	// agentReadyCallback is called (non-nil only) when an agent_ready relay
 	// message is received for this session. Set by SetAgentReadyCallback after
 	// RegisterHookSession; used by the work loop to forward relay-synthesized
@@ -170,16 +166,24 @@ func (s *SessionStore) SetAgentReadyCallback(runID, claudeSessionID string, cb f
 	}
 }
 
-// CloseHookSession marks the session window as closed and removes it from the
-// registry. Called from the work loop goroutine when cmd.Wait() returns.
+// CloseHookSession removes the session window from the registry. Called from
+// the work loop goroutine when cmd.Wait() returns.
 //
 // Any outcome_emitted relay message that arrives AFTER CloseHookSession returns
 // will observe a missing key and return unknown_session per CHB-025.
+//
+// Any WaitForOutcome caller still blocked on this key is woken: the session is
+// gone, so on wake it observes a missing key and returns (nil, nil) rather than
+// blocking until ctx cancellation.
 func (s *SessionStore) CloseHookSession(runID, claudeSessionID string) {
 	key := sessionKey{runID: runID, claudeSessionID: claudeSessionID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, key)
+	for _, ch := range s.notifyChans[key] {
+		close(ch)
+	}
+	delete(s.notifyChans, key)
 }
 
 // LatestOutcome returns the most recently received outcome_emitted payload for
@@ -268,7 +272,8 @@ func (s *SessionStore) WaitForOutcome(ctx context.Context, runID, claudeSessionI
 // (last-received-wins).
 //
 // Returns (true, "") when the update succeeds.
-// Returns (false, reason) when the session is unknown (closed or never registered).
+// Returns (false, reason) when the session is unknown (already closed and
+// removed, or never registered).
 //
 // When this is the FIRST outcome recorded for the session, all channels in
 // notifyChans[key] are closed (broadcast), waking any concurrent WaitForOutcome
@@ -280,7 +285,7 @@ func (s *SessionStore) updateOutcome(runID, claudeSessionID string, payload json
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, exists := s.sessions[key]
-	if !exists || sess == nil || sess.closed {
+	if !exists || sess == nil {
 		return false, "unknown_session"
 	}
 	// Last-received-wins: replace (not append) the current outcome.

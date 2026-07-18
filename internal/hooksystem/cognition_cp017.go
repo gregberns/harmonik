@@ -72,6 +72,9 @@ type hookInputEnvelope struct {
 // computeHookEnvelopeHash returns the SHA-256 hex digest of the canonical
 // JSON of the hook's input envelope per specs/control-points.md §4.8.CP-040a.
 func computeHookEnvelopeHash(cp core.ControlPoint, ev core.Event) (string, error) {
+	if cp.Evaluator.DelegationPath == nil {
+		return "", fmt.Errorf("cognition hook %q has nil evaluator delegation path", cp.Name)
+	}
 	envelope := hookInputEnvelope{
 		ControlPointName: cp.Name,
 		DelegationPath:   *cp.Evaluator.DelegationPath,

@@ -1005,6 +1005,15 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// when a cycle completes (warnArmed reset path). Refs: hk-lsk5.
 		hintSentThisSession = false
 
+		// pendingHint is true when the one-time self-hint crossing has occurred
+		// but the [KEEPER HINT] inject has not yet landed. Delivery is deferred
+		// to the sleep-gated block below (hk-bzol4) so a parked session is not
+		// woken by its own keeper — mirrors pendingInject's deferral. It follows
+		// hintSentThisSession's lifecycle (armed on the crossing while the latch
+		// is unset; cleared on delivery or on the dip-reset that clears the latch),
+		// NOT pendingInject's — so a pending hint survives a transient gauge blip.
+		pendingHint = false
+
 		// hardCeilingLastAt is the time of the most recent hard-ceiling restart
 		// attempt. Used to enforce HardCeilingCooldown. Zero when no hard-ceiling
 		// restart has occurred this session. (Refs: hk-34ac)
@@ -1340,8 +1349,10 @@ func (w *Watcher) Run(ctx context.Context) error {
 					warnFired = false
 					pendingInject = false
 					// Reset hint latch on genuine session reset (gauge dropped below
-					// warn and cooldown elapsed — new effective session start).
+					// warn and cooldown elapsed — new effective session start). Also
+					// cancel any undelivered pending hint from the prior crossing.
 					hintSentThisSession = false
+					pendingHint = false
 					// TEST-ONLY observability: signal the re-arm so tests can
 					// deterministically wait for the dip to be observed instead
 					// of racing a fixed sleep. Nil in production. Refs: hk-me8ru.
@@ -1374,15 +1385,36 @@ func (w *Watcher) Run(ctx context.Context) error {
 				}
 
 				// ── one-time self-hint injection (hk-lsk5) ───────────────────
-				// On the FIRST warn crossing of the session, inject the hint text
-				// so the agent is nudged to wrap up. Only once per session —
-				// hintSentThisSession latches after delivery.
+				// On the FIRST warn crossing of the session, ARM the hint so the
+				// agent is nudged to wrap up. Only once per session —
+				// hintSentThisSession latches after delivery. Actual tmux delivery
+				// is DEFERRED to the sleep-gated block below (hk-bzol4): injecting
+				// here fired with no SleepingCheckFn guard and woke a parked
+				// session. pendingHint carries the intent to the gated delivery.
 				if !hintSentThisSession && w.cfg.TmuxTarget != "" {
-					if hintErr := w.cfg.SelfHintInjectFn(ctx, w.cfg.TmuxTarget, keeperHintText(ctxFile.Tokens)); hintErr != nil {
-						slog.WarnContext(ctx, "keeper: inject self-hint", "err", hintErr)
-					} else {
-						hintSentThisSession = true
-					}
+					pendingHint = true
+				}
+			}
+
+			// ── one-time self-hint delivery (hk-lsk5; sleep-gated hk-bzol4) ──
+			// Delivers on the crossing tick itself when the session is awake
+			// (pendingHint was just armed above), or retries on a later tick once
+			// a parked session wakes. Sleep-gated so the keeper never wakes a
+			// parked session with its own hint — closing the M3 gap where the hint
+			// bypassed the SleepingCheckFn guard that the warn advisory below
+			// already honors (watcher.go SleepingCheckFn contract). The hint is a
+			// lightweight nudge, so — unlike the warn advisory — it is NOT
+			// gauge-quiesce-gated, preserving its prior immediate-delivery timing;
+			// only the sleep suppression is added.
+			if pendingHint && w.cfg.TmuxTarget != "" {
+				if w.cfg.SleepingCheckFn(w.cfg.ProjectDir, ctxFile.SessionID) {
+					slog.DebugContext(ctx, "keeper: self-hint suppressed — session is sleeping",
+						"agent", w.cfg.AgentName, "session_id", ctxFile.SessionID)
+				} else if hintErr := w.cfg.SelfHintInjectFn(ctx, w.cfg.TmuxTarget, keeperHintText(ctxFile.Tokens)); hintErr != nil {
+					slog.WarnContext(ctx, "keeper: inject self-hint", "err", hintErr)
+				} else {
+					hintSentThisSession = true
+					pendingHint = false
 				}
 			}
 

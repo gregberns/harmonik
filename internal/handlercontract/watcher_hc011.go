@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync/atomic"
@@ -709,7 +710,7 @@ func (r *readStampReader) Read(p []byte) (int, error) {
 // the scanner's internal buffer was overflowed — i.e., a line exceeded the
 // NDJSONMaxLineLenBytes cap per HC-007a.
 func isLineTooLong(err error) bool {
-	return err == bufio.ErrTooLong
+	return errors.Is(err, bufio.ErrTooLong)
 }
 
 // knownProgressMsgTypes is the complete set of required progress-stream message

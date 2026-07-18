@@ -682,7 +682,7 @@ func RunHeartbeatLoop(ctx context.Context, sessionID string, interval time.Durat
 	}
 }
 
-// DeriveCIaudeTranscriptPath derives the Claude transcript path for a given
+// DeriveClaudeTranscriptPath derives the Claude transcript path for a given
 // workspacePath and claudeSessionID, per CHB-018 session_log_location.
 //
 // Claude stores session transcripts at:
@@ -692,8 +692,13 @@ func RunHeartbeatLoop(ctx context.Context, sessionID string, interval time.Durat
 // The slug is derived from the absolute workspace path by replacing path separators
 // with hyphens and stripping leading slashes, matching Claude Code's slug convention.
 //
+// A failure to resolve the home directory is returned to the caller rather than
+// silently substituting a literal "~" — an unexpanded "~" would produce a bogus
+// session-log path that later CHB-018 steps would materialize under the wrong
+// location.
+//
 // Spec: specs/claude-hook-bridge.md §4.7 CHB-018 step 2 (session_log_location).
-func DeriveCIaudeTranscriptPath(workspacePath, claudeSessionID string) string {
+func DeriveClaudeTranscriptPath(workspacePath, claudeSessionID string) (string, error) {
 	// Derive the Claude project slug from the workspace path.
 	// Claude Code converts the workspace path to a slug by replacing '/' with '-'
 	// and removing the leading '-'.
@@ -704,9 +709,8 @@ func DeriveCIaudeTranscriptPath(workspacePath, claudeSessionID string) string {
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		// Fall back to a relative path (observable in tests).
-		homeDir = "~"
+		return "", fmt.Errorf("handler: DeriveClaudeTranscriptPath: resolve home dir: %w", err)
 	}
 
-	return filepath.Join(homeDir, ".claude", "projects", slug, claudeSessionID+".jsonl")
+	return filepath.Join(homeDir, ".claude", "projects", slug, claudeSessionID+".jsonl"), nil
 }

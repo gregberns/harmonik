@@ -6,7 +6,7 @@ package daemon
 // harmonik-twin-claude) subprocess for any workflow phase:
 //
 //   - MintClaudeSessionID — fresh UUIDv7 or resume reuse (CHB-008/009).
-//   - DeriveCIaudeTranscriptPath — session log path (CHB-018 step 2).
+//   - DeriveClaudeTranscriptPath — session log path (CHB-018 step 2).
 //   - MaterializeClaudeSettings — atomic hook-bridge settings write (CHB-001..005).
 //   - CheckSettingsLocalJSON — fail-fast if settings.local.json shadows hooks (CHB-024).
 //   - ClaudeEnvVars — CHB-006 env-var set.
@@ -237,7 +237,7 @@ type claudeRunArtifacts struct {
 // .kerf/projects/gregberns-harmonik/bridge-integration/04-research/component-3-4/design.md §1:
 //
 //  1. MintClaudeSessionID — mint fresh or reuse (CHB-008/009).
-//  2. DeriveCIaudeTranscriptPath — session log location for CHB-018 step 2.
+//  2. DeriveClaudeTranscriptPath — session log location for CHB-018 step 2.
 //  3. MaterializeClaudeSettings — atomic hook-bridge settings file (CHB-001..005).
 //     3a. EnsureWorktreeTrust — pre-seed ~/.claude.json trust entry (CHB-029/WM-040b).
 //     3b. WriteAgentTask — atomic agent-task.md write (CHB-028).
@@ -264,7 +264,11 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	}
 
 	// Step 2 — Derive Claude transcript path (CHB-018 step 2).
-	sessionLogPath := handler.DeriveCIaudeTranscriptPath(rc.workspacePath, mintRes.ClaudeSessionID)
+	sessionLogPath, err := handler.DeriveClaudeTranscriptPath(rc.workspacePath, mintRes.ClaudeSessionID)
+	if err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: DeriveClaudeTranscriptPath: %w", err)
+	}
 
 	// Step 3 — Materialize .claude/settings.json in the worktree (CHB-001..005).
 	// For a LOCAL run (rc.runner == nil) this is the byte-identical box-A-local

@@ -152,6 +152,48 @@ func TestBI010c_AgentContextDotLabelRejected(t *testing.T) {
 	}
 }
 
+// TestBI010c_AgentContextJoinedFlagFormRejected verifies that the joined
+// "--label=workflow:<mode>" argv form is caught. The raw token has the prefix
+// "--label=", not "workflow:", so a naive raw-token prefix check would let the
+// forbidden mutation through (H12 / BI-INV-001). The guard must normalize the
+// flag=value token and match the label VALUE.
+//
+// Spec ref: specs/beads-integration.md §4.3 BI-010c.
+func TestBI010c_AgentContextJoinedFlagFormRejected(t *testing.T) {
+	t.Parallel()
+
+	joinedForms := [][]string{
+		{"update", "hk-7om2q.13", "--label=workflow:dot"},
+		{"update", "hk-7om2q.13", "--label=workflow:single"},
+		{"update", "hk-7om2q.13", "--label=workflow:review-loop"},
+		// short-flag joined form
+		{"update", "hk-7om2q.13", "-l=workflow:dot"},
+	}
+	for _, args := range joinedForms {
+		err := brcli.CheckWorkflowLabelWrite(brcli.CallerKindAgent, args)
+		if err == nil {
+			t.Fatalf("BI-010c: expected ErrWorkflowLabelWriteForbidden for joined form %v, got nil", args)
+		}
+		if !errors.Is(err, brcli.ErrWorkflowLabelWriteForbidden) {
+			t.Errorf("BI-010c: joined form %v: got %v; want ErrWorkflowLabelWriteForbidden", args, err)
+		}
+	}
+}
+
+// TestBI010c_AgentContextJoinedNonLabelFlagPermitted verifies that a joined
+// flag whose value is NOT a workflow label does not trip the guard — the
+// normalization matches the value, not merely the presence of "=".
+//
+// Spec ref: specs/beads-integration.md §4.3 BI-010c.
+func TestBI010c_AgentContextJoinedNonLabelFlagPermitted(t *testing.T) {
+	t.Parallel()
+
+	err := brcli.CheckWorkflowLabelWrite(brcli.CallerKindAgent, []string{"update", "hk-7om2q.13", "--label=area:core"})
+	if err != nil {
+		t.Errorf("BI-010c: expected nil for joined non-workflow label, got %v", err)
+	}
+}
+
 // ─── Daemon-context bypass tests ──────────────────────────────────────────────
 
 // TestBI010c_DaemonContextSingleLabelPermitted verifies that a daemon-context

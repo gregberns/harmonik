@@ -53,8 +53,8 @@ func TestL0_Wire_GoldenClientRequest(t *testing.T) {
 	if frame.Method != "initialize" {
 		t.Errorf("Method: got %q, want %q", frame.Method, "initialize")
 	}
-	if frame.ID != 1 {
-		t.Errorf("ID: got %d, want 1", frame.ID)
+	if string(frame.ID) != "1" {
+		t.Errorf("ID: got %s, want 1", frame.ID)
 	}
 	if frame.Params == nil {
 		t.Fatal("Params: got nil, want non-nil")
@@ -92,8 +92,8 @@ func TestL0_Wire_GoldenServerResponse(t *testing.T) {
 	if frame.Kind != codexwire.FrameKindServerResponse {
 		t.Errorf("Kind: got %v, want FrameKindServerResponse", frame.Kind)
 	}
-	if frame.ID != 1 {
-		t.Errorf("ID: got %d, want 1", frame.ID)
+	if string(frame.ID) != "1" {
+		t.Errorf("ID: got %s, want 1", frame.ID)
 	}
 }
 

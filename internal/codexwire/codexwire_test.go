@@ -48,7 +48,7 @@ func TestCorpusRoundTrip(t *testing.T) {
 	defer f.Close()
 
 	// Track client requests by id so we can resolve response results.
-	requestsByID := map[int64]string{} // id → method
+	requestsByID := map[string]string{} // id (raw JSON) → method
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
@@ -75,20 +75,21 @@ func TestCorpusRoundTrip(t *testing.T) {
 
 		// For response frames, resolve the result type using the tracked request id.
 		if frame.Kind == codexwire.FrameKindServerResponse {
-			if method, ok := requestsByID[frame.ID]; ok {
+			id := string(frame.ID)
+			if method, ok := requestsByID[id]; ok {
 				if err := codexwire.ResolveResponseResult(&frame, method); err != nil {
-					t.Errorf("line %d: ResolveResponseResult (id=%d method=%q): %v",
-						lineNum, frame.ID, method, err)
+					t.Errorf("line %d: ResolveResponseResult (id=%s method=%q): %v",
+						lineNum, id, method, err)
 				}
 			} else {
-				t.Errorf("line %d: server response for id=%d has no tracked client request",
-					lineNum, frame.ID)
+				t.Errorf("line %d: server response for id=%s has no tracked client request",
+					lineNum, id)
 			}
 		}
 
 		// Track client requests for response correlation.
 		if frame.Kind == codexwire.FrameKindClientRequest {
-			requestsByID[frame.ID] = frame.Method
+			requestsByID[string(frame.ID)] = frame.Method
 		}
 
 		// Gate 2: ZERO unmodeled fields.
@@ -127,6 +128,40 @@ func TestMethodRegistry(t *testing.T) {
 	t.Logf("registered methods: %d", len(methods))
 	for _, m := range methods {
 		t.Logf("  %s", m)
+	}
+}
+
+// TestStringAndVariantIDRoundTrip guards the JSON-RPC 2.0 rule that an id may
+// be a string, a number, or null (not only an integer). A non-integer id must
+// parse cleanly and round-trip byte-for-byte, rather than failing the envelope
+// decode and tearing the session down (H11).
+func TestStringAndVariantIDRoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"string id request", `{"jsonrpc":"2.0","id":"abc-123","method":"initialize","params":{"clientInfo":{"name":"x","title":"y","version":"1"},"capabilities":null}}`},
+		{"string id response", `{"id":"abc-123","result":{"userAgent":"ua","codexHome":"h","platformFamily":"f","platformOs":"o"}}`},
+		{"integer id request", `{"jsonrpc":"2.0","id":7,"method":"initialize","params":{"clientInfo":{"name":"x","title":"y","version":"1"},"capabilities":null}}`},
+		{"large integer id response", `{"id":9007199254740993,"result":{"userAgent":"ua","codexHome":"h","platformFamily":"f","platformOs":"o"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frame, err := codexwire.Parse([]byte(tc.line))
+			if err != nil {
+				t.Fatalf("Parse returned error for %s: %v", tc.name, err)
+			}
+			if frame.Kind == codexwire.FrameKindRaw {
+				t.Fatalf("%s parsed to FrameKindRaw; envelope decode failed", tc.name)
+			}
+			out, err := codexwire.Marshal(frame)
+			if err != nil {
+				t.Fatalf("Marshal returned error for %s: %v", tc.name, err)
+			}
+			if err := assertSemanticEqual(t, 0, []byte(tc.line), out); err != nil {
+				t.Fatalf("%s did not round-trip: %v\n  in:  %s\n  out: %s", tc.name, err, tc.line, out)
+			}
+		})
 	}
 }
 

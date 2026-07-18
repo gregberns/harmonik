@@ -51,8 +51,13 @@ type Frame struct {
 
 	// Envelope fields (all may be zero for their type when not present on wire).
 	JSONRPC string
-	ID      int64  // 0 when absent
-	Method  string // "" for server responses
+	// ID is the JSON-RPC 2.0 request/response id, preserved verbatim as raw
+	// JSON. Per JSON-RPC 2.0 the id may be a string, a number, or null, so it
+	// is kept as json.RawMessage rather than a fixed Go scalar — a string id
+	// from a codex/peer must round-trip without tearing down the session.
+	// nil (zero length) when absent from the wire.
+	ID     json.RawMessage
+	Method string // "" for server responses
 
 	// Typed payload — only one is non-nil.
 	Params any             // client request/notification or server notification params
@@ -168,7 +173,7 @@ var methodRegistry = map[string]methodEntry{
 // Every field is optional at the envelope level; absent fields are zero.
 type rawLine struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      *int64          `json:"id"` // pointer to distinguish absent (nil) from 0
+	ID      json.RawMessage `json:"id"` // raw so a string, number, or null id round-trips verbatim
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
 	Result  json.RawMessage `json:"result"`
@@ -190,7 +195,7 @@ func Parse(line []byte) (Frame, error) {
 		return Frame{}, fmt.Errorf("codexwire: decode envelope: %w", err)
 	}
 
-	hasID := env.ID != nil
+	hasID := len(env.ID) > 0 && string(env.ID) != "null"
 	hasMethod := env.Method != ""
 	hasResult := len(env.Result) > 0 && string(env.Result) != "null"
 	hasError := len(env.Error) > 0 && string(env.Error) != "null"
@@ -204,7 +209,7 @@ func Parse(line []byte) (Frame, error) {
 		Error:     env.Error,
 	}
 	if hasID {
-		f.ID = *env.ID
+		f.ID = env.ID
 	}
 
 	switch {
@@ -338,8 +343,7 @@ func marshalClientRequest(f Frame) ([]byte, error) {
 		b, _ := json.Marshal(f.JSONRPC)
 		m["jsonrpc"] = b
 	}
-	idB, _ := json.Marshal(f.ID)
-	m["id"] = idB
+	m["id"] = idRawOrNull(f.ID)
 	methodB, _ := json.Marshal(f.Method)
 	m["method"] = methodB
 	if len(params) > 0 {
@@ -368,8 +372,7 @@ func marshalClientNotification(f Frame) ([]byte, error) {
 
 func marshalServerResponse(f Frame) ([]byte, error) {
 	m := map[string]json.RawMessage{}
-	idB, _ := json.Marshal(f.ID)
-	m["id"] = idB
+	m["id"] = idRawOrNull(f.ID)
 	if f.Result != nil {
 		rb, err := json.Marshal(f.Result)
 		if err != nil {
@@ -397,6 +400,16 @@ func marshalServerNotification(f Frame) ([]byte, error) {
 		m["params"] = params
 	}
 	return json.Marshal(m)
+}
+
+// idRawOrNull returns the verbatim JSON-RPC id bytes, or the JSON literal null
+// when the id is absent. The id is emitted as raw so a string or numeric id
+// round-trips byte-for-byte.
+func idRawOrNull(id json.RawMessage) json.RawMessage {
+	if len(id) == 0 {
+		return json.RawMessage("null")
+	}
+	return id
 }
 
 // marshalPayload serializes a typed params struct back to JSON, merging Extra.

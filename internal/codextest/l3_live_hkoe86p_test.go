@@ -125,8 +125,8 @@ func TestL3_HappyPathLive(t *testing.T) {
 				t.Logf("parse error (continuing): %v (raw: %q)", parseErr, line)
 				continue
 			}
-			t.Logf("frame: kind=%v method=%q id=%d", frame.Kind, frame.Method, frame.ID)
-			if want == "initialize_result" && frame.Kind == codexwire.FrameKindServerResponse && frame.ID == 1 {
+			t.Logf("frame: kind=%v method=%q id=%s", frame.Kind, frame.Method, frame.ID)
+			if want == "initialize_result" && frame.Kind == codexwire.FrameKindServerResponse && string(frame.ID) == "1" {
 				return frame, nil
 			}
 			if frame.Method == want {
@@ -251,7 +251,7 @@ func TestL3_ProtocolVersionCanary(t *testing.T) {
 		if parseErr != nil {
 			continue
 		}
-		if frame.Kind == codexwire.FrameKindServerResponse && frame.ID == 1 {
+		if frame.Kind == codexwire.FrameKindServerResponse && string(frame.ID) == "1" {
 			// Verify userAgent field present and non-empty via raw result.
 			var result map[string]any
 			if frame.RawResult != nil {

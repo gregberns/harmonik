@@ -21,6 +21,31 @@ import (
 type RawEvent struct {
 	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
+
+	// RunID is the run-scoped identifier from the event envelope (EV-001;
+	// EM-013), decoded so the post-suite leak sensor (SH-INV-002) can learn
+	// which run_ids were actually executed. Nil for non-run-scoped events.
+	RunID *core.RunID `json:"run_id,omitempty"`
+}
+
+// RunIDsFromEvents returns the distinct run_ids observed across events, in
+// first-seen order. It feeds CheckPostSuiteLeaks the ExecutedRunIDs set
+// (SH-INV-002) from a scenario's captured event log.
+func RunIDsFromEvents(events []RawEvent) []core.RunID {
+	seen := make(map[string]bool, len(events))
+	var out []core.RunID
+	for _, ev := range events {
+		if ev.RunID == nil {
+			continue
+		}
+		key := ev.RunID.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, *ev.RunID)
+	}
+	return out
 }
 
 // ReadEventLog reads the JSONL event log at logPath per SH-020 / SH-024.

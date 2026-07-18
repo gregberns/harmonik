@@ -129,14 +129,12 @@ package daemon
 // Beads: hk-bfvk7, hk-rcp7, hk-lhu2, hk-exg3, hk-9kgf, hk-bi4bg.
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
+	"reflect"
 	"strings"
 	"time"
 
@@ -369,14 +367,13 @@ type rawKeeperWarnMessages struct {
 //     loudly (time.ParseDuration rejects it) — never silently coerce a number
 //     to seconds/nanoseconds.
 //
-// # Absent-file fast path (hk-exg3)
+// # Absent-file fast path
 //
-// The empty-file sentinel in parseProjectConfig uses keeperBlockAbsent, an
-// explicit field-by-field zero check, NOT `raw.Keeper == (rawKeeperConfig{})`.
-// This is deliberate: the moment any forthcoming keeper config bead adds a
-// slice / map / nested-non-comparable sub-struct field, the `==` form stops
-// compiling. keeperBlockAbsent keeps the absent-file fast path compiling and
-// MUST be extended field-by-field whenever a field is added here.
+// The empty-file sentinel in parseProjectConfig no longer field-lists each block:
+// it compares the whole parsed rawProjectConfig against its zero value via
+// reflect.DeepEqual (RU-06), so ANY set keeper field — present or future —
+// defeats the sentinel with no per-field maintenance. keeperBlockAbsent survives
+// only as a test helper (hk-exg3 field-coverage assertion), not on the load path.
 type rawKeeperConfig struct {
 	ContextThresholds rawKeeperContextThresholds `yaml:"context_thresholds"`
 	HardCeiling       rawKeeperHardCeiling       `yaml:"hard_ceiling"`
@@ -1127,22 +1124,6 @@ type StallSentinelConfig struct {
 	LaneNoprogressStall time.Duration
 }
 
-// stallSentinelBlockAbsent reports whether the stall_sentinel: block is absent
-// (all fields at their zero values). Used by the empty-file fast path.
-// Field-by-field check avoids the struct-equality footgun (comparable constraint).
-// INVARIANT: extend whenever rawStallSentinelConfig gains a new field.
-func stallSentinelBlockAbsent(raw rawStallSentinelConfig) bool {
-	e := raw.Escalation
-	d := raw.Detection
-	return e.Tier1Crew == "" &&
-		e.Tier2Captain == "" &&
-		e.Tier3Operator == "" &&
-		d.RunSilenceStall == "" &&
-		d.ReviewFinalizeStall == "" &&
-		d.RunMaxAge == "" &&
-		d.LaneNoprogressStall == ""
-}
-
 // rawProjectConfig is the top-level YAML shape for .harmonik/config.yaml.
 type rawProjectConfig struct {
 	SchemaVersion int                       `yaml:"schema_version"`
@@ -1273,27 +1254,26 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		return ProjectConfig{}, &ErrMalformedConfigYAML{Path: path, Cause: err}
 	}
 
-	// Empty-file sentinel: schema_version 0 + no agents + no daemon block + no keeper block
-	// + no watchdog block → absent semantics. A file with only a daemon: or keeper: block
-	// but no schema_version: 1 falls through to the version check below and returns
+	// Empty-file sentinel: a config whose EVERY field is at its zero value carries
+	// no operator intent → absent semantics (zero-value ProjectConfig, nil error).
+	// A file with only a daemon: or keeper: block but no schema_version: 1 is NOT
+	// all-zero, so it falls through to the version check below and returns
 	// ErrUnsupportedConfigVersion (fail-fast).
-	daemonAbsent := raw.Daemon.WorkflowMode == "" && raw.Daemon.MaxConcurrent == 0 &&
-		raw.Daemon.TargetBranch == "" && len(raw.Daemon.AllowedRepos) == 0 &&
-		raw.Daemon.RemoteControlPrefix == "" &&
-		raw.Daemon.RestartBackoff.Base == "" &&
-		raw.Daemon.RestartBackoff.Cap == "" &&
-		raw.Daemon.RestartBackoff.Window == ""
-	watchdogAbsent := raw.Watchdog.Enabled == nil
-	watchBlockAbsent := raw.Watch.StatusTarget == "" && raw.Watch.OpsmonitorTarget == ""
-	opsmonitorAbsent := raw.Opsmonitor.Interval == "" && raw.Opsmonitor.ScriptPath == ""
-	superviseAbsent := superviseBlockAbsent(raw.Supervise)
-	harnessesAbsent := raw.Harnesses.Pi.Provider == "" && raw.Harnesses.Pi.Model == "" &&
-		raw.Harnesses.Pi.APIKeyEnv == "" &&
-		raw.Harnesses.Pi.Fallback == (rawHarnessesPiFallbackConfig{})
-	if raw.SchemaVersion == 0 && len(raw.Agents) == 0 &&
-		daemonAbsent && keeperBlockAbsent(raw.Keeper) && watchdogAbsent && watchBlockAbsent &&
-		opsmonitorAbsent && superviseAbsent && harnessesAbsent && sandboxBlockAbsent(raw.Sandbox) &&
-		stallSentinelBlockAbsent(raw.StallSentinel) {
+	//
+	// Detected STRUCTURALLY via reflect.DeepEqual against a zero rawProjectConfig so
+	// that ANY meaningful field — in ANY block — defeats the sentinel. This replaced
+	// a hand-maintained per-block field list that silently drifted (RU-06): a config
+	// with only watch.absent_thresh_s (and no schema_version) was wrongly treated as
+	// empty and discarded, booting the daemon on defaults with the tuning lost. The
+	// structural check cannot drift when a field is added to any block.
+	//
+	// A non-nil-but-empty agents map (`agents: {}`) is normalized to nil first so it
+	// still reads as absent, matching the prior len(raw.Agents)==0 semantics.
+	sentinel := raw
+	if len(sentinel.Agents) == 0 {
+		sentinel.Agents = nil
+	}
+	if reflect.DeepEqual(sentinel, rawProjectConfig{}) {
 		return ProjectConfig{}, nil
 	}
 
@@ -1458,46 +1438,27 @@ type keeperNodeEnvelope struct {
 	Keeper yaml.Node `yaml:"keeper"`
 }
 
-// keeperTypeToPrefix maps each keeper sub-struct's Go type name (as it appears
-// in yaml.v3's KnownFields(true) error message) to its dotted key-path prefix
-// rooted at keeper. Used to render a precise KeyPath in *ErrUnknownConfigKey.
+// strictDecodeKeeperBlock rejects any unknown key anywhere under the keeper:
+// block (the block itself or any sub-block) rather than silently ignoring it
+// (operator decision, hk-9f3f).
 //
-// Bead ref: hk-9f3f.
-var keeperTypeToPrefix = map[string]string{
-	"rawKeeperConfig":            "keeper",
-	"rawKeeperContextThresholds": "keeper.context_thresholds",
-	"rawKeeperHardCeiling":       "keeper.hard_ceiling",
-	"rawKeeperTimings":           "keeper.timings",
-	"rawKeeperCadence":           "keeper.cadence",
-	"rawKeeperBudgets":           "keeper.budgets",
-	"rawKeeperSelfService":       "keeper.self_service",
-	"rawKeeperWarnMessages":      "keeper.warn_messages",
-}
-
-// keeperUnknownFieldRe extracts the field name and owning Go type from a single
-// yaml.v3 KnownFields(true) error line, e.g.:
+// SCOPE: it validates ONLY the keeper: sub-node, so the daemon:, agents:, and
+// schema_version: top-level keys are NEVER subjected to the strict check — the
+// daemon block keeps its PL-004b unknown-key tolerance.
 //
-//	line 6: field warn_abs_token not found in type daemon.rawKeeperContextThresholds
-var keeperUnknownFieldRe = regexp.MustCompile(`field (\S+) not found in type (?:[\w.]+\.)?(\w+)`)
-
-// strictDecodeKeeperBlock re-decodes ONLY the keeper: sub-node of the config
-// YAML with yaml.v3 KnownFields(true) so that an unknown key anywhere under
-// keeper: (the block itself or any sub-block) is REJECTED rather than silently
-// ignored (operator decision, hk-9f3f).
-//
-// SCOPE: it decodes a strictKeeperEnvelope (only a keeper field), so the
-// daemon:, agents:, and schema_version: top-level keys are NEVER subjected to
-// the strict check — the daemon block keeps its PL-004b unknown-key tolerance.
+// DETECTION IS STRUCTURAL (RU-06): it walks the captured keeper yaml.Node and
+// compares each mapping key against the known yaml tags of the corresponding Go
+// struct (derived via reflection), recursing into sub-block mappings. It does
+// NOT parse yaml.v3's KnownFields(true) error text — a yaml.v3 upgrade that
+// reworded that message cannot silently degrade the precise *ErrUnknownConfigKey
+// to a generic error.
 //
 // On an unknown key it returns *ErrUnknownConfigKey whose KeyPath names the
 // offending key rooted at keeper (e.g. keeper.context_thresholds.warn_abs_token).
-// A malformed-YAML error from the strict decoder that is NOT an unknown-field
-// error is surfaced as *ErrMalformedConfigYAML (defensive; the tolerant decode
-// in parseProjectConfig already caught structural errors upstream).
 func strictDecodeKeeperBlock(path string, data []byte) error {
-	// 1. Tolerantly capture ONLY the keeper sub-node, ignoring sibling top-level
-	//    keys (schema_version, agents, daemon). No KnownFields here — top-level
-	//    tolerance must be preserved.
+	// Tolerantly capture ONLY the keeper sub-node, ignoring sibling top-level
+	// keys (schema_version, agents, daemon). No KnownFields here — top-level
+	// tolerance must be preserved.
 	var env keeperNodeEnvelope
 	if err := yaml.Unmarshal(data, &env); err != nil {
 		// Structural error — already surfaced upstream as malformed; be defensive.
@@ -1508,42 +1469,76 @@ func strictDecodeKeeperBlock(path string, data []byte) error {
 		return nil
 	}
 
-	// 2. Re-marshal the isolated keeper node and strict-decode it. KnownFields(true)
-	//    now applies ONLY to the keeper sub-tree, so an unknown key under keeper:
-	//    or any of its sub-blocks is rejected — while the daemon: block (decoded
-	//    separately and tolerantly in parseProjectConfig) is untouched.
-	keeperBytes, err := yaml.Marshal(&env.Keeper)
-	if err != nil {
-		return &ErrMalformedConfigYAML{Path: path, Cause: err}
-	}
-	var probe rawKeeperConfig
-	dec := yaml.NewDecoder(bytes.NewReader(keeperBytes))
-	dec.KnownFields(true)
-	err = dec.Decode(&probe)
-	if err == nil || errors.Is(err, io.EOF) {
-		return nil
-	}
-
-	// yaml.v3 reports unknown fields as a TypeError whose message lists one line
-	// per offending field: "field <name> not found in type <pkg>.<Type>".
-	msg := err.Error()
-	if m := keeperUnknownFieldRe.FindStringSubmatch(msg); m != nil {
-		field, typeName := m[1], m[2]
-		prefix, ok := keeperTypeToPrefix[typeName]
-		if !ok {
-			// Unknown owning type (should not happen for a keeper sub-node) —
-			// fall back to a keeper-rooted path so the operator still sees the key.
-			prefix = "keeper"
-		}
+	if keyPath, ok := unknownYAMLKey(&env.Keeper, reflect.TypeOf(rawKeeperConfig{}), "keeper"); !ok {
 		return &ErrUnknownConfigKey{
 			Path:    path,
-			KeyPath: prefix + "." + field,
-			Cause:   err,
+			KeyPath: keyPath,
+			Cause:   fmt.Errorf("unknown config key %q", keyPath),
 		}
 	}
+	return nil
+}
 
-	// Not an unknown-field error: surface as malformed (defensive).
-	return &ErrMalformedConfigYAML{Path: path, Cause: err}
+// unknownYAMLKey structurally validates a YAML mapping node against a Go struct
+// type: every mapping key must correspond to a struct field's yaml tag. It
+// recurses into sub-block mappings (struct-typed fields). On the first offending
+// key it returns (dotted-key-path, false); when every key is known it returns
+// ("", true).
+//
+// It underpins the structural unknown-key rejection for the keeper: block
+// (RU-06) so detection does not depend on yaml.v3's internal error text.
+func unknownYAMLKey(node *yaml.Node, typ reflect.Type, prefix string) (string, bool) {
+	// Unwrap a document node to its single content child.
+	if node.Kind == yaml.DocumentNode && len(node.Content) == 1 {
+		node = node.Content[0]
+	}
+	// Only mapping nodes carry keys; anything else (scalar/seq/null/alias) has no
+	// keys to validate against this struct.
+	if node.Kind != yaml.MappingNode {
+		return "", true
+	}
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() != reflect.Struct {
+		return "", true
+	}
+
+	// Build tag -> field type map for this struct.
+	known := make(map[string]reflect.Type, typ.NumField())
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		tag := f.Tag.Get("yaml")
+		if idx := strings.IndexByte(tag, ','); idx >= 0 {
+			tag = tag[:idx]
+		}
+		if tag == "" || tag == "-" {
+			continue
+		}
+		known[tag] = f.Type
+	}
+
+	// Mapping content is [key0, val0, key1, val1, ...].
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		keyNode, valNode := node.Content[i], node.Content[i+1]
+		key := keyNode.Value
+		fieldType, ok := known[key]
+		if !ok {
+			return prefix + "." + key, false
+		}
+		// Recurse into struct-typed sub-blocks (deref pointers) when the value is
+		// itself a mapping, so nested unknown keys are caught too.
+		ft := fieldType
+		for ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		if ft.Kind() == reflect.Struct && valNode.Kind == yaml.MappingNode {
+			if kp, ok := unknownYAMLKey(valNode, ft, prefix+"."+key); !ok {
+				return kp, false
+			}
+		}
+	}
+	return "", true
 }
 
 // parseDurationField parses a Go duration STRING into a time.Duration.
@@ -1789,20 +1784,6 @@ func parseWatchdogBlock(raw rawWatchdogConfig) WatchdogConfig {
 		return WatchdogConfig{Enabled: true}
 	}
 	return WatchdogConfig{Enabled: *raw.Enabled}
-}
-
-func superviseBlockAbsent(raw rawSuperviseConfig) bool {
-	return raw.HeartbeatTTL == "" &&
-		raw.StartTimeout == "" &&
-		raw.CrashLoopWindow == "" &&
-		raw.HealthProbeInterval == "" &&
-		raw.StopTimeout == "" &&
-		raw.RestartBackoff.Base == "" &&
-		raw.RestartBackoff.Cap == "" &&
-		raw.DaemonWatchdog.CheckInterval == "" &&
-		raw.DaemonWatchdog.DialTimeout == "" &&
-		raw.DaemonWatchdog.ReviveBackoff == "" &&
-		raw.DaemonWatchdog.ReviveWindow == ""
 }
 
 func parseSuperviseBlock(path string, raw rawSuperviseConfig) (SuperviseConfig, error) {

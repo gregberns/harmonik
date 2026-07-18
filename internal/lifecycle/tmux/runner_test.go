@@ -230,3 +230,36 @@ func TestOSAdapter_DefaultRunnerIsLocalRunner(t *testing.T) {
 		t.Errorf("OSAdapter zero-value ProbeTmux: unexpected error: %v", err)
 	}
 }
+
+// TestIsSSHConnectionFailure_WrappedErrTmuxFailure covers hk-cjqyn: an SSH
+// transport drop can surface as *ErrTmuxFailure{ExitCode:255} (when a tmux
+// OSAdapter command runs over the SSHRunner and captures the ssh exit code)
+// rather than a bare *exec.ExitError. ErrTmuxFailure does not unwrap to the
+// underlying exec.ExitError, so IsSSHConnectionFailure must recognise both
+// shapes.
+func TestIsSSHConnectionFailure_WrappedErrTmuxFailure(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"tmux failure 255 (ssh drop)", &ErrTmuxFailure{Op: "display-message", ExitCode: 255, Stderr: "ssh: connect ... Connection refused"}, true},
+		{"tmux failure 1 (real tmux error)", &ErrTmuxFailure{Op: "display-message", ExitCode: 1, Stderr: "can't find window"}, false},
+		{"unrelated error", errTest255{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsSSHConnectionFailure(tc.err); got != tc.want {
+				t.Errorf("IsSSHConnectionFailure(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// errTest255 is a plain error whose message mentions 255 but is neither an
+// *exec.ExitError nor an *ErrTmuxFailure — proves the check is type-based, not
+// string-based.
+type errTest255 struct{}
+
+func (errTest255) Error() string { return "exit status 255" }

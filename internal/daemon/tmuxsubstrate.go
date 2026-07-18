@@ -2700,6 +2700,23 @@ func (s *tmuxSubstrateSession) runWait(ctx context.Context) {
 				// hk-kuxxl: use the slash-free pidTarget for the same reason.
 				_, err := s.adapter.WindowPanePID(ctx, s.panePIDTarget())
 				if err != nil {
+					// hk-cjqyn: distinguish an SSH transport drop from a genuine
+					// pane-gone. For a REMOTE session this poll runs over the SSH
+					// runner; if the tunnel blips (sshd restart, network drop) ssh
+					// exits 255 and WindowPanePID errors — but claude is still
+					// running on the worker. Latching exitCodeClean here would drive
+					// workloop's close-on-exit-0 fallback (socketOutcome==nil &&
+					// exitCode==exitCodeClean) to auto-close incomplete work as a
+					// false green (G8/H4/H5). Report exitCodeUnknown ("unverified")
+					// so the crashed/incomplete branch handles it instead, matching
+					// the ctx-cancel sibling above.
+					if tmux.IsSSHConnectionFailure(err) {
+						s.outcome = handler.Outcome{
+							ExitCode: exitCodeUnknown,
+							Duration: time.Since(startedAt),
+						}
+						return
+					}
 					// Window or session gone (the worker pane closed when claude
 					// exited) — treat as process exited.
 					s.outcome = handler.Outcome{

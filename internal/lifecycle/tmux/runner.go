@@ -124,14 +124,24 @@ func (s SSHRunner) Command(ctx context.Context, name string, args ...string) *ex
 // SSH exits with code 255 on connection errors (refused, timeout, host-key
 // mismatch) to distinguish transport failures from remote-command exit codes.
 //
+// The failure surfaces in two shapes depending on the call path: a bare
+// *exec.ExitError (255) when the caller inspects the ssh process directly, or a
+// wrapped *ErrTmuxFailure{ExitCode:255} when a tmux OSAdapter command runs over
+// the SSHRunner and captures the ssh exit code (ErrTmuxFailure does not unwrap
+// to the underlying exec.ExitError, so both forms must be checked — hk-cjqyn).
+//
 // Bead: hk-rs-b11-offline-dh57.
 func IsSSHConnectionFailure(err error) bool {
 	if err == nil {
 		return false
 	}
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode() == 255
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 255 {
+		return true
+	}
+	var tmuxErr *ErrTmuxFailure
+	if errors.As(err, &tmuxErr) && tmuxErr.ExitCode == 255 {
+		return true
 	}
 	return false
 }

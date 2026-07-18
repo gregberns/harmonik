@@ -81,10 +81,10 @@ func (nullJSONLWriter) Append(_ []byte, _ bool) error { return nil }
 //
 // inflight is the process-level in-flight counter: it tracks ALL in-flight
 // async/observer goroutines and is used by the existing [EventBus.Drain]
-// method to wait for global quiescence. runDrainersMu guards runDrainers, a
-// per-run WaitGroup map keyed by run_id string. EmitWithRunID counts each
-// dispatched goroutine in both inflight (global) and the run-specific
-// WaitGroup so that [busImpl.DrainRun] can wait for a single run's consumers
+// method to wait for global quiescence. runDrainersMu guards runInflight, a
+// per-run in-flight counter map keyed by run_id string. EmitWithRunID counts
+// each dispatched goroutine in both inflight (global) and the run-specific
+// counter so that [busImpl.DrainRun] can wait for a single run's consumers
 // without blocking on other runs. Plain Emit (no run_id) only touches
 // inflight; DrainRun does not wait for those.
 //
@@ -101,22 +101,26 @@ type busImpl struct {
 	// inflight counts ALL in-flight async/observer goroutines (global
 	// quiescence). Guarded by drainMu; Drain(ctx) waits for it to reach 0 via
 	// drainCond. EmitWithRunID also increments the per-run entry in
-	// runDrainers so DrainRun can wait for just one run (hk-fx6zl).
+	// runInflight so DrainRun can wait for just one run (hk-fx6zl).
 	inflight int
-	// runDrainersMu guards runDrainers.
+	// runDrainersMu guards runInflight and runDrainCond.
 	runDrainersMu sync.Mutex
-	// runDrainers maps run_id → WaitGroup tracking only that run's in-flight
-	// goroutines. Entries are created lazily on first EmitWithRunID for a run
-	// and are never removed (they become no-ops once the run drains).
-	runDrainers map[string]*sync.WaitGroup
-	// runSealed marks run_ids whose DrainRun has begun. Once sealed,
-	// EmitWithRunID stops per-run WaitGroup tracking for that run so a late
-	// emit from a lingering per-run goroutine cannot call runWG.Add
-	// concurrently with DrainRun's runWG.Wait — the Go WaitGroup contract
-	// violation that aborts the whole process ("fatal error: sync: WaitGroup
-	// misuse: Add called concurrently with Wait"). Guarded by runDrainersMu;
-	// lazily initialised so the five constructors need no change.
-	runSealed map[string]bool
+	// runInflight maps run_id → count of that run's in-flight async/observer
+	// goroutines. addRunDrainer increments the entry under runDrainersMu and
+	// the dispatch goroutine decrements it via doneRunDrainer on exit,
+	// broadcasting runDrainCond and deleting the entry when the count reaches
+	// 0. Because DrainRun waits on runDrainCond in a `for runInflight[id] > 0`
+	// loop rather than on a per-run WaitGroup, a re-entrant EmitWithRunID from
+	// a still-in-flight handler during that run's DrainRun (a run-scoped
+	// cascade) bumps the counter and DrainRun keeps waiting — the run's
+	// cascade tail is fully delivered (hk-4hctu). There is no per-run
+	// WaitGroup, so the H7 crash ("sync: WaitGroup misuse: Add called
+	// concurrently with Wait") is structurally impossible; no seal is needed.
+	runInflight map[string]int
+	// runDrainCond is the shared condition variable DrainRun waits on; a
+	// broadcast wakes every DrainRun waiter, each of which re-checks its own
+	// run's counter. Lazily initialised under runDrainersMu (runDrainCondLocked).
+	runDrainCond *sync.Cond
 
 	// drainMu guards inflight and drainCond. Every Emit* dispatch increments
 	// inflight under drainMu (addGlobalDrainer) and the goroutine decrements
@@ -233,7 +237,7 @@ func NewBusImpl() EventBus {
 		jsonlWriter:    nullJSONLWriter{},
 		deadLetterSink: core.NoopDeadLetterSink{},
 		idGen:          core.NewEventIDGenerator(),
-		runDrainers:    make(map[string]*sync.WaitGroup),
+		runInflight:    make(map[string]int),
 	}
 }
 
@@ -257,7 +261,7 @@ func NewBusImplWithRegistry(registry *core.RedactionRegistry) EventBus {
 		jsonlWriter:    nullJSONLWriter{},
 		deadLetterSink: core.NoopDeadLetterSink{},
 		idGen:          core.NewEventIDGenerator(),
-		runDrainers:    make(map[string]*sync.WaitGroup),
+		runInflight:    make(map[string]int),
 	}
 }
 
@@ -293,7 +297,7 @@ func NewBusImplWithWriter(registry *core.RedactionRegistry, writer *JSONLWriter)
 		jsonlWriter:    w,
 		deadLetterSink: core.NoopDeadLetterSink{},
 		idGen:          core.NewEventIDGenerator(),
-		runDrainers:    make(map[string]*sync.WaitGroup),
+		runInflight:    make(map[string]int),
 	}
 }
 
@@ -334,7 +338,7 @@ func NewBusImplWithSink(registry *core.RedactionRegistry, writer *JSONLWriter, s
 		jsonlWriter:    w,
 		deadLetterSink: sink,
 		idGen:          core.NewEventIDGenerator(),
-		runDrainers:    make(map[string]*sync.WaitGroup),
+		runInflight:    make(map[string]int),
 	}
 }
 
@@ -379,7 +383,7 @@ func NewBusImplWithWriterAndHWM(
 		idGen:          gen,
 		hwmPath:        hwmPath,
 		jsonlPath:      jsonlPath,
-		runDrainers:    make(map[string]*sync.WaitGroup),
+		runInflight:    make(map[string]int),
 	}
 }
 
@@ -632,21 +636,20 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 		default:
 			// Asynchronous and observer consumers for a run-scoped event are
 			// tracked in BOTH the global inflight counter (for Drain/global
-			// quiescence) and the per-run WaitGroup (for DrainRun/per-run fair
-			// termination). Bead: hk-fx6zl.
+			// quiescence) and the per-run counter (for DrainRun/per-run fair
+			// termination). Bead: hk-fx6zl, hk-4hctu.
 			sub := sub // capture loop variable
-			// addRunDrainer does runWG.Add(1) while holding runDrainersMu, so it
-			// cannot race a DrainRun that has already sealed this run; it returns
-			// nil when the run is sealed (teardown in progress), in which case we
-			// skip per-run tracking (the global inflight counter still accounts
-			// for the goroutine).
-			runWG := b.addRunDrainer(evt.RunID.String())
+			// addRunDrainer increments the run's in-flight counter under
+			// runDrainersMu. Unlike the old sealed WaitGroup path, it ALWAYS
+			// tracks — including a re-entrant emit issued from within a handler
+			// during this run's DrainRun — so DrainRun waits on the run-scoped
+			// cascade tail instead of returning early (hk-4hctu).
+			runKey := evt.RunID.String()
+			b.addRunDrainer(runKey)
 			b.addGlobalDrainer()
 			go func() {
 				defer b.doneGlobalDrainer()
-				if runWG != nil {
-					defer runWG.Done()
-				}
+				defer b.doneRunDrainer(runKey)
 				// Panic recovery (hk-xvpwb): recover observer panics and record
 				// them to the dead-letter sink with reason "observer_panic".
 				// deadLetterSink is never nil (NoopDeadLetterSink when no sink configured).
@@ -1483,25 +1486,43 @@ func (b *busImpl) drainCondLocked() *sync.Cond {
 	return b.drainCond
 }
 
-// addRunDrainer registers one in-flight per-run goroutine: it returns the
-// run's WaitGroup after calling Add(1) on it WHILE HOLDING runDrainersMu, so
-// the Add is serialised against DrainRun's seal-then-Wait. It returns nil when
-// the run is already sealed (DrainRun has begun) — the caller then skips
-// per-run Done, relying on the global inflight counter. Doing Add under the lock is what
-// prevents "Add called concurrently with Wait".
-func (b *busImpl) addRunDrainer(runID string) *sync.WaitGroup {
+// addRunDrainer registers one in-flight per-run goroutine by incrementing the
+// run's entry in runInflight under runDrainersMu. Every registration is
+// tracked — including a re-entrant EmitWithRunID from a handler running during
+// this run's DrainRun (a run-scoped cascade) — so DrainRun waits for the
+// cascade tail (hk-4hctu). The caller must arrange a matching doneRunDrainer
+// (typically `defer b.doneRunDrainer(runID)` inside the dispatch goroutine).
+// Because DrainRun waits on a condition variable rather than a per-run
+// WaitGroup, incrementing during a DrainRun is safe (no "Add called
+// concurrently with Wait" hazard) and no seal is required.
+func (b *busImpl) addRunDrainer(runID string) {
 	b.runDrainersMu.Lock()
-	defer b.runDrainersMu.Unlock()
-	if b.runSealed[runID] {
-		return nil
+	b.runInflight[runID]++
+	b.runDrainersMu.Unlock()
+}
+
+// doneRunDrainer is the matching decrement for addRunDrainer. When the run's
+// counter reaches 0 it deletes the entry (bounding map growth) and broadcasts
+// runDrainCond so any DrainRun waiter re-checks quiescence.
+func (b *busImpl) doneRunDrainer(runID string) {
+	b.runDrainersMu.Lock()
+	b.runInflight[runID]--
+	if b.runInflight[runID] <= 0 {
+		delete(b.runInflight, runID)
+		if b.runDrainCond != nil {
+			b.runDrainCond.Broadcast()
+		}
 	}
-	wg, ok := b.runDrainers[runID]
-	if !ok {
-		wg = &sync.WaitGroup{}
-		b.runDrainers[runID] = wg
+	b.runDrainersMu.Unlock()
+}
+
+// runDrainCondLocked returns b.runDrainCond, lazily initialising it. The caller
+// MUST hold runDrainersMu.
+func (b *busImpl) runDrainCondLocked() *sync.Cond {
+	if b.runDrainCond == nil {
+		b.runDrainCond = sync.NewCond(&b.runDrainersMu)
 	}
-	wg.Add(1)
-	return wg
+	return b.runDrainCond
 }
 
 // DrainRun blocks until all in-flight asynchronous and observer dispatches
@@ -1517,31 +1538,45 @@ func (b *busImpl) addRunDrainer(runID string) *sync.WaitGroup {
 //
 // Bead: hk-fx6zl.
 func (b *busImpl) DrainRun(ctx context.Context, runID core.RunID) error {
-	// Seal the run under runDrainersMu, then read its WaitGroup. After the seal
-	// is set, addRunDrainer returns nil for this run (no further Add); any Add
-	// already performed happened under the same lock before this point, so it
-	// happens-before the Wait below. This closes the Add-concurrent-with-Wait
-	// race that otherwise aborts the process under concurrent dispatch.
-	b.runDrainersMu.Lock()
-	if b.runSealed == nil {
-		b.runSealed = make(map[string]bool)
-	}
-	b.runSealed[runID.String()] = true
-	wg := b.runDrainers[runID.String()]
-	b.runDrainersMu.Unlock()
-	if wg == nil {
-		// No per-run goroutine was ever tracked for this run — nothing to wait on.
-		return nil
-	}
+	// Wait for the run's in-flight counter to reach 0 via runDrainCond. Because
+	// cond.Wait releases runDrainersMu while parked, a re-entrant EmitWithRunID
+	// from a still-in-flight handler for this run (a run-scoped cascade) can
+	// increment the counter during the wait; the loop re-checks after every
+	// broadcast, so DrainRun returns only at true per-run quiescence — cascade
+	// descendants included (hk-4hctu). No per-run WaitGroup is involved, so the
+	// "Add called concurrently with Wait" crash cannot occur and no seal is
+	// needed. A per-run counter that was never created (nil map entry) reads as
+	// 0, so a run with no tracked goroutines returns immediately.
+	//
+	// ctx cancellation: sync.Cond has no context-aware wait, so the wait loop
+	// runs in a goroutine that closes done at quiescence. On ctx cancellation we
+	// close stop and broadcast so the waiter wakes, observes stop, and exits.
+	key := runID.String()
 	done := make(chan struct{})
+	stop := make(chan struct{})
 	go func() {
-		wg.Wait()
+		b.runDrainersMu.Lock()
+		cond := b.runDrainCondLocked()
+		for b.runInflight[key] > 0 {
+			select {
+			case <-stop:
+				b.runDrainersMu.Unlock()
+				return
+			default:
+			}
+			cond.Wait()
+		}
+		b.runDrainersMu.Unlock()
 		close(done)
 	}()
 	select {
 	case <-done:
 		return nil
 	case <-ctx.Done():
+		close(stop)
+		b.runDrainersMu.Lock()
+		b.runDrainCondLocked().Broadcast()
+		b.runDrainersMu.Unlock()
 		return fmt.Errorf("eventbus.DrainRun(%s): %w", runID, ctx.Err())
 	}
 }

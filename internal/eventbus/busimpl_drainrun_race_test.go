@@ -24,12 +24,15 @@ import (
 // only manifests under concurrent dispatch (the daemon's max_concurrent>1
 // reviewer/DOT-cascade loop), never at idle.
 //
-// The fix seals the run under runDrainersMu: once DrainRun begins, further
-// EmitWithRunID for that run skips per-run tracking, so Add can never run
-// concurrently with Wait.
+// The fix (hk-4hctu) replaces the per-run WaitGroup with an in-flight counter
+// guarded by runDrainersMu plus a condition variable DrainRun waits on. With no
+// WaitGroup there is no Add/Wait contract to violate, so the fatal is
+// structurally impossible — this test remains a valid concurrent-dispatch
+// stress test.
 //
-// Without the fix this test aborts the test binary (an unrecoverable fatal, not
-// a t.Fatal) within a few iterations; with it, it passes cleanly under -race.
+// Under the earlier WaitGroup design this test aborts the test binary (an
+// unrecoverable fatal, not a t.Fatal) within a few iterations; with the fix it
+// passes cleanly under -race.
 func TestBusImpl_DrainRunConcurrentEmitNoWaitGroupMisuse(t *testing.T) {
 	bus := eventbus.NewBusImpl()
 

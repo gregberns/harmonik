@@ -400,6 +400,23 @@ type WatcherConfig struct {
 	// Refs: hk-vs4u, hk-lhu2.
 	ActionableWarnText string
 
+	// LeaderDeferText, when non-empty, overrides the compiled-in leader
+	// defer-message body (the K2 finish-then-self-restart nudge). Empty =
+	// compiled default. This field is the T2 config surface: it is threaded here
+	// from keeper.warn_messages.leader_defer_text but is NOT yet consumed by
+	// selectWarnText — T3 adds the four SK-026 templated slots + structural
+	// validation and wires selection. Sourced from
+	// .harmonik/config.yaml keeper.warn_messages.leader_defer_text. Refs: SK-032.
+	LeaderDeferText string
+
+	// CrewDeferText, when non-empty, overrides the crew keeper-message body (K7).
+	// Empty/off by default. T2 ships ONLY the config hook: nothing consumes this
+	// field yet, so a default (or any) value fires no crew behavior. Crew
+	// activation stays gated on self_service.crews_enabled (default-off) AND the
+	// external keeper-reliability activation gate (park-resume-protocol §9). Sourced
+	// from .harmonik/config.yaml keeper.warn_messages.crew_defer_text. Refs: SK-032.
+	CrewDeferText string
+
 	// SelfServiceEnabled gates the actionable self-service restart handshake form of
 	// the warn text. When false, every warn injects the lighter finish-the-turn
 	// advisory regardless of agent/idle/SID. Threaded from

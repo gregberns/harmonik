@@ -257,6 +257,12 @@ type ResolvedKeeperConfig struct {
 	// aliased onto it in projectconfig.go). Refs: hk-vs4u.
 	DefaultWarnText    string
 	ActionableWarnText string
+	// LeaderDeferText / CrewDeferText are the K2 leader defer-message and K7
+	// crew keeper-message body overrides (empty = compiled default / off).
+	// CONFIG-only, carried verbatim to WatcherConfig; consumption is T3+. Refs:
+	// SK-032; park-resume-protocol §9 (K7 crew hook default-off).
+	LeaderDeferText string
+	CrewDeferText   string
 }
 
 // requiredKeeperValue describes one operator-required keeper value: its dotted
@@ -521,6 +527,8 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg daemon.KeeperConfig, projectDir 
 	}
 	out.DefaultWarnText = cfg.DefaultWarnText
 	out.ActionableWarnText = cfg.ActionableWarnText
+	out.LeaderDeferText = cfg.LeaderDeferText
+	out.CrewDeferText = cfg.CrewDeferText
 
 	// ── cross-field invariants (fail-loud — NEVER revert to defaults) ──
 	// Band ordering: warn < act < force_act < hard_ceiling.

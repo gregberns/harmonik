@@ -90,6 +90,8 @@ package daemon
 //	    default_warn_text: ""          # warn injection text for non-captain agents; empty = compiled default
 //	    actionable_warn_text: ""       # actionable self-service restart-handshake advisory override; empty = compiled default (hk-9kgf, hk-vs4u)
 //	    on_demand_warn_text: ""        # DEPRECATED alias of actionable_warn_text (kept RECOGNIZED so old strict configs don't hard-error); mapped with a log warning (hk-vs4u)
+//	    leader_defer_text: ""          # leader K2 defer-message body override; empty = compiled default (SK-032)
+//	    crew_defer_text: ""            # crew keeper-message body (K7); empty/off default, config hook only — gated on self_service.crews_enabled (SK-032, park-resume-protocol §9)
 //	opsmonitor:                        # hk-bi4bg: ops-monitor schedule overrides; absent = compiled defaults
 //	  interval: 5m                     # Go duration STRING; empty/absent = "5m"
 //	  script_path: scripts/ops-monitor-check.sh  # path passed to bash; empty/absent = default
@@ -336,6 +338,17 @@ type rawKeeperWarnMessages struct {
 	DefaultWarnText    string `yaml:"default_warn_text"`
 	OnDemandWarnText   string `yaml:"on_demand_warn_text"`
 	ActionableWarnText string `yaml:"actionable_warn_text"`
+	// LeaderDeferText overrides the compiled-in leader defer-message body (the
+	// K2 finish-then-self-restart nudge). Empty = compiled default. The four
+	// SK-026 structural slots are validated/filled by T3 (SK-033); T2 only
+	// carries the override text. Spec: session-keeper.md §4.14 SK-032.
+	LeaderDeferText string `yaml:"leader_defer_text"`
+	// CrewDeferText overrides the crew keeper-message body (K7). Empty/off by
+	// default: T2 ships only the config hook — nothing consumes this yet, and
+	// crew self-restart stays gated on self_service.crews_enabled (default-off)
+	// AND the external keeper-reliability activation gate. Spec: SK-032;
+	// park-resume-protocol.md §9 (K7 — DEFERRED).
+	CrewDeferText string `yaml:"crew_defer_text"`
 }
 
 // rawKeeperConfig is the keeper: block in config.yaml.
@@ -451,7 +464,9 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		// warn_messages
 		w.DefaultWarnText == "" &&
 		w.OnDemandWarnText == "" &&
-		w.ActionableWarnText == ""
+		w.ActionableWarnText == "" &&
+		w.LeaderDeferText == "" &&
+		w.CrewDeferText == ""
 }
 
 // KeeperConfigPresence records, key-by-key, whether the operator SUPPLIED a value
@@ -610,6 +625,16 @@ type KeeperConfig struct {
 	// warning) and is kept as a RECOGNIZED key so old strict configs (hk-9f3f) do not
 	// hard-error. Refs: hk-vs4u, hk-lhu2.
 	ActionableWarnText string
+	// LeaderDeferText overrides the compiled-in leader defer-message body (K2
+	// finish-then-self-restart nudge). Empty = compiled default. Carried to
+	// WatcherConfig; the four SK-026 structural slots are filled/validated by T3.
+	// Sourced from keeper.warn_messages.leader_defer_text. Refs: SK-032.
+	LeaderDeferText string
+	// CrewDeferText overrides the crew keeper-message body (K7). Empty/off by
+	// default; T2 ships only the config hook (nothing consumes it yet), with crew
+	// activation gated on self_service.crews_enabled (default-off). Sourced from
+	// keeper.warn_messages.crew_defer_text. Refs: SK-032, park-resume-protocol §9.
+	CrewDeferText string
 }
 
 // DaemonConfig holds the daemon-level operational configuration read from the
@@ -1754,6 +1779,10 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	// ── warn_messages ── empty strings are "not configured" — defer to compiled default.
 	cfg.DefaultWarnText = raw.WarnMessages.DefaultWarnText
 	cfg.ActionableWarnText = raw.WarnMessages.ActionableWarnText
+	// Leader defer-message + crew-message overrides (K2/K7). Empty = compiled
+	// default (leader) / off (crew). Carried through verbatim; consumption is T3+.
+	cfg.LeaderDeferText = raw.WarnMessages.LeaderDeferText
+	cfg.CrewDeferText = raw.WarnMessages.CrewDeferText
 	// Dedup (hk-vs4u): on_demand_warn_text is DEPRECATED in favour of the single key
 	// actionable_warn_text, but it stays a RECOGNIZED key (rawKeeperWarnMessages still
 	// declares it) so old strict configs (hk-9f3f) do not hard-error. Map the

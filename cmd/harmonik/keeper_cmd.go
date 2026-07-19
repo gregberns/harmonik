@@ -118,8 +118,13 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		// DefaultWarnText = lighter advisory; ActionableWarnText = the R3 self-service
 		// restart handshake (selectWarnText picks between them). crews_enabled is
 		// resolved UNSET→TRUE in ResolveKeeperConfig.
-		DefaultWarnText:                 resolved.DefaultWarnText,
-		ActionableWarnText:              resolved.ActionableWarnText,
+		DefaultWarnText:    resolved.DefaultWarnText,
+		ActionableWarnText: resolved.ActionableWarnText,
+		// K2 leader defer-message / K7 crew-message body overrides (config surface,
+		// T2). Carried to the watcher; T3 fills/validates the leader slots and
+		// wires selection. crew text stays inert until K7 activation.
+		LeaderDeferText:                 resolved.LeaderDeferText,
+		CrewDeferText:                   resolved.CrewDeferText,
 		SelfServiceEnabled:              resolved.SelfServiceEnabled,
 		SelfServiceCrewsEnabled:         resolved.SelfServiceCrewsEnabled,
 		SelfServiceGraceSeconds:         resolved.SelfServiceGraceSeconds,

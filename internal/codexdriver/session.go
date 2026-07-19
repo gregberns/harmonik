@@ -135,8 +135,15 @@ type codexSession struct {
 	// before start() and never mutated afterward; read only on the readLoop
 	// goroutine (handleResponse pendingInitialize), so it needs no lock.
 	resumeThreadID string
-	failure        error
-	stdinClosed    bool
+	// spawnCwd is the worktree working directory this session was spawned into
+	// (SubstrateSpawn.Cwd). Unlike cmd.Dir it is populated on BOTH the local and
+	// the remote (ssh) spawn paths — the remote path leaves cmd.Dir UNSET (the cwd
+	// is applied on the worker via `cd`), so cmd.Dir cannot be used to derive the
+	// worktree's git common dir. hk-daegv: the input to Options.WritableRoots. Set
+	// once before start(); read only on the readLoop handshake goroutine.
+	spawnCwd    string
+	failure     error
+	stdinClosed bool
 	// drainClose latches when a mid-turn CloseInput deferred the stdin close so
 	// the interrupted turn can wind down first (RU-07: a server-originated
 	// approval request the child sends AFTER we started closing still needs its
@@ -802,6 +809,23 @@ func (s *codexSession) postureExtra() map[string]json.RawMessage {
 	if s.opts.ApprovalPolicy != "" {
 		if b, err := json.Marshal(s.opts.ApprovalPolicy); err == nil {
 			extra["approvalPolicy"] = b
+		}
+	}
+	// hk-daegv: stamp the thread's workspace-write writable roots so codex's OWN
+	// `git commit` lands. Under codex 0.142.0's effective workspace-write seatbelt
+	// (danger-full-access is NOT honored under ChatGPT auth) the sole writable root
+	// is the worktree cwd; a linked worktree's git common dir (<repo>/.git) lives
+	// outside it, so codex's commit fails EPERM and only the daemon fallback
+	// commits. The composition-root hook derives the roots (worktree cwd + git
+	// common dir) from spawnCwd; the driver stays blind to what they mean (RS-017).
+	// runtimeWorkspaceRoots REPLACES the thread's roots, so the hook itself includes
+	// the worktree cwd. Rides both thread/start and thread/resume (this map is
+	// stamped on both), matching how the sandbox posture is carried.
+	if s.opts.WritableRoots != nil && s.spawnCwd != "" {
+		if roots := s.opts.WritableRoots(s.spawnCwd); len(roots) > 0 {
+			if b, err := json.Marshal(roots); err == nil {
+				extra["runtimeWorkspaceRoots"] = b
+			}
 		}
 	}
 	if len(extra) == 0 {

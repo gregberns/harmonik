@@ -142,6 +142,30 @@ type Options struct {
 	// WITHOUT the composition root never silently runs danger-full-access.
 	Sandbox        string
 	ApprovalPolicy string
+
+	// WritableRoots, when non-nil, is called at every thread/start and
+	// thread/resume with the session's worktree cwd (SubstrateSpawn.Cwd); it
+	// returns the absolute paths stamped as that thread's `runtimeWorkspaceRoots`
+	// — the codex workspace-write writable roots ("Replace the thread's runtime
+	// workspace roots. Paths must be absolute.", app-server v2 schema).
+	//
+	// hk-daegv: codex app-server 0.142.0 under ChatGPT auth does NOT honor the
+	// danger-full-access sandbox posture (that is gated behind a
+	// --dangerously-bypass-approvals-and-sandbox flag app-server does not expose),
+	// so it runs the effective workspace-write seatbelt whose only writable root is
+	// the worktree cwd. A linked worktree's git COMMON dir (<repo>/.git, holding
+	// objects/refs and worktrees/<id>/) lives OUTSIDE that root, so codex's OWN
+	// `git commit` fails EPERM and only the daemon fallback commits. Stamping the
+	// git common dir here makes codex's own commit land.
+	//
+	// The hook keeps the driver BLIND to harmonik's worktree layout (RS-017): the
+	// composition root derives the roots from the cwd and injects them, exactly
+	// like Runner / PreSpawn. Because runtimeWorkspaceRoots REPLACES the thread's
+	// roots, the hook MUST also include the worktree cwd itself. A nil hook (or an
+	// empty result, or an empty spawn cwd) omits runtimeWorkspaceRoots entirely,
+	// leaving codex's default single-root behavior untouched — and an older codex
+	// that does not know the field ignores it, so this degrades gracefully.
+	WritableRoots func(worktreeCwd string) []string
 }
 
 // codexSubstrate is the handler.Substrate implementation.
@@ -256,6 +280,12 @@ func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, r
 	// the readLoop's handshake branch (handleResponse pendingInitialize) reads a
 	// fully-published value with no race against the reactor goroutines.
 	s.resumeThreadID = resumeThreadID
+	// spawnCwd is the worktree the thread/start|resume writable-roots hook keys off
+	// (hk-daegv). Captured from in.Cwd — NOT cmd.Dir — because the remote (ssh)
+	// spawn path leaves cmd.Dir UNSET (the cwd is applied on the worker via `cd`).
+	// Immutable for the session's life; set before start() so the readLoop handshake
+	// branch reads a fully-published value with no goroutine race.
+	s.spawnCwd = in.Cwd
 	s.start(ctx)
 	return s, nil
 }

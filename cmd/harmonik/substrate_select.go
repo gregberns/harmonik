@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/gregberns/harmonik/internal/sessioncapture"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // substrateSelectEnv is the composition-root substrate-selection axis
@@ -247,6 +249,16 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 		// default posture, so it can never silently run danger-full-access.
 		Sandbox:        codexHeadlessSandbox,
 		ApprovalPolicy: codexHeadlessApprovalPolicy,
+		// hk-daegv: codex app-server 0.142.0 under ChatGPT auth does NOT honor the
+		// danger-full-access posture above — it runs the effective workspace-write
+		// seatbelt whose only writable root is the worktree cwd. A linked worktree's
+		// git common dir (<repo>/.git) lives OUTSIDE that root, so codex's OWN
+		// `git commit` fails EPERM and only the daemon fallback commits. Wire the
+		// composition-root hook that adds the git common dir to the thread's
+		// runtimeWorkspaceRoots so codex's own commit lands. Kept ALONGSIDE the
+		// `-c sandbox_mode` override and Sandbox/ApprovalPolicy (harmless
+		// forward-intent for a codex build that does honor danger-full-access).
+		WritableRoots: codexWorktreeWritableRoots,
 	}
 	sess := openCaptureSession()
 	if sess != nil {
@@ -254,6 +266,48 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 		opts.OutCapture = sess.Output()
 	}
 	return opts, sess
+}
+
+// codexWorktreeWritableRoots is the composition-root hook wired into
+// codexdriver.Options.WritableRoots (hk-daegv). Given the session's worktree cwd
+// it returns the absolute paths codex stamps as the thread's
+// `runtimeWorkspaceRoots` (the workspace-write writable roots).
+//
+// It ALWAYS includes the worktree cwd itself (runtimeWorkspaceRoots REPLACES the
+// thread's roots — dropping the cwd would make the worktree unwritable) and, when
+// the cwd matches harmonik's linked-worktree layout, the repo's git COMMON dir
+// (<repo>/.git). The git common dir holds objects/refs and worktrees/<id>/ and
+// lives OUTSIDE the worktree writable root, so without it codex's OWN `git commit`
+// fails EPERM under 0.142.0's effective workspace-write seatbelt (see WritableRoots
+// doc). An empty cwd, or a cwd not under the worktree root, adds no git dir and
+// leaves the behavior unchanged (degrades gracefully).
+func codexWorktreeWritableRoots(worktreeCwd string) []string {
+	if worktreeCwd == "" {
+		return nil
+	}
+	roots := []string{worktreeCwd}
+	if gitCommon := codexGitCommonDir(worktreeCwd); gitCommon != "" {
+		roots = append(roots, gitCommon)
+	}
+	return roots
+}
+
+// codexGitCommonDir derives the git COMMON dir (<repo>/.git) of a harmonik linked
+// worktree from its path (hk-daegv). A worktree lives at
+// <repo>/<worktreeRoot>/<name> (worktreeRoot default ".harmonik/worktrees"); its
+// common dir is <repo>/.git. Returns "" when the path does not match that layout
+// (e.g. an overridden worktree root, or a non-worktree cwd) — the caller then adds
+// no git dir.
+//
+// Uses plain "/" string ops, NOT filepath: the cwd may be a REMOTE (ssh worker)
+// POSIX path, so the derivation must not depend on the local OS path separator.
+func codexGitCommonDir(worktreeCwd string) string {
+	marker := "/" + workspace.DefaultWorktreeRoot + "/" // "/.harmonik/worktrees/"
+	idx := strings.LastIndex(worktreeCwd, marker)
+	if idx < 0 {
+		return ""
+	}
+	return worktreeCwd[:idx] + "/.git"
 }
 
 // openCaptureSession opens a live-capture corpus session when opted in, else

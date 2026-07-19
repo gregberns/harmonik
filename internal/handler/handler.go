@@ -166,6 +166,21 @@ type CommandRunner interface {
 	Command(ctx context.Context, name string, args ...string) *exec.Cmd
 }
 
+// RemoteCwdRunner is an OPTIONAL capability a CommandRunner may implement when it
+// executes the child on a REMOTE host (an ssh transport). For such a runner the
+// launch working directory (LaunchSpec.WorkDir) is a REMOTE worktree path: setting
+// the LOCAL exec.Cmd.Dir to it fork/exec-ENOENTs the local `ssh …` process, and
+// without a remote `cd` the child runs in the ssh login $HOME, not the worktree
+// (hk-fufel — the crit3 crash; the codexdriver spawn seam has the analogous
+// hk-czb11 fix). CommandInDir returns an *exec.Cmd whose REMOTE command runs in
+// dir, leaving the LOCAL exec.Cmd.Dir unset. A LOCAL runner does NOT implement this;
+// the exec path then keeps the byte-identical Command()+cmd.Dir=WorkDir path.
+// Declared locally (structurally satisfied by tmux.SSHRunner, which implements
+// CommandInDir) so handler keeps its no-import-of-tmux depguard boundary.
+type RemoteCwdRunner interface {
+	CommandInDir(ctx context.Context, dir, name string, args ...string) *exec.Cmd
+}
+
 // Handler is the daemon-side factory for handler sessions.
 //
 // Acquire via NewHandler; the zero value is not usable.
@@ -264,13 +279,26 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	// to the pre-existing LOCAL path (NFR7). cmd.Dir/cmd.Env are applied below
 	// unchanged either way (the runner is the only host-selection axis).
 	var cmd *exec.Cmd
-	if spec.Runner != nil {
-		cmd = spec.Runner.Command(ctx, spec.Binary, spec.Args...)
-	} else {
+	switch {
+	case spec.Runner != nil:
+		// hk-fufel: a worker-tunneling runner (ssh) runs the child ON THE WORKER,
+		// so spec.WorkDir is a REMOTE worktree path. Applying it as the LOCAL
+		// exec.Cmd.Dir fork/exec-ENOENTs the local `ssh …` process (the crit3
+		// crash), and without a remote `cd` the child runs in the ssh login $HOME.
+		// When the runner advertises RemoteCwdRunner, apply the cwd REMOTELY via
+		// CommandInDir and leave the local exec.Cmd.Dir UNSET; otherwise keep the
+		// byte-identical Command()+cmd.Dir=WorkDir path.
+		if rc, ok := spec.Runner.(RemoteCwdRunner); ok && spec.WorkDir != "" {
+			cmd = rc.CommandInDir(ctx, spec.WorkDir, spec.Binary, spec.Args...)
+		} else {
+			cmd = spec.Runner.Command(ctx, spec.Binary, spec.Args...)
+			cmd.Dir = spec.WorkDir
+		}
+	default:
 		//nolint:gosec // G204: Binary is daemon-config-resolved; not user-controlled
 		cmd = exec.CommandContext(ctx, spec.Binary, spec.Args...)
+		cmd.Dir = spec.WorkDir
 	}
-	cmd.Dir = spec.WorkDir
 	cmd.Env = spec.Env
 	cmd.SysProcAttr = lifecycle.SpawnChildSysProcAttr(lifecycle.RecordedPGID())
 

@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queue" //nolint:depguard // external test package (queue_test) self-import; queue allow-list omits self (cf. eventbus/mergeq leaf pattern)
 )
 
 // h6FakeLocker is a minimal QueueSetter+MutationLocker double: the daemon's real
@@ -33,7 +33,7 @@ type h6FakeLocker struct{ mu sync.Mutex }
 // found (production held the lock and called SetQueue, re-locking queueMu).
 func (f *h6FakeLocker) SetQueue(*queue.Queue) {
 	f.mu.Lock()
-	f.mu.Unlock() //nolint:staticcheck // SA2001: intentional lock/unlock to model non-reentrant re-lock
+	f.mu.Unlock() //nolint:staticcheck,gocritic // SA2001/badLock: intentional lock/unlock to model non-reentrant re-lock
 }
 func (f *h6FakeLocker) ClearQueueByName(string) {}
 func (f *h6FakeLocker) Wake()                   {}

@@ -134,7 +134,7 @@ func TestFIFOOrderUnderConcurrentSubmits(t *testing.T) {
 		if len(q.pending) == n {
 			base := q.pending[0].seq
 			for i, j := range q.pending {
-				if j.seq != base+uint64(i) {
+				if j.seq != base+uint64(i) { //nolint:gosec // G115: i is a non-negative loop index over q.pending; no overflow
 					q.mu.Unlock()
 					t.Fatalf("pending not in dense seq order at %d: seq %d (base %d)", i, j.seq, base)
 				}

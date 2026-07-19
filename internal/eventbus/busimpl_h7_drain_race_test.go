@@ -58,7 +58,7 @@ func TestBusImpl_ConcurrentEmitAndDrain_NoWaitGroupMisuse(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for j := 0; j < perEmitter; j++ {
-				_ = bus.Emit(context.Background(), h7EventType, payload)
+				_ = bus.Emit(context.Background(), h7EventType, payload) //nolint:errcheck // stress emitter; reaching Wait() without a race abort is the assertion
 			}
 		}()
 	}
@@ -68,7 +68,7 @@ func TestBusImpl_ConcurrentEmitAndDrain_NoWaitGroupMisuse(t *testing.T) {
 			defer wg.Done()
 			<-start
 			for j := 0; j < perEmitter; j++ {
-				_ = bus.Drain(context.Background())
+				_ = bus.Drain(context.Background()) //nolint:errcheck // stress drainer; reaching Wait() without a race abort is the assertion
 			}
 		}()
 	}

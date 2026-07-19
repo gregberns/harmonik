@@ -344,7 +344,7 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		// The subprocess is already spawned; reap it (and its runWait /
 		// drainStderr goroutines) before returning, or it leaks with no
 		// handle until the daemon orphan sweep. Kill is best-effort here.
-		_ = sess.Kill(ctx)
+		_ = sess.Kill(ctx) //nolint:errcheck // best-effort reap of the already-spawned subprocess before returning wtErr
 		return nil, nil, wtErr
 	}
 	var wireWriter io.Writer // nil interface when wireTap is nil (must NOT wrap a nil *os.File)
@@ -431,7 +431,7 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 	if wtErr != nil {
 		// The substrate window is already spawned; reap it before returning so
 		// the hosted subprocess does not leak until the daemon orphan sweep.
-		_ = adapted.Kill(ctx)
+		_ = adapted.Kill(ctx) //nolint:errcheck // best-effort reap of the already-spawned substrate window before returning wtErr
 		return nil, nil, wtErr
 	}
 	var wireWriter io.Writer // nil interface when wireTap is nil

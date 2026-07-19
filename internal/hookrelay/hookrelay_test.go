@@ -148,12 +148,12 @@ func hookRelayFixtureListenDelayed(t *testing.T, delay time.Duration, ackJSON st
 		if err != nil {
 			return
 		}
-		defer func() { _ = ln.Close() }()
+		defer func() { _ = ln.Close() }() //nolint:errcheck // test listener cleanup; close error non-actionable
 		conn, acceptErr := ln.Accept()
 		if acceptErr != nil {
 			return
 		}
-		defer func() { _ = conn.Close() }()
+		defer func() { _ = conn.Close() }() //nolint:errcheck // test conn cleanup; close error non-actionable
 		scanner := bufio.NewScanner(conn)
 		if scanner.Scan() {
 			select {
@@ -161,7 +161,7 @@ func hookRelayFixtureListenDelayed(t *testing.T, delay time.Duration, ackJSON st
 			default:
 			}
 		}
-		_, _ = fmt.Fprintln(conn, ackJSON)
+		_, _ = fmt.Fprintln(conn, ackJSON) //nolint:errcheck // test ack write; error non-actionable
 	}()
 
 	return sockPath, ch

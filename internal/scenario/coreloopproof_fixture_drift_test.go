@@ -71,7 +71,7 @@ func TestCoreLoopProofFixtureDrift_CodexEmptyModel(t *testing.T) {
 	dir := coreLoopProofFixtureDir(t)
 
 	// ── seed-beads.json ──────────────────────────────────────────────────────
-	seedData, err := os.ReadFile(filepath.Join(dir, "seed-beads.json"))
+	seedData, err := os.ReadFile(filepath.Join(dir, "seed-beads.json")) //nolint:gosec // G304: path from the in-repo fixture dir, not user input
 	if err != nil {
 		t.Fatalf("read seed-beads.json: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestCoreLoopProofFixtureDrift_CodexEmptyModel(t *testing.T) {
 	}
 
 	// ── cells.json ───────────────────────────────────────────────────────────
-	cellsData, err := os.ReadFile(filepath.Join(dir, "cells.json"))
+	cellsData, err := os.ReadFile(filepath.Join(dir, "cells.json")) //nolint:gosec // G304: path from the in-repo fixture dir, not user input
 	if err != nil {
 		t.Fatalf("read cells.json: %v", err)
 	}

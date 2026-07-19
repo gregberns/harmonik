@@ -27,8 +27,8 @@ func sessionW4Spawn(t *testing.T, name string, args ...string) Session {
 	t.Cleanup(func() {
 		killCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = sess.Kill(killCtx)
-		_ = sess.Wait(context.Background())
+		_ = sess.Kill(killCtx)              //nolint:errcheck // test teardown; best-effort reap
+		_ = sess.Wait(context.Background()) //nolint:errcheck // test teardown; best-effort reap
 	})
 	return sess
 }

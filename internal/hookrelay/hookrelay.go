@@ -562,7 +562,7 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 				if elapsed+retryDelay > wallMax {
 					return fmt.Errorf("bridge_daemon_startup_window_exceeded: dial failed after %v: %w", elapsed, dialErr)
 				}
-				fmt.Fprintf(stderr, "hook-relay: dial failed (%v), retrying in %v\n", dialErr, retryDelay)
+				fmt.Fprintf(stderr, "hook-relay: dial failed (%v), retrying in %v\n", dialErr, retryDelay) //nolint:errcheck // diagnostic write to stderr; error non-actionable
 				time.Sleep(retryDelay)
 				retryDelay *= 2
 				if retryDelay > retryMax {

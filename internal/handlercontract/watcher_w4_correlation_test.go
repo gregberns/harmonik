@@ -72,7 +72,7 @@ func TestWatcher_SynthesizedAgentFailed_CarriesSessionAndRunID(t *testing.T) {
 		t.Fatal("watcher did not finish")
 	}
 
-	raw := pub.payloadFor(string(handlercontract.ProgressMsgTypeAgentFailed))
+	raw := pub.payloadFor(handlercontract.ProgressMsgTypeAgentFailed)
 	if raw == nil {
 		t.Fatal("no agent_failed payload published")
 	}

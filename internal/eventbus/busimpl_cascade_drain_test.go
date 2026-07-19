@@ -48,7 +48,7 @@ func TestBusImpl_ReentrantEmitDuringDrain_IsWaitedAndDelivered(t *testing.T) {
 		ConsumerClass: core.ConsumerClassObserver,
 		EventPattern:  busImplFixtureWildcardPattern(),
 		OnPanic:       core.OnPanicRecoverAndLog,
-		Handler: func(_ context.Context, evt core.Event) error {
+		Handler: func(ctx context.Context, evt core.Event) error {
 			switch core.EventType(evt.Type) {
 			case cascadeParentType:
 				// Re-entrant cascade: emit the child only once Drain is waiting,
@@ -56,7 +56,7 @@ func TestBusImpl_ReentrantEmitDuringDrain_IsWaitedAndDelivered(t *testing.T) {
 				// the precise window the seal regression left untracked.
 				cascadeOnce.Do(func() {
 					<-drainStarted
-					_ = bus.Emit(context.Background(), cascadeChildType, cascadePayload(t))
+					_ = bus.Emit(ctx, cascadeChildType, cascadePayload(t)) //nolint:errcheck // re-entrant test emit inside sync.Once; delivery is asserted downstream
 				})
 				mu.Lock()
 				delivered[cascadeParentType]++
@@ -69,6 +69,8 @@ func TestBusImpl_ReentrantEmitDuringDrain_IsWaitedAndDelivered(t *testing.T) {
 				mu.Lock()
 				delivered[cascadeChildType]++
 				mu.Unlock()
+			default:
+				// The fixture only cares about the two cascade types.
 			}
 			return nil
 		},

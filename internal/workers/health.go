@@ -84,11 +84,11 @@ func RunHealthCheck(ctx context.Context, runner tmux.CommandRunner, cfg Config, 
 			// worker held by reg, so a failing worker never flips a different
 			// worker's Enabled state. This matters once more than one worker is
 			// configured; with the v1 single-worker cap it matches SetEnabled.
-			_, _ = reg.SetEnabledByName(w.Name, false)
+			_, _ = reg.SetEnabledByName(w.Name, false) //nolint:errcheck // no-op (error intentionally ignored) when w is not the worker held by reg — see comment above
 			emitUnhealthyEvent(ctx, w.Name, probeName, detail, emit)
 			continue
 		}
-		_, _ = reg.SetEnabledByName(w.Name, true)
+		_, _ = reg.SetEnabledByName(w.Name, true) //nolint:errcheck // no-op (error intentionally ignored) when w is not the worker held by reg — see comment above
 	}
 	return nil
 }

@@ -642,7 +642,7 @@ func TestON035Handler_HandleAfterCloseNoPanic(t *testing.T) {
 	if err := h.Close(); err != nil {
 		t.Errorf("second Close: %v", err)
 	}
-	slog.New(h).Info("after close")
+	slog.New(h).InfoContext(context.Background(), "after close")
 }
 
 // TestON035Handler_ConcurrentHandleAndClose stresses the Close/Handle race
@@ -664,7 +664,7 @@ func TestON035Handler_ConcurrentHandleAndClose(t *testing.T) {
 			defer wg.Done()
 			logger := slog.New(h)
 			for j := 0; j < 100; j++ {
-				logger.Info("racing write", "j", j)
+				logger.InfoContext(context.Background(), "racing write", "j", j)
 			}
 		}()
 	}
@@ -672,7 +672,7 @@ func TestON035Handler_ConcurrentHandleAndClose(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_ = h.Close()
+		_ = h.Close() //nolint:errcheck // concurrent-close stress; the race detector is the assertion, close error non-actionable
 	}()
 	wg.Wait()
 }

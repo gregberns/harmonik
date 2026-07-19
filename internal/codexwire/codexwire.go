@@ -565,7 +565,7 @@ func (p ThreadStartParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
-// ThreadResumeParams: client→server "thread/resume" request params.
+// ThreadResumeParams holds the client→server "thread/resume" request params.
 //
 // Protocol-schema evidence (corpus/protocol-schema.json → v2.ThreadResumeParams):
 // only `threadId` is required. The schema notes "Prefer using thread_id whenever
@@ -580,6 +580,7 @@ type ThreadResumeParams struct {
 
 var threadResumeParamsKnown = map[string]bool{"threadId": true}
 
+// UnmarshalJSON decodes ThreadResumeParams, preserving unknown fields in Extra.
 func (p *ThreadResumeParams) UnmarshalJSON(data []byte) error {
 	type alias ThreadResumeParams
 	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
@@ -588,6 +589,7 @@ func (p *ThreadResumeParams) UnmarshalJSON(data []byte) error {
 	return parseExtra(data, threadResumeParamsKnown, &p.Extra)
 }
 
+// MarshalJSON encodes ThreadResumeParams, merging the preserved Extra fields back in.
 func (p ThreadResumeParams) MarshalJSON() ([]byte, error) {
 	type alias ThreadResumeParams
 	b, err := json.Marshal(alias(p))
@@ -734,7 +736,7 @@ func (r ThreadStartResult) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, r.Extra)
 }
 
-// ThreadResumeResult: server→client "thread/resume" response result.
+// ThreadResumeResult holds the server→client "thread/resume" response result.
 //
 // Per the app-server protocol schema, v2.ThreadResumeResponse is structurally
 // identical to v2.ThreadStartResponse (same required set: thread, model,

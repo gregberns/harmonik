@@ -561,7 +561,7 @@ func (a *Adapter) SweepCloseBead(
 		return fmt.Errorf("brcli.SweepCloseBead: br label add needs-attention: %w", labelErr)
 	}
 	if labelResult.BrErr != BrOK {
-		return fmt.Errorf("brcli.SweepCloseBead: br label add needs-attention failed: %s (exit %d): stderr=%q",
+		return fmt.Errorf("brcli.SweepCloseBead: br label add needs-attention failed: %w (exit %d): stderr=%q",
 			labelResult.BrErr, labelResult.ExitCode, string(labelResult.Stderr))
 	}
 	return nil

@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queue" //nolint:depguard // external test package (queue_test) self-import; queue allow-list omits self (cf. eventbus/mergeq leaf pattern)
 )
 
 // hk3FakeLocker is a QueueSetter+MutationLocker double backed by an in-memory
@@ -122,10 +122,10 @@ func TestHandlerAdapter_AppendPersistFailure_LeavesStoreUnmutated(t *testing.T) 
 	// (loadOtherQueues) reads a not-yet-existent queues/ dir → ErrNotExist → nil,
 	// so nothing short-circuits before Persist.
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.Chmod(harmonikDir, 0o500); err != nil {
+	if err := os.Chmod(harmonikDir, 0o500); err != nil { //nolint:gosec // G302: intentional 0o500 strips the write bit to force EACCES on Persist's MkdirAll in this test
 		t.Fatalf("chmod .harmonik read-only: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(harmonikDir, 0o755) }) // let TempDir cleanup succeed
+	t.Cleanup(func() { _ = os.Chmod(harmonikDir, 0o750) }) //nolint:errcheck,gosec // G302: a directory needs the owner exec bit to be traversed+removed, so 0o750 restores TempDir cleanup; errcheck: teardown, non-actionable
 
 	_, rpcErr := adapter.HandleQueueAppend(t.Context(), hk3AppendParams(t, newBead))
 	if rpcErr == nil {

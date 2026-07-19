@@ -33,7 +33,7 @@ type RawEvent struct {
 // (SH-INV-002) from a scenario's captured event log.
 func RunIDsFromEvents(events []RawEvent) []core.RunID {
 	seen := make(map[string]bool, len(events))
-	var out []core.RunID
+	out := make([]core.RunID, 0, len(events))
 	for _, ev := range events {
 		if ev.RunID == nil {
 			continue

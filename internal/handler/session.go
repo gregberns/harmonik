@@ -433,7 +433,7 @@ func (s *session) Kill(ctx context.Context) error {
 	// one blocked goroutine per attempt.
 	s.killWaitOnce.Do(func() {
 		go func() {
-			_ = s.waitOwner.Wait()
+			_ = s.waitOwner.Wait() //nolint:errcheck // reap-observer goroutine; the Wait error is surfaced to callers via the normal Wait path, not here
 			close(s.killWaitDone)
 		}()
 	})

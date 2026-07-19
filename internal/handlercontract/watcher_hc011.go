@@ -698,7 +698,7 @@ func emitMachineTransition(
 // synthesized agent_failed back to the failed session/run and cannot
 // auto-recover it. runID may be empty (no Machine supplied); the "unknown"
 // placeholder runID from the session layer is passed through as-is.
-func buildWatcherFailedPayload(sessionID core.SessionID, runID, sub string, cause error) (core.EventType, []byte) {
+func buildWatcherFailedPayload(sessionID core.SessionID, runID, sub string, cause error) (eventType core.EventType, encoded []byte) {
 	payload, _ := json.Marshal(map[string]string{ //nolint:errcheck // static map, never fails
 		"type":           ProgressMsgTypeAgentFailed,
 		"session_id":     string(sessionID),

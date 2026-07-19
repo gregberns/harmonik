@@ -838,7 +838,7 @@ func TestSH022_SymlinkIntermediateDirTraversalRejected(t *testing.T) {
 
 	// A directory OUTSIDE the workspace holding a secret file.
 	outsideDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("host secret"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("host secret"), 0o600); err != nil {
 		t.Fatalf("write outside secret: %v", err)
 	}
 
@@ -868,10 +868,10 @@ func TestSH022_LegitNestedDirAllowed(t *testing.T) {
 	t.Parallel()
 	wsDir := t.TempDir()
 	nested := filepath.Join(wsDir, "sub", "deep")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
+	if err := os.MkdirAll(nested, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(nested, "ok.txt"), []byte("inside"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(nested, "ok.txt"), []byte("inside"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{

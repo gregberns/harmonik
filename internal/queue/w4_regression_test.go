@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queue" //nolint:depguard // external test package (queue_test) self-import; queue allow-list omits self (cf. eventbus/mergeq leaf pattern)
 )
 
 // TestPersistConcurrentSameQueueNoTempCollision exercises the real unlocked
@@ -70,7 +70,6 @@ func TestAppendItemsGroupIndexOutOfRangeReturnsError(t *testing.T) {
 	t.Parallel()
 
 	for _, idx := range []int{-1, 1, 99} {
-		idx := idx
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 			q := appendFixtureStreamQueue(queue.GroupStatusActive, nil) // single group at index 0

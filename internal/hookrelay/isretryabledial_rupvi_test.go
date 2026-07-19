@@ -8,6 +8,7 @@ package hookrelay_test
 // synthetic ECONNREFUSED so the linux fatal-path is proven on darwin too.
 
 import (
+	"context"
 	"net"
 	"os"
 	"path/filepath"
@@ -54,13 +55,13 @@ func TestIsRetryableDialErr_RetryableCases_rupvi(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mkdtemp: %v", err)
 	}
-	defer func() { _ = os.RemoveAll(sockDir) }()
+	defer func() { _ = os.RemoveAll(sockDir) }() //nolint:errcheck // test cleanup, unactionable
 	sockPath := filepath.Join(sockDir, "d.sock")
-	ln, err := net.Listen("unix", sockPath)
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)
 	}
-	defer func() { _ = ln.Close() }()
+	defer func() { _ = ln.Close() }() //nolint:errcheck // test cleanup, unactionable
 	if fi, statErr := os.Stat(sockPath); statErr != nil || fi.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("fixture: %q is not a socket (stat err=%v)", sockPath, statErr)
 	}

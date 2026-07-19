@@ -1614,6 +1614,17 @@ func (w *Watcher) Run(ctx context.Context) error {
 						"agent", w.cfg.AgentName, "session_id", ctxFile.SessionID)
 					continue
 				}
+				// T7 (SK-024 / SK-INV-006): a LEADER warn tick routes through the K1
+				// delivery decision — a presence-Online leader gets a comms nudge (no
+				// pane write, no --wake); a Stale/Offline leader gets the terminal
+				// fallback below. Crew and any InjectFn-set (test) path fall through to
+				// the unchanged pane block.
+				if handled, cleared := w.maybeDeliverLeaderWarn(ctx, ctxFile, crispIdle); handled {
+					if cleared {
+						pendingInject = false
+					}
+					continue
+				}
 				inject := w.cfg.InjectFn
 				if inject == nil {
 					// hk-vs4u: select the ACTIONABLE self-service restart handshake

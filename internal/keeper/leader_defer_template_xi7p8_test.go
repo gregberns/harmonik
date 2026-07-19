@@ -50,6 +50,14 @@ func TestLeaderDeferBody_CompiledDefaultHasAllFourSlots(t *testing.T) {
 		t.Errorf("restart-now slot did not render %q:\n%s", wantCmd, body)
 	}
 
+	// T7 nonce model: the body instructs the agent to write the SAME cycle_id as
+	// the handoff KEEPER:<id> marker, so nudge == handoff marker == restart-now
+	// event is one join key (SK-030/SK-031).
+	wantMarker := nonceMarker("cyc-123") // <!-- KEEPER:cyc-123 -->
+	if !strings.Contains(body, wantMarker) {
+		t.Errorf("body did not instruct the handoff marker %q:\n%s", wantMarker, body)
+	}
+
 	// The compiled default must itself be structurally complete (else selection loops).
 	if !leaderDeferHasAllSlots(body) {
 		t.Errorf("compiled default fails its own four-slot completeness check:\n%s", body)

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // writePresenceBeat writes an events.jsonl with one agent_presence beat for agent
@@ -155,6 +157,67 @@ func TestCommsSendArgs_NoWake(t *testing.T) {
 	// Body is the final positional after the "--" terminator.
 	if args[len(args)-1] != "the body" || args[len(args)-2] != "--" {
 		t.Errorf("body not passed after -- terminator: %v", args)
+	}
+}
+
+// TestMaybeDeliverLeaderWarn_Routing proves the Run-loop gate routes correctly:
+// a leader on the production path (InjectFn unset) + Online → comms with ZERO pane
+// write (handled+cleared); a leader + Offline → terminal (handled+cleared, pane
+// written); an InjectFn-set leader and a crew both fall through un-handled so the
+// existing pane path is preserved.
+func TestMaybeDeliverLeaderWarn_Routing(t *testing.T) {
+	onlinePath := writePresenceBeat(t, "captain", time.Now())
+	offlinePath := writePresenceBeat(t, "captain", time.Now().Add(-20*time.Minute))
+	noOp := func(string) bool { return false }
+
+	t.Run("leader online -> comms, handled, zero pane write", func(t *testing.T) {
+		comms := swapCommsSend(t)
+		pane := swapTmuxRun(t)
+		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: onlinePath, TmuxTarget: "s:0.0", OperatorAttachedFn: noOp}}
+		handled, cleared := w.maybeDeliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true)
+		if !handled || !cleared {
+			t.Fatalf("handled=%v cleared=%v, want true,true", handled, cleared)
+		}
+		if len(*comms) != 1 || *pane != 0 {
+			t.Errorf("comms=%d pane=%d, want comms=1 pane=0", len(*comms), *pane)
+		}
+	})
+
+	t.Run("leader offline -> terminal, handled, pane written", func(t *testing.T) {
+		comms := swapCommsSend(t)
+		pane := swapTmuxRun(t)
+		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: offlinePath, TmuxTarget: "s:0.0", OperatorAttachedFn: noOp}}
+		handled, cleared := w.maybeDeliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true)
+		if !handled || !cleared {
+			t.Fatalf("handled=%v cleared=%v, want true,true", handled, cleared)
+		}
+		if len(*comms) != 0 || *pane == 0 {
+			t.Errorf("comms=%d pane=%d, want comms=0 pane>0 (terminal fallback)", len(*comms), *pane)
+		}
+	})
+
+	t.Run("InjectFn-set leader -> not handled (existing pane path)", func(t *testing.T) {
+		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: onlinePath,
+			InjectFn: func(context.Context, string) error { return nil }}}
+		if handled, _ := w.maybeDeliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true); handled {
+			t.Errorf("InjectFn-set leader was handled by the T7 gate; want fall-through to the pane path")
+		}
+	})
+
+	t.Run("crew -> not handled", func(t *testing.T) {
+		w := &Watcher{cfg: WatcherConfig{AgentName: "delta", EventsJSONLPath: onlinePath, TmuxTarget: "s:0.0"}}
+		if handled, _ := w.maybeDeliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true); handled {
+			t.Errorf("crew was handled by the T7 leader gate; crew must keep the existing path")
+		}
+	})
+}
+
+func TestMintCycleID_FallbackFormat(t *testing.T) {
+	// No Cycler → one-shot generator over the config clock; id is a cyc- id.
+	w := &Watcher{cfg: WatcherConfig{AgentName: "captain", Clock: substrate.NewFakeClock(time.Now())}}
+	id := w.mintCycleID()
+	if !strings.HasPrefix(id, "cyc-") {
+		t.Errorf("mintCycleID() = %q, want a cyc- prefixed id", id)
 	}
 }
 

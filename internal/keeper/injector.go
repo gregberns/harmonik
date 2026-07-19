@@ -111,11 +111,13 @@ func LeaderDeferBody(agent, nonce string) string {
 			"If you are mid-conversation with the operator, %s first. "+
 			"If you are mid-task, %s first. "+
 			"%s "+
-			"Then self-restart: run /session-handoff, then run `%s`.",
+			"Then self-restart: run /session-handoff — include the marker %s verbatim in your "+
+			"HANDOFF-<name>.md — then run `%s`.",
 		goodStoppingPointToken,
 		deferOperatorExchangeToken,
 		deferInflightUnitToken,
 		goodStoppingPointSelfTest,
+		nonceMarker(nonce),
 		fmt.Sprintf(restartNowNonceCmdToken, agent, nonce),
 	)
 }

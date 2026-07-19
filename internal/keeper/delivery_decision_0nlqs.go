@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/presence"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // leaderDeliveryChannel names the channel a leader warn tick resolved to. The
@@ -117,6 +118,46 @@ func (w *Watcher) deliverLeaderWarn(ctx context.Context, ctxFile *CtxFile, crisp
 	}
 	// Stale/Offline leader: terminal fallback (the existing warn pane path).
 	return leaderDeliveryTerminal, w.deliverTerminalWarn(ctx, ctxFile, crispIdle, operatorAttached)
+}
+
+// mintCycleID mints ONE cyc-id for a leader warn nudge (the confirmed nonce
+// model): the SAME id is threaded into the nudge's restart-now --nonce AND the
+// handoff KEEPER:<id> marker instruction, so nudge == handoff marker ==
+// restart-now event is a single audit join key (SK-030 / SK-031). It reuses the
+// Cycler's generator when present (shared monotonic seq — no duplicate mint), and
+// falls back to a one-shot generator only for a Cycler-less (WarnOnly) leader.
+func (w *Watcher) mintCycleID() string {
+	if w.cfg.Cycler != nil {
+		return w.cfg.Cycler.MintCycleID()
+	}
+	clock := w.cfg.Clock
+	if clock == nil {
+		clock = substrate.SystemClock{}
+	}
+	return newCycleIDGen(clock)()
+}
+
+// maybeDeliverLeaderWarn applies the T7 K1 delivery decision at the warn tick.
+// It returns handled=true when this session takes the leader delivery path — a
+// leader (isLeaderRole) on the PRODUCTION path (the InjectFn test seam unset) —
+// in which case the Run caller skips the pane-inject fallback; cleared reports
+// whether delivery succeeded so the caller clears pendingInject (a failure leaves
+// it set to retry). It returns (false,false) for crew OR any InjectFn-set path,
+// which keeps the existing pane behavior byte-identical (crew unchanged; tests
+// that set InjectFn still exercise the pane path directly). One minted cyc-id is
+// threaded into the nudge's restart-now --nonce AND its handoff KEEPER:<id> marker
+// instruction (SK-030/SK-031). Refs: T7.
+func (w *Watcher) maybeDeliverLeaderWarn(ctx context.Context, ctxFile *CtxFile, crispIdle bool) (handled, cleared bool) {
+	if w.cfg.InjectFn != nil || !isLeaderRole(w.cfg.AgentName) {
+		return false, false
+	}
+	operatorAttached := w.cfg.TmuxTarget != "" && w.cfg.OperatorAttachedFn(w.cfg.TmuxTarget)
+	ch, err := w.deliverLeaderWarn(ctx, ctxFile, crispIdle, operatorAttached, w.mintCycleID())
+	if err != nil {
+		slog.WarnContext(ctx, "keeper: leader warn delivery", "agent", w.cfg.AgentName, "channel", string(ch), "err", err)
+		return true, false
+	}
+	return true, true
 }
 
 // deliverTerminalWarn runs the existing terminal warn injection: selectWarnText +

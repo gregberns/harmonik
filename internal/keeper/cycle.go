@@ -717,6 +717,15 @@ func NewCycler(cfg CyclerConfig, emitter Emitter) *Cycler {
 // processing while a cycle runs (the InCycle suppression, SK-017 / D11).
 func (c *Cycler) InCycle() bool { return c.machine.InCycle() }
 
+// MintCycleID issues one cycle id from the Cycler's own generator (cfg.CycleIDGen,
+// applyDefaults-seeded). Exposed so the T7 leader-warn delivery (watcher.go) mints
+// the SAME kind of monotonic cyc-<ts>-<seq> id from the SAME generator the cycle
+// uses — no duplicate generator, no seq collision. That one id is threaded into
+// both the nudge's restart-now --nonce and the handoff KEEPER:<id> marker
+// instruction so nudge == handoff marker == restart-now event is one join key
+// (SK-030 / SK-031). Refs: T7.
+func (c *Cycler) MintCycleID() string { return c.cfg.CycleIDGen() }
+
 // journalFilePath returns the path to the cycle journal file for the agent:
 // <projectDir>/.harmonik/keeper/<agent>.cycle.
 func journalFilePath(projectDir, agent string) string {

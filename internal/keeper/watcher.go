@@ -920,6 +920,47 @@ func containsRestartNowCmd(s string) bool {
 	return strings.Contains(s, "harmonik keeper restart-now")
 }
 
+// leaderDeferSlotTokens are the SK-026 slots 1–3 fixed anchors (defer-A, defer-B,
+// good-stopping-point self-test) that a valid leader-defer override MUST retain.
+// Slot 4 (the restart-now command) is validated by containsRestartNowCmd. Presence
+// is normative; the prose around each anchor is tunable (SK-033). Refs: T3.
+var leaderDeferSlotTokens = []string{
+	deferOperatorExchangeToken,
+	deferInflightUnitToken,
+	goodStoppingPointToken,
+}
+
+// leaderDeferHasAllSlots reports whether s carries ALL FOUR SK-026 structural
+// slots. It extends the containsRestartNowCmd approach to the full K2 template
+// (SK-033): slots 1–3 are the fixed anchors, slot 4 reuses containsRestartNowCmd.
+// An override that omits any slot is structurally incomplete and MUST fall back to
+// the compiled default rather than ship an incomplete nudge. Refs: T3, SK-033.
+func leaderDeferHasAllSlots(s string) bool {
+	for _, tok := range leaderDeferSlotTokens {
+		if !strings.Contains(s, tok) {
+			return false
+		}
+	}
+	return containsRestartNowCmd(s)
+}
+
+// selectLeaderDeferText returns the K2 leader defer nudge body to deliver: the
+// operator override (LeaderDeferText) when it is non-empty AND structurally
+// complete (all four SK-026 slots per leaderDeferHasAllSlots), otherwise the
+// compiled default (LeaderDeferBody). This mirrors selectWarnText's
+// actionable-override fallback — a structurally incomplete override never ships an
+// incomplete nudge (SK-033). nonce fills the compiled default's restart-now slot
+// (SK-030, carry-for-audit); agent is the config's AgentName. Refs: T3.
+//
+// The K1 delivery decision (comms vs terminal fallback) that CONSUMES this body is
+// T7 (SK-024); T3 provides the validated body only.
+func (c *WatcherConfig) selectLeaderDeferText(nonce string) string {
+	if c.LeaderDeferText != "" && leaderDeferHasAllSlots(c.LeaderDeferText) {
+		return c.LeaderDeferText
+	}
+	return LeaderDeferBody(c.AgentName, nonce)
+}
+
 // Watcher polls the gauge file and manages the warn-injection state machine.
 // It is safe to construct a Watcher and call Run once.
 //

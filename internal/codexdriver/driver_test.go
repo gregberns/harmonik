@@ -139,6 +139,14 @@ func runTwin(mode string) {
 				emit(`{"method":"turn/started","params":{"threadId":"th_1","turn":{"id":%q,"items":[],"itemsView":"notLoaded","status":"inProgress","error":null,"startedAt":null,"completedAt":null,"durationMs":null}}}`, tid)
 				emit(`{"method":"item/agentMessage/delta","params":{"threadId":"th_1","turnId":%q,"itemId":"msg_1","delta":"working"}}`, tid)
 				continue
+			case "dieafterturn":
+				// Play one full turn, then exit — the child death that drives the
+				// resident owner's respawn+resume path (hk-160yb G1b). A respawned
+				// twin re-execs in this same mode: it re-attaches via thread/resume
+				// (top-level case above) and then dies again after its own turn.
+				respondTurnStart(tid)
+				emitTurn(tid)
+				os.Exit(0)
 			case "approval":
 				// Ack the submission (turn/started), then send a server-originated
 				// approval request (id+method) that the driver must answer. The turn

@@ -56,8 +56,8 @@ func TestEnsureClaudeTheme_SeedsWhenAbsentFile(t *testing.T) {
 // theme key is missing, null, or "" → seeded to dark.
 func TestEnsureClaudeTheme_SeedsWhenUnset(t *testing.T) {
 	cases := map[string]map[string]interface{}{
-		"absent-key": {"projects": map[string]interface{}{}},
-		"null-theme": {"theme": nil},
+		"absent-key":  {"projects": map[string]interface{}{}},
+		"null-theme":  {"theme": nil},
 		"empty-theme": {"theme": ""},
 	}
 	for name, initial := range cases {

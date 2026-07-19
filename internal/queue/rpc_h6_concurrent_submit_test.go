@@ -44,10 +44,10 @@ func (f *h6FakeLocker) LockForMutationView() queue.LockedQueueView {
 
 type h6FakeView struct{ f *h6FakeLocker }
 
-func (h6FakeView) LockedQueueByName(string) *queue.Queue { return nil }
+func (h6FakeView) LockedQueueByName(string) *queue.Queue     { return nil }
 func (h6FakeView) LockedSetQueueByName(string, *queue.Queue) {}
-func (h6FakeView) LockedAllQueueNames() []string         { return nil }
-func (v h6FakeView) Done()                               { v.f.mu.Unlock() }
+func (h6FakeView) LockedAllQueueNames() []string             { return nil }
+func (v h6FakeView) Done()                                   { v.f.mu.Unlock() }
 
 func TestHandlerAdapter_ConcurrentSubmit_SameName_ExactlyOneWins(t *testing.T) {
 	t.Parallel()

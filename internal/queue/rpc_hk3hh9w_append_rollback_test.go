@@ -42,9 +42,9 @@ func newHK3FakeLocker(name string, q *queue.Queue) *hk3FakeLocker {
 	return &hk3FakeLocker{queues: map[string]*queue.Queue{name: q}}
 }
 
-func (f *hk3FakeLocker) SetQueue(*queue.Queue)      {}
-func (f *hk3FakeLocker) ClearQueueByName(string)    {}
-func (f *hk3FakeLocker) Wake()                      {}
+func (f *hk3FakeLocker) SetQueue(*queue.Queue)   {}
+func (f *hk3FakeLocker) ClearQueueByName(string) {}
+func (f *hk3FakeLocker) Wake()                   {}
 func (f *hk3FakeLocker) LockForMutationView() queue.LockedQueueView {
 	f.mu.Lock()
 	return hk3FakeView{f}
@@ -59,6 +59,7 @@ func (v hk3FakeView) LockedSetQueueByName(name string, q *queue.Queue) {
 	v.f.lastSetKey = name
 	v.f.queues[name] = q
 }
+
 func (v hk3FakeView) LockedAllQueueNames() []string {
 	names := make([]string, 0, len(v.f.queues))
 	for k := range v.f.queues {

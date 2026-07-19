@@ -249,7 +249,7 @@ func TestT2_PositiveAcceptance_OnlyAsyncAcked(t *testing.T) {
 	acked := core.AgentInputAckedPayload{
 		RunID:         "019ec897-0000-7000-8000-000000000042",
 		InputSeq:      int64(ack.Seq), //nolint:gosec // G115: test ack.Seq is a small controlled value, no uint64→int64 overflow
-		AcceptanceRef: ack.Token, // empty here — the paste path supplies no turn id.
+		AcceptanceRef: ack.Token,      // empty here — the paste path supplies no turn id.
 		AckedAt:       "2026-07-16T00:00:00Z",
 	}
 	if !acked.Valid() {

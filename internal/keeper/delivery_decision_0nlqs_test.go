@@ -197,8 +197,10 @@ func TestMaybeDeliverLeaderWarn_Routing(t *testing.T) {
 	})
 
 	t.Run("InjectFn-set leader -> not handled (existing pane path)", func(t *testing.T) {
-		w := &Watcher{cfg: WatcherConfig{AgentName: "captain", EventsJSONLPath: onlinePath,
-			InjectFn: func(context.Context, string) error { return nil }}}
+		w := &Watcher{cfg: WatcherConfig{
+			AgentName: "captain", EventsJSONLPath: onlinePath,
+			InjectFn: func(context.Context, string) error { return nil },
+		}}
 		if handled, _ := w.maybeDeliverLeaderWarn(context.Background(), &CtxFile{SessionID: "sid"}, true); handled {
 			t.Errorf("InjectFn-set leader was handled by the T7 gate; want fall-through to the pane path")
 		}

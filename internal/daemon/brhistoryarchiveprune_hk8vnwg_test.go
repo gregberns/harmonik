@@ -81,7 +81,7 @@ func TestHK8vnwg_PruneMaxAge(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 
 	oldP, oldS := writeArchived(t, dir, "issues.old", "T0", now.Add(-10*24*time.Hour)) // 10 days
-	newP, newS := writeArchived(t, dir, "issues.new", "T0", now.Add(-1*time.Hour))      // 1 hour
+	newP, newS := writeArchived(t, dir, "issues.new", "T0", now.Add(-1*time.Hour))     // 1 hour
 
 	// keepN=0 (disabled) so ONLY the age arm acts. maxAge = 7 days.
 	pruneBrHistoryArchive(context.Background(), dir, 0, 7*24*time.Hour, now)

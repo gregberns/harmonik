@@ -31,6 +31,7 @@ type t5RequestHandler struct {
 func (s *t5RequestHandler) EmitOutcome(_ context.Context, _ OutcomeRequest) (json.RawMessage, error) {
 	return s.result, nil
 }
+
 func (s *t5RequestHandler) ClaimNext(_ context.Context, _ string) (json.RawMessage, error) {
 	return s.result, nil
 }
@@ -47,24 +48,31 @@ type t5QueueHandler struct {
 func (s *t5QueueHandler) HandleQueueSubmit(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
 	return s.result, nil
 }
+
 func (s *t5QueueHandler) HandleQueueAppend(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
 	return s.result, nil
 }
+
 func (s *t5QueueHandler) HandleQueueStatus(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
 	return s.result, nil
 }
+
 func (s *t5QueueHandler) HandleQueueDryRun(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
 	return s.result, nil
 }
+
 func (s *t5QueueHandler) HandleQueueList(_ context.Context) (json.RawMessage, *queue.RPCError) {
 	return s.result, nil
 }
+
 func (s *t5QueueHandler) HandleQueueSetConcurrency(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
 	return s.result, nil
 }
+
 func (s *t5QueueHandler) HandleWorkerSetEnabled(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
 	return s.result, nil
 }
+
 func (s *t5QueueHandler) HandleQueueCancel(_ context.Context, _ json.RawMessage) (json.RawMessage, *queue.RPCError) {
 	return s.result, nil
 }

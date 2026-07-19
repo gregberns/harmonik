@@ -88,14 +88,22 @@ func TestSelectLeaderDeferText_FallbackPerMissingSlot(t *testing.T) {
 	}{
 		{"empty -> compiled default", "", compiled},
 		{"full override -> ships operator prose", fullOverride, fullOverride},
-		{"missing slot 1 (defer-A) -> fallback",
-			strings.Replace(fullOverride, deferOperatorExchangeToken, "wrap things up", 1), compiled},
-		{"missing slot 2 (defer-B) -> fallback",
-			strings.Replace(fullOverride, deferInflightUnitToken, "wrap up the task", 1), compiled},
-		{"missing slot 3 (self-test) -> fallback",
-			strings.Replace(fullOverride, goodStoppingPointToken, "a clean break", 1), compiled},
-		{"missing slot 4 (restart-now) -> fallback",
-			strings.Replace(fullOverride, "harmonik keeper restart-now", "restart yourself", 1), compiled},
+		{
+			"missing slot 1 (defer-A) -> fallback",
+			strings.Replace(fullOverride, deferOperatorExchangeToken, "wrap things up", 1), compiled,
+		},
+		{
+			"missing slot 2 (defer-B) -> fallback",
+			strings.Replace(fullOverride, deferInflightUnitToken, "wrap up the task", 1), compiled,
+		},
+		{
+			"missing slot 3 (self-test) -> fallback",
+			strings.Replace(fullOverride, goodStoppingPointToken, "a clean break", 1), compiled,
+		},
+		{
+			"missing slot 4 (restart-now) -> fallback",
+			strings.Replace(fullOverride, "harmonik keeper restart-now", "restart yourself", 1), compiled,
+		},
 	}
 
 	for _, tc := range cases {

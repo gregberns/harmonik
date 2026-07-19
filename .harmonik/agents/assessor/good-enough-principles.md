@@ -14,7 +14,7 @@ This doc states WHERE the bar sits; those own HOW a finding is graded.*
 
 A branch is **good enough to release** when the assessor can honestly attest, on
 its own reasoned judgment, that the work does what it claims and hides no
-ship-blocking defect — measured against the four requirements in §2, at the
+ship-blocking defect — measured against the five requirements in §2, at the
 hardness §3 (risk tier) demands. "Good enough" is deliberately NOT "perfect":
 minor, bounded, or recoverable defects are recorded as known issues and do not
 hold the gate (`07` §1). The bar cuts between *"bad enough to hold everything"*
@@ -26,9 +26,9 @@ mechanical row count that can be gamed by an empty ledger.
 
 ---
 
-## 2. The release bar — four requirements
+## 2. The release bar — five requirements
 
-All four MUST hold for a **PASS**. Any one failing at or above the §3 risk floor
+All five MUST hold for a **PASS**. Any one failing at or above the §3 risk floor
 is a **BLOCK**.
 
 ### 2.1 LT — local-tester matrix green (including the required cells)
@@ -70,6 +70,40 @@ Unreconciled claimed-done — work asserted complete but unsupported by the bran
 own artifacts — is a BLOCK; the assessor grades what the branch actually contains,
 never what a log says it contains.
 
+### 2.5 MG — merge-gate green (CI parity; the acceptance gate is the superset)
+
+The assessor MUST run the **full CI merge gate** — `make check-short` (gofumpt+gci
+`fmt-check`, `go vet ./...`, `go build ./...`, `golangci-lint run
+--new-from-rev=origin/main`, and `go test -short -race` with the proven-green
+`-count=1 -p=1 -parallel=1 -timeout=20m` knobs) — on the pinned commit in the isolated
+scratch clone, and **it MUST pass**. A **PASS is impossible while any `check-short`
+check is red.** A behaviorally-green branch that fails the CI merge gate is
+**not** shippable — it is a false-green; this is the exact failure that shipped a
+lint-failing branch to PR #31.
+
+**The acceptance gate is the SUPERSET, not a peer of CI.** CI cannot run
+everything — no real-daemon E2E, no forced-LOCAL real-agent LT, no long suites — so
+the **assessor runs ALL the checks** and CI merely re-runs the cheap, portable
+subset. **CI-green is NECESSARY but NEVER sufficient;** the assessor's PASS is the
+authoritative ship gate and MUST encompass CI's checks (§2.5) as a subset of the
+behavioral bar (§2.1–2.4).
+
+Two operating notes:
+
+- **Assess the merge RESULT, not the branch in isolation, where feasible.** CI
+  gates the PR **merge commit** (branch merged onto `origin/main`), not the branch
+  tip. When the target is reachable, the assessor runs `check-short` against the
+  merge result so a clean branch that breaks *after* merge (semantic conflict,
+  drifted `origin/main`) is caught here, not at CI.
+- **Branch-introduced vs pre-existing (honest bar under legacy debt).** The lint
+  step uses `--new-from-rev=origin/main` deliberately: it blocks only on
+  **branch-introduced** issues, never on the pre-existing legacy debt a red
+  `origin/main` already carries (a full `golangci-lint run` surfaces thousands of
+  legacy issues — a main-health problem to escalate, not this branch's blocker).
+  MG is red = the *branch* added a failing check; that is a BLOCK. Pre-existing
+  main debt is escalated to the admiral as a separate main-health finding, never
+  charged against the branch.
+
 ---
 
 ## 3. Risk tiering sets how hard the bar is (D2 — path-glob risk floor)
@@ -100,7 +134,7 @@ admiral rather than guessing (`soul.md` §escalate).
 
 ## 4. Deploy gate (GATE-0) addendum
 
-For a `gate: deploy` handoff the same four requirements apply to the named
+For a `gate: deploy` handoff the same five requirements apply to the named
 `commit`, with two additions the deploy gate enforces (`operating.md`
 §Deploy-gate): the isolated e2e reproducing the changed behavior MUST be green,
 and the deploy-readiness **preconditions the mission names** (the 24h-reliability

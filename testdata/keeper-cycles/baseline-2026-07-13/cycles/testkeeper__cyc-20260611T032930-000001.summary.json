@@ -1,0 +1,16 @@
+{
+  "abort_reason": null,
+  "agent_name": "testkeeper",
+  "ckey": "testkeeper|cyc-20260611T032930-000001",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260611T032930-000001",
+  "event_count": 2,
+  "outcome": "complete",
+  "session_id_start": "019eb4b3-b7fe-7528-a8da-59ca29e1f32b",
+  "started_at": "2026-06-11T03:30:45.464312Z",
+  "terminal_at": "2026-06-11T03:31:12.68023Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_complete"
+  ]
+}

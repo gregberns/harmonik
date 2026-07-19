@@ -96,6 +96,32 @@ func TestRunStart_Parser(t *testing.T) {
 			wantErrSubstr: "takes no positional argument",
 		},
 
+		// ---- assessor: first-class standing role (M6 WS5-3) ----
+		// Routes through the same crew-registry RPC path as commodore/admiral so
+		// the daemon writes crew.Record{Name:"assessor"} + the crew-assessor tmux
+		// session that probeCrewRegistrySessions exempts from RunOrphanSweep.
+		{
+			name:     "simple assessor: bare, no name, no flags",
+			args:     []string{"assessor"},
+			wantExit: 0,
+			wantRole: "crew",
+			wantArgv: []string{"start", "assessor"},
+		},
+		{
+			name:     "advanced assessor: flags forwarded, role pinned",
+			args:     []string{"assessor", "--mission", "m.md"},
+			wantExit: 0,
+			wantRole: "crew",
+			wantArgv: []string{"start", "assessor", "--mission", "m.md"},
+		},
+		{
+			name:          "assessor rejects a bare positional (identity is the role, not a free choice)",
+			args:          []string{"assessor", "skip"},
+			wantExit:      2,
+			wantRole:      "none",
+			wantErrSubstr: "takes no positional argument",
+		},
+
 		// ---- ADVANCED form (all-named, no positional) ----
 		{
 			name:     "advanced captain: all named",

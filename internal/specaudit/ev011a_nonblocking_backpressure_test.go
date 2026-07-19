@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.15 binding test — EV-011a non-blocking producer back-pressure.

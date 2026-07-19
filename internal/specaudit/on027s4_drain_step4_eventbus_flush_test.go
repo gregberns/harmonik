@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.37 binding test — ON-027 step 4: event bus flushes pending events (fsync).

@@ -2,12 +2,15 @@ package keeper
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // restartnow_test.go — tests for the DEAD-SIMPLE restart-now / ping path
@@ -107,6 +110,92 @@ func TestRestartNow_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(got[2], "keeper-restart") {
 		t.Errorf("inject[2] = %q, want '--wake keeper-restart'", got[2])
+	}
+}
+
+// TestRestartNow_EmitsNonceAuditEvent is the T5 acceptance
+// (hk-keeper-delivery-restartnow-nonce-kz4w6, SK-030): a successful restart
+// records a durable session_keeper_restart_now event carrying the SUPPLIED
+// nonce, so the self-restart joins to its originating cycle in events.jsonl by
+// nonce. Carry-for-audit: a nonce that matches no live cycle is NOT rejected;
+// and the additive emit does NOT change the ack→/clear→brief ordering.
+func TestRestartNow_EmitsNonceAuditEvent(t *testing.T) {
+	dir := t.TempDir()
+	agent := "captain"
+	writeSidAndCtx(t, dir, agent, goodSID)
+	requested := time.Now()
+	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
+
+	rec := &recordingInjector{}
+	em := &RecordingEmitter{}
+	// A cycle-shaped nonce that matches no live cycle here — carry-for-audit MUST
+	// still run clean and record it verbatim.
+	const nonce = "cyc-1700000000-1"
+	err := RestartNow(context.Background(), RestartNowConfig{
+		ProjectDir:  dir,
+		AgentName:   agent,
+		TmuxTarget:  "sess:0",
+		Inject:      rec.inject,
+		RequestedAt: requested,
+		Emitter:     em,
+	}, nonce)
+	if err != nil {
+		t.Fatalf("RestartNow with a non-matching nonce must NOT be rejected (carry-for-audit); got: %v", err)
+	}
+
+	// Ordering unchanged: ack + /clear + agent brief, in that order.
+	got := rec.texts()
+	if len(got) != 3 {
+		t.Fatalf("want the unchanged 3-line ack+/clear+brief sequence; got %v", got)
+	}
+	if got[0] != AckLine(nonce, "restart") || got[1] != "/clear" {
+		t.Fatalf("verify/ACK/clear ordering changed; got %v", got)
+	}
+
+	// Exactly one durable audit event carrying the supplied nonce + identity.
+	evs := em.EventsOfType(core.EventTypeSessionKeeperRestartNow)
+	if len(evs) != 1 {
+		t.Fatalf("want exactly 1 session_keeper_restart_now event; got %d", len(evs))
+	}
+	var p core.SessionKeeperRestartNowPayload
+	if uerr := json.Unmarshal(evs[0].Payload, &p); uerr != nil {
+		t.Fatalf("unmarshal payload: %v", uerr)
+	}
+	if p.Nonce != nonce {
+		t.Errorf("event nonce = %q; want %q (carry-for-audit, verbatim)", p.Nonce, nonce)
+	}
+	if p.AgentName != agent {
+		t.Errorf("event agent_name = %q; want %q", p.AgentName, agent)
+	}
+	if p.SessionID != goodSID {
+		t.Errorf("event session_id = %q; want %q", p.SessionID, goodSID)
+	}
+}
+
+// TestRestartNow_NilEmitter_NoEventStillSucceeds: a nil Emitter (Ping, or a
+// caller that opts out) emits nothing and the restart still drives cleanly —
+// omitting the audit sink preserves today's behavior.
+func TestRestartNow_NilEmitter_NoEventStillSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	agent := "captain"
+	writeSidAndCtx(t, dir, agent, goodSID)
+	requested := time.Now()
+	writeFreshHandoff(t, dir, agent, requested.Add(time.Second))
+
+	rec := &recordingInjector{}
+	err := RestartNow(context.Background(), RestartNowConfig{
+		ProjectDir:  dir,
+		AgentName:   agent,
+		TmuxTarget:  "sess:0",
+		Inject:      rec.inject,
+		RequestedAt: requested,
+		Emitter:     nil,
+	}, "nonceXYZ")
+	if err != nil {
+		t.Fatalf("RestartNow nil-emitter: %v", err)
+	}
+	if got := rec.texts(); len(got) != 3 {
+		t.Fatalf("want the unchanged 3-line ack+/clear+brief sequence; got %v", got)
 	}
 }
 

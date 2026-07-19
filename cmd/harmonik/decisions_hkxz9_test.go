@@ -29,7 +29,78 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/eventbus"
 )
+
+// decisionRow is one open decision in the client-side projection (the cmd/harmonik
+// mirror of internal/daemon.Decision — kept separate because the package boundary
+// forbids importing the daemon type). Test-only: it backs decisionsClientProjection,
+// the parity fold that this file's tests assert against K3's open-set semantics.
+type decisionRow struct {
+	DecisionID   string
+	Question     string
+	Options      []string
+	BlockedAgent string
+	ContextLink  string
+}
+
+// decisionsClientProjection is the client-side equivalent of K3's
+// decisionsProjection (internal/daemon, un-importable from cmd/harmonik). It is
+// the SAME fold: ADD on decision_needed keyed by the event's own event_id;
+// REMOVE on decision_resolved/decision_withdrawn keyed by payload.decision_id;
+// dedupe on event_id (N2). Returns the OPEN set keyed by decision_id.
+//
+// It lives in the test file because production code has no reader: the wait path
+// uses the lighter decisionTerminalInLog (one decision, terminal only). This full
+// fold exists solely to assert, in this file's tests, that the K2-side semantics
+// match K3's.
+func decisionsClientProjection(eventsPath string) map[string]decisionRow {
+	var zeroID core.EventID
+	open := make(map[string]decisionRow)
+	seen := make(map[string]struct{})
+	for evt := range eventbus.ScanAfter(eventsPath, zeroID) {
+		evID := evt.EventID.String()
+		if _, dup := seen[evID]; dup {
+			continue
+		}
+		switch evt.Type {
+		case string(core.EventTypeDecisionNeeded):
+			var p core.DecisionNeededPayload
+			if err := json.Unmarshal(evt.Payload, &p); err != nil {
+				continue
+			}
+			seen[evID] = struct{}{}
+			open[evID] = decisionRow{
+				DecisionID:   evID,
+				Question:     p.Question,
+				Options:      p.Options,
+				BlockedAgent: p.BlockedAgent,
+				ContextLink:  p.ContextLink,
+			}
+		case string(core.EventTypeDecisionResolved):
+			var p core.DecisionResolvedPayload
+			if err := json.Unmarshal(evt.Payload, &p); err != nil {
+				continue
+			}
+			if p.DecisionID == "" {
+				continue
+			}
+			seen[evID] = struct{}{}
+			delete(open, p.DecisionID)
+		case string(core.EventTypeDecisionWithdrawn):
+			var p core.DecisionWithdrawnPayload
+			if err := json.Unmarshal(evt.Payload, &p); err != nil {
+				continue
+			}
+			if p.DecisionID == "" {
+				continue
+			}
+			seen[evID] = struct{}{}
+			delete(open, p.DecisionID)
+		}
+	}
+	return open
+}
 
 // Canonical UUIDv7-shaped event_ids (lexicographic == chronological). Suffix
 // encodes role: 1xxx = decision_needed (the decision_id), 2xxx = resolved,

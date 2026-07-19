@@ -46,7 +46,14 @@ func CaptureWIP(worktreePath string) (core.WIPCapture, error) {
 		return core.WIPCapture{}, fmt.Errorf("workspace: CaptureWIP: git diff: %w", err)
 	}
 
-	untracked := extractUntrackedFiles(status)
+	// Untracked-file extraction uses -z output: the human porcelain format
+	// quotes/escapes special paths and renders renames as "new -> orig", both
+	// of which would corrupt the extracted path list.
+	statusZ, err := runGitStatusZ(worktreePath)
+	if err != nil {
+		return core.WIPCapture{}, fmt.Errorf("workspace: CaptureWIP: git status -z: %w", err)
+	}
+	untracked := extractUntrackedFiles(statusZ)
 
 	return core.WIPCapture{
 		WorktreePath:       worktreePath,
@@ -113,19 +120,43 @@ func writeFileIfNonEmpty(dir, name, content string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 }
 
-// extractUntrackedFiles parses `git status --porcelain` output and returns
-// the paths of all untracked files (lines starting with "?? ").
-func extractUntrackedFiles(porcelainOutput string) []string {
-	if porcelainOutput == "" {
+// runGitStatusZ runs `git status --porcelain -z` in dir and returns the
+// NUL-separated output. Unlike the newline format, -z never quotes or escapes
+// paths, so paths with spaces, quotes, or newlines round-trip exactly.
+func runGitStatusZ(dir string) (string, error) {
+	cmd := exec.Command("git", "status", "--porcelain", "-z") //nolint:noctx // called from non-context path
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git status --porcelain -z: %w", err)
+	}
+	return string(out), nil
+}
+
+// extractUntrackedFiles parses `git status --porcelain -z` output and returns
+// the paths of all untracked files ("?? " entries). Entries are NUL-separated;
+// rename/copy entries (X or Y of R/C) carry an extra NUL-terminated original
+// path, which is skipped so it is never misread as a status entry.
+func extractUntrackedFiles(porcelainZOutput string) []string {
+	if porcelainZOutput == "" {
 		return nil
 	}
+	entries := strings.Split(porcelainZOutput, "\x00")
 	var untracked []string
-	for _, line := range strings.Split(porcelainOutput, "\n") {
-		if strings.HasPrefix(line, "?? ") {
-			path := strings.TrimPrefix(line, "?? ")
-			if path != "" {
-				untracked = append(untracked, path)
-			}
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if len(entry) < 3 {
+			continue
+		}
+		xy, path := entry[:2], entry[3:]
+		if xy == "??" && path != "" {
+			untracked = append(untracked, path)
+			continue
+		}
+		// Rename/copy entries are followed by the original path as a separate
+		// NUL-terminated field; skip it.
+		if xy[0] == 'R' || xy[0] == 'C' || xy[1] == 'R' || xy[1] == 'C' {
+			i++
 		}
 	}
 	return untracked

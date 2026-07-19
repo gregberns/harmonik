@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.46 binding test — EV-036 compile-time check: no payload field name

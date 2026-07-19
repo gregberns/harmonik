@@ -1,0 +1,2 @@
+{"type":"run_started","payload":{"bead_id":"hk-clp-codex","run_id":"r1"}}
+{"type":"workspace_merge_status","payload":{"workspace_id":"0192cccc-0000-7000-8000-000000000003","run_id":"r1","status":"merged","source_branch":"run/r1","target_branch":"main","merge_commit_hash":"abc123"}}

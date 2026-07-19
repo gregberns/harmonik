@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.51 binding test — ON-035 every subsystem emits structured logs (NDJSON wire format).

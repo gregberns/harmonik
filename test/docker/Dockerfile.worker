@@ -1,0 +1,62 @@
+# test/docker/Dockerfile.worker — M6 WS2.2 remote-substrate worker image.
+#
+# Mirrors the origin.git / boxA / worker topology exercised by
+# internal/daemon/scenario_remote_substrate_localhost_test.go: the daemon (box A)
+# reaches this worker over SSH as Host:"worker", runs `git worktree add` in a
+# writable clone here, and fetches run/<id> straight back over
+# `ssh://worker<repoPath>` — no worker→GitHub round-trip (hk-7bwx).
+#
+# Installs: sshd + git + tmux + the generic twin. LOCKED decision (WS2.2): the
+# SSH key is NOT baked in — it is generated at compose-up by the entrypoint via a
+# shared volume, and clients connect with `StrictHostKeyChecking accept-new`.
+#
+# Build context is the repo ROOT:  docker build -f test/docker/Dockerfile.worker .
+# Makefile target reused: `twins` (build-twin-generic → <repo>/twins/generic-twin,
+# Makefile lines 214/227). COMMIT_HASH passed as a build-arg (no .git in context).
+
+# ── Stage 1: build just the generic twin from source via the Makefile ────────
+FROM golang:1.25-bookworm AS go-build
+ARG COMMIT_HASH=docker
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN make twins COMMIT_HASH="${COMMIT_HASH}"
+
+# ── Stage 2: runtime = sshd + git + tmux + twin ──────────────────────────────
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openssh-server \
+        git \
+        tmux \
+        ca-certificates \
+        netcat-openbsd \
+        python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /run/sshd
+
+# The generic twin on PATH (the worker runs handler twins locally under the
+# daemon's SSH-driven lifecycle).
+COPY --from=go-build /src/twins/generic-twin /usr/local/bin/generic-twin
+
+# Writable clone path for `git worktree add` (the worker's repo clone / RepoPath
+# in the workers registry). A real clone of origin is created at compose-up by
+# the entrypoint (or bind-mounted); this just guarantees a writable location.
+RUN mkdir -p /work/worker
+WORKDIR /work
+
+# sshd: key-only root login (no password). The authorized client key arrives at
+# runtime from the shared volume — see entrypoint-worker.sh.
+RUN sed -ri 's/^#?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config \
+    && sed -ri 's/^#?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config \
+    && sed -ri 's/^#?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+# Shared-volume convention (WS2.3 compose mounts a named volume here). The daemon
+# container writes its client public key to $KEYS_DIR/id_ed25519.pub; this worker
+# installs it into authorized_keys at boot.
+ENV KEYS_DIR=/keys
+
+EXPOSE 22
+COPY test/docker/entrypoint-worker.sh /usr/local/bin/entrypoint-worker.sh
+RUN chmod +x /usr/local/bin/entrypoint-worker.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint-worker.sh"]

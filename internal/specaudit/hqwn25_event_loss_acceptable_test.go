@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.25 binding test — EV-017 event loss between fsyncs is acceptable

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // AR-006 binding test — mechanism-tagged requirements MUST NOT carry a non-zero

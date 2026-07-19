@@ -128,6 +128,20 @@ func run() int {
 	// call_stop_hook script step will error if used.
 	worktreePath := fs.String("worktree-path", "", "absolute path to the project worktree; twin reads .claude/settings.json from here (hk-e66ht; optional)")
 
+	// --replay-path: replay a Claude-A wire.ndjson capture verbatim (M6
+	// WS3-Claude-B). When set, it takes PRECEDENCE over canned-scenario /
+	// --script-path resolution: the captured NDJSON is re-emitted line for line
+	// on the output writer with no restamping, so replaying a capture round-trips
+	// to an events.jsonl that F1.AssertStreamEquivalent finds equivalent to the
+	// capture's own. Cite: plans/2026-07-13-code-revamp/M6-PLAN.md §WS3 Claude-B.
+	replayPath := fs.String("replay-path", "", "path to a Claude-A wire.ndjson capture to replay verbatim (M6 WS3-Claude-B; takes precedence over --scenario/--script-path)")
+
+	// --preserve-timing: when replaying, reproduce the capture's inter-event
+	// delays (from its envelope timestamps) via context-aware sleeps. Default
+	// (false) drains the capture as fast as the output writer accepts it. A
+	// capture with no timestamp fields collapses to fast-drain regardless.
+	preserveTiming := fs.Bool("preserve-timing", false, "replay with the capture's inter-event delays (default: fast-drain)")
+
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		// flag.ContinueOnError: parse errors are already printed to stderr by
 		// the flag package; just exit with a non-zero code.
@@ -150,10 +164,16 @@ func run() int {
 		}
 	}
 
-	// Resolve the ScriptFile to drive.  Priority: --scenario > --script-path.
-	// If neither is set, scriptFile is nil (no-op script path).
+	// Resolve the ScriptFile to drive.  Priority: --replay-path > --scenario >
+	// --script-path.  When --replay-path is set it takes precedence and canned-
+	// scenario / --script-path resolution is skipped entirely (scriptFile stays
+	// nil); the captured wire is replayed verbatim by runReplay below.
+	// If none is set, scriptFile is nil (no-op script path).
 	var scriptFile *ScriptFile
 	switch {
+	case *replayPath != "":
+		// Replay mode (M6 WS3-Claude-B): scriptFile stays nil; runReplay drives
+		// output after the writer is established.
 	case *scenarioName != "":
 		// Canned scenario mode (CHB-021): load the named scenario from the
 		// embedded scenario table in scenarios.go.
@@ -212,13 +232,25 @@ func run() int {
 		}
 		defer func() { _ = conn.Close() }()
 		out = conn
-	} else if scriptFile != nil {
-		// Scenario or script mode without socket path: stdout fallback (CHB-022).
+	} else if scriptFile != nil || *replayPath != "" {
+		// Scenario / script / replay mode without socket path: stdout fallback
+		// (CHB-022 stdout-watcher topology).
 		out = os.Stdout
 	} else {
-		// No scenario/script and no socket path: socket-path is required.
+		// No scenario/script/replay and no socket path: socket-path is required.
 		fmt.Fprintln(os.Stderr, "harmonik-twin-claude: --socket-path is required")
 		return 1
+	}
+
+	// Replay mode (M6 WS3-Claude-B): re-emit the captured wire verbatim on the
+	// established output writer, then exit. Takes precedence over the script
+	// driver; scriptFile is nil in this mode.
+	if *replayPath != "" {
+		if err := runReplay(ctx, out, *replayPath, *preserveTiming); err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik-twin-claude: replay: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	// Script-driver loop (hk-ahvq.48.3 / CHB-021): when a script file is

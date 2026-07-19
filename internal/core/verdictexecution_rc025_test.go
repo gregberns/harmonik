@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -14,6 +15,19 @@ import (
 //
 // Spec ref: specs/reconciliation/spec.md §4.5 RC-025;
 // specs/reconciliation/schemas.md §6.2 Verdict-execution table.
+
+// mustPlan returns the execution plan for v, failing the test if PlanForVerdict
+// reports an error. Every verdict exercised by these tests is valid, so the
+// error is always nil; the helper keeps the assertion real without repeating the
+// error check at each call site.
+func mustPlan(t *testing.T, v Verdict) VerdictExecutionPlan {
+	t.Helper()
+	plan, err := PlanForVerdict(v)
+	if err != nil {
+		t.Fatalf("PlanForVerdict(%q): unexpected error: %v", v, err)
+	}
+	return plan
+}
 
 // ---- VerdictActionKind ----
 
@@ -189,7 +203,7 @@ func TestPlanForVerdict_AllVerdictsProduce_Valid(t *testing.T) {
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
-			plan := PlanForVerdict(v)
+			plan := mustPlan(t, v)
 			if !plan.Valid() {
 				t.Errorf("PlanForVerdict(%q).Valid() = false; want true", v)
 			}
@@ -208,7 +222,7 @@ func TestPlanForVerdict_AllVerdictsProduce_Valid(t *testing.T) {
 func TestPlanForVerdict_ResumeHere(t *testing.T) {
 	t.Parallel()
 
-	plan := PlanForVerdict(VerdictResumeHere)
+	plan := mustPlan(t, VerdictResumeHere)
 
 	if plan.ActionKind != VerdictActionKindDispatchCurrentNode {
 		t.Errorf("resume-here ActionKind = %q, want %q",
@@ -233,7 +247,7 @@ func TestPlanForVerdict_ResumeHere(t *testing.T) {
 func TestPlanForVerdict_ResumeWithContext(t *testing.T) {
 	t.Parallel()
 
-	plan := PlanForVerdict(VerdictResumeWithContext)
+	plan := mustPlan(t, VerdictResumeWithContext)
 
 	if plan.ActionKind != VerdictActionKindDispatchCurrentNode {
 		t.Errorf("resume-with-context ActionKind = %q, want %q",
@@ -256,8 +270,8 @@ func TestPlanForVerdict_ResumeWithContext(t *testing.T) {
 func TestPlanForVerdict_ResumeHereAndResumeWithContext_ShareActionKind(t *testing.T) {
 	t.Parallel()
 
-	here := PlanForVerdict(VerdictResumeHere)
-	withCtx := PlanForVerdict(VerdictResumeWithContext)
+	here := mustPlan(t, VerdictResumeHere)
+	withCtx := mustPlan(t, VerdictResumeWithContext)
 
 	if here.ActionKind != withCtx.ActionKind {
 		t.Errorf("resume-here and resume-with-context ActionKind differ: %q vs %q; "+
@@ -278,7 +292,7 @@ func TestPlanForVerdict_ResumeHereAndResumeWithContext_ShareActionKind(t *testin
 func TestPlanForVerdict_ResetToCheckpoint(t *testing.T) {
 	t.Parallel()
 
-	plan := PlanForVerdict(VerdictResetToCheckpoint)
+	plan := mustPlan(t, VerdictResetToCheckpoint)
 
 	if plan.ActionKind != VerdictActionKindResetToCheckpoint {
 		t.Errorf("reset-to-checkpoint ActionKind = %q, want %q",
@@ -304,7 +318,7 @@ func TestPlanForVerdict_ResetToCheckpoint(t *testing.T) {
 func TestPlanForVerdict_ReopenBead(t *testing.T) {
 	t.Parallel()
 
-	plan := PlanForVerdict(VerdictReopenBead)
+	plan := mustPlan(t, VerdictReopenBead)
 
 	if plan.ActionKind != VerdictActionKindReopenBead {
 		t.Errorf("reopen-bead ActionKind = %q, want %q",
@@ -329,7 +343,7 @@ func TestPlanForVerdict_ReopenBead(t *testing.T) {
 func TestPlanForVerdict_AcceptCloseWithNote(t *testing.T) {
 	t.Parallel()
 
-	plan := PlanForVerdict(VerdictAcceptCloseWithNote)
+	plan := mustPlan(t, VerdictAcceptCloseWithNote)
 
 	if plan.ActionKind != VerdictActionKindAcceptCloseWithNote {
 		t.Errorf("accept-close-with-note ActionKind = %q, want %q",
@@ -353,7 +367,7 @@ func TestPlanForVerdict_AcceptCloseWithNote(t *testing.T) {
 func TestPlanForVerdict_NoOpAccept(t *testing.T) {
 	t.Parallel()
 
-	plan := PlanForVerdict(VerdictNoOpAccept)
+	plan := mustPlan(t, VerdictNoOpAccept)
 
 	if plan.ActionKind != VerdictActionKindNoOp {
 		t.Errorf("no-op-accept ActionKind = %q, want %q",
@@ -377,7 +391,7 @@ func TestPlanForVerdict_NoOpAccept(t *testing.T) {
 func TestPlanForVerdict_EscalateToHuman(t *testing.T) {
 	t.Parallel()
 
-	plan := PlanForVerdict(VerdictEscalateToHuman)
+	plan := mustPlan(t, VerdictEscalateToHuman)
 
 	if plan.ActionKind != VerdictActionKindEscalateToHuman {
 		t.Errorf("escalate-to-human ActionKind = %q, want %q",
@@ -415,7 +429,7 @@ func TestPlanForVerdict_SevenVerdictsMappedToSixActionKinds(t *testing.T) {
 	// Collect distinct action kinds.
 	kindSet := make(map[VerdictActionKind][]Verdict)
 	for _, v := range verdicts {
-		plan := PlanForVerdict(v)
+		plan := mustPlan(t, v)
 		kindSet[plan.ActionKind] = append(kindSet[plan.ActionKind], v)
 	}
 
@@ -466,7 +480,7 @@ func TestPlanForVerdict_IdempotencyMechanismIsNonEmptyForAllVerdicts(t *testing.
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
-			plan := PlanForVerdict(v)
+			plan := mustPlan(t, v)
 			if plan.IdempotencyMechanism == "" {
 				t.Errorf("RC-025: PlanForVerdict(%q).IdempotencyMechanism is empty; "+
 					"every verdict must have a documented idempotency mechanism per schemas.md §6.2", v)
@@ -495,7 +509,7 @@ func TestPlanForVerdict_ActionSummaryIsNonEmptyForAllVerdicts(t *testing.T) {
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
-			plan := PlanForVerdict(v)
+			plan := mustPlan(t, v)
 			if plan.ActionSummary == "" {
 				t.Errorf("PlanForVerdict(%q).ActionSummary is empty; "+
 					"ActionSummary must be embeddable in VerdictExecutedPayload per schemas.md §6.1", v)
@@ -524,7 +538,7 @@ func TestPlanForVerdict_PlanVerdictFieldMatchesInput(t *testing.T) {
 		t.Run(string(v), func(t *testing.T) {
 			t.Parallel()
 
-			plan := PlanForVerdict(v)
+			plan := mustPlan(t, v)
 			if plan.Verdict != v {
 				t.Errorf("PlanForVerdict(%q).Verdict = %q; plan must carry the input verdict", v, plan.Verdict)
 			}
@@ -551,7 +565,7 @@ func TestPlanForVerdict_OnlyOneVerdictEmitsOperatorEscalation(t *testing.T) {
 
 	var escalates []Verdict
 	for _, v := range verdicts {
-		plan := PlanForVerdict(v)
+		plan := mustPlan(t, v)
 		if plan.EmitsOperatorEscalation {
 			escalates = append(escalates, v)
 		}
@@ -582,7 +596,7 @@ func TestPlanForVerdict_OnlyOneVerdictRequiresBIClose(t *testing.T) {
 
 	var closes []Verdict
 	for _, v := range verdicts {
-		plan := PlanForVerdict(v)
+		plan := mustPlan(t, v)
 		if plan.RequiresBIClose {
 			closes = append(closes, v)
 		}
@@ -610,7 +624,7 @@ func TestPlanForVerdict_OnlyResumeWithContextInjectsContext(t *testing.T) {
 
 	var injects []Verdict
 	for _, v := range verdicts {
-		plan := PlanForVerdict(v)
+		plan := mustPlan(t, v)
 		if plan.InjectsContext {
 			injects = append(injects, v)
 		}
@@ -618,5 +632,38 @@ func TestPlanForVerdict_OnlyResumeWithContextInjectsContext(t *testing.T) {
 
 	if len(injects) != 1 || injects[0] != VerdictResumeWithContext {
 		t.Errorf("InjectsContext=true for verdicts %v; want only [resume-with-context]", injects)
+	}
+}
+
+// TestPlanForVerdict_UnknownVerdictReturnsError verifies that a forward-compat /
+// malformed Verdict — the kind that can arrive from a decoded payload — yields a
+// typed error wrapping ErrUnknownVerdict and an invalid zero plan, NOT a panic.
+// A panic here would crash the daemon's verdict-executor goroutine (RC-025a).
+func TestPlanForVerdict_UnknownVerdictReturnsError(t *testing.T) {
+	t.Parallel()
+
+	unknown := Verdict("some-future-verdict-not-yet-known")
+	plan, err := PlanForVerdict(unknown)
+	if err == nil {
+		t.Fatalf("PlanForVerdict(%q) err = nil; want non-nil (must not panic, must not silently succeed)", unknown)
+	}
+	if !errors.Is(err, ErrUnknownVerdict) {
+		t.Errorf("PlanForVerdict(%q) err = %v; want wrapping ErrUnknownVerdict", unknown, err)
+	}
+	if plan.Valid() {
+		t.Errorf("PlanForVerdict(%q) returned a Valid() plan on error; want invalid zero plan", unknown)
+	}
+	if plan.Verdict != unknown {
+		t.Errorf("PlanForVerdict(%q).Verdict = %q; want the echoed input verdict", unknown, plan.Verdict)
+	}
+}
+
+// TestPlanForVerdict_EmptyVerdictReturnsError verifies the empty-string verdict
+// (a common malformed-payload shape) is handled as an error, not a panic.
+func TestPlanForVerdict_EmptyVerdictReturnsError(t *testing.T) {
+	t.Parallel()
+
+	if _, err := PlanForVerdict(Verdict("")); !errors.Is(err, ErrUnknownVerdict) {
+		t.Errorf("PlanForVerdict(\"\") err = %v; want wrapping ErrUnknownVerdict", err)
 	}
 }

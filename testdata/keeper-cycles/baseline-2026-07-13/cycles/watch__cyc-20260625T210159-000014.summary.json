@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "watch",
+  "ckey": "watch|cyc-20260625T210159-000014",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260625T210159-000014",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "e4b29d43-706b-47b6-9f10-f11691570b32",
+  "started_at": "2026-06-26T06:33:44.951466Z",
+  "terminal_at": "2026-06-26T06:34:38.151035Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

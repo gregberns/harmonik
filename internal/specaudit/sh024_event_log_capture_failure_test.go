@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.26 binding test — SH-024 event-log capture failure escalates to

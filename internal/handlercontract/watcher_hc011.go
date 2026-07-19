@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync/atomic"
@@ -183,6 +184,19 @@ type SpawnWatcherConfig struct {
 	// Optional: the zero value (empty string) disables the HC-061 guard and
 	// is the default for sessions whose node type is not a sub-workflow.
 	NodeType core.NodeType
+
+	// WireTap is an optional lossless raw sink for the NDJSON progress stream.
+	// When non-nil, the read-loop reads through io.TeeReader(cfg.ProgressStream,
+	// cfg.WireTap), so every byte the watcher consumes is copied verbatim to the
+	// tap BEFORE decode — a byte-exact capture of the wire. The twin-parity
+	// WS3-Claude-A reference-capture harness feeds this tap's output to
+	// internal/twinparity.AssertStreamEquivalent.
+	//
+	// Optional: when nil the read-loop consumes cfg.ProgressStream directly and
+	// behavior is byte-identical to the pre-WireTap watcher (production untouched).
+	// This is an explicit config seam — NOT an env var — so it is testable with
+	// no global state, and it never alters read-loop timing when unset.
+	WireTap io.Writer
 }
 
 // Watcher is the daemon-side goroutine that owns (a) the NDJSON read-loop on
@@ -229,6 +243,11 @@ type SpawnWatcherConfig struct {
 // Spec: specs/handler-contract.md §4.3.HC-011, §4.3.HC-011a.
 type Watcher struct {
 	sessionID core.SessionID
+
+	// runID is the run identifier carried on watcher-synthesized agent_failed
+	// events so they are attributable by the reconciler. Sourced from
+	// cfg.Machine.RunID() at spawn time; empty when no Machine was supplied.
+	runID string
 
 	// done is closed when the goroutine exits (success or failure).
 	done chan struct{}
@@ -322,6 +341,9 @@ func SpawnWatcher(ctx context.Context, cfg SpawnWatcherConfig) *Watcher {
 		sessionID: cfg.SessionID,
 		done:      make(chan struct{}),
 	}
+	if cfg.Machine != nil {
+		w.runID = cfg.Machine.RunID()
+	}
 
 	go w.runLoop(ctx, cfg, bufSize)
 	return w
@@ -347,7 +369,7 @@ func (w *Watcher) runLoop(ctx context.Context, cfg SpawnWatcherConfig, bufSize i
 
 		// Emit agent_failed{structural, watcher_panic} to the bus; route to
 		// dead-letter if the emit fails.
-		eventType, payload := buildWatcherFailedPayload(w.sessionID, WatcherPanicSubReason, panicErr)
+		eventType, payload := buildWatcherFailedPayload(w.sessionID, w.runID, WatcherPanicSubReason, panicErr)
 		w.publishOrDeadLetter(ctx, eventType, payload, cfg.Publisher, cfg.DeadLetter)
 	}()
 
@@ -363,7 +385,20 @@ func (w *Watcher) runLoop(ctx context.Context, cfg SpawnWatcherConfig, bufSize i
 // Framing violations (line-too-long, partial-message, malformed JSON) are
 // classified per HC-007a/HC-007b and result in agent_failed publication.
 func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
-	scanner := bufio.NewScanner(cfg.ProgressStream)
+	// WS3-Claude-A wire-tap seam: when cfg.WireTap is set, read through a
+	// TeeReader so every consumed byte is copied verbatim to the tap BEFORE
+	// decode (lossless raw capture). When nil, read cfg.ProgressStream directly
+	// — byte-identical to the pre-tap watcher, no timing change.
+	src := cfg.ProgressStream
+	if cfg.WireTap != nil {
+		src = io.TeeReader(cfg.ProgressStream, cfg.WireTap)
+	}
+	// HC-011a: lastReadEventAt MUST advance on every successful io.Reader.Read
+	// return, not once per decoded line/Scan — a Scan can span many Reads (or a
+	// Read many lines), and wedge detection keys off the raw Read cadence. The
+	// stamp reader wraps the (post-tap) source so it observes the same bytes the
+	// scanner consumes.
+	scanner := bufio.NewScanner(&readStampReader{inner: src, w: w})
 	// HC-007a: enforce the 1 MiB max line-length cap at the scanner layer.
 	scanner.Buffer(make([]byte, NDJSONMaxLineLenBytes+1), NDJSONMaxLineLenBytes+1)
 
@@ -379,10 +414,6 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 
 		gotLine := scanner.Scan()
 
-		// HC-011a: update lastReadEventAt on every successful Read return.
-		// bufio.Scanner internally calls Read; we approximate by updating after Scan.
-		w.lastReadEventAt.Store(time.Now().UnixNano())
-
 		if !gotLine {
 			scanErr := scanner.Err()
 			if scanErr != nil {
@@ -390,14 +421,32 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 				if isLineTooLong(scanErr) {
 					termErr := fmt.Errorf("handlercontract: ndjson line too long: %w", ErrProtocolMismatch)
 					w.setTermErr(termErr)
-					et, pl := buildWatcherFailedPayload(w.sessionID, NDJSONLineTooLongSubReason, termErr)
+					et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, NDJSONLineTooLongSubReason, termErr)
+					w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
+					return
+				}
+				// hk-9ngiv: version-negotiation failure surfaces through the
+				// scanner as an error wrapping ErrProtocolMismatch (the
+				// SessionIDInterceptor's sticky negoErr — handler advertised no
+				// mutually supported version, or never emitted handler_capabilities
+				// within the caps timeout). Preserve the sentinel (%w for scanErr,
+				// NOT %v) so the orchestrator's retry policy can distinguish a
+				// protocol mismatch — which MUST NOT retry-spin the same pinned
+				// binary — from a transient framing error (§8.7, HC-021). Mirrors
+				// the isLineTooLong branch above; both wrap ErrProtocolMismatch, but
+				// this is the general case (sub_reason protocol_mismatch) vs the
+				// line-cap subcase (sub_reason ndjson_line_too_long).
+				if errors.Is(scanErr, ErrProtocolMismatch) {
+					termErr := fmt.Errorf("handlercontract: progress stream protocol mismatch: %w", scanErr)
+					w.setTermErr(termErr)
+					et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, ProtocolMismatchSubReason, termErr)
 					w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 					return
 				}
 				// Other I/O errors: structural framing failure.
 				termErr := fmt.Errorf("handlercontract: progress stream read error: %v: %w", scanErr, ErrStructural)
 				w.setTermErr(termErr)
-				et, pl := buildWatcherFailedPayload(w.sessionID, PartialMessageSubReason, termErr)
+				et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, PartialMessageSubReason, termErr)
 				w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 				return
 			}
@@ -421,7 +470,7 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 			// HC-007b: malformed JSON on a live socket → close session, emit agent_failed.
 			termErr := fmt.Errorf("handlercontract: malformed NDJSON line: %v: %w", err, ErrStructural)
 			w.setTermErr(termErr)
-			et, pl := buildWatcherFailedPayload(w.sessionID, MalformedProgressMessageSubReason, termErr)
+			et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, MalformedProgressMessageSubReason, termErr)
 			w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 			return
 		}
@@ -442,7 +491,7 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 		if typeOnly.Type == ProgressMsgTypeOutcomeEmitted && cfg.NodeType == core.NodeTypeSubWorkflow {
 			termErr := fmt.Errorf("handlercontract: handler emitted Outcome on sub-workflow boundary node (HC-061 violation): %w", ErrStructural)
 			w.setTermErr(termErr)
-			et, pl := buildWatcherFailedPayload(w.sessionID, SubworkflowBoundaryEmitSubReason, termErr)
+			et, pl := buildWatcherFailedPayload(w.sessionID, w.runID, SubworkflowBoundaryEmitSubReason, termErr)
 			w.publishOrDeadLetter(ctx, et, pl, cfg.Publisher, cfg.DeadLetter)
 			return
 		}
@@ -644,23 +693,42 @@ func emitMachineTransition(
 // WatcherDeadLetterSink.Append; envelope stamping (event_id, timestamps,
 // source_subsystem) is the bus's responsibility per EV-002b.
 //
-// sessionID is accepted for future use (sub-reason may encode it in payload);
-// it is intentionally retained in the signature so callers are self-documenting.
-func buildWatcherFailedPayload(sessionID core.SessionID, sub string, cause error) (core.EventType, []byte) {
-	_ = sessionID                                 // reserved for payload enrichment when event-model.md §8 rows land
+// session_id and run_id are included in the payload so watcher self-defect
+// terminals are attributable: without them the reconciler cannot correlate the
+// synthesized agent_failed back to the failed session/run and cannot
+// auto-recover it. runID may be empty (no Machine supplied); the "unknown"
+// placeholder runID from the session layer is passed through as-is.
+func buildWatcherFailedPayload(sessionID core.SessionID, runID, sub string, cause error) (eventType core.EventType, encoded []byte) {
 	payload, _ := json.Marshal(map[string]string{ //nolint:errcheck // static map, never fails
 		"type":           ProgressMsgTypeAgentFailed,
+		"session_id":     string(sessionID),
+		"run_id":         runID,
 		"error_category": Class(cause),
 		"sub_reason":     sub,
 	})
 	return core.EventType(ProgressMsgTypeAgentFailed), payload
 }
 
+// readStampReader wraps the progress stream and stamps w.lastReadEventAt on
+// every Read that returns data or a nil error (HC-011a per-Read liveness).
+type readStampReader struct {
+	inner io.Reader
+	w     *Watcher
+}
+
+func (r *readStampReader) Read(p []byte) (int, error) {
+	n, err := r.inner.Read(p)
+	if n > 0 || err == nil {
+		r.w.lastReadEventAt.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
 // isLineTooLong reports whether err from bufio.Scanner.Err() signals that
 // the scanner's internal buffer was overflowed — i.e., a line exceeded the
 // NDJSONMaxLineLenBytes cap per HC-007a.
 func isLineTooLong(err error) bool {
-	return err == bufio.ErrTooLong
+	return errors.Is(err, bufio.ErrTooLong)
 }
 
 // knownProgressMsgTypes is the complete set of required progress-stream message
@@ -681,6 +749,19 @@ var knownProgressMsgTypes = map[ProgressMsgType]struct{}{
 	ProgressMsgTypeSkillsProvisioned:     {},
 	ProgressMsgTypeOutcomeEmitted:        {},
 	ProgressMsgTypeLaunchInitiated:       {},
+}
+
+// KnownProgressMsgTypes returns a copy of the complete set of required
+// progress-stream message type strings per HC-007. Exposed for consumers that
+// need to assemble a legal-kind vocabulary from the progress-stream layer
+// (e.g. internal/twinparity) without re-listing the types by hand. Additive
+// accessor only — it does not participate in the watcher publish path.
+func KnownProgressMsgTypes() []string {
+	out := make([]string, 0, len(knownProgressMsgTypes))
+	for t := range knownProgressMsgTypes {
+		out = append(out, t)
+	}
+	return out
 }
 
 // isKnownProgressMsgType reports whether msgType is one of the 12 required

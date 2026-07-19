@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mup.32 + hk-8mup.33 binding test — PL-020 composition root is internal/daemon;

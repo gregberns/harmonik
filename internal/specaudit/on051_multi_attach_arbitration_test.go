@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.62 binding test — ON-051 multi-attach arbitration.

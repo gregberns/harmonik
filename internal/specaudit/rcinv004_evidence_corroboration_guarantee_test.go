@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-63oh.45 binding test — RC-INV-004: evidence-corroboration guarantee across

@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "kk-test",
+  "ckey": "kk-test|cyc-20260610T215853-000002",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260610T215853-000002",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "abort-test-sid-0001",
+  "started_at": "2026-06-10T22:01:48.786624Z",
+  "terminal_at": "2026-06-10T22:03:06.575275Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // AR-032 binding test — every role name used in the spec corpus is one of the

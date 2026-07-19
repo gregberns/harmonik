@@ -25,7 +25,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // knownEventKinds is the set of event kinds the relay handles.
@@ -416,15 +418,14 @@ func truncate4KiB(s string) string {
 	if len(s) <= max {
 		return s
 	}
-	// Truncate at a valid UTF-8 boundary.
-	b := []byte(s[:max])
-	// Walk back to a valid rune boundary.
-	for i := len(b); i > 0; i-- {
-		if b[i-1]&0x80 == 0 || b[i-1]&0xC0 == 0xC0 {
-			return string(b[:i])
-		}
+	// A byte-boundary cut can split the final multibyte rune. Trim up to
+	// utf8.UTFMax-1 trailing bytes until the result ends on a valid rune
+	// boundary, so we never emit an invalid trailing rune (CHB-013 / RU-14).
+	b := s[:max]
+	for i := 0; i < utf8.UTFMax-1 && !utf8.ValidString(b); i++ {
+		b = b[:len(b)-1]
 	}
-	return string(b)
+	return b
 }
 
 // buildStopFailureMessage maps StopFailure error_type to progress-stream messages per CHB-013.
@@ -512,6 +513,40 @@ func resolveDialTarget(endpoint string) (network, address string) {
 	return "unix", endpoint
 }
 
+// isRetryableDialErr reports whether a DialContext failure reflects a daemon
+// that has not yet begun listening — the cold-boot / in-place-swap startup race
+// (CHB-016) — rather than a fatal misconfiguration. ENOENT ("no such file": the
+// unix socket has not been created yet) and connection-refused (the endpoint is
+// present but nothing is accepting yet) are transient and worth retrying within
+// the startup window; anything else is fatal.
+//
+// ECONNREFUSED is AMBIGUOUS for the unix transport (hk-rupvi): dialing a REGULAR
+// FILE as a unix socket returns ECONNREFUSED on Linux — the SAME errno as a real
+// socket that is present-but-not-listening (macOS returns a distinct errno, so
+// this only bit Linux CI). Retrying a non-socket path burns the whole startup
+// window and masks the misconfiguration. Disambiguate by stat: for the unix
+// transport, if the address path EXISTS and is NOT a socket, the failure is a
+// fatal misconfiguration (return false → bridge_dial_failed, no retry). TCP
+// endpoints have no filesystem path, so their ECONNREFUSED stays retryable
+// (listener still starting) — network+address are threaded in for exactly this
+// stat.
+func isRetryableDialErr(network, address string, err error) bool {
+	// ENOENT: the endpoint has not been created yet — a genuine cold-boot race.
+	if errors.Is(err, syscall.ENOENT) {
+		return true
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return false // any other dial error is a fatal misconfiguration
+	}
+	// ECONNREFUSED on a unix path: fatal iff the path exists and is not a socket.
+	if network == "unix" {
+		if fi, statErr := os.Stat(address); statErr == nil && fi.Mode()&os.ModeSocket == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // sendToSocket implements the one-shot write with daemon-not-ready retry per
 // CHB-015 and CHB-016. socketPath is the HARMONIK_DAEMON_SOCKET value: a unix
 // path for local runs, or a "tcp://127.0.0.1:<port>" reverse-tunnel endpoint for
@@ -542,6 +577,23 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 		cancelDial()
 
 		if dialErr != nil {
+			// CHB-016: a socket that is not yet listening (cold boot / in-place
+			// binary swap per docs/daemon-redeploy.md) surfaces as a dial error,
+			// not a daemon_not_ready ACK. Retry those within the startup window
+			// on the same backoff schedule; anything else is fatal.
+			if isRetryableDialErr(network, address, dialErr) {
+				elapsed := time.Since(wallStart)
+				if elapsed+retryDelay > wallMax {
+					return fmt.Errorf("bridge_daemon_startup_window_exceeded: dial failed after %v: %w", elapsed, dialErr)
+				}
+				fmt.Fprintf(stderr, "hook-relay: dial failed (%v), retrying in %v\n", dialErr, retryDelay) //nolint:errcheck // diagnostic write to stderr; error non-actionable
+				time.Sleep(retryDelay)
+				retryDelay *= 2
+				if retryDelay > retryMax {
+					retryDelay = retryMax
+				}
+				continue
+			}
 			return fmt.Errorf("bridge_dial_failed: %w", dialErr)
 		}
 

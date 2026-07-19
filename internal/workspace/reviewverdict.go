@@ -91,6 +91,19 @@ const (
 //   - notes field absent or empty.
 var ErrMalformed = errors.New("workspace: review verdict ErrMalformed")
 
+// ErrRemoteTransport is returned by the runner-routed readers (ReadReviewVerdictVia,
+// ReadAutoStatusMarkerVia) when the read over the transport FAILS at the transport
+// layer — e.g. an SSH connection failure (ssh exit 255: refused/timeout/host-key)
+// on a remote worker — as opposed to the remote command cleanly reporting the file
+// absent (cat exit 1 → no such file). A transport failure is INCONCLUSIVE: the
+// verdict/marker may well exist on the worker, we just could not reach it. Callers
+// MUST distinguish this from confirmed-absent (nil, nil): treating a network blip
+// as "no verdict" / "no FAIL marker" would drive the wrong review-gate / outcome
+// decision. On the verdict path the retrying readers retry ErrRemoteTransport within
+// the same bounded budget as ErrMalformed before surfacing it; a caller that still
+// sees it should retry or escalate, never decide.
+var ErrRemoteTransport = errors.New("workspace: remote read transport failure (inconclusive)")
+
 // ReviewVerdictPath returns the canonical path for the current reviewer
 // verdict file per workspace-model.md §4.7.WM-027a:
 //
@@ -175,7 +188,15 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 	return retryVerdictReadOnMalformed(ctx, func(ctx context.Context) (*ReviewVerdict, error) {
 		out, err := runner.Command(ctx, "cat", target).Output()
 		if err != nil {
-			// Absent verdict (cat: no such file) or transport hiccup → treat as absent,
+			if tmux.IsSSHConnectionFailure(err) {
+				// SSH transport failure (ssh exit 255) — NOT a confirmed-absent
+				// verdict. The verdict may exist on the worker; we could not reach
+				// it. Surface as inconclusive so the retry budget re-tries the read
+				// and, if it persists, the caller escalates rather than mis-reading a
+				// network blip as "verdict absent" and deciding the review gate. H4.
+				return nil, fmt.Errorf("%w: cat %s: %w", ErrRemoteTransport, target, err)
+			}
+			// Non-transport cat failure (exit 1: no such file) → genuinely absent,
 			// mirroring ReadReviewVerdict's os.IsNotExist branch (nil,nil = inconclusive).
 			//nolint:nilnil,nilerr // caller interprets nil as "absent" per WM-027a §(e); cat-fail = absent, mirrors readAutoStatusMarkerVia
 			return nil, nil
@@ -238,8 +259,9 @@ func ReadReviewVerdictLocalRetry(ctx context.Context, workspacePath string) (*Re
 // It should honor ctx for the read itself where applicable.
 type verdictRead func(ctx context.Context) (*ReviewVerdict, error)
 
-// retryVerdictReadOnMalformed runs read repeatedly, retrying ONLY on an
-// ErrMalformed result with bounded exponential backoff up to
+// retryVerdictReadOnMalformed runs read repeatedly, retrying on a transient
+// ErrMalformed (truncated mid-write read) OR ErrRemoteTransport (SSH connection
+// failure) result with bounded exponential backoff up to
 // reviewVerdictRemoteRetryBudget of total elapsed time (deadline-bounded, not a
 // fixed attempt count), honoring ctx cancellation in every inter-attempt wait.
 //
@@ -254,9 +276,12 @@ func retryVerdictReadOnMalformed(ctx context.Context, read verdictRead) (*Review
 	deadline := time.Now().Add(reviewVerdictRemoteRetryBudget)
 	for {
 		v, err := read(ctx)
-		if err == nil || !errors.Is(err, ErrMalformed) {
-			// Clean parse / absent (nil,nil), or a non-ErrMalformed error (defensive):
-			// none is retryable — return as-is.
+		if err == nil || (!errors.Is(err, ErrMalformed) && !errors.Is(err, ErrRemoteTransport)) {
+			// Clean parse / absent (nil,nil), or a non-retryable error (defensive):
+			// return as-is. ErrMalformed (transient truncated read) and
+			// ErrRemoteTransport (transient SSH connection failure) are both
+			// retried within the budget below, then surfaced so the caller can
+			// escalate on a genuinely-malformed or persistently-unreachable read.
 			return v, err
 		}
 		lastErr = err

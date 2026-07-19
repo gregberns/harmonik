@@ -38,7 +38,7 @@ var RequiredGitignoreEntries = []string{
 // commits missing .gitignore entries per WM-013e.
 const GitignoreBranchName = "harmonik/gitignore-init"
 
-// EnsureGitignoreHygiene checks the repository's root .gitignore for the four
+// EnsureGitignoreHygiene checks the repository's root .gitignore for the six
 // required harmonik control-plane patterns (WM-013e) and adds any missing
 // entries.
 //
@@ -59,7 +59,7 @@ const GitignoreBranchName = "harmonik/gitignore-init"
 //
 // # Idempotency
 //
-// EnsureGitignoreHygiene is idempotent: if all four entries are already present,
+// EnsureGitignoreHygiene is idempotent: if all six entries are already present,
 // the function returns nil without modifying the file or making a commit.
 //
 // # Pattern matching
@@ -117,11 +117,48 @@ func EnsureGitignoreHygiene(ctx context.Context, repoRoot string) error {
 		return fmt.Errorf("workspace: EnsureGitignoreHygiene: Close: %w", err)
 	}
 
-	// Stage and commit on the dedicated branch per WM-013e.
+	// desiredContent is the full working-tree .gitignore after adding the required
+	// entries. gitignoreCommit restores the operator's original HEAD after landing
+	// the commit on the dedicated branch (hk-3edb1), which reverts the working-tree
+	// .gitignore to the operator branch's version (the hygiene commit lives ONLY on
+	// harmonik/gitignore-init per WM-013e). Capture the intended content so it can
+	// be re-materialized below.
+	desiredContent := existing + toAppend
+
+	// Stage and commit on the dedicated branch per WM-013e, then restore HEAD.
 	if err := gitignoreCommit(ctx, repoRoot, gitignorePath); err != nil {
 		return fmt.Errorf("workspace: EnsureGitignoreHygiene: commit: %w", err)
 	}
 
+	// Re-materialize the required entries in the operator's working tree
+	// (hk-3edb1). The hygiene commit is a durable record on the dedicated branch;
+	// restoring HEAD reverted the file, so rewrite it as an uncommitted working-
+	// tree change so the operator checkout still ignores daemon control-plane state.
+	// This does NOT commit onto the operator branch (WM-013e forbids only that).
+	if err := reassertGitignoreWorkingTree(gitignorePath, desiredContent); err != nil {
+		return fmt.Errorf("workspace: EnsureGitignoreHygiene: %w", err)
+	}
+
+	return nil
+}
+
+// reassertGitignoreWorkingTree rewrites gitignorePath to desired when the file
+// no longer matches — e.g. after gitignoreCommit restored HEAD to the operator's
+// branch and git reverted the .gitignore that was committed on the dedicated
+// branch. A no-op when the file already matches (HEAD was never switched).
+func reassertGitignoreWorkingTree(gitignorePath, desired string) error {
+	//nolint:gosec // G304: gitignorePath is repoRoot + ".gitignore", not user input.
+	cur, err := os.ReadFile(gitignorePath)
+	if err == nil && string(cur) == desired {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reassert .gitignore: read %q: %w", gitignorePath, err)
+	}
+	//nolint:gosec // G306: 0644 matches the append-write mode above.
+	if err := os.WriteFile(gitignorePath, []byte(desired), 0o644); err != nil {
+		return fmt.Errorf("reassert .gitignore: write %q: %w", gitignorePath, err)
+	}
 	return nil
 }
 
@@ -180,7 +217,58 @@ func buildGitignoreBlock(existing string, missing []string) string {
 
 // gitignoreCommit stages the .gitignore and commits it on the
 // [GitignoreBranchName] branch per WM-013e.
-func gitignoreCommit(ctx context.Context, repoRoot, gitignorePath string) error {
+//
+// WM-013e mandates that the daemon-state .gitignore commit land on the dedicated
+// `harmonik/gitignore-init` branch, NEVER on the operator's working branch
+// (main / whatever HEAD happens to be) — committing daemon state onto the user's
+// branch pollutes their history. gitignoreCommit therefore checks out (creating
+// if absent) the dedicated branch BEFORE staging, and hard-refuses to commit if
+// HEAD is still on any non-harmonik branch after the checkout.
+//
+// After the commit it RESTORES the operator's original HEAD (hk-3edb1): without
+// this, EnsureGitignoreHygiene — which its own doc mandates be called BEFORE
+// creating any worktree at daemon startup — would leave the operator's checkout
+// parked on harmonik/gitignore-init. The caller re-materializes the .gitignore
+// entries in the working tree afterward (the restore reverts the file, which
+// lives on the dedicated branch only).
+func gitignoreCommit(ctx context.Context, repoRoot, gitignorePath string) (retErr error) {
+	// Capture the operator's original HEAD before switching branches so it can be
+	// restored afterward. Capture the branch name, or the commit SHA when HEAD is
+	// detached, so restore round-trips either faithfully.
+	origRef, origErr := gitignoreCapturedHead(ctx, repoRoot)
+	if origErr != nil {
+		return origErr
+	}
+
+	// Move HEAD onto the dedicated init branch so the commit cannot land on the
+	// operator's branch.
+	if err := checkoutGitignoreBranch(ctx, repoRoot); err != nil {
+		return err
+	}
+
+	// Restore the operator's HEAD on EVERY path after the checkout — including the
+	// safety-net refusal and the idempotent "nothing to commit" return below —
+	// unless HEAD was already the dedicated branch (no switch happened). A restore
+	// failure is surfaced but never masks an earlier error.
+	if origRef != GitignoreBranchName {
+		defer func() {
+			if rErr := restoreGitignoreHead(ctx, repoRoot, origRef); rErr != nil && retErr == nil {
+				retErr = rErr
+			}
+		}()
+	}
+
+	// Safety net: after the checkout, HEAD MUST be the dedicated branch. If it is
+	// not (checkout silently no-oped, detached HEAD, etc.), REFUSE rather than
+	// inject a daemon-state commit onto whatever branch is checked out.
+	current, err := currentGitBranch(ctx, repoRoot)
+	if err != nil {
+		return err
+	}
+	if current != GitignoreBranchName {
+		return fmt.Errorf("refusing to commit .gitignore onto branch %q: WM-013e requires the dedicated %q branch", current, GitignoreBranchName)
+	}
+
 	// git add .gitignore
 	addCmd := exec.CommandContext(ctx, "git", "add", gitignorePath)
 	addCmd.Dir = repoRoot
@@ -188,23 +276,87 @@ func gitignoreCommit(ctx context.Context, repoRoot, gitignorePath string) error 
 		return fmt.Errorf("git add .gitignore: %w\noutput: %s", err, out)
 	}
 
-	// git commit -m "..." on the current branch (workspace manager calls this
-	// before any worktree is created; the branch is main / the operator's branch).
-	// WM-013e specifies the dedicated branch name for the commit; creating and
-	// checking out that branch is the caller's (workspace manager's) responsibility
-	// at the daemon-startup level. Here we commit to whatever the current HEAD
-	// branch is, which MUST be GitignoreBranchName (harmonik/gitignore-init) when
-	// called from the workspace manager startup path per WM-013e.
+	// git commit — NO --allow-empty: an empty daemon-state commit is never
+	// desirable (it would create noise commits carrying no .gitignore change).
+	// If the tree is clean after add (nothing changed — already committed on this
+	// branch), git commit exits non-zero with "nothing to commit"; treat that as
+	// an idempotent no-op.
 	commitMsg := "harmonik: ensure .gitignore covers control-plane paths (WM-013e)"
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg, "--allow-empty")
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = repoRoot
 	if out, err := commitCmd.CombinedOutput(); err != nil {
-		// If the tree is clean after add (nothing changed — already committed),
-		// git commit exits non-zero with "nothing to commit". Treat as idempotent.
 		if strings.Contains(string(out), "nothing to commit") {
 			return nil
 		}
 		return fmt.Errorf("git commit .gitignore: %w\noutput: %s", err, out)
+	}
+	return nil
+}
+
+// currentGitBranch returns the abbreviated symbolic name of HEAD in repoRoot.
+// A detached HEAD yields "HEAD" (which is not GitignoreBranchName, so callers
+// treat it as a non-harmonik branch and refuse).
+func currentGitBranch(ctx context.Context, repoRoot string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --abbrev-ref HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// checkoutGitignoreBranch checks out [GitignoreBranchName], creating it from the
+// current HEAD when it does not yet exist, so the subsequent .gitignore commit
+// lands on the dedicated branch rather than the operator's working branch
+// (WM-013e). If HEAD is already on the dedicated branch this is a no-op.
+func checkoutGitignoreBranch(ctx context.Context, repoRoot string) error {
+	if current, err := currentGitBranch(ctx, repoRoot); err == nil && current == GitignoreBranchName {
+		return nil
+	}
+
+	// Does the dedicated branch already exist? --verify --quiet exits non-zero
+	// (no output) when the ref is absent.
+	exists := exec.CommandContext(ctx, "git", "-C", repoRoot,
+		"rev-parse", "--verify", "--quiet", "refs/heads/"+GitignoreBranchName).Run() == nil
+
+	args := []string{"-C", repoRoot, "checkout"}
+	if exists {
+		args = append(args, GitignoreBranchName)
+	} else {
+		args = append(args, "-b", GitignoreBranchName)
+	}
+	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil { //nolint:gosec // G204: git args are internally constructed, not user-tainted
+		return fmt.Errorf("git checkout %s: %w\noutput: %s", GitignoreBranchName, err, out)
+	}
+	return nil
+}
+
+// gitignoreCapturedHead returns a ref that restoreGitignoreHead can check back
+// out: the branch name when HEAD is on a branch, or the commit SHA when HEAD is
+// detached (so a detached HEAD round-trips faithfully rather than being coerced
+// onto a branch).
+func gitignoreCapturedHead(ctx context.Context, repoRoot string) (string, error) {
+	// symbolic-ref prints the branch name on a branch and exits non-zero (no
+	// output) when HEAD is detached.
+	if out, err := exec.CommandContext(ctx, "git", "-C", repoRoot,
+		"symbolic-ref", "--short", "-q", "HEAD").Output(); err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	// Detached HEAD: capture the commit SHA instead.
+	out, err := exec.CommandContext(ctx, "git", "-C", repoRoot, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("workspace: gitignoreCommit: capture original HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// restoreGitignoreHead checks the operator's original HEAD back out after the
+// hygiene commit landed on the dedicated branch (hk-3edb1). A branch name
+// restores the branch; a commit SHA re-detaches HEAD onto it.
+func restoreGitignoreHead(ctx context.Context, repoRoot, ref string) error {
+	if out, err := exec.CommandContext(ctx, "git", "-C", repoRoot,
+		"checkout", ref).CombinedOutput(); err != nil {
+		return fmt.Errorf("workspace: gitignoreCommit: restore original HEAD %q: %w\noutput: %s", ref, err, out)
 	}
 	return nil
 }

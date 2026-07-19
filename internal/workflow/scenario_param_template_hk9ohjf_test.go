@@ -32,7 +32,7 @@ package workflow_test
 //      Graph.Goal and is non-empty (threads into agentic briefs via the
 //      ExtraContext channel per WG-044).
 //
-// Depends on: hk-55zv2 (T5 — SubstituteTemplateParams + LoadDotWorkflowWithParams).
+// Depends on: hk-55zv2 (T5 — LoadDotWorkflowWithParams).
 // Bead ref: hk-9ohjf (T6e).
 
 import (

@@ -99,18 +99,140 @@ test-e2e-real-claude-reviewloop:  ## Run real-Claude review-loop E2E smoke (requ
 test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budget; prereq: build-all)
 	go test -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/...
 
+# test-subprocess: WS2.4 non-docker subprocess daemon-boot smoke. Execs the real
+# built harmonik binary as a separate process, waits for the daemon unix socket,
+# submits one bead via the CLI, and asserts a terminal run outcome. Billing-free
+# (dispatch routed to the generic twin via the codexdriver substrate; no real
+# agent, no tmux, no network). Dedicated `subprocess` build tag isolates it from
+# the default build/test (it is NOT part of -tags=scenario). Budget: 5 minutes.
+# Cite: plans/2026-07-13-code-revamp/M6-PLAN.md §WS2.4.
+.PHONY: test-subprocess
+test-subprocess:  ## Run WS2.4 non-docker subprocess boot smoke (-tags=subprocess; needs go+br+git on PATH)
+	go test -tags=subprocess -timeout 5m -count=1 ./cmd/harmonik -run TestSubprocessDaemonBootSmoke
+
+# core-loop-lt: WS4-5 FORCED, single-entry LT-leg command. THE assessor's live-verify
+# gate — drives the real task-processing loop on a scratch daemon across the core-loop
+# matrix and returns non-zero unless EVERY cell is green (any red OR pending OR skip fails,
+# the T9 zero-PENDING gate), so a partial matrix can never be mistaken for a pass. Emits a
+# machine-readable per-cell grid (marker `MATRIX_JSON …` on the last stdout line) that the
+# assessor folds into its LT verdict. Forced-LOCAL: real pi/codex (+claude, WS4-4) agents,
+# never a CI required check (see docs/methodology/TESTING.md "Gate tiers & risk-tiering").
+# Override the scratch dir with LT_SCRATCH=… . Cite: M6-PLAN §WS4-5.
+#
+# hk-xy9ym: this target must be SELF-SERVING for the CHECKED-OUT (pinned) code. It:
+#   1. wipes + inits LT_SCRATCH by cloning the LOCAL checkout ($(CURDIR)) — NOT origin/main
+#      (scratch-daemon.sh init defaults to the origin URL and SKIPS a re-clone when .git
+#      exists, so a stale origin/main clone would otherwise persist and be the daemon-under-
+#      test). Cloning the local repo checks out this branch's HEAD = the pinned code.
+#   2. seeds the fixture beads into the fresh scratch DB + writes the cell->bead_id map, so
+#      the scoped cell actually LAUNCHES (bare/un-seeded => every cell PENDING, no agent).
+#   3. scopes to pi:local — the one leg that proves the full core-loop contract e2e with a
+#      real agent (single-mode dispatch -> real pi/ornith change -> per-bead-branch landing).
+#      codex (operator runs codex-minimal), claude (WS4-4, --enable-claude), remote (needs a
+#      reachable tcp:// worker) and the pi-dot round-trip (stronger convergence model,
+#      EXTRA_CELLS) stay behind their existing opt-in knobs, so a bare run never red/skip/
+#      pends on an intentionally-absent leg. Widen with LT_HARNESSES/LT_SUBSTRATES.
+LT_SCRATCH ?= /tmp/h/core-loop-lt
+LT_SPECS   ?= scenarios/core-loop-proof/cells.json
+# Per-cell seed map (cell<TAB>bead_id) that core-loop-seed.sh writes and core-loop-matrix.sh
+# consumes via MATRIX_SEED_MAP. Lives under the (wiped-each-run) scratch so it is always
+# regenerated against THIS run's freshly-created seed beads.
+LT_SEED_MAP   ?= $(LT_SCRATCH)/.harmonik/matrix-seed-map.tsv
+LT_HARNESSES  ?= pi
+LT_SUBSTRATES ?= local
+.PHONY: core-loop-lt
+core-loop-lt: build-all  ## WS4-5 forced LT gate: inits scratch from LOCAL checkout + seeds pi:local, non-zero on any non-green cell + JSON grid (hk-xy9ym)
+	@# hk-xy9ym: guard the `rm -rf` below — never wipe an empty/root/repo-root path.
+	@test -n "$(LT_SCRATCH)" || { echo "core-loop-lt: LT_SCRATCH is empty — refusing"; exit 1; }
+	@case "$(LT_SCRATCH)" in /|.|..) echo "core-loop-lt: unsafe LT_SCRATCH='$(LT_SCRATCH)' — refusing"; exit 1;; esac
+	@# Resolve symlinks on BOTH sides and refuse if LT_SCRATCH is the repo root, $$HOME,
+	@# /, or an ANCESTOR of the repo (wiping it would destroy the fleet checkout). Only
+	@# checked when the dir already exists — a not-yet-created scratch is a safe no-op wipe.
+	@if [ -d "$(LT_SCRATCH)" ]; then \
+		lt="$$(cd "$(LT_SCRATCH)" && pwd -P)"; \
+		repo="$$(cd "$(CURDIR)" && pwd -P)"; \
+		home="$$(cd "$$HOME" 2>/dev/null && pwd -P || echo /nonexistent-home)"; \
+		if [ "$$lt" = "$$repo" ] || [ "$$lt" = "$$home" ] || [ "$$lt" = "/" ]; then \
+			echo "core-loop-lt: LT_SCRATCH resolves to '$$lt' (repo root, \$$HOME, or /) — refusing to wipe"; exit 1; fi; \
+		case "$$repo/" in "$$lt"/*) echo "core-loop-lt: LT_SCRATCH '$$lt' is an ancestor of the repo — refusing to wipe"; exit 1;; esac; \
+	fi
+	@# Stop any stale scratch daemon (pidfile-scoped; fleet-safe) BEFORE wiping the dir so a
+	@# leftover run from a prior invocation is never orphaned. Tolerate a not-yet-created scratch.
+	bash scripts/scratch-daemon.sh down "$(LT_SCRATCH)" 2>/dev/null || true
+	@# Guarantee a FRESH clone of the PINNED code: wipe, then init from the LOCAL checkout.
+	rm -rf "$(LT_SCRATCH)"
+	bash scripts/scratch-daemon.sh init "$(LT_SCRATCH)" "$(CURDIR)"
+	@# Seed the fixture beads into the fresh scratch DB + emit the cell->bead_id map so the
+	@# scoped cell launches (isolates origin + pre-creates the pi landing branch).
+	bash scripts/core-loop-seed.sh "$(LT_SCRATCH)" "$(LT_SEED_MAP)"
+	@# Run the scoped matrix: MATRIX_SEED_MAP wires per-cell seeds; --harnesses/--substrates
+	@# scope to pi:local; --assert --gate --json keep the forced zero-PENDING gate + JSON grid.
+	MATRIX_SEED_MAP="$(LT_SEED_MAP)" bash scripts/core-loop-matrix.sh "$(LT_SCRATCH)" --harnesses "$(LT_HARNESSES)" --substrates "$(LT_SUBSTRATES)" --assert --gate --json --specs "$(LT_SPECS)"
+
+# test-docker-e2e: WS2.3 remote-substrate E2E across two containers. Builds the
+# daemon (box A) + worker images, brings them up on a compose bridge network (the
+# worker reachable as `worker`), waits until `ssh worker true` from the daemon
+# succeeds (the worker installs the daemon's client key from the shared `keys`
+# volume once both are up), then execs the compiled scenario test binary baked
+# into the daemon image against HARMONIK_E2E_SSH_HOST=worker. origin.git + the
+# worker clone live on the shared volume at the identical /shared path in both
+# containers (CRUX 2). ALWAYS tears the stack down with `down -v` (fresh keys +
+# repos each run), preserving the drive's exit code. Needs NO host ~/.ssh setup —
+# keys are generated inside the containers at boot. Cite: M6-PLAN §WS2.3.
+COMPOSE_E2E := test/docker/compose.yml
+.PHONY: test-docker-e2e
+test-docker-e2e:  ## WS2.3 remote-substrate E2E over ssh across daemon+worker containers (needs docker)
+	docker compose -f $(COMPOSE_E2E) up -d --build
+	@echo "test-docker-e2e: waiting for passwordless ssh daemon->worker …"
+	@ok=0; \
+	for i in $$(seq 1 30); do \
+	  if docker compose -f $(COMPOSE_E2E) exec -T daemon \
+	       ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 worker true >/dev/null 2>&1; then \
+	    ok=1; echo "test-docker-e2e: ssh worker reachable (attempt $$i)"; break; \
+	  fi; \
+	  sleep 0.5; \
+	done; \
+	if [ "$$ok" != "1" ]; then \
+	  echo "test-docker-e2e: FATAL ssh daemon->worker never came up" >&2; \
+	  docker compose -f $(COMPOSE_E2E) logs --no-color >&2 || true; \
+	  docker compose -f $(COMPOSE_E2E) down -v || true; \
+	  exit 1; \
+	fi; \
+	docker compose -f $(COMPOSE_E2E) exec -T daemon \
+	  /usr/local/bin/remote-substrate.test \
+	  -test.run '^TestScenario_RemoteSubstrate_Localhost_E2E$$' -test.v; \
+	rc=$$?; \
+	docker compose -f $(COMPOSE_E2E) down -v; \
+	exit $$rc
+
 # ---------------------------------------------------------------------------
 # codex-app-server test taxonomy (T5, hk-oe86p)
 # Four tiers: L0 unit / L1 contract / L2 integration / L3 live.
 # ---------------------------------------------------------------------------
 
-# test-codex-l012: run L0+L1+L2 codex-app-server taxonomy tests.
-# CODEX_LIVE=0 (default) — runs against captured corpus; no live process.
-# GATE: must be green before any codex-app-server deploy or protocol change.
-# Includes the pre-deploy drift canary (TestCodexDriftCanary).
+# test-codex-l012: run L0+L1+L2 codex-app-server taxonomy tests + the structured
+# INPUT-driver harness (agent-input-substrate M2, T9): codexinput reactor,
+# codexdriver, and the L0–L3 input harness + 4×strata×EventN fault matrix +
+# bounded-liveness oracle. CODEX_LIVE=0 (default) — captured corpus, no live
+# process. GATE: must be green before any codex-app-server deploy or protocol
+# change. Includes the pre-deploy drift canaries + the SC6 gate trio (forbidigo /
+# depguard / capture-pane) via `make codex-sc6-gates`, the N=10 determinism
+# oracle, and the per-file coverage floor — this is the C6-deletion gate, so it
+# blocks a deploy, not merely a CI branch check.
 .PHONY: test-codex-l012
-test-codex-l012:  ## Codex-app-server L0/L1/L2 taxonomy gate (CODEX_LIVE=0; hk-oe86p)
-	go test -count=1 ./internal/codextest/... ./internal/codexwire/... ./internal/codexdigitaltwin/... ./internal/codexreactor/...
+test-codex-l012:  ## Codex L0/L1/L2 + input-driver harness + fault matrix + N=10 + coverage + SC6 gates (CODEX_LIVE=0; hk-oe86p, T9)
+	go test -count=1 ./internal/codextest/... ./internal/codexwire/... ./internal/codexdigitaltwin/... ./internal/codexreactor/... ./internal/codexinput/... ./internal/codexdriver/...
+	scripts/codex-oracle-n10.sh 10
+	scripts/codex-coverage-gate.sh
+	$(MAKE) codex-capture-pane-gate
+
+# codex-capture-pane-gate: the SC6 capture-pane grep ratchet — the structured
+# input driver must never scrape a tmux pane (capture-pane is an exec-arg string,
+# not an import, so a grep gate is the cheapest enforcement; the forbidigo +
+# depguard halves of the SC6 trio live in .golangci.yml).
+.PHONY: codex-capture-pane-gate
+codex-capture-pane-gate:  ## SC6: forbid `capture-pane` in the structured input-driver packages (T9)
+	scripts/codex-capture-pane-gate.sh
 
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
@@ -131,6 +253,78 @@ capture-fixtures:  ## Capture new codex corpus (CODEX_LIVE=1 required; deliberat
 	@echo "  Corpus output: testdata/codex-app-server/corpus/"
 	@echo "  Update testdata/codex-app-server/corpus/CAPTURE-LOG.md after capture."
 	CODEX_LIVE=1 go test -timeout 120s -count=1 -v -run TestL3_ ./internal/codextest/...
+
+# capture-claude-fixtures: real-Claude twin-parity capture (WS3-Claude-A).
+# Requires an AUTH'D, tmux-capable box: claude/tmux/git/br/ntm on PATH + a
+# subscription OAuth session. On a box without those the test SKIPS cleanly.
+# Output: testdata/twin-parity/claude/<scn>/{wire.ndjson,events.jsonl,meta.yaml}
+# Credfence (codename:credfence, D2): run under `env -u ANTHROPIC_API_KEY
+# -u ANTHROPIC_AUTH_TOKEN` so the run bills the subscription pool — NEVER an API
+# key (mirrors scripts/scratch-daemon.sh:237-240). Distinct from capture-fixtures
+# (codex corpus) — do not conflate.
+.PHONY: capture-claude-fixtures
+capture-claude-fixtures:  ## Capture real-Claude twin-parity fixtures (e2e_real_claude; auth+tmux required; credfenced)
+	@echo "capture-claude-fixtures: real-Claude capture into testdata/twin-parity/claude/$${HARMONIK_CAPTURE_SCN:-happy-path}/"
+	@echo "  SKIPS cleanly without claude/tmux/br/ntm binaries + auth."
+	env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+	  HARMONIK_WIRE_CAPTURE_DIR=$(CURDIR)/testdata/twin-parity/claude \
+	  HARMONIK_CAPTURE_COMMIT_SHA=$$(git rev-parse --short HEAD) \
+	  go test -tags e2e_real_claude -timeout 300s -count=1 -v \
+	    -run TestCaptureClaudeFixtures ./internal/daemon/...
+
+# test-twin-parity-claude: the ROUTINE Claude twin-parity gate (WS3-Claude-D).
+# Compares the canonical twin's --replay-path output (committed wire.ndjson)
+# against the committed Claude reference capture using only F1's equivalence
+# library: ordered kind-sequence + terminal outcome equivalent, hook/causal
+# timing within tolerance, and a drifted twin caught with a first-divergence
+# diff. Cheap, deterministic, zero-token — NO auth, tmux, or live model needed
+# (distinct from capture-claude-fixtures, the separate PERIODIC live re-capture).
+.PHONY: test-twin-parity-claude
+test-twin-parity-claude:  ## Routine Claude twin-parity gate (twin-vs-reference-capture; zero-token, deterministic)
+	go test -count=1 -run 'ClaudeParity' ./internal/twinparity/...
+
+# test-pi-live: the REAL-BOX-GATED pi oracle (WS3-pi / pi-A). Drives a real
+# `pi --mode json` single-turn, asserts the terminal NDJSON sequence
+# (session → agent_end), and writes testdata/twin-parity/pi/<scn>/{ndjson,
+# events.jsonl}. DEFAULT-SKIPPED without PI_LIVE=1; needs pi on PATH (or PI_BIN),
+# PI_PROVIDER + PI_MODEL, and valid pi provider auth. Anti-false-green:
+# HARMONIK_REQUIRE_PI_LIVE=1 turns a can't-run skip into a Fatalf.
+.PHONY: test-pi-live
+test-pi-live:  ## Real-pi oracle gate (PI_LIVE=1 required; pi provider auth; writes pi twin-parity fixtures)
+	PI_LIVE=1 go test -timeout 180s -count=1 -run TestPiA_ ./internal/daemon/...
+
+# test-twin-parity-pi: the ROUTINE pi twin-parity gate (WS3-pi / pi-C). Compares
+# the pi twin's NDJSON (committed testdata/twin-parity/pi/happy-path-sample/ndjson
+# — deterministic `harmonik-twin-pi --scenario happy-path` output) against the
+# reference capture on the pi-native wire spine (session → agent_end) + the
+# daemon-projected durable terminal triad, and proves a drifted twin is caught
+# with a first-divergence diff. Cheap, deterministic, zero-token — NO auth or live
+# pi needed (distinct from test-pi-live, the separate REAL-BOX re-capture).
+.PHONY: test-twin-parity-pi
+test-twin-parity-pi:  ## Routine pi twin-parity gate (twin-vs-reference-capture; zero-token, deterministic)
+	go test -count=1 -run 'PiParity' ./internal/twinparity/...
+
+# ---------------------------------------------------------------------------
+# Keeper replay test taxonomy (T10; session-restart-substrate)
+# Four tiers: L0 unit / L1 contract / L2 integration / L3 live, mirroring the
+# codex pair (measurement-design §3; RS-017/018/019).
+# ---------------------------------------------------------------------------
+
+# test-keeper-l012: run L0+L1+L2 keeper taxonomy tests + the corpus drift
+# canary. KEEPER_LIVE=0 (default) — corpus-driven, zero-token, no live pane.
+# GATE: must be green before any keeper cycle change deploys.
+.PHONY: test-keeper-l012
+test-keeper-l012:  ## Keeper replay L0/L1/L2 gate (KEEPER_LIVE=0; corpus-driven)
+	go test -count=1 ./internal/keepertest/... ./internal/keepertwin/... ./internal/keeper/...
+
+# test-keeper-live: run the L3 one-cycle tmux smoke against a REAL tmux pane.
+# Requires: KEEPER_LIVE=1, tmux on PATH. The pane runs a bare shell (no model,
+# no daemon). No re-capture target exists (unlike codex capture-fixtures): the
+# corpus source is the frozen baseline log — scripts/extract-keeper-corpus.py
+# is a deterministic rebuild, not a token-capped capture.
+.PHONY: test-keeper-live
+test-keeper-live:  ## Keeper L3 live gate (KEEPER_LIVE=1 required; one-cycle tmux smoke)
+	KEEPER_LIVE=1 go test -timeout 180s -count=1 -run TestL3_ ./internal/keepertest/...
 
 # ---------------------------------------------------------------------------
 # Twin-binary targets
@@ -154,10 +348,19 @@ build-twin-generic:  ## Build cmd/harmonik-twin-generic → twins/generic-twin (
 .PHONY: build-twin-claude
 build-twin-claude: build-twin-generic  ## Alias → build-twin-generic (hk-w5vra.2 will replace with real Claude twin)
 
+# build-twin-pi: compile cmd/harmonik-twin-pi/ into twins/pi-twin. The pi test
+# twin emits pi's `--mode json` NDJSON lifecycle (session → message_start/end →
+# agent_end) deterministically so it can stand in for a real pi session in
+# scenario tests and the twin-parity gate (WS3-pi). HC-043 commit stamp injected.
+.PHONY: build-twin-pi
+build-twin-pi:  ## Build cmd/harmonik-twin-pi → twins/pi-twin (SH-009 / HC-043)
+	@mkdir -p $(TWINS_DIR)
+	go build -ldflags "-X main.commitHash=$(COMMIT_HASH)" -o $(TWINS_DIR)/pi-twin ./cmd/harmonik-twin-pi
+
 # twins: build all twin binaries into twins/.
 # Add further per-twin prerequisites here as new twin packages land.
 .PHONY: twins
-twins: build-twin-generic  ## Build all twin binaries into twins/ (SH-009 search-path default)
+twins: build-twin-generic build-twin-pi  ## Build all twin binaries into twins/ (SH-009 search-path default)
 
 # build-all: build the module + all twin binaries.
 # Suitable as a pre-scenario-test warmup target.
@@ -297,7 +500,7 @@ check:  ## Tier 2: fmt-check (fail-closed), full golangci-lint, go test -race, g
 check-full:  ## Tier 3: everything in check + integration + scenario + crash test suites
 	$(MAKE) check
 	go test -race -tags=integration ./...
-	go test -race -tags=scenario ./test/scenario/...
+	$(MAKE) test-scenario
 	go test -tags=crash ./test/crash/...
 
 # ---------------------------------------------------------------------------
@@ -356,6 +559,16 @@ release-validate: build-all  ## Optional local sanity check (NOT on the release 
 .PHONY: lint
 lint:  ## golangci-lint run (shorthand)
 	$(TOOLS_DIR)/golangci-lint run
+
+# ---------------------------------------------------------------------------
+# specaudit-lint — spec-drift lint (M1-1)
+# Runs the 129 relocated spec-prose sensor tests behind the `specaudit` build
+# tag (skipped by the default `go test ./...`). See
+# internal/specaudit/RELOCATED-ALLOWLIST.md.
+# ---------------------------------------------------------------------------
+.PHONY: specaudit-lint
+specaudit-lint:  ## Run the tagged spec-drift sensor suite (-tags specaudit; M1-1)
+	scripts/specaudit-lint.sh
 
 # ---------------------------------------------------------------------------
 # Agent review — LOCAL ONLY

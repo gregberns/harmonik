@@ -1183,6 +1183,16 @@ EXAMPLES
 	// hk-9321v: resolve kerf binary via PATH for EM-062/EM-063 eager-refill.
 	// If kerf is not on PATH, KerfPath remains empty and eager-refill is disabled.
 	kerfPath, _ := exec.LookPath("kerf")
+	// M6 WS4-3: HARMONIK_DISABLE_EAGER_REFILL forces eager-refill off without
+	// removing kerf from PATH. The core-loop-proof matrix needs queue-submit to
+	// be the SOLE deterministic dispatcher: otherwise the daemon auto-dispatches
+	// the ready seed beads at boot (via `kerf next`) before a cell's subscribe
+	// arms, so the cell's `queue submit` hits bead_already_dispatched and its
+	// capture folds empty. kerf shares a bin dir with pi/codex, so a PATH shim
+	// can't drop kerf alone; this explicit toggle is the clean lever.
+	if v := os.Getenv("HARMONIK_DISABLE_EAGER_REFILL"); v == "1" || v == "true" {
+		kerfPath = ""
+	}
 
 	// hk-keul6: default JSONL log path to <ProjectDir>/.harmonik/events/events.jsonl
 	// per event-model.md §6.2 EV-020.
@@ -1330,26 +1340,32 @@ EXAMPLES
 	// Cite: bead hk-v3nv (TA4 tokenaudit — unblocks version<->cost correlation).
 	resolvedHash := resolvedCommitHash()
 
+	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
+	// the live worker registry into the Codex driver's runner (nil for tmux).
+	codexSubstrate, codexRegObserver, codexRequireBoundary := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag)
+
 	cfg := daemon.Config{
-		ProjectDir:               projectDir,
-		BrPath:                   brPath,
-		KerfPath:                 kerfPath, // hk-9321v: kerf next for EM-062/EM-063 eager-refill
-		JSONLLogPath:             jsonlLogPath,
-		MaxConcurrent:            maxConcurrentFlag,
-		NoAutoPull:               !autoPullFlag, // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
-		Substrate:                daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...),
-		DaemonBinaryPath:         daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
-		BinaryCommitHash:         resolvedHash,                        // ldflags stamp or runtime/debug fallback (hk-mz0x4, hk-v3nv)
-		AgentReadyTimeout:        agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (150s)
-		RemoteAgentReadyTimeout:  remoteAgentReadyTimeoutFlag,         // hk-96d7w: remote-worker ready timeout; 0 = built-in default (210s)
-		SubscriptionTokenCeiling: subscriptionTokenCeilingFlag,        // hk-ymav1: bandwidth auto-tuner
-		WorkflowModeDefault:      core.WorkflowMode(workflowModeFlag), // hk-30vlb: default to dot (embedded standard-bead.dot)
-		TargetBranch:             targetBranchFlag,                    // hk-mkxw1: merge target branch
-		ProtectBranches:          []string(protectBranchesFlag),       // hk-mkxw1: branches protected from daemon merges
-		ForbidUnprotectedDefault: forbidUnprotectedDefaultFlag,        // hk-mkxw1: guard against unprotected default branch
-		DefaultHarness:           core.AgentType(defaultHarnessFlag),  // hk-y01k6: tier-4 harness default
-		CodexBinary:              codexBinaryFlag,                     // hk-y01k6: codex executable path
-		Workers:                  workersCfg,                          // hk-rs-b4-bootwire-b44z: remote-substrate worker registry
+		ProjectDir:                    projectDir,
+		BrPath:                        brPath,
+		KerfPath:                      kerfPath, // hk-9321v: kerf next for EM-062/EM-063 eager-refill
+		JSONLLogPath:                  jsonlLogPath,
+		MaxConcurrent:                 maxConcurrentFlag,
+		NoAutoPull:                    !autoPullFlag,                       // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
+		Substrate:                     codexSubstrate,                      // AIS-015 selection axis; default tmux
+		WorkerRegistryObserver:        codexRegObserver,                    // M4-C3: late-bind live registry into Codex runner
+		CodexRequireIsolationBoundary: codexRequireBoundary,                // hk-5h759: fail-closed — refuse codex crew w/o bound worker/container boundary
+		DaemonBinaryPath:              daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)
+		BinaryCommitHash:              resolvedHash,                        // ldflags stamp or runtime/debug fallback (hk-mz0x4, hk-v3nv)
+		AgentReadyTimeout:             agentReadyTimeoutFlag,               // hk-hzj: per-dispatch ready timeout; 0 = built-in default (150s)
+		RemoteAgentReadyTimeout:       remoteAgentReadyTimeoutFlag,         // hk-96d7w: remote-worker ready timeout; 0 = built-in default (210s)
+		SubscriptionTokenCeiling:      subscriptionTokenCeilingFlag,        // hk-ymav1: bandwidth auto-tuner
+		WorkflowModeDefault:           core.WorkflowMode(workflowModeFlag), // hk-30vlb: default to dot (embedded standard-bead.dot)
+		TargetBranch:                  targetBranchFlag,                    // hk-mkxw1: merge target branch
+		ProtectBranches:               []string(protectBranchesFlag),       // hk-mkxw1: branches protected from daemon merges
+		ForbidUnprotectedDefault:      forbidUnprotectedDefaultFlag,        // hk-mkxw1: guard against unprotected default branch
+		DefaultHarness:                core.AgentType(defaultHarnessFlag),  // hk-y01k6: tier-4 harness default
+		CodexBinary:                   codexBinaryFlag,                     // hk-y01k6: codex executable path
+		Workers:                       workersCfg,                          // hk-rs-b4-bootwire-b44z: remote-substrate worker registry
 	}
 
 	// Yanked-binary check (specs/release-pipeline.md §7.2 point 4).

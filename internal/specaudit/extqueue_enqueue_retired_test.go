@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-rb6s3 binding test — T84: conformance assertion that the `enqueue`

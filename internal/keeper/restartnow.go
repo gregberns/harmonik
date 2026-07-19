@@ -2,10 +2,14 @@ package keeper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // restartnow.go — the DEAD-SIMPLE restart-now / ping path (hk-5da7).
@@ -42,17 +46,23 @@ const HandoffFreshnessWindow = 10 * time.Minute
 
 // RestartNowConfig carries everything RestartNow needs. ProjectDir + AgentName
 // identify the session; TmuxTarget is the already-resolved pane; Inject is the
-// injection surface (defaults to InjectText when nil); Now defaults to
-// time.Now (overridable in tests); RequestedAt anchors the freshness check — the
-// handoff must be newer than RequestedAt - HandoffFreshnessWindow (defaults to
-// Now() when zero).
+// injection surface (defaults to InjectText when nil); Clock defaults to
+// substrate.SystemClock (overridable in tests via a substrate.FakeClock);
+// RequestedAt anchors the freshness check — the handoff must be newer than
+// RequestedAt - HandoffFreshnessWindow (defaults to Clock.Now() when zero).
 type RestartNowConfig struct {
 	ProjectDir  string
 	AgentName   string
 	TmuxTarget  string
 	Inject      RestartNowInjector
-	Now         func() time.Time
+	Clock       substrate.ClockPort
 	RequestedAt time.Time
+
+	// Emitter, when non-nil, receives a durable session_keeper_restart_now event
+	// carrying the nonce on a SUCCESSFUL restart (SK-030, carry-for-audit) so the
+	// self-restart is joinable to its originating cycle in events.jsonl. Nil → no
+	// event is emitted (Ping never emits). The CLI wires a keeper.FileEmitter.
+	Emitter Emitter
 }
 
 // Nonce is a short verifiability token echoed back to the agent in the ACK line.
@@ -65,9 +75,9 @@ type RestartNowConfig struct {
 // non-zero exit). It does NOT consult or write any marker file — there is no
 // marker in this path.
 func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
-	now := cfg.Now
-	if now == nil {
-		now = time.Now
+	clock := cfg.Clock
+	if clock == nil {
+		clock = substrate.SystemClock{}
 	}
 	inject := cfg.Inject
 	if inject == nil {
@@ -75,7 +85,7 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 	}
 	requestedAt := cfg.RequestedAt
 	if requestedAt.IsZero() {
-		requestedAt = now()
+		requestedAt = clock.Now()
 	}
 	log := slog.With("agent", cfg.AgentName, "op", "restart-now", "nonce", nonce)
 	log.InfoContext(ctx, "keeper: restart-now: request received")
@@ -145,6 +155,25 @@ func RestartNow(ctx context.Context, cfg RestartNowConfig, nonce string) error {
 		return fmt.Errorf("keeper: restart-now: inject agent brief: %w", err)
 	}
 	log.InfoContext(ctx, "keeper: restart-now: agent brief injected; done")
+
+	// Step 7 (additive audit, SK-030): record a durable session_keeper_restart_now
+	// event carrying the nonce so the self-restart joins to its originating cycle
+	// in events.jsonl by nonce. Emitted AFTER the injected sequence, so it does not
+	// change the verify/ACK/clear ordering. Carry-for-audit: the nonce is never
+	// validated. Best-effort — a failed audit write must not fail a restart that
+	// already drove /clear+brief. Ping does not emit (nil Emitter).
+	if cfg.Emitter != nil {
+		payload, marshalErr := json.Marshal(core.SessionKeeperRestartNowPayload{
+			AgentName: cfg.AgentName,
+			SessionID: sid,
+			Nonce:     nonce,
+		})
+		if marshalErr != nil {
+			log.WarnContext(ctx, "keeper: restart-now: marshal audit payload", "err", marshalErr)
+		} else if emitErr := cfg.Emitter.EmitWithRunID(ctx, core.RunID{}, core.EventTypeSessionKeeperRestartNow, payload); emitErr != nil {
+			log.WarnContext(ctx, "keeper: restart-now: emit audit event", "err", emitErr)
+		}
+	}
 	return nil
 }
 

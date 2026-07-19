@@ -291,6 +291,107 @@ func TestCrewIdleReaper_PersistentOversightNeverReaped(t *testing.T) {
 	}
 }
 
+// TestCrewIdleReaper_StartWatcher_Disabled_NeverReaps is the hk-98at0 E2E
+// backfill for the SD-3 idle-reap DISABLE (operator directive 2026-07-18,
+// hk-s2eac): an idle crew whose bound queue has DRAINED to QueueStatusCompleted
+// must NOT be reaped, because StartWatcher never launches the sweep goroutine.
+//
+// This exercises the REAL StartWatcher entry point end-to-end (goroutine
+// lifecycle included) rather than calling scan()/checkCrew() directly like the
+// reaper-LOGIC tests above — so it is the guard that actually catches a
+// regression that RE-ENABLES idle-reaping (e.g. reverting StartWatcher to start
+// loop()). The parameters are deliberately aggressive: an ENABLED sweep would
+// reap "paul" within ~1 grace window (GraceAfter 10ms, ScanInterval 2ms → a few
+// ms), so a reap is observed almost immediately if the disable regresses; the
+// 200ms observation window is >10× that, making the "no reap" assertion a
+// large-margin presence-of-reap check, not a fragile wall-clock race.
+//
+// Assertion note: this proves the daemon-hosted signal the operator cares about
+// (the crew is not torn down → its session/registry Record survive). A hermetic
+// test cannot spawn a real claude --remote-control tmux pane (see
+// scenario_captain_crew_e2e), so "session stays alive" is proven at its causal
+// root: HandleCrewStop (which quits the pane and removes the registry Record) is
+// never invoked — the fake Stopper records zero calls.
+func TestCrewIdleReaper_StartWatcher_Disabled_NeverReaps(t *testing.T) {
+	queues := newFakeCrewQueues()
+	// The crew has drained all its work: bound queue reads Completed. Under an
+	// ENABLED sweep this is the exact reap-eligible state after the grace window.
+	queues.set("paul", queue.QueueStatusCompleted)
+	stopper := &fakeCrewStopper{}
+
+	r := NewCrewIdleReaper(CrewIdleReaperConfig{
+		ProjectDir:   "/fake/project",
+		Queues:       queues,
+		Stopper:      stopper,
+		GraceAfter:   10 * time.Millisecond, // tiny → an enabled sweep reaps almost at once
+		ScanInterval: 2 * time.Millisecond,  // tiny → many scans inside the window below
+		ListCrews:    listCrewsFrom([]crew.Record{{Name: "paul", Queue: "paul"}}),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Launch the REAL (disabled) StartWatcher. If it were re-enabled to start
+	// loop(), the 2ms sweep would reap "paul" within ~10-12ms.
+	r.StartWatcher(ctx)
+
+	// Observe well past GraceAfter + dozens of ScanIntervals. Disabled → no
+	// goroutine → no scan → no reap, regardless of how long we wait.
+	time.Sleep(200 * time.Millisecond)
+
+	if got := stopper.names(); len(got) != 0 {
+		t.Fatalf("idle-reap is DISABLED (hk-s2eac): a drained/completed idle crew must NOT be reaped, "+
+			"but StartWatcher reaped %v — the SD-3 sweep appears to have been re-enabled", got)
+	}
+}
+
+// TestCrewIdleReaper_StartWatcher_Disabled_NeverScans (hk-do173) is the tighter
+// unit complement to the teardown-level guard above (hk-98at0): it asserts the
+// disabled StartWatcher never even SCANS the crew registry — the sweep goroutine
+// is never launched. This is a tighter, faster signal than "no reap": a re-enabled
+// sweep calls ListCrews on its very FIRST tick (before any grace window), so a
+// regression is caught almost immediately and without depending on GraceAfter.
+func TestCrewIdleReaper_StartWatcher_Disabled_NeverScans(t *testing.T) {
+	var mu sync.Mutex
+	scans := 0
+	spyList := func(string) ([]crew.Record, error) {
+		mu.Lock()
+		scans++
+		mu.Unlock()
+		return []crew.Record{{Name: "paul", Queue: "paul"}}, nil
+	}
+
+	queues := newFakeCrewQueues()
+	queues.set("paul", queue.QueueStatusCompleted)
+
+	r := NewCrewIdleReaper(CrewIdleReaperConfig{
+		ProjectDir:   "/fake/project",
+		Queues:       queues,
+		Stopper:      &fakeCrewStopper{},
+		GraceAfter:   1 * time.Millisecond,
+		ScanInterval: 1 * time.Millisecond, // an enabled sweep would scan almost at once
+		ListCrews:    spyList,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Launch the REAL (disabled) StartWatcher. If it were re-enabled to start
+	// loop(), the 1ms sweep would call ListCrews within a few ms.
+	r.StartWatcher(ctx)
+
+	// Give a hypothetical sweep goroutine ample time for many scans.
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	got := scans
+	mu.Unlock()
+	if got != 0 {
+		t.Fatalf("idle-reap is DISABLED (hk-s2eac): StartWatcher must never launch the sweep, "+
+			"but the crew registry was scanned %d time(s) — the sweep goroutine appears to have started", got)
+	}
+}
+
 // TestCrewIdleReaper_NoOpWithoutProjectDir: scan is a no-op in unit-test mode
 // (no ProjectDir), matching StaleWatcher/QuiesceArbiter's guarded-construction
 // convention.

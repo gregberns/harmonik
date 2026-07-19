@@ -23,8 +23,8 @@ package core
 // When a payload type advances from version N to N+1:
 //   1. Update the payload struct (additive-only changes require no migration
 //      release per §6.4; breaking changes require a migration release).
-//   2. Add a call to SetPayloadSchemaVersion(typeName, N+1) in the appropriate
-//      eventreg_*.go init path.
+//   2. Register the type at the new version via RegisterEventTypeAtVersion(
+//      typeName, ctor, N+1) in the appropriate eventreg_*.go init path.
 //   3. Update or add the PayloadCompatEntry in allPayloadCompatEntries:
 //      - Set CurrentVersion = N+1, PreviousVersion = N.
 //      - Set CompatWindowHolds = true (additive-only changes) or false (breaking
@@ -46,7 +46,7 @@ package core
 
 // PayloadCompatEntry declares the N-1 compatibility window for one registered
 // event type. It is the per-type analogue of the cross-artifact compatibility
-// matrix in internal/operatornfr/schemacompatwindow_test.go.
+// matrix described in specs/control-points.md §6.3.
 //
 // Spec ref: event-model.md §4.8 EV-029.
 type PayloadCompatEntry struct {
@@ -263,7 +263,7 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// ── §8.12 Staleness-detection ───────────────────────────────────────────
 	{TypeName: "run_stale", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.13 Session-keeper (codename:session-keeper, hk-ekap1) ───────────
+	// ── §8.16 Session-keeper (codename:session-keeper, hk-ekap1) ───────────
 	{TypeName: "session_keeper_warn", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "session_keeper_no_gauge", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// Phase-2 cycle events (hk-22i70):
@@ -281,8 +281,10 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "session_keeper_operator_attached", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-wjzf: captain-initiated restart-now blocked diagnostic (ON-059).
 	{TypeName: "session_keeper_restart_now_blocked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// SK-030: successful agent-run restart-now, nonce carried for audit.
+	{TypeName: "session_keeper_restart_now", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.13 Keeper backstops + idle-restart (hk-34ac, hk-ee81) ─────────
+	// ── §8.16 Keeper backstops + idle-restart (hk-34ac, hk-ee81) ─────────
 	// hk-34ac: session_keeper_blind — fired after 5min continuous foreign_session (latched per episode).
 	{TypeName: "session_keeper_blind", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-34ac: session_keeper_hard_ceiling — SID-independent restart at 280K tokens.
@@ -298,7 +300,19 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-wqdc: session_keeper_ack_timeout — ack timeout when keeper sent a clear but received no confirmation.
 	{TypeName: "session_keeper_ack_timeout", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// ── §8.14 Alarm / self-check ───────────────────────────────────────────
+	// ── §8.20 Session-keeper interior cycle events (codename:session-restart-substrate) ──
+	{TypeName: "session_keeper_handoff_written", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "session_keeper_model_done", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "session_keeper_clear_sent", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "session_keeper_new_session_up", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
+	// ── §8.21 Agent-input acceptance events (codename:agent-input-substrate) ──
+	// Registered + compat-tabled but carved out of allEventTypeCohort / the EV-027
+	// count guard per EV-050 (async-observer cohort; §8.16/§8.20 precedent).
+	{TypeName: "agent_input_acked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "agent_input_stale", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
+	// ── §8.17 Alarm / self-check ───────────────────────────────────────────
 	// hk-tnmjy: review-gate anomaly alarm — N consecutive bead_closed with no reviewer_verdict.
 	{TypeName: "review_gate_anomaly", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 

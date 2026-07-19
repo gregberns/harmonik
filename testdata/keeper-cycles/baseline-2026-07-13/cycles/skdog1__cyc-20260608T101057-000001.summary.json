@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "skdog1",
+  "ckey": "skdog1|cyc-20260608T101057-000001",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260608T101057-000001",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "dogfood-abort-1",
+  "started_at": "2026-06-08T10:11:02.268658Z",
+  "terminal_at": "2026-06-08T10:14:02.294178Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

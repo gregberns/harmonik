@@ -192,39 +192,59 @@ func insertRCPrefixLine(content, prefix string) string {
 
 	newField := "  remote_control_prefix: " + prefix
 
-	// Pass 1: insert after the first matching daemon-block anchor field.
+	insertAfter := func(i int) string {
+		result := make([]string, 0, len(lines)+1)
+		result = append(result, lines[:i+1]...)
+		result = append(result, newField)
+		result = append(result, lines[i+1:]...)
+		return strings.Join(result, "\n")
+	}
+
+	// Locate the "daemon:" block header.
+	daemonIdx := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "daemon:" {
+			daemonIdx = i
+			break
+		}
+	}
+
+	// Pass 3 (no daemon: block at all): append a minimal one.
+	if daemonIdx == -1 {
+		if strings.HasSuffix(content, "\n") {
+			return content + "daemon:\n  remote_control_prefix: " + prefix + "\n"
+		}
+		return content + "\ndaemon:\n  remote_control_prefix: " + prefix + "\n"
+	}
+
+	// Determine the extent of the daemon block: it ends at the first following
+	// non-blank line that is NOT indented (i.e. a new top-level key).
+	blockEnd := len(lines)
+	for i := daemonIdx + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if lines[i][0] != ' ' && lines[i][0] != '\t' {
+			blockEnd = i
+			break
+		}
+	}
+
+	// Pass 1: insert after the first matching anchor field WITHIN the daemon
+	// block, so a like-named field in an unrelated top-level block is not
+	// mistaken for a daemon sub-field.
 	anchors := []string{"workflow_mode:", "max_concurrent:", "target_branch:"}
 	for _, anchor := range anchors {
-		for i, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, anchor) {
-				result := make([]string, 0, len(lines)+1)
-				result = append(result, lines[:i+1]...)
-				result = append(result, newField)
-				result = append(result, lines[i+1:]...)
-				return strings.Join(result, "\n")
+		for i := daemonIdx + 1; i < blockEnd; i++ {
+			if strings.HasPrefix(strings.TrimSpace(lines[i]), anchor) {
+				return insertAfter(i)
 			}
 		}
 	}
 
-	// Pass 2: insert after the "daemon:" line itself.
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "daemon:" {
-			result := make([]string, 0, len(lines)+1)
-			result = append(result, lines[:i+1]...)
-			result = append(result, newField)
-			result = append(result, lines[i+1:]...)
-			return strings.Join(result, "\n")
-		}
-	}
-
-	// Pass 3: no daemon: block at all — append a minimal one.
-	suffix := "\ndaemon:\n  remote_control_prefix: " + prefix + "\n"
-	// Avoid double-trailing-newline.
-	if strings.HasSuffix(content, "\n") {
-		return content + "daemon:\n  remote_control_prefix: " + prefix + "\n"
-	}
-	return content + suffix
+	// Pass 2: known daemon block but no anchor sub-field — insert right after
+	// the "daemon:" line itself.
+	return insertAfter(daemonIdx)
 }
 
 const migrateRCPrefixUsage = `harmonik migrate-rc-prefix — set daemon.remote_control_prefix for an existing project

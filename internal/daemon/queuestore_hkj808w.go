@@ -276,6 +276,17 @@ func (s *QueueStore) LockForMutation() *LockedQueueStore {
 	return &LockedQueueStore{s: s}
 }
 
+// LockForMutationView adapts LockForMutation to the queue.LockedQueueView
+// interface so queue.HandlerAdapter (which cannot import internal/daemon —
+// cycle prevention) can route the queue-append read-modify-write through the
+// mutation lock. Together with Wake, this makes *QueueStore satisfy
+// queue.MutationLocker (B1: two-writer lost-update fix).
+//
+// Spec ref: specs/queue-model.md §9.1 QM-060, §9.6 QM-064.
+func (s *QueueStore) LockForMutationView() queue.LockedQueueView {
+	return s.LockForMutation()
+}
+
 // LockedQueueStore is a write-locked view of QueueStore. The caller holds
 // the write lock for the lifetime of the LockedQueueStore. Call Done to
 // release.

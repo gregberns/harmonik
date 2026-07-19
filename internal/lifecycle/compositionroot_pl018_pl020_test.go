@@ -495,7 +495,6 @@ func TestPL020_CompositionRootIsOnlySubsystemCrossingImporter(t *testing.T) {
 	peerSubsystems := []string{
 		"github.com/gregberns/harmonik/internal/handler",
 		"github.com/gregberns/harmonik/internal/workspace",
-		"github.com/gregberns/harmonik/internal/operatornfr",
 	}
 
 	// Forbidden cross-subsystem imports: peer-subsystem A importing peer-subsystem B.

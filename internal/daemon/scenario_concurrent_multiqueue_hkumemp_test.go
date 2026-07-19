@@ -67,7 +67,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -76,6 +75,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
+	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -558,17 +558,21 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	//  - emptyCommitWorktreeFactory: satisfies the no-commit guard (hk-mmh8f)
 	//    by pre-committing an --allow-empty commit in the worktree BEFORE the
 	//    handler binary starts, without requiring the handler to run git.
-	//  - WithMergeMutex: serialises the full rebase → update-ref → push sequence
-	//    across all concurrent bead goroutines so that concurrent merges from
-	//    dupBead and betaB do not race on refs/heads/main (non-fast-forward push
-	//    failures observed without the mutex when both goroutines push at the same
-	//    time to the shared bare-repo origin).
-	var mergeMu sync.Mutex
+	//  - WithMergeQueue: the merge exclusion domain (mergeq) serialises the full
+	//    rebase → update-ref → push sequence across all concurrent bead goroutines
+	//    so concurrent merges from dupBead and betaB do not race on
+	//    refs/heads/main. The injected queue is Started here (with a t.Cleanup
+	//    cancel) because runWorkLoop only starts a queue it created itself — an
+	//    injected queue keeps the injector's lifecycle (RSM-015).
+	mergeQ := mergeq.New(nil)
+	mergeQCtx, mergeQCancel := context.WithCancel(context.Background())
+	mergeQ.Start(mergeQCtx)
+	t.Cleanup(mergeQCancel)
 	startDone := make(chan error, 1)
 	go func() {
 		startDone <- daemon.StartForTesting(loopCtx, cfg,
 			daemon.WithWorktreeFactory(emptyCommitWorktreeFactory),
-			daemon.WithMergeMutex(&mergeMu),
+			daemon.WithMergeQueue(mergeQ),
 		)
 	}()
 

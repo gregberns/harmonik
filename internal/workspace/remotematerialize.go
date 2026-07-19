@@ -394,3 +394,86 @@ finally:
         pass
     os.close(lock_fd)
 `
+
+// EnsureClaudeThemeVia pre-seeds the top-level "theme" key in the config where
+// Claude Code will read it (the WORKER's ~/.claude.json for a remote run; box-A's
+// for a local run), suppressing the first-run theme-selection modal (hk-oga33).
+// It is the theme-modal analogue of EnsureWorktreeTrustVia, and mirrors its
+// transport: local (runner == nil) delegates to the in-process EnsureClaudeTheme;
+// remote runs the theme upsert as a python3 program fed ON STDIN (never via -c —
+// see EnsureWorktreeTrustVia for the SSH argv-resplit hazard). Theme is a GLOBAL
+// key (no worktree argument), so the program takes no argv and is a lock-free
+// no-op once any launch has seeded it.
+func EnsureClaudeThemeVia(ctx context.Context, runner tmux.CommandRunner) error {
+	if runner == nil {
+		return EnsureClaudeTheme()
+	}
+	cmd := runner.Command(ctx, "python3", "-")
+	cmd.Stdin = bytes.NewReader([]byte(workerThemeUpsertProgram))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("workspace: EnsureClaudeThemeVia: %w\nremote: %s", err, out)
+	}
+	return nil
+}
+
+// workerThemeUpsertProgram is the python3 program (fed on STDIN to `python3 -`,
+// NOT via -c) that idempotently seeds ~/.claude.json["theme"] = "dark" when it is
+// absent/null/empty on the worker. It mirrors workerTrustUpsertProgram's
+// concurrency contract — lock-free fast path when already set; a bounded
+// LOCK_EX sidecar-flock read-modify-write only when a mutation is needed; atomic
+// temp-file + os.replace; preserve all other keys; never clobber an operator's
+// explicit theme. The "dark" literal MUST stay in sync with claudeDefaultTheme in
+// claudetrust_wm040b.go.
+const workerThemeUpsertProgram = `
+import fcntl, json, os, sys, tempfile
+cfg_path = os.path.join(os.path.expanduser("~"), ".claude.json")
+lock_path = cfg_path + ".lock"
+
+def load_cfg():
+    try:
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except ValueError:
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+def theme_set(cfg):
+    t = cfg.get("theme")
+    return isinstance(t, str) and t != ""
+
+# Fast path: probe WITHOUT the lock; a no-op when the theme is already set.
+if theme_set(load_cfg()):
+    sys.exit(0)
+
+# Write path: hold LOCK_EX on the sidecar lockfile across the read-modify-write so
+# concurrent writers (incl. the trust upsert) never lose each other's keys.
+lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+try:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    cfg = load_cfg()
+    if theme_set(cfg):
+        sys.exit(0)
+    cfg["theme"] = "dark"
+    d = os.path.dirname(cfg_path) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".claude.json.tmp-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, cfg_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+finally:
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    os.close(lock_fd)
+`

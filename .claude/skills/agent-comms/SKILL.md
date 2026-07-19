@@ -281,10 +281,19 @@ nudge, to actually pick the message up. Two ways to wake one:
 1. **`comms send --to NAME --wake`** — the daemon nudges the recipient's tmux
    pane right after delivery (see the `--wake` flag above). Best-effort,
    directed-only. This is the simplest path when you control the send.
-2. **Keep `comms recv --follow` armed** on the recipient — a session that holds
-   an open `--follow` stream wakes on the next delivered message without any
-   nudge. Crews are expected to keep this running for their whole life (see the
-   crew-launch skill, § Idle-crew-wake protocol).
+2. **Keep `comms recv --follow` armed via the Monitor tool** on the recipient — a
+   session that holds an open `--follow` stream wakes on the next delivered message
+   without any nudge. Crews are expected to keep this running for their whole life
+   (see the crew-launch skill, § Idle-crew-wake protocol).
+
+   > **The `--follow` stream MUST be armed via the Monitor tool, not a background
+   > bash (hk-b51bg).** A delivered line only becomes an ACTION the recipient reads
+   > and acts on when a Monitor re-invocation surfaces it as a REPL turn. A plain
+   > `run_in_background` bash streaming `--follow` to a file just accumulates bytes
+   > an idle session never reads — the message is delivered but never acted on. This
+   > was the root cause of the fleet "unread directives" under-drain. Backstop: a
+   > one-shot `comms recv --agent <me> --json` sweep on an idle timer (own POLL
+   > cursor, B1) catches a silently-dead `--follow`; re-arm the Monitor on any hit.
 
 If the recipient has gone fully idle with no armed `--follow`, a bare `send`
 alone may sit unread until something nudges the pane — prefer `--wake`.
@@ -326,7 +335,10 @@ cross-reference.)
 
 - **Dedupe on `event_id`** — never assume exactly-once (N3).
 - Use `$HARMONIK_AGENT` as identity (already set in the launch environment).
-- Use `--follow` for persistent message loops; without it `recv` is one-shot.
+- Use `--follow` for persistent message loops; without it `recv` is one-shot. Arm
+  the `--follow` stream **via the Monitor tool**, not a background bash — only a
+  Monitor re-invocation delivers a line as an actionable REPL turn (hk-b51bg;
+  see § Waking an idle peer).
 - Call `comms join` at startup and `comms leave` at clean shutdown.
 - **Refresh presence** — an armed `comms recv --follow` self-refreshes every ~60s (hk-qw63o); without `--follow` armed, re-run `comms join --reason=refresh` on a ≤90s timer instead (hk-ru45u: use `--reason=refresh` so the heartbeat is not persisted to events.jsonl). Presence expires ~120s.
 

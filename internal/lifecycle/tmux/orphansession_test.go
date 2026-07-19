@@ -197,6 +197,31 @@ func TestSweepOrphanTmuxSessions_AllZshWindowsKilled(t *testing.T) {
 	}
 }
 
+// TestSweepOrphanTmuxSessions_AllBashWindowsKilled verifies that an idle
+// non-zsh shell (bash) is also treated as orphan-eligible — the PL-006
+// regression where hardcoding "zsh" left bash/fish/sh hosts unreclaimed.
+func TestSweepOrphanTmuxSessions_AllBashWindowsKilled(t *testing.T) {
+	t.Parallel()
+
+	hash := orphanSessionFixtureProjectHash()
+	sessionName := orphanSessionFixtureSessionPrefix + "default"
+
+	adapter := orphanSessionFixtureNewAdapter(map[string][]string{
+		sessionName: {"bash", "fish"},
+	})
+
+	killed, err := SweepOrphanTmuxSessions(context.Background(), hash, adapter, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if killed != 1 {
+		t.Errorf("killed = %d, want 1 (idle bash/fish shells must be orphan-eligible)", killed)
+	}
+	if len(adapter.killedSessions) != 1 || adapter.killedSessions[0] != sessionName {
+		t.Errorf("killedSessions = %v, want [%q]", adapter.killedSessions, sessionName)
+	}
+}
+
 // TestSweepOrphanTmuxSessions_DeadPIDKilled verifies that a session whose first
 // pane reports PID 0 (treated as invalid/dead) is killed.
 func TestSweepOrphanTmuxSessions_DeadPIDKilled(t *testing.T) {
@@ -403,8 +428,9 @@ func TestSessionOrphanPrefix(t *testing.T) {
 	}
 }
 
-// TestCountNonZshWindows verifies the helper for various window name lists.
-func TestCountNonZshWindows(t *testing.T) {
+// TestCountNonShellWindows verifies the helper for various window name lists,
+// including non-zsh idle shells (bash/fish/sh — the PL-006 fix).
+func TestCountNonShellWindows(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -415,15 +441,22 @@ func TestCountNonZshWindows(t *testing.T) {
 		{[]string{}, 0},
 		{[]string{"zsh"}, 0},
 		{[]string{"zsh", "zsh"}, 0},
+		{[]string{"bash"}, 0},
+		{[]string{"fish"}, 0},
+		{[]string{"sh"}, 0},
+		{[]string{"bash", "zsh", "fish"}, 0},
 		{[]string{"claude-agent"}, 1},
 		{[]string{"zsh", "claude-agent"}, 1},
+		{[]string{"bash", "claude-agent"}, 1},
 		{[]string{"claude-agent", "zsh", "reviewer"}, 2},
+		// A workload window whose name merely contains a shell name is active.
+		{[]string{"bash-runner"}, 1},
 	}
 
 	for _, tc := range cases {
-		got := countNonZshWindows(tc.windows)
+		got := countNonShellWindows(tc.windows)
 		if got != tc.want {
-			t.Errorf("countNonZshWindows(%v) = %d, want %d", tc.windows, got, tc.want)
+			t.Errorf("countNonShellWindows(%v) = %d, want %d", tc.windows, got, tc.want)
 		}
 	}
 }

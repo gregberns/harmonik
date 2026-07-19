@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.5 binding test — HC-005 LaunchSpec delivery is JSON-on-stdin by default;

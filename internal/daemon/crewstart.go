@@ -83,6 +83,12 @@ type CrewStartRequest struct {
 	// default "crew" via Record.EffectiveType(). Stamping it durably lets the
 	// SD-3 reaper honour the manifest lifecycle.persistent flag (hk-dy5gw).
 	Type string `json:"type,omitempty"`
+	// Harness is the CLI --harness override, or "" when the flag was absent.
+	// Highest-precedence tier of the crew-scoped harness resolver (hk-l63b9):
+	// flag > mission harness: front-matter > per-crew config > default "claude".
+	// This is a SEPARATE resolution chain from the worker per-bead resolveHarness
+	// (harnessresolve.go) — a crew has no bead to carry a harness:<type> label.
+	Harness string `json:"harness,omitempty"`
 }
 
 // CrewStopRequest is the wire payload for a "crew-stop" socket op.
@@ -139,6 +145,11 @@ type crewHandlerImpl struct {
 	eventBus     crewKeeperEventBus                  // for emitting session_keeper_watcher_dead; may be nil
 	commsBus     crewKeeperCommsBus                  // for keeper-alert comms to operator; may be nil
 	liveKeeperFn func(projectDir, agent string) bool // injectable for testing; nil = keeper.LiveKeeperPresent
+
+	// crews holds the per-crew-name config read from .harmonik/config.yaml's
+	// crews: block (hk-l63b9). Nil/absent = no per-crew config; the harness
+	// resolver's third tier falls through to the default "claude".
+	crews map[string]CrewConfig
 }
 
 // CrewHandlerOpt is a functional option for NewCrewHandler.
@@ -160,6 +171,26 @@ func WithKeeperProbe(keeperCfg KeeperConfig, eventBus crewKeeperEventBus, commsB
 		h.eventBus = eventBus
 		h.commsBus = commsBus
 	}
+}
+
+// WithCrewsConfig configures the per-crew-name config read from
+// .harmonik/config.yaml's crews: block (hk-l63b9) — the third tier of the
+// crew-scoped harness resolver (flag > mission front-matter > per-crew config >
+// default "claude"). Omitting this option leaves the tier empty.
+func WithCrewsConfig(crews map[string]CrewConfig) CrewHandlerOpt {
+	return func(h *crewHandlerImpl) {
+		h.crews = crews
+	}
+}
+
+// crewConfigHarness looks up the configured harness for a crew name in the
+// crews: config tier, returning "" when absent (no per-crew config, or the
+// crew has no harness: entry).
+func (h *crewHandlerImpl) crewConfigHarness(name string) string {
+	if h.crews == nil {
+		return ""
+	}
+	return h.crews[name].Harness
 }
 
 // NewCrewHandler constructs a CrewHandler implementation.
@@ -265,6 +296,11 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	// (specs/crew-handoff-schema.md §3). Best-effort: a missing/unreadable mission
 	// or absent field yields "" and the crew inherits the compiled default model.
 	model := readMissionModel(req.MissionPath)
+	// Crew-scoped harness resolution (hk-l63b9): flag > mission harness:
+	// front-matter > per-crew config > default "claude". This is a SEPARATE
+	// resolver from the worker per-bead resolveHarness (harnessresolve.go) — a
+	// crew has no bead to carry a harness:<type> label.
+	harness := resolveCrewHarness(req.Harness, readMissionHarness(req.MissionPath), h.crewConfigHarness(req.Name))
 	lspec, buildErr := buildCrewLaunchSpec(crewLaunchCtx{
 		claudeBinary: h.claudeBinary,
 		name:         req.Name,
@@ -273,6 +309,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		projectDir:   h.projectDir,
 		resume:       isResume,
 		model:        model,
+		harness:      harness,
 	})
 	if buildErr != nil {
 		_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
@@ -479,30 +516,31 @@ func (h *crewHandlerImpl) pasteCrewMission(ctx context.Context, inj pasteInjecte
 	bufName := bufferName(sessionID, "crew-init")
 	msg := fmt.Sprintf("Please read %s and run /session-resume on it, then begin your operating loop.\n", handoffPath)
 
-	if err := inj.WriteLastPane(ctx, bufName, []byte(msg)); err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: crew-start: paste mission WriteLastPane: %v\n", err)
+	// Verify the seed actually rendered into the input box BEFORE submitting,
+	// re-pasting on a silently-dropped paste (hk-dvcc7). This mirrors the working
+	// implementer/reviewer paths (injectAndVerifySeed, hk-zexsj); the crew path
+	// alone still used a blind WriteLastPane + fixed-delay submit Enter, which on
+	// a slow or concurrent cold-start fired the Enter while the bracketed paste
+	// was still being absorbed — the keypress raced the paste and was swallowed,
+	// leaving the seed typed-but-unsubmitted so the crew idled silently until
+	// someone manually pressed Enter. injectAndVerifySeed captures the pane and
+	// confirms the marker rendered (re-pasting up to pasteVerifyAttempts) so the
+	// submit only fires once the seed is demonstrably in the input bar. Marker
+	// "/session-resume" is a stable literal in the seed, guaranteed present on a
+	// successful render (the handoff path is variable, so it is not the marker).
+	if reason := injectAndVerifySeed(ctx, inj, bufName, []byte(msg), "/session-resume", "crew-init"); reason != "" {
+		fmt.Fprintf(os.Stderr, "daemon: crew-start: paste mission unverified: %s\n", reason)
 		return
 	}
-	// Settle after the paste before submitting (hk-jzpqo).
-	//
-	// Root cause of the not-submitted seed: the post-paste submit Enter was sent
-	// IMMEDIATELY after WriteLastPane (the bracketed paste), with no settle in
-	// between.  A freshly-spawned crew pane — like a freshly-`--resume`'d
-	// implementer (hk-ip33d) — has a REPL input handler that is intermittently
-	// not yet ready to accept the keypress at that instant: the paste content is
-	// still being absorbed by the TUI, so the single Enter races it and is
-	// swallowed.  The seed then sits in the input bar unsubmitted and the crew
-	// never begins its loop until someone manually presses Enter.
-	//
-	// Fix: mirror the working implementer paths — wait splashDismissWait after the
-	// paste so the bracketed-paste content lands and the REPL returns to an
-	// input-ready prompt, THEN submit via sendResumeSubmitEnter, the same bounded
-	// submit-Enter retry the implementer-resume path uses (hk-ip33d).  A redundant
-	// Enter at an already-submitted REPL is a harmless empty line, so the retry
-	// only ever helps: at least one keypress lands after the input handler is ready.
+	// Settle after the paste before submitting (hk-jzpqo/hk-76n5g): the bracketed
+	// paste is still being absorbed by the TUI when the first submit Enter fires;
+	// waiting splashDismissWait gives the REPL time to return to an input-ready
+	// state before the bounded submit-Enter retry. A redundant Enter at an
+	// already-submitted REPL is a harmless empty line, so the retry only ever
+	// helps: at least one keypress lands after the input handler is ready.
 	splashDismissWait(ctx)
 	if es, ok := inj.(enterSender); ok {
-		sendResumeSubmitEnter(ctx, es)
+		sendSubmitEnterWithRetry(ctx, es, "crew-init")
 	}
 }
 
@@ -524,6 +562,20 @@ func (c *crewPasteInjector) WriteLastPane(ctx context.Context, bufferName string
 
 func (c *crewPasteInjector) SendEnterToLastPane(ctx context.Context) error {
 	return c.adapter.SendKeysEnter(ctx, c.paneTarget)
+}
+
+// CaptureLastPane implements paneCapturer so injectAndVerifySeed can confirm the
+// crew seed rendered before submitting (hk-dvcc7). It type-asserts the adapter
+// to the pane-capture capability (tmux.OSAdapter satisfies it) and reads the
+// crew pane's rendered text. Returns errPaneCaptureUnsupported (wrapped) when
+// the adapter cannot capture — e.g. a minimal test double — so the verify loop
+// falls back to trusting the write, unchanged from the prior blind behaviour.
+func (c *crewPasteInjector) CaptureLastPane(ctx context.Context, scrollback int) (string, error) {
+	pc, ok := c.adapter.(paneCaptureAdapter)
+	if !ok {
+		return "", fmt.Errorf("daemon: crewPasteInjector.CaptureLastPane: adapter %T lacks CapturePane: %w", c.adapter, errPaneCaptureUnsupported)
+	}
+	return pc.CapturePane(ctx, c.paneTarget, scrollback)
 }
 
 // pasteCrewMissionToSession delivers the mission kick-off line to the crew pane
@@ -568,44 +620,61 @@ func createCrewManagedMarker(projectDir, name string) error {
 }
 
 // missionFrontMatter is the subset of the mission-handoff YAML front-matter the
-// daemon reads at launch time. Only model: matters here; all other fields are
-// the crew's concern (it re-derives them on /session-resume). yaml.v3 silently
-// ignores the unmodelled keys (schema_version, crew_name, queue, …).
+// daemon reads at launch time. model: and harness: are the only fields modelled
+// here; all other fields are the crew's concern (it re-derives them on
+// /session-resume). yaml.v3 silently ignores the unmodelled keys (schema_version,
+// crew_name, queue, …).
 //
 // Spec ref: specs/crew-handoff-schema.md §3 (model: optional, opus|sonnet|haiku).
+// harness: is the crew-scoped harness resolver's mid-precedence tier (hk-l63b9).
 type missionFrontMatter struct {
-	Model string `yaml:"model"`
+	Model   string `yaml:"model"`
+	Harness string `yaml:"harness"`
 }
 
-// readMissionModel reads the optional model: field from a mission handoff's YAML
-// front-matter (the leading `---`-delimited block per crew-handoff-schema.md §3).
+// readMissionFrontMatter reads and parses a mission handoff's YAML front-matter
+// block (the leading `---`-delimited block per crew-handoff-schema.md §3).
 //
-// Best-effort by design: an empty path, a missing/unreadable file, a mission
-// without a front-matter block, or an absent model: field all return "". The
-// caller passes that to buildCrewLaunchSpec, which then injects no --model flag
-// and the crew inherits the compiled default model. A malformed front-matter
-// block likewise degrades to "" rather than failing the crew-start op — the
-// model: field is an optimisation, not a correctness contract.
-func readMissionModel(missionPath string) string {
+// Best-effort by design: an empty path, a missing/unreadable file, or a mission
+// without a front-matter block all return the zero missionFrontMatter. A
+// malformed front-matter block likewise degrades to the zero value rather than
+// failing the crew-start op — front-matter fields are optimisations, not a
+// correctness contract.
+func readMissionFrontMatter(missionPath string) missionFrontMatter {
 	if missionPath == "" {
-		return ""
+		return missionFrontMatter{}
 	}
 	//nolint:gosec // G304: missionPath is an operator/captain-supplied handoff path
 	data, err := os.ReadFile(missionPath)
 	if err != nil {
-		return ""
+		return missionFrontMatter{}
 	}
 
 	block := frontMatterBlock(string(data))
 	if block == "" {
-		return ""
+		return missionFrontMatter{}
 	}
 
 	var fm missionFrontMatter
 	if err := yaml.Unmarshal([]byte(block), &fm); err != nil {
-		return ""
+		return missionFrontMatter{}
 	}
-	return fm.Model
+	return fm
+}
+
+// readMissionModel reads the optional model: field from a mission handoff's YAML
+// front-matter. The caller passes the result to buildCrewLaunchSpec, which then
+// injects no --model flag on "" and the crew inherits the compiled default model.
+func readMissionModel(missionPath string) string {
+	return readMissionFrontMatter(missionPath).Model
+}
+
+// readMissionHarness reads the optional harness: field from a mission handoff's
+// YAML front-matter — the mid-precedence tier of the crew-scoped harness
+// resolver (hk-l63b9): flag > mission harness: front-matter > per-crew config >
+// default "claude".
+func readMissionHarness(missionPath string) string {
+	return readMissionFrontMatter(missionPath).Harness
 }
 
 // frontMatterBlock extracts the YAML body between the leading `---` fence and the

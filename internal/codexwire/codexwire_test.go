@@ -48,7 +48,7 @@ func TestCorpusRoundTrip(t *testing.T) {
 	defer f.Close()
 
 	// Track client requests by id so we can resolve response results.
-	requestsByID := map[int64]string{} // id → method
+	requestsByID := map[string]string{} // id (raw JSON) → method
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
@@ -75,20 +75,21 @@ func TestCorpusRoundTrip(t *testing.T) {
 
 		// For response frames, resolve the result type using the tracked request id.
 		if frame.Kind == codexwire.FrameKindServerResponse {
-			if method, ok := requestsByID[frame.ID]; ok {
+			id := string(frame.ID)
+			if method, ok := requestsByID[id]; ok {
 				if err := codexwire.ResolveResponseResult(&frame, method); err != nil {
-					t.Errorf("line %d: ResolveResponseResult (id=%d method=%q): %v",
-						lineNum, frame.ID, method, err)
+					t.Errorf("line %d: ResolveResponseResult (id=%s method=%q): %v",
+						lineNum, id, method, err)
 				}
 			} else {
-				t.Errorf("line %d: server response for id=%d has no tracked client request",
-					lineNum, frame.ID)
+				t.Errorf("line %d: server response for id=%s has no tracked client request",
+					lineNum, id)
 			}
 		}
 
 		// Track client requests for response correlation.
 		if frame.Kind == codexwire.FrameKindClientRequest {
-			requestsByID[frame.ID] = frame.Method
+			requestsByID[string(frame.ID)] = frame.Method
 		}
 
 		// Gate 2: ZERO unmodeled fields.
@@ -127,6 +128,151 @@ func TestMethodRegistry(t *testing.T) {
 	t.Logf("registered methods: %d", len(methods))
 	for _, m := range methods {
 		t.Logf("  %s", m)
+	}
+}
+
+// TestStringAndVariantIDRoundTrip guards the JSON-RPC 2.0 rule that an id may
+// be a string, a number, or null (not only an integer). A non-integer id must
+// parse cleanly and round-trip byte-for-byte, rather than failing the envelope
+// decode and tearing the session down (H11).
+func TestStringAndVariantIDRoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"string id request", `{"jsonrpc":"2.0","id":"abc-123","method":"initialize","params":{"clientInfo":{"name":"x","title":"y","version":"1"},"capabilities":null}}`},
+		{"string id response", `{"id":"abc-123","result":{"userAgent":"ua","codexHome":"h","platformFamily":"f","platformOs":"o"}}`},
+		{"integer id request", `{"jsonrpc":"2.0","id":7,"method":"initialize","params":{"clientInfo":{"name":"x","title":"y","version":"1"},"capabilities":null}}`},
+		{"large integer id response", `{"id":9007199254740993,"result":{"userAgent":"ua","codexHome":"h","platformFamily":"f","platformOs":"o"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frame, err := codexwire.Parse([]byte(tc.line))
+			if err != nil {
+				t.Fatalf("Parse returned error for %s: %v", tc.name, err)
+			}
+			if frame.Kind == codexwire.FrameKindRaw {
+				t.Fatalf("%s parsed to FrameKindRaw; envelope decode failed", tc.name)
+			}
+			out, err := codexwire.Marshal(frame)
+			if err != nil {
+				t.Fatalf("Marshal returned error for %s: %v", tc.name, err)
+			}
+			if err := assertSemanticEqual(t, 0, []byte(tc.line), out); err != nil {
+				t.Fatalf("%s did not round-trip: %v\n  in:  %s\n  out: %s", tc.name, err, tc.line, out)
+			}
+		})
+	}
+}
+
+// TestServerRequestClassification proves a JSON-RPC request the app-server
+// sends TO the client (id + method, e.g. an exec / apply-patch approval prompt
+// whose method is not a client-originated method) is classified as
+// FrameKindServerRequest — NOT FrameKindClientRequest and NOT dropped to
+// FrameKindRaw — so the driver can answer it instead of hanging the turn (RU-07).
+func TestServerRequestClassification(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want codexwire.FrameKind
+	}{
+		{
+			name: "approval prompt (unknown method, id+method) → ServerRequest",
+			line: `{"jsonrpc":"2.0","id":42,"method":"execCommandApproval","params":{"command":"rm -rf /tmp/x"}}`,
+			want: codexwire.FrameKindServerRequest,
+		},
+		{
+			name: "apply-patch approval (unknown method, string id) → ServerRequest",
+			line: `{"jsonrpc":"2.0","id":"appr-1","method":"applyPatchApproval","params":{"patch":"..."}}`,
+			want: codexwire.FrameKindServerRequest,
+		},
+		{
+			name: "client-originated request (registry DirClient) → ClientRequest",
+			line: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"x","title":"y","version":"1"},"capabilities":null}}`,
+			want: codexwire.FrameKindClientRequest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frame, err := codexwire.Parse([]byte(tc.line))
+			if err != nil {
+				t.Fatalf("Parse returned error: %v", err)
+			}
+			if frame.Kind != tc.want {
+				t.Fatalf("classification = %d, want %d (line dropped or misfiled)", frame.Kind, tc.want)
+			}
+			// A server request must round-trip verbatim (it is answered by id).
+			out, err := codexwire.Marshal(frame)
+			if err != nil {
+				t.Fatalf("Marshal returned error: %v", err)
+			}
+			if err := assertSemanticEqual(t, 0, []byte(tc.line), out); err != nil {
+				t.Fatalf("did not round-trip: %v\n  in:  %s\n  out: %s", err, tc.line, out)
+			}
+		})
+	}
+}
+
+// TestThreadResumeRoundTrip_HK160YB pins the thread/resume wire method added for
+// the persistent sidecar's reconnect path (hk-160yb G2). It proves: the method
+// is registered and client-originated (NOT dropped to FrameKindRaw), the typed
+// params expose the required threadId, and every optional posture field
+// (sandbox, approvalPolicy, cwd, …) round-trips verbatim through Extra — so a
+// reconnect can carry the full resume posture without the codec enumerating it.
+func TestThreadResumeRoundTrip_HK160YB(t *testing.T) {
+	// Registered + client-originated.
+	found := false
+	for _, m := range codexwire.RegisteredMethods() {
+		if m == "thread/resume" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("thread/resume not in registry — reconnect cannot marshal it")
+	}
+
+	cases := []struct {
+		name         string
+		line         string
+		wantThreadID string
+	}{
+		{
+			name:         "threadId only",
+			line:         `{"jsonrpc":"2.0","id":3,"method":"thread/resume","params":{"threadId":"th_abc123"}}`,
+			wantThreadID: "th_abc123",
+		},
+		{
+			name:         "threadId plus posture extras preserved via Extra",
+			line:         `{"jsonrpc":"2.0","id":4,"method":"thread/resume","params":{"threadId":"th_xyz789","sandbox":"danger-full-access","approvalPolicy":"never","cwd":"/w/repo"}}`,
+			wantThreadID: "th_xyz789",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frame, err := codexwire.Parse([]byte(tc.line))
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			if frame.Kind != codexwire.FrameKindClientRequest {
+				t.Fatalf("thread/resume classified as %d, want FrameKindClientRequest (%d)",
+					frame.Kind, codexwire.FrameKindClientRequest)
+			}
+			params, ok := frame.Params.(*codexwire.ThreadResumeParams)
+			if !ok {
+				t.Fatalf("Params is %T, want *codexwire.ThreadResumeParams", frame.Params)
+			}
+			if params.ThreadID != tc.wantThreadID {
+				t.Fatalf("ThreadID = %q, want %q", params.ThreadID, tc.wantThreadID)
+			}
+			out, err := codexwire.Marshal(frame)
+			if err != nil {
+				t.Fatalf("Marshal error: %v", err)
+			}
+			if err := assertSemanticEqual(t, 0, []byte(tc.line), out); err != nil {
+				t.Fatalf("did not round-trip: %v\n  in:  %s\n  out: %s", err, tc.line, out)
+			}
+		})
 	}
 }
 

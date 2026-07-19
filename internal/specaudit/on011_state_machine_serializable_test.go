@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.13 binding test — ON-011 operator-control state machine with serializable transitions.

@@ -51,6 +51,12 @@ elif [ -n "${TMUX:-}" ]; then
 else
     AGENT="default"
 fi
+# Reject path-traversal / absolute-escape in the agent name: it is interpolated
+# into a filesystem path, so a value containing a path separator or ".." could
+# steer writes outside .harmonik/keeper. Fail closed on any such value.
+case "${AGENT}" in
+    */*|*..*) echo "keeper-stop-hook: refusing unsafe agent name: ${AGENT}" >&2; exit 1 ;;
+esac
 PROJECT="${HARMONIK_PROJECT:-${PWD}}"
 KEEPER_DIR="${PROJECT}/.harmonik/keeper"
 IDLE_FILE="${KEEPER_DIR}/${AGENT}.idle"

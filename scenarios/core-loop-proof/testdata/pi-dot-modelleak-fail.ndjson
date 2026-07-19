@@ -1,0 +1,10 @@
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-pidot","agent_type":"pi","tier":1}}
+{"type":"run_started","payload":{"bead_id":"hk-clp-pidot","run_id":"r1","workflow_id":"review-loop-example","workflow_mode":"dot"}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"ornith","harness":"pi"}}
+{"type":"implementer_phase_complete","payload":{"run_id":"r1","commit_landed":true,"exit_code":0}}
+{"type":"reviewer_verdict","payload":{"run_id":"r1","verdict":"REQUEST_CHANGES","iteration_count":1,"notes":"add LINE-B"}}
+{"type":"node_dispatch_requested","payload":{"run_id":"r1","node_id":"implementer","origin":"workflow"}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"claude-opus-4-8","harness":"claude-code"}}
+{"type":"implementer_phase_complete","payload":{"run_id":"r1","commit_landed":true,"exit_code":0}}
+{"type":"reviewer_verdict","payload":{"run_id":"r1","verdict":"APPROVE","iteration_count":2,"notes":"both lines present"}}
+{"type":"run_completed","payload":{"bead_id":"hk-clp-pidot","run_id":"r1","success":true}}

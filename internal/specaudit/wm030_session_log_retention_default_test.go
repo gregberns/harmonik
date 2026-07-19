@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.42 binding test — WM-030 post-merge session-log retention default.

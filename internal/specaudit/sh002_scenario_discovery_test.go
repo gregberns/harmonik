@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.2 binding test — SH-002: scenario files live under `scenarios/` at the repo root.

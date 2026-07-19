@@ -138,6 +138,21 @@ func (d *Dispatcher) handleEvent(ctx context.Context, ev core.Event) error {
 		return nil
 	}
 
+	// LookupByTrigger returns both Hooks and Gates that match the trigger name
+	// (CP-046). S05 dispatches Hooks only; drop any Gate entries so the
+	// Payload.Hook dereferences below (sort key and fireHook) are safe. Gate
+	// triggers are dispatched by S01, not here.
+	filtered := hooks[:0]
+	for _, cp := range hooks {
+		if cp.Kind == core.KindHook {
+			filtered = append(filtered, cp)
+		}
+	}
+	hooks = filtered
+	if len(hooks) == 0 {
+		return nil
+	}
+
 	// CP-014: sort by SubsystemPriority ascending; within the same priority,
 	// by DeclarationIndex ascending (registration/declaration order per spec).
 	// LookupByTrigger returns Name-sorted for CP-046; we re-sort here to enforce

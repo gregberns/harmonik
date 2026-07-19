@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.47 binding test — WM-035 intra-run rollback verdicts keep the same worktree

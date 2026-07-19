@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "watch",
+  "ckey": "watch|cyc-20260625T210159-000003",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260625T210159-000003",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "5437d418-5b17-4401-9cb7-a88ec7754c5d",
+  "started_at": "2026-06-26T00:04:39.346259Z",
+  "terminal_at": "2026-06-26T00:07:40.946629Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

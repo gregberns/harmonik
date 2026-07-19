@@ -1,0 +1,7 @@
+{"event_type":"run_started","event_id":"a1111111-1111-1111-1111-111111111111","run_id":"run-xyz","timestamp":"2026-05-14T11:00:00.000Z","bead_id":"hk-bbb"}
+{"event_type":"agent_ready","event_id":"a2222222-2222-2222-2222-222222222222","run_id":"run-xyz","timestamp":"2026-05-14T11:00:02.000Z"}
+{"event_type":"reviewer_verdict","event_id":"a4444444-4444-4444-4444-444444444444","run_id":"run-xyz","timestamp":"2026-05-14T11:00:15.000Z","verdict":"APPROVE"}
+{"event_type":"outcome_emitted","event_id":"a6666666-6666-6666-6666-666666666666","run_id":"run-xyz","timestamp":"2026-05-14T11:00:25.000Z","outcome_status":"success","node_id":"implement"}
+{"event_type":"bead_closed","event_id":"a8888888-8888-8888-8888-888888888888","run_id":"run-xyz","timestamp":"2026-05-14T11:00:27.000Z","bead_id":"hk-bbb"}
+{"event_type":"review_loop_cycle_complete","event_id":"a9999999-9999-9999-9999-999999999999","run_id":"run-xyz","timestamp":"2026-05-14T11:00:27.800Z"}
+{"event_type":"run_completed","event_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","run_id":"run-xyz","timestamp":"2026-05-14T11:00:28.000Z"}

@@ -1,0 +1,16 @@
+{
+  "abort_reason": null,
+  "agent_name": "jamis",
+  "ckey": "jamis|cyc-20260623T174847-000007",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260623T174847-000007",
+  "event_count": 2,
+  "outcome": "complete",
+  "session_id_start": "c5b33046-8d1b-4dcc-b879-0ccc425a9012",
+  "started_at": "2026-06-24T21:23:07.199129Z",
+  "terminal_at": "2026-06-24T21:24:09.398824Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_complete"
+  ]
+}

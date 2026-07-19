@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mup.42 binding test — PL-027 upgrade contract obligation (daemon-internal side).

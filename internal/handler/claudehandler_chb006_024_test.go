@@ -1203,26 +1203,32 @@ func TestOutcomeObserver_NilWhenEmpty(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DeriveCIaudeTranscriptPath
+// DeriveClaudeTranscriptPath
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestDeriveCIaudeTranscriptPath_EndsWithSessionID verifies the derived path
+// TestDeriveClaudeTranscriptPath_EndsWithSessionID verifies the derived path
 // ends with <claude_session_id>.jsonl.
-func TestDeriveCIaudeTranscriptPath_EndsWithSessionID(t *testing.T) {
+func TestDeriveClaudeTranscriptPath_EndsWithSessionID(t *testing.T) {
 	t.Parallel()
 	const sessID = "01234567-0000-7000-8000-000000000001"
-	path := handler.DeriveCIaudeTranscriptPath("/workspace/my-project", sessID)
+	path, err := handler.DeriveClaudeTranscriptPath("/workspace/my-project", sessID)
+	if err != nil {
+		t.Fatalf("DeriveClaudeTranscriptPath: unexpected error: %v", err)
+	}
 	if !strings.HasSuffix(path, sessID+".jsonl") {
 		t.Errorf("path %q does not end with %q", path, sessID+".jsonl")
 	}
 }
 
-// TestDeriveCIaudeTranscriptPath_ContainsSlug verifies the path contains a slug
+// TestDeriveClaudeTranscriptPath_ContainsSlug verifies the path contains a slug
 // derived from the workspace path.
-func TestDeriveCIaudeTranscriptPath_ContainsSlug(t *testing.T) {
+func TestDeriveClaudeTranscriptPath_ContainsSlug(t *testing.T) {
 	t.Parallel()
 	const sessID = "test-sess-001"
-	path := handler.DeriveCIaudeTranscriptPath("/workspace/my-project", sessID)
+	path, err := handler.DeriveClaudeTranscriptPath("/workspace/my-project", sessID)
+	if err != nil {
+		t.Fatalf("DeriveClaudeTranscriptPath: unexpected error: %v", err)
+	}
 	// The path should contain "projects" as a directory component.
 	if !strings.Contains(path, "projects") {
 		t.Errorf("path %q does not contain 'projects'", path)

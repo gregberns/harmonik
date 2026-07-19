@@ -79,15 +79,40 @@ type codexRunCtx struct {
 	beadID string
 
 	// model is the codex model name passed as --model on the initial turn
-	// (e.g. "o4-mini", "o3"). REQUIRED for initial turns — an empty model
-	// causes codex to block on stdin for ~30 minutes before timing out (hk-heh3t).
-	// Ignored on resume turns (the thread context already encodes the model).
+	// (e.g. "o4-mini", "o3"). OPTIONAL: an empty model means "launch with no
+	// --model flag", so codex resolves the model from $CODEX_HOME/config.toml —
+	// i.e. the account default. This is the ONLY working configuration on a
+	// ChatGPT-subscription auth box, which specs/harness-contract.md HN-022
+	// mandates as codex's default path: under that auth every explicitly-named
+	// model (o4-mini, gpt-5, gpt-5-codex, …) is rejected with HTTP 400
+	// "not supported when using Codex with a ChatGPT account" (verified
+	// 2026-07-16), and only omitting --model succeeds. Ignored on resume turns
+	// (the thread context already encodes the model).
+	//
+	// hk-heh3t history: on codex 0.139.0 an omitted --model hung on stdin for
+	// ~30 min, so this field was once REQUIRED (empty → fail loud). That hang no
+	// longer reproduces on the pinned codex (0.142.5 verified: a --model-less
+	// `codex exec` completes in seconds and edits the tree), and requiring a
+	// model directly contradicts the HN-022 ChatGPT path — so the guard is
+	// retired. The never-spawned reaper (stalewatch neverSpawnedTimeout) remains
+	// the backstop if a future codex version ever re-hangs on an omitted --model.
+	//
+	// Operator caveat: a live empty-model run still depends on the ChatGPT account
+	// default being a model the installed codex-cli can serve — a rotating default
+	// (e.g. gpt-5.6-sol vs codex-cli 0.142.5) can 400. See
+	// scenarios/core-loop-proof/known-red.md §"Operator caveat" (COORD c072).
 	model string
 
 	// priorThreadID is non-nil for resume turns (iteration >= 2). It holds the
 	// codex thread_id captured from the prior turn's first thread.started event.
 	// Nil means this is the initial turn.
 	priorThreadID *string
+
+	// iterationCount is the 1-based DOT iteration index. On a resume turn
+	// (priorThreadID != nil) it selects the reviewer-feedback.iter-<N-1>.md the
+	// resume seed prompt points at. Zero on the initial turn. See
+	// implementerResumeSeedPrompt (agentseedprompt.go).
+	iterationCount int
 
 	// baseEnv is the base environment inherited from daemon Config.HandlerEnv.
 	// codexCredentialDenyKeys are stripped and re-emitted as empty overrides.
@@ -138,34 +163,32 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 			"buildCodexLaunchSpec: priorThreadID must not be an empty string (pass nil for initial turn)")
 	}
 
-	// Empty model on initial turn → fail loud instead of 30-min stdin hang (hk-heh3t).
-	// On resume turns the thread context already encodes the model; --model is only
-	// required on initial launch. Pass a model:<name> bead label (e.g. model:o4-mini)
-	// so the dispatcher populates rc.model.
-	if rc.priorThreadID == nil && rc.model == "" {
-		return handler.LaunchSpec{}, fmt.Errorf(
-			"codex harness: refusing to start — model is not set. " +
-				"Add a model:<name> label to the bead (e.g. model:o4-mini). " +
-				"Without a model codex blocks on stdin for ~30 minutes before timing out.")
-	}
-
 	binary := rc.codexBinary
 	if binary == "" {
 		binary = "codex"
 	}
 
 	// Build argv.
-	// Initial:  codex exec --json --sandbox workspace-write --model <model> -C <wt> <seed>
+	// Initial:  codex exec --json --sandbox workspace-write [--model <model>] -C <wt> <seed>
 	// Resume:   codex exec resume <thread_id> --json --sandbox workspace-write <seed>
 	//
 	// Note: codex 0.139.0 removed the -a/--ask-for-approval flag. Sandboxing is
 	// controlled exclusively by --sandbox/-s. Do not add -a back.
 	//
-	// --model is emitted on the initial turn only (hk-heh3t): resume turns carry the
-	// model in the thread context so --model is redundant and may not be accepted.
+	// --model is emitted on the initial turn ONLY when rc.model is non-empty. An
+	// empty model omits the flag so codex uses its $CODEX_HOME/config.toml default
+	// (the account default) — the only working config on the HN-022-mandated
+	// ChatGPT-subscription path, where a named model 400s (see the rc.model doc).
+	// Resume turns never carry --model: the thread context already encodes the
+	// model, and `codex exec resume` may reject a redundant --model.
 	seedPrompt := fmt.Sprintf(codexSeedPromptTemplate, rc.beadID)
 	var args []string
 	if rc.priorThreadID != nil {
+		// Resume turns deliver the reviewer-feedback pointer via the shared resume
+		// prompt so a DOT back-edge re-entry gets an actionable instruction instead
+		// of the identical initial prompt it already satisfied (c073 defect; peer of
+		// pasteInjectImplementerResume for claude).
+		seedPrompt = implementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
 		// codex exec resume does NOT accept -C (exit 2: "unexpected argument -C found").
 		// WorkDir in the returned LaunchSpec sets the subprocess working directory.
 		args = []string{
@@ -179,10 +202,11 @@ func buildCodexLaunchSpec(rc codexRunCtx) (handler.LaunchSpec, error) {
 			"exec",
 			"--json",
 			"--sandbox", "workspace-write",
-			"--model", rc.model,
-			"-C", rc.workspacePath,
-			seedPrompt,
 		}
+		if rc.model != "" {
+			args = append(args, "--model", rc.model)
+		}
+		args = append(args, "-C", rc.workspacePath, seedPrompt)
 	}
 
 	// Build env: copy baseEnv, strip credential keys, set CODEX_HOME.

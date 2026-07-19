@@ -1,0 +1,16 @@
+{
+  "abort_reason": null,
+  "agent_name": "stilgar",
+  "ckey": "stilgar|cyc-20260622T042506-000001",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260622T042506-000001",
+  "event_count": 2,
+  "outcome": "complete",
+  "session_id_start": "56d7a7ed-b5f1-4729-b15a-2df035b54535",
+  "started_at": "2026-06-22T07:04:46.614269Z",
+  "terminal_at": "2026-06-22T07:05:39.217095Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_complete"
+  ]
+}

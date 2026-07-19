@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.8 binding test — EV-005 events are lifecycle-boundary signals, not agent internals.

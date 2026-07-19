@@ -1,4 +1,4 @@
-package core_test
+package core
 
 import (
 	"encoding/json"
@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 // pertypecompat_hqwn38_test.go — EV-029 per-type N-1 compatibility window tests.
@@ -27,7 +25,7 @@ import (
 func TestEV029_AllRegisteredTypesHaveSchemaVersion(t *testing.T) {
 	t.Parallel()
 
-	versions := core.AllPayloadSchemaVersions()
+	versions := AllPayloadSchemaVersions()
 	if len(versions) == 0 {
 		t.Fatal("EV-029: AllPayloadSchemaVersions() returned empty map; at least one type must be registered")
 	}
@@ -54,11 +52,11 @@ func TestEV029_AllRegisteredTypesHaveSchemaVersion(t *testing.T) {
 func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 	t.Parallel()
 
-	registered := core.AllPayloadSchemaVersions()
-	declared := core.AllPayloadCompatEntries()
+	registered := AllPayloadSchemaVersions()
+	declared := AllPayloadCompatEntries()
 
 	// Build lookup maps.
-	declaredByName := make(map[string]core.PayloadCompatEntry, len(declared))
+	declaredByName := make(map[string]PayloadCompatEntry, len(declared))
 	for _, e := range declared {
 		declaredByName[e.TypeName] = e
 	}
@@ -100,7 +98,7 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 func TestEV029_InitialVersionIsOne(t *testing.T) {
 	t.Parallel()
 
-	for _, e := range core.AllPayloadCompatEntries() {
+	for _, e := range AllPayloadCompatEntries() {
 		e := e
 		if e.PreviousVersion != 0 {
 			continue // not an initial-version entry; handled by TestEV029_NMinus1WindowHolds
@@ -133,7 +131,7 @@ func TestEV029_InitialVersionIsOne(t *testing.T) {
 func TestEV029_NMinus1WindowHolds(t *testing.T) {
 	t.Parallel()
 
-	for _, e := range core.AllPayloadCompatEntries() {
+	for _, e := range AllPayloadCompatEntries() {
 		e := e
 		if e.PreviousVersion == 0 {
 			continue // initial version; vacuously satisfied, handled above
@@ -158,7 +156,7 @@ func TestEV029_NMinus1WindowHolds(t *testing.T) {
 func TestEV029_AdditiveOnlyImpliesCompatWindowHolds(t *testing.T) {
 	t.Parallel()
 
-	for _, e := range core.AllPayloadCompatEntries() {
+	for _, e := range AllPayloadCompatEntries() {
 		e := e
 		t.Run(e.TypeName, func(t *testing.T) {
 			t.Parallel()
@@ -179,11 +177,11 @@ func TestEV029_AdditiveOnlyImpliesCompatWindowHolds(t *testing.T) {
 func TestEV029_CompatEntryVersionsMatchRegistry(t *testing.T) {
 	t.Parallel()
 
-	for _, e := range core.AllPayloadCompatEntries() {
+	for _, e := range AllPayloadCompatEntries() {
 		e := e
 		t.Run(e.TypeName, func(t *testing.T) {
 			t.Parallel()
-			registryVersion, ok := core.CurrentPayloadSchemaVersion(e.TypeName)
+			registryVersion, ok := LookupTypeSchemaVersion(e.TypeName)
 			if !ok {
 				// Type in compat table but not registered — caught by
 				// TestEV029_CompatTableCoversAllRegisteredTypes; skip here.
@@ -205,7 +203,7 @@ func TestEV029_NoDuplicateCompatEntries(t *testing.T) {
 	t.Parallel()
 
 	seen := make(map[string]int)
-	for _, e := range core.AllPayloadCompatEntries() {
+	for _, e := range AllPayloadCompatEntries() {
 		seen[e.TypeName]++
 	}
 	for typeName, count := range seen {
@@ -225,7 +223,7 @@ func TestEV029_NoDuplicateCompatEntries(t *testing.T) {
 func TestEV029_CurrentVersionNeverLessThanOne(t *testing.T) {
 	t.Parallel()
 
-	for _, e := range core.AllPayloadCompatEntries() {
+	for _, e := range AllPayloadCompatEntries() {
 		e := e
 		t.Run(e.TypeName, func(t *testing.T) {
 			t.Parallel()
@@ -242,7 +240,7 @@ func TestEV029_CurrentVersionNeverLessThanOne(t *testing.T) {
 func TestEV029_PreviousVersionLessThanCurrent(t *testing.T) {
 	t.Parallel()
 
-	for _, e := range core.AllPayloadCompatEntries() {
+	for _, e := range AllPayloadCompatEntries() {
 		e := e
 		if e.PreviousVersion == 0 {
 			continue
@@ -264,7 +262,7 @@ func TestEV029_RegisterEventTypeAtVersionRejectsVersionLessThanOne(t *testing.T)
 	t.Parallel()
 
 	// schemaVersion=0 must be rejected since versions must be >= 1 per EV-028.
-	err := core.RegisterEventTypeAtVersion("test_ev029_sentinel_type_bad_version", func() core.EventPayload { return nil }, 0)
+	err := RegisterEventTypeAtVersion("test_ev029_sentinel_type_bad_version", func() EventPayload { return nil }, 0)
 	if err == nil {
 		t.Error("EV-029: RegisterEventTypeAtVersion with schemaVersion=0 should return an error; versions must be >= 1 per EV-028")
 	}
@@ -275,11 +273,11 @@ func TestEV029_RegisterEventTypeAtVersionRejectsVersionLessThanOne(t *testing.T)
 func TestEV029_LookupPayloadCompatEntryRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	for _, e := range core.AllPayloadCompatEntries() {
+	for _, e := range AllPayloadCompatEntries() {
 		e := e
 		t.Run(e.TypeName, func(t *testing.T) {
 			t.Parallel()
-			got, ok := core.LookupPayloadCompatEntry(e.TypeName)
+			got, ok := LookupPayloadCompatEntry(e.TypeName)
 			if !ok {
 				t.Fatalf("EV-029: LookupPayloadCompatEntry(%q) = (_, false); entry should be findable", e.TypeName)
 			}
@@ -298,7 +296,7 @@ func TestEV029_LookupPayloadCompatEntryRoundTrip(t *testing.T) {
 func TestEV029_LookupPayloadCompatEntryMissing(t *testing.T) {
 	t.Parallel()
 
-	_, ok := core.LookupPayloadCompatEntry("not_a_real_event_type_hqwn38")
+	_, ok := LookupPayloadCompatEntry("not_a_real_event_type_hqwn38")
 	if ok {
 		t.Error("EV-029: LookupPayloadCompatEntry for unknown type should return (_, false)")
 	}
@@ -314,7 +312,7 @@ func TestEV029_ValidateEnvelopeSchemaVersionMatchesRegistry(t *testing.T) {
 
 	// Use run_started as a representative type registered at v1.
 	e := makeTestEvent("run_started", 1)
-	if err := core.ValidateEnvelopeSchemaVersion(e); err != nil {
+	if err := ValidateEnvelopeSchemaVersion(e); err != nil {
 		t.Errorf("EV-029/EV-028: ValidateEnvelopeSchemaVersion for run_started at v1 = %v, want nil", err)
 	}
 }
@@ -327,7 +325,7 @@ func TestEV029_ValidateEnvelopeSchemaVersionDetectsMismatch(t *testing.T) {
 
 	// Use run_started (registered at v1); present a wrong envelope version.
 	e := makeTestEvent("run_started", 99)
-	err := core.ValidateEnvelopeSchemaVersion(e)
+	err := ValidateEnvelopeSchemaVersion(e)
 	if err == nil {
 		t.Error("EV-029/EV-028: ValidateEnvelopeSchemaVersion with wrong version should return error")
 	}
@@ -335,9 +333,9 @@ func TestEV029_ValidateEnvelopeSchemaVersionDetectsMismatch(t *testing.T) {
 
 // makeTestEvent constructs a minimal valid Event with the given type name and
 // envelope schema version. Used for ValidateEnvelopeSchemaVersion tests.
-func makeTestEvent(typeName string, schemaVersion int) core.Event {
-	return core.Event{
-		EventID:         core.EventID(uuid.Must(uuid.NewV7())),
+func makeTestEvent(typeName string, schemaVersion int) Event {
+	return Event{
+		EventID:         EventID(uuid.Must(uuid.NewV7())),
 		SchemaVersion:   schemaVersion,
 		Type:            typeName,
 		TimestampWall:   time.Now(),

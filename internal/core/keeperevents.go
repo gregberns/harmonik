@@ -1,15 +1,15 @@
 package core
 
-// keeperevents.go — event-bus payload types for §8.13 session-keeper events
+// keeperevents.go — event-bus payload types for §8.16 session-keeper events
 // (codename:session-keeper, hk-ekap1):
-//   - session_keeper_warn     (§8.13.1) — upward pct-threshold crossing
-//   - session_keeper_no_gauge (§8.13.2) — gauge file absent or stale
+//   - session_keeper_warn     (§8.16.1) — upward pct-threshold crossing
+//   - session_keeper_no_gauge (§8.16.2) — gauge file absent or stale
 //
 // Spec ref: codename:session-keeper (hk-ekap1).
 // Bead ref: hk-8vzek.
 
 // SessionKeeperWarnPayload is the typed event payload for session_keeper_warn
-// (event-model.md §8.13.1).
+// (event-model.md §8.16.1).
 //
 // Emitted by the keeper watcher on the first upward crossing of the
 // warn_pct threshold (default 80 %).  Not re-emitted until the percentage
@@ -32,7 +32,7 @@ type SessionKeeperWarnPayload struct {
 }
 
 // SessionKeeperNoGaugePayload is the typed event payload for
-// session_keeper_no_gauge (event-model.md §8.13.2).
+// session_keeper_no_gauge (event-model.md §8.16.2).
 //
 // Emitted at keeper startup when the gauge file is absent or stale, and
 // re-emitted every staleness interval thereafter until a fresh gauge appears.
@@ -48,7 +48,7 @@ type SessionKeeperNoGaugePayload struct {
 }
 
 // SessionKeeperHandoffStartedPayload is the payload for
-// session_keeper_handoff_started (event-model.md §8.13.3).
+// session_keeper_handoff_started (event-model.md §8.16.3).
 //
 // Emitted by the cycle core before the /session-handoff injection so the
 // cycle is auditable even if it subsequently aborts.
@@ -65,7 +65,7 @@ type SessionKeeperHandoffStartedPayload struct {
 }
 
 // SessionKeeperCycleCompletePayload is the payload for
-// session_keeper_cycle_complete (event-model.md §8.13.4).
+// session_keeper_cycle_complete (event-model.md §8.16.4).
 //
 // Emitted on successful completion of the full 7-step cycle.
 //
@@ -84,7 +84,7 @@ type SessionKeeperCycleCompletePayload struct {
 }
 
 // SessionKeeperCycleAbortedPayload is the payload for
-// session_keeper_cycle_aborted (event-model.md §8.13.5).
+// session_keeper_cycle_aborted (event-model.md §8.16.5).
 //
 // Emitted when the cycle aborts without issuing /clear because the handoff
 // nonce confirmation timed out. The session is left untouched.
@@ -103,7 +103,7 @@ type SessionKeeperCycleAbortedPayload struct {
 }
 
 // SessionKeeperClearUnconfirmedPayload is the payload for
-// session_keeper_clear_unconfirmed (event-model.md §8.13.6).
+// session_keeper_clear_unconfirmed (event-model.md §8.16.6).
 //
 // Emitted (best-effort) when the post-/clear settle wait elapses without
 // observing a new session_id in the gauge. The cycle continues regardless.
@@ -120,7 +120,7 @@ type SessionKeeperClearUnconfirmedPayload struct {
 }
 
 // SessionKeeperPrecompactBlockedPayload is the payload for
-// session_keeper_precompact_blocked (event-model.md §8.13.8).
+// session_keeper_precompact_blocked (event-model.md §8.16.8).
 //
 // Emitted by the keeper watcher when it detects the .precompact trigger marker
 // (written by the PreCompact hook) and makes a cycle decision. Always emitted
@@ -149,7 +149,7 @@ type SessionKeeperPrecompactBlockedPayload struct {
 }
 
 // SessionKeeperCycleRecoveredPayload is the payload for
-// session_keeper_cycle_recovered (event-model.md §8.13.7).
+// session_keeper_cycle_recovered (event-model.md §8.16.7).
 //
 // Emitted on keeper boot when the journal shows the keeper crashed in the
 // "cleared" phase (after /clear was issued but before /session-resume).
@@ -167,7 +167,7 @@ type SessionKeeperCycleRecoveredPayload struct {
 }
 
 // SessionKeeperRespawnAttemptedPayload is the payload for
-// session_keeper_respawn_attempted (event-model.md §8.13.9).
+// session_keeper_respawn_attempted (event-model.md §8.16.9).
 //
 // Emitted by the keeper watcher when it detects that the managed pane has
 // gone idle (agent exited after a /quit injection) and fires --respawn-cmd
@@ -209,6 +209,28 @@ type SessionKeeperRestartNowBlockedPayload struct {
 	// "nonce_mismatch", "handoff_stale", "handoff_modified_during_settle",
 	// "handoff_read_error", "handoff_stat_error", "marker_read_error".
 	Reason string `json:"reason"`
+}
+
+// SessionKeeperRestartNowPayload is the payload for session_keeper_restart_now
+// (SK-030, hk-keeper-delivery-restartnow-nonce-kz4w6).
+//
+// Emitted by RestartNow on a SUCCESSFUL agent-run restart (ack + /clear + brief
+// all injected). The Nonce carries the value supplied to `restart-now --nonce`
+// (carry-for-audit — NEVER validated), so a query of events.jsonl by that nonce
+// joins the self-restart to its originating keeper cycle.
+//
+// Durability class: O (ordinary — observability; non-destructive).
+type SessionKeeperRestartNowPayload struct {
+	// AgentName is the keeper agent name (--agent flag value).
+	AgentName string `json:"agent_name"`
+
+	// SessionID is the verified gauge session_id the restart was driven against.
+	SessionID string `json:"session_id,omitempty"`
+
+	// Nonce is the verifiability/provenance token supplied to restart-now
+	// (--nonce, or the derived rn-<ms> default when the flag is omitted). Carried
+	// for audit; never validated.
+	Nonce string `json:"nonce"`
 }
 
 // SessionKeeperLivePaneRecoverPayload is the payload for
@@ -412,4 +434,119 @@ type SessionKeeperConfigRejectedPayload struct {
 
 	// Reason is the human-readable rejection explanation.
 	Reason string `json:"reason"`
+}
+
+// ---------------------------------------------------------------------------
+// §8.20 Session-keeper interior cycle events (codename:session-restart-substrate)
+// ---------------------------------------------------------------------------
+//
+// Fine-grained restart-cycle milestones, durable on the bus and joinable by the
+// composite (agent_name, cycle_id) key (EV-046). Emitted by internal/keeper;
+// consumed by the internal/replay invariant harness (EV-048). All class O.
+//
+// Each payload carries AgentName + a REQUIRED CycleID (json "cycle_id", no
+// omitempty) with a Valid() method asserting non-empty cycle scope, following
+// the ReconciliationStartedPayload.Valid() precedent. Valid() is NOT wired into
+// DecodePayload (EventPayload is an empty marker interface); it is exercised by
+// the roundtrip/prop tests and the replay harness explicitly.
+//
+// Spec ref: event-model.md §8.20; EV-046..EV-050.
+// Bead ref: codename:session-restart-substrate.
+
+// SessionKeeperHandoffWrittenPayload is the payload for
+// session_keeper_handoff_written (event-model.md §8.20.1).
+//
+// Emitted when the handoff nonce is confirmed written by the model
+// (cycle.go confirmed-phase). Precondition of clear_sent (SR3).
+//
+// Durability class: O (ordinary — observability).
+// Refs: codename:session-restart-substrate.
+type SessionKeeperHandoffWrittenPayload struct {
+	AgentName    string `json:"agent_name"`
+	CycleID      string `json:"cycle_id"` // REQUIRED
+	SessionID    string `json:"session_id,omitempty"`
+	Nonce        string `json:"nonce,omitempty"`         // confirmed nonce marker (audit)
+	Recovered    bool   `json:"recovered,omitempty"`     // true iff accepted via freshness recovery (not nonce)
+	HandoffMtime string `json:"handoff_mtime,omitempty"` // RFC3339; carried on the recovery edge
+}
+
+// SessionKeeperModelDonePayload is the payload for session_keeper_model_done
+// (event-model.md §8.20.2).
+//
+// Emitted when the model reaches an await-input boundary after the handoff turn
+// (D12); Degraded=true if the liveness bound fired. Precondition of clear_sent
+// (SR4).
+//
+// Durability class: O (ordinary — observability).
+// Refs: codename:session-restart-substrate.
+type SessionKeeperModelDonePayload struct {
+	AgentName string `json:"agent_name"`
+	CycleID   string `json:"cycle_id"` // REQUIRED
+	SessionID string `json:"session_id,omitempty"`
+	Source    string `json:"source"`             // REQUIRED: "idle_marker" | "transcript_turn" | "timeout"
+	Degraded  bool   `json:"degraded,omitempty"` // true iff reached via model_done_timeout
+}
+
+// SessionKeeperClearSentPayload is the payload for session_keeper_clear_sent
+// (event-model.md §8.20.3).
+//
+// Emitted when /clear is injected into the pane (cycle.go cleared-phase).
+//
+// Durability class: O (ordinary — observability).
+// Refs: codename:session-restart-substrate.
+type SessionKeeperClearSentPayload struct {
+	AgentName string `json:"agent_name"`
+	CycleID   string `json:"cycle_id"`             // REQUIRED
+	SessionID string `json:"session_id,omitempty"` // session_id before /clear
+	Attempt   int    `json:"attempt"`              // 1-based; increments on defensive re-injects
+}
+
+// SessionKeeperNewSessionUpPayload is the payload for
+// session_keeper_new_session_up (event-model.md §8.20.4).
+//
+// Emitted when a new session_id is observed after /clear; precondition of
+// briefing (SR6).
+//
+// Durability class: O (ordinary — observability).
+// Refs: codename:session-restart-substrate.
+type SessionKeeperNewSessionUpPayload struct {
+	AgentName     string `json:"agent_name"`
+	CycleID       string `json:"cycle_id"`        // REQUIRED
+	PrevSessionID string `json:"prev_session_id"` // REQUIRED (needed for the != check)
+	NewSessionID  string `json:"new_session_id"`  // REQUIRED; Valid(): non-empty AND != PrevSessionID
+}
+
+// Valid reports whether p is a well-formed SessionKeeperHandoffWrittenPayload:
+// non-empty agent_name and cycle_id.
+func (p SessionKeeperHandoffWrittenPayload) Valid() bool {
+	return validCycleScope(p.AgentName, p.CycleID)
+}
+
+// Valid reports whether p is a well-formed SessionKeeperModelDonePayload:
+// non-empty agent_name and cycle_id.
+func (p SessionKeeperModelDonePayload) Valid() bool {
+	return validCycleScope(p.AgentName, p.CycleID)
+}
+
+// Valid reports whether p is a well-formed SessionKeeperClearSentPayload:
+// non-empty agent_name and cycle_id, and Attempt >= 1 (1-based).
+func (p SessionKeeperClearSentPayload) Valid() bool {
+	return validCycleScope(p.AgentName, p.CycleID) && p.Attempt >= 1
+}
+
+// Valid reports whether p is a well-formed SessionKeeperNewSessionUpPayload:
+// non-empty agent_name and cycle_id, plus a non-empty NewSessionID that differs
+// from PrevSessionID.
+func (p SessionKeeperNewSessionUpPayload) Valid() bool {
+	return validCycleScope(p.AgentName, p.CycleID) &&
+		p.NewSessionID != "" && p.NewSessionID != p.PrevSessionID
+}
+
+// validCycleScope is the shared §8.20 keeper-interior precondition: a well-formed
+// cycle-scoped payload carries a non-empty agent_name and cycle_id. The ^cyc-
+// prefix is a SOFT check kept OUT of Valid() (a future CycleIDGen change must not
+// retro-invalidate historical corpora); the replay harness reports a
+// non-conforming id as a low-severity finding rather than dropping the event.
+func validCycleScope(agent, cycleID string) bool {
+	return agent != "" && cycleID != ""
 }

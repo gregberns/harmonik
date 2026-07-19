@@ -20,11 +20,11 @@ package daemon
 
 import (
 	"context"
-	"sync"
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/mergeq"
 )
 
 // WithWorktreeFactory returns a TestOption that replaces productionWorktreeFactory
@@ -39,15 +39,17 @@ func WithWorktreeFactory(factory func(ctx context.Context, projectDir, runID, he
 	}
 }
 
-// WithMergeMutex returns a TestOption that injects mu as the merge serialization
-// mutex.  Every call to mergeRunBranchToMain will hold mu across the full
-// rebase → update-ref → push sequence, preventing concurrent-push races in
-// tests that exercise concurrent dispatch.
+// WithMergeQueue returns a TestOption that injects q as the merge exclusion
+// domain (RSM-015). Pass an ALREADY-STARTED queue: runWorkLoop owns only a queue
+// it creates itself, so it leaves an injected queue untouched — the test owns its
+// lifecycle (Start it, and cancel its Start ctx on cleanup). Use this when a test
+// needs to share/inspect the domain the commit-phase merge, the escape check, and
+// the base-sync+worktree-add all serialise through.
 //
-// Bead ref: hk-bnm89.
-func WithMergeMutex(mu *sync.Mutex) TestOption {
+// Bead ref: hk-bnm89, RSM-015.
+func WithMergeQueue(q *mergeq.Queue) TestOption {
 	return func(h *daemonTestHooks) {
-		h.mergeMu = mu
+		h.mergeQ = q
 	}
 }
 

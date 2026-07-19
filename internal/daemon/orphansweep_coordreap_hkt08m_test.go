@@ -227,16 +227,16 @@ func TestHKt08m_WorkLoop_SkipsReapWithinInterval(t *testing.T) {
 
 	// Set lastCoordinatorReap to "just now" so the interval has NOT elapsed.
 	deps := newMinimalDeps_t08m(projectDir, projectHash, adapter, time.Hour)
-	deps.lastCoordinatorReap = time.Now()
+	maint := loopMaintenanceState{lastCoordinatorReap: time.Now()}
 
 	// Simulate the work-loop gate logic (step 1c).
 	interval := deps.coordinatorReapInterval
 	if interval <= 0 {
 		interval = periodicCoordinatorReapInterval
 	}
-	if deps.coordinatorReapAdapter != nil && time.Since(deps.lastCoordinatorReap) >= interval {
+	if deps.coordinatorReapAdapter != nil && time.Since(maint.lastCoordinatorReap) >= interval {
 		runPeriodicCoordinatorReap(context.Background(), deps.projectDir, deps.coordinatorReapProjectHash, deps.coordinatorReapAdapter, nil)
-		deps.lastCoordinatorReap = time.Now()
+		maint.lastCoordinatorReap = time.Now()
 	}
 
 	killed := adapter.killedSessions_t08m()
@@ -258,16 +258,17 @@ func TestHKt08m_WorkLoop_FiresReapAfterInterval(t *testing.T) {
 
 	// Use a near-zero interval so time.Since always exceeds it.
 	deps := newMinimalDeps_t08m(projectDir, projectHash, adapter, time.Nanosecond)
-	// lastCoordinatorReap zero-valued → far in the past relative to 1ns interval.
+	// maint.lastCoordinatorReap zero-valued → far in the past relative to 1ns interval.
+	var maint loopMaintenanceState
 
 	// Simulate the work-loop gate logic (step 1c).
 	interval := deps.coordinatorReapInterval
 	if interval <= 0 {
 		interval = periodicCoordinatorReapInterval
 	}
-	if deps.coordinatorReapAdapter != nil && time.Since(deps.lastCoordinatorReap) >= interval {
+	if deps.coordinatorReapAdapter != nil && time.Since(maint.lastCoordinatorReap) >= interval {
 		runPeriodicCoordinatorReap(context.Background(), deps.projectDir, deps.coordinatorReapProjectHash, deps.coordinatorReapAdapter, nil)
-		deps.lastCoordinatorReap = time.Now()
+		maint.lastCoordinatorReap = time.Now()
 	}
 
 	killed := adapter.killedSessions_t08m()

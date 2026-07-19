@@ -2,7 +2,9 @@ package workspace
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -43,7 +45,14 @@ func LeaseLockPath(workspacePath string) string {
 // Step 4 (parent-dir fsync) is best-effort on macOS/APFS — APFS may suppress
 // the fsync on directory fds — but the call MUST be made for spec compliance.
 //
-// Returns an error if lock.Valid() is false, or if any I/O step fails.
+// Acquisition is test-and-set: the final publish step is a hard link into
+// place, which fails atomically if target already exists. A second claimant on
+// the same path gets an error wrapping ErrLeaseAlreadyHeld instead of silently
+// overwriting the holder's lease. Release (ReleaseLeaseLock) removes the file,
+// after which the path can be claimed again.
+//
+// Returns an error if lock.Valid() is false, if the lease is already held, or
+// if any I/O step fails.
 func WriteLeaseLockAtomic(target string, lock *core.LeaseLockFile) error {
 	if !lock.Valid() {
 		return fmt.Errorf("workspace: WriteLeaseLockAtomic: invalid LeaseLockFile (run_id=%v pid=%d ttl_sec=%d)", lock.RunID, lock.PID, lock.TTLSec)
@@ -84,13 +93,19 @@ func WriteLeaseLockAtomic(target string, lock *core.LeaseLockFile) error {
 		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Close (pre-rename): %w", err)
 	}
 
-	// Step 3: atomic rename — POSIX rename(2) is atomic within the same filesystem.
-	if err := os.Rename(tmpPath, target); err != nil {
+	// Step 3: atomic test-and-set claim — link(2) fails with EEXIST when target
+	// already exists, so a second claimant on the same path fails instead of
+	// silently overwriting the holder's lease. (rename(2) would clobber.)
+	if err := os.Link(tmpPath, target); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Rename %q → %q: %w", tmpPath, target, err)
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("workspace: WriteLeaseLockAtomic: lease already held at %q: %w", target, ErrLeaseAlreadyHeld)
+		}
+		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Link %q → %q: %w", tmpPath, target, err)
 	}
+	_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup of the temp file now that the link holds the lease
 
-	// Step 4: parent-dir fsync to durably record the rename.
+	// Step 4: parent-dir fsync to durably record the new link.
 	// Best-effort on macOS/APFS per spec; sync error is intentionally suppressed.
 	dirFD, err := os.Open(dir)
 	if err != nil {
@@ -206,13 +221,23 @@ func WriteLeaseReleasedMarker(workspacePath, runID, workspaceID, reason string) 
 		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: MkdirAll %q: %w", eventsDir, err)
 	}
 
-	line := fmt.Sprintf(
-		`{"event":"lease_released","run_id":%q,"workspace_id":%q,"reason":%q,"released_at":%q}`,
-		runID,
-		workspaceID,
-		reason,
-		time.Now().UTC().Format(time.RFC3339),
-	) + "\n"
+	payload, err := json.Marshal(struct {
+		Event       string `json:"event"`
+		RunID       string `json:"run_id"`
+		WorkspaceID string `json:"workspace_id"`
+		Reason      string `json:"reason"`
+		ReleasedAt  string `json:"released_at"`
+	}{
+		Event:       "lease_released",
+		RunID:       runID,
+		WorkspaceID: workspaceID,
+		Reason:      reason,
+		ReleasedAt:  time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return fmt.Errorf("workspace: WriteLeaseReleasedMarker: marshal: %w", err)
+	}
+	line := string(payload) + "\n"
 
 	//nolint:gosec // G304: path is constructed from workspace_path + known relative segments, not user input
 	f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)

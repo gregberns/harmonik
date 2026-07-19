@@ -2,7 +2,6 @@ package handlercontract
 
 import (
 	"context"
-	"fmt"
 )
 
 // Handler is the Go interface every handler implementation MUST satisfy per
@@ -20,16 +19,20 @@ type Handler interface {
 	// Launch starts an agent subprocess for the given spec and returns a
 	// Session representing it.
 	//
-	// Launch MUST be idempotent on the key returned by LaunchKey(spec): a
-	// second call with the same key MUST return the existing Session without
-	// spawning a new subprocess (HC-004). This prevents duplicate work on
-	// daemon restart.
-	//
-	// When spec.Phase and spec.IterationCount are both present (multi-phase
-	// modes such as review-loop), the key is the 4-tuple
-	// (run_id, node_id, phase, iteration_count). When both fields are absent
-	// (workflow_mode = single or omitted), the key is the 2-tuple
-	// (run_id, node_id). See LaunchKey for the canonical derivation.
+	// HC-004 idempotency — NOT ENFORCED (A9 reconciliation, 2026-07-17).
+	// The historical contract asserted Launch MUST be idempotent on a
+	// (run_id, node_id[, phase, iteration_count]) key and return an existing
+	// Session on a second call, to prevent duplicate work on daemon restart.
+	// The shipping handler.Launch (internal/handler/handler.go) mints a fresh
+	// session id via handlercontract.NewSessionID and spawns the subprocess
+	// UNCONDITIONALLY — there is no dedup guard, at either the handler or the
+	// daemon-dispatch level, keyed on (run_id, node_id). A daemon restart that
+	// re-dispatches the same (run_id, node_id) therefore spawns a SECOND
+	// subprocess (duplicate work / double budget). This is a real latent
+	// defect. The former LaunchKey helper and its self-referential idempotency
+	// tests were deleted rather than left asserting an unenforced MUST; wiring
+	// a real launch-dedup registry into handler.Launch is a scoped
+	// daemon/handler-lane follow-up, out of scope for this contract pass.
 	//
 	// On success, the returned Session's lifetime begins at this return and
 	// ends when Session.Wait returns. On failure, Launch returns nil and one
@@ -52,40 +55,4 @@ type Handler interface {
 	//
 	// Spec ref: handler-contract.md §6.1 HC-001; architecture.md §6.1.
 	AgentType() string
-}
-
-// LaunchKey derives the idempotency key for a Launch call from spec per
-// specs/handler-contract.md §4.2 HC-004.
-//
-// Key shape:
-//   - 2-tuple "(run_id)/(node_id)" when spec.Phase and spec.IterationCount
-//     are both nil (workflow_mode = single, or mode field omitted).
-//   - 4-tuple "(run_id)/(node_id)/(phase)/(iteration_count)" when both
-//     spec.Phase and spec.IterationCount are non-nil (multi-phase modes such
-//     as review-loop). Within a single review-loop cycle, distinct
-//     (phase, iteration_count) tuples produce distinct keys, so the daemon
-//     MAY issue Launch calls for different phases without the idempotency
-//     guard returning an existing Session from a prior phase.
-//
-// LaunchKey panics if spec is nil. Handlers MUST call LaunchKey after
-// validating the spec with spec.Valid(); an invalid spec (mismatched
-// Phase/IterationCount co-presence) is a caller bug.
-func LaunchKey(spec *LaunchSpec) string {
-	if spec == nil {
-		panic("handlercontract: LaunchKey called with nil spec")
-	}
-	if spec.Phase != nil && spec.IterationCount != nil {
-		// 4-tuple key for multi-phase modes (e.g., review-loop).
-		return fmt.Sprintf("%s/%s/%s/%d",
-			spec.RunID.String(),
-			string(spec.NodeID),
-			string(*spec.Phase),
-			*spec.IterationCount,
-		)
-	}
-	// 2-tuple key for single-mode or mode-omitted runs.
-	return fmt.Sprintf("%s/%s",
-		spec.RunID.String(),
-		string(spec.NodeID),
-	)
 }

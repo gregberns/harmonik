@@ -55,16 +55,17 @@ func newPrecompactCycler(
 	}
 
 	cfg := keeper.CyclerConfig{
-		AgentName:      "precompact-agent",
-		ProjectDir:     projectDir,
-		TmuxTarget:     "fake-pane",
-		ActPct:         90.0,
-		WarnPct:        80.0,
-		HandoffTimeout: 500 * time.Millisecond,
-		ClearSettle:    50 * time.Millisecond,
-		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return isManaged },
+		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
+		AgentName:           "precompact-agent",
+		ProjectDir:          projectDir,
+		TmuxTarget:          "fake-pane",
+		ActPct:              90.0,
+		WarnPct:             80.0,
+		HandoffTimeout:      500 * time.Millisecond,
+		ClearSettle:         50 * time.Millisecond,
+		PollInterval:        10 * time.Millisecond,
+		CycleIDGen:          func() string { return cycleID },
+		IsManagedFn:         func(_, _ string) bool { return isManaged },
 		HandoffFilePath: func(_, agent string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
 		},

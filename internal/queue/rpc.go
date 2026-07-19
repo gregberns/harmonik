@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -56,6 +57,33 @@ import (
 type QueueSetter interface {
 	SetQueue(q *Queue)
 	ClearQueueByName(name string)
+}
+
+// LockedQueueView is a write-locked view of the daemon's QueueStore, matching
+// daemon.LockedQueueStore. While the view is live (until Done), no other
+// writer can mutate the store — the QM-060/QM-064 read-then-write
+// serialisation surface.
+//
+// Bead ref: B1 (queue.json two-writer lost-update).
+type LockedQueueView interface {
+	LockedQueueByName(name string) *Queue
+	LockedSetQueueByName(name string, q *Queue)
+	LockedAllQueueNames() []string
+	Done()
+}
+
+// MutationLocker is optionally implemented by the QueueSetter passed to
+// NewHandlerAdapter (daemon.QueueStore implements it via LockForMutationView).
+// When present, the append adapter routes its ENTIRE read-modify-write through
+// the queue mutation lock instead of doing an unlocked disk Load — closing the
+// two-writer lost-update race between queue-append and the workloop's
+// LockForMutation status mutations (B1).
+//
+// Wake signals the workloop after a locked mutation (LockedSetQueueByName
+// does not wake by itself).
+type MutationLocker interface {
+	LockForMutationView() LockedQueueView
+	Wake()
 }
 
 // EventEmitter is the minimal bus interface required by HandlerAdapter to emit
@@ -345,17 +373,35 @@ func HandleQueueAppend(
 	ledger BeadLedger,
 	projectDir string,
 ) (QueueAppendResponse, *Queue, []core.Event, *RPCError) {
-	// Resolve the target queue (bead ref: hk-1k5as):
-	//   1. Name given → load by name (append-by-name, hk-tigaf.8).
-	//   2. Name absent, QueueID given → enumerate all queues and find by UUID
-	//      so that --queue-id alone works for non-main queues.
-	//   3. Both absent → default to "main".
+	q, rpcErr := resolveAppendTargetFromDisk(ctx, req, projectDir)
+	if rpcErr != nil {
+		return QueueAppendResponse{}, nil, nil, rpcErr
+	}
+	return HandleQueueAppendOnQueue(ctx, req, ledger, projectDir, q)
+}
+
+// resolveAppendTargetFromDisk resolves the append target queue by loading it
+// from disk (bead ref: hk-1k5as):
+//  1. Name given → load by name (append-by-name, hk-tigaf.8).
+//  2. Name absent, QueueID given → enumerate all queues and find by UUID
+//     so that --queue-id alone works for non-main queues.
+//  3. Both absent → default to "main".
+//
+// NOTE (B1): callers holding the queue mutation lock must NOT use this —
+// resolve against the LOCKED in-memory store instead (see
+// HandlerAdapter.handleQueueAppendLocked) so the read-modify-write is
+// serialised against concurrent status mutations.
+func resolveAppendTargetFromDisk(
+	ctx context.Context,
+	req QueueAppendRequest,
+	projectDir string,
+) (*Queue, *RPCError) {
 	var q *Queue
 	switch {
 	case req.Name != "":
 		loadedQ, loadErr := Load(ctx, projectDir, NormaliseQueueName(req.Name))
 		if loadErr != nil {
-			return QueueAppendResponse{}, nil, nil, &RPCError{
+			return nil, &RPCError{
 				Code:    -32099,
 				Message: "internal_error",
 				Detail:  map[string]any{"error": loadErr.Error()},
@@ -366,14 +412,14 @@ func HandleQueueAppend(
 	case req.QueueID != "":
 		foundQ, rpcErr := findQueueByID(ctx, projectDir, req.QueueID)
 		if rpcErr != nil {
-			return QueueAppendResponse{}, nil, nil, rpcErr
+			return nil, rpcErr
 		}
 		q = foundQ
 
 	default:
 		loadedQ, loadErr := Load(ctx, projectDir, QueueNameMain)
 		if loadErr != nil {
-			return QueueAppendResponse{}, nil, nil, &RPCError{
+			return nil, &RPCError{
 				Code:    -32099,
 				Message: "internal_error",
 				Detail:  map[string]any{"error": loadErr.Error()},
@@ -382,6 +428,28 @@ func HandleQueueAppend(
 		q = loadedQ
 	}
 
+	return q, nil
+}
+
+// HandleQueueAppendOnQueue runs the append pipeline on a PRE-LOADED queue q.
+// It performs NO disk Load of the target queue — the caller owns resolution.
+// The locked adapter path (B1) resolves q from the write-locked in-memory
+// QueueStore so the whole read-modify-write is serialised under the queue
+// mutation lock; the legacy path resolves from disk via
+// resolveAppendTargetFromDisk.
+//
+// Semantics otherwise identical to HandleQueueAppend (identity guard, EM-065
+// cross-queue guard, AppendItems, tail-index computation). Persist and event
+// emission remain the caller's responsibility per QM-063.
+//
+// Bead ref: hk-nomxl, B1.
+func HandleQueueAppendOnQueue(
+	ctx context.Context,
+	req QueueAppendRequest,
+	ledger BeadLedger,
+	projectDir string,
+	q *Queue,
+) (QueueAppendResponse, *Queue, []core.Event, *RPCError) {
 	if q == nil {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
 			Code:    ErrorCodeAppendTargetInvalid,
@@ -440,6 +508,20 @@ func HandleQueueAppend(
 	}
 
 	// Compute newTailIndices: indices of appended items within the target group.
+	// AppendItems only returns success with an in-range GroupIndex, but guard
+	// the direct index defensively so a decode-time mismatch can never panic the
+	// socket handler. Bead ref: W4 mega-review §c.
+	if req.GroupIndex < 0 || req.GroupIndex >= len(mutated.Groups) {
+		return QueueAppendResponse{}, nil, nil, &RPCError{
+			Code:    ErrorCodeAppendTargetInvalid,
+			Message: "append_target_invalid",
+			Detail: map[string]any{
+				"group_index":   req.GroupIndex,
+				"actual_kind":   nil,
+				"actual_status": nil,
+			},
+		}
+	}
 	targetGroup := mutated.Groups[req.GroupIndex]
 	appendedCount := len(req.BeadIDs)
 	tailStart := len(targetGroup.Items) - appendedCount
@@ -917,9 +999,44 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-submit request: %v", err)},
 		}
 	}
+
+	// H6 (two-writer lost-update / single-active TOCTOU fix): serialise the whole
+	// submit read-modify-write — the disk Load, the QM-027 single-active check,
+	// and the Persist all happen inside the pure HandleQueueSubmit, plus the
+	// in-memory write-back below — under the SAME queue mutation lock B1 uses for
+	// append and the workloop uses for status mutations. Without it two concurrent
+	// submits for the same new queue name can both pass the single-active check
+	// and both Persist to <name>.json (last-writer-wins drops one). Only test
+	// harnesses wiring a nil/plain QueueSetter fall through unlocked.
+	locker, hasLock := a.qs.(MutationLocker)
+	var lv LockedQueueView
+	if hasLock {
+		lv = locker.LockForMutationView()
+	}
+
 	resp, q, ledgerDepPairs, rpcErr := HandleQueueSubmit(ctx, req, a.ledger, a.projectDir, a.globalMaxConcurrent)
 	if rpcErr != nil {
+		if hasLock {
+			lv.Done()
+		}
 		return nil, rpcErr
+	}
+
+	// Thread the persisted queue into the running workloop (hk-4ukkq). Under the
+	// mutation lock we MUST write back through the LOCKED view — NOT a.qs.SetQueue,
+	// which re-acquires the non-reentrant queueMu and would self-deadlock (the same
+	// trap B1's appendUnderLock avoids via lv.LockedSetQueueByName). Wake the
+	// workloop, then release the lock before the (non-mutating) emits below.
+	if q != nil {
+		if hasLock {
+			lv.LockedSetQueueByName(NormaliseQueueName(q.Name), q)
+			locker.Wake()
+		} else if a.qs != nil {
+			a.qs.SetQueue(q)
+		}
+	}
+	if hasLock {
+		lv.Done()
 	}
 
 	// QM-066 oversubscription warning: a per-queue Workers count above the global
@@ -931,11 +1048,6 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 		fmt.Fprintf(os.Stderr,
 			"daemon: queue-submit: queue %q workers=%d oversubscribes global --max-concurrent=%d; global ceiling still applies (QM-062/QM-066)\n",
 			q.Name, q.Workers, a.globalMaxConcurrent)
-	}
-
-	// Thread the persisted queue into the running workloop (hk-4ukkq).
-	if a.qs != nil && q != nil {
-		a.qs.SetQueue(q)
 	}
 
 	// Emit queue_submitted event (hk-peucr). The queue has already been
@@ -983,13 +1095,130 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 	return data, nil
 }
 
-// HandleQueueAppend decodes the raw request, calls HandleQueueAppend, and
+// cloneQueue returns a deep, independent copy of q by round-tripping through
+// the same JSON representation Persist writes. Used by appendUnderLock to take
+// a snapshot before the in-place AppendItems mutation so a failed Persist never
+// leaves the in-memory store ahead of disk (hk-3hh9w). Round-tripping (rather
+// than a hand-written field copy) matches the legacy append path exactly, which
+// operates on a fresh disk-loaded copy (Load == UnmarshalQueue), and stays
+// correct as Queue/Group/Item fields evolve.
+func cloneQueue(q *Queue) (*Queue, error) {
+	data, err := json.Marshal(q)
+	if err != nil {
+		return nil, fmt.Errorf("clone queue: marshal: %w", err)
+	}
+	cloned, err := UnmarshalQueue(data)
+	if err != nil {
+		return nil, fmt.Errorf("clone queue: unmarshal: %w", err)
+	}
+	return &cloned, nil
+}
+
+// appendUnderLock performs the whole queue-append read-modify-write under the
+// queue mutation lock (B1: two-writer lost-update fix):
+//
+//  1. LockForMutationView — same lock as the workloop's LockForMutation.
+//  2. Resolve the target queue from the LIVE locked in-memory store (NOT a
+//     fresh disk Load, which would race concurrent status mutations). Falls
+//     back to disk only when the queue is not in memory (e.g. adapter wired
+//     to a fresh store) — still safe because every writer persists under
+//     this same lock.
+//  3. Clone the resolved queue and run AppendItems on the CLONE (only after
+//     validation passes — a rejected append leaves the store untouched). The
+//     live store entry is not mutated until the persist below succeeds
+//     (hk-3hh9w: no memory-ahead-of-disk on a failed persist).
+//  4. Persist the clone WHILE holding the lock (QM-063 persist-before-emit),
+//     install it via the locked view only on success, release, then Wake the
+//     workloop.
+//
+// Events are returned for the caller to emit AFTER the lock is released.
+func (a *HandlerAdapter) appendUnderLock(
+	ctx context.Context,
+	req QueueAppendRequest,
+	locker MutationLocker,
+) (QueueAppendResponse, []core.Event, *RPCError) {
+	lv := locker.LockForMutationView()
+	defer lv.Done()
+
+	// Resolve from the locked in-memory store (hk-1k5as resolution order).
+	var q *Queue
+	switch {
+	case req.Name != "":
+		q = lv.LockedQueueByName(NormaliseQueueName(req.Name))
+	case req.QueueID != "":
+		for _, name := range lv.LockedAllQueueNames() {
+			if cand := lv.LockedQueueByName(name); cand != nil && cand.QueueID == req.QueueID {
+				q = cand
+				break
+			}
+		}
+	default:
+		q = lv.LockedQueueByName(QueueNameMain)
+	}
+
+	// Disk fallback: queue persisted but not (yet) in the in-memory store.
+	if q == nil {
+		diskQ, rpcErr := resolveAppendTargetFromDisk(ctx, req, a.projectDir)
+		if rpcErr != nil {
+			return QueueAppendResponse{}, nil, rpcErr
+		}
+		q = diskQ
+	}
+
+	// Snapshot-and-swap (hk-3hh9w): AppendItems mutates the queue in place, and
+	// for the in-memory-resolved case q IS the live locked store entry. Mutating
+	// it directly and then Persisting would leave the in-memory store ahead of
+	// disk if Persist fails (memory has the appended items, disk does not, no
+	// rollback). Mutate a clone instead and install it into the store only after
+	// Persist succeeds — mirroring the legacy path, which operates on a fresh
+	// disk-loaded copy and SetQueues only on a successful persist. On Persist
+	// failure the live store is left untouched.
+	snapshot, cloneErr := cloneQueue(q)
+	if cloneErr != nil {
+		return QueueAppendResponse{}, nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("snapshot queue before append: %v", cloneErr)},
+		}
+	}
+
+	resp, mutated, events, rpcErr := HandleQueueAppendOnQueue(ctx, req, a.ledger, a.projectDir, snapshot)
+	if rpcErr != nil {
+		return QueueAppendResponse{}, nil, rpcErr
+	}
+
+	if mutated != nil {
+		// QM-063: persist BEFORE emitting; still under the mutation lock so a
+		// concurrent status-mutation cannot interleave and clobber this write.
+		// mutated is the clone, so a Persist failure here has NOT touched the
+		// live store — nothing to roll back.
+		if persistErr := Persist(ctx, a.projectDir, mutated); persistErr != nil {
+			return QueueAppendResponse{}, nil, &RPCError{
+				Code: -32099, Message: "internal_error",
+				Detail: map[string]any{"error": fmt.Sprintf("persist queue after append: %v", persistErr)},
+			}
+		}
+		// Install the persisted clone into the live store only now that disk and
+		// memory agree.
+		lv.LockedSetQueueByName(NormaliseQueueName(mutated.Name), mutated)
+	}
+
+	// Wake AFTER the write-back; the deferred Done releases the lock when this
+	// function returns, and Wake's buffered non-blocking send is safe to fire
+	// while still holding it (it only touches wakeC).
+	locker.Wake()
+	return resp, events, nil
+}
+
+// HandleQueueAppend decodes the raw request, runs the append pipeline, and
 // encodes the response. Satisfies daemon.QueueHandler.
 //
-// After AppendItems mutates the in-memory queue, the adapter persists it and
-// calls a.qs.SetQueue so the running workloop sees the appended items without
-// a restart (hk-lzs8r). Then emits queue_appended and any
-// queue_item_deferred_for_ledger_dep events returned by AppendItems (hk-peucr).
+// When a.qs implements MutationLocker (daemon.QueueStore does), the entire
+// read-modify-write runs under the queue mutation lock via appendUnderLock
+// (B1). Otherwise the legacy unlocked disk-Load path is used. Either way the
+// adapter persists the mutated queue, updates the in-memory QueueStore so the
+// running workloop sees the appended items without a restart (hk-lzs8r), and
+// then emits queue_appended plus any queue_item_deferred_for_ledger_dep
+// events returned by AppendItems (hk-peucr).
 func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
 	var req QueueAppendRequest
 	if err := json.Unmarshal(params, &req); err != nil {
@@ -998,22 +1227,41 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-append request: %v", err)},
 		}
 	}
-	resp, mutated, events, rpcErr := HandleQueueAppend(ctx, req, a.ledger, a.projectDir)
-	if rpcErr != nil {
-		return nil, rpcErr
-	}
+	// B1 (two-writer lost-update fix): when the QueueSetter also implements
+	// MutationLocker (daemon.QueueStore does), the ENTIRE
+	// read-modify-write — resolve the live queue, AppendItems, Persist, write
+	// back — runs under the queue mutation lock, serialised against the
+	// workloop's LockForMutation status mutations. Only test harnesses that
+	// pass a nil/plain QueueSetter fall through to the legacy unlocked path.
+	locker, hasLock := a.qs.(MutationLocker)
 
-	// Persist the mutated queue (QM-063: persist before emit) and update the
-	// in-memory QueueStore so the workloop sees the appended items (hk-lzs8r).
-	if mutated != nil {
-		if persistErr := Persist(ctx, a.projectDir, mutated); persistErr != nil {
-			return nil, &RPCError{
-				Code: -32099, Message: "internal_error",
-				Detail: map[string]any{"error": fmt.Sprintf("persist queue after append: %v", persistErr)},
-			}
+	var resp QueueAppendResponse
+	var events []core.Event
+	var rpcErr *RPCError
+	if hasLock {
+		resp, events, rpcErr = a.appendUnderLock(ctx, req, locker)
+		if rpcErr != nil {
+			return nil, rpcErr
 		}
-		if a.qs != nil {
-			a.qs.SetQueue(mutated)
+	} else {
+		var mutated *Queue
+		resp, mutated, events, rpcErr = HandleQueueAppend(ctx, req, a.ledger, a.projectDir)
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+
+		// Persist the mutated queue (QM-063: persist before emit) and update the
+		// in-memory QueueStore so the workloop sees the appended items (hk-lzs8r).
+		if mutated != nil {
+			if persistErr := Persist(ctx, a.projectDir, mutated); persistErr != nil {
+				return nil, &RPCError{
+					Code: -32099, Message: "internal_error",
+					Detail: map[string]any{"error": fmt.Sprintf("persist queue after append: %v", persistErr)},
+				}
+			}
+			if a.qs != nil {
+				a.qs.SetQueue(mutated)
+			}
 		}
 	}
 
@@ -1022,6 +1270,10 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 		for _, evt := range events {
 			raw, err := json.Marshal(evt.Payload)
 			if err != nil {
+				// Fall back to the raw payload, but surface the marshal failure
+				// rather than dropping it silently — a persistently unmarshalable
+				// payload would otherwise emit malformed events unnoticed.
+				log.Printf("queue: HandleQueueAppend: marshal %s payload: %v (emitting raw payload)", evt.Type, err)
 				raw = evt.Payload
 			}
 			_ = a.bus.Emit(ctx, core.EventType(evt.Type), raw)
@@ -1148,6 +1400,14 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 		return nil, &RPCError{
 			Code: -32099, Message: "internal_error",
 			Detail: map[string]any{"error": fmt.Sprintf("decode queue-set-concurrency request: %v", err)},
+		}
+	}
+	// Validate N >= 1 (as documented) before touching the controller: a zero or
+	// negative ceiling would stall or corrupt dispatch accounting.
+	if req.N < 1 {
+		return nil, &RPCError{
+			Code: -32099, Message: "invalid_concurrency",
+			Detail: map[string]any{"error": fmt.Sprintf("concurrency N must be >= 1, got %d", req.N)},
 		}
 	}
 	if a.concurrencySet == nil {

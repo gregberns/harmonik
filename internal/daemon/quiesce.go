@@ -54,6 +54,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/policy"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/schedule"
 )
@@ -849,40 +850,18 @@ func (a *QuiesceArbiter) vetoCheck(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sleep vetoed: cannot determine fleet state: %w", err)
 	}
-	if facts.Unsure {
-		return fmt.Errorf("sleep vetoed: fleet state uncertain (%s); use --force to override",
-			strings.Join(facts.UnsureReasons, "; "))
-	}
 
-	// Refuse if any dispatchable or in-flight work would be stranded.
-	var strands []string
-	if facts.Ready.Count > 0 {
-		strands = append(strands, fmt.Sprintf("%d ready bead(s)", facts.Ready.Count))
+	// Project the gathered FleetFacts into the narrow snapshot the pure veto
+	// predicate reads, then evaluate the SS-INV-005 decision (policy.SleepVeto).
+	// All fact GATHERING stayed above; only the DECISION moved to internal/policy.
+	res := policy.SleepVeto(drainSnapshot(facts))
+	if res.Unsure {
+		return fmt.Errorf("sleep vetoed: fleet state uncertain (%s); use --force to override",
+			strings.Join(res.UnsureReasons, "; "))
 	}
-	if facts.InProgress.Count > 0 {
-		strands = append(strands, fmt.Sprintf("%d in-progress bead(s)", facts.InProgress.Count))
-	}
-	if facts.Runs.RegistryCount > 0 {
-		strands = append(strands, fmt.Sprintf("%d in-flight run(s)", facts.Runs.RegistryCount))
-	}
-	if facts.Runs.LiveWorktrees > 0 {
-		strands = append(strands, fmt.Sprintf("%d live worktree(s)", facts.Runs.LiveWorktrees))
-	}
-	if facts.Queued.Count > 0 {
-		strands = append(strands, fmt.Sprintf("%d queued item(s)", facts.Queued.Count))
-	}
-	if len(facts.Queued.PausedQueues) > 0 {
-		strands = append(strands, fmt.Sprintf("%d paused queue(s)", len(facts.Queued.PausedQueues)))
-	}
-	if len(facts.Queued.FailedArchives) > 0 {
-		strands = append(strands, fmt.Sprintf("%d failed archive(s)", len(facts.Queued.FailedArchives)))
-	}
-	if len(facts.BlockedByOpenEpic) > 0 {
-		strands = append(strands, fmt.Sprintf("%d bead(s) blocked by open epic(s)", len(facts.BlockedByOpenEpic)))
-	}
-	if len(strands) > 0 {
+	if len(res.Strands) > 0 {
 		return fmt.Errorf("sleep vetoed: fleet has active work (%s); use --force to override",
-			strings.Join(strands, ", "))
+			strings.Join(res.Strands, ", "))
 	}
 	return nil
 }

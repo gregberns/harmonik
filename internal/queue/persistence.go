@@ -2,14 +2,41 @@ package queue
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// persistCounter makes concurrent in-process Persist calls for the same queue
+// mint distinct temp filenames. Keyed only on PID, two goroutines racing to
+// persist the same queue would derive an identical tmpPath and the second
+// O_EXCL create would fail with ErrPersistFailed. The per-write counter (plus a
+// random suffix as a belt-and-suspenders guard against PID reuse across
+// processes) makes each temp name unique. Bead ref: W4 mega-review §c.
+var persistCounter atomic.Uint64
+
+// uniqueTmpSuffix returns a per-write-unique suffix for an atomic-write temp
+// file: PID + a monotonically-increasing in-process counter + a short random
+// token. The counter guarantees uniqueness among concurrent goroutines in this
+// process; the random token guards against collisions across processes that
+// happen to reuse a PID.
+func uniqueTmpSuffix() string {
+	n := persistCounter.Add(1)
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failure is unexpected; the PID+counter alone still
+		// guarantees in-process uniqueness, so fall back to those.
+		return fmt.Sprintf("%d-%d", os.Getpid(), n)
+	}
+	return fmt.Sprintf("%d-%d-%s", os.Getpid(), n, hex.EncodeToString(b[:]))
+}
 
 // queueFileName is the legacy singleton filename, kept for migration and docs.
 const queueFileName = "queue.json"
@@ -107,7 +134,7 @@ func Persist(_ context.Context, projectDir string, q *Queue) error {
 
 	name := NormaliseQueueName(q.Name)
 	target := queuePath(projectDir, name)
-	tmpPath := fmt.Sprintf("%s.tmp-%d", target, os.Getpid())
+	tmpPath := fmt.Sprintf("%s.tmp-%s", target, uniqueTmpSuffix())
 
 	// Step 2: create and write to sibling temp file.
 	//nolint:gosec // G304: tmpPath derived from projectDir (.harmonik/queues/) + Getpid
@@ -411,7 +438,7 @@ func MigrateFromLegacy(_ context.Context, projectDir string) error {
 	}
 
 	// Atomic write of legacy content to main.json via rename dance.
-	tmpPath := fmt.Sprintf("%s.tmp-migrate-%d", targetPath, os.Getpid())
+	tmpPath := fmt.Sprintf("%s.tmp-migrate-%s", targetPath, uniqueTmpSuffix())
 	//nolint:gosec // G304: tmpPath derived from projectDir + Getpid
 	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_EXCL, 0o600)
 	if err != nil {

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.28 binding test — SH-026: timeout exceedance produces verdict `timeout`

@@ -156,7 +156,7 @@ func TestMergeToMain_NoWorkAgentMainAdvanced(t *testing.T) {
 	}
 
 	// ── Assertion (iv): run_failed emitted (no run_completed-success). ────────
-	// emitDone(false, …) on the no-commit guard path surfaces as run_failed; the
+	// the failed run terminal on the no-commit guard path surfaces as run_failed; the
 	// run must NOT emit a successful run_completed (that was the false-close).
 	if evs := mergeToMainFindEvents(collector, "run_completed"); len(evs) > 0 {
 		var m map[string]interface{}

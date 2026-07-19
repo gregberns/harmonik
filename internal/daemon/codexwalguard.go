@@ -46,6 +46,32 @@ package daemon
 // codex launch on this guard, and never fails loud for a missing key in a file
 // that does not exist.
 //
+// # AIS-017 adapt-not-delete disposition (agent-input-substrate M2, T10)
+//
+// The structured Codex app-server driver (internal/codexdriver +
+// internal/codexinput) REDUCES the need for this guard exactly as AIS-017
+// mandates, and does so BY CONSTRUCTION — it carries no per-launch WAL-guard call
+// of its own because it never SIGKILLs a healthy child:
+//
+//   - graceful turn-termination: a mid-turn CloseInput emits `turn/interrupt`
+//     and drains, never a SIGKILL (codexinput.stepClose InTurn branch;
+//     codexdriver.writeInterrupt). An ungraceful kill is what leaves the stale
+//     state_*.sqlite-wal behind — the interrupt path avoids creating one.
+//   - positive fast-fail: no handshake within the bound emits a structured
+//     agent_launch_failure event, not the <10s silent exit-0 that this guard's
+//     "exited without advancing HEAD" symptom describes (codexinput TimerHandshake
+//     edge; surfaced by codexdriver via setFailure/failCh — never swallowed).
+//
+// This guard is therefore NOT deleted (AIS-017 "adapt, don't delete"): it still
+// compensates for RESIDUAL ungraceful SIGKILL/crash paths, which remain live via
+// the legacy `codex exec` one-shot harness (codexharness.go), whose Teardown
+// still Kills and which is the codex path in service until the structured driver
+// is wired in (T12). Its single call site (codexharness.LaunchSpec) is thus still
+// LOAD-BEARING and is retained. The guard's post-M2 home is codex process
+// lifecycle proper; relocating the residual recovery to a dedicated boot-time
+// step there (rather than per-legacy-launch) is a codex-process-lifecycle
+// follow-up, deliberately out of this driver task's surface.
+//
 // Bead ref: hk-2pb79.
 
 import (

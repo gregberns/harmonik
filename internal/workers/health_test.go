@@ -29,6 +29,25 @@ func (r probeFailRunner) Command(ctx context.Context, name string, args ...strin
 	return exec.CommandContext(ctx, "sh", "-c", "exit 0")
 }
 
+// repoPathFailRunner is a test CommandRunner that fails the git_rev_parse probe
+// only when it targets a specific RepoPath (passed as `git -C <repoPath> ...`).
+// All other commands succeed. This lets a test fail exactly one worker in a
+// multi-worker RunHealthCheck run.
+type repoPathFailRunner struct {
+	failRepoPath string
+}
+
+func (r repoPathFailRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	if name == "git" {
+		for i, a := range args {
+			if a == "-C" && i+1 < len(args) && args[i+1] == r.failRepoPath {
+				return exec.CommandContext(ctx, "sh", "-c", "exit 1")
+			}
+		}
+	}
+	return exec.CommandContext(ctx, "sh", "-c", "exit 0")
+}
+
 // workerCfg returns a Config with one enabled worker.
 func workerCfg() workers.Config {
 	return workers.Config{
@@ -198,6 +217,60 @@ func TestRunHealthCheck_Rerunnable(t *testing.T) {
 	// Config entry retained.
 	if len(cfg.Workers) != 1 {
 		t.Fatalf("cfg.Workers: expected 1 entry retained, got %d", len(cfg.Workers))
+	}
+}
+
+// TestRunHealthCheck_FailingNonRegistryWorkerLeavesRegistryWorker asserts that a
+// probe failure on a configured worker that is NOT the one held by the Registry
+// does not flip the Registry worker's Enabled state. This is the RU-04 fix:
+// health targets each worker by name (SetEnabledByName) rather than blindly
+// flipping the single Registry worker for every configured worker.
+func TestRunHealthCheck_FailingNonRegistryWorkerLeavesRegistryWorker(t *testing.T) {
+	// The Registry consumes the PRIMARY (index 0) worker. Drive a run where the
+	// primary passes every probe and the SECONDARY fails its git_rev_parse probe.
+	// Under the old SetEnabled(false) behavior the secondary's failure would
+	// disable the single Registry worker (the primary). With SetEnabledByName the
+	// failure targets "secondary" — a no-op for the Registry — so the primary
+	// stays selectable.
+	cfg := workers.Config{
+		Version: 1,
+		Workers: []workers.Worker{
+			{Name: "primary", Transport: "ssh", Host: "p.local", RepoPath: "/primary-repo", MaxSlots: 4, Enabled: true},
+			{Name: "secondary", Transport: "ssh", Host: "s.local", RepoPath: "/secondary-repo", MaxSlots: 4, Enabled: true},
+		},
+	}
+	reg := workers.NewRegistry(cfg)
+	// Fail only the git probe run against the secondary's RepoPath.
+	runner := repoPathFailRunner{failRepoPath: "/secondary-repo"}
+
+	var captured []struct {
+		Type    core.EventType
+		Payload []byte
+	}
+	emit := captureEmit(&captured)
+
+	if err := workers.RunHealthCheck(context.Background(), runner, cfg, reg, emit); err != nil {
+		t.Fatalf("RunHealthCheck returned error: %v", err)
+	}
+
+	// Only the secondary must be reported unhealthy.
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 unhealthy event (secondary), got %d", len(captured))
+	}
+	var payload workers.WorkerUnhealthyPayload
+	if err := json.Unmarshal(captured[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.WorkerName != "secondary" {
+		t.Fatalf("unhealthy worker: got %q, want %q", payload.WorkerName, "secondary")
+	}
+
+	// The Registry (primary) must remain selectable — the secondary's failure
+	// must not have flipped it.
+	if w := reg.SelectWorker(); w == nil {
+		t.Fatal("primary: a failing non-registry worker must not disable the registry worker")
+	} else {
+		reg.ReleaseSlot()
 	}
 }
 

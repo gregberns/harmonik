@@ -48,7 +48,7 @@ func TestL1_CorpusZeroUnknownFrames(t *testing.T) {
 	}
 	defer f.Close()
 
-	requestsByID := map[int64]string{}
+	requestsByID := map[string]string{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	lineNum := 0
@@ -67,11 +67,11 @@ func TestL1_CorpusZeroUnknownFrames(t *testing.T) {
 			t.Errorf("line %d: FrameKindRaw — method %q is unregistered in codexwire (L1 contract violation)", lineNum, frame.Method)
 		}
 		if frame.Kind == codexwire.FrameKindClientRequest {
-			requestsByID[frame.ID] = frame.Method
+			requestsByID[string(frame.ID)] = frame.Method
 		}
 		if frame.Kind == codexwire.FrameKindServerResponse {
-			if _, ok := requestsByID[frame.ID]; !ok {
-				t.Errorf("line %d: response for id=%d has no tracked request", lineNum, frame.ID)
+			if _, ok := requestsByID[string(frame.ID)]; !ok {
+				t.Errorf("line %d: response for id=%s has no tracked request", lineNum, frame.ID)
 			}
 		}
 	}
@@ -90,7 +90,7 @@ func TestL1_CorpusZeroUnmodeledFields(t *testing.T) {
 	}
 	defer f.Close()
 
-	requestsByID := map[int64]string{}
+	requestsByID := map[string]string{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	lineNum := 0
@@ -108,10 +108,10 @@ func TestL1_CorpusZeroUnmodeledFields(t *testing.T) {
 			continue
 		}
 		if frame.Kind == codexwire.FrameKindClientRequest {
-			requestsByID[frame.ID] = frame.Method
+			requestsByID[string(frame.ID)] = frame.Method
 		}
 		if frame.Kind == codexwire.FrameKindServerResponse {
-			if method, ok := requestsByID[frame.ID]; ok {
+			if method, ok := requestsByID[string(frame.ID)]; ok {
 				_ = codexwire.ResolveResponseResult(&frame, method)
 			}
 		}
@@ -133,7 +133,7 @@ func TestL1_CorpusRoundTrip(t *testing.T) {
 	}
 	defer f.Close()
 
-	requestsByID := map[int64]string{}
+	requestsByID := map[string]string{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	lineNum := 0
@@ -151,10 +151,10 @@ func TestL1_CorpusRoundTrip(t *testing.T) {
 			continue
 		}
 		if frame.Kind == codexwire.FrameKindClientRequest {
-			requestsByID[frame.ID] = frame.Method
+			requestsByID[string(frame.ID)] = frame.Method
 		}
 		if frame.Kind == codexwire.FrameKindServerResponse {
-			if method, ok := requestsByID[frame.ID]; ok {
+			if method, ok := requestsByID[string(frame.ID)]; ok {
 				_ = codexwire.ResolveResponseResult(&frame, method)
 			}
 		}

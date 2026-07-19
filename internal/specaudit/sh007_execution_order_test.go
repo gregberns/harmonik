@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.7 binding test — SH-007: scenario execution order is deterministic byte-lex.

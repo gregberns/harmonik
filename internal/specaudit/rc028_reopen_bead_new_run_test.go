@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-63oh.40 binding test — RC-028: `reopen-bead` verdict MUST clear in-flight

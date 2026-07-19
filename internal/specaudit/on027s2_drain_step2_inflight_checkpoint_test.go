@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.34 binding test — ON-027 step 2: in-flight runs reach next checkpoint, then suspend.

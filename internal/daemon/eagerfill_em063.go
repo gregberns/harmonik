@@ -42,13 +42,9 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/digest"
+	"github.com/gregberns/harmonik/internal/orchestrator"
 	"github.com/gregberns/harmonik/internal/queue"
 )
-
-// eagerfillOverfetchFactor is the OVERFETCH_FACTOR from EM-062: kerf next is
-// called with limit = deficit × factor so that pre-screen rejections do not
-// leave an avoidable gap in the filled stream.
-const eagerfillOverfetchFactor = 2
 
 // labelNeedsGreenlight is the Beads label applied by stagedBeadGeneratorEval
 // to staged deploy+verify follow-up beads. It gates dispatch until a captain
@@ -77,70 +73,32 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 		return
 	}
 
-	lq := deps.queueStore.LockForMutation()
-
-	// EM-062: only fire on the single active queue whose active group is a stream.
-	// Named-queues extension: iterate all queues and refill the first stream group
-	// that has a deficit. For v1 (spec scope) we take the first match found.
-	var (
-		targetQueueName string
-		targetQueueID   string
-		targetGroupPos  int = -1
-		deficit         int
-	)
-
 	maxConcurrent := deps.maxConcurrent
 	if deps.concurrencyCtrl != nil {
 		maxConcurrent = deps.concurrencyCtrl.Get()
 	}
 	inFlight := deps.runRegistry.Len()
-	available := maxConcurrent - inFlight
-	if available <= 0 {
-		lq.Done()
-		return
-	}
 
-	for _, name := range lq.LockedAllQueueNames() {
-		q := lq.LockedQueueByName(name)
-		if q == nil || q.Status != queue.QueueStatusActive {
-			continue
-		}
-		for gi := range q.Groups {
-			g := &q.Groups[gi]
-			if g.Status != queue.GroupStatusActive || g.Kind != queue.GroupKindStream {
-				continue
-			}
-			// Count pending items already in the group (they will fill slots
-			// without refill action).
-			pendingCount := 0
-			for ii := range g.Items {
-				if g.Items[ii].Status == queue.ItemStatusPending {
-					pendingCount++
-				}
-			}
-			d := available - pendingCount
-			if d <= 0 {
-				continue
-			}
-			// Found a stream group with a deficit.
-			targetQueueName = name
-			targetQueueID = q.QueueID
-			targetGroupPos = gi
-			deficit = d
-			break
-		}
-		if targetGroupPos >= 0 {
-			break
-		}
-	}
-
+	// EM-062 deficit decision (M5 slice 3B): project the fleet under the lock,
+	// then let the pure orchestrator.EagerFillTarget pick the first active stream
+	// group short of pending work. snapshotFleet's globalCap/rrCursor/blockedQueues
+	// are selector-only inputs eager-fill never reads — pass maxConcurrent/0/nil.
+	lq := deps.queueStore.LockForMutation()
+	target, ok := orchestrator.EagerFillTarget(
+		snapshotFleet(lq, deps.runRegistry, maxConcurrent, 0, nil),
+		maxConcurrent, inFlight,
+	)
 	lq.Done()
 
-	if targetGroupPos < 0 {
+	if !ok {
 		return
 	}
+	targetQueueName := target.QueueName
+	targetQueueID := target.QueueID
+	targetGroupPos := target.GroupPos
+	deficit := target.Deficit
 
-	limit := deficit * eagerfillOverfetchFactor
+	limit := orchestrator.OverfetchLimit(deficit)
 	rawCandidates, err := kerfNextBeads(ctx, deps.kerfPath, limit)
 	if err != nil {
 		// kerf not available or returned an error — eager-refill skips silently.
@@ -157,9 +115,7 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 	}
 
 	// Take up to deficit survivors (kerf returns in priority order; preserve it).
-	if len(survivors) > deficit {
-		survivors = survivors[:deficit]
-	}
+	survivors = orchestrator.ClampSurvivors(survivors, deficit)
 
 	// Append survivors to the active stream group (QM-040).
 	lq = deps.queueStore.LockForMutation()
@@ -220,18 +176,15 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 //
 // Spec ref: specs/execution-model.md §4.13 EM-063.
 func preScreenCandidates(ctx context.Context, deps workLoopDeps, candidates []core.BeadID, targetQueueID string) []core.BeadID {
-	// Build a set of bead IDs already in the target queue for Phase 1.
+	// Phase 1 (pure, M5 slice 3B): build the in-queue set under the lock (effect),
+	// then let orchestrator.ScreenAlreadyQueued drop candidates already present.
 	inQueue := buildInQueueSet(deps, targetQueueID)
+	phase1Survivors := orchestrator.ScreenAlreadyQueued(candidates, inQueue)
 
-	survivors := make([]core.BeadID, 0, len(candidates))
-	for _, id := range candidates {
-		// Phase 1 — already in queue.
-		if _, alreadyIn := inQueue[id]; alreadyIn {
-			continue
-		}
-
+	survivors := make([]core.BeadID, 0, len(phase1Survivors))
+	for _, id := range phase1Survivors {
 		// Phase 2 — already landed on origin/main.
-		landed, commitSHA, gitErr := beadLandedOnOriginMain(ctx, deps.projectDir, string(id))
+		landed, commitSHA, gitErr := beadLandedOnOriginMain(ctx, deps.projectDir, deps.targetBranch, string(id))
 		if gitErr != nil {
 			// Non-fatal: log and treat as not-landed so we don't spuriously skip.
 			fmt.Fprintf(os.Stderr, "daemon: preScreenCandidates: git check bead=%s: %v\n", id, gitErr)
@@ -284,33 +237,58 @@ func buildInQueueSet(deps workLoopDeps, targetQueueID string) map[core.BeadID]st
 	return result
 }
 
-// beadLandedOnOriginMain executes `git log origin/main --grep "Refs: <id>"
-// --max-count=1 --format=%H` in deps.projectDir and reports whether at least
-// one commit carrying the Refs: trailer was found.
+// beadLandedOnOriginMain reports whether a commit carrying an exact
+// "Refs: <beadID>" trailer line is reachable from origin/<targetBranch>, and
+// returns that commit's SHA.
 //
-// Returns (false, "", nil) when origin/main does not exist (git exits 128).
-// Returns (false, "", err) on other git errors.
+// It mirrors the sibling provenance guard beadOnOriginMain: the check targets
+// the configured merge branch (NOT a hardcoded origin/main) and uses
+// --fixed-strings plus an exact-line verification so a shorter bead id is not a
+// false-positive substring of a longer one (e.g. "Refs: hk-12" must NOT match a
+// commit trailing "Refs: hk-123"). Because a substring --grep can surface a
+// superstring commit, --max-count is omitted so every candidate is inspected.
+//
+// Returns (false, "", nil) when targetBranch is empty or origin/<targetBranch>
+// does not exist (git exits 128). Returns (false, "", err) on other git errors.
 //
 // Spec ref: specs/execution-model.md §4.13 EM-063 Phase 2.
-func beadLandedOnOriginMain(ctx context.Context, projectDir, beadID string) (found bool, sha string, err error) {
-	grep := "Refs: " + beadID
-	//nolint:gosec // G204: beadID is an internal identifier; projectDir is a controlled path.
-	cmd := exec.CommandContext(ctx, "git", "-C", projectDir, "log", "origin/main",
-		"--grep", grep, "--max-count=1", "--format=%H")
+func beadLandedOnOriginMain(ctx context.Context, projectDir, targetBranch, beadID string) (found bool, sha string, err error) {
+	if targetBranch == "" {
+		return false, "", nil
+	}
+	needle := "Refs: " + beadID
+	ref := "origin/" + targetBranch
+	// %x1f (unit sep) splits the SHA from the body; %x1e (record sep) splits
+	// commits so each commit's body can be line-verified against needle.
+	//nolint:gosec // G204: beadID/targetBranch are internal identifiers; projectDir is a controlled path.
+	cmd := exec.CommandContext(ctx, "git", "-C", projectDir, "log", ref,
+		"--fixed-strings", "--grep", needle, "--format=%H%x1f%B%x1e")
 	out, runErr := cmd.Output()
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) && exitErr.ExitCode() == 128 {
-			// origin/main does not exist — treat as not landed.
+			// origin/<targetBranch> does not exist — treat as not landed.
 			return false, "", nil
 		}
-		return false, "", fmt.Errorf("git log origin/main --grep %q: %w", grep, runErr)
+		return false, "", fmt.Errorf("git log %s --grep %q: %w", ref, needle, runErr)
 	}
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" {
-		return false, "", nil
+	for _, rec := range strings.Split(string(out), "\x1e") {
+		rec = strings.TrimLeft(rec, "\n")
+		if rec == "" {
+			continue
+		}
+		hashAndBody := strings.SplitN(rec, "\x1f", 2)
+		if len(hashAndBody) != 2 {
+			continue
+		}
+		hash := strings.TrimSpace(hashAndBody[0])
+		for _, line := range strings.Split(hashAndBody[1], "\n") {
+			if strings.TrimRight(line, "\r") == needle {
+				return true, hash, nil
+			}
+		}
 	}
-	return true, trimmed, nil
+	return false, "", nil
 }
 
 // emitStaleOpenBeadDetected emits the stale_open_bead_detected informative

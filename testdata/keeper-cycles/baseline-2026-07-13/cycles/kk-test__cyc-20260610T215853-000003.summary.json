@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "kk-test",
+  "ckey": "kk-test|cyc-20260610T215853-000003",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260610T215853-000003",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "abort-test-sid-0002",
+  "started_at": "2026-06-10T22:05:33.78812Z",
+  "terminal_at": "2026-06-10T22:08:33.814134Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

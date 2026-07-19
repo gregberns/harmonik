@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.32 binding test — EV-023 + EV-023a divergence-evidence read with

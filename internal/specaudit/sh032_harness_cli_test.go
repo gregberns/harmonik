@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.34 binding test — SH-032: harness CLI grammar at MVH.

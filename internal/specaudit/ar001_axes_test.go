@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // AR-001 binding test — every Axes: line in the spec corpus is well-formed.

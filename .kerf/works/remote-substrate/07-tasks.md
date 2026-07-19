@@ -1,130 +1,131 @@
-# remote-substrate Phase 1 — Tasks (build beads)
+# remote-substrate — M4 Tasks (build order)
 
-> Each bead lands in ONE daemon run: a focused change + a FAST test the daemon gate runs
-> (no `//go:build scenario`, no real ssh, no daemon boot). Acceptance criteria are
-> deterministic. Dispatch order + serialization per `03-components.md` dependency graph.
-> All beads carry label `codename:remote-substrate`. Epic: (created as hk-…).
+> **AUTHORED 2026-07-16** onto the code-revamp M4 framing, replacing the Phase-1 copy (archived at
+> `_archive-phase1-landed/07-tasks.PHASE1.md`).
+>
+> **Beads B1–B12 are RETIRED.** They describe **already-shipped Phase-1 code** — the
+> `CommandRunner`/`LocalRunner`/`SSHRunner` seam, the `internal/workers` registry, worker
+> selection, code-sync, remote worktree ops, liveness probes, and the ssh-to-localhost scenario
+> all MERGED (verify in tree: `internal/lifecycle/tmux/runner.go`, `internal/workers/`,
+> `internal/daemon/codesync_rs_b8.go`, `internal/workspace/remotematerialize.go`,
+> `internal/daemon/reversetunnel.go`). Do NOT re-implement them. The M4 tasks below consume that
+> landed code and wire it onto the post-revamp M2/M3 seams.
+>
+> **This planning session is daemon-OFF and no-beads** (operator directive). The tasks below are a
+> BUILD ORDER for the implementer, not beads. Same-file tasks MUST serialize (merge-conflict
+> discipline). Component IDs map to `03-components.md`.
 
----
+## Retired Phase-1 beads (describe shipped code — do NOT rebuild)
 
-## B1 — `CommandRunner` interface + `LocalRunner`; `OSAdapter` runner field
-**Files:** `internal/lifecycle/tmux/runner.go` (new), `internal/lifecycle/tmux/osadapter.go`.
-**Do:** Define `type CommandRunner interface { Command(ctx context.Context, name string, args ...string) *exec.Cmd }`.
-`LocalRunner{}` returns `exec.CommandContext(ctx, name, args...)`. `OSAdapter` gains an
-unexported `runner CommandRunner` field defaulting to `LocalRunner{}` (constructor + a
-`WithRunner` option; existing constructors keep working). Route EVERY
-`exec.CommandContext(ctx,"tmux",…)` in osadapter.go through `o.runner.Command(...)`.
-**Test (gate-runnable):** a `recordingRunner` capturing argv; assert that with the default
-`LocalRunner` the produced argv for each method is byte-identical to the previous literal
-(no-regression). All existing tmux adapter tests pass unchanged.
-**Accept:** `grep -n 'exec.CommandContext(ctx, "tmux"' internal/lifecycle/tmux/osadapter.go`
-returns 0 (all routed through the runner); default behavior unchanged.
+| Bead | Was | Status |
+|---|---|---|
+| B1 | `CommandRunner` + `LocalRunner`; OSAdapter runner field | **SHIPPED** — `internal/lifecycle/tmux/runner.go:16-27` |
+| B2 | `SSHRunner` + OSAdapter wrapping | **SHIPPED** — `runner.go:72-121` (incl. the shell-quote hardening) |
+| B3 | `workers.yaml` schema + loader | **SHIPPED** — `internal/workers/` |
+| B4 | workers.yaml boot-wiring + CLI override | **SHIPPED** — `daemon.go:548-555` |
+| B5 | worker registry + selection + live-disable | **SHIPPED** — `SelectWorker`, `workloop.go` |
+| B6 | boot health-check (incl. API-key fail-closed) | **SHIPPED** — worker health path |
+| B7 | remote worktree ops (runner-parametrized) | **SHIPPED** — `internal/workspace/createworktree.go` |
+| B8 | code-sync fetch/push/box-A-fetch | **SHIPPED** — `internal/daemon/codesync_rs_b8.go` |
+| B9 | remote liveness probes | **SHIPPED** — pasteinject runner-routed |
+| B10 | substrate wiring + run-metadata worker identity | **SHIPPED** — `workloop.go:3463/3490`, reverse tunnel |
+| B11 | offline detection → recover | **SHIPPED** — `IsSSHConnectionFailure` (`runner.go:128`), `worker_offline` |
+| B12 | ssh-to-localhost scenario | **SHIPPED** — Phase-1 scenario test |
 
-## B2 — `SSHRunner` + verify full OSAdapter wrapping
-**Files:** `internal/lifecycle/tmux/runner.go`, `runner_test.go`.
-**Do:** `SSHRunner{Host string; Opts []string}` → `exec.CommandContext(ctx, "ssh", append(append(Opts, Host, "--", name), args...)...)`.
-MUST forward stdin (caller sets `cmd.Stdin`; SSH passes it to the remote command — needed for
-`tmux load-buffer -`). Add a single audited shell-safety path: pass argv as discrete args to
-`ssh` (no manual concatenation) so remote `tmux`/`git` receive exactly one token per arg.
-**Test:** with `SSHRunner{Host:"worker-mac-1"}`, assert `NewWindowIn` argv ==
-`["ssh","worker-mac-1","--","tmux","new-window","-P","-F","#{pane_id}","-d","-t",…,"-c","<cwd>","-e","K=V","--",<argv>…]`;
-assert a `-c` worktree path containing a space and a window name containing `/` survive intact;
-assert `load-buffer -` forwards stdin (recordingRunner exposes the `*exec.Cmd`, check `.Stdin != nil`).
-**Accept:** all 14 OSAdapter methods produce a correct `ssh <host> -- …` argv under SSHRunner;
-space/slash test green.
+## M4 build order
 
-## B3 — `workers.yaml` schema + loader
-**Files:** `internal/workers/workers.go` (new), `workers_test.go`. Mirror `internal/branching`.
-**Do:** Struct `Worker{Name,Transport,Host,OS,RepoPath string; MaxSlots int; Enabled bool}` and
-`Config{Version int; Workers []Worker}`. `Load(repoRoot string) (Config, error)` reads
-`.harmonik/workers.yaml` with `yaml.v3`; absent file → zero Config + nil err; malformed →
-typed error; `version != 1` → typed error. V1 invariant: at most one worker (warn/err if >1).
-**Test:** golden fixture parses to the expected struct; absent file → empty+nil; bad version →
-error; >1 worker → the documented v1 behavior.
-**Accept:** FR10 fields parse; missing file is non-fatal.
+### SLICE 1 — Claude remote, proven (decision 3: Claude first)
 
-## B4 — workers.yaml boot-wiring + CLI override
-**Files:** `cmd/harmonik/…` (daemon start), `internal/daemon/…Config`.
-**Do:** call `workers.Load(repoRoot)` in daemon startup after `branching.Load`; store on daemon
-`Config`. CLI flag(s) override the file (mirror branching precedence: flag > file > default).
-**Test:** flag beats file beats default for worker host/enabled.
-**Accept:** loaded worker config reaches the daemon `cfg`; precedence asserted.
+**T1 (M4-C1) — Claude remote e2e + hardening on the post-M2/M3 seams.**
+- **Do:** Confirm the landed tmux/SSH path drives a Claude implementer process on `gb-mbp`,
+  end-to-end, on the rebuilt seams. Exercise: worker-selected dispatch → remote worktree/materialize
+  → spawn Claude on the worker's tmux → reverse-tunnel relays `agent_ready` and `agent_input_acked`
+  back → commit-detect over SSH → `run/<id>` push → mac-mini fetch + merge. Fix whatever the M2
+  input-seam / M3 mergeq rebuild broke in this path.
+- **Files:** `internal/daemon/tmuxsubstrate.go`, `workloop.go`, `reversetunnel.go`,
+  `internal/workspace/remotematerialize.go`.
+- **Accept:** a worker-selected Claude run completes end-to-end against a real (or localhost-SSH)
+  worker; the async `agent_input_acked` is observed over the tunnel; no seam deleted.
 
-## B5 — worker registry + per-bead selection + live-disable
-**Files:** `internal/daemon/…` (or `internal/workers/registry.go`).
-**Do:** A registry built from the loaded config exposes `SelectWorker() *Worker` returning the
-enabled+healthy worker or `nil` (→ local). Selection re-reads `Enabled` each call (live-disable,
-FR12). Capacity: respect `MaxSlots` (count in-flight remote runs).
-**Test:** enabled worker → selected; `Enabled=false` → nil (local fallback); slots exhausted →
-nil; flipping enabled between two calls flips the result.
-**Accept:** FR9/FR12; zero/disabled workers ⇒ today's local path (NFR7).
+**T2 (M4-C2) — Ack-on-remote conformance** *(after T1; touches tmuxsubstrate → serialize with T1)*.
+- **Do:** Assert remote Claude `SubmitInput` returns `Ack{Outcome: Delivered}` (never a synthesized
+  positive); positive acceptance is the async `agent_input_acked`; a dropped/partitioned worker
+  reaches `agent_input_stale` within the AIS-INV-001 bound (never a silent wedge).
+- **Files:** `internal/daemon/tmuxsubstrate.go:2245-2258` + input-path tests.
+- **Accept:** the three assertions above are covered by gate-runnable tests.
 
-## B6 — boot health-check (depends: B2 merged)
-**Files:** `internal/daemon/…`/`internal/workers/health.go`.
-**Do:** For each enabled worker, run via `SSHRunner`: `tmux -V`, `claude --version`,
-`git -C <repo_path> rev-parse HEAD`, and `test -z "$ANTHROPIC_API_KEY"`. Any failure → mark the
-worker **unhealthy + skip** (DO NOT delete the config entry) and emit a typed
-`worker_unhealthy` event with the failing probe. Re-checkable.
-**Test (fake runner):** runner that fails `claude --version` → worker marked unhealthy, config
-entry retained, event emitted. Runner that reports a non-empty `ANTHROPIC_API_KEY` → unhealthy
-(fail-closed, NFR4).
-**Accept:** FR11 + the API-key fail-closed; healthy worker becomes selectable.
+**T3 (M4-C6) — STEP-0c honest-probe carry-forward.**
+- **Do:** Keep the `createworktree.go` honest-probe worktree guard as an explicit acceptance item
+  on both the local and SSH-runner paths (do not let the remote path bypass it).
+- **Files:** `internal/workspace/createworktree.go` + test.
+- **Accept:** the guard fires identically under `LocalRunner` and `SSHRunner`.
 
-## B7 — remote worktree ops (runner-parametrized) (depends: B1 merged)
-**Files:** `internal/workspace/createworktree.go`, `worktreepath.go`.
-**Do:** Thread a `tmux.CommandRunner` into `CreateWorktree`/`RemoveWorktree`/`resolveWorktreeHEAD`
-(via `WorktreeRootConfig` which already plumbs through). Switch git from `cmd.Dir=repoRoot` to the
-explicit `git -C <repoRoot> …` form so the runner needs no remote `cd`. Default runner = local →
-unchanged behavior.
-**Test:** recordingRunner asserts `git -C <repo> worktree add -b run/<id> <path> <sha>` locally,
-and ssh-prefixed under SSHRunner. Existing worktree tests pass with the local default.
-**Accept:** DEC-B steps 3-4 emit correct (local & remote) git; local path unchanged.
+**T4 (M4-C8) — end-to-end remote proof (Claude slice).**
+- **Do:** The mac-mini→`gb-mbp` proof for Claude: a bead's Claude process runs on the worker,
+  commits, and the branch merges on the mini. Author as a scenario test (`//go:build scenario`,
+  `t.Skip` if `ssh <worker> true` fails) plus the operational runbook update.
+- **Files:** `internal/daemon/scenario_*_test.go`, `WORKER-SETUP-macos.md`.
+- **Accept:** the commit lands on the mini's `main` via the real `ssh -- tmux/git` path with no
+  manual step. **SLICE 1 DONE — the operator's v1 goal.**
 
-## B8 — code-sync: fetch-base + push-branch + box-A fetch-before-merge (depends: B7 merged)
-**Files:** `internal/daemon/…` (dispatch + merge path).
-**Do:** For a remote-placed run: before worktree-add, ensure `baseSHA` is on origin then
-`ssh worker -- git -C <repo> fetch origin <baseSHA>`; after commit-detect,
-`ssh worker -- git -C <wt> push origin run/<id>`; on box A, `git fetch origin run/<id>` BEFORE
-the existing `mergeRunBranchToMain` (which is otherwise UNCHANGED). Local runs: no new steps.
-**Test (fake git runner):** assert the ordered argv (fetch-base → worktree → push → box-A fetch →
-merge) for a remote run; assert local runs skip the fetch/push and go straight to the existing merge.
-**Accept:** DEC-B sequence exact; `mergeRunBranchToMain` untouched; local unaffected.
+### SLICE 2 — Codex + Pi ride the same seam (decision 2)
 
-## B9 — remote liveness probes (depends: B1 merged)
-**Files:** `internal/daemon/pasteinject.go`.
-**Do:** Route `hasAnyDirectChild` (`pgrep -P`), `commandMatchesLiveAgent` (`ps -o comm=`), and any
-`worktreeActivityFingerprint`/`resolveWorktreeHEAD` through the run's `CommandRunner` (held on
-`perRunSubstrate`) instead of bare `exec.Command`. Local default unchanged.
-**Test (fake runner):** canned `pgrep`/`ps`/`rev-parse` output drives the liveness + commit-detect
-decisions identically to today; under SSHRunner assert `ssh host -- pgrep -P <pid>` argv.
-**Accept:** the pasteinject watchdog reads process/HEAD state via the runner; local unchanged.
+**T5 (M4-C3) — composition-root runner selection for the Codex driver** *(after slice 1)*.
+- **Do:** Replace the hardcoded `ltmux.LocalRunner{}` at `cmd/harmonik/substrate_select.go:40` with
+  a per-run runner selected from the same worker registry the tmux path reads, so
+  `HARMONIK_SUBSTRATE=codexdriver` + a selected worker routes the codex process to `gb-mbp`. Keep
+  the driver blind to the selection axis (RS-017 twin-blindness): selection stays at the wire/root.
+- **Files:** `cmd/harmonik/substrate_select.go`, Codex spawn/dispatch wiring (NOT
+  `internal/codexdriver/driver.go` — `Options.Runner` already exists).
+- **Accept:** zero workers → local codex (byte-identical); one healthy worker → codex process on
+  the worker via `SSHRunner`; driver has no worker/test branch.
 
-## B10 — substrate wiring + run-metadata worker identity (depends: B2,B5,B7,B9 merged)
-**Files:** `internal/daemon/tmuxsubstrate.go`, dispatch path, run-metadata/event payloads.
-**Do:** When the registry selects a worker, build the per-run `tmuxSubstrate` over an `OSAdapter`
-carrying `SSHRunner{Host}` + the remote worktree provider + remote prober; else local (NFR7).
-Strip `ANTHROPIC_API_KEY` from the forwarded spawn `Env` (fail-closed). Record `Worker` + `WorkerOS`
-on the run handle / `run_started` payload (FR13).
-**Test:** zero workers → local substrate, argv unchanged; one healthy worker → SSH-backed substrate;
-spawn env with `ANTHROPIC_API_KEY` → refused; run metadata carries worker name+os for a remote run,
-empty for local.
-**Accept:** placement deterministic; API-key refusal fires; FR13 metadata correct.
+**T6 (M4-C4) — Pi harness onto the SSH runner** *(parallel with T5; different files)*.
+- **Do:** A worker-selected Pi run spawns the Pi process on `gb-mbp` via the same `SSHRunner`,
+  composing with Pi's landed `{Provider, BaseURL, API}` config (unchanged — decision 6). M4 changes
+  only WHICH host the Pi process runs on, not the provider wiring.
+- **Files:** `internal/daemon/piharness.go`, dispatch path that builds the Pi run's substrate.
+- **Accept:** Pi process runs on the worker; `base_url` still points at the configured LLM
+  endpoint; provider config untouched.
 
-## B11 — offline / partition detection → recover (depends: B10 merged)
-**Files:** `internal/daemon/…` (workloop / liveness).
-**Do:** SSH/connection failure at spawn → skip worker + local fallback (or clean-fail with raise);
-mid-bead liveness/SSH failure → existing `run_stale` recovery (re-queue or clean-fail) + a typed
-`worker_offline` event; orphan remote worktree GC'd on the next sweep (via runner).
-**Test (fake runner):** runner healthy then returns ssh exit-255 mid-run → run reaches a recoverable
-terminal state (NOT a wedge) + `worker_offline` emitted.
-**Accept:** FR7/NFR5 — worker death recovers the bead, never silently wedges; failure is raised.
+### SLICE 3 — F4 push relocation (independent of harness work)
 
-## B12 — end-to-end ssh-to-localhost integration test  (SCENARIO — authored via worktree sub-agent, NOT a daemon-gated bead)
-**Files:** `internal/daemon/scenario_remote_substrate_localhost_test.go` (`//go:build scenario`).
-**Do:** Register a worker `{host:"localhost", repo_path:<temp clone>, os:"darwin", enabled:true}`;
-`SSHRunner{Host:"localhost"}`; temp bare origin. Drive one fake-handler bead through the full
-lifecycle: fetch-base → remote worktree-add → spawn a stub `claude` that writes a `Refs:` commit →
-commit-detect over ssh → push run branch → box-A fetch → merge to main. `t.Skip` cleanly if
-`ssh localhost true` fails.
-**Accept:** the commit lands on box A's `main` via the REAL `ssh -- tmux/git` argv path, with no
-second machine and no manual step.
+**T7 (M4-C5) — relocate merge `push` outside the `mergeq` exclusive section** *(after slice 1)*.
+- **Do:** Per the F4 resolution in `03-components.md`: move `git push origin <target>` OUT of the
+  `mergeq.Queue.Submit` critical section; keep the local ref-advance/working-tree reset and the
+  RSM-018 exclusions inside. Preserve the RSM-019 taxonomy: a lost-race (non-FF) push RE-ENTERS the
+  exclusive section, re-prepares, and re-attempts up to the retry cap; exhaustion → rejected +
+  reopen + failed terminal. Update RSM-017/019 spec text to record the relocation + the
+  re-enter-on-conflict rule.
+- **Files:** `internal/daemon/workloop.go` (merge/push path ~6353-6723), `internal/mergeq` call
+  sites, `specs/run-state-machine.md` (RSM-017/019).
+- **Accept:** no build-class or push I/O inside the exclusive section for the relocated push; a
+  forced lost-push race test re-prepares and succeeds; taxonomy byte-identical; RSM-018 exclusions
+  intact.
+
+### CONTINUOUS — conformance gate
+
+**T8 (M4-C7) — NFR7 + guardrail conformance** *(gates every M4 merge)*.
+- **Do:** Prove zero/disabled workers ⇒ byte-identical local operation. Grep-assert the
+  `CommandRunner` / `…Via(runner)` / reverse-tunnel seam is NOT deleted and that no
+  `runner!=nil`/`IsRemote` branch was removed (DEC-A cleanup deferred, decision 5). Assert the
+  `ANTHROPIC_API_KEY` fail-closed + spawn-env strip hold on ALL THREE remote harness paths.
+- **Accept:** NFR7 test green; seam-survival grep green; billing fail-closed covered for
+  Claude/Codex/Pi.
+
+## First task
+
+**T1 (M4-C1) — Claude remote e2e + hardening.** It is the head of the Claude-first slice and the
+prerequisite for T2/T3/T4; nothing else in M4 should start before the landed remote path is
+confirmed working on the post-M2/M3 seams.
+
+## Guardrails (binding on every task)
+
+- **Do NOT delete the remote seam** (`CommandRunner`, `SSHRunner`, `*Via(runner)`, reverse tunnel).
+  AIS-016 requires it and the M2 input path rides it.
+- **Do NOT do the DEC-A dual-path cleanup** — keep the `runner!=nil`/`IsRemote` branches; deferred
+  to a later evidence-backed pass (decision 5).
+- **NFR7:** zero/disabled workers ⇒ byte-identical local.
+- **Never set `ANTHROPIC_API_KEY`** on any remote path (D2 subscription-billing MUST).
+- **Same-file tasks serialize** (T1/T2 both touch tmuxsubstrate; T5/T7 both touch workloop —
+  order them, wait for each merge).

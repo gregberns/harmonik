@@ -118,8 +118,17 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		// DefaultWarnText = lighter advisory; ActionableWarnText = the R3 self-service
 		// restart handshake (selectWarnText picks between them). crews_enabled is
 		// resolved UNSET→TRUE in ResolveKeeperConfig.
-		DefaultWarnText:                 resolved.DefaultWarnText,
-		ActionableWarnText:              resolved.ActionableWarnText,
+		DefaultWarnText:    resolved.DefaultWarnText,
+		ActionableWarnText: resolved.ActionableWarnText,
+		// K2 leader defer-message / K7 crew-message body overrides (config surface,
+		// T2). Carried to the watcher; T3 fills/validates the leader slots and
+		// wires selection. crew text stays inert until K7 activation.
+		LeaderDeferText: resolved.LeaderDeferText,
+		CrewDeferText:   resolved.CrewDeferText,
+		// SK-034 (T4): mtime-gated per-tick re-read of keeper.warn_messages so
+		// wording edits apply with no keeper bounce, strictly scoped away from
+		// thresholds. Injected here because keeper may not import daemon (depguard).
+		ReloadWarnMessagesFn:            keeperReloadWarnMessagesFn(p.ProjectDir),
 		SelfServiceEnabled:              resolved.SelfServiceEnabled,
 		SelfServiceCrewsEnabled:         resolved.SelfServiceCrewsEnabled,
 		SelfServiceGraceSeconds:         resolved.SelfServiceGraceSeconds,
@@ -573,6 +582,31 @@ func keeperOperatorWarnFn(projectDir, agentName string) func(ctx context.Context
 	}
 }
 
+// keeperReloadWarnMessagesFn returns the SK-034 live-reload closure the watcher
+// calls when config.yaml's mtime advances (T4). It re-parses the config with the
+// SAME strict loader used at startup (daemon.LoadProjectConfig), so an unknown
+// key introduced by a live edit still yields *ErrUnknownConfigKey — the watcher
+// then keeps the last-good text rather than absorbing it. It returns ONLY the
+// keeper.warn_messages overrides; threshold / band / self_service edits in the
+// file are parsed but discarded here (and the watcher applies only these fields),
+// keeping the live-reload strictly scoped to warn_messages. This lives in
+// cmd/harmonik because internal/keeper may not import internal/daemon (depguard).
+func keeperReloadWarnMessagesFn(projectDir string) func() (keeper.WarnMessageTexts, error) {
+	return func() (keeper.WarnMessageTexts, error) {
+		cfg, err := daemon.LoadProjectConfig(projectDir)
+		if err != nil {
+			return keeper.WarnMessageTexts{}, err
+		}
+		k := cfg.Keeper
+		return keeper.WarnMessageTexts{
+			DefaultWarnText:    k.DefaultWarnText,
+			ActionableWarnText: k.ActionableWarnText,
+			LeaderDeferText:    k.LeaderDeferText,
+			CrewDeferText:      k.CrewDeferText,
+		}, nil
+	}
+}
+
 // newKeeperMarkerFlags builds the flag set shared by the keeper marker/action
 // subcommands (set-dispatching, clear-dispatching, restart-now, ping): a
 // --project override and the required --agent. Keeping the registration in one
@@ -771,7 +805,8 @@ func runKeeperRelease(args []string) int {
 	return 0
 }
 
-// runKeeperRestartNow implements `harmonik keeper restart-now --agent <name>`.
+// runKeeperRestartNow implements
+// `harmonik keeper restart-now --agent <name> [--nonce N] [--project DIR]`.
 //
 // SIMPLIFIED (hk-5da7): this runs the restart SYNCHRONOUSLY in-process — verify
 // the session id, ONE handoff-freshness check, inject an ACK line (so the agent
@@ -789,23 +824,58 @@ func runKeeperRelease(args []string) int {
 //
 // Refs: hk-5da7, hk-wjzf, hk-xjlq, ON-059.
 func runKeeperRestartNow(args []string) int {
-	agent, projectFlag, code := parseKeeperMarkerArgs("keeper restart-now", args)
+	// Flag-set (not parseKeeperMarkerArgs) so a net-new --nonce can be parsed
+	// alongside --agent/--project, mirroring `keeper ping` (SK-030). Omitting
+	// --nonce preserves today's behavior (a derived rn-<ms> token).
+	fs, projectFlag, agentFlag := newKeeperMarkerFlags("keeper restart-now")
+	nonceFlag := fs.String("nonce", "",
+		"provenance nonce carried on the [KEEPER ACK <nonce>] line and the emitted "+
+			"session_keeper_restart_now event; carry-for-audit, never validated (default: rn-<ms> timestamp)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 1
+		}
+		return 2
+	}
+	agent, code := resolveKeeperAgent(fs, "harmonik keeper restart-now", *agentFlag)
 	if agent == "" {
 		return code
 	}
+	projectDir := *projectFlag
+	if projectDir == "" {
+		wd, wdErr := os.Getwd()
+		if wdErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: cannot determine working directory: %v\n", wdErr)
+			return 1
+		}
+		projectDir = wd
+	}
+	// W5 (hk-x7s): Abs-normalize for parity with the watcher / enable / doctor /
+	// ping — the emitted event and the pane must resolve to the same .harmonik dir.
+	absRN, absRNErr := normalizeProjectDir("keeper restart-now", projectDir)
+	if absRNErr != nil {
+		return 1
+	}
+	projectDir = absRN
 
 	// Resolve the tmux pane the same way the watcher does (convention-derived
 	// when not explicit). restart-now has no --tmux flag — it is always the
 	// agent's own pane.
-	tmuxTarget := keeper.ResolveTmuxTarget(projectFlag, agent, "", nil)
+	tmuxTarget := keeper.ResolveTmuxTarget(projectDir, agent, "", nil)
 
 	requestedAt := time.Now().UTC()
-	nonce := restartNowNonce(requestedAt)
+	nonce := *nonceFlag
+	if nonce == "" {
+		nonce = restartNowNonce(requestedAt)
+	}
 	err := keeper.RestartNow(context.Background(), keeper.RestartNowConfig{
-		ProjectDir:  projectFlag,
+		ProjectDir:  projectDir,
 		AgentName:   agent,
 		TmuxTarget:  tmuxTarget,
 		RequestedAt: requestedAt,
+		// Durable audit record carrying the nonce (SK-030). FileEmitter appends to
+		// <projectDir>/.harmonik/events/events.jsonl.
+		Emitter: keeper.NewFileEmitter(projectDir),
 	}, nonce)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik keeper restart-now: %v\n", err)

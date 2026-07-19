@@ -257,6 +257,13 @@ func (h *Handler) Handle(_ context.Context, r slog.Record) error {
 	h.shared.mu.Lock()
 	defer h.shared.mu.Unlock()
 
+	// Guard against a Handle racing with (or following) Close: once the file
+	// is closed it is set to nil under the same mutex, so a nil file here means
+	// the handler is shut down. No-op rather than nil-deref/panic.
+	if h.shared.file == nil {
+		return os.ErrClosed
+	}
+
 	if rotErr := h.rotateIfNeeded(); rotErr != nil {
 		return rotErr
 	}

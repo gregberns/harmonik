@@ -99,7 +99,7 @@ func injectAndWatch(t *testing.T, ndjsonLines []string, queueID string, groupInd
 		}
 	}()
 
-	return viaWatchGroupCompletion(server, queueID, groupIndex, nil)
+	return viaWatchGroupCompletion(server, queueID, groupIndex, nil, nil)
 }
 
 func TestViaWatchGroupCompletion_CompleteSuccess(t *testing.T) {

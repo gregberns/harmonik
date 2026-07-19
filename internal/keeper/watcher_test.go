@@ -11,7 +11,69 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/keeper"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
+
+// driveWatcherFakeClock runs a Watcher under a substrate.FakeClock and advances
+// virtual time exactly `ticks` poll intervals in deterministic lockstep with the
+// loop (via the TEST-ONLY OnPollTickFn hook), then cancels and waits for Run to
+// return. It replaces the wall-clock-margin pattern where a fixed real-time
+// window (runWatcherFor) yields a nondeterministic number of poll iterations
+// under -race starvation — the hk-3dn16 flake. Each processed tick advances
+// virtual time by PollInterval, so cooldown/staleness windows are honored in
+// virtual time exactly as they would be in production.
+func driveWatcherFakeClock(t *testing.T, cfg keeper.WatcherConfig, em keeper.Emitter, ticks int) {
+	t.Helper()
+
+	clock := substrate.NewFakeClock(time.Unix(1_700_000_000, 0))
+	cfg.Clock = clock
+	interval := cfg.PollInterval
+	if interval <= 0 {
+		interval = 5 * time.Millisecond
+	}
+
+	// Unbuffered: the loop blocks in the hook until the driver reads, giving
+	// tight lockstep. Reading signal k (top of iteration k) proves iterations
+	// 0..k-1 fully processed (the loop cannot receive tick k until it returned
+	// to select after processing k-1).
+	tickCh := make(chan struct{})
+	prev := cfg.OnPollTickFn
+	cfg.OnPollTickFn = func() {
+		if prev != nil {
+			prev()
+		}
+		tickCh <- struct{}{}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w := keeper.NewWatcher(cfg, em)
+		_ = w.Run(ctx) //nolint:errcheck // context.Canceled is expected
+	}()
+
+	// Wait for the loop to register its poll ticker before advancing.
+	clock.BlockUntil(1)
+	// ticks+1 signals guarantee `ticks` fully-processed iterations.
+	for i := 0; i <= ticks; i++ {
+		clock.Advance(interval)
+		<-tickCh
+	}
+	cancel()
+	// The loop is at select (last processed tick done, no further tick armed);
+	// ctx.Done unblocks it. Drain a possible in-flight hook send so it can exit.
+	go func() {
+		for {
+			select {
+			case <-tickCh:
+			case <-done:
+				return
+			}
+		}
+	}()
+	<-done
+}
 
 // spyInjector records injection calls without spawning real tmux processes.
 type spyInjector struct {

@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "gurney",
+  "ckey": "gurney|cyc-20260630T120715-000002",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260630T120715-000002",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "312968ed-04d4-430c-9545-4e6192f96ced",
+  "started_at": "2026-06-30T16:59:11.074307Z",
+  "terminal_at": "2026-06-30T17:02:11.095604Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

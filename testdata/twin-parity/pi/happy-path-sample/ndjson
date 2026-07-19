@@ -1,0 +1,4 @@
+{"cwd":"/twin/pi/happy-path","id":"00000000-0000-4000-8000-0000000000a1","type":"session","version":3}
+{"message":{"usage":{"input_tokens":42,"output_tokens":0}},"type":"message_start"}
+{"type":"message_end","usage":{"input_tokens":0,"output_tokens":17}}
+{"messages":[{"role":"assistant","usage":{"input_tokens":42,"output_tokens":17}}],"type":"agent_end"}

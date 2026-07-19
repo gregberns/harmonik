@@ -94,10 +94,13 @@ type SubstrateSpawn struct {
 // available for substrate-hosted (e.g. tmux-window) processes. Notably:
 //   - Stdout() returns nil for tmux-hosted sessions — the bridge wire is a
 //     Unix socket, not a stdout pipe. Handler.Launch must handle a nil Stdout.
-//   - SendInput and CloseStdin are not part of this interface; the substrate
-//     owns the child's stdin (typically the pty managed by tmux).
+//   - Input is not a base method of this interface. A SubstrateSession MAY
+//     additionally satisfy InputPort (SubmitInput / CloseInput); the daemon
+//     obtains that port by a structural assertion at the process-spawn seam
+//     (AsInputPort, AIS-001 / HC-069). The six former type-asserted paste-inject
+//     side-interfaces are retired as the input seam in favour of InputPort.
 //
-// Spec ref: handler-contract.md HC-054; design §4 "Substrate seam".
+// Spec ref: handler-contract.md HC-054 / HC-069; design §4 "Substrate seam".
 type SubstrateSession interface {
 	// Kill terminates the hosted subprocess. For tmux-based substrates this
 	// issues `tmux kill-window`. MUST be idempotent.
@@ -134,11 +137,17 @@ type substrateSessionAdapter struct {
 // Compile-time assertion: substrateSessionAdapter implements Session.
 var _ Session = (*substrateSessionAdapter)(nil)
 
-// SendInput is a no-op for substrate sessions: the pty is managed by the
-// substrate (e.g. tmux); callers cannot write to the child's stdin via this
-// handle. Returns nil silently.
-func (a *substrateSessionAdapter) SendInput(_ context.Context, _ string) error {
-	return nil
+// SendInput retires the former silent no-op (AIS-001 / HC-069). Input to a
+// substrate-hosted session flows through the InputPort seam, not through this
+// Session method. When the underlying SubstrateSession satisfies InputPort the
+// call is routed to SubmitInput; otherwise it returns ErrInputUnsupported rather
+// than silently pretending the input was delivered.
+func (a *substrateSessionAdapter) SendInput(ctx context.Context, line string) error {
+	if ip, ok := AsInputPort(a.inner); ok {
+		_, err := ip.SubmitInput(ctx, InputRequest{Payload: []byte(line)})
+		return err
+	}
+	return ErrInputUnsupported
 }
 
 // Kill delegates to the inner SubstrateSession.
@@ -168,9 +177,15 @@ func (a *substrateSessionAdapter) Stderr() io.Reader {
 	return nil
 }
 
-// CloseStdin is a no-op for substrate sessions: stdin is owned by the pty
-// managed by the substrate.
+// CloseStdin retires the former silent no-op (AIS-001 / HC-069). End-of-input on
+// a substrate-hosted session is the InputPort.CloseInput verb; when the
+// underlying SubstrateSession satisfies InputPort the call is routed there.
+// Otherwise it returns nil: for a pty-owned substrate there is genuinely no
+// write-end pipe to close (distinct from the retired input-acceptance no-op).
 func (a *substrateSessionAdapter) CloseStdin() error {
+	if ip, ok := AsInputPort(a.inner); ok {
+		return ip.CloseInput(context.Background())
+	}
 	return nil
 }
 

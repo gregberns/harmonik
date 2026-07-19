@@ -70,7 +70,6 @@ func TestNoBareOsOnRunPath_hkhd2w6(t *testing.T) {
 		"ReadReviewerBudgetSentinel": true,
 		"ParseAutoStatusMarker":      true,
 		"parseReviewVerdict":         true,
-		"parseGateVerdict":           true,
 		"writeCognitionGateTask":     true,
 		"AutoStatusMarkerPath":       true,
 		"statTaskFile":               true,

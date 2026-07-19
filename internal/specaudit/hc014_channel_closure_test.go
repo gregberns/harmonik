@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.17 binding test — HC-014 channel closure rule.

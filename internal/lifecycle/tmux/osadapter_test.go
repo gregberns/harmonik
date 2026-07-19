@@ -73,6 +73,11 @@ func TestOSAdapter_ParseTmuxMajorVersion(t *testing.T) {
 		{"tmux 3.0", 3, false},
 		{"tmux 3.3c", 3, false},
 		{"tmux 4.0", 4, false},
+		// Dev/master builds must not be rejected (they track post-3.x tmux).
+		{"tmux next-3.6", 3, false},
+		{"tmux next-4.0", 4, false},
+		{"tmux master", devBuildMajor, false},
+		{"tmux openbsd-7.4", devBuildMajor, false},
 		{"", 0, true},
 		{"bad", 0, true},
 		{"tmux", 0, true},

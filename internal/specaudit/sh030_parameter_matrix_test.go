@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.32 binding test — SH-030: scenarios MAY declare a parameter matrix (cap 1024 cells).

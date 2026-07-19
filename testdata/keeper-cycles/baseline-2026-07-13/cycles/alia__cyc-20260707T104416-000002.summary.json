@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "alia",
+  "ckey": "alia|cyc-20260707T104416-000002",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260707T104416-000002",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "a2723099-5f97-45d7-a295-fb59031b1a18",
+  "started_at": "2026-07-07T17:07:01.661166Z",
+  "terminal_at": "2026-07-07T17:09:23.334476Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

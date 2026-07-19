@@ -882,6 +882,7 @@ The §7.1 lifecycle pseudocode and §8.8 default response apply this table consi
 - **[docs/goals/bootstrapping-self-building.md]** — G06 self-build cycle whose regression net this spec provides; informative.
 - **[docs/bootstrap.md §5 step 8]** — the MVH sequencing entry that names S07; informative.
 - **[docs/subsystems/scenario-harness.md]** — the seed-status subsystem doc; this spec supersedes it normatively.
+- **[replay-substrate.md §4 RS-017]** — the substrate's zero-token L0–L2 tiers select doubles by which `EventSource`/`Effector` value is wired, never a runtime branch; this is consistent with SH-018 / SH-INV-001. Read-only co-reference; no reverse dependency.
 
 ## 10. Conformance
 

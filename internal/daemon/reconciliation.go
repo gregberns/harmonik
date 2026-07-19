@@ -407,6 +407,9 @@ func parseConflictLog(r io.Reader) ([]core.BeadLedgerConflict, []string) {
 	var beadIDs []string
 
 	scanner := bufio.NewScanner(r)
+	// Conflict lines embed full field values (a=..., b=...), which can exceed
+	// the default 64KB token limit; raise it so the scan does not abort.
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {

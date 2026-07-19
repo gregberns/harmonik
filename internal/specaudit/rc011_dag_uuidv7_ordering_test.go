@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-63oh.15 binding test — RC-011: detectors MUST order checkpoints by git DAG

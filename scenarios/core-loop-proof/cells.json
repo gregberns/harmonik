@@ -1,5 +1,14 @@
 {
   "//": "to the claude cells. gap1 is asserted everywhere (it is the T2-implemented gap).",
+  "//workflow_id": "EVERY cell asserts dispatch.workflow_id_present=false: this daemon does",
+  "//workflow_id2": "NOT emit workflow_id on run_started for ANY mode (workloopRunStartedPayload",
+  "//workflow_id3": "has no workflow_id field; the struct comment flags it post-MVH). The spec",
+  "//workflow_id4": "(execution-model.md EM-015a §331, event-model.md §8.1.1) DOES require it —",
+  "//workflow_id5": "emitting it (incl. synthesizing stable ids for built-in single/review-loop",
+  "//workflow_id6": "and resolving the .dot graph id before run_started) is a tracked follow-up,",
+  "//workflow_id7": "not a core-loop gap. Cells claiming true here were a latent gap4 failure",
+  "//workflow_id8": "masked by golden run_started streams that carried a fabricated workflow_id;",
+  "//workflow_id9": "those goldens have been stripped so they mirror the daemon's real output.",
   "schema_version": 1,
   "cells": [
     {
@@ -17,12 +26,12 @@
           "model": null,
           "no_leak_models": [
             "claude-opus-4-8",
-            "deepseek-reasoner"
+            "ornith"
           ]
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
+          "workflow_mode": "single",
           "workflow_id_present": false
         },
         "provider": {
@@ -52,12 +61,12 @@
           "model": null,
           "no_leak_models": [
             "claude-opus-4-8",
-            "deepseek-reasoner"
+            "ornith"
           ]
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
+          "workflow_mode": "single",
           "workflow_id_present": false
         },
         "provider": {
@@ -74,6 +83,12 @@
       ]
     },
     {
+      "//": "pi single cell: the pi seed carries workflow:single (D3), so it resolves to",
+      "//2": "single mode (the ONLY reachable path to single) over the dot daemon-default.",
+      "//3": "single has no workflow graph => no workflow_id => workflow_id_present=false",
+      "//4": "(true is impossible in single mode and was the gap4 failure). Lands on the",
+      "//5": "per-bead integration branch (D2), git-verified by the runner (not the dead",
+      "//6": "workspace_merge_status event).",
       "cell": "pi:local",
       "harness": "pi",
       "substrate": "local",
@@ -87,12 +102,57 @@
           "harness": "pi",
           "model": "ornith",
           "no_leak_models": [
-            "claude-opus-4-8",
-            "claude-sonnet-4-6",
-            "sonnet"
+            "claude-opus-4-8"
           ]
         },
         "terminal": "pass",
+        "dispatch": {
+          "workflow_mode": "single",
+          "workflow_id_present": false
+        },
+        "provider": {
+          "enabled": true
+        },
+        "lands_on": "core-loop-proof-integ"
+      },
+      "gaps": [
+        "gap1",
+        "gap3",
+        "gap4",
+        "t10"
+      ]
+    },
+    {
+      "//": "pi-dot cell (D4): dot-mode review->implement round-trip, BOTH nodes on pi/ornith.",
+      "//2": "The pi-dot seed carries harness:pi + workflow:dot; the scratch project's",
+      "//3": "workflow.dot is provisioned to review-loop.dot (unpinned reviewer => inherits",
+      "//4": "the implementer's pi/ornith harness => same-model). gap6 asserts the ordered",
+      "//5": "round-trip (REQUEST_CHANGES -> implementer re-dispatch -> APPROVE -> close) AND",
+      "//6": "that every model_selected == ornith (no claude leak). Run via EXTRA_CELLS.",
+      "cell": "pi-dot:local",
+      "harness": "pi",
+      "substrate": "local",
+      "seed_bead": "pi-dot",
+      "expect": {
+        "harness_selected": {
+          "agent_type": "pi",
+          "tier": 1
+        },
+        "model_selected": {
+          "harness": "pi",
+          "model": "ornith",
+          "no_leak_models": [
+            "claude-opus-4-8"
+          ]
+        },
+        "terminal": "pass",
+        "//dispatch": "gap4 here proves workflow_mode fidelity (dot stays dot; NOT silently",
+        "//dispatch2": "forced to review-loop). workflow_id_present=false because a project-",
+        "//dispatch3": "default dot run (workflow.dot, no queue-item workflow_ref) does NOT pin",
+        "//dispatch4": "a run_started.workflow_id in this daemon — it is null, and no other",
+        "//dispatch5": "event carries it (verified from the live capture). Same treatment as the",
+        "//dispatch6": "single cell. See final-report note: null dot workflow_id is a candidate",
+        "//dispatch7": "daemon follow-up, orthogonal to the WS4-4 round-trip ask.",
         "dispatch": {
           "workflow_mode": "dot",
           "workflow_id_present": false
@@ -100,12 +160,13 @@
         "provider": {
           "enabled": true
         },
-        "lands_on": "main"
+        "lands_on": "core-loop-proof-dot-integ"
       },
       "gaps": [
         "gap1",
         "gap3",
         "gap4",
+        "gap6",
         "t10"
       ]
     },
@@ -123,14 +184,12 @@
           "harness": "pi",
           "model": "ornith",
           "no_leak_models": [
-            "claude-opus-4-8",
-            "claude-sonnet-4-6",
-            "sonnet"
+            "claude-opus-4-8"
           ]
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
+          "workflow_mode": "single",
           "workflow_id_present": false
         },
         "provider": {
@@ -160,12 +219,12 @@
           "harness": "claude-code",
           "model": "claude-opus-4-8",
           "no_leak_models": [
-            "deepseek-reasoner"
+            "ornith"
           ]
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
+          "workflow_mode": "single",
           "workflow_id_present": false
         },
         "provider": {
@@ -198,12 +257,12 @@
           "harness": "claude-code",
           "model": "claude-opus-4-8",
           "no_leak_models": [
-            "deepseek-reasoner"
+            "ornith"
           ]
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "dot",
+          "workflow_mode": "single",
           "workflow_id_present": false
         },
         "provider": {

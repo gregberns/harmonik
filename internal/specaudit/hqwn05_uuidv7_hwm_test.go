@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.5 binding test — EV-002c UUIDv7 monotonicity across daemon restart

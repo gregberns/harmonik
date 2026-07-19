@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -90,9 +91,21 @@ func RunTmuxStart(
 		computedName = "harmonik-" + hash + "-default"
 	}
 
+	// Resolve the tmux binary ONCE from the passed env's PATH so the probe,
+	// session-ensure, and attach steps all invoke the SAME binary. Without this
+	// pin, ProbeTmux/EnsureSession would re-resolve the bare "tmux" name via the
+	// process PATH (exec.LookPath), which can differ from env's PATH and select a
+	// different binary than the final attach exec (which uses this absolute path).
+	// A missing binary is a probe-class failure → exit 22.
+	tmuxBin, err := tmuxStartLookupBin(env)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "hk tmux-start: cannot locate tmux binary: %v\n", err) //nolint:errcheck // best-effort diagnostic to stderr
+		return 22
+	}
+
 	// Probe tmux before creating a session (exit code 22 on failure).
 	ctx := context.Background()
-	adapter := OSAdapter{}
+	adapter := OSAdapter{}.WithRunner(tmuxBinRunner{bin: tmuxBin})
 	if err := adapter.ProbeTmux(ctx); err != nil {
 		fmt.Fprintf(stderr, "hk tmux-start: tmux probe failed: %v\n", err)
 		return 22
@@ -105,11 +118,6 @@ func RunTmuxStart(
 	}
 
 	// Step iv — exec-replace with `tmux attach-session -t <name>`.
-	tmuxBin, err := tmuxStartLookupBin(env)
-	if err != nil {
-		fmt.Fprintf(stderr, "hk tmux-start: cannot locate tmux binary: %v\n", err)
-		return 22
-	}
 
 	argv := []string{"tmux", "attach-session", "-t", computedName}
 	if execErr := execFn(tmuxBin, argv, env); execErr != nil {
@@ -276,6 +284,25 @@ func tmuxEnvLookup(env []string, name string) string {
 		}
 	}
 	return ""
+}
+
+// tmuxBinRunner is a CommandRunner that rewrites the leading "tmux" command
+// name to a pre-resolved absolute binary path. RunTmuxStart pins the OSAdapter
+// to one so its probe and session-ensure steps invoke the SAME tmux binary that
+// the final attach exec uses (resolved once from the passed env's PATH via
+// tmuxStartLookupBin) — instead of re-resolving the bare "tmux" name through the
+// process PATH, which can select a different binary. Non-"tmux" names pass
+// through unchanged.
+type tmuxBinRunner struct {
+	bin string
+}
+
+// Command returns exec.CommandContext with "tmux" swapped for the pinned binary.
+func (r tmuxBinRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	if name == "tmux" {
+		name = r.bin
+	}
+	return exec.CommandContext(ctx, name, args...)
 }
 
 // tmuxStartLookupBin resolves the path to the tmux binary by scanning the PATH

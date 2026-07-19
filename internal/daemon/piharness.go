@@ -164,6 +164,7 @@ func (h *PiHarness) LaunchSpec(rc handlercontract.RunCtx) (handlercontract.Spawn
 		baseURL:        baseURL,
 		api:            api,
 		priorSessionID: rc.PriorSessionID,
+		iterationCount: rc.IterationCount,
 		baseEnv:        rc.BaseEnv,
 		runID:          rc.RunID,
 	}

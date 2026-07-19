@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.41 binding test — WM-029 session-log directory is consumed read-only by S08.

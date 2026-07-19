@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -75,6 +76,14 @@ func SweepStaleLeaseLocks(ctx context.Context, repoRoot string, cfg WorktreeRoot
 	var result SweepResult
 
 	for _, dw := range discovered {
+		if dw.LeaseLockUnreadable {
+			// Lease-lock file present but its content is unrecoverable
+			// (corrupt/truncated) — state UNKNOWN. Fail safe: skip, and do NOT
+			// add to NoLock. A worktree with an unreadable lock is never routed
+			// to age-based force-removal, because we cannot prove it is unleased.
+			result.Skipped = append(result.Skipped, dw.WorktreePath)
+			continue
+		}
 		if dw.LeaseLock == nil {
 			// No lease-lock — directory is either a WM-003a orphan or released.
 			// Routing is the caller's responsibility; sweep skips.
@@ -197,12 +206,19 @@ func RemoveStaleWorktrees(ctx context.Context, repoRoot string, paths []string, 
 // sweep pass (or never written, e.g., leaked reviewer worktrees) and that were
 // not caught by [RemoveStaleWorktrees] because they never had a dead-PID lock.
 //
-// Age is measured from directory mtime (os.Stat). maxAge == 0 disables the
-// pass and returns an empty result. This is the C1-simplified conservative
-// variant: it uses age as a proxy for "not an active run" rather than the full
+// Age is measured from the MOST-RECENT file mtime found ANYWHERE within the
+// worktree tree — NOT the top-directory mtime. The top-dir mtime only changes on
+// entry create/delete/rename, so an agent editing a file IN PLACE (the common
+// case) never bumps it; using it as the activity proxy would force-remove a
+// worktree holding freshly-edited, uncommitted work. Walking the tree for the
+// newest mtime captures in-place edits, so a recently-touched worktree is
+// correctly seen as active and skipped. maxAge == 0 disables the pass and returns
+// an empty result. This is the C1-simplified conservative variant: it uses recent
+// activity as a proxy for "not an active run" rather than the full
 // DiscoverActiveRuns survive-check (hk-qe736).
 //
-// Errors are non-fatal per-path, consistent with [RemoveStaleWorktrees].
+// Errors are non-fatal per-path, consistent with [RemoveStaleWorktrees]: a path
+// whose activity cannot be determined is conservatively SKIPPED (not removed).
 func RemoveAgedNoLockWorktrees(ctx context.Context, repoRoot string, paths []string, maxAge time.Duration, logger *log.Logger) RemoveStaleWorktreeResult {
 	if maxAge == 0 {
 		return RemoveStaleWorktreeResult{}
@@ -210,11 +226,16 @@ func RemoveAgedNoLockWorktrees(ctx context.Context, repoRoot string, paths []str
 	now := time.Now()
 	var aged []string
 	for _, p := range paths {
-		info, err := os.Stat(p)
+		newest, err := newestMTimeInTree(p)
 		if err != nil {
+			// Cannot determine activity → conservatively skip (never remove a
+			// worktree we could not fully scan; it may hold recent work).
+			if logger != nil {
+				logger.Printf("workspace: RemoveAgedNoLockWorktrees: skipping %q; cannot scan tree for activity: %v", p, err)
+			}
 			continue
 		}
-		if now.Sub(info.ModTime()) > maxAge {
+		if now.Sub(newest) > maxAge {
 			aged = append(aged, p)
 		}
 	}
@@ -222,6 +243,33 @@ func RemoveAgedNoLockWorktrees(ctx context.Context, repoRoot string, paths []str
 		return RemoveStaleWorktreeResult{}
 	}
 	return RemoveStaleWorktrees(ctx, repoRoot, aged, logger)
+}
+
+// newestMTimeInTree walks the directory tree rooted at root and returns the
+// most-recent modification time among the root and every entry beneath it. It is
+// the activity proxy for [RemoveAgedNoLockWorktrees]: unlike the top-dir mtime,
+// it reflects in-place file edits anywhere in the worktree. A walk error (e.g. a
+// vanished entry, permission failure) is returned so the caller can conservatively
+// skip the path rather than risk removing a worktree with recent activity.
+func newestMTimeInTree(root string) (time.Time, error) {
+	var newest time.Time
+	err := filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return newest, nil
 }
 
 // isPIDDead reports whether pid is not running on this host.

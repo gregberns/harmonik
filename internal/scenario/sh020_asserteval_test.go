@@ -419,6 +419,56 @@ func TestSH021_PayloadMatch_NumericEquality(t *testing.T) {
 	}
 }
 
+// TestSH021_PayloadMatch_YAMLIntEqualsJSONFloat verifies that a payload_match
+// value decoded from YAML as a Go int (int / int64) compares equal to the
+// JSON-decoded float64 in the actual event payload. Regression for the bug
+// where jsonValuesEqual only equated float64/float64, so YAML-decoded int
+// payload_match values never matched.
+func TestSH021_PayloadMatch_YAMLIntEqualsJSONFloat(t *testing.T) {
+	t.Parallel()
+	// Actual payload: JSON decodes 1 as float64(1.0).
+	payload := map[string]any{"count": 1, "big": 9000}
+	lines := []string{mustMarshalEvent(t, "some_event", payload), ""}
+	events := readEventsFromLines(t, lines)
+	sf := makeScenarioFileForEvents([]scenario.EventExpectation{
+		{
+			Kind: scenario.EventExpectationKindPresent,
+			Type: "some_event",
+			// YAML decodes bare integers as Go int / int64 — NOT float64.
+			PayloadMatch: map[string]any{"count": int(1), "big": int64(9000)},
+			Description:  "YAML int payload_match matches JSON float64",
+		},
+	})
+	results, verdict, _ := scenario.EvaluateAssertions(sf, events, "")
+	if !results[0].Passed {
+		t.Errorf("YAML int payload_match should equal JSON float64; got Passed=false: %+v", results[0])
+	}
+	if verdict != scenario.ScenarioVerdictPass {
+		t.Errorf("verdict = %q, want pass", verdict)
+	}
+}
+
+// TestSH021_PayloadMatch_IntMismatchStillFails guards against over-broad
+// coercion: an int payload_match that differs numerically must still fail.
+func TestSH021_PayloadMatch_IntMismatchStillFails(t *testing.T) {
+	t.Parallel()
+	payload := map[string]any{"count": 2}
+	lines := []string{mustMarshalEvent(t, "some_event", payload), ""}
+	events := readEventsFromLines(t, lines)
+	sf := makeScenarioFileForEvents([]scenario.EventExpectation{
+		{
+			Kind:         scenario.EventExpectationKindPresent,
+			Type:         "some_event",
+			PayloadMatch: map[string]any{"count": int(1)},
+			Description:  "int 1 != int 2",
+		},
+	})
+	results, _, _ := scenario.EvaluateAssertions(sf, events, "")
+	if results[0].Passed {
+		t.Error("int payload_match 1 must not match actual 2")
+	}
+}
+
 // TestSH021_PayloadMatch_MissingKey verifies that a declared key missing from
 // the payload causes event_present to fail.
 func TestSH021_PayloadMatch_MissingKey(t *testing.T) {
@@ -774,6 +824,65 @@ func TestSH022_SymlinkTraversalRejected(t *testing.T) {
 	}
 	if verdict != scenario.ScenarioVerdictFail {
 		t.Errorf("verdict = %q, want fail", verdict)
+	}
+}
+
+// TestSH022_SymlinkIntermediateDirTraversalRejected verifies that a symlinked
+// INTERMEDIATE directory (not just the leaf) which escapes the workspace is
+// rejected per SH-022. Regression for the bug where checkSymlinkSafety only
+// Lstat-ed the leaf, so "<ws>/linkdir/secret.txt" — where linkdir → outside —
+// read arbitrary host files and defeated isolation.
+func TestSH022_SymlinkIntermediateDirTraversalRejected(t *testing.T) {
+	t.Parallel()
+	wsDir := t.TempDir()
+
+	// A directory OUTSIDE the workspace holding a secret file.
+	outsideDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("host secret"), 0o600); err != nil {
+		t.Fatalf("write outside secret: %v", err)
+	}
+
+	// A symlinked INTERMEDIATE directory inside the workspace pointing outside.
+	linkDir := filepath.Join(wsDir, "linkdir")
+	if err := os.Symlink(outsideDir, linkDir); err != nil {
+		t.Skipf("symlink creation failed (may need elevated perms): %v", err)
+	}
+
+	// The predicate path traverses the symlinked intermediate dir to a real file.
+	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
+		{Kind: scenario.WorkspacePredicateKindFileContentsEqual, Path: "linkdir/secret.txt", Expected: ptr("host secret"), Description: "intermediate symlink escape"},
+	})
+	results, verdict, _ := scenario.EvaluateAssertions(sf, nil, wsDir)
+	if results[0].Passed {
+		t.Error("intermediate-dir symlink traversal: expected rejection (Passed=false), got Passed=true — host file was read")
+	}
+	if verdict != scenario.ScenarioVerdictFail {
+		t.Errorf("verdict = %q, want fail", verdict)
+	}
+}
+
+// TestSH022_LegitNestedDirAllowed confirms the tightened check does not
+// false-positive on a legitimate real (non-symlinked) nested directory inside
+// the workspace.
+func TestSH022_LegitNestedDirAllowed(t *testing.T) {
+	t.Parallel()
+	wsDir := t.TempDir()
+	nested := filepath.Join(wsDir, "sub", "deep")
+	if err := os.MkdirAll(nested, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "ok.txt"), []byte("inside"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	sf := makeScenarioFileWithWorkspace([]scenario.WorkspacePredicate{
+		{Kind: scenario.WorkspacePredicateKindFileContentsEqual, Path: "sub/deep/ok.txt", Expected: ptr("inside"), Description: "legit nested file"},
+	})
+	results, verdict, _ := scenario.EvaluateAssertions(sf, nil, wsDir)
+	if !results[0].Passed {
+		t.Errorf("legit nested file should pass; got %+v", results[0])
+	}
+	if verdict != scenario.ScenarioVerdictPass {
+		t.Errorf("verdict = %q, want pass", verdict)
 	}
 }
 

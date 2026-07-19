@@ -1,0 +1,5 @@
+{"event_type":"run_started","event_id":"11111111-1111-1111-1111-1111111111a1","run_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","timestamp":"2026-07-16T12:00:00.000Z","bead_id":"hk-pi-sample"}
+{"event_type":"agent_ready","event_id":"22222222-2222-2222-2222-2222222222a1","run_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","timestamp":"2026-07-16T12:00:02.000Z","session_id":"00000000-0000-4000-8000-0000000000a1"}
+{"event_type":"outcome_emitted","event_id":"55555555-5555-5555-5555-5555555555a1","run_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","timestamp":"2026-07-16T12:00:21.000Z","outcome_status":"success","node_id":"implement"}
+{"event_type":"bead_closed","event_id":"77777777-7777-7777-7777-7777777777a1","run_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","timestamp":"2026-07-16T12:00:22.000Z","bead_id":"hk-pi-sample"}
+{"event_type":"run_completed","event_id":"88888888-8888-8888-8888-8888888888a1","run_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1","timestamp":"2026-07-16T12:00:23.000Z","success":true}

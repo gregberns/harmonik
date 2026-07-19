@@ -128,6 +128,7 @@ package lifecycle
 // scan of the next restart.
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -213,37 +214,202 @@ type MergeCommitScanner interface {
 }
 
 // GitMergeCommitScanner is the production MergeCommitScanner implementation.
-// It shells out to `git log --grep` against the configured target branch
-// (commonly `main`) under the project directory.
+// It shells out to `git log` against the configured target branch (commonly
+// `main`) under the project directory and confirms the Cat 3c condition with
+// TWO independent pieces of evidence, not a mere body mention:
+//
+//  1. Trailer equality — a commit must carry an ACTUAL git trailer
+//     `Harmonik-Bead-ID: <beadID>` whose value equals the target bead ID
+//     exactly. The prior implementation matched `git log --grep` against commit
+//     BODIES, so a docs-only commit that merely *mentioned* the bead id in its
+//     prose falsely satisfied the condition (B2 false-close bug). Extracting the
+//     structured trailer with `%(trailers:key=...,valueonly=true)` and requiring
+//     exact value equality closes that hole — a body mention no longer matches.
+//  2. Non-docs diff — the matched commit's diff must touch at least one
+//     non-docs file. A trailer-bearing commit whose diff is EXCLUSIVELY docs
+//     (`*.md`, files under a docs/ path, or the captain-lanes tracker) does not
+//     represent merged implementation work and MUST NOT trigger a Cat 3c close.
 //
 // A scan error (git absent, branch missing, etc.) is treated as "no merge
 // commit found" — the bead-reset sweep will then proceed with the reset.
 // This is the conservative behavior given that a missed Cat 3c condition will
 // be re-detected on the next daemon restart, but a false-positive
 // merge-commit detection would skip a needed reset.
+//
+// # Change-still-present verification (H3)
+//
+// A bare `git log --grep` match on the trailer is NOT sufficient to auto-close a
+// bead as subsumed: a commit bearing the trailer can have been REVERTED or
+// otherwise superseded, leaving the bead's work absent from the current tree.
+// Auto-closing on the mere historical presence of the trailer would mark such a
+// bead DONE even though its change is gone. HasMergeCommitForBead therefore, after
+// finding the trailer-bearing commit, (1) confirms it is still an ancestor of the
+// target-branch tip and (2) confirms no later commit on the branch REVERTS it —
+// only then does it report the change present.
 type GitMergeCommitScanner struct {
 	ProjectDir   string
 	TargetBranch string // empty defaults to "main"
 }
 
 // HasMergeCommitForBead implements MergeCommitScanner.
+//
+// It requires BOTH a genuine `Harmonik-Bead-ID` trailer whose value equals
+// beadID exactly AND a non-docs diff on the matched commit, AND confirms the
+// matched commit's change is still present on the branch (ancestor of the tip
+// and not reverted by a later commit). On any scan error it returns (false, nil)
+// — conservative, as documented on the type.
 func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID core.BeadID) (bool, error) {
 	branch := s.TargetBranch
 	if branch == "" {
 		branch = "main"
 	}
-	// `git log -1` exits non-zero when no commit matches, so a non-empty
-	// stdout signals a match.
-	//nolint:gosec // G204: branch is validated (defaulted), beadID is opaque project-scoped.
-	cmd := exec.CommandContext(ctx, "git", "-C", s.ProjectDir, "log", "-1",
-		"--grep", "Harmonik-Bead-ID: "+string(beadID), "--format=%H", branch)
+	// Emit one line per commit: "<hash>\x00<trailer values NUL-joined>".
+	// valueonly=true yields only the trailer value (not the "key: " prefix), so
+	// a bead id appearing in the commit BODY prose produces no field here — only
+	// an actual Harmonik-Bead-ID trailer does. separator=%x00 collapses repeated
+	// trailers onto one NUL-separated field.
+	const format = "%H%x00%(trailers:key=Harmonik-Bead-ID,valueonly=true,separator=%x00)"
+	//nolint:gosec // G204: branch is validated (defaulted); format is a constant.
+	cmd := exec.CommandContext(ctx, "git", "-C", s.ProjectDir, "log",
+		"--format="+format, branch)
 	out, err := cmd.Output()
 	if err != nil {
-		// git log exits non-zero when the branch doesn't exist or no match;
-		// treat as "no merge commit" rather than propagating the error.
+		// git log exits non-zero when the branch doesn't exist; treat as "no
+		// merge commit" rather than propagating the error.
 		return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
 	}
-	return strings.TrimSpace(string(out)) != "", nil
+
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	// RU-12x: a commit line is "<hash>\x00<NUL-joined trailer values>"; many/large
+	// Harmonik-Bead-ID trailers can exceed bufio's default 64KB token limit, which
+	// would abort the scan mid-history and silently drop later commits. Raise the
+	// buffer to match the git-output scanning cap used elsewhere (daemon/reconciliation.go).
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		hash, trailerField, ok := strings.Cut(line, "\x00")
+		if !ok {
+			continue
+		}
+		// Exact value equality against any of the NUL-joined trailer values.
+		if !trailerHasExactValue(trailerField, string(beadID)) {
+			continue
+		}
+		touchesNonDocs, diffErr := s.commitTouchesNonDocs(ctx, hash)
+		if diffErr != nil {
+			// Conservative: a diff-read failure is treated as no evidence.
+			return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
+		}
+		if touchesNonDocs {
+			// Trailer + real diff matched. Before reporting the change present,
+			// confirm it has not been reverted/superseded — a bare historical
+			// trailer match is NOT sufficient to auto-close (H3).
+			if !s.changeStillPresent(ctx, hash, branch) {
+				// This trailer-bearing commit was reverted; keep scanning in case
+				// another commit re-landed the same bead's work.
+				continue
+			}
+			return true, nil
+		}
+		// Trailer matched but diff is docs-only — keep scanning; another commit
+		// may carry the same trailer with real implementation changes.
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
+	}
+	return false, nil
+}
+
+// trailerHasExactValue reports whether beadID exactly equals any of the
+// NUL-separated trailer values in field.
+func trailerHasExactValue(field, beadID string) bool {
+	if field == "" {
+		return false
+	}
+	for _, v := range strings.Split(field, "\x00") {
+		if v == beadID {
+			return true
+		}
+	}
+	return false
+}
+
+// commitTouchesNonDocs reports whether the diff of commit hash touches at least
+// one file that is not a docs artifact (see isDocsPath).
+//
+// diff-tree runs with -r but intentionally WITHOUT -m: a true two-parent merge
+// commit yields an empty diff and therefore reports false. That is the
+// conservative direction — harmonik's promote model carries the Harmonik-Bead-ID
+// trailer on the diff-bearing squash/single commit, not the merge node, so a
+// missed merge only leaves the bead open (never a spurious close).
+func (s GitMergeCommitScanner) commitTouchesNonDocs(ctx context.Context, hash string) (bool, error) {
+	//nolint:gosec // G204: hash is a %H value read from git output, not user input.
+	cmd := exec.CommandContext(ctx, "git", "-C", s.ProjectDir,
+		"diff-tree", "--no-commit-id", "--name-only", "-r", hash)
+	out, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		path := strings.TrimSpace(scanner.Text())
+		if path == "" {
+			continue
+		}
+		if !isDocsPath(path) {
+			return true, nil
+		}
+	}
+	return false, scanner.Err()
+}
+
+// isDocsPath reports whether path is a docs-only artifact that, on its own, does
+// NOT constitute merged implementation evidence: Markdown files (`*.md`), any
+// file under a `docs/` directory, and the captain-lanes tracker.
+func isDocsPath(path string) bool {
+	if strings.HasSuffix(path, ".md") {
+		return true
+	}
+	if strings.Contains(path, "captain-lanes") {
+		return true
+	}
+	if path == "docs" || strings.HasPrefix(path, "docs/") || strings.Contains(path, "/docs/") {
+		return true
+	}
+	return false
+}
+
+// changeStillPresent reports whether the trailer-bearing commit hash is still
+// present on branch — an ancestor of the branch tip and not reverted by a later
+// commit. A bare historical trailer match is NOT sufficient to auto-close a bead
+// (H3): the commit may have been reverted/superseded, leaving the work absent
+// from the current tree.
+func (s GitMergeCommitScanner) changeStillPresent(ctx context.Context, hash, branch string) bool {
+	// (1) Confirm the commit is still an ancestor of the branch tip. An amended/
+	// rebased/force-pushed branch could have dropped it; --is-ancestor exits 0
+	// iff hash is reachable from the tip.
+	//nolint:gosec // G204: hash is a %H value from git output; branch is validated (defaulted).
+	if err := exec.CommandContext(ctx, "git", "-C", s.ProjectDir,
+		"merge-base", "--is-ancestor", hash, branch).Run(); err != nil {
+		// Non-zero exit → not an ancestor (or git error) → change not present.
+		return false
+	}
+
+	// (2) Confirm the change has not been reverted by a LATER commit on the
+	// branch. `git revert` records "This reverts commit <full-sha>." in the revert
+	// commit message; a match in the hash..branch range means the work was undone.
+	//nolint:gosec // G204: hash is a %H value from git output; branch is validated.
+	revOut, revErr := exec.CommandContext(ctx, "git", "-C", s.ProjectDir, "log",
+		"--grep", "This reverts commit "+hash, "--format=%H", hash+".."+branch).Output()
+	if revErr == nil && strings.TrimSpace(string(revOut)) != "" {
+		// A later revert of the trailer-bearing commit exists → change superseded.
+		return false
+	}
+
+	return true
 }
 
 // QueueDispatchedSet is the set of bead IDs that appear in queue.json with

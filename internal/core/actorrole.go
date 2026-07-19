@@ -69,10 +69,14 @@ func (r ActorRole) Valid() bool {
 // including daemon-synthesised roles (ActorRoleDaemon, ActorRoleReconciliation).
 //
 // The slice is fixed at compile time; callers MUST NOT mutate it.
-// Used by WorkQueueSet (handler-contract HC-016) to assert that one queue
-// exists per declared role at daemon init.
 //
-// Spec: specs/handler-contract.md §4.3.HC-016; [architecture.md §4.8 AR-032].
+// Note (A9 reconciliation, 2026-07-17): the handlercontract HC-016
+// WorkQueueSet helper that formerly consumed this slice was dead code (no
+// non-test caller) and has been deleted. The shipping dispatch surface is
+// per-queue-name, not per-actor-role — see internal/daemon
+// queuestore_hkj808w.go / perqueuespendmeter_tigaf11.go.
+//
+// Spec: [architecture.md §4.8 AR-032].
 func AllActorRoles() []ActorRole {
 	return []ActorRole{
 		ActorRolePlanner,

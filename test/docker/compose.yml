@@ -1,0 +1,79 @@
+# test/docker/compose.yml — M6 WS2.3 remote-substrate E2E across two containers.
+#
+# Brings up the daemon (box A) + worker images built by WS2.1/WS2.2 and runs the
+# remote-substrate lifecycle scenario over a REAL ssh transport, with the worker
+# reachable by its compose service name `worker` (compose's built-in DNS on the
+# default bridge network). The `make test-docker-e2e` target orchestrates
+# up → readiness-gate → drive → down.
+#
+# DRIVE (decision (a)): the daemon image bakes a compiled scenario test binary at
+# /usr/local/bin/remote-substrate.test; the make target execs it with
+# HARMONIK_E2E_SSH_HOST=worker (set here). The Go test's stub worktree-factory
+# makes the commit that cleanly closes the bead — the generic twin does not, which
+# is why we drive the compiled test rather than the full daemon+twin lifecycle.
+#
+# TWO named volumes:
+#   keys    — pubkey handoff. entrypoint-daemon.sh generates the client keypair and
+#             publishes id_ed25519.pub here; entrypoint-worker.sh polls for it and
+#             installs it into authorized_keys. Mounted at /keys in both.
+#   shared  — origin.git + the worker clone. CRUX 2: box A creates both under
+#             HARMONIK_E2E_SHARED_ROOT=/shared, and the worker must see them at the
+#             IDENTICAL absolute path (the worker's `git fetch origin <baseSHA>`
+#             and box A's `git fetch ssh://worker/shared/worker …` both resolve the
+#             same on-disk repos). Mounted at /shared in BOTH containers.
+#
+# `docker compose … down -v` (in the make target) wipes both volumes each run so
+# keys regenerate cleanly (no stale-key silent auth failure) and the shared repos
+# start fresh.
+
+services:
+  worker:
+    build:
+      context: ../..
+      dockerfile: test/docker/Dockerfile.worker
+    volumes:
+      - keys:/keys
+      - shared:/shared
+    # Healthcheck probes ONLY that sshd is LISTENING on :22 — NOT that auth works.
+    # Gating on a successful `ssh worker true` would deadlock: the worker installs
+    # the daemon's client key from the shared `keys` volume, which the daemon only
+    # writes after it boots, and the daemon `depends_on: worker: service_healthy`.
+    # A bare TCP connect via bash /dev/tcp needs no extra tooling in the slim image.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/22'"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 2s
+
+  daemon:
+    build:
+      context: ../..
+      dockerfile: test/docker/Dockerfile.daemon
+    depends_on:
+      worker:
+        condition: service_healthy
+    volumes:
+      - keys:/keys
+      - shared:/shared
+      # WS4-2 (WS4-0 §5.1): mount the host subscription-credential dir READ-ONLY at the
+      # container path Dockerfile.daemon:88-91 fixes (daemon runs as root ⇒ ~ = /root).
+      # This is the ONLY credential the daemon/agents may use — NEVER ANTHROPIC_API_KEY
+      # (D2 / credfence). :ro so the proof run cannot mutate host creds. If ${HOME}/.claude
+      # is absent, a cell needing auth is loud-PENDING, never a key-auth fallback.
+      - ${HOME}/.claude:/root/.claude:ro   # subscription credentials (credfence)
+    environment:
+      # NOTE (WS4-0 §5.2/§5.3): deliberately NO ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
+      # here — the credfence forbids key auth in every run environment. entrypoint-daemon.sh
+      # additionally unsets them defensively before launching the daemon.
+      # Drive the SAME scenario test against the worker container over ssh.
+      HARMONIK_E2E_SSH_HOST: worker
+      # origin.git + the worker clone live here, visible at the identical path on
+      # the worker via the `shared` volume (CRUX 2).
+      HARMONIK_E2E_SHARED_ROOT: /shared
+      # Fail LOUD (not skip green) if the ssh path is broken.
+      HARMONIK_REQUIRE_REMOTE_E2E: "1"
+
+volumes:
+  keys:
+  shared:

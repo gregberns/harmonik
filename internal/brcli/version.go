@@ -19,14 +19,14 @@ var brVersionRegex = regexp.MustCompile(`br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0
 type errBrVersionMismatch struct{}
 
 func (errBrVersionMismatch) Error() string {
-	return "brcli: br version differs from pinned version (BI-024a warning)"
+	return "brcli: br version differs from pinned version (BI-024a notice)"
 }
 
 // ErrBrVersionMismatch is returned by CheckBrVersion when the installed br
 // version does not match the pinned version but br is otherwise usable
 // (output parsed successfully, binary executes). Callers MUST treat this as a
-// loud warning, NOT a fatal error — the daemon MUST proceed and log the
-// mismatch prominently.
+// notice, NOT a fatal error — the daemon MUST proceed and log the version
+// delta at notice level (an expected, benign condition).
 //
 // This is distinct from BrSchemaMismatch (closed BrError enum, exit-code 4)
 // which signals a genuine schema incompatibility detected at call time. A

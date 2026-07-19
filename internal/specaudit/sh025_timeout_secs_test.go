@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.27 binding test — SH-025: every scenario declares a wall-clock budget.

@@ -149,7 +149,7 @@ func TestCloseBeadWithHistoryTrim_TrimsBeforeClose(t *testing.T) {
 
 // TestCloseBeadWithHistoryTrim_BrUnavailablePassedThrough verifies that a
 // BrUnavailable error from CloseBead is returned as-is so callers can apply
-// the correct emitDone branch.
+// the correct run-terminal branch.
 func TestCloseBeadWithHistoryTrim_BrUnavailablePassedThrough(t *testing.T) {
 	adapter := &closeCaptureAdapter{closeErr: brcli.BrUnavailable}
 	deps := makeMinimalDeps(adapter, t.TempDir(), true)

@@ -1,0 +1,16 @@
+{
+  "abort_reason": null,
+  "agent_name": "jessica",
+  "ckey": "jessica|cyc-20260704T161600-000013",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260704T161600-000013",
+  "event_count": 2,
+  "outcome": "complete",
+  "session_id_start": "1b2af70c-a877-43fa-9d5c-120eb27dfee0",
+  "started_at": "2026-07-05T14:17:25.315015Z",
+  "terminal_at": "2026-07-05T14:18:43.137533Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_complete"
+  ]
+}

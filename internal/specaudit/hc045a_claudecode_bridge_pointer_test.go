@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-ezo2f binding test — HC-045a: claude-code agent type governed by

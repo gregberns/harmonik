@@ -1,0 +1,16 @@
+{
+  "abort_reason": "handoff_timeout",
+  "agent_name": "admiral",
+  "ckey": "admiral|cyc-20260707T051009-000015",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260707T051009-000015",
+  "event_count": 2,
+  "outcome": "aborted",
+  "session_id_start": "a43ca81a-be37-456f-9c1e-7485a09805d8",
+  "started_at": "2026-07-09T02:42:39.276817Z",
+  "terminal_at": "2026-07-09T02:45:40.881511Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_aborted"
+  ]
+}

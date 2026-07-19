@@ -2,37 +2,38 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/gregberns/harmonik/internal/agentmanifest"
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/digest"
+	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
-	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
-	"github.com/gregberns/harmonik/internal/queue"
-	"github.com/gregberns/harmonik/internal/release"
-	runpkg "github.com/gregberns/harmonik/internal/run"
-	"github.com/gregberns/harmonik/internal/schedule"
-	"github.com/gregberns/harmonik/internal/sentinel"
+	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
+
+// scanRegisteredPayloadsForSecretFields is the EV-036 startup secret-field
+// gate invoked by Start after all event-payload types are registered and before
+// bus.Seal(). It is a package var (not a direct call) solely so tests can
+// substitute a synthetic-violation stub to assert Start aborts boot, without
+// polluting the global event registry that other parallel daemon tests share.
+// Production always uses core.ScanRegisteredPayloadsForSecretFields.
+//
+// Spec ref: event-model.md §4.10 EV-036.
+var scanRegisteredPayloadsForSecretFields = core.ScanRegisteredPayloadsForSecretFields
 
 // Config holds the startup configuration for the harmonik daemon.
 //
@@ -553,6 +554,30 @@ type Config struct {
 	// Bead ref: hk-rs-b4-bootwire-b44z.
 	Workers workers.Config
 
+	// WorkerRegistryObserver, when non-nil, is invoked ONCE at work-loop startup
+	// with the live *workers.Registry the tmux dispatch path reads (or nil when
+	// no worker is configured — NFR7). The composition root uses it to late-bind
+	// that SAME registry into the Codex driver's runner-selection seam (M4-C3),
+	// so a worker-selected HARMONIK_SUBSTRATE=codexdriver run routes its codex
+	// process over SSHRunner — WITHOUT the driver ever learning about workers
+	// (RS-017 twin-blindness: selection stays at the wire/root, driver stays
+	// blind). No-op for the tmux substrate (observer is nil there).
+	WorkerRegistryObserver func(*workers.Registry)
+
+	// CodexRequireIsolationBoundary makes the work loop FAIL CLOSED for codex
+	// app-server crews (hk-5h759). The composition root sets it true iff
+	// HARMONIK_SUBSTRATE=codexdriver — a codex crew runs with a permissive sandbox
+	// posture (danger-full-access) that is safe ONLY inside a real isolation
+	// boundary (an enabled remote ssh worker / container IS the sandbox). With it
+	// set, beadRunOne refuses to launch any codex run unless the worker registry's
+	// WorkerSnapshot() yields an enabled ssh worker — mirroring the runner's own
+	// routing predicate. Any other state (no registry, no worker, disabled, or a
+	// non-ssh transport) would otherwise fall through codexWorkerRoutingRunner.Command
+	// to LocalRunner and run codex UNSANDBOXED on the daemon host. Operator mandate:
+	// never a silent local fallback; commits must land inside the boundary. False
+	// (default) for the tmux path — no permissive posture, nothing to guard.
+	CodexRequireIsolationBoundary bool
+
 	// Runner is the CommandRunner used for remote-aware marker-file reads on the
 	// DOT run path (hk-hd2w6). At runtime, local runs set it to nil (NFR7:
 	// byte-identical local path) and remote runs override it with rbc.sshRunner
@@ -610,13 +635,12 @@ type daemonTestHooks struct {
 	// The zero value (nil) falls back to productionWorktreeFactory.
 	worktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)
 
-	// mergeMu, when set via WithMergeMutex, OVERRIDES the production merge mutex
-	// so a test can share/inspect the lock held across the full
-	// rebase → update-ref → push sequence of every mergeRunBranchToMain call.
-	// The zero value (nil) is this hook's default and leaves production's own
-	// non-nil mutex (set unconditionally in newWorkLoopDeps, hk-yyso7) in place —
-	// merges are serialised across all queues in production regardless.
-	mergeMu *sync.Mutex
+	// mergeQ, when set via WithMergeQueue, OVERRIDES the production merge queue
+	// (RSM-015) so a test can share/inspect the exclusion domain across concurrent
+	// beadRunOne goroutines. The injected queue MUST already be Start()ed by the
+	// test. The zero value (nil) leaves production's own queue (created in
+	// newWorkLoopDeps, started in runWorkLoop) in place.
+	mergeQ *mergeq.Queue
 }
 
 // newBrAdapter constructs a *brcli.Adapter using hooks.brAdapterFactory when set
@@ -629,6 +653,98 @@ func newBrAdapter(hooks daemonTestHooks, brPath, projectDir string) (*brcli.Adap
 		return hooks.brAdapterFactory(brPath, projectDir)
 	}
 	return brcli.NewForProject(brPath, projectDir)
+}
+
+// newDaemonHookStore constructs the daemon hook-session store (a composition of
+// the pure internal/hook state machine) and wires the bus emitter used by the
+// rate-limit routing path (hk-lqtzq). Factored out of startWithHooks so the
+// composition root stays a single call (M5 slice 1, internal/hook extraction).
+func newDaemonHookStore(bus eventbus.EventBus) *hookSessionStore {
+	store := newHookSessionStore()
+	store.SetEmitter(bus)
+	return store
+}
+
+// loadStartupQueues runs the PL-005 step 8a per-queue load: it constructs the
+// br adapter, settles the SQLite ledger (F40), enumerates .harmonik/queues/ via
+// LoadQueueAtStartup with QM-002a/QM-002b reconciliation, installs each queue,
+// and issues a defensive Wake so the work loop unblocks promptly.
+//
+// Only runs when both ProjectDir and BrPath are set (production mode); unit-test
+// callers that omit either skip cleanly (returns nil). A forward-incompatible
+// schema_version returns a fatal error (exit code 2 per QM-002); a br-adapter
+// construction failure is non-fatal (classified + emitted per BI-031b) and the
+// daemon proceeds without a queue.
+//
+// Extracted from startWithHooks (M5 slice 1) to shave the composition-root
+// cognit; behaviour is byte-identical to the pre-extraction inline block.
+//
+// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
+// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
+// Bead ref: hk-tigaf.3.
+func loadStartupQueues(ctx context.Context, cfg Config, hooks daemonTestHooks, bus eventbus.EventBus, qs *QueueStore, daemonStartTime time.Time) error {
+	if cfg.ProjectDir == "" || cfg.BrPath == "" {
+		return nil
+	}
+
+	brAdapterForQueue, brAdapterErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
+	if brAdapterErr != nil {
+		// Classify + emit divergence_inconclusive for BrSchemaMismatch per
+		// BI-031b.  Non-fatal: daemon proceeds without a queue; queue-* ops
+		// return errors until a queue is submitted.
+		//
+		// Spec ref: specs/beads-integration.md §4.10 BI-031b.
+		// Bead ref: hk-th378.
+		_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brAdapterErr, "br-new-for-project-queue", bus)
+		return nil
+	}
+
+	// F40 (hk-n2y): run `br sync --flush-only` before QM-002a/QM-002b
+	// reconciliation to ensure the SQLite ledger is settled. After a daemon
+	// restart the database may be transiently locked by the previous process,
+	// causing every `br show` call to return exit 3 with empty stdout for the
+	// first ~31 items. A flush-only sync forces a full database round-trip,
+	// clearing the lock so the subsequent ShowBead queries succeed without
+	// spurious warnings. Non-fatal: on sync failure the reconciliation continues
+	// with the pre-F40 degraded behaviour (ShowBead failures are warned and skipped).
+	if syncErr := brAdapterForQueue.SyncFlushOnly(ctx); syncErr != nil {
+		logW := cfg.LogWriter
+		if logW == nil {
+			logW = os.Stderr
+		}
+		fmt.Fprintf(logW, "warn: daemon startup: br sync --flush-only failed; QM-002b ShowBead queries may emit transient exit-3 warnings: %v\n", syncErr) //nolint:errcheck // best-effort stderr warning
+	}
+
+	loadedQueues, loadErr := lifecycle.LoadQueueAtStartup(
+		ctx,
+		cfg.ProjectDir,
+		brAdapterForQueue,
+		bus,
+		nil, // slog.Default() is used when nil
+		&lifecycle.QM002bReapConfig{
+			Resetter:      brAdapterForQueue,
+			IntentLogDir:  lifecycle.BeadsIntentsDir(cfg.ProjectDir),
+			ProjectHash:   lifecycle.ComputeProjectHash(cfg.ProjectDir),
+			DaemonStartNS: daemonStartTime.UnixNano(),
+		},
+	)
+	if loadErr != nil {
+		// ErrQueueSchemaUnsupported → fatal (exit code 2 per QM-002).
+		return fmt.Errorf("daemon.Start: queue load: %w", loadErr)
+	}
+	for _, lq := range loadedQueues {
+		qs.SetQueue(lq)
+	}
+	// Explicit wake after all startup queues are installed so the workloop
+	// unblocks immediately if it reaches workloopIdleWait before any
+	// submit/append signal arrives (hk-ekj wake-gap fix). SetQueue above already
+	// fires the channel for each loaded queue, but a coalesced signal may have
+	// been consumed between iterations; a defensive Wake() here ensures at least
+	// one signal is present when the workloop first runs.
+	if len(loadedQueues) > 0 {
+		qs.Wake()
+	}
+	return nil
 }
 
 // Start is the composition-root entry point for the harmonik daemon.
@@ -668,7 +784,148 @@ func Start(ctx context.Context, cfg Config) error {
 // which passes a zero-value daemonTestHooks.  Test callers use StartForTesting
 // (internal/daemon/testopts_test.go) which supplies non-nil hook fields.
 //
+// acquirePidfile performs PL-002 step 1: acquire the advisory pidfile lock at
+// <ProjectDir>/.harmonik/daemon.pid (hk-iarcy). It returns the acquired
+// *lifecycle.Pidfile so the CALLER owns the defer Release() — the lock must be
+// held for the whole daemon lifetime, so a helper-scope defer would release it
+// immediately (the same lifetime trap as jsonlWriter). Returns (nil, nil) when
+// ProjectDir is empty (unit-test mode); pidfile acquisition is skipped.
+//
+// AcquirePidfile constructs the path internally as <ProjectDir>/.harmonik/daemon.pid
+// (PL-002b). Extracted from startWithHooks (giant-retirement boot-config B2).
+func acquirePidfile(cfg Config) (*lifecycle.Pidfile, error) {
+	if cfg.ProjectDir == "" {
+		return nil, nil
+	}
+	// mkdir-p <ProjectDir>/.harmonik/ so AcquirePidfile can open the file.
+	harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
+	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
+	if mkErr := os.MkdirAll(harmonikDir, 0o755); mkErr != nil {
+		return nil, fmt.Errorf("daemon.Start: mkdir-p .harmonik: %w", mkErr)
+	}
+
+	pid := os.Getpid()
+	pgid := syscall.Getpgrp()
+	// Generate a UUIDv7 as the daemon instance ID (PL-005 step 0).
+	instanceUID, uidErr := uuid.NewV7()
+	if uidErr != nil {
+		return nil, fmt.Errorf("daemon.Start: generate instance ID: %w", uidErr)
+	}
+
+	pidfile, acquireErr := lifecycle.AcquirePidfile(cfg.ProjectDir, pid, pgid, instanceUID.String())
+	if acquireErr != nil {
+		return nil, fmt.Errorf("daemon.Start: pidfile: %w", acquireErr)
+	}
+	return pidfile, nil
+}
+
+// resolveBootConfig performs PL-005 step 0 config resolution + validation and
+// mutates cfg in place: it validates the workflow mode BEFORE any I/O (PL-004a,
+// seam-2 ordering, hk-81n9r), loads + merges the branching defaults and runs the
+// fail-closed branch-protection checks (WM-005b/hk-sul12) via the pure bootconfig
+// seam, validates the conflict-resolution attempt cap (WM-024), and loads the
+// cached project config (EM-012b). Returns the resolved workflow mode and target
+// branch. Extracted from startWithHooks (giant-retirement boot-config).
+func resolveBootConfig(cfg *Config) (core.WorkflowMode, string, error) {
+	workflowModeDefault := cfg.WorkflowModeDefault
+	if err := bootconfig.ValidateWorkflowMode(workflowModeDefault); err != nil {
+		return "", "", fmt.Errorf("daemon.Start: %w", err)
+	}
+
+	bootIn := bootconfig.Input{
+		WorkflowMode:             workflowModeDefault,
+		FlagTargetBranch:         cfg.TargetBranch,
+		FlagProtectBranches:      cfg.ProtectBranches,
+		ForbidUnprotectedDefault: cfg.ForbidUnprotectedDefault,
+	}
+	if cfg.ProjectDir != "" {
+		branchingDefaults, branchingErr := branching.Load(cfg.ProjectDir)
+		if branchingErr != nil {
+			return "", "", fmt.Errorf("daemon.Start: load .harmonik/branching.yaml: %w", branchingErr)
+		}
+		bootIn.YAMLLandsOn = branchingDefaults.LandsOn
+		bootIn.YAMLProtectBranches = branchingDefaults.ProtectBranches
+	}
+	resolvedBoot, resolveErr := bootconfig.Resolve(bootIn)
+	if resolveErr != nil {
+		return "", "", fmt.Errorf("daemon.Start: %w", resolveErr)
+	}
+	cfg.TargetBranch = resolvedBoot.TargetBranch
+	cfg.ProtectBranches = resolvedBoot.ProtectBranches
+
+	// WM-024: validate ConflictResolutionAttemptCap (zero → built-in default 3;
+	// a non-zero value MUST be in [1, 10]). Fail fast on a misconfiguration.
+	if cfg.ConflictResolutionAttemptCap != 0 {
+		if err := workspace.ValidateConflictResolutionAttemptCap(cfg.ConflictResolutionAttemptCap); err != nil {
+			return "", "", fmt.Errorf("daemon.Start: invalid conflict_resolution_attempt_cap %d: %w", cfg.ConflictResolutionAttemptCap, err)
+		}
+	}
+
+	// EM-012b tier-2: load + cache .harmonik/config.yaml. A parse/schema error is
+	// fatal; a missing file is a zero-value ProjectConfig (hk-bfvk7).
+	if cfg.ProjectDir != "" {
+		projectCfg, loadErr := LoadProjectConfig(cfg.ProjectDir)
+		if loadErr != nil {
+			return "", "", fmt.Errorf("daemon.Start: load .harmonik/config.yaml: %w", loadErr)
+		}
+		cfg.ProjectCfg = projectCfg
+	}
+
+	return workflowModeDefault, resolvedBoot.TargetBranch, nil
+}
+
+// runBootPreflights runs the boot-time pre-flight maintenance steps (PL-005
+// step 0 supporting work) and returns the restart-backoff delay. Each step
+// self-guards on ProjectDir + its skip flag so unit-test mode short-circuits
+// cleanly. The delay is NOT slept here (hk-uzvt9: the sleep belongs after the
+// socket bind). Extracted from startWithHooks (giant-retirement boot-config B2).
+func runBootPreflights(ctx context.Context, cfg Config) time.Duration {
+	// WAL-checkpoint pre-flight (hk-5dewt): if .beads/beads.db-wal exists and
+	// exceeds 1 MB, run PRAGMA wal_checkpoint(TRUNCATE) via sqlite3 before the
+	// first br write. Non-fatal; no-op when sqlite3 is not on PATH. A failure is
+	// logged and swallowed — it never blocks startup.
+	if cfg.ProjectDir != "" && !cfg.SkipWALCheckpoint {
+		if err := runWALCheckpointPreflight(ctx, cfg.ProjectDir); err != nil {
+			logBootPreflightWarn("WAL checkpoint", err)
+		}
+	}
+
+	// .br_history/ rotation pre-flight (hk-5dewt): archive all but the 20
+	// most-recent snapshots so per-write scan cost stays sub-second. Non-fatal.
+	if cfg.ProjectDir != "" && !cfg.SkipBrHistoryRotation {
+		if err := runBrHistoryRotationPreflight(ctx, cfg.ProjectDir, brHistoryRotationDefaultKeep); err != nil {
+			logBootPreflightWarn(".br_history rotation", err)
+		}
+	}
+
+	// Restart-backoff pre-flight (hk-7t9g1): record the boot and compute an
+	// exponentially-increasing delay when the daemon has been restarted rapidly.
+	// applyBootBackoff only records + returns the duration; the sleep is deferred.
+	var bootBackoffDelay time.Duration
+	if cfg.ProjectDir != "" && !cfg.SkipRestartBackoff {
+		bootBackoffDelay = applyBootBackoff(ctx, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RestartBackoff)
+	}
+
+	// Beads-union driver auto-config pre-flight (hk-r0y1o): register
+	// merge.beads-union.{name,driver} in .git/config once per clone. Non-fatal.
+	if cfg.ProjectDir != "" && !cfg.SkipBeadsMergeDriverConfig {
+		ensureBeadsMergeDriver(ctx, cfg.ProjectDir)
+	}
+
+	return bootBackoffDelay
+}
+
+// logBootPreflightWarn writes a best-effort warning for a non-fatal boot
+// pre-flight failure via the default logger, matching the structured-warning
+// idiom used elsewhere in startup (e.g. the event-ID HWM warnings). Pre-flight
+// errors never block boot.
+func logBootPreflightWarn(step string, err error) {
+	log.Printf("warn: daemon startup: %s pre-flight failed (non-fatal): %v", step, err)
+}
+
 // Bead ref: hk-j192n.
+//
+//nolint:cyclop // startWithHooks is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) error {
 	// Step 1 (PL-002, hk-iarcy): acquire the advisory pidfile lock.
 	//
@@ -679,881 +936,106 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Follow-up: patch bead body / spec cross-ref for the .harmonik/run/ path form.
 	//
 	// Skip pidfile acquisition when ProjectDir is empty (unit-test mode).
-	var pidfile *lifecycle.Pidfile
-	if cfg.ProjectDir != "" {
-		// mkdir-p <ProjectDir>/.harmonik/ so AcquirePidfile can open the file.
-		harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if mkErr := os.MkdirAll(harmonikDir, 0o755); mkErr != nil {
-			return fmt.Errorf("daemon.Start: mkdir-p .harmonik: %w", mkErr)
-		}
-
-		pid := os.Getpid()
-		pgid := syscall.Getpgrp()
-		// Generate a UUIDv7 as the daemon instance ID (PL-005 step 0).
-		instanceUID, uidErr := uuid.NewV7()
-		if uidErr != nil {
-			return fmt.Errorf("daemon.Start: generate instance ID: %w", uidErr)
-		}
-		instanceID := instanceUID.String()
-
-		var acquireErr error
-		pidfile, acquireErr = lifecycle.AcquirePidfile(cfg.ProjectDir, pid, pgid, instanceID)
-		if acquireErr != nil {
-			return fmt.Errorf("daemon.Start: pidfile: %w", acquireErr)
-		}
-		defer func() { _ = pidfile.Release() }()
+	// The outer shell owns the defer so the lock is held for the whole daemon
+	// lifetime (a defer inside acquirePidfile would release it immediately).
+	pidfile, pidErr := acquirePidfile(cfg)
+	if pidErr != nil {
+		return pidErr
 	}
-
-	// Step 0 (PL-005): bootstrap cross-subsystem registries.
-
-	// PL-004a: resolve and cache workflow_mode_default once at step 0.
-	//
-	// The zero value (empty string) is now a startup error (fail-closed per
-	// hk-81n9r). Callers must set an explicit mode; use core.WorkflowModeDot
-	// for the recommended default. Any unrecognised non-empty value is also
-	// rejected so the daemon fails fast rather than silently using a wrong mode.
-	//
-	// Bead ref: hk-7om2q.8, hk-81n9r.
-	workflowModeDefault := cfg.WorkflowModeDefault
-	if workflowModeDefault == "" {
-		return fmt.Errorf("daemon.Start: WorkflowModeDefault must be set (PL-004a); set cfg.WorkflowModeDefault = core.WorkflowModeDot for the standard dot default")
-	} else if !workflowModeDefault.Valid() {
-		return fmt.Errorf("daemon.Start: invalid workflow_mode_default %q: must be one of single, review-loop, dot (PL-004a)", workflowModeDefault)
-	}
-
-	// WM-005b: apply project-level branching defaults from .harmonik/branching.yaml.
-	//
-	// Precedence: CLI flag > branching.yaml > built-in daemon default.
-	// Only fields left at their zero value (empty string / nil slice) are filled
-	// from the file; a flag-supplied value is never overwritten.
-	//
-	// This block MUST run before resolveTargetBranch and the hk-sul12 guard so
-	// that both operate on the fully-resolved cfg (flag or YAML, not zero value).
-	//
-	// Bead ref: hk-zl4sl.
-	if cfg.ProjectDir != "" {
-		branchingDefaults, branchingErr := branching.Load(cfg.ProjectDir)
-		if branchingErr != nil {
-			return fmt.Errorf("daemon.Start: load .harmonik/branching.yaml: %w", branchingErr)
-		}
-		if cfg.TargetBranch == "" && branchingDefaults.LandsOn != "" {
-			cfg.TargetBranch = branchingDefaults.LandsOn
-		}
-		if len(cfg.ProtectBranches) == 0 && len(branchingDefaults.ProtectBranches) > 0 {
-			cfg.ProtectBranches = branchingDefaults.ProtectBranches
-		}
-	}
-
-	// hk-sul12: fail-closed branch-protection validation.
-	//
-	// Two hard-error cases, checked before any socket bind:
-	//
-	//   (1) ForbidUnprotectedDefault && TargetBranch == "": the operator set
-	//       --forbid-default-main but did not provide --target-branch. The daemon
-	//       would silently merge into the default branch ("main"), which the flag
-	//       was explicitly designed to prevent.
-	//
-	//   (2) resolved TargetBranch is in ProtectBranches: the daemon would merge
-	//       completed bead branches into a protected branch, violating the
-	//       operator's explicit protection policy.
-	//
-	// resolveTargetBranch("") returns "main"; use that resolved value for (2).
-	resolvedTargetBranch := resolveTargetBranch(cfg.TargetBranch)
-	if cfg.ForbidUnprotectedDefault && cfg.TargetBranch == "" {
-		return fmt.Errorf("daemon.Start: --forbid-default-main is set but --target-branch is empty; provide an explicit --target-branch to proceed (hk-sul12)")
-	}
-	for _, protected := range cfg.ProtectBranches {
-		if resolvedTargetBranch == protected {
-			return fmt.Errorf("daemon.Start: target branch %q is in ProtectBranches; choose a different --target-branch (hk-sul12)", resolvedTargetBranch)
-		}
-	}
-
-	// WM-024: validate ConflictResolutionAttemptCap at startup.
-	//
-	// The zero value is treated as the built-in default (3) — operators who do
-	// not set the field get three attempts per merge-pending cycle (WM-024).
-	// A non-zero value MUST be in [1, 10]; values outside this range are
-	// rejected here so the daemon fails fast rather than silently misconfiguring
-	// the workspace manager (operator-nfr.md §4.3).
-	//
-	// Bead ref: hk-8mwo.36.
-	if cfg.ConflictResolutionAttemptCap != 0 {
-		if err := workspace.ValidateConflictResolutionAttemptCap(cfg.ConflictResolutionAttemptCap); err != nil {
-			return fmt.Errorf("daemon.Start: invalid conflict_resolution_attempt_cap %d: %w", cfg.ConflictResolutionAttemptCap, err)
-		}
-	}
-
-	// EM-012b tier-2: load .harmonik/config.yaml once at startup and cache in cfg.
-	// A parse error or unsupported schema_version causes the daemon to refuse to start
-	// (loud failure per bead spec; operators must fix the config before restarting).
-	// A missing file is silently treated as "no project config" (zero-value ProjectConfig).
-	//
-	// Bead ref: hk-bfvk7.
-	if cfg.ProjectDir != "" {
-		projectCfg, cfgErr := LoadProjectConfig(cfg.ProjectDir)
-		if cfgErr != nil {
-			return fmt.Errorf("daemon.Start: load .harmonik/config.yaml: %w", cfgErr)
-		}
-		cfg.ProjectCfg = projectCfg
-	}
-
-	// WAL-checkpoint pre-flight (hk-5dewt): if .beads/beads.db-wal exists and
-	// exceeds 1 MB, run PRAGMA wal_checkpoint(TRUNCATE) via sqlite3 before the
-	// first br write.  This prevents the 10s wall-clock timeout in
-	// brcli/timeout.go from firing when WAL bloat causes `br close` to take
-	// >10s (dogfood-2/3/4 diagnosis: 0.35s on clean DB vs 19.4s with 12MB WAL).
-	// The call is non-fatal and is a no-op when sqlite3 is not on PATH.
-	// Skipped when SkipWALCheckpoint is true (test isolation) or when ProjectDir
-	// is empty (unit-test mode).
-	if cfg.ProjectDir != "" && !cfg.SkipWALCheckpoint {
-		_ = runWALCheckpointPreflight(ctx, cfg.ProjectDir)
-	}
-
-	// .br_history/ rotation pre-flight (hk-5dewt): each `br` write appends a
-	// ~1.2 MB snapshot to .beads/.br_history/. With 200+ entries (226 MB) the
-	// per-write scan cost reaches ~19.5 s, exceeding the 10 s brcli timeout
-	// regardless of WAL state. Archiving all but the 20 most-recent snapshots
-	// restores sub-second write latency (validated: 19.5 s → 0.15 s).
-	// The call is non-fatal. Skipped when SkipBrHistoryRotation is true (test
-	// isolation) or when ProjectDir is empty (unit-test mode).
-	if cfg.ProjectDir != "" && !cfg.SkipBrHistoryRotation {
-		_ = runBrHistoryRotationPreflight(ctx, cfg.ProjectDir, brHistoryRotationDefaultKeep)
-	}
-
-	// Restart-backoff pre-flight (hk-7t9g1): read the persistent boot record and
-	// compute an exponentially-increasing delay when the daemon has been
-	// restarted rapidly within the last hour. This throttles the crash-and-re-pull
-	// loop (incident: 10 boots in a day, each auto-pulling br ready). The delay is
-	// NOT slept here — applyBootBackoff only records the boot and returns the
-	// duration; the actual sleep happens later, via sleepBootBackoff, AFTER the
-	// socket-bind block (hk-uzvt9: sleeping here blocked bind long enough for the
-	// supervisor's health-window to see no socket and false-revert under rapid
-	// restart). Skipped when SkipRestartBackoff is true (test isolation) or when
-	// ProjectDir is empty (unit-test mode).
-	var bootBackoffDelay time.Duration
-	if cfg.ProjectDir != "" && !cfg.SkipRestartBackoff {
-		bootBackoffDelay = applyBootBackoff(ctx, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RestartBackoff)
-	}
-
-	// Beads-union driver auto-config pre-flight (hk-r0y1o): register
-	// merge.beads-union.{name,driver} in .git/config once per clone so git
-	// invokes the union merge driver instead of the default text merge when
-	// merging .beads/issues.jsonl. The call is non-fatal. Skipped when
-	// SkipBeadsMergeDriverConfig is true (test isolation) or ProjectDir is empty.
-	if cfg.ProjectDir != "" && !cfg.SkipBeadsMergeDriverConfig {
-		ensureBeadsMergeDriver(ctx, cfg.ProjectDir)
-	}
-
-	// Instantiate the RedactionRegistry (HC-032; hk-8i31.83).
-	// No seed patterns here — handlers call registry.RegisterPattern when they
-	// are wired (per PL-005 step 0 semantics).
-	registry := handlercontract.NewRedactionRegistry()
-
-	// Open the JSONL event log when a path is configured (hk-8mup.63).
-	// The log dir must exist before Start is called; daemon callers are
-	// responsible for mkdir-p (canonically <ProjectDir>/.harmonik/events/).
-	var jsonlWriter *eventbus.JSONLWriter
-	if cfg.JSONLLogPath != "" {
-		var openErr error
-		jsonlWriter, openErr = eventbus.OpenJSONLWriter(cfg.JSONLLogPath)
-		if openErr != nil {
-			return fmt.Errorf("daemon.Start: open JSONL log %q: %w",
-				filepath.Base(cfg.JSONLLogPath), openErr)
-		}
-		defer func() { _ = jsonlWriter.Close() }()
-	}
-
-	// EV-002c: read the persisted event-ID high-water-mark and seed the
-	// EventIDGenerator so all post-restart event_ids are strictly greater than
-	// any pre-restart event_ids, even under wall-clock regression.
-	//
-	// When cfg.ProjectDir is empty (unit-test mode) we skip HWM I/O and use a
-	// fresh generator seeded from the wall clock.
-	var hwmGen *core.EventIDGenerator
-	var hwmPath string
-	var clockRegressionDetected bool
-	if cfg.ProjectDir != "" {
-		hwmPath = lifecycle.EventIDHWMPath(cfg.ProjectDir)
-		hwm, hwmExists, hwmErr := core.ReadEventIDHWM(hwmPath)
-		switch {
-		case hwmErr != nil:
-			// Unreadable HWM file: log structured warning and seed from wall clock
-			// (EV-002c: "cross-restart ordering NOT guaranteed in that case").
-			log.Printf("daemon.Start: event_id HWM at %s unreadable: %v; seeding from wall clock — cross-restart ordering not guaranteed", hwmPath, hwmErr)
-			hwmGen = core.NewEventIDGenerator()
-		case !hwmExists:
-			// Missing HWM (first run or .harmonik/ wiped): log structured warning.
-			log.Printf("daemon.Start: event_id HWM not found at %s (first run or .harmonik/ wiped); seeding from wall clock — cross-restart ordering not guaranteed", hwmPath)
-			hwmGen = core.NewEventIDGenerator()
-		default:
-			hwmGen = core.NewEventIDGeneratorWithHWM(hwm)
-			if core.IsHWMClockRegression(hwm, time.Now()) {
-				clockRegressionDetected = true
+	if pidfile != nil {
+		defer func() {
+			if relErr := pidfile.Release(); relErr != nil {
+				log.Printf("warn: daemon.Start: pidfile release: %v", relErr)
 			}
-		}
-	}
-	if hwmGen == nil {
-		hwmGen = core.NewEventIDGenerator()
+		}()
 	}
 
-	// Instantiate the EventBus with the registry, writer, seeded generator, and
-	// HWM path (EV-035, EV-002c; hk-8mup.62, hk-8i31.83, hk-8mup.63).
-	//
-	// Subscribers MUST be registered before Seal (EV-009). The
-	// HandlerPausePolicyGoroutine (hk-37zy8) is the first production subscriber;
-	// it is wired below before bus.Seal() is called.
-	bus := eventbus.NewBusImplWithWriterAndHWM(registry, jsonlWriter, hwmGen, hwmPath, cfg.JSONLLogPath)
-
-	// PL-005 step 0 (hk-m0k0a, hk-37zy8, hk-7urls): construct HandlerPauseController,
-	// RunRegistry, and QueueStore at the composition root so all are available
-	// pre-Seal for their respective Subscribe(bus) calls.
-	//
-	// Controller construction is moved here (before Seal) because the policy
-	// goroutine constructor requires it. LoadHandlerPauseState (persistence seed)
-	// runs further below, after Seal, where cfg.ProjectDir is checked — that
-	// sequencing is unchanged.
-	//
-	// RunRegistry is created here so the policy goroutine and the work loop share
-	// the same instance. The work loop receives it via deps.runRegistry (injected
-	// post-newWorkLoopDeps, same pattern as queueStore / handlerPauseController).
-	//
-	// QueueStore is instantiated here (pre-Seal) so QueueOperatorEventConsumer can
-	// reference it in its Subscribe call. The store is populated later via
-	// LoadQueueAtStartup (PL-005 step 8a). When cfg.QueueStore is non-nil the
-	// caller-supplied instance is used directly (hk-8jh26 Fix 2).
-	//
-	// Spec ref: specs/queue-model.md §9.1 QM-060.
-	// Bead ref: hk-7urls.
-	qs := cfg.QueueStore
-	if qs == nil {
-		qs = newQueueStore()
-	}
-	handlerPauseCtrl := NewHandlerPauseController(bus, nil) // persistFn patched below when ProjectDir is set
-	sharedRunRegistry := NewRunRegistry()
-
-	// Construct the HandlerPausePolicyGoroutine and subscribe it to the bus
-	// BEFORE Seal so event delivery is wired for the production run.
-	//
-	// At MVH we monitor AgentTypeClaudeCode (the only handler type in use).
-	// Subscribe registers two asynchronous consumers: agent_rate_limit_status
-	// and budget_exhausted. Bus worker-pool delivers events; no additional
-	// goroutine is needed.
-	//
-	// Spec ref: docs/components/internal/handler-pause-and-resume.md §4 event flow.
-	// Bead ref: hk-37zy8.
-	pausePolicy := NewHandlerPausePolicyGoroutine(HandlerPausePolicyConfig{
-		AgentType:  core.AgentTypeClaudeCode,
-		Controller: handlerPauseCtrl,
-		Registry:   sharedRunRegistry,
-	})
-	if subscribeErr := pausePolicy.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: HandlerPausePolicyGoroutine.Subscribe: %w", subscribeErr)
+	// Step 0 (PL-005): resolve + validate cross-subsystem boot config — workflow
+	// mode (PL-004a), branching defaults + fail-closed branch protection
+	// (WM-005b/hk-sul12), the conflict-cap (WM-024), and the cached project config
+	// (EM-012b). Mutates cfg (TargetBranch/ProtectBranches/ProjectCfg) and returns
+	// the resolved mode + target branch. Extracted for giant-retirement boot-config.
+	workflowModeDefault, resolvedTargetBranch, cfgErr := resolveBootConfig(&cfg)
+	if cfgErr != nil {
+		return cfgErr
 	}
 
-	// Construct and subscribe the DaemonSpendMeter (hk-k3f8g) BEFORE Seal.
+	// Boot pre-flight maintenance (WAL checkpoint, .br_history rotation,
+	// restart-backoff record, beads-union merge-driver config). Each step
+	// self-guards on ProjectDir + its skip flag. Returns the restart-backoff
+	// delay, which is NOT slept here — the actual sleep happens later, via
+	// sleepBootBackoff, AFTER the socket-bind block (hk-uzvt9).
+	bootBackoffDelay := runBootPreflights(ctx, cfg)
+
+	// PL-005 step 0: construct the event bus + core registries (P4), then wire
+	// every pre-Seal subscriber (P5). Split into constructBusAndRegistries plus
+	// two subscriber-wiring helpers so each stays under the funlen/cyclop
+	// ceilings; shared singletons thread through bootState. EV-009: every
+	// Subscribe MUST run before bus.Seal() (kept in this shell, below).
 	//
-	// The meter tracks daily run-count (via run_started) and output-bytes spend
-	// (via budget_accrual) from daemon-spawned claude implementer/reviewer sessions
-	// — invisible to the Pi-side flywheel budget.ts. When either the max-runs
-	// ceiling (HARMONIK_MAX_RUNS_PER_DAY, default 200) or the bytes proxy ceiling
-	// (FLYWHEEL_BUDGET_USD_PER_DAY × bytesPerUSD) is reached it emits
-	// budget_exhausted{budget_scope=handler_account}, which the existing HP-012
-	// policy consumer (pausePolicy, above) turns into a handler pause.
-	//
-	// Spec ref: specs/cognition-loop.md §4.11 CL-090, CL-090a.
-	// Spec ref: specs/handler-pause.md §11a, HP-012.
-	// Bead ref: hk-k3f8g.
-	spendMeter := NewDaemonSpendMeter(bus)
-	if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
+	// seam-1: constructBusAndRegistries RETURNS the JSONL writer so the OUTER
+	// shell owns defer Close — a helper-scope defer would close the event log
+	// before the work loop runs.
+	bs := &bootState{cfg: cfg, hooks: hooks}
+	jsonlWriter, busErr := bs.constructBusAndRegistries()
+	if busErr != nil {
+		return busErr
 	}
-	if hooks.spendMeterObserver != nil {
-		hooks.spendMeterObserver(spendMeter)
+	if jsonlWriter != nil {
+		defer func() {
+			if closeErr := jsonlWriter.Close(); closeErr != nil {
+				log.Printf("warn: daemon.Start: JSONL writer close: %v", closeErr)
+			}
+		}()
+	}
+	if wireErr := bs.wireSpendAndQueueConsumers(); wireErr != nil {
+		return wireErr
+	}
+	if wireErr := bs.wireWatchersAndObservers(ctx); wireErr != nil {
+		return wireErr
 	}
 
-	// Construct and subscribe the PerQueueSpendMeter (NQ-X1, hk-tigaf.11) BEFORE
-	// Seal. Sibling of DaemonSpendMeter above: it enforces the OPTIONAL, lower,
-	// per-queue spend ceiling (queue.Queue.SpendCapUSD) by attributing each
-	// budget_accrual chunk back to its queue via the shared RunRegistry
-	// (RunHandle.QueueName) and pausing ONLY the offending queue
-	// (QueueStatusPausedByBudget) — sibling queues keep dispatching. The global
-	// meter above remains the daemon-wide ceiling; the stricter ceiling binds.
-	// Un-pause happens on the per-queue meter's own UTC day-rollover.
-	//
-	// Spec ref: specs/queue-model.md (NQ-X1).
-	// Bead ref: hk-tigaf.11.
-	perQueueSpendMeter := NewPerQueueSpendMeter(sharedRunRegistry, qs, cfg.ProjectDir)
-	if subscribeErr := perQueueSpendMeter.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: PerQueueSpendMeter.Subscribe: %w", subscribeErr)
-	}
+	// Local aliases for the shared singletons the residual shell (P6 seal +
+	// startup events) still reads directly under their historical names.
+	bus := bs.bus
+	clockRegressionDetected := bs.clockRegressionDetected
 
-	// Construct and subscribe the QueueOperatorEventConsumer BEFORE Seal so
-	// operator_pause_status and operator_resuming events are delivered during the
-	// production run (EV-009: subscribers MUST register before Seal).
-	//
-	// The consumer drives queue-level active ↔ paused-by-drain transitions per
-	// QM-054 and QM-055. qs was constructed above (pre-Seal); cfg.ProjectDir is
-	// forwarded for the persist-before-emit step (QM-063).
-	//
-	// Spec ref: specs/queue-model.md §8.5 QM-054, §8.6 QM-055.
-	// Bead ref: hk-7urls.
-	queueOpConsumer := NewQueueOperatorEventConsumer(QueueOperatorEventConsumerConfig{
-		QueueStore: qs,
-		ProjectDir: cfg.ProjectDir,
-		Bus:        bus,
-	})
-	if subscribeErr := queueOpConsumer.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: QueueOperatorEventConsumer.Subscribe: %w", subscribeErr)
-	}
-
-	// Wire the per-bead completion notifier when --notify-stream is set (hk-ibilr).
-	if cfg.NotifyStream != nil {
-		notifyConsumer := NewNotifyStreamConsumer(cfg.NotifyStream)
-		if subscribeErr := notifyConsumer.Subscribe(bus); subscribeErr != nil {
-			return fmt.Errorf("daemon.Start: NotifyStreamConsumer.Subscribe: %w", subscribeErr)
-		}
-	}
-
-	// Wire the SubscribeHub — long-lived wildcard observer that fans events
-	// out to "subscribe" socket-op connections (hk-6ynv4). Always registered;
-	// the hub is dormant until a subscribe op connects.
-	subscribeHubCfg := SubscribeHubConfig{
-		Bus:             bus,
-		ActiveRuns:      sharedRunRegistry,
-		EventsJSONLPath: cfg.JSONLLogPath, // for since_event_id replay (hk-a5sil)
-	}
-	if pe, ok := bus.(eventbus.CommsPresenceEmitter); ok {
-		subscribeHubCfg.PresenceEmitter = pe
-	}
-	subscribeHub := NewSubscribeHub(subscribeHubCfg)
-	if subscribeErr := subscribeHub.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: SubscribeHub.Subscribe: %w", subscribeErr)
-	}
-
-	// pollGate is the shared INACTIVE gate for StaleWatcher and BandwidthTuner
-	// (SS-007, hk-w6q7 P2-b).  Updated by startPollGate (started inside the
-	// cfg.ProjectDir block below once stateBuilder is ready).  Zero value is
-	// ungated so watchers always run in unit-test mode (no ProjectDir).
-	pollGate := &PollGate{}
-
-	// Wire the StaleWatcher — wildcard observer that emits run_stale when an
-	// active run produces no event for M minutes (hk-wkzlc). Subscribed before
-	// Seal so event delivery is wired for the production run (EV-009).
-	// StartWatcher is called after Seal so the background goroutine runs within
-	// the daemon's normal context lifetime.
-	//
-	// Bead ref: hk-wkzlc.
-	staleWatcher := NewStaleWatcher(StaleWatcherConfig{
-		SubscribeBus: bus,
-		Emitter:      bus,
-		Registry:     sharedRunRegistry,
-		Gate:         pollGate,
-	})
-	if subscribeErr := staleWatcher.Subscribe(); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: StaleWatcher.Subscribe: %w", subscribeErr)
-	}
-
-	// Wire the review-gate anomaly watcher (hk-tnmjy).
-	//
-	// ReviewGateAnomalyWatcher fires review_gate_anomaly when N consecutive
-	// bead_closed events fire with no intervening reviewer_verdict — the alarm
-	// that should have fired on 2026-06-01 when ~117 beads closed without review.
-	// Default threshold: 3. Override via HARMONIK_REVIEW_GATE_ANOMALY_THRESHOLD.
-	reviewGateWatcher := NewReviewGateAnomalyWatcher(bus)
-	if subscribeErr := reviewGateWatcher.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: ReviewGateAnomalyWatcher.Subscribe: %w", subscribeErr)
-	}
-
-	// Wire the bandwidth-tuner rate-limit backstop (hk-lqtzq).
-	//
-	// bandwidthTunerBackstop subscribes to agent_rate_limited bus events
-	// (emitted by the watcher when the agent reports a 429).  When the tuner is
-	// running, it calls tuner.NotifyRateLimit so the tuner snaps concurrency to 1
-	// immediately — the emergency backstop that was wired but never reached.
-	//
-	// Two-phase wiring: Subscribe is called here (pre-Seal, required by EV-009);
-	// SetTuner is called below (post-Seal, where concurrencyCtrl is available).
-	// The atomic pointer inside the backstop makes the hand-off race-free.
-	tunerBackstop := &bandwidthTunerBackstop{}
-	if subscribeErr := tunerBackstop.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: bandwidth-tuner backstop subscribe: %w", subscribeErr)
-	}
-	tunerBackstop.SetRunRegistry(sharedRunRegistry) // PI-073: isolate Pi events from global tuner
-
-	// Wire the QuiesceArbiter (hk-jeby, M1 of hk-rl4b / codename:sleep-wake).
-	//
-	// Subscribe epic_completed + agent_message wake triggers pre-Seal so they
-	// are delivered during the production run.  Start is called post-Seal
-	// (inside if cfg.BrPath != "") to launch the background goroutine.
-	//
-	// When cfg.ProjectDir is empty (unit-test mode), the arbiter is still
-	// constructed and subscribed but Start is never called — all fields that
-	// require a project directory are guarded with nil/empty checks.
-	//
-	// Bead ref: hk-jeby.
-	var quiesceAdapter ltmux.Adapter
-	if sa, ok := cfg.Substrate.(substrateWithAdapter); ok {
-		quiesceAdapter = sa.tmuxAdapter()
-	}
-	var quiesceCommsBus eventbus.CommsMessageEmitter
-	if ce, ok := bus.(eventbus.CommsMessageEmitter); ok {
-		quiesceCommsBus = ce
-	}
-	var quiesceHash core.ProjectHash
-	if cfg.ProjectDir != "" {
-		quiesceHash = lifecycle.ComputeProjectHash(cfg.ProjectDir)
-	}
-	quiesceArbiter := NewQuiesceArbiter(QuiesceArbiterConfig{
-		ProjectDir:  cfg.ProjectDir,
-		ProjectHash: quiesceHash,
-		Adapter:     quiesceAdapter,
-		QueueStore:  qs,
-		CommsBus:    quiesceCommsBus,
-	})
-	if subscribeErr := quiesceArbiter.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: QuiesceArbiter.Subscribe: %w", subscribeErr)
-	}
-
-	// Wire the substrate launch-timeout diagnostic hooks (hk-oihnf). The substrate
-	// was constructed by the composition root (cmd/harmonik) BEFORE the bus
-	// existed, so its spawn_cap_blocked / tmux_new_window_timeout hooks were left
-	// nil and the diagnostic events never fired from the substrate layer. Now that
-	// the bus is live, probe cfg.Substrate for the hook setter and install hooks
-	// that emit the non-run-scoped diagnostic events directly onto the bus. The
-	// run-scoped (runID-bearing) emission still happens in the dispatch paths
-	// (workloop / reviewloop / dot_cascade) via errors.Is on the structural launch
-	// error; these substrate-layer hooks are the immediate, in-SpawnWindow signal.
-	if hookSetter, ok := cfg.Substrate.(substrateDiagnosticHookSetter); ok {
-		hookSetter.setDiagnosticHooks(
-			func(waited time.Duration, inUse, capSize int) {
-				emitSpawnCapBlocked(ctx, bus, core.RunID{}, waited, inUse, capSize)
-			},
-			func(waited time.Duration) {
-				emitTmuxNewWindowTimeout(ctx, bus, core.RunID{}, waited)
-			},
-		)
-	}
-
-	// Wire the Cat-BL2 reactive ledger-import-failure handler (§8.BL2, hk-k7va9).
-	//
-	// CatBL2Handler subscribes to bead_sync_failed events (emitted by the
-	// post-merge br-sync path in mergeRunBranchToMain, hk-zgt4u) and retries
-	// `br sync --import-only` once. On success it emits bead_ledger_recovered;
-	// on persistent failure it emits bead_ledger_corrupt + operator_escalation_required
-	// {reason=cat_6b_auto_escalated}. Only wired when ProjectDir is set (BrPath
-	// is always paired with ProjectDir in production).
-	//
-	// Spec ref: specs/reconciliation/spec.md §8.BL2.
-	// Bead ref: hk-k7va9.
-	if cfg.ProjectDir != "" && cfg.BrPath != "" {
-		catBL2Handler := NewCatBL2Handler(CatBL2HandlerConfig{
-			ProjectDir: cfg.ProjectDir,
-			BrPath:     cfg.BrPath,
-			Emitter:    bus,
-		})
-		if subscribeErr := catBL2Handler.Subscribe(bus); subscribeErr != nil {
-			return fmt.Errorf("daemon.Start: CatBL2Handler.Subscribe: %w", subscribeErr)
-		}
-	}
-
-	// Notify the test-only observer (when set) so tests can inspect bus
-	// subscription state before Seal locks it.  Only reachable via
-	// StartForTesting; production Start always passes a zero-value daemonTestHooks.
-	//
-	// Bead ref: hk-37zy8, hk-j192n.
-	if hooks.busObserver != nil {
-		hooks.busObserver(bus)
+	// EV-036 (event-model.md §4.10 / HC-033): before sealing the bus, verify no
+	// registered event-payload type declares an exported field whose name matches
+	// the secret-prefix rule. Payload types register via init() (mustRegister), so
+	// the registry is fully populated by now; this scan runs AFTER all
+	// RegisterEventType calls and BEFORE Seal. A positive result is FATAL — the
+	// daemon refuses to boot rather than risk emitting a secret-named field to the
+	// durable JSONL log with no startup failure. Fail-closed, matching the
+	// governor-config fail-loud discipline in seedGovernorDeps.
+	if scanErr := scanRegisteredPayloadsForSecretFields(); scanErr != nil {
+		return fmt.Errorf("daemon.Start: EV-036 secret-field scan: %w", scanErr)
 	}
 
 	if sealErr := bus.Seal(); sealErr != nil {
 		return fmt.Errorf("daemon.Start: seal bus: %w", sealErr)
 	}
+	// EV-034: seal the event-type registry at the same lifecycle point as the
+	// bus. After this, any late RegisterEventType call fails rather than
+	// silently mutating the dispatch table after dispatch has begun.
+	core.SealEventRegistry()
 
-	// EV-002c: emit daemon_degraded{reason=clock_regression} when the wall
-	// clock was behind the persisted HWM by more than 1 second at startup.
-	// Non-fatal: the generator already synthesises IDs ahead of the clock;
-	// this event is an observability signal for operators.
-	if clockRegressionDetected {
-		degradedPayload := core.DaemonDegradedPayload{
-			DetectedAt: time.Now().UTC().Format(time.RFC3339),
-			Reason:     core.DaemonDegradedReasonClockRegression,
-		}
-		if degradedBytes, marshalErr := json.Marshal(degradedPayload); marshalErr == nil {
-			_ = bus.Emit(context.Background(), core.EventTypeDaemonDegraded, degradedBytes)
-		}
+	// P6: post-Seal startup events (clock-regression degraded, stale-watch start,
+	// daemon_started F-class landmark, supervisor-revival scan, daemon_config).
+	// Returns the daemon start time threaded into the later phases. Extracted for
+	// giant-retirement boot-config (B6 complexity reduction).
+	daemonStartTime, startupErr := bs.emitStartupEvents(ctx, clockRegressionDetected, resolvedTargetBranch)
+	if startupErr != nil {
+		return startupErr
 	}
 
-	// Start the stale-watch background goroutine after Seal so the bus is in
-	// live-delivery mode (EV-009 sealed bus semantics). The goroutine runs until
-	// ctx is cancelled. Non-fatal: if context is already cancelled the goroutine
-	// exits immediately.
-	//
-	// Bead ref: hk-wkzlc.
-	staleWatcher.StartWatcher(ctx)
-
-	// Emit daemon_started (§8.7.1, hk-iarcy): F-class event marking the
-	// startup landmark for post-crash-window detection (EV-023).
-	// binary_commit_hash: forwarded from cfg.BinaryCommitHash which is stamped
-	// at build time via -ldflags "-X main.commitHash=<sha>" (hk-mz0x4).
-	// Falls back to "unknown" when the caller does not set the field (unit tests,
-	// unstamped builds) to keep the envelope well-formed per the spec.
-	binaryCommitHash := cfg.BinaryCommitHash
-	if binaryCommitHash == "" {
-		binaryCommitHash = "unknown"
-	}
-	daemonStartTime := time.Now().UTC()
-	startedPayload := core.DaemonStartedPayload{
-		StartedAt:        daemonStartTime.Format(time.RFC3339),
-		PID:              os.Getpid(),
-		BinaryCommitHash: binaryCommitHash,
-	}
-	payloadBytes, marshalErr := json.Marshal(startedPayload)
-	if marshalErr != nil {
-		return fmt.Errorf("daemon.Start: marshal daemon_started payload: %w", marshalErr)
-	}
-	if emitErr := bus.Emit(context.Background(), core.EventTypeDaemonStarted, payloadBytes); emitErr != nil {
-		return fmt.Errorf("daemon.Start: emit daemon_started: %w", emitErr)
-	}
-
-	// hk-rnkuy: emit supervisor_revival when the prior daemon session lacked a
-	// daemon_shutdown event (SIGKILL / OOM / panic). daemon_started is F-class
-	// (fsynced above) so the current session is already in the log before we scan.
-	// Non-fatal: startup continues regardless of detection or emit outcome.
-	if cfg.JSONLLogPath != "" {
-		detectAndEmitSupervisorRevival(context.Background(), cfg.JSONLLogPath, bus)
-	}
-
-	// hk-sul12: emit daemon_config stating the resolved merge-target and active
-	// branch-protection policy. Emitted immediately after daemon_started so the
-	// resolved config is observable before any dispatch work begins.
-	// hk-mptxw (F8): also serialise workflow_mode, max_concurrent, no_auto_pull
-	// so config drift across daemon restarts is visible in the event log.
-	// Non-fatal: a marshal or emit failure does not block startup.
-	if cfgPayload := (core.DaemonConfigPayload{
-		TargetBranch:             resolvedTargetBranch,
-		ProtectBranches:          cfg.ProtectBranches,
-		ForbidUnprotectedDefault: cfg.ForbidUnprotectedDefault,
-		WorkflowMode:             string(cfg.WorkflowModeDefault),
-		MaxConcurrent:            cfg.MaxConcurrent,
-		NoAutoPull:               cfg.NoAutoPull,
-	}); cfgPayload.Valid() {
-		if cfgBytes, cfgMarshalErr := json.Marshal(cfgPayload); cfgMarshalErr == nil {
-			_ = bus.Emit(context.Background(), core.EventTypeDaemonConfig, cfgBytes)
-		}
-	}
-
-	// Step 3 (PL-005 / PL-006, hk-60uvn): orphan sweep — BEFORE any socket
-	// or listener bind. Sweep errors are non-fatal: orphan presence is
-	// recoverable. Errors are surfaced via a daemon_orphan_sweep_completed
-	// event with an errors summary field.
-	//
-	// Skip sweep when ProjectDir is empty (unit-test mode).
-	if cfg.ProjectDir != "" {
-		ctx := context.Background()
-		projectHash := lifecycle.ComputeProjectHash(cfg.ProjectDir)
-
-		// Construct the BI adapter early — BEFORE the orphan sweep emits — so
-		// the PL-006 sixth-bullet stale-in_progress bead-reset can route through
-		// the adapter (BI-010d) and roll its count into the same
-		// daemon_orphan_sweep_completed event. The adapter construction
-		// requires cfg.BrPath; when BrPath is unset (unit-test mode), the
-		// bead-reset path is skipped and the rest of RunOrphanSweep proceeds.
-		//
-		// Sequencing rationale: see the package doc in
-		// internal/lifecycle/orphansweepbeads.go. The bead-reset sweep runs
-		// AFTER the existing filesystem+process sweep AND AFTER the BI-024a
-		// `br --version` handshake has succeeded. The handshake is performed
-		// explicitly below (BI-024a, hk-3pbox) before any bead operations so
-		// the ordering guarantee is structural, not reliant on which br call
-		// happens to be first.
-		//
-		// Bead ref: hk-iuaed.4.
-		var beadLedger lifecycle.InFlightBeadLedger
-		var beadResetter lifecycle.BeadResetter
-		// orphanStatusReader gates the orphan bead-reset on current status
-		// (hk-mdus1 review B3). Stays nil when br is unavailable → the reconcile
-		// conservatively skips the reset (never risks reopening a landed bead).
-		var orphanStatusReader beadStatusReader
-		var beadCat3cCloser lifecycle.BeadCat3cCloser
-		var intentGCLedger lifecycle.IntentGCLedger
-		var intentRedriveWriter lifecycle.IntentRedriveWriter
-		var intentLogDir string
-		if cfg.BrPath != "" {
-			brAdapter, brAdapterErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
-			if brAdapterErr != nil {
-				// Classify + emit divergence_inconclusive for BrSchemaMismatch per
-				// BI-031b; other error categories are also classified so the event
-				// bus always carries a structured observation.  Non-fatal: bead-reset
-				// sweep is best-effort; Cat 0 (schema mismatch / unavailable) means
-				// we proceed queue-less and the bead remains in_progress until the
-				// next restart.
-				//
-				// Spec ref: specs/beads-integration.md §4.10 BI-031b.
-				// Bead ref: hk-th378.
-				_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brAdapterErr, "br-new-for-project-sweep", bus)
-			} else {
-				// BI-024a: explicit br --version handshake before any bead
-				// operations (PL-005 step 4 Cat 0 pre-check). Policy amended by
-				// hk-m6243: a version delta is a loud WARNING (log + continue);
-				// only exec-failure or unparseable output is fatal (exit code 8).
-				//
-				// Spec ref: specs/beads-integration.md §4.8a BI-024a.
-				// Bead ref: hk-3pbox, hk-m6243.
-				if versionErr := brAdapter.CheckBrVersion(ctx, release.BeadsVersion); versionErr != nil {
-					if errors.Is(versionErr, brcli.ErrBrVersionMismatch) {
-						// Non-fatal: br version differs from pin but br is usable.
-						// Log loudly so operators know to bump the pin; do NOT exit.
-						log.Printf("WARNING: daemon.Start: br version mismatch (BI-024a): %v — daemon continues; update release.BeadsVersion to silence", versionErr)
-					} else {
-						// Fatal: br binary is unavailable or version output is unparseable.
-						failedPayload := core.DaemonStartupFailedPayload{
-							FailedAt:    time.Now().UTC().Format(time.RFC3339),
-							ExitCode:    8,
-							FailureMode: "br-version-incompatible",
-						}
-						if failedBytes, marshalErr := json.Marshal(failedPayload); marshalErr == nil {
-							_ = bus.Emit(context.Background(), core.EventTypeDaemonStartupFailed, failedBytes)
-						}
-						return fmt.Errorf("daemon.Start: br --version handshake failed (BI-024a, exit code 8): %w", versionErr)
-					}
-				}
-				beadLedger = brAdapter
-				beadResetter = brAdapter
-				orphanStatusReader = brAdapter  // hk-mdus1 B3: in_progress guard reader
-				beadCat3cCloser = brAdapter     // Cat 3c auto-reconciler (hk-lgtq2)
-				intentGCLedger = brAdapter      // GCRetiredIntentsWithRedrive ledger (hk-cizvu)
-				intentRedriveWriter = brAdapter // BI-031 step-4 re-drive (hk-aev8t)
-				intentLogDir = lifecycle.BeadsIntentsDir(cfg.ProjectDir)
-			}
-		}
-
-		// Raw queue.json load for the orphan-sweep bead-provenance check
-		// (hk-2ty0g). This is a lightweight read-only load — no QM-002a cross-
-		// check, no bead-ledger queries — performed BEFORE the full
-		// LoadQueueAtStartup at PL-005 step 8a. The two sets it produces let
-		// the bead-reset sweep:
-		//   - establish queue-based provenance for beads whose intent files
-		//     were fully drained after a previous SIGKILL recovery (QueueOwned),
-		//   - skip beads that the queue still considers live (QueueDispatched).
-		//
-		// Errors are non-fatal: a missing or corrupt queue.json yields empty
-		// sets and the sweep falls back to intent-log provenance only (the
-		// pre-fix behaviour, which is safe; it just misses the SIGKILL case).
-		//
-		// Spec ref: process-lifecycle.md §4.5 PL-006 sixth bullet.
-		// Bug ref: hk-2ty0g.
-		var queueDispatched lifecycle.QueueDispatchedSet
-		var queueOwned lifecycle.QueueOwnedSet
-		rawQ, rawQErr := queue.Load(ctx, cfg.ProjectDir, queue.QueueNameMain)
-		if rawQErr != nil {
-			logW := cfg.LogWriter
-			if logW == nil {
-				logW = os.Stderr
-			}
-			fmt.Fprintf(logW, "warn: pre-sweep queue.Load failed: %v — falling back to intent-log-only provenance\n", rawQErr)
-		}
-		if rawQErr == nil && rawQ != nil {
-			queueDispatched = make(lifecycle.QueueDispatchedSet)
-			queueOwned = make(lifecycle.QueueOwnedSet)
-			for gi := range rawQ.Groups {
-				for _, item := range rawQ.Groups[gi].Items {
-					queueOwned[item.BeadID] = struct{}{}
-					if item.Status == queue.ItemStatusDispatched {
-						queueDispatched[item.BeadID] = struct{}{}
-					}
-				}
-			}
-		}
-
-		// Extract the TmuxAdapter from cfg.Substrate (if present) so that the
-		// orphan sweep can kill windows left by the previous daemon instance that
-		// was killed (SIGKILL / OOM / crash) before exitClean ran (hk-xb5yi
-		// reap-on-exit: boot-time cleanup path via PL-021c window sweep).
-		//
-		// The extraction uses the package-private substrateWithAdapter interface so
-		// no new field is needed on daemon.Config — the adapter is already embedded
-		// in the substrate constructed by the composition root (main.go / run.go).
-		var sweepTmuxAdapter ltmux.Adapter
-		if sa, ok := cfg.Substrate.(substrateWithAdapter); ok {
-			sweepTmuxAdapter = sa.tmuxAdapter()
-		}
-
-		// hk-9vp51: extract the daemon's own spawn-target session name so the
-		// orphan sweep EXCLUDES it. Without this, a freshly-ensured fallback
-		// "harmonik-<hash>-default" session (created when the ambient session was
-		// the supervisor's) has only an idle zsh window at boot and would be
-		// classified orphaned and killed by the daemon's own boot sweep before the
-		// first dispatch — the exact "session does not exist" regression that
-		// reverted the original sub-fix #3.
-		var daemonOwnSession string
-		if ss, ok := cfg.Substrate.(substrateWithSessionName); ok {
-			daemonOwnSession = ss.daemonSessionName()
-		}
-
-		sweepResult, sweepErr := RunOrphanSweep(
-			ctx,
-			cfg.ProjectDir,
-			projectHash,
-			daemonStartTime,
-			OrphanSweepConfig{
-				BeadLedger:          beadLedger,
-				BeadResetter:        beadResetter,
-				BeadCat3cCloser:     beadCat3cCloser,
-				IntentGCLedger:      intentGCLedger,
-				IntentRedriveWriter: intentRedriveWriter, // BI-031 step-4 re-drive (hk-aev8t)
-				// BeadProvenance: sentinel-file checker (hk-11xkn). Reads
-				// .harmonik/beads-owned/<bead-id> written by ClaimBead on
-				// successful claim. The sentinel outlives the BI-030 claim intent
-				// file (deleted in step 6) and provides provenance when all intent
-				// files have been cleared by prior crash-recovery runs.
-				BeadProvenance: lifecycle.NewSentinelFileProvenanceChecker(
-					lifecycle.BeadsOwnedDir(cfg.ProjectDir),
-				),
-				MergeCommitScanner: lifecycle.GitMergeCommitScanner{
-					ProjectDir:   cfg.ProjectDir,
-					TargetBranch: "", // defaults to "main" inside the scanner
-				},
-				IntentLogDir:       intentLogDir,
-				DaemonStartNS:      daemonStartTime.UnixNano(),
-				QueueDispatched:    queueDispatched,
-				QueueOwned:         queueOwned,
-				TmuxAdapter:        sweepTmuxAdapter, // hk-xb5yi: reap orphan windows from prior crash
-				DaemonSpawnSession: daemonOwnSession, // hk-9vp51: never sweep the daemon's own spawn-target session
-			},
-		)
-
-		// Build and emit daemon_orphan_sweep_completed (§8.7.14, O-class).
-		// Do NOT abort Start on sweep error per PL-006.
-		sweepPayload := sweepResult.ToPayload()
-		sweepPayloadBytes, sweepMarshalErr := json.Marshal(sweepPayload)
-		if sweepMarshalErr != nil {
-			// Marshal failure should not block startup; log and continue.
-			sweepPayloadBytes = []byte(`{}`)
-		}
-		if sweepEmitErr := bus.Emit(ctx, core.EventTypeDaemonOrphanSweepCompleted, sweepPayloadBytes); sweepEmitErr != nil {
-			// Non-fatal: bus emit failure at this stage does not block startup.
-			_ = sweepEmitErr
-		}
-		// Surface sweep errors as the return value only if no other errors
-		// occurred — but per bead spec, do NOT abort Start on sweep error.
-		_ = sweepErr
-
-		// hk-o85ye: reset beads for bead-runs whose independent tmux sessions
-		// have already exited. Must run before LoadQueueAtStartup (QM-002a) so
-		// QM-002a sees open (not in_progress) and reverts the queue item to
-		// pending. Non-fatal — errors logged inside adoptDeadRunSessions.
-		adoptDeadRunSessions(
-			ctx,
-			cfg.ProjectDir,
-			projectHash,
-			daemonStartTime.UnixNano(),
-			intentLogDir,
-			sweepTmuxAdapter,
-			beadResetter,
-		)
-
-		// Reconcile pre-restart in-flight runs: for any run that had run_started
-		// but no terminal event, emit run_failed so the ops-monitor review-gate
-		// does not see a dangling reviewer_launched/no-verdict state after every
-		// restart (hk-r73qr).
-		//
-		// hk-iwu8a: also source orphans from the live dispatch-tracker
-		// (queueDispatched, the same pre-QM-002a raw queue.json read used by the
-		// orphan sweep above) so a bead the daemon crashed on BEFORE writing a
-		// run_started event or a runs/ record still has its -32015 dispatch-lock
-		// cleared. liveRunBeadIDs — whatever adoptDeadRunSessions left behind in
-		// .harmonik/runs/ (i.e. sessions confirmed still alive) — is excluded so a
-		// genuinely in-flight run surviving a clean restart is never reset.
-		if cfg.JSONLLogPath != "" {
-			liveRunBeadIDs := make(map[core.BeadID]struct{})
-			if liveRecs, liveErr := runpkg.List(cfg.ProjectDir); liveErr == nil {
-				for _, rec := range liveRecs {
-					if rec.BeadID != "" {
-						liveRunBeadIDs[core.BeadID(rec.BeadID)] = struct{}{}
-					}
-				}
-			}
-			// hk-hju8n: snapshot the resettable-bead set (open + in_progress) in
-			// two bulk `br list` calls so the reconcile's terminated-but-locked
-			// pass does an O(1) map lookup per bead instead of a `br show`
-			// subprocess. Without this, a long event-log history of terminated
-			// (mostly-deleted) beads makes the synchronous reconcile take minutes
-			// and the daemon is killed before it binds its socket. On any bulk-list
-			// error the cache is nil and we fall back to the per-bead reader
-			// (behaviour identical to pre-hk-hju8n).
-			reconcileStatusReader := orphanStatusReader
-			if lister, ok := orphanStatusReader.(bulkBeadLister); ok && lister != nil {
-				if cached := newCachedOrphanStatusReader(ctx, lister); cached != nil {
-					reconcileStatusReader = cached
-				}
-			}
-			_ = reconcileOrphanedRunsOnResume(
-				ctx,
-				cfg.JSONLLogPath,
-				bus,
-				beadResetter,
-				reconcileStatusReader,
-				intentLogDir,
-				projectHash,
-				daemonStartTime.UnixNano(),
-				queueDispatched,
-				liveRunBeadIDs,
-			)
-		}
-
-		// RC-020a dispatch point (a): emit reconciliation_started{trigger:"startup"}
-		// after the orphan sweep and before the daemon transitions to `ready`.
-		// This marks the boundary at which the startup detector scan runs per
-		// reconciliation/spec.md §4.3 RC-020a.
-		//
-		// The Cat 3c auto-resolver (bead in_progress + merge on main → br close)
-		// ran as part of RunOrphanSweep above (OrphanSweepConfig.BeadCat3cCloser).
-		// The reconciliation_started event here is the observable marker that the
-		// startup scan happened (INFORMATIVE note at §4.3). Non-fatal: a generation
-		// or emit error does not block the daemon from reaching `ready`.
-		//
-		// reconciliation_completed is emitted immediately after so that a hung
-		// startup reconciliation is detectable (F6/hk-mptxw).
-		//
-		// Bead ref: hk-63oh.21, hk-mptxw.
-		if startupRunUID, startupUIDErr := uuid.NewV7(); startupUIDErr == nil {
-			startupRunID := core.RunID(startupRunUID)
-			startupRecPayload := core.ReconciliationStartedPayload{
-				ReconciliationRunID: startupRunID,
-				Trigger:             core.ReconciliationTriggerStartup,
-			}
-			if startupRecBytes, marshalErr := json.Marshal(startupRecPayload); marshalErr == nil {
-				_ = bus.Emit(context.Background(), core.EventTypeReconciliationStarted, startupRecBytes)
-			}
-			startupCompPayload := core.ReconciliationCompletedPayload{
-				ReconciliationRunID: startupRunID,
-				Trigger:             core.ReconciliationTriggerStartup,
-				BeadsExamined:       sweepResult.BeadInProgressReset + sweepResult.BeadCat3cClosed,
-				BeadsClosed:         sweepResult.BeadCat3cClosed,
-				BeadsReset:          sweepResult.BeadInProgressReset,
-				CompletedAt:         time.Now().UTC().Format(time.RFC3339),
-			}
-			if startupCompBytes, marshalErr := json.Marshal(startupCompPayload); marshalErr == nil {
-				_ = bus.Emit(context.Background(), core.EventTypeReconciliationCompleted, startupCompBytes)
-			}
-		}
-
-		// RC-020a Cat-BL1 (§8.BL1): child-bead orphan startup sweep.
-		// Non-fatal: does not block daemon startup.
-		_ = RunCatBL1StartupSweep(ctx, CatBL1StartupSweepConfig{
-			ProjectDir:   cfg.ProjectDir,
-			BrPath:       cfg.BrPath,
-			TargetBranch: resolvedTargetBranch,
-			Emitter:      bus,
-		})
-
-		// RC-020a Cat-BL3 (§8.BL3): merge-conflict-log audit startup sweep.
-		// Non-fatal: does not block daemon startup.
-		_ = RunCatBL3StartupSweep(ctx, CatBL3StartupSweepConfig{
-			ProjectDir: cfg.ProjectDir,
-			Emitter:    bus,
-		})
+	// Step 3 (PL-005 / PL-006, hk-60uvn): orphan sweep + in-flight-run reconcile,
+	// BEFORE any socket or listener bind. Extracted into runStartupReconcile (and
+	// three sub-helpers) for giant-retirement boot-config B4. Holds the single
+	// ProjectDir guard internally; the only fatal path is the BI-024a br --version
+	// handshake (exit code 8). Runs before loadStartupQueues (QM-002a ordering).
+	if reconcileErr := bs.runStartupReconcile(ctx, daemonStartTime, resolvedTargetBranch); reconcileErr != nil {
+		return reconcileErr
 	}
 
 	// hk-9ptu: proactive keepalive for the daemon-owned spawn-target session.
@@ -1573,436 +1055,13 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 		go sk.RunSessionKeepalive(ctx)
 	}
 
-	// Step 4 (hk-ecrxy): register adapters and launch the work loop.
-	//
-	// AdapterRegistry: construct, register ClaudeCodeAdapter for core.AgentTypeClaudeCode,
-	// seal.  The sealed registry is forwarded into handler.NewHandler as a latent
-	// seam for post-MVH adapter-selection (hk-gql20.16).  Construct and seal here
-	// to satisfy PL-020a composition-root ordering.
-	adapterReg := handlercontract.NewAdapterRegistry()
-	if regErr := handler.Register(adapterReg); regErr != nil {
-		return fmt.Errorf("daemon.Start: register ClaudeCodeAdapter: %w", regErr)
-	}
-	if regErr := handler.RegisterCodex(adapterReg); regErr != nil {
-		return fmt.Errorf("daemon.Start: register CodexAdapter: %w", regErr)
-	}
-	if regErr := handler.RegisterPi(adapterReg); regErr != nil {
-		return fmt.Errorf("daemon.Start: register PiAdapter: %w", regErr)
-	}
-	// Seal the registry: no further adapters.
-	// The first ForAgent call would seal it anyway; explicit seal here makes the
-	// ordering contract observable.
-	claudeCodeAdapter, forAgentErr := adapterReg.ForAgent(core.AgentTypeClaudeCode)
-	if forAgentErr != nil {
-		// ForAgent only fails if no adapter is registered — that would be a bug
-		// in the Register call above; treat as fatal.
-		return fmt.Errorf("daemon.Start: seal adapter registry: %w", forAgentErr)
-	}
-
-	// HC-014a: inject the ClaudeCode adapter into the handler-pause controller
-	// so it can call Diagnose on pause-trip and Resume.
-	//
-	// SetAdapter is called after the registry is sealed and before any event
-	// consumers fire (bus is not yet sealed at this point).
-	//
-	// Spec: specs/handler-contract.md §4.3a HC-014a.  Bead: hk-tvsl7.
-	handlerPauseCtrl.SetAdapter(claudeCodeAdapter)
-
-	// Construct the hook-session store once at the composition root (hk-gql20.21).
-	// The same instance is forwarded to RunSocketListener (as HookRelayHandler)
-	// and into workLoopDeps so the work loop can call WaitForOutcome in the
-	// completion path (hk-gql20.22).
-	//
-	// Spec ref: specs/claude-hook-bridge.md §4.10 CHB-025.
-	hookStore := newHookSessionStore()
-	// Wire the bus emitter so dispatchHookRelayEnvelope can forward
-	// agent_rate_limited → agent_rate_limit_status events (hk-lqtzq).
-	// bus.Seal has already been called at this point; the emitter is used
-	// for Emit calls (delivery, not subscription), which are valid post-Seal.
-	hookStore.SetEmitter(bus)
-
-	// PL-005 step 8a (QM-002 / QM-002a): load per-queue files at startup BEFORE
-	// the socket listener or work loop start.  LoadQueueAtStartup first runs the
-	// NQ-A2 legacy migration (.harmonik/queue.json → .harmonik/queues/main.json),
-	// then enumerates .harmonik/queues/ and loads each queue with QM-002a + QM-002b
-	// reconciliation.  Only runs when both ProjectDir and BrPath are set
-	// (production mode); unit-test callers that omit one or both skip cleanly.
-	//
-	// A forward-incompatible schema_version causes a fatal return with exit-code-2
-	// semantics per QM-002.  Corrupt but parseable files produce a warning and are
-	// skipped (daemon proceeds without that queue).
-	//
-	// Spec ref: specs/queue-model.md §3.2 QM-002, §3.2a QM-002a.
-	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
-	// Bead ref: hk-tigaf.3.
-	if cfg.ProjectDir != "" && cfg.BrPath != "" {
-		brAdapterForQueue, brAdapterErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
-		if brAdapterErr != nil {
-			// Classify + emit divergence_inconclusive for BrSchemaMismatch per
-			// BI-031b.  Non-fatal: daemon proceeds without a queue; queue-* ops
-			// return errors until a queue is submitted.
-			//
-			// Spec ref: specs/beads-integration.md §4.10 BI-031b.
-			// Bead ref: hk-th378.
-			_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brAdapterErr, "br-new-for-project-queue", bus)
-		} else {
-			// F40 (hk-n2y): run `br sync --flush-only` before QM-002a/QM-002b
-			// reconciliation to ensure the SQLite ledger is settled. After a
-			// daemon restart the database may be transiently locked by the
-			// previous process, causing every `br show` call to return exit 3
-			// with empty stdout for the first ~31 items. A flush-only sync
-			// forces a full database round-trip, clearing the lock so the
-			// subsequent ShowBead queries succeed without spurious warnings.
-			// Non-fatal: on sync failure the reconciliation continues with
-			// the pre-F40 degraded behaviour (ShowBead failures are warned
-			// and skipped).
-			if syncErr := brAdapterForQueue.SyncFlushOnly(context.Background()); syncErr != nil {
-				logW := cfg.LogWriter
-				if logW == nil {
-					logW = os.Stderr
-				}
-				fmt.Fprintf(logW, "warn: daemon startup: br sync --flush-only failed; QM-002b ShowBead queries may emit transient exit-3 warnings: %v\n", syncErr)
-			}
-
-			loadedQueues, loadErr := lifecycle.LoadQueueAtStartup(
-				context.Background(),
-				cfg.ProjectDir,
-				brAdapterForQueue,
-				bus,
-				nil, // slog.Default() is used when nil
-				&lifecycle.QM002bReapConfig{
-					Resetter:      brAdapterForQueue,
-					IntentLogDir:  lifecycle.BeadsIntentsDir(cfg.ProjectDir),
-					ProjectHash:   lifecycle.ComputeProjectHash(cfg.ProjectDir),
-					DaemonStartNS: daemonStartTime.UnixNano(),
-				},
-			)
-			if loadErr != nil {
-				// ErrQueueSchemaUnsupported → fatal (exit code 2 per QM-002).
-				return fmt.Errorf("daemon.Start: queue load: %w", loadErr)
-			}
-			for _, lq := range loadedQueues {
-				qs.SetQueue(lq)
-			}
-			// Explicit wake after all startup queues are installed so the
-			// workloop unblocks immediately if it reaches workloopIdleWait
-			// before any submit/append signal arrives (hk-ekj wake-gap fix).
-			// SetQueue above already fires the channel for each loaded queue,
-			// but a coalesced signal may have been consumed between iterations;
-			// a defensive Wake() here ensures at least one signal is present
-			// when the workloop first runs.
-			if len(loadedQueues) > 0 {
-				qs.Wake()
-			}
-		}
-	}
-
-	// PL-005 step 8a (hk-m0k0a): wire the persistence function into the
-	// HandlerPauseController (constructed pre-Seal above) and load any persisted
-	// handler state from .harmonik/handler-state.json.
-	//
-	// The controller was constructed above (pre-Seal) with a nil persistFn so
-	// that HandlerPausePolicyGoroutine.Subscribe could reference it before Seal.
-	// Here we patch in the real persistFn (when ProjectDir is set) and then seed
-	// the controller from disk.
-	//
-	// LoadHandlerPauseState seeds the controller with any paused handlers that
-	// survived the last daemon run, ensuring "paused status MUST persist across
-	// restarts" per specs/handler-pause.md §8.3 HP-008 (QM-055 analog).
-	//
-	// A forward-incompatible schema_version causes a fatal return (exit code 2).
-	// File absent → all handlers default live (no-op).
-	//
-	// Spec ref: specs/handler-pause.md §3.5.
-	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 8a.
-	// Bead ref: hk-m0k0a, hk-37zy8.
-	if cfg.ProjectDir != "" {
-		harmonikDir := filepath.Join(cfg.ProjectDir, ".harmonik")
-		handlerPauseCtrl.SetPersistFn(MakeHandlerPausePersistFn(harmonikDir))
-		if loadErr := LoadHandlerPauseState(context.Background(), harmonikDir, handlerPauseCtrl); loadErr != nil {
-			return fmt.Errorf("daemon.Start: handler-state.json load: %w", loadErr)
-		}
-	}
-
-	// decisionBlocker is the daemon-singleton DecisionBlocker populated by
-	// LoadDecisionAckState (EV-043a).  Declared here so the socket listener
-	// (future: decision-ack handler) and the workloop share the same instance.
-	//
-	// Spec ref: specs/event-model.md §4.12 EV-043a.
-	// Bead ref: hk-pbmsq.
-	decisionBlocker := NewDecisionBlocker()
-	if cfg.ProjectDir != "" {
-		if loadErr := LoadDecisionAckState(context.Background(), cfg.ProjectDir, decisionBlocker); loadErr != nil {
-			return fmt.Errorf("daemon.Start: decision_acks load: %w", loadErr)
-		}
-	}
-
-	// opPauseCtrl is the daemon-singleton OperatorPauseController. Constructed
-	// inside the ProjectDir block (where the bus is available and Sealed) and
-	// consumed by both the socket listener (handles operator-pause/resume ops)
-	// and the workloop (br-ready dispatch gate). Declared here so both blocks
-	// share the same variable scope.
-	//
-	// Bead ref: hk-ry8q1.
-	var opPauseCtrl *OperatorPauseController
-
-	// concurrencyCtrl is the daemon-singleton ConcurrencyController. Initialised
-	// inside the ProjectDir block and injected into both the HandlerAdapter (so
-	// queue-set-concurrency RPCs can update the ceiling) and the workloop deps (so
-	// the dispatch gate reads the live value on every tick). Declared here so
-	// both blocks share the same variable scope.
-	//
-	// Bead ref: hk-ohiaf.
-	var concurrencyCtrl *ConcurrencyController
-
-	// queueHandlerAdapter holds the concrete *queue.HandlerAdapter (when one was
-	// constructed in the socket block) so the work-loop block can wire the live
-	// worker-toggle func into it once deps.workerRegistry exists (hk-xjbvi). The
-	// registry is built inside newWorkLoopDeps (after the socket block), so unlike
-	// the concurrency setter — which is wired pre-listener — the worker toggle is
-	// wired just after deps is built; a worker-set-enabled RPC that races the few
-	// microseconds before that gets a clean "no worker registry wired" error and
-	// is retried, never a panic. Nil in unit-test mode (no socket / no adapter).
-	var queueHandlerAdapter *queue.HandlerAdapter
-
-	// drainDet is the daemon-singleton DrainDetector. Constructed inside the
-	// ProjectDir/BrPath block and reused by both the quiesce arbiter (P1-c)
-	// and the state handler (hk-gv04 P2-a). Nil in unit-test mode.
-	var drainDet *DrainDetector
-
-	// crewHandler is the daemon-singleton crew-start/stop handler. Constructed
-	// inside the ProjectDir block (for the socket listener) and also injected into
-	// the workloop deps so the schedule tick can fire spawn-crew actions through
-	// the same HandleCrewStart path (codename:schedule, hk-0es). Declared here so
-	// both blocks share scope; nil in unit-test mode (no ProjectDir / socket).
-	var crewHandler CrewHandler
-
-	// crewIdleReaper (SD-3, hk-s2eac): tears down a crew whose bound queue has
-	// completed and stayed idle past a short grace window, reclaiming its
-	// slot. Constructed alongside crewHandler (needs it as the stop seam);
-	// started post-Seal beside quiesceArbiter.Start. Nil in unit-test mode
-	// (no ProjectDir / socket).
-	var crewIdleReaper *CrewIdleReaper
-
-	// branchReapWatcher (hk-2i36s, follow-up to hk-fpjxi): periodically reaps
-	// merged/orphaned run/* and worktree-agent-* branches so the on-demand
-	// `harmonik gc branches` tool isn't the only caller. Constructed alongside
-	// crewIdleReaper; started post-Seal beside quiesceArbiter.Start. Nil in
-	// unit-test mode (no ProjectDir).
-	var branchReapWatcher *BranchReapWatcher
-
-	// PL-003 / CHB-025 (hk-tjl40): bind the Unix-domain socket so hook-relay
-	// subprocesses can deliver outcome_emitted envelopes to the daemon.
-	//
-	// Only bind when ProjectDir is set; unit-test callers that omit ProjectDir
-	// skip the socket (no path to bind). The socket listener runs concurrently
-	// with the work loop and shuts down on the same ctx.
-	//
-	// QueueHandler: queue.NewHandlerAdapter wired when BrPath is set. A nil
-	// QueueHandler causes all queue-* ops to return -32099 (no queue loaded).
-	//
-	// Spec ref: specs/process-lifecycle.md §4.2 PL-005 step 3a; §4.1 PL-003.
-	if cfg.ProjectDir != "" {
-		sockPath := filepath.Join(cfg.ProjectDir, ".harmonik", "daemon.sock")
-		// hk-ta6dg: a too-long sockPath is a PERMANENT bind failure (unlike the
-		// transient stale-socket race removeStaleSocket already handles), and it
-		// silently defeats the reverse-tunnel readiness gate for remote runs (the
-		// gate only probes the worker-side TCP listener, never this local path —
-		// see internal/lifecycle/socketpathlimit.go). PL-003 deliberately keeps
-		// socket-bind errors non-fatal to daemon.Start (many callers/tests rely on
-		// that, including short-lived test harnesses whose t.TempDir() path is
-		// itself long enough to trip this on macOS), so this is a loud diagnostic,
-		// not an abort — the reverse-tunnel call site is where a too-long path
-		// actually blocks a run, and that path fails loud per-run.
-		if lenErr := lifecycle.ValidateSocketPathLength(sockPath); lenErr != nil {
-			fmt.Fprintf(os.Stderr, "daemon.Start: %v\n", lenErr)
-		}
-		// .harmonik/ was already created above (pidfile block), but when
-		// ProjectDir is set with BrPath="" (test mode skipping pidfile) we still
-		// need the dir. MkdirAll is idempotent.
-		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-		if mkErr := os.MkdirAll(filepath.Dir(sockPath), 0o755); mkErr != nil {
-			return fmt.Errorf("daemon.Start: mkdir-p .harmonik (socket): %w", mkErr)
-		}
-
-		// Construct the QueueHandler adapter. Nil when BrPath is unset (unit-test
-		// mode); RunSocketListener accepts nil and returns -32099 for queue-* ops.
-		// qs and bus are threaded in so the adapter can update the in-memory
-		// QueueStore and emit events after each persist (hk-4ukkq, hk-lzs8r,
-		// hk-peucr).
-		var queueHandler QueueHandler
-		if cfg.BrPath != "" {
-			brAdapterForHandler, brHandlerErr := newBrAdapter(hooks, cfg.BrPath, cfg.ProjectDir)
-			if brHandlerErr != nil {
-				// Classify + emit divergence_inconclusive for BrSchemaMismatch per
-				// BI-031b.  Non-fatal: socket handler proceeds without queue support;
-				// queue-* ops return errors until a queue is submitted.
-				//
-				// Spec ref: specs/beads-integration.md §4.10 BI-031b.
-				// Bead ref: hk-th378.
-				_ = brcli.BrErrReconciliationCategoryWithEmit(context.Background(), brHandlerErr, "br-new-for-project-handler", bus)
-			} else {
-				adapter := queue.NewHandlerAdapter(newBRQueueLedger(brAdapterForHandler), cfg.ProjectDir, qs, bus)
-				// Wire the global --max-concurrent so submit can default a queue's
-				// per-queue Workers count (QM-066) and warn on oversubscription
-				// (hk-tigaf.4 NQ-B1). cfg.MaxConcurrent zero → 1 inside the adapter.
-				adapter.SetGlobalMaxConcurrent(cfg.MaxConcurrent)
-				queueHandler = adapter
-				// Retain the concrete adapter so the work-loop block can wire the
-				// live worker-toggle func once deps.workerRegistry exists (hk-xjbvi).
-				queueHandlerAdapter = adapter
-
-				// Wire the SS-INV-005 veto gate into the quiesce arbiter (P1-c,
-				// hk-zqb3): non-force `harmonik sleep` is refused when GatherDrainFacts
-				// reports dispatchable or in-flight work that would be stranded.
-				drainDet = NewDrainDetector(brAdapterForHandler, brAdapterForHandler, newBRQueueLedger(brAdapterForHandler), sharedRunRegistry, qs, cfg.ProjectDir)
-				quiesceArbiter.SetDrain(drainDet)
-			}
-		}
-
-		// Construct the OperatorPauseController so the socket listener can handle
-		// operator-pause / operator-resume ops (hk-ry8q1). The controller emits
-		// lifecycle events on the bus; must be constructed after Seal so the bus
-		// is ready to deliver events.
-		//
-		// Bead ref: hk-ry8q1.
-		opPauseCtrl = NewOperatorPauseController(bus)
-
-		// Create the ConcurrencyController and wire it into the HandlerAdapter so
-		// queue-set-concurrency RPCs can update the ceiling at runtime (hk-ohiaf).
-		concurrencyCtrl = NewConcurrencyController(cfg.MaxConcurrent)
-		if ha, ok := queueHandler.(*queue.HandlerAdapter); ok {
-			ha.SetConcurrencyFuncs(concurrencyCtrl.Get, concurrencyCtrl.Set)
-			// hk-vfeeo: wire spawn cap so set-concurrency can detect requests
-			// that would oversubscribe the substrate's session ceiling.
-			if ss, ok := cfg.Substrate.(substrateWithSpawnCap); ok {
-				ha.SetSpawnCapFunc(ss.SpawnCapSize)
-			}
-			// hk-omvan: wire the live spawn-cap resize setter (when the
-			// substrate supports it) so set-concurrency RAISES the cap to
-			// satisfy an oversubscribing request instead of refusing it.
-			if ss, ok := cfg.Substrate.(substrateWithSpawnCapSetter); ok {
-				ha.SetSpawnCapSetFunc(ss.SetSpawnCap)
-			}
-		}
-
-		// Start the bandwidth tuner when --subscription-token-ceiling is set
-		// (hk-ymav1).  The tuner reads rolling 5h token usage from Claude Code
-		// transcripts and adjusts concurrencyCtrl on every 60s tick.
-		// normalised MaxConcurrent (zero → 1) is used as the N_max ceiling so the
-		// tuner and the static gate share the same scale.
-		if cfg.SubscriptionTokenCeiling > 0 {
-			maxN := cfg.MaxConcurrent
-			if maxN <= 0 {
-				maxN = 1
-			}
-			homeDir, homeDirErr := os.UserHomeDir()
-			if homeDirErr == nil {
-				tuner := NewBandwidthTuner(concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
-				tuner.SetGate(pollGate)       // SS-007: OFF at INACTIVE (hk-w6q7)
-				tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
-				go tuner.Run(ctx)
-			}
-		}
-
-		// commsSendHandler emits agent_message events on behalf of CLI callers.
-		// NewCommsSendHandler returns nil if bus does not implement CommsMessageEmitter
-		// (e.g. test stubs), in which case comms-send ops return an error response.
-		// Bead ref: hk-nbrmf (comms-send T4).
-		commsSendHandler := NewCommsSendHandler(bus)
-		// Wire comms-recv deps (T8, hk-nnwaa): two INDEPENDENT cursor stores +
-		// events JSONL path. SetRecvDeps is a no-op when commsSendHandler is nil
-		// (bus stub case).
-		//
-		// hk-8xspi (B1): a plain one-shot `comms recv --agent` poll and a
-		// `--follow`/`--wait` live session no longer share a cursor — draining
-		// one never advances the other, so a poller can no longer be starved by
-		// a follow/wait watcher's consumption (or vice versa). The live store is
-		// shared between the handler's catch-up drain (CommsRecvRequest.Live)
-		// and the SubscribeHub (hk-tafd4) so a follow/wait session's drain and
-		// its live tail stay on one continuous cursor. Separate on-disk
-		// directories keep the two cursor namespaces from ever colliding.
-		if impl, ok := commsSendHandler.(*commsSendHandlerImpl); ok && cfg.ProjectDir != "" {
-			pollCursorDir := filepath.Join(cfg.ProjectDir, ".harmonik", "comms", "cursors")
-			liveCursorDir := filepath.Join(cfg.ProjectDir, ".harmonik", "comms", "cursors-live")
-			pollCursorStore := NewCursorStore(pollCursorDir)
-			liveCursorStore := NewCursorStore(liveCursorDir)
-			impl.SetRecvDeps(pollCursorStore, liveCursorStore, cfg.JSONLLogPath)
-			subscribeHub.SetCommsCursorStore(liveCursorStore)
-		}
-
-		// Construct the C2 crew-start/stop handler (c2-spec.md §3.1).
-		// Spec ref: docs/plans/captain/05-specs/c2-spec.md.
-		// Bead ref: hk-5tg5o.
-		// Assigned to the function-scope var (declared above) so the workloop deps
-		// block can reuse it for spawn-crew scheduled actions (hk-0es).
-		// rcPrefix (hk-igpg): the per-project Claude RC label prefix, read from the
-		// cached .harmonik/config.yaml daemon block (loaded at Start, ~L745). Empty =
-		// bare label. Cosmetic only — crew identity keys stay bare.
-		// Wire the keeper probe (hk-qgfme). The event bus satisfies crewKeeperEventBus
-		// directly (eventbus.EventBus.Emit). For comms we need EmitAgentMessage, which
-		// lives on the optional CommsMessageEmitter capability — type-assert the bus,
-		// mirroring the quiesceCommsBus pattern above.
-		var crewCommsEmitter crewKeeperCommsBus
-		if ce, ok := bus.(crewKeeperCommsBus); ok {
-			crewCommsEmitter = ce
-		}
-		crewHandler = NewCrewHandler(
-			cfg.HandlerBinary, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RemoteControlPrefix, cfg.Substrate, opPauseCtrl,
-			WithKeeperProbe(cfg.ProjectCfg.Keeper, bus, crewCommsEmitter),
-		)
-
-		// SD-3 (hk-s2eac): wire the idle-completed-crew reaper now that both
-		// the queue store and the crew stop seam exist. Started post-Seal,
-		// below, alongside quiesceArbiter.Start.
-		crewIdleReaperAgentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "agents")
-		crewIdleReaper = NewCrewIdleReaper(CrewIdleReaperConfig{
-			ProjectDir: cfg.ProjectDir,
-			Queues:     qs,
-			Stopper:    crewHandler,
-			// GATE-0 (hk-dy5gw): a persistent oversight role (admiral, watch —
-			// manifest lifecycle.persistent: true) is never reclaimed. The manifest
-			// property is the durable source of truth; a load error reads as
-			// non-persistent so an ordinary bead-crew is unaffected.
-			PersistentType: func(typeName string) bool {
-				tf, err := agentmanifest.Load(crewIdleReaperAgentsDir, typeName)
-				if err != nil {
-					return false
-				}
-				return tf.Manifest.Lifecycle.Persistent
-			},
-		})
-
-		// hk-2i36s: wire the periodic branch reaper now that cfg.ProjectDir is
-		// known to be a git repository root. Started post-Seal, below, alongside
-		// crewIdleReaper.StartWatcher.
-		branchReapWatcher = NewBranchReapWatcher(BranchReapWatcherConfig{
-			RepoDir: cfg.ProjectDir,
-		})
-
-		// Build the live state handler (hk-gv04 P2-a: `harmonik state`).
-		// drainDet may be nil if ProjectDir was empty above — LiveStateBuilder
-		// tolerates that and sets read_quality.unsure=true in the response.
-		stateBuilder := NewLiveStateBuilder(sharedRunRegistry, qs, drainDet, concurrencyCtrl, cfg.MaxConcurrent, cfg.ProjectDir, cfg.ProjectCfg.Keeper)
-		stateHandler := NewLiveStateSocketHandler(stateBuilder)
-
-		dashBuilder := NewDashboardBuilder(stateBuilder, cfg.ProjectDir, cfg.JSONLLogPath)
-		dashHandler := NewLiveDashboardSocketHandler(dashBuilder)
-
-		// Start the poll-gate goroutine (SS-007, hk-w6q7 P2-b): evaluates the
-		// fleet ActivityLabel every pollGateInterval and gates StaleWatcher and
-		// BandwidthTuner when INACTIVE.  Must start after stateBuilder is ready.
-		startPollGate(ctx, pollGate, stateBuilder)
-
-		// Non-fatal: socket bind errors do not abort the daemon (PL-003 intent;
-		// the absence of the socket is observable externally). Drain the done
-		// channel to avoid goroutine leaks; error is discarded per the same
-		// reasoning as defer ln.Close() discards errors in RunSocketListener.
-		socketDone := make(chan error, 1)
-		go func() {
-			socketDone <- RunSocketListenerWithDashboard(ctx, sockPath, &noopRequestHandler{}, hookStore, subscribeHub, opPauseCtrl, commsSendHandler, crewHandler, quiesceArbiter, stateHandler, dashHandler, queueHandler)
-		}()
-		go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
+	// PL-005 step 4 / step 8a + PL-003 (P9-P11): register adapters + hook store,
+	// load persisted startup state (queues, handler-pause, decision-acks), and
+	// bind the socket listener. Extracted into wireSocketListener + sub-helpers
+	// for giant-retirement boot-config B5; the persistent singletons thread
+	// through bootState for the work loop (P13).
+	if socketErr := bs.wireSocketListener(ctx, daemonStartTime); socketErr != nil {
+		return socketErr
 	}
 
 	// hk-uzvt9: apply the restart-backoff sleep computed above (bootBackoffDelay)
@@ -2014,333 +1073,9 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// sleep belongs after bind. sleepBootBackoff is a no-op when the delay is 0.
 	sleepBootBackoff(ctx, bootBackoffDelay)
 
-	// Skip the work loop when BrPath is not configured (unit-test mode).
-	if cfg.BrPath != "" {
-		deps, depsErr := newWorkLoopDeps(cfg, bus, workflowModeDefault, adapterReg, hookStore)
-		if depsErr != nil {
-			return fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
-		}
-
-		// FW1 (hk-y9fn): init sentinel governor deps from config.
-		// A non-nil governorState signals to FW2 (wire-Evaluate) that the governor
-		// is wired; DaemonStartedAt seeds the cold-start warmup gate (spec §1.4).
-		// hk-drygf (FIX-B): liveness_no_progress_n is a REQUIRED operator key with
-		// no compiled default. When the operator HAS a .harmonik/config.yaml, an
-		// absent key (GovernorConfig returns *ErrMissingLivenessNoProgressN) — or a
-		// read error — fails the daemon load loud rather than silently running with
-		// the G-liveness gate disabled (the live hk-drygf bug). When no config.yaml
-		// exists at all (fresh project / unit-test bootstrap), the operator has not
-		// opted into sentinel config: keep the prior behaviour (governor wired but
-		// the gate disabled) instead of refusing to start.
-		if cfg.ProjectDir != "" {
-			sentinelCfg, sentinelErr := digest.LoadSentinelConfig(cfg.ProjectDir)
-			if sentinelErr != nil {
-				return fmt.Errorf("daemon.Start: sentinel config: %w", sentinelErr)
-			}
-			governorCfg, govErr := sentinelCfg.GovernorConfig()
-			if govErr != nil {
-				// Fail loud only when the operator actually has a config.yaml;
-				// absence means "sentinel not configured", not "misconfigured".
-				configPath := filepath.Join(cfg.ProjectDir, ".harmonik", "config.yaml")
-				if _, statErr := os.Stat(configPath); statErr == nil {
-					return fmt.Errorf("daemon.Start: governor config: %w", govErr)
-				}
-				// No config.yaml: leave governorCfg zero-valued (gate disabled).
-			}
-			deps.governorCfg = governorCfg
-			deps.governorState = &sentinel.GovernorState{
-				DaemonStartedAt: daemonStartTime,
-			}
-			// FW2 (hk-z1lr): store mode and Phase-2 classes so the per-tick
-			// governor evaluate block can guard on mode and compute HasUndeployedTail.
-			deps.sentinelMode = sentinelCfg.Mode
-			deps.sentinelPhase2Classes = sentinelCfg.Phase2Classes()
-		}
-
-		// C1 boot-seed (hk-o50hy): populate emittedEpics from the durable event log
-		// so a restart does not re-emit epic_completed for an already-completed epic
-		// (AC-5). When cfg.JSONLLogPath is empty (unit-test mode), the empty map
-		// from newWorkLoopDeps is retained — the in-process guard still works for
-		// the session.
-		if cfg.JSONLLogPath != "" {
-			seed := make(map[core.BeadID]struct{})
-			for ev := range eventbus.ScanAfter(cfg.JSONLLogPath, core.EventID{}) {
-				if core.EventType(ev.Type) != core.EventTypeEpicCompleted {
-					continue
-				}
-				var pl core.EpicCompletedPayload
-				if err := json.Unmarshal(ev.Payload, &pl); err != nil || !pl.Valid() {
-					continue
-				}
-				seed[pl.EpicID] = struct{}{}
-			}
-			deps.emittedEpics = seed
-			deps.emittedEpicsMu = &sync.Mutex{}
-		}
-
-		// AC1 boot-seed (hk-3ndb): load the durable follow-up ledger so a daemon
-		// restart does not re-emit staged beads already created in a prior session
-		// (flywheel-motion.md §5.4 B guardrail 4). When followUpLedgerPath is empty
-		// (unit-test mode) the empty map from newWorkLoopDeps is retained.
-		if deps.followUpLedgerPath != "" {
-			if ledger, loadErr := loadFollowUpLedger(deps.followUpLedgerPath); loadErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon.Start: load follow-up ledger: %v\n", loadErr)
-			} else {
-				deps.followUpLedger = ledger
-			}
-		}
-
-		// Inject the QueueStore singleton so the work loop can pull from the
-		// active queue (queue-pull dispatch path per execution-model.md §7.4 TS-1).
-		//
-		// Spec ref: specs/queue-model.md §9.1 QM-060; specs/execution-model.md §7.4.
-		deps.queueStore = qs
-		// Wire the wake channel so queue-submit RPCs immediately unblock the
-		// workloop's idle sleep (hk-24xn1).
-		deps.submitWakeC = qs.WakeCh()
-
-		// Wire the generic recurring-job surface (codename:schedule, hk-0es).
-		// Load .harmonik/schedules.json into a single-writer store; the workloop
-		// runScheduleTick fires due jobs each poll. spawn-crew actions reuse the
-		// crewHandler (HandleCrewStart path) so subscription-billing guards apply by
-		// construction; command actions inherit deps.handlerEnv (no credential keys).
-		// A present-but-unparseable file is fatal so the operator notices early; an
-		// absent file is a normal empty store.
-		scheduleStore := schedule.NewStore(cfg.ProjectDir)
-		if loadErr := scheduleStore.Load(); loadErr != nil {
-			return fmt.Errorf("daemon.Start: load schedule store: %w", loadErr)
-		}
-		ensureOpsMonitorSchedule(scheduleStore, cfg.ProjectCfg.Opsmonitor)
-		ensureCtxWatchdogSchedule(scheduleStore, cfg.ProjectCfg.Watchdog.Enabled)
-		ensureWatchLivenessSchedule(scheduleStore, cfg.ProjectCfg.Watch, deps.daemonBinaryPath)
-		deps.scheduleStore = scheduleStore
-		deps.scheduleWakeC = scheduleStore.WakeCh()
-		// Wire the schedule store into the quiesce arbiter so `harmonik sleep`
-		// suspends all enabled jobs and `harmonik wake --all` restores them
-		// symmetrically (hk-xjr1n).
-		quiesceArbiter.SetScheduleStore(scheduleStore)
-		deps.crewHandler = crewHandler // may be nil in unit-test mode (no socket)
-		deps.commsWhoQuerier = shellCommsWho(deps.daemonBinaryPath, cfg.ProjectDir)
-		deps.commsSend = shellCommsSend(deps.daemonBinaryPath, cfg.ProjectDir)
-
-		// Inject the HandlerPauseController so the dispatcher skip-on-paused gate
-		// (hk-kac8g) can consult pause state before claiming each item.
-		// nil → gate disabled; pre-hk-kac8g behaviour preserved for callers that
-		// don't set the field.
-		deps.handlerPauseController = cfg.HandlerPauseController
-
-		// Inject the drain-cancel so harmonik run <bead-id> exits after the queue
-		// completes (hk-icecw). The zero value (nil) preserves normal daemon behaviour.
-		deps.cancelOnQueueDrain = cfg.CancelOnQueueDrain
-
-		// Inject the exit-cancel so harmonik run <bead-id> exits on both
-		// all-success AND paused-by-failure outcomes (hk-8jh26 Fix 1).
-		// The zero value (nil) preserves normal daemon behaviour.
-		deps.cancelOnQueueExit = cfg.CancelOnQueueExit
-
-		// Inject the stop-dispatch context (hk-2o2i9): when set, the work loop's
-		// outer poll checks this context for dispatch-halt instead of the main ctx,
-		// so CancelOnQueueDrain/Exit do not kill in-flight reviewer goroutines.
-		// The zero value (nil) falls back to ctx (backward-compat).
-		deps.stopDispatchCtx = cfg.StopDispatchCtx
-
-		// Inject the HandlerPauseController so the work loop can gate dispatch
-		// on handler pause state (hk-m0k0a).
-		deps.handlerPauseController = handlerPauseCtrl
-
-		// Inject the OperatorPauseController so the workloop can gate br-ready
-		// dispatch when an operator pause is active (hk-ry8q1). nil when
-		// ProjectDir was not set (unit-test mode without a socket).
-		deps.operatorPauseCtrl = opPauseCtrl
-
-		// Inject the DecisionBlocker so the workloop can gate dispatch for beads
-		// blocked by an unacknowledged decision_required event (EV-043, EV-043a).
-		// Always non-nil in production; unit-test callers that do not exercise
-		// decision-blocking leave this at the always-unblocked default.
-		//
-		// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
-		// Bead ref: hk-pbmsq.
-		deps.decisionBlocker = decisionBlocker
-
-		// Inject the ConcurrencyController so the dispatch gate reads the live
-		// ceiling on every tick (hk-ohiaf). nil falls back to the static
-		// maxConcurrent field (unit-test mode / legacy callers).
-		deps.concurrencyCtrl = concurrencyCtrl
-
-		// Wire the live worker enable/disable toggle (hk-xjbvi). The work loop's
-		// deps.workerRegistry — built by newWorkLoopDeps from .harmonik/workers.yaml
-		// — is the SAME registry the dispatch path reads via SelectWorker, so a
-		// `harmonik worker enable <name>` RPC flips selectability with no restart.
-		// The closure captures that exact registry pointer; SetEnabledByName mutates
-		// it under the registry mutex. A nil registry (no workers.yaml) yields a
-		// clean "no such worker configured" error rather than a panic.
-		if queueHandlerAdapter != nil {
-			workerReg := deps.workerRegistry
-			queueHandlerAdapter.SetWorkerToggleFunc(func(name string, enabled bool) (string, error) {
-				if workerReg == nil {
-					return "", fmt.Errorf("no such worker %q: no remote worker configured (.harmonik/workers.yaml is empty)", name)
-				}
-				return workerReg.SetEnabledByName(name, enabled)
-			})
-		}
-
-		// Inject the shared RunRegistry so the work loop and the
-		// HandlerPausePolicyGoroutine operate on the same in-flight snapshot.
-		// The policy goroutine calls Registry.snapshotWithKeys() at pause time;
-		// using the same instance as the work loop ensures the freeze-list reflects
-		// actual in-flight runs rather than an empty registry.
-		//
-		// Bead ref: hk-37zy8.
-		deps.runRegistry = sharedRunRegistry
-
-		// Inject the test-only worktree factory when set via WithWorktreeFactory.
-		// Nil (the default) falls back to productionWorktreeFactory inside beadRunOne.
-		if hooks.worktreeFactory != nil {
-			deps.worktreeFactory = hooks.worktreeFactory
-		}
-
-		// Inject the test-only merge-mutex override when set via WithMergeMutex.
-		// Nil (the default) keeps production's own mutex from newWorkLoopDeps
-		// (hk-yyso7), so production merges stay serialised.
-		if hooks.mergeMu != nil {
-			deps.mergeMu = hooks.mergeMu
-		}
-
-		// hk-bk33: spawn-substrate readiness gate for post-boot re-dispatch.
-		// When a restart-backoff delay was applied and the substrate exposes a
-		// readiness probe, start a goroutine that calls ProbeSpawnReady and closes
-		// a channel when it returns. runWorkLoop waits on this channel before the
-		// first dispatch tick, preventing spurious agent_ready_timeout on
-		// QM-002a-reverted beads re-dispatched right after a restart-backoff boot.
-		if bootBackoffDelay > 0 {
-			if prober, ok := cfg.Substrate.(substrateSpawnReadier); ok {
-				readyCh := make(chan struct{})
-				go func() {
-					defer close(readyCh)
-					_ = prober.ProbeSpawnReady(ctx)
-				}()
-				deps.spawnSubstrateReadyCh = readyCh
-			}
-		}
-
-		quiesceArbiter.Start(ctx)
-
-		// SD-3 (hk-s2eac): start the idle-completed-crew reaper. crewIdleReaper
-		// is non-nil here (constructed above, same cfg.ProjectDir != "" block).
-		crewIdleReaper.StartWatcher(ctx)
-
-		// hk-2i36s: start the periodic branch reaper. branchReapWatcher is
-		// non-nil here (constructed above, same cfg.ProjectDir != "" block).
-		branchReapWatcher.StartWatcher(ctx)
-
-		// Emit the composition-root wiring audit log when HARMONIK_DEBUG_WIRING=1
-		// is set in the operator environment.  All 31 wiring points have been
-		// established at this point; the log is a stable diff surface for catching
-		// silent drops between daemon versions.
-		//
-		// Bead ref: hk-4mupj.
-		logCompositionRoot(cfg.LogWriter)
-
-		// RC-020a dispatch point (c): start the scheduled detector cadence goroutine.
-		//
-		// The goroutine runs until ctx is cancelled and emits
-		// reconciliation_started{trigger:"scheduled-hourly"} on each tick, followed
-		// by a Cat 3c bead-ledger scan and a Class B orphan repair pass
-		// (hk-m3ydd: beads in_progress with no queue record are reset to open).
-		// The default interval is 1 h (ReconciliationScanCadenceDefault); operators
-		// may override via cfg.ReconciliationScanCadence
-		// (operator-nfr.md §4.3 reconciliation_scan_cadence).
-		//
-		// Bead ref: hk-63oh.21, hk-m3ydd.
-		StartReconciliationScheduler(ctx, ReconciliationSchedulerConfig{
-			ProjectDir:   cfg.ProjectDir,
-			BrPath:       cfg.BrPath,
-			TargetBranch: "", // defaults to "main" inside the scheduler
-			Interval:     cfg.ReconciliationScanCadence,
-			Emitter:      bus,
-			LogWriter:    cfg.LogWriter,
-		})
-
-		// WR3 (hk-jn3u): recurring worker-report poll. The boot health check
-		// (buildWorkerRegistry, B6) probes each enabled worker once at startup;
-		// this drives workers.CollectReport on a report_interval ticker so worker
-		// resource + problem reports (WR1/WR2/WR4) actually flow during operation.
-		//
-		// Phase-1 OBSERVABILITY ONLY: it emits worker_report events on a timer and
-		// does NOT touch SelectWorker, max_slots, or dispatch. RunReportLoop is
-		// off-by-default — it returns immediately (no ticker armed) when the
-		// registry is nil / no worker is enabled, so a deployment with no
-		// workers.yaml behaves byte-identically. It runs in its own goroutine bound
-		// to the shutdown ctx; a slow/failing CollectReport is logged and dropped,
-		// never wedging the work loop.
-		var reportEmit workers.EmitFunc
-		if bus != nil {
-			reportEmit = bus.Emit
-		}
-		go workers.RunReportLoop(ctx, cfg.Workers, deps.workerRegistry, workers.ProductionRunnerForWorker, reportEmit)
-
-		// Use the caller-supplied ctx to drive a clean shutdown. The production
-		// caller (cmd/harmonik/main.go) passes a signal.NotifyContext so that
-		// Ctrl-C / SIGTERM cancels the work loop without sending signals into
-		// the test process (hk-7oz2f).
-		// hk-mdus1: wire the StaleWatcher force-reap watchdog seams now that
-		// `deps` (queueStore, emitter) is fully built. Two-phase because the
-		// watcher is constructed and started (StartWatcher) far earlier, before
-		// workLoopDeps exists.
-		//
-		// ForceReap: when the watchdog force-Unregisters a wedged run's leaked
-		// slot, emit a terminal run_failed and drive the owning queue item
-		// terminal so the group advances (the wedged goroutine never runs the
-		// completion path itself).
-		staleWatcher.SetForceReap(func(runID core.RunID, handle *RunHandle) {
-			emitRunCompleted(ctx, bus, runID, string(handle.BeadID), handle.OwningEpicID, handle.OwningEpicAssignee, false,
-				"force-reaped: run wedged past cancel grace; concurrency slot reclaimed (hk-mdus1)",
-				handle.QueueID, handle.QueueGroupIndex, nil)
-			if handle.QueueName != "" && handle.QueueID != nil && handle.QueueGroupIndex != nil && handle.QueueItemIndex >= 0 {
-				evaluateGroupAdvanceWithOutcome(ctx, deps, handle.QueueName, *handle.QueueID, *handle.QueueGroupIndex, handle.QueueItemIndex, false)
-			}
-		})
-		// RunProcessDead: fast dead-process reap probe. Resolve the run's tmux
-		// session (from the .harmonik/runs/ record written for independent-session
-		// runs) and report whether its pane PID is gone via the substrate's
-		// #{pane_pid} liveness. Best-effort: any lookup error → "not dead" so a
-		// probe failure never triggers a spurious reap.
-		if sa, ok := cfg.Substrate.(substrateWithAdapter); ok {
-			if reapAdapter := sa.tmuxAdapter(); reapAdapter != nil && cfg.ProjectDir != "" {
-				staleWatcher.SetRunProcessDead(func(runID core.RunID, _ *RunHandle) bool {
-					recs, listErr := runpkg.List(cfg.ProjectDir)
-					if listErr != nil {
-						return false
-					}
-					for _, r := range recs {
-						if r.RunID != runID.String() {
-							continue
-						}
-						if r.SessionName == "" {
-							return false
-						}
-						pid, pidErr := reapAdapter.WindowPanePID(ctx, ltmux.WindowHandle(r.SessionName+":"))
-						if pidErr != nil {
-							return false
-						}
-						if pid == 0 {
-							return true
-						}
-						return processDead(pid)
-					}
-					return false
-				})
-			}
-		}
-
-		loopDone := make(chan error, 1)
-		go func() {
-			loopDone <- runWorkLoop(ctx, deps)
-		}()
-
-		// Block until the work loop exits (either ctx cancelled or fatal error).
-		<-loopDone
-	}
-
-	return nil
+	// PL-005 step 4 (P13): build + inject the work-loop deps, start the background
+	// loops, wire the StaleWatcher force-reap seams, then run the work loop and
+	// block until ctx cancels or it exits. Skipped when BrPath is unset (unit-test
+	// mode). Extracted into launchWorkLoop for giant-retirement boot-config B6.
+	return bs.launchWorkLoop(ctx, daemonStartTime, bootBackoffDelay, workflowModeDefault)
 }

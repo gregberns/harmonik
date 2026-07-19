@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // wrapUpWarningText is the prompt injected into the managed pane when the
@@ -57,6 +59,67 @@ func ActionableWarnText(agent string, tokens, warn, act int64) string {
 func InjectOnDemandRestartWarning(ctx context.Context, tmuxTarget, agentName string) error {
 	text := ActionableWarnText(agentName, defaultWarnAbsTokens, defaultWarnAbsTokens, defaultActAbsTokens)
 	return InjectText(ctx, tmuxTarget, text)
+}
+
+// --- K2 leader defer template (SK-026 / SK-027 / SK-033) ------------------------
+//
+// The leader comms nudge body is a normative template with four fixed structural
+// slots (SK-026); their PROSE is tunable but their PRESENCE is not (SK-033). Each
+// slot has a load-bearing anchor token — templated the way restartNowCmdToken is —
+// that the compiled default embeds and a valid operator override MUST retain, or
+// the override falls back to the compiled default (leaderDeferHasAllSlots, watcher.go).
+
+const (
+	// Slot 1 — defer condition A (SK-026.1): finish the operator exchange first.
+	deferOperatorExchangeToken = "finish the operator exchange"
+	// Slot 2 — defer condition B (SK-026.2): finish the in-flight unit of work first.
+	deferInflightUnitToken = "finish the in-flight unit"
+	// Slot 3 anchor — the good-stopping-point self-test (SK-026.3 / SK-027). The
+	// verbatim four-part criterion is goodStoppingPointSelfTest; this short anchor
+	// is what the override-completeness check keys on.
+	goodStoppingPointToken = "good stopping point"
+)
+
+// restartNowNonceCmdToken is the SK-030 restart-now command carrying the cycle
+// nonce — slot 4 of the leader defer body (SK-026.4). Distinct from
+// restartNowCmdToken (the actionable-warn path, --agent only) so that path stays
+// unchanged; the verbatim "harmonik keeper restart-now" stem is shared, so
+// containsRestartNowCmd validates slot 4 the same way. Refs: SK-029, SK-030.
+const restartNowNonceCmdToken = "harmonik keeper restart-now --agent %s --nonce %s"
+
+// goodStoppingPointSelfTest is the verbatim SK-027 four-part good-stopping-point
+// criterion embedded as slot 3 of the leader defer body. Its presence is normative
+// (SK-026.3 / SK-033); surrounding prose is tunable. The keeper nudges and bounds
+// this self-assessment — it is agent-owned; the keeper cannot read the agent's
+// context and does not claim to detect a task boundary (SK-027).
+const goodStoppingPointSelfTest = "A good stopping point is one where nothing needed to continue lives only in your context: " +
+	"(i) you are between discrete units, not mid-edit / mid-plan / mid-tool-sequence; " +
+	"(ii) in-flight work is committed or trivially re-derivable; " +
+	"(iii) no unanswered operator question is held; and " +
+	"(iv) the next session resumes from the handoff plus durable substrate with no redo and no lost decision."
+
+// LeaderDeferBody renders the compiled-default K2 leader defer nudge body: the
+// normative four-slot template (SK-026) — defer-A, defer-B, the verbatim SK-027
+// self-test, and the SK-030 restart-now command carrying the cycle nonce. This is
+// the fallback body used whenever no valid operator override is configured
+// (selectLeaderDeferText). It sits UNDER the unchanged FORCE-ACT backstop (SK-028):
+// "take your time" is bounded, not open-ended. agent is the session name; nonce is
+// the keeper cycle id, carried for audit (SK-030). Refs: T3.
+func LeaderDeferBody(agent, nonce string) string {
+	return fmt.Sprintf(
+		"[KEEPER] Context threshold crossed — plan to restart soon, but at a %s, not mid-flow. "+
+			"If you are mid-conversation with the operator, %s first. "+
+			"If you are mid-task, %s first. "+
+			"%s "+
+			"Then self-restart: run /session-handoff — include the marker %s verbatim in your "+
+			"HANDOFF-<name>.md — then run `%s`.",
+		goodStoppingPointToken,
+		deferOperatorExchangeToken,
+		deferInflightUnitToken,
+		goodStoppingPointSelfTest,
+		nonceMarker(nonce),
+		fmt.Sprintf(restartNowNonceCmdToken, agent, nonce),
+	)
 }
 
 // AckLine formats the verifiability ACK line that the keeper injects into the
@@ -129,6 +192,20 @@ func runTmuxCombined(ctx context.Context, stdin string, args ...string) ([]byte,
 // The cycle core uses this as its InjectFn default, so /session-handoff,
 // /clear, and /session-resume all inherit the fix.
 func InjectText(ctx context.Context, tmuxTarget, text string) error {
+	return injectTextClocked(ctx, substrate.SystemClock{}, tmuxTarget, text)
+}
+
+// injectTextClocked is InjectText with the settle/retry sleeps read through the
+// given ClockPort (SK-008/SK-R3). The cycle core's default InjectFn binds this
+// to CyclerConfig.Clock (the T5 injectorClock package var, folded into the port
+// wiring at T6), so a substrate.FakeClock drives the 750ms/400ms×2 sequence in
+// virtual time; the free InjectText keeps the wall clock for watcher-side warn
+// injection. The sequence ORDER and durations are unchanged
+// (TestInjectText_SettleConstants guards them — parity risk #8).
+func injectTextClocked(ctx context.Context, clock substrate.ClockPort, tmuxTarget, text string) error {
+	if clock == nil {
+		clock = substrate.SystemClock{}
+	}
 	if tmuxTarget == "" {
 		return fmt.Errorf("keeper: inject: tmuxTarget is empty")
 	}
@@ -145,7 +222,7 @@ func InjectText(ctx context.Context, tmuxTarget, text string) error {
 
 	// Settle so the REPL finishes ingesting the pasted text before the submit
 	// Enter; otherwise the first Enter races ahead and is dropped (hk-89g).
-	if !sleepCtx(ctx, submitSettle) {
+	if !clock.Sleep(ctx, submitSettle) {
 		return ctx.Err()
 	}
 
@@ -158,7 +235,7 @@ func InjectText(ctx context.Context, tmuxTarget, text string) error {
 	// non-fatal — the line is already submitted by the first Enter on the happy
 	// path, and a redundant Enter is a harmless empty line.
 	for i := 0; i < submitRetries; i++ {
-		if !sleepCtx(ctx, submitRetryDelay) {
+		if !clock.Sleep(ctx, submitRetryDelay) {
 			break
 		}
 		_ = sendEnter(ctx, tmuxTarget) //nolint:errcheck // retry; best-effort
@@ -190,19 +267,6 @@ func SendEscapeKey(ctx context.Context, tmuxTarget string) error {
 		return fmt.Errorf("keeper: tmux send-keys Escape: %w (stderr: %s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// sleepCtx waits for d or until ctx is cancelled. Returns true if the full
-// duration elapsed, false if ctx was cancelled first.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
 }
 
 // InjectWrapUpWarning delivers the wrap-up-warning prompt into the tmux pane

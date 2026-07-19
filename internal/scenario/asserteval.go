@@ -21,6 +21,31 @@ import (
 type RawEvent struct {
 	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
+
+	// RunID is the run-scoped identifier from the event envelope (EV-001;
+	// EM-013), decoded so the post-suite leak sensor (SH-INV-002) can learn
+	// which run_ids were actually executed. Nil for non-run-scoped events.
+	RunID *core.RunID `json:"run_id,omitempty"`
+}
+
+// RunIDsFromEvents returns the distinct run_ids observed across events, in
+// first-seen order. It feeds CheckPostSuiteLeaks the ExecutedRunIDs set
+// (SH-INV-002) from a scenario's captured event log.
+func RunIDsFromEvents(events []RawEvent) []core.RunID {
+	seen := make(map[string]bool, len(events))
+	out := make([]core.RunID, 0, len(events))
+	for _, ev := range events {
+		if ev.RunID == nil {
+			continue
+		}
+		key := ev.RunID.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, *ev.RunID)
+	}
+	return out
 }
 
 // ReadEventLog reads the JSONL event log at logPath per SH-020 / SH-024.
@@ -158,6 +183,40 @@ func walkPayloadPath(payload any, path string) (any, bool) {
 	return cur, true
 }
 
+// jsonAsFloat coerces any JSON- or YAML-decoded numeric value to float64.
+// encoding/json yields float64; gopkg.in/yaml yields int / int64 / uint64 /
+// float64. Returns (0, false) for non-numeric values.
+func jsonAsFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
+}
+
 // jsonValuesEqual reports whether two JSON-decoded values are equal per SH-021:
 //   - numbers compare by numeric value (1 == 1.0)
 //   - strings compare byte-equal (NFC normalization; ASCII content is NFC by definition)
@@ -171,11 +230,15 @@ func jsonValuesEqual(a, b any) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	// encoding/json decodes all numbers as float64.
-	af, aIsFloat := a.(float64)
-	bf, bIsFloat := b.(float64)
-	if aIsFloat && bIsFloat {
-		return af == bf
+	// encoding/json decodes all numbers as float64, but the declared
+	// payload_match side comes from YAML, which decodes integers as int/int64
+	// (and floats as float64). Compare any numeric pair by numeric value so a
+	// YAML int 1 equals a JSON float64 1.0 (SH-021: "numbers compare by value").
+	if af, aIsNum := jsonAsFloat(a); aIsNum {
+		if bf, bIsNum := jsonAsFloat(b); bIsNum {
+			return af == bf
+		}
+		return false
 	}
 	as, aIsStr := a.(string)
 	bs, bIsStr := b.(string)
@@ -294,27 +357,68 @@ func isFilePredicateKind(k WorkspacePredicateKind) bool {
 	return false
 }
 
-// checkSymlinkSafety returns an error if targetPath is a symlink that resolves
-// outside workspaceDir. Returns nil if path doesn't exist, is not a symlink, or
-// resolves safely within the workspace.
+// checkSymlinkSafety returns an error if targetPath escapes workspaceDir via a
+// symlink at ANY path component — leaf OR intermediate directory. A symlinked
+// intermediate directory is the real risk: Lstat-ing only the leaf would let a
+// path like "<ws>/linkdir/secret" (where linkdir → /etc) read arbitrary host
+// files and defeat SH-022 isolation. Returns nil when the path (or its
+// resolvable prefix) stays within the workspace root.
+//
+// Because targetPath may not exist yet (e.g. a file_exists predicate that is
+// expected to fail), we resolve the deepest EXISTING ancestor with
+// EvalSymlinks — which follows every intermediate symlink — and confirm the
+// canonical result is still inside the canonical workspace root. Any
+// not-yet-existing trailing components are plain names (they cannot be
+// traversable symlinks precisely because they do not exist) and are re-checked
+// as a lexical suffix.
 func checkSymlinkSafety(targetPath, workspaceDir string) error {
-	fi, err := os.Lstat(targetPath)
-	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		return nil
-	}
-	resolved, err := filepath.EvalSymlinks(targetPath)
-	if err != nil {
-		return fmt.Errorf("symlink resolution failed: %w", err)
-	}
+	// Canonicalize the workspace root itself (it may sit under a symlinked
+	// temp dir, e.g. /tmp → /private/tmp on macOS).
 	absWS, err := filepath.Abs(workspaceDir)
 	if err != nil {
 		return fmt.Errorf("workspace abs path: %w", err)
 	}
-	absResolved := filepath.Clean(resolved)
-	absWS = filepath.Clean(absWS)
-	// Accept if resolved path IS the workspace dir or is under it.
-	if absResolved != absWS && !strings.HasPrefix(absResolved, absWS+string(filepath.Separator)) {
-		return fmt.Errorf("symlink traversal: %q resolves to %q outside workspace", targetPath, resolved)
+	rootReal, err := filepath.EvalSymlinks(absWS)
+	if err != nil {
+		return fmt.Errorf("workspace resolution failed: %w", err)
+	}
+	rootReal = filepath.Clean(rootReal)
+
+	absTarget, err := filepath.Abs(targetPath)
+	if err != nil {
+		return fmt.Errorf("target abs path: %w", err)
+	}
+
+	// Resolve the deepest existing ancestor of the target; EvalSymlinks
+	// follows EVERY intermediate symlink, so a symlinked directory anywhere
+	// on the path is caught here.
+	existing := absTarget
+	var trailing []string
+	for {
+		if _, statErr := os.Lstat(existing); statErr == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			// Reached the filesystem root without finding an existing
+			// component; nothing to resolve, treat as safe-by-absence.
+			return nil
+		}
+		trailing = append([]string{filepath.Base(existing)}, trailing...)
+		existing = parent
+	}
+
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return fmt.Errorf("symlink resolution failed: %w", err)
+	}
+	// Re-attach any not-yet-existing trailing components lexically. These are
+	// guaranteed not to be symlinks (they do not exist), so a lexical join is
+	// sound; Clean collapses any ".." they might contain.
+	full := filepath.Clean(filepath.Join(append([]string{resolved}, trailing...)...))
+
+	if full != rootReal && !strings.HasPrefix(full, rootReal+string(filepath.Separator)) {
+		return fmt.Errorf("symlink traversal: %q resolves to %q outside workspace", targetPath, full)
 	}
 	return nil
 }

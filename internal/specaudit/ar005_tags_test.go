@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // AR-005 binding test — every normative requirement carries exactly one Tags: line.

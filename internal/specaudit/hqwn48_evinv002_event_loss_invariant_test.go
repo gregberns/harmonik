@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.48 binding test — EV-INV-002 event-loss-between-fsyncs invariant

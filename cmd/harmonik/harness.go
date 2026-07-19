@@ -333,6 +333,20 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 
 	var completedResults []scenario.ScenarioResult
 
+	// executedRunIDs accumulates the distinct run_ids observed across every
+	// scenario's captured event log. It feeds the SH-INV-002 post-suite leak
+	// sensor (process + lease checks) after the loop completes.
+	var executedRunIDs []core.RunID
+	seenRunIDs := make(map[string]bool)
+	recordRunIDs := func(events []scenario.RawEvent) {
+		for _, rid := range scenario.RunIDsFromEvents(events) {
+			if key := rid.String(); !seenRunIDs[key] {
+				seenRunIDs[key] = true
+				executedRunIDs = append(executedRunIDs, rid)
+			}
+		}
+	}
+
 	// interruptExit is called after detecting ctx.Done() inside the loop.
 	// It drains the interrupt signal, checks for double-SIGINT, emits a
 	// partial SuiteResult, and returns the appropriate exit code.
@@ -482,6 +496,17 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 			finalVerdict = scenario.ScenarioVerdictTimeout
 			finalFC = scenario.FailureClassScenarioTimeout
 			finalErrDetail = orchErr.Error()
+			// SH-026 / SH-023 / §7.1 step 3: on timeout the harness MUST evaluate
+			// all declared assertions best-effort against the PARTIAL event log so
+			// operators can localize the timeout cause. The verdict remains
+			// `timeout` and the failure_class remains `scenario-timeout`; only the
+			// AssertionResults are populated (the assertion verdict/fc are
+			// discarded). A partial-log read failure is non-fatal — the timeout
+			// verdict stands with empty AssertionResults.
+			if partialEvents, readErr := scenario.ReadEventLog(absEvLogPath); readErr == nil {
+				assertionResults, _, _ = scenario.EvaluateAssertions(sf, partialEvents, workspacePath)
+				recordRunIDs(partialEvents)
+			}
 		case orchErr != nil:
 			finalVerdict = scenario.ScenarioVerdictError
 			finalFC = scenario.FailureClassOrchestrationInternalError
@@ -494,6 +519,7 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 				finalFC = scenario.FailureClassOrchestrationInternalError
 				finalErrDetail = fmt.Sprintf("read event log: %v", readErr)
 			} else {
+				recordRunIDs(events)
 				var assertFC scenario.FailureClass
 				assertionResults, finalVerdict, assertFC = scenario.EvaluateAssertions(
 					sf, events, workspacePath)
@@ -567,6 +593,29 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 		if r.Verdict != scenario.ScenarioVerdictPass {
 			suiteVerdict = scenario.SuiteVerdictFail
 			break
+		}
+	}
+
+	// SH-INV-002: post-suite leak sensor. Runs AFTER the last scenario's
+	// teardown completes and BEFORE the SuiteResult is written. It inspects the
+	// descendant process tree (HARMONIK_RUN_ID marker), held worktree leases,
+	// and open file descriptors under the fixture root. Residual leaks fail the
+	// SUITE (suite_verdict=fail) but MUST NOT alter any per-scenario verdict
+	// already recorded — leaks are a suite-level hygiene signal.
+	leakReport, leakErr := scenario.CheckPostSuiteLeaks(ctx, scenario.PostSuiteLeakParams{
+		FixtureRoot:    fixtureRoot,
+		ExecutedRunIDs: executedRunIDs,
+	})
+	if leakErr != nil {
+		// Sensor-internal failure is a harness hygiene signal, not a scenario
+		// verdict change; surface it but do not crash the suite emission.
+		fmt.Fprintf(stderr, "harness: post-suite leak sensor: %v\n", leakErr) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
+	} else if leakReport.HasLeaks() {
+		suiteVerdict = scenario.SuiteVerdictFail
+		fmt.Fprintf(stderr, "harness: SH-INV-002 post-suite leak(s) detected (%d) — suite fails:\n", //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
+			len(leakReport.Leaks))
+		for _, lk := range leakReport.Leaks {
+			fmt.Fprintf(stderr, "  - %s: %s\n", lk.Kind, lk.Detail) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 		}
 	}
 
@@ -716,7 +765,7 @@ func harnessDiscoverScenarios(
 			}
 			// SH-002: .yml and uppercase variants look like YAML but use the
 			// wrong extension; reject without opening.
-			if ext == ".yml" || strings.ToLower(ext) == ".yaml" {
+			if lower := strings.ToLower(ext); lower == ".yml" || lower == ".yaml" {
 				wrongExt = append(wrongExt, fmt.Errorf(
 					"scenario-load-failure: %q has extension %q; scenario files MUST use .yaml (SH-002)",
 					path, ext,
@@ -745,16 +794,30 @@ func harnessDiscoverScenarios(
 			loadErrs = append(loadErrs, err)
 			continue
 		}
-		// SH-005: suite-wide name uniqueness; report both conflicting paths.
-		if prev, exists := nameToPath[sf.Name]; exists {
-			loadErrs = append(loadErrs, fmt.Errorf(
-				"scenario-load-failure: duplicate scenario name %q in %q and %q (SH-005)",
-				sf.Name, prev, path,
-			))
+		// SH-030: expand the parameter matrix into one concrete ScenarioFile per
+		// cartesian-product cell BEFORE the SH-005 uniqueness check, so that
+		// {{.param}} substitution and synthetic per-cell names are materialized
+		// and matrix-cell name collisions participate in suite-wide dedup.
+		// Scenarios without a `matrix:` field expand to a single-element slice
+		// (the scenario itself, unchanged).
+		cells, expErr := sf.ExpandMatrix()
+		if expErr != nil {
+			loadErrs = append(loadErrs, fmt.Errorf("%q: %w", path, expErr))
 			continue
 		}
-		nameToPath[sf.Name] = path
-		allLoaded = append(allLoaded, harnessScenarioEntry{ScenarioFile: sf, SourcePath: path})
+		for _, cell := range cells {
+			// SH-005 / SH-030: suite-wide name uniqueness (spans matrix cells);
+			// report both conflicting paths.
+			if prev, exists := nameToPath[cell.Name]; exists {
+				loadErrs = append(loadErrs, fmt.Errorf(
+					"scenario-load-failure: duplicate scenario name %q in %q and %q (SH-005)",
+					cell.Name, prev, path,
+				))
+				continue
+			}
+			nameToPath[cell.Name] = path
+			allLoaded = append(allLoaded, harnessScenarioEntry{ScenarioFile: cell, SourcePath: path})
+		}
 	}
 
 	// Apply cadence filter.

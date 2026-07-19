@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-63oh.41 binding test — RC-029: `reset-to-checkpoint` is intra-run rollback;

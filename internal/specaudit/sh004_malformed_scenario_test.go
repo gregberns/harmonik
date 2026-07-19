@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.4 binding test — SH-004: malformed scenarios fail with `scenario-load-failure`.

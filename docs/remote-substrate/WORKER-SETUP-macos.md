@@ -118,6 +118,50 @@ interactive login — which is exactly what a dispatched bead will do.
 
 ---
 
+## Part 4b — Run the T4 (M4-C8) end-to-end Claude proof against this worker
+
+Once Part 4 is green, prove the **Claude slice** end to end with the scenario test
+`TestScenario_RemoteSubstrate_ClaudeSlice_RemoteWorker_E2E`
+(`internal/daemon/scenario_remote_substrate_t4_claude_test.go`). It dispatches ONE bead whose
+**real Claude process runs on this worker** over the production `ssh -- tmux/git` path — reverse
+tunnel, `agent_ready` + `agent_input_acked` over the tunnel, commit, and merge back to box A's
+`main` — with NO manual step. It SKIPS unless armed, so it is safe to leave in the normal test set.
+
+**Preconditions (all of Part 4, plus):**
+- Box A can `ssh <worker> true`, `ssh <worker> claude --version`, and `ssh <worker> tmux -V`
+  (the test probes all three and skips with the failing one named).
+- The worker's `claude` is logged into the **subscription** and `ANTHROPIC_API_KEY` is **empty**
+  on the worker (Part 1 step 2). The daemon's D2 guard fail-closes the spawn if the key is set.
+- A worker repo the run can materialize into. Two ways to supply it:
+  - **Same-box proof** (`<worker>` shares box A's filesystem, e.g. `localhost`): leave
+    `HARMONIK_T4_WORKER_REPO` unset — the test clones a throwaway repo under a temp dir.
+  - **Genuine two-box proof** (`gb-mbp`): point `HARMONIK_T4_WORKER_REPO` at the worker's clone
+    from Part 2 step 5 (e.g. `~/harmonik-worker/repo`), and ensure the worker can fetch box A's
+    base commit (the same reachability Part 4 verifies).
+
+**Exact command (run FROM box A, at the repo root):**
+
+```bash
+HARMONIK_T4_WORKER=gb-mbp \
+HARMONIK_T4_WORKER_REPO=~/harmonik-worker/repo \
+TMPDIR=/tmp/h \
+go test -tags scenario -run TestScenario_RemoteSubstrate_ClaudeSlice_RemoteWorker_E2E ./internal/daemon/ -v
+```
+
+A same-box smoke (no separate worker) is just:
+
+```bash
+HARMONIK_T4_WORKER=localhost TMPDIR=/tmp/h \
+go test -tags scenario -run TestScenario_RemoteSubstrate_ClaudeSlice_RemoteWorker_E2E ./internal/daemon/ -v
+```
+
+**PASS** means: a real Claude ran on the worker; `agent_ready` (provenance `claude_session_start`)
+and `agent_input_acked` were observed over the reverse tunnel; `run_started.worker_name` matched
+the host; and the worker's commit landed on box A's `main`. Leaving `HARMONIK_T4_WORKER` unset
+skips the test (armed-only) — that is the expected state in CI and on the build box.
+
+---
+
 ## Part 5 — Ongoing maintenance (dependency drift)
 
 When a project adds a dependency the worker lacks, a bead's build/test gate will fail on the

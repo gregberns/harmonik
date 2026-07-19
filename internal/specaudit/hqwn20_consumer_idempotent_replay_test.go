@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.20 binding test — EV-014b consumer idempotency on recovery and dead-letter replay.

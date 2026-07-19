@@ -497,22 +497,36 @@ func TestScenario_SSHLocalhost_ReviewVerdict_NilRunner_hk8u2al(t *testing.T) {
 	}
 }
 
-// TestScenario_SSHLocalhost_ReviewVerdict_SSHRunner_hk8u2al confirms that injecting
-// the SSHRemapRunner causes ReadReviewVerdictVia to route the cat call through ssh
-// localhost to workerCheckout/.harmonik/review.json (where APPROVE is seeded),
-// instead of the absent box-A reviewer worktree file → result.Success == true.
+// TestScenario_SSHLocalhost_ReviewVerdict_SSHRunnerBypassed_hk8u2al locks in the
+// box-A-local reviewer-verdict contract established by hk-fxy9/hk-177oz/hk-1hgjr.
+// Since fix-D the reviewer worktree is created on box A, and the daemon reads
+// review.json via workspace.ReadReviewVerdictLocalRetry with a NIL runner
+// (reviewloop.go): the per-run worker runner is DELIBERATELY bypassed for the
+// reviewer verdict, because routing it as `ssh <worker> cat <box-A-path>`
+// truncates under concurrent ControlMaster churn (hk-cnp17 class).
 //
-// The '#' in the worker checkout directory name proves SSHRunner's single-quote
-// wrapping is active: without it the remote shell treats '#hk8u2al/.harmonik/…'
-// as a comment and the cat targets the wrong (parent) directory.
-func TestScenario_SSHLocalhost_ReviewVerdict_SSHRunner_hk8u2al(t *testing.T) {
+// This test proves the bypass under a REAL remote runner: an SSHRemapRunner that
+// WOULD serve APPROVE from the worker checkout (where review.json is seeded) is
+// injected, yet the run still FAILS with verdict-absent — the reviewer verdict is
+// read box-A-local, where the handler script's reviewer role writes nothing. A
+// regression that re-routes the reviewer-verdict read back through the worker
+// runner would surface the worker APPROVE and flip this to success, catching the
+// seam re-introduction.
+//
+// (Superseded contract: this test previously asserted the OPPOSITE — that the
+// SSHRunner routed the reviewer-verdict read to the worker checkout for a success.
+// That seam was removed by hk-fxy9; the SSH transport + '#'-quoting path is still
+// positively exercised by the sibling gate-verdict SSHRunner tests, which DO
+// route via the runner. The '#' in the worker checkout dir name is retained so
+// this test keeps sharing that fixture. Bead: hk-vbkv1.)
+func TestScenario_SSHLocalhost_ReviewVerdict_SSHRunnerBypassed_hk8u2al(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 	hk8u2alSkipIfSSHLocalhostUnavailable(t)
 
 	projectDir := hk8u2alFixtureProjectSetup(t)
 	wtPath, parentSHA := hk8u2alFixtureImplWorktree(t, projectDir)
-	workerDir := hk8u2alFixtureWorkerCheckout(t)
+	workerDir := hk8u2alFixtureWorkerCheckout(t) // seeds APPROVE in the worker checkout…
 	scriptPath := hk8u2alFixtureHandlerScript(t, wtPath)
 
 	runner := hk8u2alSSHRemapRunner{
@@ -540,16 +554,20 @@ func TestScenario_SSHLocalhost_ReviewVerdict_SSHRunner_hk8u2al(t *testing.T) {
 	result := daemon.ExportedRunReviewLoopWithRunner(
 		ctx, deps,
 		hk8u2alFixtureRunID(t),
-		core.BeadID("hk-8u2al-ssh-runner-approve"),
+		core.BeadID("hk-8u2al-ssh-runner-bypassed"),
 		wtPath, parentSHA,
-		runner, // SSHRemapRunner: remap → ssh localhost cat → APPROVE from worker checkout
+		runner, // …but the reviewer verdict is read box-A-local, so this runner is NOT consulted for it.
 	)
 
-	if !result.Success {
-		t.Fatalf("SSHLocalhost ReviewVerdict SSHRunner: expected success (APPROVE from worker checkout); summary=%q", result.Summary)
+	// The injected worker runner must NOT rescue the run: the reviewer verdict is
+	// read box-A-local (absent) → verdict-absent failure, per hk-177oz.
+	if result.Success {
+		t.Fatalf("SSHLocalhost ReviewVerdict SSHRunnerBypassed: expected FAILURE — the reviewer verdict " +
+			"is read box-A-local (hk-fxy9/hk-177oz) so the injected worker runner's APPROVE must not be " +
+			"consulted; success means the reviewer-verdict read regressed to routing through the runner")
 	}
-	if result.CompletionReason != string(core.ReviewLoopCompletionReasonApproved) {
-		t.Errorf("SSHLocalhost ReviewVerdict SSHRunner: CompletionReason=%q; want %q",
-			result.CompletionReason, core.ReviewLoopCompletionReasonApproved)
+	if result.CompletionReason != string(core.ReviewLoopCompletionReasonError) {
+		t.Errorf("SSHLocalhost ReviewVerdict SSHRunnerBypassed: CompletionReason=%q; want %q (verdict absent)",
+			result.CompletionReason, core.ReviewLoopCompletionReasonError)
 	}
 }

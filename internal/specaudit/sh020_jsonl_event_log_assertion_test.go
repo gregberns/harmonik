@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.22 binding test — SH-020 harness reads the captured JSONL event log as the

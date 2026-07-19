@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-zs0.17 binding test — AR-016 subsystem is a Go package inside the daemon for MVH.

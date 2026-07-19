@@ -56,6 +56,15 @@ type DiscoveredWorktree struct {
 	// per WM-013a.
 	LeaseLock *discoveredLeaseLock
 
+	// LeaseLockUnreadable reports that a lease-lock file was PRESENT on disk but
+	// could not be read or parsed (corrupt/truncated/permission). When true,
+	// LeaseLock is nil, but the worktree MUST NOT be treated as unleased: its
+	// lease state is UNKNOWN, so it is quarantined from both the stale-lock
+	// removal and the age-based no-lock removal. This is the fail-safe distinction
+	// between "lock absent" and "lock present, state unknown" — mistaking the
+	// latter for the former would force-remove a possibly-live worktree.
+	LeaseLockUnreadable bool
+
 	// HasSessionsDir reports whether ${path}/.harmonik/sessions/ exists on disk
 	// (step d). False means no session was ever started against this worktree,
 	// which contributes to the "bare-worktree-no-lease" evidence type of WM-003a.
@@ -158,10 +167,21 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 
 		// Step (c): read the lease-lock file if present.
 		leaseLockPath := LeaseLockPath(worktreePath)
-		if ll, err := readDiscoveredLeaseLock(leaseLockPath); err == nil {
+		ll, llErr := readDiscoveredLeaseLock(leaseLockPath)
+		switch {
+		case llErr != nil:
+			// A read/parse error means the lock file EXISTS but its content
+			// cannot be recovered (corrupt/truncated). Fail safe: mark the lock
+			// present-but-unknown so downstream reapers treat the worktree as
+			// possibly-live and NEVER as absent (which would route it to
+			// force-removal). A cleanly-absent lock returns (nil, nil), NOT an
+			// error, so this branch is reached only for genuine corruption.
+			dw.LeaseLockUnreadable = true
+		case ll != nil:
 			dw.LeaseLock = ll
 		}
-		// A missing lease-lock is not an error here — the caller classifies it.
+		// A missing lease-lock leaves both LeaseLock nil and LeaseLockUnreadable
+		// false — the caller classifies it as NoLock.
 
 		// Step (d): stat the sessions root directory.
 		sessionsRoot := SessionLogRootPath(worktreePath)

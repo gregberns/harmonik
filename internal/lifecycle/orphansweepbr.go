@@ -159,7 +159,20 @@ func SweepOrphanBr(ctx context.Context, lister ProcessLister, logger *log.Logger
 		}
 	}
 
-	// Phase 3: SIGKILL any still-alive processes.
+	// Phase 3: SIGKILL any still-alive processes — after re-verifying identity
+	// via a fresh enumeration, so a recycled PID (unrelated process that
+	// inherited the number after the target exited) is never SIGKILLed.
+	if len(alive) > 0 {
+		fresh, freshErr := lister.ListOrphanBrPIDs(ctx)
+		if freshErr != nil {
+			orphanLog(logger, "SweepOrphanBr: re-enumerate before SIGKILL failed: %v; skipping SIGKILL (PID-reuse guard)", freshErr)
+			for pid := range alive {
+				survived = append(survived, pid)
+			}
+			return survived, nil
+		}
+		alive = reverifyCandidatePIDs(alive, fresh)
+	}
 	if len(alive) > 0 {
 		orphanLog(logger, "SweepOrphanBr: %d process(es) survived SIGTERM grace period; sending SIGKILL", len(alive))
 	}
@@ -180,6 +193,28 @@ func SweepOrphanBr(ctx context.Context, lister ProcessLister, logger *log.Logger
 	}
 
 	return survived, nil
+}
+
+// reverifyCandidatePIDs guards the SIGTERM→SIGKILL escalation against PID
+// reuse: kill(pid, 0) alone cannot distinguish the original target from an
+// unrelated process that inherited a recycled PID after the target exited.
+// Before SIGKILL, the caller re-runs its identity-based enumeration (comm /
+// command-line / provenance match) and passes the fresh PID set here; only
+// candidates still present in the fresh enumeration remain kill-eligible.
+// A candidate absent from the fresh set either exited (goal achieved) or its
+// PID was recycled by a non-matching process (must not be signalled).
+func reverifyCandidatePIDs(alive map[int]bool, fresh []int) map[int]bool {
+	freshSet := make(map[int]bool, len(fresh))
+	for _, pid := range fresh {
+		freshSet[pid] = true
+	}
+	confirmed := make(map[int]bool, len(alive))
+	for pid := range alive {
+		if freshSet[pid] {
+			confirmed[pid] = true
+		}
+	}
+	return confirmed
 }
 
 // orphanSweepIsPidLive probes whether pid is a live process by sending signal

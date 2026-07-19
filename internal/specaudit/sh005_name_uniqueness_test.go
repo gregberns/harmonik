@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.5 binding test — SH-005: scenario name uniqueness is repository-wide.

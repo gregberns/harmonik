@@ -180,7 +180,7 @@ func (a *Adapter) Run(ctx context.Context, args ...string) (Result, error) {
 				Stdout:   stdoutBuf.Bytes(),
 				Stderr:   stderrCap.Result().Bytes,
 				ExitCode: code,
-				BrErr:    BrErrorFromExitCode(code),
+				BrErr:    BrErrorFromExit(code, stderrCap.Result().Bytes),
 			}, nil
 		}
 		// Exec failure: binary not found, fork failed, context canceled before

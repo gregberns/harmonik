@@ -123,3 +123,4 @@ HANDOFF.md
 # (fleet-wide rebase-abort: tracked admiral.json deletion dirtied the merge index).
 # Missions (*.md) stay tracked for reviewability (hk-ev9e).
 /.harmonik/crew/*.json
+.harmonik/events/baseline-2026-07-13/

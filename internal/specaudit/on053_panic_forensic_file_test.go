@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.49 binding test — ON-053 post-panic forensic file written by the panic barrier.

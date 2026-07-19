@@ -1,4 +1,4 @@
-package core_test
+package core
 
 // daemonevents_coverage_hkj3hrn_test.go — targeted coverage uplift for the
 // Valid() methods on §8.7 daemon-event payload types.
@@ -13,8 +13,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-
-	"github.com/gregberns/harmonik/internal/core"
 )
 
 // ─── ShutdownMode.Valid ───────────────────────────────────────────────────────
@@ -23,11 +21,11 @@ func TestShutdownMode_Valid(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		mode  core.ShutdownMode
+		mode  ShutdownMode
 		valid bool
 	}{
-		{core.ShutdownModeGraceful, true},
-		{core.ShutdownModeImmediate, true},
+		{ShutdownModeGraceful, true},
+		{ShutdownModeImmediate, true},
 		{"", false},
 		{"unknown", false},
 	}
@@ -48,11 +46,11 @@ func TestOperatorPauseStatusValue_Valid(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		v     core.OperatorPauseStatusValue
+		v     OperatorPauseStatusValue
 		valid bool
 	}{
-		{core.OperatorPauseStatusValuePausing, true},
-		{core.OperatorPauseStatusValuePaused, true},
+		{OperatorPauseStatusValuePausing, true},
+		{OperatorPauseStatusValuePaused, true},
 		{"", false},
 		{"running", false},
 	}
@@ -78,15 +76,15 @@ func TestDaemonStartedPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.DaemonStartedPayload
+		p     DaemonStartedPayload
 		valid bool
 	}{
-		{"valid", core.DaemonStartedPayload{StartedAt: validTs, PID: validPID, BinaryCommitHash: validHash}, true},
-		{"zero-value", core.DaemonStartedPayload{}, false},
-		{"missing-started-at", core.DaemonStartedPayload{PID: validPID, BinaryCommitHash: validHash}, false},
-		{"pid-zero", core.DaemonStartedPayload{StartedAt: validTs, PID: 0, BinaryCommitHash: validHash}, false},
-		{"pid-negative", core.DaemonStartedPayload{StartedAt: validTs, PID: -1, BinaryCommitHash: validHash}, false},
-		{"missing-commit-hash", core.DaemonStartedPayload{StartedAt: validTs, PID: validPID}, false},
+		{"valid", DaemonStartedPayload{StartedAt: validTs, PID: validPID, BinaryCommitHash: validHash}, true},
+		{"zero-value", DaemonStartedPayload{}, false},
+		{"missing-started-at", DaemonStartedPayload{PID: validPID, BinaryCommitHash: validHash}, false},
+		{"pid-zero", DaemonStartedPayload{StartedAt: validTs, PID: 0, BinaryCommitHash: validHash}, false},
+		{"pid-negative", DaemonStartedPayload{StartedAt: validTs, PID: -1, BinaryCommitHash: validHash}, false},
+		{"missing-commit-hash", DaemonStartedPayload{StartedAt: validTs, PID: validPID}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -104,20 +102,20 @@ func TestDaemonStartedPayload_Valid(t *testing.T) {
 func TestDaemonReadyPayload_Valid(t *testing.T) {
 	t.Parallel()
 
-	validID := core.RunID(uuid.MustParse("0196a1b2-c3d4-7000-8a1b-000000000003"))
-	nilID := core.RunID(uuid.Nil)
+	validID := RunID(uuid.MustParse("0196a1b2-c3d4-7000-8a1b-000000000003"))
+	nilID := RunID(uuid.Nil)
 
 	cases := []struct {
 		name  string
-		p     core.DaemonReadyPayload
+		p     DaemonReadyPayload
 		valid bool
 	}{
-		{"valid-no-investigators", core.DaemonReadyPayload{ReadyAt: "2026-05-09T12:00:00Z", ReadyAtNsSinceBoot: 100}, true},
-		{"valid-with-investigators", core.DaemonReadyPayload{ReadyAt: "2026-05-09T12:00:00Z", ReadyAtNsSinceBoot: 100, InvestigatorRunIDs: []core.RunID{validID}}, true},
-		{"zero-value", core.DaemonReadyPayload{}, false},
-		{"missing-ready-at", core.DaemonReadyPayload{ReadyAtNsSinceBoot: 100}, false},
-		{"zero-ns", core.DaemonReadyPayload{ReadyAt: "2026-05-09T12:00:00Z", ReadyAtNsSinceBoot: 0}, false},
-		{"nil-run-id-in-investigators", core.DaemonReadyPayload{ReadyAt: "2026-05-09T12:00:00Z", ReadyAtNsSinceBoot: 100, InvestigatorRunIDs: []core.RunID{nilID}}, false},
+		{"valid-no-investigators", DaemonReadyPayload{ReadyAt: "2026-05-09T12:00:00Z", ReadyAtNsSinceBoot: 100}, true},
+		{"valid-with-investigators", DaemonReadyPayload{ReadyAt: "2026-05-09T12:00:00Z", ReadyAtNsSinceBoot: 100, InvestigatorRunIDs: []RunID{validID}}, true},
+		{"zero-value", DaemonReadyPayload{}, false},
+		{"missing-ready-at", DaemonReadyPayload{ReadyAtNsSinceBoot: 100}, false},
+		{"zero-ns", DaemonReadyPayload{ReadyAt: "2026-05-09T12:00:00Z", ReadyAtNsSinceBoot: 0}, false},
+		{"nil-run-id-in-investigators", DaemonReadyPayload{ReadyAt: "2026-05-09T12:00:00Z", ReadyAtNsSinceBoot: 100, InvestigatorRunIDs: []RunID{nilID}}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -137,15 +135,15 @@ func TestDaemonShutdownPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.DaemonShutdownPayload
+		p     DaemonShutdownPayload
 		valid bool
 	}{
-		{"valid-graceful", core.DaemonShutdownPayload{ShutdownAt: "2026-05-09T12:00:00Z", ShutdownAtNsSinceBoot: 200, Mode: core.ShutdownModeGraceful}, true},
-		{"valid-immediate", core.DaemonShutdownPayload{ShutdownAt: "2026-05-09T12:00:00Z", ShutdownAtNsSinceBoot: 200, Mode: core.ShutdownModeImmediate}, true},
-		{"zero-value", core.DaemonShutdownPayload{}, false},
-		{"missing-shutdown-at", core.DaemonShutdownPayload{ShutdownAtNsSinceBoot: 200, Mode: core.ShutdownModeGraceful}, false},
-		{"zero-ns", core.DaemonShutdownPayload{ShutdownAt: "2026-05-09T12:00:00Z", Mode: core.ShutdownModeGraceful}, false},
-		{"invalid-mode", core.DaemonShutdownPayload{ShutdownAt: "2026-05-09T12:00:00Z", ShutdownAtNsSinceBoot: 200, Mode: "unknown"}, false},
+		{"valid-graceful", DaemonShutdownPayload{ShutdownAt: "2026-05-09T12:00:00Z", ShutdownAtNsSinceBoot: 200, Mode: ShutdownModeGraceful}, true},
+		{"valid-immediate", DaemonShutdownPayload{ShutdownAt: "2026-05-09T12:00:00Z", ShutdownAtNsSinceBoot: 200, Mode: ShutdownModeImmediate}, true},
+		{"zero-value", DaemonShutdownPayload{}, false},
+		{"missing-shutdown-at", DaemonShutdownPayload{ShutdownAtNsSinceBoot: 200, Mode: ShutdownModeGraceful}, false},
+		{"zero-ns", DaemonShutdownPayload{ShutdownAt: "2026-05-09T12:00:00Z", Mode: ShutdownModeGraceful}, false},
+		{"invalid-mode", DaemonShutdownPayload{ShutdownAt: "2026-05-09T12:00:00Z", ShutdownAtNsSinceBoot: 200, Mode: "unknown"}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -165,13 +163,13 @@ func TestDaemonStartupFailedPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.DaemonStartupFailedPayload
+		p     DaemonStartupFailedPayload
 		valid bool
 	}{
-		{"valid", core.DaemonStartupFailedPayload{FailedAt: "2026-05-09T12:00:00Z", FailureMode: "queue-format-unsupported"}, true},
-		{"zero-value", core.DaemonStartupFailedPayload{}, false},
-		{"missing-failed-at", core.DaemonStartupFailedPayload{FailureMode: "queue-format-unsupported"}, false},
-		{"missing-failure-mode", core.DaemonStartupFailedPayload{FailedAt: "2026-05-09T12:00:00Z"}, false},
+		{"valid", DaemonStartupFailedPayload{FailedAt: "2026-05-09T12:00:00Z", FailureMode: "queue-format-unsupported"}, true},
+		{"zero-value", DaemonStartupFailedPayload{}, false},
+		{"missing-failed-at", DaemonStartupFailedPayload{FailureMode: "queue-format-unsupported"}, false},
+		{"missing-failure-mode", DaemonStartupFailedPayload{FailedAt: "2026-05-09T12:00:00Z"}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -191,13 +189,13 @@ func TestDaemonDegradedPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.DaemonDegradedPayload
+		p     DaemonDegradedPayload
 		valid bool
 	}{
-		{"valid", core.DaemonDegradedPayload{DetectedAt: "2026-05-09T12:00:00Z", Reason: core.DaemonDegradedReasonRTOBreach}, true},
-		{"zero-value", core.DaemonDegradedPayload{}, false},
-		{"missing-detected-at", core.DaemonDegradedPayload{Reason: core.DaemonDegradedReasonRTOBreach}, false},
-		{"invalid-reason", core.DaemonDegradedPayload{DetectedAt: "2026-05-09T12:00:00Z", Reason: "unknown_reason"}, false},
+		{"valid", DaemonDegradedPayload{DetectedAt: "2026-05-09T12:00:00Z", Reason: DaemonDegradedReasonRTOBreach}, true},
+		{"zero-value", DaemonDegradedPayload{}, false},
+		{"missing-detected-at", DaemonDegradedPayload{Reason: DaemonDegradedReasonRTOBreach}, false},
+		{"invalid-reason", DaemonDegradedPayload{DetectedAt: "2026-05-09T12:00:00Z", Reason: "unknown_reason"}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -217,14 +215,14 @@ func TestOperatorPauseStatusPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.OperatorPauseStatusPayload
+		p     OperatorPauseStatusPayload
 		valid bool
 	}{
-		{"valid-pausing", core.OperatorPauseStatusPayload{Status: core.OperatorPauseStatusValuePausing, ChangedAt: "2026-05-09T12:00:00.000Z"}, true},
-		{"valid-paused", core.OperatorPauseStatusPayload{Status: core.OperatorPauseStatusValuePaused, ChangedAt: "2026-05-09T12:00:00.000Z"}, true},
-		{"zero-value", core.OperatorPauseStatusPayload{}, false},
-		{"invalid-status", core.OperatorPauseStatusPayload{Status: "running", ChangedAt: "2026-05-09T12:00:00.000Z"}, false},
-		{"missing-changed-at", core.OperatorPauseStatusPayload{Status: core.OperatorPauseStatusValuePaused}, false},
+		{"valid-pausing", OperatorPauseStatusPayload{Status: OperatorPauseStatusValuePausing, ChangedAt: "2026-05-09T12:00:00.000Z"}, true},
+		{"valid-paused", OperatorPauseStatusPayload{Status: OperatorPauseStatusValuePaused, ChangedAt: "2026-05-09T12:00:00.000Z"}, true},
+		{"zero-value", OperatorPauseStatusPayload{}, false},
+		{"invalid-status", OperatorPauseStatusPayload{Status: "running", ChangedAt: "2026-05-09T12:00:00.000Z"}, false},
+		{"missing-changed-at", OperatorPauseStatusPayload{Status: OperatorPauseStatusValuePaused}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -244,11 +242,11 @@ func TestOperatorResumingPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.OperatorResumingPayload
+		p     OperatorResumingPayload
 		valid bool
 	}{
-		{"valid", core.OperatorResumingPayload{ResumedAt: "2026-05-09T12:00:00Z"}, true},
-		{"zero-value", core.OperatorResumingPayload{}, false},
+		{"valid", OperatorResumingPayload{ResumedAt: "2026-05-09T12:00:00Z"}, true},
+		{"zero-value", OperatorResumingPayload{}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -268,13 +266,13 @@ func TestOperatorStoppedPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.OperatorStoppedPayload
+		p     OperatorStoppedPayload
 		valid bool
 	}{
-		{"valid", core.OperatorStoppedPayload{StoppedAt: "2026-05-09T12:00:00Z", Mode: core.ShutdownModeGraceful}, true},
-		{"zero-value", core.OperatorStoppedPayload{}, false},
-		{"missing-stopped-at", core.OperatorStoppedPayload{Mode: core.ShutdownModeGraceful}, false},
-		{"invalid-mode", core.OperatorStoppedPayload{StoppedAt: "2026-05-09T12:00:00Z", Mode: "unknown"}, false},
+		{"valid", OperatorStoppedPayload{StoppedAt: "2026-05-09T12:00:00Z", Mode: ShutdownModeGraceful}, true},
+		{"zero-value", OperatorStoppedPayload{}, false},
+		{"missing-stopped-at", OperatorStoppedPayload{Mode: ShutdownModeGraceful}, false},
+		{"invalid-mode", OperatorStoppedPayload{StoppedAt: "2026-05-09T12:00:00Z", Mode: "unknown"}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -294,13 +292,13 @@ func TestOperatorUpgradingPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.OperatorUpgradingPayload
+		p     OperatorUpgradingPayload
 		valid bool
 	}{
-		{"valid", core.OperatorUpgradingPayload{UpgradeVersion: "v1.2.3", StartedAt: "2026-05-09T12:00:00Z"}, true},
-		{"zero-value", core.OperatorUpgradingPayload{}, false},
-		{"missing-version", core.OperatorUpgradingPayload{StartedAt: "2026-05-09T12:00:00Z"}, false},
-		{"missing-started-at", core.OperatorUpgradingPayload{UpgradeVersion: "v1.2.3"}, false},
+		{"valid", OperatorUpgradingPayload{UpgradeVersion: "v1.2.3", StartedAt: "2026-05-09T12:00:00Z"}, true},
+		{"zero-value", OperatorUpgradingPayload{}, false},
+		{"missing-version", OperatorUpgradingPayload{StartedAt: "2026-05-09T12:00:00Z"}, false},
+		{"missing-started-at", OperatorUpgradingPayload{UpgradeVersion: "v1.2.3"}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -320,14 +318,14 @@ func TestOperatorUpgradeCompletedPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.OperatorUpgradeCompletedPayload
+		p     OperatorUpgradeCompletedPayload
 		valid bool
 	}{
-		{"valid", core.OperatorUpgradeCompletedPayload{UpgradeVersion: "v1.2.3", CompletedAt: "2026-05-09T12:00:00Z", BinaryCommitHash: "abc123"}, true},
-		{"zero-value", core.OperatorUpgradeCompletedPayload{}, false},
-		{"missing-version", core.OperatorUpgradeCompletedPayload{CompletedAt: "2026-05-09T12:00:00Z", BinaryCommitHash: "abc123"}, false},
-		{"missing-completed-at", core.OperatorUpgradeCompletedPayload{UpgradeVersion: "v1.2.3", BinaryCommitHash: "abc123"}, false},
-		{"missing-commit-hash", core.OperatorUpgradeCompletedPayload{UpgradeVersion: "v1.2.3", CompletedAt: "2026-05-09T12:00:00Z"}, false},
+		{"valid", OperatorUpgradeCompletedPayload{UpgradeVersion: "v1.2.3", CompletedAt: "2026-05-09T12:00:00Z", BinaryCommitHash: "abc123"}, true},
+		{"zero-value", OperatorUpgradeCompletedPayload{}, false},
+		{"missing-version", OperatorUpgradeCompletedPayload{CompletedAt: "2026-05-09T12:00:00Z", BinaryCommitHash: "abc123"}, false},
+		{"missing-completed-at", OperatorUpgradeCompletedPayload{UpgradeVersion: "v1.2.3", BinaryCommitHash: "abc123"}, false},
+		{"missing-commit-hash", OperatorUpgradeCompletedPayload{UpgradeVersion: "v1.2.3", CompletedAt: "2026-05-09T12:00:00Z"}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -347,13 +345,13 @@ func TestOperatorUpgradeRejectedPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.OperatorUpgradeRejectedPayload
+		p     OperatorUpgradeRejectedPayload
 		valid bool
 	}{
-		{"valid", core.OperatorUpgradeRejectedPayload{RejectedAt: "2026-05-09T12:00:00Z", Reason: core.OperatorUpgradeRejectedReasonHashMismatch}, true},
-		{"zero-value", core.OperatorUpgradeRejectedPayload{}, false},
-		{"missing-rejected-at", core.OperatorUpgradeRejectedPayload{Reason: core.OperatorUpgradeRejectedReasonHashMismatch}, false},
-		{"invalid-reason", core.OperatorUpgradeRejectedPayload{RejectedAt: "2026-05-09T12:00:00Z", Reason: "unknown_reason"}, false},
+		{"valid", OperatorUpgradeRejectedPayload{RejectedAt: "2026-05-09T12:00:00Z", Reason: OperatorUpgradeRejectedReasonHashMismatch}, true},
+		{"zero-value", OperatorUpgradeRejectedPayload{}, false},
+		{"missing-rejected-at", OperatorUpgradeRejectedPayload{Reason: OperatorUpgradeRejectedReasonHashMismatch}, false},
+		{"invalid-reason", OperatorUpgradeRejectedPayload{RejectedAt: "2026-05-09T12:00:00Z", Reason: "unknown_reason"}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -373,14 +371,14 @@ func TestOperatorCommandRejectedPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.OperatorCommandRejectedPayload
+		p     OperatorCommandRejectedPayload
 		valid bool
 	}{
-		{"valid", core.OperatorCommandRejectedPayload{Command: core.OperatorCommandPause, CurrentState: core.DaemonStatusReady, RejectedAt: "2026-05-09T12:00:00Z"}, true},
-		{"zero-value", core.OperatorCommandRejectedPayload{}, false},
-		{"invalid-command", core.OperatorCommandRejectedPayload{Command: "unknown-cmd", CurrentState: core.DaemonStatusReady, RejectedAt: "2026-05-09T12:00:00Z"}, false},
-		{"invalid-state", core.OperatorCommandRejectedPayload{Command: core.OperatorCommandPause, CurrentState: "unknown-state", RejectedAt: "2026-05-09T12:00:00Z"}, false},
-		{"missing-rejected-at", core.OperatorCommandRejectedPayload{Command: core.OperatorCommandPause, CurrentState: core.DaemonStatusReady}, false},
+		{"valid", OperatorCommandRejectedPayload{Command: OperatorCommandPause, CurrentState: DaemonStatusReady, RejectedAt: "2026-05-09T12:00:00Z"}, true},
+		{"zero-value", OperatorCommandRejectedPayload{}, false},
+		{"invalid-command", OperatorCommandRejectedPayload{Command: "unknown-cmd", CurrentState: DaemonStatusReady, RejectedAt: "2026-05-09T12:00:00Z"}, false},
+		{"invalid-state", OperatorCommandRejectedPayload{Command: OperatorCommandPause, CurrentState: "unknown-state", RejectedAt: "2026-05-09T12:00:00Z"}, false},
+		{"missing-rejected-at", OperatorCommandRejectedPayload{Command: OperatorCommandPause, CurrentState: DaemonStatusReady}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -398,23 +396,23 @@ func TestOperatorCommandRejectedPayload_Valid(t *testing.T) {
 func TestDispatchDeferredPayload_Valid(t *testing.T) {
 	t.Parallel()
 
-	validRunID := core.RunID(uuid.MustParse("0196a1b2-c3d4-7000-8a1b-000000000003"))
-	nilRunID := core.RunID(uuid.Nil)
-	validNodeID := core.NodeID("node-1")
-	emptyNodeID := core.NodeID("")
+	validRunID := RunID(uuid.MustParse("0196a1b2-c3d4-7000-8a1b-000000000003"))
+	nilRunID := RunID(uuid.Nil)
+	validNodeID := NodeID("node-1")
+	emptyNodeID := NodeID("")
 
 	cases := []struct {
 		name  string
-		p     core.DispatchDeferredPayload
+		p     DispatchDeferredPayload
 		valid bool
 	}{
-		{"valid-no-optionals", core.DispatchDeferredPayload{Reason: core.DispatchDeferredReasonMachineCeilingExhausted, DeferredAt: "2026-05-09T12:00:00Z"}, true},
-		{"valid-with-run-and-node", core.DispatchDeferredPayload{RunID: &validRunID, NodeID: &validNodeID, Reason: core.DispatchDeferredReasonMachineCeilingExhausted, DeferredAt: "2026-05-09T12:00:00Z"}, true},
-		{"zero-value", core.DispatchDeferredPayload{}, false},
-		{"nil-run-id", core.DispatchDeferredPayload{RunID: &nilRunID, Reason: core.DispatchDeferredReasonMachineCeilingExhausted, DeferredAt: "2026-05-09T12:00:00Z"}, false},
-		{"empty-node-id", core.DispatchDeferredPayload{NodeID: &emptyNodeID, Reason: core.DispatchDeferredReasonMachineCeilingExhausted, DeferredAt: "2026-05-09T12:00:00Z"}, false},
-		{"missing-reason", core.DispatchDeferredPayload{DeferredAt: "2026-05-09T12:00:00Z"}, false},
-		{"missing-deferred-at", core.DispatchDeferredPayload{Reason: core.DispatchDeferredReasonMachineCeilingExhausted}, false},
+		{"valid-no-optionals", DispatchDeferredPayload{Reason: DispatchDeferredReasonMachineCeilingExhausted, DeferredAt: "2026-05-09T12:00:00Z"}, true},
+		{"valid-with-run-and-node", DispatchDeferredPayload{RunID: &validRunID, NodeID: &validNodeID, Reason: DispatchDeferredReasonMachineCeilingExhausted, DeferredAt: "2026-05-09T12:00:00Z"}, true},
+		{"zero-value", DispatchDeferredPayload{}, false},
+		{"nil-run-id", DispatchDeferredPayload{RunID: &nilRunID, Reason: DispatchDeferredReasonMachineCeilingExhausted, DeferredAt: "2026-05-09T12:00:00Z"}, false},
+		{"empty-node-id", DispatchDeferredPayload{NodeID: &emptyNodeID, Reason: DispatchDeferredReasonMachineCeilingExhausted, DeferredAt: "2026-05-09T12:00:00Z"}, false},
+		{"missing-reason", DispatchDeferredPayload{DeferredAt: "2026-05-09T12:00:00Z"}, false},
+		{"missing-deferred-at", DispatchDeferredPayload{Reason: DispatchDeferredReasonMachineCeilingExhausted}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -432,7 +430,7 @@ func TestDispatchDeferredPayload_Valid(t *testing.T) {
 func TestDaemonOrphanSweepCompletedPayload_Valid(t *testing.T) {
 	t.Parallel()
 
-	validP := core.DaemonOrphanSweepCompletedPayload{
+	validP := DaemonOrphanSweepCompletedPayload{
 		TmuxSessionsKilled:         0,
 		TmuxWindowsKilled:          0,
 		LocksCleared:               0,
@@ -447,47 +445,47 @@ func TestDaemonOrphanSweepCompletedPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.DaemonOrphanSweepCompletedPayload
+		p     DaemonOrphanSweepCompletedPayload
 		valid bool
 	}{
 		{"valid-all-zeros", validP, true},
-		{"zero-value-struct", core.DaemonOrphanSweepCompletedPayload{}, false}, // SweptAt empty → false
-		{"negative-tmux-sessions", func() core.DaemonOrphanSweepCompletedPayload {
+		{"zero-value-struct", DaemonOrphanSweepCompletedPayload{}, false}, // SweptAt empty → false
+		{"negative-tmux-sessions", func() DaemonOrphanSweepCompletedPayload {
 			p := validP
 			p.TmuxSessionsKilled = -1
 			return p
 		}(), false},
-		{"negative-tmux-windows", func() core.DaemonOrphanSweepCompletedPayload {
+		{"negative-tmux-windows", func() DaemonOrphanSweepCompletedPayload {
 			p := validP
 			p.TmuxWindowsKilled = -1
 			return p
 		}(), false},
-		{"negative-locks-cleared", func() core.DaemonOrphanSweepCompletedPayload {
+		{"negative-locks-cleared", func() DaemonOrphanSweepCompletedPayload {
 			p := validP
 			p.LocksCleared = -1
 			return p
 		}(), false},
-		{"negative-subprocesses", func() core.DaemonOrphanSweepCompletedPayload {
+		{"negative-subprocesses", func() DaemonOrphanSweepCompletedPayload {
 			p := validP
 			p.SubprocessesKilled = -1
 			return p
 		}(), false},
-		{"negative-br-subprocesses", func() core.DaemonOrphanSweepCompletedPayload {
+		{"negative-br-subprocesses", func() DaemonOrphanSweepCompletedPayload {
 			p := validP
 			p.BrSubprocessesKilled = -1
 			return p
 		}(), false},
-		{"negative-recon-locks", func() core.DaemonOrphanSweepCompletedPayload {
+		{"negative-recon-locks", func() DaemonOrphanSweepCompletedPayload {
 			p := validP
 			p.ReconciliationLocksRemoved = -1
 			return p
 		}(), false},
-		{"negative-stale-intents", func() core.DaemonOrphanSweepCompletedPayload {
+		{"negative-stale-intents", func() DaemonOrphanSweepCompletedPayload {
 			p := validP
 			p.StaleIntentsObserved = -1
 			return p
 		}(), false},
-		{"missing-swept-at", func() core.DaemonOrphanSweepCompletedPayload {
+		{"missing-swept-at", func() DaemonOrphanSweepCompletedPayload {
 			p := validP
 			p.SweptAt = ""
 			return p
@@ -511,14 +509,14 @@ func TestInfrastructureUnavailablePayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.InfrastructureUnavailablePayload
+		p     InfrastructureUnavailablePayload
 		valid bool
 	}{
-		{"valid", core.InfrastructureUnavailablePayload{FailedPrerequisite: core.InfrastructurePrerequisiteBrMissing, DetailString: "br not found", RetryCount: 0}, true},
-		{"zero-value", core.InfrastructureUnavailablePayload{}, false},
-		{"invalid-prerequisite", core.InfrastructureUnavailablePayload{FailedPrerequisite: "unknown_prereq", DetailString: "detail", RetryCount: 0}, false},
-		{"missing-detail", core.InfrastructureUnavailablePayload{FailedPrerequisite: core.InfrastructurePrerequisiteBrMissing, RetryCount: 0}, false},
-		{"negative-retry-count", core.InfrastructureUnavailablePayload{FailedPrerequisite: core.InfrastructurePrerequisiteBrMissing, DetailString: "detail", RetryCount: -1}, false},
+		{"valid", InfrastructureUnavailablePayload{FailedPrerequisite: InfrastructurePrerequisiteBrMissing, DetailString: "br not found", RetryCount: 0}, true},
+		{"zero-value", InfrastructureUnavailablePayload{}, false},
+		{"invalid-prerequisite", InfrastructureUnavailablePayload{FailedPrerequisite: "unknown_prereq", DetailString: "detail", RetryCount: 0}, false},
+		{"missing-detail", InfrastructureUnavailablePayload{FailedPrerequisite: InfrastructurePrerequisiteBrMissing, RetryCount: 0}, false},
+		{"negative-retry-count", InfrastructureUnavailablePayload{FailedPrerequisite: InfrastructurePrerequisiteBrMissing, DetailString: "detail", RetryCount: -1}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -536,21 +534,21 @@ func TestInfrastructureUnavailablePayload_Valid(t *testing.T) {
 func TestOperatorCommandFailedPayload_Valid(t *testing.T) {
 	t.Parallel()
 
-	validRunID := core.RunID(uuid.MustParse("0196a1b2-c3d4-7000-8a1b-000000000003"))
-	nilRunID := core.RunID(uuid.Nil)
+	validRunID := RunID(uuid.MustParse("0196a1b2-c3d4-7000-8a1b-000000000003"))
+	nilRunID := RunID(uuid.Nil)
 
 	cases := []struct {
 		name  string
-		p     core.OperatorCommandFailedPayload
+		p     OperatorCommandFailedPayload
 		valid bool
 	}{
-		{"valid-no-run-id", core.OperatorCommandFailedPayload{Command: core.OperatorCommandStop, FailureClass: core.FailureClassTransient, FailedAt: "2026-05-09T12:00:00Z"}, true},
-		{"valid-with-run-id", core.OperatorCommandFailedPayload{Command: core.OperatorCommandStop, FailureClass: core.FailureClassTransient, RunID: &validRunID, FailedAt: "2026-05-09T12:00:00Z"}, true},
-		{"zero-value", core.OperatorCommandFailedPayload{}, false},
-		{"invalid-command", core.OperatorCommandFailedPayload{Command: "unknown-cmd", FailureClass: core.FailureClassTransient, FailedAt: "2026-05-09T12:00:00Z"}, false},
-		{"invalid-failure-class", core.OperatorCommandFailedPayload{Command: core.OperatorCommandStop, FailureClass: "unknown", FailedAt: "2026-05-09T12:00:00Z"}, false},
-		{"nil-run-id", core.OperatorCommandFailedPayload{Command: core.OperatorCommandStop, FailureClass: core.FailureClassTransient, RunID: &nilRunID, FailedAt: "2026-05-09T12:00:00Z"}, false},
-		{"missing-failed-at", core.OperatorCommandFailedPayload{Command: core.OperatorCommandStop, FailureClass: core.FailureClassTransient}, false},
+		{"valid-no-run-id", OperatorCommandFailedPayload{Command: OperatorCommandStop, FailureClass: FailureClassTransient, FailedAt: "2026-05-09T12:00:00Z"}, true},
+		{"valid-with-run-id", OperatorCommandFailedPayload{Command: OperatorCommandStop, FailureClass: FailureClassTransient, RunID: &validRunID, FailedAt: "2026-05-09T12:00:00Z"}, true},
+		{"zero-value", OperatorCommandFailedPayload{}, false},
+		{"invalid-command", OperatorCommandFailedPayload{Command: "unknown-cmd", FailureClass: FailureClassTransient, FailedAt: "2026-05-09T12:00:00Z"}, false},
+		{"invalid-failure-class", OperatorCommandFailedPayload{Command: OperatorCommandStop, FailureClass: "unknown", FailedAt: "2026-05-09T12:00:00Z"}, false},
+		{"nil-run-id", OperatorCommandFailedPayload{Command: OperatorCommandStop, FailureClass: FailureClassTransient, RunID: &nilRunID, FailedAt: "2026-05-09T12:00:00Z"}, false},
+		{"missing-failed-at", OperatorCommandFailedPayload{Command: OperatorCommandStop, FailureClass: FailureClassTransient}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -570,13 +568,13 @@ func TestDaemonConfigPayload_Valid(t *testing.T) {
 
 	cases := []struct {
 		name  string
-		p     core.DaemonConfigPayload
+		p     DaemonConfigPayload
 		valid bool
 	}{
-		{"valid-minimal", core.DaemonConfigPayload{TargetBranch: "main"}, true},
-		{"valid-with-protect", core.DaemonConfigPayload{TargetBranch: "release", ProtectBranches: []string{"main"}, ForbidUnprotectedDefault: true}, true},
-		{"zero-value", core.DaemonConfigPayload{}, false},
-		{"empty-target-branch", core.DaemonConfigPayload{TargetBranch: ""}, false},
+		{"valid-minimal", DaemonConfigPayload{TargetBranch: "main"}, true},
+		{"valid-with-protect", DaemonConfigPayload{TargetBranch: "release", ProtectBranches: []string{"main"}, ForbidUnprotectedDefault: true}, true},
+		{"zero-value", DaemonConfigPayload{}, false},
+		{"empty-target-branch", DaemonConfigPayload{TargetBranch: ""}, false},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -594,20 +592,20 @@ func TestDaemonConfigPayload_Valid(t *testing.T) {
 func TestOperatorEscalationClearedPayload_Valid(t *testing.T) {
 	t.Parallel()
 
-	validRunID := core.RunID(uuid.MustParse("0196a1b2-c3d4-7000-8a1b-000000000003"))
-	nilRunID := core.RunID(uuid.Nil)
+	validRunID := RunID(uuid.MustParse("0196a1b2-c3d4-7000-8a1b-000000000003"))
+	nilRunID := RunID(uuid.Nil)
 
 	cases := []struct {
 		name  string
-		p     core.OperatorEscalationClearedPayload
+		p     OperatorEscalationClearedPayload
 		valid bool
 	}{
-		{"valid-no-run-id", core.OperatorEscalationClearedPayload{ClearedAt: "2026-05-09T12:00:00Z", ClearanceReason: core.ClearanceReasonVerdictExecuted}, true},
-		{"valid-with-run-id", core.OperatorEscalationClearedPayload{TargetRunID: &validRunID, ClearedAt: "2026-05-09T12:00:00Z", ClearanceReason: core.ClearanceReasonManualClear}, true},
-		{"zero-value", core.OperatorEscalationClearedPayload{}, false},
-		{"nil-run-id", core.OperatorEscalationClearedPayload{TargetRunID: &nilRunID, ClearedAt: "2026-05-09T12:00:00Z", ClearanceReason: core.ClearanceReasonManualClear}, false},
-		{"missing-cleared-at", core.OperatorEscalationClearedPayload{ClearanceReason: core.ClearanceReasonManualClear}, false},
-		{"invalid-clearance-reason", core.OperatorEscalationClearedPayload{ClearedAt: "2026-05-09T12:00:00Z", ClearanceReason: "unknown_reason"}, false},
+		{"valid-no-run-id", OperatorEscalationClearedPayload{ClearedAt: "2026-05-09T12:00:00Z", ClearanceReason: ClearanceReasonVerdictExecuted}, true},
+		{"valid-with-run-id", OperatorEscalationClearedPayload{TargetRunID: &validRunID, ClearedAt: "2026-05-09T12:00:00Z", ClearanceReason: ClearanceReasonManualClear}, true},
+		{"zero-value", OperatorEscalationClearedPayload{}, false},
+		{"nil-run-id", OperatorEscalationClearedPayload{TargetRunID: &nilRunID, ClearedAt: "2026-05-09T12:00:00Z", ClearanceReason: ClearanceReasonManualClear}, false},
+		{"missing-cleared-at", OperatorEscalationClearedPayload{ClearanceReason: ClearanceReasonManualClear}, false},
+		{"invalid-clearance-reason", OperatorEscalationClearedPayload{ClearedAt: "2026-05-09T12:00:00Z", ClearanceReason: "unknown_reason"}, false},
 	}
 	for _, tc := range cases {
 		tc := tc

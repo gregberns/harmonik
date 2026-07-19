@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,13 +50,12 @@ type typeEntry struct {
 
 // eventRegistry holds the per-type entry map guarded by a mutex.
 //
-// Registration is startup-time per EV-034 (see TODO below), but the mutex
-// prevents data-race during init-order weirdness where multiple init() calls
-// arrive concurrently (e.g., test binaries with parallel package-level inits).
-//
-// TODO(hk-hqwn.41/EV-034): startup-time sealing — registry MUST be sealed
-// (writes forbidden) after the first event is emitted; that sealing logic
-// belongs in the bus layer and is out of scope for this bead.
+// Registration is startup-time per EV-034: once the registry is sealed
+// (SealEventRegistry, called at the same lifecycle point as bus.Seal per
+// EV-009), all further registration attempts return ErrRegistrySealed. The
+// mutex also prevents a data-race during init-order weirdness where multiple
+// init() calls arrive concurrently (e.g., test binaries with parallel
+// package-level inits).
 //
 // TODO(hk-hqwn.41/EV-034a): source_subsystem identifier registration is a
 // separate concern; see EV-034a. Not implemented here.
@@ -70,6 +70,43 @@ var secretPrefixRe = regexp.MustCompile(`(?i)(secret|token|password|api[_-]?key|
 type eventRegistry struct {
 	mu      sync.Mutex
 	entries map[string]typeEntry // TODO(hk-hqwn.59.82): hoist key from string to EventType when the enum lands.
+	sealed  bool                 // EV-034: once true, registration is forbidden.
+}
+
+// ErrRegistrySealed is returned by RegisterEventType / RegisterEventTypeAtVersion
+// when the event-type registry has already been sealed (SealEventRegistry).
+//
+// Per EV-034 (event-model.md §4.9), payload-type registration is startup-time:
+// registration after the registry is sealed (at the same lifecycle point as
+// bus.Seal, EV-009) MUST be a startup-time error rather than silently mutating
+// the dispatch table after dispatch has begun.
+var ErrRegistrySealed = errors.New("core: event-type registry is sealed; registration is startup-time only (EV-034)")
+
+// SealEventRegistry seals the global event-type registry. After this call,
+// RegisterEventType and RegisterEventTypeAtVersion return ErrRegistrySealed;
+// read paths (DecodePayload, LookupTypeSchemaVersion, …) are unaffected.
+//
+// Per EV-034 the registry MUST be sealed at the same lifecycle point as the bus
+// (bus.Seal, EV-009) — i.e. after all init()/RegisterEventType startup calls and
+// the EV-036 secret-field scan, immediately before the daemon begins dispatch.
+// The daemon wires this in daemon.go alongside bus.Seal().
+//
+// Sealing is idempotent: calling it more than once is a no-op. Thread-safe.
+func SealEventRegistry() {
+	r := globalEventRegistry
+	r.mu.Lock()
+	r.sealed = true
+	r.mu.Unlock()
+}
+
+// EventRegistrySealed reports whether the global event-type registry has been
+// sealed. Exposed primarily for tests and startup diagnostics. Thread-safe.
+func EventRegistrySealed() bool {
+	r := globalEventRegistry
+	r.mu.Lock()
+	sealed := r.sealed
+	r.mu.Unlock()
+	return sealed
 }
 
 var globalEventRegistry = &eventRegistry{
@@ -124,6 +161,9 @@ func RegisterEventTypeAtVersion(typeName string, constructor func() EventPayload
 	r := globalEventRegistry
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.sealed {
+		return fmt.Errorf("%w: %q", ErrRegistrySealed, typeName)
+	}
 	if _, exists := r.entries[typeName]; exists {
 		return fmt.Errorf("%w: %q", ErrDuplicateEventType, typeName)
 	}
@@ -181,8 +221,8 @@ func ValidateEnvelopeSchemaVersion(e Event) error {
 // table. Each key is a registered event type name; each value is its current
 // declared schema version (≥ 1).
 //
-// Spec ref: event-model.md §4.8 EV-029 — "N (currently 71) independent
-// compatibility contracts."
+// Spec ref: event-model.md §4.8 EV-029 — one independent compatibility
+// contract per registered type (the per-type "N-1 readable" window).
 // Bead ref: hk-hqwn.38.
 func AllPayloadSchemaVersions() map[string]int {
 	r := globalEventRegistry
@@ -193,16 +233,6 @@ func AllPayloadSchemaVersions() map[string]int {
 	}
 	r.mu.Unlock()
 	return snapshot
-}
-
-// CurrentPayloadSchemaVersion returns the declared schema version for the given
-// event type. Returns (version, true) when the type is registered, (0, false)
-// when it is not. Alias for LookupTypeSchemaVersion.
-//
-// Spec ref: event-model.md §4.8 EV-028; §4.8 EV-029.
-// Bead ref: hk-hqwn.38.
-func CurrentPayloadSchemaVersion(typeName string) (int, bool) {
-	return LookupTypeSchemaVersion(typeName)
 }
 
 // DecodePayload looks up the constructor for e.Type, instantiates a fresh
@@ -225,6 +255,38 @@ func (e Event) DecodePayload() (EventPayload, error) {
 	}
 	payload := entry.constructor()
 	if err := json.Unmarshal(e.Payload, payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+// DecodePayloadStrict decodes e.Payload exactly like DecodePayload but rejects
+// unknown payload fields (json.Decoder.DisallowUnknownFields), so an additive
+// field a NEWER writer introduced surfaces as a decode error instead of being
+// silently ignored. DecodePayload uses json.Unmarshal with no
+// DisallowUnknownFields and therefore cannot see additive writer drift.
+//
+// Returns:
+//   - (payload, nil) on success.
+//   - (nil, ErrUnknownEventType) when e.Type has no registered constructor.
+//   - (nil, <decode error>) when JSON decoding fails, INCLUDING an unknown field.
+//
+// The addition is purely additive: DecodePayload's tolerant semantics are
+// unchanged and remain the default for historical replay. Strict mode is for
+// replaying the harness's OWN freshly-recorded corpus, where an unknown field
+// means a writer drifted (EV-049, event-model.md §4.7).
+func (e Event) DecodePayloadStrict() (EventPayload, error) {
+	r := globalEventRegistry
+	r.mu.Lock()
+	entry, ok := r.entries[e.Type]
+	r.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownEventType, e.Type)
+	}
+	payload := entry.constructor()
+	dec := json.NewDecoder(bytes.NewReader(e.Payload))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(payload); err != nil {
 		return nil, err
 	}
 	return payload, nil

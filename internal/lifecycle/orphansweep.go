@@ -356,7 +356,19 @@ func SweepOrphanHandlers(
 		}
 	}
 
-	// Phase 3: SIGKILL any still-alive processes.
+	// Phase 3: SIGKILL any still-alive processes — after re-verifying identity
+	// via a fresh provenance-matched enumeration, so a recycled PID (unrelated
+	// process that inherited the number after the target exited) is never
+	// SIGKILLed.
+	if len(alive) > 0 {
+		fresh, freshErr := lister.ListOrphanHandlerPIDs(ctx, projectHash)
+		if freshErr != nil {
+			orphanLog(logger, "SweepOrphanHandlers: re-enumerate before SIGKILL failed: %v; skipping SIGKILL (PID-reuse guard)", freshErr)
+			alive = map[int]bool{}
+		} else {
+			alive = reverifyCandidatePIDs(alive, fresh)
+		}
+	}
 	for pid := range alive {
 		orphanLog(logger, "SweepOrphanHandlers: pid %d survived SIGTERM grace; sending SIGKILL", pid)
 		if sigErr := syscall.Kill(pid, syscall.SIGKILL); sigErr != nil {
@@ -773,7 +785,7 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 		}
 		lockPath := filepath.Join(lockDir, name)
 
-		stale, probeErr := reconLockIsStale(lockPath)
+		held, stale, probeErr := reconLockProbeStale(lockPath)
 		if probeErr != nil {
 			orphanLog(logger, "SweepStaleReconciliationLocks: probe %q: %v (skipping)", name, probeErr)
 			continue
@@ -782,6 +794,12 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 			orphanLog(logger, "SweepStaleReconciliationLocks: %q is active (EWOULDBLOCK or live PID); skipping", name)
 			continue
 		}
+		// From here the sweep HOLDS the flock on the lock file (RC-002a: the
+		// flock is the serialization point — releasing it before the unlink
+		// would let another daemon acquire the lock and start a live
+		// reconciliation the sweep then unlinks, permitting TWO concurrent
+		// reconciliations for the same target_run_id). Close (which releases
+		// the lock) only AFTER the unlink.
 
 		// RC-002b: read verdict-executed state and run_id before unlinking.
 		runID, hasVerdictExecuted, metaErr := reconLockReadMeta(lockPath)
@@ -793,8 +811,10 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 			runID = strings.TrimSuffix(name, ".lock")
 		}
 
-		// Stale: remove via unlink + fsync(parent dir).
-		if removeErr := reconLockUnlinkAndFsync(lockPath, lockDir, logger); removeErr != nil {
+		// Stale: remove via unlink + fsync(parent dir) — with the flock still held.
+		removeErr := reconLockUnlinkAndFsync(lockPath, lockDir, logger)
+		_ = held.Close() //nolint:errcheck // releases the flock; cleanup error unactionable
+		if removeErr != nil {
 			orphanLog(logger, "SweepStaleReconciliationLocks: remove %q: %v", name, removeErr)
 			lastRemoveErr = removeErr
 			continue
@@ -816,38 +836,51 @@ func SweepStaleReconciliationLocks(projectDir string, logger *log.Logger) (Sweep
 	return result, nil
 }
 
-// reconLockIsStale reports whether a reconciliation lock file is stale:
+// reconLockProbeStale reports whether a reconciliation lock file is stale:
 //   - flock(LOCK_EX|LOCK_NB) succeeds (no live lock holder), AND
 //   - the recorded creator_pid does not respond to kill(pid, 0).
 //
-// Returns (false, nil) if the lock is actively held (EWOULDBLOCK).
-// Returns (false, err) if the file cannot be opened or the PID line cannot
-// be parsed.
-func reconLockIsStale(lockPath string) (stale bool, err error) {
+// When stale is true, the returned *os.File is open with the flock STILL HELD:
+// the caller MUST unlink the lock file BEFORE closing it, so that no other
+// daemon can acquire the lock between the staleness verdict and the unlink
+// (RC-002a: at most one reconciliation workflow per target run — the flock
+// probe is the serialization point, per PL-006).
+//
+// Returns (nil, false, nil) if the lock is actively held (EWOULDBLOCK) or the
+// recorded creator PID is live (lock released before returning).
+// Returns (nil, false, err) if the file cannot be opened or the creator_pid
+// line cannot be parsed — an unparseable creator PID cannot be confirmed dead,
+// so the file is skipped rather than removed.
+func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error) {
 	//nolint:gosec // G304: path is constructed from projectDir + .harmonik/reconciliation-locks/ + entry name, not user input
 	f, err := os.OpenFile(lockPath, os.O_RDWR, 0o600)
 	if err != nil {
-		return false, fmt.Errorf("reconLockIsStale: open %q: %w", lockPath, err)
+		return nil, false, fmt.Errorf("reconLockProbeStale: open %q: %w", lockPath, err)
 	}
-	defer func() { _ = f.Close() }() //nolint:errcheck // cleanup error unactionable
 
 	flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr != nil {
 		// EWOULDBLOCK: lock is actively held — not stale.
-		return false, nil
+		_ = f.Close()          //nolint:errcheck // cleanup error unactionable
+		return nil, false, nil //nolint:nilerr // EWOULDBLOCK = lock actively held (not stale); a normal signal, not an error to return
 	}
-	// Release immediately; we only wanted the liveness probe.
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck // release error unactionable
 
-	// Parse creator_pid from file content.
+	// Parse creator_pid from file content (flock held throughout).
 	pid, parseErr := reconLockReadCreatorPID(f)
 	if parseErr != nil {
-		// Cannot parse: treat as stale (remove it).
-		return true, nil
+		// Cannot parse: cannot prove the creator is dead — skip, don't remove.
+		_ = f.Close() //nolint:errcheck // releases the flock; cleanup error unactionable
+		return nil, false, fmt.Errorf("reconLockProbeStale: %w", parseErr)
 	}
 
-	// Stale iff the creator PID is dead.
-	return !orphanSweepIsPidLive(pid), nil
+	if orphanSweepIsPidLive(pid) {
+		// Creator still alive — not stale.
+		_ = f.Close() //nolint:errcheck // releases the flock; cleanup error unactionable
+		return nil, false, nil
+	}
+
+	// Stale: return with the flock held; caller unlinks, THEN closes.
+	return f, true, nil
 }
 
 // reconLockReadCreatorPID reads the creator_pid field from an already-open
@@ -954,6 +987,12 @@ func EnumerateStaleIntents(projectDir string, daemonStartTime time.Time) (count 
 	}
 
 	for _, entry := range entries {
+		// Intent files are `<key>.json` (BI-030); skip directories and
+		// non-.json entries (which also excludes in-flight `*.json.tmp-*`
+		// atomic-write temp files from brcli.WriteIntentLogTmp).
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
 		info, infoErr := entry.Info()
 		if infoErr != nil {
 			continue

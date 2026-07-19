@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.9 binding test — SH-009: twin-binary discovery uses scenario path or PATH prefix.

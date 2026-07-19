@@ -31,3 +31,16 @@ prefixes:
   CL: {spec-id: cognition-loop,    reserved: 2026-05-30, status: draft}
   HN: {spec-id: harness-contract,  reserved: 2026-06-10, status: draft}
   PI: {spec-id: pi-harness,        reserved: 2026-06-30, status: draft}
+  RS: {spec-id: replay-substrate,  reserved: 2026-07-13, status: draft}
+  SK: {spec-id: session-keeper,    reserved: 2026-07-13, status: draft}
+  RSM: {spec-id: run-state-machine, reserved: 2026-07-14, status: draft}
+  AIS: {spec-id: agent-input,      reserved: 2026-07-14, status: draft}
+  WG: {spec-id: workflow-graph,    reserved: 2026-05-23, status: draft}
+  DC: {spec-id: digest-command,    reserved: 2026-05-30, status: draft}
+  CI: {spec-id: credential-isolation, reserved: 2026-05-31, status: draft}
+  RP: {spec-id: release-pipeline,  reserved: 2026-06-10, status: draft}
+  SW: {spec-id: sub-workflow-dispatch, reserved: 2026-06-11, status: draft}
+  PR: {spec-id: promote,           reserved: 2026-06-12, status: reviewed}
+  HD: {spec-id: hitl-decisions,    reserved: 2026-06-13, status: reviewed}
+  FW: {spec-id: flywheel-motion,   reserved: 2026-06-21, status: finalized}
+  SS: {spec-id: system-state,      reserved: 2026-06-21, status: draft}

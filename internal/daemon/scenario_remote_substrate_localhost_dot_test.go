@@ -56,6 +56,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -136,19 +137,18 @@ func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 	t.Parallel()
 
 	// ── Pre-flight guard: ssh localhost must work (no sshd / no key → skip). ──
-	if ok, detail := rsb12SSHAvailable(t.Context()); !ok {
-		t.Skipf("remote-substrate DOT e2e requires a working `ssh localhost true` "+
-			"(passwordless sshd on this box); skipping. probe output: %s", detail)
-	}
+	rsb12RequireSSHOrSkip(t)
 
 	const bead = core.BeadID("hk-rs-b12-e2e-localhost-dot")
-	sshRunner := tmux.SSHRunner{Host: "localhost"}
+	sshHost := rsb12SSHHost()
+	sshRunner := tmux.SSHRunner{Host: sshHost}
 
-	// ── origin (bare) ────────────────────────────────────────────────────────
-	originDir := t.TempDir()
+	// ── origin (bare) + worker-clone paths (shared volume under the docker drive;
+	//    see CRUX 2 in the single-mode E2E). ───────────────────────────────────
+	originDir, workerDir := rsb12OriginWorkerDirs(t)
 	rsb12Git(t, originDir, "init", "--bare", "--initial-branch=main")
 
-	// ── box A (projectDir): the daemon's repo. ───────────────────────────────
+	// ── box A (projectDir): the daemon's repo (STAYS daemon-local, not shared). ─
 	projectDir := t.TempDir()
 	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
 	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); err != nil {
@@ -178,18 +178,17 @@ func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 	}
 
 	// ── worker clone: the SSH worker's repo (registry RepoPath). ─────────────
-	workerDir := t.TempDir()
 	rsb12Git(t, ".", "clone", originDir, workerDir)
 	rsb12GitConfig(t, workerDir)
 
-	// ── worker registry: one ssh/localhost worker. ───────────────────────────
+	// ── worker registry: one ssh worker (host from HARMONIK_E2E_SSH_HOST). ────
 	cfg := workers.Config{
 		Version: 1,
 		Workers: []workers.Worker{{
-			Name:      "localhost",
+			Name:      sshHost,
 			Transport: "ssh",
-			Host:      "localhost",
-			OS:        "darwin",
+			Host:      sshHost,
+			OS:        runtime.GOOS, // localhost worker == this host; hardcoded "linux" was wrong on darwin (latent trap, c063/c066/c068)
 			RepoPath:  workerDir,
 			MaxSlots:  1,
 			Enabled:   true,

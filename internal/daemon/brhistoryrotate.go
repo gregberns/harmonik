@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -58,6 +59,27 @@ const brHistoryRotationDefaultKeep = 20
 // every close caps the scan cost at sub-second latency regardless of session length.
 const brHistoryCloseTrimKeep = 5
 
+// brHistoryArchiveKeep and brHistoryArchiveMaxAge bound the .br_history-archive/
+// directory (hk-8vnwg). Rotation ARCHIVES old .br_history snapshots into that
+// sibling dir instead of deleting them — but nothing ever pruned the archive, so
+// it grew without bound (the confirmed 256 GB disk-fill root cause: 25 GiB across
+// 15,072 snapshots at ~5.4 MB each, because EVERY bead close runs rotation and
+// feeds the archive). These caps prune it on every rotation invocation.
+//
+// Policy (union — a snapshot is pruned if it is beyond keep-N OR older than
+// max-age, mirroring sessioncapture/retention.go): retain the 300 most-recent
+// archived snapshots (~1.6 GB worst case at 5.4 MB each) AND drop anything older
+// than 7 days. Unlike rotation (which archives, preserving a rollback tier), the
+// prune HARD-DELETES: the archive is already the "these are old" tier, and a
+// retention cap on it is the intended second version the rotation comment
+// deferred ("archived ... so that snapshots are not irreversibly destroyed on the
+// first version"). Both values are conservative disk-safety knobs, surfaced here
+// for the review gate to tune.
+const (
+	brHistoryArchiveKeep   = 300
+	brHistoryArchiveMaxAge = 7 * 24 * time.Hour
+)
+
 // runBrHistoryRotationPreflight checks whether .beads/.br_history/ contains
 // more than keepLatest entries and, if so, archives the oldest entries to a
 // sibling .beads/.br_history-archive/ directory.
@@ -78,6 +100,12 @@ const brHistoryCloseTrimKeep = 5
 func runBrHistoryRotationPreflight(ctx context.Context, projectDir string, keepLatest int) error {
 	historyDir := filepath.Join(projectDir, ".beads", ".br_history")
 	archiveDir := filepath.Join(projectDir, ".beads", ".br_history-archive")
+
+	// hk-8vnwg: cap the archive on EVERY invocation, regardless of whether
+	// .br_history needs rotation this call. The archive grows via every close's
+	// rotation, so its prune must not be gated behind the "history over limit"
+	// early returns below — a defer guarantees it runs on all return paths.
+	defer pruneBrHistoryArchive(ctx, archiveDir, brHistoryArchiveKeep, brHistoryArchiveMaxAge, time.Now())
 
 	// Stat the history directory.
 	//nolint:gosec // G304: historyDir constructed from operator-supplied projectDir; not user input.
@@ -194,4 +222,126 @@ func runBrHistoryRotationPreflight(ctx context.Context, projectDir string, keepL
 		"duration_ms", duration.Milliseconds(),
 	)
 	return nil
+}
+
+// pruneBrHistoryArchive hard-deletes archived br-history snapshots beyond the
+// keepN most-recent (by mtime) and, when maxAge > 0, any archived snapshot older
+// than maxAge (union semantics, mirroring sessioncapture/retention.go). It is
+// always non-fatal — a prune failure must never block daemon startup or a bead
+// close (same discipline as runBrHistoryRotationPreflight).
+//
+// The archive holds two files per snapshot: the ~5.4 MB
+// "<name>.jsonl.archived-<ts>" payload and a tiny
+// "<name>.jsonl.meta.json.archived-<ts>" sidecar. Retention is computed over the
+// payload files (the disk-dominant units); when a payload is pruned its sidecar
+// is removed with it. Any orphan sidecar older than maxAge is also swept so meta
+// files never accumulate unbounded. Files matching neither shape are left alone
+// (safer than a blind delete). Bead ref: hk-8vnwg.
+//
+//nolint:gocognit,cyclop // pruneBrHistoryArchive is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
+func pruneBrHistoryArchive(ctx context.Context, archiveDir string, keepN int, maxAge time.Duration, now time.Time) {
+	entries, err := os.ReadDir(archiveDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.WarnContext(ctx, "br_history_archive_prune_read_error",
+				"archive_dir", archiveDir, "error", err.Error())
+		}
+		return
+	}
+
+	const payloadInfix = ".jsonl.archived-"
+	const sidecarInfix = ".jsonl.meta.json.archived-"
+
+	type archived struct {
+		name  string
+		mtime time.Time
+	}
+	payloads := make([]archived, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		// Sidecars are pruned with their payload (or by the orphan age-sweep below).
+		if strings.Contains(n, sidecarInfix) {
+			continue
+		}
+		if !strings.Contains(n, payloadInfix) {
+			continue // unrecognised file; leave it (safer than a blind delete).
+		}
+		info, statErr := os.Stat(filepath.Join(archiveDir, n))
+		if statErr != nil {
+			continue // unstat-able: leave it.
+		}
+		payloads = append(payloads, archived{name: n, mtime: info.ModTime()})
+	}
+
+	// Newest first.
+	sort.Slice(payloads, func(i, j int) bool { return payloads[i].mtime.After(payloads[j].mtime) })
+
+	// Select payloads to prune: beyond keepN, OR older than maxAge (union).
+	toPrune := map[string]struct{}{}
+	if keepN > 0 && len(payloads) > keepN {
+		for _, p := range payloads[keepN:] {
+			toPrune[p.name] = struct{}{}
+		}
+	}
+	if maxAge > 0 {
+		for _, p := range payloads {
+			if now.Sub(p.mtime) > maxAge {
+				toPrune[p.name] = struct{}{}
+			}
+		}
+	}
+
+	pruned := 0
+	for name := range toPrune {
+		if rmErr := os.Remove(filepath.Join(archiveDir, name)); rmErr != nil && !os.IsNotExist(rmErr) {
+			slog.WarnContext(ctx, "br_history_archive_prune_remove_error",
+				"file", name, "error", rmErr.Error())
+			continue
+		}
+		pruned++
+		// Remove the paired sidecar: payload "<x>.jsonl.archived-<ts>" ->
+		// sidecar "<x>.jsonl.meta.json.archived-<ts>".
+		sidecar := strings.Replace(name, payloadInfix, sidecarInfix, 1)
+		if sidecar != name {
+			_ = os.Remove(filepath.Join(archiveDir, sidecar)) //nolint:errcheck // best-effort cleanup; sidecar may not exist
+		}
+	}
+
+	// Orphan-sidecar age sweep: a sidecar whose payload was pruned in a prior run
+	// (or that never had one) is removed once older than maxAge, so metas never
+	// leak. Sidecars already removed above simply fail os.Stat and are skipped.
+	orphanMetas := 0
+	if maxAge > 0 {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			n := e.Name()
+			if !strings.Contains(n, sidecarInfix) {
+				continue
+			}
+			info, statErr := os.Stat(filepath.Join(archiveDir, n))
+			if statErr != nil {
+				continue
+			}
+			if now.Sub(info.ModTime()) > maxAge {
+				if rmErr := os.Remove(filepath.Join(archiveDir, n)); rmErr == nil {
+					orphanMetas++
+				}
+			}
+		}
+	}
+
+	if pruned > 0 || orphanMetas > 0 {
+		slog.InfoContext(ctx, "br_history_archive_pruned",
+			"pruned_snapshots", pruned,
+			"pruned_orphan_metas", orphanMetas,
+			"kept", len(payloads)-pruned,
+			"keep_n", keepN,
+			"max_age", maxAge.String(),
+		)
+	}
 }

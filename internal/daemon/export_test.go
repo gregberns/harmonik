@@ -20,12 +20,15 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
@@ -283,12 +286,19 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-6r6xv.
 	ProtectBranches []string
 
-	// MergeMu, when non-nil, serialises every lockedMergeRunBranchToMain call
-	// across concurrent beadRunOne goroutines (mirrors WithMergeMutex on the
-	// daemon.Start path and the production newWorkLoopDeps default). When nil,
-	// ExportedWorkLoopDeps installs a fresh mutex so concurrent merges to the
-	// shared origin never race on refs/heads/main (hk-4f5ua / hk-bnm89).
-	MergeMu *sync.Mutex
+	// MergeQueue, when non-nil, is the merge exclusion domain (RSM-015) that
+	// concurrent beadRunOne goroutines serialise their commit-phase merge, escape
+	// check, and base-sync+worktree-add through. It MUST already be Start()ed by
+	// the test, which owns its lifecycle (runWorkLoop leaves an injected queue
+	// untouched).
+	//
+	// When nil: a test that calls beadRunOne DIRECTLY runs the merge critical
+	// section inline (correct for a single beadRunOne). A test that drives
+	// ExportedRunWorkLoop instead gets a queue runWorkLoop creates, starts, and
+	// owns — so a concurrent ExportedRunWorkLoop test needs neither this field nor
+	// an inline-race workaround. Inject a started queue here only when driving
+	// concurrent beadRunOne WITHOUT runWorkLoop (hk-4f5ua / hk-bnm89).
+	MergeQueue *mergeq.Queue
 
 	// WorktreeCreateMu, when non-nil, is threaded into WorktreeRootConfig for
 	// remote bead runs so that workspace.CreateWorktree serialises the
@@ -301,21 +311,18 @@ type WorkLoopDepsParams struct {
 	// nil, ExportedWorkLoopDeps installs a fresh cap-3 channel (production default).
 	AgentSpawnSem chan struct{}
 
-	// BeadAuditLogger, when non-nil, overrides the beadAuditLogger function
-	// used by the pre-dispatch subsume check to detect reopen-for-fix beads
-	// (hk-wcv). When nil (the test default), the check is skipped and the
-	// conservative crash-restart assumption applies (pre-dispatch close fires).
-	// Supply a non-nil value to exercise the bypass path in unit tests.
-	//
-	// Bead ref: hk-wcv.
-	BeadAuditLogger func(ctx context.Context, id core.BeadID) ([]brcli.AuditEvent, error)
-
 	// WorkerRegistry, when non-nil, enables the DD1 remote code-sync path in
 	// beadRunOne (remote-substrate B8). When nil (the test default), all runs
 	// take the local path: no SSH fetch/push steps are inserted.
 	//
 	// Bead ref: hk-rs-b8-codesync-3fk0.
 	WorkerRegistry *workers.Registry
+
+	// CodexRequireIsolationBoundary mirrors Config.CodexRequireIsolationBoundary
+	// (hk-5h759): when true, beadRunOne fails closed unless the worker registry's
+	// WorkerSnapshot() yields an enabled ssh worker. Test default false — the
+	// tmux/baseline path.
+	CodexRequireIsolationBoundary bool
 
 	// BrPath is the absolute path to the `br` CLI binary used by the staged-bead
 	// generator (hk-f722). When empty the generator is disabled (safe test default).
@@ -436,14 +443,10 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	lsb := p.LaunchSpecBuilder
 	wtf := p.WorktreeFactory
 
-	// MergeMu: default to a fresh mutex (mirrors newWorkLoopDeps line ~575) so
-	// concurrent beadRunOne goroutines serialise their merge-to-origin and never
-	// race on refs/heads/main. Without this, an N>1 test (e.g. SC-2) sees one
-	// bead's `git reset --hard` killed mid-merge by a sibling (hk-4f5ua).
-	mergeMu := p.MergeMu
-	if mergeMu == nil {
-		mergeMu = &sync.Mutex{}
-	}
+	// MergeQueue: pass the caller-supplied domain (nil ⇒ inline merge). Concurrent
+	// beadRunOne tests inject a started queue so their commit-phase merges never
+	// race on refs/heads/main (hk-4f5ua); single-bead tests leave it nil.
+	mergeQ := p.MergeQueue
 
 	// WorktreeCreateMu: default to a fresh mutex (mirrors newWorkLoopDeps, hk-5qp7z).
 	worktreeCreateMu := p.WorktreeCreateMu
@@ -463,8 +466,6 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		cacheReapMu = &sync.RWMutex{}
 	}
 
-	h := handler.NewHandler(p.Bus, handlercontract.NoopWatcherDeadLetter{}, adapterReg)
-
 	// Derive the submit-wake channel from the QueueStore when one is provided
 	// (hk-24xn1). Mirrors the daemon.Start wiring so queue-aware tests observe
 	// the same wake-on-submit behaviour as production.
@@ -474,60 +475,59 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	}
 
 	return workLoopDeps{
-		brAdapter:                  p.BrAdapter,
-		bus:                        p.Bus,
-		h:                          h,
-		intentLogDir:               p.IntentLogDir,
-		projectDir:                 p.ProjectDir,
-		handlerBinary:              binary,
-		handlerArgs:                p.HandlerArgs,
-		handlerEnv:                 nil,
-		brTimeoutCfg:               brcli.TimeoutConfig{},
-		tidGen:                     core.NewTransitionIDGenerator(),
-		workflowModeDefault:        wmd,
-		runRegistry:                reg,
-		maxConcurrent:              maxConcurrent,
-		cpRegistry:                 p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
-		hookStore:                  hookStore,
-		launchSpecBuilder:          lsb,
-		worktreeFactory:            wtf,
-		adapterRegistry:            p.AdapterRegistry2,
-		harnessRegistry:            p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
-		substrate:                  p.Substrate,
-		agentReadyTimeout:          p.AgentReadyTimeout,
-		postAgentReadyHangTimeout:  p.PostAgentReadyHangTimeout,
-		projectCfg:                 p.ProjectCfg,
-		queueStore:                 p.QueueStore,
-		queueLedger:                p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
-		submitWakeC:                submitWakeC,
-		cancelOnQueueDrain:         p.CancelOnQueueDrain,
-		cancelOnQueueExit:          p.CancelOnQueueExit,
-		stopDispatchCtx:            p.StopDispatchCtx,
-		handlerPauseController:     p.HandlerPauseController,
-		staleBlockerCloser:         p.StaleBlockerCloser,         // hk-rnsjs
-		strandedInProgressResetter: p.StrandedInProgressResetter, // hk-l2xd1
-		strandedResetDaemonNS:      p.StrandedResetDaemonNS,      // hk-l2xd1
-		operatorPauseCtrl:          p.OperatorPauseCtrl,          // hk-ry8q1
-		decisionBlocker:            p.DecisionBlocker,            // hk-a6e24 EV-043
-		noAutoPull:                 p.NoAutoPull,                 // hk-h5lv2 / EM-066
-		concurrencyCtrl:            p.ConcurrencyCtrl,            // hk-ohiaf
-		localInFlight:              new(atomic.Int32),            // hk-hs7ex: split gate — fresh counter for each test
-		skipBrHistoryRotation:      true,                         // hk-hypbi: tests use temp dirs without real .br_history
-		targetBranch:               resolveTargetBranch(p.TargetBranch),
-		protectBranches:            p.ProtectBranches,
-		mergeMu:                    mergeMu,
-		worktreeCreateMu:           worktreeCreateMu,
-		agentSpawnSem:              agentSpawnSem,                  // hk-5z1f0: per-worker cold-start spawn semaphore
-		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
-		emittedEpicsMu:             &sync.Mutex{},
-		beadAuditLogger:            p.BeadAuditLogger, // hk-wcv: nil by default → conservative crash-restart assumption
-		workerRegistry:             p.WorkerRegistry,  // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
-		brPath:                     p.BrPath,          // hk-f722: staged-bead generator; empty → disabled
-		followUpLedger:             make(map[string]struct{}),
-		followUpLedgerMu:           &sync.Mutex{},
-		spawnSubstrateReadyCh:      p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
-		allowedRepos:               p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
-		diskFreeBytesFunc:          p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
+		brAdapter:                     p.BrAdapter,
+		bus:                           p.Bus,
+		intentLogDir:                  p.IntentLogDir,
+		projectDir:                    p.ProjectDir,
+		handlerBinary:                 binary,
+		handlerArgs:                   p.HandlerArgs,
+		handlerEnv:                    nil,
+		brTimeoutCfg:                  brcli.TimeoutConfig{},
+		tidGen:                        core.NewTransitionIDGenerator(),
+		workflowModeDefault:           wmd,
+		runRegistry:                   reg,
+		maxConcurrent:                 maxConcurrent,
+		cpRegistry:                    p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
+		hookStore:                     hookStore,
+		launchSpecBuilder:             lsb,
+		worktreeFactory:               wtf,
+		adapterRegistry:               p.AdapterRegistry2,
+		harnessRegistry:               p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
+		substrate:                     p.Substrate,
+		agentReadyTimeout:             p.AgentReadyTimeout,
+		postAgentReadyHangTimeout:     p.PostAgentReadyHangTimeout,
+		projectCfg:                    p.ProjectCfg,
+		queueStore:                    p.QueueStore,
+		queueLedger:                   p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
+		submitWakeC:                   submitWakeC,
+		cancelOnQueueDrain:            p.CancelOnQueueDrain,
+		cancelOnQueueExit:             p.CancelOnQueueExit,
+		stopDispatchCtx:               p.StopDispatchCtx,
+		handlerPauseController:        p.HandlerPauseController,
+		staleBlockerCloser:            p.StaleBlockerCloser,         // hk-rnsjs
+		strandedInProgressResetter:    p.StrandedInProgressResetter, // hk-l2xd1
+		strandedResetDaemonNS:         p.StrandedResetDaemonNS,      // hk-l2xd1
+		operatorPauseCtrl:             p.OperatorPauseCtrl,          // hk-ry8q1
+		decisionBlocker:               p.DecisionBlocker,            // hk-a6e24 EV-043
+		noAutoPull:                    p.NoAutoPull,                 // hk-h5lv2 / EM-066
+		concurrencyCtrl:               p.ConcurrencyCtrl,            // hk-ohiaf
+		localInFlight:                 new(atomic.Int32),            // hk-hs7ex: split gate — fresh counter for each test
+		skipBrHistoryRotation:         true,                         // hk-hypbi: tests use temp dirs without real .br_history
+		targetBranch:                  bootconfig.ResolveTargetBranch(p.TargetBranch),
+		protectBranches:               p.ProtectBranches,
+		mergeQ:                        mergeQ,
+		worktreeCreateMu:              worktreeCreateMu,
+		agentSpawnSem:                 agentSpawnSem,                  // hk-5z1f0: per-worker cold-start spawn semaphore
+		emittedEpics:                  make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
+		emittedEpicsMu:                &sync.Mutex{},
+		workerRegistry:                p.WorkerRegistry,                // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
+		codexRequireIsolationBoundary: p.CodexRequireIsolationBoundary, // hk-5h759: fail-closed codex-crew isolation guard
+		brPath:                        p.BrPath,                        // hk-f722: staged-bead generator; empty → disabled
+		followUpLedger:                make(map[string]struct{}),
+		followUpLedgerMu:              &sync.Mutex{},
+		spawnSubstrateReadyCh:         p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
+		allowedRepos:                  p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
+		diskFreeBytesFunc:             p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
 		// hk-y3frr: default to a no-op clean in tests so that the now-enabled
 		// proactive reap never calls real `go clean -cache` in scenario tests
 		// (which have no goCacheCleanFunc set and would wipe the build cache on
@@ -567,11 +567,21 @@ func ExportedLoadStandardGraph(params map[string]string) (*dot.Graph, error) {
 	return loadStandardGraph(params)
 }
 
-// ExportedRunPeriodicDiskCheck calls runPeriodicDiskCheck with the given deps.
-// Used by diskcheck_hksxlb_test.go to drive the reaper directly without
-// running the full work loop (hk-guez).
-func ExportedRunPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps) {
-	runPeriodicDiskCheck(ctx, deps)
+// ExportedMaintState is an opaque test handle over the runWorkLoop-local
+// loopMaintenanceState (RSM-011: the periodic-maintenance value fields were
+// lifted off workLoopDeps). Tests create one via ExportedNewMaintState and
+// thread it through ExportedRunPeriodicDiskCheck so per-run state (diskLow,
+// last-probe timestamps) persists across calls, as it did on deps before.
+type ExportedMaintState struct{ m loopMaintenanceState }
+
+// ExportedNewMaintState returns a fresh maintenance-state handle.
+func ExportedNewMaintState() *ExportedMaintState { return &ExportedMaintState{} }
+
+// ExportedRunPeriodicDiskCheck calls runPeriodicDiskCheck with the given deps
+// and maintenance-state handle. Used by diskcheck_hksxlb_test.go to drive the
+// reaper directly without running the full work loop (hk-guez).
+func ExportedRunPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, ms *ExportedMaintState) {
+	runPeriodicDiskCheck(ctx, deps, &ms.m)
 }
 
 // ExportedWorkLoopDepsPtr returns a pointer to a workLoopDeps so tests can
@@ -591,10 +601,10 @@ func ExportedNewRunRegistry() *RunRegistry {
 	return NewRunRegistry()
 }
 
-// ExportedDiskCheckDiskLow reads the diskLow field from deps.
-// Used by diskcheck_hksxlb_test.go to assert post-call state (hk-guez).
-func ExportedDiskCheckDiskLow(deps *workLoopDeps) bool {
-	return deps.diskLow
+// ExportedDiskCheckDiskLow reads the diskLow field from the maintenance-state
+// handle. Used by diskcheck_hksxlb_test.go to assert post-call state (hk-guez).
+func ExportedDiskCheckDiskLow(ms *ExportedMaintState) bool {
+	return ms.m.diskLow
 }
 
 // ExportedDiskCheckSetGoCacheCleanInterval overrides the proactive-reap
@@ -636,6 +646,17 @@ func WorkflowModeDefaultOf(deps workLoopDeps) core.WorkflowMode {
 // cancelled, mirroring runWorkLoop.
 func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	return runWorkLoop(ctx, deps)
+}
+
+// ExportedStoreLocalInFlight preloads the split-gate local-in-flight counter on
+// deps so a test can simulate local saturation (localInFlight >= gateMax) before
+// running the work loop. localInFlight is a *atomic.Int32 shared through the
+// by-value deps copy, so a store here is visible to the loop started via
+// ExportedRunWorkLoop(deps).
+//
+// Bead ref: hk-l5saf.
+func ExportedStoreLocalInFlight(deps workLoopDeps, n int32) {
+	deps.localInFlight.Store(n)
 }
 
 // ExportedSetAgentReadyKillReapTimeout overrides the package-level
@@ -1076,7 +1097,7 @@ func ExportedMergeRunBranchToMain(
 	protectBranches []string,
 	brPath string,
 ) ExportedMergeOutcome {
-	o := mergeRunBranchToMain(ctx, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches, brPath)
+	o := mergeRunBranchToMain(ctx, inlineMergeSubmit, projectDir, runID, bus, beadID, headSHA, targetBranch, protectBranches, brPath)
 	return ExportedMergeOutcome{success: o.success, reason: o.reason, noChange: o.noChange}
 }
 
@@ -1450,6 +1471,21 @@ var ExportedDefaultPostAgentReadyHangTimeout = &defaultPostAgentReadyHangTimeout
 // ExportedWaitPostAgentReadyProgress exposes waitPostAgentReadyProgress for
 // unit tests (hk-a2okh).
 var ExportedWaitPostAgentReadyProgress = waitPostAgentReadyProgress
+
+// ExportedDefaultAgentReadyTimeout exposes defaultAgentReadyTimeout (HC-056,
+// agentready.go) so the WS3-Claude-C timing property/fuzz harness can PIN the
+// real threshold constant — if the production default drifts, the pin assertion
+// fails, surfacing that the harness's scaled band no longer models the real one.
+var ExportedDefaultAgentReadyTimeout = defaultAgentReadyTimeout
+
+// ExportedEmitAgentReadyTimeout exposes emitAgentReadyTimeout (hk-5cox8) so the
+// WS3-Claude-C harness drives the REAL anomaly emitter (inv-3) rather than a
+// fabricated stand-in.
+var ExportedEmitAgentReadyTimeout = emitAgentReadyTimeout
+
+// ExportedEmitPostAgentReadyHang exposes emitPostAgentReadyHang (hk-a2okh) so the
+// WS3-Claude-C harness drives the REAL post-agent_ready-hang anomaly emitter.
+var ExportedEmitPostAgentReadyHang = emitPostAgentReadyHang
 
 // AgentEventSourceExported is the exported alias for agentEventSource so that
 // test stubs in package daemon_test can satisfy the interface.
@@ -1939,18 +1975,30 @@ func ExportedBufferName(sessionID, purpose string) string {
 	return bufferName(sessionID, purpose)
 }
 
+// ExportedInputBufferName exposes the interim tmux/paste InputPort buffer name
+// (inputBufferName) for tests in package daemon_test. Since T8
+// (codename:agent-input-substrate) the daemon-run review-loop delivery routes
+// through handler.InputPort.SubmitInput, whose interim tmux driver uses this
+// single AIS input buffer rather than the former per-phase
+// "harmonik-<session-id>-<purpose>" buffer names. The per-purpose bufferName
+// discipline remains normative only for the keeper + interactive-CLI paste paths
+// (PL-021d carve-out).
+func ExportedInputBufferName() string {
+	return inputBufferName
+}
+
 // ExportedSynthesiseClaudeSessionID exposes rlSynthesiseClaudeSessionID for
 // tests in package daemon_test.  Tests use this to verify the produced ID
 // satisfies the tmux buffer-name regex (hk-lckbv).
 func ExportedSynthesiseClaudeSessionID() string {
-	return rlSynthesiseClaudeSessionID()
+	return rlSynthesiseClaudeSessionID(substrate.SystemClock{})
 }
 
 // ExportedResolveIter1ClaudeSessionID exposes rlResolveIter1ClaudeSessionID for
 // tests in package daemon_test (hk-za5mz). Verifies the iteration-1 session-id
 // resolution order: interceptor id → real minted id → synthesis.
 func ExportedResolveIter1ClaudeSessionID(interceptorID, realMintedID string) string {
-	return rlResolveIter1ClaudeSessionID(interceptorID, realMintedID)
+	return rlResolveIter1ClaudeSessionID(substrate.SystemClock{}, interceptorID, realMintedID)
 }
 
 // ExportedNewPerRunSubstrate wraps newPerRunSubstrate for tests in package
@@ -2164,7 +2212,7 @@ func ExportedNewQueueStore() *QueueStore {
 //
 // Bead ref: hk-nvrvp.
 func ExportedNewWorkLoopDepsWithStore(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store *hookSessionStore) (workLoopDeps, error) {
-	return newWorkLoopDeps(cfg, bus, workflowModeDefault, registry, store)
+	return newWorkLoopDeps(context.Background(), cfg, bus, workflowModeDefault, registry, store)
 }
 
 // ExportedEvaluateGroupAdvanceWithOutcome exposes evaluateGroupAdvanceWithOutcome
@@ -2499,12 +2547,16 @@ type ExportedCodexRunCtx struct {
 	CodexBinary   string
 	WorkspacePath string
 	BeadID        string
-	// Model is the codex model name (e.g. "o4-mini"). Required for initial turns;
-	// empty model on an initial turn is a fail-loud error (hk-heh3t).
-	Model         string
-	PriorThreadID *string
-	BaseEnv       []string
-	CodexHome     string
+	// Model is the codex model name (e.g. "o4-mini"). OPTIONAL: an empty model on
+	// an initial turn omits the --model flag so codex resolves the account default
+	// from $CODEX_HOME/config.toml — the only working config on the HN-022
+	// ChatGPT-subscription path, where a named model 400s. The old fail-loud guard
+	// (empty → error) was retired with hk-heh3t; matches codexRunCtx.model.
+	Model          string
+	PriorThreadID  *string
+	IterationCount int
+	BaseEnv        []string
+	CodexHome      string
 	// BillingEmitter / RunID / SkipBillingGuard expose the C3/T11 positive
 	// billing-guard seams (hk-tu48u).
 	BillingEmitter   handlercontract.EventEmitter
@@ -2524,6 +2576,7 @@ func ExportedBuildCodexLaunchSpec(rc ExportedCodexRunCtx) (handler.LaunchSpec, e
 		beadID:           rc.BeadID,
 		model:            rc.Model,
 		priorThreadID:    rc.PriorThreadID,
+		iterationCount:   rc.IterationCount,
 		baseEnv:          rc.BaseEnv,
 		codexHome:        rc.CodexHome,
 		billingEmitter:   rc.BillingEmitter,
@@ -2585,6 +2638,9 @@ type ExportedCrewLaunchCtx struct {
 	// Model is the optional per-crew model alias (hk-9j3z); empty injects no
 	// --model flag.
 	Model string
+	// Harness is the resolved crew-scoped harness selection (hk-l63b9); "" and
+	// "claude" both build today's Claude spec, any other value errors.
+	Harness string
 }
 
 // ExportedBuildCrewLaunchSpec exposes buildCrewLaunchSpec for tests in package
@@ -2600,6 +2656,7 @@ func ExportedBuildCrewLaunchSpec(rc ExportedCrewLaunchCtx) (handler.LaunchSpec, 
 		projectDir:   rc.ProjectDir,
 		resume:       rc.Resume,
 		model:        rc.Model,
+		harness:      rc.Harness,
 	})
 }
 
@@ -2607,6 +2664,18 @@ func ExportedBuildCrewLaunchSpec(rc ExportedCrewLaunchCtx) (handler.LaunchSpec, 
 // daemon_test (hk-9j3z): reads the optional model: front-matter field.
 func ExportedReadMissionModel(missionPath string) string {
 	return readMissionModel(missionPath)
+}
+
+// ExportedReadMissionHarness exposes readMissionHarness for tests in package
+// daemon_test (hk-l63b9): reads the optional harness: front-matter field.
+func ExportedReadMissionHarness(missionPath string) string {
+	return readMissionHarness(missionPath)
+}
+
+// ExportedResolveCrewHarness exposes resolveCrewHarness for tests in package
+// daemon_test (hk-l63b9): the crew-scoped harness resolver precedence walk.
+func ExportedResolveCrewHarness(flagHarness, missionHarness, configHarness string) string {
+	return resolveCrewHarness(flagHarness, missionHarness, configHarness)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2862,6 +2931,11 @@ func ExportedRoutedLaunchSpecBuilder(
 			worktreeRootPath:  rc.WorktreeRootPath,
 			beadDescription:   rc.BeadDescription,
 			nodePrompt:        rc.NodePrompt,
+			// remote-substrate M4-C4 (T6): thread the per-run runner so tests can
+			// assert the routed pi/codex exec-path launch spec carries the worker's
+			// SSHRunner (remote) or nil (local, NFR7).
+			runner:           rc.Runner,
+			workerBinaryPath: rc.WorkerBinaryPath,
 		}
 		spec, arts, err := builder(ctx, internal)
 		if err != nil {
@@ -2911,6 +2985,11 @@ func ExportedPinnedHarnessLaunchSpecBuilder(
 			worktreeRootPath:  rc.WorktreeRootPath,
 			beadDescription:   rc.BeadDescription,
 			nodePrompt:        rc.NodePrompt,
+			// remote-substrate M4-C4 (T6): thread the per-run runner so tests can
+			// assert the routed pi/codex exec-path launch spec carries the worker's
+			// SSHRunner (remote) or nil (local, NFR7).
+			runner:           rc.Runner,
+			workerBinaryPath: rc.WorkerBinaryPath,
 		}
 		spec, arts, err := builder(ctx, internal)
 		if err != nil {
@@ -3290,6 +3369,7 @@ type ExportedPiRunCtx struct {
 	// Spec: PI-050 (api_key_file). Bead: hk-xmfoi.
 	APIKeyFile     string
 	PriorSessionID *string
+	IterationCount int
 	BaseEnv        []string
 	// BillingEmitter receives pi_billing_guard events from the guard (PI-040/042/043).
 	// Nil disables event emission; enforcement still runs unless SkipBillingGuard.
@@ -3331,6 +3411,7 @@ func ExportedBuildPiLaunchSpec(rc ExportedPiRunCtx) (handler.LaunchSpec, error) 
 		baseURL:          rc.BaseURL,
 		api:              rc.API,
 		priorSessionID:   rc.PriorSessionID,
+		iterationCount:   rc.IterationCount,
 		baseEnv:          rc.BaseEnv,
 		billingEmitter:   rc.BillingEmitter,
 		runID:            rc.RunID,
@@ -3414,4 +3495,17 @@ func ExportedPiDefaultHome() string {
 // (hk-r9edj) can be exercised directly without driving the full workloop.
 func ExportedStrandedBeadHasOnDiskRun(projectDir string, beadID core.BeadID) bool {
 	return strandedBeadHasOnDiskRun(projectDir, beadID)
+}
+
+// ExportedLoadQueueProvenance runs bootState.loadQueueProvenance for projectDir
+// and returns the aggregated QueueDispatched / QueueOwned provenance sets. It is
+// the test seam for hk-nddg1: loadQueueProvenance must enumerate ALL named
+// queues (queue.EnumerateQueueNames), not just main, so a bead dispatched via a
+// crew queue (e.g. queues/paul.json) lands in QueueDispatched and the orphan
+// sweep's (a-queue) exclusion protects it from a double-dispatch reset.
+func ExportedLoadQueueProvenance(ctx context.Context, projectDir string) (lifecycle.QueueDispatchedSet, lifecycle.QueueOwnedSet) {
+	bs := &bootState{cfg: Config{ProjectDir: projectDir}}
+	st := &reconcileState{}
+	bs.loadQueueProvenance(ctx, st)
+	return st.queueDispatched, st.queueOwned
 }

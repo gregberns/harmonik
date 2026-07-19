@@ -617,3 +617,62 @@ func TestON035Handler_ExtraAttrsInFields(t *testing.T) {
 		t.Errorf("fields.phase = %v, want %q", got, "run")
 	}
 }
+
+// TestON035Handler_HandleAfterCloseNoPanic verifies that a Handle call issued
+// after Close does not nil-deref the closed log file. It must no-op and return
+// a benign error rather than panic (shutdown/teardown ordering hazard).
+func TestON035Handler_HandleAfterCloseNoPanic(t *testing.T) {
+	t.Parallel()
+
+	cfg := on035HandlerFixtureCfg(t)
+	h, err := structuredlog.NewHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+	if err := h.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Must not panic; returns an error signalling the closed handler.
+	if err := h.Handle(context.Background(), slog.Record{}); err == nil {
+		t.Errorf("Handle after Close: want non-nil error, got nil")
+	}
+
+	// Idempotent: a second Close and further Handle calls are also safe.
+	if err := h.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
+	}
+	slog.New(h).InfoContext(context.Background(), "after close")
+}
+
+// TestON035Handler_ConcurrentHandleAndClose stresses the Close/Handle race
+// under -race: many goroutines log while another closes the handler. No write
+// may panic on the nil file.
+func TestON035Handler_ConcurrentHandleAndClose(t *testing.T) {
+	t.Parallel()
+
+	cfg := on035HandlerFixtureCfg(t)
+	h, err := structuredlog.NewHandler(cfg)
+	if err != nil {
+		t.Fatalf("NewHandler: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			logger := slog.New(h)
+			for j := 0; j < 100; j++ {
+				logger.InfoContext(context.Background(), "racing write", "j", j)
+			}
+		}()
+	}
+	// Close concurrently with the writers.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = h.Close() //nolint:errcheck // concurrent-close stress; the race detector is the assertion, close error non-actionable
+	}()
+	wg.Wait()
+}

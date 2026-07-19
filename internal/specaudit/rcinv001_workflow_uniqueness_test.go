@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-63oh.44 binding test — RC-INV-001: reconciliation-as-workflow uniqueness

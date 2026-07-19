@@ -16,8 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"os"
 )
 
 // DashboardHandler is the interface the daemon registers to handle "dashboard"
@@ -53,38 +51,8 @@ func (h *liveDashboardHandlerImpl) HandleDashboard(ctx context.Context) (json.Ra
 // Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §2.
 // Bead ref: hk-2exz9.
 func RunSocketListenerWithDashboard(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, stateh StateHandler, dashh DashboardHandler, qh ...QueueHandler) error {
-	if err := removeStaleSocket(sockPath); err != nil {
-		return fmt.Errorf("daemon: RunSocketListenerWithDashboard: stale-socket check: %w", err)
-	}
-
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "unix", sockPath)
-	if err != nil {
-		return fmt.Errorf("daemon: RunSocketListenerWithDashboard: listen unix %q: %w", sockPath, err)
-	}
-	defer func() { _ = ln.Close() }() //nolint:errcheck
-
-	if err := os.Chmod(sockPath, 0o600); err != nil {
-		return fmt.Errorf("daemon: RunSocketListenerWithDashboard: chmod 0600 %q: %w", sockPath, err)
-	}
-
-	go func() {
-		<-ctx.Done()
-		_ = ln.Close() //nolint:errcheck
-	}()
-
-	var queueHandler QueueHandler
-	if len(qh) > 0 {
-		queueHandler = qh[0]
-	}
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return fmt.Errorf("daemon: RunSocketListenerWithDashboard: accept: %w", err)
-		}
-		go handleSocketConn(ctx, conn, h, hr, queueHandler, sub, oh, ch, crewh, sleepWakeh, stateh, dashh)
-	}
+	return Serve(ctx, sockPath, SocketHandlers{
+		Request: h, HookRelay: hr, Queue: firstQueueHandler(qh), Subscribe: sub,
+		Operator: oh, Comms: ch, Crew: crewh, SleepWake: sleepWakeh, State: stateh, Dashboard: dashh,
+	})
 }

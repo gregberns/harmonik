@@ -163,7 +163,7 @@ func TestPi_UnknownProfile_WorkloopRefusesLaunch(t *testing.T) {
 	// resolvePiProfile refuse gate at workloop.go:3099-3109, bypassing the
 	// whole work loop (mirrors workloop_gate_n5md3_test.go).
 	beadRunOne(ctx, deps, runID, beadRecord,
-		"", nil, nil, 0, nil, "", "", "", nil,
+		"", nil, nil, 0, "", "", "", nil,
 		false, "", nil, false)
 
 	calls := ledger.calls()

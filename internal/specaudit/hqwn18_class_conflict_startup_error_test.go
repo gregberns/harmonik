@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.18 binding test — EV-014 subscription-time class conflict is a startup error.

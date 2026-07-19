@@ -1,0 +1,19 @@
+# codex-coverage-floor.baseline — ratified per-file statement-coverage floors
+# for the structured Codex input-driver reactor files (agent-input-substrate
+# M2, T9; harness-acceptance-design §"Coverage floor").
+#
+# Measured 2026-07-15 on base phase1-session-restart-substrate 5c68bc31 via:
+#   go test -count=1 -coverprofile=<tmp> ./internal/codexinput/... ./internal/codexdriver/...
+# (in-package coverage only — the driver packages' own tests + the T9 harness's
+# in-package driver exercise; cross-package coverpkg excluded, matching the
+# keeper §6.4 command).
+#
+# The RATIFIED floors below sit a hair under the measured values — a RATCHET:
+# coverage may not drop below these. Raising a floor after an improvement is a
+# normal follow-up; lowering one requires the same scrutiny as editing any
+# protected rule file.
+#
+# Format: <file-path-under-internal/> <floor-pct>
+codexinput/reactor.go 70.0
+codexdriver/driver.go 73.0
+codexdriver/session.go 86.0

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.58 binding test — WM-INV-005 canonical-path discovery without a registry.

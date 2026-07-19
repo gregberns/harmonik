@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "gurney",
+  "ckey": "gurney|cyc-20260625T015754-000006",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260625T015754-000006",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "7ea0f952-9d75-4ed5-8df6-71aaa5b73426",
+  "started_at": "2026-06-25T22:00:59.660008Z",
+  "terminal_at": "2026-06-25T22:02:32.069743Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

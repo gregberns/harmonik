@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-zs0.14 binding test — AR-013 subsystem envelope declaration (8 elements).

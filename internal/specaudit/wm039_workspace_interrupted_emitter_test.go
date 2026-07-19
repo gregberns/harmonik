@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.53 binding test — WM-039 WM observes interrupt transitions but does NOT emit

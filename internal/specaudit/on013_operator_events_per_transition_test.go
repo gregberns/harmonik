@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.15 binding test — ON-013 operator-control events are emitted per state transition.

@@ -26,6 +26,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -160,6 +161,12 @@ type session struct {
 	// after Wait() returns.
 	outcomeDone chan struct{}
 
+	// killWaitOnce/killWaitDone: one shared reap-observer goroutine for Kill,
+	// spawned on first Kill call. killWaitDone closes when waitOwner.Wait
+	// returns (process reaped). Repeated Kill calls reuse the same goroutine.
+	killWaitOnce sync.Once
+	killWaitDone chan struct{}
+
 	// machine is the per-session lifecycle FSM (HC-064..HC-067).
 	// Constructed in NewSession and transitions to StateSpawning→StateInitializing
 	// on successful cmd.Start. The Machine() accessor exposes it to the watcher
@@ -263,16 +270,17 @@ func newSessionWithIDs(ctx context.Context, cmd *exec.Cmd, sessID, runID string)
 	ring := newRingBuffer(stderrRingCapBytes)
 
 	s := &session{
-		cmd:         cmd,
-		waitOwner:   lifecycle.NewWaitOwner(cmd),
-		stdin:       stdinPipe,
-		stdout:      stdoutPR,
-		stderr:      stderrR,
-		startedAt:   time.Now(),
-		stderrBuf:   ring,
-		stderrDone:  make(chan struct{}),
-		outcomeDone: make(chan struct{}),
-		machine:     machine,
+		cmd:          cmd,
+		waitOwner:    lifecycle.NewWaitOwner(cmd),
+		stdin:        stdinPipe,
+		stdout:       stdoutPR,
+		stderr:       stderrR,
+		startedAt:    time.Now(),
+		stderrBuf:    ring,
+		stderrDone:   make(chan struct{}),
+		outcomeDone:  make(chan struct{}),
+		killWaitDone: make(chan struct{}),
+		machine:      machine,
 	}
 
 	// Drain stderr into the ring buffer concurrently so it never blocks the
@@ -367,13 +375,30 @@ func (s *session) runWait(_ context.Context) {
 }
 
 // SendInput writes line + '\n' to the subprocess stdin.
-func (s *session) SendInput(_ context.Context, line string) error {
+//
+// The write is bounded by ctx: a wedged child that never drains its stdin
+// (the OS pipe buffer is ~64 KiB) would otherwise block the caller forever.
+// The write runs in a goroutine; on ctx expiry SendInput returns
+// ctx.Err()-wrapping ErrCanceled immediately. The writer goroutine itself
+// remains blocked only until the pipe unblocks — CloseStdin or subprocess
+// exit (Kill) releases it — so it is bounded by the session lifetime, not
+// leaked indefinitely.
+func (s *session) SendInput(ctx context.Context, line string) error {
 	data := line + "\n"
-	_, err := io.WriteString(s.stdin, data)
-	if err != nil {
-		return fmt.Errorf("handler: Session.SendInput: %w", err)
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(s.stdin, data)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("handler: Session.SendInput: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("handler: Session.SendInput: stdin write not completed: %w: %w", ctx.Err(), ErrCanceled)
 	}
-	return nil
 }
 
 // Kill sends SIGTERM to the subprocess.  If ctx expires before the subprocess
@@ -403,14 +428,18 @@ func (s *session) Kill(ctx context.Context) error {
 	}
 
 	// Wait for process exit or ctx deadline; on deadline, escalate to SIGKILL.
-	waitDone := make(chan struct{})
-	go func() {
-		_ = s.waitOwner.Wait()
-		close(waitDone)
-	}()
+	// The reap-observer goroutine is spawned once and shared across repeated
+	// Kill calls (killWaitOnce) so a caller retrying Kill does not accumulate
+	// one blocked goroutine per attempt.
+	s.killWaitOnce.Do(func() {
+		go func() {
+			_ = s.waitOwner.Wait() //nolint:errcheck // reap-observer goroutine; the Wait error is surfaced to callers via the normal Wait path, not here
+			close(s.killWaitDone)
+		}()
+	})
 
 	select {
-	case <-waitDone:
+	case <-s.killWaitDone:
 		// Process exited cleanly after SIGTERM.
 		return nil
 	case <-ctx.Done():

@@ -45,7 +45,12 @@ func TestWindowName(t *testing.T) {
 	// (no sentinel, no suffix → total 65 > 64).
 	longID := strings.Repeat("x", 65)
 
-	longIDTruncBase := longID[:beadIDMaxBytes] + windowNameFixtureTruncSuffix(longID)
+	// Expected truncated bead part depends on the fixed parts around it:
+	// budget = 64 - len(sentinel) - len(suffix) - len("~") - 8.
+	truncBase := func(sentinelLen, suffixLen int) string {
+		budget := windowNameMaxBytes - sentinelLen - suffixLen - 1 - hashSuffixLen
+		return longID[:budget] + windowNameFixtureTruncSuffix(longID)
+	}
 
 	tests := []struct {
 		name        string
@@ -150,7 +155,7 @@ func TestWindowName(t *testing.T) {
 			phase:       PhaseSingle,
 			iteration:   1,
 			ownsSession: true,
-			want:        longIDTruncBase,
+			want:        truncBase(0, 0),
 		},
 		// ── truncation: long bead_id, with suffix (implementer/owns) ──────────
 		{
@@ -159,7 +164,7 @@ func TestWindowName(t *testing.T) {
 			phase:       PhaseImplementerInitial,
 			iteration:   1,
 			ownsSession: true,
-			want:        longIDTruncBase + "/i1",
+			want:        truncBase(0, 3) + "/i1",
 		},
 		// ── truncation: long bead_id + sentinel prefix (implementer/reuse) ────
 		{
@@ -168,7 +173,7 @@ func TestWindowName(t *testing.T) {
 			phase:       PhaseImplementerInitial,
 			iteration:   2,
 			ownsSession: false,
-			want:        sentinel + longIDTruncBase + "/i2",
+			want:        sentinel + truncBase(len(sentinel), 3) + "/i2",
 		},
 		// ── truncation: long bead_id, reviewer suffix ─────────────────────────
 		{
@@ -177,7 +182,7 @@ func TestWindowName(t *testing.T) {
 			phase:       PhaseReviewer,
 			iteration:   1,
 			ownsSession: false,
-			want:        sentinel + longIDTruncBase + "/r1",
+			want:        sentinel + truncBase(len(sentinel), 3) + "/r1",
 		},
 		// ── boundary: bead_id exactly at 56 bytes (no truncation) ─────────────
 		{
@@ -202,7 +207,31 @@ func TestWindowName(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("WindowName() =\n  %q\nwant\n  %q", got, tc.want)
 			}
+			if len(got) > windowNameMaxBytes {
+				t.Errorf("WindowName() length = %d bytes, exceeds max %d: %q", len(got), windowNameMaxBytes, got)
+			}
 		})
+	}
+}
+
+// TestWindowName_MaxBytesBoundary verifies the composed name never exceeds
+// 64 bytes for adversarial combinations of long bead IDs, sentinel prefixes,
+// and phase suffixes (the beadIDMaxBytes=56 mis-budget produced 65+ bytes).
+func TestWindowName_MaxBytesBoundary(t *testing.T) {
+	t.Parallel()
+	hash := windowNameFixtureHash(t)
+
+	for _, beadLen := range []int{55, 56, 57, 63, 64, 65, 100, 200} {
+		id := windowNameFixtureBeadID(strings.Repeat("b", beadLen))
+		for _, owns := range []bool{true, false} {
+			for _, phase := range []Phase{PhaseSingle, PhaseImplementerInitial, PhaseReviewer} {
+				got := WindowName(id, phase, 12, hash, owns)
+				if len(got) > windowNameMaxBytes {
+					t.Errorf("WindowName(beadLen=%d, phase=%v, owns=%v) = %q (%d bytes), exceeds %d",
+						beadLen, phase, owns, got, len(got), windowNameMaxBytes)
+				}
+			}
+		}
 	}
 }
 

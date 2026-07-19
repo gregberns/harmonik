@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -133,15 +134,27 @@ func WriteInterruptStateChangedMarker(
 		return fmt.Errorf("workspace: WriteInterruptStateChangedMarker: MkdirAll %q: %w", eventsDir, err)
 	}
 
-	line := fmt.Sprintf(
-		`{"event":"interrupt_state_changed","workspace_id":%q,"run_id":%q,"prior_interrupt_state":%q,"new_interrupt_state":%q,"cause":%q,"changed_at":%q}`,
-		workspaceID,
-		runID,
-		priorInterruptState,
-		newInterruptState,
-		cause,
-		time.Now().UTC().Format(time.RFC3339),
-	) + "\n"
+	payload, err := json.Marshal(struct {
+		Event               string `json:"event"`
+		WorkspaceID         string `json:"workspace_id"`
+		RunID               string `json:"run_id"`
+		PriorInterruptState string `json:"prior_interrupt_state"`
+		NewInterruptState   string `json:"new_interrupt_state"`
+		Cause               string `json:"cause"`
+		ChangedAt           string `json:"changed_at"`
+	}{
+		Event:               "interrupt_state_changed",
+		WorkspaceID:         workspaceID,
+		RunID:               runID,
+		PriorInterruptState: priorInterruptState,
+		NewInterruptState:   newInterruptState,
+		Cause:               cause,
+		ChangedAt:           time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return fmt.Errorf("workspace: WriteInterruptStateChangedMarker: marshal: %w", err)
+	}
+	line := string(payload) + "\n"
 
 	//nolint:gosec // G304: path constructed from workspace_path (lease-acquired) + known relative segments; not user input
 	f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)

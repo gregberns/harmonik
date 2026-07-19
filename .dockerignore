@@ -1,0 +1,20 @@
+# Docker build-context exclusions (WS2.1/WS2.2 foundation images).
+#
+# The daemon/worker images build from the repo root context (`docker build .`).
+# The multi-stage builders only need Go source + go.mod/sum + the Makefile, so we
+# prune the large non-source trees to keep the context (and each layer) small.
+# NOTE: `.git` is excluded — the Makefile's COMMIT_HASH is passed as a build-arg
+# (see Dockerfile.daemon), so no .git is needed inside the build. Excluding it
+# keeps the context lean.
+.git
+.claude/worktrees
+.kerf
+.memory
+plans
+testdata
+docs
+specs
+node_modules
+*.log
+.tools
+twins

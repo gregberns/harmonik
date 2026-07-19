@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-xlach binding test — CHB-INV-003 mechanism-no-cognition sensor.

@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-sx9r.60 binding test — ON-044 distributed tracing across daemons is deferred post-MVH.

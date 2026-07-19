@@ -316,6 +316,17 @@ func buildCodexRoutedLaunchSpec(
 		WorkDir:      spawnSpec.WorkDir,
 		Role:         string(rc.phase),
 		StdinDevNull: spawnSpec.StdinDevNull, // hk-j0p1r: forward /dev/null stdin so ProcessExit harnesses (pi, codex) get startup EOF
+		// remote-substrate M4-C4 (T6): thread the per-run runner so a
+		// worker-selected pi/codex run spawns the agent process ON THE WORKER via
+		// the SSHRunner. rc.runner is the worker's SSHRunner for a REMOTE run and
+		// nil for a LOCAL run (set at the dispatch seam from rbc.sshRunner). These
+		// harnesses are SessionIDCaptured, so the caller forces spec.Substrate=nil
+		// (exec path) — where handler.Launch consults spec.Runner. A nil runner
+		// keeps the exec path byte-identical to box-A-local (NFR7). This composes
+		// with the landed pi provider config ({Provider,BaseURL,API}, decision 6):
+		// the runner only changes WHICH host the process runs on, never the wire
+		// config carried in spawnSpec.Env/Args above.
+		Runner: rc.runner,
 	}
 	artifacts := claudeRunArtifacts{
 		claudeSessionID:   trackingSessionID,

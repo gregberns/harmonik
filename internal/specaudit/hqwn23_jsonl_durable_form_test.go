@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.23 binding test — EV-015 JSONL is the durable on-disk form.

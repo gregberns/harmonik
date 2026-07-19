@@ -245,6 +245,7 @@ Where <BEAD_ID> is the bead ID shown in the agent-task.md header and
 <ISO_TIMESTAMP> is the current UTC time in RFC 3339 format.
 
 Then commit with message: smoke(<BEAD_ID>): 5-signal verification
+and include the line "Refs: <BEAD_ID>" on its own line in the commit body.
 
 This task is complete when the file is updated and committed.`
 
@@ -377,8 +378,10 @@ func smokeWatchSignals(
 	var smokeRunID string
 	runFailed := false
 
-	// Read the NDJSON stream line by line.
+	// Read the NDJSON stream line by line. Large-but-valid event lines (e.g.
+	// a big reviewer_verdict notes field) must not abort the scan.
 	scanner := bufio.NewScanner(conn)
+	setLargeScanBuffer(scanner)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -439,8 +442,8 @@ func smokeWatchSignals(
 					fmt.Fprintf(stdout, "harmonik smoke: [SIGNAL 3] commit on target branch=%s commit=%s\n",
 						targetBranch, commitRef)
 				} else {
-					result.detail[2] = fmt.Sprintf("FAIL: no commit with Refs: %s on branch %s", smokeBeadID, targetBranch)
-					fmt.Fprintf(stderr, "harmonik smoke: [SIGNAL 3 FAIL] no commit with Refs: %s on branch %s\n",
+					result.detail[2] = fmt.Sprintf("FAIL: no commit referencing %s on branch %s", smokeBeadID, targetBranch)
+					fmt.Fprintf(stderr, "harmonik smoke: [SIGNAL 3 FAIL] no commit referencing %s on branch %s\n", //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 						smokeBeadID, targetBranch)
 				}
 			}
@@ -524,14 +527,17 @@ func smokeWatchSignals(
 	return result, 2
 }
 
-// smokeCheckCommitOnBranch checks whether a commit with "Refs: <beadID>" in
-// its message exists on <branch> in the project git repo.
+// smokeCheckCommitOnBranch checks whether a commit referencing <beadID> in its
+// message exists on <branch> in the project git repo. The smoke task commits
+// with subject "smoke(<beadID>): ..." and a "Refs: <beadID>" trailer; matching
+// the bead ID as a fixed string covers both forms, so a correct commit passes
+// even if the agent omits the trailer.
 // Returns (true, short-sha) on success; (false, "") on failure.
 func smokeCheckCommitOnBranch(projectDir, branch, beadID string, stderr io.Writer) (bool, string) {
 	//nolint:gosec // G204: git args are validated values; projectDir is operator-controlled
 	cmd := exec.Command("git", "-C", projectDir,
 		"log", "--oneline", "--max-count=1",
-		"--grep", fmt.Sprintf("Refs: %s", beadID),
+		"--fixed-strings", "--grep", beadID,
 		branch,
 	)
 	var out bytes.Buffer
@@ -583,7 +589,7 @@ FLAGS
 SIGNALS VERIFIED
   1. run_started       — smoke bead was dispatched and a run was allocated
   2. run_completed     — implementer finished and daemon merged the commit
-  3. commit on branch  — a commit with "Refs: <bead-id>" exists on the target branch
+  3. commit on branch  — a commit referencing <bead-id> exists on the target branch
   4. reviewer_verdict  — the review gate confirmed the work
   5. bead_closed       — the bead reached the terminal lifecycle state
 

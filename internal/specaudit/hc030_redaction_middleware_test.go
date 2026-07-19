@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.37 binding test — HC-030 redaction registry middleware in event-bus producer path.

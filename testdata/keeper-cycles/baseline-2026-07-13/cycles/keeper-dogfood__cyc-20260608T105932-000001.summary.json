@@ -1,0 +1,17 @@
+{
+  "abort_reason": null,
+  "agent_name": "keeper-dogfood",
+  "ckey": "keeper-dogfood|cyc-20260608T105932-000001",
+  "clear_unconfirmed": true,
+  "cycle_id": "cyc-20260608T105932-000001",
+  "event_count": 3,
+  "outcome": "complete",
+  "session_id_start": "dogfood-live-1",
+  "started_at": "2026-06-08T10:59:37.40984Z",
+  "terminal_at": "2026-06-08T11:01:03.678909Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_clear_unconfirmed",
+    "session_keeper_cycle_complete"
+  ]
+}

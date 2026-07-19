@@ -152,7 +152,8 @@ func (s *rl8oySubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSp
 	}
 
 	// Only fresh (--session-id) launches get the relay agent_ready; --resume
-	// launches use the resumeReadyFallbackGrace inside the review loop.
+	// launches use the resumeReadyProbeDelay transitional probe (RT8: the
+	// Dispatch machine's ready segment) inside the review loop.
 	if !isResume && claudeSessionID != "" {
 		go func(csid string) {
 			select {

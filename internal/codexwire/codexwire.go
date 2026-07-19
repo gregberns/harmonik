@@ -41,6 +41,7 @@ const (
 	FrameKindClientNotification                  // client→server: jsonrpc + method, no id
 	FrameKindServerResponse                      // server→client: id + result/error, no method
 	FrameKindServerNotification                  // server→client: method + params, no id/jsonrpc
+	FrameKindServerRequest                       // server→client: id + method (approval prompt); MUST be answered
 	FrameKindRaw                                 // unknown method; raw bytes preserved
 )
 
@@ -51,8 +52,13 @@ type Frame struct {
 
 	// Envelope fields (all may be zero for their type when not present on wire).
 	JSONRPC string
-	ID      int64  // 0 when absent
-	Method  string // "" for server responses
+	// ID is the JSON-RPC 2.0 request/response id, preserved verbatim as raw
+	// JSON. Per JSON-RPC 2.0 the id may be a string, a number, or null, so it
+	// is kept as json.RawMessage rather than a fixed Go scalar — a string id
+	// from a codex/peer must round-trip without tearing down the session.
+	// nil (zero length) when absent from the wire.
+	ID     json.RawMessage
+	Method string // "" for server responses
 
 	// Typed payload — only one is non-nil.
 	Params any             // client request/notification or server notification params
@@ -100,6 +106,11 @@ var methodRegistry = map[string]methodEntry{
 		Dir:        DirClient,
 		MakeParams: func() any { return &ThreadStartParams{} },
 		MakeResult: func() any { return &ThreadStartResult{} },
+	},
+	"thread/resume": {
+		Dir:        DirClient,
+		MakeParams: func() any { return &ThreadResumeParams{} },
+		MakeResult: func() any { return &ThreadResumeResult{} },
 	},
 	"turn/start": {
 		Dir:        DirClient,
@@ -168,7 +179,7 @@ var methodRegistry = map[string]methodEntry{
 // Every field is optional at the envelope level; absent fields are zero.
 type rawLine struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      *int64          `json:"id"` // pointer to distinguish absent (nil) from 0
+	ID      json.RawMessage `json:"id"` // raw so a string, number, or null id round-trips verbatim
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
 	Result  json.RawMessage `json:"result"`
@@ -190,7 +201,7 @@ func Parse(line []byte) (Frame, error) {
 		return Frame{}, fmt.Errorf("codexwire: decode envelope: %w", err)
 	}
 
-	hasID := env.ID != nil
+	hasID := len(env.ID) > 0 && string(env.ID) != "null"
 	hasMethod := env.Method != ""
 	hasResult := len(env.Result) > 0 && string(env.Result) != "null"
 	hasError := len(env.Error) > 0 && string(env.Error) != "null"
@@ -204,13 +215,23 @@ func Parse(line []byte) (Frame, error) {
 		Error:     env.Error,
 	}
 	if hasID {
-		f.ID = *env.ID
+		f.ID = env.ID
 	}
 
 	switch {
 	case hasID && hasMethod:
-		// Client request.
-		f.Kind = FrameKindClientRequest
+		// id + method is a JSON-RPC request. Direction disambiguates: a method the
+		// client originates (registry Dir == DirClient — initialize / thread/start /
+		// turn/start) is our own outbound request; anything else — a server-only
+		// method or a method not yet modeled (e.g. an exec / apply-patch approval
+		// prompt) — is a request the app-server sends TO us and MUST be answered,
+		// never dropped (RU-07). Classify the latter as FrameKindServerRequest so
+		// the driver routes it instead of letting it fall through as a client echo.
+		if entry, ok := methodRegistry[env.Method]; ok && entry.Dir == DirClient {
+			f.Kind = FrameKindClientRequest
+		} else {
+			f.Kind = FrameKindServerRequest
+		}
 		if err := parseParams(&f, hasParams); err != nil {
 			return Frame{}, err
 		}
@@ -235,11 +256,12 @@ func Parse(line []byte) (Frame, error) {
 		}
 
 	case hasID && !hasMethod:
-		// Server response.
+		// Server response. The result stays in f.RawResult (an explicit
+		// "result": null round-trips as the "null" bytes; an absent result as
+		// empty). Typed parsing is deferred to ResolveResponseResult, which the
+		// caller invokes once it correlates the response id to the originating
+		// request method.
 		f.Kind = FrameKindServerResponse
-		if err := parseResult(&f); err != nil {
-			return Frame{}, err
-		}
 
 	default:
 		f.Kind = FrameKindRaw
@@ -262,21 +284,6 @@ func parseParams(f *Frame, hasParams bool) error {
 		return fmt.Errorf("codexwire: parse params for %q: %w", f.Method, err)
 	}
 	f.Params = p
-	return nil
-}
-
-// parseResult populates f.Result from f.RawResult for a server response.
-// The method is looked up via a reverse lookup from the request registry;
-// since we parse both directions, we find the entry by matching requests.
-// For corpus correctness the result is stored in f.Params (see Marshal).
-//
-// We can't resolve method→result without knowing the request id correlation.
-// Instead we store the raw result and resolve via ResponseResult if needed.
-func parseResult(f *Frame) error {
-	// Result parsing is done lazily via ResolveResponseResult when the caller
-	// correlates the response id to the originating request method. For the
-	// round-trip gate, we only need to preserve and re-emit RawResult, which
-	// is already stored in f.RawResult.
 	return nil
 }
 
@@ -308,7 +315,9 @@ func ResolveResponseResult(f *Frame, requestMethod string) error {
 // the round-trip guarantee.
 func Marshal(f Frame) ([]byte, error) {
 	switch f.Kind {
-	case FrameKindClientRequest:
+	case FrameKindClientRequest, FrameKindServerRequest:
+		// Both are JSON-RPC requests (jsonrpc? + id + method + params); the same
+		// envelope serializer round-trips either direction.
 		return marshalClientRequest(f)
 	case FrameKindClientNotification:
 		return marshalClientNotification(f)
@@ -338,8 +347,7 @@ func marshalClientRequest(f Frame) ([]byte, error) {
 		b, _ := json.Marshal(f.JSONRPC)
 		m["jsonrpc"] = b
 	}
-	idB, _ := json.Marshal(f.ID)
-	m["id"] = idB
+	m["id"] = idRawOrNull(f.ID)
 	methodB, _ := json.Marshal(f.Method)
 	m["method"] = methodB
 	if len(params) > 0 {
@@ -368,8 +376,7 @@ func marshalClientNotification(f Frame) ([]byte, error) {
 
 func marshalServerResponse(f Frame) ([]byte, error) {
 	m := map[string]json.RawMessage{}
-	idB, _ := json.Marshal(f.ID)
-	m["id"] = idB
+	m["id"] = idRawOrNull(f.ID)
 	if f.Result != nil {
 		rb, err := json.Marshal(f.Result)
 		if err != nil {
@@ -397,6 +404,16 @@ func marshalServerNotification(f Frame) ([]byte, error) {
 		m["params"] = params
 	}
 	return json.Marshal(m)
+}
+
+// idRawOrNull returns the verbatim JSON-RPC id bytes, or the JSON literal null
+// when the id is absent. The id is emitted as raw so a string or numeric id
+// round-trips byte-for-byte.
+func idRawOrNull(id json.RawMessage) json.RawMessage {
+	if len(id) == 0 {
+		return json.RawMessage("null")
+	}
+	return id
 }
 
 // marshalPayload serializes a typed params struct back to JSON, merging Extra.
@@ -548,6 +565,40 @@ func (p ThreadStartParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
+// ThreadResumeParams holds the client→server "thread/resume" request params.
+//
+// Protocol-schema evidence (corpus/protocol-schema.json → v2.ThreadResumeParams):
+// only `threadId` is required. The schema notes "Prefer using thread_id whenever
+// possible" (resume-by-id loads the thread from disk / rejoins a running thread).
+// All other fields (approvalPolicy, sandbox, cwd, model, …) are optional and
+// null-defaulted; they are preserved verbatim via Extra so a caller may set them
+// without this type having to enumerate the full posture surface (hk-160yb G2).
+type ThreadResumeParams struct {
+	ThreadID string                     `json:"threadId"`
+	Extra    map[string]json.RawMessage `json:"-"`
+}
+
+var threadResumeParamsKnown = map[string]bool{"threadId": true}
+
+// UnmarshalJSON decodes ThreadResumeParams, preserving unknown fields in Extra.
+func (p *ThreadResumeParams) UnmarshalJSON(data []byte) error {
+	type alias ThreadResumeParams
+	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
+		return err
+	}
+	return parseExtra(data, threadResumeParamsKnown, &p.Extra)
+}
+
+// MarshalJSON encodes ThreadResumeParams, merging the preserved Extra fields back in.
+func (p ThreadResumeParams) MarshalJSON() ([]byte, error) {
+	type alias ThreadResumeParams
+	b, err := json.Marshal(alias(p))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtra(b, p.Extra)
+}
+
 // TurnStartParams: client→server "turn/start" request params.
 //
 // Corpus evidence: {"threadId": "...", "input": [{"type":"text","text":"...","text_elements":[]}]}
@@ -684,6 +735,16 @@ func (r ThreadStartResult) MarshalJSON() ([]byte, error) {
 	}
 	return mergeExtra(b, r.Extra)
 }
+
+// ThreadResumeResult holds the server→client "thread/resume" response result.
+//
+// Per the app-server protocol schema, v2.ThreadResumeResponse is structurally
+// identical to v2.ThreadStartResponse (same required set: thread, model,
+// modelProvider, sandbox, approvalPolicy, approvalsReviewer, cwd) — a resumed
+// thread simply comes back with its turns populated. Alias the start result so
+// the codec (fields, known-map, Extra round-trip) is shared, not duplicated
+// (hk-160yb G2).
+type ThreadResumeResult = ThreadStartResult
 
 // TurnStartResult: server→client "turn/start" response result.
 //

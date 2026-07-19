@@ -31,7 +31,6 @@
 | `t5probe` | — | NON-NORMATIVE | Exploratory test probes only (package doc: "NOT part of the production build"). No spec needed; not a runtime subsystem. |
 | `testhelpers` | `specs/process-lifecycle.md` §4.1 PL-004 | NON-NORMATIVE | Test scaffolding that materializes a `.harmonik/` sandbox per PL-004. Helper, not a runtime subsystem; no normative spec of its own is required. |
 | `workspace` | `specs/workspace-model.md` | CANONICAL | workspace-model.md owns the worktree lifecycle, branch naming, lease protocol, session-log layout, interrupt-state, merge-back discipline, and WM-NNN requirements. |
-| `workflowvalidator` | `specs/execution-model.md` §4.9 EM-038–039 + `specs/control-points.md` §4.11 CP-049 | CANONICAL | Package doc cites EM-038/EM-039 for pre-run validation. `cp049_skill_name_shape_test.go` and `validator.go` also implement CP-049 (ingest-time skill-name syntactic validity), governed by control-points.md §4.11. |
 
 ---
 

@@ -91,7 +91,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -102,6 +101,7 @@ import (
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
+	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -809,12 +809,18 @@ func TestScenario_CaptainCrewE2E_hkzi4ej(t *testing.T) {
 		WorkflowModeDefault:   core.WorkflowModeReviewLoop,
 	}
 
-	var mergeMu sync.Mutex
+	// The injected merge exclusion domain (mergeq) is Started here (with a
+	// t.Cleanup cancel) because runWorkLoop only starts a queue it created itself —
+	// an injected queue keeps the injector's lifecycle (RSM-015).
+	mergeQ := mergeq.New(nil)
+	mergeQCtx, mergeQCancel := context.WithCancel(context.Background())
+	mergeQ.Start(mergeQCtx)
+	t.Cleanup(mergeQCancel)
 	startDone := make(chan error, 1)
 	go func() {
 		startDone <- daemon.StartForTesting(loopCtx, cfg,
 			daemon.WithWorktreeFactory(emptyCommitWorktreeFactory),
-			daemon.WithMergeMutex(&mergeMu),
+			daemon.WithMergeQueue(mergeQ),
 		)
 	}()
 

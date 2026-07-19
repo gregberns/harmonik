@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // AR-041 binding test — no normative artifact depends on external (out-of-repo) sources.

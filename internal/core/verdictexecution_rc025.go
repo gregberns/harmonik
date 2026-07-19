@@ -1,5 +1,10 @@
 package core
 
+import (
+	"errors"
+	"fmt"
+)
+
 // verdictexecution_rc025.go — VerdictExecutionPlan and PlanForVerdict (RC-025).
 //
 // RC-025 requires the daemon's verdict-executor to perform the mechanical action
@@ -151,6 +156,13 @@ func (p VerdictExecutionPlan) Valid() bool {
 	return true
 }
 
+// ErrUnknownVerdict is returned by PlanForVerdict when the Verdict is not one of
+// the seven declared Verdict constants. Because VerdictEvent values originate
+// from decoded payloads, a forward-compatible or malformed verdict must surface
+// as a typed error the caller can handle (RC-023 malformation path) rather than
+// crash the daemon goroutine.
+var ErrUnknownVerdict = errors.New("core: unknown verdict")
+
 // PlanForVerdict maps a VerdictEvent to its VerdictExecutionPlan.
 //
 // The returned plan describes the mechanical action the daemon's verdict-executor
@@ -158,14 +170,17 @@ func (p VerdictExecutionPlan) Valid() bool {
 // validating the VerdictEvent (RC-020 / RC-023) and performing the RC-024 staleness
 // check before calling this function; PlanForVerdict does NOT perform either check.
 //
-// For an invalid or unknown Verdict, PlanForVerdict panics. Callers MUST validate
-// the VerdictEvent before calling this function. In normal operation the daemon's
-// verdict-executor validates at RC-025a step 1 and routes through RC-023 fallback
-// before reaching this function.
+// For an invalid or unknown Verdict, PlanForVerdict returns a non-nil error
+// wrapping ErrUnknownVerdict together with the zero VerdictExecutionPlan (whose
+// Valid() reports false). It never panics: VerdictEvent values originate from
+// decoded payloads, so an unknown/forward-compat verdict must be handled
+// gracefully (RC-023) rather than crash the daemon goroutine. In normal operation
+// the daemon's verdict-executor validates at RC-025a step 1 and routes through
+// RC-023 fallback before reaching this function.
 //
 // Spec ref: specs/reconciliation/spec.md §4.5 RC-025;
 // specs/reconciliation/schemas.md §6.2 Verdict-execution table.
-func PlanForVerdict(v Verdict) VerdictExecutionPlan {
+func PlanForVerdict(v Verdict) (VerdictExecutionPlan, error) {
 	switch v {
 	case VerdictResumeHere:
 		return VerdictExecutionPlan{
@@ -173,7 +188,7 @@ func PlanForVerdict(v Verdict) VerdictExecutionPlan {
 			ActionKind:           VerdictActionKindDispatchCurrentNode,
 			ActionSummary:        "re-dispatched outer run's current node with no context change",
 			IdempotencyMechanism: "dispatch-check-sees-outer-run-already-running-no-re-dispatch",
-		}
+		}, nil
 	case VerdictResumeWithContext:
 		return VerdictExecutionPlan{
 			Verdict:              v,
@@ -181,21 +196,21 @@ func PlanForVerdict(v Verdict) VerdictExecutionPlan {
 			ActionSummary:        "re-dispatched outer run's current node with investigator context injected",
 			IdempotencyMechanism: "dispatch-layer-idempotent-context-injection-is-additive",
 			InjectsContext:       true,
-		}
+		}, nil
 	case VerdictResetToCheckpoint:
 		return VerdictExecutionPlan{
 			Verdict:              v,
 			ActionKind:           VerdictActionKindResetToCheckpoint,
 			ActionSummary:        "reverted outer run to named checkpoint; will re-run from reverted state",
 			IdempotencyMechanism: "no-op-when-current-state-already-matches-target-state-id",
-		}
+		}, nil
 	case VerdictReopenBead:
 		return VerdictExecutionPlan{
 			Verdict:              v,
 			ActionKind:           VerdictActionKindReopenBead,
 			ActionSummary:        "invoked BI adapter reopen path; cleared in-flight tracking; subsequent claim produces new run",
 			IdempotencyMechanism: "bi-031b-status-check-before-reissue-noop-when-bead-already-open",
-		}
+		}, nil
 	case VerdictAcceptCloseWithNote:
 		return VerdictExecutionPlan{
 			Verdict:              v,
@@ -203,14 +218,14 @@ func PlanForVerdict(v Verdict) VerdictExecutionPlan {
 			ActionSummary:        "appended investigator annotation to reconciliation commit; wrote Beads close if not already closed",
 			IdempotencyMechanism: "same-annotation-appended-repeated-close-write-idempotent-key-target-run-id-colon-close",
 			RequiresBIClose:      true,
-		}
+		}, nil
 	case VerdictNoOpAccept:
 		return VerdictExecutionPlan{
 			Verdict:              v,
 			ActionKind:           VerdictActionKindNoOp,
 			ActionSummary:        "no mechanical action; outer run left untouched; subsequent dispatch cycles treat run as ordinary",
 			IdempotencyMechanism: "no-mechanical-action-dedup-by-target-run-id-on-execution-event",
-		}
+		}, nil
 	case VerdictEscalateToHuman:
 		return VerdictExecutionPlan{
 			Verdict:                 v,
@@ -218,8 +233,8 @@ func PlanForVerdict(v Verdict) VerdictExecutionPlan {
 			ActionSummary:           "emitted operator_escalation_required; outer run left in current state pending operator action",
 			IdempotencyMechanism:    "deduplicated-by-target-run-id-subsequent-emissions-are-nops",
 			EmitsOperatorEscalation: true,
-		}
+		}, nil
 	default:
-		panic("PlanForVerdict: unknown verdict " + string(v) + "; caller must validate VerdictEvent before calling")
+		return VerdictExecutionPlan{Verdict: v}, fmt.Errorf("%w: %q", ErrUnknownVerdict, string(v))
 	}
 }

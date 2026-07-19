@@ -240,9 +240,11 @@ func printHumanDigest(d *digest.DigestJSON) {
 	}
 	for _, ev := range d.RecentEvents {
 		if ev.RunID != "" {
-			fmt.Printf("  %s  type=%s  run=%s\n", ev.EventID[:8], ev.Type, ev.RunID[:8])
+			//nolint:forbidigo // G-CLI: digest is a terminal report command; the whole printer writes to stdout via fmt.Print* (surrounding lines are grandfathered)
+			fmt.Printf("  %s  type=%s  run=%s\n", digestShortID(ev.EventID), ev.Type, digestShortID(ev.RunID))
 		} else {
-			fmt.Printf("  %s  type=%s\n", ev.EventID[:8], ev.Type)
+			//nolint:forbidigo // G-CLI: digest is a terminal report command; the whole printer writes to stdout via fmt.Print* (surrounding lines are grandfathered)
+			fmt.Printf("  %s  type=%s\n", digestShortID(ev.EventID), ev.Type)
 		}
 	}
 
@@ -297,4 +299,13 @@ func printHumanDigest(d *digest.DigestJSON) {
 			fmt.Printf("  WARN: %s\n", e)
 		}
 	}
+}
+
+// digestShortID returns the first 8 characters of id, or id itself when it is
+// shorter — a bare id[:8] panics on short IDs.
+func digestShortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }

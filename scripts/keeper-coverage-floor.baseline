@@ -1,0 +1,18 @@
+# keeper-coverage-floor.baseline — ratified per-file statement-coverage floors
+# for the NEW keeper reactor files (T13; measurement-design §6.4).
+#
+# Measured 2026-07-13 at phase1-session-restart-substrate df54fae2 via:
+#   go test -count=1 -coverprofile=<tmp> ./internal/keeper/...
+# (in-package coverage only — the §6.4 command; cross-package tests excluded).
+# Verified deterministic across 3 consecutive runs (identical to 0.1pp).
+#
+# Provisional targets (measurement-design §6.4) were: >=85% pure Step file,
+# >=70% shell/ports. Measured values EXCEED both; the RATIFIED floors below
+# are the measured values — a RATCHET: coverage may not drop below these.
+# Raising a floor after a coverage improvement is a normal follow-up commit;
+# lowering one requires the same scrutiny as editing any protected rule file.
+#
+# Format: <file-basename-under-internal/keeper> <floor-pct>
+step.go 92.1
+shell.go 87.4
+ports.go 92.3

@@ -140,6 +140,12 @@ type piRunCtx struct {
 	// NDJSON line. Nil means this is the initial turn.
 	priorSessionID *string
 
+	// iterationCount is the 1-based DOT iteration index. On a resume turn
+	// (priorSessionID != nil) it selects the reviewer-feedback.iter-<N-1>.md the
+	// resume seed prompt points at. Zero on the initial turn (single-mode or
+	// iteration 1). See implementerResumeSeedPrompt (agentseedprompt.go).
+	iterationCount int
+
 	// baseEnv is the base environment inherited from daemon Config.HandlerEnv.
 	// buildPiEnv strips all credential keys (allowlist semantics, PI-021) and
 	// injects only the selected provider's key.
@@ -256,9 +262,14 @@ func buildPiLaunchSpec(rc piRunCtx) (handler.LaunchSpec, error) {
 	// as --api-key (PI-020 — ps/argv leak).
 	// --no-extensions (PI-022): suppresses .pi/extensions/* auto-load so the
 	// flywheel extension cannot call kerf-next and fork-bomb the daemon.
+	// Resume turns (priorSessionID != nil) deliver the reviewer-feedback pointer
+	// via the shared resume prompt so a DOT back-edge re-entry gets an actionable
+	// instruction instead of the identical initial prompt it already satisfied
+	// (c073 defect; peer of pasteInjectImplementerResume for claude).
 	seedPrompt := fmt.Sprintf(piSeedPromptTemplate, rc.beadID)
 	var args []string
 	if rc.priorSessionID != nil {
+		seedPrompt = implementerResumeSeedPrompt(rc.beadID, rc.iterationCount-1)
 		args = []string{
 			"--mode", "json",
 			"--no-extensions",

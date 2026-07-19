@@ -73,6 +73,48 @@ type crewLaunchCtx struct {
 	// §4). When non-empty, --model <model> is appended to argv. Empty inherits the
 	// compiled default (currently sonnet) — no flag is added.
 	model string
+
+	// harness is the resolved crew-scoped harness selection (hk-l63b9): "" or
+	// "claude" builds today's Claude --remote-control spec unchanged; any other
+	// value is a harness whose crew-orchestrator substrate isn't wired yet and
+	// buildCrewLaunchSpec returns an explicit "not yet supported" error rather
+	// than silently falling back to Claude. This is a crew-scoped resolution,
+	// deliberately SEPARATE from core.AgentType (the per-bead worker taxonomy) —
+	// a crew has no bead to carry a harness:<type> label.
+	harness string
+}
+
+// crewHarnessClaude is the crew-scoped harness resolver's default value and the
+// only harness buildCrewLaunchSpec currently knows how to build a spec for.
+// hk-l63b9: deliberately NOT core.AgentTypeClaudeCode ("claude-code") — the crew
+// harness resolver is a separate, substrate-neutral vocabulary from the per-bead
+// worker harness taxonomy (see resolveCrewHarness doc comment).
+const crewHarnessClaude = "claude"
+
+// resolveCrewHarness implements the crew-scoped harness-selection precedence
+// walk (hk-l63b9):
+//
+//	Tier 1 — flag: the --harness CLI override (CrewStartRequest.Harness)
+//	Tier 2 — mission front-matter: the harness: field (readMissionHarness)
+//	Tier 3 — per-crew config: .harmonik/config.yaml crews.<name>.harness
+//	Tier 4 — default: "claude"
+//
+// This is NOT the worker per-bead resolveHarness (harnessresolve.go) — a crew
+// has no bead to carry a harness:<type> label, so the tiers and their sources
+// are entirely different. The returned value is not validated here; callers
+// pass it to buildCrewLaunchSpec, which rejects anything but "claude" with an
+// explicit error (no silent fallback).
+func resolveCrewHarness(flagHarness, missionHarness, configHarness string) string {
+	switch {
+	case flagHarness != "":
+		return flagHarness
+	case missionHarness != "":
+		return missionHarness
+	case configHarness != "":
+		return configHarness
+	default:
+		return crewHarnessClaude
+	}
 }
 
 // buildCrewLaunchSpec constructs a handler.LaunchSpec for launching a
@@ -95,6 +137,13 @@ func buildCrewLaunchSpec(rc crewLaunchCtx) (handler.LaunchSpec, error) {
 	}
 	if rc.sessionID == "" {
 		return handler.LaunchSpec{}, fmt.Errorf("buildCrewLaunchSpec: sessionID must be non-empty")
+	}
+	// hk-l63b9: branch on the resolved crew harness. "" (unresolved callers,
+	// e.g. existing tests) and "claude" both build today's Claude spec below,
+	// unchanged. Any other harness has no crew-orchestrator substrate wired yet —
+	// fail loud rather than silently falling back to Claude.
+	if rc.harness != "" && rc.harness != crewHarnessClaude {
+		return handler.LaunchSpec{}, fmt.Errorf("crew harness %q not yet supported", rc.harness)
 	}
 
 	binary := rc.claudeBinary

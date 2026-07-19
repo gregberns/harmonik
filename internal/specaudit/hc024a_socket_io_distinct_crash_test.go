@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.29 binding test — HC-024a socket-level I/O error is distinct from subprocess crash.

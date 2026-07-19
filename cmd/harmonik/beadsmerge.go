@@ -169,7 +169,7 @@ func parseBeadsJSONL(path string) ([]beadRow, error) {
 	var rows []beadRow
 	scanner := bufio.NewScanner(f)
 	// Set a generous buffer: some bead descriptions are long.
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	setLargeScanBuffer(scanner)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {

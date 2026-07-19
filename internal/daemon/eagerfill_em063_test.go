@@ -195,7 +195,7 @@ func TestEM063_Phase2_BeadLandedOnOriginMain_MissingRemote(t *testing.T) {
 		t.Skipf("git init failed: %v (%s)", err, out)
 	}
 
-	found, sha, err := beadLandedOnOriginMain(context.Background(), dir, "hk-test-bead")
+	found, sha, err := beadLandedOnOriginMain(context.Background(), dir, "main", "hk-test-bead")
 	if err != nil {
 		t.Fatalf("beadLandedOnOriginMain: unexpected error: %v", err)
 	}
@@ -614,7 +614,7 @@ func stagedBeadGitFixture(t *testing.T, dir, refBeadID string) {
 
 // TestStagedBeadGenerator_NoopWhenProvenanceAbsent verifies the §6.2 provenance
 // guard: when targetBranch is set but origin/<targetBranch> has no "Refs: <beadID>"
-// commit, the generator is a no-op even if runSucceeded was true.
+// commit, the generator is a no-op even if the run terminal was a success.
 func TestStagedBeadGenerator_NoopWhenProvenanceAbsent(t *testing.T) {
 	t.Parallel()
 	projectDir := t.TempDir()

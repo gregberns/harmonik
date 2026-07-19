@@ -1,6 +1,9 @@
 package brcli
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+)
 
 // BrError is the closed-set adapter error taxonomy for harmonik's Beads CLI
 // adapter. Every `br` invocation result MUST be classified into one of these
@@ -133,4 +136,51 @@ func BrErrorFromExitCode(code int) BrError {
 	default:
 		return BrOther
 	}
+}
+
+// BrErrorFromExit classifies a br subprocess outcome using both its exit code
+// and captured stderr. It is the stderr-aware refinement of the illustrative
+// §6.1a exit-code table and is the classifier that adapter call sites MUST use;
+// BrErrorFromExitCode remains the pure code→BrError table (spec §6.1a) and is
+// retained for callers that legitimately have only the exit code.
+//
+// The refinement fixes a defect where a *generic* br exit-1 failure (any
+// non-zero-arg error br surfaces on exit 1 that is NOT a missing bead-id) was
+// unconditionally classified as BrNotFound, producing a spurious
+// Beads-vs-harmonik divergence signal (reconciliation Cat 3, investigator
+// dispatch per BI §8). Exit code 1 is a generic failure code in the pinned
+// Beads CLI; only when br's stderr genuinely indicates a not-found condition is
+// the outcome authoritatively a missing bead-id.
+//
+// Refinement rule (exit 1 only; all other codes defer to the table):
+//
+//	empty stderr            → BrNotFound  (BI-025d empty-stderr rule: classify per the table)
+//	stderr says "not found" → BrNotFound  (genuine missing bead-id)
+//	stderr present, other   → BrOther     (generic failure; NOT a divergence)
+//
+// Classifying an unrecognized exit-1 failure as BrOther is the intended
+// outcome: BrOther callers emit divergence_inconclusive with
+// reason=authority_unavailable (BI-025a), signalling "br could not be
+// authoritatively classified" rather than the false-positive "the bead is
+// missing." Using stderr content to *classify an error* (never to derive bead
+// state) follows the BI-025d precedent that already routes the clap argparse
+// exit and the Rust-panic exit to BrOther by inspecting stderr.
+//
+// Spec ref: specs/beads-integration.md §6.1a, §4.8d BI-025d.
+func BrErrorFromExit(code int, stderr []byte) BrError {
+	base := BrErrorFromExitCode(code)
+	if code == 1 && len(bytes.TrimSpace(stderr)) > 0 && !stderrIndicatesNotFound(stderr) {
+		return BrOther
+	}
+	return base
+}
+
+// stderrIndicatesNotFound reports whether captured br stderr genuinely signals a
+// missing bead-id (as opposed to any other exit-1 failure). It matches the
+// case-insensitive substring "not found", which the pinned Beads CLI emits for
+// missing-id errors (e.g. "Error: Issue not found: <id>"). Matching is
+// deliberately conservative: a false negative degrades to BrOther (a valid,
+// investigator-dispatched classification), never to a wrong terminal state.
+func stderrIndicatesNotFound(stderr []byte) bool {
+	return bytes.Contains(bytes.ToLower(stderr), []byte("not found"))
 }

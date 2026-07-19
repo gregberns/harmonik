@@ -1,0 +1,16 @@
+{
+  "abort_reason": null,
+  "agent_name": "chani",
+  "ckey": "chani|cyc-20260708T021600-000002",
+  "clear_unconfirmed": false,
+  "cycle_id": "cyc-20260708T021600-000002",
+  "event_count": 2,
+  "outcome": "complete",
+  "session_id_start": "6e3092a2-616a-4dfc-adb2-fd708fe2db5d",
+  "started_at": "2026-07-08T07:32:35.214125Z",
+  "terminal_at": "2026-07-08T07:33:51.62309Z",
+  "types": [
+    "session_keeper_handoff_started",
+    "session_keeper_cycle_complete"
+  ]
+}

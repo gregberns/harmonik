@@ -86,11 +86,31 @@ func CheckWorkflowLabelWrite(kind CallerKind, brArgs []string) error {
 		return nil
 	}
 
-	// Agent path: scan argv for any workflow:<mode> label.
+	// Agent path: scan argv for any workflow:<mode> label VALUE.
+	//
+	// A label can reach br argv in either form: split ("--label" "workflow:dot")
+	// or joined ("--label=workflow:dot"). The joined form has the prefix
+	// "--label=", not "workflow:", so matching the raw token would miss it and
+	// let the forbidden mutation through (BI-INV-001). Normalize by splitting
+	// any "--flag=value" token into its value, then match the value.
 	for _, arg := range brArgs {
-		if strings.HasPrefix(arg, workflowLabelPrefix) {
+		if strings.HasPrefix(labelValue(arg), workflowLabelPrefix) {
 			return ErrWorkflowLabelWriteForbidden
 		}
 	}
 	return nil
+}
+
+// labelValue extracts the value an argv token carries for prefix matching. A
+// joined flag ("--flag=value") yields its value ("value"); any other token
+// (a bare "--flag", or a standalone value in the split "--flag" "value" form)
+// yields the token unchanged. Only tokens shaped like a long/short flag are
+// split, so a literal value that happens to contain "=" is left intact.
+func labelValue(arg string) string {
+	if strings.HasPrefix(arg, "-") {
+		if _, value, found := strings.Cut(arg, "="); found {
+			return value
+		}
+	}
+	return arg
 }

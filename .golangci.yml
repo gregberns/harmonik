@@ -38,6 +38,10 @@ linters:
     - gosec           # security smells (advisory; see below)
     - forbidigo       # ban specific calls (see config)
     - depguard        # import-graph + component-layer rules (subsystem-organization.md)
+    # ── Track C: complexity ceiling (ratchet via --new-from-rev; grandfathers existing) ──
+    - funlen          # function length ceiling — new/changed code only
+    - cyclop          # per-function cyclomatic complexity ceiling
+    - gocognit        # cognitive complexity (better "hard to follow" signal than raw cyclo)
   exclusions:
     rules:
       # tools/ holds one-shot CLI utilities that print to stdout and run synchronously
@@ -47,20 +51,64 @@ linters:
         linters:
           - forbidigo
           - noctx
+      # Complexity ceilings target production logic, not table-driven tests or the
+      # full-stack scenario harness / self-assert audit packages.
+      - path: (_test\.go$|^internal/scenario/|^internal/specaudit/)
+        linters:
+          - funlen
+          - cyclop
+          - gocognit
       # internal/testhelpers is test infrastructure invoked from *_test.go files;
       # forbidigo bans (panic) target production code paths, not assertion helpers.
       - path: ^internal/testhelpers/
         linters:
           - forbidigo
+      # SC6 (agent-input-substrate T9): the time.Sleep/After/NewTimer ban is
+      # PATH-SCOPED to the structured input-driver packages. This rule EXCLUDES
+      # the SC6-DRIVER-CLOCKPORT finding for every file EXCEPT those packages
+      # (path-except), so the ban bites ONLY there — FakeClock's own spin
+      # (internal/substrate) and all other code stay unaffected. Matching on the
+      # SC6-DRIVER-CLOCKPORT marker leaves the fmt.Print / panic bans intact.
+      - linters:
+          - forbidigo
+        text: 'SC6-DRIVER-CLOCKPORT'
+        path-except: internal/(codexinput|codexdriver)/
+      # SC6 carve-out: the ban targets the PRODUCTION driver path. Driver test
+      # files legitimately poll with time.Sleep (arm-before-advance spins) and
+      # backstop with time.After — those are harness plumbing, not driver timing.
+      - linters:
+          - forbidigo
+        text: 'SC6-DRIVER-CLOCKPORT'
+        path: _test\.go$
   settings:
     errcheck: { check-type-assertions: true, check-blank: true, exclude-functions: ["(io.Closer).Close"] }
     revive:   { rules: [{name: exported}, {name: package-comments}, {name: var-naming}, {name: error-return}, {name: error-naming}, {name: if-return}] }
     gocritic: { enabled-tags: [diagnostic, performance, style], disabled-checks: [hugeParam, rangeValCopy] }
     nolintlint: { require-explanation: true, require-specific: true, allow-unused: false }
+    funlen:
+      lines: 100          # 104 existing funcs exceed this — all grandfathered by --new-from-rev
+      statements: 60
+      ignore-comments: true
+    cyclop:
+      max-complexity: 15  # per-function ceiling (linter default 10; 15 = headroom for real branching)
+      package-average: 0  # disabled — rely on the per-function ceiling only
+    gocognit:
+      min-complexity: 20  # report cognitive complexity above 20 (golangci default 30; 20 is stricter)
     forbidigo:
       forbid:
         - { pattern: '^fmt\.Print.*$', msg: "use the structured logger" }
         - { pattern: '^panic$',         msg: "return an error; panics only in main/init" }
+        # SC6 (agent-input-substrate T9): the structured Codex input-driver
+        # packages must take EVERY wait through the substrate ClockPort so the
+        # bounded-liveness windows replay in virtual time. A literal-Sleep ban
+        # alone is insufficient — the live path's blind waits are time.After in a
+        # select — so time.After / time.NewTimer are banned too. These bans are
+        # SCOPED to the driver packages by the SC6-DRIVER-CLOCKPORT exclusion rule
+        # below (path-except), so FakeClock's own spin (internal/substrate) and
+        # every other package stay unaffected.
+        - { pattern: '^time\.Sleep$',    msg: "SC6-DRIVER-CLOCKPORT: driver waits go through substrate.ClockPort.Sleep, never time.Sleep" }
+        - { pattern: '^time\.After$',    msg: "SC6-DRIVER-CLOCKPORT: driver waits go through substrate.ClockPort, never time.After" }
+        - { pattern: '^time\.NewTimer$', msg: "SC6-DRIVER-CLOCKPORT: driver waits go through substrate.ClockPort, never time.NewTimer" }
     depguard:
       # Component-graph rules (subsystem layering) live here per subsystem-organization.md §Dependency layering enforcement.
       # One `rules.<name>` entry per component; `files:` scopes the rule, `allow:`/`deny:` set the allowed edges.
@@ -131,6 +179,12 @@ linters:
             - "github.com/gregberns/harmonik/internal/keeper"
             - "github.com/gregberns/harmonik/internal/dashboard"
             - "github.com/gregberns/harmonik/internal/digest"
+            # substrate: the ClockPort determinism seam (D4/SK-008/SK-R3). The
+            # cycle core reads time exclusively through substrate.ClockPort so a
+            # FakeClock can replay timeouts. substrate is a stdlib-only leaf; this
+            # edge is the intended keeper→substrate consumer direction (the
+            # reverse is denied by the substrate leaf rule). Rationale: T5.
+            - "github.com/gregberns/harmonik/internal/substrate"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "keeper MUST NOT import daemon (session-keeper spec hk-ekap1)" }
             - { pkg: "github.com/gregberns/harmonik/internal/workloop", desc: "keeper MUST NOT import workloop (session-keeper spec hk-ekap1)" }
@@ -154,6 +208,19 @@ linters:
             - "$gostd"
             - "github.com/gregberns/harmonik/internal/core"
 
+        # socketrouter: the pure protocol dispatch table (giant-retirement follow-up), a daemon
+        # sub-package. Value-in/value-out routing: Classify + Router.Dispatch + neutral Result over
+        # json.RawMessage. The daemon threads effectful handler closures IN (mergeq/runexec pattern);
+        # the router MUST NOT import daemon back. Tighter than orchestrator/policy — no core, no net
+        # (ops are strings, payloads are json.RawMessage, no conn on the edge).
+        socketrouter:
+          files: ["**/internal/daemon/router/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/daemon/router"   # self-import (external test pattern)
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "router is a pure daemon sub-package; daemon threads handler closures in, never the reverse (import-cycle caveat)" }
+
         # schedule: generic recurring-job primitive (codename:schedule, hk-0es).
         # Pure types + next-fire clock + durable single-writer store. Leaf:
         # stdlib + self-import only (no core dep today; action execution + the
@@ -166,6 +233,165 @@ linters:
             - "github.com/gregberns/harmonik/internal/schedule"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "schedule MUST NOT import daemon (hk-0es: leaf primitive)" }
+
+        # substrate: generic record→replay seam (codename:session-restart-substrate).
+        # Leaf: stdlib + self-import only. Verticals instantiate substrate, never the
+        # reverse. MUST NOT import a vertical (codex, keeper) or the daemon.
+        # Rationale: specs/replay-substrate.md §RS-005; substrate-design.md §1.3.
+        substrate:
+          files: ["**/internal/substrate/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "substrate MUST NOT import a vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexwire", desc: "substrate MUST NOT import a vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexdigitaltwin", desc: "substrate MUST NOT import a vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "substrate MUST NOT import a vertical (keeper)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "substrate MUST NOT import daemon" }
+
+        # codex vertical: reactor + digital twin instantiate the substrate seam.
+        # Companion rule pinning the "verticals depend on substrate, never
+        # sideways or on the daemon" invariant (codename:session-restart-substrate).
+        # Allow: stdlib + substrate + the codex sibling packages (codexwire/
+        # codexreactor). Deny: daemon and the keeper vertical.
+        # Rationale: specs/replay-substrate.md §RS-005; substrate-design.md §1.3.
+        codex-vertical:
+          files: ["**/internal/codexreactor/**", "**/internal/codexdigitaltwin/**", "**/internal/codexinput/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/codexwire"
+            - "github.com/gregberns/harmonik/internal/codexreactor"
+            - "github.com/gregberns/harmonik/internal/codexdigitaltwin"
+            - "github.com/gregberns/harmonik/internal/codexinput"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codex vertical MUST NOT import daemon" }
+            - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "codex vertical MUST NOT import a sibling vertical (keeper)" }
+            # SC6 (agent-input-substrate T9): the structured input reactor is on
+            # the direct-stdio input path (AIS-009); it MUST NEVER re-import the
+            # tmux write verbs. This mirrors the codexdriver→tmux deny below.
+            - { pkg: "github.com/gregberns/harmonik/internal/lifecycle/tmux", desc: "codex input path MUST NOT import tmux (AIS-009: the driver owns child stdio; tmux is not on the structured input path)" }
+
+        # codexdriver: the structured Codex app-server driver — the second
+        # handler.Substrate implementation (agent-input-substrate T6,
+        # codename:agent-input-substrate). The driver shell may import handler
+        # (the Substrate/InputPort seam it implements), apptap (the capture
+        # tee), substrate (ClockPort + Run), and the codex vertical siblings
+        # (codexwire codec + codexinput reactor). It MUST NEVER import
+        # internal/lifecycle/tmux (AIS-009/AIS-010: tmux is not on the
+        # structured input path — the AIS-016 CommandRunner seam is declared
+        # locally) or daemon.
+        codexdriver:
+          files: ["**/internal/codexdriver/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/codexwire"
+            - "github.com/gregberns/harmonik/internal/codexinput"
+            - "github.com/gregberns/harmonik/internal/codexdriver"
+            - "github.com/gregberns/harmonik/internal/apptap"
+            - "github.com/gregberns/harmonik/internal/handler"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/lifecycle/tmux", desc: "codexdriver MUST NOT import tmux (AIS-009: the driver owns the child stdio; tmux is not on the structured input path)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "codexdriver MUST NOT import daemon (composition root injects, never the reverse)" }
+
+        # sessioncapture: the CONSUMER side of the capture tee (agent-input-
+        # substrate T7, codename:agent-input-substrate; AIS-014). The apptap tee
+        # owns no file format (RS-016); this package is the caller-supplied
+        # writer that does persistence + HC-032 OUTPUT scrub + keep-N/age-prune
+        # retention + the mechanical CAPTURE-LOG ledger. It may import substrate
+        # (ClockPort for the age-prune cutoff, RS-015) and self only. It MUST
+        # NEVER import daemon (composition root injects, never the reverse), the
+        # codex vertical, or tmux.
+        sessioncapture:
+          files: ["**/internal/sessioncapture/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/sessioncapture"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "sessioncapture MUST NOT import daemon (composition root injects the capture sink, never the reverse)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexdriver", desc: "sessioncapture is the driver's consumer, not its dependency (no import cycle)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/lifecycle/tmux", desc: "sessioncapture MUST NOT import tmux" }
+
+        # keepertwin: the keeper vertical's trace-driven digital twin (T9,
+        # codename:session-restart-substrate; measurement-design §2). Synthesizes
+        # input-event schedules from the recorded corpus goldens and replays them
+        # through the generic substrate Twin into the pure keeper reactor.
+        # Allow: stdlib + substrate + keeper + core + self (external test pattern).
+        # Deny: daemon and the codex vertical.
+        keepertwin:
+          files: ["**/internal/keepertwin/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/keeper"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/keepertwin"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "keepertwin MUST NOT import daemon (offline twin)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "keepertwin MUST NOT import a sibling vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexdigitaltwin", desc: "keepertwin MUST NOT import a sibling vertical (codex)" }
+
+        # keepertest: the keeper vertical's L0–L3 replay test tiers (T10,
+        # codename:session-restart-substrate; measurement-design §3; RS-017/018).
+        # Test-only package (external keepertest_test): corpus goldens → keepertwin
+        # Twin → pure keeper reactor → substrate doubles / bridge sink, with the
+        # recorded stream decoded via internal/replay. Zero-token, offline.
+        # Deny: daemon and the codex vertical.
+        keepertest:
+          files: ["**/internal/keepertest/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/keeper"
+            - "github.com/gregberns/harmonik/internal/keepertwin"
+            - "github.com/gregberns/harmonik/internal/replay"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/google/uuid"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "keepertest MUST NOT import daemon (zero-token offline tiers)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "keepertest MUST NOT import a sibling vertical (codex)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexdigitaltwin", desc: "keepertest MUST NOT import a sibling vertical (codex)" }
+
+        # runexectest: the run-state-machine L2 fault-matrix + relaunch-oracle
+        # tiers (RT11, codename:run-state-machine; RSM-030). Test-only package
+        # (external runexectest_test), mirroring keepertest: corpus summaries →
+        # replay.StimulusSynthesizer schedules → substrate.Twin → the pure
+        # runexec reactors under FakeClock virtual time. Zero-token, offline.
+        # Deny: daemon (RSM-028 stays intact — the tiers exercise the reactors,
+        # never the shell) and the verticals.
+        runexectest:
+          files: ["**/internal/runexectest/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/runexec"
+            - "github.com/gregberns/harmonik/internal/replay"
+            - "github.com/gregberns/harmonik/internal/core"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runexectest MUST NOT import daemon (zero-token offline tiers; RSM-028)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "runexectest MUST NOT import a sibling vertical (keeper)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/codexreactor", desc: "runexectest MUST NOT import a sibling vertical (codex)" }
+
+        # replay: the session-restart invariant-checking harness (codename:session-restart-substrate).
+        # Reads a recorded events.jsonl via eventbus.ScanAfter and decodes through the typed
+        # core registry (DispatchObservational / DecodePayloadStrict). Allowed edges: stdlib +
+        # core + eventbus + uuid + self-import (external test pattern). MUST NOT import a vertical
+        # (keeper) or the daemon — it is an offline consumer, not part of the live pipeline.
+        # Rationale: events-design.md §4 (EV-U3/EV-048); decisions D6.
+        replay:
+          files: ["**/internal/replay/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/eventbus"
+            - "github.com/gregberns/harmonik/internal/replay"
+            - "github.com/google/uuid"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/keeper", desc: "replay MUST NOT import a vertical (keeper); it reads the recorded log offline" }
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "replay MUST NOT import daemon (offline consumer)" }
 
         # agentmanifest: leaf package loading .harmonik/agents/<type>/manifest.yaml.
         # Depends only on stdlib + yaml.v3. Self-import for external test pattern.
@@ -198,6 +424,21 @@ linters:
             - "**/internal/handlercontract/**"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/brcli", desc: "BI-004: handler MUST NOT import brcli; agents access br only via the Beads-CLI skill per handler-contract.md §4.11 (specs/beads-integration.md §4.2)" }
+
+        # handler↛tmux: the machine-enforced seam inversion (HC-071 / AIS-002).
+        # internal/handler DECLARES the InputPort seam (SubmitInput / CloseInput);
+        # the concrete input driver — the interim tmux/paste implementation and the
+        # future structured Codex driver — is SUPPLIED daemon-side. internal/handler
+        # therefore MUST NOT import internal/lifecycle/tmux; this replaces the former
+        # doc-comment-only "boundary" (internal/handler/substrate.go) with a real,
+        # machine-checkable deny, landed with the port.
+        #
+        # Rationale: specs/handler-contract.md §4.1a HC-071; specs/agent-input.md §4.1 AIS-002.
+        handler-tmux-ban:
+          files:
+            - "**/internal/handler/**"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/lifecycle/tmux", desc: "HC-071/AIS-002: internal/handler declares the InputPort seam; the tmux driver is supplied daemon-side — handler MUST NOT import internal/lifecycle/tmux (specs/handler-contract.md §4.1a, specs/agent-input.md §4.1)" }
 
         # lifecycle/tmux: may import internal/core, internal/lifecycle (provenance),
         # and stdlib only. No other harmonik subsystem imports are permitted.
@@ -248,6 +489,22 @@ linters:
             - "github.com/gregberns/harmonik/internal/core"
             - "github.com/gregberns/harmonik/internal/handlercontract"
             - "github.com/google/uuid"
+
+        # twinparity: leaf test-support package — normalized-event equivalence +
+        # timing assertion library (M6 WS3-F1). Depends only on core (event-type
+        # vocabulary), handlercontract (progress-msg vocabulary via
+        # KnownProgressMsgTypes), stdlib, and self-import (external test pattern).
+        # MUST NOT import daemon or any heavier subsystem — it is consumed by
+        # scenario/parity tests, not by production paths.
+        twinparity:
+          files: ["**/internal/twinparity/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/handlercontract"
+            - "github.com/gregberns/harmonik/internal/twinparity"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "twinparity is a leaf test-support package; MUST NOT import daemon (M6 WS3-F1)" }
 
         # handler-contract/lifecycle: leaf package — stdlib only (HC-064..HC-067).
         # No internal/ deps. Event emission wired in B4 (hk-q0uba follow-up).
@@ -348,23 +605,57 @@ linters:
         #     - "github.com/gregberns/harmonik/internal/eventbus"
         #     - "github.com/gregberns/harmonik/internal/memory"
   
-        # Orchestrator: everything listed above except daemon/cmd.
-        # orchestrator:
-        #   files: ["**/internal/orchestrator/**"]
-        #   allow:
-        #     - "$gostd"
-        #     - "github.com/gregberns/harmonik/internal/core"
-        #     - "github.com/gregberns/harmonik/internal/eventbus"
-        #     - "github.com/gregberns/harmonik/internal/policy"
-        #     - "github.com/gregberns/harmonik/internal/handler/contract"
-        #     - "github.com/gregberns/harmonik/internal/workspace"
-        #     - "github.com/gregberns/harmonik/internal/hook"
-        #     - "github.com/gregberns/harmonik/internal/adapter/br"
+        # Orchestrator: the pure work-loop-brain leaf (M5 slice 3, codename
+        # orchestrator). Value-in/value-out decision predicates over narrow
+        # snapshot structs projected by the daemon under the QueueStore lock;
+        # trimmed to $gostd + core exactly like internal/policy. internal/queue
+        # is deliberately NOT allowed — enum fields are projected as
+        # booleans/strings at the daemon boundary.
+        orchestrator:
+          files: ["**/internal/orchestrator/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
   
         # Composition root: may import every harmonik subsystem.
         # Also subject to llm-sdk-ban (see above).
         # uuid and yaml.v3 are direct deps of daemon production code.
         # depguard allow-list uses trailing-slash prefix matching (not Go-module "...").
+        # mergeq: the merge-queue exclusion domain (RSM-002/RSM-012,
+        # codename:run-state-machine). Leaf: stdlib + self-import only. The
+        # daemon threads its prepare/commit closures IN as `critical` funcs, so
+        # the direction is daemon -> mergeq; mergeq MUST NOT import daemon back.
+        # NEW rule (not in TC-6's pre-authorization) applied per the same
+        # "applied per carve" pattern (track-c-enforcement.md §2.2).
+        # Rationale: specs/run-state-machine.md; merge-queue-design.md §1.
+        mergeq:
+          files: ["**/internal/mergeq/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/mergeq"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "mergeq MUST NOT import daemon (leaf exclusion domain; daemon drives it)" }
+
+        # runexec: the two pure run-lifecycle reactors (Dispatch + Run machines,
+        # RSM-001/028, codename:run-state-machine). Trimmed leaf allow-list
+        # ($gostd + core + substrate + self, design 00b R8): core supplies the
+        # event-type constants the ActEmit actions carry; substrate supplies the
+        # ClockPort determinism seam + the generic Run/EventSource/Effector the
+        # reactors are driven by. The daemon shell (runshell.go) threads its
+        # effector IN — direction is daemon -> runexec; runexec MUST NOT import
+        # daemon back (RSM-028). NEW rule applied per the "applied per carve"
+        # pattern (track-c-enforcement.md §2.2).
+        # Rationale: specs/run-state-machine.md; runexec-design §0.
+        runexec:
+          files: ["**/internal/runexec/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/substrate"
+            - "github.com/gregberns/harmonik/internal/runexec"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "runexec MUST NOT import daemon (RSM-028; pure reactor leaf)" }
+
         daemon:
           files: ["**/internal/daemon/**"]
           allow:
@@ -375,6 +666,23 @@ linters:
             - "gopkg.in/yaml.v3"
             - "github.com/stretchr/testify/"
             - "go.uber.org/goleak"
+
+        # bootconfig: pure daemon sub-package (giant-retirement boot-config).
+        # Config-resolution stays isolated to $gostd + core; it must never pull in
+        # queue/branching/workspace or the daemon package itself — daemon depends
+        # on bootconfig, never the reverse (import-cycle caveat). The allow-list
+        # IS the isolation gate: it whitelists ONLY $gostd, internal/core, and the
+        # package's own external test package, so importing internal/daemon (or any
+        # other subsystem) is rejected as "not allowed from list". A separate deny
+        # row for internal/daemon is intentionally omitted: depguard prefix-matches,
+        # so a deny on ".../internal/daemon" also matches ".../internal/daemon/
+        # bootconfig" and would flag the package's own _test self-import.
+        bootconfig:
+          files: ["**/internal/daemon/bootconfig/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/daemon/bootconfig"
 
         # CLI entry-point: composition root — may import every harmonik subsystem
         # plus cmd subpackages and external utility deps.

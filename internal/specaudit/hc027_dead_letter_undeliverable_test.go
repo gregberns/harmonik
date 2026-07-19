@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.34 binding test — HC-027 dead-letter behavior for undeliverable events.

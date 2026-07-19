@@ -30,12 +30,18 @@ func TestDaemonStart_SocketBindsBeforeRestartBackoffSleep(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
+	// sunPathMax is the sockaddr_un.sun_path buffer size on darwin/BSD (104
+	// bytes). It holds the path INCLUDING the NUL terminator, so the longest
+	// bindable path is sunPathMax-1 (103) bytes; a path of exactly sunPathMax
+	// bytes still overflows with ENAMETOOLONG. The guard below must therefore be
+	// strictly-less-than, not <=, or a 104-byte candidate slips past and the
+	// bind false-reds under a long TMPDIR (hk-0oebl).
 	const sunPathMax = 104
 	const harmonikRelSock = "/.harmonik/daemon.sock"
 
 	candidate := t.TempDir()
 	var projectDir string
-	if len(candidate)+len(harmonikRelSock) <= sunPathMax {
+	if len(candidate)+len(harmonikRelSock) < sunPathMax {
 		projectDir = candidate
 	} else {
 		dir, err := os.MkdirTemp("/tmp", "hk-uzvt9-")

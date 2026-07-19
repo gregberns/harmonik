@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.29 binding test — EV-020 JSONL writes MUST be append-only.

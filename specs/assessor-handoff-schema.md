@@ -7,10 +7,10 @@ spec-id: assessor-handoff-schema
 status: draft
 spec-shape: contract
 spec-category: foundation-cross-cutting
-version: 1.0.0
+version: 2.0.0
 spec-template-version: 1.1
 owner: admiral-plan-author
-last-updated: 2026-07-06
+last-updated: 2026-07-16
 depends-on:
   - crew-handoff-schema
   - beads-integration
@@ -37,7 +37,13 @@ initiative. It flows between three components:
   (`08-assessor-wireup-plan.md` headline).
 - **Assessor** — *resumes into* the handoff, *parses* the YAML frontmatter to
   derive its gate parameters (`.harmonik/agents/assessor/operating.md` step 1
-  parses `{branch, epic_id, gate}`), and *re-hydrates* from it on keeper restart.
+  parses `{branch, epic_id, gate}`), *re-hydrates* from it on keeper restart, and
+  forms a **reasoned PASS/BLOCK** — its own judgment over the three legs (LT/XT/CR)
+  plus a claimed-done-vs-reality reconciliation, measured against the good-enough
+  principles (`.harmonik/agents/assessor/good-enough-principles.md` — WS5-5,
+  forward reference; being authored alongside this schema). The verdict is posted
+  to `spawned_by` (the admiral) over the admiral↔assessor `--topic gate` signoff
+  channel; the admiral holds the final release decision.
 
 All three MUST agree on this format, field names, charsets, and required-field
 rules. Any breaking change requires a `schema_version` bump and updates to all
@@ -46,8 +52,9 @@ three readers/writers in a single atomic commit.
 **This document does NOT own:** the assessor manifest
 (`.harmonik/agents/assessor/soul.md` / `operating.md` / `manifest.yaml`), the
 severity→P-level→found-by mapping (`07-assessor-severity-framework.md`), the
-remediation disposition labels (`09-remediation-loop-design.md`), the block query
-mechanics (owned by `operating.md` §Merge-gate step 6), or the crew registry
+remediation disposition labels (`09-remediation-loop-design.md`), the
+reasoned-verdict formation (owned by `operating.md` §Merge-gate step 6 — the
+assessor's judgment, no longer a bead-count block query), or the crew registry
 format (`.harmonik/crew/<name>.json`).
 
 ---
@@ -82,7 +89,7 @@ human-readable body.
 
 ```markdown
 ---
-schema_version: 1
+schema_version: 2
 assessor_name: assessor-core-loop-proof
 epic_id: hk-xxxxx
 branch: integration/core-loop-proof
@@ -112,7 +119,7 @@ A **deploy-gate** handoff additionally sets `gate: deploy` and MUST carry a
 
 ```markdown
 ---
-schema_version: 1
+schema_version: 2
 assessor_name: assessor-core-loop-proof-deploy
 epic_id: hk-xxxxx
 branch: integration/core-loop-proof
@@ -164,13 +171,13 @@ Eight fields; seven are unconditionally **required**, `commit` is **required iff
 
 | Field | Type | Charset / constraints | Required | Meaning |
 |---|---|---|---|---|
-| `schema_version` | integer | must equal `1` | yes | Schema version. Bump on any breaking field change. C2 and the assessor MUST validate this equals 1 before acting. |
+| `schema_version` | integer | must equal `2` | yes | Schema version. Bump on any breaking field change. C2 and the assessor MUST validate this equals 2 before acting. (v2 repurposed the schema from the deterministic found-by block-query model to the reasoned-judgment verdict model — see §9.) |
 | `assessor_name` | string | `[a-z0-9-]`, 1–64 chars | yes | The assessor instance's stable identity. Convention `assessor-<epic>` (or `assessor-<epic>-deploy`). Equals its comms `--from`/`--to` identity and the mission filename stem. NOTE: the bare launch resolves `HARMONIK_AGENT=assessor` regardless (`08` "Optional CODE changes"); `assessor_name` is the human/handoff-level instance label, not the agent-type folder. |
-| `epic_id` | string | opaque bead id (e.g. `hk-XXXXX`) | yes | The epic under gate. Doubles as the **scope label** the assessor attaches to every finding and the block query filters on (`--label <epic_id>` — `08` Gap B), because beads have no branch field. |
+| `epic_id` | string | opaque bead id (e.g. `hk-XXXXX`) | yes | The epic under gate. Doubles as the **scope label** the assessor attaches to every finding (`--label <epic_id>`), so findings stay per-branch for the record and regression corpus — beads have no branch field. It is a scope label for the ledger, NOT a block-query filter: the verdict is the assessor's reasoned judgment (`operating.md` §Merge-gate step 6), not a row count over this label. |
 | `branch` | string | git ref, e.g. `integration/<epic>` | yes | The branch-under-test. The scratch clone/daemon (`scripts/scratch-daemon.sh`) is stood up on this ref. NEVER `cd`-ed into — operated via `git -C`. |
-| `gate` | string | `merge` \| `deploy` | yes | Which gate to run. `merge` → `operating.md` §Merge-gate (LT+XT+CR, deterministic found-by block). `deploy` → §Deploy-gate (GATE-0 e2e on `commit` + 24h-reliability preconditions). |
+| `gate` | string | `merge` \| `deploy` | yes | Which gate to run. `merge` → `operating.md` §Merge-gate (LT+XT+CR → **reasoned PASS/BLOCK**). `deploy` → §Deploy-gate (GATE-0 e2e on `commit` + 24h-reliability preconditions + claimed-behavior-vs-actual reconciliation). |
 | `commit` | string | full git SHA | **iff `gate == deploy`** | The GATE-0 target commit the deploy e2e reproduces the changed behavior on. MUST be present when `gate == deploy`; MUST be omitted (or ignored) when `gate == merge` (a merge gate tests the branch tip, not a pinned commit). |
-| `found_by_sources` | sequence of string | each `[a-z0-9-]` | yes | The known `found-by:` sources the block query unions over via `--label-any` (`07` §3 wire-up gotcha: `found-by:*` does NOT glob — enumeration is load-bearing). Current set: `assessor, admiral, fast-follow`. Keeping this in the handoff makes the enumerated set explicit per gate; a missed source is a silent false-PASS. |
+| `found_by_sources` | sequence of string | each `[a-z0-9-]` | yes | The known `found-by:` sources whose prior findings the assessor gathers as **EVIDENCE** when forming its reasoned verdict and folds into the regression corpus (`found-by:*` does NOT glob, so the set is enumerated explicitly — `07` §3). Current set: `assessor, admiral, fast-follow`. These sources INFORM judgment; they are NOT a gate arbiter — the verdict is the assessor's reasoned PASS/BLOCK (`operating.md` §Merge-gate step 6), never a union row-count. A missing source narrows the evidence the assessor gathers but can never by itself flip the gate to a false-PASS (an empty ledger never yields PASS under the reasoned model). |
 | `report_path` | string | repo-relative path | yes | Where the assessor writes the deploy-readiness report (`operating.md` §Verdict step 1). Referenced in the `--topic gate` verdict message. Convention `.harmonik/reports/<epic>-gate.md`. |
 | `spawned_by` | string | `[a-z0-9-]`, 1–64 chars | yes | The comms identity that opened the gate and holds the merge/deploy decision — normally `admiral`. The assessor posts its boot status, `--topic error` (on invalid handoff), and `--topic gate` verdict here. |
 
@@ -207,55 +214,67 @@ schema's `--assignee` mirror (`crew-handoff-schema.md` §4) does not apply — t
 assessor must never take ownership of the epic it grades (independence is
 load-bearing; `operating.md` §Bounds). The durable link that matters here is the
 **`<epic_id>` scope label on each finding bead**: because beads carry no branch
-field, `--label <epic_id>` is what makes the block set per-branch (`08` Gap B).
-The handoff's `epic_id` is therefore the single source for that scope label, and
-the assessor re-derives it from the frontmatter on every keeper restart. If the
-frontmatter is unavailable on restart, the assessor posts `--topic error` to
-`spawned_by` and idles (it does NOT guess the scope, which would corrupt the
-block set).
+field, `--label <epic_id>` is what keeps the finding/evidence set per-branch — the
+record and regression-corpus seed the assessor cites in its reasoned verdict (it
+is a ledger scope, not a block-query filter). The handoff's `epic_id` is therefore
+the single source for that scope label, and the assessor re-derives it from the
+frontmatter on every keeper restart. If the frontmatter is unavailable on restart,
+the assessor posts `--topic error` to `spawned_by` and idles (it does NOT guess
+the scope, which would misattribute findings across branches).
 
 ---
 
 ## 7. Worked example
 
+A live **M6** gate — the admiral gating the M6 quality-system integration branch
+(the WS5-8 capstone dry-run gates the M6 branch itself):
+
 ```markdown
 ---
-schema_version: 1
-assessor_name: assessor-core-loop-proof
+schema_version: 2
+assessor_name: assessor-m6-quality-system
 epic_id: hk-9x1qz
-branch: integration/core-loop-proof
+branch: integration/m6-quality-system
 gate: merge
 found_by_sources: [assessor, admiral, fast-follow]
-report_path: .harmonik/reports/core-loop-proof-gate.md
+report_path: .harmonik/reports/m6-quality-system-gate.md
 spawned_by: admiral
 ---
 
-# Gate: merge — integration/core-loop-proof
+# Gate: merge — integration/m6-quality-system
 
 You are the **assessor** for epic **hk-9x1qz** on branch
-**integration/core-loop-proof**. Run the merge gate (LT + XT + CR) on an isolated
-scratch clone, file each confirmed defect as a scoped `found-by:assessor` bead
-(`--label hk-9x1qz` + the `07`/`09` severity + disposition labels), post
-`<PASS|BLOCK>` to admiral over `--topic gate`, and self-terminate.
+**integration/m6-quality-system**. Run the merge gate (LT + XT + CR) on an
+isolated scratch clone, file each confirmed defect as a scoped `found-by:assessor`
+bead (`--label hk-9x1qz` + the `07`/`09` severity + disposition labels), then form
+a **reasoned PASS/BLOCK** — your own judgment over the three legs plus a
+claimed-done-vs-reality reconciliation, measured against the good-enough
+principles (`good-enough-principles.md`, WS5-5). Post `<PASS|BLOCK>` + your
+concerns to admiral over the `--topic gate` signoff channel and self-terminate;
+the admiral makes the final release call.
 
 ## Current State
 
-The epic's acceptance behavior: per-bead/DOT integration-branch targeting drives a
-harness assertion (T10 `hk-xke2i`) that REDs today. Confirm it flips green.
-Known-RED corpus cells to exercise: ... Deploy preconditions: N/A (merge gate).
+The M6 acceptance behavior: the WS4 core-loop matrix (LT leg) folds green incl.
+the required claude cell; twin-parity round-trip holds; the assessor↔admiral
+signoff wiring is live. Reconcile each M6 workstream's claimed-done against the
+actual commits/diffs/tests on the branch — the COORD log claims are a lead, not
+proof. Known-RED corpus cells to exercise: ... Deploy preconditions: N/A (merge
+gate).
 ```
 
-This maps to: assessor instance `assessor-core-loop-proof`, gating epic
-`hk-9x1qz` on `integration/core-loop-proof`, running the **merge** gate, unioning
-findings over `found-by:{assessor,admiral,fast-follow}`, writing its report to
-`.harmonik/reports/core-loop-proof-gate.md`, and reporting to `admiral`.
+This maps to: assessor instance `assessor-m6-quality-system`, gating epic
+`hk-9x1qz` on `integration/m6-quality-system`, running the **merge** gate,
+gathering evidence from `found-by:{assessor,admiral,fast-follow}` for a reasoned
+verdict, writing its report to `.harmonik/reports/m6-quality-system-gate.md`, and
+reporting its PASS/BLOCK to `admiral` over `--topic gate`.
 
 Launch:
 
 ```
 harmonik crew start assessor \
-  --queue assessor-core-loop-proof-q \
-  --mission .harmonik/crew/missions/assessor-core-loop-proof.md
+  --queue assessor-m6-quality-system-q \
+  --mission .harmonik/crew/missions/assessor-m6-quality-system.md
 ```
 
 ---
@@ -269,11 +288,15 @@ A handoff is **invalid** if any of the following hold:
 - Any unconditionally-required field (§4) is absent.
 - `gate == deploy` but `commit` is absent (or malformed / not a hex SHA).
 - `gate` is neither `merge` nor `deploy`.
-- `schema_version != 1`.
+- `schema_version != 2`.
 - `assessor_name`, any `found_by_sources` element, or `spawned_by` contains
   characters outside `[a-z0-9-]`, or has length 0 or > 64.
-- `found_by_sources` is empty (an empty union → the block query matches nothing →
-  silent false-PASS; this is the `07` §3 wire-up gotcha and MUST be rejected).
+- `found_by_sources` is empty — a well-formed gate names at least one record
+  source for the evidence base and regression corpus, so an empty list is a
+  malformed handoff the admiral must correct. (Under the reasoned-judgment model
+  this no longer risks a false-PASS — the verdict is never a union row-count and an
+  empty ledger never yields PASS — but an empty source list signals the admiral
+  omitted the finding sources, so it is still rejected as ill-formed config.)
 
 On an invalid handoff the assessor MUST:
 
@@ -287,13 +310,23 @@ On an invalid handoff the assessor MUST:
 
 ## 9. Schema evolution
 
-`schema_version: 1` is the initial version.
+`schema_version: 2` is the current version.
 
+- **v1 → v2** (2026-07-16, M6 WS5-1/WS5-2, D1): a **breaking semantic change**.
+  The verdict model moved from a deterministic `found-by` block-query ("any open
+  P0/P1 row → BLOCK; empty → PASS") to the assessor's **reasoned judgment** over
+  the three legs plus a claimed-done-vs-reality reconciliation. `found_by_sources`
+  is repurposed from a block-query union to an EVIDENCE/record enumeration; §6
+  dropped its "block set" framing; §8 dropped the empty-union → false-PASS
+  rationale. The field SHAPE is unchanged, but the CONTRACT the fields serve
+  changed, so `schema_version` bumped to 2 and `operating.md` / `soul.md` were
+  updated in the same wave. An assessor parsing `schema_version: 1` MUST treat the
+  handoff as invalid (the old bead-count semantics are retired).
 - **Additive changes** (new optional fields): MAY be introduced without a version
   bump if C2 and the assessor treat unknown fields as no-ops and the required-field
   set is unchanged.
 - **Breaking changes** (rename/remove a required field, change a charset, change
-  the `commit`-required-iff-`deploy` rule): MUST bump `schema_version` to 2+ AND
+  the `commit`-required-iff-`deploy` rule): MUST bump `schema_version` to 3+ AND
   update the admiral author, C2, and the assessor in the same commit. An assessor
   parsing an unrecognized `schema_version` MUST treat the handoff as invalid and
   post `--topic error`.

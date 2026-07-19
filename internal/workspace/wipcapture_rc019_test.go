@@ -15,7 +15,7 @@ import (
 // Spec ref: specs/reconciliation/spec.md §4.4 RC-019.
 
 // TestRC019_extractUntrackedFiles verifies that extractUntrackedFiles correctly
-// parses `git status --porcelain` output and returns only untracked paths.
+// parses `git status --porcelain -z` output and returns only untracked paths.
 func TestRC019_extractUntrackedFiles(t *testing.T) {
 	t.Parallel()
 
@@ -33,18 +33,30 @@ func TestRC019_extractUntrackedFiles(t *testing.T) {
 		},
 		{
 			name:     "only_modified",
-			input:    "M  file.go\n M other.go\n",
+			input:    "M  file.go\x00 M other.go\x00",
 			expected: nil,
 		},
 		{
 			name:     "single_untracked",
-			input:    "?? new-file.go\n",
+			input:    "?? new-file.go\x00",
 			expected: []string{"new-file.go"},
 		},
 		{
 			name:     "mixed",
-			input:    "M  tracked.go\n?? untracked.go\n?? another.go\n",
+			input:    "M  tracked.go\x00?? untracked.go\x00?? another.go\x00",
 			expected: []string{"untracked.go", "another.go"},
+		},
+		{
+			name:     "path_with_spaces_and_quotes",
+			input:    "?? has space \"quoted\".go\x00",
+			expected: []string{`has space "quoted".go`},
+		},
+		{
+			name: "rename_original_path_skipped",
+			// -z rename entry carries the original path as an extra
+			// NUL-terminated field; it must not be misread as an entry.
+			input:    "R  new-name.go\x00old-name.go\x00?? untracked.go\x00",
+			expected: []string{"untracked.go"},
 		},
 	}
 

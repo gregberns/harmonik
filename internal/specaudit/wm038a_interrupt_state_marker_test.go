@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mwo.52 binding test — WM-038a workspace-local marker for operator/verdict-driven

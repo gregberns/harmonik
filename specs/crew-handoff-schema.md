@@ -99,8 +99,8 @@ the path as-is to the crew's paste seed.
 
 ## 3. Field contract
 
-Six fields are **required**. One field is **optional** (additive, no schema_version
-bump — per §8 additive-change rule).
+Six fields are **required**. Two fields are **optional** (additive, no
+schema_version bump — per §8 additive-change rule).
 
 | Field | Type | Charset / constraints | Required | Meaning |
 |---|---|---|---|---|
@@ -111,6 +111,7 @@ bump — per §8 additive-change rule).
 | `goal` | string | single line, no newlines | yes | Plain-English mission statement. Used in `/session-resume` framing and in crew status updates. |
 | `captain_name` | string | `[a-z0-9-]`, 1–64 chars | yes | The captain's comms identity. The crew sends `--to <captain_name> --topic status` progress updates here. |
 | `model` | string | `opus` \| `sonnet` \| `haiku` | **optional** | Claude model the crew should run on. When present, C2 (daemon) injects `--model <value>` on the crew's launch argv. Absent = no `--model` flag is added, so the crew inherits the launcher's configured default model (harmonik does not pin one). Decision rule: **sonnet** for lane-drain crews with file-disjoint clean beads (add mission clause "escalate to captain on ANY run_failed, do NOT self-classify"); **opus** for design / test / investigation. |
+| `harness` | string | opaque harness identifier (e.g. `codex`) | **optional** | Crew orchestrator harness override — the mid-precedence tier of the crew-scoped harness resolver (`--harness` flag > `harness:` here > per-crew `.harmonik/config.yaml` `crews.<name>.harness` > default `claude`; hk-l63b9). Absent = this tier is skipped. `claude` (or absent at every tier) builds today's Claude `--remote-control` spec unchanged; any other value whose crew-orchestrator substrate isn't wired yet fails the crew-start op with an explicit "not yet supported" error — never a silent fallback to Claude. |
 
 ### 3.1 Charset enforcement
 

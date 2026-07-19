@@ -163,7 +163,7 @@ const (
 	// DefaultCyclerPollInterval is the CyclerConfig nonce/settle poll cadence.
 	DefaultCyclerPollInterval = 200 * time.Millisecond
 	// DefaultClearConfirmBackstop is the CyclerConfig total hard-gate backstop for
-	// confirming /clear (new session_id minted) before completeCycleTail gives up
+	// confirming /clear (new session_id minted) before the Clearing phase gives up
 	// waiting and fires the brief injection as a last resort. A single
 	// ClearSettle window was not a hard gate: on a slow handoff write or busy
 	// pane (operator observed 1-2 minutes) the poll timed out before /clear
@@ -176,6 +176,15 @@ const (
 	// within DefaultClearConfirmBackstop, guarding against a pathologically
 	// large ClearSettle producing very few (or zero) retries. Refs: hk-vdqe2.
 	DefaultClearConfirmRetries = 20
+	// DefaultModelDoneTimeout is the CyclerConfig SR4 fail-open bound (SK-014 /
+	// D12): the maximum AwaitModelDone wait for the model-done signal before
+	// the cycle proceeds to Clearing degraded (model_done{source:"timeout",
+	// degraded:true}). Pinned strictly below DefaultClearConfirmBackstop
+	// (150s): the SR4 wait sits INSIDE the SR9 liveness budget ahead of the
+	// clear phase — if it approached the backstop it would dominate the window
+	// and let a lost Stop-hook write consume most of the budget before /clear
+	// is even sent (the exact resume-hang class SR9 exists to kill).
+	DefaultModelDoneTimeout = 60 * time.Second
 	// DefaultForceRetryInterval is the CyclerConfig forced-clear retry interval.
 	DefaultForceRetryInterval = 120 * time.Second
 	// DefaultIdleRestartAbsTokens is the CyclerConfig idle-crew restart token floor.

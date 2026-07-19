@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.15 binding test — SH-015: fixture teardown runs on every terminal path

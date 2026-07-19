@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-hqwn.43 binding test — EV-034 registry registration is startup-time.

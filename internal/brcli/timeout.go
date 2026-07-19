@@ -227,7 +227,7 @@ func classifyWaitResult(waitErr error, stdout, stderr []byte) (Result, error) {
 			Stdout:   stdout,
 			Stderr:   stderr,
 			ExitCode: code,
-			BrErr:    BrErrorFromExitCode(code),
+			BrErr:    BrErrorFromExit(code, stderr),
 		}, nil
 	}
 

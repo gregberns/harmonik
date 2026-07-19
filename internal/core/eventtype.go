@@ -3,7 +3,7 @@ package core
 // EventType is the typed string identifier for an event type in the §8 taxonomy
 // (event-model.md §8).
 //
-// The ~79 constants below cover all active rows across §8.1–§8.8. The
+// The constants below cover all active rows of the §8 taxonomy. The
 // Event.Type field uses this type per EV-001; the registry (eventregistry.go)
 // enforces that only registered types are dispatched.
 //
@@ -929,7 +929,7 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// §8.13 Session-keeper event types (codename:session-keeper, hk-ekap1)
+// §8.16 Session-keeper event types (codename:session-keeper, hk-ekap1)
 // ---------------------------------------------------------------------------
 
 const (
@@ -1021,6 +1021,16 @@ const (
 	// Refs: hk-wjzf, hk-xjlq, ON-059.
 	EventTypeSessionKeeperRestartNowBlocked EventType = "session_keeper_restart_now_blocked"
 
+	// EventTypeSessionKeeperRestartNow is the session_keeper_restart_now event
+	// type. Emitted by RestartNow on a SUCCESSFUL agent-run restart (after the
+	// ack + /clear + brief are all injected). Its `nonce` carries the value
+	// supplied to `restart-now --nonce` (carry-for-audit, SK-030): a query of
+	// events.jsonl by that nonce joins the self-restart to its originating keeper
+	// cycle. Additive — it does not change the verify/ACK/clear ordering.
+	// Durability class: O (ordinary — observability; non-destructive).
+	// Refs: SK-029, SK-030, hk-keeper-delivery-restartnow-nonce-kz4w6.
+	EventTypeSessionKeeperRestartNow EventType = "session_keeper_restart_now"
+
 	// EventTypeSessionKeeperLivePaneRecover is the session_keeper_live_pane_recover
 	// event type. Emitted by the keeper watcher's gauge-INDEPENDENT last-resort
 	// recovery: when the gauge has been stale beyond LiveRecoverGrace but the tmux
@@ -1102,7 +1112,7 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// §8.14 Alarm / self-check event types (hk-tnmjy)
+// §8.17 Alarm / self-check event types (hk-tnmjy)
 // ---------------------------------------------------------------------------
 
 const (
@@ -1145,7 +1155,7 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// §8.16 Remote-substrate worker event types (remote-substrate B6, hk-rs-b6-healthcheck-isda)
+// §8.18 Remote-substrate worker event types (remote-substrate B6, hk-rs-b6-healthcheck-isda)
 // ---------------------------------------------------------------------------
 
 const (
@@ -1161,7 +1171,7 @@ const (
 	// Bead ref: hk-rs-b6-healthcheck-isda.
 	EventTypeWorkerUnhealthy EventType = "worker_unhealthy"
 
-	// EventTypeWorkerOffline is the worker_offline event type (§8.16).
+	// EventTypeWorkerOffline is the worker_offline event type (§8.18).
 	// Emitted when an SSH connection failure (ssh exit code 255) is detected
 	// for a remote worker either at spawn time (code-sync steps a/b) or during
 	// a mid-run liveness probe. The worker is disabled in-memory
@@ -1218,7 +1228,7 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// §8.15 HITL-decisions event types (codename:hitl-decisions, hk-33p)
+// §8.14 HITL-decisions event types (codename:hitl-decisions, hk-33p)
 // ---------------------------------------------------------------------------
 //
 // The agent→human decision dual of agent-comms: an agent emits a
@@ -1258,7 +1268,7 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// §8.17 Flywheel governor observe signal (FW2 hk-z1lr)
+// §8.19 Flywheel governor observe signal (FW2 hk-z1lr)
 // ---------------------------------------------------------------------------
 //
 // governor_signal is the observe-only audit record for one sentinel.Evaluate
@@ -1337,7 +1347,7 @@ const (
 )
 
 // ---------------------------------------------------------------------------
-// §8.18 Flywheel G-liveness halt page (FW3 hk-4toh)
+// §8.19 Flywheel G-liveness halt page (FW3 hk-4toh)
 // ---------------------------------------------------------------------------
 //
 // liveness_halt is the page event emitted when the G-liveness self-kill gate
@@ -1382,4 +1392,45 @@ const (
 	// Durability class: O.
 	// Refs: hk-l087e.
 	EventTypeStallDetected EventType = "stall_detected"
+)
+
+// ---------------------------------------------------------------------------
+// §8.20 Session-keeper interior cycle events (codename:session-restart-substrate)
+// ---------------------------------------------------------------------------
+//
+// Fine-grained restart-cycle milestones, durable on the bus and joinable by the
+// composite (agent_name, cycle_id) key (EV-046). Emitted by internal/keeper;
+// consumed by the internal/replay invariant harness (EV-048). Durability class: O.
+//
+// This is a SEPARATE cohort from the coarse §8.16 watcher/lifecycle keeper
+// signals: §8.16 = the watcher/lifecycle signals shipped today; §8.20 = the
+// fine-grained interior milestones this change adds.
+//
+// Bead ref: codename:session-restart-substrate.
+
+const (
+	// EventTypeSessionKeeperHandoffWritten is the session_keeper_handoff_written
+	// event type. Emitted when the handoff nonce was confirmed written by the
+	// model (cycle.go confirmed-phase). Precondition of clear_sent (SR3).
+	// Emitter: internal/keeper. Durability class: O. (§8.20.1)
+	EventTypeSessionKeeperHandoffWritten EventType = "session_keeper_handoff_written"
+
+	// EventTypeSessionKeeperModelDone is the session_keeper_model_done event
+	// type. Emitted when the model reaches an await-input boundary after the
+	// handoff turn (D12); Degraded=true if the liveness bound fired.
+	// Precondition of clear_sent (SR4).
+	// Emitter: internal/keeper. Durability class: O. (§8.20.2)
+	EventTypeSessionKeeperModelDone EventType = "session_keeper_model_done"
+
+	// EventTypeSessionKeeperClearSent is the session_keeper_clear_sent event
+	// type. Emitted when /clear was injected into the pane (cycle.go
+	// cleared-phase).
+	// Emitter: internal/keeper. Durability class: O. (§8.20.3)
+	EventTypeSessionKeeperClearSent EventType = "session_keeper_clear_sent"
+
+	// EventTypeSessionKeeperNewSessionUp is the session_keeper_new_session_up
+	// event type. Emitted when a new session_id was observed after /clear;
+	// precondition of briefing (SR6).
+	// Emitter: internal/keeper. Durability class: O. (§8.20.4)
+	EventTypeSessionKeeperNewSessionUp EventType = "session_keeper_new_session_up"
 )

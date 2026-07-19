@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8i31.60 binding test — HC-050 skill declarations are read from LaunchSpec.

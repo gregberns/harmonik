@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-i0tw.25 binding test — SH-023: assertion failure produces verdict `fail`

@@ -288,6 +288,114 @@ func TestCrewStart_RequiresQueue(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// hk-l63b9: crew-scoped harness resolution end-to-end through HandleCrewStart
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestCrewStart_HarnessResolutionEndToEnd exercises the full composition line
+// inside HandleCrewStart — req.Harness / mission harness: front-matter / the
+// per-crew crews: config tier all reach resolveCrewHarness and, for the
+// supported "claude" resolution, flow through to a normal spawn (no
+// buildCrewLaunchSpec error, substrate.SpawnWindow called). This complements
+// the component-level tests in crewlaunchspec_test.go (resolveCrewHarness,
+// readMissionHarness, buildCrewLaunchSpec's branch in isolation).
+func TestCrewStart_HarnessResolutionEndToEnd(t *testing.T) {
+	t.Run("flag_claude_spawns_normally", func(t *testing.T) {
+		sub := &fakeSubstrate{}
+		h, _ := newTestCrewHandler(t, sub, nil)
+
+		mustCrewStart(t, h, CrewStartRequest{Name: "flag-claude", Queue: "q-flag", Harness: "claude"})
+
+		if !sub.spawnCalled {
+			t.Error("substrate.SpawnWindow was not called for the explicit claude harness")
+		}
+	})
+
+	t.Run("mission_frontmatter_claude_spawns_normally", func(t *testing.T) {
+		sub := &fakeSubstrate{}
+		h, dir := newTestCrewHandler(t, sub, nil)
+
+		missionPath := filepath.Join(dir, "mission.md")
+		const mission = "---\nschema_version: 1\nharness: claude\n---\n\n# Mission\n"
+		if err := os.WriteFile(missionPath, []byte(mission), 0o600); err != nil {
+			t.Fatalf("write mission: %v", err)
+		}
+
+		mustCrewStart(t, h, CrewStartRequest{Name: "mission-claude", Queue: "q-mission", MissionPath: missionPath})
+
+		if !sub.spawnCalled {
+			t.Error("substrate.SpawnWindow was not called for a mission harness: claude front-matter")
+		}
+	})
+
+	t.Run("per_crew_config_claude_spawns_normally", func(t *testing.T) {
+		sub := &fakeSubstrate{}
+		dir := t.TempDir()
+		h := NewCrewHandler("claude", dir, "", sub, nil,
+			WithCrewsConfig(map[string]CrewConfig{"config-claude": {Harness: "claude"}}))
+
+		mustCrewStart(t, h, CrewStartRequest{Name: "config-claude", Queue: "q-config"})
+
+		if !sub.spawnCalled {
+			t.Error("substrate.SpawnWindow was not called for a per-crew config harness: claude")
+		}
+	})
+
+	t.Run("flag_beats_mission_and_config", func(t *testing.T) {
+		// The flag ("claude") must win over a mission front-matter and a
+		// per-crew config that both name an UNSUPPORTED harness — if
+		// precedence were wrong, this would fail with a "not yet supported"
+		// error instead of spawning.
+		sub := &fakeSubstrate{}
+		dir := t.TempDir()
+		h := NewCrewHandler("claude", dir, "", sub, nil,
+			WithCrewsConfig(map[string]CrewConfig{"precedence": {Harness: "pi"}}))
+
+		missionPath := filepath.Join(dir, "mission.md")
+		const mission = "---\nschema_version: 1\nharness: codex\n---\n\n# Mission\n"
+		if err := os.WriteFile(missionPath, []byte(mission), 0o600); err != nil {
+			t.Fatalf("write mission: %v", err)
+		}
+
+		mustCrewStart(t, h, CrewStartRequest{
+			Name: "precedence", Queue: "q-precedence", MissionPath: missionPath, Harness: "claude",
+		})
+
+		if !sub.spawnCalled {
+			t.Error("substrate.SpawnWindow was not called; flag harness=claude should have won precedence")
+		}
+	})
+}
+
+// TestCrewStart_UnsupportedHarnessRollback verifies that an unsupported
+// resolved harness (hk-l63b9: buildCrewLaunchSpec rejects anything but
+// ""/"claude") fails HandleCrewStart with an explicit error, never spawns a
+// window, and rolls back the registry record written in step 2 — mirroring
+// TestCrewStart_SpawnFailRollback's rollback assertion for the harness-branch
+// error path specifically.
+func TestCrewStart_UnsupportedHarnessRollback(t *testing.T) {
+	sub := &fakeSubstrate{}
+	h, dir := newTestCrewHandler(t, sub, nil)
+
+	raw, mErr := json.Marshal(CrewStartRequest{Name: "zeta", Queue: "q-zeta", Harness: "codex"})
+	if mErr != nil {
+		t.Fatalf("marshal CrewStartRequest: %v", mErr)
+	}
+	_, err := h.HandleCrewStart(context.Background(), json.RawMessage(raw))
+	if err == nil {
+		t.Fatal("expected error for unsupported harness, got nil")
+	}
+
+	if sub.spawnCalled {
+		t.Error("substrate.SpawnWindow must NOT be called when the harness is unsupported")
+	}
+
+	_, loadErr := crew.Load(dir, "zeta")
+	if !errors.Is(loadErr, crew.ErrNotFound) {
+		t.Errorf("expected registry rollback (ErrNotFound) after unsupported-harness error, got %v", loadErr)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AC-3: crew-stop happy path
 // ─────────────────────────────────────────────────────────────────────────────
 

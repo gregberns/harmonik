@@ -68,6 +68,23 @@ func AppendItems(
 		return nil, nil, err
 	}
 
+	// Bounds-guard groupIndex BEFORE any q.Groups[groupIndex] access below.
+	// The Validate pipeline (QM-024) also rejects an out-of-range index, but
+	// this handler indexes q.Groups directly at several points; an independent
+	// guard keeps a malformed GroupIndex (e.g. decoded from untrusted JSON on
+	// the socket) from panicking with an out-of-range access rather than
+	// returning a typed error. Bead ref: W4 mega-review §c.
+	if groupIndex < 0 || groupIndex >= len(q.Groups) {
+		return nil, nil, &ValidationError{
+			Reason: ReasonAppendTargetInvalid,
+			Detail: map[string]any{
+				"group_index":   groupIndex,
+				"actual_kind":   nil,
+				"actual_status": nil,
+			},
+		}
+	}
+
 	// Build the Items slice for the validation request.
 	appendItems := make([]Item, len(beadIDs))
 	for i, id := range beadIDs {
@@ -164,7 +181,6 @@ func AppendItems(
 
 	// Mutate in place: append to the target group's Items slice.
 	g := &q.Groups[groupIndex]
-	tailStart := len(g.Items)
 	g.Items = append(g.Items, newItems...)
 
 	// QM-042 — emit queue_appended.
@@ -185,13 +201,12 @@ func AppendItems(
 
 	// QM-042 — emit queue_item_deferred_for_ledger_dep per deferred item, in
 	// append order, after queue_appended.
-	for i, id := range beadIDs {
+	for _, id := range beadIDs {
 		beadID := core.BeadID(id)
 		blockerID, deferred := deferredSet[beadID]
 		if !deferred {
 			continue
 		}
-		_ = tailStart + i // index of the newly appended item; informational
 		evtDeferred, evtErr := newEvent("queue_item_deferred_for_ledger_dep", &core.QueueItemDeferredForLedgerDepPayload{
 			QueueID:       q.QueueID,
 			GroupIndex:    groupIndex,

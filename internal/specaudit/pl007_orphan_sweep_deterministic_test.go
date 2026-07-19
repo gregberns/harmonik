@@ -1,3 +1,5 @@
+//go:build specaudit
+
 package specaudit_test
 
 // hk-8mup.13 binding test — PL-007 orphan sweep is deterministic and complete before

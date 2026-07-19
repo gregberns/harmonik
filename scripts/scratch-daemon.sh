@@ -154,6 +154,89 @@ prov_hash() {
 }
 
 # ---------------------------------------------------------------------------
+# provision_matrix_config: patch a freshly-init'd scratch config so the
+# core-loop-proof matrix can boot + run the pi/codex cells (M6 WS4-3).
+#
+# Two gaps in the `harmonik init` config (both fail-loud, no compiled default):
+#   1. sentinel.liveness_no_progress_n — shipped commented; daemon.Start refuses to
+#      boot without it. Insert `0` (G-liveness off) under the existing sentinel: block
+#      so a throwaway matrix daemon never self-kills mid-run.
+#   2. harnesses.pi — absent; a pi bead can't resolve provider/model. Append the block
+#      from scripts/scratch-config-overlay.yaml.
+# Both edits are idempotent (skipped when the target key is already ACTIVE), so re-init
+# on an existing scratch is a no-op. codex needs no block (model comes from $CODEX_HOME).
+# ---------------------------------------------------------------------------
+provision_matrix_config() {
+    local scratch cfg overlay repo_root
+    scratch="$1"
+    cfg="$scratch/.harmonik/config.yaml"
+    [ -f "$cfg" ] || { echo "[scratch-daemon] provision: no config.yaml at $cfg — skipping" >&2; return 0; }
+    repo_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+    overlay="$repo_root/scripts/scratch-config-overlay.yaml"
+
+    # (0) target_branch ref must exist LOCALLY. daemon.target_branch defaults to `main`
+    # (workloop resolveParentCommit does `git rev-parse main` to branch from / merge into).
+    # A clone made from a source checkout that is NOT on `main` (e.g. a feature branch, as
+    # the matrix does to run the as-built binary) has only `origin/main`, so `git rev-parse
+    # main` fails exit-128 and EVERY bead reopens without dispatching. Create the local
+    # branch (idempotent) from origin/main when available, else from the current HEAD.
+    if ! git -C "$scratch" rev-parse --verify --quiet main >/dev/null 2>&1; then
+        if git -C "$scratch" rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+            git -C "$scratch" branch main origin/main >/dev/null 2>&1 || true
+            echo "[scratch-daemon] provision: created local 'main' branch from origin/main"
+        else
+            git -C "$scratch" branch main HEAD >/dev/null 2>&1 || true
+            echo "[scratch-daemon] provision: created local 'main' branch from HEAD (no origin/main)"
+        fi
+    fi
+
+    # (1) liveness_no_progress_n under the existing sentinel: block.
+    if grep -qE '^[[:space:]]+liveness_no_progress_n:[[:space:]]*[0-9]' "$cfg"; then
+        echo "[scratch-daemon] provision: liveness_no_progress_n already set — skipping"
+    else
+        awk '{print} /^sentinel:/{print "  liveness_no_progress_n: 0  # WS4-3 matrix provisioning (G-liveness off; scratch-daemon.sh)"}' \
+            "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+        echo "[scratch-daemon] provision: set sentinel.liveness_no_progress_n: 0"
+    fi
+
+    # (2) harnesses.pi (+ codex.stale_wal_max_bytes) from the checked-in overlay.
+    #
+    # hk-es4f7: `harmonik init` now ships a DEFAULT harnesses.pi block (provider
+    # openrouter, model openrouter/qwen3-coder) via piConfigExampleYAML(). The old
+    # guard "skip if any 'harnesses:' present" therefore SHADOWED the matrix overlay:
+    # the ornith/DGX pi config never landed, so every pi cell red-failed the forced
+    # core-loop-lt gate (PI-040 OPENROUTER_API_KEY absent + model_selected=openrouter
+    # != pinned ornith). The overlay is the authoritative matrix config, so instead of
+    # skipping we STRIP init's default top-level harnesses:/codex: blocks and append
+    # the overlay's ornith block. Stripping is required because a second top-level
+    # 'harnesses:' key would be a duplicate-key YAML error. Idempotent: re-detect the
+    # already-applied ornith overlay (provider: ornith) and skip.
+    if [ ! -f "$overlay" ]; then
+        echo "[scratch-daemon] provision: WARNING overlay not found ($overlay) — pi cells will not run" >&2
+    elif grep -qE '^[[:space:]]+provider:[[:space:]]*ornith([[:space:]]|$)' "$cfg"; then
+        echo "[scratch-daemon] provision: ornith harnesses.pi overlay already applied — skipping"
+    else
+        # Strip any existing top-level harnesses:/codex: block (init's default) so the
+        # overlay's version is authoritative and no duplicate top-level key results.
+        # A block runs from its 'harnesses:'/'codex:' key line through all following
+        # indented or blank lines, up to the next top-level key or EOF.
+        awk '
+            /^(harnesses|codex):[[:space:]]*$/ { skip=1; next }
+            skip==1 && /^[[:space:]]/         { next }
+            skip==1 && /^[[:space:]]*$/       { next }
+            { skip=0 }
+            { print }
+        ' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+        {
+            echo ""
+            echo "# --- appended by scratch-daemon.sh provision (M6 WS4-3 / hk-es4f7) from scratch-config-overlay.yaml ---"
+            sed -n '/^# ---8<--- everything below this marker/,$p' "$overlay" | sed '1d'
+        } >> "$cfg"
+        echo "[scratch-daemon] provision: stripped default harnesses/codex + appended ornith overlay from $overlay"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Subcommand: init
 # ---------------------------------------------------------------------------
 cmd_init() {
@@ -188,6 +271,7 @@ cmd_init() {
     else
         echo "[scratch-daemon] .harmonik/config.yaml present — no init needed"
     fi
+    provision_matrix_config "$scratch"
     echo "[scratch-daemon] init complete. Next: $0 build $scratch && $0 up $scratch"
 }
 
@@ -235,9 +319,19 @@ cmd_up() {
     # tmux session. NO `harmonik supervise` => NO auto-revive, so a plain
     # `down`/pkill stays down for a clean rebuild. API keys are stripped so the
     # run bills the subscription pool (codename:credfence), matching smoke-scratch.
+    # -c "$scratch": the daemon MUST run with CWD == its ProjectDir. Guards that
+    # read config via os.Getwd() (e.g. the codex stale-WAL guard) assume this
+    # invariant; without -c the daemon inherits the CALLER's cwd (the driver
+    # checkout) and reads the wrong .harmonik/config.yaml.
+    # M6 WS4-3: default eager-refill OFF for scratch daemons so `queue submit` is
+    # the sole deterministic dispatcher (the daemon must not auto-dispatch ready
+    # seed beads at boot before a cell's subscribe arms). Override with
+    # SCRATCH_DISABLE_EAGER_REFILL=0 for scratch runs that want the flywheel.
+    local disable_eager="${SCRATCH_DISABLE_EAGER_REFILL:-1}"
     # shellcheck disable=SC2016
     tmux new-session -d -s "$sess" -c "$scratch" \
         "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+          HARMONIK_DISABLE_EAGER_REFILL='$disable_eager' \
           '$bin' --project '$scratch' \
           --max-concurrent $max_concurrent \
           --workflow-mode $workflow_mode \
@@ -500,7 +594,11 @@ cmd_batch() {
             >"$raw" 2>>"$(scratch_log "$scratch")" &
         sub_pid=$!
         # Tear down the background reader + temp stream on any exit; keep the results file.
-        trap 'kill "$sub_pid" 2>/dev/null || true; rm -f "$raw" 2>/dev/null || true' EXIT
+        # sub_pid/raw are function-locals but the EXIT trap fires at SCRIPT exit, by which
+        # point they are out of scope — under `set -u` a bare "$sub_pid" then aborts the
+        # trap with "unbound variable" (leaking the subscribe child + temp file). Guard
+        # both with :- so the cleanup always runs.
+        trap 'kill "${sub_pid:-}" 2>/dev/null || true; rm -f "${raw:-}" 2>/dev/null || true' EXIT
 
         echo "[scratch-daemon] batch: submitting $item_count item(s) to queue '$name' (project=$scratch)"
         local submit_out

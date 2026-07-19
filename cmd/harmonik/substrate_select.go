@@ -171,6 +171,40 @@ func (r *codexWorkerRoutingRunner) Command(ctx context.Context, name string, arg
 	return ltmux.LocalRunner{}.Command(ctx, name, args...)
 }
 
+// CommandInDir is the RemoteCwdRunner (hk-czb11) analog of Command: it applies
+// the spawn working directory correctly for the routed transport. Without it the
+// codex driver's RemoteCwdRunner type-assert would fail against this router (the
+// composition-root runner wired into codexdriver.Options.Runner) and fall back to
+// setting the LOCAL exec.Cmd.Dir — which for an ssh-routed run is the REMOTE
+// worktree path, fork/exec-ENOENTing the local ssh process.
+//
+//   - ssh worker bound: delegate to SSHRunner.CommandInDir — the cwd is applied
+//     ON THE WORKER (cd … && exec …) and the local exec.Cmd.Dir is left unset.
+//   - fail-closed (requireBoundary, no ssh route): return the refusal argv0
+//     exactly as Command does; dir is irrelevant (exec.Start fails immediately).
+//   - LOCAL fallback: LocalRunner runs box-A-locally, so dir is a LOCAL path —
+//     set it as exec.Cmd.Dir here, because the driver's spawn leaves Dir unset on
+//     the RemoteCwdRunner branch (this method owns applying it for local runs).
+//
+// Mirrors Command's routing decision exactly (same WorkerSnapshot peek, same
+// per-run non-multiplexed SSHRunner opts). Refs: hk-czb11.
+func (r *codexWorkerRoutingRunner) CommandInDir(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+	if reg := r.reg.Load(); reg != nil {
+		if w := reg.WorkerSnapshot(); w != nil && w.Enabled && w.Transport == "ssh" {
+			return ltmux.SSHRunner{
+				Host: w.Host,
+				Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"},
+			}.CommandInDir(ctx, dir, name, args...)
+		}
+	}
+	if r.requireBoundary {
+		return exec.CommandContext(ctx, refusedIsolationBoundaryArgv0)
+	}
+	cmd := ltmux.LocalRunner{}.Command(ctx, name, args...)
+	cmd.Dir = dir
+	return cmd
+}
+
 // codexSubstrateOptions builds the structured-driver Options and, when live
 // capture is opted in (HARMONIK_CAPTURE_DIR), wires the sessioncapture corpus
 // writers into Options.InCapture/OutCapture — the M2-4 production tee (AIS-013).

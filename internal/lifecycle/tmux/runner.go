@@ -120,6 +120,39 @@ func (s SSHRunner) Command(ctx context.Context, name string, args ...string) *ex
 	return exec.CommandContext(ctx, "ssh", sshArgs...)
 }
 
+// CommandInDir is like Command but runs the remote command in the remote working
+// directory dir. It emits:
+//
+//	ssh [Opts...] <Host> -- cd <q(dir)> && exec <q(name)> <q(args)...>
+//
+// where cd / && / exec are LITERAL remote-shell syntax (deliberately NOT quoted —
+// quoting `&&` would make it a literal argument to cd rather than the shell
+// operator), while dir, name, and every arg are single-quoted token-by-token, the
+// same quoting contract Command uses (so paths, spaces, and `#{…}` tmux tokens
+// arrive as one literal word each). `exec` replaces the remote login shell with
+// the child so signals and process lifetime match a direct spawn.
+//
+// The remote cwd is applied ON THE WORKER; the returned LOCAL *exec.Cmd runs
+// `ssh`, and its Dir is left unset (the caller's box-A default) — the remote path
+// is NEVER assigned to a local exec.Cmd.Dir (hk-czb11). SSHRunner thereby
+// satisfies the codexdriver RemoteCwdRunner capability structurally.
+func (s SSHRunner) CommandInDir(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
+	var b strings.Builder
+	b.WriteString("cd ")
+	b.WriteString(shellQuoteArg(dir))
+	b.WriteString(" && exec ")
+	b.WriteString(shellQuoteArg(name))
+	for _, a := range args {
+		b.WriteByte(' ')
+		b.WriteString(shellQuoteArg(a))
+	}
+	sshArgs := make([]string, 0, len(s.Opts)+3)
+	sshArgs = append(sshArgs, s.Opts...)
+	sshArgs = append(sshArgs, s.Host, "--", b.String())
+	//nolint:gosec // G204: ssh Host/Opts are daemon-config-resolved and the remote command is shell-quoted — not user input (mirrors Command above)
+	return exec.CommandContext(ctx, "ssh", sshArgs...)
+}
+
 // IsSSHConnectionFailure reports whether err is an SSH transport failure.
 // SSH exits with code 255 on connection errors (refused, timeout, host-key
 // mismatch) to distinguish transport failures from remote-command exit codes.

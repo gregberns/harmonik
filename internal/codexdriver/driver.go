@@ -59,6 +59,21 @@ type CommandRunner interface {
 	Command(ctx context.Context, name string, args ...string) *exec.Cmd
 }
 
+// RemoteCwdRunner is an OPTIONAL capability a CommandRunner may implement when it
+// executes the child on a REMOTE host (an ssh transport). For such a runner the
+// spawn working directory (SubstrateSpawn.Cwd) is a REMOTE worktree path: setting
+// the LOCAL exec.Cmd.Dir to it fork/exec-ENOENTs the local ssh process, and
+// without a remote `cd` the child would run in the ssh login $HOME, not the
+// worktree (both hk-czb11). CommandInDir returns an *exec.Cmd whose REMOTE command
+// runs in dir, leaving the LOCAL exec.Cmd.Dir unset (a box-A-valid default). A
+// LOCAL runner does NOT implement this; spawn then sets exec.Cmd.Dir = Cwd as
+// before (byte-identical to the pre-fix local path). Declared locally
+// (structurally satisfied by tmux.SSHRunner) so codexdriver keeps its no-import-
+// of-tmux depguard boundary.
+type RemoteCwdRunner interface {
+	CommandInDir(ctx context.Context, dir, name string, args ...string) *exec.Cmd
+}
+
 // localRunner is the default CommandRunner: plain exec.CommandContext.
 type localRunner struct{}
 
@@ -194,8 +209,20 @@ func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, r
 	// dispatch-scoped spawn ctx.
 	procCtx, procCancel := context.WithCancel(context.Background())
 
-	cmd := c.opts.Runner.Command(procCtx, argv[0], argv[1:]...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
-	cmd.Dir = in.Cwd
+	// Remote-cwd-aware spawn (hk-czb11). A remote transport (ssh) runs the child
+	// ON THE WORKER, so in.Cwd is a REMOTE worktree path. Applying it as the LOCAL
+	// exec.Cmd.Dir fork/exec-ENOENTs the local `ssh …` process, and without a
+	// remote `cd` the child runs in the ssh login $HOME rather than the worktree.
+	// When the runner advertises RemoteCwdRunner, apply the cwd REMOTELY and leave
+	// the local exec.Cmd.Dir UNSET; a local runner keeps the direct
+	// exec.Cmd.Dir = in.Cwd path (byte-identical to before).
+	var cmd *exec.Cmd
+	if rc, ok := c.opts.Runner.(RemoteCwdRunner); ok && in.Cwd != "" {
+		cmd = rc.CommandInDir(procCtx, in.Cwd, argv[0], argv[1:]...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
+	} else {
+		cmd = c.opts.Runner.Command(procCtx, argv[0], argv[1:]...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
+		cmd.Dir = in.Cwd
+	}
 	if in.Env != nil {
 		cmd.Env = in.Env
 	}

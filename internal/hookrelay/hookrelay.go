@@ -515,12 +515,36 @@ func resolveDialTarget(endpoint string) (network, address string) {
 
 // isRetryableDialErr reports whether a DialContext failure reflects a daemon
 // that has not yet begun listening — the cold-boot / in-place-swap startup race
-// (CHB-016) — rather than a fatal misconfiguration. Connection-refused (the
-// listener endpoint is present but nothing is accepting yet) and ENOENT / "no
-// such file" (the unix socket has not been created yet) are both transient and
-// worth retrying within the startup window; anything else is fatal.
-func isRetryableDialErr(err error) bool {
-	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT)
+// (CHB-016) — rather than a fatal misconfiguration. ENOENT ("no such file": the
+// unix socket has not been created yet) and connection-refused (the endpoint is
+// present but nothing is accepting yet) are transient and worth retrying within
+// the startup window; anything else is fatal.
+//
+// ECONNREFUSED is AMBIGUOUS for the unix transport (hk-rupvi): dialing a REGULAR
+// FILE as a unix socket returns ECONNREFUSED on Linux — the SAME errno as a real
+// socket that is present-but-not-listening (macOS returns a distinct errno, so
+// this only bit Linux CI). Retrying a non-socket path burns the whole startup
+// window and masks the misconfiguration. Disambiguate by stat: for the unix
+// transport, if the address path EXISTS and is NOT a socket, the failure is a
+// fatal misconfiguration (return false → bridge_dial_failed, no retry). TCP
+// endpoints have no filesystem path, so their ECONNREFUSED stays retryable
+// (listener still starting) — network+address are threaded in for exactly this
+// stat.
+func isRetryableDialErr(network, address string, err error) bool {
+	// ENOENT: the endpoint has not been created yet — a genuine cold-boot race.
+	if errors.Is(err, syscall.ENOENT) {
+		return true
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return false // any other dial error is a fatal misconfiguration
+	}
+	// ECONNREFUSED on a unix path: fatal iff the path exists and is not a socket.
+	if network == "unix" {
+		if fi, statErr := os.Stat(address); statErr == nil && fi.Mode()&os.ModeSocket == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // sendToSocket implements the one-shot write with daemon-not-ready retry per
@@ -557,7 +581,7 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 			// binary swap per docs/daemon-redeploy.md) surfaces as a dial error,
 			// not a daemon_not_ready ACK. Retry those within the startup window
 			// on the same backoff schedule; anything else is fatal.
-			if isRetryableDialErr(dialErr) {
+			if isRetryableDialErr(network, address, dialErr) {
 				elapsed := time.Since(wallStart)
 				if elapsed+retryDelay > wallMax {
 					return fmt.Errorf("bridge_daemon_startup_window_exceeded: dial failed after %v: %w", elapsed, dialErr)

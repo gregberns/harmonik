@@ -1,0 +1,37 @@
+{
+  "pass_id": "baseline-599f80ab",
+  "pass_kind": "baseline",
+  "pin_sha": "599f80ab7f8fc7ef5169db8e37210b04aeb5ccb3",
+  "pin_branch": "phase1-session-restart-substrate",
+  "scratch": "/tmp/h-assessor/scratch-baseline-599f80ab",
+  "binary_sha_verified": true,
+  "preflight_4A": "PASS",
+  "suites": {
+    "S1": "PASS \u2014 regression green-tree GREEN-with-known-issues (no product regression; all reds load/timing flakes, invariants intact; Throughput deterministic-red assessor-verified NOT a regression)",
+    "S2": "PASS (pi:local LT green; codex SKIP operator-minimal; remote SKIP no-substrate)",
+    "S3": "PARTIAL \u2014 pi:local single-mode GREEN; DOT-graph covered-by-invariance (delta doesn't touch engine) + logged coverage caveat",
+    "S4": "COVERED-BY-INVARIANCE (comms unchanged since a0591ba3) + regression tests",
+    "S5": "COVERED-BY-TEST (keeper cycle/watcher/delivery go tests) + LT; live context-fill not driven (delta well-tested at unit level)",
+    "S6": "PASS — watcher live entire campaign (pid 24675), 0 error hits, fd 13 / th 15-16 flat, daemon UP",
+    "S7": "XT adversarial DONE \u2014 codexdriver/codexwire/isolation SURVIVED (-race). F4 REFUTED (intended exactly-one-clear, admiral case preserved). F5 P3 T8 residual TOCTOU non-gating. F7 P2 scrub pre-existing non-gating."
+  },
+  "s3_cells_done": [],
+  "g_cells_done": [],
+  "s6_watcher_pid": 24675,
+  "hk_xrn8r_rerun": "RESOLVED bucket(3) TEST-DEFECT-nongating P2 (pre-existing, product-correct, over-strict test on observer stream). Evidence: busimpl.go:650 per-emit goroutine dispatch; causality.go is the emit-ordered surface. NOT delta-introduced (a0591ba3 flakes 7/10 vs 599f80ab 5/10).",
+  "last_checkpoint": "2026-07-19T03:24:44Z",
+  "final_verdict": "PASS — authoritative baseline. No P0, no gating bucket-1, no product regression. ASSESSMENT.md written (schema v2). Critic DRY.",
+  "release_sha": "9152ea5c (=599f80ab + test-only, admiral diff-verified)",
+  "cr_leg": "CLEAN \u2014 F1 P2 LATENT (no prod caller, verified), F2/F3 P3 housekeeping. Positives all confirmed.",
+  "xt_leg": "XT-CONCERNS no-P0; F4 REFUTED by assessor (ZJ1Y test pins intended behavior); F5/F7 non-gating known-issues w/ owners.",
+  "regression_leg": "DONE — GREEN-with-known-issues. REGRESSION-TREE.md written (pre-restart subagent completed post-restart). No product regression; 6 reds all load/timing flakes. Throughput deterministic-red assessor-verified: distinct run_ids = legit re-dispatch, workloop.go delta inert on retry path (read cold). NON-gating.",
+  "next_steps": [
+    "1. finish/re-run regression green-tree (\u00a70.D.4)",
+    "2. completeness critic (until dry)",
+    "3. write ASSESSMENT.md (schema v2)",
+    "4. post baseline PASS/BLOCK + hk-xrn8r disposition on --topic gate stamped 599f80ab",
+    "5. \u00a74B teardown verification",
+    "6. commit runs/baseline-599f80ab artifacts"
+  ],
+  "verdict_trending": "PASS (no P0, no gating bucket-1; F4 REFUTED; LT green, CR clean, XT survived). NOT FINAL until regression green + critic dry."
+}

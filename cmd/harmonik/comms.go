@@ -13,8 +13,12 @@ package main
 // Flag reference for `harmonik comms send`:
 //
 //	(--to NAME | --broadcast)  Directed recipient OR broadcast sentinel "*". Exactly one required.
-//	--from NAME                Sender identity (default: $HARMONIK_AGENT env var).
-//	--topic T                  Optional free-text filter key.
+//	--from NAME                Sender identity (default: $HARMONIK_AGENT env var). Free-text, no
+//	                           allowlist. `keeper` is a recognized producer identity: the
+//	                           session-keeper shells `comms send --from keeper --topic keeper`
+//	                           fire-and-forget (no join, no subscription) to nudge an agent
+//	                           whose recv-follow is armed (agent-input.md §4.10 AIS-019).
+//	--topic T                  Optional free-text filter key (e.g. `keeper` for keeper nudges).
 //	--reply-to ID              Optional event_id of the message being replied to.
 //	--wake                     After sending, nudge the recipient's tmux pane to wake an idle crew.
 //	--socket PATH              Override socket path (default: <project>/.harmonik/daemon.sock).

@@ -1342,7 +1342,7 @@ EXAMPLES
 
 	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
 	// the live worker registry into the Codex driver's runner (nil for tmux).
-	codexSubstrate, codexRegObserver, codexRequireBoundary := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag)
+	codexSubstrate, codexRegObserver, codexRequireBoundary, reviewerSubstrate := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, substrateOpts...), codexBinaryFlag)
 
 	cfg := daemon.Config{
 		ProjectDir:                    projectDir,
@@ -1350,8 +1350,9 @@ EXAMPLES
 		KerfPath:                      kerfPath, // hk-9321v: kerf next for EM-062/EM-063 eager-refill
 		JSONLLogPath:                  jsonlLogPath,
 		MaxConcurrent:                 maxConcurrentFlag,
-		NoAutoPull:                    !autoPullFlag,                       // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
-		Substrate:                     codexSubstrate,                      // AIS-015 selection axis; default tmux
+		NoAutoPull:                    !autoPullFlag,  // hk-8vy18: queue-only by default; --auto-pull opts in to br-ready drain
+		Substrate:                     codexSubstrate, // AIS-015 selection axis; default tmux
+		ReviewerSubstrate:             reviewerSubstrate,
 		WorkerRegistryObserver:        codexRegObserver,                    // M4-C3: late-bind live registry into Codex runner
 		CodexRequireIsolationBoundary: codexRequireBoundary,                // hk-5h759: fail-closed — refuse codex crew w/o bound worker/container boundary
 		DaemonBinaryPath:              daemonBinaryPath,                    // absolute path for hook commands (hk-kqdpf.6)

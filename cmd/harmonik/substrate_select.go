@@ -69,13 +69,15 @@ const (
 // REFUSES to launch a codex run that has no worker bound (which would otherwise
 // fall through codexWorkerRoutingRunner.Command to LocalRunner and run codex
 // UNSANDBOXED on the daemon host). False for the tmux path (no such posture).
-func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), requireIsolationBoundary bool) {
+// reviewerSubstrate is always tmuxSub so a claude (SessionIDMinted) reviewer
+// runs on tmux/claude, not the codex app-server driver (hk-qxvc2).
+func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), requireIsolationBoundary bool, reviewerSubstrate handler.Substrate) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
-		return tmuxSub, nil, false
+		return tmuxSub, nil, false, tmuxSub
 	}
 	router := &codexWorkerRoutingRunner{requireBoundary: true}
 	opts, _ := codexSubstrateOptions(codexBinary, router)
-	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, true
+	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, true, tmuxSub
 }
 
 // codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that

@@ -1271,9 +1271,22 @@ func runReviewLoop(
 		// cross-run pane misdirection under MaxConcurrent>1.
 		//
 		// Spec ref: specs/process-lifecycle.md §4.7 PL-021b.
-		revPRS := newPerRunSubstrate(deps.substrate, deps.handlerBinary, nil)
-		var revSubstrate handler.Substrate = deps.substrate
-		var revPasteTarget handler.Substrate = deps.substrate
+		// hk-qxvc2: route a claude (SessionIDMinted) reviewer onto the tmux/claude
+		// substrate rather than the codexdriver app-server driver. Runner stays nil
+		// (review-loop reviewer runs box-A-local against the pushed SHA — hk-fxy9).
+		revReviewerHarnessIsClaude := false
+		if deps.harnessRegistry != nil {
+			if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(revArtifacts)); hErr == nil {
+				revReviewerHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
+			}
+		}
+		revBaseSubstrate := deps.substrate
+		if revReviewerHarnessIsClaude && deps.reviewerSubstrate != nil {
+			revBaseSubstrate = deps.reviewerSubstrate
+		}
+		revPRS := newPerRunSubstrate(revBaseSubstrate, deps.handlerBinary, nil)
+		var revSubstrate handler.Substrate = revBaseSubstrate
+		var revPasteTarget handler.Substrate = revBaseSubstrate
 		if revPRS != nil {
 			revSubstrate = revPRS
 			revPasteTarget = revPRS

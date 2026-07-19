@@ -702,7 +702,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 
 	// AIS-015 selection axis; default tmux. M4-C3: codexRegObserver late-binds
 	// the live worker registry into the Codex runner (nil for the tmux path).
-	crewSubstrate, codexRegObserver, codexRequireBoundary := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions), daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir))), "") // fleet-portability T2
+	crewSubstrate, codexRegObserver, codexRequireBoundary, reviewerSubstrate := selectSubstrate(daemon.NewTmuxSubstrate(tmuxAdapter, sessionName, daemon.WithSpawnCap(maxSessions), daemon.WithCrewProjectHash(lifecycle.ComputeProjectHash(projectDir))), "") // fleet-portability T2
 
 	cfg := daemon.Config{
 		ProjectDir:                    projectDir,
@@ -710,6 +710,7 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		JSONLLogPath:                  jsonlLogPath,
 		MaxConcurrent:                 maxConcurrent, // hk-w3cp1: user-controlled concurrency
 		Substrate:                     crewSubstrate,
+		ReviewerSubstrate:             reviewerSubstrate,
 		WorkerRegistryObserver:        codexRegObserver,     // M4-C3: late-bind live registry into Codex runner
 		CodexRequireIsolationBoundary: codexRequireBoundary, // hk-5h759: fail-closed — refuse codex crew w/o bound worker/container boundary
 		DaemonBinaryPath:              daemonBinaryPath,

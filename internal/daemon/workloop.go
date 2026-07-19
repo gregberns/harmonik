@@ -493,6 +493,10 @@ type workLoopDeps struct {
 	// Bead ref: hk-gql20.14.
 	substrate handler.Substrate
 
+	// reviewerSubstrate is the claude reviewer/gate substrate from
+	// cfg.ReviewerSubstrate; nil falls back to substrate.
+	reviewerSubstrate handler.Substrate
+
 	// clock is the determinism port through which the RUN path reads time
 	// (RSM-013 / M3-D4). Production wires substrate.SystemClock{}; tests inject
 	// substrate.FakeClock so agent-ready / reap timeouts replay in virtual time
@@ -1156,8 +1160,9 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		hookStore:                  store,
 		cpRegistry:                 cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
 		adapterRegistry:            registry,
-		harnessRegistry:            harnessReg,              // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
-		substrate:                  cfg.Substrate,           // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		harnessRegistry:            harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
+		substrate:                  cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		reviewerSubstrate:          cfg.ReviewerSubstrate,
 		clock:                      substrate.SystemClock{}, // RSM-013 / M3-D4: run-path determinism port (SystemClock in prod, FakeClock in tests)
 		agentReadyTimeout:          cfg.AgentReadyTimeout,
 		remoteAgentReadyTimeout:    cfg.RemoteAgentReadyTimeout, // hk-96d7w: remote-worker agent_ready wait window

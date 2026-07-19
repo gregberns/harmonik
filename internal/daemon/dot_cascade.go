@@ -1436,9 +1436,24 @@ func dispatchDotAgenticNode(
 	// local) so the per-run substrate's liveness + worktree probes target the
 	// WORKER, and the implementer/reviewer spawns on the worker (mirrors the
 	// single-mode path, workloop.go ~2733). nil preserves local behaviour (NFR7).
-	prs := newPerRunSubstrate(deps.substrate, deps.handlerBinary, runner)
-	var substrate handler.Substrate = deps.substrate
-	var pasteTarget handler.Substrate = deps.substrate
+	// hk-qxvc2: a claude (SessionIDMinted) reviewer must run on the tmux/claude
+	// substrate, not the codexdriver app-server substrate (deps.substrate under
+	// HARMONIK_SUBSTRATE=codexdriver is protocol-locked to codex JSON-RPC; a claude
+	// reviewer handed to it never emits agent_ready). A SessionIDCaptured (codex)
+	// reviewer is out of scope — spec.Substrate is nil'd below regardless.
+	reviewerHarnessIsClaude := false
+	if isReviewer && deps.harnessRegistry != nil {
+		if h, hErr := deps.harnessRegistry.ForAgent(artifactAgentType(artifacts)); hErr == nil {
+			reviewerHarnessIsClaude = h.SessionIDPolicy() == handlercontract.SessionIDMinted
+		}
+	}
+	baseSubstrate := deps.substrate
+	if reviewerHarnessIsClaude && deps.reviewerSubstrate != nil {
+		baseSubstrate = deps.reviewerSubstrate
+	}
+	prs := newPerRunSubstrate(baseSubstrate, deps.handlerBinary, runner)
+	var substrate handler.Substrate = baseSubstrate
+	var pasteTarget handler.Substrate = baseSubstrate
 	if prs != nil {
 		// hk-538l: for a REMOTE run tell the per-run substrate which tmux session to
 		// ENSURE + spawn into ON THE WORKER and the cwd to create it with (the worker's

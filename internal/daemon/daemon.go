@@ -206,6 +206,13 @@ type Config struct {
 	// Bead ref: hk-kqdpf.4.
 	Substrate handler.Substrate
 
+	// ReviewerSubstrate is the substrate for a claude (SessionIDMinted)
+	// reviewer/cognition-gate node; it is always the tmux substrate. Under
+	// codexdriver mode Substrate is the protocol-locked codex driver, and a
+	// claude reviewer handed to it never emits agent_ready (hk-qxvc2). A nil
+	// value falls back to Substrate for backward compatibility.
+	ReviewerSubstrate handler.Substrate
+
 	// DaemonBinaryPath is the absolute path to the running harmonik binary,
 	// resolved via os.Executable() at daemon startup (hk-kqdpf.6).
 	//

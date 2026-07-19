@@ -133,6 +133,17 @@ func NewCodexSubstrate(opts Options) handler.Substrate {
 // child's stdin as the wire (AIS-009/AIS-010 — the /dev/null disposition
 // belongs to the tmux/exec paths, not this one).
 func (c *codexSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpawn) (handler.SubstrateSession, error) {
+	return c.spawn(ctx, in, "")
+}
+
+// spawn is the shared spawn body for SpawnWindow (fresh thread) and the resident
+// owner's respawn path (resume). When resumeThreadID is non-empty the session's
+// launch handshake issues `thread/resume <resumeThreadID>` instead of
+// `thread/start`, re-attaching to the prior server-side thread after a child
+// death (hk-160yb G1: reconnect via respawn→initialize→thread/resume, using the
+// G2 wire method). resumeThreadID is otherwise the empty string and the path is
+// byte-for-byte the pre-G1 fresh-thread launch.
+func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, resumeThreadID string) (handler.SubstrateSession, error) {
 	argv := in.Argv
 	if len(argv) == 0 {
 		if c.opts.Binary == "" {
@@ -172,6 +183,10 @@ func (c *codexSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSp
 
 	//nolint:contextcheck // captureDegradeLogger logs from the session-lifetime-owned tee; no request ctx to inherit (same rationale as runLoop).
 	s := newCodexSession(c.opts, cmd, procCancel, stdin, stdout, stderrRing)
+	// resumeThreadID is immutable for the session's life; set before start() so
+	// the readLoop's handshake branch (handleResponse pendingInitialize) reads a
+	// fully-published value with no race against the reactor goroutines.
+	s.resumeThreadID = resumeThreadID
 	s.start(ctx)
 	return s, nil
 }

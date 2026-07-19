@@ -129,8 +129,14 @@ type codexSession struct {
 	// resolves or the turn completes.
 	turnSeqByID map[string]uint64
 	threadID    string
-	failure     error
-	stdinClosed bool
+	// resumeThreadID, when non-empty, makes the launch handshake re-attach to an
+	// existing server-side thread via `thread/resume` instead of opening a fresh
+	// one via `thread/start` (hk-160yb G1 reconnect). Set once by the substrate
+	// before start() and never mutated afterward; read only on the readLoop
+	// goroutine (handleResponse pendingInitialize), so it needs no lock.
+	resumeThreadID string
+	failure        error
+	stdinClosed    bool
 	// drainClose latches when a mid-turn CloseInput deferred the stdin close so
 	// the interrupted turn can wind down first (RU-07: a server-originated
 	// approval request the child sends AFTER we started closing still needs its
@@ -778,6 +784,22 @@ func (s *codexSession) writeThreadStart(cwd string) {
 	})
 }
 
+// writeThreadResume re-attaches to an existing server-side thread after a child
+// respawn (hk-160yb G1 reconnect), using the G2 `thread/resume` wire method. The
+// response is the same {thread:{id}} shape as thread/start, so it is correlated
+// as pendingThreadStart and drives the identical handshake-complete path — the
+// resumed threadID is stamped and HandshakeOK moves the reactor to Ready.
+func (s *codexSession) writeThreadResume(threadID string) {
+	id := s.nextReqID(pendingThreadStart, 0)
+	s.writeFrame(codexwire.Frame{
+		Kind:    codexwire.FrameKindClientRequest,
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  "thread/resume",
+		Params:  &codexwire.ThreadResumeParams{ThreadID: threadID},
+	})
+}
+
 func (s *codexSession) writeTurnStart(seq uint64) {
 	s.mu.Lock()
 	payload := s.payloads[seq]
@@ -904,13 +926,29 @@ func (s *codexSession) handleResponse(f codexwire.Frame) {
 			s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: "initialize error: " + string(f.Error)})
 			return
 		}
-		// Complete the client side of the handshake, then open the thread.
+		// Complete the client side of the handshake, then open the thread. On a
+		// respawn we re-attach to the prior server-side thread (thread/resume)
+		// rather than starting a fresh one (hk-160yb G1). The resume response
+		// carries the same {thread:{id}} shape as thread/start (ThreadResumeResult
+		// == ThreadStartResult), so it correlates as pendingThreadStart and the
+		// existing handshake-complete path is reused unchanged.
 		s.writeFrame(codexwire.Frame{Kind: codexwire.FrameKindClientNotification, JSONRPC: "2.0", Method: "initialized"})
-		s.writeThreadStart(s.cmd.Dir)
+		if s.resumeThreadID != "" {
+			s.writeThreadResume(s.resumeThreadID)
+		} else {
+			s.writeThreadStart(s.cmd.Dir)
+		}
 
 	case pendingThreadStart:
+		// The resume and fresh-start paths share this correlation (identical
+		// {thread:{id}} response shape); only the diagnostic label differs so a
+		// reconnect failure is not misreported as a thread/start failure.
+		method := "thread/start"
+		if s.resumeThreadID != "" {
+			method = "thread/resume"
+		}
 		if len(f.Error) > 0 {
-			s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: "thread/start error: " + string(f.Error)})
+			s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: method + " error: " + string(f.Error)})
 			return
 		}
 		var res struct {
@@ -919,7 +957,7 @@ func (s *codexSession) handleResponse(f codexwire.Frame) {
 			} `json:"thread"`
 		}
 		if err := json.Unmarshal(f.RawResult, &res); err != nil || res.Thread.ID == "" {
-			s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: "thread/start: missing thread id"})
+			s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: method + ": missing thread id"})
 			return
 		}
 		s.mu.Lock()

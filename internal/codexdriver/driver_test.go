@@ -105,6 +105,18 @@ func runTwin(mode string) {
 			// notification; no reply
 		case "thread/start":
 			emit(`{"id":%d,"result":{"thread":{"id":"th_1"},"model":"twin"}}`, *env.ID)
+		case "thread/resume":
+			// Re-attach to an existing thread (hk-160yb G1). Positive stderr
+			// marker proves the driver took the resume branch (not thread/start),
+			// and the reply echoes the REQUESTED threadId so a test can assert the
+			// session re-adopted the prior thread. Shape mirrors thread/start
+			// (ThreadResumeResult == ThreadStartResult).
+			var rp struct {
+				ThreadID string `json:"threadId"`
+			}
+			_ = json.Unmarshal(env.Params, &rp)
+			fmt.Fprintln(os.Stderr, "TWIN_RESUME_RECEIVED "+rp.ThreadID)
+			emit(`{"id":%d,"result":{"thread":{"id":%q},"model":"twin"}}`, *env.ID, rp.ThreadID)
 		case "turn/start":
 			turnStarts++
 			tid := fmt.Sprintf("turn_%d", turnStarts)

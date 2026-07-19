@@ -310,10 +310,33 @@ func (c *Cycler) pollOnce(ctx context.Context) {
 // pollAwaitingHandoff is the AwaitingHandoff detection tick: handoff-timeout
 // expiry (with the freshness sample) first, else the nonce-echo read.
 func (c *Cycler) pollAwaitingHandoff(ctx context.Context, st CycleState, at time.Time) {
+	// T8 (SK-035): in-cycle operator-attached TOCTOU re-check. Gate-7 samples
+	// operator-attached ONCE at cycle entry (ports.go:190); it is NOT re-checked
+	// across the up-to-300s handoff wait, so an operator who starts typing AFTER
+	// entry would be clobbered when the wait resolves into the destructive /clear.
+	// Re-sample it here each wait tick and gate BOTH edges that reach /clear:
+	// the nonce-confirm (below) and the handoff-timeout freshness recovery
+	// (hk-fi78d, sampleHandoffFreshness). Scoped to the pane path (TmuxTarget set);
+	// the comms path writes no pane so it is harmless there. Emits nothing (Gate-7's
+	// operator_attached emission is a deliberate NO-OP, logmine TA3/F55). No
+	// threshold/timing constant changes (NG1).
+	attached := c.cfg.TmuxTarget != "" && c.cfg.OperatorAttachedFn(c.cfg.TmuxTarget)
 	if dl, ok := c.timers[TimerHandoffTimeout]; ok && !at.Before(dl) {
 		delete(c.timers, TimerHandoffTimeout)
-		c.sampleHandoffFreshness(ctx, st, at)
+		// While an operator is attached, SKIP the freshness recovery so the timeout
+		// aborts warn-only (→ stepAbort, never /clear) rather than /clear over the
+		// operator via the recovered edge. The timeout still fires, so the wait is
+		// bounded (it does not hold forever).
+		if !attached {
+			c.sampleHandoffFreshness(ctx, st, at)
+		}
 		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
+		return
+	}
+	// While attached, HOLD the nonce-confirm (the sole gate to /clear) — we never
+	// /clear over the operator's in-flight turn. The wait continues; on the next
+	// tick after they detach the nonce is read and the cycle proceeds.
+	if attached {
 		return
 	}
 	content, err := c.handoff.ReadHandoff()

@@ -123,6 +123,63 @@ func TestSpawn_RemoteRunner_UsesRemoteCwd_LocalDirUnset_czb11(t *testing.T) {
 	}
 }
 
+// TestSpawn_RemoteRunner_ForwardsEnvViaArgv_hkokqyx asserts the codex remote path
+// delivers in.Env to the remote child by rewriting the launch into an
+// `env KEY=VAL … <binary> <args>` argv (handler.RemoteExecArgv) — ssh does NOT
+// forward the local process env, so the pre-fix `cmd.Env = in.Env` never reached
+// the remote codex (hk-okqyx, the codex twin of hk-qxvc2). A forwarded var must
+// appear before the binary; an empty deny-list override must be dropped (it would
+// clobber the worker's ambient credential).
+func TestSpawn_RemoteRunner_ForwardsEnvViaArgv_hkokqyx(t *testing.T) {
+	runner := &czb11RemoteRunner{}
+	sub := codexdriver.NewCodexSubstrate(codexdriver.Options{Runner: runner})
+
+	const remoteCwd = "/box-b/.harmonik/worktrees/run-okqyx/does-not-exist-locally"
+	const marker = "HK_REMOTE_MARKER=present"
+	const emptyCred = "HK_EMPTY_CRED="
+	binary := os.Args[0]
+	sess, err := sub.SpawnWindow(context.Background(), handler.SubstrateSpawn{
+		WindowName: "twin",
+		Argv:       []string{binary, "-test.run=NONE"},
+		Cwd:        remoteCwd,
+		Env:        append(os.Environ(), "CODEXDRIVER_TWIN=1", "CODEXDRIVER_TWIN_MODE=happy", marker, emptyCred),
+	})
+	if err != nil {
+		t.Fatalf("SpawnWindow (remote runner, env-forward): %v", err)
+	}
+	czb11Cleanup(t, sess)
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.inDirCalls) != 1 {
+		t.Fatalf("CommandInDir called %d times; want 1", len(runner.inDirCalls))
+	}
+	call := runner.inDirCalls[0]
+	if call.name != "env" {
+		t.Fatalf("CommandInDir name = %q; want \"env\" (in.Env must be forwarded via an env-prefix argv) — hk-okqyx", call.name)
+	}
+	markerIdx, binaryIdx := -1, -1
+	for i, a := range call.args {
+		switch a {
+		case marker:
+			markerIdx = i
+		case binary:
+			binaryIdx = i
+		case emptyCred:
+			t.Errorf("empty deny-list override %q was forwarded to the remote codex; it must be dropped (would clobber ambient credential) — hk-okqyx", emptyCred)
+		}
+	}
+	if markerIdx < 0 {
+		t.Errorf("forwarded var %q absent from remote argv %v — hk-okqyx", marker, call.args)
+	}
+	if binaryIdx < 0 {
+		t.Fatalf("binary %q absent from remote argv %v", binary, call.args)
+	}
+	if markerIdx >= 0 && markerIdx > binaryIdx {
+		t.Errorf("forwarded var %q at idx %d must precede the binary at idx %d (env KEY=VAL … <binary>) — hk-okqyx", marker, markerIdx, binaryIdx)
+	}
+}
+
 func TestSpawn_LocalRunner_SetsLocalCmdDir_czb11(t *testing.T) {
 	runner := &czb11LocalRunner{}
 	sub := codexdriver.NewCodexSubstrate(codexdriver.Options{Runner: runner})

@@ -289,7 +289,13 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		// CommandInDir and leave the local exec.Cmd.Dir UNSET; otherwise keep the
 		// byte-identical Command()+cmd.Dir=WorkDir path.
 		if rc, ok := spec.Runner.(RemoteCwdRunner); ok && spec.WorkDir != "" {
-			cmd = rc.CommandInDir(ctx, spec.WorkDir, spec.Binary, spec.Args...)
+			// hk-qxvc2: ssh does NOT forward the local process env (cmd.Env below),
+			// so spec.Env (e.g. CLAUDE_CONFIG_DIR) would never reach the remote agent.
+			// Deliver it via an `env KEY=VAL … <binary> <args>` argv prefix that the
+			// remote login-shell `exec`s in place. cmd.Env below stays load-bearing
+			// only for the LOCAL branches.
+			name, argv := RemoteExecArgv(spec.Env, spec.Binary, spec.Args)
+			cmd = rc.CommandInDir(ctx, spec.WorkDir, name, argv...)
 		} else {
 			cmd = spec.Runner.Command(ctx, spec.Binary, spec.Args...)
 			cmd.Dir = spec.WorkDir

@@ -218,7 +218,12 @@ func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, r
 	// exec.Cmd.Dir = in.Cwd path (byte-identical to before).
 	var cmd *exec.Cmd
 	if rc, ok := c.opts.Runner.(RemoteCwdRunner); ok && in.Cwd != "" {
-		cmd = rc.CommandInDir(procCtx, in.Cwd, argv[0], argv[1:]...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
+		// hk-okqyx: ssh does NOT forward the local process env (cmd.Env below),
+		// so in.Env would never reach the remote codex. Deliver it via an
+		// `env KEY=VAL … <binary> <args>` argv prefix the remote login-shell
+		// `exec`s in place. cmd.Env below stays load-bearing for the LOCAL branch.
+		name, remoteArgv := handler.RemoteExecArgv(in.Env, argv[0], argv[1:])
+		cmd = rc.CommandInDir(procCtx, in.Cwd, name, remoteArgv...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
 	} else {
 		cmd = c.opts.Runner.Command(procCtx, argv[0], argv[1:]...) //nolint:contextcheck // session-owned lifetime by design (see comment above)
 		cmd.Dir = in.Cwd

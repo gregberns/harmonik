@@ -162,7 +162,7 @@ prov_hash() {
 #      boot without it. Insert `0` (G-liveness off) under the existing sentinel: block
 #      so a throwaway matrix daemon never self-kills mid-run.
 #   2. harnesses.pi — absent; a pi bead can't resolve provider/model. Append the block
-#      from scenarios/core-loop-proof/scratch-config-overlay.yaml.
+#      from scripts/scratch-config-overlay.yaml.
 # Both edits are idempotent (skipped when the target key is already ACTIVE), so re-init
 # on an existing scratch is a no-op. codex needs no block (model comes from $CODEX_HOME).
 # ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ provision_matrix_config() {
     cfg="$scratch/.harmonik/config.yaml"
     [ -f "$cfg" ] || { echo "[scratch-daemon] provision: no config.yaml at $cfg — skipping" >&2; return 0; }
     repo_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
-    overlay="$repo_root/scenarios/core-loop-proof/scratch-config-overlay.yaml"
+    overlay="$repo_root/scripts/scratch-config-overlay.yaml"
 
     # (0) target_branch ref must exist LOCALLY. daemon.target_branch defaults to `main`
     # (workloop resolveParentCommit does `git rev-parse main` to branch from / merge into).

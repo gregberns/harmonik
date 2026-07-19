@@ -3628,7 +3628,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 			fmt.Fprintf(os.Stderr, "daemon: workloop: %s (bead %s run %s, reopening)\n",
 				reason, beadID, runID.String())
 			failRun(reason, reason)
-			return
+			return //nolint:nakedret // giant legacy function; naming returns here is a large risky edit — deferred
 		}
 	}
 

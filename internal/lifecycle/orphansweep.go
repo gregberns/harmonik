@@ -861,8 +861,8 @@ func reconLockProbeStale(lockPath string) (held *os.File, stale bool, err error)
 	flockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr != nil {
 		// EWOULDBLOCK: lock is actively held — not stale.
-		_ = f.Close() //nolint:errcheck // cleanup error unactionable
-		return nil, false, nil
+		_ = f.Close()          //nolint:errcheck // cleanup error unactionable
+		return nil, false, nil //nolint:nilerr // EWOULDBLOCK = lock actively held (not stale); a normal signal, not an error to return
 	}
 
 	// Parse creator_pid from file content (flock held throughout).

@@ -547,7 +547,6 @@ func (o OSAdapter) WriteToPane(ctx context.Context, bufferName, paneTarget strin
 		// PasteBuffer's -d flag only deletes the buffer on success; on failure
 		// the loaded buffer would otherwise accumulate on the tmux server.
 		// Best-effort cleanup: the paste error remains the returned error.
-		//nolint:gosec // G204: bufferName was validated by LoadBuffer above
 		delCmd := o.effectiveRunner().Command(ctx, "tmux", "delete-buffer", "-b", bufferName)
 		_, _ = delCmd.CombinedOutput() //nolint:errcheck // best-effort cleanup
 		return err

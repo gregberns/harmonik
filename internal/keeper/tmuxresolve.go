@@ -345,7 +345,7 @@ func recentTranscriptTurn(transcriptDir, sessionID, role string) (time.Time, boo
 		// oldest→newest, the truncation drops the NEWEST entries and returns a
 		// stale/absent turn timestamp. Surface it rather than swallowing it
 		// silently so a mis-gated cycle has a breadcrumb. Refs: hk-74iyd.
-		slog.Warn("keeper: recentTranscriptTurn: transcript scan truncated (over-long line)",
+		slog.WarnContext(context.Background(), "keeper: recentTranscriptTurn: transcript scan truncated (over-long line)",
 			"path", path, "role", role, "err", scanErr)
 	}
 	return lastTs, found

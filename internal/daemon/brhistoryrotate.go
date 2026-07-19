@@ -237,6 +237,8 @@ func runBrHistoryRotationPreflight(ctx context.Context, projectDir string, keepL
 // is removed with it. Any orphan sidecar older than maxAge is also swept so meta
 // files never accumulate unbounded. Files matching neither shape are left alone
 // (safer than a blind delete). Bead ref: hk-8vnwg.
+//
+//nolint:gocognit,cyclop // pruneBrHistoryArchive is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 func pruneBrHistoryArchive(ctx context.Context, archiveDir string, keepN int, maxAge time.Duration, now time.Time) {
 	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
@@ -267,7 +269,6 @@ func pruneBrHistoryArchive(ctx context.Context, archiveDir string, keepN int, ma
 		if !strings.Contains(n, payloadInfix) {
 			continue // unrecognised file; leave it (safer than a blind delete).
 		}
-		//nolint:gosec // G304: archiveDir constructed from operator-supplied projectDir; not user input.
 		info, statErr := os.Stat(filepath.Join(archiveDir, n))
 		if statErr != nil {
 			continue // unstat-able: leave it.
@@ -305,7 +306,7 @@ func pruneBrHistoryArchive(ctx context.Context, archiveDir string, keepN int, ma
 		// sidecar "<x>.jsonl.meta.json.archived-<ts>".
 		sidecar := strings.Replace(name, payloadInfix, sidecarInfix, 1)
 		if sidecar != name {
-			_ = os.Remove(filepath.Join(archiveDir, sidecar)) // best-effort; may not exist
+			_ = os.Remove(filepath.Join(archiveDir, sidecar)) //nolint:errcheck // best-effort cleanup; sidecar may not exist
 		}
 	}
 
@@ -322,7 +323,6 @@ func pruneBrHistoryArchive(ctx context.Context, archiveDir string, keepN int, ma
 			if !strings.Contains(n, sidecarInfix) {
 				continue
 			}
-			//nolint:gosec // G304: archiveDir constructed from operator-supplied projectDir; not user input.
 			info, statErr := os.Stat(filepath.Join(archiveDir, n))
 			if statErr != nil {
 				continue

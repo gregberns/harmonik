@@ -259,7 +259,7 @@ func TestWatcher_SelfHint_SleepGated(t *testing.T) {
 	agent := "hint-sleep-agent"
 
 	keeperDir := filepath.Join(projectDir, ".harmonik", "keeper")
-	if err := os.MkdirAll(keeperDir, 0o755); err != nil {
+	if err := os.MkdirAll(keeperDir, 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestWatcher_SelfHint_SleepGated(t *testing.T) {
 	go func() {
 		defer close(done)
 		w := keeper.NewWatcher(cfg, em)
-		_ = w.Run(ctx) //nolint:errcheck
+		_ = w.Run(ctx) //nolint:errcheck // background watcher; returns on ctx cancel, error unactionable here
 	}()
 
 	// Phase 1 — sleeping: ~40 above-threshold ticks, all suppressed by the gate.

@@ -29,13 +29,13 @@ import (
 // keeperPresenceBeatLine builds a raw agent_presence JSONL event line — the same
 // envelope shape presence.ComputeRegistry folds (see the presence TTL matrix tests).
 func keeperPresenceBeatLine(eventID, agent string, ts time.Time) string {
-	payload, _ := json.Marshal(map[string]any{
+	payload, _ := json.Marshal(map[string]any{ //nolint:errcheck,errchkjson // marshal of a fixed test map cannot fail
 		"agent":     agent,
 		"status":    "online",
 		"last_seen": ts.UTC().Format(time.RFC3339),
 		"reason":    "join",
 	})
-	ev, _ := json.Marshal(map[string]any{
+	ev, _ := json.Marshal(map[string]any{ //nolint:errcheck,errchkjson // marshal of a fixed test map cannot fail
 		"event_id":         eventID,
 		"schema_version":   1,
 		"type":             "agent_presence",
@@ -49,11 +49,11 @@ func keeperPresenceBeatLine(eventID, agent string, ts time.Time) string {
 func keeperWriteEvents(t *testing.T, lines ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "events.jsonl")
-	f, err := os.Create(path)
+	f, err := os.Create(path) //nolint:gosec // G304: path from t.TempDir(), not user input
 	if err != nil {
 		t.Fatalf("keeperWriteEvents: create: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { _ = f.Close() }() //nolint:errcheck // best-effort close of test fixture file
 	for _, l := range lines {
 		if _, wErr := fmt.Fprintln(f, l); wErr != nil {
 			t.Fatalf("keeperWriteEvents: write: %v", wErr)

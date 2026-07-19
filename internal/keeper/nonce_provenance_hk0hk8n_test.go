@@ -73,7 +73,7 @@ func TestNonceProvenance_MarkerAndRestartNowEventShareJoinKey(t *testing.T) {
 	// surface the join query runs against. A daemon-initialized project already
 	// has .harmonik/events/; create it here to mirror that (the FileEmitter
 	// O_CREATEs the file, not its parent dir).
-	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".harmonik", "events"), 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
 		t.Fatal(err)
 	}
 	rec := &recordingInjector{}

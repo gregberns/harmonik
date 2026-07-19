@@ -85,10 +85,10 @@ func driveConn(t *testing.T, router *socketrouter.Router, hr HookRelayHandler, s
 	go handleSocketConn(context.Background(), serverConn, hr, sub, router)
 
 	go func() {
-		_, _ = clientConn.Write(reqBytes)
+		_, _ = clientConn.Write(reqBytes) //nolint:errcheck // best-effort write in test goroutine
 	}()
 
-	_ = clientConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = clientConn.SetReadDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck // best-effort deadline in test
 	got, err := io.ReadAll(clientConn)
 	if err != nil {
 		t.Fatalf("read response: %v", err)
@@ -181,6 +181,6 @@ func TestHandleSocketConn_WireBytes(t *testing.T) {
 // jsonEscape returns s as it would appear inside a JSON string literal (minus the
 // surrounding quotes), matching encoding/json's escaping used by writeSocketResponse.
 func jsonEscape(s string) string {
-	b, _ := json.Marshal(s)
+	b, _ := json.Marshal(s) //nolint:errcheck,errchkjson // marshal of a string cannot fail
 	return string(b[1 : len(b)-1])
 }

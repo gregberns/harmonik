@@ -86,7 +86,7 @@ func (l *w4SeqWatcherLister) ListAgentFollowWatcherPIDs(_ context.Context, _ str
 // a guarded sweep (process survives) from an unguarded one (process killed).
 func w4StartTermIgnoringProc(t *testing.T) int {
 	t.Helper()
-	cmd := exec.Command("sh", "-c", `trap '' TERM; echo ready; sleep 60`)
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", `trap '' TERM; echo ready; sleep 60`)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)
@@ -95,8 +95,8 @@ func w4StartTermIgnoringProc(t *testing.T) int {
 		t.Fatalf("start term-ignoring proc: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		_ = cmd.Process.Kill() //nolint:errcheck // best-effort cleanup of test subprocess
+		_ = cmd.Wait()         //nolint:errcheck // best-effort cleanup of test subprocess
 	})
 	scanner := bufio.NewScanner(stdout)
 	if !scanner.Scan() || scanner.Text() != "ready" {
@@ -195,7 +195,7 @@ func TestSweepStaleReconciliationLocks_MalformedCreatorPIDIsSkipped(t *testing.T
 
 	projectDir := t.TempDir()
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(lockDir, "run-garbled.lock")
@@ -225,7 +225,7 @@ func TestSweepStaleReconciliationLocks_HoldsFlockUntilUnlink(t *testing.T) {
 	deadPID := reconLockUpliftFindDeadPID(t)
 	projectDir := t.TempDir()
 	lockDir := filepath.Join(projectDir, ".harmonik", "reconciliation-locks")
-	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+	if err := os.MkdirAll(lockDir, 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(lockDir, "run-stale.lock")
@@ -259,7 +259,7 @@ func TestEnumerateStaleIntents_FiltersNonIntentEntries(t *testing.T) {
 
 	projectDir := t.TempDir()
 	intentsDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
-	if err := os.MkdirAll(filepath.Join(intentsDir, "subdir"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(intentsDir, "subdir"), 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
 		t.Fatal(err)
 	}
 	old := time.Now().Add(-2 * time.Hour)

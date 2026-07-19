@@ -122,7 +122,7 @@ func TestL5saf_LocalOnlyItemNotStrandedByCapGuard(t *testing.T) {
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
-		daemon.ExportedRunWorkLoop(ctx, deps)
+		daemon.ExportedRunWorkLoop(ctx, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel, error unactionable here
 	}()
 
 	// Observe for several poll ticks, then snapshot the queue WHILE THE LOOP IS

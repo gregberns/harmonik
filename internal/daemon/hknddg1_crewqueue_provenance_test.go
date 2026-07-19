@@ -88,7 +88,7 @@ func TestHKnddg1_CrewQueueDispatchedBeadNotResetBySweep(t *testing.T) {
 	t.Parallel()
 
 	projectDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
 		t.Fatalf("hk-nddg1: MkdirAll .harmonik: %v", err)
 	}
 
@@ -111,7 +111,7 @@ func TestHKnddg1_CrewQueueDispatchedBeadNotResetBySweep(t *testing.T) {
 	// intent, no run dir), so the sweep would otherwise consider X eligible for
 	// reset. The (a-queue) exclusion must be what protects it.
 	ownedDir := lifecycle.BeadsOwnedDir(projectDir)
-	if err := os.MkdirAll(ownedDir, 0o755); err != nil {
+	if err := os.MkdirAll(ownedDir, 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
 		t.Fatalf("hk-nddg1: MkdirAll beads-owned: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ownedDir, string(hknddg1BeadID)), []byte{}, 0o600); err != nil {

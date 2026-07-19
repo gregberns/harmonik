@@ -1548,6 +1548,8 @@ func strictDecodeKeeperBlock(path string, data []byte) error {
 //
 // It underpins the structural unknown-key rejection for the keeper: block
 // (RU-06) so detection does not depend on yaml.v3's internal error text.
+//
+//nolint:gocognit,cyclop // unknownYAMLKey is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 func unknownYAMLKey(node *yaml.Node, typ reflect.Type, prefix string) (string, bool) {
 	// Unwrap a document node to its single content child.
 	if node.Kind == yaml.DocumentNode && len(node.Content) == 1 {

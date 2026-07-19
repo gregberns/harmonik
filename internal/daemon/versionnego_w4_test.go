@@ -54,7 +54,7 @@ func TestSessionIDInterceptor_NegotiationSuccess(t *testing.T) {
 	ic := newSessionIDInterceptor(strings.NewReader(line), func(id string) { fired <- id })
 
 	buf := make([]byte, 4096)
-	if _, err := ic.Read(buf); err != nil && err != io.EOF {
+	if _, err := ic.Read(buf); err != nil && !errors.Is(err, io.EOF) {
 		t.Fatalf("Read: %v", err)
 	}
 
@@ -105,7 +105,7 @@ func TestSessionIDInterceptor_CapabilitiesAbsentTimeout(t *testing.T) {
 	defer func() { capsAbsentTimeout = origTimeout }()
 
 	pr, pw := io.Pipe() // silent handler: never writes
-	defer pw.Close()    //nolint:errcheck
+	defer pw.Close()    //nolint:errcheck // best-effort close of test pipe writer
 
 	ic := newSessionIDInterceptor(pr, func(string) {
 		t.Error("cb fired despite capabilities-absent timeout")

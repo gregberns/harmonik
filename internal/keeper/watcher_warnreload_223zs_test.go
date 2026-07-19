@@ -16,16 +16,16 @@ import (
 	"time"
 )
 
-func warnReloadFixtureWatcher(t *testing.T, fn func() (WarnMessageTexts, error)) (*Watcher, string) {
+func warnReloadFixtureWatcher(t *testing.T, fn func() (WarnMessageTexts, error)) (watcher *Watcher, configPath string) {
 	t.Helper()
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil { //nolint:gosec // G301: test fixture dir in t.TempDir(), perms not security-relevant
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	cfgPath := filepath.Join(cfgDir, "config.yaml")
 	// Content is irrelevant here — the parse is faked via fn; only the mtime matters.
-	if err := os.WriteFile(cfgPath, []byte("schema_version: 1\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte("schema_version: 1\n"), 0o644); err != nil { //nolint:gosec // G306: test fixture in t.TempDir(), perms not security-relevant
 		t.Fatalf("WriteFile: %v", err)
 	}
 	w := &Watcher{cfg: WatcherConfig{

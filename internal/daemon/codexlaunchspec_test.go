@@ -524,7 +524,7 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 			t.Fatalf("missing expected flag(s): --sandbox=%d --model=%d -C=%d; args=%v",
 				idxSandbox, idxModel, idxC, spec.Args)
 		}
-		if !(idxSandbox < idxModel && idxModel < idxC) {
+		if idxSandbox >= idxModel || idxModel >= idxC {
 			t.Errorf("argv ordering wrong: want --sandbox(%d) < --model(%d) < -C(%d); args=%v",
 				idxSandbox, idxModel, idxC, spec.Args)
 		}
@@ -560,7 +560,7 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 		}
 		idxSandbox := indexOf(spec.Args, "--sandbox")
 		idxC := indexOf(spec.Args, "-C")
-		if !(idxSandbox >= 0 && idxC >= 0 && idxSandbox < idxC) {
+		if idxSandbox < 0 || idxC < 0 || idxSandbox >= idxC {
 			t.Errorf("argv ordering wrong: want --sandbox(%d) < -C(%d); args=%v", idxSandbox, idxC, spec.Args)
 		}
 		// Seed prompt is the final arg, immediately after the -C value.

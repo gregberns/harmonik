@@ -924,6 +924,8 @@ func logBootPreflightWarn(step string, err error) {
 }
 
 // Bead ref: hk-j192n.
+//
+//nolint:cyclop // startWithHooks is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) error {
 	// Step 1 (PL-002, hk-iarcy): acquire the advisory pidfile lock.
 	//

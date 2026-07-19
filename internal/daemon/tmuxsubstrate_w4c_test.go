@@ -187,7 +187,7 @@ func w4cFixtureAssertShellRetokenizes(t *testing.T, quotedCommand string, argv [
 	}
 	script := `printf '%s\n' ` + quotedBin + strings.TrimPrefix(quotedCommand, quotedBin)
 
-	out, err := exec.Command("/bin/sh", "-c", script).Output()
+	out, err := exec.CommandContext(t.Context(), "/bin/sh", "-c", script).Output() //nolint:gosec // G204: script built from test-controlled quoted command, not user input
 	if err != nil {
 		t.Fatalf("sh -c re-tokenization: %v", err)
 	}

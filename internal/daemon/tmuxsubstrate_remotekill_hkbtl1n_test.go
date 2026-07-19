@@ -108,7 +108,7 @@ func TestRemoteKill_ForcefullyKillsWorkerPID_HKBTL1N(t *testing.T) {
 			"pane PID %d is never forcefully terminated (SendKeysQuit + KillWindow only), so an agent "+
 			"surviving the pane SIGHUP leaks on the worker.", workerPID)
 	}
-	var joined []string
+	joined := make([]string, 0, len(calls))
 	for _, c := range calls {
 		joined = append(joined, strings.Join(c, " "))
 	}

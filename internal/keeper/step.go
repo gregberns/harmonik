@@ -450,6 +450,8 @@ func stepClearSettleExpired(cfg *CyclerConfig, s CycleState, ev Event) (CycleSta
 // observation, same-SID escape hatch, boot-grace SID tracking) running before
 // gating — on the fail path too (§3f: a "clean" short-circuit would change
 // observable state). Gate order preserved exactly.
+//
+//nolint:cyclop // stepIdleGaugeTick is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
 	cf := ev.CF
 	snap := ev.Gates

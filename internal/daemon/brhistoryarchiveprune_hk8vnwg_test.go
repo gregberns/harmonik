@@ -15,14 +15,16 @@ import (
 
 // writeArchived creates a payload snapshot "<base>.jsonl.archived-<tag>" and its
 // "<base>.jsonl.meta.json.archived-<tag>" sidecar with the given mtime.
+//
+//nolint:unparam // tag is fixed "T0" across callers; kept for fixture-shape clarity
 func writeArchived(t *testing.T, dir, base, tag string, mtime time.Time) (payload, sidecar string) {
 	t.Helper()
 	payload = filepath.Join(dir, base+".jsonl.archived-"+tag)
 	sidecar = filepath.Join(dir, base+".jsonl.meta.json.archived-"+tag)
-	if err := os.WriteFile(payload, []byte("snapshot"), 0o644); err != nil {
+	if err := os.WriteFile(payload, []byte("snapshot"), 0o644); err != nil { //nolint:gosec // G306: test fixture in t.TempDir(), perms not security-relevant
 		t.Fatalf("write payload: %v", err)
 	}
-	if err := os.WriteFile(sidecar, []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(sidecar, []byte("{}"), 0o644); err != nil { //nolint:gosec // G306: test fixture in t.TempDir(), perms not security-relevant
 		t.Fatalf("write sidecar: %v", err)
 	}
 	if err := os.Chtimes(payload, mtime, mtime); err != nil {
@@ -102,7 +104,7 @@ func TestHK8vnwg_OrphanSidecarSwept(t *testing.T) {
 
 	// Orphan sidecar (no payload), 10 days old.
 	orphan := filepath.Join(dir, "issues.orphan.jsonl.meta.json.archived-T0")
-	if err := os.WriteFile(orphan, []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(orphan, []byte("{}"), 0o644); err != nil { //nolint:gosec // G306: test fixture in t.TempDir(), perms not security-relevant
 		t.Fatal(err)
 	}
 	old := now.Add(-10 * 24 * time.Hour)
@@ -111,7 +113,7 @@ func TestHK8vnwg_OrphanSidecarSwept(t *testing.T) {
 	}
 	// A young orphan sidecar that must survive.
 	youngOrphan := filepath.Join(dir, "issues.young.jsonl.meta.json.archived-T0")
-	if err := os.WriteFile(youngOrphan, []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(youngOrphan, []byte("{}"), 0o644); err != nil { //nolint:gosec // G306: test fixture in t.TempDir(), perms not security-relevant
 		t.Fatal(err)
 	}
 	yt := now.Add(-1 * time.Hour)
@@ -139,11 +141,11 @@ func TestHK8vnwg_LeavesUnrecognisedAndMissingDir(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	// An unrelated file (not an archived snapshot), old — must be left alone.
 	stray := filepath.Join(dir, "README.txt")
-	if err := os.WriteFile(stray, []byte("keep me"), 0o644); err != nil {
+	if err := os.WriteFile(stray, []byte("keep me"), 0o644); err != nil { //nolint:gosec // G306: test fixture in t.TempDir(), perms not security-relevant
 		t.Fatal(err)
 	}
 	old := now.Add(-30 * 24 * time.Hour)
-	_ = os.Chtimes(stray, old, old)
+	_ = os.Chtimes(stray, old, old) //nolint:errcheck // best-effort mtime set on test fixture
 
 	pruneBrHistoryArchive(context.Background(), dir, 0, 7*24*time.Hour, now)
 

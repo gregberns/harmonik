@@ -72,7 +72,6 @@ func TestRU06_EmptyFile_ReadsAsAbsent(t *testing.T) {
 		"whitespace-only":  "\n\n",
 		"empty-agents-map": "agents: {}\n",
 	} {
-		content := content
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			root := projCfgFixtureDir(t, content)

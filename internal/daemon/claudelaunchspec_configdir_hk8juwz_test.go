@@ -76,7 +76,7 @@ func TestBuildClaudeLaunchSpec_Local_SetsClaudeConfigDir(t *testing.T) {
 	// The isolated config must exist inside the worktree, carry the copied
 	// onboarding keys, and be folder-trusted.
 	isoCfg := filepath.Join(got, ".claude.json")
-	data, rerr := os.ReadFile(isoCfg)
+	data, rerr := os.ReadFile(isoCfg) //nolint:gosec // G304: path from test tempdir, not user input
 	if rerr != nil {
 		t.Fatalf("isolated .claude.json not written: %v", rerr)
 	}

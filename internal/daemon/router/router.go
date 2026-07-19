@@ -66,7 +66,7 @@ func New() *Router {
 // Register binds fn to op. It panics on a duplicate op (init-time wiring bug).
 func (r *Router) Register(op string, fn HandlerFunc) {
 	if _, dup := r.routes[op]; dup {
-		panic(fmt.Sprintf("socketrouter: duplicate op registered: %q", op))
+		panic(fmt.Sprintf("socketrouter: duplicate op registered: %q", op)) //nolint:forbidigo // duplicate-op is an init-time wiring bug; panic is the correct fail-fast (Register runs only during startup wiring)
 	}
 	r.routes[op] = fn
 }

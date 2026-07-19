@@ -99,7 +99,7 @@ func RunTmuxStart(
 	// A missing binary is a probe-class failure → exit 22.
 	tmuxBin, err := tmuxStartLookupBin(env)
 	if err != nil {
-		fmt.Fprintf(stderr, "hk tmux-start: cannot locate tmux binary: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "hk tmux-start: cannot locate tmux binary: %v\n", err) //nolint:errcheck // best-effort diagnostic to stderr
 		return 22
 	}
 

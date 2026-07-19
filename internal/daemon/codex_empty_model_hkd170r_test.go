@@ -93,7 +93,7 @@ func (e *hkd170rRecordingEmitter) modelSelectedPayloads(t *testing.T) []core.Mod
 	t.Helper()
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	var out []core.ModelSelectedPayload
+	out := make([]core.ModelSelectedPayload, 0, len(e.events))
 	for _, ev := range e.events {
 		if ev.typ != core.EventTypeModelSelected {
 			continue

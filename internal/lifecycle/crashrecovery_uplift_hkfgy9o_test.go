@@ -262,17 +262,17 @@ func TestReconLockProbeStale_DeadPIDIsStaleAndHoldsFlock(t *testing.T) {
 	if held == nil {
 		t.Fatal("reconLockProbeStale dead-PID: stale=true but held file is nil")
 	}
-	defer func() { _ = held.Close() }()
+	defer func() { _ = held.Close() }() //nolint:errcheck // best-effort close of test lock file
 
 	// The flock must STILL be held: a competing acquirer (fresh fd on the same
 	// path, LOCK_EX|LOCK_NB) must observe EWOULDBLOCK. flock locks are held per
 	// open file description, so a second open in this process conflicts exactly
 	// like a second daemon would.
-	competitor, openErr := os.OpenFile(lockPath, os.O_RDWR, 0o600)
+	competitor, openErr := os.OpenFile(lockPath, os.O_RDWR, 0o600) //nolint:gosec // G304: lockPath from t.TempDir(), not user input
 	if openErr != nil {
 		t.Fatalf("open competitor fd: %v", openErr)
 	}
-	defer func() { _ = competitor.Close() }()
+	defer func() { _ = competitor.Close() }() //nolint:errcheck // best-effort close of test lock file
 	flockErr := syscall.Flock(int(competitor.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if flockErr == nil {
 		t.Error("RC-002a regression: competing flock succeeded while probe result outstanding — flock was released before unlink")

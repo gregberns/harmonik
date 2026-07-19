@@ -109,7 +109,7 @@ func hk3hozmSealedAdapterRegistry(t *testing.T) *handlercontract.AdapterRegistry
 	if err := handler.Register(reg); err != nil {
 		t.Fatalf("hk3hozm: register claude adapter: %v", err)
 	}
-	_, _ = reg.ForAgent(core.AgentTypeClaudeCode) // seal
+	_, _ = reg.ForAgent(core.AgentTypeClaudeCode) //nolint:errcheck // seal; return unused in this fixture
 	return reg
 }
 

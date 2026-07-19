@@ -12,6 +12,7 @@ package daemon
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"testing"
 
@@ -26,8 +27,8 @@ func TestSessionIDInterceptor_BufferBoundedAfterFire_hkhi53s(t *testing.T) {
 		SupportedVersions: []int{1},
 		ClaudeSessionID:   "session-bufbound-hkhi53s",
 	}
-	capsData, _ := json.Marshal(capsMsg)
-	capsLine := append(capsData, '\n')
+	capsData, _ := json.Marshal(capsMsg) //nolint:errcheck,errchkjson // marshal of a fixed test struct cannot fail
+	capsData = append(capsData, '\n')
 
 	// A large volume of post-caps NDJSON — stand-in for a long run's output.
 	const postCapsBytes = 512 * 1024
@@ -37,7 +38,7 @@ func TestSessionIDInterceptor_BufferBoundedAfterFire_hkhi53s(t *testing.T) {
 	}
 	totalPost := post.Len()
 
-	stream := io.MultiReader(bytes.NewReader(capsLine), bytes.NewReader(post.Bytes()))
+	stream := io.MultiReader(bytes.NewReader(capsData), bytes.NewReader(post.Bytes()))
 
 	fired := 0
 	ic := newSessionIDInterceptor(stream, func(string) { fired++ })
@@ -46,7 +47,7 @@ func TestSessionIDInterceptor_BufferBoundedAfterFire_hkhi53s(t *testing.T) {
 	buf := make([]byte, 4096)
 	for {
 		_, err := ic.Read(buf)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

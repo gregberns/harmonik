@@ -868,6 +868,8 @@ func (s *tmuxSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSpa
 // The remote flag marks the spawned session as worker-hosted so runWait polls
 // worker-side liveness instead of a local kill(s.pid,0) (hk-r1zq). Local callers
 // pass false ⇒ unchanged behaviour (NFR7).
+//
+//nolint:gocognit,cyclop // spawnWindowVia is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
 func (s *tmuxSubstrate) spawnWindowVia(ctx context.Context, in handler.SubstrateSpawn, adapter tmux.Adapter, sessionName string, remote bool, runner tmux.CommandRunner) (handler.SubstrateSession, error) {
 	// Acquire spawn semaphore slot(s) before creating the window. This enforces
 	// the concurrent-session ceiling (hk-xb5yi). When the cap is not configured
@@ -1485,7 +1487,7 @@ func (s *tmuxSubstrate) KillAllWindows(ctx context.Context) error {
 		// they leak on the worker's tmux server. Ignore errors: the window may
 		// have already been killed by tmuxSubstrateSession.Kill or by an
 		// external tmux kill-window command.
-		_ = w.adapter.KillWindow(ctx, w.handle)
+		_ = w.adapter.KillWindow(ctx, w.handle) //nolint:errcheck // best-effort; window may already be killed by Kill or external tmux
 	}
 	return nil
 }

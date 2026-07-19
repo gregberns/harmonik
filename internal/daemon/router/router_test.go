@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	socketrouter "github.com/gregberns/harmonik/internal/daemon/router"
+	socketrouter "github.com/gregberns/harmonik/internal/daemon/router" //nolint:depguard // external test package for socketrouter itself; imports the package under test
 )
 
 // T1 — route-hit: each registered op invokes exactly its fn, and the Result it

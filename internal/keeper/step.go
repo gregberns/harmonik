@@ -415,12 +415,28 @@ func stepClearSettleExpired(cfg *CyclerConfig, s CycleState, ev Event) (CycleSta
 	s.ClearAttempt++
 	var actions []Action
 	if cfg.TmuxTarget != "" {
-		// Each defensive re-inject re-emits clear_sent with the
-		// incremented attempt (SK-012 — makes the unconfirmed
-		// forensics replayable).
-		if clearAct, ok := injectClearAction(&s); ok {
-			actions = append(actions, clearAct,
-				emitClearSentAction(cfg, s.CycleID, s.PrevSID, s.ClearAttempt))
+		// hk-u7j83: SUPPRESS the defensive /clear re-inject when the settle-expiry
+		// gauge shows the context ALREADY dropped below the act threshold — the
+		// /clear landed (the implicit gauge signal, hk-zj1y/hk-1ryc). Re-injecting
+		// then would be a spurious extra /clear and break the exactly-one-/clear
+		// safety property in the self-restart-races-the-auto-cycle case: the agent's
+		// own `restart-now` /clear drops the gauge, and the keeper must not pile on
+		// 19 more /clears while waiting for the new session_id to surface. The
+		// re-inject is KEPT (hk-vdqe2's defense) only when the pane still reads high
+		// — a nil CF (gauge unreadable → fail defensive) or above the act threshold
+		// — i.e. the /clear was not consumed (the busy-pane case hk-vdqe2 targets).
+		// The retry/backstop budget is unchanged: the settle window still re-arms
+		// below, so the cycle keeps polling for the new sid and still bounds the
+		// wait; only the redundant re-inject is dropped.
+		gaugeDropped := ev.CF != nil && cfg.belowActThreshold(ev.CF)
+		if !gaugeDropped {
+			// Each defensive re-inject re-emits clear_sent with the
+			// incremented attempt (SK-012 — makes the unconfirmed
+			// forensics replayable).
+			if clearAct, ok := injectClearAction(&s); ok {
+				actions = append(actions, clearAct,
+					emitClearSentAction(cfg, s.CycleID, s.PrevSID, s.ClearAttempt))
+			}
 		}
 	}
 	actions = append(actions, Action{Kind: ActArmTimer, Timer: TimerClearSettle, D: cfg.ClearSettle})

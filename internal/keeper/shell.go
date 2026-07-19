@@ -389,7 +389,18 @@ func (c *Cycler) pollClearing(ctx context.Context, st CycleState, at time.Time) 
 			_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearBackstop, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 			return
 		}
-		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
+		// hk-u7j83: sample the gauge at settle-expiry and carry it on the event so
+		// the reactor (stepClearSettleExpired) can SUPPRESS the defensive /clear
+		// re-inject when the context has ALREADY dropped below the act threshold —
+		// the /clear landed (the implicit gauge signal, hk-zj1y/hk-1ryc). The
+		// re-inject is kept only when the pane still reads high (the /clear was not
+		// consumed — the busy-pane case hk-vdqe2 defends). A read error → nil CF →
+		// re-inject as before (fail toward the defensive behavior).
+		clearCF, _, gerr := c.gauge.ReadGauge()
+		if gerr != nil {
+			clearCF = nil
+		}
+		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: st.CycleID, At: at, CF: clearCF}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 		return
 	}
 	cf, _, err := c.gauge.ReadGauge()

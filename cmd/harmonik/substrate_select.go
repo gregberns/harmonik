@@ -220,6 +220,20 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 	}
 	opts := codexdriver.Options{
 		Binary: codexBinary,
+		// hk-daegv: force the sandbox posture at app-server LAUNCH via a codex
+		// config override — NOT only per-thread. codex app-server (0.142/0.144) does
+		// not honor the thread/start `sandbox` field for the exec seatbelt; it runs
+		// its config default (workspace-write). Under workspace-write the worktree's
+		// real git dir (<repo>/.git/worktrees/<id>/ — a PARENT of the worktree
+		// writable-root) is denied, so codex's own `git commit` fails ("Operation
+		// not permitted") AND its /bin/zsh exec_command spawn fails (hk-wwyse, same
+		// seatbelt) — the turn silently no-ops and only the daemon fallback commits.
+		// `-c sandbox_mode="<posture>"` overrides ~/.codex/config.toml and applies to
+		// the exec seatbelt. Safe ONLY inside the isolation boundary the fail-closed
+		// guard enforces (danger-full-access = no seatbelt), set here at the
+		// composition root alongside Sandbox/requireBoundary. One override restores
+		// BOTH facets: .git-writable commit and working shell-spawn.
+		Args:   []string{"app-server", "-c", `sandbox_mode="` + codexHeadlessSandbox + `"`},
 		Runner: runner, // M4-C3: per-run worker-routing runner (SSHRunner remote / LocalRunner local)
 		Clock:  substrate.SystemClock{},
 		// hk-5h759: headless crew-orchestration posture. The driver auto-declines

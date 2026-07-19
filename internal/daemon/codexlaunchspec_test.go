@@ -4,7 +4,7 @@ package daemon_test
 //
 // Key invariants tested:
 //
-//   - AC2.1: initial run argv = codex exec --json --sandbox workspace-write -C <wt> <seed>
+//   - AC2.1: initial run argv configures workspace-write via -c overrides
 //   - AC2.2: resume run argv includes "resume <thread_id>" prefix
 //   - AC3.1: OPENAI_API_KEY and CODEX_API_KEY stripped from env (empty overrides present),
 //     including when inherited from the real process env via os.Environ() (C3/T10, hk-jxgnp)
@@ -49,12 +49,11 @@ func TestBuildCodexLaunchSpec_InitialTurn(t *testing.T) {
 		t.Errorf("WorkDir = %q; want %q", spec.WorkDir, rc.WorkspacePath)
 	}
 
-	// argv: codex exec --json --sandbox workspace-write --model <model> -C <wt> <seed>
+	// argv: codex exec --json -c sandbox_mode=... -c writable_roots=... --model <model> -C <wt> <seed>
 	// Note: -a/--ask-for-approval was removed in codex 0.139.0.
 	codexLaunchSpecAssertArgv(t, spec.Args, false, "")
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--json")
-	codexLaunchSpecAssertArgContains(t, spec.Args, "--sandbox")
-	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "--sandbox", "workspace-write")
+	codexLaunchSpecAssertConfigValue(t, spec.Args, `sandbox_mode="workspace-write"`)
 	codexLaunchSpecAssertArgContains(t, spec.Args, "--model")
 	codexLaunchSpecAssertArgContainsValue(t, spec.Args, "--model", rc.Model)
 	codexLaunchSpecAssertArgContains(t, spec.Args, "-C")
@@ -486,7 +485,7 @@ func TestBuildCodexLaunchSpec_EmptyModelInitialTurn(t *testing.T) {
 }
 
 // TestBuildCodexLaunchSpec_InitialArgv_Order verifies the exact ordering of the
-// initial-turn argv (GAP-2): --sandbox precedes --model precedes -C, each flag's
+// initial-turn argv (GAP-2): sandbox config precedes --model precedes -C, each flag's
 // value immediately follows it, and the seed prompt is the final arg. An empty-model
 // counterpart asserts the same shape with --model absent. Ordering is load-bearing:
 // codex parses `--model <m>` and `-C <wt>` positionally-adjacent, and the seed prompt
@@ -517,15 +516,15 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		idxSandbox := indexOf(spec.Args, "--sandbox")
+		idxSandbox := indexOf(spec.Args, `sandbox_mode="workspace-write"`)
 		idxModel := indexOf(spec.Args, "--model")
 		idxC := indexOf(spec.Args, "-C")
 		if idxSandbox < 0 || idxModel < 0 || idxC < 0 {
-			t.Fatalf("missing expected flag(s): --sandbox=%d --model=%d -C=%d; args=%v",
+			t.Fatalf("missing expected arg(s): sandbox config=%d --model=%d -C=%d; args=%v",
 				idxSandbox, idxModel, idxC, spec.Args)
 		}
 		if idxSandbox >= idxModel || idxModel >= idxC {
-			t.Errorf("argv ordering wrong: want --sandbox(%d) < --model(%d) < -C(%d); args=%v",
+			t.Errorf("argv ordering wrong: want sandbox config(%d) < --model(%d) < -C(%d); args=%v",
 				idxSandbox, idxModel, idxC, spec.Args)
 		}
 		// --model value immediately follows --model.
@@ -558,10 +557,10 @@ func TestBuildCodexLaunchSpec_InitialArgv_Order(t *testing.T) {
 		if indexOf(spec.Args, "--model") != -1 {
 			t.Errorf("empty-model argv must not contain --model anywhere; args=%v", spec.Args)
 		}
-		idxSandbox := indexOf(spec.Args, "--sandbox")
+		idxSandbox := indexOf(spec.Args, `sandbox_mode="workspace-write"`)
 		idxC := indexOf(spec.Args, "-C")
 		if idxSandbox < 0 || idxC < 0 || idxSandbox >= idxC {
-			t.Errorf("argv ordering wrong: want --sandbox(%d) < -C(%d); args=%v", idxSandbox, idxC, spec.Args)
+			t.Errorf("argv ordering wrong: want sandbox config(%d) < -C(%d); args=%v", idxSandbox, idxC, spec.Args)
 		}
 		// Seed prompt is the final arg, immediately after the -C value.
 		codexLaunchSpecAssertSeedPrompt(t, spec.Args, rc.BeadID)
@@ -634,6 +633,52 @@ func TestBuildCodexLaunchSpec_ModelNotInResumeArgv(t *testing.T) {
 	}
 }
 
+func TestBuildCodexLaunchSpec_WritableRoots_hkdaegv(t *testing.T) {
+	t.Parallel()
+
+	const (
+		worktree = "/srv/repo/.harmonik/worktrees/run-x/wt"
+		modeArg  = `sandbox_mode="workspace-write"`
+		rootsArg = `sandbox_workspace_write.writable_roots=["/srv/repo/.harmonik/worktrees/run-x/wt","/srv/repo/.git"]`
+	)
+
+	tests := []struct {
+		name          string
+		priorThreadID *string
+	}{
+		{name: "initial"},
+	}
+	threadID := "thread-hk-daegv"
+	tests = append(tests, struct {
+		name          string
+		priorThreadID *string
+	}{name: "resume", priorThreadID: &threadID})
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rc := daemon.ExportedCodexRunCtx{
+				WorkspacePath:    worktree,
+				BeadID:           "hk-daegv",
+				PriorThreadID:    tt.priorThreadID,
+				SkipBillingGuard: true,
+			}
+			spec, err := daemon.ExportedBuildCodexLaunchSpec(rc)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			codexLaunchSpecAssertConfigValue(t, spec.Args, modeArg)
+			codexLaunchSpecAssertConfigValue(t, spec.Args, rootsArg)
+			for _, arg := range spec.Args {
+				if arg == "--sandbox" {
+					t.Errorf("argv must not contain --sandbox; got %v", spec.Args)
+				}
+			}
+		})
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // assertion helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -702,6 +747,16 @@ func codexLaunchSpecAssertArgContainsValue(t *testing.T, args []string, flag, va
 		}
 	}
 	t.Errorf("flag %q not found in args %v (expected value %q)", flag, args, value)
+}
+
+func codexLaunchSpecAssertConfigValue(t *testing.T, args []string, value string) {
+	t.Helper()
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-c" && args[i+1] == value {
+			return
+		}
+	}
+	t.Errorf("config value %q not found immediately after -c in args %v", value, args)
 }
 
 // codexLaunchSpecAssertSeedPrompt verifies that the last arg is the seed prompt

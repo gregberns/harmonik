@@ -106,7 +106,7 @@ func TestCodexHarness_DetectReady_OtherEvent(t *testing.T) {
 
 // TestCodexHarness_LaunchSpec_InitialDelegates verifies the harness LaunchSpec
 // produces the same initial-turn argv as buildCodexLaunchSpec: codex exec --json
-// --sandbox workspace-write -C <wt> <seed>, with no "resume".
+// -c sandbox_mode=... -c writable_roots=... -C <wt> <seed>, with no "resume".
 func TestCodexHarness_LaunchSpec_InitialDelegates(t *testing.T) {
 	t.Parallel()
 
@@ -130,7 +130,10 @@ func TestCodexHarness_LaunchSpec_InitialDelegates(t *testing.T) {
 		t.Errorf("WorkDir = %q; want %q", spawn.WorkDir, rc.WorkspacePath)
 	}
 	codexHarnessAssertArgContainsSeq(t, spawn.Args, "exec", "--json")
-	codexHarnessAssertArgValue(t, spawn.Args, "--sandbox", "workspace-write")
+	codexHarnessAssertArgContainsSeq(t, spawn.Args, "-c", `sandbox_mode="workspace-write"`)
+	if codexHarnessArgsContain(spawn.Args, "--sandbox") {
+		t.Errorf("initial-turn argv must not contain the \"--sandbox\" flag (sandbox set via -c): %v", spawn.Args)
+	}
 	codexHarnessAssertArgValue(t, spawn.Args, "-C", rc.WorkspacePath)
 	if codexHarnessArgsContain(spawn.Args, "resume") {
 		t.Errorf("initial-turn argv must not contain \"resume\": %v", spawn.Args)

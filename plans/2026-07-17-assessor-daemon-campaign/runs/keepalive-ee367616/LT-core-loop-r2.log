@@ -1,0 +1,90 @@
+go build -ldflags "-X main.commitHash=ee367616c34332e5dfe071d0f1289b50017b1cbd" -o /tmp/harmonik ./cmd/harmonik
+go build ./...
+go build -ldflags "-X main.commitHash=ee367616c34332e5dfe071d0f1289b50017b1cbd" -o /Users/gb/github/harmonik/twins/generic-twin ./cmd/harmonik-twin-generic
+go build -ldflags "-X main.commitHash=ee367616c34332e5dfe071d0f1289b50017b1cbd" -o /Users/gb/github/harmonik/twins/pi-twin ./cmd/harmonik-twin-pi
+bash scripts/scratch-daemon.sh down "/tmp/h-assessor/lt-scratch-ee367616-r2" 2>/dev/null || true
+[scratch-daemon] no pidfile at /private/tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/daemon.pid — daemon not running via this script
+[scratch-daemon] down complete
+rm -rf "/tmp/h-assessor/lt-scratch-ee367616-r2"
+bash scripts/scratch-daemon.sh init "/tmp/h-assessor/lt-scratch-ee367616-r2" "/Users/gb/github/harmonik"
+[scratch-daemon] SAFETY: operates ONLY on the scratch clone you name; never targets the fleet daemon.
+[scratch-daemon] cloning /Users/gb/github/harmonik → /private/tmp/h-assessor/lt-scratch-ee367616-r2
+Cloning into '/private/tmp/h-assessor/lt-scratch-ee367616-r2'...
+done.
+Updating files:  67% (4240/6310)Updating files:  68% (4291/6310)Updating files:  69% (4354/6310)Updating files:  70% (4417/6310)Updating files:  71% (4481/6310)Updating files:  72% (4544/6310)Updating files:  73% (4607/6310)Updating files:  74% (4670/6310)Updating files:  75% (4733/6310)Updating files:  76% (4796/6310)Updating files:  77% (4859/6310)Updating files:  78% (4922/6310)Updating files:  79% (4985/6310)Updating files:  80% (5048/6310)Updating files:  81% (5112/6310)Updating files:  82% (5175/6310)Updating files:  83% (5238/6310)Updating files:  84% (5301/6310)Updating files:  85% (5364/6310)Updating files:  86% (5427/6310)Updating files:  87% (5490/6310)Updating files:  88% (5553/6310)Updating files:  89% (5616/6310)Updating files:  90% (5679/6310)Updating files:  91% (5743/6310)Updating files:  92% (5806/6310)Updating files:  93% (5869/6310)Updating files:  94% (5932/6310)Updating files:  95% (5995/6310)Updating files:  96% (6058/6310)Updating files:  97% (6121/6310)Updating files:  98% (6184/6310)Updating files:  99% (6247/6310)Updating files: 100% (6310/6310)Updating files: 100% (6310/6310), done.
+[scratch-daemon] no .harmonik/config.yaml — running harmonik init
+[scratch-daemon] building scratch binary → /private/tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/bin/harmonik (commit ee367616c34332e5dfe071d0f1289b50017b1cbd)
+[scratch-daemon] build OK
+harmonik init: precondition checks passed
+harmonik init: bootstrapping project at /private/tmp/h-assessor/lt-scratch-ee367616-r2 (target-branch: main)
+Prefix set to: lser
+Initialized beads workspace in ./.beads
+harmonik init: wrote .harmonik/config.yaml
+harmonik init: wrote .harmonik/branching.yaml
+harmonik init: wrote .harmonik/.gitignore
+harmonik init: provisioned .claude/skills/agent-comms
+harmonik init: provisioned .claude/skills/beads-cli
+harmonik init: provisioned .claude/skills/captain
+harmonik init: provisioned .claude/skills/crew-launch
+harmonik init: provisioned .claude/skills/harmonik-dispatch
+harmonik init: provisioned .claude/skills/harmonik-lifecycle
+harmonik init: provisioned .claude/skills/keeper
+harmonik init: provisioned .claude/skills/major-issue-fanout
+harmonik init: provisioned .claude/skills/orchestrator-rules
+harmonik init: provisioned .claude/skills/watch
+harmonik init: wrote AGENT_INDEX.md
+harmonik init: wrote STATUS.md
+harmonik init: wrote .harmonik/context/project.yaml
+harmonik init: wrote .harmonik/context/captain-lanes.md
+harmonik init: wrote .harmonik/context/roadmap.md
+harmonik init: wrote HANDOFF.md
+harmonik init: wrote AGENTS.md
+harmonik init: CLAUDE.md → AGENTS.md symlink already exists — skipping
+harmonik init: registered goal-keeper schedule (every 1h)
+harmonik: WARNING  5 on-disk instruction file(s) have not been synced to this binary version
+harmonik:   → run: harmonik sync-assets --dry-run   (review what would change)
+harmonik:          harmonik sync-assets --apply      (apply updates)
+harmonik init: done
+[scratch-daemon] provision: created local 'main' branch from origin/main
+[scratch-daemon] provision: liveness_no_progress_n already set — skipping
+[scratch-daemon] provision: stripped default harnesses/codex + appended ornith overlay from /Users/gb/github/harmonik/scenarios/core-loop-proof/scratch-config-overlay.yaml
+[scratch-daemon] init complete. Next: scripts/scratch-daemon.sh build /private/tmp/h-assessor/lt-scratch-ee367616-r2 && scripts/scratch-daemon.sh up /private/tmp/h-assessor/lt-scratch-ee367616-r2
+bash scripts/core-loop-seed.sh "/tmp/h-assessor/lt-scratch-ee367616-r2" "/tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/matrix-seed-map.tsv"
+[core-loop-seed] isolated origin -> /tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/matrix-origin.git (daemon landings push here, never the fleet)
+[core-loop-seed] provisioned /tmp/h-assessor/lt-scratch-ee367616-r2/review-loop.dot <- specs/examples/review-loop.dot (untracked; dot:review-loop same-model reviewer)
+[core-loop-seed] codex -> lser-hvo (codename:quality-system,core-loop-seed,harness:codex)
+[core-loop-seed] pi -> lands on branch 'core-loop-proof-integ' (created/reset off main)
+[core-loop-seed] pi -> lser-qxh (codename:quality-system,core-loop-seed,harness:pi,workflow:single)
+[core-loop-seed] pi-dot -> lands on branch 'core-loop-proof-dot-integ' (created/reset off main)
+[core-loop-seed] pi-dot -> lser-ktu (codename:quality-system,core-loop-seed,harness:pi,workflow:dot,dot:review-loop)
+[core-loop-seed] claude -> lser-5cy (codename:quality-system,core-loop-seed,harness:claude-code,workflow:single,model:claude-opus-4-8)
+[core-loop-seed] wrote MATRIX_SEED_MAP -> /tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/matrix-seed-map.tsv (7 cells)
+MATRIX_SEED_MAP="/tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/matrix-seed-map.tsv" bash scripts/core-loop-matrix.sh "/tmp/h-assessor/lt-scratch-ee367616-r2" --harnesses "pi" --substrates "local" --assert --gate --json --specs "scenarios/core-loop-proof/cells.json"
+[core-loop-matrix] cycling a clean scratch daemon at /tmp/h-assessor/lt-scratch-ee367616-r2 (down → build → up) [workflow-mode=dot]
+[scratch-daemon] SAFETY: operates ONLY on the scratch clone you name; never targets the fleet daemon.
+[scratch-daemon] cycle: down → build → up
+[scratch-daemon] no pidfile at /private/tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/daemon.pid — daemon not running via this script
+[scratch-daemon] down complete
+[scratch-daemon] building scratch binary → /private/tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/bin/harmonik (commit ee367616c34332e5dfe071d0f1289b50017b1cbd)
+[scratch-daemon] build OK
+[scratch-daemon] starting standalone daemon (session=harmonik-f29ddcc0e138-default, project=/private/tmp/h-assessor/lt-scratch-ee367616-r2)
+[scratch-daemon] waiting for daemon socket (/private/tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/daemon.sock)...
+[scratch-daemon] daemon ready (2s) — session=harmonik-f29ddcc0e138-default log=/private/tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/scratch-daemon.log
+[core-loop-matrix] preflight OK — pi endpoint answered (http://127.0.0.1:8551/v1)
+[core-loop-matrix] RUN   pi:local — batch 'matrix-pi-local' seed=lser-qxh
+BATCH_ITEM	lser-qxh	pass	019f7873-f526-7651-bd44-05b8649e11f9	-
+BATCH_SUMMARY name=matrix-pi-local total=1 pass=1 fail=0 incomplete=0 results=/private/tmp/h-assessor/lt-scratch-ee367616-r2/.harmonik/batch-matrix-pi-local-019f7873-edca-7bc7-ba45-f481c09a9a9d.json
+[core-loop-matrix] landing: want='core-loop-proof-integ' observed='core-loop-proof-integ' (main 5160326b->5160326b, target 5160326b->b8d0e673)
+GAP	gap1	pass	harness=pi tier=1 model=ornith
+GAP	gap3	pass	provider produced a real HEAD change (commit_landed)
+GAP	gap4	pass	workflow_mode=single workflow_id=
+GAP	t10	pass	landed on 'core-loop-proof-integ' (git-verified; main unchanged)
+
+================ core-loop-proof matrix ================
+CELL             VERDICT  DETAIL
+pi:local         ✅ GREEN CELL_VERDICT green
+--------------------------------------------------------
+green=1 red=0 pending=0 skip=0
+MATRIX_SUMMARY green=1 red=0 pending=0 skip=0
+========================================================
+MATRIX_JSON {"summary":{"green":1,"red":0,"pending":0,"skip":0},"gate":true,"all_green":true,"cells":[{"cell":"pi:local","verdict":"green","detail":"CELL_VERDICT green"}]}

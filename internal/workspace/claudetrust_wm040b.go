@@ -278,6 +278,123 @@ func ensureWorktreeTrustAt(worktreePath, cfgPath string) error {
 	return nil
 }
 
+// claudeDefaultTheme is the value seeded into ~/.claude.json["theme"] when it is
+// unset, to suppress Claude Code's first-run THEME-SELECTION modal (hk-oga33).
+// Claude Code >= 2.1.214 renders an interactive "Choose the text style … / Dark
+// mode" onboarding modal at Stage 1 (before SessionStart) whenever the top-level
+// "theme" key is null/absent, and --dangerously-skip-permissions does NOT suppress
+// it (that covers only the trust modal, HC-055b). A daemon-spawned pane parks on
+// it forever → SessionStart never fires → agent_ready times out at 150s. "dark"
+// mirrors the modal's own default-highlighted option. Kept in sync with the remote
+// worker path (workerThemeUpsertProgram in remotematerialize.go).
+const claudeDefaultTheme = "dark"
+
+// EnsureClaudeTheme pre-seeds ~/.claude.json's top-level "theme" key (when unset)
+// so a daemon-spawned Claude Code pane does not wedge on the first-run theme modal
+// (hk-oga33). It is the theme-modal analogue of EnsureWorktreeTrust's trust-modal
+// mitigation, and mirrors its concurrency model: a lock-free probe fast path (theme
+// is a GLOBAL key, so once any launch seeds it, every later launch short-circuits
+// with no lock), and a bounded sidecar-flock read-modify-write only when a mutation
+// is needed. It shares trustWriteMu and the ~/.claude.json.lock sidecar with the
+// trust writer so the two never race the same config within the process.
+//
+// Only seeds when "theme" is absent, null, or an empty string — an operator's
+// explicit theme choice is always preserved. MUST be called BEFORE exec'ing Claude
+// (same ordering obligation as EnsureWorktreeTrust). Non-fatal by contract at the
+// call site: a theme-seed failure should not harder-fail a launch than the trust
+// seed does, but the function returns the error so the caller can decide.
+func EnsureClaudeTheme() error {
+	return ensureClaudeThemeAt(claudeGlobalConfigPath())
+}
+
+// ensureClaudeThemeAt is the testable inner implementation; cfgPath is the
+// ~/.claude.json override, allowing unit tests to redirect to a temp file.
+func ensureClaudeThemeAt(cfgPath string) error {
+	// Fast path: lock-free probe. Theme is global, so once set this exits with no
+	// lock for every subsequent launch (mirrors alreadyTrustedAt).
+	set, probeErr := themeSetAt(cfgPath)
+	if probeErr != nil {
+		return probeErr
+	}
+	if set {
+		return nil
+	}
+
+	// Slow path: serialize in-process (hk-z16) then take the bounded sidecar flock,
+	// re-checking after each barrier — a predecessor may have just seeded the theme.
+	trustWriteMu.Lock()
+	defer trustWriteMu.Unlock()
+	if set2, err2 := themeSetAt(cfgPath); err2 != nil {
+		return err2
+	} else if set2 {
+		return nil
+	}
+
+	lockPath := cfgPath + ".lock"
+	lockFd, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // G304: sidecar lockfile path is derived from user's own config path
+	if err != nil {
+		return fmt.Errorf("workspace: EnsureClaudeTheme: open lockfile %s: %w", lockPath, err)
+	}
+	defer lockFd.Close() //nolint:errcheck // closing a lock fd; error is non-actionable and lock is advisory
+
+	if err := acquireExclusiveBounded(int(lockFd.Fd()), defaultTrustLockTimeout); err != nil {
+		return err
+	}
+
+	var cfg map[string]interface{}
+	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: cfgPath is the user's own config file
+	switch {
+	case err == nil:
+		if jsonErr := json.Unmarshal(data, &cfg); jsonErr != nil {
+			return fmt.Errorf("workspace: EnsureClaudeTheme: parse %s: %w", cfgPath, jsonErr)
+		}
+	case os.IsNotExist(err):
+		cfg = make(map[string]interface{})
+	default:
+		return fmt.Errorf("workspace: EnsureClaudeTheme: read %s: %w", cfgPath, err)
+	}
+
+	// Re-check under the lock, then seed only when absent/null/empty (never clobber
+	// an operator's explicit choice).
+	if s, ok := cfg["theme"].(string); ok && s != "" {
+		return nil
+	}
+	cfg["theme"] = claudeDefaultTheme
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("workspace: EnsureClaudeTheme: marshal: %w", err)
+	}
+	out = append(out, '\n')
+	if err := atomicWriteWithParentFsync(cfgPath, out); err != nil {
+		return fmt.Errorf("workspace: EnsureClaudeTheme: write %s: %w", cfgPath, err)
+	}
+	return nil
+}
+
+// themeSetAt reports whether ~/.claude.json already has a non-empty top-level
+// "theme" string, taking NO flock (mirrors alreadyTrustedAt's lock-free probe).
+// A missing/unparseable file or absent/null/empty theme reports (false, nil):
+// proceed to seed. Only genuinely reports an error the write path would also hit.
+func themeSetAt(cfgPath string) (bool, error) {
+	data, err := os.ReadFile(cfgPath) //nolint:gosec // G304: cfgPath is the user's own config file
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("workspace: EnsureClaudeTheme: read %s: %w", cfgPath, err)
+	}
+	var cfg map[string]interface{}
+	if jsonErr := json.Unmarshal(data, &cfg); jsonErr != nil {
+		// A malformed config is not the theme-probe's concern to fix; report
+		// not-set so the (locked) trust/theme write path is the single place that
+		// fail-rather-than-corrupts on a truly malformed file.
+		return false, nil
+	}
+	s, ok := cfg["theme"].(string)
+	return ok && s != "", nil
+}
+
 // alreadyTrustedAt reports whether ~/.claude.json already records worktreePath
 // as trusted (hasTrustDialogAccepted == true), taking NO flock at all (hk-bfvby).
 //

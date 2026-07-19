@@ -299,6 +299,19 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 			"daemon: buildClaudeLaunchSpec: EnsureWorktreeTrust: %w", err)
 	}
 
+	// Step 3a' — Pre-seed ~/.claude.json["theme"] to suppress the first-run
+	// theme-selection modal (hk-oga33). Claude Code >= 2.1.214 renders an
+	// interactive "Choose the text style …" onboarding modal at Stage 1 (BEFORE
+	// SessionStart) when theme is unset; --dangerously-skip-permissions does NOT
+	// suppress it (covers only the trust modal), so a daemon-spawned pane wedges on
+	// it and agent_ready times out at 150s. Same ordering + local/remote dispatch as
+	// the trust seed. Fatal-structural for the same reason: an un-themed session
+	// blocks indefinitely on the modal rather than reaching SessionStart.
+	if err := workspace.EnsureClaudeThemeVia(ctx, rc.runner); err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: EnsureClaudeTheme: %w", err)
+	}
+
 	// Step 3b — Write per-launch task artifact (CHB-028).
 	// MUST be after MaterializeClaudeSettings + EnsureWorktreeTrust and BEFORE SubstrateSpawn.
 	// The file carries the bead description for the phase. When rc.beadDescription is empty

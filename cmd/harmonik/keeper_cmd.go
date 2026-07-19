@@ -123,8 +123,12 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		// K2 leader defer-message / K7 crew-message body overrides (config surface,
 		// T2). Carried to the watcher; T3 fills/validates the leader slots and
 		// wires selection. crew text stays inert until K7 activation.
-		LeaderDeferText:                 resolved.LeaderDeferText,
-		CrewDeferText:                   resolved.CrewDeferText,
+		LeaderDeferText: resolved.LeaderDeferText,
+		CrewDeferText:   resolved.CrewDeferText,
+		// SK-034 (T4): mtime-gated per-tick re-read of keeper.warn_messages so
+		// wording edits apply with no keeper bounce, strictly scoped away from
+		// thresholds. Injected here because keeper may not import daemon (depguard).
+		ReloadWarnMessagesFn:            keeperReloadWarnMessagesFn(p.ProjectDir),
 		SelfServiceEnabled:              resolved.SelfServiceEnabled,
 		SelfServiceCrewsEnabled:         resolved.SelfServiceCrewsEnabled,
 		SelfServiceGraceSeconds:         resolved.SelfServiceGraceSeconds,
@@ -575,6 +579,31 @@ func keeperOperatorWarnFn(projectDir, agentName string) func(ctx context.Context
 		if runErr := cmd.Run(); runErr != nil {
 			fmt.Fprintf(os.Stderr, "keeper: operator warn comms send: %v\n", runErr)
 		}
+	}
+}
+
+// keeperReloadWarnMessagesFn returns the SK-034 live-reload closure the watcher
+// calls when config.yaml's mtime advances (T4). It re-parses the config with the
+// SAME strict loader used at startup (daemon.LoadProjectConfig), so an unknown
+// key introduced by a live edit still yields *ErrUnknownConfigKey — the watcher
+// then keeps the last-good text rather than absorbing it. It returns ONLY the
+// keeper.warn_messages overrides; threshold / band / self_service edits in the
+// file are parsed but discarded here (and the watcher applies only these fields),
+// keeping the live-reload strictly scoped to warn_messages. This lives in
+// cmd/harmonik because internal/keeper may not import internal/daemon (depguard).
+func keeperReloadWarnMessagesFn(projectDir string) func() (keeper.WarnMessageTexts, error) {
+	return func() (keeper.WarnMessageTexts, error) {
+		cfg, err := daemon.LoadProjectConfig(projectDir)
+		if err != nil {
+			return keeper.WarnMessageTexts{}, err
+		}
+		k := cfg.Keeper
+		return keeper.WarnMessageTexts{
+			DefaultWarnText:    k.DefaultWarnText,
+			ActionableWarnText: k.ActionableWarnText,
+			LeaderDeferText:    k.LeaderDeferText,
+			CrewDeferText:      k.CrewDeferText,
+		}, nil
 	}
 }
 

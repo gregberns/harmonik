@@ -417,6 +417,19 @@ type WatcherConfig struct {
 	// from .harmonik/config.yaml keeper.warn_messages.crew_defer_text. Refs: SK-032.
 	CrewDeferText string
 
+	// ReloadWarnMessagesFn, when non-nil, re-parses the keeper.warn_messages block
+	// from .harmonik/config.yaml and returns the CURRENT warn-text overrides. The
+	// poll loop calls it ONLY when the config file mtime advances (SK-034), so
+	// wording edits take effect without a keeper bounce. The closure applies the
+	// SAME strict unknown-key validation as startup (ErrUnknownConfigKey), so an
+	// unknown key introduced by a live edit is REJECTED, not silently absorbed;
+	// the loop then keeps the last-good texts and never crashes. The live-reload is
+	// STRICTLY scoped to warn_messages — thresholds, bands, and self_service stay
+	// startup-bound (the loop applies only the returned text fields). nil disables
+	// live reload (texts stay startup-bound). Injected from cmd/harmonik so keeper
+	// need not import daemon (depguard). Refs: SK-034, T4.
+	ReloadWarnMessagesFn func() (WarnMessageTexts, error)
+
 	// SelfServiceEnabled gates the actionable self-service restart handshake form of
 	// the warn text. When false, every warn injects the lighter finish-the-turn
 	// advisory regardless of agent/idle/SID. Threaded from
@@ -663,6 +676,18 @@ type WatcherConfig struct {
 	// window whose iteration count is nondeterministic under -race starvation. It
 	// is nil in production (zero behaviour change). Refs: hk-3dn16 (de-flake).
 	OnPollTickFn func()
+}
+
+// WarnMessageTexts carries the live-reloadable keeper.warn_messages overrides
+// (SK-034). It is the ONLY slice of keeper config the poll loop re-reads on an
+// mtime change; thresholds, bands, and self_service stay startup-bound. Returned
+// by [WatcherConfig.ReloadWarnMessagesFn] and applied verbatim by the watcher.
+// Refs: SK-034, T4.
+type WarnMessageTexts struct {
+	DefaultWarnText    string
+	ActionableWarnText string
+	LeaderDeferText    string
+	CrewDeferText      string
 }
 
 // applyDefaults fills in zero-valued duration / pct fields.
@@ -961,6 +986,71 @@ func (c *WatcherConfig) selectLeaderDeferText(nonce string) string {
 	return LeaderDeferBody(c.AgentName, nonce)
 }
 
+// keeperConfigPath returns the .harmonik/config.yaml path for the watcher's
+// project, or "" when ProjectDir is unset.
+func (w *Watcher) keeperConfigPath() string {
+	if w.cfg.ProjectDir == "" {
+		return ""
+	}
+	return filepath.Join(w.cfg.ProjectDir, ".harmonik", "config.yaml")
+}
+
+// maybeReloadWarnMessages implements the SK-034 mtime-gated per-tick re-read of
+// keeper.warn_messages. It stats config.yaml and, ONLY when the mtime advances,
+// re-parses the warn-text overrides via ReloadWarnMessagesFn and applies them to
+// the live config so the next tick's nudge body reflects the edit — no keeper
+// bounce. The re-read is STRICTLY scoped: only the four warn-text fields are
+// applied; thresholds/bands/self_service are never touched and stay startup-bound.
+//
+// The mtime cache advances on every successful stat regardless of parse outcome,
+// so each distinct file version is re-parsed at most once (stat-gated) and a
+// persistently-bad edit does not re-parse every tick. A rejected edit (e.g. an
+// unknown key → ErrUnknownConfigKey) keeps the last-good texts and is logged —
+// never silently absorbed, never a crash. A missing/unstattable config or a nil
+// ReloadWarnMessagesFn is a no-op (texts stay startup-bound). Refs: SK-034, T4.
+func (w *Watcher) maybeReloadWarnMessages(ctx context.Context) {
+	if w.cfg.ReloadWarnMessagesFn == nil {
+		return
+	}
+	path := w.keeperConfigPath()
+	if path == "" {
+		return
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return // no config file → nothing to reload; startup texts stand
+	}
+	mtime := fi.ModTime()
+	if !mtime.After(w.lastConfigMtime) {
+		return // stat-gated: unchanged mtime → do NOT re-parse
+	}
+	w.lastConfigMtime = mtime // advance once per file version, even on reject
+	texts, err := w.cfg.ReloadWarnMessagesFn()
+	if err != nil {
+		slog.WarnContext(ctx, "keeper: warn_messages live-reload rejected; keeping previous text", "err", err)
+		return
+	}
+	w.cfg.DefaultWarnText = texts.DefaultWarnText
+	w.cfg.ActionableWarnText = texts.ActionableWarnText
+	w.cfg.LeaderDeferText = texts.LeaderDeferText
+	w.cfg.CrewDeferText = texts.CrewDeferText
+}
+
+// seedConfigMtime records the current config.yaml mtime so the warn_messages
+// live-reload only fires on edits made AFTER the watcher starts (SK-034
+// stat-gated). A missing/unstattable config leaves the cache zero; the first real
+// stat in the poll loop then advances it. Refs: T4.
+func (w *Watcher) seedConfigMtime() {
+	if w.cfg.ReloadWarnMessagesFn == nil {
+		return
+	}
+	if path := w.keeperConfigPath(); path != "" {
+		if fi, err := os.Stat(path); err == nil {
+			w.lastConfigMtime = fi.ModTime()
+		}
+	}
+}
+
 // Watcher polls the gauge file and manages the warn-injection state machine.
 // It is safe to construct a Watcher and call Run once.
 //
@@ -968,6 +1058,13 @@ func (c *WatcherConfig) selectLeaderDeferText(nonce string) string {
 type Watcher struct {
 	cfg     WatcherConfig
 	emitter Emitter
+
+	// lastConfigMtime is the mtime of .harmonik/config.yaml observed on the most
+	// recent poll-tick stat. The warn_messages live-reload (SK-034) re-parses ONLY
+	// when this advances, so an unchanged file is never re-parsed (stat-gated). It
+	// is seeded at Run() entry so the first tick does not spuriously re-read. Only
+	// the Run goroutine touches it (single-threaded). Refs: T4.
+	lastConfigMtime time.Time
 
 	// heartbeatMissCount counts consecutive ticks on which deriveContextTokens
 	// returned false. When it exceeds MaxHeartbeatMisses the heartbeat stops
@@ -1100,6 +1197,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 		w.maybeEmitNoGauge(ctx, reason)
 	}
 
+	// Seed the warn_messages live-reload mtime (SK-034) so ONLY edits made after
+	// the watcher starts trigger a re-parse — startup already loaded the current
+	// texts. A missing config leaves the cache zero; the first poll stat advances it.
+	w.seedConfigMtime()
+
 	ticker := w.cfg.Clock.NewTicker(w.cfg.PollInterval)
 	defer ticker.Stop()
 
@@ -1114,6 +1216,14 @@ func (w *Watcher) Run(ctx context.Context) error {
 			if w.cfg.OnPollTickFn != nil {
 				w.cfg.OnPollTickFn()
 			}
+
+			// ── warn_messages live-reload (SK-034, T4) ───────────────────────
+			// mtime-gated per-tick re-read of keeper.warn_messages ONLY: a wording
+			// edit takes effect on the next tick with no keeper bounce, while
+			// thresholds/bands/self_service stay startup-bound. An unknown key on a
+			// live edit is rejected (ErrUnknownConfigKey) and the last-good text is
+			// kept. Runs before InCycle suppression so edits are never missed.
+			w.maybeReloadWarnMessages(ctx)
 
 			// ── InCycle suppression (SK-017 / D11) ───────────────────────────
 			// While the restart cycle is in flight (the reactor is off-Idle),

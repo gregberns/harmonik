@@ -213,6 +213,69 @@ func TestServerRequestClassification(t *testing.T) {
 	}
 }
 
+// TestThreadResumeRoundTrip_HK160YB pins the thread/resume wire method added for
+// the persistent sidecar's reconnect path (hk-160yb G2). It proves: the method
+// is registered and client-originated (NOT dropped to FrameKindRaw), the typed
+// params expose the required threadId, and every optional posture field
+// (sandbox, approvalPolicy, cwd, …) round-trips verbatim through Extra — so a
+// reconnect can carry the full resume posture without the codec enumerating it.
+func TestThreadResumeRoundTrip_HK160YB(t *testing.T) {
+	// Registered + client-originated.
+	found := false
+	for _, m := range codexwire.RegisteredMethods() {
+		if m == "thread/resume" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("thread/resume not in registry — reconnect cannot marshal it")
+	}
+
+	cases := []struct {
+		name         string
+		line         string
+		wantThreadID string
+	}{
+		{
+			name:         "threadId only",
+			line:         `{"jsonrpc":"2.0","id":3,"method":"thread/resume","params":{"threadId":"th_abc123"}}`,
+			wantThreadID: "th_abc123",
+		},
+		{
+			name:         "threadId plus posture extras preserved via Extra",
+			line:         `{"jsonrpc":"2.0","id":4,"method":"thread/resume","params":{"threadId":"th_xyz789","sandbox":"danger-full-access","approvalPolicy":"never","cwd":"/w/repo"}}`,
+			wantThreadID: "th_xyz789",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			frame, err := codexwire.Parse([]byte(tc.line))
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+			if frame.Kind != codexwire.FrameKindClientRequest {
+				t.Fatalf("thread/resume classified as %d, want FrameKindClientRequest (%d)",
+					frame.Kind, codexwire.FrameKindClientRequest)
+			}
+			params, ok := frame.Params.(*codexwire.ThreadResumeParams)
+			if !ok {
+				t.Fatalf("Params is %T, want *codexwire.ThreadResumeParams", frame.Params)
+			}
+			if params.ThreadID != tc.wantThreadID {
+				t.Fatalf("ThreadID = %q, want %q", params.ThreadID, tc.wantThreadID)
+			}
+			out, err := codexwire.Marshal(frame)
+			if err != nil {
+				t.Fatalf("Marshal error: %v", err)
+			}
+			if err := assertSemanticEqual(t, 0, []byte(tc.line), out); err != nil {
+				t.Fatalf("did not round-trip: %v\n  in:  %s\n  out: %s", err, tc.line, out)
+			}
+		})
+	}
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 // assertSemanticEqual compares original and remarshal as parsed JSON maps.

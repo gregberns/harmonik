@@ -107,6 +107,11 @@ var methodRegistry = map[string]methodEntry{
 		MakeParams: func() any { return &ThreadStartParams{} },
 		MakeResult: func() any { return &ThreadStartResult{} },
 	},
+	"thread/resume": {
+		Dir:        DirClient,
+		MakeParams: func() any { return &ThreadResumeParams{} },
+		MakeResult: func() any { return &ThreadResumeResult{} },
+	},
 	"turn/start": {
 		Dir:        DirClient,
 		MakeParams: func() any { return &TurnStartParams{} },
@@ -560,6 +565,38 @@ func (p ThreadStartParams) MarshalJSON() ([]byte, error) {
 	return mergeExtra(b, p.Extra)
 }
 
+// ThreadResumeParams: client→server "thread/resume" request params.
+//
+// Protocol-schema evidence (corpus/protocol-schema.json → v2.ThreadResumeParams):
+// only `threadId` is required. The schema notes "Prefer using thread_id whenever
+// possible" (resume-by-id loads the thread from disk / rejoins a running thread).
+// All other fields (approvalPolicy, sandbox, cwd, model, …) are optional and
+// null-defaulted; they are preserved verbatim via Extra so a caller may set them
+// without this type having to enumerate the full posture surface (hk-160yb G2).
+type ThreadResumeParams struct {
+	ThreadID string                     `json:"threadId"`
+	Extra    map[string]json.RawMessage `json:"-"`
+}
+
+var threadResumeParamsKnown = map[string]bool{"threadId": true}
+
+func (p *ThreadResumeParams) UnmarshalJSON(data []byte) error {
+	type alias ThreadResumeParams
+	if err := json.Unmarshal(data, (*alias)(p)); err != nil {
+		return err
+	}
+	return parseExtra(data, threadResumeParamsKnown, &p.Extra)
+}
+
+func (p ThreadResumeParams) MarshalJSON() ([]byte, error) {
+	type alias ThreadResumeParams
+	b, err := json.Marshal(alias(p))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtra(b, p.Extra)
+}
+
 // TurnStartParams: client→server "turn/start" request params.
 //
 // Corpus evidence: {"threadId": "...", "input": [{"type":"text","text":"...","text_elements":[]}]}
@@ -696,6 +733,16 @@ func (r ThreadStartResult) MarshalJSON() ([]byte, error) {
 	}
 	return mergeExtra(b, r.Extra)
 }
+
+// ThreadResumeResult: server→client "thread/resume" response result.
+//
+// Per the app-server protocol schema, v2.ThreadResumeResponse is structurally
+// identical to v2.ThreadStartResponse (same required set: thread, model,
+// modelProvider, sandbox, approvalPolicy, approvalsReviewer, cwd) — a resumed
+// thread simply comes back with its turns populated. Alias the start result so
+// the codec (fields, known-map, Extra round-trip) is shared, not duplicated
+// (hk-160yb G2).
+type ThreadResumeResult = ThreadStartResult
 
 // TurnStartResult: server→client "turn/start" response result.
 //

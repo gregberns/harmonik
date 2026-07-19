@@ -105,6 +105,15 @@ func runTwin(mode string) {
 			// notification; no reply
 		case "thread/start":
 			emit(`{"id":%d,"result":{"thread":{"id":"th_1"},"model":"twin"}}`, *env.ID)
+			if mode == "dieafterhandshake" {
+				// Let the driver process the thread result → reach Ready and latch
+				// the thread id, THEN die — the idle-child death the resident
+				// watchdog must proactively revive (hk-160yb G4b). The respawn
+				// re-attaches via thread/resume (handled above), which does NOT
+				// re-trigger this death, so the revived child stays live.
+				time.Sleep(200 * time.Millisecond)
+				os.Exit(0)
+			}
 		case "thread/resume":
 			// Re-attach to an existing thread (hk-160yb G1). Positive stderr
 			// marker proves the driver took the resume branch (not thread/start),

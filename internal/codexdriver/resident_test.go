@@ -121,6 +121,66 @@ func TestResidentEnqueueDeliversThroughQueue(t *testing.T) {
 	}
 }
 
+// The G4b proactive watchdog: Supervise brings up a warm child with NO submit,
+// and respawns it (resuming the thread) after it dies — again with no submit.
+func TestSuperviseProactivelyRevivesIdleChild(t *testing.T) {
+	r := NewResidentSession(Options{}, residentSpawn("dieafterhandshake"), 4)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = r.Close(ctx)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	r.Supervise(ctx)
+
+	// The watchdog spawns a first child with no submit.
+	first := waitForChild(t, r, nil, 10*time.Second)
+	if err := first.Wait(ctx); err != nil {
+		t.Fatalf("wait for first child death: %v", err)
+	}
+
+	// After the first child dies, the watchdog proactively brings up a DISTINCT
+	// second child (resuming the thread) — again with no submit. The second child
+	// resumes via thread/resume, so it does NOT re-die, and stabilizes.
+	second := waitForChild(t, r, first, 10*time.Second)
+	// Let the second child complete its (resume) handshake before inspecting it —
+	// the resume marker is written during the handshake.
+	if err := second.awaitReady(ctx); err != nil {
+		t.Fatalf("second child never reached Ready: %v", err)
+	}
+	if got := r.ThreadID(); got != "th_1" {
+		t.Fatalf("threadID = %q, want th_1 (retained across proactive revive)", got)
+	}
+
+	// Prove the proactive revive re-attached via thread/resume, not a fresh start.
+	if err := r.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if tail := string(second.Outcome().StderrTail); !strings.Contains(tail, "TWIN_RESUME_RECEIVED th_1") {
+		t.Fatalf("second child stderr %q missing resume marker", tail)
+	}
+}
+
+// waitForChild polls r.cur until it is non-nil and (when prev != nil) distinct
+// from prev, or the deadline elapses.
+func waitForChild(t *testing.T, r *ResidentSession, prev *codexSession, within time.Duration) *codexSession {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		cur := r.cur
+		r.mu.Unlock()
+		if cur != nil && cur != prev {
+			return cur
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("no %s child within %s", map[bool]string{true: "new", false: "initial"}[prev != nil], within)
+	return nil
+}
+
 // After Close, Enqueue is rejected and no child leaks.
 func TestResidentEnqueueAfterCloseRejected(t *testing.T) {
 	r := NewResidentSession(Options{}, residentSpawn("happy"), 4)

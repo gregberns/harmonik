@@ -31,8 +31,10 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // ErrResidentClosed is returned by SubmitInput/Enqueue after Close.
@@ -46,10 +48,12 @@ type ResidentSession struct {
 	spawn handler.SubstrateSpawn
 	queue *BoundedInputQueue
 
-	mu       sync.Mutex
-	cur      *codexSession // current live child session (nil until first submit)
-	threadID string        // last-known server thread id, for resume-on-respawn
-	closed   bool
+	mu          sync.Mutex
+	cur         *codexSession // current live child session (nil until first submit)
+	threadID    string        // last-known server thread id, for resume-on-respawn
+	closed      bool
+	supervising bool          // a Supervise watchdog goroutine is running
+	closeCh     chan struct{} // closed by Close to stop the watchdog
 }
 
 var _ handler.InputPort = (*ResidentSession)(nil)
@@ -67,7 +71,7 @@ func NewResidentSession(opts Options, spawn handler.SubstrateSpawn, queueCap int
 		// spawnLocked if that factory's return type ever changes.
 		panic("codexdriver: NewCodexSubstrate did not return *codexSubstrate")
 	}
-	r := &ResidentSession{sub: sub, spawn: spawn}
+	r := &ResidentSession{sub: sub, spawn: spawn, closeCh: make(chan struct{})}
 	// The queue's single drainer calls r.SubmitInput — the production caller that
 	// gives G3 its live consumer.
 	r.queue = NewBoundedInputQueue(r, queueCap)
@@ -117,6 +121,110 @@ func (r *ResidentSession) SubmitInput(ctx context.Context, req handler.InputRequ
 		r.rememberThread(sess)
 	}
 	return ack, err
+}
+
+// Watchdog backoff bounds: after a child death the watchdog waits before
+// respawning, growing the delay on rapid successive deaths so a crash-looping
+// child does not spin-respawn hot. A healthy child (one that reached Ready)
+// resets the delay to the floor.
+const (
+	watchdogBackoffMin = 100 * time.Millisecond
+	watchdogBackoffMax = 5 * time.Second
+)
+
+// Supervise starts a proactive liveness watchdog owning the resident session: it
+// brings up a warm child immediately and respawns it on death — resuming the
+// retained thread — so a live, resumed session is ready BEFORE the next submit
+// rather than only revived lazily on demand (G1b). It latches the thread id once
+// each (re)spawned child reaches Ready, so continuity holds even across a death
+// with no intervening submit. In-turn stale liveness stays owned by the
+// codexinput reactor (AIS-INV-001); this watchdog owns only the cross-death /
+// idle-child liveness the per-turn timers do not cover.
+//
+// Idempotent and non-blocking: it returns immediately and the goroutine runs
+// until Close or ctx cancellation.
+func (r *ResidentSession) Supervise(ctx context.Context) {
+	r.mu.Lock()
+	if r.closed || r.supervising {
+		r.mu.Unlock()
+		return
+	}
+	r.supervising = true
+	r.mu.Unlock()
+	go r.superviseLoop(ctx)
+}
+
+func (r *ResidentSession) superviseLoop(ctx context.Context) {
+	clock := r.sub.opts.Clock
+	backoff := watchdogBackoffMin
+	for {
+		if r.isClosed() || ctx.Err() != nil {
+			return
+		}
+		sess, err := r.ensure(ctx)
+		if err != nil {
+			// Closed, or the (re)spawn failed (e.g. a fail-closed PreSpawn guard).
+			// Back off and retry unless shutting down.
+			if r.isClosed() || !r.backoffSleep(ctx, clock, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff)
+			continue
+		}
+		// Wait until the child is Ready so we can latch its thread id (a fresh
+		// thread/start id, or the confirmed resumed id). A non-nil error means it
+		// died/failed before Ready — fall through to the death wait, which will see
+		// loopDone and respawn.
+		if err := sess.awaitReady(ctx); err == nil {
+			r.rememberThread(sess)
+			backoff = watchdogBackoffMin // healthy: reset the crash-loop backoff
+		} else if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-sess.loopDone:
+			// Child died. Back off (crash-loop guard) then loop to respawn+resume.
+			if r.isClosed() || !r.backoffSleep(ctx, clock, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff)
+		case <-r.closeCh:
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// backoffSleep waits for d, returning false (stop) if the watchdog should exit —
+// on ctx cancel OR Close (closeCh). Unlike a bare ClockPort.Sleep it also wakes
+// on closeCh, so Close stops the watchdog promptly instead of lingering up to a
+// full backoff interval.
+func (r *ResidentSession) backoffSleep(ctx context.Context, clock substrate.ClockPort, d time.Duration) bool {
+	tk := clock.NewTicker(d)
+	defer tk.Stop()
+	select {
+	case <-tk.C():
+		return true
+	case <-r.closeCh:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func nextBackoff(cur time.Duration) time.Duration {
+	n := cur * 2
+	if n > watchdogBackoffMax {
+		return watchdogBackoffMax
+	}
+	return n
+}
+
+func (r *ResidentSession) isClosed() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closed
 }
 
 // CloseInput signals end-of-input to the current child (InputPort contract). It
@@ -214,6 +322,7 @@ func (r *ResidentSession) Close(ctx context.Context) error {
 		return nil
 	}
 	r.closed = true
+	close(r.closeCh) // stop the watchdog (first-time only; closed guards idempotency)
 	r.mu.Unlock()
 
 	// Drain buffered submissions (graceful FIFO) before tearing the child down.

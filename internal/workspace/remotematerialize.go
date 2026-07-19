@@ -395,6 +395,137 @@ finally:
     os.close(lock_fd)
 `
 
+// PrepareIsolatedClaudeConfigDirVia provisions a PRIVATE, per-launch Claude Code
+// config directory for a REMOTE run ON THE WORKER and returns its worker-absolute
+// path, ready to be exported to the spawned process as CLAUDE_CONFIG_DIR
+// (hk-qxvc2). It is the SSH-aware sibling of PrepareIsolatedClaudeConfigDir: a nil
+// runner delegates to the in-process (box-A-local) function, byte-identical to
+// today (NFR7); a non-nil runner performs the SAME preparation on the worker.
+//
+// # Why the remote path is needed
+//
+// Claude Code >= 2.1.214 renders a first-run onboarding/theme modal at Stage 1
+// (BEFORE SessionStart) unless the config it reads records onboarding as complete.
+// On the LOCAL path Step 3a” isolates a private config dir so the fleet's ~15
+// concurrent writers cannot lost-update the shared ~/.claude.json's
+// modal-dismissing state away. On the REMOTE path that isolation was missing: the
+// worker's claude read the worker's SHARED ~/.claude.json, whose modal-dismissing
+// state can be perturbed by concurrent processes / theme/trust read-modify-writes,
+// so claude wedged on the modal BEFORE the SessionStart hook fired → agent_ready
+// never dialed back → deterministic agent_ready_timeout (the hk-qxvc2 stall;
+// claude-only + remote-only). Isolating the config on the worker too closes it
+// (and the fresh-worker case, hk-g5wkt).
+//
+// # Mechanism (mirrors EnsureWorktreeTrustVia)
+//
+// The preparation runs as a python3 program fed ON STDIN to `python3 - <worktree>`
+// (NOT via -c — see EnsureWorktreeTrustVia for the SSH argv-resplit hazard), with
+// the worktree path as the single argv token. On the worker the program:
+//
+//  1. mkdir -p <worktree>/.harmonik/claude-config (0o700).
+//  2. Seeds <dir>/.claude.json by COPYING the WORKER's OWN ~/.claude.json (the
+//     worker's onboarded config is the correct modal-dismisser for a process
+//     running ON the worker — box A's config is irrelevant there). If that source
+//     is missing/unreadable/corrupt, it falls back to a minimal onboarding-complete
+//     config (firstStartTime only) — same best-effort fallback as the local path.
+//  3. Upserts the worktree-trust entry
+//     (projects[<realpath(worktree)>].hasTrustDialogAccepted = true) INTO the
+//     isolated config, realpath-normalizing the key ON THE WORKER so it matches
+//     claude's own realpath() of its cwd once the config is relocated.
+//  4. Writes atomically (temp file + os.replace, 0o600).
+//
+// Unlike the shared ~/.claude.json writers this needs NO cross-process flock: the
+// isolated dir is private to ONE worktree, so no other launch races it.
+//
+// The returned worker-absolute path is computed in Go from the worker-absolute
+// workspacePath (filepath.Join, same as the local variant and the other *Via
+// path builders) — the program does not echo it back. On the seed program's
+// failure the error is propagated so the caller does NOT exec claude (an
+// un-isolated launch re-wedges on the modal), mirroring the local fatal posture.
+func PrepareIsolatedClaudeConfigDirVia(ctx context.Context, runner tmux.CommandRunner, workspacePath string) (string, error) {
+	if runner == nil {
+		return PrepareIsolatedClaudeConfigDir(workspacePath)
+	}
+
+	cmd := runner.Command(ctx, "python3", "-", workspacePath)
+	cmd.Stdin = bytes.NewReader([]byte(workerIsolatedConfigProgram))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("workspace: PrepareIsolatedClaudeConfigDirVia %s: %w\nremote: %s", workspacePath, err, out)
+	}
+	// The worker-absolute path of the isolated dir mirrors the local layout
+	// (<worktree>/.harmonik/claude-config); workspacePath is already the
+	// worker-absolute worktree path for a remote run, so filepath.Join yields the
+	// worker path CLAUDE_CONFIG_DIR must carry (same idiom as ClaudeSettingsPath).
+	return filepath.Join(workspacePath, ".harmonik", isolatedClaudeConfigDirName), nil
+}
+
+// workerIsolatedConfigProgram is the python3 program (fed on STDIN to `python3 -`,
+// NOT via -c — see EnsureWorktreeTrustVia for why) that provisions the isolated
+// per-launch Claude config dir ON THE WORKER: mkdir the dir under the worktree,
+// seed <dir>/.claude.json from the WORKER's own ~/.claude.json (or a minimal
+// onboarding-complete fallback), and upsert the realpath-normalized worktree-trust
+// entry — mirroring PrepareIsolatedClaudeConfigDir + ensureWorktreeTrustAt. The
+// fallback firstStartTime literal MUST stay in sync with fallbackFirstStartTime in
+// claudeconfigdir_hk8juwz.go (injected here so there is a single source of truth).
+//
+// No flock is taken: the isolated dir is private to ONE worktree (unlike the
+// shared ~/.claude.json that workerTrustUpsertProgram must lock), so there is no
+// concurrent writer to lose-update against. The dest is written atomically via a
+// temp file + os.replace so a reader never sees a half-written config.
+var workerIsolatedConfigProgram = fmt.Sprintf(`
+import json, os, sys, tempfile
+arg = sys.argv[1]
+if len(arg) >= 2 and arg[0] == "'" and arg[-1] == "'":
+    arg = arg[1:-1]
+config_dir = os.path.join(arg, ".harmonik", "claude-config")
+os.makedirs(config_dir, mode=0o700, exist_ok=True)
+try:
+    os.chmod(config_dir, 0o700)
+except OSError:
+    pass
+dest = os.path.join(config_dir, ".claude.json")
+src = os.path.join(os.path.expanduser("~"), ".claude.json")
+
+def load_src():
+    try:
+        with open(src) as f:
+            cfg = json.load(f)
+    except (FileNotFoundError, ValueError, OSError):
+        return None
+    return cfg if isinstance(cfg, dict) else None
+
+cfg = load_src()
+if cfg is None:
+    cfg = {"firstStartTime": %q}
+
+wt = os.path.realpath(arg)
+projects = cfg.get("projects")
+if not isinstance(projects, dict):
+    projects = {}
+    cfg["projects"] = projects
+entry = projects.get(wt)
+if not isinstance(entry, dict):
+    entry = {}
+    projects[wt] = entry
+entry["hasTrustDialogAccepted"] = True
+
+d = os.path.dirname(dest) or "."
+fd, tmp = tempfile.mkstemp(dir=d, prefix=".claude.json.tmp-")
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, dest)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+`, fallbackFirstStartTime)
+
 // EnsureClaudeThemeVia pre-seeds the top-level "theme" key in the config where
 // Claude Code will read it (the WORKER's ~/.claude.json for a remote run; box-A's
 // for a local run), suppressing the first-run theme-selection modal (hk-oga33).

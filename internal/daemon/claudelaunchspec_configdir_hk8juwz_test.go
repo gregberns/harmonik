@@ -89,14 +89,20 @@ func TestBuildClaudeLaunchSpec_Local_SetsClaudeConfigDir(t *testing.T) {
 	}
 }
 
-// TestBuildClaudeLaunchSpec_Remote_NoClaudeConfigDir asserts the isolation is
-// scoped to LOCAL: a remote run (non-nil runner) must NOT emit CLAUDE_CONFIG_DIR.
-func TestBuildClaudeLaunchSpec_Remote_NoClaudeConfigDir(t *testing.T) {
+// TestBuildClaudeLaunchSpec_Remote_SetsClaudeConfigDir asserts that a remote run
+// (non-nil runner) ALSO provisions a private CLAUDE_CONFIG_DIR — now pointing at
+// the WORKER-absolute isolated dir — and routes the isolation-provisioning program
+// through the runner so it executes ON THE WORKER (hk-qxvc2). This is the remote
+// counterpart of the local isolation (hk-8juwz): without it, the worker's claude
+// reads the fleet-raced shared ~/.claude.json and wedges on the onboarding modal
+// before SessionStart fires → agent_ready_timeout.
+func TestBuildClaudeLaunchSpec_Remote_SetsClaudeConfigDir(t *testing.T) {
 	ctx := context.Background()
 	wt := t.TempDir()
+	rr := newNoOpRecorderZ8ek() // REMOTE run
 	rc := claudeRunCtx{
 		runID:            z8ekRunID(t),
-		beadID:           "hk-8juwz-remote",
+		beadID:           "hk-qxvc2-remote",
 		workspacePath:    wt,
 		daemonSocket:     filepath.Join(wt, ".harmonik", "daemon.sock"),
 		workflowMode:     core.WorkflowModeSingle,
@@ -106,7 +112,7 @@ func TestBuildClaudeLaunchSpec_Remote_NoClaudeConfigDir(t *testing.T) {
 		daemonBinaryPath: "/Users/gb/go/bin/harmonik",
 		beadTitle:        "remote run",
 		beadDescription:  "body",
-		runner:           newNoOpRecorderZ8ek(), // REMOTE run
+		runner:           rr,
 		workerBinaryPath: "/home/worker/harmonik",
 	}
 
@@ -114,7 +120,28 @@ func TestBuildClaudeLaunchSpec_Remote_NoClaudeConfigDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildClaudeLaunchSpec (remote): %v", err)
 	}
-	if v, ok := envValue(spec.Env, "CLAUDE_CONFIG_DIR"); ok {
-		t.Errorf("CLAUDE_CONFIG_DIR unexpectedly set for REMOTE run: %q", v)
+
+	// CLAUDE_CONFIG_DIR must now be exported, pointing at the worker-absolute
+	// isolated dir under the (worker) worktree path.
+	got, ok := envValue(spec.Env, "CLAUDE_CONFIG_DIR")
+	if !ok {
+		t.Fatalf("CLAUDE_CONFIG_DIR absent from remote launch env:\n%v", spec.Env)
+	}
+	wantDir := filepath.Join(wt, ".harmonik", "claude-config")
+	if got != wantDir {
+		t.Errorf("CLAUDE_CONFIG_DIR = %q, want %q", got, wantDir)
+	}
+
+	// The isolation-provisioning program must run ON THE WORKER — i.e. through the
+	// runner as `python3 - <workspacePath>` (fed on stdin, not via -c).
+	var sawPrepare bool
+	for _, c := range rr.Calls {
+		if c.Name == "python3" && len(c.Args) >= 2 && c.Args[0] == "-" && c.Args[len(c.Args)-1] == wt {
+			sawPrepare = true
+			break
+		}
+	}
+	if !sawPrepare {
+		t.Errorf("isolated-config prepare not routed through runner as `python3 - %s`; calls:\n%+v", wt, rr.Calls)
 	}
 }

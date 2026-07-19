@@ -318,23 +318,32 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 			"daemon: buildClaudeLaunchSpec: EnsureClaudeTheme: %w", err)
 	}
 
-	// Step 3a'' — Isolate a PRIVATE per-launch Claude config dir for the LOCAL path
-	// (hk-8juwz). For a claude:LOCAL run (rc.runner == nil), provision a private
-	// config dir seeded from the operator's real (onboarded) ~/.claude.json and set
-	// CLAUDE_CONFIG_DIR to it below (Step 5). This relocates claude's config reads
-	// off the SHARED global ~/.claude.json that ~15 live fleet processes race, so
-	// the modal-dismissing onboarding state cannot be lost-updated away. Auth is
-	// Keychain-based (machine-global), so relocation does NOT lose auth. Scoped to
-	// LOCAL for now; the REMOTE worker path is a deliberate follow-up. Fatal-
-	// structural like the trust seed: an un-isolated launch re-wedges on the modal.
+	// Step 3a'' — Isolate a PRIVATE per-launch Claude config dir on BOTH the LOCAL
+	// and REMOTE paths (hk-8juwz local; hk-qxvc2 remote). Provision a private config
+	// dir seeded from the ONBOARDED ~/.claude.json of the machine claude runs on
+	// (box A for LOCAL, the WORKER for REMOTE) and set CLAUDE_CONFIG_DIR to it below
+	// (Step 5). This relocates claude's config reads off the SHARED global
+	// ~/.claude.json that concurrent processes race, so the modal-dismissing
+	// onboarding state cannot be lost-updated away and claude reaches SessionStart
+	// (→ agent_ready) instead of wedging on the first-run onboarding/theme modal.
+	// Auth is Keychain-based (machine-global), so relocation does NOT lose auth.
+	// Fatal-structural like the trust seed: an un-isolated launch re-wedges on the
+	// modal and times out at agent_ready.
+	//
+	// LOCAL (rc.runner == nil): PrepareIsolatedClaudeConfigDir seeds from box A's
+	// ~/.claude.json. REMOTE (rc.runner != nil): PrepareIsolatedClaudeConfigDirVia
+	// runs the same preparation ON THE WORKER, seeding from the WORKER's own
+	// ~/.claude.json and returning the worker-absolute dir (the value
+	// CLAUDE_CONFIG_DIR must carry, since claude reads it on the worker).
 	var isolatedClaudeConfigDir string
 	if rc.runner == nil {
-		dir, isoErr := workspace.PrepareIsolatedClaudeConfigDir(rc.workspacePath)
-		if isoErr != nil {
-			return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
-				"daemon: buildClaudeLaunchSpec: PrepareIsolatedClaudeConfigDir: %w", isoErr)
-		}
-		isolatedClaudeConfigDir = dir
+		isolatedClaudeConfigDir, err = workspace.PrepareIsolatedClaudeConfigDir(rc.workspacePath)
+	} else {
+		isolatedClaudeConfigDir, err = workspace.PrepareIsolatedClaudeConfigDirVia(ctx, rc.runner, rc.workspacePath)
+	}
+	if err != nil {
+		return handler.LaunchSpec{}, claudeRunArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: PrepareIsolatedClaudeConfigDir: %w", err)
 	}
 
 	// Step 3b — Write per-launch task artifact (CHB-028).
@@ -435,14 +444,16 @@ func buildClaudeLaunchSpec(ctx context.Context, rc claudeRunCtx) (handler.Launch
 	}
 	env := handler.ClaudeEnvVars(cfg)
 
-	// Step 5a — Export CLAUDE_CONFIG_DIR for the claude:LOCAL path (hk-8juwz).
-	// claude v2.1.214 reads CLAUDE_CONFIG_DIR to relocate its config directory to
-	// <dir>/.claude.json, off the shared global ~/.claude.json. Appended AFTER
-	// ClaudeEnvVars so the tmux/local substrate carries it into the spawned process
-	// env (SubstrateSpawn replaces the pane env with this slice). Empty for REMOTE
-	// runs (isolatedClaudeConfigDir is only set when rc.runner == nil), so the
-	// remote path is unchanged. CLAUDE_CONFIG_DIR is not on the CHB-007 forbidden
-	// env-var list, so the Step 7 guard passes.
+	// Step 5a — Export CLAUDE_CONFIG_DIR for BOTH the local and remote paths
+	// (hk-8juwz local; hk-qxvc2 remote). claude v2.1.214 reads CLAUDE_CONFIG_DIR to
+	// relocate its config directory to <dir>/.claude.json, off the shared global
+	// ~/.claude.json. Appended AFTER ClaudeEnvVars so the substrate carries it into
+	// the spawned process env (SubstrateSpawn replaces the pane env with this
+	// slice). isolatedClaudeConfigDir is now set on BOTH branches (Step 3a''); for a
+	// remote run it is the WORKER-absolute isolated dir the SSH launch exports on
+	// the worker. Still gated on non-empty so NFR7 holds if a prepare ever returns
+	// "" (no-op). CLAUDE_CONFIG_DIR is not on the CHB-007 forbidden env-var list, so
+	// the Step 7 guard passes.
 	if isolatedClaudeConfigDir != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+isolatedClaudeConfigDir)
 	}

@@ -121,7 +121,7 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		default:
 			// Fail closed: a mistyped flag (e.g. --target-branc) must not
 			// silently bootstrap against defaults.
-			fmt.Fprintf(stderr, "harmonik init: unknown argument %q\n\n%s", args[i], initUsage)
+			fmt.Fprintf(stderr, "harmonik init: unknown argument %q\n\n%s", args[i], initUsage) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 			return 1
 		}
 	}

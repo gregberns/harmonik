@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -94,12 +95,12 @@ func TestW4_DetectSquashMergeConflict_Conflict_LeavesWorktreeClean(t *testing.T)
 	runID := "0196b100-0000-7000-8000-0000004a0002"
 	taskBranch := "run/" + runID
 	taskPath := filepath.Join(repo, ".harmonik", "worktrees", runID)
-	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 
 	gitOutput(t, repo, "worktree", "add", "-b", taskBranch, taskPath, sha)
-	if err := os.WriteFile(filepath.Join(taskPath, "shared.txt"), []byte("task version\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskPath, "shared.txt"), []byte("task version\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	gitOutput(t, taskPath, "add", ".")
@@ -107,14 +108,14 @@ func TestW4_DetectSquashMergeConflict_Conflict_LeavesWorktreeClean(t *testing.T)
 
 	integPath := filepath.Join(repo, ".harmonik", "worktrees", "integ-w4-clash")
 	gitOutput(t, repo, "worktree", "add", "-b", "harmonik/integration/integ-w4-clash", integPath, sha)
-	if err := os.WriteFile(filepath.Join(integPath, "shared.txt"), []byte("integration version\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(integPath, "shared.txt"), []byte("integration version\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	gitOutput(t, integPath, "add", ".")
 	gitOutput(t, integPath, "commit", "-m", "integ: change shared.txt")
 
 	headBefore := gitOutput(t, integPath, "rev-parse", "HEAD")
-	sharedBefore, err := os.ReadFile(filepath.Join(integPath, "shared.txt"))
+	sharedBefore, err := os.ReadFile(filepath.Join(integPath, "shared.txt")) //nolint:gosec // G304: test-controlled path
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -130,11 +131,11 @@ func TestW4_DetectSquashMergeConflict_Conflict_LeavesWorktreeClean(t *testing.T)
 	assertWorktreeByteClean(t, integPath, headBefore, "conflict probe")
 
 	// The conflicted file must be restored byte-for-byte (no conflict markers).
-	sharedAfter, err := os.ReadFile(filepath.Join(integPath, "shared.txt"))
+	sharedAfter, err := os.ReadFile(filepath.Join(integPath, "shared.txt")) //nolint:gosec // G304: test-controlled path
 	if err != nil {
 		t.Fatalf("ReadFile after: %v", err)
 	}
-	if string(sharedAfter) != string(sharedBefore) {
+	if !bytes.Equal(sharedAfter, sharedBefore) {
 		t.Errorf("shared.txt mutated by probe:\nbefore: %q\nafter:  %q", sharedBefore, sharedAfter)
 	}
 }

@@ -69,6 +69,7 @@ func NewResidentSession(opts Options, spawn handler.SubstrateSpawn, queueCap int
 		// Construction-time invariant: NewCodexSubstrate always returns
 		// *codexSubstrate. Fail loud here rather than nil-deref later in
 		// spawnLocked if that factory's return type ever changes.
+		//nolint:forbidigo // construction-time invariant: NewCodexSubstrate always returns *codexSubstrate; fail loud rather than nil-deref later (constructor returns no error to thread)
 		panic("codexdriver: NewCodexSubstrate did not return *codexSubstrate")
 	}
 	r := &ResidentSession{sub: sub, spawn: spawn, closeCh: make(chan struct{})}
@@ -287,7 +288,7 @@ func (r *ResidentSession) spawnLocked(ctx context.Context) (*codexSession, error
 	if !ok {
 		// spawn always returns *codexSession; guard the type assertion so a future
 		// refactor fails loud rather than nil-panicking.
-		_ = sess.Kill(ctx)
+		_ = sess.Kill(ctx) //nolint:errcheck // best-effort teardown of the mis-typed session on an error return; the type-assertion failure is the reported error
 		return nil, fmt.Errorf("codexdriver: resident respawn: unexpected session type %T", sess)
 	}
 	r.cur = cs

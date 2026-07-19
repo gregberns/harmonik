@@ -63,11 +63,11 @@ func RunRestart(args []string, stdout, stderr io.Writer) int {
 	// genuine corruption we refuse to relaunch over.
 	if _, statErr := os.Stat(ConfigPath(projectDir)); statErr == nil {
 		if _, err := ReadConfig(projectDir); err != nil {
-			fmt.Fprintf(stderr, "harmonik supervise restart: read config: %v\n", err)
+			fmt.Fprintf(stderr, "harmonik supervise restart: read config: %v\n", err) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 			return 1
 		}
 	} else if !os.IsNotExist(statErr) {
-		fmt.Fprintf(stderr, "harmonik supervise restart: stat config: %v\n", statErr)
+		fmt.Fprintf(stderr, "harmonik supervise restart: stat config: %v\n", statErr) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 		return 1
 	}
 

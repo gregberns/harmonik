@@ -417,7 +417,7 @@ func TestRC018_NoCommitBeforeStep5(t *testing.T) {
 func TestRC018_FallbackVerdictPlanIsEscalateToHuman(t *testing.T) {
 	t.Parallel()
 
-	plan, _ := PlanForVerdict(VerdictEscalateToHuman)
+	plan := mustPlan(t, VerdictEscalateToHuman)
 
 	if !plan.Valid() {
 		t.Fatal("RC-018/step5: PlanForVerdict(VerdictEscalateToHuman).Valid() = false; want true")

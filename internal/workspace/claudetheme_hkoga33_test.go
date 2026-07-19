@@ -17,7 +17,7 @@ import (
 
 func readClaudeCfg(t *testing.T, path string) map[string]interface{} {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: test-controlled path
 	if err != nil {
 		t.Fatalf("read cfg: %v", err)
 	}
@@ -34,7 +34,7 @@ func writeClaudeCfg(t *testing.T, path string, cfg map[string]interface{}) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -155,7 +155,7 @@ func runThemeUpsert(t *testing.T, home string) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available — skipping real-python theme test")
 	}
-	cmd := exec.Command("python3", "-")
+	cmd := exec.CommandContext(t.Context(), "python3", "-")
 	cmd.Env = append(os.Environ(), "HOME="+home)
 	cmd.Stdin = bytes.NewReader([]byte(workerThemeUpsertProgram))
 	if out, err := cmd.CombinedOutput(); err != nil {

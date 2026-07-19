@@ -74,7 +74,7 @@ func writeE1mdcProject(t *testing.T, yaml string) string {
 	t.Helper()
 	projectDir := t.TempDir()
 	cfgDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0o750); err != nil {
 		t.Fatalf("MkdirAll .harmonik: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte(yaml), 0o600); err != nil {

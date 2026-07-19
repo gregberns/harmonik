@@ -23,13 +23,13 @@ import (
 
 // oneWorkerRegistry builds a live registry with a single ssh worker in the
 // requested enabled state — the same shape workers.NewRegistry produces at boot.
-func oneWorkerRegistry(host string, enabled bool) *workers.Registry {
+func oneWorkerRegistry(enabled bool) *workers.Registry {
 	return workers.NewRegistry(workers.Config{
 		Version: 1,
 		Workers: []workers.Worker{{
 			Name:      "gb-mbp",
 			Transport: "ssh",
-			Host:      host,
+			Host:      "gb-mbp",
 			MaxSlots:  1,
 			Enabled:   enabled,
 		}},
@@ -47,7 +47,7 @@ func TestCodexRouter_NFR7_ZeroWorkersLocal(t *testing.T) {
 	}{
 		{"no registry bound", func(r *codexWorkerRoutingRunner) {}},
 		{"nil registry (no worker configured)", func(r *codexWorkerRoutingRunner) { r.setRegistry(nil) }},
-		{"registry with disabled worker", func(r *codexWorkerRoutingRunner) { r.setRegistry(oneWorkerRegistry("gb-mbp", false)) }},
+		{"registry with disabled worker", func(r *codexWorkerRoutingRunner) { r.setRegistry(oneWorkerRegistry(false)) }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,7 +101,7 @@ func TestCodexRouter_RequireBoundary_RefusesUnsandboxed_HK5H759(t *testing.T) {
 	}{
 		{"no registry bound", func(r *codexWorkerRoutingRunner) {}},
 		{"nil registry", func(r *codexWorkerRoutingRunner) { r.setRegistry(nil) }},
-		{"disabled ssh worker", func(r *codexWorkerRoutingRunner) { r.setRegistry(oneWorkerRegistry("gb-mbp", false)) }},
+		{"disabled ssh worker", func(r *codexWorkerRoutingRunner) { r.setRegistry(oneWorkerRegistry(false)) }},
 		{"enabled non-ssh worker", func(r *codexWorkerRoutingRunner) { r.setRegistry(nonSSHWorkerRegistry()) }},
 	}
 	for _, tc := range refuseCases {
@@ -117,7 +117,7 @@ func TestCodexRouter_RequireBoundary_RefusesUnsandboxed_HK5H759(t *testing.T) {
 
 	t.Run("allow/enabled ssh worker routes remotely", func(t *testing.T) {
 		r := &codexWorkerRoutingRunner{requireBoundary: true}
-		r.setRegistry(oneWorkerRegistry("gb-mbp", true))
+		r.setRegistry(oneWorkerRegistry(true))
 		cmd := r.Command(context.Background(), "codex", "app-server")
 		if cmd.Args[0] != "ssh" {
 			t.Fatalf("enabled ssh worker IS the boundary; expected ssh routing, got %v", cmd.Args)
@@ -131,7 +131,7 @@ func TestCodexRouter_RequireBoundary_RefusesUnsandboxed_HK5H759(t *testing.T) {
 // WorkerRegistryObserver), Command emits `ssh <host> -- <codex ...>`.
 func TestCodexRouter_HealthyWorkerRoutesSSH(t *testing.T) {
 	r := &codexWorkerRoutingRunner{}
-	r.setRegistry(oneWorkerRegistry("gb-mbp", true))
+	r.setRegistry(oneWorkerRegistry(true))
 
 	cmd := r.Command(context.Background(), "codex", "app-server")
 	if cmd.Args[0] != "ssh" {
@@ -165,7 +165,7 @@ func TestCodexRouter_SelectSubstrateWiresObserver(t *testing.T) {
 		t.Fatalf("pre-bind expected local, got ssh: %v", got)
 	}
 	// Daemon binds the live registry (WorkerRegistryObserver) → remote.
-	rr.setRegistry(oneWorkerRegistry("gb-mbp", true))
+	rr.setRegistry(oneWorkerRegistry(true))
 	if got := rr.Command(context.Background(), "codex").Args[0]; got != "ssh" {
 		t.Fatalf("post-bind expected ssh routing, got %v", got)
 	}

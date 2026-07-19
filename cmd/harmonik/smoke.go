@@ -443,7 +443,7 @@ func smokeWatchSignals(
 						targetBranch, commitRef)
 				} else {
 					result.detail[2] = fmt.Sprintf("FAIL: no commit referencing %s on branch %s", smokeBeadID, targetBranch)
-					fmt.Fprintf(stderr, "harmonik smoke: [SIGNAL 3 FAIL] no commit referencing %s on branch %s\n",
+					fmt.Fprintf(stderr, "harmonik smoke: [SIGNAL 3 FAIL] no commit referencing %s on branch %s\n", //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 						smokeBeadID, targetBranch)
 				}
 			}

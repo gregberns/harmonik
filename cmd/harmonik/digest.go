@@ -240,8 +240,10 @@ func printHumanDigest(d *digest.DigestJSON) {
 	}
 	for _, ev := range d.RecentEvents {
 		if ev.RunID != "" {
+			//nolint:forbidigo // G-CLI: digest is a terminal report command; the whole printer writes to stdout via fmt.Print* (surrounding lines are grandfathered)
 			fmt.Printf("  %s  type=%s  run=%s\n", digestShortID(ev.EventID), ev.Type, digestShortID(ev.RunID))
 		} else {
+			//nolint:forbidigo // G-CLI: digest is a terminal report command; the whole printer writes to stdout via fmt.Print* (surrounding lines are grandfathered)
 			fmt.Printf("  %s  type=%s\n", digestShortID(ev.EventID), ev.Type)
 		}
 	}

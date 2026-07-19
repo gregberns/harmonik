@@ -194,7 +194,7 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 				// it. Surface as inconclusive so the retry budget re-tries the read
 				// and, if it persists, the caller escalates rather than mis-reading a
 				// network blip as "verdict absent" and deciding the review gate. H4.
-				return nil, fmt.Errorf("%w: cat %s: %v", ErrRemoteTransport, target, err)
+				return nil, fmt.Errorf("%w: cat %s: %w", ErrRemoteTransport, target, err)
 			}
 			// Non-transport cat failure (exit 1: no such file) → genuinely absent,
 			// mirroring ReadReviewVerdict's os.IsNotExist branch (nil,nil = inconclusive).

@@ -41,10 +41,10 @@ func TestResumeHandshakeReattachesThread(t *testing.T) {
 		t.Fatalf("spawn returned %T, want *codexSession", sess)
 	}
 	t.Cleanup(func() {
-		_ = sess.Kill(context.Background())
+		_ = sess.Kill(context.Background()) //nolint:errcheck // test teardown; best-effort
 		waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = sess.Wait(waitCtx)
+		_ = sess.Wait(waitCtx) //nolint:errcheck // test teardown; best-effort
 	})
 
 	port, ok := handler.AsInputPort(sess)
@@ -122,10 +122,10 @@ func TestFreshSpawnDoesNotResume(t *testing.T) {
 	if got := cs.currentThreadID(); got != "th_1" {
 		t.Fatalf("threadID = %q, want th_1 (fresh thread/start)", got)
 	}
-	_ = sess.Kill(context.Background())
+	_ = sess.Kill(context.Background()) //nolint:errcheck // test teardown; best-effort
 	waitCtx, waitCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer waitCancel()
-	_ = sess.Wait(waitCtx)
+	_ = sess.Wait(waitCtx) //nolint:errcheck // test teardown; best-effort
 	if tail := string(sess.Outcome().StderrTail); strings.Contains(tail, "TWIN_RESUME_RECEIVED") {
 		t.Fatalf("fresh spawn unexpectedly took resume path: %q", tail)
 	}

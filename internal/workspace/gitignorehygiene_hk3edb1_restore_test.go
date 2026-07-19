@@ -24,7 +24,7 @@ func TestHK3edb1_EnsureGitignoreHygiene_RestoresOriginalBranch(t *testing.T) {
 
 	git := func(args ...string) string {
 		t.Helper()
-		out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), "git", append([]string{"-C", repo}, args...)...).CombinedOutput() //nolint:gosec // G204: test-controlled git args
 		if err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -65,7 +65,7 @@ func TestHK3edb1_EnsureGitignoreHygiene_RestoresOriginalBranch(t *testing.T) {
 	// (4) Required entries remain in the operator's working tree (uncommitted) so
 	// daemon control-plane state stays ignored despite the commit living only on
 	// the dedicated branch.
-	data, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	data, err := os.ReadFile(filepath.Join(repo, ".gitignore")) //nolint:gosec // G304: test-controlled path
 	if err != nil {
 		t.Fatalf("read .gitignore after hygiene: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestHK3edb1_EnsureGitignoreHygiene_RestoresDetachedHead(t *testing.T) {
 
 	git := func(args ...string) string {
 		t.Helper()
-		out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), "git", append([]string{"-C", repo}, args...)...).CombinedOutput() //nolint:gosec // G204: test-controlled git args
 		if err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -120,7 +120,7 @@ func TestHK3edb1_EnsureGitignoreHygiene_RestoresDetachedHead(t *testing.T) {
 	if subj := git("log", "-1", "--format=%s", GitignoreBranchName); !strings.Contains(subj, "WM-013e") {
 		t.Errorf("dedicated-branch tip subject = %q; want the WM-013e hygiene commit", subj)
 	}
-	data, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	data, err := os.ReadFile(filepath.Join(repo, ".gitignore")) //nolint:gosec // G304: test-controlled path
 	if err != nil {
 		t.Fatalf("read .gitignore after hygiene: %v", err)
 	}

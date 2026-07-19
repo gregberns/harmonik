@@ -47,6 +47,7 @@ type QueuedResult struct {
 // (threaded through to SubmitInput so a caller can still cancel its own park),
 // and the single-slot channel the drainer resolves.
 type queuedItem struct {
+	//nolint:containedctx // per-submission caller ctx carried through the async FIFO to SubmitInput so the caller can cancel its own park (queued-work-item pattern)
 	ctx   context.Context
 	req   handler.InputRequest
 	resCh chan QueuedResult

@@ -28,10 +28,10 @@ import (
 func injectAndWatchBeads(t *testing.T, ndjsonLines []string, queueID string, beads []core.BeadID) int {
 	t.Helper()
 	server, client := net.Pipe()
-	defer func() { _ = server.Close() }()
+	defer func() { _ = server.Close() }() //nolint:errcheck // test teardown; pipe close error is non-actionable
 
 	go func() {
-		defer func() { _ = client.Close() }()
+		defer func() { _ = client.Close() }() //nolint:errcheck // test teardown; pipe close error is non-actionable
 		for _, line := range ndjsonLines {
 			if _, err := fmt.Fprintln(client, line); err != nil {
 				return
@@ -103,7 +103,7 @@ func TestSmokeCheckCommitOnBranch_MatchesActualSmokeCommit(t *testing.T) {
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // G204: git args are test-controlled
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
@@ -198,7 +198,7 @@ func TestEvalCollect_RerunDoesNotDoubleCount(t *testing.T) {
 		t.Fatalf("second collect: exit %d; stderr: %s", code, err2.String())
 	}
 
-	data, err := os.ReadFile(outputPath)
+	data, err := os.ReadFile(outputPath) //nolint:gosec // G304: outputPath is a test-controlled temp path
 	if err != nil {
 		t.Fatal(err)
 	}

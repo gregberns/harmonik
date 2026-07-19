@@ -108,7 +108,7 @@ func ReadAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, wor
 	if err != nil {
 		if tmux.IsSSHConnectionFailure(err) {
 			// SSH transport failure — inconclusive, distinct from confirmed-absent.
-			return nil, fmt.Errorf("%w: cat %s: %v", ErrRemoteTransport, target, err)
+			return nil, fmt.Errorf("%w: cat %s: %w", ErrRemoteTransport, target, err)
 		}
 		// Non-transport cat failure (no such file) → genuinely absent, preserving
 		// C1-only pass-through (the local not-exist path returns nil,nil).

@@ -177,7 +177,7 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 	// are skipped so re-collecting does not double-count the training set.
 	existing, err := evalReadExistingRunIDs(*outputFile)
 	if err != nil {
-		fmt.Fprintf(stderr, "harmonik eval collect: reading existing output: %v\n", err)
+		fmt.Fprintf(stderr, "harmonik eval collect: reading existing output: %v\n", err) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 		return 1
 	}
 
@@ -224,7 +224,7 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 		written++
 	}
 
-	fmt.Fprintf(stdout, "harmonik eval collect: wrote %d record(s) to %s (%d already present, skipped)\n",
+	fmt.Fprintf(stdout, "harmonik eval collect: wrote %d record(s) to %s (%d already present, skipped)\n", //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 		written, *outputFile, skipped)
 	return 0
 }
@@ -233,14 +233,14 @@ func runEvalCollect(args []string, stdout, stderr io.Writer, getwd func() (strin
 // output file. A missing file yields an empty set. Malformed lines are skipped.
 func evalReadExistingRunIDs(path string) (map[string]struct{}, error) {
 	ids := map[string]struct{}{}
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: path is the operator-supplied eval-collect output file
 	if err != nil {
 		if os.IsNotExist(err) {
 			return ids, nil
 		}
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() //nolint:errcheck // read-only file; close error is non-actionable
 
 	scanner := bufio.NewScanner(f)
 	setLargeScanBuffer(scanner)

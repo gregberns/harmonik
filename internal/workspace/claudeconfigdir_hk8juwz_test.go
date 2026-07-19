@@ -17,10 +17,10 @@ import (
 
 // withIsolatedConfigSource redirects the isolatedConfigSourcePath test seam for the
 // duration of the test, restoring it afterward.
-func withIsolatedConfigSource(t *testing.T, src string, srcErr error) {
+func withIsolatedConfigSource(t *testing.T, src string) {
 	t.Helper()
 	prev := isolatedConfigSourcePath
-	isolatedConfigSourcePath = func() (string, error) { return src, srcErr }
+	isolatedConfigSourcePath = func() (string, error) { return src, nil }
 	t.Cleanup(func() { isolatedConfigSourcePath = prev })
 }
 
@@ -41,7 +41,7 @@ func TestPrepareIsolatedClaudeConfigDir_CopiesSourceAndTrusts(t *testing.T) {
 		"operatorKey":      "keepme",
 	}
 	writeClaudeCfg(t, srcCfg, srcContent)
-	withIsolatedConfigSource(t, srcCfg, nil)
+	withIsolatedConfigSource(t, srcCfg)
 
 	dir, err := PrepareIsolatedClaudeConfigDir(wt)
 	if err != nil {
@@ -101,7 +101,7 @@ func TestPrepareIsolatedClaudeConfigDir_IsolatedNotShared(t *testing.T) {
 	srcDir := t.TempDir()
 	srcCfg := filepath.Join(srcDir, ".claude.json")
 	writeClaudeCfg(t, srcCfg, map[string]interface{}{"firstStartTime": "2026-01-01T00:00:00.000Z"})
-	withIsolatedConfigSource(t, srcCfg, nil)
+	withIsolatedConfigSource(t, srcCfg)
 
 	dir, err := PrepareIsolatedClaudeConfigDir(wt)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestPrepareIsolatedClaudeConfigDir_MissingSourceFallback(t *testing.T) {
 
 	// Source path points at a non-existent file.
 	missing := filepath.Join(t.TempDir(), "does-not-exist", ".claude.json")
-	withIsolatedConfigSource(t, missing, nil)
+	withIsolatedConfigSource(t, missing)
 
 	dir, err := PrepareIsolatedClaudeConfigDir(wt)
 	if err != nil {
@@ -142,7 +142,10 @@ func TestPrepareIsolatedClaudeConfigDir_MissingSourceFallback(t *testing.T) {
 	if r, rerr := filepath.EvalSymlinks(wt); rerr == nil {
 		resolved = r
 	}
-	projects, _ := got["projects"].(map[string]interface{})
+	projects, ok := got["projects"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("projects map absent from fallback config: %v", got)
+	}
 	entry, ok := projects[resolved].(map[string]interface{})
 	if !ok || entry["hasTrustDialogAccepted"] != true {
 		t.Errorf("fallback config not trusted for %q: %v", resolved, got["projects"])
@@ -156,7 +159,7 @@ func TestPrepareIsolatedClaudeConfigDir_DirPermissions(t *testing.T) {
 	srcDir := t.TempDir()
 	srcCfg := filepath.Join(srcDir, ".claude.json")
 	writeClaudeCfg(t, srcCfg, map[string]interface{}{"firstStartTime": "2026-01-01T00:00:00.000Z"})
-	withIsolatedConfigSource(t, srcCfg, nil)
+	withIsolatedConfigSource(t, srcCfg)
 
 	dir, err := PrepareIsolatedClaudeConfigDir(wt)
 	if err != nil {
@@ -171,7 +174,10 @@ func TestPrepareIsolatedClaudeConfigDir_DirPermissions(t *testing.T) {
 	}
 
 	// Sanity: the seeded config parses as JSON.
-	data, _ := os.ReadFile(filepath.Join(dir, ".claude.json"))
+	data, err := os.ReadFile(filepath.Join(dir, ".claude.json")) //nolint:gosec // G304: test-controlled path under a temp worktree
+	if err != nil {
+		t.Fatalf("read isolated config: %v", err)
+	}
 	var cfg map[string]interface{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Errorf("isolated config is not valid JSON: %v\n%s", err, data)

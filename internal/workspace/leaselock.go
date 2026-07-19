@@ -103,7 +103,7 @@ func WriteLeaseLockAtomic(target string, lock *core.LeaseLockFile) error {
 		}
 		return fmt.Errorf("workspace: WriteLeaseLockAtomic: Link %q → %q: %w", tmpPath, target, err)
 	}
-	_ = os.Remove(tmpPath)
+	_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup of the temp file now that the link holds the lease
 
 	// Step 4: parent-dir fsync to durably record the new link.
 	// Best-effort on macOS/APFS per spec; sync error is intentionally suppressed.

@@ -206,8 +206,8 @@ func captureDegradeLogger(dir string) func(error) {
 // Spawned event that kicks the handshake.
 func (s *codexSession) start(_ context.Context) {
 	go s.reapLoop()
-	go s.readLoop()
-	go s.runLoop() //nolint:contextcheck // the loop is session-lifetime-owned (ends on wire close), deliberately not spawn-ctx-scoped
+	go s.readLoop() //nolint:contextcheck // readLoop→handleFrame→handleServerRequest is session-lifetime-owned (ends on wire close), deliberately not spawn-ctx-scoped
+	go s.runLoop()  //nolint:contextcheck // the loop is session-lifetime-owned (ends on wire close), deliberately not spawn-ctx-scoped
 	s.sendEvent(codexinput.Event{Type: codexinput.EventTypeSpawned})
 }
 
@@ -588,7 +588,7 @@ func (se *sessionEffector) Execute(_ context.Context, a codexinput.Action) error
 	case codexinput.ActionTypeWriteInput:
 		s.writeTurnStart(a.InputSeq)
 	case codexinput.ActionTypeCloseInput:
-		s.closeInputAction()
+		s.closeInputAction() //nolint:contextcheck // the effector deliberately ignores its ctx (Execute takes _ context.Context); close is reactor-owned lifecycle, not caller-ctx-scoped
 	case codexinput.ActionTypeInterrupt:
 		// A graceful mid-turn interrupt: the reactor pairs this with the
 		// CloseInput that follows in the same Step batch. Mark the close to be
@@ -966,33 +966,7 @@ func (s *codexSession) handleResponse(f codexwire.Frame) {
 		}
 
 	case pendingThreadStart:
-		// The resume and fresh-start paths share this correlation (identical
-		// {thread:{id}} response shape); only the diagnostic label differs so a
-		// reconnect failure is not misreported as a thread/start failure.
-		method := "thread/start"
-		if s.resumeThreadID != "" {
-			method = "thread/resume"
-		}
-		if len(f.Error) > 0 {
-			s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: method + " error: " + string(f.Error)})
-			return
-		}
-		var res struct {
-			Thread struct {
-				ID string `json:"id"`
-			} `json:"thread"`
-		}
-		if err := json.Unmarshal(f.RawResult, &res); err != nil || res.Thread.ID == "" {
-			s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: method + ": missing thread id"})
-			return
-		}
-		s.mu.Lock()
-		s.threadID = res.Thread.ID
-		s.mu.Unlock()
-		// Handshake complete: the reactor's HandshakeOK step moves it to Ready,
-		// which runLoop publishes — that is what unblocks awaitReady (no separate
-		// ready channel needed).
-		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeHandshakeOK})
+		s.handleThreadStartResponse(f)
 
 	case pendingTurnStart:
 		if len(f.Error) > 0 {
@@ -1019,6 +993,37 @@ func (s *codexSession) handleResponse(f codexwire.Frame) {
 	case pendingInterrupt:
 		// Best-effort graceful interrupt; nothing to resolve.
 	}
+}
+
+// handleThreadStartResponse completes the handshake for a thread/start or
+// thread/resume response (identical {thread:{id}} shape; only the diagnostic
+// label differs so a reconnect failure is not misreported as a thread/start
+// failure).
+func (s *codexSession) handleThreadStartResponse(f codexwire.Frame) {
+	method := "thread/start"
+	if s.resumeThreadID != "" {
+		method = "thread/resume"
+	}
+	if len(f.Error) > 0 {
+		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: method + " error: " + string(f.Error)})
+		return
+	}
+	var res struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(f.RawResult, &res); err != nil || res.Thread.ID == "" {
+		s.sendEvent(codexinput.Event{Type: codexinput.EventTypeError, Reason: method + ": missing thread id"})
+		return
+	}
+	s.mu.Lock()
+	s.threadID = res.Thread.ID
+	s.mu.Unlock()
+	// Handshake complete: the reactor's HandshakeOK step moves it to Ready,
+	// which runLoop publishes — that is what unblocks awaitReady (no separate
+	// ready channel needed).
+	s.sendEvent(codexinput.Event{Type: codexinput.EventTypeHandshakeOK})
 }
 
 func (s *codexSession) handleNotification(f codexwire.Frame) {

@@ -8,6 +8,7 @@ package codexdriver
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -35,7 +36,7 @@ func TestResidentResumesAcrossChildDeath(t *testing.T) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = r.Close(ctx)
+		_ = r.Close(ctx) //nolint:errcheck // test teardown; best-effort
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -98,7 +99,7 @@ func TestResidentEnqueueDeliversThroughQueue(t *testing.T) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = r.Close(ctx)
+		_ = r.Close(ctx) //nolint:errcheck // test teardown; best-effort
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -128,7 +129,7 @@ func TestSuperviseProactivelyRevivesIdleChild(t *testing.T) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = r.Close(ctx)
+		_ = r.Close(ctx) //nolint:errcheck // test teardown; best-effort
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
@@ -189,7 +190,7 @@ func TestResidentEnqueueAfterCloseRejected(t *testing.T) {
 	if err := r.Close(ctx); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if _, err := r.Enqueue(ctx, handler.InputRequest{Payload: []byte("late")}); err != ErrResidentClosed {
+	if _, err := r.Enqueue(ctx, handler.InputRequest{Payload: []byte("late")}); !errors.Is(err, ErrResidentClosed) {
 		t.Fatalf("Enqueue after Close err = %v, want ErrResidentClosed", err)
 	}
 }

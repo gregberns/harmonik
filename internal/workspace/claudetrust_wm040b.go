@@ -389,6 +389,7 @@ func themeSetAt(cfgPath string) (bool, error) {
 		// A malformed config is not the theme-probe's concern to fix; report
 		// not-set so the (locked) trust/theme write path is the single place that
 		// fail-rather-than-corrupts on a truly malformed file.
+		//nolint:nilerr // intentional: a malformed config reports not-set (proceed to seed); the locked write path is the single fail-rather-than-corrupt place
 		return false, nil
 	}
 	s, ok := cfg["theme"].(string)

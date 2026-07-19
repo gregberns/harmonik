@@ -16,7 +16,7 @@ import (
 func h1GitOut(t *testing.T, repo string, args ...string) string {
 	t.Helper()
 	full := append([]string{"-C", repo}, args...)
-	out, err := exec.Command("git", full...).Output()
+	out, err := exec.CommandContext(t.Context(), "git", full...).Output() //nolint:gosec // G204: test-controlled git args
 	if err != nil {
 		t.Fatalf("git %v: %v", args, err)
 	}
@@ -64,7 +64,7 @@ func TestH1_GitignoreCommit_LandsOnDedicatedBranch(t *testing.T) {
 	// The required entries MUST still be present in the operator's working tree
 	// (an uncommitted change) so daemon control-plane state stays ignored even
 	// though the commit lives only on the dedicated branch (hk-3edb1).
-	data, err := os.ReadFile(filepath.Join(repo, ".gitignore"))
+	data, err := os.ReadFile(filepath.Join(repo, ".gitignore")) //nolint:gosec // G304: test-controlled path
 	if err != nil {
 		t.Fatalf("read .gitignore after hygiene: %v", err)
 	}

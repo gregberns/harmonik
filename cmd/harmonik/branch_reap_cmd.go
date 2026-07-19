@@ -60,7 +60,7 @@ func runBranchReapSubcommand(args []string, stdout, stderr io.Writer) int {
 		default:
 			// Fail closed: a mistyped flag (e.g. --dryrun) must not turn a
 			// dry run into a live `git branch -D` pass.
-			fmt.Fprintf(stderr, "harmonik gc branches: unknown argument %q\n\n%s", args[i], branchReapUsage)
+			fmt.Fprintf(stderr, "harmonik gc branches: unknown argument %q\n\n%s", args[i], branchReapUsage) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 			return 1
 		}
 	}

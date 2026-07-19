@@ -325,7 +325,7 @@ func checkoutGitignoreBranch(ctx context.Context, repoRoot string) error {
 	} else {
 		args = append(args, "-b", GitignoreBranchName)
 	}
-	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil { //nolint:gosec // G204: git args are internally constructed, not user-tainted
 		return fmt.Errorf("git checkout %s: %w\noutput: %s", GitignoreBranchName, err, out)
 	}
 	return nil

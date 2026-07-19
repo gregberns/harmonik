@@ -609,13 +609,13 @@ func runHarnessWithSigs(args []string, stdout, stderr io.Writer, sigCh <-chan os
 	if leakErr != nil {
 		// Sensor-internal failure is a harness hygiene signal, not a scenario
 		// verdict change; surface it but do not crash the suite emission.
-		fmt.Fprintf(stderr, "harness: post-suite leak sensor: %v\n", leakErr)
+		fmt.Fprintf(stderr, "harness: post-suite leak sensor: %v\n", leakErr) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 	} else if leakReport.HasLeaks() {
 		suiteVerdict = scenario.SuiteVerdictFail
-		fmt.Fprintf(stderr, "harness: SH-INV-002 post-suite leak(s) detected (%d) — suite fails:\n",
+		fmt.Fprintf(stderr, "harness: SH-INV-002 post-suite leak(s) detected (%d) — suite fails:\n", //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 			len(leakReport.Leaks))
 		for _, lk := range leakReport.Leaks {
-			fmt.Fprintf(stderr, "  - %s: %s\n", lk.Kind, lk.Detail)
+			fmt.Fprintf(stderr, "  - %s: %s\n", lk.Kind, lk.Detail) //nolint:errcheck // diagnostic write to stderr/stdout; failure is non-actionable
 		}
 	}
 

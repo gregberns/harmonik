@@ -32,10 +32,10 @@ func TestH2_DiscoverWorktrees_CorruptLock_Unreadable(t *testing.T) {
 
 	// Write a truncated / non-JSON lease.lock (corrupt).
 	leaseLockPath := LeaseLockPath(worktreePath)
-	if err := os.MkdirAll(filepath.Dir(leaseLockPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(leaseLockPath), 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	if err := os.WriteFile(leaseLockPath, []byte(`{"run_id":"trunc`), 0o644); err != nil {
+	if err := os.WriteFile(leaseLockPath, []byte(`{"run_id":"trunc`), 0o600); err != nil {
 		t.Fatalf("write corrupt lock: %v", err)
 	}
 
@@ -72,10 +72,10 @@ func TestH2_SweepStaleLeaseLocks_CorruptLock_NotNoLock(t *testing.T) {
 	}
 	worktreePath := WorktreePath(repo, runID, NoWorktreeRootOverride())
 	leaseLockPath := LeaseLockPath(worktreePath)
-	if err := os.MkdirAll(filepath.Dir(leaseLockPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(leaseLockPath), 0o750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	if err := os.WriteFile(leaseLockPath, []byte("not json at all"), 0o644); err != nil {
+	if err := os.WriteFile(leaseLockPath, []byte("not json at all"), 0o600); err != nil {
 		t.Fatalf("write corrupt lock: %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestH2b_RemoveAgedNoLockWorktrees_InPlaceEditProtects(t *testing.T) {
 	// top-dir mtime (writing to an existing file does not change the parent dir
 	// mtime). README exists from tempRepo's initial commit.
 	editPath := filepath.Join(worktreePath, "README")
-	if err := os.WriteFile(editPath, []byte("edited in place\n"), 0o644); err != nil {
+	if err := os.WriteFile(editPath, []byte("edited in place\n"), 0o600); err != nil {
 		t.Fatalf("in-place edit: %v", err)
 	}
 

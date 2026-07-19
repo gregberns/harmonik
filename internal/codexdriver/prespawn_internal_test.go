@@ -32,10 +32,10 @@ func TestPreSpawnHookRunsBeforeChild(t *testing.T) {
 		t.Fatalf("spawn: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = sess.Kill(context.Background())
+		_ = sess.Kill(context.Background()) //nolint:errcheck // test teardown; best-effort
 		waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = sess.Wait(waitCtx)
+		_ = sess.Wait(waitCtx) //nolint:errcheck // test teardown; best-effort
 	})
 	if ran != 1 {
 		t.Fatalf("PreSpawn ran %d times, want exactly 1 (before the child)", ran)
@@ -67,7 +67,7 @@ func TestPreSpawnFailClosedAbortsSpawn(t *testing.T) {
 		Env:        append(os.Environ(), "CODEXDRIVER_TWIN=1", "CODEXDRIVER_TWIN_MODE=happy"),
 	}, "")
 	if err == nil {
-		_ = sess.Kill(context.Background())
+		_ = sess.Kill(context.Background()) //nolint:errcheck // test teardown; best-effort
 		t.Fatal("spawn succeeded despite a failing PreSpawn guard — not fail-closed")
 	}
 	if !errors.Is(err, guardErr) {

@@ -201,11 +201,11 @@ func resetSquashProbe(workDir string) error {
 	gitDirCmd.Dir = workDir
 	if out, err := gitDirCmd.Output(); err == nil {
 		gitDir := string(out)
-		for len(gitDir) > 0 && (gitDir[len(gitDir)-1] == '\n' || gitDir[len(gitDir)-1] == '\r') {
+		for gitDir != "" && (gitDir[len(gitDir)-1] == '\n' || gitDir[len(gitDir)-1] == '\r') {
 			gitDir = gitDir[:len(gitDir)-1]
 		}
-		_ = os.Remove(filepath.Join(gitDir, "SQUASH_MSG"))
-		_ = os.Remove(filepath.Join(gitDir, "MERGE_MSG"))
+		_ = os.Remove(filepath.Join(gitDir, "SQUASH_MSG")) //nolint:errcheck // best-effort scratch-file cleanup; absence is fine
+		_ = os.Remove(filepath.Join(gitDir, "MERGE_MSG"))  //nolint:errcheck // best-effort scratch-file cleanup; absence is fine
 	}
 	return nil
 }

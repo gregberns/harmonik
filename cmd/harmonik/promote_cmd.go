@@ -310,10 +310,10 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 		rmCmd := exec.Command("git", "worktree", "remove", "--force", tmpDir) //nolint:gosec
 		rmCmd.Dir = projectDir
 		if rmErr := rmCmd.Run(); rmErr != nil {
-			_ = os.RemoveAll(tmpDir)
-			pruneCmd := exec.Command("git", "worktree", "prune")
+			_ = os.RemoveAll(tmpDir) //nolint:errcheck // best-effort cleanup of a temp worktree dir; nothing to recover on failure
+			pruneCmd := exec.CommandContext(ctx, "git", "worktree", "prune")
 			pruneCmd.Dir = projectDir
-			_ = pruneCmd.Run()
+			_ = pruneCmd.Run() //nolint:errcheck // best-effort stale-registration prune; nothing to recover on failure
 		}
 	}()
 

@@ -83,6 +83,12 @@ type CrewStartRequest struct {
 	// default "crew" via Record.EffectiveType(). Stamping it durably lets the
 	// SD-3 reaper honour the manifest lifecycle.persistent flag (hk-dy5gw).
 	Type string `json:"type,omitempty"`
+	// Harness is the CLI --harness override, or "" when the flag was absent.
+	// Highest-precedence tier of the crew-scoped harness resolver (hk-l63b9):
+	// flag > mission harness: front-matter > per-crew config > default "claude".
+	// This is a SEPARATE resolution chain from the worker per-bead resolveHarness
+	// (harnessresolve.go) — a crew has no bead to carry a harness:<type> label.
+	Harness string `json:"harness,omitempty"`
 }
 
 // CrewStopRequest is the wire payload for a "crew-stop" socket op.
@@ -139,6 +145,11 @@ type crewHandlerImpl struct {
 	eventBus     crewKeeperEventBus                  // for emitting session_keeper_watcher_dead; may be nil
 	commsBus     crewKeeperCommsBus                  // for keeper-alert comms to operator; may be nil
 	liveKeeperFn func(projectDir, agent string) bool // injectable for testing; nil = keeper.LiveKeeperPresent
+
+	// crews holds the per-crew-name config read from .harmonik/config.yaml's
+	// crews: block (hk-l63b9). Nil/absent = no per-crew config; the harness
+	// resolver's third tier falls through to the default "claude".
+	crews map[string]CrewConfig
 }
 
 // CrewHandlerOpt is a functional option for NewCrewHandler.
@@ -160,6 +171,26 @@ func WithKeeperProbe(keeperCfg KeeperConfig, eventBus crewKeeperEventBus, commsB
 		h.eventBus = eventBus
 		h.commsBus = commsBus
 	}
+}
+
+// WithCrewsConfig configures the per-crew-name config read from
+// .harmonik/config.yaml's crews: block (hk-l63b9) — the third tier of the
+// crew-scoped harness resolver (flag > mission front-matter > per-crew config >
+// default "claude"). Omitting this option leaves the tier empty.
+func WithCrewsConfig(crews map[string]CrewConfig) CrewHandlerOpt {
+	return func(h *crewHandlerImpl) {
+		h.crews = crews
+	}
+}
+
+// crewConfigHarness looks up the configured harness for a crew name in the
+// crews: config tier, returning "" when absent (no per-crew config, or the
+// crew has no harness: entry).
+func (h *crewHandlerImpl) crewConfigHarness(name string) string {
+	if h.crews == nil {
+		return ""
+	}
+	return h.crews[name].Harness
 }
 
 // NewCrewHandler constructs a CrewHandler implementation.
@@ -265,6 +296,11 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	// (specs/crew-handoff-schema.md §3). Best-effort: a missing/unreadable mission
 	// or absent field yields "" and the crew inherits the compiled default model.
 	model := readMissionModel(req.MissionPath)
+	// Crew-scoped harness resolution (hk-l63b9): flag > mission harness:
+	// front-matter > per-crew config > default "claude". This is a SEPARATE
+	// resolver from the worker per-bead resolveHarness (harnessresolve.go) — a
+	// crew has no bead to carry a harness:<type> label.
+	harness := resolveCrewHarness(req.Harness, readMissionHarness(req.MissionPath), h.crewConfigHarness(req.Name))
 	lspec, buildErr := buildCrewLaunchSpec(crewLaunchCtx{
 		claudeBinary: h.claudeBinary,
 		name:         req.Name,
@@ -273,6 +309,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		projectDir:   h.projectDir,
 		resume:       isResume,
 		model:        model,
+		harness:      harness,
 	})
 	if buildErr != nil {
 		_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
@@ -583,44 +620,61 @@ func createCrewManagedMarker(projectDir, name string) error {
 }
 
 // missionFrontMatter is the subset of the mission-handoff YAML front-matter the
-// daemon reads at launch time. Only model: matters here; all other fields are
-// the crew's concern (it re-derives them on /session-resume). yaml.v3 silently
-// ignores the unmodelled keys (schema_version, crew_name, queue, …).
+// daemon reads at launch time. model: and harness: are the only fields modelled
+// here; all other fields are the crew's concern (it re-derives them on
+// /session-resume). yaml.v3 silently ignores the unmodelled keys (schema_version,
+// crew_name, queue, …).
 //
 // Spec ref: specs/crew-handoff-schema.md §3 (model: optional, opus|sonnet|haiku).
+// harness: is the crew-scoped harness resolver's mid-precedence tier (hk-l63b9).
 type missionFrontMatter struct {
-	Model string `yaml:"model"`
+	Model   string `yaml:"model"`
+	Harness string `yaml:"harness"`
 }
 
-// readMissionModel reads the optional model: field from a mission handoff's YAML
-// front-matter (the leading `---`-delimited block per crew-handoff-schema.md §3).
+// readMissionFrontMatter reads and parses a mission handoff's YAML front-matter
+// block (the leading `---`-delimited block per crew-handoff-schema.md §3).
 //
-// Best-effort by design: an empty path, a missing/unreadable file, a mission
-// without a front-matter block, or an absent model: field all return "". The
-// caller passes that to buildCrewLaunchSpec, which then injects no --model flag
-// and the crew inherits the compiled default model. A malformed front-matter
-// block likewise degrades to "" rather than failing the crew-start op — the
-// model: field is an optimisation, not a correctness contract.
-func readMissionModel(missionPath string) string {
+// Best-effort by design: an empty path, a missing/unreadable file, or a mission
+// without a front-matter block all return the zero missionFrontMatter. A
+// malformed front-matter block likewise degrades to the zero value rather than
+// failing the crew-start op — front-matter fields are optimisations, not a
+// correctness contract.
+func readMissionFrontMatter(missionPath string) missionFrontMatter {
 	if missionPath == "" {
-		return ""
+		return missionFrontMatter{}
 	}
 	//nolint:gosec // G304: missionPath is an operator/captain-supplied handoff path
 	data, err := os.ReadFile(missionPath)
 	if err != nil {
-		return ""
+		return missionFrontMatter{}
 	}
 
 	block := frontMatterBlock(string(data))
 	if block == "" {
-		return ""
+		return missionFrontMatter{}
 	}
 
 	var fm missionFrontMatter
 	if err := yaml.Unmarshal([]byte(block), &fm); err != nil {
-		return ""
+		return missionFrontMatter{}
 	}
-	return fm.Model
+	return fm
+}
+
+// readMissionModel reads the optional model: field from a mission handoff's YAML
+// front-matter. The caller passes the result to buildCrewLaunchSpec, which then
+// injects no --model flag on "" and the crew inherits the compiled default model.
+func readMissionModel(missionPath string) string {
+	return readMissionFrontMatter(missionPath).Model
+}
+
+// readMissionHarness reads the optional harness: field from a mission handoff's
+// YAML front-matter — the mid-precedence tier of the crew-scoped harness
+// resolver (hk-l63b9): flag > mission harness: front-matter > per-crew config >
+// default "claude".
+func readMissionHarness(missionPath string) string {
+	return readMissionFrontMatter(missionPath).Harness
 }
 
 // frontMatterBlock extracts the YAML body between the leading `---` fence and the

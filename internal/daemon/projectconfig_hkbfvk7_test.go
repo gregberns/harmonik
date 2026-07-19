@@ -134,6 +134,35 @@ agents:
 	}
 }
 
+// TestProjectConfig_CrewsBlock covers the crews: block (hk-l63b9) — the
+// per-crew-name harness config tier the crew-scoped harness resolver reads.
+func TestProjectConfig_CrewsBlock(t *testing.T) {
+	t.Parallel()
+
+	root := projCfgFixtureDir(t, `
+schema_version: 1
+crews:
+  piter:
+    harness: codex
+  alpha:
+    harness: ""
+`)
+	cfg, err := daemon.ExportedLoadProjectConfig(root)
+	if err != nil {
+		t.Fatalf("LoadProjectConfig: unexpected error: %v", err)
+	}
+
+	if got := cfg.Crews["piter"].Harness; got != "codex" {
+		t.Errorf("Crews[piter].Harness = %q; want %q", got, "codex")
+	}
+	if got := cfg.Crews["alpha"].Harness; got != "" {
+		t.Errorf("Crews[alpha].Harness = %q; want empty", got)
+	}
+	if _, ok := cfg.Crews["nonexistent"]; ok {
+		t.Errorf("Crews[nonexistent] should be absent")
+	}
+}
+
 func TestProjectConfig_FileAbsent(t *testing.T) {
 	t.Parallel()
 

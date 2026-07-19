@@ -65,7 +65,6 @@ func TestBuildCrewLaunchSpec_ModelInjection(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		c := c
 		t.Run(c.label, func(t *testing.T) {
 			t.Parallel()
 			rc := daemon.ExportedCrewLaunchCtx{
@@ -139,7 +138,6 @@ captain_name: captain
 	}
 
 	for _, c := range cases {
-		c := c
 		t.Run(c.label, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
@@ -331,7 +329,6 @@ func TestBuildCrewLaunchSpec_ValidationErrors(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		c := c
 		t.Run(c.label, func(t *testing.T) {
 			t.Parallel()
 			_, err := daemon.ExportedBuildCrewLaunchSpec(c.rc)
@@ -435,7 +432,6 @@ func TestJoinRemoteControlName(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		c := c
 		t.Run(c.label, func(t *testing.T) {
 			t.Parallel()
 			if got := daemon.JoinRemoteControlName(c.prefix, c.name); got != c.want {
@@ -529,4 +525,160 @@ func TestBuildCrewLaunchSpec_RcPrefix(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestResolveCrewHarness_Precedence covers the crew-scoped harness resolver
+// precedence walk (hk-l63b9): flag > mission front-matter > per-crew config >
+// default "claude". This is a SEPARATE resolver from the worker per-bead
+// resolveHarness (harnessresolve.go) — a crew has no bead.
+func TestResolveCrewHarness_Precedence(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		label   string
+		flag    string
+		mission string
+		config  string
+		want    string
+	}{
+		{label: "all_absent_defaults_claude", flag: "", mission: "", config: "", want: "claude"},
+		{label: "config_only", flag: "", mission: "", config: "codex", want: "codex"},
+		{label: "mission_beats_config", flag: "", mission: "pi", config: "codex", want: "pi"},
+		{label: "flag_beats_mission_and_config", flag: "codex", mission: "pi", config: "pi", want: "codex"},
+		{label: "flag_only", flag: "codex", mission: "", config: "", want: "codex"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.label, func(t *testing.T) {
+			t.Parallel()
+			got := daemon.ExportedResolveCrewHarness(c.flag, c.mission, c.config)
+			if got != c.want {
+				t.Errorf("resolveCrewHarness(%q, %q, %q) = %q; want %q",
+					c.flag, c.mission, c.config, got, c.want)
+			}
+		})
+	}
+}
+
+// TestReadMissionHarness verifies the mission front-matter harness: parse
+// (hk-l63b9): a present harness: field is returned; absence, a missing file,
+// an empty path, or no front-matter block all degrade to "".
+func TestReadMissionHarness(t *testing.T) {
+	t.Parallel()
+
+	const withHarness = `---
+schema_version: 1
+crew_name: alpha
+queue: alpha-q
+epic_id: hk-tigaf
+goal: "Ship named-queues"
+captain_name: captain
+harness: codex
+---
+
+# Mission: Ship named-queues
+body text here
+`
+	const withoutHarness = `---
+schema_version: 1
+crew_name: beta
+queue: beta-q
+epic_id: hk-xyz
+goal: "drain a lane"
+captain_name: captain
+---
+
+# Mission
+`
+	const noFrontMatter = "# Mission\n\njust prose, no front-matter\n"
+
+	cases := []struct {
+		label   string
+		content string
+		want    string
+	}{
+		{label: "present", content: withHarness, want: "codex"},
+		{label: "absent", content: withoutHarness, want: ""},
+		{label: "no_frontmatter", content: noFrontMatter, want: ""},
+	}
+
+	for _, c := range cases {
+		t.Run(c.label, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			p := filepath.Join(dir, "mission.md")
+			if err := os.WriteFile(p, []byte(c.content), 0o600); err != nil {
+				t.Fatalf("write mission: %v", err)
+			}
+			if got := daemon.ExportedReadMissionHarness(p); got != c.want {
+				t.Errorf("readMissionHarness(%s) = %q; want %q", c.label, got, c.want)
+			}
+		})
+	}
+
+	if got := daemon.ExportedReadMissionHarness(""); got != "" {
+		t.Errorf("readMissionHarness(\"\") = %q; want \"\"", got)
+	}
+	if got := daemon.ExportedReadMissionHarness(filepath.Join(t.TempDir(), "nope.md")); got != "" {
+		t.Errorf("readMissionHarness(missing) = %q; want \"\"", got)
+	}
+}
+
+// TestBuildCrewLaunchSpec_HarnessBranch covers the hk-l63b9 spec-builder branch:
+// "" and "claude" both build today's Claude spec unchanged (regression
+// coverage on the existing Claude path); any other harness is rejected with an
+// explicit "not yet supported" error, never a silent Claude fallback.
+func TestBuildCrewLaunchSpec_HarnessBranch(t *testing.T) {
+	t.Parallel()
+
+	baseRC := daemon.ExportedCrewLaunchCtx{
+		ClaudeBinary: "claude",
+		Name:         "alpha",
+		SessionID:    "01930000-0000-7000-8000-000000000099",
+		ProjectDir:   "/tmp/test-project",
+	}
+
+	t.Run("empty_harness_builds_claude_spec", func(t *testing.T) {
+		t.Parallel()
+		rc := baseRC
+		rc.Harness = ""
+		spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if spec.Binary != "claude" {
+			t.Errorf("Binary = %q; want claude", spec.Binary)
+		}
+	})
+
+	t.Run("explicit_claude_builds_claude_spec", func(t *testing.T) {
+		t.Parallel()
+		rc := baseRC
+		rc.Harness = "claude"
+		spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if spec.Binary != "claude" {
+			t.Errorf("Binary = %q; want claude", spec.Binary)
+		}
+	})
+
+	for _, unsupported := range []string{"codex", "pi", "bogus"} {
+		t.Run("unsupported_"+unsupported, func(t *testing.T) {
+			t.Parallel()
+			rc := baseRC
+			rc.Harness = unsupported
+			_, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+			if err == nil {
+				t.Fatalf("expected error for harness %q, got nil", unsupported)
+			}
+			if !strings.Contains(err.Error(), unsupported) {
+				t.Errorf("error %q does not name the unsupported harness %q", err.Error(), unsupported)
+			}
+			if !strings.Contains(err.Error(), "not yet supported") {
+				t.Errorf("error %q does not read as an explicit not-yet-supported rejection", err.Error())
+			}
+		})
+	}
 }

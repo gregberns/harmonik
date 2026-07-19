@@ -1162,6 +1162,25 @@ type rawProjectConfig struct {
 	Harnesses     rawHarnessesConfig        `yaml:"harnesses"`      // hk-v7q5u: per-harness config (PI-050)
 	Sandbox       rawSandboxConfig          `yaml:"sandbox"`        // hk-6596l: sandbox backend config
 	StallSentinel rawStallSentinelConfig    `yaml:"stall_sentinel"` // hk-hm09z: stall-sentinel detection thresholds
+	Crews         map[string]rawCrewConfig  `yaml:"crews"`          // hk-l63b9: per-crew-name config (harness selection)
+}
+
+// rawCrewConfig is the per-crew-name block under crews: in config.yaml
+// (hk-l63b9). Keyed by crew name (matches CrewStartRequest.Name).
+type rawCrewConfig struct {
+	// Harness is the per-crew default harness selection (e.g. "codex"). The
+	// third-highest tier of the crew-scoped harness resolver — overridden by
+	// --harness and by the mission's harness: front-matter field.
+	Harness string `yaml:"harness"`
+}
+
+// CrewConfig holds the resolved per-crew-name config read from config.yaml's
+// crews: block (hk-l63b9).
+type CrewConfig struct {
+	// Harness is the per-crew default harness selection. Empty = not
+	// configured; the crew-scoped harness resolver falls through to the
+	// compiled default ("claude").
+	Harness string
 }
 
 // rawAgentConfig is the per-agent-type block inside the agents map.
@@ -1230,6 +1249,10 @@ type ProjectConfig struct {
 	// Zero value (all durations 0) when the block is absent. All required
 	// values are enforced at sentinel startup via ResolveStallSentinelConfig.
 	StallSentinel StallSentinelConfig
+
+	// Crews holds the per-crew-name config read from the crews: block, keyed by
+	// crew name. Nil/absent = no per-crew config for any crew. Bead: hk-l63b9.
+	Crews map[string]CrewConfig
 }
 
 // LookupAgent returns the (model, effort) pair configured for agentType, or
@@ -1290,13 +1313,20 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 	// a hand-maintained per-block field list that silently drifted (RU-06): a config
 	// with only watch.absent_thresh_s (and no schema_version) was wrongly treated as
 	// empty and discarded, booting the daemon on defaults with the tuning lost. The
-	// structural check cannot drift when a field is added to any block.
+	// structural check cannot drift when a field is added to any block — including
+	// the crews: block (hk-l63b9), which needs no bespoke absent-check here.
 	//
 	// A non-nil-but-empty agents map (`agents: {}`) is normalized to nil first so it
 	// still reads as absent, matching the prior len(raw.Agents)==0 semantics.
 	sentinel := raw
 	if len(sentinel.Agents) == 0 {
 		sentinel.Agents = nil
+	}
+	// hk-l63b9: normalize an empty-but-non-nil crews map (`crews: {}`) to nil for
+	// the same reason as agents above — so a versionless file carrying only an
+	// empty crews block still reads as absent, not ErrUnsupportedConfigVersion.
+	if len(sentinel.Crews) == 0 {
+		sentinel.Crews = nil
 	}
 	if reflect.DeepEqual(sentinel, rawProjectConfig{}) {
 		return ProjectConfig{}, nil
@@ -1387,6 +1417,12 @@ func parseProjectConfig(path string, data []byte) (ProjectConfig, error) {
 		cfg.entries[at] = agentConfigEntry{
 			model:  agentRaw.Model,
 			effort: agentRaw.Effort,
+		}
+	}
+	if len(raw.Crews) > 0 {
+		cfg.Crews = make(map[string]CrewConfig, len(raw.Crews))
+		for name, crewRaw := range raw.Crews {
+			cfg.Crews[name] = CrewConfig(crewRaw)
 		}
 	}
 

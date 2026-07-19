@@ -241,6 +241,9 @@ func (bs *bootState) buildCommsAndCrewHandlers() CommsSendHandler {
 	bs.crewHandler = NewCrewHandler(
 		cfg.HandlerBinary, cfg.ProjectDir, cfg.ProjectCfg.Daemon.RemoteControlPrefix, cfg.Substrate, bs.opPauseCtrl,
 		WithKeeperProbe(cfg.ProjectCfg.Keeper, bs.bus, crewCommsEmitter),
+		// hk-l63b9: third tier of the crew-scoped harness resolver (flag >
+		// mission front-matter > per-crew config > default "claude").
+		WithCrewsConfig(cfg.ProjectCfg.Crews),
 	)
 
 	// SD-3 (hk-s2eac): idle-completed-crew reaper. Started post-Seal in the work loop.

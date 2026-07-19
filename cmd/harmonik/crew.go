@@ -16,6 +16,11 @@ package main
 //	                    start this is the only source of the mission; the on-disk
 //	                    default (.harmonik/crew/missions/<name>.md) is never
 //	                    auto-read here (D3, hk-sn4n). Keeper-restart re-reads disk.
+//	--harness <type>    Crew orchestrator harness override (e.g. "codex"). OPTIONAL.
+//	                    Highest-precedence tier of the crew-scoped harness resolver
+//	                    (hk-l63b9); "claude" (today's only supported substrate) is
+//	                    the default when this and the mission harness: front-matter
+//	                    field are both absent.
 //	--socket PATH       Override socket path (default: <project>/.harmonik/daemon.sock).
 //	--project DIR       Project directory (default: cwd).
 //
@@ -96,6 +101,9 @@ type crewStartArgs struct {
 	// to the on-disk default mission (.harmonik/crew/missions/<name>.md) — see the
 	// mission-split rule below (D3).
 	MissionPath string
+	// Harness is the --harness override value, or "" when the flag was absent.
+	// Highest-precedence tier of the crew-scoped harness resolver (hk-l63b9).
+	Harness string
 	// SocketFlag / ProjectFlag are passed through to socket/project resolution.
 	SocketFlag  string
 	ProjectFlag string
@@ -159,6 +167,11 @@ func resolveCrewStartArgs(subArgs []string) (args crewStartArgs, help bool, usag
 			args.MissionPath = subArgs[i]
 		case strings.HasPrefix(arg, "--mission="):
 			args.MissionPath = strings.TrimPrefix(arg, "--mission=")
+		case arg == "--harness" && i+1 < len(subArgs):
+			i++
+			args.Harness = subArgs[i]
+		case strings.HasPrefix(arg, "--harness="):
+			args.Harness = strings.TrimPrefix(arg, "--harness=")
 		case arg == "--socket" && i+1 < len(subArgs):
 			i++
 			args.SocketFlag = subArgs[i]
@@ -323,6 +336,7 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 		"name":         name,
 		"queue":        args.Queue,
 		"mission_path": args.MissionPath,
+		"harness":      args.Harness,
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -664,7 +678,7 @@ func crewStartUsage() {
 	fmt.Print(`harmonik crew start — launch a persistent crew session
 
 USAGE
-  harmonik crew start <name> [--queue <q>] [--mission <handoff-path>] [--socket PATH] [--project DIR]
+  harmonik crew start <name> [--queue <q>] [--mission <handoff-path>] [--harness <type>] [--socket PATH] [--project DIR]
 
 Sends a crew-start op to the daemon. The daemon mints a session_id, writes the
 crew registry record at .harmonik/crew/<name>.json, ensures the named queue exists,
@@ -686,6 +700,12 @@ FLAGS
                     stale mission. With no --mission the crew starts WITHOUT a
                     mission (commission it later over comms). A keeper RESTART is
                     a separate path and DOES re-read the on-disk mission.
+  --harness <type>  Crew orchestrator harness override (e.g. "codex"). OPTIONAL.
+                    Highest-precedence tier of the crew-scoped harness resolver
+                    (flag > mission harness: front-matter > per-crew config >
+                    default "claude"). A harness whose substrate isn't wired
+                    yet is rejected with an explicit error — no silent
+                    fallback to claude.
   --socket PATH     Override socket path (default: <project>/.harmonik/daemon.sock).
   --project DIR     Project directory (default: cwd).
 
@@ -698,6 +718,7 @@ EXAMPLES
   harmonik crew start alpha                                  # queue defaults to alpha-q, no mission
   harmonik crew start alpha --mission /tmp/alpha-handoff.md  # queue defaults to alpha-q
   harmonik crew start beta  --queue beta-q  --mission /tmp/beta-handoff.md
+  harmonik crew start gamma --harness codex                  # crew harness override
 `)
 }
 

@@ -73,6 +73,38 @@ func TestResolveCrewStartArgs_QueueDefaulting(t *testing.T) {
 	}
 }
 
+// TestResolveCrewStartArgs_Harness covers the --harness / --harness= flag
+// parsing (hk-l63b9): absent stays "", both spellings set Harness.
+func TestResolveCrewStartArgs_Harness(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		argv        []string
+		wantHarness string
+	}{
+		{name: "absent", argv: []string{"alpha"}, wantHarness: ""},
+		{name: "space form", argv: []string{"alpha", "--harness", "codex"}, wantHarness: "codex"},
+		{name: "equals form", argv: []string{"alpha", "--harness=codex"}, wantHarness: "codex"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			args, help, usageErr := resolveCrewStartArgs(tc.argv)
+			if help {
+				t.Fatalf("unexpected help=true")
+			}
+			if usageErr != "" {
+				t.Fatalf("unexpected usage error: %s", usageErr)
+			}
+			if args.Harness != tc.wantHarness {
+				t.Errorf("Harness = %q; want %q", args.Harness, tc.wantHarness)
+			}
+		})
+	}
+}
+
 // TestResolveCrewStartArgs_MissionRule covers the D3 fresh-start mission rule:
 //   - --mission path → MissionPath is exactly that path.
 //   - no --mission → MissionPath is "" (NOT defaulted to anything).

@@ -2638,6 +2638,9 @@ type ExportedCrewLaunchCtx struct {
 	// Model is the optional per-crew model alias (hk-9j3z); empty injects no
 	// --model flag.
 	Model string
+	// Harness is the resolved crew-scoped harness selection (hk-l63b9); "" and
+	// "claude" both build today's Claude spec, any other value errors.
+	Harness string
 }
 
 // ExportedBuildCrewLaunchSpec exposes buildCrewLaunchSpec for tests in package
@@ -2653,6 +2656,7 @@ func ExportedBuildCrewLaunchSpec(rc ExportedCrewLaunchCtx) (handler.LaunchSpec, 
 		projectDir:   rc.ProjectDir,
 		resume:       rc.Resume,
 		model:        rc.Model,
+		harness:      rc.Harness,
 	})
 }
 
@@ -2660,6 +2664,18 @@ func ExportedBuildCrewLaunchSpec(rc ExportedCrewLaunchCtx) (handler.LaunchSpec, 
 // daemon_test (hk-9j3z): reads the optional model: front-matter field.
 func ExportedReadMissionModel(missionPath string) string {
 	return readMissionModel(missionPath)
+}
+
+// ExportedReadMissionHarness exposes readMissionHarness for tests in package
+// daemon_test (hk-l63b9): reads the optional harness: front-matter field.
+func ExportedReadMissionHarness(missionPath string) string {
+	return readMissionHarness(missionPath)
+}
+
+// ExportedResolveCrewHarness exposes resolveCrewHarness for tests in package
+// daemon_test (hk-l63b9): the crew-scoped harness resolver precedence walk.
+func ExportedResolveCrewHarness(flagHarness, missionHarness, configHarness string) string {
+	return resolveCrewHarness(flagHarness, missionHarness, configHarness)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

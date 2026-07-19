@@ -281,6 +281,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: "session_keeper_operator_attached", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-wjzf: captain-initiated restart-now blocked diagnostic (ON-059).
 	{TypeName: "session_keeper_restart_now_blocked", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// SK-030: successful agent-run restart-now, nonce carried for audit.
+	{TypeName: "session_keeper_restart_now", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.16 Keeper backstops + idle-restart (hk-34ac, hk-ee81) ─────────
 	// hk-34ac: session_keeper_blind — fired after 5min continuous foreign_session (latched per episode).

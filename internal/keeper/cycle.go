@@ -583,6 +583,36 @@ const nonceMarkerPrefix = "<!-- KEEPER:"
 // stayed shell-side and fire-aligned so ReadHandoff call counts match the
 // pre-rebuild code exactly (hk-vpnp / Bug 3b semantics unchanged).
 
+// CycleIDFromNonceMarker extracts the cycle_id from the FIRST keeper nonce
+// marker (<!-- KEEPER:<cycle_id> -->) in content, if present. It is the inverse
+// of nonceMarker and the provenance JOIN KEY (SK-031, T6): the same
+// cyc-<ts>-<seq> value the auto-cycle marker carries is what a leader-defer
+// message renders into `restart-now --nonce <cycle_id>` and what restart-now
+// echoes on its emitted session_keeper_restart_now event — so a query of
+// events.jsonl by this value joins the self-restart to its originating cycle.
+//
+// It surfaces the cycle_id as TEXT only (from the handoff marker), introducing
+// NO shared runtime state between the keeper process and the restart-now
+// process: the value travels solely through the marker → command string.
+// Returns ("", false) when no well-formed marker is present.
+func CycleIDFromNonceMarker(content string) (string, bool) {
+	i := strings.Index(content, nonceMarkerPrefix)
+	if i < 0 {
+		return "", false
+	}
+	tail := content[i+len(nonceMarkerPrefix):]
+	end := strings.Index(tail, "-->")
+	if end < 0 {
+		// Malformed marker (no close) — no recoverable cycle_id.
+		return "", false
+	}
+	id := strings.TrimSpace(tail[:end])
+	if id == "" {
+		return "", false
+	}
+	return id, true
+}
+
 // isOnlyNonce reports whether every keeper nonce marker in content equals
 // currentNonce (i.e. there is no foreign/stale nonce present).
 func isOnlyNonce(content, currentNonce string) bool {

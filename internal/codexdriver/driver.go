@@ -99,6 +99,17 @@ type Options struct {
 	// verbatim).
 	InCapture  io.Writer
 	OutCapture io.Writer
+	// PreSpawn, when non-nil, runs immediately before every (re)spawn of the
+	// app-server child — both the normal SpawnWindow launch and the resident
+	// owner's respawn. It is the injection seam for ungraceful-kill recovery
+	// (hk-160yb G4): the daemon composition root wires the codex stale-WAL guard
+	// (internal/daemon.cleanCodexStaleWAL) here so a child that was SIGKILLed /
+	// crashed does not fast-fail the NEXT launch on the stale state_*.sqlite-wal
+	// it left behind. codexdriver MUST NOT import internal/daemon (layering), so
+	// the guard is injected, never called directly. FAIL-CLOSED: a non-nil error
+	// aborts the spawn rather than launching onto a known-stale state — better a
+	// surfaced launch failure than a silent codex fast-fail.
+	PreSpawn func(context.Context) error
 }
 
 // codexSubstrate is the handler.Substrate implementation.
@@ -144,6 +155,15 @@ func (c *codexSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateSp
 // G2 wire method). resumeThreadID is otherwise the empty string and the path is
 // byte-for-byte the pre-G1 fresh-thread launch.
 func (c *codexSubstrate) spawn(ctx context.Context, in handler.SubstrateSpawn, resumeThreadID string) (handler.SubstrateSession, error) {
+	// Ungraceful-kill recovery seam (G4): clean any stale WAL a killed/crashed
+	// prior child left behind BEFORE launching. Fail-closed — never launch onto a
+	// known-stale state.
+	if c.opts.PreSpawn != nil {
+		if err := c.opts.PreSpawn(ctx); err != nil {
+			return nil, fmt.Errorf("codexdriver: pre-spawn guard: %w", err)
+		}
+	}
+
 	argv := in.Argv
 	if len(argv) == 0 {
 		if c.opts.Binary == "" {

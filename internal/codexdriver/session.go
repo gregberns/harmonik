@@ -780,8 +780,34 @@ func (s *codexSession) writeThreadStart(cwd string) {
 		JSONRPC: "2.0",
 		ID:      id,
 		Method:  "thread/start",
-		Params:  &codexwire.ThreadStartParams{CWD: cwd},
+		Params:  &codexwire.ThreadStartParams{CWD: cwd, Extra: s.postureExtra()},
 	})
+}
+
+// postureExtra returns the codex thread posture (sandbox + approvalPolicy) as an
+// Extra map to stamp on thread/start and thread/resume (hk-5h759). The codexwire
+// param types deliberately keep posture OUT of their typed surface — it is
+// carried verbatim through Extra (see ThreadResumeParams doc) — so the driver
+// sets it the same way. When neither Options.Sandbox nor Options.ApprovalPolicy
+// is set the map is nil, so the marshaled frame is byte-identical to the
+// no-posture form (NFR7: a driver built without the composition-root posture
+// leaves codex's own default policy untouched).
+func (s *codexSession) postureExtra() map[string]json.RawMessage {
+	extra := map[string]json.RawMessage{}
+	if s.opts.Sandbox != "" {
+		if b, err := json.Marshal(s.opts.Sandbox); err == nil {
+			extra["sandbox"] = b
+		}
+	}
+	if s.opts.ApprovalPolicy != "" {
+		if b, err := json.Marshal(s.opts.ApprovalPolicy); err == nil {
+			extra["approvalPolicy"] = b
+		}
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	return extra
 }
 
 // writeThreadResume re-attaches to an existing server-side thread after a child
@@ -796,7 +822,7 @@ func (s *codexSession) writeThreadResume(threadID string) {
 		JSONRPC: "2.0",
 		ID:      id,
 		Method:  "thread/resume",
-		Params:  &codexwire.ThreadResumeParams{ThreadID: threadID},
+		Params:  &codexwire.ThreadResumeParams{ThreadID: threadID, Extra: s.postureExtra()},
 	})
 }
 

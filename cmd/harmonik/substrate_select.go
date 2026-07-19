@@ -118,6 +118,16 @@ type codexWorkerRoutingRunner struct {
 // (with this path in the error) instead of running codex unsandboxed locally.
 const refusedIsolationBoundaryArgv0 = "/nonexistent/harmonik-REFUSED-codex-danger-full-access-requires-enabled-ssh-isolation-boundary-hk5h759"
 
+// codexHeadlessSandbox / codexHeadlessApprovalPolicy are the operator-bound
+// (hk-5h759) codex thread posture for headless crew orchestration: run codex
+// non-interactively with full workspace access so its writes and commits land.
+// This posture is safe ONLY inside the isolation boundary enforced by the
+// fail-closed guard (requireBoundary above / workloop codexRequireIsolationBoundary).
+const (
+	codexHeadlessSandbox        = "danger-full-access"
+	codexHeadlessApprovalPolicy = "never"
+)
+
 // setRegistry late-binds the live worker registry. Wired to
 // daemon.Config.WorkerRegistryObserver so the daemon hands over the SAME
 // *workers.Registry its tmux dispatch path uses. A nil registry (no worker
@@ -178,6 +188,17 @@ func codexSubstrateOptions(codexBinary string, runner codexdriver.CommandRunner)
 		Binary: codexBinary,
 		Runner: runner, // M4-C3: per-run worker-routing runner (SSHRunner remote / LocalRunner local)
 		Clock:  substrate.SystemClock{},
+		// hk-5h759: headless crew-orchestration posture. The driver auto-declines
+		// approval requests (no approval negotiation), so under codex's default
+		// policy exec/apply-patch prompts are declined and the crew's writes and
+		// commits never land. danger-full-access + never make codex run
+		// non-interactively so its work lands. This posture is SAFE ONLY inside
+		// the isolation boundary the fail-closed guard enforces — set here at the
+		// composition root alongside requireBoundary (selectSubstrate), never
+		// baked into the driver: a driver built without this leaves codex's
+		// default posture, so it can never silently run danger-full-access.
+		Sandbox:        codexHeadlessSandbox,
+		ApprovalPolicy: codexHeadlessApprovalPolicy,
 	}
 	sess := openCaptureSession()
 	if sess != nil {

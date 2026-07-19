@@ -110,6 +110,23 @@ type Options struct {
 	// aborts the spawn rather than launching onto a known-stale state — better a
 	// surfaced launch failure than a silent codex fast-fail.
 	PreSpawn func(context.Context) error
+
+	// Sandbox and ApprovalPolicy set the codex thread posture stamped on every
+	// thread/start and thread/resume handshake (hk-5h759). Headless crew
+	// orchestration needs a non-interactive posture — the driver auto-declines
+	// any approval request it receives (no approval negotiation; see
+	// session.go handleServerRequest), so under codex's default policy exec /
+	// apply-patch prompts are declined and the crew's writes and commits never
+	// land. The composition root sets Sandbox="danger-full-access" +
+	// ApprovalPolicy="never" so codex runs non-interactively and its work lands.
+	// That posture is safe ONLY inside a real isolation boundary — the daemon's
+	// fail-closed guard (cmd/harmonik/substrate_select.go requireBoundary +
+	// workloop codexRequireIsolationBoundary) refuses to launch a codex crew
+	// with no enabled ssh worker bound. Empty (the zero value) OMITS the field
+	// on the wire, leaving codex's own default posture — so a driver built
+	// WITHOUT the composition root never silently runs danger-full-access.
+	Sandbox        string
+	ApprovalPolicy string
 }
 
 // codexSubstrate is the handler.Substrate implementation.

@@ -37,6 +37,23 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// emitPostureMarker prints a stderr marker echoing the sandbox + approvalPolicy
+// the driver stamped on a thread/start or thread/resume request (hk-5h759). A
+// test asserts the headless posture (danger-full-access / never) reached the
+// wire; empty values prove the omit path (NFR7 default posture).
+func emitPostureMarker(tag string, params json.RawMessage) {
+	var p struct {
+		Sandbox        string `json:"sandbox"`
+		ApprovalPolicy string `json:"approvalPolicy"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		// Best-effort: on a decode failure p stays zero-valued and the marker
+		// reports empty posture — surface the error for debugging but still emit.
+		fmt.Fprintf(os.Stderr, "%s decode-error: %v\n", tag, err)
+	}
+	fmt.Fprintf(os.Stderr, "%s sandbox=%s approval=%s\n", tag, p.Sandbox, p.ApprovalPolicy)
+}
+
 // runTwin speaks the codex app-server NDJSON wire on stdio.
 //
 // Modes:
@@ -104,6 +121,10 @@ func runTwin(mode string) {
 		case "initialized":
 			// notification; no reply
 		case "thread/start":
+			// hk-5h759: echo the posture the driver stamped (sandbox +
+			// approvalPolicy) so a test can assert the headless posture reached the
+			// wire. Empty fields prove the omit path (NFR7 default posture).
+			emitPostureMarker("TWIN_POSTURE_START", env.Params)
 			emit(`{"id":%d,"result":{"thread":{"id":"th_1"},"model":"twin"}}`, *env.ID)
 			if mode == "dieafterhandshake" {
 				// Let the driver process the thread result → reach Ready and latch
@@ -123,7 +144,10 @@ func runTwin(mode string) {
 			var rp struct {
 				ThreadID string `json:"threadId"`
 			}
-			_ = json.Unmarshal(env.Params, &rp)
+			if err := json.Unmarshal(env.Params, &rp); err != nil {
+				fmt.Fprintf(os.Stderr, "twin thread/resume decode-error: %v\n", err)
+			}
+			emitPostureMarker("TWIN_POSTURE_RESUME", env.Params)
 			fmt.Fprintln(os.Stderr, "TWIN_RESUME_RECEIVED "+rp.ThreadID)
 			emit(`{"id":%d,"result":{"thread":{"id":%q},"model":"twin"}}`, *env.ID, rp.ThreadID)
 		case "turn/start":

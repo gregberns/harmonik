@@ -14,6 +14,7 @@ package keeper
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,6 +52,20 @@ func TestNonceProvenance_MarkerAndRestartNowEventShareJoinKey(t *testing.T) {
 	got, ok := CycleIDFromNonceMarker(content)
 	if !ok || got != cycleID {
 		t.Fatalf("CycleIDFromNonceMarker = (%q, %v); want (%q, true)", got, ok, cycleID)
+	}
+
+	// (1b) RENDER (T6): the K2 leader-defer nudge fills its restart-now --nonce
+	// slot from the marker's cycle_id — the rendered command carries that SAME
+	// value, so the marker and the rendered --nonce are one identical value.
+	cfg := &WatcherConfig{AgentName: agent}
+	body, rok := cfg.leaderDeferTextForHandoff(content)
+	if !rok {
+		t.Fatalf("leaderDeferTextForHandoff: want ok=true for a handoff carrying a KEEPER marker")
+	}
+	wantCmd := fmt.Sprintf(restartNowNonceCmdToken, agent, cycleID)
+	if !strings.Contains(body, wantCmd) {
+		t.Fatalf("rendered leader-defer body does not carry %q — the marker cycle_id was not "+
+			"rendered into the --nonce slot; body:\n%s", wantCmd, body)
 	}
 
 	// (2) RECORD: restart-now --nonce <the SAME cycle_id> emits a durable event
@@ -132,5 +147,15 @@ func TestCycleIDFromNonceMarker_Malformed(t *testing.T) {
 					tc.content, id, ok, tc.wantID, tc.wantOK)
 			}
 		})
+	}
+}
+
+// TestLeaderDeferTextForHandoff_NoMarker: a handoff with no cycle marker yields
+// no render (ok=false) — the caller must not ship a nudge with a bogus/empty
+// nonce.
+func TestLeaderDeferTextForHandoff_NoMarker(t *testing.T) {
+	cfg := &WatcherConfig{AgentName: "captain"}
+	if body, ok := cfg.leaderDeferTextForHandoff("# handoff with no keeper marker\n"); ok {
+		t.Errorf("leaderDeferTextForHandoff with no marker = (%q, true); want ok=false", body)
 	}
 }

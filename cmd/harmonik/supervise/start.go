@@ -118,7 +118,6 @@ func RunStart(args []string, stdout, stderr io.Writer) int {
 	// session-creation: any second `start` invocation will hit EWOULDBLOCK
 	// (exit 25) while the first start holds the fd. The shim acquires the lock
 	// (blocking) once start exits and releases it.
-	//nolint:gosec // G304: lockPath derived from operator-controlled projectDir
 	lockFd, err := os.OpenFile(LockPath(projectDir), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise start: open lock: %v\n", err)

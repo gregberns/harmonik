@@ -534,7 +534,6 @@ func smokeWatchSignals(
 // even if the agent omits the trailer.
 // Returns (true, short-sha) on success; (false, "") on failure.
 func smokeCheckCommitOnBranch(projectDir, branch, beadID string, stderr io.Writer) (bool, string) {
-	//nolint:gosec // G204: git args are validated values; projectDir is operator-controlled
 	cmd := exec.Command("git", "-C", projectDir,
 		"log", "--oneline", "--max-count=1",
 		"--fixed-strings", "--grep", beadID,

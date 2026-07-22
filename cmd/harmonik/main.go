@@ -1264,8 +1264,10 @@ EXAMPLES
 	// that must not receive implementer windows.
 	//
 	// We ask tmux for the current session via `display-message -p
-	// '#{session_name}'` (exec.Command, not OSAdapter, because no window handle
-	// exists yet). That returns whatever session the daemon was launched inside:
+	// '#{session_name}'` (a direct exec, not OSAdapter, because no window handle
+	// exists yet; it runs on the signal ctx so a SIGINT during boot cancels it
+	// like every other tmux call here). That returns whatever session the daemon
+	// was launched inside:
 	//   - operator's `hk tmux-start` session, or an ambient `harmonik` session →
 	//     use it verbatim; it provably exists right now so SpawnWindow can never
 	//     hit "session does not exist".
@@ -1282,7 +1284,7 @@ EXAMPLES
 	// reverted fe94e0b1). We keep the always-exists live session and only depart
 	// from it for the unusable system-session cases.
 	liveSession := ""
-	if out, dmErr := exec.Command("tmux", "display-message", "-p", "#{session_name}").Output(); dmErr != nil { //nolint:gosec // G204: arguments are hard-coded constants
+	if out, dmErr := exec.CommandContext(ctx, "tmux", "display-message", "-p", "#{session_name}").Output(); dmErr != nil {
 		// display-message failure is non-fatal: ResolveDaemonSpawnSession treats
 		// an empty live session as "force fallback to the ensured daemon session".
 		fmt.Fprintf(os.Stderr, "harmonik: tmux display-message failed (%v); falling back to deterministic daemon session\n", dmErr)

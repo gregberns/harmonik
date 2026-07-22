@@ -112,19 +112,16 @@ func runBeadsMergeSubcommand(subArgs []string) int {
 	otherPath := subArgs[2]    // %B
 	workingPath := subArgs[3]  // %P (working-tree path for conflict log)
 
-	//nolint:gosec // G304: paths provided by git invocation via registered merge driver
 	ancestorRows, err := parseBeadsJSONL(ancestorPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik beads-merge: parse ancestor (%s): %v\n", ancestorPath, err)
 		return 1
 	}
-	//nolint:gosec // G304: paths provided by git invocation via registered merge driver
 	currentRows, err := parseBeadsJSONL(currentPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik beads-merge: parse current (%s): %v\n", currentPath, err)
 		return 1
 	}
-	//nolint:gosec // G304: paths provided by git invocation via registered merge driver
 	otherRows, err := parseBeadsJSONL(otherPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik beads-merge: parse other (%s): %v\n", otherPath, err)

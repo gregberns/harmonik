@@ -908,7 +908,12 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 		}
 	}
 	msg := "chore(assets): sync embedded instruction assets via harmonik sync-assets"
-	commit := exec.Command("git", "-C", projectDir, "commit", "-m", msg) //nolint:gosec // G204: projectDir operator-controlled
+	// context.Background(), deliberately NOT a cancellable context: killing git
+	// between the index write and the ref update leaves a stale .git/index.lock
+	// and a half-staged tree in the operator's main working copy. `git commit`
+	// is short and must be allowed to finish, so this call is uncancellable by
+	// construction rather than by a nolint directive.
+	commit := exec.CommandContext(context.Background(), "git", "-C", projectDir, "commit", "-m", msg)
 	commit.Stdout = stdout
 	commit.Stderr = stderr
 	if err := commit.Run(); err != nil {
@@ -923,7 +928,10 @@ func commitSync(projectDir string, outcomes []applyOutcome, stdout, stderr io.Wr
 // using `--` so a path that looks like a flag is never misinterpreted. Returns
 // 0 on success, 1 on failure (after printing the error).
 func gitAddPath(projectDir, relPath string, stdout, stderr io.Writer) int {
-	add := exec.Command("git", "-C", projectDir, "add", "--", relPath) //nolint:gosec // G204: projectDir + manifest-derived relPath
+	// context.Background(): same reasoning as commitSync — `git add` takes the
+	// index lock, and killing it mid-write strands .git/index.lock in the
+	// operator's main working copy.
+	add := exec.CommandContext(context.Background(), "git", "-C", projectDir, "add", "--", relPath)
 	add.Stdout = stdout
 	add.Stderr = stderr
 	if err := add.Run(); err != nil {

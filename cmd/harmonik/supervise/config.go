@@ -175,7 +175,6 @@ func WriteConfigAtomic(projectDir string, cfg Config) error {
 
 // ReadConfig reads and parses .harmonik/cognition/config.json.
 func ReadConfig(projectDir string) (Config, error) {
-	//nolint:gosec // G304: path derived from operator-controlled projectDir
 	data, err := os.ReadFile(ConfigPath(projectDir))
 	if err != nil {
 		return Config{}, fmt.Errorf("supervisecmd: ReadConfig: %w", err)
@@ -220,7 +219,6 @@ func WritePidfile(projectDir string, pid int) error {
 
 // ReadPidfile reads the supervisor PID from supervisor.pid.
 func ReadPidfile(projectDir string) (int, error) {
-	//nolint:gosec // G304: path derived from operator-controlled projectDir
 	data, err := os.ReadFile(PidfilePath(projectDir))
 	if err != nil {
 		return 0, fmt.Errorf("supervisecmd: ReadPidfile: %w", err)

@@ -53,6 +53,7 @@ package main
 // Bead refs: hk-y171w, hk-7iyh (fleet-portability T11), hk-da3k (fleet-portability T12).
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -301,8 +302,11 @@ func runDoctorChecks(projectDir string, stdout, stderr io.Writer) bool {
 		gitFile := filepath.Join(projectDir, ".git")
 		info, ferr := os.Stat(gitFile)
 		if ferr != nil || info.IsDir() == false {
-			// More accurate: try `git -C <dir> rev-parse --git-dir`
-			cmd := exec.Command("git", "-C", projectDir, "rev-parse", "--git-dir") //nolint:gosec // G204: projectDir is operator-controlled
+			// More accurate: try `git -C <dir> rev-parse --git-dir`.
+			// context.Background(): `harmonik init` is a synchronous CLI entry
+			// point with no cancellable context in scope, and this probe is a
+			// sub-millisecond read-only git query.
+			cmd := exec.CommandContext(context.Background(), "git", "-C", projectDir, "rev-parse", "--git-dir")
 			if runErr := cmd.Run(); runErr != nil {
 				fmt.Fprintf(stderr, "harmonik init: %q is not a git repository (run git init first)\n", projectDir)
 				ok = false

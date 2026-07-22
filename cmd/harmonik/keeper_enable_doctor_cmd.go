@@ -345,7 +345,6 @@ func runKeeperEnable(cfg enableConfig, stdout, stderr io.Writer) int {
 			return 1
 		}
 		if _, err := os.Stat(managedPath); os.IsNotExist(err) {
-			//nolint:gosec // G306: 0600 — keeper-owned marker, no world-read needed
 			if writeErr := os.WriteFile(managedPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600); writeErr != nil {
 				fmt.Fprintf(stderr, "harmonik keeper enable: create .managed: %v\n", writeErr)
 				return 1

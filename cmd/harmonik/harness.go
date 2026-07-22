@@ -966,7 +966,6 @@ func harnessApplyFixtureFiles(projectRoot string, files map[string]scenario.File
 			mode = fs.FileMode(v)
 		}
 
-		//nolint:gosec // G306: mode is declared in the scenario file, not raw user input
 		if writeErr := os.WriteFile(absPath, content, mode); writeErr != nil {
 			return fmt.Errorf("write %q: %w", relPath, writeErr)
 		}

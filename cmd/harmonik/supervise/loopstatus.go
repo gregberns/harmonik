@@ -97,7 +97,6 @@ func LoopStatusPath(projectDir string) string {
 // ReadLoopStatus reads .harmonik/cognition/loop-status.json. Returns nil when
 // the file does not exist (cognition loop has not written status yet).
 func ReadLoopStatus(projectDir string) (*LoopStatusRecord, error) {
-	//nolint:gosec // G304: path derived from operator-controlled projectDir
 	data, err := os.ReadFile(LoopStatusPath(projectDir))
 	if err != nil {
 		if os.IsNotExist(err) {

@@ -48,7 +48,6 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Acquire supervisor.lock (fd-lifetime; kernel releases on shim exit).
-	//nolint:gosec // G304
 	lockFd, err := os.OpenFile(LockPath(projectDir), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
 	if err != nil {
 		fmt.Fprintf(stderr, "harmonik supervise _shim: open lock: %v\n", err)
@@ -62,7 +61,6 @@ func RunShim(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	// lockFd is intentionally kept open for the shim's lifetime.
-	// nolint:gocritic — intentional leak; lockFd must outlive this func stack.
 	defer func() {
 		_ = lockFd.Close()
 		_ = cleanup(projectDir)

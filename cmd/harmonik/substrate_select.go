@@ -51,8 +51,10 @@ const (
 // The spawn seam stays remote-capable (AIS-016): the driver takes the same
 // CommandRunner shape as the tmux path. For the Codex path the injected runner
 // is a per-run worker-routing runner (M4-C3): a healthy selected worker routes
-// the codex process to that worker over SSHRunner; zero/disabled workers stay
-// byte-identical LOCAL (NFR7). See codexWorkerRoutingRunner.
+// the codex process to that worker over SSHRunner. Zero/disabled workers no
+// longer fall through to a byte-identical LOCAL run as NFR7 originally
+// specified — see requireIsolationBoundary below, which now makes that case a
+// refusal. See codexWorkerRoutingRunner.
 //
 // The second return value is a worker-registry observer the daemon MUST invoke
 // once at work-loop startup with the SAME live registry the tmux dispatch path
@@ -64,20 +66,29 @@ const (
 // The third return value, requireIsolationBoundary, is true ONLY on the
 // codexdriver path: a codex app-server crew runs with a permissive sandbox
 // posture (danger-full-access) that is safe solely inside a real isolation
-// boundary — an enabled remote ssh worker IS that boundary. It is the signal the
-// daemon's fail-closed guard keys off (hk-5h759): with it set, the work loop
-// REFUSES to launch a codex run that has no worker bound (which would otherwise
-// fall through codexWorkerRoutingRunner.Command to LocalRunner and run codex
-// UNSANDBOXED on the daemon host). False for the tmux path (no such posture).
+// boundary — an enabled remote ssh worker IS that boundary. False for the tmux
+// path (no such posture).
+//
+// The refusal it describes IS enforced, but at the runner, not the work loop:
+// codexWorkerRoutingRunner.Command / CommandInDir return a command at
+// refusedIsolationBoundaryArgv0 when no healthy worker is bound, so the spawn
+// fails rather than falling through to LocalRunner and running codex
+// UNSANDBOXED on the daemon host.
+//
+// NOTE: both production call sites (main.go, run.go) currently DISCARD this
+// value, and no work-loop admission guard in internal/daemon reads it. Only
+// tests consume it. It is therefore a correct-but-dead signal today; the
+// security property rests entirely on the runner-level refusal above. Wiring it
+// into a daemon-side guard is what would make this return value load-bearing.
 // reviewerSubstrate is always tmuxSub so a claude (SessionIDMinted) reviewer
 // runs on tmux/claude, not the codex app-server driver (hk-qxvc2).
 func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler.Substrate, bindRegistry func(*workers.Registry), requireIsolationBoundary bool, reviewerSubstrate handler.Substrate) {
 	if os.Getenv(substrateSelectEnv) != "codexdriver" {
 		return tmuxSub, nil, false, tmuxSub
 	}
-	router := &codexWorkerRoutingRunner{requireBoundary: false}
+	router := &codexWorkerRoutingRunner{requireBoundary: true}
 	opts, _ := codexSubstrateOptions(codexBinary, router)
-	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, false, tmuxSub
+	return codexdriver.NewCodexSubstrate(opts), router.setRegistry, true, tmuxSub
 }
 
 // codexWorkerRoutingRunner is the composition-root CommandRunner (M4-C3) that
@@ -100,8 +111,9 @@ func selectSubstrate(tmuxSub handler.Substrate, codexBinary string) (sub handler
 // worker logic lives here at the wire/root, never inside internal/codexdriver.
 type codexWorkerRoutingRunner struct {
 	// reg is the live worker registry, late-bound by the daemon. nil until
-	// bound (and stays nil when no worker is configured) ⇒ LOCAL codex,
-	// byte-identical to the pre-M4 hardcoded LocalRunner path (NFR7).
+	// bound, and stays nil when no worker is configured. That used to mean
+	// LOCAL codex, byte-identical to the pre-M4 hardcoded LocalRunner path
+	// (NFR7) — it no longer does when requireBoundary is set; see below.
 	reg atomic.Pointer[workers.Registry]
 
 	// requireBoundary makes this runner FAIL CLOSED (hk-5h759). Set true on the
@@ -145,7 +157,10 @@ func (r *codexWorkerRoutingRunner) setRegistry(reg *workers.Registry) {
 // ssh, the codex process is spawned on that worker via SSHRunner{Host}. Any
 // other state (no registry bound, no worker, disabled/unhealthy worker,
 // non-ssh transport) falls through to LocalRunner — byte-identical local codex
-// (NFR7).
+// (NFR7) — EXCEPT when requireBoundary is set, which is the codexdriver path.
+// There the same states are refused instead, by returning a command at
+// refusedIsolationBoundaryArgv0 so the spawn fails closed rather than running
+// codex unsandboxed on the daemon host.
 //
 // Slot capacity accounting stays owned by the daemon's dispatch gate
 // (workloop SelectWorker/ReleaseSlot, which runs for every dispatched run);

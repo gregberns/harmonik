@@ -22,6 +22,7 @@ package main
 // Bead ref: hk-n7ofb.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -337,7 +338,14 @@ func promoteGitHubRelease(projectDir, semver string) error {
 		fmt.Fprintln(os.Stderr, "harmonik release certify: skipped GitHub release promotion (gh CLI not found)")
 		return nil
 	}
-	cmd := exec.Command("gh", "release", "edit", semver, "--prerelease=false") //nolint:gosec // fixed executable + args
+	// context.Background(): `harmonik release certify` is a synchronous CLI entry
+	// point with no cancellable context in scope. Killing `gh release edit`
+	// part-way would also leave the GitHub release in an indeterminate state
+	// while the local ledger has NOT yet been written — SaveLedgerFile runs
+	// after this call, and a gh failure returns without saving. A mid-flight
+	// kill would therefore flip the GitHub release while the ledger never
+	// records the certification, so this call is deliberately not cancellable.
+	cmd := exec.CommandContext(context.Background(), "gh", "release", "edit", semver, "--prerelease=false")
 	cmd.Dir = projectDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

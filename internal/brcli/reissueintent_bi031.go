@@ -105,7 +105,7 @@ func (a *Adapter) ReissueTerminalTransition(
 		if showErr == nil && record.Status == entry.IntendedPostState {
 			// Post-state confirmed.  BI-031 step 6: delete intent file.
 			// best-effort: stale file resolved by BI-031 GC on next startup if this fails.
-			_ = DeleteIntentLogAndSyncParent(intentLogDir, entry.IdempotencyKey) //nolint:errcheck
+			_ = DeleteIntentLogAndSyncParent(intentLogDir, entry.IdempotencyKey) //nolint:errcheck // best-effort; startup GC resolves a retained intent
 			return nil
 		}
 		// Cannot confirm post-state — retain intent for Cat 3a auto-resolver.
@@ -116,6 +116,6 @@ func (a *Adapter) ReissueTerminalTransition(
 		// (4f) BrOther — unrecognised exit; divergence_inconclusive; Cat 6b.
 		// In both cases the intent file is retained so reconciliation can route
 		// appropriately.
-		return fmt.Errorf("brcli.ReissueTerminalTransition: op=%s bead=%s br error %s (exit %d): retaining intent for Cat 3a/6b routing", entry.Op, entry.BeadID, result.BrErr, result.ExitCode)
+		return fmt.Errorf("brcli.ReissueTerminalTransition: op=%s bead=%s br error %w (exit %d): retaining intent for Cat 3a/6b routing", entry.Op, entry.BeadID, result.BrErr, result.ExitCode)
 	}
 }

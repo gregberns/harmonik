@@ -142,7 +142,6 @@ func TestShowBeadEndpointStatusInDependencyEdges(t *testing.T) {
 		}
 
 		for _, tc := range cases {
-			tc := tc
 			t.Run(tc.name, func(t *testing.T) {
 				jsonStr := `[{"id":"hk-c1","title":"T","description":"","status":"open","issue_type":"task","dependencies":[{"id":"hk-child","dependency_type":"waits-for","status":"` + tc.status + `"}],"dependents":[],"parent":""}]`
 				path := brcliFixtureMockBinary(t, jsonStr, "", 0)

@@ -72,7 +72,7 @@ type TimeoutConfig struct {
 // terminalWriteRetryParams returns the effective retry parameters for
 // terminal-transition writes, applying the BI-025c defaults when the
 // TimeoutConfig override fields are zero.
-func (c TimeoutConfig) terminalWriteRetryParams() (maxRetries int, base, cap_ time.Duration) {
+func (c TimeoutConfig) terminalWriteRetryParams() (maxRetries int, base, maxBackoff time.Duration) {
 	maxRetries = c.TerminalWriteMaxRetries
 	if maxRetries == 0 {
 		maxRetries = UnavailableRetryMax
@@ -81,9 +81,9 @@ func (c TimeoutConfig) terminalWriteRetryParams() (maxRetries int, base, cap_ ti
 	if base == 0 {
 		base = UnavailableRetryBase
 	}
-	cap_ = c.TerminalWriteRetryCap
-	if cap_ == 0 {
-		cap_ = UnavailableRetryCap
+	maxBackoff = c.TerminalWriteRetryCap
+	if maxBackoff == 0 {
+		maxBackoff = UnavailableRetryCap
 	}
 	return
 }

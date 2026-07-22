@@ -38,8 +38,9 @@ import (
 // Spec refs: specs/beads-integration.md §4.4 BI-010; §4.4 BI-010d (reset);
 // §4.10 BI-029, BI-030, BI-031; §6.1 RECORD IntentLogEntry.
 
-// IntentLogDir is the adapter-owned intent-log directory path relative to the
-// .harmonik/ directory. Production callers derive the absolute path via
+// IntentLogEntrySchemaVersion is the schema version stamped on every
+// adapter-owned intent-log entry written under .harmonik/beads-intents/.
+// Production callers derive that directory's absolute path via
 // lifecycle.BeadsIntentsDir(projectDir).
 const IntentLogEntrySchemaVersion = 1
 
@@ -154,7 +155,7 @@ func (a *Adapter) terminalTransitionWrite(
 			return nil
 		}
 		// Intent file retained for BI-031 recovery.
-		return fmt.Errorf("brcli.terminalTransitionWrite: br %s failed: %s (exit %d): stderr=%q",
+		return fmt.Errorf("brcli.terminalTransitionWrite: br %s failed: %w (exit %d): stderr=%q",
 			op, result.BrErr, result.ExitCode, result.Stderr)
 	}
 
@@ -219,7 +220,6 @@ func (a *Adapter) ClaimBead(
 		// The same intent-log entry (same ikey) covers both writes, so BI-030
 		// idempotency is maintained.
 		if strings.Contains(claimErr.Error(), "already assigned") {
-			fmt.Printf("brcli.ClaimBead: %s --claim rejected (pre-assigned assignee); retrying with --status in_progress (hk-amed0)\n", beadID)
 			if fallbackErr := a.terminalTransitionWrite(
 				ctx,
 				intentLogDir,
@@ -323,7 +323,7 @@ func (a *Adapter) CloseBead(
 		return fmt.Errorf("brcli.CloseBead: br label add needs-attention: %w", err)
 	}
 	if result.BrErr != BrOK {
-		return fmt.Errorf("brcli.CloseBead: br label add needs-attention failed: %s (exit %d): stderr=%q",
+		return fmt.Errorf("brcli.CloseBead: br label add needs-attention failed: %w (exit %d): stderr=%q",
 			result.BrErr, result.ExitCode, result.Stderr)
 	}
 	return nil
@@ -485,7 +485,7 @@ func (a *Adapter) ResetBead(
 	}
 	if result.BrErr != BrOK {
 		// br returned a non-zero exit code; intent file retained for BI-031 recovery.
-		return fmt.Errorf("brcli.ResetBead: br update --status open failed: %s (exit %d): stderr=%q",
+		return fmt.Errorf("brcli.ResetBead: br update --status open failed: %w (exit %d): stderr=%q",
 			result.BrErr, result.ExitCode, result.Stderr)
 	}
 
@@ -546,7 +546,7 @@ func (a *Adapter) SweepCloseBead(
 		return fmt.Errorf("brcli.SweepCloseBead: br exec: %w", err)
 	}
 	if result.BrErr != BrOK {
-		return fmt.Errorf("brcli.SweepCloseBead: br close %s failed: %s (exit %d): stderr=%q",
+		return fmt.Errorf("brcli.SweepCloseBead: br close %s failed: %w (exit %d): stderr=%q",
 			beadID, result.BrErr, result.ExitCode, string(result.Stderr))
 	}
 

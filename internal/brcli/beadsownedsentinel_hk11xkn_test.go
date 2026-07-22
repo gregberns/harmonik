@@ -32,17 +32,17 @@ func hk11xknTempProject(t *testing.T) (adapter *brcli.Adapter, projectDir string
 
 	// Create .harmonik/ subdirectory structure needed by the sentinel helpers.
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
-	if err := os.MkdirAll(harmonikDir, 0o755); err != nil { //nolint:gosec
+	if err := os.MkdirAll(harmonikDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll harmonikDir: %v", err)
 	}
 	intentLogDir = filepath.Join(harmonikDir, "beads-intents")
-	if err := os.MkdirAll(intentLogDir, 0o755); err != nil { //nolint:gosec
+	if err := os.MkdirAll(intentLogDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll intentLogDir: %v", err)
 	}
 
 	// Build a fake br script that exits 0.
 	brScript := filepath.Join(t.TempDir(), "br")
-	if err := os.WriteFile(brScript, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil { //nolint:gosec
+	if err := os.WriteFile(brScript, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write br stub: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestHK11xkn_CloseBead_DeletesSentinel(t *testing.T) {
 
 	// Pre-create the sentinel file as if ClaimBead had written it.
 	ownedDir := filepath.Join(projectDir, ".harmonik", "beads-owned")
-	if err := os.MkdirAll(ownedDir, 0o755); err != nil { //nolint:gosec
+	if err := os.MkdirAll(ownedDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll beads-owned: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ownedDir, string(beadID)), nil, 0o600); err != nil {
@@ -150,7 +150,7 @@ func TestHK11xkn_ReopenBead_DeletesSentinel(t *testing.T) {
 
 	// Pre-create the sentinel file.
 	ownedDir := filepath.Join(projectDir, ".harmonik", "beads-owned")
-	if err := os.MkdirAll(ownedDir, 0o755); err != nil { //nolint:gosec
+	if err := os.MkdirAll(ownedDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll beads-owned: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ownedDir, string(beadID)), nil, 0o600); err != nil {
@@ -184,7 +184,7 @@ func TestHK11xkn_ResetBead_DeletesSentinel(t *testing.T) {
 
 	// Pre-create the sentinel file.
 	ownedDir := filepath.Join(projectDir, ".harmonik", "beads-owned")
-	if err := os.MkdirAll(ownedDir, 0o755); err != nil { //nolint:gosec
+	if err := os.MkdirAll(ownedDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll beads-owned: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(ownedDir, string(beadID)), nil, 0o600); err != nil {

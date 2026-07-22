@@ -63,7 +63,6 @@ func b87228FixtureSpecTable() []struct {
 // Spec ref: specs/beads-integration.md §6.1a, §4.8a BI-025a.
 func TestB87228ResultBrErrSpecTable(t *testing.T) {
 	for _, tc := range b87228FixtureSpecTable() {
-		tc := tc
 		t.Run(tc.label, func(t *testing.T) {
 			path := b87228FixtureMockBinary(t, tc.code)
 			a := b87228FixtureAdapter(t, path)
@@ -95,7 +94,6 @@ func TestB87228ResultBrErrUnknownExitCodes(t *testing.T) {
 	// br exit code). All must classify as BrOther.
 	unknownCodes := []int{5, 6, 7, 8, 127}
 	for _, code := range unknownCodes {
-		code := code
 		t.Run(fmt.Sprintf("exit-%d-other", code), func(t *testing.T) {
 			path := b87228FixtureMockBinary(t, code)
 			a := b87228FixtureAdapter(t, path)
@@ -122,7 +120,6 @@ func TestB87228ResultBrErrNeverUnavailableFromExitCode(t *testing.T) {
 	// Scan all spec-listed codes plus several unknown codes.
 	codes := []int{0, 1, 2, 3, 4, 5, 127}
 	for _, code := range codes {
-		code := code
 		t.Run(fmt.Sprintf("exit-%d-not-unavailable", code), func(t *testing.T) {
 			path := b87228FixtureMockBinary(t, code)
 			a := b87228FixtureAdapter(t, path)
@@ -172,7 +169,6 @@ func TestB87228ExecErrorLeavesZeroBrErr(t *testing.T) {
 // Spec ref: specs/beads-integration.md §6.1a, §4.8a BI-025a, BI-025c.
 func TestB87228RunWithTimeoutBrErrSpecTable(t *testing.T) {
 	for _, tc := range b87228FixtureSpecTable() {
-		tc := tc
 		t.Run("timeout-path-"+tc.label, func(t *testing.T) {
 			path := b87228FixtureMockBinary(t, tc.code)
 			a := b87228FixtureAdapter(t, path)
@@ -195,7 +191,6 @@ func TestB87228RunWithTimeoutBrErrSpecTable(t *testing.T) {
 // would indicate a classification bug.
 func TestB87228BrErrIsValid(t *testing.T) {
 	for _, tc := range b87228FixtureSpecTable() {
-		tc := tc
 		t.Run("valid-"+tc.label, func(t *testing.T) {
 			path := b87228FixtureMockBinary(t, tc.code)
 			a := b87228FixtureAdapter(t, path)

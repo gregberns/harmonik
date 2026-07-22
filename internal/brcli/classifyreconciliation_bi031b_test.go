@@ -122,7 +122,6 @@ func TestBrErrReconciliationCategoryWithEmit_nonSchemaMismatchNoEmit(t *testing.
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.label, func(t *testing.T) {
 			t.Parallel()
 

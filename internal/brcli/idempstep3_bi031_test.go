@@ -99,7 +99,6 @@ func idempStep3FixtureIntentFile(t *testing.T, dir string, entry core.IntentLogE
 
 	name := string(entry.BeadID) + "-step3.json"
 	path := filepath.Join(dir, name)
-	//nolint:gosec // G306: test fixture
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("idempStep3FixtureIntentFile: WriteFile %q: %v", path, err)
 	}

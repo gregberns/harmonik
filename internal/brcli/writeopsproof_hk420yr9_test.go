@@ -68,7 +68,6 @@ func b3bWOPTempProject(t *testing.T, brPath string) (adapter *brcli.Adapter, pro
 	t.Helper()
 	projectDir = t.TempDir()
 
-	//nolint:gosec // G204: brPath from exec.LookPath; args are static
 	initCmd := exec.Command(brPath, "init")
 	initCmd.Dir = projectDir
 	if out, err := initCmd.CombinedOutput(); err != nil {
@@ -93,7 +92,6 @@ func b3bWOPTempProject(t *testing.T, brPath string) (adapter *brcli.Adapter, pro
 func b3bWOPCreateBead(t *testing.T, brPath, projectDir string) core.BeadID {
 	t.Helper()
 
-	//nolint:gosec // G204: brPath from exec.LookPath; args are static
 	cmd := exec.Command(brPath, "create", "--title", "b3b-write-ops-test", "--type", "task")
 	cmd.Dir = projectDir
 
@@ -509,7 +507,7 @@ func TestB3b_ConcurrentClose_SerializesNoDoubleClose_RealBr(t *testing.T) {
 			// to avoid directory-fsync races (terminalMu serializes writes but
 			// using distinct dirs keeps intent files cleanly scoped per call).
 			closeIntentDir := filepath.Join(intentLogDir, fmt.Sprintf("close%d", idx))
-			if mkErr := os.MkdirAll(closeIntentDir, 0o755); mkErr != nil { //nolint:gosec
+			if mkErr := os.MkdirAll(closeIntentDir, 0o755); mkErr != nil {
 				errs[idx] = fmt.Errorf("MkdirAll closeIntentDir[%d]: %w", idx, mkErr)
 				return
 			}

@@ -259,7 +259,6 @@ func TestWriteIntentLogTmpDirNotExist(t *testing.T) {
 // lowercase hex characters.
 func TestIntentLogRandHexLength(t *testing.T) {
 	for _, n := range []int{1, 4, 8, 16} {
-		n := n
 		t.Run("n="+strings.Repeat("x", n)[:0]+string(rune('0'+n)), func(t *testing.T) {
 			t.Parallel()
 			got, err := intentLogRandHex(n)
@@ -465,7 +464,6 @@ func TestRenameIntentLogTmpToFinalOverwriteExisting(t *testing.T) {
 	existingFinal := filepath.Join(dir, encodedKey+".json")
 
 	// Pre-create the canonical file to simulate a prior partial write.
-	//nolint:gosec // G304: existingFinal is a test temp path, not user input
 	if err := os.WriteFile(existingFinal, []byte(`{"schema_version":1}`), 0o600); err != nil {
 		t.Fatalf("pre-create canonical file: %v", err)
 	}
@@ -610,7 +608,6 @@ func intentLogDeleteFixture(t *testing.T, dir, idempotencyKey string) string {
 	t.Helper()
 	encodedKey := strings.ReplaceAll(idempotencyKey, ":", "_")
 	path := filepath.Join(dir, encodedKey+".json")
-	//nolint:gosec // G304: path is a test temp file, not user input
 	if err := os.WriteFile(path, []byte(`{"schema_version":1}`), 0o600); err != nil {
 		t.Fatalf("intentLogDeleteFixture: create canonical file %q: %v", path, err)
 	}

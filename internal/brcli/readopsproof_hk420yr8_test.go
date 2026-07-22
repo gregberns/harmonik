@@ -64,7 +64,6 @@ func b3aROPTempProject(t *testing.T, brPath string) (adapter *brcli.Adapter, pro
 	t.Helper()
 	projectDir = t.TempDir()
 
-	//nolint:gosec // G204: brPath from exec.LookPath; args are static
 	initCmd := exec.Command(brPath, "init")
 	initCmd.Dir = projectDir
 	if out, err := initCmd.CombinedOutput(); err != nil {
@@ -83,7 +82,6 @@ func b3aROPTempProject(t *testing.T, brPath string) (adapter *brcli.Adapter, pro
 func b3aROPCreateBead(t *testing.T, brPath, projectDir, title string) core.BeadID {
 	t.Helper()
 
-	//nolint:gosec // G204: brPath from exec.LookPath; args are static
 	cmd := exec.Command(brPath, "create", "--title", title, "--type", "task")
 	cmd.Dir = projectDir
 

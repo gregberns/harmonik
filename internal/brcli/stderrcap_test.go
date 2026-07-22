@@ -105,7 +105,6 @@ func stderrCapFixtureSIGKILLBinary(t *testing.T, partialStderr string, sleepSeco
 // exit code. It models how the adapter will use stderrCapWriter in production.
 func runWithStderrCap(t *testing.T, name string, args ...string) (StderrResult, int) {
 	t.Helper()
-	//nolint:gosec // G204: test helper; name/args are synthetic fixture paths, not user input
 	cmd := exec.CommandContext(t.Context(), name, args...)
 	capW := newStderrCapWriter()
 	cmd.Stderr = capW

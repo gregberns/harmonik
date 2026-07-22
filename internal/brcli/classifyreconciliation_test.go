@@ -36,7 +36,6 @@ func TestBrErrReconciliationCategory_directSentinels(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range routeBrErrFixtureTable() {
-		tc := tc // capture
 		t.Run(tc.label, func(t *testing.T) {
 			t.Parallel()
 
@@ -59,7 +58,6 @@ func TestBrErrReconciliationCategory_wrappedErrors(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range routeBrErrFixtureTable() {
-		tc := tc // capture
 		t.Run("wrapped-"+tc.label, func(t *testing.T) {
 			t.Parallel()
 
@@ -160,7 +158,6 @@ func TestBrErrReconciliationCategory_routingTableCoverage(t *testing.T) {
 	all := brErrorFixtureAll()
 
 	for _, e := range all {
-		e := e
 		t.Run("coverage-"+string(e), func(t *testing.T) {
 			t.Parallel()
 
@@ -210,7 +207,6 @@ func TestBrErrReconciliationCategory_specTable(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.label, func(t *testing.T) {
 			t.Parallel()
 

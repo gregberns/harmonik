@@ -316,7 +316,7 @@ func TestJitterReducesThunderingHerd_HkCw4sx(t *testing.T) {
 				return
 			}
 			if result.BrErr != brcli.BrOK {
-				retryErrors[idx] = fmt.Errorf("BrErr = %v; want BrOK", result.BrErr)
+				retryErrors[idx] = fmt.Errorf("BrErr = %w; want BrOK", result.BrErr)
 			}
 		}(i)
 	}

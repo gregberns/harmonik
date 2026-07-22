@@ -46,7 +46,11 @@ func writeEvent(t *testing.T, path string, evType core.EventType, ts time.Time, 
 	if err != nil {
 		t.Fatalf("open events file: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	t.Cleanup(func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close events file: %v", closeErr)
+		}
+	})
 	_, err = f.Write(append(line, '\n'))
 	if err != nil {
 		t.Fatalf("write event: %v", err)
@@ -180,7 +184,7 @@ func TestGovernor_ReviewerVerdictApprove_Dormant(t *testing.T) {
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"run_id":            "00000000-0000-0000-0000-000000000001",
 		"workflow_mode":     "review-loop",
 		"session_id":        "sess-1",
@@ -191,6 +195,9 @@ func TestGovernor_ReviewerVerdictApprove_Dormant(t *testing.T) {
 		"flags":             []string{},
 		"notes":             "looks good",
 	})
+	if err != nil {
+		t.Fatalf("marshal reviewer verdict payload: %v", err)
+	}
 	writeEvent(t, eventsPath, core.EventTypeReviewerVerdict, now.Add(-3*time.Minute), payload)
 
 	state := &sentinel.GovernorState{}
@@ -216,7 +223,7 @@ func TestGovernor_ReviewerVerdictRequestChanges_NotCounted(t *testing.T) {
 	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	now := time.Now()
 
-	payload, _ := json.Marshal(map[string]interface{}{
+	payload, err := json.Marshal(map[string]interface{}{
 		"run_id":            "00000000-0000-0000-0000-000000000001",
 		"workflow_mode":     "review-loop",
 		"session_id":        "sess-1",
@@ -227,6 +234,9 @@ func TestGovernor_ReviewerVerdictRequestChanges_NotCounted(t *testing.T) {
 		"flags":             []string{},
 		"notes":             "needs work",
 	})
+	if err != nil {
+		t.Fatalf("marshal reviewer verdict payload: %v", err)
+	}
 	writeEvent(t, eventsPath, core.EventTypeReviewerVerdict, now.Add(-3*time.Minute), payload)
 
 	state := &sentinel.GovernorState{}

@@ -366,9 +366,14 @@ func TestRecordLegitimateHalt_HaltReasonStoredVerbatim(t *testing.T) {
 		t.Fatalf("expected 1 decision_acknowledged event; got %d", len(acked))
 	}
 	// The halt_reason field is stored as JSON; unmarshal to compare.
-	raw, _ := json.Marshal(acked[0]["halt_reason"])
+	raw, err := json.Marshal(acked[0]["halt_reason"])
+	if err != nil {
+		t.Fatalf("marshal event halt_reason: %v", err)
+	}
 	var gotReason string
-	_ = json.Unmarshal(raw, &gotReason)
+	if err := json.Unmarshal(raw, &gotReason); err != nil {
+		t.Fatalf("unmarshal event halt_reason: %v", err)
+	}
 	if gotReason != longReason {
 		t.Errorf("event halt_reason: got %q\nwant %q", gotReason, longReason)
 	}

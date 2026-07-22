@@ -68,7 +68,11 @@ func writeEventWithV7ID(t *testing.T, path string, evType core.EventType, ts tim
 	if err != nil {
 		t.Fatalf("open events file: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	t.Cleanup(func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close events file: %v", closeErr)
+		}
+	})
 	if _, wErr := f.Write(append(line, '\n')); wErr != nil {
 		t.Fatalf("write event: %v", wErr)
 	}

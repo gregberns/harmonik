@@ -244,7 +244,7 @@ func ComputeSnapshot(
 		if ev.RunID == nil {
 			continue
 		}
-		runIDStr := (*ev.RunID).String()
+		runIDStr := ev.RunID.String()
 		st, ok := states[runIDStr]
 		if !ok {
 			// Event for a run not in the active registry (already completed

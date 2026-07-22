@@ -17,6 +17,7 @@ package sentinel_test
 // Bead: hk-l087e.
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -368,9 +369,5 @@ func TestStallHit_StallDetectedPayload(t *testing.T) {
 // The sentinel package exports ErrLayerAConfigInvalid so we can do a direct
 // type assertion.
 func isLayerAConfigInvalid(err error, out **sentinel.ErrLayerAConfigInvalid) bool {
-	if e, ok := err.(*sentinel.ErrLayerAConfigInvalid); ok {
-		*out = e
-		return true
-	}
-	return false
+	return errors.As(err, out)
 }

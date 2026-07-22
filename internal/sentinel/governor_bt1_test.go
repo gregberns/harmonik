@@ -163,12 +163,15 @@ func TestGovernor_Weight0Chatter_PopulatedFile(t *testing.T) {
 	}
 
 	// Also write a reviewer_verdict{REQUEST_CHANGES} — weight-0 per spec §1.1.
-	rcPayload, _ := json.Marshal(map[string]interface{}{
+	rcPayload, err := json.Marshal(map[string]interface{}{
 		"verdict":        "REQUEST_CHANGES",
 		"schema_version": 1,
 		"flags":          []string{},
 		"notes":          "needs work",
 	})
+	if err != nil {
+		t.Fatalf("marshal reviewer verdict payload: %v", err)
+	}
 	writeEvent(t, eventsPath, core.EventTypeReviewerVerdict, now.Add(-1*time.Minute), rcPayload)
 
 	sample := sentinel.ComputeWindowMovement(

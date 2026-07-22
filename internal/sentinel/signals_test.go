@@ -72,7 +72,11 @@ func appendEvent(t *testing.T, path string, evType core.EventType, ts time.Time,
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	t.Cleanup(func() {
+		if closeErr := f.Close(); closeErr != nil {
+			t.Errorf("close events file: %v", closeErr)
+		}
+	})
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		t.Fatalf("write event: %v", err)
 	}

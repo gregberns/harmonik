@@ -122,7 +122,10 @@ func TestEmitTrip_WritesAckFileAndEvent(t *testing.T) {
 	if ack["subject_id"] != "sentinel" {
 		t.Errorf("subject_id: got %q, want %q", ack["subject_id"], "sentinel")
 	}
-	reason, _ := ack["reason"].(string)
+	reason, ok := ack["reason"].(string)
+	if !ok {
+		t.Fatalf("ack reason is not a string: %T", ack["reason"])
+	}
 	if !strings.Contains(reason, "hk-aaa") {
 		t.Errorf("reason should name ready bead IDs; got %q", reason)
 	}
@@ -139,7 +142,10 @@ func TestEmitTrip_WritesAckFileAndEvent(t *testing.T) {
 	if p["ack_token"] != tok {
 		t.Errorf("event ack_token: got %q, want %q", p["ack_token"], tok)
 	}
-	subj, _ := p["subject"].(map[string]interface{})
+	subj, ok := p["subject"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("event subject is not an object: %T", p["subject"])
+	}
 	if subj == nil || subj["id"] != "sentinel" {
 		t.Errorf("event subject.id: got %v, want %q", subj, "sentinel")
 	}
@@ -180,7 +186,10 @@ func TestEmitTrip_Idempotent(t *testing.T) {
 
 	// Exactly one ack file in decision_acks/.
 	acksDir := filepath.Join(dir, ".harmonik", "decision_acks")
-	entries, _ := os.ReadDir(acksDir)
+	entries, err := os.ReadDir(acksDir)
+	if err != nil {
+		t.Fatalf("read acknowledgement directory: %v", err)
+	}
 	if len(entries) != 1 {
 		t.Errorf("expected 1 ack file; got %d", len(entries))
 	}

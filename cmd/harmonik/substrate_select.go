@@ -77,14 +77,23 @@ const (
 // it was singled out from. Both production callers had already been discarding
 // the value; it was always false and unparam flagged it.
 //
-// Second, and this is the part that was NOT true in the source: the daemon half
-// never existed. Comments here and in internal/codexdriver referred to a
-// workloop codexRequireIsolationBoundary that "REFUSES to launch" — no such
-// symbol is in the tree, and the only occurrences were those comments describing
-// it. The fence was only ever half-built: codexWorkerRoutingRunner.requireBoundary
-// still has live refusal logic below, but nothing has ever set it true. Anyone
-// auditing codex isolation would have read those comments and believed an
-// enforcement existed. They are corrected rather than carried forward.
+// Second, what the surviving comments say about enforcement. Nothing refuses an
+// unsandboxed codex launch today: the daemon-side guard is gone and
+// codexWorkerRoutingRunner.requireBoundary below, though its refusal logic is
+// live code, is never set true. An auditor reading the old comments here and in
+// internal/codexdriver would have concluded an enforcement point still existed,
+// so they are corrected rather than carried forward.
+//
+// The history behind that, stated correctly because an earlier version of this
+// comment got it wrong and called the daemon half a phantom: the fence was
+// FULLY BUILT and then FULLY REMOVED, on purpose. hk-5h759 (c2633a95) shipped
+// both halves — `codexWorkerRoutingRunner{requireBoundary: true}` here at the
+// composition root AND a `deps.codexRequireIsolationBoundary` refusal in
+// internal/daemon/workloop.go with Config plumbing behind it. hk-tckw3.1 Step 1
+// (d59d5d32) deleted both, per plan section 3a. So "no such symbol in the tree"
+// describes today's tree, not the design: it is the residue of a deliberate,
+// operator-directed removal, and reading it as "hk-5h759 never enforced
+// anything" is wrong in the opposite direction.
 //
 // Containment for codex comes from harmonik's own srt sandbox (hk-scaj0), a
 // different mechanism entirely, so removing this dead signal forecloses nothing.
@@ -125,12 +134,15 @@ type codexWorkerRoutingRunner struct {
 	// no enabled ssh worker is bound, Command REFUSES rather than falling through
 	// to LocalRunner.
 	//
-	// NOTHING SETS IT TRUE (hk-5vapm). The refusal logic below is live code but is
-	// unreachable in production. This comment used to say "Set true on the
-	// codexdriver path" and to call this "the authoritative, race-free enforcement
-	// point" — neither is accurate and both are corrected here rather than carried
-	// forward, because an auditor reading them would conclude that unsandboxed
-	// codex launches are refused somewhere. They are not.
+	// NOTHING SETS IT TRUE ANY MORE (hk-5vapm). The refusal logic below is live
+	// code but is unreachable in production. This comment used to say "Set true on
+	// the codexdriver path" and to call this "the authoritative, race-free
+	// enforcement point": that WAS true when hk-5h759 (c2633a95) wrote it — the
+	// composition root really did construct this runner with requireBoundary: true
+	// — and it stopped being true at hk-tckw3.1 Step 1 (d59d5d32), which flipped it
+	// to false. It is corrected rather than carried forward, because an auditor
+	// reading the old wording would conclude that unsandboxed codex launches are
+	// refused somewhere today. They are not.
 	//
 	// hk-tckw3.1 Step 1 dropped the fence deliberately: D4 scrapped the ssh worker
 	// that was the only thing able to supply the boundary, so arming this would

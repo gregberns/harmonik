@@ -1,9 +1,30 @@
 package workspace
 
-// claudeconfigdir_hk8juwz.go — per-launch CLAUDE_CONFIG_DIR isolation for the
-// claude:LOCAL launch path (hk-8juwz).
+// claudeconfigdir_hk8juwz.go — per-launch CLAUDE_CONFIG_DIR isolation, originally
+// written for the claude:LOCAL launch path (hk-8juwz).
 //
-// # Why this exists
+// # REVERTED for claude:LOCAL — do not re-wire this into the local launch
+//
+// The daemon NO LONGER calls this on the local path (Step 3a'' of
+// buildClaudeLaunchSpec). An A/B on one live daemon, one line toggled, refuted it:
+// isolation ON → agent_ready_timeout at 150s parked on the Bypass Permissions
+// modal; isolation OFF → agent_ready in 2.0s and the run completed. Two defects:
+// relocating CLAUDE_CONFIG_DIR moves the WHOLE ~/.claude surface but only
+// .claude.json is seeded here, dropping ~/.claude/settings.json and its
+// skipDangerousModePermissionPrompt; and with the dir relocated claude reports
+// "Not logged in · Please run /login" and can do no work — refuting the
+// Keychain-survives-relocation premise stated below. The modal this was written to
+// fix no longer reproduces on claude v2.1.217 against the shared config.
+//
+// This file is kept for the shared constants — remotematerialize.go consumes
+// isolatedClaudeConfigDirName and fallbackFirstStartTime (the latter injected into
+// the worker-side python program) — and to keep PrepareIsolatedClaudeConfigDirVia
+// total, since it falls back here when its runner is nil. That nil-runner
+// delegation is production-DEAD: the sole production caller of ...Via is guarded on
+// runner != nil. PrepareIsolatedClaudeConfigDir itself, seedIsolatedClaudeConfig,
+// and isolatedConfigSourcePath are therefore reachable only from tests.
+//
+// # Why this exists (the ORIGINAL rationale — retained for history, see above)
 //
 // Claude Code >= 2.1.214 renders a first-run theme/onboarding modal at Stage 1
 // (BEFORE SessionStart) unless the user-level config records onboarding as

@@ -1,7 +1,12 @@
 package workspace
 
-// claudeconfigdir_hk8juwz_test.go — unit tests for PrepareIsolatedClaudeConfigDir,
-// the per-launch CLAUDE_CONFIG_DIR isolation for claude:LOCAL (hk-8juwz).
+// claudeconfigdir_hk8juwz_test.go — unit tests for PrepareIsolatedClaudeConfigDir.
+//
+// NOTE: no production LOCAL path reaches this function any more — the claude:LOCAL
+// isolation was reverted (hk-8juwz: it broke claude auth). These tests survive
+// because the REMOTE path (PrepareIsolatedClaudeConfigDirVia, hk-qxvc2) keeps the
+// same seeding contract, and they pin that mechanism. The local regression guard
+// lives in internal/daemon/claudelaunchspec_configdir_hk8juwz_test.go.
 //
 // UNIT SCOPE: these prove the MECHANISM only — the isolated dir is created, seeded
 // from the operator's real config (or the fallback), trusted for the worktree, and

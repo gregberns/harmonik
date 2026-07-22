@@ -402,13 +402,24 @@ finally:
 // runner delegates to the in-process (box-A-local) function, byte-identical to
 // today (NFR7); a non-nil runner performs the SAME preparation on the worker.
 //
+// # WARNING — the LOCAL sibling was reverted (hk-8juwz)
+//
+// The claude:LOCAL isolation this mirrors is GONE: relocating CLAUDE_CONFIG_DIR
+// moves the whole ~/.claude surface, and a local claude launched that way reported
+// "Not logged in · Please run /login" (plus it lost ~/.claude/settings.json's
+// skipDangerousModePermissionPrompt and parked on the bypass modal). The REMOTE
+// path here is untouched but has NOT been live-tested for the same auth defect —
+// if a worker's claude ever stalls at agent_ready or reports "Not logged in",
+// suspect this first.
+//
 // # Why the remote path is needed
 //
 // Claude Code >= 2.1.214 renders a first-run onboarding/theme modal at Stage 1
 // (BEFORE SessionStart) unless the config it reads records onboarding as complete.
-// On the LOCAL path Step 3a” isolates a private config dir so the fleet's ~15
-// concurrent writers cannot lost-update the shared ~/.claude.json's
-// modal-dismissing state away. On the REMOTE path that isolation was missing: the
+// The LOCAL path once isolated a private config dir for this reason, but that was
+// reverted (see the WARNING above) — a local claude now reads the operator's shared
+// ~/.claude.json, and on claude v2.1.217 that does not reproduce the modal. On the
+// REMOTE path the isolation was originally missing: the
 // worker's claude read the worker's SHARED ~/.claude.json, whose modal-dismissing
 // state can be perturbed by concurrent processes / theme/trust read-modify-writes,
 // so claude wedged on the modal BEFORE the SessionStart hook fired → agent_ready

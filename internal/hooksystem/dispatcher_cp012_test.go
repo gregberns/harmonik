@@ -21,6 +21,7 @@ package hooksystem_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -149,14 +150,21 @@ func (c *cp012FixtureEventCollector) all() []string {
 
 // cp012FixtureMakeAgentStartedPayload builds a minimal agent_started-like payload.
 func cp012FixtureMakeAgentStartedPayload() json.RawMessage {
-	raw, _ := json.Marshal(map[string]any{"run_id": "test-run"})
-	return raw
+	return json.RawMessage(`{"run_id":"test-run"}`)
 }
 
 // cp012FixtureMakeFilteredPayload builds a payload containing a `score` field for
 // filter tests.
 func cp012FixtureMakeFilteredPayload(score int) json.RawMessage {
-	raw, _ := json.Marshal(map[string]any{"score": score})
+	return json.RawMessage(fmt.Sprintf(`{"score":%d}`, score))
+}
+
+func cp012FixtureMarshal(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
 	return raw
 }
 
@@ -352,7 +360,7 @@ func TestCP013_TriggerNameOnPrefix(t *testing.T) {
 	})
 	_ = disp
 
-	payload, _ := json.Marshal(map[string]any{})
+	payload := cp012FixtureMarshal(t, map[string]any{})
 	cp012FixtureEmitEvent(t, bus, "run_started", payload)
 	cp012FixtureWaitDrain(t, bus)
 
@@ -469,7 +477,7 @@ func TestCP014_HookOrderingBySubsystemPriority(t *testing.T) {
 		Handler: func(_ context.Context, ev core.Event) error {
 			var pl core.HookFiredPayload
 			if err := json.Unmarshal(ev.Payload, &pl); err != nil {
-				return nil
+				return err
 			}
 			firedNames = append(firedNames, string(pl.HookName))
 			return nil
@@ -535,7 +543,7 @@ func TestCP014_HookOrderingByDeclarationOrderWithinSamePriority(t *testing.T) {
 		Handler: func(_ context.Context, ev core.Event) error {
 			var pl core.HookFiredPayload
 			if err := json.Unmarshal(ev.Payload, &pl); err != nil {
-				return nil
+				return err
 			}
 			firedNames = append(firedNames, string(pl.HookName))
 			return nil
@@ -674,7 +682,7 @@ func TestCP015_HaltOnFailureStopsChain(t *testing.T) {
 			}
 			var pl core.HookFiredPayload
 			if err := json.Unmarshal(ev.Payload, &pl); err != nil {
-				return nil
+				return err
 			}
 			mu.Lock()
 			firedNames = append(firedNames, string(pl.HookName))

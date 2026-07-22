@@ -106,7 +106,7 @@ func cp016FixtureCollectFiredDescriptors(
 				}
 				var pl core.HookFiredPayload
 				if err := json.Unmarshal(ev.Payload, &pl); err != nil {
-					return nil
+					return err
 				}
 				mu.Lock()
 				*descriptors = append(*descriptors, pl.SideEffectDescriptor)

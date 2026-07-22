@@ -171,7 +171,7 @@ func cp017BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 		EventPattern:  core.EventPattern{Wildcard: true},
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, ev core.Event) error {
-			collector.record(string(ev.Type))
+			collector.record(ev.Type)
 			return nil
 		},
 	}); err != nil {
@@ -186,7 +186,7 @@ func cp017BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 // cp017EmitRunEvent emits an event scoped to a runID.
 func cp017EmitRunEvent(t *testing.T, bus eventbus.EventBus, eventType string, runID core.RunID) json.RawMessage {
 	t.Helper()
-	payload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	payload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	if err := bus.EmitWithRunID(context.Background(), runID, core.EventType(eventType), payload); err != nil {
 		t.Fatalf("EmitWithRunID(%q): %v", eventType, err)
 	}
@@ -343,7 +343,7 @@ func TestCP017_CognitionHookRequiresRunScopedEvent(t *testing.T) {
 	_ = disp
 
 	// Emit without a RunID (plain Emit, not EmitWithRunID).
-	payload, _ := json.Marshal(map[string]any{})
+	payload := cp012FixtureMarshal(t, map[string]any{})
 	if err := bus.Emit(context.Background(), "agent_started", payload); err != nil {
 		t.Fatalf("Emit: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestCP017_ReplayMatchingHashConsumesPersistedVerdict(t *testing.T) {
 	// Compute the envelope hash that the dispatcher will compute for the event
 	// we're about to emit, so we can pre-seed the reader with the correct hash.
 	runID := cp017RunID()
-	evPayload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	evPayload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	correctHash := cp017ComputeEnvelopeHash(t, cp, evPayload)
 
 	persistedVerdict := core.HookVerdictRecord{
@@ -554,7 +554,9 @@ func TestCP017_WithCognitionPanicsOnNilArg(t *testing.T) {
 
 	reg := cp012FixtureNewRegistry()
 	bus := eventbus.NewBusImpl()
-	_ = bus.Seal()
+	if err := bus.Seal(); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
 
 	eval := &cp017StubCognitionEval{}
 	writer := &cp017StubVerdictWriter{}
@@ -571,7 +573,6 @@ func TestCP017_WithCognitionPanicsOnNilArg(t *testing.T) {
 		{"nil reader", eval, writer, nil},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			defer func() {

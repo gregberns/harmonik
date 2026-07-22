@@ -171,7 +171,7 @@ func cp042BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 		EventPattern:  core.EventPattern{Wildcard: true},
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, ev core.Event) error {
-			collector.record(string(ev.Type))
+			collector.record(ev.Type)
 			return nil
 		},
 	}); err != nil {
@@ -232,7 +232,7 @@ func TestCP042_ProductionAndPersistenceAreSeparateOperations(t *testing.T) {
 	})
 
 	runID := cp042RunID()
-	payload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	payload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	if err := bus.EmitWithRunID(context.Background(), runID, "agent_started", payload); err != nil {
 		t.Fatalf("EmitWithRunID: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestCP042_WriterPathIsCanonical(t *testing.T) {
 	})
 
 	runID := cp042RunID()
-	payload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	payload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	if err := bus.EmitWithRunID(context.Background(), runID, "run_completed", payload); err != nil {
 		t.Fatalf("EmitWithRunID: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestCP042_WriterNotCalledOnEvaluatorError(t *testing.T) {
 	})
 
 	runID := cp042RunID()
-	payload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	payload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	if err := bus.EmitWithRunID(context.Background(), runID, "agent_started", payload); err != nil {
 		t.Fatalf("EmitWithRunID: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestCP042_WriterNotCalledOnReplay(t *testing.T) {
 	reg := cp012FixtureNewRegistry(cp)
 
 	runID := cp042RunID()
-	evPayload, _ := json.Marshal(map[string]any{"run_id": runID.String()})
+	evPayload := cp012FixtureMarshal(t, map[string]any{"run_id": runID.String()})
 	correctHash := cp042ComputeEnvelopeHash(t, cp, evPayload)
 
 	persistedVerdict := core.HookVerdictRecord{

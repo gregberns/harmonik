@@ -32,7 +32,8 @@
 #
 # GAP MAP: gap1 model-reaches-harness (T2, DONE) · gap2 remote==local (T7) ·
 #          gap3 provider-through-sandbox (T6) · gap4 dispatch field fidelity (T5) ·
-#          gap5 claude worktree->agent_ready (T8).
+#          gap5 claude worktree->agent_ready (T8) · gap6 dot round-trip same-model (D4) ·
+#          gap7 codex-first DOT routing (hk-ity2u).
 
 # --- helpers ---------------------------------------------------------------
 def events: $events;
@@ -240,6 +241,102 @@ def assert_gap6:
     else result("gap6"; "pass"; "REQUEST_CHANGES@\($reqIdx) -> impl re-dispatch@\($reImplIdx) -> APPROVE@\($apprIdx) -> close; all \($models | length) model_selected == \($wantModel)")
     end;
 
+# --- gap7 — codex-first DOT routing (hk-ity2u) -------------------------------
+# The codex-first safety boundary in one assertion: a bead carrying the tier-1
+# `harness:codex` label runs its IMPLEMENT node on codex while BOTH reviewer nodes
+# stay on claude-code via the DOT node pin — and each reviewer actually returns a
+# verdict. This is the property that makes per-bead codex labelling safe; when it
+# breaks, the reviewer silently goes to codex, emits no verdict, and the run reds in
+# a way that reads as "codex cannot do the work" rather than "the routing was wrong"
+# (hk-ofm89, hk-3eso9). A green outcome with the wrong routing is FALSE EVIDENCE, so
+# outcome alone is never enough.
+#
+# ATTRIBUTION — why positional, and why that is sound.
+# `harness_selected` carries only {bead_id, agent_type, tier}; there is NO node_id on
+# it (harnessresolve.go emitHarnessSelected), so per-node routing CANNOT be read off
+# the event itself. It is recovered from position: dot_cascade.go emits
+# node_dispatch_requested at the TOP of every node visit (the `for visits` loop, before
+# the node is handled), and harness_selected is emitted inside the launch-spec builder
+# closure at each node's launch — so every harness_selected belongs to the NEAREST
+# PRECEDING node_dispatch_requested. reviewer_verdict is attributed the same way (it
+# also carries no node_id). Events before the first node_dispatch_requested attribute
+# to "<pre-cascade>" and are reported, never silently dropped.
+#
+# The tiers are the load-bearing half of the assertion, not decoration:
+#   implement → tier 1 proves the harness came from the BEAD LABEL (harnessresolve.go
+#               tier-1 path). A codex implement at any other tier means the label is
+#               not what routed it, and the cell proves nothing about labelling.
+#   review/qa → tier 3 proves the harness came from the DOT NODE PIN
+#               (pinnedHarnessLaunchSpecBuilder emits tier 3 unconditionally). A
+#               claude-code reviewer at tier 4 would be the global default happening
+#               to agree — the pin would be untested and would not hold once the
+#               default moves.
+#
+# PASS requires ALL of:
+#   (a) ≥1 harness_selected attributed to the implement node, ALL of them
+#       agent_type == expect.dot_routing.implement_harness at tier implement_tier;
+#   (b) for EVERY node in expect.dot_routing.reviewer_nodes: ≥1 harness_selected
+#       attributed to it, ALL of them reviewer_harness at reviewer_tier;
+#   (c) NO reviewer-attributed harness_selected carries the implementer's harness —
+#       called out separately from (b) because this is THE failure the bead exists to
+#       catch, and it deserves its own message;
+#   (d) for EVERY reviewer node: ≥1 reviewer_verdict attributed to it — a reviewer that
+#       launches on claude and then says nothing is the same false red by another route;
+#   (e) no EPERM / "operation not permitted" text anywhere in the stream (the codex
+#       shell-step sandbox denial, which surfaces as a tool failure rather than a typed
+#       event, so it is caught by scanning the serialized stream).
+def _dot_attributed:
+  # [{i, type, p, node}] — every event tagged with the node whose dispatch preceded it.
+  [ events[] | {type: .type, p: pl} ]
+  | to_entries
+  | map({i: .key, type: .value.type, p: .value.p})
+  | reduce .[] as $e ([[], "<pre-cascade>"];
+      if $e.type == "node_dispatch_requested"
+      then [ .[0], (($e.p.node_id // "<unnamed>") | tostring) ]
+      else [ (.[0] + [$e + {node: .[1]}]), .[1] ]
+      end)
+  | .[0];
+def assert_gap7:
+  ($spec.expect.dot_routing // {}) as $dr
+  | ($dr.implement_harness // "codex")   as $wantImpl
+  | ($dr.implement_tier // 1)            as $wantImplTier
+  | ($dr.reviewer_harness // "claude-code") as $wantRev
+  | ($dr.reviewer_tier // 3)             as $wantRevTier
+  | ($dr.reviewer_nodes // ["review","qa"]) as $revNodes
+  | _dot_attributed as $att
+  | ($att | map(select(.type == "harness_selected"))) as $hs
+  | ($att | map(select(.type == "reviewer_verdict"))) as $rv
+  | ($hs | map(select(.node | test("implement"; "i")))) as $implHs
+  | ([ $revNodes[] as $n | { node: $n,
+        hs: ($hs | map(select(.node == $n))),
+        rv: ($rv | map(select(.node == $n))) } ]) as $revs
+  | ($implHs | map(select(.p.agent_type != $wantImpl or .p.tier != $wantImplTier))) as $implBad
+  | ([ $revs[] | select((.hs | length) == 0) | .node ]) as $revNoLaunch
+  | ([ $revs[] | .hs[] | select(.p.agent_type == $wantImpl) ]) as $revOnImplHarness
+  | ([ $revs[] | .hs[] | select(.p.agent_type != $wantRev or .p.tier != $wantRevTier) ]) as $revBad
+  | ([ $revs[] | select((.rv | length) == 0) | .node ]) as $revNoVerdict
+  | ([ events[] | tostring | select(test("EPERM|operation not permitted"; "i")) ] | length) as $eperm
+  | if ($dr == {})
+    then result("gap7"; "pending"; "no expect.dot_routing in spec — add {implement_harness, reviewer_nodes, reviewer_harness} to assert gap7")
+    elif ($att | map(select(.node != "<pre-cascade>")) | length) == 0
+    then result("gap7"; "fail"; "no node_dispatch_requested in the stream — this is not a DOT-cascade run, so per-node routing cannot be attributed (did the bead resolve to single/review-loop?)")
+    elif ($implHs | length) == 0
+    then result("gap7"; "fail"; "no harness_selected attributed to an implement node — the implementer never launched")
+    elif ($implBad | length) > 0
+    then result("gap7"; "fail"; "implement node routed to \($implBad[0].p.agent_type)/tier\($implBad[0].p.tier) != \($wantImpl)/tier\($wantImplTier) — the harness:\($wantImpl) bead label did not route the implementer")
+    elif ($revNoLaunch | length) > 0
+    then result("gap7"; "fail"; "reviewer node(s) \($revNoLaunch | join(",")) never launched — the cascade did not reach review/qa")
+    elif ($revOnImplHarness | length) > 0
+    then result("gap7"; "fail"; "REVIEWER ROUTED TO \($wantImpl) on node '\($revOnImplHarness[0].node)' — the bead label overrode the DOT node pin; this reviewer emits no verdict and the run reds as a false codex-capability failure (hk-ofm89)")
+    elif ($revBad | length) > 0
+    then result("gap7"; "fail"; "reviewer node '\($revBad[0].node)' routed to \($revBad[0].p.agent_type)/tier\($revBad[0].p.tier) != \($wantRev)/tier\($wantRevTier) — tier\($wantRevTier) is the DOT node pin; another tier means the pin is not what held")
+    elif ($revNoVerdict | length) > 0
+    then result("gap7"; "fail"; "reviewer node(s) \($revNoVerdict | join(",")) launched on \($wantRev) but emitted NO reviewer_verdict — silent reviewer, same false red by another route")
+    elif $eperm > 0
+    then result("gap7"; "fail"; "EPERM / 'operation not permitted' in the stream (\($eperm) event(s)) — the codex shell step hit a sandbox denial")
+    else result("gap7"; "pass"; "implement=\($wantImpl)/tier\($wantImplTier); \($revs | map("\(.node)=\(.hs[0].p.agent_type)/tier\(.hs[0].p.tier) verdict=\(.rv[0].p.verdict)") | join(" ")); no EPERM")
+    end;
+
 # --- dispatcher ------------------------------------------------------------
 # Run only the gaps the spec lists, in gap-number order, de-duplicated.
 def run_gap($g):
@@ -249,6 +346,7 @@ def run_gap($g):
   elif $g == "gap4" then assert_gap4
   elif $g == "gap5" then assert_gap5
   elif $g == "gap6" then assert_gap6
+  elif $g == "gap7" then assert_gap7
   elif $g == "t10"  then assert_t10
   else result($g; "fail"; "unknown gap id in spec: \($g)")
   end;

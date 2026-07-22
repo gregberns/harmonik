@@ -1,0 +1,16 @@
+{"type":"run_started","payload":{"bead_id":"hk-clp-codexdot","run_id":"r1","workflow_mode":"dot","workspace_path":"/w"}}
+{"type":"node_dispatch_requested","payload":{"run_id":"r1","node_id":"implement","origin":"workflow"}}
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-codexdot","agent_type":"codex","tier":1}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"","harness":"codex"}}
+{"type":"implementer_phase_complete","payload":{"bead_id":"hk-clp-codexdot","run_id":"r1","commit_landed":true,"exit_code":0}}
+{"type":"node_dispatch_requested","payload":{"run_id":"r1","node_id":"commit_gate","origin":"workflow"}}
+{"type":"node_dispatch_requested","payload":{"run_id":"r1","node_id":"review","origin":"workflow"}}
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-codexdot","agent_type":"codex","tier":1}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"claude-opus-4-8","harness":"claude-code"}}
+{"type":"reviewer_verdict","payload":{"run_id":"r1","verdict":"APPROVE","iteration_count":1,"notes":"one appended line, no other change"}}
+{"type":"node_dispatch_requested","payload":{"run_id":"r1","node_id":"qa","origin":"workflow"}}
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-codexdot","agent_type":"codex","tier":1}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"claude-opus-4-8","harness":"claude-code"}}
+{"type":"reviewer_verdict","payload":{"run_id":"r1","verdict":"APPROVE","iteration_count":1,"notes":"executed the change; file has the line"}}
+{"type":"node_dispatch_requested","payload":{"run_id":"r1","node_id":"close","origin":"workflow"}}
+{"type":"run_completed","payload":{"bead_id":"hk-clp-codexdot","run_id":"r1","success":true}}

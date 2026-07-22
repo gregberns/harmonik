@@ -106,6 +106,24 @@ check "gap6 real round-trip pass"      "$TD/pi-dot-roundtrip-pass.ndjson"  "$GAP
 check "gap6 no round-trip (first-pass APPROVE) fail" "$TD/pi-dot-noroundtrip-fail.ndjson" "$GAP6" gap6 fail
 check "gap6 same-model leak (claude) fail" "$TD/pi-dot-modelleak-fail.ndjson"  "$GAP6" gap6 fail
 
+# gap7 — codex-first DOT routing (hk-ity2u). The implement node must run on codex at
+# TIER 1 (the bead label routed it) while review + qa stay claude-code at TIER 3 (the DOT
+# node pin held), and each reviewer must actually return a verdict. Every fail fixture
+# below still CLOSES GREEN — that is the point: outcome alone cannot tell these apart from
+# the pass, which is why the bead requires asserting routing and not just the terminal.
+GAP7='{"schema_version":1,"cell":"codex-dot:local","seed_bead":"hk-clp-codexdot","substrate":"local","expect":{"dot_routing":{"implement_harness":"codex","implement_tier":1,"reviewer_nodes":["review","qa"],"reviewer_harness":"claude-code","reviewer_tier":3}},"gaps":["gap7"]}'
+check "gap7 codex impl + claude review/qa pass" "$TD/codex-dot-routing-pass.ndjson"          "$GAP7" gap7 pass
+check "gap7 reviewer routed to codex fail"      "$TD/codex-dot-reviewer-on-codex-fail.ndjson" "$GAP7" gap7 fail
+check "gap7 reviewer at tier4 (default, not pin) fail" "$TD/codex-dot-reviewer-tier4-fail.ndjson" "$GAP7" gap7 fail
+check "gap7 silent reviewer (no verdict) fail"  "$TD/codex-dot-silent-reviewer-fail.ndjson"  "$GAP7" gap7 fail
+check "gap7 implementer not on codex fail"      "$TD/codex-dot-impl-not-codex-fail.ndjson"   "$GAP7" gap7 fail
+check "gap7 not a DOT cascade fail"             "$TD/codex-dot-not-dot-fail.ndjson"          "$GAP7" gap7 fail
+check "gap7 EPERM in codex shell step fail"     "$TD/codex-dot-eperm-fail.ndjson"            "$GAP7" gap7 fail
+# The gap must be LISTED for the dispatcher to run it; the pending verdict is about the
+# missing expect block, not a missing gaps entry.
+GAP7_NOEXPECT='{"schema_version":1,"seed_bead":"hk-clp-codexdot","expect":{},"gaps":["gap7"]}'
+check "gap7 pending when no expect.dot_routing" "$TD/codex-dot-routing-pass.ndjson"          "$GAP7_NOEXPECT" gap7 pending
+
 echo "-----"
 echo "core-loop-assert self-test: pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

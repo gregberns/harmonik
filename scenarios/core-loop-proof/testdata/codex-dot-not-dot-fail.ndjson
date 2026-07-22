@@ -1,0 +1,11 @@
+{"type":"run_started","payload":{"bead_id":"hk-clp-codexdot","run_id":"r1","workflow_mode":"review-loop","workspace_path":"/w"}}
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-codexdot","agent_type":"codex","tier":1}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"","harness":"codex"}}
+{"type":"implementer_phase_complete","payload":{"bead_id":"hk-clp-codexdot","run_id":"r1","commit_landed":true,"exit_code":0}}
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-codexdot","agent_type":"claude-code","tier":3}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"claude-opus-4-8","harness":"claude-code"}}
+{"type":"reviewer_verdict","payload":{"run_id":"r1","verdict":"APPROVE","iteration_count":1,"notes":"one appended line, no other change"}}
+{"type":"harness_selected","payload":{"bead_id":"hk-clp-codexdot","agent_type":"claude-code","tier":3}}
+{"type":"model_selected","payload":{"run_id":"r1","model":"claude-opus-4-8","harness":"claude-code"}}
+{"type":"reviewer_verdict","payload":{"run_id":"r1","verdict":"APPROVE","iteration_count":1,"notes":"executed the change; file has the line"}}
+{"type":"run_completed","payload":{"bead_id":"hk-clp-codexdot","run_id":"r1","success":true}}

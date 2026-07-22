@@ -80,6 +80,10 @@ func dispatchDotGateNode(
 	resolvedModel string,
 	resolvedEffort string,
 	beadID core.BeadID,
+	// beadRecord carries the tier-1 harness:<agent-type> LABEL. hk-01vs0 needs it
+	// to compute (quietly) the harness the cognition gate WOULD inherit, so a
+	// reviewer-class gate never lands on a SessionIDCaptured harness.
+	beadRecord core.BeadRecord,
 	beadTitle string,
 	beadDescription string,
 	extraContext string,
@@ -114,7 +118,7 @@ func dispatchDotGateNode(
 		evalFn = buildMechanismGateEval(cp)
 	case core.ModeTagCognition:
 		var cogErr error
-		evalFn, cogErr = buildCognitionGateEval(deps, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
+		evalFn, cogErr = buildCognitionGateEval(deps, runID, cp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadRecord, beadTitle, beadDescription, extraContext, baseBranch, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
 		if cogErr != nil {
 			return core.Outcome{}, fmt.Errorf("dot: gate node %q: build cognition eval: %w", node.ID, cogErr)
 		}
@@ -203,6 +207,7 @@ func buildCognitionGateEval(
 	resolvedModel string,
 	resolvedEffort string,
 	beadID core.BeadID,
+	beadRecord core.BeadRecord, // hk-01vs0: tier-1 harness label source
 	beadTitle string,
 	beadDescription string,
 	extraContext string,
@@ -218,7 +223,7 @@ func buildCognitionGateEval(
 	}
 
 	return func(ctx context.Context, run *core.Run, nodeID core.NodeID, gateRef core.GateRef) (*core.GateDecisionPayload, error) {
-		return executeCognitionGate(ctx, deps, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadTitle, beadDescription, extraContext, baseBranch, gateRef, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
+		return executeCognitionGate(ctx, deps, runID, run, cp, *dp, wtPath, daemonSocket, node, iterationCount, resolvedModel, resolvedEffort, beadID, beadRecord, beadTitle, beadDescription, extraContext, baseBranch, gateRef, runner, workerBinaryPath, workerSessionName, workerSessionCwd)
 	}, nil
 }
 
@@ -238,6 +243,7 @@ func executeCognitionGate(
 	resolvedModel string,
 	resolvedEffort string,
 	beadID core.BeadID,
+	beadRecord core.BeadRecord, // hk-01vs0: tier-1 harness label source
 	beadTitle string,
 	beadDescription string,
 	extraContext string,
@@ -293,7 +299,60 @@ func executeCognitionGate(
 		baseBranch:        baseBranch,
 	}
 
+	// hk-01vs0: the cognition gate is REVIEWER-CLASS — it launches with
+	// ReviewLoopPhaseReviewer, is briefed with .harmonik/gate-task.md, and must
+	// write .harmonik/gate-verdict.json. It therefore must never run on a
+	// SessionIDCaptured harness (codex, pi), for exactly the two reasons
+	// reviewerharness_hkiv748.go documents for reviewers:
+	//   - codexlaunchspec.go emits ONLY an IMPLEMENTER seed prompt and never reads
+	//     rc.phase, so a codex "gate evaluator" is told to implement the bead and
+	//     never learns gate-task.md exists, let alone writes a verdict;
+	//   - codex never emits agent_ready, but the waitAgentReady below blocks on it,
+	//     so the gate dies at "cognition gate %q: agent_ready_timeout".
+	//
+	// Before this fix the gate took deps.launchSpecBuilder UNCONDITIONALLY. That
+	// builder is routedLaunchSpecBuilder(reg, beadRecord, …) (workloop.go), whose
+	// tier-1 leg returns a per-bead `harness:codex` LABEL immediately
+	// (harnessresolve.go) — so a single labelled bead, not just a global codex
+	// default, routed the gate onto codex. This is the third site of the
+	// "reviewer silently inherits a harness that cannot review" class; hk-pkxju
+	// closed reviewloop.go and dot_cascade.go and left this one out of scope.
+	//
+	// Reuse of dotReviewerInheritedHarnessOverride (the DOT-cascade adapter) rather
+	// than raw reviewerDefaultHarness: the correction needs the harness the gate
+	// WOULD have inherited, which is the same quiet tier-1/tier-4 walk the adapter
+	// already performs; calling reviewerDefaultHarness directly would mean
+	// duplicating that walk here. Both pin arguments are deliberately empty:
+	//   - reviewer_harness= is an attribute of an IMPLEMENTER node naming its
+	//     reviewer; no implementer node feeds a gate node, so it never applies.
+	//   - node.Harness is read ONLY by dispatchDotAgenticNode (dot_cascade.go). The
+	//     gate path has never consulted it, so there is no operator pin to protect
+	//     here — passing it would merely re-open the inherit hole for any gate node
+	//     that happens to carry harness=. Teaching gate nodes to honour a harness=
+	//     pin is a separate feature, not this fix.
+	// Non-empty return ⇒ pin via pinnedHarnessLaunchSpecBuilder, NOT
+	// routedLaunchSpecBuilder: the latter re-runs resolveHarness and would let the
+	// tier-1 `harness:codex` bead label override the correction (the hk-2jxqg
+	// footgun). Empty return ⇒ deps.launchSpecBuilder stands untouched, so an
+	// all-claude run is byte-identical to pre-hk-01vs0 behaviour.
 	specBuilder := deps.launchSpecBuilder
+	gateInheritedHarness := dotReviewerInheritedHarnessOverride(
+		deps.harnessRegistry,
+		true,               // a cognition gate is reviewer-class by construction
+		core.AgentType(""), // reviewer_harness=: never applies to a gate node
+		core.AgentType(""), // node.Harness: not a gate-path mechanism (see above)
+		beadRecord,
+		deps.defaultHarness,
+		string(beadID),
+	)
+	if gateInheritedHarness.Valid() && deps.harnessRegistry != nil {
+		specBuilder = pinnedHarnessLaunchSpecBuilder(
+			deps.harnessRegistry,
+			beadRecord,
+			gateInheritedHarness,
+			deps.bus,
+		)
+	}
 	if specBuilder == nil {
 		specBuilder = buildClaudeLaunchSpec
 	}

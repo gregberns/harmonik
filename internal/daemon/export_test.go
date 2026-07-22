@@ -991,6 +991,46 @@ func ExportedSetSubstrateRunnerObserver(f func(tmuxPkg.CommandRunner)) {
 	substrateRunnerObserver = f
 }
 
+// ExportedExecuteCognitionGate drives executeCognitionGate — the PRODUCTION
+// cognition-gate dispatch body in dot_gate.go — directly, so a test can assert
+// which harness the gate actually resolves without standing up the whole DOT
+// cascade (which needs a real git worktree and a real tmux pane).
+//
+// The call is expected to FAIL somewhere after the launch-spec build (Launch,
+// agent_ready wait, or verdict read) under a unit fixture; the returned error is
+// informational only. Callers assert on the events the build emitted and on
+// whether deps.launchSpecBuilder was consulted.
+//
+// Bead ref: hk-01vs0.
+func ExportedExecuteCognitionGate(
+	ctx context.Context,
+	deps workLoopDeps,
+	runID core.RunID,
+	cp core.ControlPoint,
+	wtPath string,
+	node *dot.Node,
+	beadID core.BeadID,
+	beadRecord core.BeadRecord,
+) error {
+	dp := cp.Evaluator.DelegationPath
+	if dp == nil {
+		return fmt.Errorf("ExportedExecuteCognitionGate: ControlPoint %q has no DelegationPath", cp.Name)
+	}
+	run := &core.Run{
+		RunID:        runID,
+		WorkflowMode: core.WorkflowModeDot,
+		Context:      map[string]any{},
+	}
+	_, err := executeCognitionGate(
+		ctx, deps, runID, run, cp, *dp, wtPath, "",
+		node, 1, "", "",
+		beadID, beadRecord, "hk-01vs0 gate fixture bead", "gate fixture body",
+		"", "main", core.GateRef(node.GateRef),
+		nil, "", "", "",
+	)
+	return err
+}
+
 // ExportedDriveDotWorkflowWithRunner exposes driveDotWorkflow with an explicit
 // CommandRunner so tests can assert the remote (runner != nil) path threads the
 // runner into the DOT agentic-node claudeRunCtx (hk-3sus).
@@ -2969,6 +3009,31 @@ func ExportedRoutedLaunchSpecBuilder(
 			PreExecMsgs:      arts.preExecMsgs,
 			Substrate:        arts.substrate,
 		}, nil
+	}
+}
+
+// ExportedObservedRoutedLaunchSpecBuilder returns the REAL production
+// routedLaunchSpecBuilder in the INTERNAL workLoopDeps.launchSpecBuilder shape
+// (so it can be installed via WorkLoopDepsParams.LaunchSpecBuilder), wrapped in
+// a call observer. It is exactly the builder beadRunOne installs in production
+// (workloop.go: routedLaunchSpecBuilder(reg, beadRecord, "", "", defaultHarness,
+// bus)), so a test can assert whether a downstream dispatch site CONSULTED it or
+// correctly REPLACED it. onCall fires once per invocation, before the build runs.
+//
+// Bead ref: hk-01vs0.
+func ExportedObservedRoutedLaunchSpecBuilder(
+	reg *handlercontract.HarnessRegistry,
+	bead core.BeadRecord,
+	globalDefault core.AgentType,
+	bus handlercontract.EventEmitter,
+	onCall func(),
+) func(context.Context, claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+	builder := routedLaunchSpecBuilder(reg, bead, core.AgentType(""), core.AgentType(""), globalDefault, bus)
+	return func(ctx context.Context, rc claudeRunCtx) (handler.LaunchSpec, claudeRunArtifacts, error) {
+		if onCall != nil {
+			onCall()
+		}
+		return builder(ctx, rc)
 	}
 }
 

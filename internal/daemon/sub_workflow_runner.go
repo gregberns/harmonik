@@ -351,7 +351,8 @@ func dispatchSubWorkflowExpandedNode(
 		return dispatchDotGateNode(
 			ctx, r.deps, r.runID, r.run, r.wtPath, r.daemonSocket, n,
 			*r.iterationCount, r.resolvedModel, r.resolvedEffort,
-			r.beadID, r.beadTitle, r.beadDescription, r.extraContext, r.baseBranch, r.runner,
+			r.beadID, r.beadRecord, // hk-01vs0: tier-1 harness label reaches the gate's harness resolution
+			r.beadTitle, r.beadDescription, r.extraContext, r.baseBranch, r.runner,
 			r.workerBinaryPath, r.workerSessionName, r.workerSessionCwd,
 		)
 

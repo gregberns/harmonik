@@ -364,13 +364,39 @@ func TestExecuteVerdict_LockReleasedOnError(t *testing.T) {
 	_, _ = daemon.ExecuteVerdict(context.Background(), ve, lock, ve025aCfg(projectDir, &ve025aRecordingEmitter{}))
 
 	// If the lock was released, a new acquire succeeds.
-	lock2, err := lifecycle.AcquireReconciliationLock(projectDir, ve.TargetRunID.String())
-	if err != nil {
-		t.Errorf("RC-002a lock not released after ExecuteVerdict error: %v; "+
-			"RC-025a step 7 must release the lock unconditionally", err)
-	} else {
-		_ = lock2.Release()
+	//
+	// The acquire is retried within a bounded window rather than asserted on the
+	// first attempt (hk-fei89). An flock lives on the open file description, and
+	// fork() duplicates every fd into the child; O_CLOEXEC drops the fd at exec,
+	// not at fork. So while any sibling test in this package sits between fork()
+	// and execve() for one of its git subprocesses, that child still references
+	// this test's own lock fd, and the flock reads as held even though
+	// ExecuteVerdict has already closed it. Measured directly: under fork
+	// pressure the window fires on ~2% of acquires and always clears in under
+	// 13ms.
+	//
+	// The window does not weaken what this test checks. A genuinely leaked lock
+	// is still held when the window expires, so a real step-7 regression still
+	// fails here; only the transient fork-window false positive is absorbed.
+	const releaseWindow = 2 * time.Second
+	deadline := time.Now().Add(releaseWindow)
+	var lastErr error
+	for {
+		lock2, err := lifecycle.AcquireReconciliationLock(projectDir, ve.TargetRunID.String())
+		if err == nil {
+			_ = lock2.Release()
+			return
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
+	t.Errorf("RC-002a lock not released after ExecuteVerdict error: %v; "+
+		"RC-025a step 7 must release the lock unconditionally "+
+		"(still held after retrying for %v — not the hk-fei89 fork/exec window)",
+		lastErr, releaseWindow)
 }
 
 // TestExecuteVerdict_VerdictEmittedCommit_HasReconciliationTrailer verifies that

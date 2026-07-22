@@ -220,7 +220,7 @@ type WorkLoopDepsParams struct {
 	// passed to runWorkLoop (backward-compat).
 	//
 	// Bead ref: hk-2o2i9.
-	StopDispatchCtx context.Context
+	StopDispatchCtx context.Context //nolint:containedctx // hk-2o2i9: mirrors daemon.Config.StopDispatchCtx, which is a context by design.
 
 	// HandlerPauseController, when non-nil, is wired into the work loop to
 	// enable the skip-on-paused dispatch gate (hk-kac8g).  When nil the gate
@@ -415,14 +415,6 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	reg := p.RunRegistry
 	if reg == nil {
 		reg = NewRunRegistry()
-	}
-
-	// Use the caller-supplied AdapterRegistry or create a fresh empty one.
-	// Tests do not need adapters registered: Launch does not consult the
-	// registry at MVH (hk-gql20.16).
-	adapterReg := p.AdapterRegistry
-	if adapterReg == nil {
-		adapterReg = handlercontract.NewAdapterRegistry()
 	}
 
 	// Use the caller-supplied HookStore or fall back to a real hookSessionStore
@@ -759,7 +751,7 @@ func ExportedSandboxSpawnForRun(cfg SandboxConfig, agentType core.AgentType, in 
 // daemon_test — the EXEC-path srt argv-wrap applied to a SessionIDCaptured
 // (pi) run's LaunchSpec (spec.Substrate==nil). Returns (binary, args) unchanged
 // when spawn is nil (strict no-op). See sandboxgate.go (hk-r4p0l part 2).
-func ExportedSandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []string) (string, []string, error) {
+func ExportedSandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []string) (wrappedBinary string, wrappedArgs []string, err error) {
 	return sandboxWrapExecArgv(spawn, binary, args)
 }
 
@@ -1200,7 +1192,7 @@ func ExportedHookLatestOutcome(s *hookSessionStore, runID, claudeSessionID strin
 }
 
 // ExportedHookDispatch exposes dispatchHookRelayEnvelope for tests.
-func ExportedHookDispatch(s *hookSessionStore, env HookRelayEnvelopeExported) (string, string) {
+func ExportedHookDispatch(s *hookSessionStore, env HookRelayEnvelopeExported) (status, reason string) {
 	ack := s.dispatchHookRelayEnvelope(hookRelayEnvelope{
 		Type:             env.Type,
 		RunID:            env.RunID,
@@ -1245,7 +1237,7 @@ func ExportedHookSetAgentReadyCallback(s *hookSessionStore, runID, claudeSession
 // ExportedPersistClaudeSessionID exposes persistClaudeSessionID for tests.
 //
 // Bead ref: hk-w5vra.6.
-func ExportedPersistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID, sessionID string) (string, bool, error) {
+func ExportedPersistClaudeSessionID(ctx context.Context, wtPath string, runID core.RunID, sessionID string) (commitSHA string, skipped bool, err error) {
 	res, err := persistClaudeSessionID(ctx, wtPath, runID, sessionID)
 	return res.CommitSHA, res.Skipped, err
 }
@@ -1314,7 +1306,7 @@ func ExportedRunHandleIsAborted(h *RunHandle) bool {
 //
 // Bead ref: hk-0z5x.
 func ExportedStalewatchObserve(w *StaleWatcher, ctx context.Context, evt core.Event) {
-	_ = w.observe(ctx, evt)
+	_ = w.observe(ctx, evt) //nolint:errcheck // hk-0z5x: this seam is called in statement position by the stalewatch tests, which assert on watcher state rather than the observe error; surfacing it would push unchecked-error findings onto every caller.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1657,6 +1649,8 @@ const ExportedReviewerBudgetSentinelName = reviewerBudgetSentinelName
 // access to the unexported reviewerBudgetSentinel struct.
 //
 // Bead: hk-sah87.
+//
+//nolint:gocritic // hk-sah87: the flat result tuple is the point of this seam — it lets daemon_test assert marker fields without access to the unexported reviewerBudgetSentinel struct; returning a struct would just re-export it.
 func ExportedReadReviewerBudgetSentinelFields(wtPath string) (present bool, reason string, budgetMS, elapsedMS int64, changedLines int, err error) {
 	s, rErr := ReadReviewerBudgetSentinel(wtPath)
 	if rErr != nil {
@@ -1889,13 +1883,13 @@ func ExportedRunRegistryRegister(r *RunRegistry, runID core.RunID, handle *RunHa
 // Bead ref: hk-zrj83, hk-930o3, hk-fra5l.
 func ExportedPasteInjectOnLaunch(
 	ctx context.Context,
-	substrate handler.Substrate,
+	subst handler.Substrate,
 	claudeSessID string,
 	phase handlercontract.ReviewLoopPhase,
 	iterCount int,
 	wtPath string,
 ) <-chan struct{} {
-	return pasteInjectOnLaunch(ctx, substrate, claudeSessID, phase, iterCount, wtPath, nil, core.RunID{})
+	return pasteInjectOnLaunch(ctx, subst, claudeSessID, phase, iterCount, wtPath, nil, core.RunID{})
 }
 
 // ExportedBufferName exposes the bufferName helper for tests in package
@@ -2157,7 +2151,7 @@ func ExportedNewWorkLoopDepsWithStore(cfg Config, bus handlercontract.EventEmitt
 // "" for the main queue (it normalises to "main").
 //
 // Bead ref: hk-45ude, hk-tigaf.4.
-func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueName string, queueID string, groupIndex int, itemIdx int, success bool) {
+func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueName, queueID string, groupIndex, itemIdx int, success bool) {
 	evaluateGroupAdvanceWithOutcome(ctx, deps, queueName, queueID, groupIndex, itemIdx, success)
 }
 
@@ -2550,7 +2544,7 @@ func (noopExportedEmitter) EmitWithRunID(context.Context, core.RunID, core.Event
 // (the same channel newChanAgentEventSource/waitAgentReady consumes in
 // production). Additional independent subscribers are obtained via
 // tap.ExportedSubscribe (hk-37giq).
-func ExportedNewPerRunEventTap(runID core.RunID) (*ExportedPerRunEventTap, <-chan core.EventEnvelope) {
+func ExportedNewPerRunEventTap(runID core.RunID) (tap *ExportedPerRunEventTap, events <-chan core.EventEnvelope) {
 	return newPerRunEventTap(noopExportedEmitter{}, runID)
 }
 

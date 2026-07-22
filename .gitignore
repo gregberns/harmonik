@@ -124,3 +124,11 @@ HANDOFF.md
 # Missions (*.md) stay tracked for reviewability (hk-ev9e).
 /.harmonik/crew/*.json
 .harmonik/events/baseline-2026-07-13/
+
+# Scenario runs materialize a real .harmonik/ inside the fixture tree, including
+# per-session keeper context gauges that carry a live session id. That is runtime
+# state leaking into testdata, not fixture data — ignore it so a test run cannot
+# dirty the tree. (Scoped deliberately: 12 keeper *.ctx files were already
+# tracked elsewhere before this rule; whether THOSE belong in git is a separate
+# operator call, and a blanket *.ctx ignore would half-fix it.)
+scenarios/**/testdata/.harmonik/

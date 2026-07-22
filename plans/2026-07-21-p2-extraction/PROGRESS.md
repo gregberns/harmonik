@@ -1,7 +1,8 @@
 # P2 EXTRACTION — live progress + file ownership
 
 **Owner of this document:** the P2 extraction agent (Claude Opus 4.8, session `59707ade`).
-**Last updated:** 2026-07-22 — P2 core COMPLETE (9/9) + RT13 + E4c landed. 13 commits.
+**Last updated:** 2026-07-22 15:20 — P2 core COMPLETE (9/9) + RT13 + E4c landed. Now draining the
+concurrent quality lane's uncommitted work to disk (§8) and running RT19.0.
 
 > ## ⚠️ We nearly collided at 08:00 — read this
 >
@@ -280,6 +281,116 @@ Until this is resolved, treat any dispatch/throughput/timing failure in the diff
 ---
 
 ## 7. Measured baselines (so later numbers are comparable)
+
+## 7b. The commit-drain wave — 2026-07-22 15:00 onward
+
+**Operator directive:** get the concurrent quality lane's ~155 uncommitted files onto disk, keep
+parallelising, and keep this file current.
+
+The near-collision in §3 is now resolved in the opposite direction from what that section assumed:
+rather than defending my files from the quality agent, I am **committing its work for it**, batch by
+batch, while it keeps working. Every commit is staged by explicit pathspec. No `git add -A`.
+
+**Standing rule for this wave — never commit a package the other agent is currently inside.** Its
+lanes move; I re-check file mtimes before every batch and skip anything written in the last ~15
+minutes. As of 15:20 it is live in `internal/scenario`, `internal/release`, `internal/eventbus`,
+`internal/brcli`, `internal/digest` — all excluded. It also rewrites
+`plans/2026-07-22-quality-audit-remediation/PROGRESS.md` as it goes, so that file will need a
+follow-up commit after the one already landed.
+
+Every non-trivial batch goes through an independent reviewer before it is committed. That gate is
+**earning its keep** — three of the first four reviews came back REQUEST_CHANGES with real defects,
+not style nits:
+
+| Batch | Verdict | What review caught |
+|---|---|---|
+| `internal/codexwire` | REQUEST_CHANGES → APPROVE | two `RawItem` doc comments described an `Extra`-merging mechanism the type does not have. Fixed, re-reviewed, landed `e2d79039` |
+| `internal/agentmanifest` + `cmd/harmonik/agent.go` | APPROVE | landed `3213baf6` |
+| `hookrelay`/`supervise`/`sessiondata` | REQUEST_CHANGES | **claimed watchdog liveness bug does not exist** — HEAD already ignored the probe `Close` error. And the real reap fix introduced two regressions: a kill error now aborts the pass so already-killed sessions emit no `tmux_orphan_reaped` event, and a missing tmux binary flips `supervise reap` from exit 0 to exit 1. Fix in flight |
+| `Makefile` + `.golangci.yml` + `scripts/**` | REQUEST_CHANGES | **P2 coordination verified clean** — all eight freeze gates byte-identical and passing, no depguard deny edge touched, the four real `core` YAML/Expr breaches still visible. But `cmd-coverage-gate.sh` was wired into **nothing** despite PROGRESS claiming it enforced, and its bare `join` inherited the ambient locale while its inputs are `LC_ALL=C` sorted — under a UTF-8 locale it would drop rows and print "all package baselines held" having compared nothing. Both fixed by me |
+
+The freeze-gate verification is the load-bearing result for P2: the quality lane edited `Makefile`
+and `.golangci.yml` concurrently and **did not weaken a single extraction fence**.
+
+## 8. Landed in this wave
+
+| Commit | What |
+|---|---|
+| `20aa1172` | zeromq research programs preserved as `//go:build ignore` — they were breaking whole-tree typechecking |
+| `3213baf6` | agentmanifest renderer write-failure propagation (129 findings → 0) |
+| `63c38c1e` | disk-reclaim runbook, bead hygiene, wedge incident, quality-wave plan |
+| `e2d79039` | codexwire checked writer errors + frame-parsing decomposition (87 findings → 0) |
+| `0fe9486c` | 275 fleet artifacts: 14 kerf works, 22 crew missions, 3 skills, gate verdicts |
+| `3b92142b` | daemon: DOT transport failures separated from "no verdict"; D2 credential guard moved to the launch boundary; both `nilerr` sites |
+| `42010150` | build: git-aware formatter, GOCACHE isolation, `cmd/**` coverage ratchet — **all eight P2 freeze gates verified byte-identical and passing** |
+
+### The two gate regressions review caught, and the lesson
+
+Both would have turned `make check-fast` red on the next commit, and neither was visible to
+`go build` or `go test`.
+
+1. **`nakedret` in `beadRunOne`.** The D2 guard moved, so its bare `return` moved with it.
+   `--new-from-rev` anchors findings to changed lines, so a return that was grandfathered at its old
+   position counted as new at its new one. Now an explicit `return false` (verified safe —
+   `succeeded` has no assignment before that point).
+
+2. **Eight `noctx` findings in `cmd/harmonik` with no new code at all.** This is the sharper lesson
+   and it generalises to every RT chunk ahead. The quality lane deleted *trailing*
+   `//nolint:gosec` comments that gosec no longer needed. Deleting a trailing comment **modifies the
+   line**, which un-grandfathers every OTHER finding anchored to that same line — here, long-standing
+   `exec.Command` findings that had been sitting underneath the gosec directive.
+
+   **Generalised rule for the RT stream: touching a line for ANY reason — even deleting a comment on
+   it — re-exposes every grandfathered finding on that line.** The catalogue §0a already warns about
+   this for function *declaration* lines and `funlen`/`cyclop`/`gocognit`. It is broader than that:
+   it applies to every line and every linter. Budget for it on any chunk that rewrites comments.
+
+### RT19.0 — the E5 prerequisite
+
+Landed as a clean ~12-line in-place cleanup, exactly as the catalogue sized it. All 10 grandfathered
+findings in `export_test.go` are gone (`golangci-lint` scoped to the file: **0**). Real fixes where
+possible — the four `unnamedResult` findings got meaningful names, `importShadow` renamed a
+parameter, `paramTypeCombine` applied, and the `ineffassign` turned out to be genuinely dead code (a
+local `adapterReg` built from `p.AdapterRegistry` and never read, because the struct it fed now uses
+`p.AdapterRegistry2`; the `handler.NewHandler` call that consumed it is gone). Justified suppressions
+only where a real fix would be worse: `containedctx` on a field that mirrors `daemon.Config` by
+design, `errcheck` on a seam whose four callers use statement position, and `tooManyResultsChecker`
+on a flat result tuple that exists precisely to avoid re-exporting an unexported struct.
+
+**Follow-up, recorded not fixed:** deleting the dead local leaves the exported `AdapterRegistry`
+params field with zero readers — vestigial. Removing the field itself would touch other test files,
+so it is out of RT19.0's charter.
+
+**This unblocks 8 of the 20 `export_test.go` split chunks (RT19.1–RT19.20).**
+
+### Four corrections to the recipes — apply these to every remaining chunk
+
+Measured while running RT19.0. Each one cost time that the next chunk should not have to spend.
+
+1. **The known-flaky set in `00-test-oracle-baseline.md` is stale.** `TestThroughput_TenBeadsAtMaxFour`
+   did **not** fail. The pair that actually fails is `TestPasteInjectCommitBudget_IdleActivePane_HKukx`
+   and `TestPasteInjectQuitOnCommit_NewCommitNoKill` — both timing-sensitive (`kill fired after 274ms
+   — too close to hard ceiling (120ms)`), both already red at HEAD. Proven pre-existing by A/B: the
+   pre-edit file gave 6 failures over `-count=8`, the edited file 5. Use that pair as the known-red set.
+2. **`go test -short ./internal/daemon/` exceeds Go's default 10-minute timeout** and dies with a
+   goroutine dump that reads like a real failure but is not. It needs `-timeout 45m` (~340s warm,
+   600s+ cold). Add the flag to every chunk's gate.
+3. **`gofumpt` requires a blank `//` line between a doc comment and a following `//nolint:` directive**
+   on a function. Every later chunk that adds a function-level suppression — the catalogue names
+   RT15.5, RT18.5, RT18.7, RT18.8, RT18.10 and LIFT.13 — will hit this.
+4. **`golangci-lint` takes a global lock.** With another agent active you get `Error: parallel
+   golangci-lint is running`. This is a DIFFERENT failure from the shared-`GOCACHE` `no export data
+   for "encoding/json"` one, and `with-isolated-gocache.sh` does **not** prevent it. Retry in a loop.
+
+**Deliberately left uncommitted, needs an operator call:** `.memory/` (263 files, 1.2 MB, zero
+tracking precedent) and `testdata/codex-app-server/gen/` (852 generated files, 5.7 MB). Also
+`scenarios/core-loop-proof/testdata/.harmonik/keeper/bravo.ctx` — a keeper gauge file with a live
+session id, written into a fixture directory by a scenario run on 2026-07-18. That is runtime
+leakage and wants a `.gitignore` entry, not a commit.
+
+---
+
+## 9. Measured baselines (so later numbers are comparable)
 
 `internal/daemon` at `34509e60` + the staged base, before any extraction:
 **126 top-level non-test files / 57,197 LOC** (recursive: 134 / 58,971).

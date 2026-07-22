@@ -170,10 +170,16 @@ func buildCrewLaunchSpec(rc crewLaunchCtx) (handler.LaunchSpec, error) {
 		args = append(args, "--model", rc.model)
 	}
 
+	// hk-137y6: pin the crew's Go build cache to a FIXED per-agent path so a
+	// crew that runs `go test` by hand inherits a bounded, non-purgeable cache
+	// outside the daemon's reap — instead of following the hk-gjbpp guidance to
+	// `GOCACHE=$(mktemp -d)`, which leaked a ~220 MiB cache per invocation until
+	// the box fell under the disk watermark and dispatch silently stopped.
 	env := []string{
 		"HARMONIK_AGENT=" + rc.name,
 		"HARMONIK_PROJECT=" + rc.projectDir,
 	}
+	env = append(env, GoCacheEnvFor(rc.projectDir, rc.name)...)
 
 	return handler.LaunchSpec{
 		Binary:  binary,

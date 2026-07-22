@@ -248,12 +248,19 @@ func (o osCaptainTmuxOps) PasteSeedToAgentPane(ctx context.Context, sessionID, p
 // --remote-control LABEL is daemon.JoinRemoteControlName(rcPrefix, name) so it
 // shows as "<prefix>-<name>" in the picker. Empty prefix ⇒ bare name (backward
 // compatible). HARMONIK_AGENT stays BARE — the prefix is cosmetic, RC-label-only.
-func buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix string) *exec.Cmd {
+func buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix, projectDir string) *exec.Cmd {
+	// hk-137y6: pin the session's Go build cache to a FIXED per-agent path, the
+	// same way crew launches do. An oversight session that runs `go test` by
+	// hand then inherits a bounded, non-purgeable cache outside the daemon's
+	// reap, instead of following the hk-gjbpp guidance to `GOCACHE=$(mktemp -d)`
+	// — which leaked a ~220 MiB cache per invocation until the box crossed the
+	// disk watermark and dispatch silently stopped.
 	return exec.Command(
 		"tmux", "new-session", "-d",
 		"-s", tmuxSession,
 		"-n", ltmux.WindowAgent,
 		"-e", "HARMONIK_AGENT="+name,
+		"-e", daemon.GoCacheEnvFor(projectDir, name)[0],
 		"claude", "--dangerously-skip-permissions",
 		"--remote-control", daemon.JoinRemoteControlName(rcPrefix, name),
 		"--session-id", sessionID,
@@ -510,7 +517,7 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	// 1) Launch the captain agent window. The agent-window run func is the hk-ly0n
 	//    test seam; the assembled command is `tmux new-session -d -s <session>
 	//    -n agent ... claude ...`.
-	cmd := buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix)
+	cmd := buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix, project)
 	if rerr := run(cmd); rerr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik captain: launch tmux session %q: %v\n", tmuxSession, rerr)
 		return 1

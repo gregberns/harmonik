@@ -22,7 +22,7 @@ func TestBuildCaptainTmuxCmd_RcPrefix_hkw8ex(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cmd := buildCaptainTmuxCmd("captain", "test-session", "11111111-2222-4333-8444-555555555555", c.rcPrefix)
+			cmd := buildCaptainTmuxCmd("captain", "test-session", "11111111-2222-4333-8444-555555555555", c.rcPrefix, t.TempDir())
 			if got := flagValueHkly0n(cmd.Args, "--remote-control"); got != c.wantRC {
 				t.Errorf("buildCaptainTmuxCmd --remote-control = %q, want %q (rcPrefix=%q)", got, c.wantRC, c.rcPrefix)
 			}
@@ -75,7 +75,7 @@ func TestCaptainLaunchRespawnParity_RcPrefix_hkw8ex(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run("prefix="+c.rcPrefix, func(t *testing.T) {
-			launchCmd := buildCaptainTmuxCmd(name, session, sid, c.rcPrefix)
+			launchCmd := buildCaptainTmuxCmd(name, session, sid, c.rcPrefix, t.TempDir())
 			respawnCmd := buildCaptainRespawnWindowCmd(name, session+":agent", sid, c.rcPrefix)
 
 			launchRC := flagValueHkly0n(launchCmd.Args, "--remote-control")

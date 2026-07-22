@@ -171,13 +171,6 @@ const diskLowWatermarkDefault uint64 = 10 * 1024 * 1024 * 1024 // 10 GiB
 // on every 2-second poll tick.
 const diskCheckInterval = 10 * time.Minute
 
-// goCacheCleanInterval is the default minimum interval between proactive
-// `go clean -cache` runs in the work loop (hk-sxlb). 60 minutes prevents the
-// build cache from accumulating to 20 GiB between disk-low crossings. The
-// reactive path (triggered when disk < watermark) runs independently of this
-// timer and may fire sooner.
-const goCacheCleanInterval = 60 * time.Minute
-
 // workLoopDeps bundles the injectable dependencies of the work loop.  All
 // fields are required (non-nil).  Use newWorkLoopDeps to construct the
 // production set from daemon.Config.
@@ -826,9 +819,9 @@ type workLoopDeps struct {
 	coordinatorReapInterval time.Duration
 
 	// NOTE (RSM-011): the periodic-maintenance VALUE fields formerly here —
-	// lastCoordinatorReap, lastDiskCheck, lastGoCacheClean, diskLow — were lifted
-	// out onto runWorkLoop-local loopMaintenanceState. workLoopDeps is passed BY
-	// VALUE into every run goroutine, so a mutation of these fields from a run
+	// lastCoordinatorReap, lastDiskCheck, diskLow — were lifted out onto
+	// runWorkLoop-local loopMaintenanceState. workLoopDeps is passed BY VALUE
+	// into every run goroutine, so a mutation of these fields from a run
 	// goroutine would be a silent no-op (PF §3 hazard). Keeping them off the
 	// bundle makes the ownership (the single work-loop goroutine) structural.
 
@@ -843,12 +836,6 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-sxlb.
 	diskCheckIntervalOverride time.Duration
-
-	// goCacheCleanIntervalOverride overrides goCacheCleanInterval for tests.
-	// Zero → goCacheCleanInterval (60 min).
-	//
-	// Bead ref: hk-sxlb.
-	goCacheCleanIntervalOverride time.Duration
 
 	// diskFreeBytesFunc, when non-nil, replaces the diskFreeBytes call inside
 	// runPeriodicDiskCheck.  Tests use this to control the apparent free-space
@@ -938,11 +925,6 @@ type loopMaintenanceState struct {
 	// lastDiskCheck records when the periodic disk free-space probe last ran.
 	// Zero → the first tick fires after diskCheckInterval elapses (hk-sxlb).
 	lastDiskCheck time.Time
-
-	// lastGoCacheClean records when `go clean -cache` was last run proactively
-	// (independently of a disk-low crossing). Zero → first proactive clean fires
-	// after goCacheCleanInterval (hk-sxlb).
-	lastGoCacheClean time.Time
 
 	// diskLow is true when the most recent disk probe found available space below
 	// diskLowWatermarkDefault (or deps.diskLowWatermark). The dispatch loop skips
@@ -1782,21 +1764,20 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 			}
 		}
 
-		// Step 1d: periodic disk watermark check and proactive go-cache reap
-		// (hk-sxlb, hk-guez). Two rate-limited sub-steps run from the same block:
+		// Step 1d: periodic disk watermark check and reactive go-cache reap
+		// (hk-sxlb, hk-guez). Reactive only — every diskCheckInterval (default
+		// 10 min). When the probe finds available space below the watermark,
+		// deps.diskLow is set true, a disk_low event is emitted, and
+		// `go clean -cache` is run immediately (reactive reap) — but ONLY when
+		// no merge-build is in flight (runRegistry.Len()==0). If a merge is in
+		// flight the reap is skipped and a loud warning is logged instead
+		// (hk-guez fix). The loop then skips dispatch this iteration (see the
+		// gate below).
 		//
-		// (A) Disk probe — every diskCheckInterval (default 10 min). When the
-		//     probe finds available space below the watermark, deps.diskLow is set
-		//     true, a disk_low event is emitted, and `go clean -cache` is run
-		//     immediately (reactive reap) — but ONLY when no merge-build is in
-		//     flight (runRegistry.Len()==0). If a merge is in flight the reap is
-		//     skipped and a loud warning is logged instead (hk-guez fix).
-		//     The loop then skips dispatch this iteration (see the gate below).
-		//
-		// (B) Proactive go-cache reap — every goCacheCleanInterval (default
-		//     60 min) even when disk is healthy, preventing the cache from
-		//     growing to 20 GiB between low-disk crossings. Also gated on idle
-		//     (runRegistry.Len()==0) to avoid racing merge-builds (hk-guez).
+		// A second sub-step used to live here — a cadence-based reap that ran
+		// `go clean -cache` even when disk was healthy. It was REMOVED and must
+		// not be restored (hk-gjbpp); full rationale in the file-level comment
+		// on diskcheck_hksxlb.go.
 		runPeriodicDiskCheck(ctx, &deps, &maint)
 		if maint.diskLow {
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
@@ -6784,21 +6765,34 @@ func runMergeBuildGate(ctx context.Context, wtPath, projectDir string, runID cor
 	if _, goModErr := os.Stat(filepath.Join(buildDir, "go.mod")); goModErr != nil {
 		return nil
 	}
+	// hk-137y6/hk-pgtbr: the gate compiles against a FIXED daemon-owned cache
+	// rather than Go's default. The default is `~/Library/Caches/go-build`, which
+	// macOS purges wholesale under disk pressure AND which the daemon's own reap
+	// targets — so this gate could fail with errors inside Go's STANDARD LIBRARY
+	// ("could not import bytes ... no such file") and the daemon would record
+	// that infrastructure fault as a BEAD rejection, indistinguishable in the
+	// event log from a genuine regression. A fixed cache also stays warm across
+	// merges instead of recompiling the world every time.
+	gateEnv := append(goCleanOwnCacheEnv(os.Environ()), GoCacheEnvFor(projectDir, "daemon-merge-gate")...)
 	for _, buildArgs := range [][]string{
 		{"build", "./..."},
 		{"vet", "./..."},
 	} {
 		buildCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
 		buildCmd.Dir = buildDir
+		buildCmd.Env = gateEnv
 		out, buildErr := buildCmd.CombinedOutput()
 		if buildErr == nil {
 			continue
 		}
 		// Cold-cache retry (hk-44ab2): the go-cache reaper can wipe the cache in
 		// the TOCTOU window; retry once when the output matches the signature.
+		// Rarer now that the gate owns its cache, but kept: a reactive disk-low
+		// reap can still reclaim it mid-gate under genuine pressure.
 		if isMergeBuildColdCacheError(out) {
 			retryCmd := exec.CommandContext(ctx, "go", buildArgs...) //nolint:gosec // G204: fixed git/go binary with controlled args (config target branch, git SHAs, module path) — not user input
 			retryCmd.Dir = buildDir
+			retryCmd.Env = gateEnv
 			if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
 				continue
 			} else {

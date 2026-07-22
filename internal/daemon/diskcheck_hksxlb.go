@@ -10,20 +10,32 @@ package daemon
 //   - runPeriodicDiskCheck(ctx, deps) — called once per work-loop poll tick.
 //     Rate-limited to diskCheckInterval (default 10 min) for the probe.
 //
-//     Sub-step A — reactive reap: when disk is below the watermark, sets
+//     Reactive reap only: when disk is below the watermark, sets
 //     maint.diskLow = true, emits a disk_low event, and runs `go clean -cache`
 //     only when no merge-build is in flight (runRegistry.Len()==0). If a
 //     merge-build IS in flight, the reap is deferred to the next tick and a
 //     warning is logged instead of corrupting the build (hk-guez fix for the
 //     stopgap in 5c2276ca).
 //
-//     Sub-step B — proactive reap (restored by hk-guez): when disk is healthy,
-//     runs `go clean -cache` every goCacheCleanInterval (default 60 min) to
-//     prevent the cache from growing to 20 GiB between low-disk crossings.
-//     Also gated on idle (runRegistry.Len()==0) to avoid racing merge-builds.
+// A time-based proactive reap (running `go clean -cache` on a fixed cadence
+// even when disk was healthy) existed here previously and was REMOVED
+// (hk-gjbpp). It had no knowledge of `go build` / `go test` invoked
+// out-of-band by crews and operators in terminals, and it wiped the shared
+// default GOCACHE those runs depend on: observed cache collapse 122M -> 2.8M
+// mid-build, with concurrent test suites failing with "could not import
+// os/context/testing/... no such file or directory" and silently reporting
+// wrong results in BOTH directions (phantom failures and green runs that
+// never actually built) — with disk nowhere near the watermark (30GiB free
+// vs ~10GiB). This path was already removed once as a stopgap (5c2276ca) and
+// then restored (hk-guez) under the belief the cache would otherwise grow
+// unbounded; it will NOT be restored a third time — the reactive reap (disk
+// pressure) is the only legitimate trigger for wiping a cache other
+// processes depend on. Do not reintroduce a cadence-based reap gated only on
+// daemon idleness; it cannot see non-daemon cache consumers.
 //
 // Spec ref: bead hk-sxlb (logmine F65 disk-watermark guard).
 // Fix ref:  bead hk-guez (merge-aware cache reaper).
+// Fix ref:  bead hk-gjbpp (removed proactive reap; reactive-only).
 
 import (
 	"context"
@@ -72,6 +84,34 @@ func runGoCleanCache(ctx context.Context, deps *workLoopDeps) error {
 	cleanCtx, cleanCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cleanCancel()
 	return exec.CommandContext(cleanCtx, "go", "clean", "-cache").Run()
+}
+
+// goCleanOwnCacheEnv strips GOCACHE from an inherited environment so that a
+// command which then names its OWN cache explicitly cannot be overridden by
+// whatever the parent process happened to export.
+//
+// Used by the relocation call sites below (the per-agent cache reclaim and the
+// merge gate's build env): both append an explicit GOCACHE after this strip, so
+// the target is a property of the COMMAND rather than of whoever launched the
+// daemon. Stripping first rather than relying on Go's last-entry-wins semantics
+// keeps that guarantee independent of env ordering.
+//
+// NOT applied to runGoCleanCache above. That is hk-agl8b, which is HELD:
+// stripping GOCACHE there makes the reap target the default cache, which does
+// not eliminate the mid-build wipe (default-cache crews are still exposed, and
+// that default is the macOS-purgeable path — hk-pgtbr). It also narrows what
+// the reaper may reclaim without giving it a replacement source of disk, which
+// risks converting a cache-corruption bug into a silently paused fleet. india
+// owns the correct fix; do not add the strip there without one.
+func goCleanOwnCacheEnv(parent []string) []string {
+	out := make([]string, 0, len(parent))
+	for _, kv := range parent {
+		if strings.HasPrefix(kv, "GOCACHE=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // reclaimStaleWorktrees enumerates .harmonik/worktrees/ and removes directories
@@ -154,10 +194,9 @@ func runWorktreeReclaim(ctx context.Context, deps *workLoopDeps, stalePaths []st
 }
 
 // runPeriodicDiskCheck is called once per work-loop poll tick to probe disk
-// space and run reactive / proactive go-cache cleanup.
-//
-// Sub-step A — disk probe (rate-limited to deps.diskCheckIntervalOverride or
-// diskCheckInterval): reads available bytes on the project filesystem.
+// space and run the reactive go-cache cleanup. Rate-limited to
+// deps.diskCheckIntervalOverride or diskCheckInterval: reads available bytes
+// on the project filesystem.
 //
 //   - Below watermark: sets maint.diskLow = true.
 //     If no merge-build is in flight (runRegistry.Len()==0), immediately runs
@@ -166,11 +205,9 @@ func runWorktreeReclaim(ctx context.Context, deps *workLoopDeps, stalePaths []st
 //     merge_build_failed at the cost of one deferred clean (hk-guez).
 //     A disk_low event is emitted when deps.bus is non-nil regardless.
 //
-//   - Above watermark: clears maint.diskLow.
-//
-// Sub-step B — proactive reap (hk-guez, restored from stopgap 5c2276ca):
-// runs `go clean -cache` every goCacheCleanInterval (default 60 min) even
-// when disk is healthy, gated on idle (runRegistry.Len()==0).
+//   - Above watermark: clears maint.diskLow. No cache reap happens on this
+//     path — see the file-level comment (hk-gjbpp) for why a healthy-disk
+//     cadence-based reap was removed rather than restored again.
 func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState) {
 	now := time.Now()
 
@@ -183,24 +220,14 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, maint *loopMa
 		watermark = diskLowWatermarkDefault
 	}
 
-	// Sub-step A: disk probe. A true return means the tick fully recovered via
-	// stale-worktree reclaim and the proactive reap must be skipped this tick
-	// (preserves the original early-return semantics).
 	if time.Since(maint.lastDiskCheck) >= checkInterval {
 		maint.lastDiskCheck = now
-		if runDiskProbe(ctx, deps, maint, now, watermark) {
-			return
-		}
+		runDiskProbe(ctx, deps, maint, now, watermark)
 	}
-
-	// Sub-step B: proactive reap.
-	runProactiveGoCacheReap(ctx, deps, maint, now)
 }
 
-// runDiskProbe performs the disk watermark probe and reactive reap (sub-step A).
-// It returns true when a stale-worktree reclaim recovered the disk, signalling
-// the caller to skip the proactive reap for this tick.
-func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState, now time.Time, watermark uint64) bool {
+// runDiskProbe performs the disk watermark probe and reactive reap.
+func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState, now time.Time, watermark uint64) {
 	freeBytesFunc := deps.diskFreeBytesFunc
 	if freeBytesFunc == nil {
 		freeBytesFunc = diskFreeBytes
@@ -210,7 +237,7 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 	if probeErr != nil {
 		// Non-fatal: log and leave diskLow unchanged.
 		fmt.Fprintf(os.Stderr, "daemon: disk-check: Statfs %s: %v\n", deps.projectDir, probeErr)
-		return false
+		return
 	}
 	if freeBytes >= watermark {
 		if maint.diskLow {
@@ -219,7 +246,7 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 				freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir)
 		}
 		maint.diskLow = false
-		return false
+		return
 	}
 
 	// Below watermark: attempt reactive reap, then emit event.
@@ -237,41 +264,11 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 				"disk below watermark but merge-build in flight; reap deferred to next tick\n",
 			freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir)
 	} else {
-		// hk-5uezz: try stale-worktree reclaim FIRST — cheaper than
-		// wiping the shared go-build cache and avoids leaving the next
-		// build with a cold cache. Re-probe after reclaim; if disk is
-		// now above the watermark, skip go clean -cache entirely.
-		if reclaimedCount := reclaimStaleWorktrees(ctx, deps); reclaimedCount > 0 {
-			if newFree, reprobeErr := freeBytesFunc(deps.projectDir); reprobeErr == nil && newFree >= watermark {
-				fmt.Fprintf(os.Stderr,
-					"daemon: disk-check: reclaimed %d stale worktree(s) — "+
-						"disk recovered available=%dMiB watermark=%dMiB path=%s; skipping go clean -cache\n",
-					reclaimedCount, newFree/(1024*1024), watermark/(1024*1024), deps.projectDir)
-				maint.diskLow = false
-				return true
-			}
-		}
-
-		// Stale-worktree reclaim was insufficient. Proceed with the
-		// shared go-build cache reap.
-		// hk-y3frr: hold the reap↔dispatch exclusive lock for the entire
-		// duration of `go clean -cache` so a run registered mid-clean
-		// cannot have its build cache deleted (Register holds the RLock;
-		// it blocks until we release the WLock below).
-		if deps.cacheReapMu != nil {
-			deps.cacheReapMu.Lock()
-		}
-		// Double-check: a run may have registered between the outer
-		// mergeOrRunInFlight check and the WLock acquisition.
-		if !mergeOrRunInFlight(deps) {
-			cleanAttempted = true
-			if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
-				cleanErrStr = cleanErr.Error()
-			}
-			maint.lastGoCacheClean = now // reset proactive timer on reactive clean
-		}
-		if deps.cacheReapMu != nil {
-			deps.cacheReapMu.Unlock()
+		var recovered bool
+		recovered, cleanAttempted, cleanErrStr = runReactiveReclaim(ctx, deps, freeBytesFunc, watermark)
+		if recovered {
+			maint.diskLow = false
+			return
 		}
 	}
 
@@ -293,44 +290,177 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 		freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir,
 		cleanAttempted, cleanErrStr)
 	maint.diskLow = true
-	return false
 }
 
-// runProactiveGoCacheReap runs `go clean -cache` every goCacheCleanInterval
-// (default 60 min) even when disk is healthy, gated on idle and protected by
-// cacheReapMu (sub-step B; hk-guez restored, TOCTOU fixed by hk-y3frr).
-func runProactiveGoCacheReap(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState, now time.Time) {
-	cleanInterval := deps.goCacheCleanIntervalOverride
-	if cleanInterval <= 0 {
-		cleanInterval = goCacheCleanInterval
+// runReactiveReclaim is the below-watermark, nothing-in-flight reclaim ladder:
+// stale worktrees first, then the shared go-build cache, then the per-agent
+// caches. Split out of runDiskProbe purely to keep that function readable once
+// hk-137y6 added the third rung; the order and the locking are unchanged.
+//
+// Returns (recovered, cleanAttempted, cleanErr):
+//   - recovered is true ONLY when the cheap stale-worktree reclaim alone put
+//     disk back above the watermark, in which case the caller clears diskLow and
+//     skips the cache reap entirely (hk-5uezz).
+//   - cleanAttempted / cleanErr feed the disk_low event payload.
+//
+// EVERY rung here is reactive-path-only by construction: this function is
+// called from exactly one place, inside the below-watermark branch. That is
+// load-bearing, not incidental — reaping a cache that other processes are
+// building against is the corruption hk-gjbpp removed the healthy-disk cadence
+// to stop, and only genuine disk pressure with nothing in flight justifies it.
+// Guarded by TestDiskCheck_HealthyDisk_LeavesAgentCachesAlone.
+func runReactiveReclaim(
+	ctx context.Context,
+	deps *workLoopDeps,
+	freeBytesFunc func(string) (uint64, error),
+	watermark uint64,
+) (recovered, cleanAttempted bool, cleanErrStr string) {
+	// hk-5uezz: try stale-worktree reclaim FIRST — cheaper than wiping the
+	// shared go-build cache and avoids leaving the next build with a cold
+	// cache. Re-probe after reclaim; if disk is now above the watermark, skip
+	// go clean -cache entirely.
+	if reclaimedCount := reclaimStaleWorktrees(ctx, deps); reclaimedCount > 0 {
+		if newFree, reprobeErr := freeBytesFunc(deps.projectDir); reprobeErr == nil && newFree >= watermark {
+			fmt.Fprintf(os.Stderr,
+				"daemon: disk-check: reclaimed %d stale worktree(s) — "+
+					"disk recovered available=%dMiB watermark=%dMiB path=%s; skipping go clean -cache\n",
+				reclaimedCount, newFree/(1024*1024), watermark/(1024*1024), deps.projectDir)
+			return true, false, ""
+		}
 	}
-	if maint.diskLow || time.Since(maint.lastGoCacheClean) < cleanInterval {
-		return
-	}
-	if mergeOrRunInFlight(deps) {
-		// Merge-build in flight: defer proactive reap to avoid racing the
-		// build cache. The timer is NOT reset so the next idle tick will
-		// fire immediately (no silent skip of the 60-min cadence).
-		fmt.Fprintf(os.Stderr,
-			"daemon: disk-check: proactive-reap deferred — merge-build in flight\n")
-		return
-	}
-	// hk-y3frr: hold the reap↔dispatch exclusive lock for the entire
-	// duration of `go clean -cache`.  Register (RLock) blocks while we
-	// hold the WLock; we release only after the clean completes.
+
+	// Stale-worktree reclaim was insufficient. Proceed with the shared
+	// go-build cache reap.
+	// hk-y3frr: hold the reap↔dispatch exclusive lock for the entire duration
+	// of `go clean -cache` so a run registered mid-clean cannot have its build
+	// cache deleted (Register holds the RLock; it blocks until we release the
+	// WLock below).
 	if deps.cacheReapMu != nil {
 		deps.cacheReapMu.Lock()
+		defer deps.cacheReapMu.Unlock()
 	}
-	// Double-check after acquiring the lock: a run may have registered
-	// between the outer mergeOrRunInFlight check and the WLock.
-	if !mergeOrRunInFlight(deps) {
-		if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
-			fmt.Fprintf(os.Stderr,
-				"daemon: disk-check: proactive go clean -cache failed: %v\n", cleanErr)
+	// Double-check: a run may have registered between the outer
+	// mergeOrRunInFlight check and the WLock acquisition.
+	if mergeOrRunInFlight(deps) {
+		return false, false, ""
+	}
+	cleanAttempted = true
+	if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
+		cleanErrStr = cleanErr.Error()
+	}
+	// hk-137y6: the per-agent caches are the relief valve now. Once the fleet's
+	// builds moved OFF Go's default cache, `go clean -cache` above reclaims
+	// progressively less — without this the daemon could sit below the
+	// watermark with dispatch paused and nothing left to free.
+	if reaped := reapAgentGoCaches(ctx, deps); reaped > 0 {
+		fmt.Fprintf(os.Stderr,
+			"daemon: disk-check: reclaimed %d per-agent go-build cache(s) under disk pressure (hk-137y6); "+
+				"affected agents will rebuild from a cold cache\n", reaped)
+	}
+	return false, cleanAttempted, cleanErrStr
+}
+
+// reapAgentGoCaches reclaims the per-agent Go build caches under
+// .harmonik/go-cache (hk-137y6) and returns how many were reclaimed.
+//
+// Called ONLY from the reactive disk-low path, never from the proactive timer:
+// these caches belong to other agents, and wiping one mid-`go test` is exactly
+// the mid-verification corruption hk-gjbpp was filed to stop. Genuine disk
+// pressure with nothing in flight justifies it; a healthy-disk cadence does not.
+//
+// A cache is reaped ONLY when it can be shown QUIESCENT (see
+// goCacheQuiescenceWindow). A reclaim that cannot tell a running cache from a
+// stale one MUST NOT delete either — on 2026-07-22 something ran `go clean
+// -cache` against a crew's private cache mid-experiment (483M -> 8.0K) and its
+// build then failed with "could not import os/exec" naming that crew's OWN
+// path. That did not merely cost a rebuild: the cache-miss errors nearly
+// entered a flaky-test dataset as real failures. A contaminated measurement
+// that looks like a result is worse than no measurement.
+//
+// Uses `go clean -cache` per directory rather than a bare rm -rf so the Go
+// toolchain removes its own cache on its own terms; a directory that fails is
+// skipped rather than force-removed.
+func reapAgentGoCaches(ctx context.Context, deps *workLoopDeps) int {
+	if deps == nil || deps.projectDir == "" {
+		return 0
+	}
+	root := goCacheRootDir(deps.projectDir)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0
+	}
+	reaped := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
 		}
-		maint.lastGoCacheClean = now
+		dir := filepath.Join(root, e.Name())
+		if !goCacheQuiescent(dir, time.Now()) {
+			// In use, or too recently used to be sure. Skipping is loud on
+			// purpose: an operator staring at a paused-for-disk daemon needs to
+			// know reclaim found candidates and declined them, otherwise the
+			// silence reads as "there was nothing to free".
+			fmt.Fprintf(os.Stderr,
+				"daemon: disk-check: SKIPPING go-cache reap for %q — active within %s; "+
+					"a reclaim that cannot prove a cache is stale must not delete it (hk-137y6)\n",
+				e.Name(), goCacheQuiescenceWindow)
+			continue
+		}
+		cleanCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		cmd := exec.CommandContext(cleanCtx, "go", "clean", "-cache")
+		// Strip any inherited GOCACHE before naming our own, so the target is
+		// unambiguous rather than resting on Go's last-entry-wins env semantics
+		// (hk-agl8b: an inherited GOCACHE is how the suite ate a crew's cache).
+		cmd.Env = append(goCleanOwnCacheEnv(os.Environ()), "GOCACHE="+dir)
+		runErr := cmd.Run()
+		cancel()
+		if runErr == nil {
+			reaped++
+		}
 	}
-	if deps.cacheReapMu != nil {
-		deps.cacheReapMu.Unlock()
+	return reaped
+}
+
+// goCacheQuiescenceWindow is how long a per-agent cache must have gone untouched
+// before the disk-pressure reclaim may delete it.
+//
+// Deliberately far longer than a build: a full `go test ./...` on this repo runs
+// in minutes, so 30 minutes of no writes means no build is using it. The cost of
+// being wrong is asymmetric and that is why the window is generous — reaping too
+// eagerly destroys a live working set and silently corrupts whatever measurement
+// it was feeding, while reaping too little only means we free less disk on this
+// tick and try again on the next.
+const goCacheQuiescenceWindow = 30 * time.Minute
+
+// goCacheQuiescent reports whether the Go build cache at dir has gone untouched
+// for at least goCacheQuiescenceWindow — i.e. whether it is provably NOT in use.
+//
+// Go writes into 256 hex-named shard subdirectories as it builds, so a live
+// cache always has a recent mtime somewhere in its top level. Checking the
+// directory plus its immediate children is enough and costs a couple of hundred
+// stats.
+//
+// FAILS CLOSED: any error reading the directory returns false (treat as in use).
+// The one thing this function must never do is report "safe to delete" about a
+// cache it could not inspect.
+func goCacheQuiescent(dir string, now time.Time) bool {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return false
 	}
+	newest := info.ModTime()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		ei, infoErr := e.Info()
+		if infoErr != nil {
+			return false // cannot inspect it -> cannot claim it is stale
+		}
+		if ei.ModTime().After(newest) {
+			newest = ei.ModTime()
+		}
+	}
+	return now.Sub(newest) >= goCacheQuiescenceWindow
 }

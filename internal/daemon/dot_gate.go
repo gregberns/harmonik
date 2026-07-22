@@ -384,8 +384,8 @@ func executeCognitionGate(
 		gateBaseSubstrate = deps.reviewerSubstrate
 	}
 	prs := newPerRunSubstrate(gateBaseSubstrate, deps.handlerBinary, runner)
-	var substrate handler.Substrate = gateBaseSubstrate
-	var pasteTarget handler.Substrate = gateBaseSubstrate
+	substrate := gateBaseSubstrate
+	pasteTarget := gateBaseSubstrate
 	if prs != nil {
 		substrate = prs
 		pasteTarget = prs

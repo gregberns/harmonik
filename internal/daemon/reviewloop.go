@@ -1294,8 +1294,8 @@ func runReviewLoop(
 			revBaseSubstrate = deps.reviewerSubstrate
 		}
 		revPRS := newPerRunSubstrate(revBaseSubstrate, deps.handlerBinary, nil)
-		var revSubstrate handler.Substrate = revBaseSubstrate
-		var revPasteTarget handler.Substrate = revBaseSubstrate
+		revSubstrate := revBaseSubstrate
+		revPasteTarget := revBaseSubstrate
 		if revPRS != nil {
 			revSubstrate = revPRS
 			revPasteTarget = revPRS

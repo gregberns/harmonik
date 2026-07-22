@@ -60,7 +60,7 @@ func TestDaemonStart_StopDispatchCancellationWritesShutdownEvent(t *testing.T) {
 func assertSingleGracefulShutdown(t *testing.T, jsonlPath string) {
 	t.Helper()
 
-	f, err := os.Open(jsonlPath)
+	f, err := os.Open(jsonlPath) //nolint:gosec // G304: jsonlPath is the test's own t.TempDir() event log, never attacker-controlled
 	if err != nil {
 		t.Fatalf("open event log: %v", err)
 	}

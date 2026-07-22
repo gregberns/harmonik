@@ -13,11 +13,11 @@ import (
 func writeFile(t *testing.T, dir, content string) {
 	t.Helper()
 	d := filepath.Join(dir, ".harmonik")
-	if err := os.MkdirAll(d, 0o755); err != nil {
+	if err := os.MkdirAll(d, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	p := filepath.Join(d, "workers.yaml")
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 }

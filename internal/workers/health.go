@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -137,5 +138,7 @@ func emitUnhealthyEvent(ctx context.Context, workerName, probeName, detail strin
 	if err != nil {
 		return
 	}
-	_ = emit(ctx, core.EventTypeWorkerUnhealthy, b)
+	if err := emit(ctx, core.EventTypeWorkerUnhealthy, b); err != nil {
+		slog.ErrorContext(ctx, "worker event emit failed", "event_type", core.EventTypeWorkerUnhealthy, "error", err)
+	}
 }

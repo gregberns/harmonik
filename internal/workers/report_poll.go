@@ -22,6 +22,7 @@ package workers
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -94,7 +95,6 @@ func pollWorkerReports(ctx context.Context, cfg Config, reg *Registry, runnerFor
 			// Unsupported transport — skip silently (matches BootHealthRunner).
 			continue
 		}
-		w := w
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -280,7 +280,6 @@ func breachSweep(ctx context.Context, cfg Config, reg *Registry, runnerFor Runne
 			det = st.detectorFor(w.Name)
 		}
 
-		w := w
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -318,7 +317,9 @@ func emitResourceBreach(ctx context.Context, p ResourceBreachPayload, emit EmitF
 	if err != nil {
 		return
 	}
-	_ = emit(ctx, core.EventTypeResourceBreach, b)
+	if err := emit(ctx, core.EventTypeResourceBreach, b); err != nil {
+		slog.ErrorContext(ctx, "worker event emit failed", "event_type", core.EventTypeResourceBreach, "error", err)
+	}
 }
 
 // hasEnabledWorker reports whether cfg has at least one worker with Enabled==true.

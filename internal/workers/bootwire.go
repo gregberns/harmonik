@@ -77,9 +77,9 @@ func BuildRegistryWithRunner(ctx context.Context, cfg Config, emit EmitFunc, run
 			enabledCount++
 		}
 	}
-	slog.Info("worker_registry_init", "workers_loaded", len(cfg.Workers), "workers_enabled", enabledCount)
+	slog.InfoContext(ctx, "worker_registry_init", "workers_loaded", len(cfg.Workers), "workers_enabled", enabledCount)
 	if enabledCount == 0 {
-		slog.Warn("remote routing DISABLED (0 enabled workers); restart the daemon after editing workers.yaml to pick up changes")
+		slog.WarnContext(ctx, "remote routing DISABLED (0 enabled workers); restart the daemon after editing workers.yaml to pick up changes")
 	}
 
 	reg := NewRegistry(cfg)
@@ -88,7 +88,9 @@ func BuildRegistryWithRunner(ctx context.Context, cfg Config, emit EmitFunc, run
 	// On a probe failure the worker is disabled in-registry and a worker_unhealthy
 	// event is emitted, so SelectWorker() skips it and the run falls back to local.
 	if runner != nil {
-		_ = RunHealthCheck(ctx, runner, cfg, reg, emit)
+		if err := RunHealthCheck(ctx, runner, cfg, reg, emit); err != nil {
+			slog.ErrorContext(ctx, "worker boot health check failed", "error", err)
+		}
 	}
 	return reg
 }

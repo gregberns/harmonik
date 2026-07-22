@@ -16,6 +16,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -63,5 +64,7 @@ func EmitWorkerTunnelFailedEvent(ctx context.Context, runID, beadID, workerName,
 	if err != nil {
 		return
 	}
-	_ = emit(ctx, core.EventTypeWorkerTunnelFailed, b)
+	if err := emit(ctx, core.EventTypeWorkerTunnelFailed, b); err != nil {
+		slog.ErrorContext(ctx, "worker event emit failed", "event_type", core.EventTypeWorkerTunnelFailed, "error", err)
+	}
 }

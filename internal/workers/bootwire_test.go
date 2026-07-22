@@ -74,8 +74,8 @@ func oneWorkerCfg(enabled bool) Config {
 // four probes succeed (worker stays healthy).
 func passingRunner() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-			return exec.Command("true")
+		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "true")
 		},
 	}
 }
@@ -84,8 +84,8 @@ func passingRunner() *tmux.RecordingRunner {
 // first probe (tmux_version) fails, marking the worker unhealthy.
 func failingRunner() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-			return exec.Command("false")
+		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "false")
 		},
 	}
 }

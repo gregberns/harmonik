@@ -195,7 +195,7 @@ func (r *dispatchSegmentRun) watchWatcherExit(watcherDone <-chan struct{}) {
 // by the time the delay elapses.
 func (r *dispatchSegmentRun) resumeReadyProbe() {
 	select {
-	case <-clockAfter(r.g.clock, resumeReadyProbeDelay):
+	case <-substrate.After(r.g.clock, resumeReadyProbeDelay):
 		if emitErr := r.g.tap.EmitWithRunID(context.Background(), r.g.runID, core.EventTypeAgentReady, nil); emitErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: dispatchsegment: resume readiness probe emit run %s: %v (best-effort)\n",
 				r.g.runID.String(), emitErr)

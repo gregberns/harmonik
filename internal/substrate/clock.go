@@ -54,3 +54,28 @@ type systemTicker struct{ t *time.Ticker }
 
 func (s *systemTicker) C() <-chan time.Time { return s.t.C }
 func (s *systemTicker) Stop()               { s.t.Stop() }
+
+// ─── After ───────────────────────────────────────────────────────────────────
+
+// After is the ClockPort-backed analogue of time.After for use in a select:
+// it returns a channel that receives once, after d has elapsed on clk. Like
+// time.After (and UNLIKE a ctx-bound sleep) the deadline fires UNCONDITIONALLY —
+// the reap/fallback guards that use it must bound the wait even after the run
+// ctx is cancelled, so the internal Sleep is anchored to context.Background().
+// Under FakeClock the wake is driven by Advance, making run-path timeouts
+// (agent-ready reap, resume-ready fallback) deterministic in tests
+// (RSM-013 / M3-D4). The goroutine outlives the caller by at most d, matching
+// time.After's un-cancellable timer. Buffered cap 1 so the send never blocks
+// when the select picked another case first.
+//
+// Origin: internal/daemon/workloop.go clockAfter, moved by
+// plans/2026-07-21-p2-extraction/RT19b-stranded-run-path-helpers.md.
+func After(clk ClockPort, d time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	go func() {
+		if clk.Sleep(context.Background(), d) {
+			ch <- clk.Now()
+		}
+	}()
+	return ch
+}

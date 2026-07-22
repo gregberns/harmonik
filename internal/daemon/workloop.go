@@ -1220,26 +1220,6 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 	}, nil
 }
 
-// clockAfter is the ClockPort-backed analogue of time.After for use in a select:
-// it returns a channel that receives once, after d has elapsed on clk. Like
-// time.After (and UNLIKE a ctx-bound sleep) the deadline fires UNCONDITIONALLY —
-// the reap/fallback guards that use it must bound the wait even after the run
-// ctx is cancelled, so the internal Sleep is anchored to context.Background().
-// Under substrate.FakeClock the wake is driven by Advance, making run-path
-// timeouts (agent-ready reap, resume-ready fallback) deterministic in tests
-// (RSM-013 / M3-D4). The goroutine outlives the caller by at most d, matching
-// time.After's un-cancellable timer. Buffered cap 1 so the send never blocks
-// when the select picked another case first.
-func clockAfter(clk substrate.ClockPort, d time.Duration) <-chan time.Time {
-	ch := make(chan time.Time, 1)
-	go func() {
-		if clk.Sleep(context.Background(), d) {
-			ch <- clk.Now()
-		}
-	}()
-	return ch
-}
-
 // runWorkLoop is the main dispatch goroutine. It blocks until ctx is cancelled
 // (typically from SIGINT/SIGTERM received by the daemon process). On context
 // cancellation it stops accepting new beads, waits for all in-flight goroutines
@@ -4823,7 +4803,7 @@ func beadRunOne(ctx context.Context, deps workLoopDeps, runID core.RunID, beadRe
 					// Bead ref: hk-do7te.
 					select {
 					case <-watcher.Done():
-					case <-clockAfter(deps.clock, agentReadyKillReapTimeout):
+					case <-substrate.After(deps.clock, agentReadyKillReapTimeout):
 						fmt.Fprintf(os.Stderr, "daemon: workloop: watcher.Done() reap timed out bead %s run %s after Kill — continuing\n",
 							beadID, runID.String())
 					}

@@ -732,7 +732,7 @@ func runReviewLoop(
 				if implWatcher != nil {
 					select {
 					case <-implWatcher.Done():
-					case <-clockAfter(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+					case <-substrate.After(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 						fmt.Fprintf(os.Stderr, "daemon: reviewloop: implWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 							beadID, state.iterationCount, runID.String())
 					}
@@ -1465,7 +1465,7 @@ func runReviewLoop(
 				if revWatcher != nil {
 					select {
 					case <-revWatcher.Done():
-					case <-clockAfter(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+					case <-substrate.After(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 						fmt.Fprintf(os.Stderr, "daemon: reviewloop: revWatcher.Done() reap timed out bead %s iter %d run %s after Kill — continuing\n",
 							beadID, state.iterationCount, runID.String())
 					}

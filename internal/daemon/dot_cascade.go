@@ -1482,7 +1482,10 @@ func dispatchDotAgenticNode(
 		baseSubstrate = deps.reviewerSubstrate
 	}
 	prs := newPerRunSubstrate(baseSubstrate, deps.handlerBinary, runner)
-	var substrate handler.Substrate = baseSubstrate
+	// runSubstrate, not `substrate`: the bare name would shadow the imported
+	// internal/substrate package for the rest of this function, where the
+	// agent-ready reap guard below calls substrate.After (P2 E5 RT19b).
+	runSubstrate := baseSubstrate
 	var pasteTarget handler.Substrate = baseSubstrate
 	if prs != nil {
 		// hk-538l: for a REMOTE run tell the per-run substrate which tmux session to
@@ -1494,10 +1497,10 @@ func dispatchDotAgenticNode(
 			prs.workerSessionName = workerSessionName
 			prs.workerSessionCwd = workerSessionCwd
 		}
-		substrate = prs
+		runSubstrate = prs
 		pasteTarget = prs
 	}
-	spec.Substrate = substrate
+	spec.Substrate = runSubstrate
 
 	// PI-014 DOT analog: predeclare sess so agentEndCb (inside the
 	// SessionIDCaptured block below) can capture it by reference. Go's `:=`
@@ -1868,7 +1871,7 @@ func dispatchDotAgenticNode(
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
-				case <-clockAfter(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
+				case <-substrate.After(deps.clock, agentReadyKillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (pre-RT8 idiom)
 				}
 			}
 			_ = sess.Wait(kctx) //nolint:errcheck // reap wait; error non-actionable (pre-RT8 idiom)

@@ -6,7 +6,7 @@ package main
 // labels on the captain launch path while HARMONIK_AGENT stays bare, proving
 // that crew wake / keeper rebind are unaffected by the RC prefix.
 //
-// The crew-launch side lives in internal/daemon/crewlaunchspec_twoproj_hk25bg_test.go.
+// The crew-launch side lives in internal/crewrun/launchspec_twoproj_hk25bg_test.go.
 //
 // Run: go test ./cmd/harmonik/ -run TwoProject -v
 

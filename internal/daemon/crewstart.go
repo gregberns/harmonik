@@ -2,7 +2,7 @@ package daemon
 
 // crewstart.go — C2 daemon-side crew-start / crew-stop handler.
 //
-// Implements the CrewHandler interface: collision-check, registry write,
+// Implements the crewrun.CrewHandler interface: collision-check, registry write,
 // queue-ensure, session launch, paste-seed, keeper-attach inputs, and teardown.
 //
 // Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1–§3.5, §7.
@@ -16,14 +16,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -49,68 +48,6 @@ type crewKeeperCommsBus interface {
 // confirm a live watcher quickly, long enough not to busy-spin.
 const keeperProbePollInterval = time.Second
 
-// CrewHandler is the interface the daemon registers to process crew-start and
-// crew-stop socket ops.
-//
-// Registered in daemon.go like CommsSendHandler; dispatched from socket.go's op
-// switch for "crew-start" and "crew-stop" ops.
-//
-// Spec ref: c2-spec.md §3.1 (daemon RPC rationale).
-// Bead ref: hk-5tg5o.
-type CrewHandler interface {
-	// HandleCrewStart processes one crew-start payload. Returns JSON-encoded
-	// CrewStartResult on success.
-	HandleCrewStart(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
-
-	// HandleCrewStop processes one crew-stop payload. Returns JSON-encoded stop
-	// confirmation on success.
-	HandleCrewStop(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
-}
-
-// CrewStartRequest is the wire payload for a "crew-start" socket op.
-//
-// Spec ref: c2-spec.md §3.1.
-type CrewStartRequest struct {
-	// Name is the crew member identifier (charset [a-z0-9-], 1–64 chars).
-	Name string `json:"name"`
-	// Queue is the named queue the crew member is bound to.
-	Queue string `json:"queue"`
-	// MissionPath is the path to the handoff file the crew seeds its boot loop from.
-	MissionPath string `json:"mission_path"`
-	// Type is the agent type folder name (e.g. "admiral", "watch", "crew"). When
-	// empty the daemon derives it from a same-named type folder (oversight
-	// singletons launch with name == type); an unresolved type reads as the
-	// default "crew" via Record.EffectiveType(). Stamping it durably lets the
-	// SD-3 reaper honour the manifest lifecycle.persistent flag (hk-dy5gw).
-	Type string `json:"type,omitempty"`
-	// Harness is the CLI --harness override, or "" when the flag was absent.
-	// Highest-precedence tier of the crew-scoped harness resolver (hk-l63b9):
-	// flag > mission harness: front-matter > per-crew config > default "claude".
-	// This is a SEPARATE resolution chain from the worker per-bead resolveHarness
-	// (harnessresolve.go) — a crew has no bead to carry a harness:<type> label.
-	Harness string `json:"harness,omitempty"`
-}
-
-// CrewStopRequest is the wire payload for a "crew-stop" socket op.
-//
-// Spec ref: c2-spec.md §3.5.
-type CrewStopRequest struct {
-	// Name is the crew member to stop.
-	Name string `json:"name"`
-	// PauseQueue, when true, halts dispatch on the crew's named queue after teardown.
-	PauseQueue bool `json:"pause_queue,omitempty"`
-}
-
-// CrewStartResult is the SocketResponse.Result payload for a successful crew-start.
-//
-// Spec ref: c2-spec.md AC-1 (prints the minted session_id).
-type CrewStartResult struct {
-	// SessionID is the minted (or resumed) session UUID.
-	SessionID string `json:"session_id"`
-	// Name echoes the crew member name.
-	Name string `json:"name"`
-}
-
 // windowHandleExposer is an optional interface a SubstrateSession may implement
 // to expose its underlying tmux window handle string for crew registry recording.
 //
@@ -131,7 +68,7 @@ type crewPaneStopper interface {
 	StopWindowByHandle(ctx context.Context, handle string) error
 }
 
-// crewHandlerImpl is the concrete implementation of CrewHandler.
+// crewHandlerImpl is the concrete implementation of crewrun.CrewHandler.
 type crewHandlerImpl struct {
 	claudeBinary string
 	projectDir   string
@@ -193,7 +130,7 @@ func (h *crewHandlerImpl) crewConfigHarness(name string) string {
 	return h.crews[name].Harness
 }
 
-// NewCrewHandler constructs a CrewHandler implementation.
+// NewCrewHandler constructs a crewrun.CrewHandler implementation.
 //
 // claudeBinary is the handler executable (empty resolves to "claude").
 // projectDir is the harmonik project root directory.
@@ -208,7 +145,7 @@ func (h *crewHandlerImpl) crewConfigHarness(name string) string {
 // opts are optional CrewHandlerOpt functional options (e.g. WithKeeperProbe).
 //
 // Bead ref: hk-5tg5o, hk-igpg, hk-qgfme.
-func NewCrewHandler(claudeBinary, projectDir, rcPrefix string, substrate handler.Substrate, opPauseCtrl OperatorControlHandler, opts ...CrewHandlerOpt) CrewHandler {
+func NewCrewHandler(claudeBinary, projectDir, rcPrefix string, substrate handler.Substrate, opPauseCtrl OperatorControlHandler, opts ...CrewHandlerOpt) crewrun.CrewHandler {
 	h := &crewHandlerImpl{
 		claudeBinary: claudeBinary,
 		projectDir:   projectDir,
@@ -226,7 +163,7 @@ func NewCrewHandler(claudeBinary, projectDir, rcPrefix string, substrate handler
 // HandleCrewStart
 // ─────────────────────────────────────────────────────────────────────────────
 
-// HandleCrewStart implements CrewHandler.HandleCrewStart.
+// HandleCrewStart implements crewrun.CrewHandler.HandleCrewStart.
 //
 // Ordering per c2-spec.md §7:
 //  1. Check collision → mint session_id (or reuse for stale re-launch)
@@ -240,7 +177,7 @@ func NewCrewHandler(claudeBinary, projectDir, rcPrefix string, substrate handler
 // On launch failure: crew.Remove rollback (queue created during step 3 is left
 // as-is per spec §7 "empty queue is harmless and reused on retry").
 func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
-	var req CrewStartRequest
+	var req crewrun.CrewStartRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return nil, fmt.Errorf("decode request: %w", err)
 	}
@@ -295,21 +232,21 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 	// Read the optional model: front-matter field from the mission handoff
 	// (specs/crew-handoff-schema.md §3). Best-effort: a missing/unreadable mission
 	// or absent field yields "" and the crew inherits the compiled default model.
-	model := readMissionModel(req.MissionPath)
+	model := crewrun.ReadMissionModel(req.MissionPath)
 	// Crew-scoped harness resolution (hk-l63b9): flag > mission harness:
 	// front-matter > per-crew config > default "claude". This is a SEPARATE
 	// resolver from the worker per-bead resolveHarness (harnessresolve.go) — a
 	// crew has no bead to carry a harness:<type> label.
-	harness := resolveCrewHarness(req.Harness, readMissionHarness(req.MissionPath), h.crewConfigHarness(req.Name))
-	lspec, buildErr := buildCrewLaunchSpec(crewLaunchCtx{
-		claudeBinary: h.claudeBinary,
-		name:         req.Name,
-		rcPrefix:     h.rcPrefix,
-		sessionID:    sessionID,
-		projectDir:   h.projectDir,
-		resume:       isResume,
-		model:        model,
-		harness:      harness,
+	harness := crewrun.ResolveCrewHarness(req.Harness, crewrun.ReadMissionHarness(req.MissionPath), h.crewConfigHarness(req.Name))
+	lspec, buildErr := crewrun.BuildCrewLaunchSpec(crewrun.CrewLaunchCtx{
+		ClaudeBinary: h.claudeBinary,
+		Name:         req.Name,
+		RcPrefix:     h.rcPrefix,
+		SessionID:    sessionID,
+		ProjectDir:   h.projectDir,
+		Resume:       isResume,
+		Model:        model,
+		Harness:      harness,
 	})
 	if buildErr != nil {
 		_ = crew.Remove(h.projectDir, req.Name) //nolint:errcheck // rollback
@@ -403,7 +340,7 @@ func (h *crewHandlerImpl) HandleCrewStart(ctx context.Context, payload json.RawM
 		}
 	}
 
-	result := CrewStartResult{
+	result := crewrun.CrewStartResult{
 		SessionID: sessionID,
 		Name:      req.Name,
 	}
@@ -460,7 +397,7 @@ func (h *crewHandlerImpl) checkQueueConflict(name, wantQueue string) error {
 // resolves, "" is returned and Record.EffectiveType() reads it as the default
 // "crew". The stamped type lets the SD-3 reaper honour lifecycle.persistent
 // (hk-dy5gw).
-func (h *crewHandlerImpl) resolveCrewType(req CrewStartRequest) string {
+func (h *crewHandlerImpl) resolveCrewType(req crewrun.CrewStartRequest) string {
 	if req.Type != "" {
 		return req.Type
 	}
@@ -619,80 +556,6 @@ func createCrewManagedMarker(projectDir, name string) error {
 	return f.Close()
 }
 
-// missionFrontMatter is the subset of the mission-handoff YAML front-matter the
-// daemon reads at launch time. model: and harness: are the only fields modelled
-// here; all other fields are the crew's concern (it re-derives them on
-// /session-resume). yaml.v3 silently ignores the unmodelled keys (schema_version,
-// crew_name, queue, …).
-//
-// Spec ref: specs/crew-handoff-schema.md §3 (model: optional, opus|sonnet|haiku).
-// harness: is the crew-scoped harness resolver's mid-precedence tier (hk-l63b9).
-type missionFrontMatter struct {
-	Model   string `yaml:"model"`
-	Harness string `yaml:"harness"`
-}
-
-// readMissionFrontMatter reads and parses a mission handoff's YAML front-matter
-// block (the leading `---`-delimited block per crew-handoff-schema.md §3).
-//
-// Best-effort by design: an empty path, a missing/unreadable file, or a mission
-// without a front-matter block all return the zero missionFrontMatter. A
-// malformed front-matter block likewise degrades to the zero value rather than
-// failing the crew-start op — front-matter fields are optimisations, not a
-// correctness contract.
-func readMissionFrontMatter(missionPath string) missionFrontMatter {
-	if missionPath == "" {
-		return missionFrontMatter{}
-	}
-	//nolint:gosec // G304: missionPath is an operator/captain-supplied handoff path
-	data, err := os.ReadFile(missionPath)
-	if err != nil {
-		return missionFrontMatter{}
-	}
-
-	block := frontMatterBlock(string(data))
-	if block == "" {
-		return missionFrontMatter{}
-	}
-
-	var fm missionFrontMatter
-	if err := yaml.Unmarshal([]byte(block), &fm); err != nil {
-		return missionFrontMatter{}
-	}
-	return fm
-}
-
-// readMissionModel reads the optional model: field from a mission handoff's YAML
-// front-matter. The caller passes the result to buildCrewLaunchSpec, which then
-// injects no --model flag on "" and the crew inherits the compiled default model.
-func readMissionModel(missionPath string) string {
-	return readMissionFrontMatter(missionPath).Model
-}
-
-// readMissionHarness reads the optional harness: field from a mission handoff's
-// YAML front-matter — the mid-precedence tier of the crew-scoped harness
-// resolver (hk-l63b9): flag > mission harness: front-matter > per-crew config >
-// default "claude".
-func readMissionHarness(missionPath string) string {
-	return readMissionFrontMatter(missionPath).Harness
-}
-
-// frontMatterBlock extracts the YAML body between the leading `---` fence and the
-// closing `---` fence of a Markdown handoff. Returns "" when no front-matter
-// block is present (the file does not open with a `---` line).
-func frontMatterBlock(content string) string {
-	const fence = "---"
-	rest, ok := strings.CutPrefix(content, fence+"\n")
-	if !ok {
-		return ""
-	}
-	end := strings.Index(rest, "\n"+fence)
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Keeper post-spawn liveness probe (hk-qgfme)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -778,7 +641,7 @@ func (h *crewHandlerImpl) reportKeeperWatcherDead(crewName string, grace time.Du
 // HandleCrewStop
 // ─────────────────────────────────────────────────────────────────────────────
 
-// HandleCrewStop implements CrewHandler.HandleCrewStop.
+// HandleCrewStop implements crewrun.CrewHandler.HandleCrewStop.
 //
 // Stop flow per c2-spec.md §3.5:
 //  1. crew.Load → error if absent
@@ -787,7 +650,7 @@ func (h *crewHandlerImpl) reportKeeperWatcherDead(crewName string, grace time.Du
 //  4. crew.Remove registry record
 //  5. Optional --pause-queue via OperatorControlHandler
 func (h *crewHandlerImpl) HandleCrewStop(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
-	var req CrewStopRequest
+	var req crewrun.CrewStopRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return nil, fmt.Errorf("decode request: %w", err)
 	}

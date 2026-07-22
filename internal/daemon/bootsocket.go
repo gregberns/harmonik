@@ -11,6 +11,7 @@ import (
 	"github.com/gregberns/harmonik/internal/agentmanifest"
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
@@ -249,7 +250,7 @@ func (bs *bootState) buildCommsAndCrewHandlers() CommsSendHandler {
 
 	// SD-3 (hk-s2eac): idle-completed-crew reaper. Started post-Seal in the work loop.
 	crewIdleReaperAgentsDir := filepath.Join(cfg.ProjectDir, ".harmonik", "agents")
-	bs.crewIdleReaper = NewCrewIdleReaper(CrewIdleReaperConfig{
+	bs.crewIdleReaper = crewrun.NewCrewIdleReaper(crewrun.CrewIdleReaperConfig{
 		ProjectDir: cfg.ProjectDir,
 		Queues:     bs.qs,
 		Stopper:    bs.crewHandler,

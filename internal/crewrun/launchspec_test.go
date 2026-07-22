@@ -1,6 +1,6 @@
-package daemon_test
+package crewrun
 
-// crewlaunchspec_test.go — unit tests for buildCrewLaunchSpec (C2 AC-5).
+// launchspec_test.go — unit tests for buildCrewLaunchSpec (C2 AC-5).
 //
 // Acceptance criterion AC-5: buildCrewLaunchSpec produces
 //
@@ -9,7 +9,7 @@ package daemon_test
 // with the caller-supplied UUID, HARMONIK_AGENT/HARMONIK_PROJECT in env,
 // --dangerously-skip-permissions present (hk-672di), and NO worktree.
 //
-// Run: go test ./internal/daemon/ -run CrewLaunchSpec
+// Run: go test ./internal/crewrun/ -run CrewLaunchSpec
 // Bead: hk-kbqto.
 
 import (
@@ -17,8 +17,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 // argvHasFlagValue reports whether args contains the pair [flag, value] adjacent
@@ -67,14 +65,14 @@ func TestBuildCrewLaunchSpec_ModelInjection(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {
 			t.Parallel()
-			rc := daemon.ExportedCrewLaunchCtx{
+			rc := CrewLaunchCtx{
 				Name:       "modeled-crew",
 				SessionID:  uuid,
 				ProjectDir: "/tmp/harmonik",
 				Resume:     c.resume,
 				Model:      c.model,
 			}
-			spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+			spec, err := BuildCrewLaunchSpec(rc)
 			if err != nil {
 				t.Fatalf("buildCrewLaunchSpec(%s): unexpected error: %v", c.label, err)
 			}
@@ -145,17 +143,17 @@ captain_name: captain
 			if err := os.WriteFile(p, []byte(c.content), 0o600); err != nil {
 				t.Fatalf("write mission: %v", err)
 			}
-			if got := daemon.ExportedReadMissionModel(p); got != c.want {
+			if got := ReadMissionModel(p); got != c.want {
 				t.Errorf("readMissionModel(%s) = %q; want %q", c.label, got, c.want)
 			}
 		})
 	}
 
 	// Empty path and missing file both return "".
-	if got := daemon.ExportedReadMissionModel(""); got != "" {
+	if got := ReadMissionModel(""); got != "" {
 		t.Errorf("readMissionModel(\"\") = %q; want \"\"", got)
 	}
-	if got := daemon.ExportedReadMissionModel(filepath.Join(t.TempDir(), "nope.md")); got != "" {
+	if got := ReadMissionModel(filepath.Join(t.TempDir(), "nope.md")); got != "" {
 		t.Errorf("readMissionModel(missing) = %q; want \"\"", got)
 	}
 }
@@ -163,14 +161,14 @@ captain_name: captain
 func TestBuildCrewLaunchSpec_Argv(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCrewLaunchCtx{
+	rc := CrewLaunchCtx{
 		ClaudeBinary: "claude",
 		Name:         "alpha",
 		SessionID:    "01930000-0000-7000-8000-000000000001",
 		ProjectDir:   "/tmp/test-project",
 	}
 
-	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+	spec, err := BuildCrewLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("buildCrewLaunchSpec: unexpected error: %v", err)
 	}
@@ -203,13 +201,13 @@ func TestBuildCrewLaunchSpec_Argv(t *testing.T) {
 func TestBuildCrewLaunchSpec_Env(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCrewLaunchCtx{
+	rc := CrewLaunchCtx{
 		Name:       "beta",
 		SessionID:  "01930000-0000-7000-8000-000000000002",
 		ProjectDir: "/home/user/harmonik",
 	}
 
-	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+	spec, err := BuildCrewLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("buildCrewLaunchSpec: unexpected error: %v", err)
 	}
@@ -240,13 +238,13 @@ func TestBuildCrewLaunchSpec_Env(t *testing.T) {
 func TestBuildCrewLaunchSpec_SkipPermissionsNoWorktree(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCrewLaunchCtx{
+	rc := CrewLaunchCtx{
 		Name:       "gamma",
 		SessionID:  "01930000-0000-7000-8000-000000000003",
 		ProjectDir: "/tmp/harmonik-proj",
 	}
 
-	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+	spec, err := BuildCrewLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("buildCrewLaunchSpec: unexpected error: %v", err)
 	}
@@ -268,14 +266,14 @@ func TestBuildCrewLaunchSpec_SkipPermissionsNoWorktree(t *testing.T) {
 func TestBuildCrewLaunchSpec_DefaultBinary(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCrewLaunchCtx{
+	rc := CrewLaunchCtx{
 		ClaudeBinary: "",
 		Name:         "delta",
 		SessionID:    "01930000-0000-7000-8000-000000000004",
 		ProjectDir:   "/tmp/harmonik",
 	}
 
-	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+	spec, err := BuildCrewLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("buildCrewLaunchSpec: unexpected error: %v", err)
 	}
@@ -287,14 +285,14 @@ func TestBuildCrewLaunchSpec_DefaultBinary(t *testing.T) {
 func TestBuildCrewLaunchSpec_CustomBinary(t *testing.T) {
 	t.Parallel()
 
-	rc := daemon.ExportedCrewLaunchCtx{
+	rc := CrewLaunchCtx{
 		ClaudeBinary: "/usr/local/bin/harmonik-twin-claude",
 		Name:         "epsilon",
 		SessionID:    "01930000-0000-7000-8000-000000000005",
 		ProjectDir:   "/tmp/harmonik",
 	}
 
-	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+	spec, err := BuildCrewLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("buildCrewLaunchSpec: unexpected error: %v", err)
 	}
@@ -308,11 +306,11 @@ func TestBuildCrewLaunchSpec_ValidationErrors(t *testing.T) {
 
 	cases := []struct {
 		label string
-		rc    daemon.ExportedCrewLaunchCtx
+		rc    CrewLaunchCtx
 	}{
 		{
 			label: "empty_name",
-			rc: daemon.ExportedCrewLaunchCtx{
+			rc: CrewLaunchCtx{
 				Name:       "",
 				SessionID:  "01930000-0000-7000-8000-000000000006",
 				ProjectDir: "/tmp/harmonik",
@@ -320,7 +318,7 @@ func TestBuildCrewLaunchSpec_ValidationErrors(t *testing.T) {
 		},
 		{
 			label: "empty_session_id",
-			rc: daemon.ExportedCrewLaunchCtx{
+			rc: CrewLaunchCtx{
 				Name:       "zeta",
 				SessionID:  "",
 				ProjectDir: "/tmp/harmonik",
@@ -331,7 +329,7 @@ func TestBuildCrewLaunchSpec_ValidationErrors(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {
 			t.Parallel()
-			_, err := daemon.ExportedBuildCrewLaunchSpec(c.rc)
+			_, err := BuildCrewLaunchSpec(c.rc)
 			if err == nil {
 				t.Errorf("buildCrewLaunchSpec(%s): expected error, got nil", c.label)
 			}
@@ -348,14 +346,14 @@ func TestBuildCrewLaunchSpec_ResumePath(t *testing.T) {
 	t.Parallel()
 
 	const uuid = "01930000-0000-7000-8000-000000000099"
-	rc := daemon.ExportedCrewLaunchCtx{
+	rc := CrewLaunchCtx{
 		Name:       "resume-crew",
 		SessionID:  uuid,
 		ProjectDir: "/tmp/harmonik",
 		Resume:     true,
 	}
 
-	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+	spec, err := BuildCrewLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("buildCrewLaunchSpec(resume): unexpected error: %v", err)
 	}
@@ -382,13 +380,13 @@ func TestBuildCrewLaunchSpec_WorkDir(t *testing.T) {
 	t.Parallel()
 
 	const projDir = "/home/user/my-project"
-	rc := daemon.ExportedCrewLaunchCtx{
+	rc := CrewLaunchCtx{
 		Name:       "eta",
 		SessionID:  "01930000-0000-7000-8000-000000000007",
 		ProjectDir: projDir,
 	}
 
-	spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+	spec, err := BuildCrewLaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("buildCrewLaunchSpec: unexpected error: %v", err)
 	}
@@ -434,7 +432,7 @@ func TestJoinRemoteControlName(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {
 			t.Parallel()
-			if got := daemon.JoinRemoteControlName(c.prefix, c.name); got != c.want {
+			if got := JoinRemoteControlName(c.prefix, c.name); got != c.want {
 				t.Errorf("JoinRemoteControlName(%q, %q) = %q; want %q", c.prefix, c.name, got, c.want)
 			}
 		})
@@ -456,14 +454,14 @@ func TestBuildCrewLaunchSpec_RcPrefix(t *testing.T) {
 	t.Run("empty_prefix_unchanged", func(t *testing.T) {
 		t.Parallel()
 		for _, resume := range []bool{false, true} {
-			rc := daemon.ExportedCrewLaunchCtx{
+			rc := CrewLaunchCtx{
 				Name:       "paul",
 				RcPrefix:   "",
 				SessionID:  uuid,
 				ProjectDir: "/tmp/harmonik",
 				Resume:     resume,
 			}
-			spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+			spec, err := BuildCrewLaunchSpec(rc)
 			if err != nil {
 				t.Fatalf("resume=%v: unexpected error: %v", resume, err)
 			}
@@ -475,7 +473,7 @@ func TestBuildCrewLaunchSpec_RcPrefix(t *testing.T) {
 
 	t.Run("prefixed_resume_parity", func(t *testing.T) {
 		t.Parallel()
-		base := daemon.ExportedCrewLaunchCtx{
+		base := CrewLaunchCtx{
 			Name:       "paul",
 			RcPrefix:   "hk",
 			SessionID:  uuid,
@@ -487,11 +485,11 @@ func TestBuildCrewLaunchSpec_RcPrefix(t *testing.T) {
 		resumed := base
 		resumed.Resume = true
 
-		specFresh, err := daemon.ExportedBuildCrewLaunchSpec(fresh)
+		specFresh, err := BuildCrewLaunchSpec(fresh)
 		if err != nil {
 			t.Fatalf("fresh: unexpected error: %v", err)
 		}
-		specResume, err := daemon.ExportedBuildCrewLaunchSpec(resumed)
+		specResume, err := BuildCrewLaunchSpec(resumed)
 		if err != nil {
 			t.Fatalf("resume: unexpected error: %v", err)
 		}
@@ -551,7 +549,7 @@ func TestResolveCrewHarness_Precedence(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.label, func(t *testing.T) {
 			t.Parallel()
-			got := daemon.ExportedResolveCrewHarness(c.flag, c.mission, c.config)
+			got := ResolveCrewHarness(c.flag, c.mission, c.config)
 			if got != c.want {
 				t.Errorf("resolveCrewHarness(%q, %q, %q) = %q; want %q",
 					c.flag, c.mission, c.config, got, c.want)
@@ -610,16 +608,16 @@ captain_name: captain
 			if err := os.WriteFile(p, []byte(c.content), 0o600); err != nil {
 				t.Fatalf("write mission: %v", err)
 			}
-			if got := daemon.ExportedReadMissionHarness(p); got != c.want {
+			if got := ReadMissionHarness(p); got != c.want {
 				t.Errorf("readMissionHarness(%s) = %q; want %q", c.label, got, c.want)
 			}
 		})
 	}
 
-	if got := daemon.ExportedReadMissionHarness(""); got != "" {
+	if got := ReadMissionHarness(""); got != "" {
 		t.Errorf("readMissionHarness(\"\") = %q; want \"\"", got)
 	}
-	if got := daemon.ExportedReadMissionHarness(filepath.Join(t.TempDir(), "nope.md")); got != "" {
+	if got := ReadMissionHarness(filepath.Join(t.TempDir(), "nope.md")); got != "" {
 		t.Errorf("readMissionHarness(missing) = %q; want \"\"", got)
 	}
 }
@@ -631,7 +629,7 @@ captain_name: captain
 func TestBuildCrewLaunchSpec_HarnessBranch(t *testing.T) {
 	t.Parallel()
 
-	baseRC := daemon.ExportedCrewLaunchCtx{
+	baseRC := CrewLaunchCtx{
 		ClaudeBinary: "claude",
 		Name:         "alpha",
 		SessionID:    "01930000-0000-7000-8000-000000000099",
@@ -642,7 +640,7 @@ func TestBuildCrewLaunchSpec_HarnessBranch(t *testing.T) {
 		t.Parallel()
 		rc := baseRC
 		rc.Harness = ""
-		spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+		spec, err := BuildCrewLaunchSpec(rc)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -655,7 +653,7 @@ func TestBuildCrewLaunchSpec_HarnessBranch(t *testing.T) {
 		t.Parallel()
 		rc := baseRC
 		rc.Harness = "claude"
-		spec, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+		spec, err := BuildCrewLaunchSpec(rc)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -669,7 +667,7 @@ func TestBuildCrewLaunchSpec_HarnessBranch(t *testing.T) {
 			t.Parallel()
 			rc := baseRC
 			rc.Harness = unsupported
-			_, err := daemon.ExportedBuildCrewLaunchSpec(rc)
+			_, err := BuildCrewLaunchSpec(rc)
 			if err == nil {
 				t.Fatalf("expected error for harness %q, got nil", unsupported)
 			}

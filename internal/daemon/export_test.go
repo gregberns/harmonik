@@ -2673,67 +2673,6 @@ func ExportedRunCodexBillingGuard(bus handlercontract.EventEmitter, beadID, code
 const ExportedForcedLoginMethodValue = forcedLoginMethodValue
 
 // ─────────────────────────────────────────────────────────────────────────────
-// buildCrewLaunchSpec test seams (hk-kbqto C2)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ExportedCrewLaunchCtx is the exported shape of crewLaunchCtx for tests.
-//
-// Bead ref: hk-kbqto, hk-4z0gp.
-type ExportedCrewLaunchCtx struct {
-	ClaudeBinary string
-	Name         string
-	// RcPrefix is the per-project --remote-control label prefix (hk-igpg); "" =
-	// bare label.
-	RcPrefix   string
-	SessionID  string
-	ProjectDir string
-	// Resume, when true, builds argv with --resume instead of --session-id
-	// (stale re-launch path per c2-spec.md §7).
-	Resume bool
-	// Model is the optional per-crew model alias (hk-9j3z); empty injects no
-	// --model flag.
-	Model string
-	// Harness is the resolved crew-scoped harness selection (hk-l63b9); "" and
-	// "claude" both build today's Claude spec, any other value errors.
-	Harness string
-}
-
-// ExportedBuildCrewLaunchSpec exposes buildCrewLaunchSpec for tests in package
-// daemon_test. See crewlaunchspec.go for semantics.
-//
-// Bead ref: hk-kbqto, hk-4z0gp.
-func ExportedBuildCrewLaunchSpec(rc ExportedCrewLaunchCtx) (handler.LaunchSpec, error) {
-	return buildCrewLaunchSpec(crewLaunchCtx{
-		claudeBinary: rc.ClaudeBinary,
-		name:         rc.Name,
-		rcPrefix:     rc.RcPrefix,
-		sessionID:    rc.SessionID,
-		projectDir:   rc.ProjectDir,
-		resume:       rc.Resume,
-		model:        rc.Model,
-		harness:      rc.Harness,
-	})
-}
-
-// ExportedReadMissionModel exposes readMissionModel for tests in package
-// daemon_test (hk-9j3z): reads the optional model: front-matter field.
-func ExportedReadMissionModel(missionPath string) string {
-	return readMissionModel(missionPath)
-}
-
-// ExportedReadMissionHarness exposes readMissionHarness for tests in package
-// daemon_test (hk-l63b9): reads the optional harness: front-matter field.
-func ExportedReadMissionHarness(missionPath string) string {
-	return readMissionHarness(missionPath)
-}
-
-// ExportedResolveCrewHarness exposes resolveCrewHarness for tests in package
-// daemon_test (hk-l63b9): the crew-scoped harness resolver precedence walk.
-func ExportedResolveCrewHarness(flagHarness, missionHarness, configHarness string) string {
-	return resolveCrewHarness(flagHarness, missionHarness, configHarness)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // OperatorPauseController test seams (hk-ry8q1)
 // ─────────────────────────────────────────────────────────────────────────────
 

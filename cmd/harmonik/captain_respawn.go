@@ -45,6 +45,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -75,7 +76,7 @@ func runCaptainRespawnTmux(cmd *exec.Cmd) ([]byte, error) { return cmd.Output() 
 // "<session>:agent" (ltmux.WindowAgent).
 //
 // rcPrefix (hk-igpg) folds the per-project prefix into the --remote-control LABEL
-// via daemon.JoinRemoteControlName so the respawned session keeps the SAME picker
+// via crewrun.JoinRemoteControlName so the respawned session keeps the SAME picker
 // label the launcher used (resume parity). Empty prefix ⇒ bare name.
 //
 // Assumes daemon.remote_control_prefix is stable across launch→respawn; if an
@@ -87,7 +88,7 @@ func buildCaptainRespawnWindowCmd(name, tmuxTarget, sessionID, rcPrefix string) 
 		"-t", tmuxTarget,
 		"-e", "HARMONIK_AGENT="+name,
 		"claude", "--dangerously-skip-permissions",
-		"--remote-control", daemon.JoinRemoteControlName(rcPrefix, name),
+		"--remote-control", crewrun.JoinRemoteControlName(rcPrefix, name),
 		"--resume", sessionID,
 	)
 }

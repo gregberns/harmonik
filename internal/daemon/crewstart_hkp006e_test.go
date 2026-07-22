@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/handler"
 )
 
@@ -54,7 +55,7 @@ func TestCrewStart_ManagedMarkerBeforeSpawn_hkp006e(t *testing.T) {
 	h, dir := newTestCrewHandler(t, sub, nil)
 	sub.projectDir = dir
 
-	mustCrewStart(t, h, CrewStartRequest{
+	mustCrewStart(t, h, crewrun.CrewStartRequest{
 		Name:  "jessica",
 		Queue: "crew-jessica",
 	})

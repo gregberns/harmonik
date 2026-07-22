@@ -253,6 +253,17 @@ transport-freeze-gate:  ## P2 E4: forbid new reverse-tunnel files or moved symbo
 queuewiring-freeze-gate:  ## P2 E3: forbid new queue-ownership files or moved symbols in internal/daemon
 	scripts/queuewiring-freeze-gate.sh
 
+# crewrun-freeze-gate: the P2 E2 extraction ratchet — the crew launch contract
+# (the crew-start/crew-stop RPC payloads, the persistent-session launch-spec
+# builder, the crew-scoped harness resolver, the mission front-matter readers,
+# the idle-crew reaper) left internal/daemon for internal/crewrun, and depguard
+# can only fence the import edge, not the creation of a new file. This grep gate
+# fails if a crew-launch-shaped file or one of the moved symbols reappears in
+# internal/daemon. Wired into check-fast and check-short.
+.PHONY: crewrun-freeze-gate
+crewrun-freeze-gate:  ## P2 E2: forbid new crew-launch files or moved symbols in internal/daemon
+	scripts/crewrun-freeze-gate.sh
+
 # test-codex-live: run L3 live tests against a real codex app-server process.
 # Requires: CODEX_LIVE=1, codex binary on PATH (or CODEX_BIN=<path> set),
 # valid codex auth (~/.codex/auth.json). Budget: 90s per test, 2 scenarios.
@@ -440,6 +451,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=HEAD~1
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
+	scripts/crewrun-freeze-gate.sh
 	@CHANGED_PKGS=$$(git diff --name-only HEAD 2>/dev/null | grep '\.go$$' | xargs -I{} dirname {} | sort -u | sed 's|^|./|' | tr '\n' ' '); \
 	if [ -n "$$CHANGED_PKGS" ]; then \
 		go test -short $$CHANGED_PKGS; \
@@ -463,6 +475,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	$(TOOLS_DIR)/golangci-lint run --new-from-rev=origin/main
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
+	scripts/crewrun-freeze-gate.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

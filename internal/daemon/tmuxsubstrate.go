@@ -1868,7 +1868,7 @@ func crewKeeperWindowArgv(keeperBin, crewName, sessName, projectDir string) []st
 // (already created by SpawnCrewSession) and launches the per-crew keeper in it.
 //
 // projectDir is derived from the crew spawn: spawn.Cwd is the crew's WorkDir
-// (the project root per buildCrewLaunchSpec), with HARMONIK_PROJECT from
+// (the project root per crewrun.BuildCrewLaunchSpec), with HARMONIK_PROJECT from
 // spawn.Env as a fallback. The keeper binary is the currently-running harmonik
 // executable (os.Executable, "harmonik" on failure), matching the CLI crew
 // keeper resolution.

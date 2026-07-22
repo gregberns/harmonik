@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
@@ -54,8 +55,8 @@ type bootState struct {
 	concurrencyCtrl     *ConcurrencyController
 	queueHandlerAdapter *queue.HandlerAdapter
 	drainDet            *DrainDetector
-	crewHandler         CrewHandler
-	crewIdleReaper      *CrewIdleReaper
+	crewHandler         crewrun.CrewHandler
+	crewIdleReaper      *crewrun.CrewIdleReaper
 	branchReapWatcher   *BranchReapWatcher
 }
 

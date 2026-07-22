@@ -674,8 +674,8 @@ type DaemonConfig struct {
 	// projects run concurrently. Empty = not configured ⇒ the bare agent name is
 	// emitted exactly as today (backward compatible). It is a COSMETIC label only:
 	// harmonik's own identity keys (HARMONIK_AGENT, crew-registry name, tmux name,
-	// --session-id) stay bare. Use JoinRemoteControlName to build the label so the
-	// format never drifts between launch sites. (hk-igpg)
+	// --session-id) stay bare. Use crewrun.JoinRemoteControlName to build the
+	// label so the format never drifts between launch sites. (hk-igpg)
 	RemoteControlPrefix string
 
 	// RestartBackoff configures the persistent boot-record backoff applied when

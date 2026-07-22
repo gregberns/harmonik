@@ -286,6 +286,36 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "queuewiring is the extracted queue-ownership layer; daemon composes it, never the reverse (P2 E3)" }
 
+        # crewrun: the daemon-side crew launch contract — crew-start/crew-stop RPC
+        # payloads, the persistent-session launch-spec builder, the crew-scoped
+        # harness resolver, the mission front-matter readers, and the idle-crew
+        # reaper — extracted from internal/daemon behind the already-fenced
+        # internal/crew registry leaf and the handler.LaunchSpec value type
+        # (P2 unit E2, slice E2a). The daemon composition root threads the queue
+        # lookup and the crew stopper IN. crewrun MUST NOT import daemon back —
+        # that back-edge re-links the ~57k-LOC monolith into the crew launch path
+        # and voids the extraction.
+        # internal/daemon/crewstart.go (the tmux-native crew-start handler) is the
+        # ONE sanctioned residue: it type-asserts substrateWithAdapter, whose only
+        # method tmuxAdapter() is unexported and therefore package-qualified, so the
+        # assertion cannot be written outside internal/daemon. Moving it is slice
+        # E2b, which needs an operator waiver of the no-new-seam rule.
+        # CAVEAT: depguard checks DIRECT imports only. internal/{crew,handler,queue}
+        # are verified daemon-free today; the transitive check is
+        # `go list -deps ./internal/crewrun | grep internal/daemon`.
+        # Rationale: plans/2026-07-21-p2-extraction/E2-crew.md slice E2a.
+        crewrun:
+          files: ["**/internal/crewrun/**"]
+          allow:
+            - "$gostd"
+            - "gopkg.in/yaml.v3"
+            - "github.com/gregberns/harmonik/internal/crew"
+            - "github.com/gregberns/harmonik/internal/handler"
+            - "github.com/gregberns/harmonik/internal/queue"
+            - "github.com/gregberns/harmonik/internal/crewrun"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "crewrun is a leaf behind the crew-registry + handler.LaunchSpec seams; importing daemon back voids P2 E2" }
+
         # socketrouter: the pure protocol dispatch table (giant-retirement follow-up), a daemon
         # sub-package. Value-in/value-out routing: Classify + Router.Dispatch + neutral Result over
         # json.RawMessage. The daemon threads effectful handler closures IN (mergeq/runexec pattern);

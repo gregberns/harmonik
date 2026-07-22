@@ -14,20 +14,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/schedule"
 )
 
 // fakeCrewStarter records HandleCrewStart calls.
 type fakeCrewStarter struct {
 	mu     sync.Mutex
-	starts []CrewStartRequest
+	starts []crewrun.CrewStartRequest
 	err    error
 }
 
 func (f *fakeCrewStarter) HandleCrewStart(_ context.Context, payload json.RawMessage) (json.RawMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var req CrewStartRequest
+	var req crewrun.CrewStartRequest
 	_ = json.Unmarshal(payload, &req)
 	f.starts = append(f.starts, req)
 	if f.err != nil {

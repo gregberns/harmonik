@@ -69,6 +69,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/agentlaunch"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/keeper"
 	"github.com/gregberns/harmonik/internal/lifecycle"
@@ -245,7 +246,7 @@ func (o osCaptainTmuxOps) PasteSeedToAgentPane(ctx context.Context, sessionID, p
 // lets the test assert the exact argv via the injected run func.
 //
 // rcPrefix (hk-igpg) is the per-project Claude RC label prefix: the
-// --remote-control LABEL is daemon.JoinRemoteControlName(rcPrefix, name) so it
+// --remote-control LABEL is crewrun.JoinRemoteControlName(rcPrefix, name) so it
 // shows as "<prefix>-<name>" in the picker. Empty prefix ⇒ bare name (backward
 // compatible). HARMONIK_AGENT stays BARE — the prefix is cosmetic, RC-label-only.
 func buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix string) *exec.Cmd {
@@ -255,7 +256,7 @@ func buildCaptainTmuxCmd(name, tmuxSession, sessionID, rcPrefix string) *exec.Cm
 		"-n", ltmux.WindowAgent,
 		"-e", "HARMONIK_AGENT="+name,
 		"claude", "--dangerously-skip-permissions",
-		"--remote-control", daemon.JoinRemoteControlName(rcPrefix, name),
+		"--remote-control", crewrun.JoinRemoteControlName(rcPrefix, name),
 		"--session-id", sessionID,
 	)
 }

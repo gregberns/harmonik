@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/crewrun"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -48,7 +49,7 @@ func TestCrewQueue_FirstSubmitAccepted(t *testing.T) {
 	ctx := context.Background()
 
 	// Step 1: crew-start ensures the queue exists as a completed placeholder.
-	raw, _ := json.Marshal(CrewStartRequest{Name: "crew-alpha", Queue: "crew-alpha"})
+	raw, _ := json.Marshal(crewrun.CrewStartRequest{Name: "crew-alpha", Queue: "crew-alpha"})
 	_, err := h.HandleCrewStart(ctx, json.RawMessage(raw))
 	if err != nil {
 		t.Fatalf("crew-start: %v", err)
@@ -93,7 +94,7 @@ func TestCrewQueue_EnsuredQueueStatusIsCompleted(t *testing.T) {
 	h, dir := newTestCrewHandler(t, &fakeSubstrate{}, nil)
 	ctx := context.Background()
 
-	raw, _ := json.Marshal(CrewStartRequest{Name: "crew-beta", Queue: "crew-beta"})
+	raw, _ := json.Marshal(crewrun.CrewStartRequest{Name: "crew-beta", Queue: "crew-beta"})
 	if _, err := h.HandleCrewStart(ctx, json.RawMessage(raw)); err != nil {
 		t.Fatalf("crew-start: %v", err)
 	}

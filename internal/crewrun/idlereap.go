@@ -1,6 +1,6 @@
-package daemon
+package crewrun
 
-// crewidlereap.go — SD-3: tear down crews that COMPLETED work and went idle,
+// idlereap.go — SD-3: tear down crews that COMPLETED work and went idle,
 // reclaiming their slot after a short grace window.
 //
 // CrewIdleReaper is a daemon-hosted periodic sweep, shaped after StaleWatcher
@@ -55,7 +55,7 @@ const (
 )
 
 // crewStopper is the seam CrewIdleReaper uses to tear a crew down. Satisfied
-// by CrewHandler.HandleCrewStop (crewstart.go); a test double may substitute
+// by CrewHandler.HandleCrewStop (wire.go); a test double may substitute
 // any function matching this shape.
 type crewStopper interface {
 	HandleCrewStop(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
@@ -159,7 +159,7 @@ func NewCrewIdleReaper(cfg CrewIdleReaperConfig) *CrewIdleReaper {
 // Traceability (hk-do173): hk-s2eac is the FEATURE bead that introduced SD-3; the
 // DISABLE and its guards are tracked under hk-98at0 (the teardown-level guard) and
 // hk-do173 (the tighter no-scan guard). Two regression tests in
-// crewidlereap_hks2eac_test.go pin this no-op —
+// idlereap_hks2eac_test.go pin this no-op —
 // TestCrewIdleReaper_StartWatcher_Disabled_NeverReaps and
 // TestCrewIdleReaper_StartWatcher_Disabled_NeverScans — both FAIL if this body is
 // reverted to launch loop(), so a re-enable cannot land silently.

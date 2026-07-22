@@ -1,6 +1,6 @@
-package daemon_test
+package crewrun
 
-// crewlaunchspec_twoproj_hk25bg_test.go — T5 live two-project validation
+// launchspec_twoproj_hk25bg_test.go — T5 live two-project validation
 // (hk-25bg): side-by-side scenario asserting that two concurrent harmonik
 // projects with distinct slugs produce non-colliding RC labels while keeping
 // all internal identity channels (HARMONIK_AGENT, --session-id / --resume)
@@ -17,13 +17,11 @@ package daemon_test
 //      agent name can carry the same bare session-id without collision because the
 //      display label already disambiguates them.
 //
-// Run: go test ./internal/daemon/ -run TwoProject -v
+// Run: go test ./internal/crewrun/ -run TwoProject -v
 
 import (
 	"strings"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/daemon"
 )
 
 const (
@@ -34,7 +32,7 @@ const (
 // buildSpec is a thin wrapper for test brevity.
 func buildSpec(t *testing.T, name, rcPrefix, sessionID string, resume bool) []string {
 	t.Helper()
-	spec, err := daemon.ExportedBuildCrewLaunchSpec(daemon.ExportedCrewLaunchCtx{
+	spec, err := BuildCrewLaunchSpec(CrewLaunchCtx{
 		Name:       name,
 		RcPrefix:   rcPrefix,
 		SessionID:  sessionID,
@@ -42,7 +40,7 @@ func buildSpec(t *testing.T, name, rcPrefix, sessionID string, resume bool) []st
 		Resume:     resume,
 	})
 	if err != nil {
-		t.Fatalf("ExportedBuildCrewLaunchSpec(name=%q, prefix=%q, resume=%v): %v", name, rcPrefix, resume, err)
+		t.Fatalf("BuildCrewLaunchSpec(name=%q, prefix=%q, resume=%v): %v", name, rcPrefix, resume, err)
 	}
 	return spec.Args
 }
@@ -50,7 +48,7 @@ func buildSpec(t *testing.T, name, rcPrefix, sessionID string, resume bool) []st
 // envHarmonikAgent extracts the bare HARMONIK_AGENT value from a launch spec's env.
 func envHarmonikAgent(t *testing.T, name, rcPrefix string, resume bool) string {
 	t.Helper()
-	spec, err := daemon.ExportedBuildCrewLaunchSpec(daemon.ExportedCrewLaunchCtx{
+	spec, err := BuildCrewLaunchSpec(CrewLaunchCtx{
 		Name:       name,
 		RcPrefix:   rcPrefix,
 		SessionID:  hk25bgUUIDHK,
@@ -58,7 +56,7 @@ func envHarmonikAgent(t *testing.T, name, rcPrefix string, resume bool) string {
 		Resume:     resume,
 	})
 	if err != nil {
-		t.Fatalf("ExportedBuildCrewLaunchSpec env path: %v", err)
+		t.Fatalf("BuildCrewLaunchSpec env path: %v", err)
 	}
 	for _, e := range spec.Env {
 		if strings.HasPrefix(e, "HARMONIK_AGENT=") {

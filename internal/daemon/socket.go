@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/gregberns/harmonik/internal/crewrun"
 	socketrouter "github.com/gregberns/harmonik/internal/daemon/router"
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -327,7 +328,7 @@ type QuiesceOverrideHandler interface {
 //
 // Spec ref: docs/plans/captain/05-specs/c2-spec.md §3.1.
 // Bead ref: hk-5tg5o (C2 daemon handler).
-func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, qh ...QueueHandler) error {
+func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh crewrun.CrewHandler, qh ...QueueHandler) error {
 	return RunSocketListenerWithSleepWake(ctx, sockPath, h, hr, sub, oh, ch, crewh, nil, qh...)
 }
 
@@ -336,7 +337,7 @@ func RunSocketListenerWithCrew(ctx context.Context, sockPath string, h RequestHa
 // daemon-sleep and daemon-wake ops return an error response.
 //
 // Bead ref: hk-s5v3 (M4 of hk-rl4b / codename:sleep-wake).
-func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh CrewHandler, sleepWakeh QuiesceOverrideHandler, qh ...QueueHandler) error {
+func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h RequestHandler, hr HookRelayHandler, sub SubscribeHandler, oh OperatorControlHandler, ch CommsSendHandler, crewh crewrun.CrewHandler, sleepWakeh QuiesceOverrideHandler, qh ...QueueHandler) error {
 	return Serve(ctx, sockPath, SocketHandlers{
 		Request: h, HookRelay: hr, Queue: firstQueueHandler(qh), Subscribe: sub,
 		Operator: oh, Comms: ch, Crew: crewh, SleepWake: sleepWakeh,
@@ -354,7 +355,7 @@ type SocketHandlers struct {
 	Subscribe SubscribeHandler
 	Operator  OperatorControlHandler
 	Comms     CommsSendHandler
-	Crew      CrewHandler
+	Crew      crewrun.CrewHandler
 	SleepWake QuiesceOverrideHandler
 	State     StateHandler
 	Dashboard DashboardHandler

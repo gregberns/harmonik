@@ -1,6 +1,6 @@
-package daemon
+package crewrun
 
-// crewidlereap_hks2eac_test.go — unit tests for SD-3 (hk-s2eac): idle-
+// idlereap_hks2eac_test.go — unit tests for SD-3 (hk-s2eac): idle-
 // completed-crew teardown.
 
 import (

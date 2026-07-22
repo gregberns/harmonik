@@ -50,7 +50,7 @@ package daemon_test
 // `claude --remote-control` tmux pane and bracketed-pastes a mission seed —
 // neither is reachable from a hermetic `go test` (no real claude, no live tmux,
 // and the brief forbids touching the live crew sessions). The C2 unit tests
-// (crewstart_hkjzpqo_test.go, crewlaunchspec_test.go) likewise assert the
+// (crewstart_hkjzpqo_test.go, crewrun/launchspec_test.go) likewise assert the
 // launch's CODE SEQUENCE with mock injecters rather than a live launch. So this
 // E2E SCRIPTS the crew-start MECHANICAL effects — the registry Write, the
 // named-queue Persist, and a comms-presence JOIN (which the crew's C3 boot

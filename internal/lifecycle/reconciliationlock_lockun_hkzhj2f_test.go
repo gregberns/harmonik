@@ -43,7 +43,14 @@ func TestReconciliationLock_Release_UnlocksOpenFileDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dup lock fd: %v", err)
 	}
-	defer func() { _ = syscall.Close(dupFd) }()
+	// errcheck runs with check-blank, so `_ =` is not an accepted discard here.
+	// The close is genuinely best-effort — it only drops the extra descriptor the
+	// test itself created — so report it rather than fail the test on it.
+	defer func() {
+		if closeErr := syscall.Close(dupFd); closeErr != nil {
+			t.Logf("close dup lock fd: %v", closeErr)
+		}
+	}()
 
 	if err := lock.Release(); err != nil {
 		t.Fatalf("Release: %v", err)

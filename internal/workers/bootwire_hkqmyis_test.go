@@ -1,7 +1,7 @@
-package daemon
+package workers
 
-// workerregistry_hkqmyis_test.go — regression test for hk-qmyis (commit
-// c3307acc): buildWorkerRegistryWithRunner previously stayed silent about how
+// bootwire_hkqmyis_test.go — regression test for hk-qmyis (commit
+// c3307acc): BuildRegistryWithRunner previously stayed silent about how
 // many workers.yaml entries were loaded vs enabled, making "workers.yaml has
 // entries but none enabled" indistinguishable in the logs from "no
 // workers.yaml at all" (both were silent). The fix emits a worker_registry_init
@@ -25,9 +25,6 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
-
-	"github.com/gregberns/harmonik/internal/handlercontract"
-	"github.com/gregberns/harmonik/internal/workers"
 )
 
 // hkqmyisCapturingSlogHandler records every slog.Record handed to it so tests
@@ -88,12 +85,12 @@ func hkqmyisInstallCapturingHandler(t *testing.T) *hkqmyisCapturingSlogHandler {
 	return h
 }
 
-// hkqmyisWorkerCfg builds a workers.Config with the given enabled flags, one
+// hkqmyisWorkerCfg builds a Config with the given enabled flags, one
 // worker per entry.
-func hkqmyisWorkerCfg(enabled ...bool) workers.Config {
-	cfg := workers.Config{Version: 1}
+func hkqmyisWorkerCfg(enabled ...bool) Config {
+	cfg := Config{Version: 1}
 	for _, en := range enabled {
-		cfg.Workers = append(cfg.Workers, workers.Worker{
+		cfg.Workers = append(cfg.Workers, Worker{
 			Name:      "worker",
 			Transport: "ssh",
 			Host:      "worker.local",
@@ -114,8 +111,8 @@ func hkqmyisWorkerCfg(enabled ...bool) workers.Config {
 func TestBuildWorkerRegistry_LogsCountsOnBoot_NoneEnabled(t *testing.T) {
 	h := hkqmyisInstallCapturingHandler(t)
 
-	bus := &handlercontract.CollectingEmitter{}
-	_ = buildWorkerRegistryWithRunner(context.Background(), hkqmyisWorkerCfg(false, false), bus, nil)
+	bus := &bootwireCollector{}
+	_ = BuildRegistryWithRunner(context.Background(), hkqmyisWorkerCfg(false, false), bus.emitFunc(), nil)
 
 	rec, ok := h.find("worker_registry_init")
 	if !ok {
@@ -151,8 +148,8 @@ func TestBuildWorkerRegistry_LogsCountsOnBoot_NoneEnabled(t *testing.T) {
 func TestBuildWorkerRegistry_LogsCountsOnBoot_SomeEnabled(t *testing.T) {
 	h := hkqmyisInstallCapturingHandler(t)
 
-	bus := &handlercontract.CollectingEmitter{}
-	_ = buildWorkerRegistryWithRunner(context.Background(), hkqmyisWorkerCfg(true, false, true), bus, nil)
+	bus := &bootwireCollector{}
+	_ = BuildRegistryWithRunner(context.Background(), hkqmyisWorkerCfg(true, false, true), bus.emitFunc(), nil)
 
 	rec, ok := h.find("worker_registry_init")
 	if !ok {
@@ -176,14 +173,14 @@ func TestBuildWorkerRegistry_LogsCountsOnBoot_SomeEnabled(t *testing.T) {
 
 // TestBuildWorkerRegistry_NoLogWhenNoWorkersConfigured verifies the pre-fix
 // silent behaviour is preserved for the OTHER "no workers.yaml at all" case —
-// buildWorkerRegistryWithRunner must stay silent (and return nil) when
+// BuildRegistryWithRunner must stay silent (and return nil) when
 // cfg.Workers is empty, so this path remains distinguishable from "entries
 // present but none enabled" (which now logs).
 func TestBuildWorkerRegistry_NoLogWhenNoWorkersConfigured(t *testing.T) {
 	h := hkqmyisInstallCapturingHandler(t)
 
-	bus := &handlercontract.CollectingEmitter{}
-	reg := buildWorkerRegistryWithRunner(context.Background(), workers.Config{Version: 1}, bus, nil)
+	bus := &bootwireCollector{}
+	reg := BuildRegistryWithRunner(context.Background(), Config{Version: 1}, bus.emitFunc(), nil)
 
 	if reg != nil {
 		t.Errorf("expected nil registry when no workers configured, got %+v", reg)

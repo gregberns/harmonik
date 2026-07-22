@@ -342,6 +342,33 @@ linters:
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "transport is a leaf: importing daemon would re-couple every remote dispatcher to the monolith (P2 E4)" }
 
+        # workers: worker addressing, selection/slot tracking, health probing,
+        # telemetry — and, since P2 unit E4c, the BOOT WIRING that turns a loaded
+        # workers.Config into a live *Registry (BuildRegistry / BootHealthRunner,
+        # bootwire.go, lifted out of internal/daemon/workloop.go). This rule is the
+        # fence that makes that lift stick: workers is a LEAF that internal/daemon,
+        # internal/transport and a P3 remote dispatcher all sit above, so a daemon
+        # import here would invert the direction of the whole extraction.
+        # The allow list is the MEASURED import set — core, lifecycle/tmux, the
+        # self-import used by the package's workers_test external tests, yaml for
+        # decoding workers.yaml (workers.go), and rapid for routing_prop_test.go.
+        # It is deliberately NARROW: handlercontract is
+        # absent on purpose, which is the whole reason BuildRegistry takes this
+        # package's own workers.EmitFunc instead of a handlercontract.EventEmitter.
+        # Widening it needs proof, not convenience.
+        # Rationale: plans/2026-07-21-p2-extraction/E4-ssh.md slice E4c.
+        workers:
+          files: ["**/internal/workers/**"]
+          allow:
+            - "$gostd"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+            - "github.com/gregberns/harmonik/internal/workers"
+            - "gopkg.in/yaml.v3"
+            - "pgregory.net/rapid"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "workers is a leaf BELOW daemon and transport; a daemon edge would invert the P2 E4c boot-wire extraction" }
+
         # keeper: stdlib + core + eventbus + presence + self-import (external test
         # pattern); MUST NOT import daemon or workloop.
         # presence: the hitl-decisions K5 orphan reaper (presence.ReapOrphanedDecisions)

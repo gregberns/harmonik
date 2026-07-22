@@ -37,9 +37,10 @@ import (
 type RunnerForWorker func(w Worker) tmux.CommandRunner
 
 // reportRunnerForWorker is the production RunnerForWorker: an SSHRunner for
-// transport "ssh", nil for any other transport. It mirrors bootHealthRunner in
-// the daemon package so the recurring poll reaches a worker exactly as the boot
-// health check does.
+// transport "ssh", nil for any other transport. It mirrors BootHealthRunner in
+// this package so the recurring poll reaches a worker exactly as the boot health
+// check does. The two are deliberately NOT merged: this one is per-worker, while
+// BootHealthRunner is per-config with first-enabled-wins semantics.
 func reportRunnerForWorker(w Worker) tmux.CommandRunner {
 	if w.Transport == "ssh" {
 		return tmux.SSHRunner{Host: w.Host}
@@ -90,7 +91,7 @@ func pollWorkerReports(ctx context.Context, cfg Config, reg *Registry, runnerFor
 		}
 		runner := runnerFor(w)
 		if runner == nil {
-			// Unsupported transport — skip silently (matches bootHealthRunner).
+			// Unsupported transport — skip silently (matches BootHealthRunner).
 			continue
 		}
 		w := w

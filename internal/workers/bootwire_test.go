@@ -1,9 +1,9 @@
-package daemon
+package workers
 
-// workerregistry_bootwire_test.go — boot-wiring tests for the remote-substrate
-// worker registry (remote-substrate B4/B6).
+// bootwire_test.go — boot-wiring tests for the remote-substrate worker registry
+// (remote-substrate B4/B6).
 //
-// These tests prove the BOOT path — buildWorkerRegistry, the helper that
+// These tests prove the BOOT path — BuildRegistry, the helper that the daemon's
 // newWorkLoopDeps calls to populate deps.workerRegistry — activates remote
 // routing. Prior to the wire, deps.workerRegistry was always nil in production
 // (NewRegistry/RunHealthCheck were never invoked outside tests), so every bead
@@ -18,19 +18,45 @@ package daemon
 import (
 	"context"
 	"os/exec"
+	"sync"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
-	"github.com/gregberns/harmonik/internal/handlercontract"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
-	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// oneWorkerCfg returns a v1 workers.Config with a single worker.
-func oneWorkerCfg(enabled bool) workers.Config {
-	return workers.Config{
+// bootwireCollector records the type of every event emitted through its EmitFunc
+// so a test can assert on emissions. It stands in for
+// handlercontract.CollectingEmitter, which this package deliberately does not
+// import: the boot wiring takes the package's own EmitFunc (P2 E4c) rather than
+// widening internal/workers' dependency closure with a handlercontract edge.
+type bootwireCollector struct {
+	mu    sync.Mutex
+	types []string
+}
+
+// emitFunc returns the EmitFunc handed to the code under test.
+func (c *bootwireCollector) emitFunc() EmitFunc {
+	return func(_ context.Context, eventType core.EventType, _ []byte) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.types = append(c.types, string(eventType))
+		return nil
+	}
+}
+
+// EventTypes returns the recorded event types in emission order.
+func (c *bootwireCollector) EventTypes() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.types...)
+}
+
+// oneWorkerCfg returns a v1 Config with a single worker.
+func oneWorkerCfg(enabled bool) Config {
+	return Config{
 		Version: 1,
-		Workers: []workers.Worker{
+		Workers: []Worker{
 			{
 				Name:      "gb-mbp",
 				Transport: "ssh",
@@ -72,13 +98,13 @@ func failingRunner() *tmux.RecordingRunner {
 func TestBuildWorkerRegistry_EnabledWorkerActivatesRemoteRouting(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	bus := &handlercontract.CollectingEmitter{}
+	bus := &bootwireCollector{}
 
 	// Boot path with a healthy worker (all probes pass).
-	reg := buildWorkerRegistryWithRunner(ctx, oneWorkerCfg(true), bus, passingRunner())
+	reg := BuildRegistryWithRunner(ctx, oneWorkerCfg(true), bus.emitFunc(), passingRunner())
 
 	if reg == nil {
-		t.Fatal("buildWorkerRegistry: expected non-nil registry for an enabled worker, got nil (remote routing would never activate)")
+		t.Fatal("BuildRegistry: expected non-nil registry for an enabled worker, got nil (remote routing would never activate)")
 	}
 	w := reg.SelectWorker()
 	if w == nil {
@@ -105,11 +131,11 @@ func TestBuildWorkerRegistry_EnabledWorkerActivatesRemoteRouting(t *testing.T) {
 func TestBuildWorkerRegistry_NoWorkerStaysLocal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	bus := &handlercontract.CollectingEmitter{}
+	bus := &bootwireCollector{}
 
 	// Zero-value config (the missing-workers.yaml case) — the ONLY nil case.
-	if reg := buildWorkerRegistryWithRunner(ctx, workers.Config{}, bus, passingRunner()); reg != nil {
-		t.Fatalf("buildWorkerRegistry: expected nil registry for empty config (NFR7 local-only), got %#v", reg)
+	if reg := BuildRegistryWithRunner(ctx, Config{}, bus.emitFunc(), passingRunner()); reg != nil {
+		t.Fatalf("BuildRegistry: expected nil registry for empty config (NFR7 local-only), got %#v", reg)
 	}
 }
 
@@ -123,11 +149,11 @@ func TestBuildWorkerRegistry_NoWorkerStaysLocal(t *testing.T) {
 func TestBuildWorkerRegistry_DisabledWorkerBuildsRegistryButStaysLocal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	bus := &handlercontract.CollectingEmitter{}
+	bus := &bootwireCollector{}
 
-	reg := buildWorkerRegistryWithRunner(ctx, oneWorkerCfg(false), bus, passingRunner())
+	reg := BuildRegistryWithRunner(ctx, oneWorkerCfg(false), bus.emitFunc(), passingRunner())
 	if reg == nil {
-		t.Fatal("buildWorkerRegistry: expected NON-nil registry for a configured-but-disabled worker (hk-xjbvi: live-enable needs a registry to flip), got nil")
+		t.Fatal("BuildRegistry: expected NON-nil registry for a configured-but-disabled worker (hk-xjbvi: live-enable needs a registry to flip), got nil")
 	}
 	// Dispatch is local-only while disabled: SelectWorker must return nil,
 	// identical to the old nil-registry path.
@@ -171,11 +197,11 @@ func TestBuildWorkerRegistry_DisabledWorkerBuildsRegistryButStaysLocal(t *testin
 func TestBuildWorkerRegistry_UnhealthyWorkerSkippedAndEventEmitted(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	bus := &handlercontract.CollectingEmitter{}
+	bus := &bootwireCollector{}
 
-	reg := buildWorkerRegistryWithRunner(ctx, oneWorkerCfg(true), bus, failingRunner())
+	reg := BuildRegistryWithRunner(ctx, oneWorkerCfg(true), bus.emitFunc(), failingRunner())
 	if reg == nil {
-		t.Fatal("buildWorkerRegistry: expected non-nil registry even for an unhealthy worker (config entries are never deleted, FR11)")
+		t.Fatal("BuildRegistry: expected non-nil registry even for an unhealthy worker (config entries are never deleted, FR11)")
 	}
 	if w := reg.SelectWorker(); w != nil {
 		t.Fatalf("SelectWorker: expected nil after a failing boot health check (worker disabled), got %q", w.Name)
@@ -193,23 +219,23 @@ func TestBuildWorkerRegistry_UnhealthyWorkerSkippedAndEventEmitted(t *testing.T)
 	}
 }
 
-// TestBootHealthRunner_TransportResolution verifies bootHealthRunner returns an
+// TestBootHealthRunner_TransportResolution verifies BootHealthRunner returns an
 // SSHRunner for transport "ssh" and nil for any other transport (probes skipped).
 func TestBootHealthRunner_TransportResolution(t *testing.T) {
 	t.Parallel()
 
-	ssh := bootHealthRunner(oneWorkerCfg(true))
+	ssh := BootHealthRunner(oneWorkerCfg(true))
 	if _, ok := ssh.(tmux.SSHRunner); !ok {
-		t.Fatalf("bootHealthRunner: transport ssh → got %T, want tmux.SSHRunner", ssh)
+		t.Fatalf("BootHealthRunner: transport ssh → got %T, want tmux.SSHRunner", ssh)
 	}
 
 	other := oneWorkerCfg(true)
 	other.Workers[0].Transport = "local"
-	if r := bootHealthRunner(other); r != nil {
-		t.Fatalf("bootHealthRunner: unsupported transport → got %T, want nil", r)
+	if r := BootHealthRunner(other); r != nil {
+		t.Fatalf("BootHealthRunner: unsupported transport → got %T, want nil", r)
 	}
 
-	if r := bootHealthRunner(workers.Config{}); r != nil {
-		t.Fatalf("bootHealthRunner: empty config → got %T, want nil", r)
+	if r := BootHealthRunner(Config{}); r != nil {
+		t.Fatalf("BootHealthRunner: empty config → got %T, want nil", r)
 	}
 }

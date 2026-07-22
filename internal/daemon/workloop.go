@@ -1133,7 +1133,15 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 	// Build the remote-worker registry from cfg.Workers and run the boot-time
 	// health check (remote-substrate B4/B6). Returns nil when no worker is
 	// enabled so the dispatch path takes the existing local-only branch (NFR7).
-	workerReg := buildWorkerRegistry(ctx, cfg.Workers, bus)
+	// The nil guard is load-bearing: bus is a handlercontract.EventEmitter
+	// INTERFACE, so `bus.Emit` on a nil bus is a method value on a nil interface
+	// and panics at the call site. Building the workers.EmitFunc here keeps the
+	// pre-E4c behaviour — a nil bus degrades to no-emit, it does not crash boot.
+	var workerEmit workers.EmitFunc
+	if bus != nil {
+		workerEmit = bus.Emit
+	}
+	workerReg := workers.BuildRegistry(ctx, cfg.Workers, workerEmit)
 
 	// M4-C3: hand the SAME live registry to the composition root's Codex
 	// runner-selection seam so a worker-selected codexdriver run routes over
@@ -1230,104 +1238,6 @@ func clockAfter(clk substrate.ClockPort, d time.Duration) <-chan time.Time {
 		}
 	}()
 	return ch
-}
-
-// buildWorkerRegistry turns the loaded workers.Config into a live *workers.Registry
-// and runs the boot-time health check (remote-substrate B4/B6).
-//
-// It returns nil — keeping the dispatch path on the existing local-only branch
-// (NFR7) — ONLY when NO worker is CONFIGURED (empty workers.yaml). When at least
-// one worker is configured it ALWAYS builds the registry, even if every worker
-// booted with enabled:false, so a later live `harmonik worker enable <name>`
-// (hk-xjbvi) can flip the worker selectable WITHOUT a daemon restart. A
-// disabled-at-boot worker is still local-only at dispatch time: SelectWorker
-// returns nil while Enabled==false, so dispatch behaviour is byte-identical to
-// the old nil-for-disabled case until an operator enables it. When a worker is
-// configured it:
-//
-//  1. Constructs the registry via workers.NewRegistry (B5 selection + slot
-//     tracking).
-//  2. Runs workers.RunHealthCheck over the worker's transport runner (B6),
-//     which probes tmux/claude/git/no-API-key, disables (SetEnabled(false)) any
-//     worker that fails a probe, and emits a worker_unhealthy event via bus.Emit.
-//     A worker that fails the boot health check is therefore SelectWorker()-skipped
-//     so its beads run locally rather than against an unhealthy host. The runner
-//     is nil for an all-disabled config (bootHealthRunner skips disabled workers),
-//     so an all-disabled config builds the registry but runs no probes.
-//
-// The runner for the health check is tmux.SSHRunner{Host: worker.Host} for
-// transport "ssh" (the only supported transport); other transports run no probes
-// and the worker stays enabled as configured.
-//
-// Bead ref: hk-rs-b4-bootwire-b44z, hk-rs-b6-healthcheck-isda.
-func buildWorkerRegistry(ctx context.Context, cfg workers.Config, bus handlercontract.EventEmitter) *workers.Registry {
-	return buildWorkerRegistryWithRunner(ctx, cfg, bus, bootHealthRunner(cfg))
-}
-
-// buildWorkerRegistryWithRunner is the runner-injectable core of
-// buildWorkerRegistry. Production passes the transport-resolved runner from
-// bootHealthRunner; tests pass a recording/no-op runner so the boot path is
-// exercisable without real ssh.
-//
-// runner == nil ⇒ the B6 boot health check is skipped (the worker stays enabled
-// as configured); this is also the unsupported-transport AND all-disabled
-// behaviour (the registry is built but no probes run).
-func buildWorkerRegistryWithRunner(ctx context.Context, cfg workers.Config, bus handlercontract.EventEmitter, runner tmuxpkg.CommandRunner) *workers.Registry {
-	// Build the registry whenever a worker is CONFIGURED — not only when one is
-	// ENABLED — so a live `worker enable` (hk-xjbvi) has a registry to flip without
-	// a restart. An all-disabled config still dispatches local-only because
-	// SelectWorker returns nil while Enabled==false (verified identical to the old
-	// nil-registry path). Zero configured workers stays nil (NFR7 local-only).
-	if len(cfg.Workers) == 0 {
-		return nil
-	}
-
-	// hk-qmyis: make "workers.yaml has entries but none enabled" visible at
-	// startup — previously this looked identical to "no workers.yaml at all"
-	// because both paths were silent. The registry is rebuilt at process start
-	// only, so editing workers.yaml under a running daemon is a no-op until the
-	// next restart; the warning below says so explicitly.
-	enabledCount := 0
-	for _, w := range cfg.Workers {
-		if w.Enabled {
-			enabledCount++
-		}
-	}
-	slog.Info("worker_registry_init", "workers_loaded", len(cfg.Workers), "workers_enabled", enabledCount)
-	if enabledCount == 0 {
-		slog.Warn("remote routing DISABLED (0 enabled workers); restart the daemon after editing workers.yaml to pick up changes")
-	}
-
-	reg := workers.NewRegistry(cfg)
-
-	// B6 boot health check: probe each enabled worker over its transport runner.
-	// On a probe failure the worker is disabled in-registry and a worker_unhealthy
-	// event is emitted, so SelectWorker() skips it and the run falls back to local.
-	if runner != nil {
-		var emit workers.EmitFunc
-		if bus != nil {
-			emit = bus.Emit
-		}
-		_ = workers.RunHealthCheck(ctx, runner, cfg, reg, emit)
-	}
-	return reg
-}
-
-// bootHealthRunner resolves the CommandRunner used for the boot health-check
-// probes against the (single, v1) enabled worker. Returns an SSHRunner for
-// transport "ssh"; nil for any other transport (probes skipped, worker stays
-// enabled as configured).
-func bootHealthRunner(cfg workers.Config) tmuxpkg.CommandRunner {
-	for _, w := range cfg.Workers {
-		if !w.Enabled {
-			continue
-		}
-		if w.Transport == "ssh" {
-			return tmuxpkg.SSHRunner{Host: w.Host}
-		}
-		return nil
-	}
-	return nil
 }
 
 // runWorkLoop is the main dispatch goroutine. It blocks until ctx is cancelled

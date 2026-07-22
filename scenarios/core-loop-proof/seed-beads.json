@@ -45,6 +45,22 @@
       "target_branch": "core-loop-proof-dot-integ"
     },
     {
+      "key": "codex-dot",
+      "title": "core-loop-proof seed: trivial one-line change (codex, dot cascade)",
+      "body": "Append a single line containing the token CODEX-DOT-LINE to docs/core-loop-proof-seed.txt and commit. Do not modify any other file.\n\n## Review\n\nApply this acceptance rubric to docs/core-loop-proof-seed.txt as it stands after the implementer's latest commit:\n\n- If the file contains a line with the token CODEX-DOT-LINE and no other file was modified, return verdict APPROVE.\n- Otherwise return REQUEST_CHANGES and say in your notes that a line containing the token CODEX-DOT-LINE must be appended.",
+      "//labels": "harness:codex is the tier-1 per-bead pin under test. The two labels that are",
+      "//labels2": "ABSENT are as load-bearing as the one that is present, and neither is an",
+      "//labels3": "oversight: NO workflow:<mode> label (the bead's preconditions forbid it — it",
+      "//labels4": "can resolve the run to single/review-loop, which has no node pins, so the",
+      "//labels5": "reviewer inherits harness:codex and the boundary is defeated silently), and",
+      "//labels6": "NO dot:<file> label (this cell must exercise the PROJECT-DEFAULT workflow.dot",
+      "//labels7": "= standard-bead.dot, whose review and qa nodes carry the claude-code pin that",
+      "//labels8": "gap7 proves held). Adding either label to this seed invalidates the cell.",
+      "labels": ["codename:quality-system", "core-loop-seed", "harness:codex"],
+      "harness": "codex",
+      "model_pin": null
+    },
+    {
       "key": "claude",
       "title": "core-loop-proof seed: trivial one-line change (claude)",
       "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. Fixture bead for the claude-code harness family (flag-gated cell).",

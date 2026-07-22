@@ -111,7 +111,7 @@ check "gap6 same-model leak (claude) fail" "$TD/pi-dot-modelleak-fail.ndjson"  "
 # node pin held), and each reviewer must actually return a verdict. Every fail fixture
 # below still CLOSES GREEN — that is the point: outcome alone cannot tell these apart from
 # the pass, which is why the bead requires asserting routing and not just the terminal.
-GAP7='{"schema_version":1,"cell":"codex-dot:local","seed_bead":"hk-clp-codexdot","substrate":"local","expect":{"dot_routing":{"implement_harness":"codex","implement_tier":1,"reviewer_nodes":["review","qa"],"reviewer_harness":"claude-code","reviewer_tier":3}},"gaps":["gap7"]}'
+GAP7='{"schema_version":1,"cell":"codex-dot:local","seed_bead":"hk-clp-codexdot","substrate":"local","expect":{"dot_routing":{"implement_harness":"codex","implement_tier":1,"reviewer_nodes":["review","qa"],"reviewer_harness":"claude-code","reviewer_tier":3},"model_selected":{"harness":"codex","model":null,"no_leak_models":["claude-opus-4-8","ornith"]}},"gaps":["gap7"]}'
 check "gap7 codex impl + claude review/qa pass" "$TD/codex-dot-routing-pass.ndjson"          "$GAP7" gap7 pass
 check "gap7 reviewer routed to codex fail"      "$TD/codex-dot-reviewer-on-codex-fail.ndjson" "$GAP7" gap7 fail
 check "gap7 reviewer at tier4 (default, not pin) fail" "$TD/codex-dot-reviewer-tier4-fail.ndjson" "$GAP7" gap7 fail
@@ -119,6 +119,15 @@ check "gap7 silent reviewer (no verdict) fail"  "$TD/codex-dot-silent-reviewer-f
 check "gap7 implementer not on codex fail"      "$TD/codex-dot-impl-not-codex-fail.ndjson"   "$GAP7" gap7 fail
 check "gap7 not a DOT cascade fail"             "$TD/codex-dot-not-dot-fail.ndjson"          "$GAP7" gap7 fail
 check "gap7 EPERM in codex shell step fail"     "$TD/codex-dot-eperm-fail.ndjson"            "$GAP7" gap7 fail
+# (f) the reviewer nodes' model= pin reaching the CODEX implement launch. Routing is
+# perfect in this fixture and it closes green — only the model leaked. gap1 owns this
+# check for single-routing cells but cannot be listed on a mixed-routing cell (its
+# last-harness_selected check would see qa's claude-code/tier-3), so gap7 carries it here.
+check "gap7 claude model leaked into codex impl fail" "$TD/codex-dot-implmodel-leak-fail.ndjson" "$GAP7" gap7 fail
+# Inert when the spec lists no no_leak_models: the same leaked stream must still PASS,
+# proving (f) is driven by the spec and is not a hardcoded model blacklist.
+GAP7_NOLEAKLIST='{"schema_version":1,"seed_bead":"hk-clp-codexdot","expect":{"dot_routing":{"implement_harness":"codex","implement_tier":1,"reviewer_nodes":["review","qa"],"reviewer_harness":"claude-code","reviewer_tier":3}},"gaps":["gap7"]}'
+check "gap7 model-leak clause inert without no_leak_models" "$TD/codex-dot-implmodel-leak-fail.ndjson" "$GAP7_NOLEAKLIST" gap7 pass
 # The gap must be LISTED for the dispatcher to run it; the pending verdict is about the
 # missing expect block, not a missing gaps entry.
 GAP7_NOEXPECT='{"schema_version":1,"seed_bead":"hk-clp-codexdot","expect":{},"gaps":["gap7"]}'

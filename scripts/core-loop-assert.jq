@@ -284,7 +284,19 @@ def assert_gap6:
 #       launches on claude and then says nothing is the same false red by another route;
 #   (e) no EPERM / "operation not permitted" text anywhere in the stream (the codex
 #       shell-step sandbox denial, which surfaces as a tool failure rather than a typed
-#       event, so it is caught by scanning the serialized stream).
+#       event, so it is caught by scanning the serialized stream);
+#   (f) no model_selected on the IMPLEMENT harness carries a model listed in
+#       expect.model_selected.no_leak_models — the node-pin model leak (hk-lfrub/hk-pkugu).
+#
+# WHY (f) LIVES HERE AND NOT IN gap1. gap1 owns the no-leak check for every SINGLE-routing
+# cell, but it cannot be listed on a mixed-routing cell at all: it asserts on the LAST
+# harness_selected for the bead ($hs[-1]), and in a DOT cascade that is the qa node's
+# claude-code/tier-3 — so gap1 would fail a perfectly-routed codex-dot run. Dropping gap1
+# from the cell silently drops its no-leak coverage exactly where the risk is HIGHEST: the
+# standard-bead graph pins model="claude-opus-4-8" on review and qa, so this is the one
+# cell where a claude model pin is in the same run as a codex launch and could leak into
+# it. (f) restores that coverage under the assertion that can express it. It is inert when
+# the spec lists no no_leak_models.
 def _dot_attributed:
   # [{i, type, p, node}] — every event tagged with the node whose dispatch preceded it.
   [ events[] | {type: .type, p: pl} ]
@@ -316,6 +328,10 @@ def assert_gap7:
   | ([ $revs[] | .hs[] | select(.p.agent_type != $wantRev or .p.tier != $wantRevTier) ]) as $revBad
   | ([ $revs[] | select((.rv | length) == 0) | .node ]) as $revNoVerdict
   | ([ events[] | tostring | select(test("EPERM|operation not permitted"; "i")) ] | length) as $eperm
+  | (($spec.expect.model_selected // {}).no_leak_models // []) as $forbidden
+  | ([ of_type("model_selected") | map(pl) | .[]
+       | select(.harness == $wantImpl)
+       | select(.model as $m | $forbidden | index($m)) ]) as $implModelLeaks
   | if ($dr == {})
     then result("gap7"; "pending"; "no expect.dot_routing in spec — add {implement_harness, reviewer_nodes, reviewer_harness} to assert gap7")
     elif ($att | map(select(.node != "<pre-cascade>")) | length) == 0
@@ -334,7 +350,9 @@ def assert_gap7:
     then result("gap7"; "fail"; "reviewer node(s) \($revNoVerdict | join(",")) launched on \($wantRev) but emitted NO reviewer_verdict — silent reviewer, same false red by another route")
     elif $eperm > 0
     then result("gap7"; "fail"; "EPERM / 'operation not permitted' in the stream (\($eperm) event(s)) — the codex shell step hit a sandbox denial")
-    else result("gap7"; "pass"; "implement=\($wantImpl)/tier\($wantImplTier); \($revs | map("\(.node)=\(.hs[0].p.agent_type)/tier\(.hs[0].p.tier) verdict=\(.rv[0].p.verdict)") | join(" ")); no EPERM")
+    elif ($implModelLeaks | length) > 0
+    then result("gap7"; "fail"; "node-model pin LEAKED into the \($wantImpl) implement launch: forbidden model(s) \($implModelLeaks | map(.model) | unique | join(",")) — the reviewer nodes' model= pin reached the implementer (cf hk-lfrub/hk-pkugu; gap1 cannot catch this on a mixed-routing cell)")
+    else result("gap7"; "pass"; "implement=\($wantImpl)/tier\($wantImplTier); \($revs | map("\(.node)=\(.hs[0].p.agent_type)/tier\(.hs[0].p.tier) verdict=\(.rv[0].p.verdict)") | join(" ")); no EPERM; no model leak into \($wantImpl)")
     end;
 
 # --- dispatcher ------------------------------------------------------------

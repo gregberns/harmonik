@@ -171,6 +171,75 @@
       ]
     },
     {
+      "//": "codex-dot cell (hk-ity2u): the codex-first safety boundary as a live cell.",
+      "//2": "A bead labelled harness:codex runs its IMPLEMENT node on codex while BOTH",
+      "//3": "reviewer nodes stay on claude-code. Run via EXTRA_CELLS (the cell name is not",
+      "//4": "harness:substrate), exactly like pi-dot:local.",
+      "//pin": "The codex-dot seed carries harness:codex and DELIBERATELY NO workflow:<mode>",
+      "//pin2": "label and NO dot:<file> label. Both omissions are load-bearing, not oversight:",
+      "//pin3": "a workflow:<mode> label is the per-bead boundary-defeat vector the bead's own",
+      "//pin4": "preconditions forbid (it can send the whole run to single/review-loop, which",
+      "//pin5": "has no node pins, so the reviewer inherits the bead's codex label). With both",
+      "//pin6": "absent the run resolves to the daemon default mode (the matrix boots the",
+      "//pin7": "scratch daemon with --workflow-mode dot) and the PROJECT-DEFAULT workflow.dot",
+      "//pin8": "— which is standard-bead.dot, whose review and qa nodes pin harness=claude-code",
+      "//pin9": "+ model=claude-opus-4-8. That pin is what gap7 proves held.",
+      "//gap1": "gap1 IS DELIBERATELY NOT LISTED, and this is the one thing to read before",
+      "//gap1b": "editing this cell. gap1 asserts on the LAST harness_selected for the bead;",
+      "//gap1c": "in a DOT cascade that is qa's claude-code/tier-3, so gap1 would RED a",
+      "//gap1d": "perfectly-routed run. gap7 is strictly stronger here — it asserts harness AND",
+      "//gap1e": "tier PER NODE — and it carries gap1's node-pin model no-leak check (clause f)",
+      "//gap1f": "so dropping gap1 drops no coverage. Do not 'restore' gap1 to this cell.",
+      "//tier": "The tiers below are the assertion, not decoration. implement at tier 1 proves",
+      "//tier2": "the BEAD LABEL routed the implementer; review/qa at tier 3 proves the DOT NODE",
+      "//tier3": "PIN held. A claude-code reviewer at tier 4 is the global default agreeing by",
+      "//tier4": "luck with the pin untested — relaxing reviewer_tier to 'any claude' silently",
+      "//tier5": "guts this cell.",
+      "cell": "codex-dot:local",
+      "harness": "codex",
+      "substrate": "local",
+      "seed_bead": "codex-dot",
+      "expect": {
+        "dot_routing": {
+          "implement_harness": "codex",
+          "implement_tier": 1,
+          "reviewer_nodes": [
+            "review",
+            "qa"
+          ],
+          "reviewer_harness": "claude-code",
+          "reviewer_tier": 3
+        },
+        "model_selected": {
+          "harness": "codex",
+          "model": null,
+          "no_leak_models": [
+            "claude-opus-4-8",
+            "ornith"
+          ]
+        },
+        "terminal": "pass",
+        "//dispatch": "dot must stay dot (gap4): a silent force to review-loop would strip",
+        "//dispatch2": "the node pins and is the exact hk-3eso9 shape. workflow_id_present is",
+        "//dispatch3": "false for the same reason as every other cell — this daemon emits no",
+        "//dispatch4": "workflow_id on run_started in any mode.",
+        "dispatch": {
+          "workflow_mode": "dot",
+          "workflow_id_present": false
+        },
+        "provider": {
+          "enabled": true
+        },
+        "lands_on": "main"
+      },
+      "gaps": [
+        "gap3",
+        "gap4",
+        "gap7",
+        "t10"
+      ]
+    },
+    {
       "cell": "pi:remote",
       "harness": "pi",
       "substrate": "remote",

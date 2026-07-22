@@ -22,16 +22,17 @@ import (
 // reapPriorAgentWatchersFn is the seam tests inject into captainReapPriorWatchers /
 // crewReapPriorWatchers to observe or no-op the reap call without touching the
 // real process table.
-type reapPriorAgentWatchersFn func(agent string)
+type reapPriorAgentWatchersFn func(agent, project string)
 
 // reapPriorAgentWatchers is the production reap hook: it enumerates and
-// terminates every prior --follow watcher process addressed to agent,
-// regardless of liveness (see lifecycle.ReapPriorAgentFollowWatchers for why),
-// and reports survivors/errors to stderr. Best-effort: never blocks or fails
-// the launch — a missed reap just leaves the pre-existing leak in place,
-// which is the status quo, not a regression introduced by this call.
-func reapPriorAgentWatchers(agent string) {
-	survived, err := lifecycle.ReapPriorAgentFollowWatchers(context.Background(), nil, agent, os.Getpid(), nil)
+// terminates every prior --follow watcher process addressed to agent WITHIN
+// project, regardless of liveness (see lifecycle.ReapPriorAgentFollowWatchers
+// for why liveness is not a gate, and why project is), and reports
+// survivors/errors to stderr. Best-effort: never blocks or fails the launch —
+// a missed reap just leaves the pre-existing leak in place, which is the
+// status quo, not a regression introduced by this call.
+func reapPriorAgentWatchers(agent, project string) {
+	survived, err := lifecycle.ReapPriorAgentFollowWatchers(context.Background(), nil, agent, project, os.Getpid(), nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik: reap prior --follow watcher(s) for %q: %v\n", agent, err)
 		return

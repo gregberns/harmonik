@@ -113,7 +113,7 @@ func TestHk6629b_MatchesAgentFollowWatcher_NotFollowOrNotHarmonik(t *testing.T) 
 func TestHk6629b_ReapPriorAgentFollowWatchers_EmptyAgent(t *testing.T) {
 	t.Parallel()
 
-	survived, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{pids: []int{123}}, "", 0, nil)
+	survived, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{pids: []int{123}}, "", "/proj", 0, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestHk6629b_ReapPriorAgentFollowWatchers_ExcludesSelf(t *testing.T) {
 	t.Parallel()
 
 	selfPID := os.Getpid()
-	survived, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{pids: []int{selfPID}}, "captain", selfPID, nil)
+	survived, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{pids: []int{selfPID}}, "captain", "/proj", selfPID, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestHk6629b_ReapPriorAgentFollowWatchers_ListError(t *testing.T) {
 	t.Parallel()
 
 	wantErr := context.DeadlineExceeded
-	_, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{err: wantErr}, "captain", 0, nil)
+	_, err := ReapPriorAgentFollowWatchers(t.Context(), &agentWatcherFakeLister{err: wantErr}, "captain", "/proj", 0, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -208,7 +208,7 @@ func TestHk6629b_ReapPriorAgentFollowWatchers_KillsLiveWatcher(t *testing.T) {
 	// kernel's own signal delivery — discard it here, as the sibling
 	// SweepOrphanBr test (BI-014a) does for the same reason. The durable
 	// assertion is the post-Wait() liveness probe below.
-	if _, err := ReapPriorAgentFollowWatchers(ctx, lister, "captain", 0, nil); err != nil {
+	if _, err := ReapPriorAgentFollowWatchers(ctx, lister, "captain", "/proj", 0, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

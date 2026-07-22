@@ -482,8 +482,10 @@ func runCaptainLaunchWithOps(subArgs []string, run captainLaunchRunFn, enableKee
 	// leave its predecessor's watcher holding a daemon subscribe slot. This is
 	// orthogonal to the D7 tmux-session pre-flight above (D7 gates on the
 	// AGENT PANE's liveness; this reaps watcher PROCESSES by argv+identity,
-	// live or dead, independent of any tmux session).
-	captainReapPriorWatchers(name)
+	// live or dead, independent of any tmux session). Scoped to project:
+	// agent names repeat across projects sharing a box, so an unscoped reap
+	// would kill a peer project's same-named watcher.
+	captainReapPriorWatchers(name, project)
 
 	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
 	// before launching so a foreign project (never run harmonik init) has the

@@ -171,7 +171,7 @@ func TestReapPriorAgentFollowWatchers_PIDReuseGuard_NoSIGKILLWhenIdentityGone(t 
 	pid := w4StartTermIgnoringProc(t)
 	lister := &w4SeqWatcherLister{seq: [][]int{{pid}, {}}}
 
-	survived, err := ReapPriorAgentFollowWatchers(t.Context(), lister, "captain", 0, orphanSweepFixtureNopLogger())
+	survived, err := ReapPriorAgentFollowWatchers(t.Context(), lister, "captain", "/proj", 0, orphanSweepFixtureNopLogger())
 	if err != nil {
 		t.Fatalf("ReapPriorAgentFollowWatchers: unexpected error: %v", err)
 	}

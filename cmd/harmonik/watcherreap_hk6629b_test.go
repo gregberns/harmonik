@@ -22,11 +22,12 @@ import (
 // captain name exactly once, before the launch completes.
 func TestCaptainLaunch_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
 	var calls int
-	var gotAgent string
+	var gotAgent, gotProject string
 	orig := captainReapPriorWatchers
-	captainReapPriorWatchers = func(agent string) {
+	captainReapPriorWatchers = func(agent, project string) {
 		calls++
 		gotAgent = agent
+		gotProject = project
 	}
 	t.Cleanup(func() { captainReapPriorWatchers = orig })
 
@@ -47,6 +48,12 @@ func TestCaptainLaunch_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
 	if gotAgent != "captain" {
 		t.Errorf("captainReapPriorWatchers agent = %q, want %q", gotAgent, "captain")
 	}
+	// The reap MUST be scoped to the launching project: agent names repeat
+	// across projects sharing a box, and an unscoped reap kills a peer
+	// project's same-named watcher.
+	if gotProject != proj {
+		t.Errorf("captainReapPriorWatchers project = %q, want %q", gotProject, proj)
+	}
 }
 
 // TestCaptainLaunch_ReapsPriorAgentWatchers_D7Refuse_Hk6629b verifies the reap
@@ -56,7 +63,7 @@ func TestCaptainLaunch_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
 func TestCaptainLaunch_ReapsPriorAgentWatchers_D7Refuse_Hk6629b(t *testing.T) {
 	var calls int
 	orig := captainReapPriorWatchers
-	captainReapPriorWatchers = func(_ string) { calls++ }
+	captainReapPriorWatchers = func(_, _ string) { calls++ }
 	t.Cleanup(func() { captainReapPriorWatchers = orig })
 
 	run, _ := captureRunHkly0n()
@@ -112,11 +119,12 @@ func startWatcherReapMockDaemon(t *testing.T, project, sessionID, crewName strin
 // name exactly once for a successful crew start.
 func TestCrewStart_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
 	var calls int
-	var gotAgent string
+	var gotAgent, gotProject string
 	orig := crewReapPriorWatchers
-	crewReapPriorWatchers = func(agent string) {
+	crewReapPriorWatchers = func(agent, project string) {
 		calls++
 		gotAgent = agent
+		gotProject = project
 	}
 	t.Cleanup(func() { crewReapPriorWatchers = orig })
 
@@ -136,6 +144,10 @@ func TestCrewStart_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
 	if gotAgent != "gamma" {
 		t.Errorf("crewReapPriorWatchers agent = %q, want %q", gotAgent, "gamma")
 	}
+	// Scoped to the launching project — see the captain-side assertion.
+	if gotProject != proj {
+		t.Errorf("crewReapPriorWatchers project = %q, want %q", gotProject, proj)
+	}
 }
 
 // TestCrewStart_ReapsPriorAgentWatchers_NoDaemonSkips_Hk6629b verifies the
@@ -148,7 +160,7 @@ func TestCrewStart_ReapsPriorAgentWatchers_Hk6629b(t *testing.T) {
 func TestCrewStart_ReapsPriorAgentWatchers_NoDaemonSkips_Hk6629b(t *testing.T) {
 	var calls int
 	orig := crewReapPriorWatchers
-	crewReapPriorWatchers = func(_ string) { calls++ }
+	crewReapPriorWatchers = func(_, _ string) { calls++ }
 	t.Cleanup(func() { crewReapPriorWatchers = orig })
 
 	proj := t.TempDir() // no mock daemon listening here

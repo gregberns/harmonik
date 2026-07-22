@@ -314,7 +314,9 @@ func runCrewStartCoreWith(subArgs []string, enableKeeper keeperEnableFn, briefSe
 	// or a re-`crew start` for the same name) must never leave its
 	// predecessor's watcher holding a daemon subscribe slot. See
 	// captainReapPriorWatchers in captain.go for the mirrored captain-side call.
-	crewReapPriorWatchers(name)
+	// Scoped to absProject: crew names repeat across projects sharing a box, so
+	// an unscoped reap would kill a peer project's same-named watcher.
+	crewReapPriorWatchers(name, absProject)
 
 	// Provision boot assets (skills, scaffolds, context tiers, AGENTS.md router)
 	// before the daemon spawns the crew so a foreign project (never run harmonik

@@ -1027,16 +1027,13 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// A forced termination never runs defers and therefore correctly emits no
 	// daemon_shutdown event.
 	defer func() {
-		if ctx.Err() == nil {
-			return
-		}
 		shutdownAtNs, clockErr := lifecycle.MonotonicNsSinceBoot()
 		if clockErr != nil {
 			log.Printf("warn: daemon.Start: read shutdown monotonic clock: %v", clockErr)
 			return
 		}
 		payload := core.DaemonShutdownPayload{
-			ShutdownAt:            time.Now().UTC().Format(time.RFC3339),
+			ShutdownAt:            time.Now().UTC().Format(time.RFC3339Nano),
 			ShutdownAtNsSinceBoot: shutdownAtNs,
 			Mode:                  core.ShutdownModeGraceful,
 		}

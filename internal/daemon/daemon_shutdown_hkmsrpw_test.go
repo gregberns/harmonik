@@ -30,6 +30,36 @@ func TestDaemonStart_GracefulShutdownWrittenToEventLog(t *testing.T) {
 		t.Fatalf("daemon.Start after graceful cancellation: %v", err)
 	}
 
+	assertSingleGracefulShutdown(t, jsonlPath)
+}
+
+// TestDaemonStart_StopDispatchCancellationWritesShutdownEvent mirrors the
+// production composition root: Start's run context remains live while the
+// independently cancelled StopDispatchCtx asks the work loop to exit cleanly.
+func TestDaemonStart_StopDispatchCancellationWritesShutdownEvent(t *testing.T) {
+	t.Parallel()
+
+	projectDir, jsonlPath := pidfileFixtureProjectDir(t)
+	runCtx := context.Background()
+	stopDispatchCtx, cancelStopDispatch := context.WithCancel(context.Background())
+	cancelStopDispatch()
+
+	cfg := daemon.Config{
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		WorkflowModeDefault: core.WorkflowModeReviewLoop,
+		StopDispatchCtx:     stopDispatchCtx,
+	}
+	if err := daemon.Start(runCtx, cfg); err != nil {
+		t.Fatalf("daemon.Start after dispatch cancellation: %v", err)
+	}
+
+	assertSingleGracefulShutdown(t, jsonlPath)
+}
+
+func assertSingleGracefulShutdown(t *testing.T, jsonlPath string) {
+	t.Helper()
+
 	f, err := os.Open(jsonlPath)
 	if err != nil {
 		t.Fatalf("open event log: %v", err)

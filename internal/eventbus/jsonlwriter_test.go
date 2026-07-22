@@ -40,6 +40,13 @@ func jsonlWriterFixtureTempPath(t *testing.T, name string) string {
 	return filepath.Join(t.TempDir(), name)
 }
 
+func eventbusFixtureClose(t testing.TB, closer interface{ Close() error }) {
+	t.Helper()
+	if err := closer.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+}
+
 // jsonlWriterFixtureReadLines reads all lines from path and returns them
 // without trailing newlines.
 func jsonlWriterFixtureReadLines(t *testing.T, path string) []string {
@@ -49,7 +56,7 @@ func jsonlWriterFixtureReadLines(t *testing.T, path string) []string {
 	if err != nil {
 		t.Fatalf("jsonlWriterFixtureReadLines: open %s: %v", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer eventbusFixtureClose(t, f)
 
 	var lines []string
 	scanner := bufio.NewScanner(f)
@@ -72,7 +79,7 @@ func TestJSONLWriterAppendSingleLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer eventbusFixtureClose(t, w)
 
 	line := []byte(`{"event_id":"01950000-0000-7000-8000-000000000001","type":"daemon_started"}`)
 	if err := w.Append(line, false); err != nil {
@@ -99,7 +106,7 @@ func TestJSONLWriterAppendPreservesExistingLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer eventbusFixtureClose(t, w)
 
 	first := []byte(`{"event_id":"01950000-0000-7000-8000-000000000001","type":"daemon_started"}`)
 	second := []byte(`{"event_id":"01950000-0000-7000-8000-000000000002","type":"daemon_ready"}`)
@@ -148,7 +155,7 @@ func TestJSONLWriterOpenExistingPreservesLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter (second): %v", err)
 	}
-	defer func() { _ = w2.Close() }()
+	defer eventbusFixtureClose(t, w2)
 
 	second := []byte(`{"event_id":"01950000-0000-7000-8000-000000000002","type":"daemon_ready"}`)
 	if err := w2.Append(second, false); err != nil {
@@ -175,7 +182,7 @@ func TestJSONLWriterAppendWithSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer eventbusFixtureClose(t, w)
 
 	line := []byte(`{"event_id":"01950000-0000-7000-8000-000000000001","type":"daemon_started"}`)
 	// sync=true exercises the F-class (fsync-boundary) path.
@@ -206,12 +213,11 @@ func TestJSONLWriterConcurrentAppend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer eventbusFixtureClose(t, w)
 
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 	for i := range goroutines {
-		i := i
 		go func() {
 			defer wg.Done()
 			for j := range linesPerGoroutine {
@@ -232,7 +238,7 @@ func TestJSONLWriterConcurrentAppend(t *testing.T) {
 	}
 	// Verify each line ends without truncation (non-empty, parseable as JSON-ish).
 	for i, line := range lines {
-		if len(line) == 0 {
+		if line == "" {
 			t.Errorf("line %d is empty (write corruption)", i)
 		}
 	}
@@ -281,7 +287,7 @@ func TestJSONLWriterFsyncConcurrentLatency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer eventbusFixtureClose(t, w)
 
 	line := []byte(`{"type":"run_started","run_id":"test"}`)
 
@@ -342,7 +348,7 @@ func BenchmarkJSONLWriterFsyncLatency(b *testing.B) {
 	if err != nil {
 		b.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = w.Close() }()
+	defer eventbusFixtureClose(b, w)
 
 	line := []byte(`{"type":"run_started","run_id":"bench"}`)
 

@@ -87,6 +87,7 @@ type JSONLWriter struct {
 	// no new items enter queue, so the drainer can safely drain and exit.
 	mu       sync.Mutex
 	isClosed bool
+	closeErr error
 
 	// closeOnce ensures Close is idempotent: a second call returns nil without
 	// re-closing the stop channel (which would panic).
@@ -141,7 +142,7 @@ func OpenJSONLWriter(path string) (*JSONLWriter, error) {
 // reducing fsync calls from O(N) to O(1) for burst-concurrent callers.
 func (w *JSONLWriter) drain(f *os.File) {
 	defer func() {
-		_ = f.Close()
+		w.closeErr = f.Close()
 		close(w.done)
 	}()
 
@@ -250,7 +251,7 @@ func (w *JSONLWriter) processBatch(f *os.File, batch []writeRequest) {
 // (EV-015).
 //
 // Spec ref: event-model.md §6.2 EV-020; §4.4 EV-015, EV-016.
-func (w *JSONLWriter) Append(line []byte, sync bool) error {
+func (w *JSONLWriter) Append(line []byte, doSync bool) error {
 	// Allocate a single buffer: line + newline. This ensures one write call
 	// per event line, minimising torn-write window under POSIX O_APPEND semantics.
 	buf := make([]byte, len(line)+1)
@@ -260,7 +261,7 @@ func (w *JSONLWriter) Append(line []byte, sync bool) error {
 	result := make(chan error, 1)
 	req := writeRequest{
 		buf:    buf,
-		doSync: sync,
+		doSync: doSync,
 		result: result,
 	}
 
@@ -281,9 +282,13 @@ func (w *JSONLWriter) Append(line []byte, sync bool) error {
 // Close signals the drainer goroutine to stop accepting new requests, waits
 // for it to finish processing any already-enqueued requests, then returns.
 //
-// Close is idempotent: a second (or subsequent) call is a no-op and returns
-// nil without panicking. This protects callers that combine an explicit close
-// with a deferred close (e.g. bus.Seal() + defer w.Close()).
+// Close returns the underlying file's close error, so a failure to flush
+// OS-buffered event data on shutdown is reported rather than swallowed.
+//
+// Close is idempotent: a second (or subsequent) call does not re-close
+// anything and returns the same result as the first without panicking. This
+// protects callers that combine an explicit close with a deferred close
+// (e.g. bus.Seal() + defer w.Close()).
 //
 // Calling Close concurrently with Append is safe: Append checks isClosed
 // under mu and returns [ErrWriterClosed] rather than sending on the queue.
@@ -298,7 +303,7 @@ func (w *JSONLWriter) Close() error {
 		close(w.stop)
 	})
 	<-w.done
-	return nil
+	return w.closeErr
 }
 
 // ScanAfter returns an iterator over all events in the JSONL file at path
@@ -328,7 +333,11 @@ func ScanAfter(path string, sinceID core.EventID) iter.Seq[core.Event] {
 			}
 			return
 		}
-		defer func() { _ = f.Close() }()
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				log.Printf("eventbus.ScanAfter: close %s: %v", path, closeErr)
+			}
+		}()
 
 		since := [16]byte(sinceID)
 		reader := bufio.NewReader(f)
@@ -406,7 +415,11 @@ func Filter(path string, runID core.RunID) iter.Seq[core.Event] {
 			}
 			return
 		}
-		defer func() { _ = f.Close() }()
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				log.Printf("eventbus.Filter: close %s: %v", path, closeErr)
+			}
+		}()
 
 		reader := bufio.NewReader(f)
 		for {

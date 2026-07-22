@@ -180,7 +180,6 @@ func TestBusImplEmit_SafeFieldsReachConsumerUnchanged(t *testing.T) {
 	}
 
 	for k, wantVal := range want {
-		k, wantVal := k, wantVal
 		gotVal, ok := receivedPayload[k]
 		if !ok {
 			t.Errorf("consumer payload missing safe key %q", k)
@@ -558,7 +557,7 @@ func TestBusImplEmit_FsyncBoundaryEventWritesToJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if err := bus.Seal(); err != nil {
@@ -605,7 +604,7 @@ func TestBusImplEmit_OrdinaryEventWritesToJSONLWithoutSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if err := bus.Seal(); err != nil {
@@ -665,7 +664,7 @@ func TestBusImplEmitWithRunID_RunIDAppearsInJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if sealErr := bus.Seal(); sealErr != nil {
@@ -724,7 +723,7 @@ func TestBusImplEmit_PlainEmit_RunIDAbsentFromJSONL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	defer func() { _ = writer.Close() }()
+	defer eventbusFixtureClose(t, writer)
 
 	bus := eventbus.NewBusImplWithWriter(nil, writer)
 	if sealErr := bus.Seal(); sealErr != nil {

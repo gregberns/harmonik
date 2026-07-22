@@ -152,6 +152,16 @@ type busImpl struct {
 	jsonlPath string
 }
 
+// recordDeadLetter preserves asynchronous dispatch semantics while making a
+// failed dead-letter write observable. Async handler failures cannot be
+// returned to the emitter after Emit has completed, so logging is the only
+// available error-reporting channel here.
+func (b *busImpl) recordDeadLetter(ctx context.Context, evt core.Event, reason string) {
+	if err := b.deadLetterSink.Record(ctx, evt, reason); err != nil {
+		log.Printf("eventbus: record dead letter for event %s (%s): %v", evt.EventID, reason, err)
+	}
+}
+
 // fsyncBoundaryEventTypes is the static set of F-class (fsync-boundary)
 // event types derived from the §8 taxonomy table in specs/event-model.md.
 // F-class events require Append(line, sync=true) per EV-016 / EV-016a.
@@ -534,7 +544,7 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 				defer func() {
 					if r := recover(); r != nil {
 						// deadLetterSink is never nil (NoopDeadLetterSink when no sink configured).
-						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+						b.recordDeadLetter(ctx, evt, "observer_panic")
 					}
 				}()
 				// Context is passed through so callers can cancel in-flight
@@ -542,7 +552,7 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 				// Consumer errors are recorded to the dead-letter sink with
 				// reason "consumer_error" (hk-xvpwb).
 				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
-					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+					b.recordDeadLetter(ctx, evt, "consumer_error")
 				}
 			}()
 		}
@@ -655,13 +665,13 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 				// deadLetterSink is never nil (NoopDeadLetterSink when no sink configured).
 				defer func() {
 					if r := recover(); r != nil {
-						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+						b.recordDeadLetter(ctx, evt, "observer_panic")
 					}
 				}()
 				// Consumer errors are recorded to the dead-letter sink with
 				// reason "consumer_error" (hk-xvpwb).
 				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
-					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+					b.recordDeadLetter(ctx, evt, "consumer_error")
 				}
 			}()
 		}
@@ -750,11 +760,11 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 				defer b.doneGlobalDrainer()
 				defer func() {
 					if r := recover(); r != nil {
-						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+						b.recordDeadLetter(ctx, evt, "observer_panic")
 					}
 				}()
 				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
-					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+					b.recordDeadLetter(ctx, evt, "consumer_error")
 				}
 			}()
 		}
@@ -844,11 +854,11 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 				defer b.doneGlobalDrainer()
 				defer func() {
 					if r := recover(); r != nil {
-						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+						b.recordDeadLetter(ctx, evt, "observer_panic")
 					}
 				}()
 				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
-					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+					b.recordDeadLetter(ctx, evt, "consumer_error")
 				}
 			}()
 		}
@@ -946,11 +956,11 @@ func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, paylo
 				defer b.doneGlobalDrainer()
 				defer func() {
 					if r := recover(); r != nil {
-						_ = b.deadLetterSink.Record(ctx, evt, "observer_panic")
+						b.recordDeadLetter(ctx, evt, "observer_panic")
 					}
 				}()
 				if handlerErr := sub.Handler(ctx, evt); handlerErr != nil {
-					_ = b.deadLetterSink.Record(ctx, evt, "consumer_error")
+					b.recordDeadLetter(ctx, evt, "consumer_error")
 				}
 			}()
 		}
@@ -1332,7 +1342,7 @@ type deadLetterEntry struct {
 // A missing dead-letter file or JSONL path is a no-op.
 //
 // Spec ref: specs/event-model.md §6.1, §6.2, §4.2 EV-011, EV-014b.
-func (b *busImpl) DeadLetterReplay(consumerName string, filter *core.EventPattern) error {
+func (b *busImpl) DeadLetterReplay(consumerName string, filter *core.EventPattern) (err error) {
 	if b.jsonlPath == "" {
 		return nil
 	}
@@ -1364,7 +1374,11 @@ func (b *busImpl) DeadLetterReplay(consumerName string, filter *core.EventPatter
 		}
 		return fmt.Errorf("eventbus.DeadLetterReplay: open %s: %w", dlPath, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("eventbus.DeadLetterReplay: close %s: %w", dlPath, closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 	reader := bufio.NewReader(f)
@@ -1416,7 +1430,11 @@ func replayAndDetectTrunc(ctx context.Context, path string, sinceID core.EventID
 		}
 		return core.EventID{}, false, fmt.Errorf("eventbus: open %s: %w", path, openErr)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("eventbus: close %s: %w", path, closeErr)
+		}
+	}()
 
 	since := [16]byte(sinceID)
 	reader := bufio.NewReader(f)

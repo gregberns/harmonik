@@ -56,7 +56,7 @@ func ev014dSetup(t *testing.T) *ev014dFixture {
 	if err != nil {
 		t.Fatalf("OpenJSONLWriter: %v", err)
 	}
-	t.Cleanup(func() { _ = w.Close() })
+	t.Cleanup(func() { eventbusFixtureClose(t, w) })
 	return &ev014dFixture{dir: dir, logPath: logPath, writer: w}
 }
 
@@ -69,11 +69,11 @@ func ev014dWriteRawEvent(t *testing.T, logPath string, ev core.Event) {
 		t.Fatalf("marshal event: %v", err)
 	}
 	line = append(line, '\n')
-	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		t.Fatalf("open log: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer eventbusFixtureClose(t, f)
 	if _, err := f.Write(line); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
@@ -282,10 +282,18 @@ func TestBusImpl_SealInvokesTailTruncationCallback(t *testing.T) {
 	// Write first event as complete line.
 	ev014dWriteRawEvent(t, fix.logPath, ev014dMakeEvent(ids[0], "run_started"))
 	// Write second event as a torn tail (no trailing newline).
-	partial, _ := json.Marshal(ev014dMakeEvent(ids[1], "run_started"))
-	f, _ := os.OpenFile(fix.logPath, os.O_WRONLY|os.O_APPEND, 0o644)
-	_, _ = f.Write(partial) // no '\n' — torn tail
-	_ = f.Close()
+	partial, err := json.Marshal(ev014dMakeEvent(ids[1], "run_started"))
+	if err != nil {
+		t.Fatalf("json.Marshal torn tail: %v", err)
+	}
+	f, err := os.OpenFile(fix.logPath, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatalf("open torn tail: %v", err)
+	}
+	if _, err := f.Write(partial); err != nil { // no '\n' — torn tail
+		t.Fatalf("write torn tail: %v", err)
+	}
+	eventbusFixtureClose(t, f)
 
 	sinceID := core.EventID{} // start from the beginning (before ids[0])
 	var cbID core.EventID
@@ -523,11 +531,11 @@ func ev014dWriteDeadLetterEvent(t *testing.T, logPath string, ev core.Event) {
 		}
 		return string(b)
 	}())
-	f, err := os.OpenFile(dlPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	f, err := os.OpenFile(dlPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		t.Fatalf("open dead-letter log: %v", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer eventbusFixtureClose(t, f)
 	if _, err := fmt.Fprintln(f, entry); err != nil {
 		t.Fatalf("write dead-letter entry: %v", err)
 	}

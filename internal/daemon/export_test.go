@@ -3595,3 +3595,13 @@ func ExportedLoadQueueProvenance(ctx context.Context, projectDir string) (lifecy
 	bs.loadQueueProvenance(ctx, st)
 	return st.queueDispatched, st.queueOwned
 }
+
+// ExportedNewCapturedSpawnProof exposes newCapturedSpawnProof (hk-47u9z) so the
+// regression test drives the PRODUCTION spawn-proof closure rather than a
+// restatement of it. A test that rebuilds the closure itself passes with the
+// production wiring reverted — verified, and it is how the first draft of the
+// hk-47u9z test was a false green.
+func ExportedNewCapturedSpawnProof(emitter handlercontract.EventEmitter, runID core.RunID) func() {
+	tap, _ := newPerRunEventTap(emitter, runID)
+	return newCapturedSpawnProof(tap, runID)
+}
